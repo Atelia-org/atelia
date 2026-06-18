@@ -76,6 +76,7 @@ internal class DurObjDequeImpl<T> : DurableDeque<T>
     }
 
     private protected override void DiscardChangesCore() => _core.Revert<LocalIdAsRefHelper>();
+    private protected override void UnfreezeToMutableCleanCore() => _core.UnfreezeToMutableClean<LocalIdAsRefHelper>();
 
     internal override DurableObject ForkAsMutableCore() {
         var fork = new DurObjDequeImpl<T>();
@@ -85,9 +86,12 @@ internal class DurObjDequeImpl<T> : DurableDeque<T>
     }
 
     internal override void FreezeCore(bool forceRebase) {
-        // LocalId 是纯值 ID，逐槽 freeze 无意义；
-        // DequeChangeTracker 目前也没有 FreezeFromCurrent/FreezeFromClean，
-        // 因此不做 tracker 级 freeze（已知内存优化缺口，与 TypedDeque/MixedDeque 相同）。
+        if (forceRebase) {
+            _core.FreezeFromCurrent<LocalIdAsRefHelper>();
+        }
+        else {
+            _core.FreezeFromClean<LocalIdAsRefHelper>();
+        }
     }
 
     private protected override uint EstimatedRebaseBytes => _core.EstimatedRebaseBytes<LocalIdAsRefHelper>();
@@ -95,6 +99,7 @@ internal class DurObjDequeImpl<T> : DurableDeque<T>
 
     private protected override void CommitCore() => _core.Commit<LocalIdAsRefHelper>();
     private protected override void SyncCurrentFromCommittedCore() => _core.SyncCurrentFromCommitted<LocalIdAsRefHelper>();
+    private protected override void SyncFrozenCurrentFromCommittedCore() => _core.MaterializeFrozenFromReconstructedCommitted<LocalIdAsRefHelper>();
     private protected override void WriteRebaseCore(BinaryDiffWriter writer, DiffWriteContext context) => _core.WriteRebase<LocalIdAsRefHelper>(writer, context);
     private protected override void WriteDeltifyCore(BinaryDiffWriter writer, DiffWriteContext context) => _core.WriteDeltify<LocalIdAsRefHelper>(writer, context);
     private protected override void ApplyDeltaCore(ref BinaryDiffReader reader) => _core.ApplyDelta<LocalIdAsRefHelper>(ref reader);

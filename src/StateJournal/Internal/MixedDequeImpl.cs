@@ -15,6 +15,10 @@ internal class MixedDequeImpl : DurableDeque {
         _core.Revert<ValueBoxHelper>();
         RecountRefs();
     }
+    private protected override void UnfreezeToMutableCleanCore() {
+        _core.UnfreezeToMutableClean<ValueBoxHelper>();
+        RecountRefs();
+    }
 
     internal override DurableObject ForkAsMutableCore() {
         var fork = new MixedDequeImpl();
@@ -25,17 +29,22 @@ internal class MixedDequeImpl : DurableDeque {
     }
 
     internal override void FreezeCore(bool forceRebase) {
-        if (!forceRebase) { return; }
-
-        _core.Current.GetSegments(out Span<ValueBox> first, out Span<ValueBox> second);
-        FreezeSegment(first);
-        FreezeSegment(second);
+        if (forceRebase) {
+            _core.FreezeFromCurrent<ValueBoxHelper>();
+        }
+        else {
+            _core.FreezeFromClean<ValueBoxHelper>();
+        }
         RecountRefs();
     }
 
     private protected override void CommitCore() => _core.Commit<ValueBoxHelper>();
     private protected override void SyncCurrentFromCommittedCore() {
         _core.SyncCurrentFromCommitted<ValueBoxHelper>();
+        RecountRefs();
+    }
+    private protected override void SyncFrozenCurrentFromCommittedCore() {
+        _core.MaterializeFrozenFromReconstructedCommitted<ValueBoxHelper>();
         RecountRefs();
     }
     private protected override void WriteRebaseCore(BinaryDiffWriter writer, DiffWriteContext context) => _core.WriteRebase<ValueBoxHelper>(writer, context);
@@ -122,9 +131,4 @@ internal class MixedDequeImpl : DurableDeque {
         }
     }
 
-    private static void FreezeSegment(Span<ValueBox> segment) {
-        for (int i = 0; i < segment.Length; ++i) {
-            segment[i] = ValueBox.Freeze(segment[i]);
-        }
-    }
 }

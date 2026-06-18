@@ -203,6 +203,33 @@ public class DequeChangeTrackerValueBoxTests {
     }
 
     [Fact]
+    public void MaterializeFrozenAndUnfreeze_DoNotAllocateExtraHeapSlots() {
+        var tracker = new DequeChangeTracker<ValueBox>();
+
+        try {
+            SeedCommittedOnly(ref tracker, Heap(7), Heap(8), Heap(9));
+            int countAfterCommit = Bits64Count;
+
+            tracker.MaterializeFrozenFromReconstructedCommitted<ValueBoxHelper>();
+
+            Assert.True(tracker.IsFrozen);
+            Assert.Equal(countAfterCommit, Bits64Count);
+            AssertDequeEqual(tracker.Current, HeapValue(7), HeapValue(8), HeapValue(9));
+
+            tracker.UnfreezeToMutableClean<ValueBoxHelper>();
+
+            Assert.False(tracker.IsFrozen);
+            Assert.Equal(countAfterCommit, Bits64Count);
+            Assert.False(tracker.HasChanges);
+            AssertDequeEqual(tracker.Current, HeapValue(7), HeapValue(8), HeapValue(9));
+            AssertDequeEqual(tracker.Committed, HeapValue(7), HeapValue(8), HeapValue(9));
+        }
+        finally {
+            Cleanup(ref tracker);
+        }
+    }
+
+    [Fact]
     public void SetFront_OnDirtyPrefix_AbsorbingCommittedValue_ReleasesExclusiveSlot_AndClearsDirty() {
         var tracker = new DequeChangeTracker<ValueBox>();
 

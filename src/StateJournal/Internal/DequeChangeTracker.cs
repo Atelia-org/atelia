@@ -6,8 +6,8 @@ namespace Atelia.StateJournal.Internal;
 
 internal struct DequeChangeTracker<TValue>
     where TValue : notnull {
-    private readonly IndexedDeque<TValue?> _committed;
-    private readonly IndexedDeque<TValue?> _current;
+    private IndexedDeque<TValue?>? _committed;
+    private IndexedDeque<TValue?> _current;
 
     /// <summary>
     /// committed 绝对索引上的脏位图。bit j 置位表示 committed[j] 已被修改。
@@ -31,25 +31,28 @@ internal struct DequeChangeTracker<TValue>
     private int _newKeepLo;
     private int _keepCount;
 
+    public readonly bool IsFrozen => _committed is null;
+    internal readonly IndexedDeque<TValue?> Committed => _committed ?? throw new InvalidOperationException("Frozen DequeChangeTracker has no mutable committed deque.");
+    private readonly IndexedDeque<TValue?> CommittedOrCurrent => _committed ?? _current;
     private int OldKeepHi => _oldKeepLo + _keepCount;
     private int NewKeepHi => _newKeepLo + _keepCount;
     private int DirtyPrefixCount => _newKeepLo;
     private int DirtySuffixCount => _current.Count - NewKeepHi;
 
     #region 可用于单元测试
-    public int TrimFrontCount => _oldKeepLo;
-    public int TrimBackCount => _committed.Count - OldKeepHi;
-    public int PushFrontCount => _newKeepLo;
-    public int PushBackCount => _current.Count - NewKeepHi;
-    public int KeepCount => _keepCount;
-    public int KeepDirtyCount => _committedDirtyMap.PopCount;
-    public bool HasChanges =>
-        _committed.Count != _keepCount // TrimFrontCount + TrimBackCount
+    public int TrimFrontCount => IsFrozen ? 0 : _oldKeepLo;
+    public int TrimBackCount => IsFrozen ? 0 : Committed.Count - OldKeepHi;
+    public int PushFrontCount => IsFrozen ? 0 : _newKeepLo;
+    public int PushBackCount => IsFrozen ? 0 : _current.Count - NewKeepHi;
+    public int KeepCount => IsFrozen ? _current.Count : _keepCount;
+    public int KeepDirtyCount => IsFrozen ? 0 : _committedDirtyMap.PopCount;
+    public bool HasChanges => !IsFrozen && (
+        Committed.Count != _keepCount // TrimFrontCount + TrimBackCount
         || _committedDirtyMap.PopCount != 0
-        || _current.Count != _keepCount; // PushFrontCount + PushBackCount
+        || _current.Count != _keepCount // PushFrontCount + PushBackCount
+    );
     internal IndexedDeque<TValue?> Current => _current;
-    internal IndexedDeque<TValue?> Committed => _committed;
-    internal IndexedDeque<TValue?> ReconstructedOrCurrent => _current.Count != 0 ? _current : _committed;
+    internal IndexedDeque<TValue?> ReconstructedOrCurrent => _current.Count != 0 ? _current : CommittedOrCurrent;
     #endregion
 
     /// <summary>估算 rebase 帧所需的 bare 字节数（仅 payload，不含 frame overhead 与 typeCode）。</summary>
@@ -110,7 +113,7 @@ internal struct DequeChangeTracker<TValue>
     public DequeChangeTracker<TValue> ForkMutableFromCommitted<VHelper>()
         where VHelper : unmanaged, ITypeHelper<TValue> {
         var fork = new DequeChangeTracker<TValue>();
-        _committed.GetSegments(out Span<TValue?> first, out Span<TValue?> second);
+        CommittedOrCurrent.GetSegments(out Span<TValue?> first, out Span<TValue?> second);
         AppendForkedSegment<VHelper>(ref fork, first);
         AppendForkedSegment<VHelper>(ref fork, second);
         fork.ResetTrackedWindow<VHelper>();
@@ -119,8 +122,9 @@ internal struct DequeChangeTracker<TValue>
 
     public void PushFront<VHelper>(TValue? value)
         where VHelper : unmanaged, ITypeHelper<TValue> {
+        ThrowIfFrozen();
         if (_newKeepLo == 0 && _oldKeepLo > 0) {
-            TValue? committedValue = _committed[_oldKeepLo - 1];
+            TValue? committedValue = Committed[_oldKeepLo - 1];
             if (VHelper.Equals(value, committedValue)) {
                 if (VHelper.NeedRelease) {
                     // 与 committed 对位值语义相等时，丢弃新值并复用 committed 的 frozen 副本。
@@ -147,8 +151,9 @@ internal struct DequeChangeTracker<TValue>
 
     public void PushBack<VHelper>(TValue? value)
         where VHelper : unmanaged, ITypeHelper<TValue> {
-        if (NewKeepHi == _current.Count && OldKeepHi < _committed.Count) {
-            TValue? committedValue = _committed[OldKeepHi];
+        ThrowIfFrozen();
+        if (NewKeepHi == _current.Count && OldKeepHi < Committed.Count) {
+            TValue? committedValue = Committed[OldKeepHi];
             if (VHelper.Equals(value, committedValue)) {
                 if (VHelper.NeedRelease) {
                     // 与 committed 对位值语义相等时，丢弃新值并复用 committed 的 frozen 副本。
@@ -182,6 +187,7 @@ internal struct DequeChangeTracker<TValue>
     /// </summary>
     public bool SetAt<VHelper>(int index, TValue? value)
         where VHelper : unmanaged, ITypeHelper<TValue> {
+        ThrowIfFrozen();
         Debug.Assert(
             !VHelper.NeedRelease,
             "一体化 SetAt 仅适用于无额外所有权释放语义的 typed/durable-ref 路径；mixed/ValueBox 仍应走二阶段 Update + AfterSet。"
@@ -203,7 +209,10 @@ internal struct DequeChangeTracker<TValue>
     /// 返回 current 槽位的可写引用。调用方可直接对槽位做原地更新。
     /// 若更新后语义发生变化，必须再调用 <see cref="AfterSet{VHelper}"/> 维护 tracker 状态。
     /// </summary>
-    public ref TValue? GetRef(int index) => ref _current.GetRef(index);
+    public ref TValue? GetRef(int index) {
+        ThrowIfFrozen();
+        return ref _current.GetRef(index);
+    }
 
     /// <summary>
     /// 配合 <see cref="GetRef"/> 使用：调用方先原地更新 current 槽位，确认语义发生变化后，
@@ -249,7 +258,7 @@ internal struct DequeChangeTracker<TValue>
 
         int keepRelativeIndex = currentIndex - _newKeepLo;
         int committedIndex = _oldKeepLo + keepRelativeIndex;
-        TValue? committedValue = _committed[committedIndex];
+        TValue? committedValue = Committed[committedIndex];
         bool wasDirty = _committedDirtyMap.TestBit(committedIndex);
         uint finalKeepBytes;
 
@@ -286,6 +295,7 @@ internal struct DequeChangeTracker<TValue>
 
     public bool TryPopFront<VHelper>(out TValue? value, out bool callerOwned)
         where VHelper : unmanaged, ITypeHelper<TValue> {
+        ThrowIfFrozen();
         bool popDirtyPrefix = _newKeepLo > 0;
         bool popKeep = !popDirtyPrefix && _keepCount > 0;
         if (!_current.TryPopFront(out value)) {
@@ -325,6 +335,7 @@ internal struct DequeChangeTracker<TValue>
 
     public bool TryPopBack<VHelper>(out TValue? value, out bool callerOwned)
         where VHelper : unmanaged, ITypeHelper<TValue> {
+        ThrowIfFrozen();
         bool popDirtySuffix = DirtySuffixCount > 0;
         bool popKeep = !popDirtySuffix && _keepCount > 0;
         if (!_current.TryPopBack(out value)) {
@@ -366,6 +377,7 @@ internal struct DequeChangeTracker<TValue>
 
     public void Revert<VHelper>()
         where VHelper : unmanaged, ITypeHelper<TValue> {
+        ThrowIfFrozen();
         if (!HasChanges) { return; }
 
         if (VHelper.NeedRelease) {
@@ -381,7 +393,7 @@ internal struct DequeChangeTracker<TValue>
 
         // 从 committed 恢复被 trim 的前后部分
         CopyCommittedRangeToCurrent<VHelper>(0, _oldKeepLo, toFront: true);
-        CopyCommittedRangeToCurrent<VHelper>(OldKeepHi, _committed.Count - OldKeepHi, toFront: false);
+        CopyCommittedRangeToCurrent<VHelper>(OldKeepHi, Committed.Count - OldKeepHi, toFront: false);
 
         RebuildCurrentValueBytesFromCurrent<VHelper>();
         ResetTrackedWindow<VHelper>();
@@ -389,6 +401,7 @@ internal struct DequeChangeTracker<TValue>
 
     public void Commit<VHelper>()
         where VHelper : unmanaged, ITypeHelper<TValue> {
+        if (IsFrozen) { return; }
         if (!HasChanges) { return; }
 
         // O(delta): 只冻结 prefix 和 suffix（keep 窗口已是 frozen 共享引用）
@@ -398,13 +411,13 @@ internal struct DequeChangeTracker<TValue>
 
         // 释放 committed 中被 trim 的元素
         if (VHelper.NeedRelease) {
-            ReleaseRange<VHelper>(_committed, 0, _oldKeepLo);
-            ReleaseRange<VHelper>(_committed, OldKeepHi, _committed.Count - OldKeepHi);
+            ReleaseRange<VHelper>(Committed, 0, _oldKeepLo);
+            ReleaseRange<VHelper>(Committed, OldKeepHi, Committed.Count - OldKeepHi);
         }
 
         // 裁掉 committed 的 trim 部分，只留 keep 窗口
-        _committed.TrimBack(_committed.Count - OldKeepHi);
-        _committed.TrimFront(_oldKeepLo);
+        Committed.TrimBack(Committed.Count - OldKeepHi);
+        Committed.TrimFront(_oldKeepLo);
 
         // 将 current 的 prefix/suffix 同步到 committed
         CopyCurrentRangeToCommitted(0, _newKeepLo, toFront: true);
@@ -413,8 +426,52 @@ internal struct DequeChangeTracker<TValue>
         ResetTrackedWindow<VHelper>();
     }
 
+    public void FreezeFromClean<VHelper>()
+        where VHelper : unmanaged, ITypeHelper<TValue> {
+        ThrowIfFrozen();
+        if (HasChanges) { throw new InvalidOperationException("Cannot FreezeFromClean while deque has changes."); }
+
+        FreezeCurrentRange<VHelper>(0, _current.Count);
+        SetFrozenTrackerState();
+    }
+
+    public void FreezeFromCurrent<VHelper>()
+        where VHelper : unmanaged, ITypeHelper<TValue> {
+        ThrowIfFrozen();
+        Commit<VHelper>();
+        FreezeFromClean<VHelper>();
+    }
+
+    public void UnfreezeToMutableClean<VHelper>()
+        where VHelper : unmanaged, ITypeHelper<TValue> {
+        if (!IsFrozen) { throw new InvalidOperationException("DequeChangeTracker is not frozen."); }
+
+        _committed = CloneDeque(_current);
+        ResetTrackedWindow<VHelper>();
+    }
+
+    public void MaterializeFrozenFromReconstructedCommitted<VHelper>()
+        where VHelper : unmanaged, ITypeHelper<TValue> {
+        ThrowIfFrozen();
+        Debug.Assert(_current.Count == 0, "MaterializeFrozenFromReconstructedCommitted 应在空 _current 上调用。");
+
+        IndexedDeque<TValue?> committed = Committed;
+        _current = committed;
+        RebuildCurrentValueBytesFromCurrent<VHelper>();
+        SetFrozenTrackerState();
+    }
+
     public void WriteDeltify<VHelper>(BinaryDiffWriter writer, DiffWriteContext context)
         where VHelper : ITypeHelper<TValue> {
+        if (IsFrozen) {
+            writer.WriteCount(0);
+            writer.WriteCount(0);
+            writer.WriteCount(0);
+            writer.WriteCount(0);
+            writer.WriteCount(0);
+            return;
+        }
+
         writer.WriteCount(TrimFrontCount);
         writer.WriteCount(TrimBackCount);
 
@@ -451,42 +508,44 @@ internal struct DequeChangeTracker<TValue>
         // 此时 _current 尚未通过 SyncCurrentFromCommitted 建立，因此必须保持为空。
         if (_current.Count != 0) { throw new InvalidOperationException("ApplyDelta requires _current to be empty. Apply deltas during deserialization, then call SyncCurrentFromCommitted."); }
 
+        IndexedDeque<TValue?> committed = Committed;
+
         int trimFrontCount = reader.ReadCount();
         int trimBackCount = reader.ReadCount();
 
-        if (trimFrontCount + trimBackCount > _committed.Count) { throw new InvalidDataException("Deque delta trims more elements than committed contains."); }
+        if (trimFrontCount + trimBackCount > committed.Count) { throw new InvalidDataException("Deque delta trims more elements than committed contains."); }
 
         if (VHelper.NeedRelease) {
-            ReleaseRange<VHelper>(_committed, 0, trimFrontCount);
-            ReleaseRange<VHelper>(_committed, _committed.Count - trimBackCount, trimBackCount);
+            ReleaseRange<VHelper>(committed, 0, trimFrontCount);
+            ReleaseRange<VHelper>(committed, committed.Count - trimBackCount, trimBackCount);
         }
 
-        _committed.TrimBack(trimBackCount);
-        _committed.TrimFront(trimFrontCount);
+        committed.TrimBack(trimBackCount);
+        committed.TrimFront(trimFrontCount);
 
         int keepPatchCount = reader.ReadCount();
         int previousKeepPatchIndex = -1;
         for (int i = 0; i < keepPatchCount; ++i) {
             int keepRelativeIndex = reader.ReadCount();
-            if ((uint)keepRelativeIndex >= (uint)_committed.Count) { throw new InvalidDataException("Deque delta keep patch index is out of range."); }
+            if ((uint)keepRelativeIndex >= (uint)committed.Count) { throw new InvalidDataException("Deque delta keep patch index is out of range."); }
             if (keepRelativeIndex <= previousKeepPatchIndex) { throw new InvalidDataException("Deque delta keep patch indices must be strictly increasing."); }
 
             TValue? patchedValue = VHelper.Freeze(ReadValue<VHelper>(ref reader));
             if (VHelper.NeedRelease) {
-                VHelper.ReleaseSlot(_committed[keepRelativeIndex]);
+                VHelper.ReleaseSlot(committed[keepRelativeIndex]);
             }
-            _committed[keepRelativeIndex] = patchedValue;
+            committed[keepRelativeIndex] = patchedValue;
             previousKeepPatchIndex = keepRelativeIndex;
         }
 
         int pushFrontCount = reader.ReadCount();
         for (int i = 0; i < pushFrontCount; ++i) {
-            _committed.PushFront(VHelper.Freeze(ReadValue<VHelper>(ref reader)));
+            committed.PushFront(VHelper.Freeze(ReadValue<VHelper>(ref reader)));
         }
 
         int pushBackCount = reader.ReadCount();
         for (int i = 0; i < pushBackCount; ++i) {
-            _committed.PushBack(VHelper.Freeze(ReadValue<VHelper>(ref reader)));
+            committed.PushBack(VHelper.Freeze(ReadValue<VHelper>(ref reader)));
         }
 
         _current.Clear();
@@ -504,11 +563,16 @@ internal struct DequeChangeTracker<TValue>
 
     public void SyncCurrentFromCommitted<VHelper>()
         where VHelper : unmanaged, ITypeHelper<TValue> {
+        ThrowIfFrozen();
         Debug.Assert(_current.Count == 0, "SyncCurrentFromCommitted 应在空 _current 上调用。");
-        CopyCommittedRangeToCurrent<VHelper>(0, _committed.Count, toFront: false);
+        CopyCommittedRangeToCurrent<VHelper>(0, Committed.Count, toFront: false);
 
         RebuildCurrentValueBytesFromCurrent<VHelper>();
         ResetTrackedWindow<VHelper>();
+    }
+
+    private void ThrowIfFrozen() {
+        if (IsFrozen) { throw new InvalidOperationException("Frozen DequeChangeTracker cannot be modified."); }
     }
 
     private void ReleaseCurrentSparseKeepValues<VHelper>()
@@ -524,7 +588,7 @@ internal struct DequeChangeTracker<TValue>
     private void RestoreCurrentKeepFromCommitted<VHelper>()
         where VHelper : unmanaged, ITypeHelper<TValue> {
         foreach (int committedIndex in _committedDirtyMap.Ones()) {
-            _current[KeepRelativeIndexFromCommittedIndex(committedIndex)] = VHelper.Freeze(_committed[committedIndex]);
+            _current[KeepRelativeIndexFromCommittedIndex(committedIndex)] = VHelper.Freeze(Committed[committedIndex]);
         }
     }
 
@@ -534,9 +598,9 @@ internal struct DequeChangeTracker<TValue>
             int currentIndex = CurrentIndexFromCommittedIndex(committedIndex);
             TValue? frozenValue = VHelper.Freeze(_current[currentIndex]);
             if (VHelper.NeedRelease) {
-                VHelper.ReleaseSlot(_committed[committedIndex]);
+                VHelper.ReleaseSlot(Committed[committedIndex]);
             }
-            _committed[committedIndex] = frozenValue;
+            Committed[committedIndex] = frozenValue;
             _current[currentIndex] = frozenValue;
         }
     }
@@ -564,7 +628,7 @@ internal struct DequeChangeTracker<TValue>
             return false;
         }
 
-        TValue? committedValue = _committed[_oldKeepLo - 1];
+        TValue? committedValue = Committed[_oldKeepLo - 1];
         if (!VHelper.Equals(value, committedValue)) {
             finalBytes = 0;
             return false;
@@ -583,7 +647,7 @@ internal struct DequeChangeTracker<TValue>
 
     private bool TryAbsorbDirtyBackIntoKeep<VHelper>(int currentIndex, TValue? value, out uint finalBytes)
         where VHelper : unmanaged, ITypeHelper<TValue> {
-        if (OldKeepHi >= _committed.Count) {
+        if (OldKeepHi >= Committed.Count) {
             finalBytes = 0;
             return false;
         }
@@ -595,7 +659,7 @@ internal struct DequeChangeTracker<TValue>
             return false;
         }
 
-        TValue? committedValue = _committed[OldKeepHi];
+        TValue? committedValue = Committed[OldKeepHi];
         if (!VHelper.Equals(value, committedValue)) {
             finalBytes = 0;
             return false;
@@ -612,11 +676,12 @@ internal struct DequeChangeTracker<TValue>
 
     private void ResetTrackedWindow<VHelper>()
         where VHelper : unmanaged, ITypeHelper<TValue> {
+        Debug.Assert(_committed is not null);
         _oldKeepLo = 0;
         _newKeepLo = 0;
-        _keepCount = _committed.Count;
+        _keepCount = Committed.Count;
         _committedDirtyMap.Clear();
-        _committedDirtyMap.SetLength(_committed.Count);
+        _committedDirtyMap.SetLength(Committed.Count);
         _dirtyPrefixValueBytes = 0;
         _dirtySuffixValueBytes = 0;
         _dirtyKeepValueBytes = 0;
@@ -628,11 +693,24 @@ internal struct DequeChangeTracker<TValue>
     private static uint EstimateValueBytes<VHelper>(TValue? value)
         where VHelper : ITypeHelper<TValue> => VHelper.EstimateBareSize(value, asKey: false);
 
+    private void SetFrozenTrackerState() {
+        _committed = null;
+        _oldKeepLo = 0;
+        _newKeepLo = 0;
+        _keepCount = 0;
+        _committedDirtyMap.Clear();
+        _dirtyPrefixValueBytes = 0;
+        _dirtySuffixValueBytes = 0;
+        _dirtyKeepValueBytes = 0;
+        _dirtyKeepIndexBytesCache = 0;
+        _dirtyKeepIndexBytesCacheValid = true;
+    }
+
     private static void AppendForkedSegment<VHelper>(ref DequeChangeTracker<TValue> fork, Span<TValue?> source)
         where VHelper : unmanaged, ITypeHelper<TValue> {
         if (source.Length == 0) { return; }
 
-        fork._committed.ReserveBack(source.Length, out Span<TValue?> committedFirst, out Span<TValue?> committedSecond);
+        fork.Committed.ReserveBack(source.Length, out Span<TValue?> committedFirst, out Span<TValue?> committedSecond);
         fork._current.ReserveBack(source.Length, out Span<TValue?> currentFirst, out Span<TValue?> currentSecond);
         AppendForkedSlice<VHelper>(ref fork, source, committedFirst, currentFirst);
         AppendForkedSlice<VHelper>(ref fork, source[committedFirst.Length..], committedSecond, currentSecond);
@@ -652,6 +730,16 @@ internal struct DequeChangeTracker<TValue>
             currentDest[i] = forkValue;
             fork._currentValueBytes += EstimateValueBytes<VHelper>(forkValue);
         }
+    }
+
+    private static IndexedDeque<TValue?> CloneDeque(IndexedDeque<TValue?> source) {
+        var clone = new IndexedDeque<TValue?>(source.Count);
+        if (source.Count == 0) { return clone; }
+
+        source.GetSegments(out Span<TValue?> first, out Span<TValue?> second);
+        clone.ReserveBack(source.Count, out Span<TValue?> destFirst, out Span<TValue?> destSecond);
+        CopySegments(first, second, destFirst, destSecond);
+        return clone;
     }
 
     private uint GetDirtyKeepIndexBytes() {
@@ -697,6 +785,16 @@ internal struct DequeChangeTracker<TValue>
             expectedCurrentValueBytes == _currentValueBytes,
             $"DequeChangeTracker _currentValueBytes drift: tracked={_currentValueBytes}, expected={expectedCurrentValueBytes}."
         );
+
+        if (IsFrozen) {
+            Debug.Assert(_dirtyPrefixValueBytes == 0, $"Frozen deque tracker should not retain dirty prefix bytes, got {_dirtyPrefixValueBytes}.");
+            Debug.Assert(_dirtySuffixValueBytes == 0, $"Frozen deque tracker should not retain dirty suffix bytes, got {_dirtySuffixValueBytes}.");
+            Debug.Assert(_dirtyKeepValueBytes == 0, $"Frozen deque tracker should not retain dirty keep bytes, got {_dirtyKeepValueBytes}.");
+            if (_dirtyKeepIndexBytesCacheValid) {
+                Debug.Assert(_dirtyKeepIndexBytesCache == 0, $"Frozen deque tracker should not retain keep index bytes, got {_dirtyKeepIndexBytesCache}.");
+            }
+            return;
+        }
 
         // dirty prefix / suffix 是 current 中 keep 窗口之外的全部元素。
         _current.GetSegments(0, _newKeepLo, out Span<TValue?> pfFirst, out Span<TValue?> pfSecond);
@@ -763,7 +861,7 @@ internal struct DequeChangeTracker<TValue>
         where VHelper : unmanaged, ITypeHelper<TValue> {
         if (count == 0) { return; }
 
-        _committed.GetSegments(index, count, out Span<TValue?> sourceFirst, out Span<TValue?> sourceSecond);
+        Committed.GetSegments(index, count, out Span<TValue?> sourceFirst, out Span<TValue?> sourceSecond);
         if (toFront) {
             _current.ReserveFront(count, out Span<TValue?> destFirst, out Span<TValue?> destSecond);
             CopySegments<VHelper>(sourceFirst, sourceSecond, destFirst, destSecond, freeze: true);
@@ -779,12 +877,12 @@ internal struct DequeChangeTracker<TValue>
 
         _current.GetSegments(index, count, out Span<TValue?> sourceFirst, out Span<TValue?> sourceSecond);
         if (toFront) {
-            _committed.ReserveFront(count, out Span<TValue?> destFirst, out Span<TValue?> destSecond);
+            Committed.ReserveFront(count, out Span<TValue?> destFirst, out Span<TValue?> destSecond);
             CopySegments(sourceFirst, sourceSecond, destFirst, destSecond);
             return;
         }
 
-        _committed.ReserveBack(count, out Span<TValue?> backDestFirst, out Span<TValue?> backDestSecond);
+        Committed.ReserveBack(count, out Span<TValue?> backDestFirst, out Span<TValue?> backDestSecond);
         CopySegments(sourceFirst, sourceSecond, backDestFirst, backDestSecond);
     }
 
@@ -914,10 +1012,19 @@ internal struct DequeChangeTracker<TValue>
     [Conditional("DEBUG")]
     private void AssertTrackedInvariant<VHelper>()
         where VHelper : ITypeHelper<TValue> {
-        Debug.Assert(0 <= _oldKeepLo && _oldKeepLo <= _committed.Count);
+        if (IsFrozen) {
+            Debug.Assert(_oldKeepLo == 0);
+            Debug.Assert(_newKeepLo == 0);
+            Debug.Assert(_keepCount == 0);
+            Debug.Assert(_committedDirtyMap.PopCount == 0);
+            return;
+        }
+
+        IndexedDeque<TValue?> committed = Committed;
+        Debug.Assert(0 <= _oldKeepLo && _oldKeepLo <= committed.Count);
         Debug.Assert(0 <= _newKeepLo && _newKeepLo <= _current.Count);
         Debug.Assert(0 <= _keepCount);
-        Debug.Assert(OldKeepHi <= _committed.Count);
+        Debug.Assert(OldKeepHi <= committed.Count);
         Debug.Assert(NewKeepHi <= _current.Count);
 
         // 验证脏位图中的所有位都在 keep window [_oldKeepLo, OldKeepHi) 内且严格递增
@@ -943,7 +1050,7 @@ internal struct DequeChangeTracker<TValue>
             }
 
             Debug.Assert(
-                VHelper.Equals(_current[_newKeepLo + i], _committed[ci]),
+                VHelper.Equals(_current[_newKeepLo + i], committed[ci]),
                 "keep window 中未标记 patch 的位置必须保持相等。"
             );
         }

@@ -228,6 +228,76 @@ public class RepositoryReplayCommittedTests : IDisposable {
     }
 
     [Fact]
+    public void ReplayCommitted_ForceMutable_FromFrozenTypedDeque_PersistsMutableClone() {
+        var dir = GetTempDir();
+
+        using (var repo = CreateRepositoryWithBranch(dir, "main", out var main)) {
+            var root = main.CreateDict<int, DurableDeque<int>>();
+            var source = main.CreateDeque<int>();
+            source.PushBack(10);
+            source.PushBack(20);
+            source.Freeze();
+            root.Upsert(1, source);
+            AssertSuccess(repo.Commit(root));
+
+            var clone = AssertSuccess(repo.ReplayCommitted(source, LoadMaterializationMode.ForceMutable));
+            Assert.False(clone.IsFrozen);
+            Assert.False(clone.HasChanges);
+            Assert.Equal(DurableState.Clean, clone.State);
+            Assert.Equal(GetIssue.None, clone.PeekFront(out int front));
+            Assert.Equal(10, front);
+
+            root.Upsert(2, clone);
+            AssertSuccess(repo.Commit(root));
+        }
+
+        using var reopened = AssertSuccess(Repository.Open(dir));
+        var mainAgain = AssertSuccess(reopened.CheckoutBranch("main"));
+        var loadedRoot = Assert.IsAssignableFrom<DurableDict<int, DurableDeque<int>>>(mainAgain.GraphRoot);
+        Assert.Equal(GetIssue.None, loadedRoot.Get(1, out DurableDeque<int>? loadedSource));
+        Assert.Equal(GetIssue.None, loadedRoot.Get(2, out DurableDeque<int>? loadedClone));
+        Assert.True(loadedSource!.IsFrozen);
+        Assert.False(loadedClone!.IsFrozen);
+        Assert.Equal(GetIssue.None, loadedClone.PeekBack(out int value));
+        Assert.Equal(20, value);
+    }
+
+    [Fact]
+    public void ReplayCommitted_ForceFrozen_FromMutableTypedDeque_PersistsFrozenClone() {
+        var dir = GetTempDir();
+
+        using (var repo = CreateRepositoryWithBranch(dir, "main", out var main)) {
+            var root = main.CreateDict<int, DurableDeque<int>>();
+            var source = main.CreateDeque<int>();
+            source.PushBack(10);
+            source.PushBack(20);
+            root.Upsert(1, source);
+            AssertSuccess(repo.Commit(root));
+
+            var clone = AssertSuccess(repo.ReplayCommitted(source, LoadMaterializationMode.ForceFrozen));
+            Assert.True(clone.IsFrozen);
+            Assert.False(clone.HasChanges);
+            Assert.Equal(DurableState.Clean, clone.State);
+            Assert.Equal(GetIssue.None, clone.PeekBack(out int back));
+            Assert.Equal(20, back);
+            Assert.Throws<ObjectFrozenException>(() => clone.PushBack(30));
+
+            root.Upsert(2, clone);
+            AssertSuccess(repo.Commit(root));
+        }
+
+        using var reopened = AssertSuccess(Repository.Open(dir));
+        var mainAgain = AssertSuccess(reopened.CheckoutBranch("main"));
+        var loadedRoot = Assert.IsAssignableFrom<DurableDict<int, DurableDeque<int>>>(mainAgain.GraphRoot);
+        Assert.Equal(GetIssue.None, loadedRoot.Get(1, out DurableDeque<int>? loadedSource));
+        Assert.Equal(GetIssue.None, loadedRoot.Get(2, out DurableDeque<int>? loadedClone));
+        Assert.False(loadedSource!.IsFrozen);
+        Assert.True(loadedClone!.IsFrozen);
+        Assert.Equal(GetIssue.None, loadedClone.PeekFront(out int value));
+        Assert.Equal(10, value);
+    }
+
+    [Fact]
     public void ReplayCommitted_TypedOrderedDict_ForceFrozen_PersistsFrozenClone() {
         var dir = GetTempDir();
 

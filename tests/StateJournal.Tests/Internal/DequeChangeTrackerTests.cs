@@ -484,6 +484,41 @@ public class DequeChangeTrackerTests {
     }
 
     [Fact]
+    public void FreezeFromClean_AndUnfreezeToMutableClean_PreserveSequenceAndEstimate() {
+        var tracker = new DequeChangeTracker<int>();
+        SeedCommitted(ref tracker, [1, 2, 3]);
+
+        tracker.FreezeFromClean<Int32Helper>();
+
+        Assert.True(tracker.IsFrozen);
+        Assert.False(tracker.HasChanges);
+        Assert.Equal([1, 2, 3], Collect(tracker.Current));
+        AssertEstimateMatchesSerializedBody<int, Int32Helper>(tracker);
+
+        tracker.UnfreezeToMutableClean<Int32Helper>();
+
+        Assert.False(tracker.IsFrozen);
+        Assert.False(tracker.HasChanges);
+        Assert.Equal([1, 2, 3], Collect(tracker.Current));
+        Assert.Equal([1, 2, 3], Collect(tracker.Committed));
+        AssertEstimateMatchesSerializedBody<int, Int32Helper>(tracker);
+    }
+
+    [Fact]
+    public void MaterializeFrozenFromReconstructedCommitted_PreservesSequenceAndEstimate() {
+        var tracker = new DequeChangeTracker<int>();
+        SeedCommittedOnly(ref tracker, [4, 5, 6]);
+
+        tracker.MaterializeFrozenFromReconstructedCommitted<Int32Helper>();
+
+        Assert.True(tracker.IsFrozen);
+        Assert.False(tracker.HasChanges);
+        Assert.Equal([4, 5, 6], Collect(tracker.Current));
+        Assert.Equal([4, 5, 6], Collect(tracker.ReconstructedOrCurrent));
+        AssertEstimateMatchesSerializedBody<int, Int32Helper>(tracker);
+    }
+
+    [Fact]
     public void PeekFrontAndPeekBack_ReturnCurrentEdgeValues() {
         var tracker = new DequeChangeTracker<int>();
         SeedCommitted(ref tracker, [1, 2, 3]);

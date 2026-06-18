@@ -24,6 +24,7 @@ public abstract class DurableDequeBase : DurableObject {
     private protected virtual void SyncMutableCurrentFromCommittedCore() => SyncCurrentFromCommittedCore();
     // frozen load 路径默认与 non-frozen 相同；子类若需区分（如 tracker-level 内存释放）可 override。
     private protected virtual void SyncFrozenCurrentFromCommittedCore() => SyncCurrentFromCommittedCore();
+    private protected abstract void UnfreezeToMutableCleanCore();
     private protected abstract void WriteRebaseCore(BinaryDiffWriter writer, DiffWriteContext context);
     private protected abstract void WriteDeltifyCore(BinaryDiffWriter writer, DiffWriteContext context);
     private protected abstract void ApplyDeltaCore(ref BinaryDiffReader reader);
@@ -34,6 +35,7 @@ public abstract class DurableDequeBase : DurableObject {
     internal sealed override void DiscardChanges() {
         if (IsFrozen) {
             ThrowIfCannotDiscardFrozenChanges();
+            UnfreezeToMutableCleanCore();
             ClearDiscardedFreeze();
             return;
         }

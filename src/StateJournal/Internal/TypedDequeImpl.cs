@@ -98,6 +98,7 @@ internal class TypedDequeImpl<T, VHelper> : DurableDeque<T>
     private protected override uint EstimatedDeltifyBytes => _core.EstimatedDeltifyBytes<VHelper>();
 
     private protected override void DiscardChangesCore() => _core.Revert<VHelper>();
+    private protected override void UnfreezeToMutableCleanCore() => _core.UnfreezeToMutableClean<VHelper>();
 
     internal override DurableObject ForkAsMutableCore() {
         var fork = new TypedDequeImpl<T, VHelper>();
@@ -107,15 +108,17 @@ internal class TypedDequeImpl<T, VHelper> : DurableDeque<T>
     }
 
     internal override void FreezeCore(bool forceRebase) {
-        if (!forceRebase) { return; }
-
-        _core.Current.GetSegments(out Span<T?> first, out Span<T?> second);
-        FreezeSegment(first);
-        FreezeSegment(second);
+        if (forceRebase) {
+            _core.FreezeFromCurrent<VHelper>();
+        }
+        else {
+            _core.FreezeFromClean<VHelper>();
+        }
     }
 
     private protected override void CommitCore() => _core.Commit<VHelper>();
     private protected override void SyncCurrentFromCommittedCore() => _core.SyncCurrentFromCommitted<VHelper>();
+    private protected override void SyncFrozenCurrentFromCommittedCore() => _core.MaterializeFrozenFromReconstructedCommitted<VHelper>();
     private protected override void WriteRebaseCore(BinaryDiffWriter writer, DiffWriteContext context) => _core.WriteRebase<VHelper>(writer, context);
     private protected override void WriteDeltifyCore(BinaryDiffWriter writer, DiffWriteContext context) => _core.WriteDeltify<VHelper>(writer, context);
     private protected override void ApplyDeltaCore(ref BinaryDiffReader reader) => _core.ApplyDelta<VHelper>(ref reader);
@@ -143,12 +146,6 @@ internal class TypedDequeImpl<T, VHelper> : DurableDeque<T>
         if (tracker is null || !VHelper.NeedValidateReconstructed) { return null; }
         _core.ReconstructedOrCurrent.GetSegments(out Span<T?> first, out Span<T?> second);
         return ValidateSegment(first, tracker) ?? ValidateSegment(second, tracker);
-    }
-
-    private static void FreezeSegment(Span<T?> segment) {
-        for (int i = 0; i < segment.Length; ++i) {
-            segment[i] = VHelper.Freeze(segment[i]);
-        }
     }
 
     private static AteliaError? ValidateSegment(Span<T?> segment, LoadPlaceholderTracker tracker) {
