@@ -119,6 +119,58 @@ public sealed class AgentWorkspacePersistenceTests {
     }
 
     [Fact]
+    public void WorkspaceAttachedAppend_AppendsToExistingDurableHistoryDeque() {
+        var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-workspace-append-{Guid.NewGuid():N}");
+
+        try {
+            using var repo = Repository.Create(repoDir).Unwrap();
+            var revision = repo.CreateBranch("main").Unwrap();
+            var workspaceRoot = AgentWorkspaceRoot.Create(revision);
+            workspaceRoot.Meta.SetSystemPrompt("workspace-append-system");
+            var initialHistoryDeque = GetHistoryDeque(workspaceRoot);
+
+            var state = AgentState.RestoreFromWorkspaceRoot(workspaceRoot);
+            state.AttachWorkspaceRoot(workspaceRoot, syncExistingState: false);
+
+            state.AppendObservation(new ObservationEntry(), "recent-events");
+            var afterObservationDeque = GetHistoryDeque(workspaceRoot);
+            state.AppendAction(
+                new ActionEntry(
+                    new ActionMessage([new ActionBlock.Text("assistant-turn")]),
+                    new CompletionDescriptor("provider-a", "spec-a", "model-a")
+                )
+            );
+            var afterActionDeque = GetHistoryDeque(workspaceRoot);
+
+            Assert.Same(initialHistoryDeque, afterObservationDeque);
+            Assert.Same(initialHistoryDeque, afterActionDeque);
+            Assert.Collection(
+                workspaceRoot.History.LoadRecent(),
+                entry => {
+                    var observation = Assert.IsType<ObservationEntry>(entry);
+                    Assert.Equal("recent-events", observation.Notifications);
+                },
+                entry => Assert.IsType<ActionEntry>(entry)
+            );
+            Assert.Equal(2UL, workspaceRoot.History.GetRequiredLastSerial());
+
+            state.ReplacePrefixWithRecap(1, "summary-text");
+
+            Assert.NotSame(initialHistoryDeque, GetHistoryDeque(workspaceRoot));
+            var history = workspaceRoot.History.LoadRecent();
+            var recap = Assert.IsType<RecapEntry>(history[0]);
+            Assert.Equal("summary-text", recap.Content);
+            Assert.IsType<ActionEntry>(history[1]);
+            Assert.Equal(3UL, workspaceRoot.History.GetRequiredLastSerial());
+        }
+        finally {
+            if (Directory.Exists(repoDir)) {
+                Directory.Delete(repoDir, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
     public void Host_StateCoreMutationsUpdateWorkspaceBeforeCommit() {
         var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-host-working-state-{Guid.NewGuid():N}");
 
@@ -539,6 +591,12 @@ public sealed class AgentWorkspacePersistenceTests {
 
     private static LlmProfile CreateFullFeatureProfile(ICompletionClient client, string modelId) {
         return new LlmProfile(client, modelId, $"{modelId}-profile", 4096, CapabilityProfile.FullFeature);
+    }
+
+    private static DurableDeque GetHistoryDeque(AgentWorkspaceRoot workspaceRoot) {
+        return workspaceRoot.Root.Get<DurableDeque>("history", out var history) == GetIssue.None
+            ? history!
+            : throw new InvalidOperationException("Workspace root is missing history deque.");
     }
 
     private sealed class RecordingTool : ITool {

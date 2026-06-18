@@ -193,6 +193,14 @@ internal sealed class AgentWorkspaceRoot {
             _workspaceRoot.SetHistory(history);
         }
 
+        public void AppendRecent(HistoryEntry entry) {
+            ArgumentNullException.ThrowIfNull(entry);
+
+            _workspaceRoot.GetRequiredHistory().PushBack<DurableObject>(
+                AgentEngineStateCodec.WriteHistoryEntry(_workspaceRoot.Revision, entry)
+            );
+        }
+
         public IReadOnlyList<HistoryEntry> LoadRecent() {
             var historyContainer = _workspaceRoot.GetRequiredHistory();
             var recentHistory = new List<HistoryEntry>(historyContainer.Count);
