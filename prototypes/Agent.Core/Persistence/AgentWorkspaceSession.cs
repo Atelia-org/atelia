@@ -5,13 +5,9 @@ using Atelia.StateJournal;
 namespace Atelia.Agent.Core.Persistence;
 
 internal enum AgentWorkspaceSessionFaultPoint {
-    BeforeReplacePendingToolResults,
     AfterReplacePendingToolResultsMutation,
-    BeforeUpsertPendingToolResult,
     AfterUpsertPendingToolResultMutation,
-    BeforeUpdateTurnRuntime,
     AfterUpdateTurnRuntimeMutation,
-    BeforeUpdatePendingCompaction,
     AfterUpdatePendingCompactionMutation
 }
 
@@ -275,7 +271,6 @@ internal sealed class AgentWorkspaceSession : IDisposable {
         ArgumentNullException.ThrowIfNull(pendingResults);
 
         EnsureOpenForEngine();
-        ThrowInjectedFaultIfAny(AgentWorkspaceSessionFaultPoint.BeforeReplacePendingToolResults);
         _workspaceRoot.Meta.Stamp();
         _workspaceRoot.RuntimeState.ReplacePendingToolResults(pendingResults);
         ThrowInjectedFaultIfAny(AgentWorkspaceSessionFaultPoint.AfterReplacePendingToolResultsMutation);
@@ -286,7 +281,6 @@ internal sealed class AgentWorkspaceSession : IDisposable {
         ArgumentNullException.ThrowIfNull(pendingResult);
 
         EnsureOpenForEngine();
-        ThrowInjectedFaultIfAny(AgentWorkspaceSessionFaultPoint.BeforeUpsertPendingToolResult);
         _workspaceRoot.Meta.Stamp();
         _workspaceRoot.RuntimeState.UpsertPendingToolResult(pendingResult);
         ThrowInjectedFaultIfAny(AgentWorkspaceSessionFaultPoint.AfterUpsertPendingToolResultMutation);
@@ -298,7 +292,6 @@ internal sealed class AgentWorkspaceSession : IDisposable {
         int? lockedCompactionSplitIndex
     ) {
         EnsureOpenForEngine();
-        ThrowInjectedFaultIfAny(AgentWorkspaceSessionFaultPoint.BeforeUpdateTurnRuntime);
         _workspaceRoot.Meta.Stamp();
         _workspaceRoot.RuntimeState.UpdateTurnRuntime(resolvedProfile, lockedCompactionSplitIndex);
         ThrowInjectedFaultIfAny(AgentWorkspaceSessionFaultPoint.AfterUpdateTurnRuntimeMutation);
@@ -307,7 +300,6 @@ internal sealed class AgentWorkspaceSession : IDisposable {
 
     internal CompactionCheckpoint? UpdatePendingCompaction(CompactionCheckpoint? pendingCompaction) {
         EnsureOpenForEngine();
-        ThrowInjectedFaultIfAny(AgentWorkspaceSessionFaultPoint.BeforeUpdatePendingCompaction);
         _workspaceRoot.Meta.Stamp();
         if (pendingCompaction is null) {
             _workspaceRoot.RuntimeState.ClearPendingCompaction();

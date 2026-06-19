@@ -2598,17 +2598,20 @@ public sealed class AgentWorkspacePersistenceTests {
 
             var durableResult = CreateToolCallExecutionResult("tool-alpha", "call-1", "durable-output");
             var ghostResult = CreateToolCallExecutionResult("tool-ghost", "ghost-call", "ghost-output");
-            host.WorkspaceRoot.RuntimeState.ReplacePendingToolResults([durableResult]);
 
             var localPendingResults = GetPendingToolResults(host.Engine);
             localPendingResults.Clear();
-            localPendingResults[ghostResult.ToolCallId] = ghostResult;
-            Assert.Equal("ghost-call", Assert.Single(localPendingResults).Key);
+            localPendingResults[durableResult.ToolCallId] = durableResult;
+            Assert.Equal("call-1", Assert.Single(localPendingResults).Key);
 
             ConfigureSessionFaultToThrowOnce(
                 GetWorkspaceSession(host),
-                AgentWorkspaceSessionFaultPoint.BeforeReplacePendingToolResults,
-                "Injected fault before pending tool results mutation."
+                AgentWorkspaceSessionFaultPoint.AfterReplacePendingToolResultsMutation,
+                "Injected fault after pending tool results mutation.",
+                beforeThrow: () => {
+                    localPendingResults.Clear();
+                    localPendingResults[ghostResult.ToolCallId] = ghostResult;
+                }
             );
 
             var exception = Assert.Throws<TargetInvocationException>(
@@ -2616,13 +2619,61 @@ public sealed class AgentWorkspacePersistenceTests {
             );
 
             var inner = Assert.IsType<InvalidOperationException>(exception.InnerException);
-            Assert.Equal("Injected fault before pending tool results mutation.", inner.Message);
+            Assert.Equal("Injected fault after pending tool results mutation.", inner.Message);
 
             var reloadedResult = Assert.Single(localPendingResults).Value;
             Assert.False(localPendingResults.ContainsKey(ghostResult.ToolCallId));
-            Assert.NotSame(ghostResult, reloadedResult);
+            Assert.NotSame(durableResult, reloadedResult);
             AssertToolCallExecutionResult(durableResult, reloadedResult);
             AssertToolCallExecutionResult(durableResult, Assert.Single(host.LoadSnapshot().PendingToolResults));
+        }
+        finally {
+            if (Directory.Exists(repoDir)) {
+                Directory.Delete(repoDir, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public void Host_UpsertPendingToolResult_FailureReloadsAuthoritativePendingResults() {
+        var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-host-pending-results-upsert-fault-reload-{Guid.NewGuid():N}");
+
+        try {
+            using var host = AgentEngineHost.CreateNew(repoDir);
+
+            var existingResult = CreateToolCallExecutionResult("tool-alpha", "call-1", "output-1");
+            var upsertedResult = CreateToolCallExecutionResult("tool-beta", "call-2", "output-2");
+            var ghostResult = CreateToolCallExecutionResult("tool-ghost", "ghost-call", "ghost-output");
+            host.WorkspaceRoot.RuntimeState.ReplacePendingToolResults([existingResult]);
+
+            var localPendingResults = GetPendingToolResults(host.Engine);
+            localPendingResults.Clear();
+            localPendingResults[existingResult.ToolCallId] = existingResult;
+
+            ConfigureSessionFaultToThrowOnce(
+                GetWorkspaceSession(host),
+                AgentWorkspaceSessionFaultPoint.AfterUpsertPendingToolResultMutation,
+                "Injected fault after pending tool result upsert.",
+                beforeThrow: () => {
+                    localPendingResults.Clear();
+                    localPendingResults[ghostResult.ToolCallId] = ghostResult;
+                }
+            );
+
+            var exception = Assert.Throws<TargetInvocationException>(
+                () => InvokeRequiredInstanceMethod(host.Engine, "UpsertPendingToolResult", upsertedResult)
+            );
+
+            var inner = Assert.IsType<InvalidOperationException>(exception.InnerException);
+            Assert.Equal("Injected fault after pending tool result upsert.", inner.Message);
+
+            Assert.False(localPendingResults.ContainsKey(ghostResult.ToolCallId));
+            Assert.Equal(["call-1", "call-2"], localPendingResults.Keys.OrderBy(static key => key, StringComparer.Ordinal));
+            AssertToolCallExecutionResult(existingResult, localPendingResults["call-1"]);
+            AssertToolCallExecutionResult(upsertedResult, localPendingResults["call-2"]);
+            Assert.Equal(["call-1", "call-2"], host.LoadSnapshot().PendingToolResults
+                .Select(static result => result.ToolCallId)
+                .OrderBy(static toolCallId => toolCallId, StringComparer.Ordinal));
         }
         finally {
             if (Directory.Exists(repoDir)) {
@@ -2745,8 +2796,13 @@ public sealed class AgentWorkspacePersistenceTests {
 
             ConfigureSessionFaultToThrowOnce(
                 GetWorkspaceSession(host),
-                AgentWorkspaceSessionFaultPoint.BeforeUpdatePendingCompaction,
-                "Injected fault before pending compaction mutation."
+                AgentWorkspaceSessionFaultPoint.AfterUpdatePendingCompactionMutation,
+                "Injected fault after pending compaction mutation.",
+                beforeThrow: () => _ = InvokeRequiredInstanceMethod(
+                    host.Engine,
+                    "ApplyPendingCompactionSnapshot",
+                    new CompactionCheckpoint(9, "ghost-system", "ghost-prompt")
+                )
             );
 
             var exception = Assert.Throws<TargetInvocationException>(
@@ -2754,9 +2810,48 @@ public sealed class AgentWorkspacePersistenceTests {
             );
 
             var inner = Assert.IsType<InvalidOperationException>(exception.InnerException);
-            Assert.Equal("Injected fault before pending compaction mutation.", inner.Message);
-            Assert.Equal(durablePendingCompaction, host.Engine.ExportStateSnapshot().PendingCompaction);
-            Assert.Equal(durablePendingCompaction, host.LoadSnapshot().PendingCompaction);
+            Assert.Equal("Injected fault after pending compaction mutation.", inner.Message);
+            Assert.Equal(localPendingCompaction, host.Engine.ExportStateSnapshot().PendingCompaction);
+            Assert.Equal(localPendingCompaction, host.LoadSnapshot().PendingCompaction);
+        }
+        finally {
+            if (Directory.Exists(repoDir)) {
+                Directory.Delete(repoDir, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public void Host_PersistPendingCompactionClear_FailureReloadsAuthoritativePendingCompaction() {
+        var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-host-compaction-clear-fault-reload-{Guid.NewGuid():N}");
+
+        try {
+            using var host = AgentEngineHost.CreateNew(repoDir);
+
+            var seededPendingCompaction = new CompactionCheckpoint(5, "seed-system", "seed-prompt");
+            host.WorkspaceRoot.RuntimeState.SetPendingCompaction(seededPendingCompaction);
+            _ = InvokeRequiredInstanceMethod(host.Engine, "ApplyPendingCompactionSnapshot", new object?[] { null });
+            Assert.Null(host.Engine.ExportStateSnapshot().PendingCompaction);
+
+            ConfigureSessionFaultToThrowOnce(
+                GetWorkspaceSession(host),
+                AgentWorkspaceSessionFaultPoint.AfterUpdatePendingCompactionMutation,
+                "Injected fault after pending compaction clear.",
+                beforeThrow: () => _ = InvokeRequiredInstanceMethod(
+                    host.Engine,
+                    "ApplyPendingCompactionSnapshot",
+                    new CompactionCheckpoint(9, "ghost-system", "ghost-prompt")
+                )
+            );
+
+            var exception = Assert.Throws<TargetInvocationException>(
+                () => InvokeRequiredInstanceMethod(host.Engine, "PersistPendingCompaction")
+            );
+
+            var inner = Assert.IsType<InvalidOperationException>(exception.InnerException);
+            Assert.Equal("Injected fault after pending compaction clear.", inner.Message);
+            Assert.Null(host.Engine.ExportStateSnapshot().PendingCompaction);
+            Assert.Null(host.LoadSnapshot().PendingCompaction);
         }
         finally {
             if (Directory.Exists(repoDir)) {
@@ -3074,7 +3169,8 @@ public sealed class AgentWorkspacePersistenceTests {
     private static void ConfigureSessionFaultToThrowOnce(
         AgentWorkspaceSession session,
         AgentWorkspaceSessionFaultPoint targetPoint,
-        string message
+        string message,
+        Action? beforeThrow = null
     ) {
         var fired = false;
         session.FaultInjectionForTesting = point => {
@@ -3083,6 +3179,7 @@ public sealed class AgentWorkspacePersistenceTests {
             }
 
             fired = true;
+            beforeThrow?.Invoke();
             return new InvalidOperationException(message);
         };
     }
