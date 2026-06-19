@@ -113,7 +113,6 @@ public partial class AgentEngine {
 
     private static AgentEngine CreateFromPersistedStateCore(
         AgentState state,
-        AgentEngineRuntimeStateSnapshot runtimeState,
         LlmProfileRegistry? profileRegistry,
         IEnumerable<IApp>? initialApps,
         IEnumerable<ITool>? initialTools,
@@ -123,9 +122,7 @@ public partial class AgentEngine {
         AgentWorkspaceSession? workspaceSession = null
     ) {
         ArgumentNullException.ThrowIfNull(state);
-        ArgumentNullException.ThrowIfNull(runtimeState);
-
-        var engine = new AgentEngine(
+        return new AgentEngine(
             state: state,
             initialApps: initialApps,
             initialTools: initialTools,
@@ -134,6 +131,31 @@ public partial class AgentEngine {
             autoCompaction: autoCompaction,
             profileRegistry: profileRegistry,
             workspaceSession: workspaceSession
+        );
+    }
+
+    private static AgentEngine CreateFromPersistedStateCore(
+        AgentState state,
+        AgentEngineRuntimeStateSnapshot runtimeState,
+        LlmProfileRegistry? profileRegistry,
+        IEnumerable<IApp>? initialApps,
+        IEnumerable<ITool>? initialTools,
+        IIdleObservationProvider? idleProvider,
+        Func<DateTimeOffset>? utcNowProvider,
+        AutoCompactionOptions? autoCompaction,
+        AgentWorkspaceSession? workspaceSession = null
+    ) {
+        ArgumentNullException.ThrowIfNull(runtimeState);
+
+        var engine = CreateFromPersistedStateCore(
+            state,
+            profileRegistry,
+            initialApps,
+            initialTools,
+            idleProvider,
+            utcNowProvider,
+            autoCompaction,
+            workspaceSession
         );
 
         engine.ApplyRuntimeStateSnapshot(runtimeState);
@@ -151,9 +173,8 @@ public partial class AgentEngine {
     ) {
         ArgumentNullException.ThrowIfNull(workspaceSession);
 
-        return CreateFromPersistedStateCore(
+        var engine = CreateFromPersistedStateCore(
             workspaceSession.RestoreState(),
-            workspaceSession.LoadRuntimeState(),
             profileRegistry,
             initialApps,
             initialTools,
@@ -162,6 +183,9 @@ public partial class AgentEngine {
             autoCompaction,
             workspaceSession
         );
+
+        engine.RestoreRuntimeStateFromWorkspaceSession(workspaceSession);
+        return engine;
     }
 
     internal void CommitStableBoundary() {
@@ -218,9 +242,21 @@ public partial class AgentEngine {
             )
         );
         ApplyPendingCompactionSnapshot(runtimeState.PendingCompaction);
+        ApplyToolSessionExecutionSequence(runtimeState.ToolSessionExecutionSequence);
+    }
 
-        if (runtimeState.ToolSessionExecutionSequence > 0) {
-            EnsureSession().RestoreExecutionSequence(runtimeState.ToolSessionExecutionSequence);
+    private void RestoreRuntimeStateFromWorkspaceSession(AgentWorkspaceSession workspaceSession) {
+        ArgumentNullException.ThrowIfNull(workspaceSession);
+
+        ApplyPendingToolResultsSnapshot(workspaceSession.LoadPendingToolResults());
+        ApplyTurnRuntimeSnapshot(workspaceSession.LoadTurnRuntimeState());
+        ApplyPendingCompactionSnapshot(workspaceSession.LoadPendingCompaction());
+        ApplyToolSessionExecutionSequence(workspaceSession.LoadToolSessionExecutionSequence());
+    }
+
+    private void ApplyToolSessionExecutionSequence(long toolSessionExecutionSequence) {
+        if (toolSessionExecutionSequence > 0) {
+            EnsureSession().RestoreExecutionSequence(toolSessionExecutionSequence);
         }
     }
 

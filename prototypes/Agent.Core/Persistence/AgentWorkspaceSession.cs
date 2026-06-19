@@ -251,23 +251,6 @@ internal sealed class AgentWorkspaceSession : IDisposable {
         return _workspaceRoot.Meta.GetRequiredSystemPrompt();
     }
 
-    internal AgentEngineRuntimeStateSnapshot LoadRuntimeState() {
-        EnsureOpenForEngine();
-
-        var pendingToolResults = _workspaceRoot.RuntimeState.LoadPendingToolResults();
-        var turnRuntime = LoadTurnRuntimeState();
-        var pendingCompaction = _workspaceRoot.RuntimeState.LoadPendingCompaction();
-        var toolSessionExecutionSequence = _workspaceRoot.RuntimeState.GetToolSessionExecutionSequenceOrDefault();
-
-        return new AgentEngineRuntimeStateSnapshot(
-            PendingToolResults: pendingToolResults,
-            ResolvedProfile: turnRuntime.ResolvedProfile,
-            LockedCompactionSplitIndex: turnRuntime.LockedCompactionSplitIndex,
-            PendingCompaction: pendingCompaction,
-            ToolSessionExecutionSequence: toolSessionExecutionSequence
-        );
-    }
-
     internal void Commit() {
         EnsureOpenForEngine();
         if (_repo is null) { return; }
@@ -324,6 +307,11 @@ internal sealed class AgentWorkspaceSession : IDisposable {
         EnsureOpenForEngine();
         _workspaceRoot.Meta.Stamp();
         return _workspaceRoot.RuntimeState.AllocateNextToolSessionExecutionSequence();
+    }
+
+    internal long LoadToolSessionExecutionSequence() {
+        EnsureOpenForEngine();
+        return _workspaceRoot.RuntimeState.GetToolSessionExecutionSequenceOrDefault();
     }
 
     private void AttachPendingNotifications(ObservationEntry entry, string? inlineNotifications = null) {

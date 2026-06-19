@@ -1578,9 +1578,9 @@ public sealed class AgentWorkspacePersistenceTests {
             session.UpdateTurnRuntime(secondProfile, 5);
             Assert.Same(turnRuntime, GetTurnRuntimeMap(workspaceRoot));
 
-            var runtimeState = session.LoadRuntimeState();
-            Assert.Equal(secondProfile, runtimeState.ResolvedProfile);
-            Assert.Equal(5, runtimeState.LockedCompactionSplitIndex);
+            var updatedTurnRuntime = session.LoadTurnRuntimeState();
+            Assert.Equal(secondProfile, updatedTurnRuntime.ResolvedProfile);
+            Assert.Equal(5, updatedTurnRuntime.LockedCompactionSplitIndex);
         }
         finally {
             if (Directory.Exists(repoDir)) {
@@ -1609,9 +1609,9 @@ public sealed class AgentWorkspacePersistenceTests {
             session.UpdateTurnRuntime(null, null);
             Assert.Same(turnRuntime, GetTurnRuntimeMap(workspaceRoot));
 
-            var runtimeState = session.LoadRuntimeState();
-            Assert.Null(runtimeState.ResolvedProfile);
-            Assert.Null(runtimeState.LockedCompactionSplitIndex);
+            var clearedTurnRuntime = session.LoadTurnRuntimeState();
+            Assert.Null(clearedTurnRuntime.ResolvedProfile);
+            Assert.Null(clearedTurnRuntime.LockedCompactionSplitIndex);
         }
         finally {
             if (Directory.Exists(repoDir)) {
@@ -1690,7 +1690,7 @@ public sealed class AgentWorkspacePersistenceTests {
 
             Assert.Equal(1L, first);
             Assert.Equal(2L, second);
-            Assert.Equal(2L, session.LoadRuntimeState().ToolSessionExecutionSequence);
+            Assert.Equal(2L, session.LoadToolSessionExecutionSequence());
             Assert.Equal(2L, workspaceRoot.RuntimeState.GetToolSessionExecutionSequenceOrDefault());
         }
         finally {
@@ -1717,13 +1717,13 @@ public sealed class AgentWorkspacePersistenceTests {
             };
 
             var updatedPendingResults = session.ReplacePendingToolResults(pendingResults);
-            var runtimeState = session.LoadRuntimeState();
+            var persistedPendingResults = session.LoadPendingToolResults();
 
             Assert.NotSame(initialPendingMap, GetPendingToolResultsMap(workspaceRoot));
             Assert.Equal(pendingResults.Length, updatedPendingResults.Count);
             for (int i = 0; i < pendingResults.Length; i++) {
                 AssertToolCallExecutionResult(pendingResults[i], updatedPendingResults[i]);
-                AssertToolCallExecutionResult(pendingResults[i], runtimeState.PendingToolResults[i]);
+                AssertToolCallExecutionResult(pendingResults[i], persistedPendingResults[i]);
             }
         }
         finally {
@@ -3014,6 +3014,14 @@ public sealed class AgentWorkspacePersistenceTests {
                     ..
                 ]
                 && first == typeof(AgentWorkspaceSession)
+        );
+    }
+
+    [Fact]
+    public void AgentWorkspaceSession_DoesNotExposeWholeRuntimeSnapshotLoader() {
+        Assert.DoesNotContain(
+            typeof(AgentWorkspaceSession).GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic),
+            static method => method.Name == "LoadRuntimeState"
         );
     }
 
