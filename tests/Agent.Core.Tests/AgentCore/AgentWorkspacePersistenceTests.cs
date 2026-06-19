@@ -1619,6 +1619,72 @@ public sealed class AgentWorkspacePersistenceTests {
     }
 
     [Fact]
+    public void WorkspaceSessionReplacePendingToolResults_ReturnsUpdatedPendingResultsSnapshot() {
+        var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-pending-results-session-replace-{Guid.NewGuid():N}");
+
+        try {
+            using var repo = Repository.Create(repoDir).Unwrap();
+            var revision = repo.CreateBranch("main").Unwrap();
+            var workspaceRoot = AgentWorkspaceRoot.Create(revision);
+            using var session = AgentWorkspaceSession.Open(workspaceRoot);
+            var initialPendingMap = GetPendingToolResultsMap(workspaceRoot);
+
+            var pendingResults = new[] {
+                CreateToolCallExecutionResult("tool-alpha", "call-1", "output-1"),
+                CreateToolCallExecutionResult("tool-beta", "call-2", "output-2")
+            };
+
+            var updatedPendingResults = session.ReplacePendingToolResults(pendingResults);
+            var runtimeState = session.LoadRuntimeState();
+
+            Assert.NotSame(initialPendingMap, GetPendingToolResultsMap(workspaceRoot));
+            Assert.Equal(pendingResults.Length, updatedPendingResults.Count);
+            for (int i = 0; i < pendingResults.Length; i++) {
+                AssertToolCallExecutionResult(pendingResults[i], updatedPendingResults[i]);
+                AssertToolCallExecutionResult(pendingResults[i], runtimeState.PendingToolResults[i]);
+            }
+        }
+        finally {
+            if (Directory.Exists(repoDir)) {
+                Directory.Delete(repoDir, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public void WorkspaceSessionUpsertPendingToolResult_ReturnsUpdatedPendingResultsSnapshot() {
+        var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-pending-results-session-upsert-{Guid.NewGuid():N}");
+
+        try {
+            using var repo = Repository.Create(repoDir).Unwrap();
+            var revision = repo.CreateBranch("main").Unwrap();
+            var workspaceRoot = AgentWorkspaceRoot.Create(revision);
+            using var session = AgentWorkspaceSession.Open(workspaceRoot);
+
+            session.ReplacePendingToolResults([
+                CreateToolCallExecutionResult("tool-alpha", "call-1", "output-1")
+            ]);
+            var upsertedResult = CreateToolCallExecutionResult("tool-beta", "call-2", "output-2");
+
+            var updatedPendingResults = session.UpsertPendingToolResult(upsertedResult);
+            var freshPendingResults = session.LoadPendingToolResults();
+
+            Assert.Equal(freshPendingResults.Count, updatedPendingResults.Count);
+            for (int i = 0; i < freshPendingResults.Count; i++) {
+                AssertToolCallExecutionResult(freshPendingResults[i], updatedPendingResults[i]);
+            }
+            Assert.Equal(["call-1", "call-2"], updatedPendingResults
+                .Select(static result => result.ToolCallId)
+                .OrderBy(static toolCallId => toolCallId, StringComparer.Ordinal));
+        }
+        finally {
+            if (Directory.Exists(repoDir)) {
+                Directory.Delete(repoDir, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
     public void StateRoot_ReplaceRuntimeState_ReplacesPendingCompactionDurableRecordAfterLiveMutation() {
         var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-pending-compaction-runtime-replace-{Guid.NewGuid():N}");
 
@@ -2107,6 +2173,59 @@ public sealed class AgentWorkspacePersistenceTests {
     }
 
     [Fact]
+    public async Task Host_ToolExecution_RefreshesPendingToolResultsCacheFromDurableWorkspace() {
+        var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-host-pending-results-refresh-{Guid.NewGuid():N}");
+
+        try {
+            var client = new QueueCompletionClient(
+                new ActionMessage([
+                    new ActionBlock.ToolCall(new RawToolCall("alpha", "call-1", "{}"))
+                ])
+            );
+            var profile = CreateFullFeatureProfile(client, "model-pending-refresh");
+
+            using var host = AgentEngineHost.CreateNew(
+                repoDir,
+                runtime: new AgentEngineHostRuntime(initialTools: [
+                    new RecordingTool("alpha")
+                ]));
+
+            host.Engine.State.AppendObservation(new ObservationEntry(), "seed-observation");
+            host.Engine.State.AppendAction(
+                new ActionEntry(
+                    new ActionMessage([new ActionBlock.Text("seed-action")]),
+                    profile.ToCompletionDescriptor()
+                )
+            );
+            host.Engine.WaitingInput += static (_, args) => {
+                args.ShouldContinue = true;
+                args.Observation = IncomingObservation.FromRecentEvents("fresh-observation");
+            };
+
+            await host.StepAsync(profile);
+            await host.StepAsync(profile);
+
+            var pendingBeforeToolExecution = GetPendingToolResults(host.Engine);
+            pendingBeforeToolExecution["ghost-call"] = CreateToolCallExecutionResult("tool-ghost", "ghost-call", "ghost-output");
+
+            await host.StepAsync(profile);
+
+            var localPendingResults = GetPendingToolResults(host.Engine);
+            var durablePendingResult = Assert.Single(host.LoadSnapshot().PendingToolResults);
+
+            Assert.Single(localPendingResults);
+            Assert.True(localPendingResults.ContainsKey("call-1"));
+            Assert.False(localPendingResults.ContainsKey("ghost-call"));
+            Assert.Equal("call-1", durablePendingResult.ToolCallId);
+        }
+        finally {
+            if (Directory.Exists(repoDir)) {
+                Directory.Delete(repoDir, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
     public async Task Host_BeginNewTurn_ClearsTurnRuntimeWithoutReplacingDurableDict() {
         var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-host-turn-runtime-identity-{Guid.NewGuid():N}");
 
@@ -2488,6 +2607,10 @@ public sealed class AgentWorkspacePersistenceTests {
 
     private static string[] GetCachedPendingNotifications(AgentState state) {
         return GetRequiredPrivateField<ConcurrentQueue<string>>(GetWorkingSet(state), "_pendingNotifications").ToArray();
+    }
+
+    private static Dictionary<string, ToolCallExecutionResult> GetPendingToolResults(AgentEngine engine) {
+        return GetRequiredPrivateField<Dictionary<string, ToolCallExecutionResult>>(engine, "_pendingToolResults");
     }
 
     private static void ReplaceCachedPendingNotifications(AgentState state, params string[] notifications) {

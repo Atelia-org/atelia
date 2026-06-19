@@ -300,16 +300,42 @@ public partial class AgentEngine {
     }
 
     private void PersistPendingToolResults() {
-        _workspaceSession?.ReplacePendingToolResults(_pendingToolResults.Values
-            .OrderBy(static result => result.ToolCallId, StringComparer.Ordinal)
-            .Select(AgentState.CloneToolCallExecutionResult)
-            .ToArray());
+        if (_workspaceSession is null) { return; }
+
+        try {
+            ApplyPendingToolResultsSnapshot(_workspaceSession.ReplacePendingToolResults(_pendingToolResults.Values
+                .OrderBy(static result => result.ToolCallId, StringComparer.Ordinal)
+                .Select(AgentState.CloneToolCallExecutionResult)
+                .ToArray()));
+        }
+        catch {
+            ApplyPendingToolResultsSnapshot(_workspaceSession.LoadPendingToolResults());
+            throw;
+        }
     }
 
     private void UpsertPendingToolResult(ToolCallExecutionResult pendingResult) {
-        if (_workspaceSession is null) { return; }
+        if (_workspaceSession is null) {
+            _pendingToolResults[pendingResult.ToolCallId] = pendingResult;
+            return;
+        }
 
-        _workspaceSession.UpsertPendingToolResult(pendingResult);
+        try {
+            ApplyPendingToolResultsSnapshot(_workspaceSession.UpsertPendingToolResult(pendingResult));
+        }
+        catch {
+            ApplyPendingToolResultsSnapshot(_workspaceSession.LoadPendingToolResults());
+            throw;
+        }
+    }
+
+    private void ApplyPendingToolResultsSnapshot(IReadOnlyList<ToolCallExecutionResult> pendingResults) {
+        ArgumentNullException.ThrowIfNull(pendingResults);
+
+        _pendingToolResults.Clear();
+        foreach (var pendingResult in pendingResults) {
+            _pendingToolResults[pendingResult.ToolCallId] = AgentState.CloneToolCallExecutionResult(pendingResult);
+        }
     }
 
     private void PersistTurnRuntime() {

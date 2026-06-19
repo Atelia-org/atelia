@@ -691,7 +691,6 @@ public partial class AgentEngine {
         var session = EnsureSession();
         var result = await session.ExecuteAsync(nextCall, cancellationToken).ConfigureAwait(false);
         UpsertPendingToolResult(result);
-        _pendingToolResults[nextCall.ToolCallId] = result;
         PersistToolSessionExecutionSequence();
         var activeProfile = _turnRuntime.ActiveToolExecutionProfile
             ?? throw new InvalidOperationException("Tool execution completed without an active tool-execution profile.");

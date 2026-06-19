@@ -79,6 +79,11 @@ internal sealed class AgentWorkspaceSession : IDisposable {
         return _workspaceRoot.History.LoadPendingNotifications();
     }
 
+    internal IReadOnlyList<ToolCallExecutionResult> LoadPendingToolResults() {
+        EnsureOpenForEngine();
+        return _workspaceRoot.RuntimeState.LoadPendingToolResults();
+    }
+
     internal (IReadOnlyList<HistoryEntry> RecentHistory, ulong LastSerial) LoadRecentHistorySnapshot() {
         EnsureOpenForState();
         return (
@@ -235,20 +240,22 @@ internal sealed class AgentWorkspaceSession : IDisposable {
         _repo.Commit(_workspaceRoot.Root).Unwrap();
     }
 
-    internal void ReplacePendingToolResults(IReadOnlyList<ToolCallExecutionResult> pendingResults) {
+    internal IReadOnlyList<ToolCallExecutionResult> ReplacePendingToolResults(IReadOnlyList<ToolCallExecutionResult> pendingResults) {
         ArgumentNullException.ThrowIfNull(pendingResults);
 
         EnsureOpenForEngine();
         _workspaceRoot.Meta.Stamp();
         _workspaceRoot.RuntimeState.ReplacePendingToolResults(pendingResults);
+        return _workspaceRoot.RuntimeState.LoadPendingToolResults();
     }
 
-    internal void UpsertPendingToolResult(ToolCallExecutionResult pendingResult) {
+    internal IReadOnlyList<ToolCallExecutionResult> UpsertPendingToolResult(ToolCallExecutionResult pendingResult) {
         ArgumentNullException.ThrowIfNull(pendingResult);
 
         EnsureOpenForEngine();
         _workspaceRoot.Meta.Stamp();
         _workspaceRoot.RuntimeState.UpsertPendingToolResult(pendingResult);
+        return _workspaceRoot.RuntimeState.LoadPendingToolResults();
     }
 
     internal void UpdateTurnRuntime(LlmProfileCheckpoint? resolvedProfile, int? lockedCompactionSplitIndex) {
