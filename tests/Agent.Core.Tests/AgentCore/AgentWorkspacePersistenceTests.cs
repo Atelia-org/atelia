@@ -2098,6 +2098,108 @@ public sealed class AgentWorkspacePersistenceTests {
     }
 
     [Fact]
+    public async Task PublicCreateFromStateSnapshot_RestoresResolvedProfileOverlayForToolExecutionWithoutWriteThrough() {
+        var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-public-snapshot-tool-restore-{Guid.NewGuid():N}");
+
+        try {
+            var resolvedProfile = new LlmProfile(
+                new NoopCompletionClient("provider-tool", "spec-tool"),
+                "model-tool",
+                "resolved-profile",
+                4096,
+                CapabilityProfile.FullFeature
+            );
+            var nominalProfile = new LlmProfile(
+                new NoopCompletionClient("provider-tool", "spec-tool"),
+                "model-tool",
+                "nominal-profile",
+                4096,
+                CapabilityProfile.FullFeature
+            );
+            var expected = CreateWaitingToolResultsSnapshotFixture(resolvedProfile);
+
+            using var repo = Repository.Create(repoDir).Unwrap();
+            var revision = repo.CreateBranch("main").Unwrap();
+            var stateRoot = AgentEngineStateRoot.Create(revision, "public-snapshot-tool-restore");
+            stateRoot.Save(expected);
+
+            var engine = AgentEngine.CreateFromStateSnapshot(
+                stateRoot.Load(),
+                new LlmProfileRegistry([resolvedProfile]),
+                initialTools: [new RecordingTool("alpha")]
+            );
+            LlmProfile? activeProfile = null;
+            engine.ToolExecutionCompleted += (_, args) => activeProfile = args.Profile;
+
+            var step = await engine.StepAsync(nominalProfile);
+            var pendingResult = Assert.Single(engine.ExportStateSnapshot().PendingToolResults);
+            var persisted = stateRoot.Load();
+
+            Assert.True(step.ProgressMade);
+            Assert.Same(resolvedProfile, activeProfile);
+            Assert.Equal("call-1", pendingResult.ToolCallId);
+            Assert.Empty(persisted.PendingToolResults);
+            Assert.Equal(expected.ResolvedProfile, persisted.ResolvedProfile);
+        }
+        finally {
+            if (Directory.Exists(repoDir)) {
+                Directory.Delete(repoDir, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task PublicCreateFromRoot_RestoresResolvedProfileOverlayForToolExecutionWithoutWriteThrough() {
+        var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-public-root-tool-restore-{Guid.NewGuid():N}");
+
+        try {
+            var resolvedProfile = new LlmProfile(
+                new NoopCompletionClient("provider-tool", "spec-tool"),
+                "model-tool",
+                "resolved-profile",
+                4096,
+                CapabilityProfile.FullFeature
+            );
+            var nominalProfile = new LlmProfile(
+                new NoopCompletionClient("provider-tool", "spec-tool"),
+                "model-tool",
+                "nominal-profile",
+                4096,
+                CapabilityProfile.FullFeature
+            );
+            var expected = CreateWaitingToolResultsSnapshotFixture(resolvedProfile);
+
+            using var repo = Repository.Create(repoDir).Unwrap();
+            var revision = repo.CreateBranch("main").Unwrap();
+            var stateRoot = AgentEngineStateRoot.Create(revision, "public-root-tool-restore");
+            stateRoot.Save(expected);
+
+            var engine = AgentEngine.CreateFromRoot(
+                stateRoot.Root,
+                new LlmProfileRegistry([resolvedProfile]),
+                initialTools: [new RecordingTool("alpha")]
+            );
+            LlmProfile? activeProfile = null;
+            engine.ToolExecutionCompleted += (_, args) => activeProfile = args.Profile;
+
+            var step = await engine.StepAsync(nominalProfile);
+            var pendingResult = Assert.Single(engine.ExportStateSnapshot().PendingToolResults);
+            var persisted = stateRoot.Load();
+
+            Assert.True(step.ProgressMade);
+            Assert.Same(resolvedProfile, activeProfile);
+            Assert.Equal("call-1", pendingResult.ToolCallId);
+            Assert.Empty(persisted.PendingToolResults);
+            Assert.Equal(expected.ResolvedProfile, persisted.ResolvedProfile);
+        }
+        finally {
+            if (Directory.Exists(repoDir)) {
+                Directory.Delete(repoDir, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
     public void Host_OpenExisting_RestoresRuntimeOnlyFieldsFromSnapshotCompatibilityLayer() {
         var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-host-runtime-reopen-{Guid.NewGuid():N}");
 
@@ -2643,6 +2745,27 @@ public sealed class AgentWorkspacePersistenceTests {
             PendingCompaction: new CompactionCheckpoint(2, "compact-system", "compact-now"),
             ToolSessionExecutionSequence: 42
         );
+    }
+
+    private static AgentEngineStateSnapshot CreateWaitingToolResultsSnapshotFixture(LlmProfile resolvedProfile) {
+        ArgumentNullException.ThrowIfNull(resolvedProfile);
+
+        var state = AgentState.CreateDefault("tool-restore-system");
+        state.AppendObservation(new ObservationEntry(), "seed-observation");
+        state.AppendAction(
+            new ActionEntry(
+                new ActionMessage([
+                    new ActionBlock.ToolCall(new RawToolCall("alpha", "call-1", "{}"))
+                ]),
+                resolvedProfile.ToCompletionDescriptor()
+            )
+        );
+
+        var snapshot = new AgentEngine(state: state).ExportStateSnapshot();
+        return snapshot with {
+            ResolvedProfile = LlmProfileCheckpoint.FromProfile(resolvedProfile),
+            LockedCompactionSplitIndex = 1
+        };
     }
 
     private static void AssertHistoryEntry(HistoryEntry expected, HistoryEntry actual) {
