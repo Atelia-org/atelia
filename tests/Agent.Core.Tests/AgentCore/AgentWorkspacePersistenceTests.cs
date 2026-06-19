@@ -1621,7 +1621,7 @@ public sealed class AgentWorkspacePersistenceTests {
     }
 
     [Fact]
-    public void WorkspaceSessionUpdateTurnRuntime_ReturnsUpdatedTurnRuntimeSnapshot() {
+    public void WorkspaceSessionUpdateTurnRuntime_ReturnsUpdatedTurnRuntimeState() {
         var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-turn-runtime-session-update-{Guid.NewGuid():N}");
 
         try {
