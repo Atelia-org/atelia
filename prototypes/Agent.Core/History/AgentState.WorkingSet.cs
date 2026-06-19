@@ -62,15 +62,25 @@ internal sealed class AgentStateWorkingSet {
         return serial;
     }
 
+    public void BackfillAppendedHistoryEntry(HistoryEntry entry, ulong lastSerial) {
+        ArgumentNullException.ThrowIfNull(entry);
+        _recentHistory.Add(entry);
+        LastSerial = lastSerial;
+    }
+
     public void EnqueuePendingNotification(string notification) {
         ArgumentNullException.ThrowIfNull(notification);
         _pendingNotifications.Enqueue(notification);
     }
 
+    public void ClearPendingNotifications() {
+        while (_pendingNotifications.TryDequeue(out _)) { }
+    }
+
     public void ReplacePendingNotifications(IReadOnlyList<string> pendingNotifications) {
         ArgumentNullException.ThrowIfNull(pendingNotifications);
 
-        while (_pendingNotifications.TryDequeue(out _)) { }
+        ClearPendingNotifications();
 
         foreach (var notification in pendingNotifications) {
             if (notification is null) {

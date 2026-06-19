@@ -299,7 +299,7 @@ public sealed class AgentWorkspacePersistenceTests {
     }
 
     [Fact]
-    public void WorkspaceSessionAppendAction_ReturnsUpdatedRecentHistorySnapshotForTargetedReplace() {
+    public void WorkspaceSessionAppendAction_ReturnsAuthoritativePreRecentHistoryForDeltaBackfill() {
         var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-workspace-session-append-action-snapshot-{Guid.NewGuid():N}");
 
         try {
@@ -327,17 +327,13 @@ public sealed class AgentWorkspacePersistenceTests {
             Assert.Equal(2UL, appended.Serial);
             Assert.True(appended.TokenEstimate > 0);
             Assert.Equal(2UL, mutation.LastSerial);
+            Assert.Same(appended, mutation.AppendedEntry);
             Assert.Collection(
-                mutation.RecentHistory,
+                mutation.AuthoritativePreRecentHistory,
                 entry => {
                     var observation = Assert.IsType<ObservationEntry>(entry);
                     Assert.Equal(1UL, observation.Serial);
                     Assert.Equal("durable-observation", observation.Notifications);
-                },
-                entry => {
-                    var action = Assert.IsType<ActionEntry>(entry);
-                    Assert.Equal(2UL, action.Serial);
-                    Assert.Equal("durable-action", action.Message.GetFlattenedText());
                 }
             );
             Assert.Collection(
@@ -363,7 +359,7 @@ public sealed class AgentWorkspacePersistenceTests {
     }
 
     [Fact]
-    public void WorkspaceSessionAppendObservation_ReturnsUpdatedWorkingSetForTargetedReplace() {
+    public void WorkspaceSessionAppendObservation_ReturnsAuthoritativePreStateForDeltaBackfill() {
         var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-workspace-session-append-observation-working-set-{Guid.NewGuid():N}");
 
         try {
@@ -399,18 +395,19 @@ public sealed class AgentWorkspacePersistenceTests {
             Assert.Equal(3UL, appended.Serial);
             Assert.True(appended.TokenEstimate > 0);
             Assert.Equal(expectedLastSerial, mutation.LastSerial);
-            Assert.Equal(expectedPendingNotifications, mutation.PendingNotifications);
-            Assert.Equal(expectedRecentHistory.Count, mutation.RecentHistory.Count);
-            for (int i = 0; i < expectedRecentHistory.Count; i++) {
-                AssertHistoryEntry(expectedRecentHistory[i], mutation.RecentHistory[i]);
-            }
+            Assert.Same(appended, mutation.AppendedEntry);
+            Assert.Equal(["durable-notification"], mutation.AuthoritativePrePendingNotifications);
+            AssertObservationActionHistory(
+                mutation.AuthoritativePreRecentHistory,
+                "durable-observation",
+                "durable-action"
+            );
             AssertObservationActionObservationHistory(
-                mutation.RecentHistory,
+                expectedRecentHistory,
                 "durable-observation",
                 "durable-action",
                 "durable-notification\nfollow-up-events"
             );
-            Assert.Empty(mutation.PendingNotifications);
             Assert.Empty(workspaceRoot.History.LoadPendingNotifications());
             Assert.Equal(3UL, workspaceRoot.History.GetRequiredLastSerial());
         }
@@ -593,7 +590,7 @@ public sealed class AgentWorkspacePersistenceTests {
     }
 
     [Fact]
-    public void WorkspaceSessionAppendToolResults_ReturnsUpdatedWorkingSetForTargetedReplace() {
+    public void WorkspaceSessionAppendToolResults_ReturnsAuthoritativePreStateForDeltaBackfill() {
         var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-workspace-session-append-tool-results-working-set-{Guid.NewGuid():N}");
 
         try {
@@ -625,25 +622,25 @@ public sealed class AgentWorkspacePersistenceTests {
             ]);
             var mutation = session.AppendToolResults(appended);
             var expectedRecentHistory = workspaceRoot.History.LoadRecent();
-            var expectedPendingNotifications = workspaceRoot.History.LoadPendingNotifications();
             var expectedLastSerial = workspaceRoot.History.GetRequiredLastSerial();
 
             Assert.Equal(3UL, appended.Serial);
             Assert.True(appended.TokenEstimate > 0);
             Assert.Equal(expectedLastSerial, mutation.LastSerial);
-            Assert.Equal(expectedPendingNotifications, mutation.PendingNotifications);
-            Assert.Equal(expectedRecentHistory.Count, mutation.RecentHistory.Count);
-            for (int i = 0; i < expectedRecentHistory.Count; i++) {
-                AssertHistoryEntry(expectedRecentHistory[i], mutation.RecentHistory[i]);
-            }
+            Assert.Same(appended, mutation.AppendedEntry);
+            Assert.Equal(["durable-notification"], mutation.AuthoritativePrePendingNotifications);
+            AssertObservationActionHistory(
+                mutation.AuthoritativePreRecentHistory,
+                "durable-observation",
+                "durable-action"
+            );
             AssertObservationActionToolResultsHistory(
-                mutation.RecentHistory,
+                expectedRecentHistory,
                 "durable-observation",
                 "durable-action",
                 "durable-notification",
                 "call-1"
             );
-            Assert.Empty(mutation.PendingNotifications);
             Assert.Empty(workspaceRoot.History.LoadPendingNotifications());
             Assert.Equal(3UL, workspaceRoot.History.GetRequiredLastSerial());
         }
@@ -960,7 +957,7 @@ public sealed class AgentWorkspacePersistenceTests {
     }
 
     [Fact]
-    public void WorkspaceSessionInjectActionContent_ReturnsUpdatedRecentHistoryStateForTargetedReplace() {
+    public void WorkspaceSessionInjectActionContent_ReturnsAuthoritativePreRecentHistoryForDeltaBackfill() {
         var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-workspace-session-inject-state-{Guid.NewGuid():N}");
 
         try {
@@ -991,18 +988,12 @@ public sealed class AgentWorkspacePersistenceTests {
             Assert.Equal(3UL, mutation.Result.InjectedEntrySerial);
             Assert.Equal(ActionBlockKind.Thinking, mutation.Result.InjectedBlockKind);
             Assert.Equal(3UL, mutation.LastSerial);
-            var freshState = session.LoadRecentHistoryState();
-            Assert.Equal(freshState.LastSerial, mutation.LastSerial);
-            Assert.Equal(freshState.RecentHistory.Count, mutation.RecentHistory.Count);
-            for (int i = 0; i < freshState.RecentHistory.Count; i++) {
-                AssertHistoryEntry(freshState.RecentHistory[i], mutation.RecentHistory[i]);
-            }
-            AssertObservationActionInjectionHistory(
-                mutation.RecentHistory,
+            Assert.Equal("injected-thinking", mutation.AppendedEntry.Content);
+            Assert.Equal(ActionBlockKind.Thinking, mutation.AppendedEntry.BlockKind);
+            AssertObservationActionHistory(
+                mutation.AuthoritativePreRecentHistory,
                 "durable-observation",
-                "durable-action",
-                "injected-thinking",
-                ActionBlockKind.Thinking
+                "durable-action"
             );
             AssertObservationActionInjectionHistory(
                 workspaceRoot.History.LoadRecent(),
@@ -1012,6 +1003,194 @@ public sealed class AgentWorkspacePersistenceTests {
                 ActionBlockKind.Thinking
             );
             Assert.Equal(3UL, workspaceRoot.History.GetRequiredLastSerial());
+        }
+        finally {
+            if (Directory.Exists(repoDir)) {
+                Directory.Delete(repoDir, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public void WorkspaceLiveAppendAction_AlignedCacheBackfillsDeltaWithoutReplacingPrefixReferences() {
+        var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-workspace-append-action-delta-{Guid.NewGuid():N}");
+
+        try {
+            using var repo = Repository.Create(repoDir).Unwrap();
+            var revision = repo.CreateBranch("main").Unwrap();
+            var workspaceRoot = AgentWorkspaceRoot.Create(revision);
+
+            using var session = AgentWorkspaceSession.Open(workspaceRoot);
+            var state = session.RestoreState();
+            state.AppendObservation(new ObservationEntry(), "durable-observation");
+
+            var originalObservation = Assert.IsType<ObservationEntry>(Assert.Single(state.RecentHistory));
+            var appended = state.AppendAction(
+                new ActionEntry(
+                    new ActionMessage([new ActionBlock.Text("durable-action")]),
+                    new CompletionDescriptor("provider-a", "spec-a", "model-a")
+                )
+            );
+
+            Assert.Same(originalObservation, state.RecentHistory[0]);
+            Assert.Same(appended, state.RecentHistory[1]);
+            AssertObservationActionHistory(state.RecentHistory, "durable-observation", "durable-action");
+            Assert.Equal(2UL, GetWorkingSet(state).LastSerial);
+        }
+        finally {
+            if (Directory.Exists(repoDir)) {
+                Directory.Delete(repoDir, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public void WorkspaceLiveInjectActionContent_AlignedCacheBackfillsDeltaWithoutReplacingPrefixReferences() {
+        var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-workspace-inject-delta-{Guid.NewGuid():N}");
+
+        try {
+            using var repo = Repository.Create(repoDir).Unwrap();
+            var revision = repo.CreateBranch("main").Unwrap();
+            var workspaceRoot = AgentWorkspaceRoot.Create(revision);
+
+            using var session = AgentWorkspaceSession.Open(workspaceRoot);
+            var state = session.RestoreState();
+            state.AppendObservation(new ObservationEntry(), "durable-observation");
+            state.AppendAction(CreateActionEntryWithReasoningTail("durable-action", "durable-thinking"));
+
+            var originalObservation = Assert.IsType<ObservationEntry>(state.RecentHistory[0]);
+            var originalAction = Assert.IsType<ActionEntry>(state.RecentHistory[1]);
+            var injected = state.InjectActionContent(
+                new ActionInjectionRequest(
+                    "injected-thinking",
+                    new InjectionSource(InjectionSourceKind.HostOverride),
+                    InjectedActionContentMode.MatchRecentActionTail
+                )
+            );
+
+            Assert.Same(originalObservation, state.RecentHistory[0]);
+            Assert.Same(originalAction, state.RecentHistory[1]);
+            var injection = Assert.IsType<InjectionEntry>(state.RecentHistory[2]);
+            Assert.Equal(injected.InjectedEntrySerial, injection.Serial);
+            Assert.Equal(ActionBlockKind.Thinking, injection.BlockKind);
+            Assert.Equal("injected-thinking", injection.Content);
+        }
+        finally {
+            if (Directory.Exists(repoDir)) {
+                Directory.Delete(repoDir, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public void WorkspaceLiveAppendObservation_AlignedCacheBackfillsDeltaWithoutReplacingPrefixReferences() {
+        var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-workspace-append-observation-delta-{Guid.NewGuid():N}");
+
+        try {
+            using var repo = Repository.Create(repoDir).Unwrap();
+            var revision = repo.CreateBranch("main").Unwrap();
+            var workspaceRoot = AgentWorkspaceRoot.Create(revision);
+
+            using var session = AgentWorkspaceSession.Open(workspaceRoot);
+            var state = session.RestoreState();
+            state.AppendObservation(new ObservationEntry(), "durable-observation");
+            state.AppendAction(
+                new ActionEntry(
+                    new ActionMessage([new ActionBlock.Text("durable-action")]),
+                    new CompletionDescriptor("provider-a", "spec-a", "model-a")
+                )
+            );
+            state.AppendNotification("durable-notification");
+
+            var originalObservation = Assert.IsType<ObservationEntry>(state.RecentHistory[0]);
+            var originalAction = Assert.IsType<ActionEntry>(state.RecentHistory[1]);
+            var appended = state.AppendObservation(new ObservationEntry(), "follow-up-events");
+
+            Assert.Same(originalObservation, state.RecentHistory[0]);
+            Assert.Same(originalAction, state.RecentHistory[1]);
+            Assert.Same(appended, state.RecentHistory[2]);
+            Assert.Equal("durable-notification\nfollow-up-events", appended.Notifications);
+            Assert.Empty(GetCachedPendingNotifications(state));
+            Assert.Equal(3UL, GetWorkingSet(state).LastSerial);
+        }
+        finally {
+            if (Directory.Exists(repoDir)) {
+                Directory.Delete(repoDir, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public void WorkspaceLiveAppendAction_SoftHistoryDriftFallsBackToWholeReload() {
+        var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-workspace-append-action-soft-drift-{Guid.NewGuid():N}");
+
+        try {
+            using var repo = Repository.Create(repoDir).Unwrap();
+            var revision = repo.CreateBranch("main").Unwrap();
+            var workspaceRoot = AgentWorkspaceRoot.Create(revision);
+
+            using var session = AgentWorkspaceSession.Open(workspaceRoot);
+            var state = session.RestoreState();
+            state.AppendObservation(new ObservationEntry(), "durable-observation");
+
+            var driftedObservation = CreateAssignedObservationEntry(1UL, "drifted-observation");
+            ReplaceCachedRecentHistory(state, driftedObservation);
+            ReplaceCachedLastSerial(state, 1UL);
+
+            state.AppendAction(
+                new ActionEntry(
+                    new ActionMessage([new ActionBlock.Text("durable-action")]),
+                    new CompletionDescriptor("provider-a", "spec-a", "model-a")
+                )
+            );
+
+            Assert.NotSame(driftedObservation, state.RecentHistory[0]);
+            AssertObservationActionHistory(state.RecentHistory, "durable-observation", "durable-action");
+            Assert.Equal(2UL, GetWorkingSet(state).LastSerial);
+        }
+        finally {
+            if (Directory.Exists(repoDir)) {
+                Directory.Delete(repoDir, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public void WorkspaceLiveAppendObservation_SoftPendingNotificationsDriftFallsBackToWholeReload() {
+        var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-workspace-append-observation-soft-pending-drift-{Guid.NewGuid():N}");
+
+        try {
+            using var repo = Repository.Create(repoDir).Unwrap();
+            var revision = repo.CreateBranch("main").Unwrap();
+            var workspaceRoot = AgentWorkspaceRoot.Create(revision);
+
+            using var session = AgentWorkspaceSession.Open(workspaceRoot);
+            var state = session.RestoreState();
+            state.AppendObservation(new ObservationEntry(), "durable-observation");
+            state.AppendAction(
+                new ActionEntry(
+                    new ActionMessage([new ActionBlock.Text("durable-action")]),
+                    new CompletionDescriptor("provider-a", "spec-a", "model-a")
+                )
+            );
+            state.AppendNotification("durable-notification");
+
+            var originalObservation = Assert.IsType<ObservationEntry>(state.RecentHistory[0]);
+            var originalAction = Assert.IsType<ActionEntry>(state.RecentHistory[1]);
+            ReplaceCachedPendingNotifications(state, "drifted-notification");
+
+            var appended = state.AppendObservation(new ObservationEntry(), "follow-up-events");
+
+            Assert.NotSame(originalObservation, state.RecentHistory[0]);
+            Assert.NotSame(originalAction, state.RecentHistory[1]);
+            Assert.Equal("durable-notification\nfollow-up-events", appended.Notifications);
+            Assert.Empty(GetCachedPendingNotifications(state));
+            AssertObservationActionObservationHistory(
+                state.RecentHistory,
+                "durable-observation",
+                "durable-action",
+                "durable-notification\nfollow-up-events"
+            );
         }
         finally {
             if (Directory.Exists(repoDir)) {
@@ -3323,6 +3502,26 @@ public sealed class AgentWorkspacePersistenceTests {
         );
     }
 
+    private static void AssertObservationActionHistory(
+        IReadOnlyList<HistoryEntry> history,
+        string observationNotifications,
+        string actionText
+    ) {
+        Assert.Collection(
+            history,
+            entry => {
+                var observation = Assert.IsType<ObservationEntry>(entry);
+                Assert.Equal(1UL, observation.Serial);
+                Assert.Equal(observationNotifications, observation.Notifications);
+            },
+            entry => {
+                var action = Assert.IsType<ActionEntry>(entry);
+                Assert.Equal(2UL, action.Serial);
+                Assert.Equal(actionText, action.Message.GetFlattenedText());
+            }
+        );
+    }
+
     private static void AssertObservationActionInjectionHistory(
         IReadOnlyList<HistoryEntry> history,
         string observationNotifications,
@@ -3484,8 +3683,11 @@ public sealed class AgentWorkspacePersistenceTests {
         return true;
     }
 
-    private static ObservationEntry CreateAssignedObservationEntry(ulong serial) {
+    private static ObservationEntry CreateAssignedObservationEntry(ulong serial, string? notifications = null) {
         var entry = new ObservationEntry();
+        if (notifications is not null) {
+            entry.AssignNotifications(notifications);
+        }
         entry.AssignTokenEstimate(1);
         entry.AssignSerial(serial);
         return entry;

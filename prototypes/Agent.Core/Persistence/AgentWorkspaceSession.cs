@@ -112,63 +112,65 @@ internal sealed class AgentWorkspaceSession : IDisposable {
         ArgumentNullException.ThrowIfNull(entry);
 
         EnsureOpenForState();
-        var recentHistory = _workspaceRoot.History.LoadRecent();
-        RecentHistoryRules.ValidateAppendOrder(recentHistory, entry);
+        var authoritativePreRecentHistory = _workspaceRoot.History.LoadRecent();
+        RecentHistoryRules.ValidateAppendOrder(authoritativePreRecentHistory, entry);
         entry.AssignTokenEstimate(TokenEstimateHelper.GetDefault().Estimate(entry));
         entry.AssignSerial(_workspaceRoot.History.AllocateNextSerial());
         _workspaceRoot.History.AppendRecent(entry);
-        var (updatedRecentHistory, updatedLastSerial) = LoadRecentHistoryState();
 
         return new WorkspaceAppendActionMutationResult(
-            RecentHistory: updatedRecentHistory,
-            LastSerial: updatedLastSerial
+            AuthoritativePreRecentHistory: authoritativePreRecentHistory,
+            AppendedEntry: entry,
+            LastSerial: entry.Serial
         );
     }
 
-    internal WorkspaceWorkingSetMutationResult AppendObservation(ObservationEntry entry, string? inlineNotifications = null) {
+    internal WorkspaceWorkingSetAppendMutationResult AppendObservation(ObservationEntry entry, string? inlineNotifications = null) {
         ArgumentNullException.ThrowIfNull(entry);
 
         EnsureOpenForState();
-        var recentHistory = _workspaceRoot.History.LoadRecent();
-        if (RecentHistoryRules.HasPendingActionContinuation(recentHistory)) {
+        var authoritativePreRecentHistory = _workspaceRoot.History.LoadRecent();
+        if (RecentHistoryRules.HasPendingActionContinuation(authoritativePreRecentHistory)) {
             throw new InvalidOperationException("Cannot append observation while a pending action continuation is open.");
         }
 
-        RecentHistoryRules.ValidateAppendOrder(recentHistory, entry);
+        var authoritativePrePendingNotifications = _workspaceRoot.History.LoadPendingNotifications();
+        RecentHistoryRules.ValidateAppendOrder(authoritativePreRecentHistory, entry);
         AttachPendingNotifications(entry, inlineNotifications);
         entry.AssignTokenEstimate(TokenEstimateHelper.GetDefault().Estimate(entry));
         entry.AssignSerial(_workspaceRoot.History.AllocateNextSerial());
         _workspaceRoot.History.AppendRecent(entry);
-        var (updatedRecentHistory, updatedLastSerial) = LoadRecentHistoryState();
-        return new WorkspaceWorkingSetMutationResult(
-            RecentHistory: updatedRecentHistory,
-            PendingNotifications: _workspaceRoot.History.LoadPendingNotifications(),
-            LastSerial: updatedLastSerial
+        return new WorkspaceWorkingSetAppendMutationResult(
+            AuthoritativePreRecentHistory: authoritativePreRecentHistory,
+            AuthoritativePrePendingNotifications: authoritativePrePendingNotifications,
+            AppendedEntry: entry,
+            LastSerial: entry.Serial
         );
     }
 
-    internal WorkspaceWorkingSetMutationResult AppendToolResults(ToolResultsEntry entry) {
+    internal WorkspaceWorkingSetAppendMutationResult AppendToolResults(ToolResultsEntry entry) {
         ArgumentNullException.ThrowIfNull(entry);
         if (entry.Results is not { Count: > 0 }) {
             throw new ArgumentException("ToolResultsEntry must include at least one tool result.", nameof(entry));
         }
 
         EnsureOpenForState();
-        var recentHistory = _workspaceRoot.History.LoadRecent();
-        if (RecentHistoryRules.HasPendingActionContinuation(recentHistory)) {
+        var authoritativePreRecentHistory = _workspaceRoot.History.LoadRecent();
+        if (RecentHistoryRules.HasPendingActionContinuation(authoritativePreRecentHistory)) {
             throw new InvalidOperationException("Cannot append tool results while a pending action continuation is open.");
         }
 
-        RecentHistoryRules.ValidateAppendOrder(recentHistory, entry);
+        var authoritativePrePendingNotifications = _workspaceRoot.History.LoadPendingNotifications();
+        RecentHistoryRules.ValidateAppendOrder(authoritativePreRecentHistory, entry);
         AttachPendingNotifications(entry);
         entry.AssignTokenEstimate(TokenEstimateHelper.GetDefault().Estimate(entry));
         entry.AssignSerial(_workspaceRoot.History.AllocateNextSerial());
         _workspaceRoot.History.AppendRecent(entry);
-        var (updatedRecentHistory, updatedLastSerial) = LoadRecentHistoryState();
-        return new WorkspaceWorkingSetMutationResult(
-            RecentHistory: updatedRecentHistory,
-            PendingNotifications: _workspaceRoot.History.LoadPendingNotifications(),
-            LastSerial: updatedLastSerial
+        return new WorkspaceWorkingSetAppendMutationResult(
+            AuthoritativePreRecentHistory: authoritativePreRecentHistory,
+            AuthoritativePrePendingNotifications: authoritativePrePendingNotifications,
+            AppendedEntry: entry,
+            LastSerial: entry.Serial
         );
     }
 
@@ -179,13 +181,13 @@ internal sealed class AgentWorkspaceSession : IDisposable {
         }
 
         EnsureOpenForState();
-        var recentHistory = _workspaceRoot.History.LoadRecent();
-        if (recentHistory.Count == 0) {
+        var authoritativePreRecentHistory = _workspaceRoot.History.LoadRecent();
+        if (authoritativePreRecentHistory.Count == 0) {
             throw new InvalidOperationException("Cannot inject action content into empty history. At least one prior ActionEntry is required.");
         }
 
-        var injectedBlockKind = RecentHistoryRules.ResolveInjectedBlockKind(recentHistory, request);
-        if (recentHistory[^1] is ActionEntry tailAction) {
+        var injectedBlockKind = RecentHistoryRules.ResolveInjectedBlockKind(authoritativePreRecentHistory, request);
+        if (authoritativePreRecentHistory[^1] is ActionEntry tailAction) {
             RecentHistoryRules.EnsureActionAcceptsInjection(tailAction, context: "inject after trailing action");
         }
 
@@ -194,15 +196,15 @@ internal sealed class AgentWorkspaceSession : IDisposable {
             blockKind: injectedBlockKind,
             source: request.Source
         );
-        RecentHistoryRules.ValidateAppendOrder(recentHistory, injectionEntry);
+        RecentHistoryRules.ValidateAppendOrder(authoritativePreRecentHistory, injectionEntry);
         injectionEntry.AssignTokenEstimate(TokenEstimateHelper.GetDefault().Estimate(injectionEntry));
         injectionEntry.AssignSerial(_workspaceRoot.History.AllocateNextSerial());
         _workspaceRoot.History.AppendRecent(injectionEntry);
-        var (updatedRecentHistory, updatedLastSerial) = LoadRecentHistoryState();
 
         return new WorkspaceInjectionMutationResult(
-            RecentHistory: updatedRecentHistory,
-            LastSerial: updatedLastSerial,
+            AuthoritativePreRecentHistory: authoritativePreRecentHistory,
+            AppendedEntry: injectionEntry,
+            LastSerial: injectionEntry.Serial,
             Result: new ActionInjectionResult(
                 InjectedEntrySerial: injectionEntry.Serial,
                 InjectedBlockKind: injectedBlockKind
@@ -338,18 +340,21 @@ internal sealed class AgentWorkspaceSession : IDisposable {
 }
 
 internal sealed record WorkspaceAppendActionMutationResult(
-    IReadOnlyList<HistoryEntry> RecentHistory,
+    IReadOnlyList<HistoryEntry> AuthoritativePreRecentHistory,
+    ActionEntry AppendedEntry,
     ulong LastSerial
 );
 
-internal sealed record WorkspaceWorkingSetMutationResult(
-    IReadOnlyList<HistoryEntry> RecentHistory,
-    IReadOnlyList<string> PendingNotifications,
+internal sealed record WorkspaceWorkingSetAppendMutationResult(
+    IReadOnlyList<HistoryEntry> AuthoritativePreRecentHistory,
+    IReadOnlyList<string> AuthoritativePrePendingNotifications,
+    ObservationEntry AppendedEntry,
     ulong LastSerial
 );
 
 internal sealed record WorkspaceInjectionMutationResult(
-    IReadOnlyList<HistoryEntry> RecentHistory,
+    IReadOnlyList<HistoryEntry> AuthoritativePreRecentHistory,
+    InjectionEntry AppendedEntry,
     ulong LastSerial,
     ActionInjectionResult Result
 );
