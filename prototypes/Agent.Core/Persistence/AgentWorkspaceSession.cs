@@ -90,13 +90,9 @@ internal sealed class AgentWorkspaceSession : IDisposable {
         return _workspaceRoot.RuntimeState.LoadPendingToolResults();
     }
 
-    internal AgentTurnRuntimeStateSnapshot LoadTurnRuntimeState() {
+    internal (LlmProfileCheckpoint? ResolvedProfile, int? LockedCompactionSplitIndex) LoadTurnRuntimeState() {
         EnsureOpenForEngine();
-        var (resolvedProfile, lockedCompactionSplitIndex) = _workspaceRoot.RuntimeState.LoadTurnRuntime();
-        return new AgentTurnRuntimeStateSnapshot(
-            ResolvedProfile: resolvedProfile,
-            LockedCompactionSplitIndex: lockedCompactionSplitIndex
-        );
+        return _workspaceRoot.RuntimeState.LoadTurnRuntime();
     }
 
     internal CompactionCheckpoint? LoadPendingCompaction() {
@@ -273,7 +269,7 @@ internal sealed class AgentWorkspaceSession : IDisposable {
         return _workspaceRoot.RuntimeState.LoadPendingToolResults();
     }
 
-    internal AgentTurnRuntimeStateSnapshot UpdateTurnRuntime(
+    internal (LlmProfileCheckpoint? ResolvedProfile, int? LockedCompactionSplitIndex) UpdateTurnRuntime(
         LlmProfileCheckpoint? resolvedProfile,
         int? lockedCompactionSplitIndex
     ) {

@@ -3043,6 +3043,11 @@ public sealed class AgentWorkspacePersistenceTests {
         );
     }
 
+    [Fact]
+    public void AgentCore_InternalSurface_DoesNotContainTurnRuntimeSnapshotType() {
+        Assert.Null(typeof(AgentEngineStateSnapshot).Assembly.GetType("Atelia.Agent.Core.Persistence.AgentTurnRuntimeStateSnapshot", throwOnError: false));
+    }
+
     private static AgentEngineStateSnapshot CreateSnapshotFixture() {
         var invocation = new CompletionDescriptor("provider-a", "spec-a", "model-a");
         var state = AgentState.CreateDefault("roundtrip-system");

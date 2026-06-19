@@ -6,8 +6,8 @@ using Atelia.Completion.Tools;
 namespace Atelia.Agent.Core;
 
 public partial class AgentEngine {
-    internal AgentTurnRuntimeStateSnapshot ExportTurnRuntimeStateSnapshot() {
-        return new AgentTurnRuntimeStateSnapshot(
+    internal (LlmProfileCheckpoint? ResolvedProfile, int? LockedCompactionSplitIndex) ExportTurnRuntimeState() {
+        return (
             ResolvedProfile: _turnRuntime.ResolvedProfile is null
                 ? null
                 : LlmProfileCheckpoint.FromProfile(_turnRuntime.ResolvedProfile),
@@ -21,7 +21,7 @@ public partial class AgentEngine {
             .Select(AgentState.CloneToolCallExecutionResult)
             .ToArray();
 
-        var turnRuntimeSnapshot = ExportTurnRuntimeStateSnapshot();
+        var turnRuntimeState = ExportTurnRuntimeState();
 
         CompactionCheckpoint? pendingCompaction = _compactionRequest.HasValue
             ? new CompactionCheckpoint(
@@ -33,8 +33,8 @@ public partial class AgentEngine {
 
         return new AgentEngineRuntimeStateSnapshot(
             PendingToolResults: pendingToolResults,
-            ResolvedProfile: turnRuntimeSnapshot.ResolvedProfile,
-            LockedCompactionSplitIndex: turnRuntimeSnapshot.LockedCompactionSplitIndex,
+            ResolvedProfile: turnRuntimeState.ResolvedProfile,
+            LockedCompactionSplitIndex: turnRuntimeState.LockedCompactionSplitIndex,
             PendingCompaction: pendingCompaction,
             ToolSessionExecutionSequence: _toolSession?.LastIssuedExecutionSequence ?? 0
         );
@@ -235,11 +235,9 @@ public partial class AgentEngine {
         ArgumentNullException.ThrowIfNull(runtimeState);
 
         ApplyPendingToolResultsSnapshot(runtimeState.PendingToolResults);
-        ApplyTurnRuntimeSnapshot(
-            new AgentTurnRuntimeStateSnapshot(
-                runtimeState.ResolvedProfile,
-                runtimeState.LockedCompactionSplitIndex
-            )
+        ApplyTurnRuntimeState(
+            runtimeState.ResolvedProfile,
+            runtimeState.LockedCompactionSplitIndex
         );
         ApplyPendingCompactionSnapshot(runtimeState.PendingCompaction);
         ApplyToolSessionExecutionSequence(runtimeState.ToolSessionExecutionSequence);
@@ -249,7 +247,8 @@ public partial class AgentEngine {
         ArgumentNullException.ThrowIfNull(workspaceSession);
 
         ApplyPendingToolResultsSnapshot(workspaceSession.LoadPendingToolResults());
-        ApplyTurnRuntimeSnapshot(workspaceSession.LoadTurnRuntimeState());
+        var (resolvedProfile, lockedCompactionSplitIndex) = workspaceSession.LoadTurnRuntimeState();
+        ApplyTurnRuntimeState(resolvedProfile, lockedCompactionSplitIndex);
         ApplyPendingCompactionSnapshot(workspaceSession.LoadPendingCompaction());
         ApplyToolSessionExecutionSequence(workspaceSession.LoadToolSessionExecutionSequence());
     }
@@ -260,17 +259,16 @@ public partial class AgentEngine {
         }
     }
 
-    private void ApplyTurnRuntimeSnapshot(
-        AgentTurnRuntimeStateSnapshot turnRuntimeSnapshot,
+    private void ApplyTurnRuntimeState(
+        LlmProfileCheckpoint? resolvedProfileCheckpoint,
+        int? lockedCompactionSplitIndex,
         LlmProfile? preferredResolvedProfile = null
     ) {
-        ArgumentNullException.ThrowIfNull(turnRuntimeSnapshot);
-
-        var resolvedProfile = turnRuntimeSnapshot.ResolvedProfile is null
+        var resolvedProfile = resolvedProfileCheckpoint is null
             ? null
-            : ResolveResolvedProfileCheckpoint(turnRuntimeSnapshot.ResolvedProfile, preferredResolvedProfile);
+            : ResolveResolvedProfileCheckpoint(resolvedProfileCheckpoint, preferredResolvedProfile);
 
-        _turnRuntime.ReplacePersistedTurnState(resolvedProfile, turnRuntimeSnapshot.LockedCompactionSplitIndex);
+        _turnRuntime.ReplacePersistedTurnState(resolvedProfile, lockedCompactionSplitIndex);
     }
 
     private LlmProfile ResolveResolvedProfileCheckpoint(
@@ -318,14 +316,24 @@ public partial class AgentEngine {
         }
 
         try {
-            var turnRuntimeSnapshot = ExportTurnRuntimeStateSnapshot();
-            ApplyTurnRuntimeSnapshot(_workspaceSession.UpdateTurnRuntime(
-                turnRuntimeSnapshot.ResolvedProfile,
-                turnRuntimeSnapshot.LockedCompactionSplitIndex
-            ), preferredResolvedProfile);
+            var turnRuntimeState = ExportTurnRuntimeState();
+            var updatedTurnRuntimeState = _workspaceSession.UpdateTurnRuntime(
+                turnRuntimeState.ResolvedProfile,
+                turnRuntimeState.LockedCompactionSplitIndex
+            );
+            ApplyTurnRuntimeState(
+                updatedTurnRuntimeState.ResolvedProfile,
+                updatedTurnRuntimeState.LockedCompactionSplitIndex,
+                preferredResolvedProfile
+            );
         }
         catch {
-            ApplyTurnRuntimeSnapshot(_workspaceSession.LoadTurnRuntimeState(), preferredResolvedProfile);
+            var reloadedTurnRuntimeState = _workspaceSession.LoadTurnRuntimeState();
+            ApplyTurnRuntimeState(
+                reloadedTurnRuntimeState.ResolvedProfile,
+                reloadedTurnRuntimeState.LockedCompactionSplitIndex,
+                preferredResolvedProfile
+            );
             throw;
         }
     }

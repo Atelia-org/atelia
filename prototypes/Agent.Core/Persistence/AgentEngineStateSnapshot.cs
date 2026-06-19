@@ -49,14 +49,6 @@ public sealed record CompactionCheckpoint(
 );
 
 /// <summary>
-/// AgentEngine 当前 turn 的可持久化运行态快照。
-/// </summary>
-internal sealed record AgentTurnRuntimeStateSnapshot(
-    LlmProfileCheckpoint? ResolvedProfile,
-    int? LockedCompactionSplitIndex
-);
-
-/// <summary>
 /// AgentEngine 中仍通过 snapshot adapter 读写的 runtime-only 可持久化状态。
 /// </summary>
 internal sealed record AgentEngineRuntimeStateSnapshot(
