@@ -2939,6 +2939,14 @@ public sealed class AgentWorkspacePersistenceTests {
         );
     }
 
+    [Fact]
+    public void AgentCore_PublicSurface_DoesNotExportStateRootCompatibilityAdapter() {
+        Assert.DoesNotContain(
+            typeof(AgentEngine).Assembly.GetExportedTypes(),
+            static type => type == typeof(AgentEngineStateRoot)
+        );
+    }
+
     private static AgentEngineStateSnapshot CreateSnapshotFixture() {
         var invocation = new CompletionDescriptor("provider-a", "spec-a", "model-a");
         var state = AgentState.CreateDefault("roundtrip-system");

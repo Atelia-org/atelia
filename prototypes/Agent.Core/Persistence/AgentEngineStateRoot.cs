@@ -7,9 +7,10 @@ namespace Atelia.Agent.Core.Persistence;
 /// <summary>
 /// 以 <see cref="DurableDict{TKey}"/> 为 graph root 的 AgentEngine workspace adapter。
 /// 当前 repo-backed host / internal path 以 live durable workspace 为主；
-/// 本类型仍保留 snapshot save/load 入口，主要用于 compatibility、diagnostic 和 import/export。
+/// 本类型已收回 internal，保留 snapshot save/load 入口主要用于测试、diagnostic 和少量内部 compatibility/import-export 桥接。
+/// 对外公开的 non-live restore surface 应显式停留在 <see cref="AgentEngineStateSnapshot"/> + `AgentEngine.CreateFromStateSnapshot(...)`。
 /// </summary>
-public sealed class AgentEngineStateRoot {
+internal sealed class AgentEngineStateRoot {
     private readonly AgentWorkspaceRoot _workspaceRoot;
 
     private AgentEngineStateRoot(AgentWorkspaceRoot workspaceRoot) {
@@ -38,7 +39,7 @@ public sealed class AgentEngineStateRoot {
 
     /// <summary>
     /// 从已有 graph root 包装出 workspace adapter。
-    /// public 调用方若随后走 <see cref="Load"/>，得到的是 snapshot compatibility 视图，而不是绑定 live host 的运行时会话。
+    /// 该 internal adapter 若随后走 <see cref="Load"/>，得到的是 snapshot 视图，而不是绑定 live host 的运行时会话。
     /// </summary>
     public static AgentEngineStateRoot FromRoot(DurableDict<string> root) => FromWorkspaceRoot(AgentWorkspaceRoot.FromRoot(root));
 
@@ -86,7 +87,7 @@ public sealed class AgentEngineStateRoot {
 
     /// <summary>
     /// 从当前 workspace materialize 一个 <see cref="AgentEngineStateSnapshot"/>。
-    /// public non-live restore 应显式走 `Load()` -> `AgentEngine.CreateFromStateSnapshot(...)`；
+    /// 公开的 non-live restore surface 应显式走 snapshot + `AgentEngine.CreateFromStateSnapshot(...)`；
     /// internal live host 则应直接围绕 workspaceRoot / session 恢复。
     /// </summary>
     public AgentEngineStateSnapshot Load() => LoadSnapshot(_workspaceRoot);
