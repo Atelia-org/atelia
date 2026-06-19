@@ -1,3 +1,5 @@
+using Atelia.Completion.Tools;
+
 namespace Atelia.Agent.Core.Persistence;
 
 /// <summary>
@@ -20,7 +22,14 @@ internal static class AgentEngineWorkspaceSnapshotHelper {
         workspaceRoot.History.SetLastSerial(snapshot.AgentState.LastSerial);
         workspaceRoot.History.ReplaceRecent(snapshot.AgentState.RecentHistory);
         workspaceRoot.History.ReplacePendingNotifications(snapshot.AgentState.PendingNotifications);
-        ReplaceRuntimeState(workspaceRoot, ToRuntimeStateSnapshot(snapshot));
+        ReplaceRuntimeState(
+            workspaceRoot,
+            snapshot.PendingToolResults,
+            snapshot.ResolvedProfile,
+            snapshot.LockedCompactionSplitIndex,
+            snapshot.PendingCompaction,
+            snapshot.ToolSessionExecutionSequence
+        );
     }
 
     /// <summary>
@@ -35,7 +44,10 @@ internal static class AgentEngineWorkspaceSnapshotHelper {
         ulong lastSerial = workspaceRoot.History.GetRequiredLastSerial();
         var recentHistory = workspaceRoot.History.LoadRecent();
         var pendingNotifications = workspaceRoot.History.LoadPendingNotifications();
-        var runtimeState = LoadRuntimeState(workspaceRoot);
+        var pendingToolResults = workspaceRoot.RuntimeState.LoadPendingToolResults();
+        var (resolvedProfile, lockedCompactionSplitIndex) = workspaceRoot.RuntimeState.LoadTurnRuntime();
+        var pendingCompaction = workspaceRoot.RuntimeState.LoadPendingCompaction();
+        var toolSessionExecutionSequence = workspaceRoot.RuntimeState.GetToolSessionExecutionSequenceOrDefault();
 
         return new AgentEngineStateSnapshot(
             AgentState: new AgentStateSnapshot(
@@ -44,31 +56,6 @@ internal static class AgentEngineWorkspaceSnapshotHelper {
                 PendingNotifications: pendingNotifications,
                 LastSerial: lastSerial
             ),
-            PendingToolResults: runtimeState.PendingToolResults,
-            ResolvedProfile: runtimeState.ResolvedProfile,
-            LockedCompactionSplitIndex: runtimeState.LockedCompactionSplitIndex,
-            PendingCompaction: runtimeState.PendingCompaction,
-            ToolSessionExecutionSequence: runtimeState.ToolSessionExecutionSequence
-        );
-    }
-
-    private static void ReplaceRuntimeState(AgentWorkspaceRoot workspaceRoot, AgentEngineRuntimeStateSnapshot snapshot) {
-        ArgumentNullException.ThrowIfNull(snapshot);
-
-        workspaceRoot.Meta.Stamp();
-        workspaceRoot.RuntimeState.SetToolSessionExecutionSequence(snapshot.ToolSessionExecutionSequence);
-        workspaceRoot.RuntimeState.ReplacePendingToolResults(snapshot.PendingToolResults);
-        workspaceRoot.RuntimeState.ReplaceTurnRuntime(snapshot.ResolvedProfile, snapshot.LockedCompactionSplitIndex);
-        workspaceRoot.RuntimeState.ReplacePendingCompaction(snapshot.PendingCompaction);
-    }
-
-    private static AgentEngineRuntimeStateSnapshot LoadRuntimeState(AgentWorkspaceRoot workspaceRoot) {
-        var pendingToolResults = workspaceRoot.RuntimeState.LoadPendingToolResults();
-        var (resolvedProfile, lockedCompactionSplitIndex) = workspaceRoot.RuntimeState.LoadTurnRuntime();
-        var pendingCompaction = workspaceRoot.RuntimeState.LoadPendingCompaction();
-        var toolSessionExecutionSequence = workspaceRoot.RuntimeState.GetToolSessionExecutionSequenceOrDefault();
-
-        return new AgentEngineRuntimeStateSnapshot(
             PendingToolResults: pendingToolResults,
             ResolvedProfile: resolvedProfile,
             LockedCompactionSplitIndex: lockedCompactionSplitIndex,
@@ -77,13 +64,19 @@ internal static class AgentEngineWorkspaceSnapshotHelper {
         );
     }
 
-    private static AgentEngineRuntimeStateSnapshot ToRuntimeStateSnapshot(AgentEngineStateSnapshot snapshot) {
-        return new AgentEngineRuntimeStateSnapshot(
-            PendingToolResults: snapshot.PendingToolResults,
-            ResolvedProfile: snapshot.ResolvedProfile,
-            LockedCompactionSplitIndex: snapshot.LockedCompactionSplitIndex,
-            PendingCompaction: snapshot.PendingCompaction,
-            ToolSessionExecutionSequence: snapshot.ToolSessionExecutionSequence
-        );
+    private static void ReplaceRuntimeState(
+        AgentWorkspaceRoot workspaceRoot,
+        IReadOnlyList<ToolCallExecutionResult> pendingToolResults,
+        LlmProfileCheckpoint? resolvedProfile,
+        int? lockedCompactionSplitIndex,
+        CompactionCheckpoint? pendingCompaction,
+        long toolSessionExecutionSequence
+    ) {
+        ArgumentNullException.ThrowIfNull(pendingToolResults);
+        workspaceRoot.Meta.Stamp();
+        workspaceRoot.RuntimeState.SetToolSessionExecutionSequence(toolSessionExecutionSequence);
+        workspaceRoot.RuntimeState.ReplacePendingToolResults(pendingToolResults);
+        workspaceRoot.RuntimeState.ReplaceTurnRuntime(resolvedProfile, lockedCompactionSplitIndex);
+        workspaceRoot.RuntimeState.ReplacePendingCompaction(pendingCompaction);
     }
 }

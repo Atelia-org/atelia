@@ -15,29 +15,23 @@ public partial class AgentEngine {
         );
     }
 
-    internal AgentEngineRuntimeStateSnapshot ExportRuntimeStateSnapshot() {
+    private IReadOnlyList<ToolCallExecutionResult> ExportPendingToolResultsSnapshot() {
         var pendingToolResults = _pendingToolResults.Values
             .OrderBy(static result => result.ToolCallId, StringComparer.Ordinal)
             .Select(AgentState.CloneToolCallExecutionResult)
             .ToArray();
 
-        var turnRuntimeState = ExportTurnRuntimeState();
+        return pendingToolResults;
+    }
 
-        CompactionCheckpoint? pendingCompaction = _compactionRequest.HasValue
+    private CompactionCheckpoint? ExportPendingCompactionSnapshot() {
+        return _compactionRequest.HasValue
             ? new CompactionCheckpoint(
                 _compactionRequest.Value.SplitIndex,
                 _compactionRequest.Value.SystemPrompt,
                 _compactionRequest.Value.SummarizePrompt
             )
             : null;
-
-        return new AgentEngineRuntimeStateSnapshot(
-            PendingToolResults: pendingToolResults,
-            ResolvedProfile: turnRuntimeState.ResolvedProfile,
-            LockedCompactionSplitIndex: turnRuntimeState.LockedCompactionSplitIndex,
-            PendingCompaction: pendingCompaction,
-            ToolSessionExecutionSequence: _toolSession?.LastIssuedExecutionSequence ?? 0
-        );
     }
 
     /// <summary>
@@ -45,15 +39,15 @@ public partial class AgentEngine {
     /// 该 public snapshot 主要用于 compatibility、diagnostic 和 import/export；repo-backed live durable host 不是靠它驱动主持久化。
     /// </summary>
     public AgentEngineStateSnapshot ExportStateSnapshot() {
-        var runtimeSnapshot = ExportRuntimeStateSnapshot();
+        var turnRuntimeState = ExportTurnRuntimeState();
 
         return new AgentEngineStateSnapshot(
             AgentState: _state.ExportSnapshot(),
-            PendingToolResults: runtimeSnapshot.PendingToolResults,
-            ResolvedProfile: runtimeSnapshot.ResolvedProfile,
-            LockedCompactionSplitIndex: runtimeSnapshot.LockedCompactionSplitIndex,
-            PendingCompaction: runtimeSnapshot.PendingCompaction,
-            ToolSessionExecutionSequence: runtimeSnapshot.ToolSessionExecutionSequence
+            PendingToolResults: ExportPendingToolResultsSnapshot(),
+            ResolvedProfile: turnRuntimeState.ResolvedProfile,
+            LockedCompactionSplitIndex: turnRuntimeState.LockedCompactionSplitIndex,
+            PendingCompaction: ExportPendingCompactionSnapshot(),
+            ToolSessionExecutionSequence: _toolSession?.LastIssuedExecutionSequence ?? 0
         );
     }
 
@@ -95,13 +89,11 @@ public partial class AgentEngine {
 
         return CreateFromPersistedStateCore(
             AgentState.RestoreSnapshot(snapshot.AgentState),
-            new AgentEngineRuntimeStateSnapshot(
-                PendingToolResults: snapshot.PendingToolResults,
-                ResolvedProfile: snapshot.ResolvedProfile,
-                LockedCompactionSplitIndex: snapshot.LockedCompactionSplitIndex,
-                PendingCompaction: snapshot.PendingCompaction,
-                ToolSessionExecutionSequence: snapshot.ToolSessionExecutionSequence
-            ),
+            snapshot.PendingToolResults,
+            snapshot.ResolvedProfile,
+            snapshot.LockedCompactionSplitIndex,
+            snapshot.PendingCompaction,
+            snapshot.ToolSessionExecutionSequence,
             profileRegistry,
             initialApps,
             initialTools,
@@ -136,7 +128,11 @@ public partial class AgentEngine {
 
     private static AgentEngine CreateFromPersistedStateCore(
         AgentState state,
-        AgentEngineRuntimeStateSnapshot runtimeState,
+        IReadOnlyList<ToolCallExecutionResult> pendingToolResults,
+        LlmProfileCheckpoint? resolvedProfile,
+        int? lockedCompactionSplitIndex,
+        CompactionCheckpoint? pendingCompaction,
+        long toolSessionExecutionSequence,
         LlmProfileRegistry? profileRegistry,
         IEnumerable<IApp>? initialApps,
         IEnumerable<ITool>? initialTools,
@@ -145,7 +141,7 @@ public partial class AgentEngine {
         AutoCompactionOptions? autoCompaction,
         AgentWorkspaceSession? workspaceSession = null
     ) {
-        ArgumentNullException.ThrowIfNull(runtimeState);
+        ArgumentNullException.ThrowIfNull(pendingToolResults);
 
         var engine = CreateFromPersistedStateCore(
             state,
@@ -158,7 +154,13 @@ public partial class AgentEngine {
             workspaceSession
         );
 
-        engine.ApplyRuntimeStateSnapshot(runtimeState);
+        engine.ApplyRuntimeState(
+            pendingToolResults,
+            resolvedProfile,
+            lockedCompactionSplitIndex,
+            pendingCompaction,
+            toolSessionExecutionSequence
+        );
         return engine;
     }
 
@@ -231,16 +233,22 @@ public partial class AgentEngine {
         }
     }
 
-    private void ApplyRuntimeStateSnapshot(AgentEngineRuntimeStateSnapshot runtimeState) {
-        ArgumentNullException.ThrowIfNull(runtimeState);
+    private void ApplyRuntimeState(
+        IReadOnlyList<ToolCallExecutionResult> pendingToolResults,
+        LlmProfileCheckpoint? resolvedProfile,
+        int? lockedCompactionSplitIndex,
+        CompactionCheckpoint? pendingCompaction,
+        long toolSessionExecutionSequence
+    ) {
+        ArgumentNullException.ThrowIfNull(pendingToolResults);
 
-        ApplyPendingToolResultsSnapshot(runtimeState.PendingToolResults);
+        ApplyPendingToolResultsSnapshot(pendingToolResults);
         ApplyTurnRuntimeState(
-            runtimeState.ResolvedProfile,
-            runtimeState.LockedCompactionSplitIndex
+            resolvedProfile,
+            lockedCompactionSplitIndex
         );
-        ApplyPendingCompactionSnapshot(runtimeState.PendingCompaction);
-        ApplyToolSessionExecutionSequence(runtimeState.ToolSessionExecutionSequence);
+        ApplyPendingCompactionSnapshot(pendingCompaction);
+        ApplyToolSessionExecutionSequence(toolSessionExecutionSequence);
     }
 
     private void RestoreRuntimeStateFromWorkspaceSession(AgentWorkspaceSession workspaceSession) {
