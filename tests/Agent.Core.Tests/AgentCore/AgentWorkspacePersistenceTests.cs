@@ -960,8 +960,8 @@ public sealed class AgentWorkspacePersistenceTests {
     }
 
     [Fact]
-    public void WorkspaceSessionInjectActionContent_ReturnsUpdatedRecentHistorySnapshotForTargetedReplace() {
-        var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-workspace-session-inject-snapshot-{Guid.NewGuid():N}");
+    public void WorkspaceSessionInjectActionContent_ReturnsUpdatedRecentHistoryStateForTargetedReplace() {
+        var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-workspace-session-inject-state-{Guid.NewGuid():N}");
 
         try {
             using var repo = Repository.Create(repoDir).Unwrap();
