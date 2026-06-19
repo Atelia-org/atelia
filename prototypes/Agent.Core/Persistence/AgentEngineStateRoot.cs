@@ -21,24 +21,6 @@ internal static class AgentEngineStateRoot {
         SaveSnapshot(workspaceRoot, engine.ExportStateSnapshot());
     }
 
-    internal static void SaveSnapshotAndCommit(Repository repo, AgentWorkspaceRoot workspaceRoot, AgentEngine engine) {
-        ArgumentNullException.ThrowIfNull(repo);
-        ArgumentNullException.ThrowIfNull(workspaceRoot);
-        ArgumentNullException.ThrowIfNull(engine);
-
-        SaveSnapshot(workspaceRoot, engine);
-        repo.Commit(workspaceRoot.Root).Unwrap();
-    }
-
-    internal static void SaveSnapshotAndCommit(Repository repo, AgentWorkspaceRoot workspaceRoot, AgentEngineStateSnapshot snapshot) {
-        ArgumentNullException.ThrowIfNull(repo);
-        ArgumentNullException.ThrowIfNull(workspaceRoot);
-        ArgumentNullException.ThrowIfNull(snapshot);
-
-        SaveSnapshot(workspaceRoot, snapshot);
-        repo.Commit(workspaceRoot.Root).Unwrap();
-    }
-
     /// <summary>
     /// 把一个完整 snapshot 投影进 workspace root。
     /// 这是 compatibility adapter 入口，不表示 snapshot 是 runtime 的主真相。

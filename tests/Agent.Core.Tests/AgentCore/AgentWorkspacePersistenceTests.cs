@@ -1487,7 +1487,7 @@ public sealed class AgentWorkspacePersistenceTests {
     }
 
     [Fact]
-    public void StateRoot_SaveSnapshot_ReplacesDurableHistoryDequeAfterLiveAppend() {
+    public void SnapshotHelper_SaveSnapshot_ReplacesDurableHistoryDequeAfterLiveAppend() {
         var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-workspace-snapshot-replace-{Guid.NewGuid():N}");
 
         try {
@@ -1523,7 +1523,7 @@ public sealed class AgentWorkspacePersistenceTests {
     }
 
     [Fact]
-    public void StateRoot_SaveSnapshot_ReplacesTurnRuntimeDurableDictAfterLiveMutation() {
+    public void SnapshotHelper_SaveSnapshot_ReplacesTurnRuntimeDurableDictAfterLiveMutation() {
         var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-turn-runtime-snapshot-replace-{Guid.NewGuid():N}");
 
         try {
@@ -1550,7 +1550,7 @@ public sealed class AgentWorkspacePersistenceTests {
     }
 
     [Fact]
-    public void StateRoot_LiveTurnRuntimeFieldUpdates_KeepDurableDictIdentity() {
+    public void WorkspaceRoot_LiveTurnRuntimeFieldUpdates_KeepDurableDictIdentity() {
         var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-turn-runtime-live-update-{Guid.NewGuid():N}");
 
         try {
@@ -1586,7 +1586,7 @@ public sealed class AgentWorkspacePersistenceTests {
     }
 
     [Fact]
-    public void StateRoot_LiveTurnRuntimeFieldClears_KeepDurableDictIdentity() {
+    public void WorkspaceRoot_LiveTurnRuntimeFieldClears_KeepDurableDictIdentity() {
         var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-turn-runtime-live-clear-{Guid.NewGuid():N}");
 
         try {
@@ -1763,7 +1763,7 @@ public sealed class AgentWorkspacePersistenceTests {
     }
 
     [Fact]
-    public void StateRoot_ReplaceRuntimeState_ReplacesPendingCompactionDurableRecordAfterLiveMutation() {
+    public void SnapshotHelper_ReplaceRuntimeState_ReplacesPendingCompactionDurableRecordAfterLiveMutation() {
         var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-pending-compaction-runtime-replace-{Guid.NewGuid():N}");
 
         try {
@@ -2217,7 +2217,8 @@ public sealed class AgentWorkspacePersistenceTests {
             using (var repo = Repository.Create(repoDir).Unwrap()) {
                 var revision = repo.CreateBranch("main").Unwrap();
                 var workspaceRoot = AgentWorkspaceRoot.Create(revision, "seed-system");
-                AgentEngineStateRoot.SaveSnapshotAndCommit(repo, workspaceRoot, expected);
+                AgentEngineStateRoot.SaveSnapshot(workspaceRoot, expected);
+                repo.Commit(workspaceRoot.Root).Unwrap();
             }
 
             using var reopened = AgentEngineHost.OpenExisting(

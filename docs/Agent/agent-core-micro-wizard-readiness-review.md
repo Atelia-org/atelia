@@ -74,7 +74,7 @@
 
 ### 1.4 引擎状态已经可以 durable snapshot
 
-`AgentEngineStateSnapshot` 和 `AgentEngineStateRoot` 已经存在，这说明：
+`AgentEngineStateSnapshot` 与围绕 `AgentWorkspaceRoot` 做 materialize/project 的内部 snapshot helper 已经存在，这说明：
 
 - 未来要加 wizard instance durable state，并不是从零开始
 - 但也意味着我们现在应该先把 wizard runtime 的状态形状想清楚，再写入 snapshot schema
@@ -401,7 +401,7 @@ Micro-Wizard 第一版应该顺着这个纪律来：
 - `WizardPhaseState`
 - `WizardScratchpad`
 
-并写入 `AgentEngineStateSnapshot` / `AgentEngineStateRoot`。
+并写入 `AgentEngineStateSnapshot` / 内部 snapshot helper。
 
 ### 阶段 D：最后再做 timeline cleanup / telemetry / audit
 
