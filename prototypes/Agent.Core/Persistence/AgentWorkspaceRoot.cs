@@ -233,6 +233,16 @@ internal sealed class AgentWorkspaceRoot {
             _workspaceRoot.GetRequiredPendingNotifications().PushBack(notification);
         }
 
+        public string[] DrainPendingNotifications() {
+            var pendingNotifications = LoadPendingNotifications();
+            if (pendingNotifications.Count == 0) {
+                return Array.Empty<string>();
+            }
+
+            ReplacePendingNotifications(Array.Empty<string>());
+            return pendingNotifications as string[] ?? pendingNotifications.ToArray();
+        }
+
         public IReadOnlyList<string> LoadPendingNotifications() {
             var notificationsContainer = _workspaceRoot.GetRequiredPendingNotifications();
             var pendingNotifications = new List<string>(notificationsContainer.Count);
@@ -245,6 +255,23 @@ internal sealed class AgentWorkspaceRoot {
             }
 
             return pendingNotifications;
+        }
+
+        public void ReplacePrefixWithRecap(int splitIndex, RecapEntry recap) {
+            ArgumentNullException.ThrowIfNull(recap);
+
+            var recentHistory = LoadRecent();
+            if (splitIndex < 1 || splitIndex >= recentHistory.Count) {
+                throw new ArgumentOutOfRangeException(nameof(splitIndex), splitIndex, "splitIndex must replace a non-empty prefix and preserve a non-empty suffix.");
+            }
+
+            var replacedHistory = new List<HistoryEntry>(recentHistory.Count - splitIndex + 1) { recap };
+            for (int index = splitIndex; index < recentHistory.Count; index++) {
+                replacedHistory.Add(recentHistory[index]);
+            }
+
+            ReplaceRecent(replacedHistory);
+            SetLastSerial(Math.Max(GetRequiredLastSerial(), recap.Serial));
         }
     }
 

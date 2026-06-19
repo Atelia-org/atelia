@@ -74,14 +74,6 @@ internal sealed class AgentWorkspaceSession : IDisposable {
         return _workspaceRoot.History.AllocateNextSerial();
     }
 
-    internal void ReplaceRecentHistory(IReadOnlyList<HistoryEntry> recentHistory, ulong lastSerial) {
-        ArgumentNullException.ThrowIfNull(recentHistory);
-
-        EnsureOpenForState();
-        _workspaceRoot.History.ReplaceRecent(recentHistory);
-        _workspaceRoot.History.SetLastSerial(lastSerial);
-    }
-
     internal void AppendHistoryEntry(HistoryEntry entry) {
         ArgumentNullException.ThrowIfNull(entry);
 
@@ -89,11 +81,14 @@ internal sealed class AgentWorkspaceSession : IDisposable {
         _workspaceRoot.History.AppendRecent(entry);
     }
 
-    internal void ReplacePendingNotifications(IReadOnlyList<string> notifications) {
-        ArgumentNullException.ThrowIfNull(notifications);
-
+    internal string[] DrainPendingNotifications() {
         EnsureOpenForState();
-        _workspaceRoot.History.ReplacePendingNotifications(notifications);
+        return _workspaceRoot.History.DrainPendingNotifications();
+    }
+
+    internal IReadOnlyList<string> LoadPendingNotifications() {
+        EnsureOpenForState();
+        return _workspaceRoot.History.LoadPendingNotifications();
     }
 
     internal void AppendPendingNotification(string notification) {
@@ -101,6 +96,22 @@ internal sealed class AgentWorkspaceSession : IDisposable {
 
         EnsureOpenForState();
         _workspaceRoot.History.AppendPendingNotification(notification);
+    }
+
+    internal void ReplacePrefixWithRecap(int splitIndex, string summary) {
+        EnsureOpenForState();
+
+        var recentHistory = _workspaceRoot.History.LoadRecent();
+        if (splitIndex < 1 || splitIndex >= recentHistory.Count) {
+            throw new ArgumentOutOfRangeException(nameof(splitIndex), splitIndex, "splitIndex must replace a non-empty prefix and preserve a non-empty suffix.");
+        }
+
+        var insteadSerial = recentHistory[splitIndex - 1].Serial;
+        var recap = new RecapEntry(summary, insteadSerial);
+        recap.AssignTokenEstimate(TokenEstimateHelper.GetDefault().Estimate(recap));
+        recap.AssignSerial(_workspaceRoot.History.AllocateNextSerial());
+
+        _workspaceRoot.History.ReplacePrefixWithRecap(splitIndex, recap);
     }
 
     internal void SetSystemPrompt(string systemPrompt) {

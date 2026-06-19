@@ -64,6 +64,20 @@ internal sealed class AgentStateWorkingSet {
         _pendingNotifications.Enqueue(notification);
     }
 
+    public void ReplacePendingNotifications(IReadOnlyList<string> pendingNotifications) {
+        ArgumentNullException.ThrowIfNull(pendingNotifications);
+
+        while (_pendingNotifications.TryDequeue(out _)) { }
+
+        foreach (var notification in pendingNotifications) {
+            if (notification is null) {
+                throw new InvalidOperationException("Pending notifications must not contain null values.");
+            }
+
+            _pendingNotifications.Enqueue(notification);
+        }
+    }
+
     public string[] DrainPendingNotifications() {
         if (_pendingNotifications.IsEmpty) {
             return Array.Empty<string>();

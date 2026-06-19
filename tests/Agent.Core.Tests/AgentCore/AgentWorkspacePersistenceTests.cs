@@ -1,3 +1,5 @@
+using System.Collections.Concurrent;
+using System.Reflection;
 using Atelia.Agent.Core;
 using Atelia.Agent.Core.History;
 using Atelia.Agent.Core.Persistence;
@@ -167,6 +169,117 @@ public sealed class AgentWorkspacePersistenceTests {
             var recap = Assert.IsType<RecapEntry>(history[0]);
             Assert.Equal("summary-text", recap.Content);
             Assert.IsType<ActionEntry>(history[1]);
+            Assert.Equal(3UL, workspaceRoot.History.GetRequiredLastSerial());
+        }
+        finally {
+            if (Directory.Exists(repoDir)) {
+                Directory.Delete(repoDir, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public void WorkspaceAttachedNotificationDrain_UsesDurableWorkspaceAsAuthoritativeSource() {
+        var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-workspace-drain-authoritative-{Guid.NewGuid():N}");
+
+        try {
+            using var repo = Repository.Create(repoDir).Unwrap();
+            var revision = repo.CreateBranch("main").Unwrap();
+            var workspaceRoot = AgentWorkspaceRoot.Create(revision);
+
+            using var session = AgentWorkspaceSession.Open(workspaceRoot);
+            var state = session.RestoreState();
+            state.AppendNotification("durable-notification");
+            Assert.Equal(["durable-notification"], workspaceRoot.History.LoadPendingNotifications());
+
+            ReplaceCachedPendingNotifications(state, "stale-cached-notification");
+
+            var observation = state.AppendObservation(new ObservationEntry(), "recent-events");
+
+            Assert.Equal("durable-notification\nrecent-events", observation.Notifications);
+            Assert.Empty(workspaceRoot.History.LoadPendingNotifications());
+            Assert.Empty(GetCachedPendingNotifications(state));
+        }
+        finally {
+            if (Directory.Exists(repoDir)) {
+                Directory.Delete(repoDir, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public void Host_AppendNotification_RefreshesPendingNotificationCacheFromDurableWorkspace() {
+        var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-host-append-notification-authoritative-{Guid.NewGuid():N}");
+
+        try {
+            using var host = AgentEngineHost.CreateNew(repoDir);
+            host.Engine.AppendNotification("durable-notification-1");
+
+            ReplaceCachedPendingNotifications(host.Engine.State);
+            Assert.False(host.Engine.State.HasPendingNotification);
+            Assert.Equal(["durable-notification-1"], host.WorkspaceRoot.History.LoadPendingNotifications());
+
+            host.Engine.AppendNotification("durable-notification-2");
+
+            var expectedNotifications = new[] { "durable-notification-1", "durable-notification-2" };
+            var snapshot = host.LoadSnapshot();
+
+            Assert.True(host.Engine.State.HasPendingNotification);
+            Assert.Equal(expectedNotifications, GetCachedPendingNotifications(host.Engine.State));
+            Assert.Equal(expectedNotifications, host.WorkspaceRoot.History.LoadPendingNotifications());
+            Assert.Equal(expectedNotifications, snapshot.AgentState.PendingNotifications);
+        }
+        finally {
+            if (Directory.Exists(repoDir)) {
+                Directory.Delete(repoDir, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public void WorkspaceAttachedRecap_UsesDurableWorkspaceAsAuthoritativeSource() {
+        var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-workspace-recap-authoritative-{Guid.NewGuid():N}");
+
+        try {
+            using var repo = Repository.Create(repoDir).Unwrap();
+            var revision = repo.CreateBranch("main").Unwrap();
+            var workspaceRoot = AgentWorkspaceRoot.Create(revision);
+
+            using var session = AgentWorkspaceSession.Open(workspaceRoot);
+            var state = session.RestoreState();
+            state.AppendObservation(new ObservationEntry(), "durable-observation");
+            state.AppendAction(
+                new ActionEntry(
+                    new ActionMessage([new ActionBlock.Text("durable-action")]),
+                    new CompletionDescriptor("provider-a", "spec-a", "model-a")
+                )
+            );
+
+            ReplaceCachedRecentHistory(
+                state,
+                CreateAssignedObservationEntry(999UL),
+                CreateAssignedActionEntry(1000UL, "stale-cached-action")
+            );
+
+            var recap = state.ReplacePrefixWithRecap(1, "summary-text");
+            var history = workspaceRoot.History.LoadRecent();
+
+            Assert.Equal(1UL, recap.InsteadSerial);
+            Assert.Equal(3UL, recap.Serial);
+            Assert.Collection(
+                history,
+                entry => {
+                    var persistedRecap = Assert.IsType<RecapEntry>(entry);
+                    Assert.Equal("summary-text", persistedRecap.Content);
+                    Assert.Equal(1UL, persistedRecap.InsteadSerial);
+                    Assert.Equal(3UL, persistedRecap.Serial);
+                },
+                entry => {
+                    var action = Assert.IsType<ActionEntry>(entry);
+                    Assert.Equal(2UL, action.Serial);
+                    Assert.Equal("durable-action", action.Message.GetFlattenedText());
+                }
+            );
             Assert.Equal(3UL, workspaceRoot.History.GetRequiredLastSerial());
         }
         finally {
@@ -1024,6 +1137,54 @@ public sealed class AgentWorkspacePersistenceTests {
         return workspaceRoot.Root.Get<DurableDict<string>>("pendingCompaction", out var pendingCompaction) == GetIssue.None
             ? pendingCompaction!
             : throw new InvalidOperationException("Workspace root is missing pendingCompaction record.");
+    }
+
+    private static string[] GetCachedPendingNotifications(AgentState state) {
+        return GetRequiredPrivateField<ConcurrentQueue<string>>(GetWorkingSet(state), "_pendingNotifications").ToArray();
+    }
+
+    private static void ReplaceCachedPendingNotifications(AgentState state, params string[] notifications) {
+        var queue = GetRequiredPrivateField<ConcurrentQueue<string>>(GetWorkingSet(state), "_pendingNotifications");
+        while (queue.TryDequeue(out _)) { }
+
+        foreach (var notification in notifications) {
+            queue.Enqueue(notification);
+        }
+    }
+
+    private static void ReplaceCachedRecentHistory(AgentState state, params HistoryEntry[] entries) {
+        var recentHistory = GetRequiredPrivateField<List<HistoryEntry>>(GetWorkingSet(state), "_recentHistory");
+        recentHistory.Clear();
+        recentHistory.AddRange(entries);
+    }
+
+    private static AgentStateWorkingSet GetWorkingSet(AgentState state) {
+        return GetRequiredPrivateField<AgentStateWorkingSet>(state, "_workingSet");
+    }
+
+    private static T GetRequiredPrivateField<T>(object instance, string fieldName) where T : class {
+        var field = instance.GetType().GetField(fieldName, BindingFlags.Instance | BindingFlags.NonPublic)
+            ?? throw new InvalidOperationException($"Field '{fieldName}' was not found on '{instance.GetType().FullName}'.");
+
+        return field.GetValue(instance) as T
+            ?? throw new InvalidOperationException($"Field '{fieldName}' on '{instance.GetType().FullName}' was null or not a '{typeof(T).FullName}'.");
+    }
+
+    private static ObservationEntry CreateAssignedObservationEntry(ulong serial) {
+        var entry = new ObservationEntry();
+        entry.AssignTokenEstimate(1);
+        entry.AssignSerial(serial);
+        return entry;
+    }
+
+    private static ActionEntry CreateAssignedActionEntry(ulong serial, string content) {
+        var entry = new ActionEntry(
+            new ActionMessage([new ActionBlock.Text(content)]),
+            new CompletionDescriptor("provider-stale", "spec-stale", "model-stale")
+        );
+        entry.AssignTokenEstimate(1);
+        entry.AssignSerial(serial);
+        return entry;
     }
 
     private sealed class RecordingTool : ITool {

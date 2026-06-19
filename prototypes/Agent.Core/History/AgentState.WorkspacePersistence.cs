@@ -33,20 +33,24 @@ public sealed partial class AgentState {
         return _workingSet.RememberAllocatedSerial(nextSerial);
     }
 
-    private void SyncSessionHistoryAndSerial() {
-        if (_workspaceSession is null) { return; }
-
-        _workspaceSession.ReplaceRecentHistory(RecentHistory, _workingSet.LastSerial);
-    }
-
     private void SyncSessionAppendedHistoryEntry(HistoryEntry entry) {
         if (_workspaceSession is null) { return; }
 
         _workspaceSession.AppendHistoryEntry(entry);
     }
 
-    private void SyncSessionPendingNotifications() {
-        _workspaceSession?.ReplacePendingNotifications(_workingSet.ExportPendingNotificationsSnapshot());
+    private void ReloadWorkingSetFromWorkspaceSession() {
+        var snapshot = _workspaceSession?.LoadStateSnapshot()
+            ?? throw new InvalidOperationException("AgentState is not attached to a live workspace session.");
+
+        ApplySnapshot(snapshot);
+    }
+
+    private void ReloadPendingNotificationsFromWorkspaceSession() {
+        var pendingNotifications = _workspaceSession?.LoadPendingNotifications()
+            ?? throw new InvalidOperationException("AgentState is not attached to a live workspace session.");
+
+        _workingSet.ReplacePendingNotifications(pendingNotifications);
     }
 
     private void SyncSessionAppendedNotification(string item) {

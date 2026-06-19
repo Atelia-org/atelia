@@ -17,27 +17,16 @@ public sealed partial class AgentState {
     internal static AgentState RestoreSnapshot(AgentStateSnapshot snapshot) {
         ArgumentNullException.ThrowIfNull(snapshot);
 
-        return RestoreCore(
-            snapshot.SystemPrompt,
-            snapshot.RecentHistory,
-            snapshot.PendingNotifications,
-            snapshot.LastSerial
-        );
+        var state = new AgentState(snapshot.SystemPrompt);
+        state.ApplySnapshot(snapshot);
+        return state;
     }
 
-    internal static AgentState RestoreCore(
-        string systemPrompt,
-        IReadOnlyList<HistoryEntry> recentHistory,
-        IReadOnlyList<string> pendingNotifications,
-        ulong lastSerial
-    ) {
-        ArgumentNullException.ThrowIfNull(systemPrompt);
-        ArgumentNullException.ThrowIfNull(recentHistory);
-        ArgumentNullException.ThrowIfNull(pendingNotifications);
+    private void ApplySnapshot(AgentStateSnapshot snapshot) {
+        ArgumentNullException.ThrowIfNull(snapshot);
 
-        var state = new AgentState(systemPrompt);
-        state.ReplaceWorkingSet(recentHistory, pendingNotifications, lastSerial);
-        return state;
+        SystemPrompt = snapshot.SystemPrompt;
+        ReplaceWorkingSet(snapshot.RecentHistory, snapshot.PendingNotifications, snapshot.LastSerial);
     }
 
     private void ReplaceWorkingSet(
