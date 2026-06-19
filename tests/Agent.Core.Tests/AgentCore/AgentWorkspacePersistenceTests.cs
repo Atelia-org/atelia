@@ -2814,6 +2814,117 @@ public sealed class AgentWorkspacePersistenceTests {
     }
 
     [Fact]
+    public async Task Host_PendingInputNotificationFold_FailureReloadsAuthoritativeWorkingSet() {
+        var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-host-pending-input-fold-fault-reload-{Guid.NewGuid():N}");
+
+        try {
+            var profile = CreateFullFeatureProfile(
+                new NoopCompletionClient("provider-fold-fault", "spec-fold-fault"),
+                "model-pending-input-fold-fault"
+            );
+
+            using var host = AgentEngineHost.CreateNew(repoDir);
+            host.Engine.WaitingInput += static (_, args) => {
+                args.ShouldContinue = true;
+                args.Observation = IncomingObservation.FromRecentEvents("current-input");
+            };
+
+            await host.StepAsync(profile);
+            host.Engine.AppendNotification("late-notification");
+
+            ConfigureSessionFaultToThrowOnce(
+                GetWorkspaceSession(host),
+                AgentWorkspaceSessionFaultPoint.AfterFoldPendingNotificationsIntoCurrentObservationMutation,
+                "Injected fault after pending-input notification fold.",
+                beforeThrow: () => {
+                    ReplaceCachedRecentHistory(host.Engine.State, CreateAssignedObservationEntry(999UL, "ghost-observation"));
+                    ReplaceCachedPendingNotifications(host.Engine.State, "ghost-pending");
+                    ReplaceCachedLastSerial(host.Engine.State, 999UL);
+                }
+            );
+
+            var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => host.StepAsync(profile));
+
+            Assert.Equal("Injected fault after pending-input notification fold.", exception.Message);
+            var durableObservation = Assert.IsType<ObservationEntry>(Assert.Single(host.LoadDurableRecentHistory()));
+            Assert.Equal("current-input\nlate-notification", durableObservation.Notifications);
+            Assert.Equal(1UL, durableObservation.Serial);
+            Assert.Empty(host.LoadDurablePendingNotifications());
+
+            var localObservation = Assert.IsType<ObservationEntry>(Assert.Single(host.Engine.State.RecentHistory));
+            Assert.Equal("current-input\nlate-notification", localObservation.Notifications);
+            Assert.Equal(1UL, localObservation.Serial);
+            Assert.Empty(GetCachedPendingNotifications(host.Engine.State));
+            Assert.False(host.Engine.State.HasPendingNotification);
+            Assert.Equal(1UL, GetWorkingSet(host.Engine.State).LastSerial);
+        }
+        finally {
+            if (Directory.Exists(repoDir)) {
+                Directory.Delete(repoDir, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task Host_PendingToolResultsNotificationFold_FailureReloadsAuthoritativeWorkingSet() {
+        var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-host-pending-tool-results-fold-fault-reload-{Guid.NewGuid():N}");
+
+        try {
+            var profile = CreateFullFeatureProfile(
+                new NoopCompletionClient("provider-toolresults-fold-fault", "spec-toolresults-fold-fault"),
+                "model-pending-tool-results-fold-fault"
+            );
+            var toolResult = CreateToolCallExecutionResult("alpha", "call-1", "tool-output");
+
+            using var host = AgentEngineHost.CreateNew(repoDir);
+            AppendObservationActionToolResultsTurn(host.Engine.State, profile.ToCompletionDescriptor(), "seed-observation", toolResult);
+            host.Engine.AppendNotification("late-notification");
+
+            ConfigureSessionFaultToThrowOnce(
+                GetWorkspaceSession(host),
+                AgentWorkspaceSessionFaultPoint.AfterFoldPendingNotificationsIntoCurrentObservationMutation,
+                "Injected fault after pending-tool-results notification fold.",
+                beforeThrow: () => {
+                    ReplaceCachedRecentHistory(host.Engine.State, CreateAssignedObservationEntry(999UL, "ghost-observation"));
+                    ReplaceCachedPendingNotifications(host.Engine.State, "ghost-pending");
+                    ReplaceCachedLastSerial(host.Engine.State, 999UL);
+                }
+            );
+
+            var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => host.StepAsync(profile));
+
+            Assert.Equal("Injected fault after pending-tool-results notification fold.", exception.Message);
+            Assert.Empty(host.LoadDurablePendingNotifications());
+            AssertObservationActionToolResultsHistory(
+                host.LoadDurableRecentHistory(),
+                "seed-observation",
+                "",
+                "late-notification",
+                "call-1"
+            );
+
+            Assert.Empty(GetCachedPendingNotifications(host.Engine.State));
+            Assert.False(host.Engine.State.HasPendingNotification);
+            AssertObservationActionToolResultsHistory(
+                host.Engine.State.RecentHistory,
+                "seed-observation",
+                "",
+                "late-notification",
+                "call-1"
+            );
+            var localTail = Assert.IsType<ToolResultsEntry>(host.Engine.State.RecentHistory[^1]);
+            var localResult = Assert.Single(localTail.Results);
+            Assert.Equal("tool-output", localResult.ExecuteResult.GetFlattenedText());
+            Assert.Equal(3UL, GetWorkingSet(host.Engine.State).LastSerial);
+        }
+        finally {
+            if (Directory.Exists(repoDir)) {
+                Directory.Delete(repoDir, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
     public void Host_Recap_PersistsAcrossReopen() {
         var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-host-recap-{Guid.NewGuid():N}");
 
