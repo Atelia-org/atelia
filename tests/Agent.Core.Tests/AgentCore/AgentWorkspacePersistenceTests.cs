@@ -3061,7 +3061,7 @@ public sealed class AgentWorkspacePersistenceTests {
     }
 
     [Fact]
-    public void Host_OpenExisting_LoadSnapshot_RestoresRuntimeOnlyFieldsSeededBySnapshotCompatibilityLayer() {
+    public void Host_OpenExisting_TypedDurableQueriesAndRuntimeOverlayRestoreFieldsSeededBySnapshotCompatibilityLayer() {
         var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-host-runtime-reopen-{Guid.NewGuid():N}");
 
         try {
@@ -3085,16 +3085,27 @@ public sealed class AgentWorkspacePersistenceTests {
                 repoDir,
                 new AgentEngineHostRuntime(profileRegistry: new LlmProfileRegistry([restoredProfile]))
             );
-            var actual = reopened.LoadSnapshot();
+            var durableSystemPrompt = reopened.LoadDurableSystemPrompt();
+            var durableRecentHistory = reopened.LoadDurableRecentHistory();
+            var durablePendingNotifications = reopened.LoadDurablePendingNotifications();
+            var durablePendingToolResults = reopened.LoadDurablePendingToolResults();
+            var durableTurnRuntime = reopened.LoadDurableTurnRuntime();
+            var durablePendingCompaction = reopened.LoadDurablePendingCompaction();
+            var durableToolSessionExecutionSequence = reopened.LoadDurableToolSessionExecutionSequence();
 
-            Assert.Equal(expected.AgentState.SystemPrompt, actual.AgentState.SystemPrompt);
-            Assert.Equal(expected.AgentState.RecentHistory.Count, actual.AgentState.RecentHistory.Count);
-            Assert.Equal(expected.PendingToolResults.Count, actual.PendingToolResults.Count);
-            AssertToolCallExecutionResult(expected.PendingToolResults[0], actual.PendingToolResults[0]);
-            Assert.Equal(expected.ResolvedProfile, actual.ResolvedProfile);
-            Assert.Equal(expected.LockedCompactionSplitIndex, actual.LockedCompactionSplitIndex);
-            Assert.Equal(expected.PendingCompaction, actual.PendingCompaction);
-            Assert.Equal(expected.ToolSessionExecutionSequence, actual.ToolSessionExecutionSequence);
+            Assert.Equal(expected.AgentState.SystemPrompt, durableSystemPrompt);
+            Assert.Equal(expected.AgentState.PendingNotifications, durablePendingNotifications);
+            Assert.Equal(expected.AgentState.RecentHistory.Count, durableRecentHistory.Count);
+            for (int i = 0; i < expected.AgentState.RecentHistory.Count; i++) {
+                AssertHistoryEntry(expected.AgentState.RecentHistory[i], durableRecentHistory[i]);
+            }
+
+            Assert.Equal(expected.PendingToolResults.Count, durablePendingToolResults.Count);
+            AssertToolCallExecutionResult(expected.PendingToolResults[0], durablePendingToolResults[0]);
+            Assert.Equal(expected.ResolvedProfile, durableTurnRuntime.ResolvedProfile);
+            Assert.Equal(expected.LockedCompactionSplitIndex, durableTurnRuntime.LockedCompactionSplitIndex);
+            Assert.Equal(expected.PendingCompaction, durablePendingCompaction);
+            Assert.Equal(expected.ToolSessionExecutionSequence, durableToolSessionExecutionSequence);
             Assert.True(reopened.Engine.CurrentTurnFullFeatureEnabled);
         }
         finally {
@@ -3898,11 +3909,10 @@ public sealed class AgentWorkspacePersistenceTests {
     }
 
     [Fact]
-    public void Host_PublicSurface_StillExposesLoadSnapshotQuery() {
-        Assert.Contains(
+    public void Host_PublicSurface_DoesNotExposeLoadSnapshotQuery() {
+        Assert.DoesNotContain(
             typeof(AgentEngineHost).GetMethods(BindingFlags.Instance | BindingFlags.Public),
-            static method => method.Name == nameof(AgentEngineHost.LoadSnapshot)
-                && method.ReturnType == typeof(AgentEngineStateSnapshot)
+            static method => method.Name == "LoadSnapshot"
                 && method.GetParameters().Length == 0
         );
     }

@@ -205,15 +205,6 @@ public sealed class AgentEngineHost : IDisposable {
         return _workspaceSession.WorkspaceRoot.RuntimeState.GetToolSessionExecutionSequenceOrDefault();
     }
 
-    /// <summary>
-    /// 从 live durable workspace materialize 当前快照。
-    /// 优先用于 compatibility / diagnostic / whole-state 断言；日常 live truth 查询请优先使用各个 <c>LoadDurable*</c> typed query。
-    /// </summary>
-    public AgentEngineStateSnapshot LoadSnapshot() {
-        EnsureNotDisposed();
-        return AgentEngineWorkspaceSnapshotHelper.LoadSnapshot(_workspaceSession.WorkspaceRoot);
-    }
-
     public void Dispose() {
         if (_disposed) { return; }
         _disposed = true;

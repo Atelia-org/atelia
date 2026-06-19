@@ -18,7 +18,7 @@
 > - 这一包顺手把 `CurrentTurnFullFeatureEnabled` 也并入了 turn-runtime apply seam：repo-backed reopen 与 live authoritative backfill 后，本地 turn runtime overlay 不再残留“resolved profile 已恢复，但 full-feature flag 仍是旧值/空值”的漂移。
 > - 阶段 D 的两条 runtime 小尾巴现也按同一方向收口：`pendingCompaction` 改成 session-owned authoritative mutation + local backfill，并补上 catch/reload；`tool session execution sequence` 改成由 session 先做 durable authoritative allocate、`ToolSession` 再回填本地 checkpoint，避免持久化回调失败时本地序号先跑到 durable 前面。
 > - 当前 public snapshot path 仍保留，但定位应视为 compatibility / diagnostic / import-export 边界，不再是推荐主路径。
-> - 小尾修已继续收口：`AgentEngineHost` 不再暴露任何可写持久化 adapter 表面，live host 仅保留显式 `LoadSnapshot()` 查询口，且 `AgentWorkspaceSession` 也不再承担 session-level whole-snapshot query adapter；默认 state seeding 已回收到 `AgentWorkspaceRoot.Create(...)` 创建期，不再以普通 helper 形式承担隐式 reset 语义。
+> - 小尾修已继续收口：`AgentEngineHost` 不再暴露任何 whole-snapshot / 可写持久化 adapter 表面，live host 仅保留 typed durable truth queries，且 `AgentWorkspaceSession` 也不再承担 session-level whole-snapshot query adapter；默认 state seeding 已回收到 `AgentWorkspaceRoot.Create(...)` 创建期，不再以普通 helper 形式承担隐式 reset 语义。
 
 相关文档：
 - `docs/Agent/agent-core-branching-infrastructure-backlog.md`
