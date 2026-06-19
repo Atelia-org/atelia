@@ -2931,6 +2931,14 @@ public sealed class AgentWorkspacePersistenceTests {
         );
     }
 
+    [Fact]
+    public void AgentEngine_PublicSurface_DoesNotExposeRootBasedRestoreHelper() {
+        Assert.DoesNotContain(
+            typeof(AgentEngine).GetMethods(BindingFlags.Static | BindingFlags.Public),
+            static method => method.Name == "CreateFromRoot"
+        );
+    }
+
     private static AgentEngineStateSnapshot CreateSnapshotFixture() {
         var invocation = new CompletionDescriptor("provider-a", "spec-a", "model-a");
         var state = AgentState.CreateDefault("roundtrip-system");
