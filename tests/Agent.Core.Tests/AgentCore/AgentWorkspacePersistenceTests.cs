@@ -2946,6 +2946,16 @@ public sealed class AgentWorkspacePersistenceTests {
     }
 
     [Fact]
+    public void Host_PublicSurface_StillExposesLoadSnapshotQuery() {
+        Assert.Contains(
+            typeof(AgentEngineHost).GetMethods(BindingFlags.Instance | BindingFlags.Public),
+            static method => method.Name == nameof(AgentEngineHost.LoadSnapshot)
+                && method.ReturnType == typeof(AgentEngineStateSnapshot)
+                && method.GetParameters().Length == 0
+        );
+    }
+
+    [Fact]
     public void AgentEngine_PublicSurface_DoesNotExposeRootBasedRestoreHelper() {
         Assert.DoesNotContain(
             typeof(AgentEngine).GetMethods(BindingFlags.Static | BindingFlags.Public),
