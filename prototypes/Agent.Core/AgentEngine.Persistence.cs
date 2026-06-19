@@ -293,7 +293,7 @@ public partial class AgentEngine {
 
         var resolvedProfile = _resolvedProfileRestore.ResolveOrNull(checkpoint)
             ?? throw new InvalidOperationException(
-                "State snapshot contains a resolved LlmProfile checkpoint, but no compatible registered or remembered profile was available to restore it. " +
+                "Persisted agent state contains a resolved LlmProfile checkpoint, but no compatible registered or remembered profile was available to restore it. " +
                 $"Missing checkpoint: {checkpoint.ProviderId}/{checkpoint.ApiSpecId}/{checkpoint.ModelId}."
             );
 

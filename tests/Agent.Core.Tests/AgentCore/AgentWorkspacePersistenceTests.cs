@@ -2267,6 +2267,7 @@ public sealed class AgentWorkspacePersistenceTests {
         );
 
         Assert.Contains("no compatible registered or remembered profile", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Persisted agent state contains a resolved LlmProfile checkpoint", ex.Message, StringComparison.Ordinal);
         Assert.Contains("Missing checkpoint", ex.Message, StringComparison.Ordinal);
     }
 
