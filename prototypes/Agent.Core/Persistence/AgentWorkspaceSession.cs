@@ -100,7 +100,7 @@ internal sealed class AgentWorkspaceSession : IDisposable {
         return _workspaceRoot.RuntimeState.LoadPendingCompaction();
     }
 
-    internal (IReadOnlyList<HistoryEntry> RecentHistory, ulong LastSerial) LoadRecentHistorySnapshot() {
+    internal (IReadOnlyList<HistoryEntry> RecentHistory, ulong LastSerial) LoadRecentHistoryState() {
         EnsureOpenForState();
         return (
             RecentHistory: _workspaceRoot.History.LoadRecent(),
@@ -117,7 +117,7 @@ internal sealed class AgentWorkspaceSession : IDisposable {
         entry.AssignTokenEstimate(TokenEstimateHelper.GetDefault().Estimate(entry));
         entry.AssignSerial(_workspaceRoot.History.AllocateNextSerial());
         _workspaceRoot.History.AppendRecent(entry);
-        var (updatedRecentHistory, updatedLastSerial) = LoadRecentHistorySnapshot();
+        var (updatedRecentHistory, updatedLastSerial) = LoadRecentHistoryState();
 
         return new WorkspaceAppendActionMutationResult(
             RecentHistory: updatedRecentHistory,
@@ -139,7 +139,7 @@ internal sealed class AgentWorkspaceSession : IDisposable {
         entry.AssignTokenEstimate(TokenEstimateHelper.GetDefault().Estimate(entry));
         entry.AssignSerial(_workspaceRoot.History.AllocateNextSerial());
         _workspaceRoot.History.AppendRecent(entry);
-        var (updatedRecentHistory, updatedLastSerial) = LoadRecentHistorySnapshot();
+        var (updatedRecentHistory, updatedLastSerial) = LoadRecentHistoryState();
         return new WorkspaceWorkingSetMutationResult(
             RecentHistory: updatedRecentHistory,
             PendingNotifications: _workspaceRoot.History.LoadPendingNotifications(),
@@ -164,7 +164,7 @@ internal sealed class AgentWorkspaceSession : IDisposable {
         entry.AssignTokenEstimate(TokenEstimateHelper.GetDefault().Estimate(entry));
         entry.AssignSerial(_workspaceRoot.History.AllocateNextSerial());
         _workspaceRoot.History.AppendRecent(entry);
-        var (updatedRecentHistory, updatedLastSerial) = LoadRecentHistorySnapshot();
+        var (updatedRecentHistory, updatedLastSerial) = LoadRecentHistoryState();
         return new WorkspaceWorkingSetMutationResult(
             RecentHistory: updatedRecentHistory,
             PendingNotifications: _workspaceRoot.History.LoadPendingNotifications(),
@@ -198,7 +198,7 @@ internal sealed class AgentWorkspaceSession : IDisposable {
         injectionEntry.AssignTokenEstimate(TokenEstimateHelper.GetDefault().Estimate(injectionEntry));
         injectionEntry.AssignSerial(_workspaceRoot.History.AllocateNextSerial());
         _workspaceRoot.History.AppendRecent(injectionEntry);
-        var (updatedRecentHistory, updatedLastSerial) = LoadRecentHistorySnapshot();
+        var (updatedRecentHistory, updatedLastSerial) = LoadRecentHistoryState();
 
         return new WorkspaceInjectionMutationResult(
             RecentHistory: updatedRecentHistory,

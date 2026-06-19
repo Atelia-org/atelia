@@ -104,7 +104,7 @@ memory_notebook_replace与memory_notebook_replace_span工具就是为你主动�
         }
 
         try {
-            ApplyPendingNotificationsSnapshot(_workspaceSession.AppendPendingNotification(item));
+            ApplyPendingNotificationsState(_workspaceSession.AppendPendingNotification(item));
         }
         catch {
             ReloadPendingNotificationsFromWorkspaceSession();
@@ -123,7 +123,7 @@ memory_notebook_replace与memory_notebook_replace_span工具就是为你主动�
         if (_workspaceSession is not null) {
             try {
                 var mutation = _workspaceSession.AppendAction(entry);
-                ApplyRecentHistorySnapshot(mutation.RecentHistory, mutation.LastSerial);
+                ApplyRecentHistoryState(mutation.RecentHistory, mutation.LastSerial);
                 return entry;
             }
             catch {
@@ -211,7 +211,7 @@ memory_notebook_replace与memory_notebook_replace_span工具就是为你主动�
         if (_workspaceSession is not null) {
             try {
                 var mutation = _workspaceSession.InjectActionContent(request);
-                ApplyRecentHistorySnapshot(mutation.RecentHistory, mutation.LastSerial);
+                ApplyRecentHistoryState(mutation.RecentHistory, mutation.LastSerial);
                 LogInjectedActionContent(request.Source.Kind, mutation.Result);
                 return mutation.Result;
             }

@@ -991,11 +991,11 @@ public sealed class AgentWorkspacePersistenceTests {
             Assert.Equal(3UL, mutation.Result.InjectedEntrySerial);
             Assert.Equal(ActionBlockKind.Thinking, mutation.Result.InjectedBlockKind);
             Assert.Equal(3UL, mutation.LastSerial);
-            var freshSnapshot = session.LoadRecentHistorySnapshot();
-            Assert.Equal(freshSnapshot.LastSerial, mutation.LastSerial);
-            Assert.Equal(freshSnapshot.RecentHistory.Count, mutation.RecentHistory.Count);
-            for (int i = 0; i < freshSnapshot.RecentHistory.Count; i++) {
-                AssertHistoryEntry(freshSnapshot.RecentHistory[i], mutation.RecentHistory[i]);
+            var freshState = session.LoadRecentHistoryState();
+            Assert.Equal(freshState.LastSerial, mutation.LastSerial);
+            Assert.Equal(freshState.RecentHistory.Count, mutation.RecentHistory.Count);
+            for (int i = 0; i < freshState.RecentHistory.Count; i++) {
+                AssertHistoryEntry(freshState.RecentHistory[i], mutation.RecentHistory[i]);
             }
             AssertObservationActionInjectionHistory(
                 mutation.RecentHistory,

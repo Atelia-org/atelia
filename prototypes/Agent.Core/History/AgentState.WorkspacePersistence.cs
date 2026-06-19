@@ -32,20 +32,20 @@ public sealed partial class AgentState {
     }
 
     private void ReloadRecentHistoryFromWorkspaceSession() {
-        var (recentHistory, lastSerial) = _workspaceSession?.LoadRecentHistorySnapshot()
+        var (recentHistory, lastSerial) = _workspaceSession?.LoadRecentHistoryState()
             ?? throw new InvalidOperationException("AgentState is not live-bound to a workspace session.");
 
-        ApplyRecentHistorySnapshot(recentHistory, lastSerial);
+        ApplyRecentHistoryState(recentHistory, lastSerial);
     }
 
-    private void ApplyRecentHistorySnapshot(
+    private void ApplyRecentHistoryState(
         IReadOnlyList<HistoryEntry> recentHistory,
         ulong lastSerial
     ) {
         _workingSet.ReplaceRecentHistory(recentHistory, lastSerial, CloneHistoryEntry);
     }
 
-    private void ApplyPendingNotificationsSnapshot(IReadOnlyList<string> pendingNotifications) {
+    private void ApplyPendingNotificationsState(IReadOnlyList<string> pendingNotifications) {
         _workingSet.ReplacePendingNotifications(pendingNotifications);
     }
 
@@ -53,6 +53,6 @@ public sealed partial class AgentState {
         var pendingNotifications = _workspaceSession?.LoadPendingNotifications()
             ?? throw new InvalidOperationException("AgentState is not live-bound to a workspace session.");
 
-        ApplyPendingNotificationsSnapshot(pendingNotifications);
+        ApplyPendingNotificationsState(pendingNotifications);
     }
 }
