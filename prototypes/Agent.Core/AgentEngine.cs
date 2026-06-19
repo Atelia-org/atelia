@@ -471,13 +471,17 @@ public partial class AgentEngine {
     }
 
     private AgentRunState DetermineState() {
+        return DetermineState(_state.RecentHistory);
+    }
+
+    private AgentRunState DetermineState(IReadOnlyList<HistoryEntry> recentHistory) {
         if (_compactionRequest.HasValue) { return AgentRunState.Compacting; }
-        if (_state.RecentHistory.Count == 0) { return AgentRunState.WaitingInput; }
-        if (_state.HasPendingActionContinuation) {
+        if (recentHistory.Count == 0) { return AgentRunState.WaitingInput; }
+        if (recentHistory[^1] is InjectionEntry) {
             return AgentRunState.PendingActionContinuation;
         }
 
-        var last = _state.RecentHistory[^1];
+        var last = recentHistory[^1];
         return last switch {
             ToolResultsEntry => AgentRunState.PendingToolResults,
             ObservationEntry => AgentRunState.PendingInput,
@@ -797,7 +801,10 @@ public partial class AgentEngine {
     /// 若显式起点已被 Recap 裁剪，返回结果的 <c>StartIndex</c> 为 -1，但仍会保留可从残留片段推断出的锁定信息。
     /// </remarks>
     private CurrentTurnInfo AnalyzeCurrentTurn()
-        => TurnAnalyzer.Analyze(_state.RecentHistory);
+        => AnalyzeCurrentTurn(_state.RecentHistory);
+
+    private static CurrentTurnInfo AnalyzeCurrentTurn(IReadOnlyList<HistoryEntry> recentHistory)
+        => TurnAnalyzer.Analyze(recentHistory);
 
     private static string DescribeDescriptor(CompletionDescriptor descriptor)
         => $"{{Provider={descriptor.ProviderId}, ApiSpec={descriptor.ApiSpecId}, Model={descriptor.Model}}}";

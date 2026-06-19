@@ -163,6 +163,129 @@ public sealed class AgentWorkspacePersistenceTests {
     }
 
     [Fact]
+    public void Engine_CaptureCurrentContextSavepoint_NonLive_CollectsCurrentHistoryAndRuntimeCheckpoint() {
+        var profile = CreateFullFeatureProfile(
+            new NoopCompletionClient("provider-savepoint", "spec-savepoint"),
+            "model-savepoint"
+        );
+        var toolResult = CreateToolCallExecutionResult("alpha", "call-1", "tool-output");
+        var pendingCompaction = new CompactionCheckpoint(1, "compact-system", "compact-prompt");
+        var state = AgentState.CreateDefault("savepoint-system");
+        state.AppendObservation(new ObservationEntry(), "seed-observation");
+        state.AppendAction(
+            new ActionEntry(
+                new ActionMessage([
+                    new ActionBlock.ToolCall(toolResult.RawToolCall)
+                ]),
+                profile.ToCompletionDescriptor()
+            )
+        );
+
+        var engine = new AgentEngine(state);
+        GetPendingToolResults(engine)[toolResult.ToolCallId] = toolResult;
+        var turnRuntime = GetRequiredPrivateField<object>(engine, "_turnRuntime");
+        _ = InvokeRequiredInstanceMethod(turnRuntime, "RememberResolvedProfile", profile);
+        _ = InvokeRequiredInstanceMethod(turnRuntime, "RememberCompactionSplitIndex", 9);
+        _ = InvokeRequiredInstanceMethod(turnRuntime, "RememberCurrentTurnFullFeatureEnabled", true);
+        _ = InvokeRequiredInstanceMethod(engine, "ApplyPendingCompactionSnapshot", pendingCompaction);
+        _ = InvokeRequiredInstanceMethod(engine, "ApplyToolSessionExecutionSequence", 42L);
+
+        var savepoint = Assert.IsType<ContextSavepoint>(
+            InvokeRequiredInstanceMethod(engine, "CaptureCurrentContextSavepoint")
+        );
+
+        AssertContextSavepoint(
+            new ContextSavepoint(
+                anchorEntrySerial: 2,
+                anchorHistoryCount: 2,
+                entryState: AgentRunState.Compacting,
+                turnLock: profile.ToCompletionDescriptor(),
+                pendingCompactionSuppressed: false,
+                runtimeCheckpoint: new RuntimeCheckpoint(
+                    pendingToolResults: [toolResult],
+                    resolvedProfile: LlmProfileCheckpoint.FromProfile(profile),
+                    lockedCompactionSplitIndex: 9,
+                    pendingCompaction: pendingCompaction,
+                    toolSessionExecutionSequence: 42
+                )
+            ),
+            savepoint
+        );
+    }
+
+    [Fact]
+    public void Engine_PersistAndClearCurrentContextSavepoint_Live_UsesAuthoritativeRecentHistoryAndDurableSlot() {
+        var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-engine-live-savepoint-{Guid.NewGuid():N}");
+        var profile = CreateFullFeatureProfile(
+            new NoopCompletionClient("provider-live-savepoint", "spec-live-savepoint"),
+            "model-live-savepoint"
+        );
+        var toolResult = CreateToolCallExecutionResult("alpha", "call-1", "tool-output");
+        var pendingCompaction = new CompactionCheckpoint(1, "compact-system", "compact-prompt");
+        var expected = new ContextSavepoint(
+            anchorEntrySerial: 2,
+            anchorHistoryCount: 2,
+            entryState: AgentRunState.Compacting,
+            turnLock: profile.ToCompletionDescriptor(),
+            pendingCompactionSuppressed: false,
+            runtimeCheckpoint: new RuntimeCheckpoint(
+                pendingToolResults: [toolResult],
+                resolvedProfile: LlmProfileCheckpoint.FromProfile(profile),
+                lockedCompactionSplitIndex: 5,
+                pendingCompaction: pendingCompaction,
+                toolSessionExecutionSequence: 17
+            )
+        );
+
+        try {
+            using (var host = AgentEngineHost.CreateNew(repoDir)) {
+                host.Engine.State.AppendObservation(new ObservationEntry(), "durable-observation");
+                host.Engine.State.AppendAction(
+                    new ActionEntry(
+                        new ActionMessage([
+                            new ActionBlock.ToolCall(toolResult.RawToolCall)
+                        ]),
+                        profile.ToCompletionDescriptor()
+                    )
+                );
+
+                GetPendingToolResults(host.Engine)[toolResult.ToolCallId] = toolResult;
+                var turnRuntime = GetRequiredPrivateField<object>(host.Engine, "_turnRuntime");
+                _ = InvokeRequiredInstanceMethod(turnRuntime, "RememberResolvedProfile", profile);
+                _ = InvokeRequiredInstanceMethod(turnRuntime, "RememberCompactionSplitIndex", 5);
+                _ = InvokeRequiredInstanceMethod(turnRuntime, "RememberCurrentTurnFullFeatureEnabled", true);
+                _ = InvokeRequiredInstanceMethod(host.Engine, "ApplyPendingCompactionSnapshot", pendingCompaction);
+                _ = InvokeRequiredInstanceMethod(host.Engine, "ApplyToolSessionExecutionSequence", 17L);
+
+                ReplaceCachedRecentHistory(host.Engine.State, new ObservationEntry());
+
+                var persisted = Assert.IsType<ContextSavepoint>(
+                    InvokeRequiredInstanceMethod(host.Engine, "PersistCurrentContextSavepoint")
+                );
+
+                AssertContextSavepoint(expected, persisted);
+                AssertContextSavepoint(expected, host.WorkspaceRoot.ContextState.LoadSavepoint());
+                host.SaveAndCommit();
+            }
+
+            using (var reopened = AgentEngineHost.OpenExisting(repoDir)) {
+                AssertContextSavepoint(expected, reopened.WorkspaceRoot.ContextState.LoadSavepoint());
+                _ = InvokeRequiredInstanceMethod(reopened.Engine, "ClearPersistedContextSavepoint");
+                Assert.Null(reopened.WorkspaceRoot.ContextState.LoadSavepoint());
+                reopened.SaveAndCommit();
+            }
+
+            using var reopenedAfterClear = AgentEngineHost.OpenExisting(repoDir);
+            Assert.Null(reopenedAfterClear.WorkspaceRoot.ContextState.LoadSavepoint());
+        }
+        finally {
+            if (Directory.Exists(repoDir)) {
+                Directory.Delete(repoDir, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
     public void WorkspaceBornState_RestoreAndWriteThroughsNotificationDrainAndRecap() {
         var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-workspace-born-{Guid.NewGuid():N}");
 

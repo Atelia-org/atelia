@@ -1,11 +1,50 @@
 using Atelia.Agent.Core.App;
 using Atelia.Agent.Core.History;
 using Atelia.Agent.Core.Persistence;
+using Atelia.Completion.Abstractions;
 using Atelia.Completion.Tools;
 
 namespace Atelia.Agent.Core;
 
 public partial class AgentEngine {
+    internal RuntimeCheckpoint CaptureRuntimeCheckpoint() {
+        var turnRuntimeState = ExportTurnRuntimeState();
+
+        return new RuntimeCheckpoint(
+            pendingToolResults: ExportPendingToolResultsSnapshot(),
+            resolvedProfile: turnRuntimeState.ResolvedProfile,
+            lockedCompactionSplitIndex: turnRuntimeState.LockedCompactionSplitIndex,
+            pendingCompaction: ExportPendingCompactionSnapshot(),
+            toolSessionExecutionSequence: ExportToolSessionExecutionSequence()
+        );
+    }
+
+    internal ContextSavepoint CaptureCurrentContextSavepoint() {
+        var recentHistory = LoadAuthoritativeRecentHistoryForSavepointCapture();
+        var currentTurn = AnalyzeCurrentTurn(recentHistory);
+
+        return new ContextSavepoint(
+            anchorEntrySerial: recentHistory.Count == 0 ? null : recentHistory[^1].Serial,
+            anchorHistoryCount: recentHistory.Count,
+            entryState: DetermineState(recentHistory),
+            turnLock: CloneCompletionDescriptorOrNull(currentTurn.LockedInvocation),
+            pendingCompactionSuppressed: false,
+            runtimeCheckpoint: CaptureRuntimeCheckpoint()
+        );
+    }
+
+    internal ContextSavepoint? PersistCurrentContextSavepoint() {
+        if (_workspaceSession is null) { return null; }
+
+        var savepoint = CaptureCurrentContextSavepoint();
+        return _workspaceSession.UpdateContextSavepoint(savepoint);
+    }
+
+    internal void ClearPersistedContextSavepoint() {
+        if (_workspaceSession is null) { return; }
+        _workspaceSession.UpdateContextSavepoint(null);
+    }
+
     internal (LlmProfileCheckpoint? ResolvedProfile, int? LockedCompactionSplitIndex) ExportTurnRuntimeState() {
         return (
             ResolvedProfile: _turnRuntime.ResolvedProfile is null
@@ -32,6 +71,10 @@ public partial class AgentEngine {
                 _compactionRequest.Value.SummarizePrompt
             )
             : null;
+    }
+
+    private long ExportToolSessionExecutionSequence() {
+        return _toolSession?.LastIssuedExecutionSequence ?? 0;
     }
 
     /// <summary>
@@ -314,6 +357,20 @@ public partial class AgentEngine {
 
         return Equals(profile.ToCompletionDescriptor(), checkpoint.ToCompletionDescriptor())
             && profile.SoftContextTokenCap == checkpoint.SoftContextTokenCap;
+    }
+
+    private IReadOnlyList<HistoryEntry> LoadAuthoritativeRecentHistoryForSavepointCapture() {
+        if (_workspaceSession is null) {
+            return _state.RecentHistory;
+        }
+
+        return _workspaceSession.LoadRecentHistoryState().RecentHistory;
+    }
+
+    private static CompletionDescriptor? CloneCompletionDescriptorOrNull(CompletionDescriptor? descriptor) {
+        return descriptor is null
+            ? null
+            : new CompletionDescriptor(descriptor.ProviderId, descriptor.ApiSpecId, descriptor.Model);
     }
 
     private void PersistTurnRuntime(LlmProfile? preferredResolvedProfile = null) {
