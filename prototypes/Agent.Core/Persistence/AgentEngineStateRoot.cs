@@ -25,14 +25,7 @@ public sealed class AgentEngineStateRoot {
     public static AgentEngineStateRoot Create(Revision revision, string? systemPrompt = null) {
         ArgumentNullException.ThrowIfNull(revision);
 
-        return Create(AgentWorkspaceRoot.Create(revision), systemPrompt);
-    }
-
-    internal static AgentEngineStateRoot Create(AgentWorkspaceRoot workspaceRoot, string? systemPrompt = null) {
-        ArgumentNullException.ThrowIfNull(workspaceRoot);
-
-        workspaceRoot.SeedDefaultState(systemPrompt);
-        return new AgentEngineStateRoot(workspaceRoot);
+        return new AgentEngineStateRoot(AgentWorkspaceRoot.Create(revision, systemPrompt));
     }
 
     public static AgentEngineStateRoot Create(Revision revision, AgentEngine engine) {
@@ -95,12 +88,16 @@ public sealed class AgentEngineStateRoot {
     /// 从当前 workspace materialize 一个 <see cref="AgentEngineStateSnapshot"/>。
     /// 该入口服务于 public compatibility / diagnostic / import-export 场景；internal live host 应直接围绕 workspaceRoot 恢复。
     /// </summary>
-    public AgentEngineStateSnapshot Load() {
-        string systemPrompt = _workspaceRoot.Meta.GetRequiredSystemPrompt();
-        ulong lastSerial = _workspaceRoot.History.GetRequiredLastSerial();
-        var recentHistory = _workspaceRoot.History.LoadRecent();
-        var pendingNotifications = _workspaceRoot.History.LoadPendingNotifications();
-        var runtimeState = LoadRuntimeState();
+    public AgentEngineStateSnapshot Load() => LoadSnapshot(_workspaceRoot);
+
+    internal static AgentEngineStateSnapshot LoadSnapshot(AgentWorkspaceRoot workspaceRoot) {
+        ArgumentNullException.ThrowIfNull(workspaceRoot);
+
+        string systemPrompt = workspaceRoot.Meta.GetRequiredSystemPrompt();
+        ulong lastSerial = workspaceRoot.History.GetRequiredLastSerial();
+        var recentHistory = workspaceRoot.History.LoadRecent();
+        var pendingNotifications = workspaceRoot.History.LoadPendingNotifications();
+        var runtimeState = LoadRuntimeState(workspaceRoot);
 
         return new AgentEngineStateSnapshot(
             AgentState: new AgentStateSnapshot(
@@ -127,11 +124,11 @@ public sealed class AgentEngineStateRoot {
         _workspaceRoot.RuntimeState.ReplacePendingCompaction(snapshot.PendingCompaction);
     }
 
-    private AgentEngineRuntimeStateSnapshot LoadRuntimeState() {
-        var pendingToolResults = _workspaceRoot.RuntimeState.LoadPendingToolResults();
-        var (resolvedProfile, lockedCompactionSplitIndex) = _workspaceRoot.RuntimeState.LoadTurnRuntime();
-        var pendingCompaction = _workspaceRoot.RuntimeState.LoadPendingCompaction();
-        var toolSessionExecutionSequence = _workspaceRoot.RuntimeState.GetToolSessionExecutionSequenceOrDefault();
+    private static AgentEngineRuntimeStateSnapshot LoadRuntimeState(AgentWorkspaceRoot workspaceRoot) {
+        var pendingToolResults = workspaceRoot.RuntimeState.LoadPendingToolResults();
+        var (resolvedProfile, lockedCompactionSplitIndex) = workspaceRoot.RuntimeState.LoadTurnRuntime();
+        var pendingCompaction = workspaceRoot.RuntimeState.LoadPendingCompaction();
+        var toolSessionExecutionSequence = workspaceRoot.RuntimeState.GetToolSessionExecutionSequenceOrDefault();
 
         return new AgentEngineRuntimeStateSnapshot(
             PendingToolResults: pendingToolResults,

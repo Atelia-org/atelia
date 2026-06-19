@@ -8,7 +8,10 @@
 > - 阶段 C / D 已部分落地：history append、pending notifications、pending tool results、turn runtime 的 live mutation 路径已经存在。
 > - `pendingCompaction` live path 已收口到稳定 durable slot 内的字段级 mutation；新 schema 要求预先 seed `pendingCompaction` record，不再兼容缺 key 读取或懒创建；snapshot / full-runtime replace 仍保留 whole-replace 语义。
 > - 阶段 E 的最小收口已落地：repo-backed live 创建路径改为 born-bound，`AgentState`/`AgentEngine` 不再依赖 `AttachWorkspaceRoot(... syncExistingState:true/false)` 或 `AttachRepositoryPersistence(...)` 这类 post-attach 主路径。
+> - `AgentWorkspaceSession` 现已成为 repo-backed live path 的单一 mutation/commit owner：history/meta/runtime 的 live 写入与 `Commit/Dispose` 都直接站在 `AgentWorkspaceRoot` 上；`AgentEngineStateRoot` 被压回 public snapshot compatibility / diagnostic / import-export 视图。
+> - 阶段 C 的一个行为保持型前置切口也已落地：`AgentState` 的 `recentHistory / pendingNotifications / lastSerial` 已收成内部 working-set cache，并建立了整包 `LoadStateSnapshot -> RestoreSnapshot -> ReplaceWorkingSet` seam，为后续把 durable history/workspace 提升为真相预留了 cache reload 边界。
 > - 当前 public snapshot path 仍保留，但定位应视为 compatibility / diagnostic / import-export 边界，不再是推荐主路径。
+> - 小尾修已继续收口：`AgentEngineHost` 不再暴露可写 `StateRoot` adapter，live host 仅保留显式 `LoadSnapshot()` 查询口；默认 state seeding 也已回收到 `AgentWorkspaceRoot.Create(...)` 创建期，不再以普通 helper 形式承担隐式 reset 语义。
 
 相关文档：
 - `docs/Agent/agent-core-branching-infrastructure-backlog.md`

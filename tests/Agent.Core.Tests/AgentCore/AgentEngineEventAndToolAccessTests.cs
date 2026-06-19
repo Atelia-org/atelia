@@ -29,7 +29,7 @@ public sealed class AgentEngineEventAndToolAccessTests {
             var observedCountAtEvent = -1;
             HistoryEntryKind? observedLastKind = null;
             host.Engine.ActionProduced += (_, _) => {
-                var snapshot = host.StateRoot.Load();
+                var snapshot = host.LoadSnapshot();
                 observedCountAtEvent = snapshot.AgentState.RecentHistory.Count;
                 observedLastKind = snapshot.AgentState.RecentHistory[^1].Kind;
             };

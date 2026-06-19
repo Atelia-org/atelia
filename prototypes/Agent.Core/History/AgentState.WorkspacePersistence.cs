@@ -26,18 +26,17 @@ public sealed partial class AgentState {
 
     private ulong AllocateNextSerial() {
         if (_workspaceSession is null) {
-            return ++_lastSerial;
+            return _workingSet.AllocateNextSerial();
         }
 
         var nextSerial = _workspaceSession.AllocateNextSerial();
-        _lastSerial = nextSerial;
-        return nextSerial;
+        return _workingSet.RememberAllocatedSerial(nextSerial);
     }
 
     private void SyncSessionHistoryAndSerial() {
         if (_workspaceSession is null) { return; }
 
-        _workspaceSession.ReplaceRecentHistory(_recentHistory, _lastSerial);
+        _workspaceSession.ReplaceRecentHistory(RecentHistory, _workingSet.LastSerial);
     }
 
     private void SyncSessionAppendedHistoryEntry(HistoryEntry entry) {
@@ -47,7 +46,7 @@ public sealed partial class AgentState {
     }
 
     private void SyncSessionPendingNotifications() {
-        _workspaceSession?.ReplacePendingNotifications(_pendingNotifications.ToArray());
+        _workspaceSession?.ReplacePendingNotifications(_workingSet.ExportPendingNotificationsSnapshot());
     }
 
     private void SyncSessionAppendedNotification(string item) {

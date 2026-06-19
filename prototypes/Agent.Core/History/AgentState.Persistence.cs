@@ -8,9 +8,9 @@ public sealed partial class AgentState {
     internal AgentStateSnapshot ExportSnapshot() {
         return new AgentStateSnapshot(
             SystemPrompt: SystemPrompt,
-            RecentHistory: _recentHistory.ToArray(),
-            PendingNotifications: _pendingNotifications.ToArray(),
-            LastSerial: _lastSerial
+            RecentHistory: _workingSet.ExportRecentHistorySnapshot(),
+            PendingNotifications: _workingSet.ExportPendingNotificationsSnapshot(),
+            LastSerial: _workingSet.LastSerial
         );
     }
 
@@ -36,24 +36,21 @@ public sealed partial class AgentState {
         ArgumentNullException.ThrowIfNull(pendingNotifications);
 
         var state = new AgentState(systemPrompt);
-        ulong maxSerial = 0;
-
-        foreach (var sourceEntry in recentHistory) {
-            ArgumentNullException.ThrowIfNull(sourceEntry);
-
-            var restoredEntry = CloneHistoryEntry(sourceEntry);
-            state._recentHistory.Add(restoredEntry);
-            maxSerial = Math.Max(maxSerial, restoredEntry.Serial);
-        }
-
-        foreach (var notification in pendingNotifications) {
-            if (notification is null) { throw new InvalidOperationException("Pending notifications must not contain null values."); }
-
-            state._pendingNotifications.Enqueue(notification);
-        }
-
-        state._lastSerial = Math.Max(lastSerial, maxSerial);
+        state.ReplaceWorkingSet(recentHistory, pendingNotifications, lastSerial);
         return state;
+    }
+
+    private void ReplaceWorkingSet(
+        IReadOnlyList<HistoryEntry> recentHistory,
+        IReadOnlyList<string> pendingNotifications,
+        ulong lastSerial
+    ) {
+        _workingSet.ReplaceAll(
+            recentHistory,
+            pendingNotifications,
+            lastSerial,
+            CloneHistoryEntry
+        );
     }
 
     private static HistoryEntry CloneHistoryEntry(HistoryEntry entry) {

@@ -42,31 +42,17 @@ internal sealed class AgentWorkspaceRoot {
 
     public RuntimeStateBlock RuntimeState { get; }
 
-    public static AgentWorkspaceRoot Create(Revision revision) {
+    public static AgentWorkspaceRoot Create(Revision revision, string? systemPrompt = null) {
         ArgumentNullException.ThrowIfNull(revision);
 
         var root = revision.CreateDict<string>();
         StampMetadata(root);
         var workspaceRoot = new AgentWorkspaceRoot(root);
-        workspaceRoot.InitializeDefaultShape();
+        workspaceRoot.InitializeDefaultState(systemPrompt);
         return workspaceRoot;
     }
 
     public static AgentWorkspaceRoot FromRoot(DurableDict<string> root) => new(root);
-
-    internal void SeedDefaultState(string? systemPrompt = null) {
-        Meta.Stamp();
-        Meta.SetSystemPrompt(string.IsNullOrWhiteSpace(systemPrompt)
-            ? AgentState.DefaultSystemPrompt
-            : systemPrompt);
-        History.SetLastSerial(0);
-        History.ReplaceRecent(Array.Empty<HistoryEntry>());
-        History.ReplacePendingNotifications(Array.Empty<string>());
-        RuntimeState.SetToolSessionExecutionSequence(0);
-        RuntimeState.ReplacePendingToolResults(Array.Empty<ToolCallExecutionResult>());
-        RuntimeState.ReplaceTurnRuntime(null, null);
-        RuntimeState.ReplacePendingCompaction(null);
-    }
 
     private void SetHistory(DurableDeque history) {
         ArgumentNullException.ThrowIfNull(history);
@@ -120,8 +106,18 @@ internal sealed class AgentWorkspaceRoot {
             : throw new InvalidDataException("Agent state root is missing pendingCompaction record.");
     }
 
-    private void InitializeDefaultShape() {
-        SeedDefaultState();
+    private void InitializeDefaultState(string? systemPrompt) {
+        Meta.Stamp();
+        Meta.SetSystemPrompt(string.IsNullOrWhiteSpace(systemPrompt)
+            ? AgentState.DefaultSystemPrompt
+            : systemPrompt);
+        History.SetLastSerial(0);
+        History.ReplaceRecent(Array.Empty<HistoryEntry>());
+        History.ReplacePendingNotifications(Array.Empty<string>());
+        RuntimeState.SetToolSessionExecutionSequence(0);
+        RuntimeState.ReplacePendingToolResults(Array.Empty<ToolCallExecutionResult>());
+        RuntimeState.ReplaceTurnRuntime(null, null);
+        RuntimeState.ReplacePendingCompaction(null);
     }
 
     private static void StampMetadata(DurableDict<string> root) {

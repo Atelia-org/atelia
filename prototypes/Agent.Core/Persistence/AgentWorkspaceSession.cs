@@ -20,15 +20,26 @@ internal sealed class AgentWorkspaceSession : IDisposable {
 
     internal AgentWorkspaceRoot WorkspaceRoot => _workspaceRoot;
 
+    internal AgentEngineStateSnapshot LoadSnapshot() {
+        EnsureOpenForEngine();
+        return AgentEngineStateRoot.LoadSnapshot(_workspaceRoot);
+    }
+
+    internal AgentStateSnapshot LoadStateSnapshot() {
+        EnsureOpenForState();
+
+        return new AgentStateSnapshot(
+            SystemPrompt: _workspaceRoot.Meta.GetRequiredSystemPrompt(),
+            RecentHistory: _workspaceRoot.History.LoadRecent(),
+            PendingNotifications: _workspaceRoot.History.LoadPendingNotifications(),
+            LastSerial: _workspaceRoot.History.GetRequiredLastSerial()
+        );
+    }
+
     internal AgentState RestoreState() {
         EnsureOpenForState();
 
-        var state = AgentState.RestoreCore(
-            LoadSystemPrompt(),
-            LoadRecentHistory(),
-            LoadPendingNotifications(),
-            LoadLastSerial()
-        );
+        var state = AgentState.RestoreSnapshot(LoadStateSnapshot());
         state.BindWorkspaceSession(this);
         return state;
     }
@@ -56,26 +67,6 @@ internal sealed class AgentWorkspaceSession : IDisposable {
         if (_closed) {
             throw new InvalidOperationException("AgentEngine workspace session has been closed.");
         }
-    }
-
-    internal string LoadSystemPrompt() {
-        EnsureOpenForState();
-        return _workspaceRoot.Meta.GetRequiredSystemPrompt();
-    }
-
-    internal IReadOnlyList<HistoryEntry> LoadRecentHistory() {
-        EnsureOpenForState();
-        return _workspaceRoot.History.LoadRecent();
-    }
-
-    internal IReadOnlyList<string> LoadPendingNotifications() {
-        EnsureOpenForState();
-        return _workspaceRoot.History.LoadPendingNotifications();
-    }
-
-    internal ulong LoadLastSerial() {
-        EnsureOpenForState();
-        return _workspaceRoot.History.GetRequiredLastSerial();
     }
 
     internal ulong AllocateNextSerial() {

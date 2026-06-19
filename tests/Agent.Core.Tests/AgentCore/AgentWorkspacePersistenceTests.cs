@@ -10,19 +10,20 @@ namespace Agent.Core.Tests;
 
 public sealed class AgentWorkspacePersistenceTests {
     [Fact]
-    public void WorkspaceRoot_Create_SeedsMinimalShapeAndCanSelfRead() {
+    public void WorkspaceRoot_Create_SeedsMinimalShapeDuringCreationAndCanSelfRead() {
         var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-workspace-shape-{Guid.NewGuid():N}");
 
         try {
             using var repo = Repository.Create(repoDir).Unwrap();
             var revision = repo.CreateBranch("main").Unwrap();
-            var workspaceRoot = AgentWorkspaceRoot.Create(revision);
+            var workspaceRoot = AgentWorkspaceRoot.Create(revision, "shape-system");
 
             Assert.Equal(GetIssue.None, workspaceRoot.Root.Get<string>("kind", out var kind));
             Assert.Equal("agent-engine-state", kind);
             Assert.Equal(GetIssue.None, workspaceRoot.Root.Get<long>("schemaVersion", out var schemaVersion));
             Assert.Equal(3L, schemaVersion);
 
+            Assert.Equal("shape-system", workspaceRoot.Meta.GetRequiredSystemPrompt());
             Assert.Empty(workspaceRoot.History.LoadRecent());
             Assert.Empty(workspaceRoot.History.LoadPendingNotifications());
             Assert.Empty(workspaceRoot.RuntimeState.LoadPendingToolResults());
@@ -381,7 +382,7 @@ public sealed class AgentWorkspacePersistenceTests {
             host.Engine.AppendNotification("queued-notification");
             host.Engine.State.AppendObservation(new ObservationEntry(), "recent-events");
 
-            var snapshot = host.StateRoot.Load();
+            var snapshot = host.LoadSnapshot();
 
             Assert.Equal("updated-before-commit", snapshot.AgentState.SystemPrompt);
             Assert.Empty(snapshot.AgentState.PendingNotifications);
@@ -496,7 +497,7 @@ public sealed class AgentWorkspacePersistenceTests {
             }
 
             using var reopened = AgentEngineHost.OpenExisting(repoDir);
-            var snapshot = reopened.StateRoot.Load();
+            var snapshot = reopened.LoadSnapshot();
 
             Assert.Equal("host-system", reopened.Engine.SystemPrompt);
             Assert.Equal(3, snapshot.AgentState.RecentHistory.Count);
@@ -527,7 +528,7 @@ public sealed class AgentWorkspacePersistenceTests {
             }
 
             using var reopened = AgentEngineHost.OpenExisting(repoDir);
-            var snapshot = reopened.StateRoot.Load();
+            var snapshot = reopened.LoadSnapshot();
 
             Assert.Empty(snapshot.AgentState.PendingNotifications);
             var observation = Assert.IsType<ObservationEntry>(Assert.Single(snapshot.AgentState.RecentHistory));
@@ -558,7 +559,7 @@ public sealed class AgentWorkspacePersistenceTests {
             }
 
             using var reopened = AgentEngineHost.OpenExisting(repoDir);
-            var snapshot = reopened.StateRoot.Load();
+            var snapshot = reopened.LoadSnapshot();
 
             Assert.Equal(2, snapshot.AgentState.RecentHistory.Count);
             var recap = Assert.IsType<RecapEntry>(snapshot.AgentState.RecentHistory[0]);
@@ -636,12 +637,12 @@ public sealed class AgentWorkspacePersistenceTests {
                        repoDir,
                        runtime: new AgentEngineHostRuntime(initialTools: [
                            alphaTool = new RecordingTool("alpha", context => {
-                               sequencesSeenInsideTools.Add(liveHost!.StateRoot.Load().ToolSessionExecutionSequence);
+                               sequencesSeenInsideTools.Add(liveHost!.LoadSnapshot().ToolSessionExecutionSequence);
                                Assert.True(context.Session.TryGetTool("alpha", out var sessionTool));
                                Assert.Same(alphaTool, sessionTool);
                            }),
                            betaTool = new RecordingTool("beta", context => {
-                               sequencesSeenInsideTools.Add(liveHost!.StateRoot.Load().ToolSessionExecutionSequence);
+                               sequencesSeenInsideTools.Add(liveHost!.LoadSnapshot().ToolSessionExecutionSequence);
                                Assert.True(context.Session.TryGetTool("beta", out var sessionTool));
                                Assert.Same(betaTool, sessionTool);
                            })
@@ -660,29 +661,29 @@ public sealed class AgentWorkspacePersistenceTests {
                 };
 
                 await host.StepAsync(profile);
-                var afterInitialTurnStart = host.StateRoot.Load();
+                var afterInitialTurnStart = host.LoadSnapshot();
                 Assert.Null(afterInitialTurnStart.ResolvedProfile);
                 Assert.Null(afterInitialTurnStart.LockedCompactionSplitIndex);
 
                 await host.StepAsync(profile);
-                var afterModelOutput = host.StateRoot.Load();
-                var afterModelOutputPendingMap = GetPendingToolResultsMap(host.StateRoot);
+                var afterModelOutput = host.LoadSnapshot();
+                var afterModelOutputPendingMap = GetPendingToolResultsMap(host.WorkspaceRoot);
                 Assert.Empty(afterModelOutput.PendingToolResults);
                 Assert.Equal(LlmProfileCheckpoint.FromProfile(profile), afterModelOutput.ResolvedProfile);
                 Assert.Equal(1, afterModelOutput.LockedCompactionSplitIndex);
 
                 await host.StepAsync(profile);
                 Assert.Equal([1L], sequencesSeenInsideTools);
-                Assert.Same(afterModelOutputPendingMap, GetPendingToolResultsMap(host.StateRoot));
-                var afterFirstToolExecution = host.StateRoot.Load();
+                Assert.Same(afterModelOutputPendingMap, GetPendingToolResultsMap(host.WorkspaceRoot));
+                var afterFirstToolExecution = host.LoadSnapshot();
                 var firstPendingResult = Assert.Single(afterFirstToolExecution.PendingToolResults);
                 Assert.Equal("call-1", firstPendingResult.ToolCallId);
                 Assert.Equal(1L, afterFirstToolExecution.ToolSessionExecutionSequence);
 
                 await host.StepAsync(profile);
                 Assert.Equal([1L, 2L], sequencesSeenInsideTools);
-                Assert.Same(afterModelOutputPendingMap, GetPendingToolResultsMap(host.StateRoot));
-                var afterSecondToolExecution = host.StateRoot.Load();
+                Assert.Same(afterModelOutputPendingMap, GetPendingToolResultsMap(host.WorkspaceRoot));
+                var afterSecondToolExecution = host.LoadSnapshot();
                 Assert.Equal(["call-1", "call-2"], afterSecondToolExecution.PendingToolResults
                     .Select(static result => result.ToolCallId)
                     .OrderBy(static toolCallId => toolCallId, StringComparer.Ordinal));
@@ -692,8 +693,8 @@ public sealed class AgentWorkspacePersistenceTests {
             using (var reopened = AgentEngineHost.OpenExisting(
                        repoDir,
                        new AgentEngineHostRuntime(profileRegistry: new LlmProfileRegistry([profile])))) {
-                var reopenedAfterToolExecution = reopened.StateRoot.Load();
-                var pendingMapBeforeClear = GetPendingToolResultsMap(reopened.StateRoot);
+                var reopenedAfterToolExecution = reopened.LoadSnapshot();
+                var pendingMapBeforeClear = GetPendingToolResultsMap(reopened.WorkspaceRoot);
                 Assert.Equal(["call-1", "call-2"], reopenedAfterToolExecution.PendingToolResults
                     .Select(static result => result.ToolCallId)
                     .OrderBy(static toolCallId => toolCallId, StringComparer.Ordinal));
@@ -705,18 +706,18 @@ public sealed class AgentWorkspacePersistenceTests {
                 };
 
                 await reopened.StepAsync(profile);
-                var afterToolResults = reopened.StateRoot.Load();
-                Assert.NotSame(pendingMapBeforeClear, GetPendingToolResultsMap(reopened.StateRoot));
+                var afterToolResults = reopened.LoadSnapshot();
+                Assert.NotSame(pendingMapBeforeClear, GetPendingToolResultsMap(reopened.WorkspaceRoot));
                 Assert.Empty(afterToolResults.PendingToolResults);
                 Assert.IsType<ToolResultsEntry>(afterToolResults.AgentState.RecentHistory[^1]);
                 Assert.Equal(2L, afterToolResults.ToolSessionExecutionSequence);
 
                 await reopened.StepAsync(profile);
-                var afterFinalModelOutput = reopened.StateRoot.Load();
+                var afterFinalModelOutput = reopened.LoadSnapshot();
                 Assert.Equal(LlmProfileCheckpoint.FromProfile(profile), afterFinalModelOutput.ResolvedProfile);
 
                 await reopened.StepAsync(profile);
-                var afterNewTurn = reopened.StateRoot.Load();
+                var afterNewTurn = reopened.LoadSnapshot();
                 Assert.Null(afterNewTurn.ResolvedProfile);
                 Assert.Null(afterNewTurn.LockedCompactionSplitIndex);
             }
@@ -752,23 +753,23 @@ public sealed class AgentWorkspacePersistenceTests {
                 args.Observation = IncomingObservation.FromRecentEvents($"fresh-observation-{++incomingObservationIndex}");
             };
 
-            var initialTurnRuntime = GetTurnRuntimeMap(host.StateRoot);
+            var initialTurnRuntime = GetTurnRuntimeMap(host.WorkspaceRoot);
 
             await host.StepAsync(profile);
-            var afterTurnStart = host.StateRoot.Load();
-            Assert.Same(initialTurnRuntime, GetTurnRuntimeMap(host.StateRoot));
+            var afterTurnStart = host.LoadSnapshot();
+            Assert.Same(initialTurnRuntime, GetTurnRuntimeMap(host.WorkspaceRoot));
             Assert.Null(afterTurnStart.ResolvedProfile);
             Assert.Null(afterTurnStart.LockedCompactionSplitIndex);
 
             await host.StepAsync(profile);
-            var afterModelOutput = host.StateRoot.Load();
-            Assert.Same(initialTurnRuntime, GetTurnRuntimeMap(host.StateRoot));
+            var afterModelOutput = host.LoadSnapshot();
+            Assert.Same(initialTurnRuntime, GetTurnRuntimeMap(host.WorkspaceRoot));
             Assert.Equal(LlmProfileCheckpoint.FromProfile(profile), afterModelOutput.ResolvedProfile);
             Assert.NotNull(afterModelOutput.LockedCompactionSplitIndex);
 
             await host.StepAsync(profile);
-            var afterNextTurnStart = host.StateRoot.Load();
-            Assert.Same(initialTurnRuntime, GetTurnRuntimeMap(host.StateRoot));
+            var afterNextTurnStart = host.LoadSnapshot();
+            Assert.Same(initialTurnRuntime, GetTurnRuntimeMap(host.WorkspaceRoot));
             Assert.Null(afterNextTurnStart.ResolvedProfile);
             Assert.Null(afterNextTurnStart.LockedCompactionSplitIndex);
         }
@@ -798,24 +799,24 @@ public sealed class AgentWorkspacePersistenceTests {
                 )
             );
 
-            var pendingCompactionRecord = GetPendingCompactionRecord(host.StateRoot);
+            var pendingCompactionRecord = GetPendingCompactionRecord(host.WorkspaceRoot);
 
             Assert.True(host.Engine.RequestCompaction("compact-system", "compact-now"));
-            var requested = host.StateRoot.Load();
-            Assert.Same(pendingCompactionRecord, GetPendingCompactionRecord(host.StateRoot));
+            var requested = host.LoadSnapshot();
+            Assert.Same(pendingCompactionRecord, GetPendingCompactionRecord(host.WorkspaceRoot));
             Assert.Equal(new CompactionCheckpoint(1, "compact-system", "compact-now"), requested.PendingCompaction);
 
             Assert.True(host.Engine.RequestCompaction("compact-system-updated", "compact-now-updated"));
-            var updated = host.StateRoot.Load();
-            Assert.Same(pendingCompactionRecord, GetPendingCompactionRecord(host.StateRoot));
+            var updated = host.LoadSnapshot();
+            Assert.Same(pendingCompactionRecord, GetPendingCompactionRecord(host.WorkspaceRoot));
             Assert.Equal(
                 new CompactionCheckpoint(1, "compact-system-updated", "compact-now-updated"),
                 updated.PendingCompaction
             );
 
             await host.StepAsync(profile);
-            var afterCompaction = host.StateRoot.Load();
-            Assert.Same(pendingCompactionRecord, GetPendingCompactionRecord(host.StateRoot));
+            var afterCompaction = host.LoadSnapshot();
+            Assert.Same(pendingCompactionRecord, GetPendingCompactionRecord(host.WorkspaceRoot));
             Assert.Null(afterCompaction.PendingCompaction);
             var recap = Assert.IsType<RecapEntry>(afterCompaction.AgentState.RecentHistory[0]);
             Assert.Equal("summary from live compaction", recap.Content);
@@ -885,6 +886,15 @@ public sealed class AgentWorkspacePersistenceTests {
                 Directory.Delete(repoDir, recursive: true);
             }
         }
+    }
+
+    [Fact]
+    public void Host_PublicSurface_DoesNotExposeWritableStateRootAdapter() {
+        Assert.Null(typeof(AgentEngineHost).GetProperty("StateRoot", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public));
+        Assert.DoesNotContain(
+            typeof(AgentEngineHost).GetMethods(System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public),
+            static method => method.ReturnType == typeof(AgentEngineStateRoot)
+        );
     }
 
     private static AgentEngineStateSnapshot CreateSnapshotFixture() {

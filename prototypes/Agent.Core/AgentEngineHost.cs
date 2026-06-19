@@ -53,10 +53,10 @@ public sealed class AgentEngineHost : IDisposable {
         }
     }
 
-    public AgentEngineStateRoot StateRoot {
+    internal AgentWorkspaceRoot WorkspaceRoot {
         get {
             EnsureNotDisposed();
-            return AgentEngineStateRoot.FromWorkspaceRoot(_workspaceSession.WorkspaceRoot);
+            return _workspaceSession.WorkspaceRoot;
         }
     }
 
@@ -80,8 +80,7 @@ public sealed class AgentEngineHost : IDisposable {
         AgentWorkspaceSession? workspaceSession = null;
         try {
             var revision = repo.CreateBranch(options.BranchName).Unwrap();
-            var workspaceRoot = AgentWorkspaceRoot.Create(revision);
-            workspaceRoot.SeedDefaultState(options.SystemPrompt);
+            var workspaceRoot = AgentWorkspaceRoot.Create(revision, options.SystemPrompt);
             repo.Commit(workspaceRoot.Root).Unwrap();
 
             workspaceSession = AgentWorkspaceSession.Open(workspaceRoot, repo);
@@ -148,6 +147,15 @@ public sealed class AgentEngineHost : IDisposable {
     public void SaveAndCommit() {
         EnsureNotDisposed();
         _engine.CommitStableBoundary();
+    }
+
+    /// <summary>
+    /// 从 live durable workspace materialize 当前快照。
+    /// 该入口只提供只读 snapshot 查询，不再暴露可写 state-root adapter。
+    /// </summary>
+    public AgentEngineStateSnapshot LoadSnapshot() {
+        EnsureNotDisposed();
+        return _workspaceSession.LoadSnapshot();
     }
 
     public void Dispose() {
