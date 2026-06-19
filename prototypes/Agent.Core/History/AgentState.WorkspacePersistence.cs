@@ -24,21 +24,6 @@ public sealed partial class AgentState {
         _workspaceSession?.EnsureOpenForState();
     }
 
-    private ulong AllocateNextSerial() {
-        if (_workspaceSession is null) {
-            return _workingSet.AllocateNextSerial();
-        }
-
-        var nextSerial = _workspaceSession.AllocateNextSerial();
-        return _workingSet.RememberAllocatedSerial(nextSerial);
-    }
-
-    private void SyncSessionAppendedHistoryEntry(HistoryEntry entry) {
-        if (_workspaceSession is null) { return; }
-
-        _workspaceSession.AppendHistoryEntry(entry);
-    }
-
     private void ReloadWorkingSetFromWorkspaceSession() {
         var snapshot = _workspaceSession?.LoadStateSnapshot()
             ?? throw new InvalidOperationException("AgentState is not attached to a live workspace session.");

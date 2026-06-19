@@ -69,18 +69,6 @@ internal sealed class AgentWorkspaceSession : IDisposable {
         }
     }
 
-    internal ulong AllocateNextSerial() {
-        EnsureOpenForState();
-        return _workspaceRoot.History.AllocateNextSerial();
-    }
-
-    internal void AppendHistoryEntry(HistoryEntry entry) {
-        ArgumentNullException.ThrowIfNull(entry);
-
-        EnsureOpenForState();
-        _workspaceRoot.History.AppendRecent(entry);
-    }
-
     internal string[] DrainPendingNotifications() {
         EnsureOpenForState();
         return _workspaceRoot.History.DrainPendingNotifications();

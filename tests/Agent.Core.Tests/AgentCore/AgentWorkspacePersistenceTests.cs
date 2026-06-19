@@ -1723,6 +1723,73 @@ public sealed class AgentWorkspacePersistenceTests {
     }
 
     [Fact]
+    public void PublicCreateFromStateSnapshot_LocalHistoryMutationStaysInWorkingSetOnly() {
+        var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-public-snapshot-local-history-{Guid.NewGuid():N}");
+
+        try {
+            using var repo = Repository.Create(repoDir).Unwrap();
+            var revision = repo.CreateBranch("main").Unwrap();
+            var stateRoot = AgentEngineStateRoot.Create(revision, "public-snapshot-system");
+            var snapshot = stateRoot.Load();
+
+            var engine = AgentEngine.CreateFromStateSnapshot(snapshot);
+            engine.AppendNotification("queued-notification");
+            var observation = engine.State.AppendObservation(new ObservationEntry(), "recent-events");
+            engine.State.AppendAction(
+                new ActionEntry(
+                    new ActionMessage([new ActionBlock.Text("assistant-turn")]),
+                    new CompletionDescriptor("provider-a", "spec-a", "model-a")
+                )
+            );
+            engine.InjectActionContent(
+                new ActionInjectionRequest(
+                    "continue-here",
+                    new InjectionSource(InjectionSourceKind.HostOverride),
+                    InjectedActionContentMode.Text
+                )
+            );
+            var recap = engine.State.ReplacePrefixWithRecap(1, "summary-text");
+
+            Assert.Equal("queued-notification\nrecent-events", observation.Notifications);
+            Assert.False(engine.State.HasPendingNotification);
+            Assert.Equal(1UL, recap.InsteadSerial);
+            Assert.Equal(4UL, recap.Serial);
+            Assert.Collection(
+                engine.State.RecentHistory,
+                entry => {
+                    var recapEntry = Assert.IsType<RecapEntry>(entry);
+                    Assert.Equal(4UL, recapEntry.Serial);
+                    Assert.Equal("summary-text", recapEntry.Content);
+                    Assert.Equal(1UL, recapEntry.InsteadSerial);
+                },
+                entry => {
+                    var action = Assert.IsType<ActionEntry>(entry);
+                    Assert.Equal(2UL, action.Serial);
+                    Assert.Equal("assistant-turn", action.Message.GetFlattenedText());
+                },
+                entry => {
+                    var injection = Assert.IsType<InjectionEntry>(entry);
+                    Assert.Equal(3UL, injection.Serial);
+                    Assert.Equal("continue-here", injection.Content);
+                    Assert.Equal(ActionBlockKind.Text, injection.BlockKind);
+                }
+            );
+
+            var persisted = stateRoot.Load();
+
+            Assert.Equal("public-snapshot-system", persisted.AgentState.SystemPrompt);
+            Assert.Empty(persisted.AgentState.RecentHistory);
+            Assert.Empty(persisted.AgentState.PendingNotifications);
+            Assert.Null(persisted.PendingCompaction);
+        }
+        finally {
+            if (Directory.Exists(repoDir)) {
+                Directory.Delete(repoDir, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
     public void Host_CreateNewThenOpenExisting_RestoresPersistedStateThroughExistingPath() {
         var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-host-open-{Guid.NewGuid():N}");
 
