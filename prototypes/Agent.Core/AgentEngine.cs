@@ -592,6 +592,10 @@ public partial class AgentEngine {
         _turnRuntime.RememberCurrentTurnFullFeatureEnabled(resolvedProfile.SupportsAgentCoreFullFeatures);
         EnsurePendingActionContinuationIsSupported(state, resolvedProfile);
 
+        if (state == AgentRunState.PendingInput) {
+            _state.FoldPendingNotificationsIntoCurrentObservationForPendingInput();
+        }
+
         var estimatedContextTokens = EstimateCurrentContextTokens();
 
         // 软上下文上限检查：在最终 profile 已确定后、构造 liveContext 前执行。
@@ -624,10 +628,6 @@ public partial class AgentEngine {
                 "[Engine] PrepareInvocationAsync queued compaction; deferring current model call until compaction completes."
             );
             return StepOutcome.FromStateMutation();
-        }
-
-        if (state == AgentRunState.PendingInput && _state.FoldPendingNotificationsIntoCurrentObservationForPendingInput()) {
-            estimatedContextTokens = EstimateCurrentContextTokens();
         }
 
         var invocation = resolvedProfile.ToCompletionDescriptor();

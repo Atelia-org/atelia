@@ -2382,6 +2382,126 @@ public sealed class AgentWorkspacePersistenceTests {
     }
 
     [Fact]
+    public async Task Host_PendingInputLateNotification_PrepareInvocationSeesFoldedCurrentObservation() {
+        var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-host-pending-input-prepare-folded-observation-{Guid.NewGuid():N}");
+
+        try {
+            var client = new RecordingQueueCompletionClient(
+                new ActionMessage([new ActionBlock.Text("assistant-output")])
+            );
+            var profile = CreateFullFeatureProfile(client, "model-pending-input-prepare");
+
+            using var host = AgentEngineHost.CreateNew(repoDir);
+            host.Engine.WaitingInput += static (_, args) => {
+                args.ShouldContinue = true;
+                args.Observation = IncomingObservation.FromRecentEvents("current-input");
+            };
+
+            await host.StepAsync(profile);
+            host.Engine.AppendNotification("late-notification");
+
+            string? notificationsSeenInPrepare = null;
+            ulong? estimatedTokensSeenInPrepare = null;
+            ulong? liveEstimateSeenInPrepare = null;
+            host.Engine.PrepareInvocationAsync = (args, _) => {
+                notificationsSeenInPrepare = Assert.IsType<ObservationEntry>(host.Engine.State.RecentHistory[^1]).Notifications;
+                estimatedTokensSeenInPrepare = args.EstimatedContextTokens;
+                liveEstimateSeenInPrepare = host.Engine.EstimateCurrentContextTokens();
+                return Task.CompletedTask;
+            };
+
+            await host.StepAsync(profile);
+
+            Assert.Equal("current-input\nlate-notification", notificationsSeenInPrepare);
+            Assert.Equal(liveEstimateSeenInPrepare, estimatedTokensSeenInPrepare);
+        }
+        finally {
+            if (Directory.Exists(repoDir)) {
+                Directory.Delete(repoDir, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task Host_PendingInputLateNotification_SoftCapGateUsesFoldedCurrentObservation() {
+        var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-host-pending-input-soft-cap-folded-observation-{Guid.NewGuid():N}");
+
+        try {
+            const string currentInput = "current-input";
+            var lateNotification = new string('n', 512);
+            var seedInvocation = new CompletionDescriptor("provider-a", "spec-a", "model-a");
+
+            using var host = AgentEngineHost.CreateNew(
+                repoDir,
+                runtime: new AgentEngineHostRuntime(
+                    autoCompaction: new AutoCompactionOptions("compact-system", "compact-now")
+                )
+            );
+            host.Engine.State.AppendObservation(new ObservationEntry(), "seed-observation-1");
+            host.Engine.State.AppendAction(
+                new ActionEntry(
+                    new ActionMessage([new ActionBlock.Text("seed-action-1")]),
+                    seedInvocation
+                )
+            );
+            host.Engine.State.AppendObservation(new ObservationEntry(), "seed-observation-2");
+            host.Engine.State.AppendAction(
+                new ActionEntry(
+                    new ActionMessage([new ActionBlock.Text("seed-action-2")]),
+                    seedInvocation
+                )
+            );
+            host.Engine.WaitingInput += static (_, args) => {
+                args.ShouldContinue = true;
+                args.Observation = IncomingObservation.FromRecentEvents(currentInput);
+            };
+
+            await host.StepAsync(CreateFullFeatureProfile(new NoopCompletionClient("provider-a", "spec-a"), "model-seed"));
+            host.Engine.AppendNotification(lateNotification);
+
+            var preFoldEstimate = host.Engine.EstimateCurrentContextTokens();
+            var expectedFoldedState = AgentState.CreateDefault(host.Engine.SystemPrompt);
+            expectedFoldedState.AppendObservation(new ObservationEntry(), "seed-observation-1");
+            expectedFoldedState.AppendAction(
+                new ActionEntry(
+                    new ActionMessage([new ActionBlock.Text("seed-action-1")]),
+                    seedInvocation
+                )
+            );
+            expectedFoldedState.AppendObservation(new ObservationEntry(), "seed-observation-2");
+            expectedFoldedState.AppendAction(
+                new ActionEntry(
+                    new ActionMessage([new ActionBlock.Text("seed-action-2")]),
+                    seedInvocation
+                )
+            );
+            expectedFoldedState.AppendObservation(new ObservationEntry(), $"{currentInput}\n{lateNotification}");
+            var postFoldEstimate = new AgentEngine(state: expectedFoldedState).EstimateCurrentContextTokens();
+            Assert.True(postFoldEstimate > preFoldEstimate);
+
+            var client = new RecordingQueueCompletionClient(
+                new ActionMessage([new ActionBlock.Text("assistant-output")])
+            );
+            var softCapProfile = CreateFullFeatureProfile(client, "model-soft-cap-folded", (int)postFoldEstimate);
+
+            await host.StepAsync(softCapProfile);
+
+            Assert.Empty(client.Requests);
+            Assert.True(host.Engine.HasPendingCompaction);
+            Assert.NotNull(host.LoadDurablePendingCompaction());
+            Assert.Equal(
+                $"{currentInput}\n{lateNotification}",
+                Assert.IsType<ObservationEntry>(host.LoadDurableRecentHistory()[^1]).Notifications
+            );
+        }
+        finally {
+            if (Directory.Exists(repoDir)) {
+                Directory.Delete(repoDir, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
     public async Task Host_PendingInputRetry_LateNotificationAppearsInRetryRequest() {
         var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-host-pending-input-retry-late-notification-{Guid.NewGuid():N}");
 
@@ -3770,7 +3890,11 @@ public sealed class AgentWorkspacePersistenceTests {
     }
 
     private static LlmProfile CreateFullFeatureProfile(ICompletionClient client, string modelId) {
-        return new LlmProfile(client, modelId, $"{modelId}-profile", 4096, CapabilityProfile.FullFeature);
+        return CreateFullFeatureProfile(client, modelId, 4096);
+    }
+
+    private static LlmProfile CreateFullFeatureProfile(ICompletionClient client, string modelId, int softContextTokenCap) {
+        return new LlmProfile(client, modelId, $"{modelId}-profile", checked((uint)softContextTokenCap), CapabilityProfile.FullFeature);
     }
 
     private static DurableDeque GetHistoryDeque(AgentWorkspaceRoot workspaceRoot) {
