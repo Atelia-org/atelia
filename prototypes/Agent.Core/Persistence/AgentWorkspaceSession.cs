@@ -99,6 +99,61 @@ internal sealed class AgentWorkspaceSession : IDisposable {
         );
     }
 
+    internal WorkspaceAppendActionMutationResult AppendAction(ActionEntry entry) {
+        ArgumentNullException.ThrowIfNull(entry);
+
+        EnsureOpenForState();
+        var recentHistory = _workspaceRoot.History.LoadRecent();
+        RecentHistoryRules.ValidateAppendOrder(recentHistory, entry);
+        entry.AssignTokenEstimate(TokenEstimateHelper.GetDefault().Estimate(entry));
+        entry.AssignSerial(_workspaceRoot.History.AllocateNextSerial());
+        _workspaceRoot.History.AppendRecent(entry);
+        var (updatedRecentHistory, updatedLastSerial) = LoadRecentHistorySnapshot();
+
+        return new WorkspaceAppendActionMutationResult(
+            RecentHistory: updatedRecentHistory,
+            LastSerial: updatedLastSerial
+        );
+    }
+
+    internal WorkspaceInjectionMutationResult InjectActionContent(ActionInjectionRequest request) {
+        ArgumentNullException.ThrowIfNull(request);
+        if (string.IsNullOrWhiteSpace(request.Content)) {
+            throw new ArgumentException("Injected action content must not be null or whitespace.", nameof(request));
+        }
+
+        EnsureOpenForState();
+        var recentHistory = _workspaceRoot.History.LoadRecent();
+        if (recentHistory.Count == 0) {
+            throw new InvalidOperationException("Cannot inject action content into empty history. At least one prior ActionEntry is required.");
+        }
+
+        var injectedBlockKind = RecentHistoryRules.ResolveInjectedBlockKind(recentHistory, request);
+        if (recentHistory[^1] is ActionEntry tailAction) {
+            RecentHistoryRules.EnsureActionAcceptsInjection(tailAction, context: "inject after trailing action");
+        }
+
+        var injectionEntry = new InjectionEntry(
+            content: request.Content,
+            blockKind: injectedBlockKind,
+            source: request.Source
+        );
+        RecentHistoryRules.ValidateAppendOrder(recentHistory, injectionEntry);
+        injectionEntry.AssignTokenEstimate(TokenEstimateHelper.GetDefault().Estimate(injectionEntry));
+        injectionEntry.AssignSerial(_workspaceRoot.History.AllocateNextSerial());
+        _workspaceRoot.History.AppendRecent(injectionEntry);
+        var (updatedRecentHistory, updatedLastSerial) = LoadRecentHistorySnapshot();
+
+        return new WorkspaceInjectionMutationResult(
+            RecentHistory: updatedRecentHistory,
+            LastSerial: updatedLastSerial,
+            Result: new ActionInjectionResult(
+                InjectedEntrySerial: injectionEntry.Serial,
+                InjectedBlockKind: injectedBlockKind
+            )
+        );
+    }
+
     internal void AppendPendingNotification(string notification) {
         ArgumentNullException.ThrowIfNull(notification);
 
@@ -195,3 +250,14 @@ internal sealed class AgentWorkspaceSession : IDisposable {
         _workspaceRoot.RuntimeState.SetToolSessionExecutionSequence(executionSequence);
     }
 }
+
+internal sealed record WorkspaceAppendActionMutationResult(
+    IReadOnlyList<HistoryEntry> RecentHistory,
+    ulong LastSerial
+);
+
+internal sealed record WorkspaceInjectionMutationResult(
+    IReadOnlyList<HistoryEntry> RecentHistory,
+    ulong LastSerial,
+    ActionInjectionResult Result
+);

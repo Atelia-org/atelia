@@ -244,6 +244,70 @@ public sealed class AgentWorkspacePersistenceTests {
     }
 
     [Fact]
+    public void WorkspaceSessionAppendAction_ReturnsUpdatedRecentHistorySnapshotForTargetedReplace() {
+        var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-workspace-session-append-action-snapshot-{Guid.NewGuid():N}");
+
+        try {
+            using var repo = Repository.Create(repoDir).Unwrap();
+            var revision = repo.CreateBranch("main").Unwrap();
+            var workspaceRoot = AgentWorkspaceRoot.Create(revision);
+
+            using var session = AgentWorkspaceSession.Open(workspaceRoot);
+            var state = session.RestoreState();
+            state.AppendObservation(new ObservationEntry(), "durable-observation");
+
+            ReplaceCachedRecentHistory(
+                state,
+                CreateAssignedObservationEntry(999UL),
+                CreateAssignedActionEntry(1000UL, "stale-cached-action")
+            );
+            ReplaceCachedLastSerial(state, 1000UL);
+
+            var appended = new ActionEntry(
+                new ActionMessage([new ActionBlock.Text("durable-action")]),
+                new CompletionDescriptor("provider-a", "spec-a", "model-a")
+            );
+            var mutation = session.AppendAction(appended);
+
+            Assert.Equal(2UL, appended.Serial);
+            Assert.True(appended.TokenEstimate > 0);
+            Assert.Equal(2UL, mutation.LastSerial);
+            Assert.Collection(
+                mutation.RecentHistory,
+                entry => {
+                    var observation = Assert.IsType<ObservationEntry>(entry);
+                    Assert.Equal(1UL, observation.Serial);
+                    Assert.Equal("durable-observation", observation.Notifications);
+                },
+                entry => {
+                    var action = Assert.IsType<ActionEntry>(entry);
+                    Assert.Equal(2UL, action.Serial);
+                    Assert.Equal("durable-action", action.Message.GetFlattenedText());
+                }
+            );
+            Assert.Collection(
+                workspaceRoot.History.LoadRecent(),
+                entry => {
+                    var observation = Assert.IsType<ObservationEntry>(entry);
+                    Assert.Equal(1UL, observation.Serial);
+                    Assert.Equal("durable-observation", observation.Notifications);
+                },
+                entry => {
+                    var action = Assert.IsType<ActionEntry>(entry);
+                    Assert.Equal(2UL, action.Serial);
+                    Assert.Equal("durable-action", action.Message.GetFlattenedText());
+                }
+            );
+            Assert.Equal(2UL, workspaceRoot.History.GetRequiredLastSerial());
+        }
+        finally {
+            if (Directory.Exists(repoDir)) {
+                Directory.Delete(repoDir, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
     public void WorkspaceAttachedAppendObservation_UsesDurableRecentHistoryForAppendOrderValidation() {
         var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-workspace-append-observation-order-{Guid.NewGuid():N}");
 
@@ -569,6 +633,324 @@ public sealed class AgentWorkspacePersistenceTests {
             );
             Assert.Equal(3UL, GetWorkingSet(state).LastSerial);
             Assert.Equal(3UL, workspaceRoot.History.GetRequiredLastSerial());
+        }
+        finally {
+            if (Directory.Exists(repoDir)) {
+                Directory.Delete(repoDir, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public void WorkspaceSessionInjectActionContent_ReturnsUpdatedRecentHistorySnapshotForTargetedReplace() {
+        var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-workspace-session-inject-snapshot-{Guid.NewGuid():N}");
+
+        try {
+            using var repo = Repository.Create(repoDir).Unwrap();
+            var revision = repo.CreateBranch("main").Unwrap();
+            var workspaceRoot = AgentWorkspaceRoot.Create(revision);
+
+            using var session = AgentWorkspaceSession.Open(workspaceRoot);
+            var state = session.RestoreState();
+            state.AppendObservation(new ObservationEntry(), "durable-observation");
+            state.AppendAction(CreateActionEntryWithReasoningTail("durable-action", "durable-thinking"));
+
+            ReplaceCachedRecentHistory(
+                state,
+                CreateAssignedObservationEntry(999UL),
+                CreateAssignedActionEntry(1000UL, "stale-cache-action")
+            );
+            ReplaceCachedLastSerial(state, 1000UL);
+
+            var mutation = session.InjectActionContent(
+                new ActionInjectionRequest(
+                    "injected-thinking",
+                    new InjectionSource(InjectionSourceKind.HostOverride),
+                    InjectedActionContentMode.MatchRecentActionTail
+                )
+            );
+
+            Assert.Equal(3UL, mutation.Result.InjectedEntrySerial);
+            Assert.Equal(ActionBlockKind.Thinking, mutation.Result.InjectedBlockKind);
+            Assert.Equal(3UL, mutation.LastSerial);
+            var freshSnapshot = session.LoadRecentHistorySnapshot();
+            Assert.Equal(freshSnapshot.LastSerial, mutation.LastSerial);
+            Assert.Equal(freshSnapshot.RecentHistory.Count, mutation.RecentHistory.Count);
+            for (int i = 0; i < freshSnapshot.RecentHistory.Count; i++) {
+                AssertHistoryEntry(freshSnapshot.RecentHistory[i], mutation.RecentHistory[i]);
+            }
+            AssertObservationActionInjectionHistory(
+                mutation.RecentHistory,
+                "durable-observation",
+                "durable-action",
+                "injected-thinking",
+                ActionBlockKind.Thinking
+            );
+            AssertObservationActionInjectionHistory(
+                workspaceRoot.History.LoadRecent(),
+                "durable-observation",
+                "durable-action",
+                "injected-thinking",
+                ActionBlockKind.Thinking
+            );
+            Assert.Equal(3UL, workspaceRoot.History.GetRequiredLastSerial());
+        }
+        finally {
+            if (Directory.Exists(repoDir)) {
+                Directory.Delete(repoDir, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public void WorkspaceSessionInjectActionContent_RejectsWhitespaceContent() {
+        var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-workspace-session-inject-whitespace-{Guid.NewGuid():N}");
+
+        try {
+            using var repo = Repository.Create(repoDir).Unwrap();
+            var revision = repo.CreateBranch("main").Unwrap();
+            var workspaceRoot = AgentWorkspaceRoot.Create(revision);
+
+            using var session = AgentWorkspaceSession.Open(workspaceRoot);
+            var state = session.RestoreState();
+            state.AppendObservation(new ObservationEntry(), "durable-observation");
+            state.AppendAction(
+                new ActionEntry(
+                    new ActionMessage([new ActionBlock.Text("durable-action")]),
+                    new CompletionDescriptor("provider-a", "spec-a", "model-a")
+                )
+            );
+
+            var exception = Assert.Throws<ArgumentException>(
+                () => session.InjectActionContent(
+                    new ActionInjectionRequest(
+                        "   ",
+                        new InjectionSource(InjectionSourceKind.HostOverride),
+                        InjectedActionContentMode.Text
+                    )
+                )
+            );
+
+            Assert.Equal("request", exception.ParamName);
+        }
+        finally {
+            if (Directory.Exists(repoDir)) {
+                Directory.Delete(repoDir, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public void WorkspaceAttachedInjectActionContent_SupportsConsecutiveInjectionsFromDurableRecentHistory() {
+        var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-workspace-consecutive-injection-{Guid.NewGuid():N}");
+
+        try {
+            using var repo = Repository.Create(repoDir).Unwrap();
+            var revision = repo.CreateBranch("main").Unwrap();
+            var workspaceRoot = AgentWorkspaceRoot.Create(revision);
+
+            using var session = AgentWorkspaceSession.Open(workspaceRoot);
+            var state = session.RestoreState();
+            state.AppendObservation(new ObservationEntry(), "durable-observation");
+            state.AppendAction(CreateActionEntryWithReasoningTail("durable-action", "durable-thinking"));
+
+            var firstInjection = state.InjectActionContent(
+                new ActionInjectionRequest(
+                    "first-injection",
+                    new InjectionSource(InjectionSourceKind.HostOverride),
+                    InjectedActionContentMode.MatchRecentActionTail
+                )
+            );
+
+            ReplaceCachedRecentHistory(
+                state,
+                CreateAssignedObservationEntry(999UL),
+                CreateAssignedActionEntry(1000UL, "stale-cache-action"),
+                CreateAssignedInjectionEntry(1001UL, "stale-cache-injection")
+            );
+            ReplaceCachedLastSerial(state, 1001UL);
+
+            var secondInjection = state.InjectActionContent(
+                new ActionInjectionRequest(
+                    "second-injection",
+                    new InjectionSource(InjectionSourceKind.HostOverride),
+                    InjectedActionContentMode.MatchRecentActionTail
+                )
+            );
+
+            Assert.Equal(ActionBlockKind.Thinking, firstInjection.InjectedBlockKind);
+            Assert.Equal(ActionBlockKind.Thinking, secondInjection.InjectedBlockKind);
+            Assert.Equal(3UL, firstInjection.InjectedEntrySerial);
+            Assert.Equal(4UL, secondInjection.InjectedEntrySerial);
+            Assert.Collection(
+                state.RecentHistory,
+                entry => {
+                    var observation = Assert.IsType<ObservationEntry>(entry);
+                    Assert.Equal(1UL, observation.Serial);
+                    Assert.Equal("durable-observation", observation.Notifications);
+                },
+                entry => {
+                    var action = Assert.IsType<ActionEntry>(entry);
+                    Assert.Equal(2UL, action.Serial);
+                    Assert.Equal("durable-action", action.Message.GetFlattenedText());
+                },
+                entry => {
+                    var injection = Assert.IsType<InjectionEntry>(entry);
+                    Assert.Equal(3UL, injection.Serial);
+                    Assert.Equal("first-injection", injection.Content);
+                    Assert.Equal(ActionBlockKind.Thinking, injection.BlockKind);
+                },
+                entry => {
+                    var injection = Assert.IsType<InjectionEntry>(entry);
+                    Assert.Equal(4UL, injection.Serial);
+                    Assert.Equal("second-injection", injection.Content);
+                    Assert.Equal(ActionBlockKind.Thinking, injection.BlockKind);
+                }
+            );
+            Assert.Equal(4UL, GetWorkingSet(state).LastSerial);
+            Assert.Equal(4UL, workspaceRoot.History.GetRequiredLastSerial());
+            Assert.Collection(
+                workspaceRoot.History.LoadRecent(),
+                entry => Assert.IsType<ObservationEntry>(entry),
+                entry => Assert.IsType<ActionEntry>(entry),
+                entry => Assert.IsType<InjectionEntry>(entry),
+                entry => Assert.IsType<InjectionEntry>(entry)
+            );
+        }
+        finally {
+            if (Directory.Exists(repoDir)) {
+                Directory.Delete(repoDir, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public void WorkspaceAttachedInjectActionContent_FailureRefreshesRecentHistoryCacheFromDurableWorkspace() {
+        var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-workspace-injection-failure-refresh-{Guid.NewGuid():N}");
+
+        try {
+            using var repo = Repository.Create(repoDir).Unwrap();
+            var revision = repo.CreateBranch("main").Unwrap();
+            var workspaceRoot = AgentWorkspaceRoot.Create(revision);
+
+            using var session = AgentWorkspaceSession.Open(workspaceRoot);
+            var state = session.RestoreState();
+            state.AppendObservation(new ObservationEntry(), "durable-observation");
+            state.AppendAction(
+                new ActionEntry(
+                    new ActionMessage([
+                        new ActionBlock.ToolCall(new RawToolCall("tool-durable", "durable-tool-call", "{}"))
+                    ]),
+                    new CompletionDescriptor("provider-a", "spec-a", "model-a")
+                )
+            );
+
+            ReplaceCachedRecentHistory(
+                state,
+                CreateAssignedObservationEntry(999UL),
+                CreateAssignedActionEntry(1000UL, "stale-cache-action")
+            );
+            ReplaceCachedLastSerial(state, 1000UL);
+
+            var exception = Assert.Throws<InvalidOperationException>(
+                () => state.InjectActionContent(
+                    new ActionInjectionRequest(
+                        "should-fail",
+                        new InjectionSource(InjectionSourceKind.HostOverride),
+                        InjectedActionContentMode.Text
+                    )
+                )
+            );
+
+            Assert.Equal(
+                "Cannot inject after trailing action because the trailing ActionEntry already contains tool calls. Injection only supports assistant content before tool execution begins.",
+                exception.Message
+            );
+            Assert.Equal(2UL, GetWorkingSet(state).LastSerial);
+            Assert.Equal(2UL, workspaceRoot.History.GetRequiredLastSerial());
+            Assert.Collection(
+                state.RecentHistory,
+                entry => {
+                    var observation = Assert.IsType<ObservationEntry>(entry);
+                    Assert.Equal(1UL, observation.Serial);
+                    Assert.Equal("durable-observation", observation.Notifications);
+                },
+                entry => {
+                    var action = Assert.IsType<ActionEntry>(entry);
+                    Assert.Equal(2UL, action.Serial);
+                    Assert.Equal("durable-tool-call", Assert.Single(action.Message.ToolCalls).ToolCallId);
+                }
+            );
+        }
+        finally {
+            if (Directory.Exists(repoDir)) {
+                Directory.Delete(repoDir, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public void WorkspaceAttachedInjectActionContent_AllowsExplicitModeAfterRecapInjectionShape() {
+        var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-workspace-recap-injection-{Guid.NewGuid():N}");
+
+        try {
+            using var repo = Repository.Create(repoDir).Unwrap();
+            var revision = repo.CreateBranch("main").Unwrap();
+            var workspaceRoot = AgentWorkspaceRoot.Create(revision);
+
+            using var session = AgentWorkspaceSession.Open(workspaceRoot);
+            var state = session.RestoreState();
+            state.AppendObservation(new ObservationEntry(), "first-observation");
+            state.AppendAction(
+                new ActionEntry(
+                    new ActionMessage([new ActionBlock.Text("first-action")]),
+                    new CompletionDescriptor("provider-a", "spec-a", "model-a")
+                )
+            );
+            state.AppendObservation(new ObservationEntry(), "second-observation");
+            state.InjectActionContent(
+                new ActionInjectionRequest(
+                    "seed-injection",
+                    new InjectionSource(InjectionSourceKind.HostOverride),
+                    InjectedActionContentMode.Text
+                )
+            );
+            state.ReplacePrefixWithRecap(3, "summary-text");
+
+            var injected = state.InjectActionContent(
+                new ActionInjectionRequest(
+                    "after-recap",
+                    new InjectionSource(InjectionSourceKind.HostOverride),
+                    InjectedActionContentMode.Thinking
+                )
+            );
+
+            Assert.Equal(6UL, injected.InjectedEntrySerial);
+            Assert.Equal(ActionBlockKind.Thinking, injected.InjectedBlockKind);
+            Assert.True(state.HasPendingActionContinuation);
+            Assert.Equal(6UL, GetWorkingSet(state).LastSerial);
+            Assert.Equal(6UL, workspaceRoot.History.GetRequiredLastSerial());
+            Assert.Collection(
+                state.RecentHistory,
+                entry => {
+                    var recap = Assert.IsType<RecapEntry>(entry);
+                    Assert.Equal(5UL, recap.Serial);
+                    Assert.Equal("summary-text", recap.Content);
+                    Assert.Equal(3UL, recap.InsteadSerial);
+                },
+                entry => {
+                    var injection = Assert.IsType<InjectionEntry>(entry);
+                    Assert.Equal(4UL, injection.Serial);
+                    Assert.Equal("seed-injection", injection.Content);
+                    Assert.Equal(ActionBlockKind.Text, injection.BlockKind);
+                },
+                entry => {
+                    var injection = Assert.IsType<InjectionEntry>(entry);
+                    Assert.Equal(6UL, injection.Serial);
+                    Assert.Equal("after-recap", injection.Content);
+                    Assert.Equal(ActionBlockKind.Thinking, injection.BlockKind);
+                }
+            );
         }
         finally {
             if (Directory.Exists(repoDir)) {

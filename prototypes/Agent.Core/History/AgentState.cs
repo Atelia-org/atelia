@@ -115,13 +115,12 @@ memory_notebook_replace与memory_notebook_replace_span工具就是为你主动�
         if (entry is null) { throw new ArgumentNullException(nameof(entry)); }
         EnsureWorkspaceSessionOpen();
         if (_workspaceSession is not null) {
-            ReloadRecentHistoryFromWorkspaceSession();
+            var mutation = _workspaceSession.AppendAction(entry);
+            ApplyRecentHistorySnapshot(mutation.RecentHistory, mutation.LastSerial);
+            return entry;
         }
         ValidateAppendOrder(entry);
         AppendEntryCore(entry);
-        if (_workspaceSession is not null) {
-            ReloadRecentHistoryFromWorkspaceSession();
-        }
         return entry;
     }
 
@@ -188,21 +187,25 @@ memory_notebook_replace与memory_notebook_replace_span工具就是为你主动�
             throw new ArgumentException("Injected action content must not be null or whitespace.", nameof(request));
         }
         if (_workspaceSession is not null) {
-            ReloadRecentHistoryFromWorkspaceSession();
+            try {
+                var mutation = _workspaceSession.InjectActionContent(request);
+                ApplyRecentHistorySnapshot(mutation.RecentHistory, mutation.LastSerial);
+                LogInjectedActionContent(request.Source.Kind, mutation.Result);
+                return mutation.Result;
+            }
+            catch {
+                ReloadRecentHistoryFromWorkspaceSession();
+                throw;
+            }
         }
+
         if (RecentHistory.Count == 0) {
             throw new InvalidOperationException("Cannot inject action content into empty history. At least one prior ActionEntry is required.");
         }
 
-        var referenceActionIndex = FindLatestActionIndex();
-        if (referenceActionIndex < 0) {
-            throw new InvalidOperationException("Cannot inject action content because no prior ActionEntry exists in history.");
-        }
-
-        var referenceAction = (ActionEntry)RecentHistory[referenceActionIndex];
-        var injectedBlockKind = ResolveInjectedBlockKind(referenceAction, request);
+        var injectedBlockKind = RecentHistoryRules.ResolveInjectedBlockKind(RecentHistory, request);
         if (RecentHistory[^1] is ActionEntry tailAction) {
-            EnsureActionAcceptsInjection(tailAction, context: "inject after trailing action");
+            RecentHistoryRules.EnsureActionAcceptsInjection(tailAction, context: "inject after trailing action");
         }
 
         var injectionEntry = new InjectionEntry(
@@ -212,19 +215,13 @@ memory_notebook_replace与memory_notebook_replace_span工具就是为你主动�
         );
         ValidateAppendOrder(injectionEntry);
         AppendEntryCore(injectionEntry);
-        if (_workspaceSession is not null) {
-            ReloadRecentHistoryFromWorkspaceSession();
-        }
 
-        DebugUtil.Info(
-            "History",
-            $"Injected action continuation serial={injectionEntry.Serial} source={request.Source.Kind} blockKind={injectedBlockKind}"
-        );
-
-        return new ActionInjectionResult(
+        var result = new ActionInjectionResult(
             InjectedEntrySerial: injectionEntry.Serial,
             InjectedBlockKind: injectedBlockKind
         );
+        LogInjectedActionContent(request.Source.Kind, result);
+        return result;
     }
 
     /// <summary>
@@ -332,73 +329,17 @@ memory_notebook_replace与memory_notebook_replace_span工具就是为你主动�
     }
 
     private void ValidateAppendOrder(HistoryEntry entry) {
-        if (RecentHistory.Count == 0) {
-            if (!entry.IsObservationLike) { throw new InvalidOperationException("The first history entry must be an observation-like entry."); }
-            return;
-        }
-
-        var last = RecentHistory[^1];
-        if (IsLegalHistoryTransition(last, entry)) { return; }
-
-        throw new InvalidOperationException($"Illegal history transition. Last={last.Kind}, Next={entry.Kind}");
+        RecentHistoryRules.ValidateAppendOrder(RecentHistory, entry);
     }
 
-    private static bool IsLegalHistoryTransition(HistoryEntry last, HistoryEntry next) {
-        ArgumentNullException.ThrowIfNull(last);
-        ArgumentNullException.ThrowIfNull(next);
-
-        if (last.IsObservationLike) {
-            return next is ActionEntry or InjectionEntry;
-        }
-
-        return (last, next) switch {
-            (ActionEntry, ObservationEntry) => true,
-            (ActionEntry, RecapEntry) => true,
-            (ActionEntry, InjectionEntry) => true,
-            (InjectionEntry, ActionEntry) => true,
-            (InjectionEntry, InjectionEntry) => true,
-            _ => false
-        };
-    }
-
-    private int FindLatestActionIndex() {
-        for (var index = RecentHistory.Count - 1; index >= 0; index--) {
-            if (RecentHistory[index] is ActionEntry) {
-                return index;
-            }
-        }
-
-        return -1;
-    }
-
-    private static ActionBlockKind ResolveInjectedBlockKind(ActionEntry referenceAction, ActionInjectionRequest request) {
-        return request.Mode switch {
-            InjectedActionContentMode.Text => ActionBlockKind.Text,
-            InjectedActionContentMode.Thinking => ActionBlockKind.Thinking,
-            InjectedActionContentMode.MatchRecentActionTail => ResolveBlockKindFromRecentActionTail(referenceAction),
-            _ => throw new ArgumentOutOfRangeException(nameof(request), request.Mode, "Unsupported injected action content mode.")
-        };
-    }
-
-    private static ActionBlockKind ResolveBlockKindFromRecentActionTail(ActionEntry referenceAction) {
-        for (var index = referenceAction.Message.Blocks.Count - 1; index >= 0; index--) {
-            switch (referenceAction.Message.Blocks[index]) {
-                case ActionBlock.ReasoningBlock:
-                    return ActionBlockKind.Thinking;
-                case ActionBlock.Text:
-                    return ActionBlockKind.Text;
-            }
-        }
-
-        return ActionBlockKind.Text;
-    }
-
-    private static void EnsureActionAcceptsInjection(ActionEntry action, string context) {
-        if (action.Message.ToolCalls.Count > 0) {
-            throw new InvalidOperationException(
-                $"Cannot {context} because the trailing ActionEntry already contains tool calls. Injection only supports assistant content before tool execution begins."
-            );
-        }
+    private static void LogInjectedActionContent(
+        InjectionSourceKind sourceKind,
+        ActionInjectionResult result
+    ) {
+        DebugUtil.Info(
+            "History",
+            $"Injected action continuation serial={result.InjectedEntrySerial} source={sourceKind} blockKind={result.InjectedBlockKind}"
+        );
     }
 
     /// <summary>
