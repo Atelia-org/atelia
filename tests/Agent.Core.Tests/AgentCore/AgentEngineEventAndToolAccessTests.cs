@@ -29,9 +29,9 @@ public sealed class AgentEngineEventAndToolAccessTests {
             var observedCountAtEvent = -1;
             HistoryEntryKind? observedLastKind = null;
             host.Engine.ActionProduced += (_, _) => {
-                var snapshot = host.LoadSnapshot();
-                observedCountAtEvent = snapshot.AgentState.RecentHistory.Count;
-                observedLastKind = snapshot.AgentState.RecentHistory[^1].Kind;
+                var recentHistory = host.LoadDurableRecentHistory();
+                observedCountAtEvent = recentHistory.Count;
+                observedLastKind = recentHistory[^1].Kind;
             };
 
             await host.StepAsync(profile);
