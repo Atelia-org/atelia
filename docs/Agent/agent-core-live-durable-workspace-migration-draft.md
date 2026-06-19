@@ -4,9 +4,9 @@
 定位：讨论 `Agent.Core` 如何从当前的 snapshot persistence 模式，迁移到以 StateJournal 为主真相的 live durable workspace 模式。
 
 > Progress note
-> - 最近一次阶段复盘的结论仍是：当前路线值得继续推进；主骨架纠偏已经实质成功，整体完成度现约在 `85%` 左右，但还没到“草案核心目标已全部完成”的程度。
+> - 最近一次阶段复盘的结论仍是：当前路线值得继续推进；主骨架纠偏已经实质成功，整体完成度现约在 `87%` 左右，但还没到“草案核心目标已全部完成”的程度。
 > - 阶段 A / B / E 已基本完成；阶段 C / D 的 append / fold / runtime 主链已基本成形；阶段 F 也已达到“snapshot 降级为 compatibility / diagnostic / import-export 边界”的目标。
-> - 下一轮的高价值入口，已经不再是继续机械清理低收益 snapshot 边角，也不再是“先把 savepoint durable façade 立起来”这一步本身；更自然的后续，是在现有 tail-rewrite substrate 与 `ContextSavepoint` / `RuntimeCheckpoint` durable façade 之上，继续补 active savepoint owner / lifecycle、compaction suppression discipline，以及 single-active pop-route v0 的最小真实调用链。
+> - 下一轮的高价值入口，已经不再是继续机械清理低收益 snapshot 边角，也不再是“先把 savepoint durable façade 立起来”这一步本身；更自然的后续，是在现有 tail-rewrite substrate、durable `ContextSavepoint` / `RuntimeCheckpoint` façade，以及 engine-owned capture/persist seam 之上，继续补 active savepoint lifecycle、compaction suppression discipline，以及 single-active pop-route v0 的最小真实调用链。
 > - `pendingCompaction` live path 已收口到稳定 durable slot 内的字段级 mutation；新 schema 要求预先 seed `pendingCompaction` record，不再兼容缺 key 读取或懒创建；snapshot / full-runtime replace 仍保留 whole-replace 语义。
 > - 阶段 E 的最小收口已落地：repo-backed live 创建路径改为 born-bound，`AgentState`/`AgentEngine` 不再依赖 `AttachWorkspaceRoot(... syncExistingState:true/false)` 或 `AttachRepositoryPersistence(...)` 这类 post-attach 主路径。
 > - `AgentWorkspaceSession` 现已成为 repo-backed live path 的单一 mutation/commit owner：history/meta/runtime 的 live 写入与 `Commit/Dispose` 都直接站在 `AgentWorkspaceRoot` 上；`AgentEngineWorkspaceSnapshotHelper` 已继续收口为围绕 `AgentWorkspaceRoot` 的 internal snapshot helper，公开 non-live surface 只剩 snapshot restore。
@@ -23,6 +23,7 @@
 > - `ReplacePrefixWithRecap(...)` 这一条 recent-history rewrite 主链也已继续收口：live path 现已具备 release-mode split-point 校验、authoritative mutation result、aligned cache delta/backfill、post-mutation fault reload，以及 mid-rewrite fault 时对 durable recent history / `lastSerial` 的 rollback；阶段 C 当前更主要的剩余难点，已从 recap 本身前移到更广义的 future tail-rewrite 与 rich `HistoryEntry` cache 一致性边界。
 > - 阶段 D / future frame metadata 的 durable 前置切口也已开始落地：workspace schema 已前推到 `v4`，create path 预 seed `contextSavepoint` durable slot；internal `ContextSavepoint` / `RuntimeCheckpoint`、`ContextStateBlock` 与 session-level typed query/mutation 已建立，并刻意没有重新扩张 public snapshot contract。
 > - 这一步仍然只是 substrate，不是完整 wizard/frame runtime：当前尚未引入 active savepoint owner、capture/clear 事务、crash-recovery 语义或 retained-result merge；它的价值在于先把“应 durable 化的 savepoint/runtime 边界”正式锚进 live workspace，而不是继续让它停留在文档层。
+> - 在此基础上，`AgentEngine` 也已开始承担 savepoint owner 的最小职责：`CaptureRuntimeCheckpoint()` / `CaptureCurrentContextSavepoint()` / `PersistCurrentContextSavepoint()` / `ClearPersistedContextSavepoint()` 已落地；其中 live path 的 history anchor / turn lock 会优先取 authoritative durable recent-history，而 runtime checkpoint 仍由 engine 当前 runtime overlay 组装。
 
 相关文档：
 - `docs/Agent/agent-core-branching-infrastructure-backlog.md`
@@ -470,7 +471,8 @@ AgentWorkspaceRoot
 
 - `pending tool results`、`resolved profile checkpoint`、`locked compaction split index`、`pending compaction`、`tool session execution sequence` 这些 runtime 主链状态，已经基本迁到 session-owned authoritative mutation/query + local backfill 方向。
 - `future frame metadata` 也不再是完全空白：`ContextSavepoint` / `RuntimeCheckpoint` 的 internal durable façade 已落地，schema/create-path seed、root façade、session mutation/query 与 roundtrip 测试都已就位。
-- 但这并不等于阶段 D 已彻底完成；当前缺的不是“再加一层 record”，而是让谁来拥有这些 metadata、在什么事务边界 capture/clear、以及它如何真正服务 active wizard / pop-route / frame recovery 主链。
+- `AgentEngine` 也已补上最小 capture/persist seam：savepoint 的 `EntryState` 与 runtime checkpoint 由 engine 负责组装，live path 下的 history anchor / turn lock 则优先从 authoritative durable recent-history 取数，避免把本地 cache 漂移升级成 durable control-plane 漂移。
+- 但这并不等于阶段 D 已彻底完成；当前缺的已不再是“再加一层 record”，而是 active savepoint lifecycle、compaction suppression 语义、capture/clear 的更强事务护栏，以及它如何真正服务 active wizard / pop-route / frame recovery 主链。
 
 ### 阶段 E：重构 `AgentEngineHost` / engine 创建方式
 
