@@ -68,6 +68,15 @@ internal sealed class AgentStateWorkingSet {
         LastSerial = lastSerial;
     }
 
+    public void ReplaceLastHistoryEntry(HistoryEntry entry) {
+        ArgumentNullException.ThrowIfNull(entry);
+        if (_recentHistory.Count == 0) {
+            throw new InvalidOperationException("Cannot replace the last history entry because the working set is empty.");
+        }
+
+        _recentHistory[^1] = entry;
+    }
+
     public void EnqueuePendingNotification(string notification) {
         ArgumentNullException.ThrowIfNull(notification);
         _pendingNotifications.Enqueue(notification);

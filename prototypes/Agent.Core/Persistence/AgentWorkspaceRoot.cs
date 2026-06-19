@@ -202,6 +202,17 @@ internal sealed class AgentWorkspaceRoot {
             );
         }
 
+        public void ReplaceRecentAt(int index, HistoryEntry entry) {
+            ArgumentNullException.ThrowIfNull(entry);
+
+            if (!_workspaceRoot.GetRequiredHistory().TrySetAt<DurableObject>(
+                    index,
+                    AgentWorkspaceRecordCodec.WriteHistoryEntry(_workspaceRoot.Revision, entry)
+                )) {
+                throw new ArgumentOutOfRangeException(nameof(index), index, "History index is out of range.");
+            }
+        }
+
         public IReadOnlyList<HistoryEntry> LoadRecent() {
             var historyContainer = _workspaceRoot.GetRequiredHistory();
             var recentHistory = new List<HistoryEntry>(historyContainer.Count);

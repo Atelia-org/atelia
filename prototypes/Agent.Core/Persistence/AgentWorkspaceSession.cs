@@ -8,7 +8,8 @@ internal enum AgentWorkspaceSessionFaultPoint {
     AfterReplacePendingToolResultsMutation,
     AfterUpsertPendingToolResultMutation,
     AfterUpdateTurnRuntimeMutation,
-    AfterUpdatePendingCompactionMutation
+    AfterUpdatePendingCompactionMutation,
+    AfterFoldPendingNotificationsIntoCurrentObservationMutation
 }
 
 internal sealed class AgentWorkspaceSession : IDisposable {
@@ -220,6 +221,40 @@ internal sealed class AgentWorkspaceSession : IDisposable {
         return _workspaceRoot.History.LoadPendingNotifications();
     }
 
+    internal WorkspaceFoldPendingNotificationsIntoObservationMutationResult FoldPendingNotificationsIntoCurrentObservation() {
+        EnsureOpenForState();
+
+        var authoritativePreRecentHistory = _workspaceRoot.History.LoadRecent();
+        var authoritativePrePendingNotifications = _workspaceRoot.History.LoadPendingNotifications();
+        var lastSerial = _workspaceRoot.History.GetRequiredLastSerial();
+        if (authoritativePrePendingNotifications.Count == 0) {
+            return new WorkspaceFoldPendingNotificationsIntoObservationMutationResult(
+                AuthoritativePreRecentHistory: authoritativePreRecentHistory,
+                AuthoritativePrePendingNotifications: authoritativePrePendingNotifications,
+                UpdatedObservation: null,
+                LastSerial: lastSerial
+            );
+        }
+
+        if (authoritativePreRecentHistory.Count == 0 || authoritativePreRecentHistory[^1] is not ObservationEntry observation) {
+            throw new InvalidOperationException("Cannot fold pending notifications because the durable recent-history tail is not an ObservationEntry.");
+        }
+
+        var collapsedNotifications = CollapseNotifications(authoritativePrePendingNotifications)
+            ?? throw new InvalidOperationException("Pending notifications snapshot unexpectedly collapsed to null.");
+        var updatedObservation = ObservationEntryMutationHelper.CloneWithMergedNotifications(observation, collapsedNotifications);
+        _workspaceRoot.History.ReplaceRecentAt(authoritativePreRecentHistory.Count - 1, updatedObservation);
+        _workspaceRoot.History.ReplacePendingNotifications(Array.Empty<string>());
+        ThrowInjectedFaultIfAny(AgentWorkspaceSessionFaultPoint.AfterFoldPendingNotificationsIntoCurrentObservationMutation);
+
+        return new WorkspaceFoldPendingNotificationsIntoObservationMutationResult(
+            AuthoritativePreRecentHistory: authoritativePreRecentHistory,
+            AuthoritativePrePendingNotifications: authoritativePrePendingNotifications,
+            UpdatedObservation: updatedObservation,
+            LastSerial: lastSerial
+        );
+    }
+
     internal void ReplacePrefixWithRecap(int splitIndex, string summary) {
         EnsureOpenForState();
 
@@ -358,3 +393,12 @@ internal sealed record WorkspaceInjectionMutationResult(
     ulong LastSerial,
     ActionInjectionResult Result
 );
+
+internal sealed record WorkspaceFoldPendingNotificationsIntoObservationMutationResult(
+    IReadOnlyList<HistoryEntry> AuthoritativePreRecentHistory,
+    IReadOnlyList<string> AuthoritativePrePendingNotifications,
+    ObservationEntry? UpdatedObservation,
+    ulong LastSerial
+) {
+    public bool FoldApplied => UpdatedObservation is not null;
+}

@@ -626,6 +626,10 @@ public partial class AgentEngine {
             return StepOutcome.FromStateMutation();
         }
 
+        if (state == AgentRunState.PendingInput && _state.FoldPendingNotificationsIntoCurrentObservationForPendingInput()) {
+            estimatedContextTokens = EstimateCurrentContextTokens();
+        }
+
         var invocation = resolvedProfile.ToCompletionDescriptor();
         var compactionPreview = BuildCompactionPreview();
         var renderContext = new AppRenderContext(

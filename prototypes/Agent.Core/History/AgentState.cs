@@ -272,6 +272,54 @@ memory_notebook_replace与memory_notebook_replace_span工具就是为你主动�
         return result;
     }
 
+    internal bool FoldPendingNotificationsIntoCurrentObservationForPendingInput() {
+        EnsureWorkspaceSessionOpen();
+        if (!HasPendingNotification) {
+            return false;
+        }
+
+        if (_workspaceSession is not null) {
+            try {
+                var mutation = _workspaceSession.FoldPendingNotificationsIntoCurrentObservation();
+                if (!mutation.FoldApplied) {
+                    if (!IsRecentHistoryCacheAligned(mutation.AuthoritativePreRecentHistory)
+                        || !IsPendingNotificationsCacheAligned(mutation.AuthoritativePrePendingNotifications)) {
+                        ReloadWorkingSetFromWorkspaceSession();
+                    }
+
+                    return false;
+                }
+
+                if (!TryApplyCurrentObservationNotificationFoldDelta(
+                    mutation.AuthoritativePreRecentHistory,
+                    mutation.AuthoritativePrePendingNotifications,
+                    mutation.UpdatedObservation!,
+                    mutation.LastSerial
+                )) {
+                    ReloadWorkingSetFromWorkspaceSession();
+                }
+
+                return true;
+            }
+            catch {
+                ReloadWorkingSetFromWorkspaceSession();
+                throw;
+            }
+        }
+
+        if (RecentHistory.Count == 0 || RecentHistory[^1] is not ObservationEntry observation) {
+            throw new InvalidOperationException("Cannot fold pending notifications because the current tail is not an ObservationEntry.");
+        }
+
+        var notifications = TakeoutPendingNotifications();
+        if (notifications is null) {
+            return false;
+        }
+
+        _workingSet.ReplaceLastHistoryEntry(ObservationEntryMutationHelper.CloneWithMergedNotifications(observation, notifications));
+        return true;
+    }
+
     /// <summary>
     /// 更新系统提示词。
     /// </summary>

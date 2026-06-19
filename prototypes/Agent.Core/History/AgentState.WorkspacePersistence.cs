@@ -76,6 +76,27 @@ public sealed partial class AgentState {
         return true;
     }
 
+    private bool TryApplyCurrentObservationNotificationFoldDelta(
+        IReadOnlyList<HistoryEntry> authoritativePreRecentHistory,
+        IReadOnlyList<string> authoritativePrePendingNotifications,
+        ObservationEntry updatedObservation,
+        ulong lastSerial
+    ) {
+        if (!IsRecentHistoryCacheAligned(authoritativePreRecentHistory)
+            || !IsPendingNotificationsCacheAligned(authoritativePrePendingNotifications)) {
+            return false;
+        }
+
+        if (_workingSet.RecentHistory.Count == 0 || _workingSet.RecentHistory[^1] is not ObservationEntry) {
+            return false;
+        }
+
+        _workingSet.ClearPendingNotifications();
+        _workingSet.ReplaceLastHistoryEntry(updatedObservation);
+        _workingSet.RememberAllocatedSerial(lastSerial);
+        return true;
+    }
+
     private bool IsRecentHistoryCacheAligned(IReadOnlyList<HistoryEntry> authoritativeRecentHistory) {
         ArgumentNullException.ThrowIfNull(authoritativeRecentHistory);
 

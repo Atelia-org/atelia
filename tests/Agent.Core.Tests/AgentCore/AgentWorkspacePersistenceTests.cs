@@ -2345,6 +2345,127 @@ public sealed class AgentWorkspacePersistenceTests {
     }
 
     [Fact]
+    public async Task Host_PendingInputLateNotification_FoldsIntoCurrentObservationBeforeModelRequest() {
+        var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-host-pending-input-late-notification-{Guid.NewGuid():N}");
+
+        try {
+            var client = new RecordingQueueCompletionClient(
+                new ActionMessage([new ActionBlock.Text("assistant-output")])
+            );
+            var profile = CreateFullFeatureProfile(client, "model-pending-input-late");
+
+            using var host = AgentEngineHost.CreateNew(repoDir);
+            var initialHistoryDeque = GetHistoryDeque(host.WorkspaceRoot);
+            host.Engine.WaitingInput += static (_, args) => {
+                args.ShouldContinue = true;
+                args.Observation = IncomingObservation.FromRecentEvents("current-input");
+            };
+
+            await host.StepAsync(profile);
+            host.Engine.AppendNotification("late-notification");
+
+            await host.StepAsync(profile);
+
+            var request = Assert.Single(client.Requests);
+            AssertSingleObservationRequestContent(request, "current-input\nlate-notification");
+            Assert.Empty(host.LoadDurablePendingNotifications());
+            Assert.Same(initialHistoryDeque, GetHistoryDeque(host.WorkspaceRoot));
+
+            var durableObservation = Assert.IsType<ObservationEntry>(host.LoadDurableRecentHistory()[0]);
+            Assert.Equal("current-input\nlate-notification", durableObservation.Notifications);
+        }
+        finally {
+            if (Directory.Exists(repoDir)) {
+                Directory.Delete(repoDir, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task Host_PendingInputRetry_LateNotificationAppearsInRetryRequest() {
+        var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-host-pending-input-retry-late-notification-{Guid.NewGuid():N}");
+
+        try {
+            var client = new RecordingQueueCompletionClient(
+                new InvalidOperationException("simulated provider failure"),
+                new ActionMessage([new ActionBlock.Text("assistant-output")])
+            );
+            var profile = CreateFullFeatureProfile(client, "model-pending-input-retry");
+
+            using var host = AgentEngineHost.CreateNew(repoDir);
+            host.Engine.WaitingInput += static (_, args) => {
+                args.ShouldContinue = true;
+                args.Observation = IncomingObservation.FromRecentEvents("current-input");
+            };
+
+            await host.StepAsync(profile);
+            await Assert.ThrowsAsync<InvalidOperationException>(() => host.StepAsync(profile));
+
+            host.Engine.AppendNotification("late-after-failure");
+
+            await host.StepAsync(profile);
+
+            Assert.Equal(2, client.Requests.Count);
+            AssertSingleObservationRequestContent(client.Requests[0], "current-input");
+            AssertSingleObservationRequestContent(client.Requests[1], "current-input\nlate-after-failure");
+            Assert.Empty(host.LoadDurablePendingNotifications());
+
+            var durableObservation = Assert.IsType<ObservationEntry>(host.LoadDurableRecentHistory()[0]);
+            Assert.Equal("current-input\nlate-after-failure", durableObservation.Notifications);
+        }
+        finally {
+            if (Directory.Exists(repoDir)) {
+                Directory.Delete(repoDir, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task Host_OpenExisting_PendingInputRetry_FoldsLateNotificationBeforeRetryRequest() {
+        var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-host-pending-input-reopen-retry-late-notification-{Guid.NewGuid():N}");
+
+        try {
+            var failingClient = new RecordingQueueCompletionClient(
+                new InvalidOperationException("simulated provider failure")
+            );
+            var failingProfile = CreateFullFeatureProfile(failingClient, "model-pending-input-reopen-retry");
+
+            using (var host = AgentEngineHost.CreateNew(repoDir)) {
+                host.Engine.WaitingInput += static (_, args) => {
+                    args.ShouldContinue = true;
+                    args.Observation = IncomingObservation.FromRecentEvents("current-input");
+                };
+
+                await host.StepAsync(failingProfile);
+                await Assert.ThrowsAsync<InvalidOperationException>(() => host.StepAsync(failingProfile));
+
+                host.Engine.AppendNotification("late-after-reopen");
+                host.SaveAndCommit();
+            }
+
+            var retryClient = new RecordingQueueCompletionClient(
+                new ActionMessage([new ActionBlock.Text("assistant-output")])
+            );
+            var retryProfile = CreateFullFeatureProfile(retryClient, "model-pending-input-reopen-retry");
+
+            using var reopened = AgentEngineHost.OpenExisting(repoDir);
+            await reopened.StepAsync(retryProfile);
+
+            var request = Assert.Single(retryClient.Requests);
+            AssertSingleObservationRequestContent(request, "current-input\nlate-after-reopen");
+            Assert.Empty(reopened.LoadDurablePendingNotifications());
+
+            var durableObservation = Assert.IsType<ObservationEntry>(reopened.LoadDurableRecentHistory()[0]);
+            Assert.Equal("current-input\nlate-after-reopen", durableObservation.Notifications);
+        }
+        finally {
+            if (Directory.Exists(repoDir)) {
+                Directory.Delete(repoDir, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
     public void Host_Recap_PersistsAcrossReopen() {
         var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-host-recap-{Guid.NewGuid():N}");
 
@@ -3615,6 +3736,11 @@ public sealed class AgentWorkspacePersistenceTests {
         );
     }
 
+    private static void AssertSingleObservationRequestContent(CompletionRequest request, string expectedContent) {
+        var observation = Assert.IsType<ObservationMessage>(Assert.Single(request.Context));
+        Assert.Equal(expectedContent, observation.Content);
+    }
+
     private static void AssertObservationActionInjectionHistory(
         IReadOnlyList<HistoryEntry> history,
         string observationNotifications,
@@ -3903,6 +4029,45 @@ public sealed class AgentWorkspacePersistenceTests {
                     new CompletionDescriptor(Name, ApiSpecId, request.ModelId)
                 )
             );
+        }
+    }
+
+    private sealed class RecordingQueueCompletionClient : ICompletionClient {
+        private readonly Queue<object> _outcomes;
+
+        public RecordingQueueCompletionClient(params object[] outcomes) {
+            _outcomes = new Queue<object>(outcomes);
+        }
+
+        public string Name => "test-provider";
+
+        public string ApiSpecId => "test-spec";
+
+        public List<CompletionRequest> Requests { get; } = [];
+
+        public Task<CompletionResult> StreamCompletionAsync(
+            CompletionRequest request,
+            CompletionStreamObserver? observer,
+            CancellationToken cancellationToken = default
+        ) {
+            _ = observer;
+            _ = cancellationToken;
+            Requests.Add(request);
+
+            var outcome = _outcomes.Count > 0
+                ? _outcomes.Dequeue()
+                : new ActionMessage([new ActionBlock.Text("default-output")]);
+
+            return outcome switch {
+                Exception exception => Task.FromException<CompletionResult>(exception),
+                ActionMessage message => Task.FromResult(
+                    new CompletionResult(
+                        message,
+                        new CompletionDescriptor(Name, ApiSpecId, request.ModelId)
+                    )
+                ),
+                _ => throw new InvalidOperationException($"Unsupported scripted completion outcome type: {outcome.GetType().FullName}")
+            };
         }
     }
 
