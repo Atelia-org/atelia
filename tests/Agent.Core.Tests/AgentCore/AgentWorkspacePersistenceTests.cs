@@ -651,6 +651,79 @@ public sealed class AgentWorkspacePersistenceTests {
     }
 
     [Fact]
+    public void WorkspaceAttachedAppendToolResults_FailureRefreshesWorkingSetFromDurableWorkspace() {
+        var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-workspace-append-tool-results-failure-refresh-{Guid.NewGuid():N}");
+
+        try {
+            using var repo = Repository.Create(repoDir).Unwrap();
+            var revision = repo.CreateBranch("main").Unwrap();
+            var workspaceRoot = AgentWorkspaceRoot.Create(revision);
+
+            using var session = AgentWorkspaceSession.Open(workspaceRoot);
+            var state = session.RestoreState();
+            state.AppendObservation(new ObservationEntry(), "durable-observation");
+            state.AppendAction(
+                new ActionEntry(
+                    new ActionMessage([new ActionBlock.Text("durable-action")]),
+                    new CompletionDescriptor("provider-a", "spec-a", "model-a")
+                )
+            );
+            state.InjectActionContent(
+                new ActionInjectionRequest(
+                    "durable-injection",
+                    new InjectionSource(InjectionSourceKind.HostOverride),
+                    InjectedActionContentMode.Text
+                )
+            );
+            state.AppendNotification("durable-notification");
+
+            ReplaceCachedRecentHistory(
+                state,
+                CreateAssignedObservationEntry(999UL),
+                CreateAssignedActionEntry(1000UL, "stale-cache-action")
+            );
+            ReplaceCachedLastSerial(state, 1000UL);
+            ReplaceCachedPendingNotifications(state, "stale-cached-notification");
+
+            var exception = Assert.Throws<InvalidOperationException>(
+                () => state.AppendToolResults(
+                    new ToolResultsEntry([
+                        CreateToolCallExecutionResult("tool-alpha", "call-1", "tool-output")
+                    ])
+                )
+            );
+
+            Assert.Equal("Cannot append tool results while a pending action continuation is open.", exception.Message);
+            Assert.Collection(
+                state.RecentHistory,
+                entry => {
+                    var observation = Assert.IsType<ObservationEntry>(entry);
+                    Assert.Equal(1UL, observation.Serial);
+                    Assert.Equal("durable-observation", observation.Notifications);
+                },
+                entry => {
+                    var action = Assert.IsType<ActionEntry>(entry);
+                    Assert.Equal(2UL, action.Serial);
+                    Assert.Equal("durable-action", action.Message.GetFlattenedText());
+                },
+                entry => {
+                    var injection = Assert.IsType<InjectionEntry>(entry);
+                    Assert.Equal(3UL, injection.Serial);
+                    Assert.Equal("durable-injection", injection.Content);
+                }
+            );
+            Assert.Equal(["durable-notification"], GetCachedPendingNotifications(state));
+            Assert.Equal(3UL, GetWorkingSet(state).LastSerial);
+            Assert.Equal(3UL, workspaceRoot.History.GetRequiredLastSerial());
+        }
+        finally {
+            if (Directory.Exists(repoDir)) {
+                Directory.Delete(repoDir, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
     public void WorkspaceAttachedAppendToolResults_UsesDurableRecentHistoryAndPendingNotificationsAsAuthoritativeSource() {
         var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-workspace-append-tool-results-authoritative-{Guid.NewGuid():N}");
 
