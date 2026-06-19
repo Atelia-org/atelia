@@ -82,30 +82,6 @@ public partial class AgentEngine {
         );
     }
 
-    /// <summary>
-    /// 从状态快照重建一个新的、未绑定 live durable host 的 <see cref="AgentEngine"/>。
-    /// 低层重载保留显式 resolver 逃生口，用于 compatibility/import-export/public non-live 宿主不想引入 <see cref="LlmProfileRegistry"/> 的场景。
-    /// </summary>
-    public static AgentEngine CreateFromStateSnapshot(
-        AgentEngineStateSnapshot snapshot,
-        Func<LlmProfileCheckpoint, LlmProfile?>? resolvedProfileResolver,
-        IEnumerable<IApp>? initialApps = null,
-        IEnumerable<ITool>? initialTools = null,
-        IIdleObservationProvider? idleProvider = null,
-        Func<DateTimeOffset>? utcNowProvider = null,
-        AutoCompactionOptions? autoCompaction = null
-    ) {
-        return CreateFromStateSnapshotCore(
-            snapshot,
-            resolvedProfileResolver,
-            initialApps,
-            initialTools,
-            idleProvider,
-            utcNowProvider,
-            autoCompaction
-        );
-    }
-
     private static AgentEngine CreateFromStateSnapshotCore(
         AgentEngineStateSnapshot snapshot,
         Func<LlmProfileCheckpoint, LlmProfile?>? resolvedProfileResolver,

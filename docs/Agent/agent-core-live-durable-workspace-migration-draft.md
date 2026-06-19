@@ -331,7 +331,7 @@ AgentWorkspaceRoot
 - 引入了 internal `AgentWorkspaceSession`
 - `AgentState` 的 durable history / system prompt / notifications 写链与 `AgentEngine` 的 runtime / commit 写链已统一挂到同一个 session 宿主
 - repo-backed born-bound live engine 持有真实 session
-- `AgentEngineWorkspaceSnapshotHelper` 已收回为 internal static snapshot helper；公开的 non-live restore surface 只剩 `AgentEngineStateSnapshot` + `CreateFromStateSnapshot(...)`，且 snapshot/public 路径仍明确不持有 session
+- `AgentEngineWorkspaceSnapshotHelper` 已收回为 internal static snapshot helper；公开的 non-live restore surface 只剩 `AgentEngineStateSnapshot` + `CreateFromStateSnapshot(..., LlmProfileRegistry?)`，且 snapshot/public 路径仍明确不持有 session
 
 长期看，这个方向是反着的。
 更合理的关系应是：

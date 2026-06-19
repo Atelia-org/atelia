@@ -2245,7 +2245,7 @@ public sealed class AgentWorkspacePersistenceTests {
     }
 
     [Fact]
-    public void CreateFromStateSnapshot_RejectsResolvedProfileResolverWithMismatchedSoftCap() {
+    public void CreateFromStateSnapshot_RejectsRegistryWithoutCompatibleSoftCap() {
         var snapshot = CreateSnapshotFixture();
         var mismatchedProfile = new LlmProfile(
             new NoopCompletionClient("provider-b", "spec-b"),
@@ -2256,10 +2256,14 @@ public sealed class AgentWorkspacePersistenceTests {
         );
 
         var ex = Assert.Throws<InvalidOperationException>(
-            () => AgentEngine.CreateFromStateSnapshot(snapshot, _ => mismatchedProfile)
+            () => AgentEngine.CreateFromStateSnapshot(
+                snapshot,
+                new LlmProfileRegistry([mismatchedProfile])
+            )
         );
 
-        Assert.Contains("soft-context budget", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("no reusable resolver/restore seam", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Missing checkpoint", ex.Message, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -2942,6 +2946,21 @@ public sealed class AgentWorkspacePersistenceTests {
         Assert.DoesNotContain(
             typeof(AgentEngine).GetMethods(BindingFlags.Static | BindingFlags.Public),
             static method => method.Name == "CreateFromRoot"
+        );
+    }
+
+    [Fact]
+    public void AgentEngine_PublicSurface_DoesNotExposeResolverBasedSnapshotRestoreOverload() {
+        Assert.DoesNotContain(
+            typeof(AgentEngine).GetMethods(BindingFlags.Static | BindingFlags.Public),
+            static method => method.Name == "CreateFromStateSnapshot"
+                && method.GetParameters() is [
+                    { ParameterType: var first },
+                    { ParameterType: var second },
+                    ..
+                ]
+                && first == typeof(AgentEngineStateSnapshot)
+                && second == typeof(Func<LlmProfileCheckpoint, LlmProfile?>)
         );
     }
 
