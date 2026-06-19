@@ -93,6 +93,11 @@ internal sealed class AgentWorkspaceSession : IDisposable {
         );
     }
 
+    internal CompactionCheckpoint? LoadPendingCompaction() {
+        EnsureOpenForEngine();
+        return _workspaceRoot.RuntimeState.LoadPendingCompaction();
+    }
+
     internal (IReadOnlyList<HistoryEntry> RecentHistory, ulong LastSerial) LoadRecentHistorySnapshot() {
         EnsureOpenForState();
         return (
@@ -277,24 +282,23 @@ internal sealed class AgentWorkspaceSession : IDisposable {
         return LoadTurnRuntimeState();
     }
 
-    internal void SetPendingCompaction(CompactionCheckpoint pendingCompaction) {
-        ArgumentNullException.ThrowIfNull(pendingCompaction);
-
+    internal CompactionCheckpoint? UpdatePendingCompaction(CompactionCheckpoint? pendingCompaction) {
         EnsureOpenForEngine();
         _workspaceRoot.Meta.Stamp();
-        _workspaceRoot.RuntimeState.SetPendingCompaction(pendingCompaction);
+        if (pendingCompaction is null) {
+            _workspaceRoot.RuntimeState.ClearPendingCompaction();
+        }
+        else {
+            _workspaceRoot.RuntimeState.SetPendingCompaction(pendingCompaction);
+        }
+
+        return _workspaceRoot.RuntimeState.LoadPendingCompaction();
     }
 
-    internal void ClearPendingCompaction() {
+    internal long AllocateToolSessionExecutionSequence() {
         EnsureOpenForEngine();
         _workspaceRoot.Meta.Stamp();
-        _workspaceRoot.RuntimeState.ClearPendingCompaction();
-    }
-
-    internal void SetToolSessionExecutionSequence(long executionSequence) {
-        EnsureOpenForEngine();
-        _workspaceRoot.Meta.Stamp();
-        _workspaceRoot.RuntimeState.SetToolSessionExecutionSequence(executionSequence);
+        return _workspaceRoot.RuntimeState.AllocateNextToolSessionExecutionSequence();
     }
 
     private void AttachPendingNotifications(ObservationEntry entry, string? inlineNotifications = null) {

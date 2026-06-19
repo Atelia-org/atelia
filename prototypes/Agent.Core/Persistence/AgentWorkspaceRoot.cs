@@ -292,6 +292,17 @@ internal sealed class AgentWorkspaceRoot {
                 : 0L;
         }
 
+        public long AllocateNextToolSessionExecutionSequence() {
+            var current = GetToolSessionExecutionSequenceOrDefault();
+            if (current < 0) {
+                throw new InvalidDataException("Tool session execution sequence checkpoint must be greater than or equal to zero.");
+            }
+
+            var next = checked(current + 1);
+            SetToolSessionExecutionSequence(next);
+            return next;
+        }
+
         public void ReplacePendingToolResults(IReadOnlyList<ToolCallExecutionResult> pendingResults) {
             ArgumentNullException.ThrowIfNull(pendingResults);
 

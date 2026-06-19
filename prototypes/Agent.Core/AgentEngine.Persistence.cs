@@ -316,13 +316,7 @@ public partial class AgentEngine {
                 runtimeState.LockedCompactionSplitIndex
             )
         );
-        _compactionRequest = runtimeState.PendingCompaction is null
-            ? null
-            : new CompactionRequest(
-                runtimeState.PendingCompaction.SplitIndex,
-                runtimeState.PendingCompaction.SystemPrompt,
-                runtimeState.PendingCompaction.SummarizePrompt
-            );
+        ApplyPendingCompactionSnapshot(runtimeState.PendingCompaction);
 
         if (runtimeState.ToolSessionExecutionSequence > 0) {
             EnsureSession().RestoreExecutionSequence(runtimeState.ToolSessionExecutionSequence);
@@ -402,25 +396,30 @@ public partial class AgentEngine {
     private void PersistPendingCompaction() {
         if (_workspaceSession is null) { return; }
 
-        if (_compactionRequest.HasValue) {
-            _workspaceSession.SetPendingCompaction(
-                new CompactionCheckpoint(
-                    _compactionRequest.Value.SplitIndex,
-                    _compactionRequest.Value.SystemPrompt,
-                    _compactionRequest.Value.SummarizePrompt
-                )
-            );
-            return;
+        var pendingCompaction = _compactionRequest.HasValue
+            ? new CompactionCheckpoint(
+                _compactionRequest.Value.SplitIndex,
+                _compactionRequest.Value.SystemPrompt,
+                _compactionRequest.Value.SummarizePrompt
+            )
+            : null;
+
+        try {
+            ApplyPendingCompactionSnapshot(_workspaceSession.UpdatePendingCompaction(pendingCompaction));
         }
-
-        _workspaceSession.ClearPendingCompaction();
+        catch {
+            ApplyPendingCompactionSnapshot(_workspaceSession.LoadPendingCompaction());
+            throw;
+        }
     }
 
-    private void PersistToolSessionExecutionSequence() {
-        _workspaceSession?.SetToolSessionExecutionSequence(_toolSession?.LastIssuedExecutionSequence ?? 0);
-    }
-
-    private void PersistToolSessionExecutionSequence(long executionSequence) {
-        _workspaceSession?.SetToolSessionExecutionSequence(executionSequence);
+    private void ApplyPendingCompactionSnapshot(CompactionCheckpoint? pendingCompaction) {
+        _compactionRequest = pendingCompaction is null
+            ? null
+            : new CompactionRequest(
+                pendingCompaction.SplitIndex,
+                pendingCompaction.SystemPrompt,
+                pendingCompaction.SummarizePrompt
+            );
     }
 }

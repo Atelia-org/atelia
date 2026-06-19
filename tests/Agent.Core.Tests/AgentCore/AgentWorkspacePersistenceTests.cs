@@ -1643,6 +1643,62 @@ public sealed class AgentWorkspacePersistenceTests {
     }
 
     [Fact]
+    public void WorkspaceSessionUpdatePendingCompaction_ReturnsUpdatedSnapshot() {
+        var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-pending-compaction-session-update-{Guid.NewGuid():N}");
+
+        try {
+            using var repo = Repository.Create(repoDir).Unwrap();
+            var revision = repo.CreateBranch("main").Unwrap();
+            var workspaceRoot = AgentWorkspaceRoot.Create(revision);
+            using var session = AgentWorkspaceSession.Open(workspaceRoot);
+            var pendingCompactionRecord = GetPendingCompactionRecord(workspaceRoot);
+            var expected = new CompactionCheckpoint(3, "live-system", "live-prompt");
+
+            var updated = session.UpdatePendingCompaction(expected);
+
+            Assert.Same(pendingCompactionRecord, GetPendingCompactionRecord(workspaceRoot));
+            Assert.Equal(expected, updated);
+            Assert.Equal(expected, session.LoadPendingCompaction());
+
+            var cleared = session.UpdatePendingCompaction(null);
+
+            Assert.Same(pendingCompactionRecord, GetPendingCompactionRecord(workspaceRoot));
+            Assert.Null(cleared);
+            Assert.Null(session.LoadPendingCompaction());
+        }
+        finally {
+            if (Directory.Exists(repoDir)) {
+                Directory.Delete(repoDir, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public void WorkspaceSessionAllocateToolSessionExecutionSequence_ReturnsAuthoritativeSequence() {
+        var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-tool-sequence-session-allocate-{Guid.NewGuid():N}");
+
+        try {
+            using var repo = Repository.Create(repoDir).Unwrap();
+            var revision = repo.CreateBranch("main").Unwrap();
+            var workspaceRoot = AgentWorkspaceRoot.Create(revision);
+            using var session = AgentWorkspaceSession.Open(workspaceRoot);
+
+            var first = session.AllocateToolSessionExecutionSequence();
+            var second = session.AllocateToolSessionExecutionSequence();
+
+            Assert.Equal(1L, first);
+            Assert.Equal(2L, second);
+            Assert.Equal(2L, session.LoadRuntimeState().ToolSessionExecutionSequence);
+            Assert.Equal(2L, workspaceRoot.RuntimeState.GetToolSessionExecutionSequenceOrDefault());
+        }
+        finally {
+            if (Directory.Exists(repoDir)) {
+                Directory.Delete(repoDir, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
     public void WorkspaceSessionReplacePendingToolResults_ReturnsUpdatedPendingResultsSnapshot() {
         var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-pending-results-session-replace-{Guid.NewGuid():N}");
 
@@ -1719,7 +1775,7 @@ public sealed class AgentWorkspacePersistenceTests {
             using var session = AgentWorkspaceSession.Open(workspaceRoot);
             var livePendingCompaction = GetPendingCompactionRecord(workspaceRoot);
 
-            session.SetPendingCompaction(new CompactionCheckpoint(2, "live-system", "live-prompt"));
+            session.UpdatePendingCompaction(new CompactionCheckpoint(2, "live-system", "live-prompt"));
             Assert.Same(livePendingCompaction, GetPendingCompactionRecord(workspaceRoot));
 
             AgentEngineStateRoot.FromRoot(workspaceRoot.Root).Save(

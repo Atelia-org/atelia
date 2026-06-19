@@ -237,9 +237,9 @@ public partial class AgentEngine {
             _toolSession.Registry = registry;
         }
 
-        _toolSession.ExecutionSequenceAllocated = _workspaceSession is null
+        _toolSession.AuthoritativeExecutionSequenceAllocator = _workspaceSession is null
             ? null
-            : PersistToolSessionExecutionSequence;
+            : _workspaceSession.AllocateToolSessionExecutionSequence;
 
         return _toolSession;
     }
@@ -695,7 +695,6 @@ public partial class AgentEngine {
         var session = EnsureSession();
         var result = await session.ExecuteAsync(nextCall, cancellationToken).ConfigureAwait(false);
         UpsertPendingToolResult(result);
-        PersistToolSessionExecutionSequence();
         var activeProfile = _turnRuntime.ActiveToolExecutionProfile
             ?? throw new InvalidOperationException("Tool execution completed without an active tool-execution profile.");
         deferredEvents.Add(
