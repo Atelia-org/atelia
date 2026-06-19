@@ -271,17 +271,24 @@ internal sealed class AgentWorkspaceRoot {
         public void ReplacePrefixWithRecap(int splitIndex, RecapEntry recap) {
             ArgumentNullException.ThrowIfNull(recap);
 
-            var recentHistory = LoadRecent();
-            if (splitIndex < 1 || splitIndex >= recentHistory.Count) {
+            var history = _workspaceRoot.GetRequiredHistory();
+            if (splitIndex < 1 || splitIndex >= history.Count) {
                 throw new ArgumentOutOfRangeException(nameof(splitIndex), splitIndex, "splitIndex must replace a non-empty prefix and preserve a non-empty suffix.");
             }
 
-            var replacedHistory = new List<HistoryEntry>(recentHistory.Count - splitIndex + 1) { recap };
-            for (int index = splitIndex; index < recentHistory.Count; index++) {
-                replacedHistory.Add(recentHistory[index]);
+            if (!history.TrySetAt<DurableObject>(
+                    splitIndex - 1,
+                    AgentWorkspaceRecordCodec.WriteHistoryEntry(_workspaceRoot.Revision, recap)
+                )) {
+                throw new InvalidOperationException("History deque changed unexpectedly before recap prefix replacement.");
             }
 
-            ReplaceRecent(replacedHistory);
+            for (int index = 0; index < splitIndex - 1; index++) {
+                if (history.PopFront<DurableObject>(out _) != GetIssue.None) {
+                    throw new InvalidOperationException("History deque changed unexpectedly during recap prefix replacement.");
+                }
+            }
+
             SetLastSerial(Math.Max(GetRequiredLastSerial(), recap.Serial));
         }
     }

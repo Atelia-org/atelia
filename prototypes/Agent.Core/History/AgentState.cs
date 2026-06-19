@@ -526,13 +526,26 @@ memory_notebook_replace与memory_notebook_replace_span工具就是为你主动�
             recap.AssignTokenEstimate(TokenEstimateHelper.GetDefault().Estimate(recap));
             recap.AssignSerial(_workingSet.AllocateNextSerial());
 
-            _workingSet.ReplacePrefixWithRecap(splitIndex, recap);
+            _workingSet.ReplacePrefixWithRecap(splitIndex, recap, recap.Serial);
         }
         else {
-            _workspaceSession.ReplacePrefixWithRecap(splitIndex, summary);
-            ReloadWorkingSetFromWorkspaceSession();
-            recap = RecentHistory[0] as RecapEntry
-                ?? throw new InvalidOperationException("Workspace recap replacement did not reload a recap entry at history prefix.");
+            try {
+                var mutation = _workspaceSession.ReplacePrefixWithRecap(splitIndex, summary);
+                if (!TryApplyRecapRewriteDelta(
+                    mutation.AuthoritativePreRecentHistory,
+                    mutation.SplitIndex,
+                    mutation.RecapEntry,
+                    mutation.LastSerial
+                )) {
+                    ReloadRecentHistoryFromWorkspaceSession();
+                }
+
+                recap = mutation.RecapEntry;
+            }
+            catch {
+                ReloadRecentHistoryFromWorkspaceSession();
+                throw;
+            }
         }
 
         DebugUtil.Info(

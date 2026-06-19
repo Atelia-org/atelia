@@ -118,10 +118,14 @@ internal sealed class AgentStateWorkingSet {
         _recentHistory.Add(entry);
     }
 
-    public void ReplacePrefixWithRecap(int splitIndex, RecapEntry recap) {
+    public void ReplacePrefixWithRecap(int splitIndex, RecapEntry recap, ulong lastSerial) {
         ArgumentNullException.ThrowIfNull(recap);
+        if (splitIndex < 1 || splitIndex >= _recentHistory.Count) {
+            throw new ArgumentOutOfRangeException(nameof(splitIndex), splitIndex, "splitIndex must replace a non-empty prefix and preserve a non-empty suffix.");
+        }
 
         _recentHistory.RemoveRange(0, splitIndex);
         _recentHistory.Insert(0, recap);
+        LastSerial = lastSerial;
     }
 }

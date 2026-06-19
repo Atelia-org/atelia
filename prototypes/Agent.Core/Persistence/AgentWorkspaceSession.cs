@@ -9,7 +9,8 @@ internal enum AgentWorkspaceSessionFaultPoint {
     AfterUpsertPendingToolResultMutation,
     AfterUpdateTurnRuntimeMutation,
     AfterUpdatePendingCompactionMutation,
-    AfterFoldPendingNotificationsIntoCurrentObservationMutation
+    AfterFoldPendingNotificationsIntoCurrentObservationMutation,
+    AfterReplacePrefixWithRecapMutation
 }
 
 internal sealed class AgentWorkspaceSession : IDisposable {
@@ -291,20 +292,33 @@ internal sealed class AgentWorkspaceSession : IDisposable {
         );
     }
 
-    internal void ReplacePrefixWithRecap(int splitIndex, string summary) {
+    internal WorkspaceRecapMutationResult ReplacePrefixWithRecap(int splitIndex, string summary) {
         EnsureOpenForState();
 
-        var recentHistory = _workspaceRoot.History.LoadRecent();
-        if (splitIndex < 1 || splitIndex >= recentHistory.Count) {
+        var authoritativePreRecentHistory = _workspaceRoot.History.LoadRecent();
+        if (splitIndex < 1 || splitIndex >= authoritativePreRecentHistory.Count) {
             throw new ArgumentOutOfRangeException(nameof(splitIndex), splitIndex, "splitIndex must replace a non-empty prefix and preserve a non-empty suffix.");
         }
+        if (!authoritativePreRecentHistory[splitIndex - 1].IsObservationLike) {
+            throw new InvalidOperationException("splitIndex must end the replaced prefix at an observation-like entry.");
+        }
+        if (!authoritativePreRecentHistory[splitIndex].IsActorLike) {
+            throw new InvalidOperationException("splitIndex must preserve an actor-like suffix head.");
+        }
 
-        var insteadSerial = recentHistory[splitIndex - 1].Serial;
+        var insteadSerial = authoritativePreRecentHistory[splitIndex - 1].Serial;
         var recap = new RecapEntry(summary, insteadSerial);
         recap.AssignTokenEstimate(TokenEstimateHelper.GetDefault().Estimate(recap));
         recap.AssignSerial(_workspaceRoot.History.AllocateNextSerial());
 
         _workspaceRoot.History.ReplacePrefixWithRecap(splitIndex, recap);
+        ThrowInjectedFaultIfAny(AgentWorkspaceSessionFaultPoint.AfterReplacePrefixWithRecapMutation);
+        return new WorkspaceRecapMutationResult(
+            AuthoritativePreRecentHistory: authoritativePreRecentHistory,
+            SplitIndex: splitIndex,
+            RecapEntry: recap,
+            LastSerial: recap.Serial
+        );
     }
 
     internal string SetSystemPrompt(string systemPrompt) {
@@ -443,3 +457,10 @@ internal sealed record WorkspaceFoldPendingNotificationsIntoObservationMutationR
 ) {
     public bool FoldApplied => UpdatedObservation is not null;
 }
+
+internal sealed record WorkspaceRecapMutationResult(
+    IReadOnlyList<HistoryEntry> AuthoritativePreRecentHistory,
+    int SplitIndex,
+    RecapEntry RecapEntry,
+    ulong LastSerial
+);

@@ -164,7 +164,7 @@ public sealed class AgentWorkspacePersistenceTests {
 
             state.ReplacePrefixWithRecap(1, "summary-text");
 
-            Assert.NotSame(initialHistoryDeque, GetHistoryDeque(workspaceRoot));
+            Assert.Same(initialHistoryDeque, GetHistoryDeque(workspaceRoot));
             var history = workspaceRoot.History.LoadRecent();
             var recap = Assert.IsType<RecapEntry>(history[0]);
             Assert.Equal("summary-text", recap.Content);
@@ -1710,8 +1710,60 @@ public sealed class AgentWorkspacePersistenceTests {
     }
 
     [Fact]
-    public void WorkspaceLiveRecap_UsesDurableWorkspaceAsAuthoritativeSource() {
-        var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-workspace-recap-authoritative-{Guid.NewGuid():N}");
+    public void WorkspaceLiveRecap_AlignedCacheUsesTargetedDeltaBackfill() {
+        var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-workspace-recap-delta-backfill-{Guid.NewGuid():N}");
+
+        try {
+            using var repo = Repository.Create(repoDir).Unwrap();
+            var revision = repo.CreateBranch("main").Unwrap();
+            var workspaceRoot = AgentWorkspaceRoot.Create(revision);
+            var initialHistoryDeque = GetHistoryDeque(workspaceRoot);
+
+            using var session = AgentWorkspaceSession.Open(workspaceRoot);
+            var state = session.RestoreState();
+            state.AppendObservation(new ObservationEntry(), "durable-observation");
+            var action = state.AppendAction(
+                new ActionEntry(
+                    new ActionMessage([new ActionBlock.Text("durable-action")]),
+                    new CompletionDescriptor("provider-a", "spec-a", "model-a")
+                )
+            );
+
+            var recap = state.ReplacePrefixWithRecap(1, "summary-text");
+            var history = workspaceRoot.History.LoadRecent();
+
+            Assert.Same(initialHistoryDeque, GetHistoryDeque(workspaceRoot));
+            Assert.Equal(1UL, recap.InsteadSerial);
+            Assert.Equal(3UL, recap.Serial);
+            Assert.Same(recap, state.RecentHistory[0]);
+            Assert.Same(action, state.RecentHistory[1]);
+            Assert.Collection(
+                history,
+                entry => {
+                    var persistedRecap = Assert.IsType<RecapEntry>(entry);
+                    Assert.Equal("summary-text", persistedRecap.Content);
+                    Assert.Equal(1UL, persistedRecap.InsteadSerial);
+                    Assert.Equal(3UL, persistedRecap.Serial);
+                },
+                entry => {
+                    var action = Assert.IsType<ActionEntry>(entry);
+                    Assert.Equal(2UL, action.Serial);
+                    Assert.Equal("durable-action", action.Message.GetFlattenedText());
+                }
+            );
+            Assert.Equal(3UL, workspaceRoot.History.GetRequiredLastSerial());
+            Assert.Equal(3UL, GetWorkingSet(state).LastSerial);
+        }
+        finally {
+            if (Directory.Exists(repoDir)) {
+                Directory.Delete(repoDir, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public void WorkspaceLiveRecap_SoftHistoryDriftFallsBackToWholeReload() {
+        var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-workspace-recap-soft-drift-{Guid.NewGuid():N}");
 
         try {
             using var repo = Repository.Create(repoDir).Unwrap();
@@ -1728,32 +1780,70 @@ public sealed class AgentWorkspacePersistenceTests {
                 )
             );
 
-            ReplaceCachedRecentHistory(
-                state,
-                CreateAssignedObservationEntry(999UL),
-                CreateAssignedActionEntry(1000UL, "stale-cached-action")
-            );
+            var driftedObservation = CreateAssignedObservationEntry(1UL, "drifted-observation");
+            var driftedAction = CreateAssignedActionEntry(2UL, "drifted-action");
+            ReplaceCachedRecentHistory(state, driftedObservation, driftedAction);
+            ReplaceCachedLastSerial(state, 2UL);
 
             var recap = state.ReplacePrefixWithRecap(1, "summary-text");
-            var history = workspaceRoot.History.LoadRecent();
 
-            Assert.Equal(1UL, recap.InsteadSerial);
-            Assert.Equal(3UL, recap.Serial);
-            Assert.Collection(
-                history,
-                entry => {
-                    var persistedRecap = Assert.IsType<RecapEntry>(entry);
-                    Assert.Equal("summary-text", persistedRecap.Content);
-                    Assert.Equal(1UL, persistedRecap.InsteadSerial);
-                    Assert.Equal(3UL, persistedRecap.Serial);
-                },
-                entry => {
-                    var action = Assert.IsType<ActionEntry>(entry);
-                    Assert.Equal(2UL, action.Serial);
-                    Assert.Equal("durable-action", action.Message.GetFlattenedText());
+            Assert.NotSame(recap, state.RecentHistory[0]);
+            Assert.NotSame(driftedAction, state.RecentHistory[1]);
+            AssertRecapActionHistory(state.RecentHistory, "summary-text", 1UL, "durable-action");
+            var reloadedRecap = Assert.IsType<RecapEntry>(state.RecentHistory[0]);
+            Assert.Equal(1UL, reloadedRecap.InsteadSerial);
+            Assert.Equal(3UL, reloadedRecap.Serial);
+            Assert.Equal(3UL, GetWorkingSet(state).LastSerial);
+        }
+        finally {
+            if (Directory.Exists(repoDir)) {
+                Directory.Delete(repoDir, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public void WorkspaceLiveRecap_FaultReloadsRecentHistoryCacheFromDurableWorkspace() {
+        var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-workspace-recap-fault-reload-{Guid.NewGuid():N}");
+
+        try {
+            using var repo = Repository.Create(repoDir).Unwrap();
+            var revision = repo.CreateBranch("main").Unwrap();
+            var workspaceRoot = AgentWorkspaceRoot.Create(revision);
+
+            using var session = AgentWorkspaceSession.Open(workspaceRoot);
+            var state = session.RestoreState();
+            state.AppendObservation(new ObservationEntry(), "durable-observation");
+            state.AppendAction(
+                new ActionEntry(
+                    new ActionMessage([new ActionBlock.Text("durable-action")]),
+                    new CompletionDescriptor("provider-a", "spec-a", "model-a")
+                )
+            );
+
+            ConfigureSessionFaultToThrowOnce(
+                session,
+                AgentWorkspaceSessionFaultPoint.AfterReplacePrefixWithRecapMutation,
+                "Injected fault after recap rewrite.",
+                beforeThrow: () => {
+                    ReplaceCachedRecentHistory(
+                        state,
+                        CreateAssignedObservationEntry(999UL, "ghost-observation"),
+                        CreateAssignedActionEntry(1000UL, "ghost-action")
+                    );
+                    ReplaceCachedLastSerial(state, 1000UL);
                 }
             );
-            Assert.Equal(3UL, workspaceRoot.History.GetRequiredLastSerial());
+
+            var exception = Assert.Throws<InvalidOperationException>(() => state.ReplacePrefixWithRecap(1, "summary-text"));
+
+            Assert.Equal("Injected fault after recap rewrite.", exception.Message);
+            AssertRecapActionHistory(workspaceRoot.History.LoadRecent(), "summary-text", 1UL, "durable-action");
+            AssertRecapActionHistory(state.RecentHistory, "summary-text", 1UL, "durable-action");
+            var localRecap = Assert.IsType<RecapEntry>(state.RecentHistory[0]);
+            Assert.Equal(1UL, localRecap.InsteadSerial);
+            Assert.Equal(3UL, localRecap.Serial);
+            Assert.Equal(3UL, GetWorkingSet(state).LastSerial);
         }
         finally {
             if (Directory.Exists(repoDir)) {
@@ -4197,6 +4287,28 @@ public sealed class AgentWorkspacePersistenceTests {
                 var observation = Assert.IsType<ObservationEntry>(entry);
                 Assert.Equal(1UL, observation.Serial);
                 Assert.Equal(observationNotifications, observation.Notifications);
+            },
+            entry => {
+                var action = Assert.IsType<ActionEntry>(entry);
+                Assert.Equal(2UL, action.Serial);
+                Assert.Equal(actionText, action.Message.GetFlattenedText());
+            }
+        );
+    }
+
+    private static void AssertRecapActionHistory(
+        IReadOnlyList<HistoryEntry> history,
+        string recapContent,
+        ulong insteadSerial,
+        string actionText
+    ) {
+        Assert.Collection(
+            history,
+            entry => {
+                var recap = Assert.IsType<RecapEntry>(entry);
+                Assert.Equal(3UL, recap.Serial);
+                Assert.Equal(recapContent, recap.Content);
+                Assert.Equal(insteadSerial, recap.InsteadSerial);
             },
             entry => {
                 var action = Assert.IsType<ActionEntry>(entry);

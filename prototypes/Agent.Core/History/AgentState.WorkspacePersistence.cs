@@ -97,6 +97,24 @@ public sealed partial class AgentState {
         return true;
     }
 
+    private bool TryApplyRecapRewriteDelta(
+        IReadOnlyList<HistoryEntry> authoritativePreRecentHistory,
+        int splitIndex,
+        RecapEntry recapEntry,
+        ulong lastSerial
+    ) {
+        if (!IsRecentHistoryCacheAligned(authoritativePreRecentHistory)) {
+            return false;
+        }
+
+        if (_workingSet.RecentHistory.Count == 0 || splitIndex < 1 || splitIndex >= _workingSet.RecentHistory.Count) {
+            return false;
+        }
+
+        _workingSet.ReplacePrefixWithRecap(splitIndex, recapEntry, lastSerial);
+        return true;
+    }
+
     private bool IsRecentHistoryCacheAligned(IReadOnlyList<HistoryEntry> authoritativeRecentHistory) {
         ArgumentNullException.ThrowIfNull(authoritativeRecentHistory);
 
