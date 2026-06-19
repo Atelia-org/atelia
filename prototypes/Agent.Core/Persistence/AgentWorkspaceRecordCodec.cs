@@ -7,7 +7,7 @@ using Atelia.StateJournal;
 
 namespace Atelia.Agent.Core.Persistence;
 
-internal static class AgentEngineStateCodec {
+internal static class AgentWorkspaceRecordCodec {
     public const string KeyKind = "kind";
     public const string KeySystemPrompt = "systemPrompt";
 

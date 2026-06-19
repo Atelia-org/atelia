@@ -187,7 +187,7 @@ internal sealed class AgentWorkspaceRoot {
             var history = _workspaceRoot.Revision.CreateDeque();
             foreach (var entry in recentHistory) {
                 history.PushBack<DurableObject>(
-                    AgentEngineStateCodec.WriteHistoryEntry(_workspaceRoot.Revision, entry)
+                    AgentWorkspaceRecordCodec.WriteHistoryEntry(_workspaceRoot.Revision, entry)
                 );
             }
 
@@ -198,7 +198,7 @@ internal sealed class AgentWorkspaceRoot {
             ArgumentNullException.ThrowIfNull(entry);
 
             _workspaceRoot.GetRequiredHistory().PushBack<DurableObject>(
-                AgentEngineStateCodec.WriteHistoryEntry(_workspaceRoot.Revision, entry)
+                AgentWorkspaceRecordCodec.WriteHistoryEntry(_workspaceRoot.Revision, entry)
             );
         }
 
@@ -210,7 +210,7 @@ internal sealed class AgentWorkspaceRoot {
                     throw new InvalidDataException($"History record at index {i} is missing or invalid.");
                 }
 
-                recentHistory.Add(AgentEngineStateCodec.ReadHistoryEntry(historyRecord));
+                recentHistory.Add(AgentWorkspaceRecordCodec.ReadHistoryEntry(historyRecord));
             }
 
             return recentHistory;
@@ -310,7 +310,7 @@ internal sealed class AgentWorkspaceRoot {
             foreach (var pendingResult in pendingResults) {
                 pendingToolResults.Upsert(
                     pendingResult.ToolCallId,
-                    AgentEngineStateCodec.WritePendingToolResult(_workspaceRoot.Revision, pendingResult)
+                    AgentWorkspaceRecordCodec.WritePendingToolResult(_workspaceRoot.Revision, pendingResult)
                 );
             }
 
@@ -322,7 +322,7 @@ internal sealed class AgentWorkspaceRoot {
 
             _workspaceRoot.GetRequiredPendingToolResults().Upsert(
                 pendingResult.ToolCallId,
-                AgentEngineStateCodec.WritePendingToolResult(_workspaceRoot.Revision, pendingResult)
+                AgentWorkspaceRecordCodec.WritePendingToolResult(_workspaceRoot.Revision, pendingResult)
             );
         }
 
@@ -332,7 +332,7 @@ internal sealed class AgentWorkspaceRoot {
             foreach (var toolCallId in pendingToolResultsContainer.Keys) {
                 var resultRecord = pendingToolResultsContainer.GetOrThrow<DurableDict<string>>(toolCallId)
                     ?? throw new InvalidDataException($"Pending tool result '{toolCallId}' is missing.");
-                pendingToolResults.Add(AgentEngineStateCodec.ReadPendingToolResult(resultRecord));
+                pendingToolResults.Add(AgentWorkspaceRecordCodec.ReadPendingToolResult(resultRecord));
             }
 
             return pendingToolResults;
@@ -340,55 +340,55 @@ internal sealed class AgentWorkspaceRoot {
 
         public void ReplaceTurnRuntime(LlmProfileCheckpoint? resolvedProfile, int? lockedCompactionSplitIndex) {
             var turnRuntime = _workspaceRoot.Revision.CreateDict<string>();
-            AgentEngineStateCodec.WriteTurnRuntime(turnRuntime, resolvedProfile, lockedCompactionSplitIndex);
+            AgentWorkspaceRecordCodec.WriteTurnRuntime(turnRuntime, resolvedProfile, lockedCompactionSplitIndex);
             _workspaceRoot.SetTurnRuntime(turnRuntime);
         }
 
         public void UpdateTurnRuntime(LlmProfileCheckpoint? resolvedProfile, int? lockedCompactionSplitIndex) {
             var turnRuntime = _workspaceRoot.GetRequiredTurnRuntime();
             if (resolvedProfile is null) {
-                AgentEngineStateCodec.ClearResolvedProfile(turnRuntime);
+                AgentWorkspaceRecordCodec.ClearResolvedProfile(turnRuntime);
             }
             else {
-                AgentEngineStateCodec.WriteResolvedProfile(turnRuntime, resolvedProfile);
+                AgentWorkspaceRecordCodec.WriteResolvedProfile(turnRuntime, resolvedProfile);
             }
 
             if (lockedCompactionSplitIndex.HasValue) {
-                AgentEngineStateCodec.WriteLockedCompactionSplitIndex(turnRuntime, lockedCompactionSplitIndex.Value);
+                AgentWorkspaceRecordCodec.WriteLockedCompactionSplitIndex(turnRuntime, lockedCompactionSplitIndex.Value);
             }
             else {
-                AgentEngineStateCodec.ClearLockedCompactionSplitIndex(turnRuntime);
+                AgentWorkspaceRecordCodec.ClearLockedCompactionSplitIndex(turnRuntime);
             }
         }
 
         public void SetResolvedProfile(LlmProfileCheckpoint resolvedProfile) {
             ArgumentNullException.ThrowIfNull(resolvedProfile);
-            AgentEngineStateCodec.WriteResolvedProfile(_workspaceRoot.GetRequiredTurnRuntime(), resolvedProfile);
+            AgentWorkspaceRecordCodec.WriteResolvedProfile(_workspaceRoot.GetRequiredTurnRuntime(), resolvedProfile);
         }
 
         public void ClearResolvedProfile() {
-            AgentEngineStateCodec.ClearResolvedProfile(_workspaceRoot.GetRequiredTurnRuntime());
+            AgentWorkspaceRecordCodec.ClearResolvedProfile(_workspaceRoot.GetRequiredTurnRuntime());
         }
 
         public void SetLockedCompactionSplitIndex(int lockedCompactionSplitIndex) {
-            AgentEngineStateCodec.WriteLockedCompactionSplitIndex(
+            AgentWorkspaceRecordCodec.WriteLockedCompactionSplitIndex(
                 _workspaceRoot.GetRequiredTurnRuntime(),
                 lockedCompactionSplitIndex
             );
         }
 
         public void ClearLockedCompactionSplitIndex() {
-            AgentEngineStateCodec.ClearLockedCompactionSplitIndex(_workspaceRoot.GetRequiredTurnRuntime());
+            AgentWorkspaceRecordCodec.ClearLockedCompactionSplitIndex(_workspaceRoot.GetRequiredTurnRuntime());
         }
 
         public (LlmProfileCheckpoint? ResolvedProfile, int? LockedCompactionSplitIndex) LoadTurnRuntime() {
-            return AgentEngineStateCodec.ReadTurnRuntime(_workspaceRoot.GetRequiredTurnRuntime());
+            return AgentWorkspaceRecordCodec.ReadTurnRuntime(_workspaceRoot.GetRequiredTurnRuntime());
         }
 
         public void ReplacePendingCompaction(CompactionCheckpoint? pendingCompaction) {
             var pendingCompactionRecord = _workspaceRoot.Revision.CreateDict<string>();
             if (pendingCompaction is not null) {
-                AgentEngineStateCodec.WriteCompactionCheckpointFields(pendingCompactionRecord, pendingCompaction);
+                AgentWorkspaceRecordCodec.WriteCompactionCheckpointFields(pendingCompactionRecord, pendingCompaction);
             }
 
             _workspaceRoot.SetPendingCompactionRecord(pendingCompactionRecord);
@@ -396,20 +396,20 @@ internal sealed class AgentWorkspaceRoot {
 
         public void SetPendingCompaction(CompactionCheckpoint pendingCompaction) {
             ArgumentNullException.ThrowIfNull(pendingCompaction);
-            AgentEngineStateCodec.WriteCompactionCheckpointFields(
+            AgentWorkspaceRecordCodec.WriteCompactionCheckpointFields(
                 _workspaceRoot.GetRequiredPendingCompactionRecord(),
                 pendingCompaction
             );
         }
 
         public void ClearPendingCompaction() {
-            AgentEngineStateCodec.ClearCompactionCheckpointFields(
+            AgentWorkspaceRecordCodec.ClearCompactionCheckpointFields(
                 _workspaceRoot.GetRequiredPendingCompactionRecord()
             );
         }
 
         public CompactionCheckpoint? LoadPendingCompaction() {
-            return AgentEngineStateCodec.ReadCompactionCheckpointOrNull(
+            return AgentWorkspaceRecordCodec.ReadCompactionCheckpointOrNull(
                 _workspaceRoot.GetRequiredPendingCompactionRecord()
             );
         }

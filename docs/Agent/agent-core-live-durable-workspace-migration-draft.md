@@ -31,7 +31,7 @@
 相关代码：
 - `prototypes/Agent.Core/AgentEngine.Persistence.cs`
 - `prototypes/Agent.Core/Persistence/AgentEngineWorkspaceSnapshotHelper.cs`
-- `prototypes/Agent.Core/Persistence/AgentEngineStateCodec.cs`
+- `prototypes/Agent.Core/Persistence/AgentWorkspaceRecordCodec.cs`
 - `prototypes/Agent.Core/History/AgentState.Persistence.cs`
 - `prototypes/Agent.Core/AgentEngineHost.cs`
 
