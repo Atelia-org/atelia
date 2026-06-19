@@ -4,6 +4,17 @@ using Atelia.StateJournal;
 
 namespace Atelia.Agent.Core.Persistence;
 
+internal enum AgentWorkspaceSessionFaultPoint {
+    BeforeReplacePendingToolResults,
+    AfterReplacePendingToolResultsMutation,
+    BeforeUpsertPendingToolResult,
+    AfterUpsertPendingToolResultMutation,
+    BeforeUpdateTurnRuntime,
+    AfterUpdateTurnRuntimeMutation,
+    BeforeUpdatePendingCompaction,
+    AfterUpdatePendingCompactionMutation
+}
+
 internal sealed class AgentWorkspaceSession : IDisposable {
     private readonly AgentWorkspaceRoot _workspaceRoot;
     private readonly Repository? _repo;
@@ -17,6 +28,12 @@ internal sealed class AgentWorkspaceSession : IDisposable {
     internal static AgentWorkspaceSession Open(AgentWorkspaceRoot workspaceRoot, Repository? repo = null) {
         return new AgentWorkspaceSession(workspaceRoot, repo);
     }
+
+    /// <summary>
+    /// test-only fault injection seam，用于精确命中 engine 的 catch + reload 护栏。
+    /// 返回非 null 异常时，session 会在对应 fault point 抛出它。
+    /// </summary>
+    internal Func<AgentWorkspaceSessionFaultPoint, Exception?>? FaultInjectionForTesting { get; set; }
 
     internal AgentWorkspaceRoot WorkspaceRoot => _workspaceRoot;
 
@@ -258,8 +275,10 @@ internal sealed class AgentWorkspaceSession : IDisposable {
         ArgumentNullException.ThrowIfNull(pendingResults);
 
         EnsureOpenForEngine();
+        ThrowInjectedFaultIfAny(AgentWorkspaceSessionFaultPoint.BeforeReplacePendingToolResults);
         _workspaceRoot.Meta.Stamp();
         _workspaceRoot.RuntimeState.ReplacePendingToolResults(pendingResults);
+        ThrowInjectedFaultIfAny(AgentWorkspaceSessionFaultPoint.AfterReplacePendingToolResultsMutation);
         return _workspaceRoot.RuntimeState.LoadPendingToolResults();
     }
 
@@ -267,8 +286,10 @@ internal sealed class AgentWorkspaceSession : IDisposable {
         ArgumentNullException.ThrowIfNull(pendingResult);
 
         EnsureOpenForEngine();
+        ThrowInjectedFaultIfAny(AgentWorkspaceSessionFaultPoint.BeforeUpsertPendingToolResult);
         _workspaceRoot.Meta.Stamp();
         _workspaceRoot.RuntimeState.UpsertPendingToolResult(pendingResult);
+        ThrowInjectedFaultIfAny(AgentWorkspaceSessionFaultPoint.AfterUpsertPendingToolResultMutation);
         return _workspaceRoot.RuntimeState.LoadPendingToolResults();
     }
 
@@ -277,13 +298,16 @@ internal sealed class AgentWorkspaceSession : IDisposable {
         int? lockedCompactionSplitIndex
     ) {
         EnsureOpenForEngine();
+        ThrowInjectedFaultIfAny(AgentWorkspaceSessionFaultPoint.BeforeUpdateTurnRuntime);
         _workspaceRoot.Meta.Stamp();
         _workspaceRoot.RuntimeState.UpdateTurnRuntime(resolvedProfile, lockedCompactionSplitIndex);
+        ThrowInjectedFaultIfAny(AgentWorkspaceSessionFaultPoint.AfterUpdateTurnRuntimeMutation);
         return LoadTurnRuntimeState();
     }
 
     internal CompactionCheckpoint? UpdatePendingCompaction(CompactionCheckpoint? pendingCompaction) {
         EnsureOpenForEngine();
+        ThrowInjectedFaultIfAny(AgentWorkspaceSessionFaultPoint.BeforeUpdatePendingCompaction);
         _workspaceRoot.Meta.Stamp();
         if (pendingCompaction is null) {
             _workspaceRoot.RuntimeState.ClearPendingCompaction();
@@ -292,6 +316,7 @@ internal sealed class AgentWorkspaceSession : IDisposable {
             _workspaceRoot.RuntimeState.SetPendingCompaction(pendingCompaction);
         }
 
+        ThrowInjectedFaultIfAny(AgentWorkspaceSessionFaultPoint.AfterUpdatePendingCompactionMutation);
         return _workspaceRoot.RuntimeState.LoadPendingCompaction();
     }
 
@@ -309,6 +334,13 @@ internal sealed class AgentWorkspaceSession : IDisposable {
         }
 
         entry.MergeNotifications(notifications);
+    }
+
+    private void ThrowInjectedFaultIfAny(AgentWorkspaceSessionFaultPoint point) {
+        var exception = FaultInjectionForTesting?.Invoke(point);
+        if (exception is not null) {
+            throw exception;
+        }
     }
 
     private static string? CollapseNotifications(IReadOnlyList<string> notifications) {

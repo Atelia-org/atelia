@@ -2307,6 +2307,55 @@ public sealed class AgentWorkspacePersistenceTests {
     }
 
     [Fact]
+    public void Host_PersistTurnRuntime_FailureReloadsAuthoritativeTurnRuntime() {
+        var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-host-turn-runtime-fault-reload-{Guid.NewGuid():N}");
+
+        try {
+            var profile = CreateFullFeatureProfile(
+                new NoopCompletionClient("provider-turn-fault", "spec-turn-fault"),
+                "model-turn-fault"
+            );
+
+            using var host = AgentEngineHost.CreateNew(
+                repoDir,
+                runtime: new AgentEngineHostRuntime(profileRegistry: new LlmProfileRegistry([profile]))
+            );
+
+            host.WorkspaceRoot.RuntimeState.UpdateTurnRuntime(LlmProfileCheckpoint.FromProfile(profile), 7);
+
+            var turnRuntime = GetRequiredPrivateField<object>(host.Engine, "_turnRuntime");
+            _ = InvokeRequiredInstanceMethod(turnRuntime, "RememberResolvedProfile", profile);
+            _ = InvokeRequiredInstanceMethod(turnRuntime, "RememberCompactionSplitIndex", 3);
+            _ = InvokeRequiredInstanceMethod(turnRuntime, "RememberCurrentTurnFullFeatureEnabled", false);
+            Assert.False(host.Engine.CurrentTurnFullFeatureEnabled);
+            Assert.Equal(3, host.Engine.ExportStateSnapshot().LockedCompactionSplitIndex);
+
+            ConfigureSessionFaultToThrowOnce(
+                GetWorkspaceSession(host),
+                AgentWorkspaceSessionFaultPoint.AfterUpdateTurnRuntimeMutation,
+                "Injected fault after turn runtime mutation."
+            );
+
+            var exception = Assert.Throws<TargetInvocationException>(
+                () => InvokeRequiredInstanceMethod(host.Engine, "PersistTurnRuntime", new object?[] { null })
+            );
+
+            var inner = Assert.IsType<InvalidOperationException>(exception.InnerException);
+            Assert.Equal("Injected fault after turn runtime mutation.", inner.Message);
+            Assert.True(host.Engine.CurrentTurnFullFeatureEnabled);
+            Assert.Equal(LlmProfileCheckpoint.FromProfile(profile), host.Engine.ExportStateSnapshot().ResolvedProfile);
+            Assert.Equal(3, host.Engine.ExportStateSnapshot().LockedCompactionSplitIndex);
+            Assert.Equal(LlmProfileCheckpoint.FromProfile(profile), host.LoadSnapshot().ResolvedProfile);
+            Assert.Equal(3, host.LoadSnapshot().LockedCompactionSplitIndex);
+        }
+        finally {
+            if (Directory.Exists(repoDir)) {
+                Directory.Delete(repoDir, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
     public async Task Host_OpenExisting_RestoresResolvedProfileOverlayForWaitingToolResults() {
         var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-host-resolved-profile-overlay-{Guid.NewGuid():N}");
 
@@ -2541,6 +2590,48 @@ public sealed class AgentWorkspacePersistenceTests {
     }
 
     [Fact]
+    public void Host_PersistPendingToolResults_FailureReloadsAuthoritativePendingResults() {
+        var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-host-pending-results-fault-reload-{Guid.NewGuid():N}");
+
+        try {
+            using var host = AgentEngineHost.CreateNew(repoDir);
+
+            var durableResult = CreateToolCallExecutionResult("tool-alpha", "call-1", "durable-output");
+            var ghostResult = CreateToolCallExecutionResult("tool-ghost", "ghost-call", "ghost-output");
+            host.WorkspaceRoot.RuntimeState.ReplacePendingToolResults([durableResult]);
+
+            var localPendingResults = GetPendingToolResults(host.Engine);
+            localPendingResults.Clear();
+            localPendingResults[ghostResult.ToolCallId] = ghostResult;
+            Assert.Equal("ghost-call", Assert.Single(localPendingResults).Key);
+
+            ConfigureSessionFaultToThrowOnce(
+                GetWorkspaceSession(host),
+                AgentWorkspaceSessionFaultPoint.BeforeReplacePendingToolResults,
+                "Injected fault before pending tool results mutation."
+            );
+
+            var exception = Assert.Throws<TargetInvocationException>(
+                () => InvokeRequiredInstanceMethod(host.Engine, "PersistPendingToolResults")
+            );
+
+            var inner = Assert.IsType<InvalidOperationException>(exception.InnerException);
+            Assert.Equal("Injected fault before pending tool results mutation.", inner.Message);
+
+            var reloadedResult = Assert.Single(localPendingResults).Value;
+            Assert.False(localPendingResults.ContainsKey(ghostResult.ToolCallId));
+            Assert.NotSame(ghostResult, reloadedResult);
+            AssertToolCallExecutionResult(durableResult, reloadedResult);
+            AssertToolCallExecutionResult(durableResult, Assert.Single(host.LoadSnapshot().PendingToolResults));
+        }
+        finally {
+            if (Directory.Exists(repoDir)) {
+                Directory.Delete(repoDir, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
     public async Task Host_BeginNewTurn_ClearsTurnRuntimeWithoutReplacingDurableDict() {
         var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-host-turn-runtime-identity-{Guid.NewGuid():N}");
 
@@ -2631,6 +2722,41 @@ public sealed class AgentWorkspacePersistenceTests {
             Assert.Null(afterCompaction.PendingCompaction);
             var recap = Assert.IsType<RecapEntry>(afterCompaction.AgentState.RecentHistory[0]);
             Assert.Equal("summary from live compaction", recap.Content);
+        }
+        finally {
+            if (Directory.Exists(repoDir)) {
+                Directory.Delete(repoDir, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public void Host_PersistPendingCompaction_FailureReloadsAuthoritativePendingCompaction() {
+        var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-host-compaction-fault-reload-{Guid.NewGuid():N}");
+
+        try {
+            using var host = AgentEngineHost.CreateNew(repoDir);
+
+            var durablePendingCompaction = new CompactionCheckpoint(5, "durable-system", "durable-prompt");
+            var localPendingCompaction = new CompactionCheckpoint(1, "local-system", "local-prompt");
+            host.WorkspaceRoot.RuntimeState.SetPendingCompaction(durablePendingCompaction);
+            _ = InvokeRequiredInstanceMethod(host.Engine, "ApplyPendingCompactionSnapshot", localPendingCompaction);
+            Assert.Equal(localPendingCompaction, host.Engine.ExportStateSnapshot().PendingCompaction);
+
+            ConfigureSessionFaultToThrowOnce(
+                GetWorkspaceSession(host),
+                AgentWorkspaceSessionFaultPoint.BeforeUpdatePendingCompaction,
+                "Injected fault before pending compaction mutation."
+            );
+
+            var exception = Assert.Throws<TargetInvocationException>(
+                () => InvokeRequiredInstanceMethod(host.Engine, "PersistPendingCompaction")
+            );
+
+            var inner = Assert.IsType<InvalidOperationException>(exception.InnerException);
+            Assert.Equal("Injected fault before pending compaction mutation.", inner.Message);
+            Assert.Equal(durablePendingCompaction, host.Engine.ExportStateSnapshot().PendingCompaction);
+            Assert.Equal(durablePendingCompaction, host.LoadSnapshot().PendingCompaction);
         }
         finally {
             if (Directory.Exists(repoDir)) {
@@ -2939,6 +3065,26 @@ public sealed class AgentWorkspacePersistenceTests {
         return workspaceRoot.Root.Get<DurableDict<string>>("pendingCompaction", out var pendingCompaction) == GetIssue.None
             ? pendingCompaction!
             : throw new InvalidOperationException("Workspace root is missing pendingCompaction record.");
+    }
+
+    private static AgentWorkspaceSession GetWorkspaceSession(AgentEngineHost host) {
+        return GetRequiredPrivateField<AgentWorkspaceSession>(host, "_workspaceSession");
+    }
+
+    private static void ConfigureSessionFaultToThrowOnce(
+        AgentWorkspaceSession session,
+        AgentWorkspaceSessionFaultPoint targetPoint,
+        string message
+    ) {
+        var fired = false;
+        session.FaultInjectionForTesting = point => {
+            if (point != targetPoint || fired) {
+                return null;
+            }
+
+            fired = true;
+            return new InvalidOperationException(message);
+        };
     }
 
     private static string[] GetCachedPendingNotifications(AgentState state) {
