@@ -26,8 +26,19 @@ internal sealed class AgentStateWorkingSet {
         ArgumentNullException.ThrowIfNull(pendingNotifications);
         ArgumentNullException.ThrowIfNull(cloneHistoryEntry);
 
+        ReplaceRecentHistory(recentHistory, lastSerial, cloneHistoryEntry);
+        ReplacePendingNotifications(pendingNotifications);
+    }
+
+    public void ReplaceRecentHistory(
+        IReadOnlyList<HistoryEntry> recentHistory,
+        ulong lastSerial,
+        Func<HistoryEntry, HistoryEntry> cloneHistoryEntry
+    ) {
+        ArgumentNullException.ThrowIfNull(recentHistory);
+        ArgumentNullException.ThrowIfNull(cloneHistoryEntry);
+
         _recentHistory.Clear();
-        while (_pendingNotifications.TryDequeue(out _)) { }
 
         ulong maxSerial = 0;
         foreach (var sourceEntry in recentHistory) {
@@ -36,14 +47,6 @@ internal sealed class AgentStateWorkingSet {
             var restoredEntry = cloneHistoryEntry(sourceEntry);
             _recentHistory.Add(restoredEntry);
             maxSerial = Math.Max(maxSerial, restoredEntry.Serial);
-        }
-
-        foreach (var notification in pendingNotifications) {
-            if (notification is null) {
-                throw new InvalidOperationException("Pending notifications must not contain null values.");
-            }
-
-            _pendingNotifications.Enqueue(notification);
         }
 
         LastSerial = Math.Max(lastSerial, maxSerial);

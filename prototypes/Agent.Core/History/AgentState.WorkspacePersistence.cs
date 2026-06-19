@@ -46,6 +46,13 @@ public sealed partial class AgentState {
         ApplySnapshot(snapshot);
     }
 
+    private void ReloadRecentHistoryFromWorkspaceSession() {
+        var (recentHistory, lastSerial) = _workspaceSession?.LoadRecentHistorySnapshot()
+            ?? throw new InvalidOperationException("AgentState is not attached to a live workspace session.");
+
+        _workingSet.ReplaceRecentHistory(recentHistory, lastSerial, CloneHistoryEntry);
+    }
+
     private void ReloadPendingNotificationsFromWorkspaceSession() {
         var pendingNotifications = _workspaceSession?.LoadPendingNotifications()
             ?? throw new InvalidOperationException("AgentState is not attached to a live workspace session.");

@@ -114,8 +114,14 @@ memory_notebook_replace与memory_notebook_replace_span工具就是为你主动�
     public ActionEntry AppendAction(ActionEntry entry) {
         if (entry is null) { throw new ArgumentNullException(nameof(entry)); }
         EnsureWorkspaceSessionOpen();
+        if (_workspaceSession is not null) {
+            ReloadRecentHistoryFromWorkspaceSession();
+        }
         ValidateAppendOrder(entry);
         AppendEntryCore(entry);
+        if (_workspaceSession is not null) {
+            ReloadRecentHistoryFromWorkspaceSession();
+        }
         return entry;
     }
 
@@ -128,12 +134,18 @@ memory_notebook_replace与memory_notebook_replace_span工具就是为你主动�
     public ObservationEntry AppendObservation(ObservationEntry entry, string? inlineNotifications = null) {
         if (entry is null) { throw new ArgumentNullException(nameof(entry)); }
         EnsureWorkspaceSessionOpen();
+        if (_workspaceSession is not null) {
+            ReloadRecentHistoryFromWorkspaceSession();
+        }
         if (HasPendingActionContinuation) {
             throw new InvalidOperationException("Cannot append observation while a pending action continuation is open.");
         }
         ValidateAppendOrder(entry);
         AttachNotificationsToObservation(entry, inlineNotifications);
         AppendEntryCore(entry);
+        if (_workspaceSession is not null) {
+            ReloadRecentHistoryFromWorkspaceSession();
+        }
         return entry;
     }
 
@@ -146,6 +158,9 @@ memory_notebook_replace与memory_notebook_replace_span工具就是为你主动�
     public ToolResultsEntry AppendToolResults(ToolResultsEntry entry) {
         if (entry is null) { throw new ArgumentNullException(nameof(entry)); }
         EnsureWorkspaceSessionOpen();
+        if (_workspaceSession is not null) {
+            ReloadRecentHistoryFromWorkspaceSession();
+        }
         if (entry.Results is not { Count: > 0 }) { throw new ArgumentException("ToolResultsEntry must include at least one tool result.", nameof(entry)); }
         if (HasPendingActionContinuation) {
             throw new InvalidOperationException("Cannot append tool results while a pending action continuation is open.");
@@ -153,6 +168,9 @@ memory_notebook_replace与memory_notebook_replace_span工具就是为你主动�
         ValidateAppendOrder(entry);
         AttachNotificationsToObservation(entry);
         AppendEntryCore(entry);
+        if (_workspaceSession is not null) {
+            ReloadRecentHistoryFromWorkspaceSession();
+        }
         return entry;
     }
 
@@ -168,6 +186,9 @@ memory_notebook_replace与memory_notebook_replace_span工具就是为你主动�
         EnsureWorkspaceSessionOpen();
         if (string.IsNullOrWhiteSpace(request.Content)) {
             throw new ArgumentException("Injected action content must not be null or whitespace.", nameof(request));
+        }
+        if (_workspaceSession is not null) {
+            ReloadRecentHistoryFromWorkspaceSession();
         }
         if (RecentHistory.Count == 0) {
             throw new InvalidOperationException("Cannot inject action content into empty history. At least one prior ActionEntry is required.");
@@ -191,6 +212,9 @@ memory_notebook_replace与memory_notebook_replace_span工具就是为你主动�
         );
         ValidateAppendOrder(injectionEntry);
         AppendEntryCore(injectionEntry);
+        if (_workspaceSession is not null) {
+            ReloadRecentHistoryFromWorkspaceSession();
+        }
 
         DebugUtil.Info(
             "History",

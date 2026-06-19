@@ -91,6 +91,14 @@ internal sealed class AgentWorkspaceSession : IDisposable {
         return _workspaceRoot.History.LoadPendingNotifications();
     }
 
+    internal (IReadOnlyList<HistoryEntry> RecentHistory, ulong LastSerial) LoadRecentHistorySnapshot() {
+        EnsureOpenForState();
+        return (
+            RecentHistory: _workspaceRoot.History.LoadRecent(),
+            LastSerial: _workspaceRoot.History.GetRequiredLastSerial()
+        );
+    }
+
     internal void AppendPendingNotification(string notification) {
         ArgumentNullException.ThrowIfNull(notification);
 
