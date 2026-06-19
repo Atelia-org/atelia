@@ -2961,6 +2961,24 @@ public sealed class AgentWorkspacePersistenceTests {
         );
     }
 
+    [Fact]
+    public void AgentState_WorkspaceSessionBinding_IsBornBoundAtRestoreBoundary() {
+        Assert.DoesNotContain(
+            typeof(AgentState).GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic),
+            static method => method.Name == "BindWorkspaceSession" && !method.IsPrivate
+        );
+        Assert.Contains(
+            typeof(AgentState).GetMethods(BindingFlags.Static | BindingFlags.NonPublic),
+            static method => method.Name == "RestoreSnapshot"
+                && method.GetParameters() is [
+                    { ParameterType: var first },
+                    { ParameterType: var second }
+                ]
+                && first == typeof(AgentStateSnapshot)
+                && second == typeof(AgentWorkspaceSession)
+        );
+    }
+
     private static AgentEngineStateSnapshot CreateSnapshotFixture() {
         var invocation = new CompletionDescriptor("provider-a", "spec-a", "model-a");
         var state = AgentState.CreateDefault("roundtrip-system");

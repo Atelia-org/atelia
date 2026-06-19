@@ -51,10 +51,7 @@ internal sealed class AgentWorkspaceSession : IDisposable {
 
     internal AgentState RestoreState() {
         EnsureOpenForState();
-
-        var state = AgentState.RestoreSnapshot(LoadStateSnapshot());
-        state.BindWorkspaceSession(this);
-        return state;
+        return AgentState.RestoreSnapshot(LoadStateSnapshot(), this);
     }
 
     internal void Close() {

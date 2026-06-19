@@ -15,9 +15,19 @@ public sealed partial class AgentState {
     }
 
     internal static AgentState RestoreSnapshot(AgentStateSnapshot snapshot) {
+        return RestoreSnapshot(snapshot, workspaceSession: null);
+    }
+
+    internal static AgentState RestoreSnapshot(
+        AgentStateSnapshot snapshot,
+        AgentWorkspaceSession? workspaceSession
+    ) {
         ArgumentNullException.ThrowIfNull(snapshot);
 
         var state = new AgentState(snapshot.SystemPrompt);
+        if (workspaceSession is not null) {
+            state.BindWorkspaceSession(workspaceSession);
+        }
         state.ApplySnapshot(snapshot);
         return state;
     }

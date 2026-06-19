@@ -81,9 +81,6 @@ public partial class AgentEngine {
         _standaloneTools = new Dictionary<string, ITool>(StringComparer.OrdinalIgnoreCase);
         _resolvedProfileRestore = new ResolvedProfileRestoreCache(resolvedProfileResolver);
         _workspaceSession = workspaceSession;
-        if (_workspaceSession is not null) {
-            _state.BindWorkspaceSession(_workspaceSession);
-        }
         _toolsDirty = true;
         _idleProvider = idleProvider ?? new TimestampHeartbeatObservationProvider();
         _utcNowProvider = utcNowProvider ?? (() => DateTimeOffset.UtcNow);

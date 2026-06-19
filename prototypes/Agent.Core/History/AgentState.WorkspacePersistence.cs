@@ -5,7 +5,7 @@ namespace Atelia.Agent.Core.History;
 public sealed partial class AgentState {
     private AgentWorkspaceSession? _workspaceSession;
 
-    internal void BindWorkspaceSession(AgentWorkspaceSession workspaceSession) {
+    private void BindWorkspaceSession(AgentWorkspaceSession workspaceSession) {
         ArgumentNullException.ThrowIfNull(workspaceSession);
         EnsureWorkspaceSessionOpen();
 
@@ -14,7 +14,7 @@ public sealed partial class AgentState {
                 return;
             }
 
-            throw new InvalidOperationException("AgentState workspace session is already attached.");
+            throw new InvalidOperationException("AgentState is already live-bound to a workspace session.");
         }
 
         _workspaceSession = workspaceSession;
@@ -26,14 +26,14 @@ public sealed partial class AgentState {
 
     private void ReloadWorkingSetFromWorkspaceSession() {
         var snapshot = _workspaceSession?.LoadStateSnapshot()
-            ?? throw new InvalidOperationException("AgentState is not attached to a live workspace session.");
+            ?? throw new InvalidOperationException("AgentState is not live-bound to a workspace session.");
 
         ApplySnapshot(snapshot);
     }
 
     private void ReloadRecentHistoryFromWorkspaceSession() {
         var (recentHistory, lastSerial) = _workspaceSession?.LoadRecentHistorySnapshot()
-            ?? throw new InvalidOperationException("AgentState is not attached to a live workspace session.");
+            ?? throw new InvalidOperationException("AgentState is not live-bound to a workspace session.");
 
         ApplyRecentHistorySnapshot(recentHistory, lastSerial);
     }
@@ -51,7 +51,7 @@ public sealed partial class AgentState {
 
     private void ReloadPendingNotificationsFromWorkspaceSession() {
         var pendingNotifications = _workspaceSession?.LoadPendingNotifications()
-            ?? throw new InvalidOperationException("AgentState is not attached to a live workspace session.");
+            ?? throw new InvalidOperationException("AgentState is not live-bound to a workspace session.");
 
         ApplyPendingNotificationsSnapshot(pendingNotifications);
     }
