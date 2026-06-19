@@ -150,8 +150,64 @@ public sealed class AgentEngineHost : IDisposable {
     }
 
     /// <summary>
+    /// 读取 live durable workspace 中当前持久化的系统提示词真值。
+    /// </summary>
+    public string LoadDurableSystemPrompt() {
+        EnsureNotDisposed();
+        return _workspaceSession.WorkspaceRoot.Meta.GetRequiredSystemPrompt();
+    }
+
+    /// <summary>
+    /// 读取 live durable workspace 中当前持久化的 recent history 真值。
+    /// </summary>
+    public IReadOnlyList<HistoryEntry> LoadDurableRecentHistory() {
+        EnsureNotDisposed();
+        return _workspaceSession.WorkspaceRoot.History.LoadRecent();
+    }
+
+    /// <summary>
+    /// 读取 live durable workspace 中当前持久化的 pending notifications 真值。
+    /// </summary>
+    public IReadOnlyList<string> LoadDurablePendingNotifications() {
+        EnsureNotDisposed();
+        return _workspaceSession.WorkspaceRoot.History.LoadPendingNotifications();
+    }
+
+    /// <summary>
+    /// 读取 live durable workspace 中当前持久化的 pending tool results 真值。
+    /// </summary>
+    public IReadOnlyList<ToolCallExecutionResult> LoadDurablePendingToolResults() {
+        EnsureNotDisposed();
+        return _workspaceSession.WorkspaceRoot.RuntimeState.LoadPendingToolResults();
+    }
+
+    /// <summary>
+    /// 读取 live durable workspace 中当前持久化的 turn runtime 真值。
+    /// </summary>
+    public (LlmProfileCheckpoint? ResolvedProfile, int? LockedCompactionSplitIndex) LoadDurableTurnRuntime() {
+        EnsureNotDisposed();
+        return _workspaceSession.WorkspaceRoot.RuntimeState.LoadTurnRuntime();
+    }
+
+    /// <summary>
+    /// 读取 live durable workspace 中当前持久化的 pending compaction 真值。
+    /// </summary>
+    public CompactionCheckpoint? LoadDurablePendingCompaction() {
+        EnsureNotDisposed();
+        return _workspaceSession.WorkspaceRoot.RuntimeState.LoadPendingCompaction();
+    }
+
+    /// <summary>
+    /// 读取 live durable workspace 中当前持久化的 tool session execution sequence 真值。
+    /// </summary>
+    public long LoadDurableToolSessionExecutionSequence() {
+        EnsureNotDisposed();
+        return _workspaceSession.WorkspaceRoot.RuntimeState.GetToolSessionExecutionSequenceOrDefault();
+    }
+
+    /// <summary>
     /// 从 live durable workspace materialize 当前快照。
-    /// 该入口只提供只读 snapshot 查询，不再暴露任何可写持久化 adapter 表面。
+    /// 优先用于 compatibility / diagnostic / whole-state 断言；日常 live truth 查询请优先使用各个 <c>LoadDurable*</c> typed query。
     /// </summary>
     public AgentEngineStateSnapshot LoadSnapshot() {
         EnsureNotDisposed();
