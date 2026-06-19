@@ -18,9 +18,10 @@ internal sealed class AgentWorkspaceRoot {
     private const string KeyTurnRuntime = "turnRuntime";
     private const string KeyPendingCompaction = "pendingCompaction";
     private const string KeyToolSessionExecutionSequence = "toolSessionExecutionSequence";
+    private const string KeyContextSavepoint = "contextSavepoint";
 
     private const string KindValue = "agent-engine-state";
-    private const long SchemaVersion = 3L;
+    private const long SchemaVersion = 4L;
 
     private readonly DurableDict<string> _root;
 
@@ -30,6 +31,7 @@ internal sealed class AgentWorkspaceRoot {
         Meta = new MetaBlock(this);
         History = new HistoryBlock(this);
         RuntimeState = new RuntimeStateBlock(this);
+        ContextState = new ContextStateBlock(this);
     }
 
     public DurableDict<string> Root => _root;
@@ -41,6 +43,8 @@ internal sealed class AgentWorkspaceRoot {
     public HistoryBlock History { get; }
 
     public RuntimeStateBlock RuntimeState { get; }
+
+    public ContextStateBlock ContextState { get; }
 
     public static AgentWorkspaceRoot Create(Revision revision, string? systemPrompt = null) {
         ArgumentNullException.ThrowIfNull(revision);
@@ -118,6 +122,7 @@ internal sealed class AgentWorkspaceRoot {
         RuntimeState.ReplacePendingToolResults(Array.Empty<ToolCallExecutionResult>());
         RuntimeState.ReplaceTurnRuntime(null, null);
         RuntimeState.ReplacePendingCompaction(null);
+        ContextState.ReplaceSavepoint(null);
     }
 
     private static void StampMetadata(DurableDict<string> root) {
@@ -136,6 +141,18 @@ internal sealed class AgentWorkspaceRoot {
                 $"Unsupported agent-engine-state schema version. Expected {SchemaVersion}."
             );
         }
+    }
+
+    private void SetContextSavepointRecord(DurableDict<string> contextSavepoint) {
+        ArgumentNullException.ThrowIfNull(contextSavepoint);
+        _root.Upsert<DurableObject>(KeyContextSavepoint, contextSavepoint);
+    }
+
+    private DurableDict<string> GetRequiredContextSavepointRecord() {
+        return _root.TryGet<DurableDict<string>>(KeyContextSavepoint, out var contextSavepoint)
+               && contextSavepoint is not null
+            ? contextSavepoint
+            : throw new InvalidDataException("Agent state root is missing contextSavepoint record.");
     }
 
     public sealed class MetaBlock {
@@ -417,6 +434,43 @@ internal sealed class AgentWorkspaceRoot {
         public CompactionCheckpoint? LoadPendingCompaction() {
             return AgentWorkspaceRecordCodec.ReadCompactionCheckpointOrNull(
                 _workspaceRoot.GetRequiredPendingCompactionRecord()
+            );
+        }
+    }
+
+    public sealed class ContextStateBlock {
+        private readonly AgentWorkspaceRoot _workspaceRoot;
+
+        internal ContextStateBlock(AgentWorkspaceRoot workspaceRoot) {
+            _workspaceRoot = workspaceRoot;
+        }
+
+        public void ReplaceSavepoint(ContextSavepoint? savepoint) {
+            var savepointRecord = _workspaceRoot.Revision.CreateDict<string>();
+            if (savepoint is not null) {
+                AgentWorkspaceRecordCodec.WriteContextSavepointFields(savepointRecord, savepoint);
+            }
+
+            _workspaceRoot.SetContextSavepointRecord(savepointRecord);
+        }
+
+        public void SetSavepoint(ContextSavepoint savepoint) {
+            ArgumentNullException.ThrowIfNull(savepoint);
+            AgentWorkspaceRecordCodec.WriteContextSavepointFields(
+                _workspaceRoot.GetRequiredContextSavepointRecord(),
+                savepoint
+            );
+        }
+
+        public void ClearSavepoint() {
+            AgentWorkspaceRecordCodec.ClearContextSavepointFields(
+                _workspaceRoot.GetRequiredContextSavepointRecord()
+            );
+        }
+
+        public ContextSavepoint? LoadSavepoint() {
+            return AgentWorkspaceRecordCodec.ReadContextSavepointOrNull(
+                _workspaceRoot.GetRequiredContextSavepointRecord()
             );
         }
     }

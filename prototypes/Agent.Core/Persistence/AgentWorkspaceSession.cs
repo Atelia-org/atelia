@@ -105,6 +105,11 @@ internal sealed class AgentWorkspaceSession : IDisposable {
         return _workspaceRoot.RuntimeState.LoadPendingCompaction();
     }
 
+    internal ContextSavepoint? LoadContextSavepoint() {
+        EnsureOpenForEngine();
+        return _workspaceRoot.ContextState.LoadSavepoint();
+    }
+
     internal (IReadOnlyList<HistoryEntry> RecentHistory, ulong LastSerial) LoadRecentHistoryState() {
         EnsureOpenForState();
         return (
@@ -466,6 +471,19 @@ internal sealed class AgentWorkspaceSession : IDisposable {
     internal long LoadToolSessionExecutionSequence() {
         EnsureOpenForEngine();
         return _workspaceRoot.RuntimeState.GetToolSessionExecutionSequenceOrDefault();
+    }
+
+    internal ContextSavepoint? UpdateContextSavepoint(ContextSavepoint? savepoint) {
+        EnsureOpenForEngine();
+        _workspaceRoot.Meta.Stamp();
+        if (savepoint is null) {
+            _workspaceRoot.ContextState.ClearSavepoint();
+        }
+        else {
+            _workspaceRoot.ContextState.SetSavepoint(savepoint);
+        }
+
+        return _workspaceRoot.ContextState.LoadSavepoint();
     }
 
     private void AttachPendingNotifications(ObservationEntry entry, string? inlineNotifications = null) {

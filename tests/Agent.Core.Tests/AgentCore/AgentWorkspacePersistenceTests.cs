@@ -23,7 +23,7 @@ public sealed class AgentWorkspacePersistenceTests {
             Assert.Equal(GetIssue.None, workspaceRoot.Root.Get<string>("kind", out var kind));
             Assert.Equal("agent-engine-state", kind);
             Assert.Equal(GetIssue.None, workspaceRoot.Root.Get<long>("schemaVersion", out var schemaVersion));
-            Assert.Equal(3L, schemaVersion);
+            Assert.Equal(4L, schemaVersion);
 
             Assert.Equal("shape-system", workspaceRoot.Meta.GetRequiredSystemPrompt());
             Assert.Empty(workspaceRoot.History.LoadRecent());
@@ -31,8 +31,10 @@ public sealed class AgentWorkspacePersistenceTests {
             Assert.Empty(workspaceRoot.RuntimeState.LoadPendingToolResults());
             Assert.Equal((ResolvedProfile: null, LockedCompactionSplitIndex: null), workspaceRoot.RuntimeState.LoadTurnRuntime());
             Assert.Null(workspaceRoot.RuntimeState.LoadPendingCompaction());
+            Assert.Null(workspaceRoot.ContextState.LoadSavepoint());
             Assert.Equal(0UL, workspaceRoot.History.GetRequiredLastSerial());
             Assert.Equal(0L, workspaceRoot.RuntimeState.GetToolSessionExecutionSequenceOrDefault());
+            Assert.NotNull(GetContextSavepointRecord(workspaceRoot));
         }
         finally {
             if (Directory.Exists(repoDir)) {
@@ -70,6 +72,88 @@ public sealed class AgentWorkspacePersistenceTests {
             }
 
             AssertToolCallExecutionResult(expected.PendingToolResults[0], actual.PendingToolResults[0]);
+        }
+        finally {
+            if (Directory.Exists(repoDir)) {
+                Directory.Delete(repoDir, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public void WorkspaceRoot_ContextSavepointSetAndClear_RoundTripsNestedCheckpointWithoutReplacingSeededRecord() {
+        var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-workspace-context-savepoint-root-{Guid.NewGuid():N}");
+
+        try {
+            using var repo = Repository.Create(repoDir).Unwrap();
+            var revision = repo.CreateBranch("main").Unwrap();
+            var workspaceRoot = AgentWorkspaceRoot.Create(revision, "savepoint-root-system");
+            var seededRecord = GetContextSavepointRecord(workspaceRoot);
+            var expected = CreateContextSavepointFixture();
+
+            workspaceRoot.ContextState.SetSavepoint(expected);
+
+            Assert.Same(seededRecord, GetContextSavepointRecord(workspaceRoot));
+            AssertContextSavepoint(expected, workspaceRoot.ContextState.LoadSavepoint());
+
+            var emptyHistorySavepoint = new ContextSavepoint(
+                anchorEntrySerial: null,
+                anchorHistoryCount: 0,
+                entryState: AgentRunState.WaitingInput,
+                turnLock: null,
+                pendingCompactionSuppressed: false,
+                runtimeCheckpoint: new RuntimeCheckpoint(
+                    pendingToolResults: [],
+                    resolvedProfile: null,
+                    lockedCompactionSplitIndex: null,
+                    pendingCompaction: null,
+                    toolSessionExecutionSequence: 0
+                )
+            );
+            workspaceRoot.ContextState.SetSavepoint(emptyHistorySavepoint);
+
+            Assert.Same(seededRecord, GetContextSavepointRecord(workspaceRoot));
+            AssertContextSavepoint(emptyHistorySavepoint, workspaceRoot.ContextState.LoadSavepoint());
+
+            workspaceRoot.ContextState.ClearSavepoint();
+
+            Assert.Same(seededRecord, GetContextSavepointRecord(workspaceRoot));
+            Assert.Null(workspaceRoot.ContextState.LoadSavepoint());
+        }
+        finally {
+            if (Directory.Exists(repoDir)) {
+                Directory.Delete(repoDir, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public void WorkspaceSessionUpdateContextSavepoint_RoundTripsAfterCommitAndReopen() {
+        var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-workspace-context-savepoint-session-{Guid.NewGuid():N}");
+
+        try {
+            var expected = CreateContextSavepointFixture();
+
+            using (var repo = Repository.Create(repoDir).Unwrap()) {
+                var revision = repo.CreateBranch("main").Unwrap();
+                var workspaceRoot = AgentWorkspaceRoot.Create(revision, "savepoint-session-system");
+
+                using var session = AgentWorkspaceSession.Open(workspaceRoot, repo);
+                var updated = session.UpdateContextSavepoint(expected);
+                AssertContextSavepoint(expected, updated);
+                session.Commit();
+            }
+
+            using var reopenedRepo = Repository.Open(repoDir).Unwrap();
+            var reopenedRevision = reopenedRepo.CheckoutBranch("main").Unwrap();
+            var reopenedRoot = AgentWorkspaceRoot.FromRoot(
+                reopenedRevision.GraphRoot as DurableDict<string>
+                ?? throw new InvalidDataException("Repository graph root is not a valid agent-engine-state.")
+            );
+            using var reopenedSession = AgentWorkspaceSession.Open(reopenedRoot);
+
+            AssertContextSavepoint(expected, reopenedRoot.ContextState.LoadSavepoint());
+            AssertContextSavepoint(expected, reopenedSession.LoadContextSavepoint());
         }
         finally {
             if (Directory.Exists(repoDir)) {
@@ -4589,6 +4673,26 @@ public sealed class AgentWorkspacePersistenceTests {
         );
     }
 
+    private static ContextSavepoint CreateContextSavepointFixture() {
+        return new ContextSavepoint(
+            anchorEntrySerial: 7,
+            anchorHistoryCount: 4,
+            entryState: AgentRunState.PendingToolResults,
+            turnLock: new CompletionDescriptor("provider-turn-lock", "spec-turn-lock", "model-turn-lock"),
+            pendingCompactionSuppressed: true,
+            runtimeCheckpoint: new RuntimeCheckpoint(
+                pendingToolResults: [
+                    CreateToolCallExecutionResult("tool-alpha", "call-1", "output-1"),
+                    CreateToolCallExecutionResult("tool-beta", "call-2", "output-2")
+                ],
+                resolvedProfile: new LlmProfileCheckpoint("provider-profile", "spec-profile", "model-profile", "profile-name", 6144),
+                lockedCompactionSplitIndex: 5,
+                pendingCompaction: new CompactionCheckpoint(3, "savepoint-system", "savepoint-summarize"),
+                toolSessionExecutionSequence: 42
+            )
+        );
+    }
+
     private static void SeedLiveWorkspaceResolvedProfileCheckpoint(
         string repoDir,
         LlmProfileCheckpoint checkpoint
@@ -4663,6 +4767,27 @@ public sealed class AgentWorkspacePersistenceTests {
         Assert.Equal(expected.ExecuteResult.Status, actual.ExecuteResult.Status);
         Assert.Equal(expected.ExecuteResult.GetFlattenedText(), actual.ExecuteResult.GetFlattenedText());
         Assert.Equal(expected.Elapsed, actual.Elapsed);
+    }
+
+    private static void AssertContextSavepoint(ContextSavepoint expected, ContextSavepoint? actual) {
+        var savepoint = Assert.IsType<ContextSavepoint>(actual);
+        Assert.Equal(expected.AnchorEntrySerial, savepoint.AnchorEntrySerial);
+        Assert.Equal(expected.AnchorHistoryCount, savepoint.AnchorHistoryCount);
+        Assert.Equal(expected.EntryState, savepoint.EntryState);
+        Assert.Equal(expected.TurnLock, savepoint.TurnLock);
+        Assert.Equal(expected.PendingCompactionSuppressed, savepoint.PendingCompactionSuppressed);
+        AssertRuntimeCheckpoint(expected.RuntimeCheckpoint, savepoint.RuntimeCheckpoint);
+    }
+
+    private static void AssertRuntimeCheckpoint(RuntimeCheckpoint expected, RuntimeCheckpoint actual) {
+        Assert.Equal(expected.ResolvedProfile, actual.ResolvedProfile);
+        Assert.Equal(expected.LockedCompactionSplitIndex, actual.LockedCompactionSplitIndex);
+        Assert.Equal(expected.PendingCompaction, actual.PendingCompaction);
+        Assert.Equal(expected.ToolSessionExecutionSequence, actual.ToolSessionExecutionSequence);
+        Assert.Equal(expected.PendingToolResults.Count, actual.PendingToolResults.Count);
+        for (int i = 0; i < expected.PendingToolResults.Count; i++) {
+            AssertToolCallExecutionResult(expected.PendingToolResults[i], actual.PendingToolResults[i]);
+        }
     }
 
     private static void AssertObservationActionObservationHistory(
@@ -4897,6 +5022,12 @@ public sealed class AgentWorkspacePersistenceTests {
         return workspaceRoot.Root.Get<DurableDict<string>>("pendingCompaction", out var pendingCompaction) == GetIssue.None
             ? pendingCompaction!
             : throw new InvalidOperationException("Workspace root is missing pendingCompaction record.");
+    }
+
+    private static DurableDict<string> GetContextSavepointRecord(AgentWorkspaceRoot workspaceRoot) {
+        return workspaceRoot.Root.Get<DurableDict<string>>("contextSavepoint", out var contextSavepoint) == GetIssue.None
+            ? contextSavepoint!
+            : throw new InvalidOperationException("Workspace root is missing contextSavepoint record.");
     }
 
     private static AgentWorkspaceSession GetWorkspaceSession(AgentEngineHost host) {

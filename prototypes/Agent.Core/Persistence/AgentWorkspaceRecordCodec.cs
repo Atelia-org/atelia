@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Atelia.Agent.Core;
 using Atelia.Agent.Core.History;
 using Atelia.Completion.Abstractions;
 using Atelia.Completion.Tools;
@@ -42,15 +43,26 @@ internal static class AgentWorkspaceRecordCodec {
 
     private const string KeyResolvedProfile = "resolvedProfile";
     private const string KeyLockedCompactionSplitIndex = "lockedCompactionSplitIndex";
+    private const string KeyTurnRuntime = "turnRuntime";
+    private const string KeyPendingCompaction = "pendingCompaction";
+    private const string KeyPendingToolResults = "pendingToolResults";
+    private const string KeyToolSessionExecutionSequence = "toolSessionExecutionSequence";
 
     private const string KeyProviderId = "providerId";
     private const string KeyApiSpecId = "apiSpecId";
+    private const string KeyModel = "model";
     private const string KeyModelId = "modelId";
     private const string KeyName = "name";
     private const string KeySoftContextTokenCap = "softContextTokenCap";
 
     private const string KeySplitIndex = "splitIndex";
     private const string KeySummarizePrompt = "summarizePrompt";
+    private const string KeyAnchorEntrySerial = "anchorEntrySerial";
+    private const string KeyAnchorHistoryCount = "anchorHistoryCount";
+    private const string KeyEntryState = "entryState";
+    private const string KeyTurnLock = "turnLock";
+    private const string KeyPendingCompactionSuppressed = "pendingCompactionSuppressed";
+    private const string KeyRuntimeCheckpoint = "runtimeCheckpoint";
 
     private static readonly JsonSerializerOptions JsonOptions = new() {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
@@ -293,6 +305,174 @@ internal static class AgentWorkspaceRecordCodec {
         return new CompactionCheckpoint(split, systemPrompt, summarizePrompt);
     }
 
+    public static void WriteContextSavepointFields(DurableDict<string> record, ContextSavepoint savepoint) {
+        ArgumentNullException.ThrowIfNull(record);
+        ArgumentNullException.ThrowIfNull(savepoint);
+
+        if (savepoint.AnchorEntrySerial.HasValue) {
+            record.Upsert(KeyAnchorEntrySerial, savepoint.AnchorEntrySerial.Value);
+        }
+        else {
+            record.Remove(KeyAnchorEntrySerial);
+        }
+        record.Upsert(KeyAnchorHistoryCount, savepoint.AnchorHistoryCount);
+        record.Upsert(KeyEntryState, savepoint.EntryState.ToString());
+        record.Upsert(KeyPendingCompactionSuppressed, savepoint.PendingCompactionSuppressed);
+        if (savepoint.TurnLock is null) {
+            record.Remove(KeyTurnLock);
+        }
+        else {
+            WriteCompletionDescriptor(record, KeyTurnLock, savepoint.TurnLock);
+        }
+
+        record.Upsert<DurableObject>(
+            KeyRuntimeCheckpoint,
+            WriteRuntimeCheckpoint(record.Revision, savepoint.RuntimeCheckpoint)
+        );
+    }
+
+    public static void ClearContextSavepointFields(DurableDict<string> record) {
+        ArgumentNullException.ThrowIfNull(record);
+
+        record.Remove(KeyAnchorEntrySerial);
+        record.Remove(KeyAnchorHistoryCount);
+        record.Remove(KeyEntryState);
+        record.Remove(KeyTurnLock);
+        record.Remove(KeyPendingCompactionSuppressed);
+        record.Remove(KeyRuntimeCheckpoint);
+    }
+
+    public static ContextSavepoint? ReadContextSavepointOrNull(DurableDict<string> record) {
+        ArgumentNullException.ThrowIfNull(record);
+
+        bool hasAnchorEntrySerial = record.Get<ulong>(KeyAnchorEntrySerial, out var anchorEntrySerial) == GetIssue.None;
+        bool hasAnchorHistoryCount = record.Get<int>(KeyAnchorHistoryCount, out var anchorHistoryCount) == GetIssue.None;
+        bool hasEntryState = record.TryGet<string>(KeyEntryState, out var entryStateText);
+        bool hasPendingCompactionSuppressed = record.Get<bool>(
+            KeyPendingCompactionSuppressed,
+            out var pendingCompactionSuppressed
+        ) == GetIssue.None;
+        bool hasTurnLock = record.TryGet<DurableDict<string>>(KeyTurnLock, out _);
+        bool hasRuntimeCheckpoint = record.TryGet<DurableDict<string>>(KeyRuntimeCheckpoint, out var runtimeCheckpointRecord);
+
+        if (!hasAnchorEntrySerial
+            && !hasAnchorHistoryCount
+            && !hasEntryState
+            && !hasPendingCompactionSuppressed
+            && !hasTurnLock
+            && !hasRuntimeCheckpoint) {
+            return null;
+        }
+
+        if (!hasAnchorHistoryCount) {
+            throw new InvalidDataException("Context savepoint is missing anchorHistoryCount.");
+        }
+        if (!hasEntryState || string.IsNullOrWhiteSpace(entryStateText)) {
+            throw new InvalidDataException("Context savepoint is missing entryState.");
+        }
+        if (!Enum.TryParse<AgentRunState>(entryStateText, ignoreCase: true, out var entryState)) {
+            throw new InvalidDataException($"Unsupported context savepoint entryState '{entryStateText}'.");
+        }
+        if (!hasPendingCompactionSuppressed) {
+            throw new InvalidDataException("Context savepoint is missing pendingCompactionSuppressed.");
+        }
+        if (!hasRuntimeCheckpoint || runtimeCheckpointRecord is null) {
+            throw new InvalidDataException("Context savepoint is missing runtimeCheckpoint.");
+        }
+
+        if (anchorHistoryCount == 0 && hasAnchorEntrySerial) {
+            throw new InvalidDataException("Context savepoint must not persist anchorEntrySerial when anchorHistoryCount is zero.");
+        }
+        if (anchorHistoryCount > 0 && !hasAnchorEntrySerial) {
+            throw new InvalidDataException("Context savepoint is missing anchorEntrySerial.");
+        }
+
+        return new ContextSavepoint(
+            hasAnchorEntrySerial ? anchorEntrySerial : null,
+            anchorHistoryCount,
+            entryState,
+            ReadCompletionDescriptorOrNull(record, KeyTurnLock),
+            pendingCompactionSuppressed,
+            ReadRuntimeCheckpoint(runtimeCheckpointRecord)
+        );
+    }
+
+    public static DurableDict<string> WriteRuntimeCheckpoint(Revision revision, RuntimeCheckpoint checkpoint) {
+        ArgumentNullException.ThrowIfNull(revision);
+        ArgumentNullException.ThrowIfNull(checkpoint);
+
+        var record = revision.CreateDict<string>();
+        WriteRuntimeCheckpointFields(record, checkpoint);
+        return record;
+    }
+
+    public static void WriteRuntimeCheckpointFields(DurableDict<string> record, RuntimeCheckpoint checkpoint) {
+        ArgumentNullException.ThrowIfNull(record);
+        ArgumentNullException.ThrowIfNull(checkpoint);
+
+        var pendingToolResults = record.Revision.CreateDeque();
+        foreach (var pendingResult in checkpoint.PendingToolResults) {
+            pendingToolResults.PushBack<DurableObject>(WritePendingToolResult(record.Revision, pendingResult));
+        }
+
+        var turnRuntime = record.Revision.CreateDict<string>();
+        WriteTurnRuntime(turnRuntime, checkpoint.ResolvedProfile, checkpoint.LockedCompactionSplitIndex);
+
+        var pendingCompaction = record.Revision.CreateDict<string>();
+        if (checkpoint.PendingCompaction is not null) {
+            WriteCompactionCheckpointFields(pendingCompaction, checkpoint.PendingCompaction);
+        }
+
+        record.Upsert<DurableObject>(KeyPendingToolResults, pendingToolResults);
+        record.Upsert<DurableObject>(KeyTurnRuntime, turnRuntime);
+        record.Upsert<DurableObject>(KeyPendingCompaction, pendingCompaction);
+        record.Upsert(KeyToolSessionExecutionSequence, checkpoint.ToolSessionExecutionSequence);
+    }
+
+    public static RuntimeCheckpoint ReadRuntimeCheckpoint(DurableDict<string> record) {
+        ArgumentNullException.ThrowIfNull(record);
+
+        var pendingToolResults = new List<ToolCallExecutionResult>();
+        if (record.TryGet<DurableDeque>(KeyPendingToolResults, out var pendingToolResultsRecord)
+            && pendingToolResultsRecord is not null) {
+            for (int index = 0; index < pendingToolResultsRecord.Count; index++) {
+                if (!pendingToolResultsRecord.TryGetAt<DurableDict<string>>(index, out var resultRecord)
+                    || resultRecord is null) {
+                    throw new InvalidDataException(
+                        $"Runtime checkpoint pending tool result at index {index} is missing or invalid."
+                    );
+                }
+
+                pendingToolResults.Add(ReadPendingToolResult(resultRecord));
+            }
+        }
+
+        var turnRuntime = record.TryGet<DurableDict<string>>(KeyTurnRuntime, out var turnRuntimeRecord)
+                          && turnRuntimeRecord is not null
+            ? ReadTurnRuntime(turnRuntimeRecord)
+            : (ResolvedProfile: null, LockedCompactionSplitIndex: null);
+
+        var pendingCompaction = record.TryGet<DurableDict<string>>(KeyPendingCompaction, out var pendingCompactionRecord)
+                                && pendingCompactionRecord is not null
+            ? ReadCompactionCheckpointOrNull(pendingCompactionRecord)
+            : null;
+
+        long toolSessionExecutionSequence = record.Get<long>(
+            KeyToolSessionExecutionSequence,
+            out var executionSequence
+        ) == GetIssue.None
+            ? executionSequence
+            : 0L;
+
+        return new RuntimeCheckpoint(
+            pendingToolResults,
+            turnRuntime.ResolvedProfile,
+            turnRuntime.LockedCompactionSplitIndex,
+            pendingCompaction,
+            toolSessionExecutionSequence
+        );
+    }
+
     private static ActionEntry ReadActionEntry(DurableDict<string> record, DateTimeOffset timestamp) {
         string providerId = record.Get<string>(KeyInvocationProviderId, out var provider) == GetIssue.None
             ? provider!
@@ -453,6 +633,43 @@ internal static class AgentWorkspaceRecordCodec {
             HistoryEntryKind.Recap => KindRecap,
             _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, "Unsupported history entry kind.")
         };
+    }
+
+    private static void WriteCompletionDescriptor(
+        DurableDict<string> parent,
+        string key,
+        CompletionDescriptor descriptor
+    ) {
+        ArgumentNullException.ThrowIfNull(parent);
+        ArgumentNullException.ThrowIfNull(key);
+        ArgumentNullException.ThrowIfNull(descriptor);
+
+        var descriptorRecord = parent.Revision.CreateDict<string>();
+        descriptorRecord.Upsert(KeyProviderId, descriptor.ProviderId);
+        descriptorRecord.Upsert(KeyApiSpecId, descriptor.ApiSpecId);
+        descriptorRecord.Upsert(KeyModel, descriptor.Model);
+        parent.Upsert<DurableObject>(key, descriptorRecord);
+    }
+
+    private static CompletionDescriptor? ReadCompletionDescriptorOrNull(DurableDict<string> parent, string key) {
+        ArgumentNullException.ThrowIfNull(parent);
+        ArgumentNullException.ThrowIfNull(key);
+
+        if (!parent.TryGet<DurableDict<string>>(key, out var descriptorRecord) || descriptorRecord is null) {
+            return null;
+        }
+
+        string providerId = descriptorRecord.Get<string>(KeyProviderId, out var provider) == GetIssue.None
+            ? provider!
+            : throw new InvalidDataException("Completion descriptor is missing providerId.");
+        string apiSpecId = descriptorRecord.Get<string>(KeyApiSpecId, out var apiSpec) == GetIssue.None
+            ? apiSpec!
+            : throw new InvalidDataException("Completion descriptor is missing apiSpecId.");
+        string model = descriptorRecord.Get<string>(KeyModel, out var modelValue) == GetIssue.None
+            ? modelValue!
+            : throw new InvalidDataException("Completion descriptor is missing model.");
+
+        return new CompletionDescriptor(providerId, apiSpecId, model);
     }
 
     private sealed record ToolCallExecutionResultDto(
