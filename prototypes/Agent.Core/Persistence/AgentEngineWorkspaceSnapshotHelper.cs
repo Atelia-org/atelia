@@ -1,7 +1,3 @@
-using Atelia.Agent.Core.History;
-using Atelia.Completion.Tools;
-using Atelia.StateJournal;
-
 namespace Atelia.Agent.Core.Persistence;
 
 /// <summary>
@@ -11,16 +7,6 @@ namespace Atelia.Agent.Core.Persistence;
 /// 对外公开的 non-live restore surface 应显式停留在 <see cref="AgentEngineStateSnapshot"/> + `AgentEngine.CreateFromStateSnapshot(...)`。
 /// </summary>
 internal static class AgentEngineWorkspaceSnapshotHelper {
-    /// <summary>
-    /// 把当前 <see cref="AgentEngine"/> 导出为 snapshot，再写回 workspace。
-    /// 保留该入口主要是为了 compatibility/import-export；repo-backed live host 的主路径应优先直接做 workspace mutation。
-    /// </summary>
-    internal static void SaveSnapshot(AgentWorkspaceRoot workspaceRoot, AgentEngine engine) {
-        ArgumentNullException.ThrowIfNull(workspaceRoot);
-        ArgumentNullException.ThrowIfNull(engine);
-        SaveSnapshot(workspaceRoot, engine.ExportStateSnapshot());
-    }
-
     /// <summary>
     /// 把一个完整 snapshot 投影进 workspace root。
     /// 这是 compatibility adapter 入口，不表示 snapshot 是 runtime 的主真相。

@@ -2947,6 +2947,20 @@ public sealed class AgentWorkspacePersistenceTests {
         );
     }
 
+    [Fact]
+    public void SnapshotHelper_DoesNotAcceptLiveAgentEngineInput() {
+        Assert.DoesNotContain(
+            typeof(AgentEngineWorkspaceSnapshotHelper).GetMethods(BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic),
+            static method => method.Name == "SaveSnapshot"
+                && method.GetParameters() is [
+                    { ParameterType: var first },
+                    { ParameterType: var second }
+                ]
+                && first == typeof(AgentWorkspaceRoot)
+                && second == typeof(AgentEngine)
+        );
+    }
+
     private static AgentEngineStateSnapshot CreateSnapshotFixture() {
         var invocation = new CompletionDescriptor("provider-a", "spec-a", "model-a");
         var state = AgentState.CreateDefault("roundtrip-system");
