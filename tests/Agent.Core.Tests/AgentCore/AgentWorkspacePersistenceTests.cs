@@ -42,18 +42,18 @@ public sealed class AgentWorkspacePersistenceTests {
     }
 
     [Fact]
-    public void StateRoot_SaveThenLoad_RoundTripsAllSnapshotFields() {
+    public void SnapshotHelper_SaveThenLoad_RoundTripsAllSnapshotFields() {
         var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-state-root-{Guid.NewGuid():N}");
 
         try {
             using var repo = Repository.Create(repoDir).Unwrap();
             var revision = repo.CreateBranch("main").Unwrap();
-            var stateRoot = AgentEngineStateRoot.Create(revision, "bootstrap-system");
+            var workspaceRoot = AgentWorkspaceRoot.Create(revision, "bootstrap-system");
             var expected = CreateSnapshotFixture();
 
-            stateRoot.Save(expected);
+            AgentEngineStateRoot.SaveSnapshot(workspaceRoot, expected);
 
-            var actual = stateRoot.Load();
+            var actual = AgentEngineStateRoot.LoadSnapshot(workspaceRoot);
 
             Assert.Equal(expected.AgentState.SystemPrompt, actual.AgentState.SystemPrompt);
             Assert.Equal(expected.AgentState.LastSerial, actual.AgentState.LastSerial);
@@ -1502,12 +1502,10 @@ public sealed class AgentWorkspacePersistenceTests {
             state.AppendNotification("live-pending");
             var livePendingNotificationsDeque = GetPendingNotificationsDeque(workspaceRoot);
             var snapshot = CreateSnapshotFixture();
-            var stateRoot = AgentEngineStateRoot.FromRoot(workspaceRoot.Root);
-
-            stateRoot.Save(snapshot);
+            AgentEngineStateRoot.SaveSnapshot(workspaceRoot, snapshot);
 
             Assert.NotSame(liveAppendDeque, GetHistoryDeque(workspaceRoot));
-            var actual = stateRoot.Load();
+            var actual = AgentEngineStateRoot.LoadSnapshot(workspaceRoot);
             Assert.Equal(snapshot.AgentState.RecentHistory.Count, actual.AgentState.RecentHistory.Count);
             Assert.Equal(snapshot.AgentState.LastSerial, actual.AgentState.LastSerial);
             for (int i = 0; i < snapshot.AgentState.RecentHistory.Count; i++) {
@@ -1540,7 +1538,7 @@ public sealed class AgentWorkspacePersistenceTests {
 
             Assert.Same(liveTurnRuntime, GetTurnRuntimeMap(workspaceRoot));
 
-            AgentEngineStateRoot.FromRoot(workspaceRoot.Root).Save(CreateSnapshotFixture());
+            AgentEngineStateRoot.SaveSnapshot(workspaceRoot, CreateSnapshotFixture());
 
             Assert.NotSame(liveTurnRuntime, GetTurnRuntimeMap(workspaceRoot));
         }
@@ -1778,7 +1776,8 @@ public sealed class AgentWorkspacePersistenceTests {
             session.UpdatePendingCompaction(new CompactionCheckpoint(2, "live-system", "live-prompt"));
             Assert.Same(livePendingCompaction, GetPendingCompactionRecord(workspaceRoot));
 
-            AgentEngineStateRoot.FromRoot(workspaceRoot.Root).Save(
+            AgentEngineStateRoot.SaveSnapshot(
+                workspaceRoot,
                 new AgentEngineStateSnapshot(
                     AgentState: new AgentStateSnapshot(
                         SystemPrompt: workspaceRoot.Meta.GetRequiredSystemPrompt(),
@@ -1797,7 +1796,7 @@ public sealed class AgentWorkspacePersistenceTests {
             Assert.NotSame(livePendingCompaction, GetPendingCompactionRecord(workspaceRoot));
             Assert.Equal(
                 new CompactionCheckpoint(4, "snapshot-system", "snapshot-prompt"),
-                AgentEngineStateRoot.FromRoot(workspaceRoot.Root).Load().PendingCompaction
+                AgentEngineStateRoot.LoadSnapshot(workspaceRoot).PendingCompaction
             );
         }
         finally {
@@ -1859,9 +1858,9 @@ public sealed class AgentWorkspacePersistenceTests {
         try {
             using var repo = Repository.Create(repoDir).Unwrap();
             var revision = repo.CreateBranch("main").Unwrap();
-            var stateRoot = AgentEngineStateRoot.Create(revision, "public-root-system");
+            var workspaceRoot = AgentWorkspaceRoot.Create(revision, "public-root-system");
 
-            var snapshot = stateRoot.Load();
+            var snapshot = AgentEngineStateRoot.LoadSnapshot(workspaceRoot);
             var engine = AgentEngine.CreateFromStateSnapshot(snapshot);
             engine.State.SetSystemPrompt("updated-in-memory-only");
             engine.AppendNotification("queued-notification");
@@ -1874,7 +1873,7 @@ public sealed class AgentWorkspacePersistenceTests {
             );
             Assert.True(engine.RequestCompaction("compact-system", "compact-now"));
 
-            var persisted = stateRoot.Load();
+            var persisted = AgentEngineStateRoot.LoadSnapshot(workspaceRoot);
 
             Assert.Equal("public-root-system", persisted.AgentState.SystemPrompt);
             Assert.Empty(persisted.AgentState.RecentHistory);
@@ -1895,8 +1894,8 @@ public sealed class AgentWorkspacePersistenceTests {
         try {
             using var repo = Repository.Create(repoDir).Unwrap();
             var revision = repo.CreateBranch("main").Unwrap();
-            var stateRoot = AgentEngineStateRoot.Create(revision, "public-snapshot-system");
-            var snapshot = stateRoot.Load();
+            var workspaceRoot = AgentWorkspaceRoot.Create(revision, "public-snapshot-system");
+            var snapshot = AgentEngineStateRoot.LoadSnapshot(workspaceRoot);
 
             var engine = AgentEngine.CreateFromStateSnapshot(snapshot);
             engine.State.SetSystemPrompt("updated-in-memory-only");
@@ -1910,7 +1909,7 @@ public sealed class AgentWorkspacePersistenceTests {
             );
             Assert.True(engine.RequestCompaction("compact-system", "compact-now"));
 
-            var persisted = stateRoot.Load();
+            var persisted = AgentEngineStateRoot.LoadSnapshot(workspaceRoot);
 
             Assert.Equal("public-snapshot-system", persisted.AgentState.SystemPrompt);
             Assert.Empty(persisted.AgentState.RecentHistory);
@@ -1931,8 +1930,8 @@ public sealed class AgentWorkspacePersistenceTests {
         try {
             using var repo = Repository.Create(repoDir).Unwrap();
             var revision = repo.CreateBranch("main").Unwrap();
-            var stateRoot = AgentEngineStateRoot.Create(revision, "public-snapshot-system");
-            var snapshot = stateRoot.Load();
+            var workspaceRoot = AgentWorkspaceRoot.Create(revision, "public-snapshot-system");
+            var snapshot = AgentEngineStateRoot.LoadSnapshot(workspaceRoot);
 
             var engine = AgentEngine.CreateFromStateSnapshot(snapshot);
             engine.AppendNotification("queued-notification");
@@ -1977,7 +1976,7 @@ public sealed class AgentWorkspacePersistenceTests {
                 }
             );
 
-            var persisted = stateRoot.Load();
+            var persisted = AgentEngineStateRoot.LoadSnapshot(workspaceRoot);
 
             Assert.Equal("public-snapshot-system", persisted.AgentState.SystemPrompt);
             Assert.Empty(persisted.AgentState.RecentHistory);
@@ -2121,11 +2120,11 @@ public sealed class AgentWorkspacePersistenceTests {
 
             using var repo = Repository.Create(repoDir).Unwrap();
             var revision = repo.CreateBranch("main").Unwrap();
-            var stateRoot = AgentEngineStateRoot.Create(revision, "public-snapshot-tool-restore");
-            stateRoot.Save(expected);
+            var workspaceRoot = AgentWorkspaceRoot.Create(revision, "public-snapshot-tool-restore");
+            AgentEngineStateRoot.SaveSnapshot(workspaceRoot, expected);
 
             var engine = AgentEngine.CreateFromStateSnapshot(
-                stateRoot.Load(),
+                AgentEngineStateRoot.LoadSnapshot(workspaceRoot),
                 new LlmProfileRegistry([resolvedProfile]),
                 initialTools: [new RecordingTool("alpha")]
             );
@@ -2134,7 +2133,7 @@ public sealed class AgentWorkspacePersistenceTests {
 
             var step = await engine.StepAsync(nominalProfile);
             var pendingResult = Assert.Single(engine.ExportStateSnapshot().PendingToolResults);
-            var persisted = stateRoot.Load();
+            var persisted = AgentEngineStateRoot.LoadSnapshot(workspaceRoot);
 
             Assert.True(step.ProgressMade);
             Assert.Same(resolvedProfile, activeProfile);
@@ -2172,10 +2171,10 @@ public sealed class AgentWorkspacePersistenceTests {
 
             using var repo = Repository.Create(repoDir).Unwrap();
             var revision = repo.CreateBranch("main").Unwrap();
-            var stateRoot = AgentEngineStateRoot.Create(revision, "public-root-tool-restore");
-            stateRoot.Save(expected);
+            var workspaceRoot = AgentWorkspaceRoot.Create(revision, "public-root-tool-restore");
+            AgentEngineStateRoot.SaveSnapshot(workspaceRoot, expected);
 
-            var snapshot = stateRoot.Load();
+            var snapshot = AgentEngineStateRoot.LoadSnapshot(workspaceRoot);
             var engine = AgentEngine.CreateFromStateSnapshot(
                 snapshot,
                 new LlmProfileRegistry([resolvedProfile]),
@@ -2186,7 +2185,7 @@ public sealed class AgentWorkspacePersistenceTests {
 
             var step = await engine.StepAsync(nominalProfile);
             var pendingResult = Assert.Single(engine.ExportStateSnapshot().PendingToolResults);
-            var persisted = stateRoot.Load();
+            var persisted = AgentEngineStateRoot.LoadSnapshot(workspaceRoot);
 
             Assert.True(step.ProgressMade);
             Assert.Same(resolvedProfile, activeProfile);
@@ -2217,8 +2216,8 @@ public sealed class AgentWorkspacePersistenceTests {
 
             using (var repo = Repository.Create(repoDir).Unwrap()) {
                 var revision = repo.CreateBranch("main").Unwrap();
-                var stateRoot = AgentEngineStateRoot.Create(revision, "seed-system");
-                stateRoot.SaveAndCommit(repo, expected);
+                var workspaceRoot = AgentWorkspaceRoot.Create(revision, "seed-system");
+                AgentEngineStateRoot.SaveSnapshotAndCommit(repo, workspaceRoot, expected);
             }
 
             using var reopened = AgentEngineHost.OpenExisting(
@@ -3150,28 +3149,16 @@ public sealed class AgentWorkspacePersistenceTests {
             : throw new InvalidOperationException("Workspace root is missing pendingNotifications deque.");
     }
 
-    private static DurableDict<string> GetPendingToolResultsMap(AgentEngineStateRoot stateRoot) {
-        return GetPendingToolResultsMap(stateRoot.WorkspaceRoot);
-    }
-
     private static DurableDict<string> GetPendingToolResultsMap(AgentWorkspaceRoot workspaceRoot) {
         return workspaceRoot.Root.Get<DurableDict<string>>("pendingToolResults", out var pendingToolResults) == GetIssue.None
             ? pendingToolResults!
             : throw new InvalidOperationException("Workspace root is missing pendingToolResults map.");
     }
 
-    private static DurableDict<string> GetTurnRuntimeMap(AgentEngineStateRoot stateRoot) {
-        return GetTurnRuntimeMap(stateRoot.WorkspaceRoot);
-    }
-
     private static DurableDict<string> GetTurnRuntimeMap(AgentWorkspaceRoot workspaceRoot) {
         return workspaceRoot.Root.Get<DurableDict<string>>("turnRuntime", out var turnRuntime) == GetIssue.None
             ? turnRuntime!
             : throw new InvalidOperationException("Workspace root is missing turnRuntime map.");
-    }
-
-    private static DurableDict<string> GetPendingCompactionRecord(AgentEngineStateRoot stateRoot) {
-        return GetPendingCompactionRecord(stateRoot.WorkspaceRoot);
     }
 
     private static DurableDict<string> GetPendingCompactionRecord(AgentWorkspaceRoot workspaceRoot) {

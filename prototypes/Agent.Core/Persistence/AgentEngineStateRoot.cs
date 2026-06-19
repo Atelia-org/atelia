@@ -5,84 +5,54 @@ using Atelia.StateJournal;
 namespace Atelia.Agent.Core.Persistence;
 
 /// <summary>
-/// 以 <see cref="DurableDict{TKey}"/> 为 graph root 的 AgentEngine workspace adapter。
+/// 围绕 <see cref="AgentWorkspaceRoot"/> 做 snapshot materialize/project 的内部 helper。
 /// 当前 repo-backed host / internal path 以 live durable workspace 为主；
-/// 本类型已收回 internal，保留 snapshot save/load 入口主要用于测试、diagnostic 和少量内部 compatibility/import-export 桥接。
+/// 本类型不再充当第二个 root façade，保留的职责仅是 snapshot save/load 桥接，主要用于测试、diagnostic 和少量内部 compatibility/import-export。
 /// 对外公开的 non-live restore surface 应显式停留在 <see cref="AgentEngineStateSnapshot"/> + `AgentEngine.CreateFromStateSnapshot(...)`。
 /// </summary>
-internal sealed class AgentEngineStateRoot {
-    private readonly AgentWorkspaceRoot _workspaceRoot;
-
-    private AgentEngineStateRoot(AgentWorkspaceRoot workspaceRoot) {
-        _workspaceRoot = workspaceRoot ?? throw new ArgumentNullException(nameof(workspaceRoot));
-    }
-
-    public DurableDict<string> Root => _workspaceRoot.Root;
-
-    public Revision Revision => _workspaceRoot.Revision;
-
-    internal AgentWorkspaceRoot WorkspaceRoot => _workspaceRoot;
-
-    public static AgentEngineStateRoot Create(Revision revision, string? systemPrompt = null) {
-        ArgumentNullException.ThrowIfNull(revision);
-
-        return new AgentEngineStateRoot(AgentWorkspaceRoot.Create(revision, systemPrompt));
-    }
-
-    public static AgentEngineStateRoot Create(Revision revision, AgentEngine engine) {
-        ArgumentNullException.ThrowIfNull(engine);
-
-        var stateRoot = Create(revision, engine.SystemPrompt);
-        stateRoot.Save(engine);
-        return stateRoot;
-    }
-
-    /// <summary>
-    /// 从已有 graph root 包装出 workspace adapter。
-    /// 该 internal adapter 若随后走 <see cref="Load"/>，得到的是 snapshot 视图，而不是绑定 live host 的运行时会话。
-    /// </summary>
-    public static AgentEngineStateRoot FromRoot(DurableDict<string> root) => FromWorkspaceRoot(AgentWorkspaceRoot.FromRoot(root));
-
-    internal static AgentEngineStateRoot FromWorkspaceRoot(AgentWorkspaceRoot workspaceRoot) => new(workspaceRoot);
-
+internal static class AgentEngineStateRoot {
     /// <summary>
     /// 把当前 <see cref="AgentEngine"/> 导出为 snapshot，再写回 workspace。
     /// 保留该入口主要是为了 compatibility/import-export；repo-backed live host 的主路径应优先直接做 workspace mutation。
     /// </summary>
-    public void Save(AgentEngine engine) {
+    internal static void SaveSnapshot(AgentWorkspaceRoot workspaceRoot, AgentEngine engine) {
+        ArgumentNullException.ThrowIfNull(workspaceRoot);
         ArgumentNullException.ThrowIfNull(engine);
-        Save(engine.ExportStateSnapshot());
+        SaveSnapshot(workspaceRoot, engine.ExportStateSnapshot());
     }
 
-    public void SaveAndCommit(Repository repo, AgentEngine engine) {
+    internal static void SaveSnapshotAndCommit(Repository repo, AgentWorkspaceRoot workspaceRoot, AgentEngine engine) {
         ArgumentNullException.ThrowIfNull(repo);
+        ArgumentNullException.ThrowIfNull(workspaceRoot);
         ArgumentNullException.ThrowIfNull(engine);
 
-        Save(engine);
-        repo.Commit(Root).Unwrap();
+        SaveSnapshot(workspaceRoot, engine);
+        repo.Commit(workspaceRoot.Root).Unwrap();
     }
 
-    public void SaveAndCommit(Repository repo, AgentEngineStateSnapshot snapshot) {
+    internal static void SaveSnapshotAndCommit(Repository repo, AgentWorkspaceRoot workspaceRoot, AgentEngineStateSnapshot snapshot) {
         ArgumentNullException.ThrowIfNull(repo);
+        ArgumentNullException.ThrowIfNull(workspaceRoot);
         ArgumentNullException.ThrowIfNull(snapshot);
 
-        Save(snapshot);
-        repo.Commit(Root).Unwrap();
+        SaveSnapshot(workspaceRoot, snapshot);
+        repo.Commit(workspaceRoot.Root).Unwrap();
     }
 
     /// <summary>
     /// 把一个完整 snapshot 投影进 workspace root。
     /// 这是 compatibility adapter 入口，不表示 snapshot 是 runtime 的主真相。
     /// </summary>
-    public void Save(AgentEngineStateSnapshot snapshot) {
+    internal static void SaveSnapshot(AgentWorkspaceRoot workspaceRoot, AgentEngineStateSnapshot snapshot) {
+        ArgumentNullException.ThrowIfNull(workspaceRoot);
         ArgumentNullException.ThrowIfNull(snapshot);
 
-        _workspaceRoot.Meta.Stamp();
-        _workspaceRoot.Meta.SetSystemPrompt(snapshot.AgentState.SystemPrompt);
-        _workspaceRoot.History.SetLastSerial(snapshot.AgentState.LastSerial);
-        _workspaceRoot.History.ReplaceRecent(snapshot.AgentState.RecentHistory);
-        _workspaceRoot.History.ReplacePendingNotifications(snapshot.AgentState.PendingNotifications);
-        ReplaceRuntimeState(ToRuntimeStateSnapshot(snapshot));
+        workspaceRoot.Meta.Stamp();
+        workspaceRoot.Meta.SetSystemPrompt(snapshot.AgentState.SystemPrompt);
+        workspaceRoot.History.SetLastSerial(snapshot.AgentState.LastSerial);
+        workspaceRoot.History.ReplaceRecent(snapshot.AgentState.RecentHistory);
+        workspaceRoot.History.ReplacePendingNotifications(snapshot.AgentState.PendingNotifications);
+        ReplaceRuntimeState(workspaceRoot, ToRuntimeStateSnapshot(snapshot));
     }
 
     /// <summary>
@@ -90,8 +60,6 @@ internal sealed class AgentEngineStateRoot {
     /// 公开的 non-live restore surface 应显式走 snapshot + `AgentEngine.CreateFromStateSnapshot(...)`；
     /// internal live host 则应直接围绕 workspaceRoot / session 恢复。
     /// </summary>
-    public AgentEngineStateSnapshot Load() => LoadSnapshot(_workspaceRoot);
-
     internal static AgentEngineStateSnapshot LoadSnapshot(AgentWorkspaceRoot workspaceRoot) {
         ArgumentNullException.ThrowIfNull(workspaceRoot);
 
@@ -116,14 +84,14 @@ internal sealed class AgentEngineStateRoot {
         );
     }
 
-    private void ReplaceRuntimeState(AgentEngineRuntimeStateSnapshot snapshot) {
+    private static void ReplaceRuntimeState(AgentWorkspaceRoot workspaceRoot, AgentEngineRuntimeStateSnapshot snapshot) {
         ArgumentNullException.ThrowIfNull(snapshot);
 
-        _workspaceRoot.Meta.Stamp();
-        _workspaceRoot.RuntimeState.SetToolSessionExecutionSequence(snapshot.ToolSessionExecutionSequence);
-        _workspaceRoot.RuntimeState.ReplacePendingToolResults(snapshot.PendingToolResults);
-        _workspaceRoot.RuntimeState.ReplaceTurnRuntime(snapshot.ResolvedProfile, snapshot.LockedCompactionSplitIndex);
-        _workspaceRoot.RuntimeState.ReplacePendingCompaction(snapshot.PendingCompaction);
+        workspaceRoot.Meta.Stamp();
+        workspaceRoot.RuntimeState.SetToolSessionExecutionSequence(snapshot.ToolSessionExecutionSequence);
+        workspaceRoot.RuntimeState.ReplacePendingToolResults(snapshot.PendingToolResults);
+        workspaceRoot.RuntimeState.ReplaceTurnRuntime(snapshot.ResolvedProfile, snapshot.LockedCompactionSplitIndex);
+        workspaceRoot.RuntimeState.ReplacePendingCompaction(snapshot.PendingCompaction);
     }
 
     private static AgentEngineRuntimeStateSnapshot LoadRuntimeState(AgentWorkspaceRoot workspaceRoot) {
