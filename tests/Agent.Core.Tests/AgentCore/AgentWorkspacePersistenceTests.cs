@@ -2586,6 +2586,234 @@ public sealed class AgentWorkspacePersistenceTests {
     }
 
     [Fact]
+    public async Task Host_PendingToolResultsRetry_LateNotificationAppearsInRetryRequestWithoutLosingToolResultsType() {
+        var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-host-pending-tool-results-retry-late-notification-{Guid.NewGuid():N}");
+
+        try {
+            var client = new RecordingQueueCompletionClient(
+                new InvalidOperationException("simulated provider failure"),
+                new ActionMessage([new ActionBlock.Text("assistant-output")])
+            );
+            const string modelId = "model-pending-tool-results-retry";
+            var profile = CreateFullFeatureProfile(client, modelId);
+            var invocation = profile.ToCompletionDescriptor();
+            var toolResult = CreateToolCallExecutionResult("alpha", "call-1", "tool-output");
+
+            using var host = AgentEngineHost.CreateNew(repoDir);
+            AppendObservationActionToolResultsTurn(host.Engine.State, invocation, "seed-observation", toolResult);
+
+            await Assert.ThrowsAsync<InvalidOperationException>(() => host.StepAsync(profile));
+
+            host.Engine.AppendNotification("late-after-failure");
+
+            string? notificationsSeenInPrepare = null;
+            string[]? resultIdsSeenInPrepare = null;
+            ulong? estimatedTokensSeenInPrepare = null;
+            ulong? liveEstimateSeenInPrepare = null;
+            host.Engine.PrepareInvocationAsync = (args, _) => {
+                var tail = Assert.IsType<ToolResultsEntry>(host.Engine.State.RecentHistory[^1]);
+                var durableTail = Assert.IsType<ToolResultsEntry>(host.LoadDurableRecentHistory()[^1]);
+                notificationsSeenInPrepare = tail.Notifications;
+                resultIdsSeenInPrepare = tail.Results.Select(static result => result.ToolCallId).ToArray();
+                Assert.Equal("late-after-failure", durableTail.Notifications);
+                Assert.Equal(["call-1"], durableTail.Results.Select(static result => result.ToolCallId).ToArray());
+                estimatedTokensSeenInPrepare = args.EstimatedContextTokens;
+                liveEstimateSeenInPrepare = host.Engine.EstimateCurrentContextTokens();
+                return Task.CompletedTask;
+            };
+
+            await host.StepAsync(profile);
+
+            Assert.Equal("late-after-failure", notificationsSeenInPrepare);
+            Assert.Equal(["call-1"], Assert.IsType<string[]>(resultIdsSeenInPrepare));
+            Assert.Equal(liveEstimateSeenInPrepare, estimatedTokensSeenInPrepare);
+            AssertLastToolResultsRequestContentAndResults(client.Requests[1], "late-after-failure", "call-1");
+            Assert.Empty(host.LoadDurablePendingNotifications());
+
+            var foldedEntry = Assert.IsType<ToolResultsEntry>(host.LoadDurableRecentHistory()[^2]);
+            Assert.Equal("late-after-failure", foldedEntry.Notifications);
+            var durableResult = Assert.Single(foldedEntry.Results);
+            Assert.Equal("call-1", durableResult.ToolCallId);
+            Assert.Equal("tool-output", durableResult.ExecuteResult.GetFlattenedText());
+        }
+        finally {
+            if (Directory.Exists(repoDir)) {
+                Directory.Delete(repoDir, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task Host_OpenExisting_PendingToolResultsRetry_FoldsLateNotificationWithoutLosingToolResultsType() {
+        var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-host-pending-tool-results-reopen-retry-late-notification-{Guid.NewGuid():N}");
+
+        try {
+            const string modelId = "model-pending-tool-results-reopen-retry";
+            var failingClient = new RecordingQueueCompletionClient(
+                new InvalidOperationException("simulated provider failure")
+            );
+            var failingProfile = CreateFullFeatureProfile(failingClient, modelId);
+            var invocation = failingProfile.ToCompletionDescriptor();
+            var toolResult = CreateToolCallExecutionResult("alpha", "call-1", "tool-output");
+
+            using (var host = AgentEngineHost.CreateNew(repoDir)) {
+                AppendObservationActionToolResultsTurn(host.Engine.State, invocation, "seed-observation", toolResult);
+
+                await Assert.ThrowsAsync<InvalidOperationException>(() => host.StepAsync(failingProfile));
+
+                host.Engine.AppendNotification("late-after-reopen");
+                host.SaveAndCommit();
+            }
+
+            var retryClient = new RecordingQueueCompletionClient(
+                new ActionMessage([new ActionBlock.Text("assistant-output")])
+            );
+            var retryProfile = CreateFullFeatureProfile(retryClient, modelId);
+
+            using var reopened = AgentEngineHost.OpenExisting(repoDir);
+            string? notificationsSeenInPrepare = null;
+            string[]? resultIdsSeenInPrepare = null;
+            reopened.Engine.PrepareInvocationAsync = (_, _) => {
+                var tail = Assert.IsType<ToolResultsEntry>(reopened.Engine.State.RecentHistory[^1]);
+                var durableTail = Assert.IsType<ToolResultsEntry>(reopened.LoadDurableRecentHistory()[^1]);
+                notificationsSeenInPrepare = tail.Notifications;
+                resultIdsSeenInPrepare = tail.Results.Select(static result => result.ToolCallId).ToArray();
+                Assert.Equal("late-after-reopen", durableTail.Notifications);
+                Assert.Equal(["call-1"], durableTail.Results.Select(static result => result.ToolCallId).ToArray());
+                return Task.CompletedTask;
+            };
+            await reopened.StepAsync(retryProfile);
+
+            Assert.Equal("late-after-reopen", notificationsSeenInPrepare);
+            Assert.Equal(["call-1"], Assert.IsType<string[]>(resultIdsSeenInPrepare));
+            AssertLastToolResultsRequestContentAndResults(retryClient.Requests[0], "late-after-reopen", "call-1");
+            Assert.Empty(reopened.LoadDurablePendingNotifications());
+
+            var foldedEntry = Assert.IsType<ToolResultsEntry>(reopened.LoadDurableRecentHistory()[^2]);
+            Assert.Equal("late-after-reopen", foldedEntry.Notifications);
+            var durableResult = Assert.Single(foldedEntry.Results);
+            Assert.Equal("call-1", durableResult.ToolCallId);
+            Assert.Equal("tool-output", durableResult.ExecuteResult.GetFlattenedText());
+        }
+        finally {
+            if (Directory.Exists(repoDir)) {
+                Directory.Delete(repoDir, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task Host_PendingToolResultsLateNotification_SoftCapGateUsesFoldedToolResultsInput() {
+        var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-host-pending-tool-results-soft-cap-folded-observation-{Guid.NewGuid():N}");
+
+        try {
+            const string modelId = "model-soft-cap-folded-tool-results";
+            var seedProfile = CreateFullFeatureProfile(new NoopCompletionClient("test-provider", "test-spec"), modelId);
+            var invocation = seedProfile.ToCompletionDescriptor();
+            var currentTurnResult = CreateToolCallExecutionResult("beta", "call-2", "current-tool-output");
+            var lateNotification = new string('n', 512);
+
+            using var host = AgentEngineHost.CreateNew(
+                repoDir,
+                runtime: new AgentEngineHostRuntime(
+                    autoCompaction: new AutoCompactionOptions("compact-system", "compact-now")
+                )
+            );
+            host.Engine.State.AppendObservation(new ObservationEntry(), "seed-observation-1");
+            host.Engine.State.AppendAction(
+                new ActionEntry(
+                    new ActionMessage([new ActionBlock.Text("seed-action-1")]),
+                    invocation
+                )
+            );
+            host.Engine.State.AppendObservation(new ObservationEntry(), "seed-observation-2");
+            host.Engine.State.AppendAction(
+                new ActionEntry(
+                    new ActionMessage([
+                        new ActionBlock.ToolCall(currentTurnResult.RawToolCall)
+                    ]),
+                    invocation
+                )
+            );
+            host.Engine.State.AppendToolResults(new ToolResultsEntry([currentTurnResult]));
+            host.Engine.AppendNotification(lateNotification);
+
+            var preFoldEstimate = host.Engine.EstimateCurrentContextTokens();
+            var expectedFoldedState = AgentState.CreateDefault(host.Engine.SystemPrompt);
+            expectedFoldedState.AppendObservation(new ObservationEntry(), "seed-observation-1");
+            expectedFoldedState.AppendAction(
+                new ActionEntry(
+                    new ActionMessage([new ActionBlock.Text("seed-action-1")]),
+                    invocation
+                )
+            );
+            var expectedCurrentResult = CreateToolCallExecutionResult("beta", "call-2", "current-tool-output");
+            expectedFoldedState.AppendObservation(new ObservationEntry(), "seed-observation-2");
+            expectedFoldedState.AppendAction(
+                new ActionEntry(
+                    new ActionMessage([
+                        new ActionBlock.ToolCall(expectedCurrentResult.RawToolCall)
+                    ]),
+                    invocation
+                )
+            );
+            expectedFoldedState.AppendToolResults(new ToolResultsEntry([expectedCurrentResult]));
+            expectedFoldedState.AppendNotification(lateNotification);
+            _ = InvokeRequiredInstanceMethod(expectedFoldedState, "FoldPendingNotificationsIntoCurrentToolResultsForPendingModelCall");
+            var postFoldEstimate = new AgentEngine(state: expectedFoldedState).EstimateCurrentContextTokens();
+            Assert.True(postFoldEstimate > preFoldEstimate);
+
+            var client = new RecordingQueueCompletionClient(
+                new ActionMessage([new ActionBlock.Text("assistant-output")])
+            );
+            var softCapProfile = CreateFullFeatureProfile(client, modelId, (int)postFoldEstimate);
+
+            await host.StepAsync(softCapProfile);
+
+            Assert.Empty(client.Requests);
+            Assert.True(host.Engine.HasPendingCompaction);
+            Assert.NotNull(host.LoadDurablePendingCompaction());
+            Assert.Empty(host.LoadDurablePendingNotifications());
+
+            var durableTail = Assert.IsType<ToolResultsEntry>(host.LoadDurableRecentHistory()[^1]);
+            Assert.Equal(lateNotification, durableTail.Notifications);
+            var durableResult = Assert.Single(durableTail.Results);
+            Assert.Equal("call-2", durableResult.ToolCallId);
+            Assert.Equal("current-tool-output", durableResult.ExecuteResult.GetFlattenedText());
+        }
+        finally {
+            if (Directory.Exists(repoDir)) {
+                Directory.Delete(repoDir, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public void WorkspaceSessionFoldPendingNotificationsIntoCurrentToolResults_RejectsObservationTailWithoutMutatingDurableState() {
+        var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-tool-results-fold-tail-guard-{Guid.NewGuid():N}");
+
+        try {
+            using var host = AgentEngineHost.CreateNew(repoDir);
+            host.Engine.State.AppendObservation(new ObservationEntry(), "current-input");
+            host.Engine.AppendNotification("late-notification");
+
+            var session = GetWorkspaceSession(host);
+            var exception = Assert.Throws<InvalidOperationException>(() => session.FoldPendingNotificationsIntoCurrentToolResults());
+
+            Assert.Equal("Cannot fold pending notifications because the durable recent-history tail is not a ToolResultsEntry.", exception.Message);
+            Assert.Equal(["late-notification"], host.LoadDurablePendingNotifications());
+
+            var durableTail = Assert.IsType<ObservationEntry>(Assert.Single(host.LoadDurableRecentHistory()));
+            Assert.Equal("current-input", durableTail.Notifications);
+        }
+        finally {
+            if (Directory.Exists(repoDir)) {
+                Directory.Delete(repoDir, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
     public void Host_Recap_PersistsAcrossReopen() {
         var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-host-recap-{Guid.NewGuid():N}");
 
@@ -3861,6 +4089,16 @@ public sealed class AgentWorkspacePersistenceTests {
         Assert.Equal(expectedContent, observation.Content);
     }
 
+    private static void AssertLastToolResultsRequestContentAndResults(
+        CompletionRequest request,
+        string expectedContent,
+        params string[] expectedToolCallIds
+    ) {
+        var toolResults = Assert.IsType<ToolResultsMessage>(request.Context[^1]);
+        Assert.Equal(expectedContent, toolResults.Content);
+        Assert.Equal(expectedToolCallIds, toolResults.Results.Select(static result => result.ToolCallId));
+    }
+
     private static void AssertObservationActionInjectionHistory(
         IReadOnlyList<HistoryEntry> history,
         string observationNotifications,
@@ -3895,6 +4133,28 @@ public sealed class AgentWorkspacePersistenceTests {
 
     private static LlmProfile CreateFullFeatureProfile(ICompletionClient client, string modelId, int softContextTokenCap) {
         return new LlmProfile(client, modelId, $"{modelId}-profile", checked((uint)softContextTokenCap), CapabilityProfile.FullFeature);
+    }
+
+    private static ToolResultsEntry AppendObservationActionToolResultsTurn(
+        AgentState state,
+        CompletionDescriptor invocation,
+        string observationNotifications,
+        ToolCallExecutionResult result
+    ) {
+        ArgumentNullException.ThrowIfNull(state);
+        ArgumentNullException.ThrowIfNull(invocation);
+        ArgumentNullException.ThrowIfNull(result);
+
+        state.AppendObservation(new ObservationEntry(), observationNotifications);
+        state.AppendAction(
+            new ActionEntry(
+                new ActionMessage([
+                    new ActionBlock.ToolCall(result.RawToolCall)
+                ]),
+                invocation
+            )
+        );
+        return state.AppendToolResults(new ToolResultsEntry([result]));
     }
 
     private static DurableDeque GetHistoryDeque(AgentWorkspaceRoot workspaceRoot) {

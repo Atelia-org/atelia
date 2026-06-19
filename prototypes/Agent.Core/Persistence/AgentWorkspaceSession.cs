@@ -237,7 +237,7 @@ internal sealed class AgentWorkspaceSession : IDisposable {
         }
 
         if (authoritativePreRecentHistory.Count == 0 || authoritativePreRecentHistory[^1] is not ObservationEntry observation) {
-            throw new InvalidOperationException("Cannot fold pending notifications because the durable recent-history tail is not an ObservationEntry.");
+            throw new InvalidOperationException("Cannot fold pending notifications because the durable recent-history tail is not observation-like.");
         }
 
         var collapsedNotifications = CollapseNotifications(authoritativePrePendingNotifications)
@@ -251,6 +251,42 @@ internal sealed class AgentWorkspaceSession : IDisposable {
             AuthoritativePreRecentHistory: authoritativePreRecentHistory,
             AuthoritativePrePendingNotifications: authoritativePrePendingNotifications,
             UpdatedObservation: updatedObservation,
+            LastSerial: lastSerial
+        );
+    }
+
+    internal WorkspaceFoldPendingNotificationsIntoObservationMutationResult FoldPendingNotificationsIntoCurrentToolResults() {
+        EnsureOpenForState();
+
+        var authoritativePreRecentHistory = _workspaceRoot.History.LoadRecent();
+        var authoritativePrePendingNotifications = _workspaceRoot.History.LoadPendingNotifications();
+        var lastSerial = _workspaceRoot.History.GetRequiredLastSerial();
+        if (authoritativePrePendingNotifications.Count == 0) {
+            return new WorkspaceFoldPendingNotificationsIntoObservationMutationResult(
+                AuthoritativePreRecentHistory: authoritativePreRecentHistory,
+                AuthoritativePrePendingNotifications: authoritativePrePendingNotifications,
+                UpdatedObservation: null,
+                LastSerial: lastSerial
+            );
+        }
+
+        if (authoritativePreRecentHistory.Count == 0 || authoritativePreRecentHistory[^1] is not ToolResultsEntry toolResultsEntry) {
+            throw new InvalidOperationException("Cannot fold pending notifications because the durable recent-history tail is not a ToolResultsEntry.");
+        }
+
+        var collapsedNotifications = CollapseNotifications(authoritativePrePendingNotifications)
+            ?? throw new InvalidOperationException("Pending notifications snapshot unexpectedly collapsed to null.");
+        var updatedToolResults = AssertToolResultsEntry(
+            ObservationEntryMutationHelper.CloneWithMergedNotifications(toolResultsEntry, collapsedNotifications)
+        );
+        _workspaceRoot.History.ReplaceRecentAt(authoritativePreRecentHistory.Count - 1, updatedToolResults);
+        _workspaceRoot.History.ReplacePendingNotifications(Array.Empty<string>());
+        ThrowInjectedFaultIfAny(AgentWorkspaceSessionFaultPoint.AfterFoldPendingNotificationsIntoCurrentObservationMutation);
+
+        return new WorkspaceFoldPendingNotificationsIntoObservationMutationResult(
+            AuthoritativePreRecentHistory: authoritativePreRecentHistory,
+            AuthoritativePrePendingNotifications: authoritativePrePendingNotifications,
+            UpdatedObservation: updatedToolResults,
             LastSerial: lastSerial
         );
     }
@@ -365,6 +401,11 @@ internal sealed class AgentWorkspaceSession : IDisposable {
         }
 
         return string.Join("\n", notifications);
+    }
+
+    private static ToolResultsEntry AssertToolResultsEntry(ObservationEntry entry) {
+        return entry as ToolResultsEntry
+            ?? throw new InvalidOperationException("Merged tool-results observation unexpectedly lost its ToolResultsEntry subtype.");
     }
 
     private static string? MergeNotifications(string? first, string? second) {

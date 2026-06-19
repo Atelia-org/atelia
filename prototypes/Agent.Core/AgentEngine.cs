@@ -595,6 +595,9 @@ public partial class AgentEngine {
         if (state == AgentRunState.PendingInput) {
             _state.FoldPendingNotificationsIntoCurrentObservationForPendingInput();
         }
+        else if (state == AgentRunState.PendingToolResults) {
+            _state.FoldPendingNotificationsIntoCurrentToolResultsForPendingModelCall();
+        }
 
         var estimatedContextTokens = EstimateCurrentContextTokens();
 
