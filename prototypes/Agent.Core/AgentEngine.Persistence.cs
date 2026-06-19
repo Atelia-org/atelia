@@ -7,15 +7,22 @@ using Atelia.StateJournal;
 namespace Atelia.Agent.Core;
 
 public partial class AgentEngine {
+    internal AgentTurnRuntimeStateSnapshot ExportTurnRuntimeStateSnapshot() {
+        return new AgentTurnRuntimeStateSnapshot(
+            ResolvedProfile: _turnRuntime.ResolvedProfile is null
+                ? null
+                : LlmProfileCheckpoint.FromProfile(_turnRuntime.ResolvedProfile),
+            LockedCompactionSplitIndex: _turnRuntime.LockedCompactionSplitIndex
+        );
+    }
+
     internal AgentEngineRuntimeStateSnapshot ExportRuntimeStateSnapshot() {
         var pendingToolResults = _pendingToolResults.Values
             .OrderBy(static result => result.ToolCallId, StringComparer.Ordinal)
             .Select(AgentState.CloneToolCallExecutionResult)
             .ToArray();
 
-        LlmProfileCheckpoint? resolvedProfile = _turnRuntime.ResolvedProfile is null
-            ? null
-            : LlmProfileCheckpoint.FromProfile(_turnRuntime.ResolvedProfile);
+        var turnRuntimeSnapshot = ExportTurnRuntimeStateSnapshot();
 
         CompactionCheckpoint? pendingCompaction = _compactionRequest.HasValue
             ? new CompactionCheckpoint(
@@ -27,8 +34,8 @@ public partial class AgentEngine {
 
         return new AgentEngineRuntimeStateSnapshot(
             PendingToolResults: pendingToolResults,
-            ResolvedProfile: resolvedProfile,
-            LockedCompactionSplitIndex: _turnRuntime.LockedCompactionSplitIndex,
+            ResolvedProfile: turnRuntimeSnapshot.ResolvedProfile,
+            LockedCompactionSplitIndex: turnRuntimeSnapshot.LockedCompactionSplitIndex,
             PendingCompaction: pendingCompaction,
             ToolSessionExecutionSequence: _toolSession?.LastIssuedExecutionSequence ?? 0
         );
@@ -150,50 +157,11 @@ public partial class AgentEngine {
             idleProvider: idleProvider,
             utcNowProvider: utcNowProvider,
             autoCompaction: autoCompaction,
+            resolvedProfileResolver: resolvedProfileResolver,
             workspaceSession: workspaceSession
         );
 
-        foreach (var pendingToolResult in runtimeState.PendingToolResults) {
-            engine._pendingToolResults[pendingToolResult.ToolCallId] = AgentState.CloneToolCallExecutionResult(pendingToolResult);
-        }
-
-        if (runtimeState.ResolvedProfile is not null) {
-            if (resolvedProfileResolver is null) {
-                throw new InvalidOperationException(
-                    "State snapshot contains a resolved LlmProfile checkpoint, but no resolver was supplied."
-                );
-            }
-
-            var resolvedProfile = resolvedProfileResolver(runtimeState.ResolvedProfile)
-                ?? throw new InvalidOperationException(
-                    $"Resolved profile checkpoint could not be restored: {runtimeState.ResolvedProfile.ProviderId}/{runtimeState.ResolvedProfile.ApiSpecId}/{runtimeState.ResolvedProfile.ModelId}."
-                );
-
-            if (!Equals(resolvedProfile.ToCompletionDescriptor(), runtimeState.ResolvedProfile.ToCompletionDescriptor())) {
-                throw new InvalidOperationException(
-                    "Resolved profile checkpoint did not round-trip to the same invocation identity."
-                );
-            }
-
-            engine._turnRuntime.RememberResolvedProfile(resolvedProfile);
-        }
-
-        if (runtimeState.LockedCompactionSplitIndex.HasValue) {
-            engine._turnRuntime.RememberCompactionSplitIndex(runtimeState.LockedCompactionSplitIndex.Value);
-        }
-
-        if (runtimeState.PendingCompaction is not null) {
-            engine._compactionRequest = new CompactionRequest(
-                runtimeState.PendingCompaction.SplitIndex,
-                runtimeState.PendingCompaction.SystemPrompt,
-                runtimeState.PendingCompaction.SummarizePrompt
-            );
-        }
-
-        if (runtimeState.ToolSessionExecutionSequence > 0) {
-            engine.EnsureSession().RestoreExecutionSequence(runtimeState.ToolSessionExecutionSequence);
-        }
-
+        engine.ApplyRuntimeStateSnapshot(runtimeState);
         return engine;
     }
 
@@ -338,15 +306,97 @@ public partial class AgentEngine {
         }
     }
 
-    private void PersistTurnRuntime() {
+    private void ApplyRuntimeStateSnapshot(AgentEngineRuntimeStateSnapshot runtimeState) {
+        ArgumentNullException.ThrowIfNull(runtimeState);
+
+        ApplyPendingToolResultsSnapshot(runtimeState.PendingToolResults);
+        ApplyTurnRuntimeSnapshot(
+            new AgentTurnRuntimeStateSnapshot(
+                runtimeState.ResolvedProfile,
+                runtimeState.LockedCompactionSplitIndex
+            )
+        );
+        _compactionRequest = runtimeState.PendingCompaction is null
+            ? null
+            : new CompactionRequest(
+                runtimeState.PendingCompaction.SplitIndex,
+                runtimeState.PendingCompaction.SystemPrompt,
+                runtimeState.PendingCompaction.SummarizePrompt
+            );
+
+        if (runtimeState.ToolSessionExecutionSequence > 0) {
+            EnsureSession().RestoreExecutionSequence(runtimeState.ToolSessionExecutionSequence);
+        }
+    }
+
+    private void ApplyTurnRuntimeSnapshot(
+        AgentTurnRuntimeStateSnapshot turnRuntimeSnapshot,
+        LlmProfile? preferredResolvedProfile = null
+    ) {
+        ArgumentNullException.ThrowIfNull(turnRuntimeSnapshot);
+
+        var resolvedProfile = turnRuntimeSnapshot.ResolvedProfile is null
+            ? null
+            : ResolveResolvedProfileCheckpoint(turnRuntimeSnapshot.ResolvedProfile, preferredResolvedProfile);
+
+        _turnRuntime.ReplacePersistedTurnState(resolvedProfile, turnRuntimeSnapshot.LockedCompactionSplitIndex);
+    }
+
+    private LlmProfile ResolveResolvedProfileCheckpoint(
+        LlmProfileCheckpoint checkpoint,
+        LlmProfile? preferredResolvedProfile = null
+    ) {
+        ArgumentNullException.ThrowIfNull(checkpoint);
+
+        if (preferredResolvedProfile is not null && ProfileMatchesCheckpoint(preferredResolvedProfile, checkpoint)) {
+            _resolvedProfileRestore.Remember(preferredResolvedProfile);
+            EnsureProfileSupportsAgentCoreFullFeatures(preferredResolvedProfile, source: "Resolved profile checkpoint restore");
+            return preferredResolvedProfile;
+        }
+
+        var resolvedProfile = _resolvedProfileRestore.ResolveOrNull(checkpoint)
+            ?? throw new InvalidOperationException(
+                "State snapshot contains a resolved LlmProfile checkpoint, but no reusable resolver/restore seam was able to restore it. " +
+                $"Missing checkpoint: {checkpoint.ProviderId}/{checkpoint.ApiSpecId}/{checkpoint.ModelId}."
+            );
+
+        if (!ProfileMatchesCheckpoint(resolvedProfile, checkpoint)) {
+            throw new InvalidOperationException(
+                "Resolved profile checkpoint did not round-trip to the same invocation identity and soft-context budget."
+            );
+        }
+
+        EnsureProfileSupportsAgentCoreFullFeatures(resolvedProfile, source: "Resolved profile checkpoint restore");
+        _resolvedProfileRestore.Remember(resolvedProfile);
+        return resolvedProfile;
+    }
+
+    private static bool ProfileMatchesCheckpoint(LlmProfile profile, LlmProfileCheckpoint checkpoint) {
+        ArgumentNullException.ThrowIfNull(profile);
+        ArgumentNullException.ThrowIfNull(checkpoint);
+
+        return Equals(profile.ToCompletionDescriptor(), checkpoint.ToCompletionDescriptor())
+            && profile.SoftContextTokenCap == checkpoint.SoftContextTokenCap;
+    }
+
+    private void PersistTurnRuntime(LlmProfile? preferredResolvedProfile = null) {
         if (_workspaceSession is null) { return; }
 
-        _workspaceSession.UpdateTurnRuntime(
-            _turnRuntime.ResolvedProfile is null
-                ? null
-                : LlmProfileCheckpoint.FromProfile(_turnRuntime.ResolvedProfile),
-            _turnRuntime.LockedCompactionSplitIndex
-        );
+        if (_turnRuntime.ResolvedProfile is not null) {
+            _resolvedProfileRestore.Remember(_turnRuntime.ResolvedProfile);
+        }
+
+        try {
+            var turnRuntimeSnapshot = ExportTurnRuntimeStateSnapshot();
+            ApplyTurnRuntimeSnapshot(_workspaceSession.UpdateTurnRuntime(
+                turnRuntimeSnapshot.ResolvedProfile,
+                turnRuntimeSnapshot.LockedCompactionSplitIndex
+            ), preferredResolvedProfile);
+        }
+        catch {
+            ApplyTurnRuntimeSnapshot(_workspaceSession.LoadTurnRuntimeState(), preferredResolvedProfile);
+            throw;
+        }
     }
 
     private void PersistPendingCompaction() {

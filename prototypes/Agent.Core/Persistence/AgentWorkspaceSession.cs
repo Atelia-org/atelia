@@ -84,6 +84,15 @@ internal sealed class AgentWorkspaceSession : IDisposable {
         return _workspaceRoot.RuntimeState.LoadPendingToolResults();
     }
 
+    internal AgentTurnRuntimeStateSnapshot LoadTurnRuntimeState() {
+        EnsureOpenForEngine();
+        var (resolvedProfile, lockedCompactionSplitIndex) = _workspaceRoot.RuntimeState.LoadTurnRuntime();
+        return new AgentTurnRuntimeStateSnapshot(
+            ResolvedProfile: resolvedProfile,
+            LockedCompactionSplitIndex: lockedCompactionSplitIndex
+        );
+    }
+
     internal (IReadOnlyList<HistoryEntry> RecentHistory, ulong LastSerial) LoadRecentHistorySnapshot() {
         EnsureOpenForState();
         return (
@@ -220,14 +229,14 @@ internal sealed class AgentWorkspaceSession : IDisposable {
         EnsureOpenForEngine();
 
         var pendingToolResults = _workspaceRoot.RuntimeState.LoadPendingToolResults();
-        var (resolvedProfile, lockedCompactionSplitIndex) = _workspaceRoot.RuntimeState.LoadTurnRuntime();
+        var turnRuntime = LoadTurnRuntimeState();
         var pendingCompaction = _workspaceRoot.RuntimeState.LoadPendingCompaction();
         var toolSessionExecutionSequence = _workspaceRoot.RuntimeState.GetToolSessionExecutionSequenceOrDefault();
 
         return new AgentEngineRuntimeStateSnapshot(
             PendingToolResults: pendingToolResults,
-            ResolvedProfile: resolvedProfile,
-            LockedCompactionSplitIndex: lockedCompactionSplitIndex,
+            ResolvedProfile: turnRuntime.ResolvedProfile,
+            LockedCompactionSplitIndex: turnRuntime.LockedCompactionSplitIndex,
             PendingCompaction: pendingCompaction,
             ToolSessionExecutionSequence: toolSessionExecutionSequence
         );
@@ -258,10 +267,14 @@ internal sealed class AgentWorkspaceSession : IDisposable {
         return _workspaceRoot.RuntimeState.LoadPendingToolResults();
     }
 
-    internal void UpdateTurnRuntime(LlmProfileCheckpoint? resolvedProfile, int? lockedCompactionSplitIndex) {
+    internal AgentTurnRuntimeStateSnapshot UpdateTurnRuntime(
+        LlmProfileCheckpoint? resolvedProfile,
+        int? lockedCompactionSplitIndex
+    ) {
         EnsureOpenForEngine();
         _workspaceRoot.Meta.Stamp();
         _workspaceRoot.RuntimeState.UpdateTurnRuntime(resolvedProfile, lockedCompactionSplitIndex);
+        return LoadTurnRuntimeState();
     }
 
     internal void SetPendingCompaction(CompactionCheckpoint pendingCompaction) {

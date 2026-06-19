@@ -27,6 +27,7 @@ public partial class AgentEngine {
     private readonly IIdleObservationProvider _idleProvider;
     private readonly Func<DateTimeOffset> _utcNowProvider;
     private readonly AutoCompactionOptions? _autoCompactionOptions;
+    private readonly ResolvedProfileRestoreCache _resolvedProfileRestore;
 
     private ToolRegistry? _toolRegistry;
     private ToolSession? _toolSession;
@@ -61,6 +62,7 @@ public partial class AgentEngine {
         idleProvider,
         utcNowProvider,
         autoCompaction,
+        resolvedProfileResolver: null,
         workspaceSession: null
     ) { }
 
@@ -71,11 +73,13 @@ public partial class AgentEngine {
         IIdleObservationProvider? idleProvider,
         Func<DateTimeOffset>? utcNowProvider,
         AutoCompactionOptions? autoCompaction,
+        Func<LlmProfileCheckpoint, LlmProfile?>? resolvedProfileResolver,
         AgentWorkspaceSession? workspaceSession
     ) {
         _state = state ?? AgentState.CreateDefault();
         _appHost = new DefaultAppHost();
         _standaloneTools = new Dictionary<string, ITool>(StringComparer.OrdinalIgnoreCase);
+        _resolvedProfileRestore = new ResolvedProfileRestoreCache(resolvedProfileResolver);
         _workspaceSession = workspaceSession;
         if (_workspaceSession is not null) {
             _state.BindWorkspaceSession(_workspaceSession);
@@ -935,12 +939,52 @@ public partial class AgentEngine {
             LockedCompactionSplitIndex = splitIndex;
         }
 
+        public void ReplacePersistedTurnState(LlmProfile? resolvedProfile, int? lockedCompactionSplitIndex) {
+            ResolvedProfile = resolvedProfile;
+            LockedCompactionSplitIndex = lockedCompactionSplitIndex;
+            CurrentTurnFullFeatureEnabled = resolvedProfile?.SupportsAgentCoreFullFeatures;
+        }
+
         public void BeginToolExecution(LlmProfile profile) {
             ActiveToolExecutionProfile = profile ?? throw new ArgumentNullException(nameof(profile));
         }
 
         public void EndToolExecution() {
             ActiveToolExecutionProfile = null;
+        }
+    }
+
+    private sealed class ResolvedProfileRestoreCache {
+        private readonly Func<LlmProfileCheckpoint, LlmProfile?>? _resolver;
+        private readonly Dictionary<CompletionDescriptor, LlmProfile> _knownProfiles = new();
+
+        public ResolvedProfileRestoreCache(Func<LlmProfileCheckpoint, LlmProfile?>? resolver) {
+            _resolver = resolver;
+        }
+
+        public void Remember(LlmProfile profile) {
+            ArgumentNullException.ThrowIfNull(profile);
+            _knownProfiles[profile.ToCompletionDescriptor()] = profile;
+        }
+
+        public LlmProfile? ResolveOrNull(LlmProfileCheckpoint checkpoint) {
+            ArgumentNullException.ThrowIfNull(checkpoint);
+
+            if (_knownProfiles.TryGetValue(checkpoint.ToCompletionDescriptor(), out var knownProfile)
+                && AgentEngine.ProfileMatchesCheckpoint(knownProfile, checkpoint)) {
+                return knownProfile;
+            }
+
+            var resolvedProfile = _resolver?.Invoke(checkpoint);
+            if (resolvedProfile is null) {
+                return null;
+            }
+
+            if (AgentEngine.ProfileMatchesCheckpoint(resolvedProfile, checkpoint)) {
+                Remember(resolvedProfile);
+            }
+
+            return resolvedProfile;
         }
     }
 

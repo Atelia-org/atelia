@@ -1619,6 +1619,30 @@ public sealed class AgentWorkspacePersistenceTests {
     }
 
     [Fact]
+    public void WorkspaceSessionUpdateTurnRuntime_ReturnsUpdatedTurnRuntimeSnapshot() {
+        var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-turn-runtime-session-update-{Guid.NewGuid():N}");
+
+        try {
+            using var repo = Repository.Create(repoDir).Unwrap();
+            var revision = repo.CreateBranch("main").Unwrap();
+            var workspaceRoot = AgentWorkspaceRoot.Create(revision);
+            using var session = AgentWorkspaceSession.Open(workspaceRoot);
+            var expectedProfile = new LlmProfileCheckpoint("provider-turn", "spec-turn", "model-turn", "profile-turn", 4096);
+
+            var updatedTurnRuntime = session.UpdateTurnRuntime(expectedProfile, 7);
+
+            Assert.Equal(expectedProfile, updatedTurnRuntime.ResolvedProfile);
+            Assert.Equal(7, updatedTurnRuntime.LockedCompactionSplitIndex);
+            Assert.Equal(updatedTurnRuntime, session.LoadTurnRuntimeState());
+        }
+        finally {
+            if (Directory.Exists(repoDir)) {
+                Directory.Delete(repoDir, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
     public void WorkspaceSessionReplacePendingToolResults_ReturnsUpdatedPendingResultsSnapshot() {
         var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-pending-results-session-replace-{Guid.NewGuid():N}");
 
@@ -2051,6 +2075,139 @@ public sealed class AgentWorkspacePersistenceTests {
             Assert.Equal(expected.LockedCompactionSplitIndex, actual.LockedCompactionSplitIndex);
             Assert.Equal(expected.PendingCompaction, actual.PendingCompaction);
             Assert.Equal(expected.ToolSessionExecutionSequence, actual.ToolSessionExecutionSequence);
+            Assert.True(reopened.Engine.CurrentTurnFullFeatureEnabled);
+        }
+        finally {
+            if (Directory.Exists(repoDir)) {
+                Directory.Delete(repoDir, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public void CreateFromStateSnapshot_RejectsResolvedProfileResolverWithMismatchedSoftCap() {
+        var snapshot = CreateSnapshotFixture();
+        var mismatchedProfile = new LlmProfile(
+            new NoopCompletionClient("provider-b", "spec-b"),
+            "model-b",
+            "profile-b-mismatched",
+            4096,
+            CapabilityProfile.FullFeature
+        );
+
+        var ex = Assert.Throws<InvalidOperationException>(
+            () => AgentEngine.CreateFromStateSnapshot(snapshot, _ => mismatchedProfile)
+        );
+
+        Assert.Contains("soft-context budget", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Host_LiveTurnRuntimeBackfill_ReappliesResolvedProfileOverlayWithoutProfileRegistry() {
+        var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-host-turn-runtime-backfill-{Guid.NewGuid():N}");
+
+        try {
+            var profile = CreateFullFeatureProfile(
+                new QueueCompletionClient(new ActionMessage([new ActionBlock.Text("assistant-output")])),
+                "model-runtime-backfill"
+            );
+
+            using var host = AgentEngineHost.CreateNew(repoDir);
+            host.Engine.State.AppendObservation(new ObservationEntry(), "seed-observation");
+            host.Engine.State.AppendAction(
+                new ActionEntry(
+                    new ActionMessage([new ActionBlock.Text("seed-action")]),
+                    profile.ToCompletionDescriptor()
+                )
+            );
+            host.Engine.WaitingInput += static (_, args) => {
+                args.ShouldContinue = true;
+                args.Observation = IncomingObservation.FromRecentEvents("fresh-observation");
+            };
+
+            await host.StepAsync(profile);
+            await host.StepAsync(profile);
+
+            Assert.True(host.Engine.CurrentTurnFullFeatureEnabled);
+
+            var turnRuntime = GetRequiredPrivateField<object>(host.Engine, "_turnRuntime");
+            _ = InvokeRequiredInstanceMethod(turnRuntime, "RememberCurrentTurnFullFeatureEnabled", false);
+            Assert.False(host.Engine.CurrentTurnFullFeatureEnabled);
+
+            _ = InvokeRequiredInstanceMethod(host.Engine, "PersistTurnRuntime", new object?[] { null });
+
+            Assert.True(host.Engine.CurrentTurnFullFeatureEnabled);
+            var persisted = host.LoadSnapshot();
+            Assert.Equal(LlmProfileCheckpoint.FromProfile(profile), persisted.ResolvedProfile);
+            Assert.NotNull(persisted.LockedCompactionSplitIndex);
+        }
+        finally {
+            if (Directory.Exists(repoDir)) {
+                Directory.Delete(repoDir, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task Host_OpenExisting_RestoresResolvedProfileOverlayForWaitingToolResults() {
+        var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-host-resolved-profile-overlay-{Guid.NewGuid():N}");
+
+        try {
+            var nominalProfile = CreateFullFeatureProfile(
+                new NoopCompletionClient("provider-requested", "spec-requested"),
+                "model-requested"
+            );
+            var resolvedProfile = CreateFullFeatureProfile(
+                new QueueCompletionClient(
+                    new ActionMessage([
+                        new ActionBlock.ToolCall(new RawToolCall("alpha", "call-1", "{}"))
+                    ])
+                ),
+                "model-resolved"
+            );
+
+            using (var host = AgentEngineHost.CreateNew(
+                       repoDir,
+                       runtime: new AgentEngineHostRuntime(initialTools: [
+                           new RecordingTool("alpha")
+                       ]))) {
+                host.Engine.State.AppendObservation(new ObservationEntry(), "seed-observation");
+                host.Engine.State.AppendAction(
+                    new ActionEntry(
+                        new ActionMessage([new ActionBlock.Text("seed-action")]),
+                        nominalProfile.ToCompletionDescriptor()
+                    )
+                );
+                host.Engine.WaitingInput += static (_, args) => {
+                    args.ShouldContinue = true;
+                    args.Observation = IncomingObservation.FromRecentEvents("fresh-observation");
+                };
+                host.Engine.ResolveProfile += (_, args) => {
+                    args.Profile = resolvedProfile;
+                };
+
+                await host.StepAsync(nominalProfile);
+                await host.StepAsync(nominalProfile);
+
+                var afterModelOutput = host.LoadSnapshot();
+                Assert.Equal(LlmProfileCheckpoint.FromProfile(resolvedProfile), afterModelOutput.ResolvedProfile);
+                var outputEntry = Assert.IsType<ActionEntry>(afterModelOutput.AgentState.RecentHistory[^1]);
+                Assert.Single(outputEntry.Message.ToolCalls);
+            }
+
+            using var reopened = AgentEngineHost.OpenExisting(
+                repoDir,
+                new AgentEngineHostRuntime(
+                    profileRegistry: new LlmProfileRegistry([resolvedProfile]),
+                    initialTools: [new RecordingTool("alpha")]
+                )
+            );
+
+            var toolStep = await reopened.StepAsync(nominalProfile);
+            var pendingResult = Assert.Single(reopened.LoadSnapshot().PendingToolResults);
+
+            Assert.True(toolStep.ProgressMade);
+            Assert.Equal("call-1", pendingResult.ToolCallId);
         }
         finally {
             if (Directory.Exists(repoDir)) {
@@ -2642,6 +2799,44 @@ public sealed class AgentWorkspacePersistenceTests {
 
         return field.GetValue(instance) as T
             ?? throw new InvalidOperationException($"Field '{fieldName}' on '{instance.GetType().FullName}' was null or not a '{typeof(T).FullName}'.");
+    }
+
+    private static object? InvokeRequiredInstanceMethod(object instance, string methodName, params object?[]? arguments) {
+        arguments ??= [];
+        var method = instance.GetType()
+            .GetMethods(BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public)
+            .FirstOrDefault(candidate =>
+                candidate.Name == methodName
+                && ParametersMatch(candidate.GetParameters(), arguments))
+            ?? throw new InvalidOperationException(
+                $"Method '{methodName}' with {arguments.Length} argument(s) was not found on '{instance.GetType().FullName}'."
+            );
+
+        return method.Invoke(instance, arguments);
+    }
+
+    private static bool ParametersMatch(ParameterInfo[] parameters, object?[] arguments) {
+        if (parameters.Length != arguments.Length) {
+            return false;
+        }
+
+        for (var index = 0; index < parameters.Length; index++) {
+            var argument = arguments[index];
+            if (argument is null) {
+                if (parameters[index].ParameterType.IsValueType
+                    && Nullable.GetUnderlyingType(parameters[index].ParameterType) is null) {
+                    return false;
+                }
+
+                continue;
+            }
+
+            if (!parameters[index].ParameterType.IsInstanceOfType(argument)) {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private static ObservationEntry CreateAssignedObservationEntry(ulong serial) {
