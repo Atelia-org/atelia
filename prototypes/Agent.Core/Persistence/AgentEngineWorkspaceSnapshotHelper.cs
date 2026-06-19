@@ -10,7 +10,7 @@ namespace Atelia.Agent.Core.Persistence;
 /// 本类型不再充当第二个 root façade，保留的职责仅是 snapshot save/load 桥接，主要用于测试、diagnostic 和少量内部 compatibility/import-export。
 /// 对外公开的 non-live restore surface 应显式停留在 <see cref="AgentEngineStateSnapshot"/> + `AgentEngine.CreateFromStateSnapshot(...)`。
 /// </summary>
-internal static class AgentEngineStateRoot {
+internal static class AgentEngineWorkspaceSnapshotHelper {
     /// <summary>
     /// 把当前 <see cref="AgentEngine"/> 导出为 snapshot，再写回 workspace。
     /// 保留该入口主要是为了 compatibility/import-export；repo-backed live host 的主路径应优先直接做 workspace mutation。

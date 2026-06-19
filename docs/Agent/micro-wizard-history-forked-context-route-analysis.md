@@ -136,7 +136,7 @@
 
 那么复杂度会明显抬升。
 
-原因是当前内部 snapshot helper（`AgentEngineStateRoot.SaveSnapshot(...)`）的持久化方式仍是“把快照重新编码成一套新的 Durable 对象图”，而不是直接把 `RecentHistory` 维护为天然可 fork 的 durable 主结构。
+原因是当前内部 snapshot helper（`AgentEngineWorkspaceSnapshotHelper.SaveSnapshot(...)`）的持久化方式仍是“把快照重新编码成一套新的 Durable 对象图”，而不是直接把 `RecentHistory` 维护为天然可 fork 的 durable 主结构。
 
 尤其要注意当前 StateJournal 的能力边界已经变化为：
 

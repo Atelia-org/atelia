@@ -13,7 +13,7 @@
 
 相关代码：
 - `prototypes/Agent.Core/AgentEngine.Persistence.cs`
-- `prototypes/Agent.Core/Persistence/AgentEngineStateRoot.cs`
+- `prototypes/Agent.Core/Persistence/AgentEngineWorkspaceSnapshotHelper.cs`
 - `prototypes/Agent.Core/History/AgentState.cs`
 - `prototypes/Agent.Core/IApp.cs`
 - `prototypes/Completion.Tools/ToolSession.cs`

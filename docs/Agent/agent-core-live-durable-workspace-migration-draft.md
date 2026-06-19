@@ -8,7 +8,7 @@
 > - 阶段 C / D 已部分落地：history append、pending notifications、pending tool results、turn runtime 的 live mutation 路径已经存在。
 > - `pendingCompaction` live path 已收口到稳定 durable slot 内的字段级 mutation；新 schema 要求预先 seed `pendingCompaction` record，不再兼容缺 key 读取或懒创建；snapshot / full-runtime replace 仍保留 whole-replace 语义。
 > - 阶段 E 的最小收口已落地：repo-backed live 创建路径改为 born-bound，`AgentState`/`AgentEngine` 不再依赖 `AttachWorkspaceRoot(... syncExistingState:true/false)` 或 `AttachRepositoryPersistence(...)` 这类 post-attach 主路径。
-> - `AgentWorkspaceSession` 现已成为 repo-backed live path 的单一 mutation/commit owner：history/meta/runtime 的 live 写入与 `Commit/Dispose` 都直接站在 `AgentWorkspaceRoot` 上；`AgentEngineStateRoot` 已继续收口为围绕 `AgentWorkspaceRoot` 的 internal snapshot helper，公开 non-live surface 只剩 snapshot restore。
+> - `AgentWorkspaceSession` 现已成为 repo-backed live path 的单一 mutation/commit owner：history/meta/runtime 的 live 写入与 `Commit/Dispose` 都直接站在 `AgentWorkspaceRoot` 上；`AgentEngineWorkspaceSnapshotHelper` 已继续收口为围绕 `AgentWorkspaceRoot` 的 internal snapshot helper，公开 non-live surface 只剩 snapshot restore。
 > - 阶段 C 的一个行为保持型前置切口也已落地：`AgentState` 的 `recentHistory / pendingNotifications / lastSerial` 已收成内部 working-set cache，并建立了整包 `LoadStateSnapshot -> RestoreSnapshot -> ReplaceWorkingSet` seam，为后续把 durable history/workspace 提升为真相预留了 cache reload 边界。
 > - 阶段 C 已继续向 durable truth 推进一步：repo-backed live path 下，`pending notifications` 的 append / drain、`ReplacePrefixWithRecap(...)`，以及 `AppendAction` / `AppendObservation` / `AppendToolResults` / `InjectActionContent` 这些 recent-history 主链入口，现已围绕 `AgentWorkspaceSession` authoritative mutation 工作；其中 recap / drain 与 observation / tool-results append 走 `LoadStateSnapshot -> ApplySnapshot`，action append / injection 走 targeted recent-history snapshot reload，notification append 走 targeted pending-cache refresh。
 > - 阶段 C 的 recent-history 主链实现也已进一步收口：`AgentState` 中原先为 live/local 双用保留的 generic history write-through primitive（如统一 `AllocateNextSerial` / `AppendHistoryEntry` seam）已开始回退为 non-live local-path 专用 helper，repo-backed live path 不再通过这些“伪通用”入口直接写 durable history。
@@ -18,7 +18,7 @@
 > - 这一包顺手把 `CurrentTurnFullFeatureEnabled` 也并入了 turn-runtime apply seam：repo-backed reopen 与 live authoritative backfill 后，本地 turn runtime overlay 不再残留“resolved profile 已恢复，但 full-feature flag 仍是旧值/空值”的漂移。
 > - 阶段 D 的两条 runtime 小尾巴现也按同一方向收口：`pendingCompaction` 改成 session-owned authoritative mutation + local backfill，并补上 catch/reload；`tool session execution sequence` 改成由 session 先做 durable authoritative allocate、`ToolSession` 再回填本地 checkpoint，避免持久化回调失败时本地序号先跑到 durable 前面。
 > - 当前 public snapshot path 仍保留，但定位应视为 compatibility / diagnostic / import-export 边界，不再是推荐主路径。
-> - 小尾修已继续收口：`AgentEngineHost` 不再暴露可写 `StateRoot` adapter，live host 仅保留显式 `LoadSnapshot()` 查询口；默认 state seeding 也已回收到 `AgentWorkspaceRoot.Create(...)` 创建期，不再以普通 helper 形式承担隐式 reset 语义。
+> - 小尾修已继续收口：`AgentEngineHost` 不再暴露任何可写持久化 adapter 表面，live host 仅保留显式 `LoadSnapshot()` 查询口；默认 state seeding 也已回收到 `AgentWorkspaceRoot.Create(...)` 创建期，不再以普通 helper 形式承担隐式 reset 语义。
 
 相关文档：
 - `docs/Agent/agent-core-branching-infrastructure-backlog.md`
@@ -30,7 +30,7 @@
 
 相关代码：
 - `prototypes/Agent.Core/AgentEngine.Persistence.cs`
-- `prototypes/Agent.Core/Persistence/AgentEngineStateRoot.cs`
+- `prototypes/Agent.Core/Persistence/AgentEngineWorkspaceSnapshotHelper.cs`
 - `prototypes/Agent.Core/Persistence/AgentEngineStateCodec.cs`
 - `prototypes/Agent.Core/History/AgentState.Persistence.cs`
 - `prototypes/Agent.Core/AgentEngineHost.cs`
@@ -91,11 +91,11 @@
 ```text
 live AgentEngine / AgentState
   -> ExportStateSnapshot()
-  -> AgentEngineStateRoot.SaveSnapshot(workspaceRoot, snapshot)
+  -> AgentEngineWorkspaceSnapshotHelper.SaveSnapshot(workspaceRoot, snapshot)
   -> StateJournal durable graph
 
 restart
-  -> AgentEngineStateRoot.LoadSnapshot(workspaceRoot)
+  -> AgentEngineWorkspaceSnapshotHelper.LoadSnapshot(workspaceRoot)
   -> AgentEngineStateSnapshot
   -> CreateFromStateSnapshot(...)
   -> new AgentEngine
@@ -106,7 +106,7 @@ restart
 - durable serialization target
 - not durable working state host
 
-因此现在的 `AgentEngineStateRoot` 更像：
+因此现在的 `AgentEngineWorkspaceSnapshotHelper` 更像：
 
 - 围绕 `AgentWorkspaceRoot` 的 snapshot helper
 
@@ -331,7 +331,7 @@ AgentWorkspaceRoot
 - 引入了 internal `AgentWorkspaceSession`
 - `AgentState` 的 durable history / system prompt / notifications 写链与 `AgentEngine` 的 runtime / commit 写链已统一挂到同一个 session 宿主
 - repo-backed born-bound live engine 持有真实 session
-- `AgentEngineStateRoot` 已收回为 internal static snapshot helper；公开的 non-live restore surface 只剩 `AgentEngineStateSnapshot` + `CreateFromStateSnapshot(...)`，且 snapshot/public 路径仍明确不持有 session
+- `AgentEngineWorkspaceSnapshotHelper` 已收回为 internal static snapshot helper；公开的 non-live restore surface 只剩 `AgentEngineStateSnapshot` + `CreateFromStateSnapshot(...)`，且 snapshot/public 路径仍明确不持有 session
 
 长期看，这个方向是反着的。
 更合理的关系应是：
@@ -406,7 +406,7 @@ AgentWorkspaceRoot
 
 先在文档和代码心智模型上收口：
 
-- `AgentEngineStateSnapshot` / internal `AgentEngineStateRoot` 是过渡方案
+- `AgentEngineStateSnapshot` / internal `AgentEngineWorkspaceSnapshotHelper` 是过渡方案
 - 它们主要服务当前 host、迁移、诊断、测试
 - 不再把它们视为长期主骨架
 

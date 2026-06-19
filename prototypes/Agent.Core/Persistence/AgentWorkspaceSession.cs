@@ -35,7 +35,7 @@ internal sealed class AgentWorkspaceSession : IDisposable {
 
     internal AgentEngineStateSnapshot LoadSnapshot() {
         EnsureOpenForEngine();
-        return AgentEngineStateRoot.LoadSnapshot(_workspaceRoot);
+        return AgentEngineWorkspaceSnapshotHelper.LoadSnapshot(_workspaceRoot);
     }
 
     internal AgentStateSnapshot LoadStateSnapshot() {

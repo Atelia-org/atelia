@@ -151,7 +151,7 @@ public sealed class AgentEngineHost : IDisposable {
 
     /// <summary>
     /// 从 live durable workspace materialize 当前快照。
-    /// 该入口只提供只读 snapshot 查询，不再暴露可写 state-root adapter。
+    /// 该入口只提供只读 snapshot 查询，不再暴露任何可写持久化 adapter 表面。
     /// </summary>
     public AgentEngineStateSnapshot LoadSnapshot() {
         EnsureNotDisposed();
