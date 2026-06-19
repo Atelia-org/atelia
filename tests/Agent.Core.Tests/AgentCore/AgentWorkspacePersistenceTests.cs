@@ -2262,7 +2262,7 @@ public sealed class AgentWorkspacePersistenceTests {
             )
         );
 
-        Assert.Contains("no reusable resolver/restore seam", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("no compatible registered or remembered profile", ex.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("Missing checkpoint", ex.Message, StringComparison.Ordinal);
     }
 
