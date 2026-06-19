@@ -2276,6 +2276,44 @@ public sealed class AgentWorkspacePersistenceTests {
     }
 
     [Fact]
+    public void Host_OpenExisting_RejectsResolvedProfileCheckpointWhenRegistrySoftCapDoesNotMatch() {
+        var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-host-runtime-reopen-soft-cap-mismatch-{Guid.NewGuid():N}");
+
+        try {
+            using (var repo = Repository.Create(repoDir).Unwrap()) {
+                var revision = repo.CreateBranch("main").Unwrap();
+                var workspaceRoot = AgentWorkspaceRoot.Create(revision, "seed-system");
+                AgentEngineWorkspaceSnapshotHelper.SaveSnapshot(workspaceRoot, CreateSnapshotFixture());
+                repo.Commit(workspaceRoot.Root).Unwrap();
+            }
+
+            var mismatchedProfile = new LlmProfile(
+                new NoopCompletionClient("provider-b", "spec-b"),
+                "model-b",
+                "profile-b-mismatched",
+                4096,
+                CapabilityProfile.FullFeature
+            );
+
+            var ex = Assert.Throws<InvalidOperationException>(
+                () => AgentEngineHost.OpenExisting(
+                    repoDir,
+                    new AgentEngineHostRuntime(profileRegistry: new LlmProfileRegistry([mismatchedProfile]))
+                )
+            );
+
+            Assert.Contains("Persisted agent state contains a resolved LlmProfile checkpoint", ex.Message, StringComparison.Ordinal);
+            Assert.Contains("Missing checkpoint", ex.Message, StringComparison.Ordinal);
+            Assert.DoesNotContain("State snapshot contains", ex.Message, StringComparison.Ordinal);
+        }
+        finally {
+            if (Directory.Exists(repoDir)) {
+                Directory.Delete(repoDir, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
     public void CreateFromStateSnapshot_RejectsRegistryWithoutCompatibleSoftCap() {
         var snapshot = CreateSnapshotFixture();
         var mismatchedProfile = new LlmProfile(
