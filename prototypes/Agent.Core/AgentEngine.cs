@@ -62,7 +62,7 @@ public partial class AgentEngine {
         idleProvider,
         utcNowProvider,
         autoCompaction,
-        resolvedProfileResolver: null,
+        profileRegistry: null,
         workspaceSession: null
     ) { }
 
@@ -73,13 +73,13 @@ public partial class AgentEngine {
         IIdleObservationProvider? idleProvider,
         Func<DateTimeOffset>? utcNowProvider,
         AutoCompactionOptions? autoCompaction,
-        Func<LlmProfileCheckpoint, LlmProfile?>? resolvedProfileResolver,
+        LlmProfileRegistry? profileRegistry,
         AgentWorkspaceSession? workspaceSession
     ) {
         _state = state ?? AgentState.CreateDefault();
         _appHost = new DefaultAppHost();
         _standaloneTools = new Dictionary<string, ITool>(StringComparer.OrdinalIgnoreCase);
-        _resolvedProfileRestore = new ResolvedProfileRestoreCache(resolvedProfileResolver);
+        _resolvedProfileRestore = new ResolvedProfileRestoreCache(profileRegistry);
         _workspaceSession = workspaceSession;
         _toolsDirty = true;
         _idleProvider = idleProvider ?? new TimestampHeartbeatObservationProvider();
@@ -951,11 +951,11 @@ public partial class AgentEngine {
     }
 
     private sealed class ResolvedProfileRestoreCache {
-        private readonly Func<LlmProfileCheckpoint, LlmProfile?>? _resolver;
+        private readonly LlmProfileRegistry? _profileRegistry;
         private readonly Dictionary<CompletionDescriptor, LlmProfile> _knownProfiles = new();
 
-        public ResolvedProfileRestoreCache(Func<LlmProfileCheckpoint, LlmProfile?>? resolver) {
-            _resolver = resolver;
+        public ResolvedProfileRestoreCache(LlmProfileRegistry? profileRegistry) {
+            _profileRegistry = profileRegistry;
         }
 
         public void Remember(LlmProfile profile) {
@@ -971,7 +971,7 @@ public partial class AgentEngine {
                 return knownProfile;
             }
 
-            var resolvedProfile = _resolver?.Invoke(checkpoint);
+            var resolvedProfile = _profileRegistry?.ResolveOrNull(checkpoint);
             if (resolvedProfile is null) {
                 return null;
             }

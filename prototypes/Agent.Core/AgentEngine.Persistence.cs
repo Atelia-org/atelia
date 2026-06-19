@@ -73,7 +73,7 @@ public partial class AgentEngine {
     ) {
         return CreateFromStateSnapshotCore(
             snapshot,
-            profileRegistry is null ? null : checkpoint => profileRegistry.ResolveOrNull(checkpoint),
+            profileRegistry,
             initialApps,
             initialTools,
             idleProvider,
@@ -84,7 +84,7 @@ public partial class AgentEngine {
 
     private static AgentEngine CreateFromStateSnapshotCore(
         AgentEngineStateSnapshot snapshot,
-        Func<LlmProfileCheckpoint, LlmProfile?>? resolvedProfileResolver,
+        LlmProfileRegistry? profileRegistry,
         IEnumerable<IApp>? initialApps,
         IEnumerable<ITool>? initialTools,
         IIdleObservationProvider? idleProvider,
@@ -102,7 +102,7 @@ public partial class AgentEngine {
                 PendingCompaction: snapshot.PendingCompaction,
                 ToolSessionExecutionSequence: snapshot.ToolSessionExecutionSequence
             ),
-            resolvedProfileResolver,
+            profileRegistry,
             initialApps,
             initialTools,
             idleProvider,
@@ -114,7 +114,7 @@ public partial class AgentEngine {
     private static AgentEngine CreateFromPersistedStateCore(
         AgentState state,
         AgentEngineRuntimeStateSnapshot runtimeState,
-        Func<LlmProfileCheckpoint, LlmProfile?>? resolvedProfileResolver,
+        LlmProfileRegistry? profileRegistry,
         IEnumerable<IApp>? initialApps,
         IEnumerable<ITool>? initialTools,
         IIdleObservationProvider? idleProvider,
@@ -132,7 +132,7 @@ public partial class AgentEngine {
             idleProvider: idleProvider,
             utcNowProvider: utcNowProvider,
             autoCompaction: autoCompaction,
-            resolvedProfileResolver: resolvedProfileResolver,
+            profileRegistry: profileRegistry,
             workspaceSession: workspaceSession
         );
 
@@ -149,32 +149,12 @@ public partial class AgentEngine {
         Func<DateTimeOffset>? utcNowProvider = null,
         AutoCompactionOptions? autoCompaction = null
     ) {
-        return CreateFromWorkspaceSession(
-            workspaceSession,
-            profileRegistry is null ? null : checkpoint => profileRegistry.ResolveOrNull(checkpoint),
-            initialApps,
-            initialTools,
-            idleProvider,
-            utcNowProvider,
-            autoCompaction
-        );
-    }
-
-    internal static AgentEngine CreateFromWorkspaceSession(
-        AgentWorkspaceSession workspaceSession,
-        Func<LlmProfileCheckpoint, LlmProfile?>? resolvedProfileResolver,
-        IEnumerable<IApp>? initialApps = null,
-        IEnumerable<ITool>? initialTools = null,
-        IIdleObservationProvider? idleProvider = null,
-        Func<DateTimeOffset>? utcNowProvider = null,
-        AutoCompactionOptions? autoCompaction = null
-    ) {
         ArgumentNullException.ThrowIfNull(workspaceSession);
 
         return CreateFromPersistedStateCore(
             workspaceSession.RestoreState(),
             workspaceSession.LoadRuntimeState(),
-            resolvedProfileResolver,
+            profileRegistry,
             initialApps,
             initialTools,
             idleProvider,
