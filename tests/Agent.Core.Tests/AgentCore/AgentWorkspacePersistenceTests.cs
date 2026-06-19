@@ -1121,6 +1121,53 @@ public sealed class AgentWorkspacePersistenceTests {
     }
 
     [Fact]
+    public void WorkspaceLiveAppendToolResults_AlignedCacheBackfillsDeltaWithoutReplacingPrefixReferences() {
+        var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-workspace-append-tool-results-delta-{Guid.NewGuid():N}");
+
+        try {
+            using var repo = Repository.Create(repoDir).Unwrap();
+            var revision = repo.CreateBranch("main").Unwrap();
+            var workspaceRoot = AgentWorkspaceRoot.Create(revision);
+
+            using var session = AgentWorkspaceSession.Open(workspaceRoot);
+            var state = session.RestoreState();
+            state.AppendObservation(new ObservationEntry(), "durable-observation");
+            state.AppendAction(
+                new ActionEntry(
+                    new ActionMessage([new ActionBlock.Text("durable-action")]),
+                    new CompletionDescriptor("provider-a", "spec-a", "model-a")
+                )
+            );
+            state.AppendNotification("durable-notification");
+
+            var originalObservation = Assert.IsType<ObservationEntry>(state.RecentHistory[0]);
+            var originalAction = Assert.IsType<ActionEntry>(state.RecentHistory[1]);
+            var appended = state.AppendToolResults(
+                new ToolResultsEntry([
+                    CreateToolCallExecutionResult("tool-alpha", "call-1", "tool-output")
+                ])
+            );
+
+            Assert.Same(originalObservation, state.RecentHistory[0]);
+            Assert.Same(originalAction, state.RecentHistory[1]);
+            Assert.Same(appended, state.RecentHistory[2]);
+            Assert.Empty(GetCachedPendingNotifications(state));
+            AssertObservationActionToolResultsHistory(
+                state.RecentHistory,
+                "durable-observation",
+                "durable-action",
+                "durable-notification",
+                "call-1"
+            );
+        }
+        finally {
+            if (Directory.Exists(repoDir)) {
+                Directory.Delete(repoDir, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
     public void WorkspaceLiveAppendAction_SoftHistoryDriftFallsBackToWholeReload() {
         var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-workspace-append-action-soft-drift-{Guid.NewGuid():N}");
 
@@ -1147,6 +1194,52 @@ public sealed class AgentWorkspacePersistenceTests {
             Assert.NotSame(driftedObservation, state.RecentHistory[0]);
             AssertObservationActionHistory(state.RecentHistory, "durable-observation", "durable-action");
             Assert.Equal(2UL, GetWorkingSet(state).LastSerial);
+        }
+        finally {
+            if (Directory.Exists(repoDir)) {
+                Directory.Delete(repoDir, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public void WorkspaceLiveInjectActionContent_SoftHistoryDriftFallsBackToWholeReload() {
+        var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-workspace-inject-soft-drift-{Guid.NewGuid():N}");
+
+        try {
+            using var repo = Repository.Create(repoDir).Unwrap();
+            var revision = repo.CreateBranch("main").Unwrap();
+            var workspaceRoot = AgentWorkspaceRoot.Create(revision);
+
+            using var session = AgentWorkspaceSession.Open(workspaceRoot);
+            var state = session.RestoreState();
+            state.AppendObservation(new ObservationEntry(), "durable-observation");
+            state.AppendAction(CreateActionEntryWithReasoningTail("durable-action", "durable-thinking"));
+
+            var driftedObservation = CreateAssignedObservationEntry(1UL, "drifted-observation");
+            var driftedAction = CreateAssignedActionEntry(2UL, "drifted-action");
+            ReplaceCachedRecentHistory(state, driftedObservation, driftedAction);
+            ReplaceCachedLastSerial(state, 2UL);
+
+            var injected = state.InjectActionContent(
+                new ActionInjectionRequest(
+                    "injected-thinking",
+                    new InjectionSource(InjectionSourceKind.HostOverride),
+                    InjectedActionContentMode.MatchRecentActionTail
+                )
+            );
+
+            Assert.NotSame(driftedObservation, state.RecentHistory[0]);
+            Assert.NotSame(driftedAction, state.RecentHistory[1]);
+            Assert.Equal(3UL, injected.InjectedEntrySerial);
+            Assert.Equal(ActionBlockKind.Thinking, injected.InjectedBlockKind);
+            AssertObservationActionInjectionHistory(
+                state.RecentHistory,
+                "durable-observation",
+                "durable-action",
+                "injected-thinking",
+                ActionBlockKind.Thinking
+            );
         }
         finally {
             if (Directory.Exists(repoDir)) {
