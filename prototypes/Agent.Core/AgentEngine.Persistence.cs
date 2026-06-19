@@ -2,7 +2,6 @@ using Atelia.Agent.Core.App;
 using Atelia.Agent.Core.History;
 using Atelia.Agent.Core.Persistence;
 using Atelia.Completion.Tools;
-using Atelia.StateJournal;
 
 namespace Atelia.Agent.Core;
 
@@ -206,60 +205,6 @@ public partial class AgentEngine {
             utcNowProvider,
             autoCompaction,
             workspaceSession
-        );
-    }
-
-    /// <summary>
-    /// 从一个 <see cref="AgentEngineStateRoot"/> 的 graph root 重建 <see cref="AgentEngine"/>。
-    /// public 入口会先 materialize snapshot 再恢复，因此属于 compatibility/import-export/public non-live 路径，而非 internal live workspace host path。
-    /// </summary>
-    public static AgentEngine CreateFromRoot(
-        DurableDict<string> root,
-        LlmProfileRegistry? profileRegistry = null,
-        IEnumerable<IApp>? initialApps = null,
-        IEnumerable<ITool>? initialTools = null,
-        IIdleObservationProvider? idleProvider = null,
-        Func<DateTimeOffset>? utcNowProvider = null,
-        AutoCompactionOptions? autoCompaction = null
-    ) {
-        ArgumentNullException.ThrowIfNull(root);
-
-        var workspaceRoot = AgentWorkspaceRoot.FromRoot(root);
-        return CreateFromStateSnapshot(
-            AgentEngineStateRoot.FromWorkspaceRoot(workspaceRoot).Load(),
-            profileRegistry,
-            initialApps,
-            initialTools,
-            idleProvider,
-            utcNowProvider,
-            autoCompaction
-        );
-    }
-
-    /// <summary>
-    /// 从一个 <see cref="AgentEngineStateRoot"/> 的 graph root 重建 <see cref="AgentEngine"/>。
-    /// public 入口会先 materialize snapshot 再恢复；低层重载保留显式 resolver 逃生口，用于 compatibility/import-export/public non-live 宿主不想引入 <see cref="LlmProfileRegistry"/> 的场景。
-    /// </summary>
-    public static AgentEngine CreateFromRoot(
-        DurableDict<string> root,
-        Func<LlmProfileCheckpoint, LlmProfile?>? resolvedProfileResolver,
-        IEnumerable<IApp>? initialApps = null,
-        IEnumerable<ITool>? initialTools = null,
-        IIdleObservationProvider? idleProvider = null,
-        Func<DateTimeOffset>? utcNowProvider = null,
-        AutoCompactionOptions? autoCompaction = null
-    ) {
-        ArgumentNullException.ThrowIfNull(root);
-
-        var workspaceRoot = AgentWorkspaceRoot.FromRoot(root);
-        return CreateFromStateSnapshot(
-            AgentEngineStateRoot.FromWorkspaceRoot(workspaceRoot).Load(),
-            resolvedProfileResolver,
-            initialApps,
-            initialTools,
-            idleProvider,
-            utcNowProvider,
-            autoCompaction
         );
     }
 

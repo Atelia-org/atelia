@@ -86,7 +86,8 @@ public sealed class AgentEngineStateRoot {
 
     /// <summary>
     /// 从当前 workspace materialize 一个 <see cref="AgentEngineStateSnapshot"/>。
-    /// 该入口服务于 public compatibility / diagnostic / import-export 场景；internal live host 应直接围绕 workspaceRoot 恢复。
+    /// public non-live restore 应显式走 `Load()` -> `AgentEngine.CreateFromStateSnapshot(...)`；
+    /// internal live host 则应直接围绕 workspaceRoot / session 恢复。
     /// </summary>
     public AgentEngineStateSnapshot Load() => LoadSnapshot(_workspaceRoot);
 

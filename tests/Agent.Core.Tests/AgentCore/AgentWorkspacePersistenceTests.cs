@@ -1853,7 +1853,7 @@ public sealed class AgentWorkspacePersistenceTests {
     }
 
     [Fact]
-    public void PublicCreateFromRoot_RemainsSnapshotBasedAndDoesNotLiveWriteThrough() {
+    public void PublicLoadThenCreateFromStateSnapshot_RemainsNonLiveAndDoesNotWriteThrough() {
         var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-public-root-{Guid.NewGuid():N}");
 
         try {
@@ -1861,7 +1861,8 @@ public sealed class AgentWorkspacePersistenceTests {
             var revision = repo.CreateBranch("main").Unwrap();
             var stateRoot = AgentEngineStateRoot.Create(revision, "public-root-system");
 
-            var engine = AgentEngine.CreateFromRoot(stateRoot.Root);
+            var snapshot = stateRoot.Load();
+            var engine = AgentEngine.CreateFromStateSnapshot(snapshot);
             engine.State.SetSystemPrompt("updated-in-memory-only");
             engine.AppendNotification("queued-notification");
             engine.State.AppendObservation(new ObservationEntry(), "recent-events");
@@ -2149,7 +2150,7 @@ public sealed class AgentWorkspacePersistenceTests {
     }
 
     [Fact]
-    public async Task PublicCreateFromRoot_RestoresResolvedProfileOverlayForToolExecutionWithoutWriteThrough() {
+    public async Task PublicLoadThenCreateFromStateSnapshot_RestoresResolvedProfileOverlayForToolExecutionWithoutWriteThrough() {
         var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-public-root-tool-restore-{Guid.NewGuid():N}");
 
         try {
@@ -2174,8 +2175,9 @@ public sealed class AgentWorkspacePersistenceTests {
             var stateRoot = AgentEngineStateRoot.Create(revision, "public-root-tool-restore");
             stateRoot.Save(expected);
 
-            var engine = AgentEngine.CreateFromRoot(
-                stateRoot.Root,
+            var snapshot = stateRoot.Load();
+            var engine = AgentEngine.CreateFromStateSnapshot(
+                snapshot,
                 new LlmProfileRegistry([resolvedProfile]),
                 initialTools: [new RecordingTool("alpha")]
             );
