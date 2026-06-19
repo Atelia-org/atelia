@@ -125,6 +125,7 @@ memory_notebook_replace与memory_notebook_replace_span工具就是为你主动�
                 var mutation = _workspaceSession.AppendAction(entry);
                 if (!TryApplyRecentHistoryDelta(
                     mutation.AuthoritativePreRecentHistory,
+                    mutation.AuthoritativePreLastSerial,
                     mutation.AppendedEntry,
                     mutation.LastSerial
                 )) {
@@ -156,6 +157,7 @@ memory_notebook_replace与memory_notebook_replace_span工具就是为你主动�
                 var mutation = _workspaceSession.AppendObservation(entry, inlineNotifications);
                 if (!TryApplyWorkingSetDelta(
                     mutation.AuthoritativePreRecentHistory,
+                    mutation.AuthoritativePreLastSerial,
                     mutation.AuthoritativePrePendingNotifications,
                     mutation.AppendedEntry,
                     mutation.LastSerial
@@ -192,6 +194,7 @@ memory_notebook_replace与memory_notebook_replace_span工具就是为你主动�
                 var mutation = _workspaceSession.AppendToolResults(entry);
                 if (!TryApplyWorkingSetDelta(
                     mutation.AuthoritativePreRecentHistory,
+                    mutation.AuthoritativePreLastSerial,
                     mutation.AuthoritativePrePendingNotifications,
                     mutation.AppendedEntry,
                     mutation.LastSerial
@@ -233,6 +236,7 @@ memory_notebook_replace与memory_notebook_replace_span工具就是为你主动�
                 var mutation = _workspaceSession.InjectActionContent(request);
                 if (!TryApplyRecentHistoryDelta(
                     mutation.AuthoritativePreRecentHistory,
+                    mutation.AuthoritativePreLastSerial,
                     mutation.AppendedEntry,
                     mutation.LastSerial
                 )) {
@@ -282,7 +286,7 @@ memory_notebook_replace与memory_notebook_replace_span工具就是为你主动�
             try {
                 var mutation = _workspaceSession.FoldPendingNotificationsIntoCurrentObservation();
                 if (!mutation.FoldApplied) {
-                    if (!IsRecentHistoryCacheAligned(mutation.AuthoritativePreRecentHistory)
+                    if (!IsRecentHistoryCacheAligned(mutation.AuthoritativePreRecentHistory, mutation.AuthoritativePreLastSerial)
                         || !IsPendingNotificationsCacheAligned(mutation.AuthoritativePrePendingNotifications)) {
                         ReloadWorkingSetFromWorkspaceSession();
                     }
@@ -292,6 +296,7 @@ memory_notebook_replace与memory_notebook_replace_span工具就是为你主动�
 
                 if (!TryApplyCurrentObservationNotificationFoldDelta(
                     mutation.AuthoritativePreRecentHistory,
+                    mutation.AuthoritativePreLastSerial,
                     mutation.AuthoritativePrePendingNotifications,
                     mutation.UpdatedObservation!,
                     mutation.LastSerial
@@ -330,7 +335,7 @@ memory_notebook_replace与memory_notebook_replace_span工具就是为你主动�
             try {
                 var mutation = _workspaceSession.FoldPendingNotificationsIntoCurrentToolResults();
                 if (!mutation.FoldApplied) {
-                    if (!IsRecentHistoryCacheAligned(mutation.AuthoritativePreRecentHistory)
+                    if (!IsRecentHistoryCacheAligned(mutation.AuthoritativePreRecentHistory, mutation.AuthoritativePreLastSerial)
                         || !IsPendingNotificationsCacheAligned(mutation.AuthoritativePrePendingNotifications)) {
                         ReloadWorkingSetFromWorkspaceSession();
                     }
@@ -340,6 +345,7 @@ memory_notebook_replace与memory_notebook_replace_span工具就是为你主动�
 
                 if (!TryApplyCurrentObservationNotificationFoldDelta(
                     mutation.AuthoritativePreRecentHistory,
+                    mutation.AuthoritativePreLastSerial,
                     mutation.AuthoritativePrePendingNotifications,
                     mutation.UpdatedObservation!,
                     mutation.LastSerial
@@ -533,6 +539,7 @@ memory_notebook_replace与memory_notebook_replace_span工具就是为你主动�
                 var mutation = _workspaceSession.ReplacePrefixWithRecap(splitIndex, summary);
                 if (!TryApplyRecapRewriteDelta(
                     mutation.AuthoritativePreRecentHistory,
+                    mutation.AuthoritativePreLastSerial,
                     mutation.SplitIndex,
                     mutation.RecapEntry,
                     mutation.LastSerial
@@ -554,6 +561,46 @@ memory_notebook_replace与memory_notebook_replace_span工具就是为你主动�
         );
 
         return recap;
+    }
+
+    internal void RewriteRecentHistoryTail(ulong anchorSerial, IReadOnlyList<HistoryEntry> replacementEntries) {
+        ArgumentNullException.ThrowIfNull(replacementEntries);
+        EnsureWorkspaceSessionOpen();
+
+        if (_workspaceSession is not null) {
+            try {
+                var mutation = _workspaceSession.RewriteRecentHistoryTail(anchorSerial, replacementEntries);
+                if (!TryApplyRecentHistoryTailRewriteDelta(
+                    mutation.AuthoritativePreRecentHistory,
+                    mutation.AuthoritativePreLastSerial,
+                    mutation.AnchorIndex,
+                    mutation.ReplacementEntries,
+                    mutation.LastSerial
+                )) {
+                    ReloadRecentHistoryFromWorkspaceSession();
+                }
+
+                return;
+            }
+            catch {
+                ReloadRecentHistoryFromWorkspaceSession();
+                throw;
+            }
+        }
+
+        var anchorIndex = RecentHistoryRules.FindIndexBySerial(RecentHistory, anchorSerial);
+        if (anchorIndex < 0) {
+            throw new InvalidOperationException($"Cannot rewrite recent history tail because anchor serial {anchorSerial} was not found.");
+        }
+
+        RecentHistoryRules.ValidateTailRewrite(RecentHistory, anchorIndex, replacementEntries);
+        foreach (var replacementEntry in replacementEntries) {
+            ArgumentNullException.ThrowIfNull(replacementEntry);
+            replacementEntry.AssignTokenEstimate(TokenEstimateHelper.GetDefault().Estimate(replacementEntry));
+            replacementEntry.AssignSerial(_workingSet.AllocateNextSerial());
+        }
+
+        _workingSet.RewriteRecentHistoryTail(anchorIndex, replacementEntries, _workingSet.LastSerial);
     }
 
     private int DetermineActiveTurnStartIndex(CurrentTurnInfo currentTurn) {

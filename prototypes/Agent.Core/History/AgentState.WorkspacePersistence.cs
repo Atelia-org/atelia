@@ -49,10 +49,11 @@ public sealed partial class AgentState {
 
     private bool TryApplyRecentHistoryDelta(
         IReadOnlyList<HistoryEntry> authoritativePreRecentHistory,
+        ulong authoritativePreLastSerial,
         HistoryEntry appendedEntry,
         ulong lastSerial
     ) {
-        if (!IsRecentHistoryCacheAligned(authoritativePreRecentHistory)) {
+        if (!IsRecentHistoryCacheAligned(authoritativePreRecentHistory, authoritativePreLastSerial)) {
             return false;
         }
 
@@ -62,11 +63,12 @@ public sealed partial class AgentState {
 
     private bool TryApplyWorkingSetDelta(
         IReadOnlyList<HistoryEntry> authoritativePreRecentHistory,
+        ulong authoritativePreLastSerial,
         IReadOnlyList<string> authoritativePrePendingNotifications,
         ObservationEntry appendedEntry,
         ulong lastSerial
     ) {
-        if (!IsRecentHistoryCacheAligned(authoritativePreRecentHistory)
+        if (!IsRecentHistoryCacheAligned(authoritativePreRecentHistory, authoritativePreLastSerial)
             || !IsPendingNotificationsCacheAligned(authoritativePrePendingNotifications)) {
             return false;
         }
@@ -78,11 +80,12 @@ public sealed partial class AgentState {
 
     private bool TryApplyCurrentObservationNotificationFoldDelta(
         IReadOnlyList<HistoryEntry> authoritativePreRecentHistory,
+        ulong authoritativePreLastSerial,
         IReadOnlyList<string> authoritativePrePendingNotifications,
         ObservationEntry updatedObservation,
         ulong lastSerial
     ) {
-        if (!IsRecentHistoryCacheAligned(authoritativePreRecentHistory)
+        if (!IsRecentHistoryCacheAligned(authoritativePreRecentHistory, authoritativePreLastSerial)
             || !IsPendingNotificationsCacheAligned(authoritativePrePendingNotifications)) {
             return false;
         }
@@ -99,11 +102,12 @@ public sealed partial class AgentState {
 
     private bool TryApplyRecapRewriteDelta(
         IReadOnlyList<HistoryEntry> authoritativePreRecentHistory,
+        ulong authoritativePreLastSerial,
         int splitIndex,
         RecapEntry recapEntry,
         ulong lastSerial
     ) {
-        if (!IsRecentHistoryCacheAligned(authoritativePreRecentHistory)) {
+        if (!IsRecentHistoryCacheAligned(authoritativePreRecentHistory, authoritativePreLastSerial)) {
             return false;
         }
 
@@ -115,10 +119,32 @@ public sealed partial class AgentState {
         return true;
     }
 
-    private bool IsRecentHistoryCacheAligned(IReadOnlyList<HistoryEntry> authoritativeRecentHistory) {
+    private bool TryApplyRecentHistoryTailRewriteDelta(
+        IReadOnlyList<HistoryEntry> authoritativePreRecentHistory,
+        ulong authoritativePreLastSerial,
+        int anchorIndex,
+        IReadOnlyList<HistoryEntry> replacementEntries,
+        ulong lastSerial
+    ) {
+        if (!IsRecentHistoryCacheAligned(authoritativePreRecentHistory, authoritativePreLastSerial)) {
+            return false;
+        }
+
+        if ((uint)anchorIndex >= (uint)_workingSet.RecentHistory.Count) {
+            return false;
+        }
+
+        _workingSet.RewriteRecentHistoryTail(anchorIndex, replacementEntries, lastSerial);
+        return true;
+    }
+
+    private bool IsRecentHistoryCacheAligned(
+        IReadOnlyList<HistoryEntry> authoritativeRecentHistory,
+        ulong authoritativeLastSerial
+    ) {
         ArgumentNullException.ThrowIfNull(authoritativeRecentHistory);
 
-        if (_workingSet.LastSerial != GetMaxSerial(authoritativeRecentHistory)) {
+        if (_workingSet.LastSerial != authoritativeLastSerial) {
             return false;
         }
 
@@ -151,16 +177,6 @@ public sealed partial class AgentState {
         }
 
         return true;
-    }
-
-    private static ulong GetMaxSerial(IReadOnlyList<HistoryEntry> recentHistory) {
-        ulong maxSerial = 0;
-        foreach (var entry in recentHistory) {
-            ArgumentNullException.ThrowIfNull(entry);
-            maxSerial = Math.Max(maxSerial, entry.Serial);
-        }
-
-        return maxSerial;
     }
 
     private static bool HistoryEntriesStructurallyEqual(HistoryEntry left, HistoryEntry right) {

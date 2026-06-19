@@ -128,4 +128,19 @@ internal sealed class AgentStateWorkingSet {
         _recentHistory.Insert(0, recap);
         LastSerial = lastSerial;
     }
+
+    public void RewriteRecentHistoryTail(int anchorIndex, IReadOnlyList<HistoryEntry> replacementEntries, ulong lastSerial) {
+        ArgumentNullException.ThrowIfNull(replacementEntries);
+        if ((uint)anchorIndex >= (uint)_recentHistory.Count) {
+            throw new ArgumentOutOfRangeException(nameof(anchorIndex), anchorIndex, "anchorIndex must identify an existing recent-history entry.");
+        }
+
+        _recentHistory.RemoveRange(anchorIndex + 1, _recentHistory.Count - anchorIndex - 1);
+        foreach (var replacementEntry in replacementEntries) {
+            ArgumentNullException.ThrowIfNull(replacementEntry);
+            _recentHistory.Add(replacementEntry);
+        }
+
+        LastSerial = lastSerial;
+    }
 }

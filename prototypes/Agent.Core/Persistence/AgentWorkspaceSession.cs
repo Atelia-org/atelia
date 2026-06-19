@@ -11,7 +11,9 @@ internal enum AgentWorkspaceSessionFaultPoint {
     AfterUpdatePendingCompactionMutation,
     AfterFoldPendingNotificationsIntoCurrentObservationMutation,
     AfterReplacePrefixWithRecapFrontPopMutation,
-    AfterReplacePrefixWithRecapMutation
+    AfterReplacePrefixWithRecapMutation,
+    AfterRewriteRecentHistoryTailStepMutation,
+    AfterRewriteRecentHistoryTailMutation
 }
 
 internal sealed class AgentWorkspaceSession : IDisposable {
@@ -116,6 +118,7 @@ internal sealed class AgentWorkspaceSession : IDisposable {
 
         EnsureOpenForState();
         var authoritativePreRecentHistory = _workspaceRoot.History.LoadRecent();
+        var authoritativePreLastSerial = _workspaceRoot.History.GetRequiredLastSerial();
         RecentHistoryRules.ValidateAppendOrder(authoritativePreRecentHistory, entry);
         entry.AssignTokenEstimate(TokenEstimateHelper.GetDefault().Estimate(entry));
         entry.AssignSerial(_workspaceRoot.History.AllocateNextSerial());
@@ -123,6 +126,7 @@ internal sealed class AgentWorkspaceSession : IDisposable {
 
         return new WorkspaceAppendActionMutationResult(
             AuthoritativePreRecentHistory: authoritativePreRecentHistory,
+            AuthoritativePreLastSerial: authoritativePreLastSerial,
             AppendedEntry: entry,
             LastSerial: entry.Serial
         );
@@ -133,6 +137,7 @@ internal sealed class AgentWorkspaceSession : IDisposable {
 
         EnsureOpenForState();
         var authoritativePreRecentHistory = _workspaceRoot.History.LoadRecent();
+        var authoritativePreLastSerial = _workspaceRoot.History.GetRequiredLastSerial();
         if (RecentHistoryRules.HasPendingActionContinuation(authoritativePreRecentHistory)) {
             throw new InvalidOperationException("Cannot append observation while a pending action continuation is open.");
         }
@@ -145,6 +150,7 @@ internal sealed class AgentWorkspaceSession : IDisposable {
         _workspaceRoot.History.AppendRecent(entry);
         return new WorkspaceWorkingSetAppendMutationResult(
             AuthoritativePreRecentHistory: authoritativePreRecentHistory,
+            AuthoritativePreLastSerial: authoritativePreLastSerial,
             AuthoritativePrePendingNotifications: authoritativePrePendingNotifications,
             AppendedEntry: entry,
             LastSerial: entry.Serial
@@ -159,6 +165,7 @@ internal sealed class AgentWorkspaceSession : IDisposable {
 
         EnsureOpenForState();
         var authoritativePreRecentHistory = _workspaceRoot.History.LoadRecent();
+        var authoritativePreLastSerial = _workspaceRoot.History.GetRequiredLastSerial();
         if (RecentHistoryRules.HasPendingActionContinuation(authoritativePreRecentHistory)) {
             throw new InvalidOperationException("Cannot append tool results while a pending action continuation is open.");
         }
@@ -171,6 +178,7 @@ internal sealed class AgentWorkspaceSession : IDisposable {
         _workspaceRoot.History.AppendRecent(entry);
         return new WorkspaceWorkingSetAppendMutationResult(
             AuthoritativePreRecentHistory: authoritativePreRecentHistory,
+            AuthoritativePreLastSerial: authoritativePreLastSerial,
             AuthoritativePrePendingNotifications: authoritativePrePendingNotifications,
             AppendedEntry: entry,
             LastSerial: entry.Serial
@@ -185,6 +193,7 @@ internal sealed class AgentWorkspaceSession : IDisposable {
 
         EnsureOpenForState();
         var authoritativePreRecentHistory = _workspaceRoot.History.LoadRecent();
+        var authoritativePreLastSerial = _workspaceRoot.History.GetRequiredLastSerial();
         if (authoritativePreRecentHistory.Count == 0) {
             throw new InvalidOperationException("Cannot inject action content into empty history. At least one prior ActionEntry is required.");
         }
@@ -206,6 +215,7 @@ internal sealed class AgentWorkspaceSession : IDisposable {
 
         return new WorkspaceInjectionMutationResult(
             AuthoritativePreRecentHistory: authoritativePreRecentHistory,
+            AuthoritativePreLastSerial: authoritativePreLastSerial,
             AppendedEntry: injectionEntry,
             LastSerial: injectionEntry.Serial,
             Result: new ActionInjectionResult(
@@ -232,6 +242,7 @@ internal sealed class AgentWorkspaceSession : IDisposable {
         if (authoritativePrePendingNotifications.Count == 0) {
             return new WorkspaceFoldPendingNotificationsIntoObservationMutationResult(
                 AuthoritativePreRecentHistory: authoritativePreRecentHistory,
+                AuthoritativePreLastSerial: lastSerial,
                 AuthoritativePrePendingNotifications: authoritativePrePendingNotifications,
                 UpdatedObservation: null,
                 LastSerial: lastSerial
@@ -251,6 +262,7 @@ internal sealed class AgentWorkspaceSession : IDisposable {
 
         return new WorkspaceFoldPendingNotificationsIntoObservationMutationResult(
             AuthoritativePreRecentHistory: authoritativePreRecentHistory,
+            AuthoritativePreLastSerial: lastSerial,
             AuthoritativePrePendingNotifications: authoritativePrePendingNotifications,
             UpdatedObservation: updatedObservation,
             LastSerial: lastSerial
@@ -266,6 +278,7 @@ internal sealed class AgentWorkspaceSession : IDisposable {
         if (authoritativePrePendingNotifications.Count == 0) {
             return new WorkspaceFoldPendingNotificationsIntoObservationMutationResult(
                 AuthoritativePreRecentHistory: authoritativePreRecentHistory,
+                AuthoritativePreLastSerial: lastSerial,
                 AuthoritativePrePendingNotifications: authoritativePrePendingNotifications,
                 UpdatedObservation: null,
                 LastSerial: lastSerial
@@ -287,6 +300,7 @@ internal sealed class AgentWorkspaceSession : IDisposable {
 
         return new WorkspaceFoldPendingNotificationsIntoObservationMutationResult(
             AuthoritativePreRecentHistory: authoritativePreRecentHistory,
+            AuthoritativePreLastSerial: lastSerial,
             AuthoritativePrePendingNotifications: authoritativePrePendingNotifications,
             UpdatedObservation: updatedToolResults,
             LastSerial: lastSerial
@@ -329,9 +343,57 @@ internal sealed class AgentWorkspaceSession : IDisposable {
         ThrowInjectedFaultIfAny(AgentWorkspaceSessionFaultPoint.AfterReplacePrefixWithRecapMutation);
         return new WorkspaceRecapMutationResult(
             AuthoritativePreRecentHistory: authoritativePreRecentHistory,
+            AuthoritativePreLastSerial: previousLastSerial,
             SplitIndex: splitIndex,
             RecapEntry: recap,
             LastSerial: recap.Serial
+        );
+    }
+
+    internal WorkspaceTailRewriteMutationResult RewriteRecentHistoryTail(
+        ulong anchorSerial,
+        IReadOnlyList<HistoryEntry> replacementEntries
+    ) {
+        ArgumentNullException.ThrowIfNull(replacementEntries);
+
+        EnsureOpenForState();
+        var authoritativePreRecentHistory = _workspaceRoot.History.LoadRecent();
+        var authoritativePreLastSerial = _workspaceRoot.History.GetRequiredLastSerial();
+        var anchorIndex = RecentHistoryRules.FindIndexBySerial(authoritativePreRecentHistory, anchorSerial);
+        if (anchorIndex < 0) {
+            throw new InvalidOperationException($"Cannot rewrite recent history tail because anchor serial {anchorSerial} was not found.");
+        }
+
+        RecentHistoryRules.ValidateTailRewrite(authoritativePreRecentHistory, anchorIndex, replacementEntries);
+
+        try {
+            for (int index = authoritativePreRecentHistory.Count - 1; index > anchorIndex; index--) {
+                _workspaceRoot.History.PopBackRecent();
+                ThrowInjectedFaultIfAny(AgentWorkspaceSessionFaultPoint.AfterRewriteRecentHistoryTailStepMutation);
+            }
+
+            foreach (var replacementEntry in replacementEntries) {
+                ArgumentNullException.ThrowIfNull(replacementEntry);
+                replacementEntry.AssignTokenEstimate(TokenEstimateHelper.GetDefault().Estimate(replacementEntry));
+                replacementEntry.AssignSerial(_workspaceRoot.History.AllocateNextSerial());
+                _workspaceRoot.History.AppendRecent(replacementEntry);
+                ThrowInjectedFaultIfAny(AgentWorkspaceSessionFaultPoint.AfterRewriteRecentHistoryTailStepMutation);
+            }
+        }
+        catch {
+            _workspaceRoot.History.ReplaceRecent(authoritativePreRecentHistory);
+            _workspaceRoot.History.SetLastSerial(authoritativePreLastSerial);
+            throw;
+        }
+
+        var lastSerial = _workspaceRoot.History.GetRequiredLastSerial();
+        ThrowInjectedFaultIfAny(AgentWorkspaceSessionFaultPoint.AfterRewriteRecentHistoryTailMutation);
+        return new WorkspaceTailRewriteMutationResult(
+            AuthoritativePreRecentHistory: authoritativePreRecentHistory,
+            AuthoritativePreLastSerial: authoritativePreLastSerial,
+            AnchorIndex: anchorIndex,
+            ReplacementEntries: replacementEntries,
+            LastSerial: lastSerial
         );
     }
 
@@ -445,12 +507,14 @@ internal sealed class AgentWorkspaceSession : IDisposable {
 
 internal sealed record WorkspaceAppendActionMutationResult(
     IReadOnlyList<HistoryEntry> AuthoritativePreRecentHistory,
+    ulong AuthoritativePreLastSerial,
     ActionEntry AppendedEntry,
     ulong LastSerial
 );
 
 internal sealed record WorkspaceWorkingSetAppendMutationResult(
     IReadOnlyList<HistoryEntry> AuthoritativePreRecentHistory,
+    ulong AuthoritativePreLastSerial,
     IReadOnlyList<string> AuthoritativePrePendingNotifications,
     ObservationEntry AppendedEntry,
     ulong LastSerial
@@ -458,6 +522,7 @@ internal sealed record WorkspaceWorkingSetAppendMutationResult(
 
 internal sealed record WorkspaceInjectionMutationResult(
     IReadOnlyList<HistoryEntry> AuthoritativePreRecentHistory,
+    ulong AuthoritativePreLastSerial,
     InjectionEntry AppendedEntry,
     ulong LastSerial,
     ActionInjectionResult Result
@@ -465,6 +530,7 @@ internal sealed record WorkspaceInjectionMutationResult(
 
 internal sealed record WorkspaceFoldPendingNotificationsIntoObservationMutationResult(
     IReadOnlyList<HistoryEntry> AuthoritativePreRecentHistory,
+    ulong AuthoritativePreLastSerial,
     IReadOnlyList<string> AuthoritativePrePendingNotifications,
     ObservationEntry? UpdatedObservation,
     ulong LastSerial
@@ -474,7 +540,16 @@ internal sealed record WorkspaceFoldPendingNotificationsIntoObservationMutationR
 
 internal sealed record WorkspaceRecapMutationResult(
     IReadOnlyList<HistoryEntry> AuthoritativePreRecentHistory,
+    ulong AuthoritativePreLastSerial,
     int SplitIndex,
     RecapEntry RecapEntry,
+    ulong LastSerial
+);
+
+internal sealed record WorkspaceTailRewriteMutationResult(
+    IReadOnlyList<HistoryEntry> AuthoritativePreRecentHistory,
+    ulong AuthoritativePreLastSerial,
+    int AnchorIndex,
+    IReadOnlyList<HistoryEntry> ReplacementEntries,
     ulong LastSerial
 );

@@ -43,6 +43,45 @@ internal static class RecentHistoryRules {
         return recentHistory.Count > 0 && recentHistory[^1] is InjectionEntry;
     }
 
+    internal static int FindIndexBySerial(IReadOnlyList<HistoryEntry> recentHistory, ulong serial) {
+        ArgumentNullException.ThrowIfNull(recentHistory);
+
+        for (var index = 0; index < recentHistory.Count; index++) {
+            if (recentHistory[index].Serial == serial) {
+                return index;
+            }
+        }
+
+        return -1;
+    }
+
+    internal static void ValidateTailRewrite(
+        IReadOnlyList<HistoryEntry> recentHistory,
+        int anchorIndex,
+        IReadOnlyList<HistoryEntry> replacementEntries
+    ) {
+        ArgumentNullException.ThrowIfNull(recentHistory);
+        ArgumentNullException.ThrowIfNull(replacementEntries);
+
+        if ((uint)anchorIndex >= (uint)recentHistory.Count) {
+            throw new ArgumentOutOfRangeException(nameof(anchorIndex), anchorIndex, "anchorIndex must identify an existing recent-history entry.");
+        }
+
+        var previous = recentHistory[anchorIndex];
+        for (var index = 0; index < replacementEntries.Count; index++) {
+            var replacementEntry = replacementEntries[index]
+                ?? throw new InvalidOperationException("replacementEntries must not contain null entries.");
+
+            if (!IsLegalHistoryTransition(previous, replacementEntry)) {
+                throw new InvalidOperationException(
+                    $"Illegal tail rewrite transition. Previous={previous.Kind}, Next={replacementEntry.Kind}"
+                );
+            }
+
+            previous = replacementEntry;
+        }
+    }
+
     internal static ActionBlockKind ResolveInjectedBlockKind(
         IReadOnlyList<HistoryEntry> recentHistory,
         ActionInjectionRequest request

@@ -273,6 +273,12 @@ internal sealed class AgentWorkspaceRoot {
                 throw new InvalidOperationException("History deque changed unexpectedly during front-pop.");
             }
         }
+
+        public void PopBackRecent() {
+            if (_workspaceRoot.GetRequiredHistory().PopBack<DurableObject>(out _) != GetIssue.None) {
+                throw new InvalidOperationException("History deque changed unexpectedly during back-pop.");
+            }
+        }
     }
 
     public sealed class RuntimeStateBlock {

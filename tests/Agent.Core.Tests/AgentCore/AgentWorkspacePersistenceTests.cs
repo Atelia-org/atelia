@@ -1955,6 +1955,348 @@ public sealed class AgentWorkspacePersistenceTests {
     }
 
     [Fact]
+    public void WorkspaceLocalTailRewrite_TruncateLeavesSerialGapAndNextAppendStaysMonotonic() {
+        var state = AgentState.CreateDefault("tail-rewrite-local");
+        state.AppendObservation(new ObservationEntry(), "first-observation");
+        state.AppendAction(
+            new ActionEntry(
+                new ActionMessage([new ActionBlock.Text("first-action")]),
+                new CompletionDescriptor("provider-a", "spec-a", "model-a")
+            )
+        );
+        state.AppendObservation(new ObservationEntry(), "second-observation");
+        state.AppendAction(
+            new ActionEntry(
+                new ActionMessage([new ActionBlock.Text("second-action")]),
+                new CompletionDescriptor("provider-a", "spec-a", "model-a")
+            )
+        );
+
+        InvokeRewriteRecentHistoryTail(state, 2UL);
+
+        AssertObservationActionHistory(state.RecentHistory, "first-observation", "first-action");
+        Assert.Equal(4UL, GetWorkingSet(state).LastSerial);
+
+        var appended = state.AppendObservation(new ObservationEntry(), "after-truncate");
+
+        Assert.Equal(5UL, appended.Serial);
+        Assert.Collection(
+            state.RecentHistory,
+            entry => {
+                var observation = Assert.IsType<ObservationEntry>(entry);
+                Assert.Equal(1UL, observation.Serial);
+                Assert.Equal("first-observation", observation.Notifications);
+            },
+            entry => {
+                var action = Assert.IsType<ActionEntry>(entry);
+                Assert.Equal(2UL, action.Serial);
+                Assert.Equal("first-action", action.Message.GetFlattenedText());
+            },
+            entry => {
+                var observation = Assert.IsType<ObservationEntry>(entry);
+                Assert.Equal(5UL, observation.Serial);
+                Assert.Equal("after-truncate", observation.Notifications);
+            }
+        );
+        Assert.Equal(5UL, GetWorkingSet(state).LastSerial);
+    }
+
+    [Fact]
+    public void WorkspaceLiveTailRewrite_AlignedCacheUsesTargetedDeltaBackfill() {
+        var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-workspace-tail-rewrite-delta-backfill-{Guid.NewGuid():N}");
+
+        try {
+            using var repo = Repository.Create(repoDir).Unwrap();
+            var revision = repo.CreateBranch("main").Unwrap();
+            var workspaceRoot = AgentWorkspaceRoot.Create(revision);
+            var initialHistoryDeque = GetHistoryDeque(workspaceRoot);
+
+            using var session = AgentWorkspaceSession.Open(workspaceRoot);
+            var state = session.RestoreState();
+            state.AppendObservation(new ObservationEntry(), "first-observation");
+            state.AppendAction(
+                new ActionEntry(
+                    new ActionMessage([new ActionBlock.Text("first-action")]),
+                    new CompletionDescriptor("provider-a", "spec-a", "model-a")
+                )
+            );
+            state.AppendObservation(new ObservationEntry(), "second-observation");
+            state.AppendAction(
+                new ActionEntry(
+                    new ActionMessage([new ActionBlock.Text("second-action")]),
+                    new CompletionDescriptor("provider-a", "spec-a", "model-a")
+                )
+            );
+
+            var replacementObservation = new ObservationEntry();
+            replacementObservation.AssignNotifications("rewritten-observation");
+            var replacementAction = new ActionEntry(
+                new ActionMessage([new ActionBlock.Text("rewritten-action")]),
+                new CompletionDescriptor("provider-a", "spec-a", "model-a")
+            );
+
+            InvokeRewriteRecentHistoryTail(state, 2UL, replacementObservation, replacementAction);
+
+            Assert.Same(initialHistoryDeque, GetHistoryDeque(workspaceRoot));
+            Assert.Same(replacementObservation, state.RecentHistory[2]);
+            Assert.Same(replacementAction, state.RecentHistory[3]);
+            AssertObservationActionObservationActionHistory(
+                workspaceRoot.History.LoadRecent(),
+                "first-observation",
+                "first-action",
+                5UL,
+                "rewritten-observation",
+                6UL,
+                "rewritten-action"
+            );
+            AssertObservationActionObservationActionHistory(
+                state.RecentHistory,
+                "first-observation",
+                "first-action",
+                5UL,
+                "rewritten-observation",
+                6UL,
+                "rewritten-action"
+            );
+            Assert.Equal(6UL, GetWorkingSet(state).LastSerial);
+            Assert.Equal(6UL, workspaceRoot.History.GetRequiredLastSerial());
+        }
+        finally {
+            if (Directory.Exists(repoDir)) {
+                Directory.Delete(repoDir, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public void WorkspaceLiveTailRewrite_SoftHistoryDriftFallsBackToWholeReload() {
+        var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-workspace-tail-rewrite-soft-drift-{Guid.NewGuid():N}");
+
+        try {
+            using var repo = Repository.Create(repoDir).Unwrap();
+            var revision = repo.CreateBranch("main").Unwrap();
+            var workspaceRoot = AgentWorkspaceRoot.Create(revision);
+
+            using var session = AgentWorkspaceSession.Open(workspaceRoot);
+            var state = session.RestoreState();
+            state.AppendObservation(new ObservationEntry(), "first-observation");
+            state.AppendAction(
+                new ActionEntry(
+                    new ActionMessage([new ActionBlock.Text("first-action")]),
+                    new CompletionDescriptor("provider-a", "spec-a", "model-a")
+                )
+            );
+            state.AppendObservation(new ObservationEntry(), "second-observation");
+            state.AppendAction(
+                new ActionEntry(
+                    new ActionMessage([new ActionBlock.Text("second-action")]),
+                    new CompletionDescriptor("provider-a", "spec-a", "model-a")
+                )
+            );
+
+            ReplaceCachedRecentHistory(
+                state,
+                CreateAssignedObservationEntry(1UL, "drifted-first-observation"),
+                CreateAssignedActionEntry(2UL, "drifted-first-action"),
+                CreateAssignedObservationEntry(3UL, "drifted-second-observation"),
+                CreateAssignedActionEntry(4UL, "drifted-second-action")
+            );
+            ReplaceCachedLastSerial(state, 4UL);
+
+            var replacementObservation = new ObservationEntry();
+            replacementObservation.AssignNotifications("rewritten-observation");
+            var replacementAction = new ActionEntry(
+                new ActionMessage([new ActionBlock.Text("rewritten-action")]),
+                new CompletionDescriptor("provider-a", "spec-a", "model-a")
+            );
+
+            InvokeRewriteRecentHistoryTail(state, 2UL, replacementObservation, replacementAction);
+
+            Assert.NotSame(replacementObservation, state.RecentHistory[2]);
+            Assert.NotSame(replacementAction, state.RecentHistory[3]);
+            AssertObservationActionObservationActionHistory(
+                state.RecentHistory,
+                "first-observation",
+                "first-action",
+                5UL,
+                "rewritten-observation",
+                6UL,
+                "rewritten-action"
+            );
+            Assert.Equal(6UL, GetWorkingSet(state).LastSerial);
+        }
+        finally {
+            if (Directory.Exists(repoDir)) {
+                Directory.Delete(repoDir, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public void WorkspaceLiveTailRewrite_MidRewriteFaultRollsBackDurableAndLocalRecentHistory() {
+        var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-workspace-tail-rewrite-mid-rollback-{Guid.NewGuid():N}");
+
+        try {
+            using var repo = Repository.Create(repoDir).Unwrap();
+            var revision = repo.CreateBranch("main").Unwrap();
+            var workspaceRoot = AgentWorkspaceRoot.Create(revision);
+
+            using var session = AgentWorkspaceSession.Open(workspaceRoot);
+            var state = session.RestoreState();
+            state.AppendObservation(new ObservationEntry(), "first-observation");
+            state.AppendAction(
+                new ActionEntry(
+                    new ActionMessage([new ActionBlock.Text("first-action")]),
+                    new CompletionDescriptor("provider-a", "spec-a", "model-a")
+                )
+            );
+            state.AppendObservation(new ObservationEntry(), "second-observation");
+            state.AppendAction(
+                new ActionEntry(
+                    new ActionMessage([new ActionBlock.Text("second-action")]),
+                    new CompletionDescriptor("provider-a", "spec-a", "model-a")
+                )
+            );
+
+            ConfigureSessionFaultToThrowOnce(
+                session,
+                AgentWorkspaceSessionFaultPoint.AfterRewriteRecentHistoryTailStepMutation,
+                "Injected fault during tail rewrite step.",
+                beforeThrow: () => {
+                    ReplaceCachedRecentHistory(
+                        state,
+                        CreateAssignedObservationEntry(999UL, "ghost-observation"),
+                        CreateAssignedActionEntry(1000UL, "ghost-action")
+                    );
+                    ReplaceCachedLastSerial(state, 1000UL);
+                }
+            );
+
+            var replacementObservation = new ObservationEntry();
+            replacementObservation.AssignNotifications("rewritten-observation");
+            var replacementAction = new ActionEntry(
+                new ActionMessage([new ActionBlock.Text("rewritten-action")]),
+                new CompletionDescriptor("provider-a", "spec-a", "model-a")
+            );
+
+            var exception = Assert.Throws<TargetInvocationException>(
+                () => InvokeRewriteRecentHistoryTail(state, 2UL, replacementObservation, replacementAction)
+            );
+
+            var inner = Assert.IsType<InvalidOperationException>(exception.InnerException);
+            Assert.Equal("Injected fault during tail rewrite step.", inner.Message);
+            AssertObservationActionObservationActionHistory(
+                workspaceRoot.History.LoadRecent(),
+                "first-observation",
+                "first-action",
+                3UL,
+                "second-observation",
+                4UL,
+                "second-action"
+            );
+            AssertObservationActionObservationActionHistory(
+                state.RecentHistory,
+                "first-observation",
+                "first-action",
+                3UL,
+                "second-observation",
+                4UL,
+                "second-action"
+            );
+            Assert.Equal(4UL, GetWorkingSet(state).LastSerial);
+            Assert.Equal(4UL, workspaceRoot.History.GetRequiredLastSerial());
+        }
+        finally {
+            if (Directory.Exists(repoDir)) {
+                Directory.Delete(repoDir, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public void WorkspaceLiveTailRewrite_PostMutationFaultReloadsDurableTruth() {
+        var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-workspace-tail-rewrite-post-fault-reload-{Guid.NewGuid():N}");
+
+        try {
+            using var repo = Repository.Create(repoDir).Unwrap();
+            var revision = repo.CreateBranch("main").Unwrap();
+            var workspaceRoot = AgentWorkspaceRoot.Create(revision);
+
+            using var session = AgentWorkspaceSession.Open(workspaceRoot);
+            var state = session.RestoreState();
+            state.AppendObservation(new ObservationEntry(), "first-observation");
+            state.AppendAction(
+                new ActionEntry(
+                    new ActionMessage([new ActionBlock.Text("first-action")]),
+                    new CompletionDescriptor("provider-a", "spec-a", "model-a")
+                )
+            );
+            state.AppendObservation(new ObservationEntry(), "second-observation");
+            state.AppendAction(
+                new ActionEntry(
+                    new ActionMessage([new ActionBlock.Text("second-action")]),
+                    new CompletionDescriptor("provider-a", "spec-a", "model-a")
+                )
+            );
+
+            var replacementObservation = new ObservationEntry();
+            replacementObservation.AssignNotifications("rewritten-observation");
+            var replacementAction = new ActionEntry(
+                new ActionMessage([new ActionBlock.Text("rewritten-action")]),
+                new CompletionDescriptor("provider-a", "spec-a", "model-a")
+            );
+
+            ConfigureSessionFaultToThrowOnce(
+                session,
+                AgentWorkspaceSessionFaultPoint.AfterRewriteRecentHistoryTailMutation,
+                "Injected fault after tail rewrite mutation.",
+                beforeThrow: () => {
+                    ReplaceCachedRecentHistory(
+                        state,
+                        CreateAssignedObservationEntry(999UL, "ghost-observation"),
+                        CreateAssignedActionEntry(1000UL, "ghost-action")
+                    );
+                    ReplaceCachedLastSerial(state, 1000UL);
+                }
+            );
+
+            var exception = Assert.Throws<TargetInvocationException>(
+                () => InvokeRewriteRecentHistoryTail(state, 2UL, replacementObservation, replacementAction)
+            );
+
+            var inner = Assert.IsType<InvalidOperationException>(exception.InnerException);
+            Assert.Equal("Injected fault after tail rewrite mutation.", inner.Message);
+            AssertObservationActionObservationActionHistory(
+                workspaceRoot.History.LoadRecent(),
+                "first-observation",
+                "first-action",
+                5UL,
+                "rewritten-observation",
+                6UL,
+                "rewritten-action"
+            );
+            AssertObservationActionObservationActionHistory(
+                state.RecentHistory,
+                "first-observation",
+                "first-action",
+                5UL,
+                "rewritten-observation",
+                6UL,
+                "rewritten-action"
+            );
+            Assert.NotSame(replacementObservation, state.RecentHistory[2]);
+            Assert.NotSame(replacementAction, state.RecentHistory[3]);
+            Assert.Equal(6UL, GetWorkingSet(state).LastSerial);
+            Assert.Equal(6UL, workspaceRoot.History.GetRequiredLastSerial());
+        }
+        finally {
+            if (Directory.Exists(repoDir)) {
+                Directory.Delete(repoDir, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
     public void SnapshotHelper_SaveSnapshot_ReplacesDurableHistoryDequeAfterLiveAppend() {
         var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-workspace-snapshot-replace-{Guid.NewGuid():N}");
 
@@ -4349,6 +4691,40 @@ public sealed class AgentWorkspacePersistenceTests {
         );
     }
 
+    private static void AssertObservationActionObservationActionHistory(
+        IReadOnlyList<HistoryEntry> history,
+        string firstObservationNotifications,
+        string firstActionText,
+        ulong secondObservationSerial,
+        string secondObservationNotifications,
+        ulong secondActionSerial,
+        string secondActionText
+    ) {
+        Assert.Collection(
+            history,
+            entry => {
+                var observation = Assert.IsType<ObservationEntry>(entry);
+                Assert.Equal(1UL, observation.Serial);
+                Assert.Equal(firstObservationNotifications, observation.Notifications);
+            },
+            entry => {
+                var action = Assert.IsType<ActionEntry>(entry);
+                Assert.Equal(2UL, action.Serial);
+                Assert.Equal(firstActionText, action.Message.GetFlattenedText());
+            },
+            entry => {
+                var observation = Assert.IsType<ObservationEntry>(entry);
+                Assert.Equal(secondObservationSerial, observation.Serial);
+                Assert.Equal(secondObservationNotifications, observation.Notifications);
+            },
+            entry => {
+                var action = Assert.IsType<ActionEntry>(entry);
+                Assert.Equal(secondActionSerial, action.Serial);
+                Assert.Equal(secondActionText, action.Message.GetFlattenedText());
+            }
+        );
+    }
+
     private static void AssertObservationActionToolResultsHistory(
         IReadOnlyList<HistoryEntry> history,
         string observationNotifications,
@@ -4561,6 +4937,16 @@ public sealed class AgentWorkspacePersistenceTests {
 
     private static CompactionCheckpoint? ExportLivePendingCompactionOverlay(AgentEngine engine) {
         return (CompactionCheckpoint?)InvokeRequiredInstanceMethod(engine, "ExportPendingCompactionSnapshot");
+    }
+
+    private static void InvokeRewriteRecentHistoryTail(
+        AgentState state,
+        ulong anchorSerial,
+        params HistoryEntry[] replacementEntries
+    ) {
+        ArgumentNullException.ThrowIfNull(state);
+        ArgumentNullException.ThrowIfNull(replacementEntries);
+        _ = InvokeRequiredInstanceMethod(state, "RewriteRecentHistoryTail", anchorSerial, replacementEntries);
     }
 
     private static void ReplaceCachedPendingNotifications(AgentState state, params string[] notifications) {
