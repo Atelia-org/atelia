@@ -10,6 +10,7 @@ internal enum AgentWorkspaceSessionFaultPoint {
     AfterUpdateTurnRuntimeMutation,
     AfterUpdatePendingCompactionMutation,
     AfterFoldPendingNotificationsIntoCurrentObservationMutation,
+    AfterReplacePrefixWithRecapFrontPopMutation,
     AfterReplacePrefixWithRecapMutation
 }
 
@@ -296,6 +297,7 @@ internal sealed class AgentWorkspaceSession : IDisposable {
         EnsureOpenForState();
 
         var authoritativePreRecentHistory = _workspaceRoot.History.LoadRecent();
+        var previousLastSerial = _workspaceRoot.History.GetRequiredLastSerial();
         if (splitIndex < 1 || splitIndex >= authoritativePreRecentHistory.Count) {
             throw new ArgumentOutOfRangeException(nameof(splitIndex), splitIndex, "splitIndex must replace a non-empty prefix and preserve a non-empty suffix.");
         }
@@ -311,7 +313,19 @@ internal sealed class AgentWorkspaceSession : IDisposable {
         recap.AssignTokenEstimate(TokenEstimateHelper.GetDefault().Estimate(recap));
         recap.AssignSerial(_workspaceRoot.History.AllocateNextSerial());
 
-        _workspaceRoot.History.ReplacePrefixWithRecap(splitIndex, recap);
+        try {
+            _workspaceRoot.History.ReplaceRecentAt(splitIndex - 1, recap);
+            for (int index = 0; index < splitIndex - 1; index++) {
+                _workspaceRoot.History.PopFrontRecent();
+                ThrowInjectedFaultIfAny(AgentWorkspaceSessionFaultPoint.AfterReplacePrefixWithRecapFrontPopMutation);
+            }
+        }
+        catch {
+            _workspaceRoot.History.ReplaceRecent(authoritativePreRecentHistory);
+            _workspaceRoot.History.SetLastSerial(previousLastSerial);
+            throw;
+        }
+
         ThrowInjectedFaultIfAny(AgentWorkspaceSessionFaultPoint.AfterReplacePrefixWithRecapMutation);
         return new WorkspaceRecapMutationResult(
             AuthoritativePreRecentHistory: authoritativePreRecentHistory,

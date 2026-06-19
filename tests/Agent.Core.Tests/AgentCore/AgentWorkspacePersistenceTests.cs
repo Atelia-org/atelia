@@ -1853,6 +1853,108 @@ public sealed class AgentWorkspacePersistenceTests {
     }
 
     [Fact]
+    public void WorkspaceLiveRecap_MidRewriteFaultRollsBackDurableAndLocalRecentHistory() {
+        var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-workspace-recap-mid-rewrite-rollback-{Guid.NewGuid():N}");
+
+        try {
+            using var repo = Repository.Create(repoDir).Unwrap();
+            var revision = repo.CreateBranch("main").Unwrap();
+            var workspaceRoot = AgentWorkspaceRoot.Create(revision);
+
+            using var session = AgentWorkspaceSession.Open(workspaceRoot);
+            var state = session.RestoreState();
+            state.AppendObservation(new ObservationEntry(), "first-observation");
+            state.AppendAction(
+                new ActionEntry(
+                    new ActionMessage([new ActionBlock.Text("first-action")]),
+                    new CompletionDescriptor("provider-a", "spec-a", "model-a")
+                )
+            );
+            state.AppendObservation(new ObservationEntry(), "second-observation");
+            state.InjectActionContent(
+                new ActionInjectionRequest(
+                    "seed-injection",
+                    new InjectionSource(InjectionSourceKind.HostOverride),
+                    InjectedActionContentMode.Text
+                )
+            );
+
+            ConfigureSessionFaultToThrowOnce(
+                session,
+                AgentWorkspaceSessionFaultPoint.AfterReplacePrefixWithRecapFrontPopMutation,
+                "Injected fault during recap front-pop rewrite.",
+                beforeThrow: () => {
+                    ReplaceCachedRecentHistory(
+                        state,
+                        CreateAssignedObservationEntry(999UL, "ghost-observation"),
+                        CreateAssignedActionEntry(1000UL, "ghost-action")
+                    );
+                    ReplaceCachedLastSerial(state, 1000UL);
+                }
+            );
+
+            var exception = Assert.Throws<InvalidOperationException>(() => state.ReplacePrefixWithRecap(3, "summary-text"));
+
+            Assert.Equal("Injected fault during recap front-pop rewrite.", exception.Message);
+            Assert.Collection(
+                workspaceRoot.History.LoadRecent(),
+                entry => {
+                    var observation = Assert.IsType<ObservationEntry>(entry);
+                    Assert.Equal(1UL, observation.Serial);
+                    Assert.Equal("first-observation", observation.Notifications);
+                },
+                entry => {
+                    var action = Assert.IsType<ActionEntry>(entry);
+                    Assert.Equal(2UL, action.Serial);
+                    Assert.Equal("first-action", action.Message.GetFlattenedText());
+                },
+                entry => {
+                    var observation = Assert.IsType<ObservationEntry>(entry);
+                    Assert.Equal(3UL, observation.Serial);
+                    Assert.Equal("second-observation", observation.Notifications);
+                },
+                entry => {
+                    var injection = Assert.IsType<InjectionEntry>(entry);
+                    Assert.Equal(4UL, injection.Serial);
+                    Assert.Equal("seed-injection", injection.Content);
+                    Assert.Equal(ActionBlockKind.Text, injection.BlockKind);
+                }
+            );
+            Assert.Collection(
+                state.RecentHistory,
+                entry => {
+                    var observation = Assert.IsType<ObservationEntry>(entry);
+                    Assert.Equal(1UL, observation.Serial);
+                    Assert.Equal("first-observation", observation.Notifications);
+                },
+                entry => {
+                    var action = Assert.IsType<ActionEntry>(entry);
+                    Assert.Equal(2UL, action.Serial);
+                    Assert.Equal("first-action", action.Message.GetFlattenedText());
+                },
+                entry => {
+                    var observation = Assert.IsType<ObservationEntry>(entry);
+                    Assert.Equal(3UL, observation.Serial);
+                    Assert.Equal("second-observation", observation.Notifications);
+                },
+                entry => {
+                    var injection = Assert.IsType<InjectionEntry>(entry);
+                    Assert.Equal(4UL, injection.Serial);
+                    Assert.Equal("seed-injection", injection.Content);
+                    Assert.Equal(ActionBlockKind.Text, injection.BlockKind);
+                }
+            );
+            Assert.Equal(4UL, workspaceRoot.History.GetRequiredLastSerial());
+            Assert.Equal(4UL, GetWorkingSet(state).LastSerial);
+        }
+        finally {
+            if (Directory.Exists(repoDir)) {
+                Directory.Delete(repoDir, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
     public void SnapshotHelper_SaveSnapshot_ReplacesDurableHistoryDequeAfterLiveAppend() {
         var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-workspace-snapshot-replace-{Guid.NewGuid():N}");
 

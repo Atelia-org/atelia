@@ -4,13 +4,14 @@
 定位：讨论 `Agent.Core` 如何从当前的 snapshot persistence 模式，迁移到以 StateJournal 为主真相的 live durable workspace 模式。
 
 > Progress note
-> - 阶段 B 已基本完成：`AgentState` / `AgentWorkspaceRoot` 已能围绕 repo-backed workspace 作为主持久化载体工作。
-> - 阶段 C / D 已部分落地：history append、pending notifications、pending tool results、turn runtime 的 live mutation 路径已经存在。
+> - 最近一次阶段复盘的结论是：当前路线值得继续推进；主骨架纠偏已经实质成功，整体完成度大约在 `80%` 左右，但还没到“草案核心目标已全部完成”的程度。
+> - 阶段 A / B / E 已基本完成；阶段 C / D 的 append / fold / runtime 主链已基本成形；阶段 F 也已达到“snapshot 降级为 compatibility / diagnostic / import-export 边界”的目标。
+> - 下一轮的高价值入口，不再是继续机械清理低收益 snapshot 边角，而是把阶段 C 中 recap / future tail-rewrite 这类 history rewrite seam 再往 authoritative durable mutation + 明确 cache reload/backfill 策略继续收口，然后再进入 branch / frame metadata 的 durable 前置切口。
 > - `pendingCompaction` live path 已收口到稳定 durable slot 内的字段级 mutation；新 schema 要求预先 seed `pendingCompaction` record，不再兼容缺 key 读取或懒创建；snapshot / full-runtime replace 仍保留 whole-replace 语义。
 > - 阶段 E 的最小收口已落地：repo-backed live 创建路径改为 born-bound，`AgentState`/`AgentEngine` 不再依赖 `AttachWorkspaceRoot(... syncExistingState:true/false)` 或 `AttachRepositoryPersistence(...)` 这类 post-attach 主路径。
 > - `AgentWorkspaceSession` 现已成为 repo-backed live path 的单一 mutation/commit owner：history/meta/runtime 的 live 写入与 `Commit/Dispose` 都直接站在 `AgentWorkspaceRoot` 上；`AgentEngineWorkspaceSnapshotHelper` 已继续收口为围绕 `AgentWorkspaceRoot` 的 internal snapshot helper，公开 non-live surface 只剩 snapshot restore。
 > - 阶段 C 的一个行为保持型前置切口已继续收口：`AgentState` 的 `recentHistory / pendingNotifications / lastSerial` 仍作为内部 working-set cache 保留，但 repo-backed live restore / whole-working-set reload 已不再经过 `AgentStateSnapshot`，而是改走 workspace cache-seed / apply seam，为后续把 durable history/workspace 提升为真相预留了更直接的 cache reload 边界。
-> - 阶段 C 已继续向 durable truth 推进一步：repo-backed live path 下，`pending notifications` 的 append / drain、`ReplacePrefixWithRecap(...)`，以及 `AppendAction` / `AppendObservation` / `AppendToolResults` / `InjectActionContent` 这些 recent-history 主链入口，现已围绕 `AgentWorkspaceSession` authoritative mutation 工作；其中 recap / drain 走 whole-working-set cache-seed reload，observation / tool-results append 走 working-set mutation backfill，action append / injection 走 targeted recent-history snapshot reload，notification append 走 targeted pending-cache refresh。
+> - 阶段 C 已继续向 durable truth 推进一步：repo-backed live path 下，`pending notifications` 的 append / drain、`ReplacePrefixWithRecap(...)`，以及 `AppendAction` / `AppendObservation` / `AppendToolResults` / `InjectActionContent` 这些 recent-history 主链入口，现已围绕 `AgentWorkspaceSession` authoritative mutation 工作；其中 observation / tool-results append 走 working-set mutation backfill，action append / injection 走 targeted recent-history snapshot reload，notification append 走 targeted pending-cache refresh，recap 现也已收口为 authoritative durable rewrite + aligned cache delta/backfill，drift / fault 时仅回退 recent-history reload。
 > - 阶段 C 的 recent-history 主链实现也已进一步收口：`AgentState` 中原先为 live/local 双用保留的 generic history write-through primitive（如统一 `AllocateNextSerial` / `AppendHistoryEntry` seam）已开始回退为 non-live local-path 专用 helper，repo-backed live path 不再通过这些“伪通用”入口直接写 durable history。
 > - 相邻的小尾巴也在继续收口：`AppendNotification(...)` 与 `SetSystemPrompt(...)` 的 repo-backed live path 已改成 operation-specific session mutation，不再依赖 `SyncSession* + Reload*` 形式的旧桥接。
 > - 阶段 D 已继续向 authoritative cache-backfill 收口：`pending tool results` 与 `ResolvedProfile / turn runtime` 的 live path 现都已通过 `AgentWorkspaceSession` authoritative mutation/query 回填 `AgentEngine` 本地 runtime overlay；其中 `pending tool results` 仍走 durable result snapshot，turn runtime 则已收回为字段级 state/query；`AgentEngine` 现已持有可复用的 resolved-profile restore/apply seam，恢复与 live backfill 都不再只依赖 `CreateFrom*` 临时 restore。
@@ -19,6 +20,7 @@
 > - 阶段 D 的两条 runtime 小尾巴现也按同一方向收口：`pendingCompaction` 改成 session-owned authoritative mutation + local backfill，并补上 catch/reload；`tool session execution sequence` 改成由 session 先做 durable authoritative allocate、`ToolSession` 再回填本地 checkpoint，避免持久化回调失败时本地序号先跑到 durable 前面。
 > - 当前 public snapshot path 仍保留，但定位应视为 compatibility / diagnostic / import-export 边界，不再是推荐主路径。
 > - 小尾修已继续收口：`AgentEngineHost` 不再暴露任何 whole-snapshot / 可写持久化 adapter 表面，live host 仅保留 typed durable truth queries，且 `AgentWorkspaceSession` 也不再承担 session-level whole-snapshot query adapter；默认 state seeding 已回收到 `AgentWorkspaceRoot.Create(...)` 创建期，不再以普通 helper 形式承担隐式 reset 语义。
+> - `ReplacePrefixWithRecap(...)` 这一条 recent-history rewrite 主链也已继续收口：live path 现已具备 release-mode split-point 校验、authoritative mutation result、aligned cache delta/backfill、post-mutation fault reload，以及 mid-rewrite fault 时对 durable recent history / `lastSerial` 的 rollback；阶段 C 当前更主要的剩余难点，已从 recap 本身前移到更广义的 future tail-rewrite 与 rich `HistoryEntry` cache 一致性边界。
 
 相关文档：
 - `docs/Agent/agent-core-branching-infrastructure-backlog.md`
@@ -441,6 +443,12 @@ AgentWorkspaceRoot
 
 此阶段完成后，`RecentHistory` 才算真正进入 live durable workspace 模式。
 
+当前进度判断：
+
+- `AppendAction` / `AppendObservation` / `AppendToolResults` / `InjectActionContent`、late notification fold、以及 `ReplacePrefixWithRecap(...)` 这几条核心 recent-history 主链，已经基本切到 `AgentWorkspaceSession` authoritative mutation
+- 其中 recap 已进一步收口到“release-mode 校验 + authoritative mutation result + aligned cache delta/backfill + drift/fault reload + mid-rewrite rollback”
+- 但这并不等于“阶段 C 已彻底完成”；更广义的 future tail-rewrite 体系，以及 rich `HistoryEntry` cache 与 durable history deque 的长期一致性边界，仍是这一阶段剩余的主难点
+
 > 主要风险：当前 `HistoryEntry` 是富 C# 对象（`ActionEntry.Message.Blocks` 等），让 `AgentState` 直接面向 durable history root 后，cache（C# 对象）与 durable history deque 必须在 append / inject / **recap / tail-rewrite** 等所有路径上保持一致。recap 替换、尾部回写这类非追加操作尤其容易让两者漂移，应在本阶段就明确 cache 失效与重建策略，这是阶段 C 的首要工程难点（与 §11.2 呼应）。
 
 ### 阶段 D：把 pending tool results / turn runtime / compaction state 迁入 live durable model
@@ -481,6 +489,11 @@ AgentWorkspaceRoot
 - 离线备份/恢复
 
 而不是日常主运行路径。
+
+当前进度判断：
+
+- live host / repo-backed reopen 主路径已经不再依赖 snapshot restore
+- 公开 snapshot surface 仍保留，但更适合作为明确命名的 non-live 边界，而不是继续向 live 主链反向渗透
 
 ---
 
