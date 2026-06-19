@@ -147,7 +147,8 @@ memory_notebook_replace与memory_notebook_replace_span工具就是为你主动�
         EnsureWorkspaceSessionOpen();
         if (_workspaceSession is not null) {
             try {
-                ApplySnapshot(_workspaceSession.AppendObservation(entry, inlineNotifications));
+                var mutation = _workspaceSession.AppendObservation(entry, inlineNotifications);
+                ReplaceWorkingSet(mutation.RecentHistory, mutation.PendingNotifications, mutation.LastSerial);
                 return entry;
             }
             catch {
@@ -175,7 +176,8 @@ memory_notebook_replace与memory_notebook_replace_span工具就是为你主动�
         EnsureWorkspaceSessionOpen();
         if (_workspaceSession is not null) {
             try {
-                ApplySnapshot(_workspaceSession.AppendToolResults(entry));
+                var mutation = _workspaceSession.AppendToolResults(entry);
+                ReplaceWorkingSet(mutation.RecentHistory, mutation.PendingNotifications, mutation.LastSerial);
                 return entry;
             }
             catch {

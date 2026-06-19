@@ -38,10 +38,10 @@ internal sealed class AgentWorkspaceSession : IDisposable {
         return AgentEngineWorkspaceSnapshotHelper.LoadSnapshot(_workspaceRoot);
     }
 
-    internal AgentStateSnapshot LoadStateSnapshot() {
+    internal (string SystemPrompt, IReadOnlyList<HistoryEntry> RecentHistory, IReadOnlyList<string> PendingNotifications, ulong LastSerial) LoadStateCacheSeed() {
         EnsureOpenForState();
 
-        return new AgentStateSnapshot(
+        return (
             SystemPrompt: _workspaceRoot.Meta.GetRequiredSystemPrompt(),
             RecentHistory: _workspaceRoot.History.LoadRecent(),
             PendingNotifications: _workspaceRoot.History.LoadPendingNotifications(),
@@ -51,7 +51,8 @@ internal sealed class AgentWorkspaceSession : IDisposable {
 
     internal AgentState RestoreState() {
         EnsureOpenForState();
-        return AgentState.RestoreSnapshot(LoadStateSnapshot(), this);
+        var (systemPrompt, recentHistory, pendingNotifications, lastSerial) = LoadStateCacheSeed();
+        return AgentState.RestoreWorkspaceState(this, systemPrompt, recentHistory, pendingNotifications, lastSerial);
     }
 
     internal void Close() {
@@ -133,7 +134,7 @@ internal sealed class AgentWorkspaceSession : IDisposable {
         );
     }
 
-    internal AgentStateSnapshot AppendObservation(ObservationEntry entry, string? inlineNotifications = null) {
+    internal WorkspaceWorkingSetMutationResult AppendObservation(ObservationEntry entry, string? inlineNotifications = null) {
         ArgumentNullException.ThrowIfNull(entry);
 
         EnsureOpenForState();
@@ -147,10 +148,15 @@ internal sealed class AgentWorkspaceSession : IDisposable {
         entry.AssignTokenEstimate(TokenEstimateHelper.GetDefault().Estimate(entry));
         entry.AssignSerial(_workspaceRoot.History.AllocateNextSerial());
         _workspaceRoot.History.AppendRecent(entry);
-        return LoadStateSnapshot();
+        var (updatedRecentHistory, updatedLastSerial) = LoadRecentHistorySnapshot();
+        return new WorkspaceWorkingSetMutationResult(
+            RecentHistory: updatedRecentHistory,
+            PendingNotifications: _workspaceRoot.History.LoadPendingNotifications(),
+            LastSerial: updatedLastSerial
+        );
     }
 
-    internal AgentStateSnapshot AppendToolResults(ToolResultsEntry entry) {
+    internal WorkspaceWorkingSetMutationResult AppendToolResults(ToolResultsEntry entry) {
         ArgumentNullException.ThrowIfNull(entry);
         if (entry.Results is not { Count: > 0 }) {
             throw new ArgumentException("ToolResultsEntry must include at least one tool result.", nameof(entry));
@@ -167,7 +173,12 @@ internal sealed class AgentWorkspaceSession : IDisposable {
         entry.AssignTokenEstimate(TokenEstimateHelper.GetDefault().Estimate(entry));
         entry.AssignSerial(_workspaceRoot.History.AllocateNextSerial());
         _workspaceRoot.History.AppendRecent(entry);
-        return LoadStateSnapshot();
+        var (updatedRecentHistory, updatedLastSerial) = LoadRecentHistorySnapshot();
+        return new WorkspaceWorkingSetMutationResult(
+            RecentHistory: updatedRecentHistory,
+            PendingNotifications: _workspaceRoot.History.LoadPendingNotifications(),
+            LastSerial: updatedLastSerial
+        );
     }
 
     internal WorkspaceInjectionMutationResult InjectActionContent(ActionInjectionRequest request) {
@@ -349,6 +360,12 @@ internal sealed class AgentWorkspaceSession : IDisposable {
 
 internal sealed record WorkspaceAppendActionMutationResult(
     IReadOnlyList<HistoryEntry> RecentHistory,
+    ulong LastSerial
+);
+
+internal sealed record WorkspaceWorkingSetMutationResult(
+    IReadOnlyList<HistoryEntry> RecentHistory,
+    IReadOnlyList<string> PendingNotifications,
     ulong LastSerial
 );
 

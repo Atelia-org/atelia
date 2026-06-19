@@ -15,28 +15,58 @@ public sealed partial class AgentState {
     }
 
     internal static AgentState RestoreSnapshot(AgentStateSnapshot snapshot) {
-        return RestoreSnapshot(snapshot, workspaceSession: null);
-    }
-
-    internal static AgentState RestoreSnapshot(
-        AgentStateSnapshot snapshot,
-        AgentWorkspaceSession? workspaceSession
-    ) {
         ArgumentNullException.ThrowIfNull(snapshot);
 
-        var state = new AgentState(snapshot.SystemPrompt);
+        return RestorePersistedState(
+            snapshot.SystemPrompt,
+            snapshot.RecentHistory,
+            snapshot.PendingNotifications,
+            snapshot.LastSerial,
+            workspaceSession: null
+        );
+    }
+
+    internal static AgentState RestoreWorkspaceState(
+        AgentWorkspaceSession workspaceSession,
+        string systemPrompt,
+        IReadOnlyList<HistoryEntry> recentHistory,
+        IReadOnlyList<string> pendingNotifications,
+        ulong lastSerial
+    ) {
+        ArgumentNullException.ThrowIfNull(workspaceSession);
+
+        return RestorePersistedState(
+            systemPrompt,
+            recentHistory,
+            pendingNotifications,
+            lastSerial,
+            workspaceSession
+        );
+    }
+
+    private static AgentState RestorePersistedState(
+        string systemPrompt,
+        IReadOnlyList<HistoryEntry> recentHistory,
+        IReadOnlyList<string> pendingNotifications,
+        ulong lastSerial,
+        AgentWorkspaceSession? workspaceSession
+    ) {
+        var state = new AgentState(systemPrompt);
         if (workspaceSession is not null) {
             state.BindWorkspaceSession(workspaceSession);
         }
-        state.ApplySnapshot(snapshot);
+        state.ReplaceWorkingSet(recentHistory, pendingNotifications, lastSerial);
         return state;
     }
 
-    private void ApplySnapshot(AgentStateSnapshot snapshot) {
-        ArgumentNullException.ThrowIfNull(snapshot);
-
-        SystemPrompt = snapshot.SystemPrompt;
-        ReplaceWorkingSet(snapshot.RecentHistory, snapshot.PendingNotifications, snapshot.LastSerial);
+    private void ApplyWorkspaceState(
+        string systemPrompt,
+        IReadOnlyList<HistoryEntry> recentHistory,
+        IReadOnlyList<string> pendingNotifications,
+        ulong lastSerial
+    ) {
+        SystemPrompt = systemPrompt;
+        ReplaceWorkingSet(recentHistory, pendingNotifications, lastSerial);
     }
 
     private void ReplaceWorkingSet(

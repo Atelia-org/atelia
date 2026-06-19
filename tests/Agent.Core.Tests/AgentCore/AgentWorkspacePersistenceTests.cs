@@ -363,8 +363,8 @@ public sealed class AgentWorkspacePersistenceTests {
     }
 
     [Fact]
-    public void WorkspaceSessionAppendObservation_ReturnsUpdatedStateSnapshotForTargetedReplace() {
-        var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-workspace-session-append-observation-snapshot-{Guid.NewGuid():N}");
+    public void WorkspaceSessionAppendObservation_ReturnsUpdatedWorkingSetForTargetedReplace() {
+        var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-workspace-session-append-observation-working-set-{Guid.NewGuid():N}");
 
         try {
             using var repo = Repository.Create(repoDir).Unwrap();
@@ -391,24 +391,26 @@ public sealed class AgentWorkspacePersistenceTests {
             ReplaceCachedPendingNotifications(state, "stale-cached-notification");
 
             var appended = new ObservationEntry();
-            var snapshot = session.AppendObservation(appended, "follow-up-events");
-            var freshSnapshot = session.LoadStateSnapshot();
+            var mutation = session.AppendObservation(appended, "follow-up-events");
+            var expectedRecentHistory = workspaceRoot.History.LoadRecent();
+            var expectedPendingNotifications = workspaceRoot.History.LoadPendingNotifications();
+            var expectedLastSerial = workspaceRoot.History.GetRequiredLastSerial();
 
             Assert.Equal(3UL, appended.Serial);
             Assert.True(appended.TokenEstimate > 0);
-            Assert.Equal(freshSnapshot.LastSerial, snapshot.LastSerial);
-            Assert.Equal(freshSnapshot.PendingNotifications, snapshot.PendingNotifications);
-            Assert.Equal(freshSnapshot.RecentHistory.Count, snapshot.RecentHistory.Count);
-            for (int i = 0; i < freshSnapshot.RecentHistory.Count; i++) {
-                AssertHistoryEntry(freshSnapshot.RecentHistory[i], snapshot.RecentHistory[i]);
+            Assert.Equal(expectedLastSerial, mutation.LastSerial);
+            Assert.Equal(expectedPendingNotifications, mutation.PendingNotifications);
+            Assert.Equal(expectedRecentHistory.Count, mutation.RecentHistory.Count);
+            for (int i = 0; i < expectedRecentHistory.Count; i++) {
+                AssertHistoryEntry(expectedRecentHistory[i], mutation.RecentHistory[i]);
             }
             AssertObservationActionObservationHistory(
-                snapshot.RecentHistory,
+                mutation.RecentHistory,
                 "durable-observation",
                 "durable-action",
                 "durable-notification\nfollow-up-events"
             );
-            Assert.Empty(snapshot.PendingNotifications);
+            Assert.Empty(mutation.PendingNotifications);
             Assert.Empty(workspaceRoot.History.LoadPendingNotifications());
             Assert.Equal(3UL, workspaceRoot.History.GetRequiredLastSerial());
         }
@@ -591,8 +593,8 @@ public sealed class AgentWorkspacePersistenceTests {
     }
 
     [Fact]
-    public void WorkspaceSessionAppendToolResults_ReturnsUpdatedStateSnapshotForTargetedReplace() {
-        var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-workspace-session-append-tool-results-snapshot-{Guid.NewGuid():N}");
+    public void WorkspaceSessionAppendToolResults_ReturnsUpdatedWorkingSetForTargetedReplace() {
+        var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-workspace-session-append-tool-results-working-set-{Guid.NewGuid():N}");
 
         try {
             using var repo = Repository.Create(repoDir).Unwrap();
@@ -621,25 +623,27 @@ public sealed class AgentWorkspacePersistenceTests {
             var appended = new ToolResultsEntry([
                 CreateToolCallExecutionResult("tool-alpha", "call-1", "tool-output")
             ]);
-            var snapshot = session.AppendToolResults(appended);
-            var freshSnapshot = session.LoadStateSnapshot();
+            var mutation = session.AppendToolResults(appended);
+            var expectedRecentHistory = workspaceRoot.History.LoadRecent();
+            var expectedPendingNotifications = workspaceRoot.History.LoadPendingNotifications();
+            var expectedLastSerial = workspaceRoot.History.GetRequiredLastSerial();
 
             Assert.Equal(3UL, appended.Serial);
             Assert.True(appended.TokenEstimate > 0);
-            Assert.Equal(freshSnapshot.LastSerial, snapshot.LastSerial);
-            Assert.Equal(freshSnapshot.PendingNotifications, snapshot.PendingNotifications);
-            Assert.Equal(freshSnapshot.RecentHistory.Count, snapshot.RecentHistory.Count);
-            for (int i = 0; i < freshSnapshot.RecentHistory.Count; i++) {
-                AssertHistoryEntry(freshSnapshot.RecentHistory[i], snapshot.RecentHistory[i]);
+            Assert.Equal(expectedLastSerial, mutation.LastSerial);
+            Assert.Equal(expectedPendingNotifications, mutation.PendingNotifications);
+            Assert.Equal(expectedRecentHistory.Count, mutation.RecentHistory.Count);
+            for (int i = 0; i < expectedRecentHistory.Count; i++) {
+                AssertHistoryEntry(expectedRecentHistory[i], mutation.RecentHistory[i]);
             }
             AssertObservationActionToolResultsHistory(
-                snapshot.RecentHistory,
+                mutation.RecentHistory,
                 "durable-observation",
                 "durable-action",
                 "durable-notification",
                 "call-1"
             );
-            Assert.Empty(snapshot.PendingNotifications);
+            Assert.Empty(mutation.PendingNotifications);
             Assert.Empty(workspaceRoot.History.LoadPendingNotifications());
             Assert.Equal(3UL, workspaceRoot.History.GetRequiredLastSerial());
         }
@@ -2992,7 +2996,7 @@ public sealed class AgentWorkspacePersistenceTests {
             typeof(AgentState).GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic),
             static method => method.Name == "BindWorkspaceSession" && !method.IsPrivate
         );
-        Assert.Contains(
+        Assert.DoesNotContain(
             typeof(AgentState).GetMethods(BindingFlags.Static | BindingFlags.NonPublic),
             static method => method.Name == "RestoreSnapshot"
                 && method.GetParameters() is [
@@ -3001,6 +3005,15 @@ public sealed class AgentWorkspacePersistenceTests {
                 ]
                 && first == typeof(AgentStateSnapshot)
                 && second == typeof(AgentWorkspaceSession)
+        );
+        Assert.Contains(
+            typeof(AgentState).GetMethods(BindingFlags.Static | BindingFlags.NonPublic),
+            static method => method.ReturnType == typeof(AgentState)
+                && method.GetParameters() is [
+                    { ParameterType: var first },
+                    ..
+                ]
+                && first == typeof(AgentWorkspaceSession)
         );
     }
 

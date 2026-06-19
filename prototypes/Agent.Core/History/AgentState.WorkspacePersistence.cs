@@ -25,10 +25,10 @@ public sealed partial class AgentState {
     }
 
     private void ReloadWorkingSetFromWorkspaceSession() {
-        var snapshot = _workspaceSession?.LoadStateSnapshot()
+        var (systemPrompt, recentHistory, pendingNotifications, lastSerial) = _workspaceSession?.LoadStateCacheSeed()
             ?? throw new InvalidOperationException("AgentState is not live-bound to a workspace session.");
 
-        ApplySnapshot(snapshot);
+        ApplyWorkspaceState(systemPrompt, recentHistory, pendingNotifications, lastSerial);
     }
 
     private void ReloadRecentHistoryFromWorkspaceSession() {
