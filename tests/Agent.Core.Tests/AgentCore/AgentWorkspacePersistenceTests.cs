@@ -2280,12 +2280,10 @@ public sealed class AgentWorkspacePersistenceTests {
         var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-host-runtime-reopen-soft-cap-mismatch-{Guid.NewGuid():N}");
 
         try {
-            using (var repo = Repository.Create(repoDir).Unwrap()) {
-                var revision = repo.CreateBranch("main").Unwrap();
-                var workspaceRoot = AgentWorkspaceRoot.Create(revision, "seed-system");
-                AgentEngineWorkspaceSnapshotHelper.SaveSnapshot(workspaceRoot, CreateSnapshotFixture());
-                repo.Commit(workspaceRoot.Root).Unwrap();
-            }
+            SeedLiveWorkspaceResolvedProfileCheckpoint(
+                repoDir,
+                new LlmProfileCheckpoint("provider-b", "spec-b", "model-b", "checkpoint-name", 8192)
+            );
 
             var mismatchedProfile = new LlmProfile(
                 new NoopCompletionClient("provider-b", "spec-b"),
@@ -2305,6 +2303,38 @@ public sealed class AgentWorkspacePersistenceTests {
             Assert.Contains("Persisted agent state contains a resolved LlmProfile checkpoint", ex.Message, StringComparison.Ordinal);
             Assert.Contains("Missing checkpoint", ex.Message, StringComparison.Ordinal);
             Assert.DoesNotContain("State snapshot contains", ex.Message, StringComparison.Ordinal);
+        }
+        finally {
+            if (Directory.Exists(repoDir)) {
+                Directory.Delete(repoDir, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public void Host_OpenExisting_RestoresResolvedProfileCheckpointWhenOnlyNameDiffers() {
+        var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-host-runtime-reopen-name-only-differs-{Guid.NewGuid():N}");
+
+        try {
+            var checkpoint = new LlmProfileCheckpoint("provider-b", "spec-b", "model-b", "checkpoint-name", 8192);
+            SeedLiveWorkspaceResolvedProfileCheckpoint(repoDir, checkpoint);
+
+            var restoredProfile = new LlmProfile(
+                new NoopCompletionClient("provider-b", "spec-b"),
+                "model-b",
+                "registry-name-different",
+                8192,
+                CapabilityProfile.FullFeature
+            );
+
+            using var reopened = AgentEngineHost.OpenExisting(
+                repoDir,
+                new AgentEngineHostRuntime(profileRegistry: new LlmProfileRegistry([restoredProfile]))
+            );
+            var snapshot = reopened.LoadSnapshot();
+
+            Assert.Equal(checkpoint, snapshot.ResolvedProfile);
+            Assert.True(reopened.Engine.CurrentTurnFullFeatureEnabled);
         }
         finally {
             if (Directory.Exists(repoDir)) {
@@ -3156,6 +3186,17 @@ public sealed class AgentWorkspacePersistenceTests {
             PendingCompaction: new CompactionCheckpoint(2, "compact-system", "compact-now"),
             ToolSessionExecutionSequence: 42
         );
+    }
+
+    private static void SeedLiveWorkspaceResolvedProfileCheckpoint(
+        string repoDir,
+        LlmProfileCheckpoint checkpoint
+    ) {
+        using var repo = Repository.Create(repoDir).Unwrap();
+        var revision = repo.CreateBranch("main").Unwrap();
+        var workspaceRoot = AgentWorkspaceRoot.Create(revision, "seed-system");
+        workspaceRoot.RuntimeState.SetResolvedProfile(checkpoint);
+        repo.Commit(workspaceRoot.Root).Unwrap();
     }
 
     private static AgentEngineStateSnapshot CreateWaitingToolResultsSnapshotFixture(LlmProfile resolvedProfile) {
