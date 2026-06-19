@@ -116,6 +116,43 @@ internal sealed class AgentWorkspaceSession : IDisposable {
         );
     }
 
+    internal AgentStateSnapshot AppendObservation(ObservationEntry entry, string? inlineNotifications = null) {
+        ArgumentNullException.ThrowIfNull(entry);
+
+        EnsureOpenForState();
+        var recentHistory = _workspaceRoot.History.LoadRecent();
+        if (RecentHistoryRules.HasPendingActionContinuation(recentHistory)) {
+            throw new InvalidOperationException("Cannot append observation while a pending action continuation is open.");
+        }
+
+        RecentHistoryRules.ValidateAppendOrder(recentHistory, entry);
+        AttachPendingNotifications(entry, inlineNotifications);
+        entry.AssignTokenEstimate(TokenEstimateHelper.GetDefault().Estimate(entry));
+        entry.AssignSerial(_workspaceRoot.History.AllocateNextSerial());
+        _workspaceRoot.History.AppendRecent(entry);
+        return LoadStateSnapshot();
+    }
+
+    internal AgentStateSnapshot AppendToolResults(ToolResultsEntry entry) {
+        ArgumentNullException.ThrowIfNull(entry);
+        if (entry.Results is not { Count: > 0 }) {
+            throw new ArgumentException("ToolResultsEntry must include at least one tool result.", nameof(entry));
+        }
+
+        EnsureOpenForState();
+        var recentHistory = _workspaceRoot.History.LoadRecent();
+        if (RecentHistoryRules.HasPendingActionContinuation(recentHistory)) {
+            throw new InvalidOperationException("Cannot append tool results while a pending action continuation is open.");
+        }
+
+        RecentHistoryRules.ValidateAppendOrder(recentHistory, entry);
+        AttachPendingNotifications(entry);
+        entry.AssignTokenEstimate(TokenEstimateHelper.GetDefault().Estimate(entry));
+        entry.AssignSerial(_workspaceRoot.History.AllocateNextSerial());
+        _workspaceRoot.History.AppendRecent(entry);
+        return LoadStateSnapshot();
+    }
+
     internal WorkspaceInjectionMutationResult InjectActionContent(ActionInjectionRequest request) {
         ArgumentNullException.ThrowIfNull(request);
         if (string.IsNullOrWhiteSpace(request.Content)) {
@@ -248,6 +285,30 @@ internal sealed class AgentWorkspaceSession : IDisposable {
         EnsureOpenForEngine();
         _workspaceRoot.Meta.Stamp();
         _workspaceRoot.RuntimeState.SetToolSessionExecutionSequence(executionSequence);
+    }
+
+    private void AttachPendingNotifications(ObservationEntry entry, string? inlineNotifications = null) {
+        var queuedNotifications = CollapseNotifications(_workspaceRoot.History.DrainPendingNotifications());
+        var notifications = MergeNotifications(queuedNotifications, inlineNotifications);
+        if (notifications is null) {
+            return;
+        }
+
+        entry.MergeNotifications(notifications);
+    }
+
+    private static string? CollapseNotifications(IReadOnlyList<string> notifications) {
+        if (notifications.Count == 0) {
+            return null;
+        }
+
+        return string.Join("\n", notifications);
+    }
+
+    private static string? MergeNotifications(string? first, string? second) {
+        if (first is null) { return second; }
+        if (second is null) { return first; }
+        return string.Join("\n", first, second);
     }
 }
 

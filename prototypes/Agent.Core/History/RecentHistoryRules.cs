@@ -38,6 +38,11 @@ internal static class RecentHistoryRules {
         return -1;
     }
 
+    internal static bool HasPendingActionContinuation(IReadOnlyList<HistoryEntry> recentHistory) {
+        ArgumentNullException.ThrowIfNull(recentHistory);
+        return recentHistory.Count > 0 && recentHistory[^1] is InjectionEntry;
+    }
+
     internal static ActionBlockKind ResolveInjectedBlockKind(
         IReadOnlyList<HistoryEntry> recentHistory,
         ActionInjectionRequest request

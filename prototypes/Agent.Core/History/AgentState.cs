@@ -115,9 +115,15 @@ memory_notebook_replace与memory_notebook_replace_span工具就是为你主动�
         if (entry is null) { throw new ArgumentNullException(nameof(entry)); }
         EnsureWorkspaceSessionOpen();
         if (_workspaceSession is not null) {
-            var mutation = _workspaceSession.AppendAction(entry);
-            ApplyRecentHistorySnapshot(mutation.RecentHistory, mutation.LastSerial);
-            return entry;
+            try {
+                var mutation = _workspaceSession.AppendAction(entry);
+                ApplyRecentHistorySnapshot(mutation.RecentHistory, mutation.LastSerial);
+                return entry;
+            }
+            catch {
+                ReloadRecentHistoryFromWorkspaceSession();
+                throw;
+            }
         }
         ValidateAppendOrder(entry);
         AppendEntryCore(entry);
@@ -134,7 +140,14 @@ memory_notebook_replace与memory_notebook_replace_span工具就是为你主动�
         if (entry is null) { throw new ArgumentNullException(nameof(entry)); }
         EnsureWorkspaceSessionOpen();
         if (_workspaceSession is not null) {
-            ReloadRecentHistoryFromWorkspaceSession();
+            try {
+                ApplySnapshot(_workspaceSession.AppendObservation(entry, inlineNotifications));
+                return entry;
+            }
+            catch {
+                ReloadWorkingSetFromWorkspaceSession();
+                throw;
+            }
         }
         if (HasPendingActionContinuation) {
             throw new InvalidOperationException("Cannot append observation while a pending action continuation is open.");
@@ -142,9 +155,6 @@ memory_notebook_replace与memory_notebook_replace_span工具就是为你主动�
         ValidateAppendOrder(entry);
         AttachNotificationsToObservation(entry, inlineNotifications);
         AppendEntryCore(entry);
-        if (_workspaceSession is not null) {
-            ReloadRecentHistoryFromWorkspaceSession();
-        }
         return entry;
     }
 
@@ -158,7 +168,14 @@ memory_notebook_replace与memory_notebook_replace_span工具就是为你主动�
         if (entry is null) { throw new ArgumentNullException(nameof(entry)); }
         EnsureWorkspaceSessionOpen();
         if (_workspaceSession is not null) {
-            ReloadRecentHistoryFromWorkspaceSession();
+            try {
+                ApplySnapshot(_workspaceSession.AppendToolResults(entry));
+                return entry;
+            }
+            catch {
+                ReloadWorkingSetFromWorkspaceSession();
+                throw;
+            }
         }
         if (entry.Results is not { Count: > 0 }) { throw new ArgumentException("ToolResultsEntry must include at least one tool result.", nameof(entry)); }
         if (HasPendingActionContinuation) {
@@ -167,9 +184,6 @@ memory_notebook_replace与memory_notebook_replace_span工具就是为你主动�
         ValidateAppendOrder(entry);
         AttachNotificationsToObservation(entry);
         AppendEntryCore(entry);
-        if (_workspaceSession is not null) {
-            ReloadRecentHistoryFromWorkspaceSession();
-        }
         return entry;
     }
 
