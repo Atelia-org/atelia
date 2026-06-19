@@ -155,7 +155,7 @@ public sealed class AgentEngineHost : IDisposable {
     /// </summary>
     public AgentEngineStateSnapshot LoadSnapshot() {
         EnsureNotDisposed();
-        return _workspaceSession.LoadSnapshot();
+        return AgentEngineWorkspaceSnapshotHelper.LoadSnapshot(_workspaceSession.WorkspaceRoot);
     }
 
     public void Dispose() {

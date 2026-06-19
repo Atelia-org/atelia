@@ -33,11 +33,6 @@ internal sealed class AgentWorkspaceSession : IDisposable {
 
     internal AgentWorkspaceRoot WorkspaceRoot => _workspaceRoot;
 
-    internal AgentEngineStateSnapshot LoadSnapshot() {
-        EnsureOpenForEngine();
-        return AgentEngineWorkspaceSnapshotHelper.LoadSnapshot(_workspaceRoot);
-    }
-
     internal (string SystemPrompt, IReadOnlyList<HistoryEntry> RecentHistory, IReadOnlyList<string> PendingNotifications, ulong LastSerial) LoadStateCacheSeed() {
         EnsureOpenForState();
 

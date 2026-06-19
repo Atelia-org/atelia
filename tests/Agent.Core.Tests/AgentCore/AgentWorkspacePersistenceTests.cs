@@ -3025,6 +3025,14 @@ public sealed class AgentWorkspacePersistenceTests {
         );
     }
 
+    [Fact]
+    public void AgentWorkspaceSession_DoesNotExposeWholeSnapshotLoader() {
+        Assert.DoesNotContain(
+            typeof(AgentWorkspaceSession).GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic),
+            static method => method.Name == "LoadSnapshot"
+        );
+    }
+
     private static AgentEngineStateSnapshot CreateSnapshotFixture() {
         var invocation = new CompletionDescriptor("provider-a", "spec-a", "model-a");
         var state = AgentState.CreateDefault("roundtrip-system");
