@@ -179,11 +179,12 @@ internal sealed class AgentWorkspaceSession : IDisposable {
         );
     }
 
-    internal void AppendPendingNotification(string notification) {
+    internal IReadOnlyList<string> AppendPendingNotification(string notification) {
         ArgumentNullException.ThrowIfNull(notification);
 
         EnsureOpenForState();
         _workspaceRoot.History.AppendPendingNotification(notification);
+        return _workspaceRoot.History.LoadPendingNotifications();
     }
 
     internal void ReplacePrefixWithRecap(int splitIndex, string summary) {
@@ -202,11 +203,12 @@ internal sealed class AgentWorkspaceSession : IDisposable {
         _workspaceRoot.History.ReplacePrefixWithRecap(splitIndex, recap);
     }
 
-    internal void SetSystemPrompt(string systemPrompt) {
+    internal string SetSystemPrompt(string systemPrompt) {
         ArgumentNullException.ThrowIfNull(systemPrompt);
 
         EnsureOpenForState();
         _workspaceRoot.Meta.SetSystemPrompt(systemPrompt);
+        return _workspaceRoot.Meta.GetRequiredSystemPrompt();
     }
 
     internal AgentEngineRuntimeStateSnapshot LoadRuntimeState() {

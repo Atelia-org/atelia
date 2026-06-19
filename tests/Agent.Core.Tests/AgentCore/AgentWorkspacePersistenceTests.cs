@@ -1350,6 +1350,61 @@ public sealed class AgentWorkspacePersistenceTests {
     }
 
     [Fact]
+    public void WorkspaceSessionAppendPendingNotification_ReturnsUpdatedPendingNotificationSnapshotForTargetedRefresh() {
+        var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-workspace-session-append-notification-snapshot-{Guid.NewGuid():N}");
+
+        try {
+            using var repo = Repository.Create(repoDir).Unwrap();
+            var revision = repo.CreateBranch("main").Unwrap();
+            var workspaceRoot = AgentWorkspaceRoot.Create(revision);
+
+            using var session = AgentWorkspaceSession.Open(workspaceRoot);
+            var state = session.RestoreState();
+            state.AppendNotification("durable-notification-1");
+
+            ReplaceCachedPendingNotifications(state, "stale-cached-notification");
+
+            var pendingNotifications = session.AppendPendingNotification("durable-notification-2");
+            var freshPendingNotifications = session.LoadPendingNotifications();
+
+            Assert.Equal(freshPendingNotifications, pendingNotifications);
+            Assert.Equal(["durable-notification-1", "durable-notification-2"], pendingNotifications);
+            Assert.Equal(["durable-notification-1", "durable-notification-2"], workspaceRoot.History.LoadPendingNotifications());
+        }
+        finally {
+            if (Directory.Exists(repoDir)) {
+                Directory.Delete(repoDir, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public void WorkspaceSessionSetSystemPrompt_ReturnsUpdatedDurablePrompt() {
+        var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-workspace-session-set-prompt-{Guid.NewGuid():N}");
+
+        try {
+            using var repo = Repository.Create(repoDir).Unwrap();
+            var revision = repo.CreateBranch("main").Unwrap();
+            var workspaceRoot = AgentWorkspaceRoot.Create(revision, "initial-system");
+
+            using var session = AgentWorkspaceSession.Open(workspaceRoot);
+            var state = session.RestoreState();
+
+            var updatedPrompt = session.SetSystemPrompt("updated-system");
+            state.SetSystemPrompt("state-updated-system");
+
+            Assert.Equal("updated-system", updatedPrompt);
+            Assert.Equal("state-updated-system", state.SystemPrompt);
+            Assert.Equal("state-updated-system", workspaceRoot.Meta.GetRequiredSystemPrompt());
+        }
+        finally {
+            if (Directory.Exists(repoDir)) {
+                Directory.Delete(repoDir, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
     public void Host_AppendNotification_RefreshesPendingNotificationCacheFromDurableWorkspace() {
         var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-host-append-notification-authoritative-{Guid.NewGuid():N}");
 

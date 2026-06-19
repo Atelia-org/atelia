@@ -45,22 +45,14 @@ public sealed partial class AgentState {
         _workingSet.ReplaceRecentHistory(recentHistory, lastSerial, CloneHistoryEntry);
     }
 
+    private void ApplyPendingNotificationsSnapshot(IReadOnlyList<string> pendingNotifications) {
+        _workingSet.ReplacePendingNotifications(pendingNotifications);
+    }
+
     private void ReloadPendingNotificationsFromWorkspaceSession() {
         var pendingNotifications = _workspaceSession?.LoadPendingNotifications()
             ?? throw new InvalidOperationException("AgentState is not attached to a live workspace session.");
 
-        _workingSet.ReplacePendingNotifications(pendingNotifications);
-    }
-
-    private void SyncSessionAppendedNotification(string item) {
-        if (_workspaceSession is null) { return; }
-
-        _workspaceSession.AppendPendingNotification(item);
-    }
-
-    private void SyncSessionSystemPrompt() {
-        if (_workspaceSession is null) { return; }
-
-        _workspaceSession.SetSystemPrompt(SystemPrompt);
+        ApplyPendingNotificationsSnapshot(pendingNotifications);
     }
 }
