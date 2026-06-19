@@ -127,7 +127,7 @@ public sealed class AgentWorkspacePersistenceTests {
     }
 
     [Fact]
-    public void WorkspaceAttachedAppend_AppendsToExistingDurableHistoryDeque() {
+    public void WorkspaceLiveAppend_AppendsToExistingDurableHistoryDeque() {
         var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-workspace-append-{Guid.NewGuid():N}");
 
         try {
@@ -179,7 +179,7 @@ public sealed class AgentWorkspacePersistenceTests {
     }
 
     [Fact]
-    public void WorkspaceAttachedAppendAction_UsesDurableRecentHistoryAsAuthoritativeSource() {
+    public void WorkspaceLiveAppendAction_UsesDurableRecentHistoryAsAuthoritativeSource() {
         var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-workspace-append-action-authoritative-{Guid.NewGuid():N}");
 
         try {
@@ -244,7 +244,7 @@ public sealed class AgentWorkspacePersistenceTests {
     }
 
     [Fact]
-    public void WorkspaceAttachedAppendAction_FailureRefreshesRecentHistoryCacheFromDurableWorkspace() {
+    public void WorkspaceLiveAppendAction_FailureRefreshesRecentHistoryCacheFromDurableWorkspace() {
         var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-workspace-append-action-failure-refresh-{Guid.NewGuid():N}");
 
         try {
@@ -420,7 +420,7 @@ public sealed class AgentWorkspacePersistenceTests {
     }
 
     [Fact]
-    public void WorkspaceAttachedAppendObservation_UsesDurableRecentHistoryForAppendOrderValidation() {
+    public void WorkspaceLiveAppendObservation_UsesDurableRecentHistoryForAppendOrderValidation() {
         var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-workspace-append-observation-order-{Guid.NewGuid():N}");
 
         try {
@@ -471,7 +471,7 @@ public sealed class AgentWorkspacePersistenceTests {
     }
 
     [Fact]
-    public void WorkspaceAttachedAppendObservation_FailureRefreshesWorkingSetFromDurableWorkspace() {
+    public void WorkspaceLiveAppendObservation_FailureRefreshesWorkingSetFromDurableWorkspace() {
         var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-workspace-append-observation-failure-refresh-{Guid.NewGuid():N}");
 
         try {
@@ -540,7 +540,7 @@ public sealed class AgentWorkspacePersistenceTests {
     }
 
     [Fact]
-    public void WorkspaceAttachedAppendObservation_UsesDurableRecentHistoryForPendingActionGuard() {
+    public void WorkspaceLiveAppendObservation_UsesDurableRecentHistoryForPendingActionGuard() {
         var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-workspace-append-observation-guard-{Guid.NewGuid():N}");
 
         try {
@@ -651,7 +651,7 @@ public sealed class AgentWorkspacePersistenceTests {
     }
 
     [Fact]
-    public void WorkspaceAttachedAppendToolResults_FailureRefreshesWorkingSetFromDurableWorkspace() {
+    public void WorkspaceLiveAppendToolResults_FailureRefreshesWorkingSetFromDurableWorkspace() {
         var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-workspace-append-tool-results-failure-refresh-{Guid.NewGuid():N}");
 
         try {
@@ -724,7 +724,7 @@ public sealed class AgentWorkspacePersistenceTests {
     }
 
     [Fact]
-    public void WorkspaceAttachedAppendToolResults_UsesDurableRecentHistoryAndPendingNotificationsAsAuthoritativeSource() {
+    public void WorkspaceLiveAppendToolResults_UsesDurableRecentHistoryAndPendingNotificationsAsAuthoritativeSource() {
         var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-workspace-append-tool-results-authoritative-{Guid.NewGuid():N}");
 
         try {
@@ -785,7 +785,7 @@ public sealed class AgentWorkspacePersistenceTests {
     }
 
     [Fact]
-    public void WorkspaceAttachedInjectActionContent_UsesDurableRecentHistoryForPriorActionLookup() {
+    public void WorkspaceLiveInjectActionContent_UsesDurableRecentHistoryForPriorActionLookup() {
         var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-workspace-inject-prior-action-{Guid.NewGuid():N}");
 
         try {
@@ -841,7 +841,7 @@ public sealed class AgentWorkspacePersistenceTests {
     }
 
     [Fact]
-    public void WorkspaceAttachedInjectActionContent_MatchRecentActionTail_UsesDurableLatestActionTail() {
+    public void WorkspaceLiveInjectActionContent_MatchRecentActionTail_UsesDurableLatestActionTail() {
         var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-workspace-inject-tail-kind-{Guid.NewGuid():N}");
 
         try {
@@ -896,7 +896,7 @@ public sealed class AgentWorkspacePersistenceTests {
     }
 
     [Fact]
-    public void WorkspaceAttachedInjectActionContent_UsesDurableTailActionForToolCallGuard() {
+    public void WorkspaceLiveInjectActionContent_UsesDurableTailActionForToolCallGuard() {
         var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-workspace-inject-tail-guard-{Guid.NewGuid():N}");
 
         try {
@@ -1055,7 +1055,7 @@ public sealed class AgentWorkspacePersistenceTests {
     }
 
     [Fact]
-    public void WorkspaceAttachedInjectActionContent_SupportsConsecutiveInjectionsFromDurableRecentHistory() {
+    public void WorkspaceLiveInjectActionContent_SupportsConsecutiveInjectionsFromDurableRecentHistory() {
         var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-workspace-consecutive-injection-{Guid.NewGuid():N}");
 
         try {
@@ -1139,7 +1139,7 @@ public sealed class AgentWorkspacePersistenceTests {
     }
 
     [Fact]
-    public void WorkspaceAttachedInjectActionContent_FailureRefreshesRecentHistoryCacheFromDurableWorkspace() {
+    public void WorkspaceLiveInjectActionContent_FailureRefreshesRecentHistoryCacheFromDurableWorkspace() {
         var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-workspace-injection-failure-refresh-{Guid.NewGuid():N}");
 
         try {
@@ -1204,7 +1204,7 @@ public sealed class AgentWorkspacePersistenceTests {
     }
 
     [Fact]
-    public void WorkspaceAttachedInjectActionContent_AllowsExplicitModeAfterRecapInjectionShape() {
+    public void WorkspaceLiveInjectActionContent_AllowsExplicitModeAfterRecapInjectionShape() {
         var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-workspace-recap-injection-{Guid.NewGuid():N}");
 
         try {
@@ -1274,7 +1274,7 @@ public sealed class AgentWorkspacePersistenceTests {
     }
 
     [Fact]
-    public void WorkspaceAttachedInjectActionContent_MatchRecentActionTail_RejectsRecapInjectionShapeWithoutActionEntry() {
+    public void WorkspaceLiveInjectActionContent_MatchRecentActionTail_RejectsRecapInjectionShapeWithoutActionEntry() {
         var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-workspace-recap-injection-match-tail-{Guid.NewGuid():N}");
 
         try {
@@ -1321,7 +1321,7 @@ public sealed class AgentWorkspacePersistenceTests {
     }
 
     [Fact]
-    public void WorkspaceAttachedNotificationDrain_UsesDurableWorkspaceAsAuthoritativeSource() {
+    public void WorkspaceLiveNotificationDrain_UsesDurableWorkspaceAsAuthoritativeSource() {
         var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-workspace-drain-authoritative-{Guid.NewGuid():N}");
 
         try {
@@ -1434,7 +1434,7 @@ public sealed class AgentWorkspacePersistenceTests {
     }
 
     [Fact]
-    public void WorkspaceAttachedRecap_UsesDurableWorkspaceAsAuthoritativeSource() {
+    public void WorkspaceLiveRecap_UsesDurableWorkspaceAsAuthoritativeSource() {
         var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-workspace-recap-authoritative-{Guid.NewGuid():N}");
 
         try {
