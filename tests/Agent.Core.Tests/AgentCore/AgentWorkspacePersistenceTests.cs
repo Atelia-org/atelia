@@ -3302,7 +3302,7 @@ public sealed class AgentWorkspacePersistenceTests {
             _ = InvokeRequiredInstanceMethod(turnRuntime, "RememberCompactionSplitIndex", 3);
             _ = InvokeRequiredInstanceMethod(turnRuntime, "RememberCurrentTurnFullFeatureEnabled", false);
             Assert.False(host.Engine.CurrentTurnFullFeatureEnabled);
-            Assert.Equal(3, host.Engine.ExportStateSnapshot().LockedCompactionSplitIndex);
+            Assert.Equal(3, ExportLiveTurnRuntimeOverlay(host.Engine).LockedCompactionSplitIndex);
 
             ConfigureSessionFaultToThrowOnce(
                 GetWorkspaceSession(host),
@@ -3317,12 +3317,13 @@ public sealed class AgentWorkspacePersistenceTests {
             var inner = Assert.IsType<InvalidOperationException>(exception.InnerException);
             Assert.Equal("Injected fault after turn runtime mutation.", inner.Message);
             var durableTurnRuntime = host.LoadDurableTurnRuntime();
+            var localTurnRuntimeOverlay = ExportLiveTurnRuntimeOverlay(host.Engine);
 
             Assert.Equal(LlmProfileCheckpoint.FromProfile(profile), durableTurnRuntime.ResolvedProfile);
             Assert.Equal(3, durableTurnRuntime.LockedCompactionSplitIndex);
             Assert.True(host.Engine.CurrentTurnFullFeatureEnabled);
-            Assert.Equal(LlmProfileCheckpoint.FromProfile(profile), host.Engine.ExportStateSnapshot().ResolvedProfile);
-            Assert.Equal(3, host.Engine.ExportStateSnapshot().LockedCompactionSplitIndex);
+            Assert.Equal(LlmProfileCheckpoint.FromProfile(profile), localTurnRuntimeOverlay.ResolvedProfile);
+            Assert.Equal(3, localTurnRuntimeOverlay.LockedCompactionSplitIndex);
         }
         finally {
             if (Directory.Exists(repoDir)) {
@@ -3767,7 +3768,7 @@ public sealed class AgentWorkspacePersistenceTests {
             var localPendingCompaction = new CompactionCheckpoint(1, "local-system", "local-prompt");
             host.WorkspaceRoot.RuntimeState.SetPendingCompaction(durablePendingCompaction);
             _ = InvokeRequiredInstanceMethod(host.Engine, "ApplyPendingCompactionSnapshot", localPendingCompaction);
-            Assert.Equal(localPendingCompaction, host.Engine.ExportStateSnapshot().PendingCompaction);
+            Assert.Equal(localPendingCompaction, ExportLivePendingCompactionOverlay(host.Engine));
 
             ConfigureSessionFaultToThrowOnce(
                 GetWorkspaceSession(host),
@@ -3789,7 +3790,7 @@ public sealed class AgentWorkspacePersistenceTests {
             var reloadedDurablePendingCompaction = host.LoadDurablePendingCompaction();
 
             Assert.Equal(localPendingCompaction, reloadedDurablePendingCompaction);
-            Assert.Equal(localPendingCompaction, host.Engine.ExportStateSnapshot().PendingCompaction);
+            Assert.Equal(localPendingCompaction, ExportLivePendingCompactionOverlay(host.Engine));
         }
         finally {
             if (Directory.Exists(repoDir)) {
@@ -3808,7 +3809,7 @@ public sealed class AgentWorkspacePersistenceTests {
             var seededPendingCompaction = new CompactionCheckpoint(5, "seed-system", "seed-prompt");
             host.WorkspaceRoot.RuntimeState.SetPendingCompaction(seededPendingCompaction);
             _ = InvokeRequiredInstanceMethod(host.Engine, "ApplyPendingCompactionSnapshot", new object?[] { null });
-            Assert.Null(host.Engine.ExportStateSnapshot().PendingCompaction);
+            Assert.Null(ExportLivePendingCompactionOverlay(host.Engine));
 
             ConfigureSessionFaultToThrowOnce(
                 GetWorkspaceSession(host),
@@ -3830,7 +3831,7 @@ public sealed class AgentWorkspacePersistenceTests {
             var durablePendingCompaction = host.LoadDurablePendingCompaction();
 
             Assert.Null(durablePendingCompaction);
-            Assert.Null(host.Engine.ExportStateSnapshot().PendingCompaction);
+            Assert.Null(ExportLivePendingCompactionOverlay(host.Engine));
         }
         finally {
             if (Directory.Exists(repoDir)) {
@@ -4336,6 +4337,16 @@ public sealed class AgentWorkspacePersistenceTests {
 
     private static Dictionary<string, ToolCallExecutionResult> GetPendingToolResults(AgentEngine engine) {
         return GetRequiredPrivateField<Dictionary<string, ToolCallExecutionResult>>(engine, "_pendingToolResults");
+    }
+
+    private static (LlmProfileCheckpoint? ResolvedProfile, int? LockedCompactionSplitIndex) ExportLiveTurnRuntimeOverlay(AgentEngine engine) {
+        return ((LlmProfileCheckpoint? ResolvedProfile, int? LockedCompactionSplitIndex))
+            (InvokeRequiredInstanceMethod(engine, "ExportTurnRuntimeState")
+             ?? throw new InvalidOperationException("ExportTurnRuntimeState returned null."));
+    }
+
+    private static CompactionCheckpoint? ExportLivePendingCompactionOverlay(AgentEngine engine) {
+        return (CompactionCheckpoint?)InvokeRequiredInstanceMethod(engine, "ExportPendingCompactionSnapshot");
     }
 
     private static void ReplaceCachedPendingNotifications(AgentState state, params string[] notifications) {
