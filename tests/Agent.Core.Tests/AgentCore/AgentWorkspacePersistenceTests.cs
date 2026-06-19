@@ -2201,7 +2201,7 @@ public sealed class AgentWorkspacePersistenceTests {
     }
 
     [Fact]
-    public void Host_OpenExisting_RestoresRuntimeOnlyFieldsFromSnapshotCompatibilityLayer() {
+    public void Host_OpenExisting_LoadSnapshot_RestoresRuntimeOnlyFieldsSeededBySnapshotCompatibilityLayer() {
         var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-host-runtime-reopen-{Guid.NewGuid():N}");
 
         try {
@@ -2225,7 +2225,7 @@ public sealed class AgentWorkspacePersistenceTests {
                 repoDir,
                 new AgentEngineHostRuntime(profileRegistry: new LlmProfileRegistry([restoredProfile]))
             );
-            var actual = reopened.Engine.ExportStateSnapshot();
+            var actual = reopened.LoadSnapshot();
 
             Assert.Equal(expected.AgentState.SystemPrompt, actual.AgentState.SystemPrompt);
             Assert.Equal(expected.AgentState.RecentHistory.Count, actual.AgentState.RecentHistory.Count);
@@ -2309,7 +2309,7 @@ public sealed class AgentWorkspacePersistenceTests {
     }
 
     [Fact]
-    public void Host_PersistTurnRuntime_FailureReloadsAuthoritativeTurnRuntime() {
+    public void Host_PersistTurnRuntime_FailureReloadsAuthoritativeTurnRuntimeAndLocalOverlay() {
         var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-host-turn-runtime-fault-reload-{Guid.NewGuid():N}");
 
         try {
@@ -2344,11 +2344,13 @@ public sealed class AgentWorkspacePersistenceTests {
 
             var inner = Assert.IsType<InvalidOperationException>(exception.InnerException);
             Assert.Equal("Injected fault after turn runtime mutation.", inner.Message);
+            var durableSnapshot = host.LoadSnapshot();
+
+            Assert.Equal(LlmProfileCheckpoint.FromProfile(profile), durableSnapshot.ResolvedProfile);
+            Assert.Equal(3, durableSnapshot.LockedCompactionSplitIndex);
             Assert.True(host.Engine.CurrentTurnFullFeatureEnabled);
             Assert.Equal(LlmProfileCheckpoint.FromProfile(profile), host.Engine.ExportStateSnapshot().ResolvedProfile);
             Assert.Equal(3, host.Engine.ExportStateSnapshot().LockedCompactionSplitIndex);
-            Assert.Equal(LlmProfileCheckpoint.FromProfile(profile), host.LoadSnapshot().ResolvedProfile);
-            Assert.Equal(3, host.LoadSnapshot().LockedCompactionSplitIndex);
         }
         finally {
             if (Directory.Exists(repoDir)) {
@@ -2784,7 +2786,7 @@ public sealed class AgentWorkspacePersistenceTests {
     }
 
     [Fact]
-    public void Host_PersistPendingCompaction_FailureReloadsAuthoritativePendingCompaction() {
+    public void Host_PersistPendingCompaction_FailureReloadsAuthoritativePendingCompactionAndLocalOverlay() {
         var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-host-compaction-fault-reload-{Guid.NewGuid():N}");
 
         try {
@@ -2813,8 +2815,10 @@ public sealed class AgentWorkspacePersistenceTests {
 
             var inner = Assert.IsType<InvalidOperationException>(exception.InnerException);
             Assert.Equal("Injected fault after pending compaction mutation.", inner.Message);
+            var durableSnapshot = host.LoadSnapshot();
+
+            Assert.Equal(localPendingCompaction, durableSnapshot.PendingCompaction);
             Assert.Equal(localPendingCompaction, host.Engine.ExportStateSnapshot().PendingCompaction);
-            Assert.Equal(localPendingCompaction, host.LoadSnapshot().PendingCompaction);
         }
         finally {
             if (Directory.Exists(repoDir)) {
@@ -2824,7 +2828,7 @@ public sealed class AgentWorkspacePersistenceTests {
     }
 
     [Fact]
-    public void Host_PersistPendingCompactionClear_FailureReloadsAuthoritativePendingCompaction() {
+    public void Host_PersistPendingCompactionClear_FailureReloadsAuthoritativePendingCompactionAndLocalOverlay() {
         var repoDir = Path.Combine(Path.GetTempPath(), $"atelia-agent-host-compaction-clear-fault-reload-{Guid.NewGuid():N}");
 
         try {
@@ -2852,8 +2856,10 @@ public sealed class AgentWorkspacePersistenceTests {
 
             var inner = Assert.IsType<InvalidOperationException>(exception.InnerException);
             Assert.Equal("Injected fault after pending compaction clear.", inner.Message);
+            var durableSnapshot = host.LoadSnapshot();
+
+            Assert.Null(durableSnapshot.PendingCompaction);
             Assert.Null(host.Engine.ExportStateSnapshot().PendingCompaction);
-            Assert.Null(host.LoadSnapshot().PendingCompaction);
         }
         finally {
             if (Directory.Exists(repoDir)) {
