@@ -11,7 +11,13 @@ public sealed record FamilyChatConfig(
 public sealed record FamilyChatBackendConfig(
     string Kind,
     string BaseAddress,
-    string? ApiKey = null
+    string? ApiKey = null,
+    // Name of an environment variable whose value overrides BaseAddress at load
+    // time. Useful for keeping machine-specific URLs out of the config file.
+    string? BaseAddressEnv = null,
+    // Name of an environment variable whose value overrides ApiKey at load time.
+    // Preferred over inline ApiKey to keep secrets out of the config file.
+    string? ApiKeyEnv = null
 );
 
 public sealed record FamilyChatUserConfig(
@@ -28,7 +34,19 @@ public sealed record FamilyChatUserConfig(
     // Optional path to a markdown (or plain text) file whose content overrides
     // the inline SystemPrompt. Resolved relative to the config file's directory
     // when not absolute. Convenient for authoring long system prompts.
-    string? SystemPromptFile = null
+    string? SystemPromptFile = null,
+    // Optional per-user backend override. When non-empty, this user's completion
+    // requests are routed to this BaseAddress instead of the global Backend.BaseAddress.
+    // Useful when different users should talk to different LLM providers.
+    string? BaseAddress = null,
+    // Optional per-user API key. When non-empty, used instead of Backend.ApiKey.
+    string? ApiKey = null,
+    // Name of an environment variable whose value overrides the per-user BaseAddress
+    // at load time. Resolved after the inline BaseAddress, so env wins if both set.
+    string? BaseAddressEnv = null,
+    // Name of an environment variable whose value overrides the per-user ApiKey
+    // at load time.
+    string? ApiKeyEnv = null
 );
 
 public sealed record FamilyChatMeDto(

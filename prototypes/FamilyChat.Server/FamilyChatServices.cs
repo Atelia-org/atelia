@@ -24,20 +24,30 @@ public sealed class DefaultFamilyChatCompletionClientFactory : IFamilyChatComple
         ArgumentNullException.ThrowIfNull(backend);
         ArgumentNullException.ThrowIfNull(user);
 
-        var httpClient = CompletionHttpTransportFactory.CreateLiveClient(new Uri(backend.BaseAddress, UriKind.Absolute));
+        // Per-user backend override: a user may specify its own BaseAddress/ApiKey
+        // to route to a different LLM provider than the global backend. Falls back
+        // to the global backend values when the user-level fields are absent.
+        string effectiveBaseAddress = !string.IsNullOrWhiteSpace(user.BaseAddress)
+            ? user.BaseAddress!
+            : backend.BaseAddress;
+        string? effectiveApiKey = !string.IsNullOrWhiteSpace(user.ApiKey)
+            ? user.ApiKey
+            : backend.ApiKey;
+
+        var httpClient = CompletionHttpTransportFactory.CreateLiveClient(new Uri(effectiveBaseAddress, UriKind.Absolute));
         return backend.Kind.Trim().ToLowerInvariant() switch {
             "openai-chat" => new OpenAIChatClient(
-                apiKey: backend.ApiKey,
+                apiKey: effectiveApiKey,
                 httpClient: httpClient,
                 dialect: ResolveOpenAiChatDialect(user.CompletionSurfaceId)
             // , options: OpenAIChatClientOptions.QwenThinkingDisabled()
             ),
             "openai-responses" => new OpenAIResponsesClient(
-                apiKey: backend.ApiKey,
+                apiKey: effectiveApiKey,
                 httpClient: httpClient
             ),
             "anthropic" => new AnthropicClient(
-                apiKey: backend.ApiKey,
+                apiKey: effectiveApiKey,
                 httpClient: httpClient
             ),
             _ => throw new InvalidOperationException($"Unsupported backend kind '{backend.Kind}'.")
@@ -667,6 +677,8 @@ internal static class FamilyChatConfigLoader {
 
         config = ResolveSystemPromptFiles(config, resolvedPath);
         config = ApplyDefaultCompactionPrompts(config);
+        config = ResolveBackendEnvironmentVariables(config);
+        config = ResolveUserEnvironmentVariables(config);
 
         Validate(config);
         return config;
@@ -712,7 +724,90 @@ internal static class FamilyChatConfigLoader {
         return config with { Users = normalizedUsers };
     }
 
+    private static FamilyChatConfig ResolveBackendEnvironmentVariables(FamilyChatConfig config) {
+        var backend = config.Backend;
+        string baseAddress = backend.BaseAddress;
+        string? apiKey = backend.ApiKey;
+
+        if (!string.IsNullOrWhiteSpace(backend.BaseAddressEnv)) {
+            string? resolved = Environment.GetEnvironmentVariable(backend.BaseAddressEnv);
+            if (string.IsNullOrWhiteSpace(resolved)) {
+                throw new InvalidOperationException(
+                    $"FamilyChat backend.baseAddressEnv references environment variable '{backend.BaseAddressEnv}', "
+                    + "but it is not set or empty."
+                );
+            }
+
+            baseAddress = resolved;
+        }
+
+        if (!string.IsNullOrWhiteSpace(backend.ApiKeyEnv)) {
+            string? resolved = Environment.GetEnvironmentVariable(backend.ApiKeyEnv);
+            if (string.IsNullOrWhiteSpace(resolved)) {
+                throw new InvalidOperationException(
+                    $"FamilyChat backend.apiKeyEnv references environment variable '{backend.ApiKeyEnv}', "
+                    + "but it is not set or empty."
+                );
+            }
+
+            apiKey = resolved;
+        }
+
+        return config with {
+            Backend = backend with { BaseAddress = baseAddress, ApiKey = apiKey },
+        };
+    }
+
+    private static FamilyChatConfig ResolveUserEnvironmentVariables(FamilyChatConfig config) {
+        var resolvedUsers = new List<FamilyChatUserConfig>(config.Users.Count);
+        foreach (var user in config.Users) {
+            string? baseAddress = user.BaseAddress;
+            string? apiKey = user.ApiKey;
+
+            if (!string.IsNullOrWhiteSpace(user.BaseAddressEnv)) {
+                string? resolved = Environment.GetEnvironmentVariable(user.BaseAddressEnv);
+                if (string.IsNullOrWhiteSpace(resolved)) {
+                    throw new InvalidOperationException(
+                        $"FamilyChat user '{user.UserId}' baseAddressEnv references environment variable "
+                        + $"'{user.BaseAddressEnv}', but it is not set or empty."
+                    );
+                }
+                baseAddress = resolved;
+            }
+
+            if (!string.IsNullOrWhiteSpace(user.ApiKeyEnv)) {
+                string? resolved = Environment.GetEnvironmentVariable(user.ApiKeyEnv);
+                if (string.IsNullOrWhiteSpace(resolved)) {
+                    throw new InvalidOperationException(
+                        $"FamilyChat user '{user.UserId}' apiKeyEnv references environment variable "
+                        + $"'{user.ApiKeyEnv}', but it is not set or empty."
+                    );
+                }
+                apiKey = resolved;
+            }
+
+            resolvedUsers.Add(user with { BaseAddress = baseAddress, ApiKey = apiKey });
+        }
+
+        return config with { Users = resolvedUsers };
+    }
+
     private static void Validate(FamilyChatConfig config) {
+        var backend = config.Backend;
+        if (string.IsNullOrWhiteSpace(backend.Kind)) {
+            throw new InvalidOperationException("FamilyChat config backend must have a non-empty kind.");
+        }
+
+        if (string.IsNullOrWhiteSpace(backend.BaseAddress)) {
+            throw new InvalidOperationException("FamilyChat config backend must have a non-empty baseAddress.");
+        }
+
+        if (string.IsNullOrWhiteSpace(backend.ApiKey)) {
+            throw new InvalidOperationException(
+                "FamilyChat config backend must have a non-empty apiKey (set 'apiKey' inline or via 'apiKeyEnv')."
+            );
+        }
+
         var userIds = new HashSet<string>(StringComparer.Ordinal);
         for (int i = 0; i < config.Users.Count; i++) {
             var user = config.Users[i];
@@ -800,8 +895,11 @@ internal static class FamilyChatConfigTemplateFactory {
         return new FamilyChatConfig(
             Backend: new FamilyChatBackendConfig(
                 Kind: "openai-chat",
+                // Keep a placeholder here; the real URL is resolved at load
+                // time from the environment variable named below.
                 BaseAddress: "http://localhost:8888/",
-                ApiKey: null
+                BaseAddressEnv: "DEEPSEEK_BASE_URL",
+                ApiKeyEnv: "DEEPSEEK_API_KEY"
             ),
             Users: [
                 CreateUser("alice", "Alice", "alice123", ".atelia/family-chat/sessions/alice"),
