@@ -284,23 +284,24 @@ public sealed class FamilyChatHostService : IAsyncDisposable {
         // Failsafe: if the previous turn's post-generation compaction didn't happen
         // or failed, try once more before generating.  Otherwise the user would wait
         // for compaction *plus* generation in a single turn.
-        if (host.Engine.GetStatistics().EstimatedTokens >= host.User.CompactionThresholdTokens) {
-            liveTurn.Publish(new StreamEventDto("meta", new { phase = "compaction-start" }), phase: "compaction-start");
-            var emergency = await host.Engine.CompactAsync(
-                host.User.CompactionSystemPrompt!,
-                host.User.CompactionPrompt!,
-                ct
-            ).ConfigureAwait(false);
+        // 先试用一阵关闭pre压缩功能，仅post压缩，以提高响应性。
+        // if (host.Engine.GetStatistics().EstimatedTokens >= host.User.CompactionThresholdTokens) {
+        //     liveTurn.Publish(new StreamEventDto("meta", new { phase = "compaction-start" }), phase: "compaction-start");
+        //     var emergency = await host.Engine.CompactAsync(
+        //         host.User.CompactionSystemPrompt!,
+        //         host.User.CompactionPrompt!,
+        //         ct
+        //     ).ConfigureAwait(false);
 
-            if (!emergency.Applied) {
-                throw new FamilyChatTurnException(
-                    "当前会话上下文过长，且无法继续压缩。",
-                    emergency.FailureReason?.ToString()
-                );
-            }
+        //     if (!emergency.Applied) {
+        //         throw new FamilyChatTurnException(
+        //             "当前会话上下文过长，且无法继续压缩。",
+        //             emergency.FailureReason?.ToString()
+        //         );
+        //     }
 
-            liveTurn.Publish(new StreamEventDto("meta", new { phase = "compaction-finish" }), phase: "compaction-finish");
-        }
+        //     liveTurn.Publish(new StreamEventDto("meta", new { phase = "compaction-finish" }), phase: "compaction-finish");
+        // }
 
         var observer = new CompletionStreamObserver();
         liveTurn.AttachObserver(observer);
