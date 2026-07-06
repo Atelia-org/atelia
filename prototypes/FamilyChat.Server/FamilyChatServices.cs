@@ -381,15 +381,31 @@ public sealed class FamilyChatHostService : IAsyncDisposable {
         // ── Post-generation compaction ──────────────────────────────
         // Compact *after* the response is sent so the user spends the
         // reading / typing time waiting, not the generation latency.
+        //
+        // This is a best-effort optimization that runs *after* the turn's
+        // response has already been delivered (status "completed"). A
+        // compaction failure (timeout, transient backend error, shutdown)
+        // must NOT surface as a turn failure — the user already got their
+        // reply, and a later turn will retry compaction anyway.
         if (host.Engine.GetStatistics().EstimatedTokens >= host.User.CompactionThresholdTokens) {
-            using var compactCts = new CancellationTokenSource(TimeSpan.FromMinutes(2));
-            DebugUtil.Info("FamilyChat.Session", $"RunTurnAsync post-compaction trigger: user={host.User.UserId}, turnId={liveTurn.TurnId}, head={host.Engine.PersistedHeadAddress}");
-            await host.Engine.CompactAsync(
-                host.User.CompactionSystemPrompt!,
-                host.User.CompactionPrompt!,
-                compactCts.Token
-            ).ConfigureAwait(false);
-            DebugUtil.Info("FamilyChat.Session", $"RunTurnAsync post-compaction done: user={host.User.UserId}, turnId={liveTurn.TurnId}, {host.Engine.GetDebugStateSummary()}");
+            try {
+                using var compactCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                compactCts.CancelAfter(TimeSpan.FromMinutes(5));
+                DebugUtil.Info("FamilyChat.Session", $"RunTurnAsync post-compaction trigger: user={host.User.UserId}, turnId={liveTurn.TurnId}, head={host.Engine.PersistedHeadAddress}");
+                await host.Engine.CompactAsync(
+                    host.User.CompactionSystemPrompt!,
+                    host.User.CompactionPrompt!,
+                    compactCts.Token
+                ).ConfigureAwait(false);
+                DebugUtil.Info("FamilyChat.Session", $"RunTurnAsync post-compaction done: user={host.User.UserId}, turnId={liveTurn.TurnId}, {host.Engine.GetDebugStateSummary()}");
+            }
+            catch (Exception ex) {
+                DebugUtil.Warning(
+                    "FamilyChat.Session",
+                    $"RunTurnAsync post-compaction failed (non-fatal, turn already completed): user={host.User.UserId}, turnId={liveTurn.TurnId}",
+                    ex
+                );
+            }
         }
     }
 
