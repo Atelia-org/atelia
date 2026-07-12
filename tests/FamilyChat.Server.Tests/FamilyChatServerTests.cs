@@ -51,10 +51,11 @@ public sealed class FamilyChatServerTests {
 
             using var engine = await ChatSessionEngine.CreateAsync(
                 repoDir,
-                new ChatSessionCreateOptions("model-a", "system", "openai-chat/strict"),
+                new ChatSessionCreateOptions("system"),
                 new ChatSessionRuntime(
                     client,
                     "openai-chat/strict",
+                    "model-a",
                     new ToolRegistry([new EchoTool()]).CreateSession()
                 )
             );
@@ -93,10 +94,11 @@ public sealed class FamilyChatServerTests {
 
             using var engine = await ChatSessionEngine.CreateAsync(
                 repoDir,
-                new ChatSessionCreateOptions("model-a", "system", "openai-chat/strict"),
+                new ChatSessionCreateOptions("system"),
                 new ChatSessionRuntime(
                     client,
                     "openai-chat/strict",
+                    "model-a",
                     new ToolRegistry(Array.Empty<ITool>()).CreateSession()
                 )
             );
@@ -134,10 +136,11 @@ public sealed class FamilyChatServerTests {
 
             using var engine = await ChatSessionEngine.CreateAsync(
                 repoDir,
-                new ChatSessionCreateOptions("model-a", "system", "openai-chat/strict"),
+                new ChatSessionCreateOptions("system"),
                 new ChatSessionRuntime(
                     client,
                     "openai-chat/strict",
+                    "model-a",
                     new ToolRegistry(Array.Empty<ITool>()).CreateSession()
                 )
             );
@@ -167,14 +170,14 @@ public sealed class FamilyChatServerTests {
                         "Alice",
                         "pw1",
                         Path.Combine(tempDir, "alice-session"),
-                        "unsloth/qwen3.6",
-                        "openai-chat/sglang-compatible",
                         200,
                         "compact-system",
                         "compact-prompt",
                         "system"
                     )
-                ]
+                ],
+                connectionModelId: "unsloth/qwen3.6",
+                connectionSurfaceId: "openai-chat/sglang-compatible"
             );
 
             var scriptFactory = new ScriptedCompletionClientFactory();
@@ -228,14 +231,14 @@ public sealed class FamilyChatServerTests {
                         "Alice",
                         "pw1",
                         Path.Combine(tempDir, "alice-session"),
-                        "unsloth/qwen3.6",
-                        "openai-chat/sglang-compatible",
                         200,
                         "compact-system",
                         "compact-prompt",
                         "system"
                     )
-                ]
+                ],
+                connectionModelId: "unsloth/qwen3.6",
+                connectionSurfaceId: "openai-chat/sglang-compatible"
             );
 
             var scriptFactory = new ScriptedCompletionClientFactory();
@@ -290,8 +293,6 @@ public sealed class FamilyChatServerTests {
                         "Alice",
                         "pw1",
                         Path.Combine(tempDir, "alice-session"),
-                        "model-a",
-                        "openai-chat/strict",
                         200,
                         "compact-system",
                         "compact-prompt",
@@ -357,8 +358,6 @@ public sealed class FamilyChatServerTests {
                         "Alice",
                         "pw1",
                         Path.Combine(tempDir, "alice-session"),
-                        "model-a",
-                        "openai-chat/strict",
                         200,
                         "compact-system",
                         "compact-prompt",
@@ -421,8 +420,6 @@ public sealed class FamilyChatServerTests {
                         "Alice",
                         "pw1",
                         Path.Combine(tempDir, "alice-session"),
-                        "model-a",
-                        "openai-chat/strict",
                         200,
                         "compact-system",
                         "compact-prompt",
@@ -485,8 +482,6 @@ public sealed class FamilyChatServerTests {
                         "Alice",
                         "pw1",
                         Path.Combine(tempDir, "alice-session"),
-                        "model-a",
-                        "openai-chat/strict",
                         200,
                         "compact-system",
                         "compact-prompt",
@@ -580,8 +575,6 @@ public sealed class FamilyChatServerTests {
                         "Alice",
                         "pw1",
                         sessionDir,
-                        "model-a",
-                        "openai-chat/strict",
                         200,
                         "compact-system",
                         "compact-prompt",
@@ -621,10 +614,11 @@ public sealed class FamilyChatServerTests {
 
             using var engine = await ChatSessionEngine.CreateAsync(
                 repoDir,
-                new ChatSessionCreateOptions("model-a", "system", "openai-chat/strict"),
+                new ChatSessionCreateOptions("system"),
                 new ChatSessionRuntime(
                     client,
                     "openai-chat/strict",
+                    "model-a",
                     new ToolRegistry(Array.Empty<ITool>()).CreateSession()
                 )
             );
@@ -676,10 +670,11 @@ public sealed class FamilyChatServerTests {
 
             using var engine = await ChatSessionEngine.CreateAsync(
                 repoDir,
-                new ChatSessionCreateOptions("model-a", "system", "openai-chat/strict"),
+                new ChatSessionCreateOptions("system"),
                 new ChatSessionRuntime(
                     client,
                     "openai-chat/strict",
+                    "model-a",
                     new ToolRegistry([new EchoTool()]).CreateSession()
                 )
             );
@@ -709,10 +704,11 @@ public sealed class FamilyChatServerTests {
 
             using var engine = await ChatSessionEngine.CreateAsync(
                 repoDir,
-                new ChatSessionCreateOptions("model-a", "system", "openai-chat/strict"),
+                new ChatSessionCreateOptions("system"),
                 new ChatSessionRuntime(
                     client,
                     "openai-chat/strict",
+                    "model-a",
                     new ToolRegistry(Array.Empty<ITool>()).CreateSession()
                 )
             );
@@ -744,10 +740,11 @@ public sealed class FamilyChatServerTests {
 
             using var engine = await ChatSessionEngine.CreateAsync(
                 repoDir,
-                new ChatSessionCreateOptions("model-a", "system", "openai-chat/strict"),
+                new ChatSessionCreateOptions("system"),
                 new ChatSessionRuntime(
                     client,
                     "openai-chat/strict",
+                    "model-a",
                     new ToolRegistry(Array.Empty<ITool>()).CreateSession()
                 )
             );
@@ -783,8 +780,6 @@ public sealed class FamilyChatServerTests {
                         "Alice",
                         "pw1",
                         Path.Combine(tempDir, "alice-session"),
-                        "model-a",
-                        "openai-chat/strict",
                         200,
                         "compact-system",
                         "compact-prompt",
@@ -837,8 +832,6 @@ public sealed class FamilyChatServerTests {
                         "Alice",
                         "pw1",
                         Path.Combine(tempDir, "alice-session"),
-                        "model-a",
-                        "openai-chat/strict",
                         200,
                         "compact-system",
                         "compact-prompt",
@@ -893,8 +886,6 @@ public sealed class FamilyChatServerTests {
                         "Alice",
                         "pw1",
                         Path.Combine(tempDir, "alice-session"),
-                        "model-a",
-                        "openai-chat/strict",
                         200,
                         "compact-system",
                         "compact-prompt",
@@ -949,8 +940,6 @@ public sealed class FamilyChatServerTests {
                         "Alice",
                         "pw1",
                         Path.Combine(tempDir, "alice-session"),
-                        "model-a",
-                        "openai-chat/strict",
                         200,
                         "compact-system",
                         "compact-prompt",
@@ -1015,10 +1004,11 @@ public sealed class FamilyChatServerTests {
 
             using (var engine = await ChatSessionEngine.CreateAsync(
                 sessionDir,
-                new ChatSessionCreateOptions("model-a", "system", "openai-chat/strict"),
+                new ChatSessionCreateOptions("system"),
                 new ChatSessionRuntime(
                     setupClient,
                     "openai-chat/strict",
+                    "model-a",
                     new ToolRegistry(Array.Empty<ITool>()).CreateSession()
                 )
             )) {
@@ -1037,8 +1027,6 @@ public sealed class FamilyChatServerTests {
                         "Alice",
                         "pw1",
                         sessionDir,
-                        "model-a",
-                        "openai-chat/strict",
                         200,
                         "compact-system",
                         "compact-prompt",
@@ -1087,10 +1075,11 @@ public sealed class FamilyChatServerTests {
 
             using var engine = await ChatSessionEngine.CreateAsync(
                 repoDir,
-                new ChatSessionCreateOptions("model-a", "system", "openai-chat/strict"),
+                new ChatSessionCreateOptions("system"),
                 new ChatSessionRuntime(
                     client,
                     "openai-chat/strict",
+                    "model-a",
                     new ToolRegistry(Array.Empty<ITool>()).CreateSession()
                 )
             );
@@ -1103,9 +1092,25 @@ public sealed class FamilyChatServerTests {
             await engine.SendMessageAsync("fourth");
             await engine.SendMessageAsync("fifth");
 
+            var scriptedFactory = new ScriptedCompletionClientFactory();
+            var hostConfig = new FamilyChatConfig(
+                [],
+                [
+                    new FamilyChatConnectionConfig(
+                        "test",
+                        "Test",
+                        "openai-chat",
+                        "model-a",
+                        "openai-chat/strict",
+                        "http://localhost:8000/",
+                        ApiKey: "test-key"
+                    )
+                ],
+                "test"
+            );
             var hostService = new FamilyChatHostService(
-                new FamilyChatConfig(new FamilyChatBackendConfig("openai-chat", "http://localhost:8000/"), []),
-                new ScriptedCompletionClientFactory(),
+                hostConfig,
+                new FamilyChatConnectionRegistry(hostConfig, scriptedFactory),
                 DisabledFamilyChatUserMessageNormalizer.Instance
             );
 
@@ -1153,10 +1158,11 @@ public sealed class FamilyChatServerTests {
 
             using var engine = await ChatSessionEngine.CreateAsync(
                 repoDir,
-                new ChatSessionCreateOptions("model-a", "system", "openai-chat/strict"),
+                new ChatSessionCreateOptions("system"),
                 new ChatSessionRuntime(
                     client,
                     "openai-chat/strict",
+                    "model-a",
                     new ToolRegistry(Array.Empty<ITool>()).CreateSession()
                 )
             );
@@ -1169,9 +1175,25 @@ public sealed class FamilyChatServerTests {
             await engine.SendMessageAsync("fourth");
             await engine.SendMessageAsync("fifth");
 
+            var scriptedFactory2 = new ScriptedCompletionClientFactory();
+            var hostConfig2 = new FamilyChatConfig(
+                [],
+                [
+                    new FamilyChatConnectionConfig(
+                        "test",
+                        "Test",
+                        "openai-chat",
+                        "model-a",
+                        "openai-chat/strict",
+                        "http://localhost:8000/",
+                        ApiKey: "test-key"
+                    )
+                ],
+                "test"
+            );
             var hostService = new FamilyChatHostService(
-                new FamilyChatConfig(new FamilyChatBackendConfig("openai-chat", "http://localhost:8000/"), []),
-                new ScriptedCompletionClientFactory(),
+                hostConfig2,
+                new FamilyChatConnectionRegistry(hostConfig2, scriptedFactory2),
                 DisabledFamilyChatUserMessageNormalizer.Instance
             );
 
@@ -1205,8 +1227,6 @@ public sealed class FamilyChatServerTests {
                         "Alice",
                         "pw1",
                         Path.Combine(tempDir, "alice-session"),
-                        "model-a",
-                        "openai-chat/strict",
                         200,
                         "compact-system",
                         "compact-prompt",
@@ -1248,8 +1268,6 @@ public sealed class FamilyChatServerTests {
                         "Alice",
                         "pw1",
                         Path.Combine(tempDir, "alice-session"),
-                        "model-a",
-                        "openai-chat/strict",
                         200,
                         "compact-system",
                         "compact-prompt",
@@ -1290,21 +1308,27 @@ public sealed class FamilyChatServerTests {
             Assert.NotNull(exception);
             Assert.True(File.Exists(configPath));
 
+            string configDir = Path.GetDirectoryName(configPath)!;
+            string connectionsPath = Path.Combine(configDir, "connections.json");
+            Assert.True(File.Exists(connectionsPath));
+
             string details = FlattenExceptionMessages(exception!);
-            Assert.Contains(configPath, details, StringComparison.Ordinal);
             Assert.Contains("modelId", details, StringComparison.Ordinal);
             Assert.Contains("listenUrls", details, StringComparison.Ordinal);
             Assert.Contains("passwords", details, StringComparison.Ordinal);
 
-            var generated = ReadConfig(configPath);
-            Assert.Equal("openai-chat", generated.Backend.Kind);
-            Assert.Equal("http://localhost:8888/", generated.Backend.BaseAddress);
-            Assert.Equal("http://0.0.0.0:3510", Assert.Single(generated.ListenUrls!));
-            Assert.Equal(2, generated.Users.Count);
-            Assert.Equal("alice", generated.Users[0].UserId);
-            Assert.Equal("alice123", generated.Users[0].Password);
-            Assert.Equal(".atelia/family-chat/sessions/alice", generated.Users[0].SessionDir);
-            Assert.Equal("REPLACE_WITH_YOUR_LOCAL_MODEL_ID", generated.Users[0].ModelId);
+            var generatedUsers = ReadUsersFile(configPath);
+            Assert.Equal("http://0.0.0.0:3510", Assert.Single(generatedUsers.ListenUrls!));
+            Assert.Equal(2, generatedUsers.Users.Count);
+            Assert.Equal("alice", generatedUsers.Users[0].UserId);
+            Assert.Equal("alice123", generatedUsers.Users[0].Password);
+            Assert.Equal(".atelia/family-chat/sessions/alice", generatedUsers.Users[0].SessionDir);
+
+            var generatedConnections = ReadConnectionsFile(connectionsPath);
+            Assert.Equal("local", generatedConnections.DefaultConnectionId);
+            var connection = Assert.Single(generatedConnections.Connections);
+            Assert.Equal("local", connection.Id);
+            Assert.Equal("REPLACE_WITH_YOUR_LOCAL_MODEL_ID", connection.ModelId);
         }
         finally {
             Directory.Delete(tempDir, recursive: true);
@@ -1316,18 +1340,28 @@ public sealed class FamilyChatServerTests {
         string tempDir = CreateTempDirectory();
         try {
             string configPath = BootstrapTemplate(tempDir);
-            var config = ReadConfig(configPath);
-            var updated = config with {
-                Users = config.Users
+            string configDir = Path.GetDirectoryName(configPath)!;
+            string connectionsPath = Path.Combine(configDir, "connections.json");
+
+            var usersConfig = ReadUsersFile(configPath);
+            var updatedUsers = usersConfig with {
+                Users = usersConfig.Users
                     .Select(
                         user => user with {
-                            ModelId = "model-a",
                             SessionDir = Path.Combine(tempDir, "generated-sessions", user.UserId)
                         }
                     )
                     .ToArray()
             };
-            WriteConfigFile(configPath, updated);
+            File.WriteAllText(configPath, JsonSerializer.Serialize(updatedUsers, new JsonSerializerOptions(JsonSerializerDefaults.Web)));
+
+            var connectionsConfig = ReadConnectionsFile(connectionsPath);
+            var updatedConnections = connectionsConfig with {
+                Connections = connectionsConfig.Connections
+                    .Select(conn => conn with { ModelId = "model-a" })
+                    .ToArray()
+            };
+            File.WriteAllText(connectionsPath, JsonSerializer.Serialize(updatedConnections, new JsonSerializerOptions(JsonSerializerDefaults.Web)));
 
             var scriptFactory = new ScriptedCompletionClientFactory();
             scriptFactory.For("alice").EnqueueText("hello from template");
@@ -1367,8 +1401,6 @@ public sealed class FamilyChatServerTests {
                         "Alice",
                         "",
                         Path.Combine(tempDir, "alice-session"),
-                        "model-a",
-                        "openai-chat/strict",
                         200,
                         "compact-system",
                         "compact-prompt",
@@ -1404,8 +1436,6 @@ public sealed class FamilyChatServerTests {
                         "Alice",
                         "pw1",
                         Path.Combine(tempDir, "alice-session"),
-                        "model-a",
-                        "openai-chat/strict",
                         200,
                         "compact-system",
                         "compact-prompt",
@@ -1416,8 +1446,6 @@ public sealed class FamilyChatServerTests {
                         "Alice 2",
                         "pw2",
                         Path.Combine(tempDir, "alice-session-2"),
-                        "model-b",
-                        "openai-chat/strict",
                         200,
                         "compact-system",
                         "compact-prompt",
@@ -1453,27 +1481,49 @@ public sealed class FamilyChatServerTests {
             );
 
             var (defaultCompactionSystemPrompt, defaultCompactionPrompt) = GetGeneratedTemplateCompactionPrompts();
-            string configPath = WriteRawConfig(
-                tempDir,
-                new {
-                    backend = new {
-                        kind = "openai-chat",
-                        baseAddress = "http://localhost:8000/",
-                        apiKey = (string?)null,
-                    },
-                    users = new[] {
-                        new {
-                            userId = "alice",
-                            displayName = "Alice",
-                            password = "pw1",
-                            sessionDir,
-                            modelId = "model-a",
-                            completionSurfaceId = "openai-chat/strict",
-                            compactionThresholdTokens = 120UL,
-                            systemPrompt = "system",
+            string configDir = Path.Combine(tempDir, ".atelia", "family-chat");
+            Directory.CreateDirectory(configDir);
+            string configPath = Path.Combine(configDir, "config.json");
+
+            File.WriteAllText(
+                configPath,
+                JsonSerializer.Serialize(
+                    new {
+                        users = new[] {
+                            new {
+                                userId = "alice",
+                                displayName = "Alice",
+                                password = "pw1",
+                                sessionDir,
+                                compactionThresholdTokens = 120UL,
+                                systemPrompt = "system"
+                            }
                         }
-                    }
-                }
+                    },
+                    new JsonSerializerOptions(JsonSerializerDefaults.Web)
+                )
+            );
+
+            string connectionsPath = Path.Combine(configDir, "connections.json");
+            File.WriteAllText(
+                connectionsPath,
+                JsonSerializer.Serialize(
+                    new {
+                        connections = new[] {
+                            new {
+                                id = "test",
+                                displayName = "Test",
+                                kind = "openai-chat",
+                                modelId = "model-a",
+                                completionSurfaceId = "openai-chat/strict",
+                                baseAddress = "http://localhost:8000/",
+                                apiKey = "test-key"
+                            }
+                        },
+                        defaultConnectionId = "test"
+                    },
+                    new JsonSerializerOptions(JsonSerializerDefaults.Web)
+                )
             );
 
             var scriptFactory = new ScriptedCompletionClientFactory();
@@ -1540,8 +1590,6 @@ public sealed class FamilyChatServerTests {
                         "Alice",
                         "pw1",
                         sessionDir,
-                        "model-a",
-                        "openai-chat/strict",
                         120,
                         customCompactionSystemPrompt,
                         customCompactionPrompt,
@@ -1588,17 +1636,30 @@ public sealed class FamilyChatServerTests {
         string tempDir = CreateTempDirectory();
         try {
             string configPath = BootstrapTemplate(tempDir);
-            var generated = ReadConfig(configPath);
+            string configDir = Path.GetDirectoryName(configPath)!;
+            string connectionsPath = Path.Combine(configDir, "connections.json");
+
+            var generatedUsers = ReadUsersFile(configPath);
+            var generatedConnections = ReadConnectionsFile(connectionsPath);
 
             string readmePath = Path.Combine("/repos/focus/atelia", "prototypes", "FamilyChat.Server", "README.md");
             string readme = File.ReadAllText(readmePath);
-            string json = ExtractFirstJsonCodeBlock(readme);
-            var documented = JsonSerializer.Deserialize<FamilyChatConfig>(json, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+            var jsonBlocks = Regex.Matches(readme, "```json\\s*(.*?)\\s*```", RegexOptions.Singleline)
+                .Select(m => m.Groups[1].Value)
+                .ToArray();
 
-            Assert.NotNull(documented);
-            Assert.Equal(generated.Backend, documented!.Backend);
-            Assert.Equal(generated.ListenUrls, documented.ListenUrls);
-            Assert.Equal(generated.Users, documented.Users);
+            Assert.True(jsonBlocks.Length >= 2, "README should contain at least two JSON code blocks.");
+
+            var documentedUsers = JsonSerializer.Deserialize<FamilyChatUsersFileConfig>(jsonBlocks[0], new JsonSerializerOptions(JsonSerializerDefaults.Web));
+            var documentedConnections = JsonSerializer.Deserialize<FamilyChatConnectionsFileConfig>(jsonBlocks[1], new JsonSerializerOptions(JsonSerializerDefaults.Web));
+
+            Assert.NotNull(documentedUsers);
+            Assert.NotNull(documentedConnections);
+            Assert.Equal(generatedUsers.ListenUrls, documentedUsers!.ListenUrls);
+            Assert.Equal(generatedUsers.Users, documentedUsers.Users);
+            Assert.Equal(generatedConnections.Connections, documentedConnections!.Connections);
+            Assert.Equal(generatedConnections.DefaultConnectionId, documentedConnections.DefaultConnectionId);
+
             Assert.Contains("dotnet run --project prototypes/FamilyChat.Server", readme, StringComparison.Ordinal);
             Assert.Contains("http://<你的局域网IP>:3510", readme, StringComparison.Ordinal);
             Assert.Contains(".atelia/family-chat/config.json", readme, StringComparison.Ordinal);
@@ -1621,8 +1682,6 @@ public sealed class FamilyChatServerTests {
                         "Alice",
                         "pw1",
                         Path.Combine(tempDir, "alice-session"),
-                        "model-a",
-                        "openai-chat/strict",
                         200,
                         "compact-system",
                         "compact-prompt",
@@ -1696,8 +1755,6 @@ public sealed class FamilyChatServerTests {
                         "Alice",
                         "pw1",
                         sessionDir,
-                        "model-a",
-                        "openai-chat/strict",
                         45,
                         "compact-system",
                         "compact-prompt",
@@ -1759,8 +1816,6 @@ public sealed class FamilyChatServerTests {
                         "Alice",
                         "pw1",
                         Path.Combine(tempDir, "alice-session"),
-                        "model-a",
-                        "openai-chat/strict",
                         20,
                         "compact-system",
                         "compact-prompt",
@@ -1806,8 +1861,6 @@ public sealed class FamilyChatServerTests {
                         "Alice",
                         "pw1",
                         Path.Combine(tempDir, "alice-session"),
-                        "model-a",
-                        "openai-chat/strict",
                         200,
                         "compact-system",
                         "compact-prompt",
@@ -1864,8 +1917,6 @@ public sealed class FamilyChatServerTests {
                         "Alice",
                         "pw1",
                         Path.Combine(tempDir, "alice-session"),
-                        "model-a",
-                        "openai-chat/strict",
                         200,
                         "compact-system",
                         "compact-prompt",
@@ -1939,8 +1990,6 @@ public sealed class FamilyChatServerTests {
                         "Alice",
                         "pw1",
                         Path.Combine(tempDir, "alice-session"),
-                        "model-a",
-                        "openai-chat/strict",
                         200,
                         "compact-system",
                         "compact-prompt",
@@ -2006,8 +2055,6 @@ public sealed class FamilyChatServerTests {
                         "Alice",
                         "pw1",
                         Path.Combine(tempDir, "alice-session"),
-                        "model-a",
-                        "openai-chat/strict",
                         200,
                         "compact-system",
                         "compact-prompt",
@@ -2070,8 +2117,6 @@ public sealed class FamilyChatServerTests {
                         "Alice",
                         "pw1",
                         Path.Combine(tempDir, "alice-session"),
-                        "model-a",
-                        "openai-chat/strict",
                         200,
                         "compact-system",
                         "compact-prompt",
@@ -2133,8 +2178,6 @@ public sealed class FamilyChatServerTests {
                         "Alice",
                         "pw1",
                         Path.Combine(tempDir, "alice-session"),
-                        "model-a",
-                        "openai-chat/strict",
                         200,
                         "compact-system",
                         "compact-prompt",
@@ -2211,7 +2254,7 @@ public sealed class FamilyChatServerTests {
     ) {
         using var response = await client.PostAsJsonAsync(
             "/api/chat/turns",
-            new ChatStreamRequest(message, autoPrefillThinkOpenTag)
+            new ChatStreamRequest(message, autoPrefillThinkOpenTag, ConnectionId: null)
         );
         Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
         var started = await response.Content.ReadFromJsonAsync<StartTurnResponseDto>();
@@ -2317,11 +2360,12 @@ public sealed class FamilyChatServerTests {
         var runtime = new ChatSessionRuntime(
             scriptedClient,
             completionSurfaceId,
+            modelId,
             new ToolRegistry(Array.Empty<ITool>()).CreateSession()
         );
         var engine = await ChatSessionEngine.CreateAsync(
             sessionDir,
-            new ChatSessionCreateOptions(modelId, "system", completionSurfaceId),
+            new ChatSessionCreateOptions("system"),
             runtime
         );
 
@@ -2344,34 +2388,52 @@ public sealed class FamilyChatServerTests {
     private static string WriteConfig(
         string tempDir,
         ulong thresholdTokens,
-        IReadOnlyList<FamilyChatUserConfig> users
+        IReadOnlyList<FamilyChatUserConfig> users,
+        string connectionModelId = "model-a",
+        string connectionSurfaceId = "openai-chat/strict"
     ) {
-        var config = new FamilyChatConfig(
-            new FamilyChatBackendConfig("openai-chat", "http://localhost:8000/"),
-            users
+        string configDir = Path.Combine(tempDir, ".atelia", "family-chat");
+        Directory.CreateDirectory(configDir);
+
+        var usersConfig = new FamilyChatUsersFileConfig(users, ["http://localhost:3510"]);
+        string usersPath = Path.Combine(configDir, "config.json");
+        File.WriteAllText(usersPath, JsonSerializer.Serialize(usersConfig, new JsonSerializerOptions(JsonSerializerDefaults.Web)));
+
+        var connectionsConfig = new FamilyChatConnectionsFileConfig(
+            [
+                new FamilyChatConnectionConfig(
+                    "test",
+                    "Test",
+                    "openai-chat",
+                    connectionModelId,
+                    connectionSurfaceId,
+                    "http://localhost:8000/",
+                    ApiKey: "test-key"
+                )
+            ],
+            "test"
         );
+        string connectionsPath = Path.Combine(configDir, "connections.json");
+        File.WriteAllText(connectionsPath, JsonSerializer.Serialize(connectionsConfig, new JsonSerializerOptions(JsonSerializerDefaults.Web)));
 
-        string configDir = Path.Combine(tempDir, ".atelia", "family-chat");
-        Directory.CreateDirectory(configDir);
-        string path = Path.Combine(configDir, "config.json");
-        WriteConfigFile(path, config);
-        return path;
+        return usersPath;
     }
 
-    private static string WriteRawConfig(string tempDir, object config) {
-        string configDir = Path.Combine(tempDir, ".atelia", "family-chat");
-        Directory.CreateDirectory(configDir);
-        string path = Path.Combine(configDir, "config.json");
-        File.WriteAllText(path, JsonSerializer.Serialize(config, new JsonSerializerOptions(JsonSerializerDefaults.Web)));
-        return path;
+
+
+
+
+    private static FamilyChatUsersFileConfig ReadUsersFile(string path) {
+        var config = JsonSerializer.Deserialize<FamilyChatUsersFileConfig>(
+            File.ReadAllText(path),
+            new JsonSerializerOptions(JsonSerializerDefaults.Web)
+        );
+        Assert.NotNull(config);
+        return config!;
     }
 
-    private static void WriteConfigFile(string path, FamilyChatConfig config) {
-        File.WriteAllText(path, JsonSerializer.Serialize(config, new JsonSerializerOptions(JsonSerializerDefaults.Web)));
-    }
-
-    private static FamilyChatConfig ReadConfig(string path) {
-        var config = JsonSerializer.Deserialize<FamilyChatConfig>(
+    private static FamilyChatConnectionsFileConfig ReadConnectionsFile(string path) {
+        var config = JsonSerializer.Deserialize<FamilyChatConnectionsFileConfig>(
             File.ReadAllText(path),
             new JsonSerializerOptions(JsonSerializerDefaults.Web)
         );
@@ -2392,7 +2454,7 @@ public sealed class FamilyChatServerTests {
         string tempDir = CreateTempDirectory();
         try {
             string configPath = BootstrapTemplate(tempDir);
-            var config = ReadConfig(configPath);
+            var config = ReadUsersFile(configPath);
             var user = config.Users[0];
             Assert.NotNull(user.CompactionSystemPrompt);
             Assert.NotNull(user.CompactionPrompt);
@@ -2412,11 +2474,7 @@ public sealed class FamilyChatServerTests {
         return string.Join(Environment.NewLine, parts);
     }
 
-    private static string ExtractFirstJsonCodeBlock(string markdown) {
-        var match = Regex.Match(markdown, "```json\\s*(.*?)\\s*```", RegexOptions.Singleline);
-        Assert.True(match.Success, "README should contain a JSON code block.");
-        return match.Groups[1].Value;
-    }
+
 
     private sealed class FamilyChatServerFactory(
         string configPath,
@@ -2437,14 +2495,14 @@ public sealed class FamilyChatServerTests {
     }
 
     private sealed class ScriptedCompletionClientFactory : IFamilyChatCompletionClientFactory {
-        private readonly ConcurrentDictionary<string, ScriptedCompletionClient> _clients = new(StringComparer.Ordinal);
+        private readonly ScriptedCompletionClient _sharedClient = new ScriptedCompletionClient("openai-chat-v1");
 
         public ScriptedCompletionClient For(string userId) {
-            return _clients.GetOrAdd(userId, _ => new ScriptedCompletionClient("openai-chat-v1"));
+            return _sharedClient;
         }
 
-        public ICompletionClient Create(FamilyChatBackendConfig backend, FamilyChatUserConfig user)
-            => For(user.UserId);
+        public ICompletionClient Create(FamilyChatConnectionConfig connection)
+            => _sharedClient;
     }
 
     private sealed class ScriptedCompletionClient(string apiSpecId) : ICompletionClient {

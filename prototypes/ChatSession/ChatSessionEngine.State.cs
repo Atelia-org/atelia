@@ -20,14 +20,11 @@ public sealed partial class ChatSessionEngine : IDisposable {
     private readonly Repository _repo;
     private readonly DurableDict<string> _root;
     private readonly DurableDeque _messages;
-    private readonly ChatSessionRuntime _runtime;
+    private ChatSessionRuntime _runtime;
 
     private readonly string _repoDir;
     private readonly string _branchName;
-    private readonly string _apiSpecId;
-    private readonly string _modelId;
     private string _systemPrompt;
-    private readonly string _completionSurfaceId;
 
     private bool _disposed;
 
@@ -46,19 +43,13 @@ public sealed partial class ChatSessionEngine : IDisposable {
         _repoDir = repoDir;
         _branchName = branchName;
 
-        _apiSpecId = root.Get<string>(KeyApiSpecId, out var apiSpecId) == GetIssue.None
-            ? apiSpecId! : throw new InvalidDataException("Root is missing apiSpecId.");
-        _modelId = root.Get<string>(KeyModelId, out var modelId) == GetIssue.None
-            ? modelId! : throw new InvalidDataException("Root is missing modelId.");
         _systemPrompt = root.Get<string>(KeySystemPrompt, out var sp) == GetIssue.None
             ? sp! : throw new InvalidDataException("Root is missing systemPrompt.");
-        _completionSurfaceId = root.Get<string>(KeyCompletionSurfaceId, out var csid) == GetIssue.None
-            ? csid! : throw new InvalidDataException("Root is missing completionSurfaceId.");
     }
 
     public string RepoDir => _repoDir;
     public string BranchName => _branchName;
-    public string ModelId => _modelId;
+    public string ModelId => _runtime.ModelId;
     public string SystemPrompt => _systemPrompt;
     public CommitAddress? PersistedHeadAddress => TryGetPersistedHeadAddress();
     public int DurableMessageCount => _messages.Count;
@@ -73,9 +64,7 @@ public sealed partial class ChatSessionEngine : IDisposable {
         ThrowIfDisposed();
         ArgumentNullException.ThrowIfNull(configSystemPrompt);
 
-        if (string.Equals(_systemPrompt, configSystemPrompt, StringComparison.Ordinal)) {
-            return false;
-        }
+        if (string.Equals(_systemPrompt, configSystemPrompt, StringComparison.Ordinal)) { return false; }
 
         DebugUtil.Info(
             "ChatSession.Persistence",
@@ -88,6 +77,18 @@ public sealed partial class ChatSessionEngine : IDisposable {
         return true;
     }
 
+    /// <summary>
+    /// Replaces the LLM connection used for subsequent turns (and compaction).
+    /// Because the persisted history is provider-neutral, the same session may be
+    /// continued with a different <see cref="ChatSessionRuntime"/> (client / surface /
+    /// model).  Callers must serialize this with turn execution (no concurrent turns).
+    /// </summary>
+    public void UseRuntime(ChatSessionRuntime runtime) {
+        ThrowIfDisposed();
+        ArgumentNullException.ThrowIfNull(runtime);
+        _runtime = runtime;
+    }
+
     public static Task<ChatSessionEngine> CreateAsync(
         string repoDir,
         ChatSessionCreateOptions options,
@@ -95,7 +96,7 @@ public sealed partial class ChatSessionEngine : IDisposable {
         CancellationToken ct = default
     ) {
         ct.ThrowIfCancellationRequested();
-        ValidateCreateArguments(options, runtime);
+        ValidateCreateArguments(runtime);
 
         var repo = Repository.Create(repoDir).Unwrap();
         try {
@@ -104,8 +105,8 @@ public sealed partial class ChatSessionEngine : IDisposable {
             root.Upsert(KeyKind, RootKind);
             root.Upsert(KeySchemaVersion, SchemaVersion);
             root.Upsert(KeyApiSpecId, runtime.CompletionClient.ApiSpecId);
-            root.Upsert(KeyCompletionSurfaceId, options.CompletionSurfaceId);
-            root.Upsert(KeyModelId, options.ModelId);
+            root.Upsert(KeyCompletionSurfaceId, runtime.CompletionSurfaceId);
+            root.Upsert(KeyModelId, runtime.ModelId);
             root.Upsert(KeySystemPrompt, options.SystemPrompt);
 
             var messages = revision.CreateDeque();
@@ -141,7 +142,6 @@ public sealed partial class ChatSessionEngine : IDisposable {
             }
 
             ValidateRoot(root);
-            ValidateSurfaceIdentity(root, runtime);
             ValidateRuntimeCompatibility(runtime);
 
             if (!root.TryGet<DurableDeque>(KeyMessages, out var messages) || messages is null) {
@@ -159,13 +159,7 @@ public sealed partial class ChatSessionEngine : IDisposable {
         }
     }
 
-    private static void ValidateCreateArguments(ChatSessionCreateOptions options, ChatSessionRuntime runtime) {
-        if (runtime.CompletionSurfaceId != options.CompletionSurfaceId) {
-            throw new ArgumentException(
-                $"Runtime CompletionSurfaceId '{runtime.CompletionSurfaceId}' does not match options '{options.CompletionSurfaceId}'."
-            );
-        }
-
+    private static void ValidateCreateArguments(ChatSessionRuntime runtime) {
         if (runtime.CompletionClient.ApiSpecId == GeminiApiSpecId
             && runtime.ToolSession.VisibleDefinitions.Length > 0) { throw new NotSupportedException("Gemini tool loop is not supported in ChatSession v1."); }
     }
@@ -179,22 +173,6 @@ public sealed partial class ChatSessionEngine : IDisposable {
         if (root.Get<string>(KeyKind, out var kind) != GetIssue.None || kind != RootKind) { throw new InvalidDataException("Root is not a chat-session."); }
 
         if (root.Get<long>(KeySchemaVersion, out var version) != GetIssue.None || version != SchemaVersion) { throw new InvalidDataException($"Unsupported schema version. Expected {SchemaVersion}."); }
-    }
-
-    private static void ValidateSurfaceIdentity(DurableDict<string> root, ChatSessionRuntime runtime) {
-        root.Get<string>(KeyCompletionSurfaceId, out var persistedSurfaceId);
-        if (persistedSurfaceId != runtime.CompletionSurfaceId) {
-            throw new InvalidOperationException(
-                $"Runtime surface '{runtime.CompletionSurfaceId}' does not match persisted surface '{persistedSurfaceId}'."
-            );
-        }
-
-        root.Get<string>(KeyApiSpecId, out var persistedApiSpecId);
-        if (persistedApiSpecId != runtime.CompletionClient.ApiSpecId) {
-            throw new InvalidOperationException(
-                $"Runtime API spec '{runtime.CompletionClient.ApiSpecId}' does not match persisted '{persistedApiSpecId}'."
-            );
-        }
     }
 
     private void Commit() {

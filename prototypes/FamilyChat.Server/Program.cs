@@ -14,6 +14,7 @@ string configuredConfigPath = builder.Configuration["FamilyChat:ConfigPath"] ?? 
 string resolvedConfigPath = Path.GetFullPath(configuredConfigPath, builder.Environment.ContentRootPath);
 FamilyChatConfigBootstrapper.EnsureExistsOrBootstrap(resolvedConfigPath);
 var config = FamilyChatConfigLoader.Load(resolvedConfigPath);
+string assetVersion = FamilyChatStaticAssetVersion.BuildToken(builder.Environment.ContentRootPath);
 
 if (config.ListenUrls is { Count: > 0 }) {
     builder.WebHost.UseUrls(config.ListenUrls.ToArray());
@@ -21,6 +22,7 @@ if (config.ListenUrls is { Count: > 0 }) {
 
 builder.Services.AddSingleton(config);
 builder.Services.AddSingleton<IFamilyChatCompletionClientFactory, DefaultFamilyChatCompletionClientFactory>();
+builder.Services.AddSingleton<FamilyChatConnectionRegistry>();
 builder.Services.AddSingleton<IFamilyChatUserMessageNormalizer>(_ => FamilyChatUserMessageNormalizerFactory.CreateFromEnvironment());
 builder.Services.AddSingleton<FamilyChatHostService>();
 builder.Services.AddAuthentication(CookieScheme)
@@ -55,7 +57,7 @@ app.MapGet(
     "/login",
     (HttpRequest request) => {
         bool invalidCredentials = string.Equals(request.Query["error"], "invalid", StringComparison.Ordinal);
-        return Results.Content(FamilyChatHtml.RenderLoginPage(invalidCredentials), "text/html; charset=utf-8");
+        return Results.Content(FamilyChatHtml.RenderLoginPage(invalidCredentials, assetVersion), "text/html; charset=utf-8");
     }
 );
 
@@ -68,7 +70,7 @@ app.MapPost(
 
         if (!hostService.TryGetUser(userId, out var user) || !hostService.ValidatePassword(user, password)) {
             return Results.Content(
-                FamilyChatHtml.RenderLoginPage(invalidCredentials: true),
+                FamilyChatHtml.RenderLoginPage(invalidCredentials: true, assetVersion),
                 "text/html; charset=utf-8",
                 Encoding.UTF8,
                 StatusCodes.Status401Unauthorized
@@ -103,12 +105,12 @@ app.MapPost(
 
 app.MapGet(
     "/",
-    (ClaimsPrincipal user, FamilyChatHostService hostService) => {
+    (ClaimsPrincipal user, FamilyChatHostService hostService, FamilyChatConnectionRegistry connections) => {
         string userId = user.FindFirstValue(FamilyChatClaimTypes.UserId)
             ?? throw new InvalidOperationException("Authenticated principal is missing user id.");
         if (!hostService.TryGetUser(userId, out var configUser)) { return Results.Unauthorized(); }
 
-        return Results.Content(FamilyChatHtml.RenderAppPage(configUser), "text/html; charset=utf-8");
+        return Results.Content(FamilyChatHtml.RenderAppPage(configUser, connections, assetVersion), "text/html; charset=utf-8");
     }
 ).RequireAuthorization();
 
@@ -146,6 +148,7 @@ api.MapPost(
         HttpContext httpContext,
         ClaimsPrincipal user,
         FamilyChatHostService hostService,
+        FamilyChatConnectionRegistry connections,
         IHostApplicationLifetime applicationLifetime,
         ChatStreamRequest request
     ) => {
@@ -157,14 +160,15 @@ api.MapPost(
 
         if (!session.TurnLock.Wait(0)) { return BuildTurnBusyConflict(hostService, session); }
 
+        var connection = connections.Resolve(request.ConnectionId);
         bool autoPrefillThinkOpenTag = request.AutoPrefillThinkOpenTag
-            ?? FamilyChatThinkRepairDefaults.ShouldEnableForModel(session.User.ModelId);
+            ?? FamilyChatThinkRepairDefaults.ShouldEnableForModel(connection.ModelId);
         var liveTurn = hostService.StartTurn(
             session,
             request.Message,
-            new FamilyChatTurnOptions(autoPrefillThinkOpenTag)
+            new FamilyChatTurnOptions(autoPrefillThinkOpenTag, connection.Id)
         );
-        DebugUtil.Info("FamilyChat.Api", $"POST /api/chat/turns user={userId}, turnId={liveTurn.TurnId}, head={session.Engine.PersistedHeadAddress}");
+        DebugUtil.Info("FamilyChat.Api", $"POST /api/chat/turns user={userId}, turnId={liveTurn.TurnId}, connectionId={connection.Id}, head={session.Engine.PersistedHeadAddress}");
         return StartAcceptedTurn(session, liveTurn, hostService, applicationLifetime);
     }
 );

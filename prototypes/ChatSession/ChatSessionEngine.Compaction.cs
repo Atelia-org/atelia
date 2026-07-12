@@ -11,7 +11,6 @@ public sealed partial class ChatSessionEngine {
         CancellationToken ct = default
     ) {
         ThrowIfDisposed();
-        ValidateRuntimeSurfaceIdentity();
 
         var messages = MessageRecord.ToHistoryMessages(_messages);
         int splitIndex = FindHalfContextSplitPoint(messages);
@@ -149,7 +148,7 @@ public sealed partial class ChatSessionEngine {
         var summarizeMessages = ProjectForSummarization(prefix, summarizePrompt);
 
         var completionRequest = new CompletionRequest(
-            ModelId: _modelId,
+            ModelId: _runtime.ModelId,
             SystemPrompt: summarizeSystemPrompt,
             Context: summarizeMessages,
             Tools: System.Collections.Immutable.ImmutableArray<ToolDefinition>.Empty

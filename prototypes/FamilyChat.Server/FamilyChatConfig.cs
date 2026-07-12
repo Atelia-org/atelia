@@ -2,18 +2,44 @@ using System.Text.Json.Serialization;
 
 namespace Atelia.FamilyChat.Server;
 
+/// <summary>
+/// Merged runtime configuration. Users (identity + session history + behavior) are
+/// loaded from config.json; LLM connections are loaded from a sibling connections.json.
+/// The two are intentionally decoupled: a user account owns a session history, while a
+/// connection describes an LLM endpoint that can be chosen (and switched) at runtime.
+/// </summary>
 public sealed record FamilyChatConfig(
-    FamilyChatBackendConfig Backend,
+    IReadOnlyList<FamilyChatUserConfig> Users,
+    IReadOnlyList<FamilyChatConnectionConfig> Connections,
+    string DefaultConnectionId,
+    IReadOnlyList<string>? ListenUrls = null
+);
+
+/// <summary>Shape of config.json: user accounts + server settings, with no LLM binding.</summary>
+public sealed record FamilyChatUsersFileConfig(
     IReadOnlyList<FamilyChatUserConfig> Users,
     IReadOnlyList<string>? ListenUrls = null
 );
 
-public sealed record FamilyChatBackendConfig(
+/// <summary>Shape of connections.json: the independent LLM connection catalog.</summary>
+public sealed record FamilyChatConnectionsFileConfig(
+    IReadOnlyList<FamilyChatConnectionConfig> Connections,
+    string? DefaultConnectionId = null
+);
+
+public sealed record FamilyChatConnectionConfig(
+    // Stable identifier used by the UI radio buttons and turn requests.
+    string Id,
+    // Human-facing label shown in the connection picker.
+    string DisplayName,
+    // Backend family: openai-chat / openai-responses / anthropic.
     string Kind,
+    string ModelId,
+    string CompletionSurfaceId,
     string BaseAddress,
     string? ApiKey = null,
-    // Name of an environment variable whose value overrides BaseAddress at load
-    // time. Useful for keeping machine-specific URLs out of the config file.
+    // Name of an environment variable whose value overrides BaseAddress at load time.
+    // Useful for keeping machine-specific URLs out of the config file.
     string? BaseAddressEnv = null,
     // Name of an environment variable whose value overrides ApiKey at load time.
     // Preferred over inline ApiKey to keep secrets out of the config file.
@@ -25,28 +51,21 @@ public sealed record FamilyChatUserConfig(
     string DisplayName,
     string Password,
     string SessionDir,
-    string ModelId,
-    string CompletionSurfaceId,
     ulong CompactionThresholdTokens,
     string? CompactionSystemPrompt,
     string? CompactionPrompt,
     string SystemPrompt = "",
-    // Optional path to a markdown (or plain text) file whose content overrides
-    // the inline SystemPrompt. Resolved relative to the config file's directory
-    // when not absolute. Convenient for authoring long system prompts.
-    string? SystemPromptFile = null,
-    // Optional per-user backend override. When non-empty, this user's completion
-    // requests are routed to this BaseAddress instead of the global Backend.BaseAddress.
-    // Useful when different users should talk to different LLM providers.
-    string? BaseAddress = null,
-    // Optional per-user API key. When non-empty, used instead of Backend.ApiKey.
-    string? ApiKey = null,
-    // Name of an environment variable whose value overrides the per-user BaseAddress
-    // at load time. Resolved after the inline BaseAddress, so env wins if both set.
-    string? BaseAddressEnv = null,
-    // Name of an environment variable whose value overrides the per-user ApiKey
-    // at load time.
-    string? ApiKeyEnv = null
+    // Optional path to a markdown (or plain text) file whose content overrides the
+    // inline SystemPrompt. Resolved relative to the config file's directory when not
+    // absolute. Convenient for authoring long system prompts.
+    string? SystemPromptFile = null
+);
+
+public sealed record FamilyChatConnectionInfoDto(
+    string Id,
+    string DisplayName,
+    string ModelId,
+    bool DefaultAutoPrefillThinkOpenTag
 );
 
 public sealed record FamilyChatMeDto(
@@ -72,7 +91,8 @@ public sealed record AssistantMessageDto(
 
 public sealed record ChatStreamRequest(
     [property: JsonPropertyName("message")] string Message,
-    [property: JsonPropertyName("autoPrefillThinkOpenTag")] bool? AutoPrefillThinkOpenTag = null
+    [property: JsonPropertyName("autoPrefillThinkOpenTag")] bool? AutoPrefillThinkOpenTag = null,
+    [property: JsonPropertyName("connectionId")] string? ConnectionId = null
 );
 
 public sealed record PopLatestTurnResponseDto(
@@ -90,7 +110,8 @@ public sealed record CurrentTurnDto(
     string? TurnId = null,
     string? UserMessage = null,
     string? Phase = null,
-    bool? AutoPrefillThinkOpenTag = null
+    bool? AutoPrefillThinkOpenTag = null,
+    string? ConnectionId = null
 );
 
 public sealed record StreamEventDto(

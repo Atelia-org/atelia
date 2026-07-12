@@ -18,15 +18,14 @@ public sealed class ChatSessionQuickStartSamplesTests {
             var runtime = new ChatSessionRuntime(
                 CompletionClient: completionClient,
                 CompletionSurfaceId: "openai-chat/strict",
+                ModelId: "model-a",
                 ToolSession: new ToolRegistry(Array.Empty<ITool>()).CreateSession()
             );
 
             using (var engine = await ChatSessionEngine.CreateAsync(
                        repoDir,
                        new ChatSessionCreateOptions(
-                           ModelId: "model-a",
-                           SystemPrompt: "You are a helpful assistant.",
-                           CompletionSurfaceId: "openai-chat/strict"
+                           SystemPrompt: "You are a helpful assistant."
                        ),
                        runtime
                    )) {
@@ -43,6 +42,7 @@ public sealed class ChatSessionQuickStartSamplesTests {
                 new ChatSessionRuntime(
                     CompletionClient: new ScriptedCompletionClient("openai-chat-v1"),
                     CompletionSurfaceId: "openai-chat/strict",
+                    ModelId: "model-a",
                     ToolSession: new ToolRegistry(Array.Empty<ITool>()).CreateSession()
                 )
             );
@@ -109,6 +109,7 @@ public sealed class ChatSessionQuickStartSamplesTests {
             var runtime = new ChatSessionRuntime(
                 CompletionClient: completionClient,
                 CompletionSurfaceId: "openai-chat/strict",
+                ModelId: "model-a",
                 ToolSession: new ToolRegistry([echoTool]).CreateSession(
                     items: new Dictionary<string, object?> { ["scope"] = "demo" }
                 )
@@ -117,9 +118,7 @@ public sealed class ChatSessionQuickStartSamplesTests {
             using var engine = await ChatSessionEngine.CreateAsync(
                 repoDir,
                 new ChatSessionCreateOptions(
-                    ModelId: "model-a",
-                    SystemPrompt: "You are a coding assistant.",
-                    CompletionSurfaceId: "openai-chat/strict"
+                    SystemPrompt: "You are a coding assistant."
                 ),
                 runtime
             );

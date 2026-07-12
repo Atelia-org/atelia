@@ -15,7 +15,6 @@ public sealed partial class ChatSessionEngine {
         CancellationToken ct = default
     ) {
         ThrowIfDisposed();
-        ValidateRuntimeSurfaceIdentity();
 
         var session = _runtime.ToolSession;
         var tools = session.VisibleDefinitions;
@@ -37,7 +36,7 @@ public sealed partial class ChatSessionEngine {
             ct.ThrowIfCancellationRequested();
 
             var request = new CompletionRequest(
-                ModelId: _modelId,
+                ModelId: _runtime.ModelId,
                 SystemPrompt: _systemPrompt,
                 Context: workingContext,
                 Tools: tools
@@ -98,24 +97,10 @@ public sealed partial class ChatSessionEngine {
 
         return new ChatSessionTurnResult(
             Message: finalMessage,
-            Invocation: invocation ?? new CompletionDescriptor("none", "none", _modelId),
+            Invocation: invocation ?? new CompletionDescriptor("none", "none", _runtime.ModelId),
             Errors: errors?.AsReadOnly(),
             ToolCallsExecuted: totalToolCallsExecuted
         );
-    }
-
-    private void ValidateRuntimeSurfaceIdentity() {
-        if (_runtime.CompletionClient.ApiSpecId != _apiSpecId) {
-            throw new InvalidOperationException(
-                $"Runtime API spec changed: '{_runtime.CompletionClient.ApiSpecId}' vs persisted '{_apiSpecId}'."
-            );
-        }
-
-        if (_runtime.CompletionSurfaceId != _completionSurfaceId) {
-            throw new InvalidOperationException(
-                $"Runtime surface changed: '{_runtime.CompletionSurfaceId}' vs persisted '{_completionSurfaceId}'."
-            );
-        }
     }
 
     private ActionMessage SanitizeForPersistence(ActionMessage message) {

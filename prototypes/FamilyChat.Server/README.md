@@ -1,6 +1,8 @@
 # FamilyChat.Server
 
-家庭局域网里的单会话 Chat 服务。每个账号绑定一个固定 `ChatSession`，没有“新建会话”与历史翻页，只显示最近 `6` 个可见轮次。
+家庭局域网里的单会话 Chat 服务。每个**账号**绑定一份固定的会话历史（`ChatSession`），没有“新建会话”与历史翻页，只显示最近 `6` 个可见轮次。
+
+**账号与 LLM 连接解耦**：账号只负责身份、会话历史与行为（系统提示词、压缩阈值）；可用的 LLM 连接（endpoint / 模型 / surface）在独立的 `connections.json` 中配置，前端可用单选按钮在运行时切换，同一份历史可以用不同连接继续。
 
 ## 快速开始
 
@@ -24,9 +26,9 @@ http://0.0.0.0:3510
 
 通常只需要改这几项就能开始使用：
 
-1. 把两个用户的 `modelId` 改成你本地真实加载的模型名。
-2. 把模板里的弱口令 `alice123` / `bob123` 改掉。
-3. 如果你不想监听全部网卡，就把 `listenUrls` 改成你想绑定的地址。
+1. 在 `connections.json` 里把连接的 `modelId` 改成你本地真实加载的模型名，并按需修改 `baseAddress` / `apiKey`（或改用 `baseAddressEnv` / `apiKeyEnv` 从环境变量注入）。
+2. 把 `config.json` 模板里的弱口令 `alice123` / `bob123` 改掉。
+3. 如果你不想监听全部网卡，就把 `config.json` 的 `listenUrls` 改成你想绑定的地址。
 
 `modelId` 如果保留模板占位值，服务仍然能启动，但真正发送消息时会由底层 LLM backend 报“模型不存在”之类的错误。
 
@@ -42,19 +44,12 @@ http://0.0.0.0:3510
 
 ```json
 {
-  "backend": {
-    "kind": "openai-chat",
-    "baseAddress": "http://localhost:8888/",
-    "apiKey": null
-  },
   "users": [
     {
       "userId": "alice",
       "displayName": "Alice",
       "password": "alice123",
       "sessionDir": ".atelia/family-chat/sessions/alice",
-      "modelId": "REPLACE_WITH_YOUR_LOCAL_MODEL_ID",
-      "completionSurfaceId": "openai-chat/sglang-compatible",
       "systemPrompt": "你是家庭局域网里的私人助手。优先用简洁、直接、可信的中文回答。不确定时明确说明不确定，不编造细节。",
       "compactionThresholdTokens": 32000,
       "compactionSystemPrompt": "你是一位专业的游戏书吏（Game Scribe），负责将漫长的冒险历程提炼成引人入胜的“前情提要”。你的任务不是简单地压缩文本，而是要捕捉故事的核心戏剧性：\n  1. **聚焦动机与冲突**：识别并强调每个主要角色的核心目标、他们遇到的阻碍，以及角色之间的内在或外在冲突。\n  2. **保留关键“变化”**：记录世界状态、人物关系或角色心境发生的关键转折点。\n  3. **提炼悬念**：清晰地列出当前故事中悬而未决的问题、未解的谜团或迫在眉睫的危机。\n  4. **使用第三人称**：始终使用角色的名字进行叙述，保持客观的史官视角。",
@@ -65,8 +60,6 @@ http://0.0.0.0:3510
       "displayName": "Bob",
       "password": "bob123",
       "sessionDir": ".atelia/family-chat/sessions/bob",
-      "modelId": "REPLACE_WITH_YOUR_LOCAL_MODEL_ID",
-      "completionSurfaceId": "openai-chat/sglang-compatible",
       "systemPrompt": "你是家庭局域网里的私人助手。优先用简洁、直接、可信的中文回答。不确定时明确说明不确定，不编造细节。",
       "compactionThresholdTokens": 32000,
       "compactionSystemPrompt": "你是一位专业的游戏书吏（Game Scribe），负责将漫长的冒险历程提炼成引人入胜的“前情提要”。你的任务不是简单地压缩文本，而是要捕捉故事的核心戏剧性：\n  1. **聚焦动机与冲突**：识别并强调每个主要角色的核心目标、他们遇到的阻碍，以及角色之间的内在或外在冲突。\n  2. **保留关键“变化”**：记录世界状态、人物关系或角色心境发生的关键转折点。\n  3. **提炼悬念**：清晰地列出当前故事中悬而未决的问题、未解的谜团或迫在眉睫的危机。\n  4. **使用第三人称**：始终使用角色的名字进行叙述，保持客观的史官视角。",
@@ -78,6 +71,27 @@ http://0.0.0.0:3510
   ]
 }
 ```
+
+连接目录 `connections.json`（与 `config.json` 同目录）自动生成的模板示例：
+
+```json
+{
+  "defaultConnectionId": "local",
+  "connections": [
+    {
+      "id": "local",
+      "displayName": "本地模型",
+      "kind": "openai-chat",
+      "modelId": "REPLACE_WITH_YOUR_LOCAL_MODEL_ID",
+      "completionSurfaceId": "openai-chat/sglang-compatible",
+      "baseAddress": "http://localhost:8888/",
+      "apiKey": "sk-local-placeholder"
+    }
+  ]
+}
+```
+
+前端会按 `connections` 渲染单选按钮，登录后默认选中 `defaultConnectionId`，聊天时可随时切换；账号历史与所选连接无关，可用任意连接继续同一段历史。每条连接可用 `baseAddressEnv` / `apiKeyEnv` 从环境变量注入 URL 与密钥，避免把密钥写进文件。
 
 其中 `compactionSystemPrompt` 和 `compactionPrompt` 现在是可选的 override 字段：
 
@@ -116,11 +130,11 @@ http://0.0.0.0:3510
 
 针对部分本地小模型偶发出现的“开启 thinking 后，本该先输出 `<think>`，却直接输出 thinking 内容，最终卡死在无限 think 循环里”的问题，页面输入区下方现在提供了一个 checkbox：
 
-- `modelId` 为 `unsloth/qwen3.6` 时，该开关默认开启。
+- `modelId` 为 `unsloth/qwen3.6` 时，该开关默认开启（依据当前所选连接的 `modelId`）。
 - 开启后，服务端会在“本轮用户消息之后、真正发给模型之前”临时插入一条仅包含 `<think>` 的 assistant prefill，让模型工作在“从 `<think>` 之后继续续写”的模式。
 - 与此同时，本轮流式显示会按“已经进入 think 块”来过滤文本，因此模型后续输出的 thinking 内容不会直接泄漏到可见正文里；若最终返回里仍然缺少开头 `<think>`，服务端还会在写入历史前再做一次兜底修复。
 - 这是 `FamilyChat.Server` 面向本地模型的专用兼容层，不追求通用跨模型兼容；若你的模型不需要它，可以手动取消勾选。
-- 勾选状态按“用户 + modelId”保存在浏览器本地。
+- 勾选状态按“用户 + 连接”保存在浏览器本地。
 
 同时，生成中新增了 `Stop` 按钮：
 

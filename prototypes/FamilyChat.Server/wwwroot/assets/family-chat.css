@@ -72,6 +72,46 @@ body {
   font-family: "IBM Plex Mono", "Maple Mono", monospace;
 }
 
+.connection-picker {
+  border: 1px solid #e0d7c5;
+  border-radius: 14px;
+  padding: 10px 14px 12px;
+  margin: 0 0 12px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+}
+
+.connection-picker legend {
+  padding: 0 6px;
+  font-size: 0.8rem;
+  color: #7a7060;
+}
+
+.connection-option {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  margin: 0;
+  cursor: pointer;
+}
+
+.connection-option input[type="radio"] {
+  width: auto;
+  margin: 0;
+}
+
+.connection-option .connection-name {
+  color: #4d4639;
+  font-weight: 600;
+}
+
+.connection-option .connection-model {
+  color: #9a8f7c;
+  font-size: 0.8rem;
+  font-family: "IBM Plex Mono", "Maple Mono", monospace;
+}
+
 .login-form {
   display: grid;
   gap: 12px;

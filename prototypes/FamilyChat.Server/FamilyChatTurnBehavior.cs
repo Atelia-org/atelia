@@ -5,7 +5,8 @@ using Atelia.Diagnostics;
 namespace Atelia.FamilyChat.Server;
 
 internal sealed record FamilyChatTurnOptions(
-    bool AutoPrefillThinkOpenTag
+    bool AutoPrefillThinkOpenTag,
+    string ConnectionId
 );
 
 internal sealed record FamilyChatTurnBehavior(

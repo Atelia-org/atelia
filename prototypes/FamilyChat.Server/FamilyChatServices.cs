@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Encodings.Web;
@@ -16,41 +17,30 @@ using Atelia.Completion.Transport;
 namespace Atelia.FamilyChat.Server;
 
 public interface IFamilyChatCompletionClientFactory {
-    ICompletionClient Create(FamilyChatBackendConfig backend, FamilyChatUserConfig user);
+    ICompletionClient Create(FamilyChatConnectionConfig connection);
 }
 
 public sealed class DefaultFamilyChatCompletionClientFactory : IFamilyChatCompletionClientFactory {
-    public ICompletionClient Create(FamilyChatBackendConfig backend, FamilyChatUserConfig user) {
-        ArgumentNullException.ThrowIfNull(backend);
-        ArgumentNullException.ThrowIfNull(user);
+    public ICompletionClient Create(FamilyChatConnectionConfig connection) {
+        ArgumentNullException.ThrowIfNull(connection);
 
-        // Per-user backend override: a user may specify its own BaseAddress/ApiKey
-        // to route to a different LLM provider than the global backend. Falls back
-        // to the global backend values when the user-level fields are absent.
-        string effectiveBaseAddress = !string.IsNullOrWhiteSpace(user.BaseAddress)
-            ? user.BaseAddress!
-            : backend.BaseAddress;
-        string? effectiveApiKey = !string.IsNullOrWhiteSpace(user.ApiKey)
-            ? user.ApiKey
-            : backend.ApiKey;
-
-        var httpClient = CompletionHttpTransportFactory.CreateLiveClient(new Uri(effectiveBaseAddress, UriKind.Absolute));
-        return backend.Kind.Trim().ToLowerInvariant() switch {
+        var httpClient = CompletionHttpTransportFactory.CreateLiveClient(new Uri(connection.BaseAddress, UriKind.Absolute));
+        return connection.Kind.Trim().ToLowerInvariant() switch {
             "openai-chat" => new OpenAIChatClient(
-                apiKey: effectiveApiKey,
+                apiKey: connection.ApiKey,
                 httpClient: httpClient,
-                dialect: ResolveOpenAiChatDialect(user.CompletionSurfaceId)
+                dialect: ResolveOpenAiChatDialect(connection.CompletionSurfaceId)
             // , options: OpenAIChatClientOptions.QwenThinkingDisabled()
             ),
             "openai-responses" => new OpenAIResponsesClient(
-                apiKey: effectiveApiKey,
+                apiKey: connection.ApiKey,
                 httpClient: httpClient
             ),
             "anthropic" => new AnthropicClient(
-                apiKey: effectiveApiKey,
+                apiKey: connection.ApiKey,
                 httpClient: httpClient
             ),
-            _ => throw new InvalidOperationException($"Unsupported backend kind '{backend.Kind}'.")
+            _ => throw new InvalidOperationException($"Unsupported connection kind '{connection.Kind}'.")
         };
     }
 
@@ -64,23 +54,76 @@ public sealed class DefaultFamilyChatCompletionClientFactory : IFamilyChatComple
     }
 }
 
+/// <summary>
+/// Owns the catalog of LLM connections and lazily builds + caches one decorated
+/// <see cref="ICompletionClient"/> per connection id. Clients are shared across all
+/// users and turns; per-turn behavior (e.g. think-tag repair) flows separately through
+/// <see cref="FamilyChatCompletionExecutionContext"/>, so a single client instance is safe to reuse.
+/// </summary>
+public sealed class FamilyChatConnectionRegistry : IDisposable {
+    private readonly IFamilyChatCompletionClientFactory _factory;
+    private readonly IReadOnlyDictionary<string, FamilyChatConnectionConfig> _byId;
+    private readonly ConcurrentDictionary<string, ICompletionClient> _clients = new(StringComparer.Ordinal);
+
+    public FamilyChatConnectionRegistry(FamilyChatConfig config, IFamilyChatCompletionClientFactory factory) {
+        ArgumentNullException.ThrowIfNull(config);
+        _factory = factory ?? throw new ArgumentNullException(nameof(factory));
+        Connections = config.Connections;
+        DefaultConnectionId = config.DefaultConnectionId;
+        _byId = config.Connections.ToDictionary(static x => x.Id, StringComparer.Ordinal);
+    }
+
+    public IReadOnlyList<FamilyChatConnectionConfig> Connections { get; }
+
+    public string DefaultConnectionId { get; }
+
+    public bool TryGet(string id, out FamilyChatConnectionConfig connection)
+        => _byId.TryGetValue(id, out connection!);
+
+    /// <summary>Resolves the requested connection id, falling back to the default when absent or unknown.</summary>
+    public FamilyChatConnectionConfig Resolve(string? requestedId) {
+        if (!string.IsNullOrWhiteSpace(requestedId) && _byId.TryGetValue(requestedId, out var requested)) { return requested; }
+
+        return _byId.TryGetValue(DefaultConnectionId, out var fallback)
+            ? fallback
+            : throw new InvalidOperationException($"Default connection '{DefaultConnectionId}' is not registered.");
+    }
+
+    public ICompletionClient GetClient(string connectionId) {
+        if (!_byId.TryGetValue(connectionId, out var connection)) { throw new InvalidOperationException($"Unknown connection '{connectionId}'."); }
+
+        return _clients.GetOrAdd(
+            connection.Id,
+            static (_, state) => new FamilyChatCompletionClientDecorator(state.Factory.Create(state.Connection)),
+            (Factory: _factory, Connection: connection)
+        );
+    }
+
+    public void Dispose() {
+        foreach (var client in _clients.Values) {
+            if (client is IDisposable disposable) {
+                disposable.Dispose();
+            }
+        }
+    }
+}
+
 public sealed class FamilyChatHostService : IAsyncDisposable {
     private const string UserMessagePrefix = "玩家角色试图采取如下动作：\n```\n";
     private const string UserMessageSuffix = "\n```\n";
 
-    private readonly FamilyChatConfig _config;
-    private readonly IFamilyChatCompletionClientFactory _completionClientFactory;
+    private readonly FamilyChatConnectionRegistry _connections;
     private readonly IFamilyChatUserMessageNormalizer _userMessageNormalizer;
     private readonly ConcurrentDictionary<string, Lazy<Task<UserSessionHost>>> _sessions = new(StringComparer.Ordinal);
     private readonly IReadOnlyDictionary<string, FamilyChatUserConfig> _users;
 
     public FamilyChatHostService(
         FamilyChatConfig config,
-        IFamilyChatCompletionClientFactory completionClientFactory,
+        FamilyChatConnectionRegistry connections,
         IFamilyChatUserMessageNormalizer userMessageNormalizer
     ) {
-        _config = config ?? throw new ArgumentNullException(nameof(config));
-        _completionClientFactory = completionClientFactory ?? throw new ArgumentNullException(nameof(completionClientFactory));
+        ArgumentNullException.ThrowIfNull(config);
+        _connections = connections ?? throw new ArgumentNullException(nameof(connections));
         _userMessageNormalizer = userMessageNormalizer ?? throw new ArgumentNullException(nameof(userMessageNormalizer));
         _users = config.Users.ToDictionary(x => x.UserId, StringComparer.Ordinal);
     }
@@ -196,7 +239,8 @@ public sealed class FamilyChatHostService : IAsyncDisposable {
                 currentTurn.TurnId,
                 currentTurn.UserMessage,
                 currentTurn.Phase,
-                currentTurn.Options.AutoPrefillThinkOpenTag
+                currentTurn.Options.AutoPrefillThinkOpenTag,
+                currentTurn.Options.ConnectionId
             );
         DebugUtil.Info(
             "FamilyChat.Session",
@@ -276,6 +320,16 @@ public sealed class FamilyChatHostService : IAsyncDisposable {
             "FamilyChat.Session",
             $"RunTurnAsync start: user={host.User.UserId}, turnId={liveTurn.TurnId}, input={Preview(liveTurn.UserMessage)}, {host.Engine.GetDebugStateSummary()}",
             eventKind: DebugEventKind.Start
+        );
+
+        // Bind this turn to the connection the user selected in the UI (falling back to
+        // the default). Because the persisted history is provider-neutral, swapping the
+        // runtime between turns is safe; post-generation compaction reuses the same one.
+        var connection = _connections.Resolve(liveTurn.Options.ConnectionId);
+        host.Engine.UseRuntime(BuildRuntime(connection, host.ToolSession));
+        DebugUtil.Info(
+            "FamilyChat.Session",
+            $"RunTurnAsync connection: user={host.User.UserId}, turnId={liveTurn.TurnId}, connectionId={connection.Id}, model={connection.ModelId}, surface={connection.CompletionSurfaceId}"
         );
 
         string effectiveUserMessage = await NormalizeUserMessageAsync(liveTurn, ct).ConfigureAwait(false);
@@ -424,19 +478,10 @@ public sealed class FamilyChatHostService : IAsyncDisposable {
     }
 
     private async Task<UserSessionHost> CreateSessionAsync(FamilyChatUserConfig user, CancellationToken ct) {
-        var completionClient = new FamilyChatCompletionClientDecorator(
-            _completionClientFactory.Create(_config.Backend, user)
-        );
-        var runtime = new ChatSessionRuntime(
-            CompletionClient: completionClient,
-            CompletionSurfaceId: user.CompletionSurfaceId,
-            ToolSession: new ToolRegistry(Array.Empty<ITool>()).CreateSession()
-        );
-        var createOptions = new ChatSessionCreateOptions(
-            ModelId: user.ModelId,
-            SystemPrompt: user.SystemPrompt,
-            CompletionSurfaceId: user.CompletionSurfaceId
-        );
+        var toolSession = new ToolRegistry(Array.Empty<ITool>()).CreateSession();
+        var bootstrapConnection = _connections.Resolve(null);
+        var runtime = BuildRuntime(bootstrapConnection, toolSession);
+        var createOptions = new ChatSessionCreateOptions(SystemPrompt: user.SystemPrompt);
 
         var sessionDir = Path.GetFullPath(user.SessionDir);
         ChatSessionEngine engine;
@@ -455,10 +500,18 @@ public sealed class FamilyChatHostService : IAsyncDisposable {
             DebugUtil.Info("FamilyChat.Session", $"CreateSessionAsync: system prompt synced from config for user={user.UserId}");
         }
 
-        DebugUtil.Info("FamilyChat.Session", $"CreateSessionAsync: user={user.UserId}, sessionDir={sessionDir}, {engine.GetDebugStateSummary()}");
+        DebugUtil.Info("FamilyChat.Session", $"CreateSessionAsync: user={user.UserId}, sessionDir={sessionDir}, bootstrapConnection={bootstrapConnection.Id}, {engine.GetDebugStateSummary()}");
 
-        return new UserSessionHost(user, engine, completionClient);
+        return new UserSessionHost(user, engine, toolSession);
     }
+
+    private ChatSessionRuntime BuildRuntime(FamilyChatConnectionConfig connection, ToolSession toolSession)
+        => new ChatSessionRuntime(
+            CompletionClient: _connections.GetClient(connection.Id),
+            CompletionSurfaceId: connection.CompletionSurfaceId,
+            ModelId: connection.ModelId,
+            ToolSession: toolSession
+        );
 
     private async Task<string> NormalizeUserMessageAsync(FamilyChatLiveTurn liveTurn, CancellationToken ct) {
         string original = liveTurn.UserMessage;
@@ -601,7 +654,6 @@ public sealed class FamilyChatHostService : IAsyncDisposable {
 }
 
 public sealed class UserSessionHost : IAsyncDisposable {
-    private readonly ICompletionClient _completionClient;
     private readonly object _turnStateGate = new();
     private FamilyChatLiveTurn? _currentTurn;
     private FamilyChatLiveTurn? _lastTurn;
@@ -609,16 +661,18 @@ public sealed class UserSessionHost : IAsyncDisposable {
     public UserSessionHost(
         FamilyChatUserConfig user,
         ChatSessionEngine engine,
-        ICompletionClient completionClient
+        ToolSession toolSession
     ) {
         User = user;
         Engine = engine;
-        _completionClient = completionClient;
+        ToolSession = toolSession;
     }
 
     public FamilyChatUserConfig User { get; }
 
     public ChatSessionEngine Engine { get; }
+
+    public ToolSession ToolSession { get; }
 
     public SemaphoreSlim TurnLock { get; } = new(1, 1);
 
@@ -667,14 +721,13 @@ public sealed class UserSessionHost : IAsyncDisposable {
 
     public ValueTask DisposeAsync() {
         Engine.Dispose();
-        if (_completionClient is IDisposable disposable) {
-            disposable.Dispose();
-        }
         return ValueTask.CompletedTask;
     }
 }
 
 internal static class FamilyChatConfigLoader {
+    public const string ConnectionsFileName = "connections.json";
+
     public static FamilyChatConfig Load(string configPath) {
         if (string.IsNullOrWhiteSpace(configPath)) { throw new InvalidOperationException("FamilyChat config path must not be blank."); }
 
@@ -686,16 +739,40 @@ internal static class FamilyChatConfigLoader {
             );
         }
 
-        var json = File.ReadAllText(resolvedPath);
-        var config = JsonSerializer.Deserialize(json, FamilyChatJsonContext.Default.FamilyChatConfig);
-        if (config is null) { throw new InvalidOperationException($"Failed to deserialize FamilyChat config: {resolvedPath}"); }
+        string configDir = Path.GetDirectoryName(resolvedPath)
+            ?? throw new InvalidOperationException($"Cannot determine config directory for: {resolvedPath}");
+        string connectionsPath = Path.Combine(configDir, ConnectionsFileName);
+        if (!File.Exists(connectionsPath)) {
+            throw new FileNotFoundException(
+                $"FamilyChat connections file was not found: {connectionsPath}",
+                connectionsPath
+            );
+        }
 
-        if (config.Users.Count == 0) { throw new InvalidOperationException("FamilyChat config must contain at least one user."); }
+        var usersFile = JsonSerializer.Deserialize(File.ReadAllText(resolvedPath), FamilyChatJsonContext.Default.FamilyChatUsersFileConfig);
+        if (usersFile is null) { throw new InvalidOperationException($"Failed to deserialize FamilyChat config: {resolvedPath}"); }
+
+        var connectionsFile = JsonSerializer.Deserialize(File.ReadAllText(connectionsPath), FamilyChatJsonContext.Default.FamilyChatConnectionsFileConfig);
+        if (connectionsFile is null) { throw new InvalidOperationException($"Failed to deserialize FamilyChat connections: {connectionsPath}"); }
+
+        if (usersFile.Users is not { Count: > 0 }) { throw new InvalidOperationException("FamilyChat config must contain at least one user."); }
+
+        if (connectionsFile.Connections is not { Count: > 0 }) { throw new InvalidOperationException("FamilyChat connections file must contain at least one connection."); }
+
+        string defaultConnectionId = !string.IsNullOrWhiteSpace(connectionsFile.DefaultConnectionId)
+            ? connectionsFile.DefaultConnectionId!
+            : connectionsFile.Connections[0].Id;
+
+        var config = new FamilyChatConfig(
+            Users: usersFile.Users,
+            Connections: connectionsFile.Connections,
+            DefaultConnectionId: defaultConnectionId,
+            ListenUrls: usersFile.ListenUrls
+        );
 
         config = ResolveSystemPromptFiles(config, resolvedPath);
         config = ApplyDefaultCompactionPrompts(config);
-        config = ResolveBackendEnvironmentVariables(config);
-        config = ResolveUserEnvironmentVariables(config);
+        config = ResolveConnectionEnvironmentVariables(config);
 
         Validate(config);
         return config;
@@ -741,87 +818,68 @@ internal static class FamilyChatConfigLoader {
         return config with { Users = normalizedUsers };
     }
 
-    private static FamilyChatConfig ResolveBackendEnvironmentVariables(FamilyChatConfig config) {
-        var backend = config.Backend;
-        string baseAddress = backend.BaseAddress;
-        string? apiKey = backend.ApiKey;
+    private static FamilyChatConfig ResolveConnectionEnvironmentVariables(FamilyChatConfig config) {
+        var resolvedConnections = new List<FamilyChatConnectionConfig>(config.Connections.Count);
+        foreach (var connection in config.Connections) {
+            string baseAddress = connection.BaseAddress;
+            string? apiKey = connection.ApiKey;
 
-        if (!string.IsNullOrWhiteSpace(backend.BaseAddressEnv)) {
-            string? resolved = Environment.GetEnvironmentVariable(backend.BaseAddressEnv);
-            if (string.IsNullOrWhiteSpace(resolved)) {
-                throw new InvalidOperationException(
-                    $"FamilyChat backend.baseAddressEnv references environment variable '{backend.BaseAddressEnv}', "
-                    + "but it is not set or empty."
-                );
-            }
-
-            baseAddress = resolved;
-        }
-
-        if (!string.IsNullOrWhiteSpace(backend.ApiKeyEnv)) {
-            string? resolved = Environment.GetEnvironmentVariable(backend.ApiKeyEnv);
-            if (string.IsNullOrWhiteSpace(resolved)) {
-                throw new InvalidOperationException(
-                    $"FamilyChat backend.apiKeyEnv references environment variable '{backend.ApiKeyEnv}', "
-                    + "but it is not set or empty."
-                );
-            }
-
-            apiKey = resolved;
-        }
-
-        return config with {
-            Backend = backend with { BaseAddress = baseAddress, ApiKey = apiKey },
-        };
-    }
-
-    private static FamilyChatConfig ResolveUserEnvironmentVariables(FamilyChatConfig config) {
-        var resolvedUsers = new List<FamilyChatUserConfig>(config.Users.Count);
-        foreach (var user in config.Users) {
-            string? baseAddress = user.BaseAddress;
-            string? apiKey = user.ApiKey;
-
-            if (!string.IsNullOrWhiteSpace(user.BaseAddressEnv)) {
-                string? resolved = Environment.GetEnvironmentVariable(user.BaseAddressEnv);
+            if (!string.IsNullOrWhiteSpace(connection.BaseAddressEnv)) {
+                string? resolved = Environment.GetEnvironmentVariable(connection.BaseAddressEnv);
                 if (string.IsNullOrWhiteSpace(resolved)) {
                     throw new InvalidOperationException(
-                        $"FamilyChat user '{user.UserId}' baseAddressEnv references environment variable "
-                        + $"'{user.BaseAddressEnv}', but it is not set or empty."
+                        $"FamilyChat connection '{connection.Id}' baseAddressEnv references environment variable "
+                        + $"'{connection.BaseAddressEnv}', but it is not set or empty."
                     );
                 }
                 baseAddress = resolved;
             }
 
-            if (!string.IsNullOrWhiteSpace(user.ApiKeyEnv)) {
-                string? resolved = Environment.GetEnvironmentVariable(user.ApiKeyEnv);
+            if (!string.IsNullOrWhiteSpace(connection.ApiKeyEnv)) {
+                string? resolved = Environment.GetEnvironmentVariable(connection.ApiKeyEnv);
                 if (string.IsNullOrWhiteSpace(resolved)) {
                     throw new InvalidOperationException(
-                        $"FamilyChat user '{user.UserId}' apiKeyEnv references environment variable "
-                        + $"'{user.ApiKeyEnv}', but it is not set or empty."
+                        $"FamilyChat connection '{connection.Id}' apiKeyEnv references environment variable "
+                        + $"'{connection.ApiKeyEnv}', but it is not set or empty."
                     );
                 }
                 apiKey = resolved;
             }
 
-            resolvedUsers.Add(user with { BaseAddress = baseAddress, ApiKey = apiKey });
+            resolvedConnections.Add(connection with { BaseAddress = baseAddress, ApiKey = apiKey });
         }
 
-        return config with { Users = resolvedUsers };
+        return config with { Connections = resolvedConnections };
     }
 
     private static void Validate(FamilyChatConfig config) {
-        var backend = config.Backend;
-        if (string.IsNullOrWhiteSpace(backend.Kind)) {
-            throw new InvalidOperationException("FamilyChat config backend must have a non-empty kind.");
+        var connectionIds = new HashSet<string>(StringComparer.Ordinal);
+        for (int i = 0; i < config.Connections.Count; i++) {
+            var connection = config.Connections[i];
+            if (string.IsNullOrWhiteSpace(connection.Id)) { throw new InvalidOperationException($"FamilyChat connection[{i}] must have a non-empty id."); }
+
+            if (!connectionIds.Add(connection.Id)) { throw new InvalidOperationException($"FamilyChat connections contain duplicate id '{connection.Id}'."); }
+
+            if (string.IsNullOrWhiteSpace(connection.DisplayName)) { throw new InvalidOperationException($"FamilyChat connection '{connection.Id}' must have a non-empty displayName."); }
+
+            if (string.IsNullOrWhiteSpace(connection.Kind)) { throw new InvalidOperationException($"FamilyChat connection '{connection.Id}' must have a non-empty kind."); }
+
+            if (string.IsNullOrWhiteSpace(connection.ModelId)) { throw new InvalidOperationException($"FamilyChat connection '{connection.Id}' must have a non-empty modelId."); }
+
+            if (string.IsNullOrWhiteSpace(connection.CompletionSurfaceId)) { throw new InvalidOperationException($"FamilyChat connection '{connection.Id}' must have a non-empty completionSurfaceId."); }
+
+            if (string.IsNullOrWhiteSpace(connection.BaseAddress)) { throw new InvalidOperationException($"FamilyChat connection '{connection.Id}' must have a non-empty baseAddress."); }
+
+            if (string.IsNullOrWhiteSpace(connection.ApiKey)) {
+                throw new InvalidOperationException(
+                    $"FamilyChat connection '{connection.Id}' must have a non-empty apiKey (set 'apiKey' inline or via 'apiKeyEnv')."
+                );
+            }
         }
 
-        if (string.IsNullOrWhiteSpace(backend.BaseAddress)) {
-            throw new InvalidOperationException("FamilyChat config backend must have a non-empty baseAddress.");
-        }
-
-        if (string.IsNullOrWhiteSpace(backend.ApiKey)) {
+        if (!connectionIds.Contains(config.DefaultConnectionId)) {
             throw new InvalidOperationException(
-                "FamilyChat config backend must have a non-empty apiKey (set 'apiKey' inline or via 'apiKeyEnv')."
+                $"FamilyChat defaultConnectionId '{config.DefaultConnectionId}' does not match any connection id."
             );
         }
 
@@ -861,24 +919,44 @@ internal static class FamilyChatConfigBootstrapper {
         if (string.IsNullOrWhiteSpace(configPath)) { throw new InvalidOperationException("FamilyChat config path must not be blank."); }
 
         string resolvedPath = Path.GetFullPath(configPath);
-        if (File.Exists(resolvedPath)) { return; }
-
         string? parentDir = Path.GetDirectoryName(resolvedPath);
         if (string.IsNullOrWhiteSpace(parentDir)) { throw new InvalidOperationException($"Cannot determine parent directory for FamilyChat config path: {resolvedPath}"); }
 
+        string connectionsPath = Path.Combine(parentDir, FamilyChatConfigLoader.ConnectionsFileName);
+        bool configExists = File.Exists(resolvedPath);
+        bool connectionsExists = File.Exists(connectionsPath);
+        if (configExists && connectionsExists) { return; }
+
         Directory.CreateDirectory(parentDir);
 
-        var template = FamilyChatConfigTemplateFactory.Create(resolvedPath);
         var jsonOptions = new JsonSerializerOptions(FamilyChatJson.Options) {
             WriteIndented = true,
             Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping
         };
-        File.WriteAllText(resolvedPath, JsonSerializer.Serialize(template, jsonOptions) + Environment.NewLine, Encoding.UTF8);
+
+        var generated = new List<string>();
+        if (!configExists) {
+            File.WriteAllText(
+                resolvedPath,
+                JsonSerializer.Serialize(FamilyChatConfigTemplateFactory.CreateUsersFile(), jsonOptions) + Environment.NewLine,
+                Encoding.UTF8
+            );
+            generated.Add(resolvedPath);
+        }
+
+        if (!connectionsExists) {
+            File.WriteAllText(
+                connectionsPath,
+                JsonSerializer.Serialize(FamilyChatConfigTemplateFactory.CreateConnectionsFile(), jsonOptions) + Environment.NewLine,
+                Encoding.UTF8
+            );
+            generated.Add(connectionsPath);
+        }
 
         throw new InvalidOperationException(
-            "FamilyChat config template has been generated at "
-            + resolvedPath
-            + ". Please update listenUrls, modelId, and the default account passwords before restarting the server."
+            "FamilyChat config templates have been generated at "
+            + string.Join(" and ", generated)
+            + ". Please update listenUrls, the connections' modelId / baseAddress / apiKey, and the default account passwords before restarting the server."
         );
     }
 }
@@ -907,22 +985,35 @@ internal static class FamilyChatDefaults {
 
 internal static class FamilyChatConfigTemplateFactory {
     public const string PlaceholderModelId = "REPLACE_WITH_YOUR_LOCAL_MODEL_ID";
+    public const string DefaultConnectionId = "local";
 
-    public static FamilyChatConfig Create(string configPath) {
-        return new FamilyChatConfig(
-            Backend: new FamilyChatBackendConfig(
-                Kind: "openai-chat",
-                // Keep a placeholder here; the real URL is resolved at load
-                // time from the environment variable named below.
-                BaseAddress: "http://localhost:8888/",
-                BaseAddressEnv: "DEEPSEEK_BASE_URL",
-                ApiKeyEnv: "DEEPSEEK_API_KEY"
-            ),
+    public static FamilyChatUsersFileConfig CreateUsersFile() {
+        return new FamilyChatUsersFileConfig(
             Users: [
                 CreateUser("alice", "Alice", "alice123", ".atelia/family-chat/sessions/alice"),
                 CreateUser("bob", "Bob", "bob123", ".atelia/family-chat/sessions/bob"),
             ],
             ListenUrls: ["http://0.0.0.0:3510"]
+        );
+    }
+
+    public static FamilyChatConnectionsFileConfig CreateConnectionsFile() {
+        return new FamilyChatConnectionsFileConfig(
+            Connections: [
+                new FamilyChatConnectionConfig(
+                    Id: DefaultConnectionId,
+                    DisplayName: "本地模型",
+                    Kind: "openai-chat",
+                    ModelId: PlaceholderModelId,
+                    CompletionSurfaceId: "openai-chat/sglang-compatible",
+                    // Points at a local OpenAI-compatible server by default. The inline
+                    // placeholder key lets the config load out of the box; swap in a real
+                    // key, or move it to an env var via ApiKeyEnv, before going live.
+                    BaseAddress: "http://localhost:8888/",
+                    ApiKey: "sk-local-placeholder"
+                ),
+            ],
+            DefaultConnectionId: DefaultConnectionId
         );
     }
 
@@ -932,21 +1023,21 @@ internal static class FamilyChatConfigTemplateFactory {
             DisplayName: displayName,
             Password: password,
             SessionDir: sessionDir,
-            ModelId: PlaceholderModelId,
-            CompletionSurfaceId: "openai-chat/sglang-compatible",
-            SystemPrompt: FamilyChatDefaults.SystemPrompt,
             CompactionThresholdTokens: 32000,
             CompactionSystemPrompt: FamilyChatDefaults.CompactionSystemPrompt,
-            CompactionPrompt: FamilyChatDefaults.CompactionPrompt
+            CompactionPrompt: FamilyChatDefaults.CompactionPrompt,
+            SystemPrompt: FamilyChatDefaults.SystemPrompt
         );
     }
 }
 
 internal static class FamilyChatHtml {
-    public static string RenderLoginPage(bool invalidCredentials) {
+    public static string RenderLoginPage(bool invalidCredentials, string assetVersion) {
         string errorHtml = invalidCredentials
             ? "<p class=\"error\">用户名或密码不正确。</p>"
             : string.Empty;
+
+        string stylesheetPath = FamilyChatStaticAssetVersion.AppendToPath("/assets/family-chat.css", assetVersion);
 
         return $$"""
 <!doctype html>
@@ -955,7 +1046,7 @@ internal static class FamilyChatHtml {
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Family Chat Login</title>
-  <link rel="stylesheet" href="/assets/family-chat.css">
+    <link rel="stylesheet" href="{{stylesheetPath}}">
 </head>
 <body class="login-body">
   <main class="login-shell">
@@ -974,8 +1065,25 @@ internal static class FamilyChatHtml {
 """;
     }
 
-    public static string RenderAppPage(FamilyChatUserConfig user) {
+    public static string RenderAppPage(FamilyChatUserConfig user, FamilyChatConnectionRegistry connections, string assetVersion) {
         ArgumentNullException.ThrowIfNull(user);
+        ArgumentNullException.ThrowIfNull(connections);
+
+        var connectionInfos = connections.Connections
+            .Select(
+            static c => new FamilyChatConnectionInfoDto(
+                c.Id,
+                c.DisplayName,
+                c.ModelId,
+                FamilyChatThinkRepairDefaults.ShouldEnableForModel(c.ModelId)
+            )
+        )
+            .ToArray();
+        string connectionsJson = JsonSerializer.Serialize(connectionInfos, FamilyChatJson.Options);
+        string defaultConnectionJson = JsonSerializer.Serialize(connections.DefaultConnectionId, FamilyChatJson.Options);
+        string stylesheetPath = FamilyChatStaticAssetVersion.AppendToPath("/assets/family-chat.css", assetVersion);
+        string scriptPath = FamilyChatStaticAssetVersion.AppendToPath("/assets/family-chat.js", assetVersion);
+
         return $$"""
 <!doctype html>
 <html lang="zh-CN">
@@ -983,13 +1091,16 @@ internal static class FamilyChatHtml {
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Family Chat</title>
-  <link rel="stylesheet" href="/assets/family-chat.css">
+    <link rel="stylesheet" href="{{stylesheetPath}}">
 </head>
 <body class="app-body">
   <main class="app-shell">
 
     <section class="composer">
       <form id="chat-form">
+        <fieldset id="connection-picker" class="connection-picker" aria-label="模型连接">
+          <legend>模型连接</legend>
+        </fieldset>
         <textarea id="message-input" rows="3" placeholder="说点什么……" required></textarea>
         <label class="composer-option">
           <input id="auto-repair-missing-think-open-tag" type="checkbox">
@@ -1031,14 +1142,34 @@ internal static class FamilyChatHtml {
     window.familyChatBootstrap = {
       displayName: {{JsonSerializer.Serialize(user.DisplayName, FamilyChatJson.Options)}},
       userId: {{JsonSerializer.Serialize(user.UserId, FamilyChatJson.Options)}},
-      modelId: {{JsonSerializer.Serialize(user.ModelId, FamilyChatJson.Options)}},
-      defaultAutoPrefillThinkOpenTag: {{JsonSerializer.Serialize(FamilyChatThinkRepairDefaults.ShouldEnableForModel(user.ModelId), FamilyChatJson.Options)}}
+      connections: {{connectionsJson}},
+      defaultConnectionId: {{defaultConnectionJson}}
     };
   </script>
-  <script src="/assets/family-chat.js"></script>
+    <script src="{{scriptPath}}"></script>
 </body>
 </html>
 """;
+    }
+}
+
+internal static class FamilyChatStaticAssetVersion {
+    public static string BuildToken(string contentRootPath) {
+        ArgumentException.ThrowIfNullOrWhiteSpace(contentRootPath);
+
+        string webRootPath = Path.Combine(contentRootPath, "wwwroot", "assets");
+        long latestTicks = Math.Max(
+            File.GetLastWriteTimeUtc(Path.Combine(webRootPath, "family-chat.css")).Ticks,
+            File.GetLastWriteTimeUtc(Path.Combine(webRootPath, "family-chat.js")).Ticks
+        );
+
+        return latestTicks.ToString(CultureInfo.InvariantCulture);
+    }
+
+    public static string AppendToPath(string assetPath, string versionToken) {
+        ArgumentException.ThrowIfNullOrWhiteSpace(assetPath);
+        ArgumentException.ThrowIfNullOrWhiteSpace(versionToken);
+        return $"{assetPath}?v={versionToken}";
     }
 }
 
@@ -1062,7 +1193,8 @@ internal static class FamilyChatJson {
 }
 
 [JsonSourceGenerationOptions(JsonSerializerDefaults.Web)]
-[JsonSerializable(typeof(FamilyChatConfig))]
-[JsonSerializable(typeof(FamilyChatBackendConfig))]
+[JsonSerializable(typeof(FamilyChatUsersFileConfig))]
+[JsonSerializable(typeof(FamilyChatConnectionsFileConfig))]
+[JsonSerializable(typeof(FamilyChatConnectionConfig))]
 [JsonSerializable(typeof(FamilyChatUserConfig))]
 internal sealed partial class FamilyChatJsonContext : JsonSerializerContext;
