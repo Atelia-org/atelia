@@ -216,11 +216,226 @@ public sealed class ChatSessionQuickStartSamplesTests {
         Assert.Equal(1, withBoundary);
     }
 
+    [Fact]
+    public async Task RunMemoryMaintainersAsync_RunsIndependentMaintainersOverSameRecentFragment() {
+        string repoDir = CreateTempDirectory();
+        try {
+            var completionClient = new ScriptedCompletionClient("openai-chat-v1");
+            completionClient.EnqueueText("old-assistant");
+            completionClient.Enqueue(
+                (request, observer, ct) => {
+                    Assert.Equal("plan-system", request.SystemPrompt);
+                    Assert.Collection(
+                        request.Context,
+                        message => Assert.Equal("recent-user", Assert.IsType<ObservationMessage>(message).Content),
+                        message => Assert.Equal("old-assistant", Assert.IsType<ActionMessage>(message).GetFlattenedText()),
+                        message => Assert.Equal("plan-prompt", Assert.IsType<ObservationMessage>(message).Content)
+                    );
+
+                    return Task.FromResult(
+                        new CompletionResult(
+                            new ActionMessage([new ActionBlock.Text("updated-plan")]),
+                            new CompletionDescriptor("scripted", "openai-chat-v1", request.ModelId)
+                        )
+                    );
+                }
+            );
+            completionClient.Enqueue(
+                (request, observer, ct) => {
+                    Assert.Equal("self-system", request.SystemPrompt);
+                    Assert.Collection(
+                        request.Context,
+                        message => Assert.Equal("recent-user", Assert.IsType<ObservationMessage>(message).Content),
+                        message => Assert.Equal("old-assistant", Assert.IsType<ActionMessage>(message).GetFlattenedText()),
+                        message => Assert.Equal("self-prompt", Assert.IsType<ObservationMessage>(message).Content)
+                    );
+
+                    return Task.FromResult(
+                        new CompletionResult(
+                            new ActionMessage([new ActionBlock.Text("updated-self")]),
+                            new CompletionDescriptor("scripted", "openai-chat-v1", request.ModelId)
+                        )
+                    );
+                }
+            );
+
+            using var engine = await ChatSessionEngine.CreateAsync(
+                repoDir,
+                new ChatSessionCreateOptions(SystemPrompt: "base-system"),
+                new ChatSessionRuntime(
+                    CompletionClient: completionClient,
+                    CompletionSurfaceId: "openai-chat/strict",
+                    ModelId: "model-a",
+                    ToolSession: new ToolRegistry(Array.Empty<ITool>()).CreateSession()
+                )
+            );
+
+            engine.SetContextHeader(
+                new ContextHeader(
+                    "header-system",
+                    "header-user",
+                    new ActionMessage([new ActionBlock.Text(new string('h', 200))])
+                )
+            );
+            await engine.SendMessageAsync("recent-user", CancellationToken.None);
+
+            var emptyToolSession = new ToolRegistry(Array.Empty<ITool>()).CreateSession();
+            var result = await engine.RunMemoryMaintainersAsync(
+                new MemoryMaintenanceRequest([
+                    new TestMemoryMaintainer("plan", "assistant.open-threads", "plan-system", "plan-prompt", emptyToolSession),
+                    new TestMemoryMaintainer("self", "assistant.self-state", "self-system", "self-prompt", emptyToolSession),
+                ]),
+                CancellationToken.None
+            );
+
+            Assert.True(result.Completed);
+            Assert.Null(result.FailureReason);
+            Assert.Equal(1, result.SplitIndex);
+            Assert.Collection(
+                result.MaintainerResults,
+                maintainer => {
+                    Assert.Equal("plan", maintainer.MaintainerId);
+                    Assert.Equal("assistant.open-threads", maintainer.TargetBlockKey);
+                    Assert.Equal("updated-plan", maintainer.UpdatedText);
+                },
+                maintainer => {
+                    Assert.Equal("self", maintainer.MaintainerId);
+                    Assert.Equal("assistant.self-state", maintainer.TargetBlockKey);
+                    Assert.Equal("updated-self", maintainer.UpdatedText);
+                }
+            );
+            Assert.IsType<ContextHeader>(engine.Context[0]);
+        }
+        finally {
+            Directory.Delete(repoDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task RunMemoryMaintainersAsync_RunsMaintainerToolLoop() {
+        string repoDir = CreateTempDirectory();
+        try {
+            var completionClient = new ScriptedCompletionClient("openai-chat-v1");
+            completionClient.EnqueueText("old-assistant");
+            completionClient.Enqueue(
+                (request, observer, ct) => {
+                    Assert.Equal("memory-system", request.SystemPrompt);
+                    Assert.Equal("workspace.echo", Assert.Single(request.Tools).Name);
+
+                    var call = new RawToolCall("workspace.echo", "call-1", """{"text":"memory"}""");
+                    return Task.FromResult(
+                        new CompletionResult(
+                            new ActionMessage([new ActionBlock.ToolCall(call)]),
+                            new CompletionDescriptor("scripted", "openai-chat-v1", request.ModelId)
+                        )
+                    );
+                }
+            );
+            completionClient.Enqueue(
+                (request, observer, ct) => {
+                    var toolResults = Assert.IsType<ToolResultsMessage>(request.Context[^1]);
+                    var toolResult = Assert.Single(toolResults.Results);
+                    Assert.Equal("workspace.echo", toolResult.ToolName);
+                    Assert.Equal("echo:memory|maintainer", toolResult.GetFlattenedText());
+
+                    return Task.FromResult(
+                        new CompletionResult(
+                            new ActionMessage([new ActionBlock.Text("updated-with-tool")]),
+                            new CompletionDescriptor("scripted", "openai-chat-v1", request.ModelId)
+                        )
+                    );
+                }
+            );
+
+            using var engine = await ChatSessionEngine.CreateAsync(
+                repoDir,
+                new ChatSessionCreateOptions(SystemPrompt: "base-system"),
+                new ChatSessionRuntime(
+                    CompletionClient: completionClient,
+                    CompletionSurfaceId: "openai-chat/strict",
+                    ModelId: "model-a",
+                    ToolSession: new ToolRegistry(Array.Empty<ITool>()).CreateSession()
+                )
+            );
+
+            engine.SetContextHeader(
+                new ContextHeader(
+                    "header-system",
+                    "header-user",
+                    new ActionMessage([new ActionBlock.Text(new string('h', 200))])
+                )
+            );
+            await engine.SendMessageAsync("recent-user", CancellationToken.None);
+
+            var toolHost = new DemoTools();
+            var echoTool = MethodToolWrapper.FromMethod(
+                toolHost,
+                typeof(DemoTools).GetMethod(nameof(DemoTools.EchoAsync))!
+            );
+            var maintainerToolSession = new ToolRegistry([echoTool]).CreateSession(
+                items: new Dictionary<string, object?> { ["scope"] = "maintainer" }
+            );
+
+            var result = await engine.RunMemoryMaintainersAsync(
+                new MemoryMaintenanceRequest([
+                    new TestMemoryMaintainer("tooling", "assistant.tooling", "memory-system", "memory-prompt", maintainerToolSession),
+                ]),
+                CancellationToken.None
+            );
+
+            var maintainerResult = Assert.Single(result.MaintainerResults);
+            Assert.Equal("updated-with-tool", maintainerResult.UpdatedText);
+            Assert.Equal(1, maintainerResult.ToolCallsExecuted);
+        }
+        finally {
+            Directory.Delete(repoDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task RunMemoryMaintainersAsync_RejectsDuplicateTargetBlockKeys() {
+        string repoDir = CreateTempDirectory();
+        try {
+            using var engine = await ChatSessionEngine.CreateAsync(
+                repoDir,
+                new ChatSessionCreateOptions(SystemPrompt: "base-system"),
+                new ChatSessionRuntime(
+                    CompletionClient: new ScriptedCompletionClient("openai-chat-v1"),
+                    CompletionSurfaceId: "openai-chat/strict",
+                    ModelId: "model-a",
+                    ToolSession: new ToolRegistry(Array.Empty<ITool>()).CreateSession()
+                )
+            );
+
+            var emptyToolSession = new ToolRegistry(Array.Empty<ITool>()).CreateSession();
+            await Assert.ThrowsAsync<ArgumentException>(
+                () => engine.RunMemoryMaintainersAsync(
+                    new MemoryMaintenanceRequest([
+                        new TestMemoryMaintainer("first", "assistant.open-threads", "system", "prompt", emptyToolSession),
+                        new TestMemoryMaintainer("second", "assistant.open-threads", "system", "prompt", emptyToolSession),
+                    ]),
+                    CancellationToken.None
+                )
+            );
+        }
+        finally {
+            Directory.Delete(repoDir, recursive: true);
+        }
+    }
+
     private static string CreateTempDirectory() {
         string path = Path.Combine(Path.GetTempPath(), "chat-session-quickstart-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(path);
         return path;
     }
+
+    private sealed record TestMemoryMaintainer(
+        string Id,
+        string TargetBlockKey,
+        string SystemPrompt,
+        string UserPrompt,
+        ToolSession ToolSession
+    ) : IMemoryMaintainerAgent;
 
     private sealed class ScriptedCompletionClient(string apiSpecId) : ICompletionClient {
         private readonly Queue<Func<CompletionRequest, CompletionStreamObserver?, CancellationToken, Task<CompletionResult>>> _responses = new();
