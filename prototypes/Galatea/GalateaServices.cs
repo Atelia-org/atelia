@@ -1,0 +1,1200 @@
+using System.Collections.Concurrent;
+using System.Globalization;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Encodings.Web;
+using System.Text.Json;
+using System.Text.Json.Serialization;
+using System.Threading.Channels;
+using Atelia.ChatSession;
+using Atelia.Diagnostics;
+using Atelia.Completion.Abstractions;
+using Atelia.Completion.Anthropic;
+using Atelia.Completion.OpenAI;
+using Atelia.Completion.Tools;
+using Atelia.Completion.Transport;
+
+namespace Atelia.Galatea.Server;
+
+public interface IGalateaCompletionClientFactory {
+    ICompletionClient Create(GalateaConnectionConfig connection);
+}
+
+public sealed class DefaultGalateaCompletionClientFactory : IGalateaCompletionClientFactory {
+    public ICompletionClient Create(GalateaConnectionConfig connection) {
+        ArgumentNullException.ThrowIfNull(connection);
+
+        var httpClient = CompletionHttpTransportFactory.CreateLiveClient(new Uri(connection.BaseAddress, UriKind.Absolute));
+        return connection.Kind.Trim().ToLowerInvariant() switch {
+            "openai-chat" => new OpenAIChatClient(
+                apiKey: connection.ApiKey,
+                httpClient: httpClient,
+                dialect: ResolveOpenAiChatDialect(connection.CompletionSurfaceId)
+            // , options: OpenAIChatClientOptions.QwenThinkingDisabled()
+            ),
+            "openai-responses" => new OpenAIResponsesClient(
+                apiKey: connection.ApiKey,
+                httpClient: httpClient
+            ),
+            "anthropic" => new AnthropicClient(
+                apiKey: connection.ApiKey,
+                httpClient: httpClient
+            ),
+            _ => throw new InvalidOperationException($"Unsupported connection kind '{connection.Kind}'.")
+        };
+    }
+
+    private static OpenAIChatDialect ResolveOpenAiChatDialect(string completionSurfaceId) {
+        return completionSurfaceId switch {
+            "openai-chat/strict" => OpenAIChatDialects.Strict,
+            "openai-chat/sglang-compatible" => OpenAIChatDialects.SgLangCompatible,
+            "openai-chat/deepseek-v4" => OpenAIChatDialects.DeepSeekV4,
+            _ => throw new InvalidOperationException($"Unsupported OpenAI Chat surface '{completionSurfaceId}'.")
+        };
+    }
+}
+
+/// <summary>
+/// Owns the catalog of LLM connections and lazily builds + caches one decorated
+/// <see cref="ICompletionClient"/> per connection id. Clients are shared across all
+/// users and turns; per-turn behavior (e.g. think-tag repair) flows separately through
+/// <see cref="GalateaCompletionExecutionContext"/>, so a single client instance is safe to reuse.
+/// </summary>
+public sealed class GalateaConnectionRegistry : IDisposable {
+    private readonly IGalateaCompletionClientFactory _factory;
+    private readonly IReadOnlyDictionary<string, GalateaConnectionConfig> _byId;
+    private readonly ConcurrentDictionary<string, ICompletionClient> _clients = new(StringComparer.Ordinal);
+
+    public GalateaConnectionRegistry(GalateaConfig config, IGalateaCompletionClientFactory factory) {
+        ArgumentNullException.ThrowIfNull(config);
+        _factory = factory ?? throw new ArgumentNullException(nameof(factory));
+        Connections = config.Connections;
+        DefaultConnectionId = config.DefaultConnectionId;
+        _byId = config.Connections.ToDictionary(static x => x.Id, StringComparer.Ordinal);
+    }
+
+    public IReadOnlyList<GalateaConnectionConfig> Connections { get; }
+
+    public string DefaultConnectionId { get; }
+
+    public bool TryGet(string id, out GalateaConnectionConfig connection)
+        => _byId.TryGetValue(id, out connection!);
+
+    /// <summary>Resolves the requested connection id, falling back to the default when absent or unknown.</summary>
+    public GalateaConnectionConfig Resolve(string? requestedId) {
+        if (!string.IsNullOrWhiteSpace(requestedId) && _byId.TryGetValue(requestedId, out var requested)) { return requested; }
+
+        return _byId.TryGetValue(DefaultConnectionId, out var fallback)
+            ? fallback
+            : throw new InvalidOperationException($"Default connection '{DefaultConnectionId}' is not registered.");
+    }
+
+    public ICompletionClient GetClient(string connectionId) {
+        if (!_byId.TryGetValue(connectionId, out var connection)) { throw new InvalidOperationException($"Unknown connection '{connectionId}'."); }
+
+        return _clients.GetOrAdd(
+            connection.Id,
+            static (_, state) => new GalateaCompletionClientDecorator(state.Factory.Create(state.Connection)),
+            (Factory: _factory, Connection: connection)
+        );
+    }
+
+    public void Dispose() {
+        foreach (var client in _clients.Values) {
+            if (client is IDisposable disposable) {
+                disposable.Dispose();
+            }
+        }
+    }
+}
+
+public sealed class GalateaHostService : IAsyncDisposable {
+    private const string UserMessagePrefix = "玩家角色试图采取如下动作：\n```\n";
+    private const string UserMessageSuffix = "\n```\n";
+
+    private readonly GalateaConnectionRegistry _connections;
+    private readonly IGalateaUserMessageNormalizer _userMessageNormalizer;
+    private readonly ConcurrentDictionary<string, Lazy<Task<UserSessionHost>>> _sessions = new(StringComparer.Ordinal);
+    private readonly IReadOnlyDictionary<string, GalateaUserConfig> _users;
+
+    public GalateaHostService(
+        GalateaConfig config,
+        GalateaConnectionRegistry connections,
+        IGalateaUserMessageNormalizer userMessageNormalizer
+    ) {
+        ArgumentNullException.ThrowIfNull(config);
+        _connections = connections ?? throw new ArgumentNullException(nameof(connections));
+        _userMessageNormalizer = userMessageNormalizer ?? throw new ArgumentNullException(nameof(userMessageNormalizer));
+        _users = config.Users.ToDictionary(x => x.UserId, StringComparer.Ordinal);
+    }
+
+    public bool TryGetUser(string userId, out GalateaUserConfig user)
+        => _users.TryGetValue(userId, out user!);
+
+    public bool ValidatePassword(GalateaUserConfig user, string password) {
+        ArgumentNullException.ThrowIfNull(user);
+        password ??= string.Empty;
+
+        byte[] left = SHA256.HashData(Encoding.UTF8.GetBytes(password));
+        byte[] right = SHA256.HashData(Encoding.UTF8.GetBytes(user.Password ?? string.Empty));
+        return CryptographicOperations.FixedTimeEquals(left, right);
+    }
+
+    public async Task<UserSessionHost> GetSessionAsync(string userId, CancellationToken ct) {
+        var user = _users.GetValueOrDefault(userId)
+            ?? throw new InvalidOperationException($"Unknown user '{userId}'.");
+
+        var lazy = _sessions.GetOrAdd(
+            userId,
+            static (key, state) => new Lazy<Task<UserSessionHost>>(
+                () => state.Service.CreateSessionAsync(state.User, CancellationToken.None),
+                LazyThreadSafetyMode.ExecutionAndPublication
+            ),
+            (Service: this, User: user)
+        );
+
+        var session = await lazy.Value.ConfigureAwait(false);
+        DebugUtil.Info("Galatea.Session", $"GetSessionAsync: user={userId}, {session.Engine.GetDebugStateSummary()}");
+        return session;
+    }
+
+    public IReadOnlyList<RecentTurnDto> BuildRecentTurns(ChatSessionEngine engine, int maxTurns = 12) {
+        ArgumentNullException.ThrowIfNull(engine);
+
+        var turns = new List<RecentTurnDto>();
+        string? pendingUserText = null;
+        AssistantMessageDto? latestAssistant = null;
+
+        foreach (var message in engine.Context) {
+            if (message is RecapMessage recap) {
+                if (pendingUserText is not null && latestAssistant is not null) {
+                    turns.Add(new RecentTurnDto(pendingUserText, latestAssistant));
+                }
+
+                pendingUserText = null;
+                latestAssistant = null;
+                turns.Add(
+                    new RecentTurnDto(
+                        string.Empty,
+                        new AssistantMessageDto(recap.Content ?? string.Empty, null, HasReasoning: false),
+                        IsRecap: true
+                    )
+                );
+                continue;
+            }
+
+            if (message is ToolResultsMessage) { continue; }
+
+            if (message is ObservationMessage observation) {
+                if (pendingUserText is not null && latestAssistant is not null) {
+                    turns.Add(new RecentTurnDto(pendingUserText, latestAssistant));
+                }
+
+                pendingUserText = NormalizeUserMessageForDisplay(observation.Content);
+                latestAssistant = null;
+                continue;
+            }
+
+            if (message is ActionMessage action && pendingUserText is not null) {
+                var projected = ProjectAssistant(action);
+                if (projected is not null) {
+                    latestAssistant = projected;
+                }
+            }
+        }
+
+        if (pendingUserText is not null && latestAssistant is not null) {
+            turns.Add(new RecentTurnDto(pendingUserText, latestAssistant));
+        }
+
+        turns.Reverse();
+        IReadOnlyList<RecentTurnDto> projectedTurns = turns.Count <= maxTurns ? turns : turns.Take(maxTurns).ToArray();
+        DebugUtil.Info(
+            "Galatea.Session",
+            $"BuildRecentTurns: {engine.GetDebugStateSummary()}, projectedTurns={projectedTurns.Count}, firstTurn={DescribeTurn(projectedTurns.FirstOrDefault())}"
+        );
+        return projectedTurns;
+    }
+
+    public RecentTurnsResponseDto BuildRecentTurnsResponse(ChatSessionEngine engine, int maxTurns = 12) {
+        ArgumentNullException.ThrowIfNull(engine);
+
+        var allTurns = BuildRecentTurns(engine, int.MaxValue);
+        var turns = ProjectRecentTurnsResponse(allTurns, maxTurns);
+        DebugUtil.Info(
+            "Galatea.Session",
+            $"BuildRecentTurnsResponse: {engine.GetDebugStateSummary()}, responseTurns={turns.Count}, recapVisible={turns.Any(static x => x.IsRecap)}, firstTurn={DescribeTurn(turns.FirstOrDefault())}"
+        );
+        return new RecentTurnsResponseDto(turns);
+    }
+
+    public CurrentTurnDto BuildCurrentTurn(UserSessionHost host) {
+        ArgumentNullException.ThrowIfNull(host);
+
+        var currentTurn = host.GetCurrentTurn();
+        var result = currentTurn is null
+            ? new CurrentTurnDto("idle")
+            : new CurrentTurnDto(
+                "running",
+                currentTurn.TurnId,
+                currentTurn.UserMessage,
+                currentTurn.Phase,
+                currentTurn.Options.AutoPrefillThinkOpenTag,
+                currentTurn.Options.ConnectionId
+            );
+        DebugUtil.Info(
+            "Galatea.Session",
+            $"BuildCurrentTurn: user={host.User.UserId}, status={result.Status}, turnId={result.TurnId ?? "<none>"}, phase={result.Phase ?? "<none>"}, head={host.Engine.PersistedHeadAddress}"
+        );
+        return result;
+    }
+
+    internal GalateaLiveTurn StartTurn(UserSessionHost host, string userMessage, GalateaTurnOptions options) {
+        ArgumentNullException.ThrowIfNull(host);
+        ArgumentException.ThrowIfNullOrWhiteSpace(userMessage);
+        ArgumentNullException.ThrowIfNull(options);
+        return host.StartTurn(userMessage, options);
+    }
+
+    internal RecentTurnDto? PopLatestTurn(UserSessionHost host) {
+        ArgumentNullException.ThrowIfNull(host);
+
+        var previousLatestTurn = BuildRecentTurns(host.Engine, maxTurns: 1).FirstOrDefault();
+        DebugUtil.Info(
+            "Galatea.Session",
+            $"PopLatestTurn before remove: user={host.User.UserId}, head={host.Engine.PersistedHeadAddress}, latestVisible={DescribeTurn(previousLatestTurn)}"
+        );
+        if (!host.Engine.TryRemoveLatestCompletedTurn(out var removedTurn) || removedTurn is null) { return null; }
+        string removedUserText = NormalizeUserMessageForDisplay(removedTurn.UserMessage);
+
+        if (previousLatestTurn is not null
+            && !previousLatestTurn.IsRecap
+            && string.Equals(previousLatestTurn.UserText, removedUserText, StringComparison.Ordinal)) {
+            DebugUtil.Info(
+                "Galatea.Session",
+                $"PopLatestTurn matched visible turn: user={host.User.UserId}, removedCount={removedTurn.RemovedMessageCount}, head={host.Engine.PersistedHeadAddress}"
+            );
+            return previousLatestTurn;
+        }
+
+        DebugUtil.Warning(
+            "Galatea.Session",
+            $"PopLatestTurn fallback DTO: user={host.User.UserId}, removedCount={removedTurn.RemovedMessageCount}, removedUser={Preview(removedUserText)}, previousVisible={DescribeTurn(previousLatestTurn)}, head={host.Engine.PersistedHeadAddress}"
+        );
+        return new RecentTurnDto(
+            removedUserText,
+            new AssistantMessageDto(string.Empty, null, HasReasoning: false)
+        );
+    }
+
+    internal GalateaLiveTurn? FindTurn(UserSessionHost host, string turnId) {
+        ArgumentNullException.ThrowIfNull(host);
+        ArgumentException.ThrowIfNullOrWhiteSpace(turnId);
+        return host.FindTurn(turnId);
+    }
+
+    internal void FinishTurn(UserSessionHost host, GalateaLiveTurn turn) {
+        ArgumentNullException.ThrowIfNull(host);
+        ArgumentNullException.ThrowIfNull(turn);
+        host.FinishTurn(turn);
+    }
+
+    internal bool RequestStop(UserSessionHost host, string turnId) {
+        ArgumentNullException.ThrowIfNull(host);
+        ArgumentException.ThrowIfNullOrWhiteSpace(turnId);
+
+        var turn = host.FindTurn(turnId);
+        return turn?.RequestStop() == true;
+    }
+
+    internal async Task RunTurnAsync(
+        UserSessionHost host,
+        GalateaLiveTurn liveTurn,
+        CancellationToken ct
+    ) {
+        ArgumentNullException.ThrowIfNull(host);
+        ArgumentNullException.ThrowIfNull(liveTurn);
+
+        liveTurn.Publish(new StreamEventDto("meta", new { phase = "turn-start" }), phase: "turn-start");
+        DebugUtil.Info(
+            "Galatea.Session",
+            $"RunTurnAsync start: user={host.User.UserId}, turnId={liveTurn.TurnId}, input={Preview(liveTurn.UserMessage)}, {host.Engine.GetDebugStateSummary()}",
+            eventKind: DebugEventKind.Start
+        );
+
+        // Bind this turn to the connection the user selected in the UI (falling back to
+        // the default). Because the persisted history is provider-neutral, swapping the
+        // runtime between turns is safe; post-generation compaction reuses the same one.
+        var connection = _connections.Resolve(liveTurn.Options.ConnectionId);
+        host.Engine.UseRuntime(BuildRuntime(connection, host.ToolSession));
+        DebugUtil.Info(
+            "Galatea.Session",
+            $"RunTurnAsync connection: user={host.User.UserId}, turnId={liveTurn.TurnId}, connectionId={connection.Id}, model={connection.ModelId}, surface={connection.CompletionSurfaceId}"
+        );
+
+        string effectiveUserMessage = await NormalizeUserMessageAsync(liveTurn, ct).ConfigureAwait(false);
+        string promptedUserMessage = WrapUserMessageForEngine(effectiveUserMessage);
+
+        // Failsafe: if the previous turn's post-generation compaction didn't happen
+        // or failed, try once more before generating.  Otherwise the user would wait
+        // for compaction *plus* generation in a single turn.
+        // 先试用一阵关闭pre压缩功能，仅post压缩，以提高响应性。
+        // if (host.Engine.GetStatistics().EstimatedTokens >= host.User.CompactionThresholdTokens) {
+        //     liveTurn.Publish(new StreamEventDto("meta", new { phase = "compaction-start" }), phase: "compaction-start");
+        //     var emergency = await host.Engine.CompactAsync(
+        //         host.User.CompactionSystemPrompt!,
+        //         host.User.CompactionPrompt!,
+        //         ct
+        //     ).ConfigureAwait(false);
+
+        //     if (!emergency.Applied) {
+        //         throw new GalateaTurnException(
+        //             "当前会话上下文过长，且无法继续压缩。",
+        //             emergency.FailureReason?.ToString()
+        //         );
+        //     }
+
+        //     liveTurn.Publish(new StreamEventDto("meta", new { phase = "compaction-finish" }), phase: "compaction-finish");
+        // }
+
+        var observer = new CompletionStreamObserver();
+        liveTurn.AttachObserver(observer);
+        var toolLoopStarted = 0;
+        observer.ReceivedThinkingBegin += () => liveTurn.Publish(
+            new StreamEventDto("meta", new { phase = "reasoning-start" }),
+            phase: "reasoning-start"
+        );
+        observer.ReceivedThinkingEnd += () => liveTurn.Publish(
+            new StreamEventDto("meta", new { phase = "reasoning-end" }),
+            phase: "reasoning-end"
+        );
+        observer.ReceivedReasoningDelta += delta => liveTurn.Publish(new StreamEventDto("reasoning-delta", new { delta }));
+        var textFilter = new InlineThinkTextFilter(startInsideThink: liveTurn.Options.AutoPrefillThinkOpenTag);
+        observer.ReceivedTextDelta += delta => {
+            var visibleText = textFilter.Filter(delta);
+            if (string.IsNullOrEmpty(visibleText)) { return; }
+            liveTurn.Publish(new StreamEventDto("text-delta", new { delta = visibleText }));
+        };
+        observer.ReceivedToolCall += call => {
+            if (Interlocked.Exchange(ref toolLoopStarted, 1) == 0) {
+                liveTurn.Publish(new StreamEventDto("meta", new { phase = "tool-loop-start" }), phase: "tool-loop-start");
+            }
+
+            liveTurn.Publish(
+                new StreamEventDto("meta", new { phase = "tool-call", toolName = call.ToolName, toolCallId = call.ToolCallId }),
+                phase: "tool-call"
+            );
+        };
+
+        ChatSessionTurnResult turnResult;
+        try {
+            using var behaviorScope = GalateaCompletionExecutionContext.Push(
+                GalateaTurnBehavior.FromUserAndTurn(host.User, liveTurn.Options)
+            );
+            turnResult = await host.Engine.SendMessageAsync(promptedUserMessage, observer, ct).ConfigureAwait(false);
+        }
+        catch (ChatSessionTurnAbortedException ex) {
+            DebugUtil.Warning(
+                "Galatea.Session",
+                $"RunTurnAsync completion aborted: user={host.User.UserId}, turnId={liveTurn.TurnId}, termination={ex.Termination.Kind}, providerReason={ex.Termination.ProviderReason ?? "<none>"}, detail={ex.Termination.Detail ?? "<none>"}"
+            );
+            if (liveTurn.StopRequested && WasStoppedByObserver(ex.Termination)) {
+                throw new GalateaTurnException(
+                    "已停止生成，本轮结果未写入历史。你可以调整开关或修改输入后重试。",
+                    "stopped-by-user"
+                );
+            }
+
+            throw new GalateaTurnException(
+                "模型本次输出未正常结束，本轮结果已放弃写入历史。请刷新页面后重试。",
+                ex.Termination.ProviderReason ?? ex.Termination.Kind.ToString()
+            );
+        }
+        var snapshot = BuildRecentTurnsResponse(host.Engine);
+        DebugUtil.Info(
+            "Galatea.Session",
+            $"RunTurnAsync send done: user={host.User.UserId}, turnId={liveTurn.TurnId}, errors={turnResult.Errors?.Count ?? 0}, snapshotTurns={snapshot.Turns.Count}, recapVisible={snapshot.Turns.Any(static x => x.IsRecap)}, head={host.Engine.PersistedHeadAddress}"
+        );
+
+        if (Volatile.Read(ref toolLoopStarted) == 1) {
+            liveTurn.Publish(new StreamEventDto("meta", new { phase = "tool-loop-finish" }), phase: "tool-loop-finish");
+        }
+
+        liveTurn.Publish(
+            new StreamEventDto(
+                "done",
+                new {
+                    recentTurns = snapshot.Turns,
+                    toolCallsExecuted = turnResult.ToolCallsExecuted,
+                    errors = turnResult.Errors
+                }
+            ),
+            status: "completed"
+        );
+
+        // ── Post-generation compaction ──────────────────────────────
+        // Compact *after* the response is sent so the user spends the
+        // reading / typing time waiting, not the generation latency.
+        //
+        // This is a best-effort optimization that runs *after* the turn's
+        // response has already been delivered (status "completed"). A
+        // compaction failure (timeout, transient backend error, shutdown)
+        // must NOT surface as a turn failure — the user already got their
+        // reply, and a later turn will retry compaction anyway.
+        if (host.Engine.GetStatistics().EstimatedTokens >= host.User.CompactionThresholdTokens) {
+            try {
+                using var compactCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                compactCts.CancelAfter(TimeSpan.FromMinutes(5));
+                DebugUtil.Info("Galatea.Session", $"RunTurnAsync post-compaction trigger: user={host.User.UserId}, turnId={liveTurn.TurnId}, head={host.Engine.PersistedHeadAddress}");
+                await host.Engine.CompactAsync(
+                    host.User.CompactionSystemPrompt!,
+                    host.User.CompactionPrompt!,
+                    compactCts.Token
+                ).ConfigureAwait(false);
+                DebugUtil.Info("Galatea.Session", $"RunTurnAsync post-compaction done: user={host.User.UserId}, turnId={liveTurn.TurnId}, {host.Engine.GetDebugStateSummary()}");
+            }
+            catch (Exception ex) {
+                DebugUtil.Warning(
+                    "Galatea.Session",
+                    $"RunTurnAsync post-compaction failed (non-fatal, turn already completed): user={host.User.UserId}, turnId={liveTurn.TurnId}",
+                    ex
+                );
+            }
+        }
+    }
+
+    public async ValueTask DisposeAsync() {
+        foreach (var entry in _sessions.Values) {
+            if (!entry.IsValueCreated) { continue; }
+
+            try {
+                var session = await entry.Value.ConfigureAwait(false);
+                await session.DisposeAsync().ConfigureAwait(false);
+            }
+            catch {
+                // Ignore teardown failures during host shutdown.
+            }
+        }
+    }
+
+    private async Task<UserSessionHost> CreateSessionAsync(GalateaUserConfig user, CancellationToken ct) {
+        var toolSession = new ToolRegistry(Array.Empty<ITool>()).CreateSession();
+        var bootstrapConnection = _connections.Resolve(null);
+        var runtime = BuildRuntime(bootstrapConnection, toolSession);
+        var createOptions = new ChatSessionCreateOptions(SystemPrompt: user.SystemPrompt);
+
+        var sessionDir = Path.GetFullPath(user.SessionDir);
+        ChatSessionEngine engine;
+        if (Directory.Exists(sessionDir) && Directory.EnumerateFileSystemEntries(sessionDir).Any()) {
+            engine = await ChatSessionEngine.OpenAsync(sessionDir, runtime, ct: ct).ConfigureAwait(false);
+        }
+        else {
+            Directory.CreateDirectory(sessionDir);
+            engine = await ChatSessionEngine.CreateAsync(sessionDir, createOptions, runtime, ct).ConfigureAwait(false);
+        }
+
+        // Reflect config-level prompt changes into the persisted session so that
+        // editing config.json / prompts/*.md and restarting the server is enough
+        // to update the system prompt for existing sessions.
+        if (engine.TrySyncSystemPrompt(user.SystemPrompt)) {
+            DebugUtil.Info("Galatea.Session", $"CreateSessionAsync: system prompt synced from config for user={user.UserId}");
+        }
+
+        DebugUtil.Info("Galatea.Session", $"CreateSessionAsync: user={user.UserId}, sessionDir={sessionDir}, bootstrapConnection={bootstrapConnection.Id}, {engine.GetDebugStateSummary()}");
+
+        return new UserSessionHost(user, engine, toolSession);
+    }
+
+    private ChatSessionRuntime BuildRuntime(GalateaConnectionConfig connection, ToolSession toolSession)
+        => new ChatSessionRuntime(
+            CompletionClient: _connections.GetClient(connection.Id),
+            CompletionSurfaceId: connection.CompletionSurfaceId,
+            ModelId: connection.ModelId,
+            ToolSession: toolSession
+        );
+
+    private async Task<string> NormalizeUserMessageAsync(GalateaLiveTurn liveTurn, CancellationToken ct) {
+        string original = liveTurn.UserMessage;
+        if (!_userMessageNormalizer.ShouldNormalize(original)) { return original; }
+
+        liveTurn.Publish(
+            new StreamEventDto("meta", new { phase = "input-normalization-start" }),
+            phase: "input-normalization-start"
+        );
+
+        try {
+            string effective = await _userMessageNormalizer.NormalizeAsync(original, ct).ConfigureAwait(false);
+            if (string.IsNullOrWhiteSpace(effective)) {
+                effective = original;
+            }
+            bool changed = !string.Equals(original, effective, StringComparison.Ordinal);
+            liveTurn.Publish(
+                new StreamEventDto("meta", new { phase = "input-normalization-finish", changed }),
+                phase: "input-normalization-finish"
+            );
+            return effective;
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) {
+            throw;
+        }
+        catch (Exception ex) {
+            DebugUtil.Warning(
+                "Galatea.Session",
+                $"NormalizeUserMessageAsync fallback to original: turnId={liveTurn.TurnId}, input={Preview(original)}, error={ex.Message}"
+            );
+            liveTurn.Publish(
+                new StreamEventDto("meta", new { phase = "input-normalization-finish", changed = false, fallback = true }),
+                phase: "input-normalization-finish"
+            );
+            return original;
+        }
+    }
+
+    private static AssistantMessageDto? ProjectAssistant(ActionMessage action) {
+        var textBuilder = new StringBuilder();
+        var reasoningBuilder = new StringBuilder();
+
+        foreach (var block in action.Blocks) {
+            switch (block) {
+                case ActionBlock.Text text:
+                    textBuilder.Append(text.Content);
+                    break;
+                case ActionBlock.TextReasoningBlock reasoning:
+                    reasoningBuilder.Append(reasoning.Content);
+                    break;
+            }
+        }
+
+        if (textBuilder.Length == 0 && reasoningBuilder.Length == 0) { return null; }
+
+        var cleanedText = StripInlineThinkBlocks(textBuilder.ToString());
+        string? reasoningText = reasoningBuilder.Length == 0 ? null : reasoningBuilder.ToString();
+        return new AssistantMessageDto(
+            Text: cleanedText,
+            ReasoningText: reasoningText,
+            HasReasoning: !string.IsNullOrEmpty(reasoningText)
+        );
+    }
+
+    /// <summary>
+    /// Removes inline <c>&lt;think&gt;...&lt;/think&gt;</c> blocks from the text.
+    /// If the closing tag is missing, the text from <c>&lt;think&gt;</c> onward is dropped.
+    /// </summary>
+    private static string StripInlineThinkBlocks(string text) {
+        return InlineThinkTextFilter.StripInlineThinkBlocks(text);
+    }
+
+    private static bool WasStoppedByObserver(CompletionTermination termination) {
+        ArgumentNullException.ThrowIfNull(termination);
+
+        if (termination.Kind is not CompletionTerminationKind.Incomplete) { return false; }
+
+        return termination.Detail?.Contains("Streaming observer stopped", StringComparison.Ordinal) == true;
+    }
+
+    internal static string WrapUserMessageForEngine(string userMessage) {
+        ArgumentException.ThrowIfNullOrWhiteSpace(userMessage);
+        return UserMessagePrefix + userMessage + UserMessageSuffix;
+    }
+
+    internal static string NormalizeUserMessageForDisplay(string? storedUserMessage) {
+        if (string.IsNullOrEmpty(storedUserMessage)) { return string.Empty; }
+
+        if (storedUserMessage.StartsWith(UserMessagePrefix, StringComparison.Ordinal)
+            && storedUserMessage.EndsWith(UserMessageSuffix, StringComparison.Ordinal)) {
+            return storedUserMessage.Substring(
+                UserMessagePrefix.Length,
+                storedUserMessage.Length - UserMessagePrefix.Length - UserMessageSuffix.Length
+            );
+        }
+
+        return storedUserMessage;
+    }
+
+    private static string DescribeTurn(RecentTurnDto? turn) {
+        if (turn is null) { return "<null>"; }
+        if (turn.IsRecap) { return $"recap={Preview(turn.Assistant.Text)}"; }
+        return $"user={Preview(turn.UserText)}, assistant={Preview(turn.Assistant.Text)}";
+    }
+
+    private static IReadOnlyList<RecentTurnDto> ProjectRecentTurnsResponse(IReadOnlyList<RecentTurnDto> allTurns, int maxTurns) {
+        ArgumentNullException.ThrowIfNull(allTurns);
+
+        var projectedTurns = allTurns.Count <= maxTurns
+            ? new List<RecentTurnDto>(allTurns)
+            : allTurns.Take(maxTurns).ToList();
+
+        int recapIndex = FindRecapIndex(allTurns);
+        if (recapIndex < 0 || recapIndex < maxTurns) { return projectedTurns; }
+
+        // Optional boundary hint: include the first turn immediately after the recap
+        // if it fell outside maxTurns, so the UI can see where the uncompressed range starts.
+        if (recapIndex > 0 && recapIndex - 1 >= maxTurns) {
+            projectedTurns.Add(allTurns[recapIndex - 1]);
+        }
+
+        projectedTurns.Add(allTurns[recapIndex]);
+        return projectedTurns;
+    }
+
+    private static int FindRecapIndex(IReadOnlyList<RecentTurnDto> turns) {
+        for (int i = 0; i < turns.Count; i++) {
+            if (turns[i].IsRecap) { return i; }
+        }
+
+        return -1;
+    }
+
+    private static string Preview(string? text) {
+        if (string.IsNullOrWhiteSpace(text)) { return "<null>"; }
+        string normalized = text.Replace("\r", string.Empty, StringComparison.Ordinal)
+            .Replace("\n", "\\n", StringComparison.Ordinal);
+        return normalized.Length <= 120 ? normalized : normalized[..120] + "...";
+    }
+}
+
+public sealed class UserSessionHost : IAsyncDisposable {
+    private readonly object _turnStateGate = new();
+    private GalateaLiveTurn? _currentTurn;
+    private GalateaLiveTurn? _lastTurn;
+
+    public UserSessionHost(
+        GalateaUserConfig user,
+        ChatSessionEngine engine,
+        ToolSession toolSession
+    ) {
+        User = user;
+        Engine = engine;
+        ToolSession = toolSession;
+    }
+
+    public GalateaUserConfig User { get; }
+
+    public ChatSessionEngine Engine { get; }
+
+    public ToolSession ToolSession { get; }
+
+    public SemaphoreSlim TurnLock { get; } = new(1, 1);
+
+    internal GalateaLiveTurn StartTurn(string userMessage, GalateaTurnOptions options) {
+        ArgumentException.ThrowIfNullOrWhiteSpace(userMessage);
+        var liveTurn = new GalateaLiveTurn(userMessage, options);
+        lock (_turnStateGate) {
+            _lastTurn = null;
+            _currentTurn = liveTurn;
+        }
+
+        return liveTurn;
+    }
+
+    internal GalateaLiveTurn? GetCurrentTurn() {
+        lock (_turnStateGate) {
+            return _currentTurn;
+        }
+    }
+
+    internal GalateaLiveTurn? FindTurn(string turnId) {
+        ArgumentException.ThrowIfNullOrWhiteSpace(turnId);
+
+        lock (_turnStateGate) {
+            if (string.Equals(_currentTurn?.TurnId, turnId, StringComparison.Ordinal)) { return _currentTurn; }
+
+            if (string.Equals(_lastTurn?.TurnId, turnId, StringComparison.Ordinal)) { return _lastTurn; }
+
+            return null;
+        }
+    }
+
+    internal void FinishTurn(GalateaLiveTurn turn) {
+        ArgumentNullException.ThrowIfNull(turn);
+
+        lock (_turnStateGate) {
+            if (ReferenceEquals(_currentTurn, turn)) {
+                _currentTurn = null;
+                _lastTurn = turn;
+            }
+            else if (ReferenceEquals(_lastTurn, turn)) {
+                _lastTurn = turn;
+            }
+        }
+    }
+
+    public ValueTask DisposeAsync() {
+        Engine.Dispose();
+        return ValueTask.CompletedTask;
+    }
+}
+
+internal static class GalateaConfigLoader {
+    public const string ConnectionsFileName = "connections.json";
+
+    public static GalateaConfig Load(string configPath) {
+        if (string.IsNullOrWhiteSpace(configPath)) { throw new InvalidOperationException("Galatea config path must not be blank."); }
+
+        string resolvedPath = Path.GetFullPath(configPath);
+        if (!File.Exists(resolvedPath)) {
+            throw new FileNotFoundException(
+                $"Galatea config file was not found: {resolvedPath}",
+                resolvedPath
+            );
+        }
+
+        string configDir = Path.GetDirectoryName(resolvedPath)
+            ?? throw new InvalidOperationException($"Cannot determine config directory for: {resolvedPath}");
+        string connectionsPath = Path.Combine(configDir, ConnectionsFileName);
+        if (!File.Exists(connectionsPath)) {
+            throw new FileNotFoundException(
+                $"Galatea connections file was not found: {connectionsPath}",
+                connectionsPath
+            );
+        }
+
+        var usersFile = JsonSerializer.Deserialize(File.ReadAllText(resolvedPath), GalateaJsonContext.Default.GalateaUsersFileConfig);
+        if (usersFile is null) { throw new InvalidOperationException($"Failed to deserialize Galatea config: {resolvedPath}"); }
+
+        var connectionsFile = JsonSerializer.Deserialize(File.ReadAllText(connectionsPath), GalateaJsonContext.Default.GalateaConnectionsFileConfig);
+        if (connectionsFile is null) { throw new InvalidOperationException($"Failed to deserialize Galatea connections: {connectionsPath}"); }
+
+        if (usersFile.Users is not { Count: > 0 }) { throw new InvalidOperationException("Galatea config must contain at least one user."); }
+
+        if (connectionsFile.Connections is not { Count: > 0 }) { throw new InvalidOperationException("Galatea connections file must contain at least one connection."); }
+
+        string defaultConnectionId = !string.IsNullOrWhiteSpace(connectionsFile.DefaultConnectionId)
+            ? connectionsFile.DefaultConnectionId!
+            : connectionsFile.Connections[0].Id;
+
+        var config = new GalateaConfig(
+            Users: usersFile.Users,
+            Connections: connectionsFile.Connections,
+            DefaultConnectionId: defaultConnectionId,
+            ListenUrls: usersFile.ListenUrls
+        );
+
+        config = ResolveSystemPromptFiles(config, resolvedPath);
+        config = ApplyDefaultCompactionPrompts(config);
+        config = ResolveConnectionEnvironmentVariables(config);
+
+        Validate(config);
+        return config;
+    }
+
+    private static GalateaConfig ResolveSystemPromptFiles(GalateaConfig config, string configPath) {
+        string configDir = Path.GetDirectoryName(configPath)
+            ?? throw new InvalidOperationException($"Cannot determine config directory for: {configPath}");
+
+        var resolvedUsers = new List<GalateaUserConfig>(config.Users.Count);
+        foreach (var user in config.Users) {
+            if (string.IsNullOrWhiteSpace(user.SystemPromptFile)) {
+                resolvedUsers.Add(user);
+                continue;
+            }
+
+            string promptPath = Path.GetFullPath(user.SystemPromptFile, configDir);
+            if (!File.Exists(promptPath)) {
+                throw new FileNotFoundException(
+                    $"Galatea user '{user.UserId}' systemPromptFile was not found: {promptPath}",
+                    promptPath
+                );
+            }
+
+            string promptText = File.ReadAllText(promptPath).Trim();
+            resolvedUsers.Add(user with { SystemPrompt = promptText });
+        }
+
+        return config with { Users = resolvedUsers };
+    }
+
+    private static GalateaConfig ApplyDefaultCompactionPrompts(GalateaConfig config) {
+        var normalizedUsers = new List<GalateaUserConfig>(config.Users.Count);
+        foreach (var user in config.Users) {
+            normalizedUsers.Add(
+                user with {
+                    CompactionSystemPrompt = user.CompactionSystemPrompt ?? GalateaDefaults.CompactionSystemPrompt,
+                    CompactionPrompt = user.CompactionPrompt ?? GalateaDefaults.CompactionPrompt,
+                }
+            );
+        }
+
+        return config with { Users = normalizedUsers };
+    }
+
+    private static GalateaConfig ResolveConnectionEnvironmentVariables(GalateaConfig config) {
+        var resolvedConnections = new List<GalateaConnectionConfig>(config.Connections.Count);
+        foreach (var connection in config.Connections) {
+            string baseAddress = connection.BaseAddress;
+            string? apiKey = connection.ApiKey;
+
+            if (!string.IsNullOrWhiteSpace(connection.BaseAddressEnv)) {
+                string? resolved = Environment.GetEnvironmentVariable(connection.BaseAddressEnv);
+                if (string.IsNullOrWhiteSpace(resolved)) {
+                    throw new InvalidOperationException(
+                        $"Galatea connection '{connection.Id}' baseAddressEnv references environment variable "
+                        + $"'{connection.BaseAddressEnv}', but it is not set or empty."
+                    );
+                }
+                baseAddress = resolved;
+            }
+
+            if (!string.IsNullOrWhiteSpace(connection.ApiKeyEnv)) {
+                string? resolved = Environment.GetEnvironmentVariable(connection.ApiKeyEnv);
+                if (string.IsNullOrWhiteSpace(resolved)) {
+                    throw new InvalidOperationException(
+                        $"Galatea connection '{connection.Id}' apiKeyEnv references environment variable "
+                        + $"'{connection.ApiKeyEnv}', but it is not set or empty."
+                    );
+                }
+                apiKey = resolved;
+            }
+
+            resolvedConnections.Add(connection with { BaseAddress = baseAddress, ApiKey = apiKey });
+        }
+
+        return config with { Connections = resolvedConnections };
+    }
+
+    private static void Validate(GalateaConfig config) {
+        var connectionIds = new HashSet<string>(StringComparer.Ordinal);
+        for (int i = 0; i < config.Connections.Count; i++) {
+            var connection = config.Connections[i];
+            if (string.IsNullOrWhiteSpace(connection.Id)) { throw new InvalidOperationException($"Galatea connection[{i}] must have a non-empty id."); }
+
+            if (!connectionIds.Add(connection.Id)) { throw new InvalidOperationException($"Galatea connections contain duplicate id '{connection.Id}'."); }
+
+            if (string.IsNullOrWhiteSpace(connection.DisplayName)) { throw new InvalidOperationException($"Galatea connection '{connection.Id}' must have a non-empty displayName."); }
+
+            if (string.IsNullOrWhiteSpace(connection.Kind)) { throw new InvalidOperationException($"Galatea connection '{connection.Id}' must have a non-empty kind."); }
+
+            if (string.IsNullOrWhiteSpace(connection.ModelId)) { throw new InvalidOperationException($"Galatea connection '{connection.Id}' must have a non-empty modelId."); }
+
+            if (string.IsNullOrWhiteSpace(connection.CompletionSurfaceId)) { throw new InvalidOperationException($"Galatea connection '{connection.Id}' must have a non-empty completionSurfaceId."); }
+
+            if (string.IsNullOrWhiteSpace(connection.BaseAddress)) { throw new InvalidOperationException($"Galatea connection '{connection.Id}' must have a non-empty baseAddress."); }
+
+            if (string.IsNullOrWhiteSpace(connection.ApiKey)) {
+                throw new InvalidOperationException(
+                    $"Galatea connection '{connection.Id}' must have a non-empty apiKey (set 'apiKey' inline or via 'apiKeyEnv')."
+                );
+            }
+        }
+
+        if (!connectionIds.Contains(config.DefaultConnectionId)) {
+            throw new InvalidOperationException(
+                $"Galatea defaultConnectionId '{config.DefaultConnectionId}' does not match any connection id."
+            );
+        }
+
+        var userIds = new HashSet<string>(StringComparer.Ordinal);
+        for (int i = 0; i < config.Users.Count; i++) {
+            var user = config.Users[i];
+            if (string.IsNullOrWhiteSpace(user.UserId)) { throw new InvalidOperationException($"Galatea config user[{i}] must have a non-empty userId."); }
+
+            if (!userIds.Add(user.UserId)) { throw new InvalidOperationException($"Galatea config contains duplicate userId '{user.UserId}'."); }
+
+            if (string.IsNullOrWhiteSpace(user.Password)) { throw new InvalidOperationException($"Galatea config user '{user.UserId}' must have a non-empty password."); }
+
+            if (string.IsNullOrWhiteSpace(user.SessionDir)) { throw new InvalidOperationException($"Galatea config user '{user.UserId}' must have a non-empty sessionDir."); }
+
+            if (string.IsNullOrWhiteSpace(user.SystemPrompt)) {
+                throw new InvalidOperationException(
+                    $"Galatea config user '{user.UserId}' must provide a non-empty systemPrompt "
+                    + "(either inline via 'systemPrompt' or by pointing 'systemPromptFile' at a non-empty file)."
+                );
+            }
+
+            if (string.IsNullOrWhiteSpace(user.CompactionSystemPrompt)) { throw new InvalidOperationException($"Galatea config user '{user.UserId}' must have a non-empty compactionSystemPrompt."); }
+
+            if (string.IsNullOrWhiteSpace(user.CompactionPrompt)) { throw new InvalidOperationException($"Galatea config user '{user.UserId}' must have a non-empty compactionPrompt."); }
+        }
+
+        if (config.ListenUrls is null) { return; }
+
+        for (int i = 0; i < config.ListenUrls.Count; i++) {
+            if (string.IsNullOrWhiteSpace(config.ListenUrls[i])) { throw new InvalidOperationException($"Galatea config listenUrls[{i}] must not be blank."); }
+        }
+    }
+}
+
+internal static class GalateaConfigBootstrapper {
+    public static void EnsureExistsOrBootstrap(string configPath) {
+        if (string.IsNullOrWhiteSpace(configPath)) { throw new InvalidOperationException("Galatea config path must not be blank."); }
+
+        string resolvedPath = Path.GetFullPath(configPath);
+        string? parentDir = Path.GetDirectoryName(resolvedPath);
+        if (string.IsNullOrWhiteSpace(parentDir)) { throw new InvalidOperationException($"Cannot determine parent directory for Galatea config path: {resolvedPath}"); }
+
+        string connectionsPath = Path.Combine(parentDir, GalateaConfigLoader.ConnectionsFileName);
+        bool configExists = File.Exists(resolvedPath);
+        bool connectionsExists = File.Exists(connectionsPath);
+        if (configExists && connectionsExists) { return; }
+
+        Directory.CreateDirectory(parentDir);
+
+        var jsonOptions = new JsonSerializerOptions(GalateaJson.Options) {
+            WriteIndented = true,
+            Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping
+        };
+
+        var generated = new List<string>();
+        if (!configExists) {
+            File.WriteAllText(
+                resolvedPath,
+                JsonSerializer.Serialize(GalateaConfigTemplateFactory.CreateUsersFile(), jsonOptions) + Environment.NewLine,
+                Encoding.UTF8
+            );
+            generated.Add(resolvedPath);
+        }
+
+        if (!connectionsExists) {
+            File.WriteAllText(
+                connectionsPath,
+                JsonSerializer.Serialize(GalateaConfigTemplateFactory.CreateConnectionsFile(), jsonOptions) + Environment.NewLine,
+                Encoding.UTF8
+            );
+            generated.Add(connectionsPath);
+        }
+
+        throw new InvalidOperationException(
+            "Galatea config templates have been generated at "
+            + string.Join(" and ", generated)
+            + ". Please update listenUrls, the connections' modelId / baseAddress / apiKey, and the default account passwords before restarting the server."
+        );
+    }
+}
+
+internal static class GalateaDefaults {
+    public const string SystemPrompt =
+        "你是家庭局域网里的私人助手。优先用简洁、直接、可信的中文回答。"
+        + "不确定时明确说明不确定，不编造细节。";
+
+    public const string CompactionSystemPrompt = @"你是一位专业的游戏书吏（Game Scribe），负责将漫长的冒险历程提炼成引人入胜的“前情提要”。你的任务不是简单地压缩文本，而是要捕捉故事的核心戏剧性：
+  1. **聚焦动机与冲突**：识别并强调每个主要角色的核心目标、他们遇到的阻碍，以及角色之间的内在或外在冲突。
+  2. **保留关键“变化”**：记录世界状态、人物关系或角色心境发生的关键转折点。
+  3. **提炼悬念**：清晰地列出当前故事中悬而未决的问题、未解的谜团或迫在眉睫的危机。
+  4. **使用第三人称**：始终使用角色的名字进行叙述，保持客观的史官视角。";
+
+    public const string CompactionPrompt = @"请根据以上对话历史，撰写一段承前启后的中文剧情摘要。摘要需要清晰且充满张力，并至少包括以下结构：
+  1. **【主要角色间的重要交互历史】**：重要！这是防止两个角色前一天刚海誓山盟，后一天因遗忘而又回退到保持距离的关键信息。迭代时摘要旧条目，添加新条目。
+  2. **【当前局势】**：概括主要角色们目前所处的地点、时间和核心情境。
+  3. **【角色动态与内心驱动】**：分点阐述每个主要角色：
+      * 他们最新的状态是怎样的？
+      * 他们当前正在做什么？
+      * 他们内心最迫切的目标或欲望是什么？
+      * 他们与其他角色的关系（如信任、怀疑、联盟、敌对）的状态与最新变化？
+  4. **【悬念与线索】**：分点列出故事中所有待解决的谜题、未完成的任务、隐藏的线索或潜在的威胁。这些是推动故事继续发展的关键。";
+}
+
+internal static class GalateaConfigTemplateFactory {
+    public const string PlaceholderModelId = "REPLACE_WITH_YOUR_LOCAL_MODEL_ID";
+    public const string DefaultConnectionId = "local";
+
+    public static GalateaUsersFileConfig CreateUsersFile() {
+        return new GalateaUsersFileConfig(
+            Users: [
+                CreateUser("alice", "Alice", "alice123", ".atelia/galatea/sessions/alice"),
+                CreateUser("bob", "Bob", "bob123", ".atelia/galatea/sessions/bob"),
+            ],
+            ListenUrls: ["http://0.0.0.0:3510"]
+        );
+    }
+
+    public static GalateaConnectionsFileConfig CreateConnectionsFile() {
+        return new GalateaConnectionsFileConfig(
+            Connections: [
+                new GalateaConnectionConfig(
+                    Id: DefaultConnectionId,
+                    DisplayName: "本地模型",
+                    Kind: "openai-chat",
+                    ModelId: PlaceholderModelId,
+                    CompletionSurfaceId: "openai-chat/sglang-compatible",
+                    // Points at a local OpenAI-compatible server by default. The inline
+                    // placeholder key lets the config load out of the box; swap in a real
+                    // key, or move it to an env var via ApiKeyEnv, before going live.
+                    BaseAddress: "http://localhost:8888/",
+                    ApiKey: "sk-local-placeholder"
+                ),
+            ],
+            DefaultConnectionId: DefaultConnectionId
+        );
+    }
+
+    private static GalateaUserConfig CreateUser(string userId, string displayName, string password, string sessionDir) {
+        return new GalateaUserConfig(
+            UserId: userId,
+            DisplayName: displayName,
+            Password: password,
+            SessionDir: sessionDir,
+            CompactionThresholdTokens: 32000,
+            CompactionSystemPrompt: GalateaDefaults.CompactionSystemPrompt,
+            CompactionPrompt: GalateaDefaults.CompactionPrompt,
+            SystemPrompt: GalateaDefaults.SystemPrompt
+        );
+    }
+}
+
+internal static class GalateaHtml {
+    public static string RenderLoginPage(bool invalidCredentials, string assetVersion) {
+        string errorHtml = invalidCredentials
+            ? "<p class=\"error\">用户名或密码不正确。</p>"
+            : string.Empty;
+
+        string stylesheetPath = GalateaStaticAssetVersion.AppendToPath("/assets/galatea.css", assetVersion);
+
+        return $$"""
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Family Chat Login</title>
+    <link rel="stylesheet" href="{{stylesheetPath}}">
+</head>
+<body class="login-body">
+  <main class="login-shell">
+    <h1>Family Chat</h1>
+    <p class="login-copy">局域网家庭单会话 Chat</p>
+    <p class="login-hint">首次启动后，请先确认 <code>.atelia/galatea/config.json</code>。</p>
+    {{errorHtml}}
+    <form method="post" action="/login" class="login-form">
+      <label>用户名<input name="userId" autocomplete="username" required></label>
+      <label>密码<input type="password" name="password" autocomplete="current-password" required></label>
+      <button type="submit">登录</button>
+    </form>
+  </main>
+</body>
+</html>
+""";
+    }
+
+    public static string RenderAppPage(GalateaUserConfig user, GalateaConnectionRegistry connections, string assetVersion) {
+        ArgumentNullException.ThrowIfNull(user);
+        ArgumentNullException.ThrowIfNull(connections);
+
+        var connectionInfos = connections.Connections
+            .Select(
+            static c => new GalateaConnectionInfoDto(
+                c.Id,
+                c.DisplayName,
+                c.ModelId,
+                GalateaThinkRepairDefaults.ShouldEnableForModel(c.ModelId)
+            )
+        )
+            .ToArray();
+        string connectionsJson = JsonSerializer.Serialize(connectionInfos, GalateaJson.Options);
+        string defaultConnectionJson = JsonSerializer.Serialize(connections.DefaultConnectionId, GalateaJson.Options);
+        string stylesheetPath = GalateaStaticAssetVersion.AppendToPath("/assets/galatea.css", assetVersion);
+        string scriptPath = GalateaStaticAssetVersion.AppendToPath("/assets/galatea.js", assetVersion);
+
+        return $$"""
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Family Chat</title>
+    <link rel="stylesheet" href="{{stylesheetPath}}">
+</head>
+<body class="app-body">
+  <main class="app-shell">
+
+    <section class="composer">
+      <form id="chat-form">
+        <fieldset id="connection-picker" class="connection-picker" aria-label="模型连接">
+          <legend>模型连接</legend>
+        </fieldset>
+        <textarea id="message-input" rows="3" placeholder="说点什么……" required></textarea>
+        <label class="composer-option">
+          <input id="auto-repair-missing-think-open-tag" type="checkbox">
+          <span>强制以 <code>&lt;think&gt;</code> 续写思考模式</span>
+        </label>
+        <div class="composer-actions">
+          <div class="composer-status">
+            <span id="composer-mode-hint" class="eyebrow hidden"></span>
+            <span id="status-text" class="status-text"></span>
+          </div>
+          <div class="composer-buttons">
+            <button id="undo-last-button" type="button" class="ghost-button">撤销上一轮</button>
+            <button id="stop-button" type="button" class="ghost-button">停止</button>
+            <button id="send-button" type="submit">发送</button>
+          </div>
+        </div>
+      </form>
+    </section>
+
+    <section id="live-turn" class="live-turn hidden" aria-live="polite">
+      <article class="turn-card assistant live">
+        <header>Assistant</header>
+        <details class="reasoning-panel hidden" id="live-reasoning-panel">
+          <summary>Reasoning</summary>
+          <pre id="live-reasoning"></pre>
+        </details>
+        <pre id="live-text"></pre>
+      </article>
+    </section>
+
+    <section class="history">
+      <div id="turn-list" class="turn-list"></div>
+    </section>
+
+    <button id="scroll-to-top" class="scroll-to-top" title="回到顶端">↑ 回到顶端</button>
+  </main>
+
+  <script>
+    window.galateaBootstrap = {
+      displayName: {{JsonSerializer.Serialize(user.DisplayName, GalateaJson.Options)}},
+      userId: {{JsonSerializer.Serialize(user.UserId, GalateaJson.Options)}},
+      connections: {{connectionsJson}},
+      defaultConnectionId: {{defaultConnectionJson}}
+    };
+  </script>
+    <script src="{{scriptPath}}"></script>
+</body>
+</html>
+""";
+    }
+}
+
+internal static class GalateaStaticAssetVersion {
+    public static string BuildToken(string contentRootPath) {
+        ArgumentException.ThrowIfNullOrWhiteSpace(contentRootPath);
+
+        string webRootPath = Path.Combine(contentRootPath, "wwwroot", "assets");
+        long latestTicks = Math.Max(
+            File.GetLastWriteTimeUtc(Path.Combine(webRootPath, "galatea.css")).Ticks,
+            File.GetLastWriteTimeUtc(Path.Combine(webRootPath, "galatea.js")).Ticks
+        );
+
+        return latestTicks.ToString(CultureInfo.InvariantCulture);
+    }
+
+    public static string AppendToPath(string assetPath, string versionToken) {
+        ArgumentException.ThrowIfNullOrWhiteSpace(assetPath);
+        ArgumentException.ThrowIfNullOrWhiteSpace(versionToken);
+        return $"{assetPath}?v={versionToken}";
+    }
+}
+
+internal static class GalateaSseWriter {
+    public static async Task WriteEventAsync(HttpResponse response, string eventName, object? payload, CancellationToken ct) {
+        string json = JsonSerializer.Serialize(payload, GalateaJson.Options);
+        await response.WriteAsync($"event: {eventName}\n", ct);
+        await response.WriteAsync($"data: {json}\n\n", ct);
+        await response.Body.FlushAsync(ct);
+    }
+}
+
+internal static class GalateaClaimTypes {
+    public const string UserId = "family_chat_user_id";
+}
+
+internal static class GalateaJson {
+    public static readonly JsonSerializerOptions Options = new(JsonSerializerDefaults.Web) {
+        WriteIndented = false
+    };
+}
+
+[JsonSourceGenerationOptions(JsonSerializerDefaults.Web)]
+[JsonSerializable(typeof(GalateaUsersFileConfig))]
+[JsonSerializable(typeof(GalateaConnectionsFileConfig))]
+[JsonSerializable(typeof(GalateaConnectionConfig))]
+[JsonSerializable(typeof(GalateaUserConfig))]
+internal sealed partial class GalateaJsonContext : JsonSerializerContext;
