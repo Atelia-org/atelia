@@ -140,6 +140,82 @@ public sealed class ChatSessionQuickStartSamplesTests {
         }
     }
 
+    [Fact]
+    public async Task ContextHeader_ProjectsToSystemUserAndAssistantBeforeRecentHistory() {
+        string repoDir = CreateTempDirectory();
+        try {
+            var completionClient = new ScriptedCompletionClient("openai-chat-v1");
+            completionClient.Enqueue(
+                (request, observer, ct) => {
+                    Assert.Equal("base-system\n\nheader-system", request.SystemPrompt);
+                    Assert.Collection(
+                        request.Context,
+                        message => Assert.Equal("header-user", Assert.IsType<ObservationMessage>(message).Content),
+                        message => Assert.Equal("header-assistant", Assert.IsType<ActionMessage>(message).GetFlattenedText()),
+                        message => Assert.Equal("fresh-user", Assert.IsType<ObservationMessage>(message).Content)
+                    );
+
+                    return Task.FromResult(
+                        new CompletionResult(
+                            new ActionMessage([new ActionBlock.Text("fresh-assistant")]),
+                            new CompletionDescriptor("scripted", "openai-chat-v1", request.ModelId)
+                        )
+                    );
+                }
+            );
+
+            using var engine = await ChatSessionEngine.CreateAsync(
+                repoDir,
+                new ChatSessionCreateOptions(SystemPrompt: "base-system"),
+                new ChatSessionRuntime(
+                    CompletionClient: completionClient,
+                    CompletionSurfaceId: "openai-chat/strict",
+                    ModelId: "model-a",
+                    ToolSession: new ToolRegistry(Array.Empty<ITool>()).CreateSession()
+                )
+            );
+
+            engine.SetContextHeader(
+                new ContextHeader(
+                    "header-system",
+                    "header-user",
+                    new ActionMessage([new ActionBlock.Text("header-assistant")])
+                )
+            );
+
+            var turn = await engine.SendMessageAsync("fresh-user", CancellationToken.None);
+
+            Assert.Equal("fresh-assistant", turn.Message.GetFlattenedText());
+            Assert.Collection(
+                engine.Context,
+                message => Assert.IsType<ContextHeader>(message),
+                message => Assert.Equal("fresh-user", Assert.IsType<ObservationMessage>(message).Content),
+                message => Assert.Equal("fresh-assistant", Assert.IsType<ActionMessage>(message).GetFlattenedText())
+            );
+        }
+        finally {
+            Directory.Delete(repoDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void FindHalfContextSplitPoint_WhenEnabled_CanSplitAssistantToUserBoundary() {
+        var messages = new IHistoryMessage[] {
+            new ContextHeader(
+                new string('s', 80),
+                "oldest-user",
+                new ActionMessage([new ActionBlock.Text(new string('a', 80))])
+            ),
+            new ObservationMessage("recent-user")
+        };
+
+        int withoutBoundary = ChatSessionEngine.FindHalfContextSplitPoint(messages);
+        int withBoundary = ChatSessionEngine.FindHalfContextSplitPoint(messages, allowActionToObservationBoundary: true);
+
+        Assert.Equal(-1, withoutBoundary);
+        Assert.Equal(1, withBoundary);
+    }
+
     private static string CreateTempDirectory() {
         string path = Path.Combine(Path.GetTempPath(), "chat-session-quickstart-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(path);

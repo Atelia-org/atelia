@@ -8,10 +8,14 @@ namespace Atelia.ChatSession;
 internal static class MessageRecord {
     public const string KeyKind = "kind";
     public const string KeyContent = "content";
+    public const string KeySystemPromptFragment = "systemPromptFragment";
+    public const string KeyUserMessage = "userMessage";
+    public const string KeyAssistantActionBlocksJson = "assistantActionBlocksJson";
     public const string KeyActionBlocksJson = "actionBlocksJson";
     public const string KeyResultsJson = "resultsJson";
     public const string KeyTimestampUtc = "timestampUtc";
 
+    public const string KindContextHeader = "context-header";
     public const string KindObservation = "observation";
     public const string KindAction = "action";
     public const string KindToolResults = "tool-results";
@@ -56,9 +60,19 @@ internal static class MessageRecord {
         return record;
     }
 
+    public static DurableDict<string> PrependContextHeader(DurableDeque messages, ContextHeader header) {
+        var record = CreateRecord(messages.Revision, KindContextHeader);
+        if (!string.IsNullOrEmpty(header.SystemPromptFragment)) { record.Upsert(KeySystemPromptFragment, header.SystemPromptFragment); }
+        if (!string.IsNullOrEmpty(header.UserMessage)) { record.Upsert(KeyUserMessage, header.UserMessage); }
+        if (header.AssistantMessage is not null) { record.Upsert(KeyAssistantActionBlocksJson, ActionMessageSerialization.SerializeBlocks(header.AssistantMessage.Blocks)); }
+        messages.PushFront<DurableObject>(record);
+        return record;
+    }
+
     public static IHistoryMessage ToHistoryMessage(DurableDict<string> record) {
         record.Get<string>(KeyKind, out var kind);
         return kind switch {
+            KindContextHeader => BuildContextHeader(record),
             KindObservation => BuildObservation(record),
             KindAction => BuildAction(record),
             KindToolResults => BuildToolResults(record),
@@ -87,6 +101,18 @@ internal static class MessageRecord {
     private static ObservationMessage BuildObservation(DurableDict<string> record) {
         record.TryGet<string>(KeyContent, out var content);
         return new ObservationMessage(content);
+    }
+
+    private static ContextHeader BuildContextHeader(DurableDict<string> record) {
+        record.TryGet<string>(KeySystemPromptFragment, out var systemPromptFragment);
+        record.TryGet<string>(KeyUserMessage, out var userMessage);
+
+        ActionMessage? assistantMessage = null;
+        if (record.TryGet<string>(KeyAssistantActionBlocksJson, out var json) && !string.IsNullOrEmpty(json)) {
+            assistantMessage = new ActionMessage(ActionMessageSerialization.DeserializeBlocks(json));
+        }
+
+        return new ContextHeader(systemPromptFragment, userMessage, assistantMessage);
     }
 
     private static ObservationMessage BuildRecap(DurableDict<string> record) {

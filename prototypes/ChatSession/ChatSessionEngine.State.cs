@@ -54,6 +54,21 @@ public sealed partial class ChatSessionEngine : IDisposable {
     public CommitAddress? PersistedHeadAddress => TryGetPersistedHeadAddress();
     public int DurableMessageCount => _messages.Count;
 
+    public void SetContextHeader(ContextHeader? header) {
+        ThrowIfDisposed();
+
+        while (_messages.Count > 0
+               && _messages.TryGetAt<DurableDict<string>>(0, out var record)
+               && record is not null
+               && record.TryGet<string>(MessageRecord.KeyKind, out var kind)
+               && kind == MessageRecord.KindContextHeader) {
+            _messages.PopFront<DurableObject>(out _);
+        }
+
+        if (header is not null) { MessageRecord.PrependContextHeader(_messages, header); }
+        Commit();
+    }
+
     /// <summary>
     /// If <paramref name="configSystemPrompt"/> differs from the currently persisted
     /// system prompt, updates the StateJournal root and the in-memory field so that
@@ -197,6 +212,8 @@ public sealed partial class ChatSessionEngine : IDisposable {
         int obsCount = 0, actionCount = 0, toolCount = 0, recapCount = 0;
         for (int i = 0; i < allMessages.Count; i++) {
             switch (allMessages[i].Kind) {
+                case HistoryMessageKind.ContextHeader:
+                    break;
                 case HistoryMessageKind.Observation:
                     obsCount++;
                     break;
@@ -260,10 +277,18 @@ internal static class ChatSessionTokenEstimator {
 
     public static ulong Estimate(IHistoryMessage message) {
         return message switch {
+            ContextHeader header => EstimateContextHeader(header),
             ActionMessage action => EstimateAction(action),
             ObservationMessage obs => (ulong)(obs.Content?.Length ?? 0) / 2,
             _ => 0
         };
+    }
+
+    private static ulong EstimateContextHeader(ContextHeader header) {
+        ulong total = (ulong)(header.SystemPromptFragment?.Length ?? 0) / 2;
+        total += (ulong)(header.UserMessage?.Length ?? 0) / 2;
+        if (header.AssistantMessage is not null) { total += EstimateAction(header.AssistantMessage); }
+        return total;
     }
 
     private static ulong EstimateAction(ActionMessage action) {

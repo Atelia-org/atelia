@@ -768,6 +768,52 @@ public sealed class FamilyChatServerTests {
     }
 
     [Fact]
+    public async Task ChatSession_CompactAsync_PreservesLeadingContextHeader() {
+        string repoDir = CreateTempDirectory();
+        try {
+            var client = new ScriptedCompletionClient("openai-chat-v1");
+            client.EnqueueText(new string('A', 120));
+            client.EnqueueText("keep");
+            client.EnqueueText("summary");
+
+            using var engine = await ChatSessionEngine.CreateAsync(
+                repoDir,
+                new ChatSessionCreateOptions("system"),
+                new ChatSessionRuntime(
+                    client,
+                    "openai-chat/strict",
+                    "model-a",
+                    new ToolRegistry(Array.Empty<ITool>()).CreateSession()
+                )
+            );
+
+            engine.SetContextHeader(
+                new ContextHeader(
+                    "header-system",
+                    "header-user",
+                    new ActionMessage([new ActionBlock.Text("header-assistant")])
+                )
+            );
+            await engine.SendMessageAsync("first");
+            await engine.SendMessageAsync("second");
+
+            var compaction = await engine.CompactAsync("compact-system", "compact-prompt");
+
+            Assert.True(compaction.Applied);
+            Assert.Collection(
+                engine.Context,
+                message => Assert.Equal("header-system", Assert.IsType<ContextHeader>(message).SystemPromptFragment),
+                message => Assert.Equal("summary", Assert.IsType<RecapMessage>(message).Content),
+                message => Assert.Equal("second", Assert.IsType<ObservationMessage>(message).Content),
+                message => Assert.Equal("keep", Assert.IsType<ActionMessage>(message).GetFlattenedText())
+            );
+        }
+        finally {
+            Directory.Delete(repoDir, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task PopLatestTurn_ReturnsPoppedTurn_AndRemovesItFromRecentTurns() {
         string tempDir = CreateTempDirectory();
         try {

@@ -24,6 +24,14 @@ public sealed class ChatSessionTurnAbortedException : Exception {
     public IReadOnlyList<string>? Errors { get; }
 }
 
+public sealed record ContextHeader(
+    string? SystemPromptFragment,
+    string? UserMessage,
+    ActionMessage? AssistantMessage
+) : IHistoryMessage {
+    public HistoryMessageKind Kind => HistoryMessageKind.ContextHeader;
+}
+
 public sealed record RecapMessage(string? Content) : ObservationMessage(Content);
 
 public sealed record CompactionResult(

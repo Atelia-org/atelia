@@ -19,8 +19,9 @@ public sealed partial class ChatSessionEngine {
         var session = _runtime.ToolSession;
         var tools = session.VisibleDefinitions;
         var persistedContext = MessageRecord.ToHistoryMessages(_messages);
-        var workingContext = new List<IHistoryMessage>(persistedContext.Count + 8);
-        workingContext.AddRange(persistedContext);
+        var projectedContext = ProjectContextHeadersForRequest(_systemPrompt, persistedContext);
+        var workingContext = new List<IHistoryMessage>(projectedContext.Context.Count + 8);
+        workingContext.AddRange(projectedContext.Context);
 
         var turnMessages = new List<IHistoryMessage>(capacity: 4);
         var userObservation = new ObservationMessage(message);
@@ -37,7 +38,7 @@ public sealed partial class ChatSessionEngine {
 
             var request = new CompletionRequest(
                 ModelId: _runtime.ModelId,
-                SystemPrompt: _systemPrompt,
+                SystemPrompt: projectedContext.SystemPrompt,
                 Context: workingContext,
                 Tools: tools
             );
@@ -141,6 +142,41 @@ public sealed partial class ChatSessionEngine {
             }
         }
     }
+
+    internal static ProjectedContext ProjectContextHeadersForRequest(
+        string baseSystemPrompt,
+        IReadOnlyList<IHistoryMessage> persistedContext
+    ) {
+        ArgumentNullException.ThrowIfNull(baseSystemPrompt);
+        ArgumentNullException.ThrowIfNull(persistedContext);
+
+        var systemPrompt = new System.Text.StringBuilder(baseSystemPrompt);
+        var context = new List<IHistoryMessage>(persistedContext.Count + 2);
+
+        for (int i = 0; i < persistedContext.Count; i++) {
+            if (persistedContext[i] is not ContextHeader header) {
+                context.Add(persistedContext[i]);
+                continue;
+            }
+
+            if (!string.IsNullOrWhiteSpace(header.SystemPromptFragment)) {
+                if (systemPrompt.Length > 0) { systemPrompt.AppendLine().AppendLine(); }
+                systemPrompt.Append(header.SystemPromptFragment.Trim());
+            }
+
+            if (!string.IsNullOrWhiteSpace(header.UserMessage)) {
+                context.Add(new ObservationMessage(header.UserMessage));
+            }
+
+            if (header.AssistantMessage is not null && header.AssistantMessage.Blocks.Count > 0) {
+                context.Add(header.AssistantMessage);
+            }
+        }
+
+        return new ProjectedContext(systemPrompt.ToString(), context);
+    }
+
+    internal sealed record ProjectedContext(string SystemPrompt, IReadOnlyList<IHistoryMessage> Context);
 
     private static string BuildTurnAbortMessage(CompletionTermination termination) {
         ArgumentNullException.ThrowIfNull(termination);

@@ -48,7 +48,10 @@ public sealed partial class ChatSessionEngine {
             .ConfigureAwait(false);
     }
 
-    internal static int FindHalfContextSplitPoint(IReadOnlyList<IHistoryMessage> messages) {
+    internal static int FindHalfContextSplitPoint(
+        IReadOnlyList<IHistoryMessage> messages,
+        bool allowActionToObservationBoundary = false
+    ) {
         if (messages.Count < 2) { return -1; }
 
         ulong totalTokens = ChatSessionTokenEstimator.Estimate(messages);
@@ -70,6 +73,17 @@ public sealed partial class ChatSessionEngine {
 
                 if (cumulativeTokens >= halfTokens) { return suffixStart; }
             }
+
+            if (allowActionToObservationBoundary
+                && MessageEndsWithAction(messages[i])
+                && messages[i + 1].Kind == HistoryMessageKind.Observation) {
+                int suffixStart = i + 1;
+                if (suffixStart == 0) { continue; }
+
+                lastValidSuffixStart = suffixStart;
+
+                if (cumulativeTokens >= halfTokens) { return suffixStart; }
+            }
         }
 
         return lastValidSuffixStart;
@@ -80,6 +94,14 @@ public sealed partial class ChatSessionEngine {
                && splitIndex < messages.Count - 1
                && IsObservationLike(messages[splitIndex])
                && messages[splitIndex + 1].Kind == HistoryMessageKind.Action;
+    }
+
+    private static bool MessageEndsWithAction(IHistoryMessage message) {
+        return message switch {
+            ActionMessage => true,
+            ContextHeader header => header.AssistantMessage is not null,
+            _ => false
+        };
     }
 
     private static bool IsObservationLike(IHistoryMessage message) {
@@ -99,6 +121,12 @@ public sealed partial class ChatSessionEngine {
         for (int i = 0; i < prefix.Count; i++) {
             var original = prefix[i];
             switch (original.Kind) {
+                case HistoryMessageKind.ContextHeader:
+                    var header = (ContextHeader)original;
+                    if (!string.IsNullOrWhiteSpace(header.SystemPromptFragment)) { messages.Add(new ObservationMessage(header.SystemPromptFragment)); }
+                    if (!string.IsNullOrWhiteSpace(header.UserMessage)) { messages.Add(new ObservationMessage(header.UserMessage)); }
+                    if (header.AssistantMessage is not null) { messages.Add(StripReasoningBlocks(header.AssistantMessage)); }
+                    break;
                 case HistoryMessageKind.Action:
                     var action = (ActionMessage)original;
                     messages.Add(StripReasoningBlocks(action));
@@ -144,6 +172,7 @@ public sealed partial class ChatSessionEngine {
 
         var prefix = new List<IHistoryMessage>(splitIndex);
         for (int i = 0; i < splitIndex; i++) { prefix.Add(currentMessages[i]); }
+        var protectedHeaders = prefix.OfType<ContextHeader>().ToArray();
 
         var summarizeMessages = ProjectForSummarization(prefix, summarizePrompt);
 
@@ -176,6 +205,9 @@ public sealed partial class ChatSessionEngine {
         }
 
         MessageRecord.PrependRecap(_messages, summary);
+        for (int i = protectedHeaders.Length - 1; i >= 0; i--) {
+            MessageRecord.PrependContextHeader(_messages, protectedHeaders[i]);
+        }
         Commit();
 
         var remaining = MessageRecord.ToHistoryMessages(_messages);
