@@ -1,5 +1,4 @@
 using Atelia.Completion.Abstractions;
-using Atelia.Completion.Tools;
 
 namespace Atelia.ChatSession;
 
@@ -33,16 +32,9 @@ public sealed record ContextHeader(
     public HistoryMessageKind Kind => HistoryMessageKind.ContextHeader;
 }
 
-public interface IMemoryMaintainerAgent {
-    string Id { get; }
-    string TargetBlockKey { get; }
-    string SystemPrompt { get; }
-    string UserPrompt { get; }
-    ToolSession ToolSession { get; }
-}
-
 public sealed record MemoryMaintenanceRequest(
-    IReadOnlyList<IMemoryMaintainerAgent> Maintainers,
+    MemoryPack MemoryPack,
+    IReadOnlyList<IMemoryBlockMaintainer> Maintainers,
     bool AllowActionToObservationBoundary = true
 );
 
@@ -50,18 +42,10 @@ public sealed record MemoryMaintenanceResult(
     bool Completed,
     CompactionFailureReason? FailureReason,
     int SplitIndex,
-    IReadOnlyList<MemoryMaintainerResult> MaintainerResults,
+    IReadOnlyList<MemoryBlockMaintenanceResult> MaintainerResults,
     int HistoryCountBefore,
-    ulong TokensBefore
-);
-
-public sealed record MemoryMaintainerResult(
-    string MaintainerId,
-    string TargetBlockKey,
-    string UpdatedText,
-    CompletionDescriptor Invocation,
-    IReadOnlyList<string>? Errors,
-    int ToolCallsExecuted
+    ulong TokensBefore,
+    MemoryPack? UpdatedMemoryPack
 );
 
 public sealed record RecapSourceAnchor(

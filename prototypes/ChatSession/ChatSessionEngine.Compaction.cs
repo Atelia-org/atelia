@@ -5,8 +5,6 @@ using Atelia.StateJournal;
 namespace Atelia.ChatSession;
 
 public sealed partial class ChatSessionEngine {
-    private const int MaxMemoryMaintainerToolLoopIterations = 16;
-
     public async Task<CompactionResult> CompactAsync(
         string summarizeSystemPrompt,
         string summarizePrompt,
@@ -60,12 +58,10 @@ public sealed partial class ChatSessionEngine {
 
         var maintainers = request.Maintainers.ToArray();
         if (maintainers.Length == 0) { throw new ArgumentException("At least one memory maintainer is required.", nameof(request)); }
-        for (int i = 0; i < maintainers.Length; i++) {
-            ValidateMemoryMaintainer(maintainers[i]);
-        }
-        EnsureUniqueMemoryMaintainers(maintainers);
+        MemoryMaintenanceOrchestrator.ValidateMaintainers(maintainers);
 
         var messages = MessageRecord.ToHistoryMessages(_messages);
+        var tokensBefore = ChatSessionTokenEstimator.Estimate(messages);
         int splitIndex = FindHalfContextSplitPoint(messages, request.AllowActionToObservationBoundary);
         DebugUtil.Info(
             "ChatSession.MemoryMaintenance",
@@ -76,22 +72,31 @@ public sealed partial class ChatSessionEngine {
                 Completed: false,
                 FailureReason: CompactionFailureReason.NoValidSplitPoint,
                 SplitIndex: splitIndex,
-                MaintainerResults: Array.Empty<MemoryMaintainerResult>(),
+                MaintainerResults: Array.Empty<MemoryBlockMaintenanceResult>(),
                 HistoryCountBefore: messages.Count,
-                TokensBefore: ChatSessionTokenEstimator.Estimate(messages)
+                TokensBefore: tokensBefore,
+                UpdatedMemoryPack: null
             );
         }
 
         var fragment = CreateHistorySlice(messages, splitIndex, messages.Count - splitIndex);
-        var tasks = new Task<MemoryMaintainerResult>[maintainers.Length];
-        for (int i = 0; i < maintainers.Length; i++) {
-            tasks[i] = RunMemoryMaintainerAsync(maintainers[i], fragment, ct);
-        }
+        var recentHistory = new RecentHistorySlice(
+            PriorContext: CreatePriorContextSnapshot(messages, splitIndex),
+            Messages: fragment,
+            SourceId: PersistedHeadAddress?.ToString(),
+            EstimatedTokens: ChatSessionTokenEstimator.Estimate(fragment)
+        );
 
-        var results = await Task.WhenAll(tasks).ConfigureAwait(false);
+        var results = await MemoryMaintenanceOrchestrator.RunAsync(
+            request.MemoryPack,
+            recentHistory,
+            maintainers,
+            ct
+        ).ConfigureAwait(false);
+        var updatedMemoryPack = MemoryMaintenanceOrchestrator.ApplyResults(request.MemoryPack, results);
         DebugUtil.Info(
             "ChatSession.MemoryMaintenance",
-            $"RunMemoryMaintainersAsync completed: head={PersistedHeadAddress}, splitIndex={splitIndex}, results={results.Length}"
+            $"RunMemoryMaintainersAsync completed: head={PersistedHeadAddress}, splitIndex={splitIndex}, results={results.Count}"
         );
 
         return new MemoryMaintenanceResult(
@@ -100,7 +105,8 @@ public sealed partial class ChatSessionEngine {
             SplitIndex: splitIndex,
             MaintainerResults: results,
             HistoryCountBefore: messages.Count,
-            TokensBefore: ChatSessionTokenEstimator.Estimate(messages)
+            TokensBefore: tokensBefore,
+            UpdatedMemoryPack: updatedMemoryPack
         );
     }
 
@@ -178,101 +184,15 @@ public sealed partial class ChatSessionEngine {
         return result;
     }
 
-    private static void ValidateMemoryMaintainer(IMemoryMaintainerAgent maintainer) {
-        ArgumentNullException.ThrowIfNull(maintainer);
-        if (string.IsNullOrWhiteSpace(maintainer.Id)) { throw new ArgumentException("Memory maintainer id cannot be empty.", nameof(maintainer)); }
-        if (string.IsNullOrWhiteSpace(maintainer.TargetBlockKey)) { throw new ArgumentException("Memory maintainer target block key cannot be empty.", nameof(maintainer)); }
-        ArgumentNullException.ThrowIfNull(maintainer.SystemPrompt);
-        ArgumentNullException.ThrowIfNull(maintainer.UserPrompt);
-        ArgumentNullException.ThrowIfNull(maintainer.ToolSession);
-    }
-
-    private static void EnsureUniqueMemoryMaintainers(IReadOnlyList<IMemoryMaintainerAgent> maintainers) {
-        var ids = new HashSet<string>(StringComparer.Ordinal);
-        var targetBlockKeys = new HashSet<string>(StringComparer.Ordinal);
-        for (int i = 0; i < maintainers.Count; i++) {
-            if (!ids.Add(maintainers[i].Id)) { throw new ArgumentException($"Duplicate memory maintainer id: {maintainers[i].Id}", nameof(maintainers)); }
-
-            if (!targetBlockKeys.Add(maintainers[i].TargetBlockKey)) { throw new ArgumentException($"Duplicate memory maintainer target block key: {maintainers[i].TargetBlockKey}", nameof(maintainers)); }
-        }
-    }
-
-    private async Task<MemoryMaintainerResult> RunMemoryMaintainerAsync(
-        IMemoryMaintainerAgent maintainer,
-        IReadOnlyList<IHistoryMessage> recentHistoryFragment,
-        CancellationToken ct
+    private static ContextHeaderSnapshot CreatePriorContextSnapshot(
+        IReadOnlyList<IHistoryMessage> messages,
+        int splitIndex
     ) {
-        var session = maintainer.ToolSession;
-        var workingContext = new List<IHistoryMessage>(recentHistoryFragment.Count + 8);
-        workingContext.AddRange(recentHistoryFragment);
-        workingContext.Add(new ObservationMessage(maintainer.UserPrompt));
-
-        ActionMessage? finalMessage = null;
-        CompletionDescriptor? invocation = null;
-        List<string>? errors = null;
-        int totalToolCallsExecuted = 0;
-
-        for (int iteration = 0; iteration < MaxMemoryMaintainerToolLoopIterations; iteration++) {
-            ct.ThrowIfCancellationRequested();
-
-            var completionRequest = new CompletionRequest(
-                ModelId: _runtime.ModelId,
-                SystemPrompt: maintainer.SystemPrompt,
-                Context: workingContext,
-                Tools: session.VisibleDefinitions
-            );
-
-            var result = await _runtime.CompletionClient.StreamCompletionAsync(completionRequest, null, ct)
-                .ConfigureAwait(false);
-
-            invocation = result.Invocation;
-            if (result.Errors is { Count: > 0 }) {
-                errors ??= new List<string>();
-                errors.AddRange(result.Errors);
-            }
-
-            if (!result.Termination.IsSuccess) {
-                throw new ChatSessionTurnAbortedException(
-                    BuildTurnAbortMessage(result.Termination),
-                    result.Termination,
-                    result.Errors
-                );
-            }
-
-            finalMessage = StripReasoningBlocks(result.Message);
-            workingContext.Add(finalMessage);
-
-            var toolCalls = finalMessage.ToolCalls;
-            if (toolCalls.Count == 0) { break; }
-
-            var toolResults = new ToolResult[toolCalls.Count];
-            int executed = 0;
-            for (int i = 0; i < toolCalls.Count; i++) {
-                ct.ThrowIfCancellationRequested();
-                var callResult = await session.ExecuteAsync(toolCalls[i], ct).ConfigureAwait(false);
-                toolResults[i] = callResult.ToToolResult();
-                executed++;
-            }
-
-            totalToolCallsExecuted += executed;
-            workingContext.Add(new ToolResultsMessage(content: null, results: toolResults));
+        for (int i = splitIndex - 1; i >= 0; i--) {
+            if (messages[i] is ContextHeader header) { return ContextHeaderSnapshot.FromContextHeader(header); }
         }
 
-        if (finalMessage is not null && finalMessage.ToolCalls.Count > 0) {
-            throw new InvalidOperationException(
-                $"Memory maintainer '{maintainer.Id}' tool loop exceeded the hard limit of {MaxMemoryMaintainerToolLoopIterations} iterations."
-            );
-        }
-
-        var updatedText = InlineThinkTextFilter.StripInlineThinkBlocks(finalMessage?.GetFlattenedText() ?? string.Empty).Trim();
-        return new MemoryMaintainerResult(
-            MaintainerId: maintainer.Id,
-            TargetBlockKey: maintainer.TargetBlockKey,
-            UpdatedText: updatedText,
-            Invocation: invocation ?? new CompletionDescriptor("none", "none", _runtime.ModelId),
-            Errors: errors?.AsReadOnly(),
-            ToolCallsExecuted: totalToolCallsExecuted
-        );
+        return ContextHeaderSnapshot.Empty;
     }
 
     private static List<IHistoryMessage> ProjectForSummarization(

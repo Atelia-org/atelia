@@ -3270,7 +3270,8 @@ public sealed class FamilyChatServerTests {
             case ContextHeader expectedContextHeader:
                 var actualContextHeader = Assert.IsType<ContextHeader>(actual);
                 Assert.Equal(expectedContextHeader.SystemPromptFragment, actualContextHeader.SystemPromptFragment);
-                Assert.Equal(expectedContextHeader.UserMessage, actualContextHeader.UserMessage);
+                Assert.Equal(expectedContextHeader.ObservationMessage, actualContextHeader.ObservationMessage);
+                Assert.Equal(expectedContextHeader.ActionMessage?.GetFlattenedText(), actualContextHeader.ActionMessage?.GetFlattenedText());
                 break;
             default:
                 Assert.Fail($"Unsupported history message type '{expected.GetType()}'.");
