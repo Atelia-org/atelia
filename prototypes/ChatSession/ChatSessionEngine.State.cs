@@ -57,7 +57,7 @@ public sealed partial class ChatSessionEngine : IDisposable {
         }
 
         if (header is not null) { MessageRecord.PrependContextHeader(_messages, header); }
-        Commit();
+        Commit(ChatSessionCommitKind.UpdateContextHeader, "updated context header");
     }
 
     /// <summary>
@@ -78,7 +78,7 @@ public sealed partial class ChatSessionEngine : IDisposable {
         );
 
         _root.Upsert(KeySystemPrompt, configSystemPrompt);
-        _repo.Commit(_root).Unwrap();
+        Commit(ChatSessionCommitKind.UpdateSystemPrompt, "updated system prompt");
         _systemPrompt = configSystemPrompt;
         return true;
     }
@@ -118,7 +118,7 @@ public sealed partial class ChatSessionEngine : IDisposable {
             var messages = revision.CreateDeque();
             root.Upsert<DurableObject>(KeyMessages, messages);
 
-            repo.Commit(root).Unwrap();
+            repo.Commit(root, ChatSessionCommitMetadata.EncodeNote(ChatSessionCommitKind.InitialState, "created chat session initial state")).Unwrap();
 
             var engine = new ChatSessionEngine(repo, root, messages, runtime, repoDir, options.BranchName);
             DebugUtil.Info("ChatSession.Persistence", $"CreateAsync: {engine.GetDebugStateSummary()}");
@@ -172,17 +172,18 @@ public sealed partial class ChatSessionEngine : IDisposable {
             && runtime.ToolSession.VisibleDefinitions.Length > 0) { throw new NotSupportedException("Gemini tool loop is not supported in ChatSession v1."); }
     }
 
-    private void Commit() {
+    private void Commit(ChatSessionCommitKind kind, string reason) {
         ThrowIfDisposed();
         var beforeHead = PersistedHeadAddress;
+        var note = ChatSessionCommitMetadata.EncodeNote(kind, reason);
         DebugUtil.Info(
             "ChatSession.Persistence",
-            $"Commit before: branch={_branchName}, head={FormatCommitAddress(beforeHead)}, durableMessages={_messages.Count}"
+            $"Commit before: branch={_branchName}, kind={ChatSessionCommitMetadata.FormatKind(kind)}, head={FormatCommitAddress(beforeHead)}, durableMessages={_messages.Count}"
         );
-        _repo.Commit(_root).Unwrap();
+        _repo.Commit(_root, note).Unwrap();
         DebugUtil.Info(
             "ChatSession.Persistence",
-            $"Commit after: branch={_branchName}, head={FormatCommitAddress(PersistedHeadAddress)}, durableMessages={_messages.Count}"
+            $"Commit after: branch={_branchName}, kind={ChatSessionCommitMetadata.FormatKind(kind)}, head={FormatCommitAddress(PersistedHeadAddress)}, durableMessages={_messages.Count}"
         );
     }
 

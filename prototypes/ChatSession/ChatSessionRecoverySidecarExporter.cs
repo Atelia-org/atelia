@@ -109,6 +109,7 @@ public static class ChatSessionRecoverySidecarExporter {
             ChatSessionCommitAttributionKind.Compaction => "compaction",
             ChatSessionCommitAttributionKind.RevertTurn => "revert-turn",
             ChatSessionCommitAttributionKind.UpdateSystemPrompt => "update-system-prompt",
+            ChatSessionCommitAttributionKind.UpdateContextHeader => "update-context-header",
             ChatSessionCommitAttributionKind.RedundantSave => "redundant-save",
             ChatSessionCommitAttributionKind.Other => "other",
             _ => kind.ToString()

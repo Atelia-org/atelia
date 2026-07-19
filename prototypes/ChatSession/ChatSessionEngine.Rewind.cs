@@ -42,7 +42,7 @@ public sealed partial class ChatSessionEngine {
             _messages.PopBack<DurableObject>(out _);
         }
 
-        Commit();
+        Commit(ChatSessionCommitKind.RevertTurn, "removed latest completed turn");
         removedTurn = new RemovedChatTurnResult(observation.Content ?? string.Empty, removedCount);
         DebugUtil.Info(
             "ChatSession.Rewind",

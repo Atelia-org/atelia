@@ -1246,6 +1246,169 @@ public sealed class FamilyChatServerTests {
     }
 
     [Fact]
+    public async Task ChatSessionLegacyRecapRecovery_Analyze_PrefersExplicitCommitMetadata() {
+        string repoDir = CreateTempDirectory();
+        try {
+            var client = new ScriptedCompletionClient("openai-chat-v1");
+            client.EnqueueText(new string('A', 120));
+            client.EnqueueText("keep");
+            client.EnqueueText("summary");
+
+            using (var engine = await ChatSessionEngine.CreateAsync(
+                repoDir,
+                new ChatSessionCreateOptions("system"),
+                new ChatSessionRuntime(
+                    client,
+                    "openai-chat/strict",
+                    "model-a",
+                    new ToolRegistry(Array.Empty<ITool>()).CreateSession()
+                )
+            )) {
+                engine.SetContextHeader(new ContextHeader("header-system", "header-user", null));
+                await engine.SendMessageAsync("first");
+                await engine.SendMessageAsync("second");
+                Assert.True(engine.TrySyncSystemPrompt("updated system"));
+                var compaction = await engine.CompactAsync("compact-system", "compact-prompt");
+                Assert.True(compaction.Applied);
+                Assert.True(engine.TryRemoveLatestCompletedTurn(out var removed));
+                Assert.Equal(2, removed!.RemovedMessageCount);
+            }
+
+            var report = ChatSessionLegacyRecapRecovery.Analyze(repoDir);
+
+            Assert.Empty(report.Warnings);
+            Assert.Equal(
+                [
+                    ChatSessionCommitAttributionKind.InitialState,
+                    ChatSessionCommitAttributionKind.UpdateContextHeader,
+                    ChatSessionCommitAttributionKind.ModelTurn,
+                    ChatSessionCommitAttributionKind.ModelTurn,
+                    ChatSessionCommitAttributionKind.UpdateSystemPrompt,
+                    ChatSessionCommitAttributionKind.Compaction,
+                    ChatSessionCommitAttributionKind.RevertTurn,
+                ],
+                report.Timeline.Select(static entry => entry.Attribution.Kind).ToArray()
+            );
+            Assert.Equal("created chat session initial state", report.Timeline[0].Attribution.Reason);
+            Assert.Equal("updated context header", report.Timeline[1].Attribution.Reason);
+            Assert.Equal("updated system prompt", report.Timeline[4].Attribution.Reason);
+            Assert.Equal("applied prefix summary compaction", report.Timeline[5].Attribution.Reason);
+            Assert.Equal("removed latest completed turn", report.Timeline[6].Attribution.Reason);
+
+            string json = ChatSessionRecoverySidecarExporter.ExportJson(report);
+            using var document = JsonDocument.Parse(json);
+            var timeline = document.RootElement.GetProperty("timeline");
+            Assert.Equal("update-context-header", timeline[1].GetProperty("attribution").GetProperty("kind").GetString());
+            Assert.Equal("compaction", timeline[5].GetProperty("attribution").GetProperty("kind").GetString());
+            Assert.Equal("revert-turn", timeline[6].GetProperty("attribution").GetProperty("kind").GetString());
+        }
+        finally {
+            Directory.Delete(repoDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task ChatSessionCommitMetadata_NotAppliedCompactionAndUnchangedPrompt_DoNotCreateCommits() {
+        string repoDir = CreateTempDirectory();
+        try {
+            var client = new ScriptedCompletionClient("openai-chat-v1");
+            client.EnqueueText("first reply");
+
+            using (var engine = await ChatSessionEngine.CreateAsync(
+                repoDir,
+                new ChatSessionCreateOptions("system"),
+                new ChatSessionRuntime(
+                    client,
+                    "openai-chat/strict",
+                    "model-a",
+                    new ToolRegistry(Array.Empty<ITool>()).CreateSession()
+                )
+            )) {
+                Assert.False(engine.TrySyncSystemPrompt("system"));
+                await engine.SendMessageAsync("first");
+                var compaction = await engine.CompactAsync("compact-system", "compact-prompt");
+                Assert.False(compaction.Applied);
+            }
+
+            var report = ChatSessionLegacyRecapRecovery.Analyze(repoDir);
+
+            Assert.Empty(report.Warnings);
+            Assert.Equal(
+                [ChatSessionCommitAttributionKind.InitialState, ChatSessionCommitAttributionKind.ModelTurn],
+                report.Timeline.Select(static entry => entry.Attribution.Kind).ToArray()
+            );
+            Assert.DoesNotContain(report.Timeline, static entry => entry.Attribution.Kind == ChatSessionCommitAttributionKind.Compaction);
+            Assert.DoesNotContain(report.Timeline, static entry => entry.Attribution.Kind == ChatSessionCommitAttributionKind.UpdateSystemPrompt);
+        }
+        finally {
+            Directory.Delete(repoDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task ChatSessionLegacyRecapRecovery_Analyze_FallsBackWhenExplicitMetadataIsMissing() {
+        string repoDir = CreateTempDirectory();
+        try {
+            var client = new ScriptedCompletionClient("openai-chat-v1");
+            client.EnqueueText("first reply");
+
+            using (var engine = await ChatSessionEngine.CreateAsync(
+                repoDir,
+                new ChatSessionCreateOptions("system"),
+                new ChatSessionRuntime(
+                    client,
+                    "openai-chat/strict",
+                    "model-a",
+                    new ToolRegistry(Array.Empty<ITool>()).CreateSession()
+                )
+            )) {
+                await engine.SendMessageAsync("first");
+                Assert.True(engine.TrySyncSystemPrompt("updated system"));
+            }
+            StripBranchReflogNotes(repoDir, "main");
+
+            var report = ChatSessionLegacyRecapRecovery.Analyze(repoDir);
+
+            Assert.Empty(report.Warnings);
+            Assert.Equal(
+                [
+                    ChatSessionCommitAttributionKind.InitialState,
+                    ChatSessionCommitAttributionKind.ModelTurn,
+                    ChatSessionCommitAttributionKind.UpdateSystemPrompt,
+                ],
+                report.Timeline.Select(static entry => entry.Attribution.Kind).ToArray()
+            );
+            Assert.Equal("oldest effective commit in the analyzed branch history", report.Timeline[0].Attribution.Reason);
+            Assert.Equal("previous messages are preserved and the commit appends one observation/action turn", report.Timeline[1].Attribution.Reason);
+            Assert.Equal("message sequence is unchanged and system prompt changed", report.Timeline[2].Attribution.Reason);
+        }
+        finally {
+            Directory.Delete(repoDir, recursive: true);
+        }
+    }
+
+    [Theory]
+    [InlineData(ChatSessionCommitKind.InitialState, "initial-state")]
+    [InlineData(ChatSessionCommitKind.ModelTurn, "model-turn")]
+    [InlineData(ChatSessionCommitKind.Compaction, "compaction")]
+    [InlineData(ChatSessionCommitKind.RevertTurn, "revert-turn")]
+    [InlineData(ChatSessionCommitKind.UpdateSystemPrompt, "update-system-prompt")]
+    [InlineData(ChatSessionCommitKind.UpdateContextHeader, "update-context-header")]
+    [InlineData(ChatSessionCommitKind.RedundantSave, "redundant-save")]
+    public void ChatSessionCommitMetadata_EncodeNote_RoundTripsStableKind(ChatSessionCommitKind kind, string expectedText) {
+        string note = ChatSessionCommitMetadata.EncodeNote(kind, "reason");
+
+        Assert.True(ChatSessionCommitMetadata.TryDecodeNote(note, out var metadata));
+        Assert.Equal(kind, metadata.Kind);
+        Assert.Equal("reason", metadata.Reason);
+        Assert.Equal(ChatSessionStorageSchema.SchemaVersion, metadata.ChatSessionSchemaVersion);
+
+        using var document = JsonDocument.Parse(note);
+        Assert.Equal(ChatSessionCommitMetadata.SchemaId, document.RootElement.GetProperty("schema").GetString());
+        Assert.Equal(expectedText, document.RootElement.GetProperty("commitKind").GetString());
+    }
+
+    [Fact]
     public void ChatSessionRecoverySidecarExporter_ExportJson_WritesStableShapeAndWarnings() {
         var report = new ChatSessionLegacyRecapRecoveryReport(
             Timeline: [
@@ -2745,6 +2908,31 @@ public sealed class FamilyChatServerTests {
         finally {
             engine.Dispose();
         }
+    }
+
+    private static void StripBranchReflogNotes(string repoDir, string branchName) {
+        string branchPath = Path.Combine(repoDir, "refs", "branches", branchName + ".json");
+        string reflogPath = branchPath[..^".json".Length] + ".reflog.jsonl";
+        var lines = File.ReadAllLines(reflogPath);
+        for (int i = 0; i < lines.Length; i++) {
+            if (string.IsNullOrWhiteSpace(lines[i])) { continue; }
+            lines[i] = StripJsonProperty(lines[i], "note");
+        }
+        File.WriteAllLines(reflogPath, lines);
+    }
+
+    private static string StripJsonProperty(string json, string propertyName) {
+        using var document = JsonDocument.Parse(json);
+        using var stream = new MemoryStream();
+        using (var writer = new Utf8JsonWriter(stream)) {
+            writer.WriteStartObject();
+            foreach (var property in document.RootElement.EnumerateObject()) {
+                if (property.NameEquals(propertyName)) { continue; }
+                property.WriteTo(writer);
+            }
+            writer.WriteEndObject();
+        }
+        return Encoding.UTF8.GetString(stream.ToArray());
     }
 
     private static string CreateTempDirectory() {

@@ -383,7 +383,7 @@ public sealed partial class ChatSessionEngine {
         for (int i = protectedHeaders.Length - 1; i >= 0; i--) {
             MessageRecord.PrependContextHeader(_messages, protectedHeaders[i]);
         }
-        Commit();
+        Commit(ChatSessionCommitKind.Compaction, "applied prefix summary compaction");
 
         var remaining = MessageRecord.ToHistoryMessages(_messages);
         var tokensAfter = ChatSessionTokenEstimator.Estimate(remaining);

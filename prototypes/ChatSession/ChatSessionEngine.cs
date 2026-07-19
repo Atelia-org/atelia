@@ -94,7 +94,7 @@ public sealed partial class ChatSessionEngine {
 
         finalMessage ??= new ActionMessage(Array.Empty<ActionBlock>());
         PersistTurnMessages(turnMessages);
-        Commit();
+        Commit(ChatSessionCommitKind.ModelTurn, "persisted model turn");
 
         return new ChatSessionTurnResult(
             Message: finalMessage,

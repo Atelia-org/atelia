@@ -19,6 +19,7 @@ public enum ChatSessionCommitAttributionKind {
     Compaction,
     RevertTurn,
     UpdateSystemPrompt,
+    UpdateContextHeader,
     RedundantSave,
     Other
 }
@@ -214,6 +215,8 @@ public static class ChatSessionLegacyRecapRecovery {
         IReadOnlyDictionary<string, ChatSessionLegacyRecapRecoveryFinding> findingsByNewHead
     ) {
         var currentSnapshot = snapshots[snapshotIndex];
+        if (TryReadExplicitAttribution(currentSnapshot, out var explicitAttribution)) { return explicitAttribution; }
+
         if (snapshotIndex == 0) { return new ChatSessionCommitAttribution(ChatSessionCommitAttributionKind.InitialState, "oldest effective commit in the analyzed branch history"); }
 
         var currentHead = currentSnapshot.Address.Address.ToString();
@@ -249,6 +252,32 @@ public static class ChatSessionLegacyRecapRecovery {
 
         return new ChatSessionCommitAttribution(ChatSessionCommitAttributionKind.Other, "message sequence changed in a way that is not classified by the conservative attribution rules");
     }
+
+    private static bool TryReadExplicitAttribution(
+        CommitSnapshot snapshot,
+        out ChatSessionCommitAttribution attribution
+    ) {
+        attribution = null!;
+        if (!ChatSessionCommitMetadata.TryDecodeNote(snapshot.Address.Note, out var metadata)) { return false; }
+
+        attribution = new ChatSessionCommitAttribution(
+            ToAttributionKind(metadata.Kind),
+            metadata.Reason ?? "explicit chat session commit metadata"
+        );
+        return true;
+    }
+
+    private static ChatSessionCommitAttributionKind ToAttributionKind(ChatSessionCommitKind kind)
+        => kind switch {
+            ChatSessionCommitKind.InitialState => ChatSessionCommitAttributionKind.InitialState,
+            ChatSessionCommitKind.ModelTurn => ChatSessionCommitAttributionKind.ModelTurn,
+            ChatSessionCommitKind.Compaction => ChatSessionCommitAttributionKind.Compaction,
+            ChatSessionCommitKind.RevertTurn => ChatSessionCommitAttributionKind.RevertTurn,
+            ChatSessionCommitKind.UpdateSystemPrompt => ChatSessionCommitAttributionKind.UpdateSystemPrompt,
+            ChatSessionCommitKind.UpdateContextHeader => ChatSessionCommitAttributionKind.UpdateContextHeader,
+            ChatSessionCommitKind.RedundantSave => ChatSessionCommitAttributionKind.RedundantSave,
+            _ => ChatSessionCommitAttributionKind.Other
+        };
 
     private static bool IsPrefix(
         IReadOnlyList<HistoryRecordSnapshot> prefix,

@@ -21,7 +21,9 @@ public readonly record struct BranchHistoryAddress(
     BranchHistoryAddressSource Source,
     ulong? Generation,
     int? LineNumber
-);
+) {
+    public string? Note { get; init; }
+}
 
 /// <summary>离线扫描 branch metadata 的结果。Warnings 表示已跳过的损坏或不支持片段。</summary>
 public sealed record BranchHistoryScanResult(
@@ -86,6 +88,7 @@ public static class RepositoryHistoryReader {
         var addresses = new List<BranchHistoryAddress>();
         var warnings = new List<string>();
         var seen = new HashSet<string>(StringComparer.Ordinal);
+        var notesByNewHead = ReadBranchReflogNotesByNewHead(repository.DirectoryPath, branchName, warnings);
 
         if (!repository.TryGetBranchHeadAddress(branchName, out var current)) {
             warnings.Add($"Branch '{branchName}' has no committed head or cannot be read.");
@@ -111,7 +114,9 @@ public static class RepositoryHistoryReader {
                     isHead ? BranchHistoryAddressSource.EffectiveHead : BranchHistoryAddressSource.EffectiveParent,
                     Generation: null,
                     LineNumber: null
-                )
+                ) {
+                    Note = notesByNewHead.TryGetValue(current.ToString(), out var note) ? note : null,
+                }
             );
 
             var parent = rootResult.Value!.Revision.HeadParentAddress;
@@ -171,15 +176,15 @@ public static class RepositoryHistoryReader {
                     continue;
                 }
 
-                TryAddParsed(entry.OldHead, BranchHistoryAddressSource.ReflogOldHead, entry.Generation, lineNumber);
-                TryAddParsed(entry.NewHead, BranchHistoryAddressSource.ReflogNewHead, entry.Generation, lineNumber);
+                TryAddParsed(entry.OldHead, BranchHistoryAddressSource.ReflogOldHead, entry.Generation, lineNumber, note: null);
+                TryAddParsed(entry.NewHead, BranchHistoryAddressSource.ReflogNewHead, entry.Generation, lineNumber, entry.Note);
             }
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) {
             warnings.Add($"Stopped reading reflog '{reflogPath}' after line {lineNumber}: {ex.Message}");
         }
 
-        void TryAddParsed(string? text, BranchHistoryAddressSource source, ulong generation, int sourceLineNumber) {
+        void TryAddParsed(string? text, BranchHistoryAddressSource source, ulong generation, int sourceLineNumber, string? note) {
             if (string.IsNullOrWhiteSpace(text)) { return; }
             var address = CommitAddress.TryParse(text);
             if (address is null) {
@@ -187,8 +192,46 @@ public static class RepositoryHistoryReader {
                 return;
             }
 
-            AddUnique(address.Value, source, generation, sourceLineNumber, addresses, seen);
+            AddUnique(address.Value, source, generation, sourceLineNumber, note, addresses, seen);
         }
+    }
+
+    private static Dictionary<string, string> ReadBranchReflogNotesByNewHead(
+        string repoDir,
+        string branchName,
+        List<string> warnings
+    ) {
+        var result = new Dictionary<string, string>(StringComparer.Ordinal);
+        var reflogPath = GetBranchReflogPath(repoDir, branchName);
+        if (!File.Exists(reflogPath)) { return result; }
+
+        var lineNumber = 0;
+        try {
+            foreach (var line in File.ReadLines(reflogPath)) {
+                lineNumber++;
+                if (string.IsNullOrWhiteSpace(line)) { continue; }
+
+                BranchReflogEntry? entry;
+                try {
+                    entry = JsonSerializer.Deserialize<BranchReflogEntry>(line);
+                }
+                catch (JsonException ex) {
+                    warnings.Add($"Skipped malformed reflog line {lineNumber} in '{reflogPath}' while reading notes: {ex.Message}");
+                    continue;
+                }
+
+                if (entry is null || entry.Version != BranchReflogEntryVersion || entry.Generation == 0) { continue; }
+                if (string.IsNullOrWhiteSpace(entry.NewHead) || string.IsNullOrWhiteSpace(entry.Note)) { continue; }
+                if (CommitAddress.TryParse(entry.NewHead) is null) { continue; }
+
+                result[entry.NewHead] = entry.Note;
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) {
+            warnings.Add($"Stopped reading reflog notes '{reflogPath}' after line {lineNumber}: {ex.Message}");
+        }
+
+        return result;
     }
 
     private static void AddBranchRefAddresses(
@@ -248,7 +291,7 @@ public static class RepositoryHistoryReader {
 
         try {
             var address = CommitAddress.FromPersisted(data.SegmentNumber, data.Ticket, branchPath);
-            AddUnique(address, source, generation: null, lineNumber: null, addresses, seen);
+            AddUnique(address, source, generation: null, lineNumber: null, note: null, addresses, seen);
         }
         catch (InvalidDataException ex) {
             warnings.Add($"Skipped invalid legacy branch ref '{branchPath}': {ex.Message}");
@@ -282,7 +325,7 @@ public static class RepositoryHistoryReader {
                 return;
             }
 
-            AddUnique(address.Value, source, data.Generation, lineNumber: null, addresses, seen);
+            AddUnique(address.Value, source, data.Generation, lineNumber: null, note: null, addresses, seen);
         }
     }
 
@@ -291,11 +334,12 @@ public static class RepositoryHistoryReader {
         BranchHistoryAddressSource source,
         ulong? generation,
         int? lineNumber,
+        string? note,
         List<BranchHistoryAddress> addresses,
         HashSet<string> seen
     ) {
         if (!seen.Add(address.ToString())) { return; }
-        addresses.Add(new BranchHistoryAddress(address, source, generation, lineNumber));
+        addresses.Add(new BranchHistoryAddress(address, source, generation, lineNumber) { Note = string.IsNullOrWhiteSpace(note) ? null : note });
     }
 
     private static string GetBranchFilePath(string repoDir, string branchName) {
@@ -308,6 +352,11 @@ public static class RepositoryHistoryReader {
         if (!fullPath.StartsWith(containmentPrefix, StringComparison.Ordinal)) { throw new InvalidOperationException($"Branch name '{branchName}' resolved to a path outside the branches directory."); }
 
         return fullPath;
+    }
+
+    private static string GetBranchReflogPath(string repoDir, string branchName) {
+        var branchPath = GetBranchFilePath(repoDir, branchName);
+        return branchPath[..^".json".Length] + ".reflog.jsonl";
     }
 
     private sealed class BranchData {
@@ -342,5 +391,8 @@ public static class RepositoryHistoryReader {
 
         [JsonPropertyName("newHead")]
         public string? NewHead { get; set; }
+
+        [JsonPropertyName("note")]
+        public string? Note { get; set; }
     }
 }

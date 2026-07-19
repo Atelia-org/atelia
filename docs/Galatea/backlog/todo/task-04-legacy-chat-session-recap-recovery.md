@@ -39,7 +39,7 @@
 
 新增决策：后续新写入的 ChatSession commit 应携带显式 commit metadata，例如 `model-turn`、`compaction`、`revert-turn`、`update-system-prompt`、`redundant-save`。legacy sidecar 中的 attribution 字段用于填补旧数据缺口，也可作为未来 metadata schema 的样例。
 
-后续实施任务：[`task-06-chat-session-explicit-commit-kind-metadata.md`](task-06-chat-session-explicit-commit-kind-metadata.md)。
+后续实施任务：[`task-06-chat-session-explicit-commit-kind-metadata.md`](../done/task-06-chat-session-explicit-commit-kind-metadata.md)。
 
 ## 推断思路
 
