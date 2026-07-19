@@ -35,7 +35,7 @@
 3. [`task-04c-chat-session-recap-recovery-sidecar-export.md`](../done/task-04c-chat-session-recap-recovery-sidecar-export.md)：把 04b 的 finding 输出为 JSON sidecar，供导出器和人工审阅使用。
 4. [`task-04d-chat-session-legacy-upgrade-export.md`](../done/task-04d-chat-session-legacy-upgrade-export.md)：导出新版语义 JSON，补齐 legacy recap source mapping 与 commit metadata。默认不原地修改输入 repo。
 5. [`task-04e-chat-session-event-source-replay-migration.md`](task-04e-chat-session-event-source-replay-migration.md)：把 04d JSON 扩展为可 replay 的 semantic event source，并导入为新版 StateJournal repo。
-6. 04f：从 `chat-session-legacy-upgrade-export.json` 生成面向人工阅读和搜索的 Markdown。JSON 仍是机读事实源；Markdown 只把每条 event 的变更部分放进 code fence，便于检索、审阅和对比。
+6. 04f：从 `chat-session-legacy-upgrade-export.json` 生成面向人工阅读和搜索的 Markdown。JSON 仍是机读事实源；Markdown 抽取 system prompt、observation、action flattened text 与 recap 内容，按 replay 顺序输出为纯文本 code fence 流，便于检索、审阅和对比。fence 至少使用 6 个 `~`；若内容中出现更长连续 `~`，则自动使用更长 fence，避免内容意外闭合 fence。
 
 最终决策：不要为了恢复结果原地改写旧 repo；优先输出 JSON event source，并可选择 replay 到新的 upgraded repo。best-effort 推断保留在 legacy export 的 `metadataSource` / recap mapping 中；新 replay repo 写入 explicit commit metadata。
 
@@ -78,7 +78,7 @@ Task 06 已完成：[`task-06-chat-session-explicit-commit-kind-metadata.md`](..
 - 有测试覆盖：普通 commit 不应误判为 compaction；rewind 或普通追加不应误判。
 - 有测试覆盖：普通 completion 归因为 `model-turn`；纯尾部回退归因为 `revert-turn`，且不输出 unresolved compaction finding。
 - 有测试覆盖：完整 message signature 序列不变但 root `systemPrompt` 变化的相邻 commit 归因为 `update-system-prompt`；二者都相同才归因为 `redundant-save`。
-- 能从 `chat-session-legacy-upgrade-export.json` 生成 Markdown，且每条 event 都有可搜索标题和包含变更主体 JSON 的 code fence。
+- 能从 `chat-session-legacy-upgrade-export.json` 生成 Markdown，且系统提示词、用户观察、模型行动与 recap 都以纯文本 code fence 表示，避免 JSON 转义影响阅读和搜索。
 
 ## 风险点
 

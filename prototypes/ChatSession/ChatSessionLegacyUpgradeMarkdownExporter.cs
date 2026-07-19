@@ -1,6 +1,4 @@
-using System.Globalization;
 using System.Text;
-using System.Text.Encodings.Web;
 using System.Text.Json;
 
 namespace Atelia.ChatSession;
@@ -11,11 +9,6 @@ public sealed record ChatSessionLegacyUpgradeMarkdownExportOptions(
 
 public static class ChatSessionLegacyUpgradeMarkdownExporter {
     private const int MinimumFenceLength = 6;
-
-    private static readonly JsonWriterOptions ChangeJsonWriterOptions = new() {
-        Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
-        Indented = true
-    };
 
     public static string ExportMarkdown(
         string repoDir,
@@ -63,82 +56,99 @@ public static class ChatSessionLegacyUpgradeMarkdownExporter {
 
     private static string ExportMarkdown(JsonElement root, ChatSessionLegacyUpgradeMarkdownExportOptions options) {
         var builder = new StringBuilder();
-        builder.AppendLine("# ChatSession Legacy Upgrade Event Source");
-        builder.AppendLine();
-        AppendScalar(builder, "schema", GetOptionalString(root, "schema"));
-        AppendScalar(builder, "branchName", GetOptionalString(root, "branchName"));
-        AppendScalar(builder, "generatedAtUtc", GetOptionalString(root, "generatedAtUtc"));
-
         var events = root.TryGetProperty("events", out var eventsElement) && eventsElement.ValueKind == JsonValueKind.Array
             ? eventsElement.EnumerateArray().ToArray()
             : throw new InvalidDataException("Upgrade export JSON is missing an events array.");
 
-        AppendScalar(builder, "events", events.Length.ToString(CultureInfo.InvariantCulture));
-        if (root.TryGetProperty("timeline", out var timeline) && timeline.ValueKind == JsonValueKind.Array) {
-            AppendScalar(builder, "timeline", timeline.GetArrayLength().ToString(CultureInfo.InvariantCulture));
-        }
-
         if (options.IncludeWarnings && root.TryGetProperty("warnings", out var warnings) && warnings.ValueKind == JsonValueKind.Array && warnings.GetArrayLength() > 0) {
-            builder.AppendLine("- warnings:");
             foreach (var warning in warnings.EnumerateArray()) {
-                builder.Append("  - ");
-                builder.AppendLine(ToSingleLine(warning.GetString()));
+                AppendFence(builder, "warning", warning.GetString());
             }
         }
 
-        for (int eventIndex = 0; eventIndex < events.Length; eventIndex++) {
-            AppendEvent(builder, events[eventIndex], eventIndex);
+        foreach (var replayEvent in events) {
+            AppendEvent(builder, replayEvent);
         }
 
         return builder.ToString();
     }
 
-    private static void AppendEvent(StringBuilder builder, JsonElement replayEvent, int eventIndex) {
-        int ordinal = GetOptionalInt32(replayEvent, "ordinal") ?? eventIndex;
+    private static void AppendEvent(StringBuilder builder, JsonElement replayEvent) {
         string kind = GetOptionalString(replayEvent, "kind") ?? "unknown";
-        string? commit = GetOptionalString(replayEvent, "commit");
-        string changeJson = FormatChangeJson(replayEvent);
-        string fence = CreateFence(changeJson);
 
-        builder.AppendLine();
-        builder.Append(CultureInfo.InvariantCulture, $"## {ordinal:D5} {kind}");
-        if (!string.IsNullOrWhiteSpace(commit)) {
-            builder.Append(' ');
-            builder.Append(commit);
+        switch (kind) {
+            case "initial-state":
+                if (replayEvent.TryGetProperty("root", out var root) && root.ValueKind == JsonValueKind.Object) {
+                    AppendFence(builder, "system-prompt", GetOptionalString(root, "systemPrompt"));
+                }
+                AppendMessages(builder, replayEvent, "messages");
+                break;
+            case "model-turn":
+                AppendMessages(builder, replayEvent, "appendedMessages");
+                break;
+            case "compaction":
+                if (replayEvent.TryGetProperty("recapMessage", out var recapMessage) && recapMessage.ValueKind == JsonValueKind.Object) {
+                    AppendFence(builder, "recap", GetOptionalString(recapMessage, "content"));
+                }
+                break;
+            case "update-system-prompt":
+                if (replayEvent.TryGetProperty("systemPromptChange", out var change) && change.ValueKind == JsonValueKind.Object) {
+                    AppendFence(builder, "system-prompt", GetOptionalString(change, "newSystemPrompt"));
+                }
+                break;
         }
-        builder.AppendLine();
-        AppendScalar(builder, "ordinal", ordinal.ToString(CultureInfo.InvariantCulture));
-        AppendScalar(builder, "kind", kind);
-        AppendScalar(builder, "commit", commit);
-        if (replayEvent.TryGetProperty("commitMetadata", out var metadata) && metadata.ValueKind == JsonValueKind.Object) {
-            AppendScalar(builder, "commitKind", GetOptionalString(metadata, "commitKind"));
-            AppendScalar(builder, "commitReason", GetOptionalString(metadata, "commitReason"));
-            AppendScalar(builder, "metadataSource", GetOptionalString(metadata, "metadataSource"));
-        }
+    }
 
-        builder.AppendLine();
+    private static void AppendMessages(StringBuilder builder, JsonElement replayEvent, string propertyName) {
+        if (!replayEvent.TryGetProperty(propertyName, out var messages) || messages.ValueKind != JsonValueKind.Array) { return; }
+
+        foreach (var message in messages.EnumerateArray()) {
+            AppendMessage(builder, message);
+        }
+    }
+
+    private static void AppendMessage(StringBuilder builder, JsonElement message) {
+        string kind = GetOptionalString(message, "kind") ?? "unknown";
+        switch (kind) {
+            case "observation":
+                AppendFence(builder, "observation", GetOptionalString(message, "content"));
+                break;
+            case "action":
+                if (message.TryGetProperty("action", out var action) && action.ValueKind == JsonValueKind.Object) {
+                    AppendFence(builder, "action", GetOptionalString(action, "flattenedText"));
+                }
+                break;
+            case "recap":
+                AppendFence(builder, "recap", GetOptionalString(message, "content"));
+                break;
+            case "tool-results":
+                AppendFence(builder, "tool-results", GetOptionalString(message, "content"));
+                break;
+            case "context-header":
+                if (message.TryGetProperty("contextHeader", out var contextHeader) && contextHeader.ValueKind == JsonValueKind.Object) {
+                    AppendFence(builder, "context-header", GetOptionalString(contextHeader, "systemPromptFragment"));
+                    AppendFence(builder, "observation", GetOptionalString(contextHeader, "userMessage"));
+                    if (contextHeader.TryGetProperty("assistantMessage", out var assistantMessage) && assistantMessage.ValueKind == JsonValueKind.Object) {
+                        AppendFence(builder, "action", GetOptionalString(assistantMessage, "flattenedText"));
+                    }
+                }
+                break;
+        }
+    }
+
+    private static void AppendFence(StringBuilder builder, string label, string? content) {
+        if (string.IsNullOrEmpty(content)) { return; }
+
+        string normalizedContent = NormalizeLineEndings(content);
+        string fence = CreateFence(normalizedContent);
+        if (builder.Length > 0) { builder.AppendLine(); }
+
         builder.Append(fence);
-        builder.AppendLine("json");
-        builder.AppendLine(changeJson);
+        builder.AppendLine(label);
+        builder.Append(normalizedContent);
+        if (!normalizedContent.EndsWith('\n')) { builder.AppendLine(); }
         builder.AppendLine(fence);
     }
-
-    private static string FormatChangeJson(JsonElement replayEvent) {
-        using var stream = new MemoryStream();
-        using (var writer = new Utf8JsonWriter(stream, ChangeJsonWriterOptions)) {
-            writer.WriteStartObject();
-            foreach (var property in replayEvent.EnumerateObject()) {
-                if (IsEventMetadataProperty(property.Name) || property.Value.ValueKind == JsonValueKind.Null) { continue; }
-
-                property.WriteTo(writer);
-            }
-            writer.WriteEndObject();
-        }
-        return Encoding.UTF8.GetString(stream.ToArray());
-    }
-
-    private static bool IsEventMetadataProperty(string propertyName)
-        => propertyName is "ordinal" or "commit" or "kind" or "commitMetadata";
 
     private static string CreateFence(string content) {
         int longestRun = 0;
@@ -156,27 +166,13 @@ public static class ChatSessionLegacyUpgradeMarkdownExporter {
         return new string('~', Math.Max(MinimumFenceLength, longestRun + 1));
     }
 
-    private static void AppendScalar(StringBuilder builder, string name, string? value) {
-        if (string.IsNullOrWhiteSpace(value)) { return; }
-
-        builder.Append("- ");
-        builder.Append(name);
-        builder.Append(": ");
-        builder.AppendLine(ToSingleLine(value));
-    }
-
     private static string? GetOptionalString(JsonElement element, string propertyName)
         => element.TryGetProperty(propertyName, out var property) && property.ValueKind != JsonValueKind.Null
             ? property.GetString()
             : null;
 
-    private static int? GetOptionalInt32(JsonElement element, string propertyName)
-        => element.TryGetProperty(propertyName, out var property) && property.ValueKind == JsonValueKind.Number
-            ? property.GetInt32()
-            : null;
-
-    private static string ToSingleLine(string? text)
-        => string.IsNullOrEmpty(text) ? string.Empty : text.Replace('\r', ' ').Replace('\n', ' ');
+    private static string NormalizeLineEndings(string text)
+        => text.Replace("\r\n", "\n").Replace('\r', '\n');
 
     private static void WriteText(string outputPath, string text) {
         var directory = Path.GetDirectoryName(outputPath);

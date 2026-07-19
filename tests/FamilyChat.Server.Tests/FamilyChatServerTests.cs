@@ -1661,13 +1661,26 @@ public sealed class FamilyChatServerTests {
     }
 
         [Fact]
-        public void ChatSessionLegacyUpgradeMarkdownExporter_ExportMarkdownFromJson_WritesSearchableEventFences() {
+        public void ChatSessionLegacyUpgradeMarkdownExporter_ExportMarkdownFromJson_WritesPlainTranscriptFences() {
                 const string json = """
                         {
                             "schema": "atelia.chat-session.legacy-upgrade-export.v1",
                             "branchName": "main",
-                            "timeline": [],
                             "events": [
+                                {
+                                    "ordinal": 0,
+                                    "commit": "000000000001",
+                                    "kind": "initial-state",
+                                    "commitMetadata": {
+                                        "commitKind": "initial-state",
+                                        "commitReason": "created session",
+                                        "metadataSource": "explicit"
+                                    },
+                                    "root": {
+                                        "systemPrompt": "system\nprompt"
+                                    },
+                                    "messages": []
+                                },
                                 {
                                     "ordinal": 1,
                                     "commit": "abcdef123456",
@@ -1680,7 +1693,34 @@ public sealed class FamilyChatServerTests {
                                     "appendedMessages": [
                                         {
                                             "kind": "observation",
-                                            "content": "hello ~~~~~~ world"
+                                            "content": "hello ~~~~~~~ world"
+                                        },
+                                        {
+                                            "kind": "action",
+                                            "action": {
+                                                "flattenedText": "hi\nold friend"
+                                            }
+                                        }
+                                    ]
+                                },
+                                {
+                                    "ordinal": 2,
+                                    "kind": "update-system-prompt",
+                                    "systemPromptChange": {
+                                        "newSystemPrompt": "updated system"
+                                    }
+                                },
+                                {
+                                    "ordinal": 3,
+                                    "kind": "compaction",
+                                    "recapMessage": {
+                                        "kind": "recap",
+                                        "content": "summary text"
+                                    },
+                                    "sourceMessages": [
+                                        {
+                                            "kind": "observation",
+                                            "content": "do not duplicate old source"
                                         }
                                     ]
                                 }
@@ -1691,17 +1731,18 @@ public sealed class FamilyChatServerTests {
 
                 string markdown = ChatSessionLegacyUpgradeMarkdownExporter.ExportMarkdownFromJson(json);
 
-                Assert.Contains("# ChatSession Legacy Upgrade Event Source", markdown, StringComparison.Ordinal);
-                Assert.Contains("## 00001 model-turn abcdef123456", markdown, StringComparison.Ordinal);
-                Assert.Contains("- commitReason: appends turn", markdown, StringComparison.Ordinal);
-                Assert.Contains("~~~~~~~json", markdown, StringComparison.Ordinal);
-                Assert.Contains("\"appendedMessages\"", markdown, StringComparison.Ordinal);
-                Assert.Contains("hello ~~~~~~ world", markdown, StringComparison.Ordinal);
-                Assert.DoesNotContain("\"commitMetadata\"", markdown, StringComparison.Ordinal);
+                Assert.Contains("~~~~~~system-prompt\nsystem\nprompt\n~~~~~~", markdown, StringComparison.Ordinal);
+                Assert.Contains("~~~~~~~~observation\nhello ~~~~~~~ world\n~~~~~~~~", markdown, StringComparison.Ordinal);
+                Assert.Contains("~~~~~~action\nhi\nold friend\n~~~~~~", markdown, StringComparison.Ordinal);
+                Assert.Contains("~~~~~~system-prompt\nupdated system\n~~~~~~", markdown, StringComparison.Ordinal);
+                Assert.Contains("~~~~~~recap\nsummary text\n~~~~~~", markdown, StringComparison.Ordinal);
+                Assert.DoesNotContain("commitMetadata", markdown, StringComparison.Ordinal);
+                Assert.DoesNotContain("appendedMessages", markdown, StringComparison.Ordinal);
+                Assert.DoesNotContain("do not duplicate old source", markdown, StringComparison.Ordinal);
         }
 
         [Fact]
-        public void ChatSessionLegacyUpgradeMarkdownExporter_WriteMarkdownFileFromJsonFile_CreatesFile() {
+        public void ChatSessionLegacyUpgradeMarkdownExporter_WriteMarkdownFileFromJsonFile_CreatesPlainTranscriptFile() {
                 string tempDir = CreateTempDirectory();
                 try {
                         string inputPath = Path.Combine(tempDir, "chat-session-legacy-upgrade-export.json");
@@ -1717,11 +1758,6 @@ public sealed class FamilyChatServerTests {
                                             "ordinal": 0,
                                             "commit": "000000000001",
                                             "kind": "initial-state",
-                                            "commitMetadata": {
-                                                "commitKind": "initial-state",
-                                                "commitReason": "created session",
-                                                "metadataSource": "explicit"
-                                            },
                                             "root": {
                                                 "systemPrompt": "system"
                                             },
@@ -1736,8 +1772,7 @@ public sealed class FamilyChatServerTests {
                         ChatSessionLegacyUpgradeMarkdownExporter.WriteMarkdownFileFromJsonFile(inputPath, outputPath);
 
                         string markdown = File.ReadAllText(outputPath);
-                        Assert.Contains("## 00000 initial-state 000000000001", markdown, StringComparison.Ordinal);
-                        Assert.Contains("\"root\"", markdown, StringComparison.Ordinal);
+                        Assert.Equal("~~~~~~system-prompt\nsystem\n~~~~~~\n", markdown);
                 }
                 finally {
                         Directory.Delete(tempDir, recursive: true);
