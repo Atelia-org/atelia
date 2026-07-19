@@ -1,16 +1,12 @@
 using System.Text;
 using System.Text.Encodings.Web;
 using System.Text.Json;
-using System.Text.RegularExpressions;
 using Atelia.ChatSession;
-using Atelia.Completion.Abstractions;
 
 namespace ChatSessionBacktestCli;
 
 internal static partial class Program {
     private const int DefaultThresholdTokens = 12_000;
-    private const string PatternMaintainerId = "pattern-count.not-but";
-    private const string PatternBlockId = "galatea.pattern.not-but-count";
 
     private static readonly JsonSerializerOptions JsonOptions = new() {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
@@ -82,29 +78,24 @@ internal static partial class Program {
             if (step.Event.Kind != ChatSessionLegacyEventKinds.ModelTurn || step.MessageCount == 0) { continue; }
 
             var historyMessages = cursor.CurrentHistoryMessages;
-            var estimatedTokens = EstimateTokens(historyMessages);
+            var estimatedTokens = BacktestTextUtil.EstimateTokens(historyMessages);
             if (estimatedTokens < thresholdTokens) { continue; }
 
-            var oldBlock = memoryPack.Action.GetValueOrDefault(PatternBlockId);
-            var analysis = AnalyzeNotButPattern(historyMessages);
-            var newBlock = RenderPatternBlock(analysis);
+            var oldBlock = memoryPack.Action.GetValueOrDefault(NotButPatternAnalyzer.BlockId);
+            var oldCount = NotButPatternAnalyzer.ExtractCount(oldBlock?.Text);
+            var analysis = NotButPatternAnalyzer.Analyze(historyMessages);
+            var newBlock = NotButPatternAnalyzer.RenderBlock(analysis);
             var draft = new MemoryPackDraft(memoryPack);
-            draft.UpsertBlock(new MemoryPackBlockPath(MemoryPackCarrier.Action, PatternBlockId), newBlock);
+            draft.UpsertBlock(new MemoryPackBlockPath(MemoryPackCarrier.Action, NotButPatternAnalyzer.BlockId), newBlock);
             memoryPack = draft.Build();
 
-            var record = new PatternReplayRecord(
-                EventOrdinal: step.Event.Ordinal,
-                EventCommit: step.Event.Commit,
-                HistoryMessageCount: step.MessageCount,
-                EstimatedTokens: estimatedTokens,
-                MaintainerId: PatternMaintainerId,
-                TargetCarrier: MemoryPackCarrier.Action.ToString(),
-                TargetBlockId: PatternBlockId,
-                OldBlock: oldBlock?.Text,
-                NewBlock: newBlock,
-                Count: analysis.Count,
-                DeltaCount: analysis.Count - ExtractCount(oldBlock?.Text),
-                Examples: analysis.Examples
+            var record = NotButPatternAnalyzer.CreateReplayRecord(
+                step,
+                estimatedTokens,
+                oldBlock?.Text,
+                newBlock,
+                analysis,
+                oldCount
             );
             writer.WriteLine(JsonSerializer.Serialize(record, JsonOptions));
             lastRecord = record;
@@ -141,55 +132,6 @@ internal static partial class Program {
         if (replayEvent.RecapMessage is not null) { yield return replayEvent.RecapMessage; }
     }
 
-    private static PatternAnalysis AnalyzeNotButPattern(IReadOnlyList<IHistoryMessage> messages) {
-        var matches = new List<string>();
-        foreach (var text in messages.Select(FlattenMessageText)) {
-            foreach (Match match in NotButPattern().Matches(text)) {
-                var value = NormalizeWhitespace(match.Value);
-                if (value.Length > 120) { value = value[..120]; }
-                matches.Add(value);
-            }
-        }
-
-        return new PatternAnalysis(matches.Count, matches.Distinct(StringComparer.Ordinal).Take(8).ToArray());
-    }
-
-    private static string FlattenMessageText(IHistoryMessage message)
-        => message switch {
-            ContextHeader contextHeader => string.Join('\n',
-                new[] {
-                    contextHeader.SystemPromptFragment,
-                    contextHeader.ObservationMessage,
-                    contextHeader.ActionMessage?.GetFlattenedText()
-            }.Where(static text => !string.IsNullOrEmpty(text))
-            ),
-            RecapMessage recap => recap.Content ?? string.Empty,
-            ToolResultsMessage toolResults => toolResults.Content ?? string.Empty,
-            ObservationMessage observation => observation.Content ?? string.Empty,
-            ActionMessage action => action.GetFlattenedText(),
-            _ => message.ToString() ?? string.Empty
-        };
-
-    private static int EstimateTokens(IReadOnlyList<IHistoryMessage> messages)
-        => Math.Max(1, messages.Sum(message => FlattenMessageText(message).Length) / 3);
-
-    private static string RenderPatternBlock(PatternAnalysis analysis) {
-        var builder = new StringBuilder();
-        builder.AppendLine($"不是...而是... pattern count: {analysis.Count}");
-        if (analysis.Examples.Count > 0) {
-            builder.AppendLine("examples:");
-            foreach (var example in analysis.Examples) { builder.AppendLine($"- {example}"); }
-        }
-
-        return builder.ToString().TrimEnd();
-    }
-
-    private static int ExtractCount(string? blockContent) {
-        if (string.IsNullOrWhiteSpace(blockContent)) { return 0; }
-        var match = CountPattern().Match(blockContent);
-        return match.Success && int.TryParse(match.Groups[1].Value, out var count) ? count : 0;
-    }
-
     private static void WriteMarkdownReport(
         string reportPath,
         ChatSessionLegacyEventSource eventSource,
@@ -211,12 +153,15 @@ internal static partial class Program {
 
         writer.WriteLine($"- finalCount: `{lastRecord.Count}`");
         writer.WriteLine();
-        writer.WriteLine("## Final Examples");
-        foreach (var example in lastRecord.Examples) { writer.WriteLine($"- {example}"); }
+        writer.WriteLine("## Final Block Tail");
+        writer.WriteLine();
+        writer.WriteLine("```text");
+        writer.WriteLine(lastRecord.NewBlock.TailPreview);
+        writer.WriteLine("```");
+        writer.WriteLine();
+        writer.WriteLine("## Last Delta Matches");
+        foreach (var match in lastRecord.DeltaMatches) { writer.WriteLine($"- {match}"); }
     }
-
-    private static string NormalizeWhitespace(string text)
-        => WhitespacePattern().Replace(text, " ").Trim();
 
     private static int Fail(string message) {
         Console.Error.WriteLine($"error: {message}");
@@ -232,32 +177,7 @@ internal static partial class Program {
         Console.WriteLine("  replay-pattern-count --input <path> --output <jsonl> [--report-md <path>] [--threshold-tokens <n>] [--respect-original-compaction]");
     }
 
-    [GeneratedRegex("不是[\\s\\S]{0,80}?而是[\\s\\S]{0,80}?(?=$|[。！？!?；;\\n])")]
-    private static partial Regex NotButPattern();
-
-    [GeneratedRegex("pattern count: (\\d+)")]
-    private static partial Regex CountPattern();
-
-    [GeneratedRegex("\\s+")]
-    private static partial Regex WhitespacePattern();
 }
-
-internal sealed record PatternAnalysis(int Count, IReadOnlyList<string> Examples);
-
-internal sealed record PatternReplayRecord(
-    int EventOrdinal,
-    string? EventCommit,
-    int HistoryMessageCount,
-    int EstimatedTokens,
-    string MaintainerId,
-    string TargetCarrier,
-    string TargetBlockId,
-    string? OldBlock,
-    string NewBlock,
-    int Count,
-    int DeltaCount,
-    IReadOnlyList<string> Examples
-);
 
 internal sealed class CliOptions {
     private readonly Dictionary<string, string?> _values;
