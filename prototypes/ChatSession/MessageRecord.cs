@@ -86,7 +86,7 @@ internal static class MessageRecord {
     }
 
     public static IHistoryMessage ToHistoryMessage(DurableDict<string> record) {
-        record.Get<string>(KeyKind, out var kind);
+        var kind = GetKind(record);
         return kind switch {
             KindContextHeader => BuildContextHeader(record),
             KindObservation => BuildObservation(record),
@@ -95,6 +95,17 @@ internal static class MessageRecord {
             KindRecap => BuildRecap(record),
             _ => throw new InvalidDataException($"Unknown message kind: {kind}")
         };
+    }
+
+    public static string GetKind(DurableDict<string> record) {
+        if (record.Get<string>(KeyKind, out var kind) != GetIssue.None || string.IsNullOrEmpty(kind)) { throw new InvalidDataException("Message record is missing kind."); }
+        return kind;
+    }
+
+    public static DateTimeOffset? GetTimestampUtc(DurableDict<string> record) {
+        if (!record.TryGet<long>(KeyTimestampUtc, out var ticks)) { return null; }
+        try { return new DateTimeOffset(ticks, TimeSpan.Zero); }
+        catch (ArgumentOutOfRangeException) { return null; }
     }
 
     public static List<IHistoryMessage> ToHistoryMessages(DurableDeque messages) {

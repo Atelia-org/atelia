@@ -255,6 +255,17 @@ Console.WriteLine(stats.EstimatedTokens);
 
 `EstimatedTokens` 是启发式估算，不是 provider 精确 token 计数。
 
+### 5.3 离线读取与 Markdown 导出
+
+维护工具可以不创建 `ChatSessionEngine`，直接读取当前 branch HEAD 的 durable messages：
+
+```csharp
+var records = ChatSessionHistoryReader.ReadCurrent(sessionDir);
+var markdown = ChatSessionMarkdownExporter.Export(records);
+```
+
+`ChatSessionHistoryRecord` 会保留 durable record index、原始 kind、timestamp、provider-facing `IHistoryMessage` 投影，以及 recap 的 `RecapSourceAnchor`。导出器支持 include / skip recap；旧 recap 没有 anchor 时会标记为 `unresolved-recap`，不会假装已经展开。
+
 ---
 
 ## 6. 重开、重来、压缩历史

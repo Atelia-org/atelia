@@ -841,6 +841,179 @@ public sealed class FamilyChatServerTests {
     }
 
     [Fact]
+    public async Task ChatSessionHistoryReader_ReadCurrent_ReturnsRecordsWithMetadata() {
+        string repoDir = CreateTempDirectory();
+        try {
+            var client = new ScriptedCompletionClient("openai-chat-v1");
+            client.EnqueueText("reply");
+
+            using (var engine = await ChatSessionEngine.CreateAsync(
+                repoDir,
+                new ChatSessionCreateOptions("system"),
+                new ChatSessionRuntime(
+                    client,
+                    "openai-chat/strict",
+                    "model-a",
+                    new ToolRegistry(Array.Empty<ITool>()).CreateSession()
+                )
+            )) {
+                engine.SetContextHeader(
+                    new ContextHeader(
+                        "header-system",
+                        "header-user",
+                        new ActionMessage([new ActionBlock.Text("header-assistant")])
+                    )
+                );
+                await engine.SendMessageAsync("hello");
+            }
+
+            var records = ChatSessionHistoryReader.ReadCurrent(repoDir);
+
+            Assert.Collection(
+                records,
+                record => {
+                    Assert.Equal(0, record.Index);
+                    Assert.Equal(MessageRecord.KindContextHeader, record.Kind);
+                    Assert.NotNull(record.TimestampUtc);
+                    var header = Assert.IsType<ContextHeader>(record.Message);
+                    Assert.Equal("header-system", header.SystemPromptFragment);
+                },
+                record => {
+                    Assert.Equal(1, record.Index);
+                    Assert.Equal(MessageRecord.KindObservation, record.Kind);
+                    Assert.NotNull(record.TimestampUtc);
+                    Assert.Equal("hello", Assert.IsType<ObservationMessage>(record.Message).Content);
+                },
+                record => {
+                    Assert.Equal(2, record.Index);
+                    Assert.Equal(MessageRecord.KindAction, record.Kind);
+                    Assert.NotNull(record.TimestampUtc);
+                    Assert.Equal("reply", Assert.IsType<ActionMessage>(record.Message).GetFlattenedText());
+                }
+            );
+
+            string markdown = ChatSessionMarkdownExporter.Export(records);
+            Assert.Contains("## 00000 context-header", markdown, StringComparison.Ordinal);
+            Assert.Contains("### systemPromptFragment", markdown, StringComparison.Ordinal);
+            Assert.Contains("header-assistant", markdown, StringComparison.Ordinal);
+            Assert.Contains("## 00001 observation", markdown, StringComparison.Ordinal);
+            Assert.Contains("## 00002 action", markdown, StringComparison.Ordinal);
+        }
+        finally {
+            Directory.Delete(repoDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task ChatSessionMarkdownExporter_PreservesToolCallsAndToolResults() {
+        string repoDir = CreateTempDirectory();
+        try {
+            var client = new ScriptedCompletionClient("openai-chat-v1");
+            client.Enqueue(
+                (request, observer, ct) => {
+                    var call = new RawToolCall("echo", "call-1", "{\"value\":\"alpha\"}");
+                    return Task.FromResult(
+                        new CompletionResult(
+                            new ActionMessage([
+                                new ActionBlock.Text("thinking"),
+                                new ActionBlock.ToolCall(call),
+                            ]),
+                            new CompletionDescriptor("test", "openai-chat-v1", request.ModelId)
+                        )
+                    );
+                }
+            );
+            client.EnqueueText("done");
+
+            using (var engine = await ChatSessionEngine.CreateAsync(
+                repoDir,
+                new ChatSessionCreateOptions("system"),
+                new ChatSessionRuntime(
+                    client,
+                    "openai-chat/strict",
+                    "model-a",
+                    new ToolRegistry([new EchoTool()]).CreateSession()
+                )
+            )) {
+                await engine.SendMessageAsync("hello");
+            }
+
+            var records = ChatSessionHistoryReader.ReadCurrent(repoDir);
+            string markdown = ChatSessionMarkdownExporter.Export(records);
+
+            Assert.Contains(records, static record => record.Kind == MessageRecord.KindToolResults);
+            Assert.Contains("### toolCall 00", markdown, StringComparison.Ordinal);
+            Assert.Contains("- toolName: echo", markdown, StringComparison.Ordinal);
+            Assert.Contains("- toolCallId: call-1", markdown, StringComparison.Ordinal);
+            Assert.Contains("{\"value\":\"alpha\"}", markdown, StringComparison.Ordinal);
+            Assert.Contains("### toolResult 00", markdown, StringComparison.Ordinal);
+            Assert.Contains("- status: Success", markdown, StringComparison.Ordinal);
+            Assert.Contains("echo:{\"value\":\"alpha\"}", markdown, StringComparison.Ordinal);
+        }
+        finally {
+            Directory.Delete(repoDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task ChatSessionMarkdownExporter_HandlesRecapAnchorAndUnresolvedRecap() {
+        string repoDir = CreateTempDirectory();
+        try {
+            var client = new ScriptedCompletionClient("openai-chat-v1");
+            client.EnqueueText(new string('A', 120));
+            client.EnqueueText("keep");
+            client.EnqueueText("summary");
+
+            using (var engine = await ChatSessionEngine.CreateAsync(
+                repoDir,
+                new ChatSessionCreateOptions("system"),
+                new ChatSessionRuntime(
+                    client,
+                    "openai-chat/strict",
+                    "model-a",
+                    new ToolRegistry(Array.Empty<ITool>()).CreateSession()
+                )
+            )) {
+                await engine.SendMessageAsync("first");
+                await engine.SendMessageAsync("second");
+                var compaction = await engine.CompactAsync("compact-system", "compact-prompt");
+                Assert.True(compaction.Applied);
+            }
+
+            var records = ChatSessionHistoryReader.ReadCurrent(repoDir);
+            var recapRecord = Assert.Single(records, static record => record.Message is RecapMessage);
+            Assert.NotNull(recapRecord.RecapSource);
+
+            string markdown = ChatSessionMarkdownExporter.Export(records);
+            Assert.Contains("- recapSource: anchored", markdown, StringComparison.Ordinal);
+            Assert.Contains("- sourceStartIndex: 0", markdown, StringComparison.Ordinal);
+            Assert.Contains("- compactionKind: prefix-summary", markdown, StringComparison.Ordinal);
+
+            string skipped = ChatSessionMarkdownExporter.Export(
+                records,
+                new ChatSessionMarkdownExportOptions(ChatSessionMarkdownRecapMode.Skip)
+            );
+            Assert.DoesNotContain("summary", skipped, StringComparison.Ordinal);
+
+            string unresolved = ChatSessionMarkdownExporter.Export(
+                [
+                    new ChatSessionHistoryRecord(
+                        0,
+                        MessageRecord.KindRecap,
+                        null,
+                        new RecapMessage("legacy summary"),
+                        null
+                    ),
+                ]
+            );
+            Assert.Contains("- recapSource: unresolved-recap", unresolved, StringComparison.Ordinal);
+        }
+        finally {
+            Directory.Delete(repoDir, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task ChatSession_CompactAsync_PreservesLeadingContextHeader() {
         string repoDir = CreateTempDirectory();
         try {

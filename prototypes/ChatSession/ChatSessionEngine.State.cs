@@ -1,21 +1,12 @@
 using Atelia.Completion.Abstractions;
 using Atelia.Diagnostics;
 using Atelia.StateJournal;
+using static Atelia.ChatSession.ChatSessionStorageSchema;
 
 namespace Atelia.ChatSession;
 
 public sealed partial class ChatSessionEngine : IDisposable {
-    private const string RootKind = "chat-session";
-    private const long SchemaVersion = 2L;
     private const string GeminiApiSpecId = "google-gemini-generate-content-v1beta";
-
-    private const string KeyKind = "kind";
-    private const string KeySchemaVersion = "schemaVersion";
-    private const string KeyApiSpecId = "apiSpecId";
-    private const string KeyCompletionSurfaceId = "completionSurfaceId";
-    private const string KeyModelId = "modelId";
-    private const string KeySystemPrompt = "systemPrompt";
-    private const string KeyMessages = "messages";
 
     private readonly Repository _repo;
     private readonly DurableDict<string> _root;
@@ -156,13 +147,10 @@ public sealed partial class ChatSessionEngine : IDisposable {
                 throw new InvalidDataException("Repository graph root is not a valid chat session.");
             }
 
-            ValidateRoot(root);
+            ChatSessionStorageSchema.ValidateRoot(root);
             ValidateRuntimeCompatibility(runtime);
 
-            if (!root.TryGet<DurableDeque>(KeyMessages, out var messages) || messages is null) {
-                repo.Dispose();
-                throw new InvalidDataException("Root is missing messages deque.");
-            }
+            var messages = GetMessages(root);
 
             var engine = new ChatSessionEngine(repo, root, messages, runtime, repoDir, branchName);
             DebugUtil.Info("ChatSession.Persistence", $"OpenAsync: {engine.GetDebugStateSummary()}");
@@ -182,12 +170,6 @@ public sealed partial class ChatSessionEngine : IDisposable {
     private static void ValidateRuntimeCompatibility(ChatSessionRuntime runtime) {
         if (runtime.CompletionClient.ApiSpecId == GeminiApiSpecId
             && runtime.ToolSession.VisibleDefinitions.Length > 0) { throw new NotSupportedException("Gemini tool loop is not supported in ChatSession v1."); }
-    }
-
-    private static void ValidateRoot(DurableDict<string> root) {
-        if (root.Get<string>(KeyKind, out var kind) != GetIssue.None || kind != RootKind) { throw new InvalidDataException("Root is not a chat-session."); }
-
-        if (root.Get<long>(KeySchemaVersion, out var version) != GetIssue.None || version != SchemaVersion) { throw new InvalidDataException($"Unsupported schema version. Expected {SchemaVersion}."); }
     }
 
     private void Commit() {
