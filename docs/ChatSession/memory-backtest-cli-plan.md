@@ -136,6 +136,10 @@ latestExamples:
 
 `CompactAsync` 适合作第二阶段任务。它引入 LLM summarizer、压缩质量评估、prompt 调试，变量更多，因此不建议作为第一阶段。
 
+第二阶段已经明确不只是“加一个命令”，还需要补一块可复用基础设施：从统一的 connection 配置构造真实 `ICompletionClient`，并对每次 LLM 调用保存完整输入 / 输出 / 元数据日志。这样 backtest 才能成为 prompt tuning 的工作台，而不是一次性脚本。
+
+配套设计见：[`llm-connection-and-call-log-plan.md`](llm-connection-and-call-log-plan.md)。
+
 回测时应使用“只取 model turns，自己按阈值触发 rolling summary”的方式，不依赖导出文件中已有的真实 `compaction` 事件。
 
 也就是说，rolling summary 回测模式应忽略原始 `compaction` event 对 history 的缩短效果，用 model-turn 序列模拟：
@@ -176,6 +180,37 @@ RecentHistory: split 后的后半窗口
 ```text
 NewBlock: 新 rolling summary
 ```
+
+推荐第一版 `replay-rolling-summary` 专门实现一个 `RollingSummaryMaintainer`，而不是立刻强行复用 `CompletionMemoryBlockMaintainer`。原因是 rolling summary backtest 需要更多调试信息：prompt 文件快照、window dump、summary diff、call log 路径、异常状态、耗时等。等这些字段稳定后，再判断哪些能力应回收进通用 maintainer substrate。
+
+第一版命令建议：
+
+```bash
+dotnet run --project prototypes/ChatSession.BacktestCli -- replay-rolling-summary \
+  --input prototypes/Galatea/.atelia/galatea/sessions/cyber-copy-upgraded/chat-session-legacy-upgrade-export.json \
+  --threshold-tokens 12000 \
+  --connections prototypes/Galatea/.atelia/galatea/connections.json \
+  --connection local-deepseek \
+  --system-prompt prompts/summary-system.md \
+  --prompt prompts/summary-user.md \
+  --output gitignore/backtest/rolling-summary.jsonl \
+  --call-log-dir gitignore/backtest/rolling-summary-calls
+```
+
+JSONL report 每个 epoch 至少记录：
+
+- epoch index
+- triggering event ordinal / commit
+- replay mode
+- threshold tokens / estimated tokens
+- split index / old-window count / recent-window count
+- target carrier / block id
+- old summary block length + tail preview
+- new summary block length + tail preview
+- call log file path
+- status / exception summary
+
+LLM call log 文件保存完整 request / response；JSONL report 只保存索引和摘要，避免主 report 被大 prompt 淹没。
 
 ## 7. Original Compaction Event 的处理模式
 
@@ -223,9 +258,12 @@ dotnet run --project prototypes/ChatSession.BacktestCli -- replay-pattern-count 
 dotnet run --project prototypes/ChatSession.BacktestCli -- replay-rolling-summary \
   --input prototypes/Galatea/.atelia/galatea/sessions/cyber-copy-upgraded/chat-session-legacy-upgrade-export.json \
   --threshold-tokens 12000 \
+  --connections prototypes/Galatea/.atelia/galatea/connections.json \
+  --connection local-deepseek \
   --system-prompt prompts/summary-system.md \
   --prompt prompts/summary-user.md \
-  --output gitignore/backtest/rolling-summary.jsonl
+  --output gitignore/backtest/rolling-summary.jsonl \
+  --call-log-dir gitignore/backtest/rolling-summary-calls
 ```
 
 后续可加：
@@ -250,11 +288,13 @@ dotnet run --project prototypes/ChatSession.BacktestCli -- replay-rolling-summar
 
 完成后再实现第二轮：
 
-1. `replay-rolling-summary`。
-2. 接入 `CompletionMemoryBlockMaintainer`。
-3. 支持 prompt 文件。
-4. 支持 `ignore-original-compaction` 默认策略。
-5. 生成 summary diff / token estimate / window dump。
+1. 在 `Atelia.Completion` 中抽出公共 connection config / factory / registry。
+2. 在 `Atelia.Completion` 中实现 logging completion client，每次 LLM 调用落盘。
+3. `ChatSession.BacktestCli` 增加 `--connections` / `--connection` / `--call-log-dir`。
+4. 实现 `replay-rolling-summary`，默认 `ignore-original-compaction`。
+5. 支持 prompt 文件，并在 call log 中保存 prompt 文件路径、内容快照或 hash。
+6. 生成 summary diff / token estimate / window dump / call log path。
+7. 先用专用 `RollingSummaryMaintainer` 跑通，再评估是否回收进 `CompletionMemoryBlockMaintainer`。
 
 ## 10. 开放问题
 
@@ -262,3 +302,6 @@ dotnet run --project prototypes/ChatSession.BacktestCli -- replay-rolling-summar
 - Backtest report schema 是否要稳定成 `atelia.chat-session.memory-backtest-report.v1`？倾向从 JSONL 开始，等第二轮再固定 schema。
 - token threshold 使用现有 `ChatSessionTokenEstimator` 即可，但它当前是 internal；如果 CLI 需要直接使用，应考虑暴露一个 public estimate helper 或由 ChatSession 提供 replay policy。
 - 确定性 pattern maintainer 的 block 输出先用 Markdown，还是 JSON？倾向 Markdown，便于 LLM 维护器后续接手；JSONL report 负责机器可读审计。
+- connection config 应放在哪层？倾向 `Atelia.Completion`，不是 `Atelia.ChatSession`。ChatSession 继续只接受 `ICompletionClient`，Completion 提供官方 config-to-client 路径。
+- Galatea / FamilyChat 现有 connection registry 是否立即迁移？倾向先让 Backtest CLI 使用公共实现；应用层后续小步迁移，避免第二阶段一次改太宽。
+- LLM call log 是每次调用一个文件，还是 request / response / meta 分文件？倾向每次调用一个完整 JSON 文件；JSONL report 只引用该文件路径。
