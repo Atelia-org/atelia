@@ -28,16 +28,8 @@
     return connections.length > 0 ? connections[0].id : null;
   }
 
-  function getConnection(connectionId) {
-    return connections.find((c) => c.id === connectionId) ?? null;
-  }
-
   function connectionStorageKey() {
     return ["family-chat", "connection", userKey].join(":");
-  }
-
-  function autoPrefillStorageKey(connectionId) {
-    return ["family-chat", "auto-prefill-think-open-tag", userKey, connectionId ?? "unknown"].join(":");
   }
 
   const turnList = document.getElementById("turn-list");
@@ -46,7 +38,6 @@
   const sendButton = document.getElementById("send-button");
   const undoLastButton = document.getElementById("undo-last-button");
   const stopButton = document.getElementById("stop-button");
-  const autoPrefillThinkOpenTagCheckbox = document.getElementById("auto-repair-missing-think-open-tag");
   const connectionPicker = document.getElementById("connection-picker");
   const composerModeHint = document.getElementById("composer-mode-hint");
   const statusText = document.getElementById("status-text");
@@ -118,9 +109,6 @@
     if (stopButton) {
       stopButton.disabled = !streaming;
     }
-    if (autoPrefillThinkOpenTagCheckbox) {
-      autoPrefillThinkOpenTagCheckbox.disabled = streaming;
-    }
     if (connectionPicker) {
       connectionPicker.querySelectorAll('input[name="connection"]').forEach((radio) => {
         radio.disabled = streaming;
@@ -179,31 +167,6 @@
     state.streamGeneration += 1;
   }
 
-  function loadAutoPrefillPreference(connectionId) {
-    const stored = window.localStorage.getItem(autoPrefillStorageKey(connectionId));
-    if (stored === "true") {
-      return true;
-    }
-
-    if (stored === "false") {
-      return false;
-    }
-
-    const connection = getConnection(connectionId);
-    return connection?.defaultAutoPrefillThinkOpenTag === true;
-  }
-
-  function saveAutoPrefillPreference() {
-    if (!autoPrefillThinkOpenTagCheckbox) {
-      return;
-    }
-
-    window.localStorage.setItem(
-      autoPrefillStorageKey(state.selectedConnectionId),
-      autoPrefillThinkOpenTagCheckbox.checked ? "true" : "false"
-    );
-  }
-
   function escapeAttr(text) {
     return escapeHtml(text).replaceAll('"', "&quot;");
   }
@@ -239,14 +202,14 @@
       radio.disabled = state.streaming;
       radio.addEventListener("change", () => {
         if (radio.checked) {
-          selectConnection(radio.value, { persist: true, reloadAutoPrefill: true });
+          selectConnection(radio.value, { persist: true });
         }
       });
     });
   }
 
   function selectConnection(connectionId, options = {}) {
-    const { persist = false, reloadAutoPrefill = false, updateRadio = false } = options;
+    const { persist = false, updateRadio = false } = options;
     const resolved = resolveConnectionId(connectionId);
     state.selectedConnectionId = resolved;
 
@@ -260,9 +223,6 @@
       });
     }
 
-    if (reloadAutoPrefill && autoPrefillThinkOpenTagCheckbox) {
-      autoPrefillThinkOpenTagCheckbox.checked = loadAutoPrefillPreference(resolved);
-    }
   }
 
   async function loadRecentTurns() {
@@ -516,7 +476,6 @@
       },
       body: JSON.stringify({
         message,
-        autoPrefillThinkOpenTag: autoPrefillThinkOpenTagCheckbox?.checked ?? false,
         connectionId: state.selectedConnectionId,
       }),
     });
@@ -577,27 +536,16 @@
     setStreaming(true, "已发送停止请求，等待模型收尾…");
   });
 
-  autoPrefillThinkOpenTagCheckbox?.addEventListener("change", saveAutoPrefillPreference);
-
   async function initializeApp() {
     const storedConnectionId = window.localStorage.getItem(connectionStorageKey());
     selectConnection(storedConnectionId ?? bootstrapConfig.defaultConnectionId, { persist: false });
     renderConnectionPicker();
-    if (autoPrefillThinkOpenTagCheckbox) {
-      autoPrefillThinkOpenTagCheckbox.checked = loadAutoPrefillPreference(state.selectedConnectionId);
-    }
 
     await loadRecentTurns();
     const currentTurn = await loadCurrentTurn();
     if (currentTurn?.status === "running" && currentTurn.turnId) {
       if (currentTurn.connectionId) {
         selectConnection(currentTurn.connectionId, { updateRadio: true });
-      }
-      if (
-        autoPrefillThinkOpenTagCheckbox
-        && typeof currentTurn.autoPrefillThinkOpenTag === "boolean"
-      ) {
-        autoPrefillThinkOpenTagCheckbox.checked = currentTurn.autoPrefillThinkOpenTag;
       }
       await attachToTurn(currentTurn.turnId, "正在恢复生成…");
       return;

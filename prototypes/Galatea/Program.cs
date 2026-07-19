@@ -161,12 +161,10 @@ api.MapPost(
         if (!session.TurnLock.Wait(0)) { return BuildTurnBusyConflict(hostService, session); }
 
         var connection = connections.Resolve(request.ConnectionId);
-        bool autoPrefillThinkOpenTag = request.AutoPrefillThinkOpenTag
-            ?? GalateaThinkRepairDefaults.ShouldEnableForModel(connection.ModelId);
         var liveTurn = hostService.StartTurn(
             session,
             request.Message,
-            new GalateaTurnOptions(autoPrefillThinkOpenTag, connection.Id)
+            new GalateaTurnOptions(connection.Id)
         );
         DebugUtil.Info("Galatea.Api", $"POST /api/chat/turns user={userId}, turnId={liveTurn.TurnId}, connectionId={connection.Id}, head={session.Engine.PersistedHeadAddress}");
         return StartAcceptedTurn(session, liveTurn, hostService, applicationLifetime);

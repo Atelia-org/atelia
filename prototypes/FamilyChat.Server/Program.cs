@@ -161,12 +161,10 @@ api.MapPost(
         if (!session.TurnLock.Wait(0)) { return BuildTurnBusyConflict(hostService, session); }
 
         var connection = connections.Resolve(request.ConnectionId);
-        bool autoPrefillThinkOpenTag = request.AutoPrefillThinkOpenTag
-            ?? FamilyChatThinkRepairDefaults.ShouldEnableForModel(connection.ModelId);
         var liveTurn = hostService.StartTurn(
             session,
             request.Message,
-            new FamilyChatTurnOptions(autoPrefillThinkOpenTag, connection.Id)
+            new FamilyChatTurnOptions(connection.Id)
         );
         DebugUtil.Info("FamilyChat.Api", $"POST /api/chat/turns user={userId}, turnId={liveTurn.TurnId}, connectionId={connection.Id}, head={session.Engine.PersistedHeadAddress}");
         return StartAcceptedTurn(session, liveTurn, hostService, applicationLifetime);

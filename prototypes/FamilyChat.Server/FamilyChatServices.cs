@@ -55,10 +55,9 @@ public sealed class DefaultFamilyChatCompletionClientFactory : IFamilyChatComple
 }
 
 /// <summary>
-/// Owns the catalog of LLM connections and lazily builds + caches one decorated
+/// Owns the catalog of LLM connections and lazily builds + caches one
 /// <see cref="ICompletionClient"/> per connection id. Clients are shared across all
-/// users and turns; per-turn behavior (e.g. think-tag repair) flows separately through
-/// <see cref="FamilyChatCompletionExecutionContext"/>, so a single client instance is safe to reuse.
+/// users and turns, so a single client instance is safe to reuse.
 /// </summary>
 public sealed class FamilyChatConnectionRegistry : IDisposable {
     private readonly IFamilyChatCompletionClientFactory _factory;
@@ -94,7 +93,7 @@ public sealed class FamilyChatConnectionRegistry : IDisposable {
 
         return _clients.GetOrAdd(
             connection.Id,
-            static (_, state) => new FamilyChatCompletionClientDecorator(state.Factory.Create(state.Connection)),
+            static (_, state) => state.Factory.Create(state.Connection),
             (Factory: _factory, Connection: connection)
         );
     }
@@ -239,7 +238,6 @@ public sealed class FamilyChatHostService : IAsyncDisposable {
                 currentTurn.TurnId,
                 currentTurn.UserMessage,
                 currentTurn.Phase,
-                currentTurn.Options.AutoPrefillThinkOpenTag,
                 currentTurn.Options.ConnectionId
             );
         DebugUtil.Info(
@@ -369,7 +367,7 @@ public sealed class FamilyChatHostService : IAsyncDisposable {
             phase: "reasoning-end"
         );
         observer.ReceivedReasoningDelta += delta => liveTurn.Publish(new StreamEventDto("reasoning-delta", new { delta }));
-        var textFilter = new InlineThinkTextFilter(startInsideThink: liveTurn.Options.AutoPrefillThinkOpenTag);
+        var textFilter = new InlineThinkTextFilter(startInsideThink: false);
         observer.ReceivedTextDelta += delta => {
             var visibleText = textFilter.Filter(delta);
             if (string.IsNullOrEmpty(visibleText)) { return; }
@@ -388,9 +386,6 @@ public sealed class FamilyChatHostService : IAsyncDisposable {
 
         ChatSessionTurnResult turnResult;
         try {
-            using var behaviorScope = FamilyChatCompletionExecutionContext.Push(
-                FamilyChatTurnBehavior.FromUserAndTurn(host.User, liveTurn.Options)
-            );
             turnResult = await host.Engine.SendMessageAsync(promptedUserMessage, observer, ct).ConfigureAwait(false);
         }
         catch (ChatSessionTurnAbortedException ex) {
@@ -1074,8 +1069,7 @@ internal static class FamilyChatHtml {
             static c => new FamilyChatConnectionInfoDto(
                 c.Id,
                 c.DisplayName,
-                c.ModelId,
-                FamilyChatThinkRepairDefaults.ShouldEnableForModel(c.ModelId)
+                c.ModelId
             )
         )
             .ToArray();
@@ -1102,10 +1096,6 @@ internal static class FamilyChatHtml {
           <legend>模型连接</legend>
         </fieldset>
         <textarea id="message-input" rows="3" placeholder="说点什么……" required></textarea>
-        <label class="composer-option">
-          <input id="auto-repair-missing-think-open-tag" type="checkbox">
-          <span>强制以 <code>&lt;think&gt;</code> 续写思考模式</span>
-        </label>
         <div class="composer-actions">
           <div class="composer-status">
             <span id="composer-mode-hint" class="eyebrow hidden"></span>

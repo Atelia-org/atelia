@@ -64,8 +64,7 @@ public sealed record GalateaUserConfig(
 public sealed record GalateaConnectionInfoDto(
     string Id,
     string DisplayName,
-    string ModelId,
-    bool DefaultAutoPrefillThinkOpenTag
+    string ModelId
 );
 
 public sealed record GalateaMeDto(
@@ -91,7 +90,6 @@ public sealed record AssistantMessageDto(
 
 public sealed record ChatStreamRequest(
     [property: JsonPropertyName("message")] string Message,
-    [property: JsonPropertyName("autoPrefillThinkOpenTag")] bool? AutoPrefillThinkOpenTag = null,
     [property: JsonPropertyName("connectionId")] string? ConnectionId = null
 );
 
@@ -110,7 +108,6 @@ public sealed record CurrentTurnDto(
     string? TurnId = null,
     string? UserMessage = null,
     string? Phase = null,
-    bool? AutoPrefillThinkOpenTag = null,
     string? ConnectionId = null
 );
 
