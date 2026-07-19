@@ -1,8 +1,9 @@
 # Task 01: ChatSession Recap Source Anchors
 
-> 状态：Todo
+> 状态：Done
 > 建议执行者：熟悉 `prototypes/ChatSession` 与 StateJournal 基本用法的实现会话
 > 优先级：高。它能让未来新数据天然可追溯。
+> 结果摘要：[`../done/task-01-chat-session-recap-source-anchors-handoff.md`](../done/task-01-chat-session-recap-source-anchors-handoff.md)
 
 ## 背景
 

@@ -9,6 +9,7 @@ using Atelia.ChatSession;
 using Atelia.Completion.Abstractions;
 using Atelia.Completion.Tools;
 using Atelia.FamilyChat.Server;
+using Atelia.StateJournal;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
@@ -761,6 +762,78 @@ public sealed class FamilyChatServerTests {
                 message => Assert.Equal("second", Assert.IsType<ObservationMessage>(message).Content),
                 message => Assert.Equal("keep", Assert.IsType<ActionMessage>(message).GetFlattenedText())
             );
+        }
+        finally {
+            Directory.Delete(repoDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task ChatSession_CompactAsync_WritesRecapSourceAnchor() {
+        string repoDir = CreateTempDirectory();
+        try {
+            var client = new ScriptedCompletionClient("openai-chat-v1");
+            client.EnqueueText(new string('A', 120));
+            client.EnqueueText("keep");
+            client.EnqueueText("summary");
+
+            using var engine = await ChatSessionEngine.CreateAsync(
+                repoDir,
+                new ChatSessionCreateOptions("system"),
+                new ChatSessionRuntime(
+                    client,
+                    "openai-chat/strict",
+                    "model-a",
+                    new ToolRegistry(Array.Empty<ITool>()).CreateSession()
+                )
+            );
+
+            await engine.SendMessageAsync("first");
+            await engine.SendMessageAsync("second");
+            Assert.True(engine.PersistedHeadAddress is { });
+            string sourceHead = engine.PersistedHeadAddress.Value.ToString();
+            int sourceMessageCount = engine.Context.Count;
+
+            var compaction = await engine.CompactAsync("compact-system", "compact-prompt");
+
+            Assert.True(compaction.Applied);
+            Assert.Collection(
+                engine.Context,
+                message => {
+                    var recap = Assert.IsType<RecapMessage>(message);
+                    Assert.Equal("summary", recap.Content);
+                    Assert.NotNull(recap.SourceAnchor);
+                    var anchor = recap.SourceAnchor!;
+                    Assert.Equal(sourceHead, anchor.SourceHeadBeforeCompaction);
+                    Assert.Equal("main", anchor.SourceBranchName);
+                    Assert.Equal(0, anchor.SourceStartIndex);
+                    Assert.Equal(compaction.SplitIndex, anchor.SourceEndExclusive);
+                    Assert.Equal(sourceMessageCount, anchor.SourceMessageCountBefore);
+                    Assert.Equal("prefix-summary", anchor.CompactionKind);
+                },
+                message => Assert.Equal("second", Assert.IsType<ObservationMessage>(message).Content),
+                message => Assert.Equal("keep", Assert.IsType<ActionMessage>(message).GetFlattenedText())
+            );
+        }
+        finally {
+            Directory.Delete(repoDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void ChatSession_ReadRecapWithoutSourceAnchor_KeepsLegacyRecordCompatible() {
+        string repoDir = CreateTempDirectory();
+        try {
+            using var repo = Repository.Create(repoDir).Unwrap();
+            var revision = repo.CreateBranch("main").Unwrap();
+            var messages = revision.CreateDeque();
+
+            MessageRecord.PrependRecap(messages, "legacy summary");
+
+            var context = MessageRecord.ToHistoryMessages(messages);
+            var recap = Assert.IsType<RecapMessage>(Assert.Single(context));
+            Assert.Equal("legacy summary", recap.Content);
+            Assert.Null(recap.SourceAnchor);
         }
         finally {
             Directory.Delete(repoDir, recursive: true);

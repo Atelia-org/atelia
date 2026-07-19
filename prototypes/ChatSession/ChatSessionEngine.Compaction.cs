@@ -332,6 +332,7 @@ public sealed partial class ChatSessionEngine {
     ) {
         var tokensBefore = ChatSessionTokenEstimator.Estimate(currentMessages);
         var historyCountBefore = currentMessages.Count;
+        var sourceHeadBeforeCompaction = PersistedHeadAddress;
 
         var prefix = new List<IHistoryMessage>(splitIndex);
         for (int i = 0; i < splitIndex; i++) { prefix.Add(currentMessages[i]); }
@@ -367,7 +368,18 @@ public sealed partial class ChatSessionEngine {
             _messages.PopFront<DurableObject>(out _);
         }
 
-        MessageRecord.PrependRecap(_messages, summary);
+        var sourceAnchor = sourceHeadBeforeCompaction is { } head
+            ? new RecapSourceAnchor(
+                SourceHeadBeforeCompaction: head.ToString(),
+                SourceBranchName: _branchName,
+                SourceStartIndex: 0,
+                SourceEndExclusive: splitIndex,
+                SourceMessageCountBefore: historyCountBefore,
+                CompactionKind: MessageRecord.CompactionKindPrefixSummary
+            )
+            : null;
+
+        MessageRecord.PrependRecap(_messages, summary, sourceAnchor);
         for (int i = protectedHeaders.Length - 1; i >= 0; i--) {
             MessageRecord.PrependContextHeader(_messages, protectedHeaders[i]);
         }

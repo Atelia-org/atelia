@@ -14,12 +14,20 @@ internal static class MessageRecord {
     public const string KeyActionBlocksJson = "actionBlocksJson";
     public const string KeyResultsJson = "resultsJson";
     public const string KeyTimestampUtc = "timestampUtc";
+    public const string KeySourceHeadBeforeCompaction = "sourceHeadBeforeCompaction";
+    public const string KeySourceBranchName = "sourceBranchName";
+    public const string KeySourceStartIndex = "sourceStartIndex";
+    public const string KeySourceEndExclusive = "sourceEndExclusive";
+    public const string KeySourceMessageCountBefore = "sourceMessageCountBefore";
+    public const string KeyCompactionKind = "compactionKind";
 
     public const string KindContextHeader = "context-header";
     public const string KindObservation = "observation";
     public const string KindAction = "action";
     public const string KindToolResults = "tool-results";
     public const string KindRecap = "recap";
+
+    public const string CompactionKindPrefixSummary = "prefix-summary";
 
     private const string BlockKindText = "text";
     private const string BlockKindToolCall = "tool-call";
@@ -53,9 +61,17 @@ internal static class MessageRecord {
         return record;
     }
 
-    public static DurableDict<string> PrependRecap(DurableDeque messages, string summary) {
+    public static DurableDict<string> PrependRecap(DurableDeque messages, string summary, RecapSourceAnchor? sourceAnchor = null) {
         var record = CreateRecord(messages.Revision, KindRecap);
         record.Upsert(KeyContent, summary);
+        if (sourceAnchor is not null) {
+            record.Upsert(KeySourceHeadBeforeCompaction, sourceAnchor.SourceHeadBeforeCompaction);
+            record.Upsert(KeySourceBranchName, sourceAnchor.SourceBranchName);
+            record.Upsert(KeySourceStartIndex, sourceAnchor.SourceStartIndex);
+            record.Upsert(KeySourceEndExclusive, sourceAnchor.SourceEndExclusive);
+            record.Upsert(KeySourceMessageCountBefore, sourceAnchor.SourceMessageCountBefore);
+            record.Upsert(KeyCompactionKind, sourceAnchor.CompactionKind);
+        }
         messages.PushFront<DurableObject>(record);
         return record;
     }
@@ -117,7 +133,30 @@ internal static class MessageRecord {
 
     private static ObservationMessage BuildRecap(DurableDict<string> record) {
         record.TryGet<string>(KeyContent, out var content);
-        return new RecapMessage(content);
+        return new RecapMessage(content, TryBuildRecapSourceAnchor(record));
+    }
+
+    private static RecapSourceAnchor? TryBuildRecapSourceAnchor(DurableDict<string> record) {
+        if (!record.TryGet<string>(KeySourceHeadBeforeCompaction, out var sourceHeadBeforeCompaction)
+            || string.IsNullOrWhiteSpace(sourceHeadBeforeCompaction)) { return null; }
+
+        if (!record.TryGet<string>(KeySourceBranchName, out var sourceBranchName)
+            || string.IsNullOrWhiteSpace(sourceBranchName)) { return null; }
+
+        if (!record.TryGet<int>(KeySourceStartIndex, out var sourceStartIndex)) { return null; }
+        if (!record.TryGet<int>(KeySourceEndExclusive, out var sourceEndExclusive)) { return null; }
+        if (!record.TryGet<int>(KeySourceMessageCountBefore, out var sourceMessageCountBefore)) { return null; }
+        if (!record.TryGet<string>(KeyCompactionKind, out var compactionKind)
+            || string.IsNullOrWhiteSpace(compactionKind)) { return null; }
+
+        return new RecapSourceAnchor(
+            sourceHeadBeforeCompaction,
+            sourceBranchName,
+            sourceStartIndex,
+            sourceEndExclusive,
+            sourceMessageCountBefore,
+            compactionKind
+        );
     }
 
     private static ActionMessage BuildAction(DurableDict<string> record) {

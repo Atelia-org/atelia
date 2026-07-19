@@ -64,7 +64,19 @@ public sealed record MemoryMaintainerResult(
     int ToolCallsExecuted
 );
 
-public sealed record RecapMessage(string? Content) : ObservationMessage(Content);
+public sealed record RecapSourceAnchor(
+    string SourceHeadBeforeCompaction,
+    string SourceBranchName,
+    int SourceStartIndex,
+    int SourceEndExclusive,
+    int SourceMessageCountBefore,
+    string CompactionKind
+);
+
+public sealed record RecapMessage(
+    string? Content,
+    RecapSourceAnchor? SourceAnchor = null
+) : ObservationMessage(Content);
 
 public sealed record CompactionResult(
     bool Applied,
