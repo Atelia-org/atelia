@@ -398,6 +398,29 @@ public sealed partial class Repository : IDisposable {
     }
 
     /// <summary>
+    /// 离线/诊断用途：从指定历史 commit 加载 graph root，不创建 branch、不写 refs / backup / reflog。
+    /// 返回的对象图不绑定任何 branch，不能通过 <see cref="Commit(DurableObject)"/> 推进 repository head；
+    /// 这里的只读语义限定在 repository 持久化层，返回对象不是不可变 facade。
+    /// </summary>
+    public AteliaResult<DurableObject> LoadRootAtCommit(CommitAddress commitAddress) {
+        using var scope = _gate.EnterScope();
+        if (!EnsureUsable(out var err)) { return err; }
+
+        var revisionResult = CreateDetachedRevisionAtAddress(commitAddress, $"commit {commitAddress}");
+        if (revisionResult.IsFailure) { return revisionResult.Error!; }
+
+        var root = revisionResult.Value!.GraphRoot;
+        if (root is null) {
+            return new SjCorruptionError(
+                $"Commit {commitAddress} has no graph root.",
+                RecoveryHint: "The commit metadata may be corrupted or point to an unborn branch state."
+            );
+        }
+
+        return root;
+    }
+
+    /// <summary>
     /// 若指定 branch 存在则等价于 <see cref="CheckoutBranch(string)"/>；否则等价于 <see cref="CreateBranch(string)"/>（unborn 起点）。
     /// 不提供带 <c>fromBranch</c> 的重载，以避免"已有 vs 派生"语义模糊。
     /// </summary>

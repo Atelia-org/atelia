@@ -1,8 +1,8 @@
 # Task 04: Legacy ChatSession Recap Recovery and Upgrade
 
-> 状态：Todo / Research Prototype
-> 建议执行者：适合做离线分析工具的新会话
-> 依赖：最好先有 Task 03 的 commit history reader；没有也可直接解析 branch reflog 做原型。
+> 状态：Todo / Epic
+> 建议执行者：分阶段执行；先由熟悉 StateJournal 的会话完成 04a，再由 ChatSession/Galatea 会话完成 04b/04c
+> 依赖：Task 01 / 02 / 03 / 03a / 04a 已完成；下一步做 Task 04b 的 ChatSession 恢复报告器。
 
 ## 背景
 
@@ -14,20 +14,26 @@
 
 - [`prototypes/ChatSession/MessageRecord.cs`](../../../../prototypes/ChatSession/MessageRecord.cs)
 - [`prototypes/ChatSession/ChatSessionEngine.Compaction.cs`](../../../../prototypes/ChatSession/ChatSessionEngine.Compaction.cs)
+- [`prototypes/ChatSession/ChatSessionHistory.cs`](../../../../prototypes/ChatSession/ChatSessionHistory.cs)
 - [`src/StateJournal/Repository.BranchRefs.cs`](../../../../src/StateJournal/Repository.BranchRefs.cs)
+- [`src/StateJournal/RepositoryHistoryReader.cs`](../../../../src/StateJournal/RepositoryHistoryReader.cs)
 - [`src/StateJournal/CommitAddress.cs`](../../../../src/StateJournal/CommitAddress.cs)
 - [`docs/Galatea/backlog/done/task-03-statejournal-commit-history-reader.md`](../done/task-03-statejournal-commit-history-reader.md)
-- [`docs/Galatea/backlog/todo/feature-request-recap-source-range-anchors.md`](feature-request-recap-source-range-anchors.md)
+- [`docs/Galatea/backlog/done/task-03a-statejournal-commit-metadata-v2.md`](../done/task-03a-statejournal-commit-metadata-v2.md)
+- [`docs/Galatea/backlog/done/feature-request-recap-source-range-anchors.md`](../done/feature-request-recap-source-range-anchors.md)
 
 ## 目标
 
-构建一个离线恢复器：扫描 ChatSession repo 的历史 heads，比较相邻 commit 中的 messages 序列，推断无 anchor recap 的 source range，并输出报告或升级后的数据。
+构建一个离线恢复链路：扫描 ChatSession repo 的历史 heads，读取历史 commit 的 messages 序列，比较相邻 commit，推断无 anchor recap 的 source range，并输出报告或 sidecar。恢复结果必须标注为 best-effort，不应伪装成绝对事实。
 
-建议阶段：
+拆分任务：
 
-1. 只读分析报告：列出每次疑似 compaction。
-2. 生成 sidecar JSON / Markdown：记录推断出的 recap source range。
-3. 可选升级：写出新的兼容 repo 或导出文件，而不是直接修改原 repo。
+1. [`task-04a-statejournal-readonly-commit-checkout.md`](../done/task-04a-statejournal-readonly-commit-checkout.md)：StateJournal 层新增只读历史 commit checkout / load API，不创建 branch、不写 refs/reflog。
+2. [`task-04b-chat-session-legacy-recap-recovery-report.md`](task-04b-chat-session-legacy-recap-recovery-report.md)：ChatSession 层实现只读恢复报告器，识别疑似 compaction。
+3. [`task-04c-chat-session-recap-recovery-sidecar-export.md`](task-04c-chat-session-recap-recovery-sidecar-export.md)：把 04b 的 finding 输出为 sidecar JSON / Markdown，供导出器和人工审阅使用。
+4. 可选后续：升级/迁移工具。默认不原地修改输入 repo。
+
+当前决策：先做 04a。不要为了 04b 在 ChatSession 层复制 repo 到 temp dir 再 `CreateBranch(fromCommit)`；那是可行但不够干净的备选方案。优先补 StateJournal 只读 API。
 
 ## 推断思路
 
@@ -51,18 +57,22 @@
 - 不要求在原 repo 上原地改写。
 - 不要求修改 StateJournal 持久化格式。
 - 不要求处理任意上层 schema，只处理 ChatSession root schema。
+- Task 04a 不要求理解 ChatSession；它只提供 StateJournal 只读历史 root 加载能力。
+- Task 04b 不要求输出 sidecar 文件；先返回结构化 finding/report 即可。
 
 ## 验收
 
+- 04a：能从指定 `CommitAddress` 只读加载历史 root，不创建 branch、不改写 branch ref / backup / reflog。
 - 能对一个包含 compaction 的测试 repo 识别出疑似 recap source range。
 - 能输出人类可审阅报告，包含 old head、new head、旧范围、新 recap index、置信度。
 - 对无法判定的 recap 明确标记 unresolved。
-- 不会修改输入 repo，默认要求用户对备份副本运行。
+- 不会修改输入 repo。
 - 有测试覆盖：普通 commit 不应误判为 compaction；rewind 或普通追加不应误判。
 
 ## 风险点
 
 - 旧数据可能缺 reflog 或 reflog 不完整。
+- `RepositoryHistoryReader` 当前枚举去重后的 address 候选集，不能完整表达 reflog transition；04b 若需要更稳的相邻关系，可回到 StateJournal 层追加 transition API。
 - 内容同一性可能受 sanitization、thinking strip、tool result flattening 影响。
 - protected `ContextHeader` 会在 compaction 后重新 prepend，比较逻辑不能只看 index。
 - StateJournal 当前没有 lazy loading，全量 checkout 历史 heads 的成本可能很高；这是离线工具可接受的代价，但要在文档中说清楚。
