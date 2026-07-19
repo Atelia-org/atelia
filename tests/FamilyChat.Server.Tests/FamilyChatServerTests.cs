@@ -1536,6 +1536,104 @@ public sealed class FamilyChatServerTests {
     }
 
     [Fact]
+    public async Task ChatSessionLegacyUpgradeExporter_ExportJson_WritesCommitMetadataAndRecapMappings() {
+        string repoDir = CreateTempDirectory();
+        try {
+            var client = new ScriptedCompletionClient("openai-chat-v1");
+            client.EnqueueText(new string('A', 120));
+            client.EnqueueText("keep");
+            client.EnqueueText("summary");
+
+            int splitIndex;
+            using (var engine = await ChatSessionEngine.CreateAsync(
+                repoDir,
+                new ChatSessionCreateOptions("system"),
+                new ChatSessionRuntime(
+                    client,
+                    "openai-chat/strict",
+                    "model-a",
+                    new ToolRegistry(Array.Empty<ITool>()).CreateSession()
+                )
+            )) {
+                await engine.SendMessageAsync("first");
+                await engine.SendMessageAsync("second");
+                var compaction = await engine.CompactAsync("compact-system", "compact-prompt");
+                Assert.True(compaction.Applied);
+                splitIndex = compaction.SplitIndex;
+            }
+
+            string json = ChatSessionLegacyUpgradeExporter.ExportJson(repoDir);
+
+            Assert.DoesNotContain(repoDir, json, StringComparison.Ordinal);
+            using var document = JsonDocument.Parse(json);
+            var root = document.RootElement;
+            Assert.Equal("atelia.chat-session.legacy-upgrade-export.v1", root.GetProperty("schema").GetString());
+            Assert.False(root.TryGetProperty("generatedAtUtc", out _));
+
+            var timeline = root.GetProperty("timeline");
+            Assert.Equal("initial-state", timeline[0].GetProperty("commitMetadata").GetProperty("commitKind").GetString());
+            Assert.Equal("explicit", timeline[0].GetProperty("commitMetadata").GetProperty("metadataSource").GetString());
+            Assert.Equal("compaction", timeline[timeline.GetArrayLength() - 1].GetProperty("commitMetadata").GetProperty("commitKind").GetString());
+            Assert.Equal("applied prefix summary compaction", timeline[timeline.GetArrayLength() - 1].GetProperty("commitMetadata").GetProperty("commitReason").GetString());
+
+            var mapping = root.GetProperty("recapMappings")[0];
+            Assert.Equal("inferred", mapping.GetProperty("kind").GetString());
+            Assert.Equal("legacy-inferred", mapping.GetProperty("mappingSource").GetString());
+            Assert.Equal("high", mapping.GetProperty("confidence").GetString());
+            Assert.Equal(0, mapping.GetProperty("recapIndex").GetInt32());
+            Assert.Equal(splitIndex, mapping.GetProperty("sourceRange").GetProperty("endExclusive").GetInt32());
+
+            var anchor = mapping.GetProperty("recapSourceAnchor");
+            Assert.Equal(mapping.GetProperty("oldHead").GetString(), anchor.GetProperty("sourceHeadBeforeCompaction").GetString());
+            Assert.Equal("main", anchor.GetProperty("sourceBranchName").GetString());
+            Assert.Equal(0, anchor.GetProperty("sourceStartIndex").GetInt32());
+            Assert.Equal(splitIndex, anchor.GetProperty("sourceEndExclusive").GetInt32());
+            Assert.Equal(4, anchor.GetProperty("sourceMessageCountBefore").GetInt32());
+            Assert.Equal("prefix-summary", anchor.GetProperty("compactionKind").GetString());
+        }
+        finally {
+            Directory.Delete(repoDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task ChatSessionLegacyUpgradeExporter_ExportJson_MarksFallbackCommitMetadataSource() {
+        string repoDir = CreateTempDirectory();
+        try {
+            var client = new ScriptedCompletionClient("openai-chat-v1");
+            client.EnqueueText("first reply");
+
+            using (var engine = await ChatSessionEngine.CreateAsync(
+                repoDir,
+                new ChatSessionCreateOptions("system"),
+                new ChatSessionRuntime(
+                    client,
+                    "openai-chat/strict",
+                    "model-a",
+                    new ToolRegistry(Array.Empty<ITool>()).CreateSession()
+                )
+            )) {
+                await engine.SendMessageAsync("first");
+            }
+            StripBranchReflogNotes(repoDir, "main");
+
+            string json = ChatSessionLegacyUpgradeExporter.ExportJson(repoDir);
+
+            using var document = JsonDocument.Parse(json);
+            var timeline = document.RootElement.GetProperty("timeline");
+            Assert.All(
+                timeline.EnumerateArray(),
+                static entry => Assert.Equal("legacy-inferred", entry.GetProperty("commitMetadata").GetProperty("metadataSource").GetString())
+            );
+            Assert.Equal("model-turn", timeline[1].GetProperty("commitMetadata").GetProperty("commitKind").GetString());
+            Assert.Equal("previous messages are preserved and the commit appends one observation/action turn", timeline[1].GetProperty("commitMetadata").GetProperty("commitReason").GetString());
+        }
+        finally {
+            Directory.Delete(repoDir, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task ChatSession_CompactAsync_PreservesLeadingContextHeader() {
         string repoDir = CreateTempDirectory();
         try {

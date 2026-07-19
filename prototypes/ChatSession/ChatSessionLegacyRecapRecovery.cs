@@ -24,9 +24,15 @@ public enum ChatSessionCommitAttributionKind {
     Other
 }
 
+public enum ChatSessionCommitAttributionSource {
+    LegacyInferred,
+    Explicit
+}
+
 public sealed record ChatSessionCommitAttribution(
     ChatSessionCommitAttributionKind Kind,
-    string Reason
+    string Reason,
+    ChatSessionCommitAttributionSource Source = ChatSessionCommitAttributionSource.LegacyInferred
 );
 
 public sealed record ChatSessionLegacyCommitTimelineEntry(
@@ -262,7 +268,8 @@ public static class ChatSessionLegacyRecapRecovery {
 
         attribution = new ChatSessionCommitAttribution(
             ToAttributionKind(metadata.Kind),
-            metadata.Reason ?? "explicit chat session commit metadata"
+            metadata.Reason ?? "explicit chat session commit metadata",
+            ChatSessionCommitAttributionSource.Explicit
         );
         return true;
     }

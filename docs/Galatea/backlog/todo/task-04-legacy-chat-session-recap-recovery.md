@@ -33,7 +33,8 @@
 1. [`task-04a-statejournal-readonly-commit-checkout.md`](../done/task-04a-statejournal-readonly-commit-checkout.md)：StateJournal 层新增只读历史 commit checkout / load API，不创建 branch、不写 refs/reflog。
 2. [`task-04b-chat-session-legacy-recap-recovery-report.md`](../done/task-04b-chat-session-legacy-recap-recovery-report.md)：ChatSession 层实现只读恢复报告器，识别疑似 compaction。
 3. [`task-04c-chat-session-recap-recovery-sidecar-export.md`](../done/task-04c-chat-session-recap-recovery-sidecar-export.md)：把 04b 的 finding 输出为 JSON sidecar，供导出器和人工审阅使用。
-4. 可选后续：升级/迁移工具。默认不原地修改输入 repo。
+4. [`task-04d-chat-session-legacy-upgrade-export.md`](../done/task-04d-chat-session-legacy-upgrade-export.md)：导出新版语义 JSON，补齐 legacy recap source mapping 与 commit metadata。默认不原地修改输入 repo。
+5. [`task-04e-chat-session-event-source-replay-migration.md`](task-04e-chat-session-event-source-replay-migration.md)：把 04d JSON 扩展为可 replay 的 semantic event source，并导入为新版 StateJournal repo。
 
 当前决策：04a / 04b / 04c 已完成。不要为了恢复结果原地改写旧 repo；优先输出 sidecar / report，保持 best-effort 推断与原始数据分离。下一步应让 Markdown export 或升级工具读取 sidecar。
 
