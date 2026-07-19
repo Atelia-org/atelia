@@ -9,6 +9,7 @@
 
   <ItemGroup>
     <ProjectReference Include="../ChatSession/ChatSession.csproj" />
+    <ProjectReference Include="../Completion/Completion.csproj" />
   </ItemGroup>
 
 </Project>

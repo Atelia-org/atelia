@@ -2,11 +2,14 @@ using System.Text;
 using System.Text.Encodings.Web;
 using System.Text.Json;
 using Atelia.ChatSession;
+using Atelia.Completion;
+using Atelia.Completion.Abstractions;
 
 namespace ChatSessionBacktestCli;
 
 internal static partial class Program {
     private const int DefaultThresholdTokens = 12_000;
+    private const string DefaultLlmSmokeCallLogDir = "gitignore/backtest/llm-smoke-calls";
 
     private static readonly JsonSerializerOptions JsonOptions = new() {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
@@ -25,11 +28,12 @@ internal static partial class Program {
             var options = CliOptions.Parse(args.Skip(1).ToArray());
             return command switch {
                 "inspect" => RunInspect(options),
+                "llm-smoke" => RunLlmSmokeAsync(options).GetAwaiter().GetResult(),
                 "replay-pattern-count" => RunReplayPatternCount(options),
                 _ => Fail($"Unknown command '{command}'.")
             };
         }
-        catch (Exception ex) when (ex is ArgumentException or InvalidDataException or IOException or NotSupportedException) {
+        catch (Exception ex) when (ex is ArgumentException or InvalidDataException or InvalidOperationException or IOException or NotSupportedException) {
             Console.Error.WriteLine($"error: {ex.Message}");
             return 1;
         }
@@ -110,6 +114,47 @@ internal static partial class Program {
         return 0;
     }
 
+    private static async Task<int> RunLlmSmokeAsync(CliOptions options) {
+        var connectionsPath = options.Require("connections");
+        var requestedConnectionId = options.Get("connection");
+        var callLogDir = options.Get("call-log-dir") ?? DefaultLlmSmokeCallLogDir;
+        var message = options.Get("message") ?? "请用一句话回复：LLM smoke test ok。";
+
+        var connections = CompletionConnectionConfigLoader.LoadFile(connectionsPath);
+        using var registry = new CompletionConnectionRegistry(connections, new DefaultCompletionClientFactory());
+
+        if (!string.IsNullOrWhiteSpace(requestedConnectionId) && !registry.TryGet(requestedConnectionId, out _)) { throw new ArgumentException($"Unknown completion connection '{requestedConnectionId}'."); }
+
+        var connection = registry.Resolve(requestedConnectionId);
+        var client = registry.GetClient(connection.Id);
+        var loggingClient = new LoggingCompletionClient(
+            client,
+            connection,
+            callLogDir,
+            new CompletionCallLogContext(Command: "llm-smoke")
+        );
+
+        var request = new CompletionRequest(
+            ModelId: connection.ModelId,
+            SystemPrompt: "You are a concise smoke-test assistant. Reply briefly.",
+            Context: new IHistoryMessage[] { new ObservationMessage(message) },
+            Tools: System.Collections.Immutable.ImmutableArray<ToolDefinition>.Empty
+        );
+
+        var result = await loggingClient.StreamCompletionAsync(request, observer: null, CancellationToken.None).ConfigureAwait(false);
+        Console.WriteLine($"connection: {connection.Id}");
+        Console.WriteLine($"provider: {loggingClient.Name}/{loggingClient.ApiSpecId}");
+        Console.WriteLine($"callLogDir: {Path.GetFullPath(callLogDir)}");
+        Console.WriteLine("response:");
+        Console.WriteLine(result.Message.GetFlattenedText());
+        if (result.Errors is { Count: > 0 }) {
+            Console.WriteLine("errors:");
+            foreach (var error in result.Errors) { Console.WriteLine($"- {error}"); }
+        }
+
+        return 0;
+    }
+
     private static Dictionary<string, int> CountMessageKinds(IReadOnlyList<ChatSessionLegacyReplayEvent> events) {
         var counts = new Dictionary<string, int>(StringComparer.Ordinal);
         foreach (var message in events.SelectMany(EnumerateMessages)) {
@@ -174,6 +219,7 @@ internal static partial class Program {
         Console.WriteLine();
         Console.WriteLine("Commands:");
         Console.WriteLine("  inspect --input <path>");
+        Console.WriteLine("  llm-smoke --connections <path> [--connection <id>] [--call-log-dir <dir>] [--message <text>]");
         Console.WriteLine("  replay-pattern-count --input <path> --output <jsonl> [--report-md <path>] [--threshold-tokens <n>] [--respect-original-compaction]");
     }
 
