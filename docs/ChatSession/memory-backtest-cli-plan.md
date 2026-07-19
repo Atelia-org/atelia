@@ -148,7 +148,7 @@ latestExamples:
 replay model-turn events one by one
 if estimatedTokens >= threshold:
     split = FindHalfContextSplitPoint(history)
-    slice = old summary + history[split..]
+  slice = old summary + history[..split]
     maintainer updates summary block
     report epoch
 ```
@@ -171,8 +171,8 @@ MemoryPackCarrier.Observation / session.rolling-summary
 
 ```text
 OldBlock: 上一版 rolling summary，初始为空 block
-PriorContext: 旧 ContextHeader / 旧 MemoryPack render
-RecentHistory: split 后的后半窗口
+PriorContext: 旧 rolling summary / 旧 MemoryPack render
+RecentHistory: split 前、即将滑出窗口的前半窗口
 ```
 
 输出：
@@ -181,7 +181,7 @@ RecentHistory: split 后的后半窗口
 NewBlock: 新 rolling summary
 ```
 
-推荐第一版 `replay-rolling-summary` 专门实现一个 `RollingSummaryMaintainer`，而不是立刻强行复用 `CompletionMemoryBlockMaintainer`。原因是 rolling summary backtest 需要更多调试信息：prompt 文件快照、window dump、summary diff、call log 路径、异常状态、耗时等。等这些字段稳定后，再判断哪些能力应回收进通用 maintainer substrate。
+推荐第一版 `replay-rolling-summary` 复用 `IMemoryBlockMaintainer` / `CompletionMemoryBlockMaintainer` 的 block-transform 契约，由 backtest runner 负责构造正确的 sliding-out prefix `RecentHistorySlice`，并在 runner 层记录 prompt 文件快照、window dump、summary diff、call log 路径、异常状态、耗时等专用调试信息。若后续发现 prompt 构造或无工具单次调用场景需要更轻量实现，再抽 `CompletionTextBlockMaintainer`，而不是一开始另起一套 `RollingSummaryMaintainer`。
 
 第一版命令建议：
 
@@ -294,7 +294,7 @@ dotnet run --project prototypes/ChatSession.BacktestCli -- replay-rolling-summar
 4. 实现 `replay-rolling-summary`，默认 `ignore-original-compaction`。
 5. 支持 prompt 文件，并在 call log 中保存 prompt 文件路径、内容快照或 hash。
 6. 生成 summary diff / token estimate / window dump / call log path。
-7. 先用专用 `RollingSummaryMaintainer` 跑通，再评估是否回收进 `CompletionMemoryBlockMaintainer`。
+7. 优先复用 `CompletionMemoryBlockMaintainer` 跑通；如 prompt 形态或单次调用需求明显别扭，再抽更轻的 text block maintainer。
 
 ## 10. 开放问题
 

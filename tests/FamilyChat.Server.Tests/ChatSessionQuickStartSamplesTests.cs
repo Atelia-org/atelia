@@ -217,7 +217,7 @@ public sealed class ChatSessionQuickStartSamplesTests {
     }
 
     [Fact]
-    public async Task RunMemoryMaintainersAsync_RunsIndependentMaintainersOverSameRecentFragment() {
+    public async Task RunMemoryMaintainersAsync_RunsIndependentMaintainersOverSlidingOutPrefix() {
         string repoDir = CreateTempDirectory();
         try {
             var completionClient = new ScriptedCompletionClient("openai-chat-v1");
@@ -476,11 +476,10 @@ public sealed class ChatSessionQuickStartSamplesTests {
     ) {
         Assert.Collection(
             request.Context,
+            message => Assert.Equal("## assistant.open-threads\n\nold-plan\n\n## assistant.self-state\n\nold-self", Assert.IsType<ActionMessage>(message).GetFlattenedText()),
             message => Assert.Equal("header-system", Assert.IsType<ObservationMessage>(message).Content),
             message => Assert.Equal("header-user", Assert.IsType<ObservationMessage>(message).Content),
             message => Assert.Equal(new string('h', 200), Assert.IsType<ActionMessage>(message).GetFlattenedText()),
-            message => Assert.Equal("recent-user", Assert.IsType<ObservationMessage>(message).Content),
-            message => Assert.Equal("old-assistant", Assert.IsType<ActionMessage>(message).GetFlattenedText()),
             message => {
                 var prompt = Assert.IsType<ObservationMessage>(message).Content;
                 Assert.Contains(expectedInstruction, prompt);

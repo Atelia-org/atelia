@@ -26,6 +26,15 @@ public sealed record ContextHeaderSnapshot(
             header.ActionMessage?.GetFlattenedText() ?? string.Empty
         );
     }
+
+    public static ContextHeaderSnapshot FromRenderedMemoryPack(RenderedMemoryPack rendered)
+        => rendered is null
+            ? throw new ArgumentNullException(nameof(rendered))
+            : new ContextHeaderSnapshot(
+                rendered.SystemPromptFragment,
+                rendered.ObservationMessage,
+                rendered.ActionMessage
+            );
 }
 
 public sealed record RecentHistorySlice {
@@ -411,9 +420,30 @@ public sealed class CompletionMemoryBlockMaintainer : IMemoryBlockMaintainer {
             workingContext.Add(new ActionMessage([new ActionBlock.Text(recentHistory.PriorContext.ActionMessage)]));
         }
 
-        workingContext.AddRange(recentHistory.Messages);
+        AddProjectedMessages(workingContext, recentHistory.Messages);
         workingContext.Add(new ObservationMessage(BuildMaintenancePrompt(request)));
         return workingContext;
+    }
+
+    private static void AddProjectedMessages(List<IHistoryMessage> destination, IReadOnlyList<IHistoryMessage> messages) {
+        for (int i = 0; i < messages.Count; i++) {
+            var original = messages[i];
+            switch (original.Kind) {
+                case HistoryMessageKind.ContextHeader:
+                    var header = (ContextHeader)original;
+                    if (!string.IsNullOrWhiteSpace(header.SystemPromptFragment)) { destination.Add(new ObservationMessage(header.SystemPromptFragment)); }
+                    if (!string.IsNullOrWhiteSpace(header.ObservationMessage)) { destination.Add(new ObservationMessage(header.ObservationMessage)); }
+                    if (header.ActionMessage is not null) { destination.Add(StripReasoningBlocks(header.ActionMessage)); }
+                    break;
+                case HistoryMessageKind.Action:
+                    destination.Add(StripReasoningBlocks((ActionMessage)original));
+                    break;
+                case HistoryMessageKind.Observation:
+                case HistoryMessageKind.ToolResults:
+                    destination.Add(original);
+                    break;
+            }
+        }
     }
 
     private string BuildMaintenancePrompt(MemoryBlockMaintenanceRequest request) {

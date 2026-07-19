@@ -228,7 +228,7 @@ dotnet run --project prototypes/ChatSession.BacktestCli -- replay-rolling-summar
 
 - replay mode 使用 `ignore-original-compaction`。
 - target block 初版使用 `MemoryPackCarrier.System / session.rolling-summary`。
-- 每次 threshold 触发一个 epoch。
+- 每次 threshold 触发一个 epoch，分析窗口为 split point 之前、即将滑出上下文窗口的 prefix。
 - 每个 epoch 写一行 JSONL report，并写一个完整 call log JSON。
 
 ## 7. 施工顺序
@@ -240,14 +240,14 @@ dotnet run --project prototypes/ChatSession.BacktestCli -- replay-rolling-summar
 3. 给 `ChatSession.BacktestCli` 增加 `Atelia.Completion` 引用。
 4. 给 `ChatSession.BacktestCli` 加 `llm-smoke --connections <path> [--connection <id>]`，只做最小真实调用，验证公共 loader/factory/registry 可用。
 5. 添加 `LoggingCompletionClient`，先确保每次调用能落盘语义层 request / response / exception，且不保存 `apiKey`。
-6. 实现 `RollingSummaryMaintainer` 专用版本，先不强行复用 `CompletionMemoryBlockMaintainer`。
+6. 先复用 `IMemoryBlockMaintainer` / `CompletionMemoryBlockMaintainer` 的 block-transform 契约，由 backtest runner 构造 sliding-out prefix `RecentHistorySlice`。
 7. 实现 `replay-rolling-summary`，生成 JSONL report + call log dir。
 8. 用真实 Galatea export 做第一次 prompt 调试。
 9. 再迁移 Galatea / FamilyChat 到公共 `CompletionConnectionRegistry`。
 
 首批可处理的弃用、重构、迁移、bug fix：
 
-- **可立即做**：新增公共 Completion connection loader/factory/registry；Backtest CLI 引用 Completion；实现 `llm-smoke`；实现语义层 `LoggingCompletionClient` 的第一版；确保 call log 不泄露 `apiKey`。
+- **可立即做**：新增公共 Completion connection loader/factory/registry；Backtest CLI 引用 Completion；实现 `llm-smoke`；实现语义层 `LoggingCompletionClient` 的第一版；确保 call log 不泄露 `apiKey`；让 rolling summary backtest 复用 block maintainer 契约，并显式传入 sliding-out prefix window。
 - **可顺手删**：Galatea / FamilyChat 的 think repair / `<think>` prefill 相关类型、UI 开关、turn options 字段和 decorator。删除时应作为单独提交/单独变更批次，避免和公共 connection 抽取混在一起。
 - **稍后迁移**：Galatea / FamilyChat 的 connection config、factory、registry 切到公共 Completion 类型。迁移前先让 Backtest CLI 跑通公共路径，降低一次性改动范围。
 - **暂不做**：固定 `kind` 与 `completionSurfaceId` 的完整合法矩阵；把 call log 扩展成 provider wire log；强制禁止 inline `apiKey`。inline key 后续应迁移到 env var，但第一批只保证日志不泄漏。

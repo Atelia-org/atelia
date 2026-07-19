@@ -543,7 +543,7 @@ Secretary 不应写成普通 summarizer。它的系统提示词应强调：
 | `IMemoryMaintainerAgent` | 描述一个只维护单个目标块的 maintainer 实例 |
 | `MemoryMaintenanceRequest` | 接收一组 maintainer 和 split 策略 |
 | `MemoryMaintainerResult` | 返回单个目标块的新文本、调用信息和工具执行次数 |
-| `RunMemoryMaintainersAsync(...)` | 选择 recent fragment，并行运行 maintainer，不直接拼装 `ContextHeader` |
+| `RunMemoryMaintainersAsync(...)` | 选择即将滑出窗口的旧 prefix，并行运行 maintainer，不直接拼装 `ContextHeader` |
 | `SetContextHeader(...)` | 应用层合成新 header 后，原子替换持久 history 前段的上下文头 |
 
 这层的边界是：负责切片、投影、completion/tool loop、并行编排和基础冲突校验；不负责定义 Memory Pack 区块，不负责决定哪些文字进入 system/user/assistant 三种载体。
@@ -598,7 +598,7 @@ engine.SetContextHeader(_memoryHeaderComposer.Compose(memoryPack));
 | API | 用途 |
 |---|---|
 | `FindCompactionSplitPoint()` | 只计算 split，不执行摘要 |
-| `ProjectMessagesForMaintenance(split)` | 取 old prefix / recent fragment 的只读投影 |
+| `ProjectMessagesForMaintenance(split)` | 取即将滑出窗口的 old prefix 的只读投影；未来如需即时分析最新上下文，再新增显式 suffix 策略 |
 | `RemovePrefix(...)` | 让上层维护器在确认 header 质量后删除已吸收旧前缀 |
 | `ContextHeader` | 在 history 前注入结构化前段，不伪装成 user recap，也不整体伪装成 system prompt |
 
@@ -649,7 +649,7 @@ MVP 已优先提供 `RunMemoryMaintainersAsync(...)` 和 `SetContextHeader(...)`
 ## 11. 推荐实施顺序
 
 1. 在 `ChatSession` 中实现 `ContextHeader`、请求前展开、持久化、`Assistant -> User` split boundary 支持。
-2. 在 `ChatSession` 中实现通用 `MemoryMaintainerAgent` substrate：选择 recent fragment、并行运行 maintainer、支持 maintainer 自带工具会话、返回分块结果。
+2. 在 `ChatSession` 中实现通用 `MemoryMaintainerAgent` substrate：选择即将滑出窗口的 old prefix、并行运行 maintainer、支持 maintainer 自带工具会话、返回分块结果。
 3. 定义 Memory Pack v0 的区块、投影载体和写权限，特别是 protected block 与 maintainer-owned block 的边界。
 4. 实现 `GalateaMemoryStore` 的文件版：`pack.md`、`audit.jsonl`、`episodes.jsonl`、`archives/`。
 5. 实现 `GalateaMemoryEpochCoordinator`：soft threshold 后台维护、hard threshold 等待、active epoch / pending 标记。

@@ -31,7 +31,7 @@
 
 `RecentHistorySlice` 是一次分析看到的只读历史片段。它不承诺来源一定是完整会话，也不承诺一定来自某个 split point；调用方可以传入任意已投影好的 recent history。
 
-为了支持滚动处理，它还携带一份前置上下文快照。这样用新结构复刻现有滚动压缩能力时，analyzer/maintainer 能同时看到“上一版前段上下文”和“本次 recent history”：
+为了支持滚动处理，它还携带一份前置上下文快照。这样用新结构复刻现有滚动压缩能力时，analyzer/maintainer 能同时看到“上一版前段上下文”和“本次 analysis window”：
 
 ```csharp
 public sealed record RecentHistorySlice(
@@ -63,11 +63,13 @@ public sealed record ContextHeaderSnapshot(
 - `SourceId` 用于 audit，例如 session id、epoch id、archive id。
 - `EstimatedTokens` 是可选优化信息，不作为语义依据。
 
-`RecentHistorySlice` 因此更准确地表示一个 analysis window：
+`RecentHistorySlice` 因此更准确地表示一个 analysis window，而不是固定意义上的“最新后缀”：
 
 ```text
 PriorContext + Messages
 ```
+
+当前 Galatea memory 维护的默认目标是**即将滑出上下文窗口的最旧一端**。也就是说，调用方通常应把 split point 之前的 prefix 作为 `Messages` 传入，让 analyzer/maintainer 在信息丢失前完成提炼。未来如果出现“即时分析最新上下文”的并行 analyzer，可以传入最新 suffix；这属于调用方选择的 window policy，不改变 `RecentHistorySlice` 契约。
 
 它仍然保持内容无关；`PriorContext` 只表达三载体文本，不解释其中有哪些 Memory Pack block。
 
@@ -274,7 +276,7 @@ RecentHistorySlice + MemoryPack snapshot
 推荐把 epoch 编排显式分成两个入口：
 
 1. 纯 substrate 入口：调用方已经提供 `RecentHistorySlice` 与 `MemoryPack` snapshot，编排器只做 duplicate writer 检查、old block 解析、并行 `MaintainAsync` 和结果汇总。这是最容易单测的核心路径。
-2. `ChatSessionEngine` 便捷入口：沿用现有 `FindHalfContextSplitPoint(...)` 从持久 history 切出 recent fragment，并把 split metadata / token estimate 放入 epoch result。该入口是兼容现有 `RunMemoryMaintainersAsync(...)` 能力的迁移路径。
+2. `ChatSessionEngine` 便捷入口：沿用现有 `FindHalfContextSplitPoint(...)` 从持久 history 切出即将滑出窗口的 prefix，并把 split metadata / token estimate 放入 epoch result。该入口是兼容现有 `RunMemoryMaintainersAsync(...)` 能力的迁移路径。
 
 epoch result 应保留现有审计字段：是否完成、失败原因、split index、维护前 history count、维护前 token estimate、每个 maintainer 的 invocation / errors / tool calls。与此同时，block-level 结果必须以 `MemoryPackBlockPath` 表达目标，而不是旧的单字符串 `TargetBlockKey`。
 
@@ -282,7 +284,9 @@ epoch result 应保留现有审计字段：是否完成、失败原因、split i
 
 ### 5.2 与现有 ChatSession substrate 的关系
 
-当前 `RunMemoryMaintainersAsync(...)` 已经提供“给一组 maintainer 同一个 recent fragment，并行运行”的雏形。后续可以演化为：
+当前 `RunMemoryMaintainersAsync(...)` 提供“给一组 maintainer 同一个 sliding-out analysis window，并行运行”的便捷入口。现阶段默认 window policy 是分析 split point 之前的 prefix，因为这些上下文即将从主窗口中丢失，最需要被提炼进 Memory Pack 或 rolling summary。后续如果需要分析最新后缀，应新增显式策略，而不是把 `RecentHistorySlice` 本身绑定为 suffix。
+
+后续可以演化为：
 
 - ChatSession 层保留通用 recent history 切片和 completion/tool-loop 编排。
 - `MemoryPack`、`MemoryPackDraft`、`IMemoryBlockMaintainer` 等内容无关工程 substrate 放在 `Atelia.ChatSession`。
@@ -296,7 +300,7 @@ epoch result 应保留现有审计字段：是否完成、失败原因、split i
 兼容现有滚动压缩：
 
 ```text
-上一版 ContextHeader 摘要 + recent messages
+上一版 ContextHeader 摘要 + sliding-out prefix messages
 → analyzer / maintainer
 → 新 ContextHeader 摘要
 ```
@@ -304,7 +308,7 @@ epoch result 应保留现有审计字段：是否完成、失败原因、split i
 维护 Memory Pack block：
 
 ```text
-上一版 MemoryPack 渲染结果 + recent messages + old block text
+上一版 MemoryPack 渲染结果 + sliding-out prefix messages + old block text
 → IMemoryBlockMaintainer
 → new block text
 ```

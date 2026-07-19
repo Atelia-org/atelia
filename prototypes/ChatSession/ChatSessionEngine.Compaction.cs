@@ -79,9 +79,9 @@ public sealed partial class ChatSessionEngine {
             );
         }
 
-        var fragment = CreateHistorySlice(messages, splitIndex, messages.Count - splitIndex);
+        var fragment = CreateHistorySlice(messages, 0, splitIndex);
         var recentHistory = new RecentHistorySlice(
-            PriorContext: CreatePriorContextSnapshot(messages, splitIndex),
+            PriorContext: ContextHeaderSnapshot.FromRenderedMemoryPack(request.MemoryPack.Render()),
             Messages: fragment,
             SourceId: PersistedHeadAddress?.ToString(),
             EstimatedTokens: ChatSessionTokenEstimator.Estimate(fragment)
@@ -182,17 +182,6 @@ public sealed partial class ChatSessionEngine {
         var result = new IHistoryMessage[count];
         for (int i = 0; i < count; i++) { result[i] = messages[startIndex + i]; }
         return result;
-    }
-
-    private static ContextHeaderSnapshot CreatePriorContextSnapshot(
-        IReadOnlyList<IHistoryMessage> messages,
-        int splitIndex
-    ) {
-        for (int i = splitIndex - 1; i >= 0; i--) {
-            if (messages[i] is ContextHeader header) { return ContextHeaderSnapshot.FromContextHeader(header); }
-        }
-
-        return ContextHeaderSnapshot.Empty;
     }
 
     private static List<IHistoryMessage> ProjectForSummarization(
