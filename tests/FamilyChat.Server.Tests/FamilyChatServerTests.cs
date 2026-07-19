@@ -1661,6 +1661,60 @@ public sealed class FamilyChatServerTests {
     }
 
     [Fact]
+    public async Task ChatSessionLegacyEventSourceImporter_Import_ReplaysCurrentMessagesAndExplicitCommitMetadata() {
+        string sourceRepoDir = CreateTempDirectory();
+        string tempDir = CreateTempDirectory();
+        try {
+            var client = new ScriptedCompletionClient("openai-chat-v1");
+            client.EnqueueText(new string('A', 120));
+            client.EnqueueText("keep");
+            client.EnqueueText("summary");
+
+            using (var engine = await ChatSessionEngine.CreateAsync(
+                sourceRepoDir,
+                new ChatSessionCreateOptions("system"),
+                new ChatSessionRuntime(
+                    client,
+                    "openai-chat/strict",
+                    "model-a",
+                    new ToolRegistry(Array.Empty<ITool>()).CreateSession()
+                )
+            )) {
+                await engine.SendMessageAsync("first");
+                await engine.SendMessageAsync("second");
+                Assert.True(engine.TrySyncSystemPrompt("updated system"));
+                var compaction = await engine.CompactAsync("compact-system", "compact-prompt");
+                Assert.True(compaction.Applied);
+            }
+
+            string eventSourcePath = Path.Combine(tempDir, "chat-session-legacy-upgrade-export.json");
+            string upgradedRepoDir = Path.Combine(tempDir, "upgraded");
+            ChatSessionLegacyUpgradeExporter.WriteJsonFile(sourceRepoDir, eventSourcePath);
+
+            var result = ChatSessionLegacyEventSourceImporter.Import(eventSourcePath, upgradedRepoDir);
+
+            Assert.Equal("main", result.BranchName);
+            Assert.NotNull(result.HeadAddress);
+            Assert.Equal(5, result.EventCount);
+
+            var sourceRecords = ChatSessionHistoryReader.ReadCurrent(sourceRepoDir);
+            var upgradedRecords = ChatSessionHistoryReader.ReadCurrent(upgradedRepoDir);
+            AssertEquivalentHistoryRecords(sourceRecords, upgradedRecords);
+            Assert.Contains(upgradedRecords, static record => record.Message is RecapMessage { SourceAnchor: not null });
+
+            var sourceReport = ChatSessionLegacyRecapRecovery.Analyze(sourceRepoDir);
+            var upgradedReport = ChatSessionLegacyRecapRecovery.Analyze(upgradedRepoDir);
+            Assert.Empty(upgradedReport.Warnings);
+            Assert.Equal(sourceReport.Timeline.Select(static entry => entry.Attribution.Kind), upgradedReport.Timeline.Select(static entry => entry.Attribution.Kind));
+            Assert.All(upgradedReport.Timeline, static entry => Assert.Equal(ChatSessionCommitAttributionSource.Explicit, entry.Attribution.Source));
+        }
+        finally {
+            Directory.Delete(sourceRepoDir, recursive: true);
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task ChatSession_CompactAsync_PreservesLeadingContextHeader() {
         string repoDir = CreateTempDirectory();
         try {
@@ -3058,6 +3112,51 @@ public sealed class FamilyChatServerTests {
             writer.WriteEndObject();
         }
         return Encoding.UTF8.GetString(stream.ToArray());
+    }
+
+    private static void AssertEquivalentHistoryRecords(
+        IReadOnlyList<ChatSessionHistoryRecord> expected,
+        IReadOnlyList<ChatSessionHistoryRecord> actual
+    ) {
+        Assert.Equal(expected.Count, actual.Count);
+        for (int recordIndex = 0; recordIndex < expected.Count; recordIndex++) {
+            Assert.Equal(expected[recordIndex].Kind, actual[recordIndex].Kind);
+            AssertEquivalentHistoryMessage(expected[recordIndex].Message, actual[recordIndex].Message);
+        }
+    }
+
+    private static void AssertEquivalentHistoryMessage(IHistoryMessage expected, IHistoryMessage actual) {
+        switch (expected) {
+            case RecapMessage expectedRecap:
+                var actualRecap = Assert.IsType<RecapMessage>(actual);
+                Assert.Equal(expectedRecap.Content, actualRecap.Content);
+                break;
+            case ToolResultsMessage expectedToolResults:
+                var actualToolResults = Assert.IsType<ToolResultsMessage>(actual);
+                Assert.Equal(expectedToolResults.Content, actualToolResults.Content);
+                Assert.Equal(expectedToolResults.Results.Select(static result => result.GetFlattenedText()), actualToolResults.Results.Select(static result => result.GetFlattenedText()));
+                break;
+            case ObservationMessage expectedObservation:
+                var actualObservation = Assert.IsType<ObservationMessage>(actual);
+                Assert.Equal(expectedObservation.Content, actualObservation.Content);
+                break;
+            case ActionMessage expectedAction:
+                var actualAction = Assert.IsType<ActionMessage>(actual);
+                Assert.Equal(expectedAction.GetFlattenedText(), actualAction.GetFlattenedText());
+                Assert.Equal(
+                    ActionMessageSerialization.SerializeBlocks(expectedAction.Blocks),
+                    ActionMessageSerialization.SerializeBlocks(actualAction.Blocks)
+                );
+                break;
+            case ContextHeader expectedContextHeader:
+                var actualContextHeader = Assert.IsType<ContextHeader>(actual);
+                Assert.Equal(expectedContextHeader.SystemPromptFragment, actualContextHeader.SystemPromptFragment);
+                Assert.Equal(expectedContextHeader.UserMessage, actualContextHeader.UserMessage);
+                break;
+            default:
+                Assert.Fail($"Unsupported history message type '{expected.GetType()}'.");
+                break;
+        }
     }
 
     private static string CreateTempDirectory() {

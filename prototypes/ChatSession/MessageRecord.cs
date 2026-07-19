@@ -76,12 +76,60 @@ internal static class MessageRecord {
         return record;
     }
 
+    internal static DurableDict<string> AppendHistoryMessage(DurableDeque messages, IHistoryMessage message, DateTimeOffset? timestampUtc = null) {
+        ArgumentNullException.ThrowIfNull(message);
+        return message switch {
+            RecapMessage recap => AppendRecap(messages, recap.Content ?? string.Empty, recap.SourceAnchor, timestampUtc),
+            ToolResultsMessage toolResults => AppendToolResults(messages, toolResults, timestampUtc),
+            ObservationMessage observation => AppendObservation(messages, observation.Content, timestampUtc),
+            ActionMessage action => AppendAction(messages, action, timestampUtc),
+            ContextHeader contextHeader => AppendContextHeader(messages, contextHeader, timestampUtc),
+            _ => throw new InvalidOperationException($"Unsupported history message type '{message.GetType()}'.")
+        };
+    }
+
+    internal static DurableDict<string> AppendRecap(DurableDeque messages, string summary, RecapSourceAnchor? sourceAnchor = null, DateTimeOffset? timestampUtc = null) {
+        var record = CreateRecord(messages.Revision, KindRecap, timestampUtc);
+        record.Upsert(KeyContent, summary);
+        if (sourceAnchor is not null) { WriteRecapSourceAnchor(record, sourceAnchor); }
+        messages.PushBack<DurableObject>(record);
+        return record;
+    }
+
+    internal static DurableDict<string> AppendContextHeader(DurableDeque messages, ContextHeader header, DateTimeOffset? timestampUtc = null) {
+        var record = CreateRecord(messages.Revision, KindContextHeader, timestampUtc);
+        WriteContextHeader(record, header);
+        messages.PushBack<DurableObject>(record);
+        return record;
+    }
+
     public static DurableDict<string> PrependContextHeader(DurableDeque messages, ContextHeader header) {
         var record = CreateRecord(messages.Revision, KindContextHeader);
-        if (!string.IsNullOrEmpty(header.SystemPromptFragment)) { record.Upsert(KeySystemPromptFragment, header.SystemPromptFragment); }
-        if (!string.IsNullOrEmpty(header.UserMessage)) { record.Upsert(KeyUserMessage, header.UserMessage); }
-        if (header.AssistantMessage is not null) { record.Upsert(KeyAssistantActionBlocksJson, ActionMessageSerialization.SerializeBlocks(header.AssistantMessage.Blocks)); }
+        WriteContextHeader(record, header);
         messages.PushFront<DurableObject>(record);
+        return record;
+    }
+
+    private static DurableDict<string> AppendObservation(DurableDeque messages, string? content, DateTimeOffset? timestampUtc) {
+        var record = CreateRecord(messages.Revision, KindObservation, timestampUtc);
+        if (content is not null) { record.Upsert(KeyContent, content); }
+        messages.PushBack<DurableObject>(record);
+        return record;
+    }
+
+    private static DurableDict<string> AppendAction(DurableDeque messages, ActionMessage message, DateTimeOffset? timestampUtc) {
+        var record = CreateRecord(messages.Revision, KindAction, timestampUtc);
+        record.Upsert(KeyActionBlocksJson, ActionMessageSerialization.SerializeBlocks(message.Blocks));
+        messages.PushBack<DurableObject>(record);
+        return record;
+    }
+
+    private static DurableDict<string> AppendToolResults(DurableDeque messages, ToolResultsMessage message, DateTimeOffset? timestampUtc) {
+        var record = CreateRecord(messages.Revision, KindToolResults, timestampUtc);
+        if (!string.IsNullOrEmpty(message.Content)) { record.Upsert(KeyContent, message.Content); }
+        var resultDtos = ResultsToDtos(message.Results);
+        record.Upsert(KeyResultsJson, JsonSerializer.Serialize(resultDtos, JsonOptions));
+        messages.PushBack<DurableObject>(record);
         return record;
     }
 
@@ -119,10 +167,29 @@ internal static class MessageRecord {
     }
 
     private static DurableDict<string> CreateRecord(Revision revision, string kind) {
+        return CreateRecord(revision, kind, timestampUtc: null);
+    }
+
+    private static DurableDict<string> CreateRecord(Revision revision, string kind, DateTimeOffset? timestampUtc) {
         var record = revision.CreateDict<string>();
         record.Upsert(KeyKind, kind);
-        record.Upsert(KeyTimestampUtc, DateTimeOffset.UtcNow.Ticks);
+        record.Upsert(KeyTimestampUtc, (timestampUtc ?? DateTimeOffset.UtcNow).ToUniversalTime().Ticks);
         return record;
+    }
+
+    private static void WriteRecapSourceAnchor(DurableDict<string> record, RecapSourceAnchor sourceAnchor) {
+        record.Upsert(KeySourceHeadBeforeCompaction, sourceAnchor.SourceHeadBeforeCompaction);
+        record.Upsert(KeySourceBranchName, sourceAnchor.SourceBranchName);
+        record.Upsert(KeySourceStartIndex, sourceAnchor.SourceStartIndex);
+        record.Upsert(KeySourceEndExclusive, sourceAnchor.SourceEndExclusive);
+        record.Upsert(KeySourceMessageCountBefore, sourceAnchor.SourceMessageCountBefore);
+        record.Upsert(KeyCompactionKind, sourceAnchor.CompactionKind);
+    }
+
+    private static void WriteContextHeader(DurableDict<string> record, ContextHeader header) {
+        if (!string.IsNullOrEmpty(header.SystemPromptFragment)) { record.Upsert(KeySystemPromptFragment, header.SystemPromptFragment); }
+        if (!string.IsNullOrEmpty(header.UserMessage)) { record.Upsert(KeyUserMessage, header.UserMessage); }
+        if (header.AssistantMessage is not null) { record.Upsert(KeyAssistantActionBlocksJson, ActionMessageSerialization.SerializeBlocks(header.AssistantMessage.Blocks)); }
     }
 
     private static ObservationMessage BuildObservation(DurableDict<string> record) {
