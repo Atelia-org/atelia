@@ -1571,10 +1571,23 @@ public sealed class FamilyChatServerTests {
             Assert.False(root.TryGetProperty("generatedAtUtc", out _));
 
             var timeline = root.GetProperty("timeline");
+            var events = root.GetProperty("events");
+            Assert.Equal(timeline.GetArrayLength(), events.GetArrayLength());
             Assert.Equal("initial-state", timeline[0].GetProperty("commitMetadata").GetProperty("commitKind").GetString());
             Assert.Equal("explicit", timeline[0].GetProperty("commitMetadata").GetProperty("metadataSource").GetString());
             Assert.Equal("compaction", timeline[timeline.GetArrayLength() - 1].GetProperty("commitMetadata").GetProperty("commitKind").GetString());
             Assert.Equal("applied prefix summary compaction", timeline[timeline.GetArrayLength() - 1].GetProperty("commitMetadata").GetProperty("commitReason").GetString());
+
+            Assert.Equal("initial-state", events[0].GetProperty("kind").GetString());
+            Assert.Equal("system", events[0].GetProperty("root").GetProperty("systemPrompt").GetString());
+            Assert.Equal(JsonValueKind.Array, events[0].GetProperty("messages").ValueKind);
+
+            Assert.Equal("model-turn", events[1].GetProperty("kind").GetString());
+            var appended = events[1].GetProperty("appendedMessages");
+            Assert.Equal("observation", appended[0].GetProperty("kind").GetString());
+            Assert.Equal("first", appended[0].GetProperty("content").GetString());
+            Assert.Equal("action", appended[1].GetProperty("kind").GetString());
+            Assert.Equal(new string('A', 120), appended[1].GetProperty("action").GetProperty("flattenedText").GetString());
 
             var mapping = root.GetProperty("recapMappings")[0];
             Assert.Equal("inferred", mapping.GetProperty("kind").GetString());
@@ -1590,6 +1603,14 @@ public sealed class FamilyChatServerTests {
             Assert.Equal(splitIndex, anchor.GetProperty("sourceEndExclusive").GetInt32());
             Assert.Equal(4, anchor.GetProperty("sourceMessageCountBefore").GetInt32());
             Assert.Equal("prefix-summary", anchor.GetProperty("compactionKind").GetString());
+
+            var compactionEvent = events[events.GetArrayLength() - 1];
+            Assert.Equal("compaction", compactionEvent.GetProperty("kind").GetString());
+            Assert.Equal("high", compactionEvent.GetProperty("confidence").GetString());
+            Assert.Equal(splitIndex, compactionEvent.GetProperty("sourceMessages").GetArrayLength());
+            Assert.Equal("first", compactionEvent.GetProperty("sourceMessages")[0].GetProperty("content").GetString());
+            Assert.Equal("summary", compactionEvent.GetProperty("recapMessage").GetProperty("content").GetString());
+            Assert.Equal(mapping.GetProperty("oldHead").GetString(), compactionEvent.GetProperty("recapSourceAnchor").GetProperty("sourceHeadBeforeCompaction").GetString());
         }
         finally {
             Directory.Delete(repoDir, recursive: true);
@@ -1614,6 +1635,7 @@ public sealed class FamilyChatServerTests {
                 )
             )) {
                 await engine.SendMessageAsync("first");
+                Assert.True(engine.TrySyncSystemPrompt("updated system"));
             }
             StripBranchReflogNotes(repoDir, "main");
 
@@ -1627,6 +1649,11 @@ public sealed class FamilyChatServerTests {
             );
             Assert.Equal("model-turn", timeline[1].GetProperty("commitMetadata").GetProperty("commitKind").GetString());
             Assert.Equal("previous messages are preserved and the commit appends one observation/action turn", timeline[1].GetProperty("commitMetadata").GetProperty("commitReason").GetString());
+            var events = document.RootElement.GetProperty("events");
+            Assert.Equal(timeline.GetArrayLength(), events.GetArrayLength());
+            Assert.Equal("update-system-prompt", events[2].GetProperty("kind").GetString());
+            Assert.Equal("system", events[2].GetProperty("systemPromptChange").GetProperty("oldSystemPrompt").GetString());
+            Assert.Equal("updated system", events[2].GetProperty("systemPromptChange").GetProperty("newSystemPrompt").GetString());
         }
         finally {
             Directory.Delete(repoDir, recursive: true);
