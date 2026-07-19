@@ -1,5 +1,6 @@
 using System.Security.Claims;
 using System.Text;
+using Atelia.Completion;
 using Atelia.Diagnostics;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Atelia.FamilyChat.Server;
@@ -21,8 +22,9 @@ if (config.ListenUrls is { Count: > 0 }) {
 }
 
 builder.Services.AddSingleton(config);
-builder.Services.AddSingleton<IFamilyChatCompletionClientFactory, DefaultFamilyChatCompletionClientFactory>();
-builder.Services.AddSingleton<FamilyChatConnectionRegistry>();
+builder.Services.AddSingleton<ICompletionClientFactory, DefaultCompletionClientFactory>();
+builder.Services.AddSingleton(_ => new CompletionConnectionsFileConfig(config.Connections, config.DefaultConnectionId));
+builder.Services.AddSingleton<CompletionConnectionRegistry>();
 builder.Services.AddSingleton<IFamilyChatUserMessageNormalizer>(_ => FamilyChatUserMessageNormalizerFactory.CreateFromEnvironment());
 builder.Services.AddSingleton<FamilyChatHostService>();
 builder.Services.AddAuthentication(CookieScheme)
@@ -105,7 +107,7 @@ app.MapPost(
 
 app.MapGet(
     "/",
-    (ClaimsPrincipal user, FamilyChatHostService hostService, FamilyChatConnectionRegistry connections) => {
+    (ClaimsPrincipal user, FamilyChatHostService hostService, CompletionConnectionRegistry connections) => {
         string userId = user.FindFirstValue(FamilyChatClaimTypes.UserId)
             ?? throw new InvalidOperationException("Authenticated principal is missing user id.");
         if (!hostService.TryGetUser(userId, out var configUser)) { return Results.Unauthorized(); }
@@ -148,7 +150,7 @@ api.MapPost(
         HttpContext httpContext,
         ClaimsPrincipal user,
         FamilyChatHostService hostService,
-        FamilyChatConnectionRegistry connections,
+        CompletionConnectionRegistry connections,
         IHostApplicationLifetime applicationLifetime,
         ChatStreamRequest request
     ) => {

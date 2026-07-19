@@ -6,6 +6,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using Atelia.ChatSession;
+using Atelia.Completion;
 using Atelia.Completion.Abstractions;
 using Atelia.Completion.Tools;
 using Atelia.FamilyChat.Server;
@@ -155,129 +156,6 @@ public sealed class FamilyChatServerTests {
         }
         finally {
             Directory.Delete(repoDir, recursive: true);
-        }
-    }
-
-    [Fact]
-    public async Task FamilyChat_AutoPrefillThinkOpenTag_DefaultsOnForUnslothQwen36() {
-        string tempDir = CreateTempDirectory();
-        try {
-            var configPath = WriteConfig(
-                tempDir,
-                thresholdTokens: 200,
-                users: [
-                    new FamilyChatUserConfig(
-                        "alice",
-                        "Alice",
-                        "pw1",
-                        Path.Combine(tempDir, "alice-session"),
-                        200,
-                        "compact-system",
-                        "compact-prompt",
-                        "system"
-                    )
-                ],
-                connectionModelId: "unsloth/qwen3.6",
-                connectionSurfaceId: "openai-chat/sglang-compatible"
-            );
-
-            var scriptFactory = new ScriptedCompletionClientFactory();
-            scriptFactory.For("alice").Enqueue(
-                (request, observer, ct) => {
-                    Assert.Collection(
-                        request.Context,
-                        message => Assert.Equal("玩家角色试图采取如下动作：\n```\none\n```\n", Assert.IsType<ObservationMessage>(message).Content),
-                        message => Assert.Equal("<think>", Assert.IsType<ActionMessage>(message).GetFlattenedText())
-                    );
-
-                    observer?.OnTextDelta("先想一想</think>正式回答");
-                    return Task.FromResult(
-                        new CompletionResult(
-                            new ActionMessage([new ActionBlock.Text("先想一想</think>正式回答")]),
-                            new CompletionDescriptor("test", "openai-chat-v1", request.ModelId)
-                        )
-                    );
-                }
-            );
-
-            await using var factory = new FamilyChatServerFactory(configPath, scriptFactory);
-            using var client = factory.CreateClient(new WebApplicationFactoryClientOptions {
-                AllowAutoRedirect = false,
-                HandleCookies = true,
-            });
-            await LoginAsync(client, "alice", "pw1");
-
-            string sse = await ReadSseAsStringAsync(client, "one");
-
-            var turns = await GetRecentTurnsAsync(client);
-            Assert.Single(turns);
-            Assert.Equal("正式回答", turns[0].Assistant.Text);
-            Assert.DoesNotContain("先想一想", sse, StringComparison.Ordinal);
-        }
-        finally {
-            Directory.Delete(tempDir, recursive: true);
-        }
-    }
-
-    [Fact]
-    public async Task FamilyChat_AutoPrefillThinkOpenTag_CanBeDisabledPerRequest() {
-        string tempDir = CreateTempDirectory();
-        try {
-            var configPath = WriteConfig(
-                tempDir,
-                thresholdTokens: 200,
-                users: [
-                    new FamilyChatUserConfig(
-                        "alice",
-                        "Alice",
-                        "pw1",
-                        Path.Combine(tempDir, "alice-session"),
-                        200,
-                        "compact-system",
-                        "compact-prompt",
-                        "system"
-                    )
-                ],
-                connectionModelId: "unsloth/qwen3.6",
-                connectionSurfaceId: "openai-chat/sglang-compatible"
-            );
-
-            var scriptFactory = new ScriptedCompletionClientFactory();
-            scriptFactory.For("alice").Enqueue(
-                (request, observer, ct) => {
-                    Assert.Single(request.Context);
-                    Assert.Equal(
-                        "玩家角色试图采取如下动作：\n```\none\n```\n",
-                        Assert.IsType<ObservationMessage>(request.Context[0]).Content
-                    );
-
-                    observer?.OnTextDelta("先想一想</think>正式回答");
-                    return Task.FromResult(
-                        new CompletionResult(
-                            new ActionMessage([new ActionBlock.Text("先想一想</think>正式回答")]),
-                            new CompletionDescriptor("test", "openai-chat-v1", request.ModelId)
-                        )
-                    );
-                }
-            );
-
-            await using var factory = new FamilyChatServerFactory(configPath, scriptFactory);
-            using var client = factory.CreateClient(new WebApplicationFactoryClientOptions {
-                AllowAutoRedirect = false,
-                HandleCookies = true,
-            });
-            await LoginAsync(client, "alice", "pw1");
-
-            var started = await StartTurnAsync(client, "one", autoPrefillThinkOpenTag: false);
-            _ = await ReadTurnEventsAsStringAsync(client, started.TurnId);
-            await WaitForCurrentTurnIdleAsync(client);
-
-            var turns = await GetRecentTurnsAsync(client);
-            Assert.Single(turns);
-            Assert.Equal("先想一想</think>正式回答", turns[0].Assistant.Text);
-        }
-        finally {
-            Directory.Delete(tempDir, recursive: true);
         }
     }
 
@@ -2208,7 +2086,7 @@ public sealed class FamilyChatServerTests {
             var hostConfig = new FamilyChatConfig(
                 [],
                 [
-                    new FamilyChatConnectionConfig(
+                    new CompletionConnectionConfig(
                         "test",
                         "Test",
                         "openai-chat",
@@ -2222,7 +2100,7 @@ public sealed class FamilyChatServerTests {
             );
             var hostService = new FamilyChatHostService(
                 hostConfig,
-                new FamilyChatConnectionRegistry(hostConfig, scriptedFactory),
+                new CompletionConnectionRegistry(new CompletionConnectionsFileConfig(hostConfig.Connections, hostConfig.DefaultConnectionId), scriptedFactory),
                 DisabledFamilyChatUserMessageNormalizer.Instance
             );
 
@@ -2291,7 +2169,7 @@ public sealed class FamilyChatServerTests {
             var hostConfig2 = new FamilyChatConfig(
                 [],
                 [
-                    new FamilyChatConnectionConfig(
+                    new CompletionConnectionConfig(
                         "test",
                         "Test",
                         "openai-chat",
@@ -2305,7 +2183,7 @@ public sealed class FamilyChatServerTests {
             );
             var hostService = new FamilyChatHostService(
                 hostConfig2,
-                new FamilyChatConnectionRegistry(hostConfig2, scriptedFactory2),
+                new CompletionConnectionRegistry(new CompletionConnectionsFileConfig(hostConfig2.Connections, hostConfig2.DefaultConnectionId), scriptedFactory2),
                 DisabledFamilyChatUserMessageNormalizer.Instance
             );
 
@@ -2597,7 +2475,7 @@ public sealed class FamilyChatServerTests {
             Assert.True(jsonBlocks.Length >= 2, "README should contain at least two JSON code blocks.");
 
             var documentedUsers = JsonSerializer.Deserialize<FamilyChatUsersFileConfig>(jsonBlocks[0], new JsonSerializerOptions(JsonSerializerDefaults.Web));
-            var documentedConnections = JsonSerializer.Deserialize<FamilyChatConnectionsFileConfig>(jsonBlocks[1], new JsonSerializerOptions(JsonSerializerDefaults.Web));
+            var documentedConnections = JsonSerializer.Deserialize<CompletionConnectionsFileConfig>(jsonBlocks[1], new JsonSerializerOptions(JsonSerializerDefaults.Web));
 
             Assert.NotNull(documentedUsers);
             Assert.NotNull(documentedConnections);
@@ -3076,14 +2954,10 @@ public sealed class FamilyChatServerTests {
         return sse;
     }
 
-    private static async Task<StartTurnResponseDto> StartTurnAsync(
-        HttpClient client,
-        string message,
-        bool? autoPrefillThinkOpenTag = null
-    ) {
+    private static async Task<StartTurnResponseDto> StartTurnAsync(HttpClient client, string message) {
         using var response = await client.PostAsJsonAsync(
             "/api/chat/turns",
-            new ChatStreamRequest(message, autoPrefillThinkOpenTag, ConnectionId: null)
+            new ChatStreamRequest(message, ConnectionId: null)
         );
         Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
         var started = await response.Content.ReadFromJsonAsync<StartTurnResponseDto>();
@@ -3299,9 +3173,9 @@ public sealed class FamilyChatServerTests {
         string usersPath = Path.Combine(configDir, "config.json");
         File.WriteAllText(usersPath, JsonSerializer.Serialize(usersConfig, new JsonSerializerOptions(JsonSerializerDefaults.Web)));
 
-        var connectionsConfig = new FamilyChatConnectionsFileConfig(
+        var connectionsConfig = new CompletionConnectionsFileConfig(
             [
-                new FamilyChatConnectionConfig(
+            new CompletionConnectionConfig(
                     "test",
                     "Test",
                     "openai-chat",
@@ -3332,8 +3206,8 @@ public sealed class FamilyChatServerTests {
         return config!;
     }
 
-    private static FamilyChatConnectionsFileConfig ReadConnectionsFile(string path) {
-        var config = JsonSerializer.Deserialize<FamilyChatConnectionsFileConfig>(
+    private static CompletionConnectionsFileConfig ReadConnectionsFile(string path) {
+        var config = JsonSerializer.Deserialize<CompletionConnectionsFileConfig>(
             File.ReadAllText(path),
             new JsonSerializerOptions(JsonSerializerDefaults.Web)
         );
@@ -3370,7 +3244,7 @@ public sealed class FamilyChatServerTests {
             builder.UseSetting("FamilyChat:ConfigPath", configPath);
             builder.ConfigureTestServices(
                 services => {
-                    services.AddSingleton<IFamilyChatCompletionClientFactory>(scriptedFactory);
+                    services.AddSingleton<ICompletionClientFactory>(scriptedFactory);
                     services.AddSingleton<IFamilyChatUserMessageNormalizer>(
                         userMessageNormalizer ?? DisabledFamilyChatUserMessageNormalizer.Instance
                     );
@@ -3379,14 +3253,14 @@ public sealed class FamilyChatServerTests {
         }
     }
 
-    private sealed class ScriptedCompletionClientFactory : IFamilyChatCompletionClientFactory {
+    private sealed class ScriptedCompletionClientFactory : ICompletionClientFactory {
         private readonly ScriptedCompletionClient _sharedClient = new ScriptedCompletionClient("openai-chat-v1");
 
         public ScriptedCompletionClient For(string userId) {
             return _sharedClient;
         }
 
-        public ICompletionClient Create(FamilyChatConnectionConfig connection)
+        public ICompletionClient Create(CompletionConnectionConfig connection)
             => _sharedClient;
     }
 

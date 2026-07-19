@@ -7,118 +7,25 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading.Channels;
 using Atelia.ChatSession;
+using Atelia.Completion;
 using Atelia.Diagnostics;
 using Atelia.Completion.Abstractions;
-using Atelia.Completion.Anthropic;
-using Atelia.Completion.OpenAI;
 using Atelia.Completion.Tools;
-using Atelia.Completion.Transport;
 
 namespace Atelia.FamilyChat.Server;
-
-public interface IFamilyChatCompletionClientFactory {
-    ICompletionClient Create(FamilyChatConnectionConfig connection);
-}
-
-public sealed class DefaultFamilyChatCompletionClientFactory : IFamilyChatCompletionClientFactory {
-    public ICompletionClient Create(FamilyChatConnectionConfig connection) {
-        ArgumentNullException.ThrowIfNull(connection);
-
-        var httpClient = CompletionHttpTransportFactory.CreateLiveClient(new Uri(connection.BaseAddress, UriKind.Absolute));
-        return connection.Kind.Trim().ToLowerInvariant() switch {
-            "openai-chat" => new OpenAIChatClient(
-                apiKey: connection.ApiKey,
-                httpClient: httpClient,
-                dialect: ResolveOpenAiChatDialect(connection.CompletionSurfaceId)
-            // , options: OpenAIChatClientOptions.QwenThinkingDisabled()
-            ),
-            "openai-responses" => new OpenAIResponsesClient(
-                apiKey: connection.ApiKey,
-                httpClient: httpClient
-            ),
-            "anthropic" => new AnthropicClient(
-                apiKey: connection.ApiKey,
-                httpClient: httpClient
-            ),
-            _ => throw new InvalidOperationException($"Unsupported connection kind '{connection.Kind}'.")
-        };
-    }
-
-    private static OpenAIChatDialect ResolveOpenAiChatDialect(string completionSurfaceId) {
-        return completionSurfaceId switch {
-            "openai-chat/strict" => OpenAIChatDialects.Strict,
-            "openai-chat/sglang-compatible" => OpenAIChatDialects.SgLangCompatible,
-            "openai-chat/deepseek-v4" => OpenAIChatDialects.DeepSeekV4,
-            _ => throw new InvalidOperationException($"Unsupported OpenAI Chat surface '{completionSurfaceId}'.")
-        };
-    }
-}
-
-/// <summary>
-/// Owns the catalog of LLM connections and lazily builds + caches one
-/// <see cref="ICompletionClient"/> per connection id. Clients are shared across all
-/// users and turns, so a single client instance is safe to reuse.
-/// </summary>
-public sealed class FamilyChatConnectionRegistry : IDisposable {
-    private readonly IFamilyChatCompletionClientFactory _factory;
-    private readonly IReadOnlyDictionary<string, FamilyChatConnectionConfig> _byId;
-    private readonly ConcurrentDictionary<string, ICompletionClient> _clients = new(StringComparer.Ordinal);
-
-    public FamilyChatConnectionRegistry(FamilyChatConfig config, IFamilyChatCompletionClientFactory factory) {
-        ArgumentNullException.ThrowIfNull(config);
-        _factory = factory ?? throw new ArgumentNullException(nameof(factory));
-        Connections = config.Connections;
-        DefaultConnectionId = config.DefaultConnectionId;
-        _byId = config.Connections.ToDictionary(static x => x.Id, StringComparer.Ordinal);
-    }
-
-    public IReadOnlyList<FamilyChatConnectionConfig> Connections { get; }
-
-    public string DefaultConnectionId { get; }
-
-    public bool TryGet(string id, out FamilyChatConnectionConfig connection)
-        => _byId.TryGetValue(id, out connection!);
-
-    /// <summary>Resolves the requested connection id, falling back to the default when absent or unknown.</summary>
-    public FamilyChatConnectionConfig Resolve(string? requestedId) {
-        if (!string.IsNullOrWhiteSpace(requestedId) && _byId.TryGetValue(requestedId, out var requested)) { return requested; }
-
-        return _byId.TryGetValue(DefaultConnectionId, out var fallback)
-            ? fallback
-            : throw new InvalidOperationException($"Default connection '{DefaultConnectionId}' is not registered.");
-    }
-
-    public ICompletionClient GetClient(string connectionId) {
-        if (!_byId.TryGetValue(connectionId, out var connection)) { throw new InvalidOperationException($"Unknown connection '{connectionId}'."); }
-
-        return _clients.GetOrAdd(
-            connection.Id,
-            static (_, state) => state.Factory.Create(state.Connection),
-            (Factory: _factory, Connection: connection)
-        );
-    }
-
-    public void Dispose() {
-        foreach (var client in _clients.Values) {
-            if (client is IDisposable disposable) {
-                disposable.Dispose();
-            }
-        }
-    }
-}
 
 public sealed class FamilyChatHostService : IAsyncDisposable {
     private const string UserMessagePrefix = "玩家角色试图采取如下动作：\n```\n";
     private const string UserMessageSuffix = "\n```\n";
 
-    private readonly FamilyChatConnectionRegistry _connections;
+    private readonly CompletionConnectionRegistry _connections;
     private readonly IFamilyChatUserMessageNormalizer _userMessageNormalizer;
     private readonly ConcurrentDictionary<string, Lazy<Task<UserSessionHost>>> _sessions = new(StringComparer.Ordinal);
     private readonly IReadOnlyDictionary<string, FamilyChatUserConfig> _users;
 
     public FamilyChatHostService(
         FamilyChatConfig config,
-        FamilyChatConnectionRegistry connections,
+        CompletionConnectionRegistry connections,
         IFamilyChatUserMessageNormalizer userMessageNormalizer
     ) {
         ArgumentNullException.ThrowIfNull(config);
@@ -500,7 +407,7 @@ public sealed class FamilyChatHostService : IAsyncDisposable {
         return new UserSessionHost(user, engine, toolSession);
     }
 
-    private ChatSessionRuntime BuildRuntime(FamilyChatConnectionConfig connection, ToolSession toolSession)
+    private ChatSessionRuntime BuildRuntime(CompletionConnectionConfig connection, ToolSession toolSession)
         => new ChatSessionRuntime(
             CompletionClient: _connections.GetClient(connection.Id),
             CompletionSurfaceId: connection.CompletionSurfaceId,
@@ -737,37 +644,22 @@ internal static class FamilyChatConfigLoader {
         string configDir = Path.GetDirectoryName(resolvedPath)
             ?? throw new InvalidOperationException($"Cannot determine config directory for: {resolvedPath}");
         string connectionsPath = Path.Combine(configDir, ConnectionsFileName);
-        if (!File.Exists(connectionsPath)) {
-            throw new FileNotFoundException(
-                $"FamilyChat connections file was not found: {connectionsPath}",
-                connectionsPath
-            );
-        }
-
         var usersFile = JsonSerializer.Deserialize(File.ReadAllText(resolvedPath), FamilyChatJsonContext.Default.FamilyChatUsersFileConfig);
         if (usersFile is null) { throw new InvalidOperationException($"Failed to deserialize FamilyChat config: {resolvedPath}"); }
 
-        var connectionsFile = JsonSerializer.Deserialize(File.ReadAllText(connectionsPath), FamilyChatJsonContext.Default.FamilyChatConnectionsFileConfig);
-        if (connectionsFile is null) { throw new InvalidOperationException($"Failed to deserialize FamilyChat connections: {connectionsPath}"); }
+        var connectionsFile = CompletionConnectionConfigLoader.LoadFile(connectionsPath);
 
         if (usersFile.Users is not { Count: > 0 }) { throw new InvalidOperationException("FamilyChat config must contain at least one user."); }
-
-        if (connectionsFile.Connections is not { Count: > 0 }) { throw new InvalidOperationException("FamilyChat connections file must contain at least one connection."); }
-
-        string defaultConnectionId = !string.IsNullOrWhiteSpace(connectionsFile.DefaultConnectionId)
-            ? connectionsFile.DefaultConnectionId!
-            : connectionsFile.Connections[0].Id;
 
         var config = new FamilyChatConfig(
             Users: usersFile.Users,
             Connections: connectionsFile.Connections,
-            DefaultConnectionId: defaultConnectionId,
+            DefaultConnectionId: connectionsFile.DefaultConnectionId!,
             ListenUrls: usersFile.ListenUrls
         );
 
         config = ResolveSystemPromptFiles(config, resolvedPath);
         config = ApplyDefaultCompactionPrompts(config);
-        config = ResolveConnectionEnvironmentVariables(config);
 
         Validate(config);
         return config;
@@ -813,71 +705,7 @@ internal static class FamilyChatConfigLoader {
         return config with { Users = normalizedUsers };
     }
 
-    private static FamilyChatConfig ResolveConnectionEnvironmentVariables(FamilyChatConfig config) {
-        var resolvedConnections = new List<FamilyChatConnectionConfig>(config.Connections.Count);
-        foreach (var connection in config.Connections) {
-            string baseAddress = connection.BaseAddress;
-            string? apiKey = connection.ApiKey;
-
-            if (!string.IsNullOrWhiteSpace(connection.BaseAddressEnv)) {
-                string? resolved = Environment.GetEnvironmentVariable(connection.BaseAddressEnv);
-                if (string.IsNullOrWhiteSpace(resolved)) {
-                    throw new InvalidOperationException(
-                        $"FamilyChat connection '{connection.Id}' baseAddressEnv references environment variable "
-                        + $"'{connection.BaseAddressEnv}', but it is not set or empty."
-                    );
-                }
-                baseAddress = resolved;
-            }
-
-            if (!string.IsNullOrWhiteSpace(connection.ApiKeyEnv)) {
-                string? resolved = Environment.GetEnvironmentVariable(connection.ApiKeyEnv);
-                if (string.IsNullOrWhiteSpace(resolved)) {
-                    throw new InvalidOperationException(
-                        $"FamilyChat connection '{connection.Id}' apiKeyEnv references environment variable "
-                        + $"'{connection.ApiKeyEnv}', but it is not set or empty."
-                    );
-                }
-                apiKey = resolved;
-            }
-
-            resolvedConnections.Add(connection with { BaseAddress = baseAddress, ApiKey = apiKey });
-        }
-
-        return config with { Connections = resolvedConnections };
-    }
-
     private static void Validate(FamilyChatConfig config) {
-        var connectionIds = new HashSet<string>(StringComparer.Ordinal);
-        for (int i = 0; i < config.Connections.Count; i++) {
-            var connection = config.Connections[i];
-            if (string.IsNullOrWhiteSpace(connection.Id)) { throw new InvalidOperationException($"FamilyChat connection[{i}] must have a non-empty id."); }
-
-            if (!connectionIds.Add(connection.Id)) { throw new InvalidOperationException($"FamilyChat connections contain duplicate id '{connection.Id}'."); }
-
-            if (string.IsNullOrWhiteSpace(connection.DisplayName)) { throw new InvalidOperationException($"FamilyChat connection '{connection.Id}' must have a non-empty displayName."); }
-
-            if (string.IsNullOrWhiteSpace(connection.Kind)) { throw new InvalidOperationException($"FamilyChat connection '{connection.Id}' must have a non-empty kind."); }
-
-            if (string.IsNullOrWhiteSpace(connection.ModelId)) { throw new InvalidOperationException($"FamilyChat connection '{connection.Id}' must have a non-empty modelId."); }
-
-            if (string.IsNullOrWhiteSpace(connection.CompletionSurfaceId)) { throw new InvalidOperationException($"FamilyChat connection '{connection.Id}' must have a non-empty completionSurfaceId."); }
-
-            if (string.IsNullOrWhiteSpace(connection.BaseAddress)) { throw new InvalidOperationException($"FamilyChat connection '{connection.Id}' must have a non-empty baseAddress."); }
-
-            if (string.IsNullOrWhiteSpace(connection.ApiKey)) {
-                throw new InvalidOperationException(
-                    $"FamilyChat connection '{connection.Id}' must have a non-empty apiKey (set 'apiKey' inline or via 'apiKeyEnv')."
-                );
-            }
-        }
-
-        if (!connectionIds.Contains(config.DefaultConnectionId)) {
-            throw new InvalidOperationException(
-                $"FamilyChat defaultConnectionId '{config.DefaultConnectionId}' does not match any connection id."
-            );
-        }
-
         var userIds = new HashSet<string>(StringComparer.Ordinal);
         for (int i = 0; i < config.Users.Count; i++) {
             var user = config.Users[i];
@@ -992,10 +820,10 @@ internal static class FamilyChatConfigTemplateFactory {
         );
     }
 
-    public static FamilyChatConnectionsFileConfig CreateConnectionsFile() {
-        return new FamilyChatConnectionsFileConfig(
+    public static CompletionConnectionsFileConfig CreateConnectionsFile() {
+        return new CompletionConnectionsFileConfig(
             Connections: [
-                new FamilyChatConnectionConfig(
+                new CompletionConnectionConfig(
                     Id: DefaultConnectionId,
                     DisplayName: "本地模型",
                     Kind: "openai-chat",
@@ -1060,7 +888,7 @@ internal static class FamilyChatHtml {
 """;
     }
 
-    public static string RenderAppPage(FamilyChatUserConfig user, FamilyChatConnectionRegistry connections, string assetVersion) {
+    public static string RenderAppPage(FamilyChatUserConfig user, CompletionConnectionRegistry connections, string assetVersion) {
         ArgumentNullException.ThrowIfNull(user);
         ArgumentNullException.ThrowIfNull(connections);
 
@@ -1184,7 +1012,5 @@ internal static class FamilyChatJson {
 
 [JsonSourceGenerationOptions(JsonSerializerDefaults.Web)]
 [JsonSerializable(typeof(FamilyChatUsersFileConfig))]
-[JsonSerializable(typeof(FamilyChatConnectionsFileConfig))]
-[JsonSerializable(typeof(FamilyChatConnectionConfig))]
 [JsonSerializable(typeof(FamilyChatUserConfig))]
 internal sealed partial class FamilyChatJsonContext : JsonSerializerContext;

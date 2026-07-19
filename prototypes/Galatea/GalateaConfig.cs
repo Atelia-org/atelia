@@ -1,4 +1,5 @@
 using System.Text.Json.Serialization;
+using Atelia.Completion;
 
 namespace Atelia.Galatea.Server;
 
@@ -10,7 +11,7 @@ namespace Atelia.Galatea.Server;
 /// </summary>
 public sealed record GalateaConfig(
     IReadOnlyList<GalateaUserConfig> Users,
-    IReadOnlyList<GalateaConnectionConfig> Connections,
+    IReadOnlyList<CompletionConnectionConfig> Connections,
     string DefaultConnectionId,
     IReadOnlyList<string>? ListenUrls = null
 );
@@ -19,31 +20,6 @@ public sealed record GalateaConfig(
 public sealed record GalateaUsersFileConfig(
     IReadOnlyList<GalateaUserConfig> Users,
     IReadOnlyList<string>? ListenUrls = null
-);
-
-/// <summary>Shape of connections.json: the independent LLM connection catalog.</summary>
-public sealed record GalateaConnectionsFileConfig(
-    IReadOnlyList<GalateaConnectionConfig> Connections,
-    string? DefaultConnectionId = null
-);
-
-public sealed record GalateaConnectionConfig(
-    // Stable identifier used by the UI radio buttons and turn requests.
-    string Id,
-    // Human-facing label shown in the connection picker.
-    string DisplayName,
-    // Backend family: openai-chat / openai-responses / anthropic.
-    string Kind,
-    string ModelId,
-    string CompletionSurfaceId,
-    string BaseAddress,
-    string? ApiKey = null,
-    // Name of an environment variable whose value overrides BaseAddress at load time.
-    // Useful for keeping machine-specific URLs out of the config file.
-    string? BaseAddressEnv = null,
-    // Name of an environment variable whose value overrides ApiKey at load time.
-    // Preferred over inline ApiKey to keep secrets out of the config file.
-    string? ApiKeyEnv = null
 );
 
 public sealed record GalateaUserConfig(
