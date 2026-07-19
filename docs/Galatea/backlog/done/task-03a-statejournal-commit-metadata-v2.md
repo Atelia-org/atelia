@@ -20,7 +20,7 @@ Task 03 需要从 StateJournal repo 层枚举历史 commit，并让 ChatSession 
 - [`src/StateJournal/Internal/VersionChain.cs`](../../../../src/StateJournal/Internal/VersionChain.cs)
 - [`src/StateJournal/Internal/VersionChainStatus.cs`](../../../../src/StateJournal/Internal/VersionChainStatus.cs)
 - [`src/StateJournal/Repository.cs`](../../../../src/StateJournal/Repository.cs)
-- [`docs/Galatea/backlog/todo/task-03-statejournal-commit-history-reader.md`](../todo/task-03-statejournal-commit-history-reader.md)
+- [`docs/Galatea/backlog/done/task-03-statejournal-commit-history-reader.md`](task-03-statejournal-commit-history-reader.md)
 
 ## 目标
 

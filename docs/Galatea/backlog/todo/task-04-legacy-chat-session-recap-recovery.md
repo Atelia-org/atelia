@@ -16,7 +16,7 @@
 - [`prototypes/ChatSession/ChatSessionEngine.Compaction.cs`](../../../../prototypes/ChatSession/ChatSessionEngine.Compaction.cs)
 - [`src/StateJournal/Repository.BranchRefs.cs`](../../../../src/StateJournal/Repository.BranchRefs.cs)
 - [`src/StateJournal/CommitAddress.cs`](../../../../src/StateJournal/CommitAddress.cs)
-- [`docs/Galatea/backlog/todo/task-03-statejournal-commit-history-reader.md`](task-03-statejournal-commit-history-reader.md)
+- [`docs/Galatea/backlog/done/task-03-statejournal-commit-history-reader.md`](../done/task-03-statejournal-commit-history-reader.md)
 - [`docs/Galatea/backlog/todo/feature-request-recap-source-range-anchors.md`](feature-request-recap-source-range-anchors.md)
 
 ## 目标

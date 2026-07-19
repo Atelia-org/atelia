@@ -147,6 +147,7 @@ var replay = repo.CreateBranch("replay", head).Value;
 - `Revision.HeadAddress` / `Revision.HeadParentAddress` 分别暴露当前 commit 与父 commit 的完整 `CommitAddress`；旧的 `HeadParentId` 只是 ticket-only 视图，不应当用于跨 segment 定位。
 - branch ref 当前主格式是 `version: 2`：`head` 保存当前权威 `CommitAddress`，`recentHeads` 保留最近若干个 HEAD，`lastNote` 保存最近一次 note。
 - 每个 branch 还会维护 `*.json.last` backup 和 `*.reflog.jsonl` 追加日志；`Repository.Open` 会在主 ref 损坏时尝试从 backup / reflog 恢复。
+- 离线分析或救援工具若只需要发现历史地址，可用 `RepositoryHistoryReader.EnumerateBranchCommitAddresses(repoDir, branchName)` 读取 branch ref / backup / reflog 元数据并枚举 `CommitAddress`；它不打开 `Repository`、不拿 repo lock、也不反序列化对象图。
 - 如果需要从较早提交继续演化，通常做法是先从 branch ref 的 `recentHeads` 或 reflog 找到旧 `CommitAddress`，再调用 `CreateBranch(name, fromCommitAddress)`。
 
 ### 2.3 Segment
