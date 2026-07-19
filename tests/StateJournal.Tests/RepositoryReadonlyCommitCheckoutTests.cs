@@ -44,7 +44,7 @@ public class RepositoryReadonlyCommitCheckoutTests : IDisposable {
         root.Upsert(2, 20);
         AssertSuccess(repo.Commit(root));
 
-        var addresses = RepositoryHistoryReader.EnumerateBranchCommitAddressValues(dir, "main");
+        var addresses = RepositoryHistoryReader.EnumerateBranchRawCommitAddressValues(dir, "main");
         Assert.Contains(firstHead, addresses);
 
         var historicalRoot = AssertSuccess(repo.LoadRootAtCommit(firstHead));

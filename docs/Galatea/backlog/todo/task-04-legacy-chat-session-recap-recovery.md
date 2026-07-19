@@ -72,7 +72,7 @@
 ## 风险点
 
 - 旧数据可能缺 reflog 或 reflog 不完整。
-- `RepositoryHistoryReader` 当前枚举去重后的 address 候选集，不能完整表达 reflog transition；04b 若需要更稳的相邻关系，可回到 StateJournal 层追加 transition API。
+- `RepositoryHistoryReader` 已区分 raw candidates 与 effective parent-chain；04b 若需要更稳的相邻关系（例如保留 reflog transition 边），可回到 StateJournal 层追加 transition API。
 - 内容同一性可能受 sanitization、thinking strip、tool result flattening 影响。
 - protected `ContextHeader` 会在 compaction 后重新 prepend，比较逻辑不能只看 index。
 - StateJournal 当前没有 lazy loading，全量 checkout 历史 heads 的成本可能很高；这是离线工具可接受的代价，但要在文档中说清楚。

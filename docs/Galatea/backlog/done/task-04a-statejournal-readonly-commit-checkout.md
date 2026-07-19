@@ -45,7 +45,7 @@ public AteliaResult<DurableObject> LoadRootAtCommit(CommitAddress commitAddress)
 新增测试覆盖：
 
 - 连续 commit 后读取非当前 HEAD 的历史 root。
-- 与 `RepositoryHistoryReader.EnumerateBranchCommitAddresses(...)` 配合读取枚举出的历史 address。
+- 与 `RepositoryHistoryReader.EnumerateBranchRawCommitAddresses(...)` / `EnumerateBranchEffectiveCommitAddresses(...)` 配合读取枚举出的历史 address。
 - 调用前后 branch ref / backup / reflog bytes 完全不变。
 - missing segment address 返回 failure 且不污染 metadata / head。
 - existing segment + invalid ticket 返回 failure 且不污染 metadata / head。
@@ -64,7 +64,7 @@ public AteliaResult<DurableObject> LoadRootAtCommit(CommitAddress commitAddress)
 - 测试 repo 连续提交多次后，可用历史 `CommitAddress` 读取对应旧 root。
 - 调用只读 checkout/load 前后，branch ref 文件、`.last` backup、reflog 内容不变。
 - 读取不存在或损坏的 commit address 时返回明确 failure，不污染 repository 状态。
-- 能与 `RepositoryHistoryReader.EnumerateBranchCommitAddresses(...)` 配合：枚举出的历史地址可被只读 API 加载。
+- 能与 `RepositoryHistoryReader.EnumerateBranchRawCommitAddresses(...)` / `EnumerateBranchEffectiveCommitAddresses(...)` 配合：枚举出的历史地址可被只读 API 加载。
 - 覆盖至少一个非当前 HEAD 的历史 commit。
 
 ## 非目标

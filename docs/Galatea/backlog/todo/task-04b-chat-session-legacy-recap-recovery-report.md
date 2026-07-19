@@ -12,7 +12,7 @@
 
 实现 ChatSession 层只读恢复报告器：
 
-- 使用 `RepositoryHistoryReader` 获取历史 commit address 候选。
+- 使用 `RepositoryHistoryReader` 获取历史 commit address；默认优先使用 effective parent-chain，必要时再参考 raw candidates 做救援诊断。
 - 使用 Task 04a API 读取每个历史 commit 的 ChatSession root/messages。
 - 将 messages 序列转成稳定 fingerprint。
 - 比较相邻 snapshots，识别疑似 compaction。

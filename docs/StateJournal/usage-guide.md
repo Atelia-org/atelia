@@ -147,7 +147,8 @@ var replay = repo.CreateBranch("replay", head).Value;
 - `Revision.HeadAddress` / `Revision.HeadParentAddress` 分别暴露当前 commit 与父 commit 的完整 `CommitAddress`；旧的 `HeadParentId` 只是 ticket-only 视图，不应当用于跨 segment 定位。
 - branch ref 当前主格式是 `version: 2`：`head` 保存当前权威 `CommitAddress`，`recentHeads` 保留最近若干个 HEAD，`lastNote` 保存最近一次 note。
 - 每个 branch 还会维护 `*.json.last` backup 和 `*.reflog.jsonl` 追加日志；`Repository.Open` 会在主 ref 损坏时尝试从 backup / reflog 恢复。
-- 离线分析或救援工具若只需要发现历史地址，可用 `RepositoryHistoryReader.EnumerateBranchCommitAddresses(repoDir, branchName)` 读取 branch ref / backup / reflog 元数据并枚举 `CommitAddress`；它不打开 `Repository`、不拿 repo lock、也不反序列化对象图。
+- 离线分析或救援工具若只需要发现所有历史候选地址，可用 `RepositoryHistoryReader.EnumerateBranchRawCommitAddresses(repoDir, branchName)` 读取 branch ref / backup / reflog 元数据并枚举 `CommitAddress`；raw 结果会包含 reflog / recentHeads 中出现过但不在当前 HEAD 父链上的短旁支。
+- 若只需要当前 branch HEAD 的有效历史，可用 `RepositoryHistoryReader.EnumerateBranchEffectiveCommitAddresses(repo, branchName)` 从 HEAD 沿 commit parent metadata 反向遍历；该路径会打开 commit metadata / root，因此需要已打开的 `Repository`。
 - 离线分析或救援工具若要读取某个历史 root，可在打开 repo 后调用 `Repository.LoadRootAtCommit(commitAddress)`；它复用 commit load 路径，不创建 branch、不写 branch metadata，返回的 root 不绑定任何 branch，不能用于推进 repository head。这里的“只读”指 repository 持久化层只读；返回对象仍是普通内存 durable object，不是不可变 facade。
 - 如果需要从较早提交继续演化，通常做法是先从 branch ref 的 `recentHeads` 或 reflog 找到旧 `CommitAddress`，再调用 `CreateBranch(name, fromCommitAddress)`。
 

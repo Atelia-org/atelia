@@ -11,6 +11,8 @@ public enum BranchHistoryAddressSource {
     BranchRecentHead,
     BranchBackupHead,
     BranchBackupRecentHead,
+    EffectiveHead,
+    EffectiveParent,
 }
 
 /// <summary>从 branch metadata 中发现的历史 commit 地址。</summary>
@@ -35,7 +37,11 @@ public static class RepositoryHistoryReader {
     private const int CurrentBranchDataVersion = 2;
     private const int BranchReflogEntryVersion = 1;
 
-    public static BranchHistoryScanResult EnumerateBranchCommitAddresses(string repoDir, string branchName) {
+    /// <summary>
+    /// 枚举 branch metadata 中出现过的 raw commit address 候选集。
+    /// 该结果包含 reflog / recentHeads 中的短旁支或回退点，不代表当前 HEAD 的有效父链。
+    /// </summary>
+    public static BranchHistoryScanResult EnumerateBranchRawCommitAddresses(string repoDir, string branchName) {
         ArgumentException.ThrowIfNullOrWhiteSpace(repoDir);
         ArgumentException.ThrowIfNullOrWhiteSpace(branchName);
 
@@ -58,8 +64,75 @@ public static class RepositoryHistoryReader {
         return new BranchHistoryScanResult(addresses, warnings);
     }
 
-    public static IReadOnlyList<CommitAddress> EnumerateBranchCommitAddressValues(string repoDir, string branchName) {
-        var result = EnumerateBranchCommitAddresses(repoDir, branchName);
+    /// <summary>
+    /// 返回 <see cref="EnumerateBranchRawCommitAddresses"/> 的 address-only 视图。
+    /// </summary>
+    public static IReadOnlyList<CommitAddress> EnumerateBranchRawCommitAddressValues(string repoDir, string branchName) {
+        var result = EnumerateBranchRawCommitAddresses(repoDir, branchName);
+        return ToAddressArray(result);
+    }
+
+    /// <summary>
+    /// 从 branch 当前 HEAD 开始，沿 commit TailMeta v2 / legacy parent metadata 遍历有效父链。
+    /// 该结果会排除 reflog / recentHeads 中出现过但不在当前 HEAD 父链上的短旁支。
+    /// </summary>
+    public static BranchHistoryScanResult EnumerateBranchEffectiveCommitAddresses(Repository repository, string branchName) {
+        ArgumentNullException.ThrowIfNull(repository);
+        ArgumentException.ThrowIfNullOrWhiteSpace(branchName);
+
+        var nameError = Repository.ValidateBranchName(branchName);
+        if (nameError is not null) { throw new ArgumentException($"Invalid branch name '{branchName}': {nameError}", nameof(branchName)); }
+
+        var addresses = new List<BranchHistoryAddress>();
+        var warnings = new List<string>();
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+
+        if (!repository.TryGetBranchHeadAddress(branchName, out var current)) {
+            warnings.Add($"Branch '{branchName}' has no committed head or cannot be read.");
+            return new BranchHistoryScanResult(addresses, warnings);
+        }
+
+        var isHead = true;
+        while (true) {
+            if (!seen.Add(current.ToString())) {
+                warnings.Add($"Stopped effective parent-chain walk at repeated commit {current}.");
+                break;
+            }
+
+            var rootResult = repository.LoadRootAtCommit(current);
+            if (rootResult.IsFailure) {
+                warnings.Add($"Stopped effective parent-chain walk at {current}: {rootResult.Error!.Message}");
+                break;
+            }
+
+            addresses.Add(
+                new BranchHistoryAddress(
+                    current,
+                    isHead ? BranchHistoryAddressSource.EffectiveHead : BranchHistoryAddressSource.EffectiveParent,
+                    Generation: null,
+                    LineNumber: null
+                )
+            );
+
+            var parent = rootResult.Value!.Revision.HeadParentAddress;
+            if (parent is null) { break; }
+
+            current = parent.Value;
+            isHead = false;
+        }
+
+        return new BranchHistoryScanResult(addresses, warnings);
+    }
+
+    /// <summary>
+    /// 返回 <see cref="EnumerateBranchEffectiveCommitAddresses"/> 的 address-only 视图。
+    /// </summary>
+    public static IReadOnlyList<CommitAddress> EnumerateBranchEffectiveCommitAddressValues(Repository repository, string branchName) {
+        var result = EnumerateBranchEffectiveCommitAddresses(repository, branchName);
+        return ToAddressArray(result);
+    }
+
+    private static IReadOnlyList<CommitAddress> ToAddressArray(BranchHistoryScanResult result) {
         var addresses = new CommitAddress[result.Addresses.Count];
         for (int i = 0; i < addresses.Length; i++) { addresses[i] = result.Addresses[i].Address; }
         return addresses;
