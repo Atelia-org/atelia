@@ -158,7 +158,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
         return session;
     }
 
-    public IReadOnlyList<RecentTurnDto> BuildRecentTurns(ChatSessionEngine engine, int maxTurns = 12) {
+    public IReadOnlyList<RecentTurnDto> BuildRecentTurns(ChatSessionEngine engine, int maxTurns = 32) {
         ArgumentNullException.ThrowIfNull(engine);
 
         var turns = new List<RecentTurnDto>();
