@@ -1,4 +1,3 @@
-using System.Buffers.Binary;
 using Atelia.Diagnostics;
 using Atelia.Rbf;
 using Atelia.StateJournal.Internal;
@@ -228,18 +227,21 @@ partial class Revision {
         // SymbolTable 的 ticket 存入 ObjectMap，key = packed slot handle（slot 1）
         _objectMap.Upsert(new SlotHandle(0, 1).Packed, stPendingSave.Ticket.Serialize());
 
-        // ── TailMeta: [0..3] GraphRoot LocalId, [4..7] SymbolTable LocalId ──
-        Span<byte> rootMeta = stackalloc byte[8];
-        BinaryPrimitives.WriteUInt32LittleEndian(rootMeta, graphRoot.LocalId.Value);
-        BinaryPrimitives.WriteUInt32LittleEndian(rootMeta[4..], new SlotHandle(0, 1).Packed);
+        Span<byte> commitMeta = stackalloc byte[CommitTailMetaV2Length];
+        WriteCommitTailMeta(
+            commitMeta,
+            graphRoot.LocalId.Value,
+            new SlotHandle(0, 1).Packed,
+            HeadAddress
+        );
 
         DiffWriteContext mapContext = new(FrameUsage.ObjectMap, frameSource) {
-            // ObjectMap 也保留逻辑祖先 commit 的 ticket。
-            // 因此 Open(targetCommit, targetFile) 能读取当前快照，同时 HeadParentId 继续暴露这条跨文件祖先信息。
+            // ObjectMap frame 的 version-chain parentTicket 仍保留 ticket-only 逻辑祖先；
+            // 完整跨 segment 父提交地址由 commit TailMeta v2 保存。
             ForceRebase = forceAll,
             ForceSave = true,
         };
-        var mapWriteResult = VersionChain.Write(_objectMap, targetFile, mapContext, tailMeta: rootMeta);
+        var mapWriteResult = VersionChain.Write(_objectMap, targetFile, mapContext, tailMeta: commitMeta);
         if (mapWriteResult.IsFailure) { return mapWriteResult.Error!; }
         pendingSaves.Add(mapWriteResult.Value);
 
@@ -261,7 +263,7 @@ partial class Revision {
 
         _head = new CommitSnapshot(
             newCommitTicket,
-            _head?.Id ?? default,
+            _head is null ? null : CommitAddress.Create(_headSegmentNumber, _head.Value.Id),
             _objectMap,
             graphRoot
         );

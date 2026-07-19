@@ -45,6 +45,12 @@ public partial class RevisionTests : IDisposable {
         return table.Count;
     }
 
+    private static DurableDict<uint, ulong> GetObjectMap(Revision revision) {
+        var field = typeof(Revision).GetField("_objectMap", BindingFlags.NonPublic | BindingFlags.Instance);
+        Assert.NotNull(field);
+        return Assert.IsAssignableFrom<DurableDict<uint, ulong>>(field!.GetValue(revision));
+    }
+
     private static CommitOutcome AssertCommitSucceeded(AteliaResult<CommitOutcome> result, string label = "Commit") {
         Assert.True(result.IsSuccess, $"{label} failed: {result.Error}");
         return result.Value;
@@ -140,6 +146,100 @@ public partial class RevisionTests : IDisposable {
         var outcome = AssertCommitSucceeded(CommitToFile(rev, root, file, segmentNumber: 7));
 
         Assert.Equal(CommitAddress.Create(7, outcome.HeadCommitTicket), rev.HeadAddress);
+    }
+
+    [Fact]
+    public void CommitToFile_RootCommit_HasNoParentAddress() {
+        var path = GetTempFilePath();
+        using var file = RbfFile.CreateNew(path);
+
+        var rev = CreateRevision();
+        var root = rev.CreateDict<int, int>();
+        root.Upsert(1, 10);
+
+        var outcome = AssertCommitSucceeded(CommitToFile(rev, root, file));
+
+        Assert.Null(rev.HeadParentAddress);
+        Assert.True(rev.HeadParentId.IsNull);
+
+        var opened = AssertSuccess(OpenRevision(outcome.HeadCommitTicket, file));
+        Assert.Null(opened.HeadParentAddress);
+        Assert.True(opened.HeadParentId.IsNull);
+    }
+
+    [Fact]
+    public void CommitToFile_SecondCommit_ReopenExposesParentAddress() {
+        var path = GetTempFilePath();
+        using var file = RbfFile.CreateNew(path);
+
+        var rev = CreateRevision();
+        var root = rev.CreateDict<int, int>();
+        root.Upsert(1, 10);
+        var first = AssertCommitSucceeded(CommitToFile(rev, root, file));
+        var firstAddress = CommitAddress.Create(1, first.HeadCommitTicket);
+
+        root.Upsert(2, 20);
+        var second = AssertCommitSucceeded(CommitToFile(rev, root, file));
+
+        Assert.Equal(firstAddress, rev.HeadParentAddress);
+        Assert.Equal(first.HeadCommitTicket, rev.HeadParentId);
+
+        var opened = AssertSuccess(OpenRevision(second.HeadCommitTicket, file));
+        Assert.Equal(firstAddress, opened.HeadParentAddress);
+        Assert.Equal(first.HeadCommitTicket, opened.HeadParentId);
+    }
+
+    [Fact]
+    public void SaveAsToFile_CrossSegmentCommit_ReopenExposesParentAddress() {
+        var path1 = GetTempFilePath();
+        var path2 = GetTempFilePath();
+        using var file1 = RbfFile.CreateNew(path1);
+        using var file2 = RbfFile.CreateNew(path2);
+
+        var rev = CreateRevision(segmentNumber: 1);
+        var root = rev.CreateDict<int, int>();
+        root.Upsert(1, 10);
+        var first = AssertCommitSucceeded(CommitToFile(rev, root, file1, segmentNumber: 1));
+        var firstAddress = CommitAddress.Create(1, first.HeadCommitTicket);
+
+        root.Upsert(2, 20);
+        var second = AssertCommitSucceeded(SaveAsToFile(rev, root, file2, segmentNumber: 2));
+
+        Assert.Equal(CommitAddress.Create(2, second.HeadCommitTicket), rev.HeadAddress);
+        Assert.Equal(firstAddress, rev.HeadParentAddress);
+
+        var opened = AssertSuccess(OpenRevision(second.HeadCommitTicket, file2, segmentNumber: 2));
+        Assert.Equal(firstAddress, opened.HeadParentAddress);
+        Assert.Equal(first.HeadCommitTicket, opened.HeadParentId);
+    }
+
+    [Fact]
+    public void Open_LegacyTailMeta_InfersParentAddressFromCurrentSegment() {
+        var path = GetTempFilePath();
+        using var file = RbfFile.CreateNew(path);
+
+        var rev = CreateRevision(segmentNumber: 9);
+        var root = rev.CreateDict<int, int>();
+        root.Upsert(1, 10);
+        var first = AssertCommitSucceeded(CommitToFile(rev, root, file, segmentNumber: 9));
+        var firstAddress = CommitAddress.Create(9, first.HeadCommitTicket);
+
+        byte[] legacyTailMeta = new byte[8];
+        BinaryPrimitives.WriteUInt32LittleEndian(legacyTailMeta, root.LocalId.Value);
+        BinaryPrimitives.WriteUInt32LittleEndian(legacyTailMeta.AsSpan(4), new SlotHandle(0, 1).Packed);
+
+        var objectMap = GetObjectMap(rev);
+        var context = new DiffWriteContext(FrameUsage.ObjectMap, FrameSource.PrimaryCommit) {
+            ForceSave = true,
+        };
+        var legacyWrite = VersionChain.Write(objectMap, file, context, tailMeta: legacyTailMeta);
+        Assert.True(legacyWrite.IsSuccess, $"Legacy ObjectMap write failed: {legacyWrite.Error}");
+        var legacyCommit = new CommitTicket(legacyWrite.Value.Ticket);
+
+        var opened = AssertSuccess(OpenRevision(legacyCommit, file, segmentNumber: 9));
+
+        Assert.Equal(firstAddress, opened.HeadParentAddress);
+        Assert.Equal(first.HeadCommitTicket, opened.HeadParentId);
     }
 
     [Fact]

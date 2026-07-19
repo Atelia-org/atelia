@@ -781,14 +781,21 @@ Phase 3: Complete pending saves + Sweep + 更新 _head
 
 - `FrameSource.CrossFileSnapshot`
 
-### `GraphRoot` / `SymbolTable` TailMeta
+### Commit TailMeta
 
-`ObjectMap` 头帧的 TailMeta 当前固定 8 字节：
+`ObjectMap` 头帧的 TailMeta 当前主格式是 commit metadata v2：
+
+- magic/version marker
+- `GraphRoot.LocalId`
+- `SymbolTable.LocalId`
+- parent `CommitAddress?`
+
+legacy 8 字节格式仍可读取：
 
 - `[0..3] GraphRoot.LocalId`
 - `[4..7] SymbolTable.LocalId`
 
-当前 open 路径只接受这种新格式。
+读取 legacy 格式时，非空 parent ticket 会按当前 segment 推断为同 segment 的 parent `CommitAddress`。这只适合旧单 segment 数据；跨 segment commit parent 必须依赖 v2 metadata 中的完整地址。
 
 ### `Open(...)`
 

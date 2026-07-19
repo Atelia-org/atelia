@@ -284,6 +284,33 @@ public class RepositoryTests : IDisposable {
     }
 
     [Fact]
+    public void FileRotation_ReopenExposesCrossSegmentParentAddress() {
+        var dir = GetTempDir();
+        CommitAddress firstHead;
+        CommitAddress secondHead;
+
+        using (var repo = CreateRepositoryWithBranch(dir, "main", out var main)) {
+            repo.SetRotationThreshold(1);
+
+            var root = main.CreateDict<int, int>();
+            root.Upsert(1, 100);
+            firstHead = AssertSuccess(repo.Commit(root));
+
+            root.Upsert(2, 200);
+            secondHead = AssertSuccess(repo.Commit(root));
+
+            Assert.NotEqual(firstHead.SegmentNumber, secondHead.SegmentNumber);
+            Assert.Equal(firstHead, main.HeadParentAddress);
+        }
+
+        using var reopened = AssertSuccess(Repository.Open(dir));
+        var reopenedMain = AssertSuccess(reopened.CheckoutBranch("main"));
+
+        Assert.Equal(secondHead, reopenedMain.HeadAddress);
+        Assert.Equal(firstHead, reopenedMain.HeadParentAddress);
+    }
+
+    [Fact]
     public void MaintainSegmentLayout_ArchivesExcessRecentSegmentsIntoBuckets() {
         const int OverCreate = 4;
         var dir = GetTempDir();

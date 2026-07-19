@@ -12,6 +12,10 @@ namespace Atelia.StateJournal;
 /// <see cref="_head"/> 持有当前已提交的快照状态（Id / ParentId / ObjectMap / GraphRoot），首次 Commit 前为 null。
 /// </summary>
 public partial class Revision {
+    private const int LegacyCommitTailMetaLength = 8;
+    private const int CommitTailMetaV2Length = 24;
+    private const uint CommitTailMetaV2Marker = 0x324D4353; // "SCM2" little-endian marker.
+
     private uint _headSegmentNumber;
 
     /// <summary>
@@ -37,7 +41,9 @@ public partial class Revision {
     private CommitSnapshot? _head;
 
     internal CommitTicket HeadId => _head?.Id ?? default;
-    public CommitTicket HeadParentId => _head?.ParentId ?? default;
+    public CommitTicket HeadParentId => _head?.ParentAddress?.CommitTicket ?? default;
+    /// <summary>最近一次成功 Commit 的父提交完整地址。root commit 或首次 Commit 前为 null。</summary>
+    public CommitAddress? HeadParentAddress => _head?.ParentAddress;
     /// <summary>最近一次 Commit 时使用的 GraphRoot。首次 Commit 前为 null。Open 后自动从 TailMeta 恢复。</summary>
     public DurableObject? GraphRoot => _head?.GraphRoot;
     /// <summary>最近一次成功 Commit 的完整地址。首次 Commit 前为 null。</summary>
@@ -142,19 +148,14 @@ public partial class Revision {
             );
         }
 
-        CommitTicket parentId = new CommitTicket(result.HeadParentTicket);
         byte[] tailMeta = result.HeadTailMeta;
 
-        // 从 TailMeta 读取 GraphRoot + SymbolTable 信息
-        // 布局：[0..3] GraphRoot.LocalId.Value (uint LE)
-        //        [4..7] SymbolTable slot packed (uint LE)
-        if (tailMeta.Length < 8) {
-            return new SjCorruptionError(
-                $"TailMeta length {tailMeta.Length} < 8.",
-                RecoveryHint: "This commit uses an unsupported or corrupted TailMeta format."
-            );
-        }
-        uint rootIdValue = BinaryPrimitives.ReadUInt32LittleEndian(tailMeta);
+        var commitMetaResult = ReadCommitTailMeta(tailMeta, result.HeadParentTicket, segmentNumber);
+        if (commitMetaResult.IsFailure) { return commitMetaResult.Error!; }
+        var commitMeta = commitMetaResult.Value;
+        uint rootIdValue = commitMeta.GraphRootLocalId;
+        uint symbolTablePacked = commitMeta.SymbolTableLocalId;
+
         if (rootIdValue == 0) {
             return new SjCorruptionError(
                 "Invalid GraphRoot LocalId 0 in TailMeta.",
@@ -162,7 +163,6 @@ public partial class Revision {
             );
         }
 
-        uint symbolTablePacked = BinaryPrimitives.ReadUInt32LittleEndian(tailMeta.AsSpan(4));
         uint expectedSymbolTablePacked = new SlotHandle(0, 1).Packed;
         if (symbolTablePacked != expectedSymbolTablePacked) {
             return new SjCorruptionError(
@@ -247,7 +247,7 @@ public partial class Revision {
         }
         DurableObject? graphRoot = rootObj;
 
-        revision._head = new CommitSnapshot(id, parentId, objectMap, graphRoot);
+        revision._head = new CommitSnapshot(id, commitMeta.ParentAddress, objectMap, graphRoot);
 
         var validateResult = revision.ValidateAllReferences();
         if (validateResult.IsFailure) { return validateResult.Error!; }
@@ -496,11 +496,83 @@ public partial class Revision {
         _headSegmentNumber = segmentNumber;
     }
 
+    private static void WriteCommitTailMeta(
+        Span<byte> destination,
+        uint graphRootLocalId,
+        uint symbolTableLocalId,
+        CommitAddress? parentAddress
+    ) {
+        if (destination.Length < CommitTailMetaV2Length) { throw new ArgumentException($"Commit tail metadata buffer must be at least {CommitTailMetaV2Length} bytes.", nameof(destination)); }
+
+        BinaryPrimitives.WriteUInt32LittleEndian(destination, CommitTailMetaV2Marker);
+        BinaryPrimitives.WriteUInt32LittleEndian(destination[4..], graphRootLocalId);
+        BinaryPrimitives.WriteUInt32LittleEndian(destination[8..], symbolTableLocalId);
+        BinaryPrimitives.WriteUInt32LittleEndian(destination[12..], parentAddress?.SegmentNumber ?? 0);
+        BinaryPrimitives.WriteUInt64LittleEndian(destination[16..], parentAddress?.CommitTicket.Ticket.Serialize() ?? 0);
+    }
+
+    private static AteliaResult<CommitTailMetadata> ReadCommitTailMeta(
+        ReadOnlySpan<byte> tailMeta,
+        SizedPtr legacyParentTicket,
+        uint currentSegmentNumber
+    ) {
+        if (tailMeta.Length == LegacyCommitTailMetaLength) {
+            var legacyParent = new CommitTicket(legacyParentTicket);
+            return new CommitTailMetadata(
+                BinaryPrimitives.ReadUInt32LittleEndian(tailMeta),
+                BinaryPrimitives.ReadUInt32LittleEndian(tailMeta[4..]),
+                legacyParent.IsNull ? null : CommitAddress.Create(currentSegmentNumber, legacyParent)
+            );
+        }
+
+        if (tailMeta.Length == CommitTailMetaV2Length) {
+            var marker = BinaryPrimitives.ReadUInt32LittleEndian(tailMeta);
+            if (marker != CommitTailMetaV2Marker) {
+                return new SjCorruptionError(
+                    $"Unsupported commit TailMeta marker 0x{marker:X8}.",
+                    RecoveryHint: "This commit uses an unsupported or corrupted TailMeta format."
+                );
+            }
+
+            uint parentSegmentNumber = BinaryPrimitives.ReadUInt32LittleEndian(tailMeta[12..]);
+            ulong parentTicketSerialized = BinaryPrimitives.ReadUInt64LittleEndian(tailMeta[16..]);
+            CommitAddress? parentAddress = null;
+            if (parentSegmentNumber != 0 || parentTicketSerialized != 0) {
+                try {
+                    parentAddress = CommitAddress.FromPersisted(parentSegmentNumber, parentTicketSerialized, "ObjectMap TailMeta v2 parent");
+                }
+                catch (InvalidDataException ex) {
+                    return new SjCorruptionError(
+                        $"Invalid parent CommitAddress in ObjectMap TailMeta v2: {ex.Message}",
+                        RecoveryHint: "The commit metadata may be corrupted."
+                    );
+                }
+            }
+
+            return new CommitTailMetadata(
+                BinaryPrimitives.ReadUInt32LittleEndian(tailMeta[4..]),
+                BinaryPrimitives.ReadUInt32LittleEndian(tailMeta[8..]),
+                parentAddress
+            );
+        }
+
+        return new SjCorruptionError(
+            $"Unsupported TailMeta length {tailMeta.Length}.",
+            RecoveryHint: "This commit uses an unsupported or corrupted TailMeta format."
+        );
+    }
+
     private readonly record struct CommitSnapshot(
         CommitTicket Id,
-        CommitTicket ParentId,
+        CommitAddress? ParentAddress,
         DurableDict<uint, ulong> ObjectMap,
         DurableObject? GraphRoot
+    );
+
+    private readonly record struct CommitTailMetadata(
+        uint GraphRootLocalId,
+        uint SymbolTableLocalId,
+        CommitAddress? ParentAddress
     );
 
     /// <summary>全量校验 ObjectMap / pool / 用户对象之间的 DurableObject 引用完整性。发现悬空引用则失败。</summary>
