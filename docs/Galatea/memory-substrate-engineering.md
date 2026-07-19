@@ -10,7 +10,7 @@
 - `IMemoryBlockMaintainer`：在 recent history 分析基础上，维护一个旧版文本块，产出新版文本。
 - `MemoryPack`：内容无关的三载体字典容器，可渲染/投影成后续 LLM API 调用需要的连续文本。
 
-这层不定义 Memory Pack 的业务 block key，不定义哪些内容应放 system/user/assistant，也不定义 Galatea 的信念、关系、回忆录、世界档案等分类。这些留给内容设计文档和后续实验。
+这层不定义 Memory Pack 的业务 block key，不定义哪些内容应放 system/observation/action，也不定义 Galatea 的信念、关系、回忆录、世界档案等分类。这些留给内容设计文档和后续实验。
 
 ## 2. 非目标
 
@@ -43,15 +43,15 @@ public sealed record RecentHistorySlice(
 
 public sealed record ContextHeaderSnapshot(
     string SystemPromptFragment,
-    string UserMessage,
-    string AssistantMessage
+    string ObservationMessage,
+    string ActionMessage
 ) {
     public static ContextHeaderSnapshot Empty { get; } = new("", "", "");
 
     public bool IsEmpty =>
         string.IsNullOrEmpty(SystemPromptFragment)
-        && string.IsNullOrEmpty(UserMessage)
-        && string.IsNullOrEmpty(AssistantMessage);
+        && string.IsNullOrEmpty(ObservationMessage)
+        && string.IsNullOrEmpty(ActionMessage);
 }
 ```
 
@@ -134,19 +134,19 @@ public sealed record MemoryBlockMaintenanceResult(
 
 ### 4.1 三载体字典
 
-Memory Pack 的容器层只表达 provider role prior：
+Memory Pack 的容器层使用 Atelia / Agent 领域术语，而不是 provider API 的 user/assistant 术语：
 
 - `system`：投影到 `ContextHeader.SystemPromptFragment`。
-- `user`：投影为首个 `ObservationMessage`。
-- `assistant`：投影为首个 `ActionMessage`。
+- `observation`：投影为首个 `ObservationMessage`，在 provider API 边界通常对应 user role。
+- `action`：投影为首个 `ActionMessage`，在 provider API 边界通常对应 assistant role。
 
 每个载体内部是一个有序字典。key 的业务含义由应用层决定；substrate 只保证 key、顺序、文本内容和渲染能力。载体身份由 `MemoryPack` 上的字段位置表达，不再在 block 内重复存储 role，避免冗余信息和不一致状态。
 
 ```csharp
 public sealed class MemoryPack {
     public OrderedDictionary<string, MemoryPackBlock> System { get; } = [];
-    public OrderedDictionary<string, MemoryPackBlock> User { get; } = [];
-    public OrderedDictionary<string, MemoryPackBlock> Assistant { get; } = [];
+    public OrderedDictionary<string, MemoryPackBlock> Observation { get; } = [];
+    public OrderedDictionary<string, MemoryPackBlock> Action { get; } = [];
 }
 
 public sealed record MemoryPackBlock(
@@ -164,7 +164,7 @@ public sealed record MemoryPackBlockPath(
 - 使用 `OrderedDictionary<string, MemoryPackBlock>` 是为了同时保留稳定顺序并避免同一 channel 内 key 重复。
 - `BlockKey` 只要求在同一 channel 内唯一。
 - `MemoryPackBlockPath` 是操作路径，不是 block 自身状态；它可用于 maintainer target、draft patch、audit 和 notice。
-- 不单独定义 `MemoryPackChannel`：`System` / `User` / `Assistant` 三个字段本身就是 channel，额外 `Name` 字段会重复表达位置并引入不一致风险。
+- 不单独定义 `MemoryPackChannel`：`System` / `Observation` / `Action` 三个字段本身就是 channel，额外 `Name` 字段会重复表达位置并引入不一致风险。
 - substrate 不知道 `core.beliefs`、`self.memoir` 等 key 是否存在。
 
 ### 4.2 渲染与投影
@@ -172,7 +172,7 @@ public sealed record MemoryPackBlockPath(
 Memory Pack 需要两种能力：
 
 1. block 级读写：给 maintainer 精确定位旧版文本块。
-2. 连续文本渲染：生成 provider API 所需的 system/user/assistant 三段文本。
+2. 连续文本渲染：生成后续投影所需的 system/observation/action 三段文本。
 
 推荐渲染格式：
 
@@ -187,8 +187,8 @@ Memory Pack 需要两种能力：
 ```csharp
 public sealed record RenderedMemoryPack(
     string SystemPromptFragment,
-    string UserMessage,
-    string AssistantMessage
+    string ObservationMessage,
+    string ActionMessage
 );
 ```
 
@@ -196,10 +196,19 @@ public sealed record RenderedMemoryPack(
 
 ```text
 SystemPrompt = BaseSystemPrompt + RenderedMemoryPack.SystemPromptFragment
-Context[0] = ObservationMessage(RenderedMemoryPack.UserMessage)
-Context[1] = ActionMessage(RenderedMemoryPack.AssistantMessage)
+Context[0] = ObservationMessage(RenderedMemoryPack.ObservationMessage)
+Context[1] = ActionMessage(RenderedMemoryPack.ActionMessage)
 Context[2..] = RecentHistory
 ```
+
+若当前 `ContextHeader` 代码仍使用 `UserMessage` / `AssistantMessage` 字段名，适配层负责映射：
+
+```text
+RenderedMemoryPack.ObservationMessage -> ContextHeader.UserMessage
+RenderedMemoryPack.ActionMessage -> ContextHeader.AssistantMessage
+```
+
+后续若 `ContextHeader` 也重命名为领域术语，本文档的 substrate 命名无需再变。
 
 空 channel 的处理应由配置决定：
 
@@ -276,7 +285,7 @@ RecentHistorySlice + MemoryPack snapshot
 
 ## 6. MVP 验收
 
-- 可以创建一个内容无关 `MemoryPack`，包含 system/user/assistant 三个 channel。
+- 可以创建一个内容无关 `MemoryPack`，包含 system/observation/action 三个 channel。
 - 每个 channel 支持按 key 读写 block，并能稳定渲染为连续文本。
 - 可以把 `MemoryPack` 投影成 `ContextHeader`。
 - `RecentHistorySlice` 能携带 `ContextHeaderSnapshot.Empty` 或上一版 `ContextHeader` 的三段文本。
@@ -287,7 +296,7 @@ RecentHistorySlice + MemoryPack snapshot
 
 ## 7. 延后事项
 
-- 哪些 block 属于 system/user/assistant。
+- 哪些 block 属于 system/observation/action。
 - 哪些 block 受保护，哪些可自动维护。
 - `mainline notice` 的语义与注入策略。
 - Reabsorb 的判断标准。

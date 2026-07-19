@@ -27,8 +27,8 @@ public sealed class ChatSessionTurnAbortedException : Exception {
 
 public sealed record ContextHeader(
     string? SystemPromptFragment,
-    string? UserMessage,
-    ActionMessage? AssistantMessage
+    string? ObservationMessage,
+    ActionMessage? ActionMessage
 ) : IHistoryMessage {
     public HistoryMessageKind Kind => HistoryMessageKind.ContextHeader;
 }

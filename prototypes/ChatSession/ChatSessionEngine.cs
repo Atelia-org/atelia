@@ -164,12 +164,12 @@ public sealed partial class ChatSessionEngine {
                 systemPrompt.Append(header.SystemPromptFragment.Trim());
             }
 
-            if (!string.IsNullOrWhiteSpace(header.UserMessage)) {
-                context.Add(new ObservationMessage(header.UserMessage));
+            if (!string.IsNullOrWhiteSpace(header.ObservationMessage)) {
+                context.Add(new ObservationMessage(header.ObservationMessage));
             }
 
-            if (header.AssistantMessage is not null && header.AssistantMessage.Blocks.Count > 0) {
-                context.Add(header.AssistantMessage);
+            if (header.ActionMessage is not null && header.ActionMessage.Blocks.Count > 0) {
+                context.Add(header.ActionMessage);
             }
         }
 

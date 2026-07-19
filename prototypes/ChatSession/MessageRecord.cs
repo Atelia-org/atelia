@@ -188,8 +188,8 @@ internal static class MessageRecord {
 
     private static void WriteContextHeader(DurableDict<string> record, ContextHeader header) {
         if (!string.IsNullOrEmpty(header.SystemPromptFragment)) { record.Upsert(KeySystemPromptFragment, header.SystemPromptFragment); }
-        if (!string.IsNullOrEmpty(header.UserMessage)) { record.Upsert(KeyUserMessage, header.UserMessage); }
-        if (header.AssistantMessage is not null) { record.Upsert(KeyAssistantActionBlocksJson, ActionMessageSerialization.SerializeBlocks(header.AssistantMessage.Blocks)); }
+        if (!string.IsNullOrEmpty(header.ObservationMessage)) { record.Upsert(KeyUserMessage, header.ObservationMessage); }
+        if (header.ActionMessage is not null) { record.Upsert(KeyAssistantActionBlocksJson, ActionMessageSerialization.SerializeBlocks(header.ActionMessage.Blocks)); }
     }
 
     private static ObservationMessage BuildObservation(DurableDict<string> record) {

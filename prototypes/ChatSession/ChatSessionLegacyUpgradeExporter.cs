@@ -317,12 +317,12 @@ public static class ChatSessionLegacyUpgradeExporter {
             ContextHeader contextHeader => new MessageDto(snapshot.Kind, timestampUtc,
                 ContextHeader: new ContextHeaderDto(
                     contextHeader.SystemPromptFragment,
-                    contextHeader.UserMessage,
-                    contextHeader.AssistantMessage is null
+                    contextHeader.ObservationMessage,
+                    contextHeader.ActionMessage is null
                     ? null
                     : new ActionMessageDto(
-                        contextHeader.AssistantMessage.GetFlattenedText(),
-                        ActionMessageSerialization.ToSerializedBlocks(contextHeader.AssistantMessage.Blocks)
+                        contextHeader.ActionMessage.GetFlattenedText(),
+                        ActionMessageSerialization.ToSerializedBlocks(contextHeader.ActionMessage.Blocks)
                     )
                 )
             ),

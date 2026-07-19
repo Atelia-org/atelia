@@ -427,8 +427,8 @@ public static class ChatSessionLegacyRecapRecovery {
     private static string BuildContextHeaderText(ContextHeader header) {
         var builder = new StringBuilder();
         AppendLabeled(builder, "systemPromptFragment", header.SystemPromptFragment);
-        AppendLabeled(builder, "userMessage", header.UserMessage);
-        if (header.AssistantMessage is not null) { AppendLabeled(builder, "assistantMessage", BuildActionText(header.AssistantMessage)); }
+        AppendLabeled(builder, "userMessage", header.ObservationMessage);
+        if (header.ActionMessage is not null) { AppendLabeled(builder, "assistantMessage", BuildActionText(header.ActionMessage)); }
         return builder.ToString();
     }
 

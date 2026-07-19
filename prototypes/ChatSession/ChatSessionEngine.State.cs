@@ -269,8 +269,8 @@ internal static class ChatSessionTokenEstimator {
 
     private static ulong EstimateContextHeader(ContextHeader header) {
         ulong total = (ulong)(header.SystemPromptFragment?.Length ?? 0) / 2;
-        total += (ulong)(header.UserMessage?.Length ?? 0) / 2;
-        if (header.AssistantMessage is not null) { total += EstimateAction(header.AssistantMessage); }
+        total += (ulong)(header.ObservationMessage?.Length ?? 0) / 2;
+        if (header.ActionMessage is not null) { total += EstimateAction(header.ActionMessage); }
         return total;
     }
 

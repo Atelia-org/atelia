@@ -27,17 +27,17 @@ Galatea 已确认 Memory Pack 可以按治理性质分三层：
 | 第一人称回忆录 | 经历、感受、自我变化 | 使用“我”的文风；情感评价不可被 maintainer 替换 |
 | 外层世界档案 | 事实、资源、状态、服务器/API 成本 | 可结构化、可自动更新；影响决策时通知主意识 |
 
-这只是内容层设想。工程 substrate 只提供 system/user/assistant 三载体字典，不硬编码三层。
+这只是内容层设想。工程 substrate 只提供 system/observation/action 三载体字典，不硬编码三层。
 
 ### 2.2 消息类型映射
 
 已确认的直觉映射：
 
-| API 载体 | 内容倾向 |
+| 领域载体 | API 边界 | 内容倾向 |
 |---|---|
-| SystemPrompt | 恒定身份、信念集、主权声明 |
-| User / Observation | 外源信息、外层世界档案、通知 |
-| Assistant / Action | 第一人称回忆录、经历种子、内在状态 |
+| System | system prompt | 恒定身份、信念集、主权声明 |
+| Observation | provider user role | 外源信息、外层世界档案、通知 |
+| Action | provider assistant role | 第一人称回忆录、经历种子、内在状态 |
 
 待研究问题：这个映射在不同模型、不同 provider API、不同上下文长度下是否稳定？
 
@@ -124,7 +124,7 @@ Galatea 不是传统“角色卡”，而是本色出演的 AI Role-Play mind。
 
 待研究问题：
 
-- 召回结果应该进入 user role、assistant role，还是工具结果？
+- 召回结果应该进入 Observation、Action，还是工具结果？
 - 召回内容如何避免覆盖当前主意识？
 - 是否需要“召回后再吸收”的闭环？
 

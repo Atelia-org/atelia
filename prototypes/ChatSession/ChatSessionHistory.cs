@@ -133,14 +133,14 @@ public static class ChatSessionMarkdownExporter {
             AppendFence(builder, "text", header.SystemPromptFragment);
         }
 
-        if (!string.IsNullOrEmpty(header.UserMessage)) {
+        if (!string.IsNullOrEmpty(header.ObservationMessage)) {
             builder.AppendLine("### userMessage");
-            AppendFence(builder, "text", header.UserMessage);
+            AppendFence(builder, "text", header.ObservationMessage);
         }
 
-        if (header.AssistantMessage is not null) {
+        if (header.ActionMessage is not null) {
             builder.AppendLine("### assistantMessage");
-            AppendAction(builder, header.AssistantMessage);
+            AppendAction(builder, header.ActionMessage);
         }
     }
 

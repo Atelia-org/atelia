@@ -155,7 +155,7 @@ public sealed partial class ChatSessionEngine {
     private static bool MessageEndsWithAction(IHistoryMessage message) {
         return message switch {
             ActionMessage => true,
-            ContextHeader header => header.AssistantMessage is not null,
+            ContextHeader header => header.ActionMessage is not null,
             _ => false
         };
     }
@@ -287,8 +287,8 @@ public sealed partial class ChatSessionEngine {
                 case HistoryMessageKind.ContextHeader:
                     var header = (ContextHeader)original;
                     if (!string.IsNullOrWhiteSpace(header.SystemPromptFragment)) { messages.Add(new ObservationMessage(header.SystemPromptFragment)); }
-                    if (!string.IsNullOrWhiteSpace(header.UserMessage)) { messages.Add(new ObservationMessage(header.UserMessage)); }
-                    if (header.AssistantMessage is not null) { messages.Add(StripReasoningBlocks(header.AssistantMessage)); }
+                    if (!string.IsNullOrWhiteSpace(header.ObservationMessage)) { messages.Add(new ObservationMessage(header.ObservationMessage)); }
+                    if (header.ActionMessage is not null) { messages.Add(StripReasoningBlocks(header.ActionMessage)); }
                     break;
                 case HistoryMessageKind.Action:
                     var action = (ActionMessage)original;
