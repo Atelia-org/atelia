@@ -2,7 +2,7 @@
 
 > 状态：Todo / Epic
 > 建议执行者：分阶段执行；先由熟悉 StateJournal 的会话完成 04a，再由 ChatSession/Galatea 会话完成 04b/04c
-> 依赖：Task 01 / 02 / 03 / 03a / 04a 已完成；下一步做 Task 04b 的 ChatSession 恢复报告器。
+> 依赖：Task 01 / 02 / 03 / 03a / 04a / 04b / 04c 已完成；下一步进入 sidecar 驱动的 Markdown export / upgrade 工具。
 
 ## 背景
 
@@ -26,14 +26,20 @@
 
 构建一个离线恢复链路：扫描 ChatSession repo 的历史 heads，读取历史 commit 的 messages 序列，比较相邻 commit，推断无 anchor recap 的 source range，并输出报告或 sidecar。恢复结果必须标注为 best-effort，不应伪装成绝对事实。
 
+随着 04c 的实测，本链路也承担了每次提交的 legacy attribution：把 commit 保守归因为 `model-turn`、`compaction`、`revert-turn`、`update-system-prompt`、`redundant-save` 或 `other`。这只是旧数据恢复层；后续 ChatSession 应在提交时显式记录 commit purpose / commit type，避免新数据继续依赖推断。
+
 拆分任务：
 
 1. [`task-04a-statejournal-readonly-commit-checkout.md`](../done/task-04a-statejournal-readonly-commit-checkout.md)：StateJournal 层新增只读历史 commit checkout / load API，不创建 branch、不写 refs/reflog。
-2. [`task-04b-chat-session-legacy-recap-recovery-report.md`](task-04b-chat-session-legacy-recap-recovery-report.md)：ChatSession 层实现只读恢复报告器，识别疑似 compaction。
-3. [`task-04c-chat-session-recap-recovery-sidecar-export.md`](task-04c-chat-session-recap-recovery-sidecar-export.md)：把 04b 的 finding 输出为 sidecar JSON / Markdown，供导出器和人工审阅使用。
+2. [`task-04b-chat-session-legacy-recap-recovery-report.md`](../done/task-04b-chat-session-legacy-recap-recovery-report.md)：ChatSession 层实现只读恢复报告器，识别疑似 compaction。
+3. [`task-04c-chat-session-recap-recovery-sidecar-export.md`](../done/task-04c-chat-session-recap-recovery-sidecar-export.md)：把 04b 的 finding 输出为 JSON sidecar，供导出器和人工审阅使用。
 4. 可选后续：升级/迁移工具。默认不原地修改输入 repo。
 
-当前决策：先做 04a。不要为了 04b 在 ChatSession 层复制 repo 到 temp dir 再 `CreateBranch(fromCommit)`；那是可行但不够干净的备选方案。优先补 StateJournal 只读 API。
+当前决策：04a / 04b / 04c 已完成。不要为了恢复结果原地改写旧 repo；优先输出 sidecar / report，保持 best-effort 推断与原始数据分离。下一步应让 Markdown export 或升级工具读取 sidecar。
+
+新增决策：后续新写入的 ChatSession commit 应携带显式 commit metadata，例如 `model-turn`、`compaction`、`revert-turn`、`update-system-prompt`、`redundant-save`。legacy sidecar 中的 attribution 字段用于填补旧数据缺口，也可作为未来 metadata schema 的样例。
+
+后续实施任务：[`task-06-chat-session-explicit-commit-kind-metadata.md`](task-06-chat-session-explicit-commit-kind-metadata.md)。
 
 ## 推断思路
 
@@ -68,6 +74,8 @@
 - 对无法判定的 recap 明确标记 unresolved。
 - 不会修改输入 repo。
 - 有测试覆盖：普通 commit 不应误判为 compaction；rewind 或普通追加不应误判。
+- 有测试覆盖：普通 completion 归因为 `model-turn`；纯尾部回退归因为 `revert-turn`，且不输出 unresolved compaction finding。
+- 有测试覆盖：完整 message signature 序列不变但 root `systemPrompt` 变化的相邻 commit 归因为 `update-system-prompt`；二者都相同才归因为 `redundant-save`。
 
 ## 风险点
 

@@ -1014,6 +1014,365 @@ public sealed class FamilyChatServerTests {
     }
 
     [Fact]
+    public async Task ChatSessionLegacyRecapRecovery_Analyze_ReportsEffectiveTimelineSignatures() {
+        string repoDir = CreateTempDirectory();
+        try {
+            var client = new ScriptedCompletionClient("openai-chat-v1");
+            client.EnqueueText("first reply");
+            client.EnqueueText("second reply");
+
+            using (var engine = await ChatSessionEngine.CreateAsync(
+                repoDir,
+                new ChatSessionCreateOptions("system"),
+                new ChatSessionRuntime(
+                    client,
+                    "openai-chat/strict",
+                    "model-a",
+                    new ToolRegistry(Array.Empty<ITool>()).CreateSession()
+                )
+            )) {
+                await engine.SendMessageAsync("first");
+                await engine.SendMessageAsync("second");
+            }
+
+            var report = ChatSessionLegacyRecapRecovery.Analyze(repoDir);
+
+            Assert.Empty(report.Warnings);
+            Assert.Equal([0, 2, 4], report.Timeline.Select(static entry => entry.MessageCount).ToArray());
+            Assert.Equal([null, 2, 2], report.Timeline.Select(static entry => entry.MessageCountDeltaFromPrevious).ToArray());
+            Assert.Equal(
+                [ChatSessionCommitAttributionKind.InitialState, ChatSessionCommitAttributionKind.ModelTurn, ChatSessionCommitAttributionKind.ModelTurn],
+                report.Timeline.Select(static entry => entry.Attribution.Kind).ToArray()
+            );
+            Assert.Empty(report.Findings);
+
+            var latest = report.Timeline[^1];
+            Assert.Contains(latest.Newest3, static signature => signature.StartsWith("observation:", StringComparison.Ordinal));
+            Assert.Contains(latest.Newest3, static signature => signature.StartsWith("action:", StringComparison.Ordinal));
+            Assert.All(
+                latest.Newest3,
+                static signature => Assert.Matches("^[a-z-]+:[0-9a-f]{12}:", signature)
+            );
+
+            string text = ChatSessionLegacyRecapRecovery.FormatText(report);
+            Assert.Contains("## Timeline", text, StringComparison.Ordinal);
+            Assert.Contains("messageCountDeltaFromPrevious: +2", text, StringComparison.Ordinal);
+            Assert.Contains("second reply", text, StringComparison.Ordinal);
+        }
+        finally {
+            Directory.Delete(repoDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task ChatSessionLegacyRecapRecovery_Analyze_FindsCompactionFromTimelineSnapshots() {
+        string repoDir = CreateTempDirectory();
+        try {
+            var client = new ScriptedCompletionClient("openai-chat-v1");
+            client.EnqueueText(new string('A', 120));
+            client.EnqueueText("keep");
+            client.EnqueueText("summary");
+
+            int splitIndex;
+            using (var engine = await ChatSessionEngine.CreateAsync(
+                repoDir,
+                new ChatSessionCreateOptions("system"),
+                new ChatSessionRuntime(
+                    client,
+                    "openai-chat/strict",
+                    "model-a",
+                    new ToolRegistry(Array.Empty<ITool>()).CreateSession()
+                )
+            )) {
+                await engine.SendMessageAsync("first");
+                await engine.SendMessageAsync("second");
+                var compaction = await engine.CompactAsync("compact-system", "compact-prompt");
+                Assert.True(compaction.Applied);
+                splitIndex = compaction.SplitIndex;
+            }
+
+            var report = ChatSessionLegacyRecapRecovery.Analyze(repoDir);
+
+            Assert.Empty(report.Warnings);
+            Assert.Equal([0, 2, 4, 3], report.Timeline.Select(static entry => entry.MessageCount).ToArray());
+            Assert.Equal(-1, report.Timeline[^1].MessageCountDeltaFromPrevious);
+            Assert.Contains(report.Timeline[^1].Oldest3, static signature => signature.StartsWith("recap:", StringComparison.Ordinal));
+
+            var finding = Assert.Single(report.Findings);
+            Assert.Equal(ChatSessionRecapRecoveryConfidence.High, finding.Confidence);
+            Assert.Equal(0, finding.RecapIndex);
+            Assert.Equal(0, finding.SourceStartIndex);
+            Assert.Equal(splitIndex, finding.SourceEndExclusive);
+            Assert.Equal(4, finding.SourceMessageCountBefore);
+            Assert.Equal(2, finding.SuffixMatchCount);
+            Assert.Equal(ChatSessionCommitAttributionKind.Compaction, report.Timeline[^1].Attribution.Kind);
+
+            string text = ChatSessionLegacyRecapRecovery.FormatText(report);
+            Assert.Contains("confidence: High", text, StringComparison.Ordinal);
+            Assert.Contains("attribution: Compaction", text, StringComparison.Ordinal);
+            Assert.Contains("sourceRange: [0, 2)", text, StringComparison.Ordinal);
+        }
+        finally {
+            Directory.Delete(repoDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task ChatSessionLegacyRecapRecovery_Analyze_FindsCompactionAfterContextHeader() {
+        string repoDir = CreateTempDirectory();
+        try {
+            var client = new ScriptedCompletionClient("openai-chat-v1");
+            client.EnqueueText(new string('A', 120));
+            client.EnqueueText("keep");
+            client.EnqueueText("summary");
+
+            int splitIndex;
+            using (var engine = await ChatSessionEngine.CreateAsync(
+                repoDir,
+                new ChatSessionCreateOptions("system"),
+                new ChatSessionRuntime(
+                    client,
+                    "openai-chat/strict",
+                    "model-a",
+                    new ToolRegistry(Array.Empty<ITool>()).CreateSession()
+                )
+            )) {
+                engine.SetContextHeader(
+                    new ContextHeader(
+                        "header-system",
+                        "header-user",
+                        new ActionMessage([new ActionBlock.Text("header-assistant")])
+                    )
+                );
+                await engine.SendMessageAsync("first");
+                await engine.SendMessageAsync("second");
+                var compaction = await engine.CompactAsync("compact-system", "compact-prompt");
+                Assert.True(compaction.Applied);
+                splitIndex = compaction.SplitIndex;
+            }
+
+            var report = ChatSessionLegacyRecapRecovery.Analyze(repoDir);
+
+            Assert.Empty(report.Warnings);
+            Assert.True(report.Timeline[^1].MessageCount < report.Timeline[^2].MessageCount);
+
+            var finding = Assert.Single(report.Findings);
+            Assert.Equal(ChatSessionRecapRecoveryConfidence.High, finding.Confidence);
+            Assert.Equal(1, finding.RecapIndex);
+            Assert.Equal(0, finding.SourceStartIndex);
+            Assert.Equal(splitIndex, finding.SourceEndExclusive);
+            Assert.Equal(5, finding.SourceMessageCountBefore);
+            Assert.Equal(2, finding.SuffixMatchCount);
+
+            Assert.StartsWith("context-header:", report.Timeline[^1].Oldest3[0], StringComparison.Ordinal);
+            Assert.StartsWith("recap:", report.Timeline[^1].Oldest3[1], StringComparison.Ordinal);
+        }
+        finally {
+            Directory.Delete(repoDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task ChatSessionLegacyRecapRecovery_Analyze_ClassifiesTailTurnRemovalAsRevertTurn() {
+        string repoDir = CreateTempDirectory();
+        try {
+            var client = new ScriptedCompletionClient("openai-chat-v1");
+            client.EnqueueText("first reply");
+            client.EnqueueText("second reply");
+
+            using (var engine = await ChatSessionEngine.CreateAsync(
+                repoDir,
+                new ChatSessionCreateOptions("system"),
+                new ChatSessionRuntime(
+                    client,
+                    "openai-chat/strict",
+                    "model-a",
+                    new ToolRegistry(Array.Empty<ITool>()).CreateSession()
+                )
+            )) {
+                await engine.SendMessageAsync("first");
+                await engine.SendMessageAsync("second");
+                Assert.True(engine.TryRemoveLatestCompletedTurn(out var removed));
+                Assert.Equal(2, removed!.RemovedMessageCount);
+            }
+
+            var report = ChatSessionLegacyRecapRecovery.Analyze(repoDir);
+
+            Assert.Empty(report.Warnings);
+            Assert.Equal([0, 2, 4, 2], report.Timeline.Select(static entry => entry.MessageCount).ToArray());
+            Assert.Equal(ChatSessionCommitAttributionKind.RevertTurn, report.Timeline[^1].Attribution.Kind);
+            Assert.Equal(-2, report.Timeline[^1].MessageCountDeltaFromPrevious);
+            Assert.Empty(report.Findings);
+        }
+        finally {
+            Directory.Delete(repoDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task ChatSessionLegacyRecapRecovery_Analyze_ClassifiesSystemPromptChange() {
+        string repoDir = CreateTempDirectory();
+        try {
+            var client = new ScriptedCompletionClient("openai-chat-v1");
+            client.EnqueueText("first reply");
+
+            using (var engine = await ChatSessionEngine.CreateAsync(
+                repoDir,
+                new ChatSessionCreateOptions("system"),
+                new ChatSessionRuntime(
+                    client,
+                    "openai-chat/strict",
+                    "model-a",
+                    new ToolRegistry(Array.Empty<ITool>()).CreateSession()
+                )
+            )) {
+                await engine.SendMessageAsync("first");
+                Assert.True(engine.TrySyncSystemPrompt("updated system"));
+            }
+
+            var report = ChatSessionLegacyRecapRecovery.Analyze(repoDir);
+
+            Assert.Empty(report.Warnings);
+            Assert.Equal([0, 2, 2], report.Timeline.Select(static entry => entry.MessageCount).ToArray());
+            Assert.Equal(ChatSessionCommitAttributionKind.UpdateSystemPrompt, report.Timeline[^1].Attribution.Kind);
+            Assert.Equal(0, report.Timeline[^1].MessageCountDeltaFromPrevious);
+            Assert.Equal(report.Timeline[^2].Oldest3, report.Timeline[^1].Oldest3);
+            Assert.Equal(report.Timeline[^2].Newest3, report.Timeline[^1].Newest3);
+            Assert.Empty(report.Findings);
+        }
+        finally {
+            Directory.Delete(repoDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void ChatSessionRecoverySidecarExporter_ExportJson_WritesStableShapeAndWarnings() {
+        var report = new ChatSessionLegacyRecapRecoveryReport(
+            Timeline: [
+                new ChatSessionLegacyCommitTimelineEntry(
+                    Ordinal: 0,
+                    Commit: "commit-0",
+                    Source: BranchHistoryAddressSource.EffectiveHead,
+                    MessageCount: 1,
+                    MessageCountDeltaFromPrevious: null,
+                    Attribution: new ChatSessionCommitAttribution(ChatSessionCommitAttributionKind.ModelTurn, "中文归因"),
+                    Oldest3: ["observation:001122334455:中文正文"],
+                    Newest3: ["observation:001122334455:中文正文"]
+                ),
+                new ChatSessionLegacyCommitTimelineEntry(
+                    Ordinal: 1,
+                    Commit: "commit-1",
+                    Source: BranchHistoryAddressSource.EffectiveParent,
+                    MessageCount: 1,
+                    MessageCountDeltaFromPrevious: 0,
+                    Attribution: new ChatSessionCommitAttribution(ChatSessionCommitAttributionKind.RedundantSave, "same messages"),
+                    Oldest3: ["observation:001122334455:中文正文"],
+                    Newest3: ["observation:001122334455:中文正文"]
+                ),
+            ],
+            Findings: [],
+            Warnings: ["sample warning"]
+        );
+
+        string json = ChatSessionRecoverySidecarExporter.ExportJson(report, branchName: "branch-a");
+
+        using var document = JsonDocument.Parse(json);
+        var root = document.RootElement;
+        Assert.Equal("atelia.chat-session.recap-recovery-sidecar.v1", root.GetProperty("schema").GetString());
+        Assert.False(root.TryGetProperty("generatedAtUtc", out _));
+        Assert.Equal("branch-a", root.GetProperty("branchName").GetString());
+        Assert.Equal("sample warning", root.GetProperty("warnings")[0].GetString());
+
+        var timelineEntry = root.GetProperty("timeline")[0];
+        Assert.Equal("effective-head", timelineEntry.GetProperty("source").GetString());
+        Assert.Equal("model-turn", timelineEntry.GetProperty("attribution").GetProperty("kind").GetString());
+        Assert.Equal("中文归因", timelineEntry.GetProperty("attribution").GetProperty("reason").GetString());
+        Assert.Equal("observation:001122334455:中文正文", timelineEntry.GetProperty("oldest3")[0].GetString());
+        Assert.Equal("redundant-save", root.GetProperty("timeline")[1].GetProperty("attribution").GetProperty("kind").GetString());
+        Assert.Contains("\n  \"schema\"", json, StringComparison.Ordinal);
+        Assert.Contains("中文正文", json, StringComparison.Ordinal);
+        Assert.DoesNotContain("\\u4E2D", json, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void ChatSessionRecoverySidecarExporter_ExportJson_MarksUnresolvedFindingExplicitly() {
+        var report = new ChatSessionLegacyRecapRecoveryReport(
+            Timeline: [],
+            Findings: [
+                new ChatSessionLegacyRecapRecoveryFinding(
+                    OldHead: "old-head",
+                    NewHead: "new-head",
+                    RecapIndex: null,
+                    SourceStartIndex: 0,
+                    SourceEndExclusive: 5,
+                    SourceMessageCountBefore: 5,
+                    SuffixMatchCount: 0,
+                    Confidence: ChatSessionRecapRecoveryConfidence.Unresolved,
+                    Reason: "not enough suffix evidence"
+                ),
+            ],
+            Warnings: []
+        );
+
+        string json = ChatSessionRecoverySidecarExporter.ExportJson(report);
+
+        using var document = JsonDocument.Parse(json);
+        var finding = document.RootElement.GetProperty("findings")[0];
+        Assert.Equal("unresolved", finding.GetProperty("kind").GetString());
+        Assert.Equal("unresolved", finding.GetProperty("confidence").GetString());
+        Assert.Equal(JsonValueKind.Null, finding.GetProperty("recapIndex").ValueKind);
+        Assert.Equal(5, finding.GetProperty("sourceRange").GetProperty("messageCountBefore").GetInt32());
+    }
+
+    [Fact]
+    public async Task ChatSessionRecoverySidecarExporter_WriteJsonFile_ExportsActualRecoveryReport() {
+        string repoDir = CreateTempDirectory();
+        string outputDir = CreateTempDirectory();
+        try {
+            var client = new ScriptedCompletionClient("openai-chat-v1");
+            client.EnqueueText(new string('A', 120));
+            client.EnqueueText("keep");
+            client.EnqueueText("summary");
+
+            using (var engine = await ChatSessionEngine.CreateAsync(
+                repoDir,
+                new ChatSessionCreateOptions("system"),
+                new ChatSessionRuntime(
+                    client,
+                    "openai-chat/strict",
+                    "model-a",
+                    new ToolRegistry(Array.Empty<ITool>()).CreateSession()
+                )
+            )) {
+                await engine.SendMessageAsync("first");
+                await engine.SendMessageAsync("second");
+                var compaction = await engine.CompactAsync("compact-system", "compact-prompt");
+                Assert.True(compaction.Applied);
+            }
+
+            var report = ChatSessionLegacyRecapRecovery.Analyze(repoDir);
+            string outputPath = Path.Combine(outputDir, "chat-session-recap-recovery.sidecar.json");
+
+            ChatSessionRecoverySidecarExporter.WriteJsonFile(report, outputPath);
+
+            string json = File.ReadAllText(outputPath);
+            Assert.DoesNotContain(repoDir, json, StringComparison.Ordinal);
+            using var document = JsonDocument.Parse(json);
+            var finding = document.RootElement.GetProperty("findings")[0];
+            Assert.Equal("inferred", finding.GetProperty("kind").GetString());
+            Assert.Equal("high", finding.GetProperty("confidence").GetString());
+            Assert.Equal(2, finding.GetProperty("sourceRange").GetProperty("endExclusive").GetInt32());
+            var timeline = document.RootElement.GetProperty("timeline");
+            Assert.Equal("compaction", timeline[timeline.GetArrayLength() - 1].GetProperty("attribution").GetProperty("kind").GetString());
+            Assert.Matches("^[a-z-]+:[0-9a-f]{12}:", timeline[timeline.GetArrayLength() - 1].GetProperty("oldest3")[0].GetString());
+        }
+        finally {
+            Directory.Delete(repoDir, recursive: true);
+            Directory.Delete(outputDir, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task ChatSession_CompactAsync_PreservesLeadingContextHeader() {
         string repoDir = CreateTempDirectory();
         try {
