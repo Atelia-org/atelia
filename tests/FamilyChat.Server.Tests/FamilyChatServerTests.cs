@@ -1660,6 +1660,90 @@ public sealed class FamilyChatServerTests {
         }
     }
 
+        [Fact]
+        public void ChatSessionLegacyUpgradeMarkdownExporter_ExportMarkdownFromJson_WritesSearchableEventFences() {
+                const string json = """
+                        {
+                            "schema": "atelia.chat-session.legacy-upgrade-export.v1",
+                            "branchName": "main",
+                            "timeline": [],
+                            "events": [
+                                {
+                                    "ordinal": 1,
+                                    "commit": "abcdef123456",
+                                    "kind": "model-turn",
+                                    "commitMetadata": {
+                                        "commitKind": "model-turn",
+                                        "commitReason": "appends turn",
+                                        "metadataSource": "legacy-inferred"
+                                    },
+                                    "appendedMessages": [
+                                        {
+                                            "kind": "observation",
+                                            "content": "hello ~~~~~~ world"
+                                        }
+                                    ]
+                                }
+                            ],
+                            "warnings": []
+                        }
+                        """;
+
+                string markdown = ChatSessionLegacyUpgradeMarkdownExporter.ExportMarkdownFromJson(json);
+
+                Assert.Contains("# ChatSession Legacy Upgrade Event Source", markdown, StringComparison.Ordinal);
+                Assert.Contains("## 00001 model-turn abcdef123456", markdown, StringComparison.Ordinal);
+                Assert.Contains("- commitReason: appends turn", markdown, StringComparison.Ordinal);
+                Assert.Contains("~~~~~~~json", markdown, StringComparison.Ordinal);
+                Assert.Contains("\"appendedMessages\"", markdown, StringComparison.Ordinal);
+                Assert.Contains("hello ~~~~~~ world", markdown, StringComparison.Ordinal);
+                Assert.DoesNotContain("\"commitMetadata\"", markdown, StringComparison.Ordinal);
+        }
+
+        [Fact]
+        public void ChatSessionLegacyUpgradeMarkdownExporter_WriteMarkdownFileFromJsonFile_CreatesFile() {
+                string tempDir = CreateTempDirectory();
+                try {
+                        string inputPath = Path.Combine(tempDir, "chat-session-legacy-upgrade-export.json");
+                        string outputPath = Path.Combine(tempDir, "nested", "chat-session-legacy-upgrade-export.md");
+                        File.WriteAllText(
+                                inputPath,
+                                """
+                                {
+                                    "schema": "atelia.chat-session.legacy-upgrade-export.v1",
+                                    "branchName": "main",
+                                    "events": [
+                                        {
+                                            "ordinal": 0,
+                                            "commit": "000000000001",
+                                            "kind": "initial-state",
+                                            "commitMetadata": {
+                                                "commitKind": "initial-state",
+                                                "commitReason": "created session",
+                                                "metadataSource": "explicit"
+                                            },
+                                            "root": {
+                                                "systemPrompt": "system"
+                                            },
+                                            "messages": []
+                                        }
+                                    ],
+                                    "warnings": []
+                                }
+                                """
+                        );
+
+                        ChatSessionLegacyUpgradeMarkdownExporter.WriteMarkdownFileFromJsonFile(inputPath, outputPath);
+
+                        string markdown = File.ReadAllText(outputPath);
+                        Assert.Contains("## 00000 initial-state 000000000001", markdown, StringComparison.Ordinal);
+                        Assert.Contains("\"root\"", markdown, StringComparison.Ordinal);
+                }
+                finally {
+                        Directory.Delete(tempDir, recursive: true);
+                }
+        }
+
     [Fact]
     public async Task ChatSessionLegacyEventSourceImporter_Import_ReplaysCurrentMessagesAndExplicitCommitMetadata() {
         string sourceRepoDir = CreateTempDirectory();
