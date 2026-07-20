@@ -1,4 +1,5 @@
 using Atelia.ChatSession;
+using Atelia.ChatSession.Memory;
 using Atelia.Completion;
 using Atelia.Completion.Abstractions;
 using Atelia.Completion.Tools;
@@ -6,7 +7,7 @@ using Atelia.Completion.Tools;
 namespace ChatSessionBacktestCli;
 
 internal static class RollingSummaryReplayDefaults {
-    public const string MaintainerId = "rolling-summary.memory-block";
+    public const string PresetName = "rolling-summary";
 
     public const string SystemPrompt = """
         You maintain one durable rolling summary block for a long-running chat session.
@@ -32,9 +33,7 @@ internal sealed class RollingSummaryReplayRunner {
     private readonly ChatSessionLegacyEventSource _eventSource;
     private readonly ICompletionClient _client;
     private readonly CompletionConnectionConfig _connection;
-    private readonly MemoryPackBlockPath _target;
-    private readonly string _systemPrompt;
-    private readonly string _userPrompt;
+    private readonly ReplayMemoryMaintainerProfile _profile;
     private readonly ToolRegistry _toolRegistry;
     private readonly string _callLogDir;
     private readonly int _thresholdTokens;
@@ -46,9 +45,7 @@ internal sealed class RollingSummaryReplayRunner {
         ChatSessionLegacyEventSource eventSource,
         ICompletionClient client,
         CompletionConnectionConfig connection,
-        MemoryPackBlockPath target,
-        string systemPrompt,
-        string userPrompt,
+        ReplayMemoryMaintainerProfile profile,
         ToolRegistry toolRegistry,
         string callLogDir,
         int thresholdTokens,
@@ -57,9 +54,7 @@ internal sealed class RollingSummaryReplayRunner {
         _eventSource = eventSource ?? throw new ArgumentNullException(nameof(eventSource));
         _client = client ?? throw new ArgumentNullException(nameof(client));
         _connection = connection ?? throw new ArgumentNullException(nameof(connection));
-        _target = target ?? throw new ArgumentNullException(nameof(target));
-        _systemPrompt = systemPrompt ?? throw new ArgumentNullException(nameof(systemPrompt));
-        _userPrompt = userPrompt ?? throw new ArgumentNullException(nameof(userPrompt));
+        _profile = profile ?? throw new ArgumentNullException(nameof(profile));
         _toolRegistry = toolRegistry ?? throw new ArgumentNullException(nameof(toolRegistry));
         _callLogDir = string.IsNullOrWhiteSpace(callLogDir) ? throw new ArgumentException("Call log directory cannot be empty.", nameof(callLogDir)) : callLogDir;
         _thresholdTokens = thresholdTokens;
@@ -87,7 +82,7 @@ internal sealed class RollingSummaryReplayRunner {
 
             int beforeMaxCallId = RollingSummaryCallLogUtil.GetMaxCallId(_callLogDir);
             string callLogPath = Path.Combine(Path.GetFullPath(_callLogDir), $"{beforeMaxCallId + 1:0000}.json");
-            var oldBlock = _memoryPack.TryGetBlock(_target, out var found) ? found : new MemoryPackBlock(string.Empty);
+            var oldBlock = _memoryPack.TryGetBlock(_profile.Target, out var found) ? found : new MemoryPackBlock(string.Empty);
             var fragment = _activeHistory.Take(splitIndex).ToArray();
             var recentHistory = new RecentHistorySlice(
                 ContextHeaderSnapshot.FromRenderedMemoryPack(_memoryPack.Render()),
@@ -104,32 +99,24 @@ internal sealed class RollingSummaryReplayRunner {
                     Command: "replay-rolling-summary",
                     EpochIndex: epochIndex,
                     EventOrdinal: replayEvent.Ordinal,
-                    MaintainerId: RollingSummaryReplayDefaults.MaintainerId,
-                    TargetCarrier: MemoryPackCarrierTokens.ToStorageToken(_target.Carrier),
-                    TargetBlockId: _target.BlockKey
+                    MaintainerId: _profile.MaintainerId,
+                    TargetCarrier: MemoryPackCarrierTokens.ToStorageToken(_profile.Target.Carrier),
+                    TargetBlockId: _profile.Target.BlockKey
                 )
             );
-            var maintainer = new CompletionMemoryBlockMaintainer(
-                RollingSummaryReplayDefaults.MaintainerId,
-                _target,
-                loggingClient,
-                _connection.ModelId,
-                _systemPrompt,
-                _userPrompt,
-                _toolRegistry.CreateSession()
-            );
+            var maintainer = _profile.CreateMaintainer(loggingClient, _connection.ModelId, _toolRegistry.CreateSession());
 
             MemoryBlockMaintenanceResult? result = null;
             string? newBlockText = null;
             Exception? exception = null;
             try {
                 result = await maintainer.MaintainAsync(
-                    new MemoryBlockMaintenanceRequest(recentHistory, _target, oldBlock),
+                    new MemoryBlockMaintenanceRequest(recentHistory, _profile.Target, oldBlock),
                     ct
                 ).ConfigureAwait(false);
-                newBlockText = RollingSummaryTextUtil.NormalizeBlockText(result.NewBlock.Text);
+                newBlockText = MemoryBlockTextNormalizer.NormalizeBlockText(result.NewBlock.Text);
                 var draft = new MemoryPackDraft(_memoryPack);
-                draft.UpsertBlock(_target, newBlockText);
+                draft.UpsertBlock(_profile.Target, newBlockText);
                 _memoryPack = draft.Build();
                 _activeHistory.RemoveRange(0, splitIndex);
             }
@@ -145,7 +132,7 @@ internal sealed class RollingSummaryReplayRunner {
                 estimatedTokens,
                 splitIndex,
                 _activeHistory.Count,
-                _target,
+                _profile,
                 oldBlock.Text,
                 newBlockText,
                 callLogPath,
@@ -183,26 +170,12 @@ internal sealed class RollingSummaryReplayRunner {
     }
 }
 
-internal static class RollingSummaryTextUtil {
-    public static string NormalizeBlockText(string text) {
-        var trimmed = (text ?? string.Empty).Trim();
-        if (!trimmed.StartsWith("```", StringComparison.Ordinal)) { return trimmed; }
-
-        int firstLineEnd = trimmed.IndexOf('\n', StringComparison.Ordinal);
-        if (firstLineEnd < 0) { return trimmed; }
-
-        string openingFence = trimmed[..firstLineEnd].Trim();
-        if (!openingFence.StartsWith("```", StringComparison.Ordinal)) { return trimmed; }
-
-        int closingFenceStart = trimmed.LastIndexOf("```", StringComparison.Ordinal);
-        if (closingFenceStart <= firstLineEnd) { return trimmed; }
-
-        string trailing = trimmed[(closingFenceStart + 3)..].Trim();
-        if (trailing.Length > 0) { return trimmed; }
-
-        return trimmed[(firstLineEnd + 1)..closingFenceStart].Trim();
-    }
-}
+internal sealed record ReplayMemoryMaintainerProfile(
+    string PresetName,
+    string MaintainerId,
+    MemoryPackBlockPath Target,
+    Func<ICompletionClient, string, ToolSession, IMemoryBlockMaintainer> CreateMaintainer
+);
 
 internal static class RollingSummarySplitPolicy {
     public static int FindHalfContextSplitPoint(IReadOnlyList<IHistoryMessage> messages) {
@@ -249,6 +222,7 @@ internal static class RollingSummaryCallLogUtil {
 
 internal sealed record RollingSummaryReplayRecord(
     string Schema,
+    string PresetName,
     int EpochIndex,
     int EventOrdinal,
     string? EventCommit,
@@ -276,7 +250,7 @@ internal sealed record RollingSummaryReplayRecord(
         int estimatedTokens,
         int splitIndex,
         int remainingActiveMessageCount,
-        MemoryPackBlockPath target,
+        ReplayMemoryMaintainerProfile profile,
         string? oldBlockText,
         string? newBlockText,
         string callLogPath,
@@ -285,6 +259,7 @@ internal sealed record RollingSummaryReplayRecord(
     )
         => new(
             Schema: "atelia.chat-session.rolling-summary-backtest.v1",
+            PresetName: profile.PresetName,
             EpochIndex: epochIndex,
             EventOrdinal: replayEvent.Ordinal,
             EventCommit: replayEvent.Commit,
@@ -294,8 +269,8 @@ internal sealed record RollingSummaryReplayRecord(
             SplitIndex: splitIndex,
             SlidingOutMessageCount: splitIndex,
             RemainingActiveMessageCount: remainingActiveMessageCount,
-            TargetCarrier: MemoryPackCarrierTokens.ToStorageToken(target.Carrier),
-            TargetBlockId: target.BlockKey,
+            TargetCarrier: MemoryPackCarrierTokens.ToStorageToken(profile.Target.Carrier),
+            TargetBlockId: profile.Target.BlockKey,
             OldBlock: BacktestOutputUtil.CreateBlockPreview(oldBlockText),
             NewBlock: BacktestOutputUtil.CreateBlockPreview(newBlockText),
             CallLogPath: callLogPath,

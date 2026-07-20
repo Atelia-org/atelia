@@ -2,6 +2,7 @@ using System.Text;
 using System.Text.Encodings.Web;
 using System.Text.Json;
 using Atelia.ChatSession;
+using Atelia.ChatSession.Memory;
 using Atelia.Completion;
 using Atelia.Completion.Abstractions;
 using Atelia.Completion.Tools;
@@ -12,6 +13,7 @@ internal static partial class Program {
     private const int DefaultThresholdTokens = 12_000;
     private const string DefaultLlmSmokeCallLogDir = "gitignore/backtest/llm-smoke-calls";
     private const string DefaultRollingSummaryCallLogDir = "gitignore/backtest/rolling-summary-calls";
+    private const string DefaultRollingSummaryMaintainerId = "rolling-summary.memory-block";
     private const string DefaultRollingSummaryBlockId = "session.rolling-summary";
 
     private static readonly JsonSerializerOptions JsonOptions = new() {
@@ -167,10 +169,9 @@ internal static partial class Program {
         var callLogDir = options.Get("call-log-dir") ?? DefaultRollingSummaryCallLogDir;
         var thresholdTokens = options.GetInt("threshold-tokens", DefaultThresholdTokens);
         var maxEpochs = options.GetInt("max-epochs", int.MaxValue);
-        var targetCarrier = ParseCarrier(options.Get("target-carrier"), MemoryPackCarrier.Observation);
-        var targetBlockId = options.Get("target-block") ?? DefaultRollingSummaryBlockId;
-        var systemPrompt = ReadPromptOrDefault(options.Get("system-prompt"), RollingSummaryReplayDefaults.SystemPrompt);
-        var userPrompt = ReadPromptOrDefault(options.Get("prompt"), RollingSummaryReplayDefaults.UserPrompt);
+        var preset = options.Get("preset") ?? RollingSummaryReplayDefaults.PresetName;
+        var systemPromptOverride = ReadPromptOrNull(options.Get("system-prompt"));
+        var userPromptOverride = ReadPromptOrNull(options.Get("prompt"));
 
         var eventSource = ChatSessionLegacyEventSourceReader.Read(inputPath);
         var connections = CompletionConnectionConfigLoader.LoadFile(connectionsPath);
@@ -180,7 +181,7 @@ internal static partial class Program {
 
         var connection = registry.Resolve(requestedConnectionId);
         var client = registry.GetClient(connection.Id);
-        var target = new MemoryPackBlockPath(targetCarrier, targetBlockId);
+        var profile = CreateReplayMaintainerProfile(options, preset, systemPromptOverride, userPromptOverride);
         var toolRegistry = new ToolRegistry(Array.Empty<ITool>());
 
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(outputPath)) ?? ".");
@@ -190,9 +191,7 @@ internal static partial class Program {
             eventSource,
             client,
             connection,
-            target,
-            systemPrompt,
-            userPrompt,
+            profile,
             toolRegistry,
             callLogDir,
             thresholdTokens,
@@ -210,6 +209,7 @@ internal static partial class Program {
 
         Console.WriteLine($"records: {recordCount}");
         Console.WriteLine($"connection: {connection.Id}");
+        Console.WriteLine($"preset: {profile.PresetName}");
         Console.WriteLine($"output: {outputPath}");
         Console.WriteLine($"callLogDir: {Path.GetFullPath(callLogDir)}");
         return runner.HadFailure ? 1 : 0;
@@ -281,18 +281,78 @@ internal static partial class Program {
         Console.WriteLine("  inspect --input <path>");
         Console.WriteLine("  llm-smoke --connections <path> [--connection <id>] [--call-log-dir <dir>] [--message <text>]");
         Console.WriteLine("  replay-pattern-count --input <path> --output <jsonl> [--report-md <path>] [--threshold-tokens <n>] [--respect-original-compaction]");
-        Console.WriteLine("  replay-rolling-summary --input <path> --output <jsonl> --connections <path> [--connection <id>] [--call-log-dir <dir>] [--threshold-tokens <n>] [--max-epochs <n>] [--system-prompt <path>] [--prompt <path>] [--target-carrier system|observation|action] [--target-block <id>]");
+        Console.WriteLine("  replay-rolling-summary --input <path> --output <jsonl> --connections <path> [--preset rolling-summary|world-understanding|first-person-autobiography] [--connection <id>] [--call-log-dir <dir>] [--threshold-tokens <n>] [--max-epochs <n>] [--system-prompt <path>] [--prompt <path>] [--target-carrier system|observation|action] [--target-block <id>]");
     }
 
-    private static string ReadPromptOrDefault(string? path, string defaultPrompt)
-        => string.IsNullOrWhiteSpace(path) ? defaultPrompt : File.ReadAllText(path, Encoding.UTF8);
+    private static string? ReadPromptOrNull(string? path)
+        => string.IsNullOrWhiteSpace(path) ? null : File.ReadAllText(path, Encoding.UTF8);
+
+    private static ReplayMemoryMaintainerProfile CreateReplayMaintainerProfile(
+        CliOptions options,
+        string preset,
+        string? systemPromptOverride,
+        string? userPromptOverride
+    ) {
+        switch (preset) {
+            case RollingSummaryReplayDefaults.PresetName:
+                var targetCarrier = ParseCarrier(options.Get("target-carrier"), MemoryPackCarrier.Observation);
+                var targetBlockId = options.Get("target-block") ?? DefaultRollingSummaryBlockId;
+                var target = new MemoryPackBlockPath(targetCarrier, targetBlockId);
+                var systemPrompt = systemPromptOverride ?? RollingSummaryReplayDefaults.SystemPrompt;
+                var userPrompt = userPromptOverride ?? RollingSummaryReplayDefaults.UserPrompt;
+                return new ReplayMemoryMaintainerProfile(
+                    RollingSummaryReplayDefaults.PresetName,
+                    DefaultRollingSummaryMaintainerId,
+                    target,
+                    (completionClient, modelId, toolSession) => new CompletionMemoryBlockMaintainer(
+                        DefaultRollingSummaryMaintainerId,
+                        target,
+                        completionClient,
+                        modelId,
+                        systemPrompt,
+                        userPrompt,
+                        toolSession
+                    )
+                );
+
+            case "world-understanding":
+                return new ReplayMemoryMaintainerProfile(
+                    preset,
+                    WorldUnderstandingMemoryMaintainer.DefaultId,
+                    RolePlayMemoryBlockPaths.WorldUnderstanding,
+                    (completionClient, modelId, toolSession) => new WorldUnderstandingMemoryMaintainer(
+                        completionClient,
+                        modelId,
+                        toolSession,
+                        systemPromptOverride,
+                        userPromptOverride
+                    )
+                );
+
+            case "first-person-autobiography":
+                return new ReplayMemoryMaintainerProfile(
+                    preset,
+                    FirstPersonAutobiographyMemoryMaintainer.DefaultId,
+                    RolePlayMemoryBlockPaths.FirstPersonAutobiography,
+                    (completionClient, modelId, toolSession) => new FirstPersonAutobiographyMemoryMaintainer(
+                        completionClient,
+                        modelId,
+                        toolSession,
+                        systemPromptOverride,
+                        userPromptOverride
+                    )
+                );
+
+            default:
+                throw new ArgumentException($"Unsupported replay memory preset '{preset}'.");
+        }
+    }
 
     private static MemoryPackCarrier ParseCarrier(string? text, MemoryPackCarrier defaultCarrier) {
         if (string.IsNullOrWhiteSpace(text)) { return defaultCarrier; }
         if (MemoryPackCarrierTokens.TryParseStorageToken(text, out var carrier)) { return carrier; }
         throw new ArgumentException($"Unsupported memory pack carrier '{text}'. Expected system, observation, or action.");
     }
-
 }
 
 internal sealed class CliOptions {
