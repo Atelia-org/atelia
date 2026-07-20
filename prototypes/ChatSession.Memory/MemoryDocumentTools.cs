@@ -11,21 +11,28 @@ public static class MemoryDocumentTools {
     public const string ReadToolName = "memory_document_read";
     public const string InsertToolName = "memory_document_insert";
     public const string ReplaceToolName = "memory_document_replace";
+    public const string ReplaceRangeToolName = "memory_document_replace_range";
     public const string DeleteToolName = "memory_document_delete";
-    public const string FinishToolName = "memory_document_finish_recording";
+    public const string RecordingFinishToolName = "memory_document_finish_recording";
+    public const string CompressionFinishToolName = "memory_document_finish_compression";
 
-    public static ToolSession CreateSession(MemoryDocumentEditingSession editingSession) {
+    public static ToolSession CreateSession(
+        MemoryDocumentEditingSession editingSession,
+        MemoryDocumentFinishToolProfile finishProfile
+    ) {
         ArgumentNullException.ThrowIfNull(editingSession);
+        ArgumentNullException.ThrowIfNull(finishProfile);
 
         var host = new MemoryDocumentToolHost(editingSession);
         ITool[] tools = [
             MethodToolWrapper.FromMethod(host, typeof(MemoryDocumentToolHost).GetMethod(nameof(MemoryDocumentToolHost.ReadAsync))!),
             MethodToolWrapper.FromMethod(host, typeof(MemoryDocumentToolHost).GetMethod(nameof(MemoryDocumentToolHost.InsertAsync))!),
             MethodToolWrapper.FromMethod(host, typeof(MemoryDocumentToolHost).GetMethod(nameof(MemoryDocumentToolHost.ReplaceAsync))!),
+            MethodToolWrapper.FromMethod(host, typeof(MemoryDocumentToolHost).GetMethod(nameof(MemoryDocumentToolHost.ReplaceRangeAsync))!),
             MethodToolWrapper.FromMethod(host, typeof(MemoryDocumentToolHost).GetMethod(nameof(MemoryDocumentToolHost.DeleteAsync))!),
-            ArtifactToolWrapper<FinishRecordingArtifact>.Create(
-                FinishToolName,
-                (artifact, _) => host.Finish(artifact)
+            ArtifactToolWrapper<FinishMemoryDocumentArtifact>.Create(
+                finishProfile.ToolName,
+                (artifact, _) => host.Finish(artifact, finishProfile)
             )
         ];
         return new ToolRegistry(tools).CreateSession();
@@ -67,6 +74,17 @@ public static class MemoryDocumentTools {
             return FromEditResult(editingSession.Replace(input.Anchor, input.Content));
         }
 
+        [Tool(ReplaceRangeToolName, "Condense a consecutive inclusive range of memory blocks into one replacement block. The first block ID remains live.")]
+        public ValueTask<ToolExecuteResult> ReplaceRangeAsync(
+            ReplaceMemoryBlockRangeInput input,
+            ToolExecutionContext context,
+            CancellationToken cancellationToken
+        ) {
+            _ = context;
+            cancellationToken.ThrowIfCancellationRequested();
+            return FromEditResult(editingSession.ReplaceRange(input.StartAnchor, input.EndAnchor, input.Content));
+        }
+
         [Tool(DeleteToolName, "Delete one memory block by stable block ID/head/tail anchor. Other live block IDs remain unchanged.")]
         public ValueTask<ToolExecuteResult> DeleteAsync(
             DeleteMemoryBlockInput input,
@@ -78,18 +96,26 @@ public static class MemoryDocumentTools {
             return FromEditResult(editingSession.Delete(input.Anchor));
         }
 
-        public ValidateResult Finish(FinishRecordingArtifact artifact) {
+        public ValidateResult Finish(
+            FinishMemoryDocumentArtifact artifact,
+            MemoryDocumentFinishToolProfile finishProfile
+        ) {
             if (!TryParseCompletionStatus(artifact.Status, out var status)) { return new ValidateResult(false, "status must be exactly 'changed' or 'no-change'."); }
+
+            if (finishProfile.Validate is not null) {
+                var validation = finishProfile.Validate(editingSession, artifact);
+                if (!validation.IsValid) { return validation; }
+            }
 
             var result = editingSession.Finish(status);
             return new ValidateResult(result.IsSuccess, result.Message);
         }
 
-        private static ValueTask<ToolExecuteResult> FromEditResult(MemoryDocumentEditResult result)
+        private ValueTask<ToolExecuteResult> FromEditResult(MemoryDocumentEditResult result)
             => ValueTask.FromResult(
                 ToolExecuteResult.FromText(
                     result.IsSuccess ? ToolExecutionStatus.Success : ToolExecutionStatus.Failed,
-                    result.Message
+                    $"{result.Message}\nCurrent estimated document tokens: {MemoryDocumentTokenEstimator.Estimate(editingSession.RenderDocumentText())}."
                 )
             );
 
@@ -112,14 +138,14 @@ public static class MemoryDocumentTools {
 
         private static bool TryParseCompletionStatus(
             string text,
-            out MemoryDocumentRecordingCompletionStatus status
+            out MemoryDocumentCompletionStatus status
         ) {
             switch (text) {
                 case "changed":
-                    status = MemoryDocumentRecordingCompletionStatus.Changed;
+                    status = MemoryDocumentCompletionStatus.Changed;
                     return true;
                 case "no-change":
-                    status = MemoryDocumentRecordingCompletionStatus.NoChange;
+                    status = MemoryDocumentCompletionStatus.NoChange;
                     return true;
                 default:
                     status = default;
@@ -128,6 +154,11 @@ public static class MemoryDocumentTools {
         }
     }
 }
+
+public sealed record MemoryDocumentFinishToolProfile(
+    string ToolName,
+    Func<MemoryDocumentEditingSession, FinishMemoryDocumentArtifact, ValidateResult>? Validate = null
+);
 
 [Description("Read a window of the current memory document.")]
 public sealed record class ReadMemoryBlocksInput(
@@ -166,6 +197,20 @@ public sealed record class ReplaceMemoryBlockInput(
     string Content
 );
 
+[Description("Condense a consecutive inclusive block range into one replacement block.")]
+public sealed record class ReplaceMemoryBlockRangeInput(
+    [property: Description("First block anchor in the inclusive range.")]
+    [property: JsonPropertyName("startAnchor")]
+    string StartAnchor,
+    [property: Description("Last block anchor in the inclusive range. Must not precede startAnchor.")]
+    [property: JsonPropertyName("endAnchor")]
+    string EndAnchor,
+    [property: Description("Complete condensed content replacing the range. Do not include block-ID display markers.")]
+    [property: JsonPropertyName("content")]
+    [property: MinLength(1)]
+    string Content
+);
+
 [Description("Delete one block from the current memory document.")]
 public sealed record class DeleteMemoryBlockInput(
     [property: Description("Target anchor: a visible decimal block ID, 'head', or 'tail'.")]
@@ -173,8 +218,8 @@ public sealed record class DeleteMemoryBlockInput(
     string Anchor
 );
 
-[Description("Finish autobiographical recording after all edits. This tool must be called exactly once and by itself.")]
-public sealed class FinishRecordingArtifact {
+[Description("Finish memory document maintenance after all edits. This tool must be called exactly once and by itself.")]
+public sealed class FinishMemoryDocumentArtifact {
     [Description("Use 'changed' after one or more successful edits, or 'no-change' when no edit was needed.")]
     [JsonPropertyName("status")]
     [Required]

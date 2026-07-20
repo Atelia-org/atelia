@@ -13,6 +13,7 @@ internal static partial class Program {
     private const int DefaultThresholdTokens = 12_000;
     private const string DefaultLlmSmokeCallLogDir = "gitignore/backtest/llm-smoke-calls";
     private const string DefaultRollingSummaryCallLogDir = "gitignore/backtest/rolling-summary-calls";
+    private const string DefaultAutobiographicalCompressionCallLogDir = "gitignore/backtest/autobiographical-compression-calls";
     private const string DefaultRollingSummaryMaintainerId = "rolling-summary.memory-block";
     private const string DefaultRollingSummaryBlockId = "session.rolling-summary";
 
@@ -34,6 +35,7 @@ internal static partial class Program {
             return command switch {
                 "inspect" => RunInspect(options),
                 "llm-smoke" => RunLlmSmokeAsync(options).GetAwaiter().GetResult(),
+                "compress-autobiography" => RunCompressAutobiographyAsync(options).GetAwaiter().GetResult(),
                 "replay-pattern-count" => RunReplayPatternCount(options),
                 "replay-rolling-summary" => RunReplayRollingSummaryAsync(options).GetAwaiter().GetResult(),
                 _ => Fail($"Unknown command '{command}'.")
@@ -215,6 +217,92 @@ internal static partial class Program {
         return runner.HadFailure ? 1 : 0;
     }
 
+    private static async Task<int> RunCompressAutobiographyAsync(CliOptions options) {
+        var inputPath = options.Require("input");
+        var outputPath = options.Require("output");
+        var connectionsPath = options.Require("connections");
+        var targetTokens = options.RequirePositiveInt("target-tokens");
+        var requestedConnectionId = options.Get("connection");
+        var callLogDir = options.Get("call-log-dir") ?? DefaultAutobiographicalCompressionCallLogDir;
+        var systemPromptOverride = ReadPromptOrNull(options.Get("system-prompt"));
+        var userPromptOverride = ReadPromptOrNull(options.Get("prompt"));
+        string autobiography = File.ReadAllText(inputPath, Encoding.UTF8);
+
+        var connections = CompletionConnectionConfigLoader.LoadFile(connectionsPath);
+        using var registry = new CompletionConnectionRegistry(connections, new DefaultCompletionClientFactory());
+        if (!string.IsNullOrWhiteSpace(requestedConnectionId) && !registry.TryGet(requestedConnectionId, out _)) { throw new ArgumentException($"Unknown completion connection '{requestedConnectionId}'."); }
+
+        var connection = registry.Resolve(requestedConnectionId);
+        var client = registry.GetClient(connection.Id);
+        Directory.CreateDirectory(callLogDir);
+        int beforeMaxCallId = RollingSummaryCallLogUtil.GetMaxCallId(callLogDir);
+        var loggingClient = new LoggingCompletionClient(
+            client,
+            connection,
+            callLogDir,
+            new CompletionCallLogContext(
+                Command: "compress-autobiography",
+                MaintainerId: AutobiographicalCompressionMemoryMaintainer.DefaultId,
+                TargetCarrier: MemoryPackCarrierTokens.ToStorageToken(RolePlayMemoryBlockPaths.FirstPersonAutobiography.Carrier),
+                TargetBlockId: RolePlayMemoryBlockPaths.FirstPersonAutobiography.BlockKey
+            )
+        );
+        var maintainer = new AutobiographicalCompressionMemoryMaintainer(
+            loggingClient,
+            connection.ModelId,
+            targetTokens,
+            systemPromptOverride,
+            userPromptOverride
+        );
+
+        MemoryBlockMaintenanceResult? result = null;
+        Exception? exception = null;
+        try {
+            result = await maintainer.MaintainAsync(
+                new MemoryBlockMaintenanceRequest(
+                    new RecentHistorySlice(ContextHeaderSnapshot.Empty, Array.Empty<IHistoryMessage>()),
+                    RolePlayMemoryBlockPaths.FirstPersonAutobiography,
+                    new MemoryPackBlock(autobiography)
+                ),
+                CancellationToken.None
+            ).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or ChatSessionTurnAbortedException or HttpRequestException or TaskCanceledException) {
+            exception = ex;
+        }
+
+        int afterMaxCallId = RollingSummaryCallLogUtil.GetMaxCallId(callLogDir);
+        var callLogPaths = Enumerable.Range(beforeMaxCallId + 1, Math.Max(0, afterMaxCallId - beforeMaxCallId))
+            .Select(id => Path.Combine(Path.GetFullPath(callLogDir), $"{id:0000}.json"))
+            .ToArray();
+        var record = AutobiographicalCompressionBacktestRecord.Create(
+            connection.Id,
+            inputPath,
+            targetTokens,
+            autobiography,
+            result,
+            callLogPaths,
+            exception
+        );
+
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(outputPath)) ?? ".");
+        await File.WriteAllTextAsync(
+            outputPath,
+            JsonSerializer.Serialize(record, JsonOptions) + Environment.NewLine,
+            Encoding.UTF8
+        ).ConfigureAwait(false);
+
+        Console.WriteLine($"connection: {connection.Id}");
+        Console.WriteLine($"status: {record.Status}");
+        Console.WriteLine($"beforeTokens: {record.BeforeTokens}");
+        Console.WriteLine($"afterTokens: {record.AfterTokens?.ToString() ?? "(none)"}");
+        Console.WriteLine($"targetTokens: {record.TargetTokens}");
+        Console.WriteLine($"targetReached: {record.TargetReached?.ToString() ?? "(none)"}");
+        Console.WriteLine($"output: {outputPath}");
+        Console.WriteLine($"callLogDir: {Path.GetFullPath(callLogDir)}");
+        return exception is null ? 0 : 1;
+    }
+
     private static Dictionary<string, int> CountMessageKinds(IReadOnlyList<ChatSessionLegacyReplayEvent> events) {
         var counts = new Dictionary<string, int>(StringComparer.Ordinal);
         foreach (var message in events.SelectMany(EnumerateMessages)) {
@@ -280,6 +368,7 @@ internal static partial class Program {
         Console.WriteLine("Commands:");
         Console.WriteLine("  inspect --input <path>");
         Console.WriteLine("  llm-smoke --connections <path> [--connection <id>] [--call-log-dir <dir>] [--message <text>]");
+        Console.WriteLine("  compress-autobiography --input <text> --target-tokens <n> --output <jsonl> --connections <path> [--connection <id>] [--call-log-dir <dir>] [--system-prompt <path>] [--prompt <path>]");
         Console.WriteLine("  replay-pattern-count --input <path> --output <jsonl> [--report-md <path>] [--threshold-tokens <n>] [--respect-original-compaction]");
         Console.WriteLine("  replay-rolling-summary --input <path> --output <jsonl> --connections <path> [--preset rolling-summary|world-understanding|first-person-autobiography|autobiographical-recording] [--connection <id>] [--call-log-dir <dir>] [--threshold-tokens <n>] [--max-epochs <n>] [--system-prompt <path>] [--prompt <path>] [--target-carrier system|observation|action] [--target-block <id>]");
     }
@@ -405,6 +494,13 @@ internal sealed class CliOptions {
         var value = Get(key);
         if (string.IsNullOrWhiteSpace(value)) { return defaultValue; }
         return int.TryParse(value, out var parsed) && parsed > 0 ? parsed : throw new ArgumentException($"--{key} must be a positive integer.");
+    }
+
+    public int RequirePositiveInt(string key) {
+        var value = Require(key);
+        return int.TryParse(value, out var parsed) && parsed > 0
+            ? parsed
+            : throw new ArgumentException($"--{key} must be a positive integer.");
     }
 
     public bool HasFlag(string key)

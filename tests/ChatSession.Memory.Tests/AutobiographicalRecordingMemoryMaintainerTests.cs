@@ -27,8 +27,8 @@ public class AutobiographicalRecordingMemoryMaintainerTests {
         completionClient.Enqueue(
             request => {
                 Assert.Contains(MemoryDocumentTools.InsertToolName, request.Tools.Select(static tool => tool.Name));
-                Assert.Contains(MemoryDocumentTools.FinishToolName, request.Tools.Select(static tool => tool.Name));
-                Assert.Contains(MemoryDocumentTools.FinishToolName, request.SystemPrompt);
+                Assert.Contains(MemoryDocumentTools.RecordingFinishToolName, request.Tools.Select(static tool => tool.Name));
+                Assert.Contains(MemoryDocumentTools.RecordingFinishToolName, request.SystemPrompt);
                 Assert.DoesNotContain("memory_document.finish_recording", request.SystemPrompt);
                 var instruction = Assert.IsType<ObservationMessage>(request.Context[^1]);
                 Assert.Contains("[block:1]", instruction.Content);
@@ -52,7 +52,7 @@ public class AutobiographicalRecordingMemoryMaintainerTests {
                 return ToolCallResult(
                     request,
                     new RawToolCall(
-                        MemoryDocumentTools.FinishToolName,
+                        MemoryDocumentTools.RecordingFinishToolName,
                         "finish-1",
                         """{"status":"changed"}"""
                     ),
@@ -78,7 +78,7 @@ public class AutobiographicalRecordingMemoryMaintainerTests {
             request => ToolCallResult(
                 request,
                 new RawToolCall(
-                    MemoryDocumentTools.FinishToolName,
+                    MemoryDocumentTools.RecordingFinishToolName,
                     "finish-no-change",
                     """{"status":"no-change"}"""
                 )
@@ -109,7 +109,7 @@ public class AutobiographicalRecordingMemoryMaintainerTests {
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(
             () => maintainer.MaintainAsync(CreateRequest("原有记忆。"), CancellationToken.None).AsTask()
         );
-        Assert.Contains(MemoryDocumentTools.FinishToolName, exception.Message);
+        Assert.Contains(MemoryDocumentTools.RecordingFinishToolName, exception.Message);
     }
 
     [Fact]
@@ -128,7 +128,7 @@ public class AutobiographicalRecordingMemoryMaintainerTests {
                     ),
                     new ActionBlock.ToolCall(
                         new RawToolCall(
-                            MemoryDocumentTools.FinishToolName,
+                            MemoryDocumentTools.RecordingFinishToolName,
                             "finish-mixed",
                             """{"status":"changed"}"""
                         )

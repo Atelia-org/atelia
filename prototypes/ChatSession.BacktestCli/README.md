@@ -100,6 +100,21 @@ dotnet run --project prototypes/ChatSession.BacktestCli -- replay-rolling-summar
 
 输出 JSONL 每行代表一次 maintainer epoch，包含 `presetName`、`eventOrdinal`、`thresholdTokens`、`splitIndex`、`slidingOutMessageCount`、`targetCarrier`、`targetBlockId`、新旧 block 预览、call log 路径、状态和错误信息。
 
+### compress-autobiography
+
+对一个已有的纯文本 autobiography 文件运行独立 compression Agent。该命令不回放 recent history，也不包含 high-watermark 自动调度。
+
+```bash
+dotnet run --project prototypes/ChatSession.BacktestCli -- compress-autobiography \
+  --input gitignore/backtest/autobiographical-recording/autobiography.md \
+  --target-tokens 700 \
+  --connections prototypes/Galatea/.atelia/galatea/connections.json \
+  --output gitignore/backtest/autobiographical-compression/result.jsonl \
+  --call-log-dir gitignore/backtest/autobiographical-compression/calls
+```
+
+输出包含完整 `newText`、压缩前后 token 估算、目标 token、实际压缩比例、是否达到目标、最终段是否原样保留、edit/tool-call 数和全部 call log 路径。未达到目标不自动视为失败；结果膨胀或修改最终段会在 maintainer 内被机械拒绝。
+
 ## 与引用项目的关系
 
 `ChatSession.BacktestCli` 是一个薄 CLI 壳，核心能力来自三个项目引用：

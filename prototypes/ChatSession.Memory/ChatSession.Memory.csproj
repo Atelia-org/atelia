@@ -18,6 +18,10 @@
                       LogicalName="Atelia.ChatSession.Memory.Prompts.AutobiographicalRecordingSystem.md" />
     <EmbeddedResource Include="../../docs/Galatea/prompt/autobiographical-maintainer/recording/user.md"
                       LogicalName="Atelia.ChatSession.Memory.Prompts.AutobiographicalRecordingUser.md" />
+    <EmbeddedResource Include="../../docs/Galatea/prompt/autobiographical-maintainer/compression/system.md"
+              LogicalName="Atelia.ChatSession.Memory.Prompts.AutobiographicalCompressionSystem.md" />
+    <EmbeddedResource Include="../../docs/Galatea/prompt/autobiographical-maintainer/compression/user.md"
+              LogicalName="Atelia.ChatSession.Memory.Prompts.AutobiographicalCompressionUser.md" />
   </ItemGroup>
 
 </Project>
