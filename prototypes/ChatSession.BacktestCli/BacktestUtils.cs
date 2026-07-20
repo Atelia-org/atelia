@@ -22,7 +22,10 @@ internal static partial class BacktestTextUtil {
         };
 
     public static int EstimateTokens(IReadOnlyList<IHistoryMessage> messages)
-        => Math.Max(1, messages.Sum(message => FlattenMessageText(message).Length) / 3);
+        => Math.Max(1, messages.Sum(EstimateTokens));
+
+    public static int EstimateTokens(IHistoryMessage message)
+        => Math.Max(1, FlattenMessageText(message).Length / 3);
 
     public static string NormalizeWhitespace(string text)
         => WhitespacePattern().Replace(text, " ").Trim();

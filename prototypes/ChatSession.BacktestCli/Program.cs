@@ -4,12 +4,15 @@ using System.Text.Json;
 using Atelia.ChatSession;
 using Atelia.Completion;
 using Atelia.Completion.Abstractions;
+using Atelia.Completion.Tools;
 
 namespace ChatSessionBacktestCli;
 
 internal static partial class Program {
     private const int DefaultThresholdTokens = 12_000;
     private const string DefaultLlmSmokeCallLogDir = "gitignore/backtest/llm-smoke-calls";
+    private const string DefaultRollingSummaryCallLogDir = "gitignore/backtest/rolling-summary-calls";
+    private const string DefaultRollingSummaryBlockId = "session.rolling-summary";
 
     private static readonly JsonSerializerOptions JsonOptions = new() {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
@@ -30,6 +33,7 @@ internal static partial class Program {
                 "inspect" => RunInspect(options),
                 "llm-smoke" => RunLlmSmokeAsync(options).GetAwaiter().GetResult(),
                 "replay-pattern-count" => RunReplayPatternCount(options),
+                "replay-rolling-summary" => RunReplayRollingSummaryAsync(options).GetAwaiter().GetResult(),
                 _ => Fail($"Unknown command '{command}'.")
             };
         }
@@ -155,6 +159,62 @@ internal static partial class Program {
         return 0;
     }
 
+    private static async Task<int> RunReplayRollingSummaryAsync(CliOptions options) {
+        var inputPath = options.Require("input");
+        var outputPath = options.Require("output");
+        var connectionsPath = options.Require("connections");
+        var requestedConnectionId = options.Get("connection");
+        var callLogDir = options.Get("call-log-dir") ?? DefaultRollingSummaryCallLogDir;
+        var thresholdTokens = options.GetInt("threshold-tokens", DefaultThresholdTokens);
+        var maxEpochs = options.GetInt("max-epochs", int.MaxValue);
+        var targetCarrier = ParseCarrier(options.Get("target-carrier"), MemoryPackCarrier.Observation);
+        var targetBlockId = options.Get("target-block") ?? DefaultRollingSummaryBlockId;
+        var systemPrompt = ReadPromptOrDefault(options.Get("system-prompt"), RollingSummaryReplayDefaults.SystemPrompt);
+        var userPrompt = ReadPromptOrDefault(options.Get("prompt"), RollingSummaryReplayDefaults.UserPrompt);
+
+        var eventSource = ChatSessionLegacyEventSourceReader.Read(inputPath);
+        var connections = CompletionConnectionConfigLoader.LoadFile(connectionsPath);
+        using var registry = new CompletionConnectionRegistry(connections, new DefaultCompletionClientFactory());
+
+        if (!string.IsNullOrWhiteSpace(requestedConnectionId) && !registry.TryGet(requestedConnectionId, out _)) { throw new ArgumentException($"Unknown completion connection '{requestedConnectionId}'."); }
+
+        var connection = registry.Resolve(requestedConnectionId);
+        var client = registry.GetClient(connection.Id);
+        var target = new MemoryPackBlockPath(targetCarrier, targetBlockId);
+        var toolRegistry = new ToolRegistry(Array.Empty<ITool>());
+
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(outputPath)) ?? ".");
+        Directory.CreateDirectory(callLogDir);
+
+        var runner = new RollingSummaryReplayRunner(
+            eventSource,
+            client,
+            connection,
+            target,
+            systemPrompt,
+            userPrompt,
+            toolRegistry,
+            callLogDir,
+            thresholdTokens,
+            maxEpochs
+        );
+
+        int recordCount = 0;
+        await using var output = new FileStream(outputPath, FileMode.Create, FileAccess.Write, FileShare.Read);
+        await using var writer = new StreamWriter(output, Encoding.UTF8);
+        await foreach (var record in runner.RunAsync(CancellationToken.None).ConfigureAwait(false)) {
+            await writer.WriteLineAsync(JsonSerializer.Serialize(record, JsonOptions)).ConfigureAwait(false);
+            await writer.FlushAsync(CancellationToken.None).ConfigureAwait(false);
+            recordCount++;
+        }
+
+        Console.WriteLine($"records: {recordCount}");
+        Console.WriteLine($"connection: {connection.Id}");
+        Console.WriteLine($"output: {outputPath}");
+        Console.WriteLine($"callLogDir: {Path.GetFullPath(callLogDir)}");
+        return runner.HadFailure ? 1 : 0;
+    }
+
     private static Dictionary<string, int> CountMessageKinds(IReadOnlyList<ChatSessionLegacyReplayEvent> events) {
         var counts = new Dictionary<string, int>(StringComparer.Ordinal);
         foreach (var message in events.SelectMany(EnumerateMessages)) {
@@ -221,6 +281,16 @@ internal static partial class Program {
         Console.WriteLine("  inspect --input <path>");
         Console.WriteLine("  llm-smoke --connections <path> [--connection <id>] [--call-log-dir <dir>] [--message <text>]");
         Console.WriteLine("  replay-pattern-count --input <path> --output <jsonl> [--report-md <path>] [--threshold-tokens <n>] [--respect-original-compaction]");
+        Console.WriteLine("  replay-rolling-summary --input <path> --output <jsonl> --connections <path> [--connection <id>] [--call-log-dir <dir>] [--threshold-tokens <n>] [--max-epochs <n>] [--system-prompt <path>] [--prompt <path>] [--target-carrier system|observation|action] [--target-block <id>]");
+    }
+
+    private static string ReadPromptOrDefault(string? path, string defaultPrompt)
+        => string.IsNullOrWhiteSpace(path) ? defaultPrompt : File.ReadAllText(path, Encoding.UTF8);
+
+    private static MemoryPackCarrier ParseCarrier(string? text, MemoryPackCarrier defaultCarrier) {
+        if (string.IsNullOrWhiteSpace(text)) { return defaultCarrier; }
+        if (MemoryPackCarrierTokens.TryParseStorageToken(text, out var carrier)) { return carrier; }
+        throw new ArgumentException($"Unsupported memory pack carrier '{text}'. Expected system, observation, or action.");
     }
 
 }
