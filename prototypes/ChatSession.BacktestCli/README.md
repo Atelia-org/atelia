@@ -96,6 +96,7 @@ dotnet run --project prototypes/ChatSession.BacktestCli -- replay-rolling-summar
 | `rolling-summary` | 默认 `Observation / session.rolling-summary`，可用参数覆盖 | 通用滚动摘要，保留长期有用事实、决策、路径、验证结果和待办。 |
 | `world-understanding` | `Observation / roleplay.world-understanding` | 维护 role-play 角色可看到的外层知识、世界理解和事实档案。 |
 | `first-person-autobiography` | `Action / roleplay.first-person-autobiography` | 维护 Galatea 第一人称自传、自我连续性材料和关键原话。 |
+| `autobiographical-recording` | `Action / roleplay.first-person-autobiography` | 使用 block-ID 编辑工具和显式 `changed` / `no-change` finish 协议维护 Galatea 自传；结果从编辑 session 物化，不接收 assistant 正文作为替换稿。 |
 
 输出 JSONL 每行代表一次 maintainer epoch，包含 `presetName`、`eventOrdinal`、`thresholdTokens`、`splitIndex`、`slidingOutMessageCount`、`targetCarrier`、`targetBlockId`、新旧 block 预览、call log 路径、状态和错误信息。
 

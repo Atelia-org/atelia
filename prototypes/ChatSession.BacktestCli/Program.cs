@@ -281,7 +281,7 @@ internal static partial class Program {
         Console.WriteLine("  inspect --input <path>");
         Console.WriteLine("  llm-smoke --connections <path> [--connection <id>] [--call-log-dir <dir>] [--message <text>]");
         Console.WriteLine("  replay-pattern-count --input <path> --output <jsonl> [--report-md <path>] [--threshold-tokens <n>] [--respect-original-compaction]");
-        Console.WriteLine("  replay-rolling-summary --input <path> --output <jsonl> --connections <path> [--preset rolling-summary|world-understanding|first-person-autobiography] [--connection <id>] [--call-log-dir <dir>] [--threshold-tokens <n>] [--max-epochs <n>] [--system-prompt <path>] [--prompt <path>] [--target-carrier system|observation|action] [--target-block <id>]");
+        Console.WriteLine("  replay-rolling-summary --input <path> --output <jsonl> --connections <path> [--preset rolling-summary|world-understanding|first-person-autobiography|autobiographical-recording] [--connection <id>] [--call-log-dir <dir>] [--threshold-tokens <n>] [--max-epochs <n>] [--system-prompt <path>] [--prompt <path>] [--target-carrier system|observation|action] [--target-block <id>]");
     }
 
     private static string? ReadPromptOrNull(string? path)
@@ -338,6 +338,19 @@ internal static partial class Program {
                         completionClient,
                         modelId,
                         toolSession,
+                        systemPromptOverride,
+                        userPromptOverride
+                    )
+                );
+
+            case "autobiographical-recording":
+                return new ReplayMemoryMaintainerProfile(
+                    preset,
+                    AutobiographicalRecordingMemoryMaintainer.DefaultId,
+                    RolePlayMemoryBlockPaths.FirstPersonAutobiography,
+                    (completionClient, modelId, _) => new AutobiographicalRecordingMemoryMaintainer(
+                        completionClient,
+                        modelId,
                         systemPromptOverride,
                         userPromptOverride
                     )
