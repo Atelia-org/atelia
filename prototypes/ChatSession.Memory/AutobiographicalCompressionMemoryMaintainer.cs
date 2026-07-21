@@ -83,6 +83,7 @@ public sealed class AutobiographicalCompressionMemoryMaintainer : IMemoryBlockMa
         var loopResult = await MemoryDocumentAgentLoop.RunAsync(
             new MemoryDocumentAgentLoopRequest(
                 Id,
+                "compression",
                 _completionClient,
                 _modelId,
                 _systemPrompt,
@@ -92,6 +93,7 @@ public sealed class AutobiographicalCompressionMemoryMaintainer : IMemoryBlockMa
                 request,
                 editingSession,
                 finishProfile,
+                TargetTokens: _targetTokenCount,
                 MissingFinishRetryCount: 1,
                 MaxIterations: MaxCompressionAgentIterations
             ),
@@ -130,7 +132,20 @@ public sealed class AutobiographicalCompressionMemoryMaintainer : IMemoryBlockMa
             ],
             Invocation: loopResult.Invocation,
             Errors: loopResult.Errors,
-            ToolCallsExecuted: loopResult.ToolCallsExecuted
+            ToolCallsExecuted: loopResult.ToolCallsExecuted,
+            Stages: [
+                new MemoryBlockMaintenanceStageResult(
+                    Stage: "compression",
+                    Status: MemoryBlockMaintenanceStageStatus.Succeeded,
+                    BeforeTokens: beforeTokens,
+                    AfterTokens: afterTokens,
+                    TargetTokens: _targetTokenCount,
+                    TargetReached: targetReached,
+                    Invocation: loopResult.Invocation,
+                    Errors: loopResult.Errors,
+                    ToolCallsExecuted: loopResult.ToolCallsExecuted
+                )
+            ]
         );
 
         ValidateResult ValidateNonExpandingResult(

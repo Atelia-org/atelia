@@ -370,7 +370,7 @@ internal static partial class Program {
         Console.WriteLine("  llm-smoke --connections <path> [--connection <id>] [--call-log-dir <dir>] [--message <text>]");
         Console.WriteLine("  compress-autobiography --input <text> --target-tokens <n> --output <jsonl> --connections <path> [--connection <id>] [--call-log-dir <dir>] [--system-prompt <path>] [--prompt <path>]");
         Console.WriteLine("  replay-pattern-count --input <path> --output <jsonl> [--report-md <path>] [--threshold-tokens <n>] [--respect-original-compaction]");
-        Console.WriteLine("  replay-rolling-summary --input <path> --output <jsonl> --connections <path> [--preset rolling-summary|world-understanding|first-person-autobiography|autobiographical-recording] [--connection <id>] [--call-log-dir <dir>] [--threshold-tokens <n>] [--max-epochs <n>] [--system-prompt <path>] [--prompt <path>] [--target-carrier system|observation|action] [--target-block <id>]");
+        Console.WriteLine("  replay-rolling-summary --input <path> --output <jsonl> --connections <path> [--preset rolling-summary|world-understanding|first-person-autobiography|autobiographical-recording|autobiographical-two-stage] [--connection <id>] [--call-log-dir <dir>] [--threshold-tokens <n>] [--max-epochs <n>] [--compression-high-watermark <n>] [--compression-target-tokens <n>] [--system-prompt <path>] [--prompt <path>] [--target-carrier system|observation|action] [--target-block <id>]");
     }
 
     private static string? ReadPromptOrNull(string? path)
@@ -442,6 +442,24 @@ internal static partial class Program {
                         modelId,
                         systemPromptOverride,
                         userPromptOverride
+                    )
+                );
+
+            case "autobiographical-two-stage":
+                var compressionPolicy = new MemoryDocumentCompressionPolicy(
+                    options.RequirePositiveInt("compression-high-watermark"),
+                    options.RequirePositiveInt("compression-target-tokens")
+                );
+                return new ReplayMemoryMaintainerProfile(
+                    preset,
+                    AutobiographicalMemoryMaintainer.DefaultId,
+                    RolePlayMemoryBlockPaths.FirstPersonAutobiography,
+                    (completionClient, modelId, _) => new AutobiographicalMemoryMaintainer(
+                        completionClient,
+                        modelId,
+                        compressionPolicy,
+                        recordingSystemPrompt: systemPromptOverride,
+                        recordingUserPrompt: userPromptOverride
                     )
                 );
 

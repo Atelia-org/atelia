@@ -286,7 +286,7 @@ public class AutobiographicalCompressionMemoryMaintainerTests {
 
         var maintainer = new AutobiographicalCompressionMemoryMaintainer(completionClient, "model-a", targetTokenCount: 2);
 
-        var exception = await Assert.ThrowsAsync<InvalidOperationException>(
+        var exception = await Assert.ThrowsAnyAsync<InvalidOperationException>(
             () => maintainer.MaintainAsync(CreateRequest("旧记忆很长。\n\n现在仍鲜活。"), CancellationToken.None).AsTask()
         );
         Assert.Contains(MemoryDocumentTools.CompressionFinishToolName, exception.Message);

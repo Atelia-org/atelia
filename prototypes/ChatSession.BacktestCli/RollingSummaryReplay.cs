@@ -125,6 +125,13 @@ internal sealed class RollingSummaryReplayRunner {
                 exception = ex;
             }
 
+            int afterMaxCallId = RollingSummaryCallLogUtil.GetMaxCallId(_callLogDir);
+            var callLogPaths = RollingSummaryCallLogUtil.BuildCallLogPaths(
+                _callLogDir,
+                beforeMaxCallId,
+                afterMaxCallId
+            );
+
             yield return RollingSummaryReplayRecord.Create(
                 epochIndex,
                 replayEvent,
@@ -136,6 +143,7 @@ internal sealed class RollingSummaryReplayRunner {
                 oldBlock.Text,
                 newBlockText,
                 callLogPath,
+                callLogPaths,
                 result,
                 exception
             );
@@ -218,6 +226,15 @@ internal static class RollingSummaryCallLogUtil {
 
         return max;
     }
+
+    public static IReadOnlyList<string> BuildCallLogPaths(
+        string callLogDir,
+        int beforeMaxCallId,
+        int afterMaxCallId
+    ) => Enumerable.Range(
+        beforeMaxCallId + 1,
+        Math.Max(0, afterMaxCallId - beforeMaxCallId)
+    ).Select(id => Path.Combine(Path.GetFullPath(callLogDir), $"{id:0000}.json")).ToArray();
 }
 
 internal sealed record RollingSummaryReplayRecord(
@@ -237,11 +254,15 @@ internal sealed record RollingSummaryReplayRecord(
     MemoryBlockPreview? OldBlock,
     MemoryBlockPreview? NewBlock,
     string CallLogPath,
+    IReadOnlyList<string> CallLogPaths,
     string Status,
     string? ExceptionType,
     string? ExceptionMessage,
     int ToolCallsExecuted,
-    IReadOnlyList<string>? Errors
+    IReadOnlyList<string>? Errors,
+    IReadOnlyList<MemoryMaintenanceStageBacktestRecord>? Stages,
+    IReadOnlyList<MemoryMaintenanceNotice>? Notices,
+    IReadOnlyList<string>? Diagnostics
 ) {
     public static RollingSummaryReplayRecord Create(
         int epochIndex,
@@ -254,10 +275,12 @@ internal sealed record RollingSummaryReplayRecord(
         string? oldBlockText,
         string? newBlockText,
         string callLogPath,
+        IReadOnlyList<string> callLogPaths,
         MemoryBlockMaintenanceResult? result,
         Exception? exception
-    )
-        => new(
+    ) {
+        var loopFailure = exception as MemoryDocumentAgentLoopException;
+        return new(
             Schema: "atelia.chat-session.rolling-summary-backtest.v1",
             PresetName: profile.PresetName,
             EpochIndex: epochIndex,
@@ -274,10 +297,60 @@ internal sealed record RollingSummaryReplayRecord(
             OldBlock: BacktestOutputUtil.CreateBlockPreview(oldBlockText),
             NewBlock: BacktestOutputUtil.CreateBlockPreview(newBlockText),
             CallLogPath: callLogPath,
+            CallLogPaths: callLogPaths,
             Status: exception is null ? "succeeded" : "failed",
             ExceptionType: exception?.GetType().FullName,
             ExceptionMessage: exception?.Message,
-            ToolCallsExecuted: result?.ToolCallsExecuted ?? 0,
-            Errors: result?.Errors
+            ToolCallsExecuted: result?.ToolCallsExecuted ?? loopFailure?.ToolCallsExecuted ?? 0,
+            Errors: result?.Errors ?? loopFailure?.Errors,
+            Stages: result?.Stages?.Select(MemoryMaintenanceStageBacktestRecord.From).ToArray()
+                ?? (loopFailure is null ? null : [MemoryMaintenanceStageBacktestRecord.FromFailure(loopFailure)]),
+            Notices: result?.Notices,
+            Diagnostics: result?.Diagnostics
+        );
+    }
+}
+
+internal sealed record MemoryMaintenanceStageBacktestRecord(
+    string Stage,
+    string Status,
+    int BeforeTokens,
+    int? AfterTokens,
+    int? TargetTokens,
+    bool? TargetReached,
+    CompletionDescriptor? Invocation,
+    IReadOnlyList<string>? Errors,
+    int ToolCallsExecuted,
+    string? FailureType,
+    string? FailureMessage
+) {
+    public static MemoryMaintenanceStageBacktestRecord From(MemoryBlockMaintenanceStageResult stage)
+        => new(
+            stage.Stage,
+            stage.Status.ToString().ToLowerInvariant(),
+            stage.BeforeTokens,
+            stage.AfterTokens,
+            stage.TargetTokens,
+            stage.TargetReached,
+            stage.Invocation,
+            stage.Errors,
+            stage.ToolCallsExecuted,
+            stage.FailureType,
+            stage.FailureMessage
+        );
+
+    public static MemoryMaintenanceStageBacktestRecord FromFailure(MemoryDocumentAgentLoopException failure)
+        => new(
+            failure.Stage,
+            "failed",
+            failure.BeforeTokens,
+            failure.WorkingTokens,
+            failure.TargetTokens,
+            null,
+            failure.Invocation,
+            failure.Errors,
+            failure.ToolCallsExecuted,
+            failure.GetType().FullName,
+            failure.Message
         );
 }

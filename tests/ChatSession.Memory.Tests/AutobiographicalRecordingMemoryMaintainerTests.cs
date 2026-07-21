@@ -103,10 +103,19 @@ public class AutobiographicalRecordingMemoryMaintainerTests {
                 new CompletionDescriptor("scripted", "openai-chat-v1", request.ModelId)
             )
         );
+        completionClient.Enqueue(
+            request => {
+                Assert.Contains(MemoryDocumentTools.RecordingFinishToolName, Assert.IsType<ObservationMessage>(request.Context[^1]).Content);
+                return new CompletionResult(
+                    new ActionMessage([]),
+                    new CompletionDescriptor("scripted", "openai-chat-v1", request.ModelId)
+                );
+            }
+        );
 
         var maintainer = new AutobiographicalRecordingMemoryMaintainer(completionClient, "model-a");
 
-        var exception = await Assert.ThrowsAsync<InvalidOperationException>(
+        var exception = await Assert.ThrowsAnyAsync<InvalidOperationException>(
             () => maintainer.MaintainAsync(CreateRequest("原有记忆。"), CancellationToken.None).AsTask()
         );
         Assert.Contains(MemoryDocumentTools.RecordingFinishToolName, exception.Message);
@@ -141,7 +150,7 @@ public class AutobiographicalRecordingMemoryMaintainerTests {
 
         var maintainer = new AutobiographicalRecordingMemoryMaintainer(completionClient, "model-a");
 
-        var exception = await Assert.ThrowsAsync<InvalidOperationException>(
+        var exception = await Assert.ThrowsAnyAsync<InvalidOperationException>(
             () => maintainer.MaintainAsync(CreateRequest("原有记忆。"), CancellationToken.None).AsTask()
         );
         Assert.Contains("only tool call", exception.Message);

@@ -269,6 +269,26 @@ public sealed record MemoryMaintenanceNotice(
     string Message
 );
 
+public enum MemoryBlockMaintenanceStageStatus {
+    Succeeded,
+    Failed,
+    Skipped
+}
+
+public sealed record MemoryBlockMaintenanceStageResult(
+    string Stage,
+    MemoryBlockMaintenanceStageStatus Status,
+    int BeforeTokens,
+    int? AfterTokens,
+    int? TargetTokens,
+    bool? TargetReached,
+    CompletionDescriptor? Invocation,
+    IReadOnlyList<string>? Errors,
+    int ToolCallsExecuted,
+    string? FailureType = null,
+    string? FailureMessage = null
+);
+
 public sealed record MemoryBlockMaintenanceResult(
     string MaintainerId,
     MemoryPackBlockPath Target,
@@ -277,7 +297,8 @@ public sealed record MemoryBlockMaintenanceResult(
     IReadOnlyList<string> Diagnostics,
     CompletionDescriptor? Invocation = null,
     IReadOnlyList<string>? Errors = null,
-    int ToolCallsExecuted = 0
+    int ToolCallsExecuted = 0,
+    IReadOnlyList<MemoryBlockMaintenanceStageResult>? Stages = null
 );
 
 public sealed class CompletionMemoryBlockMaintainer : IMemoryBlockMaintainer {

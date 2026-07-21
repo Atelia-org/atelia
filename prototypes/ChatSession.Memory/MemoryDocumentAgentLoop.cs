@@ -7,6 +7,7 @@ namespace Atelia.ChatSession.Memory;
 
 internal sealed record MemoryDocumentAgentLoopRequest(
     string MaintainerId,
+    string Stage,
     ICompletionClient CompletionClient,
     string ModelId,
     string SystemPrompt,
@@ -16,6 +17,7 @@ internal sealed record MemoryDocumentAgentLoopRequest(
     MemoryBlockMaintenanceRequest MaintenanceRequest,
     MemoryDocumentEditingSession EditingSession,
     MemoryDocumentFinishToolProfile FinishProfile,
+    int? TargetTokens = null,
     int MissingFinishRetryCount = 0,
     int MaxIterations = 16
 );
@@ -26,6 +28,36 @@ internal sealed record MemoryDocumentAgentLoopResult(
     IReadOnlyList<string>? Errors,
     int ToolCallsExecuted
 );
+
+public sealed class MemoryDocumentAgentLoopException : InvalidOperationException {
+    public MemoryDocumentAgentLoopException(
+        string message,
+        string stage,
+        int beforeTokens,
+        int workingTokens,
+        int? targetTokens,
+        CompletionDescriptor? invocation,
+        IReadOnlyList<string>? errors,
+        int toolCallsExecuted,
+        Exception? innerException = null
+    ) : base(message, innerException) {
+        Stage = stage;
+        BeforeTokens = beforeTokens;
+        WorkingTokens = workingTokens;
+        TargetTokens = targetTokens;
+        Invocation = invocation;
+        Errors = errors;
+        ToolCallsExecuted = toolCallsExecuted;
+    }
+
+    public string Stage { get; }
+    public int BeforeTokens { get; }
+    public int WorkingTokens { get; }
+    public int? TargetTokens { get; }
+    public CompletionDescriptor? Invocation { get; }
+    public IReadOnlyList<string>? Errors { get; }
+    public int ToolCallsExecuted { get; }
+}
 
 internal static class MemoryDocumentAgentLoop {
     public static async ValueTask<MemoryDocumentAgentLoopResult> RunAsync(
@@ -53,8 +85,17 @@ internal static class MemoryDocumentAgentLoop {
                 Context: workingContext,
                 Tools: toolSession.VisibleDefinitions
             );
-            var result = await request.CompletionClient.StreamCompletionAsync(completionRequest, null, ct)
-                .ConfigureAwait(false);
+            CompletionResult result;
+            try {
+                result = await request.CompletionClient.StreamCompletionAsync(completionRequest, null, ct)
+                    .ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) {
+                throw;
+            }
+            catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException) {
+                throw CreateFailure($"Memory document maintenance completion failed: {ex.Message}", ex);
+            }
 
             invocation = result.Invocation;
             if (result.Errors is { Count: > 0 }) {
@@ -63,11 +104,12 @@ internal static class MemoryDocumentAgentLoop {
             }
 
             if (!result.Termination.IsSuccess) {
-                throw new ChatSessionTurnAbortedException(
+                var aborted = new ChatSessionTurnAbortedException(
                     $"Memory document maintenance completion aborted: {result.Termination.ProviderReason ?? result.Termination.Detail ?? "unknown reason"}.",
                     result.Termination,
                     result.Errors
                 );
+                throw CreateFailure(aborted.Message, aborted);
             }
 
             var action = StripReasoningBlocks(result.Message);
@@ -85,7 +127,7 @@ internal static class MemoryDocumentAgentLoop {
                     continue;
                 }
 
-                throw new InvalidOperationException(
+                throw CreateFailure(
                     $"Memory maintainer '{request.MaintainerId}' stopped without calling {request.FinishProfile.ToolName}."
                 );
             }
@@ -97,7 +139,7 @@ internal static class MemoryDocumentAgentLoop {
                 )
             );
             if (containsFinish && toolCalls.Count != 1) {
-                throw new InvalidOperationException(
+                throw CreateFailure(
                     $"{request.FinishProfile.ToolName} must be the only tool call in its assistant turn."
                 );
             }
@@ -110,7 +152,7 @@ internal static class MemoryDocumentAgentLoop {
             }
 
             if (containsFinish && toolResults[0].Status is ToolExecutionStatus.Success) {
-                if (!request.EditingSession.IsFinished) { throw new InvalidOperationException("Finish tool reported success without finishing the editing session."); }
+                if (!request.EditingSession.IsFinished) { throw CreateFailure("Finish tool reported success without finishing the editing session."); }
 
                 return new MemoryDocumentAgentLoopResult(
                     request.EditingSession,
@@ -123,9 +165,22 @@ internal static class MemoryDocumentAgentLoop {
             workingContext.Add(new ToolResultsMessage(content: null, results: toolResults));
         }
 
-        throw new InvalidOperationException(
+        throw CreateFailure(
             $"Memory maintainer '{request.MaintainerId}' tool loop exceeded the hard limit of {maxIterations} iterations."
         );
+
+        MemoryDocumentAgentLoopException CreateFailure(string message, Exception? innerException = null)
+            => new(
+                message,
+                request.Stage,
+                MemoryDocumentTokenEstimator.Estimate(request.EditingSession.BaseText),
+                MemoryDocumentTokenEstimator.Estimate(request.EditingSession.RenderDocumentText()),
+                request.TargetTokens,
+                invocation,
+                errors?.AsReadOnly(),
+                totalToolCallsExecuted,
+                innerException
+            );
     }
 
     private static List<IHistoryMessage> BuildWorkingContext(MemoryDocumentAgentLoopRequest request) {

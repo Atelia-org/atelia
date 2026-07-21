@@ -64,6 +64,7 @@ public sealed class AutobiographicalRecordingMemoryMaintainer : IMemoryBlockMain
         var loopResult = await MemoryDocumentAgentLoop.RunAsync(
             new MemoryDocumentAgentLoopRequest(
                 Id,
+                "recording",
                 _completionClient,
                 _modelId,
                 _systemPrompt,
@@ -72,15 +73,20 @@ public sealed class AutobiographicalRecordingMemoryMaintainer : IMemoryBlockMain
                 "Current Autobiography Editing View",
                 request,
                 editingSession,
-                s_finishProfile
+                s_finishProfile,
+                MissingFinishRetryCount: 1
             ),
             ct
         ).ConfigureAwait(false);
 
+        string newText = editingSession.RenderDocumentText();
+        int beforeTokens = MemoryDocumentTokenEstimator.Estimate(request.OldBlock.Text);
+        int afterTokens = MemoryDocumentTokenEstimator.Estimate(newText);
+
         return new MemoryBlockMaintenanceResult(
             MaintainerId: Id,
             Target: Target,
-            NewBlock: new MemoryPackBlock(editingSession.RenderDocumentText()),
+            NewBlock: new MemoryPackBlock(newText),
             Notices: [
                 new MemoryMaintenanceNotice(
                     "recording-completion",
@@ -97,7 +103,20 @@ public sealed class AutobiographicalRecordingMemoryMaintainer : IMemoryBlockMain
             ],
             Invocation: loopResult.Invocation,
             Errors: loopResult.Errors,
-            ToolCallsExecuted: loopResult.ToolCallsExecuted
+            ToolCallsExecuted: loopResult.ToolCallsExecuted,
+            Stages: [
+                new MemoryBlockMaintenanceStageResult(
+                    Stage: "recording",
+                    Status: MemoryBlockMaintenanceStageStatus.Succeeded,
+                    BeforeTokens: beforeTokens,
+                    AfterTokens: afterTokens,
+                    TargetTokens: null,
+                    TargetReached: null,
+                    Invocation: loopResult.Invocation,
+                    Errors: loopResult.Errors,
+                    ToolCallsExecuted: loopResult.ToolCallsExecuted
+                )
+            ]
         );
     }
 

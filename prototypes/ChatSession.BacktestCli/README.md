@@ -97,6 +97,24 @@ dotnet run --project prototypes/ChatSession.BacktestCli -- replay-rolling-summar
 | `world-understanding` | `Observation / roleplay.world-understanding` | 维护 role-play 角色可看到的外层知识、世界理解和事实档案。 |
 | `first-person-autobiography` | `Action / roleplay.first-person-autobiography` | 维护 Galatea 第一人称自传、自我连续性材料和关键原话。 |
 | `autobiographical-recording` | `Action / roleplay.first-person-autobiography` | 使用 block-ID 编辑工具和显式 `changed` / `no-change` finish 协议维护 Galatea 自传；结果从编辑 session 物化，不接收 assistant 正文作为替换稿。 |
+| `autobiographical-two-stage` | `Action / roleplay.first-person-autobiography` | 先 recording，再按 `--compression-high-watermark` 条件触发 compression；compression 失败时保留 recording 产物。 |
+
+两阶段自传回测示例：
+
+```bash
+dotnet run --project prototypes/ChatSession.BacktestCli -- replay-rolling-summary \
+  --preset autobiographical-two-stage \
+  --input prototypes/Galatea/.atelia/galatea/sessions/cyber-copy-upgraded/chat-session-legacy-upgrade-export.json \
+  --threshold-tokens 24000 \
+  --compression-high-watermark 900 \
+  --compression-target-tokens 700 \
+  --connections prototypes/Galatea/.atelia/galatea/connections.json \
+  --output gitignore/backtest/autobiographical-two-stage/result.jsonl \
+  --call-log-dir gitignore/backtest/autobiographical-two-stage/calls \
+  --max-epochs 2
+```
+
+每个 JSONL epoch 会记录 `stages`、全部 `callLogPaths`、notices 和 diagnostics。`recording` 失败会使 epoch 失败；`compression` 失败则以 `failed` stage 留下审计，但顶层 epoch 成功并保留 recorded block。
 
 输出 JSONL 每行代表一次 maintainer epoch，包含 `presetName`、`eventOrdinal`、`thresholdTokens`、`splitIndex`、`slidingOutMessageCount`、`targetCarrier`、`targetBlockId`、新旧 block 预览、call log 路径、状态和错误信息。
 
