@@ -19,16 +19,16 @@ public sealed class WorldUnderstandingRewriteMemoryMaintainer : IMemoryBlockMain
         ICompletionClient completionClient,
         string modelId,
         ToolSession toolSession,
-        string? systemPrompt = null,
-        string? userPrompt = null
+        MemoryRewritePromptSet? prompts = null
     ) {
+        prompts ??= WorldUnderstandingRewritePrompts.Default;
         _inner = new CompletionMemoryBlockMaintainer(
             DefaultId,
             RolePlayMemoryBlockPaths.WorldUnderstanding,
             completionClient,
             modelId,
-            systemPrompt ?? WorldUnderstandingRewritePrompts.SystemPrompt,
-            userPrompt ?? WorldUnderstandingRewritePrompts.UserPrompt,
+            prompts.SystemPrompt,
+            prompts.UserPrompt,
             toolSession
         );
     }

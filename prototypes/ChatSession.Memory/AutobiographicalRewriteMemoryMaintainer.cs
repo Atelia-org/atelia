@@ -18,16 +18,16 @@ public sealed class AutobiographicalRewriteMemoryMaintainer : IMemoryBlockMainta
         ICompletionClient completionClient,
         string modelId,
         ToolSession toolSession,
-        string? systemPrompt = null,
-        string? userPrompt = null
+        MemoryRewritePromptSet? prompts = null
     ) {
+        prompts ??= AutobiographicalRewritePrompts.Default;
         _inner = new CompletionMemoryBlockMaintainer(
             DefaultId,
             RolePlayMemoryBlockPaths.FirstPersonAutobiography,
             completionClient,
             modelId,
-            systemPrompt ?? AutobiographicalRewritePrompts.SystemPrompt,
-            userPrompt ?? AutobiographicalRewritePrompts.UserPrompt,
+            prompts.SystemPrompt,
+            prompts.UserPrompt,
             toolSession
         );
     }

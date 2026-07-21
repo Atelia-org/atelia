@@ -1,17 +1,22 @@
 namespace Atelia.ChatSession.Memory;
 
 public static class WorldUnderstandingRewritePrompts {
-    private const string SystemResourceName = "Atelia.ChatSession.Memory.Prompts.WorldUnderstandingRewriteSystem.md";
-    private const string UserResourceName = "Atelia.ChatSession.Memory.Prompts.WorldUnderstandingRewriteUser.md";
+    private const string EnglishSystemResourceName = "Atelia.ChatSession.Memory.Prompts.WorldUnderstandingRewrite.en.System.md";
+    private const string EnglishUserResourceName = "Atelia.ChatSession.Memory.Prompts.WorldUnderstandingRewrite.en.User.md";
+    private const string SimplifiedChineseSystemResourceName = "Atelia.ChatSession.Memory.Prompts.WorldUnderstandingRewrite.zh-CN.System.md";
+    private const string SimplifiedChineseUserResourceName = "Atelia.ChatSession.Memory.Prompts.WorldUnderstandingRewrite.zh-CN.User.md";
 
-    public static string SystemPrompt { get; } = ReadEmbeddedPrompt(SystemResourceName);
-    public static string UserPrompt { get; } = ReadEmbeddedPrompt(UserResourceName);
+    public static MemoryRewritePromptSet English { get; } = MemoryRewritePromptSet.ReadEmbedded(
+        typeof(WorldUnderstandingRewritePrompts),
+        EnglishSystemResourceName,
+        EnglishUserResourceName
+    );
 
-    private static string ReadEmbeddedPrompt(string resourceName) {
-        var assembly = typeof(WorldUnderstandingRewritePrompts).Assembly;
-        using var stream = assembly.GetManifestResourceStream(resourceName)
-            ?? throw new InvalidOperationException($"Embedded prompt resource '{resourceName}' was not found.");
-        using var reader = new StreamReader(stream);
-        return reader.ReadToEnd().Trim();
-    }
+    public static MemoryRewritePromptSet SimplifiedChinese { get; } = MemoryRewritePromptSet.ReadEmbedded(
+        typeof(WorldUnderstandingRewritePrompts),
+        SimplifiedChineseSystemResourceName,
+        SimplifiedChineseUserResourceName
+    );
+
+    public static MemoryRewritePromptSet Default => SimplifiedChinese;
 }

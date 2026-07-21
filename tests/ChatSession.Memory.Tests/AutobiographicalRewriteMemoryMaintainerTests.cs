@@ -15,12 +15,12 @@ public class AutobiographicalRewriteMemoryMaintainerTests {
                 // 空 tool session ⇒ 单轮完整重写，无可见工具。
                 Assert.Empty(request.Tools);
                 // system prompt 来自嵌入的 rewrite 资源，且能被正确加载（非空）。
-                Assert.Equal(AutobiographicalRewritePrompts.SystemPrompt, request.SystemPrompt);
+                Assert.Equal(AutobiographicalRewritePrompts.Default.SystemPrompt, request.SystemPrompt);
                 Assert.False(string.IsNullOrWhiteSpace(request.SystemPrompt));
                 // 最后一条 observation 同时含当前 block 与 rewrite user prompt。
                 var instruction = Assert.IsType<ObservationMessage>(request.Context[^1]);
                 Assert.Contains("从前，我还不明白。", instruction.Content);
-                Assert.Contains("The messages above are a segment", instruction.Content);
+                Assert.Contains("以上消息是Galatea即将从即时记忆中消退的一段生活体验", instruction.Content);
                 return new CompletionResult(
                     new ActionMessage([new ActionBlock.Text("我把那句话留了下来。\n\n此刻，我仍在等待。")]),
                     new CompletionDescriptor("scripted", "openai-chat-v1", request.ModelId)
@@ -33,6 +33,13 @@ public class AutobiographicalRewriteMemoryMaintainerTests {
 
         Assert.Equal("我把那句话留了下来。\n\n此刻，我仍在等待。", result.NewBlock.Text);
         Assert.Equal(0, result.ToolCallsExecuted);
+    }
+
+    [Fact]
+    public void Prompts_DefaultToSimplifiedChinese_AndKeepEnglishAvailable() {
+        Assert.Same(AutobiographicalRewritePrompts.SimplifiedChinese, AutobiographicalRewritePrompts.Default);
+        Assert.StartsWith("你是Galatea的代笔人", AutobiographicalRewritePrompts.Default.SystemPrompt);
+        Assert.StartsWith("You are Galatea's ghostwriter", AutobiographicalRewritePrompts.English.SystemPrompt);
     }
 
     [Fact]

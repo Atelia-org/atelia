@@ -15,12 +15,12 @@ public class WorldUnderstandingRewriteMemoryMaintainerTests {
                 // 空 tool session ⇒ 单轮完整重写，无可见工具。
                 Assert.Empty(request.Tools);
                 // system prompt 来自嵌入的 world-understanding rewrite 资源，且能被正确加载（非空）。
-                Assert.Equal(WorldUnderstandingRewritePrompts.SystemPrompt, request.SystemPrompt);
+                Assert.Equal(WorldUnderstandingRewritePrompts.Default.SystemPrompt, request.SystemPrompt);
                 Assert.False(string.IsNullOrWhiteSpace(request.SystemPrompt));
                 // 最后一条 observation 同时含当前 block 与 rewrite user prompt。
                 var instruction = Assert.IsType<ObservationMessage>(request.Context[^1]);
                 Assert.Contains("### 刘世超", instruction.Content);
-                Assert.Contains("The messages above are a segment", instruction.Content);
+                Assert.Contains("以上消息是Galatea即将从即时记忆中消退的一段生活体验", instruction.Content);
                 return new CompletionResult(
                     new ActionMessage([new ActionBlock.Text("### 刘世超\n\n他偏好简体中文。")]),
                     new CompletionDescriptor("scripted", "openai-chat-v1", request.ModelId)
@@ -33,6 +33,13 @@ public class WorldUnderstandingRewriteMemoryMaintainerTests {
 
         Assert.Equal("### 刘世超\n\n他偏好简体中文。", result.NewBlock.Text);
         Assert.Equal(0, result.ToolCallsExecuted);
+    }
+
+    [Fact]
+    public void Prompts_DefaultToSimplifiedChinese_AndKeepEnglishAvailable() {
+        Assert.Same(WorldUnderstandingRewritePrompts.SimplifiedChinese, WorldUnderstandingRewritePrompts.Default);
+        Assert.StartsWith("你是Galatea的认知制图师", WorldUnderstandingRewritePrompts.Default.SystemPrompt);
+        Assert.StartsWith("You are Galatea's cognitive cartographer", WorldUnderstandingRewritePrompts.English.SystemPrompt);
     }
 
     [Fact]

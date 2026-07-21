@@ -472,8 +472,11 @@ internal static partial class Program {
                         completionClient,
                         modelId,
                         toolSession,
-                        systemPromptOverride,
-                        userPromptOverride
+                        ResolveRewritePrompts(
+                            AutobiographicalRewritePrompts.Default,
+                            systemPromptOverride,
+                            userPromptOverride
+                        )
                     )
                 );
 
@@ -486,8 +489,11 @@ internal static partial class Program {
                         completionClient,
                         modelId,
                         toolSession,
-                        systemPromptOverride,
-                        userPromptOverride
+                        ResolveRewritePrompts(
+                            WorldUnderstandingRewritePrompts.Default,
+                            systemPromptOverride,
+                            userPromptOverride
+                        )
                     )
                 );
 
@@ -495,6 +501,15 @@ internal static partial class Program {
                 throw new ArgumentException($"Unsupported replay memory preset '{preset}'.");
         }
     }
+
+    private static MemoryRewritePromptSet ResolveRewritePrompts(
+        MemoryRewritePromptSet defaults,
+        string? systemPromptOverride,
+        string? userPromptOverride
+    ) => new(
+        systemPromptOverride ?? defaults.SystemPrompt,
+        userPromptOverride ?? defaults.UserPrompt
+    );
 
     private static MemoryPackCarrier ParseCarrier(string? text, MemoryPackCarrier defaultCarrier) {
         if (string.IsNullOrWhiteSpace(text)) { return defaultCarrier; }

@@ -23,13 +23,21 @@
     <EmbeddedResource Include="../../docs/Galatea/prompt/autobiographical-maintainer/compression/user.md"
               LogicalName="Atelia.ChatSession.Memory.Prompts.AutobiographicalCompressionUser.md" />
     <EmbeddedResource Include="../../docs/Galatea/prompt/autobiographical-maintainer/rewrite/system.md"
-              LogicalName="Atelia.ChatSession.Memory.Prompts.AutobiographicalRewriteSystem.md" />
+              LogicalName="Atelia.ChatSession.Memory.Prompts.AutobiographicalRewrite.en.System.md" />
     <EmbeddedResource Include="../../docs/Galatea/prompt/autobiographical-maintainer/rewrite/user.md"
-              LogicalName="Atelia.ChatSession.Memory.Prompts.AutobiographicalRewriteUser.md" />
+              LogicalName="Atelia.ChatSession.Memory.Prompts.AutobiographicalRewrite.en.User.md" />
+    <EmbeddedResource Include="../../docs/Galatea/prompt/autobiographical-maintainer/rewrite-zh-cn/system.md"
+              LogicalName="Atelia.ChatSession.Memory.Prompts.AutobiographicalRewrite.zh-CN.System.md" />
+    <EmbeddedResource Include="../../docs/Galatea/prompt/autobiographical-maintainer/rewrite-zh-cn/user.md"
+              LogicalName="Atelia.ChatSession.Memory.Prompts.AutobiographicalRewrite.zh-CN.User.md" />
     <EmbeddedResource Include="../../docs/Galatea/prompt/world-understanding-maintainer/rewrite/system.md"
-              LogicalName="Atelia.ChatSession.Memory.Prompts.WorldUnderstandingRewriteSystem.md" />
+              LogicalName="Atelia.ChatSession.Memory.Prompts.WorldUnderstandingRewrite.en.System.md" />
     <EmbeddedResource Include="../../docs/Galatea/prompt/world-understanding-maintainer/rewrite/user.md"
-              LogicalName="Atelia.ChatSession.Memory.Prompts.WorldUnderstandingRewriteUser.md" />
+              LogicalName="Atelia.ChatSession.Memory.Prompts.WorldUnderstandingRewrite.en.User.md" />
+    <EmbeddedResource Include="../../docs/Galatea/prompt/world-understanding-maintainer/rewrite-zh-cn/system.md"
+              LogicalName="Atelia.ChatSession.Memory.Prompts.WorldUnderstandingRewrite.zh-CN.System.md" />
+    <EmbeddedResource Include="../../docs/Galatea/prompt/world-understanding-maintainer/rewrite-zh-cn/user.md"
+              LogicalName="Atelia.ChatSession.Memory.Prompts.WorldUnderstandingRewrite.zh-CN.User.md" />
   </ItemGroup>
 
 </Project>

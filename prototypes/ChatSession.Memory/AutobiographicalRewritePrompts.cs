@@ -1,17 +1,22 @@
 namespace Atelia.ChatSession.Memory;
 
 public static class AutobiographicalRewritePrompts {
-    private const string SystemResourceName = "Atelia.ChatSession.Memory.Prompts.AutobiographicalRewriteSystem.md";
-    private const string UserResourceName = "Atelia.ChatSession.Memory.Prompts.AutobiographicalRewriteUser.md";
+    private const string EnglishSystemResourceName = "Atelia.ChatSession.Memory.Prompts.AutobiographicalRewrite.en.System.md";
+    private const string EnglishUserResourceName = "Atelia.ChatSession.Memory.Prompts.AutobiographicalRewrite.en.User.md";
+    private const string SimplifiedChineseSystemResourceName = "Atelia.ChatSession.Memory.Prompts.AutobiographicalRewrite.zh-CN.System.md";
+    private const string SimplifiedChineseUserResourceName = "Atelia.ChatSession.Memory.Prompts.AutobiographicalRewrite.zh-CN.User.md";
 
-    public static string SystemPrompt { get; } = ReadEmbeddedPrompt(SystemResourceName);
-    public static string UserPrompt { get; } = ReadEmbeddedPrompt(UserResourceName);
+    public static MemoryRewritePromptSet English { get; } = MemoryRewritePromptSet.ReadEmbedded(
+        typeof(AutobiographicalRewritePrompts),
+        EnglishSystemResourceName,
+        EnglishUserResourceName
+    );
 
-    private static string ReadEmbeddedPrompt(string resourceName) {
-        var assembly = typeof(AutobiographicalRewritePrompts).Assembly;
-        using var stream = assembly.GetManifestResourceStream(resourceName)
-            ?? throw new InvalidOperationException($"Embedded prompt resource '{resourceName}' was not found.");
-        using var reader = new StreamReader(stream);
-        return reader.ReadToEnd().Trim();
-    }
+    public static MemoryRewritePromptSet SimplifiedChinese { get; } = MemoryRewritePromptSet.ReadEmbedded(
+        typeof(AutobiographicalRewritePrompts),
+        SimplifiedChineseSystemResourceName,
+        SimplifiedChineseUserResourceName
+    );
+
+    public static MemoryRewritePromptSet Default => SimplifiedChinese;
 }
