@@ -60,6 +60,8 @@ public sealed class MemoryDocumentAgentLoopException : InvalidOperationException
 }
 
 internal static class MemoryDocumentAgentLoop {
+    internal const string EmptyLeadingObservationPlaceholder = "<empty>";
+
     public static async ValueTask<MemoryDocumentAgentLoopResult> RunAsync(
         MemoryDocumentAgentLoopRequest request,
         CancellationToken ct
@@ -199,7 +201,14 @@ internal static class MemoryDocumentAgentLoop {
 
         AddProjectedMessages(context, recentHistory.Messages);
         context.Add(new ObservationMessage(BuildFinalInstruction(request)));
+        EnsureObservationFirst(context);
         return context;
+    }
+
+    private static void EnsureObservationFirst(List<IHistoryMessage> context) {
+        if (context.Count > 0 && context[0].Kind is HistoryMessageKind.Action) {
+            context.Insert(0, new ObservationMessage(EmptyLeadingObservationPlaceholder));
+        }
     }
 
     private static string BuildFinalInstruction(MemoryDocumentAgentLoopRequest request) {

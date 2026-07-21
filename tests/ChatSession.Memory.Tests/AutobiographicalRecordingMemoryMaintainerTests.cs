@@ -95,6 +95,41 @@ public class AutobiographicalRecordingMemoryMaintainerTests {
     }
 
     [Fact]
+    public async Task MaintainAsync_PadsActionOnlyPriorContextWithObservation() {
+        var completionClient = new ScriptedCompletionClient();
+        completionClient.Enqueue(
+            request => {
+                Assert.Collection(
+                    request.Context.Take(2),
+                    message => Assert.Equal("<empty>", Assert.IsType<ObservationMessage>(message).Content),
+                    message => Assert.Equal("prior action memory", Assert.IsType<ActionMessage>(message).GetFlattenedText())
+                );
+                return ToolCallResult(
+                    request,
+                    new RawToolCall(
+                        MemoryDocumentTools.RecordingFinishToolName,
+                        "finish-padded-prior-action",
+                        """{"status":"no-change"}"""
+                    )
+                );
+            }
+        );
+        var maintainer = new AutobiographicalRecordingMemoryMaintainer(completionClient, "model-a");
+        var request = new MemoryBlockMaintenanceRequest(
+            new RecentHistorySlice(
+                new ContextHeaderSnapshot(string.Empty, string.Empty, "prior action memory"),
+                [new ObservationMessage("recent observation")]
+            ),
+            RolePlayMemoryBlockPaths.FirstPersonAutobiography,
+            new MemoryPackBlock("existing autobiography")
+        );
+
+        var result = await maintainer.MaintainAsync(request, CancellationToken.None);
+
+        Assert.Equal("existing autobiography", result.NewBlock.Text);
+    }
+
+    [Fact]
     public async Task MaintainAsync_RejectsAssistantTextWithoutFinishTool() {
         var completionClient = new ScriptedCompletionClient();
         completionClient.Enqueue(
