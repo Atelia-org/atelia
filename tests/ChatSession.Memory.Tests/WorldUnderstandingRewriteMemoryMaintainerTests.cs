@@ -17,10 +17,12 @@ public class WorldUnderstandingRewriteMemoryMaintainerTests {
                 // system prompt 来自嵌入的 world-understanding rewrite 资源，且能被正确加载（非空）。
                 Assert.Equal(WorldUnderstandingRewritePrompts.Default.SystemPrompt, request.SystemPrompt);
                 Assert.False(string.IsNullOrWhiteSpace(request.SystemPrompt));
-                // 最后一条 observation 同时含当前 block 与 rewrite user prompt。
+                // 旧世界理解只存在于 ContextHeader；末尾 instruction 不再重复注入。
                 var instruction = Assert.IsType<ObservationMessage>(request.Context[^1]);
-                Assert.Contains("### 刘世超", instruction.Content);
-                Assert.Contains("以上消息是Galatea即将从即时记忆中消退的一段生活体验", instruction.Content);
+                Assert.Equal(1, CountContextOccurrences(request.Context, "### 刘世超\n\n开发者。"));
+                Assert.DoesNotContain("### 刘世超\n\n开发者。", instruction.Content);
+                Assert.DoesNotContain("Current block:", instruction.Content);
+                Assert.Contains("上下文开头呈现了Galatea目前版本的世界理解", instruction.Content);
                 return new CompletionResult(
                     new ActionMessage([new ActionBlock.Text("### 刘世超\n\n他偏好简体中文。")]),
                     new CompletionDescriptor("scripted", "openai-chat-v1", request.ModelId)
@@ -53,10 +55,12 @@ public class WorldUnderstandingRewriteMemoryMaintainerTests {
     private static WorldUnderstandingRewriteMemoryMaintainer CreateMaintainer(ICompletionClient client)
         => new(client, "model-a", new ToolRegistry(Array.Empty<ITool>()).CreateSession());
 
-    private static MemoryBlockMaintenanceRequest CreateRequest(string oldBlock)
-        => new(
+    private static MemoryBlockMaintenanceRequest CreateRequest(string oldBlock) {
+        var memoryPack = new MemoryPack();
+        memoryPack.Observation.Add(RolePlayMemoryBlockPaths.WorldUnderstanding.BlockKey, new MemoryPackBlock(oldBlock));
+        return new(
             new RecentHistorySlice(
-                ContextHeaderSnapshot.Empty,
+                ContextHeaderSnapshot.FromRenderedMemoryPack(memoryPack.Render()),
                 [
                     new ObservationMessage("刘世超说他只用简体中文。"),
                     new ActionMessage([new ActionBlock.Text("[Galatea] 我记下了这个偏好。")])
@@ -65,6 +69,24 @@ public class WorldUnderstandingRewriteMemoryMaintainerTests {
             RolePlayMemoryBlockPaths.WorldUnderstanding,
             new MemoryPackBlock(oldBlock)
         );
+    }
+
+    private static int CountContextOccurrences(IReadOnlyList<IHistoryMessage> context, string value) {
+        int count = 0;
+        foreach (var message in context) {
+            var text = message switch {
+                ObservationMessage observation => observation.Content ?? string.Empty,
+                ActionMessage action => action.GetFlattenedText(),
+                _ => string.Empty
+            };
+            int index = 0;
+            while ((index = text.IndexOf(value, index, StringComparison.Ordinal)) >= 0) {
+                count++;
+                index += value.Length;
+            }
+        }
+        return count;
+    }
 
     private sealed class ScriptedCompletionClient : ICompletionClient {
         private readonly Queue<Func<CompletionRequest, CompletionResult>> _responses = new();

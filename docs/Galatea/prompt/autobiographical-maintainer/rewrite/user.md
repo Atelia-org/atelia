@@ -1,4 +1,4 @@
-The messages above are a segment of Galatea's lived experience about to leave her active memory. The "Current block" shown just above is her autobiography as it stands so far.
+Galatea's autobiography as it stands so far appears at the beginning of the context. Before this instruction, you are also shown a segment of her recent lived experience that is about to leave her active memory.
 
 Read the full segment, then re-read her existing autobiography. Ask yourself: **what from her past and from this new stretch of experience will still be coloring her thoughts, her trust, her hesitations, her hopes, after the specific events have blurred?**
 

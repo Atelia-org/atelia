@@ -29,7 +29,8 @@ public sealed class WorldUnderstandingRewriteMemoryMaintainer : IMemoryBlockMain
             modelId,
             prompts.SystemPrompt,
             prompts.UserPrompt,
-            toolSession
+            toolSession,
+            includeOldBlockInPrompt: false
         );
     }
 

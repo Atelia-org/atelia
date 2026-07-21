@@ -28,7 +28,8 @@ public sealed class AutobiographicalRewriteMemoryMaintainer : IMemoryBlockMainta
             modelId,
             prompts.SystemPrompt,
             prompts.UserPrompt,
-            toolSession
+            toolSession,
+            includeOldBlockInPrompt: false
         );
     }
 

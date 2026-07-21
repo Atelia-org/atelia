@@ -311,7 +311,8 @@ public sealed class CompletionMemoryBlockMaintainer : IMemoryBlockMaintainer {
         string modelId,
         string systemPrompt,
         string userPrompt,
-        ToolSession toolSession
+        ToolSession toolSession,
+        bool includeOldBlockInPrompt = true
     ) {
         Id = string.IsNullOrWhiteSpace(id)
             ? throw new ArgumentException("Memory maintainer id cannot be empty.", nameof(id))
@@ -324,6 +325,7 @@ public sealed class CompletionMemoryBlockMaintainer : IMemoryBlockMaintainer {
         SystemPrompt = systemPrompt ?? throw new ArgumentNullException(nameof(systemPrompt));
         UserPrompt = userPrompt ?? throw new ArgumentNullException(nameof(userPrompt));
         ToolSession = toolSession ?? throw new ArgumentNullException(nameof(toolSession));
+        IncludeOldBlockInPrompt = includeOldBlockInPrompt;
     }
 
     public string Id { get; }
@@ -333,6 +335,7 @@ public sealed class CompletionMemoryBlockMaintainer : IMemoryBlockMaintainer {
     public string SystemPrompt { get; }
     public string UserPrompt { get; }
     public ToolSession ToolSession { get; }
+    public bool IncludeOldBlockInPrompt { get; }
 
     public async ValueTask<MemoryBlockMaintenanceResult> MaintainAsync(
         MemoryBlockMaintenanceRequest request,
@@ -476,11 +479,13 @@ public sealed class CompletionMemoryBlockMaintainer : IMemoryBlockMaintainer {
             .Append(MemoryPackCarrierTokens.ToStorageToken(request.Target.Carrier))
             .Append('/')
             .AppendLine(request.Target.BlockKey);
-        builder.AppendLine();
-        builder.AppendLine("Current block:");
-        builder.AppendLine("```text");
-        builder.AppendLine(request.OldBlock.Text);
-        builder.AppendLine("```");
+        if (IncludeOldBlockInPrompt) {
+            builder.AppendLine();
+            builder.AppendLine("Current block:");
+            builder.AppendLine("```text");
+            builder.AppendLine(request.OldBlock.Text);
+            builder.AppendLine("```");
+        }
         builder.AppendLine();
         builder.Append("Instruction:").AppendLine();
         builder.Append(UserPrompt);

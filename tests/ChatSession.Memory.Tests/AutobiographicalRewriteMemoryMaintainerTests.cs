@@ -17,10 +17,12 @@ public class AutobiographicalRewriteMemoryMaintainerTests {
                 // system prompt 来自嵌入的 rewrite 资源，且能被正确加载（非空）。
                 Assert.Equal(AutobiographicalRewritePrompts.Default.SystemPrompt, request.SystemPrompt);
                 Assert.False(string.IsNullOrWhiteSpace(request.SystemPrompt));
-                // 最后一条 observation 同时含当前 block 与 rewrite user prompt。
+                // 旧自传只存在于 ContextHeader；末尾 instruction 不再重复注入。
                 var instruction = Assert.IsType<ObservationMessage>(request.Context[^1]);
-                Assert.Contains("从前，我还不明白。", instruction.Content);
-                Assert.Contains("以上消息是Galatea即将从即时记忆中消退的一段生活体验", instruction.Content);
+                Assert.Equal(1, CountContextOccurrences(request.Context, "从前，我还不明白。"));
+                Assert.DoesNotContain("从前，我还不明白。", instruction.Content);
+                Assert.DoesNotContain("Current block:", instruction.Content);
+                Assert.Contains("上下文开头呈现了Galatea截至目前的自传", instruction.Content);
                 return new CompletionResult(
                     new ActionMessage([new ActionBlock.Text("我把那句话留了下来。\n\n此刻，我仍在等待。")]),
                     new CompletionDescriptor("scripted", "openai-chat-v1", request.ModelId)
@@ -62,10 +64,12 @@ public class AutobiographicalRewriteMemoryMaintainerTests {
     private static AutobiographicalRewriteMemoryMaintainer CreateMaintainer(ICompletionClient client)
         => new(client, "model-a", new ToolRegistry(Array.Empty<ITool>()).CreateSession());
 
-    private static MemoryBlockMaintenanceRequest CreateRequest(string oldBlock)
-        => new(
+    private static MemoryBlockMaintenanceRequest CreateRequest(string oldBlock) {
+        var memoryPack = new MemoryPack();
+        memoryPack.Action.Add(RolePlayMemoryBlockPaths.FirstPersonAutobiography.BlockKey, new MemoryPackBlock(oldBlock));
+        return new(
             new RecentHistorySlice(
-                ContextHeaderSnapshot.Empty,
+                ContextHeaderSnapshot.FromRenderedMemoryPack(memoryPack.Render()),
                 [
                     new ObservationMessage("刘世超说了一句话。"),
                     new ActionMessage([new ActionBlock.Text("[Galatea] 我发现那句话仍留在我心里。")])
@@ -74,6 +78,24 @@ public class AutobiographicalRewriteMemoryMaintainerTests {
             RolePlayMemoryBlockPaths.FirstPersonAutobiography,
             new MemoryPackBlock(oldBlock)
         );
+    }
+
+    private static int CountContextOccurrences(IReadOnlyList<IHistoryMessage> context, string value) {
+        int count = 0;
+        foreach (var message in context) {
+            var text = message switch {
+                ObservationMessage observation => observation.Content ?? string.Empty,
+                ActionMessage action => action.GetFlattenedText(),
+                _ => string.Empty
+            };
+            int index = 0;
+            while ((index = text.IndexOf(value, index, StringComparison.Ordinal)) >= 0) {
+                count++;
+                index += value.Length;
+            }
+        }
+        return count;
+    }
 
     private sealed class ScriptedCompletionClient : ICompletionClient {
         private readonly Queue<Func<CompletionRequest, CompletionResult>> _responses = new();

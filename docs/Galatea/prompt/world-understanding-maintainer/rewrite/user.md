@@ -1,4 +1,4 @@
-The messages above are a segment of Galatea's lived experience about to leave her active memory. The "Current block" shown just above is her world-understanding as it stands so far.
+Galatea's world-understanding as it stands so far appears at the beginning of the context. Before this instruction, you are also shown a segment of her recent lived experience that is about to leave her active memory.
 
 Read the full experience, then re-read her existing world-understanding. Then rewrite it in full — carrying everything still valid forward, integrating what she learned, observed, or confirmed, and updating whatever this experience changed or contradicted.
 
