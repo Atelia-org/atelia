@@ -813,8 +813,8 @@ internal static class FamilyChatConfigTemplateFactory {
     public static FamilyChatUsersFileConfig CreateUsersFile() {
         return new FamilyChatUsersFileConfig(
             Users: [
-                CreateUser("alice", "Alice", "alice123", ".atelia/family-chat/sessions/alice"),
-                CreateUser("bob", "Bob", "bob123", ".atelia/family-chat/sessions/bob"),
+                CreateUser("alice", "alice123", ".atelia/family-chat/sessions/alice"),
+                CreateUser("bob", "bob123", ".atelia/family-chat/sessions/bob"),
             ],
             ListenUrls: ["http://0.0.0.0:3510"]
         );
@@ -825,7 +825,6 @@ internal static class FamilyChatConfigTemplateFactory {
             Connections: [
                 new CompletionConnectionConfig(
                     Id: DefaultConnectionId,
-                    DisplayName: "本地模型",
                     Kind: "openai-chat",
                     ModelId: PlaceholderModelId,
                     CompletionSurfaceId: "openai-chat/sglang-compatible",
@@ -840,10 +839,9 @@ internal static class FamilyChatConfigTemplateFactory {
         );
     }
 
-    private static FamilyChatUserConfig CreateUser(string userId, string displayName, string password, string sessionDir) {
+    private static FamilyChatUserConfig CreateUser(string userId, string password, string sessionDir) {
         return new FamilyChatUserConfig(
             UserId: userId,
-            DisplayName: displayName,
             Password: password,
             SessionDir: sessionDir,
             CompactionThresholdTokens: 32000,
@@ -896,7 +894,6 @@ internal static class FamilyChatHtml {
             .Select(
             static c => new FamilyChatConnectionInfoDto(
                 c.Id,
-                c.DisplayName,
                 c.ModelId
             )
         )
@@ -958,7 +955,6 @@ internal static class FamilyChatHtml {
 
   <script>
     window.familyChatBootstrap = {
-      displayName: {{JsonSerializer.Serialize(user.DisplayName, FamilyChatJson.Options)}},
       userId: {{JsonSerializer.Serialize(user.UserId, FamilyChatJson.Options)}},
       connections: {{connectionsJson}},
       defaultConnectionId: {{defaultConnectionJson}}

@@ -24,7 +24,6 @@ public sealed record FamilyChatUsersFileConfig(
 
 public sealed record FamilyChatUserConfig(
     string UserId,
-    string DisplayName,
     string Password,
     string SessionDir,
     ulong CompactionThresholdTokens,
@@ -39,13 +38,11 @@ public sealed record FamilyChatUserConfig(
 
 public sealed record FamilyChatConnectionInfoDto(
     string Id,
-    string DisplayName,
     string ModelId
 );
 
 public sealed record FamilyChatMeDto(
-    string UserId,
-    string DisplayName
+    string UserId
 );
 
 public sealed record RecentTurnDto(

@@ -24,7 +24,6 @@ public sealed record GalateaUsersFileConfig(
 
 public sealed record GalateaUserConfig(
     string UserId,
-    string DisplayName,
     string Password,
     string SessionDir,
     ulong CompactionThresholdTokens,
@@ -39,13 +38,11 @@ public sealed record GalateaUserConfig(
 
 public sealed record GalateaConnectionInfoDto(
     string Id,
-    string DisplayName,
     string ModelId
 );
 
 public sealed record GalateaMeDto(
-    string UserId,
-    string DisplayName
+    string UserId
 );
 
 public sealed record RecentTurnDto(

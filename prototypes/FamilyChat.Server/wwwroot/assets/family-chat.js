@@ -190,7 +190,7 @@
         return `
           <label class="connection-option">
             <input type="radio" name="connection" value="${escapeAttr(connection.id)}"${checked}>
-            <span class="connection-name">${escapeHtml(connection.displayName ?? connection.id)}</span>
+            <span class="connection-name">${escapeHtml(connection.id)}</span>
             <span class="connection-model">${escapeHtml(connection.modelId ?? "")}</span>
           </label>
         `;

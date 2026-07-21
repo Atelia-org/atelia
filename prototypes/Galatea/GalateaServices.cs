@@ -813,8 +813,8 @@ internal static class GalateaConfigTemplateFactory {
     public static GalateaUsersFileConfig CreateUsersFile() {
         return new GalateaUsersFileConfig(
             Users: [
-                CreateUser("alice", "Alice", "alice123", ".atelia/galatea/sessions/alice"),
-                CreateUser("bob", "Bob", "bob123", ".atelia/galatea/sessions/bob"),
+                CreateUser("alice", "alice123", ".atelia/galatea/sessions/alice"),
+                CreateUser("bob", "bob123", ".atelia/galatea/sessions/bob"),
             ],
             ListenUrls: ["http://0.0.0.0:3510"]
         );
@@ -825,7 +825,6 @@ internal static class GalateaConfigTemplateFactory {
             Connections: [
                 new CompletionConnectionConfig(
                     Id: DefaultConnectionId,
-                    DisplayName: "本地模型",
                     Kind: "openai-chat",
                     ModelId: PlaceholderModelId,
                     CompletionSurfaceId: "openai-chat/sglang-compatible",
@@ -840,10 +839,9 @@ internal static class GalateaConfigTemplateFactory {
         );
     }
 
-    private static GalateaUserConfig CreateUser(string userId, string displayName, string password, string sessionDir) {
+    private static GalateaUserConfig CreateUser(string userId, string password, string sessionDir) {
         return new GalateaUserConfig(
             UserId: userId,
-            DisplayName: displayName,
             Password: password,
             SessionDir: sessionDir,
             CompactionThresholdTokens: 32000,
@@ -896,7 +894,6 @@ internal static class GalateaHtml {
             .Select(
             static c => new GalateaConnectionInfoDto(
                 c.Id,
-                c.DisplayName,
                 c.ModelId
             )
         )
@@ -958,7 +955,6 @@ internal static class GalateaHtml {
 
   <script>
     window.galateaBootstrap = {
-      displayName: {{JsonSerializer.Serialize(user.DisplayName, GalateaJson.Options)}},
       userId: {{JsonSerializer.Serialize(user.UserId, GalateaJson.Options)}},
       connections: {{connectionsJson}},
       defaultConnectionId: {{defaultConnectionJson}}

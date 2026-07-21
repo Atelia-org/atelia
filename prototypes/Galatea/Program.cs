@@ -81,7 +81,7 @@ app.MapPost(
 
         var claims = new[] {
             new Claim(GalateaClaimTypes.UserId, user.UserId),
-            new Claim(ClaimTypes.Name, user.DisplayName),
+            new Claim(ClaimTypes.Name, user.UserId),
         };
         var principal = new ClaimsPrincipal(new ClaimsIdentity(claims, CookieScheme));
 
@@ -125,7 +125,7 @@ api.MapGet(
             ?? throw new InvalidOperationException("Authenticated principal is missing user id.");
         if (!hostService.TryGetUser(userId, out var configUser)) { return Results.Unauthorized(); }
 
-        return Results.Ok(new GalateaMeDto(configUser.UserId, configUser.DisplayName));
+        return Results.Ok(new GalateaMeDto(configUser.UserId));
     }
 );
 

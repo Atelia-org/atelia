@@ -169,7 +169,6 @@ public sealed class FamilyChatServerTests {
                 users: [
                     new FamilyChatUserConfig(
                         "alice",
-                        "Alice",
                         "pw1",
                         Path.Combine(tempDir, "alice-session"),
                         200,
@@ -234,7 +233,6 @@ public sealed class FamilyChatServerTests {
                 users: [
                     new FamilyChatUserConfig(
                         "alice",
-                        "Alice",
                         "pw1",
                         Path.Combine(tempDir, "alice-session"),
                         200,
@@ -296,7 +294,6 @@ public sealed class FamilyChatServerTests {
                 users: [
                     new FamilyChatUserConfig(
                         "alice",
-                        "Alice",
                         "pw1",
                         Path.Combine(tempDir, "alice-session"),
                         200,
@@ -358,7 +355,6 @@ public sealed class FamilyChatServerTests {
                 users: [
                     new FamilyChatUserConfig(
                         "alice",
-                        "Alice",
                         "pw1",
                         Path.Combine(tempDir, "alice-session"),
                         200,
@@ -451,7 +447,6 @@ public sealed class FamilyChatServerTests {
                 users: [
                     new FamilyChatUserConfig(
                         "alice",
-                        "Alice",
                         "pw1",
                         sessionDir,
                         200,
@@ -1767,7 +1762,6 @@ public sealed class FamilyChatServerTests {
                 users: [
                     new FamilyChatUserConfig(
                         "alice",
-                        "Alice",
                         "pw1",
                         Path.Combine(tempDir, "alice-session"),
                         200,
@@ -1819,7 +1813,6 @@ public sealed class FamilyChatServerTests {
                 users: [
                     new FamilyChatUserConfig(
                         "alice",
-                        "Alice",
                         "pw1",
                         Path.Combine(tempDir, "alice-session"),
                         200,
@@ -1873,7 +1866,6 @@ public sealed class FamilyChatServerTests {
                 users: [
                     new FamilyChatUserConfig(
                         "alice",
-                        "Alice",
                         "pw1",
                         Path.Combine(tempDir, "alice-session"),
                         200,
@@ -1927,7 +1919,6 @@ public sealed class FamilyChatServerTests {
                 users: [
                     new FamilyChatUserConfig(
                         "alice",
-                        "Alice",
                         "pw1",
                         Path.Combine(tempDir, "alice-session"),
                         200,
@@ -2014,7 +2005,6 @@ public sealed class FamilyChatServerTests {
                 users: [
                     new FamilyChatUserConfig(
                         "alice",
-                        "Alice",
                         "pw1",
                         sessionDir,
                         200,
@@ -2088,7 +2078,6 @@ public sealed class FamilyChatServerTests {
                 [
                     new CompletionConnectionConfig(
                         "test",
-                        "Test",
                         "openai-chat",
                         "model-a",
                         "openai-chat/strict",
@@ -2171,7 +2160,6 @@ public sealed class FamilyChatServerTests {
                 [
                     new CompletionConnectionConfig(
                         "test",
-                        "Test",
                         "openai-chat",
                         "model-a",
                         "openai-chat/strict",
@@ -2214,7 +2202,6 @@ public sealed class FamilyChatServerTests {
                 users: [
                     new FamilyChatUserConfig(
                         "alice",
-                        "Alice",
                         "pw1",
                         Path.Combine(tempDir, "alice-session"),
                         200,
@@ -2255,7 +2242,6 @@ public sealed class FamilyChatServerTests {
                 users: [
                     new FamilyChatUserConfig(
                         "alice",
-                        "Alice",
                         "pw1",
                         Path.Combine(tempDir, "alice-session"),
                         200,
@@ -2388,7 +2374,6 @@ public sealed class FamilyChatServerTests {
                 users: [
                     new FamilyChatUserConfig(
                         "alice",
-                        "Alice",
                         "",
                         Path.Combine(tempDir, "alice-session"),
                         200,
@@ -2423,7 +2408,6 @@ public sealed class FamilyChatServerTests {
                 users: [
                     new FamilyChatUserConfig(
                         "alice",
-                        "Alice",
                         "pw1",
                         Path.Combine(tempDir, "alice-session"),
                         200,
@@ -2433,7 +2417,6 @@ public sealed class FamilyChatServerTests {
                     ),
                     new FamilyChatUserConfig(
                         "alice",
-                        "Alice 2",
                         "pw2",
                         Path.Combine(tempDir, "alice-session-2"),
                         200,
@@ -2503,7 +2486,6 @@ public sealed class FamilyChatServerTests {
                 users: [
                     new FamilyChatUserConfig(
                         "alice",
-                        "Alice",
                         "pw1",
                         Path.Combine(tempDir, "alice-session"),
                         200,
@@ -2565,7 +2547,6 @@ public sealed class FamilyChatServerTests {
                 users: [
                     new FamilyChatUserConfig(
                         "alice",
-                        "Alice",
                         "pw1",
                         Path.Combine(tempDir, "alice-session"),
                         200,
@@ -2621,7 +2602,6 @@ public sealed class FamilyChatServerTests {
                 users: [
                     new FamilyChatUserConfig(
                         "alice",
-                        "Alice",
                         "pw1",
                         Path.Combine(tempDir, "alice-session"),
                         200,
@@ -2694,7 +2674,6 @@ public sealed class FamilyChatServerTests {
                 users: [
                     new FamilyChatUserConfig(
                         "alice",
-                        "Alice",
                         "pw1",
                         Path.Combine(tempDir, "alice-session"),
                         200,
@@ -2759,7 +2738,6 @@ public sealed class FamilyChatServerTests {
                 users: [
                     new FamilyChatUserConfig(
                         "alice",
-                        "Alice",
                         "pw1",
                         Path.Combine(tempDir, "alice-session"),
                         200,
@@ -2821,7 +2799,6 @@ public sealed class FamilyChatServerTests {
                 users: [
                     new FamilyChatUserConfig(
                         "alice",
-                        "Alice",
                         "pw1",
                         Path.Combine(tempDir, "alice-session"),
                         200,
@@ -2882,7 +2859,6 @@ public sealed class FamilyChatServerTests {
                 users: [
                     new FamilyChatUserConfig(
                         "alice",
-                        "Alice",
                         "pw1",
                         Path.Combine(tempDir, "alice-session"),
                         200,
@@ -3177,7 +3153,6 @@ public sealed class FamilyChatServerTests {
             [
             new CompletionConnectionConfig(
                     "test",
-                    "Test",
                     "openai-chat",
                     connectionModelId,
                     connectionSurfaceId,
