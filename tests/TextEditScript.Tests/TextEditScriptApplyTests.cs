@@ -4,11 +4,21 @@ using Xunit;
 namespace Atelia.Tests;
 
 public class TextEditScriptApplyTests {
-    [Fact]
-    public void ApplyTo_ShouldInsertAfterTail_WhenSnapshotIsEmpty() {
-        var script = new TextEditScriptDocument([
-            new InsertTextEdit(TextInsertSide.AfterAnchor, TextAnchor.Tail, "第一条。"),
-        ]);
+    [Theory]
+    [InlineData(TextInsertSide.BeforeAnchor, TextAnchorKind.Head)]
+    [InlineData(TextInsertSide.AfterAnchor, TextAnchorKind.Head)]
+    [InlineData(TextInsertSide.BeforeAnchor, TextAnchorKind.Tail)]
+    [InlineData(TextInsertSide.AfterAnchor, TextAnchorKind.Tail)]
+    public void ApplyTo_ShouldInsertAroundHeadOrTail_WhenSnapshotIsEmpty(
+        TextInsertSide side,
+        TextAnchorKind anchorKind
+    ) {
+        var anchor = anchorKind is TextAnchorKind.Head ? TextAnchor.Head : TextAnchor.Tail;
+        var script = new TextEditScriptDocument(
+            [
+            new InsertTextEdit(side, anchor, "第一条。"),
+        ]
+        );
 
         var result = script.ApplyTo(TextBlockSnapshotDocument.Empty);
 
@@ -19,28 +29,19 @@ public class TextEditScriptApplyTests {
     }
 
     [Fact]
-    public void ApplyTo_ShouldRejectInsertAfterHead_WhenSnapshotIsEmpty() {
-        var script = new TextEditScriptDocument([
-            new InsertTextEdit(TextInsertSide.AfterAnchor, TextAnchor.Head, "无效。"),
-        ]);
-
-        var result = script.ApplyTo(TextBlockSnapshotDocument.Empty);
-
-        Assert.False(result.IsSuccess);
-        Assert.NotNull(result.Error);
-        Assert.Contains("empty snapshot", result.Error.Message);
-    }
-
-    [Fact]
     public void ApplyTo_ShouldSupportHeadAndTailForReplaceAndDelete() {
-        var before = new TextBlockSnapshotDocument([
+        var before = new TextBlockSnapshotDocument(
+            [
             new TextBlockSnapshot(7, "旧首条"),
             new TextBlockSnapshot(9, "旧末条"),
-        ]);
-        var script = new TextEditScriptDocument([
+        ]
+        );
+        var script = new TextEditScriptDocument(
+            [
             new ReplaceTextEdit(TextAnchor.Tail, "新末条"),
             new DeleteTextEdit(TextAnchor.Head),
-        ]);
+        ]
+        );
 
         var result = script.ApplyTo(before);
 
@@ -52,15 +53,19 @@ public class TextEditScriptApplyTests {
 
     [Fact]
     public void ApplyTo_ShouldApplySequentiallyAgainstUpdatedSnapshot() {
-        var before = new TextBlockSnapshotDocument([
+        var before = new TextBlockSnapshotDocument(
+            [
             new TextBlockSnapshot(10, "A"),
             new TextBlockSnapshot(20, "B"),
-        ]);
-        var script = new TextEditScriptDocument([
+        ]
+        );
+        var script = new TextEditScriptDocument(
+            [
             new InsertTextEdit(TextInsertSide.BeforeAnchor, TextAnchor.Head, "X"),
             new DeleteTextEdit(TextAnchor.Head),
             new ReplaceTextEdit(TextAnchor.Head, "A2"),
-        ]);
+        ]
+        );
 
         var result = script.ApplyTo(before);
 
@@ -74,19 +79,24 @@ public class TextEditScriptApplyTests {
             block => {
                 Assert.Equal((uint)20, block.BlockId);
                 Assert.Equal("B", block.Content);
-            });
+            }
+        );
     }
 
     [Fact]
     public void ApplyTo_ShouldAllocateInsertedBlockIdsSequentiallyFromConfiguredSeed() {
-        var before = new TextBlockSnapshotDocument([
+        var before = new TextBlockSnapshotDocument(
+            [
             new TextBlockSnapshot(2, "A"),
             new TextBlockSnapshot(4, "B"),
-        ]);
-        var script = new TextEditScriptDocument([
+        ]
+        );
+        var script = new TextEditScriptDocument(
+            [
             new InsertTextEdit(TextInsertSide.AfterAnchor, TextAnchor.Tail, "C"),
             new InsertTextEdit(TextInsertSide.AfterAnchor, TextAnchor.Tail, "D"),
-        ]);
+        ]
+        );
 
         var result = script.ApplyTo(before, new TextEditScriptApplyOptions { FirstInsertedBlockId = 3 });
 
@@ -96,18 +106,23 @@ public class TextEditScriptApplyTests {
             block => Assert.Equal((uint)2, block.BlockId),
             block => Assert.Equal((uint)4, block.BlockId),
             block => Assert.Equal((uint)3, block.BlockId),
-            block => Assert.Equal((uint)5, block.BlockId));
+            block => Assert.Equal((uint)5, block.BlockId)
+        );
     }
 
     [Fact]
     public void ApplyTo_ShouldRejectDuplicateBlockIdsInSnapshot() {
-        var before = new TextBlockSnapshotDocument([
+        var before = new TextBlockSnapshotDocument(
+            [
             new TextBlockSnapshot(7, "A"),
             new TextBlockSnapshot(7, "B"),
-        ]);
-        var script = new TextEditScriptDocument([
+        ]
+        );
+        var script = new TextEditScriptDocument(
+            [
             new DeleteTextEdit(TextAnchor.Head),
-        ]);
+        ]
+        );
 
         var result = script.ApplyTo(before);
 
@@ -118,13 +133,17 @@ public class TextEditScriptApplyTests {
 
     [Fact]
     public void ApplyTo_ShouldSplitBlock_AndAllocateNewRightBlockId() {
-        var before = new TextBlockSnapshotDocument([
+        var before = new TextBlockSnapshotDocument(
+            [
             new TextBlockSnapshot(10, "abcdef"),
             new TextBlockSnapshot(20, "tail"),
-        ]);
-        var script = new TextEditScriptDocument([
+        ]
+        );
+        var script = new TextEditScriptDocument(
+            [
             new SplitTextEdit(TextAnchor.ForBlockId(10), 2),
-        ]);
+        ]
+        );
 
         var result = script.ApplyTo(before);
 
@@ -142,19 +161,24 @@ public class TextEditScriptApplyTests {
             block => {
                 Assert.Equal((uint)20, block.BlockId);
                 Assert.Equal("tail", block.Content);
-            });
+            }
+        );
     }
 
     [Fact]
     public void ApplyTo_ShouldMergeAnchorWithNext_AndPreserveAnchorBlockId() {
-        var before = new TextBlockSnapshotDocument([
+        var before = new TextBlockSnapshotDocument(
+            [
             new TextBlockSnapshot(10, "hello"),
             new TextBlockSnapshot(20, " world"),
             new TextBlockSnapshot(30, "tail"),
-        ]);
-        var script = new TextEditScriptDocument([
+        ]
+        );
+        var script = new TextEditScriptDocument(
+            [
             new MergeTextEdit(TextAnchor.ForBlockId(10)),
-        ]);
+        ]
+        );
 
         var result = script.ApplyTo(before);
 
@@ -168,19 +192,24 @@ public class TextEditScriptApplyTests {
             block => {
                 Assert.Equal((uint)30, block.BlockId);
                 Assert.Equal("tail", block.Content);
-            });
+            }
+        );
     }
 
     [Fact]
     public void ApplyTo_ShouldApplySplitThenMergeSequentiallyAgainstUpdatedSnapshot() {
-        var before = new TextBlockSnapshotDocument([
+        var before = new TextBlockSnapshotDocument(
+            [
             new TextBlockSnapshot(10, "abcd"),
             new TextBlockSnapshot(20, "Z"),
-        ]);
-        var script = new TextEditScriptDocument([
+        ]
+        );
+        var script = new TextEditScriptDocument(
+            [
             new SplitTextEdit(TextAnchor.Head, 2),
             new MergeTextEdit(TextAnchor.Head),
-        ]);
+        ]
+        );
 
         var result = script.ApplyTo(before);
 
@@ -194,17 +223,22 @@ public class TextEditScriptApplyTests {
             block => {
                 Assert.Equal((uint)20, block.BlockId);
                 Assert.Equal("Z", block.Content);
-            });
+            }
+        );
     }
 
     [Fact]
     public void ApplyTo_ShouldRejectMergeWhenAnchorHasNoNextBlock() {
-        var before = new TextBlockSnapshotDocument([
+        var before = new TextBlockSnapshotDocument(
+            [
             new TextBlockSnapshot(10, "only"),
-        ]);
-        var script = new TextEditScriptDocument([
+        ]
+        );
+        var script = new TextEditScriptDocument(
+            [
             new MergeTextEdit(TextAnchor.Tail),
-        ]);
+        ]
+        );
 
         var result = script.ApplyTo(before);
 
@@ -215,12 +249,16 @@ public class TextEditScriptApplyTests {
 
     [Fact]
     public void ApplyTo_ShouldRejectSplitOutsideBlockInterior() {
-        var before = new TextBlockSnapshotDocument([
+        var before = new TextBlockSnapshotDocument(
+            [
             new TextBlockSnapshot(10, "abc"),
-        ]);
-        var script = new TextEditScriptDocument([
+        ]
+        );
+        var script = new TextEditScriptDocument(
+            [
             new SplitTextEdit(TextAnchor.Head, 3),
-        ]);
+        ]
+        );
 
         var result = script.ApplyTo(before);
 

@@ -4,21 +4,24 @@ public static class TextEditScriptApplier {
     public static AteliaResult<TextBlockSnapshotDocument> Apply(
         TextBlockSnapshotDocument snapshot,
         TextEditScriptDocument script,
-        TextEditScriptApplyOptions? options = null) {
+        TextEditScriptApplyOptions? options = null
+    ) {
         ArgumentNullException.ThrowIfNull(snapshot);
         ArgumentNullException.ThrowIfNull(script);
 
         var stateResult = MutableSnapshotState.Create(snapshot, options ?? new TextEditScriptApplyOptions());
         if (!stateResult.TryGetValue(out var state) || state is null) {
             return AteliaResult<TextBlockSnapshotDocument>.Failure(
-                stateResult.Error ?? new TextEditScriptApplyError("Failed to initialize mutable snapshot state."));
+                stateResult.Error ?? new TextEditScriptApplyError("Failed to initialize mutable snapshot state.")
+            );
         }
 
         foreach (var operation in script.Operations) {
             var applyResult = state.Apply(operation);
             if (!applyResult.IsSuccess) {
                 return AteliaResult<TextBlockSnapshotDocument>.Failure(
-                    applyResult.Error ?? new TextEditScriptApplyError("Apply returned failure without error details."));
+                    applyResult.Error ?? new TextEditScriptApplyError("Apply returned failure without error details.")
+                );
             }
         }
 
@@ -33,7 +36,8 @@ public static class TextEditScriptApplier {
         private MutableSnapshotState(
             List<TextBlockSnapshot> blocks,
             Dictionary<uint, int> indexByBlockId,
-            uint nextInsertedBlockId) {
+            uint nextInsertedBlockId
+        ) {
             _blocks = blocks;
             _indexByBlockId = indexByBlockId;
             _nextInsertedBlockId = nextInsertedBlockId;
@@ -41,7 +45,8 @@ public static class TextEditScriptApplier {
 
         public static AteliaResult<MutableSnapshotState> Create(
             TextBlockSnapshotDocument snapshot,
-            TextEditScriptApplyOptions options) {
+            TextEditScriptApplyOptions options
+        ) {
             var blocks = new List<TextBlockSnapshot>(snapshot.Blocks.Count);
             var indexByBlockId = new Dictionary<uint, int>();
 
@@ -51,14 +56,18 @@ public static class TextEditScriptApplier {
                     return AteliaResult<MutableSnapshotState>.Failure(
                         new TextEditScriptApplyError(
                             "Input snapshot contains block id 0, which is reserved and invalid.",
-                            RecoveryHint: "Only live DurableText block ids greater than 0 may appear in a snapshot."));
+                            RecoveryHint: "Only live DurableText block ids greater than 0 may appear in a snapshot."
+                        )
+                    );
                 }
 
                 if (!indexByBlockId.TryAdd(block.BlockId, i)) {
                     return AteliaResult<MutableSnapshotState>.Failure(
                         new TextEditScriptApplyError(
                             $"Input snapshot contains duplicate block id {block.BlockId}.",
-                            RecoveryHint: "Provide each live block at most once, preserving current chain order."));
+                            RecoveryHint: "Provide each live block at most once, preserving current chain order."
+                        )
+                    );
                 }
 
                 blocks.Add(block);
@@ -69,7 +78,9 @@ public static class TextEditScriptApplier {
                 return AteliaResult<MutableSnapshotState>.Failure(
                     new TextEditScriptApplyError(
                         "FirstInsertedBlockId must be greater than 0.",
-                        RecoveryHint: "Leave it unset to auto-pick a preview id, or provide a positive id seed."));
+                        RecoveryHint: "Leave it unset to auto-pick a preview id, or provide a positive id seed."
+                    )
+                );
             }
 
             return new MutableSnapshotState(blocks, indexByBlockId, nextInsertedBlockId);
@@ -83,7 +94,8 @@ public static class TextEditScriptApplier {
                 SplitTextEdit split => ApplySplit(split),
                 MergeTextEdit merge => ApplyMerge(merge),
                 _ => AteliaResult<Unit>.Failure(
-                    new TextEditScriptApplyError($"Unsupported operation type: {operation.GetType().FullName}"))
+                    new TextEditScriptApplyError($"Unsupported operation type: {operation.GetType().FullName}")
+                )
             };
         }
 
@@ -92,14 +104,10 @@ public static class TextEditScriptApplier {
 
         private AteliaResult<Unit> ApplyInsert(InsertTextEdit operation) {
             var insertionIndexResult = ResolveInsertIndex(operation.Side, operation.Anchor);
-            if (!insertionIndexResult.TryGetValue(out var insertionIndex)) {
-                return AteliaResult<Unit>.Failure(insertionIndexResult.Error!);
-            }
+            if (!insertionIndexResult.TryGetValue(out var insertionIndex)) { return AteliaResult<Unit>.Failure(insertionIndexResult.Error!); }
 
             var newBlockIdResult = AllocateInsertedBlockId();
-            if (!newBlockIdResult.TryGetValue(out var newBlockId)) {
-                return AteliaResult<Unit>.Failure(newBlockIdResult.Error!);
-            }
+            if (!newBlockIdResult.TryGetValue(out var newBlockId)) { return AteliaResult<Unit>.Failure(newBlockIdResult.Error!); }
 
             _blocks.Insert(insertionIndex, new TextBlockSnapshot(newBlockId, operation.Content));
             RebuildIndex();
@@ -108,9 +116,7 @@ public static class TextEditScriptApplier {
 
         private AteliaResult<Unit> ApplyReplace(ReplaceTextEdit operation) {
             var targetIndexResult = ResolveTargetIndex(operation.Anchor, operationName: "replace");
-            if (!targetIndexResult.TryGetValue(out var targetIndex)) {
-                return AteliaResult<Unit>.Failure(targetIndexResult.Error!);
-            }
+            if (!targetIndexResult.TryGetValue(out var targetIndex)) { return AteliaResult<Unit>.Failure(targetIndexResult.Error!); }
 
             var current = _blocks[targetIndex];
             _blocks[targetIndex] = current with { Content = operation.Content };
@@ -119,9 +125,7 @@ public static class TextEditScriptApplier {
 
         private AteliaResult<Unit> ApplyDelete(DeleteTextEdit operation) {
             var targetIndexResult = ResolveTargetIndex(operation.Anchor, operationName: "delete");
-            if (!targetIndexResult.TryGetValue(out var targetIndex)) {
-                return AteliaResult<Unit>.Failure(targetIndexResult.Error!);
-            }
+            if (!targetIndexResult.TryGetValue(out var targetIndex)) { return AteliaResult<Unit>.Failure(targetIndexResult.Error!); }
 
             _blocks.RemoveAt(targetIndex);
             RebuildIndex();
@@ -130,22 +134,20 @@ public static class TextEditScriptApplier {
 
         private AteliaResult<Unit> ApplySplit(SplitTextEdit operation) {
             var targetIndexResult = ResolveTargetIndex(operation.Anchor, operationName: "split");
-            if (!targetIndexResult.TryGetValue(out var targetIndex)) {
-                return AteliaResult<Unit>.Failure(targetIndexResult.Error!);
-            }
+            if (!targetIndexResult.TryGetValue(out var targetIndex)) { return AteliaResult<Unit>.Failure(targetIndexResult.Error!); }
 
             var current = _blocks[targetIndex];
             if (operation.Offset <= 0 || operation.Offset >= current.Content.Length) {
                 return AteliaResult<Unit>.Failure(
                     new TextEditScriptApplyError(
                         $"Cannot split block id {current.BlockId} at offset {operation.Offset} because the offset must stay within the block interior.",
-                        "Choose an offset greater than 0 and smaller than the current block content length."));
+                        "Choose an offset greater than 0 and smaller than the current block content length."
+                    )
+                );
             }
 
             var newBlockIdResult = AllocateInsertedBlockId();
-            if (!newBlockIdResult.TryGetValue(out var newBlockId)) {
-                return AteliaResult<Unit>.Failure(newBlockIdResult.Error!);
-            }
+            if (!newBlockIdResult.TryGetValue(out var newBlockId)) { return AteliaResult<Unit>.Failure(newBlockIdResult.Error!); }
 
             _blocks[targetIndex] = current with { Content = current.Content[..operation.Offset] };
             _blocks.Insert(targetIndex + 1, new TextBlockSnapshot(newBlockId, current.Content[operation.Offset..]));
@@ -155,15 +157,15 @@ public static class TextEditScriptApplier {
 
         private AteliaResult<Unit> ApplyMerge(MergeTextEdit operation) {
             var targetIndexResult = ResolveTargetIndex(operation.Anchor, operationName: "merge");
-            if (!targetIndexResult.TryGetValue(out var targetIndex)) {
-                return AteliaResult<Unit>.Failure(targetIndexResult.Error!);
-            }
+            if (!targetIndexResult.TryGetValue(out var targetIndex)) { return AteliaResult<Unit>.Failure(targetIndexResult.Error!); }
 
             if (targetIndex >= _blocks.Count - 1) {
                 return AteliaResult<Unit>.Failure(
                     new TextEditScriptApplyError(
                         $"Cannot merge anchor '{operation.Anchor}' because it has no next block in the current snapshot.",
-                        "Target a block that still has a following neighbor, or split the block first if you need a new neighbor."));
+                        "Target a block that still has a following neighbor, or split the block first if you need a new neighbor."
+                    )
+                );
             }
 
             var current = _blocks[targetIndex];
@@ -176,13 +178,14 @@ public static class TextEditScriptApplier {
 
         private AteliaResult<int> ResolveInsertIndex(TextInsertSide side, TextAnchor anchor) {
             if (_blocks.Count == 0) {
-                return (anchor.Kind, side) switch {
-                    (TextAnchorKind.Head, TextInsertSide.BeforeAnchor) => 0,
-                    (TextAnchorKind.Tail, TextInsertSide.AfterAnchor) => 0,
+                return anchor.Kind switch {
+                    TextAnchorKind.Head or TextAnchorKind.Tail => 0,
                     _ => AteliaResult<int>.Failure(
                         new TextEditScriptApplyError(
                             $"Cannot insert {FormatSide(side)} anchor '{anchor}' into an empty snapshot.",
-                            RecoveryHint: "When the snapshot is empty, use 'before head' or 'after tail' to create the first block."))
+                            RecoveryHint: "When the snapshot is empty, use 'head' or 'tail' to create the first block."
+                        )
+                    )
                 };
             }
 
@@ -199,7 +202,9 @@ public static class TextEditScriptApplier {
                 return AteliaResult<int>.Failure(
                     new TextEditScriptApplyError(
                         $"Insert anchor block id {blockId} does not exist in the current snapshot.",
-                        RecoveryHint: "Use a live block id from the current notebook block view, or use 'head' / 'tail'."));
+                        RecoveryHint: "Use a live block id from the current notebook block view, or use 'head' / 'tail'."
+                    )
+                );
             }
 
             return side is TextInsertSide.BeforeAnchor ? index : index + 1;
@@ -210,7 +215,9 @@ public static class TextEditScriptApplier {
                 return AteliaResult<int>.Failure(
                     new TextEditScriptApplyError(
                         $"Cannot {operationName} anchor '{anchor}' because the snapshot is empty.",
-                        RecoveryHint: "Insert a block first, or target an existing block id in a non-empty snapshot."));
+                        RecoveryHint: "Insert a block first, or target an existing block id in a non-empty snapshot."
+                    )
+                );
             }
 
             return anchor.Kind switch {
@@ -222,14 +229,14 @@ public static class TextEditScriptApplier {
         }
 
         private AteliaResult<int> ResolveBlockIdIndex(uint blockId, string operationName) {
-            if (_indexByBlockId.TryGetValue(blockId, out var index)) {
-                return index;
-            }
+            if (_indexByBlockId.TryGetValue(blockId, out var index)) { return index; }
 
             return AteliaResult<int>.Failure(
                 new TextEditScriptApplyError(
                     $"Cannot {operationName} block id {blockId} because it does not exist in the current snapshot.",
-                    RecoveryHint: "Use a live block id from the current notebook block view, or use 'head' / 'tail' when appropriate."));
+                    RecoveryHint: "Use a live block id from the current notebook block view, or use 'head' / 'tail' when appropriate."
+                )
+            );
         }
 
         private AteliaResult<uint> AllocateInsertedBlockId() {
@@ -242,7 +249,9 @@ public static class TextEditScriptApplier {
                 return AteliaResult<uint>.Failure(
                     new TextEditScriptApplyError(
                         "Failed to allocate a preview block id because the uint range is exhausted.",
-                        RecoveryHint: "Choose a larger FirstInsertedBlockId seed or reduce the preview block-id space."));
+                        RecoveryHint: "Choose a larger FirstInsertedBlockId seed or reduce the preview block-id space."
+                    )
+                );
             }
 
             _nextInsertedBlockId = candidate + 1;
