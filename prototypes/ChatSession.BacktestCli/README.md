@@ -99,6 +99,7 @@ dotnet run --project prototypes/ChatSession.BacktestCli -- replay-rolling-summar
 | `autobiographical-recording` | `Action / roleplay.first-person-autobiography` | 使用 block-ID 编辑工具和显式 `changed` / `no-change` finish 协议维护 Galatea 自传；结果从编辑 session 物化，不接收 assistant 正文作为替换稿。 |
 | `autobiographical-two-stage` | `Action / roleplay.first-person-autobiography` | 先 recording，再按 `--compression-high-watermark` 条件触发 compression；compression 失败时保留 recording 产物。 |
 | `autobiographical-rewrite` | `Action / roleplay.first-person-autobiography` | 单次完整重写：一次 completion 内融入新经历并重写整份自传全文，不使用编辑工具、不做多轮 tool loop；重写天然完成摘要与长度控制，适合 <16K token 的短自传，成本/延迟远低于编辑 Agent 版。 |
+| `world-understanding-rewrite` | `Observation / roleplay.world-understanding` | 单次完整重写：与 `autobiographical-rewrite` 同一模式，但目标 block 位于 Observation（渲染为 ObservationMessage 的一部分），用世界理解 prompt 维护事实档案 / 认知地图。 |
 
 两阶段自传回测示例：
 
@@ -127,6 +128,19 @@ dotnet run --project prototypes/ChatSession.BacktestCli -- replay-rolling-summar
   --connections prototypes/Galatea/.atelia/galatea/connections.json \
   --output gitignore/backtest/autobiographical-rewrite/result.jsonl \
   --call-log-dir gitignore/backtest/autobiographical-rewrite/calls \
+  --max-epochs 2
+```
+
+单次完整重写世界理解回测示例（同为单轮重写，目标 block 位于 Observation）：
+
+```bash
+dotnet run --project prototypes/ChatSession.BacktestCli -- replay-rolling-summary \
+  --preset world-understanding-rewrite \
+  --input prototypes/Galatea/.atelia/galatea/sessions/cyber-copy-upgraded/chat-session-legacy-upgrade-export.json \
+  --threshold-tokens 24000 \
+  --connections prototypes/Galatea/.atelia/galatea/connections.json \
+  --output gitignore/backtest/world-understanding-rewrite/result.jsonl \
+  --call-log-dir gitignore/backtest/world-understanding-rewrite/calls \
   --max-epochs 2
 ```
 

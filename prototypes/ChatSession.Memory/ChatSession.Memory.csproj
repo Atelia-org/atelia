@@ -26,6 +26,10 @@
               LogicalName="Atelia.ChatSession.Memory.Prompts.AutobiographicalRewriteSystem.md" />
     <EmbeddedResource Include="../../docs/Galatea/prompt/autobiographical-maintainer/rewrite/user.md"
               LogicalName="Atelia.ChatSession.Memory.Prompts.AutobiographicalRewriteUser.md" />
+    <EmbeddedResource Include="../../docs/Galatea/prompt/world-understanding-maintainer/rewrite/system.md"
+              LogicalName="Atelia.ChatSession.Memory.Prompts.WorldUnderstandingRewriteSystem.md" />
+    <EmbeddedResource Include="../../docs/Galatea/prompt/world-understanding-maintainer/rewrite/user.md"
+              LogicalName="Atelia.ChatSession.Memory.Prompts.WorldUnderstandingRewriteUser.md" />
   </ItemGroup>
 
 </Project>
