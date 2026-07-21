@@ -20,7 +20,8 @@ public sealed class AutobiographicalRecordingMemoryMaintainer : IMemoryBlockMain
         - status `changed` after one or more successful edits;
         - status `no-change` when this experience has no lasting autobiographical consequence and no edits were made.
 
-        The recording is not accepted without a successful finish tool call.
+        After one or more successful edits, ending the turn without another tool call is also accepted as `changed`.
+        A `no-change` result still requires the explicit finish tool.
         """;
 
     private static readonly MemoryDocumentFinishToolProfile s_finishProfile = new(

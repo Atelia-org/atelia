@@ -154,8 +154,13 @@ public class AutobiographicalMemoryMaintainerTests {
                 )
             )
         );
-        completionClient.Enqueue(request => TextResult(request, "forgot to finish"));
-        completionClient.Enqueue(request => TextResult(request, "still no finish"));
+        completionClient.Enqueue(
+            request => new CompletionResult(
+                new ActionMessage([]),
+                new CompletionDescriptor("scripted", "openai-chat-v1", request.ModelId),
+                termination: CompletionTermination.Failed("provider-error", "scripted failure")
+            )
+        );
         var compression = new AutobiographicalCompressionMemoryMaintainer(
             completionClient,
             "model-a",
@@ -183,7 +188,7 @@ public class AutobiographicalMemoryMaintainerTests {
                 Assert.Equal(1, stage.ToolCallsExecuted);
                 Assert.NotNull(stage.AfterTokens);
                 Assert.True(stage.AfterTokens < stage.BeforeTokens);
-                Assert.Contains(MemoryDocumentTools.CompressionFinishToolName, stage.FailureMessage);
+                Assert.Contains("provider-error", stage.FailureMessage);
             }
         );
         Assert.Contains("compressionSucceeded=false", result.Diagnostics);
@@ -247,12 +252,6 @@ public class AutobiographicalMemoryMaintainerTests {
         new ActionMessage([new ActionBlock.ToolCall(toolCall)]),
         new CompletionDescriptor("scripted", "openai-chat-v1", request.ModelId)
     );
-
-    private static CompletionResult TextResult(CompletionRequest request, string text)
-        => new(
-            new ActionMessage([new ActionBlock.Text(text)]),
-            new CompletionDescriptor("scripted", "openai-chat-v1", request.ModelId)
-        );
 
     private sealed class DelegateMaintainer(
         Func<MemoryBlockMaintenanceRequest, MemoryBlockMaintenanceResult> maintain

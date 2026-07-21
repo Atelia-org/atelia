@@ -26,7 +26,8 @@ public sealed class AutobiographicalCompressionMemoryMaintainer : IMemoryBlockMa
         - status `changed` after one or more successful edits;
         - status `no-change` only when preserving protected content prevents any safe reduction.
 
-        The compression is not accepted without a successful finish tool call. The host rejects a result larger than the original document.
+        After one or more successful edits, ending the turn without another tool call is also accepted as `changed`.
+        A `no-change` result still requires the explicit finish tool. The host rejects a result larger than the original document.
         """;
 
     private readonly ICompletionClient _completionClient;

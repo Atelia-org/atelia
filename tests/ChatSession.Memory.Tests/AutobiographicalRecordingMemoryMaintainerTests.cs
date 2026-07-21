@@ -72,6 +72,39 @@ public class AutobiographicalRecordingMemoryMaintainerTests {
     }
 
     [Fact]
+    public async Task MaintainAsync_AutoFinishesChangedDocumentAfterEndTurn() {
+        var completionClient = new ScriptedCompletionClient();
+        completionClient.Enqueue(
+            request => ToolCallResult(
+                request,
+                new RawToolCall(
+                    MemoryDocumentTools.InsertToolName,
+                    "insert-before-end-turn",
+                    """{"side":"after","anchor":"tail","content":"后来，我把这件事记住了。"}"""
+                )
+            )
+        );
+        completionClient.Enqueue(
+            request => {
+                var toolResult = Assert.Single(Assert.IsType<ToolResultsMessage>(request.Context[^1]).Results);
+                Assert.Equal(ToolExecutionStatus.Success, toolResult.Status);
+                return new CompletionResult(
+                    new ActionMessage([new ActionBlock.Text("The autobiography is complete.")]),
+                    new CompletionDescriptor("scripted", "openai-chat-v1", request.ModelId)
+                );
+            }
+        );
+
+        var maintainer = new AutobiographicalRecordingMemoryMaintainer(completionClient, "model-a");
+        var result = await maintainer.MaintainAsync(CreateRequest("从前。"), CancellationToken.None);
+
+        Assert.Equal("从前。\n\n后来，我把这件事记住了。", result.NewBlock.Text);
+        Assert.Equal(1, result.ToolCallsExecuted);
+        Assert.Contains("completionStatus=changed", result.Diagnostics);
+        Assert.Contains("editCount=1", result.Diagnostics);
+    }
+
+    [Fact]
     public async Task MaintainAsync_AcceptsExplicitNoChangeWithoutEdits() {
         var completionClient = new ScriptedCompletionClient();
         completionClient.Enqueue(

@@ -38,6 +38,22 @@ public static class MemoryDocumentTools {
         return new ToolRegistry(tools).CreateSession();
     }
 
+    internal static ValidateResult FinishSession(
+        MemoryDocumentEditingSession editingSession,
+        FinishMemoryDocumentArtifact artifact,
+        MemoryDocumentFinishToolProfile finishProfile
+    ) {
+        if (!TryParseCompletionStatus(artifact.Status, out var status)) { return new ValidateResult(false, "status must be exactly 'changed' or 'no-change'."); }
+
+        if (finishProfile.Validate is not null) {
+            var validation = finishProfile.Validate(editingSession, artifact);
+            if (!validation.IsValid) { return validation; }
+        }
+
+        var result = editingSession.Finish(status);
+        return new ValidateResult(result.IsSuccess, result.Message);
+    }
+
     private sealed class MemoryDocumentToolHost(MemoryDocumentEditingSession editingSession) {
         [Tool(ReadToolName, "Read memory document blocks from a stable anchor. Returns block IDs and content; IDs are metadata, not document text.")]
         public ValueTask<ToolExecuteResult> ReadAsync(
@@ -99,17 +115,7 @@ public static class MemoryDocumentTools {
         public ValidateResult Finish(
             FinishMemoryDocumentArtifact artifact,
             MemoryDocumentFinishToolProfile finishProfile
-        ) {
-            if (!TryParseCompletionStatus(artifact.Status, out var status)) { return new ValidateResult(false, "status must be exactly 'changed' or 'no-change'."); }
-
-            if (finishProfile.Validate is not null) {
-                var validation = finishProfile.Validate(editingSession, artifact);
-                if (!validation.IsValid) { return validation; }
-            }
-
-            var result = editingSession.Finish(status);
-            return new ValidateResult(result.IsSuccess, result.Message);
-        }
+        ) => FinishSession(editingSession, artifact, finishProfile);
 
         private ValueTask<ToolExecuteResult> FromEditResult(MemoryDocumentEditResult result)
             => ValueTask.FromResult(
@@ -136,21 +142,22 @@ public static class MemoryDocumentTools {
             }
         }
 
-        private static bool TryParseCompletionStatus(
-            string text,
-            out MemoryDocumentCompletionStatus status
-        ) {
-            switch (text) {
-                case "changed":
-                    status = MemoryDocumentCompletionStatus.Changed;
-                    return true;
-                case "no-change":
-                    status = MemoryDocumentCompletionStatus.NoChange;
-                    return true;
-                default:
-                    status = default;
-                    return false;
-            }
+    }
+
+    private static bool TryParseCompletionStatus(
+        string text,
+        out MemoryDocumentCompletionStatus status
+    ) {
+        switch (text) {
+            case "changed":
+                status = MemoryDocumentCompletionStatus.Changed;
+                return true;
+            case "no-change":
+                status = MemoryDocumentCompletionStatus.NoChange;
+                return true;
+            default:
+                status = default;
+                return false;
         }
     }
 }

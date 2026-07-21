@@ -118,6 +118,30 @@ internal static class MemoryDocumentAgentLoop {
             workingContext.Add(action);
             var toolCalls = action.ToolCalls;
             if (toolCalls.Count == 0) {
+                if (request.EditingSession.EditCount > 0) {
+                    var implicitFinish = MemoryDocumentTools.FinishSession(
+                        request.EditingSession,
+                        new FinishMemoryDocumentArtifact { Status = "changed" },
+                        request.FinishProfile
+                    );
+                    if (implicitFinish.IsValid) {
+                        return new MemoryDocumentAgentLoopResult(
+                            request.EditingSession,
+                            invocation,
+                            errors?.AsReadOnly(),
+                            totalToolCallsExecuted
+                        );
+                    }
+
+                    workingContext.Add(
+                        new ObservationMessage(
+                            $"Document maintenance cannot finish yet: {implicitFinish.message ?? "validation failed"} "
+                            + "Continue editing, then finish again."
+                        )
+                    );
+                    continue;
+                }
+
                 if (missingFinishRetries < request.MissingFinishRetryCount) {
                     missingFinishRetries++;
                     workingContext.Add(

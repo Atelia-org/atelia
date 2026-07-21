@@ -52,6 +52,56 @@ public class AutobiographicalCompressionMemoryMaintainerTests {
     }
 
     [Fact]
+    public async Task MaintainAsync_AutoFinishStillValidatesCompressionResult() {
+        var completionClient = new ScriptedCompletionClient();
+        completionClient.Enqueue(
+            request => ToolCallResult(
+                request,
+                new RawToolCall(
+                    MemoryDocumentTools.ReplaceToolName,
+                    "replace-with-expansion",
+                    """{"anchor":"head","content":"这一段被扩写成了明显比原文更长更长的内容。"}"""
+                )
+            )
+        );
+        completionClient.Enqueue(
+            request => new CompletionResult(
+                new ActionMessage([new ActionBlock.Text("Compression is complete.")]),
+                new CompletionDescriptor("scripted", "openai-chat-v1", request.ModelId)
+            )
+        );
+        completionClient.Enqueue(
+            request => {
+                var validation = Assert.IsType<ObservationMessage>(request.Context[^1]);
+                Assert.Contains("cannot finish yet", validation.Content);
+                Assert.Contains("expanded", validation.Content);
+                return ToolCallResult(
+                    request,
+                    new RawToolCall(
+                        MemoryDocumentTools.ReplaceToolName,
+                        "replace-after-auto-validation",
+                        """{"anchor":"head","content":"旧事。"}"""
+                    )
+                );
+            }
+        );
+        completionClient.Enqueue(
+            request => new CompletionResult(
+                new ActionMessage([new ActionBlock.Text("Compression is now complete.")]),
+                new CompletionDescriptor("scripted", "openai-chat-v1", request.ModelId)
+            )
+        );
+
+        const string oldText = "一段旧事。\n\n现在仍鲜活。";
+        var maintainer = new AutobiographicalCompressionMemoryMaintainer(completionClient, "model-a", targetTokenCount: 3);
+        var result = await maintainer.MaintainAsync(CreateRequest(oldText), CancellationToken.None);
+
+        Assert.Equal("旧事。\n\n现在仍鲜活。", result.NewBlock.Text);
+        Assert.Equal(2, result.ToolCallsExecuted);
+        Assert.Contains("completionStatus=changed", result.Diagnostics);
+    }
+
+    [Fact]
     public async Task MaintainAsync_RejectsEditingFinalPassageAndAllowsRecovery() {
         const string finalPassage = "此刻，我仍在等待。";
         var completionClient = new ScriptedCompletionClient();
