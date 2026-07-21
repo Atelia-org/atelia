@@ -10,6 +10,8 @@ prototypes/Galatea/.atelia/galatea/sessions/cyber-copy-upgraded/chat-session-leg
 
 CLI 会按 export 中的事件顺序重放历史，并在满足 token 阈值时触发分析或 LLM maintainer。`replay-rolling-summary` 使用的是 synthetic sliding prefix：它忽略原始 compaction 事件，把当前活跃历史中即将滑出窗口的前缀作为 `RecentHistorySlice` 交给 maintainer。
 
+当前 LLM maintainer 统一采用单次完整 Rewrite，不暴露工具、不运行 tool-loop。已归档的 Recording / Compression / two-stage Text Edit Agent 实验可通过 tag `memory-maintainer-agentic-experiment-v1` 查阅；重构决策见 `docs/Galatea/memory-maintainer-slimming-refactor.md`。
+
 ## 命令
 
 ### inspect
@@ -71,7 +73,7 @@ dotnet run --project prototypes/ChatSession.BacktestCli -- replay-rolling-summar
   --output gitignore/backtest/content/world-understanding.jsonl \
   --call-log-dir gitignore/backtest/content/world-understanding-calls \
   --max-epochs 1 \
-  --preset world-understanding
+  --preset world-understanding-rewrite
 ```
 
 常用参数：
@@ -81,7 +83,7 @@ dotnet run --project prototypes/ChatSession.BacktestCli -- replay-rolling-summar
 - `--connections <path>`：Completion connection 配置文件。
 - `--connection <id>`：可选，指定 connection；不传时使用默认连接。
 - `--call-log-dir <dir>`：每次 LLM 调用的原始请求/响应日志目录。
-- `--threshold-tokens <n>`：当前活跃历史估算 token 数达到阈值后触发 maintainer，默认 `12000`。
+- `--threshold-tokens <n>`：当前活跃历史估算 token 数达到阈值后触发 maintainer，默认 `24000`。
 - `--max-epochs <n>`：最多触发多少次 maintainer，做真实 LLM 实验时建议先用 `1`。
 - `--preset <name>`：选择 maintainer preset。
 - `--system-prompt <path>`：覆盖 preset 的 system prompt。
@@ -94,29 +96,8 @@ dotnet run --project prototypes/ChatSession.BacktestCli -- replay-rolling-summar
 | preset | target | 用途 |
 | --- | --- | --- |
 | `rolling-summary` | 默认 `Observation / session.rolling-summary`，可用参数覆盖 | 通用滚动摘要，保留长期有用事实、决策、路径、验证结果和待办。 |
-| `world-understanding` | `Observation / roleplay.world-understanding` | 维护 role-play 角色可看到的外层知识、世界理解和事实档案。 |
-| `first-person-autobiography` | `Action / roleplay.first-person-autobiography` | 维护 Galatea 第一人称自传、自我连续性材料和关键原话。 |
-| `autobiographical-recording` | `Action / roleplay.first-person-autobiography` | 使用 block-ID 编辑工具和显式 `changed` / `no-change` finish 协议维护 Galatea 自传；结果从编辑 session 物化，不接收 assistant 正文作为替换稿。 |
-| `autobiographical-two-stage` | `Action / roleplay.first-person-autobiography` | 先 recording，再按 `--compression-high-watermark` 条件触发 compression；compression 失败时保留 recording 产物。 |
 | `autobiographical-rewrite` | `Action / roleplay.first-person-autobiography` | 单次完整重写：一次 completion 内融入新经历并重写整份自传全文，不使用编辑工具、不做多轮 tool loop；重写天然完成摘要与长度控制，适合 <16K token 的短自传，成本/延迟远低于编辑 Agent 版。 |
 | `world-understanding-rewrite` | `Observation / roleplay.world-understanding` | 单次完整重写：与 `autobiographical-rewrite` 同一模式，但目标 block 位于 Observation（渲染为 ObservationMessage 的一部分），用世界理解 prompt 维护事实档案 / 认知地图。 |
-
-两阶段自传回测示例：
-
-```bash
-dotnet run --project prototypes/ChatSession.BacktestCli -- replay-rolling-summary \
-  --preset autobiographical-two-stage \
-  --input prototypes/Galatea/.atelia/galatea/sessions/cyber-copy-upgraded/chat-session-legacy-upgrade-export.json \
-  --threshold-tokens 24000 \
-  --compression-high-watermark 900 \
-  --compression-target-tokens 700 \
-  --connections prototypes/Galatea/.atelia/galatea/connections.json \
-  --output gitignore/backtest/autobiographical-two-stage/result.jsonl \
-  --call-log-dir gitignore/backtest/autobiographical-two-stage/calls \
-  --max-epochs 2
-```
-
-每个 JSONL epoch 会记录 `stages`、全部 `callLogPaths`、notices 和 diagnostics。`recording` 失败会使 epoch 失败；`compression` 失败则以 `failed` stage 留下审计，但顶层 epoch 成功并保留 recorded block。
 
 单次完整重写自传回测示例（`autobiographical-rewrite` 不使用 `--compression-*` 参数）：
 
@@ -126,8 +107,8 @@ dotnet run --project prototypes/ChatSession.BacktestCli -- replay-rolling-summar
   --input prototypes/Galatea/.atelia/galatea/sessions/cyber-copy-upgraded/chat-session-legacy-upgrade-export.json \
   --threshold-tokens 24000 \
   --connections prototypes/Galatea/.atelia/galatea/connections.json \
-  --output gitignore/backtest/autobiographical-rewrite/result.jsonl \
-  --call-log-dir gitignore/backtest/autobiographical-rewrite/calls \
+  --output gitignore/backtest/autobiographical-rewrite/1/result.jsonl \
+  --call-log-dir gitignore/backtest/autobiographical-rewrite/1/calls \
   --max-epochs 2
 ```
 
@@ -139,37 +120,22 @@ dotnet run --project prototypes/ChatSession.BacktestCli -- replay-rolling-summar
   --input prototypes/Galatea/.atelia/galatea/sessions/cyber-copy-upgraded/chat-session-legacy-upgrade-export.json \
   --threshold-tokens 24000 \
   --connections prototypes/Galatea/.atelia/galatea/connections.json \
-  --output gitignore/backtest/world-understanding-rewrite/result.jsonl \
-  --call-log-dir gitignore/backtest/world-understanding-rewrite/calls \
+  --output gitignore/backtest/world-understanding-rewrite/1/result.jsonl \
+  --call-log-dir gitignore/backtest/world-understanding-rewrite/1/calls \
   --max-epochs 2
 ```
 
-输出 JSONL 每行代表一次 maintainer epoch，包含 `presetName`、`eventOrdinal`、`thresholdTokens`、`splitIndex`、`slidingOutMessageCount`、`targetCarrier`、`targetBlockId`、新旧 block 预览、call log 路径、状态和错误信息。
-
-### compress-autobiography
-
-对一个已有的纯文本 autobiography 文件运行独立 compression Agent。该命令不回放 recent history，也不包含 high-watermark 自动调度。
-
-```bash
-dotnet run --project prototypes/ChatSession.BacktestCli -- compress-autobiography \
-  --input gitignore/backtest/autobiographical-recording/autobiography.md \
-  --target-tokens 700 \
-  --connections prototypes/Galatea/.atelia/galatea/connections.json \
-  --output gitignore/backtest/autobiographical-compression/result.jsonl \
-  --call-log-dir gitignore/backtest/autobiographical-compression/calls
-```
-
-输出包含完整 `newText`、压缩前后 token 估算、目标 token、实际压缩比例、是否达到目标、最终段是否原样保留、edit/tool-call 数和全部 call log 路径。未达到目标不自动视为失败；结果膨胀或修改最终段会在 maintainer 内被机械拒绝。
+输出 JSONL 每行代表一次 maintainer epoch，schema 为 `atelia.chat-session.memory-maintainer-backtest.v2`，包含 `presetName`、`eventOrdinal`、`thresholdTokens`、`splitIndex`、`slidingOutMessageCount`、`targetCarrier`、`targetBlockId`、新旧 block 预览、call log 路径、invocation、状态和错误信息。
 
 ## 与引用项目的关系
 
 `ChatSession.BacktestCli` 是一个薄 CLI 壳，核心能力来自三个项目引用：
 
 - `../ChatSession/ChatSession.csproj`
-  - 提供 legacy event source 读取、replay cursor、history message projection、`MemoryPack`、`RecentHistorySlice`、`IMemoryBlockMaintainer` 和 `CompletionMemoryBlockMaintainer` 等 memory substrate 基础设施。
+  - 提供 legacy event source 读取、replay cursor、history message projection、`MemoryPack`、`RecentHistorySlice`、`IMemoryBlockMaintainer`、`RewriteMemoryBlockMaintainer`、批次编排和共享 history split policy。
 - `../ChatSession.Memory/ChatSession.Memory.csproj`
-  - 提供可复用内容层 preset，包括 `RolePlayMemoryBlockPaths`、`WorldUnderstandingMemoryMaintainer`、`FirstPersonAutobiographyMemoryMaintainer` 和 prompt 常量。
-  - CLI 的 `world-understanding` / `first-person-autobiography` preset 直接实例化这些 maintainer，用于在真实 export 上调试内容层效果。
+  - 提供可复用内容层 profile，包括 `RolePlayMemoryBlockPaths`、`AutobiographicalRewriteProfiles` 和 `WorldUnderstandingRewriteProfiles`。
+  - CLI 可覆盖 profile 的 system/user prompt，用于在真实 export 上调试内容层效果。
 - `../Completion/Completion.csproj`
   - 提供 `CompletionConnectionConfigLoader`、`CompletionConnectionRegistry`、`DefaultCompletionClientFactory` 和 `LoggingCompletionClient`。
   - `llm-smoke` 与 `replay-rolling-summary` 都通过这里读取 connection、调用真实 LLM，并写出 call log。

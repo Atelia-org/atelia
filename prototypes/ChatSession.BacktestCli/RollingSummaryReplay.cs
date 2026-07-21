@@ -2,7 +2,6 @@ using Atelia.ChatSession;
 using Atelia.ChatSession.Memory;
 using Atelia.Completion;
 using Atelia.Completion.Abstractions;
-using Atelia.Completion.Tools;
 
 namespace ChatSessionBacktestCli;
 
@@ -34,7 +33,6 @@ internal sealed class RollingSummaryReplayRunner {
     private readonly ICompletionClient _client;
     private readonly CompletionConnectionConfig _connection;
     private readonly ReplayMemoryMaintainerProfile _profile;
-    private readonly ToolRegistry _toolRegistry;
     private readonly string _callLogDir;
     private readonly int _thresholdTokens;
     private readonly int _maxEpochs;
@@ -46,7 +44,6 @@ internal sealed class RollingSummaryReplayRunner {
         ICompletionClient client,
         CompletionConnectionConfig connection,
         ReplayMemoryMaintainerProfile profile,
-        ToolRegistry toolRegistry,
         string callLogDir,
         int thresholdTokens,
         int maxEpochs
@@ -55,7 +52,6 @@ internal sealed class RollingSummaryReplayRunner {
         _client = client ?? throw new ArgumentNullException(nameof(client));
         _connection = connection ?? throw new ArgumentNullException(nameof(connection));
         _profile = profile ?? throw new ArgumentNullException(nameof(profile));
-        _toolRegistry = toolRegistry ?? throw new ArgumentNullException(nameof(toolRegistry));
         _callLogDir = string.IsNullOrWhiteSpace(callLogDir) ? throw new ArgumentException("Call log directory cannot be empty.", nameof(callLogDir)) : callLogDir;
         _thresholdTokens = thresholdTokens;
         _maxEpochs = maxEpochs;
@@ -77,7 +73,10 @@ internal sealed class RollingSummaryReplayRunner {
             int estimatedTokens = BacktestTextUtil.EstimateTokens(_activeHistory);
             if (estimatedTokens < _thresholdTokens) { continue; }
 
-            int splitIndex = RollingSummarySplitPolicy.FindHalfContextSplitPoint(_activeHistory);
+            int splitIndex = HistoryWindowSplitPolicy.FindHalfContextSplitPoint(
+                _activeHistory,
+                static message => (ulong)BacktestTextUtil.EstimateTokens(message)
+            );
             if (splitIndex < 0) { continue; }
 
             int beforeMaxCallId = RollingSummaryCallLogUtil.GetMaxCallId(_callLogDir);
@@ -104,20 +103,25 @@ internal sealed class RollingSummaryReplayRunner {
                     TargetBlockId: _profile.Target.BlockKey
                 )
             );
-            var maintainer = _profile.CreateMaintainer(loggingClient, _connection.ModelId, _toolRegistry.CreateSession());
+            var maintainer = new RewriteMemoryBlockMaintainer(
+                _profile.RewriteProfile,
+                loggingClient,
+                _connection.ModelId
+            );
 
             MemoryBlockMaintenanceResult? result = null;
             string? newBlockText = null;
             Exception? exception = null;
             try {
-                result = await maintainer.MaintainAsync(
-                    new MemoryBlockMaintenanceRequest(recentHistory, _profile.Target, oldBlock),
+                var batch = await MemoryMaintenanceOrchestrator.RunAsync(
+                    _memoryPack,
+                    recentHistory,
+                    [maintainer],
                     ct
                 ).ConfigureAwait(false);
-                newBlockText = MemoryBlockTextNormalizer.NormalizeBlockText(result.NewBlock.Text);
-                var draft = new MemoryPackDraft(_memoryPack);
-                draft.UpsertBlock(_profile.Target, newBlockText);
-                _memoryPack = draft.Build();
+                result = batch.Results[0];
+                newBlockText = result.NewBlock.Text;
+                _memoryPack = batch.UpdatedMemoryPack;
                 _activeHistory.RemoveRange(0, splitIndex);
             }
             catch (Exception ex) when (ex is InvalidOperationException or ChatSessionTurnAbortedException or HttpRequestException or TaskCanceledException) {
@@ -180,37 +184,10 @@ internal sealed class RollingSummaryReplayRunner {
 
 internal sealed record ReplayMemoryMaintainerProfile(
     string PresetName,
-    string MaintainerId,
-    MemoryPackBlockPath Target,
-    Func<ICompletionClient, string, ToolSession, IMemoryBlockMaintainer> CreateMaintainer
-);
-
-internal static class RollingSummarySplitPolicy {
-    public static int FindHalfContextSplitPoint(IReadOnlyList<IHistoryMessage> messages) {
-        if (messages.Count < 2) { return -1; }
-
-        int totalTokens = BacktestTextUtil.EstimateTokens(messages);
-        int halfTokens = (totalTokens + 1) / 2;
-        int cumulativeTokens = 0;
-        int lastValidSuffixStart = -1;
-
-        for (int i = 0; i < messages.Count - 1; i++) {
-            cumulativeTokens += BacktestTextUtil.EstimateTokens(messages[i]);
-            if (!IsObservationLike(messages[i]) || messages[i + 1].Kind != HistoryMessageKind.Action) { continue; }
-
-            int suffixStart = i;
-            if (suffixStart == 0) { continue; }
-            if (suffixStart == 1 && messages[0] is RecapMessage) { continue; }
-
-            lastValidSuffixStart = suffixStart;
-            if (cumulativeTokens >= halfTokens) { return suffixStart; }
-        }
-
-        return lastValidSuffixStart;
-    }
-
-    private static bool IsObservationLike(IHistoryMessage message)
-        => message.Kind is HistoryMessageKind.Observation or HistoryMessageKind.ToolResults;
+    MemoryRewriteProfile RewriteProfile
+) {
+    public string MaintainerId => RewriteProfile.Id;
+    public MemoryPackBlockPath Target => RewriteProfile.Target;
 }
 
 internal static class RollingSummaryCallLogUtil {
@@ -258,11 +235,8 @@ internal sealed record RollingSummaryReplayRecord(
     string Status,
     string? ExceptionType,
     string? ExceptionMessage,
-    int ToolCallsExecuted,
-    IReadOnlyList<string>? Errors,
-    IReadOnlyList<MemoryMaintenanceStageBacktestRecord>? Stages,
-    IReadOnlyList<MemoryMaintenanceNotice>? Notices,
-    IReadOnlyList<string>? Diagnostics
+    CompletionDescriptor? Invocation,
+    IReadOnlyList<string>? Errors
 ) {
     public static RollingSummaryReplayRecord Create(
         int epochIndex,
@@ -279,9 +253,8 @@ internal sealed record RollingSummaryReplayRecord(
         MemoryBlockMaintenanceResult? result,
         Exception? exception
     ) {
-        var loopFailure = exception as MemoryDocumentAgentLoopException;
         return new(
-            Schema: "atelia.chat-session.rolling-summary-backtest.v1",
+            Schema: "atelia.chat-session.memory-maintainer-backtest.v2",
             PresetName: profile.PresetName,
             EpochIndex: epochIndex,
             EventOrdinal: replayEvent.Ordinal,
@@ -301,56 +274,8 @@ internal sealed record RollingSummaryReplayRecord(
             Status: exception is null ? "succeeded" : "failed",
             ExceptionType: exception?.GetType().FullName,
             ExceptionMessage: exception?.Message,
-            ToolCallsExecuted: result?.ToolCallsExecuted ?? loopFailure?.ToolCallsExecuted ?? 0,
-            Errors: result?.Errors ?? loopFailure?.Errors,
-            Stages: result?.Stages?.Select(MemoryMaintenanceStageBacktestRecord.From).ToArray()
-                ?? (loopFailure is null ? null : [MemoryMaintenanceStageBacktestRecord.FromFailure(loopFailure)]),
-            Notices: result?.Notices,
-            Diagnostics: result?.Diagnostics
+            Invocation: result?.Invocation,
+            Errors: result?.Errors
         );
     }
-}
-
-internal sealed record MemoryMaintenanceStageBacktestRecord(
-    string Stage,
-    string Status,
-    int BeforeTokens,
-    int? AfterTokens,
-    int? TargetTokens,
-    bool? TargetReached,
-    CompletionDescriptor? Invocation,
-    IReadOnlyList<string>? Errors,
-    int ToolCallsExecuted,
-    string? FailureType,
-    string? FailureMessage
-) {
-    public static MemoryMaintenanceStageBacktestRecord From(MemoryBlockMaintenanceStageResult stage)
-        => new(
-            stage.Stage,
-            stage.Status.ToString().ToLowerInvariant(),
-            stage.BeforeTokens,
-            stage.AfterTokens,
-            stage.TargetTokens,
-            stage.TargetReached,
-            stage.Invocation,
-            stage.Errors,
-            stage.ToolCallsExecuted,
-            stage.FailureType,
-            stage.FailureMessage
-        );
-
-    public static MemoryMaintenanceStageBacktestRecord FromFailure(MemoryDocumentAgentLoopException failure)
-        => new(
-            failure.Stage,
-            "failed",
-            failure.BeforeTokens,
-            failure.WorkingTokens,
-            failure.TargetTokens,
-            null,
-            failure.Invocation,
-            failure.Errors,
-            failure.ToolCallsExecuted,
-            failure.GetType().FullName,
-            failure.Message
-        );
 }

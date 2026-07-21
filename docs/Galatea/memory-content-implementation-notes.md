@@ -4,7 +4,7 @@
 
 ## 1. 当前判断
 
-`CompletionMemoryBlockMaintainer` 已经验证可以作为内容 maintainer 的底座：它接收旧 block、MemoryPack render、即将滑出窗口的上下文片段，并返回完整新版 block。Backtest CLI 已用真实 Galatea legacy export 和真实 LLM API 跑通 rolling summary 多 epoch，因此下一步可以把“单一 summary”拆成更有领域语义的 block。
+`RewriteMemoryBlockMaintainer` 是当前内容 maintainer 的统一执行器：它读取 MemoryPack render 与即将滑出窗口的上下文片段，单次 completion 返回完整新版 block。旧 block 已位于 MemoryPack context header，不会在末尾 instruction 中重复注入。Backtest CLI 已用真实 Galatea legacy export 和真实 LLM API 跑通 rolling summary 多 epoch。
 
 这里的关键变化不是 substrate，而是内容目标：
 
@@ -73,16 +73,16 @@ MemoryPackCarrier.Action / roleplay.first-person-autobiography
 - 动态维护与召回用 indexer。
 - 与 MemoryPack 内容治理相关的 helper。
 
-该项目依赖 `ChatSession` / `Completion.Abstractions` / `Completion.Tools`，但不依赖具体 Role-Play 应用。Galatea、FamilyChat 或 Backtest CLI 都可以直接引用这些类型。
+该项目只直接依赖 `ChatSession`，不依赖 `Completion.Tools` 或具体 Role-Play 应用。Galatea、FamilyChat 或 Backtest CLI 都可以直接引用这些 profiles。
 
 ## 5. 实现形态
 
-不直接继承 `CompletionMemoryBlockMaintainer`。当前底座类是 `sealed`，而且变化点主要是 prompt、target、输出归一化。更合适的是两个包装型 `IMemoryBlockMaintainer`：
+内容差异只通过两个数据 profile 表达：
 
-- `WorldUnderstandingMemoryMaintainer`
-- `FirstPersonAutobiographyMemoryMaintainer`
+- `WorldUnderstandingRewriteProfiles`
+- `AutobiographicalRewriteProfiles`
 
-它们内部组合 `CompletionMemoryBlockMaintainer`，提供预设 `Id`、`Target`、system prompt、user prompt，并把模型常见的单一外层 Markdown code fence 归一化掉。
+每个 profile 提供 `Id`、`Target`、system prompt 与 user prompt；中文为默认值，英文仍可显式选择。通用 `RewriteMemoryBlockMaintainer` 负责一次调用、reasoning 过滤和完整外层 Markdown fence 归一化。
 
 ## 6. Backtest CLI 的角色
 
@@ -90,8 +90,8 @@ Backtest CLI 继续作为调 prompt 的实验台。后续命令可以支持：
 
 ```text
 --preset rolling-summary
---preset world-understanding
---preset first-person-autobiography
+--preset world-understanding-rewrite
+--preset autobiographical-rewrite
 ```
 
 第一轮仍然可以单 block 回测，等两个 block prompt 稳定后，再让 runner 并行运行两个 maintainer，并在 JSONL 中分别记录 old/new preview、call log 和状态。

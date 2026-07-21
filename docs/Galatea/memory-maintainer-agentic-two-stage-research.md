@@ -4,6 +4,8 @@
 >
 > 本文记录 `autobiographical-maintainer` 与 `world-understanding-maintainer` 下一阶段的共同工程需求、当前代码基础、关键技术取舍和建议实施顺序。具体内容准则以 `docs/Galatea/prompt/` 下各 maintainer 的 recording / compression prompt 为准。
 
+> **归档说明（2026-07-22）**：本文所提两阶段 Text Edit Agent 已完成实验，但回测未获得足以覆盖复杂度、成本和延迟的收益，相关实现已从主线删除。完整代码见 tag `memory-maintainer-agentic-experiment-v1`；现行 Rewrite-only 决策见 `docs/Galatea/memory-maintainer-slimming-refactor.md`。本文仅保留为研究记录，不再是实施计划。
+
 ## 1. 结论摘要
 
 新的 maintainer 设计比当前“单次 completion 返回完整替换文本”更接近长期可维护的记忆系统，核心变化有两项：

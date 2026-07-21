@@ -1,8 +1,11 @@
 # Task 07: 单次完整重写版 Autobiographical Maintainer
 
-> 状态：Todo
-> 建议执行者：熟悉 `prototypes/ChatSession.Memory` maintainer 体系与 `ChatSession.BacktestCli` preset 装配的会话
-> 依赖：无硬依赖；与既有 `autobiographical-two-stage`（编辑 Agent 版）并存，不替换
+> 状态：已完成，并由后续瘦身重构取代原“并存”方案
+> 当前决策：主线只保留单次完整 Rewrite；两阶段 Text Edit Agent 已从主线删除
+> 归档入口：tag `memory-maintainer-agentic-experiment-v1`
+> 现行设计：`docs/Galatea/memory-maintainer-slimming-refactor.md`
+
+本文以下内容保留为当时的成本调查与 Rewrite 方案形成过程。文件名仍位于 `backlog/todo` 仅为保留历史链接，不代表还有待实施工作；其中旧类型、命令和 preset 只存在于归档 tag。
 
 ## 问题背景
 
@@ -38,9 +41,9 @@ dotnet run --project prototypes/ChatSession.BacktestCli -- replay-rolling-summar
    - 编辑 Agent（现状）：~30 次往返、每轮重复前缀 + 每轮 reasoning，合计 ≈ \$7。差距约 **40×**。
    - 即便修好 prompt caching，编辑 Agent 仍需付 N 段不可缓存的 reasoning 输出 + N 次往返延迟，短产物下依旧数倍于完整重写。
 
-**决策**：对 <16K tokens 的自传类短产物，正确架构是**单次完整重写**（recording + compression 合并为一次 completion）。编辑 Agent 版保留给将来「很大且只做局部增量」的记忆块场景。
+**后续决策**：对 <16K tokens 的自传类短产物采用**单次完整重写**（recording + compression 合并为一次 completion）。编辑 Agent 版不在主线保留；未来若出现大文档、外部 store 或图/向量后端，应根据真实需求重新设计，而不是恢复兼容层。
 
-## 当前实现上下文
+## 历史实现上下文（仅归档 tag）
 
 关键文件：
 
@@ -92,6 +95,6 @@ dotnet run --project prototypes/ChatSession.BacktestCli -- replay-rolling-summar
 
 ## 非目标
 
-- 不删除 / 不重构现有 `autobiographical-two-stage` 与编辑 Agent 基础设施；它们保留给未来大文档局部增量场景。
-- 不改动 `MemoryDocumentAgentLoop` / `MemoryDocumentTools` 的行为。
+- 本节是 Task 07 实施时的原始边界，已被后续瘦身决策取代。
+- 当前主线不保留 `autobiographical-two-stage`、`MemoryDocumentAgentLoop` 或 `MemoryDocumentTools`。
 - Prompt caching 的客户端支持属于独立改动（已单独实施），本 Task 不重复处理。

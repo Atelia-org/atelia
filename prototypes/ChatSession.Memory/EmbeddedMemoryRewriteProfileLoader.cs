@@ -1,16 +1,22 @@
+using Atelia.ChatSession;
+
 namespace Atelia.ChatSession.Memory;
 
-public sealed record MemoryRewritePromptSet(string SystemPrompt, string UserPrompt) {
-    internal static MemoryRewritePromptSet ReadEmbedded(
+internal static class EmbeddedMemoryRewriteProfileLoader {
+    public static MemoryRewriteProfile Read(
         Type assemblyAnchor,
+        string id,
+        MemoryPackBlockPath target,
         string systemResourceName,
         string userResourceName
     ) => new(
-        ReadEmbeddedPrompt(assemblyAnchor, systemResourceName),
-        ReadEmbeddedPrompt(assemblyAnchor, userResourceName)
+        id,
+        target,
+        ReadResource(assemblyAnchor, systemResourceName),
+        ReadResource(assemblyAnchor, userResourceName)
     );
 
-    private static string ReadEmbeddedPrompt(Type assemblyAnchor, string resourceName) {
+    private static string ReadResource(Type assemblyAnchor, string resourceName) {
         using var stream = assemblyAnchor.Assembly.GetManifestResourceStream(resourceName)
             ?? throw new InvalidOperationException($"Embedded prompt resource '{resourceName}' was not found.");
         using var reader = new StreamReader(stream);

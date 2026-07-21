@@ -1,21 +1,20 @@
 using Atelia.ChatSession;
 using Atelia.ChatSession.Memory;
 using Atelia.Completion.Abstractions;
-using Atelia.Completion.Tools;
 using Xunit;
 
 namespace Atelia.ChatSession.Memory.Tests;
 
-public class AutobiographicalRewriteMemoryMaintainerTests {
+public class AutobiographicalRewriteProfileTests {
     [Fact]
     public async Task MaintainAsync_SingleShot_UsesModelTextAsNewBlock() {
         var completionClient = new ScriptedCompletionClient();
         completionClient.Enqueue(
             request => {
-                // 空 tool session ⇒ 单轮完整重写，无可见工具。
+                // Rewrite maintainer 固定为单次调用，不暴露工具。
                 Assert.Empty(request.Tools);
                 // system prompt 来自嵌入的 rewrite 资源，且能被正确加载（非空）。
-                Assert.Equal(AutobiographicalRewritePrompts.Default.SystemPrompt, request.SystemPrompt);
+                Assert.Equal(AutobiographicalRewriteProfiles.Default.SystemPrompt, request.SystemPrompt);
                 Assert.False(string.IsNullOrWhiteSpace(request.SystemPrompt));
                 // 旧自传只存在于 ContextHeader；末尾 instruction 不再重复注入。
                 var instruction = Assert.IsType<ObservationMessage>(request.Context[^1]);
@@ -34,14 +33,13 @@ public class AutobiographicalRewriteMemoryMaintainerTests {
         var result = await maintainer.MaintainAsync(CreateRequest("从前，我还不明白。"), CancellationToken.None);
 
         Assert.Equal("我把那句话留了下来。\n\n此刻，我仍在等待。", result.NewBlock.Text);
-        Assert.Equal(0, result.ToolCallsExecuted);
     }
 
     [Fact]
     public void Prompts_DefaultToSimplifiedChinese_AndKeepEnglishAvailable() {
-        Assert.Same(AutobiographicalRewritePrompts.SimplifiedChinese, AutobiographicalRewritePrompts.Default);
-        Assert.StartsWith("你是Galatea的代笔人", AutobiographicalRewritePrompts.Default.SystemPrompt);
-        Assert.StartsWith("You are Galatea's ghostwriter", AutobiographicalRewritePrompts.English.SystemPrompt);
+        Assert.Same(AutobiographicalRewriteProfiles.SimplifiedChinese, AutobiographicalRewriteProfiles.Default);
+        Assert.StartsWith("你是Galatea的代笔人", AutobiographicalRewriteProfiles.Default.SystemPrompt);
+        Assert.StartsWith("You are Galatea's ghostwriter", AutobiographicalRewriteProfiles.English.SystemPrompt);
     }
 
     [Fact]
@@ -61,8 +59,8 @@ public class AutobiographicalRewriteMemoryMaintainerTests {
         Assert.DoesNotContain("think", result.NewBlock.Text);
     }
 
-    private static AutobiographicalRewriteMemoryMaintainer CreateMaintainer(ICompletionClient client)
-        => new(client, "model-a", new ToolRegistry(Array.Empty<ITool>()).CreateSession());
+    private static RewriteMemoryBlockMaintainer CreateMaintainer(ICompletionClient client)
+        => new(AutobiographicalRewriteProfiles.Default, client, "model-a");
 
     private static MemoryBlockMaintenanceRequest CreateRequest(string oldBlock) {
         var memoryPack = new MemoryPack();
@@ -75,7 +73,6 @@ public class AutobiographicalRewriteMemoryMaintainerTests {
                     new ActionMessage([new ActionBlock.Text("[Galatea] 我发现那句话仍留在我心里。")])
                 ]
             ),
-            RolePlayMemoryBlockPaths.FirstPersonAutobiography,
             new MemoryPackBlock(oldBlock)
         );
     }

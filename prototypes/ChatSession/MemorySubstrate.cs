@@ -1,7 +1,6 @@
 using System.Collections.Generic;
 using System.Text;
 using Atelia.Completion.Abstractions;
-using Atelia.Completion.Tools;
 
 namespace Atelia.ChatSession;
 
@@ -260,158 +259,86 @@ public interface IMemoryBlockMaintainer {
 
 public sealed record MemoryBlockMaintenanceRequest(
     RecentHistorySlice RecentHistory,
-    MemoryPackBlockPath Target,
     MemoryPackBlock OldBlock
-);
-
-public sealed record MemoryMaintenanceNotice(
-    string Code,
-    string Message
-);
-
-public enum MemoryBlockMaintenanceStageStatus {
-    Succeeded,
-    Failed,
-    Skipped
-}
-
-public sealed record MemoryBlockMaintenanceStageResult(
-    string Stage,
-    MemoryBlockMaintenanceStageStatus Status,
-    int BeforeTokens,
-    int? AfterTokens,
-    int? TargetTokens,
-    bool? TargetReached,
-    CompletionDescriptor? Invocation,
-    IReadOnlyList<string>? Errors,
-    int ToolCallsExecuted,
-    string? FailureType = null,
-    string? FailureMessage = null
 );
 
 public sealed record MemoryBlockMaintenanceResult(
     string MaintainerId,
     MemoryPackBlockPath Target,
     MemoryPackBlock NewBlock,
-    IReadOnlyList<MemoryMaintenanceNotice> Notices,
-    IReadOnlyList<string> Diagnostics,
     CompletionDescriptor? Invocation = null,
-    IReadOnlyList<string>? Errors = null,
-    int ToolCallsExecuted = 0,
-    IReadOnlyList<MemoryBlockMaintenanceStageResult>? Stages = null
+    IReadOnlyList<string>? Errors = null
 );
 
-public sealed class CompletionMemoryBlockMaintainer : IMemoryBlockMaintainer {
-    private const int MaxToolLoopIterations = 128;
+public sealed record MemoryRewriteProfile(
+    string Id,
+    MemoryPackBlockPath Target,
+    string SystemPrompt,
+    string UserPrompt
+) {
+    public string Id { get; init; } = string.IsNullOrWhiteSpace(Id)
+        ? throw new ArgumentException("Memory rewrite profile id cannot be empty.", nameof(Id))
+        : Id;
+    public MemoryPackBlockPath Target { get; init; } = Target ?? throw new ArgumentNullException(nameof(Target));
+    public string SystemPrompt { get; init; } = SystemPrompt ?? throw new ArgumentNullException(nameof(SystemPrompt));
+    public string UserPrompt { get; init; } = UserPrompt ?? throw new ArgumentNullException(nameof(UserPrompt));
+}
 
-    public CompletionMemoryBlockMaintainer(
-        string id,
-        MemoryPackBlockPath target,
+public sealed class RewriteMemoryBlockMaintainer : IMemoryBlockMaintainer {
+    private readonly MemoryRewriteProfile _profile;
+
+    public RewriteMemoryBlockMaintainer(
+        MemoryRewriteProfile profile,
         ICompletionClient completionClient,
-        string modelId,
-        string systemPrompt,
-        string userPrompt,
-        ToolSession toolSession,
-        bool includeOldBlockInPrompt = true
+        string modelId
     ) {
-        Id = string.IsNullOrWhiteSpace(id)
-            ? throw new ArgumentException("Memory maintainer id cannot be empty.", nameof(id))
-            : id;
-        Target = target ?? throw new ArgumentNullException(nameof(target));
+        _profile = profile ?? throw new ArgumentNullException(nameof(profile));
         CompletionClient = completionClient ?? throw new ArgumentNullException(nameof(completionClient));
         ModelId = string.IsNullOrWhiteSpace(modelId)
             ? throw new ArgumentException("Model id cannot be empty.", nameof(modelId))
             : modelId;
-        SystemPrompt = systemPrompt ?? throw new ArgumentNullException(nameof(systemPrompt));
-        UserPrompt = userPrompt ?? throw new ArgumentNullException(nameof(userPrompt));
-        ToolSession = toolSession ?? throw new ArgumentNullException(nameof(toolSession));
-        IncludeOldBlockInPrompt = includeOldBlockInPrompt;
     }
 
-    public string Id { get; }
-    public MemoryPackBlockPath Target { get; }
+    public string Id => _profile.Id;
+    public MemoryPackBlockPath Target => _profile.Target;
     public ICompletionClient CompletionClient { get; }
     public string ModelId { get; }
-    public string SystemPrompt { get; }
-    public string UserPrompt { get; }
-    public ToolSession ToolSession { get; }
-    public bool IncludeOldBlockInPrompt { get; }
 
     public async ValueTask<MemoryBlockMaintenanceResult> MaintainAsync(
         MemoryBlockMaintenanceRequest request,
         CancellationToken ct
     ) {
         ArgumentNullException.ThrowIfNull(request);
-        if (!Equals(Target, request.Target)) { throw new ArgumentException("Maintenance request target does not match maintainer target.", nameof(request)); }
-
         var workingContext = BuildWorkingContext(request);
-        ActionMessage? finalMessage = null;
-        CompletionDescriptor? invocation = null;
-        List<string>? errors = null;
-        int totalToolCallsExecuted = 0;
-
-        for (int iteration = 0; iteration < MaxToolLoopIterations; iteration++) {
-            ct.ThrowIfCancellationRequested();
-
-            var completionRequest = new CompletionRequest(
+        var result = await CompletionClient.StreamCompletionAsync(
+            new CompletionRequest(
                 ModelId: ModelId,
-                SystemPrompt: SystemPrompt,
+                SystemPrompt: _profile.SystemPrompt,
                 Context: workingContext,
-                Tools: ToolSession.VisibleDefinitions
-            );
+                Tools: []
+            ),
+            observer: null,
+            ct
+        ).ConfigureAwait(false);
 
-            var result = await CompletionClient.StreamCompletionAsync(completionRequest, null, ct)
-                .ConfigureAwait(false);
-
-            invocation = result.Invocation;
-            if (result.Errors is { Count: > 0 }) {
-                errors ??= [];
-                errors.AddRange(result.Errors);
-            }
-
-            if (!result.Termination.IsSuccess) {
-                throw new ChatSessionTurnAbortedException(
-                    BuildTurnAbortMessage(result.Termination),
-                    result.Termination,
-                    result.Errors
-                );
-            }
-
-            finalMessage = StripReasoningBlocks(result.Message);
-            workingContext.Add(finalMessage);
-
-            var toolCalls = finalMessage.ToolCalls;
-            if (toolCalls.Count == 0) { break; }
-
-            var toolResults = new ToolResult[toolCalls.Count];
-            int executed = 0;
-            for (int i = 0; i < toolCalls.Count; i++) {
-                ct.ThrowIfCancellationRequested();
-                var callResult = await ToolSession.ExecuteAsync(toolCalls[i], ct).ConfigureAwait(false);
-                toolResults[i] = callResult.ToToolResult();
-                executed++;
-            }
-
-            totalToolCallsExecuted += executed;
-            workingContext.Add(new ToolResultsMessage(content: null, results: toolResults));
-        }
-
-        if (finalMessage is not null && finalMessage.ToolCalls.Count > 0) {
-            throw new InvalidOperationException(
-                $"Memory maintainer '{Id}' tool loop exceeded the hard limit of {MaxToolLoopIterations} iterations."
+        if (!result.Termination.IsSuccess) {
+            throw new ChatSessionTurnAbortedException(
+                BuildTurnAbortMessage(result.Termination),
+                result.Termination,
+                result.Errors
             );
         }
 
-        var updatedText = InlineThinkTextFilter.StripInlineThinkBlocks(finalMessage?.GetFlattenedText() ?? string.Empty).Trim();
+        var finalMessage = StripReasoningBlocks(result.Message);
+        if (finalMessage.ToolCalls.Count > 0) { throw new InvalidOperationException($"Rewrite maintainer '{Id}' returned unexpected tool calls."); }
+
+        var updatedText = NormalizeBlockText(finalMessage.GetFlattenedText());
         return new MemoryBlockMaintenanceResult(
             MaintainerId: Id,
             Target: Target,
             NewBlock: new MemoryPackBlock(updatedText),
-            Notices: Array.Empty<MemoryMaintenanceNotice>(),
-            Diagnostics: Array.Empty<string>(),
-            Invocation: invocation ?? new CompletionDescriptor("none", "none", ModelId),
-            Errors: errors?.AsReadOnly(),
-            ToolCallsExecuted: totalToolCallsExecuted
+            Invocation: result.Invocation,
+            Errors: result.Errors
         );
     }
 
@@ -445,7 +372,7 @@ public sealed class CompletionMemoryBlockMaintainer : IMemoryBlockMaintainer {
         }
 
         AddProjectedMessages(workingContext, recentHistory.Messages);
-        workingContext.Add(new ObservationMessage(BuildMaintenancePrompt(request)));
+        workingContext.Add(new ObservationMessage(BuildMaintenancePrompt()));
         return workingContext;
     }
 
@@ -470,26 +397,33 @@ public sealed class CompletionMemoryBlockMaintainer : IMemoryBlockMaintainer {
         }
     }
 
-    private string BuildMaintenancePrompt(MemoryBlockMaintenanceRequest request) {
+    private string BuildMaintenancePrompt() {
         var builder = new StringBuilder();
-        if (request.Target is null) { throw new ArgumentNullException(nameof(request.Target)); }
-
         builder.AppendLine("Maintain this memory block.");
         builder.Append("Target: ")
-            .Append(MemoryPackCarrierTokens.ToStorageToken(request.Target.Carrier))
+            .Append(MemoryPackCarrierTokens.ToStorageToken(Target.Carrier))
             .Append('/')
-            .AppendLine(request.Target.BlockKey);
-        if (IncludeOldBlockInPrompt) {
-            builder.AppendLine();
-            builder.AppendLine("Current block:");
-            builder.AppendLine("```text");
-            builder.AppendLine(request.OldBlock.Text);
-            builder.AppendLine("```");
-        }
+            .AppendLine(Target.BlockKey);
         builder.AppendLine();
         builder.Append("Instruction:").AppendLine();
-        builder.Append(UserPrompt);
+        builder.Append(_profile.UserPrompt);
         return builder.ToString();
+    }
+
+    private static string NormalizeBlockText(string? text) {
+        var trimmed = InlineThinkTextFilter.StripInlineThinkBlocks(text ?? string.Empty).Trim();
+        if (!trimmed.StartsWith("```", StringComparison.Ordinal)) { return trimmed; }
+
+        int firstLineEnd = trimmed.IndexOf('\n', StringComparison.Ordinal);
+        if (firstLineEnd < 0) { return trimmed; }
+
+        int closingFenceStart = trimmed.LastIndexOf("```", StringComparison.Ordinal);
+        if (closingFenceStart <= firstLineEnd) { return trimmed; }
+
+        string trailing = trimmed[(closingFenceStart + 3)..].Trim();
+        return trailing.Length == 0
+            ? trimmed[(firstLineEnd + 1)..closingFenceStart].Trim()
+            : trimmed;
     }
 
     private static ActionMessage StripReasoningBlocks(ActionMessage action) {
@@ -512,8 +446,13 @@ public sealed class CompletionMemoryBlockMaintainer : IMemoryBlockMaintainer {
     }
 }
 
+public sealed record MemoryMaintenanceBatchResult(
+    IReadOnlyList<MemoryBlockMaintenanceResult> Results,
+    MemoryPack UpdatedMemoryPack
+);
+
 public static class MemoryMaintenanceOrchestrator {
-    public static async Task<IReadOnlyList<MemoryBlockMaintenanceResult>> RunAsync(
+    public static async Task<MemoryMaintenanceBatchResult> RunAsync(
         MemoryPack memoryPack,
         RecentHistorySlice recentHistory,
         IReadOnlyList<IMemoryBlockMaintainer> maintainers,
@@ -531,23 +470,20 @@ public static class MemoryMaintenanceOrchestrator {
             var oldBlock = memoryPack.TryGetBlock(maintainer.Target, out var found)
                 ? found
                 : new MemoryPackBlock(string.Empty);
-            var request = new MemoryBlockMaintenanceRequest(recentHistory, maintainer.Target, oldBlock);
+            var request = new MemoryBlockMaintenanceRequest(recentHistory, oldBlock);
             tasks[i] = maintainer.MaintainAsync(request, ct).AsTask();
         }
 
-        return await Task.WhenAll(tasks).ConfigureAwait(false);
-    }
-
-    public static MemoryPack ApplyResults(MemoryPack memoryPack, IReadOnlyList<MemoryBlockMaintenanceResult> results) {
-        ArgumentNullException.ThrowIfNull(memoryPack);
-        ArgumentNullException.ThrowIfNull(results);
+        var results = await Task.WhenAll(tasks).ConfigureAwait(false);
 
         var draft = new MemoryPackDraft(memoryPack);
-        for (int i = 0; i < results.Count; i++) {
+        for (int i = 0; i < results.Length; i++) {
+            if (!string.Equals(results[i].MaintainerId, maintainers[i].Id, StringComparison.Ordinal)) { throw new InvalidOperationException($"Memory maintainer '{maintainers[i].Id}' returned mismatched id '{results[i].MaintainerId}'."); }
+            if (!Equals(results[i].Target, maintainers[i].Target)) { throw new InvalidOperationException($"Memory maintainer '{maintainers[i].Id}' returned a mismatched target."); }
             draft.UpsertBlock(results[i].Target, results[i].NewBlock.Text);
         }
 
-        return draft.Build();
+        return new MemoryMaintenanceBatchResult(results, draft.Build());
     }
 
     public static void ValidateMaintainers(IReadOnlyList<IMemoryBlockMaintainer> maintainers) {

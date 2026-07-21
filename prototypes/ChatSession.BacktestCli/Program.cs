@@ -5,7 +5,6 @@ using Atelia.ChatSession;
 using Atelia.ChatSession.Memory;
 using Atelia.Completion;
 using Atelia.Completion.Abstractions;
-using Atelia.Completion.Tools;
 
 namespace ChatSessionBacktestCli;
 
@@ -13,7 +12,6 @@ internal static partial class Program {
     private const int DefaultThresholdTokens = 24_000;
     private const string DefaultLlmSmokeCallLogDir = "gitignore/backtest/llm-smoke-calls";
     private const string DefaultRollingSummaryCallLogDir = "gitignore/backtest/rolling-summary-calls";
-    private const string DefaultAutobiographicalCompressionCallLogDir = "gitignore/backtest/autobiographical-compression-calls";
     private const string DefaultRollingSummaryMaintainerId = "rolling-summary.memory-block";
     private const string DefaultRollingSummaryBlockId = "session.rolling-summary";
 
@@ -35,7 +33,6 @@ internal static partial class Program {
             return command switch {
                 "inspect" => RunInspect(options),
                 "llm-smoke" => RunLlmSmokeAsync(options).GetAwaiter().GetResult(),
-                "compress-autobiography" => RunCompressAutobiographyAsync(options).GetAwaiter().GetResult(),
                 "replay-pattern-count" => RunReplayPatternCount(options),
                 "replay-rolling-summary" => RunReplayRollingSummaryAsync(options).GetAwaiter().GetResult(),
                 _ => Fail($"Unknown command '{command}'.")
@@ -184,7 +181,6 @@ internal static partial class Program {
         var connection = registry.Resolve(requestedConnectionId);
         var client = registry.GetClient(connection.Id);
         var profile = CreateReplayMaintainerProfile(options, preset, systemPromptOverride, userPromptOverride);
-        var toolRegistry = new ToolRegistry(Array.Empty<ITool>());
 
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(outputPath)) ?? ".");
         Directory.CreateDirectory(callLogDir);
@@ -194,7 +190,6 @@ internal static partial class Program {
             client,
             connection,
             profile,
-            toolRegistry,
             callLogDir,
             thresholdTokens,
             maxEpochs
@@ -215,92 +210,6 @@ internal static partial class Program {
         Console.WriteLine($"output: {outputPath}");
         Console.WriteLine($"callLogDir: {Path.GetFullPath(callLogDir)}");
         return runner.HadFailure ? 1 : 0;
-    }
-
-    private static async Task<int> RunCompressAutobiographyAsync(CliOptions options) {
-        var inputPath = options.Require("input");
-        var outputPath = options.Require("output");
-        var connectionsPath = options.Require("connections");
-        var targetTokens = options.RequirePositiveInt("target-tokens");
-        var requestedConnectionId = options.Get("connection");
-        var callLogDir = options.Get("call-log-dir") ?? DefaultAutobiographicalCompressionCallLogDir;
-        var systemPromptOverride = ReadPromptOrNull(options.Get("system-prompt"));
-        var userPromptOverride = ReadPromptOrNull(options.Get("prompt"));
-        string autobiography = File.ReadAllText(inputPath, Encoding.UTF8);
-
-        var connections = CompletionConnectionConfigLoader.LoadFile(connectionsPath);
-        using var registry = new CompletionConnectionRegistry(connections, new DefaultCompletionClientFactory());
-        if (!string.IsNullOrWhiteSpace(requestedConnectionId) && !registry.TryGet(requestedConnectionId, out _)) { throw new ArgumentException($"Unknown completion connection '{requestedConnectionId}'."); }
-
-        var connection = registry.Resolve(requestedConnectionId);
-        var client = registry.GetClient(connection.Id);
-        Directory.CreateDirectory(callLogDir);
-        int beforeMaxCallId = RollingSummaryCallLogUtil.GetMaxCallId(callLogDir);
-        var loggingClient = new LoggingCompletionClient(
-            client,
-            connection,
-            callLogDir,
-            new CompletionCallLogContext(
-                Command: "compress-autobiography",
-                MaintainerId: AutobiographicalCompressionMemoryMaintainer.DefaultId,
-                TargetCarrier: MemoryPackCarrierTokens.ToStorageToken(RolePlayMemoryBlockPaths.FirstPersonAutobiography.Carrier),
-                TargetBlockId: RolePlayMemoryBlockPaths.FirstPersonAutobiography.BlockKey
-            )
-        );
-        var maintainer = new AutobiographicalCompressionMemoryMaintainer(
-            loggingClient,
-            connection.ModelId,
-            targetTokens,
-            systemPromptOverride,
-            userPromptOverride
-        );
-
-        MemoryBlockMaintenanceResult? result = null;
-        Exception? exception = null;
-        try {
-            result = await maintainer.MaintainAsync(
-                new MemoryBlockMaintenanceRequest(
-                    new RecentHistorySlice(ContextHeaderSnapshot.Empty, Array.Empty<IHistoryMessage>()),
-                    RolePlayMemoryBlockPaths.FirstPersonAutobiography,
-                    new MemoryPackBlock(autobiography)
-                ),
-                CancellationToken.None
-            ).ConfigureAwait(false);
-        }
-        catch (Exception ex) when (ex is InvalidOperationException or ChatSessionTurnAbortedException or HttpRequestException or TaskCanceledException) {
-            exception = ex;
-        }
-
-        int afterMaxCallId = RollingSummaryCallLogUtil.GetMaxCallId(callLogDir);
-        var callLogPaths = Enumerable.Range(beforeMaxCallId + 1, Math.Max(0, afterMaxCallId - beforeMaxCallId))
-            .Select(id => Path.Combine(Path.GetFullPath(callLogDir), $"{id:0000}.json"))
-            .ToArray();
-        var record = AutobiographicalCompressionBacktestRecord.Create(
-            connection.Id,
-            inputPath,
-            targetTokens,
-            autobiography,
-            result,
-            callLogPaths,
-            exception
-        );
-
-        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(outputPath)) ?? ".");
-        await File.WriteAllTextAsync(
-            outputPath,
-            JsonSerializer.Serialize(record, JsonOptions) + Environment.NewLine,
-            Encoding.UTF8
-        ).ConfigureAwait(false);
-
-        Console.WriteLine($"connection: {connection.Id}");
-        Console.WriteLine($"status: {record.Status}");
-        Console.WriteLine($"beforeTokens: {record.BeforeTokens}");
-        Console.WriteLine($"afterTokens: {record.AfterTokens?.ToString() ?? "(none)"}");
-        Console.WriteLine($"targetTokens: {record.TargetTokens}");
-        Console.WriteLine($"targetReached: {record.TargetReached?.ToString() ?? "(none)"}");
-        Console.WriteLine($"output: {outputPath}");
-        Console.WriteLine($"callLogDir: {Path.GetFullPath(callLogDir)}");
-        return exception is null ? 0 : 1;
     }
 
     private static Dictionary<string, int> CountMessageKinds(IReadOnlyList<ChatSessionLegacyReplayEvent> events) {
@@ -368,9 +277,8 @@ internal static partial class Program {
         Console.WriteLine("Commands:");
         Console.WriteLine("  inspect --input <path>");
         Console.WriteLine("  llm-smoke --connections <path> [--connection <id>] [--call-log-dir <dir>] [--message <text>]");
-        Console.WriteLine("  compress-autobiography --input <text> --target-tokens <n> --output <jsonl> --connections <path> [--connection <id>] [--call-log-dir <dir>] [--system-prompt <path>] [--prompt <path>]");
         Console.WriteLine("  replay-pattern-count --input <path> --output <jsonl> [--report-md <path>] [--threshold-tokens <n>] [--respect-original-compaction]");
-        Console.WriteLine("  replay-rolling-summary --input <path> --output <jsonl> --connections <path> [--preset rolling-summary|world-understanding|first-person-autobiography|autobiographical-recording|autobiographical-two-stage|autobiographical-rewrite|world-understanding-rewrite] [--connection <id>] [--call-log-dir <dir>] [--threshold-tokens <n>] [--max-epochs <n>] [--compression-high-watermark <n>] [--compression-target-tokens <n>] [--system-prompt <path>] [--prompt <path>] [--target-carrier system|observation|action] [--target-block <id>]");
+        Console.WriteLine("  replay-rolling-summary --input <path> --output <jsonl> --connections <path> [--preset rolling-summary|autobiographical-rewrite|world-understanding-rewrite] [--connection <id>] [--call-log-dir <dir>] [--threshold-tokens <n>] [--max-epochs <n>] [--system-prompt <path>] [--prompt <path>] [--target-carrier system|observation|action] [--target-block <id>]");
     }
 
     private static string? ReadPromptOrNull(string? path)
@@ -391,109 +299,31 @@ internal static partial class Program {
                 var userPrompt = userPromptOverride ?? RollingSummaryReplayDefaults.UserPrompt;
                 return new ReplayMemoryMaintainerProfile(
                     RollingSummaryReplayDefaults.PresetName,
-                    DefaultRollingSummaryMaintainerId,
-                    target,
-                    (completionClient, modelId, toolSession) => new CompletionMemoryBlockMaintainer(
+                    new MemoryRewriteProfile(
                         DefaultRollingSummaryMaintainerId,
                         target,
-                        completionClient,
-                        modelId,
                         systemPrompt,
-                        userPrompt,
-                        toolSession
-                    )
-                );
-
-            case "world-understanding":
-                return new ReplayMemoryMaintainerProfile(
-                    preset,
-                    WorldUnderstandingMemoryMaintainer.DefaultId,
-                    RolePlayMemoryBlockPaths.WorldUnderstanding,
-                    (completionClient, modelId, toolSession) => new WorldUnderstandingMemoryMaintainer(
-                        completionClient,
-                        modelId,
-                        toolSession,
-                        systemPromptOverride,
-                        userPromptOverride
-                    )
-                );
-
-            case "first-person-autobiography":
-                return new ReplayMemoryMaintainerProfile(
-                    preset,
-                    FirstPersonAutobiographyMemoryMaintainer.DefaultId,
-                    RolePlayMemoryBlockPaths.FirstPersonAutobiography,
-                    (completionClient, modelId, toolSession) => new FirstPersonAutobiographyMemoryMaintainer(
-                        completionClient,
-                        modelId,
-                        toolSession,
-                        systemPromptOverride,
-                        userPromptOverride
-                    )
-                );
-
-            case "autobiographical-recording":
-                return new ReplayMemoryMaintainerProfile(
-                    preset,
-                    AutobiographicalRecordingMemoryMaintainer.DefaultId,
-                    RolePlayMemoryBlockPaths.FirstPersonAutobiography,
-                    (completionClient, modelId, _) => new AutobiographicalRecordingMemoryMaintainer(
-                        completionClient,
-                        modelId,
-                        systemPromptOverride,
-                        userPromptOverride
-                    )
-                );
-
-            case "autobiographical-two-stage":
-                var compressionPolicy = new MemoryDocumentCompressionPolicy(
-                    options.RequirePositiveInt("compression-high-watermark"),
-                    options.RequirePositiveInt("compression-target-tokens")
-                );
-                return new ReplayMemoryMaintainerProfile(
-                    preset,
-                    AutobiographicalMemoryMaintainer.DefaultId,
-                    RolePlayMemoryBlockPaths.FirstPersonAutobiography,
-                    (completionClient, modelId, _) => new AutobiographicalMemoryMaintainer(
-                        completionClient,
-                        modelId,
-                        compressionPolicy,
-                        recordingSystemPrompt: systemPromptOverride,
-                        recordingUserPrompt: userPromptOverride
+                        userPrompt
                     )
                 );
 
             case "autobiographical-rewrite":
                 return new ReplayMemoryMaintainerProfile(
                     preset,
-                    AutobiographicalRewriteMemoryMaintainer.DefaultId,
-                    RolePlayMemoryBlockPaths.FirstPersonAutobiography,
-                    (completionClient, modelId, toolSession) => new AutobiographicalRewriteMemoryMaintainer(
-                        completionClient,
-                        modelId,
-                        toolSession,
-                        ResolveRewritePrompts(
-                            AutobiographicalRewritePrompts.Default,
-                            systemPromptOverride,
-                            userPromptOverride
-                        )
+                    ResolveRewriteProfile(
+                        AutobiographicalRewriteProfiles.Default,
+                        systemPromptOverride,
+                        userPromptOverride
                     )
                 );
 
             case "world-understanding-rewrite":
                 return new ReplayMemoryMaintainerProfile(
                     preset,
-                    WorldUnderstandingRewriteMemoryMaintainer.DefaultId,
-                    RolePlayMemoryBlockPaths.WorldUnderstanding,
-                    (completionClient, modelId, toolSession) => new WorldUnderstandingRewriteMemoryMaintainer(
-                        completionClient,
-                        modelId,
-                        toolSession,
-                        ResolveRewritePrompts(
-                            WorldUnderstandingRewritePrompts.Default,
-                            systemPromptOverride,
-                            userPromptOverride
-                        )
+                    ResolveRewriteProfile(
+                        WorldUnderstandingRewriteProfiles.Default,
+                        systemPromptOverride,
+                        userPromptOverride
                     )
                 );
 
@@ -502,11 +332,13 @@ internal static partial class Program {
         }
     }
 
-    private static MemoryRewritePromptSet ResolveRewritePrompts(
-        MemoryRewritePromptSet defaults,
+    private static MemoryRewriteProfile ResolveRewriteProfile(
+        MemoryRewriteProfile defaults,
         string? systemPromptOverride,
         string? userPromptOverride
     ) => new(
+        defaults.Id,
+        defaults.Target,
         systemPromptOverride ?? defaults.SystemPrompt,
         userPromptOverride ?? defaults.UserPrompt
     );

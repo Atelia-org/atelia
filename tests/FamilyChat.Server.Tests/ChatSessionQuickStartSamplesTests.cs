@@ -273,28 +273,29 @@ public sealed class ChatSessionQuickStartSamplesTests {
             memoryPack.Action.Add("assistant.open-threads", new MemoryPackBlock("old-plan"));
             memoryPack.Action.Add("assistant.self-state", new MemoryPackBlock("old-self"));
 
-            var emptyToolSession = new ToolRegistry(Array.Empty<ITool>()).CreateSession();
             var result = await engine.RunMemoryMaintainersAsync(
                 new MemoryMaintenanceRequest(
                     memoryPack,
                     [
-                        new CompletionMemoryBlockMaintainer(
-                            "plan",
-                            new MemoryPackBlockPath(MemoryPackCarrier.Action, "assistant.open-threads"),
+                        new RewriteMemoryBlockMaintainer(
+                            new MemoryRewriteProfile(
+                                "plan",
+                                new MemoryPackBlockPath(MemoryPackCarrier.Action, "assistant.open-threads"),
+                                "plan-system",
+                                "plan-prompt"
+                            ),
                             completionClient,
-                            "model-a",
-                            "plan-system",
-                            "plan-prompt",
-                            emptyToolSession
+                            "model-a"
                         ),
-                        new CompletionMemoryBlockMaintainer(
-                            "self",
-                            new MemoryPackBlockPath(MemoryPackCarrier.Action, "assistant.self-state"),
+                        new RewriteMemoryBlockMaintainer(
+                            new MemoryRewriteProfile(
+                                "self",
+                                new MemoryPackBlockPath(MemoryPackCarrier.Action, "assistant.self-state"),
+                                "self-system",
+                                "self-prompt"
+                            ),
                             completionClient,
-                            "model-a",
-                            "self-system",
-                            "self-prompt",
-                            emptyToolSession
+                            "model-a"
                         ),
                     ]
                 ),
@@ -328,98 +329,6 @@ public sealed class ChatSessionQuickStartSamplesTests {
     }
 
     [Fact]
-    public async Task RunMemoryMaintainersAsync_RunsMaintainerToolLoop() {
-        string repoDir = CreateTempDirectory();
-        try {
-            var completionClient = new ScriptedCompletionClient("openai-chat-v1");
-            completionClient.EnqueueText("old-assistant");
-            completionClient.Enqueue(
-                (request, observer, ct) => {
-                    Assert.Equal("memory-system", request.SystemPrompt);
-                    Assert.Equal("workspace.echo", Assert.Single(request.Tools).Name);
-
-                    var call = new RawToolCall("workspace.echo", "call-1", """{"text":"memory"}""");
-                    return Task.FromResult(
-                        new CompletionResult(
-                            new ActionMessage([new ActionBlock.ToolCall(call)]),
-                            new CompletionDescriptor("scripted", "openai-chat-v1", request.ModelId)
-                        )
-                    );
-                }
-            );
-            completionClient.Enqueue(
-                (request, observer, ct) => {
-                    var toolResults = Assert.IsType<ToolResultsMessage>(request.Context[^1]);
-                    var toolResult = Assert.Single(toolResults.Results);
-                    Assert.Equal("workspace.echo", toolResult.ToolName);
-                    Assert.Equal("echo:memory|maintainer", toolResult.GetFlattenedText());
-
-                    return Task.FromResult(
-                        new CompletionResult(
-                            new ActionMessage([new ActionBlock.Text("updated-with-tool")]),
-                            new CompletionDescriptor("scripted", "openai-chat-v1", request.ModelId)
-                        )
-                    );
-                }
-            );
-
-            using var engine = await ChatSessionEngine.CreateAsync(
-                repoDir,
-                new ChatSessionCreateOptions(SystemPrompt: "base-system"),
-                new ChatSessionRuntime(
-                    CompletionClient: completionClient,
-                    CompletionSurfaceId: "openai-chat/strict",
-                    ModelId: "model-a",
-                    ToolSession: new ToolRegistry(Array.Empty<ITool>()).CreateSession()
-                )
-            );
-
-            engine.SetContextHeader(
-                new ContextHeader(
-                    "header-system",
-                    "header-user",
-                    new ActionMessage([new ActionBlock.Text(new string('h', 200))])
-                )
-            );
-            await engine.SendMessageAsync("recent-user", CancellationToken.None);
-
-            var toolHost = new DemoTools();
-            var echoTool = MethodToolWrapper.FromMethod(
-                toolHost,
-                typeof(DemoTools).GetMethod(nameof(DemoTools.EchoAsync))!
-            );
-            var maintainerToolSession = new ToolRegistry([echoTool]).CreateSession(
-                items: new Dictionary<string, object?> { ["scope"] = "maintainer" }
-            );
-
-            var result = await engine.RunMemoryMaintainersAsync(
-                new MemoryMaintenanceRequest(
-                    new MemoryPack(),
-                    [
-                        new CompletionMemoryBlockMaintainer(
-                            "tooling",
-                            new MemoryPackBlockPath(MemoryPackCarrier.Action, "assistant.tooling"),
-                            completionClient,
-                            "model-a",
-                            "memory-system",
-                            "memory-prompt",
-                            maintainerToolSession
-                        ),
-                    ]
-                ),
-                CancellationToken.None
-            );
-
-            var maintainerResult = Assert.Single(result.MaintainerResults);
-            Assert.Equal("updated-with-tool", maintainerResult.NewBlock.Text);
-            Assert.Equal(1, maintainerResult.ToolCallsExecuted);
-        }
-        finally {
-            Directory.Delete(repoDir, recursive: true);
-        }
-    }
-
-    [Fact]
     public async Task RunMemoryMaintainersAsync_RejectsDuplicateTargets() {
         string repoDir = CreateTempDirectory();
         try {
@@ -434,29 +343,30 @@ public sealed class ChatSessionQuickStartSamplesTests {
                 )
             );
 
-            var emptyToolSession = new ToolRegistry(Array.Empty<ITool>()).CreateSession();
             await Assert.ThrowsAsync<ArgumentException>(
                 () => engine.RunMemoryMaintainersAsync(
                     new MemoryMaintenanceRequest(
                         new MemoryPack(),
                         [
-                            new CompletionMemoryBlockMaintainer(
-                                "first",
-                                new MemoryPackBlockPath(MemoryPackCarrier.Action, "assistant.open-threads"),
+                            new RewriteMemoryBlockMaintainer(
+                                new MemoryRewriteProfile(
+                                    "first",
+                                    new MemoryPackBlockPath(MemoryPackCarrier.Action, "assistant.open-threads"),
+                                    "system",
+                                    "prompt"
+                                ),
                                 new ScriptedCompletionClient("openai-chat-v1"),
-                                "model-a",
-                                "system",
-                                "prompt",
-                                emptyToolSession
+                                "model-a"
                             ),
-                            new CompletionMemoryBlockMaintainer(
-                                "second",
-                                new MemoryPackBlockPath(MemoryPackCarrier.Action, "assistant.open-threads"),
+                            new RewriteMemoryBlockMaintainer(
+                                new MemoryRewriteProfile(
+                                    "second",
+                                    new MemoryPackBlockPath(MemoryPackCarrier.Action, "assistant.open-threads"),
+                                    "system",
+                                    "prompt"
+                                ),
                                 new ScriptedCompletionClient("openai-chat-v1"),
-                                "model-a",
-                                "system",
-                                "prompt",
-                                emptyToolSession
+                                "model-a"
                             ),
                         ]
                     ),
@@ -483,7 +393,7 @@ public sealed class ChatSessionQuickStartSamplesTests {
             message => {
                 var prompt = Assert.IsType<ObservationMessage>(message).Content;
                 Assert.Contains(expectedInstruction, prompt);
-                Assert.Contains(expectedOldBlock, prompt);
+                Assert.DoesNotContain(expectedOldBlock, prompt);
                 Assert.Contains("action/assistant", prompt);
             }
         );

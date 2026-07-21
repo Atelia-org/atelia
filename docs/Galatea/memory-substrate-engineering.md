@@ -1,6 +1,6 @@
 # Galatea Memory Substrate 工程设计草案
 
-> 状态：v0 草案。本文只讨论内容无关的软件工程 substrate，不讨论 Galatea Memory Pack 里应该有哪些具体主题、信念、关系通道或心智理论分类。
+> 状态：已实现，并于 2026-07-22 按 `memory-maintainer-slimming-refactor.md` 收缩公共合同。本文只讨论内容无关的软件工程 substrate，不讨论 Galatea Memory Pack 里应该有哪些具体主题、信念、关系通道或心智理论分类。
 
 ## 1. 目标
 
@@ -115,7 +115,6 @@ public interface IMemoryBlockMaintainer {
 
 public sealed record MemoryBlockMaintenanceRequest(
     RecentHistorySlice RecentHistory,
-    MemoryPackBlockPath Target,
     MemoryPackBlock OldBlock
 );
 
@@ -123,11 +122,8 @@ public sealed record MemoryBlockMaintenanceResult(
     string MaintainerId,
     MemoryPackBlockPath Target,
     MemoryPackBlock NewBlock,
-    IReadOnlyList<MemoryMaintenanceNotice> Notices,
-    IReadOnlyList<string> Diagnostics,
     CompletionDescriptor? Invocation = null,
-    IReadOnlyList<string>? Errors = null,
-    int ToolCallsExecuted = 0
+    IReadOnlyList<string>? Errors = null
 );
 ```
 
@@ -135,21 +131,32 @@ public sealed record MemoryBlockMaintenanceResult(
 
 - `MaintainAsync` 必须返回一个完整新版 block，而不是对旧文本的隐式增量。
 - `MaintainAsync` 不提交 Memory Pack，不替换 `ContextHeader`，不删除 history。
-- `Target` 同时用于 duplicate writer 检查、从 snapshot 读取旧 block、把结果写入 draft；同一 epoch 内每个 `MemoryPackBlockPath` 最多一个 maintainer 写。
+- maintainer 自身的 `Target` 同时用于 duplicate writer 检查、从 snapshot 读取旧 block、校验返回结果和写入 draft；request 不再重复携带同一字段。同一 epoch 内每个 `MemoryPackBlockPath` 最多一个 maintainer 写。
 - 如果 `Target` 对应的 old block 在当前 MemoryPack snapshot 中不存在，编排器应向 maintainer 传入 `new MemoryPackBlock(string.Empty)`，允许 maintainer 创建新 block。这是新建 LLM session 的正常路径，而不是错误。
-- `Notices` 可承载实现层无法直接处理的问题，但 substrate 不解释这些问题的心理学含义。
-- `Invocation` / `Errors` / `ToolCallsExecuted` 保留现有代码的审计能力，但不要求所有 maintainer 都来自 completion；非 LLM maintainer 可返回 `null` invocation 和 `0` tool calls。
-- 工具循环是具体 maintainer 实现的内部细节，不进入统一接口。内置 LLM maintainer 可以保留 `ToolSession` 配置，使不同 maintainer 暴露不同工具集合和 scoped items；规则型或测试 fake maintainer 不需要依赖 tool abstraction。
+- `Invocation` / `Errors` 保留单次 completion 的必要审计信息；非 LLM maintainer 可返回 `null`。
+- 工具循环若未来重新出现，只能是具体 maintainer 实现的内部细节，不进入统一接口或公共结果字段。当前内置 LLM 实现 `RewriteMemoryBlockMaintainer` 固定为单次 completion，工具集合为空。
 
 `IRecentHistoryAnalyzer` 与 `IMemoryBlockMaintainer` 保持并列而非继承关系：前者表达“分析 recent history，可通过 side effect 或外部 store 产出结果”；后者表达“维护一个目标 block 并返回新版 block”。同一个实现类可以同时实现两者，但 substrate 不强制每个 maintainer 都提供额外 `AnalyzeAsync` 入口。
 
-现有 `ChatSession` 中的 `IMemoryMaintainerAgent` / `MemoryMaintenanceRequest` / `MemoryMaintenanceResult` 是早期验证概念时形成的雏形，不应长期与本节类型并列成两套模型。后续实现应把已有的 recent-fragment split、并行 maintainer、tool-loop、duplicate writer 检查等能力融合到 block-level Memory substrate 中，而不是继续扩张旧 API。
+`ChatSessionEngine.RunMemoryMaintainersAsync` 的 request/result 是 session 级入口，负责选择 sliding-out history window；block 级执行则统一落在本节合同和 orchestrator 中。两层职责不同，不各自实现 maintainer loop。
 
 融合后的推荐分层：
 
 - `IMemoryBlockMaintainer`：统一 maintainer 概念，负责“给定 old block + recent history，产出 new block”。
-- 内置 LLM maintainer 实现：承载旧 `SystemPrompt` / `UserPrompt` / `ToolSession` 风格，把 old block、target path、prior context 和 recent messages 投影成 completion 请求，并执行现有 tool-loop。`ToolSession` 属于这个实现的配置，不属于所有 maintainer 的共同接口。
-- 编排器：负责选择/接收 `RecentHistorySlice`，校验 maintainer id 与 target 唯一性，并行执行 maintainer，汇总结果。它可以帮助把结果应用到 `MemoryPackDraft`，但不提交 pack store，也不调用 `SetContextHeader`。
+- `MemoryRewriteProfile`：数据化 `Id`、`Target`、system prompt 和 user prompt。
+- `RewriteMemoryBlockMaintainer`：把 prior context、recent messages 与末尾 instruction 投影成一次无工具 completion，并规范化完整 replacement block。
+- `MemoryMaintenanceOrchestrator`：接收 `RecentHistorySlice`，校验 maintainer id 与 target 唯一性，基于同一 snapshot 并行执行，校验返回身份，再统一应用到 `MemoryPackDraft`。
+
+编排器返回一个不可混淆的批次结果：
+
+```csharp
+public sealed record MemoryMaintenanceBatchResult(
+    IReadOnlyList<MemoryBlockMaintenanceResult> Results,
+    MemoryPack UpdatedMemoryPack
+);
+```
+
+这样调用方不会拿到结果后忘记应用，或用另一份 snapshot 重复应用。编排器仍不提交外部 store，也不调用 `SetContextHeader`。
 
 ## 4. MemoryPack 容器
 

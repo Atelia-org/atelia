@@ -87,92 +87,39 @@ public sealed partial class ChatSessionEngine {
             EstimatedTokens: ChatSessionTokenEstimator.Estimate(fragment)
         );
 
-        var results = await MemoryMaintenanceOrchestrator.RunAsync(
+        var batch = await MemoryMaintenanceOrchestrator.RunAsync(
             request.MemoryPack,
             recentHistory,
             maintainers,
             ct
         ).ConfigureAwait(false);
-        var updatedMemoryPack = MemoryMaintenanceOrchestrator.ApplyResults(request.MemoryPack, results);
         DebugUtil.Info(
             "ChatSession.MemoryMaintenance",
-            $"RunMemoryMaintainersAsync completed: head={PersistedHeadAddress}, splitIndex={splitIndex}, results={results.Count}"
+            $"RunMemoryMaintainersAsync completed: head={PersistedHeadAddress}, splitIndex={splitIndex}, results={batch.Results.Count}"
         );
 
         return new MemoryMaintenanceResult(
             Completed: true,
             FailureReason: null,
             SplitIndex: splitIndex,
-            MaintainerResults: results,
+            MaintainerResults: batch.Results,
             HistoryCountBefore: messages.Count,
             TokensBefore: tokensBefore,
-            UpdatedMemoryPack: updatedMemoryPack
+            UpdatedMemoryPack: batch.UpdatedMemoryPack
         );
     }
 
     internal static int FindHalfContextSplitPoint(
         IReadOnlyList<IHistoryMessage> messages,
         bool allowActionToObservationBoundary = false
-    ) {
-        if (messages.Count < 2) { return -1; }
+    ) => HistoryWindowSplitPolicy.FindHalfContextSplitPoint(
+        messages,
+        ChatSessionTokenEstimator.Estimate,
+        allowActionToObservationBoundary
+    );
 
-        ulong totalTokens = ChatSessionTokenEstimator.Estimate(messages);
-        if (totalTokens == 0) { return -1; }
-
-        ulong halfTokens = (totalTokens + 1) / 2;
-        ulong cumulativeTokens = 0;
-        int lastValidSuffixStart = -1;
-
-        for (int i = 0; i < messages.Count - 1; i++) {
-            cumulativeTokens += ChatSessionTokenEstimator.Estimate(messages[i]);
-
-            if (IsObservationLike(messages[i]) && messages[i + 1].Kind == HistoryMessageKind.Action) {
-                int suffixStart = i;
-                if (suffixStart == 0) { continue; }
-                if (suffixStart == 1 && messages[0] is RecapMessage) { continue; }
-
-                lastValidSuffixStart = suffixStart;
-
-                if (cumulativeTokens >= halfTokens) { return suffixStart; }
-            }
-
-            if (allowActionToObservationBoundary
-                && MessageEndsWithAction(messages[i])
-                && messages[i + 1].Kind == HistoryMessageKind.Observation) {
-                int suffixStart = i + 1;
-                if (suffixStart == 0) { continue; }
-
-                lastValidSuffixStart = suffixStart;
-
-                if (cumulativeTokens >= halfTokens) { return suffixStart; }
-            }
-        }
-
-        return lastValidSuffixStart;
-    }
-
-    private static bool IsValidSplitPoint(IReadOnlyList<IHistoryMessage> messages, int splitIndex) {
-        return splitIndex >= 1
-               && splitIndex < messages.Count - 1
-               && IsObservationLike(messages[splitIndex])
-               && messages[splitIndex + 1].Kind == HistoryMessageKind.Action;
-    }
-
-    private static bool MessageEndsWithAction(IHistoryMessage message) {
-        return message switch {
-            ActionMessage => true,
-            ContextHeader header => header.ActionMessage is not null,
-            _ => false
-        };
-    }
-
-    private static bool IsObservationLike(IHistoryMessage message) {
-        return message.Kind switch {
-            HistoryMessageKind.Observation => true,
-            HistoryMessageKind.ToolResults => true,
-            _ => false
-        };
-    }
+    private static bool IsValidSplitPoint(IReadOnlyList<IHistoryMessage> messages, int splitIndex)
+        => HistoryWindowSplitPolicy.IsObservationToActionBoundary(messages, splitIndex);
 
     private static IReadOnlyList<IHistoryMessage> CreateHistorySlice(
         IReadOnlyList<IHistoryMessage> messages,

@@ -2,6 +2,8 @@
 
 > 用途：给全新 coding agent 会话快速加载背景、目标、关键文件和施工边界。本文面向“具体实现 `memory-substrate-engineering.md`”这件事，不展开 Galatea 心智理论和 Memory Pack 内容分类。
 
+> **归档说明（2026-07-22）**：该交接任务已经完成，下面的提示词描述的是施工前状态，不应再次执行。现行 substrate 与 Rewrite-only 决策见 `prototypes/ChatSession/MemorySubstrate.cs` 和 `docs/Galatea/memory-maintainer-slimming-refactor.md`。
+
 ## 1. 可直接复制给新会话的用户提示词
 
 ```text

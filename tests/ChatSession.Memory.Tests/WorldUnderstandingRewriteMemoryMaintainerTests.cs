@@ -1,21 +1,20 @@
 using Atelia.ChatSession;
 using Atelia.ChatSession.Memory;
 using Atelia.Completion.Abstractions;
-using Atelia.Completion.Tools;
 using Xunit;
 
 namespace Atelia.ChatSession.Memory.Tests;
 
-public class WorldUnderstandingRewriteMemoryMaintainerTests {
+public class WorldUnderstandingRewriteProfileTests {
     [Fact]
     public async Task MaintainAsync_SingleShot_UsesModelTextAsNewBlock() {
         var completionClient = new ScriptedCompletionClient();
         completionClient.Enqueue(
             request => {
-                // 空 tool session ⇒ 单轮完整重写，无可见工具。
+                // Rewrite maintainer 固定为单次调用，不暴露工具。
                 Assert.Empty(request.Tools);
                 // system prompt 来自嵌入的 world-understanding rewrite 资源，且能被正确加载（非空）。
-                Assert.Equal(WorldUnderstandingRewritePrompts.Default.SystemPrompt, request.SystemPrompt);
+                Assert.Equal(WorldUnderstandingRewriteProfiles.Default.SystemPrompt, request.SystemPrompt);
                 Assert.False(string.IsNullOrWhiteSpace(request.SystemPrompt));
                 // 旧世界理解只存在于 ContextHeader；末尾 instruction 不再重复注入。
                 var instruction = Assert.IsType<ObservationMessage>(request.Context[^1]);
@@ -34,14 +33,13 @@ public class WorldUnderstandingRewriteMemoryMaintainerTests {
         var result = await maintainer.MaintainAsync(CreateRequest("### 刘世超\n\n开发者。"), CancellationToken.None);
 
         Assert.Equal("### 刘世超\n\n他偏好简体中文。", result.NewBlock.Text);
-        Assert.Equal(0, result.ToolCallsExecuted);
     }
 
     [Fact]
     public void Prompts_DefaultToSimplifiedChinese_AndKeepEnglishAvailable() {
-        Assert.Same(WorldUnderstandingRewritePrompts.SimplifiedChinese, WorldUnderstandingRewritePrompts.Default);
-        Assert.StartsWith("你是Galatea的认知制图师", WorldUnderstandingRewritePrompts.Default.SystemPrompt);
-        Assert.StartsWith("You are Galatea's cognitive cartographer", WorldUnderstandingRewritePrompts.English.SystemPrompt);
+        Assert.Same(WorldUnderstandingRewriteProfiles.SimplifiedChinese, WorldUnderstandingRewriteProfiles.Default);
+        Assert.StartsWith("你是Galatea的认知制图师", WorldUnderstandingRewriteProfiles.Default.SystemPrompt);
+        Assert.StartsWith("You are Galatea's cognitive cartographer", WorldUnderstandingRewriteProfiles.English.SystemPrompt);
     }
 
     [Fact]
@@ -52,8 +50,8 @@ public class WorldUnderstandingRewriteMemoryMaintainerTests {
         Assert.Equal(RolePlayMemoryBlockPaths.WorldUnderstanding, maintainer.Target);
     }
 
-    private static WorldUnderstandingRewriteMemoryMaintainer CreateMaintainer(ICompletionClient client)
-        => new(client, "model-a", new ToolRegistry(Array.Empty<ITool>()).CreateSession());
+    private static RewriteMemoryBlockMaintainer CreateMaintainer(ICompletionClient client)
+        => new(WorldUnderstandingRewriteProfiles.Default, client, "model-a");
 
     private static MemoryBlockMaintenanceRequest CreateRequest(string oldBlock) {
         var memoryPack = new MemoryPack();
@@ -66,7 +64,6 @@ public class WorldUnderstandingRewriteMemoryMaintainerTests {
                     new ActionMessage([new ActionBlock.Text("[Galatea] 我记下了这个偏好。")])
                 ]
             ),
-            RolePlayMemoryBlockPaths.WorldUnderstanding,
             new MemoryPackBlock(oldBlock)
         );
     }

@@ -100,16 +100,16 @@ public sealed class MemorySubstrateTests {
             return "created";
         });
 
-        var results = await MemoryMaintenanceOrchestrator.RunAsync(
+        var batch = await MemoryMaintenanceOrchestrator.RunAsync(
             pack,
             new RecentHistorySlice(ContextHeaderSnapshot.Empty, [new ObservationMessage("recent")]),
             [maintainer],
             CancellationToken.None
         );
-        var updated = MemoryMaintenanceOrchestrator.ApplyResults(pack, results);
 
         Assert.False(pack.Action.ContainsKey("new-block"));
-        Assert.Equal("created", updated.Action["new-block"].Text);
+        Assert.Equal("created", Assert.Single(batch.Results).NewBlock.Text);
+        Assert.Equal("created", batch.UpdatedMemoryPack.Action["new-block"].Text);
     }
 
     [Fact]
@@ -158,9 +158,7 @@ public sealed class MemorySubstrateTests {
                 new MemoryBlockMaintenanceResult(
                     Id,
                     Target,
-                    new MemoryPackBlock(maintain(request)),
-                    Array.Empty<MemoryMaintenanceNotice>(),
-                    Array.Empty<string>()
+                    new MemoryPackBlock(maintain(request))
                 )
             );
         }

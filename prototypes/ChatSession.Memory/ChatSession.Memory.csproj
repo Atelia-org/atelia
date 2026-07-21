@@ -8,20 +8,9 @@
 
   <ItemGroup>
     <ProjectReference Include="../ChatSession/ChatSession.csproj" />
-    <ProjectReference Include="../Completion.Abstractions/Completion.Abstractions.csproj" />
-    <ProjectReference Include="../Completion.Tools/Completion.Tools.csproj" />
-    <ProjectReference Include="../../src/TextEditScript/TextEditScript.csproj" />
   </ItemGroup>
 
   <ItemGroup>
-    <EmbeddedResource Include="../../docs/Galatea/prompt/autobiographical-maintainer/recording/system.md"
-                      LogicalName="Atelia.ChatSession.Memory.Prompts.AutobiographicalRecordingSystem.md" />
-    <EmbeddedResource Include="../../docs/Galatea/prompt/autobiographical-maintainer/recording/user.md"
-                      LogicalName="Atelia.ChatSession.Memory.Prompts.AutobiographicalRecordingUser.md" />
-    <EmbeddedResource Include="../../docs/Galatea/prompt/autobiographical-maintainer/compression/system.md"
-              LogicalName="Atelia.ChatSession.Memory.Prompts.AutobiographicalCompressionSystem.md" />
-    <EmbeddedResource Include="../../docs/Galatea/prompt/autobiographical-maintainer/compression/user.md"
-              LogicalName="Atelia.ChatSession.Memory.Prompts.AutobiographicalCompressionUser.md" />
     <EmbeddedResource Include="../../docs/Galatea/prompt/autobiographical-maintainer/rewrite/system.md"
               LogicalName="Atelia.ChatSession.Memory.Prompts.AutobiographicalRewrite.en.System.md" />
     <EmbeddedResource Include="../../docs/Galatea/prompt/autobiographical-maintainer/rewrite/user.md"
