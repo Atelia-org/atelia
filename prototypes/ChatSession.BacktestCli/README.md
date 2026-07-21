@@ -98,6 +98,7 @@ dotnet run --project prototypes/ChatSession.BacktestCli -- replay-rolling-summar
 | `first-person-autobiography` | `Action / roleplay.first-person-autobiography` | 维护 Galatea 第一人称自传、自我连续性材料和关键原话。 |
 | `autobiographical-recording` | `Action / roleplay.first-person-autobiography` | 使用 block-ID 编辑工具和显式 `changed` / `no-change` finish 协议维护 Galatea 自传；结果从编辑 session 物化，不接收 assistant 正文作为替换稿。 |
 | `autobiographical-two-stage` | `Action / roleplay.first-person-autobiography` | 先 recording，再按 `--compression-high-watermark` 条件触发 compression；compression 失败时保留 recording 产物。 |
+| `autobiographical-rewrite` | `Action / roleplay.first-person-autobiography` | 单次完整重写：一次 completion 内融入新经历并重写整份自传全文，不使用编辑工具、不做多轮 tool loop；重写天然完成摘要与长度控制，适合 <16K token 的短自传，成本/延迟远低于编辑 Agent 版。 |
 
 两阶段自传回测示例：
 
@@ -115,6 +116,19 @@ dotnet run --project prototypes/ChatSession.BacktestCli -- replay-rolling-summar
 ```
 
 每个 JSONL epoch 会记录 `stages`、全部 `callLogPaths`、notices 和 diagnostics。`recording` 失败会使 epoch 失败；`compression` 失败则以 `failed` stage 留下审计，但顶层 epoch 成功并保留 recorded block。
+
+单次完整重写自传回测示例（`autobiographical-rewrite` 不使用 `--compression-*` 参数）：
+
+```bash
+dotnet run --project prototypes/ChatSession.BacktestCli -- replay-rolling-summary \
+  --preset autobiographical-rewrite \
+  --input prototypes/Galatea/.atelia/galatea/sessions/cyber-copy-upgraded/chat-session-legacy-upgrade-export.json \
+  --threshold-tokens 24000 \
+  --connections prototypes/Galatea/.atelia/galatea/connections.json \
+  --output gitignore/backtest/autobiographical-rewrite/result.jsonl \
+  --call-log-dir gitignore/backtest/autobiographical-rewrite/calls \
+  --max-epochs 2
+```
 
 输出 JSONL 每行代表一次 maintainer epoch，包含 `presetName`、`eventOrdinal`、`thresholdTokens`、`splitIndex`、`slidingOutMessageCount`、`targetCarrier`、`targetBlockId`、新旧 block 预览、call log 路径、状态和错误信息。
 
