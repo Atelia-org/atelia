@@ -10,7 +10,7 @@ using Atelia.Completion.Tools;
 namespace ChatSessionBacktestCli;
 
 internal static partial class Program {
-    private const int DefaultThresholdTokens = 12_000;
+    private const int DefaultThresholdTokens = 24_000;
     private const string DefaultLlmSmokeCallLogDir = "gitignore/backtest/llm-smoke-calls";
     private const string DefaultRollingSummaryCallLogDir = "gitignore/backtest/rolling-summary-calls";
     private const string DefaultAutobiographicalCompressionCallLogDir = "gitignore/backtest/autobiographical-compression-calls";

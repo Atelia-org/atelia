@@ -302,7 +302,7 @@ public sealed record MemoryBlockMaintenanceResult(
 );
 
 public sealed class CompletionMemoryBlockMaintainer : IMemoryBlockMaintainer {
-    private const int MaxToolLoopIterations = 16;
+    private const int MaxToolLoopIterations = 128;
 
     public CompletionMemoryBlockMaintainer(
         string id,

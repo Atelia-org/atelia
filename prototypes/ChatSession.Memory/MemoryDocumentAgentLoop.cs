@@ -19,7 +19,7 @@ internal sealed record MemoryDocumentAgentLoopRequest(
     MemoryDocumentFinishToolProfile FinishProfile,
     int? TargetTokens = null,
     int MissingFinishRetryCount = 0,
-    int MaxIterations = 16
+    int MaxIterations = 128
 );
 
 internal sealed record MemoryDocumentAgentLoopResult(

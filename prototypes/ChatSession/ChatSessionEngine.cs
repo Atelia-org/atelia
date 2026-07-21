@@ -4,7 +4,7 @@ using Atelia.Completion.Tools;
 namespace Atelia.ChatSession;
 
 public sealed partial class ChatSessionEngine {
-    private const int MaxToolLoopIterations = 16;
+    private const int MaxToolLoopIterations = 128;
 
     public Task<ChatSessionTurnResult> SendMessageAsync(string message, CancellationToken ct = default)
         => SendMessageAsync(message, observer: null, ct);

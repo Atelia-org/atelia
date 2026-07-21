@@ -328,7 +328,7 @@ Console.WriteLine(compaction.TokensAfter);
 3. 把 Gemini 和工具一起用：当前 v1 明确不支持 “Gemini + visible tools” 的 tool loop。
 4. 忘记释放 engine：`ChatSessionEngine` 持有底层 repository，使用完要 `Dispose()`。
 5. 共用脏目录：`ChatSession` 目录本质上是一个 `StateJournal` repository，应该给它单独的目录，不要和别的 durable graph 混用。
-6. 期待无限工具递归：当前硬上限是 16 轮 tool loop；超过会抛 `InvalidOperationException`。
+6. 期待无限工具递归：当前硬上限是 128 轮 tool loop；超过会抛 `InvalidOperationException`。
 
 ---
 
