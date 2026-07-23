@@ -26,7 +26,10 @@ public sealed record SessionCreateOptions(
     string SystemPrompt,
     string CompletionSurfaceId,
     string Schema = SessionJournalDefaults.Schema
-);
+) {
+    public SessionConfiguration ToConfiguration()
+        => new(ModelId, SystemPrompt, CompletionSurfaceId, Schema);
+}
 
 public sealed record SessionRuntime(ICompletionClient CompletionClient);
 
@@ -91,13 +94,6 @@ public sealed record SessionProjection(
     IReadOnlyList<IHistoryMessage> Context,
     SessionExecutionState ExecutionState,
     EventAddress? Head
-);
-
-internal sealed record SessionCreatedBody(
-    string ModelId,
-    string SystemPrompt,
-    string CompletionSurfaceId,
-    string Schema
 );
 
 internal sealed record ObservationAcceptedBody(string Content);

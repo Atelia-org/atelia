@@ -15,7 +15,7 @@ internal static class SessionEventCodec {
 
     public static byte[] Encode(SessionEventKind kind, object body)
         => kind switch {
-            SessionEventKind.SessionCreated => EncodeSessionCreated((SessionCreatedBody)body),
+            SessionEventKind.SessionCreated => EncodeSessionConfiguration((SessionConfiguration)body),
             SessionEventKind.ObservationAccepted => EncodeObservationAccepted((ObservationAcceptedBody)body),
             SessionEventKind.AssistantActionProduced => EncodeAssistantActionProduced((AssistantActionProducedBody)body),
             _ => throw new NotSupportedException($"Session event kind '{kind}' is not implemented in Slice A.")
@@ -35,14 +35,14 @@ internal static class SessionEventCodec {
         }
 
         return kind switch {
-            SessionEventKind.SessionCreated => DecodeSessionCreated(body),
+            SessionEventKind.SessionCreated => DecodeSessionConfiguration(body),
             SessionEventKind.ObservationAccepted => DecodeObservationAccepted(body),
             SessionEventKind.AssistantActionProduced => DecodeAssistantActionProduced(body),
             _ => throw new NotSupportedException($"Session event kind '{kind}' is not implemented in Slice A.")
         };
     }
 
-    private static byte[] EncodeSessionCreated(SessionCreatedBody body) {
+    private static byte[] EncodeSessionConfiguration(SessionConfiguration body) {
         ArgumentNullException.ThrowIfNull(body);
         ValidateRequired(body.ModelId, nameof(body.ModelId));
         ValidateRequired(body.CompletionSurfaceId, nameof(body.CompletionSurfaceId));
@@ -106,9 +106,9 @@ internal static class SessionEventCodec {
         return buffer.WrittenMemory.ToArray();
     }
 
-    private static SessionCreatedBody DecodeSessionCreated(JsonElement body) {
+    private static SessionConfiguration DecodeSessionConfiguration(JsonElement body) {
         RequireObject(body, "session-created body");
-        return new SessionCreatedBody(
+        return new SessionConfiguration(
             ReadRequiredString(body, "modelId"),
             ReadRequiredString(body, "systemPrompt"),
             ReadRequiredString(body, "completionSurfaceId"),

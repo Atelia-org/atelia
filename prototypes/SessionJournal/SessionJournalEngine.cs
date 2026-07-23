@@ -161,12 +161,7 @@ public sealed class SessionJournalEngine : IDisposable {
             journal.CreateBranch(SessionJournalDefaults.MainBranchName, startPoint: null).Unwrap();
             RefId mainRef = journal.OpenBranch(SessionJournalDefaults.MainBranchName).Unwrap();
             var engine = new SessionJournalEngine(journal, mainRef, runtime, testHooks);
-            engine.Append(SessionEventKind.SessionCreated, new SessionCreatedBody(
-                options.ModelId,
-                options.SystemPrompt,
-                options.CompletionSurfaceId,
-                options.Schema
-            ));
+            engine.Append(SessionEventKind.SessionCreated, options.ToConfiguration());
             return engine;
         }
         catch {

@@ -15,8 +15,8 @@ internal static class SessionReducer {
             headKind = ev.Kind;
             switch (ev.Kind) {
                 case SessionEventKind.SessionCreated: {
-                    var body = RequireBody<SessionCreatedBody>(ev);
-                    config = new SessionConfiguration(body.ModelId, body.SystemPrompt, body.CompletionSurfaceId, body.Schema);
+                    var body = RequireBody<SessionConfiguration>(ev);
+                    config = body;
                     lastAction = null;
                     break;
                 }
