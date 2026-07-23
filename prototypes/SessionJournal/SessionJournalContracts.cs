@@ -28,6 +28,51 @@ public sealed record SessionCreateOptions(
     string Schema = SessionJournalDefaults.Schema
 );
 
+public sealed record SessionRuntime(ICompletionClient CompletionClient);
+
+public sealed record TurnResult(
+    ActionMessage Message,
+    CompletionDescriptor Invocation,
+    IReadOnlyList<string>? Errors
+);
+
+public sealed record ResumeOutcome(
+    bool Advanced,
+    ActionMessage? Message = null,
+    CompletionDescriptor? Invocation = null,
+    IReadOnlyList<string>? Errors = null
+);
+
+public sealed class SessionJournalTurnAbortedException : InvalidOperationException {
+    public SessionJournalTurnAbortedException(
+        string message,
+        CompletionTermination termination,
+        IReadOnlyList<string>? errors
+    ) : base(message) {
+        Termination = termination;
+        Errors = errors;
+    }
+
+    public CompletionTermination Termination { get; }
+
+    public IReadOnlyList<string>? Errors { get; }
+}
+
+internal enum SessionJournalFailpoint {
+    None,
+    AfterObservationCommitted,
+    AfterCompletionBeforeActionCommitted
+}
+
+internal sealed record SessionJournalTestHooks(
+    SessionJournalFailpoint Failpoint = SessionJournalFailpoint.None
+);
+
+internal sealed class SessionJournalFailpointException(SessionJournalFailpoint failpoint)
+    : Exception($"SessionJournal failpoint reached: {failpoint}") {
+    public SessionJournalFailpoint Failpoint { get; } = failpoint;
+}
+
 public sealed record SessionConfiguration(
     string ModelId,
     string SystemPrompt,
