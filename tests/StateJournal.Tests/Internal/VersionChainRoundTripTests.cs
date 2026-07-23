@@ -557,6 +557,8 @@ public class VersionChainRoundTripTests : IDisposable {
         public AteliaResult<RbfFrame> ReadFrame(SizedPtr ptr, Span<byte> buffer) => throw new NotSupportedException();
         public RbfReverseSequence ScanReverse(bool showTombstone = false) => throw new NotSupportedException();
         public RbfForwardSequence ScanForward(bool showTombstone = false) => throw new NotSupportedException();
+        public long GetPhysicalOffsetImmediatelyAfter(SizedPtr ticket) => throw new NotSupportedException();
+        public AteliaResult<OptionalRbfFrameInfo> ReadFrameInfoImmediatelyAfter(SizedPtr ticket) => throw new NotSupportedException();
         public AteliaResult<RbfFrameInfo> ReadFrameInfo(SizedPtr ticket) => throw new NotSupportedException();
         public AteliaResult<RbfTailMeta> ReadTailMeta(SizedPtr ticket, Span<byte> buffer) => throw new NotSupportedException();
         public AteliaResult<RbfPooledTailMeta> ReadPooledTailMeta(SizedPtr ticket) => throw new NotSupportedException();
