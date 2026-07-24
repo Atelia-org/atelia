@@ -6,7 +6,9 @@ internal static class SessionReducer {
     public static SessionProjection Reduce(IReadOnlyList<DecodedSessionEvent> events) {
         ArgumentNullException.ThrowIfNull(events);
 
-        SessionConfiguration? config = null;
+        SessionRuntimeConfiguration? config = null;
+        string? systemPrompt = null;
+        bool sessionCreated = false;
         var context = new List<IHistoryMessage>();
         SessionEventKind? headKind = null;
         ActionMessage? openAction = null;
@@ -18,8 +20,22 @@ internal static class SessionReducer {
 
         foreach (DecodedSessionEvent ev in events) {
             switch (ev.Kind) {
+                case SessionEventKind.RuntimeConfigSetup: {
+                    EnsureSetupBoundary(ev, headKind, openAction, pendingToolCall, pendingOperationId, pendingToolExecutionStarted);
+                    config = RequireBody<SessionRuntimeConfiguration>(ev);
+                    break;
+                }
+                case SessionEventKind.SystemPromptSetup: {
+                    EnsureSetupBoundary(ev, headKind, openAction, pendingToolCall, pendingOperationId, pendingToolExecutionStarted);
+                    systemPrompt = RequireBody<SystemPromptSetupBody>(ev).Content;
+                    break;
+                }
                 case SessionEventKind.SessionCreated: {
-                    config = RequireBody<SessionConfiguration>(ev);
+                    _ = RequireBody<SessionCreatedBody>(ev);
+                    EnsureSetupBoundary(ev, headKind, openAction, pendingToolCall, pendingOperationId, pendingToolExecutionStarted);
+                    if (config is null) { throw new InvalidDataException($"{ev.Kind} at {ev.Address} requires a prior runtime-config-setup."); }
+                    if (systemPrompt is null) { throw new InvalidDataException($"{ev.Kind} at {ev.Address} requires a prior system-prompt-setup."); }
+                    sessionCreated = true;
                     openAction = null;
                     observedResults.Clear();
                     pendingToolCall = null;
@@ -28,12 +44,8 @@ internal static class SessionReducer {
                     toolExecutionSequenceCheckpoint = 0;
                     break;
                 }
-                case SessionEventKind.SessionConfigurationChanged: {
-                    EnsureIdleBoundary(ev, headKind, openAction, pendingToolCall, pendingOperationId, pendingToolExecutionStarted);
-                    config = RequireBody<SessionConfiguration>(ev);
-                    break;
-                }
                 case SessionEventKind.ObservationAccepted: {
+                    EnsureSessionCreated(ev, sessionCreated);
                     var body = RequireBody<ObservationAcceptedBody>(ev);
                     context.Add(new ObservationMessage(body.Content));
                     openAction = null;
@@ -44,6 +56,7 @@ internal static class SessionReducer {
                     break;
                 }
                 case SessionEventKind.AgentActionProduced: {
+                    EnsureSessionCreated(ev, sessionCreated);
                     var body = RequireBody<AgentActionProducedBody>(ev);
                     context.Add(body.Action);
                     openAction = body.Action.ToolCalls.Count == 0 ? null : body.Action;
@@ -54,6 +67,7 @@ internal static class SessionReducer {
                     break;
                 }
                 case SessionEventKind.ToolExecutionStarted: {
+                    EnsureSessionCreated(ev, sessionCreated);
                     var body = RequireBody<ToolExecutionStartedBody>(ev);
                     EnsureOpenAction(ev, openAction);
                     EnsureDeclaredToolCall(ev, openAction!, body.ToolCallId, body.ToolName, body.RawArgumentsJson);
@@ -63,6 +77,7 @@ internal static class SessionReducer {
                     break;
                 }
                 case SessionEventKind.ToolResultObserved: {
+                    EnsureSessionCreated(ev, sessionCreated);
                     var body = RequireBody<ToolResultObservedBody>(ev);
                     EnsureOpenAction(ev, openAction);
                     RawToolCall declared = EnsureDeclaredToolCall(ev, openAction!, body.ToolCallId, body.ToolName, rawArgumentsJson: null);
@@ -88,9 +103,10 @@ internal static class SessionReducer {
             headKind = ev.Kind;
         }
 
-        var state = DeriveExecutionState(headKind, openAction, pendingToolCall, pendingOperationId, pendingToolExecutionStarted, toolExecutionSequenceCheckpoint);
+        var state = DeriveExecutionState(headKind, sessionCreated, openAction, pendingToolCall, pendingOperationId, pendingToolExecutionStarted, toolExecutionSequenceCheckpoint);
         return new SessionProjection(
             config,
+            systemPrompt,
             context.Count == 0 ? Array.AsReadOnly(Array.Empty<IHistoryMessage>()) : Array.AsReadOnly(context.ToArray()),
             state,
             events.Count == 0 ? null : events[^1].Address
@@ -99,6 +115,7 @@ internal static class SessionReducer {
 
     internal static SessionProjection Empty => new(
         Config: null,
+        SystemPrompt: null,
         Context: Array.AsReadOnly(Array.Empty<IHistoryMessage>()),
         ExecutionState: new SessionExecutionState(SessionExecutionPhase.Empty, HeadKind: null),
         Head: null
@@ -106,6 +123,7 @@ internal static class SessionReducer {
 
     private static SessionExecutionState DeriveExecutionState(
         SessionEventKind? headKind,
+        bool sessionCreated,
         ActionMessage? openAction,
         RawToolCall? pendingToolCall,
         string? pendingOperationId,
@@ -114,8 +132,9 @@ internal static class SessionReducer {
     )
         => headKind switch {
             null => new SessionExecutionState(SessionExecutionPhase.Empty, null),
+            SessionEventKind.RuntimeConfigSetup => DeriveSetupState(headKind.Value, sessionCreated, toolExecutionSequenceCheckpoint),
+            SessionEventKind.SystemPromptSetup => DeriveSetupState(headKind.Value, sessionCreated, toolExecutionSequenceCheckpoint),
             SessionEventKind.SessionCreated => new SessionExecutionState(SessionExecutionPhase.Idle, headKind),
-            SessionEventKind.SessionConfigurationChanged => new SessionExecutionState(SessionExecutionPhase.Idle, headKind, ToolExecutionSequenceCheckpoint: toolExecutionSequenceCheckpoint),
             SessionEventKind.ObservationAccepted => new SessionExecutionState(SessionExecutionPhase.AwaitingAgentAction, headKind),
             SessionEventKind.AgentActionProduced => DeriveActionState(SessionEventKind.AgentActionProduced, openAction, toolExecutionSequenceCheckpoint),
             SessionEventKind.ToolExecutionStarted => new SessionExecutionState(
@@ -130,6 +149,15 @@ internal static class SessionReducer {
             SessionEventKind.ToolResultObserved => new SessionExecutionState(SessionExecutionPhase.AwaitingToolExecution, headKind, pendingToolCall, ToolExecutionSequenceCheckpoint: toolExecutionSequenceCheckpoint),
             _ => throw new NotSupportedException($"Session event kind '{headKind}' is not implemented in Slice C execution reducer.")
         };
+
+    private static SessionExecutionState DeriveSetupState(
+        SessionEventKind headKind,
+        bool sessionCreated,
+        long toolExecutionSequenceCheckpoint
+    )
+        => sessionCreated
+            ? new SessionExecutionState(SessionExecutionPhase.Idle, headKind, ToolExecutionSequenceCheckpoint: toolExecutionSequenceCheckpoint)
+            : new SessionExecutionState(SessionExecutionPhase.Empty, headKind);
 
     private static SessionExecutionState DeriveActionState(SessionEventKind headKind, ActionMessage? action, long toolExecutionSequenceCheckpoint) {
         if (action is null) { return new SessionExecutionState(SessionExecutionPhase.Idle, headKind, ToolExecutionSequenceCheckpoint: toolExecutionSequenceCheckpoint); }
@@ -168,7 +196,7 @@ internal static class SessionReducer {
         }
     }
 
-    private static void EnsureIdleBoundary(
+    private static void EnsureSetupBoundary(
         DecodedSessionEvent ev,
         SessionEventKind? headKind,
         ActionMessage? openAction,
@@ -180,10 +208,16 @@ internal static class SessionReducer {
             && pendingToolCall is null
             && pendingOperationId is null
             && !pendingToolExecutionStarted;
-        bool isIdle = headKind is SessionEventKind.SessionCreated or SessionEventKind.SessionConfigurationChanged
+        bool isSetupOrIdle = headKind is null or SessionEventKind.RuntimeConfigSetup or SessionEventKind.SystemPromptSetup or SessionEventKind.SessionCreated
             || headKind == SessionEventKind.AgentActionProduced && hasNoPendingAction;
-        if (!isIdle) {
-            throw new InvalidDataException($"{ev.Kind} at {ev.Address} must appear only at an idle session boundary.");
+        if (!isSetupOrIdle) {
+            throw new InvalidDataException($"{ev.Kind} at {ev.Address} must appear only at setup or idle session boundaries.");
+        }
+    }
+
+    private static void EnsureSessionCreated(DecodedSessionEvent ev, bool sessionCreated) {
+        if (!sessionCreated) {
+            throw new InvalidDataException($"{ev.Kind} at {ev.Address} requires a prior session-created marker.");
         }
     }
 

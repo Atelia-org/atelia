@@ -9,12 +9,14 @@ namespace ChatSessionBacktestCli;
 
 internal sealed record SessionJournalLegacyImportResult(
     int SessionCreatedCount,
-    int ConfigurationChangedCount,
+    int RuntimeConfigSetupCount,
+    int SystemPromptSetupCount,
     int ObservationCount,
     int AgentActionCount,
     int SkippedCompactionCount,
     int SkippedRecapCount,
-    SessionConfiguration FinalConfiguration,
+    SessionRuntimeConfiguration FinalConfiguration,
+    string FinalSystemPrompt,
     IReadOnlyList<SessionJournalLegacyImportMapping> Mappings
 );
 
@@ -42,9 +44,11 @@ internal static class SessionJournalLegacyImporter {
 
         SessionJournalEngine? engine = null;
         var mappings = new List<SessionJournalLegacyImportMapping>();
-        SessionConfiguration? currentConfiguration = null;
+        SessionRuntimeConfiguration? currentConfiguration = null;
+        string? currentSystemPrompt = null;
         int sessionCreatedCount = 0;
-        int configurationChangedCount = 0;
+        int runtimeConfigSetupCount = 0;
+        int systemPromptSetupCount = 0;
         int observationCount = 0;
         int agentActionCount = 0;
         int skippedCompactionCount = 0;
@@ -58,15 +62,18 @@ internal static class SessionJournalLegacyImporter {
                         if (engine is not null) { throw new InvalidDataException("legacy export contains more than one initial-state event."); }
 
                         currentConfiguration = ToInitialConfiguration(replayEvent);
+                        currentSystemPrompt = replayEvent.Root?.SystemPrompt ?? string.Empty;
                         apiSpecId = string.IsNullOrWhiteSpace(replayEvent.Root?.ApiSpecId)
                             ? apiSpecId
                             : replayEvent.Root.ApiSpecId;
                         engine = SessionJournalEngine.Create(outputPath, new SessionCreateOptions(
                             currentConfiguration.ModelId,
-                            currentConfiguration.SystemPrompt,
+                            currentSystemPrompt,
                             currentConfiguration.CompletionSurfaceId,
                             currentConfiguration.Schema
                         ));
+                        runtimeConfigSetupCount++;
+                        systemPromptSetupCount++;
                         sessionCreatedCount++;
                         mappings.Add(new SessionJournalLegacyImportMapping(
                             replayEvent.Ordinal,
@@ -119,13 +126,13 @@ internal static class SessionJournalLegacyImporter {
                     }
                     case ChatSessionLegacyEventKinds.UpdateSystemPrompt: {
                         engine = RequireEngine(engine, replayEvent);
-                        currentConfiguration = ApplySystemPromptChange(currentConfiguration, replayEvent);
-                        EventAddress address = engine.AppendSessionConfigurationChanged(currentConfiguration);
-                        configurationChangedCount++;
+                        currentSystemPrompt = ReadSystemPromptChange(currentSystemPrompt, replayEvent);
+                        EventAddress address = engine.AppendSystemPromptSetup(currentSystemPrompt);
+                        systemPromptSetupCount++;
                         mappings.Add(new SessionJournalLegacyImportMapping(
                             replayEvent.Ordinal,
                             replayEvent.Kind,
-                            SessionEventKind.SessionConfigurationChanged.ToString(),
+                            SessionEventKind.SystemPromptSetup.ToString(),
                             address
                         ));
                         break;
@@ -146,17 +153,19 @@ internal static class SessionJournalLegacyImporter {
             throw;
         }
 
-        if (engine is null || currentConfiguration is null) { throw new InvalidDataException("legacy export did not contain an initial-state event."); }
+        if (engine is null || currentConfiguration is null || currentSystemPrompt is null) { throw new InvalidDataException("legacy export did not contain an initial-state event."); }
         engine.Dispose();
 
         return new SessionJournalLegacyImportResult(
             sessionCreatedCount,
-            configurationChangedCount,
+            runtimeConfigSetupCount,
+            systemPromptSetupCount,
             observationCount,
             agentActionCount,
             skippedCompactionCount,
             skippedRecapCount,
             currentConfiguration,
+            currentSystemPrompt,
             mappings.AsReadOnly()
         );
     }
@@ -179,6 +188,10 @@ internal static class SessionJournalLegacyImporter {
         if (!Equals(projection.Config, expected.FinalConfiguration)) {
             throw new InvalidDataException("import smoke failed: projected final config does not match imported final config.");
         }
+
+        if (!string.Equals(projection.SystemPrompt, expected.FinalSystemPrompt, StringComparison.Ordinal)) {
+            throw new InvalidDataException("import smoke failed: projected final system prompt does not match imported final system prompt.");
+        }
     }
 
     public static void WriteReport(
@@ -195,7 +208,8 @@ internal static class SessionJournalLegacyImporter {
         writer.WriteLine($"- input: `{inputPath}`");
         writer.WriteLine($"- output: `{outputPath}`");
         writer.WriteLine($"- sessionCreated: `{result.SessionCreatedCount}`");
-        writer.WriteLine($"- configurationChanged: `{result.ConfigurationChangedCount}`");
+        writer.WriteLine($"- runtimeConfigSetups: `{result.RuntimeConfigSetupCount}`");
+        writer.WriteLine($"- systemPromptSetups: `{result.SystemPromptSetupCount}`");
         writer.WriteLine($"- observations: `{result.ObservationCount}`");
         writer.WriteLine($"- agentActions: `{result.AgentActionCount}`");
         writer.WriteLine($"- skippedCompactions: `{result.SkippedCompactionCount}`");
@@ -225,30 +239,27 @@ internal static class SessionJournalLegacyImporter {
         Directory.Delete(fullPath, recursive: true);
     }
 
-    private static SessionConfiguration ToInitialConfiguration(ChatSessionLegacyReplayEvent replayEvent) {
+    private static SessionRuntimeConfiguration ToInitialConfiguration(ChatSessionLegacyReplayEvent replayEvent) {
         ChatSessionLegacyRootMetadataDto root = replayEvent.Root
             ?? throw new InvalidDataException("initial-state event is missing root metadata.");
 
-        return new SessionConfiguration(
+        return new SessionRuntimeConfiguration(
             RequireNonWhiteSpace(root.ModelId, "initial-state.root.modelId"),
-            root.SystemPrompt ?? string.Empty,
             RequireNonWhiteSpace(root.CompletionSurfaceId, "initial-state.root.completionSurfaceId"),
             SessionJournalDefaults.Schema
         );
     }
 
-    private static SessionConfiguration ApplySystemPromptChange(
-        SessionConfiguration? currentConfiguration,
+    private static string ReadSystemPromptChange(
+        string? currentSystemPrompt,
         ChatSessionLegacyReplayEvent replayEvent
     ) {
-        if (currentConfiguration is null) { throw new InvalidDataException($"update-system-prompt at ordinal {replayEvent.Ordinal} appeared before initial-state."); }
+        if (currentSystemPrompt is null) { throw new InvalidDataException($"update-system-prompt at ordinal {replayEvent.Ordinal} appeared before initial-state."); }
 
         ChatSessionLegacySystemPromptChangeDto change = replayEvent.SystemPromptChange
             ?? throw new InvalidDataException($"update-system-prompt at ordinal {replayEvent.Ordinal} is missing systemPromptChange.");
 
-        return currentConfiguration with {
-            SystemPrompt = change.NewSystemPrompt ?? string.Empty
-        };
+        return change.NewSystemPrompt ?? string.Empty;
     }
 
     private static ActionMessage ToActionMessage(ChatSessionLegacyMessageDto message) {
@@ -261,7 +272,7 @@ internal static class SessionJournalLegacyImporter {
         return new ActionMessage(ActionMessageSerialization.DeserializeBlocks(json, options: ChatSessionLegacyEventSourceReader.JsonOptions));
     }
 
-    private static CompletionDescriptor ToCompletionDescriptor(SessionConfiguration configuration, string apiSpecId)
+    private static CompletionDescriptor ToCompletionDescriptor(SessionRuntimeConfiguration configuration, string apiSpecId)
         => new(configuration.CompletionSurfaceId, apiSpecId, configuration.ModelId);
 
     private static SessionJournalEngine RequireEngine(SessionJournalEngine? engine, ChatSessionLegacyReplayEvent replayEvent)

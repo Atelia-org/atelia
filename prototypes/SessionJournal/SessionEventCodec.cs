@@ -16,8 +16,9 @@ internal static class SessionEventCodec {
 
     public static byte[] Encode(SessionEventKind kind, object body)
         => kind switch {
-            SessionEventKind.SessionCreated => EncodeSessionConfiguration((SessionConfiguration)body),
-            SessionEventKind.SessionConfigurationChanged => EncodeSessionConfiguration((SessionConfiguration)body),
+            SessionEventKind.RuntimeConfigSetup => EncodeRuntimeConfiguration((SessionRuntimeConfiguration)body),
+            SessionEventKind.SystemPromptSetup => EncodeSystemPromptSetup((SystemPromptSetupBody)body),
+            SessionEventKind.SessionCreated => EncodeSessionCreated((SessionCreatedBody)body),
             SessionEventKind.ObservationAccepted => EncodeObservationAccepted((ObservationAcceptedBody)body),
             SessionEventKind.AgentActionProduced => EncodeAgentActionProduced((AgentActionProducedBody)body),
             SessionEventKind.ToolExecutionStarted => EncodeToolExecutionStarted((ToolExecutionStartedBody)body),
@@ -39,8 +40,9 @@ internal static class SessionEventCodec {
         }
 
         return kind switch {
-            SessionEventKind.SessionCreated => DecodeSessionConfiguration(body),
-            SessionEventKind.SessionConfigurationChanged => DecodeSessionConfiguration(body),
+            SessionEventKind.RuntimeConfigSetup => DecodeRuntimeConfiguration(body),
+            SessionEventKind.SystemPromptSetup => DecodeSystemPromptSetup(body),
+            SessionEventKind.SessionCreated => DecodeSessionCreated(body),
             SessionEventKind.ObservationAccepted => DecodeObservationAccepted(body),
             SessionEventKind.AgentActionProduced => DecodeAgentActionProduced(body),
             SessionEventKind.ToolExecutionStarted => DecodeToolExecutionStarted(body),
@@ -49,7 +51,7 @@ internal static class SessionEventCodec {
         };
     }
 
-    private static byte[] EncodeSessionConfiguration(SessionConfiguration body) {
+    private static byte[] EncodeRuntimeConfiguration(SessionRuntimeConfiguration body) {
         ArgumentNullException.ThrowIfNull(body);
         ValidateRequired(body.ModelId, nameof(body.ModelId));
         ValidateRequired(body.CompletionSurfaceId, nameof(body.CompletionSurfaceId));
@@ -60,9 +62,38 @@ internal static class SessionEventCodec {
             WriteEnvelopeStart(writer);
             writer.WriteStartObject("body");
             writer.WriteString("modelId", body.ModelId);
-            writer.WriteString("systemPrompt", body.SystemPrompt ?? string.Empty);
             writer.WriteString("completionSurfaceId", body.CompletionSurfaceId);
             writer.WriteString("schema", body.Schema);
+            writer.WriteEndObject();
+            writer.WriteEndObject();
+        }
+
+        return buffer.WrittenMemory.ToArray();
+    }
+
+    private static byte[] EncodeSystemPromptSetup(SystemPromptSetupBody body) {
+        ArgumentNullException.ThrowIfNull(body);
+        if (body.Content is null) { throw new ArgumentNullException(nameof(body.Content)); }
+
+        var buffer = new ArrayBufferWriter<byte>();
+        using (var writer = new Utf8JsonWriter(buffer, WriterOptions)) {
+            WriteEnvelopeStart(writer);
+            writer.WriteStartObject("body");
+            writer.WriteString("content", body.Content);
+            writer.WriteEndObject();
+            writer.WriteEndObject();
+        }
+
+        return buffer.WrittenMemory.ToArray();
+    }
+
+    private static byte[] EncodeSessionCreated(SessionCreatedBody body) {
+        ArgumentNullException.ThrowIfNull(body);
+
+        var buffer = new ArrayBufferWriter<byte>();
+        using (var writer = new Utf8JsonWriter(buffer, WriterOptions)) {
+            WriteEnvelopeStart(writer);
+            writer.WriteStartObject("body");
             writer.WriteEndObject();
             writer.WriteEndObject();
         }
@@ -160,14 +191,27 @@ internal static class SessionEventCodec {
         return buffer.WrittenMemory.ToArray();
     }
 
-    private static SessionConfiguration DecodeSessionConfiguration(JsonElement body) {
-        RequireObject(body, "session-created body");
-        return new SessionConfiguration(
+    private static SessionRuntimeConfiguration DecodeRuntimeConfiguration(JsonElement body) {
+        RequireObject(body, "runtime-config-setup body");
+        return new SessionRuntimeConfiguration(
             ReadRequiredString(body, "modelId"),
-            ReadRequiredString(body, "systemPrompt"),
             ReadRequiredString(body, "completionSurfaceId"),
             ReadRequiredString(body, "schema")
         );
+    }
+
+    private static SystemPromptSetupBody DecodeSystemPromptSetup(JsonElement body) {
+        RequireObject(body, "system-prompt-setup body");
+        return new SystemPromptSetupBody(ReadRequiredString(body, "content"));
+    }
+
+    private static SessionCreatedBody DecodeSessionCreated(JsonElement body) {
+        RequireObject(body, "session-created body");
+        if (body.EnumerateObject().Any()) {
+            throw new InvalidDataException("session-created body must be empty.");
+        }
+
+        return new SessionCreatedBody();
     }
 
     private static ObservationAcceptedBody DecodeObservationAccepted(JsonElement body) {

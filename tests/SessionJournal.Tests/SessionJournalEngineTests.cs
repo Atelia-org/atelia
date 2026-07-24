@@ -20,25 +20,29 @@ public sealed class SessionJournalEngineTests : IDisposable {
     }
 
     [Fact]
-    public void Create_WritesSessionCreatedAndProjectsConfigFromJournal() {
+    public void Create_WritesSetupEventsThenSessionCreatedAndProjectsStateFromJournal() {
         string path = NewJournalPath();
 
-        using var engine = SessionJournalEngine.Create(path,
+        SessionProjection projection;
+        using (var engine = SessionJournalEngine.Create(path,
             new SessionCreateOptions(
                 ModelId: "model-A",
                 SystemPrompt: "system-A",
                 CompletionSurfaceId: "surface-A"
             )
-        );
-
-        SessionProjection projection = engine.Project();
+        )) {
+            projection = engine.Project();
+        }
 
         Assert.NotNull(projection.Head);
-        string createdJson = System.Text.Encoding.UTF8.GetString(engine.ReadPayloadBytes(projection.Head.Value));
-        Assert.Equal("{\"v\":1,\"body\":{\"modelId\":\"model-A\",\"systemPrompt\":\"system-A\",\"completionSurfaceId\":\"surface-A\",\"schema\":\"atelia.session-journal.trunk.v1\"}}", createdJson);
+        string[] payloads = ReadJournalPayloadJson(path);
+        Assert.Equal(3, payloads.Length);
+        Assert.Equal("{\"v\":1,\"body\":{\"modelId\":\"model-A\",\"completionSurfaceId\":\"surface-A\",\"schema\":\"atelia.session-journal.trunk.v1\"}}", payloads[0]);
+        Assert.Equal("{\"v\":1,\"body\":{\"content\":\"system-A\"}}", payloads[1]);
+        Assert.Equal("{\"v\":1,\"body\":{}}", payloads[2]);
         Assert.NotNull(projection.Config);
         Assert.Equal("model-A", projection.Config.ModelId);
-        Assert.Equal("system-A", projection.Config.SystemPrompt);
+        Assert.Equal("system-A", projection.SystemPrompt);
         Assert.Equal("surface-A", projection.Config.CompletionSurfaceId);
         Assert.Equal(SessionJournalDefaults.Schema, projection.Config.Schema);
         Assert.Empty(projection.Context);
@@ -73,7 +77,7 @@ public sealed class SessionJournalEngineTests : IDisposable {
 
         Assert.NotNull(projection.Config);
         Assert.Equal("model-A", projection.Config.ModelId);
-        Assert.Equal("system-A", projection.Config.SystemPrompt);
+        Assert.Equal("system-A", projection.SystemPrompt);
         Assert.Equal("surface-A", projection.Config.CompletionSurfaceId);
         Assert.Equal(2, projection.Context.Count);
 
@@ -88,7 +92,7 @@ public sealed class SessionJournalEngineTests : IDisposable {
     }
 
     [Fact]
-    public void AppendSessionConfigurationChanged_ReopenReplacesConfigAndKeepsContext() {
+    public void AppendRuntimeConfigSetup_ReopenReplacesConfigAndKeepsContext() {
         string path = NewJournalPath();
 
         using (var engine = SessionJournalEngine.Create(path,
@@ -103,12 +107,12 @@ public sealed class SessionJournalEngineTests : IDisposable {
                 new ActionMessage([new ActionBlock.Text("answer")]),
                 new CompletionDescriptor("fake-provider", "fake-api-v1", "model-A")
             );
-            EventAddress address = engine.AppendSessionConfigurationChanged(
-                new SessionConfiguration("model-B", "system-B", "surface-B", SessionJournalDefaults.Schema)
+            EventAddress address = engine.AppendRuntimeConfigSetup(
+                new SessionRuntimeConfiguration("model-B", "surface-B", SessionJournalDefaults.Schema)
             );
 
             string configJson = System.Text.Encoding.UTF8.GetString(engine.ReadPayloadBytes(address));
-            Assert.Equal("{\"v\":1,\"body\":{\"modelId\":\"model-B\",\"systemPrompt\":\"system-B\",\"completionSurfaceId\":\"surface-B\",\"schema\":\"atelia.session-journal.trunk.v1\"}}", configJson);
+            Assert.Equal("{\"v\":1,\"body\":{\"modelId\":\"model-B\",\"completionSurfaceId\":\"surface-B\",\"schema\":\"atelia.session-journal.trunk.v1\"}}", configJson);
         }
 
         using var reopened = SessionJournalEngine.Open(path);
@@ -116,17 +120,51 @@ public sealed class SessionJournalEngineTests : IDisposable {
 
         Assert.NotNull(projection.Config);
         Assert.Equal("model-B", projection.Config.ModelId);
-        Assert.Equal("system-B", projection.Config.SystemPrompt);
+        Assert.Equal("system-A", projection.SystemPrompt);
         Assert.Equal("surface-B", projection.Config.CompletionSurfaceId);
         Assert.Equal(2, projection.Context.Count);
         Assert.Equal("hello", Assert.IsType<ObservationMessage>(projection.Context[0]).Content);
         Assert.Equal("answer", Assert.IsType<ActionMessage>(projection.Context[1]).GetFlattenedText());
         Assert.Equal(SessionExecutionPhase.Idle, projection.ExecutionState.Phase);
-        Assert.Equal(SessionEventKind.SessionConfigurationChanged, projection.ExecutionState.HeadKind);
+        Assert.Equal(SessionEventKind.RuntimeConfigSetup, projection.ExecutionState.HeadKind);
     }
 
     [Fact]
-    public void AppendSessionConfigurationChanged_WhenNotIdle_Throws() {
+    public void AppendSystemPromptSetup_ReopenReplacesPromptAndKeepsContext() {
+        string path = NewJournalPath();
+
+        using (var engine = SessionJournalEngine.Create(path,
+            new SessionCreateOptions(
+                ModelId: "model-A",
+                SystemPrompt: "system-A",
+                CompletionSurfaceId: "surface-A"
+            )
+        )) {
+            engine.AppendObservation("hello");
+            engine.AppendAgentAction(
+                new ActionMessage([new ActionBlock.Text("answer")]),
+                new CompletionDescriptor("fake-provider", "fake-api-v1", "model-A")
+            );
+            EventAddress address = engine.AppendSystemPromptSetup("system-B");
+
+            string promptJson = System.Text.Encoding.UTF8.GetString(engine.ReadPayloadBytes(address));
+            Assert.Equal("{\"v\":1,\"body\":{\"content\":\"system-B\"}}", promptJson);
+        }
+
+        using var reopened = SessionJournalEngine.Open(path);
+        SessionProjection projection = reopened.Project();
+
+        Assert.NotNull(projection.Config);
+        Assert.Equal("model-A", projection.Config.ModelId);
+        Assert.Equal("system-B", projection.SystemPrompt);
+        Assert.Equal("surface-A", projection.Config.CompletionSurfaceId);
+        Assert.Equal(2, projection.Context.Count);
+        Assert.Equal(SessionExecutionPhase.Idle, projection.ExecutionState.Phase);
+        Assert.Equal(SessionEventKind.SystemPromptSetup, projection.ExecutionState.HeadKind);
+    }
+
+    [Fact]
+    public void AppendSetupEvents_WhenNotIdle_Throw() {
         string path = NewJournalPath();
         using var engine = SessionJournalEngine.Create(path,
             new SessionCreateOptions(
@@ -138,16 +176,21 @@ public sealed class SessionJournalEngineTests : IDisposable {
 
         engine.AppendObservation("hello");
 
-        var ex = Assert.Throws<InvalidOperationException>(
-            () => engine.AppendSessionConfigurationChanged(
-                new SessionConfiguration("model-B", "system-B", "surface-B", SessionJournalDefaults.Schema)
+        var configEx = Assert.Throws<InvalidOperationException>(
+            () => engine.AppendRuntimeConfigSetup(
+                new SessionRuntimeConfiguration("model-B", "surface-B", SessionJournalDefaults.Schema)
             )
         );
-        Assert.Contains("requires an idle session", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("requires an idle session", configEx.Message, StringComparison.Ordinal);
+
+        var promptEx = Assert.Throws<InvalidOperationException>(
+            () => engine.AppendSystemPromptSetup("system-B")
+        );
+        Assert.Contains("requires an idle session", promptEx.Message, StringComparison.Ordinal);
     }
 
     [Fact]
-    public void Project_WhenConfigurationChangedAppearsInsidePendingTurn_Throws() {
+    public void Project_WhenSetupEventAppearsInsidePendingTurn_Throws() {
         string path = NewJournalPath();
 
         using (var engine = SessionJournalEngine.Create(path,
@@ -164,20 +207,36 @@ public sealed class SessionJournalEngineTests : IDisposable {
             RefId main = journal.OpenBranch(SessionJournalDefaults.MainBranchName).Unwrap();
             EventAddress expectedHead = journal.GetHead(main) ?? throw new InvalidDataException("SessionJournal test journal has no head.");
             byte[] payload = System.Text.Encoding.UTF8.GetBytes(
-                "{\"v\":1,\"body\":{\"modelId\":\"model-B\",\"systemPrompt\":\"system-B\",\"completionSurfaceId\":\"surface-B\",\"schema\":\"atelia.session-journal.trunk.v1\"}}"
+                "{\"v\":1,\"body\":{\"content\":\"system-B\"}}"
             );
             journal.CommitToRef(
                 SessionJournalDefaults.MainBranchName,
                 expectedHead,
                 payload,
-                opaqueEventKind: (uint)SessionEventKind.SessionConfigurationChanged,
+                opaqueEventKind: (uint)SessionEventKind.SystemPromptSetup,
                 hint: default
             ).Unwrap();
         }
 
         using var reopened = SessionJournalEngine.Open(path);
         var ex = Assert.Throws<InvalidDataException>(() => reopened.Project());
-        Assert.Contains("must appear only at an idle session boundary", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("must appear only at setup or idle session boundaries", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Project_WhenBusinessEventAppearsBeforeSessionCreatedMarker_Throws() {
+        string path = NewJournalPath();
+        using (var journal = EventJournal.EventJournal.CreateNew(path)) {
+            journal.CreateBranch(SessionJournalDefaults.MainBranchName, startPoint: null).Unwrap();
+            CommitToMain(journal, null, SessionEventKind.RuntimeConfigSetup, "{\"v\":1,\"body\":{\"modelId\":\"model-A\",\"completionSurfaceId\":\"surface-A\",\"schema\":\"atelia.session-journal.trunk.v1\"}}");
+            RefId main = journal.OpenBranch(SessionJournalDefaults.MainBranchName).Unwrap();
+            EventAddress head = journal.GetHead(main) ?? throw new InvalidDataException("SessionJournal test journal has no head.");
+            CommitToMain(journal, head, SessionEventKind.ObservationAccepted, "{\"v\":1,\"body\":{\"content\":\"hello\"}}");
+        }
+
+        using var reopened = SessionJournalEngine.Open(path);
+        var ex = Assert.Throws<InvalidDataException>(() => reopened.Project());
+        Assert.Contains("requires a prior session-created marker", ex.Message, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -337,7 +396,7 @@ public sealed class SessionJournalEngineTests : IDisposable {
     }
 
     [Fact]
-    public async Task SendAsync_AfterConfigurationChanged_UsesLatestJournalConfig() {
+    public async Task SendAsync_AfterRuntimeConfigAndSystemPromptSetup_UsesLatestJournalState() {
         string path = NewJournalPath();
         var client = new ScriptedCompletionClient();
         client.Enqueue(
@@ -356,9 +415,8 @@ public sealed class SessionJournalEngineTests : IDisposable {
             new SessionCreateOptions("model-A", "system-A", "surface-A"),
             new SessionRuntime(client)
         );
-        engine.AppendSessionConfigurationChanged(
-            new SessionConfiguration("model-B", "system-B", "surface-B", SessionJournalDefaults.Schema)
-        );
+        engine.AppendRuntimeConfigSetup(new SessionRuntimeConfiguration("model-B", "surface-B", SessionJournalDefaults.Schema));
+        engine.AppendSystemPromptSetup("system-B");
 
         TurnResult result = await engine.SendAsync("hello", CancellationToken.None);
 
@@ -524,10 +582,12 @@ public sealed class SessionJournalEngineTests : IDisposable {
         }
 
         string[] payloads = ReadJournalPayloadJson(path);
-        Assert.Equal("{\"v\":1,\"body\":{\"toolCallId\":\"call-1\",\"toolName\":\"lookup\",\"rawArgumentsJson\":\"{\\\"q\\\":\\\"x\\\"}\",\"operationId\":\"" + ExtractOperationId(payloads[3]) + "\"}}", payloads[3]);
-        Assert.Equal("{\"v\":1,\"body\":{\"toolCallId\":\"call-1\",\"toolName\":\"lookup\",\"status\":\"success\",\"blocks\":[{\"kind\":\"text\",\"content\":\"result:{\\\"q\\\":\\\"x\\\"}\"}]}}", payloads[4]);
-        Assert.DoesNotContain("opaqueEventKind", payloads[3], StringComparison.Ordinal);
-        Assert.DoesNotContain("sequenceNumber", payloads[4], StringComparison.Ordinal);
+        string startedPayload = payloads[^3];
+        string resultPayload = payloads[^2];
+        Assert.Equal("{\"v\":1,\"body\":{\"toolCallId\":\"call-1\",\"toolName\":\"lookup\",\"rawArgumentsJson\":\"{\\\"q\\\":\\\"x\\\"}\",\"operationId\":\"" + ExtractOperationId(startedPayload) + "\"}}", startedPayload);
+        Assert.Equal("{\"v\":1,\"body\":{\"toolCallId\":\"call-1\",\"toolName\":\"lookup\",\"status\":\"success\",\"blocks\":[{\"kind\":\"text\",\"content\":\"result:{\\\"q\\\":\\\"x\\\"}\"}]}}", resultPayload);
+        Assert.DoesNotContain("opaqueEventKind", startedPayload, StringComparison.Ordinal);
+        Assert.DoesNotContain("sequenceNumber", resultPayload, StringComparison.Ordinal);
 
         using var reopened = SessionJournalEngine.Open(path);
         SessionProjection replayed = reopened.Project();
@@ -570,7 +630,7 @@ public sealed class SessionJournalEngineTests : IDisposable {
             persistedOperationId = inspection.Project().ExecutionState.PendingOperationId!;
         }
 
-        Assert.Equal(persistedOperationId, ExtractOperationId(ReadJournalPayloadJson(path)[3]));
+        Assert.Equal(persistedOperationId, ExtractOperationId(ReadJournalPayloadJson(path)[^1]));
 
         var resumeClient = new ScriptedCompletionClient();
         var resumeTool = new RecordingTool("lookup", _ => ToolExecuteResult.FromText(ToolExecutionStatus.Success, "resumed-result"));
@@ -870,6 +930,20 @@ public sealed class SessionJournalEngineTests : IDisposable {
 
         return payloads;
     }
+
+    private static EventAddress CommitToMain(
+        EventJournal.EventJournal journal,
+        EventAddress? expectedHead,
+        SessionEventKind kind,
+        string payloadJson
+    )
+        => journal.CommitToRef(
+            SessionJournalDefaults.MainBranchName,
+            expectedHead,
+            System.Text.Encoding.UTF8.GetBytes(payloadJson),
+            opaqueEventKind: (uint)kind,
+            hint: default
+        ).Unwrap().EventAddress;
 
     private static string ExtractOperationId(string startedPayload) {
         using var document = System.Text.Json.JsonDocument.Parse(startedPayload);

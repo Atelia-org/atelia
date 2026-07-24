@@ -1,20 +1,18 @@
 # SessionJournal Configuration Access Notes
 
-> 状态：Design Note / Open Question
+> 状态：Design Note / Decision Updated
 > 日期：2026-07-24
 > 相关文档：[SessionJournal 主干设计基线](session-journal-trunk-design.md)、[ChatSession 事件源与长期上下文架构路线图](../ChatSession/event-sourced-session-architecture-roadmap.md)
 
 ## 1. 背景
 
-`SessionJournal` 的配置事实目前由 `session-created` 与后续 `session-configuration-changed`
-事件表达。已倾向拍板的一点是：`session-configuration-changed` 保存**完整有效配置快照**，
-而不是一组 partial patch。这样 reducer 读取到配置事件时可以直接替换当前 config，避免字段新增、
-默认值变化和 patch 链重放带来的复杂性。
+`SessionJournal` 已将 runtime config 与 system prompt 分离：
 
-仍未拍板的问题有两个：
+- `runtime-config-setup` 保存完整 runtime config snapshot：model id、completion surface、schema 等运行时配置。
+- `system-prompt-setup` 保存完整 system prompt snapshot。system prompt 是上下文事实，是 Agent 隐状态的一部分，不再混入 runtime config。
+- `session-created` 只作为初始化完成 marker，空 body。初始化顺序为 `runtime-config-setup` -> `system-prompt-setup` -> `session-created`。
 
-1. 是否把 system prompt 变化拆成独立 `system-prompt-changed`。
-2. 加载一个很长的 session 时，如何快速找到最近一次配置快照。
+仍需长期观察的问题：加载一个很长的 session 时，如何快速找到最近一次 runtime config 与 system prompt snapshot。
 
 ## 2. 使用场景假设
 
@@ -22,33 +20,23 @@
 所有 raw events，而是从尾部读取一段 raw suffix，并结合 recap / artifact / retrieval 等派生产物构造
 当前上下文。
 
-如果配置长期稳定，最后一次 `session-configuration-changed` 与 journal head 之间可能隔着大量事件。
-单纯从 head 沿 parent chain 反向扫描直到找到配置事件，正确但在冷启动时可能过慢。
+如果 runtime config 或 system prompt 长期稳定，最后一次 setup event 与 journal head 之间可能隔着大量事件。
+单纯从 head 沿 parent chain 反向扫描直到找到两个 setup event，正确但在冷启动时可能过慢。
 
-## 3. System Prompt 是否独立成事件
+## 3. System Prompt 独立事件决议
 
-暂不定稿。
+已选择拆出 `system-prompt-setup`，原因是 system prompt 更接近 context fact，而不是 runtime config。
+它可能包含 Agent 自己可编辑的核心 belief / self policy，后续治理、审阅、provenance、压缩和上下文规划
+都可能与 model id / completion surface 不同。
 
-保持统一 `session-configuration-changed` 的优势：
-
-- model id、completion surface、system prompt、schema/profile 等共同组成 completion request 的有效配置。
-- 每次配置变更写完整快照，reducer 和审计语义简单。
-- 不需要为 system prompt 建第二套事件语义和恢复规则。
-
-拆出 `system-prompt-changed` 的潜在理由：
-
-- system prompt 里可能包含 Agent 自己可编辑的核心 belief / self policy，变更频率和治理方式可能不同于
-  model id 或 completion surface。
-- 将来如果需要对核心 belief 做独立 lineage、权限、审阅或冲突处理，单独事件可能更清晰。
-
-当前建议：在 importer / CS-2 阶段先实现统一 `session-configuration-changed`。若后续确认 system prompt
-中的可自编辑区域需要独立治理，再以新的 EventKind 或上层 artifact/config partition 重新收口。
+`system-prompt-setup` 不是 diff，也不叫 `system-prompt-changed`。它表达“从此位置起生效的完整 system
+prompt snapshot”，既覆盖初始化，也覆盖后续重设。
 
 ## 4. 快速找到最近配置的候选方案
 
 ### 4.1 反向扫描 parent chain
 
-从当前 head 开始读 header，遇到 `session-configuration-changed` 或 `session-created` 即停止。
+从当前 head 开始读 header，直到找到最近的 `runtime-config-setup` 与最近的 `system-prompt-setup`。
 
 优点：
 
@@ -59,7 +47,7 @@
 缺点：
 
 - 配置长期稳定时，冷启动可能需要扫描大量 frame。
-- 只解决 latest config，不解决后续 projection 的其他快速入口。
+- 需要找两个 latest setup event，不解决后续 projection 的其他快速入口。
 
 ### 4.2 可重建 SessionJournal projection cache
 
@@ -76,7 +64,8 @@ cache/session-projection/main.json
   "schema": "atelia.session-journal.projection-cache.v1",
   "branch": "main",
   "head": "<EventAddress>",
-  "latestConfigurationEvent": "<EventAddress>",
+  "latestRuntimeConfigSetup": "<EventAddress>",
+  "latestSystemPromptSetup": "<EventAddress>",
   "eventCount": 123456
 }
 ```
@@ -84,13 +73,13 @@ cache/session-projection/main.json
 加载时：
 
 1. 读取 branch head。
-2. 若 cache head 等于当前 head，直接读取 `latestConfigurationEvent` payload。
+2. 若 cache head 等于当前 head，直接读取两个 latest setup event payload。
 3. 若 cache 缺失或不匹配，fallback 到反向扫描或 forward replay 重建，并重写 cache。
 4. 后续可做 tail merge：若 cache head 是当前 head 的祖先，只扫描 cache head 到当前 head 的新增尾部。
 
 优点：
 
-- 正常 reopen 可 O(1) 找到最新完整 config。
+- 正常 reopen 可 O(1) 找到最新 runtime config 与 system prompt。
 - cache 可删除、可重建，不改变 raw event 正确性。
 - 不污染 EventFrame wire format，也不要求每个 raw event 冗余携带 config pointer。
 
@@ -101,12 +90,12 @@ cache/session-projection/main.json
 
 ### 4.3 在 recap / artifact metadata 上记录 config address
 
-recap 或 artifact 生成时记录当时 as-of 的 `session-configuration-changed` / `session-created`
-地址。Context planner 选择 artifact anchor 时，可同时拿到该 artifact 对应的 config snapshot。
+recap 或 artifact 生成时记录当时 as-of 的 `runtime-config-setup` 与 `system-prompt-setup` 地址。
+Context planner 选择 artifact anchor 时，可同时拿到该 artifact 对应的 runtime config 与 prompt snapshot。
 
 优点：
 
-- 很适合回答“这个 recap 是在什么配置下生成的”。
+- 很适合回答“这个 recap 是在什么 runtime config / system prompt 下生成的”。
 - 适合 request manifest / artifact provenance，避免用今天的 system prompt 解释昨天生成的 artifact。
 
 缺点：
@@ -132,14 +121,13 @@ recap 或 artifact 生成时记录当时 as-of 的 `session-configuration-change
 
 短期推荐：
 
-- `session-configuration-changed` 保存完整配置快照。
-- 正确性 fallback 使用 parent chain 反向扫描或 full replay。
+- `runtime-config-setup` 与 `system-prompt-setup` 都保存完整 snapshot。
+- 正确性 fallback 使用 parent chain 反向扫描或 full replay，直到拿到两个 setup event。
 - 若冷启动性能成为问题，优先在 SessionJournal 层加可重建 projection cache，记录
-  `latestConfigurationEvent`。
+  `latestRuntimeConfigSetup` 与 `latestSystemPromptSetup`。
 - recap / artifact metadata 可以记录 config address，但只作为 context/artifact provenance 与 planner 优化，
   不作为 raw journal 恢复的必要依赖。
 
 长期可再评估：
 
-- system prompt 是否需要独立事件，取决于 Agent 自编辑核心 belief 的频率、治理方式和审计需求。
 - nearest-kind sparse index 是否值得抽成 EventJournal 通用能力，取决于类似查询是否反复出现。

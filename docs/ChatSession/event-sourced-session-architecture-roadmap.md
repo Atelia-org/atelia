@@ -122,7 +122,9 @@ EventJournal 只看到 bytes；`Atelia.ChatSession` 在 payload 中定义 versio
 
 | EventKind | 含义 |
 |:----------|:-----|
-| `session-created` | session identity、初始 system/config |
+| `runtime-config-setup` | model、completion surface 等 runtime config snapshot 从此位置起生效 |
+| `system-prompt-setup` | system prompt snapshot 从此位置起生效 |
+| `session-created` | session 初始化完成 marker |
 | `observation-accepted` | 外部 observation 已进入 session |
 | `context-plan-committed` | 已选定本次 completion 的 exact inputs |
 | `completion-request-prepared` | canonical request manifest 与 attempt identity 已持久化 |
@@ -133,7 +135,6 @@ EventJournal 只看到 bytes；`Atelia.ChatSession` 在 payload 中定义 versio
 | `turn-completed` | 本轮达到无未处理 tool call 的完成状态 |
 | `turn-failed` | 本轮以可诊断失败结束 |
 | `turn-paused` | 本轮等待人工、资源或外部事件 |
-| `session-configuration-changed` | system prompt、model policy 等持久配置发生变化 |
 
 `completion-request-prepared` 与 `context-plan-committed` 可以在 MVP 合并为一个 payload；概念上仍应区分“选择了什么”和“如何从已持久化事实重建实际发给 completion client 的 canonical request”。
 

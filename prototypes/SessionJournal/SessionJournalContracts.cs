@@ -10,12 +10,13 @@ public static class SessionJournalDefaults {
 }
 
 public enum SessionEventKind : uint {
-    SessionCreated = 1,
-    SessionConfigurationChanged = 2,
-    ObservationAccepted = 3,
-    AgentActionProduced = 4,
-    ToolExecutionStarted = 5,
-    ToolResultObserved = 6,
+    RuntimeConfigSetup = 1,
+    SystemPromptSetup = 2,
+    SessionCreated = 3,
+    ObservationAccepted = 4,
+    AgentActionProduced = 5,
+    ToolExecutionStarted = 6,
+    ToolResultObserved = 7,
 }
 
 public enum SessionExecutionPhase {
@@ -31,8 +32,8 @@ public sealed record SessionCreateOptions(
     string CompletionSurfaceId,
     string Schema = SessionJournalDefaults.Schema
 ) {
-    public SessionConfiguration ToConfiguration()
-        => new(ModelId, SystemPrompt, CompletionSurfaceId, Schema);
+    public SessionRuntimeConfiguration ToRuntimeConfiguration()
+        => new(ModelId, CompletionSurfaceId, Schema);
 }
 
 public sealed record SessionRuntime(ICompletionClient CompletionClient, ToolSession? ToolSession = null);
@@ -82,9 +83,8 @@ internal sealed class SessionJournalFailpointException(SessionJournalFailpoint f
     public SessionJournalFailpoint Failpoint { get; } = failpoint;
 }
 
-public sealed record SessionConfiguration(
+public sealed record SessionRuntimeConfiguration(
     string ModelId,
-    string SystemPrompt,
     string CompletionSurfaceId,
     string Schema
 );
@@ -99,11 +99,16 @@ public sealed record SessionExecutionState(
 );
 
 public sealed record SessionProjection(
-    SessionConfiguration? Config,
+    SessionRuntimeConfiguration? Config,
+    string? SystemPrompt,
     IReadOnlyList<IHistoryMessage> Context,
     SessionExecutionState ExecutionState,
     EventAddress? Head
 );
+
+internal sealed record SessionCreatedBody;
+
+internal sealed record SystemPromptSetupBody(string Content);
 
 internal sealed record ObservationAcceptedBody(string Content);
 

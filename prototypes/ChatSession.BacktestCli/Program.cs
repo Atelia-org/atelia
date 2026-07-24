@@ -134,7 +134,8 @@ internal static partial class Program {
         Console.WriteLine($"branchName: {eventSource.BranchName ?? "(none)"}");
         Console.WriteLine($"output: {Path.GetFullPath(outputPath)}");
         Console.WriteLine($"sessionCreated: {result.SessionCreatedCount}");
-        Console.WriteLine($"configurationChanged: {result.ConfigurationChangedCount}");
+        Console.WriteLine($"runtimeConfigSetups: {result.RuntimeConfigSetupCount}");
+        Console.WriteLine($"systemPromptSetups: {result.SystemPromptSetupCount}");
         Console.WriteLine($"observations: {result.ObservationCount}");
         Console.WriteLine($"agentActions: {result.AgentActionCount}");
         Console.WriteLine($"skippedCompactions: {result.SkippedCompactionCount}");

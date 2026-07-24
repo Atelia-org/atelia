@@ -145,17 +145,29 @@ public sealed class SessionJournalEngine : IDisposable {
         return Append(SessionEventKind.ObservationAccepted, new ObservationAcceptedBody(content));
     }
 
-    public EventAddress AppendSessionConfigurationChanged(SessionConfiguration configuration) {
+    public EventAddress AppendRuntimeConfigSetup(SessionRuntimeConfiguration configuration) {
         ArgumentNullException.ThrowIfNull(configuration);
-        ValidateConfiguration(configuration);
+        ValidateRuntimeConfiguration(configuration);
         SessionProjection projection = Project();
         if (projection.ExecutionState.Phase != SessionExecutionPhase.Idle) {
             throw new InvalidOperationException(
-                $"AppendSessionConfigurationChanged requires an idle session. Current phase is '{projection.ExecutionState.Phase}'."
+                $"AppendRuntimeConfigSetup requires an idle session. Current phase is '{projection.ExecutionState.Phase}'."
             );
         }
 
-        return Append(SessionEventKind.SessionConfigurationChanged, configuration);
+        return Append(SessionEventKind.RuntimeConfigSetup, configuration);
+    }
+
+    public EventAddress AppendSystemPromptSetup(string systemPrompt) {
+        if (systemPrompt is null) { throw new ArgumentNullException(nameof(systemPrompt)); }
+        SessionProjection projection = Project();
+        if (projection.ExecutionState.Phase != SessionExecutionPhase.Idle) {
+            throw new InvalidOperationException(
+                $"AppendSystemPromptSetup requires an idle session. Current phase is '{projection.ExecutionState.Phase}'."
+            );
+        }
+
+        return Append(SessionEventKind.SystemPromptSetup, new SystemPromptSetupBody(systemPrompt));
     }
 
     public EventAddress AppendAgentAction(ActionMessage action, CompletionDescriptor invocation) {
@@ -191,7 +203,9 @@ public sealed class SessionJournalEngine : IDisposable {
             journal.CreateBranch(SessionJournalDefaults.MainBranchName, startPoint: null).Unwrap();
             RefId mainRef = journal.OpenBranch(SessionJournalDefaults.MainBranchName).Unwrap();
             var engine = new SessionJournalEngine(journal, mainRef, runtime, testHooks);
-            engine.Append(SessionEventKind.SessionCreated, options.ToConfiguration());
+            engine.Append(SessionEventKind.RuntimeConfigSetup, options.ToRuntimeConfiguration());
+            engine.Append(SessionEventKind.SystemPromptSetup, new SystemPromptSetupBody(options.SystemPrompt));
+            engine.Append(SessionEventKind.SessionCreated, new SessionCreatedBody());
             return engine;
         }
         catch {
@@ -229,11 +243,13 @@ public sealed class SessionJournalEngine : IDisposable {
             );
         }
 
-        SessionConfiguration config = projection.Config
+        SessionRuntimeConfiguration config = projection.Config
             ?? throw new InvalidDataException("SessionJournal projection is missing session configuration.");
+        string systemPrompt = projection.SystemPrompt
+            ?? throw new InvalidDataException("SessionJournal projection is missing system prompt.");
         var request = new CompletionRequest(
             ModelId: config.ModelId,
-            SystemPrompt: config.SystemPrompt,
+            SystemPrompt: systemPrompt,
             Context: projection.Context,
             Tools: runtime.ToolSession?.VisibleDefinitions ?? ImmutableArray<ToolDefinition>.Empty
         );
@@ -360,11 +376,10 @@ public sealed class SessionJournalEngine : IDisposable {
         if (options.SystemPrompt is null) { throw new ArgumentNullException(nameof(options.SystemPrompt)); }
     }
 
-    private static void ValidateConfiguration(SessionConfiguration configuration) {
+    private static void ValidateRuntimeConfiguration(SessionRuntimeConfiguration configuration) {
         ValidateRequired(configuration.ModelId, nameof(configuration.ModelId));
         ValidateRequired(configuration.CompletionSurfaceId, nameof(configuration.CompletionSurfaceId));
         ValidateRequired(configuration.Schema, nameof(configuration.Schema));
-        if (configuration.SystemPrompt is null) { throw new ArgumentNullException(nameof(configuration.SystemPrompt)); }
     }
 
     private static void ValidateRequired(string value, string name) {

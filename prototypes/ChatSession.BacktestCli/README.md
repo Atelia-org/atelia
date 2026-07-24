@@ -45,7 +45,7 @@ dotnet run --project prototypes/ChatSession.BacktestCli -- replay-pattern-count 
 
 ### import-session-journal
 
-把 legacy upgrade export 导入新的 `SessionJournal` repo。第一版只导入主干 raw facts：`initial-state` 写成 `session-created`，`model-turn` 的 observation/action 写成 `observation-accepted` / `agent-action-produced`，`update-system-prompt` 写成完整 `session-configuration-changed` 配置快照。legacy `compaction` / `recap` 属于可重建 derived artifact，导入时跳过并在输出中计数。
+把 legacy upgrade export 导入新的 `SessionJournal` repo。第一版只导入主干 raw facts：`initial-state` 写成 `runtime-config-setup` / `system-prompt-setup` / `session-created` 初始化链，`model-turn` 的 observation/action 写成 `observation-accepted` / `agent-action-produced`，`update-system-prompt` 写成新的 `system-prompt-setup` snapshot。legacy `compaction` / `recap` 属于可重建 derived artifact，导入时跳过并在输出中计数。
 
 ```bash
 dotnet run --project prototypes/ChatSession.BacktestCli -- import-session-journal \
