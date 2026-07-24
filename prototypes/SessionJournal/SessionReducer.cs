@@ -17,7 +17,6 @@ internal static class SessionReducer {
         long toolExecutionSequenceCheckpoint = 0;
 
         foreach (DecodedSessionEvent ev in events) {
-            headKind = ev.Kind;
             switch (ev.Kind) {
                 case SessionEventKind.SessionCreated: {
                     config = RequireBody<SessionConfiguration>(ev);
@@ -30,12 +29,8 @@ internal static class SessionReducer {
                     break;
                 }
                 case SessionEventKind.SessionConfigurationChanged: {
+                    EnsureIdleBoundary(ev, headKind, openAction, pendingToolCall, pendingOperationId, pendingToolExecutionStarted);
                     config = RequireBody<SessionConfiguration>(ev);
-                    openAction = null;
-                    observedResults.Clear();
-                    pendingToolCall = null;
-                    pendingOperationId = null;
-                    pendingToolExecutionStarted = false;
                     break;
                 }
                 case SessionEventKind.ObservationAccepted: {
@@ -51,7 +46,7 @@ internal static class SessionReducer {
                 case SessionEventKind.AgentActionProduced: {
                     var body = RequireBody<AgentActionProducedBody>(ev);
                     context.Add(body.Action);
-                    openAction = body.Action;
+                    openAction = body.Action.ToolCalls.Count == 0 ? null : body.Action;
                     observedResults.Clear();
                     pendingToolCall = body.Action.ToolCalls.FirstOrDefault();
                     pendingOperationId = null;
@@ -89,6 +84,8 @@ internal static class SessionReducer {
                 default:
                     throw new NotSupportedException($"Session event kind '{ev.Kind}' is not implemented in Slice C reducer.");
             }
+
+            headKind = ev.Kind;
         }
 
         var state = DeriveExecutionState(headKind, openAction, pendingToolCall, pendingOperationId, pendingToolExecutionStarted, toolExecutionSequenceCheckpoint);
@@ -135,9 +132,7 @@ internal static class SessionReducer {
         };
 
     private static SessionExecutionState DeriveActionState(SessionEventKind headKind, ActionMessage? action, long toolExecutionSequenceCheckpoint) {
-        if (action is null) {
-            throw new InvalidDataException("agent-action-produced head requires a replayed ActionMessage.");
-        }
+        if (action is null) { return new SessionExecutionState(SessionExecutionPhase.Idle, headKind, ToolExecutionSequenceCheckpoint: toolExecutionSequenceCheckpoint); }
 
         RawToolCall? pending = action.ToolCalls.FirstOrDefault();
         return pending is null
@@ -170,6 +165,25 @@ internal static class SessionReducer {
     private static void EnsureOpenAction(DecodedSessionEvent ev, ActionMessage? openAction) {
         if (openAction is null) {
             throw new InvalidDataException($"{ev.Kind} at {ev.Address} requires a prior agent action with pending tool calls.");
+        }
+    }
+
+    private static void EnsureIdleBoundary(
+        DecodedSessionEvent ev,
+        SessionEventKind? headKind,
+        ActionMessage? openAction,
+        RawToolCall? pendingToolCall,
+        string? pendingOperationId,
+        bool pendingToolExecutionStarted
+    ) {
+        bool hasNoPendingAction = openAction is null
+            && pendingToolCall is null
+            && pendingOperationId is null
+            && !pendingToolExecutionStarted;
+        bool isIdle = headKind is SessionEventKind.SessionCreated or SessionEventKind.SessionConfigurationChanged
+            || headKind == SessionEventKind.AgentActionProduced && hasNoPendingAction;
+        if (!isIdle) {
+            throw new InvalidDataException($"{ev.Kind} at {ev.Address} must appear only at an idle session boundary.");
         }
     }
 

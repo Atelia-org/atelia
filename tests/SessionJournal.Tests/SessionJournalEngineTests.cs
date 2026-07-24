@@ -147,6 +147,40 @@ public sealed class SessionJournalEngineTests : IDisposable {
     }
 
     [Fact]
+    public void Project_WhenConfigurationChangedAppearsInsidePendingTurn_Throws() {
+        string path = NewJournalPath();
+
+        using (var engine = SessionJournalEngine.Create(path,
+            new SessionCreateOptions(
+                ModelId: "model-A",
+                SystemPrompt: "system-A",
+                CompletionSurfaceId: "surface-A"
+            )
+        )) {
+            engine.AppendObservation("hello");
+        }
+
+        using (var journal = EventJournal.EventJournal.OpenExisting(path)) {
+            RefId main = journal.OpenBranch(SessionJournalDefaults.MainBranchName).Unwrap();
+            EventAddress expectedHead = journal.GetHead(main) ?? throw new InvalidDataException("SessionJournal test journal has no head.");
+            byte[] payload = System.Text.Encoding.UTF8.GetBytes(
+                "{\"v\":1,\"body\":{\"modelId\":\"model-B\",\"systemPrompt\":\"system-B\",\"completionSurfaceId\":\"surface-B\",\"schema\":\"atelia.session-journal.trunk.v1\"}}"
+            );
+            journal.CommitToRef(
+                SessionJournalDefaults.MainBranchName,
+                expectedHead,
+                payload,
+                opaqueEventKind: (uint)SessionEventKind.SessionConfigurationChanged,
+                hint: default
+            ).Unwrap();
+        }
+
+        using var reopened = SessionJournalEngine.Open(path);
+        var ex = Assert.Throws<InvalidDataException>(() => reopened.Project());
+        Assert.Contains("must appear only at an idle session boundary", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void ObservationPayload_UsesCanonicalEnvelopeBytesWithoutHeaderDuplication() {
         string path = NewJournalPath();
         using var engine = SessionJournalEngine.Create(path,
