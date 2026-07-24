@@ -106,6 +106,24 @@ public sealed record SessionProjection(
     EventAddress? Head
 );
 
+public sealed record AddressedSessionHistoryMessage(
+    IHistoryMessage Message,
+    EventAddress SourceStartInclusive,
+    EventAddress SourceEndInclusive
+);
+
+public sealed record SessionHistoryReplay(
+    EventAddress? SourceRawHead,
+    IReadOnlyList<AddressedSessionHistoryMessage> Messages,
+    SessionExecutionState ExecutionState
+) {
+    public static SessionHistoryReplay Empty { get; } = new(
+        SourceRawHead: null,
+        Messages: Array.AsReadOnly(Array.Empty<AddressedSessionHistoryMessage>()),
+        ExecutionState: new SessionExecutionState(SessionExecutionPhase.Empty, HeadKind: null)
+    );
+}
+
 public sealed record SessionGoverningSetup(
     EventAddress Head,
     EventAddress RuntimeConfigSetupAddress,

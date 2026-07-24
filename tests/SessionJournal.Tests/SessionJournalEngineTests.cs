@@ -92,6 +92,77 @@ public sealed class SessionJournalEngineTests : IDisposable {
     }
 
     [Fact]
+    public void ReplayHistory_ObservationAndAction_CarriesSourceAddresses() {
+        string path = NewJournalPath();
+        var invocation = new CompletionDescriptor("fake-provider", "fake-api-v1", "model-A");
+        var action = new ActionMessage(
+            [
+                new ActionBlock.Text("answer"),
+                new ActionBlock.Text(" continued")
+            ]
+        );
+
+        EventAddress observationAddress;
+        EventAddress actionAddress;
+        using (var engine = SessionJournalEngine.Create(path,
+            new SessionCreateOptions(
+                ModelId: "model-A",
+                SystemPrompt: "system-A",
+                CompletionSurfaceId: "surface-A"
+            )
+        )) {
+            observationAddress = engine.AppendObservation("hello");
+            actionAddress = engine.AppendAgentAction(action, invocation);
+        }
+
+        using var reopened = SessionJournalEngine.Open(path);
+        SessionProjection projection = reopened.Project();
+        SessionHistoryReplay replay = reopened.ReplayHistory();
+
+        Assert.Equal(projection.Head, replay.SourceRawHead);
+        Assert.Equal(projection.ExecutionState, replay.ExecutionState);
+        Assert.Equal(projection.Context.Count, replay.Messages.Count);
+
+        AddressedSessionHistoryMessage observationEntry = replay.Messages[0];
+        var observation = Assert.IsType<ObservationMessage>(observationEntry.Message);
+        Assert.Equal("hello", observation.Content);
+        Assert.Equal(observationAddress, observationEntry.SourceStartInclusive);
+        Assert.Equal(observationAddress, observationEntry.SourceEndInclusive);
+
+        AddressedSessionHistoryMessage actionEntry = replay.Messages[1];
+        var projectedAction = Assert.IsType<ActionMessage>(actionEntry.Message);
+        Assert.Equal("answer continued", projectedAction.GetFlattenedText());
+        Assert.Equal(actionAddress, actionEntry.SourceStartInclusive);
+        Assert.Equal(actionAddress, actionEntry.SourceEndInclusive);
+    }
+
+    [Fact]
+    public void ReplayHistory_SetupAndSessionCreated_DoNotEmitHistoryMessages() {
+        string path = NewJournalPath();
+        EventAddress setupHead;
+
+        using (var engine = SessionJournalEngine.Create(path,
+            new SessionCreateOptions(
+                ModelId: "model-A",
+                SystemPrompt: "system-A",
+                CompletionSurfaceId: "surface-A"
+            )
+        )) {
+            setupHead = engine.AppendSystemPromptSetup("system-B");
+        }
+
+        using var reopened = SessionJournalEngine.Open(path);
+        SessionProjection projection = reopened.Project();
+        SessionHistoryReplay replay = reopened.ReplayHistory();
+
+        Assert.Empty(replay.Messages);
+        Assert.Equal(setupHead, replay.SourceRawHead);
+        Assert.Equal(projection.ExecutionState, replay.ExecutionState);
+        Assert.Equal(SessionExecutionPhase.Idle, replay.ExecutionState.Phase);
+        Assert.Equal(SessionEventKind.SystemPromptSetup, replay.ExecutionState.HeadKind);
+    }
+
+    [Fact]
     public void AppendRuntimeConfigSetup_ReopenReplacesConfigAndKeepsContext() {
         string path = NewJournalPath();
 
@@ -931,6 +1002,112 @@ public sealed class SessionJournalEngineTests : IDisposable {
         Assert.Equal(SessionExecutionPhase.Idle, projection.ExecutionState.Phase);
     }
 
+    [Fact]
+    public async Task ReplayHistory_MultipleToolCalls_UsesToolResultObservedRange() {
+        string path = NewJournalPath();
+        var client = new ScriptedCompletionClient();
+        var registry = new ToolRegistry(
+            [
+                new RecordingTool("alpha", _ => ToolExecuteResult.FromText(ToolExecutionStatus.Success, "A")),
+                new RecordingTool("beta", _ => ToolExecuteResult.FromText(ToolExecutionStatus.Success, "B"))
+            ]
+        );
+
+        client.Enqueue(
+            request => new CompletionResult(
+                new ActionMessage(
+                    [
+                        new ActionBlock.ToolCall(new RawToolCall("alpha", "call-A", "{}")),
+                        new ActionBlock.ToolCall(new RawToolCall("beta", "call-B", "{}"))
+                    ]
+                ),
+                new CompletionDescriptor("scripted", "test-api-v1", request.ModelId)
+            )
+        );
+        client.Enqueue(
+            request => new CompletionResult(
+                new ActionMessage([new ActionBlock.Text("done")]),
+                new CompletionDescriptor("scripted", "test-api-v1", request.ModelId)
+            )
+        );
+
+        using (var engine = SessionJournalEngine.Create(
+            path,
+            new SessionCreateOptions("model-A", "system-A", "surface-A"),
+            new SessionRuntime(client, registry.CreateSession())
+        )) {
+            await engine.SendAsync("need two tools", CancellationToken.None);
+        }
+
+        EventAddress[] toolResultAddresses = ReadJournalAddressesByKind(path, SessionEventKind.ToolResultObserved);
+        Assert.Equal(2, toolResultAddresses.Length);
+
+        using var reopened = SessionJournalEngine.Open(path);
+        SessionHistoryReplay replay = reopened.ReplayHistory();
+
+        Assert.Equal(4, replay.Messages.Count);
+        Assert.IsType<ObservationMessage>(replay.Messages[0].Message);
+        Assert.IsType<ActionMessage>(replay.Messages[1].Message);
+        AddressedSessionHistoryMessage toolResultsEntry = replay.Messages[2];
+        var toolResults = Assert.IsType<ToolResultsMessage>(toolResultsEntry.Message);
+        Assert.Equal(toolResultAddresses[0], toolResultsEntry.SourceStartInclusive);
+        Assert.Equal(toolResultAddresses[1], toolResultsEntry.SourceEndInclusive);
+        Assert.Collection(
+            toolResults.Results,
+            first => Assert.Equal("call-A", first.ToolCallId),
+            second => Assert.Equal("call-B", second.ToolCallId)
+        );
+        Assert.Equal("done", Assert.IsType<ActionMessage>(replay.Messages[3].Message).GetFlattenedText());
+    }
+
+    [Fact]
+    public async Task ReplayHistory_UnclosedToolCalls_DoNotEmitToolResultsMessage() {
+        string path = NewJournalPath();
+        var client = new ScriptedCompletionClient();
+        var registry = new ToolRegistry(
+            [
+                new RecordingTool("alpha", _ => ToolExecuteResult.FromText(ToolExecutionStatus.Success, "A")),
+                new RecordingTool("beta", _ => ToolExecuteResult.FromText(ToolExecutionStatus.Success, "B"))
+            ]
+        );
+
+        client.Enqueue(
+            request => new CompletionResult(
+                new ActionMessage(
+                    [
+                        new ActionBlock.ToolCall(new RawToolCall("alpha", "call-A", "{}")),
+                        new ActionBlock.ToolCall(new RawToolCall("beta", "call-B", "{}"))
+                    ]
+                ),
+                new CompletionDescriptor("scripted", "test-api-v1", request.ModelId)
+            )
+        );
+
+        using (var engine = SessionJournalEngine.CreateForTest(
+            path,
+            new SessionCreateOptions("model-A", "system-A", "surface-A"),
+            new SessionRuntime(client, registry.CreateSession()),
+            new SessionJournalTestHooks(SessionJournalFailpoint.AfterToolResultCommitted)
+        )) {
+            var ex = await Assert.ThrowsAsync<SessionJournalFailpointException>(
+                () => engine.SendAsync("need two tools", CancellationToken.None)
+            );
+            Assert.Equal(SessionJournalFailpoint.AfterToolResultCommitted, ex.Failpoint);
+        }
+
+        using var reopened = SessionJournalEngine.Open(path);
+        SessionProjection projection = reopened.Project();
+        SessionHistoryReplay replay = reopened.ReplayHistory();
+
+        Assert.Equal(projection.ExecutionState, replay.ExecutionState);
+        Assert.Equal(SessionExecutionPhase.AwaitingToolExecution, replay.ExecutionState.Phase);
+        Assert.Equal("call-B", replay.ExecutionState.PendingToolCall?.ToolCallId);
+        Assert.Equal(2, replay.Messages.Count);
+        Assert.IsType<ObservationMessage>(replay.Messages[0].Message);
+        Assert.IsType<ActionMessage>(replay.Messages[1].Message);
+        Assert.DoesNotContain(replay.Messages, message => message.Message is ToolResultsMessage);
+    }
+
     private sealed class ScriptedCompletionClient : ICompletionClient {
         private readonly Queue<Func<CompletionRequest, CompletionResult>> _responses = new();
 
@@ -989,6 +1166,22 @@ public sealed class SessionJournalEngineTests : IDisposable {
         }
 
         return payloads;
+    }
+
+    private static EventAddress[] ReadJournalAddressesByKind(string path, SessionEventKind kind) {
+        using var journal = EventJournal.EventJournal.OpenExisting(path);
+        RefId main = journal.OpenBranch(SessionJournalDefaults.MainBranchName).Unwrap();
+        EventAddress head = journal.GetHead(main) ?? throw new InvalidDataException("SessionJournal test journal has no head.");
+        IReadOnlyList<EventAddress> chain = journal.ReadChronologicalChain(head, checkedRead: true).Unwrap();
+        var addresses = new List<EventAddress>();
+        foreach (EventAddress address in chain) {
+            EventFrameHeader header = journal.ReadEventHeaderPreview(address).Unwrap();
+            if (header.OpaqueEventKind == (uint)kind) {
+                addresses.Add(address);
+            }
+        }
+
+        return addresses.ToArray();
     }
 
     private static EventAddress CommitToMain(

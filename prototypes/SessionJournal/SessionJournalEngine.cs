@@ -80,19 +80,24 @@ public sealed class SessionJournalEngine : IDisposable {
         EventAddress? head = _journal.GetHead(_mainRef);
         if (head is null) { return SessionReducer.Empty; }
 
-        IReadOnlyList<EventAddress> chain = _journal.ReadChronologicalChain(head.Value, checkedRead: true, cancellationToken: cancellationToken).Unwrap();
-        var events = new List<DecodedSessionEvent>(chain.Count);
-        foreach (EventAddress address in chain) {
-            cancellationToken.ThrowIfCancellationRequested();
-            using EventFrame frame = _journal.ReadEvent(address).Unwrap();
-            ValidateSessionHeaderPreview(address, frame.Header);
+        return SessionReducer.Reduce(ReadDecodedChronologicalEvents(head.Value, cancellationToken));
+    }
 
-            var kind = (SessionEventKind)frame.Header.OpaqueEventKind;
-            object body = SessionEventCodec.Decode(kind, frame.Payload, out int version);
-            events.Add(new DecodedSessionEvent(kind, version, body, address));
-        }
+    public SessionHistoryReplay ReplayHistory(CancellationToken cancellationToken = default) {
+        ThrowIfDisposed();
+        EventAddress? head = _journal.GetHead(_mainRef);
+        if (head is null) { return SessionHistoryReplay.Empty; }
 
-        return SessionReducer.Reduce(events);
+        var messages = new List<AddressedSessionHistoryMessage>();
+        SessionProjection projection = SessionReducer.Reduce(
+            ReadDecodedChronologicalEvents(head.Value, cancellationToken),
+            messages
+        );
+        return new SessionHistoryReplay(
+            head,
+            messages.Count == 0 ? Array.AsReadOnly(Array.Empty<AddressedSessionHistoryMessage>()) : Array.AsReadOnly(messages.ToArray()),
+            projection.ExecutionState
+        );
     }
 
     public async Task<TurnResult> SendAsync(string observation, CancellationToken cancellationToken = default)
@@ -271,6 +276,25 @@ public sealed class SessionJournalEngine : IDisposable {
             journal.Dispose();
             throw;
         }
+    }
+
+    private IReadOnlyList<DecodedSessionEvent> ReadDecodedChronologicalEvents(
+        EventAddress head,
+        CancellationToken cancellationToken
+    ) {
+        IReadOnlyList<EventAddress> chain = _journal.ReadChronologicalChain(head, checkedRead: true, cancellationToken: cancellationToken).Unwrap();
+        var events = new List<DecodedSessionEvent>(chain.Count);
+        foreach (EventAddress address in chain) {
+            cancellationToken.ThrowIfCancellationRequested();
+            using EventFrame frame = _journal.ReadEvent(address).Unwrap();
+            ValidateSessionHeaderPreview(address, frame.Header);
+
+            var kind = (SessionEventKind)frame.Header.OpaqueEventKind;
+            object body = SessionEventCodec.Decode(kind, frame.Payload, out int version);
+            events.Add(new DecodedSessionEvent(kind, version, body, address));
+        }
+
+        return events;
     }
 
     private async Task<TurnResult> CompletePendingObservationAsync(

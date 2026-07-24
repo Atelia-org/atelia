@@ -1,9 +1,13 @@
 using Atelia.Completion.Abstractions;
+using Atelia.EventJournal;
 
 namespace Atelia.SessionJournal;
 
 internal static class SessionReducer {
-    public static SessionProjection Reduce(IReadOnlyList<DecodedSessionEvent> events) {
+    public static SessionProjection Reduce(
+        IReadOnlyList<DecodedSessionEvent> events,
+        ICollection<AddressedSessionHistoryMessage>? addressedMessages = null
+    ) {
         ArgumentNullException.ThrowIfNull(events);
 
         SessionRuntimeConfiguration? config = null;
@@ -17,6 +21,8 @@ internal static class SessionReducer {
         string? pendingOperationId = null;
         bool pendingToolExecutionStarted = false;
         long toolExecutionSequenceCheckpoint = 0;
+        EventAddress? firstObservedToolResultAddress = null;
+        EventAddress? lastObservedToolResultAddress = null;
 
         foreach (DecodedSessionEvent ev in events) {
             switch (ev.Kind) {
@@ -41,29 +47,38 @@ internal static class SessionReducer {
                     pendingToolCall = null;
                     pendingOperationId = null;
                     pendingToolExecutionStarted = false;
+                    firstObservedToolResultAddress = null;
+                    lastObservedToolResultAddress = null;
                     toolExecutionSequenceCheckpoint = 0;
                     break;
                 }
                 case SessionEventKind.ObservationAccepted: {
                     EnsureSessionCreated(ev, sessionCreated);
                     var body = RequireBody<ObservationAcceptedBody>(ev);
-                    context.Add(new ObservationMessage(body.Content));
+                    var message = new ObservationMessage(body.Content);
+                    context.Add(message);
+                    addressedMessages?.Add(new AddressedSessionHistoryMessage(message, ev.Address, ev.Address));
                     openAction = null;
                     observedResults.Clear();
                     pendingToolCall = null;
                     pendingOperationId = null;
                     pendingToolExecutionStarted = false;
+                    firstObservedToolResultAddress = null;
+                    lastObservedToolResultAddress = null;
                     break;
                 }
                 case SessionEventKind.AgentActionProduced: {
                     EnsureSessionCreated(ev, sessionCreated);
                     var body = RequireBody<AgentActionProducedBody>(ev);
                     context.Add(body.Action);
+                    addressedMessages?.Add(new AddressedSessionHistoryMessage(body.Action, ev.Address, ev.Address));
                     openAction = body.Action.ToolCalls.Count == 0 ? null : body.Action;
                     observedResults.Clear();
                     pendingToolCall = body.Action.ToolCalls.FirstOrDefault();
                     pendingOperationId = null;
                     pendingToolExecutionStarted = false;
+                    firstObservedToolResultAddress = null;
+                    lastObservedToolResultAddress = null;
                     break;
                 }
                 case SessionEventKind.ToolExecutionStarted: {
@@ -82,14 +97,26 @@ internal static class SessionReducer {
                     EnsureOpenAction(ev, openAction);
                     RawToolCall declared = EnsureDeclaredToolCall(ev, openAction!, body.ToolCallId, body.ToolName, rawArgumentsJson: null);
                     observedResults[body.ToolCallId] = body;
+                    if (!firstObservedToolResultAddress.HasValue) {
+                        firstObservedToolResultAddress = ev.Address;
+                    }
+                    lastObservedToolResultAddress = ev.Address;
                     pendingOperationId = null;
                     pendingToolExecutionStarted = false;
                     toolExecutionSequenceCheckpoint++;
                     pendingToolCall = NextPendingToolCall(openAction!, observedResults);
                     if (pendingToolCall is null) {
-                        context.Add(ProjectToolResults(openAction!, observedResults));
+                        ToolResultsMessage message = ProjectToolResults(openAction!, observedResults);
+                        context.Add(message);
+                        addressedMessages?.Add(new AddressedSessionHistoryMessage(
+                            message,
+                            firstObservedToolResultAddress.GetValueOrDefault(ev.Address),
+                            lastObservedToolResultAddress.GetValueOrDefault(ev.Address)
+                        ));
                         openAction = null;
                         observedResults.Clear();
+                        firstObservedToolResultAddress = null;
+                        lastObservedToolResultAddress = null;
                     }
                     else if (string.Equals(pendingToolCall.ToolCallId, declared.ToolCallId, StringComparison.Ordinal)) {
                         throw new InvalidDataException($"tool-result-observed did not advance pending tool call '{declared.ToolCallId}'.");
