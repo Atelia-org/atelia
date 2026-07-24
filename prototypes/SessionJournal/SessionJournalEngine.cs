@@ -145,6 +145,19 @@ public sealed class SessionJournalEngine : IDisposable {
         return Append(SessionEventKind.ObservationAccepted, new ObservationAcceptedBody(content));
     }
 
+    public EventAddress AppendSessionConfigurationChanged(SessionConfiguration configuration) {
+        ArgumentNullException.ThrowIfNull(configuration);
+        ValidateConfiguration(configuration);
+        SessionProjection projection = Project();
+        if (projection.ExecutionState.Phase != SessionExecutionPhase.Idle) {
+            throw new InvalidOperationException(
+                $"AppendSessionConfigurationChanged requires an idle session. Current phase is '{projection.ExecutionState.Phase}'."
+            );
+        }
+
+        return Append(SessionEventKind.SessionConfigurationChanged, configuration);
+    }
+
     public EventAddress AppendAgentAction(ActionMessage action, CompletionDescriptor invocation) {
         ArgumentNullException.ThrowIfNull(action);
         ArgumentNullException.ThrowIfNull(invocation);
@@ -345,6 +358,13 @@ public sealed class SessionJournalEngine : IDisposable {
         ValidateRequired(options.CompletionSurfaceId, nameof(options.CompletionSurfaceId));
         ValidateRequired(options.Schema, nameof(options.Schema));
         if (options.SystemPrompt is null) { throw new ArgumentNullException(nameof(options.SystemPrompt)); }
+    }
+
+    private static void ValidateConfiguration(SessionConfiguration configuration) {
+        ValidateRequired(configuration.ModelId, nameof(configuration.ModelId));
+        ValidateRequired(configuration.CompletionSurfaceId, nameof(configuration.CompletionSurfaceId));
+        ValidateRequired(configuration.Schema, nameof(configuration.Schema));
+        if (configuration.SystemPrompt is null) { throw new ArgumentNullException(nameof(configuration.SystemPrompt)); }
     }
 
     private static void ValidateRequired(string value, string name) {

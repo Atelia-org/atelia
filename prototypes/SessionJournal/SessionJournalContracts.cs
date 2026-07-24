@@ -11,6 +11,7 @@ public static class SessionJournalDefaults {
 
 public enum SessionEventKind : uint {
     SessionCreated = 1,
+    SessionConfigurationChanged = 2,
     ObservationAccepted = 3,
     AgentActionProduced = 4,
     ToolExecutionStarted = 5,

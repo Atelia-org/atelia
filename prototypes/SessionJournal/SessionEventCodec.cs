@@ -17,6 +17,7 @@ internal static class SessionEventCodec {
     public static byte[] Encode(SessionEventKind kind, object body)
         => kind switch {
             SessionEventKind.SessionCreated => EncodeSessionConfiguration((SessionConfiguration)body),
+            SessionEventKind.SessionConfigurationChanged => EncodeSessionConfiguration((SessionConfiguration)body),
             SessionEventKind.ObservationAccepted => EncodeObservationAccepted((ObservationAcceptedBody)body),
             SessionEventKind.AgentActionProduced => EncodeAgentActionProduced((AgentActionProducedBody)body),
             SessionEventKind.ToolExecutionStarted => EncodeToolExecutionStarted((ToolExecutionStartedBody)body),
@@ -39,6 +40,7 @@ internal static class SessionEventCodec {
 
         return kind switch {
             SessionEventKind.SessionCreated => DecodeSessionConfiguration(body),
+            SessionEventKind.SessionConfigurationChanged => DecodeSessionConfiguration(body),
             SessionEventKind.ObservationAccepted => DecodeObservationAccepted(body),
             SessionEventKind.AgentActionProduced => DecodeAgentActionProduced(body),
             SessionEventKind.ToolExecutionStarted => DecodeToolExecutionStarted(body),

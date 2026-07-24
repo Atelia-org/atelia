@@ -32,6 +32,7 @@ internal static partial class Program {
             var options = CliOptions.Parse(args.Skip(1).ToArray());
             return command switch {
                 "inspect" => RunInspect(options),
+                "import-session-journal" => RunImportSessionJournal(options),
                 "llm-smoke" => RunLlmSmokeAsync(options).GetAwaiter().GetResult(),
                 "replay-pattern-count" => RunReplayPatternCount(options),
                 "replay-rolling-summary" => RunReplayRollingSummaryAsync(options).GetAwaiter().GetResult(),
@@ -116,6 +117,33 @@ internal static partial class Program {
         Console.WriteLine($"records: {recordCount}");
         Console.WriteLine($"output: {outputPath}");
         if (!string.IsNullOrWhiteSpace(reportPath)) { Console.WriteLine($"report: {reportPath}"); }
+        return 0;
+    }
+
+    private static int RunImportSessionJournal(CliOptions options) {
+        var inputPath = options.Require("input");
+        var outputPath = options.Require("output");
+        var reportPath = options.Get("report-md");
+        bool force = options.HasFlag("force");
+
+        var eventSource = ChatSessionLegacyEventSourceReader.Read(inputPath);
+        var result = SessionJournalLegacyImporter.Import(eventSource, outputPath, force);
+        SessionJournalLegacyImporter.VerifyImportedRepo(outputPath, result);
+
+        Console.WriteLine($"schema: {eventSource.Schema}");
+        Console.WriteLine($"branchName: {eventSource.BranchName ?? "(none)"}");
+        Console.WriteLine($"output: {Path.GetFullPath(outputPath)}");
+        Console.WriteLine($"sessionCreated: {result.SessionCreatedCount}");
+        Console.WriteLine($"configurationChanged: {result.ConfigurationChangedCount}");
+        Console.WriteLine($"observations: {result.ObservationCount}");
+        Console.WriteLine($"agentActions: {result.AgentActionCount}");
+        Console.WriteLine($"skippedCompactions: {result.SkippedCompactionCount}");
+        Console.WriteLine($"skippedRecaps: {result.SkippedRecapCount}");
+        if (!string.IsNullOrWhiteSpace(reportPath)) {
+            SessionJournalLegacyImporter.WriteReport(reportPath, inputPath, outputPath, result);
+            Console.WriteLine($"report: {Path.GetFullPath(reportPath)}");
+        }
+
         return 0;
     }
 
@@ -276,6 +304,7 @@ internal static partial class Program {
         Console.WriteLine();
         Console.WriteLine("Commands:");
         Console.WriteLine("  inspect --input <path>");
+        Console.WriteLine("  import-session-journal --input <path> --output <repo-dir> [--force] [--report-md <path>]");
         Console.WriteLine("  llm-smoke --connections <path> [--connection <id>] [--call-log-dir <dir>] [--message <text>]");
         Console.WriteLine("  replay-pattern-count --input <path> --output <jsonl> [--report-md <path>] [--threshold-tokens <n>] [--respect-original-compaction]");
         Console.WriteLine("  replay-rolling-summary --input <path> --output <jsonl> --connections <path> [--preset rolling-summary|autobiographical-rewrite|world-understanding-rewrite] [--connection <id>] [--call-log-dir <dir>] [--threshold-tokens <n>] [--max-epochs <n>] [--system-prompt <path>] [--prompt <path>] [--target-carrier system|observation|action] [--target-block <id>]");

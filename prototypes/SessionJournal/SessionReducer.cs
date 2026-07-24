@@ -29,6 +29,15 @@ internal static class SessionReducer {
                     toolExecutionSequenceCheckpoint = 0;
                     break;
                 }
+                case SessionEventKind.SessionConfigurationChanged: {
+                    config = RequireBody<SessionConfiguration>(ev);
+                    openAction = null;
+                    observedResults.Clear();
+                    pendingToolCall = null;
+                    pendingOperationId = null;
+                    pendingToolExecutionStarted = false;
+                    break;
+                }
                 case SessionEventKind.ObservationAccepted: {
                     var body = RequireBody<ObservationAcceptedBody>(ev);
                     context.Add(new ObservationMessage(body.Content));
@@ -109,6 +118,7 @@ internal static class SessionReducer {
         => headKind switch {
             null => new SessionExecutionState(SessionExecutionPhase.Empty, null),
             SessionEventKind.SessionCreated => new SessionExecutionState(SessionExecutionPhase.Idle, headKind),
+            SessionEventKind.SessionConfigurationChanged => new SessionExecutionState(SessionExecutionPhase.Idle, headKind, ToolExecutionSequenceCheckpoint: toolExecutionSequenceCheckpoint),
             SessionEventKind.ObservationAccepted => new SessionExecutionState(SessionExecutionPhase.AwaitingAgentAction, headKind),
             SessionEventKind.AgentActionProduced => DeriveActionState(SessionEventKind.AgentActionProduced, openAction, toolExecutionSequenceCheckpoint),
             SessionEventKind.ToolExecutionStarted => new SessionExecutionState(

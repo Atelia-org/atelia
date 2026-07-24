@@ -11,6 +11,7 @@
     <ProjectReference Include="../ChatSession/ChatSession.csproj" />
     <ProjectReference Include="../ChatSession.Memory/ChatSession.Memory.csproj" />
     <ProjectReference Include="../Completion/Completion.csproj" />
+    <ProjectReference Include="../SessionJournal/SessionJournal.csproj" />
   </ItemGroup>
 
 </Project>

@@ -88,6 +88,65 @@ public sealed class SessionJournalEngineTests : IDisposable {
     }
 
     [Fact]
+    public void AppendSessionConfigurationChanged_ReopenReplacesConfigAndKeepsContext() {
+        string path = NewJournalPath();
+
+        using (var engine = SessionJournalEngine.Create(path,
+            new SessionCreateOptions(
+                ModelId: "model-A",
+                SystemPrompt: "system-A",
+                CompletionSurfaceId: "surface-A"
+            )
+        )) {
+            engine.AppendObservation("hello");
+            engine.AppendAgentAction(
+                new ActionMessage([new ActionBlock.Text("answer")]),
+                new CompletionDescriptor("fake-provider", "fake-api-v1", "model-A")
+            );
+            EventAddress address = engine.AppendSessionConfigurationChanged(
+                new SessionConfiguration("model-B", "system-B", "surface-B", SessionJournalDefaults.Schema)
+            );
+
+            string configJson = System.Text.Encoding.UTF8.GetString(engine.ReadPayloadBytes(address));
+            Assert.Equal("{\"v\":1,\"body\":{\"modelId\":\"model-B\",\"systemPrompt\":\"system-B\",\"completionSurfaceId\":\"surface-B\",\"schema\":\"atelia.session-journal.trunk.v1\"}}", configJson);
+        }
+
+        using var reopened = SessionJournalEngine.Open(path);
+        SessionProjection projection = reopened.Project();
+
+        Assert.NotNull(projection.Config);
+        Assert.Equal("model-B", projection.Config.ModelId);
+        Assert.Equal("system-B", projection.Config.SystemPrompt);
+        Assert.Equal("surface-B", projection.Config.CompletionSurfaceId);
+        Assert.Equal(2, projection.Context.Count);
+        Assert.Equal("hello", Assert.IsType<ObservationMessage>(projection.Context[0]).Content);
+        Assert.Equal("answer", Assert.IsType<ActionMessage>(projection.Context[1]).GetFlattenedText());
+        Assert.Equal(SessionExecutionPhase.Idle, projection.ExecutionState.Phase);
+        Assert.Equal(SessionEventKind.SessionConfigurationChanged, projection.ExecutionState.HeadKind);
+    }
+
+    [Fact]
+    public void AppendSessionConfigurationChanged_WhenNotIdle_Throws() {
+        string path = NewJournalPath();
+        using var engine = SessionJournalEngine.Create(path,
+            new SessionCreateOptions(
+                ModelId: "model-A",
+                SystemPrompt: "system-A",
+                CompletionSurfaceId: "surface-A"
+            )
+        );
+
+        engine.AppendObservation("hello");
+
+        var ex = Assert.Throws<InvalidOperationException>(
+            () => engine.AppendSessionConfigurationChanged(
+                new SessionConfiguration("model-B", "system-B", "surface-B", SessionJournalDefaults.Schema)
+            )
+        );
+        Assert.Contains("requires an idle session", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void ObservationPayload_UsesCanonicalEnvelopeBytesWithoutHeaderDuplication() {
         string path = NewJournalPath();
         using var engine = SessionJournalEngine.Create(path,
@@ -240,6 +299,36 @@ public sealed class SessionJournalEngineTests : IDisposable {
         Assert.Equal("scripted", result.Invocation.ProviderId);
         Assert.Equal(2, projection.Context.Count);
         Assert.Equal(SessionExecutionPhase.Idle, projection.ExecutionState.Phase);
+        Assert.Equal(0, client.RemainingResponses);
+    }
+
+    [Fact]
+    public async Task SendAsync_AfterConfigurationChanged_UsesLatestJournalConfig() {
+        string path = NewJournalPath();
+        var client = new ScriptedCompletionClient();
+        client.Enqueue(
+            request => {
+                Assert.Equal("model-B", request.ModelId);
+                Assert.Equal("system-B", request.SystemPrompt);
+                return new CompletionResult(
+                    new ActionMessage(new ActionBlock[] { new ActionBlock.Text("answer-B") }),
+                    new CompletionDescriptor("scripted", "test-api-v1", request.ModelId)
+                );
+            }
+        );
+
+        using var engine = SessionJournalEngine.Create(
+            path,
+            new SessionCreateOptions("model-A", "system-A", "surface-A"),
+            new SessionRuntime(client)
+        );
+        engine.AppendSessionConfigurationChanged(
+            new SessionConfiguration("model-B", "system-B", "surface-B", SessionJournalDefaults.Schema)
+        );
+
+        TurnResult result = await engine.SendAsync("hello", CancellationToken.None);
+
+        Assert.Equal("answer-B", result.Message.GetFlattenedText());
         Assert.Equal(0, client.RemainingResponses);
     }
 

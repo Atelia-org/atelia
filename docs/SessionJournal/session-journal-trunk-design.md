@@ -111,7 +111,7 @@ body **禁止**复述 EventJournal header 已有的字段（`EventFrameHeader.cs
 | uint | EventKind | body 关键字段 |
 |-----:|:----------|:--------------|
 | 1 | `session-created` | modelId, systemPrompt, completionSurfaceId, schema |
-| 2 | `session-configuration-changed` | 变更后的 model/systemPrompt/surface 子集 |
+| 2 | `session-configuration-changed` | 变更后的完整 SessionConfiguration 快照：modelId, systemPrompt, completionSurfaceId, schema |
 | 3 | `observation-accepted` | content（外部输入文本；未来可扩展块） |
 | 4 | `agent-action-produced` | **raw（未消毒）** `ActionMessage`（adapter-normalized，含 ReasoningBlock；复用 `ActionMessageSerialization`）、invocation 摘要 |
 | 5 | `tool-execution-started` | toolCallId, toolName, rawArgumentsJson, operationId |

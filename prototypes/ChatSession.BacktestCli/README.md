@@ -43,6 +43,24 @@ dotnet run --project prototypes/ChatSession.BacktestCli -- replay-pattern-count 
 - `--threshold-tokens <n>`：估算 token 数达到阈值后才触发分析，默认 `12000`。
 - `--respect-original-compaction`：按 export 中原始 compaction 事件回放；默认忽略原始 compaction。
 
+### import-session-journal
+
+把 legacy upgrade export 导入新的 `SessionJournal` repo。第一版只导入主干 raw facts：`initial-state` 写成 `session-created`，`model-turn` 的 observation/action 写成 `observation-accepted` / `agent-action-produced`，`update-system-prompt` 写成完整 `session-configuration-changed` 配置快照。legacy `compaction` / `recap` 属于可重建 derived artifact，导入时跳过并在输出中计数。
+
+```bash
+dotnet run --project prototypes/ChatSession.BacktestCli -- import-session-journal \
+  --input prototypes/Galatea/.atelia/galatea/sessions/cyber-copy-upgraded/chat-session-legacy-upgrade-export.json \
+  --output gitignore/session-journal/cyber-copy-upgraded \
+  --report-md gitignore/session-journal/cyber-copy-upgraded-import.md
+```
+
+常用参数：
+
+- `--input <path>`：legacy export JSON。
+- `--output <repo-dir>`：新 `SessionJournal` repo 目录。目录已存在且非空时默认失败。
+- `--force`：删除并重建目标 repo 目录，仅用于确认要替换该输出路径时。
+- `--report-md <path>`：可选，写出 legacy ordinal 到新 `EventAddress` 的映射。
+
 ### llm-smoke
 
 用指定 Completion connection 发送一次最小 LLM 请求，并写出 call log。这个命令用于先确认连接配置、API key、provider wrapper 和日志目录是否正常。
