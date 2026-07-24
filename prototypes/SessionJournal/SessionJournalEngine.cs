@@ -1,5 +1,6 @@
 using System.Collections.Immutable;
 using Atelia.Completion.Abstractions;
+using Atelia.Completion.Tools;
 using Atelia.EventJournal;
 
 namespace Atelia.SessionJournal;
@@ -111,14 +112,14 @@ public sealed class SessionJournalEngine : IDisposable {
         CancellationToken cancellationToken = default
     ) {
         ThrowIfDisposed();
-        var projection = Project(cancellationToken);
+        SessionProjection projection = Project(cancellationToken);
         return projection.ExecutionState.Phase switch {
             SessionExecutionPhase.Empty or SessionExecutionPhase.Idle => new ResumeOutcome(Advanced: false),
             SessionExecutionPhase.AwaitingAssistantAction => ToResumeOutcome(
                 await CompletePendingObservationAsync(observer, cancellationToken).ConfigureAwait(false)
             ),
-            SessionExecutionPhase.AwaitingToolExecution => throw new NotSupportedException(
-                "SessionJournal slice B does not execute tool calls; tool-loop recovery starts in slice C."
+            SessionExecutionPhase.AwaitingToolExecution => ToResumeOutcome(
+                await ContinueToolLoopAsync(projection, observer, cancellationToken).ConfigureAwait(false)
             ),
             _ => throw new InvalidOperationException($"Unknown SessionJournal execution phase '{projection.ExecutionState.Phase}'.")
         };
@@ -204,7 +205,7 @@ public sealed class SessionJournalEngine : IDisposable {
             ModelId: config.ModelId,
             SystemPrompt: config.SystemPrompt,
             Context: projection.Context,
-            Tools: ImmutableArray<ToolDefinition>.Empty
+            Tools: runtime.ToolSession?.VisibleDefinitions ?? ImmutableArray<ToolDefinition>.Empty
         );
 
         CompletionResult result = await runtime.CompletionClient
@@ -221,7 +222,69 @@ public sealed class SessionJournalEngine : IDisposable {
 
         TriggerFailpoint(SessionJournalFailpoint.AfterCompletionBeforeActionCommitted);
         AppendAssistantAction(result.Message, result.Invocation);
+
+        projection = Project(cancellationToken);
+        if (projection.ExecutionState.Phase == SessionExecutionPhase.AwaitingToolExecution) {
+            return await ContinueToolLoopAsync(projection, observer, cancellationToken).ConfigureAwait(false);
+        }
+
         return new TurnResult(result.Message, result.Invocation, FreezeErrors(result.Errors));
+    }
+
+    private async Task<TurnResult> ContinueToolLoopAsync(
+        SessionProjection projection,
+        CompletionStreamObserver? observer,
+        CancellationToken cancellationToken
+    ) {
+        SessionRuntime runtime = RequireRuntime();
+        ToolSession toolSession = RequireToolSession(runtime);
+        if (projection.ExecutionState.PendingToolCall is null) {
+            throw new InvalidDataException("AwaitingToolExecution requires a pending tool call.");
+        }
+
+        RawToolCall toolCall = projection.ExecutionState.PendingToolCall;
+        if (!projection.ExecutionState.PendingToolExecutionStarted) {
+            string operationId = projection.ExecutionState.PendingOperationId ?? BuildOperationId(projection.Head, toolCall);
+            AppendToolExecutionStarted(toolCall, operationId);
+            TriggerFailpoint(SessionJournalFailpoint.AfterToolStartedCommitted);
+        }
+
+        toolSession.RestoreExecutionSequence(projection.ExecutionState.ToolExecutionSequenceCheckpoint);
+        ToolCallExecutionResult executionResult = await toolSession.ExecuteAsync(toolCall, cancellationToken).ConfigureAwait(false);
+        AppendToolResultObserved(executionResult);
+        TriggerFailpoint(SessionJournalFailpoint.AfterToolResultCommitted);
+
+        SessionProjection refreshed = Project(cancellationToken);
+        return refreshed.ExecutionState.Phase switch {
+            SessionExecutionPhase.AwaitingToolExecution => await ContinueToolLoopAsync(refreshed, observer, cancellationToken).ConfigureAwait(false),
+            SessionExecutionPhase.AwaitingAssistantAction => await CompletePendingObservationAsync(observer, cancellationToken).ConfigureAwait(false),
+            SessionExecutionPhase.Idle => new TurnResult(
+                new ActionMessage(Array.Empty<ActionBlock>()),
+                new CompletionDescriptor(runtime.CompletionClient.Name, runtime.CompletionClient.ApiSpecId, refreshed.Config?.ModelId ?? string.Empty),
+                null
+            ),
+            _ => throw new InvalidOperationException($"Tool loop cannot continue from phase '{refreshed.ExecutionState.Phase}'.")
+        };
+    }
+
+    private EventAddress AppendToolExecutionStarted(RawToolCall call, string operationId) {
+        ArgumentNullException.ThrowIfNull(call);
+        ValidateRequired(call.ToolCallId, nameof(call.ToolCallId));
+        ValidateRequired(call.ToolName, nameof(call.ToolName));
+        ValidateRequired(call.RawArgumentsJson, nameof(call.RawArgumentsJson));
+        ValidateRequired(operationId, nameof(operationId));
+        return Append(
+            SessionEventKind.ToolExecutionStarted,
+            new ToolExecutionStartedBody(call.ToolCallId, call.ToolName, call.RawArgumentsJson, operationId)
+        );
+    }
+
+    private EventAddress AppendToolResultObserved(ToolCallExecutionResult result) {
+        ArgumentNullException.ThrowIfNull(result);
+        return Append(
+            SessionEventKind.ToolResultObserved,
+            new ToolResultObservedBody(result.ToolCallId, result.ToolName, result.ExecuteResult.Status, result.ExecuteResult.Blocks)
+        );
     }
 
     private EventAddress Append(SessionEventKind kind, object body) {
@@ -240,6 +303,9 @@ public sealed class SessionJournalEngine : IDisposable {
     private SessionRuntime RequireRuntime()
         => _runtime ?? throw new InvalidOperationException("SessionJournal runtime is required for SendAsync/ResumeAsync.");
 
+    private static ToolSession RequireToolSession(SessionRuntime runtime)
+        => runtime.ToolSession ?? throw new InvalidOperationException("SessionJournal runtime requires a ToolSession for tool execution.");
+
     private void TriggerFailpoint(SessionJournalFailpoint failpoint) {
         if (_testHooks.Failpoint == failpoint) { throw new SessionJournalFailpointException(failpoint); }
     }
@@ -254,6 +320,12 @@ public sealed class SessionJournalEngine : IDisposable {
 
     private static IReadOnlyList<string>? FreezeErrors(IReadOnlyList<string>? errors)
         => errors is null ? null : Array.AsReadOnly(errors.ToArray());
+
+    private static string BuildOperationId(EventAddress? head, RawToolCall call) {
+        ArgumentNullException.ThrowIfNull(call);
+        string turnKey = head?.ToString() ?? "no-head";
+        return $"atelia.session-journal.tool.v1:{turnKey}:{call.ToolCallId}";
+    }
 
     private static void ValidateCreateOptions(SessionCreateOptions options) {
         ValidateRequired(options.ModelId, nameof(options.ModelId));

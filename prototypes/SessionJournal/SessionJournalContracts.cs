@@ -1,4 +1,5 @@
 using Atelia.Completion.Abstractions;
+using Atelia.Completion.Tools;
 using Atelia.EventJournal;
 
 namespace Atelia.SessionJournal;
@@ -12,6 +13,8 @@ public enum SessionEventKind : uint {
     SessionCreated = 1,
     ObservationAccepted = 3,
     AssistantActionProduced = 4,
+    ToolExecutionStarted = 5,
+    ToolResultObserved = 6,
 }
 
 public enum SessionExecutionPhase {
@@ -31,7 +34,7 @@ public sealed record SessionCreateOptions(
         => new(ModelId, SystemPrompt, CompletionSurfaceId, Schema);
 }
 
-public sealed record SessionRuntime(ICompletionClient CompletionClient);
+public sealed record SessionRuntime(ICompletionClient CompletionClient, ToolSession? ToolSession = null);
 
 public sealed record TurnResult(
     ActionMessage Message,
@@ -64,7 +67,9 @@ public sealed class SessionJournalTurnAbortedException : InvalidOperationExcepti
 internal enum SessionJournalFailpoint {
     None,
     AfterObservationCommitted,
-    AfterCompletionBeforeActionCommitted
+    AfterCompletionBeforeActionCommitted,
+    AfterToolStartedCommitted,
+    AfterToolResultCommitted
 }
 
 internal sealed record SessionJournalTestHooks(
@@ -86,7 +91,10 @@ public sealed record SessionConfiguration(
 public sealed record SessionExecutionState(
     SessionExecutionPhase Phase,
     SessionEventKind? HeadKind,
-    RawToolCall? PendingToolCall = null
+    RawToolCall? PendingToolCall = null,
+    string? PendingOperationId = null,
+    bool PendingToolExecutionStarted = false,
+    long ToolExecutionSequenceCheckpoint = 0
 );
 
 public sealed record SessionProjection(
@@ -101,6 +109,20 @@ internal sealed record ObservationAcceptedBody(string Content);
 internal sealed record AssistantActionProducedBody(
     ActionMessage Action,
     CompletionDescriptor Invocation
+);
+
+internal sealed record ToolExecutionStartedBody(
+    string ToolCallId,
+    string ToolName,
+    string RawArgumentsJson,
+    string OperationId
+);
+
+internal sealed record ToolResultObservedBody(
+    string ToolCallId,
+    string ToolName,
+    ToolExecutionStatus Status,
+    IReadOnlyList<ToolResultBlock> Blocks
 );
 
 internal readonly record struct DecodedSessionEvent(

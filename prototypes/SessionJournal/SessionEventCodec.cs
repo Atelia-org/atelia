@@ -7,6 +7,7 @@ namespace Atelia.SessionJournal;
 
 internal static class SessionEventCodec {
     private const int BodySchemaVersion = 1;
+    private const string ToolResultBlockKindText = "text";
     private static readonly JsonWriterOptions WriterOptions = new() {
         Indented = false,
         Encoder = System.Text.Encodings.Web.JavaScriptEncoder.Default,
@@ -18,7 +19,9 @@ internal static class SessionEventCodec {
             SessionEventKind.SessionCreated => EncodeSessionConfiguration((SessionConfiguration)body),
             SessionEventKind.ObservationAccepted => EncodeObservationAccepted((ObservationAcceptedBody)body),
             SessionEventKind.AssistantActionProduced => EncodeAssistantActionProduced((AssistantActionProducedBody)body),
-            _ => throw new NotSupportedException($"Session event kind '{kind}' is not implemented in Slice A.")
+            SessionEventKind.ToolExecutionStarted => EncodeToolExecutionStarted((ToolExecutionStartedBody)body),
+            SessionEventKind.ToolResultObserved => EncodeToolResultObserved((ToolResultObservedBody)body),
+            _ => throw new NotSupportedException($"Session event kind '{kind}' is not implemented in Slice C.")
         };
 
     public static object Decode(SessionEventKind kind, ReadOnlySpan<byte> payload, out int bodySchemaVersion) {
@@ -38,7 +41,9 @@ internal static class SessionEventCodec {
             SessionEventKind.SessionCreated => DecodeSessionConfiguration(body),
             SessionEventKind.ObservationAccepted => DecodeObservationAccepted(body),
             SessionEventKind.AssistantActionProduced => DecodeAssistantActionProduced(body),
-            _ => throw new NotSupportedException($"Session event kind '{kind}' is not implemented in Slice A.")
+            SessionEventKind.ToolExecutionStarted => DecodeToolExecutionStarted(body),
+            SessionEventKind.ToolResultObserved => DecodeToolResultObserved(body),
+            _ => throw new NotSupportedException($"Session event kind '{kind}' is not implemented in Slice C.")
         };
     }
 
@@ -106,6 +111,53 @@ internal static class SessionEventCodec {
         return buffer.WrittenMemory.ToArray();
     }
 
+    private static byte[] EncodeToolExecutionStarted(ToolExecutionStartedBody body) {
+        ArgumentNullException.ThrowIfNull(body);
+        ValidateRequired(body.ToolCallId, nameof(body.ToolCallId));
+        ValidateRequired(body.ToolName, nameof(body.ToolName));
+        ValidateRequired(body.RawArgumentsJson, nameof(body.RawArgumentsJson));
+        ValidateRequired(body.OperationId, nameof(body.OperationId));
+
+        var buffer = new ArrayBufferWriter<byte>();
+        using (var writer = new Utf8JsonWriter(buffer, WriterOptions)) {
+            WriteEnvelopeStart(writer);
+            writer.WriteStartObject("body");
+            writer.WriteString("toolCallId", body.ToolCallId);
+            writer.WriteString("toolName", body.ToolName);
+            writer.WriteString("rawArgumentsJson", body.RawArgumentsJson);
+            writer.WriteString("operationId", body.OperationId);
+            writer.WriteEndObject();
+            writer.WriteEndObject();
+        }
+
+        return buffer.WrittenMemory.ToArray();
+    }
+
+    private static byte[] EncodeToolResultObserved(ToolResultObservedBody body) {
+        ArgumentNullException.ThrowIfNull(body);
+        ValidateRequired(body.ToolCallId, nameof(body.ToolCallId));
+        ValidateRequired(body.ToolName, nameof(body.ToolName));
+        ArgumentNullException.ThrowIfNull(body.Blocks);
+
+        var buffer = new ArrayBufferWriter<byte>();
+        using (var writer = new Utf8JsonWriter(buffer, WriterOptions)) {
+            WriteEnvelopeStart(writer);
+            writer.WriteStartObject("body");
+            writer.WriteString("toolCallId", body.ToolCallId);
+            writer.WriteString("toolName", body.ToolName);
+            writer.WriteString("status", WriteStatus(body.Status));
+            writer.WriteStartArray("blocks");
+            foreach (var block in body.Blocks) {
+                WriteToolResultBlock(writer, block);
+            }
+            writer.WriteEndArray();
+            writer.WriteEndObject();
+            writer.WriteEndObject();
+        }
+
+        return buffer.WrittenMemory.ToArray();
+    }
+
     private static SessionConfiguration DecodeSessionConfiguration(JsonElement body) {
         RequireObject(body, "session-created body");
         return new SessionConfiguration(
@@ -144,6 +196,35 @@ internal static class SessionEventCodec {
             ReadRequiredString(invocationElement, "model")
         );
         return new AssistantActionProducedBody(action, invocation);
+    }
+
+    private static ToolExecutionStartedBody DecodeToolExecutionStarted(JsonElement body) {
+        RequireObject(body, "tool-execution-started body");
+        return new ToolExecutionStartedBody(
+            ReadRequiredString(body, "toolCallId"),
+            ReadRequiredString(body, "toolName"),
+            ReadRequiredString(body, "rawArgumentsJson"),
+            ReadRequiredString(body, "operationId")
+        );
+    }
+
+    private static ToolResultObservedBody DecodeToolResultObserved(JsonElement body) {
+        RequireObject(body, "tool-result-observed body");
+        if (!body.TryGetProperty("blocks", out JsonElement blocksElement) || blocksElement.ValueKind != JsonValueKind.Array) {
+            throw new InvalidDataException("tool-result-observed body requires array property 'blocks'.");
+        }
+
+        var blocks = new List<ToolResultBlock>();
+        foreach (JsonElement blockElement in blocksElement.EnumerateArray()) {
+            blocks.Add(ReadToolResultBlock(blockElement));
+        }
+
+        return new ToolResultObservedBody(
+            ReadRequiredString(body, "toolCallId"),
+            ReadRequiredString(body, "toolName"),
+            ReadStatus(ReadRequiredString(body, "status")),
+            blocks
+        );
     }
 
     private static void WriteEnvelopeStart(Utf8JsonWriter writer) {
@@ -195,6 +276,44 @@ internal static class SessionEventCodec {
             reasoning
         );
     }
+
+    private static void WriteToolResultBlock(Utf8JsonWriter writer, ToolResultBlock block) {
+        writer.WriteStartObject();
+        switch (block) {
+            case ToolResultBlock.Text text:
+                writer.WriteString("kind", ToolResultBlockKindText);
+                writer.WriteString("content", text.Content);
+                break;
+            default:
+                throw new InvalidOperationException($"Unsupported tool result block type '{block.GetType().FullName}'.");
+        }
+        writer.WriteEndObject();
+    }
+
+    private static ToolResultBlock ReadToolResultBlock(JsonElement block) {
+        RequireObject(block, "tool result block");
+        string kind = ReadRequiredString(block, "kind");
+        return kind switch {
+            ToolResultBlockKindText => new ToolResultBlock.Text(ReadRequiredString(block, "content")),
+            _ => throw new InvalidDataException($"Unsupported tool result block kind '{kind}'.")
+        };
+    }
+
+    private static string WriteStatus(ToolExecutionStatus status)
+        => status switch {
+            ToolExecutionStatus.Success => "success",
+            ToolExecutionStatus.Failed => "failed",
+            ToolExecutionStatus.Skipped => "skipped",
+            _ => throw new InvalidOperationException($"Unsupported tool execution status '{status}'.")
+        };
+
+    private static ToolExecutionStatus ReadStatus(string value)
+        => value switch {
+            "success" => ToolExecutionStatus.Success,
+            "failed" => ToolExecutionStatus.Failed,
+            "skipped" => ToolExecutionStatus.Skipped,
+            _ => throw new InvalidDataException($"Unsupported tool execution status '{value}'.")
+        };
 
     private static void RequireObject(JsonElement element, string name) {
         if (element.ValueKind != JsonValueKind.Object) {
