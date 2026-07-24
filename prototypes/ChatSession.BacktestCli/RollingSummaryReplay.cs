@@ -46,8 +46,10 @@ internal sealed class LegacyRollingSummaryReplaySource : IRollingSummaryReplaySo
 
     public async IAsyncEnumerable<RollingSummaryReplayStep> ReadStepsAsync([System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct) {
         _ = Task.CompletedTask;
-        foreach (var replayEvent in _eventSource.Events) {
+        for (int position = 0; position < _eventSource.Events.Count; position++) {
             ct.ThrowIfCancellationRequested();
+            var replayEvent = _eventSource.Events[position];
+            if (replayEvent.Ordinal != position) { throw new InvalidDataException($"Event ordinal mismatch at index {position}: {replayEvent.Ordinal}."); }
             if (replayEvent.Ordinal < 0) { throw new InvalidDataException("Replay event ordinal cannot be negative."); }
 
             var cursor = CreateCursor(replayEvent);

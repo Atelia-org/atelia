@@ -42,6 +42,24 @@ public sealed class RollingSummaryReplaySourceTests : IDisposable {
     }
 
     [Fact]
+    public async Task LegacySource_OrdinalMismatchThrowsInvalidDataException() {
+        var source = new LegacyRollingSummaryReplaySource(new ChatSessionLegacyEventSource {
+            Schema = ChatSessionLegacyEventSourceSchema.SchemaId,
+            Events = [
+                new ChatSessionLegacyReplayEvent {
+                    Ordinal = 1,
+                    Commit = "commit-1",
+                    Kind = ChatSessionLegacyEventKinds.InitialState,
+                    Messages = []
+                }
+            ]
+        });
+
+        var ex = await Assert.ThrowsAsync<InvalidDataException>(() => DrainAsync(source));
+        Assert.Contains("Event ordinal mismatch", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task SessionJournalSource_UsesAddressedReplayAndSameRunner() {
         string repoPath = CreateSessionJournalWithTwoTurns();
         var runner = CreateRunner(SessionJournalRollingSummaryReplaySource.Open(repoPath));
@@ -117,6 +135,11 @@ public sealed class RollingSummaryReplaySourceTests : IDisposable {
         }
 
         return records;
+    }
+
+    private static async Task DrainAsync(IRollingSummaryReplaySource source) {
+        await foreach (var _ in source.ReadStepsAsync(CancellationToken.None)) {
+        }
     }
 
     private static ChatSessionLegacyEventSource CreateLegacyEventSource()
