@@ -247,3 +247,13 @@ dotnet run --project prototypes/ChatSession.BacktestCli -- replay-rolling-summar
   rolling summary。
 - latest index 的 branch/rewind 语义：第一版可只支持 `main`，但 artifact 必须记录 source head，避免把旁支
   产物误当当前有效链。
+
+## 12. 分片任务
+
+本 brief 已拆分为 5 个更小的实施切片，入口见
+[cs-5-lite-slices/README.md](cs-5-lite-slices/README.md)。
+
+其中 A/B 已完成更具体的设计方案：
+
+- [CS-5-lite-A Design: SessionJournal Addressed Replay Cursor](cs-5-lite-slices/cs-5-lite-A-addressed-replay-cursor-design.md)
+- [CS-5-lite-B 设计：Derived Recap Store 最小库](cs-5-lite-slices/cs-5-lite-B-derived-recap-store-design.md)
