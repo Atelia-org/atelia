@@ -80,7 +80,7 @@ stateDiagram-v2
 EventJournal 对 payload 不透明，只解释 header。SessionJournal 用两个层面表达领域语义：
 
 - **`OpaqueEventKind`（header uint）**= 领域判别器。`ReadEventHeaderPreview` 零 payload 即可路由 / 恢复 / 快速 replay，不必读 body。
-- **payload = 版本化 envelope** `{ "v": <bodySchemaVersion>, "body": <kind-specific> }`。`v` 是**当前 `OpaqueEventKind` 对应 body schema 的版本**，不是全局 session 版本；EventJournal header 的 `FormatVersion` 管更底层 frame 格式，两者不混。任一 kind 的 body 演进只 bump 该 kind 的 `v`。
+- **logical payload = 版本化 envelope** `{ "v": <bodySchemaVersion>, "body": <kind-specific> }`。`v` 是**当前 `OpaqueEventKind` 对应 body schema 的版本**，不是全局 session 版本；EventJournal header 的 `FormatVersion` 管更底层 frame 格式，两者不混。任一 kind 的 body 演进只 bump 该 kind 的 `v`。若 EventJournal 启用 payload codec / 压缩，RBF stored payload 可能不是这段 JSON，但 `ReadEvent` 返回给 SessionJournal 的 logical payload 必须仍是该 canonical JSON bytes。
 
 ### 2.1 Canonical 编码契约（落盘只读，必须现在钉死）
 
