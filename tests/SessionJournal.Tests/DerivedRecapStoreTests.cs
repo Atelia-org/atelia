@@ -134,6 +134,82 @@ public sealed class DerivedRecapStoreTests : IDisposable {
     }
 
     [Fact]
+    public async Task MissingContentAndMemoryPackArtifact_IsSkippedDuringRebuild() {
+        string repoPath = NewRepoPath();
+        var store = DerivedRecapStore.Open(repoPath);
+        Directory.CreateDirectory(store.ArtifactsDirectory);
+        await File.WriteAllTextAsync(
+            Path.Combine(store.ArtifactsDirectory, "missing-fields.json"),
+            """
+            {
+              "schema": "atelia.session-journal.derived-recap.v1",
+              "artifactId": "missing-fields",
+              "artifactKind": "rolling-summary",
+              "lineageKey": "rolling-summary|profile:rolling-summary|target:observation/session.rolling-summary",
+              "profileId": "rolling-summary",
+              "producer": "tests",
+              "producerFingerprint": "sha256:test",
+              "status": "produced"
+            }
+            """
+        );
+
+        var index = await store.RebuildLatestIndexAsync();
+
+        Assert.Empty(index.Items);
+    }
+
+    [Fact]
+    public async Task TryReadLatestAsync_RebuildsWhenIndexContainsInvalidEntry() {
+        var addresses = CreateAddresses();
+        string repoPath = NewRepoPath();
+        var store = DerivedRecapStore.Open(repoPath);
+        var artifact = await store.WriteProducedAsync(CreateRequest(addresses, summary: "summary v1"));
+        await File.WriteAllTextAsync(
+            store.LatestIndexPath,
+            $$"""
+            {
+              "schema": "atelia.session-journal.derived-recap.latest-index.v1",
+              "rebuiltUtc": "2026-07-25T00:00:00Z",
+              "items": {
+                "{{artifact.LineageKey.Value}}": {
+                  "artifactId": "../bad",
+                  "artifactPath": "../artifacts/../bad.json",
+                  "sourceRawHead": "ej1:00000000000000010000000100000000",
+                  "anchorRawEvent": "ej1:00000000000000010000000100000000",
+                  "sourceEndInclusive": "ej1:00000000000000010000000100000000",
+                  "createdUtc": "2026-07-25T00:00:00Z",
+                  "producerFingerprint": "sha256:test"
+                }
+              }
+            }
+            """
+        );
+
+        var latest = await store.TryReadLatestAsync(artifact.LineageKey);
+
+        Assert.NotNull(latest);
+        Assert.Equal(artifact.ArtifactId, latest.ArtifactId);
+    }
+
+    [Fact]
+    public async Task MemoryPackSchemaMismatchArtifact_IsSkippedDuringRebuild() {
+        var addresses = CreateAddresses();
+        string repoPath = NewRepoPath();
+        var store = DerivedRecapStore.Open(repoPath);
+        var artifact = await store.WriteProducedAsync(CreateRequest(addresses, summary: "summary v1"));
+        string artifactPath = Path.Combine(store.ArtifactsDirectory, $"{artifact.ArtifactId}.json");
+        var root = JsonNode.Parse(await File.ReadAllTextAsync(artifactPath))!.AsObject();
+        root["memoryPack"]!["schema"] = "atelia.session-journal.memory-pack.snapshot.v0";
+        await File.WriteAllTextAsync(artifactPath, root.ToJsonString());
+
+        var index = await store.RebuildLatestIndexAsync();
+
+        Assert.Empty(index.Items);
+        Assert.Null(await store.TryReadArtifactAsync(artifact.ArtifactId));
+    }
+
+    [Fact]
     public void EventAddressTextCodec_Roundtrip_AndRejectsInvalidText() {
         EventAddress address = CreateAddresses().SourceEndInclusive;
 
@@ -147,8 +223,19 @@ public sealed class DerivedRecapStoreTests : IDisposable {
         Assert.Null(EventAddressTextCodec.ParseNullable(null));
         Assert.False(EventAddressTextCodec.TryParse("ej1:1234", out _));
         Assert.False(EventAddressTextCodec.TryParse("ej1:zzzzzzzzzzzzzzzz0000000100000000", out _));
+        Assert.False(EventAddressTextCodec.TryParse("ej1:" + text[4..].ToUpperInvariant(), out _));
         Assert.False(EventAddressTextCodec.TryParse("ej1:00000000000000000000000100000000", out _));
         Assert.False(EventAddressTextCodec.TryParse("ej1:00000000000000010000000000000000", out _));
+    }
+
+    [Fact]
+    public async Task WriteProduced_RejectsDefaultEventAddress() {
+        var addresses = CreateAddresses() with { SourceEndInclusive = default };
+        var store = DerivedRecapStore.Open(NewRepoPath());
+
+        await Assert.ThrowsAsync<ArgumentException>(
+            async () => await store.WriteProducedAsync(CreateRequest(addresses, summary: "summary v1"))
+        );
     }
 
     [Fact]

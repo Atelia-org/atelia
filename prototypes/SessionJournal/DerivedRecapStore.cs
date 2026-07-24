@@ -207,7 +207,7 @@ public sealed class DerivedRecapStore {
         try {
             await using var stream = File.OpenRead(LatestIndexPath);
             var dto = await JsonSerializer.DeserializeAsync<DerivedRecapLatestIndexDto>(stream, JsonOptions, ct).ConfigureAwait(false);
-            if (dto?.Schema != LatestIndexSchema) { return null; }
+            if (!IsUsableLatestIndex(dto)) { return null; }
             return dto;
         }
         catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException) {
@@ -220,7 +220,9 @@ public sealed class DerivedRecapStore {
         try {
             await using var stream = File.OpenRead(path);
             var dto = await JsonSerializer.DeserializeAsync<DerivedRecapArtifactDto>(stream, JsonOptions, ct).ConfigureAwait(false);
-            return IsUsableArtifact(dto) ? dto : null;
+            if (IsUsableArtifact(dto)) { return dto; }
+            DebugUtil.Warning("DerivedRecap", $"Skipping malformed artifact '{path}'.");
+            return null;
         }
         catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException) {
             DebugUtil.Warning("DerivedRecap", $"Skipping unreadable artifact '{path}': {ex.Message}");
@@ -234,7 +236,13 @@ public sealed class DerivedRecapStore {
         if (!string.Equals(dto.Status, DerivedRecapArtifactStatus.Produced, StringComparison.Ordinal)) { return false; }
         if (!IsSafeArtifactId(dto.ArtifactId)) { return false; }
         if (string.IsNullOrWhiteSpace(dto.LineageKey)) { return false; }
-        if (dto.Content.Storage != DerivedRecapContentStorage.Inline) { return false; }
+        if (dto.Content is null) { return false; }
+        if (dto.MemoryPack is null) { return false; }
+        if (dto.Target is null) { return false; }
+        if (!string.Equals(dto.MemoryPack.Schema, MemoryPackSnapshotSchema, StringComparison.Ordinal)) { return false; }
+        if (dto.MemoryPack.System is null || dto.MemoryPack.Observation is null || dto.MemoryPack.Action is null) { return false; }
+        if (!string.Equals(dto.Content.Storage, DerivedRecapContentStorage.Inline, StringComparison.Ordinal)) { return false; }
+        if (dto.Content.Text is null || dto.Content.Sha256 is null) { return false; }
         if (!string.Equals(dto.Content.Sha256, ComputeSha256Hex(dto.Content.Text), StringComparison.Ordinal)) { return false; }
         if (!TryGetSnapshotBlockText(dto.MemoryPack, dto.Target, out string? targetText)) { return false; }
         if (!string.Equals(targetText, dto.Content.Text, StringComparison.Ordinal)) { return false; }
@@ -244,6 +252,25 @@ public sealed class DerivedRecapStore {
                EventAddressTextCodec.TryParse(dto.AnchorRawEvent, out _) &&
                EventAddressTextCodec.TryParse(dto.GoverningRuntimeConfigSetup, out _) &&
                EventAddressTextCodec.TryParse(dto.GoverningSystemPromptSetup, out _);
+    }
+
+    private static bool IsUsableLatestIndex(DerivedRecapLatestIndexDto? dto) {
+        if (dto is null) { return false; }
+        if (!string.Equals(dto.Schema, LatestIndexSchema, StringComparison.Ordinal)) { return false; }
+        if (dto.Items is null) { return false; }
+
+        foreach (var pair in dto.Items) {
+            if (string.IsNullOrWhiteSpace(pair.Key)) { return false; }
+            var item = pair.Value;
+            if (item is null) { return false; }
+            if (!IsSafeArtifactId(item.ArtifactId)) { return false; }
+            if (!EventAddressTextCodec.TryParse(item.SourceRawHead, out _)) { return false; }
+            if (!EventAddressTextCodec.TryParse(item.AnchorRawEvent, out _)) { return false; }
+            if (!EventAddressTextCodec.TryParse(item.SourceEndInclusive, out _)) { return false; }
+            if (string.IsNullOrWhiteSpace(item.ProducerFingerprint)) { return false; }
+        }
+
+        return true;
     }
 
     private static bool TryGetSnapshotBlockText(
@@ -260,6 +287,7 @@ public sealed class DerivedRecapStore {
         };
 
         foreach (var block in blocks) {
+            if (block is null) { return false; }
             if (string.Equals(block.Key, target.BlockKey, StringComparison.Ordinal)) {
                 text = block.Text;
                 return true;
@@ -468,6 +496,12 @@ public sealed record DerivedRecapWriteRequest(
         ValidateRequired(ProducerFingerprint, nameof(ProducerFingerprint));
         ArgumentNullException.ThrowIfNull(Target);
         ArgumentNullException.ThrowIfNull(MemoryPack);
+        ValidateAddress(SourceRawHead, nameof(SourceRawHead));
+        ValidateAddress(SourceEndInclusive, nameof(SourceEndInclusive));
+        ValidateAddress(AnchorRawEvent, nameof(AnchorRawEvent));
+        ValidateAddress(GoverningRuntimeConfigSetup, nameof(GoverningRuntimeConfigSetup));
+        ValidateAddress(GoverningSystemPromptSetup, nameof(GoverningSystemPromptSetup));
+        if (SourceStartExclusive is { } startExclusive) { ValidateAddress(startExclusive, nameof(SourceStartExclusive)); }
         ValidateLineagePart(ArtifactKind, nameof(ArtifactKind));
         ValidateLineagePart(ProfileId, nameof(ProfileId));
         ValidateLineagePart(Target.BlockKey, nameof(Target));
@@ -483,6 +517,12 @@ public sealed record DerivedRecapWriteRequest(
     private static void ValidateLineagePart(string value, string paramName) {
         if (value.Contains('|', StringComparison.Ordinal)) {
             throw new ArgumentException("Lineage part cannot contain '|'.", paramName);
+        }
+    }
+
+    private static void ValidateAddress(EventAddress address, string paramName) {
+        if (address.Ticket.Packed == 0 || address.SegmentNumber == 0) {
+            throw new ArgumentException("EventAddress cannot be default or half-empty.", paramName);
         }
     }
 }
@@ -582,6 +622,7 @@ public static class EventAddressTextCodec {
         }
 
         ReadOnlySpan<char> hex = value.AsSpan(Prefix.Length);
+        if (!IsLowerHex(hex)) { return false; }
         if (!ulong.TryParse(hex[..16], NumberStyles.HexNumber, CultureInfo.InvariantCulture, out ulong ticketPacked) ||
             !uint.TryParse(hex[16..24], NumberStyles.HexNumber, CultureInfo.InvariantCulture, out uint segmentNumber) ||
             !uint.TryParse(hex[24..32], NumberStyles.HexNumber, CultureInfo.InvariantCulture, out uint hintPacked)) {
@@ -599,6 +640,15 @@ public static class EventAddressTextCodec {
         if (value is null) { return true; }
         if (!TryParse(value, out var parsed)) { return false; }
         address = parsed;
+        return true;
+    }
+
+    private static bool IsLowerHex(ReadOnlySpan<char> text) {
+        foreach (char ch in text) {
+            if ((ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'f')) { continue; }
+            return false;
+        }
+
         return true;
     }
 
