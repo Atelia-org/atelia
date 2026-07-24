@@ -7,9 +7,9 @@
 ## 目的
 
 `CS-5-lite` 的原始 brief 已经具备方向性，但横跨 raw replay、derived store、Backtest CLI、LLM
-调用和验收报告。为了避免一次实现范围过大，本目录把它拆成 5 个可独立推进的小切片。
+调用和验收报告。为了避免一次实现范围过大，本目录把它拆成 6 个可独立推进的小切片。
 
-这 5 个切片共同服务同一个目标：
+这 6 个切片共同服务同一个目标：
 
 ```text
 SessionJournal raw repo
@@ -33,7 +33,9 @@ SessionJournal raw repo
 ## 已完成的细化设计
 
 - [CS-5-lite-A Design: SessionJournal Addressed Replay Cursor](cs-5-lite-A-addressed-replay-cursor-design.md)
+- [CS-5-lite-B0 设计：SessionJournal Memory Substrate 上移](cs-5-lite-B0-sessionjournal-memory-substrate-design.md)
 - [CS-5-lite-B 设计：Derived Recap Store 最小库](cs-5-lite-B-derived-recap-store-design.md)
+- [CS-5-lite-C 设计：RollingSummary Runner 输入源抽象](cs-5-lite-C-runner-input-abstraction-design.md)
 
 ## 总体实施顺序
 
