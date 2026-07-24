@@ -148,6 +148,31 @@ public sealed class SessionJournalEngineTests : IDisposable {
     }
 
     [Fact]
+    public void ObservationPayload_DefaultSessionJournalCompressionUsesZlib() {
+        string path = NewJournalPath();
+        string content = string.Concat(Enumerable.Repeat("SessionJournal 默认压缩应适合中文 LLM 输出和 JSON payload。", 160));
+        EventAddress observationAddress;
+
+        using (var engine = SessionJournalEngine.Create(
+            path,
+            new SessionCreateOptions("model-A", "system-A", "surface-A")
+        )) {
+            observationAddress = engine.AppendObservation(content);
+        }
+
+        using (var reopened = SessionJournalEngine.Open(path)) {
+            SessionProjection projection = reopened.Project();
+
+            var observation = Assert.IsType<ObservationMessage>(Assert.Single(projection.Context));
+            Assert.Equal(content, observation.Content);
+        }
+
+        using var journal = EventJournal.EventJournal.OpenExisting(path);
+        EventFrameHeader header = journal.ReadEventHeaderChecked(observationAddress).Unwrap();
+        Assert.Equal(EventPayloadCodecId.Zlib, header.PayloadCodecId);
+    }
+
+    [Fact]
     public void ActionPayload_RoundTripsToolCallAndProjectsPendingToolState() {
         string path = NewJournalPath();
         var invocation = new CompletionDescriptor("fake-provider", "fake-api-v1", "model-A");

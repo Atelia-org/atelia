@@ -6,6 +6,10 @@ using Atelia.EventJournal;
 namespace Atelia.SessionJournal;
 
 public sealed class SessionJournalEngine : IDisposable {
+    private static readonly EventJournalOptions DefaultJournalOptions = new() {
+        PayloadCodecPolicy = EventPayloadCodecPolicy.Zlib
+    };
+
     private readonly EventJournal.EventJournal _journal;
     private readonly RefId _mainRef;
     private readonly SessionJournalTestHooks _testHooks;
@@ -169,7 +173,7 @@ public sealed class SessionJournalEngine : IDisposable {
         ArgumentNullException.ThrowIfNull(options);
         ValidateCreateOptions(options);
 
-        var journal = EventJournal.EventJournal.CreateNew(path, journalOptions);
+        var journal = EventJournal.EventJournal.CreateNew(path, journalOptions ?? DefaultJournalOptions);
         try {
             journal.CreateBranch(SessionJournalDefaults.MainBranchName, startPoint: null).Unwrap();
             RefId mainRef = journal.OpenBranch(SessionJournalDefaults.MainBranchName).Unwrap();
@@ -189,7 +193,7 @@ public sealed class SessionJournalEngine : IDisposable {
         SessionJournalTestHooks? testHooks,
         EventJournalOptions? journalOptions = null
     ) {
-        var journal = EventJournal.EventJournal.OpenExisting(path, journalOptions);
+        var journal = EventJournal.EventJournal.OpenExisting(path, journalOptions ?? DefaultJournalOptions);
         try {
             RefId mainRef = journal.OpenBranch(SessionJournalDefaults.MainBranchName).Unwrap();
             return new SessionJournalEngine(journal, mainRef, runtime, testHooks);
