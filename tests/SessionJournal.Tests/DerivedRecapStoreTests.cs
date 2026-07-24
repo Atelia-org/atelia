@@ -210,6 +210,43 @@ public sealed class DerivedRecapStoreTests : IDisposable {
     }
 
     [Fact]
+    public async Task RebuildLatestIndex_DuplicateArtifactIdFiles_DoesNotThrow() {
+        var addresses = CreateAddresses();
+        string repoPath = NewRepoPath();
+        var store = DerivedRecapStore.Open(repoPath);
+        var artifact = await store.WriteProducedAsync(CreateRequest(addresses, summary: "summary v1"));
+        string artifactPath = Path.Combine(store.ArtifactsDirectory, $"{artifact.ArtifactId}.json");
+        File.Copy(artifactPath, Path.Combine(store.ArtifactsDirectory, "copied-artifact.json"));
+        Directory.Delete(store.IndexesDirectory, recursive: true);
+
+        var index = await store.RebuildLatestIndexAsync();
+
+        Assert.Single(index.Items);
+        Assert.Contains(index.Items, pair => pair.Value.ArtifactId == artifact.ArtifactId);
+    }
+
+    [Fact]
+    public async Task DuplicateMemoryPackBlockKeyArtifact_IsSkipped() {
+        var addresses = CreateAddresses();
+        string repoPath = NewRepoPath();
+        var store = DerivedRecapStore.Open(repoPath);
+        var artifact = await store.WriteProducedAsync(CreateRequest(addresses, summary: "summary v1"));
+        string artifactPath = Path.Combine(store.ArtifactsDirectory, $"{artifact.ArtifactId}.json");
+        var root = JsonNode.Parse(await File.ReadAllTextAsync(artifactPath))!.AsObject();
+        var observation = root["memoryPack"]!["observation"]!.AsArray();
+        observation.Add(new JsonObject {
+            ["key"] = "session.rolling-summary",
+            ["text"] = "duplicate"
+        });
+        await File.WriteAllTextAsync(artifactPath, root.ToJsonString());
+
+        var index = await store.RebuildLatestIndexAsync();
+
+        Assert.Empty(index.Items);
+        Assert.Null(await store.TryReadArtifactAsync(artifact.ArtifactId));
+    }
+
+    [Fact]
     public void EventAddressTextCodec_Roundtrip_AndRejectsInvalidText() {
         EventAddress address = CreateAddresses().SourceEndInclusive;
 

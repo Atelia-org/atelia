@@ -241,6 +241,9 @@ public sealed class DerivedRecapStore {
         if (dto.Target is null) { return false; }
         if (!string.Equals(dto.MemoryPack.Schema, MemoryPackSnapshotSchema, StringComparison.Ordinal)) { return false; }
         if (dto.MemoryPack.System is null || dto.MemoryPack.Observation is null || dto.MemoryPack.Action is null) { return false; }
+        if (!IsUsableMemoryPackCarrier(dto.MemoryPack.System)) { return false; }
+        if (!IsUsableMemoryPackCarrier(dto.MemoryPack.Observation)) { return false; }
+        if (!IsUsableMemoryPackCarrier(dto.MemoryPack.Action)) { return false; }
         if (!string.Equals(dto.Content.Storage, DerivedRecapContentStorage.Inline, StringComparison.Ordinal)) { return false; }
         if (dto.Content.Text is null || dto.Content.Sha256 is null) { return false; }
         if (!string.Equals(dto.Content.Sha256, ComputeSha256Hex(dto.Content.Text), StringComparison.Ordinal)) { return false; }
@@ -273,6 +276,18 @@ public sealed class DerivedRecapStore {
         return true;
     }
 
+    private static bool IsUsableMemoryPackCarrier(IReadOnlyList<MemoryPackBlockDto> blocks) {
+        var keys = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var block in blocks) {
+            if (block is null) { return false; }
+            if (string.IsNullOrWhiteSpace(block.Key)) { return false; }
+            if (block.Text is null) { return false; }
+            if (!keys.Add(block.Key)) { return false; }
+        }
+
+        return true;
+    }
+
     private static bool TryGetSnapshotBlockText(
         MemoryPackSnapshotDto memoryPack,
         DerivedRecapTarget target,
@@ -300,6 +315,9 @@ public sealed class DerivedRecapStore {
     private static DerivedRecapArtifactDto? SelectLatest(IReadOnlyList<DerivedRecapArtifactDto> artifacts) {
         if (artifacts.Count == 0) { return null; }
 
+        artifacts = DeduplicateByArtifactId(artifacts);
+        if (artifacts.Count == 0) { return null; }
+
         var byId = artifacts.ToDictionary(static artifact => artifact.ArtifactId, StringComparer.Ordinal);
         var predecessorIds = new HashSet<string>(StringComparer.Ordinal);
         foreach (var artifact in artifacts) {
@@ -323,6 +341,22 @@ public sealed class DerivedRecapStore {
             .ThenBy(static artifact => artifact.CreatedUtc)
             .ThenBy(static artifact => artifact.ArtifactId, StringComparer.Ordinal)
             .Last();
+    }
+
+    private static IReadOnlyList<DerivedRecapArtifactDto> DeduplicateByArtifactId(IReadOnlyList<DerivedRecapArtifactDto> artifacts) {
+        var deduplicated = new List<DerivedRecapArtifactDto>(artifacts.Count);
+        foreach (var group in artifacts.GroupBy(static artifact => artifact.ArtifactId, StringComparer.Ordinal)) {
+            if (group.Skip(1).Any()) {
+                DebugUtil.Warning("DerivedRecap", $"Lineage '{group.First().LineageKey}' contains duplicate artifactId '{group.Key}'; selecting one deterministic candidate.");
+            }
+
+            deduplicated.Add(group
+                .OrderBy(static artifact => ComputeIdentityHash(artifact), StringComparer.Ordinal)
+                .ThenBy(static artifact => artifact.CreatedUtc)
+                .Last());
+        }
+
+        return deduplicated;
     }
 
     private static DerivedRecapArtifact Materialize(DerivedRecapArtifactDto dto)
