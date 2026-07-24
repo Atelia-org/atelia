@@ -20,20 +20,51 @@
 ```
 
 暂不启用 `blobs/`。artifact JSON 同时内联完整 `memoryPack` 与 target block 的 `content`，这样后续 tail-only
-projection 可以直接 materialize `ContextHeader`，也能让人工打开单个 artifact 就看到当前 rolling summary。
+projection 可以直接 materialize context header / `CompletionRequest` context，也能让人工打开单个 artifact
+就看到当前 rolling summary。
 
 推荐实现位置：
 
-- 新增小项目：`prototypes/ChatSession.SessionJournal/ChatSession.SessionJournal.csproj`
-- 命名空间：`Atelia.ChatSession.SessionJournal`
-- 依赖：`prototypes/ChatSession`、`prototypes/SessionJournal`
+- 项目：`prototypes/SessionJournal/SessionJournal.csproj`
+- 命名空间：`Atelia.SessionJournal.Derived`
+- 依赖：继续沿用 `SessionJournal` 已有依赖，不新增对 `prototypes/ChatSession` 的项目引用
 
-理由：`MemoryPack` 属于 `Atelia.ChatSession`，`EventAddress` 与 repo path 属于 `Atelia.SessionJournal` /
-`Atelia.EventJournal`。把 store 放进 `SessionJournal` 会让底层 session repo 反向依赖 ChatSession memory
-领域；放进 BacktestCli 又会让后续 tail projection 无法复用。一个很薄的桥接项目最干净。
+理由：`prototypes/SessionJournal` 是新的 LLM Session 基础设施主干，derived recap store 属于 raw
+SessionJournal repo 的长期上下文派生层。旧 `prototypes/ChatSession` 的存储技术选型不再作为长期方向；
+memory / recap / compaction 相关 abstraction 后续应逐步上移到 SessionJournal 主干，而不是再通过桥接项目固化
+两套主干。
 
-如果本阶段不想新增项目，可临时放在 `prototypes/ChatSession.BacktestCli` 内部，但这只能作为脚手架，不建议作为
-CS-5-lite-B 的正式落点。
+`prototypes/ChatSession.SessionJournal` 桥接项目降为不推荐的过渡备选。只有在短期必须同时保留两套公共 API、
+且又无法及时整理 `SessionJournal` 命名空间时，才考虑临时使用；它不应成为 CS-5-lite-B 的正式落点。
+
+B0 已经把 memory substrate 的长期归属收到 `prototypes/SessionJournal`。因此 B 不再围绕旧
+`Atelia.ChatSession.MemoryPack` 或桥接项目设计正式 API：
+
+- B 在 `SessionJournal` 内定义 store、artifact DTO、`EventAddress` text codec、latest index，以及
+  `MemoryPack` 与 artifact JSON 之间的 snapshot codec。
+- B 的 public API 优先接受/返回 `Atelia.SessionJournal.MemoryPack`、`MemoryPackBlockPath` 等权威类型。
+- `MemoryPackSnapshotDto` 如果存在，应定位为 store wire DTO / codec 内部模型，而不是调用方长期手写的主模型。
+- C/D 分片负责从 addressed replay 构造 `RecentHistorySlice`，调用新的 `Atelia.SessionJournal`
+  maintainer/orchestrator，并把成功后的 `MemoryPack` 写入 B。
+- 后续另开迁移分片评估 `prototypes/ChatSession.Memory` 改名为更中性的 maintainer 实现项目；这不阻塞 B。
+
+推荐后续迁移方向：
+
+```text
+prototypes/SessionJournal
+  - MemoryPack / carrier-block path 抽象
+  - IMemoryBlockMaintainer / maintenance request-result / orchestrator
+  - DerivedRecapStore / later ArtifactSet / compaction framework
+
+maintainer implementation project
+  - autobiography rewrite profile
+  - world-understanding rewrite profile
+  - concrete prompt resources and model-facing producers
+
+prototypes/ChatSession
+  - legacy/simple engine
+  - 逐步改为引用 SessionJournal memory substrate，或在后续淘汰
+```
 
 ## 2. Store 与 repo path 关联
 
@@ -81,7 +112,7 @@ public sealed class DerivedRecapStore {
     "blockKey": "session.rolling-summary"
   },
   "memoryPack": {
-    "schema": "atelia.chat-session.memory-pack.snapshot.v1",
+    "schema": "atelia.session-journal.memory-pack.snapshot.v1",
     "system": [],
     "observation": [
       {
@@ -112,25 +143,29 @@ public sealed class DerivedRecapStore {
 
 ### 3.2 MemoryPack JSON
 
-`MemoryPack` 当前没有公共 JSON codec。B 第一版应在 store 项目内提供专用 snapshot DTO：
+`MemoryPack` 现在归属 `Atelia.SessionJournal`，但它仍不应直接暴露 `OrderedDictionary` 的默认 JSON 形态作为
+长期 wire contract。B 第一版应在 `Atelia.SessionJournal.Derived` 内提供专用 snapshot codec：
 
 ```csharp
-public sealed record MemoryPackSnapshotDto(
+internal sealed record MemoryPackSnapshotDto(
     string Schema,
     IReadOnlyList<MemoryPackBlockDto> System,
     IReadOnlyList<MemoryPackBlockDto> Observation,
     IReadOnlyList<MemoryPackBlockDto> Action
 );
 
-public sealed record MemoryPackBlockDto(string Key, string Text);
+internal sealed record MemoryPackBlockDto(string Key, string Text);
 ```
+
+如果实现者认为测试或调用侧需要可见 DTO，可把 DTO 设为 `public`，但 `DerivedRecapWriteRequest` /
+`DerivedRecapArtifact` 的主要使用路径仍应提供 `MemoryPack` 视图，避免 B/C/D 再形成一套并行 memory 模型。
 
 序列化规则：
 
-- carrier 名使用 `MemoryPackCarrierTokens` 的 `system|observation|action` 语义，但 JSON 字段名固定为
+- carrier 名使用 `system|observation|action` 语义，但 JSON 字段名固定为
   `system`、`observation`、`action`。
 - 每个 carrier 用数组而不是 object，保留 `OrderedDictionary` 顺序。
-- 反序列化时按数组顺序 `UpsertBlock`。
+- 反序列化到 `Atelia.SessionJournal.MemoryPack` 时按数组顺序 `UpsertBlock`。
 - 空 carrier 写 `[]`，不省略字段。
 
 同时保留 `content`，它必须等于 `memoryPack` 中 `target` 指向 block 的 text。读取 artifact 时如果二者不一致，
@@ -282,6 +317,10 @@ public sealed class DerivedRecapStore {
 }
 ```
 
+`DerivedRecapWriteRequest` 应接受 `MemoryPack memoryPack` 与 `MemoryPackBlockPath target`，由 store 负责生成
+snapshot JSON、校验 target block 存在并计算 `content.sha256`。这让 D 分片的调用代码保持自然：runner 只提交
+维护后的权威 `MemoryPack`，不需要理解 store 的 wire DTO 细节。
+
 `TryReadLatestAsync` 流程：
 
 1. 尝试读取 `indexes/latest-by-profile.json`。
@@ -316,17 +355,21 @@ public sealed class DerivedRecapStore {
 
 - A 提供 addressed replay message 和 `EventAddress` source range；B 不设计 cursor。
 - C/D 决定何时触发 maintainer、如何构造 `RecentHistorySlice`、成功后调用 B。
+- C/D 不应把旧 `Atelia.ChatSession.MemoryPack` 作为正式输入传给 B；legacy replay 边界若仍产出旧类型，应先转换为
+  `Atelia.SessionJournal.MemoryPack`。
 - D 负责传入 `sourceRawHead`、`sourceStartExclusive`、`sourceEndInclusive`、`anchorRawEvent`、
   governing setup addresses、`previousArtifact`、`invocation`、`callLogPaths`。
 - E 做端到端命令和“raw chain 未变化”验收。
-- B 不写 EventJournal event，不创建 branch，不做 `ArtifactSetCommitted`。
+- B 不写 EventJournal event，不创建 branch，不做 `ArtifactSetCommitted`，不继续迁移旧 `ChatSession` 主链。
 
 ## 9. 最小测试集
 
-推荐新增测试项目或放入现有相关测试：
+推荐放入现有 SessionJournal 测试：
 
-- 若新增桥接项目：`tests/ChatSession.SessionJournal.Tests`
-- 若临时落在 CLI：对应测试可先放 `tests/SessionJournal.Tests` 或新建 CLI-adjacent tests
+- `tests/SessionJournal.Tests`
+
+B 的 store 测试不应依赖 `prototypes/ChatSession`；需要 maintainer 结果时，用
+`Atelia.SessionJournal.MemoryPack` 直接构造。
 
 测试用例：
 
@@ -370,3 +413,5 @@ public sealed class DerivedRecapStore {
 - 内联 `memoryPack` 会让 artifact 文件随 summary 变大。第一版 rolling summary 可接受；当内容超过人工可读阈值或
   多 artifact 共享大正文时，再启用 `blobs/<sha256>.txt`。
 - `producerFingerprint` 的具体算法留给 D。B 只保存字符串并参与 hash，不解释它的语义。
+- 第一版会短期并存两套 memory 类型：`SessionJournal` 内的新权威 substrate，以及旧 `ChatSession` 内的 legacy
+  substrate。B/C/D 应只使用前者；旧类型只允许停留在 legacy 边界。

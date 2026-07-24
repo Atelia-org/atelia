@@ -95,8 +95,10 @@ SessionJournal raw repo
   raw events -> `SessionProjection` 的纯 reducer。
 - [SessionJournalContracts.cs](../../prototypes/SessionJournal/SessionJournalContracts.cs)
   `SessionEventKind`、`SessionProjection`、`SessionGoverningSetup` 等契约。
+- [SessionMemoryContracts.cs](../../prototypes/SessionJournal/SessionMemoryContracts.cs)
+  新 SessionJournal 主干的 `MemoryPack`、`SessionContextHeader`、maintainer/orchestrator substrate。
 - [MemorySubstrate.cs](../../prototypes/ChatSession/MemorySubstrate.cs)
-  `MemoryPack`、`RecentHistorySlice`、`ContextHeaderSnapshot`、`RewriteMemoryBlockMaintainer`。
+  旧 ChatSession legacy memory substrate；新分片不应围绕它设计正式 API。
 - [ChatSessionContracts.cs](../../prototypes/ChatSession/ChatSessionContracts.cs)
   `ContextHeader`、`RecapMessage`、`RecapSourceAnchor` 等旧 ChatSession context projection 类型。
 - [AutobiographicalRewriteProfiles.cs](../../prototypes/ChatSession.Memory/AutobiographicalRewriteProfiles.cs)
@@ -250,10 +252,11 @@ dotnet run --project prototypes/ChatSession.BacktestCli -- replay-rolling-summar
 
 ## 12. 分片任务
 
-本 brief 已拆分为 5 个更小的实施切片，入口见
+本 brief 已拆分为 6 个更小的实施切片，入口见
 [cs-5-lite-slices/README.md](cs-5-lite-slices/README.md)。
 
-其中 A/B 已完成更具体的设计方案：
+其中 A/B0/B 已完成更具体的设计方案：
 
 - [CS-5-lite-A Design: SessionJournal Addressed Replay Cursor](cs-5-lite-slices/cs-5-lite-A-addressed-replay-cursor-design.md)
+- [CS-5-lite-B0 设计：SessionJournal Memory Substrate 上移](cs-5-lite-slices/cs-5-lite-B0-sessionjournal-memory-substrate-design.md)
 - [CS-5-lite-B 设计：Derived Recap Store 最小库](cs-5-lite-slices/cs-5-lite-B-derived-recap-store-design.md)

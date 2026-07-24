@@ -24,7 +24,8 @@ SessionJournal raw repo
 | 分片 | 名称 | 主要产物 | 依赖 |
 | --- | --- | --- | --- |
 | A | [SessionJournal Addressed Replay Cursor](cs-5-lite-A-addressed-replay-cursor.md) | 带 raw address 的 history message replay API | 现有 `SessionJournalEngine.Project()` / `SessionReducer` |
-| B | [Derived Recap Store 最小库](cs-5-lite-B-derived-recap-store.md) | 可写、可读、可重建 latest index 的 recap artifact store | `EventAddress` 字符串、`MemoryPack` 序列化方案 |
+| B0 | [SessionJournal Memory Substrate 上移](cs-5-lite-B0-sessionjournal-memory-substrate.md) | SessionJournal-owned memory/maintainer substrate | A |
+| B | [Derived Recap Store 最小库](cs-5-lite-B-derived-recap-store.md) | 可写、可读、可重建 latest index 的 recap artifact store | A、B0 |
 | C | RollingSummary Runner 输入源抽象 | legacy 与 SessionJournal 可共用的 replay step runner | A |
 | D | LLM 结果写入 Derived Recap Artifact | maintainer 成功后产生带 provenance 的 artifact | A、B、C |
 | E | CLI 与端到端验收 | 新命令、文档、回归测试/手工验收命令 | A、B、C、D |
@@ -39,10 +40,12 @@ SessionJournal raw repo
 推荐先做 A 和 B 的方案定稿，再进入代码实施：
 
 1. **A** 先解决 raw event 到 `IHistoryMessage` 的可追踪投影，避免 CLI 复制 reducer 语义。
-2. **B** 定义 recap artifact 的最小持久格式和 index 语义。
-3. **C** 把现有 rolling summary runner 从 legacy event source 解耦。
-4. **D** 把 C 产生的成功维护结果写入 B。
-5. **E** 收 CLI、README、测试与一次真实 imported repo 验收。
+2. **B0** 把 memory substrate 的长期归属收到 `SessionJournal` 主干，避免 B/C/D 围绕旧
+   `ChatSession` 类型设计正式 API。
+3. **B** 定义 recap artifact 的最小持久格式和 index 语义。
+4. **C** 把现有 rolling summary runner 从 legacy event source 解耦。
+5. **D** 把 C 产生的成功维护结果写入 B。
+6. **E** 收 CLI、README、测试与一次真实 imported repo 验收。
 
 ## 跨分片约束
 
