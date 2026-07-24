@@ -90,11 +90,13 @@ public sealed class SessionJournalEngineTests : IDisposable {
             CompletionSurfaceId: "surface-A"
         ));
 
-        var address = engine.AppendObservation("hello");
+        var address = engine.AppendObservation("你好，Atelia <session>");
         byte[] payload = engine.ReadPayloadBytes(address);
         string json = System.Text.Encoding.UTF8.GetString(payload);
 
-        Assert.Equal("{\"v\":1,\"body\":{\"content\":\"hello\"}}", json);
+        Assert.Equal("{\"v\":1,\"body\":{\"content\":\"你好，Atelia <session>\"}}", json);
+        Assert.DoesNotContain("\\u4F60", json, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("\\u597D", json, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("opaqueEventKind", json, StringComparison.Ordinal);
         Assert.DoesNotContain("sequenceNumber", json, StringComparison.Ordinal);
         Assert.DoesNotContain("utcUnixTimeMilliseconds", json, StringComparison.Ordinal);
@@ -120,7 +122,7 @@ public sealed class SessionJournalEngineTests : IDisposable {
             engine.AppendObservation("need lookup");
             actionAddress = engine.AppendAssistantAction(action, invocation);
             string actionJson = System.Text.Encoding.UTF8.GetString(engine.ReadPayloadBytes(actionAddress));
-            Assert.Equal("{\"v\":1,\"body\":{\"action\":[{\"kind\":\"text\",\"content\":\"I will call a tool.\"},{\"kind\":\"tool-call\",\"toolName\":\"lookup\",\"toolCallId\":\"call-1\",\"rawArgumentsJson\":\"{\\u0022q\\u0022:\\u0022x\\u0022}\"}],\"invocation\":{\"providerId\":\"fake-provider\",\"apiSpecId\":\"fake-api-v1\",\"model\":\"model-A\"}}}", actionJson);
+            Assert.Equal("{\"v\":1,\"body\":{\"action\":[{\"kind\":\"text\",\"content\":\"I will call a tool.\"},{\"kind\":\"tool-call\",\"toolName\":\"lookup\",\"toolCallId\":\"call-1\",\"rawArgumentsJson\":\"{\\\"q\\\":\\\"x\\\"}\"}],\"invocation\":{\"providerId\":\"fake-provider\",\"apiSpecId\":\"fake-api-v1\",\"model\":\"model-A\"}}}", actionJson);
         }
 
         using var reopened = SessionJournalEngine.Open(path);
@@ -313,8 +315,8 @@ public sealed class SessionJournalEngineTests : IDisposable {
         }
 
         string[] payloads = ReadJournalPayloadJson(path);
-        Assert.Equal("{\"v\":1,\"body\":{\"toolCallId\":\"call-1\",\"toolName\":\"lookup\",\"rawArgumentsJson\":\"{\\u0022q\\u0022:\\u0022x\\u0022}\",\"operationId\":\"" + ExtractOperationId(payloads[3]) + "\"}}", payloads[3]);
-        Assert.Equal("{\"v\":1,\"body\":{\"toolCallId\":\"call-1\",\"toolName\":\"lookup\",\"status\":\"success\",\"blocks\":[{\"kind\":\"text\",\"content\":\"result:{\\u0022q\\u0022:\\u0022x\\u0022}\"}]}}", payloads[4]);
+        Assert.Equal("{\"v\":1,\"body\":{\"toolCallId\":\"call-1\",\"toolName\":\"lookup\",\"rawArgumentsJson\":\"{\\\"q\\\":\\\"x\\\"}\",\"operationId\":\"" + ExtractOperationId(payloads[3]) + "\"}}", payloads[3]);
+        Assert.Equal("{\"v\":1,\"body\":{\"toolCallId\":\"call-1\",\"toolName\":\"lookup\",\"status\":\"success\",\"blocks\":[{\"kind\":\"text\",\"content\":\"result:{\\\"q\\\":\\\"x\\\"}\"}]}}", payloads[4]);
         Assert.DoesNotContain("opaqueEventKind", payloads[3], StringComparison.Ordinal);
         Assert.DoesNotContain("sequenceNumber", payloads[4], StringComparison.Ordinal);
 

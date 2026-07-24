@@ -90,7 +90,7 @@ EventJournal 对 payload 不透明，只解释 header。SessionJournal 用两个
 - property order 固定；dictionary key 按 ordinal 排序。
 - 数字用 invariant 格式；不产生 `-0`、指数抖动。
 - null/default 字段策略固定（推荐省略 null，由 body schema 显式声明可选字段）。
-- 字符串 escaping 策略固定。
+- 字符串 escaping 策略固定为 `JavaScriptEncoder.UnsafeRelaxedJsonEscaping`：中文等非 ASCII 文本按 UTF-8 原文落盘，不写成 `\uXXXX`；JSON 必需转义（如引号、反斜杠、控制字符）仍按 `Utf8JsonWriter` 规则输出。SessionJournal payload 是落盘 canonical JSON，不得直接当作 HTML / `<script>` 内容嵌入。
 - Action body 复用 `ActionMessageSerialization`（camelCase）；SessionJournal 的 canonical writer 必须在其之上强制上述键序/空白纪律，不依赖默认 serializer 的偶然行为。
 
 > 对已落盘事件做 hash 时直接 hash 其 bytes，不重新 canonicalize；canonical writer 的作用是保证「同一 logical event 首次写出时 bytes 就唯一」。

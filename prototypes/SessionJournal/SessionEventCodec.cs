@@ -10,7 +10,7 @@ internal static class SessionEventCodec {
     private const string ToolResultBlockKindText = "text";
     private static readonly JsonWriterOptions WriterOptions = new() {
         Indented = false,
-        Encoder = System.Text.Encodings.Web.JavaScriptEncoder.Default,
+        Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
         SkipValidation = false
     };
 
