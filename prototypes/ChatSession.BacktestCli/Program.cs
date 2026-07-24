@@ -214,7 +214,7 @@ internal static partial class Program {
         Directory.CreateDirectory(callLogDir);
 
         var runner = new RollingSummaryReplayRunner(
-            eventSource,
+            new LegacyRollingSummaryReplaySource(eventSource),
             client,
             connection,
             profile,

@@ -2,12 +2,138 @@ using Atelia.ChatSession;
 using Atelia.ChatSession.Memory;
 using Atelia.Completion;
 using Atelia.Completion.Abstractions;
+using Atelia.EventJournal;
+using Atelia.SessionJournal.Derived;
 using SJ = Atelia.SessionJournal;
 
 namespace ChatSessionBacktestCli;
 
-internal sealed class RollingSummaryReplayRunner {
+internal interface IRollingSummaryReplaySource {
+    string SourceKind { get; }
+
+    IAsyncEnumerable<RollingSummaryReplayStep> ReadStepsAsync(CancellationToken ct);
+}
+
+internal sealed record RollingSummaryReplayStep(
+    RollingSummaryReplaySourceCursor Cursor,
+    IReadOnlyList<IHistoryMessage> AppendedMessages,
+    bool IsTriggerBoundary,
+    bool ResetActiveHistory = false
+);
+
+internal sealed record RollingSummaryReplaySourceCursor(
+    string SourceKind,
+    string SourceId,
+    long? EventOrdinal = null,
+    string? EventCommit = null,
+    EventAddress? SourceStartInclusive = null,
+    EventAddress? SourceEndInclusive = null,
+    EventAddress? SourceRawHead = null
+);
+
+internal static class RollingSummaryReplaySourceKinds {
+    public const string LegacyChatSessionExport = "legacy-chat-session-export";
+    public const string SessionJournal = "session-journal";
+}
+
+internal sealed class LegacyRollingSummaryReplaySource : IRollingSummaryReplaySource {
     private readonly ChatSessionLegacyEventSource _eventSource;
+
+    public LegacyRollingSummaryReplaySource(ChatSessionLegacyEventSource eventSource)
+        => _eventSource = eventSource ?? throw new ArgumentNullException(nameof(eventSource));
+
+    public string SourceKind => RollingSummaryReplaySourceKinds.LegacyChatSessionExport;
+
+    public async IAsyncEnumerable<RollingSummaryReplayStep> ReadStepsAsync([System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct) {
+        _ = Task.CompletedTask;
+        foreach (var replayEvent in _eventSource.Events) {
+            ct.ThrowIfCancellationRequested();
+            if (replayEvent.Ordinal < 0) { throw new InvalidDataException("Replay event ordinal cannot be negative."); }
+
+            var cursor = CreateCursor(replayEvent);
+            switch (replayEvent.Kind) {
+                case ChatSessionLegacyEventKinds.InitialState:
+                    yield return new RollingSummaryReplayStep(
+                        cursor,
+                        ToHistoryMessages(replayEvent.Messages),
+                        IsTriggerBoundary: false,
+                        ResetActiveHistory: true
+                    );
+                    break;
+                case ChatSessionLegacyEventKinds.ModelTurn:
+                    yield return new RollingSummaryReplayStep(
+                        cursor,
+                        ToHistoryMessages(replayEvent.AppendedMessages),
+                        IsTriggerBoundary: true
+                    );
+                    break;
+                case ChatSessionLegacyEventKinds.UpdateSystemPrompt:
+                case ChatSessionLegacyEventKinds.Compaction:
+                case ChatSessionLegacyEventKinds.RedundantSave:
+                    break;
+                default:
+                    throw new NotSupportedException($"Event kind '{replayEvent.Kind}' is not supported by rolling summary replay.");
+            }
+        }
+
+        await Task.CompletedTask.ConfigureAwait(false);
+    }
+
+    private static RollingSummaryReplaySourceCursor CreateCursor(ChatSessionLegacyReplayEvent replayEvent)
+        => new(
+            SourceKind: RollingSummaryReplaySourceKinds.LegacyChatSessionExport,
+            SourceId: replayEvent.Commit ?? replayEvent.Ordinal.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            EventOrdinal: replayEvent.Ordinal,
+            EventCommit: replayEvent.Commit
+        );
+
+    private static IReadOnlyList<IHistoryMessage> ToHistoryMessages(IReadOnlyList<ChatSessionLegacyMessageDto>? messages)
+        => messages is null || messages.Count == 0
+            ? Array.AsReadOnly(Array.Empty<IHistoryMessage>())
+            : Array.AsReadOnly(messages.Select(ChatSessionLegacyEventSourceProjection.ToHistoryMessage).ToArray());
+}
+
+internal sealed class SessionJournalRollingSummaryReplaySource : IRollingSummaryReplaySource {
+    private readonly string _repoPath;
+
+    private SessionJournalRollingSummaryReplaySource(string repoPath)
+        => _repoPath = repoPath;
+
+    public string SourceKind => RollingSummaryReplaySourceKinds.SessionJournal;
+
+    public static SessionJournalRollingSummaryReplaySource Open(string sessionJournalRepoPath) {
+        if (string.IsNullOrWhiteSpace(sessionJournalRepoPath)) {
+            throw new ArgumentException("SessionJournal repo path cannot be empty.", nameof(sessionJournalRepoPath));
+        }
+
+        return new SessionJournalRollingSummaryReplaySource(Path.GetFullPath(sessionJournalRepoPath));
+    }
+
+    public async IAsyncEnumerable<RollingSummaryReplayStep> ReadStepsAsync([System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct) {
+        using var engine = SJ.SessionJournalEngine.Open(_repoPath);
+        SJ.SessionHistoryReplay replay = engine.ReplayHistory(ct);
+        foreach (SJ.AddressedSessionHistoryMessage addressed in replay.Messages) {
+            ct.ThrowIfCancellationRequested();
+            var cursor = new RollingSummaryReplaySourceCursor(
+                SourceKind: RollingSummaryReplaySourceKinds.SessionJournal,
+                SourceId: EventAddressTextCodec.Format(addressed.SourceEndInclusive),
+                SourceStartInclusive: addressed.SourceStartInclusive,
+                SourceEndInclusive: addressed.SourceEndInclusive,
+                SourceRawHead: replay.SourceRawHead
+            );
+            yield return new RollingSummaryReplayStep(
+                cursor,
+                Array.AsReadOnly(new[] { addressed.Message }),
+                IsTriggerBoundary: addressed.Message.Kind is HistoryMessageKind.Action or HistoryMessageKind.ToolResults
+            );
+        }
+
+        await Task.CompletedTask.ConfigureAwait(false);
+    }
+}
+
+internal sealed class RollingSummaryReplayRunner {
+    private readonly IRollingSummaryReplaySource _source;
     private readonly ICompletionClient _client;
     private readonly CompletionConnectionConfig _connection;
     private readonly ReplayMemoryMaintainerProfile _profile;
@@ -18,7 +144,7 @@ internal sealed class RollingSummaryReplayRunner {
     private SJ.MemoryPack _memoryPack = new();
 
     public RollingSummaryReplayRunner(
-        ChatSessionLegacyEventSource eventSource,
+        IRollingSummaryReplaySource source,
         ICompletionClient client,
         CompletionConnectionConfig connection,
         ReplayMemoryMaintainerProfile profile,
@@ -26,7 +152,7 @@ internal sealed class RollingSummaryReplayRunner {
         int thresholdTokens,
         int maxEpochs
     ) {
-        _eventSource = eventSource ?? throw new ArgumentNullException(nameof(eventSource));
+        _source = source ?? throw new ArgumentNullException(nameof(source));
         _client = client ?? throw new ArgumentNullException(nameof(client));
         _connection = connection ?? throw new ArgumentNullException(nameof(connection));
         _profile = profile ?? throw new ArgumentNullException(nameof(profile));
@@ -40,12 +166,11 @@ internal sealed class RollingSummaryReplayRunner {
     public async IAsyncEnumerable<RollingSummaryReplayRecord> RunAsync([System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct) {
         int epochIndex = 0;
 
-        foreach (var replayEvent in _eventSource.Events) {
+        await foreach (var step in _source.ReadStepsAsync(ct).ConfigureAwait(false)) {
             ct.ThrowIfCancellationRequested();
-            if (replayEvent.Ordinal < 0) { throw new InvalidDataException("Replay event ordinal cannot be negative."); }
-
-            bool appendedModelTurn = ApplyEvent(replayEvent);
-            if (!appendedModelTurn) { continue; }
+            if (step.ResetActiveHistory) { _activeHistory.Clear(); }
+            if (step.AppendedMessages.Count > 0) { _activeHistory.AddRange(step.AppendedMessages); }
+            if (!step.IsTriggerBoundary) { continue; }
             if (epochIndex >= _maxEpochs) { yield break; }
 
             int estimatedTokens = BacktestTextUtil.EstimateTokens(_activeHistory);
@@ -64,7 +189,7 @@ internal sealed class RollingSummaryReplayRunner {
             var recentHistory = new SJ.RecentHistorySlice(
                 SJ.ContextHeaderSnapshot.FromRenderedMemoryPack(_memoryPack.Render()),
                 fragment,
-                SourceId: replayEvent.Commit ?? replayEvent.Ordinal.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                SourceId: step.Cursor.SourceId,
                 EstimatedTokens: (ulong)BacktestTextUtil.EstimateTokens(fragment)
             );
 
@@ -75,7 +200,7 @@ internal sealed class RollingSummaryReplayRunner {
                 new CompletionCallLogContext(
                     Command: "replay-rolling-summary",
                     EpochIndex: epochIndex,
-                    EventOrdinal: replayEvent.Ordinal,
+                    EventOrdinal: step.Cursor.EventOrdinal,
                     MaintainerId: _profile.MaintainerId,
                     TargetCarrier: SJ.MemoryPackCarrierTokens.ToStorageToken(_profile.Target.Carrier),
                     TargetBlockId: _profile.Target.BlockKey
@@ -116,7 +241,7 @@ internal sealed class RollingSummaryReplayRunner {
 
             yield return RollingSummaryReplayRecord.Create(
                 epochIndex,
-                replayEvent,
+                step.Cursor,
                 _thresholdTokens,
                 estimatedTokens,
                 splitIndex,
@@ -132,30 +257,6 @@ internal sealed class RollingSummaryReplayRunner {
 
             epochIndex++;
             if (exception is not null) { yield break; }
-        }
-    }
-
-    private bool ApplyEvent(ChatSessionLegacyReplayEvent replayEvent) {
-        switch (replayEvent.Kind) {
-            case ChatSessionLegacyEventKinds.InitialState:
-                _activeHistory.Clear();
-                _activeHistory.AddRange(
-                    (replayEvent.Messages ?? Array.Empty<ChatSessionLegacyMessageDto>())
-                    .Select(ChatSessionLegacyEventSourceProjection.ToHistoryMessage)
-                );
-                return false;
-            case ChatSessionLegacyEventKinds.ModelTurn:
-                _activeHistory.AddRange(
-                    (replayEvent.AppendedMessages ?? Array.Empty<ChatSessionLegacyMessageDto>())
-                    .Select(ChatSessionLegacyEventSourceProjection.ToHistoryMessage)
-                );
-                return true;
-            case ChatSessionLegacyEventKinds.UpdateSystemPrompt:
-            case ChatSessionLegacyEventKinds.Compaction:
-            case ChatSessionLegacyEventKinds.RedundantSave:
-                return false;
-            default:
-                throw new NotSupportedException($"Event kind '{replayEvent.Kind}' is not supported by rolling summary replay.");
         }
     }
 }
@@ -196,8 +297,13 @@ internal sealed record RollingSummaryReplayRecord(
     string Schema,
     string PresetName,
     int EpochIndex,
-    int EventOrdinal,
+    string SourceKind,
+    string SourceId,
+    long? EventOrdinal,
     string? EventCommit,
+    string? SourceRawHead,
+    string? SourceStartInclusive,
+    string? SourceEndInclusive,
     string ReplayMode,
     int ThresholdTokens,
     int EstimatedTokens,
@@ -218,7 +324,7 @@ internal sealed record RollingSummaryReplayRecord(
 ) {
     public static RollingSummaryReplayRecord Create(
         int epochIndex,
-        ChatSessionLegacyReplayEvent replayEvent,
+        RollingSummaryReplaySourceCursor cursor,
         int thresholdTokens,
         int estimatedTokens,
         int splitIndex,
@@ -235,8 +341,13 @@ internal sealed record RollingSummaryReplayRecord(
             Schema: "atelia.chat-session.memory-maintainer-backtest.v2",
             PresetName: profile.PresetName,
             EpochIndex: epochIndex,
-            EventOrdinal: replayEvent.Ordinal,
-            EventCommit: replayEvent.Commit,
+            SourceKind: cursor.SourceKind,
+            SourceId: cursor.SourceId,
+            EventOrdinal: cursor.EventOrdinal,
+            EventCommit: cursor.EventCommit,
+            SourceRawHead: FormatAddress(cursor.SourceRawHead),
+            SourceStartInclusive: FormatAddress(cursor.SourceStartInclusive),
+            SourceEndInclusive: FormatAddress(cursor.SourceEndInclusive),
             ReplayMode: "ignore-original-compaction.synthetic-sliding-prefix",
             ThresholdTokens: thresholdTokens,
             EstimatedTokens: estimatedTokens,
@@ -256,4 +367,7 @@ internal sealed record RollingSummaryReplayRecord(
             Errors: result?.Errors
         );
     }
+
+    private static string? FormatAddress(Atelia.EventJournal.EventAddress? address)
+        => address is null ? null : EventAddressTextCodec.Format(address.Value);
 }
