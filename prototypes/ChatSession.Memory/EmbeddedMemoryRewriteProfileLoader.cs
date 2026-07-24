@@ -1,4 +1,4 @@
-using Atelia.ChatSession;
+using Atelia.SessionJournal;
 
 namespace Atelia.ChatSession.Memory;
 

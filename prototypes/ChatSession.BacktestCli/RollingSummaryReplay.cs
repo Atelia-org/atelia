@@ -2,6 +2,7 @@ using Atelia.ChatSession;
 using Atelia.ChatSession.Memory;
 using Atelia.Completion;
 using Atelia.Completion.Abstractions;
+using SJ = Atelia.SessionJournal;
 
 namespace ChatSessionBacktestCli;
 
@@ -14,7 +15,7 @@ internal sealed class RollingSummaryReplayRunner {
     private readonly int _thresholdTokens;
     private readonly int _maxEpochs;
     private readonly List<IHistoryMessage> _activeHistory = [];
-    private MemoryPack _memoryPack = new();
+    private SJ.MemoryPack _memoryPack = new();
 
     public RollingSummaryReplayRunner(
         ChatSessionLegacyEventSource eventSource,
@@ -58,10 +59,10 @@ internal sealed class RollingSummaryReplayRunner {
 
             int beforeMaxCallId = RollingSummaryCallLogUtil.GetMaxCallId(_callLogDir);
             string callLogPath = Path.Combine(Path.GetFullPath(_callLogDir), $"{beforeMaxCallId + 1:0000}.json");
-            var oldBlock = _memoryPack.TryGetBlock(_profile.Target, out var found) ? found : new MemoryPackBlock(string.Empty);
+            var oldBlock = _memoryPack.TryGetBlock(_profile.Target, out var found) ? found : new SJ.MemoryPackBlock(string.Empty);
             var fragment = _activeHistory.Take(splitIndex).ToArray();
-            var recentHistory = new RecentHistorySlice(
-                ContextHeaderSnapshot.FromRenderedMemoryPack(_memoryPack.Render()),
+            var recentHistory = new SJ.RecentHistorySlice(
+                SJ.ContextHeaderSnapshot.FromRenderedMemoryPack(_memoryPack.Render()),
                 fragment,
                 SourceId: replayEvent.Commit ?? replayEvent.Ordinal.ToString(System.Globalization.CultureInfo.InvariantCulture),
                 EstimatedTokens: (ulong)BacktestTextUtil.EstimateTokens(fragment)
@@ -76,21 +77,21 @@ internal sealed class RollingSummaryReplayRunner {
                     EpochIndex: epochIndex,
                     EventOrdinal: replayEvent.Ordinal,
                     MaintainerId: _profile.MaintainerId,
-                    TargetCarrier: MemoryPackCarrierTokens.ToStorageToken(_profile.Target.Carrier),
+                    TargetCarrier: SJ.MemoryPackCarrierTokens.ToStorageToken(_profile.Target.Carrier),
                     TargetBlockId: _profile.Target.BlockKey
                 )
             );
-            var maintainer = new RewriteMemoryBlockMaintainer(
+            var maintainer = new SJ.RewriteMemoryBlockMaintainer(
                 _profile.RewriteProfile,
                 loggingClient,
                 _connection.ModelId
             );
 
-            MemoryBlockMaintenanceResult? result = null;
+            SJ.MemoryBlockMaintenanceResult? result = null;
             string? newBlockText = null;
             Exception? exception = null;
             try {
-                var batch = await MemoryMaintenanceOrchestrator.RunAsync(
+                var batch = await SJ.MemoryMaintenanceOrchestrator.RunAsync(
                     _memoryPack,
                     recentHistory,
                     [maintainer],
@@ -101,7 +102,7 @@ internal sealed class RollingSummaryReplayRunner {
                 _memoryPack = batch.UpdatedMemoryPack;
                 _activeHistory.RemoveRange(0, splitIndex);
             }
-            catch (Exception ex) when (ex is InvalidOperationException or ChatSessionTurnAbortedException or HttpRequestException or TaskCanceledException) {
+            catch (Exception ex) when (ex is InvalidOperationException or SJ.SessionJournalTurnAbortedException or HttpRequestException or TaskCanceledException) {
                 HadFailure = true;
                 exception = ex;
             }
@@ -161,10 +162,10 @@ internal sealed class RollingSummaryReplayRunner {
 
 internal sealed record ReplayMemoryMaintainerProfile(
     string PresetName,
-    MemoryRewriteProfile RewriteProfile
+    SJ.MemoryRewriteProfile RewriteProfile
 ) {
     public string MaintainerId => RewriteProfile.Id;
-    public MemoryPackBlockPath Target => RewriteProfile.Target;
+    public SJ.MemoryPackBlockPath Target => RewriteProfile.Target;
 }
 
 internal static class RollingSummaryCallLogUtil {
@@ -227,7 +228,7 @@ internal sealed record RollingSummaryReplayRecord(
         string? newBlockText,
         string callLogPath,
         IReadOnlyList<string> callLogPaths,
-        MemoryBlockMaintenanceResult? result,
+        SJ.MemoryBlockMaintenanceResult? result,
         Exception? exception
     ) {
         return new(
@@ -242,7 +243,7 @@ internal sealed record RollingSummaryReplayRecord(
             SplitIndex: splitIndex,
             SlidingOutMessageCount: splitIndex,
             RemainingActiveMessageCount: remainingActiveMessageCount,
-            TargetCarrier: MemoryPackCarrierTokens.ToStorageToken(profile.Target.Carrier),
+            TargetCarrier: SJ.MemoryPackCarrierTokens.ToStorageToken(profile.Target.Carrier),
             TargetBlockId: profile.Target.BlockKey,
             OldBlock: BacktestOutputUtil.CreateBlockPreview(oldBlockText),
             NewBlock: BacktestOutputUtil.CreateBlockPreview(newBlockText),

@@ -5,6 +5,7 @@ using Atelia.ChatSession;
 using Atelia.ChatSession.Memory;
 using Atelia.Completion;
 using Atelia.Completion.Abstractions;
+using SJ = Atelia.SessionJournal;
 
 namespace ChatSessionBacktestCli;
 
@@ -344,8 +345,8 @@ internal static partial class Program {
         }
     }
 
-    private static MemoryRewriteProfile ResolveRewriteProfile(
-        MemoryRewriteProfile defaults,
+    private static SJ.MemoryRewriteProfile ResolveRewriteProfile(
+        SJ.MemoryRewriteProfile defaults,
         string? systemPromptOverride,
         string? userPromptOverride
     ) => new(

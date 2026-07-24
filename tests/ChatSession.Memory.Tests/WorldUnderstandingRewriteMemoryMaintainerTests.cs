@@ -1,6 +1,6 @@
-using Atelia.ChatSession;
 using Atelia.ChatSession.Memory;
 using Atelia.Completion.Abstractions;
+using Atelia.SessionJournal;
 using Xunit;
 
 namespace Atelia.ChatSession.Memory.Tests;
