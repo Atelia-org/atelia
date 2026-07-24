@@ -18,7 +18,7 @@ internal static class SessionEventCodec {
         => kind switch {
             SessionEventKind.SessionCreated => EncodeSessionConfiguration((SessionConfiguration)body),
             SessionEventKind.ObservationAccepted => EncodeObservationAccepted((ObservationAcceptedBody)body),
-            SessionEventKind.AssistantActionProduced => EncodeAssistantActionProduced((AssistantActionProducedBody)body),
+            SessionEventKind.AgentActionProduced => EncodeAgentActionProduced((AgentActionProducedBody)body),
             SessionEventKind.ToolExecutionStarted => EncodeToolExecutionStarted((ToolExecutionStartedBody)body),
             SessionEventKind.ToolResultObserved => EncodeToolResultObserved((ToolResultObservedBody)body),
             _ => throw new NotSupportedException($"Session event kind '{kind}' is not implemented in Slice C.")
@@ -40,7 +40,7 @@ internal static class SessionEventCodec {
         return kind switch {
             SessionEventKind.SessionCreated => DecodeSessionConfiguration(body),
             SessionEventKind.ObservationAccepted => DecodeObservationAccepted(body),
-            SessionEventKind.AssistantActionProduced => DecodeAssistantActionProduced(body),
+            SessionEventKind.AgentActionProduced => DecodeAgentActionProduced(body),
             SessionEventKind.ToolExecutionStarted => DecodeToolExecutionStarted(body),
             SessionEventKind.ToolResultObserved => DecodeToolResultObserved(body),
             _ => throw new NotSupportedException($"Session event kind '{kind}' is not implemented in Slice C.")
@@ -84,7 +84,7 @@ internal static class SessionEventCodec {
         return buffer.WrittenMemory.ToArray();
     }
 
-    private static byte[] EncodeAssistantActionProduced(AssistantActionProducedBody body) {
+    private static byte[] EncodeAgentActionProduced(AgentActionProducedBody body) {
         ArgumentNullException.ThrowIfNull(body);
         ArgumentNullException.ThrowIfNull(body.Action);
         ArgumentNullException.ThrowIfNull(body.Invocation);
@@ -173,10 +173,10 @@ internal static class SessionEventCodec {
         return new ObservationAcceptedBody(ReadRequiredString(body, "content"));
     }
 
-    private static AssistantActionProducedBody DecodeAssistantActionProduced(JsonElement body) {
-        RequireObject(body, "assistant-action-produced body");
+    private static AgentActionProducedBody DecodeAgentActionProduced(JsonElement body) {
+        RequireObject(body, "agent-action-produced body");
         if (!body.TryGetProperty("action", out JsonElement actionElement) || actionElement.ValueKind != JsonValueKind.Array) {
-            throw new InvalidDataException("assistant-action-produced body requires array property 'action'.");
+            throw new InvalidDataException("agent-action-produced body requires array property 'action'.");
         }
 
         var blocks = new List<SerializedActionBlock>();
@@ -185,7 +185,7 @@ internal static class SessionEventCodec {
         }
 
         if (!body.TryGetProperty("invocation", out JsonElement invocationElement)) {
-            throw new InvalidDataException("assistant-action-produced body requires object property 'invocation'.");
+            throw new InvalidDataException("agent-action-produced body requires object property 'invocation'.");
         }
 
         RequireObject(invocationElement, "invocation");
@@ -195,7 +195,7 @@ internal static class SessionEventCodec {
             ReadRequiredString(invocationElement, "apiSpecId"),
             ReadRequiredString(invocationElement, "model")
         );
-        return new AssistantActionProducedBody(action, invocation);
+        return new AgentActionProducedBody(action, invocation);
     }
 
     private static ToolExecutionStartedBody DecodeToolExecutionStarted(JsonElement body) {

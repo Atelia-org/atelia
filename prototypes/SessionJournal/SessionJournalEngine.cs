@@ -130,7 +130,7 @@ public sealed class SessionJournalEngine : IDisposable {
         SessionProjection projection = Project(cancellationToken);
         return projection.ExecutionState.Phase switch {
             SessionExecutionPhase.Empty or SessionExecutionPhase.Idle => new ResumeOutcome(Advanced: false),
-            SessionExecutionPhase.AwaitingAssistantAction => ToResumeOutcome(
+            SessionExecutionPhase.AwaitingAgentAction => ToResumeOutcome(
                 await CompletePendingObservationAsync(observer, cancellationToken).ConfigureAwait(false)
             ),
             SessionExecutionPhase.AwaitingToolExecution => ToResumeOutcome(
@@ -145,10 +145,10 @@ public sealed class SessionJournalEngine : IDisposable {
         return Append(SessionEventKind.ObservationAccepted, new ObservationAcceptedBody(content));
     }
 
-    public EventAddress AppendAssistantAction(ActionMessage action, CompletionDescriptor invocation) {
+    public EventAddress AppendAgentAction(ActionMessage action, CompletionDescriptor invocation) {
         ArgumentNullException.ThrowIfNull(action);
         ArgumentNullException.ThrowIfNull(invocation);
-        return Append(SessionEventKind.AssistantActionProduced, new AssistantActionProducedBody(action, invocation));
+        return Append(SessionEventKind.AgentActionProduced, new AgentActionProducedBody(action, invocation));
     }
 
     public byte[] ReadPayloadBytes(EventAddress address) {
@@ -210,9 +210,9 @@ public sealed class SessionJournalEngine : IDisposable {
     ) {
         SessionRuntime runtime = RequireRuntime();
         SessionProjection projection = Project(cancellationToken);
-        if (projection.ExecutionState.Phase != SessionExecutionPhase.AwaitingAssistantAction) {
+        if (projection.ExecutionState.Phase != SessionExecutionPhase.AwaitingAgentAction) {
             throw new InvalidOperationException(
-                $"Completion can resume only from '{SessionExecutionPhase.AwaitingAssistantAction}', got '{projection.ExecutionState.Phase}'."
+                $"Completion can resume only from '{SessionExecutionPhase.AwaitingAgentAction}', got '{projection.ExecutionState.Phase}'."
             );
         }
 
@@ -238,7 +238,7 @@ public sealed class SessionJournalEngine : IDisposable {
         }
 
         TriggerFailpoint(SessionJournalFailpoint.AfterCompletionBeforeActionCommitted);
-        AppendAssistantAction(result.Message, result.Invocation);
+        AppendAgentAction(result.Message, result.Invocation);
 
         projection = Project(cancellationToken);
         if (projection.ExecutionState.Phase == SessionExecutionPhase.AwaitingToolExecution) { return await ContinueToolLoopAsync(projection, observer, cancellationToken).ConfigureAwait(false); }
@@ -270,7 +270,7 @@ public sealed class SessionJournalEngine : IDisposable {
         SessionProjection refreshed = Project(cancellationToken);
         return refreshed.ExecutionState.Phase switch {
             SessionExecutionPhase.AwaitingToolExecution => await ContinueToolLoopAsync(refreshed, observer, cancellationToken).ConfigureAwait(false),
-            SessionExecutionPhase.AwaitingAssistantAction => await CompletePendingObservationAsync(observer, cancellationToken).ConfigureAwait(false),
+            SessionExecutionPhase.AwaitingAgentAction => await CompletePendingObservationAsync(observer, cancellationToken).ConfigureAwait(false),
             SessionExecutionPhase.Idle => new TurnResult(
                 new ActionMessage(Array.Empty<ActionBlock>()),
                 new CompletionDescriptor(runtime.CompletionClient.Name, runtime.CompletionClient.ApiSpecId, refreshed.Config?.ModelId ?? string.Empty),

@@ -39,8 +39,8 @@ internal static class SessionReducer {
                     pendingToolExecutionStarted = false;
                     break;
                 }
-                case SessionEventKind.AssistantActionProduced: {
-                    var body = RequireBody<AssistantActionProducedBody>(ev);
+                case SessionEventKind.AgentActionProduced: {
+                    var body = RequireBody<AgentActionProducedBody>(ev);
                     context.Add(body.Action);
                     openAction = body.Action;
                     observedResults.Clear();
@@ -109,8 +109,8 @@ internal static class SessionReducer {
         => headKind switch {
             null => new SessionExecutionState(SessionExecutionPhase.Empty, null),
             SessionEventKind.SessionCreated => new SessionExecutionState(SessionExecutionPhase.Idle, headKind),
-            SessionEventKind.ObservationAccepted => new SessionExecutionState(SessionExecutionPhase.AwaitingAssistantAction, headKind),
-            SessionEventKind.AssistantActionProduced => DeriveActionState(SessionEventKind.AssistantActionProduced, openAction, toolExecutionSequenceCheckpoint),
+            SessionEventKind.ObservationAccepted => new SessionExecutionState(SessionExecutionPhase.AwaitingAgentAction, headKind),
+            SessionEventKind.AgentActionProduced => DeriveActionState(SessionEventKind.AgentActionProduced, openAction, toolExecutionSequenceCheckpoint),
             SessionEventKind.ToolExecutionStarted => new SessionExecutionState(
                 SessionExecutionPhase.AwaitingToolExecution,
                 headKind,
@@ -119,14 +119,14 @@ internal static class SessionReducer {
                 pendingToolExecutionStarted,
                 toolExecutionSequenceCheckpoint
             ),
-            SessionEventKind.ToolResultObserved when pendingToolCall is null => new SessionExecutionState(SessionExecutionPhase.AwaitingAssistantAction, headKind, ToolExecutionSequenceCheckpoint: toolExecutionSequenceCheckpoint),
+            SessionEventKind.ToolResultObserved when pendingToolCall is null => new SessionExecutionState(SessionExecutionPhase.AwaitingAgentAction, headKind, ToolExecutionSequenceCheckpoint: toolExecutionSequenceCheckpoint),
             SessionEventKind.ToolResultObserved => new SessionExecutionState(SessionExecutionPhase.AwaitingToolExecution, headKind, pendingToolCall, ToolExecutionSequenceCheckpoint: toolExecutionSequenceCheckpoint),
             _ => throw new NotSupportedException($"Session event kind '{headKind}' is not implemented in Slice C execution reducer.")
         };
 
     private static SessionExecutionState DeriveActionState(SessionEventKind headKind, ActionMessage? action, long toolExecutionSequenceCheckpoint) {
         if (action is null) {
-            throw new InvalidDataException("assistant-action-produced head requires a replayed ActionMessage.");
+            throw new InvalidDataException("agent-action-produced head requires a replayed ActionMessage.");
         }
 
         RawToolCall? pending = action.ToolCalls.FirstOrDefault();
@@ -159,7 +159,7 @@ internal static class SessionReducer {
 
     private static void EnsureOpenAction(DecodedSessionEvent ev, ActionMessage? openAction) {
         if (openAction is null) {
-            throw new InvalidDataException($"{ev.Kind} at {ev.Address} requires a prior assistant action with pending tool calls.");
+            throw new InvalidDataException($"{ev.Kind} at {ev.Address} requires a prior agent action with pending tool calls.");
         }
     }
 

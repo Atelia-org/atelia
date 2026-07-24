@@ -12,7 +12,7 @@ public static class SessionJournalDefaults {
 public enum SessionEventKind : uint {
     SessionCreated = 1,
     ObservationAccepted = 3,
-    AssistantActionProduced = 4,
+    AgentActionProduced = 4,
     ToolExecutionStarted = 5,
     ToolResultObserved = 6,
 }
@@ -20,7 +20,7 @@ public enum SessionEventKind : uint {
 public enum SessionExecutionPhase {
     Empty,
     Idle,
-    AwaitingAssistantAction,
+    AwaitingAgentAction,
     AwaitingToolExecution,
 }
 
@@ -106,7 +106,7 @@ public sealed record SessionProjection(
 
 internal sealed record ObservationAcceptedBody(string Content);
 
-internal sealed record AssistantActionProducedBody(
+internal sealed record AgentActionProducedBody(
     ActionMessage Action,
     CompletionDescriptor Invocation
 );

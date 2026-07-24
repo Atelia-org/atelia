@@ -65,7 +65,7 @@ public sealed class SessionJournalEngineTests : IDisposable {
             )
         )) {
             engine.AppendObservation("hello");
-            engine.AppendAssistantAction(action, invocation);
+            engine.AppendAgentAction(action, invocation);
         }
 
         using var reopened = SessionJournalEngine.Open(path);
@@ -84,7 +84,7 @@ public sealed class SessionJournalEngineTests : IDisposable {
         Assert.Equal("answer continued", projectedAction.GetFlattenedText());
         Assert.Empty(projectedAction.ToolCalls);
         Assert.Equal(SessionExecutionPhase.Idle, projection.ExecutionState.Phase);
-        Assert.Equal(SessionEventKind.AssistantActionProduced, projection.ExecutionState.HeadKind);
+        Assert.Equal(SessionEventKind.AgentActionProduced, projection.ExecutionState.HeadKind);
     }
 
     [Fact]
@@ -192,7 +192,7 @@ public sealed class SessionJournalEngineTests : IDisposable {
             )
         )) {
             engine.AppendObservation("need lookup");
-            actionAddress = engine.AppendAssistantAction(action, invocation);
+            actionAddress = engine.AppendAgentAction(action, invocation);
             string actionJson = System.Text.Encoding.UTF8.GetString(engine.ReadPayloadBytes(actionAddress));
             Assert.Equal("{\"v\":1,\"body\":{\"action\":[{\"kind\":\"text\",\"content\":\"I will call a tool.\"},{\"kind\":\"tool-call\",\"toolName\":\"lookup\",\"toolCallId\":\"call-1\",\"rawArgumentsJson\":\"{\\\"q\\\":\\\"x\\\"}\"}],\"invocation\":{\"providerId\":\"fake-provider\",\"apiSpecId\":\"fake-api-v1\",\"model\":\"model-A\"}}}", actionJson);
         }
@@ -258,7 +258,7 @@ public sealed class SessionJournalEngineTests : IDisposable {
                 () => engine.SendAsync("hello", CancellationToken.None)
             );
             Assert.Equal(SessionJournalFailpoint.AfterObservationCommitted, ex.Failpoint);
-            Assert.Equal(SessionExecutionPhase.AwaitingAssistantAction, engine.Project().ExecutionState.Phase);
+            Assert.Equal(SessionExecutionPhase.AwaitingAgentAction, engine.Project().ExecutionState.Phase);
             Assert.Single(engine.Project().Context);
             Assert.Equal(0, firstClient.Calls);
         }
@@ -307,7 +307,7 @@ public sealed class SessionJournalEngineTests : IDisposable {
                 () => engine.SendAsync("hello", CancellationToken.None)
             );
             Assert.Equal(SessionJournalFailpoint.AfterCompletionBeforeActionCommitted, ex.Failpoint);
-            Assert.Equal(SessionExecutionPhase.AwaitingAssistantAction, engine.Project().ExecutionState.Phase);
+            Assert.Equal(SessionExecutionPhase.AwaitingAgentAction, engine.Project().ExecutionState.Phase);
             Assert.Equal(1, firstClient.Calls);
         }
 
@@ -495,7 +495,7 @@ public sealed class SessionJournalEngineTests : IDisposable {
                 () => engine.SendAsync("need lookup", CancellationToken.None)
             );
             Assert.Equal(SessionJournalFailpoint.AfterToolResultCommitted, ex.Failpoint);
-            Assert.Equal(SessionExecutionPhase.AwaitingAssistantAction, engine.Project().ExecutionState.Phase);
+            Assert.Equal(SessionExecutionPhase.AwaitingAgentAction, engine.Project().ExecutionState.Phase);
             Assert.Equal(1, tool.Calls);
         }
 
