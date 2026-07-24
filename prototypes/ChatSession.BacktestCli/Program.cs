@@ -12,8 +12,6 @@ internal static partial class Program {
     private const int DefaultThresholdTokens = 24_000;
     private const string DefaultLlmSmokeCallLogDir = "gitignore/backtest/llm-smoke-calls";
     private const string DefaultRollingSummaryCallLogDir = "gitignore/backtest/rolling-summary-calls";
-    private const string DefaultRollingSummaryMaintainerId = "rolling-summary.memory-block";
-    private const string DefaultRollingSummaryBlockId = "session.rolling-summary";
 
     private static readonly JsonSerializerOptions JsonOptions = new() {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
@@ -197,7 +195,7 @@ internal static partial class Program {
         var callLogDir = options.Get("call-log-dir") ?? DefaultRollingSummaryCallLogDir;
         var thresholdTokens = options.GetInt("threshold-tokens", DefaultThresholdTokens);
         var maxEpochs = options.GetInt("max-epochs", int.MaxValue);
-        var preset = options.Get("preset") ?? RollingSummaryReplayDefaults.PresetName;
+        var preset = options.Get("preset") ?? "autobiographical-rewrite";
         var systemPromptOverride = ReadPromptOrNull(options.Get("system-prompt"));
         var userPromptOverride = ReadPromptOrNull(options.Get("prompt"));
 
@@ -308,7 +306,7 @@ internal static partial class Program {
         Console.WriteLine("  import-session-journal --input <path> --output <repo-dir> [--force] [--report-md <path>]");
         Console.WriteLine("  llm-smoke --connections <path> [--connection <id>] [--call-log-dir <dir>] [--message <text>]");
         Console.WriteLine("  replay-pattern-count --input <path> --output <jsonl> [--report-md <path>] [--threshold-tokens <n>] [--respect-original-compaction]");
-        Console.WriteLine("  replay-rolling-summary --input <path> --output <jsonl> --connections <path> [--preset rolling-summary|autobiographical-rewrite|world-understanding-rewrite] [--connection <id>] [--call-log-dir <dir>] [--threshold-tokens <n>] [--max-epochs <n>] [--system-prompt <path>] [--prompt <path>] [--target-carrier system|observation|action] [--target-block <id>]");
+        Console.WriteLine("  replay-rolling-summary --input <path> --output <jsonl> --connections <path> [--preset autobiographical-rewrite|world-understanding-rewrite] [--connection <id>] [--call-log-dir <dir>] [--threshold-tokens <n>] [--max-epochs <n>] [--system-prompt <path>] [--prompt <path>]");
     }
 
     private static string? ReadPromptOrNull(string? path)
@@ -321,22 +319,6 @@ internal static partial class Program {
         string? userPromptOverride
     ) {
         switch (preset) {
-            case RollingSummaryReplayDefaults.PresetName:
-                var targetCarrier = ParseCarrier(options.Get("target-carrier"), MemoryPackCarrier.Observation);
-                var targetBlockId = options.Get("target-block") ?? DefaultRollingSummaryBlockId;
-                var target = new MemoryPackBlockPath(targetCarrier, targetBlockId);
-                var systemPrompt = systemPromptOverride ?? RollingSummaryReplayDefaults.SystemPrompt;
-                var userPrompt = userPromptOverride ?? RollingSummaryReplayDefaults.UserPrompt;
-                return new ReplayMemoryMaintainerProfile(
-                    RollingSummaryReplayDefaults.PresetName,
-                    new MemoryRewriteProfile(
-                        DefaultRollingSummaryMaintainerId,
-                        target,
-                        systemPrompt,
-                        userPrompt
-                    )
-                );
-
             case "autobiographical-rewrite":
                 return new ReplayMemoryMaintainerProfile(
                     preset,
@@ -373,11 +355,6 @@ internal static partial class Program {
         userPromptOverride ?? defaults.UserPrompt
     );
 
-    private static MemoryPackCarrier ParseCarrier(string? text, MemoryPackCarrier defaultCarrier) {
-        if (string.IsNullOrWhiteSpace(text)) { return defaultCarrier; }
-        if (MemoryPackCarrierTokens.TryParseStorageToken(text, out var carrier)) { return carrier; }
-        throw new ArgumentException($"Unsupported memory pack carrier '{text}'. Expected system, observation, or action.");
-    }
 }
 
 internal sealed class CliOptions {

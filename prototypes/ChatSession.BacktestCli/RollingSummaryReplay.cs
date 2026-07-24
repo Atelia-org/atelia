@@ -5,29 +5,6 @@ using Atelia.Completion.Abstractions;
 
 namespace ChatSessionBacktestCli;
 
-internal static class RollingSummaryReplayDefaults {
-    public const string PresetName = "rolling-summary";
-
-    public const string SystemPrompt = """
-        You maintain one durable rolling summary block for a long-running chat session.
-        Return only the complete replacement text for the target memory block.
-        Do not include prefaces, analysis labels, Markdown code fences, or explanations outside the block.
-        The first character of your response must be the first character of the memory block itself.
-        """;
-
-    public const string UserPrompt = """
-        从“即将滑出上下文窗口”的片段中提炼后续仍有用的信息，并把它们合并进当前 rolling summary。
-
-        目标：
-        - 保留长期有用的事实、决策、未完成任务、用户偏好、当前实现状态、重要路径和验证结果。
-        - 删除已经过时、被后文否定、纯寒暄、临时操作细节、低价值逐字流水账。
-        - 如果新片段修正了旧 summary，直接更新为当前可信版本。
-        - 输出完整新版 block，不要只输出 delta。
-        - 默认使用简体中文；代码标识符、路径、命令、模型名、专有名词保持原文。
-        - 结构要便于后续 maintainer 再维护，优先短小分组和项目符号。
-        """;
-}
-
 internal sealed class RollingSummaryReplayRunner {
     private readonly ChatSessionLegacyEventSource _eventSource;
     private readonly ICompletionClient _client;
