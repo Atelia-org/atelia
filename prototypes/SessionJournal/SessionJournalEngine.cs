@@ -85,9 +85,7 @@ public sealed class SessionJournalEngine : IDisposable {
         foreach (EventAddress address in chain) {
             cancellationToken.ThrowIfCancellationRequested();
             using EventFrame frame = _journal.ReadEvent(address).Unwrap();
-            if (!Enum.IsDefined(typeof(SessionEventKind), frame.Header.OpaqueEventKind)) { throw new InvalidDataException($"Unknown SessionJournal event kind '{frame.Header.OpaqueEventKind}' at {address}."); }
-
-            if (frame.Header.Hint != default(AddressHint)) { throw new InvalidDataException($"SessionJournal trunk requires EventAddress hint 0, got '{frame.Header.Hint}' at {address}."); }
+            ValidateSessionHeaderPreview(address, frame.Header);
 
             var kind = (SessionEventKind)frame.Header.OpaqueEventKind;
             object body = SessionEventCodec.Decode(kind, frame.Payload, out int version);
@@ -174,6 +172,50 @@ public sealed class SessionJournalEngine : IDisposable {
         ArgumentNullException.ThrowIfNull(action);
         ArgumentNullException.ThrowIfNull(invocation);
         return Append(SessionEventKind.AgentActionProduced, new AgentActionProducedBody(action, invocation));
+    }
+
+    public SessionGoverningSetup ResolveGoverningSetup(EventAddress head, CancellationToken cancellationToken = default) {
+        ThrowIfDisposed();
+
+        EventAddress? cursor = head;
+        EventAddress? runtimeConfigSetupAddress = null;
+        EventAddress? systemPromptSetupAddress = null;
+
+        while (cursor is { } address && (runtimeConfigSetupAddress is null || systemPromptSetupAddress is null)) {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            EventFrameHeader header = _journal.ReadEventHeaderPreview(address).Unwrap();
+            ValidateSessionHeaderPreview(address, header);
+
+            var kind = (SessionEventKind)header.OpaqueEventKind;
+            if (kind == SessionEventKind.RuntimeConfigSetup && runtimeConfigSetupAddress is null) {
+                runtimeConfigSetupAddress = address;
+            }
+            else if (kind == SessionEventKind.SystemPromptSetup && systemPromptSetupAddress is null) {
+                systemPromptSetupAddress = address;
+            }
+
+            cursor = header.Parent;
+        }
+
+        if (runtimeConfigSetupAddress is null) {
+            throw new InvalidDataException($"SessionJournal governing setup for head {head} is missing runtime-config-setup on its parent chain.");
+        }
+
+        if (systemPromptSetupAddress is null) {
+            throw new InvalidDataException($"SessionJournal governing setup for head {head} is missing system-prompt-setup on its parent chain.");
+        }
+
+        SessionRuntimeConfiguration runtimeConfig = ReadRuntimeConfigSetup(runtimeConfigSetupAddress.Value);
+        string systemPrompt = ReadSystemPromptSetup(systemPromptSetupAddress.Value);
+
+        return new SessionGoverningSetup(
+            head,
+            runtimeConfigSetupAddress.Value,
+            runtimeConfig,
+            systemPromptSetupAddress.Value,
+            systemPrompt
+        );
     }
 
     public byte[] ReadPayloadBytes(EventAddress address) {
@@ -340,6 +382,43 @@ public sealed class SessionJournalEngine : IDisposable {
             opaqueEventKind: (uint)kind,
             hint: default
         ).Unwrap().EventAddress;
+    }
+
+    private static void ValidateSessionHeaderPreview(EventAddress address, EventFrameHeader header) {
+        if (!Enum.IsDefined(typeof(SessionEventKind), header.OpaqueEventKind)) {
+            throw new InvalidDataException($"Unknown SessionJournal event kind '{header.OpaqueEventKind}' at {address}.");
+        }
+
+        if (header.Hint != default(AddressHint)) {
+            throw new InvalidDataException($"SessionJournal trunk requires EventAddress hint 0, got '{header.Hint}' at {address}.");
+        }
+    }
+
+    private SessionRuntimeConfiguration ReadRuntimeConfigSetup(EventAddress address) {
+        using EventFrame frame = _journal.ReadEvent(address).Unwrap();
+        ValidateSessionHeaderPreview(address, frame.Header);
+        var kind = (SessionEventKind)frame.Header.OpaqueEventKind;
+        if (kind != SessionEventKind.RuntimeConfigSetup) {
+            throw new InvalidDataException($"Expected runtime-config-setup at {address}, got '{kind}'.");
+        }
+
+        object body = SessionEventCodec.Decode(kind, frame.Payload, out _);
+        return body as SessionRuntimeConfiguration
+            ?? throw new InvalidDataException($"runtime-config-setup at {address} decoded to unexpected body type '{body.GetType().Name}'.");
+    }
+
+    private string ReadSystemPromptSetup(EventAddress address) {
+        using EventFrame frame = _journal.ReadEvent(address).Unwrap();
+        ValidateSessionHeaderPreview(address, frame.Header);
+        var kind = (SessionEventKind)frame.Header.OpaqueEventKind;
+        if (kind != SessionEventKind.SystemPromptSetup) {
+            throw new InvalidDataException($"Expected system-prompt-setup at {address}, got '{kind}'.");
+        }
+
+        object body = SessionEventCodec.Decode(kind, frame.Payload, out _);
+        return body is SystemPromptSetupBody prompt
+            ? prompt.Content
+            : throw new InvalidDataException($"system-prompt-setup at {address} decoded to unexpected body type '{body.GetType().Name}'.");
     }
 
     private SessionRuntime RequireRuntime()

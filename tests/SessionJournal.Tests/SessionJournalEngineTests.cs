@@ -164,6 +164,66 @@ public sealed class SessionJournalEngineTests : IDisposable {
     }
 
     [Fact]
+    public void ResolveGoverningSetup_FromHeadFindsLatestSetupWithoutReadingIntermediatePayloads() {
+        string path = NewJournalPath();
+        EventAddress runtimeA;
+        EventAddress promptA;
+        EventAddress runtimeB;
+        EventAddress promptB;
+
+        using (var journal = EventJournal.EventJournal.CreateNew(path)) {
+            journal.CreateBranch(SessionJournalDefaults.MainBranchName, startPoint: null).Unwrap();
+            runtimeA = CommitToMain(journal, null, SessionEventKind.RuntimeConfigSetup, "{\"v\":1,\"body\":{\"modelId\":\"model-A\",\"completionSurfaceId\":\"surface-A\",\"schema\":\"atelia.session-journal.trunk.v1\"}}");
+            promptA = CommitToMain(journal, runtimeA, SessionEventKind.SystemPromptSetup, "{\"v\":1,\"body\":{\"content\":\"system-A\"}}");
+            EventAddress created = CommitToMain(journal, promptA, SessionEventKind.SessionCreated, "{\"v\":1,\"body\":{}}");
+            EventAddress malformedObservation = CommitToMain(journal, created, SessionEventKind.ObservationAccepted, "this is intentionally not json");
+            runtimeB = CommitToMain(journal, malformedObservation, SessionEventKind.RuntimeConfigSetup, "{\"v\":1,\"body\":{\"modelId\":\"model-B\",\"completionSurfaceId\":\"surface-B\",\"schema\":\"atelia.session-journal.trunk.v1\"}}");
+            EventAddress malformedAction = CommitToMain(journal, runtimeB, SessionEventKind.AgentActionProduced, "also intentionally not json");
+            promptB = CommitToMain(journal, malformedAction, SessionEventKind.SystemPromptSetup, "{\"v\":1,\"body\":{\"content\":\"system-B\"}}");
+        }
+
+        using var engine = SessionJournalEngine.Open(path);
+        SessionGoverningSetup setup = engine.ResolveGoverningSetup(promptB);
+
+        Assert.Equal(promptB, setup.Head);
+        Assert.Equal(runtimeB, setup.RuntimeConfigSetupAddress);
+        Assert.Equal(promptB, setup.SystemPromptSetupAddress);
+        Assert.Equal("model-B", setup.RuntimeConfig.ModelId);
+        Assert.Equal("surface-B", setup.RuntimeConfig.CompletionSurfaceId);
+        Assert.Equal(SessionJournalDefaults.Schema, setup.RuntimeConfig.Schema);
+        Assert.Equal("system-B", setup.SystemPrompt);
+        Assert.NotEqual(runtimeA, setup.RuntimeConfigSetupAddress);
+        Assert.NotEqual(promptA, setup.SystemPromptSetupAddress);
+    }
+
+    [Fact]
+    public void ResolveGoverningSetup_WhenSetupIsMissing_Throws() {
+        string missingPromptPath = NewJournalPath();
+        EventAddress runtimeOnlyHead;
+        using (var journal = EventJournal.EventJournal.CreateNew(missingPromptPath)) {
+            journal.CreateBranch(SessionJournalDefaults.MainBranchName, startPoint: null).Unwrap();
+            runtimeOnlyHead = CommitToMain(journal, null, SessionEventKind.RuntimeConfigSetup, "{\"v\":1,\"body\":{\"modelId\":\"model-A\",\"completionSurfaceId\":\"surface-A\",\"schema\":\"atelia.session-journal.trunk.v1\"}}");
+        }
+
+        using (var engine = SessionJournalEngine.Open(missingPromptPath)) {
+            var ex = Assert.Throws<InvalidDataException>(() => engine.ResolveGoverningSetup(runtimeOnlyHead));
+            Assert.Contains("missing system-prompt-setup", ex.Message, StringComparison.Ordinal);
+        }
+
+        string missingRuntimePath = NewJournalPath();
+        EventAddress promptOnlyHead;
+        using (var journal = EventJournal.EventJournal.CreateNew(missingRuntimePath)) {
+            journal.CreateBranch(SessionJournalDefaults.MainBranchName, startPoint: null).Unwrap();
+            promptOnlyHead = CommitToMain(journal, null, SessionEventKind.SystemPromptSetup, "{\"v\":1,\"body\":{\"content\":\"system-A\"}}");
+        }
+
+        using (var engine = SessionJournalEngine.Open(missingRuntimePath)) {
+            var ex = Assert.Throws<InvalidDataException>(() => engine.ResolveGoverningSetup(promptOnlyHead));
+            Assert.Contains("missing runtime-config-setup", ex.Message, StringComparison.Ordinal);
+        }
+    }
+
+    [Fact]
     public void AppendSetupEvents_WhenNotIdle_Throw() {
         string path = NewJournalPath();
         using var engine = SessionJournalEngine.Create(path,

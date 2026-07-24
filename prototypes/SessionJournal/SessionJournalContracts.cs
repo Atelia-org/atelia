@@ -106,6 +106,14 @@ public sealed record SessionProjection(
     EventAddress? Head
 );
 
+public sealed record SessionGoverningSetup(
+    EventAddress Head,
+    EventAddress RuntimeConfigSetupAddress,
+    SessionRuntimeConfiguration RuntimeConfig,
+    EventAddress SystemPromptSetupAddress,
+    string SystemPrompt
+);
+
 internal sealed record SessionCreatedBody;
 
 internal sealed record SystemPromptSetupBody(string Content);
