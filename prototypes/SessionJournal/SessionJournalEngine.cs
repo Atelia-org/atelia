@@ -39,6 +39,14 @@ public sealed class SessionJournalEngine : IDisposable {
         SessionJournalTestHooks testHooks
     ) => CreateCore(path, options, runtime, testHooks);
 
+    internal static SessionJournalEngine CreateForTest(
+        string path,
+        SessionCreateOptions options,
+        SessionRuntime? runtime,
+        SessionJournalTestHooks testHooks,
+        EventJournalOptions journalOptions
+    ) => CreateCore(path, options, runtime, testHooks, journalOptions);
+
     public static SessionJournalEngine Open(string path)
         => OpenCore(path, runtime: null, testHooks: null);
 
@@ -50,6 +58,13 @@ public sealed class SessionJournalEngine : IDisposable {
         SessionRuntime runtime,
         SessionJournalTestHooks testHooks
     ) => OpenCore(path, runtime, testHooks);
+
+    internal static SessionJournalEngine OpenForTest(
+        string path,
+        SessionRuntime? runtime,
+        SessionJournalTestHooks testHooks,
+        EventJournalOptions journalOptions
+    ) => OpenCore(path, runtime, testHooks, journalOptions);
 
     public void UseRuntime(SessionRuntime runtime) {
         ThrowIfDisposed();
@@ -66,13 +81,9 @@ public sealed class SessionJournalEngine : IDisposable {
         foreach (EventAddress address in chain) {
             cancellationToken.ThrowIfCancellationRequested();
             using EventFrame frame = _journal.ReadEvent(address).Unwrap();
-            if (!Enum.IsDefined(typeof(SessionEventKind), frame.Header.OpaqueEventKind)) {
-                throw new InvalidDataException($"Unknown SessionJournal event kind '{frame.Header.OpaqueEventKind}' at {address}.");
-            }
+            if (!Enum.IsDefined(typeof(SessionEventKind), frame.Header.OpaqueEventKind)) { throw new InvalidDataException($"Unknown SessionJournal event kind '{frame.Header.OpaqueEventKind}' at {address}."); }
 
-            if (frame.Header.Hint != default(AddressHint)) {
-                throw new InvalidDataException($"SessionJournal trunk requires EventAddress hint 0, got '{frame.Header.Hint}' at {address}.");
-            }
+            if (frame.Header.Hint != default(AddressHint)) { throw new InvalidDataException($"SessionJournal trunk requires EventAddress hint 0, got '{frame.Header.Hint}' at {address}."); }
 
             var kind = (SessionEventKind)frame.Header.OpaqueEventKind;
             object body = SessionEventCodec.Decode(kind, frame.Payload, out int version);
@@ -152,12 +163,13 @@ public sealed class SessionJournalEngine : IDisposable {
         string path,
         SessionCreateOptions options,
         SessionRuntime? runtime,
-        SessionJournalTestHooks? testHooks
+        SessionJournalTestHooks? testHooks,
+        EventJournalOptions? journalOptions = null
     ) {
         ArgumentNullException.ThrowIfNull(options);
         ValidateCreateOptions(options);
 
-        var journal = EventJournal.EventJournal.CreateNew(path);
+        var journal = EventJournal.EventJournal.CreateNew(path, journalOptions);
         try {
             journal.CreateBranch(SessionJournalDefaults.MainBranchName, startPoint: null).Unwrap();
             RefId mainRef = journal.OpenBranch(SessionJournalDefaults.MainBranchName).Unwrap();
@@ -174,9 +186,10 @@ public sealed class SessionJournalEngine : IDisposable {
     private static SessionJournalEngine OpenCore(
         string path,
         SessionRuntime? runtime,
-        SessionJournalTestHooks? testHooks
+        SessionJournalTestHooks? testHooks,
+        EventJournalOptions? journalOptions = null
     ) {
-        var journal = EventJournal.EventJournal.OpenExisting(path);
+        var journal = EventJournal.EventJournal.OpenExisting(path, journalOptions);
         try {
             RefId mainRef = journal.OpenBranch(SessionJournalDefaults.MainBranchName).Unwrap();
             return new SessionJournalEngine(journal, mainRef, runtime, testHooks);
@@ -224,9 +237,7 @@ public sealed class SessionJournalEngine : IDisposable {
         AppendAssistantAction(result.Message, result.Invocation);
 
         projection = Project(cancellationToken);
-        if (projection.ExecutionState.Phase == SessionExecutionPhase.AwaitingToolExecution) {
-            return await ContinueToolLoopAsync(projection, observer, cancellationToken).ConfigureAwait(false);
-        }
+        if (projection.ExecutionState.Phase == SessionExecutionPhase.AwaitingToolExecution) { return await ContinueToolLoopAsync(projection, observer, cancellationToken).ConfigureAwait(false); }
 
         return new TurnResult(result.Message, result.Invocation, FreezeErrors(result.Errors));
     }
@@ -238,9 +249,7 @@ public sealed class SessionJournalEngine : IDisposable {
     ) {
         SessionRuntime runtime = RequireRuntime();
         ToolSession toolSession = RequireToolSession(runtime);
-        if (projection.ExecutionState.PendingToolCall is null) {
-            throw new InvalidDataException("AwaitingToolExecution requires a pending tool call.");
-        }
+        if (projection.ExecutionState.PendingToolCall is null) { throw new InvalidDataException("AwaitingToolExecution requires a pending tool call."); }
 
         RawToolCall toolCall = projection.ExecutionState.PendingToolCall;
         if (!projection.ExecutionState.PendingToolExecutionStarted) {
@@ -331,15 +340,11 @@ public sealed class SessionJournalEngine : IDisposable {
         ValidateRequired(options.ModelId, nameof(options.ModelId));
         ValidateRequired(options.CompletionSurfaceId, nameof(options.CompletionSurfaceId));
         ValidateRequired(options.Schema, nameof(options.Schema));
-        if (options.SystemPrompt is null) {
-            throw new ArgumentNullException(nameof(options.SystemPrompt));
-        }
+        if (options.SystemPrompt is null) { throw new ArgumentNullException(nameof(options.SystemPrompt)); }
     }
 
     private static void ValidateRequired(string value, string name) {
-        if (string.IsNullOrWhiteSpace(value)) {
-            throw new ArgumentException("Value must not be null, empty, or whitespace.", name);
-        }
+        if (string.IsNullOrWhiteSpace(value)) { throw new ArgumentException("Value must not be null, empty, or whitespace.", name); }
     }
 
     private static string BuildTurnAbortMessage(CompletionTermination termination) {

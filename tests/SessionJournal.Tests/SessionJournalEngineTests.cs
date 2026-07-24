@@ -23,11 +23,13 @@ public sealed class SessionJournalEngineTests : IDisposable {
     public void Create_WritesSessionCreatedAndProjectsConfigFromJournal() {
         string path = NewJournalPath();
 
-        using var engine = SessionJournalEngine.Create(path, new SessionCreateOptions(
-            ModelId: "model-A",
-            SystemPrompt: "system-A",
-            CompletionSurfaceId: "surface-A"
-        ));
+        using var engine = SessionJournalEngine.Create(path,
+            new SessionCreateOptions(
+                ModelId: "model-A",
+                SystemPrompt: "system-A",
+                CompletionSurfaceId: "surface-A"
+            )
+        );
 
         SessionProjection projection = engine.Project();
 
@@ -48,16 +50,20 @@ public sealed class SessionJournalEngineTests : IDisposable {
     public void AppendObservationAndAction_ReopenRebuildsContextAndConfigFromJournal() {
         string path = NewJournalPath();
         var invocation = new CompletionDescriptor("fake-provider", "fake-api-v1", "model-A");
-        var action = new ActionMessage(new ActionBlock[] {
-            new ActionBlock.Text("answer"),
-            new ActionBlock.Text(" continued")
-        });
+        var action = new ActionMessage(
+            new ActionBlock[] {
+                new ActionBlock.Text("answer"),
+                new ActionBlock.Text(" continued")
+        }
+        );
 
-        using (var engine = SessionJournalEngine.Create(path, new SessionCreateOptions(
-            ModelId: "model-A",
-            SystemPrompt: "system-A",
-            CompletionSurfaceId: "surface-A"
-        ))) {
+        using (var engine = SessionJournalEngine.Create(path,
+            new SessionCreateOptions(
+                ModelId: "model-A",
+                SystemPrompt: "system-A",
+                CompletionSurfaceId: "surface-A"
+            )
+        )) {
             engine.AppendObservation("hello");
             engine.AppendAssistantAction(action, invocation);
         }
@@ -84,11 +90,13 @@ public sealed class SessionJournalEngineTests : IDisposable {
     [Fact]
     public void ObservationPayload_UsesCanonicalEnvelopeBytesWithoutHeaderDuplication() {
         string path = NewJournalPath();
-        using var engine = SessionJournalEngine.Create(path, new SessionCreateOptions(
-            ModelId: "model-A",
-            SystemPrompt: "system-A",
-            CompletionSurfaceId: "surface-A"
-        ));
+        using var engine = SessionJournalEngine.Create(path,
+            new SessionCreateOptions(
+                ModelId: "model-A",
+                SystemPrompt: "system-A",
+                CompletionSurfaceId: "surface-A"
+            )
+        );
 
         var address = engine.AppendObservation("你好，Atelia <session>");
         byte[] payload = engine.ReadPayloadBytes(address);
@@ -105,20 +113,59 @@ public sealed class SessionJournalEngineTests : IDisposable {
     }
 
     [Fact]
+    public void ObservationPayload_CompressedEventJournalStillProjectsLogicalPayload() {
+        string path = NewJournalPath();
+        var journalOptions = new EventJournalOptions {
+            PayloadCodecPolicy = EventPayloadCodecPolicy.Brotli with {
+                MinimumPayloadLength = 0,
+                MinimumSavingsBytes = 1,
+                MinimumSavingsRatio = 0.01
+            }
+        };
+        string content = string.Concat(Enumerable.Repeat("这是一段用于验证 SessionJournal logical payload 透明读取的中文内容。", 128));
+        EventAddress observationAddress;
+
+        using (var engine = SessionJournalEngine.CreateForTest(
+            path,
+            new SessionCreateOptions("model-A", "system-A", "surface-A"),
+            runtime: null,
+            new SessionJournalTestHooks(),
+            journalOptions
+        )) {
+            observationAddress = engine.AppendObservation(content);
+        }
+
+        using (var reopened = SessionJournalEngine.OpenForTest(path, runtime: null, new SessionJournalTestHooks(), journalOptions)) {
+            SessionProjection projection = reopened.Project();
+
+            var observation = Assert.IsType<ObservationMessage>(Assert.Single(projection.Context));
+            Assert.Equal(content, observation.Content);
+        }
+
+        using var journal = EventJournal.EventJournal.OpenExisting(path, journalOptions);
+        EventFrameHeader header = journal.ReadEventHeaderChecked(observationAddress).Unwrap();
+        Assert.Equal(EventPayloadCodecId.Brotli, header.PayloadCodecId);
+    }
+
+    [Fact]
     public void ActionPayload_RoundTripsToolCallAndProjectsPendingToolState() {
         string path = NewJournalPath();
         var invocation = new CompletionDescriptor("fake-provider", "fake-api-v1", "model-A");
-        var action = new ActionMessage(new ActionBlock[] {
-            new ActionBlock.Text("I will call a tool."),
-            new ActionBlock.ToolCall(new RawToolCall("lookup", "call-1", "{\"q\":\"x\"}"))
-        });
+        var action = new ActionMessage(
+            new ActionBlock[] {
+                new ActionBlock.Text("I will call a tool."),
+                new ActionBlock.ToolCall(new RawToolCall("lookup", "call-1", "{\"q\":\"x\"}"))
+        }
+        );
 
         EventAddress actionAddress;
-        using (var engine = SessionJournalEngine.Create(path, new SessionCreateOptions(
-            ModelId: "model-A",
-            SystemPrompt: "system-A",
-            CompletionSurfaceId: "surface-A"
-        ))) {
+        using (var engine = SessionJournalEngine.Create(path,
+            new SessionCreateOptions(
+                ModelId: "model-A",
+                SystemPrompt: "system-A",
+                CompletionSurfaceId: "surface-A"
+            )
+        )) {
             engine.AppendObservation("need lookup");
             actionAddress = engine.AppendAssistantAction(action, invocation);
             string actionJson = System.Text.Encoding.UTF8.GetString(engine.ReadPayloadBytes(actionAddress));
@@ -141,17 +188,19 @@ public sealed class SessionJournalEngineTests : IDisposable {
     public async Task SendAsync_CommitsObservationThenActionAndUsesJournalConfig() {
         string path = NewJournalPath();
         var client = new ScriptedCompletionClient();
-        client.Enqueue(request => {
-            Assert.Equal("model-A", request.ModelId);
-            Assert.Equal("system-A", request.SystemPrompt);
-            Assert.Empty(request.Tools);
-            var observation = Assert.IsType<ObservationMessage>(Assert.Single(request.Context));
-            Assert.Equal("hello", observation.Content);
-            return new CompletionResult(
-                new ActionMessage(new ActionBlock[] { new ActionBlock.Text("answer") }),
-                new CompletionDescriptor("scripted", "test-api-v1", request.ModelId)
-            );
-        });
+        client.Enqueue(
+            request => {
+                Assert.Equal("model-A", request.ModelId);
+                Assert.Equal("system-A", request.SystemPrompt);
+                Assert.Empty(request.Tools);
+                var observation = Assert.IsType<ObservationMessage>(Assert.Single(request.Context));
+                Assert.Equal("hello", observation.Content);
+                return new CompletionResult(
+                    new ActionMessage(new ActionBlock[] { new ActionBlock.Text("answer") }),
+                    new CompletionDescriptor("scripted", "test-api-v1", request.ModelId)
+                );
+            }
+        );
 
         using var engine = SessionJournalEngine.Create(
             path,
@@ -190,14 +239,16 @@ public sealed class SessionJournalEngineTests : IDisposable {
         }
 
         var resumeClient = new ScriptedCompletionClient();
-        resumeClient.Enqueue(request => {
-            var observation = Assert.IsType<ObservationMessage>(Assert.Single(request.Context));
-            Assert.Equal("hello", observation.Content);
-            return new CompletionResult(
-                new ActionMessage(new ActionBlock[] { new ActionBlock.Text("resumed") }),
-                new CompletionDescriptor("scripted", "test-api-v1", request.ModelId)
-            );
-        });
+        resumeClient.Enqueue(
+            request => {
+                var observation = Assert.IsType<ObservationMessage>(Assert.Single(request.Context));
+                Assert.Equal("hello", observation.Content);
+                return new CompletionResult(
+                    new ActionMessage(new ActionBlock[] { new ActionBlock.Text("resumed") }),
+                    new CompletionDescriptor("scripted", "test-api-v1", request.ModelId)
+                );
+            }
+        );
 
         using var reopened = SessionJournalEngine.Open(path, new SessionRuntime(resumeClient));
         ResumeOutcome outcome = await reopened.ResumeAsync(CancellationToken.None);
@@ -214,10 +265,12 @@ public sealed class SessionJournalEngineTests : IDisposable {
     public async Task ResumeAsync_AfterCompletionBeforeAction_RerunsCompletionDeterministically() {
         string path = NewJournalPath();
         var firstClient = new ScriptedCompletionClient();
-        firstClient.Enqueue(request => new CompletionResult(
-            new ActionMessage(new ActionBlock[] { new ActionBlock.Text("not-yet-persisted") }),
-            new CompletionDescriptor("scripted", "test-api-v1", request.ModelId)
-        ));
+        firstClient.Enqueue(
+            request => new CompletionResult(
+                new ActionMessage(new ActionBlock[] { new ActionBlock.Text("not-yet-persisted") }),
+                new CompletionDescriptor("scripted", "test-api-v1", request.ModelId)
+            )
+        );
 
         using (var engine = SessionJournalEngine.CreateForTest(
             path,
@@ -234,10 +287,12 @@ public sealed class SessionJournalEngineTests : IDisposable {
         }
 
         var resumeClient = new ScriptedCompletionClient();
-        resumeClient.Enqueue(request => new CompletionResult(
-            new ActionMessage(new ActionBlock[] { new ActionBlock.Text("persisted-on-resume") }),
-            new CompletionDescriptor("scripted", "test-api-v1", request.ModelId)
-        ));
+        resumeClient.Enqueue(
+            request => new CompletionResult(
+                new ActionMessage(new ActionBlock[] { new ActionBlock.Text("persisted-on-resume") }),
+                new CompletionDescriptor("scripted", "test-api-v1", request.ModelId)
+            )
+        );
 
         using var reopened = SessionJournalEngine.Open(path, new SessionRuntime(resumeClient));
         ResumeOutcome outcome = await reopened.ResumeAsync(CancellationToken.None);
@@ -271,33 +326,39 @@ public sealed class SessionJournalEngineTests : IDisposable {
         var tool = new RecordingTool("lookup", context => ToolExecuteResult.FromText(ToolExecutionStatus.Success, $"result:{context.RawToolCall.RawArgumentsJson}"));
         ToolSession toolSession = new ToolRegistry([tool]).CreateSession();
 
-        client.Enqueue(request => {
-            Assert.Single(request.Tools);
-            var observation = Assert.IsType<ObservationMessage>(Assert.Single(request.Context));
-            Assert.Equal("need lookup", observation.Content);
-            return new CompletionResult(
-                new ActionMessage(new ActionBlock[] {
-                    new ActionBlock.Text("calling"),
-                    new ActionBlock.ToolCall(new RawToolCall("lookup", "call-1", "{\"q\":\"x\"}"))
-                }),
-                new CompletionDescriptor("scripted", "test-api-v1", request.ModelId)
-            );
-        });
-        client.Enqueue(request => {
-            Assert.Equal(3, request.Context.Count);
-            var action = Assert.IsType<ActionMessage>(request.Context[1]);
-            Assert.Single(action.ToolCalls);
-            var results = Assert.IsType<ToolResultsMessage>(request.Context[2]);
-            ToolResult result = Assert.Single(results.Results);
-            Assert.Equal("lookup", result.ToolName);
-            Assert.Equal("call-1", result.ToolCallId);
-            Assert.Equal(ToolExecutionStatus.Success, result.Status);
-            Assert.Equal("result:{\"q\":\"x\"}", result.GetFlattenedText());
-            return new CompletionResult(
-                new ActionMessage(new ActionBlock[] { new ActionBlock.Text("final") }),
-                new CompletionDescriptor("scripted", "test-api-v1", request.ModelId)
-            );
-        });
+        client.Enqueue(
+            request => {
+                Assert.Single(request.Tools);
+                var observation = Assert.IsType<ObservationMessage>(Assert.Single(request.Context));
+                Assert.Equal("need lookup", observation.Content);
+                return new CompletionResult(
+                    new ActionMessage(
+                        new ActionBlock[] {
+                            new ActionBlock.Text("calling"),
+                            new ActionBlock.ToolCall(new RawToolCall("lookup", "call-1", "{\"q\":\"x\"}"))
+                    }
+                    ),
+                    new CompletionDescriptor("scripted", "test-api-v1", request.ModelId)
+                );
+            }
+        );
+        client.Enqueue(
+            request => {
+                Assert.Equal(3, request.Context.Count);
+                var action = Assert.IsType<ActionMessage>(request.Context[1]);
+                Assert.Single(action.ToolCalls);
+                var results = Assert.IsType<ToolResultsMessage>(request.Context[2]);
+                ToolResult result = Assert.Single(results.Results);
+                Assert.Equal("lookup", result.ToolName);
+                Assert.Equal("call-1", result.ToolCallId);
+                Assert.Equal(ToolExecutionStatus.Success, result.Status);
+                Assert.Equal("result:{\"q\":\"x\"}", result.GetFlattenedText());
+                return new CompletionResult(
+                    new ActionMessage(new ActionBlock[] { new ActionBlock.Text("final") }),
+                    new CompletionDescriptor("scripted", "test-api-v1", request.ModelId)
+                );
+            }
+        );
 
         using (var engine = SessionJournalEngine.Create(
             path,
@@ -332,10 +393,12 @@ public sealed class SessionJournalEngineTests : IDisposable {
         string path = NewJournalPath();
         var firstClient = new ScriptedCompletionClient();
         var firstTool = new RecordingTool("lookup", _ => ToolExecuteResult.FromText(ToolExecutionStatus.Success, "not-persisted"));
-        firstClient.Enqueue(request => new CompletionResult(
-            new ActionMessage(new ActionBlock[] { new ActionBlock.ToolCall(new RawToolCall("lookup", "call-1", "{}")) }),
-            new CompletionDescriptor("scripted", "test-api-v1", request.ModelId)
-        ));
+        firstClient.Enqueue(
+            request => new CompletionResult(
+                new ActionMessage(new ActionBlock[] { new ActionBlock.ToolCall(new RawToolCall("lookup", "call-1", "{}")) }),
+                new CompletionDescriptor("scripted", "test-api-v1", request.ModelId)
+            )
+        );
 
         using (var engine = SessionJournalEngine.CreateForTest(
             path,
@@ -363,14 +426,16 @@ public sealed class SessionJournalEngineTests : IDisposable {
 
         var resumeClient = new ScriptedCompletionClient();
         var resumeTool = new RecordingTool("lookup", _ => ToolExecuteResult.FromText(ToolExecutionStatus.Success, "resumed-result"));
-        resumeClient.Enqueue(request => {
-            var results = Assert.IsType<ToolResultsMessage>(request.Context[2]);
-            Assert.Equal("resumed-result", Assert.Single(results.Results).GetFlattenedText());
-            return new CompletionResult(
-                new ActionMessage(new ActionBlock[] { new ActionBlock.Text("done") }),
-                new CompletionDescriptor("scripted", "test-api-v1", request.ModelId)
-            );
-        });
+        resumeClient.Enqueue(
+            request => {
+                var results = Assert.IsType<ToolResultsMessage>(request.Context[2]);
+                Assert.Equal("resumed-result", Assert.Single(results.Results).GetFlattenedText());
+                return new CompletionResult(
+                    new ActionMessage(new ActionBlock[] { new ActionBlock.Text("done") }),
+                    new CompletionDescriptor("scripted", "test-api-v1", request.ModelId)
+                );
+            }
+        );
 
         using var reopened = SessionJournalEngine.Open(path, new SessionRuntime(resumeClient, new ToolRegistry([resumeTool]).CreateSession()));
         ResumeOutcome outcome = await reopened.ResumeAsync(CancellationToken.None);
@@ -388,10 +453,12 @@ public sealed class SessionJournalEngineTests : IDisposable {
         string path = NewJournalPath();
         var firstClient = new ScriptedCompletionClient();
         var tool = new RecordingTool("lookup", _ => ToolExecuteResult.FromText(ToolExecutionStatus.Success, "persisted-result"));
-        firstClient.Enqueue(request => new CompletionResult(
-            new ActionMessage(new ActionBlock[] { new ActionBlock.ToolCall(new RawToolCall("lookup", "call-1", "{}")) }),
-            new CompletionDescriptor("scripted", "test-api-v1", request.ModelId)
-        ));
+        firstClient.Enqueue(
+            request => new CompletionResult(
+                new ActionMessage(new ActionBlock[] { new ActionBlock.ToolCall(new RawToolCall("lookup", "call-1", "{}")) }),
+                new CompletionDescriptor("scripted", "test-api-v1", request.ModelId)
+            )
+        );
 
         using (var engine = SessionJournalEngine.CreateForTest(
             path,
@@ -409,14 +476,16 @@ public sealed class SessionJournalEngineTests : IDisposable {
 
         var resumeClient = new ScriptedCompletionClient();
         var resumeTool = new RecordingTool("lookup", _ => ToolExecuteResult.FromText(ToolExecutionStatus.Success, "should-not-run"));
-        resumeClient.Enqueue(request => {
-            var results = Assert.IsType<ToolResultsMessage>(request.Context[2]);
-            Assert.Equal("persisted-result", Assert.Single(results.Results).GetFlattenedText());
-            return new CompletionResult(
-                new ActionMessage(new ActionBlock[] { new ActionBlock.Text("done") }),
-                new CompletionDescriptor("scripted", "test-api-v1", request.ModelId)
-            );
-        });
+        resumeClient.Enqueue(
+            request => {
+                var results = Assert.IsType<ToolResultsMessage>(request.Context[2]);
+                Assert.Equal("persisted-result", Assert.Single(results.Results).GetFlattenedText());
+                return new CompletionResult(
+                    new ActionMessage(new ActionBlock[] { new ActionBlock.Text("done") }),
+                    new CompletionDescriptor("scripted", "test-api-v1", request.ModelId)
+                );
+            }
+        );
 
         using var reopened = SessionJournalEngine.Open(path, new SessionRuntime(resumeClient, new ToolRegistry([resumeTool]).CreateSession()));
         ResumeOutcome outcome = await reopened.ResumeAsync(CancellationToken.None);
@@ -433,13 +502,17 @@ public sealed class SessionJournalEngineTests : IDisposable {
         var firstClient = new ScriptedCompletionClient();
         var alpha = new RecordingTool("alpha", context => ToolExecuteResult.FromText(ToolExecutionStatus.Success, $"seq:{context.ExecutionSequence}"));
         var beta = new RecordingTool("beta", context => ToolExecuteResult.FromText(ToolExecutionStatus.Success, $"seq:{context.ExecutionSequence}"));
-        firstClient.Enqueue(request => new CompletionResult(
-            new ActionMessage(new ActionBlock[] {
-                new ActionBlock.ToolCall(new RawToolCall("alpha", "call-A", "{}")),
-                new ActionBlock.ToolCall(new RawToolCall("beta", "call-B", "{}"))
-            }),
-            new CompletionDescriptor("scripted", "test-api-v1", request.ModelId)
-        ));
+        firstClient.Enqueue(
+            request => new CompletionResult(
+                new ActionMessage(
+                    new ActionBlock[] {
+                        new ActionBlock.ToolCall(new RawToolCall("alpha", "call-A", "{}")),
+                        new ActionBlock.ToolCall(new RawToolCall("beta", "call-B", "{}"))
+            }
+                ),
+                new CompletionDescriptor("scripted", "test-api-v1", request.ModelId)
+            )
+        );
 
         using (var engine = SessionJournalEngine.CreateForTest(
             path,
@@ -459,18 +532,20 @@ public sealed class SessionJournalEngineTests : IDisposable {
         var resumeClient = new ScriptedCompletionClient();
         var resumedAlpha = new RecordingTool("alpha", _ => ToolExecuteResult.FromText(ToolExecutionStatus.Success, "should-not-run"));
         var resumedBeta = new RecordingTool("beta", context => ToolExecuteResult.FromText(ToolExecutionStatus.Success, $"seq:{context.ExecutionSequence}"));
-        resumeClient.Enqueue(request => {
-            var results = Assert.IsType<ToolResultsMessage>(request.Context[2]);
-            Assert.Collection(
-                results.Results,
-                first => Assert.Equal("seq:1", first.GetFlattenedText()),
-                second => Assert.Equal("seq:2", second.GetFlattenedText())
-            );
-            return new CompletionResult(
-                new ActionMessage(new ActionBlock[] { new ActionBlock.Text("done") }),
-                new CompletionDescriptor("scripted", "test-api-v1", request.ModelId)
-            );
-        });
+        resumeClient.Enqueue(
+            request => {
+                var results = Assert.IsType<ToolResultsMessage>(request.Context[2]);
+                Assert.Collection(
+                    results.Results,
+                    first => Assert.Equal("seq:1", first.GetFlattenedText()),
+                    second => Assert.Equal("seq:2", second.GetFlattenedText())
+                );
+                return new CompletionResult(
+                    new ActionMessage(new ActionBlock[] { new ActionBlock.Text("done") }),
+                    new CompletionDescriptor("scripted", "test-api-v1", request.ModelId)
+                );
+            }
+        );
 
         using var reopened = SessionJournalEngine.Open(path, new SessionRuntime(resumeClient, new ToolRegistry([resumedAlpha, resumedBeta]).CreateSession()));
         ResumeOutcome outcome = await reopened.ResumeAsync(CancellationToken.None);
@@ -489,26 +564,34 @@ public sealed class SessionJournalEngineTests : IDisposable {
         var tool = new RecordingTool("lookup", context => ToolExecuteResult.FromText(ToolExecutionStatus.Success, $"seq:{context.ExecutionSequence}"));
         ToolSession toolSession = new ToolRegistry([tool]).CreateSession();
 
-        client.Enqueue(request => new CompletionResult(
-            new ActionMessage(new ActionBlock[] { new ActionBlock.ToolCall(new RawToolCall("lookup", "call-1", "{}")) }),
-            new CompletionDescriptor("scripted", "test-api-v1", request.ModelId)
-        ));
-        client.Enqueue(request => new CompletionResult(
-            new ActionMessage(new ActionBlock[] { new ActionBlock.Text("first done") }),
-            new CompletionDescriptor("scripted", "test-api-v1", request.ModelId)
-        ));
-        client.Enqueue(request => new CompletionResult(
-            new ActionMessage(new ActionBlock[] { new ActionBlock.ToolCall(new RawToolCall("lookup", "call-2", "{}")) }),
-            new CompletionDescriptor("scripted", "test-api-v1", request.ModelId)
-        ));
-        client.Enqueue(request => {
-            var results = Assert.IsType<ToolResultsMessage>(request.Context[^1]);
-            Assert.Equal("seq:2", Assert.Single(results.Results).GetFlattenedText());
-            return new CompletionResult(
-                new ActionMessage(new ActionBlock[] { new ActionBlock.Text("second done") }),
+        client.Enqueue(
+            request => new CompletionResult(
+                new ActionMessage(new ActionBlock[] { new ActionBlock.ToolCall(new RawToolCall("lookup", "call-1", "{}")) }),
                 new CompletionDescriptor("scripted", "test-api-v1", request.ModelId)
-            );
-        });
+            )
+        );
+        client.Enqueue(
+            request => new CompletionResult(
+                new ActionMessage(new ActionBlock[] { new ActionBlock.Text("first done") }),
+                new CompletionDescriptor("scripted", "test-api-v1", request.ModelId)
+            )
+        );
+        client.Enqueue(
+            request => new CompletionResult(
+                new ActionMessage(new ActionBlock[] { new ActionBlock.ToolCall(new RawToolCall("lookup", "call-2", "{}")) }),
+                new CompletionDescriptor("scripted", "test-api-v1", request.ModelId)
+            )
+        );
+        client.Enqueue(
+            request => {
+                var results = Assert.IsType<ToolResultsMessage>(request.Context[^1]);
+                Assert.Equal("seq:2", Assert.Single(results.Results).GetFlattenedText());
+                return new CompletionResult(
+                    new ActionMessage(new ActionBlock[] { new ActionBlock.Text("second done") }),
+                    new CompletionDescriptor("scripted", "test-api-v1", request.ModelId)
+                );
+            }
+        );
 
         using var engine = SessionJournalEngine.Create(
             path,
@@ -528,30 +611,38 @@ public sealed class SessionJournalEngineTests : IDisposable {
     public async Task SendAsync_MultipleToolCalls_ProjectsResultsInDeclaredOrder() {
         string path = NewJournalPath();
         var client = new ScriptedCompletionClient();
-        var registry = new ToolRegistry([
+        var registry = new ToolRegistry(
+            [
             new RecordingTool("alpha", _ => ToolExecuteResult.FromText(ToolExecutionStatus.Success, "A")),
             new RecordingTool("beta", _ => ToolExecuteResult.FromText(ToolExecutionStatus.Success, "B"))
-        ]);
+        ]
+        );
 
-        client.Enqueue(request => new CompletionResult(
-            new ActionMessage(new ActionBlock[] {
-                new ActionBlock.ToolCall(new RawToolCall("alpha", "call-A", "{}")),
-                new ActionBlock.ToolCall(new RawToolCall("beta", "call-B", "{}"))
-            }),
-            new CompletionDescriptor("scripted", "test-api-v1", request.ModelId)
-        ));
-        client.Enqueue(request => {
-            var results = Assert.IsType<ToolResultsMessage>(request.Context[2]);
-            Assert.Collection(
-                results.Results,
-                first => Assert.Equal("call-A", first.ToolCallId),
-                second => Assert.Equal("call-B", second.ToolCallId)
-            );
-            return new CompletionResult(
-                new ActionMessage(new ActionBlock[] { new ActionBlock.Text("done") }),
+        client.Enqueue(
+            request => new CompletionResult(
+                new ActionMessage(
+                    new ActionBlock[] {
+                        new ActionBlock.ToolCall(new RawToolCall("alpha", "call-A", "{}")),
+                        new ActionBlock.ToolCall(new RawToolCall("beta", "call-B", "{}"))
+            }
+                ),
                 new CompletionDescriptor("scripted", "test-api-v1", request.ModelId)
-            );
-        });
+            )
+        );
+        client.Enqueue(
+            request => {
+                var results = Assert.IsType<ToolResultsMessage>(request.Context[2]);
+                Assert.Collection(
+                    results.Results,
+                    first => Assert.Equal("call-A", first.ToolCallId),
+                    second => Assert.Equal("call-B", second.ToolCallId)
+                );
+                return new CompletionResult(
+                    new ActionMessage(new ActionBlock[] { new ActionBlock.Text("done") }),
+                    new CompletionDescriptor("scripted", "test-api-v1", request.ModelId)
+                );
+            }
+        );
 
         using (var engine = SessionJournalEngine.Create(
             path,
