@@ -155,7 +155,7 @@ ChatSession branch 直接映射到 EventJournal branch：
 
 - 正常会话沿当前 branch 追加。
 - rewind 不删除 Event，而是移动 ref 或从历史 Event 创建新 branch。
-- reroll 从同一个 Observation/ContextPlan 附近产生替代 AssistantAction 分支。
+- reroll 从同一个 Observation/ContextPlan 附近产生替代 AgentAction 分支。
 - 被放弃的未来仍可通过 reflog 或显式 branch 保留。
 
 上层 UI 必须区分“当前有效父链”和“曾发生但当前不可达的旁支”。
@@ -189,6 +189,9 @@ ChatSession branch 直接映射到 EventJournal branch：
 | `ProducerFingerprint` | prompt、model、关键配置与 codec 的稳定 fingerprint |
 | `SourceRawHead` | 生成时观察到的 raw branch head |
 | `SourceRanges` | 实际吸收的 raw EventAddress 区间或集合 |
+| `AnchorRawEvent` | 可作为后续 raw suffix 起点的边界事件；CS-5-lite 可先用 rolling summary 覆盖到的最后一个 raw event |
+| `GoverningRuntimeConfigSetup` | 生成时按 `SourceRawHead` 解析到的 runtime-config-setup 地址 |
+| `GoverningSystemPromptSetup` | 生成时按 `SourceRawHead` 解析到的 system-prompt-setup 地址 |
 | `InputArtifacts` | 本次读取的旧 artifact 地址 |
 | `PreviousArtifact` | 同 lineage 的上一版，可空 |
 | `Content` | 不透明 artifact body |
@@ -236,11 +239,20 @@ selected ArtifactSet
 
 现有 `RewriteMemoryBlockMaintainer` 可作为首批 artifact producer 继续使用：输入旧 artifact + raw range，输出完整新 artifact。变化在于结果先写入 Artifact Journal 和 ArtifactSet，而不是只覆盖一个当前 block。
 
+近期实施可先走一个 **CS-5-lite** 桥接形态：不实现完整 ArtifactSet policy / retrieval / 多 artifact 一致性选择，只把
+Rolling Summary / recap 作为第一类可加载 derived artifact 保存。它的主要价值是为后续 tail-only projection 提供真实
+anchor：Context Planner 可把 recap materialize 为 `ContextHeader` 形态的 observation header，并可选附带 action
+header；随后只 replay anchor 之后的 raw suffix。没有 recap anchor 时才退回朴素 raw suffix fallback。
+
 ## 7. Context Planner
 
 ### 7.1 Planner 的问题
 
 真正要优化的不是“最近保留多少条”，而是：在固定预算下，哪组 artifact anchor、raw suffix 和召回材料最能支持下一次行动。
+
+tail-only projection 的边界优先来自 recap / artifact anchor，而不是临时的固定 turn 截断。对长寿命 autonomous /
+role-play Agent，历史不一定自然分成 user turn；长期连续性主要由 rolling summary、自传、world understanding 等
+derived context 承担。raw suffix 只负责保留 anchor 之后仍需逐事件呈现的近期细节。
 
 基础候选策略：
 
@@ -531,9 +543,25 @@ Context Planner 选择 artifact anchor + raw suffix
 - legacy-inferred metadata 继续保留来源标记。
 - 导入不修改旧 repo。
 
+### CS-2.5 / CS-5-lite：SessionJournal Derived Recap Store 与 RollingSummary Replay
+
+产出：把 `prototypes/ChatSession.BacktestCli/RollingSummaryReplay.cs` 从 legacy event source 迁移到新的
+SessionJournal repo forward replay；建立 recap 类 derived artifact 的最小磁盘 / 内存结构；用现有
+`RewriteMemoryBlockMaintainer` 生成可加载 rolling summary，并记录 raw source range、anchor、profile、
+invocation、`runtime-config-setup` 与 `system-prompt-setup` provenance。
+
+本阶段不实现完整 CS-5 ArtifactSet / retrieval / planner，只为后续 tail-only projection 准备真实 recap anchor。
+
+验收：
+
+- 能从 `import-session-journal` 生成的 SessionJournal repo 顺序 replay raw observation/action/tool-result。
+- Rolling summary 不写回 raw event chain；derived store 可删除、可重建、可加载。
+- 每个 recap artifact 能说明覆盖到哪个 raw head / source range，并能追溯所用 profile、上一个 artifact 与 LLM invocation。
+- 后续 tail projection 可把最新 recap materialize 为 `ContextHeader` / observation header，并从 anchor 之后 replay raw suffix。
+
 ### CS-3：可恢复的无工具 Completion
 
-产出：最小 raw-only `ContextPlan` 形状、引用式 canonical request manifest 恢复合同、completion attempt、Action 逐步落盘。turn 完成隐式判定（Action 无 tool call），不落独立 TurnCompleted 事件。本阶段只选择固定前缀与 raw suffix，不设计 artifact anchor、retrieval 候选比较或高级预算策略。
+产出：最小 `ContextPlan` 形状、引用式 canonical request manifest 恢复合同、completion attempt、Action 逐步落盘。turn 完成隐式判定（Action 无 tool call），不落独立 TurnCompleted 事件。若 CS-5-lite 已落地，本阶段可以引用 recap anchor 构造 tail projection；否则只使用 raw suffix fallback。本阶段仍不设计完整 ArtifactSet、retrieval 候选比较或高级预算策略。
 
 验收：
 

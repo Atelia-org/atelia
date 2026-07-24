@@ -1,6 +1,9 @@
 # ChatSession Memory Backtest CLI 设计备忘
 
 > 状态：设计备忘。用途是给后续 coding agent 会话快速恢复“离线 replay / memory maintainer 回测 / CLI 工具化”的总体思路。
+> 后续演进：legacy export replay 已完成早期验证；下一步应迁移到 SessionJournal raw event
+> forward replay，并把 rolling summary 写入 derived recap store。任务简报见
+> [CS-5-lite: SessionJournal Derived Recap Store + RollingSummary Replay](cs-5-lite-sessionjournal-derived-recap-store.md)。
 
 ## 1. 背景
 
