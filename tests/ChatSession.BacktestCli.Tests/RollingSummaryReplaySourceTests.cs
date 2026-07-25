@@ -1,6 +1,7 @@
 using Atelia.ChatSession;
 using Atelia.Completion;
 using Atelia.Completion.Abstractions;
+using Atelia.EventJournal;
 using Atelia.SessionJournal.Derived;
 using ChatSessionBacktestCli;
 using SJ = Atelia.SessionJournal;
@@ -162,9 +163,104 @@ public sealed class RollingSummaryReplaySourceTests : IDisposable {
     public void ReplayMessage_RejectsPartialRawRange() {
         Assert.Throws<ArgumentException>(() => new RollingSummaryReplayMessage(
             new ObservationMessage("hello"),
-            sourceStartInclusive: new Atelia.EventJournal.EventAddress(Ticket: default, SegmentNumber: 1, Hint: default),
+            sourceStartInclusive: Address(1),
             sourceEndInclusive: null
         ));
+    }
+
+    [Fact]
+    public async Task Runner_MixedFragmentProvenanceFailsBeforeMaintainerCall() {
+        var client = new ScriptedCompletionClient("summary");
+        var source = new StaticReplaySource(
+            "custom",
+            [
+                new RollingSummaryReplayStep(
+                    new RollingSummaryReplaySourceCursor("custom", "trigger", SourceRawHead: Address(9)),
+                    [
+                        new RollingSummaryReplayMessage(new ObservationMessage("hello 1"), Address(1), Address(1)),
+                        new RollingSummaryReplayMessage(new ActionMessage([new ActionBlock.Text("answer 1")])),
+                        new RollingSummaryReplayMessage(new ObservationMessage("hello 2"), Address(2), Address(2)),
+                        new RollingSummaryReplayMessage(new ActionMessage([new ActionBlock.Text("answer 2")]), Address(3), Address(3))
+                    ],
+                    IsTriggerBoundary: true
+                )
+            ]
+        );
+        var runner = CreateRunner(source, client);
+
+        var ex = await Assert.ThrowsAsync<InvalidDataException>(() => RunAllAsync(runner));
+
+        Assert.Contains("cannot mix addressed and unaddressed", ex.Message, StringComparison.Ordinal);
+        Assert.Equal(0, client.CallCount);
+    }
+
+    [Fact]
+    public async Task Runner_AddressedFragmentWithoutRawHeadFailsBeforeMaintainerCall() {
+        var client = new ScriptedCompletionClient("summary");
+        var source = new StaticReplaySource(
+            "custom",
+            [
+                new RollingSummaryReplayStep(
+                    new RollingSummaryReplaySourceCursor("custom", "trigger"),
+                    [
+                        new RollingSummaryReplayMessage(new ObservationMessage("hello 1"), Address(1), Address(1)),
+                        new RollingSummaryReplayMessage(new ActionMessage([new ActionBlock.Text("answer 1")]), Address(2), Address(2)),
+                        new RollingSummaryReplayMessage(new ObservationMessage("hello 2"), Address(3), Address(3)),
+                        new RollingSummaryReplayMessage(new ActionMessage([new ActionBlock.Text("answer 2")]), Address(4), Address(4))
+                    ],
+                    IsTriggerBoundary: true
+                )
+            ]
+        );
+        var runner = CreateRunner(source, client);
+
+        var ex = await Assert.ThrowsAsync<InvalidDataException>(() => RunAllAsync(runner));
+
+        Assert.Contains("must match", ex.Message, StringComparison.Ordinal);
+        Assert.Equal(0, client.CallCount);
+    }
+
+    [Fact]
+    public async Task Runner_RawHeadDriftFailsBeforeProcessingSecondStep() {
+        var source = new StaticReplaySource(
+            "custom",
+            [
+                new RollingSummaryReplayStep(
+                    new RollingSummaryReplaySourceCursor("custom", "step-1", SourceRawHead: Address(1)),
+                    [],
+                    IsTriggerBoundary: false
+                ),
+                new RollingSummaryReplayStep(
+                    new RollingSummaryReplaySourceCursor("custom", "step-2", SourceRawHead: Address(2)),
+                    [],
+                    IsTriggerBoundary: false
+                )
+            ]
+        );
+        var runner = CreateRunner(source);
+
+        var ex = await Assert.ThrowsAsync<InvalidDataException>(() => RunAllAsync(runner));
+
+        Assert.Contains("raw head changed", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Runner_SourceKindMismatchFailsBeforeProcessingStep() {
+        var source = new StaticReplaySource(
+            "custom",
+            [
+                new RollingSummaryReplayStep(
+                    new RollingSummaryReplaySourceCursor("other", "step-1"),
+                    [],
+                    IsTriggerBoundary: false
+                )
+            ]
+        );
+        var runner = CreateRunner(source);
+
+        var ex = await Assert.ThrowsAsync<InvalidDataException>(() => RunAllAsync(runner));
+
+        Assert.Contains("does not match step source kind", ex.Message, StringComparison.Ordinal);
     }
 
     private RollingSummaryReplayRunner CreateRunner(
@@ -235,6 +331,9 @@ public sealed class RollingSummaryReplaySourceTests : IDisposable {
             ]
         };
 
+    private static EventAddress Address(uint segmentNumber)
+        => new(Ticket: default, SegmentNumber: segmentNumber, Hint: default);
+
     private string CreateSessionJournalWithTwoTurns() {
         return CreateSessionJournalWithTurns(2);
     }
@@ -299,6 +398,8 @@ public sealed class RollingSummaryReplaySourceTests : IDisposable {
 
         public string ApiSpecId => "openai-chat-v1";
 
+        public int CallCount { get; private set; }
+
         public Task<CompletionResult> StreamCompletionAsync(
             CompletionRequest request,
             CompletionStreamObserver? observer,
@@ -306,6 +407,7 @@ public sealed class RollingSummaryReplaySourceTests : IDisposable {
         ) {
             _ = observer;
             cancellationToken.ThrowIfCancellationRequested();
+            CallCount++;
             return Task.FromResult(new CompletionResult(
                 new ActionMessage([new ActionBlock.Text(responseText)]),
                 CompletionDescriptor.From(this, request)
@@ -327,6 +429,28 @@ public sealed class RollingSummaryReplaySourceTests : IDisposable {
             _ = observer;
             cancellationToken.ThrowIfCancellationRequested();
             throw new InvalidOperationException("scripted failure");
+        }
+    }
+
+    private sealed class StaticReplaySource : IRollingSummaryReplaySource {
+        private readonly IReadOnlyList<RollingSummaryReplayStep> _steps;
+
+        public StaticReplaySource(string sourceKind, IReadOnlyList<RollingSummaryReplayStep> steps) {
+            SourceKind = sourceKind;
+            _steps = steps;
+        }
+
+        public string SourceKind { get; }
+
+        public async IAsyncEnumerable<RollingSummaryReplayStep> ReadStepsAsync(
+            [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct
+        ) {
+            foreach (RollingSummaryReplayStep step in _steps) {
+                ct.ThrowIfCancellationRequested();
+                yield return step;
+            }
+
+            await Task.CompletedTask.ConfigureAwait(false);
         }
     }
 

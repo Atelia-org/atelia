@@ -55,8 +55,11 @@ SessionJournal raw repo
 - record 的 `sourceRawHead` 是本次 replay 开始时的 raw head snapshot，同次 replay 的多个 epoch 保持一致。
 - record 的 `sourceStartInclusive` / `sourceEndInclusive` 来自本次 selected fragment 的首尾 addressed
   message；不再来自 trigger step。
-- D 只应为成功 record 写 artifact，并令 `anchorRawEvent = sourceEndInclusive`。失败 record 虽保留
-  attempted fragment range 供诊断，但 active prefix 未移除，不得据此推进 artifact lineage。
+- D 的 artifact candidate 至少必须满足 `status == "succeeded"`、`sourceKind == "session-journal"`，
+  且 `sourceRawHead` / `sourceStartInclusive` / `sourceEndInclusive` 均非 null；令
+  `anchorRawEvent = sourceEndInclusive`。
+- runner 捕获并报告的 failed record 虽保留 attempted fragment range 供诊断，但 active prefix 未移除，
+  不得据此推进 artifact lineage。source contract 违规会 fail-fast，不生成 record。
 
 ## 跨分片约束
 

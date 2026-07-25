@@ -193,9 +193,12 @@ internal sealed class RollingSummaryReplayRunner {
 
     public async IAsyncEnumerable<RollingSummaryReplayRecord> RunAsync([System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct) {
         int epochIndex = 0;
+        bool hasObservedSourceRawHead = false;
+        EventAddress? expectedSourceRawHead = null;
 
         await foreach (var step in _source.ReadStepsAsync(ct).ConfigureAwait(false)) {
             ct.ThrowIfCancellationRequested();
+            ValidateStepSource(step, ref hasObservedSourceRawHead, ref expectedSourceRawHead);
             if (step.ResetActiveHistory) { _activeHistory.Clear(); }
             if (step.AppendedEntries.Count > 0) { _activeHistory.AddRange(step.AppendedEntries); }
             if (!step.IsTriggerBoundary) { continue; }
@@ -211,13 +214,13 @@ internal sealed class RollingSummaryReplayRunner {
             );
             if (splitIndex < 0) { continue; }
 
+            var fragmentEntries = _activeHistory.Take(splitIndex).ToArray();
+            (EventAddress? fragmentSourceStartInclusive, EventAddress? fragmentSourceEndInclusive)
+                = GetFragmentSourceRange(fragmentEntries, step.TriggerCursor);
+            var fragment = fragmentEntries.Select(static entry => entry.Message).ToArray();
             int beforeMaxCallId = RollingSummaryCallLogUtil.GetMaxCallId(_callLogDir);
             string callLogPath = Path.Combine(Path.GetFullPath(_callLogDir), $"{beforeMaxCallId + 1:0000}.json");
             var oldBlock = _memoryPack.TryGetBlock(_profile.Target, out var found) ? found : new SJ.MemoryPackBlock(string.Empty);
-            var fragmentEntries = _activeHistory.Take(splitIndex).ToArray();
-            var fragment = fragmentEntries.Select(static entry => entry.Message).ToArray();
-            EventAddress? fragmentSourceStartInclusive = fragmentEntries[0].SourceStartInclusive;
-            EventAddress? fragmentSourceEndInclusive = fragmentEntries[^1].SourceEndInclusive;
             var recentHistory = new SJ.RecentHistorySlice(
                 SJ.ContextHeaderSnapshot.FromRenderedMemoryPack(_memoryPack.Render()),
                 fragment,
@@ -292,6 +295,51 @@ internal sealed class RollingSummaryReplayRunner {
             epochIndex++;
             if (exception is not null) { yield break; }
         }
+    }
+
+    private void ValidateStepSource(
+        RollingSummaryReplayStep step,
+        ref bool hasObservedSourceRawHead,
+        ref EventAddress? expectedSourceRawHead
+    ) {
+        if (!string.Equals(_source.SourceKind, step.TriggerCursor.SourceKind, StringComparison.Ordinal)) {
+            throw new InvalidDataException(
+                $"Replay source kind '{_source.SourceKind}' does not match step source kind '{step.TriggerCursor.SourceKind}'."
+            );
+        }
+
+        if (!hasObservedSourceRawHead) {
+            expectedSourceRawHead = step.TriggerCursor.SourceRawHead;
+            hasObservedSourceRawHead = true;
+        }
+        else if (expectedSourceRawHead != step.TriggerCursor.SourceRawHead) {
+            throw new InvalidDataException("Replay source raw head changed while reading one replay snapshot.");
+        }
+    }
+
+    private static (EventAddress? StartInclusive, EventAddress? EndInclusive) GetFragmentSourceRange(
+        IReadOnlyList<RollingSummaryReplayMessage> fragmentEntries,
+        RollingSummaryReplaySourceCursor triggerCursor
+    ) {
+        if (fragmentEntries.Count == 0) {
+            throw new InvalidDataException("Rolling summary split produced an empty fragment.");
+        }
+
+        bool isAddressed = fragmentEntries[0].SourceStartInclusive.HasValue;
+        if (fragmentEntries.Any(entry => entry.SourceStartInclusive.HasValue != isAddressed)) {
+            throw new InvalidDataException("Rolling summary fragment cannot mix addressed and unaddressed messages.");
+        }
+
+        if (isAddressed != triggerCursor.SourceRawHead.HasValue) {
+            throw new InvalidDataException(
+                "Rolling summary fragment address state must match the trigger cursor source raw head state."
+            );
+        }
+
+        return (
+            fragmentEntries[0].SourceStartInclusive,
+            fragmentEntries[^1].SourceEndInclusive
+        );
     }
 }
 

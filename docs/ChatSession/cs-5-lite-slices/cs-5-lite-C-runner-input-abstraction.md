@@ -31,7 +31,8 @@ internal sealed record RollingSummaryReplayMessage(
 internal sealed record RollingSummaryReplayStep(
     RollingSummaryReplaySourceCursor TriggerCursor,
     IReadOnlyList<RollingSummaryReplayMessage> AppendedEntries,
-    bool IsTriggerBoundary
+    bool IsTriggerBoundary,
+    bool ResetActiveHistory = false
 );
 ```
 
@@ -52,4 +53,5 @@ trigger step 地址代替；因此成功 record 的 `SourceEndInclusive` 可供 
 - 新 SessionJournal adapter 能驱动同一 runner，并在 record 中输出 source id/address。
 - runner 不再依赖 `ChatSessionLegacyReplayEvent` 作为核心状态输入。
 - trigger cursor 与每条 message 的 optional raw range 在类型结构上分离。
-- 成功/失败 record 均报告 selected/attempted fragment range；失败不移除 active prefix。
+- 成功 record 与 runner 捕获并报告的 failed record 分别报告 selected/attempted fragment range；
+  后者不移除 active prefix。source contract 违规 fail-fast，不生成 record。

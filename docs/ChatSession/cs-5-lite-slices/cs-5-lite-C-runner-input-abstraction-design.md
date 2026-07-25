@@ -44,7 +44,8 @@ internal sealed record RollingSummaryReplayMessage {
 internal sealed record RollingSummaryReplayStep(
     RollingSummaryReplaySourceCursor TriggerCursor,
     IReadOnlyList<RollingSummaryReplayMessage> AppendedEntries,
-    bool IsTriggerBoundary
+    bool IsTriggerBoundary,
+    bool ResetActiveHistory = false
 );
 
 internal sealed record RollingSummaryReplaySourceCursor(
@@ -71,6 +72,10 @@ internal sealed record RollingSummaryReplaySourceCursor(
   legacy 没有 raw address，两者均为 null。
 - `TriggerCursor.SourceRawHead` 是 adapter 开始 replay 时看到的 raw head snapshot；同一次 SessionJournal
   replay 产生的所有 step 共享它，legacy 填 null。
+- runner 以 ordinal 比较要求 `_source.SourceKind == step.TriggerCursor.SourceKind`，并要求一次
+  `RunAsync` 内所有 step 的 `SourceRawHead` 恒定（包括恒为 null）；违反时抛 `InvalidDataException`。
+- selected fragment 必须全部 addressed 或全部 unaddressed，且 addressed 状态必须与 trigger cursor
+  是否带 `SourceRawHead` 一致；违反时在调用 maintainer 前抛 `InvalidDataException`，不生成 record。
 
 将 trigger cursor 与 message provenance 分开是 D handoff 的关键：触发 split 的 step 往往晚于 fragment
 末尾，不能把 trigger step 的地址当作 recap anchor。
@@ -147,17 +152,22 @@ public RollingSummaryReplayRunner(
 内部循环：
 
 1. 从 source 读取 step。
-2. 若 `step.AppendedEntries.Count > 0`，追加到 `_activeHistory`。
-3. 若 `!step.IsTriggerBoundary`，继续下一 step。
-4. 仅将 entry 投影成 `IHistoryMessage` 后交给现有 token estimation 与 `HistoryWindowSplitPolicy`；
+2. 校验 step `SourceKind` 与本次 replay 的 `SourceRawHead` snapshot invariant。
+3. 若 `step.ResetActiveHistory`，先清空 `_activeHistory`；再把 `step.AppendedEntries` 追加进去。
+4. 若 `!step.IsTriggerBoundary`，继续下一 step。
+5. 仅将 entry 投影成 `IHistoryMessage` 后交给现有 token estimation 与 `HistoryWindowSplitPolicy`；
    trigger boundary 和 split policy 均不改变。
-5. `fragmentEntries = _activeHistory[..split]`，maintainer 输入
+6. `fragmentEntries = _activeHistory[..split]`；在创建 maintainer 前验证 fragment provenance
+   homogeneous，且其 addressed 状态与 trigger cursor 的 `SourceRawHead` 状态一致。
+7. maintainer 输入
    `fragment = fragmentEntries.Select(entry => entry.Message)`。
-6. attempted fragment 的 raw range取
+8. attempted fragment 的 raw range 取
    `fragmentEntries[0].SourceStartInclusive` 到 `fragmentEntries[^1].SourceEndInclusive`。
-7. `RecentHistorySlice.SourceId = step.TriggerCursor.SourceId`，继续保留 trigger 诊断语义。
-8. maintainer 成功后 `_activeHistory.RemoveRange(0, split)`；失败时不移除 prefix，并停止本次 replay。
-9. 无论成功或失败，record 都写入第 6 步算出的 attempted fragment range。
+9. `RecentHistorySlice.SourceId = step.TriggerCursor.SourceId`，继续保留 trigger 诊断语义。
+10. maintainer 成功后 `_activeHistory.RemoveRange(0, split)`。
+11. 对 runner catch filter 捕获并报告的 maintainer/runtime 失败，不移除 prefix、停止本次 replay，
+    并在 failed record 中写入第 8 步算出的 attempted fragment range。source contract
+    `InvalidDataException` 属于 fail-fast，不转成 failed record。
 
 因此，在四条 history message
 `[obs1, action1, obs2, action2]` 上由 `action2` 触发 split、`splitIndex = 2` 时：
@@ -190,8 +200,11 @@ string? SourceEndInclusive
 - `sourceId` / `eventOrdinal` / `eventCommit` 表示 trigger step。
 - `sourceRawHead` 表示 replay snapshot，不会随 epoch 改写。
 - `sourceStartInclusive` / `sourceEndInclusive` 表示 selected/attempted fragment，而不是 trigger step。
-- 成功 record 的 `sourceEndInclusive` 可由 D 直接用作 `anchorRawEvent`；失败 record 只用于诊断，
-  不得产出 artifact。失败时 `remainingActiveMessageCount` 仍包含 attempted prefix。
+- D 的 artifact candidate 至少必须同时满足：`status == "succeeded"`、`sourceKind == "session-journal"`，
+  且 `sourceRawHead` / `sourceStartInclusive` / `sourceEndInclusive` 均非 null；其
+  `sourceEndInclusive` 可直接用作 `anchorRawEvent`。
+- runner catch filter 捕获并报告的 failed record 只用于诊断，不得产出 artifact；此时
+  `remainingActiveMessageCount` 仍包含 attempted prefix。source contract 违规直接抛异常，不产生 record。
 
 `CompletionCallLogContext.EventOrdinal` 仍只能表达 legacy ordinal。第一版 SessionJournal 模式可传 null；
 D/E 后续若需要 raw address 写入 call log，可扩展 `CompletionCallLogContext`。
@@ -255,6 +268,9 @@ tests/ChatSession.BacktestCli.Tests/ChatSession.BacktestCli.Tests.csproj
 
 7. `RollingSummaryReplayMessage` 拒绝只有 start 或只有 end 的 partial raw range。
 
+8. custom source 的 mixed provenance、fragment/raw-head 状态不一致、raw-head drift 与 source-kind
+   mismatch 均 fail-fast；fragment contract 违规发生时 maintainer 尚未被调用。
+
 验证命令：
 
 ```bash
@@ -270,7 +286,9 @@ dotnet build prototypes/ChatSession.BacktestCli/ChatSession.BacktestCli.csproj
 - SessionJournal adapter 复用 `SessionJournalEngine.ReplayHistory()`，不复制 reducer。
 - trigger cursor 与每条 message 的 raw range 在类型结构上分离。
 - record 的 raw endpoints 来自 selected fragment 首尾 entry；成功 record 可直接作为 D 的 anchor 输入。
-- 失败 record 保留 attempted provenance，且不会移除 active prefix。
+- source kind、raw-head snapshot、fragment provenance homogeneous 与 fragment/raw-head 状态匹配均由
+  runner fail-fast enforcement。
+- runner 捕获并报告的失败 record 保留 attempted provenance，且不会移除 active prefix。
 - 不写 `DerivedRecapStore`；D 分片只需在 record/result 上接 artifact 写入。
 
 ## 10. 残余风险
@@ -279,6 +297,6 @@ dotnet build prototypes/ChatSession.BacktestCli/ChatSession.BacktestCli.csproj
   bootstrap 行为。
 - `CompletionCallLogContext` 暂不记录 raw address；输出 record 已有 address 字段，后续可再扩展 call log。
 - legacy source 缺少 raw address，因此其成功 record 仍不能直接生成带 raw anchor 的 SessionJournal recap artifact。
-- 当前 runner 相信单一 source 不会混合“有 raw range”和“无 raw range”的 entry；内置的 legacy 与
-  SessionJournal adapter 均满足此约束。
+- runner 会拒绝 source-kind mismatch、raw-head drift、mixed provenance 以及 fragment/raw-head 状态不一致；
+  内置 legacy 与 SessionJournal adapter 均满足这些 invariant。
 - Backtest CLI 仍处于实验工具定位，新增测试项目只覆盖 runner/source，不做真实 LLM 或端到端 CLI black-box。
