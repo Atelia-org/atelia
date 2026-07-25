@@ -179,13 +179,14 @@ internal static class SessionTailContextProjection {
             case SessionEventKind.ToolExecutionStarted:
             case SessionEventKind.ToolResultObserved:
             case SessionEventKind.CompletionRequestPrepared:
+            case SessionEventKind.CompletionAttemptRestarted:
                 throw new InvalidDataException($"Recap artifact anchor kind '{kind}' is not replay-safe in CS-3B.");
             default:
                 throw new InvalidDataException($"Unsupported recap artifact anchor kind '{kind}'.");
         }
     }
 
-    private static TailFoldResult FoldSuffix(
+    internal static TailFoldResult FoldSuffix(
         SessionGoverningSetup seed,
         IReadOnlyList<DecodedSessionEvent> events
     ) {
@@ -213,6 +214,7 @@ internal static class SessionTailContextProjection {
                     break;
                 case SessionEventKind.SessionCreated:
                 case SessionEventKind.CompletionRequestPrepared:
+                case SessionEventKind.CompletionAttemptRestarted:
                 case SessionEventKind.CompletionAttemptFailed:
                     EnsureNoOpenTool(ev, openAction);
                     break;
@@ -361,7 +363,7 @@ internal static class SessionTailContextProjection {
         }
     }
 
-    private sealed record TailFoldResult(
+    internal sealed record TailFoldResult(
         SessionGoverningSetup GoverningSetup,
         IReadOnlyList<IHistoryMessage> Context
     );
