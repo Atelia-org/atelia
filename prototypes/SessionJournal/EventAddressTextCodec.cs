@@ -12,11 +12,16 @@ public static class EventAddressTextCodec {
     public const int HexLength = 32;
     public const int TextLength = 36;
 
-    public static string Format(EventAddress address)
-        => string.Create(
+    public static string Format(EventAddress address) {
+        if (address.Ticket.Packed == 0 || address.SegmentNumber == 0) {
+            throw new ArgumentException("EventAddress must have a non-zero ticket and segment number.", nameof(address));
+        }
+
+        return string.Create(
             CultureInfo.InvariantCulture,
             $"{Prefix}{address.Ticket.Packed:x16}{address.SegmentNumber:x8}{address.Hint.Packed:x8}"
         );
+    }
 
     public static string? FormatNullable(EventAddress? address)
         => address is null ? null : Format(address.Value);

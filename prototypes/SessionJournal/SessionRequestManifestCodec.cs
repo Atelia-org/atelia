@@ -26,7 +26,18 @@ internal static class SessionRequestManifestCodec {
     }
 
     public static CompletionRequestPreparedBody Decode(JsonElement body) {
-        RequireObject(body, "completion-request-prepared body");
+        RequireExactProperties(
+            body,
+            "completion-request-prepared body",
+            "attempt",
+            "plan",
+            "setups",
+            "parameters",
+            "toolSet",
+            "rendering",
+            "target",
+            "commitment"
+        );
         var result = new CompletionRequestPreparedBody(
             ReadAttempt(ReadRequiredObject(body, "attempt")),
             ReadPlan(ReadRequiredObject(body, "plan")),
@@ -52,6 +63,9 @@ internal static class SessionRequestManifestCodec {
 
         RequireText(body.Plan.SelectionPolicyId, "plan.selectionPolicyId");
         RequireText(body.Plan.PlannerFingerprint, "plan.plannerFingerprint");
+        if (body.Plan.RawStartExclusive is EventAddress rawStartExclusive) {
+            _ = EventAddressTextCodec.Format(rawStartExclusive);
+        }
         RequireSha256(body.Plan.RawRangeSha256, "plan.rawRangeSha256");
         RequireText(body.Plan.RenderingProfileId, "plan.renderingProfileId");
         RequireText(body.Plan.ModelProfileId, "plan.modelProfileId");
@@ -98,7 +112,6 @@ internal static class SessionRequestManifestCodec {
         RequireText(body.Target.CompletionSurfaceId, "target.completionSurfaceId");
         RequireText(body.Target.ClientName, "target.clientName");
         RequireText(body.Target.ApiSpecId, "target.apiSpecId");
-        RequireText(body.Target.AdapterFingerprint, "target.adapterFingerprint");
 
         if (!string.Equals(
                 body.Commitment.Algorithm,
@@ -206,13 +219,12 @@ internal static class SessionRequestManifestCodec {
         writer.WriteStartObject("connection");
         writer.WriteString("connectionId", value.Connection.ConnectionId);
         writer.WriteString("kind", value.Connection.Kind);
-        writer.WriteString("fingerprint", value.Connection.Fingerprint);
-        writer.WriteString("adapterFingerprint", value.Connection.AdapterFingerprint);
+        writer.WriteString("connectionFingerprint", value.Connection.ConnectionFingerprint);
+        writer.WriteString("requestAdapterFingerprint", value.Connection.RequestAdapterFingerprint);
         writer.WriteEndObject();
         writer.WriteString("completionSurfaceId", value.CompletionSurfaceId);
         writer.WriteString("clientName", value.ClientName);
         writer.WriteString("apiSpecId", value.ApiSpecId);
-        writer.WriteString("adapterFingerprint", value.AdapterFingerprint);
         writer.WriteEndObject();
     }
 
@@ -224,27 +236,36 @@ internal static class SessionRequestManifestCodec {
         writer.WriteEndObject();
     }
 
-    private static SessionRequestAttempt ReadAttempt(JsonElement element)
-        => new(
+    private static SessionRequestAttempt ReadAttempt(JsonElement element) {
+        RequireExactProperties(element, "attempt", "attemptId", "correlationId", "reason", "replacesAttemptId");
+        return new(
             ReadRequiredString(element, "attemptId"),
             ReadRequiredString(element, "correlationId"),
             ReadRequiredString(element, "reason"),
             ReadNullableString(element, "replacesAttemptId")
         );
+    }
 
     private static SessionContextPlan ReadPlan(JsonElement element) {
+        RequireExactProperties(
+            element,
+            "plan",
+            "selectionPolicyId",
+            "plannerFingerprint",
+            "rawStartExclusive",
+            "rawRangeSha256",
+            "artifactInputs",
+            "recalledInputs",
+            "renderingProfileId",
+            "modelProfileId",
+            "estimatedInputTokens",
+            "reason"
+        );
         var artifacts = ReadArray(element, "artifactInputs")
-            .Select(static item => new SessionRequestArtifactInput(
-                ReadRequiredString(item, "artifactId"),
-                ReadRequiredString(item, "artifactKind"),
-                ReadRequiredString(item, "contentSha256")
-            ))
+            .Select(ReadArtifactInput)
             .ToImmutableArray();
         var recalled = ReadArray(element, "recalledInputs")
-            .Select(static item => new SessionRequestRecalledInput(
-                ReadRequiredString(item, "sourceId"),
-                ReadRequiredString(item, "contentSha256")
-            ))
+            .Select(ReadRecalledInput)
             .ToImmutableArray();
         return new SessionContextPlan(
             ReadRequiredString(element, "selectionPolicyId"),
@@ -260,65 +281,117 @@ internal static class SessionRequestManifestCodec {
         );
     }
 
-    private static SessionGoverningSetupReferences ReadSetups(JsonElement element)
-        => new(
+    private static SessionRequestArtifactInput ReadArtifactInput(JsonElement element) {
+        RequireExactProperties(element, "artifact input", "artifactId", "artifactKind", "contentSha256");
+        return new(
+            ReadRequiredString(element, "artifactId"),
+            ReadRequiredString(element, "artifactKind"),
+            ReadRequiredString(element, "contentSha256")
+        );
+    }
+
+    private static SessionRequestRecalledInput ReadRecalledInput(JsonElement element) {
+        RequireExactProperties(element, "recalled input", "sourceId", "contentSha256");
+        return new(
+            ReadRequiredString(element, "sourceId"),
+            ReadRequiredString(element, "contentSha256")
+        );
+    }
+
+    private static SessionGoverningSetupReferences ReadSetups(JsonElement element) {
+        RequireExactProperties(element, "setups", "runtimeConfig", "systemPrompt");
+        return new(
             ReadSetup(ReadRequiredObject(element, "runtimeConfig")),
             ReadSetup(ReadRequiredObject(element, "systemPrompt"))
         );
+    }
 
-    private static SessionSetupReference ReadSetup(JsonElement element)
-        => new(
+    private static SessionSetupReference ReadSetup(JsonElement element) {
+        RequireExactProperties(element, "setup reference", "address", "bodySchemaVersion", "payloadSha256");
+        return new(
             ReadRequiredAddress(element, "address"),
             ReadRequiredInt32(element, "bodySchemaVersion"),
             ReadRequiredString(element, "payloadSha256")
         );
+    }
 
-    private static SessionRequestParameters ReadParameters(JsonElement element)
-        => new(
+    private static SessionRequestParameters ReadParameters(JsonElement element) {
+        RequireExactProperties(element, "parameters", "modelId", "maxTokens");
+        return new(
             ReadRequiredString(element, "modelId"),
             ReadNullableInt32(element, "maxTokens")
         );
+    }
 
-    private static SessionRequestToolSet ReadToolSet(JsonElement element)
-        => new(
+    private static SessionRequestToolSet ReadToolSet(JsonElement element) {
+        RequireExactProperties(element, "toolSet", "codecId", "sha256", "definitions");
+        return new(
             ReadRequiredString(element, "codecId"),
             ReadRequiredString(element, "sha256"),
             ReadArray(element, "definitions")
                 .Select(SessionRequestCanonicalizer.ReadToolDefinition)
                 .ToImmutableArray()
         );
+    }
 
-    private static SessionRequestRendering ReadRendering(JsonElement element)
-        => new(
+    private static SessionRequestRendering ReadRendering(JsonElement element) {
+        RequireExactProperties(
+            element,
+            "rendering",
+            "contextRendererId",
+            "contextRendererFingerprint",
+            "canonicalRequestCodecId",
+            "toolCodecId",
+            "reasoningCodecSetFingerprint"
+        );
+        return new(
             ReadRequiredString(element, "contextRendererId"),
             ReadRequiredString(element, "contextRendererFingerprint"),
             ReadRequiredString(element, "canonicalRequestCodecId"),
             ReadRequiredString(element, "toolCodecId"),
             ReadRequiredString(element, "reasoningCodecSetFingerprint")
         );
+    }
 
     private static SessionRequestTarget ReadTarget(JsonElement element) {
+        RequireExactProperties(
+            element,
+            "target",
+            "connection",
+            "completionSurfaceId",
+            "clientName",
+            "apiSpecId"
+        );
         JsonElement connection = ReadRequiredObject(element, "connection");
+        RequireExactProperties(
+            connection,
+            "target connection",
+            "connectionId",
+            "kind",
+            "connectionFingerprint",
+            "requestAdapterFingerprint"
+        );
         return new SessionRequestTarget(
             new SessionCompletionTargetIdentity(
                 ReadRequiredString(connection, "connectionId"),
                 ReadRequiredString(connection, "kind"),
-                ReadRequiredString(connection, "fingerprint"),
-                ReadRequiredString(connection, "adapterFingerprint")
+                ReadRequiredString(connection, "connectionFingerprint"),
+                ReadRequiredString(connection, "requestAdapterFingerprint")
             ),
             ReadRequiredString(element, "completionSurfaceId"),
             ReadRequiredString(element, "clientName"),
-            ReadRequiredString(element, "apiSpecId"),
-            ReadRequiredString(element, "adapterFingerprint")
+            ReadRequiredString(element, "apiSpecId")
         );
     }
 
-    private static SessionRequestCommitment ReadCommitment(JsonElement element)
-        => new(
+    private static SessionRequestCommitment ReadCommitment(JsonElement element) {
+        RequireExactProperties(element, "commitment", "algorithm", "byteLength", "sha256");
+        return new(
             ReadRequiredString(element, "algorithm"),
             ReadRequiredInt32(element, "byteLength"),
             ReadRequiredString(element, "sha256")
         );
+    }
 
     private static void ValidateSetup(SessionSetupReference value, string path) {
         if (value.BodySchemaVersion <= 0) {
@@ -332,8 +405,8 @@ internal static class SessionRequestManifestCodec {
         ArgumentNullException.ThrowIfNull(value);
         RequireText(value.ConnectionId, "target.connection.connectionId");
         RequireText(value.Kind, "target.connection.kind");
-        RequireText(value.Fingerprint, "target.connection.fingerprint");
-        RequireText(value.AdapterFingerprint, "target.connection.adapterFingerprint");
+        RequireText(value.ConnectionFingerprint, "target.connection.connectionFingerprint");
+        RequireText(value.RequestAdapterFingerprint, "target.connection.requestAdapterFingerprint");
     }
 
     private static void RequireSha256(string value, string path) {
@@ -440,6 +513,20 @@ internal static class SessionRequestManifestCodec {
     private static void RequireObject(JsonElement element, string name) {
         if (element.ValueKind != JsonValueKind.Object) {
             throw new InvalidDataException($"Expected {name} to be a JSON object.");
+        }
+    }
+
+    private static void RequireExactProperties(JsonElement element, string name, params string[] allowedProperties) {
+        RequireObject(element, name);
+        var allowed = new HashSet<string>(allowedProperties, StringComparer.Ordinal);
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (JsonProperty property in element.EnumerateObject()) {
+            if (!seen.Add(property.Name)) {
+                throw new InvalidDataException($"{name} contains duplicate property '{property.Name}'.");
+            }
+            if (!allowed.Contains(property.Name)) {
+                throw new InvalidDataException($"{name} contains unknown property '{property.Name}'.");
+            }
         }
     }
 }

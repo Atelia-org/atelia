@@ -82,8 +82,7 @@ internal sealed record SessionRequestTarget(
     SessionCompletionTargetIdentity Connection,
     string CompletionSurfaceId,
     string ClientName,
-    string ApiSpecId,
-    string AdapterFingerprint
+    string ApiSpecId
 );
 
 internal sealed record SessionRequestCommitment(

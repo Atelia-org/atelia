@@ -39,6 +39,9 @@ internal static class SessionEventCodec {
         if (!root.TryGetProperty("body", out JsonElement body)) {
             throw new InvalidDataException("Session event envelope is missing required property 'body'.");
         }
+        if (kind == SessionEventKind.CompletionRequestPrepared) {
+            RequireExactProperties(root, "completion-request-prepared envelope", "v", "body");
+        }
 
         return kind switch {
             SessionEventKind.RuntimeConfigSetup => DecodeRuntimeConfiguration(body),
@@ -378,6 +381,20 @@ internal static class SessionEventCodec {
     private static void RequireObject(JsonElement element, string name) {
         if (element.ValueKind != JsonValueKind.Object) {
             throw new InvalidDataException($"Expected {name} to be a JSON object.");
+        }
+    }
+
+    private static void RequireExactProperties(JsonElement element, string name, params string[] allowedProperties) {
+        RequireObject(element, name);
+        var allowed = new HashSet<string>(allowedProperties, StringComparer.Ordinal);
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (JsonProperty property in element.EnumerateObject()) {
+            if (!seen.Add(property.Name)) {
+                throw new InvalidDataException($"{name} contains duplicate property '{property.Name}'.");
+            }
+            if (!allowed.Contains(property.Name)) {
+                throw new InvalidDataException($"{name} contains unknown property '{property.Name}'.");
+            }
         }
     }
 

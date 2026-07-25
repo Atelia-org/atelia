@@ -84,7 +84,7 @@ internal static class SessionRequestCanonicalizer {
     }
 
     internal static ToolDefinition ReadToolDefinition(JsonElement element) {
-        RequireObject(element, "tool definition");
+        RequireExactProperties(element, "tool definition", "name", "description", "inputSchema");
         return new ToolDefinition(
             ReadRequiredString(element, "name"),
             ReadRequiredString(element, "description"),
@@ -105,7 +105,9 @@ internal static class SessionRequestCanonicalizer {
                 }
                 writer.WriteEndArray();
                 break;
-            case ObservationMessage observation when message.Kind == HistoryMessageKind.Observation:
+            case ObservationMessage observation
+                when message.Kind == HistoryMessageKind.Observation &&
+                     observation.GetType() == typeof(ObservationMessage):
                 writer.WriteString("kind", "observation");
                 WriteNullableString(writer, "content", observation.Content);
                 break;
@@ -250,9 +252,55 @@ internal static class SessionRequestCanonicalizer {
 
     private static ToolSchema ReadToolSchema(JsonElement element) {
         RequireObject(element, "tool schema");
+        RequireNoDuplicateProperties(element, "tool schema");
+        string kind = ReadRequiredString(element, "kind");
+        switch (kind) {
+            case "object":
+                RequireExactProperties(
+                    element,
+                    "object tool schema",
+                    "kind",
+                    "description",
+                    "example",
+                    "additionalProperties",
+                    "properties"
+                );
+                break;
+            case "array":
+                RequireExactProperties(
+                    element,
+                    "array tool schema",
+                    "kind",
+                    "description",
+                    "example",
+                    "nullable",
+                    "items"
+                );
+                break;
+            case "value":
+                RequireExactProperties(
+                    element,
+                    "value tool schema",
+                    "kind",
+                    "description",
+                    "example",
+                    "valueKind",
+                    "nullable",
+                    "default",
+                    "stringEnumValues",
+                    "minLength",
+                    "maxLength",
+                    "pattern",
+                    "minimum",
+                    "maximum"
+                );
+                break;
+            default:
+                throw new InvalidDataException($"Unsupported tool schema kind '{kind}'.");
+        }
         string? description = ReadNullableString(element, "description");
         string? example = ReadNullableString(element, "example");
-        return ReadRequiredString(element, "kind") switch {
+        return kind switch {
             "object" => ReadObjectSchema(element, description, example),
             "array" => new ToolSchema.Array(
                 ReadToolSchema(ReadRequiredProperty(element, "items")),
@@ -261,7 +309,7 @@ internal static class SessionRequestCanonicalizer {
                 example
             ),
             "value" => ReadValueSchema(element, description, example),
-            string kind => throw new InvalidDataException($"Unsupported tool schema kind '{kind}'.")
+            string unsupportedKind => throw new InvalidDataException($"Unsupported tool schema kind '{unsupportedKind}'.")
         };
     }
 
@@ -273,7 +321,7 @@ internal static class SessionRequestCanonicalizer {
 
         var properties = new List<ToolSchema.Property>();
         foreach (JsonElement property in propertiesElement.EnumerateArray()) {
-            RequireObject(property, "tool schema property");
+            RequireExactProperties(property, "tool schema property", "name", "required", "schema");
             properties.Add(new ToolSchema.Property(
                 ReadRequiredString(property, "name"),
                 ReadToolSchema(ReadRequiredProperty(property, "schema")),
@@ -447,6 +495,29 @@ internal static class SessionRequestCanonicalizer {
     private static void RequireObject(JsonElement element, string name) {
         if (element.ValueKind != JsonValueKind.Object) {
             throw new InvalidDataException($"Expected {name} to be a JSON object.");
+        }
+    }
+
+    private static void RequireNoDuplicateProperties(JsonElement element, string name) {
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (JsonProperty property in element.EnumerateObject()) {
+            if (!seen.Add(property.Name)) {
+                throw new InvalidDataException($"{name} contains duplicate property '{property.Name}'.");
+            }
+        }
+    }
+
+    private static void RequireExactProperties(JsonElement element, string name, params string[] allowedProperties) {
+        RequireObject(element, name);
+        var allowed = new HashSet<string>(allowedProperties, StringComparer.Ordinal);
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (JsonProperty property in element.EnumerateObject()) {
+            if (!seen.Add(property.Name)) {
+                throw new InvalidDataException($"{name} contains duplicate property '{property.Name}'.");
+            }
+            if (!allowed.Contains(property.Name)) {
+                throw new InvalidDataException($"{name} contains unknown property '{property.Name}'.");
+            }
         }
     }
 }
