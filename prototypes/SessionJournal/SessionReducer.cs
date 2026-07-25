@@ -61,7 +61,9 @@ internal static class SessionReducer {
                 case SessionEventKind.ObservationAccepted: {
                     EnsureSessionCreated(ev, sessionCreated);
                     if (headKind is not (SessionEventKind.SessionCreated or SessionEventKind.RuntimeConfigSetup or SessionEventKind.SystemPromptSetup)
-                        && !(headKind == SessionEventKind.AgentActionProduced && openAction is null)) {
+                        && !(headKind == SessionEventKind.AgentActionProduced && openAction is null)
+                        && !(headKind == SessionEventKind.ImportedAgentAction && openAction is null)
+                        && headKind != SessionEventKind.CompletionAttemptFailed) {
                         throw new InvalidDataException($"{ev.Kind} at {ev.Address} must appear only at an idle session boundary.");
                     }
                     var body = RequireBody<ObservationAcceptedBody>(ev);
@@ -98,11 +100,32 @@ internal static class SessionReducer {
                     pendingCompletionAttemptId = body.Attempt.AttemptId;
                     break;
                 }
-                case SessionEventKind.AgentActionProduced: {
+                case SessionEventKind.CompletionAttemptFailed: {
+                    EnsureSessionCreated(ev, sessionCreated);
+                    var body = RequireBody<CompletionAttemptFailedBody>(ev);
+                    if (headKind != SessionEventKind.CompletionRequestPrepared
+                        || pendingRequestPreparedAddress is not { } preparedAddress
+                        || ev.Parent != preparedAddress) {
+                        throw new InvalidDataException(
+                            $"{ev.Kind} at {ev.Address} must directly follow the active completion-request-prepared event."
+                        );
+                    }
+                    if (!string.Equals(body.AttemptId, pendingCompletionAttemptId, StringComparison.Ordinal)) {
+                        throw new InvalidDataException($"{ev.Kind} at {ev.Address} does not match the active completion attempt.");
+                    }
+                    pendingRequestPreparedAddress = null;
+                    pendingCompletionAttemptId = null;
+                    activeCorrelationId = null;
+                    break;
+                }
+                case SessionEventKind.AgentActionProduced:
+                case SessionEventKind.ImportedAgentAction: {
                     EnsureSessionCreated(ev, sessionCreated);
                     EventAddress? preparedAddress = pendingRequestPreparedAddress;
-                    bool isPreparedAction = preparedAddress.HasValue;
-                    bool isImportedAction = pendingRequestPreparedAddress is null
+                    bool isPreparedAction = ev.Kind == SessionEventKind.AgentActionProduced
+                        && preparedAddress.HasValue;
+                    bool isImportedAction = ev.Kind == SessionEventKind.ImportedAgentAction
+                        && pendingRequestPreparedAddress is null
                         && (headKind == SessionEventKind.ObservationAccepted
                             || headKind == SessionEventKind.ToolResultObserved && pendingToolCall is null);
                     if (!isPreparedAction && !isImportedAction) {
@@ -134,8 +157,13 @@ internal static class SessionReducer {
                     EnsureSessionCreated(ev, sessionCreated);
                     var body = RequireBody<ToolExecutionStartedBody>(ev);
                     EnsureOpenAction(ev, openAction);
-                    EnsureDeclaredToolCall(ev, openAction!, body.ToolCallId, body.ToolName, body.RawArgumentsJson);
-                    pendingToolCall = new RawToolCall(body.ToolName, body.ToolCallId, body.RawArgumentsJson);
+                    if (pendingToolCall is null) {
+                        throw new InvalidDataException($"{ev.Kind} at {ev.Address} requires a current pending tool call.");
+                    }
+                    if (pendingToolExecutionStarted || pendingOperationId is not null) {
+                        throw new InvalidDataException($"{ev.Kind} at {ev.Address} duplicates an already-started tool execution.");
+                    }
+                    EnsureMatchesPendingToolCall(ev, pendingToolCall, body.ToolCallId, body.ToolName, body.RawArgumentsJson);
                     pendingOperationId = body.OperationId;
                     pendingToolExecutionStarted = true;
                     break;
@@ -144,7 +172,16 @@ internal static class SessionReducer {
                     EnsureSessionCreated(ev, sessionCreated);
                     var body = RequireBody<ToolResultObservedBody>(ev);
                     EnsureOpenAction(ev, openAction);
-                    RawToolCall declared = EnsureDeclaredToolCall(ev, openAction!, body.ToolCallId, body.ToolName, rawArgumentsJson: null);
+                    if (pendingToolCall is null) {
+                        throw new InvalidDataException($"{ev.Kind} at {ev.Address} requires a current pending tool call.");
+                    }
+                    if (!pendingToolExecutionStarted || pendingOperationId is null) {
+                        throw new InvalidDataException($"{ev.Kind} at {ev.Address} requires a preceding start for the current tool call.");
+                    }
+                    EnsureMatchesPendingToolCall(ev, pendingToolCall, body.ToolCallId, body.ToolName, rawArgumentsJson: null);
+                    if (observedResults.ContainsKey(body.ToolCallId)) {
+                        throw new InvalidDataException($"{ev.Kind} at {ev.Address} duplicates result for tool call '{body.ToolCallId}'.");
+                    }
                     observedResults[body.ToolCallId] = body;
                     if (!firstObservedToolResultAddress.HasValue) {
                         firstObservedToolResultAddress = ev.Address;
@@ -166,9 +203,6 @@ internal static class SessionReducer {
                         observedResults.Clear();
                         firstObservedToolResultAddress = null;
                         lastObservedToolResultAddress = null;
-                    }
-                    else if (string.Equals(pendingToolCall.ToolCallId, declared.ToolCallId, StringComparison.Ordinal)) {
-                        throw new InvalidDataException($"tool-result-observed did not advance pending tool call '{declared.ToolCallId}'.");
                     }
                     break;
                 }
@@ -239,8 +273,19 @@ internal static class SessionReducer {
                 PendingCompletionAttemptId: pendingCompletionAttemptId,
                 ActiveCorrelationId: activeCorrelationId
             ),
+            SessionEventKind.CompletionAttemptFailed => new SessionExecutionState(
+                SessionExecutionPhase.TurnFailed,
+                headKind,
+                ToolExecutionSequenceCheckpoint: toolExecutionSequenceCheckpoint
+            ),
             SessionEventKind.AgentActionProduced => DeriveActionState(
                 SessionEventKind.AgentActionProduced,
+                openAction,
+                toolExecutionSequenceCheckpoint,
+                activeCorrelationId
+            ),
+            SessionEventKind.ImportedAgentAction => DeriveActionState(
+                SessionEventKind.ImportedAgentAction,
                 openAction,
                 toolExecutionSequenceCheckpoint,
                 activeCorrelationId
@@ -344,7 +389,9 @@ internal static class SessionReducer {
             && !pendingToolExecutionStarted
             && pendingRequestPreparedAddress is null;
         bool isSetupOrIdle = headKind is null or SessionEventKind.RuntimeConfigSetup or SessionEventKind.SystemPromptSetup or SessionEventKind.SessionCreated
-            || headKind == SessionEventKind.AgentActionProduced && hasNoPendingAction;
+            or SessionEventKind.CompletionAttemptFailed
+            || headKind is SessionEventKind.AgentActionProduced or SessionEventKind.ImportedAgentAction
+                && hasNoPendingAction;
         if (!isSetupOrIdle) {
             throw new InvalidDataException($"{ev.Kind} at {ev.Address} must appear only at setup or idle session boundaries.");
         }
@@ -356,27 +403,29 @@ internal static class SessionReducer {
         }
     }
 
-    private static RawToolCall EnsureDeclaredToolCall(
+    private static void EnsureMatchesPendingToolCall(
         DecodedSessionEvent ev,
-        ActionMessage openAction,
+        RawToolCall pending,
         string toolCallId,
         string toolName,
         string? rawArgumentsJson
     ) {
-        RawToolCall? declared = openAction.ToolCalls.FirstOrDefault(call => string.Equals(call.ToolCallId, toolCallId, StringComparison.Ordinal));
-        if (declared is null) {
-            throw new InvalidDataException($"{ev.Kind} at {ev.Address} references undeclared tool call '{toolCallId}'.");
+        if (!string.Equals(pending.ToolCallId, toolCallId, StringComparison.Ordinal)) {
+            throw new InvalidDataException(
+                $"{ev.Kind} at {ev.Address} targets tool call '{toolCallId}' while current pending call is '{pending.ToolCallId}'."
+            );
         }
-
-        if (!string.Equals(declared.ToolName, toolName, StringComparison.Ordinal)) {
-            throw new InvalidDataException($"{ev.Kind} at {ev.Address} tool name '{toolName}' does not match declared tool '{declared.ToolName}'.");
+        if (!string.Equals(pending.ToolName, toolName, StringComparison.Ordinal)) {
+            throw new InvalidDataException(
+                $"{ev.Kind} at {ev.Address} tool name '{toolName}' does not match current pending tool '{pending.ToolName}'."
+            );
         }
-
-        if (rawArgumentsJson is not null && !string.Equals(declared.RawArgumentsJson, rawArgumentsJson, StringComparison.Ordinal)) {
-            throw new InvalidDataException($"{ev.Kind} at {ev.Address} raw arguments do not match declared tool call '{toolCallId}'.");
+        if (rawArgumentsJson is not null
+            && !string.Equals(pending.RawArgumentsJson, rawArgumentsJson, StringComparison.Ordinal)) {
+            throw new InvalidDataException(
+                $"{ev.Kind} at {ev.Address} raw arguments do not match current pending tool call '{pending.ToolCallId}'."
+            );
         }
-
-        return declared;
     }
 
     private static T RequireBody<T>(DecodedSessionEvent ev) where T : class

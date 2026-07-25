@@ -110,7 +110,7 @@ internal static class SessionJournalLegacyImporter {
                                     mappings.Add(new SessionJournalLegacyImportMapping(
                                         replayEvent.Ordinal,
                                         replayEvent.Kind,
-                                        SessionEventKind.AgentActionProduced.ToString(),
+                                        SessionEventKind.ImportedAgentAction.ToString(),
                                         address
                                     ));
                                     break;

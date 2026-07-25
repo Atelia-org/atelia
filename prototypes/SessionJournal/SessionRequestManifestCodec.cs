@@ -76,6 +76,25 @@ internal static class SessionRequestManifestCodec {
         if (!body.Plan.ArtifactInputs.IsEmpty || !body.Plan.RecalledInputs.IsEmpty) {
             throw new NotSupportedException("completion-request-prepared v1 supports full-raw plans only; artifact and recalled inputs must be empty.");
         }
+        if (!string.Equals(body.Attempt.Reason, body.Plan.Reason, StringComparison.Ordinal)) {
+            throw new InvalidDataException("attempt.reason must match plan.reason.");
+        }
+        if (!string.Equals(body.Plan.ModelProfileId, body.Parameters.ModelId, StringComparison.Ordinal)) {
+            throw new InvalidDataException("plan.modelProfileId must match parameters.modelId.");
+        }
+        if (!string.Equals(body.Plan.SelectionPolicyId, SessionRequestManifestDefaults.SelectionPolicyId, StringComparison.Ordinal)) {
+            throw new NotSupportedException($"Unsupported selection policy '{body.Plan.SelectionPolicyId}'.");
+        }
+        if (!string.Equals(body.Plan.PlannerFingerprint, SessionRequestManifestDefaults.PlannerFingerprint, StringComparison.Ordinal)
+            || !string.Equals(body.Plan.RenderingProfileId, SessionRequestManifestDefaults.RenderingProfileId, StringComparison.Ordinal)
+            || !string.Equals(body.Rendering.ContextRendererId, SessionRequestManifestDefaults.ContextRendererId, StringComparison.Ordinal)
+            || !string.Equals(body.Rendering.ContextRendererFingerprint, SessionRequestManifestDefaults.ContextRendererFingerprint, StringComparison.Ordinal)
+            || !string.Equals(body.Rendering.ReasoningCodecSetFingerprint, SessionRequestManifestDefaults.ReasoningCodecSetFingerprint, StringComparison.Ordinal)) {
+            throw new NotSupportedException("completion-request-prepared v1 contains unsupported planner or rendering identities.");
+        }
+        if (body.Plan.RawStartExclusive is not null) {
+            throw new InvalidDataException("full-raw plans require plan.rawStartExclusive to be null.");
+        }
 
         ValidateSetup(body.Setups.RuntimeConfig, "setups.runtimeConfig");
         ValidateSetup(body.Setups.SystemPrompt, "setups.systemPrompt");

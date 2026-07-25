@@ -18,6 +18,8 @@ public enum SessionEventKind : uint {
     ToolExecutionStarted = 6,
     ToolResultObserved = 7,
     CompletionRequestPrepared = 8,
+    CompletionAttemptFailed = 9,
+    ImportedAgentAction = 10,
 }
 
 public enum SessionExecutionPhase {
@@ -26,6 +28,7 @@ public enum SessionExecutionPhase {
     AwaitingAgentAction,
     AwaitingCompletion,
     AwaitingToolExecution,
+    TurnFailed,
 }
 
 public sealed record SessionCreateOptions(
@@ -94,7 +97,8 @@ internal enum SessionJournalFailpoint {
 }
 
 internal sealed record SessionJournalTestHooks(
-    SessionJournalFailpoint Failpoint = SessionJournalFailpoint.None
+    SessionJournalFailpoint Failpoint = SessionJournalFailpoint.None,
+    Action<SessionEventKind>? BeforeCommit = null
 );
 
 internal sealed class SessionJournalFailpointException(SessionJournalFailpoint failpoint)
@@ -188,6 +192,14 @@ internal sealed record CompletionRequestPreparedBody(
     SessionRequestRendering Rendering,
     SessionRequestTarget Target,
     SessionRequestCommitment Commitment
+);
+
+internal sealed record CompletionAttemptFailedBody(
+    string AttemptId,
+    CompletionTerminationKind TerminationKind,
+    string? ProviderReason,
+    string? Detail,
+    IReadOnlyList<string> Errors
 );
 
 internal readonly record struct DecodedSessionEvent(

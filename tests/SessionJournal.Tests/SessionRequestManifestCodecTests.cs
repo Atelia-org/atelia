@@ -263,7 +263,7 @@ public sealed class SessionRequestManifestCodecTests : IDisposable {
     }
 
     [Fact]
-    public void ManifestValidation_RejectsInvalidSetupAndRawStartAddressesBeforeEncoding() {
+    public void ManifestValidation_RejectsInvalidSetupAndNonNullFullRawStartBeforeEncoding() {
         var body = CreateManifestBody(CreateToolDefinitions(), out _);
 
         Assert.Throws<ArgumentException>(() => SessionEventCodec.Encode(
@@ -275,10 +275,10 @@ public sealed class SessionRequestManifestCodecTests : IDisposable {
             }
         ));
         var invalidRawStart = body with {
-            Plan = body.Plan with { RawStartExclusive = default(EventAddress) }
+            Plan = body.Plan with { RawStartExclusive = body.Setups.SystemPrompt.Address }
         };
-        Assert.Throws<ArgumentException>(() => SessionRequestManifestCodec.Validate(invalidRawStart));
-        Assert.Throws<ArgumentException>(() => SessionEventCodec.Encode(
+        Assert.Throws<InvalidDataException>(() => SessionRequestManifestCodec.Validate(invalidRawStart));
+        Assert.Throws<InvalidDataException>(() => SessionEventCodec.Encode(
             SessionEventKind.CompletionRequestPrepared,
             invalidRawStart
         ));
@@ -346,6 +346,29 @@ public sealed class SessionRequestManifestCodecTests : IDisposable {
         ));
     }
 
+    [Fact]
+    public void ManifestValidation_RejectsCrossFieldSemanticDrift() {
+        CompletionRequestPreparedBody body = CreateManifestBody(CreateToolDefinitions(), out _);
+
+        Assert.Throws<InvalidDataException>(() => SessionRequestManifestCodec.Validate(
+            body with { Attempt = body.Attempt with { Reason = "different" } }
+        ));
+        Assert.Throws<InvalidDataException>(() => SessionRequestManifestCodec.Validate(
+            body with { Plan = body.Plan with { ModelProfileId = "different-model" } }
+        ));
+        Assert.Throws<NotSupportedException>(() => SessionRequestManifestCodec.Validate(
+            body with { Plan = body.Plan with { SelectionPolicyId = "unknown-policy" } }
+        ));
+        Assert.Throws<NotSupportedException>(() => SessionRequestManifestCodec.Validate(
+            body with { Plan = body.Plan with { PlannerFingerprint = "unknown-planner" } }
+        ));
+        Assert.Throws<NotSupportedException>(() => SessionRequestManifestCodec.Validate(
+            body with {
+                Rendering = body.Rendering with { ContextRendererFingerprint = "unknown-renderer" }
+            }
+        ));
+    }
+
     private static string ReplaceOnce(string source, string marker, string replacement) {
         int index = source.IndexOf(marker, StringComparison.Ordinal);
         Assert.True(index >= 0, $"Mutation marker was not found: {marker}");
@@ -356,7 +379,7 @@ public sealed class SessionRequestManifestCodecTests : IDisposable {
         ImmutableArray<ToolDefinition> tools,
         out CompletionRequest request
     ) {
-        (EventAddress runtime, EventAddress prompt, EventAddress rawStart) = CreateAddresses();
+        (EventAddress runtime, EventAddress prompt, _) = CreateAddresses();
         request = new CompletionRequest(
             "model-α",
             "system <raw> & prompt",
@@ -365,16 +388,16 @@ public sealed class SessionRequestManifestCodecTests : IDisposable {
             4096
         );
         return new CompletionRequestPreparedBody(
-            new SessionRequestAttempt("attempt-01", "correlation-01", "new observation", null),
+            new SessionRequestAttempt("attempt-01", "correlation-01", "full raw fallback", null),
             new SessionContextPlan(
-                "full-raw-v1",
-                "sha256:planner",
-                rawStart,
+                SessionRequestManifestDefaults.SelectionPolicyId,
+                SessionRequestManifestDefaults.PlannerFingerprint,
+                null,
                 new string('a', 64),
                 [],
                 [],
-                "session-context-v1",
-                "model-profile-v1",
+                SessionRequestManifestDefaults.RenderingProfileId,
+                request.ModelId,
                 123,
                 "full raw fallback"
             ),
@@ -389,11 +412,11 @@ public sealed class SessionRequestManifestCodecTests : IDisposable {
                 tools
             ),
             new SessionRequestRendering(
-                "session-context-v1",
-                "sha256:renderer",
+                SessionRequestManifestDefaults.ContextRendererId,
+                SessionRequestManifestDefaults.ContextRendererFingerprint,
                 SessionRequestManifestDefaults.CanonicalRequestCodecId,
                 SessionRequestManifestDefaults.ToolCodecId,
-                "sha256:reasoning-codecs"
+                SessionRequestManifestDefaults.ReasoningCodecSetFingerprint
             ),
             new SessionRequestTarget(
                 new SessionCompletionTargetIdentity(

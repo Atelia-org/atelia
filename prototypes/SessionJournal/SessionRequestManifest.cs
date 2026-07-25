@@ -92,6 +92,12 @@ internal sealed record SessionRequestCommitment(
 );
 
 internal static class SessionRequestManifestDefaults {
+    public const string SelectionPolicyId = "full-raw";
+    public const string PlannerFingerprint = "atelia.session-journal.full-raw-planner.v1";
+    public const string RenderingProfileId = "atelia.session-journal.full-raw-rendering.v1";
+    public const string ContextRendererId = "atelia.session-journal.full-raw.v1";
+    public const string ContextRendererFingerprint = "atelia.session-journal.full-raw.v1";
+    public const string ReasoningCodecSetFingerprint = "atelia.reasoning-codec-set.v1";
     public const string CanonicalRequestCodecId = "atelia.completion-request.canonical-json.v1";
     public const string ToolCodecId = "atelia.tool-definition.canonical-json.v1";
     public const string CommitmentAlgorithm = "sha-256";

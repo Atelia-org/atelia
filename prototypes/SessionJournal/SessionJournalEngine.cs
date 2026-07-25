@@ -1,8 +1,4 @@
 using System.Collections.Immutable;
-using System.Buffers.Binary;
-using System.Globalization;
-using System.Security.Cryptography;
-using System.Text;
 using Atelia.Completion.Abstractions;
 using Atelia.Completion.Tools;
 using Atelia.EventJournal;
@@ -122,9 +118,9 @@ public sealed class SessionJournalEngine : IDisposable {
         ThrowIfDisposed();
         ValidateRequired(observation, nameof(observation));
         var projection = Project(cancellationToken);
-        if (projection.ExecutionState.Phase != SessionExecutionPhase.Idle) {
+        if (projection.ExecutionState.Phase is not (SessionExecutionPhase.Idle or SessionExecutionPhase.TurnFailed)) {
             throw new InvalidOperationException(
-                $"SendAsync requires an idle session. Current phase is '{projection.ExecutionState.Phase}'; call ResumeAsync first."
+                $"SendAsync requires an idle or explicitly failed turn boundary. Current phase is '{projection.ExecutionState.Phase}'; call ResumeAsync first."
             );
         }
 
@@ -143,7 +139,8 @@ public sealed class SessionJournalEngine : IDisposable {
         ThrowIfDisposed();
         SessionProjection projection = Project(cancellationToken);
         return projection.ExecutionState.Phase switch {
-            SessionExecutionPhase.Empty or SessionExecutionPhase.Idle => new ResumeOutcome(Advanced: false),
+            SessionExecutionPhase.Empty or SessionExecutionPhase.Idle or SessionExecutionPhase.TurnFailed =>
+                new ResumeOutcome(Advanced: false),
             SessionExecutionPhase.AwaitingAgentAction => ToResumeOutcome(
                 await CompletePendingObservationAsync(observer, cancellationToken).ConfigureAwait(false)
             ),
@@ -197,11 +194,12 @@ public sealed class SessionJournalEngine : IDisposable {
                 "AppendImportedAgentAction requires an unprepared observation or settled tool-result completion boundary."
             );
         }
-        return Append(SessionEventKind.AgentActionProduced, new AgentActionProducedBody(action, invocation));
+        return Append(SessionEventKind.ImportedAgentAction, new AgentActionProducedBody(action, invocation));
     }
 
     public SessionGoverningSetup ResolveGoverningSetup(EventAddress head, CancellationToken cancellationToken = default) {
         ThrowIfDisposed();
+        _lastGoverningSetupResolutionDiagnostics = default;
 
         EventAddress? cursor = head;
         EventAddress? runtimeConfigSetupAddress = null;
@@ -431,13 +429,28 @@ public sealed class SessionJournalEngine : IDisposable {
             .ConfigureAwait(false);
 
         if (!result.Termination.IsSuccess) {
+            IReadOnlyList<string> frozenErrors = FreezeErrors(result.Errors)
+                ?? Array.AsReadOnly(Array.Empty<string>());
+            AppendExpected(
+                SessionEventKind.CompletionAttemptFailed,
+                new CompletionAttemptFailedBody(
+                    manifest.Attempt.AttemptId,
+                    result.Termination.Kind,
+                    result.Termination.ProviderReason,
+                    result.Termination.Detail,
+                    frozenErrors
+                ),
+                preparedAddress,
+                requireBoundSetupCursor: false
+            );
             throw new SessionJournalTurnAbortedException(
                 BuildTurnAbortMessage(result.Termination),
                 result.Termination,
-                FreezeErrors(result.Errors)
+                frozenErrors
             );
         }
 
+        ValidateCompletionInvocation(result.Invocation, runtime.CompletionClient, request);
         TriggerFailpoint(SessionJournalFailpoint.AfterCompletionBeforeActionCommitted);
         AppendExpected(
             SessionEventKind.AgentActionProduced,
@@ -551,13 +564,13 @@ public sealed class SessionJournalEngine : IDisposable {
                 ReplacesAttemptId: null
             ),
             new SessionContextPlan(
-                SelectionPolicyId: "full-raw",
-                PlannerFingerprint: "atelia.session-journal.full-raw-planner.v1",
+                SelectionPolicyId: SessionRequestManifestDefaults.SelectionPolicyId,
+                PlannerFingerprint: SessionRequestManifestDefaults.PlannerFingerprint,
                 RawStartExclusive: null,
                 RawRangeSha256: ComputeRawRangeSha256(expectedParent, cancellationToken),
                 ArtifactInputs: ImmutableArray<SessionRequestArtifactInput>.Empty,
                 RecalledInputs: ImmutableArray<SessionRequestRecalledInput>.Empty,
-                RenderingProfileId: "atelia.session-journal.full-raw-rendering.v1",
+                RenderingProfileId: SessionRequestManifestDefaults.RenderingProfileId,
                 ModelProfileId: request.ModelId,
                 EstimatedInputTokens: checked((commitment.ByteLength + 3) / 4),
                 Reason: reason
@@ -573,11 +586,11 @@ public sealed class SessionJournalEngine : IDisposable {
                 tools
             ),
             new SessionRequestRendering(
-                ContextRendererId: "atelia.session-journal.full-raw.v1",
-                ContextRendererFingerprint: "atelia.session-journal.full-raw.v1",
+                ContextRendererId: SessionRequestManifestDefaults.ContextRendererId,
+                ContextRendererFingerprint: SessionRequestManifestDefaults.ContextRendererFingerprint,
                 CanonicalRequestCodecId: SessionRequestManifestDefaults.CanonicalRequestCodecId,
                 ToolCodecId: SessionRequestManifestDefaults.ToolCodecId,
-                ReasoningCodecSetFingerprint: "atelia.reasoning-codec-set.v1"
+                ReasoningCodecSetFingerprint: SessionRequestManifestDefaults.ReasoningCodecSetFingerprint
             ),
             new SessionRequestTarget(
                 completionTarget,
@@ -592,7 +605,7 @@ public sealed class SessionJournalEngine : IDisposable {
         return manifest;
     }
 
-    private static void ValidateManifestMatchesRequest(
+    private void ValidateManifestMatchesRequest(
         CompletionRequestPreparedBody manifest,
         CompletionRequest request,
         ImmutableArray<ToolDefinition> tools,
@@ -602,13 +615,23 @@ public sealed class SessionJournalEngine : IDisposable {
     ) {
         SessionRequestManifestCodec.Validate(manifest);
         SessionRequestCommitment expectedCommitment = SessionRequestCanonicalizer.CreateCommitment(request);
+        SessionSetupReference expectedRuntimeSetup = CreateSetupReference(
+            governingSetup.RuntimeConfigSetupAddress,
+            SessionEventKind.RuntimeConfigSetup
+        );
+        SessionSetupReference expectedPromptSetup = CreateSetupReference(
+            governingSetup.SystemPromptSetupAddress,
+            SessionEventKind.SystemPromptSetup
+        );
         if (manifest.Commitment != expectedCommitment
             || !string.Equals(manifest.Parameters.ModelId, request.ModelId, StringComparison.Ordinal)
             || manifest.Parameters.MaxTokens != request.MaxTokens
+            || !string.Equals(request.ModelId, governingSetup.RuntimeConfig.ModelId, StringComparison.Ordinal)
+            || !string.Equals(request.SystemPrompt, governingSetup.SystemPrompt, StringComparison.Ordinal)
             || !string.Equals(manifest.ToolSet.Sha256, SessionRequestCanonicalizer.ComputeToolSetSha256(tools), StringComparison.Ordinal)
             || !manifest.ToolSet.Definitions.SequenceEqual(tools)
-            || manifest.Setups.RuntimeConfig.Address != governingSetup.RuntimeConfigSetupAddress
-            || manifest.Setups.SystemPrompt.Address != governingSetup.SystemPromptSetupAddress
+            || manifest.Setups.RuntimeConfig != expectedRuntimeSetup
+            || manifest.Setups.SystemPrompt != expectedPromptSetup
             || manifest.Target.Connection != completionTarget
             || !string.Equals(manifest.Target.CompletionSurfaceId, governingSetup.RuntimeConfig.CompletionSurfaceId, StringComparison.Ordinal)
             || !string.Equals(manifest.Target.ClientName, runtime.CompletionClient.Name, StringComparison.Ordinal)
@@ -641,42 +664,27 @@ public sealed class SessionJournalEngine : IDisposable {
             checkedRead: true,
             cancellationToken: cancellationToken
         ).Unwrap();
-        using IncrementalHash hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
-        AppendHashField(hash, Encoding.UTF8.GetBytes("atelia.session-journal.raw-range.v1"));
-        hash.AppendData([0]); // RawStartExclusive = null for the CS-3A full-raw policy.
-        AppendHashField(hash, Encoding.UTF8.GetBytes(EventAddressTextCodec.Format(rawEndInclusive)));
-
-        Span<byte> number = stackalloc byte[4];
+        var entries = new List<SessionRawRangeHashEntry>(chain.Count);
         foreach (EventAddress address in chain) {
             cancellationToken.ThrowIfCancellationRequested();
             using EventFrame frame = _journal.ReadEvent(address).Unwrap();
             ValidateSessionHeaderPreview(address, frame.Header);
-            AppendHashField(hash, Encoding.UTF8.GetBytes(EventAddressTextCodec.Format(address)));
-            if (frame.Header.Parent is { } parent) {
-                hash.AppendData([1]);
-                AppendHashField(hash, Encoding.UTF8.GetBytes(EventAddressTextCodec.Format(parent)));
-            }
-            else {
-                hash.AppendData([0]);
-            }
-
-            BinaryPrimitives.WriteUInt32BigEndian(number, frame.Header.OpaqueEventKind);
-            hash.AppendData(number);
             var kind = (SessionEventKind)frame.Header.OpaqueEventKind;
             _ = SessionEventCodec.Decode(kind, frame.Payload, out int bodySchemaVersion);
-            BinaryPrimitives.WriteInt32BigEndian(number, bodySchemaVersion);
-            hash.AppendData(number);
-            AppendHashField(hash, SHA256.HashData(frame.Payload));
+            entries.Add(new SessionRawRangeHashEntry(
+                address,
+                frame.Header.Parent,
+                frame.Header.OpaqueEventKind,
+                bodySchemaVersion,
+                SessionRequestCanonicalizer.Sha256Hex(frame.Payload)
+            ));
         }
 
-        return Convert.ToHexStringLower(hash.GetHashAndReset());
-    }
-
-    private static void AppendHashField(IncrementalHash hash, ReadOnlySpan<byte> bytes) {
-        Span<byte> length = stackalloc byte[4];
-        BinaryPrimitives.WriteInt32BigEndian(length, bytes.Length);
-        hash.AppendData(length);
-        hash.AppendData(bytes);
+        return SessionRawRangeHasher.Compute(
+            rawStartExclusive: null,
+            rawEndInclusive,
+            entries
+        );
     }
 
     private EventAddress Append(SessionEventKind kind, object body) {
@@ -709,6 +717,7 @@ public sealed class SessionJournalEngine : IDisposable {
 
         byte[] payload = SessionEventCodec.Encode(kind, body);
         try {
+            _testHooks.BeforeCommit?.Invoke(kind);
             EventAddress committed = _journal.CommitToRef(
                 SessionJournalDefaults.MainBranchName,
                 expectedHead,
@@ -843,6 +852,20 @@ public sealed class SessionJournalEngine : IDisposable {
             Errors: result.Errors
         );
 
+    private static void ValidateCompletionInvocation(
+        CompletionDescriptor invocation,
+        ICompletionClient client,
+        CompletionRequest request
+    ) {
+        if (!string.Equals(invocation.ProviderId, client.Name, StringComparison.Ordinal)
+            || !string.Equals(invocation.ApiSpecId, client.ApiSpecId, StringComparison.Ordinal)
+            || !string.Equals(invocation.Model, request.ModelId, StringComparison.Ordinal)) {
+            throw new InvalidDataException(
+                "Completion result invocation does not match the actual client identity and prepared request model."
+            );
+        }
+    }
+
     private static IReadOnlyList<string>? FreezeErrors(IReadOnlyList<string>? errors)
         => errors is null ? null : Array.AsReadOnly(errors.ToArray());
 
@@ -873,9 +896,9 @@ public sealed class SessionJournalEngine : IDisposable {
         ArgumentNullException.ThrowIfNull(termination);
         return termination.Kind switch {
             CompletionTerminationKind.Incomplete =>
-                $"Completion ended incompletely; no action was persisted and the prepared request remains durable. reason={termination.ProviderReason ?? "<none>"}, detail={termination.Detail ?? "<none>"}",
+                $"Completion ended incompletely; the prepared request and known failure outcome were persisted, while no success action was persisted. reason={termination.ProviderReason ?? "<none>"}, detail={termination.Detail ?? "<none>"}",
             CompletionTerminationKind.Failed =>
-                $"Completion failed; no action was persisted and the prepared request remains durable. reason={termination.ProviderReason ?? "<none>"}, detail={termination.Detail ?? "<none>"}",
+                $"Completion failed; the prepared request and known failure outcome were persisted, while no success action was persisted. reason={termination.ProviderReason ?? "<none>"}, detail={termination.Detail ?? "<none>"}",
             _ =>
                 $"Completion was aborted; no action was persisted and the prepared request remains durable. reason={termination.ProviderReason ?? "<none>"}, detail={termination.Detail ?? "<none>"}"
         };

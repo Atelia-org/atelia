@@ -24,6 +24,8 @@ internal static class SessionEventCodec {
             SessionEventKind.ToolExecutionStarted => EncodeToolExecutionStarted((ToolExecutionStartedBody)body),
             SessionEventKind.ToolResultObserved => EncodeToolResultObserved((ToolResultObservedBody)body),
             SessionEventKind.CompletionRequestPrepared => EncodeCompletionRequestPrepared((CompletionRequestPreparedBody)body),
+            SessionEventKind.CompletionAttemptFailed => EncodeCompletionAttemptFailed((CompletionAttemptFailedBody)body),
+            SessionEventKind.ImportedAgentAction => EncodeAgentActionProduced((AgentActionProducedBody)body),
             _ => throw new NotSupportedException($"Session event kind '{kind}' is not implemented.")
         };
 
@@ -39,8 +41,8 @@ internal static class SessionEventCodec {
         if (!root.TryGetProperty("body", out JsonElement body)) {
             throw new InvalidDataException("Session event envelope is missing required property 'body'.");
         }
-        if (kind == SessionEventKind.CompletionRequestPrepared) {
-            RequireExactProperties(root, "completion-request-prepared envelope", "v", "body");
+        if (kind is SessionEventKind.CompletionRequestPrepared or SessionEventKind.CompletionAttemptFailed) {
+            RequireExactProperties(root, $"{kind} envelope", "v", "body");
         }
 
         return kind switch {
@@ -52,6 +54,8 @@ internal static class SessionEventCodec {
             SessionEventKind.ToolExecutionStarted => DecodeToolExecutionStarted(body),
             SessionEventKind.ToolResultObserved => DecodeToolResultObserved(body),
             SessionEventKind.CompletionRequestPrepared => SessionRequestManifestCodec.Decode(body),
+            SessionEventKind.CompletionAttemptFailed => DecodeCompletionAttemptFailed(body),
+            SessionEventKind.ImportedAgentAction => DecodeAgentActionProduced(body),
             _ => throw new NotSupportedException($"Session event kind '{kind}' is not implemented.")
         };
     }
@@ -208,6 +212,32 @@ internal static class SessionEventCodec {
         return buffer.WrittenMemory.ToArray();
     }
 
+    private static byte[] EncodeCompletionAttemptFailed(CompletionAttemptFailedBody body) {
+        ArgumentNullException.ThrowIfNull(body);
+        ValidateRequired(body.AttemptId, nameof(body.AttemptId));
+        ValidateFailureTerminationKind(body.TerminationKind);
+        ArgumentNullException.ThrowIfNull(body.Errors);
+
+        var buffer = new ArrayBufferWriter<byte>();
+        using (var writer = new Utf8JsonWriter(buffer, WriterOptions)) {
+            WriteEnvelopeStart(writer);
+            writer.WriteStartObject("body");
+            writer.WriteString("attemptId", body.AttemptId);
+            writer.WriteString("terminationKind", WriteFailureTerminationKind(body.TerminationKind));
+            WriteNullableString(writer, "providerReason", body.ProviderReason);
+            WriteNullableString(writer, "detail", body.Detail);
+            writer.WriteStartArray("errors");
+            foreach (string error in body.Errors) {
+                if (error is null) { throw new ArgumentException("Completion failure errors cannot contain null.", nameof(body)); }
+                writer.WriteStringValue(error);
+            }
+            writer.WriteEndArray();
+            writer.WriteEndObject();
+            writer.WriteEndObject();
+        }
+        return buffer.WrittenMemory.ToArray();
+    }
+
     private static SessionRuntimeConfiguration DecodeRuntimeConfiguration(JsonElement body) {
         RequireObject(body, "runtime-config-setup body");
         return new SessionRuntimeConfiguration(
@@ -287,6 +317,40 @@ internal static class SessionEventCodec {
             ReadRequiredString(body, "toolName"),
             ReadStatus(ReadRequiredString(body, "status")),
             blocks
+        );
+    }
+
+    private static CompletionAttemptFailedBody DecodeCompletionAttemptFailed(JsonElement body) {
+        RequireExactProperties(
+            body,
+            "completion-attempt-failed body",
+            "attemptId",
+            "terminationKind",
+            "providerReason",
+            "detail",
+            "errors"
+        );
+        if (!body.TryGetProperty("errors", out JsonElement errorsElement)
+            || errorsElement.ValueKind != JsonValueKind.Array) {
+            throw new InvalidDataException("completion-attempt-failed body requires array property 'errors'.");
+        }
+        var errors = new List<string>();
+        foreach (JsonElement errorElement in errorsElement.EnumerateArray()) {
+            if (errorElement.ValueKind != JsonValueKind.String) {
+                throw new InvalidDataException("completion-attempt-failed errors must be strings.");
+            }
+            errors.Add(errorElement.GetString()!);
+        }
+
+        CompletionTerminationKind terminationKind = ReadFailureTerminationKind(
+            ReadRequiredString(body, "terminationKind")
+        );
+        return new CompletionAttemptFailedBody(
+            ReadRequiredString(body, "attemptId"),
+            terminationKind,
+            ReadRequiredNullableString(body, "providerReason"),
+            ReadRequiredNullableString(body, "detail"),
+            Array.AsReadOnly(errors.ToArray())
         );
     }
 
@@ -378,6 +442,31 @@ internal static class SessionEventCodec {
             _ => throw new InvalidDataException($"Unsupported tool execution status '{value}'.")
         };
 
+    private static string WriteFailureTerminationKind(CompletionTerminationKind kind)
+        => kind switch {
+            CompletionTerminationKind.Incomplete => "incomplete",
+            CompletionTerminationKind.Failed => "failed",
+            _ => throw new InvalidOperationException($"Unsupported durable completion failure kind '{kind}'.")
+        };
+
+    private static CompletionTerminationKind ReadFailureTerminationKind(string value)
+        => value switch {
+            "incomplete" => CompletionTerminationKind.Incomplete,
+            "failed" => CompletionTerminationKind.Failed,
+            _ => throw new InvalidDataException($"Unsupported durable completion failure kind '{value}'.")
+        };
+
+    private static void ValidateFailureTerminationKind(CompletionTerminationKind kind) {
+        if (kind is not (CompletionTerminationKind.Incomplete or CompletionTerminationKind.Failed)) {
+            throw new ArgumentOutOfRangeException(nameof(kind), kind, "Only known incomplete/failed outcomes are durable failure events.");
+        }
+    }
+
+    private static void WriteNullableString(Utf8JsonWriter writer, string propertyName, string? value) {
+        if (value is null) { writer.WriteNull(propertyName); }
+        else { writer.WriteString(propertyName, value); }
+    }
+
     private static void RequireObject(JsonElement element, string name) {
         if (element.ValueKind != JsonValueKind.Object) {
             throw new InvalidDataException($"Expected {name} to be a JSON object.");
@@ -417,6 +506,17 @@ internal static class SessionEventCodec {
         if (property.ValueKind == JsonValueKind.Null) { return null; }
         if (property.ValueKind != JsonValueKind.String) {
             throw new InvalidDataException($"Optional string property '{propertyName}' is invalid.");
+        }
+        return property.GetString();
+    }
+
+    private static string? ReadRequiredNullableString(JsonElement element, string propertyName) {
+        if (!element.TryGetProperty(propertyName, out JsonElement property)) {
+            throw new InvalidDataException($"Required nullable string property '{propertyName}' is missing.");
+        }
+        if (property.ValueKind == JsonValueKind.Null) { return null; }
+        if (property.ValueKind != JsonValueKind.String) {
+            throw new InvalidDataException($"Required nullable string property '{propertyName}' is invalid.");
         }
         return property.GetString();
     }
