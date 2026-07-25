@@ -13,6 +13,7 @@ internal static partial class Program {
     private const int DefaultThresholdTokens = 24_000;
     private const string DefaultLlmSmokeCallLogDir = "gitignore/backtest/llm-smoke-calls";
     private const string DefaultRollingSummaryCallLogDir = "gitignore/backtest/rolling-summary-calls";
+    private const string DefaultSessionJournalRollingSummaryCallLogDir = "gitignore/backtest/session-journal-rolling-summary-calls";
 
     private static readonly JsonSerializerOptions JsonOptions = new() {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
@@ -20,7 +21,12 @@ internal static partial class Program {
         Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping
     };
 
-    public static int Main(string[] args) {
+    public static int Main(string[] args)
+        => MainCore(args, new DefaultCompletionClientFactory());
+
+    internal static int MainCore(string[] args, ICompletionClientFactory completionClientFactory) {
+        ArgumentNullException.ThrowIfNull(args);
+        ArgumentNullException.ThrowIfNull(completionClientFactory);
         try {
             if (args.Length == 0 || args[0] is "-h" or "--help") {
                 PrintHelp();
@@ -32,9 +38,10 @@ internal static partial class Program {
             return command switch {
                 "inspect" => RunInspect(options),
                 "import-session-journal" => RunImportSessionJournal(options),
-                "llm-smoke" => RunLlmSmokeAsync(options).GetAwaiter().GetResult(),
+                "llm-smoke" => RunLlmSmokeAsync(options, completionClientFactory).GetAwaiter().GetResult(),
                 "replay-pattern-count" => RunReplayPatternCount(options),
-                "replay-rolling-summary" => RunReplayRollingSummaryAsync(options).GetAwaiter().GetResult(),
+                "replay-rolling-summary" => RunReplayRollingSummaryAsync(options, completionClientFactory).GetAwaiter().GetResult(),
+                "replay-rolling-summary-session-journal" => RunSessionJournalRollingSummaryAsync(options, completionClientFactory).GetAwaiter().GetResult(),
                 _ => Fail($"Unknown command '{command}'.")
             };
         }
@@ -147,14 +154,17 @@ internal static partial class Program {
         return 0;
     }
 
-    private static async Task<int> RunLlmSmokeAsync(CliOptions options) {
+    private static async Task<int> RunLlmSmokeAsync(
+        CliOptions options,
+        ICompletionClientFactory completionClientFactory
+    ) {
         var connectionsPath = options.Require("connections");
         var requestedConnectionId = options.Get("connection");
         var callLogDir = options.Get("call-log-dir") ?? DefaultLlmSmokeCallLogDir;
         var message = options.Get("message") ?? "请用一句话回复：LLM smoke test ok。";
 
         var connections = CompletionConnectionConfigLoader.LoadFile(connectionsPath);
-        using var registry = new CompletionConnectionRegistry(connections, new DefaultCompletionClientFactory());
+        using var registry = new CompletionConnectionRegistry(connections, completionClientFactory);
 
         if (!string.IsNullOrWhiteSpace(requestedConnectionId) && !registry.TryGet(requestedConnectionId, out _)) { throw new ArgumentException($"Unknown completion connection '{requestedConnectionId}'."); }
 
@@ -188,39 +198,87 @@ internal static partial class Program {
         return 0;
     }
 
-    private static async Task<int> RunReplayRollingSummaryAsync(CliOptions options) {
+    private static Task<int> RunReplayRollingSummaryAsync(
+        CliOptions options,
+        ICompletionClientFactory completionClientFactory
+    ) => RunRollingSummaryAsync(
+        options,
+        completionClientFactory,
+        command: "replay-rolling-summary",
+        defaultCallLogDir: DefaultRollingSummaryCallLogDir,
+        sourceFactory: static inputPath => new LegacyRollingSummaryReplaySource(
+            ChatSessionLegacyEventSourceReader.Read(inputPath)
+        ),
+        artifactWriterFactory: null
+    );
+
+    private static Task<int> RunSessionJournalRollingSummaryAsync(
+        CliOptions options,
+        ICompletionClientFactory completionClientFactory
+    ) => RunRollingSummaryAsync(
+        options,
+        completionClientFactory,
+        command: "replay-rolling-summary-session-journal",
+        defaultCallLogDir: DefaultSessionJournalRollingSummaryCallLogDir,
+        sourceFactory: static inputPath => SessionJournalRollingSummaryReplaySource.Open(inputPath),
+        artifactWriterFactory: static (inputPath, profile, client, connection) =>
+            SessionJournalDerivedRecapWriter.Open(inputPath, profile, client, connection)
+    );
+
+    private static async Task<int> RunRollingSummaryAsync(
+        CliOptions options,
+        ICompletionClientFactory completionClientFactory,
+        string command,
+        string defaultCallLogDir,
+        Func<string, IRollingSummaryReplaySource> sourceFactory,
+        Func<
+            string,
+            ReplayMemoryMaintainerProfile,
+            ICompletionClient,
+            CompletionConnectionConfig,
+            IRollingSummaryArtifactWriter
+        >? artifactWriterFactory
+    ) {
         var inputPath = options.Require("input");
         var outputPath = options.Require("output");
         var connectionsPath = options.Require("connections");
         var requestedConnectionId = options.Get("connection");
-        var callLogDir = options.Get("call-log-dir") ?? DefaultRollingSummaryCallLogDir;
+        var callLogDir = options.Get("call-log-dir") ?? defaultCallLogDir;
         var thresholdTokens = options.GetInt("threshold-tokens", DefaultThresholdTokens);
         var maxEpochs = options.GetInt("max-epochs", int.MaxValue);
         var preset = options.Get("preset") ?? "autobiographical-rewrite";
         var systemPromptOverride = ReadPromptOrNull(options.Get("system-prompt"));
         var userPromptOverride = ReadPromptOrNull(options.Get("prompt"));
 
-        var eventSource = ChatSessionLegacyEventSourceReader.Read(inputPath);
         var connections = CompletionConnectionConfigLoader.LoadFile(connectionsPath);
-        using var registry = new CompletionConnectionRegistry(connections, new DefaultCompletionClientFactory());
+        using var registry = new CompletionConnectionRegistry(connections, completionClientFactory);
 
         if (!string.IsNullOrWhiteSpace(requestedConnectionId) && !registry.TryGet(requestedConnectionId, out _)) { throw new ArgumentException($"Unknown completion connection '{requestedConnectionId}'."); }
 
         var connection = registry.Resolve(requestedConnectionId);
         var client = registry.GetClient(connection.Id);
-        var profile = CreateReplayMaintainerProfile(options, preset, systemPromptOverride, userPromptOverride);
+        var profile = CreateReplayMaintainerProfile(preset, systemPromptOverride, userPromptOverride);
+        IRollingSummaryReplaySource source = sourceFactory(inputPath);
+        IRollingSummaryArtifactWriter? artifactWriter = artifactWriterFactory?.Invoke(
+            inputPath,
+            profile,
+            client,
+            connection
+        );
 
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(outputPath)) ?? ".");
         Directory.CreateDirectory(callLogDir);
 
         var runner = new RollingSummaryReplayRunner(
-            new LegacyRollingSummaryReplaySource(eventSource),
+            source,
             client,
             connection,
             profile,
             callLogDir,
             thresholdTokens,
-            maxEpochs
+            maxEpochs,
+            artifactWriter,
+            command
         );
 
         int recordCount = 0;
@@ -308,13 +366,13 @@ internal static partial class Program {
         Console.WriteLine("  llm-smoke --connections <path> [--connection <id>] [--call-log-dir <dir>] [--message <text>]");
         Console.WriteLine("  replay-pattern-count --input <path> --output <jsonl> [--report-md <path>] [--threshold-tokens <n>] [--respect-original-compaction]");
         Console.WriteLine("  replay-rolling-summary --input <path> --output <jsonl> --connections <path> [--preset autobiographical-rewrite|world-understanding-rewrite] [--connection <id>] [--call-log-dir <dir>] [--threshold-tokens <n>] [--max-epochs <n>] [--system-prompt <path>] [--prompt <path>]");
+        Console.WriteLine("  replay-rolling-summary-session-journal --input <repo-dir> --output <jsonl> --connections <path> [--preset autobiographical-rewrite|world-understanding-rewrite] [--connection <id>] [--call-log-dir <dir>] [--threshold-tokens <n>] [--max-epochs <n>] [--system-prompt <path>] [--prompt <path>]");
     }
 
     private static string? ReadPromptOrNull(string? path)
         => string.IsNullOrWhiteSpace(path) ? null : File.ReadAllText(path, Encoding.UTF8);
 
     private static ReplayMemoryMaintainerProfile CreateReplayMaintainerProfile(
-        CliOptions options,
         string preset,
         string? systemPromptOverride,
         string? userPromptOverride

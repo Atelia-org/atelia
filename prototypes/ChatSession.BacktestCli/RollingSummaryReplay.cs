@@ -175,6 +175,7 @@ internal sealed class RollingSummaryReplayRunner {
     private readonly CompletionConnectionConfig _connection;
     private readonly ReplayMemoryMaintainerProfile _profile;
     private readonly IRollingSummaryArtifactWriter? _artifactWriter;
+    private readonly string _command;
     private readonly string _callLogDir;
     private readonly int _thresholdTokens;
     private readonly int _maxEpochs;
@@ -189,7 +190,8 @@ internal sealed class RollingSummaryReplayRunner {
         string callLogDir,
         int thresholdTokens,
         int maxEpochs,
-        IRollingSummaryArtifactWriter? artifactWriter = null
+        IRollingSummaryArtifactWriter? artifactWriter = null,
+        string command = "replay-rolling-summary"
     ) {
         _source = source ?? throw new ArgumentNullException(nameof(source));
         _client = client ?? throw new ArgumentNullException(nameof(client));
@@ -212,6 +214,9 @@ internal sealed class RollingSummaryReplayRunner {
             }
         }
         _artifactWriter = artifactWriter;
+        _command = string.IsNullOrWhiteSpace(command)
+            ? throw new ArgumentException("Replay command cannot be empty.", nameof(command))
+            : command;
         _callLogDir = string.IsNullOrWhiteSpace(callLogDir) ? throw new ArgumentException("Call log directory cannot be empty.", nameof(callLogDir)) : callLogDir;
         _thresholdTokens = thresholdTokens;
         _maxEpochs = maxEpochs;
@@ -268,7 +273,7 @@ internal sealed class RollingSummaryReplayRunner {
                 _connection,
                 _callLogDir,
                 new CompletionCallLogContext(
-                    Command: "replay-rolling-summary",
+                    Command: _command,
                     EpochIndex: epochIndex,
                     EventOrdinal: step.TriggerCursor.EventOrdinal,
                     MaintainerId: _profile.MaintainerId,
