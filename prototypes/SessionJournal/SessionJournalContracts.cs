@@ -17,6 +17,7 @@ public enum SessionEventKind : uint {
     AgentActionProduced = 5,
     ToolExecutionStarted = 6,
     ToolResultObserved = 7,
+    CompletionRequestPrepared = 8,
 }
 
 public enum SessionExecutionPhase {
@@ -36,7 +37,23 @@ public sealed record SessionCreateOptions(
         => new(ModelId, CompletionSurfaceId, Schema);
 }
 
-public sealed record SessionRuntime(ICompletionClient CompletionClient, ToolSession? ToolSession = null);
+/// <summary>
+/// Non-secret identity of the configured completion connection. Secrets and endpoint credentials
+/// must never be copied into the raw SessionJournal.
+/// </summary>
+public sealed record SessionCompletionTargetIdentity(
+    string ConnectionId,
+    string Kind,
+    string Fingerprint,
+    string AdapterFingerprint
+);
+
+public sealed record SessionRuntime(
+    ICompletionClient CompletionClient,
+    ToolSession? ToolSession = null,
+    SessionCompletionTargetIdentity? CompletionTarget = null,
+    int? MaxTokens = null
+);
 
 public sealed record TurnResult(
     ActionMessage Message,
@@ -155,6 +172,17 @@ internal sealed record ToolResultObservedBody(
     string ToolName,
     ToolExecutionStatus Status,
     IReadOnlyList<ToolResultBlock> Blocks
+);
+
+internal sealed record CompletionRequestPreparedBody(
+    SessionRequestAttempt Attempt,
+    SessionContextPlan Plan,
+    SessionGoverningSetupReferences Setups,
+    SessionRequestParameters Parameters,
+    SessionRequestToolSet ToolSet,
+    SessionRequestRendering Rendering,
+    SessionRequestTarget Target,
+    SessionRequestCommitment Commitment
 );
 
 internal readonly record struct DecodedSessionEvent(

@@ -2,6 +2,7 @@ using Atelia.ChatSession;
 using Atelia.Completion;
 using Atelia.Completion.Abstractions;
 using Atelia.EventJournal;
+using Atelia.SessionJournal;
 using Atelia.SessionJournal.Derived;
 using ChatSessionBacktestCli;
 using SJ = Atelia.SessionJournal;

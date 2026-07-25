@@ -23,7 +23,8 @@ internal static class SessionEventCodec {
             SessionEventKind.AgentActionProduced => EncodeAgentActionProduced((AgentActionProducedBody)body),
             SessionEventKind.ToolExecutionStarted => EncodeToolExecutionStarted((ToolExecutionStartedBody)body),
             SessionEventKind.ToolResultObserved => EncodeToolResultObserved((ToolResultObservedBody)body),
-            _ => throw new NotSupportedException($"Session event kind '{kind}' is not implemented in Slice C.")
+            SessionEventKind.CompletionRequestPrepared => EncodeCompletionRequestPrepared((CompletionRequestPreparedBody)body),
+            _ => throw new NotSupportedException($"Session event kind '{kind}' is not implemented.")
         };
 
     public static object Decode(SessionEventKind kind, ReadOnlySpan<byte> payload, out int bodySchemaVersion) {
@@ -47,7 +48,8 @@ internal static class SessionEventCodec {
             SessionEventKind.AgentActionProduced => DecodeAgentActionProduced(body),
             SessionEventKind.ToolExecutionStarted => DecodeToolExecutionStarted(body),
             SessionEventKind.ToolResultObserved => DecodeToolResultObserved(body),
-            _ => throw new NotSupportedException($"Session event kind '{kind}' is not implemented in Slice C.")
+            SessionEventKind.CompletionRequestPrepared => SessionRequestManifestCodec.Decode(body),
+            _ => throw new NotSupportedException($"Session event kind '{kind}' is not implemented.")
         };
     }
 
@@ -188,6 +190,18 @@ internal static class SessionEventCodec {
             writer.WriteEndObject();
         }
 
+        return buffer.WrittenMemory.ToArray();
+    }
+
+    private static byte[] EncodeCompletionRequestPrepared(CompletionRequestPreparedBody body) {
+        byte[] canonicalBody = SessionRequestManifestCodec.Encode(body);
+        var buffer = new ArrayBufferWriter<byte>();
+        using (var writer = new Utf8JsonWriter(buffer, WriterOptions)) {
+            WriteEnvelopeStart(writer);
+            writer.WritePropertyName("body");
+            writer.WriteRawValue(canonicalBody, skipInputValidation: false);
+            writer.WriteEndObject();
+        }
         return buffer.WrittenMemory.ToArray();
     }
 

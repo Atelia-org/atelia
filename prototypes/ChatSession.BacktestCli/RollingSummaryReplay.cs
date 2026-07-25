@@ -3,6 +3,7 @@ using Atelia.ChatSession.Memory;
 using Atelia.Completion;
 using Atelia.Completion.Abstractions;
 using Atelia.EventJournal;
+using Atelia.SessionJournal;
 using Atelia.SessionJournal.Derived;
 using SJ = Atelia.SessionJournal;
 
