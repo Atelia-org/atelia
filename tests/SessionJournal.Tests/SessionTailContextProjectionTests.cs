@@ -384,7 +384,7 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
             () => reopened.SendAsync("must reject", CancellationToken.None)
         );
 
-        Assert.Contains("does not match prepared attempt", error.Message, StringComparison.Ordinal);
+        Assert.Contains("does not match active attempt", error.Message, StringComparison.Ordinal);
         Assert.Empty(client.Requests);
     }
 

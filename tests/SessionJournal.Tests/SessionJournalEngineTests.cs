@@ -880,7 +880,7 @@ public sealed class SessionJournalEngineTests : IDisposable {
     }
 
     [Fact]
-    public async Task SendAsync_MismatchedCompletionInvocation_LeavesPreparedWithoutAction() {
+    public async Task SendAsync_MismatchedCompletionInvocation_PersistsHostKnownFailure() {
         string path = NewJournalPath();
         var client = new ScriptedCompletionClient();
         client.Enqueue(request => new CompletionResult(
@@ -893,14 +893,31 @@ public sealed class SessionJournalEngineTests : IDisposable {
             new SessionCreateOptions("model-A", "system-A", "surface-A"),
             CreateRuntime(client)
         )) {
-            await Assert.ThrowsAsync<InvalidDataException>(
+            SessionJournalTurnAbortedException error =
+                await Assert.ThrowsAsync<SessionJournalTurnAbortedException>(
                 () => engine.SendAsync("hello", CancellationToken.None)
             );
-            Assert.Equal(SessionExecutionPhase.AwaitingCompletion, engine.Project().ExecutionState.Phase);
+            Assert.Equal(
+                "atelia.host.invalid-completion-invocation",
+                error.Termination.ProviderReason
+            );
+            Assert.Equal(SessionExecutionPhase.TurnFailed, engine.Project().ExecutionState.Phase);
         }
 
         Assert.Empty(ReadJournalAddressesByKind(path, SessionEventKind.AgentActionProduced));
-        Assert.Empty(ReadJournalAddressesByKind(path, SessionEventKind.CompletionAttemptFailed));
+        EventAddress failureAddress = Assert.Single(
+            ReadJournalAddressesByKind(path, SessionEventKind.CompletionAttemptFailed)
+        );
+        using var inspection = SessionJournalEngine.Open(path);
+        CompletionAttemptFailedBody failure = Assert.IsType<CompletionAttemptFailedBody>(
+            SessionEventCodec.Decode(
+                SessionEventKind.CompletionAttemptFailed,
+                inspection.ReadPayloadBytes(failureAddress),
+                out _
+            )
+        );
+        Assert.Equal(CompletionTerminationKind.Failed, failure.TerminationKind);
+        Assert.Equal("atelia.host.invalid-completion-invocation", failure.ProviderReason);
     }
 
     [Fact]
@@ -1132,7 +1149,7 @@ public sealed class SessionJournalEngineTests : IDisposable {
             () => reopened.ResumeAsync(CancellationToken.None)
         );
 
-        Assert.Contains("CS-3C", resumeError.Message, StringComparison.Ordinal);
+        Assert.Contains("RefuseUncertain", resumeError.Message, StringComparison.Ordinal);
         Assert.Equal(SessionExecutionPhase.AwaitingCompletion, reopened.Project().ExecutionState.Phase);
         Assert.Equal(0, resumeClient.Calls);
     }

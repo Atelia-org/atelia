@@ -53,12 +53,19 @@ public sealed record SessionCompletionTargetIdentity(
     string RequestAdapterFingerprint
 );
 
+public enum SessionPreparedCompletionRecoveryPolicy {
+    RefuseUncertain,
+    RestartWithNewAttempt,
+}
+
 public sealed record SessionRuntime(
     ICompletionClient CompletionClient,
     ToolSession? ToolSession = null,
     SessionCompletionTargetIdentity? CompletionTarget = null,
     int? MaxTokens = null,
-    SessionTailProjectionOptions? TailProjection = null
+    SessionTailProjectionOptions? TailProjection = null,
+    SessionPreparedCompletionRecoveryPolicy PreparedCompletionRecoveryPolicy =
+        SessionPreparedCompletionRecoveryPolicy.RefuseUncertain
 );
 
 public sealed record SessionTailProjectionOptions(string ArtifactId) {
@@ -99,6 +106,7 @@ internal enum SessionJournalFailpoint {
     None,
     AfterObservationCommitted,
     AfterRequestPreparedCommitted,
+    AfterCompletionAttemptRestartedCommitted,
     AfterCompletionBeforeActionCommitted,
     AfterToolStartedCommitted,
     AfterToolResultCommitted

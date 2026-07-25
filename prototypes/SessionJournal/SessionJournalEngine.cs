@@ -7,6 +7,8 @@ namespace Atelia.SessionJournal;
 
 public sealed class SessionJournalEngine : IDisposable {
     private const string UnsupportedTailToolCallReason = "atelia.host.unsupported-tool-call";
+    private const string InvalidCompletionInvocationReason =
+        "atelia.host.invalid-completion-invocation";
 
     private static readonly EventJournalOptions DefaultJournalOptions = new() {
         PayloadCodecPolicy = EventPayloadCodecPolicy.Zlib
@@ -167,6 +169,18 @@ public sealed class SessionJournalEngine : IDisposable {
         CancellationToken cancellationToken = default
     ) {
         ThrowIfDisposed();
+        if (_journal.GetHead(_mainRef) is { } preparedHead) {
+            SessionEventKind preparedHeadKind = ReadEventKind(preparedHead);
+            if (preparedHeadKind is SessionEventKind.CompletionRequestPrepared
+                or SessionEventKind.CompletionAttemptRestarted) {
+                return await ResumePreparedCompletionAsync(
+                    preparedHead,
+                    observer,
+                    cancellationToken
+                ).ConfigureAwait(false);
+            }
+        }
+
         if (_runtime?.TailProjection is not null
             && _journal.GetHead(_mainRef) is { } tailHead
             && ReadEventKind(tailHead) == SessionEventKind.ObservationAccepted) {
@@ -589,13 +603,15 @@ public sealed class SessionJournalEngine : IDisposable {
     ) {
         CompletionRequestPreparedBody manifest = BuildRequestManifest(
             request,
+            expectedParent,
             governingSetup,
             completionTarget,
             runtime,
             tools,
             materialization,
             correlationId,
-            reason
+            reason,
+            cancellationToken
         );
         EventAddress preparedAddress = AppendExpected(
             SessionEventKind.CompletionRequestPrepared,
@@ -605,6 +621,26 @@ public sealed class SessionJournalEngine : IDisposable {
         );
         TriggerFailpoint(SessionJournalFailpoint.AfterRequestPreparedCommitted);
 
+        return await ExecuteCommittedCompletionAttemptAsync(
+            request,
+            preparedAddress,
+            manifest.Attempt.AttemptId,
+            runtime,
+            allowResultToolCalls,
+            observer,
+            cancellationToken
+        ).ConfigureAwait(false);
+    }
+
+    private async Task<CompletionResult> ExecuteCommittedCompletionAttemptAsync(
+        CompletionRequest request,
+        EventAddress activeAttemptAddress,
+        string activeAttemptId,
+        SessionRuntime runtime,
+        bool allowResultToolCalls,
+        CompletionStreamObserver? observer,
+        CancellationToken cancellationToken
+    ) {
         CompletionResult result = await runtime.CompletionClient
             .StreamCompletionAsync(request, observer, cancellationToken)
             .ConfigureAwait(false);
@@ -615,13 +651,13 @@ public sealed class SessionJournalEngine : IDisposable {
             AppendExpected(
                 SessionEventKind.CompletionAttemptFailed,
                 new CompletionAttemptFailedBody(
-                    manifest.Attempt.AttemptId,
+                    activeAttemptId,
                     result.Termination.Kind,
                     result.Termination.ProviderReason,
                     result.Termination.Detail,
                     frozenErrors
                 ),
-                preparedAddress,
+                activeAttemptAddress,
                 requireBoundSetupCursor: false
             );
             throw new SessionJournalTurnAbortedException(
@@ -631,41 +667,257 @@ public sealed class SessionJournalEngine : IDisposable {
             );
         }
 
-        ValidateCompletionInvocation(result.Invocation, runtime.CompletionClient, request);
+        string? invocationMismatch = GetCompletionInvocationMismatch(
+            result.Invocation,
+            runtime.CompletionClient,
+            request
+        );
+        if (invocationMismatch is not null) {
+            ThrowKnownHostFailure(
+                activeAttemptAddress,
+                activeAttemptId,
+                InvalidCompletionInvocationReason,
+                invocationMismatch
+            );
+        }
         if (!allowResultToolCalls && result.Message.ToolCalls.Count > 0) {
             const string detail =
                 "Provider returned tool calls for an explicit-artifact-tail request, but that policy supports no tools.";
-            CompletionTermination hostFailure = CompletionTermination.Failed(
+            ThrowKnownHostFailure(
+                activeAttemptAddress,
+                activeAttemptId,
                 UnsupportedTailToolCallReason,
                 detail
-            );
-            IReadOnlyList<string> errors = Array.AsReadOnly([detail]);
-            AppendExpected(
-                SessionEventKind.CompletionAttemptFailed,
-                new CompletionAttemptFailedBody(
-                    manifest.Attempt.AttemptId,
-                    hostFailure.Kind,
-                    hostFailure.ProviderReason,
-                    hostFailure.Detail,
-                    errors
-                ),
-                preparedAddress,
-                requireBoundSetupCursor: false
-            );
-            throw new SessionJournalTurnAbortedException(
-                BuildTurnAbortMessage(hostFailure),
-                hostFailure,
-                errors
             );
         }
         TriggerFailpoint(SessionJournalFailpoint.AfterCompletionBeforeActionCommitted);
         AppendExpected(
             SessionEventKind.AgentActionProduced,
             new AgentActionProducedBody(result.Message, result.Invocation),
-            preparedAddress,
+            activeAttemptAddress,
             requireBoundSetupCursor: false
         );
         return result;
+    }
+
+    private void ThrowKnownHostFailure(
+        EventAddress activeAttemptAddress,
+        string activeAttemptId,
+        string reason,
+        string detail
+    ) {
+        CompletionTermination hostFailure = CompletionTermination.Failed(reason, detail);
+        IReadOnlyList<string> errors = Array.AsReadOnly([detail]);
+        AppendExpected(
+            SessionEventKind.CompletionAttemptFailed,
+            new CompletionAttemptFailedBody(
+                activeAttemptId,
+                hostFailure.Kind,
+                hostFailure.ProviderReason,
+                hostFailure.Detail,
+                errors
+            ),
+            activeAttemptAddress,
+            requireBoundSetupCursor: false
+        );
+        throw new SessionJournalTurnAbortedException(
+            BuildTurnAbortMessage(hostFailure),
+            hostFailure,
+            errors
+        );
+    }
+
+    private async Task<ResumeOutcome> ResumePreparedCompletionAsync(
+        EventAddress activeAttemptHead,
+        CompletionStreamObserver? observer,
+        CancellationToken cancellationToken
+    ) {
+        PreparedAttemptChain chain = ResolvePreparedAttemptChain(
+            activeAttemptHead,
+            cancellationToken
+        );
+        SessionPreparedCompletionRecoveryPolicy policy =
+            _runtime?.PreparedCompletionRecoveryPolicy
+            ?? SessionPreparedCompletionRecoveryPolicy.RefuseUncertain;
+        if (policy == SessionPreparedCompletionRecoveryPolicy.RefuseUncertain) {
+            throw new InvalidOperationException(
+                "The current completion attempt has an uncertain outcome. "
+                + "Recovery policy RefuseUncertain does not call the provider or mutate the journal."
+            );
+        }
+        if (policy != SessionPreparedCompletionRecoveryPolicy.RestartWithNewAttempt) {
+            throw new NotSupportedException(
+                $"Unsupported prepared completion recovery policy '{policy}'."
+            );
+        }
+
+        SessionRuntime runtime = RequireRuntime();
+        ValidateRecoveryRuntimeCompatibility(runtime, chain.Reconstruction.Manifest);
+        string restartedAttemptId = $"attempt-{Guid.NewGuid():N}";
+        EventAddress restartedAddress = AppendExpected(
+            SessionEventKind.CompletionAttemptRestarted,
+            new CompletionAttemptRestartedBody(
+                restartedAttemptId,
+                chain.ActiveAttemptId,
+                chain.SourcePreparedAddress
+            ),
+            chain.ActiveAttemptAddress,
+            requireBoundSetupCursor: false
+        );
+        TriggerFailpoint(SessionJournalFailpoint.AfterCompletionAttemptRestartedCommitted);
+
+        bool allowResultToolCalls = string.Equals(
+            chain.Reconstruction.Manifest.Plan.SelectionPolicyId,
+            SessionRequestManifestDefaults.FullRawSelectionPolicyId,
+            StringComparison.Ordinal
+        );
+        CompletionResult result = await ExecuteCommittedCompletionAttemptAsync(
+            chain.Reconstruction.Request,
+            restartedAddress,
+            restartedAttemptId,
+            runtime,
+            allowResultToolCalls,
+            observer,
+            cancellationToken
+        ).ConfigureAwait(false);
+
+        if (allowResultToolCalls) {
+            SessionProjection projection = Project(cancellationToken);
+            if (projection.ExecutionState.Phase == SessionExecutionPhase.AwaitingToolExecution) {
+                return ToResumeOutcome(
+                    await ContinueToolLoopAsync(
+                        projection,
+                        observer,
+                        cancellationToken
+                    ).ConfigureAwait(false)
+                );
+            }
+        }
+
+        return ToResumeOutcome(
+            new TurnResult(result.Message, result.Invocation, FreezeErrors(result.Errors))
+        );
+    }
+
+    private PreparedAttemptChain ResolvePreparedAttemptChain(
+        EventAddress activeAttemptHead,
+        CancellationToken cancellationToken
+    ) {
+        var newestToOldestRestarts =
+            new List<(EventAddress Address, EventAddress Parent, CompletionAttemptRestartedBody Body)>();
+        EventAddress cursor = activeAttemptHead;
+        CompletionRequestPreparedBody sourceManifest;
+        EventAddress sourcePreparedAddress;
+        while (true) {
+            cancellationToken.ThrowIfCancellationRequested();
+            using EventFrame frame = _journal.ReadEvent(cursor).Unwrap();
+            ValidateSessionHeaderPreview(cursor, frame.Header);
+            var kind = (SessionEventKind)frame.Header.OpaqueEventKind;
+            object body = SessionEventCodec.Decode(kind, frame.Payload, out _);
+            if (kind == SessionEventKind.CompletionAttemptRestarted) {
+                EventAddress parent = frame.Header.Parent
+                    ?? throw new InvalidDataException(
+                        $"CompletionAttemptRestarted at {cursor} requires an active-attempt parent."
+                    );
+                var restart = body as CompletionAttemptRestartedBody
+                    ?? throw new InvalidDataException(
+                        $"CompletionAttemptRestarted at {cursor} decoded to an unexpected body."
+                    );
+                newestToOldestRestarts.Add((cursor, parent, restart));
+                cursor = parent;
+                continue;
+            }
+            if (kind != SessionEventKind.CompletionRequestPrepared) {
+                throw new InvalidDataException(
+                    $"Prepared recovery chain reached '{kind}' at {cursor} instead of CompletionRequestPrepared."
+                );
+            }
+            sourceManifest = body as CompletionRequestPreparedBody
+                ?? throw new InvalidDataException(
+                    $"CompletionRequestPrepared at {cursor} decoded to an unexpected body."
+                );
+            sourcePreparedAddress = cursor;
+            break;
+        }
+
+        if (sourceManifest.Attempt.ReplacesAttemptId is not null) {
+            throw new InvalidDataException(
+                $"Source CompletionRequestPrepared at {sourcePreparedAddress} must not replace another attempt."
+            );
+        }
+        var seenAttemptIds = new HashSet<string>(StringComparer.Ordinal);
+        if (!seenAttemptIds.Add(sourceManifest.Attempt.AttemptId)) {
+            throw new InvalidDataException("Source prepared attempt id is invalid.");
+        }
+        EventAddress expectedParent = sourcePreparedAddress;
+        string activeAttemptId = sourceManifest.Attempt.AttemptId;
+        foreach (var restartEntry in newestToOldestRestarts.AsEnumerable().Reverse()) {
+            CompletionAttemptRestartedBody restart = restartEntry.Body;
+            if (restartEntry.Parent != expectedParent
+                || restart.SourcePreparedAddress != sourcePreparedAddress
+                || !string.Equals(
+                    restart.ReplacesAttemptId,
+                    activeAttemptId,
+                    StringComparison.Ordinal
+                )
+                || !seenAttemptIds.Add(restart.AttemptId)) {
+                throw new InvalidDataException(
+                    $"CompletionAttemptRestarted at {restartEntry.Address} does not strictly continue the source attempt chain."
+                );
+            }
+            expectedParent = restartEntry.Address;
+            activeAttemptId = restart.AttemptId;
+        }
+        if (expectedParent != activeAttemptHead) {
+            throw new InvalidDataException(
+                "Prepared recovery chain does not terminate at the current active attempt head."
+            );
+        }
+
+        SessionPreparedRequestReconstruction reconstruction =
+            SessionPreparedRequestReconstructor.Reconstruct(
+                _journal,
+                sourcePreparedAddress,
+                cancellationToken
+            );
+        return new PreparedAttemptChain(
+            sourcePreparedAddress,
+            expectedParent,
+            activeAttemptId,
+            reconstruction
+        );
+    }
+
+    private static void ValidateRecoveryRuntimeCompatibility(
+        SessionRuntime runtime,
+        CompletionRequestPreparedBody manifest
+    ) {
+        SessionCompletionTargetIdentity completionTarget = runtime.CompletionTarget
+            ?? throw new InvalidOperationException(
+                "Prepared completion recovery requires the exact durable CompletionTarget identity."
+            );
+        ImmutableArray<ToolDefinition> visibleTools =
+            runtime.ToolSession?.VisibleDefinitions ?? ImmutableArray<ToolDefinition>.Empty;
+        if (completionTarget != manifest.Target.Connection
+            || !string.Equals(
+                runtime.CompletionClient.Name,
+                manifest.Target.ClientName,
+                StringComparison.Ordinal
+            )
+            || !string.Equals(
+                runtime.CompletionClient.ApiSpecId,
+                manifest.Target.ApiSpecId,
+                StringComparison.Ordinal
+            )
+            || !string.Equals(
+                SessionRequestCanonicalizer.ComputeToolSetSha256(visibleTools),
+                manifest.ToolSet.Sha256,
+                StringComparison.Ordinal
+            )) {
+            throw new InvalidOperationException(
+                "Current runtime dispatch identity or visible tool definitions do not exactly match the prepared manifest."
+            );
+        }
     }
 
     private async Task<TurnResult> ContinueToolLoopAsync(
@@ -799,11 +1051,20 @@ public sealed class SessionJournalEngine : IDisposable {
                     return;
                 case SessionEventKind.CompletionAttemptFailed
                     when body is CompletionAttemptFailedBody failure:
-                    ValidateTailFailedBoundary(address, frame.Header.Parent, failure);
+                    ValidateTailFailedBoundary(
+                        address,
+                        frame.Header.Parent,
+                        failure,
+                        cancellationToken
+                    );
                     return;
                 case SessionEventKind.AgentActionProduced when body is AgentActionProducedBody action:
                     ValidateTailTerminalAction(address, action);
-                    ValidateTailLiveActionBoundary(address, frame.Header.Parent);
+                    ValidateTailLiveActionBoundary(
+                        address,
+                        frame.Header.Parent,
+                        cancellationToken
+                    );
                     return;
                 case SessionEventKind.ImportedAgentAction when body is AgentActionProducedBody action:
                     ValidateTailTerminalAction(address, action);
@@ -858,30 +1119,55 @@ public sealed class SessionJournalEngine : IDisposable {
 
     private void ValidateTailFailedBoundary(
         EventAddress failureAddress,
-        EventAddress? preparedAddress,
-        CompletionAttemptFailedBody failure
+        EventAddress? activeAttemptAddress,
+        CompletionAttemptFailedBody failure,
+        CancellationToken cancellationToken
     ) {
-        EventAddress prepared = preparedAddress
+        EventAddress activeAttempt = activeAttemptAddress
             ?? throw new InvalidDataException(
-                $"CompletionAttemptFailed at {failureAddress} requires a CompletionRequestPrepared parent."
+                $"CompletionAttemptFailed at {failureAddress} requires an active completion attempt parent."
             );
-        CompletionRequestPreparedBody manifest = ValidateTailPreparedObservation(prepared);
-        if (!string.Equals(failure.AttemptId, manifest.Attempt.AttemptId, StringComparison.Ordinal)) {
+        PreparedAttemptChain chain = ResolvePreparedAttemptChain(
+            activeAttempt,
+            cancellationToken
+        );
+        ValidateTailSourceObservation(chain, failureAddress);
+        if (!string.Equals(failure.AttemptId, chain.ActiveAttemptId, StringComparison.Ordinal)) {
             throw new InvalidDataException(
-                $"CompletionAttemptFailed at {failureAddress} does not match prepared attempt '{manifest.Attempt.AttemptId}'."
+                $"CompletionAttemptFailed at {failureAddress} does not match active attempt '{chain.ActiveAttemptId}'."
             );
         }
     }
 
     private void ValidateTailLiveActionBoundary(
         EventAddress actionAddress,
-        EventAddress? preparedAddress
+        EventAddress? activeAttemptAddress,
+        CancellationToken cancellationToken
     ) {
-        EventAddress prepared = preparedAddress
+        EventAddress activeAttempt = activeAttemptAddress
             ?? throw new InvalidDataException(
-                $"AgentActionProduced at {actionAddress} requires a CompletionRequestPrepared parent."
+                $"AgentActionProduced at {actionAddress} requires an active completion attempt parent."
             );
-        _ = ValidateTailPreparedObservation(prepared);
+        PreparedAttemptChain chain = ResolvePreparedAttemptChain(
+            activeAttempt,
+            cancellationToken
+        );
+        ValidateTailSourceObservation(chain, actionAddress);
+    }
+
+    private static void ValidateTailSourceObservation(
+        PreparedAttemptChain chain,
+        EventAddress terminalAddress
+    ) {
+        if (!string.Equals(
+                chain.Reconstruction.Manifest.Attempt.Reason,
+                "observation",
+                StringComparison.Ordinal
+            )) {
+            throw new InvalidDataException(
+                $"Tail terminal event at {terminalAddress} must originate from an ObservationAccepted prepared request."
+            );
+        }
     }
 
     private void ValidateTailImportedActionBoundary(
@@ -901,42 +1187,6 @@ public sealed class SessionJournalEngine : IDisposable {
                 $"ImportedAgentAction at {actionAddress} has an invalid ObservationAccepted parent body."
             );
         }
-    }
-
-    private CompletionRequestPreparedBody ValidateTailPreparedObservation(EventAddress preparedAddress) {
-        (EventAddress? observationAddress, object preparedBody) = ReadTailEvent(
-            preparedAddress,
-            SessionEventKind.CompletionRequestPrepared
-        );
-        var manifest = preparedBody as CompletionRequestPreparedBody
-            ?? throw new InvalidDataException(
-                $"CompletionRequestPrepared at {preparedAddress} decoded to an unexpected body."
-            );
-        EventAddress observation = observationAddress
-            ?? throw new InvalidDataException(
-                $"CompletionRequestPrepared at {preparedAddress} requires an ObservationAccepted parent."
-            );
-        var (_, observationBody) = ReadTailEvent(
-            observation,
-            SessionEventKind.ObservationAccepted
-        );
-        if (observationBody is not ObservationAcceptedBody) {
-            throw new InvalidDataException(
-                $"CompletionRequestPrepared at {preparedAddress} has an invalid ObservationAccepted parent body."
-            );
-        }
-        string expectedCorrelationId = BuildCorrelationId(observation);
-        if (!string.Equals(
-                manifest.Attempt.CorrelationId,
-                expectedCorrelationId,
-                StringComparison.Ordinal
-            )
-            || !string.Equals(manifest.Attempt.Reason, "observation", StringComparison.Ordinal)) {
-            throw new InvalidDataException(
-                $"CompletionRequestPrepared at {preparedAddress} does not describe its ObservationAccepted parent."
-            );
-        }
-        return manifest;
     }
 
     private static void ValidateTailTerminalAction(
@@ -985,13 +1235,15 @@ public sealed class SessionJournalEngine : IDisposable {
 
     private CompletionRequestPreparedBody BuildRequestManifest(
         CompletionRequest request,
+        EventAddress authoritativeRawEndInclusive,
         SessionGoverningSetup governingSetup,
         SessionCompletionTargetIdentity completionTarget,
         SessionRuntime runtime,
         ImmutableArray<ToolDefinition> tools,
         RequestContextMaterialization materialization,
         string correlationId,
-        string reason
+        string reason,
+        CancellationToken cancellationToken
     ) {
         ValidateRequired(correlationId, nameof(correlationId));
         ValidateRequired(reason, nameof(reason));
@@ -1041,102 +1293,21 @@ public sealed class SessionJournalEngine : IDisposable {
             commitment
         );
 
-        ValidateManifestMatchesRequest(manifest, request, tools, governingSetup, completionTarget, runtime);
+        SessionPreparedRequestReconstruction reconstructed =
+            SessionPreparedRequestReconstructor.Reconstruct(
+                _journal,
+                manifest,
+                authoritativeRawEndInclusive,
+                cancellationToken
+            );
+        byte[] originalCanonicalBytes = SessionRequestCanonicalizer.Canonicalize(request);
+        if (!originalCanonicalBytes.AsSpan().SequenceEqual(reconstructed.CanonicalBytes)) {
+            throw new InvalidDataException(
+                "Prepared manifest reconstruction does not exactly match the original canonical request bytes."
+            );
+        }
         return manifest;
     }
-
-    private void ValidateManifestMatchesRequest(
-        CompletionRequestPreparedBody manifest,
-        CompletionRequest request,
-        ImmutableArray<ToolDefinition> tools,
-        SessionGoverningSetup governingSetup,
-        SessionCompletionTargetIdentity completionTarget,
-        SessionRuntime runtime
-    ) {
-        SessionRequestManifestCodec.Validate(manifest);
-        SessionRequestCommitment expectedCommitment = SessionRequestCanonicalizer.CreateCommitment(request);
-        SessionSetupReference expectedRuntimeSetup = CreateSetupReference(
-            governingSetup.RuntimeConfigSetupAddress,
-            SessionEventKind.RuntimeConfigSetup
-        );
-        SessionSetupReference expectedPromptSetup = CreateSetupReference(
-            governingSetup.SystemPromptSetupAddress,
-            SessionEventKind.SystemPromptSetup
-        );
-        bool requestContextMatchesPlan = RequestContextMatchesPlan(
-            manifest,
-            request,
-            governingSetup.SystemPrompt
-        );
-        if (manifest.Commitment != expectedCommitment
-            || !string.Equals(manifest.Parameters.ModelId, request.ModelId, StringComparison.Ordinal)
-            || manifest.Parameters.MaxTokens != request.MaxTokens
-            || !string.Equals(request.ModelId, governingSetup.RuntimeConfig.ModelId, StringComparison.Ordinal)
-            || !requestContextMatchesPlan
-            || !string.Equals(manifest.ToolSet.Sha256, SessionRequestCanonicalizer.ComputeToolSetSha256(tools), StringComparison.Ordinal)
-            || !manifest.ToolSet.Definitions.SequenceEqual(tools)
-            || manifest.Setups.RuntimeConfig != expectedRuntimeSetup
-            || manifest.Setups.SystemPrompt != expectedPromptSetup
-            || manifest.Target.Connection != completionTarget
-            || !string.Equals(manifest.Target.CompletionSurfaceId, governingSetup.RuntimeConfig.CompletionSurfaceId, StringComparison.Ordinal)
-            || !string.Equals(manifest.Target.ClientName, runtime.CompletionClient.Name, StringComparison.Ordinal)
-            || !string.Equals(manifest.Target.ApiSpecId, runtime.CompletionClient.ApiSpecId, StringComparison.Ordinal)) {
-            throw new InvalidDataException("completion-request-prepared manifest does not match the exact provider-neutral CompletionRequest.");
-        }
-    }
-
-    private static bool RequestContextMatchesPlan(
-        CompletionRequestPreparedBody manifest,
-        CompletionRequest request,
-        string governingSystemPrompt
-    ) {
-        if (string.Equals(
-                manifest.Plan.SelectionPolicyId,
-                SessionRequestManifestDefaults.FullRawSelectionPolicyId,
-                StringComparison.Ordinal
-            )) {
-            return string.Equals(request.SystemPrompt, governingSystemPrompt, StringComparison.Ordinal);
-        }
-
-        if (!string.Equals(
-                manifest.Plan.SelectionPolicyId,
-                SessionRequestManifestDefaults.ExplicitArtifactTailSelectionPolicyId,
-                StringComparison.Ordinal
-            )
-            || manifest.Plan.ArtifactInputs.Length != 1) {
-            return false;
-        }
-
-        (string expectedSystemPrompt, ImmutableArray<IHistoryMessage> expectedPrefix) =
-            SessionTailContextProjection.ExpandContextSnapshot(
-                governingSystemPrompt,
-                manifest.Plan.ArtifactInputs[0].ContextSnapshot
-            );
-        if (!string.Equals(request.SystemPrompt, expectedSystemPrompt, StringComparison.Ordinal)
-            || request.Context.Count < expectedPrefix.Length) {
-            return false;
-        }
-
-        for (int i = 0; i < expectedPrefix.Length; i++) {
-            if (!HistoryMessageContentEquals(request.Context[i], expectedPrefix[i])) { return false; }
-        }
-        return true;
-    }
-
-    private static bool HistoryMessageContentEquals(IHistoryMessage actual, IHistoryMessage expected)
-        => (actual, expected) switch {
-            (ObservationMessage actualObservation, ObservationMessage expectedObservation)
-                when actualObservation is not ToolResultsMessage
-                    && expectedObservation is not ToolResultsMessage
-                => string.Equals(
-                    actualObservation.Content,
-                    expectedObservation.Content,
-                    StringComparison.Ordinal
-                ),
-            (ActionMessage actualAction, ActionMessage expectedAction)
-                => actualAction.Blocks.SequenceEqual(expectedAction.Blocks),
-            _ => false
-        };
 
     private SessionSetupReference CreateSetupReference(EventAddress address, SessionEventKind expectedKind) {
         using EventFrame frame = _journal.ReadEvent(address).Unwrap();
@@ -1373,18 +1544,20 @@ public sealed class SessionJournalEngine : IDisposable {
             Errors: result.Errors
         );
 
-    private static void ValidateCompletionInvocation(
+    private static string? GetCompletionInvocationMismatch(
         CompletionDescriptor invocation,
         ICompletionClient client,
         CompletionRequest request
     ) {
-        if (!string.Equals(invocation.ProviderId, client.Name, StringComparison.Ordinal)
-            || !string.Equals(invocation.ApiSpecId, client.ApiSpecId, StringComparison.Ordinal)
-            || !string.Equals(invocation.Model, request.ModelId, StringComparison.Ordinal)) {
-            throw new InvalidDataException(
-                "Completion result invocation does not match the actual client identity and prepared request model."
-            );
+        if (string.Equals(invocation.ProviderId, client.Name, StringComparison.Ordinal)
+            && string.Equals(invocation.ApiSpecId, client.ApiSpecId, StringComparison.Ordinal)
+            && string.Equals(invocation.Model, request.ModelId, StringComparison.Ordinal)) {
+            return null;
         }
+        return
+            "Completion result invocation does not match the active client and reconstructed request: "
+            + $"expected provider='{client.Name}', apiSpec='{client.ApiSpecId}', model='{request.ModelId}'; "
+            + $"actual provider='{invocation.ProviderId}', apiSpec='{invocation.ApiSpecId}', model='{invocation.Model}'.";
     }
 
     private static IReadOnlyList<string>? FreezeErrors(IReadOnlyList<string>? errors)
@@ -1427,6 +1600,13 @@ public sealed class SessionJournalEngine : IDisposable {
         EventAddress? RawStartExclusive,
         string RawRangeSha256,
         ImmutableArray<SessionRequestArtifactInput> ArtifactInputs
+    );
+
+    private sealed record PreparedAttemptChain(
+        EventAddress SourcePreparedAddress,
+        EventAddress ActiveAttemptAddress,
+        string ActiveAttemptId,
+        SessionPreparedRequestReconstruction Reconstruction
     );
 
     private static string BuildTurnAbortMessage(CompletionTermination termination) {
