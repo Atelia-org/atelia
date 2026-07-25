@@ -476,12 +476,12 @@ public sealed class SessionJournalEngineTests : IDisposable {
                 new SessionRuntimeConfiguration("model-B", "surface-B", SessionJournalDefaults.Schema)
             )
         );
-        Assert.Contains("requires an idle session", configEx.Message, StringComparison.Ordinal);
+        Assert.Contains("requires an idle or explicitly failed turn boundary", configEx.Message, StringComparison.Ordinal);
 
         var promptEx = Assert.Throws<InvalidOperationException>(
             () => engine.AppendSystemPromptSetup("system-B")
         );
-        Assert.Contains("requires an idle session", promptEx.Message, StringComparison.Ordinal);
+        Assert.Contains("requires an idle or explicitly failed turn boundary", promptEx.Message, StringComparison.Ordinal);
     }
 
     [Fact]
