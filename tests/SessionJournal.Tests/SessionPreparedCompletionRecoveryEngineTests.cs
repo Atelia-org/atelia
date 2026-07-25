@@ -409,6 +409,92 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
     }
 
     [Fact]
+    public async Task ResumeAsync_FullRawToolContinuationTerminal_AllowsNextTailSend() {
+        string path = NewJournalPath();
+        DerivedRecapArtifact artifact;
+        using (var setup = SessionJournalEngine.Create(
+            path,
+            new SessionCreateOptions("model-A", "system-A", "surface-A")
+        )) {
+            setup.AppendObservation("old");
+            EventAddress anchor = setup.AppendImportedAgentAction(
+                new ActionMessage([new ActionBlock.Text("old answer")]),
+                new CompletionDescriptor("import", "import-v1", "model-A")
+            );
+            artifact = await WriteArtifactAsync(
+                path,
+                anchor,
+                setup.ResolveGoverningSetup(anchor)
+            );
+        }
+
+        var tool = new RecordingTool("lookup");
+        ToolSession initialTools = new ToolRegistry([tool]).CreateSession();
+        var client = new ScriptedClient();
+        client.Enqueue(request => new CompletionResult(
+            new ActionMessage([
+                new ActionBlock.ToolCall(new RawToolCall("lookup", "call-1", "{}"))
+            ]),
+            Descriptor(request)
+        ));
+        client.Enqueue(_ => throw new IOException("transport after tool result"));
+        using (var engine = SessionJournalEngine.Open(
+            path,
+            CreateRuntime(client, initialTools)
+        )) {
+            await Assert.ThrowsAsync<IOException>(
+                () => engine.SendAsync("tool turn", CancellationToken.None)
+            );
+            Assert.Equal(
+                SessionExecutionPhase.AwaitingCompletion,
+                engine.Project().ExecutionState.Phase
+            );
+        }
+
+        CompletionRequestPreparedBody sourceManifest =
+            ReadBody<CompletionRequestPreparedBody>(
+                path,
+                ReadHead(path),
+                SessionEventKind.CompletionRequestPrepared
+            );
+        Assert.Equal("tool-continuation", sourceManifest.Attempt.Reason);
+
+        ToolSession recoveryTools = new ToolRegistry([tool]).CreateSession();
+        client.Enqueue(request => Success(request, "recovered terminal"));
+        using (var reopened = SessionJournalEngine.Open(
+            path,
+            CreateRuntime(
+                client,
+                recoveryTools,
+                recoveryPolicy: SessionPreparedCompletionRecoveryPolicy.RestartWithNewAttempt,
+                tailProjection: new SessionTailProjectionOptions(artifact.ArtifactId)
+            )
+        )) {
+            ResumeOutcome recovered = await reopened.ResumeAsync(CancellationToken.None);
+            Assert.Equal("recovered terminal", recovered.Message?.GetFlattenedText());
+
+            client.Enqueue(request => Success(request, "next tail answer"));
+            reopened.UseRuntime(CreateRuntime(
+                client,
+                tailProjection: new SessionTailProjectionOptions(artifact.ArtifactId)
+            ));
+            int projectionCountBeforeTailSend = reopened.FullProjectionInvocationCount;
+
+            TurnResult next = await reopened.SendAsync(
+                "next tail observation",
+                CancellationToken.None
+            );
+
+            Assert.Equal("next tail answer", next.Message.GetFlattenedText());
+            Assert.Equal(
+                projectionCountBeforeTailSend,
+                reopened.FullProjectionInvocationCount
+            );
+        }
+        Assert.Equal(1, tool.Calls);
+    }
+
+    [Fact]
     public async Task ResumeAsync_FullRawToolCall_FailsBeforeUnpinnedToolImplementationRuns() {
         string path = NewJournalPath();
         var sourceTool = new RecordingTool("lookup");

@@ -1132,7 +1132,7 @@ public sealed class SessionJournalEngine : IDisposable {
             activeAttempt,
             cancellationToken
         );
-        ValidateTailSourceObservation(chain, failureAddress);
+        ValidateTailSourceCompletionBoundary(chain, failureAddress);
         if (!string.Equals(failure.AttemptId, chain.ActiveAttemptId, StringComparison.Ordinal)) {
             throw new InvalidDataException(
                 $"CompletionAttemptFailed at {failureAddress} does not match active attempt '{chain.ActiveAttemptId}'."
@@ -1153,45 +1153,61 @@ public sealed class SessionJournalEngine : IDisposable {
             activeAttempt,
             cancellationToken
         );
-        ValidateTailSourceObservation(chain, actionAddress);
+        ValidateTailSourceCompletionBoundary(chain, actionAddress);
     }
 
-    private void ValidateTailSourceObservation(
+    private void ValidateTailSourceCompletionBoundary(
         PreparedAttemptIdentityChain chain,
         EventAddress terminalAddress
     ) {
-        EventAddress observationAddress = chain.SourcePreparedParent
+        EventAddress sourceBoundaryAddress = chain.SourcePreparedParent
             ?? throw new InvalidDataException(
-                $"Tail source CompletionRequestPrepared at {chain.SourcePreparedAddress} requires an ObservationAccepted parent."
+                $"Tail source CompletionRequestPrepared at {chain.SourcePreparedAddress} requires a completion boundary parent."
             );
-        EventFrameHeader observationHeader =
-            _journal.ReadEventHeaderPreview(observationAddress).Unwrap();
-        ValidateSessionHeaderPreview(observationAddress, observationHeader);
-        if ((SessionEventKind)observationHeader.OpaqueEventKind
-            != SessionEventKind.ObservationAccepted) {
-            throw new InvalidDataException(
-                $"Tail source CompletionRequestPrepared at {chain.SourcePreparedAddress} must directly follow ObservationAccepted, got '{(SessionEventKind)observationHeader.OpaqueEventKind}' at {observationAddress}."
-            );
-        }
-        string expectedCorrelationId = BuildCorrelationId(observationAddress);
+        EventFrameHeader sourceBoundaryHeader =
+            _journal.ReadEventHeaderPreview(sourceBoundaryAddress).Unwrap();
+        ValidateSessionHeaderPreview(sourceBoundaryAddress, sourceBoundaryHeader);
+        var sourceBoundaryKind =
+            (SessionEventKind)sourceBoundaryHeader.OpaqueEventKind;
+        string reason = chain.SourceManifest.Attempt.Reason;
         if (!string.Equals(
-                chain.SourceManifest.Attempt.Reason,
-                "observation",
-                StringComparison.Ordinal
-            )
-            || !string.Equals(
                 chain.SourceManifest.Plan.Reason,
-                "observation",
-                StringComparison.Ordinal
-            )
-            || !string.Equals(
-                chain.SourceManifest.Attempt.CorrelationId,
-                expectedCorrelationId,
+                reason,
                 StringComparison.Ordinal
             )) {
             throw new InvalidDataException(
-                $"Tail terminal event at {terminalAddress} must originate from its directly preceding ObservationAccepted address with matching reason and correlation."
+                $"Tail terminal event at {terminalAddress} has mismatched attempt and plan reasons."
             );
+        }
+
+        switch (reason) {
+            case "observation": {
+                if (sourceBoundaryKind != SessionEventKind.ObservationAccepted
+                    || !string.Equals(
+                        chain.SourceManifest.Attempt.CorrelationId,
+                        BuildCorrelationId(sourceBoundaryAddress),
+                        StringComparison.Ordinal
+                    )) {
+                    throw new InvalidDataException(
+                        $"Tail terminal event at {terminalAddress} must originate from its directly preceding ObservationAccepted address with matching correlation."
+                    );
+                }
+                break;
+            }
+            case "tool-continuation":
+                if (sourceBoundaryKind != SessionEventKind.ToolResultObserved) {
+                    throw new InvalidDataException(
+                        $"Tail terminal event at {terminalAddress} declares a tool continuation whose source parent is '{sourceBoundaryKind}'."
+                    );
+                }
+                // The source Prepared was committed by the validated writer and was fully
+                // reconstructed before restart dispatch. The original observation may be far
+                // behind this bounded proof, so its correlation id remains a trusted manifest fact.
+                break;
+            default:
+                throw new InvalidDataException(
+                    $"Tail terminal event at {terminalAddress} has unsupported source reason '{reason}'."
+                );
         }
     }
 
