@@ -92,11 +92,24 @@ internal sealed record SessionRequestCommitment(
 );
 
 internal static class SessionRequestManifestDefaults {
-    public const string SelectionPolicyId = "full-raw";
-    public const string PlannerFingerprint = "atelia.session-journal.full-raw-planner.v1";
-    public const string RenderingProfileId = "atelia.session-journal.full-raw-rendering.v1";
-    public const string ContextRendererId = "atelia.session-journal.full-raw.v1";
-    public const string ContextRendererFingerprint = "atelia.session-journal.full-raw.v1";
+    public const string FullRawSelectionPolicyId = "full-raw";
+    public const string FullRawPlannerFingerprint = "atelia.session-journal.full-raw-planner.v1";
+    public const string FullRawRenderingProfileId = "atelia.session-journal.full-raw-rendering.v1";
+    public const string FullRawContextRendererId = "atelia.session-journal.full-raw.v1";
+    public const string FullRawContextRendererFingerprint = "atelia.session-journal.full-raw.v1";
+
+    public const string RecapTailSelectionPolicyId = "atelia.session-journal.recap-tail.v1";
+    public const string RecapTailPlannerFingerprint = "atelia.session-journal.recap-tail-planner.v1";
+    public const string RecapTailRenderingProfileId = "atelia.session-journal.recap-tail-rendering.v1";
+    public const string RecapTailContextRendererId = "atelia.session-journal.recap-tail.v1";
+    public const string RecapTailContextRendererFingerprint = "atelia.session-journal.recap-tail.v1";
+
+    // Existing aliases remain the full-raw defaults so current callers and wire bytes do not drift.
+    public const string SelectionPolicyId = FullRawSelectionPolicyId;
+    public const string PlannerFingerprint = FullRawPlannerFingerprint;
+    public const string RenderingProfileId = FullRawRenderingProfileId;
+    public const string ContextRendererId = FullRawContextRendererId;
+    public const string ContextRendererFingerprint = FullRawContextRendererFingerprint;
     public const string ReasoningCodecSetFingerprint = "atelia.reasoning-codec-set.v1";
     public const string CanonicalRequestCodecId = "atelia.completion-request.canonical-json.v1";
     public const string ToolCodecId = "atelia.tool-definition.canonical-json.v1";

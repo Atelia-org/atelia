@@ -250,7 +250,7 @@ public sealed class SessionRequestManifestCodecTests : IDisposable {
             SessionEventKind.CompletionRequestPrepared,
             body with { ToolSet = body.ToolSet with { Sha256 = new string('0', 64) } }
         ));
-        Assert.Throws<NotSupportedException>(() => SessionEventCodec.Encode(
+        Assert.Throws<InvalidDataException>(() => SessionEventCodec.Encode(
             SessionEventKind.CompletionRequestPrepared,
             body with {
                 Plan = body.Plan with {
@@ -283,6 +283,115 @@ public sealed class SessionRequestManifestCodecTests : IDisposable {
             invalidRawStart
         ));
         Assert.Throws<ArgumentException>(() => EventAddressTextCodec.Format(default));
+    }
+
+    [Fact]
+    public void CompletionRequestPrepared_RecapTailRoundtripsExactlyWithOneArtifactAndRawSuffix() {
+        CompletionRequestPreparedBody body = CreateRecapTailManifestBody();
+
+        byte[] encoded = SessionEventCodec.Encode(SessionEventKind.CompletionRequestPrepared, body);
+        var decoded = Assert.IsType<CompletionRequestPreparedBody>(
+            SessionEventCodec.Decode(SessionEventKind.CompletionRequestPrepared, encoded, out _)
+        );
+        byte[] reencoded = SessionEventCodec.Encode(SessionEventKind.CompletionRequestPrepared, decoded);
+
+        Assert.Equal(encoded, reencoded);
+        Assert.Equal(SessionRequestManifestDefaults.RecapTailSelectionPolicyId, decoded.Plan.SelectionPolicyId);
+        Assert.NotNull(decoded.Plan.RawStartExclusive);
+        SessionRequestArtifactInput artifact = Assert.Single(decoded.Plan.ArtifactInputs);
+        Assert.Equal("artifact-01", artifact.ArtifactId);
+        Assert.Equal("rolling-summary", artifact.ArtifactKind);
+        Assert.Equal(new string('d', 64), artifact.ContentSha256);
+        Assert.Empty(decoded.Plan.RecalledInputs);
+    }
+
+    [Fact]
+    public void ManifestValidation_RecapTailRejectsOpenBoundaryOrNonExclusiveInputs() {
+        CompletionRequestPreparedBody body = CreateRecapTailManifestBody();
+        SessionRequestArtifactInput artifact = Assert.Single(body.Plan.ArtifactInputs);
+
+        Assert.Throws<InvalidDataException>(() => SessionRequestManifestCodec.Validate(
+            body with { Plan = body.Plan with { RawStartExclusive = null } }
+        ));
+        Assert.Throws<InvalidDataException>(() => SessionRequestManifestCodec.Validate(
+            body with { Plan = body.Plan with { ArtifactInputs = [] } }
+        ));
+        Assert.Throws<InvalidDataException>(() => SessionRequestManifestCodec.Validate(
+            body with { Plan = body.Plan with { ArtifactInputs = [artifact, artifact] } }
+        ));
+        Assert.Throws<InvalidDataException>(() => SessionRequestManifestCodec.Validate(
+            body with {
+                Plan = body.Plan with {
+                    RecalledInputs = [new SessionRequestRecalledInput("recall-1", new string('e', 64))]
+                }
+            }
+        ));
+    }
+
+    [Fact]
+    public void ManifestValidation_RecapTailRejectsInvalidArtifactCommitment() {
+        CompletionRequestPreparedBody body = CreateRecapTailManifestBody();
+        SessionRequestArtifactInput artifact = Assert.Single(body.Plan.ArtifactInputs);
+
+        Assert.Throws<ArgumentException>(() => SessionRequestManifestCodec.Validate(
+            body with { Plan = body.Plan with { ArtifactInputs = [artifact with { ArtifactId = " " }] } }
+        ));
+        Assert.Throws<ArgumentException>(() => SessionRequestManifestCodec.Validate(
+            body with { Plan = body.Plan with { ArtifactInputs = [artifact with { ArtifactKind = "" }] } }
+        ));
+        Assert.Throws<ArgumentException>(() => SessionRequestManifestCodec.Validate(
+            body with {
+                Plan = body.Plan with {
+                    ArtifactInputs = [artifact with { ContentSha256 = new string('A', 64) }]
+                }
+            }
+        ));
+    }
+
+    [Fact]
+    public void ManifestValidation_PoliciesRejectMismatchedPlannerAndRenderingIdentities() {
+        CompletionRequestPreparedBody recap = CreateRecapTailManifestBody();
+        CompletionRequestPreparedBody fullRaw = recap with {
+            Plan = recap.Plan with {
+                SelectionPolicyId = SessionRequestManifestDefaults.FullRawSelectionPolicyId,
+                PlannerFingerprint = SessionRequestManifestDefaults.FullRawPlannerFingerprint,
+                RawStartExclusive = null,
+                ArtifactInputs = [],
+                RenderingProfileId = SessionRequestManifestDefaults.FullRawRenderingProfileId
+            },
+            Rendering = recap.Rendering with {
+                ContextRendererId = SessionRequestManifestDefaults.FullRawContextRendererId,
+                ContextRendererFingerprint = SessionRequestManifestDefaults.FullRawContextRendererFingerprint
+            }
+        };
+
+        Assert.Throws<NotSupportedException>(() => SessionRequestManifestCodec.Validate(
+            recap with { Plan = recap.Plan with { PlannerFingerprint = SessionRequestManifestDefaults.FullRawPlannerFingerprint } }
+        ));
+        Assert.Throws<NotSupportedException>(() => SessionRequestManifestCodec.Validate(
+            recap with { Plan = recap.Plan with { RenderingProfileId = SessionRequestManifestDefaults.FullRawRenderingProfileId } }
+        ));
+        Assert.Throws<NotSupportedException>(() => SessionRequestManifestCodec.Validate(
+            recap with {
+                Rendering = recap.Rendering with {
+                    ContextRendererId = SessionRequestManifestDefaults.FullRawContextRendererId
+                }
+            }
+        ));
+        Assert.Throws<NotSupportedException>(() => SessionRequestManifestCodec.Validate(
+            recap with {
+                Rendering = recap.Rendering with {
+                    ContextRendererFingerprint = SessionRequestManifestDefaults.FullRawContextRendererFingerprint
+                }
+            }
+        ));
+        Assert.Throws<InvalidDataException>(() => SessionRequestManifestCodec.Validate(
+            fullRaw with {
+                Plan = fullRaw.Plan with {
+                    RecalledInputs = [new SessionRequestRecalledInput("recall-1", new string('e', 64))]
+                }
+            }
+        ));
     }
 
     [Fact]
@@ -431,6 +540,27 @@ public sealed class SessionRequestManifestCodecTests : IDisposable {
             ),
             SessionRequestCanonicalizer.CreateCommitment(request)
         );
+    }
+
+    private CompletionRequestPreparedBody CreateRecapTailManifestBody() {
+        CompletionRequestPreparedBody fullRaw = CreateManifestBody(CreateToolDefinitions(), out _);
+        return fullRaw with {
+            Attempt = fullRaw.Attempt with { Reason = "recap plus dependency-closed tail" },
+            Plan = fullRaw.Plan with {
+                SelectionPolicyId = SessionRequestManifestDefaults.RecapTailSelectionPolicyId,
+                PlannerFingerprint = SessionRequestManifestDefaults.RecapTailPlannerFingerprint,
+                RawStartExclusive = fullRaw.Setups.SystemPrompt.Address,
+                ArtifactInputs = [
+                    new SessionRequestArtifactInput("artifact-01", "rolling-summary", new string('d', 64))
+                ],
+                RenderingProfileId = SessionRequestManifestDefaults.RecapTailRenderingProfileId,
+                Reason = "recap plus dependency-closed tail"
+            },
+            Rendering = fullRaw.Rendering with {
+                ContextRendererId = SessionRequestManifestDefaults.RecapTailContextRendererId,
+                ContextRendererFingerprint = SessionRequestManifestDefaults.RecapTailContextRendererFingerprint
+            }
+        };
     }
 
     private (EventAddress Runtime, EventAddress Prompt, EventAddress RawStart) CreateAddresses() {

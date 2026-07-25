@@ -73,28 +73,13 @@ internal static class SessionRequestManifestCodec {
         if (body.Plan.EstimatedInputTokens < 0) {
             throw new ArgumentOutOfRangeException(nameof(body), "plan.estimatedInputTokens cannot be negative.");
         }
-        if (!body.Plan.ArtifactInputs.IsEmpty || !body.Plan.RecalledInputs.IsEmpty) {
-            throw new NotSupportedException("completion-request-prepared v1 supports full-raw plans only; artifact and recalled inputs must be empty.");
-        }
         if (!string.Equals(body.Attempt.Reason, body.Plan.Reason, StringComparison.Ordinal)) {
             throw new InvalidDataException("attempt.reason must match plan.reason.");
         }
         if (!string.Equals(body.Plan.ModelProfileId, body.Parameters.ModelId, StringComparison.Ordinal)) {
             throw new InvalidDataException("plan.modelProfileId must match parameters.modelId.");
         }
-        if (!string.Equals(body.Plan.SelectionPolicyId, SessionRequestManifestDefaults.SelectionPolicyId, StringComparison.Ordinal)) {
-            throw new NotSupportedException($"Unsupported selection policy '{body.Plan.SelectionPolicyId}'.");
-        }
-        if (!string.Equals(body.Plan.PlannerFingerprint, SessionRequestManifestDefaults.PlannerFingerprint, StringComparison.Ordinal)
-            || !string.Equals(body.Plan.RenderingProfileId, SessionRequestManifestDefaults.RenderingProfileId, StringComparison.Ordinal)
-            || !string.Equals(body.Rendering.ContextRendererId, SessionRequestManifestDefaults.ContextRendererId, StringComparison.Ordinal)
-            || !string.Equals(body.Rendering.ContextRendererFingerprint, SessionRequestManifestDefaults.ContextRendererFingerprint, StringComparison.Ordinal)
-            || !string.Equals(body.Rendering.ReasoningCodecSetFingerprint, SessionRequestManifestDefaults.ReasoningCodecSetFingerprint, StringComparison.Ordinal)) {
-            throw new NotSupportedException("completion-request-prepared v1 contains unsupported planner or rendering identities.");
-        }
-        if (body.Plan.RawStartExclusive is not null) {
-            throw new InvalidDataException("full-raw plans require plan.rawStartExclusive to be null.");
-        }
+        ValidatePlanPolicy(body);
 
         ValidateSetup(body.Setups.RuntimeConfig, "setups.runtimeConfig");
         ValidateSetup(body.Setups.SystemPrompt, "setups.systemPrompt");
@@ -115,6 +100,15 @@ internal static class SessionRequestManifestCodec {
 
         RequireText(body.Rendering.ContextRendererId, "rendering.contextRendererId");
         RequireText(body.Rendering.ContextRendererFingerprint, "rendering.contextRendererFingerprint");
+        if (!string.Equals(
+                body.Rendering.ReasoningCodecSetFingerprint,
+                SessionRequestManifestDefaults.ReasoningCodecSetFingerprint,
+                StringComparison.Ordinal
+            )) {
+            throw new NotSupportedException(
+                $"Unsupported reasoning codec set fingerprint '{body.Rendering.ReasoningCodecSetFingerprint}'."
+            );
+        }
         if (!string.Equals(
                 body.Rendering.CanonicalRequestCodecId,
                 SessionRequestManifestDefaults.CanonicalRequestCodecId,
@@ -143,6 +137,81 @@ internal static class SessionRequestManifestCodec {
             throw new ArgumentOutOfRangeException(nameof(body), "commitment.byteLength must be positive.");
         }
         RequireSha256(body.Commitment.Sha256, "commitment.sha256");
+    }
+
+    private static void ValidatePlanPolicy(CompletionRequestPreparedBody body) {
+        switch (body.Plan.SelectionPolicyId) {
+            case SessionRequestManifestDefaults.FullRawSelectionPolicyId:
+                ValidatePolicyIdentities(
+                    body,
+                    SessionRequestManifestDefaults.FullRawPlannerFingerprint,
+                    SessionRequestManifestDefaults.FullRawRenderingProfileId,
+                    SessionRequestManifestDefaults.FullRawContextRendererId,
+                    SessionRequestManifestDefaults.FullRawContextRendererFingerprint
+                );
+                if (body.Plan.RawStartExclusive is not null) {
+                    throw new InvalidDataException("full-raw plans require plan.rawStartExclusive to be null.");
+                }
+                if (!body.Plan.ArtifactInputs.IsEmpty || !body.Plan.RecalledInputs.IsEmpty) {
+                    throw new InvalidDataException(
+                        "full-raw plans require plan.artifactInputs and plan.recalledInputs to be empty."
+                    );
+                }
+                break;
+
+            case SessionRequestManifestDefaults.RecapTailSelectionPolicyId:
+                ValidatePolicyIdentities(
+                    body,
+                    SessionRequestManifestDefaults.RecapTailPlannerFingerprint,
+                    SessionRequestManifestDefaults.RecapTailRenderingProfileId,
+                    SessionRequestManifestDefaults.RecapTailContextRendererId,
+                    SessionRequestManifestDefaults.RecapTailContextRendererFingerprint
+                );
+                if (body.Plan.RawStartExclusive is null) {
+                    throw new InvalidDataException("recap-tail plans require plan.rawStartExclusive.");
+                }
+                if (body.Plan.ArtifactInputs.Length != 1) {
+                    throw new InvalidDataException("recap-tail plans require exactly one plan.artifactInputs entry.");
+                }
+                if (!body.Plan.RecalledInputs.IsEmpty) {
+                    throw new InvalidDataException("recap-tail plans require plan.recalledInputs to be empty.");
+                }
+                ValidateArtifactInput(body.Plan.ArtifactInputs[0]);
+                break;
+
+            default:
+                throw new NotSupportedException(
+                    $"Unsupported selection policy '{body.Plan.SelectionPolicyId}'."
+                );
+        }
+    }
+
+    private static void ValidatePolicyIdentities(
+        CompletionRequestPreparedBody body,
+        string plannerFingerprint,
+        string renderingProfileId,
+        string contextRendererId,
+        string contextRendererFingerprint
+    ) {
+        if (!string.Equals(body.Plan.PlannerFingerprint, plannerFingerprint, StringComparison.Ordinal)
+            || !string.Equals(body.Plan.RenderingProfileId, renderingProfileId, StringComparison.Ordinal)
+            || !string.Equals(body.Rendering.ContextRendererId, contextRendererId, StringComparison.Ordinal)
+            || !string.Equals(
+                body.Rendering.ContextRendererFingerprint,
+                contextRendererFingerprint,
+                StringComparison.Ordinal
+            )) {
+            throw new NotSupportedException(
+                $"Selection policy '{body.Plan.SelectionPolicyId}' contains mismatched planner or rendering identities."
+            );
+        }
+    }
+
+    private static void ValidateArtifactInput(SessionRequestArtifactInput input) {
+        ArgumentNullException.ThrowIfNull(input);
+        RequireText(input.ArtifactId, "plan.artifactInputs[].artifactId");
+        RequireText(input.ArtifactKind, "plan.artifactInputs[].artifactKind");
+        RequireSha256(input.ContentSha256, "plan.artifactInputs[].contentSha256");
     }
 
     private static void WriteAttempt(Utf8JsonWriter writer, SessionRequestAttempt value) {
