@@ -1,14 +1,15 @@
 # SessionJournal Configuration Access Notes
 
-> 状态：Decision Revised / CS-3 Handoff
+> 状态：CS-3A Implemented / CS-3B/CS-3C Handoff
 > 日期：2026-07-26
 > 相关文档：[SessionJournal 主干设计基线](session-journal-trunk-design.md)、[ChatSession 事件源与长期上下文架构路线图](../ChatSession/event-sourced-session-architecture-roadmap.md)
 
 ## 1. 结论
 
-CS-5-lite 完成后，下一条主线应进入 roadmap 的 **最小 CS-3：可恢复的无工具 Completion**。这个切片需要
-最小 `ContextPlan`、引用式 canonical request manifest，以及 artifact + raw suffix 的 tail context
-projection。
+CS-5-lite 完成后，主线已进入 roadmap 的 **最小 CS-3：可恢复 Completion**。CS-3A 已落地 minimal
+`ContextPlan`、canonical request manifest 与 governing setup checkpoint；下一步分别由 CS-3B 引入
+artifact + raw suffix 的 tail context projection，由 CS-3C 实现 prepared request 的确定性 reopen
+driver。
 
 **赞同把已提交的 ContextPlan / request manifest 用作重启时的 governing setup 加速点。**准确场景是：
 
@@ -54,15 +55,21 @@ manifest 的长历史 governing setup scan”不可接受，才单独设计它�
 - `session-created`：初始化完成 marker，空 body。初始化顺序为
   `runtime-config-setup -> system-prompt-setup -> session-created`。
 
-当前 `SessionJournalEngine.ResolveGoverningSetup(head)` 已实现正确性基线：
+`SessionJournalEngine.ResolveGoverningSetup(head)` 的 CS-3A 实现为：
 
 1. 从给定 `head` 沿 authoritative `EventFrameHeader.Parent` 回溯。
 2. 每步只调用 `ReadEventHeaderPreview`，不解码中间 payload。
-3. 分别找到最近的 `runtime-config-setup` 与 `system-prompt-setup`。
-4. 最后只读取这两个 event 的 payload。
-5. 缺少任一 setup 时 fail-fast。
+3. 分别收集 checkpoint 之后最近的 `runtime-config-setup` 与 `system-prompt-setup`。
+4. 若尚有缺项且命中最近的 `completion-request-prepared`，只读取该 manifest，并从其 setup refs
+   逐字段补缺；若两个 setup 已在尾段直接命中，则不读取 manifest payload。
+5. setup ref 直接读取目标 event，校验 kind、body schema version，以及 `ReadEvent` 返回的完整、
+   解压后的 logical envelope bytes 的 SHA-256。
+6. 无 checkpoint 时继续回溯到 root；缺少任一 setup 或 checkpoint 引用校验失败时 fail-fast。
 
-这条路径不会因正文很大而解码冷历史，但配置长期稳定时仍需访问 O(全历史) 个 header。
+manifest 的 setup lineage 绑定是 **validated writer invariant**：append manifest 前必须用
+`GoverningSetupCursor` 证明两个地址是 `Header.Parent` 当时的 governing setup，并以同一个 expected
+Parent 做 ref CAS。reopen 不再用 O(N) scan 重证祖先关系，否则会抵消 checkpoint 的收益；它信任 checked
+raw manifest 的语义事实，同时独立验证所引用 payload 的 kind/schema/hash。
 
 同时要注意：`Project()` / `ReplayHistory()` 当前仍通过 `ReadChronologicalChain` 解码完整 raw chain。
 在 tail-only projection 尚未接入正式请求路径以前，只优化 setup resolver 并不能消除整体 O(N) replay；
@@ -121,19 +128,21 @@ resolveGoverningSetup(head):
 
 roadmap 已明确允许 MVP 将 `context-plan-committed` 与 `completion-request-prepared` 合并为一个 payload。
 近期推荐保留 `completion-request-prepared` 这个 event kind，并在 payload 内嵌 minimal `ContextPlan`；
-这个单一 raw event 同时承担 plan 审计、request 恢复与 governing setup prefix checkpoint。payload 至少
-要明确：
+这个单一 raw event 同时承担 plan 审计、request 恢复与 governing setup prefix checkpoint。
+
+`basedOnRawHead` / `RawEndInclusive` **不进入 payload**。按照 trunk 的 header/body 去重不变量，它们都
+由 manifest frame 的 `Header.Parent` 唯一表达；materialized plan view 可在解码时注入这个地址。payload
+至少明确：
 
 ```text
-basedOnRawHead
 governingRuntimeConfigSetup
 governingSystemPromptSetup
 ```
 
 并在 append 前保证：
 
-- `basedOnRawHead` 是 manifest event 的直接 Parent，或由 event contract 明确绑定。
-- 两个 setup 地址是 `basedOnRawHead` Parent lineage 上各自最近的 setup。
+- cursor 的 `validForHead` 就是即将成为 manifest `Header.Parent` 的地址。
+- 两个 setup 地址是这个 Parent lineage 上各自最近的 setup。
 - 两个地址解码为预期 kind/schema。
 - manifest 自己不改变 governing setup。
 
@@ -149,7 +158,8 @@ GoverningSetupCursor {
 ```
 
 - reopen 时先由 resolver 建立 cursor。
-- 构造 `basedOnRawHead` 的 plan/manifest 前，必须满足 `cursor.validForHead == basedOnRawHead`。
+- 构造 plan/manifest 前，必须满足 `cursor.validForHead == expectedParent`；commit 也必须以同一个
+  `expectedParent` 做 CAS。
 - 普通 event 成功 append/commit 后，推进 `validForHead`，两个 setup pointers 不变。
 - setup event 成功 append/commit 后，推进 `validForHead` 并替换对应 pointer。
 - ref CAS/commit 失败、observed head 不一致或 branch 切换时，cursor 立即失效，按新 head 重新 resolve。
@@ -320,23 +330,27 @@ ContextPlan 必须验证 `RawStartExclusive` 是 dependency-closed boundary，�
 
 ## 8. 推荐的下一步工作包
 
-### CS-3A：Minimal Plan/Manifest Checkpoint
+### CS-3A：Minimal Plan/Manifest Checkpoint（已实施）
 
 范围：
 
 - 采用 roadmap 允许的 MVP 合并 event，同时表达 minimal `ContextPlan` 与
   `CompletionRequestPrepared` manifest。
 - 一开始就定义完整、可恢复同一 canonical request 的 manifest schema，包括：
-  - `basedOnRawHead`、两个 governing setup event 地址。
-  - raw range / artifact / tool schema 的稳定地址、版本与必要 hash。
+  - 由 frame `Header.Parent` 表达的 plan raw head / raw end，以及两个 governing setup event 地址。
+  - raw range / artifact 的稳定地址、版本与必要 hash。
+  - 当前没有 immutable tool-schema store，因此首版保存完整、可逆、content-addressed 的 inline
+    `ToolDefinition` set snapshot；不伪造 tool schema address。
   - renderer / serializer / prompt / model / connection identity 与 fingerprint。
-  - canonical request hash、attempt id、correlation id。
+  - provider-neutral canonical `CompletionRequest` bytes 的 hash、attempt id、correlation id；该 hash
+    不冒充 provider HTTP body hash。
 - 引入绑定 head 的 `GoverningSetupCursor`，并实现 append 成功推进、setup 替换、CAS/branch 失配后失效
   与重解析规则。
 - 增加 `completion-request-prepared` event kind / codec。
 - reducer 将该 event 投影为 `RequestPrepared` / `AwaitingCompletion` execution phase；它对 rendered
   conversation context 与 governing setup 都是中性的。
-- 后续 `agent-action-produced` 必须关联对应 attempt / manifest，不能只依赖位置猜测。
+- 正常 completion 成功后，`agent-action-produced.Header.Parent` 必须直接指向 prepared event，以因果边
+  关联 request；body 不重复保存 Parent。import/manual action 走显式 unprepared append 入口。
 - 在发送 completion 前提交该 event。
 - 让 `ResolveGoverningSetup` 在 Parent 回溯中使用最近 checkpoint，并逐字段合并 checkpoint 之后的新
   setup。
@@ -345,6 +359,31 @@ ContextPlan 必须验证 `RawStartExclusive` 是 dependency-closed boundary，�
 
 这一包先兑现本笔记的核心收益：程序正常运行时把内存中的 setup pointers 固化到 raw chain，重启后用
 near-head checkpoint 恢复。Planner policy 可以先选择 full raw fallback，不必提前实现 CS-6。
+
+实际落点：
+
+- kind 8 `completion-request-prepared` 合并保存 minimal ContextPlan 与完整 v1 manifest；body 不复述
+  frame `Header.Parent`。
+- full-raw v1 的 `RawStartExclusive = null`，`RawRangeSha256` 覆盖
+  `(RawStartExclusive, Header.Parent]`，使用带 domain tag、长度前缀、event address/Parent/kind/schema
+  与 logical payload hash 的 canonical framing。
+- setup ref 的 hash domain 固定为完整 logical SessionEvent envelope bytes；tool definitions 使用完整、
+  可逆、content-addressed inline snapshot。
+- connection identity 明确拆成 `ConnectionFingerprint` 与 `RequestAdapterFingerprint`，不保存秘密。
+- manifest codec 严格拒绝 unknown/duplicate properties 与非法地址，并保证
+  `Encode -> Decode -> Encode` byte exact。
+- 每次 completion（含 tool-loop 续环）都在 provider 调用前提交 manifest；成功 action 直接以 prepared
+  event 为 Parent。prepared 对 conversation context 中性。
+- reopen 到 prepared 时投影为 `AwaitingCompletion`。CS-3A 的 `ResumeAsync` 明确 fail-fast，不使用当前
+  config/head 重规划或盲目重发；CS-3C 再实现从 manifest 重建并继续。
+- provider 明确返回 `Incomplete` / `Failed` 时写 kind 9 `completion-attempt-failed`，保存 attempt id、
+  termination/reason/detail/errors，并投影为可替换 setup、可接收下一条 observation 的
+  `TurnFailed`。transport exception/cancellation 没有已知 outcome，仍保留
+  prepared/`AwaitingCompletion`。
+- legacy/manual Action 走独立 kind 10 `imported-agent-action`；reopen 后不再把“缺少 prepared 的普通
+  Action”猜成 import。live kind 5 Action 必须直接继承 prepared。
+- create 时 cursor 已绑定；open 时 lazy；普通 append 推进 head，setup append 替换对应 pointer，任何
+  observed-head/CAS 失配都使 cursor 失效。
 
 ### CS-3B：Tail Projection Contract
 
@@ -393,8 +432,9 @@ Governing setup：
 - checkpoint 后只更新 prompt：采用 checkpoint runtime + 新 prompt。
 - 两者都更新：不读取旧 manifest payload即可完成。
 - divergent branch / rewind：不可达 checkpoint 不复用。
-- manifest setup refs kind/schema/Parent binding 错误：fail-fast。
-- `GoverningSetupCursor.validForHead` 与 request 的 `basedOnRawHead` 不同：拒绝写 manifest 并重解析。
+- manifest setup refs kind/schema/payload hash 错误：reopen fail-fast；setup lineage/Parent binding
+  在 manifest append 时由 exact-head cursor 强制。
+- `GoverningSetupCursor.validForHead` 与 manifest 的 expected Parent 不同：拒绝写 manifest并重解析。
 - 普通 append 保留两个 pointers，setup append 只替换对应 pointer；ref CAS/branch 失配使 cursor 失效。
 
 Tail projection：
@@ -413,10 +453,13 @@ Request recovery：
 
 - manifest 提交前崩溃：允许重新规划。
 - manifest 提交后崩溃：只从已提交引用重建同一 canonical request。
-- manifest 成为 head：`Project/Resume` 得到 `RequestPrepared/AwaitingCompletion`，不因未知 kind
-  失败。
+- manifest 成为 head：`Project` 得到 `AwaitingCompletion`，`ResumeAsync` 以明确的 CS-3A
+  fail-fast 拒绝重规划/重发，而不是因未知 kind 失败。
 - prepared event 不改变 rendered conversation context 或 governing setup。
-- `agent-action-produced` 的 attempt / manifest 关联可验证。
+- completion 产生的 `agent-action-produced.Header.Parent` 必须是 prepared event；无 prepared parent 的
+  import/manual action只能走显式入口并落为 `imported-agent-action`。
+- provider 已明确返回 non-success：known outcome durable，reopen 为 `TurnFailed`；transport
+  exception/cancellation：仍为 `AwaitingCompletion`，不伪造 outcome。
 - 当前 config、renderer 或 planner 升级：不改变旧 manifest 的恢复结果。
 
 ## 10. 暂不采用的方案

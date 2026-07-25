@@ -1,7 +1,7 @@
 # SessionJournal 主干设计基线
 
-> **状态**：Trunk Design Baseline（主干设计，已与用户共同拍板）
-> **日期**：2026-07-24
+> **状态**：Trunk Design Baseline + CS-3A Addendum
+> **日期**：2026-07-26
 > **底层依赖**：[EventJournal 使用指南](../../src/EventJournal/README.md)、[EventJournal 功能需求与粗粒度设计基线](../EventJournal/event-journal-requirements-and-design.md)
 > **上层路线图**：[ChatSession 事件源与长期上下文架构路线图](../ChatSession/event-sourced-session-architecture-roadmap.md)
 > **替代对象**：`prototypes/ChatSession`（StateJournal deque + 整轮末尾 commit）
@@ -20,7 +20,7 @@ Raw Event Journal（事实源）+ Recoverable Execution State Machine（执行�
 | 领域事件 envelope + EventKind | ContextPlanner / 预算化上下文选择 |
 | 逐事件落盘的 tool-loop 状态机 | DerivedArtifact / recap / 自传 / 世界理解 |
 | 纯 replay reducer（events → 投影） | Retrieval read models（FTS/向量/图） |
-| full-replay 构造 `CompletionRequest` | 引用式 canonical request manifest（留给 CS-3/CS-6） |
+| full-raw minimal plan + canonical request manifest | tail projection / 预算化 selection policy（CS-3B/CS-6） |
 | reopen 恢复、failpoint 测试 | exactly-once 补偿、非幂等工具暂停协议 |
 
 主干与 roadmap 阶段对应：本文 = **CS-0（reducer/replay contract）+ CS-1（raw 垂直切片）+ CS-3/CS-4 的执行机骨架**的收敛实现基线。
@@ -29,7 +29,10 @@ Raw Event Journal（事实源）+ Recoverable Execution State Machine（执行�
 
 1. **项目位置**：`prototypes/SessionJournal`，命名空间 `Atelia.SessionJournal`。老 `ChatSession` 原地不动，留作对照与迁移源。
 2. **工具粒度**：每次工具调用落 **两个事件**（`tool-execution-started` + `tool-result-observed`）。崩溃点精确到"哪个调用在途"。
-3. **请求持久化**：主干阶段**暂不持久化** canonical completion request；靠确定性 replay 恢复。后续 CS-3/CS-6 的持久化形状已定为**引用式 request manifest**：记录所需 raw/artifact/tool schema/config 的稳定地址与版本，而不是把超大 request body 值拷贝进一个自包含事件。
+3. **请求持久化**：CS-3A 已在每次 completion 调用前提交合并式
+   `completion-request-prepared`：内嵌 minimal `ContextPlan` 与 canonical request manifest。首版
+   selection policy 是 full raw；manifest 引用 setup/raw 范围并内联当前尚无独立 object store 的完整
+   tool-definition snapshot，不复制超大的 rendered request body。
 
 ## 1. 核心洞察：链头决定恢复入口，replay 补全执行状态
 
@@ -50,16 +53,23 @@ reopen → 读取 main 链头 kind → replay 当前链得到 SessionProjection 
 链头 kind                     下一合法动作
 ──────────────────────────────────────────────────
 ∅ / SessionCreated / ConfigChanged  等 observation
-Observation                          跑 completion → append Action
+Observation                          append Prepared → 跑 completion → append Action
+CompletionRequestPrepared            CS-3A 停止并拒绝重规划/重发；CS-3C 从 manifest 恢复
+CompletionAttemptFailed              已知 provider non-success 已落盘；可等新 observation
 Action(含 tool call)                 取首个未结算 call → append ToolStarted
 Action(无 tool call)                 turn 结束 → 等 observation
 ToolStarted                          执行该工具 → append ToolResult
 ToolResult                           还有未结算 call? → 下一个 ToolStarted
-                                     否则 → 跑 completion → append Action（续环）
+                                     否则 → append Prepared → 跑 completion → append Action（续环）
 ```
 
 崩溃窗口天然编码在链头 + replay projection：
-- `Observation` 后崩 → 重跑 completion（确定性 replay 保证输入一致）。
+- `Observation` 后、Prepared 前崩 → 允许重新规划并提交 manifest。
+- `Prepared` 后崩 → 投影为 `AwaitingCompletion`。CS-3A 明确 fail-fast，不从当前配置/head
+  重新规划或盲目重发；CS-3C 将只从已提交 manifest 重建同一 canonical request。
+- provider 明确返回 `Incomplete` / `Failed` → append `completion-attempt-failed` 后抛出；reopen
+  投影为 `TurnFailed`。transport exception / cancellation 没有已知 outcome，仍停在
+  `AwaitingCompletion`，不得伪造失败事实。
 - `ToolStarted` 后、`ToolResult` 前崩 → 该工具**可能已执行**。主干默认工具幂等（见 §6），安全重跑；非幂等工具的 uncertain/paused 协议留给 CS-4 完整版。
 - `Action` 后崩 → 按 kind 继续结算工具或续环。
 
@@ -67,12 +77,15 @@ ToolResult                           还有未结算 call? → 下一个 ToolSta
 stateDiagram-v2
     [*] --> Idle
     Idle --> Observed: append Observation
-    Observed --> Acted: completion → Action
+    Observed --> Prepared: append request manifest
+    Prepared --> Acted: completion → Action
+    Prepared --> TurnFailed: known non-success
+    TurnFailed --> Observed: next observation
     Acted --> ToolStarted: has unsettled call
     Acted --> Idle: no tool call (turn done)
     ToolStarted --> ToolSettled: execute → ToolResult
     ToolSettled --> ToolStarted: more unsettled calls
-    ToolSettled --> Acted: all settled → next completion
+    ToolSettled --> Prepared: all settled → next completion
 ```
 
 ## 2. 事件信封
@@ -117,8 +130,18 @@ body **禁止**复述 EventJournal header 已有的字段（`EventFrameHeader.cs
 | 5 | `agent-action-produced` | **raw（未消毒）** `ActionMessage`（adapter-normalized，含 ReasoningBlock；复用 `ActionMessageSerialization`）、invocation 摘要 |
 | 6 | `tool-execution-started` | toolCallId, toolName, rawArgumentsJson, operationId |
 | 7 | `tool-result-observed` | toolCallId, status, blocks |
+| 8 | `completion-request-prepared` | attempt、minimal ContextPlan、governing setup refs、request parameters、inline tool set、renderer/target identity、canonical request commitment |
+| 9 | `completion-attempt-failed` | attemptId、明确的 Incomplete/Failed termination、provider reason、detail、errors |
+| 10 | `imported-agent-action` | legacy/manual import 的 Action + invocation；durably 区别于 live completion Action |
 
-`turn` 完成是**隐式判定**（Action 无 tool call、或最近 Action 的全部 tool call 均已结算），不落独立事件——它可由 replay 确定性推出，属派生状态而非 raw fact。主干**不实现**：`tool-execution-uncertain`、`turn-failed`、`turn-paused`、`completion-request-prepared`、`context-plan-committed`。这些记录执行机的**非正常控制决策**，不可由 replay 推出，是真实事实，留作 CS-3/CS-4/CS-6 的显式扩展点；uint=8 起的命名空间为它们保留，本文不写空实现。
+`turn` 完成是**隐式判定**（Action 无 tool call、或最近 Action 的全部 tool call 均已结算），不落独立事件——它可由 replay 确定性推出，属派生状态而非 raw fact。MVP 将
+`context-plan-committed` 概念合并进 kind 8 的 `completion-request-prepared` body。仍未实现：
+`tool-execution-uncertain`、通用 `turn-failed`、`turn-paused`；它们留作 CS-4 之后的显式扩展点。
+kind 9 只表达 provider 已明确返回的 completion attempt non-success，不冒充通用 turn/tool failure。
+
+kind 8 的 frame `Header.Parent` 是 plan based-on raw head / raw end 的唯一真源，body 不复述 Parent。
+completion 成功产生的 `agent-action-produced.Header.Parent` 必须直接指向该 prepared event；manual/import
+历史只能走显式 `AppendImportedAgentAction` 入口，并落为不同的 kind 10。
 
 > raw Action 存 provider adapter 规范化后的完整 `ActionMessage`，**不做** persistence/context sanitization（对比老 `ChatSessionEngine.SanitizeForPersistence`，`ChatSessionEngine.cs:107-126`，那是落盘前剥 inline-think/丢空块）。是否剥 reasoning/think/空块、能否跨 provider 回灌，由 **projection/request renderer** 在构造 `CompletionRequest` 时决定。raw fact 与 provider-native wire log 不是同一层——后者（HTTP headers、临时字段、敏感内容）若需要另存 provider call forensic log，不进 raw session event。
 
@@ -145,6 +168,11 @@ Reduce(chronological events) -> SessionProjection {
 - `Context` 直接投影成 provider-facing `IHistoryMessage`（复用 `Completion.Abstractions`：`ObservationMessage` / `ActionMessage` / `ToolResultsMessage`）。
 - **结算顺序不变量**：一条 `Action` 触发的多个 `tool-result-observed` 合并成一条 `ToolResultsMessage` 时，block 顺序 = 该 `Action` 中 tool call 的**声明顺序**，用 `toolCallId` join 匹配——**不是** result 事件的 append 顺序，也不是工具执行完成顺序。这对 provider 对齐是硬要求；未来并行工具执行时 observed order 可乱，但投影顺序必须稳定。
 - `ExecutionState` 供状态机恢复；它不落盘，每次由 replay 重建。
+- `completion-request-prepared` 对 rendered `Context` 与 governing setup 中性，但将执行态投影为
+  `AwaitingCompletion`，并保留 pending prepared address、attempt id 与跨 tool-loop 的 correlation id。
+- `completion-attempt-failed` 必须直接继承并匹配 pending prepared attempt；消费后清空 pending/correlation，
+  投影为 quiescent `TurnFailed`。`ResumeAsync` 不重发，但可以先替换 runtime config / system prompt，
+  再由下一条 observation 开始新 turn。
 - reducer 是状态机正确性的核心。实现时允许用链头 kind 快速分派，但不得跳过 replay 所需的当前 turn / tool-call settlement 信息。`turn` 完成由此隐式判定，无独立事件。
 - config / system prompt 按事件位置 as-of 解析（见 §2.4）：投影历史 Action 用其位置之前的最新 snapshot，构造当前请求才用链尾最新。
 - 未知 schema/version → fail-fast（主干阶段无兼容需求，符合 AGENTS.md「及时重构优于兼容层」）。
@@ -185,11 +213,19 @@ public sealed class SessionJournalEngine : IDisposable {
     public SessionProjection Project();   // = Reduce(ReadChronologicalChain(head))
 }
 
-public sealed record SessionRuntime(ICompletionClient CompletionClient, string CompletionSurfaceId, ToolSession ToolSession);
+public sealed record SessionRuntime(
+    ICompletionClient CompletionClient,
+    ToolSession? ToolSession,
+    SessionCompletionTargetIdentity? CompletionTarget,
+    int? MaxTokens
+);
 ```
 
-- `SendAsync` / `ResumeAsync` 共享同一个内部驱动循环：**每一步都是"读链头 → 决定动作 → 执行 → CommitToRef 落盘"**，而不是老代码的"内存跑完整轮再一次 commit"。
+- `SendAsync` / `ResumeAsync` 共享同一个内部驱动循环：**每一步都是"读链头 → 决定动作 → 执行 → CommitToRef 落盘"**，而不是老代码的"内存跑完整轮再一次 commit"。每次调用 completion（包括 tool results 后续环）都必须先提交自己的 kind 8 manifest。
 - `SendAsync` 幂等前提：调用前链头必须是静止态（`Idle`）；否则先 `ResumeAsync`。
+- `SessionRuntime.CompletionTarget` 是非秘密 connection/request-adapter identity；正式写 manifest
+  时必填。CS-3A 的 `ResumeAsync(AwaitingCompletion)` 明确拒绝继续，直到 CS-3C 提供 manifest-only
+  request reconstruction/reopen driver。
 
 ## 6. 工具执行协议（started + result 双事件）
 
@@ -201,6 +237,10 @@ public sealed record SessionRuntime(ICompletionClient CompletionClient, string C
 4. 回到状态机：还有未结算 call 继续，否则续 completion。
 
 **主干幂等假设**：MVP 工具视为幂等或可安全重跑。`ToolStarted` 后崩溃 → `ResumeAsync` 直接重执行该工具并补 `ToolResult`。非幂等/不可查询工具的 `uncertain`/`paused` 分级（roadmap §8.4）是 CS-4 完整版的显式扩展点，主干保留 `operationId` 字段与状态插槽，但不在本阶段实现补偿逻辑——届时按能力分级接入，不改事件格式。`operationId` 在切片 A/B（无工具）不出现，切片 C 引入 `tool-execution-started` 时必须持久化。
+
+reducer 严格强制 first-unsettled 顺序：`tool-execution-started` 只能启动当前 pending call，且不能重复
+start/替换 operationId；`tool-result-observed` 必须跟随对应 start 并匹配当前 call。未 start、乱序、重复
+result 都是非法 raw chain，fail-fast 且不递增 execution sequence。
 
 ## 7. 第一个可运行垂直切片（建议实现顺序）
 
@@ -226,6 +266,8 @@ public sealed record SessionRuntime(ICompletionClient CompletionClient, string C
 
 - 不双写 StateJournal；不保留老 `ChatSession` 兼容 wrapper。
 - 不在主干实现 planner / 预算 / retrieval / artifact。
-- 不持久化 canonical request manifest；主干靠 replay 构造请求。后续 manifest 走引用式设计，不值拷贝超大 request body。
+- 不在 CS-3A 从 prepared manifest 自动重发 completion；这属于 CS-3C。
+- 不在 CS-3A 实现 tail-only projection；full-raw manifest 的 Context 仍由 full replay 构造，CS-3B
+  再引入 dependency-closed suffix。
 - 不实现非幂等工具补偿（保留插槽）。
 - 不做多 Parent merge、GC/repack（EventJournal 本身也不做）。

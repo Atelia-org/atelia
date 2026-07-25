@@ -563,6 +563,14 @@ invocation、`runtime-config-setup` 与 `system-prompt-setup` provenance。
 
 产出：最小 `ContextPlan` 形状、引用式 canonical request manifest 恢复合同、completion attempt、Action 逐步落盘。turn 完成隐式判定（Action 无 tool call），不落独立 TurnCompleted 事件。若 CS-5-lite 已落地，本阶段可以引用 recap anchor 构造 tail projection；否则只使用 raw suffix fallback。本阶段仍不设计完整 ArtifactSet、retrieval 候选比较或高级预算策略。
 
+> 2026-07-26 进度：CS-3A 已实现合并式 `completion-request-prepared` v1、full-raw minimal plan、
+> canonical request commitment、exact-head governing setup cursor 与 near-head setup checkpoint。
+> prepared 后的 `ResumeAsync` 目前有意 fail-fast；tail projection 与 manifest-only request reopen driver
+> 分别留给 CS-3B / CS-3C。provider 已明确返回的 non-success 另以
+> `completion-attempt-failed` 持久化；transport/cancellation 仍保持 prepared uncertain。
+> legacy/manual Action 使用独立 `imported-agent-action`，不与 live completion Action 混淆。详见
+> [SessionJournal Configuration Access Notes](../SessionJournal/session-configuration-access-notes.md)。
+
 验收：
 
 - 在 request 前后、response 前后注入崩溃，reopen 后状态明确。
