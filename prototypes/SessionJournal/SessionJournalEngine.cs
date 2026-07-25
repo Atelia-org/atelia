@@ -6,6 +6,8 @@ using Atelia.EventJournal;
 namespace Atelia.SessionJournal;
 
 public sealed class SessionJournalEngine : IDisposable {
+    private const string UnsupportedTailToolCallReason = "atelia.host.unsupported-tool-call";
+
     private static readonly EventJournalOptions DefaultJournalOptions = new() {
         PayloadCodecPolicy = EventPayloadCodecPolicy.Zlib
     };
@@ -631,8 +633,29 @@ public sealed class SessionJournalEngine : IDisposable {
 
         ValidateCompletionInvocation(result.Invocation, runtime.CompletionClient, request);
         if (!allowResultToolCalls && result.Message.ToolCalls.Count > 0) {
-            throw new NotSupportedException(
-                "Explicit artifact tail completion does not support provider results containing tool calls."
+            const string detail =
+                "Provider returned tool calls for an explicit-artifact-tail request, but that policy supports no tools.";
+            CompletionTermination hostFailure = CompletionTermination.Failed(
+                UnsupportedTailToolCallReason,
+                detail
+            );
+            IReadOnlyList<string> errors = Array.AsReadOnly([detail]);
+            AppendExpected(
+                SessionEventKind.CompletionAttemptFailed,
+                new CompletionAttemptFailedBody(
+                    manifest.Attempt.AttemptId,
+                    hostFailure.Kind,
+                    hostFailure.ProviderReason,
+                    hostFailure.Detail,
+                    errors
+                ),
+                preparedAddress,
+                requireBoundSetupCursor: false
+            );
+            throw new SessionJournalTurnAbortedException(
+                BuildTurnAbortMessage(hostFailure),
+                hostFailure,
+                errors
             );
         }
         TriggerFailpoint(SessionJournalFailpoint.AfterCompletionBeforeActionCommitted);
@@ -772,16 +795,24 @@ public sealed class SessionJournalEngine : IDisposable {
             object body = SessionEventCodec.Decode(kind, frame.Payload, out _);
             switch (kind) {
                 case SessionEventKind.SessionCreated when body is SessionCreatedBody:
+                    ValidateTailBootstrapChain(address, frame.Header.Parent);
                     return;
-                case SessionEventKind.CompletionAttemptFailed when body is CompletionAttemptFailedBody:
+                case SessionEventKind.CompletionAttemptFailed
+                    when body is CompletionAttemptFailedBody failure:
+                    ValidateTailFailedBoundary(address, frame.Header.Parent, failure);
+                    return;
+                case SessionEventKind.AgentActionProduced when body is AgentActionProducedBody action:
+                    ValidateTailTerminalAction(address, action);
+                    ValidateTailLiveActionBoundary(address, frame.Header.Parent);
+                    return;
+                case SessionEventKind.ImportedAgentAction when body is AgentActionProducedBody action:
+                    ValidateTailTerminalAction(address, action);
+                    ValidateTailImportedActionBoundary(address, frame.Header.Parent);
                     return;
                 case SessionEventKind.AgentActionProduced:
                 case SessionEventKind.ImportedAgentAction:
-                    if (body is AgentActionProducedBody action && action.Action.ToolCalls.Count == 0) {
-                        return;
-                    }
                     throw new InvalidOperationException(
-                        $"Explicit artifact tail SendAsync requires a terminal action without tool calls at {address}."
+                        $"Explicit artifact tail action boundary at {address} decoded to an unexpected body."
                     );
                 default:
                     throw new InvalidOperationException(
@@ -791,6 +822,148 @@ public sealed class SessionJournalEngine : IDisposable {
         }
 
         throw new InvalidDataException("Explicit artifact tail idle boundary reached the journal root unexpectedly.");
+    }
+
+    private void ValidateTailBootstrapChain(
+        EventAddress createdAddress,
+        EventAddress? promptAddress
+    ) {
+        EventAddress prompt = promptAddress
+            ?? throw new InvalidDataException(
+                $"SessionCreated at {createdAddress} requires a bootstrap SystemPromptSetup parent."
+            );
+        (EventAddress? runtimeAddress, object promptBody) = ReadTailEvent(
+            prompt,
+            SessionEventKind.SystemPromptSetup
+        );
+        if (promptBody is not SystemPromptSetupBody) {
+            throw new InvalidDataException(
+                $"Bootstrap SystemPromptSetup at {prompt} decoded to an unexpected body."
+            );
+        }
+        EventAddress runtime = runtimeAddress
+            ?? throw new InvalidDataException(
+                $"Bootstrap SystemPromptSetup at {prompt} requires a RuntimeConfigSetup parent."
+            );
+        (EventAddress? rootParent, object runtimeBody) = ReadTailEvent(
+            runtime,
+            SessionEventKind.RuntimeConfigSetup
+        );
+        if (runtimeBody is not SessionRuntimeConfiguration || rootParent is not null) {
+            throw new InvalidDataException(
+                $"Bootstrap RuntimeConfigSetup at {runtime} must be the SessionJournal root."
+            );
+        }
+    }
+
+    private void ValidateTailFailedBoundary(
+        EventAddress failureAddress,
+        EventAddress? preparedAddress,
+        CompletionAttemptFailedBody failure
+    ) {
+        EventAddress prepared = preparedAddress
+            ?? throw new InvalidDataException(
+                $"CompletionAttemptFailed at {failureAddress} requires a CompletionRequestPrepared parent."
+            );
+        CompletionRequestPreparedBody manifest = ValidateTailPreparedObservation(prepared);
+        if (!string.Equals(failure.AttemptId, manifest.Attempt.AttemptId, StringComparison.Ordinal)) {
+            throw new InvalidDataException(
+                $"CompletionAttemptFailed at {failureAddress} does not match prepared attempt '{manifest.Attempt.AttemptId}'."
+            );
+        }
+    }
+
+    private void ValidateTailLiveActionBoundary(
+        EventAddress actionAddress,
+        EventAddress? preparedAddress
+    ) {
+        EventAddress prepared = preparedAddress
+            ?? throw new InvalidDataException(
+                $"AgentActionProduced at {actionAddress} requires a CompletionRequestPrepared parent."
+            );
+        _ = ValidateTailPreparedObservation(prepared);
+    }
+
+    private void ValidateTailImportedActionBoundary(
+        EventAddress actionAddress,
+        EventAddress? observationAddress
+    ) {
+        EventAddress observation = observationAddress
+            ?? throw new InvalidDataException(
+                $"ImportedAgentAction at {actionAddress} requires an ObservationAccepted parent."
+            );
+        var (_, observationBody) = ReadTailEvent(
+            observation,
+            SessionEventKind.ObservationAccepted
+        );
+        if (observationBody is not ObservationAcceptedBody) {
+            throw new InvalidDataException(
+                $"ImportedAgentAction at {actionAddress} has an invalid ObservationAccepted parent body."
+            );
+        }
+    }
+
+    private CompletionRequestPreparedBody ValidateTailPreparedObservation(EventAddress preparedAddress) {
+        (EventAddress? observationAddress, object preparedBody) = ReadTailEvent(
+            preparedAddress,
+            SessionEventKind.CompletionRequestPrepared
+        );
+        var manifest = preparedBody as CompletionRequestPreparedBody
+            ?? throw new InvalidDataException(
+                $"CompletionRequestPrepared at {preparedAddress} decoded to an unexpected body."
+            );
+        EventAddress observation = observationAddress
+            ?? throw new InvalidDataException(
+                $"CompletionRequestPrepared at {preparedAddress} requires an ObservationAccepted parent."
+            );
+        var (_, observationBody) = ReadTailEvent(
+            observation,
+            SessionEventKind.ObservationAccepted
+        );
+        if (observationBody is not ObservationAcceptedBody) {
+            throw new InvalidDataException(
+                $"CompletionRequestPrepared at {preparedAddress} has an invalid ObservationAccepted parent body."
+            );
+        }
+        string expectedCorrelationId = BuildCorrelationId(observation);
+        if (!string.Equals(
+                manifest.Attempt.CorrelationId,
+                expectedCorrelationId,
+                StringComparison.Ordinal
+            )
+            || !string.Equals(manifest.Attempt.Reason, "observation", StringComparison.Ordinal)) {
+            throw new InvalidDataException(
+                $"CompletionRequestPrepared at {preparedAddress} does not describe its ObservationAccepted parent."
+            );
+        }
+        return manifest;
+    }
+
+    private static void ValidateTailTerminalAction(
+        EventAddress actionAddress,
+        AgentActionProducedBody action
+    ) {
+        if (action.Action.ToolCalls.Count > 0) {
+            throw new InvalidOperationException(
+                $"Explicit artifact tail SendAsync requires a terminal action without tool calls at {actionAddress}."
+            );
+        }
+    }
+
+    private (EventAddress? Parent, object Body) ReadTailEvent(
+        EventAddress address,
+        SessionEventKind expectedKind
+    ) {
+        using EventFrame frame = _journal.ReadEvent(address).Unwrap();
+        ValidateSessionHeaderPreview(address, frame.Header);
+        var actualKind = (SessionEventKind)frame.Header.OpaqueEventKind;
+        if (actualKind != expectedKind) {
+            throw new InvalidDataException(
+                $"Tail boundary expected '{expectedKind}' at {address}, got '{actualKind}'."
+            );
+        }
+        object body = SessionEventCodec.Decode(actualKind, frame.Payload, out _);
+        return (frame.Header.Parent, body);
     }
 
     private SessionEventKind ReadEventKind(EventAddress address) {

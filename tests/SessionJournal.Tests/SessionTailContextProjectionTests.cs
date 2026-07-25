@@ -194,14 +194,21 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
     }
 
     [Fact]
-    public async Task SendAsync_TailProviderToolCall_FailsBeforeActionCommitWithoutFullProjection() {
+    public async Task SendAsync_TailProviderToolCall_PersistsKnownFailureAndAllowsNextObservation() {
         string path = NewJournalPath();
-        var client = new CapturingCompletionClient(request => new CompletionResult(
-            new ActionMessage([
-                new ActionBlock.ToolCall(new RawToolCall("lookup", "call-1", "{}"))
-            ]),
-            new CompletionDescriptor("tail-client", "tail-api-v1", request.ModelId)
-        ));
+        int responseIndex = 0;
+        string? failedAttemptId = null;
+        var client = new CapturingCompletionClient(request => {
+            ActionMessage message = responseIndex++ == 0
+                ? new ActionMessage([
+                    new ActionBlock.ToolCall(new RawToolCall("lookup", "call-1", "{}"))
+                ])
+                : new ActionMessage([new ActionBlock.Text("recovered answer")]);
+            return new CompletionResult(
+                message,
+                new CompletionDescriptor("tail-client", "tail-api-v1", request.ModelId)
+            );
+        });
         using (var engine = SessionJournalEngine.Create(
             path,
             new SessionCreateOptions("model-A", "system-A", "surface-A")
@@ -221,16 +228,164 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
             engine.UseRuntime(CreateRuntime(client, artifact.ArtifactId));
             int projectionCountBeforeSend = engine.FullProjectionInvocationCount;
 
-            NotSupportedException error = await Assert.ThrowsAsync<NotSupportedException>(
+            SessionJournalTurnAbortedException error =
+                await Assert.ThrowsAsync<SessionJournalTurnAbortedException>(
                 () => engine.SendAsync("new observation", CancellationToken.None)
             );
 
-            Assert.Contains("tool calls", error.Message, StringComparison.Ordinal);
+            Assert.Equal(CompletionTerminationKind.Failed, error.Termination.Kind);
+            Assert.Equal("atelia.host.unsupported-tool-call", error.Termination.ProviderReason);
+            Assert.Contains("supports no tools", error.Termination.Detail, StringComparison.Ordinal);
             Assert.Equal(projectionCountBeforeSend, engine.FullProjectionInvocationCount);
+
+            SessionProjection failed = engine.Project();
+            Assert.Equal(SessionExecutionPhase.TurnFailed, failed.ExecutionState.Phase);
+            EventAddress failureAddress = failed.Head!.Value;
+            CompletionAttemptFailedBody failure = Assert.IsType<CompletionAttemptFailedBody>(
+                SessionEventCodec.Decode(
+                    SessionEventKind.CompletionAttemptFailed,
+                    engine.ReadPayloadBytes(failureAddress),
+                    out _
+                )
+            );
+            Assert.Equal(CompletionTerminationKind.Failed, failure.TerminationKind);
+            Assert.Equal("atelia.host.unsupported-tool-call", failure.ProviderReason);
+            failedAttemptId = failure.AttemptId;
+
+            int projectionCountBeforeRecovery = engine.FullProjectionInvocationCount;
+            TurnResult recovered = await engine.SendAsync(
+                "recovery observation",
+                CancellationToken.None
+            );
+            Assert.Equal("recovered answer", recovered.Message.GetFlattenedText());
+            Assert.Equal(projectionCountBeforeRecovery, engine.FullProjectionInvocationCount);
         }
-        Assert.Single(client.Requests);
-        Assert.Single(ReadAddressesByKind(path, SessionEventKind.CompletionRequestPrepared));
-        Assert.Empty(ReadAddressesByKind(path, SessionEventKind.AgentActionProduced));
+        Assert.Equal(2, client.Requests.Count);
+        Assert.Equal(2, ReadAddressesByKind(path, SessionEventKind.CompletionRequestPrepared).Length);
+        Assert.Single(ReadAddressesByKind(path, SessionEventKind.CompletionAttemptFailed));
+        Assert.Single(ReadAddressesByKind(path, SessionEventKind.AgentActionProduced));
+        EventAddress firstPrepared =
+            ReadAddressesByKind(path, SessionEventKind.CompletionRequestPrepared)[0];
+        using var inspection = SessionJournalEngine.Open(path);
+        CompletionRequestPreparedBody prepared = Assert.IsType<CompletionRequestPreparedBody>(
+            SessionEventCodec.Decode(
+                SessionEventKind.CompletionRequestPrepared,
+                inspection.ReadPayloadBytes(firstPrepared),
+                out _
+            )
+        );
+        Assert.Equal(prepared.Attempt.AttemptId, failedAttemptId);
+    }
+
+    [Fact]
+    public async Task SendAsync_BootstrapThenLiveActionBoundaries_PassLocalCausalityWithoutProjection() {
+        string path = NewJournalPath();
+        var client = new CapturingCompletionClient(request => new CompletionResult(
+            new ActionMessage([new ActionBlock.Text("tail answer")]),
+            new CompletionDescriptor("tail-client", "tail-api-v1", request.ModelId)
+        ));
+        using var engine = SessionJournalEngine.Create(
+            path,
+            new SessionCreateOptions("model-A", "system-A", "surface-A")
+        );
+        EventAddress created = engine.Project().Head!.Value;
+        DerivedRecapArtifact artifact = await WriteArtifactAsync(
+            path,
+            created,
+            sourceRawHead: created,
+            engine.ResolveGoverningSetup(created),
+            CreateMemoryPack()
+        );
+        engine.UseRuntime(CreateRuntime(client, artifact.ArtifactId));
+        int projectionCountBeforeSend = engine.FullProjectionInvocationCount;
+
+        await engine.SendAsync("first observation", CancellationToken.None);
+        await engine.SendAsync("second observation", CancellationToken.None);
+
+        Assert.Equal(projectionCountBeforeSend, engine.FullProjectionInvocationCount);
+        Assert.Equal(2, client.Requests.Count);
+    }
+
+    [Theory]
+    [InlineData(SessionEventKind.AgentActionProduced)]
+    [InlineData(SessionEventKind.SessionCreated)]
+    public async Task SendAsync_ForgedIdleBoundary_FailsLocalCausalityProof(
+        SessionEventKind forgedKind
+    ) {
+        string path = NewJournalPath();
+        EventAddress observation;
+        using (var engine = SessionJournalEngine.Create(
+            path,
+            new SessionCreateOptions("model-A", "system-A", "surface-A")
+        )) {
+            observation = engine.AppendObservation("orphan observation");
+        }
+        using (var journal = EventJournal.EventJournal.OpenExisting(path)) {
+            object body = forgedKind == SessionEventKind.AgentActionProduced
+                ? new AgentActionProducedBody(
+                    new ActionMessage([new ActionBlock.Text("orphan action")]),
+                    new CompletionDescriptor("tail-client", "tail-api-v1", "model-A")
+                )
+                : new SessionCreatedBody();
+            _ = Commit(journal, observation, forgedKind, body);
+        }
+
+        var client = new CapturingCompletionClient(_ => throw new InvalidOperationException("must not call provider"));
+        using var reopened = SessionJournalEngine.Open(
+            path,
+            CreateRuntime(client, "missing-artifact")
+        );
+
+        await Assert.ThrowsAsync<InvalidDataException>(
+            () => reopened.SendAsync("must reject", CancellationToken.None)
+        );
+        Assert.Empty(client.Requests);
+    }
+
+    [Fact]
+    public async Task SendAsync_FailedBoundaryAttemptMismatch_FailsLocalCausalityProof() {
+        string path = NewJournalPath();
+        var sourceClient = new CapturingCompletionClient(
+            _ => throw new InvalidOperationException("failpoint must run first")
+        );
+        EventAddress prepared;
+        using (var engine = SessionJournalEngine.CreateForTest(
+            path,
+            new SessionCreateOptions("model-A", "system-A", "surface-A"),
+            CreateFullRuntime(sourceClient),
+            new SessionJournalTestHooks(SessionJournalFailpoint.AfterRequestPreparedCommitted)
+        )) {
+            await Assert.ThrowsAsync<SessionJournalFailpointException>(
+                () => engine.SendAsync("source observation", CancellationToken.None)
+            );
+            prepared = engine.Project().Head!.Value;
+        }
+        using (var journal = EventJournal.EventJournal.OpenExisting(path)) {
+            _ = Commit(
+                journal,
+                prepared,
+                SessionEventKind.CompletionAttemptFailed,
+                new CompletionAttemptFailedBody(
+                    "different-attempt",
+                    CompletionTerminationKind.Failed,
+                    "test",
+                    "mismatch",
+                    Array.AsReadOnly(Array.Empty<string>())
+                )
+            );
+        }
+
+        var client = new CapturingCompletionClient(_ => throw new InvalidOperationException("must not call provider"));
+        using var reopened = SessionJournalEngine.Open(
+            path,
+            CreateRuntime(client, "missing-artifact")
+        );
+        InvalidDataException error = await Assert.ThrowsAsync<InvalidDataException>(
+            () => reopened.SendAsync("must reject", CancellationToken.None)
+        );
+
+        Assert.Contains("does not match prepared attempt", error.Message, StringComparison.Ordinal);
+        Assert.Empty(client.Requests);
     }
 
     [Fact]
@@ -267,7 +422,9 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
     [Theory]
     [InlineData("tool-action")]
     [InlineData("tool-result")]
-    public async Task SendAsync_UnsafeArtifactBoundary_FailsBeforeProvider(string boundary) {
+    public async Task SendAsync_ImportedToolResultContinuation_FailsLocalCausalityBeforeProvider(
+        string boundary
+    ) {
         string path = NewJournalPath();
         EventAddress toolAction;
         EventAddress toolResult;
@@ -332,7 +489,7 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
             () => reopened.SendAsync("next", CancellationToken.None)
         );
 
-        Assert.Contains("anchor", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("ObservationAccepted", error.Message, StringComparison.Ordinal);
         Assert.Empty(client.Requests);
     }
 
@@ -408,6 +565,20 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
             ),
             MaxTokens: 512,
             TailProjection: new SessionTailProjectionOptions(artifactId)
+        );
+
+    private static SessionRuntime CreateFullRuntime(CapturingCompletionClient client)
+        => new(
+            CompletionClient: client,
+            ToolSession: null,
+            CompletionTarget: new SessionCompletionTargetIdentity(
+                "tail-connection",
+                "test",
+                "tail-connection-v1",
+                "tail-adapter-v1"
+            ),
+            MaxTokens: 512,
+            TailProjection: null
         );
 
     private sealed class NoopTool : ITool {
