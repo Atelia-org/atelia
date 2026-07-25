@@ -180,6 +180,11 @@ internal static class SessionRequestManifestCodec {
                         "explicit-artifact-tail plans require plan.recalledInputs to be empty."
                     );
                 }
+                if (!body.ToolSet.Definitions.IsEmpty) {
+                    throw new InvalidDataException(
+                        "explicit-artifact-tail plans require an empty tool definition set."
+                    );
+                }
                 ValidateArtifactInput(body.Plan.ArtifactInputs[0]);
                 break;
 

@@ -335,6 +335,15 @@ public sealed class SessionRequestManifestCodecTests : IDisposable {
                 }
             }
         ));
+        ImmutableArray<ToolDefinition> nonEmptyTools = CreateToolDefinitions();
+        Assert.Throws<InvalidDataException>(() => SessionRequestManifestCodec.Validate(
+            body with {
+                ToolSet = body.ToolSet with {
+                    Definitions = nonEmptyTools,
+                    Sha256 = SessionRequestCanonicalizer.ComputeToolSetSha256(nonEmptyTools)
+                }
+            }
+        ));
     }
 
     [Fact]
@@ -648,7 +657,7 @@ public sealed class SessionRequestManifestCodecTests : IDisposable {
     }
 
     private CompletionRequestPreparedBody CreateExplicitArtifactTailManifestBody() {
-        CompletionRequestPreparedBody fullRaw = CreateManifestBody(CreateToolDefinitions(), out _);
+        CompletionRequestPreparedBody fullRaw = CreateManifestBody(ImmutableArray<ToolDefinition>.Empty, out _);
         SessionRequestArtifactInput artifact = CreateArtifactInput(
             new SessionRequestArtifactContextSnapshot(
                 "system recap",
