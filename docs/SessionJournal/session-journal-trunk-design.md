@@ -1,6 +1,6 @@
 # SessionJournal 主干设计基线
 
-> **状态**：Trunk Design Baseline + CS-3A Addendum
+> **状态**：Trunk Design Baseline + CS-3A/CS-3B Addendum
 > **日期**：2026-07-26
 > **底层依赖**：[EventJournal 使用指南](../../src/EventJournal/README.md)、[EventJournal 功能需求与粗粒度设计基线](../EventJournal/event-journal-requirements-and-design.md)
 > **上层路线图**：[ChatSession 事件源与长期上下文架构路线图](../ChatSession/event-sourced-session-architecture-roadmap.md)
@@ -20,7 +20,7 @@ Raw Event Journal（事实源）+ Recoverable Execution State Machine（执行�
 | 领域事件 envelope + EventKind | ContextPlanner / 预算化上下文选择 |
 | 逐事件落盘的 tool-loop 状态机 | DerivedArtifact / recap / 自传 / 世界理解 |
 | 纯 replay reducer（events → 投影） | Retrieval read models（FTS/向量/图） |
-| full-raw minimal plan + canonical request manifest | tail projection / 预算化 selection policy（CS-3B/CS-6） |
+| full-raw / explicit-artifact-tail minimal plan + canonical request manifest | 预算化 selection policy（CS-6） |
 | reopen 恢复、failpoint 测试 | exactly-once 补偿、非幂等工具暂停协议 |
 
 主干与 roadmap 阶段对应：本文 = **CS-0（reducer/replay contract）+ CS-1（raw 垂直切片）+ CS-3/CS-4 的执行机骨架**的收敛实现基线。
@@ -31,8 +31,10 @@ Raw Event Journal（事实源）+ Recoverable Execution State Machine（执行�
 2. **工具粒度**：每次工具调用落 **两个事件**（`tool-execution-started` + `tool-result-observed`）。崩溃点精确到"哪个调用在途"。
 3. **请求持久化**：CS-3A 已在每次 completion 调用前提交合并式
    `completion-request-prepared`：内嵌 minimal `ContextPlan` 与 canonical request manifest。首版
-   selection policy 是 full raw；manifest 引用 setup/raw 范围并内联当前尚无独立 object store 的完整
-   tool-definition snapshot，不复制超大的 rendered request body。
+   selection policy 是 full raw；CS-3B 增加调用方指定 exact artifact 的
+   `explicit-artifact-tail`。manifest 引用 setup/raw 范围，内联当前尚无独立 object store 的完整
+   tool-definition snapshot；tail plan 还内联有界的 materialized artifact header，使可删除 derived
+   artifact 不成为 prepared request 的恢复依赖，但仍不复制整份 rendered request body。
 
 ## 1. 核心洞察：链头决定恢复入口，replay 补全执行状态
 
@@ -55,7 +57,7 @@ reopen → 读取 main 链头 kind → replay 当前链得到 SessionProjection 
 ∅ / SessionCreated / ConfigChanged  等 observation
 Observation                          append Prepared → 跑 completion → append Action
 CompletionRequestPrepared            CS-3A 停止并拒绝重规划/重发；CS-3C 从 manifest 恢复
-CompletionAttemptFailed              已知 provider non-success 已落盘；可等新 observation
+CompletionAttemptFailed              已知 completion rejection/failure 已落盘；可等新 observation
 Action(含 tool call)                 取首个未结算 call → append ToolStarted
 Action(无 tool call)                 turn 结束 → 等 observation
 ToolStarted                          执行该工具 → append ToolResult
@@ -67,8 +69,10 @@ ToolResult                           还有未结算 call? → 下一个 ToolSta
 - `Observation` 后、Prepared 前崩 → 允许重新规划并提交 manifest。
 - `Prepared` 后崩 → 投影为 `AwaitingCompletion`。CS-3A 明确 fail-fast，不从当前配置/head
   重新规划或盲目重发；CS-3C 将只从已提交 manifest 重建同一 canonical request。
-- provider 明确返回 `Incomplete` / `Failed` → append `completion-attempt-failed` 后抛出；reopen
-  投影为 `TurnFailed`。transport exception / cancellation 没有已知 outcome，仍停在
+- provider 明确返回 `Incomplete` / `Failed`，或 host 已收到 response 但确认它违反已提交的 request
+  policy → append `completion-attempt-failed` 后抛出；reopen 投影为 `TurnFailed`。例如
+  `explicit-artifact-tail` 的 success response 含 tool calls 时，使用保留 reason
+  `atelia.host.unsupported-tool-call`。transport exception / cancellation 没有已知 outcome，仍停在
   `AwaitingCompletion`，不得伪造失败事实。
 - `ToolStarted` 后、`ToolResult` 前崩 → 该工具**可能已执行**。主干默认工具幂等（见 §6），安全重跑；非幂等工具的 uncertain/paused 协议留给 CS-4 完整版。
 - `Action` 后崩 → 按 kind 继续结算工具或续环。
@@ -131,13 +135,16 @@ body **禁止**复述 EventJournal header 已有的字段（`EventFrameHeader.cs
 | 6 | `tool-execution-started` | toolCallId, toolName, rawArgumentsJson, operationId |
 | 7 | `tool-result-observed` | toolCallId, status, blocks |
 | 8 | `completion-request-prepared` | attempt、minimal ContextPlan、governing setup refs、request parameters、inline tool set、renderer/target identity、canonical request commitment |
-| 9 | `completion-attempt-failed` | attemptId、明确的 Incomplete/Failed termination、provider reason、detail、errors |
+| 9 | `completion-attempt-failed` | attemptId、明确的 Incomplete/Failed 或 host-known rejection、reason、detail、errors |
 | 10 | `imported-agent-action` | legacy/manual import 的 Action + invocation；durably 区别于 live completion Action |
 
 `turn` 完成是**隐式判定**（Action 无 tool call、或最近 Action 的全部 tool call 均已结算），不落独立事件——它可由 replay 确定性推出，属派生状态而非 raw fact。MVP 将
 `context-plan-committed` 概念合并进 kind 8 的 `completion-request-prepared` body。仍未实现：
 `tool-execution-uncertain`、通用 `turn-failed`、`turn-paused`；它们留作 CS-4 之后的显式扩展点。
-kind 9 只表达 provider 已明确返回的 completion attempt non-success，不冒充通用 turn/tool failure。
+kind 9 只表达 completion attempt 的 **known non-success outcome**：包括 provider 明确返回的 non-success，
+以及 host 收到 response 后依据已提交 request policy 作出的确定性拒绝；它不冒充通用 turn/tool failure。
+host reason 使用 `atelia.host.*` 保留命名空间，当前定义
+`atelia.host.unsupported-tool-call`。
 
 kind 8 的 frame `Header.Parent` 是 plan based-on raw head / raw end 的唯一真源，body 不复述 Parent。
 completion 成功产生的 `agent-action-produced.Header.Parent` 必须直接指向该 prepared event；manual/import
@@ -267,7 +274,14 @@ result 都是非法 raw chain，fail-fast 且不递增 execution sequence。
 - 不双写 StateJournal；不保留老 `ChatSession` 兼容 wrapper。
 - 不在主干实现 planner / 预算 / retrieval / artifact。
 - 不在 CS-3A 从 prepared manifest 自动重发 completion；这属于 CS-3C。
-- 不在 CS-3A 实现 tail-only projection；full-raw manifest 的 Context 仍由 full replay 构造，CS-3B
-  再引入 dependency-closed suffix。
+- CS-3B 为 `explicit-artifact-tail + ObservationAccepted + no tools` 增加 bounded recent-idle fast
+  path，并把该 request context materialization 切到 dependency-closed suffix，不调用 `Project()`；
+  显式 `Project()` / `ReplayHistory()` 与其他 execution phase 仍是 full replay。
+- fast path 的 idle validator 会局部证明 bootstrap、live/imported terminal Action 与 failed attempt
+  的直接因果边；不能只凭最近非 setup event 的 kind 接受边界。
+- 该 bounded proof 信任更早 prefix 来自受控 writer；它不是任意低层 raw 篡改下的 full reducer
+  equivalence。若要接纳不可信 raw import，需先完整验证或引入 execution checkpoint / suffix-local DFA。
+- 不在 CS-3B 实现 latest artifact 选择、多 artifact composition、预算、retrieval 或完整 planner；
+  runtime 只接收 exact artifact id。
 - 不实现非幂等工具补偿（保留插槽）。
 - 不做多 Parent merge、GC/repack（EventJournal 本身也不做）。

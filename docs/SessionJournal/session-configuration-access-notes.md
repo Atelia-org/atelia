@@ -1,15 +1,15 @@
 # SessionJournal Configuration Access Notes
 
-> 状态：CS-3A Implemented / CS-3B/CS-3C Handoff
+> 状态：CS-3A + CS-3B Implemented / CS-3C Handoff
 > 日期：2026-07-26
 > 相关文档：[SessionJournal 主干设计基线](session-journal-trunk-design.md)、[ChatSession 事件源与长期上下文架构路线图](../ChatSession/event-sourced-session-architecture-roadmap.md)
 
 ## 1. 结论
 
 CS-5-lite 完成后，主线已进入 roadmap 的 **最小 CS-3：可恢复 Completion**。CS-3A 已落地 minimal
-`ContextPlan`、canonical request manifest 与 governing setup checkpoint；下一步分别由 CS-3B 引入
-artifact + raw suffix 的 tail context projection，由 CS-3C 实现 prepared request 的确定性 reopen
-driver。
+`ContextPlan`、canonical request manifest 与 governing setup checkpoint；CS-3B 又落地了由调用方指定
+exact artifact 的 dependency-closed tail context projection。下一步由 CS-3C 使用已经提交的 manifest
+实现 prepared request 的确定性 reopen driver。
 
 **赞同把已提交的 ContextPlan / request manifest 用作重启时的 governing setup 加速点。**准确场景是：
 
@@ -71,9 +71,25 @@ manifest 的 setup lineage 绑定是 **validated writer invariant**：append man
 Parent 做 ref CAS。reopen 不再用 O(N) scan 重证祖先关系，否则会抵消 checkpoint 的收益；它信任 checked
 raw manifest 的语义事实，同时独立验证所引用 payload 的 kind/schema/hash。
 
-同时要注意：`Project()` / `ReplayHistory()` 当前仍通过 `ReadChronologicalChain` 解码完整 raw chain。
-在 tail-only projection 尚未接入正式请求路径以前，只优化 setup resolver 并不能消除整体 O(N) replay；
-真正的近期性能切口必须包含 tail context projection。
+同时要注意：显式调用 `Project()` / `ReplayHistory()` 以及非 CS-3B phase 的通用 execution recovery，
+当前仍通过 `ReadChronologicalChain` 解码完整 raw chain。CS-3B 只为
+`explicit-artifact-tail + ObservationAccepted + no tools` 建立窄 fast path：
+
+- `SendAsync` 沿最近的 setup run 找到 idle predecessor，并对 bootstrap、live/imported terminal
+  Action 或 failed attempt 做有界局部因果证明，再以 CAS append observation。
+- observation-head `ResumeAsync` 验证该 observation 的 direct predecessor 通过同一 idle-boundary
+  合同；它不会仅凭链头 kind 猜测 reducer 状态。
+- 随后的 request preparation 从 exact observation address、governing setup、artifact 与 raw suffix
+  构造，不调用 `Project()`。
+
+这里采用与 setup checkpoint 相同的 **validated-writer trust model**：局部证明信任更早 prefix 已经由
+SessionJournal 的受控 writer / artifact provenance 校验，不试图把任意低层伪造 raw chain 重新做一次
+full-history reducer validation。若未来允许不可信 raw import 直接进入 fast path，必须先做完整验真，或
+增加 suffix-local execution DFA / 更强 checkpoint，不能继续把 bounded proof 当作全链等价证明。
+
+因此 CS-3B 收掉了该无工具 observation request path 的 full-history context materialization，但不能被
+描述成“整个 SessionJournal 已经 O(tail) reopen”。其他 phase 仍以通用 `Project()` 为权威，CS-3C 与
+后续 execution checkpoint/recovery 工作还要继续缩短重启路径。
 
 ## 3. 必须分开的三个问题
 
@@ -291,14 +307,25 @@ Reduce(SessionRuntimeConfiguration seededConfig, tailEvents)
 仍会在首个 observation/action 上因 `sessionCreated == false` 失败，并会把 tool execution sequence
 错误地从 0 开始。
 
-### 7.2 CS-3 应先限制为 dependency-closed 无工具 tail
+### 7.2 CS-3B 的 dependency-closed 无工具 tail
 
-CS-3 是无工具 Completion，可以先把边界收窄：
+CS-3B 将边界收窄为：
 
-- `RawStartExclusive` 必须使 suffix 不从 tool execution/result 中间开始。
-- suffix 开头应位于明确的 replay-safe boundary，例如 setup/observation，或包含其依赖的 fresh action。
-- 若所选 artifact anchor 不满足边界，优先选择更早的 replay-safe artifact；没有可用候选时退化为
-  full-raw replay。
+- runtime 只接收调用方指定的 exact `ArtifactId`；engine 不读取 `latest` index，也不在不可用时偷偷改选
+  另一个 artifact。未配置 tail projection 时走 full raw；显式指定的 artifact 无效时 fail-fast。
+- `DerivedRecapStore` 读取时重算包含完整 `MemoryPack` 的 artifact identity，并核对 deterministic
+  `ArtifactId`（含合法 collision suffix）；不能只验证 target block content 后就让被篡改的非 target
+  system/action carrier 沿用旧 id。
+- `RawStartExclusive` 等于该 artifact 的 `AnchorRawEvent`，且必须是当前 observation head 的严格祖先；
+  suffix 必须非空，从而保留本次 observation。
+- 一次 authoritative Parent walk 必须证明
+  `currentHead -> ... -> artifact.SourceRawHead -> ... -> artifact.AnchorRawEvent`，并要求
+  `AnchorRawEvent == SourceEndInclusive`。物理地址排序、latest index 与 artifact 自报 lineage 都不能替代
+  这项证明。
+- suffix 不得从 tool execution/result 中间开始。本版接受 setup、`session-created`、observation、
+  `completion-attempt-failed` 与无 tool call 的 terminal Action 作为 exclusive boundary；带 tool calls
+  的 Action、`tool-execution-started`、`tool-result-observed` 与
+  `completion-request-prepared` anchor 保守 fail-fast。
 - 不默认把 raw start 向前跨过 artifact anchor。有损 recap + overlap 会把已经被摘要吸收的 raw 内容
   再次注入 request；只有未来 planner/renderer 明确建模“可控重复”并有对应语义测试时才允许。
 - seed 必须明确表达 session 已初始化，以及 boundary as-of 的两个 setup。
@@ -306,9 +333,21 @@ CS-3 是无工具 Completion，可以先把边界收窄：
   generic fold 应以 boundary as-of setup 为 seed，再让 tail events 更新它；不能把未来的 head setup
   注入更早边界。
 
-是否给现有 `SessionReducer.Reduce` 增加完整 seed，还是建立专用
-`SessionTailContextProjector`，应在 CS-3B 通过 parity tests 后决定。不要先假设“一处重载”就能保持
-execution 与 context 两种语义。
+实现采用专用 `SessionTailContextProjection`，不扩展通用 `SessionReducer` seed。原因是 CS-3B 只承诺
+context 与 governing setup fold；它没有闭合 `ToolExecutionSequenceCheckpoint`、active correlation、
+pending attempt 等 execution state。把这个 context seed 伪装成完整 reducer seed 会产生错误恢复承诺。
+
+artifact 的 `MemoryPack` 先 materialize 为 `SessionContextHeader`，再由版本化 renderer 展开成真正的
+provider-facing request：
+
+1. 非空 system fragment 经 `Trim()` 后以固定字节 `\n\n` 追加到 governing system prompt；不使用
+   平台相关的 `Environment.NewLine`。
+2. 非空 observation fragment 展开为 `ObservationMessage`。
+3. 非空 action fragment 展开为 text-only `ActionMessage`。
+4. 展开后的普通 messages 才与 raw suffix messages 拼接；`SessionContextHeader` 本身绝不进入
+   `CompletionRequest`，canonical request codec 也继续拒绝它。
+
+这套精确规则由独立 renderer id/fingerprint 固定，不能复用 full-raw renderer identity。
 
 ### 7.3 CS-5-lite anchor 不是天然 reducer boundary
 
@@ -327,6 +366,25 @@ execution 与 context 两种语义。
 ContextPlan 必须验证 `RawStartExclusive` 是 dependency-closed boundary，而不是机械令
 `RawStartExclusive = AnchorRawEvent`。不安全时应换用更早的 safe artifact 或 full-raw fallback；
 不能把透明 overlap 当成 reducer 实现细节。
+
+CS-3B 没有实现“自动换用更早 artifact”的 planner。调用方若希望 fallback，必须在提交 manifest 前明确
+选择 full raw 或另一个 exact artifact；一旦 `completion-request-prepared` 已提交，恢复不得重新规划。
+
+### 7.4 可删除 artifact 与 prepared request 恢复
+
+`DerivedRecapStore` 的 artifacts 是可删除、可重建的 sidecar；而 raw
+`completion-request-prepared` 必须足够封闭，使 CS-3C 能恢复同一个 request。只在 manifest 中保存
+`ArtifactId + hash` 会让“删除 derived store”破坏已提交 request，这是不合法的。
+
+因此 `explicit-artifact-tail` manifest 的单个 artifact input 同时保存：
+
+- exact artifact id / kind，用于 selection provenance；
+- materialized header 的三段 exact string snapshot；
+- 对该 snapshot 使用 domain tag 与 32-bit big-endian 长度前缀计算的 SHA-256。
+
+snapshot 有明确大小上限。artifact 只参与 manifest 提交前的选择和校验；manifest 提交后，即使 derived
+artifact 被删除，CS-3C 仍可从 raw manifest 内联 snapshot、raw suffix、setup refs 与 renderer identity
+重建同一 provider-neutral request。这里内联的是有界 recap header，不是复制整份 rendered request。
 
 ## 8. 推荐的下一步工作包
 
@@ -376,35 +434,57 @@ near-head checkpoint 恢复。Planner policy 可以先选择 full raw fallback�
   event 为 Parent。prepared 对 conversation context 中性。
 - reopen 到 prepared 时投影为 `AwaitingCompletion`。CS-3A 的 `ResumeAsync` 明确 fail-fast，不使用当前
   config/head 重规划或盲目重发；CS-3C 再实现从 manifest 重建并继续。
-- provider 明确返回 `Incomplete` / `Failed` 时写 kind 9 `completion-attempt-failed`，保存 attempt id、
+- provider 明确返回 `Incomplete` / `Failed`，或 host 在收到 success response 后发现结果违反已经提交的
+  request policy 时，写 kind 9 `completion-attempt-failed`，保存 attempt id、
   termination/reason/detail/errors，并投影为可替换 setup、可接收下一条 observation 的
-  `TurnFailed`。transport exception/cancellation 没有已知 outcome，仍保留
+  `TurnFailed`。当前 `explicit-artifact-tail` 收到 tool calls 时使用保留 reason
+  `atelia.host.unsupported-tool-call`。transport exception/cancellation 没有已知 outcome，仍保留
   prepared/`AwaitingCompletion`。
 - legacy/manual Action 走独立 kind 10 `imported-agent-action`；reopen 后不再把“缺少 prepared 的普通
   Action”猜成 import。live kind 5 Action 必须直接继承 prepared。
 - create 时 cursor 已绑定；open 时 lazy；普通 append 推进 head，setup append 替换对应 pointer，任何
   observed-head/CAS 失配都使 cursor 失效。
 
-### CS-3B：Tail Projection Contract
+### CS-3B：Tail Projection Contract（已实施）
 
-范围：
+实际落点：
 
-- 只支持无工具 completion。
-- 定义 replay-safe / dependency-closed `RawStartExclusive`。
-- materialize 一个 recap artifact，再读取必要的 raw suffix。
-- 明确 boundary seed 与 current-head governing setup 的区别。
-- 用 full replay 对照 setup 地址/值、boundary seed 和闭合 suffix fold 的对应状态。
+- `SessionRuntime.TailProjection` 接收 exact artifact id；不新增 latest/ranking policy。
+- derived store 读取时重算完整 artifact identity，使 exact id 覆盖 renderer 实际消费的整个
+  `MemoryPack`，而不只是 target block。
+- 新增严格的 `explicit-artifact-tail` plan/renderer identities；full-raw bytes 与旧 identity 保持不变。
+- manifest 内联 exact materialized header snapshot 及其 canonical hash，derived artifact 删除不影响已
+  prepared request 的恢复合同。
+- 验证 current head、artifact source head 与 anchor 的 Parent ancestry/order；只读取并 hash
+  `(AnchorRawEvent, current observation]`。
+- 以 `ResolveGoverningSetup(anchor)` 取得 boundary-as-of seed，让 suffix setup events 更新，并与 exact
+  current-head governing setup 地址和值对照。
+- 专用 projector 严格 fold observation/action/tool start/result 的 context dependencies；不冒充完整
+  execution reducer。
+- 固定展开 artifact header，再构造最终 provider-facing `CompletionRequest` 与 canonical commitment。
+- 只支持 observation boundary、空 tool definitions；mid-tool / dependency-open anchor fail-fast。
+- `SendAsync` 与 observation-head `ResumeAsync` 使用 bounded recent-idle validator 进入 tail fast path；
+  validator 不只检查 kind，还证明 bootstrap setup chain、live Action 的
+  `Observation -> Prepared -> Action`、failed attempt 的 attempt binding，以及 imported Action 的
+  observation parent；本切片继续拒绝 imported ToolResult continuation。测试以 full-projection
+  invocation delta 证明成功路径不调用 `Project()`。
+- provider 即使返回 tool calls，也不会留下伪装成 unknown outcome 的 prepared：engine 先提交带
+  `atelia.host.unsupported-tool-call` reason 的 known `completion-attempt-failed`，再抛
+  `SessionJournalTurnAbortedException`；reopen/投影为 `TurnFailed`，可接受下一条 observation。
 - 对最终 artifact + suffix request，只要求 dependency-closed、确定性可重建且 provenance 可审计；有损
   recap 不与 full-raw request 声称逐字或结构等价。
-- 对 mid-tool / dependency-open boundary fail-fast。
 
-这一包证明“少读历史仍能确定性构造合法请求，并保持必要状态一致”，不新增完整 planner policy。
+这一包证明“只读取明确 raw suffix 仍能确定性构造合法 request context，并保持 setup/context fold
+一致”，不新增完整 planner policy，也不声称通用 execution `Project()` 已经 tail-only。
 
 ### CS-3C：Canonical Request Recovery
 
-使用 CS-3A 已经完整落盘的 manifest：
+使用 CS-3A/CS-3B 已经完整落盘的 full-raw / explicit-artifact-tail manifest：
 
 - 从已提交 manifest 重建 request 的 reopen driver。
+- 把“manifest snapshot + setup refs + raw suffix -> canonical request”的 reconstruction helper 做成单一
+  实现，并同时用于 prepared 前 end-to-end rebuild-and-compare 与 reopen；不能让当前 preparation
+  validator 只比较 artifact prefix，留下 suffix renderer 演进分叉。
 - request 前后、response 前后的 failpoint acceptance。
 
 必须先提交 manifest，再发送 completion；reopen 后从 manifest 引用重建 request，不重新运行 planner。

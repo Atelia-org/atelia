@@ -565,9 +565,16 @@ invocation、`runtime-config-setup` 与 `system-prompt-setup` provenance。
 
 > 2026-07-26 进度：CS-3A 已实现合并式 `completion-request-prepared` v1、full-raw minimal plan、
 > canonical request commitment、exact-head governing setup cursor 与 near-head setup checkpoint。
-> prepared 后的 `ResumeAsync` 目前有意 fail-fast；tail projection 与 manifest-only request reopen driver
-> 分别留给 CS-3B / CS-3C。provider 已明确返回的 non-success 另以
-> `completion-attempt-failed` 持久化；transport/cancellation 仍保持 prepared uncertain。
+> CS-3B 已实现调用方指定 exact artifact 的 `explicit-artifact-tail`：验证
+> `currentHead -> SourceRawHead -> AnchorRawEvent` Parent ancestry，以 boundary-as-of setup fold
+> dependency-closed suffix，并把 materialized artifact header 的有界 snapshot 内联进 manifest，避免
+> 可删除 derived store 破坏 prepared request 的恢复合同。该切片只替换 request context
+> materialization，并为无工具 observation `SendAsync` / `ResumeAsync` 增加不调用 `Project()` 的
+> bounded recent-idle fast path；通用 execution projection 与其他 phase 仍是 full replay。
+> prepared 后的 `ResumeAsync` 目前有意 fail-fast；manifest-only request reopen driver留给 CS-3C。
+> provider 已明确返回的 non-success，以及 host 收到 response 后确认其违反已提交 request policy 的
+> known rejection，另以 `completion-attempt-failed` 持久化；例如 tail no-tool policy 遇到 tool calls
+> 使用 `atelia.host.unsupported-tool-call`。transport/cancellation 仍保持 prepared uncertain。
 > legacy/manual Action 使用独立 `imported-agent-action`，不与 live completion Action 混淆。详见
 > [SessionJournal Configuration Access Notes](../SessionJournal/session-configuration-access-notes.md)。
 
