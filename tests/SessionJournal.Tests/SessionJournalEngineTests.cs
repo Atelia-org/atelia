@@ -818,6 +818,44 @@ public sealed class SessionJournalEngineTests : IDisposable {
         Assert.Equal(2, client.Calls);
     }
 
+    [Fact]
+    public async Task TurnFailed_AllowsSetupReplacementAndNextRequestUsesLatestSetup() {
+        string path = NewJournalPath();
+        var client = new ScriptedCompletionClient();
+        client.Enqueue(request => new CompletionResult(
+            new ActionMessage([new ActionBlock.Text("failed")]),
+            new CompletionDescriptor("scripted", "test-api-v1", request.ModelId),
+            termination: CompletionTermination.Failed("known")
+        ));
+        client.Enqueue(request => {
+            Assert.Equal("model-B", request.ModelId);
+            Assert.Equal("system-B", request.SystemPrompt);
+            return new CompletionResult(
+                new ActionMessage([new ActionBlock.Text("recovered")]),
+                new CompletionDescriptor("scripted", "test-api-v1", request.ModelId)
+            );
+        });
+
+        using var engine = SessionJournalEngine.Create(
+            path,
+            new SessionCreateOptions("model-A", "system-A", "surface-A"),
+            CreateRuntime(client)
+        );
+        await Assert.ThrowsAsync<SessionJournalTurnAbortedException>(
+            () => engine.SendAsync("first", CancellationToken.None)
+        );
+
+        engine.AppendRuntimeConfigSetup(
+            new SessionRuntimeConfiguration("model-B", "surface-B", SessionJournalDefaults.Schema)
+        );
+        engine.AppendSystemPromptSetup("system-B");
+        TurnResult result = await engine.SendAsync("second", CancellationToken.None);
+
+        Assert.Equal("recovered", result.Message.GetFlattenedText());
+        Assert.Equal(SessionExecutionPhase.Idle, engine.Project().ExecutionState.Phase);
+        Assert.Equal(2, client.Calls);
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
@@ -928,6 +966,64 @@ public sealed class SessionJournalEngineTests : IDisposable {
 
         using var reopened = SessionJournalEngine.Open(path);
         Assert.Throws<InvalidDataException>(() => reopened.Project());
+    }
+
+    [Fact]
+    public async Task Project_PreparedReasonMustMatchDirectCompletionBoundary() {
+        string sourcePath = NewJournalPath();
+        var client = new ScriptedCompletionClient();
+        using (var source = SessionJournalEngine.CreateForTest(
+            sourcePath,
+            new SessionCreateOptions("model-A", "system-A", "surface-A"),
+            CreateRuntime(client),
+            new SessionJournalTestHooks(SessionJournalFailpoint.AfterRequestPreparedCommitted)
+        )) {
+            await Assert.ThrowsAsync<SessionJournalFailpointException>(
+                () => source.SendAsync("source", CancellationToken.None)
+            );
+        }
+        EventAddress sourcePrepared = Assert.Single(
+            ReadJournalAddressesByKind(sourcePath, SessionEventKind.CompletionRequestPrepared)
+        );
+        CompletionRequestPreparedBody sourceBody;
+        using (var source = SessionJournalEngine.Open(sourcePath)) {
+            sourceBody = Assert.IsType<CompletionRequestPreparedBody>(
+                SessionEventCodec.Decode(
+                    SessionEventKind.CompletionRequestPrepared,
+                    source.ReadPayloadBytes(sourcePrepared),
+                    out _
+                )
+            );
+        }
+
+        string targetPath = NewJournalPath();
+        EventAddress targetObservation;
+        using (var target = SessionJournalEngine.Create(
+            targetPath,
+            new SessionCreateOptions("model-A", "system-A", "surface-A")
+        )) {
+            targetObservation = target.AppendObservation("target");
+        }
+        CompletionRequestPreparedBody forged = sourceBody with {
+            Attempt = sourceBody.Attempt with {
+                CorrelationId = $"atelia.session-journal.turn.v1:{EventAddressTextCodec.Format(targetObservation)}",
+                Reason = "tool-continuation"
+            },
+            Plan = sourceBody.Plan with { Reason = "tool-continuation" }
+        };
+        using (var journal = EventJournal.EventJournal.OpenExisting(targetPath)) {
+            journal.CommitToRef(
+                SessionJournalDefaults.MainBranchName,
+                targetObservation,
+                SessionEventCodec.Encode(SessionEventKind.CompletionRequestPrepared, forged),
+                opaqueEventKind: (uint)SessionEventKind.CompletionRequestPrepared,
+                hint: default
+            ).Unwrap();
+        }
+
+        using var reopened = SessionJournalEngine.Open(targetPath);
+        InvalidDataException error = Assert.Throws<InvalidDataException>(() => reopened.Project());
+        Assert.Contains("reason", error.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

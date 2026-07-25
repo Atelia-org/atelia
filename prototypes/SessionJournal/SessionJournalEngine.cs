@@ -163,9 +163,9 @@ public sealed class SessionJournalEngine : IDisposable {
         ArgumentNullException.ThrowIfNull(configuration);
         ValidateRuntimeConfiguration(configuration);
         SessionProjection projection = Project();
-        if (projection.ExecutionState.Phase != SessionExecutionPhase.Idle) {
+        if (projection.ExecutionState.Phase is not (SessionExecutionPhase.Idle or SessionExecutionPhase.TurnFailed)) {
             throw new InvalidOperationException(
-                $"AppendRuntimeConfigSetup requires an idle session. Current phase is '{projection.ExecutionState.Phase}'."
+                $"AppendRuntimeConfigSetup requires an idle or explicitly failed turn boundary. Current phase is '{projection.ExecutionState.Phase}'."
             );
         }
 
@@ -175,9 +175,9 @@ public sealed class SessionJournalEngine : IDisposable {
     public EventAddress AppendSystemPromptSetup(string systemPrompt) {
         if (systemPrompt is null) { throw new ArgumentNullException(nameof(systemPrompt)); }
         SessionProjection projection = Project();
-        if (projection.ExecutionState.Phase != SessionExecutionPhase.Idle) {
+        if (projection.ExecutionState.Phase is not (SessionExecutionPhase.Idle or SessionExecutionPhase.TurnFailed)) {
             throw new InvalidOperationException(
-                $"AppendSystemPromptSetup requires an idle session. Current phase is '{projection.ExecutionState.Phase}'."
+                $"AppendSystemPromptSetup requires an idle or explicitly failed turn boundary. Current phase is '{projection.ExecutionState.Phase}'."
             );
         }
 

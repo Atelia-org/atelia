@@ -96,6 +96,14 @@ internal static class SessionReducer {
                         || !string.Equals(body.Attempt.CorrelationId, activeCorrelationId, StringComparison.Ordinal)) {
                         throw new InvalidDataException($"{ev.Kind} at {ev.Address} has a correlation id that does not match the active turn.");
                     }
+                    string expectedReason = headKind == SessionEventKind.ObservationAccepted
+                        ? "observation"
+                        : "tool-continuation";
+                    if (!string.Equals(body.Attempt.Reason, expectedReason, StringComparison.Ordinal)) {
+                        throw new InvalidDataException(
+                            $"{ev.Kind} at {ev.Address} reason '{body.Attempt.Reason}' does not match predecessor '{headKind}'."
+                        );
+                    }
                     pendingRequestPreparedAddress = ev.Address;
                     pendingCompletionAttemptId = body.Attempt.AttemptId;
                     break;
