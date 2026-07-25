@@ -1,4 +1,5 @@
 using Atelia.Completion.Abstractions;
+using Atelia.Completion.Tools;
 using Atelia.EventJournal;
 using Atelia.SessionJournal.Derived;
 using Xunit;
@@ -31,6 +32,7 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
         EventAddress runtimeB;
         EventAddress promptB;
         RenderedMemoryPack rendered;
+        int fullProjectionCountBeforeSend;
 
         using (var engine = SessionJournalEngine.Create(
             path,
@@ -57,6 +59,7 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
             );
             promptB = engine.AppendSystemPromptSetup("system-B");
             engine.UseRuntime(CreateRuntime(client, artifact.ArtifactId));
+            fullProjectionCountBeforeSend = engine.FullProjectionInvocationCount;
 
             TurnResult result = await engine.SendAsync("new observation", CancellationToken.None);
 
@@ -69,6 +72,7 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
                 ),
                 engine.LastTailProjectionDiagnostics
             );
+            Assert.Equal(fullProjectionCountBeforeSend, engine.FullProjectionInvocationCount);
         }
 
         CompletionRequest request = Assert.Single(client.Requests);
@@ -104,6 +108,129 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
         Assert.Equal(SessionRequestCanonicalizer.CreateCommitment(request), manifest.Commitment);
         Assert.Equal(runtimeB, manifest.Setups.RuntimeConfig.Address);
         Assert.Equal(promptB, manifest.Setups.SystemPrompt.Address);
+    }
+
+    [Fact]
+    public async Task ResumeAsync_ExactObservationTail_DoesNotInvokeFullProjection() {
+        string path = NewJournalPath();
+        DerivedRecapArtifact artifact;
+        using (var engine = SessionJournalEngine.Create(
+            path,
+            new SessionCreateOptions("model-A", "system-A", "surface-A")
+        )) {
+            engine.AppendObservation("old observation");
+            EventAddress anchor = engine.AppendImportedAgentAction(
+                new ActionMessage([new ActionBlock.Text("old answer")]),
+                new CompletionDescriptor("import", "import-v1", "model-A")
+            );
+            artifact = await WriteArtifactAsync(
+                path,
+                anchor,
+                sourceRawHead: anchor,
+                engine.ResolveGoverningSetup(anchor),
+                CreateMemoryPack()
+            );
+            engine.AppendObservation("resume observation");
+        }
+
+        var client = new CapturingCompletionClient(request => new CompletionResult(
+            new ActionMessage([new ActionBlock.Text("resumed answer")]),
+            new CompletionDescriptor("tail-client", "tail-api-v1", request.ModelId)
+        ));
+        using var reopened = SessionJournalEngine.Open(path, CreateRuntime(client, artifact.ArtifactId));
+        int projectionCountBeforeResume = reopened.FullProjectionInvocationCount;
+
+        ResumeOutcome outcome = await reopened.ResumeAsync(CancellationToken.None);
+
+        Assert.True(outcome.Advanced);
+        Assert.Equal("resumed answer", outcome.Message?.GetFlattenedText());
+        Assert.Equal(projectionCountBeforeResume, reopened.FullProjectionInvocationCount);
+        Assert.Single(client.Requests);
+    }
+
+    [Fact]
+    public async Task ResumeAsync_ObservationWhoseParentIsNotIdle_RejectsWithoutFullProjection() {
+        string path = NewJournalPath();
+        var client = new CapturingCompletionClient(_ => throw new InvalidOperationException("must not call provider"));
+        using var engine = SessionJournalEngine.Create(
+            path,
+            new SessionCreateOptions("model-A", "system-A", "surface-A")
+        );
+        engine.AppendObservation("first observation");
+        engine.AppendObservation("invalid second observation");
+        engine.UseRuntime(CreateRuntime(client, "missing-artifact"));
+        int projectionCountBeforeResume = engine.FullProjectionInvocationCount;
+
+        InvalidOperationException error = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => engine.ResumeAsync(CancellationToken.None)
+        );
+
+        Assert.Contains("idle boundary", error.Message, StringComparison.Ordinal);
+        Assert.Equal(projectionCountBeforeResume, engine.FullProjectionInvocationCount);
+        Assert.Empty(client.Requests);
+    }
+
+    [Fact]
+    public async Task SendAsync_TailRuntimeWithVisibleTools_FailsBeforeObservationOrFullProjection() {
+        string path = NewJournalPath();
+        var client = new CapturingCompletionClient(_ => throw new InvalidOperationException("must not call provider"));
+        ToolSession toolSession = new ToolRegistry([new NoopTool()]).CreateSession();
+        using (var engine = SessionJournalEngine.Create(
+            path,
+            new SessionCreateOptions("model-A", "system-A", "surface-A"),
+            CreateRuntime(client, "missing-artifact", toolSession)
+        )) {
+            int projectionCountBeforeSend = engine.FullProjectionInvocationCount;
+
+            NotSupportedException error = await Assert.ThrowsAsync<NotSupportedException>(
+                () => engine.SendAsync("new observation", CancellationToken.None)
+            );
+
+            Assert.Contains("without tools", error.Message, StringComparison.Ordinal);
+            Assert.Equal(projectionCountBeforeSend, engine.FullProjectionInvocationCount);
+            Assert.Empty(client.Requests);
+        }
+        Assert.Empty(ReadAddressesByKind(path, SessionEventKind.ObservationAccepted));
+    }
+
+    [Fact]
+    public async Task SendAsync_TailProviderToolCall_FailsBeforeActionCommitWithoutFullProjection() {
+        string path = NewJournalPath();
+        var client = new CapturingCompletionClient(request => new CompletionResult(
+            new ActionMessage([
+                new ActionBlock.ToolCall(new RawToolCall("lookup", "call-1", "{}"))
+            ]),
+            new CompletionDescriptor("tail-client", "tail-api-v1", request.ModelId)
+        ));
+        using (var engine = SessionJournalEngine.Create(
+            path,
+            new SessionCreateOptions("model-A", "system-A", "surface-A")
+        )) {
+            engine.AppendObservation("old observation");
+            EventAddress anchor = engine.AppendImportedAgentAction(
+                new ActionMessage([new ActionBlock.Text("old answer")]),
+                new CompletionDescriptor("import", "import-v1", "model-A")
+            );
+            DerivedRecapArtifact artifact = await WriteArtifactAsync(
+                path,
+                anchor,
+                sourceRawHead: anchor,
+                engine.ResolveGoverningSetup(anchor),
+                CreateMemoryPack()
+            );
+            engine.UseRuntime(CreateRuntime(client, artifact.ArtifactId));
+            int projectionCountBeforeSend = engine.FullProjectionInvocationCount;
+
+            NotSupportedException error = await Assert.ThrowsAsync<NotSupportedException>(
+                () => engine.SendAsync("new observation", CancellationToken.None)
+            );
+
+            Assert.Contains("tool calls", error.Message, StringComparison.Ordinal);
+            Assert.Equal(projectionCountBeforeSend, engine.FullProjectionInvocationCount);
+        }
+        Assert.Single(client.Requests);
+        Assert.Single(ReadAddressesByKind(path, SessionEventKind.CompletionRequestPrepared));
+        Assert.Empty(ReadAddressesByKind(path, SessionEventKind.AgentActionProduced));
     }
 
     [Fact]
@@ -265,10 +392,14 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
         ));
     }
 
-    private static SessionRuntime CreateRuntime(CapturingCompletionClient client, string artifactId)
+    private static SessionRuntime CreateRuntime(
+        CapturingCompletionClient client,
+        string artifactId,
+        ToolSession? toolSession = null
+    )
         => new(
             CompletionClient: client,
-            ToolSession: null,
+            ToolSession: toolSession,
             CompletionTarget: new SessionCompletionTargetIdentity(
                 "tail-connection",
                 "test",
@@ -278,6 +409,22 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
             MaxTokens: 512,
             TailProjection: new SessionTailProjectionOptions(artifactId)
         );
+
+    private sealed class NoopTool : ITool {
+        public ToolDefinition Definition { get; } =
+            new("noop", "No-op tool.", new ToolSchema.Object());
+
+        public ValueTask<ToolExecuteResult> ExecuteAsync(
+            ToolExecutionContext context,
+            CancellationToken cancellationToken
+        ) {
+            _ = context;
+            cancellationToken.ThrowIfCancellationRequested();
+            return ValueTask.FromResult(
+                ToolExecuteResult.FromText(ToolExecutionStatus.Success, "unused")
+            );
+        }
+    }
 
     private static EventAddress Commit(
         EventJournal.EventJournal journal,

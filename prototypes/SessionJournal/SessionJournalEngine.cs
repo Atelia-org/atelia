@@ -17,6 +17,7 @@ public sealed class SessionJournalEngine : IDisposable {
     private SessionGoverningSetup? _governingSetupCursor;
     private GoverningSetupResolutionDiagnostics _lastGoverningSetupResolutionDiagnostics;
     private SessionTailProjectionDiagnostics _lastTailProjectionDiagnostics;
+    private int _fullProjectionInvocationCount;
     private bool _disposed;
 
     private SessionJournalEngine(
@@ -40,6 +41,8 @@ public sealed class SessionJournalEngine : IDisposable {
 
     internal SessionTailProjectionDiagnostics LastTailProjectionDiagnostics
         => _lastTailProjectionDiagnostics;
+
+    internal int FullProjectionInvocationCount => _fullProjectionInvocationCount;
 
     public static SessionJournalEngine Create(string path, SessionCreateOptions options)
         => CreateCore(path, options, runtime: null, testHooks: null);
@@ -88,6 +91,7 @@ public sealed class SessionJournalEngine : IDisposable {
 
     public SessionProjection Project(CancellationToken cancellationToken = default) {
         ThrowIfDisposed();
+        _fullProjectionInvocationCount++;
         EventAddress? head = _journal.GetHead(_mainRef);
         if (head is null) { return SessionReducer.Empty; }
 
@@ -121,6 +125,26 @@ public sealed class SessionJournalEngine : IDisposable {
     ) {
         ThrowIfDisposed();
         ValidateRequired(observation, nameof(observation));
+        if (_runtime?.TailProjection is not null) {
+            SessionRuntime runtime = RequireRuntime();
+            _ = RequireEmptyTailToolSet(runtime);
+            EventAddress expectedHead = _journal.GetHead(_mainRef)
+                ?? throw new InvalidOperationException("SendAsync requires an initialized SessionJournal.");
+            ValidateTailIdleBoundary(expectedHead, cancellationToken);
+            EventAddress observationAddress = AppendExpected(
+                SessionEventKind.ObservationAccepted,
+                new ObservationAcceptedBody(observation),
+                expectedHead,
+                requireBoundSetupCursor: false
+            );
+            TriggerFailpoint(SessionJournalFailpoint.AfterObservationCommitted);
+            return await CompletePendingObservationAsync(
+                observer,
+                cancellationToken,
+                expectedTailObservation: observationAddress
+            ).ConfigureAwait(false);
+        }
+
         var projection = Project(cancellationToken);
         if (projection.ExecutionState.Phase is not (SessionExecutionPhase.Idle or SessionExecutionPhase.TurnFailed)) {
             throw new InvalidOperationException(
@@ -141,6 +165,21 @@ public sealed class SessionJournalEngine : IDisposable {
         CancellationToken cancellationToken = default
     ) {
         ThrowIfDisposed();
+        if (_runtime?.TailProjection is not null
+            && _journal.GetHead(_mainRef) is { } tailHead
+            && ReadEventKind(tailHead) == SessionEventKind.ObservationAccepted) {
+            SessionRuntime runtime = RequireRuntime();
+            _ = RequireEmptyTailToolSet(runtime);
+            ValidateTailObservationBoundary(tailHead, cancellationToken);
+            return ToResumeOutcome(
+                await CompletePendingObservationAsync(
+                    observer,
+                    cancellationToken,
+                    expectedTailObservation: tailHead
+                ).ConfigureAwait(false)
+            );
+        }
+
         SessionProjection projection = Project(cancellationToken);
         return projection.ExecutionState.Phase switch {
             SessionExecutionPhase.Empty or SessionExecutionPhase.Idle or SessionExecutionPhase.TurnFailed =>
@@ -375,9 +414,26 @@ public sealed class SessionJournalEngine : IDisposable {
 
     private async Task<TurnResult> CompletePendingObservationAsync(
         CompletionStreamObserver? observer,
-        CancellationToken cancellationToken
+        CancellationToken cancellationToken,
+        EventAddress? expectedTailObservation = null
     ) {
         SessionRuntime runtime = RequireRuntime();
+        if (runtime.TailProjection is not null) {
+            EventAddress observationAddress = expectedTailObservation
+                ?? throw new InvalidOperationException(
+                    "Explicit artifact tail completion requires an exact ObservationAccepted address."
+                );
+            return await CompleteTailObservationAsync(
+                runtime,
+                observationAddress,
+                observer,
+                cancellationToken
+            ).ConfigureAwait(false);
+        }
+        if (expectedTailObservation is not null) {
+            throw new InvalidOperationException("A tail observation address was supplied without tail projection.");
+        }
+
         SessionProjection projection = Project(cancellationToken);
         if (projection.ExecutionState.Phase != SessionExecutionPhase.AwaitingAgentAction) {
             throw new InvalidOperationException(
@@ -403,57 +459,19 @@ public sealed class SessionJournalEngine : IDisposable {
             throw new InvalidDataException("Governing setup cursor does not match the exact current projection.");
         }
 
-        RequestContextMaterialization materialization;
         _lastTailProjectionDiagnostics = default;
-        if (runtime.TailProjection is null) {
-            materialization = new RequestContextMaterialization(
-                systemPrompt,
-                projection.Context,
-                SessionRequestManifestDefaults.FullRawSelectionPolicyId,
-                SessionRequestManifestDefaults.FullRawPlannerFingerprint,
-                SessionRequestManifestDefaults.FullRawRenderingProfileId,
-                SessionRequestManifestDefaults.FullRawContextRendererId,
-                SessionRequestManifestDefaults.FullRawContextRendererFingerprint,
-                RawStartExclusive: null,
-                ComputeRawRangeSha256(rawStartExclusive: null, expectedParent, cancellationToken),
-                ImmutableArray<SessionRequestArtifactInput>.Empty
-            );
-        }
-        else {
-            if (projection.ExecutionState.HeadKind != SessionEventKind.ObservationAccepted) {
-                throw new NotSupportedException(
-                    "CS-3B explicit artifact tail projection supports ObservationAccepted completion boundaries only."
-                );
-            }
-            if (!tools.IsEmpty) {
-                throw new NotSupportedException(
-                    "CS-3B explicit artifact tail projection supports completion requests without tools only."
-                );
-            }
-
-            SessionTailContextProjectionResult tail = await SessionTailContextProjection.MaterializeAsync(
-                _journal,
-                Path,
-                expectedParent,
-                governingSetup,
-                runtime.TailProjection,
-                ResolveGoverningSetup,
-                cancellationToken
-            ).ConfigureAwait(false);
-            _lastTailProjectionDiagnostics = tail.Diagnostics;
-            materialization = new RequestContextMaterialization(
-                tail.SystemPrompt,
-                tail.Context,
-                SessionRequestManifestDefaults.ExplicitArtifactTailSelectionPolicyId,
-                SessionRequestManifestDefaults.ExplicitArtifactTailPlannerFingerprint,
-                SessionRequestManifestDefaults.ExplicitArtifactTailRenderingProfileId,
-                SessionRequestManifestDefaults.ExplicitArtifactTailContextRendererId,
-                SessionRequestManifestDefaults.ExplicitArtifactTailContextRendererFingerprint,
-                tail.RawStartExclusive,
-                tail.RawRangeSha256,
-                [tail.ArtifactInput]
-            );
-        }
+        var materialization = new RequestContextMaterialization(
+            systemPrompt,
+            projection.Context,
+            SessionRequestManifestDefaults.FullRawSelectionPolicyId,
+            SessionRequestManifestDefaults.FullRawPlannerFingerprint,
+            SessionRequestManifestDefaults.FullRawRenderingProfileId,
+            SessionRequestManifestDefaults.FullRawContextRendererId,
+            SessionRequestManifestDefaults.FullRawContextRendererFingerprint,
+            RawStartExclusive: null,
+            ComputeRawRangeSha256(rawStartExclusive: null, expectedParent, cancellationToken),
+            ImmutableArray<SessionRequestArtifactInput>.Empty
+        );
 
         var request = new CompletionRequest(
             ModelId: config.ModelId,
@@ -463,14 +481,119 @@ public sealed class SessionJournalEngine : IDisposable {
             MaxTokens: runtime.MaxTokens
         );
 
-        CompletionRequestPreparedBody manifest = BuildRequestManifest(
+        string correlationId = projection.ExecutionState.ActiveCorrelationId
+            ?? throw new InvalidDataException("AwaitingAgentAction requires an active correlation id.");
+        string reason = projection.ExecutionState.HeadKind == SessionEventKind.ToolResultObserved
+            ? "tool-continuation"
+            : "observation";
+        CompletionResult result = await ExecutePreparedCompletionAsync(
             request,
-            projection,
+            expectedParent,
             governingSetup,
             completionTarget,
             runtime,
             tools,
-            materialization
+            materialization,
+            correlationId,
+            reason,
+            allowResultToolCalls: true,
+            observer,
+            cancellationToken
+        ).ConfigureAwait(false);
+
+        projection = Project(cancellationToken);
+        if (projection.ExecutionState.Phase == SessionExecutionPhase.AwaitingToolExecution) { return await ContinueToolLoopAsync(projection, observer, cancellationToken).ConfigureAwait(false); }
+
+        return new TurnResult(result.Message, result.Invocation, FreezeErrors(result.Errors));
+    }
+
+    private async Task<TurnResult> CompleteTailObservationAsync(
+        SessionRuntime runtime,
+        EventAddress observationAddress,
+        CompletionStreamObserver? observer,
+        CancellationToken cancellationToken
+    ) {
+        ImmutableArray<ToolDefinition> tools = RequireEmptyTailToolSet(runtime);
+        _lastTailProjectionDiagnostics = default;
+        ValidateTailObservationBoundary(observationAddress, cancellationToken);
+        SessionCompletionTargetIdentity completionTarget = runtime.CompletionTarget
+            ?? throw new InvalidOperationException(
+                "SessionJournal runtime requires non-secret CompletionTarget identity before a durable completion request can be prepared."
+            );
+        SessionGoverningSetup governingSetup = EnsureGoverningSetupCursor(
+            observationAddress,
+            cancellationToken
+        );
+        SessionTailContextProjectionResult tail = await SessionTailContextProjection.MaterializeAsync(
+            _journal,
+            Path,
+            observationAddress,
+            governingSetup,
+            runtime.TailProjection!,
+            ResolveGoverningSetup,
+            cancellationToken
+        ).ConfigureAwait(false);
+        _lastTailProjectionDiagnostics = tail.Diagnostics;
+        var materialization = new RequestContextMaterialization(
+            tail.SystemPrompt,
+            tail.Context,
+            SessionRequestManifestDefaults.ExplicitArtifactTailSelectionPolicyId,
+            SessionRequestManifestDefaults.ExplicitArtifactTailPlannerFingerprint,
+            SessionRequestManifestDefaults.ExplicitArtifactTailRenderingProfileId,
+            SessionRequestManifestDefaults.ExplicitArtifactTailContextRendererId,
+            SessionRequestManifestDefaults.ExplicitArtifactTailContextRendererFingerprint,
+            tail.RawStartExclusive,
+            tail.RawRangeSha256,
+            [tail.ArtifactInput]
+        );
+        var request = new CompletionRequest(
+            ModelId: governingSetup.RuntimeConfig.ModelId,
+            SystemPrompt: materialization.SystemPrompt,
+            Context: materialization.Context,
+            Tools: tools,
+            MaxTokens: runtime.MaxTokens
+        );
+
+        CompletionResult result = await ExecutePreparedCompletionAsync(
+            request,
+            observationAddress,
+            governingSetup,
+            completionTarget,
+            runtime,
+            tools,
+            materialization,
+            BuildCorrelationId(observationAddress),
+            reason: "observation",
+            allowResultToolCalls: false,
+            observer,
+            cancellationToken
+        ).ConfigureAwait(false);
+        return new TurnResult(result.Message, result.Invocation, FreezeErrors(result.Errors));
+    }
+
+    private async Task<CompletionResult> ExecutePreparedCompletionAsync(
+        CompletionRequest request,
+        EventAddress expectedParent,
+        SessionGoverningSetup governingSetup,
+        SessionCompletionTargetIdentity completionTarget,
+        SessionRuntime runtime,
+        ImmutableArray<ToolDefinition> tools,
+        RequestContextMaterialization materialization,
+        string correlationId,
+        string reason,
+        bool allowResultToolCalls,
+        CompletionStreamObserver? observer,
+        CancellationToken cancellationToken
+    ) {
+        CompletionRequestPreparedBody manifest = BuildRequestManifest(
+            request,
+            governingSetup,
+            completionTarget,
+            runtime,
+            tools,
+            materialization,
+            correlationId,
+            reason
         );
         EventAddress preparedAddress = AppendExpected(
             SessionEventKind.CompletionRequestPrepared,
@@ -507,6 +630,11 @@ public sealed class SessionJournalEngine : IDisposable {
         }
 
         ValidateCompletionInvocation(result.Invocation, runtime.CompletionClient, request);
+        if (!allowResultToolCalls && result.Message.ToolCalls.Count > 0) {
+            throw new NotSupportedException(
+                "Explicit artifact tail completion does not support provider results containing tool calls."
+            );
+        }
         TriggerFailpoint(SessionJournalFailpoint.AfterCompletionBeforeActionCommitted);
         AppendExpected(
             SessionEventKind.AgentActionProduced,
@@ -514,11 +642,7 @@ public sealed class SessionJournalEngine : IDisposable {
             preparedAddress,
             requireBoundSetupCursor: false
         );
-
-        projection = Project(cancellationToken);
-        if (projection.ExecutionState.Phase == SessionExecutionPhase.AwaitingToolExecution) { return await ContinueToolLoopAsync(projection, observer, cancellationToken).ConfigureAwait(false); }
-
-        return new TurnResult(result.Message, result.Invocation, FreezeErrors(result.Errors));
+        return result;
     }
 
     private async Task<TurnResult> ContinueToolLoopAsync(
@@ -596,20 +720,108 @@ public sealed class SessionJournalEngine : IDisposable {
         return cursor;
     }
 
+    private void ValidateTailObservationBoundary(
+        EventAddress observationAddress,
+        CancellationToken cancellationToken
+    ) {
+        EventAddress? observedHead = _journal.GetHead(_mainRef);
+        if (observedHead != observationAddress) {
+            throw new InvalidOperationException(
+                $"Explicit artifact tail completion expected ObservationAccepted head '{observationAddress}', observed '{observedHead}'."
+            );
+        }
+
+        using EventFrame frame = _journal.ReadEvent(observationAddress).Unwrap();
+        ValidateSessionHeaderPreview(observationAddress, frame.Header);
+        var kind = (SessionEventKind)frame.Header.OpaqueEventKind;
+        if (kind != SessionEventKind.ObservationAccepted) {
+            throw new InvalidOperationException(
+                $"Explicit artifact tail completion requires ObservationAccepted head, got '{kind}'."
+            );
+        }
+        object body = SessionEventCodec.Decode(kind, frame.Payload, out _);
+        if (body is not ObservationAcceptedBody) {
+            throw new InvalidDataException(
+                $"ObservationAccepted at {observationAddress} decoded to unexpected body type '{body.GetType().Name}'."
+            );
+        }
+        EventAddress parent = frame.Header.Parent
+            ?? throw new InvalidDataException(
+                $"ObservationAccepted at {observationAddress} requires an idle predecessor."
+            );
+        ValidateTailIdleBoundary(parent, cancellationToken);
+    }
+
+    private void ValidateTailIdleBoundary(
+        EventAddress boundaryHead,
+        CancellationToken cancellationToken
+    ) {
+        EventAddress? cursor = boundaryHead;
+        while (cursor is { } address) {
+            cancellationToken.ThrowIfCancellationRequested();
+            EventFrameHeader header = _journal.ReadEventHeaderPreview(address).Unwrap();
+            ValidateSessionHeaderPreview(address, header);
+            var kind = (SessionEventKind)header.OpaqueEventKind;
+            if (kind is SessionEventKind.RuntimeConfigSetup or SessionEventKind.SystemPromptSetup) {
+                cursor = header.Parent;
+                continue;
+            }
+
+            using EventFrame frame = _journal.ReadEvent(address).Unwrap();
+            ValidateSessionHeaderPreview(address, frame.Header);
+            object body = SessionEventCodec.Decode(kind, frame.Payload, out _);
+            switch (kind) {
+                case SessionEventKind.SessionCreated when body is SessionCreatedBody:
+                    return;
+                case SessionEventKind.CompletionAttemptFailed when body is CompletionAttemptFailedBody:
+                    return;
+                case SessionEventKind.AgentActionProduced:
+                case SessionEventKind.ImportedAgentAction:
+                    if (body is AgentActionProducedBody action && action.Action.ToolCalls.Count == 0) {
+                        return;
+                    }
+                    throw new InvalidOperationException(
+                        $"Explicit artifact tail SendAsync requires a terminal action without tool calls at {address}."
+                    );
+                default:
+                    throw new InvalidOperationException(
+                        $"Explicit artifact tail SendAsync requires an idle boundary, got '{kind}' at {address}."
+                    );
+            }
+        }
+
+        throw new InvalidDataException("Explicit artifact tail idle boundary reached the journal root unexpectedly.");
+    }
+
+    private SessionEventKind ReadEventKind(EventAddress address) {
+        EventFrameHeader header = _journal.ReadEventHeaderPreview(address).Unwrap();
+        ValidateSessionHeaderPreview(address, header);
+        return (SessionEventKind)header.OpaqueEventKind;
+    }
+
+    private static ImmutableArray<ToolDefinition> RequireEmptyTailToolSet(SessionRuntime runtime) {
+        ImmutableArray<ToolDefinition> tools =
+            runtime.ToolSession?.VisibleDefinitions ?? ImmutableArray<ToolDefinition>.Empty;
+        if (!tools.IsEmpty) {
+            throw new NotSupportedException(
+                "Explicit artifact tail projection supports completion requests without tools only."
+            );
+        }
+        return tools;
+    }
+
     private CompletionRequestPreparedBody BuildRequestManifest(
         CompletionRequest request,
-        SessionProjection projection,
         SessionGoverningSetup governingSetup,
         SessionCompletionTargetIdentity completionTarget,
         SessionRuntime runtime,
         ImmutableArray<ToolDefinition> tools,
-        RequestContextMaterialization materialization
+        RequestContextMaterialization materialization,
+        string correlationId,
+        string reason
     ) {
-        string correlationId = projection.ExecutionState.ActiveCorrelationId
-            ?? throw new InvalidDataException("AwaitingAgentAction requires an active correlation id.");
-        string reason = projection.ExecutionState.HeadKind == SessionEventKind.ToolResultObserved
-            ? "tool-continuation"
-            : "observation";
+        ValidateRequired(correlationId, nameof(correlationId));
+        ValidateRequired(reason, nameof(reason));
         SessionRequestCommitment commitment = SessionRequestCanonicalizer.CreateCommitment(request);
         var manifest = new CompletionRequestPreparedBody(
             new SessionRequestAttempt(
@@ -1004,6 +1216,9 @@ public sealed class SessionJournalEngine : IDisposable {
 
     private static IReadOnlyList<string>? FreezeErrors(IReadOnlyList<string>? errors)
         => errors is null ? null : Array.AsReadOnly(errors.ToArray());
+
+    private static string BuildCorrelationId(EventAddress observationAddress)
+        => $"atelia.session-journal.turn.v1:{EventAddressTextCodec.Format(observationAddress)}";
 
     private static string BuildOperationId(EventAddress? head, RawToolCall call) {
         ArgumentNullException.ThrowIfNull(call);
