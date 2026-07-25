@@ -1,6 +1,6 @@
 # CS-5-lite-C 设计：RollingSummary Runner 输入源抽象
 
-> 状态：Design / Ready for Implementation
+> 状态：Implemented / Ready for D Handoff
 > 日期：2026-07-25
 > 对应 brief：[CS-5-lite-C: RollingSummary Runner 输入源抽象](cs-5-lite-C-runner-input-abstraction.md)
 
@@ -35,9 +35,15 @@ internal interface IRollingSummaryReplaySource {
     IAsyncEnumerable<RollingSummaryReplayStep> ReadStepsAsync(CancellationToken ct);
 }
 
+internal sealed record RollingSummaryReplayMessage {
+    public IHistoryMessage Message { get; }
+    public EventAddress? SourceStartInclusive { get; }
+    public EventAddress? SourceEndInclusive { get; }
+}
+
 internal sealed record RollingSummaryReplayStep(
-    RollingSummaryReplaySourceCursor Cursor,
-    IReadOnlyList<IHistoryMessage> AppendedMessages,
+    RollingSummaryReplaySourceCursor TriggerCursor,
+    IReadOnlyList<RollingSummaryReplayMessage> AppendedEntries,
     bool IsTriggerBoundary
 );
 
@@ -46,23 +52,28 @@ internal sealed record RollingSummaryReplaySourceCursor(
     string SourceId,
     long? EventOrdinal = null,
     string? EventCommit = null,
-    EventAddress? SourceStartInclusive = null,
-    EventAddress? SourceEndInclusive = null,
     EventAddress? SourceRawHead = null
 );
 ```
 
 语义：
 
-- `AppendedMessages` 是本 step 追加进 `_activeHistory` 的 message。为空 step 可用于保留 source cursor，但第一版
-  runner 可以直接跳过。
+- `AppendedEntries` 是本 step 追加进 `_activeHistory` 的 message entry。每个 entry 携带自己的 optional raw
+  range；构造时强制 start/end 同时存在或同时缺失，避免产生半截 provenance。
 - `IsTriggerBoundary` 表示追加完成后是否允许 threshold/split 检查。legacy 中只在 `model-turn` 后触发；
   SessionJournal 中建议在每个 `ActionMessage` 或 `ToolResultsMessage` 后触发。
-- `Cursor.SourceId` 是 human-facing 诊断 id：
+- `TriggerCursor` 只描述“在哪个 source step 触发了本次 threshold 检查”，不描述被 sliding fragment
+  实际吸收的范围。
+- `TriggerCursor.SourceId` 是 human-facing 诊断 id：
   - legacy：`commit ?? ordinal.ToString(InvariantCulture)`。
   - SessionJournal：`EventAddressTextCodec.Format(SourceEndInclusive)`。
-- `SourceStartInclusive` / `SourceEndInclusive` 是 step 覆盖的 raw source range。legacy 没有 raw address，填 null。
-- `SourceRawHead` 是 adapter 开始 replay 时看到的 raw head；legacy 填 null。
+- message entry 的 `SourceStartInclusive` / `SourceEndInclusive` 是该 message 覆盖的 raw source range。
+  legacy 没有 raw address，两者均为 null。
+- `TriggerCursor.SourceRawHead` 是 adapter 开始 replay 时看到的 raw head snapshot；同一次 SessionJournal
+  replay 产生的所有 step 共享它，legacy 填 null。
+
+将 trigger cursor 与 message provenance 分开是 D handoff 的关键：触发 split 的 step 往往晚于 fragment
+末尾，不能把 trigger step 的地址当作 recap anchor。
 
 ## 3. Legacy Adapter
 
@@ -76,11 +87,13 @@ internal sealed class LegacyRollingSummaryReplaySource : IRollingSummaryReplaySo
 
 映射规则：
 
-- `initial-state`：输出一个 `IsTriggerBoundary = false` 的 step，`AppendedMessages = messages`，用于初始化
+- `initial-state`：输出一个 `IsTriggerBoundary = false` 的 step，`AppendedEntries = messages`，用于初始化
   `_activeHistory`。
-- `model-turn`：输出 `IsTriggerBoundary = true` 的 step，`AppendedMessages = appendedMessages`。
+- `model-turn`：输出 `IsTriggerBoundary = true` 的 step，`AppendedEntries = appendedMessages`。
 - `update-system-prompt` / `compaction` / `redundant-save`：不输出 step。
 - ordinal 必须与遍历 index 一致；不一致继续抛 `InvalidDataException`。
+- legacy entry 的 raw range 始终为 null；record 的既有 `sourceId` / `eventOrdinal` / `eventCommit`
+  仍来自 trigger cursor。
 
 注意：这和 `ChatSessionLegacyReplayCursor` 的完整 replay 不同。rolling summary 现有策略本来就忽略原始
 compaction 和 system prompt change；C 保持这个行为，不在 legacy adapter 里引入 `ContextHeader` 或 recap。
@@ -100,10 +113,10 @@ internal sealed class SessionJournalRollingSummaryReplaySource : IRollingSummary
 1. `using var engine = SessionJournalEngine.Open(sessionJournalRepoPath)`。
 2. 调用 A 分片提供的 `engine.ReplayHistory()`。
 3. 遍历 `SessionHistoryReplay.Messages`，每个 `AddressedSessionHistoryMessage` 产出一个 step：
-   - `AppendedMessages = [addressed.Message]`。
-   - `SourceStartInclusive = addressed.SourceStartInclusive`。
-   - `SourceEndInclusive = addressed.SourceEndInclusive`。
-   - `SourceRawHead = replay.SourceRawHead`。
+   - `AppendedEntries = [new RollingSummaryReplayMessage(addressed.Message, addressed.SourceStartInclusive,
+     addressed.SourceEndInclusive)]`。
+   - `TriggerCursor.SourceId = Format(addressed.SourceEndInclusive)`。
+   - `TriggerCursor.SourceRawHead = replay.SourceRawHead`。
    - `IsTriggerBoundary = addressed.Message.Kind is Action or ToolResults`。
 4. setup/session-created 不进入 history；这已经由 `ReplayHistory()` 和 `SessionReducer` 保证，adapter 不重写 reducer。
 
@@ -134,13 +147,24 @@ public RollingSummaryReplayRunner(
 内部循环：
 
 1. 从 source 读取 step。
-2. 若 `step.AppendedMessages.Count > 0`，追加到 `_activeHistory`。
+2. 若 `step.AppendedEntries.Count > 0`，追加到 `_activeHistory`。
 3. 若 `!step.IsTriggerBoundary`，继续下一 step。
-4. threshold 达标后按现有 `HistoryWindowSplitPolicy` 找 split。
-5. `fragment = _activeHistory[..split]`。
-6. `RecentHistorySlice.SourceId = step.Cursor.SourceId`。
-7. maintainer 成功后 `_activeHistory.RemoveRange(0, split)`。
-8. 输出 record。
+4. 仅将 entry 投影成 `IHistoryMessage` 后交给现有 token estimation 与 `HistoryWindowSplitPolicy`；
+   trigger boundary 和 split policy 均不改变。
+5. `fragmentEntries = _activeHistory[..split]`，maintainer 输入
+   `fragment = fragmentEntries.Select(entry => entry.Message)`。
+6. attempted fragment 的 raw range取
+   `fragmentEntries[0].SourceStartInclusive` 到 `fragmentEntries[^1].SourceEndInclusive`。
+7. `RecentHistorySlice.SourceId = step.TriggerCursor.SourceId`，继续保留 trigger 诊断语义。
+8. maintainer 成功后 `_activeHistory.RemoveRange(0, split)`；失败时不移除 prefix，并停止本次 replay。
+9. 无论成功或失败，record 都写入第 6 步算出的 attempted fragment range。
+
+因此，在四条 history message
+`[obs1, action1, obs2, action2]` 上由 `action2` 触发 split、`splitIndex = 2` 时：
+
+- trigger `SourceId` 指向 `action2`；
+- selected fragment 是 `[obs1, action1]`；
+- record `SourceEndInclusive` 指向 `action1`，而不是 `action2`。
 
 ## 6. Record 兼容与新增字段
 
@@ -163,6 +187,11 @@ string? SourceEndInclusive
 - 新字段总是写出；legacy address 字段为 null。
 - SessionJournal record 的 `eventOrdinal` / `eventCommit` 为 null，address 字段用
   `Atelia.SessionJournal.Derived.EventAddressTextCodec` 格式化。
+- `sourceId` / `eventOrdinal` / `eventCommit` 表示 trigger step。
+- `sourceRawHead` 表示 replay snapshot，不会随 epoch 改写。
+- `sourceStartInclusive` / `sourceEndInclusive` 表示 selected/attempted fragment，而不是 trigger step。
+- 成功 record 的 `sourceEndInclusive` 可由 D 直接用作 `anchorRawEvent`；失败 record 只用于诊断，
+  不得产出 artifact。失败时 `remainingActiveMessageCount` 仍包含 attempted prefix。
 
 `CompletionCallLogContext.EventOrdinal` 仍只能表达 legacy ordinal。第一版 SessionJournal 模式可传 null；
 D/E 后续若需要 raw address 写入 call log，可扩展 `CompletionCallLogContext`。
@@ -182,7 +211,7 @@ replay-rolling-summary --session-journal-input <repo-dir> ...
 
 ## 8. 测试策略
 
-当前 `ChatSession.BacktestCli` 没有测试项目。C 推荐新增轻量测试项目：
+已新增轻量测试项目：
 
 ```text
 tests/ChatSession.BacktestCli.Tests/ChatSession.BacktestCli.Tests.csproj
@@ -200,7 +229,7 @@ tests/ChatSession.BacktestCli.Tests/ChatSession.BacktestCli.Tests.csproj
 [assembly: InternalsVisibleTo("Atelia.ChatSession.BacktestCli.Tests")]
 ```
 
-最小测试：
+当前回归测试覆盖：
 
 1. `LegacySource_PreservesExistingTriggerShape`
    - 构造 initial-state + model-turn。
@@ -209,10 +238,8 @@ tests/ChatSession.BacktestCli.Tests/ChatSession.BacktestCli.Tests.csproj
      address 字段为 null。
 
 2. `SessionJournalSource_UsesAddressedReplayAndSameRunner`
-   - 创建 SessionJournal repo，append observation + action。
-   - runner 使用 `SessionJournalRollingSummaryReplaySource.Open(path)`。
-   - 断言输出一条 record，`sourceKind = session-journal`，`sourceEndInclusive` 非 null，
-     `eventOrdinal/eventCommit` 为 null。
+   - 创建两回合 SessionJournal repo，使 `action2` 触发四消息 split。
+   - 断言 trigger `sourceId = action2`，fragment `sourceEndInclusive = action1`。
 
 3. `Runner_RemovesSlidingPrefixAfterSuccessfulMaintainer`
    - 使用多个 action boundary 或低阈值。
@@ -221,6 +248,12 @@ tests/ChatSession.BacktestCli.Tests/ChatSession.BacktestCli.Tests.csproj
 4. `SessionJournalSource_EmptyHistoryProducesNoRecords`
    - 只有 setup/session-created。
    - runner 不触发 maintainer。
+
+5. 连续两个 epoch 的 fragment range 分别来自各自首尾 entry，且 `sourceRawHead` 相同。
+
+6. maintainer 失败时 record 仍报告 attempted fragment range，active prefix 不移除。
+
+7. `RollingSummaryReplayMessage` 拒绝只有 start 或只有 end 的 partial raw range。
 
 验证命令：
 
@@ -235,7 +268,9 @@ dotnet build prototypes/ChatSession.BacktestCli/ChatSession.BacktestCli.csproj
 - `RollingSummaryReplayRunner` 核心不再持有 `ChatSessionLegacyEventSource`。
 - legacy replay command 继续可构造 runner 并保持原 JSONL 关键字段。
 - SessionJournal adapter 复用 `SessionJournalEngine.ReplayHistory()`，不复制 reducer。
-- record 能表达 legacy ordinal/commit 与 SessionJournal raw address。
+- trigger cursor 与每条 message 的 raw range 在类型结构上分离。
+- record 的 raw endpoints 来自 selected fragment 首尾 entry；成功 record 可直接作为 D 的 anchor 输入。
+- 失败 record 保留 attempted provenance，且不会移除 active prefix。
 - 不写 `DerivedRecapStore`；D 分片只需在 record/result 上接 artifact 写入。
 
 ## 10. 残余风险
@@ -243,4 +278,7 @@ dotnet build prototypes/ChatSession.BacktestCli/ChatSession.BacktestCli.csproj
 - SessionJournal adapter 第一版从 full `ReplayHistory()` 开始，不做 recap anchor tail replay；这正是 D/E 之前的
   bootstrap 行为。
 - `CompletionCallLogContext` 暂不记录 raw address；输出 record 已有 address 字段，后续可再扩展 call log。
+- legacy source 缺少 raw address，因此其成功 record 仍不能直接生成带 raw anchor 的 SessionJournal recap artifact。
+- 当前 runner 相信单一 source 不会混合“有 raw range”和“无 raw range”的 entry；内置的 legacy 与
+  SessionJournal adapter 均满足此约束。
 - Backtest CLI 仍处于实验工具定位，新增测试项目只覆盖 runner/source，不做真实 LLM 或端到端 CLI black-box。

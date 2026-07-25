@@ -14,9 +14,30 @@ internal interface IRollingSummaryReplaySource {
     IAsyncEnumerable<RollingSummaryReplayStep> ReadStepsAsync(CancellationToken ct);
 }
 
+internal sealed record RollingSummaryReplayMessage {
+    public RollingSummaryReplayMessage(
+        IHistoryMessage message,
+        EventAddress? sourceStartInclusive = null,
+        EventAddress? sourceEndInclusive = null
+    ) {
+        ArgumentNullException.ThrowIfNull(message);
+        if (sourceStartInclusive.HasValue != sourceEndInclusive.HasValue) {
+            throw new ArgumentException("Source start and end addresses must either both be present or both be absent.");
+        }
+
+        Message = message;
+        SourceStartInclusive = sourceStartInclusive;
+        SourceEndInclusive = sourceEndInclusive;
+    }
+
+    public IHistoryMessage Message { get; }
+    public EventAddress? SourceStartInclusive { get; }
+    public EventAddress? SourceEndInclusive { get; }
+}
+
 internal sealed record RollingSummaryReplayStep(
-    RollingSummaryReplaySourceCursor Cursor,
-    IReadOnlyList<IHistoryMessage> AppendedMessages,
+    RollingSummaryReplaySourceCursor TriggerCursor,
+    IReadOnlyList<RollingSummaryReplayMessage> AppendedEntries,
     bool IsTriggerBoundary,
     bool ResetActiveHistory = false
 );
@@ -26,8 +47,6 @@ internal sealed record RollingSummaryReplaySourceCursor(
     string SourceId,
     long? EventOrdinal = null,
     string? EventCommit = null,
-    EventAddress? SourceStartInclusive = null,
-    EventAddress? SourceEndInclusive = null,
     EventAddress? SourceRawHead = null
 );
 
@@ -57,7 +76,7 @@ internal sealed class LegacyRollingSummaryReplaySource : IRollingSummaryReplaySo
                 case ChatSessionLegacyEventKinds.InitialState:
                     yield return new RollingSummaryReplayStep(
                         cursor,
-                        ToHistoryMessages(replayEvent.Messages),
+                        ToReplayMessages(replayEvent.Messages),
                         IsTriggerBoundary: false,
                         ResetActiveHistory: true
                     );
@@ -65,7 +84,7 @@ internal sealed class LegacyRollingSummaryReplaySource : IRollingSummaryReplaySo
                 case ChatSessionLegacyEventKinds.ModelTurn:
                     yield return new RollingSummaryReplayStep(
                         cursor,
-                        ToHistoryMessages(replayEvent.AppendedMessages),
+                        ToReplayMessages(replayEvent.AppendedMessages),
                         IsTriggerBoundary: true
                     );
                     break;
@@ -89,10 +108,13 @@ internal sealed class LegacyRollingSummaryReplaySource : IRollingSummaryReplaySo
             EventCommit: replayEvent.Commit
         );
 
-    private static IReadOnlyList<IHistoryMessage> ToHistoryMessages(IReadOnlyList<ChatSessionLegacyMessageDto>? messages)
+    private static IReadOnlyList<RollingSummaryReplayMessage> ToReplayMessages(IReadOnlyList<ChatSessionLegacyMessageDto>? messages)
         => messages is null || messages.Count == 0
-            ? Array.AsReadOnly(Array.Empty<IHistoryMessage>())
-            : Array.AsReadOnly(messages.Select(ChatSessionLegacyEventSourceProjection.ToHistoryMessage).ToArray());
+            ? Array.AsReadOnly(Array.Empty<RollingSummaryReplayMessage>())
+            : Array.AsReadOnly(messages
+                .Select(ChatSessionLegacyEventSourceProjection.ToHistoryMessage)
+                .Select(static message => new RollingSummaryReplayMessage(message))
+                .ToArray());
 }
 
 internal sealed class SessionJournalRollingSummaryReplaySource : IRollingSummaryReplaySource {
@@ -119,13 +141,17 @@ internal sealed class SessionJournalRollingSummaryReplaySource : IRollingSummary
             var cursor = new RollingSummaryReplaySourceCursor(
                 SourceKind: RollingSummaryReplaySourceKinds.SessionJournal,
                 SourceId: EventAddressTextCodec.Format(addressed.SourceEndInclusive),
-                SourceStartInclusive: addressed.SourceStartInclusive,
-                SourceEndInclusive: addressed.SourceEndInclusive,
                 SourceRawHead: replay.SourceRawHead
             );
             yield return new RollingSummaryReplayStep(
                 cursor,
-                Array.AsReadOnly(new[] { addressed.Message }),
+                Array.AsReadOnly([
+                    new RollingSummaryReplayMessage(
+                        addressed.Message,
+                        addressed.SourceStartInclusive,
+                        addressed.SourceEndInclusive
+                    )
+                ]),
                 IsTriggerBoundary: addressed.Message.Kind is HistoryMessageKind.Action or HistoryMessageKind.ToolResults
             );
         }
@@ -142,7 +168,7 @@ internal sealed class RollingSummaryReplayRunner {
     private readonly string _callLogDir;
     private readonly int _thresholdTokens;
     private readonly int _maxEpochs;
-    private readonly List<IHistoryMessage> _activeHistory = [];
+    private readonly List<RollingSummaryReplayMessage> _activeHistory = [];
     private SJ.MemoryPack _memoryPack = new();
 
     public RollingSummaryReplayRunner(
@@ -171,15 +197,16 @@ internal sealed class RollingSummaryReplayRunner {
         await foreach (var step in _source.ReadStepsAsync(ct).ConfigureAwait(false)) {
             ct.ThrowIfCancellationRequested();
             if (step.ResetActiveHistory) { _activeHistory.Clear(); }
-            if (step.AppendedMessages.Count > 0) { _activeHistory.AddRange(step.AppendedMessages); }
+            if (step.AppendedEntries.Count > 0) { _activeHistory.AddRange(step.AppendedEntries); }
             if (!step.IsTriggerBoundary) { continue; }
             if (epochIndex >= _maxEpochs) { yield break; }
 
-            int estimatedTokens = BacktestTextUtil.EstimateTokens(_activeHistory);
+            var activeMessages = _activeHistory.Select(static entry => entry.Message).ToArray();
+            int estimatedTokens = BacktestTextUtil.EstimateTokens(activeMessages);
             if (estimatedTokens < _thresholdTokens) { continue; }
 
             int splitIndex = HistoryWindowSplitPolicy.FindHalfContextSplitPoint(
-                _activeHistory,
+                activeMessages,
                 static message => (ulong)BacktestTextUtil.EstimateTokens(message)
             );
             if (splitIndex < 0) { continue; }
@@ -187,11 +214,14 @@ internal sealed class RollingSummaryReplayRunner {
             int beforeMaxCallId = RollingSummaryCallLogUtil.GetMaxCallId(_callLogDir);
             string callLogPath = Path.Combine(Path.GetFullPath(_callLogDir), $"{beforeMaxCallId + 1:0000}.json");
             var oldBlock = _memoryPack.TryGetBlock(_profile.Target, out var found) ? found : new SJ.MemoryPackBlock(string.Empty);
-            var fragment = _activeHistory.Take(splitIndex).ToArray();
+            var fragmentEntries = _activeHistory.Take(splitIndex).ToArray();
+            var fragment = fragmentEntries.Select(static entry => entry.Message).ToArray();
+            EventAddress? fragmentSourceStartInclusive = fragmentEntries[0].SourceStartInclusive;
+            EventAddress? fragmentSourceEndInclusive = fragmentEntries[^1].SourceEndInclusive;
             var recentHistory = new SJ.RecentHistorySlice(
                 SJ.ContextHeaderSnapshot.FromRenderedMemoryPack(_memoryPack.Render()),
                 fragment,
-                SourceId: step.Cursor.SourceId,
+                SourceId: step.TriggerCursor.SourceId,
                 EstimatedTokens: (ulong)BacktestTextUtil.EstimateTokens(fragment)
             );
 
@@ -202,7 +232,7 @@ internal sealed class RollingSummaryReplayRunner {
                 new CompletionCallLogContext(
                     Command: "replay-rolling-summary",
                     EpochIndex: epochIndex,
-                    EventOrdinal: step.Cursor.EventOrdinal,
+                    EventOrdinal: step.TriggerCursor.EventOrdinal,
                     MaintainerId: _profile.MaintainerId,
                     TargetCarrier: SJ.MemoryPackCarrierTokens.ToStorageToken(_profile.Target.Carrier),
                     TargetBlockId: _profile.Target.BlockKey
@@ -243,7 +273,9 @@ internal sealed class RollingSummaryReplayRunner {
 
             yield return RollingSummaryReplayRecord.Create(
                 epochIndex,
-                step.Cursor,
+                step.TriggerCursor,
+                fragmentSourceStartInclusive,
+                fragmentSourceEndInclusive,
                 _thresholdTokens,
                 estimatedTokens,
                 splitIndex,
@@ -327,6 +359,8 @@ internal sealed record RollingSummaryReplayRecord(
     public static RollingSummaryReplayRecord Create(
         int epochIndex,
         RollingSummaryReplaySourceCursor cursor,
+        EventAddress? sourceStartInclusive,
+        EventAddress? sourceEndInclusive,
         int thresholdTokens,
         int estimatedTokens,
         int splitIndex,
@@ -348,8 +382,8 @@ internal sealed record RollingSummaryReplayRecord(
             EventOrdinal: cursor.EventOrdinal,
             EventCommit: cursor.EventCommit,
             SourceRawHead: FormatAddress(cursor.SourceRawHead),
-            SourceStartInclusive: FormatAddress(cursor.SourceStartInclusive),
-            SourceEndInclusive: FormatAddress(cursor.SourceEndInclusive),
+            SourceStartInclusive: FormatAddress(sourceStartInclusive),
+            SourceEndInclusive: FormatAddress(sourceEndInclusive),
             ReplayMode: "ignore-original-compaction.synthetic-sliding-prefix",
             ThresholdTokens: thresholdTokens,
             EstimatedTokens: estimatedTokens,

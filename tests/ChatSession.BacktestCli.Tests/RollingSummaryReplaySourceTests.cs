@@ -62,6 +62,7 @@ public sealed class RollingSummaryReplaySourceTests : IDisposable {
     [Fact]
     public async Task SessionJournalSource_UsesAddressedReplayAndSameRunner() {
         string repoPath = CreateSessionJournalWithTwoTurns();
+        SessionHistoryReplaySnapshot replay = ReadHistoryReplay(repoPath);
         var runner = CreateRunner(SessionJournalRollingSummaryReplaySource.Open(repoPath));
 
         var records = await RunAllAsync(runner);
@@ -73,7 +74,11 @@ public sealed class RollingSummaryReplaySourceTests : IDisposable {
         Assert.NotNull(record.SourceRawHead);
         Assert.NotNull(record.SourceStartInclusive);
         Assert.NotNull(record.SourceEndInclusive);
-        Assert.Equal(record.SourceEndInclusive, record.SourceId);
+        Assert.Equal(replay.SourceRawHead, record.SourceRawHead);
+        Assert.Equal(replay.Messages[0].SourceStartInclusive, record.SourceStartInclusive);
+        Assert.Equal(replay.Messages[1].SourceEndInclusive, record.SourceEndInclusive);
+        Assert.Equal(replay.Messages[3].SourceEndInclusive, record.SourceId);
+        Assert.NotEqual(record.SourceEndInclusive, record.SourceId);
         Assert.True(EventAddressTextCodec.TryParse(record.SourceEndInclusive, out _));
         Assert.Equal(2, record.SplitIndex);
         Assert.Equal(2, record.RemainingActiveMessageCount);
@@ -103,10 +108,73 @@ public sealed class RollingSummaryReplaySourceTests : IDisposable {
         Assert.NotNull(record.NewBlock);
     }
 
-    private RollingSummaryReplayRunner CreateRunner(IRollingSummaryReplaySource source)
+    [Fact]
+    public async Task SessionJournalSource_ConsecutiveEpochsUseFragmentRangesAndSameRawHead() {
+        string repoPath = CreateSessionJournalWithTurns(3);
+        SessionHistoryReplaySnapshot replay = ReadHistoryReplay(repoPath);
+        var runner = CreateRunner(
+            SessionJournalRollingSummaryReplaySource.Open(repoPath),
+            maxEpochs: 2
+        );
+
+        var records = await RunAllAsync(runner);
+
+        Assert.Collection(
+            records,
+            first => {
+                Assert.Equal(replay.Messages[0].SourceStartInclusive, first.SourceStartInclusive);
+                Assert.Equal(replay.Messages[1].SourceEndInclusive, first.SourceEndInclusive);
+                Assert.Equal(replay.Messages[3].SourceEndInclusive, first.SourceId);
+                Assert.Equal(replay.SourceRawHead, first.SourceRawHead);
+            },
+            second => {
+                Assert.Equal(replay.Messages[2].SourceStartInclusive, second.SourceStartInclusive);
+                Assert.Equal(replay.Messages[3].SourceEndInclusive, second.SourceEndInclusive);
+                Assert.Equal(replay.Messages[5].SourceEndInclusive, second.SourceId);
+                Assert.Equal(replay.SourceRawHead, second.SourceRawHead);
+            }
+        );
+        Assert.Equal(records[0].SourceRawHead, records[1].SourceRawHead);
+    }
+
+    [Fact]
+    public async Task Runner_FailureReportsAttemptedFragmentRangeWithoutRemovingPrefix() {
+        string repoPath = CreateSessionJournalWithTwoTurns();
+        SessionHistoryReplaySnapshot replay = ReadHistoryReplay(repoPath);
+        var runner = CreateRunner(
+            SessionJournalRollingSummaryReplaySource.Open(repoPath),
+            new ThrowingCompletionClient()
+        );
+
+        var records = await RunAllAsync(runner);
+
+        var record = Assert.Single(records);
+        Assert.True(runner.HadFailure);
+        Assert.Equal("failed", record.Status);
+        Assert.Equal(typeof(InvalidOperationException).FullName, record.ExceptionType);
+        Assert.Equal(replay.Messages[0].SourceStartInclusive, record.SourceStartInclusive);
+        Assert.Equal(replay.Messages[1].SourceEndInclusive, record.SourceEndInclusive);
+        Assert.Equal(2, record.SplitIndex);
+        Assert.Equal(4, record.RemainingActiveMessageCount);
+    }
+
+    [Fact]
+    public void ReplayMessage_RejectsPartialRawRange() {
+        Assert.Throws<ArgumentException>(() => new RollingSummaryReplayMessage(
+            new ObservationMessage("hello"),
+            sourceStartInclusive: new Atelia.EventJournal.EventAddress(Ticket: default, SegmentNumber: 1, Hint: default),
+            sourceEndInclusive: null
+        ));
+    }
+
+    private RollingSummaryReplayRunner CreateRunner(
+        IRollingSummaryReplaySource source,
+        ICompletionClient? client = null,
+        int maxEpochs = 1
+    )
         => new(
             source,
-            new ScriptedCompletionClient("summary"),
+            client ?? new ScriptedCompletionClient("summary"),
             new CompletionConnectionConfig(
                 Id: "test",
                 Kind: "scripted",
@@ -125,7 +193,7 @@ public sealed class RollingSummaryReplaySourceTests : IDisposable {
             ),
             Path.Combine(NewTempPath(), "calls"),
             thresholdTokens: 1,
-            maxEpochs: 1
+            maxEpochs
         );
 
     private static async Task<IReadOnlyList<RollingSummaryReplayRecord>> RunAllAsync(RollingSummaryReplayRunner runner) {
@@ -168,19 +236,33 @@ public sealed class RollingSummaryReplaySourceTests : IDisposable {
         };
 
     private string CreateSessionJournalWithTwoTurns() {
+        return CreateSessionJournalWithTurns(2);
+    }
+
+    private string CreateSessionJournalWithTurns(int turnCount) {
         string repoPath = NewTempPath();
         using var engine = SJ.SessionJournalEngine.Create(repoPath, new SJ.SessionCreateOptions("model-a", "system", "surface"));
-        engine.AppendObservation("hello 1");
-        engine.AppendAgentAction(
-            new ActionMessage([new ActionBlock.Text("answer 1")]),
-            new CompletionDescriptor("scripted", "openai-chat-v1", "model-a")
-        );
-        engine.AppendObservation("hello 2");
-        engine.AppendAgentAction(
-            new ActionMessage([new ActionBlock.Text("answer 2")]),
-            new CompletionDescriptor("scripted", "openai-chat-v1", "model-a")
-        );
+        for (int turn = 1; turn <= turnCount; turn++) {
+            engine.AppendObservation($"hello {turn}");
+            engine.AppendAgentAction(
+                new ActionMessage([new ActionBlock.Text($"answer {turn}")]),
+                new CompletionDescriptor("scripted", "openai-chat-v1", "model-a")
+            );
+        }
+
         return repoPath;
+    }
+
+    private static SessionHistoryReplaySnapshot ReadHistoryReplay(string repoPath) {
+        using var engine = SJ.SessionJournalEngine.Open(repoPath);
+        SJ.SessionHistoryReplay replay = engine.ReplayHistory();
+        return new SessionHistoryReplaySnapshot(
+            EventAddressTextCodec.Format(replay.SourceRawHead!.Value),
+            replay.Messages.Select(static message => new AddressedMessageSnapshot(
+                EventAddressTextCodec.Format(message.SourceStartInclusive),
+                EventAddressTextCodec.Format(message.SourceEndInclusive)
+            )).ToArray()
+        );
     }
 
     private static ChatSessionLegacyMessageDto Observation(string text)
@@ -230,4 +312,31 @@ public sealed class RollingSummaryReplaySourceTests : IDisposable {
             ));
         }
     }
+
+    private sealed class ThrowingCompletionClient : ICompletionClient {
+        public string Name => "throwing";
+
+        public string ApiSpecId => "openai-chat-v1";
+
+        public Task<CompletionResult> StreamCompletionAsync(
+            CompletionRequest request,
+            CompletionStreamObserver? observer,
+            CancellationToken cancellationToken = default
+        ) {
+            _ = request;
+            _ = observer;
+            cancellationToken.ThrowIfCancellationRequested();
+            throw new InvalidOperationException("scripted failure");
+        }
+    }
+
+    private sealed record SessionHistoryReplaySnapshot(
+        string SourceRawHead,
+        IReadOnlyList<AddressedMessageSnapshot> Messages
+    );
+
+    private sealed record AddressedMessageSnapshot(
+        string SourceStartInclusive,
+        string SourceEndInclusive
+    );
 }

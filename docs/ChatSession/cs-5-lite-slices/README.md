@@ -1,6 +1,6 @@
 # CS-5-lite 分片实施入口
 
-> 状态：Task Split / Pre-Implementation
+> 状态：Incremental Implementation / A–C Complete, D Ready
 > 日期：2026-07-25
 > 父任务：[CS-5-lite: SessionJournal Derived Recap Store + RollingSummary Replay](../cs-5-lite-sessionjournal-derived-recap-store.md)
 
@@ -21,14 +21,14 @@ SessionJournal raw repo
 
 ## 分片列表
 
-| 分片 | 名称 | 主要产物 | 依赖 |
-| --- | --- | --- | --- |
-| A | [SessionJournal Addressed Replay Cursor](cs-5-lite-A-addressed-replay-cursor.md) | 带 raw address 的 history message replay API | 现有 `SessionJournalEngine.Project()` / `SessionReducer` |
-| B0 | [SessionJournal Memory Substrate 上移](cs-5-lite-B0-sessionjournal-memory-substrate.md) | SessionJournal-owned memory/maintainer substrate | A |
-| B | [Derived Recap Store 最小库](cs-5-lite-B-derived-recap-store.md) | 可写、可读、可重建 latest index 的 recap artifact store | A、B0 |
-| C | RollingSummary Runner 输入源抽象 | legacy 与 SessionJournal 可共用的 replay step runner | A |
-| D | LLM 结果写入 Derived Recap Artifact | maintainer 成功后产生带 provenance 的 artifact | A、B、C |
-| E | CLI 与端到端验收 | 新命令、文档、回归测试/手工验收命令 | A、B、C、D |
+| 分片 | 名称 | 主要产物 | 依赖 | 状态 |
+| --- | --- | --- | --- | --- |
+| A | [SessionJournal Addressed Replay Cursor](cs-5-lite-A-addressed-replay-cursor.md) | 带 raw address 的 history message replay API | 现有 `SessionJournalEngine.Project()` / `SessionReducer` | 已实施 |
+| B0 | [SessionJournal Memory Substrate 上移](cs-5-lite-B0-sessionjournal-memory-substrate.md) | SessionJournal-owned memory/maintainer substrate | A | 已实施 |
+| B | [Derived Recap Store 最小库](cs-5-lite-B-derived-recap-store.md) | 可写、可读、可重建 latest index 的 recap artifact store | A、B0 | 已实施 |
+| C | [RollingSummary Runner 输入源抽象](cs-5-lite-C-runner-input-abstraction-design.md) | legacy 与 SessionJournal 可共用的 replay step runner | A、B（复用 address codec，不读写 store） | 已实施；D handoff ready |
+| D | LLM 结果写入 Derived Recap Artifact | maintainer 成功后产生带 provenance 的 artifact | A、B、C | 待实施 |
+| E | CLI 与端到端验收 | 新命令、文档、回归测试/手工验收命令 | A、B、C、D | 待实施 |
 
 ## 已完成的细化设计
 
@@ -39,7 +39,7 @@ SessionJournal raw repo
 
 ## 总体实施顺序
 
-推荐先做 A 和 B 的方案定稿，再进入代码实施：
+当前 A、B0、B、C 已实施；后续从 D 继续：
 
 1. **A** 先解决 raw event 到 `IHistoryMessage` 的可追踪投影，避免 CLI 复制 reducer 语义。
 2. **B0** 把 memory substrate 的长期归属收到 `SessionJournal` 主干，避免 B/C/D 围绕旧
@@ -48,6 +48,15 @@ SessionJournal raw repo
 4. **C** 把现有 rolling summary runner 从 legacy event source 解耦。
 5. **D** 把 C 产生的成功维护结果写入 B。
 6. **E** 收 CLI、README、测试与一次真实 imported repo 验收。
+
+### C → D handoff
+
+- record 的 `sourceId` / `eventOrdinal` / `eventCommit` 仍标识触发 threshold 检查的 source step。
+- record 的 `sourceRawHead` 是本次 replay 开始时的 raw head snapshot，同次 replay 的多个 epoch 保持一致。
+- record 的 `sourceStartInclusive` / `sourceEndInclusive` 来自本次 selected fragment 的首尾 addressed
+  message；不再来自 trigger step。
+- D 只应为成功 record 写 artifact，并令 `anchorRawEvent = sourceEndInclusive`。失败 record 虽保留
+  attempted fragment range 供诊断，但 active prefix 未移除，不得据此推进 artifact lineage。
 
 ## 跨分片约束
 
