@@ -26,11 +26,23 @@ internal static class SessionPreparedRequestReconstructor {
         EventJournal.EventJournal journal,
         EventAddress sourcePreparedAddress,
         CancellationToken cancellationToken = default
+    ) => Reconstruct(
+        new SessionJournalEventReader(
+            journal ?? throw new ArgumentNullException(nameof(journal))
+        ),
+        sourcePreparedAddress,
+        cancellationToken
+    );
+
+    public static SessionPreparedRequestReconstruction Reconstruct(
+        SessionJournalEventReader reader,
+        EventAddress sourcePreparedAddress,
+        CancellationToken cancellationToken = default
     ) {
-        ArgumentNullException.ThrowIfNull(journal);
+        ArgumentNullException.ThrowIfNull(reader);
         cancellationToken.ThrowIfCancellationRequested();
 
-        using EventFrame frame = journal.ReadEvent(sourcePreparedAddress).Unwrap();
+        using EventFrame frame = reader.ReadEvent(sourcePreparedAddress).Unwrap();
         ValidateSessionHeader(sourcePreparedAddress, frame.Header);
         var kind = (SessionEventKind)frame.Header.OpaqueEventKind;
         if (kind != SessionEventKind.CompletionRequestPrepared) {
@@ -48,7 +60,7 @@ internal static class SessionPreparedRequestReconstructor {
                 $"CompletionRequestPrepared at {sourcePreparedAddress} decoded to an unexpected body."
             );
 
-        return Reconstruct(journal, manifest, rawEndInclusive, cancellationToken) with {
+        return Reconstruct(reader, manifest, rawEndInclusive, cancellationToken) with {
             SourcePreparedAddress = sourcePreparedAddress
         };
     }
@@ -58,20 +70,34 @@ internal static class SessionPreparedRequestReconstructor {
         CompletionRequestPreparedBody manifest,
         EventAddress authoritativeRawEndInclusive,
         CancellationToken cancellationToken = default
+    ) => Reconstruct(
+        new SessionJournalEventReader(
+            journal ?? throw new ArgumentNullException(nameof(journal))
+        ),
+        manifest,
+        authoritativeRawEndInclusive,
+        cancellationToken
+    );
+
+    public static SessionPreparedRequestReconstruction Reconstruct(
+        SessionJournalEventReader reader,
+        CompletionRequestPreparedBody manifest,
+        EventAddress authoritativeRawEndInclusive,
+        CancellationToken cancellationToken = default
     ) {
-        ArgumentNullException.ThrowIfNull(journal);
+        ArgumentNullException.ThrowIfNull(reader);
         ArgumentNullException.ThrowIfNull(manifest);
         cancellationToken.ThrowIfCancellationRequested();
         SessionRequestManifestCodec.Validate(manifest);
 
         SessionRuntimeConfiguration runtimeConfig = ReadAndValidateSetupReference<SessionRuntimeConfiguration>(
-            journal,
+            reader,
             manifest.Setups.RuntimeConfig,
             SessionEventKind.RuntimeConfigSetup,
             cancellationToken
         );
         SystemPromptSetupBody systemPrompt = ReadAndValidateSetupReference<SystemPromptSetupBody>(
-            journal,
+            reader,
             manifest.Setups.SystemPrompt,
             SessionEventKind.SystemPromptSetup,
             cancellationToken
@@ -79,7 +105,7 @@ internal static class SessionPreparedRequestReconstructor {
 
         ValidateRuntimeAndTarget(manifest, runtimeConfig);
         IReadOnlyList<DecodedSessionEvent> rawEvents = ReadAndValidateRawRange(
-            journal,
+            reader,
             manifest.Plan.RawStartExclusive,
             authoritativeRawEndInclusive,
             manifest.Plan.RawRangeSha256,
@@ -288,7 +314,7 @@ internal static class SessionPreparedRequestReconstructor {
     }
 
     private static IReadOnlyList<DecodedSessionEvent> ReadAndValidateRawRange(
-        EventJournal.EventJournal journal,
+        SessionJournalEventReader reader,
         EventAddress? rawStartExclusive,
         EventAddress rawEndInclusive,
         string expectedRawRangeSha256,
@@ -303,7 +329,7 @@ internal static class SessionPreparedRequestReconstructor {
                 ?? throw new InvalidDataException(
                     $"Raw start '{rawStartExclusive}' is not an ancestor of raw end '{rawEndInclusive}'."
                 );
-            using EventFrame frame = journal.ReadEvent(address).Unwrap();
+            using EventFrame frame = reader.ReadEvent(address).Unwrap();
             ValidateSessionHeader(address, frame.Header);
             var kind = (SessionEventKind)frame.Header.OpaqueEventKind;
             object body = SessionEventCodec.Decode(kind, frame.Payload, out int bodySchemaVersion);
@@ -349,13 +375,13 @@ internal static class SessionPreparedRequestReconstructor {
     }
 
     private static T ReadAndValidateSetupReference<T>(
-        EventJournal.EventJournal journal,
+        SessionJournalEventReader reader,
         SessionSetupReference reference,
         SessionEventKind expectedKind,
         CancellationToken cancellationToken
     ) where T : class {
         cancellationToken.ThrowIfCancellationRequested();
-        using EventFrame frame = journal.ReadEvent(reference.Address).Unwrap();
+        using EventFrame frame = reader.ReadEvent(reference.Address).Unwrap();
         ValidateSessionHeader(reference.Address, frame.Header);
         var actualKind = (SessionEventKind)frame.Header.OpaqueEventKind;
         if (actualKind != expectedKind) {

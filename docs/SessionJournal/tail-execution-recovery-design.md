@@ -1,6 +1,6 @@
 # SessionJournal Tail-only Execution Recovery Design
 
-> **状态**：Design Baseline / 待实施
+> **状态**：Design Baseline / CS-3D0 已实施，CS-3D1 待实施
 > **日期**：2026-07-26
 > **建议路线编号**：CS-3D
 > **前置实现**：CS-3A governing setup checkpoint、CS-3B dependency-closed tail context、
@@ -322,6 +322,8 @@ runtime identity 和 capability policy 通过后才能产生外部调用。
 
 ### CS-3D0：合同、观测与 reference oracle
 
+> **状态**：已实施
+
 目标：先锁定“在线路径不得 full replay”的可执行边界，不改 event schema。
 
 - 为 raw header/payload reads 与 `Project()` 调用提供测试 diagnostics。
@@ -334,7 +336,32 @@ runtime identity 和 capability policy 通过后才能产生外部调用。
 - phase matrix 覆盖 Observation、P/R、Failure、Action、Started、Result、Idle、setup run。
 - 测试明确区分 audit full replay 与 online recovery reads。
 
+实际落点：
+
+- 新增 `SessionJournalEventReader`，统一承接 Engine、Prepared reconstructor 与 tail context projector
+  的逻辑读取；累计 header preview、payload read、chronological-chain 调用及返回 event 数。
+- `SessionJournalEngine.CaptureReadDiagnostics()` 将上述累计值与
+  `FullProjectionInvocationCount` 合并成可做 snapshot delta 的
+  `SessionJournalReadDiagnostics`。它计量 SessionJournal 发起的逻辑 API reads，不冒充底层物理 IO、
+  page cache 或解压字节统计。
+- 新增 full reducer reference-oracle matrix，冻结 Empty、Idle、AwaitingAgentAction、
+  AwaitingCompletion、AwaitingToolExecution、TurnFailed 各 phase 的必要字段；后续 D2 differential
+  tests 应复用同一语义合同。
+- 冷前缀 baseline 证明：`T` 个已闭合 imported turns 的 Idle `ResumeAsync` 当前读取
+  `3 + 2T` 个 payload、返回同样数量的 chronological events，并调用一次 full `Project()`；Prepared
+  `RefuseUncertain` 在不同前缀长度下始终只读一个 head header 与一个 Prepared payload，不调用
+  chronological chain / `Project()`。
+
+相关文件：
+
+- `prototypes/SessionJournal/SessionJournalEventReader.cs`
+- `prototypes/SessionJournal/SessionJournalContracts.cs`
+- `prototypes/SessionJournal/SessionJournalEngine.cs`
+- `tests/SessionJournal.Tests/SessionExecutionRecoveryContractTests.cs`
+
 ### CS-3D1：Durable execution checkpoint 与 reserved tool sequence
+
+> **状态**：下一实施切片
 
 目标：移除 execution state 中唯一必须从 root 累计的字段。
 

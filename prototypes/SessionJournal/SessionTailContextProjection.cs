@@ -18,7 +18,7 @@ internal sealed record SessionTailContextProjectionResult(
 
 internal static class SessionTailContextProjection {
     public static async ValueTask<SessionTailContextProjectionResult> MaterializeAsync(
-        EventJournal.EventJournal journal,
+        SessionJournalEventReader reader,
         string sessionJournalPath,
         EventAddress expectedParent,
         SessionGoverningSetup currentGoverningSetup,
@@ -26,7 +26,7 @@ internal static class SessionTailContextProjection {
         Func<EventAddress, CancellationToken, SessionGoverningSetup> resolveGoverningSetup,
         CancellationToken cancellationToken
     ) {
-        ArgumentNullException.ThrowIfNull(journal);
+        ArgumentNullException.ThrowIfNull(reader);
         ArgumentNullException.ThrowIfNull(currentGoverningSetup);
         ArgumentNullException.ThrowIfNull(options);
         ArgumentNullException.ThrowIfNull(resolveGoverningSetup);
@@ -49,21 +49,21 @@ internal static class SessionTailContextProjection {
         }
 
         IReadOnlyList<EventAddress> suffixAddresses = CollectAndValidateSuffix(
-            journal,
+            reader,
             expectedParent,
             artifact.AnchorRawEvent,
             artifact.SourceRawHead,
             cancellationToken,
             out int headerVisitCount
         );
-        ValidateReplaySafeBoundary(journal, artifact.AnchorRawEvent);
+        ValidateReplaySafeBoundary(reader, artifact.AnchorRawEvent);
 
         SessionGoverningSetup anchorSetup = resolveGoverningSetup(artifact.AnchorRawEvent, cancellationToken);
         var suffixEntries = new List<SessionRawRangeHashEntry>(suffixAddresses.Count);
         var suffixEvents = new List<DecodedSessionEvent>(suffixAddresses.Count);
         foreach (EventAddress address in suffixAddresses) {
             cancellationToken.ThrowIfCancellationRequested();
-            using EventFrame frame = journal.ReadEvent(address).Unwrap();
+            using EventFrame frame = reader.ReadEvent(address).Unwrap();
             ValidateSessionHeader(address, frame.Header);
             var kind = (SessionEventKind)frame.Header.OpaqueEventKind;
             object body = SessionEventCodec.Decode(kind, frame.Payload, out int bodySchemaVersion);
@@ -127,7 +127,7 @@ internal static class SessionTailContextProjection {
     }
 
     private static IReadOnlyList<EventAddress> CollectAndValidateSuffix(
-        EventJournal.EventJournal journal,
+        SessionJournalEventReader reader,
         EventAddress expectedParent,
         EventAddress anchor,
         EventAddress sourceRawHead,
@@ -140,7 +140,7 @@ internal static class SessionTailContextProjection {
         headerVisitCount = 0;
         while (cursor is { } address) {
             cancellationToken.ThrowIfCancellationRequested();
-            EventFrameHeader header = journal.ReadEventHeaderPreview(address).Unwrap();
+            EventFrameHeader header = reader.ReadEventHeaderPreview(address).Unwrap();
             headerVisitCount++;
             ValidateSessionHeader(address, header);
             if (address == sourceRawHead) { sawSourceHead = true; }
@@ -160,8 +160,8 @@ internal static class SessionTailContextProjection {
         throw new InvalidDataException("Recap artifact anchor is not an ancestor of the current completion boundary.");
     }
 
-    private static void ValidateReplaySafeBoundary(EventJournal.EventJournal journal, EventAddress anchor) {
-        using EventFrame frame = journal.ReadEvent(anchor).Unwrap();
+    private static void ValidateReplaySafeBoundary(SessionJournalEventReader reader, EventAddress anchor) {
+        using EventFrame frame = reader.ReadEvent(anchor).Unwrap();
         ValidateSessionHeader(anchor, frame.Header);
         var kind = (SessionEventKind)frame.Header.OpaqueEventKind;
         object body = SessionEventCodec.Decode(kind, frame.Payload, out _);

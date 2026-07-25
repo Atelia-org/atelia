@@ -1,6 +1,6 @@
 # SessionJournal Configuration Access Notes
 
-> 状态：CS-3A + CS-3B + CS-3C Implemented
+> 状态：CS-3A + CS-3B + CS-3C + CS-3D0 Implemented
 > 日期：2026-07-26
 > 相关文档：[SessionJournal 主干设计基线](session-journal-trunk-design.md)、
 > [Tail-only Execution Recovery Design](tail-execution-recovery-design.md)、

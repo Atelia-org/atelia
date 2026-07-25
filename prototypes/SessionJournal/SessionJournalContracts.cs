@@ -244,3 +244,28 @@ internal readonly record struct SessionTailProjectionDiagnostics(
     int SuffixPayloadReadCount,
     int SuffixEventCount
 );
+
+internal readonly record struct SessionJournalReadDiagnostics(
+    long HeaderPreviewReadCount,
+    long PayloadReadCount,
+    long ChronologicalChainReadCount,
+    long ChronologicalEventCount,
+    long FullProjectionInvocationCount
+) {
+    public static SessionJournalReadDiagnostics operator -(
+        SessionJournalReadDiagnostics end,
+        SessionJournalReadDiagnostics start
+    ) => new(
+        HeaderPreviewReadCount: checked(end.HeaderPreviewReadCount - start.HeaderPreviewReadCount),
+        PayloadReadCount: checked(end.PayloadReadCount - start.PayloadReadCount),
+        ChronologicalChainReadCount: checked(
+            end.ChronologicalChainReadCount - start.ChronologicalChainReadCount
+        ),
+        ChronologicalEventCount: checked(
+            end.ChronologicalEventCount - start.ChronologicalEventCount
+        ),
+        FullProjectionInvocationCount: checked(
+            end.FullProjectionInvocationCount - start.FullProjectionInvocationCount
+        )
+    );
+}

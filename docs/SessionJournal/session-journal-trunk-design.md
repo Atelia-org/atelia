@@ -1,6 +1,6 @@
 # SessionJournal 主干设计基线
 
-> **状态**：Trunk Design Baseline + CS-3A/B/C Addendum + CS-3D Target
+> **状态**：Trunk Design Baseline + CS-3A/B/C + CS-3D0 Diagnostics
 > **日期**：2026-07-26
 > **底层依赖**：[EventJournal 使用指南](../../src/EventJournal/README.md)、[EventJournal 功能需求与粗粒度设计基线](../EventJournal/event-journal-requirements-and-design.md)
 > **上层路线图**：[ChatSession 事件源与长期上下文架构路线图](../ChatSession/event-sourced-session-architecture-roadmap.md)

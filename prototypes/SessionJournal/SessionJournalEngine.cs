@@ -17,6 +17,7 @@ public sealed class SessionJournalEngine : IDisposable {
     };
 
     private readonly EventJournal.EventJournal _journal;
+    private readonly SessionJournalEventReader _reader;
     private readonly RefId _mainRef;
     private readonly SessionJournalTestHooks _testHooks;
     private SessionRuntime? _runtime;
@@ -33,6 +34,7 @@ public sealed class SessionJournalEngine : IDisposable {
         SessionJournalTestHooks? testHooks
     ) {
         _journal = journal;
+        _reader = new SessionJournalEventReader(journal);
         _mainRef = mainRef;
         _runtime = runtime;
         _testHooks = testHooks ?? new SessionJournalTestHooks();
@@ -49,6 +51,13 @@ public sealed class SessionJournalEngine : IDisposable {
         => _lastTailProjectionDiagnostics;
 
     internal int FullProjectionInvocationCount => _fullProjectionInvocationCount;
+
+    internal SessionJournalReadDiagnostics CaptureReadDiagnostics() {
+        SessionJournalReadDiagnostics reads = _reader.CaptureDiagnostics();
+        return reads with {
+            FullProjectionInvocationCount = _fullProjectionInvocationCount
+        };
+    }
 
     public static SessionJournalEngine Create(string path, SessionCreateOptions options)
         => CreateCore(path, options, runtime: null, testHooks: null);
@@ -274,7 +283,7 @@ public sealed class SessionJournalEngine : IDisposable {
         while (cursor is { } address && (runtimeConfigSetupAddress is null || systemPromptSetupAddress is null)) {
             cancellationToken.ThrowIfCancellationRequested();
 
-            EventFrameHeader header = _journal.ReadEventHeaderPreview(address).Unwrap();
+            EventFrameHeader header = _reader.ReadEventHeaderPreview(address).Unwrap();
             headerVisitCount++;
             ValidateSessionHeaderPreview(address, header);
 
@@ -287,7 +296,7 @@ public sealed class SessionJournalEngine : IDisposable {
             }
             else if (kind == SessionEventKind.CompletionRequestPrepared
                 && (runtimeConfigSetupAddress is null || systemPromptSetupAddress is null)) {
-                using EventFrame manifestFrame = _journal.ReadEvent(address).Unwrap();
+                using EventFrame manifestFrame = _reader.ReadEvent(address).Unwrap();
                 payloadReadCount++;
                 manifestPayloadReadCount++;
                 object decoded = SessionEventCodec.Decode(kind, manifestFrame.Payload, out _);
@@ -350,7 +359,7 @@ public sealed class SessionJournalEngine : IDisposable {
 
     public byte[] ReadPayloadBytes(EventAddress address) {
         ThrowIfDisposed();
-        using EventFrame frame = _journal.ReadEvent(address).Unwrap();
+        using EventFrame frame = _reader.ReadEvent(address).Unwrap();
         return frame.Payload.ToArray();
     }
 
@@ -415,11 +424,11 @@ public sealed class SessionJournalEngine : IDisposable {
         EventAddress head,
         CancellationToken cancellationToken
     ) {
-        IReadOnlyList<EventAddress> chain = _journal.ReadChronologicalChain(head, checkedRead: true, cancellationToken: cancellationToken).Unwrap();
+        IReadOnlyList<EventAddress> chain = _reader.ReadChronologicalChain(head, checkedRead: true, cancellationToken: cancellationToken).Unwrap();
         var events = new List<DecodedSessionEvent>(chain.Count);
         foreach (EventAddress address in chain) {
             cancellationToken.ThrowIfCancellationRequested();
-            using EventFrame frame = _journal.ReadEvent(address).Unwrap();
+            using EventFrame frame = _reader.ReadEvent(address).Unwrap();
             ValidateSessionHeaderPreview(address, frame.Header);
 
             var kind = (SessionEventKind)frame.Header.OpaqueEventKind;
@@ -543,7 +552,7 @@ public sealed class SessionJournalEngine : IDisposable {
             cancellationToken
         );
         SessionTailContextProjectionResult tail = await SessionTailContextProjection.MaterializeAsync(
-            _journal,
+            _reader,
             Path,
             observationAddress,
             governingSetup,
@@ -763,7 +772,7 @@ public sealed class SessionJournalEngine : IDisposable {
         ValidateRecoveryRuntimeCompatibility(runtime, chain.SourceManifest);
         SessionPreparedRequestReconstruction reconstruction =
             SessionPreparedRequestReconstructor.Reconstruct(
-                _journal,
+                _reader,
                 chain.SourcePreparedAddress,
                 cancellationToken
             );
@@ -815,7 +824,7 @@ public sealed class SessionJournalEngine : IDisposable {
         EventAddress? sourcePreparedParent;
         while (true) {
             cancellationToken.ThrowIfCancellationRequested();
-            using EventFrame frame = _journal.ReadEvent(cursor).Unwrap();
+            using EventFrame frame = _reader.ReadEvent(cursor).Unwrap();
             ValidateSessionHeaderPreview(cursor, frame.Header);
             var kind = (SessionEventKind)frame.Header.OpaqueEventKind;
             object body = SessionEventCodec.Decode(kind, frame.Payload, out _);
@@ -1007,7 +1016,7 @@ public sealed class SessionJournalEngine : IDisposable {
             );
         }
 
-        using EventFrame frame = _journal.ReadEvent(observationAddress).Unwrap();
+        using EventFrame frame = _reader.ReadEvent(observationAddress).Unwrap();
         ValidateSessionHeaderPreview(observationAddress, frame.Header);
         var kind = (SessionEventKind)frame.Header.OpaqueEventKind;
         if (kind != SessionEventKind.ObservationAccepted) {
@@ -1035,7 +1044,7 @@ public sealed class SessionJournalEngine : IDisposable {
         EventAddress? cursor = boundaryHead;
         while (cursor is { } address) {
             cancellationToken.ThrowIfCancellationRequested();
-            EventFrameHeader header = _journal.ReadEventHeaderPreview(address).Unwrap();
+            EventFrameHeader header = _reader.ReadEventHeaderPreview(address).Unwrap();
             ValidateSessionHeaderPreview(address, header);
             var kind = (SessionEventKind)header.OpaqueEventKind;
             if (kind is SessionEventKind.RuntimeConfigSetup or SessionEventKind.SystemPromptSetup) {
@@ -1043,7 +1052,7 @@ public sealed class SessionJournalEngine : IDisposable {
                 continue;
             }
 
-            using EventFrame frame = _journal.ReadEvent(address).Unwrap();
+            using EventFrame frame = _reader.ReadEvent(address).Unwrap();
             ValidateSessionHeaderPreview(address, frame.Header);
             object body = SessionEventCodec.Decode(kind, frame.Payload, out _);
             switch (kind) {
@@ -1165,7 +1174,7 @@ public sealed class SessionJournalEngine : IDisposable {
                 $"Tail source CompletionRequestPrepared at {chain.SourcePreparedAddress} requires a completion boundary parent."
             );
         EventFrameHeader sourceBoundaryHeader =
-            _journal.ReadEventHeaderPreview(sourceBoundaryAddress).Unwrap();
+            _reader.ReadEventHeaderPreview(sourceBoundaryAddress).Unwrap();
         ValidateSessionHeaderPreview(sourceBoundaryAddress, sourceBoundaryHeader);
         var sourceBoundaryKind =
             (SessionEventKind)sourceBoundaryHeader.OpaqueEventKind;
@@ -1245,7 +1254,7 @@ public sealed class SessionJournalEngine : IDisposable {
         EventAddress address,
         SessionEventKind expectedKind
     ) {
-        using EventFrame frame = _journal.ReadEvent(address).Unwrap();
+        using EventFrame frame = _reader.ReadEvent(address).Unwrap();
         ValidateSessionHeaderPreview(address, frame.Header);
         var actualKind = (SessionEventKind)frame.Header.OpaqueEventKind;
         if (actualKind != expectedKind) {
@@ -1258,7 +1267,7 @@ public sealed class SessionJournalEngine : IDisposable {
     }
 
     private SessionEventKind ReadEventKind(EventAddress address) {
-        EventFrameHeader header = _journal.ReadEventHeaderPreview(address).Unwrap();
+        EventFrameHeader header = _reader.ReadEventHeaderPreview(address).Unwrap();
         ValidateSessionHeaderPreview(address, header);
         return (SessionEventKind)header.OpaqueEventKind;
     }
@@ -1336,7 +1345,7 @@ public sealed class SessionJournalEngine : IDisposable {
 
         SessionPreparedRequestReconstruction reconstructed =
             SessionPreparedRequestReconstructor.Reconstruct(
-                _journal,
+                _reader,
                 manifest,
                 authoritativeRawEndInclusive,
                 cancellationToken
@@ -1351,7 +1360,7 @@ public sealed class SessionJournalEngine : IDisposable {
     }
 
     private SessionSetupReference CreateSetupReference(EventAddress address, SessionEventKind expectedKind) {
-        using EventFrame frame = _journal.ReadEvent(address).Unwrap();
+        using EventFrame frame = _reader.ReadEvent(address).Unwrap();
         ValidateSessionHeaderPreview(address, frame.Header);
         var actualKind = (SessionEventKind)frame.Header.OpaqueEventKind;
         if (actualKind != expectedKind) {
@@ -1375,7 +1384,7 @@ public sealed class SessionJournalEngine : IDisposable {
     ) {
         IReadOnlyList<EventAddress> chain;
         if (rawStartExclusive is null) {
-            chain = _journal.ReadChronologicalChain(
+            chain = _reader.ReadChronologicalChain(
                 rawEndInclusive,
                 checkedRead: true,
                 cancellationToken: cancellationToken
@@ -1387,7 +1396,7 @@ public sealed class SessionJournalEngine : IDisposable {
             while (cursor is { } address && address != rawStartExclusive.Value) {
                 cancellationToken.ThrowIfCancellationRequested();
                 reverse.Add(address);
-                EventFrameHeader header = _journal.ReadEventHeaderPreview(address).Unwrap();
+                EventFrameHeader header = _reader.ReadEventHeaderPreview(address).Unwrap();
                 ValidateSessionHeaderPreview(address, header);
                 cursor = header.Parent;
             }
@@ -1400,7 +1409,7 @@ public sealed class SessionJournalEngine : IDisposable {
         var entries = new List<SessionRawRangeHashEntry>(chain.Count);
         foreach (EventAddress address in chain) {
             cancellationToken.ThrowIfCancellationRequested();
-            using EventFrame frame = _journal.ReadEvent(address).Unwrap();
+            using EventFrame frame = _reader.ReadEvent(address).Unwrap();
             ValidateSessionHeaderPreview(address, frame.Header);
             var kind = (SessionEventKind)frame.Header.OpaqueEventKind;
             _ = SessionEventCodec.Decode(kind, frame.Payload, out int bodySchemaVersion);
@@ -1508,7 +1517,7 @@ public sealed class SessionJournalEngine : IDisposable {
     }
 
     private SessionRuntimeConfiguration ReadRuntimeConfigSetup(EventAddress address) {
-        using EventFrame frame = _journal.ReadEvent(address).Unwrap();
+        using EventFrame frame = _reader.ReadEvent(address).Unwrap();
         ValidateSessionHeaderPreview(address, frame.Header);
         var kind = (SessionEventKind)frame.Header.OpaqueEventKind;
         if (kind != SessionEventKind.RuntimeConfigSetup) {
@@ -1525,7 +1534,7 @@ public sealed class SessionJournalEngine : IDisposable {
         SessionEventKind expectedKind,
         ref int payloadReadCount
     ) where T : class {
-        using EventFrame frame = _journal.ReadEvent(reference.Address).Unwrap();
+        using EventFrame frame = _reader.ReadEvent(reference.Address).Unwrap();
         payloadReadCount++;
         ValidateSessionHeaderPreview(reference.Address, frame.Header);
         var actualKind = (SessionEventKind)frame.Header.OpaqueEventKind;
@@ -1554,7 +1563,7 @@ public sealed class SessionJournalEngine : IDisposable {
     }
 
     private string ReadSystemPromptSetup(EventAddress address) {
-        using EventFrame frame = _journal.ReadEvent(address).Unwrap();
+        using EventFrame frame = _reader.ReadEvent(address).Unwrap();
         ValidateSessionHeaderPreview(address, frame.Header);
         var kind = (SessionEventKind)frame.Header.OpaqueEventKind;
         if (kind != SessionEventKind.SystemPromptSetup) {
