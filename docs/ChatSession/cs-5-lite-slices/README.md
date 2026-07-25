@@ -1,7 +1,7 @@
 # CS-5-lite 分片实施入口
 
-> 状态：Incremental Implementation / A–D Complete, E Ready
-> 日期：2026-07-25
+> 状态：Implemented / A–E Complete
+> 日期：2026-07-26
 > 父任务：[CS-5-lite: SessionJournal Derived Recap Store + RollingSummary Replay](../cs-5-lite-sessionjournal-derived-recap-store.md)
 
 ## 目的
@@ -26,9 +26,9 @@ SessionJournal raw repo
 | A | [SessionJournal Addressed Replay Cursor](cs-5-lite-A-addressed-replay-cursor.md) | 带 raw address 的 history message replay API | 现有 `SessionJournalEngine.Project()` / `SessionReducer` | 已实施 |
 | B0 | [SessionJournal Memory Substrate 上移](cs-5-lite-B0-sessionjournal-memory-substrate.md) | SessionJournal-owned memory/maintainer substrate | A | 已实施 |
 | B | [Derived Recap Store 最小库](cs-5-lite-B-derived-recap-store.md) | 可写、可读、可重建 latest index 的 recap artifact store | A、B0 | 已实施 |
-| C | [RollingSummary Runner 输入源抽象](cs-5-lite-C-runner-input-abstraction-design.md) | legacy 与 SessionJournal 可共用的 replay step runner | A、B（复用 address codec，不读写 store） | 已实施；D handoff ready |
-| D | [LLM 结果写入 Derived Recap Artifact](cs-5-lite-D-artifact-writing.md) | maintainer 成功后产生带 provenance 的 artifact | A、B、C | 已实施；E handoff ready |
-| E | CLI 与端到端验收 | 新命令、文档、回归测试/手工验收命令 | A、B、C、D | 待实施 |
+| C | [RollingSummary Runner 输入源抽象](cs-5-lite-C-runner-input-abstraction-design.md) | legacy 与 SessionJournal 可共用的 replay step runner | A、B（复用 address codec，不读写 store） | 已实施 |
+| D | [LLM 结果写入 Derived Recap Artifact](cs-5-lite-D-artifact-writing.md) | maintainer 成功后产生带 provenance 的 artifact | A、B、C | 已实施 |
+| E | [CLI 与端到端验收](cs-5-lite-E-cli-e2e.md) | 新命令、文档、自动 E2E 与真实 LLM 验收 | A、B、C、D | 已实施 |
 
 ## 已完成的细化设计
 
@@ -36,10 +36,12 @@ SessionJournal raw repo
 - [CS-5-lite-B0 设计：SessionJournal Memory Substrate 上移](cs-5-lite-B0-sessionjournal-memory-substrate-design.md)
 - [CS-5-lite-B 设计：Derived Recap Store 最小库](cs-5-lite-B-derived-recap-store-design.md)
 - [CS-5-lite-C 设计：RollingSummary Runner 输入源抽象](cs-5-lite-C-runner-input-abstraction-design.md)
+- [CS-5-lite-D：LLM 结果写入 Derived Recap Artifact](cs-5-lite-D-artifact-writing.md)
+- [CS-5-lite-E：CLI 与端到端验收](cs-5-lite-E-cli-e2e.md)
 
 ## 总体实施顺序
 
-当前 A、B0、B、C、D 已实施；后续从 E 继续：
+当前 A、B0、B、C、D、E 均已实施：
 
 1. **A** 先解决 raw event 到 `IHistoryMessage` 的可追踪投影，避免 CLI 复制 reducer 语义。
 2. **B0** 把 memory substrate 的长期归属收到 `SessionJournal` 主干，避免 B/C/D 围绕旧
@@ -48,6 +50,17 @@ SessionJournal raw repo
 4. **C** 把现有 rolling summary runner 从 legacy event source 解耦。
 5. **D** 把 C 产生的成功维护结果写入 B。
 6. **E** 收 CLI、README、测试与一次真实 imported repo 验收。
+
+### E 实施结果
+
+- 正式命令 `replay-rolling-summary-session-journal` 以 repo 目录为输入；legacy 命令继续只接受 export
+  JSON，不做输入格式猜测。
+- CLI 显式组装同 repo 的 addressed source 与 artifact writer；成功 JSONL 链接实际 artifact 和
+  Completion call log。
+- 自动 E2E 使用 injected scripted factory，覆盖 import、生成、existing-lineage preflight、raw
+  不变和删除 `derived/recaps/v1/` 后再生，不依赖网络。
+- `dsv4p` 真实验收在同一新 imported repo 上分别完成 autobiographical 与 world-understanding
+  单 epoch；两个独立 lineage 同时存在，raw journal 未变化。
 
 ### D → E handoff
 

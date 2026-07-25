@@ -1,7 +1,7 @@
 # CS-5-lite: SessionJournal Derived Recap Store + RollingSummary Replay
 
-> 状态：Task Brief / Pre-Implementation Context
-> 日期：2026-07-25
+> 状态：Implemented / CS-5-lite Complete
+> 日期：2026-07-26
 > 上层路线图：[ChatSession 事件源与长期上下文架构路线图](event-sourced-session-architecture-roadmap.md)
 > 相关设计：[SessionJournal Configuration Access Notes](../SessionJournal/session-configuration-access-notes.md)
 
@@ -24,9 +24,13 @@ store，如何把现有 rolling summary replay 从 legacy export 迁到新的 Se
   是 derived artifacts，不是 raw facts。
 - `SessionJournalEngine.ResolveGoverningSetup(head)` 已能沿 parent chain 只读 header preview，解析
   `head` as-of 最近的 `runtime-config-setup` 与 `system-prompt-setup`，再只读这两个 setup payload。
-- `prototypes/ChatSession.BacktestCli/RollingSummaryReplay.cs` 目前仍从 legacy event source 读取消息，
-  在内存中维护 `_activeHistory` 与 `MemoryPack`，并复用 `RewriteMemoryBlockMaintainer` 生成 rolling
-  summary。
+- `prototypes/ChatSession.BacktestCli/RollingSummaryReplay.cs` 已把 runner 与输入源解耦；legacy export
+  与 addressed SessionJournal replay 共用 `_activeHistory`、`MemoryPack`、split policy 和
+  `RewriteMemoryBlockMaintainer` 主链。
+- `DerivedRecapStore` 与 `SessionJournalDerivedRecapWriter` 已把成功候选写成带 raw range、governing
+  setup、invocation 和 call-log provenance 的 derived artifact，不修改 raw event chain。
+- 正式 CLI `replay-rolling-summary-session-journal` 已接通上述主链，并完成 scripted E2E 与真实
+  `dsv4p` 双 preset 验收。
 
 当前设计判断：
 
@@ -84,7 +88,9 @@ SessionJournal raw repo
 主要代码入口：
 
 - [RollingSummaryReplay.cs](../../prototypes/ChatSession.BacktestCli/RollingSummaryReplay.cs)
-  当前 legacy-source rolling summary runner；应迁移或扩展为可从 SessionJournal replay。
+  legacy 与 SessionJournal 共用的 rolling summary runner、source abstraction 与 replay record。
+- [RollingSummaryArtifactWriting.cs](../../prototypes/ChatSession.BacktestCli/RollingSummaryArtifactWriting.cs)
+  SessionJournal Derived Recap writer、producer fingerprint、lineage preflight 与写入边界。
 - [Program.cs](../../prototypes/ChatSession.BacktestCli/Program.cs)
   Backtest CLI 命令入口、connection 配置、rolling summary 参数。
 - [SessionJournalLegacyImporter.cs](../../prototypes/ChatSession.BacktestCli/SessionJournalLegacyImporter.cs)
@@ -115,19 +121,17 @@ SessionJournal raw repo
 
 ## 6. 建议数据模型
 
-第一版可以把 derived recap store 做在 SessionJournal repo 内的独立目录，例如：
+第一版已把 derived recap store 放在 SessionJournal repo 内：
 
 ```text
 derived/recaps/v1/
   artifacts/<artifact-id>.json
-  blobs/<content-hash>.txt
   indexes/latest-by-profile.json
 ```
 
 具体路径可调整，但语义应保持：
 
 - `artifacts` 是 append-only 产物记录。
-- `blobs` 保存较大的 recap / MemoryPack 内容，可按 hash 去重。
 - `indexes` 是可删除、可重建的 read model。
 
 最小 artifact 字段建议：
@@ -210,9 +214,9 @@ latest usable recap artifact
 没有可用 recap artifact 时，tail projection 可以退回 full replay 或朴素 raw suffix fallback。fallback 是
 bootstrap 工具，不是长期主要机制。
 
-## 9. 建议验收
+## 9. 已完成验收
 
-实现完成后至少能证明：
+自动 E2E 与真实 `dsv4p` 验收已经证明：
 
 - 从 `import-session-journal` 生成的 repo 运行 rolling summary replay。
 - replay 不依赖 legacy export JSON 的 message stream。
@@ -225,38 +229,48 @@ bootstrap 工具，不是长期主要机制。
 
 ## 10. 推荐命令形态
 
-现有命令可扩展一个 SessionJournal 输入模式，或新增命令。形状示例：
+实现采用独立命令，避免 legacy JSON 与 repo 目录发生输入格式二义性：
 
 ```bash
 dotnet run --project prototypes/ChatSession.BacktestCli -- replay-rolling-summary-session-journal \
   --input gitignore/session-journal/cyber-copy-upgraded \
-  --threshold-tokens 12000 \
+  --threshold-tokens 24000 \
   --connections prototypes/Galatea/.atelia/galatea/connections.json \
-  --connection local-deepseek \
+  --connection dsv4p \
   --output gitignore/backtest/session-journal-rolling-summary.jsonl \
-  --call-log-dir gitignore/backtest/session-journal-rolling-summary-calls
+  --call-log-dir gitignore/backtest/session-journal-rolling-summary-calls \
+  --max-epochs 1 \
+  --preset autobiographical-rewrite
 ```
 
-若选择复用旧 `replay-rolling-summary` 命令，应显式区分 `--legacy-input` 与 `--session-journal-input`，
-避免输入格式二义性。
+旧 `replay-rolling-summary` 保持 legacy-only 且不写 artifact；新命令显式装配 SessionJournal
+source + writer。
 
-## 11. 开放问题
+## 11. 已定决策与后续问题
 
-- derived store 是否短期直接放在 SessionJournal repo 下，还是单独 artifact repo。
-- `MemoryPack` 是否直接进入 artifact body，还是每个 block 单独作为 artifact。
+- derived store 直接放在 SessionJournal repo 的 `derived/recaps/v1/` 下。
+- 完整 `MemoryPack` 进入 artifact body；artifact identity 覆盖其 canonical content。
+- rolling summary、autobiography、world understanding 共享 store schema，以 profile/target 区分
+  lineage。
+- 第一版 latest index 只面向当前 main raw history；artifact 记录 source raw head 防止 provenance
+  丢失。
+
+后续仍需解决：
+
 - `ContextHeader` 的 action header 如何与 raw suffix 开头的 `ActionMessage` 拼接。
-- rolling summary、autobiography、world understanding 是否在 CS-5-lite 共享同一 store schema，还是先只做
-  rolling summary。
-- latest index 的 branch/rewind 语义：第一版可只支持 `main`，但 artifact 必须记录 source head，避免把旁支
-  产物误当当前有效链。
+- 从 existing latest materialize `MemoryPack`，并只 replay `anchorRawEvent` 之后的 raw tail。
+- branch/rewind 下的 usable-artifact 与 latest index policy。
 
 ## 12. 分片任务
 
 本 brief 已拆分为 6 个更小的实施切片，入口见
 [cs-5-lite-slices/README.md](cs-5-lite-slices/README.md)。
 
-其中 A/B0/B 已完成更具体的设计方案：
+其中 A/B0/B/C/D/E 的设计和实施记录见：
 
 - [CS-5-lite-A Design: SessionJournal Addressed Replay Cursor](cs-5-lite-slices/cs-5-lite-A-addressed-replay-cursor-design.md)
 - [CS-5-lite-B0 设计：SessionJournal Memory Substrate 上移](cs-5-lite-slices/cs-5-lite-B0-sessionjournal-memory-substrate-design.md)
 - [CS-5-lite-B 设计：Derived Recap Store 最小库](cs-5-lite-slices/cs-5-lite-B-derived-recap-store-design.md)
+- [CS-5-lite-C 设计：RollingSummary Runner 输入源抽象](cs-5-lite-slices/cs-5-lite-C-runner-input-abstraction-design.md)
+- [CS-5-lite-D：LLM 结果写入 Derived Recap Artifact](cs-5-lite-slices/cs-5-lite-D-artifact-writing.md)
+- [CS-5-lite-E：CLI 与端到端验收](cs-5-lite-slices/cs-5-lite-E-cli-e2e.md)
