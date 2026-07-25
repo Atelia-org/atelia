@@ -16,6 +16,7 @@ public sealed class SessionJournalEngine : IDisposable {
     private SessionRuntime? _runtime;
     private SessionGoverningSetup? _governingSetupCursor;
     private GoverningSetupResolutionDiagnostics _lastGoverningSetupResolutionDiagnostics;
+    private SessionTailProjectionDiagnostics _lastTailProjectionDiagnostics;
     private bool _disposed;
 
     private SessionJournalEngine(
@@ -36,6 +37,9 @@ public sealed class SessionJournalEngine : IDisposable {
         => _lastGoverningSetupResolutionDiagnostics;
 
     internal EventAddress? GoverningSetupCursorHeadForTest => _governingSetupCursor?.Head;
+
+    internal SessionTailProjectionDiagnostics LastTailProjectionDiagnostics
+        => _lastTailProjectionDiagnostics;
 
     public static SessionJournalEngine Create(string path, SessionCreateOptions options)
         => CreateCore(path, options, runtime: null, testHooks: null);
@@ -390,13 +394,6 @@ public sealed class SessionJournalEngine : IDisposable {
                 "SessionJournal runtime requires non-secret CompletionTarget identity before a durable completion request can be prepared."
             );
         ImmutableArray<ToolDefinition> tools = runtime.ToolSession?.VisibleDefinitions ?? ImmutableArray<ToolDefinition>.Empty;
-        var request = new CompletionRequest(
-            ModelId: config.ModelId,
-            SystemPrompt: systemPrompt,
-            Context: projection.Context,
-            Tools: tools,
-            MaxTokens: runtime.MaxTokens
-        );
 
         EventAddress expectedParent = projection.Head
             ?? throw new InvalidDataException("AwaitingAgentAction projection requires a raw head.");
@@ -406,6 +403,66 @@ public sealed class SessionJournalEngine : IDisposable {
             throw new InvalidDataException("Governing setup cursor does not match the exact current projection.");
         }
 
+        RequestContextMaterialization materialization;
+        _lastTailProjectionDiagnostics = default;
+        if (runtime.TailProjection is null) {
+            materialization = new RequestContextMaterialization(
+                systemPrompt,
+                projection.Context,
+                SessionRequestManifestDefaults.FullRawSelectionPolicyId,
+                SessionRequestManifestDefaults.FullRawPlannerFingerprint,
+                SessionRequestManifestDefaults.FullRawRenderingProfileId,
+                SessionRequestManifestDefaults.FullRawContextRendererId,
+                SessionRequestManifestDefaults.FullRawContextRendererFingerprint,
+                RawStartExclusive: null,
+                ComputeRawRangeSha256(rawStartExclusive: null, expectedParent, cancellationToken),
+                ImmutableArray<SessionRequestArtifactInput>.Empty
+            );
+        }
+        else {
+            if (projection.ExecutionState.HeadKind != SessionEventKind.ObservationAccepted) {
+                throw new NotSupportedException(
+                    "CS-3B explicit artifact tail projection supports ObservationAccepted completion boundaries only."
+                );
+            }
+            if (!tools.IsEmpty) {
+                throw new NotSupportedException(
+                    "CS-3B explicit artifact tail projection supports completion requests without tools only."
+                );
+            }
+
+            SessionTailContextProjectionResult tail = await SessionTailContextProjection.MaterializeAsync(
+                _journal,
+                Path,
+                expectedParent,
+                governingSetup,
+                runtime.TailProjection,
+                ResolveGoverningSetup,
+                cancellationToken
+            ).ConfigureAwait(false);
+            _lastTailProjectionDiagnostics = tail.Diagnostics;
+            materialization = new RequestContextMaterialization(
+                tail.SystemPrompt,
+                tail.Context,
+                SessionRequestManifestDefaults.ExplicitArtifactTailSelectionPolicyId,
+                SessionRequestManifestDefaults.ExplicitArtifactTailPlannerFingerprint,
+                SessionRequestManifestDefaults.ExplicitArtifactTailRenderingProfileId,
+                SessionRequestManifestDefaults.ExplicitArtifactTailContextRendererId,
+                SessionRequestManifestDefaults.ExplicitArtifactTailContextRendererFingerprint,
+                tail.RawStartExclusive,
+                tail.RawRangeSha256,
+                [tail.ArtifactInput]
+            );
+        }
+
+        var request = new CompletionRequest(
+            ModelId: config.ModelId,
+            SystemPrompt: materialization.SystemPrompt,
+            Context: materialization.Context,
+            Tools: tools,
+            MaxTokens: runtime.MaxTokens
+        );
+
         CompletionRequestPreparedBody manifest = BuildRequestManifest(
             request,
             projection,
@@ -413,8 +470,7 @@ public sealed class SessionJournalEngine : IDisposable {
             completionTarget,
             runtime,
             tools,
-            expectedParent,
-            cancellationToken
+            materialization
         );
         EventAddress preparedAddress = AppendExpected(
             SessionEventKind.CompletionRequestPrepared,
@@ -547,8 +603,7 @@ public sealed class SessionJournalEngine : IDisposable {
         SessionCompletionTargetIdentity completionTarget,
         SessionRuntime runtime,
         ImmutableArray<ToolDefinition> tools,
-        EventAddress expectedParent,
-        CancellationToken cancellationToken
+        RequestContextMaterialization materialization
     ) {
         string correlationId = projection.ExecutionState.ActiveCorrelationId
             ?? throw new InvalidDataException("AwaitingAgentAction requires an active correlation id.");
@@ -564,13 +619,13 @@ public sealed class SessionJournalEngine : IDisposable {
                 ReplacesAttemptId: null
             ),
             new SessionContextPlan(
-                SelectionPolicyId: SessionRequestManifestDefaults.SelectionPolicyId,
-                PlannerFingerprint: SessionRequestManifestDefaults.PlannerFingerprint,
-                RawStartExclusive: null,
-                RawRangeSha256: ComputeRawRangeSha256(expectedParent, cancellationToken),
-                ArtifactInputs: ImmutableArray<SessionRequestArtifactInput>.Empty,
+                SelectionPolicyId: materialization.SelectionPolicyId,
+                PlannerFingerprint: materialization.PlannerFingerprint,
+                RawStartExclusive: materialization.RawStartExclusive,
+                RawRangeSha256: materialization.RawRangeSha256,
+                ArtifactInputs: materialization.ArtifactInputs,
                 RecalledInputs: ImmutableArray<SessionRequestRecalledInput>.Empty,
-                RenderingProfileId: SessionRequestManifestDefaults.RenderingProfileId,
+                RenderingProfileId: materialization.RenderingProfileId,
                 ModelProfileId: request.ModelId,
                 EstimatedInputTokens: checked((commitment.ByteLength + 3) / 4),
                 Reason: reason
@@ -586,8 +641,8 @@ public sealed class SessionJournalEngine : IDisposable {
                 tools
             ),
             new SessionRequestRendering(
-                ContextRendererId: SessionRequestManifestDefaults.ContextRendererId,
-                ContextRendererFingerprint: SessionRequestManifestDefaults.ContextRendererFingerprint,
+                ContextRendererId: materialization.ContextRendererId,
+                ContextRendererFingerprint: materialization.ContextRendererFingerprint,
                 CanonicalRequestCodecId: SessionRequestManifestDefaults.CanonicalRequestCodecId,
                 ToolCodecId: SessionRequestManifestDefaults.ToolCodecId,
                 ReasoningCodecSetFingerprint: SessionRequestManifestDefaults.ReasoningCodecSetFingerprint
@@ -623,11 +678,16 @@ public sealed class SessionJournalEngine : IDisposable {
             governingSetup.SystemPromptSetupAddress,
             SessionEventKind.SystemPromptSetup
         );
+        bool requestContextMatchesPlan = RequestContextMatchesPlan(
+            manifest,
+            request,
+            governingSetup.SystemPrompt
+        );
         if (manifest.Commitment != expectedCommitment
             || !string.Equals(manifest.Parameters.ModelId, request.ModelId, StringComparison.Ordinal)
             || manifest.Parameters.MaxTokens != request.MaxTokens
             || !string.Equals(request.ModelId, governingSetup.RuntimeConfig.ModelId, StringComparison.Ordinal)
-            || !string.Equals(request.SystemPrompt, governingSetup.SystemPrompt, StringComparison.Ordinal)
+            || !requestContextMatchesPlan
             || !string.Equals(manifest.ToolSet.Sha256, SessionRequestCanonicalizer.ComputeToolSetSha256(tools), StringComparison.Ordinal)
             || !manifest.ToolSet.Definitions.SequenceEqual(tools)
             || manifest.Setups.RuntimeConfig != expectedRuntimeSetup
@@ -639,6 +699,59 @@ public sealed class SessionJournalEngine : IDisposable {
             throw new InvalidDataException("completion-request-prepared manifest does not match the exact provider-neutral CompletionRequest.");
         }
     }
+
+    private static bool RequestContextMatchesPlan(
+        CompletionRequestPreparedBody manifest,
+        CompletionRequest request,
+        string governingSystemPrompt
+    ) {
+        if (string.Equals(
+                manifest.Plan.SelectionPolicyId,
+                SessionRequestManifestDefaults.FullRawSelectionPolicyId,
+                StringComparison.Ordinal
+            )) {
+            return string.Equals(request.SystemPrompt, governingSystemPrompt, StringComparison.Ordinal);
+        }
+
+        if (!string.Equals(
+                manifest.Plan.SelectionPolicyId,
+                SessionRequestManifestDefaults.ExplicitArtifactTailSelectionPolicyId,
+                StringComparison.Ordinal
+            )
+            || manifest.Plan.ArtifactInputs.Length != 1) {
+            return false;
+        }
+
+        (string expectedSystemPrompt, ImmutableArray<IHistoryMessage> expectedPrefix) =
+            SessionTailContextProjection.ExpandContextSnapshot(
+                governingSystemPrompt,
+                manifest.Plan.ArtifactInputs[0].ContextSnapshot
+            );
+        if (!string.Equals(request.SystemPrompt, expectedSystemPrompt, StringComparison.Ordinal)
+            || request.Context.Count < expectedPrefix.Length) {
+            return false;
+        }
+
+        for (int i = 0; i < expectedPrefix.Length; i++) {
+            if (!HistoryMessageContentEquals(request.Context[i], expectedPrefix[i])) { return false; }
+        }
+        return true;
+    }
+
+    private static bool HistoryMessageContentEquals(IHistoryMessage actual, IHistoryMessage expected)
+        => (actual, expected) switch {
+            (ObservationMessage actualObservation, ObservationMessage expectedObservation)
+                when actualObservation is not ToolResultsMessage
+                    && expectedObservation is not ToolResultsMessage
+                => string.Equals(
+                    actualObservation.Content,
+                    expectedObservation.Content,
+                    StringComparison.Ordinal
+                ),
+            (ActionMessage actualAction, ActionMessage expectedAction)
+                => actualAction.Blocks.SequenceEqual(expectedAction.Blocks),
+            _ => false
+        };
 
     private SessionSetupReference CreateSetupReference(EventAddress address, SessionEventKind expectedKind) {
         using EventFrame frame = _journal.ReadEvent(address).Unwrap();
@@ -656,14 +769,37 @@ public sealed class SessionJournalEngine : IDisposable {
     }
 
     internal string ComputeRawRangeSha256ForTest(EventAddress rawEndInclusive)
-        => ComputeRawRangeSha256(rawEndInclusive, CancellationToken.None);
+        => ComputeRawRangeSha256(rawStartExclusive: null, rawEndInclusive, CancellationToken.None);
 
-    private string ComputeRawRangeSha256(EventAddress rawEndInclusive, CancellationToken cancellationToken) {
-        IReadOnlyList<EventAddress> chain = _journal.ReadChronologicalChain(
-            rawEndInclusive,
-            checkedRead: true,
-            cancellationToken: cancellationToken
-        ).Unwrap();
+    private string ComputeRawRangeSha256(
+        EventAddress? rawStartExclusive,
+        EventAddress rawEndInclusive,
+        CancellationToken cancellationToken
+    ) {
+        IReadOnlyList<EventAddress> chain;
+        if (rawStartExclusive is null) {
+            chain = _journal.ReadChronologicalChain(
+                rawEndInclusive,
+                checkedRead: true,
+                cancellationToken: cancellationToken
+            ).Unwrap();
+        }
+        else {
+            var reverse = new List<EventAddress>();
+            EventAddress? cursor = rawEndInclusive;
+            while (cursor is { } address && address != rawStartExclusive.Value) {
+                cancellationToken.ThrowIfCancellationRequested();
+                reverse.Add(address);
+                EventFrameHeader header = _journal.ReadEventHeaderPreview(address).Unwrap();
+                ValidateSessionHeaderPreview(address, header);
+                cursor = header.Parent;
+            }
+            if (cursor != rawStartExclusive) {
+                throw new InvalidDataException("rawStartExclusive is not an ancestor of rawEndInclusive.");
+            }
+            reverse.Reverse();
+            chain = reverse;
+        }
         var entries = new List<SessionRawRangeHashEntry>(chain.Count);
         foreach (EventAddress address in chain) {
             cancellationToken.ThrowIfCancellationRequested();
@@ -681,7 +817,7 @@ public sealed class SessionJournalEngine : IDisposable {
         }
 
         return SessionRawRangeHasher.Compute(
-            rawStartExclusive: null,
+            rawStartExclusive,
             rawEndInclusive,
             entries
         );
@@ -891,6 +1027,19 @@ public sealed class SessionJournalEngine : IDisposable {
     private static void ValidateRequired(string value, string name) {
         if (string.IsNullOrWhiteSpace(value)) { throw new ArgumentException("Value must not be null, empty, or whitespace.", name); }
     }
+
+    private sealed record RequestContextMaterialization(
+        string SystemPrompt,
+        IReadOnlyList<IHistoryMessage> Context,
+        string SelectionPolicyId,
+        string PlannerFingerprint,
+        string RenderingProfileId,
+        string ContextRendererId,
+        string ContextRendererFingerprint,
+        EventAddress? RawStartExclusive,
+        string RawRangeSha256,
+        ImmutableArray<SessionRequestArtifactInput> ArtifactInputs
+    );
 
     private static string BuildTurnAbortMessage(CompletionTermination termination) {
         ArgumentNullException.ThrowIfNull(termination);

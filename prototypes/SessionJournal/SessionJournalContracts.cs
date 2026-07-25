@@ -56,8 +56,15 @@ public sealed record SessionRuntime(
     ICompletionClient CompletionClient,
     ToolSession? ToolSession = null,
     SessionCompletionTargetIdentity? CompletionTarget = null,
-    int? MaxTokens = null
+    int? MaxTokens = null,
+    SessionTailProjectionOptions? TailProjection = null
 );
+
+public sealed record SessionTailProjectionOptions(string ArtifactId) {
+    public string ArtifactId { get; init; } = string.IsNullOrWhiteSpace(ArtifactId)
+        ? throw new ArgumentException("Tail projection artifact id cannot be empty.", nameof(ArtifactId))
+        : ArtifactId;
+}
 
 public sealed record TurnResult(
     ActionMessage Message,
@@ -214,4 +221,10 @@ internal readonly record struct GoverningSetupResolutionDiagnostics(
     int HeaderVisitCount,
     int PayloadReadCount,
     int ManifestPayloadReadCount
+);
+
+internal readonly record struct SessionTailProjectionDiagnostics(
+    int HeaderVisitCount,
+    int SuffixPayloadReadCount,
+    int SuffixEventCount
 );
