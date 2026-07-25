@@ -20,6 +20,7 @@ public enum SessionEventKind : uint {
     CompletionRequestPrepared = 8,
     CompletionAttemptFailed = 9,
     ImportedAgentAction = 10,
+    CompletionAttemptRestarted = 11,
 }
 
 public enum SessionExecutionPhase {
@@ -128,7 +129,8 @@ public sealed record SessionExecutionState(
     long ToolExecutionSequenceCheckpoint = 0,
     EventAddress? PendingRequestPreparedAddress = null,
     string? PendingCompletionAttemptId = null,
-    string? ActiveCorrelationId = null
+    string? ActiveCorrelationId = null,
+    EventAddress? ActiveCompletionAttemptAddress = null
 );
 
 public sealed record SessionProjection(
@@ -207,6 +209,12 @@ internal sealed record CompletionAttemptFailedBody(
     string? ProviderReason,
     string? Detail,
     IReadOnlyList<string> Errors
+);
+
+internal sealed record CompletionAttemptRestartedBody(
+    string AttemptId,
+    string ReplacesAttemptId,
+    EventAddress SourcePreparedAddress
 );
 
 internal readonly record struct DecodedSessionEvent(

@@ -58,7 +58,9 @@ internal static class SessionRequestManifestCodec {
         RequireText(body.Attempt.CorrelationId, "attempt.correlationId");
         RequireText(body.Attempt.Reason, "attempt.reason");
         if (body.Attempt.ReplacesAttemptId is not null) {
-            RequireText(body.Attempt.ReplacesAttemptId, "attempt.replacesAttemptId");
+            throw new InvalidDataException(
+                "completion-request-prepared attempt.replacesAttemptId must be null; retries are represented by completion-attempt-restarted."
+            );
         }
 
         RequireText(body.Plan.SelectionPolicyId, "plan.selectionPolicyId");

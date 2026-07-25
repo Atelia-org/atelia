@@ -574,6 +574,9 @@ public sealed class SessionRequestManifestCodecTests : IDisposable {
         CompletionRequestPreparedBody body = CreateManifestBody(CreateToolDefinitions(), out _);
 
         Assert.Throws<InvalidDataException>(() => SessionRequestManifestCodec.Validate(
+            body with { Attempt = body.Attempt with { ReplacesAttemptId = "prior-attempt" } }
+        ));
+        Assert.Throws<InvalidDataException>(() => SessionRequestManifestCodec.Validate(
             body with { Attempt = body.Attempt with { Reason = "different" } }
         ));
         Assert.Throws<InvalidDataException>(() => SessionRequestManifestCodec.Validate(

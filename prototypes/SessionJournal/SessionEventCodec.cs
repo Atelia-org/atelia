@@ -26,6 +26,7 @@ internal static class SessionEventCodec {
             SessionEventKind.CompletionRequestPrepared => EncodeCompletionRequestPrepared((CompletionRequestPreparedBody)body),
             SessionEventKind.CompletionAttemptFailed => EncodeCompletionAttemptFailed((CompletionAttemptFailedBody)body),
             SessionEventKind.ImportedAgentAction => EncodeAgentActionProduced((AgentActionProducedBody)body),
+            SessionEventKind.CompletionAttemptRestarted => EncodeCompletionAttemptRestarted((CompletionAttemptRestartedBody)body),
             _ => throw new NotSupportedException($"Session event kind '{kind}' is not implemented.")
         };
 
@@ -41,7 +42,9 @@ internal static class SessionEventCodec {
         if (!root.TryGetProperty("body", out JsonElement body)) {
             throw new InvalidDataException("Session event envelope is missing required property 'body'.");
         }
-        if (kind is SessionEventKind.CompletionRequestPrepared or SessionEventKind.CompletionAttemptFailed) {
+        if (kind is SessionEventKind.CompletionRequestPrepared
+            or SessionEventKind.CompletionAttemptFailed
+            or SessionEventKind.CompletionAttemptRestarted) {
             RequireExactProperties(root, $"{kind} envelope", "v", "body");
         }
 
@@ -56,6 +59,7 @@ internal static class SessionEventCodec {
             SessionEventKind.CompletionRequestPrepared => SessionRequestManifestCodec.Decode(body),
             SessionEventKind.CompletionAttemptFailed => DecodeCompletionAttemptFailed(body),
             SessionEventKind.ImportedAgentAction => DecodeAgentActionProduced(body),
+            SessionEventKind.CompletionAttemptRestarted => DecodeCompletionAttemptRestarted(body),
             _ => throw new NotSupportedException($"Session event kind '{kind}' is not implemented.")
         };
     }
@@ -238,6 +242,22 @@ internal static class SessionEventCodec {
         return buffer.WrittenMemory.ToArray();
     }
 
+    private static byte[] EncodeCompletionAttemptRestarted(CompletionAttemptRestartedBody body) {
+        ValidateCompletionAttemptRestarted(body);
+
+        var buffer = new ArrayBufferWriter<byte>();
+        using (var writer = new Utf8JsonWriter(buffer, WriterOptions)) {
+            WriteEnvelopeStart(writer);
+            writer.WriteStartObject("body");
+            writer.WriteString("attemptId", body.AttemptId);
+            writer.WriteString("replacesAttemptId", body.ReplacesAttemptId);
+            writer.WriteString("sourcePreparedAddress", EventAddressTextCodec.Format(body.SourcePreparedAddress));
+            writer.WriteEndObject();
+            writer.WriteEndObject();
+        }
+        return buffer.WrittenMemory.ToArray();
+    }
+
     private static SessionRuntimeConfiguration DecodeRuntimeConfiguration(JsonElement body) {
         RequireObject(body, "runtime-config-setup body");
         return new SessionRuntimeConfiguration(
@@ -354,6 +374,35 @@ internal static class SessionEventCodec {
         );
     }
 
+    private static CompletionAttemptRestartedBody DecodeCompletionAttemptRestarted(JsonElement body) {
+        RequireExactProperties(
+            body,
+            "completion-attempt-restarted body",
+            "attemptId",
+            "replacesAttemptId",
+            "sourcePreparedAddress"
+        );
+        string sourcePreparedAddressText = ReadRequiredString(body, "sourcePreparedAddress");
+        if (!EventAddressTextCodec.TryParse(sourcePreparedAddressText, out var sourcePreparedAddress)) {
+            throw new InvalidDataException(
+                $"completion-attempt-restarted sourcePreparedAddress '{sourcePreparedAddressText}' is invalid."
+            );
+        }
+
+        var result = new CompletionAttemptRestartedBody(
+            ReadRequiredString(body, "attemptId"),
+            ReadRequiredString(body, "replacesAttemptId"),
+            sourcePreparedAddress
+        );
+        try {
+            ValidateCompletionAttemptRestarted(result);
+        }
+        catch (ArgumentException ex) {
+            throw new InvalidDataException("completion-attempt-restarted body is invalid.", ex);
+        }
+        return result;
+    }
+
     private static void WriteEnvelopeStart(Utf8JsonWriter writer) {
         writer.WriteStartObject();
         writer.WriteNumber("v", BodySchemaVersion);
@@ -460,6 +509,19 @@ internal static class SessionEventCodec {
         if (kind is not (CompletionTerminationKind.Incomplete or CompletionTerminationKind.Failed)) {
             throw new ArgumentOutOfRangeException(nameof(kind), kind, "Only known incomplete/failed outcomes are durable failure events.");
         }
+    }
+
+    private static void ValidateCompletionAttemptRestarted(CompletionAttemptRestartedBody body) {
+        ArgumentNullException.ThrowIfNull(body);
+        ValidateRequired(body.AttemptId, nameof(body.AttemptId));
+        ValidateRequired(body.ReplacesAttemptId, nameof(body.ReplacesAttemptId));
+        if (string.Equals(body.AttemptId, body.ReplacesAttemptId, StringComparison.Ordinal)) {
+            throw new ArgumentException(
+                "A restarted completion attempt must use a new attempt id.",
+                nameof(body)
+            );
+        }
+        _ = EventAddressTextCodec.Format(body.SourcePreparedAddress);
     }
 
     private static void WriteNullableString(Utf8JsonWriter writer, string propertyName, string? value) {
