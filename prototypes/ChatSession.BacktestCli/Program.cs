@@ -262,6 +262,9 @@ internal static partial class Program {
         var preset = options.Get("preset") ?? "autobiographical-rewrite";
 
         if (enforceSessionJournalPathBoundary) {
+            EnsurePathChainHasNoReparsePoint(inputPath, "--input");
+            EnsurePathChainHasNoReparsePoint(outputPath, "--output");
+            EnsurePathChainHasNoReparsePoint(callLogDir, "--call-log-dir");
             EnsurePathIsOutsideRepository(inputPath, outputPath, "--output");
             EnsurePathIsOutsideRepository(inputPath, callLogDir, "--call-log-dir");
         }
@@ -334,6 +337,30 @@ internal static partial class Program {
         Console.WriteLine($"output: {outputPath}");
         Console.WriteLine($"callLogDir: {Path.GetFullPath(callLogDir)}");
         return runner.HadFailure ? 1 : 0;
+    }
+
+    private static void EnsurePathChainHasNoReparsePoint(string path, string optionName) {
+        string currentPath = Path.GetFullPath(path);
+        while (true) {
+            try {
+                FileAttributes attributes = File.GetAttributes(currentPath);
+                if ((attributes & FileAttributes.ReparsePoint) != 0) {
+                    throw new ArgumentException(
+                        $"{optionName} must not contain a symbolic link or reparse point: {currentPath}"
+                    );
+                }
+            }
+            catch (FileNotFoundException) {
+                // A candidate leaf may not exist yet; its existing ancestors still need checking.
+            }
+            catch (DirectoryNotFoundException) {
+                // A candidate leaf may not exist yet; its existing ancestors still need checking.
+            }
+
+            string? parentPath = Path.GetDirectoryName(currentPath);
+            if (parentPath is null) { break; }
+            currentPath = parentPath;
+        }
     }
 
     private static void EnsurePathIsOutsideRepository(

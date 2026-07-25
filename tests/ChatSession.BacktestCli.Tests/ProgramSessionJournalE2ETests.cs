@@ -6,6 +6,7 @@ using Atelia.SessionJournal.Derived;
 using ChatSessionBacktestCli;
 using SJ = Atelia.SessionJournal;
 using Xunit;
+using Xunit.Sdk;
 
 namespace Atelia.ChatSession.BacktestCli.Tests;
 
@@ -128,6 +129,10 @@ public sealed class ProgramSessionJournalE2ETests : IDisposable {
         Assert.Equal(firstRecord.ArtifactId, preservedRecord.ArtifactId);
         Assert.Equal(firstRecord.SourceEndInclusive, preservedRecord.SourceEndInclusive);
         Assert.Equal(firstRecord.Status, preservedRecord.Status);
+        Assert.Empty(Directory.EnumerateFiles(
+            Path.GetDirectoryName(firstOutputPath)!,
+            $".{Path.GetFileName(firstOutputPath)}.*.tmp"
+        ));
         AssertHistoryUnchanged(rawBefore, ReadHistorySnapshot(repoPath));
 
         string exactDerivedStoreRoot = Path.Combine(repoPath, "derived", "recaps", "v1");
@@ -286,6 +291,88 @@ public sealed class ProgramSessionJournalE2ETests : IDisposable {
     }
 
     [Fact]
+    public void SessionJournalCommand_RejectsSymlinkAliasesBeforeWrites() {
+        Directory.CreateDirectory(_tempRoot);
+        string legacyPath = Path.Combine(_tempRoot, "legacy.json");
+        string repoPath = Path.Combine(_tempRoot, "session-journal");
+        string connectionsPath = Path.Combine(_tempRoot, "connections.json");
+        WriteLegacyExport(legacyPath, turnCount: 3);
+        WriteConnections(connectionsPath);
+        var factory = new ScriptedCompletionClientFactory("must-not-run");
+
+        Assert.Equal(
+            0,
+            Program.MainCore(
+                [
+                    "import-session-journal",
+                    "--input", legacyPath,
+                    "--output", repoPath
+                ],
+                factory
+            )
+        );
+        SessionHistorySnapshot rawBefore = ReadHistorySnapshot(repoPath);
+        string rawFilePath = Assert.Single(
+            Directory.EnumerateFiles(
+                Path.Combine(repoPath, "events"),
+                "*.rbf",
+                SearchOption.AllDirectories
+            )
+        );
+        byte[] rawFileBytes = File.ReadAllBytes(rawFilePath);
+
+        string repoAliasPath = Path.Combine(_tempRoot, "repo-alias");
+        CreateDirectorySymbolicLinkOrSkip(repoAliasPath, repoPath);
+        int repoAliasExitCode = RunSessionJournalReplay(
+            factory,
+            repoAliasPath,
+            connectionsPath,
+            rawFilePath,
+            Path.Combine(_tempRoot, "repo-alias-calls")
+        );
+
+        Assert.Equal(1, repoAliasExitCode);
+        Assert.Equal(0, factory.CompletionCallCount);
+        Assert.Equal(rawFileBytes, File.ReadAllBytes(rawFilePath));
+        AssertHistoryUnchanged(rawBefore, ReadHistorySnapshot(repoPath));
+
+        string rawParentPath = Path.GetDirectoryName(rawFilePath)!;
+        string outputParentAliasPath = Path.Combine(_tempRoot, "output-parent-alias");
+        CreateDirectorySymbolicLinkOrSkip(outputParentAliasPath, rawParentPath);
+        string aliasedOutputPath = Path.Combine(outputParentAliasPath, "must-not-exist.jsonl");
+        int outputAliasExitCode = RunSessionJournalReplay(
+            factory,
+            repoPath,
+            connectionsPath,
+            aliasedOutputPath,
+            Path.Combine(_tempRoot, "output-alias-calls")
+        );
+
+        Assert.Equal(1, outputAliasExitCode);
+        Assert.Equal(0, factory.CompletionCallCount);
+        Assert.False(File.Exists(Path.Combine(rawParentPath, "must-not-exist.jsonl")));
+        Assert.Equal(rawFileBytes, File.ReadAllBytes(rawFilePath));
+        AssertHistoryUnchanged(rawBefore, ReadHistorySnapshot(repoPath));
+
+        string callLogAliasPath = Path.Combine(_tempRoot, "call-log-alias");
+        CreateDirectorySymbolicLinkOrSkip(callLogAliasPath, rawParentPath);
+        string outsideOutputPath = Path.Combine(_tempRoot, "outside.jsonl");
+        int callLogAliasExitCode = RunSessionJournalReplay(
+            factory,
+            repoPath,
+            connectionsPath,
+            outsideOutputPath,
+            callLogAliasPath
+        );
+
+        Assert.Equal(1, callLogAliasExitCode);
+        Assert.Equal(0, factory.CompletionCallCount);
+        Assert.False(File.Exists(outsideOutputPath));
+        Assert.Equal(rawFileBytes, File.ReadAllBytes(rawFilePath));
+        AssertHistoryUnchanged(rawBefore, ReadHistorySnapshot(repoPath));
+    }
+
+    [Fact]
     public void MainCore_MalformedConnectionsJsonReturnsFailureInsteadOfEscaping() {
         Directory.CreateDirectory(_tempRoot);
         string malformedConnectionsPath = Path.Combine(_tempRoot, "malformed-connections.json");
@@ -303,6 +390,19 @@ public sealed class ProgramSessionJournalE2ETests : IDisposable {
 
         Assert.Equal(1, exitCode);
         Assert.Equal(0, factory.CompletionCallCount);
+    }
+
+    private static void CreateDirectorySymbolicLinkOrSkip(string path, string targetPath) {
+        try {
+            Directory.CreateSymbolicLink(path, targetPath);
+        }
+        catch (Exception ex) when (
+            ex is IOException or NotSupportedException or UnauthorizedAccessException
+        ) {
+            throw SkipException.ForSkip(
+                $"Directory symbolic links are unavailable on this platform: {ex.Message}"
+            );
+        }
     }
 
     private static int RunSessionJournalReplay(
