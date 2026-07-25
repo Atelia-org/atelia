@@ -110,18 +110,24 @@ public sealed class ProgramSessionJournalE2ETests : IDisposable {
         Assert.NotNull(firstArtifact.Invocation);
         Assert.Equal(firstRecord.CallLogPaths, firstArtifact.CallLogPaths);
         AssertHistoryUnchanged(rawBefore, ReadHistorySnapshot(repoPath));
+        byte[] firstOutputBytes = File.ReadAllBytes(firstOutputPath);
 
         int callCountBeforeRejectedReplay = factory.CompletionCallCount;
         int rejectedExitCode = RunSessionJournalReplay(
             factory,
             repoPath,
             connectionsPath,
-            Path.Combine(_tempRoot, "rejected.jsonl"),
+            firstOutputPath,
             Path.Combine(_tempRoot, "rejected-calls")
         );
 
         Assert.Equal(1, rejectedExitCode);
         Assert.Equal(callCountBeforeRejectedReplay, factory.CompletionCallCount);
+        Assert.Equal(firstOutputBytes, File.ReadAllBytes(firstOutputPath));
+        RollingSummaryReplayRecord preservedRecord = ReadSingleRecord(firstOutputPath);
+        Assert.Equal(firstRecord.ArtifactId, preservedRecord.ArtifactId);
+        Assert.Equal(firstRecord.SourceEndInclusive, preservedRecord.SourceEndInclusive);
+        Assert.Equal(firstRecord.Status, preservedRecord.Status);
         AssertHistoryUnchanged(rawBefore, ReadHistorySnapshot(repoPath));
 
         string exactDerivedStoreRoot = Path.Combine(repoPath, "derived", "recaps", "v1");
@@ -215,6 +221,88 @@ public sealed class ProgramSessionJournalE2ETests : IDisposable {
         Assert.Null(record.ArtifactId);
         string callLogPath = Assert.Single(record.CallLogPaths);
         Assert.Equal("replay-rolling-summary", ReadCallLogCommand(callLogPath));
+    }
+
+    [Fact]
+    public void SessionJournalCommand_RejectsRepositoryContainedOutputAndCallLogPathsBeforeWrites() {
+        Directory.CreateDirectory(_tempRoot);
+        string legacyPath = Path.Combine(_tempRoot, "legacy.json");
+        string repoPath = Path.Combine(_tempRoot, "session-journal");
+        string connectionsPath = Path.Combine(_tempRoot, "connections.json");
+        WriteLegacyExport(legacyPath, turnCount: 3);
+        WriteConnections(connectionsPath);
+        var factory = new ScriptedCompletionClientFactory("must-not-run");
+
+        Assert.Equal(
+            0,
+            Program.MainCore(
+                [
+                    "import-session-journal",
+                    "--input", legacyPath,
+                    "--output", repoPath
+                ],
+                factory
+            )
+        );
+        SessionHistorySnapshot rawBefore = ReadHistorySnapshot(repoPath);
+        string rawFilePath = Assert.Single(
+            Directory.EnumerateFiles(
+                Path.Combine(repoPath, "events"),
+                "*.rbf",
+                SearchOption.AllDirectories
+            )
+        );
+        byte[] rawFileBytes = File.ReadAllBytes(rawFilePath);
+
+        int containedOutputExitCode = RunSessionJournalReplay(
+            factory,
+            repoPath,
+            connectionsPath,
+            rawFilePath,
+            Path.Combine(_tempRoot, "outside-calls")
+        );
+
+        Assert.Equal(1, containedOutputExitCode);
+        Assert.Equal(0, factory.CompletionCallCount);
+        Assert.Equal(rawFileBytes, File.ReadAllBytes(rawFilePath));
+        AssertHistoryUnchanged(rawBefore, ReadHistorySnapshot(repoPath));
+
+        string outsideOutputPath = Path.Combine(_tempRoot, "outside.jsonl");
+        string containedCallLogDir = Path.Combine(repoPath, "forbidden-calls");
+        int containedCallLogExitCode = RunSessionJournalReplay(
+            factory,
+            repoPath,
+            connectionsPath,
+            outsideOutputPath,
+            containedCallLogDir
+        );
+
+        Assert.Equal(1, containedCallLogExitCode);
+        Assert.Equal(0, factory.CompletionCallCount);
+        Assert.False(File.Exists(outsideOutputPath));
+        Assert.False(Directory.Exists(containedCallLogDir));
+        Assert.Equal(rawFileBytes, File.ReadAllBytes(rawFilePath));
+        AssertHistoryUnchanged(rawBefore, ReadHistorySnapshot(repoPath));
+    }
+
+    [Fact]
+    public void MainCore_MalformedConnectionsJsonReturnsFailureInsteadOfEscaping() {
+        Directory.CreateDirectory(_tempRoot);
+        string malformedConnectionsPath = Path.Combine(_tempRoot, "malformed-connections.json");
+        File.WriteAllText(malformedConnectionsPath, "{");
+        var factory = new ScriptedCompletionClientFactory("must-not-run");
+
+        int exitCode = Program.MainCore(
+            [
+                "llm-smoke",
+                "--connections", malformedConnectionsPath,
+                "--call-log-dir", Path.Combine(_tempRoot, "calls")
+            ],
+            factory
+        );
+
+        Assert.Equal(1, exitCode);
+        Assert.Equal(0, factory.CompletionCallCount);
     }
 
     private static int RunSessionJournalReplay(

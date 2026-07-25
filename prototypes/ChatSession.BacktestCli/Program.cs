@@ -45,7 +45,17 @@ internal static partial class Program {
                 _ => Fail($"Unknown command '{command}'.")
             };
         }
-        catch (Exception ex) when (ex is ArgumentException or InvalidDataException or InvalidOperationException or IOException or NotSupportedException) {
+        catch (Exception ex) when (
+            ex is ArgumentException
+                or HttpRequestException
+                or InvalidDataException
+                or InvalidOperationException
+                or IOException
+                or JsonException
+                or NotSupportedException
+                or TaskCanceledException
+                or UnauthorizedAccessException
+        ) {
             Console.Error.WriteLine($"error: {ex.Message}");
             return 1;
         }
@@ -209,7 +219,8 @@ internal static partial class Program {
         sourceFactory: static inputPath => new LegacyRollingSummaryReplaySource(
             ChatSessionLegacyEventSourceReader.Read(inputPath)
         ),
-        artifactWriterFactory: null
+        artifactWriterFactory: null,
+        enforceSessionJournalPathBoundary: false
     );
 
     private static Task<int> RunSessionJournalRollingSummaryAsync(
@@ -222,7 +233,8 @@ internal static partial class Program {
         defaultCallLogDir: DefaultSessionJournalRollingSummaryCallLogDir,
         sourceFactory: static inputPath => SessionJournalRollingSummaryReplaySource.Open(inputPath),
         artifactWriterFactory: static (inputPath, profile, client, connection) =>
-            SessionJournalDerivedRecapWriter.Open(inputPath, profile, client, connection)
+            SessionJournalDerivedRecapWriter.Open(inputPath, profile, client, connection),
+        enforceSessionJournalPathBoundary: true
     );
 
     private static async Task<int> RunRollingSummaryAsync(
@@ -237,7 +249,8 @@ internal static partial class Program {
             ICompletionClient,
             CompletionConnectionConfig,
             IRollingSummaryArtifactWriter
-        >? artifactWriterFactory
+        >? artifactWriterFactory,
+        bool enforceSessionJournalPathBoundary
     ) {
         var inputPath = options.Require("input");
         var outputPath = options.Require("output");
@@ -247,6 +260,12 @@ internal static partial class Program {
         var thresholdTokens = options.GetInt("threshold-tokens", DefaultThresholdTokens);
         var maxEpochs = options.GetInt("max-epochs", int.MaxValue);
         var preset = options.Get("preset") ?? "autobiographical-rewrite";
+
+        if (enforceSessionJournalPathBoundary) {
+            EnsurePathIsOutsideRepository(inputPath, outputPath, "--output");
+            EnsurePathIsOutsideRepository(inputPath, callLogDir, "--call-log-dir");
+        }
+
         var systemPromptOverride = ReadPromptOrNull(options.Get("system-prompt"));
         var userPromptOverride = ReadPromptOrNull(options.Get("prompt"));
 
@@ -266,7 +285,8 @@ internal static partial class Program {
             connection
         );
 
-        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(outputPath)) ?? ".");
+        string fullOutputPath = Path.GetFullPath(outputPath);
+        Directory.CreateDirectory(Path.GetDirectoryName(fullOutputPath) ?? ".");
         Directory.CreateDirectory(callLogDir);
 
         var runner = new RollingSummaryReplayRunner(
@@ -282,12 +302,30 @@ internal static partial class Program {
         );
 
         int recordCount = 0;
-        await using var output = new FileStream(outputPath, FileMode.Create, FileAccess.Write, FileShare.Read);
-        await using var writer = new StreamWriter(output, Encoding.UTF8);
-        await foreach (var record in runner.RunAsync(CancellationToken.None).ConfigureAwait(false)) {
-            await writer.WriteLineAsync(JsonSerializer.Serialize(record, JsonOptions)).ConfigureAwait(false);
-            await writer.FlushAsync(CancellationToken.None).ConfigureAwait(false);
-            recordCount++;
+        (string temporaryOutputPath, FileStream temporaryOutput) = CreateTemporaryOutput(fullOutputPath);
+        try {
+            await using (temporaryOutput.ConfigureAwait(false)) {
+                await using var writer = new StreamWriter(
+                    temporaryOutput,
+                    Encoding.UTF8,
+                    bufferSize: 1024,
+                    leaveOpen: true
+                );
+                await foreach (var record in runner.RunAsync(CancellationToken.None).ConfigureAwait(false)) {
+                    await writer.WriteLineAsync(JsonSerializer.Serialize(record, JsonOptions)).ConfigureAwait(false);
+                    await writer.FlushAsync(CancellationToken.None).ConfigureAwait(false);
+                    recordCount++;
+                }
+
+                await writer.FlushAsync(CancellationToken.None).ConfigureAwait(false);
+                await temporaryOutput.FlushAsync(CancellationToken.None).ConfigureAwait(false);
+            }
+
+            File.Move(temporaryOutputPath, fullOutputPath, overwrite: true);
+        }
+        catch {
+            TryDeleteFile(temporaryOutputPath);
+            throw;
         }
 
         Console.WriteLine($"records: {recordCount}");
@@ -296,6 +334,65 @@ internal static partial class Program {
         Console.WriteLine($"output: {outputPath}");
         Console.WriteLine($"callLogDir: {Path.GetFullPath(callLogDir)}");
         return runner.HadFailure ? 1 : 0;
+    }
+
+    private static void EnsurePathIsOutsideRepository(
+        string repositoryPath,
+        string candidatePath,
+        string optionName
+    ) {
+        string repositoryFullPath = Path.TrimEndingDirectorySeparator(Path.GetFullPath(repositoryPath));
+        string candidateFullPath = Path.TrimEndingDirectorySeparator(Path.GetFullPath(candidatePath));
+        StringComparison comparison = OperatingSystem.IsWindows()
+            ? StringComparison.OrdinalIgnoreCase
+            : StringComparison.Ordinal;
+        string repositoryPrefix = Path.EndsInDirectorySeparator(repositoryFullPath)
+            ? repositoryFullPath
+            : repositoryFullPath + Path.DirectorySeparatorChar;
+
+        if (
+            candidateFullPath.Equals(repositoryFullPath, comparison)
+            || candidateFullPath.StartsWith(repositoryPrefix, comparison)
+        ) {
+            throw new ArgumentException(
+                $"{optionName} must be outside the SessionJournal input repository."
+            );
+        }
+    }
+
+    private static (string Path, FileStream Stream) CreateTemporaryOutput(string fullOutputPath) {
+        string directory = Path.GetDirectoryName(fullOutputPath) ?? ".";
+        string fileName = Path.GetFileName(fullOutputPath);
+
+        while (true) {
+            string temporaryPath = Path.Combine(
+                directory,
+                $".{fileName}.{Guid.NewGuid():N}.tmp"
+            );
+            try {
+                return (
+                    temporaryPath,
+                    new FileStream(
+                        temporaryPath,
+                        FileMode.CreateNew,
+                        FileAccess.Write,
+                        FileShare.Read
+                    )
+                );
+            }
+            catch (IOException) when (File.Exists(temporaryPath)) {
+                // An extremely unlikely name collision; reserve another unique path.
+            }
+        }
+    }
+
+    private static void TryDeleteFile(string path) {
+        try {
+            File.Delete(path);
+        }
+        catch {
+            // Best-effort cleanup must not hide the original replay failure.
+        }
     }
 
     private static Dictionary<string, int> CountMessageKinds(IReadOnlyList<ChatSessionLegacyReplayEvent> events) {
