@@ -1,6 +1,6 @@
 # CS-5-lite 分片实施入口
 
-> 状态：Incremental Implementation / A–C Complete, D Ready
+> 状态：Incremental Implementation / A–D Complete, E Ready
 > 日期：2026-07-25
 > 父任务：[CS-5-lite: SessionJournal Derived Recap Store + RollingSummary Replay](../cs-5-lite-sessionjournal-derived-recap-store.md)
 
@@ -27,7 +27,7 @@ SessionJournal raw repo
 | B0 | [SessionJournal Memory Substrate 上移](cs-5-lite-B0-sessionjournal-memory-substrate.md) | SessionJournal-owned memory/maintainer substrate | A | 已实施 |
 | B | [Derived Recap Store 最小库](cs-5-lite-B-derived-recap-store.md) | 可写、可读、可重建 latest index 的 recap artifact store | A、B0 | 已实施 |
 | C | [RollingSummary Runner 输入源抽象](cs-5-lite-C-runner-input-abstraction-design.md) | legacy 与 SessionJournal 可共用的 replay step runner | A、B（复用 address codec，不读写 store） | 已实施；D handoff ready |
-| D | LLM 结果写入 Derived Recap Artifact | maintainer 成功后产生带 provenance 的 artifact | A、B、C | 待实施 |
+| D | [LLM 结果写入 Derived Recap Artifact](cs-5-lite-D-artifact-writing.md) | maintainer 成功后产生带 provenance 的 artifact | A、B、C | 已实施；E handoff ready |
 | E | CLI 与端到端验收 | 新命令、文档、回归测试/手工验收命令 | A、B、C、D | 待实施 |
 
 ## 已完成的细化设计
@@ -39,7 +39,7 @@ SessionJournal raw repo
 
 ## 总体实施顺序
 
-当前 A、B0、B、C 已实施；后续从 D 继续：
+当前 A、B0、B、C、D 已实施；后续从 E 继续：
 
 1. **A** 先解决 raw event 到 `IHistoryMessage` 的可追踪投影，避免 CLI 复制 reducer 语义。
 2. **B0** 把 memory substrate 的长期归属收到 `SessionJournal` 主干，避免 B/C/D 围绕旧
@@ -48,6 +48,21 @@ SessionJournal raw repo
 4. **C** 把现有 rolling summary runner 从 legacy event source 解耦。
 5. **D** 把 C 产生的成功维护结果写入 B。
 6. **E** 收 CLI、README、测试与一次真实 imported repo 验收。
+
+### D → E handoff
+
+- E 的 artifact-producing SessionJournal 命令必须显式组装
+  `SessionJournalRollingSummaryReplaySource + SessionJournalDerivedRecapWriter +
+  RollingSummaryReplayRunner`；source 单独使用时仍是无副作用 replay。
+- writer 在首次 LLM 调用前要求目标 lineage 为空。当前 runner 是 full replay + empty `MemoryPack`，
+  不能把已有 latest artifact 直接接成 previous。
+- SessionJournal source 与 concrete writer 必须指向同一 repo；D writer 用 derived-store exclusive
+  write lock 串行化 latest check + artifact/index commit，避免并发启动产生双 root lineage。
+- store 成功返回后 runner 才提交候选 `MemoryPack` 并移除 prefix；artifact operational failure 会输出
+  failed record，保留候选诊断信息但不推进状态。
+- replay record 的 `artifactId` / `artifactPath` / `anchorRawEvent` / `previousArtifact` 直接链接实际
+  artifact；legacy 或任一失败 record 的这些字段为 null。
+- E 只负责正式 CLI、帮助/README 与 smoke，不重新定义 anchor、lineage、fingerprint 或失败语义。
 
 ### C → D handoff
 

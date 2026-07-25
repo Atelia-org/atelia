@@ -40,7 +40,8 @@ internal sealed class RollingSummaryArtifactWriteException : Exception {
     }
 }
 
-internal sealed class SessionJournalDerivedRecapWriter : IRollingSummaryArtifactWriter {
+internal sealed class SessionJournalDerivedRecapWriter
+    : IRollingSummaryArtifactWriter, IRollingSummaryRepositoryBound {
     public const string Producer = "ChatSession.BacktestCli/replay-rolling-summary-session-journal";
     public const string FingerprintSchema = "atelia.chat-session.rolling-summary-producer-fingerprint.v1";
     public const string AddressedReplayAdapterVersion = "session-journal-addressed-replay-v1";
@@ -80,6 +81,7 @@ internal sealed class SessionJournalDerivedRecapWriter : IRollingSummaryArtifact
     }
 
     public string RequiredSourceKind => RollingSummaryReplaySourceKinds.SessionJournal;
+    public string RepositoryPath => _repoPath;
 
     public static SessionJournalDerivedRecapWriter Open(
         string sessionJournalRepoPath,
@@ -138,6 +140,7 @@ internal sealed class SessionJournalDerivedRecapWriter : IRollingSummaryArtifact
         ValidateCandidate(candidate);
         await _writeGate.WaitAsync(ct).ConfigureAwait(false);
         try {
+            await using FileStream storeWriteLock = await AcquireStoreWriteLockAsync(ct).ConfigureAwait(false);
             DerivedRecapArtifact? latest = await _store.TryReadLatestAsync(_lineageKey, ct).ConfigureAwait(false);
             string? expectedPreviousArtifact = _previous?.ArtifactId;
             if (!string.Equals(latest?.ArtifactId, expectedPreviousArtifact, StringComparison.Ordinal)) {
@@ -191,6 +194,50 @@ internal sealed class SessionJournalDerivedRecapWriter : IRollingSummaryArtifact
         finally {
             _writeGate.Release();
         }
+    }
+
+    private async ValueTask<FileStream> AcquireStoreWriteLockAsync(CancellationToken ct) {
+        string lockPath = Path.Combine(_store.StoreRoot, ".rolling-summary-writer.lock");
+        try {
+            Directory.CreateDirectory(_store.StoreRoot);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) {
+            throw new RollingSummaryArtifactWriteException(
+                $"Failed to prepare the derived recap store write lock '{lockPath}'.",
+                ex
+            );
+        }
+
+        IOException? lastContention = null;
+        const int maxAttempts = 400;
+        for (int attempt = 0; attempt < maxAttempts; attempt++) {
+            ct.ThrowIfCancellationRequested();
+            try {
+                return new FileStream(
+                    lockPath,
+                    FileMode.OpenOrCreate,
+                    FileAccess.ReadWrite,
+                    FileShare.None,
+                    bufferSize: 1,
+                    FileOptions.Asynchronous
+                );
+            }
+            catch (UnauthorizedAccessException ex) {
+                throw new RollingSummaryArtifactWriteException(
+                    $"Access was denied while acquiring the derived recap store write lock '{lockPath}'.",
+                    ex
+                );
+            }
+            catch (IOException ex) {
+                lastContention = ex;
+                await Task.Delay(TimeSpan.FromMilliseconds(25), ct).ConfigureAwait(false);
+            }
+        }
+
+        throw new RollingSummaryArtifactWriteException(
+            $"Timed out while acquiring the derived recap store write lock '{lockPath}'.",
+            lastContention ?? new IOException("The derived recap store write lock was unavailable.")
+        );
     }
 
     internal static string ComputeProducerFingerprint(

@@ -160,6 +160,234 @@ public sealed class RollingSummaryReplaySourceTests : IDisposable {
     }
 
     [Fact]
+    public async Task ArtifactWriter_SuccessWritesLinkedArtifactWithSnapshotProvenance() {
+        string repoPath = CreateSessionJournalWithGoverningPromptChange();
+        SessionHistoryReplaySnapshot replay = ReadHistoryReplay(repoPath);
+        SJ.SessionGoverningSetup governingSetup;
+        using (var engine = SJ.SessionJournalEngine.Open(repoPath)) {
+            governingSetup = engine.ResolveGoverningSetup(EventAddressTextCodec.Parse(replay.SourceRawHead));
+        }
+        var runner = CreateRunner(
+            SessionJournalRollingSummaryReplaySource.Open(repoPath),
+            artifactRepoPath: repoPath
+        );
+
+        var records = await RunAllAsync(runner);
+
+        var record = Assert.Single(records);
+        Assert.Equal("succeeded", record.Status);
+        Assert.NotNull(record.ArtifactId);
+        Assert.NotNull(record.ArtifactPath);
+        Assert.True(File.Exists(record.ArtifactPath));
+        Assert.Equal(record.SourceEndInclusive, record.AnchorRawEvent);
+        Assert.Null(record.PreviousArtifact);
+        Assert.NotEmpty(record.CallLogPaths);
+
+        var store = DerivedRecapStore.Open(repoPath);
+        var artifact = await store.TryReadArtifactAsync(record.ArtifactId);
+        Assert.NotNull(artifact);
+        Assert.Equal(DerivedRecapArtifactKinds.RollingSummary, artifact.ArtifactKind);
+        Assert.Equal(EventAddressTextCodec.Parse(record.SourceRawHead!), artifact.SourceRawHead);
+        Assert.Null(artifact.SourceStartExclusive);
+        Assert.Equal(EventAddressTextCodec.Parse(record.SourceEndInclusive!), artifact.SourceEndInclusive);
+        Assert.Equal(artifact.SourceEndInclusive, artifact.AnchorRawEvent);
+        Assert.Equal(governingSetup.RuntimeConfigSetupAddress, artifact.GoverningRuntimeConfigSetup);
+        Assert.Equal(governingSetup.SystemPromptSetupAddress, artifact.GoverningSystemPromptSetup);
+        Assert.Equal("rolling-summary", artifact.ProfileId);
+        Assert.Equal(record.Invocation, artifact.Invocation);
+        Assert.Equal(record.CallLogPaths, artifact.CallLogPaths);
+        Assert.True(artifact.MemoryPack.TryGetBlock(artifact.Target, out var targetBlock));
+        Assert.Equal("summary", targetBlock.Text);
+
+        SessionHistoryReplaySnapshot replayAfter = ReadHistoryReplay(repoPath);
+        Assert.Equal(replay.SourceRawHead, replayAfter.SourceRawHead);
+        Assert.Equal(replay.Messages, replayAfter.Messages);
+    }
+
+    [Fact]
+    public async Task ArtifactWriter_ConsecutiveEpochsBuildsRunLocalLineage() {
+        string repoPath = CreateSessionJournalWithTurns(3);
+        var runner = CreateRunner(
+            SessionJournalRollingSummaryReplaySource.Open(repoPath),
+            maxEpochs: 2,
+            artifactRepoPath: repoPath
+        );
+
+        var records = await RunAllAsync(runner);
+
+        Assert.Equal(2, records.Count);
+        var store = DerivedRecapStore.Open(repoPath);
+        var first = await store.TryReadArtifactAsync(records[0].ArtifactId!);
+        var second = await store.TryReadArtifactAsync(records[1].ArtifactId!);
+        Assert.NotNull(first);
+        Assert.NotNull(second);
+        Assert.Null(first.PreviousArtifact);
+        Assert.Null(first.SourceStartExclusive);
+        Assert.Empty(first.InputArtifacts);
+        Assert.Equal(first.ArtifactId, second.PreviousArtifact);
+        Assert.Equal(first.AnchorRawEvent, second.SourceStartExclusive);
+        Assert.Equal([first.ArtifactId], second.InputArtifacts);
+        Assert.Equal(first.ArtifactId, records[1].PreviousArtifact);
+        Assert.Equal(EventAddressTextCodec.Format(second.AnchorRawEvent), records[1].AnchorRawEvent);
+
+        var latest = await store.TryReadLatestAsync(first.LineageKey);
+        Assert.NotNull(latest);
+        Assert.Equal(second.ArtifactId, latest.ArtifactId);
+    }
+
+    [Fact]
+    public async Task ArtifactWriter_MaintainerFailureDoesNotWriteProducedArtifact() {
+        string repoPath = CreateSessionJournalWithTwoTurns();
+        var runner = CreateRunner(
+            SessionJournalRollingSummaryReplaySource.Open(repoPath),
+            new ThrowingCompletionClient(),
+            artifactRepoPath: repoPath
+        );
+
+        var records = await RunAllAsync(runner);
+
+        var record = Assert.Single(records);
+        Assert.Equal("failed", record.Status);
+        Assert.Null(record.ArtifactId);
+        Assert.Null(record.ArtifactPath);
+        Assert.Null(record.AnchorRawEvent);
+        Assert.Null(record.PreviousArtifact);
+        Assert.Equal(4, record.RemainingActiveMessageCount);
+        var store = DerivedRecapStore.Open(repoPath);
+        Assert.Empty(Directory.EnumerateFiles(store.ArtifactsDirectory, "*.json"));
+        var lineage = DerivedRecapLineageKey.Create(
+            DerivedRecapArtifactKinds.RollingSummary,
+            "rolling-summary",
+            new SJ.MemoryPackBlockPath(SJ.MemoryPackCarrier.Observation, "session.rolling-summary")
+        );
+        Assert.Null(await store.TryReadLatestAsync(lineage));
+    }
+
+    [Fact]
+    public async Task ArtifactWriter_OperationalFailureReportsCandidateWithoutCommittingPrefix() {
+        string repoPath = CreateSessionJournalWithTwoTurns();
+        var writer = new ThrowingArtifactWriter();
+        var runner = CreateRunner(
+            SessionJournalRollingSummaryReplaySource.Open(repoPath),
+            artifactWriter: writer
+        );
+
+        var records = await RunAllAsync(runner);
+
+        var record = Assert.Single(records);
+        Assert.True(runner.HadFailure);
+        Assert.Equal("failed", record.Status);
+        Assert.Equal(typeof(RollingSummaryArtifactWriteException).FullName, record.ExceptionType);
+        Assert.NotNull(record.NewBlock);
+        Assert.NotNull(record.Invocation);
+        Assert.NotEmpty(record.CallLogPaths);
+        Assert.Null(record.ArtifactId);
+        Assert.Null(record.ArtifactPath);
+        Assert.Null(record.AnchorRawEvent);
+        Assert.Null(record.PreviousArtifact);
+        Assert.Equal(4, record.RemainingActiveMessageCount);
+        Assert.Equal(1, writer.WriteCount);
+    }
+
+    [Fact]
+    public async Task ArtifactWriter_ExistingTargetLineageFailsBeforeCompletionCall() {
+        string repoPath = CreateSessionJournalWithTwoTurns();
+        var firstClient = new ScriptedCompletionClient("summary");
+        var firstRunner = CreateRunner(
+            SessionJournalRollingSummaryReplaySource.Open(repoPath),
+            firstClient,
+            artifactRepoPath: repoPath
+        );
+        _ = await RunAllAsync(firstRunner);
+        var secondClient = new ScriptedCompletionClient("summary");
+        var secondRunner = CreateRunner(
+            SessionJournalRollingSummaryReplaySource.Open(repoPath),
+            secondClient,
+            artifactRepoPath: repoPath
+        );
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => RunAllAsync(secondRunner));
+
+        Assert.Contains("empty", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(0, secondClient.CallCount);
+    }
+
+    [Fact]
+    public async Task ArtifactWriter_ConcurrentRootWritersAllowOnlyOneLineageCommit() {
+        string repoPath = CreateSessionJournalWithTwoTurns();
+        SessionHistoryReplaySnapshot replay = ReadHistoryReplay(repoPath);
+        EventAddress sourceRawHead = EventAddressTextCodec.Parse(replay.SourceRawHead);
+        var client = new ScriptedCompletionClient("summary");
+        CompletionConnectionConfig connection = CreateTestConnection();
+        ReplayMemoryMaintainerProfile profile = CreateTestProfile();
+        var firstWriter = SessionJournalDerivedRecapWriter.Open(repoPath, profile, client, connection);
+        var secondWriter = SessionJournalDerivedRecapWriter.Open(repoPath, profile, client, connection);
+        await firstWriter.PrepareAsync(sourceRawHead, CancellationToken.None);
+        await secondWriter.PrepareAsync(sourceRawHead, CancellationToken.None);
+        RollingSummaryArtifactCandidate firstCandidate = CreateArtifactCandidate(
+            profile,
+            EventAddressTextCodec.Parse(replay.Messages[1].SourceEndInclusive),
+            "summary-a"
+        );
+        RollingSummaryArtifactCandidate secondCandidate = CreateArtifactCandidate(
+            profile,
+            EventAddressTextCodec.Parse(replay.Messages[3].SourceEndInclusive),
+            "summary-b"
+        );
+
+        Task<RollingSummaryArtifactLink> firstTask = firstWriter
+            .WriteProducedAsync(firstCandidate, CancellationToken.None)
+            .AsTask();
+        Task<RollingSummaryArtifactLink> secondTask = secondWriter
+            .WriteProducedAsync(secondCandidate, CancellationToken.None)
+            .AsTask();
+        await Assert.ThrowsAnyAsync<Exception>(() => Task.WhenAll(firstTask, secondTask));
+
+        Task<RollingSummaryArtifactLink>[] tasks = [firstTask, secondTask];
+        _ = Assert.Single(tasks, static task => task.IsCompletedSuccessfully);
+        Task<RollingSummaryArtifactLink> failedTask = Assert.Single(tasks, static task => task.IsFaulted);
+        Assert.IsType<InvalidOperationException>(failedTask.Exception!.InnerException);
+        var store = DerivedRecapStore.Open(repoPath);
+        Assert.Single(Directory.EnumerateFiles(store.ArtifactsDirectory, "*.json"));
+    }
+
+    [Fact]
+    public void ArtifactWriter_DifferentRepositorySourceIsRejectedAtCompositionBoundary() {
+        string sourceRepoPath = CreateSessionJournalWithTwoTurns();
+        string writerRepoPath = CreateSessionJournalWithTwoTurns();
+        var client = new ScriptedCompletionClient("summary");
+        var writer = SessionJournalDerivedRecapWriter.Open(
+            writerRepoPath,
+            CreateTestProfile(),
+            client,
+            CreateTestConnection()
+        );
+
+        var ex = Assert.Throws<ArgumentException>(() => CreateRunner(
+            SessionJournalRollingSummaryReplaySource.Open(sourceRepoPath),
+            client,
+            artifactWriter: writer
+        ));
+
+        Assert.Contains("same SessionJournal repository", ex.Message, StringComparison.Ordinal);
+        Assert.Equal(0, client.CallCount);
+    }
+
+    [Fact]
+    public void ArtifactWriter_LegacySourceIsRejectedAtCompositionBoundary() {
+        var client = new ScriptedCompletionClient("summary");
+
+        var ex = Assert.Throws<ArgumentException>(() => CreateRunner(
+            new LegacyRollingSummaryReplaySource(CreateLegacyEventSource()),
+            client,
+            artifactWriter: new ThrowingArtifactWriter()
+        ));
+
+        Assert.Contains("requires source kind", ex.Message, StringComparison.Ordinal);
+        Assert.Equal(0, client.CallCount);
+    }
+
+    [Fact]
     public void ReplayMessage_RejectsPartialRawRange() {
         Assert.Throws<ArgumentException>(() => new RollingSummaryReplayMessage(
             new ObservationMessage("hello"),
@@ -266,31 +494,76 @@ public sealed class RollingSummaryReplaySourceTests : IDisposable {
     private RollingSummaryReplayRunner CreateRunner(
         IRollingSummaryReplaySource source,
         ICompletionClient? client = null,
-        int maxEpochs = 1
-    )
-        => new(
+        int maxEpochs = 1,
+        string? artifactRepoPath = null,
+        IRollingSummaryArtifactWriter? artifactWriter = null
+    ) {
+        client ??= new ScriptedCompletionClient("summary");
+        CompletionConnectionConfig connection = CreateTestConnection();
+        ReplayMemoryMaintainerProfile profile = CreateTestProfile();
+        if (artifactRepoPath is not null) {
+            if (artifactWriter is not null) {
+                throw new ArgumentException("Specify either an artifact repo path or an artifact writer, not both.");
+            }
+            artifactWriter = SessionJournalDerivedRecapWriter.Open(
+                artifactRepoPath,
+                profile,
+                client,
+                connection
+            );
+        }
+
+        return new RollingSummaryReplayRunner(
             source,
-            client ?? new ScriptedCompletionClient("summary"),
-            new CompletionConnectionConfig(
-                Id: "test",
-                Kind: "scripted",
-                ModelId: "model-a",
-                CompletionSurfaceId: "surface",
-                BaseAddress: "http://localhost"
-            ),
-            new ReplayMemoryMaintainerProfile(
-                "test",
-                new SJ.MemoryRewriteProfile(
-                    "rolling-summary",
-                    new SJ.MemoryPackBlockPath(SJ.MemoryPackCarrier.Observation, "session.rolling-summary"),
-                    "system prompt",
-                    "user prompt"
-                )
-            ),
+            client,
+            connection,
+            profile,
             Path.Combine(NewTempPath(), "calls"),
             thresholdTokens: 1,
-            maxEpochs
+            maxEpochs,
+            artifactWriter
         );
+    }
+
+    private static CompletionConnectionConfig CreateTestConnection()
+        => new(
+            Id: "test",
+            Kind: "scripted",
+            ModelId: "model-a",
+            CompletionSurfaceId: "surface",
+            BaseAddress: "http://localhost"
+        );
+
+    private static ReplayMemoryMaintainerProfile CreateTestProfile()
+        => new(
+            "test",
+            new SJ.MemoryRewriteProfile(
+                "rolling-summary",
+                new SJ.MemoryPackBlockPath(SJ.MemoryPackCarrier.Observation, "session.rolling-summary"),
+                "system prompt",
+                "user prompt"
+            )
+        );
+
+    private static RollingSummaryArtifactCandidate CreateArtifactCandidate(
+        ReplayMemoryMaintainerProfile profile,
+        EventAddress sourceEndInclusive,
+        string summary
+    ) {
+        var memoryPack = new SJ.MemoryPack();
+        memoryPack.Observation.Add(profile.Target.BlockKey, new SJ.MemoryPackBlock(summary));
+        return new RollingSummaryArtifactCandidate(
+            sourceEndInclusive,
+            memoryPack,
+            new SJ.MemoryBlockMaintenanceResult(
+                profile.MaintainerId,
+                profile.Target,
+                new SJ.MemoryPackBlock(summary),
+                new CompletionDescriptor("scripted", "openai-chat-v1", "model-a")
+            ),
+            []
+        );
+    }
 
     private static async Task<IReadOnlyList<RollingSummaryReplayRecord>> RunAllAsync(RollingSummaryReplayRunner runner) {
         var records = new List<RollingSummaryReplayRecord>();
@@ -349,6 +622,26 @@ public sealed class RollingSummaryReplaySourceTests : IDisposable {
             );
         }
 
+        return repoPath;
+    }
+
+    private string CreateSessionJournalWithGoverningPromptChange() {
+        string repoPath = NewTempPath();
+        using var engine = SJ.SessionJournalEngine.Create(
+            repoPath,
+            new SJ.SessionCreateOptions("model-a", "system-a", "surface")
+        );
+        engine.AppendObservation("hello 1");
+        engine.AppendAgentAction(
+            new ActionMessage([new ActionBlock.Text("answer 1")]),
+            new CompletionDescriptor("scripted", "openai-chat-v1", "model-a")
+        );
+        engine.AppendSystemPromptSetup("system-b");
+        engine.AppendObservation("hello 2");
+        engine.AppendAgentAction(
+            new ActionMessage([new ActionBlock.Text("answer 2")]),
+            new CompletionDescriptor("scripted", "openai-chat-v1", "model-a")
+        );
         return repoPath;
     }
 
@@ -429,6 +722,31 @@ public sealed class RollingSummaryReplaySourceTests : IDisposable {
             _ = observer;
             cancellationToken.ThrowIfCancellationRequested();
             throw new InvalidOperationException("scripted failure");
+        }
+    }
+
+    private sealed class ThrowingArtifactWriter : IRollingSummaryArtifactWriter {
+        public string RequiredSourceKind => RollingSummaryReplaySourceKinds.SessionJournal;
+
+        public int WriteCount { get; private set; }
+
+        public ValueTask PrepareAsync(EventAddress sourceRawHead, CancellationToken ct) {
+            _ = sourceRawHead;
+            ct.ThrowIfCancellationRequested();
+            return ValueTask.CompletedTask;
+        }
+
+        public ValueTask<RollingSummaryArtifactLink> WriteProducedAsync(
+            RollingSummaryArtifactCandidate candidate,
+            CancellationToken ct
+        ) {
+            _ = candidate;
+            ct.ThrowIfCancellationRequested();
+            WriteCount++;
+            throw new RollingSummaryArtifactWriteException(
+                "Scripted artifact write failure.",
+                new IOException("disk unavailable")
+            );
         }
     }
 

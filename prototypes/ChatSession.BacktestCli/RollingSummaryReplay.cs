@@ -14,6 +14,10 @@ internal interface IRollingSummaryReplaySource {
     IAsyncEnumerable<RollingSummaryReplayStep> ReadStepsAsync(CancellationToken ct);
 }
 
+internal interface IRollingSummaryRepositoryBound {
+    string RepositoryPath { get; }
+}
+
 internal sealed record RollingSummaryReplayMessage {
     public RollingSummaryReplayMessage(
         IHistoryMessage message,
@@ -117,13 +121,15 @@ internal sealed class LegacyRollingSummaryReplaySource : IRollingSummaryReplaySo
                 .ToArray());
 }
 
-internal sealed class SessionJournalRollingSummaryReplaySource : IRollingSummaryReplaySource {
+internal sealed class SessionJournalRollingSummaryReplaySource
+    : IRollingSummaryReplaySource, IRollingSummaryRepositoryBound {
     private readonly string _repoPath;
 
     private SessionJournalRollingSummaryReplaySource(string repoPath)
         => _repoPath = repoPath;
 
     public string SourceKind => RollingSummaryReplaySourceKinds.SessionJournal;
+    public string RepositoryPath => _repoPath;
 
     public static SessionJournalRollingSummaryReplaySource Open(string sessionJournalRepoPath) {
         if (string.IsNullOrWhiteSpace(sessionJournalRepoPath)) {
@@ -134,8 +140,11 @@ internal sealed class SessionJournalRollingSummaryReplaySource : IRollingSummary
     }
 
     public async IAsyncEnumerable<RollingSummaryReplayStep> ReadStepsAsync([System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct) {
-        using var engine = SJ.SessionJournalEngine.Open(_repoPath);
-        SJ.SessionHistoryReplay replay = engine.ReplayHistory(ct);
+        SJ.SessionHistoryReplay replay;
+        using (var engine = SJ.SessionJournalEngine.Open(_repoPath)) {
+            replay = engine.ReplayHistory(ct);
+        }
+
         foreach (SJ.AddressedSessionHistoryMessage addressed in replay.Messages) {
             ct.ThrowIfCancellationRequested();
             var cursor = new RollingSummaryReplaySourceCursor(
@@ -165,6 +174,7 @@ internal sealed class RollingSummaryReplayRunner {
     private readonly ICompletionClient _client;
     private readonly CompletionConnectionConfig _connection;
     private readonly ReplayMemoryMaintainerProfile _profile;
+    private readonly IRollingSummaryArtifactWriter? _artifactWriter;
     private readonly string _callLogDir;
     private readonly int _thresholdTokens;
     private readonly int _maxEpochs;
@@ -178,12 +188,30 @@ internal sealed class RollingSummaryReplayRunner {
         ReplayMemoryMaintainerProfile profile,
         string callLogDir,
         int thresholdTokens,
-        int maxEpochs
+        int maxEpochs,
+        IRollingSummaryArtifactWriter? artifactWriter = null
     ) {
         _source = source ?? throw new ArgumentNullException(nameof(source));
         _client = client ?? throw new ArgumentNullException(nameof(client));
         _connection = connection ?? throw new ArgumentNullException(nameof(connection));
         _profile = profile ?? throw new ArgumentNullException(nameof(profile));
+        if (artifactWriter is not null &&
+            !string.Equals(artifactWriter.RequiredSourceKind, source.SourceKind, StringComparison.Ordinal)) {
+            throw new ArgumentException(
+                $"Artifact writer requires source kind '{artifactWriter.RequiredSourceKind}', but replay source kind is '{source.SourceKind}'.",
+                nameof(artifactWriter)
+            );
+        }
+        if (artifactWriter is IRollingSummaryRepositoryBound repositoryBoundWriter) {
+            if (source is not IRollingSummaryRepositoryBound repositoryBoundSource ||
+                !PathsEqual(repositoryBoundSource.RepositoryPath, repositoryBoundWriter.RepositoryPath)) {
+                throw new ArgumentException(
+                    "Repository-bound replay source and artifact writer must target the same SessionJournal repository.",
+                    nameof(artifactWriter)
+                );
+            }
+        }
+        _artifactWriter = artifactWriter;
         _callLogDir = string.IsNullOrWhiteSpace(callLogDir) ? throw new ArgumentException("Call log directory cannot be empty.", nameof(callLogDir)) : callLogDir;
         _thresholdTokens = thresholdTokens;
         _maxEpochs = maxEpochs;
@@ -195,10 +223,17 @@ internal sealed class RollingSummaryReplayRunner {
         int epochIndex = 0;
         bool hasObservedSourceRawHead = false;
         EventAddress? expectedSourceRawHead = null;
+        bool artifactWriterPrepared = false;
 
         await foreach (var step in _source.ReadStepsAsync(ct).ConfigureAwait(false)) {
             ct.ThrowIfCancellationRequested();
             ValidateStepSource(step, ref hasObservedSourceRawHead, ref expectedSourceRawHead);
+            if (_artifactWriter is not null && !artifactWriterPrepared) {
+                EventAddress sourceRawHead = step.TriggerCursor.SourceRawHead
+                    ?? throw new InvalidDataException("Artifact-producing replay requires a source raw head.");
+                await _artifactWriter.PrepareAsync(sourceRawHead, ct).ConfigureAwait(false);
+                artifactWriterPrepared = true;
+            }
             if (step.ResetActiveHistory) { _activeHistory.Clear(); }
             if (step.AppendedEntries.Count > 0) { _activeHistory.AddRange(step.AppendedEntries); }
             if (!step.IsTriggerBoundary) { continue; }
@@ -248,10 +283,11 @@ internal sealed class RollingSummaryReplayRunner {
             );
 
             SJ.MemoryBlockMaintenanceResult? result = null;
+            SJ.MemoryMaintenanceBatchResult? batch = null;
             string? newBlockText = null;
             Exception? exception = null;
             try {
-                var batch = await SJ.MemoryMaintenanceOrchestrator.RunAsync(
+                batch = await SJ.MemoryMaintenanceOrchestrator.RunAsync(
                     _memoryPack,
                     recentHistory,
                     [maintainer],
@@ -259,20 +295,51 @@ internal sealed class RollingSummaryReplayRunner {
                 ).ConfigureAwait(false);
                 result = batch.Results[0];
                 newBlockText = result.NewBlock.Text;
-                _memoryPack = batch.UpdatedMemoryPack;
-                _activeHistory.RemoveRange(0, splitIndex);
             }
-            catch (Exception ex) when (ex is InvalidOperationException or SJ.SessionJournalTurnAbortedException or HttpRequestException or TaskCanceledException) {
+            catch (Exception ex) when (
+                ex is InvalidOperationException or SJ.SessionJournalTurnAbortedException or HttpRequestException ||
+                ex is TaskCanceledException && !ct.IsCancellationRequested
+            ) {
                 HadFailure = true;
                 exception = ex;
             }
 
-            int afterMaxCallId = RollingSummaryCallLogUtil.GetMaxCallId(_callLogDir);
-            var callLogPaths = RollingSummaryCallLogUtil.BuildCallLogPaths(
-                _callLogDir,
-                beforeMaxCallId,
-                afterMaxCallId
-            );
+            IReadOnlyList<string> callLogPaths = loggingClient.WrittenCallLogPaths;
+            if (callLogPaths.Count > 0) {
+                callLogPath = callLogPaths[0];
+            }
+
+            RollingSummaryArtifactLink? artifactLink = null;
+            if (exception is null && _artifactWriter is not null) {
+                if (step.TriggerCursor.SourceRawHead is null ||
+                    fragmentSourceStartInclusive is null ||
+                    fragmentSourceEndInclusive is not { } sourceEndInclusive) {
+                    throw new InvalidDataException(
+                        "Artifact-producing replay requires source raw head and an addressed fragment range."
+                    );
+                }
+
+                try {
+                    artifactLink = await _artifactWriter.WriteProducedAsync(
+                        new RollingSummaryArtifactCandidate(
+                            sourceEndInclusive,
+                            batch!.UpdatedMemoryPack,
+                            result!,
+                            callLogPaths
+                        ),
+                        ct
+                    ).ConfigureAwait(false);
+                }
+                catch (RollingSummaryArtifactWriteException ex) {
+                    HadFailure = true;
+                    exception = ex;
+                }
+            }
+
+            if (exception is null) {
+                _memoryPack = batch!.UpdatedMemoryPack;
+                _activeHistory.RemoveRange(0, splitIndex);
+            }
 
             yield return RollingSummaryReplayRecord.Create(
                 epochIndex,
@@ -289,7 +356,8 @@ internal sealed class RollingSummaryReplayRunner {
                 callLogPath,
                 callLogPaths,
                 result,
-                exception
+                exception,
+                artifactLink
             );
 
             epochIndex++;
@@ -341,6 +409,13 @@ internal sealed class RollingSummaryReplayRunner {
             fragmentEntries[^1].SourceEndInclusive
         );
     }
+
+    private static bool PathsEqual(string left, string right)
+        => string.Equals(
+            Path.GetFullPath(left),
+            Path.GetFullPath(right),
+            OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal
+        );
 }
 
 internal sealed record ReplayMemoryMaintainerProfile(
@@ -364,15 +439,6 @@ internal static class RollingSummaryCallLogUtil {
 
         return max;
     }
-
-    public static IReadOnlyList<string> BuildCallLogPaths(
-        string callLogDir,
-        int beforeMaxCallId,
-        int afterMaxCallId
-    ) => Enumerable.Range(
-        beforeMaxCallId + 1,
-        Math.Max(0, afterMaxCallId - beforeMaxCallId)
-    ).Select(id => Path.Combine(Path.GetFullPath(callLogDir), $"{id:0000}.json")).ToArray();
 }
 
 internal sealed record RollingSummaryReplayRecord(
@@ -398,6 +464,10 @@ internal sealed record RollingSummaryReplayRecord(
     MemoryBlockPreview? NewBlock,
     string CallLogPath,
     IReadOnlyList<string> CallLogPaths,
+    string? ArtifactId,
+    string? ArtifactPath,
+    string? AnchorRawEvent,
+    string? PreviousArtifact,
     string Status,
     string? ExceptionType,
     string? ExceptionMessage,
@@ -419,7 +489,8 @@ internal sealed record RollingSummaryReplayRecord(
         string callLogPath,
         IReadOnlyList<string> callLogPaths,
         SJ.MemoryBlockMaintenanceResult? result,
-        Exception? exception
+        Exception? exception,
+        RollingSummaryArtifactLink? artifactLink
     ) {
         return new(
             Schema: "atelia.chat-session.memory-maintainer-backtest.v2",
@@ -444,6 +515,10 @@ internal sealed record RollingSummaryReplayRecord(
             NewBlock: BacktestOutputUtil.CreateBlockPreview(newBlockText),
             CallLogPath: callLogPath,
             CallLogPaths: callLogPaths,
+            ArtifactId: artifactLink?.ArtifactId,
+            ArtifactPath: artifactLink?.ArtifactPath,
+            AnchorRawEvent: FormatAddress(artifactLink?.AnchorRawEvent),
+            PreviousArtifact: artifactLink?.PreviousArtifact,
             Status: exception is null ? "succeeded" : "failed",
             ExceptionType: exception?.GetType().FullName,
             ExceptionMessage: exception?.Message,
