@@ -1,6 +1,6 @@
 # SessionJournal Tail-only Execution Recovery Design
 
-> **状态**：Design Baseline / CS-3D0 已实施，CS-3D1 待实施
+> **状态**：Design Baseline / CS-3D0、CS-3D1 已实施，CS-3D2 待实施
 > **日期**：2026-07-26
 > **建议路线编号**：CS-3D
 > **前置实现**：CS-3A governing setup checkpoint、CS-3B dependency-closed tail context、
@@ -226,14 +226,16 @@ manual/legacy `ImportedAgentAction` 没有 manifest，因此新 schema 应携带
 
 ## 7. Tool execution sequence 必须先变成近头 durable fact
 
-当前 `ToolExecutionSequenceCheckpoint` 从 root 累计 `ToolResultObserved`，是通用 tail recovery 的主要
-长程阻塞点，而且“执行后才从结果计数”不能精确表达已 durable-started 但尚未 observed-result 的调用。
+CS-3D1 前，`ToolExecutionSequenceCheckpoint` 从 root 累计 `ToolResultObserved`，是通用 tail
+recovery 的主要长程阻塞点，而且“执行后才从结果计数”不能精确表达已 durable-started 但尚未
+observed-result 的调用。CS-3D1 已按下述协议消除这项长程状态。
 
-推荐协议：
+已实施协议：
 
 1. `CompletionRequestPrepared` 增加最小 `ExecutionCheckpoint`，至少保存
    `LastIssuedToolExecutionSequence`。
-2. `ImportedAgentAction` 同样携带 checkpoint，或要求 import 后追加专用 checkpoint。
+2. `AgentActionProduced` / `ImportedAgentAction` 统一携带 checkpoint；前者必须与 source Prepared
+   相等，后者必须与 append 前 reducer state 相等。
 3. 开始工具前先计算并 durable reserve `nextSequence = lastIssued + 1`。
 4. `tool-execution-started` 同时保存 `operationId` 与 `executionSequence`。
 5. 工具执行获得的 `ToolExecutionContext.ExecutionSequence` 必须等于已落盘的 reserved sequence；
@@ -242,12 +244,53 @@ manual/legacy `ImportedAgentAction` 没有 manifest，因此新 schema 应携带
 7. reopen 于 Started 时，reconcile/retry 使用同一 operation id 与 sequence；reopen 于 Result 后，下一次
    从该 sequence + 1 开始。
 
-这可能需要为 `ToolSession` 增加“执行已保留 sequence”的正式 API，而不是临时修改
-`AuthoritativeExecutionSequenceAllocator`。项目尚未发布，优先做干净的协议升级与 event schema golden
-更新，不保留长期兼容分支。
+`ToolSession.ExecuteReservedAsync(call, reservedSequence, ct)` 是 durable host 的唯一正式入口：
+宿主先提交 reservation，再把确切 sequence 交给 dispatcher。它允许等于当前 sequence，以支持 uncertain
+operation 用同一个 reservation 重试；拒绝小于当前 sequence；允许新进程从 0 直接采用较大的 durable
+checkpoint。旧 `AuthoritativeExecutionSequenceAllocator` 已删除，`Agent.Core` 作为
+`Completion.Tools` 的并列消费者也已迁移；SessionJournal 不依赖 Agent.Core。
 
 Prepared 每次 LLM 调用前都会出现，因此即使很多轮没有工具，最近 checkpoint 仍贴近 head；活跃工具段内
 Started/Result 自身继续推进 checkpoint。
+
+CS-3D1 的 wire 形状为：
+
+```text
+CompletionRequestPrepared.execution
+  { lastIssuedToolExecutionSequence }
+
+AgentActionProduced / ImportedAgentAction
+  execution { lastIssuedToolExecutionSequence }
+  toolRuntimeIdentity | null
+
+ToolExecutionStarted
+  operationId
+  executionSequence
+  toolRuntimeIdentity
+
+ToolResultObserved
+  executionSequence
+```
+
+`toolRuntimeIdentity` 是非 secret、set-level 的
+`{ hostId, implementationSetFingerprint, capabilitySetFingerprint }`。tool definitions 仍描述模型
+看见的接口；runtime identity 额外固定真正执行这些接口的实现集合与副作用 capability policy。非空 tool
+set 必须有 identity，空 tool set 必须在 manifest 中写 `null`。Action 有 tool calls 时继承 Prepared
+identity（import 则取当前显式 runtime identity），Started 再重复固定实际 dispatch identity。reducer 和
+driver 都要求三者精确相等。
+
+这是原型期的 breaking wire upgrade：codec 对新增字段采用 exact decode，不为旧 Action/Started/Result
+body 推断默认 checkpoint 或 runtime identity。已有实验 journal 必须重建或离线迁移；在线恢复路径不保留
+兼容分支，也不会为缺字段的旧历史回退到 root 猜测。
+
+checkpoint 在 Started 提交时推进，而不是等 Result：所以 Started 后崩溃、外部执行后但 Result 前崩溃，
+都恢复同一 `operationId + executionSequence`。Result 只重复并确认该 sequence；下一次 Started 必须严格
+等于 checkpoint + 1。
+
+显式 artifact-tail request preparation 目前用 `ResolveExecutionCheckpoint` 沿 Parent 做 header-first
+回溯，只解码最近的 Prepared/Action/Started/Result checkpoint；bootstrap 才走到 SessionCreated=0。
+这只是 D1 给现有 request path 的近头读取桥梁。通用 reopen 仍待 D2 用
+`SessionExecutionTailResolver` 替换 `Project()`，不要误报 D1 已完成 online tail-only driver。
 
 ## 8. Request Context：recap/artifact 是正常路径，不是异常优化
 
@@ -361,7 +404,7 @@ runtime identity 和 capability policy 通过后才能产生外部调用。
 
 ### CS-3D1：Durable execution checkpoint 与 reserved tool sequence
 
-> **状态**：下一实施切片
+> **状态**：已实施
 
 目标：移除 execution state 中唯一必须从 root 累计的字段。
 
@@ -376,6 +419,28 @@ runtime identity 和 capability policy 通过后才能产生外部调用。
 
 - Started 前、Started 后、外部执行后、Result 后崩溃都恢复同一 sequence/operation。
 - 后续工具严格单调递增，无 root scan。
+
+实现补充：
+
+- failpoint 覆盖 `AfterActionCommitted`、`AfterToolStartedCommitted`、
+  `AfterToolExecutionBeforeResultCommitted`、`AfterToolResultCommitted`；
+- canonical manifest/action/start/result codec 均严格校验新字段；
+- full reducer 仍作为 reference oracle，但 checkpoint 已改为读取 durable fact，不再按 Result 数量计数；
+- `SessionTailContextProjection` 的 suffix fold 同步校验 checkpoint、reserved sequence 与 runtime identity；
+- runtime identity 不匹配时，在 provider/tool dispatch 或新 Started 写入之前 fail-fast。
+
+关键文件：
+
+- `prototypes/Completion.Tools/ToolSession.cs`
+- `prototypes/Completion.Tools/ToolDispatch.cs`
+- `prototypes/SessionJournal/SessionJournalContracts.cs`
+- `prototypes/SessionJournal/SessionRequestManifestCodec.cs`
+- `prototypes/SessionJournal/SessionEventCodec.cs`
+- `prototypes/SessionJournal/SessionReducer.cs`
+- `prototypes/SessionJournal/SessionJournalEngine.cs`
+- `tests/Completion.Tests/Tools/ToolSessionTests.cs`
+- `tests/SessionJournal.Tests/SessionJournalEngineTests.cs`
+- `tests/SessionJournal.Tests/SessionExecutionRecoveryContractTests.cs`
 
 ### CS-3D2：`SessionExecutionTailResolver`
 
@@ -461,11 +526,11 @@ runtime identity 和 capability policy 通过后才能产生外部调用。
 
 ## 13. 下一次 Coding Session 的起点
 
-从 **CS-3D0** 开始，不要直接重写 `ResumeAsync()`：
+从 **CS-3D2** 开始，不要把 D1 的近头 checkpoint resolver 误当成完整 execution resolver：
 
-1. 先为当前 phase matrix 建立 read diagnostics 与 full reducer oracle。
-2. 具体设计 CS-3D1 的 event body/schema 和 `ToolSession` reserved-sequence API。
-3. 在 schema 评审通过后实现 D1，再实现纯读取 D2。
+1. 按 §6 phase matrix 实现纯读取 `SessionExecutionTailResolver`。
+2. 用 D0 full reducer oracle 做 differential tests，并证明读取量与冷前缀长度无关。
+3. D2 必须直接消费 D1 的 Prepared/Action/Started/Result checkpoint 与 tool runtime identity。
 4. D2 differential tests 稳定后，才让 D3 替换 online driver。
 
 这样能把“协议正确性”“tail resolver 正确性”“driver 外部副作用”分成可独立审阅的风险面。

@@ -104,7 +104,9 @@ public sealed class SessionCompletionAttemptRestartedTests {
                 SessionEventKind.AgentActionProduced,
                 new AgentActionProducedBody(
                     new ActionMessage([new ActionBlock.Text("done")]),
-                    new CompletionDescriptor("provider", "api", "runtime-model")
+                    new CompletionDescriptor("provider", "api", "runtime-model"),
+                    new SessionExecutionCheckpoint(0),
+                    ToolRuntimeIdentity: null
                 ),
                 action,
                 restart2
@@ -210,7 +212,9 @@ public sealed class SessionCompletionAttemptRestartedTests {
         object terminalBody = terminalKind switch {
             SessionEventKind.AgentActionProduced => new AgentActionProducedBody(
                 new ActionMessage([new ActionBlock.Text("done")]),
-                new CompletionDescriptor("provider", "api", "runtime-model")
+                new CompletionDescriptor("provider", "api", "runtime-model"),
+                new SessionExecutionCheckpoint(0),
+                ToolRuntimeIdentity: null
             ),
             SessionEventKind.CompletionAttemptFailed => new CompletionAttemptFailedBody(
                 "attempt-2",
@@ -324,6 +328,7 @@ public sealed class SessionCompletionAttemptRestartedTests {
         ImmutableArray<ToolDefinition> tools = ImmutableArray<ToolDefinition>.Empty;
         return new CompletionRequestPreparedBody(
             new SessionRequestAttempt(attemptId, correlationId, "observation", null),
+            new SessionExecutionCheckpoint(0),
             new SessionContextPlan(
                 SessionRequestManifestDefaults.FullRawSelectionPolicyId,
                 SessionRequestManifestDefaults.FullRawPlannerFingerprint,
@@ -344,7 +349,8 @@ public sealed class SessionCompletionAttemptRestartedTests {
             new SessionRequestToolSet(
                 SessionRequestManifestDefaults.ToolCodecId,
                 SessionRequestCanonicalizer.ComputeToolSetSha256(tools),
-                tools
+                tools,
+                RuntimeIdentity: null
             ),
             new SessionRequestRendering(
                 SessionRequestManifestDefaults.FullRawContextRendererId,

@@ -7,6 +7,11 @@ using Xunit;
 namespace Atelia.SessionJournal.Tests;
 
 public sealed class SessionExecutionRecoveryContractTests : IDisposable {
+    private static readonly SessionToolRuntimeIdentity ToolRuntimeIdentity = new(
+        "test-tool-host",
+        "test-tool-implementations-v1",
+        "test-tool-capabilities-v1"
+    );
     private readonly List<string> _tempDirectories = [];
 
     [Fact]
@@ -65,7 +70,9 @@ public sealed class SessionExecutionRecoveryContractTests : IDisposable {
                     new ActionBlock.ToolCall(call1),
                     new ActionBlock.ToolCall(call2)
                 ]),
-                Invocation()
+                Invocation(),
+                new SessionExecutionCheckpoint(0),
+                ToolRuntimeIdentity
             ),
             action,
             prepared
@@ -76,7 +83,9 @@ public sealed class SessionExecutionRecoveryContractTests : IDisposable {
                 call1.ToolCallId,
                 call1.ToolName,
                 call1.RawArgumentsJson,
-                "operation-1"
+                "operation-1",
+                1,
+                ToolRuntimeIdentity
             ),
             started1,
             action
@@ -86,6 +95,7 @@ public sealed class SessionExecutionRecoveryContractTests : IDisposable {
             new ToolResultObservedBody(
                 call1.ToolCallId,
                 call1.ToolName,
+                1,
                 ToolExecutionStatus.Success,
                 Array.Empty<ToolResultBlock>()
             ),
@@ -98,7 +108,9 @@ public sealed class SessionExecutionRecoveryContractTests : IDisposable {
                 call2.ToolCallId,
                 call2.ToolName,
                 call2.RawArgumentsJson,
-                "operation-2"
+                "operation-2",
+                2,
+                ToolRuntimeIdentity
             ),
             started2,
             result1
@@ -108,6 +120,7 @@ public sealed class SessionExecutionRecoveryContractTests : IDisposable {
             new ToolResultObservedBody(
                 call2.ToolCallId,
                 call2.ToolName,
+                2,
                 ToolExecutionStatus.Success,
                 Array.Empty<ToolResultBlock>()
             ),
@@ -116,7 +129,7 @@ public sealed class SessionExecutionRecoveryContractTests : IDisposable {
         );
         DecodedSessionEvent continuationPreparedEvent = Event(
             SessionEventKind.CompletionRequestPrepared,
-            PreparedBody("attempt-2", correlation, "tool-continuation", runtime, prompt),
+            PreparedBody("attempt-2", correlation, "tool-continuation", runtime, prompt, checkpoint: 2),
             continuationPrepared,
             result2
         );
@@ -177,7 +190,8 @@ public sealed class SessionExecutionRecoveryContractTests : IDisposable {
                     SessionExecutionPhase.AwaitingToolExecution,
                     SessionEventKind.AgentActionProduced,
                     PendingToolCall: call1,
-                    ActiveCorrelationId: correlation
+                    ActiveCorrelationId: correlation,
+                    PendingToolRuntimeIdentity: ToolRuntimeIdentity
                 )
             ),
             Scenario(
@@ -189,7 +203,9 @@ public sealed class SessionExecutionRecoveryContractTests : IDisposable {
                     PendingToolCall: call1,
                     PendingOperationId: "operation-1",
                     PendingToolExecutionStarted: true,
-                    ActiveCorrelationId: correlation
+                    ToolExecutionSequenceCheckpoint: 1,
+                    ActiveCorrelationId: correlation,
+                    PendingToolRuntimeIdentity: ToolRuntimeIdentity
                 )
             ),
             Scenario(
@@ -207,7 +223,8 @@ public sealed class SessionExecutionRecoveryContractTests : IDisposable {
                     SessionEventKind.ToolResultObserved,
                     PendingToolCall: call2,
                     ToolExecutionSequenceCheckpoint: 1,
-                    ActiveCorrelationId: correlation
+                    ActiveCorrelationId: correlation,
+                    PendingToolRuntimeIdentity: ToolRuntimeIdentity
                 )
             ),
             Scenario(
@@ -227,8 +244,9 @@ public sealed class SessionExecutionRecoveryContractTests : IDisposable {
                     PendingToolCall: call2,
                     PendingOperationId: "operation-2",
                     PendingToolExecutionStarted: true,
-                    ToolExecutionSequenceCheckpoint: 1,
-                    ActiveCorrelationId: correlation
+                    ToolExecutionSequenceCheckpoint: 2,
+                    ActiveCorrelationId: correlation,
+                    PendingToolRuntimeIdentity: ToolRuntimeIdentity
                 )
             ),
             Scenario(
@@ -328,7 +346,9 @@ public sealed class SessionExecutionRecoveryContractTests : IDisposable {
                         SessionEventKind.AgentActionProduced,
                         new AgentActionProducedBody(
                             new ActionMessage([new ActionBlock.Text("done")]),
-                            Invocation()
+                            Invocation(),
+                            new SessionExecutionCheckpoint(0),
+                            ToolRuntimeIdentity: null
                         ),
                         terminalAction,
                         prepared
@@ -348,7 +368,9 @@ public sealed class SessionExecutionRecoveryContractTests : IDisposable {
                         SessionEventKind.ImportedAgentAction,
                         new AgentActionProducedBody(
                             new ActionMessage([new ActionBlock.Text("imported")]),
-                            Invocation()
+                            Invocation(),
+                            new SessionExecutionCheckpoint(0),
+                            ToolRuntimeIdentity: null
                         ),
                         importedAction,
                         observation
@@ -369,7 +391,9 @@ public sealed class SessionExecutionRecoveryContractTests : IDisposable {
                         SessionEventKind.AgentActionProduced,
                         new AgentActionProducedBody(
                             new ActionMessage([new ActionBlock.Text("done")]),
-                            Invocation()
+                            Invocation(),
+                            new SessionExecutionCheckpoint(0),
+                            ToolRuntimeIdentity: null
                         ),
                         terminalAction,
                         prepared
@@ -508,7 +532,9 @@ public sealed class SessionExecutionRecoveryContractTests : IDisposable {
                 SessionEventKind.ImportedAgentAction,
                 new AgentActionProducedBody(
                     new ActionMessage([new ActionBlock.Text($"action-{i}")]),
-                    Invocation()
+                    Invocation(),
+                    new SessionExecutionCheckpoint(0),
+                    ToolRuntimeIdentity: null
                 )
             );
         }
@@ -533,11 +559,16 @@ public sealed class SessionExecutionRecoveryContractTests : IDisposable {
         string correlationId,
         string reason,
         EventAddress runtime,
-        EventAddress prompt
+        EventAddress prompt,
+        long checkpoint = 0
     ) {
-        ImmutableArray<ToolDefinition> tools = [];
+        ImmutableArray<ToolDefinition> tools = [
+            new ToolDefinition("alpha", "Alpha", new ToolSchema.Object()),
+            new ToolDefinition("beta", "Beta", new ToolSchema.Object())
+        ];
         return new CompletionRequestPreparedBody(
             new SessionRequestAttempt(attemptId, correlationId, reason, null),
+            new SessionExecutionCheckpoint(checkpoint),
             new SessionContextPlan(
                 SessionRequestManifestDefaults.FullRawSelectionPolicyId,
                 SessionRequestManifestDefaults.FullRawPlannerFingerprint,
@@ -558,7 +589,8 @@ public sealed class SessionExecutionRecoveryContractTests : IDisposable {
             new SessionRequestToolSet(
                 SessionRequestManifestDefaults.ToolCodecId,
                 SessionRequestCanonicalizer.ComputeToolSetSha256(tools),
-                tools
+                tools,
+                ToolRuntimeIdentity
             ),
             new SessionRequestRendering(
                 SessionRequestManifestDefaults.FullRawContextRendererId,

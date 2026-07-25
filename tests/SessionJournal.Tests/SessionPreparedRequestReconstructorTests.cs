@@ -6,6 +6,11 @@ using Xunit;
 namespace Atelia.SessionJournal.Tests;
 
 public sealed class SessionPreparedRequestReconstructorTests : IDisposable {
+    private static readonly SessionToolRuntimeIdentity ToolRuntimeIdentity = new(
+        "test-tool-host",
+        "test-tool-implementations-v1",
+        "test-tool-capabilities-v1"
+    );
     private readonly List<string> _tempDirectories = [];
 
     public void Dispose() {
@@ -211,14 +216,23 @@ public sealed class SessionPreparedRequestReconstructorTests : IDisposable {
             SessionEventKind.ImportedAgentAction,
             new AgentActionProducedBody(
                 action,
-                new CompletionDescriptor("import", "import-v1", "model-A")
+                new CompletionDescriptor("import", "import-v1", "model-A"),
+                new SessionExecutionCheckpoint(0),
+                ToolRuntimeIdentity
             )
         );
         EventAddress started = Commit(
             journal,
             actionAddress,
             SessionEventKind.ToolExecutionStarted,
-            new ToolExecutionStartedBody("call-1", "lookup", "{\"q\":\"x\"}", "operation-1")
+            new ToolExecutionStartedBody(
+                "call-1",
+                "lookup",
+                "{\"q\":\"x\"}",
+                "operation-1",
+                1,
+                ToolRuntimeIdentity
+            )
         );
         EventAddress result = Commit(
             journal,
@@ -227,6 +241,7 @@ public sealed class SessionPreparedRequestReconstructorTests : IDisposable {
             new ToolResultObservedBody(
                 "call-1",
                 "lookup",
+                1,
                 ToolExecutionStatus.Success,
                 [new ToolResultBlock.Text("found")]
             )
@@ -411,6 +426,7 @@ public sealed class SessionPreparedRequestReconstructorTests : IDisposable {
                 reason,
                 ReplacesAttemptId: null
             ),
+            new SessionExecutionCheckpoint(0),
             new SessionContextPlan(
                 selectionPolicyId,
                 isFullRaw
@@ -435,7 +451,10 @@ public sealed class SessionPreparedRequestReconstructorTests : IDisposable {
             new SessionRequestToolSet(
                 SessionRequestManifestDefaults.ToolCodecId,
                 SessionRequestCanonicalizer.ComputeToolSetSha256(tools),
-                tools
+                tools,
+                tools.IsEmpty
+                    ? null
+                    : ToolRuntimeIdentity
             ),
             new SessionRequestRendering(
                 isFullRaw

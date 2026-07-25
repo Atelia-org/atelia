@@ -20,10 +20,12 @@ internal static class SessionReducer {
         RawToolCall? pendingToolCall = null;
         string? pendingOperationId = null;
         bool pendingToolExecutionStarted = false;
+        SessionToolRuntimeIdentity? pendingToolRuntimeIdentity = null;
         long toolExecutionSequenceCheckpoint = 0;
         EventAddress? firstObservedToolResultAddress = null;
         EventAddress? lastObservedToolResultAddress = null;
         EventAddress? pendingRequestPreparedAddress = null;
+        CompletionRequestPreparedBody? pendingRequestManifest = null;
         EventAddress? activeCompletionAttemptAddress = null;
         string? pendingCompletionAttemptId = null;
         HashSet<string>? seenCompletionAttemptIds = null;
@@ -52,10 +54,12 @@ internal static class SessionReducer {
                     pendingToolCall = null;
                     pendingOperationId = null;
                     pendingToolExecutionStarted = false;
+                    pendingToolRuntimeIdentity = null;
                     firstObservedToolResultAddress = null;
                     lastObservedToolResultAddress = null;
                     toolExecutionSequenceCheckpoint = 0;
                     pendingRequestPreparedAddress = null;
+                    pendingRequestManifest = null;
                     activeCompletionAttemptAddress = null;
                     pendingCompletionAttemptId = null;
                     seenCompletionAttemptIds = null;
@@ -79,9 +83,11 @@ internal static class SessionReducer {
                     pendingToolCall = null;
                     pendingOperationId = null;
                     pendingToolExecutionStarted = false;
+                    pendingToolRuntimeIdentity = null;
                     firstObservedToolResultAddress = null;
                     lastObservedToolResultAddress = null;
                     pendingRequestPreparedAddress = null;
+                    pendingRequestManifest = null;
                     activeCompletionAttemptAddress = null;
                     pendingCompletionAttemptId = null;
                     seenCompletionAttemptIds = null;
@@ -115,7 +121,14 @@ internal static class SessionReducer {
                             $"{ev.Kind} at {ev.Address} must introduce the source attempt rather than replace another attempt."
                         );
                     }
+                    if (body.Execution.LastIssuedToolExecutionSequence != toolExecutionSequenceCheckpoint) {
+                        throw new InvalidDataException(
+                            $"{ev.Kind} at {ev.Address} checkpoint {body.Execution.LastIssuedToolExecutionSequence} "
+                            + $"does not match current last-issued sequence {toolExecutionSequenceCheckpoint}."
+                        );
+                    }
                     pendingRequestPreparedAddress = ev.Address;
+                    pendingRequestManifest = body;
                     activeCompletionAttemptAddress = ev.Address;
                     pendingCompletionAttemptId = body.Attempt.AttemptId;
                     seenCompletionAttemptIds = new HashSet<string>(StringComparer.Ordinal) {
@@ -175,6 +188,7 @@ internal static class SessionReducer {
                         throw new InvalidDataException($"{ev.Kind} at {ev.Address} does not match the active completion attempt.");
                     }
                     pendingRequestPreparedAddress = null;
+                    pendingRequestManifest = null;
                     activeCompletionAttemptAddress = null;
                     pendingCompletionAttemptId = null;
                     seenCompletionAttemptIds = null;
@@ -203,6 +217,28 @@ internal static class SessionReducer {
                     }
                     var body = RequireBody<AgentActionProducedBody>(ev);
                     ValidateActionToolCalls(ev, body.Action);
+                    if (body.Execution.LastIssuedToolExecutionSequence != toolExecutionSequenceCheckpoint) {
+                        throw new InvalidDataException(
+                            $"{ev.Kind} at {ev.Address} checkpoint {body.Execution.LastIssuedToolExecutionSequence} "
+                            + $"does not match current last-issued sequence {toolExecutionSequenceCheckpoint}."
+                        );
+                    }
+                    SessionToolRuntimeIdentity? expectedToolRuntimeIdentity =
+                        body.Action.ToolCalls.Count == 0
+                            ? null
+                            : isPreparedAction
+                                ? pendingRequestManifest?.ToolSet.RuntimeIdentity
+                                : body.ToolRuntimeIdentity;
+                    if (body.ToolRuntimeIdentity != expectedToolRuntimeIdentity) {
+                        throw new InvalidDataException(
+                            $"{ev.Kind} at {ev.Address} tool runtime identity does not match its durable request source."
+                        );
+                    }
+                    if (body.Action.ToolCalls.Count > 0 && body.ToolRuntimeIdentity is null) {
+                        throw new InvalidDataException(
+                            $"{ev.Kind} at {ev.Address} contains tool calls without a durable tool runtime identity."
+                        );
+                    }
                     context.Add(body.Action);
                     addressedMessages?.Add(new AddressedSessionHistoryMessage(body.Action, ev.Address, ev.Address));
                     openAction = body.Action.ToolCalls.Count == 0 ? null : body.Action;
@@ -210,14 +246,17 @@ internal static class SessionReducer {
                     pendingToolCall = body.Action.ToolCalls.FirstOrDefault();
                     pendingOperationId = null;
                     pendingToolExecutionStarted = false;
+                    pendingToolRuntimeIdentity = body.ToolRuntimeIdentity;
                     firstObservedToolResultAddress = null;
                     lastObservedToolResultAddress = null;
                     pendingRequestPreparedAddress = null;
+                    pendingRequestManifest = null;
                     activeCompletionAttemptAddress = null;
                     pendingCompletionAttemptId = null;
                     seenCompletionAttemptIds = null;
                     if (body.Action.ToolCalls.Count == 0) {
                         activeCorrelationId = null;
+                        pendingToolRuntimeIdentity = null;
                     }
                     break;
                 }
@@ -232,8 +271,22 @@ internal static class SessionReducer {
                         throw new InvalidDataException($"{ev.Kind} at {ev.Address} duplicates an already-started tool execution.");
                     }
                     EnsureMatchesPendingToolCall(ev, pendingToolCall, body.ToolCallId, body.ToolName, body.RawArgumentsJson);
+                    if (pendingToolRuntimeIdentity is null
+                        || body.ToolRuntimeIdentity != pendingToolRuntimeIdentity) {
+                        throw new InvalidDataException(
+                            $"{ev.Kind} at {ev.Address} tool runtime identity does not match the pending Action."
+                        );
+                    }
+                    long expectedExecutionSequence = checked(toolExecutionSequenceCheckpoint + 1);
+                    if (body.ExecutionSequence != expectedExecutionSequence) {
+                        throw new InvalidDataException(
+                            $"{ev.Kind} at {ev.Address} sequence {body.ExecutionSequence} "
+                            + $"must reserve next sequence {expectedExecutionSequence}."
+                        );
+                    }
                     pendingOperationId = body.OperationId;
                     pendingToolExecutionStarted = true;
+                    toolExecutionSequenceCheckpoint = body.ExecutionSequence;
                     break;
                 }
                 case SessionEventKind.ToolResultObserved: {
@@ -247,6 +300,12 @@ internal static class SessionReducer {
                         throw new InvalidDataException($"{ev.Kind} at {ev.Address} requires a preceding start for the current tool call.");
                     }
                     EnsureMatchesPendingToolCall(ev, pendingToolCall, body.ToolCallId, body.ToolName, rawArgumentsJson: null);
+                    if (body.ExecutionSequence != toolExecutionSequenceCheckpoint) {
+                        throw new InvalidDataException(
+                            $"{ev.Kind} at {ev.Address} sequence {body.ExecutionSequence} "
+                            + $"does not match the active reserved sequence {toolExecutionSequenceCheckpoint}."
+                        );
+                    }
                     if (observedResults.ContainsKey(body.ToolCallId)) {
                         throw new InvalidDataException($"{ev.Kind} at {ev.Address} duplicates result for tool call '{body.ToolCallId}'.");
                     }
@@ -257,7 +316,6 @@ internal static class SessionReducer {
                     lastObservedToolResultAddress = ev.Address;
                     pendingOperationId = null;
                     pendingToolExecutionStarted = false;
-                    toolExecutionSequenceCheckpoint++;
                     pendingToolCall = NextPendingToolCall(openAction!, observedResults);
                     if (pendingToolCall is null) {
                         ToolResultsMessage message = ProjectToolResults(openAction!, observedResults);
@@ -271,6 +329,7 @@ internal static class SessionReducer {
                         observedResults.Clear();
                         firstObservedToolResultAddress = null;
                         lastObservedToolResultAddress = null;
+                        pendingToolRuntimeIdentity = null;
                     }
                     break;
                 }
@@ -288,6 +347,7 @@ internal static class SessionReducer {
             pendingToolCall,
             pendingOperationId,
             pendingToolExecutionStarted,
+            pendingToolRuntimeIdentity,
             toolExecutionSequenceCheckpoint,
             pendingRequestPreparedAddress,
             activeCompletionAttemptAddress,
@@ -318,6 +378,7 @@ internal static class SessionReducer {
         RawToolCall? pendingToolCall,
         string? pendingOperationId,
         bool pendingToolExecutionStarted,
+        SessionToolRuntimeIdentity? pendingToolRuntimeIdentity,
         long toolExecutionSequenceCheckpoint,
         EventAddress? pendingRequestPreparedAddress,
         EventAddress? activeCompletionAttemptAddress,
@@ -353,13 +414,15 @@ internal static class SessionReducer {
                 SessionEventKind.AgentActionProduced,
                 openAction,
                 toolExecutionSequenceCheckpoint,
-                activeCorrelationId
+                activeCorrelationId,
+                pendingToolRuntimeIdentity
             ),
             SessionEventKind.ImportedAgentAction => DeriveActionState(
                 SessionEventKind.ImportedAgentAction,
                 openAction,
                 toolExecutionSequenceCheckpoint,
-                activeCorrelationId
+                activeCorrelationId,
+                pendingToolRuntimeIdentity
             ),
             SessionEventKind.ToolExecutionStarted => new SessionExecutionState(
                 SessionExecutionPhase.AwaitingToolExecution,
@@ -368,7 +431,8 @@ internal static class SessionReducer {
                 pendingOperationId,
                 pendingToolExecutionStarted,
                 toolExecutionSequenceCheckpoint,
-                ActiveCorrelationId: activeCorrelationId
+                ActiveCorrelationId: activeCorrelationId,
+                PendingToolRuntimeIdentity: pendingToolRuntimeIdentity
             ),
             SessionEventKind.ToolResultObserved when pendingToolCall is null => new SessionExecutionState(
                 SessionExecutionPhase.AwaitingAgentAction,
@@ -381,7 +445,8 @@ internal static class SessionReducer {
                 headKind,
                 pendingToolCall,
                 ToolExecutionSequenceCheckpoint: toolExecutionSequenceCheckpoint,
-                ActiveCorrelationId: activeCorrelationId
+                ActiveCorrelationId: activeCorrelationId,
+                PendingToolRuntimeIdentity: pendingToolRuntimeIdentity
             ),
             _ => throw new NotSupportedException($"Session event kind '{headKind}' is not implemented in Slice C execution reducer.")
         };
@@ -399,7 +464,8 @@ internal static class SessionReducer {
         SessionEventKind headKind,
         ActionMessage? action,
         long toolExecutionSequenceCheckpoint,
-        string? activeCorrelationId
+        string? activeCorrelationId,
+        SessionToolRuntimeIdentity? pendingToolRuntimeIdentity
     ) {
         if (action is null) {
             return new SessionExecutionState(SessionExecutionPhase.Idle, headKind, ToolExecutionSequenceCheckpoint: toolExecutionSequenceCheckpoint);
@@ -413,7 +479,8 @@ internal static class SessionReducer {
                 headKind,
                 pending,
                 ToolExecutionSequenceCheckpoint: toolExecutionSequenceCheckpoint,
-                ActiveCorrelationId: activeCorrelationId
+                ActiveCorrelationId: activeCorrelationId,
+                PendingToolRuntimeIdentity: pendingToolRuntimeIdentity
             );
     }
 

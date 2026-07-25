@@ -7,8 +7,6 @@ namespace Atelia.SessionJournal;
 
 public sealed class SessionJournalEngine : IDisposable {
     private const string UnsupportedTailToolCallReason = "atelia.host.unsupported-tool-call";
-    private const string RecoveryToolExecutionIdentityUnverifiedReason =
-        "atelia.host.recovery-tool-execution-identity-unverified";
     private const string InvalidCompletionInvocationReason =
         "atelia.host.invalid-completion-invocation";
 
@@ -264,7 +262,25 @@ public sealed class SessionJournalEngine : IDisposable {
                 "AppendImportedAgentAction requires an unprepared observation or settled tool-result completion boundary."
             );
         }
-        return Append(SessionEventKind.ImportedAgentAction, new AgentActionProducedBody(action, invocation));
+        SessionToolRuntimeIdentity? toolRuntimeIdentity = null;
+        if (action.ToolCalls.Count > 0) {
+            SessionRuntime runtime = RequireRuntime();
+            toolRuntimeIdentity = RequireToolRuntimeIdentity(
+                runtime,
+                runtime.ToolSession?.VisibleDefinitions ?? ImmutableArray<ToolDefinition>.Empty
+            );
+        }
+        return Append(
+            SessionEventKind.ImportedAgentAction,
+            new AgentActionProducedBody(
+                action,
+                invocation,
+                new SessionExecutionCheckpoint(
+                    projection.ExecutionState.ToolExecutionSequenceCheckpoint
+                ),
+                toolRuntimeIdentity
+            )
+        );
     }
 
     public SessionGoverningSetup ResolveGoverningSetup(EventAddress head, CancellationToken cancellationToken = default) {
@@ -523,6 +539,9 @@ public sealed class SessionJournalEngine : IDisposable {
             materialization,
             correlationId,
             reason,
+            new SessionExecutionCheckpoint(
+                projection.ExecutionState.ToolExecutionSequenceCheckpoint
+            ),
             allowResultToolCalls: true,
             observer,
             cancellationToken
@@ -591,6 +610,7 @@ public sealed class SessionJournalEngine : IDisposable {
             materialization,
             BuildCorrelationId(observationAddress),
             reason: "observation",
+            ResolveExecutionCheckpoint(observationAddress, cancellationToken),
             allowResultToolCalls: false,
             observer,
             cancellationToken
@@ -608,6 +628,7 @@ public sealed class SessionJournalEngine : IDisposable {
         RequestContextMaterialization materialization,
         string correlationId,
         string reason,
+        SessionExecutionCheckpoint executionCheckpoint,
         bool allowResultToolCalls,
         CompletionStreamObserver? observer,
         CancellationToken cancellationToken
@@ -622,6 +643,7 @@ public sealed class SessionJournalEngine : IDisposable {
             materialization,
             correlationId,
             reason,
+            executionCheckpoint,
             cancellationToken
         );
         EventAddress preparedAddress = AppendExpected(
@@ -636,9 +658,9 @@ public sealed class SessionJournalEngine : IDisposable {
             request,
             preparedAddress,
             manifest.Attempt.AttemptId,
+            manifest,
             runtime,
             allowResultToolCalls,
-            UnsupportedTailToolCallReason,
             observer,
             cancellationToken
         ).ConfigureAwait(false);
@@ -648,9 +670,9 @@ public sealed class SessionJournalEngine : IDisposable {
         CompletionRequest request,
         EventAddress activeAttemptAddress,
         string activeAttemptId,
+        CompletionRequestPreparedBody manifest,
         SessionRuntime runtime,
         bool allowResultToolCalls,
-        string disallowedToolCallReason,
         CompletionStreamObserver? observer,
         CancellationToken cancellationToken
     ) {
@@ -694,26 +716,33 @@ public sealed class SessionJournalEngine : IDisposable {
             );
         }
         if (!allowResultToolCalls && result.Message.ToolCalls.Count > 0) {
-            string detail = disallowedToolCallReason switch {
-                RecoveryToolExecutionIdentityUnverifiedReason =>
-                    "Recovered completion returned tool calls, but the prepared manifest did not durably pin tool implementation identity; recovery will not execute tools.",
-                _ =>
-                    "Provider returned tool calls for an explicit-artifact-tail request, but that policy supports no tools."
-            };
+            const string detail =
+                "Provider returned tool calls for a request whose durable policy supports no tools.";
             ThrowKnownHostFailure(
                 activeAttemptAddress,
                 activeAttemptId,
-                disallowedToolCallReason,
+                UnsupportedTailToolCallReason,
                 detail
             );
         }
         TriggerFailpoint(SessionJournalFailpoint.AfterCompletionBeforeActionCommitted);
         AppendExpected(
             SessionEventKind.AgentActionProduced,
-            new AgentActionProducedBody(result.Message, result.Invocation),
+            new AgentActionProducedBody(
+                result.Message,
+                result.Invocation,
+                manifest.Execution,
+                result.Message.ToolCalls.Count == 0
+                    ? null
+                    : manifest.ToolSet.RuntimeIdentity
+                        ?? throw new InvalidDataException(
+                            "A prepared result containing tool calls requires a durable tool runtime identity."
+                        )
+            ),
             activeAttemptAddress,
             requireBoundSetupCursor: false
         );
+        TriggerFailpoint(SessionJournalFailpoint.AfterActionCommitted);
         return result;
     }
 
@@ -798,11 +827,9 @@ public sealed class SessionJournalEngine : IDisposable {
             reconstruction.Request,
             restartedAddress,
             restartedAttemptId,
+            chain.SourceManifest,
             runtime,
-            false,
-            sourceAllowsToolCalls
-                ? RecoveryToolExecutionIdentityUnverifiedReason
-                : UnsupportedTailToolCallReason,
+            sourceAllowsToolCalls,
             observer,
             cancellationToken
         ).ConfigureAwait(false);
@@ -908,6 +935,9 @@ public sealed class SessionJournalEngine : IDisposable {
             );
         ImmutableArray<ToolDefinition> visibleTools =
             runtime.ToolSession?.VisibleDefinitions ?? ImmutableArray<ToolDefinition>.Empty;
+        SessionToolRuntimeIdentity? currentToolRuntimeIdentity = visibleTools.IsEmpty
+            ? null
+            : runtime.ToolRuntimeIdentity;
         if (completionTarget != manifest.Target.Connection
             || !string.Equals(
                 runtime.CompletionClient.Name,
@@ -923,7 +953,8 @@ public sealed class SessionJournalEngine : IDisposable {
                 SessionRequestCanonicalizer.ComputeToolSetSha256(visibleTools),
                 manifest.ToolSet.Sha256,
                 StringComparison.Ordinal
-            )) {
+            )
+            || currentToolRuntimeIdentity != manifest.ToolSet.RuntimeIdentity) {
             throw new InvalidOperationException(
                 "Current runtime dispatch identity or visible tool definitions do not exactly match the prepared manifest."
             );
@@ -938,17 +969,39 @@ public sealed class SessionJournalEngine : IDisposable {
         SessionRuntime runtime = RequireRuntime();
         ToolSession toolSession = RequireToolSession(runtime);
         if (projection.ExecutionState.PendingToolCall is null) { throw new InvalidDataException("AwaitingToolExecution requires a pending tool call."); }
+        SessionToolRuntimeIdentity expectedToolRuntimeIdentity =
+            projection.ExecutionState.PendingToolRuntimeIdentity
+                ?? throw new InvalidDataException(
+                    "AwaitingToolExecution requires a durable pending tool runtime identity."
+                );
+        if (runtime.ToolRuntimeIdentity != expectedToolRuntimeIdentity) {
+            throw new InvalidOperationException(
+                "Current tool runtime implementation/capability identity does not match the durable pending Action."
+            );
+        }
 
         RawToolCall toolCall = projection.ExecutionState.PendingToolCall;
+        long reservedExecutionSequence =
+            projection.ExecutionState.ToolExecutionSequenceCheckpoint;
         if (!projection.ExecutionState.PendingToolExecutionStarted) {
             string operationId = projection.ExecutionState.PendingOperationId ?? BuildOperationId(projection.Head, toolCall);
-            AppendToolExecutionStarted(toolCall, operationId);
+            reservedExecutionSequence = checked(reservedExecutionSequence + 1);
+            AppendToolExecutionStarted(
+                toolCall,
+                operationId,
+                reservedExecutionSequence,
+                expectedToolRuntimeIdentity
+            );
             TriggerFailpoint(SessionJournalFailpoint.AfterToolStartedCommitted);
         }
 
-        toolSession.RestoreExecutionSequence(projection.ExecutionState.ToolExecutionSequenceCheckpoint);
-        ToolCallExecutionResult executionResult = await toolSession.ExecuteAsync(toolCall, cancellationToken).ConfigureAwait(false);
-        AppendToolResultObserved(executionResult);
+        ToolCallExecutionResult executionResult = await toolSession.ExecuteReservedAsync(
+            toolCall,
+            reservedExecutionSequence,
+            cancellationToken
+        ).ConfigureAwait(false);
+        TriggerFailpoint(SessionJournalFailpoint.AfterToolExecutionBeforeResultCommitted);
+        AppendToolResultObserved(executionResult, reservedExecutionSequence);
         TriggerFailpoint(SessionJournalFailpoint.AfterToolResultCommitted);
 
         SessionProjection refreshed = Project(cancellationToken);
@@ -964,23 +1017,45 @@ public sealed class SessionJournalEngine : IDisposable {
         };
     }
 
-    private EventAddress AppendToolExecutionStarted(RawToolCall call, string operationId) {
+    private EventAddress AppendToolExecutionStarted(
+        RawToolCall call,
+        string operationId,
+        long executionSequence,
+        SessionToolRuntimeIdentity toolRuntimeIdentity
+    ) {
         ArgumentNullException.ThrowIfNull(call);
         ValidateRequired(call.ToolCallId, nameof(call.ToolCallId));
         ValidateRequired(call.ToolName, nameof(call.ToolName));
         ValidateRequired(call.RawArgumentsJson, nameof(call.RawArgumentsJson));
         ValidateRequired(operationId, nameof(operationId));
+        ArgumentNullException.ThrowIfNull(toolRuntimeIdentity);
         return Append(
             SessionEventKind.ToolExecutionStarted,
-            new ToolExecutionStartedBody(call.ToolCallId, call.ToolName, call.RawArgumentsJson, operationId)
+            new ToolExecutionStartedBody(
+                call.ToolCallId,
+                call.ToolName,
+                call.RawArgumentsJson,
+                operationId,
+                executionSequence,
+                toolRuntimeIdentity
+            )
         );
     }
 
-    private EventAddress AppendToolResultObserved(ToolCallExecutionResult result) {
+    private EventAddress AppendToolResultObserved(
+        ToolCallExecutionResult result,
+        long executionSequence
+    ) {
         ArgumentNullException.ThrowIfNull(result);
         return Append(
             SessionEventKind.ToolResultObserved,
-            new ToolResultObservedBody(result.ToolCallId, result.ToolName, result.ExecuteResult.Status, result.ExecuteResult.Blocks)
+            new ToolResultObservedBody(
+                result.ToolCallId,
+                result.ToolName,
+                executionSequence,
+                result.ExecuteResult.Status,
+                result.ExecuteResult.Blocks
+            )
         );
     }
 
@@ -1272,6 +1347,55 @@ public sealed class SessionJournalEngine : IDisposable {
         return (SessionEventKind)header.OpaqueEventKind;
     }
 
+    private SessionExecutionCheckpoint ResolveExecutionCheckpoint(
+        EventAddress head,
+        CancellationToken cancellationToken
+    ) {
+        EventAddress? cursor = head;
+        while (cursor is { } address) {
+            cancellationToken.ThrowIfCancellationRequested();
+            EventFrameHeader header = _reader.ReadEventHeaderPreview(address).Unwrap();
+            ValidateSessionHeaderPreview(address, header);
+            var kind = (SessionEventKind)header.OpaqueEventKind;
+            switch (kind) {
+                case SessionEventKind.SessionCreated:
+                    return new SessionExecutionCheckpoint(0);
+                case SessionEventKind.CompletionRequestPrepared:
+                case SessionEventKind.AgentActionProduced:
+                case SessionEventKind.ImportedAgentAction:
+                case SessionEventKind.ToolExecutionStarted:
+                case SessionEventKind.ToolResultObserved: {
+                    using EventFrame frame = _reader.ReadEvent(address).Unwrap();
+                    object body = SessionEventCodec.Decode(kind, frame.Payload, out _);
+                    return kind switch {
+                        SessionEventKind.CompletionRequestPrepared =>
+                            ((CompletionRequestPreparedBody)body).Execution,
+                        SessionEventKind.AgentActionProduced or SessionEventKind.ImportedAgentAction =>
+                            ((AgentActionProducedBody)body).Execution,
+                        SessionEventKind.ToolExecutionStarted =>
+                            new SessionExecutionCheckpoint(
+                                ((ToolExecutionStartedBody)body).ExecutionSequence
+                            ),
+                        SessionEventKind.ToolResultObserved =>
+                            new SessionExecutionCheckpoint(
+                                ((ToolResultObservedBody)body).ExecutionSequence
+                            ),
+                        _ => throw new InvalidOperationException(
+                            $"Unhandled execution checkpoint event kind '{kind}'."
+                        )
+                    };
+                }
+                default:
+                    cursor = header.Parent;
+                    break;
+            }
+        }
+
+        throw new InvalidDataException(
+            $"Execution checkpoint resolution from head '{head}' did not reach SessionCreated."
+        );
+    }
+
     private static ImmutableArray<ToolDefinition> RequireEmptyTailToolSet(SessionRuntime runtime) {
         ImmutableArray<ToolDefinition> tools =
             runtime.ToolSession?.VisibleDefinitions ?? ImmutableArray<ToolDefinition>.Empty;
@@ -1293,10 +1417,12 @@ public sealed class SessionJournalEngine : IDisposable {
         RequestContextMaterialization materialization,
         string correlationId,
         string reason,
+        SessionExecutionCheckpoint executionCheckpoint,
         CancellationToken cancellationToken
     ) {
         ValidateRequired(correlationId, nameof(correlationId));
         ValidateRequired(reason, nameof(reason));
+        ArgumentNullException.ThrowIfNull(executionCheckpoint);
         SessionRequestCommitment commitment = SessionRequestCanonicalizer.CreateCommitment(request);
         var manifest = new CompletionRequestPreparedBody(
             new SessionRequestAttempt(
@@ -1305,6 +1431,7 @@ public sealed class SessionJournalEngine : IDisposable {
                 reason,
                 ReplacesAttemptId: null
             ),
+            executionCheckpoint,
             new SessionContextPlan(
                 SelectionPolicyId: materialization.SelectionPolicyId,
                 PlannerFingerprint: materialization.PlannerFingerprint,
@@ -1325,7 +1452,8 @@ public sealed class SessionJournalEngine : IDisposable {
             new SessionRequestToolSet(
                 SessionRequestManifestDefaults.ToolCodecId,
                 SessionRequestCanonicalizer.ComputeToolSetSha256(tools),
-                tools
+                tools,
+                tools.IsEmpty ? null : RequireToolRuntimeIdentity(runtime, tools)
             ),
             new SessionRequestRendering(
                 ContextRendererId: materialization.ContextRendererId,
@@ -1581,6 +1709,21 @@ public sealed class SessionJournalEngine : IDisposable {
 
     private static ToolSession RequireToolSession(SessionRuntime runtime)
         => runtime.ToolSession ?? throw new InvalidOperationException("SessionJournal runtime requires a ToolSession for tool execution.");
+
+    private static SessionToolRuntimeIdentity RequireToolRuntimeIdentity(
+        SessionRuntime runtime,
+        ImmutableArray<ToolDefinition> visibleTools
+    ) {
+        if (visibleTools.IsEmpty) {
+            throw new InvalidOperationException(
+                "A tool-bearing request requires at least one visible tool definition."
+            );
+        }
+        return runtime.ToolRuntimeIdentity
+            ?? throw new InvalidOperationException(
+                "A tool-bearing SessionJournal runtime requires a non-secret ToolRuntimeIdentity."
+            );
+    }
 
     private void TriggerFailpoint(SessionJournalFailpoint failpoint) {
         if (_testHooks.Failpoint == failpoint) { throw new SessionJournalFailpointException(failpoint); }

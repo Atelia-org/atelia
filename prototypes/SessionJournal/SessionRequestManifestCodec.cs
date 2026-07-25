@@ -13,6 +13,7 @@ internal static class SessionRequestManifestCodec {
         using (var writer = new Utf8JsonWriter(buffer, SessionRequestCanonicalizer.WriterOptions)) {
             writer.WriteStartObject();
             WriteAttempt(writer, body.Attempt);
+            WriteExecution(writer, body.Execution);
             WritePlan(writer, body.Plan);
             WriteSetups(writer, body.Setups);
             WriteParameters(writer, body.Parameters);
@@ -30,6 +31,7 @@ internal static class SessionRequestManifestCodec {
             body,
             "completion-request-prepared body",
             "attempt",
+            "execution",
             "plan",
             "setups",
             "parameters",
@@ -40,6 +42,7 @@ internal static class SessionRequestManifestCodec {
         );
         var result = new CompletionRequestPreparedBody(
             ReadAttempt(ReadRequiredObject(body, "attempt")),
+            ReadExecution(ReadRequiredObject(body, "execution")),
             ReadPlan(ReadRequiredObject(body, "plan")),
             ReadSetups(ReadRequiredObject(body, "setups")),
             ReadParameters(ReadRequiredObject(body, "parameters")),
@@ -60,6 +63,12 @@ internal static class SessionRequestManifestCodec {
         if (body.Attempt.ReplacesAttemptId is not null) {
             throw new InvalidDataException(
                 "completion-request-prepared attempt.replacesAttemptId must be null; retries are represented by completion-attempt-restarted."
+            );
+        }
+        if (body.Execution.LastIssuedToolExecutionSequence < 0) {
+            throw new ArgumentOutOfRangeException(
+                nameof(body),
+                "execution.lastIssuedToolExecutionSequence cannot be negative."
             );
         }
 
@@ -98,6 +107,18 @@ internal static class SessionRequestManifestCodec {
         string actualToolHash = SessionRequestCanonicalizer.ComputeToolSetSha256(body.ToolSet.Definitions);
         if (!string.Equals(body.ToolSet.Sha256, actualToolHash, StringComparison.Ordinal)) {
             throw new InvalidDataException("toolSet.sha256 does not match the inline canonical tool definitions.");
+        }
+        if (body.ToolSet.Definitions.IsEmpty) {
+            if (body.ToolSet.RuntimeIdentity is not null) {
+                throw new InvalidDataException("An empty tool set must not pin a tool runtime identity.");
+            }
+        }
+        else {
+            ValidateToolRuntimeIdentity(
+                body.ToolSet.RuntimeIdentity
+                    ?? throw new InvalidDataException("A non-empty tool set requires a tool runtime identity."),
+                "toolSet.runtimeIdentity"
+            );
         }
 
         RequireText(body.Rendering.ContextRendererId, "rendering.contextRendererId");
@@ -241,6 +262,12 @@ internal static class SessionRequestManifestCodec {
         writer.WriteEndObject();
     }
 
+    private static void WriteExecution(Utf8JsonWriter writer, SessionExecutionCheckpoint value) {
+        writer.WriteStartObject("execution");
+        writer.WriteNumber("lastIssuedToolExecutionSequence", value.LastIssuedToolExecutionSequence);
+        writer.WriteEndObject();
+    }
+
     private static void WritePlan(Utf8JsonWriter writer, SessionContextPlan value) {
         writer.WriteStartObject("plan");
         writer.WriteString("selectionPolicyId", value.SelectionPolicyId);
@@ -307,6 +334,7 @@ internal static class SessionRequestManifestCodec {
         writer.WriteStartObject("toolSet");
         writer.WriteString("codecId", value.CodecId);
         writer.WriteString("sha256", value.Sha256);
+        WriteToolRuntimeIdentity(writer, "runtimeIdentity", value.RuntimeIdentity);
         writer.WriteStartArray("definitions");
         foreach (ToolDefinition definition in value.Definitions) {
             SessionRequestCanonicalizer.WriteToolDefinition(writer, definition);
@@ -354,6 +382,13 @@ internal static class SessionRequestManifestCodec {
             ReadRequiredString(element, "correlationId"),
             ReadRequiredString(element, "reason"),
             ReadNullableString(element, "replacesAttemptId")
+        );
+    }
+
+    private static SessionExecutionCheckpoint ReadExecution(JsonElement element) {
+        RequireExactProperties(element, "execution", "lastIssuedToolExecutionSequence");
+        return new SessionExecutionCheckpoint(
+            ReadRequiredInt64(element, "lastIssuedToolExecutionSequence")
         );
     }
 
@@ -458,13 +493,14 @@ internal static class SessionRequestManifestCodec {
     }
 
     private static SessionRequestToolSet ReadToolSet(JsonElement element) {
-        RequireExactProperties(element, "toolSet", "codecId", "sha256", "definitions");
+        RequireExactProperties(element, "toolSet", "codecId", "sha256", "runtimeIdentity", "definitions");
         return new(
             ReadRequiredString(element, "codecId"),
             ReadRequiredString(element, "sha256"),
             ReadArray(element, "definitions")
                 .Select(SessionRequestCanonicalizer.ReadToolDefinition)
-                .ToImmutableArray()
+                .ToImmutableArray(),
+            ReadToolRuntimeIdentity(element, "runtimeIdentity")
         );
     }
 
@@ -543,6 +579,50 @@ internal static class SessionRequestManifestCodec {
         RequireText(value.RequestAdapterFingerprint, "target.connection.requestAdapterFingerprint");
     }
 
+    private static void ValidateToolRuntimeIdentity(SessionToolRuntimeIdentity value, string path) {
+        ArgumentNullException.ThrowIfNull(value);
+        RequireText(value.HostId, $"{path}.hostId");
+        RequireText(value.ImplementationSetFingerprint, $"{path}.implementationSetFingerprint");
+        RequireText(value.CapabilitySetFingerprint, $"{path}.capabilitySetFingerprint");
+    }
+
+    private static void WriteToolRuntimeIdentity(
+        Utf8JsonWriter writer,
+        string propertyName,
+        SessionToolRuntimeIdentity? value
+    ) {
+        if (value is null) {
+            writer.WriteNull(propertyName);
+            return;
+        }
+
+        writer.WriteStartObject(propertyName);
+        writer.WriteString("hostId", value.HostId);
+        writer.WriteString("implementationSetFingerprint", value.ImplementationSetFingerprint);
+        writer.WriteString("capabilitySetFingerprint", value.CapabilitySetFingerprint);
+        writer.WriteEndObject();
+    }
+
+    private static SessionToolRuntimeIdentity? ReadToolRuntimeIdentity(
+        JsonElement element,
+        string propertyName
+    ) {
+        JsonElement property = ReadRequiredProperty(element, propertyName);
+        if (property.ValueKind == JsonValueKind.Null) { return null; }
+        RequireExactProperties(
+            property,
+            propertyName,
+            "hostId",
+            "implementationSetFingerprint",
+            "capabilitySetFingerprint"
+        );
+        return new SessionToolRuntimeIdentity(
+            ReadRequiredString(property, "hostId"),
+            ReadRequiredString(property, "implementationSetFingerprint"),
+            ReadRequiredString(property, "capabilitySetFingerprint")
+        );
+    }
+
     private static void RequireSha256(string value, string path) {
         if (value.Length != 64 || value.Any(static ch => !((ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'f')))) {
             throw new ArgumentException($"{path} must be a lowercase 64-character SHA-256 hex digest.", nameof(value));
@@ -613,6 +693,13 @@ internal static class SessionRequestManifestCodec {
         return property.ValueKind == JsonValueKind.Number && property.TryGetInt32(out int value)
             ? value
             : throw new InvalidDataException($"Required integer property '{propertyName}' is invalid.");
+    }
+
+    private static long ReadRequiredInt64(JsonElement element, string propertyName) {
+        JsonElement property = ReadRequiredProperty(element, propertyName);
+        return property.ValueKind == JsonValueKind.Number && property.TryGetInt64(out long value)
+            ? value
+            : throw new InvalidDataException($"Required long integer property '{propertyName}' is invalid.");
     }
 
     private static int? ReadNullableInt32(JsonElement element, string propertyName) {

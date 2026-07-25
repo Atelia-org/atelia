@@ -324,7 +324,9 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
             object body = forgedKind == SessionEventKind.AgentActionProduced
                 ? new AgentActionProducedBody(
                     new ActionMessage([new ActionBlock.Text("orphan action")]),
-                    new CompletionDescriptor("tail-client", "tail-api-v1", "model-A")
+                    new CompletionDescriptor("tail-client", "tail-api-v1", "model-A"),
+                    new SessionExecutionCheckpoint(0),
+                    ToolRuntimeIdentity: null
                 )
                 : new SessionCreatedBody();
             _ = Commit(journal, observation, forgedKind, body);
@@ -431,7 +433,16 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
         EventAddress finalAction;
         using (var engine = SessionJournalEngine.Create(
             path,
-            new SessionCreateOptions("model-A", "system-A", "surface-A")
+            new SessionCreateOptions("model-A", "system-A", "surface-A"),
+            new SessionRuntime(
+                new CapturingCompletionClient(_ => throw new InvalidOperationException("unused")),
+                new ToolRegistry([new NoopTool("lookup")]).CreateSession(),
+                ToolRuntimeIdentity: new SessionToolRuntimeIdentity(
+                    "test-tool-host",
+                    "test-tool-implementations-v1",
+                    "test-tool-capabilities-v1"
+                )
+            )
         )) {
             engine.AppendObservation("use tool");
             toolAction = engine.AppendImportedAgentAction(
@@ -446,7 +457,18 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
                 journal,
                 toolAction,
                 SessionEventKind.ToolExecutionStarted,
-                new ToolExecutionStartedBody("call-1", "lookup", "{}", "op-1")
+                new ToolExecutionStartedBody(
+                    "call-1",
+                    "lookup",
+                    "{}",
+                    "op-1",
+                    1,
+                    new SessionToolRuntimeIdentity(
+                        "test-tool-host",
+                        "test-tool-implementations-v1",
+                        "test-tool-capabilities-v1"
+                    )
+                )
             );
             toolResult = Commit(
                 journal,
@@ -455,6 +477,7 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
                 new ToolResultObservedBody(
                     "call-1",
                     "lookup",
+                    1,
                     ToolExecutionStatus.Success,
                     [new ToolResultBlock.Text("result")]
                 )
@@ -465,7 +488,9 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
                 SessionEventKind.ImportedAgentAction,
                 new AgentActionProducedBody(
                     new ActionMessage([new ActionBlock.Text("done")]),
-                    new CompletionDescriptor("import", "import-v1", "model-A")
+                    new CompletionDescriptor("import", "import-v1", "model-A"),
+                    new SessionExecutionCheckpoint(1),
+                    ToolRuntimeIdentity: null
                 )
             );
         }
@@ -581,9 +606,9 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
             TailProjection: null
         );
 
-    private sealed class NoopTool : ITool {
+    private sealed class NoopTool(string name = "noop") : ITool {
         public ToolDefinition Definition { get; } =
-            new("noop", "No-op tool.", new ToolSchema.Object());
+            new(name, "No-op tool.", new ToolSchema.Object());
 
         public ValueTask<ToolExecuteResult> ExecuteAsync(
             ToolExecutionContext context,

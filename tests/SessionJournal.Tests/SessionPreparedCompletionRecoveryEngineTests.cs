@@ -7,6 +7,11 @@ using Xunit;
 namespace Atelia.SessionJournal.Tests;
 
 public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
+    private static readonly SessionToolRuntimeIdentity ToolRuntimeIdentity = new(
+        "recovery-tool-host",
+        "recovery-tool-implementations-v1",
+        "recovery-tool-capabilities-v1"
+    );
     private static readonly SessionCompletionTargetIdentity DefaultTarget = new(
         "recovery-connection",
         "test",
@@ -495,7 +500,7 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
     }
 
     [Fact]
-    public async Task ResumeAsync_FullRawToolCall_FailsBeforeUnpinnedToolImplementationRuns() {
+    public async Task ResumeAsync_FullRawToolCall_RuntimeIdentityMismatchFailsBeforeProviderOrTool() {
         string path = NewJournalPath();
         var sourceTool = new RecordingTool("lookup");
         ToolSession sourceTools = new ToolRegistry([sourceTool]).CreateSession();
@@ -506,49 +511,31 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
         );
         var recoveryTool = new RecordingTool("lookup");
         ToolSession recoveryTools = new ToolRegistry([recoveryTool]).CreateSession();
-        client.Enqueue(request => new CompletionResult(
-            new ActionMessage([
-                new ActionBlock.ToolCall(new RawToolCall("lookup", "call-1", "{}"))
-            ]),
-            Descriptor(request)
-        ));
         using (var reopened = SessionJournalEngine.Open(
             path,
             CreateRuntime(
                 client,
                 recoveryTools,
-                recoveryPolicy: SessionPreparedCompletionRecoveryPolicy.RestartWithNewAttempt
+                recoveryPolicy: SessionPreparedCompletionRecoveryPolicy.RestartWithNewAttempt,
+                toolRuntimeIdentity: ToolRuntimeIdentity with {
+                    ImplementationSetFingerprint = "different-implementations-v2"
+                }
             )
         )) {
-            SessionJournalTurnAbortedException error =
-                await Assert.ThrowsAsync<SessionJournalTurnAbortedException>(
-                    () => reopened.ResumeAsync(CancellationToken.None)
-                );
-            Assert.Equal(
-                "atelia.host.recovery-tool-execution-identity-unverified",
-                error.Termination.ProviderReason
+            InvalidOperationException error = await Assert.ThrowsAsync<InvalidOperationException>(
+                () => reopened.ResumeAsync(CancellationToken.None)
             );
+            Assert.Contains("do not exactly match", error.Message, StringComparison.Ordinal);
             Assert.Equal(
-                SessionExecutionPhase.TurnFailed,
+                SessionExecutionPhase.AwaitingCompletion,
                 reopened.Project().ExecutionState.Phase
             );
         }
         Assert.Equal(0, sourceTool.Calls);
         Assert.Equal(0, recoveryTool.Calls);
-        Assert.Equal(1, client.Calls);
-        Assert.Single(ReadAddressesByKind(path, SessionEventKind.CompletionAttemptRestarted));
-        EventAddress failureAddress = Assert.Single(
-            ReadAddressesByKind(path, SessionEventKind.CompletionAttemptFailed)
-        );
-        CompletionAttemptFailedBody failure = ReadBody<CompletionAttemptFailedBody>(
-            path,
-            failureAddress,
-            SessionEventKind.CompletionAttemptFailed
-        );
-        Assert.Equal(
-            "atelia.host.recovery-tool-execution-identity-unverified",
-            failure.ProviderReason
-        );
+        Assert.Equal(0, client.Calls);
+        Assert.Empty(ReadAddressesByKind(path, SessionEventKind.CompletionAttemptRestarted));
+        Assert.Empty(ReadAddressesByKind(path, SessionEventKind.CompletionAttemptFailed));
         Assert.Empty(ReadAddressesByKind(path, SessionEventKind.ToolExecutionStarted));
         Assert.Empty(ReadAddressesByKind(path, SessionEventKind.ToolResultObserved));
     }
@@ -576,14 +563,16 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
         SessionPreparedCompletionRecoveryPolicy recoveryPolicy =
             SessionPreparedCompletionRecoveryPolicy.RefuseUncertain,
         SessionTailProjectionOptions? tailProjection = null,
-        int? maxTokens = 256
+        int? maxTokens = 256,
+        SessionToolRuntimeIdentity? toolRuntimeIdentity = null
     ) => new(
         CompletionClient: client,
         ToolSession: tools,
         CompletionTarget: target ?? DefaultTarget,
         MaxTokens: maxTokens,
         TailProjection: tailProjection,
-        PreparedCompletionRecoveryPolicy: recoveryPolicy
+        PreparedCompletionRecoveryPolicy: recoveryPolicy,
+        ToolRuntimeIdentity: toolRuntimeIdentity ?? ToolRuntimeIdentity
     );
 
     private static CompletionResult Success(CompletionRequest request, string text)

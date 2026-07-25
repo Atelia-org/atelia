@@ -53,6 +53,17 @@ public sealed record SessionCompletionTargetIdentity(
     string RequestAdapterFingerprint
 );
 
+/// <summary>
+/// Non-secret identity of the concrete tool host selected for durable dispatch.
+/// Definitions describe what the model sees; this identity additionally pins which
+/// implementation set and side-effect capability policy will execute those calls.
+/// </summary>
+public sealed record SessionToolRuntimeIdentity(
+    string HostId,
+    string ImplementationSetFingerprint,
+    string CapabilitySetFingerprint
+);
+
 public enum SessionPreparedCompletionRecoveryPolicy {
     RefuseUncertain,
     RestartWithNewAttempt,
@@ -65,7 +76,8 @@ public sealed record SessionRuntime(
     int? MaxTokens = null,
     SessionTailProjectionOptions? TailProjection = null,
     SessionPreparedCompletionRecoveryPolicy PreparedCompletionRecoveryPolicy =
-        SessionPreparedCompletionRecoveryPolicy.RefuseUncertain
+        SessionPreparedCompletionRecoveryPolicy.RefuseUncertain,
+    SessionToolRuntimeIdentity? ToolRuntimeIdentity = null
 );
 
 public sealed record SessionTailProjectionOptions(string ArtifactId) {
@@ -108,7 +120,9 @@ internal enum SessionJournalFailpoint {
     AfterRequestPreparedCommitted,
     AfterCompletionAttemptRestartedCommitted,
     AfterCompletionBeforeActionCommitted,
+    AfterActionCommitted,
     AfterToolStartedCommitted,
+    AfterToolExecutionBeforeResultCommitted,
     AfterToolResultCommitted
 }
 
@@ -138,7 +152,8 @@ public sealed record SessionExecutionState(
     EventAddress? PendingRequestPreparedAddress = null,
     string? PendingCompletionAttemptId = null,
     string? ActiveCorrelationId = null,
-    EventAddress? ActiveCompletionAttemptAddress = null
+    EventAddress? ActiveCompletionAttemptAddress = null,
+    SessionToolRuntimeIdentity? PendingToolRuntimeIdentity = null
 );
 
 public sealed record SessionProjection(
@@ -183,25 +198,31 @@ internal sealed record ObservationAcceptedBody(string Content);
 
 internal sealed record AgentActionProducedBody(
     ActionMessage Action,
-    CompletionDescriptor Invocation
+    CompletionDescriptor Invocation,
+    SessionExecutionCheckpoint Execution,
+    SessionToolRuntimeIdentity? ToolRuntimeIdentity
 );
 
 internal sealed record ToolExecutionStartedBody(
     string ToolCallId,
     string ToolName,
     string RawArgumentsJson,
-    string OperationId
+    string OperationId,
+    long ExecutionSequence,
+    SessionToolRuntimeIdentity ToolRuntimeIdentity
 );
 
 internal sealed record ToolResultObservedBody(
     string ToolCallId,
     string ToolName,
+    long ExecutionSequence,
     ToolExecutionStatus Status,
     IReadOnlyList<ToolResultBlock> Blocks
 );
 
 internal sealed record CompletionRequestPreparedBody(
     SessionRequestAttempt Attempt,
+    SessionExecutionCheckpoint Execution,
     SessionContextPlan Plan,
     SessionGoverningSetupReferences Setups,
     SessionRequestParameters Parameters,

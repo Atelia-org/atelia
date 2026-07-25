@@ -69,12 +69,21 @@ internal sealed record SessionRequestParameters(
 );
 
 /// <summary>
+/// Minimal operational checkpoint needed to allocate the next durable tool execution
+/// sequence without replaying the raw prefix.
+/// </summary>
+internal sealed record SessionExecutionCheckpoint(
+    long LastIssuedToolExecutionSequence
+);
+
+/// <summary>
 /// Complete inline tool-definition snapshot. There is no durable tool catalog in v1.
 /// </summary>
 internal sealed record SessionRequestToolSet(
     string CodecId,
     string Sha256,
-    ImmutableArray<ToolDefinition> Definitions
+    ImmutableArray<ToolDefinition> Definitions,
+    SessionToolRuntimeIdentity? RuntimeIdentity
 );
 
 internal sealed record SessionRequestRendering(

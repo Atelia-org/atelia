@@ -148,12 +148,12 @@ body **禁止**复述 EventJournal header 已有的字段（`EventFrameHeader.cs
 | 2 | `system-prompt-setup` | content（从此位置起生效的完整 system prompt snapshot） |
 | 3 | `session-created` | 空 body；初始化完成 marker |
 | 4 | `observation-accepted` | content（外部输入文本；未来可扩展块） |
-| 5 | `agent-action-produced` | **raw（未消毒）** `ActionMessage`（adapter-normalized，含 ReasoningBlock；复用 `ActionMessageSerialization`）、invocation 摘要 |
-| 6 | `tool-execution-started` | toolCallId, toolName, rawArgumentsJson, operationId |
-| 7 | `tool-result-observed` | toolCallId, status, blocks |
-| 8 | `completion-request-prepared` | attempt、minimal ContextPlan、governing setup refs、request parameters、inline tool set、renderer/target identity、canonical request commitment |
+| 5 | `agent-action-produced` | **raw（未消毒）** `ActionMessage`、invocation 摘要、execution checkpoint；有 tool calls 时固定 tool runtime identity |
+| 6 | `tool-execution-started` | toolCallId, toolName, rawArgumentsJson, operationId, reserved executionSequence, tool runtime identity |
+| 7 | `tool-result-observed` | toolCallId, executionSequence, status, blocks |
+| 8 | `completion-request-prepared` | attempt、execution checkpoint、minimal ContextPlan、governing setup refs、request parameters、inline tool set + runtime identity、renderer/target identity、canonical request commitment |
 | 9 | `completion-attempt-failed` | attemptId、明确的 Incomplete/Failed 或 host-known rejection、reason、detail、errors |
-| 10 | `imported-agent-action` | legacy/manual import 的 Action + invocation；durably 区别于 live completion Action |
+| 10 | `imported-agent-action` | legacy/manual import 的 Action + invocation + execution checkpoint；有 tool calls 时固定当前 runtime identity |
 | 11 | `completion-attempt-restarted` | 新 attemptId、replacesAttemptId、sourcePreparedAddress |
 
 `turn` 完成是**隐式判定**（Action 无 tool call、或最近 Action 的全部 tool call 均已结算），不落独立事件——它可由 replay 确定性推出，属派生状态而非 raw fact。MVP 将
@@ -162,8 +162,8 @@ body **禁止**复述 EventJournal header 已有的字段（`EventFrameHeader.cs
 kind 9 只表达 completion attempt 的 **known non-success outcome**：包括 provider 明确返回的 non-success，
 以及 host 收到 response 后依据已提交 request policy 作出的确定性拒绝；它不冒充通用 turn/tool failure。
 host reason 使用 `atelia.host.*` 保留命名空间，当前定义
-`atelia.host.unsupported-tool-call`、`atelia.host.invalid-completion-invocation` 与
-`atelia.host.recovery-tool-execution-identity-unverified`。
+`atelia.host.unsupported-tool-call` 与 `atelia.host.invalid-completion-invocation`。tool runtime identity
+不匹配发生在外部调用前，直接 fail-fast 且不伪造 provider/host-known completion outcome。
 
 kind 8 的 frame `Header.Parent` 是 plan based-on raw head / raw end 的唯一真源，body 不复述 Parent。
 kind 11 不复制 manifest：其 `Header.Parent` 指向前一个 active attempt，body 的

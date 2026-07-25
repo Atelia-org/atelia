@@ -627,9 +627,10 @@ canonical request。execution resolver 本身不读取 artifact 文本。
 [SessionJournal Tail-only Execution Recovery Design](../SessionJournal/tail-execution-recovery-design.md)。
 
 > 2026-07-26 进度：CS-3D0 已增加统一的 SessionJournal logical-read diagnostics 与 full reducer
-> reference-oracle phase matrix。实测 baseline 明确区分了 Idle 通用恢复的 O(全历史) payload reads，
-> 以及 Prepared refusal 的近头固定读取；本切片不改 event schema、phase 语义或 driver 分流。下一步
-> CS-3D1 将把 tool execution sequence 与 runtime identity 变成近头 durable facts。
+> reference-oracle phase matrix；CS-3D1 已把 last-issued tool sequence、reserved Started/Result
+> sequence 与 implementation/capability runtime identity 变成 Prepared/Action/tool tail 中的 durable
+> facts，并用 `ToolSession.ExecuteReservedAsync` 保证外部工具收到已落盘的确切 sequence。下一步 CS-3D2
+> 实现纯读取 `SessionExecutionTailResolver`，用这些近头事实替代 online `Project()`。
 
 ### CS-4：可恢复 Tool Loop
 

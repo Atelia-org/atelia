@@ -42,7 +42,11 @@ internal static class SessionEventCodec {
         if (!root.TryGetProperty("body", out JsonElement body)) {
             throw new InvalidDataException("Session event envelope is missing required property 'body'.");
         }
-        if (kind is SessionEventKind.CompletionRequestPrepared
+        if (kind is SessionEventKind.AgentActionProduced
+            or SessionEventKind.ImportedAgentAction
+            or SessionEventKind.ToolExecutionStarted
+            or SessionEventKind.ToolResultObserved
+            or SessionEventKind.CompletionRequestPrepared
             or SessionEventKind.CompletionAttemptFailed
             or SessionEventKind.CompletionAttemptRestarted) {
             RequireExactProperties(root, $"{kind} envelope", "v", "body");
@@ -134,6 +138,24 @@ internal static class SessionEventCodec {
         ArgumentNullException.ThrowIfNull(body);
         ArgumentNullException.ThrowIfNull(body.Action);
         ArgumentNullException.ThrowIfNull(body.Invocation);
+        ValidateExecutionCheckpoint(body.Execution, "agent-action-produced execution");
+        if (body.Action.ToolCalls.Count == 0) {
+            if (body.ToolRuntimeIdentity is not null) {
+                throw new ArgumentException(
+                    "A terminal agent action must not pin a tool runtime identity.",
+                    nameof(body)
+                );
+            }
+        }
+        else {
+            ValidateToolRuntimeIdentity(
+                body.ToolRuntimeIdentity
+                    ?? throw new ArgumentException(
+                        "An agent action containing tool calls requires a tool runtime identity.",
+                        nameof(body)
+                    )
+            );
+        }
 
         var blocks = ActionMessageSerialization.ToSerializedBlocks(body.Action.Blocks);
         var buffer = new ArrayBufferWriter<byte>();
@@ -150,6 +172,8 @@ internal static class SessionEventCodec {
             writer.WriteString("apiSpecId", body.Invocation.ApiSpecId);
             writer.WriteString("model", body.Invocation.Model);
             writer.WriteEndObject();
+            WriteExecutionCheckpoint(writer, "execution", body.Execution);
+            WriteToolRuntimeIdentity(writer, "toolRuntimeIdentity", body.ToolRuntimeIdentity);
             writer.WriteEndObject();
             writer.WriteEndObject();
         }
@@ -163,6 +187,8 @@ internal static class SessionEventCodec {
         ValidateRequired(body.ToolName, nameof(body.ToolName));
         ValidateRequired(body.RawArgumentsJson, nameof(body.RawArgumentsJson));
         ValidateRequired(body.OperationId, nameof(body.OperationId));
+        ValidateExecutionSequence(body.ExecutionSequence, nameof(body.ExecutionSequence));
+        ValidateToolRuntimeIdentity(body.ToolRuntimeIdentity);
 
         var buffer = new ArrayBufferWriter<byte>();
         using (var writer = new Utf8JsonWriter(buffer, WriterOptions)) {
@@ -172,6 +198,8 @@ internal static class SessionEventCodec {
             writer.WriteString("toolName", body.ToolName);
             writer.WriteString("rawArgumentsJson", body.RawArgumentsJson);
             writer.WriteString("operationId", body.OperationId);
+            writer.WriteNumber("executionSequence", body.ExecutionSequence);
+            WriteToolRuntimeIdentity(writer, "toolRuntimeIdentity", body.ToolRuntimeIdentity);
             writer.WriteEndObject();
             writer.WriteEndObject();
         }
@@ -183,6 +211,7 @@ internal static class SessionEventCodec {
         ArgumentNullException.ThrowIfNull(body);
         ValidateRequired(body.ToolCallId, nameof(body.ToolCallId));
         ValidateRequired(body.ToolName, nameof(body.ToolName));
+        ValidateExecutionSequence(body.ExecutionSequence, nameof(body.ExecutionSequence));
         ArgumentNullException.ThrowIfNull(body.Blocks);
 
         var buffer = new ArrayBufferWriter<byte>();
@@ -191,6 +220,7 @@ internal static class SessionEventCodec {
             writer.WriteStartObject("body");
             writer.WriteString("toolCallId", body.ToolCallId);
             writer.WriteString("toolName", body.ToolName);
+            writer.WriteNumber("executionSequence", body.ExecutionSequence);
             writer.WriteString("status", WriteStatus(body.Status));
             writer.WriteStartArray("blocks");
             foreach (var block in body.Blocks) {
@@ -287,7 +317,14 @@ internal static class SessionEventCodec {
     }
 
     private static AgentActionProducedBody DecodeAgentActionProduced(JsonElement body) {
-        RequireObject(body, "agent-action-produced body");
+        RequireExactProperties(
+            body,
+            "agent-action-produced body",
+            "action",
+            "invocation",
+            "execution",
+            "toolRuntimeIdentity"
+        );
         if (!body.TryGetProperty("action", out JsonElement actionElement) || actionElement.ValueKind != JsonValueKind.Array) {
             throw new InvalidDataException("agent-action-produced body requires array property 'action'.");
         }
@@ -301,28 +338,65 @@ internal static class SessionEventCodec {
             throw new InvalidDataException("agent-action-produced body requires object property 'invocation'.");
         }
 
-        RequireObject(invocationElement, "invocation");
+        RequireExactProperties(invocationElement, "invocation", "providerId", "apiSpecId", "model");
         var action = new ActionMessage(ActionMessageSerialization.FromSerializedBlocks(blocks));
         var invocation = new CompletionDescriptor(
             ReadRequiredString(invocationElement, "providerId"),
             ReadRequiredString(invocationElement, "apiSpecId"),
             ReadRequiredString(invocationElement, "model")
         );
-        return new AgentActionProducedBody(action, invocation);
+        var result = new AgentActionProducedBody(
+            action,
+            invocation,
+            ReadExecutionCheckpoint(ReadRequiredObject(body, "execution")),
+            ReadToolRuntimeIdentity(body, "toolRuntimeIdentity")
+        );
+        try {
+            _ = EncodeAgentActionProduced(result);
+        }
+        catch (ArgumentException ex) {
+            throw new InvalidDataException("agent-action-produced body is invalid.", ex);
+        }
+        return result;
     }
 
     private static ToolExecutionStartedBody DecodeToolExecutionStarted(JsonElement body) {
-        RequireObject(body, "tool-execution-started body");
-        return new ToolExecutionStartedBody(
+        RequireExactProperties(
+            body,
+            "tool-execution-started body",
+            "toolCallId",
+            "toolName",
+            "rawArgumentsJson",
+            "operationId",
+            "executionSequence",
+            "toolRuntimeIdentity"
+        );
+        var result = new ToolExecutionStartedBody(
             ReadRequiredString(body, "toolCallId"),
             ReadRequiredString(body, "toolName"),
             ReadRequiredString(body, "rawArgumentsJson"),
-            ReadRequiredString(body, "operationId")
+            ReadRequiredString(body, "operationId"),
+            ReadRequiredInt64(body, "executionSequence"),
+            ReadToolRuntimeIdentity(body, "toolRuntimeIdentity")
+                ?? throw new InvalidDataException(
+                    "tool-execution-started body requires toolRuntimeIdentity."
+                )
         );
+        ValidateExecutionSequence(result.ExecutionSequence, "executionSequence");
+        ValidateToolRuntimeIdentity(result.ToolRuntimeIdentity);
+        return result;
     }
 
     private static ToolResultObservedBody DecodeToolResultObserved(JsonElement body) {
-        RequireObject(body, "tool-result-observed body");
+        RequireExactProperties(
+            body,
+            "tool-result-observed body",
+            "toolCallId",
+            "toolName",
+            "executionSequence",
+            "status",
+            "blocks"
+        );
         if (!body.TryGetProperty("blocks", out JsonElement blocksElement) || blocksElement.ValueKind != JsonValueKind.Array) {
             throw new InvalidDataException("tool-result-observed body requires array property 'blocks'.");
         }
@@ -332,12 +406,15 @@ internal static class SessionEventCodec {
             blocks.Add(ReadToolResultBlock(blockElement));
         }
 
-        return new ToolResultObservedBody(
+        var result = new ToolResultObservedBody(
             ReadRequiredString(body, "toolCallId"),
             ReadRequiredString(body, "toolName"),
+            ReadRequiredInt64(body, "executionSequence"),
             ReadStatus(ReadRequiredString(body, "status")),
             blocks
         );
+        ValidateExecutionSequence(result.ExecutionSequence, "executionSequence");
+        return result;
     }
 
     private static CompletionAttemptFailedBody DecodeCompletionAttemptFailed(JsonElement body) {
@@ -406,6 +483,63 @@ internal static class SessionEventCodec {
     private static void WriteEnvelopeStart(Utf8JsonWriter writer) {
         writer.WriteStartObject();
         writer.WriteNumber("v", BodySchemaVersion);
+    }
+
+    private static void WriteExecutionCheckpoint(
+        Utf8JsonWriter writer,
+        string propertyName,
+        SessionExecutionCheckpoint value
+    ) {
+        writer.WriteStartObject(propertyName);
+        writer.WriteNumber("lastIssuedToolExecutionSequence", value.LastIssuedToolExecutionSequence);
+        writer.WriteEndObject();
+    }
+
+    private static SessionExecutionCheckpoint ReadExecutionCheckpoint(JsonElement element) {
+        RequireExactProperties(element, "execution checkpoint", "lastIssuedToolExecutionSequence");
+        var result = new SessionExecutionCheckpoint(
+            ReadRequiredInt64(element, "lastIssuedToolExecutionSequence")
+        );
+        ValidateExecutionCheckpoint(result, "execution checkpoint");
+        return result;
+    }
+
+    private static void WriteToolRuntimeIdentity(
+        Utf8JsonWriter writer,
+        string propertyName,
+        SessionToolRuntimeIdentity? value
+    ) {
+        if (value is null) {
+            writer.WriteNull(propertyName);
+            return;
+        }
+        writer.WriteStartObject(propertyName);
+        writer.WriteString("hostId", value.HostId);
+        writer.WriteString("implementationSetFingerprint", value.ImplementationSetFingerprint);
+        writer.WriteString("capabilitySetFingerprint", value.CapabilitySetFingerprint);
+        writer.WriteEndObject();
+    }
+
+    private static SessionToolRuntimeIdentity? ReadToolRuntimeIdentity(
+        JsonElement element,
+        string propertyName
+    ) {
+        if (!element.TryGetProperty(propertyName, out JsonElement property)) {
+            throw new InvalidDataException($"Required property '{propertyName}' is missing.");
+        }
+        if (property.ValueKind == JsonValueKind.Null) { return null; }
+        RequireExactProperties(
+            property,
+            propertyName,
+            "hostId",
+            "implementationSetFingerprint",
+            "capabilitySetFingerprint"
+        );
+        return new SessionToolRuntimeIdentity(
+            ReadRequiredString(property, "hostId"),
+            ReadRequiredString(property, "implementationSetFingerprint"),
+            ReadRequiredString(property, "capabilitySetFingerprint")
+        );
     }
 
     private static void WriteSerializedActionBlock(Utf8JsonWriter writer, SerializedActionBlock block) {
@@ -554,6 +688,47 @@ internal static class SessionEventCodec {
             throw new InvalidDataException($"Required numeric property '{propertyName}' is missing or invalid.");
         }
         return value;
+    }
+
+    private static long ReadRequiredInt64(JsonElement element, string propertyName) {
+        if (!element.TryGetProperty(propertyName, out JsonElement property)
+            || property.ValueKind != JsonValueKind.Number
+            || !property.TryGetInt64(out long value)) {
+            throw new InvalidDataException($"Required long numeric property '{propertyName}' is missing or invalid.");
+        }
+        return value;
+    }
+
+    private static JsonElement ReadRequiredObject(JsonElement element, string propertyName) {
+        if (!element.TryGetProperty(propertyName, out JsonElement property)) {
+            throw new InvalidDataException($"Required property '{propertyName}' is missing.");
+        }
+        RequireObject(property, propertyName);
+        return property;
+    }
+
+    private static void ValidateExecutionCheckpoint(SessionExecutionCheckpoint value, string name) {
+        ArgumentNullException.ThrowIfNull(value);
+        if (value.LastIssuedToolExecutionSequence < 0) {
+            throw new ArgumentOutOfRangeException(
+                name,
+                value.LastIssuedToolExecutionSequence,
+                "Last-issued tool execution sequence cannot be negative."
+            );
+        }
+    }
+
+    private static void ValidateExecutionSequence(long value, string name) {
+        if (value <= 0) {
+            throw new ArgumentOutOfRangeException(name, value, "Execution sequence must be greater than zero.");
+        }
+    }
+
+    private static void ValidateToolRuntimeIdentity(SessionToolRuntimeIdentity value) {
+        ArgumentNullException.ThrowIfNull(value);
+        ValidateRequired(value.HostId, "toolRuntimeIdentity.hostId");
+        ValidateRequired(value.ImplementationSetFingerprint, "toolRuntimeIdentity.implementationSetFingerprint");
+        ValidateRequired(value.CapabilitySetFingerprint, "toolRuntimeIdentity.capabilitySetFingerprint");
     }
 
     private static string ReadRequiredString(JsonElement element, string propertyName) {

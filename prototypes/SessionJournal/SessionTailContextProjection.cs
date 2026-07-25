@@ -199,6 +199,8 @@ internal static class SessionTailContextProjection {
         var observedResults = new Dictionary<string, ToolResultObservedBody>(StringComparer.Ordinal);
         RawToolCall? pendingCall = null;
         bool pendingStarted = false;
+        long? executionSequenceCheckpoint = null;
+        SessionToolRuntimeIdentity? pendingToolRuntimeIdentity = null;
 
         foreach (DecodedSessionEvent ev in events) {
             switch (ev.Kind) {
@@ -213,11 +215,24 @@ internal static class SessionTailContextProjection {
                     systemPrompt = RequireBody<SystemPromptSetupBody>(ev).Content;
                     break;
                 case SessionEventKind.SessionCreated:
-                case SessionEventKind.CompletionRequestPrepared:
                 case SessionEventKind.CompletionAttemptRestarted:
                 case SessionEventKind.CompletionAttemptFailed:
                     EnsureNoOpenTool(ev, openAction);
                     break;
+                case SessionEventKind.CompletionRequestPrepared: {
+                    EnsureNoOpenTool(ev, openAction);
+                    CompletionRequestPreparedBody prepared =
+                        RequireBody<CompletionRequestPreparedBody>(ev);
+                    if (executionSequenceCheckpoint is long current
+                        && prepared.Execution.LastIssuedToolExecutionSequence != current) {
+                        throw new InvalidDataException(
+                            $"{ev.Kind} at {ev.Address} changes the suffix execution checkpoint."
+                        );
+                    }
+                    executionSequenceCheckpoint =
+                        prepared.Execution.LastIssuedToolExecutionSequence;
+                    break;
+                }
                 case SessionEventKind.ObservationAccepted:
                     EnsureNoOpenTool(ev, openAction);
                     context.Add(new ObservationMessage(RequireBody<ObservationAcceptedBody>(ev).Content));
@@ -225,10 +240,24 @@ internal static class SessionTailContextProjection {
                 case SessionEventKind.AgentActionProduced:
                 case SessionEventKind.ImportedAgentAction: {
                     EnsureNoOpenTool(ev, openAction);
-                    ActionMessage action = RequireBody<AgentActionProducedBody>(ev).Action;
+                    AgentActionProducedBody actionBody =
+                        RequireBody<AgentActionProducedBody>(ev);
+                    ActionMessage action = actionBody.Action;
                     ValidateToolCalls(ev, action);
+                    if (executionSequenceCheckpoint is long current
+                        && actionBody.Execution.LastIssuedToolExecutionSequence != current) {
+                        throw new InvalidDataException(
+                            $"{ev.Kind} at {ev.Address} changes the suffix execution checkpoint."
+                        );
+                    }
+                    executionSequenceCheckpoint =
+                        actionBody.Execution.LastIssuedToolExecutionSequence;
                     context.Add(action);
                     if (action.ToolCalls.Count > 0) {
+                        pendingToolRuntimeIdentity = actionBody.ToolRuntimeIdentity
+                            ?? throw new InvalidDataException(
+                                $"{ev.Kind} at {ev.Address} has tool calls without runtime identity."
+                            );
                         openAction = action;
                         observedResults.Clear();
                         pendingCall = action.ToolCalls[0];
@@ -242,6 +271,14 @@ internal static class SessionTailContextProjection {
                     }
                     ToolExecutionStartedBody started = RequireBody<ToolExecutionStartedBody>(ev);
                     EnsurePendingMatches(ev, pendingCall, started.ToolCallId, started.ToolName, started.RawArgumentsJson);
+                    if (pendingToolRuntimeIdentity != started.ToolRuntimeIdentity
+                        || executionSequenceCheckpoint is not long current
+                        || started.ExecutionSequence != checked(current + 1)) {
+                        throw new InvalidDataException(
+                            $"{ev.Kind} at {ev.Address} does not match the pending runtime identity and next reserved sequence."
+                        );
+                    }
+                    executionSequenceCheckpoint = started.ExecutionSequence;
                     pendingStarted = true;
                     break;
                 }
@@ -251,6 +288,11 @@ internal static class SessionTailContextProjection {
                     }
                     ToolResultObservedBody result = RequireBody<ToolResultObservedBody>(ev);
                     EnsurePendingMatches(ev, pendingCall, result.ToolCallId, result.ToolName, rawArgumentsJson: null);
+                    if (result.ExecutionSequence != executionSequenceCheckpoint) {
+                        throw new InvalidDataException(
+                            $"{ev.Kind} at {ev.Address} does not repeat the active reserved sequence."
+                        );
+                    }
                     if (!observedResults.TryAdd(result.ToolCallId, result)) {
                         throw new InvalidDataException($"{ev.Kind} at {ev.Address} duplicates suffix tool result '{result.ToolCallId}'.");
                     }
@@ -260,6 +302,7 @@ internal static class SessionTailContextProjection {
                         context.Add(ProjectToolResults(openAction, observedResults));
                         openAction = null;
                         observedResults.Clear();
+                        pendingToolRuntimeIdentity = null;
                     }
                     break;
                 }

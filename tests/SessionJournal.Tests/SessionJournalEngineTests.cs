@@ -6,6 +6,11 @@ using Xunit;
 namespace Atelia.SessionJournal.Tests;
 
 public sealed class SessionJournalEngineTests : IDisposable {
+    private static readonly SessionToolRuntimeIdentity ToolRuntimeIdentity = new(
+        "test-tool-host",
+        "test-tool-implementations-v1",
+        "test-tool-capabilities-v1"
+    );
     private readonly List<string> _tempDirectories = new();
 
     public void Dispose() {
@@ -631,17 +636,25 @@ public sealed class SessionJournalEngineTests : IDisposable {
         );
 
         EventAddress actionAddress;
-        using (var engine = SessionJournalEngine.Create(path,
+        var toolSession = new ToolRegistry([
+            new RecordingTool(
+                "lookup",
+                _ => ToolExecuteResult.FromText(ToolExecutionStatus.Success, "unused")
+            )
+        ]).CreateSession();
+        using (var engine = SessionJournalEngine.Create(
+            path,
             new SessionCreateOptions(
                 ModelId: "model-A",
                 SystemPrompt: "system-A",
                 CompletionSurfaceId: "surface-A"
-            )
+            ),
+            CreateRuntime(new ScriptedCompletionClient(), toolSession)
         )) {
             engine.AppendObservation("need lookup");
             actionAddress = engine.AppendImportedAgentAction(action, invocation);
             string actionJson = System.Text.Encoding.UTF8.GetString(engine.ReadPayloadBytes(actionAddress));
-            Assert.Equal("{\"v\":1,\"body\":{\"action\":[{\"kind\":\"text\",\"content\":\"I will call a tool.\"},{\"kind\":\"tool-call\",\"toolName\":\"lookup\",\"toolCallId\":\"call-1\",\"rawArgumentsJson\":\"{\\\"q\\\":\\\"x\\\"}\"}],\"invocation\":{\"providerId\":\"fake-provider\",\"apiSpecId\":\"fake-api-v1\",\"model\":\"model-A\"}}}", actionJson);
+            Assert.Equal("{\"v\":1,\"body\":{\"action\":[{\"kind\":\"text\",\"content\":\"I will call a tool.\"},{\"kind\":\"tool-call\",\"toolName\":\"lookup\",\"toolCallId\":\"call-1\",\"rawArgumentsJson\":\"{\\\"q\\\":\\\"x\\\"}\"}],\"invocation\":{\"providerId\":\"fake-provider\",\"apiSpecId\":\"fake-api-v1\",\"model\":\"model-A\"},\"execution\":{\"lastIssuedToolExecutionSequence\":0},\"toolRuntimeIdentity\":{\"hostId\":\"test-tool-host\",\"implementationSetFingerprint\":\"test-tool-implementations-v1\",\"capabilitySetFingerprint\":\"test-tool-capabilities-v1\"}}}", actionJson);
         }
 
         using var reopened = SessionJournalEngine.Open(path);
@@ -1229,8 +1242,8 @@ public sealed class SessionJournalEngineTests : IDisposable {
         string startedPayload = Assert.Single(ReadJournalPayloadJsonByKind(path, SessionEventKind.ToolExecutionStarted));
         string resultPayload = Assert.Single(ReadJournalPayloadJsonByKind(path, SessionEventKind.ToolResultObserved));
         Assert.Equal(2, ReadJournalPayloadJsonByKind(path, SessionEventKind.CompletionRequestPrepared).Length);
-        Assert.Equal("{\"v\":1,\"body\":{\"toolCallId\":\"call-1\",\"toolName\":\"lookup\",\"rawArgumentsJson\":\"{\\\"q\\\":\\\"x\\\"}\",\"operationId\":\"" + ExtractOperationId(startedPayload) + "\"}}", startedPayload);
-        Assert.Equal("{\"v\":1,\"body\":{\"toolCallId\":\"call-1\",\"toolName\":\"lookup\",\"status\":\"success\",\"blocks\":[{\"kind\":\"text\",\"content\":\"result:{\\\"q\\\":\\\"x\\\"}\"}]}}", resultPayload);
+        Assert.Equal("{\"v\":1,\"body\":{\"toolCallId\":\"call-1\",\"toolName\":\"lookup\",\"rawArgumentsJson\":\"{\\\"q\\\":\\\"x\\\"}\",\"operationId\":\"" + ExtractOperationId(startedPayload) + "\",\"executionSequence\":1,\"toolRuntimeIdentity\":{\"hostId\":\"test-tool-host\",\"implementationSetFingerprint\":\"test-tool-implementations-v1\",\"capabilitySetFingerprint\":\"test-tool-capabilities-v1\"}}}", startedPayload);
+        Assert.Equal("{\"v\":1,\"body\":{\"toolCallId\":\"call-1\",\"toolName\":\"lookup\",\"executionSequence\":1,\"status\":\"success\",\"blocks\":[{\"kind\":\"text\",\"content\":\"result:{\\\"q\\\":\\\"x\\\"}\"}]}}", resultPayload);
         Assert.DoesNotContain("opaqueEventKind", startedPayload, StringComparison.Ordinal);
         Assert.DoesNotContain("sequenceNumber", resultPayload, StringComparison.Ordinal);
 
@@ -1299,6 +1312,143 @@ public sealed class SessionJournalEngineTests : IDisposable {
         Assert.Equal(SessionExecutionPhase.Idle, projection.ExecutionState.Phase);
         Assert.Equal(1, resumeTool.Calls);
         Assert.False(string.IsNullOrWhiteSpace(persistedOperationId));
+    }
+
+    [Fact]
+    public async Task ResumeAsync_PendingActionToolRuntimeIdentityMismatchFailsBeforeStartOrExecution() {
+        string path = NewJournalPath();
+        var firstClient = new ScriptedCompletionClient();
+        firstClient.Enqueue(request => new CompletionResult(
+            new ActionMessage([
+                new ActionBlock.ToolCall(new RawToolCall("lookup", "call-1", "{}"))
+            ]),
+            new CompletionDescriptor("scripted", "test-api-v1", request.ModelId)
+        ));
+        var sourceTool = new RecordingTool(
+            "lookup",
+            _ => ToolExecuteResult.FromText(ToolExecutionStatus.Success, "must-not-run")
+        );
+        using (var engine = SessionJournalEngine.CreateForTest(
+            path,
+            new SessionCreateOptions("model-A", "system-A", "surface-A"),
+            CreateRuntime(firstClient, new ToolRegistry([sourceTool]).CreateSession()),
+            new SessionJournalTestHooks(SessionJournalFailpoint.AfterActionCommitted)
+        )) {
+            await Assert.ThrowsAsync<SessionJournalFailpointException>(
+                () => engine.SendAsync("need lookup", CancellationToken.None)
+            );
+        }
+        Assert.Equal(0, sourceTool.Calls);
+        Assert.Empty(ReadJournalPayloadJsonByKind(path, SessionEventKind.ToolExecutionStarted));
+
+        var recoveryTool = new RecordingTool(
+            "lookup",
+            _ => ToolExecuteResult.FromText(ToolExecutionStatus.Success, "must-not-run")
+        );
+        var differentIdentity = ToolRuntimeIdentity with {
+            CapabilitySetFingerprint = "different-capabilities-v2"
+        };
+        using (var reopened = SessionJournalEngine.Open(
+            path,
+            CreateRuntime(
+                new ScriptedCompletionClient(),
+                new ToolRegistry([recoveryTool]).CreateSession(),
+                toolRuntimeIdentity: differentIdentity
+            )
+        )) {
+            InvalidOperationException error = await Assert.ThrowsAsync<InvalidOperationException>(
+                () => reopened.ResumeAsync(CancellationToken.None)
+            );
+
+            Assert.Contains("does not match the durable pending Action", error.Message, StringComparison.Ordinal);
+            Assert.Equal(0, recoveryTool.Calls);
+            Assert.Equal(
+                SessionExecutionPhase.AwaitingToolExecution,
+                reopened.Project().ExecutionState.Phase
+            );
+        }
+        Assert.Empty(ReadJournalPayloadJsonByKind(path, SessionEventKind.ToolExecutionStarted));
+    }
+
+    [Fact]
+    public async Task ResumeAsync_AfterExternalToolExecutionBeforeResult_RetriesSameReservedSequenceAndOperation() {
+        string path = NewJournalPath();
+        var firstSequences = new List<long>();
+        var firstClient = new ScriptedCompletionClient();
+        firstClient.Enqueue(request => new CompletionResult(
+            new ActionMessage([
+                new ActionBlock.ToolCall(new RawToolCall("lookup", "call-1", "{}"))
+            ]),
+            new CompletionDescriptor("scripted", "test-api-v1", request.ModelId)
+        ));
+        var firstTool = new RecordingTool(
+            "lookup",
+            context => {
+                firstSequences.Add(context.ExecutionSequence);
+                return ToolExecuteResult.FromText(ToolExecutionStatus.Success, "uncertain-result");
+            }
+        );
+
+        using (var engine = SessionJournalEngine.CreateForTest(
+            path,
+            new SessionCreateOptions("model-A", "system-A", "surface-A"),
+            CreateRuntime(firstClient, new ToolRegistry([firstTool]).CreateSession()),
+            new SessionJournalTestHooks(
+                SessionJournalFailpoint.AfterToolExecutionBeforeResultCommitted
+            )
+        )) {
+            SessionJournalFailpointException error =
+                await Assert.ThrowsAsync<SessionJournalFailpointException>(
+                    () => engine.SendAsync("need lookup", CancellationToken.None)
+                );
+            Assert.Equal(
+                SessionJournalFailpoint.AfterToolExecutionBeforeResultCommitted,
+                error.Failpoint
+            );
+            Assert.Equal([1L], firstSequences);
+            SessionExecutionState state = engine.Project().ExecutionState;
+            Assert.True(state.PendingToolExecutionStarted);
+            Assert.Equal(1, state.ToolExecutionSequenceCheckpoint);
+        }
+
+        string startedPayload = Assert.Single(
+            ReadJournalPayloadJsonByKind(path, SessionEventKind.ToolExecutionStarted)
+        );
+        string operationId = ExtractOperationId(startedPayload);
+        Assert.Empty(ReadJournalPayloadJsonByKind(path, SessionEventKind.ToolResultObserved));
+
+        var retriedSequences = new List<long>();
+        var resumedTool = new RecordingTool(
+            "lookup",
+            context => {
+                retriedSequences.Add(context.ExecutionSequence);
+                return ToolExecuteResult.FromText(ToolExecutionStatus.Success, "retried-result");
+            }
+        );
+        var resumeClient = new ScriptedCompletionClient();
+        resumeClient.Enqueue(request => new CompletionResult(
+            new ActionMessage([new ActionBlock.Text("done")]),
+            new CompletionDescriptor("scripted", "test-api-v1", request.ModelId)
+        ));
+        using (var reopened = SessionJournalEngine.Open(
+            path,
+            CreateRuntime(resumeClient, new ToolRegistry([resumedTool]).CreateSession())
+        )) {
+            ResumeOutcome outcome = await reopened.ResumeAsync(CancellationToken.None);
+
+            Assert.True(outcome.Advanced);
+            Assert.Equal([1L], retriedSequences);
+        }
+        Assert.Single(ReadJournalPayloadJsonByKind(path, SessionEventKind.ToolExecutionStarted));
+        Assert.Single(ReadJournalPayloadJsonByKind(path, SessionEventKind.ToolResultObserved));
+        Assert.Equal(
+            operationId,
+            ExtractOperationId(
+                Assert.Single(
+                    ReadJournalPayloadJsonByKind(path, SessionEventKind.ToolExecutionStarted)
+                )
+            )
+        );
     }
 
     [Fact]
@@ -1527,11 +1677,12 @@ public sealed class SessionJournalEngineTests : IDisposable {
         using (var journal = EventJournal.EventJournal.OpenExisting(path)) {
             RefId main = journal.OpenBranch(SessionJournalDefaults.MainBranchName).Unwrap();
             EventAddress head = journal.GetHead(main)!.Value;
-            const string startA = "{\"v\":1,\"body\":{\"toolCallId\":\"call-A\",\"toolName\":\"alpha\",\"rawArgumentsJson\":\"{}\",\"operationId\":\"op-A\"}}";
-            const string startAAgain = "{\"v\":1,\"body\":{\"toolCallId\":\"call-A\",\"toolName\":\"alpha\",\"rawArgumentsJson\":\"{}\",\"operationId\":\"op-A-2\"}}";
-            const string startB = "{\"v\":1,\"body\":{\"toolCallId\":\"call-B\",\"toolName\":\"beta\",\"rawArgumentsJson\":\"{}\",\"operationId\":\"op-B\"}}";
-            const string resultA = "{\"v\":1,\"body\":{\"toolCallId\":\"call-A\",\"toolName\":\"alpha\",\"status\":\"success\",\"blocks\":[]}}";
-            const string resultB = "{\"v\":1,\"body\":{\"toolCallId\":\"call-B\",\"toolName\":\"beta\",\"status\":\"success\",\"blocks\":[]}}";
+            const string identity = "\"toolRuntimeIdentity\":{\"hostId\":\"test-tool-host\",\"implementationSetFingerprint\":\"test-tool-implementations-v1\",\"capabilitySetFingerprint\":\"test-tool-capabilities-v1\"}";
+            const string startA = "{\"v\":1,\"body\":{\"toolCallId\":\"call-A\",\"toolName\":\"alpha\",\"rawArgumentsJson\":\"{}\",\"operationId\":\"op-A\",\"executionSequence\":1," + identity + "}}";
+            const string startAAgain = "{\"v\":1,\"body\":{\"toolCallId\":\"call-A\",\"toolName\":\"alpha\",\"rawArgumentsJson\":\"{}\",\"operationId\":\"op-A-2\",\"executionSequence\":2," + identity + "}}";
+            const string startB = "{\"v\":1,\"body\":{\"toolCallId\":\"call-B\",\"toolName\":\"beta\",\"rawArgumentsJson\":\"{}\",\"operationId\":\"op-B\",\"executionSequence\":1," + identity + "}}";
+            const string resultA = "{\"v\":1,\"body\":{\"toolCallId\":\"call-A\",\"toolName\":\"alpha\",\"executionSequence\":1,\"status\":\"success\",\"blocks\":[]}}";
+            const string resultB = "{\"v\":1,\"body\":{\"toolCallId\":\"call-B\",\"toolName\":\"beta\",\"executionSequence\":1,\"status\":\"success\",\"blocks\":[]}}";
 
             if (invalidCase == "skip-current-start") {
                 _ = CommitToMain(journal, head, SessionEventKind.ToolExecutionStarted, startB);
@@ -1585,7 +1736,9 @@ public sealed class SessionJournalEngineTests : IDisposable {
                 "[{\"kind\":\"tool-call\",\"toolName\":\"alpha\",\"toolCallId\":\"call-1\",\"rawArgumentsJson\":\"\"}]"
         };
         string payload = "{\"v\":1,\"body\":{\"action\":" + actionBlocks
-            + ",\"invocation\":{\"providerId\":\"import\",\"apiSpecId\":\"import-v1\",\"model\":\"model-A\"}}}";
+            + ",\"invocation\":{\"providerId\":\"import\",\"apiSpecId\":\"import-v1\",\"model\":\"model-A\"}"
+            + ",\"execution\":{\"lastIssuedToolExecutionSequence\":0}"
+            + ",\"toolRuntimeIdentity\":{\"hostId\":\"test-tool-host\",\"implementationSetFingerprint\":\"test-tool-implementations-v1\",\"capabilitySetFingerprint\":\"test-tool-capabilities-v1\"}}}";
         using (var journal = EventJournal.EventJournal.OpenExisting(path)) {
             _ = CommitToMain(journal, observation, SessionEventKind.ImportedAgentAction, payload);
         }
@@ -1768,7 +1921,8 @@ public sealed class SessionJournalEngineTests : IDisposable {
     private static SessionRuntime CreateRuntime(
         ICompletionClient client,
         ToolSession? toolSession = null,
-        int? maxTokens = null
+        int? maxTokens = null,
+        SessionToolRuntimeIdentity? toolRuntimeIdentity = null
     ) => new(
         client,
         toolSession,
@@ -1778,14 +1932,20 @@ public sealed class SessionJournalEngineTests : IDisposable {
             ConnectionFingerprint: "test-connection-fingerprint-v1",
             RequestAdapterFingerprint: "test-request-adapter-v1"
         ),
-        maxTokens
+        maxTokens,
+        ToolRuntimeIdentity: toolRuntimeIdentity ?? ToolRuntimeIdentity
     );
 
     private string CreateImportedTwoToolPendingJournal() {
         string path = NewJournalPath();
+        var tools = new ToolRegistry([
+            new RecordingTool("alpha", _ => ToolExecuteResult.FromText(ToolExecutionStatus.Success, "unused")),
+            new RecordingTool("beta", _ => ToolExecuteResult.FromText(ToolExecutionStatus.Success, "unused"))
+        ]).CreateSession();
         using var engine = SessionJournalEngine.Create(
             path,
-            new SessionCreateOptions("model-A", "system-A", "surface-A")
+            new SessionCreateOptions("model-A", "system-A", "surface-A"),
+            CreateRuntime(new ScriptedCompletionClient(), tools)
         );
         engine.AppendObservation("run two tools");
         engine.AppendImportedAgentAction(

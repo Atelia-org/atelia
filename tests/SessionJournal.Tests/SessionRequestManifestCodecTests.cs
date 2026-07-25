@@ -38,10 +38,12 @@ public sealed class SessionRequestManifestCodecTests : IDisposable {
         Assert.Equal(1, bodySchemaVersion);
         Assert.Equal(encoded, reencoded);
         Assert.Equal(body.Attempt, decoded.Attempt);
+        Assert.Equal(body.Execution, decoded.Execution);
         Assert.Equal(body.Plan.RawStartExclusive, decoded.Plan.RawStartExclusive);
         Assert.Equal(body.Setups, decoded.Setups);
         Assert.Equal(body.Parameters, decoded.Parameters);
         Assert.Equal(body.ToolSet.Sha256, decoded.ToolSet.Sha256);
+        Assert.Equal(body.ToolSet.RuntimeIdentity, decoded.ToolSet.RuntimeIdentity);
         Assert.Equal(body.Target, decoded.Target);
         Assert.Equal(body.Commitment, decoded.Commitment);
         Assert.DoesNotContain("basedOnRawHead", json, StringComparison.Ordinal);
@@ -260,6 +262,50 @@ public sealed class SessionRequestManifestCodecTests : IDisposable {
                 }
             }
         ));
+    }
+
+    [Fact]
+    public void ManifestValidation_RequiresCheckpointAndExactToolRuntimeIdentityShape() {
+        CompletionRequestPreparedBody withTools =
+            CreateManifestBody(CreateToolDefinitions(), out _);
+
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            SessionRequestManifestCodec.Encode(
+                withTools with {
+                    Execution = new SessionExecutionCheckpoint(-1)
+                }
+            )
+        );
+        Assert.Throws<InvalidDataException>(() =>
+            SessionRequestManifestCodec.Encode(
+                withTools with {
+                    ToolSet = withTools.ToolSet with { RuntimeIdentity = null }
+                }
+            )
+        );
+
+        ImmutableArray<ToolDefinition> emptyTools = [];
+        CompletionRequestPreparedBody withoutTools = withTools with {
+            ToolSet = new SessionRequestToolSet(
+                SessionRequestManifestDefaults.ToolCodecId,
+                SessionRequestCanonicalizer.ComputeToolSetSha256(emptyTools),
+                emptyTools,
+                RuntimeIdentity: null
+            )
+        };
+        Assert.Throws<InvalidDataException>(() =>
+            SessionRequestManifestCodec.Encode(
+                withoutTools with {
+                    ToolSet = withoutTools.ToolSet with {
+                        RuntimeIdentity = new SessionToolRuntimeIdentity(
+                            "unexpected-host",
+                            "unexpected-implementations",
+                            "unexpected-capabilities"
+                        )
+                    }
+                }
+            )
+        );
     }
 
     [Fact]
@@ -615,6 +661,7 @@ public sealed class SessionRequestManifestCodecTests : IDisposable {
         );
         return new CompletionRequestPreparedBody(
             new SessionRequestAttempt("attempt-01", "correlation-01", "full raw fallback", null),
+            new SessionExecutionCheckpoint(17),
             new SessionContextPlan(
                 SessionRequestManifestDefaults.SelectionPolicyId,
                 SessionRequestManifestDefaults.PlannerFingerprint,
@@ -635,7 +682,14 @@ public sealed class SessionRequestManifestCodecTests : IDisposable {
             new SessionRequestToolSet(
                 SessionRequestManifestDefaults.ToolCodecId,
                 SessionRequestCanonicalizer.ComputeToolSetSha256(tools),
-                tools
+                tools,
+                tools.IsEmpty
+                    ? null
+                    : new SessionToolRuntimeIdentity(
+                        "test-tool-host",
+                        "test-tool-implementations-v1",
+                        "test-tool-capabilities-v1"
+                    )
             ),
             new SessionRequestRendering(
                 SessionRequestManifestDefaults.ContextRendererId,
