@@ -255,7 +255,7 @@ public sealed class SessionRequestManifestCodecTests : IDisposable {
             body with {
                 Plan = body.Plan with {
                     ArtifactInputs = [
-                        new SessionRequestArtifactInput("artifact-1", "rolling-summary", new string('1', 64))
+                        CreateArtifactInput()
                     ]
                 }
             }
@@ -286,8 +286,8 @@ public sealed class SessionRequestManifestCodecTests : IDisposable {
     }
 
     [Fact]
-    public void CompletionRequestPrepared_RecapTailRoundtripsExactlyWithOneArtifactAndRawSuffix() {
-        CompletionRequestPreparedBody body = CreateRecapTailManifestBody();
+    public void CompletionRequestPrepared_ExplicitArtifactTailRoundtripsExactlyWithSnapshotAndRawSuffix() {
+        CompletionRequestPreparedBody body = CreateExplicitArtifactTailManifestBody();
 
         byte[] encoded = SessionEventCodec.Encode(SessionEventKind.CompletionRequestPrepared, body);
         var decoded = Assert.IsType<CompletionRequestPreparedBody>(
@@ -296,18 +296,27 @@ public sealed class SessionRequestManifestCodecTests : IDisposable {
         byte[] reencoded = SessionEventCodec.Encode(SessionEventKind.CompletionRequestPrepared, decoded);
 
         Assert.Equal(encoded, reencoded);
-        Assert.Equal(SessionRequestManifestDefaults.RecapTailSelectionPolicyId, decoded.Plan.SelectionPolicyId);
+        Assert.Equal(
+            SessionRequestManifestDefaults.ExplicitArtifactTailSelectionPolicyId,
+            decoded.Plan.SelectionPolicyId
+        );
         Assert.NotNull(decoded.Plan.RawStartExclusive);
         SessionRequestArtifactInput artifact = Assert.Single(decoded.Plan.ArtifactInputs);
         Assert.Equal("artifact-01", artifact.ArtifactId);
         Assert.Equal("rolling-summary", artifact.ArtifactKind);
-        Assert.Equal(new string('d', 64), artifact.ContentSha256);
+        Assert.Equal(
+            SessionArtifactContextSnapshotHasher.ComputeSha256(artifact.ContextSnapshot),
+            artifact.ContentSha256
+        );
+        Assert.Equal("system recap", artifact.ContextSnapshot.SystemPromptFragment);
+        Assert.Equal("observation recap", artifact.ContextSnapshot.ObservationMessage);
+        Assert.Equal("action recap", artifact.ContextSnapshot.ActionMessage);
         Assert.Empty(decoded.Plan.RecalledInputs);
     }
 
     [Fact]
-    public void ManifestValidation_RecapTailRejectsOpenBoundaryOrNonExclusiveInputs() {
-        CompletionRequestPreparedBody body = CreateRecapTailManifestBody();
+    public void ManifestValidation_ExplicitArtifactTailRejectsOpenBoundaryOrNonExclusiveInputs() {
+        CompletionRequestPreparedBody body = CreateExplicitArtifactTailManifestBody();
         SessionRequestArtifactInput artifact = Assert.Single(body.Plan.ArtifactInputs);
 
         Assert.Throws<InvalidDataException>(() => SessionRequestManifestCodec.Validate(
@@ -329,8 +338,8 @@ public sealed class SessionRequestManifestCodecTests : IDisposable {
     }
 
     [Fact]
-    public void ManifestValidation_RecapTailRejectsInvalidArtifactCommitment() {
-        CompletionRequestPreparedBody body = CreateRecapTailManifestBody();
+    public void ManifestValidation_ExplicitArtifactTailRejectsInvalidArtifactCommitmentOrSnapshot() {
+        CompletionRequestPreparedBody body = CreateExplicitArtifactTailManifestBody();
         SessionRequestArtifactInput artifact = Assert.Single(body.Plan.ArtifactInputs);
 
         Assert.Throws<ArgumentException>(() => SessionRequestManifestCodec.Validate(
@@ -346,41 +355,82 @@ public sealed class SessionRequestManifestCodecTests : IDisposable {
                 }
             }
         ));
+        Assert.Throws<InvalidDataException>(() => SessionRequestManifestCodec.Validate(
+            body with {
+                Plan = body.Plan with {
+                    ArtifactInputs = [artifact with { ContentSha256 = new string('0', 64) }]
+                }
+            }
+        ));
+        Assert.Throws<ArgumentNullException>(() => SessionRequestManifestCodec.Validate(
+            body with {
+                Plan = body.Plan with {
+                    ArtifactInputs = [
+                        artifact with {
+                            ContextSnapshot = artifact.ContextSnapshot with { ObservationMessage = null! }
+                        }
+                    ]
+                }
+            }
+        ));
+        Assert.Throws<ArgumentException>(() => SessionRequestManifestCodec.Validate(
+            body with {
+                Plan = body.Plan with {
+                    ArtifactInputs = [
+                        artifact with {
+                            ContextSnapshot = new SessionRequestArtifactContextSnapshot(
+                                new string('x', SessionArtifactContextSnapshotHasher.MaxSnapshotUtf8Bytes + 1),
+                                string.Empty,
+                                string.Empty
+                            )
+                        }
+                    ]
+                }
+            }
+        ));
     }
 
     [Fact]
     public void ManifestValidation_PoliciesRejectMismatchedPlannerAndRenderingIdentities() {
-        CompletionRequestPreparedBody recap = CreateRecapTailManifestBody();
-        CompletionRequestPreparedBody fullRaw = recap with {
-            Plan = recap.Plan with {
+        CompletionRequestPreparedBody explicitArtifact = CreateExplicitArtifactTailManifestBody();
+        CompletionRequestPreparedBody fullRaw = explicitArtifact with {
+            Plan = explicitArtifact.Plan with {
                 SelectionPolicyId = SessionRequestManifestDefaults.FullRawSelectionPolicyId,
                 PlannerFingerprint = SessionRequestManifestDefaults.FullRawPlannerFingerprint,
                 RawStartExclusive = null,
                 ArtifactInputs = [],
                 RenderingProfileId = SessionRequestManifestDefaults.FullRawRenderingProfileId
             },
-            Rendering = recap.Rendering with {
+            Rendering = explicitArtifact.Rendering with {
                 ContextRendererId = SessionRequestManifestDefaults.FullRawContextRendererId,
                 ContextRendererFingerprint = SessionRequestManifestDefaults.FullRawContextRendererFingerprint
             }
         };
 
         Assert.Throws<NotSupportedException>(() => SessionRequestManifestCodec.Validate(
-            recap with { Plan = recap.Plan with { PlannerFingerprint = SessionRequestManifestDefaults.FullRawPlannerFingerprint } }
+            explicitArtifact with {
+                Plan = explicitArtifact.Plan with {
+                    PlannerFingerprint = SessionRequestManifestDefaults.FullRawPlannerFingerprint
+                }
+            }
         ));
         Assert.Throws<NotSupportedException>(() => SessionRequestManifestCodec.Validate(
-            recap with { Plan = recap.Plan with { RenderingProfileId = SessionRequestManifestDefaults.FullRawRenderingProfileId } }
+            explicitArtifact with {
+                Plan = explicitArtifact.Plan with {
+                    RenderingProfileId = SessionRequestManifestDefaults.FullRawRenderingProfileId
+                }
+            }
         ));
         Assert.Throws<NotSupportedException>(() => SessionRequestManifestCodec.Validate(
-            recap with {
-                Rendering = recap.Rendering with {
+            explicitArtifact with {
+                Rendering = explicitArtifact.Rendering with {
                     ContextRendererId = SessionRequestManifestDefaults.FullRawContextRendererId
                 }
             }
         ));
         Assert.Throws<NotSupportedException>(() => SessionRequestManifestCodec.Validate(
-            recap with {
-                Rendering = recap.Rendering with {
+            explicitArtifact with {
+                Rendering = explicitArtifact.Rendering with {
                     ContextRendererFingerprint = SessionRequestManifestDefaults.FullRawContextRendererFingerprint
                 }
             }
@@ -391,6 +441,61 @@ public sealed class SessionRequestManifestCodecTests : IDisposable {
                     RecalledInputs = [new SessionRequestRecalledInput("recall-1", new string('e', 64))]
                 }
             }
+        ));
+    }
+
+    [Fact]
+    public void ArtifactContextSnapshotCommitment_HasStableGoldenAndIsSensitiveToEveryField() {
+        var snapshot = new SessionRequestArtifactContextSnapshot(
+            "system 🌟",
+            "observation\nline2",
+            "action"
+        );
+        string baseline = SessionArtifactContextSnapshotHasher.ComputeSha256(snapshot);
+
+        Assert.Equal(
+            "atelia.session-journal.artifact-context-snapshot.sha256.v1",
+            SessionArtifactContextSnapshotHasher.CodecId
+        );
+        Assert.Equal("2e89e9acf6c1e7dbcef6874a602a51cb425f76404b2b89124d5990891832f5fc", baseline);
+        Assert.NotEqual(
+            baseline,
+            SessionArtifactContextSnapshotHasher.ComputeSha256(
+                snapshot with { SystemPromptFragment = "system changed" }
+            )
+        );
+        Assert.NotEqual(
+            baseline,
+            SessionArtifactContextSnapshotHasher.ComputeSha256(
+                snapshot with { ObservationMessage = "observation changed" }
+            )
+        );
+        Assert.NotEqual(
+            baseline,
+            SessionArtifactContextSnapshotHasher.ComputeSha256(
+                snapshot with { ActionMessage = "action changed" }
+            )
+        );
+    }
+
+    [Fact]
+    public void CompletionRequestPrepared_StrictDecodeRejectsUnknownOrDuplicateSnapshotProperties() {
+        string canonical = Encoding.UTF8.GetString(
+            SessionEventCodec.Encode(
+                SessionEventKind.CompletionRequestPrepared,
+                CreateExplicitArtifactTailManifestBody()
+            )
+        );
+
+        AssertStrictDecodeRejected(ReplaceOnce(
+            canonical,
+            "\"contextSnapshot\":{\"systemPromptFragment\":",
+            "\"contextSnapshot\":{\"unknown\":true,\"systemPromptFragment\":"
+        ));
+        AssertStrictDecodeRejected(ReplaceOnce(
+            canonical,
+            "\"contextSnapshot\":{\"systemPromptFragment\":",
+            "\"contextSnapshot\":{\"systemPromptFragment\":\"other\",\"systemPromptFragment\":"
         ));
     }
 
@@ -542,25 +647,45 @@ public sealed class SessionRequestManifestCodecTests : IDisposable {
         );
     }
 
-    private CompletionRequestPreparedBody CreateRecapTailManifestBody() {
+    private CompletionRequestPreparedBody CreateExplicitArtifactTailManifestBody() {
         CompletionRequestPreparedBody fullRaw = CreateManifestBody(CreateToolDefinitions(), out _);
+        SessionRequestArtifactInput artifact = CreateArtifactInput(
+            new SessionRequestArtifactContextSnapshot(
+                "system recap",
+                "observation recap",
+                "action recap"
+            )
+        );
         return fullRaw with {
-            Attempt = fullRaw.Attempt with { Reason = "recap plus dependency-closed tail" },
+            Attempt = fullRaw.Attempt with { Reason = "explicit artifact plus dependency-closed tail" },
             Plan = fullRaw.Plan with {
-                SelectionPolicyId = SessionRequestManifestDefaults.RecapTailSelectionPolicyId,
-                PlannerFingerprint = SessionRequestManifestDefaults.RecapTailPlannerFingerprint,
+                SelectionPolicyId = SessionRequestManifestDefaults.ExplicitArtifactTailSelectionPolicyId,
+                PlannerFingerprint = SessionRequestManifestDefaults.ExplicitArtifactTailPlannerFingerprint,
                 RawStartExclusive = fullRaw.Setups.SystemPrompt.Address,
-                ArtifactInputs = [
-                    new SessionRequestArtifactInput("artifact-01", "rolling-summary", new string('d', 64))
-                ],
-                RenderingProfileId = SessionRequestManifestDefaults.RecapTailRenderingProfileId,
-                Reason = "recap plus dependency-closed tail"
+                ArtifactInputs = [artifact],
+                RenderingProfileId =
+                    SessionRequestManifestDefaults.ExplicitArtifactTailRenderingProfileId,
+                Reason = "explicit artifact plus dependency-closed tail"
             },
             Rendering = fullRaw.Rendering with {
-                ContextRendererId = SessionRequestManifestDefaults.RecapTailContextRendererId,
-                ContextRendererFingerprint = SessionRequestManifestDefaults.RecapTailContextRendererFingerprint
+                ContextRendererId =
+                    SessionRequestManifestDefaults.ExplicitArtifactTailContextRendererId,
+                ContextRendererFingerprint =
+                    SessionRequestManifestDefaults.ExplicitArtifactTailContextRendererFingerprint
             }
         };
+    }
+
+    private static SessionRequestArtifactInput CreateArtifactInput(
+        SessionRequestArtifactContextSnapshot? snapshot = null
+    ) {
+        snapshot ??= new SessionRequestArtifactContextSnapshot("system", "observation", "action");
+        return new SessionRequestArtifactInput(
+            "artifact-01",
+            "rolling-summary",
+            SessionArtifactContextSnapshotHasher.ComputeSha256(snapshot),
+            snapshot
+        );
     }
 
     private (EventAddress Runtime, EventAddress Prompt, EventAddress RawStart) CreateAddresses() {

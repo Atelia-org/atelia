@@ -159,22 +159,26 @@ internal static class SessionRequestManifestCodec {
                 }
                 break;
 
-            case SessionRequestManifestDefaults.RecapTailSelectionPolicyId:
+            case SessionRequestManifestDefaults.ExplicitArtifactTailSelectionPolicyId:
                 ValidatePolicyIdentities(
                     body,
-                    SessionRequestManifestDefaults.RecapTailPlannerFingerprint,
-                    SessionRequestManifestDefaults.RecapTailRenderingProfileId,
-                    SessionRequestManifestDefaults.RecapTailContextRendererId,
-                    SessionRequestManifestDefaults.RecapTailContextRendererFingerprint
+                    SessionRequestManifestDefaults.ExplicitArtifactTailPlannerFingerprint,
+                    SessionRequestManifestDefaults.ExplicitArtifactTailRenderingProfileId,
+                    SessionRequestManifestDefaults.ExplicitArtifactTailContextRendererId,
+                    SessionRequestManifestDefaults.ExplicitArtifactTailContextRendererFingerprint
                 );
                 if (body.Plan.RawStartExclusive is null) {
-                    throw new InvalidDataException("recap-tail plans require plan.rawStartExclusive.");
+                    throw new InvalidDataException("explicit-artifact-tail plans require plan.rawStartExclusive.");
                 }
                 if (body.Plan.ArtifactInputs.Length != 1) {
-                    throw new InvalidDataException("recap-tail plans require exactly one plan.artifactInputs entry.");
+                    throw new InvalidDataException(
+                        "explicit-artifact-tail plans require exactly one plan.artifactInputs entry."
+                    );
                 }
                 if (!body.Plan.RecalledInputs.IsEmpty) {
-                    throw new InvalidDataException("recap-tail plans require plan.recalledInputs to be empty.");
+                    throw new InvalidDataException(
+                        "explicit-artifact-tail plans require plan.recalledInputs to be empty."
+                    );
                 }
                 ValidateArtifactInput(body.Plan.ArtifactInputs[0]);
                 break;
@@ -212,6 +216,13 @@ internal static class SessionRequestManifestCodec {
         RequireText(input.ArtifactId, "plan.artifactInputs[].artifactId");
         RequireText(input.ArtifactKind, "plan.artifactInputs[].artifactKind");
         RequireSha256(input.ContentSha256, "plan.artifactInputs[].contentSha256");
+        SessionArtifactContextSnapshotHasher.ValidateSnapshot(input.ContextSnapshot);
+        string actualContentHash = SessionArtifactContextSnapshotHasher.ComputeSha256(input.ContextSnapshot);
+        if (!string.Equals(input.ContentSha256, actualContentHash, StringComparison.Ordinal)) {
+            throw new InvalidDataException(
+                "plan.artifactInputs[].contentSha256 does not match the exact materialized contextSnapshot."
+            );
+        }
     }
 
     private static void WriteAttempt(Utf8JsonWriter writer, SessionRequestAttempt value) {
@@ -235,6 +246,11 @@ internal static class SessionRequestManifestCodec {
             writer.WriteString("artifactId", input.ArtifactId);
             writer.WriteString("artifactKind", input.ArtifactKind);
             writer.WriteString("contentSha256", input.ContentSha256);
+            writer.WriteStartObject("contextSnapshot");
+            writer.WriteString("systemPromptFragment", input.ContextSnapshot.SystemPromptFragment);
+            writer.WriteString("observationMessage", input.ContextSnapshot.ObservationMessage);
+            writer.WriteString("actionMessage", input.ContextSnapshot.ActionMessage);
+            writer.WriteEndObject();
             writer.WriteEndObject();
         }
         writer.WriteEndArray();
@@ -370,11 +386,34 @@ internal static class SessionRequestManifestCodec {
     }
 
     private static SessionRequestArtifactInput ReadArtifactInput(JsonElement element) {
-        RequireExactProperties(element, "artifact input", "artifactId", "artifactKind", "contentSha256");
+        RequireExactProperties(
+            element,
+            "artifact input",
+            "artifactId",
+            "artifactKind",
+            "contentSha256",
+            "contextSnapshot"
+        );
         return new(
             ReadRequiredString(element, "artifactId"),
             ReadRequiredString(element, "artifactKind"),
-            ReadRequiredString(element, "contentSha256")
+            ReadRequiredString(element, "contentSha256"),
+            ReadArtifactContextSnapshot(ReadRequiredObject(element, "contextSnapshot"))
+        );
+    }
+
+    private static SessionRequestArtifactContextSnapshot ReadArtifactContextSnapshot(JsonElement element) {
+        RequireExactProperties(
+            element,
+            "artifact context snapshot",
+            "systemPromptFragment",
+            "observationMessage",
+            "actionMessage"
+        );
+        return new SessionRequestArtifactContextSnapshot(
+            ReadRequiredString(element, "systemPromptFragment"),
+            ReadRequiredString(element, "observationMessage"),
+            ReadRequiredString(element, "actionMessage")
         );
     }
 

@@ -34,7 +34,14 @@ internal sealed record SessionContextPlan(
 internal sealed record SessionRequestArtifactInput(
     string ArtifactId,
     string ArtifactKind,
-    string ContentSha256
+    string ContentSha256,
+    SessionRequestArtifactContextSnapshot ContextSnapshot
+);
+
+internal sealed record SessionRequestArtifactContextSnapshot(
+    string SystemPromptFragment,
+    string ObservationMessage,
+    string ActionMessage
 );
 
 internal sealed record SessionRequestRecalledInput(
@@ -98,11 +105,15 @@ internal static class SessionRequestManifestDefaults {
     public const string FullRawContextRendererId = "atelia.session-journal.full-raw.v1";
     public const string FullRawContextRendererFingerprint = "atelia.session-journal.full-raw.v1";
 
-    public const string RecapTailSelectionPolicyId = "atelia.session-journal.recap-tail.v1";
-    public const string RecapTailPlannerFingerprint = "atelia.session-journal.recap-tail-planner.v1";
-    public const string RecapTailRenderingProfileId = "atelia.session-journal.recap-tail-rendering.v1";
-    public const string RecapTailContextRendererId = "atelia.session-journal.recap-tail.v1";
-    public const string RecapTailContextRendererFingerprint = "atelia.session-journal.recap-tail.v1";
+    public const string ExplicitArtifactTailSelectionPolicyId = "explicit-artifact-tail";
+    public const string ExplicitArtifactTailPlannerFingerprint =
+        "atelia.session-journal.explicit-artifact-tail-planner.v1";
+    public const string ExplicitArtifactTailRenderingProfileId =
+        "atelia.session-journal.explicit-artifact-tail-rendering.v1";
+    public const string ExplicitArtifactTailContextRendererId =
+        "atelia.session-journal.explicit-artifact-tail.v1";
+    public const string ExplicitArtifactTailContextRendererFingerprint =
+        "atelia.session-journal.explicit-artifact-tail.v1";
 
     // Existing aliases remain the full-raw defaults so current callers and wire bytes do not drift.
     public const string SelectionPolicyId = FullRawSelectionPolicyId;
