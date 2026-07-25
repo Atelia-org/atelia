@@ -99,7 +99,7 @@ internal static class SessionJournalLegacyImporter {
                                     break;
                                 }
                                 case LegacyMessageKindAction: {
-                                    EventAddress address = engine.AppendAgentAction(
+                                    EventAddress address = engine.AppendImportedAgentAction(
                                         ToActionMessage(message),
                                         ToCompletionDescriptor(
                                             currentConfiguration ?? throw new InvalidDataException("model-turn appeared before initial configuration."),

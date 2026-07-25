@@ -1,4 +1,8 @@
 using System.Collections.Immutable;
+using System.Buffers.Binary;
+using System.Globalization;
+using System.Security.Cryptography;
+using System.Text;
 using Atelia.Completion.Abstractions;
 using Atelia.Completion.Tools;
 using Atelia.EventJournal;
@@ -14,6 +18,8 @@ public sealed class SessionJournalEngine : IDisposable {
     private readonly RefId _mainRef;
     private readonly SessionJournalTestHooks _testHooks;
     private SessionRuntime? _runtime;
+    private SessionGoverningSetup? _governingSetupCursor;
+    private GoverningSetupResolutionDiagnostics _lastGoverningSetupResolutionDiagnostics;
     private bool _disposed;
 
     private SessionJournalEngine(
@@ -29,6 +35,11 @@ public sealed class SessionJournalEngine : IDisposable {
     }
 
     public string Path => _journal.JournalPath;
+
+    internal GoverningSetupResolutionDiagnostics LastGoverningSetupResolutionDiagnostics
+        => _lastGoverningSetupResolutionDiagnostics;
+
+    internal EventAddress? GoverningSetupCursorHeadForTest => _governingSetupCursor?.Head;
 
     public static SessionJournalEngine Create(string path, SessionCreateOptions options)
         => CreateCore(path, options, runtime: null, testHooks: null);
@@ -136,6 +147,9 @@ public sealed class SessionJournalEngine : IDisposable {
             SessionExecutionPhase.AwaitingAgentAction => ToResumeOutcome(
                 await CompletePendingObservationAsync(observer, cancellationToken).ConfigureAwait(false)
             ),
+            SessionExecutionPhase.AwaitingCompletion => throw new InvalidOperationException(
+                "The current completion request is already durably prepared. CS-3A does not resend or replan it; canonical request recovery is implemented by CS-3C."
+            ),
             SessionExecutionPhase.AwaitingToolExecution => ToResumeOutcome(
                 await ContinueToolLoopAsync(projection, observer, cancellationToken).ConfigureAwait(false)
             ),
@@ -173,9 +187,16 @@ public sealed class SessionJournalEngine : IDisposable {
         return Append(SessionEventKind.SystemPromptSetup, new SystemPromptSetupBody(systemPrompt));
     }
 
-    public EventAddress AppendAgentAction(ActionMessage action, CompletionDescriptor invocation) {
+    public EventAddress AppendImportedAgentAction(ActionMessage action, CompletionDescriptor invocation) {
         ArgumentNullException.ThrowIfNull(action);
         ArgumentNullException.ThrowIfNull(invocation);
+        SessionProjection projection = Project();
+        if (projection.ExecutionState.Phase != SessionExecutionPhase.AwaitingAgentAction
+            || projection.ExecutionState.HeadKind is not (SessionEventKind.ObservationAccepted or SessionEventKind.ToolResultObserved)) {
+            throw new InvalidOperationException(
+                "AppendImportedAgentAction requires an unprepared observation or settled tool-result completion boundary."
+            );
+        }
         return Append(SessionEventKind.AgentActionProduced, new AgentActionProducedBody(action, invocation));
     }
 
@@ -185,11 +206,17 @@ public sealed class SessionJournalEngine : IDisposable {
         EventAddress? cursor = head;
         EventAddress? runtimeConfigSetupAddress = null;
         EventAddress? systemPromptSetupAddress = null;
+        SessionRuntimeConfiguration? runtimeConfig = null;
+        string? systemPrompt = null;
+        int headerVisitCount = 0;
+        int payloadReadCount = 0;
+        int manifestPayloadReadCount = 0;
 
         while (cursor is { } address && (runtimeConfigSetupAddress is null || systemPromptSetupAddress is null)) {
             cancellationToken.ThrowIfCancellationRequested();
 
             EventFrameHeader header = _journal.ReadEventHeaderPreview(address).Unwrap();
+            headerVisitCount++;
             ValidateSessionHeaderPreview(address, header);
 
             var kind = (SessionEventKind)header.OpaqueEventKind;
@@ -198,6 +225,33 @@ public sealed class SessionJournalEngine : IDisposable {
             }
             else if (kind == SessionEventKind.SystemPromptSetup && systemPromptSetupAddress is null) {
                 systemPromptSetupAddress = address;
+            }
+            else if (kind == SessionEventKind.CompletionRequestPrepared
+                && (runtimeConfigSetupAddress is null || systemPromptSetupAddress is null)) {
+                using EventFrame manifestFrame = _journal.ReadEvent(address).Unwrap();
+                payloadReadCount++;
+                manifestPayloadReadCount++;
+                object decoded = SessionEventCodec.Decode(kind, manifestFrame.Payload, out _);
+                var manifest = decoded as CompletionRequestPreparedBody
+                    ?? throw new InvalidDataException($"completion-request-prepared at {address} decoded to '{decoded.GetType().Name}'.");
+
+                if (runtimeConfigSetupAddress is null) {
+                    runtimeConfig = ReadAndValidateSetupReference<SessionRuntimeConfiguration>(
+                        manifest.Setups.RuntimeConfig,
+                        SessionEventKind.RuntimeConfigSetup,
+                        ref payloadReadCount
+                    );
+                    runtimeConfigSetupAddress = manifest.Setups.RuntimeConfig.Address;
+                }
+                if (systemPromptSetupAddress is null) {
+                    SystemPromptSetupBody prompt = ReadAndValidateSetupReference<SystemPromptSetupBody>(
+                        manifest.Setups.SystemPrompt,
+                        SessionEventKind.SystemPromptSetup,
+                        ref payloadReadCount
+                    );
+                    systemPrompt = prompt.Content;
+                    systemPromptSetupAddress = manifest.Setups.SystemPrompt.Address;
+                }
             }
 
             cursor = header.Parent;
@@ -211,8 +265,20 @@ public sealed class SessionJournalEngine : IDisposable {
             throw new InvalidDataException($"SessionJournal governing setup for head {head} is missing system-prompt-setup on its parent chain.");
         }
 
-        SessionRuntimeConfiguration runtimeConfig = ReadRuntimeConfigSetup(runtimeConfigSetupAddress.Value);
-        string systemPrompt = ReadSystemPromptSetup(systemPromptSetupAddress.Value);
+        if (runtimeConfig is null) {
+            runtimeConfig = ReadRuntimeConfigSetup(runtimeConfigSetupAddress.Value);
+            payloadReadCount++;
+        }
+        if (systemPrompt is null) {
+            systemPrompt = ReadSystemPromptSetup(systemPromptSetupAddress.Value);
+            payloadReadCount++;
+        }
+
+        _lastGoverningSetupResolutionDiagnostics = new(
+            headerVisitCount,
+            payloadReadCount,
+            manifestPayloadReadCount
+        );
 
         return new SessionGoverningSetup(
             head,
@@ -250,9 +316,17 @@ public sealed class SessionJournalEngine : IDisposable {
             journal.CreateBranch(SessionJournalDefaults.MainBranchName, startPoint: null).Unwrap();
             RefId mainRef = journal.OpenBranch(SessionJournalDefaults.MainBranchName).Unwrap();
             var engine = new SessionJournalEngine(journal, mainRef, runtime, testHooks);
-            engine.Append(SessionEventKind.RuntimeConfigSetup, options.ToRuntimeConfiguration());
-            engine.Append(SessionEventKind.SystemPromptSetup, new SystemPromptSetupBody(options.SystemPrompt));
-            engine.Append(SessionEventKind.SessionCreated, new SessionCreatedBody());
+            SessionRuntimeConfiguration runtimeConfig = options.ToRuntimeConfiguration();
+            EventAddress runtimeAddress = engine.Append(SessionEventKind.RuntimeConfigSetup, runtimeConfig);
+            EventAddress promptAddress = engine.Append(SessionEventKind.SystemPromptSetup, new SystemPromptSetupBody(options.SystemPrompt));
+            EventAddress createdAddress = engine.Append(SessionEventKind.SessionCreated, new SessionCreatedBody());
+            engine._governingSetupCursor = new SessionGoverningSetup(
+                createdAddress,
+                runtimeAddress,
+                runtimeConfig,
+                promptAddress,
+                options.SystemPrompt
+            );
             return engine;
         }
         catch {
@@ -291,7 +365,7 @@ public sealed class SessionJournalEngine : IDisposable {
 
             var kind = (SessionEventKind)frame.Header.OpaqueEventKind;
             object body = SessionEventCodec.Decode(kind, frame.Payload, out int version);
-            events.Add(new DecodedSessionEvent(kind, version, body, address));
+            events.Add(new DecodedSessionEvent(kind, version, body, address, frame.Header.Parent));
         }
 
         return events;
@@ -313,12 +387,44 @@ public sealed class SessionJournalEngine : IDisposable {
             ?? throw new InvalidDataException("SessionJournal projection is missing session configuration.");
         string systemPrompt = projection.SystemPrompt
             ?? throw new InvalidDataException("SessionJournal projection is missing system prompt.");
+        SessionCompletionTargetIdentity completionTarget = runtime.CompletionTarget
+            ?? throw new InvalidOperationException(
+                "SessionJournal runtime requires non-secret CompletionTarget identity before a durable completion request can be prepared."
+            );
+        ImmutableArray<ToolDefinition> tools = runtime.ToolSession?.VisibleDefinitions ?? ImmutableArray<ToolDefinition>.Empty;
         var request = new CompletionRequest(
             ModelId: config.ModelId,
             SystemPrompt: systemPrompt,
             Context: projection.Context,
-            Tools: runtime.ToolSession?.VisibleDefinitions ?? ImmutableArray<ToolDefinition>.Empty
+            Tools: tools,
+            MaxTokens: runtime.MaxTokens
         );
+
+        EventAddress expectedParent = projection.Head
+            ?? throw new InvalidDataException("AwaitingAgentAction projection requires a raw head.");
+        SessionGoverningSetup governingSetup = EnsureGoverningSetupCursor(expectedParent, cancellationToken);
+        if (governingSetup.RuntimeConfig != config
+            || !string.Equals(governingSetup.SystemPrompt, systemPrompt, StringComparison.Ordinal)) {
+            throw new InvalidDataException("Governing setup cursor does not match the exact current projection.");
+        }
+
+        CompletionRequestPreparedBody manifest = BuildRequestManifest(
+            request,
+            projection,
+            governingSetup,
+            completionTarget,
+            runtime,
+            tools,
+            expectedParent,
+            cancellationToken
+        );
+        EventAddress preparedAddress = AppendExpected(
+            SessionEventKind.CompletionRequestPrepared,
+            manifest,
+            expectedParent,
+            requireBoundSetupCursor: true
+        );
+        TriggerFailpoint(SessionJournalFailpoint.AfterRequestPreparedCommitted);
 
         CompletionResult result = await runtime.CompletionClient
             .StreamCompletionAsync(request, observer, cancellationToken)
@@ -333,7 +439,12 @@ public sealed class SessionJournalEngine : IDisposable {
         }
 
         TriggerFailpoint(SessionJournalFailpoint.AfterCompletionBeforeActionCommitted);
-        AppendAgentAction(result.Message, result.Invocation);
+        AppendExpected(
+            SessionEventKind.AgentActionProduced,
+            new AgentActionProducedBody(result.Message, result.Invocation),
+            preparedAddress,
+            requireBoundSetupCursor: false
+        );
 
         projection = Project(cancellationToken);
         if (projection.ExecutionState.Phase == SessionExecutionPhase.AwaitingToolExecution) { return await ContinueToolLoopAsync(projection, observer, cancellationToken).ConfigureAwait(false); }
@@ -395,17 +506,253 @@ public sealed class SessionJournalEngine : IDisposable {
         );
     }
 
+    private SessionGoverningSetup EnsureGoverningSetupCursor(
+        EventAddress expectedHead,
+        CancellationToken cancellationToken
+    ) {
+        if (_governingSetupCursor is { } cursor && cursor.Head == expectedHead) {
+            return cursor;
+        }
+
+        EventAddress? observedHead = _journal.GetHead(_mainRef);
+        if (observedHead != expectedHead) {
+            _governingSetupCursor = null;
+            throw new InvalidOperationException(
+                $"Cannot bind governing setup cursor: expected head '{expectedHead}', observed '{observedHead}'."
+            );
+        }
+
+        cursor = ResolveGoverningSetup(expectedHead, cancellationToken);
+        _governingSetupCursor = cursor;
+        return cursor;
+    }
+
+    private CompletionRequestPreparedBody BuildRequestManifest(
+        CompletionRequest request,
+        SessionProjection projection,
+        SessionGoverningSetup governingSetup,
+        SessionCompletionTargetIdentity completionTarget,
+        SessionRuntime runtime,
+        ImmutableArray<ToolDefinition> tools,
+        EventAddress expectedParent,
+        CancellationToken cancellationToken
+    ) {
+        string correlationId = projection.ExecutionState.ActiveCorrelationId
+            ?? throw new InvalidDataException("AwaitingAgentAction requires an active correlation id.");
+        string reason = projection.ExecutionState.HeadKind == SessionEventKind.ToolResultObserved
+            ? "tool-continuation"
+            : "observation";
+        SessionRequestCommitment commitment = SessionRequestCanonicalizer.CreateCommitment(request);
+        var manifest = new CompletionRequestPreparedBody(
+            new SessionRequestAttempt(
+                $"attempt-{Guid.NewGuid():N}",
+                correlationId,
+                reason,
+                ReplacesAttemptId: null
+            ),
+            new SessionContextPlan(
+                SelectionPolicyId: "full-raw",
+                PlannerFingerprint: "atelia.session-journal.full-raw-planner.v1",
+                RawStartExclusive: null,
+                RawRangeSha256: ComputeRawRangeSha256(expectedParent, cancellationToken),
+                ArtifactInputs: ImmutableArray<SessionRequestArtifactInput>.Empty,
+                RecalledInputs: ImmutableArray<SessionRequestRecalledInput>.Empty,
+                RenderingProfileId: "atelia.session-journal.full-raw-rendering.v1",
+                ModelProfileId: request.ModelId,
+                EstimatedInputTokens: checked((commitment.ByteLength + 3) / 4),
+                Reason: reason
+            ),
+            new SessionGoverningSetupReferences(
+                CreateSetupReference(governingSetup.RuntimeConfigSetupAddress, SessionEventKind.RuntimeConfigSetup),
+                CreateSetupReference(governingSetup.SystemPromptSetupAddress, SessionEventKind.SystemPromptSetup)
+            ),
+            new SessionRequestParameters(request.ModelId, request.MaxTokens),
+            new SessionRequestToolSet(
+                SessionRequestManifestDefaults.ToolCodecId,
+                SessionRequestCanonicalizer.ComputeToolSetSha256(tools),
+                tools
+            ),
+            new SessionRequestRendering(
+                ContextRendererId: "atelia.session-journal.full-raw.v1",
+                ContextRendererFingerprint: "atelia.session-journal.full-raw.v1",
+                CanonicalRequestCodecId: SessionRequestManifestDefaults.CanonicalRequestCodecId,
+                ToolCodecId: SessionRequestManifestDefaults.ToolCodecId,
+                ReasoningCodecSetFingerprint: "atelia.reasoning-codec-set.v1"
+            ),
+            new SessionRequestTarget(
+                completionTarget,
+                governingSetup.RuntimeConfig.CompletionSurfaceId,
+                runtime.CompletionClient.Name,
+                runtime.CompletionClient.ApiSpecId
+            ),
+            commitment
+        );
+
+        ValidateManifestMatchesRequest(manifest, request, tools, governingSetup, completionTarget, runtime);
+        return manifest;
+    }
+
+    private static void ValidateManifestMatchesRequest(
+        CompletionRequestPreparedBody manifest,
+        CompletionRequest request,
+        ImmutableArray<ToolDefinition> tools,
+        SessionGoverningSetup governingSetup,
+        SessionCompletionTargetIdentity completionTarget,
+        SessionRuntime runtime
+    ) {
+        SessionRequestManifestCodec.Validate(manifest);
+        SessionRequestCommitment expectedCommitment = SessionRequestCanonicalizer.CreateCommitment(request);
+        if (manifest.Commitment != expectedCommitment
+            || !string.Equals(manifest.Parameters.ModelId, request.ModelId, StringComparison.Ordinal)
+            || manifest.Parameters.MaxTokens != request.MaxTokens
+            || !string.Equals(manifest.ToolSet.Sha256, SessionRequestCanonicalizer.ComputeToolSetSha256(tools), StringComparison.Ordinal)
+            || !manifest.ToolSet.Definitions.SequenceEqual(tools)
+            || manifest.Setups.RuntimeConfig.Address != governingSetup.RuntimeConfigSetupAddress
+            || manifest.Setups.SystemPrompt.Address != governingSetup.SystemPromptSetupAddress
+            || manifest.Target.Connection != completionTarget
+            || !string.Equals(manifest.Target.CompletionSurfaceId, governingSetup.RuntimeConfig.CompletionSurfaceId, StringComparison.Ordinal)
+            || !string.Equals(manifest.Target.ClientName, runtime.CompletionClient.Name, StringComparison.Ordinal)
+            || !string.Equals(manifest.Target.ApiSpecId, runtime.CompletionClient.ApiSpecId, StringComparison.Ordinal)) {
+            throw new InvalidDataException("completion-request-prepared manifest does not match the exact provider-neutral CompletionRequest.");
+        }
+    }
+
+    private SessionSetupReference CreateSetupReference(EventAddress address, SessionEventKind expectedKind) {
+        using EventFrame frame = _journal.ReadEvent(address).Unwrap();
+        ValidateSessionHeaderPreview(address, frame.Header);
+        var actualKind = (SessionEventKind)frame.Header.OpaqueEventKind;
+        if (actualKind != expectedKind) {
+            throw new InvalidDataException($"Expected '{expectedKind}' setup at {address}, got '{actualKind}'.");
+        }
+        _ = SessionEventCodec.Decode(actualKind, frame.Payload, out int bodySchemaVersion);
+        return new SessionSetupReference(
+            address,
+            bodySchemaVersion,
+            SessionRequestCanonicalizer.Sha256Hex(frame.Payload)
+        );
+    }
+
+    internal string ComputeRawRangeSha256ForTest(EventAddress rawEndInclusive)
+        => ComputeRawRangeSha256(rawEndInclusive, CancellationToken.None);
+
+    private string ComputeRawRangeSha256(EventAddress rawEndInclusive, CancellationToken cancellationToken) {
+        IReadOnlyList<EventAddress> chain = _journal.ReadChronologicalChain(
+            rawEndInclusive,
+            checkedRead: true,
+            cancellationToken: cancellationToken
+        ).Unwrap();
+        using IncrementalHash hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        AppendHashField(hash, Encoding.UTF8.GetBytes("atelia.session-journal.raw-range.v1"));
+        hash.AppendData([0]); // RawStartExclusive = null for the CS-3A full-raw policy.
+        AppendHashField(hash, Encoding.UTF8.GetBytes(EventAddressTextCodec.Format(rawEndInclusive)));
+
+        Span<byte> number = stackalloc byte[4];
+        foreach (EventAddress address in chain) {
+            cancellationToken.ThrowIfCancellationRequested();
+            using EventFrame frame = _journal.ReadEvent(address).Unwrap();
+            ValidateSessionHeaderPreview(address, frame.Header);
+            AppendHashField(hash, Encoding.UTF8.GetBytes(EventAddressTextCodec.Format(address)));
+            if (frame.Header.Parent is { } parent) {
+                hash.AppendData([1]);
+                AppendHashField(hash, Encoding.UTF8.GetBytes(EventAddressTextCodec.Format(parent)));
+            }
+            else {
+                hash.AppendData([0]);
+            }
+
+            BinaryPrimitives.WriteUInt32BigEndian(number, frame.Header.OpaqueEventKind);
+            hash.AppendData(number);
+            var kind = (SessionEventKind)frame.Header.OpaqueEventKind;
+            _ = SessionEventCodec.Decode(kind, frame.Payload, out int bodySchemaVersion);
+            BinaryPrimitives.WriteInt32BigEndian(number, bodySchemaVersion);
+            hash.AppendData(number);
+            AppendHashField(hash, SHA256.HashData(frame.Payload));
+        }
+
+        return Convert.ToHexStringLower(hash.GetHashAndReset());
+    }
+
+    private static void AppendHashField(IncrementalHash hash, ReadOnlySpan<byte> bytes) {
+        Span<byte> length = stackalloc byte[4];
+        BinaryPrimitives.WriteInt32BigEndian(length, bytes.Length);
+        hash.AppendData(length);
+        hash.AppendData(bytes);
+    }
+
     private EventAddress Append(SessionEventKind kind, object body) {
         ThrowIfDisposed();
         EventAddress? expectedHead = _journal.GetHead(_mainRef);
+        return AppendExpected(kind, body, expectedHead, requireBoundSetupCursor: false);
+    }
+
+    private EventAddress AppendExpected(
+        SessionEventKind kind,
+        object body,
+        EventAddress? expectedHead,
+        bool requireBoundSetupCursor
+    ) {
+        ThrowIfDisposed();
+        EventAddress? observedHead = _journal.GetHead(_mainRef);
+        if (observedHead != expectedHead) {
+            _governingSetupCursor = null;
+            throw new InvalidOperationException(
+                $"SessionJournal branch head changed before append. Expected '{expectedHead}', observed '{observedHead}'."
+            );
+        }
+        if (requireBoundSetupCursor
+            && (_governingSetupCursor is null || _governingSetupCursor.Head != expectedHead)) {
+            _governingSetupCursor = null;
+            throw new InvalidOperationException(
+                $"A completion request can be prepared only with a governing setup cursor bound to expected parent '{expectedHead}'."
+            );
+        }
+
         byte[] payload = SessionEventCodec.Encode(kind, body);
-        return _journal.CommitToRef(
-            SessionJournalDefaults.MainBranchName,
-            expectedHead,
-            payload,
-            opaqueEventKind: (uint)kind,
-            hint: default
-        ).Unwrap().EventAddress;
+        try {
+            EventAddress committed = _journal.CommitToRef(
+                SessionJournalDefaults.MainBranchName,
+                expectedHead,
+                payload,
+                opaqueEventKind: (uint)kind,
+                hint: default
+            ).Unwrap().EventAddress;
+            AdvanceGoverningSetupCursor(kind, body, expectedHead, committed);
+            return committed;
+        }
+        catch {
+            _governingSetupCursor = null;
+            throw;
+        }
+    }
+
+    private void AdvanceGoverningSetupCursor(
+        SessionEventKind kind,
+        object body,
+        EventAddress? expectedHead,
+        EventAddress committed
+    ) {
+        SessionGoverningSetup? cursor = _governingSetupCursor;
+        if (cursor is null) { return; }
+        if (cursor.Head != expectedHead) {
+            _governingSetupCursor = null;
+            return;
+        }
+
+        _governingSetupCursor = kind switch {
+            SessionEventKind.RuntimeConfigSetup when body is SessionRuntimeConfiguration config =>
+                cursor with {
+                    Head = committed,
+                    RuntimeConfigSetupAddress = committed,
+                    RuntimeConfig = config
+                },
+            SessionEventKind.SystemPromptSetup when body is SystemPromptSetupBody prompt =>
+                cursor with {
+                    Head = committed,
+                    SystemPromptSetupAddress = committed,
+                    SystemPrompt = prompt.Content
+                },
+            _ => cursor with { Head = committed }
+        };
     }
 
     private static void ValidateSessionHeaderPreview(EventAddress address, EventFrameHeader header) {
@@ -429,6 +776,39 @@ public sealed class SessionJournalEngine : IDisposable {
         object body = SessionEventCodec.Decode(kind, frame.Payload, out _);
         return body as SessionRuntimeConfiguration
             ?? throw new InvalidDataException($"runtime-config-setup at {address} decoded to unexpected body type '{body.GetType().Name}'.");
+    }
+
+    private T ReadAndValidateSetupReference<T>(
+        SessionSetupReference reference,
+        SessionEventKind expectedKind,
+        ref int payloadReadCount
+    ) where T : class {
+        using EventFrame frame = _journal.ReadEvent(reference.Address).Unwrap();
+        payloadReadCount++;
+        ValidateSessionHeaderPreview(reference.Address, frame.Header);
+        var actualKind = (SessionEventKind)frame.Header.OpaqueEventKind;
+        if (actualKind != expectedKind) {
+            throw new InvalidDataException(
+                $"Setup checkpoint expected '{expectedKind}' at {reference.Address}, got '{actualKind}'."
+            );
+        }
+
+        object body = SessionEventCodec.Decode(actualKind, frame.Payload, out int bodySchemaVersion);
+        if (bodySchemaVersion != reference.BodySchemaVersion) {
+            throw new InvalidDataException(
+                $"Setup checkpoint schema version mismatch at {reference.Address}: expected {reference.BodySchemaVersion}, got {bodySchemaVersion}."
+            );
+        }
+
+        string payloadSha256 = SessionRequestCanonicalizer.Sha256Hex(frame.Payload);
+        if (!string.Equals(payloadSha256, reference.PayloadSha256, StringComparison.Ordinal)) {
+            throw new InvalidDataException($"Setup checkpoint payload hash mismatch at {reference.Address}.");
+        }
+
+        return body as T
+            ?? throw new InvalidDataException(
+                $"Setup checkpoint at {reference.Address} decoded to '{body.GetType().Name}', expected '{typeof(T).Name}'."
+            );
     }
 
     private string ReadSystemPromptSetup(EventAddress address) {
@@ -493,11 +873,11 @@ public sealed class SessionJournalEngine : IDisposable {
         ArgumentNullException.ThrowIfNull(termination);
         return termination.Kind switch {
             CompletionTerminationKind.Incomplete =>
-                $"Completion ended incompletely and was not persisted. reason={termination.ProviderReason ?? "<none>"}, detail={termination.Detail ?? "<none>"}",
+                $"Completion ended incompletely; no action was persisted and the prepared request remains durable. reason={termination.ProviderReason ?? "<none>"}, detail={termination.Detail ?? "<none>"}",
             CompletionTerminationKind.Failed =>
-                $"Completion failed and was not persisted. reason={termination.ProviderReason ?? "<none>"}, detail={termination.Detail ?? "<none>"}",
+                $"Completion failed; no action was persisted and the prepared request remains durable. reason={termination.ProviderReason ?? "<none>"}, detail={termination.Detail ?? "<none>"}",
             _ =>
-                $"Completion was aborted and was not persisted. reason={termination.ProviderReason ?? "<none>"}, detail={termination.Detail ?? "<none>"}"
+                $"Completion was aborted; no action was persisted and the prepared request remains durable. reason={termination.ProviderReason ?? "<none>"}, detail={termination.Detail ?? "<none>"}"
         };
     }
 

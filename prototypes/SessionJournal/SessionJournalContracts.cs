@@ -24,6 +24,7 @@ public enum SessionExecutionPhase {
     Empty,
     Idle,
     AwaitingAgentAction,
+    AwaitingCompletion,
     AwaitingToolExecution,
 }
 
@@ -44,8 +45,8 @@ public sealed record SessionCreateOptions(
 public sealed record SessionCompletionTargetIdentity(
     string ConnectionId,
     string Kind,
-    string Fingerprint,
-    string AdapterFingerprint
+    string ConnectionFingerprint,
+    string RequestAdapterFingerprint
 );
 
 public sealed record SessionRuntime(
@@ -86,6 +87,7 @@ public sealed class SessionJournalTurnAbortedException : InvalidOperationExcepti
 internal enum SessionJournalFailpoint {
     None,
     AfterObservationCommitted,
+    AfterRequestPreparedCommitted,
     AfterCompletionBeforeActionCommitted,
     AfterToolStartedCommitted,
     AfterToolResultCommitted
@@ -112,7 +114,10 @@ public sealed record SessionExecutionState(
     RawToolCall? PendingToolCall = null,
     string? PendingOperationId = null,
     bool PendingToolExecutionStarted = false,
-    long ToolExecutionSequenceCheckpoint = 0
+    long ToolExecutionSequenceCheckpoint = 0,
+    EventAddress? PendingRequestPreparedAddress = null,
+    string? PendingCompletionAttemptId = null,
+    string? ActiveCorrelationId = null
 );
 
 public sealed record SessionProjection(
@@ -189,5 +194,12 @@ internal readonly record struct DecodedSessionEvent(
     SessionEventKind Kind,
     int BodySchemaVersion,
     object Body,
-    EventAddress Address
+    EventAddress Address,
+    EventAddress? Parent
+);
+
+internal readonly record struct GoverningSetupResolutionDiagnostics(
+    int HeaderVisitCount,
+    int PayloadReadCount,
+    int ManifestPayloadReadCount
 );

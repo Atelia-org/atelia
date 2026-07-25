@@ -617,7 +617,7 @@ public sealed class RollingSummaryReplaySourceTests : IDisposable {
         using var engine = SJ.SessionJournalEngine.Create(repoPath, new SJ.SessionCreateOptions("model-a", "system", "surface"));
         for (int turn = 1; turn <= turnCount; turn++) {
             engine.AppendObservation($"hello {turn}");
-            engine.AppendAgentAction(
+            engine.AppendImportedAgentAction(
                 new ActionMessage([new ActionBlock.Text($"answer {turn}")]),
                 new CompletionDescriptor("scripted", "openai-chat-v1", "model-a")
             );
@@ -633,13 +633,13 @@ public sealed class RollingSummaryReplaySourceTests : IDisposable {
             new SJ.SessionCreateOptions("model-a", "system-a", "surface")
         );
         engine.AppendObservation("hello 1");
-        engine.AppendAgentAction(
+        engine.AppendImportedAgentAction(
             new ActionMessage([new ActionBlock.Text("answer 1")]),
             new CompletionDescriptor("scripted", "openai-chat-v1", "model-a")
         );
         engine.AppendSystemPromptSetup("system-b");
         engine.AppendObservation("hello 2");
-        engine.AppendAgentAction(
+        engine.AppendImportedAgentAction(
             new ActionMessage([new ActionBlock.Text("answer 2")]),
             new CompletionDescriptor("scripted", "openai-chat-v1", "model-a")
         );

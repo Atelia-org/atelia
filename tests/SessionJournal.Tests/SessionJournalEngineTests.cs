@@ -69,7 +69,7 @@ public sealed class SessionJournalEngineTests : IDisposable {
             )
         )) {
             engine.AppendObservation("hello");
-            engine.AppendAgentAction(action, invocation);
+            engine.AppendImportedAgentAction(action, invocation);
         }
 
         using var reopened = SessionJournalEngine.Open(path);
@@ -112,7 +112,7 @@ public sealed class SessionJournalEngineTests : IDisposable {
             )
         )) {
             observationAddress = engine.AppendObservation("hello");
-            actionAddress = engine.AppendAgentAction(action, invocation);
+            actionAddress = engine.AppendImportedAgentAction(action, invocation);
         }
 
         using var reopened = SessionJournalEngine.Open(path);
@@ -174,7 +174,7 @@ public sealed class SessionJournalEngineTests : IDisposable {
             )
         )) {
             engine.AppendObservation("hello");
-            engine.AppendAgentAction(
+            engine.AppendImportedAgentAction(
                 new ActionMessage([new ActionBlock.Text("answer")]),
                 new CompletionDescriptor("fake-provider", "fake-api-v1", "model-A")
             );
@@ -212,7 +212,7 @@ public sealed class SessionJournalEngineTests : IDisposable {
             )
         )) {
             engine.AppendObservation("hello");
-            engine.AppendAgentAction(
+            engine.AppendImportedAgentAction(
                 new ActionMessage([new ActionBlock.Text("answer")]),
                 new CompletionDescriptor("fake-provider", "fake-api-v1", "model-A")
             );
@@ -292,6 +292,165 @@ public sealed class SessionJournalEngineTests : IDisposable {
             var ex = Assert.Throws<InvalidDataException>(() => engine.ResolveGoverningSetup(promptOnlyHead));
             Assert.Contains("missing runtime-config-setup", ex.Message, StringComparison.Ordinal);
         }
+    }
+
+    [Fact]
+    public async Task ResolveGoverningSetup_UsesRecentPreparedCheckpointAndMergesOneSidedUpdates() {
+        string path = NewJournalPath();
+        var client = new ScriptedCompletionClient();
+        client.Enqueue(request => new CompletionResult(
+            new ActionMessage([new ActionBlock.Text("answer")]),
+            new CompletionDescriptor("scripted", "test-api-v1", request.ModelId)
+        ));
+
+        using var engine = SessionJournalEngine.Create(
+            path,
+            new SessionCreateOptions("model-A", "system-A", "surface-A"),
+            CreateRuntime(client)
+        );
+        await engine.SendAsync("hello", CancellationToken.None);
+
+        EventAddress actionHead = engine.Project().Head!.Value;
+        SessionGoverningSetup fromCheckpoint = engine.ResolveGoverningSetup(actionHead);
+        Assert.Equal("model-A", fromCheckpoint.RuntimeConfig.ModelId);
+        Assert.Equal("system-A", fromCheckpoint.SystemPrompt);
+        Assert.Equal(2, engine.LastGoverningSetupResolutionDiagnostics.HeaderVisitCount);
+        Assert.Equal(1, engine.LastGoverningSetupResolutionDiagnostics.ManifestPayloadReadCount);
+
+        EventAddress runtimeB = engine.AppendRuntimeConfigSetup(
+            new SessionRuntimeConfiguration("model-B", "surface-B", SessionJournalDefaults.Schema)
+        );
+        SessionGoverningSetup runtimeMerged = engine.ResolveGoverningSetup(runtimeB);
+        Assert.Equal(runtimeB, runtimeMerged.RuntimeConfigSetupAddress);
+        Assert.Equal("model-B", runtimeMerged.RuntimeConfig.ModelId);
+        Assert.Equal("system-A", runtimeMerged.SystemPrompt);
+        Assert.Equal(1, engine.LastGoverningSetupResolutionDiagnostics.ManifestPayloadReadCount);
+
+        EventAddress promptB = engine.AppendSystemPromptSetup("system-B");
+        SessionGoverningSetup bothDirect = engine.ResolveGoverningSetup(promptB);
+        Assert.Equal(runtimeB, bothDirect.RuntimeConfigSetupAddress);
+        Assert.Equal(promptB, bothDirect.SystemPromptSetupAddress);
+        Assert.Equal("system-B", bothDirect.SystemPrompt);
+        Assert.Equal(2, engine.LastGoverningSetupResolutionDiagnostics.HeaderVisitCount);
+        Assert.Equal(0, engine.LastGoverningSetupResolutionDiagnostics.ManifestPayloadReadCount);
+    }
+
+    [Fact]
+    public async Task ResolveGoverningSetup_UsesCheckpointRuntimeAfterPromptOnlyUpdate() {
+        string path = NewJournalPath();
+        var client = new ScriptedCompletionClient();
+        client.Enqueue(request => new CompletionResult(
+            new ActionMessage([new ActionBlock.Text("answer")]),
+            new CompletionDescriptor("scripted", "test-api-v1", request.ModelId)
+        ));
+
+        using var engine = SessionJournalEngine.Create(
+            path,
+            new SessionCreateOptions("model-A", "system-A", "surface-A"),
+            CreateRuntime(client)
+        );
+        await engine.SendAsync("hello", CancellationToken.None);
+        EventAddress promptB = engine.AppendSystemPromptSetup("system-B");
+
+        SessionGoverningSetup setup = engine.ResolveGoverningSetup(promptB);
+        Assert.Equal("model-A", setup.RuntimeConfig.ModelId);
+        Assert.Equal(promptB, setup.SystemPromptSetupAddress);
+        Assert.Equal("system-B", setup.SystemPrompt);
+        Assert.Equal(1, engine.LastGoverningSetupResolutionDiagnostics.ManifestPayloadReadCount);
+    }
+
+    [Fact]
+    public async Task GoverningSetupCursor_CreateBinds_OpenIsLazy_AndPreparedPlanningBindsExactHead() {
+        string path = NewJournalPath();
+        EventAddress observation;
+        using (var created = SessionJournalEngine.Create(
+            path,
+            new SessionCreateOptions("model-A", "system-A", "surface-A")
+        )) {
+            Assert.Equal(created.Project().Head, created.GoverningSetupCursorHeadForTest);
+            observation = created.AppendObservation("hello");
+            Assert.Equal(observation, created.GoverningSetupCursorHeadForTest);
+        }
+
+        var client = new ScriptedCompletionClient();
+        using var reopened = SessionJournalEngine.OpenForTest(
+            path,
+            CreateRuntime(client),
+            new SessionJournalTestHooks(SessionJournalFailpoint.AfterRequestPreparedCommitted)
+        );
+        Assert.Null(reopened.GoverningSetupCursorHeadForTest);
+        _ = reopened.ResolveGoverningSetup(observation);
+        Assert.Null(reopened.GoverningSetupCursorHeadForTest);
+
+        await Assert.ThrowsAsync<SessionJournalFailpointException>(
+            () => reopened.ResumeAsync(CancellationToken.None)
+        );
+        Assert.Equal(reopened.Project().Head, reopened.GoverningSetupCursorHeadForTest);
+        Assert.Equal(0, client.Calls);
+    }
+
+    [Theory]
+    [InlineData("hash")]
+    [InlineData("kind")]
+    [InlineData("schema")]
+    public async Task ResolveGoverningSetup_CorruptCheckpointReference_FailsFast(string corruption) {
+        string path = NewJournalPath();
+        var client = new ScriptedCompletionClient();
+        client.Enqueue(request => new CompletionResult(
+            new ActionMessage([new ActionBlock.Text("answer")]),
+            new CompletionDescriptor("scripted", "test-api-v1", request.ModelId)
+        ));
+
+        EventAddress actionHead;
+        using (var engine = SessionJournalEngine.Create(
+            path,
+            new SessionCreateOptions("model-A", "system-A", "surface-A"),
+            CreateRuntime(client)
+        )) {
+            await engine.SendAsync("hello", CancellationToken.None);
+            actionHead = engine.Project().Head!.Value;
+        }
+
+        EventAddress prepared = Assert.Single(ReadJournalAddressesByKind(path, SessionEventKind.CompletionRequestPrepared));
+        CompletionRequestPreparedBody sourceManifest;
+        using (var inspection = SessionJournalEngine.Open(path)) {
+            sourceManifest = Assert.IsType<CompletionRequestPreparedBody>(
+                SessionEventCodec.Decode(SessionEventKind.CompletionRequestPrepared, inspection.ReadPayloadBytes(prepared), out _)
+            );
+        }
+
+        EventAddress corruptHead;
+        using (var journal = EventJournal.EventJournal.OpenExisting(path)) {
+            SessionSetupReference runtimeRef = sourceManifest.Setups.RuntimeConfig;
+            if (corruption == "hash") {
+                runtimeRef = runtimeRef with { PayloadSha256 = new string('0', 64) };
+            }
+            else if (corruption == "schema") {
+                runtimeRef = runtimeRef with { BodySchemaVersion = checked(runtimeRef.BodySchemaVersion + 1) };
+            }
+            else {
+                using EventFrame actionFrame = journal.ReadEvent(actionHead).Unwrap();
+                runtimeRef = new SessionSetupReference(
+                    actionHead,
+                    BodySchemaVersion: 1,
+                    SessionRequestCanonicalizer.Sha256Hex(actionFrame.Payload)
+                );
+            }
+
+            CompletionRequestPreparedBody corrupt = sourceManifest with {
+                Setups = sourceManifest.Setups with { RuntimeConfig = runtimeRef }
+            };
+            corruptHead = journal.CommitToRef(
+                SessionJournalDefaults.MainBranchName,
+                actionHead,
+                SessionEventCodec.Encode(SessionEventKind.CompletionRequestPrepared, corrupt),
+                opaqueEventKind: (uint)SessionEventKind.CompletionRequestPrepared,
+                hint: default
+            ).Unwrap().EventAddress;
+        }
+
+        using var reopened = SessionJournalEngine.Open(path);
+        Assert.Throws<InvalidDataException>(() => reopened.ResolveGoverningSetup(corruptHead));
     }
 
     [Fact]
@@ -475,7 +634,7 @@ public sealed class SessionJournalEngineTests : IDisposable {
             )
         )) {
             engine.AppendObservation("need lookup");
-            actionAddress = engine.AppendAgentAction(action, invocation);
+            actionAddress = engine.AppendImportedAgentAction(action, invocation);
             string actionJson = System.Text.Encoding.UTF8.GetString(engine.ReadPayloadBytes(actionAddress));
             Assert.Equal("{\"v\":1,\"body\":{\"action\":[{\"kind\":\"text\",\"content\":\"I will call a tool.\"},{\"kind\":\"tool-call\",\"toolName\":\"lookup\",\"toolCallId\":\"call-1\",\"rawArgumentsJson\":\"{\\\"q\\\":\\\"x\\\"}\"}],\"invocation\":{\"providerId\":\"fake-provider\",\"apiSpecId\":\"fake-api-v1\",\"model\":\"model-A\"}}}", actionJson);
         }
@@ -513,7 +672,7 @@ public sealed class SessionJournalEngineTests : IDisposable {
         using var engine = SessionJournalEngine.Create(
             path,
             new SessionCreateOptions("model-A", "system-A", "surface-A"),
-            new SessionRuntime(client)
+            CreateRuntime(client)
         );
 
         TurnResult result = await engine.SendAsync("hello", CancellationToken.None);
@@ -524,6 +683,57 @@ public sealed class SessionJournalEngineTests : IDisposable {
         Assert.Equal(2, projection.Context.Count);
         Assert.Equal(SessionExecutionPhase.Idle, projection.ExecutionState.Phase);
         Assert.Equal(0, client.RemainingResponses);
+        engine.Dispose();
+
+        EventAddress observationAddress = Assert.Single(ReadJournalAddressesByKind(path, SessionEventKind.ObservationAccepted));
+        EventAddress preparedAddress = Assert.Single(ReadJournalAddressesByKind(path, SessionEventKind.CompletionRequestPrepared));
+        EventAddress actionAddress = Assert.Single(ReadJournalAddressesByKind(path, SessionEventKind.AgentActionProduced));
+        using (var journal = EventJournal.EventJournal.OpenExisting(path)) {
+            Assert.Equal(observationAddress, journal.ReadEventHeaderChecked(preparedAddress).Unwrap().Parent);
+            Assert.Equal(preparedAddress, journal.ReadEventHeaderChecked(actionAddress).Unwrap().Parent);
+        }
+
+        using var inspection = SessionJournalEngine.Open(path);
+        var manifest = Assert.IsType<CompletionRequestPreparedBody>(
+            SessionEventCodec.Decode(SessionEventKind.CompletionRequestPrepared, inspection.ReadPayloadBytes(preparedAddress), out _)
+        );
+        Assert.Equal("full-raw", manifest.Plan.SelectionPolicyId);
+        Assert.Null(manifest.Plan.RawStartExclusive);
+        Assert.Equal(inspection.ComputeRawRangeSha256ForTest(observationAddress), manifest.Plan.RawRangeSha256);
+        Assert.Equal("model-A", manifest.Parameters.ModelId);
+        Assert.Empty(manifest.ToolSet.Definitions);
+        Assert.Equal("surface-A", manifest.Target.CompletionSurfaceId);
+        Assert.Equal(SessionRequestCanonicalizer.CreateCommitment(client.Requests.Single()), manifest.Commitment);
+    }
+
+    [Fact]
+    public async Task SendAsync_AfterRequestPreparedCommitted_LeavesDurableAwaitingCompletionBeforeProviderCall() {
+        string path = NewJournalPath();
+        var client = new ScriptedCompletionClient();
+        using (var engine = SessionJournalEngine.CreateForTest(
+            path,
+            new SessionCreateOptions("model-A", "system-A", "surface-A"),
+            CreateRuntime(client),
+            new SessionJournalTestHooks(SessionJournalFailpoint.AfterRequestPreparedCommitted)
+        )) {
+            var ex = await Assert.ThrowsAsync<SessionJournalFailpointException>(
+                () => engine.SendAsync("hello", CancellationToken.None)
+            );
+
+            Assert.Equal(SessionJournalFailpoint.AfterRequestPreparedCommitted, ex.Failpoint);
+            SessionExecutionState state = engine.Project().ExecutionState;
+            Assert.Equal(SessionExecutionPhase.AwaitingCompletion, state.Phase);
+            Assert.Equal(SessionEventKind.CompletionRequestPrepared, state.HeadKind);
+            Assert.Equal(engine.Project().Head, state.PendingRequestPreparedAddress);
+            Assert.False(string.IsNullOrWhiteSpace(state.PendingCompletionAttemptId));
+            Assert.False(string.IsNullOrWhiteSpace(state.ActiveCorrelationId));
+            Assert.Equal(0, client.Calls);
+        }
+
+        using var reopened = SessionJournalEngine.Open(path, CreateRuntime(client));
+        Assert.Equal(SessionExecutionPhase.AwaitingCompletion, reopened.Project().ExecutionState.Phase);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => reopened.ResumeAsync(CancellationToken.None));
+        Assert.Equal(0, client.Calls);
     }
 
     [Fact]
@@ -544,7 +754,7 @@ public sealed class SessionJournalEngineTests : IDisposable {
         using var engine = SessionJournalEngine.Create(
             path,
             new SessionCreateOptions("model-A", "system-A", "surface-A"),
-            new SessionRuntime(client)
+            CreateRuntime(client)
         );
         engine.AppendRuntimeConfigSetup(new SessionRuntimeConfiguration("model-B", "surface-B", SessionJournalDefaults.Schema));
         engine.AppendSystemPromptSetup("system-B");
@@ -563,7 +773,7 @@ public sealed class SessionJournalEngineTests : IDisposable {
         using (var engine = SessionJournalEngine.CreateForTest(
             path,
             new SessionCreateOptions("model-A", "system-A", "surface-A"),
-            new SessionRuntime(firstClient),
+            CreateRuntime(firstClient),
             new SessionJournalTestHooks(SessionJournalFailpoint.AfterObservationCommitted)
         )) {
             var ex = await Assert.ThrowsAsync<SessionJournalFailpointException>(
@@ -587,7 +797,7 @@ public sealed class SessionJournalEngineTests : IDisposable {
             }
         );
 
-        using var reopened = SessionJournalEngine.Open(path, new SessionRuntime(resumeClient));
+        using var reopened = SessionJournalEngine.Open(path, CreateRuntime(resumeClient));
         ResumeOutcome outcome = await reopened.ResumeAsync(CancellationToken.None);
         SessionProjection projection = reopened.Project();
 
@@ -599,7 +809,7 @@ public sealed class SessionJournalEngineTests : IDisposable {
     }
 
     [Fact]
-    public async Task ResumeAsync_AfterCompletionBeforeAction_RerunsCompletionDeterministically() {
+    public async Task ResumeAsync_AfterCompletionBeforeAction_DoesNotReplanOrResendPreparedRequest() {
         string path = NewJournalPath();
         var firstClient = new ScriptedCompletionClient();
         firstClient.Enqueue(
@@ -612,32 +822,29 @@ public sealed class SessionJournalEngineTests : IDisposable {
         using (var engine = SessionJournalEngine.CreateForTest(
             path,
             new SessionCreateOptions("model-A", "system-A", "surface-A"),
-            new SessionRuntime(firstClient),
+            CreateRuntime(firstClient),
             new SessionJournalTestHooks(SessionJournalFailpoint.AfterCompletionBeforeActionCommitted)
         )) {
             var ex = await Assert.ThrowsAsync<SessionJournalFailpointException>(
                 () => engine.SendAsync("hello", CancellationToken.None)
             );
             Assert.Equal(SessionJournalFailpoint.AfterCompletionBeforeActionCommitted, ex.Failpoint);
-            Assert.Equal(SessionExecutionPhase.AwaitingAgentAction, engine.Project().ExecutionState.Phase);
+            SessionExecutionState state = engine.Project().ExecutionState;
+            Assert.Equal(SessionExecutionPhase.AwaitingCompletion, state.Phase);
+            Assert.NotNull(state.PendingRequestPreparedAddress);
+            Assert.False(string.IsNullOrWhiteSpace(state.PendingCompletionAttemptId));
             Assert.Equal(1, firstClient.Calls);
         }
 
         var resumeClient = new ScriptedCompletionClient();
-        resumeClient.Enqueue(
-            request => new CompletionResult(
-                new ActionMessage(new ActionBlock[] { new ActionBlock.Text("persisted-on-resume") }),
-                new CompletionDescriptor("scripted", "test-api-v1", request.ModelId)
-            )
+        using var reopened = SessionJournalEngine.Open(path, CreateRuntime(resumeClient));
+        InvalidOperationException resumeError = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => reopened.ResumeAsync(CancellationToken.None)
         );
 
-        using var reopened = SessionJournalEngine.Open(path, new SessionRuntime(resumeClient));
-        ResumeOutcome outcome = await reopened.ResumeAsync(CancellationToken.None);
-
-        Assert.True(outcome.Advanced);
-        Assert.Equal("persisted-on-resume", outcome.Message!.GetFlattenedText());
-        Assert.Equal("persisted-on-resume", Assert.IsType<ActionMessage>(reopened.Project().Context[1]).GetFlattenedText());
-        Assert.Equal(1, resumeClient.Calls);
+        Assert.Contains("CS-3C", resumeError.Message, StringComparison.Ordinal);
+        Assert.Equal(SessionExecutionPhase.AwaitingCompletion, reopened.Project().ExecutionState.Phase);
+        Assert.Equal(0, resumeClient.Calls);
     }
 
     [Fact]
@@ -647,7 +854,7 @@ public sealed class SessionJournalEngineTests : IDisposable {
         using var engine = SessionJournalEngine.Create(
             path,
             new SessionCreateOptions("model-A", "system-A", "surface-A"),
-            new SessionRuntime(client)
+            CreateRuntime(client)
         );
 
         ResumeOutcome outcome = await engine.ResumeAsync(CancellationToken.None);
@@ -700,7 +907,7 @@ public sealed class SessionJournalEngineTests : IDisposable {
         using (var engine = SessionJournalEngine.Create(
             path,
             new SessionCreateOptions("model-A", "system-A", "surface-A"),
-            new SessionRuntime(client, toolSession)
+            CreateRuntime(client, toolSession)
         )) {
             TurnResult turn = await engine.SendAsync("need lookup", CancellationToken.None);
             SessionProjection projection = engine.Project();
@@ -712,9 +919,9 @@ public sealed class SessionJournalEngineTests : IDisposable {
             Assert.Equal(2, client.Calls);
         }
 
-        string[] payloads = ReadJournalPayloadJson(path);
-        string startedPayload = payloads[^3];
-        string resultPayload = payloads[^2];
+        string startedPayload = Assert.Single(ReadJournalPayloadJsonByKind(path, SessionEventKind.ToolExecutionStarted));
+        string resultPayload = Assert.Single(ReadJournalPayloadJsonByKind(path, SessionEventKind.ToolResultObserved));
+        Assert.Equal(2, ReadJournalPayloadJsonByKind(path, SessionEventKind.CompletionRequestPrepared).Length);
         Assert.Equal("{\"v\":1,\"body\":{\"toolCallId\":\"call-1\",\"toolName\":\"lookup\",\"rawArgumentsJson\":\"{\\\"q\\\":\\\"x\\\"}\",\"operationId\":\"" + ExtractOperationId(startedPayload) + "\"}}", startedPayload);
         Assert.Equal("{\"v\":1,\"body\":{\"toolCallId\":\"call-1\",\"toolName\":\"lookup\",\"status\":\"success\",\"blocks\":[{\"kind\":\"text\",\"content\":\"result:{\\\"q\\\":\\\"x\\\"}\"}]}}", resultPayload);
         Assert.DoesNotContain("opaqueEventKind", startedPayload, StringComparison.Ordinal);
@@ -742,7 +949,7 @@ public sealed class SessionJournalEngineTests : IDisposable {
         using (var engine = SessionJournalEngine.CreateForTest(
             path,
             new SessionCreateOptions("model-A", "system-A", "surface-A"),
-            new SessionRuntime(firstClient, new ToolRegistry([firstTool]).CreateSession()),
+            CreateRuntime(firstClient, new ToolRegistry([firstTool]).CreateSession()),
             new SessionJournalTestHooks(SessionJournalFailpoint.AfterToolStartedCommitted)
         )) {
             var ex = await Assert.ThrowsAsync<SessionJournalFailpointException>(
@@ -776,7 +983,7 @@ public sealed class SessionJournalEngineTests : IDisposable {
             }
         );
 
-        using var reopened = SessionJournalEngine.Open(path, new SessionRuntime(resumeClient, new ToolRegistry([resumeTool]).CreateSession()));
+        using var reopened = SessionJournalEngine.Open(path, CreateRuntime(resumeClient, new ToolRegistry([resumeTool]).CreateSession()));
         ResumeOutcome outcome = await reopened.ResumeAsync(CancellationToken.None);
         SessionProjection projection = reopened.Project();
 
@@ -802,7 +1009,7 @@ public sealed class SessionJournalEngineTests : IDisposable {
         using (var engine = SessionJournalEngine.CreateForTest(
             path,
             new SessionCreateOptions("model-A", "system-A", "surface-A"),
-            new SessionRuntime(firstClient, new ToolRegistry([tool]).CreateSession()),
+            CreateRuntime(firstClient, new ToolRegistry([tool]).CreateSession()),
             new SessionJournalTestHooks(SessionJournalFailpoint.AfterToolResultCommitted)
         )) {
             var ex = await Assert.ThrowsAsync<SessionJournalFailpointException>(
@@ -826,7 +1033,7 @@ public sealed class SessionJournalEngineTests : IDisposable {
             }
         );
 
-        using var reopened = SessionJournalEngine.Open(path, new SessionRuntime(resumeClient, new ToolRegistry([resumeTool]).CreateSession()));
+        using var reopened = SessionJournalEngine.Open(path, CreateRuntime(resumeClient, new ToolRegistry([resumeTool]).CreateSession()));
         ResumeOutcome outcome = await reopened.ResumeAsync(CancellationToken.None);
 
         Assert.True(outcome.Advanced);
@@ -856,7 +1063,7 @@ public sealed class SessionJournalEngineTests : IDisposable {
         using (var engine = SessionJournalEngine.CreateForTest(
             path,
             new SessionCreateOptions("model-A", "system-A", "surface-A"),
-            new SessionRuntime(firstClient, new ToolRegistry([alpha, beta]).CreateSession()),
+            CreateRuntime(firstClient, new ToolRegistry([alpha, beta]).CreateSession()),
             new SessionJournalTestHooks(SessionJournalFailpoint.AfterToolResultCommitted)
         )) {
             var ex = await Assert.ThrowsAsync<SessionJournalFailpointException>(
@@ -886,7 +1093,7 @@ public sealed class SessionJournalEngineTests : IDisposable {
             }
         );
 
-        using var reopened = SessionJournalEngine.Open(path, new SessionRuntime(resumeClient, new ToolRegistry([resumedAlpha, resumedBeta]).CreateSession()));
+        using var reopened = SessionJournalEngine.Open(path, CreateRuntime(resumeClient, new ToolRegistry([resumedAlpha, resumedBeta]).CreateSession()));
         ResumeOutcome outcome = await reopened.ResumeAsync(CancellationToken.None);
 
         Assert.True(outcome.Advanced);
@@ -935,7 +1142,7 @@ public sealed class SessionJournalEngineTests : IDisposable {
         using var engine = SessionJournalEngine.Create(
             path,
             new SessionCreateOptions("model-A", "system-A", "surface-A"),
-            new SessionRuntime(client, toolSession)
+            CreateRuntime(client, toolSession)
         );
 
         await engine.SendAsync("first", CancellationToken.None);
@@ -986,7 +1193,7 @@ public sealed class SessionJournalEngineTests : IDisposable {
         using (var engine = SessionJournalEngine.Create(
             path,
             new SessionCreateOptions("model-A", "system-A", "surface-A"),
-            new SessionRuntime(client, registry.CreateSession())
+            CreateRuntime(client, registry.CreateSession())
         )) {
             await engine.SendAsync("need two tools", CancellationToken.None);
         }
@@ -1034,7 +1241,7 @@ public sealed class SessionJournalEngineTests : IDisposable {
         using (var engine = SessionJournalEngine.Create(
             path,
             new SessionCreateOptions("model-A", "system-A", "surface-A"),
-            new SessionRuntime(client, registry.CreateSession())
+            CreateRuntime(client, registry.CreateSession())
         )) {
             await engine.SendAsync("need two tools", CancellationToken.None);
         }
@@ -1086,7 +1293,7 @@ public sealed class SessionJournalEngineTests : IDisposable {
         using (var engine = SessionJournalEngine.CreateForTest(
             path,
             new SessionCreateOptions("model-A", "system-A", "surface-A"),
-            new SessionRuntime(client, registry.CreateSession()),
+            CreateRuntime(client, registry.CreateSession()),
             new SessionJournalTestHooks(SessionJournalFailpoint.AfterToolResultCommitted)
         )) {
             var ex = await Assert.ThrowsAsync<SessionJournalFailpointException>(
@@ -1110,6 +1317,7 @@ public sealed class SessionJournalEngineTests : IDisposable {
 
     private sealed class ScriptedCompletionClient : ICompletionClient {
         private readonly Queue<Func<CompletionRequest, CompletionResult>> _responses = new();
+        private readonly List<CompletionRequest> _requests = new();
 
         public string Name => "scripted";
 
@@ -1118,6 +1326,8 @@ public sealed class SessionJournalEngineTests : IDisposable {
         public int Calls { get; private set; }
 
         public int RemainingResponses => _responses.Count;
+
+        public IReadOnlyList<CompletionRequest> Requests => _requests;
 
         public void Enqueue(Func<CompletionRequest, CompletionResult> response)
             => _responses.Enqueue(response);
@@ -1130,6 +1340,7 @@ public sealed class SessionJournalEngineTests : IDisposable {
             _ = observer;
             cancellationToken.ThrowIfCancellationRequested();
             Calls++;
+            _requests.Add(request);
             if (_responses.Count == 0) { throw new InvalidOperationException("No scripted response remaining."); }
             return Task.FromResult(_responses.Dequeue()(request));
         }
@@ -1168,6 +1379,22 @@ public sealed class SessionJournalEngineTests : IDisposable {
         return payloads;
     }
 
+    private static SessionRuntime CreateRuntime(
+        ICompletionClient client,
+        ToolSession? toolSession = null,
+        int? maxTokens = null
+    ) => new(
+        client,
+        toolSession,
+        new SessionCompletionTargetIdentity(
+            ConnectionId: "test-connection",
+            Kind: "test",
+            ConnectionFingerprint: "test-connection-fingerprint-v1",
+            RequestAdapterFingerprint: "test-request-adapter-v1"
+        ),
+        maxTokens
+    );
+
     private static EventAddress[] ReadJournalAddressesByKind(string path, SessionEventKind kind) {
         using var journal = EventJournal.EventJournal.OpenExisting(path);
         RefId main = journal.OpenBranch(SessionJournalDefaults.MainBranchName).Unwrap();
@@ -1182,6 +1409,22 @@ public sealed class SessionJournalEngineTests : IDisposable {
         }
 
         return addresses.ToArray();
+    }
+
+    private static string[] ReadJournalPayloadJsonByKind(string path, SessionEventKind kind) {
+        using var journal = EventJournal.EventJournal.OpenExisting(path);
+        RefId main = journal.OpenBranch(SessionJournalDefaults.MainBranchName).Unwrap();
+        EventAddress head = journal.GetHead(main) ?? throw new InvalidDataException("SessionJournal test journal has no head.");
+        IReadOnlyList<EventAddress> chain = journal.ReadChronologicalChain(head, checkedRead: true).Unwrap();
+        var payloads = new List<string>();
+        foreach (EventAddress address in chain) {
+            using EventFrame frame = journal.ReadEvent(address).Unwrap();
+            if (frame.Header.OpaqueEventKind == (uint)kind) {
+                payloads.Add(System.Text.Encoding.UTF8.GetString(frame.Payload));
+            }
+        }
+
+        return payloads.ToArray();
     }
 
     private static EventAddress CommitToMain(

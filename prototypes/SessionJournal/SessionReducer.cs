@@ -23,22 +23,25 @@ internal static class SessionReducer {
         long toolExecutionSequenceCheckpoint = 0;
         EventAddress? firstObservedToolResultAddress = null;
         EventAddress? lastObservedToolResultAddress = null;
+        EventAddress? pendingRequestPreparedAddress = null;
+        string? pendingCompletionAttemptId = null;
+        string? activeCorrelationId = null;
 
         foreach (DecodedSessionEvent ev in events) {
             switch (ev.Kind) {
                 case SessionEventKind.RuntimeConfigSetup: {
-                    EnsureSetupBoundary(ev, headKind, openAction, pendingToolCall, pendingOperationId, pendingToolExecutionStarted);
+                    EnsureSetupBoundary(ev, headKind, openAction, pendingToolCall, pendingOperationId, pendingToolExecutionStarted, pendingRequestPreparedAddress);
                     config = RequireBody<SessionRuntimeConfiguration>(ev);
                     break;
                 }
                 case SessionEventKind.SystemPromptSetup: {
-                    EnsureSetupBoundary(ev, headKind, openAction, pendingToolCall, pendingOperationId, pendingToolExecutionStarted);
+                    EnsureSetupBoundary(ev, headKind, openAction, pendingToolCall, pendingOperationId, pendingToolExecutionStarted, pendingRequestPreparedAddress);
                     systemPrompt = RequireBody<SystemPromptSetupBody>(ev).Content;
                     break;
                 }
                 case SessionEventKind.SessionCreated: {
                     _ = RequireBody<SessionCreatedBody>(ev);
-                    EnsureSetupBoundary(ev, headKind, openAction, pendingToolCall, pendingOperationId, pendingToolExecutionStarted);
+                    EnsureSetupBoundary(ev, headKind, openAction, pendingToolCall, pendingOperationId, pendingToolExecutionStarted, pendingRequestPreparedAddress);
                     if (config is null) { throw new InvalidDataException($"{ev.Kind} at {ev.Address} requires a prior runtime-config-setup."); }
                     if (systemPrompt is null) { throw new InvalidDataException($"{ev.Kind} at {ev.Address} requires a prior system-prompt-setup."); }
                     sessionCreated = true;
@@ -50,10 +53,17 @@ internal static class SessionReducer {
                     firstObservedToolResultAddress = null;
                     lastObservedToolResultAddress = null;
                     toolExecutionSequenceCheckpoint = 0;
+                    pendingRequestPreparedAddress = null;
+                    pendingCompletionAttemptId = null;
+                    activeCorrelationId = null;
                     break;
                 }
                 case SessionEventKind.ObservationAccepted: {
                     EnsureSessionCreated(ev, sessionCreated);
+                    if (headKind is not (SessionEventKind.SessionCreated or SessionEventKind.RuntimeConfigSetup or SessionEventKind.SystemPromptSetup)
+                        && !(headKind == SessionEventKind.AgentActionProduced && openAction is null)) {
+                        throw new InvalidDataException($"{ev.Kind} at {ev.Address} must appear only at an idle session boundary.");
+                    }
                     var body = RequireBody<ObservationAcceptedBody>(ev);
                     var message = new ObservationMessage(body.Content);
                     context.Add(message);
@@ -65,10 +75,44 @@ internal static class SessionReducer {
                     pendingToolExecutionStarted = false;
                     firstObservedToolResultAddress = null;
                     lastObservedToolResultAddress = null;
+                    pendingRequestPreparedAddress = null;
+                    pendingCompletionAttemptId = null;
+                    activeCorrelationId = BuildCorrelationId(ev.Address);
+                    break;
+                }
+                case SessionEventKind.CompletionRequestPrepared: {
+                    EnsureSessionCreated(ev, sessionCreated);
+                    var body = RequireBody<CompletionRequestPreparedBody>(ev);
+                    bool isCompletionBoundary = headKind == SessionEventKind.ObservationAccepted
+                        || headKind == SessionEventKind.ToolResultObserved && pendingToolCall is null;
+                    if (!isCompletionBoundary || openAction is not null || pendingRequestPreparedAddress is not null) {
+                        throw new InvalidDataException(
+                            $"{ev.Kind} at {ev.Address} requires an observation or fully-settled tool result immediately before it."
+                        );
+                    }
+                    if (activeCorrelationId is null
+                        || !string.Equals(body.Attempt.CorrelationId, activeCorrelationId, StringComparison.Ordinal)) {
+                        throw new InvalidDataException($"{ev.Kind} at {ev.Address} has a correlation id that does not match the active turn.");
+                    }
+                    pendingRequestPreparedAddress = ev.Address;
+                    pendingCompletionAttemptId = body.Attempt.AttemptId;
                     break;
                 }
                 case SessionEventKind.AgentActionProduced: {
                     EnsureSessionCreated(ev, sessionCreated);
+                    EventAddress? preparedAddress = pendingRequestPreparedAddress;
+                    bool isPreparedAction = preparedAddress.HasValue;
+                    bool isImportedAction = pendingRequestPreparedAddress is null
+                        && (headKind == SessionEventKind.ObservationAccepted
+                            || headKind == SessionEventKind.ToolResultObserved && pendingToolCall is null);
+                    if (!isPreparedAction && !isImportedAction) {
+                        throw new InvalidDataException($"{ev.Kind} at {ev.Address} does not follow a completion boundary.");
+                    }
+                    if (isPreparedAction && ev.Parent != preparedAddress.GetValueOrDefault()) {
+                        throw new InvalidDataException(
+                            $"{ev.Kind} at {ev.Address} must directly descend from completion-request-prepared {preparedAddress}."
+                        );
+                    }
                     var body = RequireBody<AgentActionProducedBody>(ev);
                     context.Add(body.Action);
                     addressedMessages?.Add(new AddressedSessionHistoryMessage(body.Action, ev.Address, ev.Address));
@@ -79,6 +123,11 @@ internal static class SessionReducer {
                     pendingToolExecutionStarted = false;
                     firstObservedToolResultAddress = null;
                     lastObservedToolResultAddress = null;
+                    pendingRequestPreparedAddress = null;
+                    pendingCompletionAttemptId = null;
+                    if (body.Action.ToolCalls.Count == 0) {
+                        activeCorrelationId = null;
+                    }
                     break;
                 }
                 case SessionEventKind.ToolExecutionStarted: {
@@ -130,7 +179,18 @@ internal static class SessionReducer {
             headKind = ev.Kind;
         }
 
-        var state = DeriveExecutionState(headKind, sessionCreated, openAction, pendingToolCall, pendingOperationId, pendingToolExecutionStarted, toolExecutionSequenceCheckpoint);
+        var state = DeriveExecutionState(
+            headKind,
+            sessionCreated,
+            openAction,
+            pendingToolCall,
+            pendingOperationId,
+            pendingToolExecutionStarted,
+            toolExecutionSequenceCheckpoint,
+            pendingRequestPreparedAddress,
+            pendingCompletionAttemptId,
+            activeCorrelationId
+        );
         return new SessionProjection(
             config,
             systemPrompt,
@@ -155,25 +215,58 @@ internal static class SessionReducer {
         RawToolCall? pendingToolCall,
         string? pendingOperationId,
         bool pendingToolExecutionStarted,
-        long toolExecutionSequenceCheckpoint
+        long toolExecutionSequenceCheckpoint,
+        EventAddress? pendingRequestPreparedAddress,
+        string? pendingCompletionAttemptId,
+        string? activeCorrelationId
     )
         => headKind switch {
             null => new SessionExecutionState(SessionExecutionPhase.Empty, null),
             SessionEventKind.RuntimeConfigSetup => DeriveSetupState(headKind.Value, sessionCreated, toolExecutionSequenceCheckpoint),
             SessionEventKind.SystemPromptSetup => DeriveSetupState(headKind.Value, sessionCreated, toolExecutionSequenceCheckpoint),
             SessionEventKind.SessionCreated => new SessionExecutionState(SessionExecutionPhase.Idle, headKind),
-            SessionEventKind.ObservationAccepted => new SessionExecutionState(SessionExecutionPhase.AwaitingAgentAction, headKind),
-            SessionEventKind.AgentActionProduced => DeriveActionState(SessionEventKind.AgentActionProduced, openAction, toolExecutionSequenceCheckpoint),
+            SessionEventKind.ObservationAccepted => new SessionExecutionState(
+                SessionExecutionPhase.AwaitingAgentAction,
+                headKind,
+                ToolExecutionSequenceCheckpoint: toolExecutionSequenceCheckpoint,
+                ActiveCorrelationId: activeCorrelationId
+            ),
+            SessionEventKind.CompletionRequestPrepared => new SessionExecutionState(
+                SessionExecutionPhase.AwaitingCompletion,
+                headKind,
+                ToolExecutionSequenceCheckpoint: toolExecutionSequenceCheckpoint,
+                PendingRequestPreparedAddress: pendingRequestPreparedAddress,
+                PendingCompletionAttemptId: pendingCompletionAttemptId,
+                ActiveCorrelationId: activeCorrelationId
+            ),
+            SessionEventKind.AgentActionProduced => DeriveActionState(
+                SessionEventKind.AgentActionProduced,
+                openAction,
+                toolExecutionSequenceCheckpoint,
+                activeCorrelationId
+            ),
             SessionEventKind.ToolExecutionStarted => new SessionExecutionState(
                 SessionExecutionPhase.AwaitingToolExecution,
                 headKind,
                 pendingToolCall,
                 pendingOperationId,
                 pendingToolExecutionStarted,
-                toolExecutionSequenceCheckpoint
+                toolExecutionSequenceCheckpoint,
+                ActiveCorrelationId: activeCorrelationId
             ),
-            SessionEventKind.ToolResultObserved when pendingToolCall is null => new SessionExecutionState(SessionExecutionPhase.AwaitingAgentAction, headKind, ToolExecutionSequenceCheckpoint: toolExecutionSequenceCheckpoint),
-            SessionEventKind.ToolResultObserved => new SessionExecutionState(SessionExecutionPhase.AwaitingToolExecution, headKind, pendingToolCall, ToolExecutionSequenceCheckpoint: toolExecutionSequenceCheckpoint),
+            SessionEventKind.ToolResultObserved when pendingToolCall is null => new SessionExecutionState(
+                SessionExecutionPhase.AwaitingAgentAction,
+                headKind,
+                ToolExecutionSequenceCheckpoint: toolExecutionSequenceCheckpoint,
+                ActiveCorrelationId: activeCorrelationId
+            ),
+            SessionEventKind.ToolResultObserved => new SessionExecutionState(
+                SessionExecutionPhase.AwaitingToolExecution,
+                headKind,
+                pendingToolCall,
+                ToolExecutionSequenceCheckpoint: toolExecutionSequenceCheckpoint,
+                ActiveCorrelationId: activeCorrelationId
+            ),
             _ => throw new NotSupportedException($"Session event kind '{headKind}' is not implemented in Slice C execution reducer.")
         };
 
@@ -186,13 +279,26 @@ internal static class SessionReducer {
             ? new SessionExecutionState(SessionExecutionPhase.Idle, headKind, ToolExecutionSequenceCheckpoint: toolExecutionSequenceCheckpoint)
             : new SessionExecutionState(SessionExecutionPhase.Empty, headKind);
 
-    private static SessionExecutionState DeriveActionState(SessionEventKind headKind, ActionMessage? action, long toolExecutionSequenceCheckpoint) {
-        if (action is null) { return new SessionExecutionState(SessionExecutionPhase.Idle, headKind, ToolExecutionSequenceCheckpoint: toolExecutionSequenceCheckpoint); }
+    private static SessionExecutionState DeriveActionState(
+        SessionEventKind headKind,
+        ActionMessage? action,
+        long toolExecutionSequenceCheckpoint,
+        string? activeCorrelationId
+    ) {
+        if (action is null) {
+            return new SessionExecutionState(SessionExecutionPhase.Idle, headKind, ToolExecutionSequenceCheckpoint: toolExecutionSequenceCheckpoint);
+        }
 
         RawToolCall? pending = action.ToolCalls.FirstOrDefault();
         return pending is null
             ? new SessionExecutionState(SessionExecutionPhase.Idle, headKind, ToolExecutionSequenceCheckpoint: toolExecutionSequenceCheckpoint)
-            : new SessionExecutionState(SessionExecutionPhase.AwaitingToolExecution, headKind, pending, ToolExecutionSequenceCheckpoint: toolExecutionSequenceCheckpoint);
+            : new SessionExecutionState(
+                SessionExecutionPhase.AwaitingToolExecution,
+                headKind,
+                pending,
+                ToolExecutionSequenceCheckpoint: toolExecutionSequenceCheckpoint,
+                ActiveCorrelationId: activeCorrelationId
+            );
     }
 
     private static RawToolCall? NextPendingToolCall(ActionMessage action, IReadOnlyDictionary<string, ToolResultObservedBody> observedResults) {
@@ -229,12 +335,14 @@ internal static class SessionReducer {
         ActionMessage? openAction,
         RawToolCall? pendingToolCall,
         string? pendingOperationId,
-        bool pendingToolExecutionStarted
+        bool pendingToolExecutionStarted,
+        EventAddress? pendingRequestPreparedAddress
     ) {
         bool hasNoPendingAction = openAction is null
             && pendingToolCall is null
             && pendingOperationId is null
-            && !pendingToolExecutionStarted;
+            && !pendingToolExecutionStarted
+            && pendingRequestPreparedAddress is null;
         bool isSetupOrIdle = headKind is null or SessionEventKind.RuntimeConfigSetup or SessionEventKind.SystemPromptSetup or SessionEventKind.SessionCreated
             || headKind == SessionEventKind.AgentActionProduced && hasNoPendingAction;
         if (!isSetupOrIdle) {
@@ -273,4 +381,7 @@ internal static class SessionReducer {
 
     private static T RequireBody<T>(DecodedSessionEvent ev) where T : class
         => ev.Body as T ?? throw new InvalidDataException($"Event kind '{ev.Kind}' body is not '{typeof(T).Name}'.");
+
+    private static string BuildCorrelationId(EventAddress observationAddress)
+        => $"atelia.session-journal.turn.v1:{EventAddressTextCodec.Format(observationAddress)}";
 }

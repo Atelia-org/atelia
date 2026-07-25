@@ -285,7 +285,7 @@ public sealed class DerivedRecapStoreTests : IDisposable {
             new SessionCreateOptions("model-A", "system-A", "surface-A")
         )) {
             engine.AppendObservation("hello");
-            engine.AppendAgentAction(
+            engine.AppendImportedAgentAction(
                 new ActionMessage([new ActionBlock.Text("answer")]),
                 new CompletionDescriptor("fake-provider", "fake-api-v1", "model-A")
             );
