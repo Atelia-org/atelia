@@ -1,153 +1,441 @@
 # SessionJournal Configuration Access Notes
 
-> 状态：Design Note / Decision Updated
-> 日期：2026-07-24
+> 状态：Decision Revised / CS-3 Handoff
+> 日期：2026-07-26
 > 相关文档：[SessionJournal 主干设计基线](session-journal-trunk-design.md)、[ChatSession 事件源与长期上下文架构路线图](../ChatSession/event-sourced-session-architecture-roadmap.md)
 
-## 1. 背景
+## 1. 结论
 
-`SessionJournal` 已将 runtime config 与 system prompt 分离：
+CS-5-lite 完成后，下一条主线应进入 roadmap 的 **最小 CS-3：可恢复的无工具 Completion**。这个切片需要
+最小 `ContextPlan`、引用式 canonical request manifest，以及 artifact + raw suffix 的 tail context
+projection。
 
-- `runtime-config-setup` 保存完整 runtime config snapshot：model id、completion surface、schema 等运行时配置。
-- `system-prompt-setup` 保存完整 system prompt snapshot。system prompt 是上下文事实，是 Agent 隐状态的一部分，不再混入 runtime config。
-- `session-created` 只作为初始化完成 marker，空 body。初始化顺序为 `runtime-config-setup` -> `system-prompt-setup` -> `session-created`。
+**赞同把已提交的 ContextPlan / request manifest 用作重启时的 governing setup 加速点。**准确场景是：
 
-仍需长期观察的问题：加载一个很长的 session 时，如何快速找到最近一次 runtime config 与 system prompt snapshot。
+1. 进程正常运行时，内存状态已经持有当前 governing `runtime-config-setup` 与
+   `system-prompt-setup` 地址。
+2. 每次调用 LLM 前，把精确 `ContextPlan` 与 canonical request manifest 提交到 raw event chain，并将
+   这两个地址引用写入该 event。
+3. 进程重启后，从 ref head 沿 Parent 回溯。遇到最近一份已提交的 plan/manifest 时，读取其中的两个地址，
+   分别一次定址读取 setup payload，而不再继续回溯到 session root。
 
-## 2. 使用场景假设
+这里没有循环依赖：重启时使用的是**程序终止前已经提交**的 plan/manifest checkpoint，而不是试图读取一个
+尚未构造的未来 plan。对下一次新请求而言，它也是 previous committed checkpoint；对崩溃于 request
+prepared 之后的同一次请求而言，它就是 current in-flight request 的恢复事实。
 
-长期运行的 LLM Agent session 可能远大于一次 LLM context window。实际恢复时，常见路径不是全量读完
-所有 raw events，而是从尾部读取一段 raw suffix，并结合 recap / artifact / retrieval 等派生产物构造
-当前上下文。
+“一跳”需要区分两个层次：
 
-如果 runtime config 或 system prompt 长期稳定，最后一次 setup event 与 journal head 之间可能隔着大量事件。
-单纯从 head 沿 parent chain 反向扫描直到找到两个 setup event，正确但在冷启动时可能过慢。
+- 从 checkpoint payload 中的地址到两个 setup event，是各一次直接 address dereference。
+- 从 ref head 找到最近 checkpoint，仍要扫描 checkpoint 之后的少量 raw events；复杂度是
+  `O(distance from head to nearest usable checkpoint or newer setup)`，不保证一个 Parent hop。
 
-## 3. System Prompt 独立事件决议
+只要每次 completion 前都提交 checkpoint，正常重启只遍历最后一次 request 之后的局部尾段。首次请求、
+legacy import、rewind 到首份 checkpoint 之前，以及无 checkpoint 的分支仍必须走 authoritative parent
+scan。不应为此提前实现 CS-6 的完整 Context Planner；CS-3 只需锁定最小 plan/manifest recovery contract。
 
-已选择拆出 `system-prompt-setup`，原因是 system prompt 更接近 context fact，而不是 runtime config。
-它可能包含 Agent 自己可编辑的核心 belief / self policy，后续治理、审阅、provenance、压缩和上下文规划
-都可能与 model id / completion surface 不同。
-
-`system-prompt-setup` 不是 diff，也不叫 `system-prompt-changed`。它表达“从此位置起生效的完整 system
-prompt snapshot”，既覆盖初始化，也覆盖后续重设。
-
-## 4. Tail Projection 与 Recap Anchor
-
-下一步 tail-only projection 不应优先围绕固定 turn 边界做复杂设计。长期目标里，rolling summary /
-recap、自传和 world understanding 都是可重建的 derived artifacts；它们会成为 raw suffix 的自然
-anchor。恢复或构造请求时，Planner 优先选择一个靠近 head 的 recap/artifact anchor，把 anchor 之前的
-历史 materialize 为 `ContextHeader` 形态的 observation header，并可选附带 action header；随后只读取
-anchor 之后的 raw suffix。
-
-在 recap artifact 尚未落地时，可以保留朴素 raw suffix fallback 用于 bootstrap、小历史或审计，但它不应
-被打磨成长期主要机制。对于 autonomous / role-play Agent，执行历史可能长期处在连续 tool-loop 中，
-并不总是自然分成传统 user turn；边界设计应先满足局部依赖闭合，再由 recap anchor 承担长程连续性。
-
-## 5. 快速找到最近配置的候选方案
-
-### 5.1 反向扫描 parent chain
-
-从当前 head 开始读 header，直到找到最近的 `runtime-config-setup` 与最近的 `system-prompt-setup`。
-
-优点：
-
-- 不需要额外文件或格式。
-- cache 损坏问题不存在。
-- 适合作为永远可用的 fallback。
-
-缺点：
-
-- 配置长期稳定时，冷启动可能需要扫描大量 frame。
-- 需要找两个 latest setup event，不解决后续 projection 的其他快速入口。
-
-### 5.2 可重建 SessionJournal projection cache
-
-在 journal repo 内维护一个可丢弃 cache，例如：
+因此近期方案是：
 
 ```text
-cache/session-projection/main.json
+authoritative parent scan
++ nearest committed ContextPlan / request manifest as an on-chain checkpoint
++ dependency-closed raw suffix
++ minimal ContextPlan / canonical request manifest
 ```
 
-记录：
+独立 projection cache 不是当前前置条件。只有在 tail projection 落地后，benchmark 仍证明“首次、无
+manifest 的长历史 governing setup scan”不可接受，才单独设计它的信任与校验合同。
 
-```json
-{
-  "schema": "atelia.session-journal.projection-cache.v1",
-  "branch": "main",
-  "head": "<EventAddress>",
-  "latestRuntimeConfigSetup": "<EventAddress>",
-  "latestSystemPromptSetup": "<EventAddress>",
-  "eventCount": 123456
+## 2. 当前实现事实
+
+`SessionJournal` 的 sticky setup 已拆成两个彼此独立的完整 snapshot：
+
+- `runtime-config-setup`：`SessionRuntimeConfiguration`，包含 model id、completion surface、schema。
+- `system-prompt-setup`：完整 system prompt。
+- `session-created`：初始化完成 marker，空 body。初始化顺序为
+  `runtime-config-setup -> system-prompt-setup -> session-created`。
+
+当前 `SessionJournalEngine.ResolveGoverningSetup(head)` 已实现正确性基线：
+
+1. 从给定 `head` 沿 authoritative `EventFrameHeader.Parent` 回溯。
+2. 每步只调用 `ReadEventHeaderPreview`，不解码中间 payload。
+3. 分别找到最近的 `runtime-config-setup` 与 `system-prompt-setup`。
+4. 最后只读取这两个 event 的 payload。
+5. 缺少任一 setup 时 fail-fast。
+
+这条路径不会因正文很大而解码冷历史，但配置长期稳定时仍需访问 O(全历史) 个 header。
+
+同时要注意：`Project()` / `ReplayHistory()` 当前仍通过 `ReadChronologicalChain` 解码完整 raw chain。
+在 tail-only projection 尚未接入正式请求路径以前，只优化 setup resolver 并不能消除整体 O(N) replay；
+真正的近期性能切口必须包含 tail context projection。
+
+## 3. 必须分开的三个问题
+
+| 问题 | 输出 | 正确性来源 | 近期方案 |
+| --- | --- | --- | --- |
+| Governing setup 定位 | 两个 setup 地址及 snapshot | raw Parent chain | header-only scan；最近 plan/manifest 是链上 checkpoint |
+| Completion context 物化 | artifact header + dependency-closed raw suffix | artifact provenance + raw events | CS-3 tail projector |
+| Execution recovery | 当前 phase、pending tool、attempt 等 | raw operational events / request manifest | CS-3 无工具最小合同；CS-4 扩展 tool-loop |
+
+把三者合并成“给 reducer 一个 config seed”会遗漏真实状态，也会让 ContextPlan、projection cache 和
+execution checkpoint 的职责混在一起。
+
+## 4. Governing setup resolver 的正确形状
+
+### 4.1 两个字段独立解析
+
+runtime config 与 system prompt 可以在不同位置更新。resolver 必须逐字段保留“当前 head 向后看到的
+第一个 setup”，checkpoint 只能补齐尚未找到的字段：
+
+```text
+resolveGoverningSetup(head):
+    runtimeSetup = null
+    promptSetup = null
+
+    for event in walkParents(head):
+        header = ReadEventHeaderPreview(event)
+
+        if header.kind == runtime-config-setup and runtimeSetup == null:
+            runtimeSetup = event
+
+        if header.kind == system-prompt-setup and promptSetup == null:
+            promptSetup = event
+
+        if header.kind == completion-request-prepared:
+            manifest = readAndValidatePlanManifest(event)
+            if runtimeSetup == null:
+                runtimeSetup = manifest.governingRuntimeConfigSetup
+            if promptSetup == null:
+                promptSetup = manifest.governingSystemPromptSetup
+
+        if runtimeSetup != null and promptSetup != null:
+            break
+
+    require runtimeSetup and promptSetup
+    read and validate both setup payloads
+```
+
+例如最近 plan/manifest 之后只发生了新的 runtime setup，扫描必须采用新 runtime setup，同时从 checkpoint
+补 prompt；不能把 manifest 的整对 setup 无条件覆盖到当前 head。
+
+### 4.2 Manifest checkpoint 的必要不变量
+
+roadmap 已明确允许 MVP 将 `context-plan-committed` 与 `completion-request-prepared` 合并为一个 payload。
+近期推荐保留 `completion-request-prepared` 这个 event kind，并在 payload 内嵌 minimal `ContextPlan`；
+这个单一 raw event 同时承担 plan 审计、request 恢复与 governing setup prefix checkpoint。payload 至少
+要明确：
+
+```text
+basedOnRawHead
+governingRuntimeConfigSetup
+governingSystemPromptSetup
+```
+
+并在 append 前保证：
+
+- `basedOnRawHead` 是 manifest event 的直接 Parent，或由 event contract 明确绑定。
+- 两个 setup 地址是 `basedOnRawHead` Parent lineage 上各自最近的 setup。
+- 两个地址解码为预期 kind/schema。
+- manifest 自己不改变 governing setup。
+
+当前 `SessionJournalEngine` 尚未持有 governing addresses；这必须成为 CS-3A 的显式状态合同，而不能当作
+已有事实：
+
+```text
+GoverningSetupCursor {
+    validForHead
+    runtimeConfigSetup
+    systemPromptSetup
 }
 ```
 
-加载时：
+- reopen 时先由 resolver 建立 cursor。
+- 构造 `basedOnRawHead` 的 plan/manifest 前，必须满足 `cursor.validForHead == basedOnRawHead`。
+- 普通 event 成功 append/commit 后，推进 `validForHead`，两个 setup pointers 不变。
+- setup event 成功 append/commit 后，推进 `validForHead` 并替换对应 pointer。
+- ref CAS/commit 失败、observed head 不一致或 branch 切换时，cursor 立即失效，按新 head 重新 resolve。
 
-1. 读取 branch head。
-2. 若 cache head 等于当前 head，直接读取两个 latest setup event payload。
-3. 若 cache 缺失或不匹配，fallback 到反向扫描或 forward replay 重建，并重写 cache。
-4. 后续可做 tail merge：若 cache head 是当前 head 的祖先，只扫描 cache head 到当前 head 的新增尾部。
+这样写 checkpoint 时无需再扫描一次全历史，也不会把易陈旧的进程内字段误当成无条件权威。
+checkpoint 将实际用于构造 request 的状态固化为 raw fact。重启后回溯在当前 Parent 链上遇到它时，已经
+检查过 checkpoint 之后是否存在更新的 setup；checkpoint 只补齐仍缺失的字段。
 
-优点：
+若以后拆分成两个 event，canonical request manifest 仍是“实际 request 使用了什么”的恢复权威；
+ContextPlan 不应再保存一份可能分叉的独立引用。MVP 合并 event 则只存一组 setup refs，由 plan 解释和
+request recovery 共同引用。
 
-- 正常 reopen 可 O(1) 找到最新 runtime config 与 system prompt。
-- cache 可删除、可重建，不改变 raw event 正确性。
-- 不污染 EventFrame wire format，也不要求每个 raw event 冗余携带 config pointer。
+### 4.3 冷启动恢复与新请求规划的时序
 
-缺点：
+首次启动或当前链上还没有 checkpoint 时：
 
-- 需要 cache invalidation 与 branch/head 校验。
-- 第一版若不做 tail merge，cache miss 仍可能退回较慢路径。
+```text
+raw head
+-> resolve current governing setup
+-> choose artifact + dependency-closed raw suffix
+-> build minimal ContextPlan
+-> build and persist canonical request manifest
+-> send completion
+```
 
-### 5.3 在 recap / artifact metadata 上记录 config address
+进程在上述持久化之后终止并重启时：
 
-recap 或 artifact 生成时记录当时 as-of 的 `runtime-config-setup` 与 `system-prompt-setup` 地址。
-Context planner 选择 artifact anchor 时，可同时拿到该 artifact 对应的 runtime config 与 prompt snapshot。
+```text
+ref head
+-> scan short raw tail
+-> find nearest committed plan/manifest
+-> dereference its two governing setup addresses
+-> rebuild termination-time in-memory setup state
+-> recover in-flight request, or plan the next request
+```
 
-优点：
+因此同一个 event 既是本次已准备 request 的恢复入口，也是下一次新请求的 prefix checkpoint。唯一不能做的
+是：在首次构造它之前，反过来依赖这个尚不存在的 event。
 
-- 很适合回答“这个 recap 是在什么 runtime config / system prompt 下生成的”。
-- 适合 request manifest / artifact provenance，避免用今天的 system prompt 解释昨天生成的 artifact。
+### 4.4 分支与 rewind
 
-缺点：
+Parent scan 天然限定 current lineage：
 
-- 不适合作为 governing setup resolver 的唯一入口。artifact 可能尚未生成、生成失败、被禁用，或落后于 raw tail 很远。
-- raw journal 的恢复正确性不应依赖 derived artifact。
+- divergent branch 上的 manifest 不会被遇到，因此不会被复用。
+- rewind 到 manifest 之前时，该 manifest 同样不可达。
+- 从 manifest 之后分叉时，只要 checkpoint event 仍在共同祖先链上，就可以安全复用。
+- manifest 之后若有任一新 setup，扫描会先命中新 setup，再只从 manifest 补另一字段。
 
-### 5.4 EventJournal 通用 nearest-kind sparse index
+这比“按 branch 名拿一个 latest manifest”更稳；checkpoint 的适用性来自真实 Parent 可达性，而不是
+可变命名或时间戳。
 
-在 EventJournal 或 SessionJournal 层维护 “head -> nearest ancestor of kind X” 的稀疏索引。
+## 5. 对“hint 永远不可能给错答案”的修正
 
-优点：
+仅验证：
 
-- 可推广到其他快速查询，例如最近 checkpoint、最近 artifact set、最近 special control event。
-- 比单一 config cache 更通用。
+```text
+checkpoint.validForHead 位于 current Parent chain
+```
 
-缺点：
+只能证明 checkpoint **适用于这条分支的某个祖先位置**，不能证明其
+`runtimeConfigSetup` / `systemPromptSetup` 真的是该位置之前各自最近的 setup。
 
-- 当前需求还小，过早下沉到 EventJournal 可能增加通用接口复杂性。
-- 需要定义索引文件格式、失效规则和 branch/rewind 语义。
+一个语法有效、`validForHead` 也可达、但把地址写成更老 setup 的 derived cache，会静默返回旧配置。
+读取目标 payload 并验证 kind 也无法发现“它是同 kind、但不是 latest”的错误。因此：
 
-## 6. 当前倾向
+- raw request manifest 可以作为强 checkpoint，因为它是不可变 request fact，append 时必须验证
+  governing refs；raw 损坏应 fail-fast。
+- derived artifact 的 `Governing*` 字段首先是 artifact provenance，不自动成为 raw resolver 的
+  correctness source。
+- 任意可删除 cache 若直接携带 setup refs，就必须明确其信任/校验模型；不能仅靠“命中祖先”声称
+  arbitrary corruption 只会变慢、绝不会给错。
 
-短期推荐：
+换言之，early-exit checkpoint 是一份“已验证的 prefix summary”，不是因为改名为 hint 就不参与
+语义。近期优先复用 raw canonical manifest，正是为了避免新增一份较弱的 setup 真源。
 
-- `runtime-config-setup` 与 `system-prompt-setup` 都保存完整 snapshot。
-- 已在 SessionJournal 层提供无持久 hint 的 governing setup resolver：给定 `head`，沿 parent chain
-  只读 EventJournal header preview，直到拿到最近的 `runtime-config-setup` 与 `system-prompt-setup`
-  地址；随后只读取这两个 setup event 的 payload 并解码。缺少任一 setup 时 fail-fast。
-- 这个 resolver 是当前正确性基线。它只信当前 `head` 的 Parent 链，不新增 raw event 字段、
-  不新增 cache 文件、不改变 wire format。
-- 若冷启动性能成为问题，优先给该 resolver 增加可重建 near-head hint。trunk 阶段 hint 可来自
-  SessionJournal projection cache，记录 `validForHead`、`latestRuntimeConfigSetup` 与
-  `latestSystemPromptSetup`；CS-3 后 hint 可来自 `ContextPlan` / request manifest 的引用式
-  provenance；CS-5 后也可来自 artifact anchor / fold checkpoint。
-- hint 只是 parent-chain resolver 的提前退出票，不是权威源。hint 缺失、过期或被删除时必须退化为
-  纯 parent-chain 回溯；raw journal 恢复正确性不依赖 derived cache / artifact / manifest。
-- tail-only projection 的优先前置是建立 recap 类 derived artifact store。这样切分点可以来自真实
-  recap anchor，而不是临时硬造 turn window；没有 anchor 时只保留朴素 raw suffix fallback。
+## 6. 为什么暂不先做独立 setup cache
 
-长期可再评估：
+候选 cache 可以长成：
 
-- nearest-kind sparse index 是否值得抽成 EventJournal 通用能力，取决于类似查询是否反复出现。
+```json
+{
+  "schema": "atelia.session-journal.governing-setup-checkpoint.v1",
+  "coveredThrough": "<EventAddress>",
+  "runtimeConfigSetup": "<EventAddress>",
+  "systemPromptSetup": "<EventAddress>"
+}
+```
+
+但它现在不是最佳的第一步：
+
+1. 正式请求仍在 full replay；resolver cache 不是当前最大的 O(N) 来源。
+2. `coveredThrough` 若只在 config 改变时更新，稳定 config 时它会长期停在 root，完全不能提供
+   near-head early exit。
+3. 若要持续 near-head，`coveredThrough` 必须在普通 append、周期 checkpoint 或成功 resolve 后前移；
+   因而“正文只在 config 改变时更新”与“O(1) 退出票”不能同时成立。
+4. derived cache 的语义损坏不能仅靠 Parent 可达性证明安全。
+5. CS-3 之后每次 completion 本来就会产生带 governing refs 的 raw plan/manifest checkpoint，通常已
+   足够靠近 head。
+
+若真实 benchmark 证明首次请求的 fallback scan 仍不可接受，再比较：
+
+- 带明确校验/信任模型的 SessionJournal compiled cache。
+- EventJournal 层可验证的 sparse traversal summary。
+- 专用 raw checkpoint event。
+- dedicated ref。
+
+在没有数据前，不应为了避免一次 bootstrap scan，先引入会与 request manifest 重叠的第二套长期机制。
+
+## 7. Tail reducer 不能只 seed config
+
+### 7.1 当前 reducer 的长程状态
+
+当前 `SessionReducer` 不只依赖 `config`：
+
+- `SessionRuntimeConfiguration`。
+- `systemPrompt`。
+- `sessionCreated`；tail 通常不再包含 root 的 `session-created` marker。
+- `ToolExecutionSequenceCheckpoint`；它在整个 session 内单调递增，恢复时用于
+  `ToolSession.RestoreExecutionSequence`。
+- 若 tail 从未闭合 tool turn 中间开始，还需要 `openAction`、已观察 tool results、
+  pending operation id / started 状态等。
+
+因此简单增加：
+
+```text
+Reduce(SessionRuntimeConfiguration seededConfig, tailEvents)
+```
+
+仍会在首个 observation/action 上因 `sessionCreated == false` 失败，并会把 tool execution sequence
+错误地从 0 开始。
+
+### 7.2 CS-3 应先限制为 dependency-closed 无工具 tail
+
+CS-3 是无工具 Completion，可以先把边界收窄：
+
+- `RawStartExclusive` 必须使 suffix 不从 tool execution/result 中间开始。
+- suffix 开头应位于明确的 replay-safe boundary，例如 setup/observation，或包含其依赖的 fresh action。
+- 若所选 artifact anchor 不满足边界，优先选择更早的 replay-safe artifact；没有可用候选时退化为
+  full-raw replay。
+- 不默认把 raw start 向前跨过 artifact anchor。有损 recap + overlap 会把已经被摘要吸收的 raw 内容
+  再次注入 request；只有未来 planner/renderer 明确建模“可控重复”并有对应语义测试时才允许。
+- seed 必须明确表达 session 已初始化，以及 boundary as-of 的两个 setup。
+- current-head governing setup 与 boundary seed 是两个概念：若 tail 内可能出现 setup change，
+  generic fold 应以 boundary as-of setup 为 seed，再让 tail events 更新它；不能把未来的 head setup
+  注入更早边界。
+
+是否给现有 `SessionReducer.Reduce` 增加完整 seed，还是建立专用
+`SessionTailContextProjector`，应在 CS-3B 通过 parity tests 后决定。不要先假设“一处重载”就能保持
+execution 与 context 两种语义。
+
+### 7.3 CS-5-lite anchor 不是天然 reducer boundary
+
+当前 Derived Recap Artifact 的：
+
+- `AnchorRawEvent` 是 producer 已吸收范围的 coverage high-watermark。
+- `GoverningRuntimeConfigSetup` / `GoverningSystemPromptSetup` 是按 artifact 的
+  `SourceRawHead` resolve，而不是按 `AnchorRawEvent` resolve。
+
+因此不能把 artifact 的 `Governing*` refs 当成 anchor 位置的 reducer seed。
+
+另外，rolling split 可能让 fragment 结束在声明 tool calls 的 `AgentActionProduced`，而
+`(AnchorRawEvent, currentHead]` 从 `ToolExecutionStarted` / `ToolResultObserved` 开始。这样的 tail
+缺少 `openAction`，现有 reducer 会正确拒绝。
+
+ContextPlan 必须验证 `RawStartExclusive` 是 dependency-closed boundary，而不是机械令
+`RawStartExclusive = AnchorRawEvent`。不安全时应换用更早的 safe artifact 或 full-raw fallback；
+不能把透明 overlap 当成 reducer 实现细节。
+
+## 8. 推荐的下一步工作包
+
+### CS-3A：Minimal Plan/Manifest Checkpoint
+
+范围：
+
+- 采用 roadmap 允许的 MVP 合并 event，同时表达 minimal `ContextPlan` 与
+  `CompletionRequestPrepared` manifest。
+- 一开始就定义完整、可恢复同一 canonical request 的 manifest schema，包括：
+  - `basedOnRawHead`、两个 governing setup event 地址。
+  - raw range / artifact / tool schema 的稳定地址、版本与必要 hash。
+  - renderer / serializer / prompt / model / connection identity 与 fingerprint。
+  - canonical request hash、attempt id、correlation id。
+- 引入绑定 head 的 `GoverningSetupCursor`，并实现 append 成功推进、setup 替换、CAS/branch 失配后失效
+  与重解析规则。
+- 增加 `completion-request-prepared` event kind / codec。
+- reducer 将该 event 投影为 `RequestPrepared` / `AwaitingCompletion` execution phase；它对 rendered
+  conversation context 与 governing setup 都是中性的。
+- 后续 `agent-action-produced` 必须关联对应 attempt / manifest，不能只依赖位置猜测。
+- 在发送 completion 前提交该 event。
+- 让 `ResolveGoverningSetup` 在 Parent 回溯中使用最近 checkpoint，并逐字段合并 checkpoint 之后的新
+  setup。
+- 记录 header visit count，证明 reopen 后只扫描 plan/manifest 之后的局部尾段。
+- 保留首次、无 checkpoint 和 rewind 场景的纯 Parent scan fallback。
+
+这一包先兑现本笔记的核心收益：程序正常运行时把内存中的 setup pointers 固化到 raw chain，重启后用
+near-head checkpoint 恢复。Planner policy 可以先选择 full raw fallback，不必提前实现 CS-6。
+
+### CS-3B：Tail Projection Contract
+
+范围：
+
+- 只支持无工具 completion。
+- 定义 replay-safe / dependency-closed `RawStartExclusive`。
+- materialize 一个 recap artifact，再读取必要的 raw suffix。
+- 明确 boundary seed 与 current-head governing setup 的区别。
+- 用 full replay 对照 setup 地址/值、boundary seed 和闭合 suffix fold 的对应状态。
+- 对最终 artifact + suffix request，只要求 dependency-closed、确定性可重建且 provenance 可审计；有损
+  recap 不与 full-raw request 声称逐字或结构等价。
+- 对 mid-tool / dependency-open boundary fail-fast。
+
+这一包证明“少读历史仍能确定性构造合法请求，并保持必要状态一致”，不新增完整 planner policy。
+
+### CS-3C：Canonical Request Recovery
+
+使用 CS-3A 已经完整落盘的 manifest：
+
+- 从已提交 manifest 重建 request 的 reopen driver。
+- request 前后、response 前后的 failpoint acceptance。
+
+必须先提交 manifest，再发送 completion；reopen 后从 manifest 引用重建 request，不重新运行 planner。
+CS-3A/B/C 可以在一个垂直切片内连续提交，但设计和测试断言应分开。任何可被正式写入 journal 的
+`completion-request-prepared` 都必须从第一版起满足完整 schema；不能先写仅够 setup checkpoint、却无法
+恢复 request 的 append-only 半成品。
+
+### CS-4 以后
+
+tool-loop tail recovery 需要正式处理：
+
+- open action / observed results / pending operation。
+- `ToolExecutionSequenceCheckpoint` 的可靠恢复。
+- mid-turn boundary 与 request manifest 的关系。
+
+不能把 CS-3 的无工具 seed 静默推广成通用 tool-loop reducer seed。
+
+## 9. 验收矩阵
+
+Governing setup：
+
+- 无 manifest：回溯到 root setup，结果与当前 resolver 相同。
+- 有 recent plan/manifest：结果相同，header visit 只覆盖局部尾段。
+- checkpoint 后只更新 runtime：采用新 runtime + checkpoint prompt。
+- checkpoint 后只更新 prompt：采用 checkpoint runtime + 新 prompt。
+- 两者都更新：不读取旧 manifest payload即可完成。
+- divergent branch / rewind：不可达 checkpoint 不复用。
+- manifest setup refs kind/schema/Parent binding 错误：fail-fast。
+- `GoverningSetupCursor.validForHead` 与 request 的 `basedOnRawHead` 不同：拒绝写 manifest 并重解析。
+- 普通 append 保留两个 pointers，setup append 只替换对应 pointer；ref CAS/branch 失配使 cursor 失效。
+
+Tail projection：
+
+- 无工具、dependency-closed boundary：setup、seed 与闭合 raw suffix fold 的对应状态与 full replay
+  一致。
+- artifact + suffix request：确定性可重建、dependency-closed、provenance 可审计；不要求等价于
+  full-raw prompt。
+- tail 内有 setup change：最终 config/system prompt 与 full projection 相同。
+- artifact anchor 非安全边界：选择更早 safe artifact 或 full-raw fallback，不从 mid-tool 强行
+  reduce，也不默认注入 overlap。
+- artifact 的 `SourceRawHead` setup refs 不误当 anchor seed。
+- 删除 derived artifact：退化为 full/raw fallback，raw journal 仍可运行。
+
+Request recovery：
+
+- manifest 提交前崩溃：允许重新规划。
+- manifest 提交后崩溃：只从已提交引用重建同一 canonical request。
+- manifest 成为 head：`Project/Resume` 得到 `RequestPrepared/AwaitingCompletion`，不因未知 kind
+  失败。
+- prepared event 不改变 rendered conversation context 或 governing setup。
+- `agent-action-produced` 的 attempt / manifest 关联可验证。
+- 当前 config、renderer 或 planner 升级：不改变旧 manifest 的恢复结果。
+
+## 10. 暂不采用的方案
+
+- 把 full `SessionProjection.Context` 缓存回来：它无界且正是 tail-only 试图避免物化的冷历史。
+- 每个 raw event 重复携带 setup pointers：污染 event body，增加双真源。
+- 把尚未提交的未来 ContextPlan 当作首次 setup locator：此时 event 还不存在；但已提交的最近
+  ContextPlan/manifest 正是重启恢复应使用的 checkpoint。
+- 只 seed runtime config：遗漏 system prompt、session marker 与 execution checkpoint。
+- 机械令 `RawStartExclusive = artifact.AnchorRawEvent`：coverage anchor 不等于 dependency boundary。
+- 现在实现完整 CS-6 Context Planner：CS-3 只需要最小 plan/manifest 与确定性恢复合同。
+- 立即新增 dedicated config ref 或通用 nearest-kind index：先让 raw manifest checkpoint 经真实负载验证。
+
+## 11. 一句话决议
+
+下一步实现最小 CS-3 是正确的；但它的主目标是 **tail request construction + persisted request recovery**，
+不是给 setup resolver 造索引。
+
+正常运行时把内存中的两个 governing setup 地址写入每次 completion 前提交的
+`ContextPlan` / canonical request manifest；重启后从 head 扫描局部尾段，命中最近 checkpoint 后各一次
+定址读取 setup payload。它不能替代首次 fallback，也不能把 artifact coverage anchor 冒充
+dependency-closed reducer boundary。
