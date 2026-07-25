@@ -137,6 +137,7 @@ internal static class SessionReducer {
                         );
                     }
                     var body = RequireBody<AgentActionProducedBody>(ev);
+                    ValidateActionToolCalls(ev, body.Action);
                     context.Add(body.Action);
                     addressedMessages?.Add(new AddressedSessionHistoryMessage(body.Action, ev.Address, ev.Address));
                     openAction = body.Action.ToolCalls.Count == 0 ? null : body.Action;
@@ -425,6 +426,24 @@ internal static class SessionReducer {
             throw new InvalidDataException(
                 $"{ev.Kind} at {ev.Address} raw arguments do not match current pending tool call '{pending.ToolCallId}'."
             );
+        }
+    }
+
+    private static void ValidateActionToolCalls(DecodedSessionEvent ev, ActionMessage action) {
+        var toolCallIds = new HashSet<string>(StringComparer.Ordinal);
+        foreach (RawToolCall call in action.ToolCalls) {
+            if (string.IsNullOrWhiteSpace(call.ToolCallId)
+                || string.IsNullOrWhiteSpace(call.ToolName)
+                || string.IsNullOrWhiteSpace(call.RawArgumentsJson)) {
+                throw new InvalidDataException(
+                    $"{ev.Kind} at {ev.Address} contains a tool call with an empty id, name, or raw arguments."
+                );
+            }
+            if (!toolCallIds.Add(call.ToolCallId)) {
+                throw new InvalidDataException(
+                    $"{ev.Kind} at {ev.Address} contains duplicate tool call id '{call.ToolCallId}'."
+                );
+            }
         }
     }
 

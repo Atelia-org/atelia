@@ -1445,6 +1445,43 @@ public sealed class SessionJournalEngineTests : IDisposable {
         Assert.Throws<InvalidDataException>(() => reopened.Project());
     }
 
+    [Theory]
+    [InlineData("duplicate-id")]
+    [InlineData("empty-id")]
+    [InlineData("empty-name")]
+    [InlineData("empty-arguments")]
+    public void Project_InvalidActionToolCallIdentity_Throws(string invalidCase) {
+        string path = NewJournalPath();
+        EventAddress observation;
+        using (var engine = SessionJournalEngine.Create(
+            path,
+            new SessionCreateOptions("model-A", "system-A", "surface-A")
+        )) {
+            observation = engine.AppendObservation("run tool");
+        }
+
+        string actionBlocks = invalidCase switch {
+            "duplicate-id" =>
+                "[{\"kind\":\"tool-call\",\"toolName\":\"alpha\",\"toolCallId\":\"call-1\",\"rawArgumentsJson\":\"{}\"},"
+                + "{\"kind\":\"tool-call\",\"toolName\":\"beta\",\"toolCallId\":\"call-1\",\"rawArgumentsJson\":\"{}\"}]",
+            "empty-id" =>
+                "[{\"kind\":\"tool-call\",\"toolName\":\"alpha\",\"toolCallId\":\"\",\"rawArgumentsJson\":\"{}\"}]",
+            "empty-name" =>
+                "[{\"kind\":\"tool-call\",\"toolName\":\"\",\"toolCallId\":\"call-1\",\"rawArgumentsJson\":\"{}\"}]",
+            _ =>
+                "[{\"kind\":\"tool-call\",\"toolName\":\"alpha\",\"toolCallId\":\"call-1\",\"rawArgumentsJson\":\"\"}]"
+        };
+        string payload = "{\"v\":1,\"body\":{\"action\":" + actionBlocks
+            + ",\"invocation\":{\"providerId\":\"import\",\"apiSpecId\":\"import-v1\",\"model\":\"model-A\"}}}";
+        using (var journal = EventJournal.EventJournal.OpenExisting(path)) {
+            _ = CommitToMain(journal, observation, SessionEventKind.ImportedAgentAction, payload);
+        }
+
+        using var reopened = SessionJournalEngine.Open(path);
+        InvalidDataException error = Assert.Throws<InvalidDataException>(() => reopened.Project());
+        Assert.Contains("tool call", error.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
     [Fact]
     public async Task ReplayHistory_MultipleToolCalls_UsesToolResultObservedRange() {
         string path = NewJournalPath();
