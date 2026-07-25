@@ -134,6 +134,25 @@ public sealed class DerivedRecapStoreTests : IDisposable {
     }
 
     [Fact]
+    public async Task NonTargetMemoryPackMutation_InvalidatesArtifactIdentity() {
+        var addresses = CreateAddresses();
+        string repoPath = NewRepoPath();
+        var store = DerivedRecapStore.Open(repoPath);
+        DerivedRecapWriteRequest request = CreateRequest(addresses, summary: "summary v1");
+        request.MemoryPack.System.Add("policy", new MemoryPackBlock("system memory"));
+        var artifact = await store.WriteProducedAsync(request);
+        string artifactPath = Path.Combine(store.ArtifactsDirectory, $"{artifact.ArtifactId}.json");
+        var root = JsonNode.Parse(await File.ReadAllTextAsync(artifactPath))!.AsObject();
+        root["memoryPack"]!["system"]![0]!["text"] = "tampered system memory";
+        await File.WriteAllTextAsync(artifactPath, root.ToJsonString());
+
+        var index = await store.RebuildLatestIndexAsync();
+
+        Assert.Empty(index.Items);
+        Assert.Null(await store.TryReadArtifactAsync(artifact.ArtifactId));
+    }
+
+    [Fact]
     public async Task MissingContentAndMemoryPackArtifact_IsSkippedDuringRebuild() {
         string repoPath = NewRepoPath();
         var store = DerivedRecapStore.Open(repoPath);

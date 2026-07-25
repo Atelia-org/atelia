@@ -98,9 +98,11 @@ public sealed class DerivedRecapStore {
             Status: DerivedRecapArtifactStatus.Produced
         );
 
-        string sourceEndShort = EventAddressTextCodec.Format(request.SourceEndInclusive)[4..16];
-        string hashShort = ComputeCanonicalSha256Hex(identity)[..16];
-        string baseArtifactId = $"{GetArtifactKindPrefix(request.ArtifactKind)}_{sourceEndShort}_{hashShort}";
+        string baseArtifactId = BuildArtifactIdBase(
+            request.ArtifactKind,
+            EventAddressTextCodec.Format(request.SourceEndInclusive),
+            ComputeCanonicalSha256Hex(identity)
+        );
         string artifactId = baseArtifactId;
         string json;
         DerivedRecapArtifactDto dto;
@@ -248,12 +250,14 @@ public sealed class DerivedRecapStore {
         if (!string.Equals(dto.Content.Sha256, ComputeSha256Hex(dto.Content.Text), StringComparison.Ordinal)) { return false; }
         if (!TryGetSnapshotBlockText(dto.MemoryPack, dto.Target, out string? targetText)) { return false; }
         if (!string.Equals(targetText, dto.Content.Text, StringComparison.Ordinal)) { return false; }
-        return EventAddressTextCodec.TryParse(dto.SourceRawHead, out _) &&
-               EventAddressTextCodec.TryParseNullable(dto.SourceStartExclusive, out _) &&
-               EventAddressTextCodec.TryParse(dto.SourceEndInclusive, out _) &&
-               EventAddressTextCodec.TryParse(dto.AnchorRawEvent, out _) &&
-               EventAddressTextCodec.TryParse(dto.GoverningRuntimeConfigSetup, out _) &&
-               EventAddressTextCodec.TryParse(dto.GoverningSystemPromptSetup, out _);
+        bool addressesAreValid =
+            EventAddressTextCodec.TryParse(dto.SourceRawHead, out _) &&
+            EventAddressTextCodec.TryParseNullable(dto.SourceStartExclusive, out _) &&
+            EventAddressTextCodec.TryParse(dto.SourceEndInclusive, out _) &&
+            EventAddressTextCodec.TryParse(dto.AnchorRawEvent, out _) &&
+            EventAddressTextCodec.TryParse(dto.GoverningRuntimeConfigSetup, out _) &&
+            EventAddressTextCodec.TryParse(dto.GoverningSystemPromptSetup, out _);
+        return addressesAreValid && ArtifactIdMatchesIdentity(dto);
     }
 
     private static bool IsUsableLatestIndex(DerivedRecapLatestIndexDto? dto) {
@@ -433,6 +437,40 @@ public sealed class DerivedRecapStore {
         => string.Equals(artifactKind, DerivedRecapArtifactKinds.RollingSummary, StringComparison.Ordinal)
             ? "rr"
             : SanitizeArtifactIdPart(artifactKind);
+
+    private static bool ArtifactIdMatchesIdentity(DerivedRecapArtifactDto dto) {
+        string expectedBase = BuildArtifactIdBase(
+            dto.ArtifactKind,
+            dto.SourceEndInclusive,
+            ComputeIdentityHash(dto)
+        );
+        if (string.Equals(dto.ArtifactId, expectedBase, StringComparison.Ordinal)) { return true; }
+        if (!dto.ArtifactId.StartsWith(expectedBase + "_", StringComparison.Ordinal)) { return false; }
+
+        string suffixText = dto.ArtifactId[(expectedBase.Length + 1)..];
+        return int.TryParse(
+                suffixText,
+                NumberStyles.None,
+                CultureInfo.InvariantCulture,
+                out int suffix
+            )
+            && suffix >= 2
+            && string.Equals(
+                suffixText,
+                suffix.ToString(CultureInfo.InvariantCulture),
+                StringComparison.Ordinal
+            );
+    }
+
+    private static string BuildArtifactIdBase(
+        string artifactKind,
+        string sourceEndInclusive,
+        string identitySha256
+    ) {
+        string sourceEndShort = sourceEndInclusive[4..16];
+        string hashShort = identitySha256[..16];
+        return $"{GetArtifactKindPrefix(artifactKind)}_{sourceEndShort}_{hashShort}";
+    }
 
     private static string SanitizeArtifactIdPart(string value) {
         var builder = new StringBuilder(value.Length);
