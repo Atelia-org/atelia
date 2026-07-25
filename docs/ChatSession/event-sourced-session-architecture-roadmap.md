@@ -363,8 +363,16 @@ stateDiagram-v2
 对最后一种情况：
 
 - provider 支持 idempotency / result lookup 时，用 attempt id 查询或重试。
-- provider 不支持时，记录旧 attempt 为 abandoned/uncertain，再创建新 attempt。
+- provider 不支持时，默认停在 uncertain；只有显式 recovery policy 授权后，才先记录旧 attempt 被新的
+  attempt 替代，再发起调用。
 - 不得把新 completion 假装成旧 attempt 的同一响应。
+
+当前 CS-3C 的无 capability fallback 使用 `completion-attempt-restarted`：source Prepared manifest
+保持 request 唯一真源，Restarted 以 Parent 串联 active attempt，并记录新/replaces attempt id。
+`RestartWithNewAttempt` 是明确的 at-least-once 选择；它保留审计身份，但无法排除旧 attempt 已在 provider
+侧成功或产生费用。默认 `RefuseUncertain` 不进行外部调用。显式 restart 当前要求调用方独占 branch
+driver；CAS 可以保护 journal attachment，但无法撤回已经并发发出的 provider 请求，跨进程
+lease / single-flight 留给 provider capability 阶段。
 
 completion 通常没有外部业务副作用，但会产生费用，因此 attempt history 仍应保留。
 
@@ -571,7 +579,14 @@ invocation、`runtime-config-setup` 与 `system-prompt-setup` provenance。
 > 可删除 derived store 破坏 prepared request 的恢复合同。该切片只替换 request context
 > materialization，并为无工具 observation `SendAsync` / `ResumeAsync` 增加不调用 `Project()` 的
 > bounded recent-idle fast path；通用 execution projection 与其他 phase 仍是 full replay。
-> prepared 后的 `ResumeAsync` 目前有意 fail-fast；manifest-only request reopen driver留给 CS-3C。
+> CS-3C 已实现单一 `SessionPreparedRequestReconstructor`，在 prepare 前与 reopen 时都从 manifest
+> references 重建并核对 exact canonical bytes。Prepared/Restarted 默认 `RefuseUncertain`；显式
+> `RestartWithNewAttempt` 会先提交 kind 11，形成 `P -> R1 -> R2` 可审计 attempt 链，再调用 provider。
+> explicit-artifact-tail 的 reopen 使用内联 snapshot，不依赖 derived sidecar，也不调用 `Project()`。
+> 默认 refusal 与 tail terminal validation 只做近头 attempt topology proof，不会借 reconstructor
+> 暗中退化为 full replay；后者同时支持 observation source，以及由 validated full-raw writer 提交的
+> tool-continuation source terminal。manifest 尚未固定 tool implementation identity，因此 recovered response
+> 若含 tool calls，会在任何工具执行前 durable fail；initial non-recovery tool loop 不受影响。
 > provider 已明确返回的 non-success，以及 host 收到 response 后确认其违反已提交 request policy 的
 > known rejection，另以 `completion-attempt-failed` 持久化；例如 tail no-tool policy 遇到 tool calls
 > 使用 `atelia.host.unsupported-tool-call`。transport/cancellation 仍保持 prepared uncertain。

@@ -56,7 +56,7 @@ reopen → 读取 main 链头 kind → replay 当前链得到 SessionProjection 
 ──────────────────────────────────────────────────
 ∅ / SessionCreated / ConfigChanged  等 observation
 Observation                          append Prepared → 跑 completion → append Action
-CompletionRequestPrepared            CS-3A 停止并拒绝重规划/重发；CS-3C 从 manifest 恢复
+CompletionRequestPrepared / Restarted 默认拒绝 uncertain；显式 policy → 重建 source manifest、append Restarted、调用
 CompletionAttemptFailed              已知 completion rejection/failure 已落盘；可等新 observation
 Action(含 tool call)                 取首个未结算 call → append ToolStarted
 Action(无 tool call)                 turn 结束 → 等 observation
@@ -67,8 +67,9 @@ ToolResult                           还有未结算 call? → 下一个 ToolSta
 
 崩溃窗口天然编码在链头 + replay projection：
 - `Observation` 后、Prepared 前崩 → 允许重新规划并提交 manifest。
-- `Prepared` 后崩 → 投影为 `AwaitingCompletion`。CS-3A 明确 fail-fast，不从当前配置/head
-  重新规划或盲目重发；CS-3C 将只从已提交 manifest 重建同一 canonical request。
+- `Prepared` / `Restarted` 后崩 → 投影为 `AwaitingCompletion`。默认 `RefuseUncertain` 不调用
+  provider、不改 journal；显式 `RestartWithNewAttempt` 从 source manifest 重建同一 canonical
+  request，先 append 新 Restarted，再调用。
 - provider 明确返回 `Incomplete` / `Failed`，或 host 已收到 response 但确认它违反已提交的 request
   policy → append `completion-attempt-failed` 后抛出；reopen 投影为 `TurnFailed`。例如
   `explicit-artifact-tail` 的 success response 含 tool calls 时，使用保留 reason
@@ -84,6 +85,10 @@ stateDiagram-v2
     Observed --> Prepared: append request manifest
     Prepared --> Acted: completion → Action
     Prepared --> TurnFailed: known non-success
+    Prepared --> Restarted: explicit uncertain restart
+    Restarted --> Restarted: crash / transport uncertain, explicit restart
+    Restarted --> Acted: completion → Action
+    Restarted --> TurnFailed: known non-success
     TurnFailed --> Observed: next observation
     Acted --> ToolStarted: has unsettled call
     Acted --> Idle: no tool call (turn done)
@@ -137,6 +142,7 @@ body **禁止**复述 EventJournal header 已有的字段（`EventFrameHeader.cs
 | 8 | `completion-request-prepared` | attempt、minimal ContextPlan、governing setup refs、request parameters、inline tool set、renderer/target identity、canonical request commitment |
 | 9 | `completion-attempt-failed` | attemptId、明确的 Incomplete/Failed 或 host-known rejection、reason、detail、errors |
 | 10 | `imported-agent-action` | legacy/manual import 的 Action + invocation；durably 区别于 live completion Action |
+| 11 | `completion-attempt-restarted` | 新 attemptId、replacesAttemptId、sourcePreparedAddress |
 
 `turn` 完成是**隐式判定**（Action 无 tool call、或最近 Action 的全部 tool call 均已结算），不落独立事件——它可由 replay 确定性推出，属派生状态而非 raw fact。MVP 将
 `context-plan-committed` 概念合并进 kind 8 的 `completion-request-prepared` body。仍未实现：
@@ -144,11 +150,15 @@ body **禁止**复述 EventJournal header 已有的字段（`EventFrameHeader.cs
 kind 9 只表达 completion attempt 的 **known non-success outcome**：包括 provider 明确返回的 non-success，
 以及 host 收到 response 后依据已提交 request policy 作出的确定性拒绝；它不冒充通用 turn/tool failure。
 host reason 使用 `atelia.host.*` 保留命名空间，当前定义
-`atelia.host.unsupported-tool-call`。
+`atelia.host.unsupported-tool-call`、`atelia.host.invalid-completion-invocation` 与
+`atelia.host.recovery-tool-execution-identity-unverified`。
 
 kind 8 的 frame `Header.Parent` 是 plan based-on raw head / raw end 的唯一真源，body 不复述 Parent。
-completion 成功产生的 `agent-action-produced.Header.Parent` 必须直接指向该 prepared event；manual/import
-历史只能走显式 `AppendImportedAgentAction` 入口，并落为不同的 kind 10。
+kind 11 不复制 manifest：其 `Header.Parent` 指向前一个 active attempt，body 的
+`sourcePreparedAddress` 始终引用原 kind 8。reconstruction 永远使用 source Prepared 的 Parent 作为 raw
+end，不能把 Restarted.Parent 误当 request raw end。completion 成功产生的
+`agent-action-produced.Header.Parent` 必须直接指向当前 active Prepared/Restarted；manual/import 历史
+只能走显式 `AppendImportedAgentAction` 入口，并落为不同的 kind 10。
 
 > raw Action 存 provider adapter 规范化后的完整 `ActionMessage`，**不做** persistence/context sanitization（对比老 `ChatSessionEngine.SanitizeForPersistence`，`ChatSessionEngine.cs:107-126`，那是落盘前剥 inline-think/丢空块）。是否剥 reasoning/think/空块、能否跨 provider 回灌，由 **projection/request renderer** 在构造 `CompletionRequest` 时决定。raw fact 与 provider-native wire log 不是同一层——后者（HTTP headers、临时字段、敏感内容）若需要另存 provider call forensic log，不进 raw session event。
 
@@ -175,9 +185,11 @@ Reduce(chronological events) -> SessionProjection {
 - `Context` 直接投影成 provider-facing `IHistoryMessage`（复用 `Completion.Abstractions`：`ObservationMessage` / `ActionMessage` / `ToolResultsMessage`）。
 - **结算顺序不变量**：一条 `Action` 触发的多个 `tool-result-observed` 合并成一条 `ToolResultsMessage` 时，block 顺序 = 该 `Action` 中 tool call 的**声明顺序**，用 `toolCallId` join 匹配——**不是** result 事件的 append 顺序，也不是工具执行完成顺序。这对 provider 对齐是硬要求；未来并行工具执行时 observed order 可乱，但投影顺序必须稳定。
 - `ExecutionState` 供状态机恢复；它不落盘，每次由 replay 重建。
-- `completion-request-prepared` 对 rendered `Context` 与 governing setup 中性，但将执行态投影为
-  `AwaitingCompletion`，并保留 pending prepared address、attempt id 与跨 tool-loop 的 correlation id。
-- `completion-attempt-failed` 必须直接继承并匹配 pending prepared attempt；消费后清空 pending/correlation，
+- `completion-request-prepared` / `completion-attempt-restarted` 对 rendered `Context` 与 governing
+  setup 中性，但将执行态投影为 `AwaitingCompletion`，并分别保留 source Prepared、active attempt
+  address/id 与跨 tool-loop correlation id。
+- Restarted 必须直接继承 active Prepared/Restarted，source 不变、replaces id 匹配且新 id 唯一。
+- `completion-attempt-failed` 必须直接继承并匹配 active attempt；消费后清空 pending/correlation，
   投影为 quiescent `TurnFailed`。`ResumeAsync` 不重发，但可以先替换 runtime config / system prompt，
   再由下一条 observation 开始新 turn。
 - reducer 是状态机正确性的核心。实现时允许用链头 kind 快速分派，但不得跳过 replay 所需的当前 turn / tool-call settlement 信息。`turn` 完成由此隐式判定，无独立事件。
@@ -224,15 +236,17 @@ public sealed record SessionRuntime(
     ICompletionClient CompletionClient,
     ToolSession? ToolSession,
     SessionCompletionTargetIdentity? CompletionTarget,
-    int? MaxTokens
+    int? MaxTokens,
+    SessionTailProjectionOptions? TailProjection,
+    SessionPreparedCompletionRecoveryPolicy PreparedCompletionRecoveryPolicy
 );
 ```
 
 - `SendAsync` / `ResumeAsync` 共享同一个内部驱动循环：**每一步都是"读链头 → 决定动作 → 执行 → CommitToRef 落盘"**，而不是老代码的"内存跑完整轮再一次 commit"。每次调用 completion（包括 tool results 后续环）都必须先提交自己的 kind 8 manifest。
 - `SendAsync` 幂等前提：调用前链头必须是静止态（`Idle`）；否则先 `ResumeAsync`。
-- `SessionRuntime.CompletionTarget` 是非秘密 connection/request-adapter identity；正式写 manifest
-  时必填。CS-3A 的 `ResumeAsync(AwaitingCompletion)` 明确拒绝继续，直到 CS-3C 提供 manifest-only
-  request reconstruction/reopen driver。
+- `SessionRuntime.CompletionTarget` 是非秘密 connection/request-adapter identity；正式写 manifest与
+  restart dispatch 时必须精确匹配。CS-3C 的 recovery policy 默认 `RefuseUncertain`；显式
+  `RestartWithNewAttempt` 才授权产生一个新的 provider 调用。
 
 ## 6. 工具执行协议（started + result 双事件）
 
@@ -273,12 +287,18 @@ result 都是非法 raw chain，fail-fast 且不递增 execution sequence。
 
 - 不双写 StateJournal；不保留老 `ChatSession` 兼容 wrapper。
 - 不在主干实现 planner / 预算 / retrieval / artifact。
-- 不在 CS-3A 从 prepared manifest 自动重发 completion；这属于 CS-3C。
+- CS-3C 不实现 provider-side attempt lookup / 原生 idempotency；默认不自动重发，显式 restart 使用新
+  attempt identity 并保留替代链。显式 restart 当前要求调用方独占 branch driver；CAS 不能撤回已经
+  并发发出的 provider 请求，跨进程 lease / single-flight 留待后续 capability。
+- CS-3C manifest 尚未固定 tool implementation identity；recovered response 的 tool calls 必须在执行前
+  durable fail，不自动进入工具循环。initial non-recovery tool loop 保持原合同。
 - CS-3B 为 `explicit-artifact-tail + ObservationAccepted + no tools` 增加 bounded recent-idle fast
   path，并把该 request context materialization 切到 dependency-closed suffix，不调用 `Project()`；
   显式 `Project()` / `ReplayHistory()` 与其他 execution phase 仍是 full replay。
 - fast path 的 idle validator 会局部证明 bootstrap、live/imported terminal Action 与 failed attempt
-  的直接因果边；不能只凭最近非 setup event 的 kind 接受边界。
+  的直接因果边；不能只凭最近非 setup event 的 kind 接受边界。CS-3C 允许 validated full-raw
+  `tool-continuation` manifest 的 terminal Action/Failure 成为下一次 tail Send 的闭合边界，但不把
+  任意 imported ToolResult 当作 tail projector 起点。
 - 该 bounded proof 信任更早 prefix 来自受控 writer；它不是任意低层 raw 篡改下的 full reducer
   equivalence。若要接纳不可信 raw import，需先完整验证或引入 execution checkpoint / suffix-local DFA。
 - 不在 CS-3B 实现 latest artifact 选择、多 artifact composition、预算、retrieval 或完整 planner；
