@@ -2,7 +2,9 @@
 
 > 状态：CS-3A + CS-3B + CS-3C Implemented
 > 日期：2026-07-26
-> 相关文档：[SessionJournal 主干设计基线](session-journal-trunk-design.md)、[ChatSession 事件源与长期上下文架构路线图](../ChatSession/event-sourced-session-architecture-roadmap.md)
+> 相关文档：[SessionJournal 主干设计基线](session-journal-trunk-design.md)、
+> [Tail-only Execution Recovery Design](tail-execution-recovery-design.md)、
+> [ChatSession 事件源与长期上下文架构路线图](../ChatSession/event-sourced-session-architecture-roadmap.md)
 
 ## 1. 结论
 
@@ -91,6 +93,11 @@ full-history reducer validation。若未来允许不可信 raw import 直接进�
 让 `explicit-artifact-tail` 的 Prepared reopen 直接从链头进入 manifest-only reconstruction，不调用
 `Project()`。这仍不能被描述成“整个 SessionJournal 已经 O(tail) reopen”：full-raw reconstruction 与
 其他 execution phase 仍可能完整 replay，后续 execution checkpoint/recovery 工作还要继续缩短重启路径。
+
+下一阶段已收束为 [CS-3D Tail-only Execution Recovery](tail-execution-recovery-design.md)：在线恢复只
+重建最小 execution state，不构造完整 conversation；需要调用 LLM 时，再由 coherent recap/artifact
+set（rolling 第一人称自传、world-understanding 等）与 dependency-closed raw suffix 构造 bounded
+request context。完整 `Project()` 只保留为显式审计/迁移 API 与 reference oracle。
 
 ## 3. 必须分开的三个问题
 
@@ -524,15 +531,18 @@ id，不能只给 reopen 临时加 lookup。当前显式 restart 还假定调用
 driver；head CAS 能阻止两个结果同时接到同一 active attempt，却无法撤销已经并发发出的 provider
 调用。跨进程 lease / single-flight 属于后续 capability。
 
-### CS-4 以后
+### CS-3D / CS-4 以后
 
-tool-loop tail recovery 需要正式处理：
+通用 execution tail recovery 需要正式处理：
 
 - open action / observed results / pending operation。
-- `ToolExecutionSequenceCheckpoint` 的可靠恢复。
+- `ToolExecutionSequenceCheckpoint` 必须成为近头 durable fact，不能再从 root 计数。
 - mid-turn boundary 与 request manifest 的关系。
+- tool continuation 的 request context 必须来自 artifact set + dependency-closed suffix，而不是
+  full `SessionProjection.Context`。
 
-不能把 CS-3 的无工具 seed 静默推广成通用 tool-loop reducer seed。
+不能把 CS-3 的无工具 context fold 静默推广成通用 execution reducer seed。具体职责、事件协议和实施
+切片见 [Tail-only Execution Recovery Design](tail-execution-recovery-design.md)。
 
 ## 9. 验收矩阵
 
@@ -597,10 +607,11 @@ Request recovery：
 
 ## 11. 一句话决议
 
-下一步实现最小 CS-3 是正确的；但它的主目标是 **tail request construction + persisted request recovery**，
-不是给 setup resolver 造索引。
+CS-3A/B/C 已证明 **tail request construction + persisted request recovery** 的最小合同。下一步是
+CS-3D：让在线 execution recovery 也完全退出 full `Project()`，但不要求审计 API 放弃完整历史。
 
 正常运行时把内存中的两个 governing setup 地址写入每次 completion 前提交的
 `ContextPlan` / canonical request manifest；重启后从 head 扫描局部尾段，命中最近 checkpoint 后各一次
 定址读取 setup payload。它不能替代首次 fallback，也不能把 artifact coverage anchor 冒充
-dependency-closed reducer boundary。
+dependency-closed reducer boundary。完整 conversation 不是 execution recovery 的输入；真正需要调用
+LLM 时，正常长会话由 coherent recap/artifact set + dependency-closed raw suffix 提供 bounded context。

@@ -599,6 +599,33 @@ invocation、`runtime-config-setup` 与 `system-prompt-setup` provenance。
 - 已准备 request 只从 manifest 引用的旧 raw/config/schema/profile 重建，不因当前配置变化被悄悄替换。
 - duplicate attempt 有不同 identity 和可审计原因。
 
+### CS-3D：Tail-only Execution Recovery
+
+产出：把在线 execution recovery 与完整 conversation projection 分离；从 ref head 沿 Parent 反向解析
+当前 attempt/action/tool dependencies 和近头 execution checkpoint，恢复最小 `SessionExecutionState`。
+`Project()` / `ReplayHistory()` 保留完整审计语义，但退出 `Open` / `ResumeAsync` / `SendAsync` /
+tool-loop driver 的默认路径。
+
+需要调用 LLM 时，正常长会话不物化 root-to-head conversation，而由 coherent recap/artifact set
+（rolling 第一人称自传、world-understanding 等）加 dependency-closed raw suffix 构造 bounded
+canonical request。execution resolver 本身不读取 artifact 文本。
+
+本阶段同时把全局 `ToolExecutionSequenceCheckpoint` 改成近头 durable fact：tool execution 在外部调用前
+先持久化 reserved sequence/operation id，Started/Result 使用并校验同一 identity。
+
+验收：
+
+- Observation、Prepared/Restarted、Failure、Action、ToolStarted、ToolResult 和 Idle 恢复均不调用
+  `Project()`。
+- tail execution state 与 full reducer reference oracle 一致。
+- 10k+ 冷历史前缀不增加正常 reopen 的 payload reads；读取量只随当前 operational dependency span
+  增长。
+- Observation 与 dependency-closed ToolResult 后的下一次 completion 都使用 artifact set + raw suffix，
+  不回退到完整 conversation。
+
+详细设计见
+[SessionJournal Tail-only Execution Recovery Design](../SessionJournal/tail-execution-recovery-design.md)。
+
 ### CS-4：可恢复 Tool Loop
 
 产出：tool started/result/uncertain 事件、idempotency contract、恢复驱动器。

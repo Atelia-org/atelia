@@ -1,9 +1,10 @@
 # SessionJournal 主干设计基线
 
-> **状态**：Trunk Design Baseline + CS-3A/CS-3B Addendum
+> **状态**：Trunk Design Baseline + CS-3A/B/C Addendum + CS-3D Target
 > **日期**：2026-07-26
 > **底层依赖**：[EventJournal 使用指南](../../src/EventJournal/README.md)、[EventJournal 功能需求与粗粒度设计基线](../EventJournal/event-journal-requirements-and-design.md)
 > **上层路线图**：[ChatSession 事件源与长期上下文架构路线图](../ChatSession/event-sourced-session-architecture-roadmap.md)
+> **后续恢复设计**：[Tail-only Execution Recovery Design](tail-execution-recovery-design.md)
 > **替代对象**：`prototypes/ChatSession`（StateJournal deque + 整轮末尾 commit）
 
 ## 0. 定位与边界
@@ -19,7 +20,7 @@ Raw Event Journal（事实源）+ Recoverable Execution State Machine（执行�
 | 单 store = 单 session、`main` branch | 多 session、跨 session 知识 artifact |
 | 领域事件 envelope + EventKind | ContextPlanner / 预算化上下文选择 |
 | 逐事件落盘的 tool-loop 状态机 | DerivedArtifact / recap / 自传 / 世界理解 |
-| 纯 replay reducer（events → 投影） | Retrieval read models（FTS/向量/图） |
+| full replay audit reducer + tail execution recovery | Retrieval read models（FTS/向量/图） |
 | full-raw / explicit-artifact-tail minimal plan + canonical request manifest | 预算化 selection policy（CS-6） |
 | reopen 恢复、failpoint 测试 | exactly-once 补偿、非幂等工具暂停协议 |
 
@@ -43,13 +44,24 @@ Raw Event Journal（事实源）+ Recoverable Execution State Machine（执行�
 
 主干根治办法：**不额外维护 mutable "当前状态" 字段**。每个 EventJournal 事件都是 `CommitToRef` 一次 CAS 推进，落盘即 durable flush。
 
-恢复流程是：
+最初主干恢复流程是：
 
 ```text
 reopen → 读取 main 链头 kind → replay 当前链得到 SessionProjection → 根据 ExecutionState 继续
 ```
 
 链头 kind 给出恢复入口；完整 `ExecutionState` 由 reducer 从当前有效父链重建。例如 `ToolResult` 后是否还有未结算 call，必须 replay 最近的 `Action` 和已观察到的 tool results，不能只看一个 kind。
+
+该流程已被确认只适合作为 correctness baseline，不适合作为长历史在线恢复路径。CS-3D 的目标流程为：
+
+```text
+reopen → 从 head 反向解析 operational tail → 得到最小 ExecutionState → 根据 phase 继续
+```
+
+这里只读取当前 Action/attempt/tool dependencies 与近头 execution checkpoint，不构造完整 conversation。
+完整历史继续由显式 `Project()` / `ReplayHistory()` 提供；需要调用 LLM 时，context 由 artifact set +
+dependency-closed raw suffix 单独物化。详见
+[Tail-only Execution Recovery Design](tail-execution-recovery-design.md)。
 
 ```
 链头 kind                     下一合法动作
@@ -184,7 +196,8 @@ Reduce(chronological events) -> SessionProjection {
 
 - `Context` 直接投影成 provider-facing `IHistoryMessage`（复用 `Completion.Abstractions`：`ObservationMessage` / `ActionMessage` / `ToolResultsMessage`）。
 - **结算顺序不变量**：一条 `Action` 触发的多个 `tool-result-observed` 合并成一条 `ToolResultsMessage` 时，block 顺序 = 该 `Action` 中 tool call 的**声明顺序**，用 `toolCallId` join 匹配——**不是** result 事件的 append 顺序，也不是工具执行完成顺序。这对 provider 对齐是硬要求；未来并行工具执行时 observed order 可乱，但投影顺序必须稳定。
-- `ExecutionState` 供状态机恢复；它不落盘，每次由 replay 重建。
+- `ExecutionState` 供状态机恢复；它不作为 mutable snapshot 落盘。当前实现由 full replay 重建，
+  CS-3D 将改为由 head 附近 raw operational facts/checkpoints 重建。
 - `completion-request-prepared` / `completion-attempt-restarted` 对 rendered `Context` 与 governing
   setup 中性，但将执行态投影为 `AwaitingCompletion`，并分别保留 source Prepared、active attempt
   address/id 与跨 tool-loop correlation id。
@@ -192,11 +205,19 @@ Reduce(chronological events) -> SessionProjection {
 - `completion-attempt-failed` 必须直接继承并匹配 active attempt；消费后清空 pending/correlation，
   投影为 quiescent `TurnFailed`。`ResumeAsync` 不重发，但可以先替换 runtime config / system prompt，
   再由下一条 observation 开始新 turn。
-- reducer 是状态机正确性的核心。实现时允许用链头 kind 快速分派，但不得跳过 replay 所需的当前 turn / tool-call settlement 信息。`turn` 完成由此隐式判定，无独立事件。
+- full reducer 是状态机语义的 reference oracle。在线 resolver 可以用链头 kind 快速分派，但不得跳过
+  当前 Action / tool-call settlement / attempt chain 所需的局部 raw facts。`turn` 完成仍由依赖闭合
+  隐式判定，无独立事件。
 - config / system prompt 按事件位置 as-of 解析（见 §2.4）：投影历史 Action 用其位置之前的最新 snapshot，构造当前请求才用链尾最新。
 - 未知 schema/version → fail-fast（主干阶段无兼容需求，符合 AGENTS.md「及时重构优于兼容层」）。
 
-reducer 同时喂两条路：**completion 请求投影**（构造 `CompletionRequest.Context`）与**状态机恢复**（决定下一动作）。二者共用同一 replay，杜绝"配置 + 当前 head 重跑 planner"的漂移。
+旧实现让同一个 reducer 同时喂 completion context 与状态机恢复；CS-3D 起必须拆开：
+
+- Tail Execution Projection 决定下一动作，不物化 conversation。
+- Request Context Projection 从 committed plan 指定的 artifact set + suffix 构造 bounded request。
+- Full Audit Projection 继续作为审计、迁移和 differential-test oracle。
+
+避免 planner 漂移依靠 committed manifest，而不是依靠每次在线恢复重放整段历史。
 
 ## 4. 与 EventJournal 的映射
 
