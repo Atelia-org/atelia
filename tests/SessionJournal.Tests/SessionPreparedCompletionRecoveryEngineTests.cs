@@ -47,6 +47,60 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
     }
 
     [Fact]
+    public async Task ResumeAsync_DefaultRefuse_UsesLocalAttemptProofWithoutRequestReconstruction() {
+        string path = NewJournalPath();
+        var client = new ScriptedClient();
+        EventAddress validPrepared = await CreateFullRawPreparedAsync(
+            path,
+            CreateRuntime(client)
+        );
+        EventAddress observation = ReadParent(path, validPrepared)!.Value;
+        CompletionRequestPreparedBody validManifest =
+            ReadBody<CompletionRequestPreparedBody>(
+                path,
+                validPrepared,
+                SessionEventKind.CompletionRequestPrepared
+            );
+        CompletionRequestPreparedBody malformedManifest = validManifest with {
+            Commitment = validManifest.Commitment with { Sha256 = new string('0', 64) }
+        };
+        EventAddress malformedPrepared;
+        using (var journal = EventJournal.EventJournal.OpenExisting(path)) {
+            RefId main = journal.OpenBranch(SessionJournalDefaults.MainBranchName).Unwrap();
+            Assert.True(journal.MoveRef(main, validPrepared, observation).Unwrap());
+            malformedPrepared = journal.CommitToRef(
+                SessionJournalDefaults.MainBranchName,
+                observation,
+                SessionEventCodec.Encode(
+                    SessionEventKind.CompletionRequestPrepared,
+                    malformedManifest
+                ),
+                opaqueEventKind: (uint)SessionEventKind.CompletionRequestPrepared,
+                hint: default
+            ).Unwrap().EventAddress;
+        }
+        using (var journal = EventJournal.EventJournal.OpenExisting(path)) {
+            Assert.Throws<InvalidDataException>(
+                () => SessionPreparedRequestReconstructor.Reconstruct(
+                    journal,
+                    malformedPrepared,
+                    CancellationToken.None
+                )
+            );
+        }
+
+        using (var reopened = SessionJournalEngine.Open(path, CreateRuntime(client))) {
+            InvalidOperationException error = await Assert.ThrowsAsync<InvalidOperationException>(
+                () => reopened.ResumeAsync(CancellationToken.None)
+            );
+            Assert.Contains("RefuseUncertain", error.Message, StringComparison.Ordinal);
+        }
+
+        Assert.Equal(malformedPrepared, ReadHead(path));
+        Assert.Equal(0, client.Calls);
+    }
+
+    [Fact]
     public async Task ResumeAsync_RestartSuccess_AppendsNewAttemptAndBindsActionToIt() {
         string path = NewJournalPath();
         var sourceClient = new ScriptedClient();
@@ -355,23 +409,23 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
     }
 
     [Fact]
-    public async Task ResumeAsync_FullRawToolCall_ContinuesExistingToolLoop() {
+    public async Task ResumeAsync_FullRawToolCall_FailsBeforeUnpinnedToolImplementationRuns() {
         string path = NewJournalPath();
-        var tool = new RecordingTool("lookup");
-        ToolSession sourceTools = new ToolRegistry([tool]).CreateSession();
+        var sourceTool = new RecordingTool("lookup");
+        ToolSession sourceTools = new ToolRegistry([sourceTool]).CreateSession();
         var client = new ScriptedClient();
         _ = await CreateFullRawPreparedAsync(
             path,
             CreateRuntime(client, sourceTools)
         );
-        ToolSession recoveryTools = new ToolRegistry([tool]).CreateSession();
+        var recoveryTool = new RecordingTool("lookup");
+        ToolSession recoveryTools = new ToolRegistry([recoveryTool]).CreateSession();
         client.Enqueue(request => new CompletionResult(
             new ActionMessage([
                 new ActionBlock.ToolCall(new RawToolCall("lookup", "call-1", "{}"))
             ]),
             Descriptor(request)
         ));
-        client.Enqueue(request => Success(request, "tool loop done"));
         using (var reopened = SessionJournalEngine.Open(
             path,
             CreateRuntime(
@@ -380,14 +434,37 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
                 recoveryPolicy: SessionPreparedCompletionRecoveryPolicy.RestartWithNewAttempt
             )
         )) {
-            ResumeOutcome outcome = await reopened.ResumeAsync(CancellationToken.None);
-            Assert.Equal("tool loop done", outcome.Message?.GetFlattenedText());
+            SessionJournalTurnAbortedException error =
+                await Assert.ThrowsAsync<SessionJournalTurnAbortedException>(
+                    () => reopened.ResumeAsync(CancellationToken.None)
+                );
+            Assert.Equal(
+                "atelia.host.recovery-tool-execution-identity-unverified",
+                error.Termination.ProviderReason
+            );
+            Assert.Equal(
+                SessionExecutionPhase.TurnFailed,
+                reopened.Project().ExecutionState.Phase
+            );
         }
-        Assert.Equal(1, tool.Calls);
-        Assert.Equal(2, client.Calls);
+        Assert.Equal(0, sourceTool.Calls);
+        Assert.Equal(0, recoveryTool.Calls);
+        Assert.Equal(1, client.Calls);
         Assert.Single(ReadAddressesByKind(path, SessionEventKind.CompletionAttemptRestarted));
-        Assert.Single(ReadAddressesByKind(path, SessionEventKind.ToolExecutionStarted));
-        Assert.Single(ReadAddressesByKind(path, SessionEventKind.ToolResultObserved));
+        EventAddress failureAddress = Assert.Single(
+            ReadAddressesByKind(path, SessionEventKind.CompletionAttemptFailed)
+        );
+        CompletionAttemptFailedBody failure = ReadBody<CompletionAttemptFailedBody>(
+            path,
+            failureAddress,
+            SessionEventKind.CompletionAttemptFailed
+        );
+        Assert.Equal(
+            "atelia.host.recovery-tool-execution-identity-unverified",
+            failure.ProviderReason
+        );
+        Assert.Empty(ReadAddressesByKind(path, SessionEventKind.ToolExecutionStarted));
+        Assert.Empty(ReadAddressesByKind(path, SessionEventKind.ToolResultObserved));
     }
 
     private async Task<EventAddress> CreateFullRawPreparedAsync(

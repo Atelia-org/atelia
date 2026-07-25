@@ -26,6 +26,7 @@ internal static class SessionReducer {
         EventAddress? pendingRequestPreparedAddress = null;
         EventAddress? activeCompletionAttemptAddress = null;
         string? pendingCompletionAttemptId = null;
+        HashSet<string>? seenCompletionAttemptIds = null;
         string? activeCorrelationId = null;
 
         foreach (DecodedSessionEvent ev in events) {
@@ -57,6 +58,7 @@ internal static class SessionReducer {
                     pendingRequestPreparedAddress = null;
                     activeCompletionAttemptAddress = null;
                     pendingCompletionAttemptId = null;
+                    seenCompletionAttemptIds = null;
                     activeCorrelationId = null;
                     break;
                 }
@@ -82,6 +84,7 @@ internal static class SessionReducer {
                     pendingRequestPreparedAddress = null;
                     activeCompletionAttemptAddress = null;
                     pendingCompletionAttemptId = null;
+                    seenCompletionAttemptIds = null;
                     activeCorrelationId = BuildCorrelationId(ev.Address);
                     break;
                 }
@@ -115,6 +118,9 @@ internal static class SessionReducer {
                     pendingRequestPreparedAddress = ev.Address;
                     activeCompletionAttemptAddress = ev.Address;
                     pendingCompletionAttemptId = body.Attempt.AttemptId;
+                    seenCompletionAttemptIds = new HashSet<string>(StringComparer.Ordinal) {
+                        body.Attempt.AttemptId
+                    };
                     break;
                 }
                 case SessionEventKind.CompletionAttemptRestarted: {
@@ -125,6 +131,7 @@ internal static class SessionReducer {
                         || pendingRequestPreparedAddress is not { } sourcePreparedAddress
                         || activeCompletionAttemptAddress is not { } activeAttemptAddress
                         || pendingCompletionAttemptId is not { } activeAttemptId
+                        || seenCompletionAttemptIds is null
                         || ev.Parent != activeAttemptAddress) {
                         throw new InvalidDataException(
                             $"{ev.Kind} at {ev.Address} must directly follow the active completion attempt."
@@ -142,9 +149,10 @@ internal static class SessionReducer {
                     }
                     if (string.IsNullOrWhiteSpace(body.AttemptId)
                         || string.IsNullOrWhiteSpace(body.ReplacesAttemptId)
-                        || string.Equals(body.AttemptId, body.ReplacesAttemptId, StringComparison.Ordinal)) {
+                        || string.Equals(body.AttemptId, body.ReplacesAttemptId, StringComparison.Ordinal)
+                        || !seenCompletionAttemptIds.Add(body.AttemptId)) {
                         throw new InvalidDataException(
-                            $"{ev.Kind} at {ev.Address} must introduce a distinct, non-empty attempt id."
+                            $"{ev.Kind} at {ev.Address} must introduce an attempt id that is non-empty and distinct across the entire active attempt chain."
                         );
                     }
                     activeCompletionAttemptAddress = ev.Address;
@@ -169,6 +177,7 @@ internal static class SessionReducer {
                     pendingRequestPreparedAddress = null;
                     activeCompletionAttemptAddress = null;
                     pendingCompletionAttemptId = null;
+                    seenCompletionAttemptIds = null;
                     activeCorrelationId = null;
                     break;
                 }
@@ -206,6 +215,7 @@ internal static class SessionReducer {
                     pendingRequestPreparedAddress = null;
                     activeCompletionAttemptAddress = null;
                     pendingCompletionAttemptId = null;
+                    seenCompletionAttemptIds = null;
                     if (body.Action.ToolCalls.Count == 0) {
                         activeCorrelationId = null;
                     }

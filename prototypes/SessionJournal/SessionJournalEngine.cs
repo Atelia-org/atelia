@@ -7,6 +7,8 @@ namespace Atelia.SessionJournal;
 
 public sealed class SessionJournalEngine : IDisposable {
     private const string UnsupportedTailToolCallReason = "atelia.host.unsupported-tool-call";
+    private const string RecoveryToolExecutionIdentityUnverifiedReason =
+        "atelia.host.recovery-tool-execution-identity-unverified";
     private const string InvalidCompletionInvocationReason =
         "atelia.host.invalid-completion-invocation";
 
@@ -627,6 +629,7 @@ public sealed class SessionJournalEngine : IDisposable {
             manifest.Attempt.AttemptId,
             runtime,
             allowResultToolCalls,
+            UnsupportedTailToolCallReason,
             observer,
             cancellationToken
         ).ConfigureAwait(false);
@@ -638,6 +641,7 @@ public sealed class SessionJournalEngine : IDisposable {
         string activeAttemptId,
         SessionRuntime runtime,
         bool allowResultToolCalls,
+        string disallowedToolCallReason,
         CompletionStreamObserver? observer,
         CancellationToken cancellationToken
     ) {
@@ -681,12 +685,16 @@ public sealed class SessionJournalEngine : IDisposable {
             );
         }
         if (!allowResultToolCalls && result.Message.ToolCalls.Count > 0) {
-            const string detail =
-                "Provider returned tool calls for an explicit-artifact-tail request, but that policy supports no tools.";
+            string detail = disallowedToolCallReason switch {
+                RecoveryToolExecutionIdentityUnverifiedReason =>
+                    "Recovered completion returned tool calls, but the prepared manifest did not durably pin tool implementation identity; recovery will not execute tools.",
+                _ =>
+                    "Provider returned tool calls for an explicit-artifact-tail request, but that policy supports no tools."
+            };
             ThrowKnownHostFailure(
                 activeAttemptAddress,
                 activeAttemptId,
-                UnsupportedTailToolCallReason,
+                disallowedToolCallReason,
                 detail
             );
         }
@@ -732,7 +740,7 @@ public sealed class SessionJournalEngine : IDisposable {
         CompletionStreamObserver? observer,
         CancellationToken cancellationToken
     ) {
-        PreparedAttemptChain chain = ResolvePreparedAttemptChain(
+        PreparedAttemptIdentityChain chain = ResolvePreparedAttemptIdentityChain(
             activeAttemptHead,
             cancellationToken
         );
@@ -752,7 +760,13 @@ public sealed class SessionJournalEngine : IDisposable {
         }
 
         SessionRuntime runtime = RequireRuntime();
-        ValidateRecoveryRuntimeCompatibility(runtime, chain.Reconstruction.Manifest);
+        ValidateRecoveryRuntimeCompatibility(runtime, chain.SourceManifest);
+        SessionPreparedRequestReconstruction reconstruction =
+            SessionPreparedRequestReconstructor.Reconstruct(
+                _journal,
+                chain.SourcePreparedAddress,
+                cancellationToken
+            );
         string restartedAttemptId = $"attempt-{Guid.NewGuid():N}";
         EventAddress restartedAddress = AppendExpected(
             SessionEventKind.CompletionAttemptRestarted,
@@ -766,40 +780,30 @@ public sealed class SessionJournalEngine : IDisposable {
         );
         TriggerFailpoint(SessionJournalFailpoint.AfterCompletionAttemptRestartedCommitted);
 
-        bool allowResultToolCalls = string.Equals(
-            chain.Reconstruction.Manifest.Plan.SelectionPolicyId,
+        bool sourceAllowsToolCalls = string.Equals(
+            chain.SourceManifest.Plan.SelectionPolicyId,
             SessionRequestManifestDefaults.FullRawSelectionPolicyId,
             StringComparison.Ordinal
         );
         CompletionResult result = await ExecuteCommittedCompletionAttemptAsync(
-            chain.Reconstruction.Request,
+            reconstruction.Request,
             restartedAddress,
             restartedAttemptId,
             runtime,
-            allowResultToolCalls,
+            false,
+            sourceAllowsToolCalls
+                ? RecoveryToolExecutionIdentityUnverifiedReason
+                : UnsupportedTailToolCallReason,
             observer,
             cancellationToken
         ).ConfigureAwait(false);
-
-        if (allowResultToolCalls) {
-            SessionProjection projection = Project(cancellationToken);
-            if (projection.ExecutionState.Phase == SessionExecutionPhase.AwaitingToolExecution) {
-                return ToResumeOutcome(
-                    await ContinueToolLoopAsync(
-                        projection,
-                        observer,
-                        cancellationToken
-                    ).ConfigureAwait(false)
-                );
-            }
-        }
 
         return ToResumeOutcome(
             new TurnResult(result.Message, result.Invocation, FreezeErrors(result.Errors))
         );
     }
 
-    private PreparedAttemptChain ResolvePreparedAttemptChain(
+    private PreparedAttemptIdentityChain ResolvePreparedAttemptIdentityChain(
         EventAddress activeAttemptHead,
         CancellationToken cancellationToken
     ) {
@@ -808,6 +812,7 @@ public sealed class SessionJournalEngine : IDisposable {
         EventAddress cursor = activeAttemptHead;
         CompletionRequestPreparedBody sourceManifest;
         EventAddress sourcePreparedAddress;
+        EventAddress? sourcePreparedParent;
         while (true) {
             cancellationToken.ThrowIfCancellationRequested();
             using EventFrame frame = _journal.ReadEvent(cursor).Unwrap();
@@ -837,6 +842,7 @@ public sealed class SessionJournalEngine : IDisposable {
                     $"CompletionRequestPrepared at {cursor} decoded to an unexpected body."
                 );
             sourcePreparedAddress = cursor;
+            sourcePreparedParent = frame.Header.Parent;
             break;
         }
 
@@ -874,17 +880,12 @@ public sealed class SessionJournalEngine : IDisposable {
             );
         }
 
-        SessionPreparedRequestReconstruction reconstruction =
-            SessionPreparedRequestReconstructor.Reconstruct(
-                _journal,
-                sourcePreparedAddress,
-                cancellationToken
-            );
-        return new PreparedAttemptChain(
+        return new PreparedAttemptIdentityChain(
             sourcePreparedAddress,
+            sourcePreparedParent,
             expectedParent,
             activeAttemptId,
-            reconstruction
+            sourceManifest
         );
     }
 
@@ -1127,7 +1128,7 @@ public sealed class SessionJournalEngine : IDisposable {
             ?? throw new InvalidDataException(
                 $"CompletionAttemptFailed at {failureAddress} requires an active completion attempt parent."
             );
-        PreparedAttemptChain chain = ResolvePreparedAttemptChain(
+        PreparedAttemptIdentityChain chain = ResolvePreparedAttemptIdentityChain(
             activeAttempt,
             cancellationToken
         );
@@ -1148,24 +1149,48 @@ public sealed class SessionJournalEngine : IDisposable {
             ?? throw new InvalidDataException(
                 $"AgentActionProduced at {actionAddress} requires an active completion attempt parent."
             );
-        PreparedAttemptChain chain = ResolvePreparedAttemptChain(
+        PreparedAttemptIdentityChain chain = ResolvePreparedAttemptIdentityChain(
             activeAttempt,
             cancellationToken
         );
         ValidateTailSourceObservation(chain, actionAddress);
     }
 
-    private static void ValidateTailSourceObservation(
-        PreparedAttemptChain chain,
+    private void ValidateTailSourceObservation(
+        PreparedAttemptIdentityChain chain,
         EventAddress terminalAddress
     ) {
+        EventAddress observationAddress = chain.SourcePreparedParent
+            ?? throw new InvalidDataException(
+                $"Tail source CompletionRequestPrepared at {chain.SourcePreparedAddress} requires an ObservationAccepted parent."
+            );
+        EventFrameHeader observationHeader =
+            _journal.ReadEventHeaderPreview(observationAddress).Unwrap();
+        ValidateSessionHeaderPreview(observationAddress, observationHeader);
+        if ((SessionEventKind)observationHeader.OpaqueEventKind
+            != SessionEventKind.ObservationAccepted) {
+            throw new InvalidDataException(
+                $"Tail source CompletionRequestPrepared at {chain.SourcePreparedAddress} must directly follow ObservationAccepted, got '{(SessionEventKind)observationHeader.OpaqueEventKind}' at {observationAddress}."
+            );
+        }
+        string expectedCorrelationId = BuildCorrelationId(observationAddress);
         if (!string.Equals(
-                chain.Reconstruction.Manifest.Attempt.Reason,
+                chain.SourceManifest.Attempt.Reason,
                 "observation",
+                StringComparison.Ordinal
+            )
+            || !string.Equals(
+                chain.SourceManifest.Plan.Reason,
+                "observation",
+                StringComparison.Ordinal
+            )
+            || !string.Equals(
+                chain.SourceManifest.Attempt.CorrelationId,
+                expectedCorrelationId,
                 StringComparison.Ordinal
             )) {
             throw new InvalidDataException(
-                $"Tail terminal event at {terminalAddress} must originate from an ObservationAccepted prepared request."
+                $"Tail terminal event at {terminalAddress} must originate from its directly preceding ObservationAccepted address with matching reason and correlation."
             );
         }
     }
@@ -1602,11 +1627,12 @@ public sealed class SessionJournalEngine : IDisposable {
         ImmutableArray<SessionRequestArtifactInput> ArtifactInputs
     );
 
-    private sealed record PreparedAttemptChain(
+    private sealed record PreparedAttemptIdentityChain(
         EventAddress SourcePreparedAddress,
+        EventAddress? SourcePreparedParent,
         EventAddress ActiveAttemptAddress,
         string ActiveAttemptId,
-        SessionPreparedRequestReconstruction Reconstruction
+        CompletionRequestPreparedBody SourceManifest
     );
 
     private static string BuildTurnAbortMessage(CompletionTermination termination) {

@@ -243,6 +243,41 @@ public sealed class SessionCompletionAttemptRestartedTests {
         ));
     }
 
+    [Fact]
+    public void Reducer_RejectsAttemptIdReusedFromEarlierInActiveChain() {
+        IReadOnlyList<DecodedSessionEvent> prefix = CreatePreparedPrefix(
+            out EventAddress sourcePrepared
+        );
+        EventAddress restart1 = Address(6);
+        var events = prefix.Concat([
+            Event(
+                SessionEventKind.CompletionAttemptRestarted,
+                new CompletionAttemptRestartedBody(
+                    "attempt-2",
+                    "attempt-1",
+                    sourcePrepared
+                ),
+                restart1,
+                sourcePrepared
+            ),
+            Event(
+                SessionEventKind.CompletionAttemptRestarted,
+                new CompletionAttemptRestartedBody(
+                    "attempt-1",
+                    "attempt-2",
+                    sourcePrepared
+                ),
+                Address(7),
+                restart1
+            )
+        ]).ToArray();
+
+        InvalidDataException error = Assert.Throws<InvalidDataException>(
+            () => SessionReducer.Reduce(events)
+        );
+        Assert.Contains("entire active attempt chain", error.Message, StringComparison.Ordinal);
+    }
+
     private static IReadOnlyList<DecodedSessionEvent> CreatePreparedPrefix(out EventAddress sourcePrepared) {
         EventAddress runtime = Address(1);
         EventAddress prompt = Address(2);
