@@ -36,7 +36,7 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
     public async Task ResumeAsync_DefaultRefuse_ValidatesPreparedButDoesNotMutateOrCallProvider() {
         string path = NewJournalPath();
         var client = new ScriptedClient();
-        EventAddress prepared = await CreateFullRawPreparedAsync(
+        EventAddress prepared = await CreatePreparedAsync(
             path,
             CreateRuntime(client)
         );
@@ -55,7 +55,7 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
     public async Task ResumeAsync_DefaultRefuse_UsesLocalAttemptProofWithoutRequestReconstruction() {
         string path = NewJournalPath();
         var client = new ScriptedClient();
-        EventAddress validPrepared = await CreateFullRawPreparedAsync(
+        EventAddress validPrepared = await CreatePreparedAsync(
             path,
             CreateRuntime(client)
         );
@@ -109,7 +109,7 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
     public async Task ResumeAsync_RestartSuccess_AppendsNewAttemptAndBindsActionToIt() {
         string path = NewJournalPath();
         var sourceClient = new ScriptedClient();
-        EventAddress prepared = await CreateFullRawPreparedAsync(
+        EventAddress prepared = await CreatePreparedAsync(
             path,
             CreateRuntime(sourceClient)
         );
@@ -154,7 +154,7 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
     public async Task ResumeAsync_RestartUsesPreparedRequestInsteadOfCurrentRuntimeParameters() {
         string path = NewJournalPath();
         var sourceClient = new ScriptedClient();
-        _ = await CreateFullRawPreparedAsync(
+        _ = await CreatePreparedAsync(
             path,
             CreateRuntime(sourceClient, maxTokens: 111)
         );
@@ -179,7 +179,7 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
     public async Task ResumeAsync_RestartKnownFailure_BindsFailureToRestartAttempt() {
         string path = NewJournalPath();
         var sourceClient = new ScriptedClient();
-        _ = await CreateFullRawPreparedAsync(path, CreateRuntime(sourceClient));
+        _ = await CreatePreparedAsync(path, CreateRuntime(sourceClient));
         var recoveryClient = new ScriptedClient();
         recoveryClient.Enqueue(request => new CompletionResult(
             new ActionMessage([new ActionBlock.Text("unused")]),
@@ -223,7 +223,7 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
     public async Task ResumeAsync_RestartWithoutTools_ProviderToolCallDurablyFails() {
         string path = NewJournalPath();
         var sourceClient = new ScriptedClient();
-        _ = await CreateFullRawPreparedAsync(path, CreateRuntime(sourceClient));
+        _ = await CreatePreparedAsync(path, CreateRuntime(sourceClient));
         var recoveryClient = new ScriptedClient();
         recoveryClient.Enqueue(request => new CompletionResult(
             new ActionMessage([
@@ -288,7 +288,7 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
         string path = NewJournalPath();
         var sourceClient = new ScriptedClient();
         var sourceTool = new RecordingTool("lookup");
-        _ = await CreateFullRawPreparedAsync(
+        _ = await CreatePreparedAsync(
             path,
             CreateRuntime(
                 sourceClient,
@@ -361,7 +361,7 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
     public async Task ResumeAsync_RestartFailpointThenReopen_AppendsSecondAuditableRestart() {
         string path = NewJournalPath();
         var sourceClient = new ScriptedClient();
-        EventAddress prepared = await CreateFullRawPreparedAsync(
+        EventAddress prepared = await CreatePreparedAsync(
             path,
             CreateRuntime(sourceClient)
         );
@@ -431,6 +431,11 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
                 SessionJournalFailpoint.AfterCompletionBeforeActionCommitted
             )
         )) {
+            await CoherentArtifactSetTestFixture.ActivateAtCurrentHeadAsync(
+                path,
+                engine,
+                fixtureId: "provider-before-action"
+            );
             await Assert.ThrowsAsync<SessionJournalFailpointException>(
                 () => engine.SendAsync("hello", CancellationToken.None)
             );
@@ -461,7 +466,7 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
     ) {
         string path = NewJournalPath();
         var sourceClient = new ScriptedClient();
-        EventAddress prepared = await CreateFullRawPreparedAsync(
+        EventAddress prepared = await CreatePreparedAsync(
             path,
             CreateRuntime(sourceClient)
         );
@@ -559,7 +564,7 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
     }
 
     [Fact]
-    public async Task ResumeAsync_FullRawToolContinuationTerminal_AllowsNextTailSend() {
+    public async Task ResumeAsync_ToolContinuationTerminal_AllowsNextCoherentSend() {
         string path = NewJournalPath();
         TestArtifactSet artifact;
         using (var setup = SessionJournalEngine.Create(
@@ -648,12 +653,12 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
     }
 
     [Fact]
-    public async Task ResumeAsync_FullRawToolCall_RuntimeIdentityMismatchFailsBeforeProviderOrTool() {
+    public async Task ResumeAsync_ToolCall_RuntimeIdentityMismatchFailsBeforeProviderOrTool() {
         string path = NewJournalPath();
         var sourceTool = new RecordingTool("lookup");
         ToolSession sourceTools = new ToolRegistry([sourceTool]).CreateSession();
         var client = new ScriptedClient();
-        _ = await CreateFullRawPreparedAsync(
+        _ = await CreatePreparedAsync(
             path,
             CreateRuntime(client, sourceTools)
         );
@@ -688,7 +693,7 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
         Assert.Empty(ReadAddressesByKind(path, SessionEventKind.ToolResultObserved));
     }
 
-    private async Task<EventAddress> CreateFullRawPreparedAsync(
+    private async Task<EventAddress> CreatePreparedAsync(
         string path,
         SessionRuntime runtime
     ) {
@@ -698,10 +703,15 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
             runtime,
             new SessionJournalTestHooks(SessionJournalFailpoint.AfterRequestPreparedCommitted)
         );
+        await CoherentArtifactSetTestFixture.ActivateAtCurrentHeadAsync(
+            path,
+            engine,
+            fixtureId: "prepared-recovery"
+        );
         await Assert.ThrowsAsync<SessionJournalFailpointException>(
             () => engine.SendAsync("prepared observation", CancellationToken.None)
         );
-        return engine.Project().Head!.Value;
+        return engine.ResolveExecutionTail().Head!.Value;
     }
 
     private static SessionRuntime CreateRuntime(
@@ -711,7 +721,7 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
         SessionPreparedCompletionRecoveryPolicy recoveryPolicy =
             SessionPreparedCompletionRecoveryPolicy.RefuseUncertain,
         SessionRequestContextPolicy requestContextPolicy =
-            SessionRequestContextPolicy.LegacyFullRaw,
+            SessionRequestContextPolicy.RequireActiveArtifactSet,
         int? maxTokens = 256,
         SessionToolRuntimeIdentity? toolRuntimeIdentity = null
     ) => new(

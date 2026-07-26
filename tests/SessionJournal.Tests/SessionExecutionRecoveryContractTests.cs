@@ -471,6 +471,11 @@ public sealed class SessionExecutionRecoveryContractTests : IDisposable {
                 SessionJournalFailpoint.AfterRequestPreparedCommitted
             )
         )) {
+            await CoherentArtifactSetTestFixture.ActivateAtCurrentHeadAsync(
+                path,
+                preparing,
+                fixtureId: $"prepared-refusal-{turnCount}"
+            );
             await Assert.ThrowsAsync<SessionJournalFailpointException>(
                 () => preparing.SendAsync("pending", CancellationToken.None)
             );
@@ -653,8 +658,7 @@ public sealed class SessionExecutionRecoveryContractTests : IDisposable {
                 "test",
                 "test-connection-fingerprint-v1",
                 "test-request-adapter-v1"
-            ),
-            RequestContextPolicy: SessionRequestContextPolicy.LegacyFullRaw
+            )
         );
 
     private string NewJournalPath() {

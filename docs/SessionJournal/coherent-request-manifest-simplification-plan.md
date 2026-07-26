@@ -1,6 +1,6 @@
 # CS-3D6：Coherent-only Request Manifest 化简计划
 
-> **状态**：Implementation Plan / 尚未实施
+> **状态**：Implementation in progress / D6A、D6B 已实施
 > **日期**：2026-07-27
 > **前置基线**：[Tail-only Execution Recovery Design](tail-execution-recovery-design.md)
 > **来源调研**：[Tail Execution Recovery 化简调研](tail-execution-recovery-simplification-study.md)
@@ -374,6 +374,21 @@ unsupported schema，而不是普通 corruption 或 full replay fallback。
 - Prepared 后删除 sidecar仍 exact reopen；
 - failpoint、CAS 与 operation id/sequence 断言保持；
 - 1 vs 10001 cold prefix diagnostics 不退化。
+
+**实施记录（2026-07-27）**
+
+- 新增共享 `CoherentArtifactSetTestFixture`：只负责在当前 replay-safe idle head 写入两个 exact
+  sidecar artifacts、提交 `ArtifactSetCommitted`，以及从 provider request 中区分固定 artifact
+  prefix 与待断言 raw suffix；它不生成 execution-state oracle、Prepared commitment 或预期 manifest。
+- `SessionJournalEngineTests` 的 online send/resume、tool loop、provider failure 与 failpoint 场景已改为
+  coherent activation；online request 断言显式跳过两个 artifact contribution 后检查 dependency-closed
+  raw suffix，且 `FullProjectionInvocationCount` 在请求期间保持不变。
+- `SessionPreparedCompletionRecoveryEngineTests` 的通用 Prepared/restart/dispatch/tool identity 场景不再
+  借 `CreateFullRawPreparedAsync` 建立状态；Prepared 后删除 sidecar 的 exact reopen 覆盖继续保留。
+- `SessionExecutionRecoveryContractTests` 的 runtime-driven Prepared refusal diagnostics 已改用 coherent
+  activation。仅服务于 reducer/tail-resolver 独立 oracle 的 hand-built full-raw manifest body 暂留，
+  与 legacy codec/reconstructor fixtures 一并交由 D6D 原子 wire cutover 清理。
+- 本包只修改测试与本计划文档；production、event schema 与 canonical bytes 均未改变。
 
 ### CS-3D6C：停止 live full-raw，并建立 per-kind schema 基础
 

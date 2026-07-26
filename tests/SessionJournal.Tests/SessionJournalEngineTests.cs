@@ -315,6 +315,10 @@ public sealed class SessionJournalEngineTests : IDisposable {
             new SessionCreateOptions("model-A", "system-A", "surface-A"),
             CreateRuntime(client)
         );
+        await CoherentArtifactSetTestFixture.ActivateAtCurrentHeadAsync(
+            path,
+            engine
+        );
         await engine.SendAsync("hello", CancellationToken.None);
 
         EventAddress actionHead = engine.Project().Head!.Value;
@@ -359,6 +363,10 @@ public sealed class SessionJournalEngineTests : IDisposable {
             new SessionCreateOptions("model-A", "system-A", "surface-A"),
             CreateRuntime(client)
         );
+        await CoherentArtifactSetTestFixture.ActivateAtCurrentHeadAsync(
+            path,
+            engine
+        );
         await engine.SendAsync("hello", CancellationToken.None);
         EventAddress promptB = engine.AppendSystemPromptSetup("system-B");
 
@@ -378,6 +386,10 @@ public sealed class SessionJournalEngineTests : IDisposable {
             new SessionCreateOptions("model-A", "system-A", "surface-A")
         )) {
             Assert.Equal(created.Project().Head, created.GoverningSetupCursorHeadForTest);
+            await CoherentArtifactSetTestFixture.ActivateAtCurrentHeadAsync(
+                path,
+                created
+            );
             observation = created.AppendObservation("hello");
             Assert.Equal(observation, created.GoverningSetupCursorHeadForTest);
         }
@@ -417,6 +429,10 @@ public sealed class SessionJournalEngineTests : IDisposable {
             new SessionCreateOptions("model-A", "system-A", "surface-A"),
             CreateRuntime(client)
         )) {
+            await CoherentArtifactSetTestFixture.ActivateAtCurrentHeadAsync(
+                path,
+                engine
+            );
             await engine.SendAsync("hello", CancellationToken.None);
             actionHead = engine.Project().Head!.Value;
         }
@@ -683,7 +699,11 @@ public sealed class SessionJournalEngineTests : IDisposable {
                 Assert.Equal("model-A", request.ModelId);
                 Assert.Equal("system-A", request.SystemPrompt);
                 Assert.Empty(request.Tools);
-                var observation = Assert.IsType<ObservationMessage>(Assert.Single(request.Context));
+                var observation = Assert.IsType<ObservationMessage>(
+                    Assert.Single(
+                        CoherentArtifactSetTestFixture.RawSuffix(request)
+                    )
+                );
                 Assert.Equal("hello", observation.Content);
                 return new CompletionResult(
                     new ActionMessage(new ActionBlock[] { new ActionBlock.Text("answer") }),
@@ -697,10 +717,18 @@ public sealed class SessionJournalEngineTests : IDisposable {
             new SessionCreateOptions("model-A", "system-A", "surface-A"),
             CreateRuntime(client)
         );
+        ActivatedCoherentArtifactSet activated =
+            await CoherentArtifactSetTestFixture.ActivateAtCurrentHeadAsync(
+                path,
+                engine
+            );
 
         int projectionCountBeforeSend = engine.FullProjectionInvocationCount;
         TurnResult result = await engine.SendAsync("hello", CancellationToken.None);
-        Assert.Equal(client.Calls, engine.FullProjectionInvocationCount - projectionCountBeforeSend);
+        Assert.Equal(
+            projectionCountBeforeSend,
+            engine.FullProjectionInvocationCount
+        );
         SessionProjection projection = engine.Project();
 
         Assert.Equal("answer", result.Message.GetFlattenedText());
@@ -722,9 +750,19 @@ public sealed class SessionJournalEngineTests : IDisposable {
         var manifest = Assert.IsType<CompletionRequestPreparedBody>(
             SessionEventCodec.Decode(SessionEventKind.CompletionRequestPrepared, inspection.ReadPayloadBytes(preparedAddress), out _)
         );
-        Assert.Equal("full-raw", manifest.Plan.SelectionPolicyId);
-        Assert.Null(manifest.Plan.RawStartExclusive);
-        Assert.Equal(inspection.ComputeRawRangeSha256ForTest(observationAddress), manifest.Plan.RawRangeSha256);
+        Assert.Equal(
+            SessionRequestManifestDefaults.CoherentArtifactTailSelectionPolicyId,
+            manifest.Plan.SelectionPolicyId
+        );
+        Assert.Equal(activated.CommonAnchor, manifest.Plan.RawStartExclusive);
+        Assert.Equal(
+            activated.Activation,
+            Assert.IsType<SessionArtifactSetReference>(
+                manifest.Plan.ActiveArtifactSet
+            ).Address
+        );
+        Assert.Equal(2, manifest.Plan.ArtifactInputs.Length);
+        Assert.Equal(64, manifest.Plan.RawRangeSha256.Length);
         Assert.Equal("model-A", manifest.Parameters.ModelId);
         Assert.Empty(manifest.ToolSet.Definitions);
         Assert.Equal("surface-A", manifest.Target.CompletionSurfaceId);
@@ -732,7 +770,7 @@ public sealed class SessionJournalEngineTests : IDisposable {
     }
 
     [Fact]
-    public async Task SendAsync_FullRawWithoutTools_ProviderToolCallDurablyFails() {
+    public async Task SendAsync_WithoutTools_ProviderToolCallDurablyFails() {
         string path = NewJournalPath();
         var client = new ScriptedCompletionClient();
         client.Enqueue(request => new CompletionResult(
@@ -747,6 +785,10 @@ public sealed class SessionJournalEngineTests : IDisposable {
             path,
             new SessionCreateOptions("model-A", "system-A", "surface-A"),
             CreateRuntime(client)
+        );
+        await CoherentArtifactSetTestFixture.ActivateAtCurrentHeadAsync(
+            path,
+            engine
         );
 
         SessionJournalTurnAbortedException error =
@@ -828,6 +870,10 @@ public sealed class SessionJournalEngineTests : IDisposable {
             CreateRuntime(client),
             new SessionJournalTestHooks(SessionJournalFailpoint.AfterRequestPreparedCommitted)
         )) {
+            await CoherentArtifactSetTestFixture.ActivateAtCurrentHeadAsync(
+                path,
+                engine
+            );
             var ex = await Assert.ThrowsAsync<SessionJournalFailpointException>(
                 () => engine.SendAsync("hello", CancellationToken.None)
             );
@@ -871,6 +917,10 @@ public sealed class SessionJournalEngineTests : IDisposable {
             new SessionCreateOptions("model-A", "system-A", "surface-A"),
             CreateRuntime(client)
         )) {
+            await CoherentArtifactSetTestFixture.ActivateAtCurrentHeadAsync(
+                path,
+                engine
+            );
             SessionJournalTurnAbortedException ex = await Assert.ThrowsAsync<SessionJournalTurnAbortedException>(
                 () => engine.SendAsync("hello", CancellationToken.None)
             );
@@ -914,6 +964,10 @@ public sealed class SessionJournalEngineTests : IDisposable {
             new SessionCreateOptions("model-A", "system-A", "surface-A"),
             CreateRuntime(client)
         );
+        await CoherentArtifactSetTestFixture.ActivateAtCurrentHeadAsync(
+            path,
+            engine
+        );
         await Assert.ThrowsAsync<SessionJournalTurnAbortedException>(
             () => engine.SendAsync("first", CancellationToken.None)
         );
@@ -948,6 +1002,10 @@ public sealed class SessionJournalEngineTests : IDisposable {
             new SessionCreateOptions("model-A", "system-A", "surface-A"),
             CreateRuntime(client)
         );
+        await CoherentArtifactSetTestFixture.ActivateAtCurrentHeadAsync(
+            path,
+            engine
+        );
         await Assert.ThrowsAsync<SessionJournalTurnAbortedException>(
             () => engine.SendAsync("first", CancellationToken.None)
         );
@@ -978,6 +1036,10 @@ public sealed class SessionJournalEngineTests : IDisposable {
             new SessionCreateOptions("model-A", "system-A", "surface-A"),
             CreateRuntime(client)
         )) {
+            await CoherentArtifactSetTestFixture.ActivateAtCurrentHeadAsync(
+                path,
+                engine
+            );
             await Assert.ThrowsAnyAsync<Exception>(() => engine.SendAsync("hello", CancellationToken.None));
             Assert.Equal(SessionExecutionPhase.AwaitingCompletion, engine.Project().ExecutionState.Phase);
         }
@@ -1000,6 +1062,10 @@ public sealed class SessionJournalEngineTests : IDisposable {
             new SessionCreateOptions("model-A", "system-A", "surface-A"),
             CreateRuntime(client)
         )) {
+            await CoherentArtifactSetTestFixture.ActivateAtCurrentHeadAsync(
+                path,
+                engine
+            );
             SessionJournalTurnAbortedException error =
                 await Assert.ThrowsAsync<SessionJournalTurnAbortedException>(
                 () => engine.SendAsync("hello", CancellationToken.None)
@@ -1044,6 +1110,10 @@ public sealed class SessionJournalEngineTests : IDisposable {
             CreateRuntime(client),
             hooks
         );
+        await CoherentArtifactSetTestFixture.ActivateAtCurrentHeadAsync(
+            path,
+            engine
+        );
 
         await Assert.ThrowsAsync<IOException>(() => engine.SendAsync("hello", CancellationToken.None));
 
@@ -1063,6 +1133,10 @@ public sealed class SessionJournalEngineTests : IDisposable {
             CreateRuntime(client),
             new SessionJournalTestHooks(SessionJournalFailpoint.AfterRequestPreparedCommitted)
         )) {
+            await CoherentArtifactSetTestFixture.ActivateAtCurrentHeadAsync(
+                path,
+                engine
+            );
             await Assert.ThrowsAsync<SessionJournalFailpointException>(
                 () => engine.SendAsync("hello", CancellationToken.None)
             );
@@ -1102,6 +1176,10 @@ public sealed class SessionJournalEngineTests : IDisposable {
             CreateRuntime(client),
             new SessionJournalTestHooks(SessionJournalFailpoint.AfterRequestPreparedCommitted)
         )) {
+            await CoherentArtifactSetTestFixture.ActivateAtCurrentHeadAsync(
+                sourcePath,
+                source
+            );
             await Assert.ThrowsAsync<SessionJournalFailpointException>(
                 () => source.SendAsync("source", CancellationToken.None)
             );
@@ -1170,6 +1248,10 @@ public sealed class SessionJournalEngineTests : IDisposable {
             new SessionCreateOptions("model-A", "system-A", "surface-A"),
             CreateRuntime(client)
         );
+        await CoherentArtifactSetTestFixture.ActivateAtCurrentHeadAsync(
+            path,
+            engine
+        );
         engine.AppendRuntimeConfigSetup(new SessionRuntimeConfiguration("model-B", "surface-B", SessionJournalDefaults.Schema));
         engine.AppendSystemPromptSetup("system-B");
 
@@ -1190,6 +1272,10 @@ public sealed class SessionJournalEngineTests : IDisposable {
             CreateRuntime(firstClient),
             new SessionJournalTestHooks(SessionJournalFailpoint.AfterObservationCommitted)
         )) {
+            await CoherentArtifactSetTestFixture.ActivateAtCurrentHeadAsync(
+                path,
+                engine
+            );
             var ex = await Assert.ThrowsAsync<SessionJournalFailpointException>(
                 () => engine.SendAsync("hello", CancellationToken.None)
             );
@@ -1202,7 +1288,11 @@ public sealed class SessionJournalEngineTests : IDisposable {
         var resumeClient = new ScriptedCompletionClient();
         resumeClient.Enqueue(
             request => {
-                var observation = Assert.IsType<ObservationMessage>(Assert.Single(request.Context));
+                var observation = Assert.IsType<ObservationMessage>(
+                    Assert.Single(
+                        CoherentArtifactSetTestFixture.RawSuffix(request)
+                    )
+                );
                 Assert.Equal("hello", observation.Content);
                 return new CompletionResult(
                     new ActionMessage(new ActionBlock[] { new ActionBlock.Text("resumed") }),
@@ -1239,6 +1329,10 @@ public sealed class SessionJournalEngineTests : IDisposable {
             CreateRuntime(firstClient),
             new SessionJournalTestHooks(SessionJournalFailpoint.AfterCompletionBeforeActionCommitted)
         )) {
+            await CoherentArtifactSetTestFixture.ActivateAtCurrentHeadAsync(
+                path,
+                engine
+            );
             var ex = await Assert.ThrowsAsync<SessionJournalFailpointException>(
                 () => engine.SendAsync("hello", CancellationToken.None)
             );
@@ -1287,7 +1381,11 @@ public sealed class SessionJournalEngineTests : IDisposable {
         client.Enqueue(
             request => {
                 Assert.Single(request.Tools);
-                var observation = Assert.IsType<ObservationMessage>(Assert.Single(request.Context));
+                var observation = Assert.IsType<ObservationMessage>(
+                    Assert.Single(
+                        CoherentArtifactSetTestFixture.RawSuffix(request)
+                    )
+                );
                 Assert.Equal("need lookup", observation.Content);
                 return new CompletionResult(
                     new ActionMessage(
@@ -1302,10 +1400,13 @@ public sealed class SessionJournalEngineTests : IDisposable {
         );
         client.Enqueue(
             request => {
-                Assert.Equal(3, request.Context.Count);
-                var action = Assert.IsType<ActionMessage>(request.Context[1]);
+                var rawSuffix =
+                    CoherentArtifactSetTestFixture.RawSuffix(request);
+                Assert.Equal(3, rawSuffix.Length);
+                var action = Assert.IsType<ActionMessage>(rawSuffix[1]);
                 Assert.Single(action.ToolCalls);
-                var results = Assert.IsType<ToolResultsMessage>(request.Context[2]);
+                var results =
+                    Assert.IsType<ToolResultsMessage>(rawSuffix[2]);
                 ToolResult result = Assert.Single(results.Results);
                 Assert.Equal("lookup", result.ToolName);
                 Assert.Equal("call-1", result.ToolCallId);
@@ -1323,9 +1424,16 @@ public sealed class SessionJournalEngineTests : IDisposable {
             new SessionCreateOptions("model-A", "system-A", "surface-A"),
             CreateRuntime(client, toolSession)
         )) {
+            await CoherentArtifactSetTestFixture.ActivateAtCurrentHeadAsync(
+                path,
+                engine
+            );
             int projectionCountBeforeSend = engine.FullProjectionInvocationCount;
             TurnResult turn = await engine.SendAsync("need lookup", CancellationToken.None);
-            Assert.Equal(client.Calls, engine.FullProjectionInvocationCount - projectionCountBeforeSend);
+            Assert.Equal(
+                projectionCountBeforeSend,
+                engine.FullProjectionInvocationCount
+            );
             SessionProjection projection = engine.Project();
 
             Assert.Equal("final", turn.Message.GetFlattenedText());
@@ -1368,6 +1476,10 @@ public sealed class SessionJournalEngineTests : IDisposable {
             CreateRuntime(firstClient, new ToolRegistry([firstTool]).CreateSession()),
             new SessionJournalTestHooks(SessionJournalFailpoint.AfterToolStartedCommitted)
         )) {
+            await CoherentArtifactSetTestFixture.ActivateAtCurrentHeadAsync(
+                path,
+                engine
+            );
             var ex = await Assert.ThrowsAsync<SessionJournalFailpointException>(
                 () => engine.SendAsync("need lookup", CancellationToken.None)
             );
@@ -1390,7 +1502,9 @@ public sealed class SessionJournalEngineTests : IDisposable {
         var resumeTool = new RecordingTool("lookup", _ => ToolExecuteResult.FromText(ToolExecutionStatus.Success, "resumed-result"));
         resumeClient.Enqueue(
             request => {
-                var results = Assert.IsType<ToolResultsMessage>(request.Context[2]);
+                var results = Assert.IsType<ToolResultsMessage>(
+                    CoherentArtifactSetTestFixture.RawSuffix(request)[2]
+                );
                 Assert.Equal("resumed-result", Assert.Single(results.Results).GetFlattenedText());
                 return new CompletionResult(
                     new ActionMessage(new ActionBlock[] { new ActionBlock.Text("done") }),
@@ -1430,6 +1544,10 @@ public sealed class SessionJournalEngineTests : IDisposable {
             CreateRuntime(firstClient, new ToolRegistry([sourceTool]).CreateSession()),
             new SessionJournalTestHooks(SessionJournalFailpoint.AfterActionCommitted)
         )) {
+            await CoherentArtifactSetTestFixture.ActivateAtCurrentHeadAsync(
+                path,
+                engine
+            );
             await Assert.ThrowsAsync<SessionJournalFailpointException>(
                 () => engine.SendAsync("need lookup", CancellationToken.None)
             );
@@ -1495,6 +1613,10 @@ public sealed class SessionJournalEngineTests : IDisposable {
                 SessionJournalFailpoint.AfterToolExecutionBeforeResultCommitted
             )
         )) {
+            await CoherentArtifactSetTestFixture.ActivateAtCurrentHeadAsync(
+                path,
+                engine
+            );
             SessionJournalFailpointException error =
                 await Assert.ThrowsAsync<SessionJournalFailpointException>(
                     () => engine.SendAsync("need lookup", CancellationToken.None)
@@ -1572,6 +1694,10 @@ public sealed class SessionJournalEngineTests : IDisposable {
             CreateRuntime(firstClient, new ToolRegistry([tool]).CreateSession()),
             new SessionJournalTestHooks(SessionJournalFailpoint.AfterToolResultCommitted)
         )) {
+            await CoherentArtifactSetTestFixture.ActivateAtCurrentHeadAsync(
+                path,
+                engine
+            );
             var ex = await Assert.ThrowsAsync<SessionJournalFailpointException>(
                 () => engine.SendAsync("need lookup", CancellationToken.None)
             );
@@ -1584,7 +1710,9 @@ public sealed class SessionJournalEngineTests : IDisposable {
         var resumeTool = new RecordingTool("lookup", _ => ToolExecuteResult.FromText(ToolExecutionStatus.Success, "should-not-run"));
         resumeClient.Enqueue(
             request => {
-                var results = Assert.IsType<ToolResultsMessage>(request.Context[2]);
+                var results = Assert.IsType<ToolResultsMessage>(
+                    CoherentArtifactSetTestFixture.RawSuffix(request)[2]
+                );
                 Assert.Equal("persisted-result", Assert.Single(results.Results).GetFlattenedText());
                 return new CompletionResult(
                     new ActionMessage(new ActionBlock[] { new ActionBlock.Text("done") }),
@@ -1626,6 +1754,10 @@ public sealed class SessionJournalEngineTests : IDisposable {
             CreateRuntime(firstClient, new ToolRegistry([alpha, beta]).CreateSession()),
             new SessionJournalTestHooks(SessionJournalFailpoint.AfterToolResultCommitted)
         )) {
+            await CoherentArtifactSetTestFixture.ActivateAtCurrentHeadAsync(
+                path,
+                engine
+            );
             var ex = await Assert.ThrowsAsync<SessionJournalFailpointException>(
                 () => engine.SendAsync("need two tools", CancellationToken.None)
             );
@@ -1640,7 +1772,9 @@ public sealed class SessionJournalEngineTests : IDisposable {
         var resumedBeta = new RecordingTool("beta", context => ToolExecuteResult.FromText(ToolExecutionStatus.Success, $"seq:{context.ExecutionSequence}"));
         resumeClient.Enqueue(
             request => {
-                var results = Assert.IsType<ToolResultsMessage>(request.Context[2]);
+                var results = Assert.IsType<ToolResultsMessage>(
+                    CoherentArtifactSetTestFixture.RawSuffix(request)[2]
+                );
                 Assert.Collection(
                     results.Results,
                     first => Assert.Equal("seq:1", first.GetFlattenedText()),
@@ -1704,6 +1838,10 @@ public sealed class SessionJournalEngineTests : IDisposable {
             new SessionCreateOptions("model-A", "system-A", "surface-A"),
             CreateRuntime(client, toolSession)
         );
+        await CoherentArtifactSetTestFixture.ActivateAtCurrentHeadAsync(
+            path,
+            engine
+        );
 
         await engine.SendAsync("first", CancellationToken.None);
         TurnResult second = await engine.SendAsync("second", CancellationToken.None);
@@ -1737,7 +1875,9 @@ public sealed class SessionJournalEngineTests : IDisposable {
         );
         client.Enqueue(
             request => {
-                var results = Assert.IsType<ToolResultsMessage>(request.Context[2]);
+                var results = Assert.IsType<ToolResultsMessage>(
+                    CoherentArtifactSetTestFixture.RawSuffix(request)[2]
+                );
                 Assert.Collection(
                     results.Results,
                     first => Assert.Equal("call-A", first.ToolCallId),
@@ -1755,6 +1895,10 @@ public sealed class SessionJournalEngineTests : IDisposable {
             new SessionCreateOptions("model-A", "system-A", "surface-A"),
             CreateRuntime(client, registry.CreateSession())
         )) {
+            await CoherentArtifactSetTestFixture.ActivateAtCurrentHeadAsync(
+                path,
+                engine
+            );
             await engine.SendAsync("need two tools", CancellationToken.None);
         }
 
@@ -1888,6 +2032,10 @@ public sealed class SessionJournalEngineTests : IDisposable {
             new SessionCreateOptions("model-A", "system-A", "surface-A"),
             CreateRuntime(client, registry.CreateSession())
         )) {
+            await CoherentArtifactSetTestFixture.ActivateAtCurrentHeadAsync(
+                path,
+                engine
+            );
             await engine.SendAsync("need two tools", CancellationToken.None);
         }
 
@@ -1941,6 +2089,10 @@ public sealed class SessionJournalEngineTests : IDisposable {
             CreateRuntime(client, registry.CreateSession()),
             new SessionJournalTestHooks(SessionJournalFailpoint.AfterToolResultCommitted)
         )) {
+            await CoherentArtifactSetTestFixture.ActivateAtCurrentHeadAsync(
+                path,
+                engine
+            );
             var ex = await Assert.ThrowsAsync<SessionJournalFailpointException>(
                 () => engine.SendAsync("need two tools", CancellationToken.None)
             );
@@ -2039,7 +2191,6 @@ public sealed class SessionJournalEngineTests : IDisposable {
             RequestAdapterFingerprint: "test-request-adapter-v1"
         ),
         maxTokens,
-        RequestContextPolicy: SessionRequestContextPolicy.LegacyFullRaw,
         ToolRuntimeIdentity: toolRuntimeIdentity ?? ToolRuntimeIdentity
     );
 
