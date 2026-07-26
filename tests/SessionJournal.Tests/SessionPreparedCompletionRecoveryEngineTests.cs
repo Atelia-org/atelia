@@ -220,6 +220,144 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
     }
 
     [Fact]
+    public async Task ResumeAsync_RestartWithoutTools_ProviderToolCallDurablyFails() {
+        string path = NewJournalPath();
+        var sourceClient = new ScriptedClient();
+        _ = await CreateFullRawPreparedAsync(path, CreateRuntime(sourceClient));
+        var recoveryClient = new ScriptedClient();
+        recoveryClient.Enqueue(request => new CompletionResult(
+            new ActionMessage([
+                new ActionBlock.ToolCall(
+                    new RawToolCall("unexpected", "call-1", "{}")
+                )
+            ]),
+            Descriptor(request)
+        ));
+        using (var reopened = SessionJournalEngine.Open(
+            path,
+            CreateRuntime(
+                recoveryClient,
+                recoveryPolicy:
+                    SessionPreparedCompletionRecoveryPolicy.RestartWithNewAttempt
+            )
+        )) {
+            SessionJournalTurnAbortedException error =
+                await Assert.ThrowsAsync<SessionJournalTurnAbortedException>(
+                    () => reopened.ResumeAsync(CancellationToken.None)
+                );
+            Assert.Equal(
+                "atelia.host.unsupported-tool-call",
+                error.Termination.ProviderReason
+            );
+            Assert.Equal(
+                SessionExecutionPhase.TurnFailed,
+                reopened.ResolveExecutionTail().State.Phase
+            );
+
+            ResumeOutcome settled =
+                await reopened.ResumeAsync(CancellationToken.None);
+            Assert.False(settled.Advanced);
+        }
+
+        Assert.Single(
+            ReadAddressesByKind(
+                path,
+                SessionEventKind.CompletionAttemptRestarted
+            )
+        );
+        Assert.Single(
+            ReadAddressesByKind(
+                path,
+                SessionEventKind.CompletionAttemptFailed
+            )
+        );
+        Assert.Empty(
+            ReadAddressesByKind(path, SessionEventKind.AgentActionProduced)
+        );
+        Assert.Empty(
+            ReadAddressesByKind(path, SessionEventKind.ToolExecutionStarted)
+        );
+        Assert.Empty(
+            ReadAddressesByKind(path, SessionEventKind.ToolResultObserved)
+        );
+        Assert.Equal(1, recoveryClient.Calls);
+    }
+
+    [Fact]
+    public async Task ResumeAsync_RestartWithTools_CompletesToolLoopAndReturnsIdle() {
+        string path = NewJournalPath();
+        var sourceClient = new ScriptedClient();
+        var sourceTool = new RecordingTool("lookup");
+        _ = await CreateFullRawPreparedAsync(
+            path,
+            CreateRuntime(
+                sourceClient,
+                new ToolRegistry([sourceTool]).CreateSession()
+            )
+        );
+        var recoveryClient = new ScriptedClient();
+        recoveryClient.Enqueue(request => new CompletionResult(
+            new ActionMessage([
+                new ActionBlock.ToolCall(
+                    new RawToolCall("lookup", "call-1", "{}")
+                )
+            ]),
+            Descriptor(request)
+        ));
+        recoveryClient.Enqueue(request => Success(request, "done"));
+        var recoveryTool = new RecordingTool("lookup");
+        using (var reopened = SessionJournalEngine.Open(
+            path,
+            CreateRuntime(
+                recoveryClient,
+                new ToolRegistry([recoveryTool]).CreateSession(),
+                recoveryPolicy:
+                    SessionPreparedCompletionRecoveryPolicy.RestartWithNewAttempt
+            )
+        )) {
+            ResumeOutcome outcome =
+                await reopened.ResumeAsync(CancellationToken.None);
+
+            Assert.True(outcome.Advanced);
+            Assert.Equal("done", outcome.Message?.GetFlattenedText());
+            Assert.Equal(
+                SessionExecutionPhase.Idle,
+                reopened.ResolveExecutionTail().State.Phase
+            );
+        }
+
+        Assert.Equal(2, recoveryClient.Calls);
+        Assert.Equal(1, recoveryTool.Calls);
+        Assert.NotNull(recoveryTool.LastContext);
+        Assert.False(string.IsNullOrWhiteSpace(
+            recoveryTool.LastContext!.OperationId
+        ));
+        EventAddress firstAction = ReadAddressesByKind(
+            path,
+            SessionEventKind.AgentActionProduced
+        )[0];
+        AgentActionProducedBody action = ReadBody<AgentActionProducedBody>(
+            path,
+            firstAction,
+            SessionEventKind.AgentActionProduced
+        );
+        Assert.Equal(ToolRuntimeIdentity, action.ToolRuntimeIdentity);
+        Assert.Equal(
+            2,
+            ReadAddressesByKind(
+                path,
+                SessionEventKind.CompletionRequestPrepared
+            ).Length
+        );
+        Assert.Single(
+            ReadAddressesByKind(path, SessionEventKind.ToolExecutionStarted)
+        );
+        Assert.Single(
+            ReadAddressesByKind(path, SessionEventKind.ToolResultObserved)
+        );
+    }
+
+    [Fact]
     public async Task ResumeAsync_RestartFailpointThenReopen_AppendsSecondAuditableRestart() {
         string path = NewJournalPath();
         var sourceClient = new ScriptedClient();
@@ -692,13 +830,15 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
 
         public int Calls { get; private set; }
 
+        public ToolExecutionContext? LastContext { get; private set; }
+
         public ValueTask<ToolExecuteResult> ExecuteAsync(
             ToolExecutionContext context,
             CancellationToken cancellationToken
         ) {
-            _ = context;
             cancellationToken.ThrowIfCancellationRequested();
             Calls++;
+            LastContext = context;
             return ValueTask.FromResult(
                 ToolExecuteResult.FromText(ToolExecutionStatus.Success, "tool result")
             );

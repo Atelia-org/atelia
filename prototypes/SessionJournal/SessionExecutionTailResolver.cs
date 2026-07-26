@@ -42,16 +42,6 @@ internal static class SessionExecutionTailResolver {
         };
     }
 
-    internal static PreparedAttemptIdentityChain ResolvePreparedAttemptIdentityChain(
-        SessionJournalEventReader reader,
-        EventAddress activeAttemptHead,
-        CancellationToken cancellationToken = default
-    ) {
-        ArgumentNullException.ThrowIfNull(reader);
-        var resolver = new Resolver(reader, cancellationToken);
-        return resolver.ResolvePreparedAttemptIdentityChain(activeAttemptHead);
-    }
-
     private static SessionExecutionRecoveryBoundary EmptyBoundary { get; } = new(
         SourcePrepared: null,
         SourceAction: null,

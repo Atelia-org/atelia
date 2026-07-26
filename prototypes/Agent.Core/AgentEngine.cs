@@ -702,6 +702,7 @@ public partial class AgentEngine {
             : await session.ExecuteReservedAsync(
                 nextCall,
                 _workspaceSession.AllocateToolSessionExecutionSequence(),
+                operationId: null,
                 cancellationToken
             ).ConfigureAwait(false);
         UpsertPendingToolResult(result);

@@ -535,7 +535,7 @@ public sealed class SessionJournalEngine : IDisposable {
             new SessionExecutionCheckpoint(
                 recovery.State.ToolExecutionSequenceCheckpoint
             ),
-            allowResultToolCalls: true,
+            allowResultToolCalls: !fullRaw.Tools.IsEmpty,
             observer,
             cancellationToken
         ).ConfigureAwait(false);
@@ -976,11 +976,8 @@ public sealed class SessionJournalEngine : IDisposable {
         );
         TriggerFailpoint(SessionJournalFailpoint.AfterCompletionAttemptRestartedCommitted);
 
-        bool sourceAllowsToolCalls = string.Equals(
-            manifest.Plan.SelectionPolicyId,
-            SessionRequestManifestDefaults.FullRawSelectionPolicyId,
-            StringComparison.Ordinal
-        );
+        bool sourceAllowsToolCalls =
+            !manifest.ToolSet.Definitions.IsEmpty;
         CommittedCompletionResult committed =
             await ExecuteCommittedCompletionAttemptAsync(
             reconstruction.Request,
@@ -1114,6 +1111,7 @@ public sealed class SessionJournalEngine : IDisposable {
         ToolCallExecutionResult executionResult = await toolSession.ExecuteReservedAsync(
             toolCall,
             reservedExecutionSequence,
+            recovery.State.PendingOperationId,
             cancellationToken
         ).ConfigureAwait(false);
         TriggerFailpoint(SessionJournalFailpoint.AfterToolExecutionBeforeResultCommitted);

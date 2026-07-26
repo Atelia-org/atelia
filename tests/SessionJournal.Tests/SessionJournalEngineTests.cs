@@ -732,6 +732,70 @@ public sealed class SessionJournalEngineTests : IDisposable {
     }
 
     [Fact]
+    public async Task SendAsync_FullRawWithoutTools_ProviderToolCallDurablyFails() {
+        string path = NewJournalPath();
+        var client = new ScriptedCompletionClient();
+        client.Enqueue(request => new CompletionResult(
+            new ActionMessage([
+                new ActionBlock.ToolCall(
+                    new RawToolCall("unexpected", "call-1", "{}")
+                )
+            ]),
+            new CompletionDescriptor("scripted", "test-api-v1", request.ModelId)
+        ));
+        using var engine = SessionJournalEngine.Create(
+            path,
+            new SessionCreateOptions("model-A", "system-A", "surface-A"),
+            CreateRuntime(client)
+        );
+
+        SessionJournalTurnAbortedException error =
+            await Assert.ThrowsAsync<SessionJournalTurnAbortedException>(
+                () => engine.SendAsync("hello", CancellationToken.None)
+            );
+
+        Assert.Equal(
+            "atelia.host.unsupported-tool-call",
+            error.Termination.ProviderReason
+        );
+        Assert.Equal(
+            SessionExecutionPhase.TurnFailed,
+            engine.ResolveExecutionTail().State.Phase
+        );
+        engine.Dispose();
+        Assert.Single(
+            ReadJournalAddressesByKind(
+                path,
+                SessionEventKind.CompletionRequestPrepared
+            )
+        );
+        Assert.Single(
+            ReadJournalAddressesByKind(
+                path,
+                SessionEventKind.CompletionAttemptFailed
+            )
+        );
+        Assert.Empty(
+            ReadJournalAddressesByKind(
+                path,
+                SessionEventKind.AgentActionProduced
+            )
+        );
+        Assert.Empty(
+            ReadJournalAddressesByKind(
+                path,
+                SessionEventKind.ToolExecutionStarted
+            )
+        );
+        Assert.Empty(
+            ReadJournalAddressesByKind(
+                path,
+                SessionEventKind.ToolResultObserved
+            )
+        );
+    }
+
+    [Fact]
     public void BoundaryMutations_UseTailRecoveryWithoutFullProjection() {
         string path = NewJournalPath();
         using var engine = SessionJournalEngine.Create(
@@ -1406,6 +1470,7 @@ public sealed class SessionJournalEngineTests : IDisposable {
     public async Task ResumeAsync_AfterExternalToolExecutionBeforeResult_RetriesSameReservedSequenceAndOperation() {
         string path = NewJournalPath();
         var firstSequences = new List<long>();
+        var firstOperationIds = new List<string?>();
         var firstClient = new ScriptedCompletionClient();
         firstClient.Enqueue(request => new CompletionResult(
             new ActionMessage([
@@ -1417,6 +1482,7 @@ public sealed class SessionJournalEngineTests : IDisposable {
             "lookup",
             context => {
                 firstSequences.Add(context.ExecutionSequence);
+                firstOperationIds.Add(context.OperationId);
                 return ToolExecuteResult.FromText(ToolExecutionStatus.Success, "uncertain-result");
             }
         );
@@ -1438,6 +1504,7 @@ public sealed class SessionJournalEngineTests : IDisposable {
                 error.Failpoint
             );
             Assert.Equal([1L], firstSequences);
+            Assert.Single(firstOperationIds);
             SessionExecutionState state = engine.Project().ExecutionState;
             Assert.True(state.PendingToolExecutionStarted);
             Assert.Equal(1, state.ToolExecutionSequenceCheckpoint);
@@ -1450,10 +1517,12 @@ public sealed class SessionJournalEngineTests : IDisposable {
         Assert.Empty(ReadJournalPayloadJsonByKind(path, SessionEventKind.ToolResultObserved));
 
         var retriedSequences = new List<long>();
+        var retriedOperationIds = new List<string?>();
         var resumedTool = new RecordingTool(
             "lookup",
             context => {
                 retriedSequences.Add(context.ExecutionSequence);
+                retriedOperationIds.Add(context.OperationId);
                 return ToolExecuteResult.FromText(ToolExecutionStatus.Success, "retried-result");
             }
         );
@@ -1470,6 +1539,8 @@ public sealed class SessionJournalEngineTests : IDisposable {
 
             Assert.True(outcome.Advanced);
             Assert.Equal([1L], retriedSequences);
+            Assert.Equal([operationId], firstOperationIds);
+            Assert.Equal([operationId], retriedOperationIds);
         }
         Assert.Single(ReadJournalPayloadJsonByKind(path, SessionEventKind.ToolExecutionStarted));
         Assert.Single(ReadJournalPayloadJsonByKind(path, SessionEventKind.ToolResultObserved));
