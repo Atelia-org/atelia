@@ -8,7 +8,8 @@
 > **相关文档**：
 > [Configuration Access Notes](session-configuration-access-notes.md)、
 > [SessionJournal 主干设计](session-journal-trunk-design.md)、
-> [ChatSession 架构路线图](../ChatSession/event-sourced-session-architecture-roadmap.md)
+> [ChatSession 架构路线图](../ChatSession/event-sourced-session-architecture-roadmap.md)、
+> [CS-3D 实施后化简调研](tail-execution-recovery-simplification-study.md)
 
 ## 0. 给后续 Coding Agent 的结论
 
