@@ -425,9 +425,21 @@ internal static class SessionPreparedRequestReconstructor {
             ?? throw new InvalidDataException(
                 "Coherent artifact-tail manifest requires an active artifact-set reference."
             );
-        if (!rawEvents.Any(ev => ev.Address == reference.Address)) {
+        DecodedSessionEvent? latestActivation = null;
+        for (int i = rawEvents.Count - 1; i >= 0; i--) {
+            if (rawEvents[i].Kind == SessionEventKind.ArtifactSetCommitted) {
+                latestActivation = rawEvents[i];
+                break;
+            }
+        }
+        if (latestActivation is null) {
             throw new InvalidDataException(
-                "Referenced active artifact set is not on the authoritative raw request range."
+                "Coherent artifact-tail raw range contains no active ArtifactSetCommitted event."
+            );
+        }
+        if (latestActivation.Value.Address != reference.Address) {
+            throw new InvalidDataException(
+                "Referenced active artifact set is not the latest activation on the authoritative raw request range."
             );
         }
         using SessionJournalEventFrame frame = reader.ReadEvent(reference.Address).Unwrap();

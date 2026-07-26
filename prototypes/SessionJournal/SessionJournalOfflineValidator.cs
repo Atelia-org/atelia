@@ -60,22 +60,23 @@ public static class SessionJournalOfflineValidator {
 
         EventAddress? head;
         IReadOnlyList<EventAddress> chain;
+        IReadOnlyList<DecodedSessionEvent> chronologicalEvents;
         SessionProjection projection;
         SessionExecutionRecovery recovery;
         SortedDictionary<string, int> preparedPolicyCounts =
             new(StringComparer.Ordinal);
-        (
-            EventAddress Address,
-            EventAddress? Parent,
-            ArtifactSetCommittedBody Body
-        )? latestArtifactSet = null;
+        RawArtifactSetActivation? latestArtifactSet = null;
+        var artifactSets = new Dictionary<EventAddress, RawArtifactSetActivation>();
         long logicalPayloadBytes = 0;
 
-        using (var journal = EventJournal.EventJournal.OpenExisting(fullPath)) {
+        using (var journal =
+            EventJournal.EventJournal.OpenReadOnlyExisting(fullPath)) {
             RefId main = journal.OpenBranch(SessionJournalDefaults.MainBranchName).Unwrap();
             head = journal.GetHead(main);
             if (head is null) {
                 chain = Array.AsReadOnly(Array.Empty<EventAddress>());
+                chronologicalEvents =
+                    Array.AsReadOnly(Array.Empty<DecodedSessionEvent>());
                 projection = SessionReducer.Empty;
                 recovery = SessionExecutionTailResolver.Resolve(
                     new SessionJournalEventReader(journal),
@@ -143,11 +144,20 @@ public static class SessionJournalOfflineValidator {
                             artifactSet.CurrentSetups.SystemPrompt,
                             SessionEventKind.SystemPromptSetup
                         );
-                        latestArtifactSet ??= (
+                        var activation = new RawArtifactSetActivation(
                             address,
                             frame.Header.Parent,
-                            artifactSet
+                            artifactSet,
+                            new SessionArtifactSetReference(
+                                address,
+                                bodySchemaVersion,
+                                SessionRequestCanonicalizer.Sha256Hex(
+                                    frame.Payload
+                                )
+                            )
                         );
+                        artifactSets.Add(address, activation);
+                        latestArtifactSet ??= activation;
                     }
                     cursor = frame.Header.Parent;
                 }
@@ -155,6 +165,7 @@ public static class SessionJournalOfflineValidator {
                 reverseAddresses.Reverse();
                 reverseEvents.Reverse();
                 chain = reverseAddresses.AsReadOnly();
+                chronologicalEvents = reverseEvents.AsReadOnly();
                 EventAddress? expectedParent = null;
                 foreach (DecodedSessionEvent decodedEvent in reverseEvents) {
                     if (decodedEvent.Parent != expectedParent) {
@@ -170,6 +181,15 @@ public static class SessionJournalOfflineValidator {
                     );
                 }
 
+                ValidateArtifactSetAndPreparedProvenance(
+                    reverseEvents,
+                    artifactSets
+                );
+                ValidatePreparedRequestReconstructions(
+                    journal,
+                    reverseEvents,
+                    cancellationToken
+                );
                 projection = SessionReducer.Reduce(reverseEvents);
                 recovery = SessionExecutionTailResolver.Resolve(
                     new SessionJournalEventReader(journal),
@@ -187,8 +207,8 @@ public static class SessionJournalOfflineValidator {
 
         SessionGoverningSetup? governingSetup = null;
         if (head is { } exactHead) {
-            using var engine = SessionJournalEngine.Open(fullPath);
-            governingSetup = engine.ResolveGoverningSetup(
+            governingSetup = ResolveGoverningSetup(
+                chronologicalEvents,
                 exactHead,
                 cancellationToken
             );
@@ -204,7 +224,8 @@ public static class SessionJournalOfflineValidator {
             }
             if (latestArtifactSet is { } setupActivation) {
                 SessionGoverningSetup coverage =
-                    engine.ResolveGoverningSetup(
+                    ResolveGoverningSetup(
+                        chronologicalEvents,
                         setupActivation.Body.CommonAnchor,
                         cancellationToken
                     );
@@ -213,7 +234,8 @@ public static class SessionJournalOfflineValidator {
                         "ArtifactSetCommitted requires an exact raw parent."
                     );
                 SessionGoverningSetup current =
-                    engine.ResolveGoverningSetup(
+                    ResolveGoverningSetup(
+                        chronologicalEvents,
                         activationParent,
                         cancellationToken
                     );
@@ -251,7 +273,8 @@ public static class SessionJournalOfflineValidator {
                     artifact,
                     member,
                     active.Body,
-                    chainPositions
+                    chainPositions,
+                    active.Parent
                 );
                 memberReports.Add(new SessionJournalOfflineArtifactMemberReport(
                     member.RoleId,
@@ -313,7 +336,8 @@ public static class SessionJournalOfflineValidator {
         DerivedRecapArtifact? artifact,
         SessionArtifactSetMember member,
         ArtifactSetCommittedBody activeSet,
-        IReadOnlyDictionary<EventAddress, int> chainPositions
+        IReadOnlyDictionary<EventAddress, int> chainPositions,
+        EventAddress? activationParent
     ) {
         if (artifact is null) {
             return "Exact artifact is missing or unusable.";
@@ -356,7 +380,10 @@ public static class SessionJournalOfflineValidator {
                 artifact.AnchorRawEvent,
                 out int anchorPosition
             )
-            || sourcePosition < anchorPosition) {
+            || activationParent is not { } parent
+            || !chainPositions.TryGetValue(parent, out int activationParentPosition)
+            || sourcePosition < anchorPosition
+            || sourcePosition > activationParentPosition) {
             return "Exact artifact source provenance is not on the current raw lineage.";
         }
         SessionRequestArtifactInput input =
@@ -369,6 +396,183 @@ public static class SessionJournalOfflineValidator {
             return "Exact artifact target contribution hash does not match the committed member.";
         }
         return null;
+    }
+
+    private static SessionGoverningSetup ResolveGoverningSetup(
+        IReadOnlyList<DecodedSessionEvent> chronologicalEvents,
+        EventAddress targetHead,
+        CancellationToken cancellationToken
+    ) {
+        EventAddress? runtimeConfigSetupAddress = null;
+        SessionRuntimeConfiguration? runtimeConfig = null;
+        EventAddress? systemPromptSetupAddress = null;
+        string? systemPrompt = null;
+
+        foreach (DecodedSessionEvent decodedEvent in chronologicalEvents) {
+            cancellationToken.ThrowIfCancellationRequested();
+            switch (decodedEvent.Kind) {
+                case SessionEventKind.RuntimeConfigSetup:
+                    runtimeConfigSetupAddress = decodedEvent.Address;
+                    runtimeConfig =
+                        decodedEvent.Body as SessionRuntimeConfiguration
+                        ?? throw new InvalidDataException(
+                            $"runtime-config-setup at {decodedEvent.Address} decoded to an unexpected body."
+                        );
+                    break;
+                case SessionEventKind.SystemPromptSetup:
+                    systemPromptSetupAddress = decodedEvent.Address;
+                    systemPrompt =
+                        (decodedEvent.Body as SystemPromptSetupBody)?.Content
+                        ?? throw new InvalidDataException(
+                            $"system-prompt-setup at {decodedEvent.Address} decoded to an unexpected body."
+                        );
+                    break;
+            }
+
+            if (decodedEvent.Address != targetHead) {
+                continue;
+            }
+            if (runtimeConfigSetupAddress is null || runtimeConfig is null) {
+                throw new InvalidDataException(
+                    $"SessionJournal governing setup for head {targetHead} is missing runtime-config-setup on its parent chain."
+                );
+            }
+            if (systemPromptSetupAddress is null || systemPrompt is null) {
+                throw new InvalidDataException(
+                    $"SessionJournal governing setup for head {targetHead} is missing system-prompt-setup on its parent chain."
+                );
+            }
+            return new SessionGoverningSetup(
+                targetHead,
+                runtimeConfigSetupAddress.Value,
+                runtimeConfig,
+                systemPromptSetupAddress.Value,
+                systemPrompt
+            );
+        }
+
+        throw new InvalidDataException(
+            $"SessionJournal governing setup target {targetHead} is not on the current main Parent chain."
+        );
+    }
+
+    private static void ValidateArtifactSetAndPreparedProvenance(
+        IReadOnlyList<DecodedSessionEvent> chronologicalEvents,
+        IReadOnlyDictionary<EventAddress, RawArtifactSetActivation> artifactSets
+    ) {
+        var governingSetups = new Dictionary<
+            EventAddress,
+            (EventAddress? RuntimeConfig, EventAddress? SystemPrompt)
+        >();
+        EventAddress? runtimeConfig = null;
+        EventAddress? systemPrompt = null;
+        RawArtifactSetActivation? activeArtifactSet = null;
+
+        foreach (DecodedSessionEvent ev in chronologicalEvents) {
+            if (ev.Kind == SessionEventKind.RuntimeConfigSetup) {
+                runtimeConfig = ev.Address;
+            }
+            else if (ev.Kind == SessionEventKind.SystemPromptSetup) {
+                systemPrompt = ev.Address;
+            }
+            governingSetups.Add(ev.Address, (runtimeConfig, systemPrompt));
+
+            if (ev.Kind == SessionEventKind.ArtifactSetCommitted) {
+                RawArtifactSetActivation activation = artifactSets[ev.Address];
+                EventAddress parent = activation.Parent
+                    ?? throw new InvalidDataException(
+                        $"ArtifactSetCommitted at {activation.Address} requires an exact raw parent."
+                    );
+                if (!governingSetups.TryGetValue(
+                        activation.Body.CommonAnchor,
+                        out var coverage
+                    )
+                    || !governingSetups.TryGetValue(parent, out var current)
+                    || coverage.RuntimeConfig is null
+                    || coverage.SystemPrompt is null
+                    || current.RuntimeConfig is null
+                    || current.SystemPrompt is null) {
+                    throw new InvalidDataException(
+                        $"ArtifactSetCommitted at {activation.Address} has a common anchor or setup boundary outside the current raw lineage."
+                    );
+                }
+                if (activation.Body.CoverageSetups.RuntimeConfig.Address
+                        != coverage.RuntimeConfig
+                    || activation.Body.CoverageSetups.SystemPrompt.Address
+                        != coverage.SystemPrompt
+                    || activation.Body.CurrentSetups.RuntimeConfig.Address
+                        != current.RuntimeConfig
+                    || activation.Body.CurrentSetups.SystemPrompt.Address
+                        != current.SystemPrompt) {
+                    throw new InvalidDataException(
+                        $"ArtifactSetCommitted at {activation.Address} setup references do not match its authoritative raw boundaries."
+                    );
+                }
+                activeArtifactSet = activation;
+                continue;
+            }
+
+            if (ev.Kind == SessionEventKind.CompletionRequestPrepared
+                && ((CompletionRequestPreparedBody)ev.Body).Plan.SelectionPolicyId
+                    == SessionRequestManifestDefaults.CoherentArtifactTailSelectionPolicyId) {
+                CompletionRequestPreparedBody prepared =
+                    (CompletionRequestPreparedBody)ev.Body;
+                if (activeArtifactSet is null
+                    || prepared.Plan.ActiveArtifactSet
+                        != activeArtifactSet.Reference) {
+                    throw new InvalidDataException(
+                        $"Coherent CompletionRequestPrepared at {ev.Address} does not reference the latest active ArtifactSetCommitted event."
+                    );
+                }
+                ValidatePreparedArtifactMemberAssertion(
+                    prepared,
+                    activeArtifactSet.Body
+                );
+            }
+        }
+    }
+
+    private static void ValidatePreparedArtifactMemberAssertion(
+        CompletionRequestPreparedBody prepared,
+        ArtifactSetCommittedBody activation
+    ) {
+        var asserted = prepared.Plan.ArtifactInputs
+            .Select(static input => (
+                input.ArtifactId,
+                input.ArtifactKind,
+                input.ContentSha256
+            ))
+            .OrderBy(static item => item.ArtifactId, StringComparer.Ordinal);
+        var activated = activation.Members
+            .Select(static member => (
+                member.ArtifactId,
+                member.ArtifactKind,
+                member.ContentSha256
+            ))
+            .OrderBy(static item => item.ArtifactId, StringComparer.Ordinal);
+        if (!asserted.SequenceEqual(activated)) {
+            throw new InvalidDataException(
+                "Coherent CompletionRequestPrepared artifact inputs do not exactly match the latest activation."
+            );
+        }
+    }
+
+    private static void ValidatePreparedRequestReconstructions(
+        EventJournal.EventJournal journal,
+        IReadOnlyList<DecodedSessionEvent> chronologicalEvents,
+        CancellationToken cancellationToken
+    ) {
+        foreach (DecodedSessionEvent ev in chronologicalEvents) {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (ev.Kind != SessionEventKind.CompletionRequestPrepared) {
+                continue;
+            }
+            _ = SessionPreparedRequestReconstructor.Reconstruct(
+                journal,
+                ev.Address,
+                cancellationToken
+            );
+        }
     }
 
     private static void ValidateSetupReference(
@@ -412,4 +616,11 @@ public static class SessionJournalOfflineValidator {
             );
         }
     }
+
+    private sealed record RawArtifactSetActivation(
+        EventAddress Address,
+        EventAddress? Parent,
+        ArtifactSetCommittedBody Body,
+        SessionArtifactSetReference Reference
+    );
 }

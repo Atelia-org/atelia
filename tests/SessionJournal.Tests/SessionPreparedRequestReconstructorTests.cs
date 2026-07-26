@@ -714,6 +714,170 @@ public sealed class SessionPreparedRequestReconstructorTests : IDisposable {
     }
 
     [Fact]
+    public void Reconstruct_CoherentPlanRequiresLatestActivationOnRawRange() {
+        string path = NewJournalPath();
+        using var journal = CreateJournal(path);
+        EventAddress runtime = Commit(
+            journal,
+            expectedParent: null,
+            SessionEventKind.RuntimeConfigSetup,
+            new SessionRuntimeConfiguration(
+                "model-A",
+                "surface-A",
+                SessionJournalDefaults.Schema
+            )
+        );
+        EventAddress prompt = Commit(
+            journal,
+            runtime,
+            SessionEventKind.SystemPromptSetup,
+            new SystemPromptSetupBody("system-A")
+        );
+        EventAddress created = Commit(
+            journal,
+            prompt,
+            SessionEventKind.SessionCreated,
+            new SessionCreatedBody()
+        );
+        SessionGoverningSetupReferences setups = new(
+            CreateSetupReference(journal, runtime),
+            CreateSetupReference(journal, prompt)
+        );
+        ImmutableArray<SessionRequestArtifactInput> artifactInputs = [
+            CreateArtifactInput(
+                "artifact-autobiography",
+                "rolling-summary",
+                new SessionRequestArtifactContextSnapshot(
+                    "",
+                    "",
+                    "## autobiography\n\nself"
+                )
+            ),
+            CreateArtifactInput(
+                "artifact-world",
+                "rolling-summary",
+                new SessionRequestArtifactContextSnapshot(
+                    "",
+                    "## world-understanding\n\nworld",
+                    ""
+                )
+            )
+        ];
+        ImmutableArray<SessionArtifactSetMember> members = [
+            new(
+                "autobiography",
+                artifactInputs[0].ArtifactId,
+                artifactInputs[0].ArtifactKind,
+                new MemoryPackBlockPath(
+                    MemoryPackCarrier.Action,
+                    "autobiography"
+                ),
+                artifactInputs[0].ContentSha256
+            ),
+            new(
+                "world-understanding",
+                artifactInputs[1].ArtifactId,
+                artifactInputs[1].ArtifactKind,
+                new MemoryPackBlockPath(
+                    MemoryPackCarrier.Observation,
+                    "world-understanding"
+                ),
+                artifactInputs[1].ContentSha256
+            )
+        ];
+        var activationBody = new ArtifactSetCommittedBody(
+            SessionRequestManifestDefaults.ActiveArtifactSetPolicyId,
+            SessionRequestManifestDefaults.ActiveArtifactSetPolicyFingerprint,
+            created,
+            setups,
+            setups,
+            members
+        );
+        EventAddress activationA = Commit(
+            journal,
+            created,
+            SessionEventKind.ArtifactSetCommitted,
+            activationBody
+        );
+        EventAddress activationB = Commit(
+            journal,
+            activationA,
+            SessionEventKind.ArtifactSetCommitted,
+            activationBody
+        );
+        EventAddress observation = Commit(
+            journal,
+            activationB,
+            SessionEventKind.ObservationAccepted,
+            new ObservationAcceptedBody("hello")
+        );
+        SessionRequestArtifactContextSnapshot aggregate =
+            SessionTailContextProjection.AggregateContextSnapshots(
+                artifactInputs
+            );
+        (string systemPrompt, ImmutableArray<IHistoryMessage> headerContext) =
+            SessionTailContextProjection.ExpandContextSnapshot(
+                "system-A",
+                aggregate
+            );
+        var requestContext = ImmutableArray.CreateBuilder<IHistoryMessage>();
+        requestContext.AddRange(headerContext);
+        requestContext.Add(new ObservationMessage("hello"));
+        var request = new CompletionRequest(
+            "model-A",
+            systemPrompt,
+            requestContext.ToImmutable(),
+            ImmutableArray<ToolDefinition>.Empty
+        );
+        CompletionRequestPreparedBody manifest = CreateManifest(
+            journal,
+            request,
+            runtime,
+            prompt,
+            rawStartExclusive: created,
+            rawEndInclusive: observation,
+            rawAddresses: [activationA, activationB, observation],
+            SessionRequestManifestDefaults.CoherentArtifactTailSelectionPolicyId,
+            artifactInputs,
+            activeArtifactSet: CreateArtifactSetReference(
+                journal,
+                activationB
+            )
+        );
+
+        SessionPreparedRequestReconstruction valid =
+            SessionPreparedRequestReconstructor.Reconstruct(
+                journal,
+                manifest,
+                observation
+            );
+        Assert.Equal(
+            SessionRequestCanonicalizer.Canonicalize(request),
+            valid.CanonicalBytes
+        );
+
+        InvalidDataException error = Assert.Throws<InvalidDataException>(
+            () => SessionPreparedRequestReconstructor.Reconstruct(
+                journal,
+                manifest with {
+                    Plan = manifest.Plan with {
+                        ActiveArtifactSet = CreateArtifactSetReference(
+                            journal,
+                            activationA
+                        )
+                    }
+                },
+                observation
+            )
+        );
+        Assert.Contains(
+            "latest activation",
+            error.Message,
+            StringComparison.Ordinal
+        );
+    }
+
+    [Fact]
     public void Reconstruct_SourcePreparedRejectsAnotherEventKind() {
         string path = NewJournalPath();
         using var journal = CreateJournal(path);
@@ -742,11 +906,17 @@ public sealed class SessionPreparedRequestReconstructorTests : IDisposable {
         string selectionPolicyId,
         ImmutableArray<SessionRequestArtifactInput> artifactInputs,
         string reason = "observation",
-        EventAddress? correlationObservation = null
+        EventAddress? correlationObservation = null,
+        SessionArtifactSetReference? activeArtifactSet = null
     ) {
         bool isFullRaw = string.Equals(
             selectionPolicyId,
             SessionRequestManifestDefaults.FullRawSelectionPolicyId,
+            StringComparison.Ordinal
+        );
+        bool isCoherent = string.Equals(
+            selectionPolicyId,
+            SessionRequestManifestDefaults.CoherentArtifactTailSelectionPolicyId,
             StringComparison.Ordinal
         );
         string correlation =
@@ -765,6 +935,8 @@ public sealed class SessionPreparedRequestReconstructorTests : IDisposable {
                 selectionPolicyId,
                 isFullRaw
                     ? SessionRequestManifestDefaults.FullRawPlannerFingerprint
+                    : isCoherent
+                        ? SessionRequestManifestDefaults.CoherentArtifactTailPlannerFingerprint
                     : SessionRequestManifestDefaults.ExplicitArtifactTailPlannerFingerprint,
                 rawStartExclusive,
                 ComputeRawRangeSha256(journal, rawStartExclusive, rawEndInclusive, rawAddresses),
@@ -772,10 +944,13 @@ public sealed class SessionPreparedRequestReconstructorTests : IDisposable {
                 ImmutableArray<SessionRequestRecalledInput>.Empty,
                 isFullRaw
                     ? SessionRequestManifestDefaults.FullRawRenderingProfileId
+                    : isCoherent
+                        ? SessionRequestManifestDefaults.CoherentArtifactTailRenderingProfileId
                     : SessionRequestManifestDefaults.ExplicitArtifactTailRenderingProfileId,
                 request.ModelId,
                 EstimatedInputTokens: checked((commitment.ByteLength + 3) / 4),
-                reason
+                reason,
+                activeArtifactSet
             ),
             new SessionGoverningSetupReferences(
                 CreateSetupReference(journal, runtimeSetup),
@@ -793,9 +968,13 @@ public sealed class SessionPreparedRequestReconstructorTests : IDisposable {
             new SessionRequestRendering(
                 isFullRaw
                     ? SessionRequestManifestDefaults.FullRawContextRendererId
+                    : isCoherent
+                        ? SessionRequestManifestDefaults.CoherentArtifactTailContextRendererId
                     : SessionRequestManifestDefaults.ExplicitArtifactTailContextRendererId,
                 isFullRaw
                     ? SessionRequestManifestDefaults.FullRawContextRendererFingerprint
+                    : isCoherent
+                        ? SessionRequestManifestDefaults.CoherentArtifactTailContextRendererFingerprint
                     : SessionRequestManifestDefaults.ExplicitArtifactTailContextRendererFingerprint,
                 SessionRequestManifestDefaults.CanonicalRequestCodecId,
                 SessionRequestManifestDefaults.ToolCodecId,
@@ -829,6 +1008,34 @@ public sealed class SessionPreparedRequestReconstructorTests : IDisposable {
             SessionRequestCanonicalizer.Sha256Hex(frame.Payload)
         );
     }
+
+    private static SessionArtifactSetReference CreateArtifactSetReference(
+        EventJournal.EventJournal journal,
+        EventAddress address
+    ) {
+        using EventFrame frame = journal.ReadEvent(address).Unwrap();
+        _ = SessionEventCodec.Decode(
+            SessionEventKind.ArtifactSetCommitted,
+            frame.Payload,
+            out int bodySchemaVersion
+        );
+        return new SessionArtifactSetReference(
+            address,
+            bodySchemaVersion,
+            SessionRequestCanonicalizer.Sha256Hex(frame.Payload)
+        );
+    }
+
+    private static SessionRequestArtifactInput CreateArtifactInput(
+        string artifactId,
+        string artifactKind,
+        SessionRequestArtifactContextSnapshot snapshot
+    ) => new(
+        artifactId,
+        artifactKind,
+        SessionArtifactContextSnapshotHasher.ComputeSha256(snapshot),
+        snapshot
+    );
 
     private static string ComputeRawRangeSha256(
         EventJournal.EventJournal journal,
