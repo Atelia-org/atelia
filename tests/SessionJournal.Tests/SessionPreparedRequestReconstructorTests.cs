@@ -320,6 +320,197 @@ public sealed class SessionPreparedRequestReconstructorTests : IDisposable {
         ));
     }
 
+    [Theory]
+    [InlineData("wrong-failure", "active suffix completion attempt")]
+    [InlineData("setup-during-completion", "setup, idle, or failed suffix boundary")]
+    [InlineData("wrong-imported-correlation", "correlation or execution checkpoint")]
+    public void Reconstruct_ArtifactTailRejectsBuriedMalformedExecutionSuffix(
+        string corruption,
+        string expectedError
+    ) {
+        string path = NewJournalPath();
+        using var journal = CreateJournal(path);
+        var runtimeBody = new SessionRuntimeConfiguration(
+            "model-A",
+            "surface-A",
+            SessionJournalDefaults.Schema
+        );
+        EventAddress runtime = Commit(
+            journal,
+            expectedParent: null,
+            SessionEventKind.RuntimeConfigSetup,
+            runtimeBody
+        );
+        EventAddress prompt = Commit(
+            journal,
+            runtime,
+            SessionEventKind.SystemPromptSetup,
+            new SystemPromptSetupBody("system-A")
+        );
+        EventAddress created = Commit(
+            journal,
+            prompt,
+            SessionEventKind.SessionCreated,
+            new SessionCreatedBody()
+        );
+        var rawAddresses = new List<EventAddress>();
+        EventAddress firstObservation = Commit(
+            journal,
+            created,
+            SessionEventKind.ObservationAccepted,
+            new ObservationAcceptedBody("first")
+        );
+        rawAddresses.Add(firstObservation);
+        EventAddress corruptParent = firstObservation;
+        EventAddress governingRuntime = runtime;
+        if (!string.Equals(
+                corruption,
+                "wrong-imported-correlation",
+                StringComparison.Ordinal
+            )) {
+            var firstRequest = new CompletionRequest(
+                "model-A",
+                "system-A",
+                [new ObservationMessage("first")],
+                ImmutableArray<ToolDefinition>.Empty,
+                MaxTokens: null
+            );
+            CompletionRequestPreparedBody firstManifest = CreateManifest(
+                journal,
+                firstRequest,
+                runtime,
+                prompt,
+                rawStartExclusive: null,
+                firstObservation,
+                rawAddresses: [
+                    runtime,
+                    prompt,
+                    created,
+                    firstObservation
+                ],
+                SessionRequestManifestDefaults.FullRawSelectionPolicyId,
+                artifactInputs: []
+            );
+            EventAddress firstPrepared = Commit(
+                journal,
+                firstObservation,
+                SessionEventKind.CompletionRequestPrepared,
+                firstManifest
+            );
+            rawAddresses.Add(firstPrepared);
+            corruptParent = firstPrepared;
+        }
+
+        EventAddress corrupt = corruption switch {
+            "wrong-failure" => Commit(
+                journal,
+                corruptParent,
+                SessionEventKind.CompletionAttemptFailed,
+                new CompletionAttemptFailedBody(
+                    "wrong-attempt",
+                    CompletionTerminationKind.Failed,
+                    "test",
+                    "buried mismatch",
+                    Array.AsReadOnly(Array.Empty<string>())
+                )
+            ),
+            "setup-during-completion" => Commit(
+                journal,
+                corruptParent,
+                SessionEventKind.RuntimeConfigSetup,
+                runtimeBody
+            ),
+            "wrong-imported-correlation" => Commit(
+                journal,
+                corruptParent,
+                SessionEventKind.ImportedAgentAction,
+                new AgentActionProducedBody(
+                    new ActionMessage([new ActionBlock.Text("corrupt")]),
+                    new CompletionDescriptor("import", "import-v1", "model-A"),
+                    "wrong-correlation",
+                    new SessionExecutionCheckpoint(0),
+                    ToolRuntimeIdentity: null
+                )
+            ),
+            _ => throw new InvalidOperationException(corruption)
+        };
+        rawAddresses.Add(corrupt);
+        if (corruption == "setup-during-completion") {
+            governingRuntime = corrupt;
+        }
+        EventAddress secondObservation = Commit(
+            journal,
+            corrupt,
+            SessionEventKind.ObservationAccepted,
+            new ObservationAcceptedBody("second")
+        );
+        rawAddresses.Add(secondObservation);
+        EventAddress validImported = Commit(
+            journal,
+            secondObservation,
+            SessionEventKind.ImportedAgentAction,
+            new AgentActionProducedBody(
+                new ActionMessage([new ActionBlock.Text("valid")]),
+                new CompletionDescriptor("import", "import-v1", "model-A"),
+                $"atelia.session-journal.turn.v1:{EventAddressTextCodec.Format(secondObservation)}",
+                new SessionExecutionCheckpoint(0),
+                ToolRuntimeIdentity: null
+            )
+        );
+        rawAddresses.Add(validImported);
+        EventAddress finalObservation = Commit(
+            journal,
+            validImported,
+            SessionEventKind.ObservationAccepted,
+            new ObservationAcceptedBody("third")
+        );
+        rawAddresses.Add(finalObservation);
+        var snapshot = new SessionRequestArtifactContextSnapshot(
+            "",
+            "recap",
+            ""
+        );
+        var artifactInput = new SessionRequestArtifactInput(
+            "deleted-sidecar",
+            "rolling-summary",
+            SessionArtifactContextSnapshotHasher.ComputeSha256(snapshot),
+            snapshot
+        );
+        var placeholderRequest = new CompletionRequest(
+            "model-A",
+            "system-A",
+            [new ObservationMessage("recap")],
+            ImmutableArray<ToolDefinition>.Empty,
+            MaxTokens: null
+        );
+        CompletionRequestPreparedBody outerManifest = CreateManifest(
+            journal,
+            placeholderRequest,
+            governingRuntime,
+            prompt,
+            created,
+            finalObservation,
+            rawAddresses,
+            SessionRequestManifestDefaults.ExplicitArtifactTailSelectionPolicyId,
+            artifactInputs: [artifactInput]
+        );
+        EventAddress committedOuter = Commit(
+            journal,
+            finalObservation,
+            SessionEventKind.CompletionRequestPrepared,
+            outerManifest
+        );
+
+        InvalidDataException error = Assert.Throws<InvalidDataException>(
+            () => SessionPreparedRequestReconstructor.Reconstruct(
+                journal,
+                committedOuter
+            )
+        );
+
+        Assert.Contains(expectedError, error.Message, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void Reconstruct_FullRawSettledToolResultBuildsToolContinuationRequest() {
         string path = NewJournalPath();

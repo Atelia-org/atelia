@@ -27,7 +27,7 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
             new ActionMessage([new ActionBlock.Text("tail answer")]),
             new CompletionDescriptor("tail-client", "tail-api-v1", request.ModelId)
         ));
-        DerivedRecapArtifact artifact;
+        TestArtifactSet artifact;
         EventAddress anchor;
         EventAddress runtimeB;
         EventAddress promptB;
@@ -116,7 +116,10 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
         Assert.Collection(
             manifest.Plan.ArtifactInputs,
             observation => {
-                Assert.Equal(artifact.ArtifactId, observation.ArtifactId);
+                Assert.Equal(
+                    artifact.WorldUnderstanding.ArtifactId,
+                    observation.ArtifactId
+                );
                 Assert.Equal("", observation.ContextSnapshot.SystemPromptFragment);
                 Assert.Equal(
                     "## roleplay.world-understanding\n\nmemory observation",
@@ -125,7 +128,10 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
                 Assert.Equal("", observation.ContextSnapshot.ActionMessage);
             },
             autobiography => {
-                Assert.Equal(Assert.Single(artifact.InputArtifacts), autobiography.ArtifactId);
+                Assert.Equal(
+                    artifact.Autobiography.ArtifactId,
+                    autobiography.ArtifactId
+                );
                 Assert.Equal("", autobiography.ContextSnapshot.SystemPromptFragment);
                 Assert.Equal("", autobiography.ContextSnapshot.ObservationMessage);
                 Assert.Equal(
@@ -149,7 +155,7 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
     [Fact]
     public async Task ResumeAsync_ExactObservationTail_DoesNotInvokeFullProjection() {
         string path = NewJournalPath();
-        DerivedRecapArtifact artifact;
+        TestArtifactSet artifact;
         using (var engine = SessionJournalEngine.Create(
             path,
             new SessionCreateOptions("model-A", "system-A", "surface-A")
@@ -187,7 +193,7 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
     [Fact]
     public async Task SendAsync_CoherentArtifactTail_ToolContinuationKeepsVisibleToolsAndNeverProjects() {
         string path = NewJournalPath();
-        DerivedRecapArtifact artifact;
+        TestArtifactSet artifact;
         using (var setup = SessionJournalEngine.Create(
             path,
             new SessionCreateOptions("model-A", "system-A", "surface-A")
@@ -355,7 +361,7 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
                 new ActionMessage([new ActionBlock.Text("old answer")]),
                 new CompletionDescriptor("import", "import-v1", "model-A")
             );
-            DerivedRecapArtifact artifact = await WriteArtifactAsync(
+            TestArtifactSet artifact = await WriteArtifactAsync(
                 path,
                 anchor,
                 sourceRawHead: anchor,
@@ -426,7 +432,7 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
             new SessionCreateOptions("model-A", "system-A", "surface-A")
         );
         EventAddress created = engine.Project().Head!.Value;
-        DerivedRecapArtifact artifact = await WriteArtifactAsync(
+        TestArtifactSet artifact = await WriteArtifactAsync(
             path,
             created,
             sourceRawHead: created,
@@ -542,7 +548,7 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
             new CompletionDescriptor("import", "import-v1", "model-A")
         );
         SessionGoverningSetup setup = engine.ResolveGoverningSetup(anchor);
-        DerivedRecapArtifact artifact = await WriteArtifactAsync(
+        TestArtifactSet artifact = await WriteArtifactAsync(
             path,
             anchor,
             sourceRawHead: setup.RuntimeConfigSetupAddress,
@@ -636,7 +642,7 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
         }
 
         EventAddress anchor = boundary == "tool-action" ? toolAction : toolResult;
-        DerivedRecapArtifact artifact;
+        TestArtifactSet artifact;
         using (var engine = SessionJournalEngine.Open(path)) {
             SessionGoverningSetup setup = engine.ResolveGoverningSetup(anchor);
             artifact = await WriteArtifactAsync(
@@ -704,7 +710,7 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
         return memoryPack;
     }
 
-    private static async ValueTask<DerivedRecapArtifact> WriteArtifactAsync(
+    private static async ValueTask<TestArtifactSet> WriteArtifactAsync(
         string path,
         EventAddress anchor,
         EventAddress sourceRawHead,
@@ -736,7 +742,8 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
             MemoryPackCarrier.Observation,
             "roleplay.world-understanding"
         );
-        return await DerivedRecapStore.Open(path).WriteProducedAsync(new DerivedRecapWriteRequest(
+        DerivedRecapArtifact worldUnderstandingArtifact =
+            await DerivedRecapStore.Open(path).WriteProducedAsync(new DerivedRecapWriteRequest(
             ArtifactKind: "world-understanding",
             ProfileId: "tail-tests-world",
             Producer: "tests",
@@ -748,15 +755,18 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
             GoverningRuntimeConfigSetup: setup.RuntimeConfigSetupAddress,
             GoverningSystemPromptSetup: setup.SystemPromptSetupAddress,
             PreviousArtifact: null,
-            InputArtifacts: [autobiographyArtifact.ArtifactId],
             Target: target,
             MemoryPack: memoryPack
         ));
+        return new TestArtifactSet(
+            worldUnderstandingArtifact,
+            autobiographyArtifact
+        );
     }
 
     private static SessionRuntime CreateRuntime(
         CapturingCompletionClient client,
-        DerivedRecapArtifact artifact,
+        TestArtifactSet artifact,
         ToolSession? toolSession = null,
         SessionToolRuntimeIdentity? toolRuntimeIdentity = null
     )
@@ -772,8 +782,8 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
             MaxTokens: 512,
             ToolRuntimeIdentity: toolRuntimeIdentity,
             TailProjection: new SessionTailProjectionOptions(
-                artifact.ArtifactId,
-                Assert.Single(artifact.InputArtifacts)
+                artifact.WorldUnderstanding.ArtifactId,
+                artifact.Autobiography.ArtifactId
             )
         );
 
@@ -793,6 +803,11 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
 
     private static SessionToolRuntimeIdentity TestToolRuntimeIdentity { get; } =
         new("tail-tool-host", "tail-tools-v1", "tail-capabilities-v1");
+
+    private sealed record TestArtifactSet(
+        DerivedRecapArtifact WorldUnderstanding,
+        DerivedRecapArtifact Autobiography
+    );
 
     private static SessionRuntime CreateRuntime(
         CapturingCompletionClient client,

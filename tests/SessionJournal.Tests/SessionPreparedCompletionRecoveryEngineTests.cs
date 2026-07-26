@@ -496,7 +496,7 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
     [Fact]
     public async Task ResumeAsync_TailPreparedAfterArtifactDeletion_ReconstructsInlineWithoutProject() {
         string path = NewJournalPath();
-        DerivedRecapArtifact artifact;
+        TestArtifactSet artifact;
         using (var setup = SessionJournalEngine.Create(
             path,
             new SessionCreateOptions("model-A", "system-A", "surface-A")
@@ -527,16 +527,14 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
         }
         string artifactPath = Path.Combine(
             DerivedRecapStore.Open(path).ArtifactsDirectory,
-            $"{artifact.ArtifactId}.json"
+            $"{artifact.WorldUnderstanding.ArtifactId}.json"
         );
         File.Delete(artifactPath);
         Assert.False(File.Exists(artifactPath));
-        foreach (string inputArtifactId in artifact.InputArtifacts) {
-            File.Delete(Path.Combine(
-                DerivedRecapStore.Open(path).ArtifactsDirectory,
-                $"{inputArtifactId}.json"
-            ));
-        }
+        File.Delete(Path.Combine(
+            DerivedRecapStore.Open(path).ArtifactsDirectory,
+            $"{artifact.Autobiography.ArtifactId}.json"
+        ));
 
         var recoveryClient = new ScriptedClient();
         recoveryClient.Enqueue(request => Success(request, "inline recovery"));
@@ -560,7 +558,7 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
     [Fact]
     public async Task ResumeAsync_FullRawToolContinuationTerminal_AllowsNextTailSend() {
         string path = NewJournalPath();
-        DerivedRecapArtifact artifact;
+        TestArtifactSet artifact;
         using (var setup = SessionJournalEngine.Create(
             path,
             new SessionCreateOptions("model-A", "system-A", "surface-A")
@@ -728,7 +726,7 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
     private static CompletionDescriptor Descriptor(CompletionRequest request)
         => new("recovery-client", "recovery-api-v1", request.ModelId);
 
-    private static async ValueTask<DerivedRecapArtifact> WriteArtifactAsync(
+    private static async ValueTask<TestArtifactSet> WriteArtifactAsync(
         string path,
         EventAddress anchor,
         SessionGoverningSetup setup
@@ -764,7 +762,8 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
                 MemoryPack: memoryPack
             )
         );
-        return await DerivedRecapStore.Open(path).WriteProducedAsync(new DerivedRecapWriteRequest(
+        DerivedRecapArtifact worldUnderstandingArtifact =
+            await DerivedRecapStore.Open(path).WriteProducedAsync(new DerivedRecapWriteRequest(
             ArtifactKind: "world-understanding",
             ProfileId: "recovery-tests-world",
             Producer: "tests",
@@ -776,17 +775,29 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
             GoverningRuntimeConfigSetup: setup.RuntimeConfigSetupAddress,
             GoverningSystemPromptSetup: setup.SystemPromptSetupAddress,
             PreviousArtifact: null,
-            InputArtifacts: [autobiographyArtifact.ArtifactId],
             Target: new MemoryPackBlockPath(
                 MemoryPackCarrier.Observation,
                 "roleplay.world-understanding"
             ),
             MemoryPack: memoryPack
         ));
+        return new TestArtifactSet(
+            worldUnderstandingArtifact,
+            autobiographyArtifact
+        );
     }
 
-    private static SessionTailProjectionOptions TailOptions(DerivedRecapArtifact artifact)
-        => new(artifact.ArtifactId, Assert.Single(artifact.InputArtifacts));
+    private static SessionTailProjectionOptions TailOptions(
+        TestArtifactSet artifact
+    ) => new(
+        artifact.WorldUnderstanding.ArtifactId,
+        artifact.Autobiography.ArtifactId
+    );
+
+    private sealed record TestArtifactSet(
+        DerivedRecapArtifact WorldUnderstanding,
+        DerivedRecapArtifact Autobiography
+    );
 
     private static EventAddress ReadHead(string path) {
         using var journal = EventJournal.EventJournal.OpenExisting(path);

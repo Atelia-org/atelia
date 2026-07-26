@@ -329,6 +329,7 @@ internal static class SessionPreparedRequestReconstructor {
             || folded.GoverningSetup.SystemPromptSetupAddress != manifest.Setups.SystemPrompt.Address
             || folded.GoverningSetup.RuntimeConfig != referencedRuntime
             || !string.Equals(folded.GoverningSetup.SystemPrompt, referencedSystemPrompt, StringComparison.Ordinal)
+            || folded.Phase != finalRecovery.State.Phase
             || folded.ToolExecutionSequenceCheckpoint != manifest.Execution.LastIssuedToolExecutionSequence
             || folded.ToolExecutionSequenceCheckpoint != finalRecovery.State.ToolExecutionSequenceCheckpoint
             || !string.Equals(folded.ActiveCorrelationId, finalRecovery.State.ActiveCorrelationId, StringComparison.Ordinal)) {

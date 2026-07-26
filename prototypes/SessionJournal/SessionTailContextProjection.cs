@@ -112,7 +112,8 @@ internal static class SessionTailContextProjection {
             || !string.Equals(folded.GoverningSetup.SystemPrompt, currentGoverningSetup.SystemPrompt, StringComparison.Ordinal)) {
             throw new InvalidDataException("Tail projection governing setup does not match the exact current-head governing setup.");
         }
-        if (folded.ToolExecutionSequenceCheckpoint != currentRecovery.State.ToolExecutionSequenceCheckpoint
+        if (folded.Phase != currentRecovery.State.Phase
+            || folded.ToolExecutionSequenceCheckpoint != currentRecovery.State.ToolExecutionSequenceCheckpoint
             || !string.Equals(
                 folded.ActiveCorrelationId,
                 currentRecovery.State.ActiveCorrelationId,
@@ -241,38 +242,90 @@ internal static class SessionTailContextProjection {
         long? executionSequenceCheckpoint =
             executionSeed?.State.ToolExecutionSequenceCheckpoint;
         string? activeCorrelationId = executionSeed?.State.ActiveCorrelationId;
+        SessionExecutionPhase phase = executionSeed?.State.Phase
+            ?? InferSeedPhase(executionSeed?.State.HeadKind);
         SessionToolRuntimeIdentity? pendingToolRuntimeIdentity = null;
         CompletionRequestPreparedBody? sourcePrepared = null;
         EventAddress? sourcePreparedAddress = null;
         string? activeAttemptId = null;
         EventAddress? activeAttemptAddress = null;
+        HashSet<string>? seenAttemptIds = null;
         SessionEventKind? priorKind = executionSeed?.State.HeadKind;
+        EventAddress? priorAddress = executionSeed?.Head ?? seed.Head;
 
         foreach (DecodedSessionEvent ev in events) {
+            if (ev.Parent != priorAddress) {
+                throw new InvalidDataException(
+                    $"{ev.Kind} at {ev.Address} does not directly descend from the prior suffix event."
+                );
+            }
             switch (ev.Kind) {
                 case SessionEventKind.RuntimeConfigSetup:
-                    EnsureNoOpenTool(ev, openAction);
+                    EnsureSetupPhase(ev, phase, openAction, sourcePrepared);
                     runtimeAddress = ev.Address;
                     runtimeConfig = RequireBody<SessionRuntimeConfiguration>(ev);
+                    phase = phase == SessionExecutionPhase.Empty
+                        ? SessionExecutionPhase.Empty
+                        : SessionExecutionPhase.Idle;
+                    activeCorrelationId = null;
                     break;
                 case SessionEventKind.SystemPromptSetup:
-                    EnsureNoOpenTool(ev, openAction);
+                    EnsureSetupPhase(ev, phase, openAction, sourcePrepared);
                     promptAddress = ev.Address;
                     systemPrompt = RequireBody<SystemPromptSetupBody>(ev).Content;
+                    phase = phase == SessionExecutionPhase.Empty
+                        ? SessionExecutionPhase.Empty
+                        : SessionExecutionPhase.Idle;
+                    activeCorrelationId = null;
                     break;
                 case SessionEventKind.SessionCreated:
-                case SessionEventKind.CompletionAttemptFailed:
                     EnsureNoOpenTool(ev, openAction);
+                    _ = RequireBody<SessionCreatedBody>(ev);
+                    if (phase != SessionExecutionPhase.Empty
+                        || priorKind != SessionEventKind.SystemPromptSetup) {
+                        throw new InvalidDataException(
+                            $"{ev.Kind} at {ev.Address} must complete the bootstrap setup run."
+                        );
+                    }
+                    executionSequenceCheckpoint = 0;
+                    activeCorrelationId = null;
+                    phase = SessionExecutionPhase.Idle;
                     break;
+                case SessionEventKind.CompletionAttemptFailed: {
+                    EnsureNoOpenTool(ev, openAction);
+                    CompletionAttemptFailedBody failed =
+                        RequireBody<CompletionAttemptFailedBody>(ev);
+                    if (phase != SessionExecutionPhase.AwaitingCompletion
+                        || sourcePrepared is null
+                        || ev.Parent != activeAttemptAddress
+                        || !string.Equals(failed.AttemptId, activeAttemptId, StringComparison.Ordinal)) {
+                        throw new InvalidDataException(
+                            $"{ev.Kind} at {ev.Address} does not fail the active suffix completion attempt."
+                        );
+                    }
+                    sourcePrepared = null;
+                    sourcePreparedAddress = null;
+                    activeAttemptId = null;
+                    activeAttemptAddress = null;
+                    seenAttemptIds = null;
+                    activeCorrelationId = null;
+                    phase = SessionExecutionPhase.TurnFailed;
+                    break;
+                }
                 case SessionEventKind.CompletionAttemptRestarted: {
                     EnsureNoOpenTool(ev, openAction);
                     CompletionAttemptRestartedBody restarted =
                         RequireBody<CompletionAttemptRestartedBody>(ev);
-                    if (sourcePrepared is null
+                    if (phase != SessionExecutionPhase.AwaitingCompletion
+                        || sourcePrepared is null
                         || sourcePreparedAddress is null
+                        || seenAttemptIds is null
                         || restarted.SourcePreparedAddress != sourcePreparedAddress
                         || ev.Parent != activeAttemptAddress
-                        || !string.Equals(restarted.ReplacesAttemptId, activeAttemptId, StringComparison.Ordinal)) {
+                        || !string.Equals(restarted.ReplacesAttemptId, activeAttemptId, StringComparison.Ordinal)
+                        || string.IsNullOrWhiteSpace(restarted.AttemptId)
+                        || string.Equals(restarted.AttemptId, restarted.ReplacesAttemptId, StringComparison.Ordinal)
+                        || !seenAttemptIds.Add(restarted.AttemptId)) {
                         throw new InvalidDataException(
                             $"{ev.Kind} at {ev.Address} does not replace the active suffix Prepared attempt."
                         );
@@ -285,6 +338,13 @@ internal static class SessionTailContextProjection {
                     EnsureNoOpenTool(ev, openAction);
                     CompletionRequestPreparedBody prepared =
                         RequireBody<CompletionRequestPreparedBody>(ev);
+                    if (phase != SessionExecutionPhase.AwaitingAgentAction
+                        || sourcePrepared is not null
+                        || prepared.Attempt.ReplacesAttemptId is not null) {
+                        throw new InvalidDataException(
+                            $"{ev.Kind} at {ev.Address} requires an unprepared suffix completion boundary."
+                        );
+                    }
                     string expectedReason = priorKind switch {
                         SessionEventKind.ObservationAccepted => "observation",
                         SessionEventKind.ToolResultObserved => "tool-continuation",
@@ -311,11 +371,23 @@ internal static class SessionTailContextProjection {
                     sourcePreparedAddress = ev.Address;
                     activeAttemptId = prepared.Attempt.AttemptId;
                     activeAttemptAddress = ev.Address;
+                    seenAttemptIds = new HashSet<string>(StringComparer.Ordinal) {
+                        prepared.Attempt.AttemptId
+                    };
                     activeCorrelationId = prepared.Attempt.CorrelationId;
+                    phase = SessionExecutionPhase.AwaitingCompletion;
                     break;
                 }
                 case SessionEventKind.ObservationAccepted:
                     EnsureNoOpenTool(ev, openAction);
+                    if (phase is not (
+                        SessionExecutionPhase.Idle
+                        or SessionExecutionPhase.TurnFailed
+                    )) {
+                        throw new InvalidDataException(
+                            $"{ev.Kind} at {ev.Address} must appear at an idle or failed suffix boundary."
+                        );
+                    }
                     context.Add(new ObservationMessage(RequireBody<ObservationAcceptedBody>(ev).Content));
                     activeCorrelationId =
                         $"atelia.session-journal.turn.v1:{EventAddressTextCodec.Format(ev.Address)}";
@@ -323,6 +395,8 @@ internal static class SessionTailContextProjection {
                     sourcePreparedAddress = null;
                     activeAttemptId = null;
                     activeAttemptAddress = null;
+                    seenAttemptIds = null;
+                    phase = SessionExecutionPhase.AwaitingAgentAction;
                     break;
                 case SessionEventKind.AgentActionProduced:
                 case SessionEventKind.ImportedAgentAction: {
@@ -331,10 +405,31 @@ internal static class SessionTailContextProjection {
                         RequireBody<AgentActionProducedBody>(ev);
                     ActionMessage action = actionBody.Action;
                     ValidateToolCalls(ev, action);
-                    if (executionSequenceCheckpoint is long current
-                        && actionBody.Execution.LastIssuedToolExecutionSequence != current) {
+                    bool isPreparedAction =
+                        ev.Kind == SessionEventKind.AgentActionProduced
+                        && phase == SessionExecutionPhase.AwaitingCompletion;
+                    bool isImportedAction =
+                        ev.Kind == SessionEventKind.ImportedAgentAction
+                        && phase == SessionExecutionPhase.AwaitingAgentAction
+                        && sourcePrepared is null
+                        && priorKind is (
+                            SessionEventKind.ObservationAccepted
+                            or SessionEventKind.ToolResultObserved
+                        );
+                    if (!isPreparedAction && !isImportedAction) {
                         throw new InvalidDataException(
-                            $"{ev.Kind} at {ev.Address} changes the suffix execution checkpoint."
+                            $"{ev.Kind} at {ev.Address} does not directly follow its required completion boundary."
+                        );
+                    }
+                    if (!string.Equals(
+                            actionBody.CorrelationId,
+                            activeCorrelationId,
+                            StringComparison.Ordinal
+                        )
+                        || executionSequenceCheckpoint is long current
+                            && actionBody.Execution.LastIssuedToolExecutionSequence != current) {
+                        throw new InvalidDataException(
+                            $"{ev.Kind} at {ev.Address} changes the suffix correlation or execution checkpoint."
                         );
                     }
                     executionSequenceCheckpoint =
@@ -359,6 +454,7 @@ internal static class SessionTailContextProjection {
                     sourcePreparedAddress = null;
                     activeAttemptId = null;
                     activeAttemptAddress = null;
+                    seenAttemptIds = null;
                     context.Add(action);
                     if (action.ToolCalls.Count > 0) {
                         pendingToolRuntimeIdentity = actionBody.ToolRuntimeIdentity
@@ -369,11 +465,24 @@ internal static class SessionTailContextProjection {
                         observedResults.Clear();
                         pendingCall = action.ToolCalls[0];
                         pendingStarted = false;
+                        phase = SessionExecutionPhase.AwaitingToolExecution;
+                    }
+                    else {
+                        if (actionBody.ToolRuntimeIdentity is not null) {
+                            throw new InvalidDataException(
+                                $"{ev.Kind} at {ev.Address} has a runtime identity without tool calls."
+                            );
+                        }
+                        activeCorrelationId = null;
+                        phase = SessionExecutionPhase.Idle;
                     }
                     break;
                 }
                 case SessionEventKind.ToolExecutionStarted: {
-                    if (openAction is null || pendingCall is null || pendingStarted) {
+                    if (phase != SessionExecutionPhase.AwaitingToolExecution
+                        || openAction is null
+                        || pendingCall is null
+                        || pendingStarted) {
                         throw new InvalidDataException($"{ev.Kind} at {ev.Address} has no unstarted suffix-local pending tool call.");
                     }
                     ToolExecutionStartedBody started = RequireBody<ToolExecutionStartedBody>(ev);
@@ -390,7 +499,10 @@ internal static class SessionTailContextProjection {
                     break;
                 }
                 case SessionEventKind.ToolResultObserved: {
-                    if (openAction is null || pendingCall is null || !pendingStarted) {
+                    if (phase != SessionExecutionPhase.AwaitingToolExecution
+                        || openAction is null
+                        || pendingCall is null
+                        || !pendingStarted) {
                         throw new InvalidDataException($"{ev.Kind} at {ev.Address} has no started suffix-local pending tool call.");
                     }
                     ToolResultObservedBody result = RequireBody<ToolResultObservedBody>(ev);
@@ -410,6 +522,7 @@ internal static class SessionTailContextProjection {
                         openAction = null;
                         observedResults.Clear();
                         pendingToolRuntimeIdentity = null;
+                        phase = SessionExecutionPhase.AwaitingAgentAction;
                     }
                     break;
                 }
@@ -417,6 +530,7 @@ internal static class SessionTailContextProjection {
                     throw new InvalidDataException($"Unsupported suffix event kind '{ev.Kind}'.");
             }
             priorKind = ev.Kind;
+            priorAddress = ev.Address;
         }
         if (openAction is not null || pendingCall is not null || pendingStarted) {
             throw new InvalidDataException("Recap raw suffix ends with unresolved tool dependencies.");
@@ -433,8 +547,54 @@ internal static class SessionTailContextProjection {
             ),
             context,
             activeCorrelationId,
-            executionSequenceCheckpoint ?? 0
+            executionSequenceCheckpoint ?? 0,
+            phase
         );
+    }
+
+    private static SessionExecutionPhase InferSeedPhase(
+        SessionEventKind? headKind
+    ) => headKind switch {
+        null
+            or SessionEventKind.RuntimeConfigSetup
+            or SessionEventKind.SystemPromptSetup =>
+                SessionExecutionPhase.Empty,
+        SessionEventKind.SessionCreated
+            or SessionEventKind.AgentActionProduced
+            or SessionEventKind.ImportedAgentAction =>
+                SessionExecutionPhase.Idle,
+        SessionEventKind.ObservationAccepted
+            or SessionEventKind.ToolResultObserved =>
+                SessionExecutionPhase.AwaitingAgentAction,
+        SessionEventKind.CompletionRequestPrepared
+            or SessionEventKind.CompletionAttemptRestarted =>
+                SessionExecutionPhase.AwaitingCompletion,
+        SessionEventKind.CompletionAttemptFailed =>
+            SessionExecutionPhase.TurnFailed,
+        SessionEventKind.ToolExecutionStarted =>
+            SessionExecutionPhase.AwaitingToolExecution,
+        _ => throw new InvalidDataException(
+            $"Cannot infer suffix seed phase for '{headKind}'."
+        )
+    };
+
+    private static void EnsureSetupPhase(
+        DecodedSessionEvent ev,
+        SessionExecutionPhase phase,
+        ActionMessage? openAction,
+        CompletionRequestPreparedBody? sourcePrepared
+    ) {
+        EnsureNoOpenTool(ev, openAction);
+        if (sourcePrepared is not null
+            || phase is not (
+                SessionExecutionPhase.Empty
+                or SessionExecutionPhase.Idle
+                or SessionExecutionPhase.TurnFailed
+            )) {
+            throw new InvalidDataException(
+                $"{ev.Kind} at {ev.Address} must appear only at a setup, idle, or failed suffix boundary."
+            );
+        }
     }
 
     internal static SessionRequestArtifactContextSnapshot AggregateContextSnapshots(
@@ -581,7 +741,8 @@ internal static class SessionTailContextProjection {
         SessionGoverningSetup GoverningSetup,
         IReadOnlyList<IHistoryMessage> Context,
         string? ActiveCorrelationId,
-        long ToolExecutionSequenceCheckpoint
+        long ToolExecutionSequenceCheckpoint,
+        SessionExecutionPhase Phase
     );
 
     private sealed record TargetContribution(

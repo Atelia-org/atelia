@@ -81,6 +81,13 @@ public sealed record SessionRuntime(
     SessionToolRuntimeIdentity? ToolRuntimeIdentity = null
 );
 
+/// <summary>
+/// Exact produced-artifact ids selected by the caller as one coherent request-context set.
+/// SessionJournal treats membership as an upstream assertion; it does not infer semantic roles
+/// from artifact kind, target path, producer dependencies, or <c>InputArtifacts</c>. Planning
+/// still verifies exact availability, unique targets, common coverage/setup, and current lineage.
+/// A durable semantic ArtifactSet policy is intentionally deferred to a later raw contract.
+/// </summary>
 public sealed record SessionTailProjectionOptions {
     public SessionTailProjectionOptions(params string[] artifactIds) {
         ArgumentNullException.ThrowIfNull(artifactIds);
