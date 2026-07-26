@@ -1,6 +1,6 @@
 # CS-3D6：Coherent-only Request Manifest 化简计划
 
-> **状态**：Implementation in progress / D6A、D6B 已实施
+> **状态**：Implementation in progress / D6A、D6B、D6C1 已实施
 > **日期**：2026-07-27
 > **前置基线**：[Tail-only Execution Recovery Design](tail-execution-recovery-design.md)
 > **来源调研**：[Tail Execution Recovery 化简调研](tail-execution-recovery-simplification-study.md)
@@ -45,7 +45,7 @@ production branch 本身，而是：
 
 ### 1.1 当前生产事实
 
-当前 `SessionJournalEngine` 已经把 `RequireActiveArtifactSet` 作为默认 runtime policy；它会：
+当前 `SessionJournalEngine` 已经只有 coherent artifact-tail online writer；它会：
 
 1. 从 completion boundary 解析 exact governing setup；
 2. 找到 durable `ArtifactSetCommitted`；
@@ -54,10 +54,9 @@ production branch 本身，而是：
 5. 将 artifact snapshots、raw range、tools、setup 与 target 写入 Prepared；
 6. Prepared 后即使 sidecar 被删除，也能从 committed manifest exact reopen。
 
-`explicit-artifact-tail` 已没有 online writer，只剩 codec/reconstructor 的旧请求读取分支。
-`LegacyFullRaw` 只有显式 runtime opt-in 才会产生；仓库中没有 SessionJournal 以外的 production caller
-使用它。默认 coherent 路径已经覆盖 Observation completion、ToolResult continuation、visible tools、
-Prepared reopen 与长冷前缀 bounded-read 验收。
+`explicit-artifact-tail` 与 `full-raw` 都已没有 online writer，只剩 D6D 前
+codec/reconstructor 的旧请求读取分支。coherent 路径覆盖 Observation completion、ToolResult
+continuation、visible tools、Prepared reopen 与长冷前缀 bounded-read 验收。
 
 ### 1.2 ArtifactSet 是运行前置条件，不是可选优化
 
@@ -409,8 +408,8 @@ unsupported schema，而不是普通 corruption 或 full replay fallback。
 清理留到 D6E。已经在 D6B 迁为 coherent 的通用测试继续保留。
 
 暂时保留旧 full-raw/explicit decoder 和 reconstructor，仅作为 D6D 前的过渡只读能力；任何新 writer
-均不得产生它们。这个过渡状态只能持续到下一个工作包，文档不得把它描述为长期 compatibility
-承诺。
+均不得产生它们。这个过渡状态只持续到 D6D wire cutover，文档不得把它描述为长期 compatibility
+承诺；D6C2 只建立 per-kind schema plumbing，不扩大或续期 legacy reader。
 
 保留：
 
@@ -418,6 +417,21 @@ unsupported schema，而不是普通 corruption 或 full replay fallback。
 - `SessionReducer` full semantics；
 - OfflineValidator 的 full oracle；
 - full replay CLI/maintainer 能力。
+
+**D6C1 实施记录（2026-07-27）**
+
+- `SessionRuntime` 已删除 request-context policy selector；online `SendAsync()` 与
+  AwaitingAgentAction completion routing 现在无条件走 active ArtifactSet readiness 与 coherent
+  artifact-tail materialization。
+- live full-raw writer、`MaterializeFullRawRequestContext()`、其 request-context record 和仅服务于
+  该 writer 的 raw-range hasher 已删除；public `Project()` / `ReplayHistory()` 不变。
+- 通用 Prepared recovery、offline historical Prepared corruption 与 failed-boundary causality
+  fixtures 已改为现场提交 coherent activation；Prepared exact reopen 仍只依赖 committed manifest
+  的 inline contribution，Prepared 后删除 sidecar 继续可恢复。
+- D6D 前暂留 full-raw / explicit policy constants、codec 与 reconstructor reader branches，明确只是
+  historical Prepared 的过渡只读面；本切片未改 event schema、Prepared shape 或 canonical bytes。
+- 验证证据：相关 recovery/offline/tail focused tests `45/45`、`SessionJournal.Tests`
+  `206/206`、`ChatSession.BacktestCli.Tests` `35/35`；Backtest CLI build 为 0 warning。
 
 #### D6C2：per-kind body schema plumbing
 

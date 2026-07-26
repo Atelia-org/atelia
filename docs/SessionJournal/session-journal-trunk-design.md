@@ -267,7 +267,6 @@ public sealed record SessionRuntime(
     ToolSession? ToolSession,
     SessionCompletionTargetIdentity? CompletionTarget,
     int? MaxTokens,
-    SessionRequestContextPolicy RequestContextPolicy,
     SessionPreparedCompletionRecoveryPolicy PreparedCompletionRecoveryPolicy,
     SessionToolRuntimeIdentity? ToolRuntimeIdentity
 );
@@ -334,9 +333,9 @@ result 都是非法 raw chain，fail-fast 且不递增 execution sequence。
   Observation 与 fully-settled ToolResult 共用 coherent set + dependency-closed suffix projector；
   visible definitions 与 tool implementation/capability identity 一并固定。
 - CS-3D5 新增 raw kind 12 `ArtifactSetCommitted`，原子保存 policy、common anchor、coverage/current
-  setup refs 与 canonical role members。`SessionRuntime` 默认 `RequireActiveArtifactSet`，online
-  planner 从 activation 或近头 Prepared exact reference 恢复 active ids；只有显式 `LegacyFullRaw`
-  才允许 live root-to-head request materialization。
+  setup refs 与 canonical role members。D6C1 后 `SessionRuntime` 不再暴露 request-context policy；
+  online planner 只从 activation 或近头 Prepared exact reference 恢复 active ids，不再存在 live
+  root-to-head request materialization。
 - offline `validate-session-journal` 负责 strict full validation/full-vs-tail differential，
   `checkpoint-artifact-set-session-journal` 只追加一条 activation；legacy export 继续通过
   `import-session-journal` 写入新 current-wire repo，不原地改旧 raw。

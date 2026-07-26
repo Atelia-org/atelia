@@ -166,14 +166,17 @@ public sealed class SessionJournalOfflineValidatorTests : IDisposable {
                     "test",
                     "offline-validation-v1",
                     "offline-adapter-v1"
-                ),
-                RequestContextPolicy:
-                    SessionRequestContextPolicy.LegacyFullRaw
+                )
             ),
             new SessionJournalTestHooks(
                 SessionJournalFailpoint.AfterRequestPreparedCommitted
             )
         )) {
+            await CoherentArtifactSetTestFixture.ActivateAtCurrentHeadAsync(
+                path,
+                engine,
+                fixtureId: "offline-validator-historical-prepared"
+            );
             await Assert.ThrowsAsync<SessionJournalFailpointException>(
                 () => engine.SendAsync(
                     "prepared corruption",

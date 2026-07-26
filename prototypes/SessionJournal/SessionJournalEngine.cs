@@ -167,13 +167,10 @@ public sealed class SessionJournalEngine : IDisposable {
         ThrowIfDisposed();
         SessionRuntime runtime = RequireRuntime();
         ValidateRequired(observation, nameof(observation));
-        if (runtime.RequestContextPolicy ==
-            SessionRequestContextPolicy.RequireActiveArtifactSet) {
-            ImmutableArray<ToolDefinition> visibleTools =
-                runtime.ToolSession?.VisibleDefinitions ?? ImmutableArray<ToolDefinition>.Empty;
-            if (!visibleTools.IsEmpty) {
-                _ = RequireToolRuntimeIdentity(runtime, visibleTools);
-            }
+        ImmutableArray<ToolDefinition> visibleTools =
+            runtime.ToolSession?.VisibleDefinitions ?? ImmutableArray<ToolDefinition>.Empty;
+        if (!visibleTools.IsEmpty) {
+            _ = RequireToolRuntimeIdentity(runtime, visibleTools);
         }
 
         SessionExecutionRecovery recovery = ResolveExecutionTail(
@@ -187,16 +184,13 @@ public sealed class SessionJournalEngine : IDisposable {
                 $"SendAsync requires an idle or explicitly failed turn boundary. Current phase is '{recovery.State.Phase}'; call ResumeAsync first."
             );
         }
-        if (runtime.RequestContextPolicy ==
-            SessionRequestContextPolicy.RequireActiveArtifactSet) {
-            _ = await EnsureActiveArtifactSetReadyAsync(
-                recovery.Head
-                    ?? throw new InvalidDataException(
-                        "Active artifact-set policy requires a raw session head."
-                    ),
-                cancellationToken
-            ).ConfigureAwait(false);
-        }
+        _ = await EnsureActiveArtifactSetReadyAsync(
+            recovery.Head
+                ?? throw new InvalidDataException(
+                    "Active artifact-set policy requires a raw session head."
+                ),
+            cancellationToken
+        ).ConfigureAwait(false);
         EventAddress observationAddress = AppendExpected(
             SessionEventKind.ObservationAccepted,
             new ObservationAcceptedBody(observation),
@@ -644,7 +638,7 @@ public sealed class SessionJournalEngine : IDisposable {
         CompletionStreamObserver? observer,
         CancellationToken cancellationToken
     ) {
-        if (recovery.Head is not { } expectedParent
+        if (recovery.Head is null
             || recovery.State.Phase !=
                 SessionExecutionPhase.AwaitingAgentAction) {
             throw new InvalidOperationException(
@@ -652,159 +646,12 @@ public sealed class SessionJournalEngine : IDisposable {
             );
         }
         SessionRuntime runtime = RequireRuntime();
-        if (runtime.RequestContextPolicy ==
-            SessionRequestContextPolicy.RequireActiveArtifactSet) {
-            return await CompleteArtifactTailAsync(
-                runtime,
-                recovery,
-                observer,
-                cancellationToken
-            ).ConfigureAwait(false);
-        }
-        if (runtime.RequestContextPolicy
-            != SessionRequestContextPolicy.LegacyFullRaw) {
-            throw new NotSupportedException(
-                $"Unsupported request context policy '{runtime.RequestContextPolicy}'."
-            );
-        }
-        FullRawRequestContext fullRaw = MaterializeFullRawRequestContext(
+        return await CompleteArtifactTailAsync(
+            runtime,
             recovery,
-            runtime,
-            cancellationToken
-        );
-        CommittedCompletionResult committed =
-            await ExecutePreparedCompletionAsync(
-            fullRaw.Request,
-            expectedParent,
-            fullRaw.GoverningSetup,
-            fullRaw.CompletionTarget,
-            runtime,
-            fullRaw.Tools,
-            fullRaw.Materialization,
-            fullRaw.CorrelationId,
-            fullRaw.Reason,
-            new SessionExecutionCheckpoint(
-                recovery.State.ToolExecutionSequenceCheckpoint
-            ),
-            allowResultToolCalls: !fullRaw.Tools.IsEmpty,
             observer,
             cancellationToken
         ).ConfigureAwait(false);
-
-        SessionExecutionRecovery actionRecovery = ResolveExecutionTail(
-            committed.ActionAddress,
-            cancellationToken
-        );
-        if (actionRecovery.State.Phase ==
-            SessionExecutionPhase.AwaitingToolExecution) {
-            return await ContinueToolLoopAsync(
-                actionRecovery,
-                observer,
-                cancellationToken
-            ).ConfigureAwait(false);
-        }
-        if (actionRecovery.State.Phase != SessionExecutionPhase.Idle) {
-            throw new InvalidDataException(
-                $"Committed terminal Action resolved to unexpected phase '{actionRecovery.State.Phase}'."
-            );
-        }
-
-        return new TurnResult(
-            committed.Result.Message,
-            committed.Result.Invocation,
-            FreezeErrors(committed.Result.Errors)
-        );
-    }
-
-    private FullRawRequestContext MaterializeFullRawRequestContext(
-        SessionExecutionRecovery recovery,
-        SessionRuntime runtime,
-        CancellationToken cancellationToken
-    ) {
-        SessionProjection projection = Project(cancellationToken);
-        if (projection.Head != recovery.Head
-            || projection.ExecutionState != recovery.State) {
-            throw new InvalidDataException(
-                "Full-raw request projection does not match the exact execution recovery boundary."
-            );
-        }
-        SessionRuntimeConfiguration config = projection.Config
-            ?? throw new InvalidDataException(
-                "SessionJournal projection is missing session configuration."
-            );
-        string systemPrompt = projection.SystemPrompt
-            ?? throw new InvalidDataException(
-                "SessionJournal projection is missing system prompt."
-            );
-        SessionCompletionTargetIdentity completionTarget =
-            runtime.CompletionTarget
-            ?? throw new InvalidOperationException(
-                "SessionJournal runtime requires non-secret CompletionTarget identity before a durable completion request can be prepared."
-            );
-        ImmutableArray<ToolDefinition> tools =
-            runtime.ToolSession?.VisibleDefinitions
-            ?? ImmutableArray<ToolDefinition>.Empty;
-        EventAddress expectedParent = recovery.Head
-            ?? throw new InvalidDataException(
-                "AwaitingAgentAction recovery requires a raw head."
-            );
-        SessionGoverningSetup governingSetup =
-            EnsureGoverningSetupCursor(
-                expectedParent,
-                cancellationToken
-            );
-        if (governingSetup.RuntimeConfig != config
-            || !string.Equals(
-                governingSetup.SystemPrompt,
-                systemPrompt,
-                StringComparison.Ordinal
-            )) {
-            throw new InvalidDataException(
-                "Governing setup cursor does not match the exact current projection."
-            );
-        }
-
-        _lastTailProjectionDiagnostics = default;
-        var materialization = new RequestContextMaterialization(
-            systemPrompt,
-            projection.Context,
-            SessionRequestManifestDefaults.FullRawSelectionPolicyId,
-            SessionRequestManifestDefaults.FullRawPlannerFingerprint,
-            SessionRequestManifestDefaults.FullRawRenderingProfileId,
-            SessionRequestManifestDefaults.FullRawContextRendererId,
-            SessionRequestManifestDefaults.FullRawContextRendererFingerprint,
-            RawStartExclusive: null,
-            ComputeRawRangeSha256(
-                rawStartExclusive: null,
-                expectedParent,
-                cancellationToken
-            ),
-            ImmutableArray<SessionRequestArtifactInput>.Empty
-        );
-        var request = new CompletionRequest(
-            ModelId: config.ModelId,
-            SystemPrompt: materialization.SystemPrompt,
-            Context: materialization.Context,
-            Tools: tools,
-            MaxTokens: runtime.MaxTokens
-        );
-        string correlationId = recovery.State.ActiveCorrelationId
-            ?? throw new InvalidDataException(
-                "AwaitingAgentAction requires an active correlation id."
-            );
-        string reason = recovery.State.HeadKind ==
-            SessionEventKind.ToolResultObserved
-                ? "tool-continuation"
-                : "observation";
-        return new FullRawRequestContext(
-            request,
-            governingSetup,
-            completionTarget,
-            tools,
-            materialization,
-            correlationId,
-            reason
-        );
     }
 
     private async Task<TurnResult> CompleteArtifactTailAsync(
@@ -1840,61 +1687,6 @@ public sealed class SessionJournalEngine : IDisposable {
         }
     }
 
-    internal string ComputeRawRangeSha256ForTest(EventAddress rawEndInclusive)
-        => ComputeRawRangeSha256(rawStartExclusive: null, rawEndInclusive, CancellationToken.None);
-
-    private string ComputeRawRangeSha256(
-        EventAddress? rawStartExclusive,
-        EventAddress rawEndInclusive,
-        CancellationToken cancellationToken
-    ) {
-        IReadOnlyList<EventAddress> chain;
-        if (rawStartExclusive is null) {
-            chain = _reader.ReadChronologicalChain(
-                rawEndInclusive,
-                checkedRead: true,
-                cancellationToken: cancellationToken
-            ).Unwrap();
-        }
-        else {
-            var reverse = new List<EventAddress>();
-            EventAddress? cursor = rawEndInclusive;
-            while (cursor is { } address && address != rawStartExclusive.Value) {
-                cancellationToken.ThrowIfCancellationRequested();
-                reverse.Add(address);
-                EventFrameHeader header = _reader.ReadEventHeaderPreview(address).Unwrap();
-                ValidateSessionHeaderPreview(address, header);
-                cursor = header.Parent;
-            }
-            if (cursor != rawStartExclusive) {
-                throw new InvalidDataException("rawStartExclusive is not an ancestor of rawEndInclusive.");
-            }
-            reverse.Reverse();
-            chain = reverse;
-        }
-        var entries = new List<SessionRawRangeHashEntry>(chain.Count);
-        foreach (EventAddress address in chain) {
-            cancellationToken.ThrowIfCancellationRequested();
-            using SessionJournalEventFrame frame = _reader.ReadEvent(address).Unwrap();
-            ValidateSessionHeaderPreview(address, frame.Header);
-            var kind = (SessionEventKind)frame.Header.OpaqueEventKind;
-            _ = SessionEventCodec.Decode(kind, frame.Payload, out int bodySchemaVersion);
-            entries.Add(new SessionRawRangeHashEntry(
-                address,
-                frame.Header.Parent,
-                frame.Header.OpaqueEventKind,
-                bodySchemaVersion,
-                SessionRequestCanonicalizer.Sha256Hex(frame.Payload)
-            ));
-        }
-
-        return SessionRawRangeHasher.Compute(
-            rawStartExclusive,
-            rawEndInclusive,
-            entries
-        );
-    }
-
     private EventAddress Append(SessionEventKind kind, object body) {
         ThrowIfDisposed();
         EventAddress? expectedHead = _journal.GetHead(_mainRef);
@@ -2139,16 +1931,6 @@ public sealed class SessionJournalEngine : IDisposable {
     private sealed record ReadyActiveArtifactSet(
         SessionActiveArtifactSet Active,
         ImmutableArray<DerivedRecapArtifact> Artifacts
-    );
-
-    private sealed record FullRawRequestContext(
-        CompletionRequest Request,
-        SessionGoverningSetup GoverningSetup,
-        SessionCompletionTargetIdentity CompletionTarget,
-        ImmutableArray<ToolDefinition> Tools,
-        RequestContextMaterialization Materialization,
-        string CorrelationId,
-        string Reason
     );
 
     private sealed record CommittedCompletionResult(

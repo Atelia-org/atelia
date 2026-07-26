@@ -530,10 +530,10 @@ runtime identity 和 capability policy 通过后才能产生外部调用。
 
 - routing-only phase 的 `FullProjectionInvocationCount` 保持不变；artifact-tail Observation
   completion 仍为 0。
-- legacy `full-raw` 每个新 provider request 允许且只允许一次明确的 `Project()` 作为 Context
-  materialization；不能把 reducer 内联/改名来伪造计数为 0。
-- 10k+ 冷历史前缀不增加 execution recovery payload reads；旧 full-raw request/reconstruction
-  仍可按其合同读取全 raw。
+- online provider request 的 `FullProjectionInvocationCount` 保持为 0；public audit projection 仍按
+  调用显式计数。
+- 10k+ 冷历史前缀不增加 execution recovery payload reads；D6D 前 historical full-raw
+  Prepared reconstruction 仍可按其只读合同读取全 raw。
 - exact-head CAS/failpoint 行为与原实现一致。
 
 实际落点：
@@ -541,10 +541,9 @@ runtime identity 和 capability policy 通过后才能产生外部调用。
 - `SendAsync()`、`ResumeAsync()`、setup mutation 与 imported Action append 统一从 current-head
   `ResolveExecutionTail()` 获取 phase/state；mutation 均以 `recovery.Head` 作为
   `AppendExpected` parent。
-- `CompleteAwaitingAgentActionAsync(recovery)` 是唯一 completion routing 入口。artifact-tail 目前只
-  接受 Observation；settled ToolResult 明确报 D4 尚未实现。legacy full-raw 经命名明确的
-  `MaterializeFullRawRequestContext()` 调用一次 public `Project()`，并要求 full projection 的
-  exact head/state 与 recovery 一致。
+- `CompleteAwaitingAgentActionAsync(recovery)` 是唯一 completion routing 入口，并直接进入 coherent
+  artifact-tail；Observation 与 dependency-closed ToolResult continuation 均不调用 `Project()`。
+  D6C1 已删除 live full-raw routing 与 `MaterializeFullRawRequestContext()`。
 - completion helper 返回 committed `ActionAddress`；普通 completion 与 Prepared restart 都从该
   exact address 重新 resolve。若 Action 含 tools，同一次 driver 调用继续进入 tool loop。
 - tool Started/Result 分别以旧 recovery head / exact Started address 做 CAS append；每次 append 后
@@ -680,10 +679,10 @@ dependency/lineage，不等价于 active-set membership，不能拿它猜后一�
   activation 的 current refs 取得 governing setup；artifact projector 从 coverage refs 直接取得
   anchor seed。两者都验证 kind/schema/payload hash，消除了“setup 长期不变时每轮回溯到 root”的隐藏
   O(history)。
-- `SessionRuntime` 默认 `RequireActiveArtifactSet`；缺 activation/member 时在 append
-  Prepared/provider 前 fail-fast，绝不静默 full replay。只有显式
-  `SessionRequestContextPolicy.LegacyFullRaw` 才生成 live full-raw request；public `Project()` /
-  `ReplayHistory()` 与 committed full-raw reconstruction 仍保留完整审计语义。
+- `SessionRuntime` 不再暴露 request-context policy selector；online writer 只有 coherent
+  artifact-tail。缺 activation/member 时在 append Observation/Prepared/provider 前 fail-fast，绝不
+  静默 full replay。public `Project()` / `ReplayHistory()` 仍保留完整审计语义；D6D 前 committed
+  full-raw/explicit Prepared reader 仅作为过渡历史读取面保留，不存在对应 live writer。
 - 本次为 breaking wire upgrade：`SessionContextPlan` 现在显式保存 nullable
   `activeArtifactSet`，新 coherent plans 要求非空 reference。旧实验 journal 若包含早期 Prepared
   bytes，必须走离线重建/版本化迁移，不能用缺省字段猜测过去；仅含 current imported raw facts 的 repo

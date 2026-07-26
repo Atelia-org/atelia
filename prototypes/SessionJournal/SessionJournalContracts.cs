@@ -71,18 +71,11 @@ public enum SessionPreparedCompletionRecoveryPolicy {
     RestartWithNewAttempt,
 }
 
-public enum SessionRequestContextPolicy {
-    RequireActiveArtifactSet,
-    LegacyFullRaw,
-}
-
 public sealed record SessionRuntime(
     ICompletionClient CompletionClient,
     ToolSession? ToolSession = null,
     SessionCompletionTargetIdentity? CompletionTarget = null,
     int? MaxTokens = null,
-    SessionRequestContextPolicy RequestContextPolicy =
-        SessionRequestContextPolicy.RequireActiveArtifactSet,
     SessionPreparedCompletionRecoveryPolicy PreparedCompletionRecoveryPolicy =
         SessionPreparedCompletionRecoveryPolicy.RefuseUncertain,
     SessionToolRuntimeIdentity? ToolRuntimeIdentity = null

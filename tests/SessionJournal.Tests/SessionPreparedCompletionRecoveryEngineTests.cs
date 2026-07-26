@@ -521,11 +521,7 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
         var sourceClient = new ScriptedClient();
         using (var source = SessionJournalEngine.OpenForTest(
             path,
-            CreateRuntime(
-                sourceClient,
-                requestContextPolicy:
-                    SessionRequestContextPolicy.RequireActiveArtifactSet
-            ),
+            CreateRuntime(sourceClient),
             new SessionJournalTestHooks(SessionJournalFailpoint.AfterRequestPreparedCommitted)
         )) {
             await Assert.ThrowsAsync<SessionJournalFailpointException>(
@@ -549,9 +545,7 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
             path,
             CreateRuntime(
                 recoveryClient,
-                recoveryPolicy: SessionPreparedCompletionRecoveryPolicy.RestartWithNewAttempt,
-                requestContextPolicy:
-                    SessionRequestContextPolicy.RequireActiveArtifactSet
+                recoveryPolicy: SessionPreparedCompletionRecoveryPolicy.RestartWithNewAttempt
             )
         );
         int projectionCountBeforeResume = reopened.FullProjectionInvocationCount;
@@ -622,20 +616,14 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
             CreateRuntime(
                 client,
                 recoveryTools,
-                recoveryPolicy: SessionPreparedCompletionRecoveryPolicy.RestartWithNewAttempt,
-                requestContextPolicy:
-                    SessionRequestContextPolicy.RequireActiveArtifactSet
+                recoveryPolicy: SessionPreparedCompletionRecoveryPolicy.RestartWithNewAttempt
             )
         )) {
             ResumeOutcome recovered = await reopened.ResumeAsync(CancellationToken.None);
             Assert.Equal("recovered terminal", recovered.Message?.GetFlattenedText());
 
             client.Enqueue(request => Success(request, "next tail answer"));
-            reopened.UseRuntime(CreateRuntime(
-                client,
-                requestContextPolicy:
-                    SessionRequestContextPolicy.RequireActiveArtifactSet
-            ));
+            reopened.UseRuntime(CreateRuntime(client));
             int projectionCountBeforeTailSend = reopened.FullProjectionInvocationCount;
 
             TurnResult next = await reopened.SendAsync(
@@ -720,8 +708,6 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
         SessionCompletionTargetIdentity? target = null,
         SessionPreparedCompletionRecoveryPolicy recoveryPolicy =
             SessionPreparedCompletionRecoveryPolicy.RefuseUncertain,
-        SessionRequestContextPolicy requestContextPolicy =
-            SessionRequestContextPolicy.RequireActiveArtifactSet,
         int? maxTokens = 256,
         SessionToolRuntimeIdentity? toolRuntimeIdentity = null
     ) => new(
@@ -729,7 +715,6 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
         ToolSession: tools,
         CompletionTarget: target ?? DefaultTarget,
         MaxTokens: maxTokens,
-        RequestContextPolicy: requestContextPolicy,
         PreparedCompletionRecoveryPolicy: recoveryPolicy,
         ToolRuntimeIdentity: toolRuntimeIdentity ?? ToolRuntimeIdentity
     );

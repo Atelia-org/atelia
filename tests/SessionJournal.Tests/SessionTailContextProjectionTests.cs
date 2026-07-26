@@ -1148,9 +1148,14 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
         using (var engine = SessionJournalEngine.CreateForTest(
             path,
             new SessionCreateOptions("model-A", "system-A", "surface-A"),
-            CreateFullRuntime(sourceClient),
+            CreateRuntime(sourceClient, "unused"),
             new SessionJournalTestHooks(SessionJournalFailpoint.AfterRequestPreparedCommitted)
         )) {
+            await CoherentArtifactSetTestFixture.ActivateAtCurrentHeadAsync(
+                path,
+                engine,
+                fixtureId: "failed-boundary-attempt-mismatch"
+            );
             await Assert.ThrowsAsync<SessionJournalFailpointException>(
                 () => engine.SendAsync("source observation", CancellationToken.None)
             );
@@ -1573,20 +1578,6 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
         ),
         MaxTokens: 512
     );
-
-    private static SessionRuntime CreateFullRuntime(CapturingCompletionClient client)
-        => new(
-            CompletionClient: client,
-            ToolSession: null,
-            CompletionTarget: new SessionCompletionTargetIdentity(
-                "tail-connection",
-                "test",
-                "tail-connection-v1",
-                "tail-adapter-v1"
-            ),
-            MaxTokens: 512,
-            RequestContextPolicy: SessionRequestContextPolicy.LegacyFullRaw
-        );
 
     private static SessionArtifactSetMemberSelection[] Selections(
         TestArtifactSet artifact
