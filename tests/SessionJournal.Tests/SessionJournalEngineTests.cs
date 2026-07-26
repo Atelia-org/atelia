@@ -2039,6 +2039,7 @@ public sealed class SessionJournalEngineTests : IDisposable {
             RequestAdapterFingerprint: "test-request-adapter-v1"
         ),
         maxTokens,
+        RequestContextPolicy: SessionRequestContextPolicy.LegacyFullRaw,
         ToolRuntimeIdentity: toolRuntimeIdentity ?? ToolRuntimeIdentity
     );
 

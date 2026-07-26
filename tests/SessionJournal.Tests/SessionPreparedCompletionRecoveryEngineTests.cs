@@ -511,13 +511,15 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
                 anchor,
                 setup.ResolveGoverningSetup(anchor)
             );
+            await setup.CommitArtifactSetAsync(Selections(artifact));
         }
         var sourceClient = new ScriptedClient();
         using (var source = SessionJournalEngine.OpenForTest(
             path,
             CreateRuntime(
                 sourceClient,
-                tailProjection: TailOptions(artifact)
+                requestContextPolicy:
+                    SessionRequestContextPolicy.RequireActiveArtifactSet
             ),
             new SessionJournalTestHooks(SessionJournalFailpoint.AfterRequestPreparedCommitted)
         )) {
@@ -543,7 +545,8 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
             CreateRuntime(
                 recoveryClient,
                 recoveryPolicy: SessionPreparedCompletionRecoveryPolicy.RestartWithNewAttempt,
-                tailProjection: TailOptions(artifact)
+                requestContextPolicy:
+                    SessionRequestContextPolicy.RequireActiveArtifactSet
             )
         );
         int projectionCountBeforeResume = reopened.FullProjectionInvocationCount;
@@ -573,6 +576,7 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
                 anchor,
                 setup.ResolveGoverningSetup(anchor)
             );
+            await setup.CommitArtifactSetAsync(Selections(artifact));
         }
 
         var tool = new RecordingTool("lookup");
@@ -614,7 +618,8 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
                 client,
                 recoveryTools,
                 recoveryPolicy: SessionPreparedCompletionRecoveryPolicy.RestartWithNewAttempt,
-                tailProjection: TailOptions(artifact)
+                requestContextPolicy:
+                    SessionRequestContextPolicy.RequireActiveArtifactSet
             )
         )) {
             ResumeOutcome recovered = await reopened.ResumeAsync(CancellationToken.None);
@@ -623,7 +628,8 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
             client.Enqueue(request => Success(request, "next tail answer"));
             reopened.UseRuntime(CreateRuntime(
                 client,
-                tailProjection: TailOptions(artifact)
+                requestContextPolicy:
+                    SessionRequestContextPolicy.RequireActiveArtifactSet
             ));
             int projectionCountBeforeTailSend = reopened.FullProjectionInvocationCount;
 
@@ -704,7 +710,8 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
         SessionCompletionTargetIdentity? target = null,
         SessionPreparedCompletionRecoveryPolicy recoveryPolicy =
             SessionPreparedCompletionRecoveryPolicy.RefuseUncertain,
-        SessionTailProjectionOptions? tailProjection = null,
+        SessionRequestContextPolicy requestContextPolicy =
+            SessionRequestContextPolicy.LegacyFullRaw,
         int? maxTokens = 256,
         SessionToolRuntimeIdentity? toolRuntimeIdentity = null
     ) => new(
@@ -712,7 +719,7 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
         ToolSession: tools,
         CompletionTarget: target ?? DefaultTarget,
         MaxTokens: maxTokens,
-        TailProjection: tailProjection,
+        RequestContextPolicy: requestContextPolicy,
         PreparedCompletionRecoveryPolicy: recoveryPolicy,
         ToolRuntimeIdentity: toolRuntimeIdentity ?? ToolRuntimeIdentity
     );
@@ -787,12 +794,15 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
         );
     }
 
-    private static SessionTailProjectionOptions TailOptions(
+    private static SessionArtifactSetMemberSelection[] Selections(
         TestArtifactSet artifact
-    ) => new(
-        artifact.WorldUnderstanding.ArtifactId,
-        artifact.Autobiography.ArtifactId
-    );
+    ) => [
+        new(
+            "world-understanding",
+            artifact.WorldUnderstanding.ArtifactId
+        ),
+        new("autobiography", artifact.Autobiography.ArtifactId)
+    ];
 
     private sealed record TestArtifactSet(
         DerivedRecapArtifact WorldUnderstanding,

@@ -66,9 +66,24 @@ internal static class SessionReducer {
                     activeCorrelationId = null;
                     break;
                 }
+                case SessionEventKind.ArtifactSetCommitted: {
+                    EnsureSessionCreated(ev, sessionCreated);
+                    EnsureSetupBoundary(
+                        ev,
+                        headKind,
+                        openAction,
+                        pendingToolCall,
+                        pendingOperationId,
+                        pendingToolExecutionStarted,
+                        pendingRequestPreparedAddress
+                    );
+                    _ = RequireBody<ArtifactSetCommittedBody>(ev);
+                    activeCorrelationId = null;
+                    break;
+                }
                 case SessionEventKind.ObservationAccepted: {
                     EnsureSessionCreated(ev, sessionCreated);
-                    if (headKind is not (SessionEventKind.SessionCreated or SessionEventKind.RuntimeConfigSetup or SessionEventKind.SystemPromptSetup)
+                    if (headKind is not (SessionEventKind.SessionCreated or SessionEventKind.RuntimeConfigSetup or SessionEventKind.SystemPromptSetup or SessionEventKind.ArtifactSetCommitted)
                         && !(headKind == SessionEventKind.AgentActionProduced && openAction is null)
                         && !(headKind == SessionEventKind.ImportedAgentAction && openAction is null)
                         && headKind != SessionEventKind.CompletionAttemptFailed) {
@@ -400,6 +415,11 @@ internal static class SessionReducer {
             SessionEventKind.RuntimeConfigSetup => DeriveSetupState(headKind.Value, sessionCreated, toolExecutionSequenceCheckpoint),
             SessionEventKind.SystemPromptSetup => DeriveSetupState(headKind.Value, sessionCreated, toolExecutionSequenceCheckpoint),
             SessionEventKind.SessionCreated => new SessionExecutionState(SessionExecutionPhase.Idle, headKind),
+            SessionEventKind.ArtifactSetCommitted => new SessionExecutionState(
+                SessionExecutionPhase.Idle,
+                headKind,
+                ToolExecutionSequenceCheckpoint: toolExecutionSequenceCheckpoint
+            ),
             SessionEventKind.ObservationAccepted => new SessionExecutionState(
                 SessionExecutionPhase.AwaitingAgentAction,
                 headKind,
@@ -536,7 +556,7 @@ internal static class SessionReducer {
             && pendingOperationId is null
             && !pendingToolExecutionStarted
             && pendingRequestPreparedAddress is null;
-        bool isSetupOrIdle = headKind is null or SessionEventKind.RuntimeConfigSetup or SessionEventKind.SystemPromptSetup or SessionEventKind.SessionCreated
+        bool isSetupOrIdle = headKind is null or SessionEventKind.RuntimeConfigSetup or SessionEventKind.SystemPromptSetup or SessionEventKind.SessionCreated or SessionEventKind.ArtifactSetCommitted
             or SessionEventKind.CompletionAttemptFailed
             || headKind is SessionEventKind.AgentActionProduced or SessionEventKind.ImportedAgentAction
                 && hasNoPendingAction;

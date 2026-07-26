@@ -2,6 +2,7 @@ using System.Collections.Immutable;
 using Atelia.Completion.Abstractions;
 using Atelia.Completion.Tools;
 using Atelia.EventJournal;
+using Atelia.SessionJournal.Derived;
 
 namespace Atelia.SessionJournal;
 
@@ -161,7 +162,8 @@ public sealed class SessionJournalEngine : IDisposable {
     ) {
         ThrowIfDisposed();
         ValidateRequired(observation, nameof(observation));
-        if (_runtime?.TailProjection is not null) {
+        if (_runtime?.RequestContextPolicy ==
+            SessionRequestContextPolicy.RequireActiveArtifactSet) {
             SessionRuntime runtime = RequireRuntime();
             ImmutableArray<ToolDefinition> visibleTools =
                 runtime.ToolSession?.VisibleDefinitions ?? ImmutableArray<ToolDefinition>.Empty;
@@ -179,6 +181,16 @@ public sealed class SessionJournalEngine : IDisposable {
         )) {
             throw new InvalidOperationException(
                 $"SendAsync requires an idle or explicitly failed turn boundary. Current phase is '{recovery.State.Phase}'; call ResumeAsync first."
+            );
+        }
+        if (_runtime?.RequestContextPolicy ==
+            SessionRequestContextPolicy.RequireActiveArtifactSet) {
+            _ = ResolveActiveArtifactSet(
+                recovery.Head
+                    ?? throw new InvalidDataException(
+                        "Active artifact-set policy requires a raw session head."
+                    ),
+                cancellationToken
             );
         }
         EventAddress observationAddress = AppendExpected(
@@ -240,6 +252,129 @@ public sealed class SessionJournalEngine : IDisposable {
     public EventAddress AppendObservation(string content) {
         ValidateRequired(content, nameof(content));
         return Append(SessionEventKind.ObservationAccepted, new ObservationAcceptedBody(content));
+    }
+
+    public async ValueTask<EventAddress> CommitArtifactSetAsync(
+        IReadOnlyList<SessionArtifactSetMemberSelection> members,
+        CancellationToken cancellationToken = default
+    ) {
+        ThrowIfDisposed();
+        ArgumentNullException.ThrowIfNull(members);
+        if (members.Count < 2) {
+            throw new ArgumentException(
+                "An active artifact set requires at least two exact members.",
+                nameof(members)
+            );
+        }
+        SessionExecutionRecovery recovery = ResolveExecutionTail(cancellationToken);
+        if (recovery.Head is not { } expectedHead
+            || recovery.State.Phase != SessionExecutionPhase.Idle) {
+            throw new InvalidOperationException(
+                "ArtifactSetCommitted requires an exact idle SessionJournal head."
+            );
+        }
+        var roles = new HashSet<string>(StringComparer.Ordinal);
+        var artifactIds = new HashSet<string>(StringComparer.Ordinal);
+        foreach (SessionArtifactSetMemberSelection member in members) {
+            ValidateRequired(member.RoleId, nameof(member.RoleId));
+            ValidateRequired(member.ArtifactId, nameof(member.ArtifactId));
+            if (!roles.Add(member.RoleId) || !artifactIds.Add(member.ArtifactId)) {
+                throw new ArgumentException(
+                    "Artifact set roles and exact artifact ids must be unique.",
+                    nameof(members)
+                );
+            }
+        }
+
+        DerivedRecapStore store = DerivedRecapStore.Open(Path);
+        var artifacts = new List<(string RoleId, DerivedRecapArtifact Artifact)>(
+            members.Count
+        );
+        foreach (SessionArtifactSetMemberSelection member in members) {
+            DerivedRecapArtifact artifact = await store
+                .TryReadArtifactAsync(member.ArtifactId, cancellationToken)
+                .ConfigureAwait(false)
+                ?? throw new InvalidDataException(
+                    $"Exact artifact '{member.ArtifactId}' was not found or is unusable."
+                );
+            artifacts.Add((member.RoleId, artifact));
+        }
+        EventAddress commonAnchor = artifacts[0].Artifact.AnchorRawEvent;
+        if (artifacts.Any(item =>
+                item.Artifact.AnchorRawEvent != commonAnchor
+                || item.Artifact.SourceEndInclusive != commonAnchor)) {
+            throw new InvalidDataException(
+                "Active artifact-set members require one common exact coverage anchor."
+            );
+        }
+        var targets = new HashSet<(MemoryPackCarrier Carrier, string BlockKey)>();
+        foreach ((_, DerivedRecapArtifact artifact) in artifacts) {
+            if (!targets.Add((
+                    artifact.Target.Carrier,
+                    artifact.Target.BlockKey
+                ))) {
+                throw new InvalidDataException(
+                    "Active artifact-set members require unique target blocks."
+                );
+            }
+        }
+        ValidateArtifactSetLineage(
+            expectedHead,
+            commonAnchor,
+            artifacts.Select(static item => item.Artifact.SourceRawHead),
+            cancellationToken
+        );
+        SessionTailContextProjection.ValidateReplaySafeBoundary(
+            _reader,
+            commonAnchor
+        );
+        SessionGoverningSetup coverageSetup =
+            ResolveGoverningSetup(commonAnchor, cancellationToken);
+        foreach ((_, DerivedRecapArtifact artifact) in artifacts) {
+            if (artifact.GoverningRuntimeConfigSetup
+                    != coverageSetup.RuntimeConfigSetupAddress
+                || artifact.GoverningSystemPromptSetup
+                    != coverageSetup.SystemPromptSetupAddress) {
+                throw new InvalidDataException(
+                    $"Artifact '{artifact.ArtifactId}' governing setup does not match the common anchor."
+                );
+            }
+        }
+        SessionGoverningSetup currentSetup = EnsureGoverningSetupCursor(
+            expectedHead,
+            cancellationToken
+        );
+        ImmutableArray<SessionArtifactSetMember> committedMembers = [
+            .. artifacts
+                .OrderBy(static item => item.RoleId, StringComparer.Ordinal)
+                .Select(static item => {
+                    SessionRequestArtifactInput input =
+                        SessionTailContextProjection.CreateArtifactInput(
+                            item.Artifact
+                        );
+                    return new SessionArtifactSetMember(
+                        item.RoleId,
+                        item.Artifact.ArtifactId,
+                        item.Artifact.ArtifactKind,
+                        item.Artifact.Target,
+                        input.ContentSha256
+                    );
+                })
+        ];
+        var body = new ArtifactSetCommittedBody(
+            SessionRequestManifestDefaults.ActiveArtifactSetPolicyId,
+            SessionRequestManifestDefaults.ActiveArtifactSetPolicyFingerprint,
+            commonAnchor,
+            CreateSetupReferences(coverageSetup),
+            CreateSetupReferences(currentSetup),
+            committedMembers
+        );
+        return AppendExpected(
+            SessionEventKind.ArtifactSetCommitted,
+            body,
+            expectedHead,
+            requireBoundSetupCursor: true
+        );
     }
 
     public EventAddress AppendRuntimeConfigSetup(SessionRuntimeConfiguration configuration) {
@@ -347,31 +482,39 @@ public sealed class SessionJournalEngine : IDisposable {
             else if (kind == SessionEventKind.SystemPromptSetup && systemPromptSetupAddress is null) {
                 systemPromptSetupAddress = address;
             }
-            else if (kind == SessionEventKind.CompletionRequestPrepared
+            else if (kind is (
+                    SessionEventKind.CompletionRequestPrepared
+                    or SessionEventKind.ArtifactSetCommitted
+                )
                 && (runtimeConfigSetupAddress is null || systemPromptSetupAddress is null)) {
                 using EventFrame manifestFrame = _reader.ReadEvent(address).Unwrap();
                 payloadReadCount++;
                 manifestPayloadReadCount++;
                 object decoded = SessionEventCodec.Decode(kind, manifestFrame.Payload, out _);
-                var manifest = decoded as CompletionRequestPreparedBody
-                    ?? throw new InvalidDataException($"completion-request-prepared at {address} decoded to '{decoded.GetType().Name}'.");
+                SessionGoverningSetupReferences setupReferences = decoded switch {
+                    CompletionRequestPreparedBody manifest => manifest.Setups,
+                    ArtifactSetCommittedBody activation => activation.CurrentSetups,
+                    _ => throw new InvalidDataException(
+                        $"setup checkpoint at {address} decoded to '{decoded.GetType().Name}'."
+                    )
+                };
 
                 if (runtimeConfigSetupAddress is null) {
                     runtimeConfig = ReadAndValidateSetupReference<SessionRuntimeConfiguration>(
-                        manifest.Setups.RuntimeConfig,
+                        setupReferences.RuntimeConfig,
                         SessionEventKind.RuntimeConfigSetup,
                         ref payloadReadCount
                     );
-                    runtimeConfigSetupAddress = manifest.Setups.RuntimeConfig.Address;
+                    runtimeConfigSetupAddress = setupReferences.RuntimeConfig.Address;
                 }
                 if (systemPromptSetupAddress is null) {
                     SystemPromptSetupBody prompt = ReadAndValidateSetupReference<SystemPromptSetupBody>(
-                        manifest.Setups.SystemPrompt,
+                        setupReferences.SystemPrompt,
                         SessionEventKind.SystemPromptSetup,
                         ref payloadReadCount
                     );
                     systemPrompt = prompt.Content;
-                    systemPromptSetupAddress = manifest.Setups.SystemPrompt.Address;
+                    systemPromptSetupAddress = setupReferences.SystemPrompt.Address;
                 }
             }
 
@@ -505,13 +648,20 @@ public sealed class SessionJournalEngine : IDisposable {
             );
         }
         SessionRuntime runtime = RequireRuntime();
-        if (runtime.TailProjection is not null) {
+        if (runtime.RequestContextPolicy ==
+            SessionRequestContextPolicy.RequireActiveArtifactSet) {
             return await CompleteArtifactTailAsync(
                 runtime,
                 recovery,
                 observer,
                 cancellationToken
             ).ConfigureAwait(false);
+        }
+        if (runtime.RequestContextPolicy
+            != SessionRequestContextPolicy.LegacyFullRaw) {
+            throw new NotSupportedException(
+                $"Unsupported request context policy '{runtime.RequestContextPolicy}'."
+            );
         }
         FullRawRequestContext fullRaw = MaterializeFullRawRequestContext(
             recovery,
@@ -687,13 +837,22 @@ public sealed class SessionJournalEngine : IDisposable {
             completionBoundary,
             cancellationToken
         );
+        SessionActiveArtifactSet activeArtifactSet = ResolveActiveArtifactSet(
+            completionBoundary,
+            cancellationToken
+        );
         SessionTailContextProjectionResult tail = await SessionTailContextProjection.MaterializeAsync(
             _reader,
             Path,
             completionBoundary,
             governingSetup,
-            runtime.TailProjection!,
-            ResolveGoverningSetup,
+            ReadSetupFromReferences(
+                activeArtifactSet.Body.CommonAnchor,
+                activeArtifactSet.Body.CoverageSetups
+            ),
+            activeArtifactSet.Body.Members
+                .Select(static member => member.ArtifactId)
+                .ToImmutableArray(),
             cancellationToken
         ).ConfigureAwait(false);
         _lastTailProjectionDiagnostics = tail.Diagnostics;
@@ -707,7 +866,8 @@ public sealed class SessionJournalEngine : IDisposable {
             SessionRequestManifestDefaults.CoherentArtifactTailContextRendererFingerprint,
             tail.RawStartExclusive,
             tail.RawRangeSha256,
-            tail.ArtifactInputs
+            tail.ArtifactInputs,
+            activeArtifactSet.Reference
         );
         var request = new CompletionRequest(
             ModelId: governingSetup.RuntimeConfig.ModelId,
@@ -1268,7 +1428,8 @@ public sealed class SessionJournalEngine : IDisposable {
                 RenderingProfileId: materialization.RenderingProfileId,
                 ModelProfileId: request.ModelId,
                 EstimatedInputTokens: checked((commitment.ByteLength + 3) / 4),
-                Reason: reason
+                Reason: reason,
+                ActiveArtifactSet: materialization.ActiveArtifactSet
             ),
             new SessionGoverningSetupReferences(
                 CreateSetupReference(governingSetup.RuntimeConfigSetupAddress, SessionEventKind.RuntimeConfigSetup),
@@ -1326,6 +1487,172 @@ public sealed class SessionJournalEngine : IDisposable {
             bodySchemaVersion,
             SessionRequestCanonicalizer.Sha256Hex(frame.Payload)
         );
+    }
+
+    private SessionGoverningSetupReferences CreateSetupReferences(
+        SessionGoverningSetup setup
+    ) => new(
+        CreateSetupReference(
+            setup.RuntimeConfigSetupAddress,
+            SessionEventKind.RuntimeConfigSetup
+        ),
+        CreateSetupReference(
+            setup.SystemPromptSetupAddress,
+            SessionEventKind.SystemPromptSetup
+        )
+    );
+
+    private SessionGoverningSetup ReadSetupFromReferences(
+        EventAddress head,
+        SessionGoverningSetupReferences references
+    ) {
+        int payloadReads = 0;
+        SessionRuntimeConfiguration runtime =
+            ReadAndValidateSetupReference<SessionRuntimeConfiguration>(
+                references.RuntimeConfig,
+                SessionEventKind.RuntimeConfigSetup,
+                ref payloadReads
+            );
+        SystemPromptSetupBody prompt =
+            ReadAndValidateSetupReference<SystemPromptSetupBody>(
+                references.SystemPrompt,
+                SessionEventKind.SystemPromptSetup,
+                ref payloadReads
+            );
+        return new SessionGoverningSetup(
+            head,
+            references.RuntimeConfig.Address,
+            runtime,
+            references.SystemPrompt.Address,
+            prompt.Content
+        );
+    }
+
+    private void ValidateArtifactSetLineage(
+        EventAddress currentHead,
+        EventAddress commonAnchor,
+        IEnumerable<EventAddress> sourceHeads,
+        CancellationToken cancellationToken
+    ) {
+        var unseen = new HashSet<EventAddress>(sourceHeads);
+        EventAddress? cursor = currentHead;
+        while (cursor is { } address) {
+            cancellationToken.ThrowIfCancellationRequested();
+            unseen.Remove(address);
+            EventFrameHeader header = _reader.ReadEventHeaderPreview(address).Unwrap();
+            ValidateSessionHeaderPreview(address, header);
+            if (address == commonAnchor) {
+                if (unseen.Count != 0) {
+                    throw new InvalidDataException(
+                        "At least one artifact sourceRawHead is off the current lineage or before the common anchor."
+                    );
+                }
+                return;
+            }
+            cursor = header.Parent;
+        }
+        throw new InvalidDataException(
+            "Artifact-set common anchor is not on the current lineage."
+        );
+    }
+
+    private SessionActiveArtifactSet ResolveActiveArtifactSet(
+        EventAddress completionBoundary,
+        CancellationToken cancellationToken
+    ) {
+        EventAddress? cursor = completionBoundary;
+        while (cursor is { } address) {
+            cancellationToken.ThrowIfCancellationRequested();
+            EventFrameHeader header =
+                _reader.ReadEventHeaderPreview(address).Unwrap();
+            ValidateSessionHeaderPreview(address, header);
+            var kind = (SessionEventKind)header.OpaqueEventKind;
+            if (kind == SessionEventKind.ArtifactSetCommitted) {
+                return ReadActiveArtifactSet(address, expectedReference: null);
+            }
+            if (kind == SessionEventKind.CompletionRequestPrepared) {
+                using EventFrame frame = _reader.ReadEvent(address).Unwrap();
+                var manifest = (CompletionRequestPreparedBody)SessionEventCodec.Decode(
+                    kind,
+                    frame.Payload,
+                    out _
+                );
+                if (manifest.Plan.ActiveArtifactSet is { } reference) {
+                    SessionActiveArtifactSet resolved =
+                        ReadActiveArtifactSet(reference.Address, reference);
+                    ValidateManifestArtifactSetAssertion(manifest, resolved.Body);
+                    return resolved;
+                }
+            }
+            if (kind == SessionEventKind.SessionCreated) {
+                break;
+            }
+            cursor = header.Parent;
+        }
+        throw new InvalidOperationException(
+            "Request context policy RequireActiveArtifactSet requires a durable ArtifactSetCommitted ancestor."
+        );
+    }
+
+    private SessionActiveArtifactSet ReadActiveArtifactSet(
+        EventAddress address,
+        SessionArtifactSetReference? expectedReference
+    ) {
+        using EventFrame frame = _reader.ReadEvent(address).Unwrap();
+        ValidateSessionHeaderPreview(address, frame.Header);
+        if ((SessionEventKind)frame.Header.OpaqueEventKind
+            != SessionEventKind.ArtifactSetCommitted) {
+            throw new InvalidDataException(
+                $"Active artifact-set reference at {address} is not ArtifactSetCommitted."
+            );
+        }
+        object decoded = SessionEventCodec.Decode(
+            SessionEventKind.ArtifactSetCommitted,
+            frame.Payload,
+            out int version
+        );
+        var reference = new SessionArtifactSetReference(
+            address,
+            version,
+            SessionRequestCanonicalizer.Sha256Hex(frame.Payload)
+        );
+        if (expectedReference is not null && expectedReference != reference) {
+            throw new InvalidDataException(
+                "Prepared active artifact-set reference does not match exact raw bytes."
+            );
+        }
+        return new SessionActiveArtifactSet(
+            address,
+            (ArtifactSetCommittedBody)decoded,
+            reference
+        );
+    }
+
+    private static void ValidateManifestArtifactSetAssertion(
+        CompletionRequestPreparedBody manifest,
+        ArtifactSetCommittedBody activation
+    ) {
+        var asserted = manifest.Plan.ArtifactInputs
+            .Select(static input => (
+                input.ArtifactId,
+                input.ArtifactKind,
+                input.ContentSha256
+            ))
+            .OrderBy(static item => item.ArtifactId, StringComparer.Ordinal)
+            .ToArray();
+        var activated = activation.Members
+            .Select(static member => (
+                member.ArtifactId,
+                member.ArtifactKind,
+                member.ContentSha256
+            ))
+            .OrderBy(static item => item.ArtifactId, StringComparer.Ordinal)
+            .ToArray();
+        if (!asserted.SequenceEqual(activated)) {
+            throw new InvalidDataException(
+                "Prepared artifact inputs do not exactly assert the referenced active artifact-set members."
+            );
+        }
     }
 
     internal string ComputeRawRangeSha256ForTest(EventAddress rawEndInclusive)
@@ -1618,7 +1945,8 @@ public sealed class SessionJournalEngine : IDisposable {
         string ContextRendererFingerprint,
         EventAddress? RawStartExclusive,
         string RawRangeSha256,
-        ImmutableArray<SessionRequestArtifactInput> ArtifactInputs
+        ImmutableArray<SessionRequestArtifactInput> ArtifactInputs,
+        SessionArtifactSetReference? ActiveArtifactSet = null
     );
 
     private sealed record FullRawRequestContext(

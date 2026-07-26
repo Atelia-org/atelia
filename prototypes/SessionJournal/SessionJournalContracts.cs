@@ -22,6 +22,7 @@ public enum SessionEventKind : uint {
     CompletionAttemptFailed = 9,
     ImportedAgentAction = 10,
     CompletionAttemptRestarted = 11,
+    ArtifactSetCommitted = 12,
 }
 
 public enum SessionExecutionPhase {
@@ -70,45 +71,27 @@ public enum SessionPreparedCompletionRecoveryPolicy {
     RestartWithNewAttempt,
 }
 
+public enum SessionRequestContextPolicy {
+    RequireActiveArtifactSet,
+    LegacyFullRaw,
+}
+
 public sealed record SessionRuntime(
     ICompletionClient CompletionClient,
     ToolSession? ToolSession = null,
     SessionCompletionTargetIdentity? CompletionTarget = null,
     int? MaxTokens = null,
-    SessionTailProjectionOptions? TailProjection = null,
+    SessionRequestContextPolicy RequestContextPolicy =
+        SessionRequestContextPolicy.RequireActiveArtifactSet,
     SessionPreparedCompletionRecoveryPolicy PreparedCompletionRecoveryPolicy =
         SessionPreparedCompletionRecoveryPolicy.RefuseUncertain,
     SessionToolRuntimeIdentity? ToolRuntimeIdentity = null
 );
 
-/// <summary>
-/// Exact produced-artifact ids selected by the caller as one coherent request-context set.
-/// SessionJournal treats membership as an upstream assertion; it does not infer semantic roles
-/// from artifact kind, target path, producer dependencies, or <c>InputArtifacts</c>. Planning
-/// still verifies exact availability, unique targets, common coverage/setup, and current lineage.
-/// A durable semantic ArtifactSet policy is intentionally deferred to a later raw contract.
-/// </summary>
-public sealed record SessionTailProjectionOptions {
-    public SessionTailProjectionOptions(params string[] artifactIds) {
-        ArgumentNullException.ThrowIfNull(artifactIds);
-        if (artifactIds.Length < 2) {
-            throw new ArgumentException(
-                "Coherent artifact-tail projection requires at least two exact artifact ids.",
-                nameof(artifactIds)
-            );
-        }
-        if (artifactIds.Any(string.IsNullOrWhiteSpace)
-            || artifactIds.Distinct(StringComparer.Ordinal).Count() != artifactIds.Length) {
-            throw new ArgumentException(
-                "Coherent artifact-tail projection artifact ids must be non-empty and distinct.",
-                nameof(artifactIds)
-            );
-        }
-        ArtifactIds = [.. artifactIds];
-    }
-
-    public ImmutableArray<string> ArtifactIds { get; }
-}
+public sealed record SessionArtifactSetMemberSelection(
+    string RoleId,
+    string ArtifactId
+);
 
 public sealed record TurnResult(
     ActionMessage Message,
@@ -269,6 +252,29 @@ internal sealed record CompletionAttemptRestartedBody(
     string AttemptId,
     string ReplacesAttemptId,
     EventAddress SourcePreparedAddress
+);
+
+internal sealed record ArtifactSetCommittedBody(
+    string PolicyId,
+    string PolicyFingerprint,
+    EventAddress CommonAnchor,
+    SessionGoverningSetupReferences CoverageSetups,
+    SessionGoverningSetupReferences CurrentSetups,
+    ImmutableArray<SessionArtifactSetMember> Members
+);
+
+internal sealed record SessionArtifactSetMember(
+    string RoleId,
+    string ArtifactId,
+    string ArtifactKind,
+    MemoryPackBlockPath Target,
+    string ContentSha256
+);
+
+internal sealed record SessionActiveArtifactSet(
+    EventAddress Address,
+    ArtifactSetCommittedBody Body,
+    SessionArtifactSetReference Reference
 );
 
 internal readonly record struct DecodedSessionEvent(

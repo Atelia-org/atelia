@@ -111,6 +111,10 @@ internal static class SessionPreparedRequestReconstructor {
             manifest.Plan.RawRangeSha256,
             cancellationToken
         );
+        if (manifest.Plan.SelectionPolicyId
+            == SessionRequestManifestDefaults.CoherentArtifactTailSelectionPolicyId) {
+            ValidateActiveArtifactSetReference(reader, manifest, rawEvents);
+        }
 
         CompletionRequest request = manifest.Plan.SelectionPolicyId switch {
             SessionRequestManifestDefaults.FullRawSelectionPolicyId => ReconstructFullRaw(
@@ -408,6 +412,65 @@ internal static class SessionPreparedRequestReconstructor {
             )) {
             throw new InvalidDataException(
                 "Manifest request parameters or target surface do not match the referenced runtime configuration."
+            );
+        }
+    }
+
+    private static void ValidateActiveArtifactSetReference(
+        SessionJournalEventReader reader,
+        CompletionRequestPreparedBody manifest,
+        IReadOnlyList<DecodedSessionEvent> rawEvents
+    ) {
+        SessionArtifactSetReference reference = manifest.Plan.ActiveArtifactSet
+            ?? throw new InvalidDataException(
+                "Coherent artifact-tail manifest requires an active artifact-set reference."
+            );
+        if (!rawEvents.Any(ev => ev.Address == reference.Address)) {
+            throw new InvalidDataException(
+                "Referenced active artifact set is not on the authoritative raw request range."
+            );
+        }
+        using EventFrame frame = reader.ReadEvent(reference.Address).Unwrap();
+        ValidateSessionHeader(reference.Address, frame.Header);
+        if ((SessionEventKind)frame.Header.OpaqueEventKind
+            != SessionEventKind.ArtifactSetCommitted) {
+            throw new InvalidDataException(
+                "Active artifact-set reference does not point to ArtifactSetCommitted."
+            );
+        }
+        object decoded = SessionEventCodec.Decode(
+            SessionEventKind.ArtifactSetCommitted,
+            frame.Payload,
+            out int version
+        );
+        if (version != reference.BodySchemaVersion
+            || !string.Equals(
+                SessionRequestCanonicalizer.Sha256Hex(frame.Payload),
+                reference.PayloadSha256,
+                StringComparison.Ordinal
+            )) {
+            throw new InvalidDataException(
+                "Active artifact-set reference does not match exact raw bytes."
+            );
+        }
+        var activation = (ArtifactSetCommittedBody)decoded;
+        var asserted = manifest.Plan.ArtifactInputs
+            .Select(static input => (
+                input.ArtifactId,
+                input.ArtifactKind,
+                input.ContentSha256
+            ))
+            .OrderBy(static item => item.ArtifactId, StringComparer.Ordinal);
+        var activated = activation.Members
+            .Select(static member => (
+                member.ArtifactId,
+                member.ArtifactKind,
+                member.ContentSha256
+            ))
+            .OrderBy(static item => item.ArtifactId, StringComparer.Ordinal);
+        if (!asserted.SequenceEqual(activated)) {
+            throw new InvalidDataException(
+                "Prepared artifact inputs do not exactly match the referenced activation."
             );
         }
     }

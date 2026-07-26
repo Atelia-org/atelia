@@ -180,6 +180,9 @@ internal static class SessionRequestManifestCodec {
                         "full-raw plans require plan.artifactInputs and plan.recalledInputs to be empty."
                     );
                 }
+                if (body.Plan.ActiveArtifactSet is not null) {
+                    throw new InvalidDataException("full-raw plans require plan.activeArtifactSet to be null.");
+                }
                 break;
 
             case SessionRequestManifestDefaults.ExplicitArtifactTailSelectionPolicyId:
@@ -208,6 +211,11 @@ internal static class SessionRequestManifestCodec {
                         "explicit-artifact-tail plans require an empty tool definition set."
                     );
                 }
+                if (body.Plan.ActiveArtifactSet is not null) {
+                    throw new InvalidDataException(
+                        "legacy explicit-artifact-tail plans require plan.activeArtifactSet to be null."
+                    );
+                }
                 ValidateArtifactInput(body.Plan.ArtifactInputs[0]);
                 break;
 
@@ -232,6 +240,12 @@ internal static class SessionRequestManifestCodec {
                         "coherent-artifact-tail plans require plan.recalledInputs to be empty."
                     );
                 }
+                ValidateArtifactSetReference(
+                    body.Plan.ActiveArtifactSet
+                        ?? throw new InvalidDataException(
+                            "coherent-artifact-tail plans require plan.activeArtifactSet."
+                        )
+                );
                 var artifactIds = new HashSet<string>(StringComparer.Ordinal);
                 foreach (SessionRequestArtifactInput input in body.Plan.ArtifactInputs) {
                     ValidateArtifactInput(input);
@@ -294,6 +308,21 @@ internal static class SessionRequestManifestCodec {
         }
     }
 
+    private static void ValidateArtifactSetReference(
+        SessionArtifactSetReference reference
+    ) {
+        _ = EventAddressTextCodec.Format(reference.Address);
+        if (reference.BodySchemaVersion <= 0) {
+            throw new InvalidDataException(
+                "plan.activeArtifactSet.bodySchemaVersion must be positive."
+            );
+        }
+        RequireSha256(
+            reference.PayloadSha256,
+            "plan.activeArtifactSet.payloadSha256"
+        );
+    }
+
     private static void WriteAttempt(Utf8JsonWriter writer, SessionRequestAttempt value) {
         writer.WriteStartObject("attempt");
         writer.WriteString("attemptId", value.AttemptId);
@@ -337,6 +366,7 @@ internal static class SessionRequestManifestCodec {
             writer.WriteEndObject();
         }
         writer.WriteEndArray();
+        WriteArtifactSetReference(writer, value.ActiveArtifactSet);
         writer.WriteString("renderingProfileId", value.RenderingProfileId);
         writer.WriteString("modelProfileId", value.ModelProfileId);
         writer.WriteNumber("estimatedInputTokens", value.EstimatedInputTokens);
@@ -443,6 +473,7 @@ internal static class SessionRequestManifestCodec {
             "rawRangeSha256",
             "artifactInputs",
             "recalledInputs",
+            "activeArtifactSet",
             "renderingProfileId",
             "modelProfileId",
             "estimatedInputTokens",
@@ -464,7 +495,44 @@ internal static class SessionRequestManifestCodec {
             ReadRequiredString(element, "renderingProfileId"),
             ReadRequiredString(element, "modelProfileId"),
             ReadRequiredInt32(element, "estimatedInputTokens"),
-            ReadRequiredString(element, "reason")
+            ReadRequiredString(element, "reason"),
+            ReadArtifactSetReference(element)
+        );
+    }
+
+    private static void WriteArtifactSetReference(
+        Utf8JsonWriter writer,
+        SessionArtifactSetReference? reference
+    ) {
+        if (reference is null) {
+            writer.WriteNull("activeArtifactSet");
+            return;
+        }
+        writer.WriteStartObject("activeArtifactSet");
+        writer.WriteString("address", EventAddressTextCodec.Format(reference.Address));
+        writer.WriteNumber("bodySchemaVersion", reference.BodySchemaVersion);
+        writer.WriteString("payloadSha256", reference.PayloadSha256);
+        writer.WriteEndObject();
+    }
+
+    private static SessionArtifactSetReference? ReadArtifactSetReference(
+        JsonElement plan
+    ) {
+        if (!plan.TryGetProperty("activeArtifactSet", out JsonElement element)) {
+            throw new InvalidDataException("plan.activeArtifactSet is required.");
+        }
+        if (element.ValueKind == JsonValueKind.Null) { return null; }
+        RequireExactProperties(
+            element,
+            "active artifact set reference",
+            "address",
+            "bodySchemaVersion",
+            "payloadSha256"
+        );
+        return new SessionArtifactSetReference(
+            EventAddressTextCodec.Parse(ReadRequiredString(element, "address")),
+            ReadRequiredInt32(element, "bodySchemaVersion"),
+            ReadRequiredString(element, "payloadSha256")
         );
     }
 

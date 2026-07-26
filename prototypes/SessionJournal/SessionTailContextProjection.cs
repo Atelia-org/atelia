@@ -22,18 +22,25 @@ internal static class SessionTailContextProjection {
         string sessionJournalPath,
         EventAddress expectedParent,
         SessionGoverningSetup currentGoverningSetup,
-        SessionTailProjectionOptions options,
-        Func<EventAddress, CancellationToken, SessionGoverningSetup> resolveGoverningSetup,
+        SessionGoverningSetup anchorSetup,
+        ImmutableArray<string> artifactIds,
         CancellationToken cancellationToken
     ) {
         ArgumentNullException.ThrowIfNull(reader);
         ArgumentNullException.ThrowIfNull(currentGoverningSetup);
-        ArgumentNullException.ThrowIfNull(options);
-        ArgumentNullException.ThrowIfNull(resolveGoverningSetup);
+        ArgumentNullException.ThrowIfNull(anchorSetup);
+        if (artifactIds.Length < 2
+            || artifactIds.Any(string.IsNullOrWhiteSpace)
+            || artifactIds.Distinct(StringComparer.Ordinal).Count() != artifactIds.Length) {
+            throw new ArgumentException(
+                "Artifact-tail materialization requires at least two distinct exact artifact ids.",
+                nameof(artifactIds)
+            );
+        }
 
         var store = DerivedRecapStore.Open(sessionJournalPath);
-        var artifacts = new List<DerivedRecapArtifact>(options.ArtifactIds.Length);
-        foreach (string artifactId in options.ArtifactIds) {
+        var artifacts = new List<DerivedRecapArtifact>(artifactIds.Length);
+        foreach (string artifactId in artifactIds) {
             DerivedRecapArtifact artifact = await store
                 .TryReadArtifactAsync(artifactId, cancellationToken)
                 .ConfigureAwait(false)
@@ -67,7 +74,11 @@ internal static class SessionTailContextProjection {
         );
         ValidateReplaySafeBoundary(reader, commonAnchor);
 
-        SessionGoverningSetup anchorSetup = resolveGoverningSetup(commonAnchor, cancellationToken);
+        if (anchorSetup.Head != commonAnchor) {
+            throw new InvalidDataException(
+                "Artifact-tail anchor setup must be pinned to the common coverage anchor."
+            );
+        }
         foreach (DerivedRecapArtifact artifact in artifacts) {
             if (artifact.GoverningRuntimeConfigSetup != anchorSetup.RuntimeConfigSetupAddress
                 || artifact.GoverningSystemPromptSetup != anchorSetup.SystemPromptSetupAddress) {
@@ -129,9 +140,9 @@ internal static class SessionTailContextProjection {
             .OrderBy(static item => item.Carrier)
             .ThenBy(static item => item.BlockKey, StringComparer.Ordinal)
             .ToArray();
-        var targets = new HashSet<MemoryPackBlockPath>();
+        var targets = new HashSet<(MemoryPackCarrier Carrier, string BlockKey)>();
         foreach (TargetContribution contribution in contributions) {
-            if (!targets.Add(new MemoryPackBlockPath(contribution.Carrier, contribution.BlockKey))) {
+            if (!targets.Add((contribution.Carrier, contribution.BlockKey))) {
                 throw new InvalidDataException(
                     $"Coherent artifact set contains duplicate target '{contribution.Carrier}/{contribution.BlockKey}'."
                 );
@@ -199,7 +210,7 @@ internal static class SessionTailContextProjection {
         throw new InvalidDataException("Recap artifact anchor is not an ancestor of the current completion boundary.");
     }
 
-    private static void ValidateReplaySafeBoundary(SessionJournalEventReader reader, EventAddress anchor) {
+    internal static void ValidateReplaySafeBoundary(SessionJournalEventReader reader, EventAddress anchor) {
         using EventFrame frame = reader.ReadEvent(anchor).Unwrap();
         ValidateSessionHeader(anchor, frame.Header);
         var kind = (SessionEventKind)frame.Header.OpaqueEventKind;
@@ -288,6 +299,21 @@ internal static class SessionTailContextProjection {
                         );
                     }
                     executionSequenceCheckpoint = 0;
+                    activeCorrelationId = null;
+                    phase = SessionExecutionPhase.Idle;
+                    break;
+                case SessionEventKind.ArtifactSetCommitted:
+                    EnsureNoOpenTool(ev, openAction);
+                    _ = RequireBody<ArtifactSetCommittedBody>(ev);
+                    if (phase is not (
+                        SessionExecutionPhase.Idle
+                        or SessionExecutionPhase.TurnFailed
+                    )
+                        || sourcePrepared is not null) {
+                        throw new InvalidDataException(
+                            $"{ev.Kind} at {ev.Address} must appear at an idle or failed suffix boundary."
+                        );
+                    }
                     activeCorrelationId = null;
                     phase = SessionExecutionPhase.Idle;
                     break;
@@ -560,6 +586,7 @@ internal static class SessionTailContextProjection {
             or SessionEventKind.SystemPromptSetup =>
                 SessionExecutionPhase.Empty,
         SessionEventKind.SessionCreated
+            or SessionEventKind.ArtifactSetCommitted
             or SessionEventKind.AgentActionProduced
             or SessionEventKind.ImportedAgentAction =>
                 SessionExecutionPhase.Idle,
@@ -615,6 +642,17 @@ internal static class SessionTailContextProjection {
     );
 
     private static TargetContribution CreateTargetContribution(DerivedRecapArtifact artifact) {
+        SessionRequestArtifactInput input = CreateArtifactInput(artifact);
+        return new TargetContribution(
+            artifact.Target.Carrier,
+            artifact.Target.BlockKey,
+            input
+        );
+    }
+
+    internal static SessionRequestArtifactInput CreateArtifactInput(
+        DerivedRecapArtifact artifact
+    ) {
         if (!artifact.MemoryPack.TryGetBlock(artifact.Target, out MemoryPackBlock block)) {
             throw new InvalidDataException(
                 $"Recap artifact '{artifact.ArtifactId}' is missing its target block."
@@ -646,15 +684,11 @@ internal static class SessionTailContextProjection {
                 $"Unsupported recap target carrier '{artifact.Target.Carrier}'."
             )
         };
-        return new TargetContribution(
-            artifact.Target.Carrier,
-            artifact.Target.BlockKey,
-            new SessionRequestArtifactInput(
-                artifact.ArtifactId,
-                artifact.ArtifactKind,
-                SessionArtifactContextSnapshotHasher.ComputeSha256(snapshot),
-                snapshot
-            )
+        return new SessionRequestArtifactInput(
+            artifact.ArtifactId,
+            artifact.ArtifactKind,
+            SessionArtifactContextSnapshotHasher.ComputeSha256(snapshot),
+            snapshot
         );
     }
 

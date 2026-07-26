@@ -28,7 +28,8 @@ internal sealed record SessionContextPlan(
     string RenderingProfileId,
     string ModelProfileId,
     int EstimatedInputTokens,
-    string Reason
+    string Reason,
+    SessionArtifactSetReference? ActiveArtifactSet = null
 );
 
 internal sealed record SessionRequestArtifactInput(
@@ -47,6 +48,12 @@ internal sealed record SessionRequestArtifactContextSnapshot(
 internal sealed record SessionRequestRecalledInput(
     string SourceId,
     string ContentSha256
+);
+
+internal sealed record SessionArtifactSetReference(
+    EventAddress Address,
+    int BodySchemaVersion,
+    string PayloadSha256
 );
 
 /// <summary>
@@ -108,6 +115,10 @@ internal sealed record SessionRequestCommitment(
 );
 
 internal static class SessionRequestManifestDefaults {
+    public const string ActiveArtifactSetPolicyId =
+        "atelia.session-journal.active-artifact-set.v1";
+    public const string ActiveArtifactSetPolicyFingerprint =
+        "atelia.session-journal.active-artifact-set.v1";
     public const string FullRawSelectionPolicyId = "full-raw";
     public const string FullRawPlannerFingerprint = "atelia.session-journal.full-raw-planner.v1";
     public const string FullRawRenderingProfileId = "atelia.session-journal.full-raw-rendering.v1";

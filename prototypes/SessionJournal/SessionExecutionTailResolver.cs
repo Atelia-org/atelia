@@ -67,6 +67,8 @@ internal static class SessionExecutionTailResolver {
                 SessionEventKind.RuntimeConfigSetup or SessionEventKind.SystemPromptSetup =>
                     ResolveSetupRun(head, kind),
                 SessionEventKind.SessionCreated => ResolveCreated(head),
+                SessionEventKind.ArtifactSetCommitted =>
+                    ResolveArtifactSet(head),
                 SessionEventKind.ObservationAccepted => ResolveObservation(head),
                 SessionEventKind.CompletionRequestPrepared
                     or SessionEventKind.CompletionAttemptRestarted =>
@@ -224,6 +226,37 @@ internal static class SessionExecutionTailResolver {
                     LatestExecutionCheckpoint:
                         idle.Boundary.LatestExecutionCheckpoint
                 )
+            );
+        }
+
+        private SessionExecutionRecovery ResolveArtifactSet(EventAddress head) {
+            DecodedSessionEvent activation = ReadDecoded(
+                head,
+                SessionEventKind.ArtifactSetCommitted
+            );
+            _ = RequireBody<ArtifactSetCommittedBody>(activation);
+            EventAddress parent = activation.Parent
+                ?? throw new InvalidDataException(
+                    $"ArtifactSetCommitted at {head} requires an idle predecessor."
+                );
+            SessionExecutionRecovery predecessor = ResolveHead(parent);
+            if (predecessor.State.Phase is not (
+                SessionExecutionPhase.Idle
+                or SessionExecutionPhase.TurnFailed
+            )) {
+                throw new InvalidDataException(
+                    $"ArtifactSetCommitted at {head} must directly descend from an idle or failed boundary."
+                );
+            }
+            return Recovery(
+                head,
+                new SessionExecutionState(
+                    SessionExecutionPhase.Idle,
+                    SessionEventKind.ArtifactSetCommitted,
+                    ToolExecutionSequenceCheckpoint:
+                        predecessor.State.ToolExecutionSequenceCheckpoint
+                ),
+                predecessor.Boundary
             );
         }
 
