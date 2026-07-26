@@ -548,6 +548,28 @@ D6D 将只修改 `CompletionRequestPrepared` 的 expected version。
   performance tests `2/2`、`ChatSession.BacktestCli.Tests` `35/35`；SessionJournal 与 Backtest CLI
   build 均为 0 warning，且 SessionJournal project references 不含 `Agent.Core`。
 
+**D6D 审阅尾修记录（2026-07-27）**
+
+- 修正 Prepared setup 的自证循环：reconstructor 不再以 Prepared 自己的 `setups` 作为 suffix
+  fold seed，而是从 exact latest activation 的 `coverageSetups` 读取完整 setup seed，再折叠
+  authoritative raw suffix，最后将推导出的 governing setup 与 Prepared exact refs 比较。
+- `ArtifactSetCommitted.currentSetups` 也不再只验证引用自身；现在从 `commonAnchor` 的 coverage
+  seed 开始，只扫描已加载的 raw suffix 到 activation Parent，按 setup 事件更新 exact refs 后
+  比较。该校验不读取 cold prefix，且保留 activation 后 runtime-only / prompt-only mutation。
+- 新增真实 journal 反证：即使攻击者把侧分支 setup 写入 Prepared 并同步重算 request commitment，
+  仍因 activation coverage + Parent lineage 推导不一致而 fail-fast；corrupt activation
+  coverage/current refs、raw hash/non-ancestor start、setup kind/hash/schema、model/correlation，
+  以及 buried malformed tool suffix 同样被拒绝。
+- 恢复 policy-independent v2 合同覆盖：nested tool schema、absent 与 explicit-null default、
+  数字默认值运行时类型、canonical request 五字段 literal commitment 与逐字段 hash sensitivity、
+  非法 history kind、artifact snapshot literal hash，以及 nested unknown/duplicate strict decode。
+  这些测试直接针对 v2 manifest 或真实 coherent journal，不恢复 legacy policy fixture。
+- 尾修验证证据：manifest/reconstructor focused tests `29/29`、`SessionJournal.Tests` `230/230`、
+  10k request-context performance tests `2/2`、`ChatSession.BacktestCli.Tests` `35/35`；
+  SessionJournal、Backtest CLI 与 CLI tests build 均为 0 warning，禁用 legacy policy 名称在
+  production/current-wire tests 中保持归零，SessionJournal project reference 不含
+  `Agent.Core`。
+
 ### CS-3D6E：Legacy fixture 与验证收口
 
 **目标**

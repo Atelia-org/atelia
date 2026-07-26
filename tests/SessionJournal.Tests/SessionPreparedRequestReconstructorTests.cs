@@ -242,6 +242,118 @@ public sealed class SessionPreparedRequestReconstructorTests : IDisposable {
     }
 
     [Fact]
+    public void Reconstruct_RejectsRawRangeSetupModelAndCorrelationCorruption() {
+        string path = NewJournalPath();
+        using EventJournal.EventJournal journal = CreateJournal(path);
+        Scenario scenario = CreateToolContinuationScenario(journal);
+        SessionSetupReference promptReference =
+            CreateSetupReference(journal, scenario.Prompt);
+
+        var corruptions = new Dictionary<string, CompletionRequestPreparedBody> {
+            ["raw range hash"] = scenario.Manifest with {
+                Plan = scenario.Manifest.Plan with {
+                    RawRangeSha256 = new string('0', 64)
+                }
+            },
+            ["setup kind"] = scenario.Manifest with {
+                Setups = scenario.Manifest.Setups with {
+                    RuntimeConfig = promptReference
+                }
+            },
+            ["setup hash"] = scenario.Manifest with {
+                Setups = scenario.Manifest.Setups with {
+                    RuntimeConfig =
+                        scenario.Manifest.Setups.RuntimeConfig with {
+                            PayloadSha256 = new string('0', 64)
+                        }
+                }
+            },
+            ["setup schema"] = scenario.Manifest with {
+                Setups = scenario.Manifest.Setups with {
+                    RuntimeConfig =
+                        scenario.Manifest.Setups.RuntimeConfig with {
+                            BodySchemaVersion = 2
+                        }
+                }
+            },
+            ["model"] = scenario.Manifest with {
+                Parameters = scenario.Manifest.Parameters with {
+                    ModelId = "model-corrupt"
+                }
+            },
+            ["correlation"] = scenario.Manifest with {
+                Attempt = scenario.Manifest.Attempt with {
+                    CorrelationId = "correlation-corrupt"
+                }
+            }
+        };
+
+        foreach ((string name, CompletionRequestPreparedBody manifest)
+            in corruptions) {
+            InvalidDataException error = Assert.Throws<InvalidDataException>(
+                () => SessionPreparedRequestReconstructor.Reconstruct(
+                    journal,
+                    manifest,
+                    scenario.RawEnd
+                )
+            );
+            Assert.NotEmpty(error.Message);
+        }
+    }
+
+    [Fact]
+    public void Reconstruct_RejectsNonAncestorRawStartAndBuriedMalformedToolSuffix() {
+        string path = NewJournalPath();
+        using EventJournal.EventJournal journal = CreateJournal(path);
+        Scenario scenario = CreateToolContinuationScenario(journal);
+        const string sideBranch = "raw-start-side";
+        journal.CreateBranch(sideBranch, scenario.Created).Unwrap();
+        EventAddress sideObservation = Commit(
+            journal,
+            sideBranch,
+            scenario.Created,
+            SessionEventKind.ObservationAccepted,
+            new ObservationAcceptedBody("side")
+        );
+
+        InvalidDataException parentError =
+            Assert.Throws<InvalidDataException>(() =>
+                SessionPreparedRequestReconstructor.Reconstruct(
+                    journal,
+                    scenario.Manifest with {
+                        Plan = scenario.Manifest.Plan with {
+                            RawStartExclusive = sideObservation
+                        }
+                    },
+                    scenario.RawEnd
+                )
+            );
+        Assert.Contains(
+            "not an ancestor",
+            parentError.Message,
+            StringComparison.Ordinal
+        );
+
+        string malformedPath = NewJournalPath();
+        using EventJournal.EventJournal malformedJournal =
+            CreateJournal(malformedPath);
+        Scenario malformed = CreateToolContinuationScenario(
+            malformedJournal,
+            mutateStarted: body => body with {
+                ToolCallId = "buried-wrong-call"
+            }
+        );
+
+        Assert.Throws<InvalidDataException>(() =>
+            SessionPreparedRequestReconstructor.Reconstruct(
+                malformedJournal,
+                malformed.Manifest,
+                malformed.RawEnd
+            )
+        );
+    }
+
+    [Fact]
     public void CoherentRecipe_RejectsSnapshotCarrierMismatchAgainstActivationTarget() {
         SessionRequestArtifactInput system = Artifact(
             "system",
@@ -314,7 +426,9 @@ public sealed class SessionPreparedRequestReconstructorTests : IDisposable {
     private static Scenario CreateToolContinuationScenario(
         EventJournal.EventJournal journal,
         Func<ArtifactSetCommittedBody, ArtifactSetCommittedBody>?
-            mutateActivation = null
+            mutateActivation = null,
+        Func<ToolExecutionStartedBody, ToolExecutionStartedBody>?
+            mutateStarted = null
     ) {
         EventAddress runtime = Commit(
             journal,
@@ -457,18 +571,22 @@ public sealed class SessionPreparedRequestReconstructorTests : IDisposable {
                 ToolIdentity
             )
         );
+        var startedBody = new ToolExecutionStartedBody(
+            "call-1",
+            "sample",
+            """{"value":1}""",
+            "operation-1",
+            1,
+            ToolIdentity
+        );
+        if (mutateStarted is not null) {
+            startedBody = mutateStarted(startedBody);
+        }
         EventAddress started = Commit(
             journal,
             action,
             SessionEventKind.ToolExecutionStarted,
-            new ToolExecutionStartedBody(
-                "call-1",
-                "sample",
-                """{"value":1}""",
-                "operation-1",
-                1,
-                ToolIdentity
-            )
+            startedBody
         );
         ToolResult result = ToolResult.FromText(
             "sample",

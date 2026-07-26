@@ -190,8 +190,277 @@ public sealed class SessionRequestManifestCodecTests {
         );
     }
 
-    private static CompletionRequestPreparedBody CreateManifest() {
-        ImmutableArray<ToolDefinition> tools = [];
+    [Fact]
+    public void CompletionRequestPreparedV2_PreservesAbsentNullAndNumericToolDefaults() {
+        CompletionRequestPreparedBody body = CreateManifest(
+            CreateToolDefinitions()
+        );
+
+        byte[] encoded = SessionEventCodec.Encode(
+            SessionEventKind.CompletionRequestPrepared,
+            body
+        );
+        var decoded = Assert.IsType<CompletionRequestPreparedBody>(
+            SessionEventCodec.Decode(
+                SessionEventKind.CompletionRequestPrepared,
+                encoded,
+                out _
+            )
+        );
+        var root = Assert.IsType<ToolSchema.Object>(
+            decoded.ToolSet.Definitions[0].InputSchema
+        );
+        var absent = Assert.IsType<ToolSchema.Value>(root.Properties[0].Schema);
+        var explicitNull =
+            Assert.IsType<ToolSchema.Value>(root.Properties[1].Schema);
+        var int64 = Assert.IsType<ToolSchema.Value>(root.Properties[2].Schema);
+        var float32 = Assert.IsType<ToolSchema.Value>(root.Properties[3].Schema);
+        var decimalValue =
+            Assert.IsType<ToolSchema.Value>(root.Properties[4].Schema);
+
+        Assert.False(absent.Default.HasValue);
+        Assert.True(explicitNull.Default.HasValue);
+        Assert.Null(explicitNull.Default.GetValueOrDefault().Value);
+        Assert.IsType<long>(int64.Default.GetValueOrDefault().Value);
+        Assert.IsType<long>(int64.Minimum);
+        Assert.IsType<long>(int64.Maximum);
+        Assert.IsType<float>(float32.Default.GetValueOrDefault().Value);
+        Assert.IsType<decimal>(decimalValue.Default.GetValueOrDefault().Value);
+        Assert.Equal(encoded, SessionEventCodec.Encode(
+            SessionEventKind.CompletionRequestPrepared,
+            decoded
+        ));
+    }
+
+    [Fact]
+    public void CompletionRequestPreparedV2_RoundtripsComprehensiveNestedToolSchemasInOrder() {
+        CompletionRequestPreparedBody body = CreateManifest(
+            CreateComprehensiveToolDefinitions()
+        );
+
+        byte[] encoded = SessionEventCodec.Encode(
+            SessionEventKind.CompletionRequestPrepared,
+            body
+        );
+        var decoded = Assert.IsType<CompletionRequestPreparedBody>(
+            SessionEventCodec.Decode(
+                SessionEventKind.CompletionRequestPrepared,
+                encoded,
+                out _
+            )
+        );
+        var root = Assert.IsType<ToolSchema.Object>(
+            decoded.ToolSet.Definitions[1].InputSchema
+        );
+
+        Assert.Equal(["sample", "complex"], decoded.ToolSet.Definitions
+            .Select(static definition => definition.Name));
+        Assert.True(root.AdditionalProperties);
+        Assert.Equal("complex root", root.Description);
+        Assert.Equal("root example", root.Example);
+        Assert.IsType<bool>(
+            Assert.IsType<ToolSchema.Value>(root.Properties[0].Schema)
+                .Default.GetValueOrDefault().Value
+        );
+        Assert.IsType<int>(
+            Assert.IsType<ToolSchema.Value>(root.Properties[1].Schema)
+                .Default.GetValueOrDefault().Value
+        );
+        Assert.IsType<double>(
+            Assert.IsType<ToolSchema.Value>(root.Properties[2].Schema)
+                .Default.GetValueOrDefault().Value
+        );
+        var array = Assert.IsType<ToolSchema.Array>(root.Properties[3].Schema);
+        var item = Assert.IsType<ToolSchema.Value>(array.ItemSchema);
+        Assert.Equal(["alpha", "beta"], item.StringEnumValues.ToArray());
+        Assert.Equal(1, item.MinLength);
+        Assert.Equal(12, item.MaxLength);
+        Assert.Equal("^[a-z]+$", item.Pattern);
+        Assert.IsType<ToolSchema.Object>(root.Properties[4].Schema);
+        Assert.Equal(encoded, SessionEventCodec.Encode(
+            SessionEventKind.CompletionRequestPrepared,
+            decoded
+        ));
+    }
+
+    [Fact]
+    public void CanonicalRequest_AllFiveFieldsHaveStableLiteralCommitment() {
+        ImmutableArray<ToolDefinition> tools = CreateToolDefinitions();
+        var request = new CompletionRequest(
+            "model-α",
+            "system <raw> & prompt",
+            [
+                new ObservationMessage("observe"),
+                new ActionMessage([
+                    new ActionBlock.Text("answer"),
+                    new ActionBlock.TextReasoningBlock(
+                        "think",
+                        new CompletionDescriptor(
+                            "provider",
+                            "responses-v1",
+                            "model-α"
+                        ),
+                        "debug"
+                    ),
+                    new ActionBlock.ToolCall(
+                        new RawToolCall("sample", "call-1", "{\"x\":1}")
+                    )
+                ]),
+                new ToolResultsMessage(
+                    null,
+                    [ToolResult.FromText(
+                        "sample",
+                        "call-1",
+                        ToolExecutionStatus.Success,
+                        "ok"
+                    )]
+                )
+            ],
+            tools,
+            4096
+        );
+
+        byte[] canonical = SessionRequestCanonicalizer.Canonicalize(request);
+        SessionRequestCommitment commitment =
+            SessionRequestCanonicalizer.CreateCommitment(request);
+
+        Assert.Equal(1921, canonical.Length);
+        Assert.Equal(1921, commitment.ByteLength);
+        Assert.Equal(
+            "dc714068ed5e60a5213cc7c673ca4f6c65a42caae0a8d60d224d0c5ac2d0fb95",
+            commitment.Sha256
+        );
+    }
+
+    [Fact]
+    public void CanonicalRequest_CommitmentChangesForEachOfFiveFields() {
+        var baseline = new CompletionRequest(
+            "model",
+            "system",
+            [new ObservationMessage("observation")],
+            [],
+            100
+        );
+        string hash = SessionRequestCanonicalizer.CreateCommitment(
+            baseline
+        ).Sha256;
+        ImmutableArray<ToolDefinition> changedTools = [
+            new ToolDefinition("ping", "Ping tool", new ToolSchema.Object())
+        ];
+
+        Assert.NotEqual(hash, SessionRequestCanonicalizer.CreateCommitment(
+            baseline with { ModelId = "model-2" }
+        ).Sha256);
+        Assert.NotEqual(hash, SessionRequestCanonicalizer.CreateCommitment(
+            baseline with { SystemPrompt = "system-2" }
+        ).Sha256);
+        Assert.NotEqual(hash, SessionRequestCanonicalizer.CreateCommitment(
+            baseline with {
+                Context = [new ObservationMessage("observation-2")]
+            }
+        ).Sha256);
+        Assert.NotEqual(hash, SessionRequestCanonicalizer.CreateCommitment(
+            baseline with { Tools = changedTools }
+        ).Sha256);
+        Assert.NotEqual(hash, SessionRequestCanonicalizer.CreateCommitment(
+            baseline with { MaxTokens = 101 }
+        ).Sha256);
+    }
+
+    [Fact]
+    public void CanonicalRequest_RejectsContextHeaderUnknownAndDerivedHistoryMessages() {
+        Assert.Throws<InvalidOperationException>(() =>
+            SessionRequestCanonicalizer.Canonicalize(new CompletionRequest(
+                "model",
+                "system",
+                [new UnsupportedHistoryMessage(HistoryMessageKind.ContextHeader)],
+                [],
+                null
+            ))
+        );
+        Assert.Throws<InvalidOperationException>(() =>
+            SessionRequestCanonicalizer.Canonicalize(new CompletionRequest(
+                "model",
+                "system",
+                [new UnsupportedHistoryMessage(HistoryMessageKind.Observation)],
+                [],
+                null
+            ))
+        );
+        Assert.Throws<InvalidOperationException>(() =>
+            SessionRequestCanonicalizer.Canonicalize(new CompletionRequest(
+                "model",
+                "system",
+                [new DerivedObservationMessage("derived")],
+                [],
+                null
+            ))
+        );
+    }
+
+    [Fact]
+    public void ArtifactContextSnapshotHash_HasStableLiteralAndFieldSensitivity() {
+        var snapshot = new SessionRequestArtifactContextSnapshot(
+            "system 🌟",
+            "observation\nline2",
+            "action"
+        );
+        string hash = SessionArtifactContextSnapshotHasher.ComputeSha256(
+            snapshot
+        );
+
+        Assert.Equal(
+            "2e89e9acf6c1e7dbcef6874a602a51cb425f76404b2b89124d5990891832f5fc",
+            hash
+        );
+        Assert.NotEqual(hash, SessionArtifactContextSnapshotHasher.ComputeSha256(
+            snapshot with { SystemPromptFragment = "changed" }
+        ));
+        Assert.NotEqual(hash, SessionArtifactContextSnapshotHasher.ComputeSha256(
+            snapshot with { ObservationMessage = "changed" }
+        ));
+        Assert.NotEqual(hash, SessionArtifactContextSnapshotHasher.ComputeSha256(
+            snapshot with { ActionMessage = "changed" }
+        ));
+    }
+
+    [Fact]
+    public void CompletionRequestPreparedV2_StrictDecodeRejectsNestedSnapshotAndToolSchemaDrift() {
+        string canonical = EncodeManifestJson(CreateToolDefinitions());
+        (string Marker, string Replacement)[] mutations = [
+            (
+                "\"contextSnapshot\":{\"systemPromptFragment\":",
+                "\"contextSnapshot\":{\"unknown\":true,\"systemPromptFragment\":"
+            ),
+            (
+                "\"contextSnapshot\":{\"systemPromptFragment\":",
+                "\"contextSnapshot\":{\"systemPromptFragment\":\"other\",\"systemPromptFragment\":"
+            ),
+            (
+                "\"inputSchema\":{\"kind\":\"object\",",
+                "\"inputSchema\":{\"kind\":\"object\",\"unknown\":true,"
+            ),
+            (
+                "\"inputSchema\":{\"kind\":\"object\",",
+                "\"inputSchema\":{\"kind\":\"array\",\"kind\":\"object\","
+            ),
+            (
+                "{\"name\":\"withoutDefault\",\"required\":",
+                "{\"name\":\"other\",\"name\":\"withoutDefault\",\"required\":"
+            )
+        ];
+
+        foreach ((string marker, string replacement) in mutations) {
+            AssertStrictDecodeRejected(
+                ReplaceOnce(canonical, marker, replacement)
+            );
+        }
+    }
+
+    private static CompletionRequestPreparedBody CreateManifest(
+        ImmutableArray<ToolDefinition>? requestedTools = null
+    ) {
+        ImmutableArray<ToolDefinition> tools = requestedTools ?? [];
         SessionRequestArtifactInput system = Artifact(
             "artifact-system",
             "rolling-summary",
@@ -236,7 +505,13 @@ public sealed class SessionRequestManifestCodecTests {
                 SessionRequestManifestDefaults.ToolCodecId,
                 SessionRequestCanonicalizer.ComputeToolSetSha256(tools),
                 tools,
-                RuntimeIdentity: null
+                tools.IsEmpty
+                    ? null
+                    : new SessionToolRuntimeIdentity(
+                        "test-host",
+                        "test-implementations",
+                        "test-capabilities"
+                    )
             ),
             new SessionRequestRecipe(
                 SessionRequestManifestDefaults.RecipeId,
@@ -267,11 +542,137 @@ public sealed class SessionRequestManifestCodecTests {
         snapshot
     );
 
-    private static string EncodeManifestJson()
+    private static string EncodeManifestJson(
+        ImmutableArray<ToolDefinition>? tools = null
+    )
         => Encoding.UTF8.GetString(SessionEventCodec.Encode(
             SessionEventKind.CompletionRequestPrepared,
-            CreateManifest()
+            CreateManifest(tools)
         ));
+
+    private static ImmutableArray<ToolDefinition> CreateToolDefinitions() {
+        var schema = new ToolSchema.Object([
+            new ToolSchema.Property(
+                "withoutDefault",
+                new ToolSchema.Value(
+                    ToolParamType.String,
+                    isNullable: true
+                ),
+                isRequired: false
+            ),
+            new ToolSchema.Property(
+                "explicitNull",
+                new ToolSchema.Value(
+                    ToolParamType.String,
+                    isNullable: true,
+                    defaultValue: new ParamDefault(null)
+                ),
+                isRequired: false
+            ),
+            new ToolSchema.Property(
+                "count",
+                new ToolSchema.Value(
+                    ToolParamType.Int64,
+                    defaultValue: new ParamDefault(7L),
+                    minimum: -9L,
+                    maximum: 20L
+                ),
+                isRequired: true
+            ),
+            new ToolSchema.Property(
+                "ratio",
+                new ToolSchema.Value(
+                    ToolParamType.Float32,
+                    defaultValue: new ParamDefault(1.25f)
+                ),
+                isRequired: false
+            ),
+            new ToolSchema.Property(
+                "price",
+                new ToolSchema.Value(
+                    ToolParamType.Decimal,
+                    defaultValue: new ParamDefault(12.50m)
+                ),
+                isRequired: false
+            )
+        ]);
+        return [new ToolDefinition("sample", "Sample tool", schema)];
+    }
+
+    private static ImmutableArray<ToolDefinition>
+        CreateComprehensiveToolDefinitions() {
+        var nested = new ToolSchema.Object([
+            new ToolSchema.Property(
+                "name",
+                new ToolSchema.Value(
+                    ToolParamType.String,
+                    description: "nested name"
+                ),
+                isRequired: true
+            )
+        ], description: "nested object", example: "nested example");
+        var complex = new ToolSchema.Object(
+            [
+                new ToolSchema.Property(
+                    "enabled",
+                    new ToolSchema.Value(
+                        ToolParamType.Boolean,
+                        defaultValue: new ParamDefault(true)
+                    ),
+                    isRequired: false
+                ),
+                new ToolSchema.Property(
+                    "limit",
+                    new ToolSchema.Value(
+                        ToolParamType.Int32,
+                        defaultValue: new ParamDefault(3),
+                        minimum: -1,
+                        maximum: 10
+                    ),
+                    isRequired: false
+                ),
+                new ToolSchema.Property(
+                    "score",
+                    new ToolSchema.Value(
+                        ToolParamType.Float64,
+                        defaultValue: new ParamDefault(0.5d),
+                        minimum: -2.25d,
+                        maximum: 4.5d
+                    ),
+                    isRequired: false
+                ),
+                new ToolSchema.Property(
+                    "tags",
+                    new ToolSchema.Array(
+                        new ToolSchema.Value(
+                            ToolParamType.String,
+                            description: "tag",
+                            example: "alpha",
+                            stringEnumValues: ["alpha", "beta"],
+                            minLength: 1,
+                            maxLength: 12,
+                            pattern: "^[a-z]+$"
+                        ),
+                        isNullable: true,
+                        description: "tag list",
+                        example: "[alpha]"
+                    ),
+                    isRequired: false
+                ),
+                new ToolSchema.Property(
+                    "nested",
+                    nested,
+                    isRequired: true
+                )
+            ],
+            additionalProperties: true,
+            description: "complex root",
+            example: "root example"
+        );
+        return CreateToolDefinitions().Add(
+            new ToolDefinition("complex", "Complex tool", complex)
+        );
+    }
 
     private static void AssertStrictDecodeRejected(string json) {
         Assert.Throws<InvalidDataException>(() => SessionEventCodec.Decode(
@@ -294,4 +695,12 @@ public sealed class SessionRequestManifestCodecTests {
             source.AsSpan(index + marker.Length)
         );
     }
+
+    private sealed record UnsupportedHistoryMessage(
+        HistoryMessageKind Kind
+    ) : IHistoryMessage;
+
+    private sealed record DerivedObservationMessage(
+        string? Value
+    ) : ObservationMessage(Value);
 }
