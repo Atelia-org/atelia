@@ -121,11 +121,13 @@ internal static class SessionPreparedRequestReconstructor {
                 rawEvents
             ),
             SessionRequestManifestDefaults.ExplicitArtifactTailSelectionPolicyId => ReconstructExplicitArtifactTail(
+                reader,
                 manifest,
                 authoritativeRawEndInclusive,
                 runtimeConfig,
                 systemPrompt.Content,
-                rawEvents
+                rawEvents,
+                cancellationToken
             ),
             SessionRequestManifestDefaults.CoherentArtifactTailSelectionPolicyId => ReconstructCoherentArtifactTail(
                 reader,
@@ -211,11 +213,13 @@ internal static class SessionPreparedRequestReconstructor {
     }
 
     private static CompletionRequest ReconstructExplicitArtifactTail(
+        SessionJournalEventReader reader,
         CompletionRequestPreparedBody manifest,
         EventAddress rawEndInclusive,
         SessionRuntimeConfiguration referencedRuntime,
         string referencedSystemPrompt,
-        IReadOnlyList<DecodedSessionEvent> rawEvents
+        IReadOnlyList<DecodedSessionEvent> rawEvents,
+        CancellationToken cancellationToken
     ) {
         EventAddress rawStartExclusive = manifest.Plan.RawStartExclusive
             ?? throw new InvalidDataException("Explicit artifact tail reconstruction requires rawStartExclusive.");
@@ -235,8 +239,18 @@ internal static class SessionPreparedRequestReconstructor {
             manifest.Setups.SystemPrompt.Address,
             referencedSystemPrompt
         );
+        SessionExecutionRecovery executionSeed =
+            SessionExecutionTailResolver.Resolve(
+                reader,
+                rawStartExclusive,
+                cancellationToken
+            );
         SessionTailContextProjection.TailFoldResult folded =
-            SessionTailContextProjection.FoldSuffix(seed, rawEvents);
+            SessionTailContextProjection.FoldSuffix(
+                seed,
+                rawEvents,
+                executionSeed
+            );
         if (folded.GoverningSetup.Head != rawEndInclusive
             || folded.GoverningSetup.RuntimeConfigSetupAddress != manifest.Setups.RuntimeConfig.Address
             || folded.GoverningSetup.SystemPromptSetupAddress != manifest.Setups.SystemPrompt.Address

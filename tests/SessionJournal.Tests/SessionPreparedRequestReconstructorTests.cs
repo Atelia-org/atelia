@@ -179,6 +179,148 @@ public sealed class SessionPreparedRequestReconstructorTests : IDisposable {
     }
 
     [Fact]
+    public void Reconstruct_CommittedLegacyExplicitTail_WithObservationSeedAndPreparedActionSuffix_IsExact() {
+        string path = NewJournalPath();
+        using var journal = CreateJournal(path);
+        EventAddress runtime = Commit(
+            journal,
+            expectedParent: null,
+            SessionEventKind.RuntimeConfigSetup,
+            new SessionRuntimeConfiguration(
+                "model-A",
+                "surface-A",
+                SessionJournalDefaults.Schema
+            )
+        );
+        EventAddress prompt = Commit(
+            journal,
+            runtime,
+            SessionEventKind.SystemPromptSetup,
+            new SystemPromptSetupBody("system-A")
+        );
+        EventAddress created = Commit(
+            journal,
+            prompt,
+            SessionEventKind.SessionCreated,
+            new SessionCreatedBody()
+        );
+        EventAddress rawStartObservation = Commit(
+            journal,
+            created,
+            SessionEventKind.ObservationAccepted,
+            new ObservationAcceptedBody("absorbed observation")
+        );
+        var firstRequest = new CompletionRequest(
+            "model-A",
+            "system-A",
+            [new ObservationMessage("absorbed observation")],
+            ImmutableArray<ToolDefinition>.Empty,
+            MaxTokens: null
+        );
+        CompletionRequestPreparedBody firstManifest = CreateManifest(
+            journal,
+            firstRequest,
+            runtime,
+            prompt,
+            rawStartExclusive: null,
+            rawStartObservation,
+            rawAddresses: [
+                runtime,
+                prompt,
+                created,
+                rawStartObservation
+            ],
+            SessionRequestManifestDefaults.FullRawSelectionPolicyId,
+            artifactInputs: []
+        );
+        EventAddress firstPrepared = Commit(
+            journal,
+            rawStartObservation,
+            SessionEventKind.CompletionRequestPrepared,
+            firstManifest
+        );
+        EventAddress firstAction = Commit(
+            journal,
+            firstPrepared,
+            SessionEventKind.AgentActionProduced,
+            new AgentActionProducedBody(
+                new ActionMessage([new ActionBlock.Text("live answer")]),
+                new CompletionDescriptor("client-A", "api-A", "model-A"),
+                firstManifest.Attempt.CorrelationId,
+                firstManifest.Execution,
+                ToolRuntimeIdentity: null
+            )
+        );
+        EventAddress finalObservation = Commit(
+            journal,
+            firstAction,
+            SessionEventKind.ObservationAccepted,
+            new ObservationAcceptedBody("next observation")
+        );
+        var snapshot = new SessionRequestArtifactContextSnapshot(
+            "",
+            "absorbed observation",
+            "absorbed answer"
+        );
+        var artifactInput = new SessionRequestArtifactInput(
+            "deleted-legacy-sidecar",
+            "rolling-summary",
+            SessionArtifactContextSnapshotHasher.ComputeSha256(snapshot),
+            snapshot
+        );
+        var exactRequest = new CompletionRequest(
+            "model-A",
+            "system-A",
+            [
+                new ObservationMessage("absorbed observation"),
+                new ActionMessage([new ActionBlock.Text("absorbed answer")]),
+                new ActionMessage([new ActionBlock.Text("live answer")]),
+                new ObservationMessage("next observation")
+            ],
+            ImmutableArray<ToolDefinition>.Empty,
+            MaxTokens: null
+        );
+        CompletionRequestPreparedBody legacyManifest = CreateManifest(
+            journal,
+            exactRequest,
+            runtime,
+            prompt,
+            rawStartObservation,
+            finalObservation,
+            rawAddresses: [
+                firstPrepared,
+                firstAction,
+                finalObservation
+            ],
+            SessionRequestManifestDefaults.ExplicitArtifactTailSelectionPolicyId,
+            artifactInputs: [artifactInput]
+        );
+        EventAddress committedLegacyPrepared = Commit(
+            journal,
+            finalObservation,
+            SessionEventKind.CompletionRequestPrepared,
+            legacyManifest
+        );
+
+        SessionPreparedRequestReconstruction reconstructed =
+            SessionPreparedRequestReconstructor.Reconstruct(
+                journal,
+                committedLegacyPrepared
+            );
+
+        Assert.Equal(committedLegacyPrepared, reconstructed.SourcePreparedAddress);
+        Assert.Equal(finalObservation, reconstructed.RawEndInclusive);
+        Assert.Equal(
+            SessionRequestCanonicalizer.Canonicalize(exactRequest),
+            reconstructed.CanonicalBytes
+        );
+        Assert.Equal(legacyManifest.Commitment, reconstructed.Manifest.Commitment);
+        Assert.False(Directory.Exists(
+            Path.Combine(path, "derived")
+        ));
+    }
+
+    [Fact]
     public void Reconstruct_FullRawSettledToolResultBuildsToolContinuationRequest() {
         string path = NewJournalPath();
         using var journal = CreateJournal(path);
