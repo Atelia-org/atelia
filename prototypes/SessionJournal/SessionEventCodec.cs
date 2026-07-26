@@ -8,7 +8,6 @@ using Atelia.EventJournal;
 namespace Atelia.SessionJournal;
 
 internal static class SessionEventCodec {
-    private const int BodySchemaVersion = 1;
     private const string ToolResultBlockKindText = "text";
     private static readonly JsonWriterOptions WriterOptions = new() {
         Indented = false,
@@ -16,30 +15,36 @@ internal static class SessionEventCodec {
         SkipValidation = false
     };
 
-    public static byte[] Encode(SessionEventKind kind, object body)
-        => kind switch {
-            SessionEventKind.RuntimeConfigSetup => EncodeRuntimeConfiguration((SessionRuntimeConfiguration)body),
-            SessionEventKind.SystemPromptSetup => EncodeSystemPromptSetup((SystemPromptSetupBody)body),
-            SessionEventKind.SessionCreated => EncodeSessionCreated((SessionCreatedBody)body),
-            SessionEventKind.ObservationAccepted => EncodeObservationAccepted((ObservationAcceptedBody)body),
-            SessionEventKind.AgentActionProduced => EncodeAgentActionProduced((AgentActionProducedBody)body),
-            SessionEventKind.ToolExecutionStarted => EncodeToolExecutionStarted((ToolExecutionStartedBody)body),
-            SessionEventKind.ToolResultObserved => EncodeToolResultObserved((ToolResultObservedBody)body),
-            SessionEventKind.CompletionRequestPrepared => EncodeCompletionRequestPrepared((CompletionRequestPreparedBody)body),
-            SessionEventKind.CompletionAttemptFailed => EncodeCompletionAttemptFailed((CompletionAttemptFailedBody)body),
-            SessionEventKind.ImportedAgentAction => EncodeAgentActionProduced((AgentActionProducedBody)body),
-            SessionEventKind.CompletionAttemptRestarted => EncodeCompletionAttemptRestarted((CompletionAttemptRestartedBody)body),
-            SessionEventKind.ArtifactSetCommitted => EncodeArtifactSetCommitted((ArtifactSetCommittedBody)body),
+    public static byte[] Encode(SessionEventKind kind, object body) {
+        int bodySchemaVersion = GetExpectedBodySchemaVersion(kind);
+        return kind switch {
+            SessionEventKind.RuntimeConfigSetup => EncodeRuntimeConfiguration((SessionRuntimeConfiguration)body, bodySchemaVersion),
+            SessionEventKind.SystemPromptSetup => EncodeSystemPromptSetup((SystemPromptSetupBody)body, bodySchemaVersion),
+            SessionEventKind.SessionCreated => EncodeSessionCreated((SessionCreatedBody)body, bodySchemaVersion),
+            SessionEventKind.ObservationAccepted => EncodeObservationAccepted((ObservationAcceptedBody)body, bodySchemaVersion),
+            SessionEventKind.AgentActionProduced => EncodeAgentActionProduced((AgentActionProducedBody)body, bodySchemaVersion),
+            SessionEventKind.ToolExecutionStarted => EncodeToolExecutionStarted((ToolExecutionStartedBody)body, bodySchemaVersion),
+            SessionEventKind.ToolResultObserved => EncodeToolResultObserved((ToolResultObservedBody)body, bodySchemaVersion),
+            SessionEventKind.CompletionRequestPrepared => EncodeCompletionRequestPrepared((CompletionRequestPreparedBody)body, bodySchemaVersion),
+            SessionEventKind.CompletionAttemptFailed => EncodeCompletionAttemptFailed((CompletionAttemptFailedBody)body, bodySchemaVersion),
+            SessionEventKind.ImportedAgentAction => EncodeAgentActionProduced((AgentActionProducedBody)body, bodySchemaVersion),
+            SessionEventKind.CompletionAttemptRestarted => EncodeCompletionAttemptRestarted((CompletionAttemptRestartedBody)body, bodySchemaVersion),
+            SessionEventKind.ArtifactSetCommitted => EncodeArtifactSetCommitted((ArtifactSetCommittedBody)body, bodySchemaVersion),
             _ => throw new NotSupportedException($"Session event kind '{kind}' is not implemented.")
         };
+    }
 
     public static object Decode(SessionEventKind kind, ReadOnlySpan<byte> payload, out int bodySchemaVersion) {
+        int expectedBodySchemaVersion = GetExpectedBodySchemaVersion(kind);
         using var document = JsonDocument.Parse(payload.ToArray());
         JsonElement root = document.RootElement;
         RequireObject(root, "envelope");
         bodySchemaVersion = ReadRequiredInt32(root, "v");
-        if (bodySchemaVersion != BodySchemaVersion) {
-            throw new InvalidDataException($"Unsupported schema version {bodySchemaVersion} for session event kind '{kind}'.");
+        if (bodySchemaVersion != expectedBodySchemaVersion) {
+            throw new NotSupportedException(
+                $"Unsupported body schema version for session event kind '{kind}': "
+                + $"actual={bodySchemaVersion}, expected={expectedBodySchemaVersion}."
+            );
         }
 
         if (!root.TryGetProperty("body", out JsonElement body)) {
@@ -64,19 +69,39 @@ internal static class SessionEventCodec {
             SessionEventKind.SystemPromptSetup => DecodeSystemPromptSetup(body),
             SessionEventKind.SessionCreated => DecodeSessionCreated(body),
             SessionEventKind.ObservationAccepted => DecodeObservationAccepted(body),
-            SessionEventKind.AgentActionProduced => DecodeAgentActionProduced(body),
+            SessionEventKind.AgentActionProduced => DecodeAgentActionProduced(body, bodySchemaVersion),
             SessionEventKind.ToolExecutionStarted => DecodeToolExecutionStarted(body),
             SessionEventKind.ToolResultObserved => DecodeToolResultObserved(body),
             SessionEventKind.CompletionRequestPrepared => SessionRequestManifestCodec.Decode(body),
             SessionEventKind.CompletionAttemptFailed => DecodeCompletionAttemptFailed(body),
-            SessionEventKind.ImportedAgentAction => DecodeAgentActionProduced(body),
+            SessionEventKind.ImportedAgentAction => DecodeAgentActionProduced(body, bodySchemaVersion),
             SessionEventKind.CompletionAttemptRestarted => DecodeCompletionAttemptRestarted(body),
             SessionEventKind.ArtifactSetCommitted => DecodeArtifactSetCommitted(body),
             _ => throw new NotSupportedException($"Session event kind '{kind}' is not implemented.")
         };
     }
 
-    private static byte[] EncodeRuntimeConfiguration(SessionRuntimeConfiguration body) {
+    internal static int GetExpectedBodySchemaVersion(SessionEventKind kind)
+        => kind switch {
+            SessionEventKind.RuntimeConfigSetup => 1,
+            SessionEventKind.SystemPromptSetup => 1,
+            SessionEventKind.SessionCreated => 1,
+            SessionEventKind.ObservationAccepted => 1,
+            SessionEventKind.AgentActionProduced => 1,
+            SessionEventKind.ToolExecutionStarted => 1,
+            SessionEventKind.ToolResultObserved => 1,
+            SessionEventKind.CompletionRequestPrepared => 1,
+            SessionEventKind.CompletionAttemptFailed => 1,
+            SessionEventKind.ImportedAgentAction => 1,
+            SessionEventKind.CompletionAttemptRestarted => 1,
+            SessionEventKind.ArtifactSetCommitted => 1,
+            _ => throw new NotSupportedException($"Session event kind '{kind}' is not implemented.")
+        };
+
+    private static byte[] EncodeRuntimeConfiguration(
+        SessionRuntimeConfiguration body,
+        int bodySchemaVersion
+    ) {
         ArgumentNullException.ThrowIfNull(body);
         ValidateRequired(body.ModelId, nameof(body.ModelId));
         ValidateRequired(body.CompletionSurfaceId, nameof(body.CompletionSurfaceId));
@@ -84,7 +109,7 @@ internal static class SessionEventCodec {
 
         var buffer = new ArrayBufferWriter<byte>();
         using (var writer = new Utf8JsonWriter(buffer, WriterOptions)) {
-            WriteEnvelopeStart(writer);
+            WriteEnvelopeStart(writer, bodySchemaVersion);
             writer.WriteStartObject("body");
             writer.WriteString("modelId", body.ModelId);
             writer.WriteString("completionSurfaceId", body.CompletionSurfaceId);
@@ -96,13 +121,16 @@ internal static class SessionEventCodec {
         return buffer.WrittenMemory.ToArray();
     }
 
-    private static byte[] EncodeSystemPromptSetup(SystemPromptSetupBody body) {
+    private static byte[] EncodeSystemPromptSetup(
+        SystemPromptSetupBody body,
+        int bodySchemaVersion
+    ) {
         ArgumentNullException.ThrowIfNull(body);
         if (body.Content is null) { throw new ArgumentNullException(nameof(body.Content)); }
 
         var buffer = new ArrayBufferWriter<byte>();
         using (var writer = new Utf8JsonWriter(buffer, WriterOptions)) {
-            WriteEnvelopeStart(writer);
+            WriteEnvelopeStart(writer, bodySchemaVersion);
             writer.WriteStartObject("body");
             writer.WriteString("content", body.Content);
             writer.WriteEndObject();
@@ -112,12 +140,15 @@ internal static class SessionEventCodec {
         return buffer.WrittenMemory.ToArray();
     }
 
-    private static byte[] EncodeSessionCreated(SessionCreatedBody body) {
+    private static byte[] EncodeSessionCreated(
+        SessionCreatedBody body,
+        int bodySchemaVersion
+    ) {
         ArgumentNullException.ThrowIfNull(body);
 
         var buffer = new ArrayBufferWriter<byte>();
         using (var writer = new Utf8JsonWriter(buffer, WriterOptions)) {
-            WriteEnvelopeStart(writer);
+            WriteEnvelopeStart(writer, bodySchemaVersion);
             writer.WriteStartObject("body");
             writer.WriteEndObject();
             writer.WriteEndObject();
@@ -126,13 +157,16 @@ internal static class SessionEventCodec {
         return buffer.WrittenMemory.ToArray();
     }
 
-    private static byte[] EncodeObservationAccepted(ObservationAcceptedBody body) {
+    private static byte[] EncodeObservationAccepted(
+        ObservationAcceptedBody body,
+        int bodySchemaVersion
+    ) {
         ArgumentNullException.ThrowIfNull(body);
         ValidateRequired(body.Content, nameof(body.Content));
 
         var buffer = new ArrayBufferWriter<byte>();
         using (var writer = new Utf8JsonWriter(buffer, WriterOptions)) {
-            WriteEnvelopeStart(writer);
+            WriteEnvelopeStart(writer, bodySchemaVersion);
             writer.WriteStartObject("body");
             writer.WriteString("content", body.Content);
             writer.WriteEndObject();
@@ -142,7 +176,10 @@ internal static class SessionEventCodec {
         return buffer.WrittenMemory.ToArray();
     }
 
-    private static byte[] EncodeAgentActionProduced(AgentActionProducedBody body) {
+    private static byte[] EncodeAgentActionProduced(
+        AgentActionProducedBody body,
+        int bodySchemaVersion
+    ) {
         ArgumentNullException.ThrowIfNull(body);
         ArgumentNullException.ThrowIfNull(body.Action);
         ArgumentNullException.ThrowIfNull(body.Invocation);
@@ -169,7 +206,7 @@ internal static class SessionEventCodec {
         var blocks = ActionMessageSerialization.ToSerializedBlocks(body.Action.Blocks);
         var buffer = new ArrayBufferWriter<byte>();
         using (var writer = new Utf8JsonWriter(buffer, WriterOptions)) {
-            WriteEnvelopeStart(writer);
+            WriteEnvelopeStart(writer, bodySchemaVersion);
             writer.WriteStartObject("body");
             writer.WriteStartArray("action");
             foreach (var block in blocks) {
@@ -191,7 +228,10 @@ internal static class SessionEventCodec {
         return buffer.WrittenMemory.ToArray();
     }
 
-    private static byte[] EncodeToolExecutionStarted(ToolExecutionStartedBody body) {
+    private static byte[] EncodeToolExecutionStarted(
+        ToolExecutionStartedBody body,
+        int bodySchemaVersion
+    ) {
         ArgumentNullException.ThrowIfNull(body);
         ValidateRequired(body.ToolCallId, nameof(body.ToolCallId));
         ValidateRequired(body.ToolName, nameof(body.ToolName));
@@ -202,7 +242,7 @@ internal static class SessionEventCodec {
 
         var buffer = new ArrayBufferWriter<byte>();
         using (var writer = new Utf8JsonWriter(buffer, WriterOptions)) {
-            WriteEnvelopeStart(writer);
+            WriteEnvelopeStart(writer, bodySchemaVersion);
             writer.WriteStartObject("body");
             writer.WriteString("toolCallId", body.ToolCallId);
             writer.WriteString("toolName", body.ToolName);
@@ -217,7 +257,10 @@ internal static class SessionEventCodec {
         return buffer.WrittenMemory.ToArray();
     }
 
-    private static byte[] EncodeToolResultObserved(ToolResultObservedBody body) {
+    private static byte[] EncodeToolResultObserved(
+        ToolResultObservedBody body,
+        int bodySchemaVersion
+    ) {
         ArgumentNullException.ThrowIfNull(body);
         ValidateRequired(body.ToolCallId, nameof(body.ToolCallId));
         ValidateRequired(body.ToolName, nameof(body.ToolName));
@@ -226,7 +269,7 @@ internal static class SessionEventCodec {
 
         var buffer = new ArrayBufferWriter<byte>();
         using (var writer = new Utf8JsonWriter(buffer, WriterOptions)) {
-            WriteEnvelopeStart(writer);
+            WriteEnvelopeStart(writer, bodySchemaVersion);
             writer.WriteStartObject("body");
             writer.WriteString("toolCallId", body.ToolCallId);
             writer.WriteString("toolName", body.ToolName);
@@ -244,11 +287,14 @@ internal static class SessionEventCodec {
         return buffer.WrittenMemory.ToArray();
     }
 
-    private static byte[] EncodeCompletionRequestPrepared(CompletionRequestPreparedBody body) {
+    private static byte[] EncodeCompletionRequestPrepared(
+        CompletionRequestPreparedBody body,
+        int bodySchemaVersion
+    ) {
         byte[] canonicalBody = SessionRequestManifestCodec.Encode(body);
         var buffer = new ArrayBufferWriter<byte>();
         using (var writer = new Utf8JsonWriter(buffer, WriterOptions)) {
-            WriteEnvelopeStart(writer);
+            WriteEnvelopeStart(writer, bodySchemaVersion);
             writer.WritePropertyName("body");
             writer.WriteRawValue(canonicalBody, skipInputValidation: false);
             writer.WriteEndObject();
@@ -256,7 +302,10 @@ internal static class SessionEventCodec {
         return buffer.WrittenMemory.ToArray();
     }
 
-    private static byte[] EncodeCompletionAttemptFailed(CompletionAttemptFailedBody body) {
+    private static byte[] EncodeCompletionAttemptFailed(
+        CompletionAttemptFailedBody body,
+        int bodySchemaVersion
+    ) {
         ArgumentNullException.ThrowIfNull(body);
         ValidateRequired(body.AttemptId, nameof(body.AttemptId));
         ValidateFailureTerminationKind(body.TerminationKind);
@@ -264,7 +313,7 @@ internal static class SessionEventCodec {
 
         var buffer = new ArrayBufferWriter<byte>();
         using (var writer = new Utf8JsonWriter(buffer, WriterOptions)) {
-            WriteEnvelopeStart(writer);
+            WriteEnvelopeStart(writer, bodySchemaVersion);
             writer.WriteStartObject("body");
             writer.WriteString("attemptId", body.AttemptId);
             writer.WriteString("terminationKind", WriteFailureTerminationKind(body.TerminationKind));
@@ -282,12 +331,15 @@ internal static class SessionEventCodec {
         return buffer.WrittenMemory.ToArray();
     }
 
-    private static byte[] EncodeCompletionAttemptRestarted(CompletionAttemptRestartedBody body) {
+    private static byte[] EncodeCompletionAttemptRestarted(
+        CompletionAttemptRestartedBody body,
+        int bodySchemaVersion
+    ) {
         ValidateCompletionAttemptRestarted(body);
 
         var buffer = new ArrayBufferWriter<byte>();
         using (var writer = new Utf8JsonWriter(buffer, WriterOptions)) {
-            WriteEnvelopeStart(writer);
+            WriteEnvelopeStart(writer, bodySchemaVersion);
             writer.WriteStartObject("body");
             writer.WriteString("attemptId", body.AttemptId);
             writer.WriteString("replacesAttemptId", body.ReplacesAttemptId);
@@ -298,11 +350,14 @@ internal static class SessionEventCodec {
         return buffer.WrittenMemory.ToArray();
     }
 
-    private static byte[] EncodeArtifactSetCommitted(ArtifactSetCommittedBody body) {
+    private static byte[] EncodeArtifactSetCommitted(
+        ArtifactSetCommittedBody body,
+        int bodySchemaVersion
+    ) {
         ValidateArtifactSetCommitted(body);
         var buffer = new ArrayBufferWriter<byte>();
         using (var writer = new Utf8JsonWriter(buffer, WriterOptions)) {
-            WriteEnvelopeStart(writer);
+            WriteEnvelopeStart(writer, bodySchemaVersion);
             writer.WriteStartObject("body");
             writer.WriteString("policyId", body.PolicyId);
             writer.WriteString("policyFingerprint", body.PolicyFingerprint);
@@ -360,7 +415,10 @@ internal static class SessionEventCodec {
         return new ObservationAcceptedBody(ReadRequiredString(body, "content"));
     }
 
-    private static AgentActionProducedBody DecodeAgentActionProduced(JsonElement body) {
+    private static AgentActionProducedBody DecodeAgentActionProduced(
+        JsonElement body,
+        int bodySchemaVersion
+    ) {
         RequireExactProperties(
             body,
             "agent-action-produced body",
@@ -398,7 +456,7 @@ internal static class SessionEventCodec {
             ReadToolRuntimeIdentity(body, "toolRuntimeIdentity")
         );
         try {
-            _ = EncodeAgentActionProduced(result);
+            _ = EncodeAgentActionProduced(result, bodySchemaVersion);
         }
         catch (ArgumentException ex) {
             throw new InvalidDataException("agent-action-produced body is invalid.", ex);
@@ -718,9 +776,12 @@ internal static class SessionEventCodec {
         }
     }
 
-    private static void WriteEnvelopeStart(Utf8JsonWriter writer) {
+    private static void WriteEnvelopeStart(
+        Utf8JsonWriter writer,
+        int bodySchemaVersion
+    ) {
         writer.WriteStartObject();
-        writer.WriteNumber("v", BodySchemaVersion);
+        writer.WriteNumber("v", bodySchemaVersion);
     }
 
     private static void WriteExecutionCheckpoint(

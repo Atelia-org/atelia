@@ -1,6 +1,6 @@
 # CS-3D6：Coherent-only Request Manifest 化简计划
 
-> **状态**：Implementation in progress / D6A、D6B、D6C1 已实施
+> **状态**：Implementation in progress / D6A、D6B、D6C1、D6C2 已实施
 > **日期**：2026-07-27
 > **前置基线**：[Tail-only Execution Recovery Design](tail-execution-recovery-design.md)
 > **来源调研**：[Tail Execution Recovery 化简调研](tail-execution-recovery-simplification-study.md)
@@ -450,6 +450,19 @@ D6D 将只修改 `CompletionRequestPrepared` 的 expected version。
 - 当前所有 event canonical bytes不变；
 - online request path 不再有 `Project()` materialization 分支；
 - production code 已不能写 full-raw，但旧 reader 尚可在本包内通过原有 golden。
+
+**D6C2 实施记录（2026-07-27）**
+
+- `SessionEventCodec` 已以 exhaustive `SessionEventKind` mapping 取代全局 body schema version；
+  当前 12 个 kind 的 expected version 均为 v1，后续 D6D 可只提升
+  `CompletionRequestPrepared`。
+- encode 入口先解析 kind-specific version，再显式传入全部 11 个 envelope writer；共享 action
+  body writer 仍由 `AgentActionProduced` / `ImportedAgentAction` 各自的 kind mapping 提供版本。
+- decode 在解析 payload 前先拒绝 unknown kind，并以 kind-specific expected version 验证 envelope；
+  unsupported version 诊断明确包含 kind、`actual=` 与 `expected=`。
+- Prepared body shape、manifest codec/readers、所有 version 数值与既有 canonical goldens 均未改变。
+- 验证证据：新增 body-schema-version focused tests `15/15`，`SessionJournal.Tests`
+  `229/229`；测试项目 build 为 0 warning，`git diff --check` 通过。
 
 ### CS-3D6D：Prepared v2 原子 cutover
 
