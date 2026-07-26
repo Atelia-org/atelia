@@ -1,6 +1,6 @@
 # SessionJournal Tail-only Execution Recovery Design
 
-> **状态**：Design Baseline / CS-3D0、CS-3D1 已实施，CS-3D2 待实施
+> **状态**：Design Baseline / CS-3D0、CS-3D1、CS-3D2 已实施，CS-3D3 待实施
 > **日期**：2026-07-26
 > **建议路线编号**：CS-3D
 > **前置实现**：CS-3A governing setup checkpoint、CS-3B dependency-closed tail context、
@@ -95,7 +95,8 @@ dependencies，而不是假定“回溯到最近一条用户消息”。
   - `ContinueToolLoopAsync()`：每次 append tool result 后再次 `Project()`。
 - `prototypes/SessionJournal/SessionReducer.cs`
   - 同时累计 config、system prompt、完整 context 与 execution state。
-  - `ToolExecutionSequenceCheckpoint` 当前通过从 root 计数 `ToolResultObserved` 得到。
+  - full reducer 已消费 D1 的 durable execution checkpoint；它不再通过从 root 计数
+    `ToolResultObserved` 推断 sequence，但仍会为审计语义解码完整历史。
 - `prototypes/SessionJournal/SessionTailContextProjection.cs`
   - 已能从 artifact anchor fold dependency-closed suffix。
   - 这是 request context projector，不是通用 execution reducer。
@@ -260,6 +261,7 @@ CompletionRequestPrepared.execution
   { lastIssuedToolExecutionSequence }
 
 AgentActionProduced / ImportedAgentAction
+  correlationId
   execution { lastIssuedToolExecutionSequence }
   toolRuntimeIdentity | null
 
@@ -278,6 +280,12 @@ ToolResultObserved
 set 必须有 identity，空 tool set 必须在 manifest 中写 `null`。Action 有 tool calls 时继承 Prepared
 identity（import 则取当前显式 runtime identity），Started 再重复固定实际 dispatch identity。reducer 和
 driver 都要求三者精确相等。
+
+CS-3D2 进一步发现：Action 还必须固定 non-empty `correlationId`。live Action 从 source Prepared
+精确继承；import Action 从当前 Observation/settled ToolResult completion boundary 继承。terminal
+Action 落盘时同样保存 correlation，只在派生 execution state 进入 Idle 后清空。否则连续
+`ImportedAgentAction -> Started -> Result -> ImportedAgentAction` 会迫使 reopen 一直追到最初
+Observation，Action 就不能充当 bounded operational checkpoint。
 
 这是原型期的 breaking wire upgrade：codec 对新增字段采用 exact decode，不为旧 Action/Started/Result
 body 推断默认 checkpoint 或 runtime identity。已有实验 journal 必须重建或离线迁移；在线恢复路径不保留
@@ -353,7 +361,7 @@ Prepared 提交前 artifact 缺失属于 planning/liveness 问题；Prepared 提
 
 tail-only 只能解决“读多少历史”，不能自动解决外部副作用：
 
-- manifest 当前固定 tool definitions，不等于固定 tool implementation identity。
+- CS-3D1 已让 manifest 同时固定 tool definitions 与 tool implementation/capability runtime identity。
 - reopen 后准备执行 raw Action 中的 tool call 前，必须验证当前 host 的实现/版本/capability 与 durable
   identity 相符。
 - 幂等、可查询、不可查询非幂等工具仍分别需要 retry/reconcile/pause 策略。
@@ -444,6 +452,8 @@ runtime identity 和 capability policy 通过后才能产生外部调用。
 
 ### CS-3D2：`SessionExecutionTailResolver`
 
+> **状态**：已实施
+
 目标：实现独立、纯读取、不构造 Context 的 tail execution projection。
 
 - 按 §6 的 head-kind DFA 实现反向 dependency collection。
@@ -455,6 +465,46 @@ runtime identity 和 capability policy 通过后才能产生外部调用。
 
 - 正常链上 state 与 full reducer oracle 一致。
 - reads 只覆盖 operational tail/checkpoint。
+
+实际落点：
+
+- 新增 `SessionExecutionTailResolver.Resolve(reader, exactHead)`；`head = null` 返回 Empty，其他路径只使用
+  `ReadEventHeaderPreview` / `ReadEvent` 沿 exact Parent lineage 读取，不调用
+  `ReadChronologicalChain`、`Project()`、artifact store，也不产生 history message。
+- `SessionExecutionRecovery` 返回最小 `SessionExecutionState`、source
+  Prepared/Action/Observation/latest-checkpoint boundary 与本次 header/payload logical read diagnostics。
+  Engine 暴露 current-head 与 exact-head internal 入口，供 CS-3D3 driver 切换；本切片没有把
+  `ResumeAsync` / tool loop 的 phase routing 全部迁过去。
+- setup/bootstrap、Observation、P/R/Failure、live/import Action、Started/Result 分别按 §6 DFA
+  收集依赖。tool tail 回溯到当前 Action 后反转，并按 Action 声明顺序正向验证
+  `Started -> Result`、call id/name/raw args、runtime identity 与 reserved sequence。
+- 连续 setup run 的 Parent 导航仍先读 header，但 run 内每个 setup payload 都 exact decode；因此损坏的
+  near-head setup 不会被仅凭 kind 误判为 Idle。新 Observation 会开启新的 boundary provenance：
+  清空上一轮 source Prepared/Action，只保留本 Observation 与继承的 latest checkpoint。
+- P/R identity-chain resolver 从 Engine 抽到 resolver 成为共享单一路径；Engine 既有
+  recent-idle validator 也委托 tail resolver，不再维护第二套 bootstrap/terminal attempt topology。
+- validated-writer trust cut 明确停在最近 Prepared/Action durable checkpoint：Prepared 验 direct
+  source kind/reason/correlation/checkpoint，但不递归重验更旧 autonomous loop；Imported-after-Result
+  最多回收前一 Action 的完整 tool span，证明 Result 已 fully settled 后即停。
+- Action wire 新增 required non-empty `correlationId`。这是又一次 prototype breaking wire
+  redefinition：codec exact decode，不从旧 Action body 或遥远 Observation 猜值；旧实验 journal 必须
+  再次 import/migrate。
+- differential tests 覆盖全部 head phase、多 tool、受控 Engine writer、exact old head、真实 main-ref
+  rewind/divergent branch、失败后的新 Observation；malformed tests 覆盖 setup payload、
+  Parent/attempt/correlation/checkpoint/runtime identity、result-before-start、声明顺序和 duplicate
+  call id。
+- 冷前缀 1 turn 与 32 turns 下，terminal imported Action 与新 Prepared 的 resolver read 数相同；
+  imported-after-settled-Result 也固定只回收前一 Action tool span；chronological-chain/full-projection
+  计数均为 0。
+
+关键文件：
+
+- `prototypes/SessionJournal/SessionExecutionTailResolver.cs`
+- `prototypes/SessionJournal/SessionJournalContracts.cs`
+- `prototypes/SessionJournal/SessionEventCodec.cs`
+- `prototypes/SessionJournal/SessionReducer.cs`
+- `prototypes/SessionJournal/SessionJournalEngine.cs`
+- `tests/SessionJournal.Tests/SessionExecutionTailResolverTests.cs`
 
 ### CS-3D3：Engine driver 切换
 
@@ -526,11 +576,15 @@ runtime identity 和 capability policy 通过后才能产生外部调用。
 
 ## 13. 下一次 Coding Session 的起点
 
-从 **CS-3D2** 开始，不要把 D1 的近头 checkpoint resolver 误当成完整 execution resolver：
+从 **CS-3D3** 开始。D2 已把协议正确性与纯读取 resolver 独立验证；下一步才迁移 online driver：
 
-1. 按 §6 phase matrix 实现纯读取 `SessionExecutionTailResolver`。
-2. 用 D0 full reducer oracle 做 differential tests，并证明读取量与冷前缀长度无关。
-3. D2 必须直接消费 D1 的 Prepared/Action/Started/Result checkpoint 与 tool runtime identity。
-4. D2 differential tests 稳定后，才让 D3 替换 online driver。
+1. `ResumeAsync()` 所有 phase 统一使用 current-head `ResolveExecutionTail()`，移除非 fast path 的
+   `Project()` routing。
+2. `ContinueToolLoopAsync()` 在 Started/Result append 后重新 resolve exact new head，不再 full replay。
+3. `SendAsync()`、setup mutation 与 import append 的 boundary/state 检查逐步改用 resolver；每条路径都
+   保留 expected-head CAS 与 runtime identity gate。
+4. 用 D0 diagnostics 证明所有 online phase 的 `FullProjectionInvocationCount` 不增长；public
+   `Project()` / `ReplayHistory()` 继续保留完整审计语义。
 
-这样能把“协议正确性”“tail resolver 正确性”“driver 外部副作用”分成可独立审阅的风险面。
+不要在 D3 顺手展开 ArtifactSet/request-context 工作；Observation 与 ToolResult 的 artifact-tail
+泛化仍属于 D4。这样继续保持“tail state 判定”和“LLM 看见什么”两个风险面分离。

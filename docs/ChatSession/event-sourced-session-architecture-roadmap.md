@@ -585,8 +585,8 @@ invocation、`runtime-config-setup` 与 `system-prompt-setup` provenance。
 > explicit-artifact-tail 的 reopen 使用内联 snapshot，不依赖 derived sidecar，也不调用 `Project()`。
 > 默认 refusal 与 tail terminal validation 只做近头 attempt topology proof，不会借 reconstructor
 > 暗中退化为 full replay；后者同时支持 observation source，以及由 validated full-raw writer 提交的
-> tool-continuation source terminal。manifest 尚未固定 tool implementation identity，因此 recovered response
-> 若含 tool calls，会在任何工具执行前 durable fail；initial non-recovery tool loop 不受影响。
+> tool-continuation source terminal。CS-3D1 已在 manifest 固定 tool implementation/capability runtime
+> identity；recovered response 只有在当前 host identity 精确匹配时才能进入 durable tool dispatch。
 > provider 已明确返回的 non-success，以及 host 收到 response 后确认其违反已提交 request policy 的
 > known rejection，另以 `completion-attempt-failed` 持久化；例如 tail no-tool policy 遇到 tool calls
 > 使用 `atelia.host.unsupported-tool-call`。transport/cancellation 仍保持 prepared uncertain。
@@ -629,8 +629,11 @@ canonical request。execution resolver 本身不读取 artifact 文本。
 > 2026-07-26 进度：CS-3D0 已增加统一的 SessionJournal logical-read diagnostics 与 full reducer
 > reference-oracle phase matrix；CS-3D1 已把 last-issued tool sequence、reserved Started/Result
 > sequence 与 implementation/capability runtime identity 变成 Prepared/Action/tool tail 中的 durable
-> facts，并用 `ToolSession.ExecuteReservedAsync` 保证外部工具收到已落盘的确切 sequence。下一步 CS-3D2
-> 实现纯读取 `SessionExecutionTailResolver`，用这些近头事实替代 online `Project()`。
+> facts，并用 `ToolSession.ExecuteReservedAsync` 保证外部工具收到已落盘的确切 sequence。CS-3D2
+> 已实现纯读取 `SessionExecutionTailResolver`，并把 correlationId 固定进 Action checkpoint，避免
+> imported tool continuation 为找 active correlation 回溯到最初 Observation。resolver 已通过 full
+> reducer differential、branch/rewind、malformed tail 与 cold-prefix bounded-read 验证；下一步
+> CS-3D3 才会用它替代所有 online `Project()` routing。
 
 ### CS-4：可恢复 Tool Loop
 

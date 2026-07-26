@@ -148,12 +148,12 @@ body **禁止**复述 EventJournal header 已有的字段（`EventFrameHeader.cs
 | 2 | `system-prompt-setup` | content（从此位置起生效的完整 system prompt snapshot） |
 | 3 | `session-created` | 空 body；初始化完成 marker |
 | 4 | `observation-accepted` | content（外部输入文本；未来可扩展块） |
-| 5 | `agent-action-produced` | **raw（未消毒）** `ActionMessage`、invocation 摘要、execution checkpoint；有 tool calls 时固定 tool runtime identity |
+| 5 | `agent-action-produced` | **raw（未消毒）** `ActionMessage`、invocation 摘要、correlationId、execution checkpoint；有 tool calls 时固定 tool runtime identity |
 | 6 | `tool-execution-started` | toolCallId, toolName, rawArgumentsJson, operationId, reserved executionSequence, tool runtime identity |
 | 7 | `tool-result-observed` | toolCallId, executionSequence, status, blocks |
 | 8 | `completion-request-prepared` | attempt、execution checkpoint、minimal ContextPlan、governing setup refs、request parameters、inline tool set + runtime identity、renderer/target identity、canonical request commitment |
 | 9 | `completion-attempt-failed` | attemptId、明确的 Incomplete/Failed 或 host-known rejection、reason、detail、errors |
-| 10 | `imported-agent-action` | legacy/manual import 的 Action + invocation + execution checkpoint；有 tool calls 时固定当前 runtime identity |
+| 10 | `imported-agent-action` | legacy/manual import 的 Action + invocation + correlationId + execution checkpoint；有 tool calls 时固定当前 runtime identity |
 | 11 | `completion-attempt-restarted` | 新 attemptId、replacesAttemptId、sourcePreparedAddress |
 
 `turn` 完成是**隐式判定**（Action 无 tool call、或最近 Action 的全部 tool call 均已结算），不落独立事件——它可由 replay 确定性推出，属派生状态而非 raw fact。MVP 将
@@ -171,6 +171,9 @@ kind 11 不复制 manifest：其 `Header.Parent` 指向前一个 active attempt�
 end，不能把 Restarted.Parent 误当 request raw end。completion 成功产生的
 `agent-action-produced.Header.Parent` 必须直接指向当前 active Prepared/Restarted；manual/import 历史
 只能走显式 `AppendImportedAgentAction` 入口，并落为不同的 kind 10。
+两类 Action 都必须保存 active completion-boundary correlation：live 值精确继承 source Prepared，
+import 值取 append 前的 Observation/settled ToolResult execution state。即使 terminal Action 的派生
+state 随后清空 correlation，raw body 仍保留它作为近头 provenance/checkpoint。
 
 > raw Action 存 provider adapter 规范化后的完整 `ActionMessage`，**不做** persistence/context sanitization（对比老 `ChatSessionEngine.SanitizeForPersistence`，`ChatSessionEngine.cs:107-126`，那是落盘前剥 inline-think/丢空块）。是否剥 reasoning/think/空块、能否跨 provider 回灌，由 **projection/request renderer** 在构造 `CompletionRequest` 时决定。raw fact 与 provider-native wire log 不是同一层——后者（HTTP headers、临时字段、敏感内容）若需要另存 provider call forensic log，不进 raw session event。
 
@@ -311,8 +314,9 @@ result 都是非法 raw chain，fail-fast 且不递增 execution sequence。
 - CS-3C 不实现 provider-side attempt lookup / 原生 idempotency；默认不自动重发，显式 restart 使用新
   attempt identity 并保留替代链。显式 restart 当前要求调用方独占 branch driver；CAS 不能撤回已经
   并发发出的 provider 请求，跨进程 lease / single-flight 留待后续 capability。
-- CS-3C manifest 尚未固定 tool implementation identity；recovered response 的 tool calls 必须在执行前
-  durable fail，不自动进入工具循环。initial non-recovery tool loop 保持原合同。
+- CS-3D1 已让 manifest 固定 tool implementation/capability runtime identity；recovered response
+  只有在当前 host identity 精确匹配时才可进入 durable tool dispatch。跨实现升级的 reconcile/pause
+  policy 仍留待后续 capability。
 - CS-3B 为 `explicit-artifact-tail + ObservationAccepted + no tools` 增加 bounded recent-idle fast
   path，并把该 request context materialization 切到 dependency-closed suffix，不调用 `Project()`；
   显式 `Project()` / `ReplayHistory()` 与其他 execution phase 仍是 full replay。

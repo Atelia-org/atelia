@@ -1,6 +1,6 @@
 # SessionJournal Configuration Access Notes
 
-> 状态：CS-3A + CS-3B + CS-3C + CS-3D0 Implemented
+> 状态：CS-3A + CS-3B + CS-3C + CS-3D0 + CS-3D1 + CS-3D2 Implemented
 > 日期：2026-07-26
 > 相关文档：[SessionJournal 主干设计基线](session-journal-trunk-design.md)、
 > [Tail-only Execution Recovery Design](tail-execution-recovery-design.md)、
@@ -517,9 +517,9 @@ near-head checkpoint 恢复。Planner policy 可以先选择 full raw fallback�
 - Action / known failure 必须直接继承当前 active Prepared/Restarted；transport exception/cancellation
   仍留下该 attempt 的 uncertain `AwaitingCompletion`。下一次显式 restart 会再写一个新 attempt，不把
   新调用伪装成旧调用。
-- manifest 当前只固定 tool definitions，没有固定 tool implementation identity；因此 recovery 可以重发
-  exact full-raw request，但若结果含 tool calls，会在任何工具执行前写 host-known failure，不能自动进入
-  tool loop。initial non-recovery full-raw tool loop 不受影响。artifact-tail 仍维持 no-tools 合同。
+- CS-3D1 已在 manifest 同时固定 tool definitions 与 tool implementation/capability runtime identity；
+  recovery 重发 exact full-raw request 后，只有当前 host identity 精确匹配才能进入 durable tool
+  dispatch。artifact-tail 当前仍维持 no-tools 合同。
 - tail Prepared 即使 sidecar artifact 已删除，也能仅凭内联 snapshot 恢复，且不调用 `Project()`。
 - provider success envelope 的 invocation identity 与 committed target 不一致时，以
   `atelia.host.invalid-completion-invocation` 写 durable kind 9，而不留下伪 uncertain Prepared。
@@ -531,18 +531,26 @@ id，不能只给 reopen 临时加 lookup。当前显式 restart 还假定调用
 driver；head CAS 能阻止两个结果同时接到同一 active attempt，却无法撤销已经并发发出的 provider
 调用。跨进程 lease / single-flight 属于后续 capability。
 
-### CS-3D / CS-4 以后
+### CS-3D1 / CS-3D2（已实施）与后续
 
-通用 execution tail recovery 需要正式处理：
+CS-3D1 已把 last-issued tool sequence、Started reservation/result sequence、operation id 与 tool
+runtime identity 变成近头 durable facts。CS-3D2 已新增独立
+`SessionExecutionTailResolver`，按 exact Parent lineage 恢复 open action、observed results、pending
+operation、attempt/correlation 与 checkpoint，不构造 Context，也不调用 full `Project()`。
 
-- open action / observed results / pending operation。
-- `ToolExecutionSequenceCheckpoint` 必须成为近头 durable fact，不能再从 root 计数。
-- mid-turn boundary 与 request manifest 的关系。
-- tool continuation 的 request context 必须来自 artifact set + dependency-closed suffix，而不是
-  full `SessionProjection.Context`。
+Action 还新增 required `correlationId`：live 值继承 Prepared；import 值继承 Observation/settled
+ToolResult completion boundary。这样 Action 本身就是 correlation + sequence 的 trust cut，连续 imported
+tool continuation 不必追到最初 Observation。
 
-不能把 CS-3 的无工具 context fold 静默推广成通用 execution reducer seed。具体职责、事件协议和实施
-切片见 [Tail-only Execution Recovery Design](tail-execution-recovery-design.md)。
+后续仍需：
+
+- CS-3D3 把 `ResumeAsync`、tool loop、setup/import boundary 等 online driver 全部切到 resolver。
+- CS-3D4 让 tool continuation 的 request context 来自 coherent artifact set + dependency-closed
+  suffix，而不是 full `SessionProjection.Context`。
+
+不能把 CS-3 的 context fold 静默推广成通用 execution reducer seed，也不能让 resolver 越过最近
+Prepared/Action checkpoint 重验完整 autonomous loop。具体职责、事件协议和实施切片见
+[Tail-only Execution Recovery Design](tail-execution-recovery-design.md)。
 
 ## 9. 验收矩阵
 
@@ -589,8 +597,18 @@ Request recovery：
 - 当前 config/max tokens/tail option 或 planner 升级：不改变旧 manifest 的恢复结果；dispatch
   connection/client/tool definitions 漂移则在新 attempt 提交前拒绝。
 - 删除 derived artifact：已 committed explicit-artifact-tail request 仍可由内联 snapshot 恢复。
-- recovered response 含 tool calls：在 tool implementation identity 尚未 durable 化前，必须 durable
-  fail 且零工具执行。
+- recovered response 含 tool calls：当前 host tool runtime identity 必须与 manifest 精确一致；否则在
+  新 Started 或外部 dispatch 前 fail-fast。
+
+Tail execution recovery：
+
+- exact-head 的 Empty/Setup/Created/Observation/P/R/Failure/Action/Started/Result state 与 full reducer
+  oracle 一致。
+- tool tail 按 Action 声明顺序 join；错 Parent/attempt/correlation/checkpoint/runtime identity、
+  result-before-start、乱序 call 与 duplicate call id fail-fast。
+- branch、rewind、divergent head 只消费各自真实 Parent lineage，不查询物理 latest。
+- 1 turn 与 32 turns 冷前缀下，terminal Action 与新 Prepared 的 header/payload reads 相同；
+  chronological-chain/full-projection reads 为 0。
 
 ## 10. 暂不采用的方案
 
@@ -607,8 +625,10 @@ Request recovery：
 
 ## 11. 一句话决议
 
-CS-3A/B/C 已证明 **tail request construction + persisted request recovery** 的最小合同。下一步是
-CS-3D：让在线 execution recovery 也完全退出 full `Project()`，但不要求审计 API 放弃完整历史。
+CS-3A/B/C 已证明 **tail request construction + persisted request recovery** 的最小合同；
+CS-3D1/D2 已证明 **durable operational checkpoint + pure tail execution projection**。下一步
+CS-3D3 是让所有 online execution driver 使用该 resolver、完全退出 full `Project()`，但不要求审计
+API 放弃完整历史。
 
 正常运行时把内存中的两个 governing setup 地址写入每次 completion 前提交的
 `ContextPlan` / canonical request manifest；重启后从 head 扫描局部尾段，命中最近 checkpoint 后各一次
