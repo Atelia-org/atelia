@@ -216,6 +216,17 @@ public sealed class SessionExecutionTailResolverTests : IDisposable {
                 actual.Diagnostics.PayloadReadCount,
                 reads.PayloadReadCount
             );
+            if (head == observation || head == observationAfterFailure) {
+                Assert.Null(actual.Boundary.SourcePrepared);
+                Assert.Null(actual.Boundary.SourceAction);
+                Assert.Equal(head, actual.Boundary.SourceObservation);
+            }
+            if (head == runtime) {
+                Assert.Equal(1, actual.Diagnostics.PayloadReadCount);
+            }
+            if (head == prompt) {
+                Assert.Equal(2, actual.Diagnostics.PayloadReadCount);
+            }
         }
     }
 
@@ -284,6 +295,87 @@ public sealed class SessionExecutionTailResolverTests : IDisposable {
         );
         Assert.Equal(2, recovery.Diagnostics.PayloadReadCount);
         Assert.Equal(1, recovery.Diagnostics.HeaderReadCount);
+        Assert.Equal(0, reader.CaptureDiagnostics().ChronologicalChainReadCount);
+    }
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(32)]
+    public void Resolve_ImportedAfterSettledResult_MatchesOracleWithConstantReads(
+        int turns
+    ) {
+        string path = CreateImportedColdPrefix(turns);
+        using var journal = EventJournal.EventJournal.OpenExisting(path);
+        RefId main = journal.OpenBranch(
+            SessionJournalDefaults.MainBranchName
+        ).Unwrap();
+        EventAddress prior = journal.GetHead(main)
+            ?? throw new InvalidDataException("Fixture has no head.");
+        EventAddress observation = Commit(
+            journal,
+            prior,
+            SessionEventKind.ObservationAccepted,
+            new ObservationAcceptedBody("use tool")
+        );
+        string correlation = Correlation(observation);
+        EventAddress action = Commit(
+            journal,
+            observation,
+            SessionEventKind.ImportedAgentAction,
+            new AgentActionProducedBody(
+                new ActionMessage([
+                    new ActionBlock.ToolCall(
+                        new RawToolCall("alpha", "call-1", "{}")
+                    )
+                ]),
+                Invocation(),
+                correlation,
+                new SessionExecutionCheckpoint(0),
+                ToolIdentity
+            )
+        );
+        EventAddress started = Commit(
+            journal,
+            action,
+            SessionEventKind.ToolExecutionStarted,
+            new ToolExecutionStartedBody(
+                "call-1",
+                "alpha",
+                "{}",
+                "operation-1",
+                1,
+                ToolIdentity
+            )
+        );
+        EventAddress result = Commit(
+            journal,
+            started,
+            SessionEventKind.ToolResultObserved,
+            Result("call-1", "alpha", 1)
+        );
+        EventAddress terminal = Commit(
+            journal,
+            result,
+            SessionEventKind.ImportedAgentAction,
+            new AgentActionProducedBody(
+                new ActionMessage([new ActionBlock.Text("done")]),
+                Invocation(),
+                correlation,
+                new SessionExecutionCheckpoint(1),
+                ToolRuntimeIdentity: null
+            )
+        );
+        SessionExecutionState expected = FullOracle(journal, terminal);
+        var reader = new SessionJournalEventReader(journal);
+
+        SessionExecutionRecovery recovery =
+            SessionExecutionTailResolver.Resolve(reader, terminal);
+
+        Assert.Equal(expected, recovery.State);
+        Assert.Equal(SessionExecutionPhase.Idle, recovery.State.Phase);
+        Assert.Equal(terminal, recovery.Boundary.SourceAction);
+        Assert.Equal(4, recovery.Diagnostics.PayloadReadCount);
+        Assert.Equal(2, recovery.Diagnostics.HeaderReadCount);
         Assert.Equal(0, reader.CaptureDiagnostics().ChronologicalChainReadCount);
     }
 
@@ -366,6 +458,21 @@ public sealed class SessionExecutionTailResolverTests : IDisposable {
             new SessionJournalEventReader(journal),
             right
         ).Boundary.SourceAction);
+
+        RefId main = journal.OpenBranch(
+            SessionJournalDefaults.MainBranchName
+        ).Unwrap();
+        Assert.True(journal.MoveRef(main, observation, left).Unwrap());
+        Assert.True(journal.MoveRef(main, left, observation).Unwrap());
+        Assert.True(journal.MoveRef(main, observation, right).Unwrap());
+        SessionExecutionState expectedCurrent = FullOracle(journal, right);
+        journal.Dispose();
+
+        using var reopened = SessionJournalEngine.Open(path);
+        SessionExecutionRecovery current = reopened.ResolveExecutionTail();
+        Assert.Equal(right, current.Head);
+        Assert.Equal(expectedCurrent, current.State);
+        Assert.Equal(right, current.Boundary.SourceAction);
     }
 
     [Fact]
@@ -549,6 +656,51 @@ public sealed class SessionExecutionTailResolverTests : IDisposable {
             Encoding.UTF8.GetBytes(extra),
             out _
         ));
+    }
+
+    [Fact]
+    public void Resolve_MalformedNearHeadSetupPayload_FailsFast() {
+        string path = NewPath();
+        using var journal = EventJournal.EventJournal.CreateNew(path);
+        journal.CreateBranch(SessionJournalDefaults.MainBranchName, null).Unwrap();
+        EventAddress runtime = Commit(
+            journal,
+            null,
+            SessionEventKind.RuntimeConfigSetup,
+            new SessionRuntimeConfiguration(
+                "model-A",
+                "surface-A",
+                SessionJournalDefaults.Schema
+            )
+        );
+        EventAddress prompt = Commit(
+            journal,
+            runtime,
+            SessionEventKind.SystemPromptSetup,
+            new SystemPromptSetupBody("system")
+        );
+        EventAddress created = Commit(
+            journal,
+            prompt,
+            SessionEventKind.SessionCreated,
+            new SessionCreatedBody()
+        );
+        EventAddress malformed = journal.CommitToRef(
+            SessionJournalDefaults.MainBranchName,
+            created,
+            Encoding.UTF8.GetBytes(
+                """{"v":1,"body":{"content":42}}"""
+            ),
+            opaqueEventKind: (uint)SessionEventKind.SystemPromptSetup,
+            hint: default
+        ).Unwrap().EventAddress;
+        var reader = new SessionJournalEventReader(journal);
+
+        Assert.Throws<InvalidDataException>(() =>
+            SessionExecutionTailResolver.Resolve(reader, malformed)
+        );
+        Assert.Equal(1, reader.CaptureDiagnostics().PayloadReadCount);
+        Assert.Equal(0, reader.CaptureDiagnostics().ChronologicalChainReadCount);
     }
 
     public void Dispose() {

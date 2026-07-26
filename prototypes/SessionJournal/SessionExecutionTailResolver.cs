@@ -110,9 +110,16 @@ internal static class SessionExecutionTailResolver {
                 )) {
                     break;
                 }
+                DecodedSessionEvent setup = ReadDecoded(address, kind);
+                if (kind == SessionEventKind.RuntimeConfigSetup) {
+                    _ = RequireBody<SessionRuntimeConfiguration>(setup);
+                }
+                else {
+                    _ = RequireBody<SystemPromptSetupBody>(setup);
+                }
                 setupCount++;
                 oldestSetupKind = kind;
-                cursor = header.Parent;
+                cursor = setup.Parent;
             }
 
             if (cursor is null) {
@@ -220,7 +227,13 @@ internal static class SessionExecutionTailResolver {
                         idle.State.ToolExecutionSequenceCheckpoint,
                     ActiveCorrelationId: correlationId
                 ),
-                idle.Boundary with { SourceObservation = head }
+                new SessionExecutionRecoveryBoundary(
+                    SourcePrepared: null,
+                    SourceAction: null,
+                    SourceObservation: head,
+                    LatestExecutionCheckpoint:
+                        idle.Boundary.LatestExecutionCheckpoint
+                )
             );
         }
 

@@ -425,7 +425,7 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
     [Theory]
     [InlineData("tool-action")]
     [InlineData("tool-result")]
-    public async Task SendAsync_ImportedToolResultContinuation_FailsLocalCausalityBeforeProvider(
+    public async Task SendAsync_ImportedToolResultContinuation_RejectsNonReplaySafeArtifactAnchorBeforeProvider(
         string boundary
     ) {
         string path = NewJournalPath();
