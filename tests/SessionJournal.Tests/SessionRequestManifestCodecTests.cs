@@ -663,13 +663,13 @@ public sealed class SessionRequestManifestCodecTests : IDisposable {
             new SessionRequestAttempt("attempt-01", "correlation-01", "full raw fallback", null),
             new SessionExecutionCheckpoint(17),
             new SessionContextPlan(
-                SessionRequestManifestDefaults.SelectionPolicyId,
-                SessionRequestManifestDefaults.PlannerFingerprint,
+                SessionRequestManifestDefaults.FullRawSelectionPolicyId,
+                SessionRequestManifestDefaults.FullRawPlannerFingerprint,
                 null,
                 new string('a', 64),
                 [],
                 [],
-                SessionRequestManifestDefaults.RenderingProfileId,
+                SessionRequestManifestDefaults.FullRawRenderingProfileId,
                 request.ModelId,
                 123,
                 "full raw fallback"
@@ -692,8 +692,8 @@ public sealed class SessionRequestManifestCodecTests : IDisposable {
                     )
             ),
             new SessionRequestRendering(
-                SessionRequestManifestDefaults.ContextRendererId,
-                SessionRequestManifestDefaults.ContextRendererFingerprint,
+                SessionRequestManifestDefaults.FullRawContextRendererId,
+                SessionRequestManifestDefaults.FullRawContextRendererFingerprint,
                 SessionRequestManifestDefaults.CanonicalRequestCodecId,
                 SessionRequestManifestDefaults.ToolCodecId,
                 SessionRequestManifestDefaults.ReasoningCodecSetFingerprint

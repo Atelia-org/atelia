@@ -119,25 +119,20 @@ one exact coherent ArtifactSet + one dependency-closed raw suffix
 set，本计划也不修改 `ArtifactSetCommitted` wire；但 Prepared 必须保存 exact set reference，而不是只保存
 “latest”断言。未来 planner 选择更早合法 set 时，不需要重新引入第二套 manifest policy。
 
-### 1.4 最低 coherent membership
+### 1.4 coherent membership 的分层职责
 
-当前合同只要求至少两个唯一 role/member，并不保证它们一定是实际运行所需的两种 recap。由于本计划把
-coherent artifact-tail 变成唯一 online 路径，实施前应固定最低 membership policy：
+`SessionJournal` 是通用执行与持久化底座，不应硬编码某个应用的 memory maintainer 名称。
+core 只负责结构性 coherence：
 
-- 必须包含 `autobiography`；
-- 必须包含 `world-understanding`；
-- 可以允许额外唯一 role；
-- 所有 member 继续要求 common anchor、coverage setup、lineage 与 target 唯一。
+- 至少两个唯一 role/member；
+- member id 与 exact sidecar 一致；
+- common anchor、coverage setup、lineage、target 与 contribution hash 一致；
+- online completion 前所有 exact member 都可读且可验证。
 
-如果后续确认 role ID 应来自 profile/target 而不是上述短名称，应在 **D6A** 一次性确定 canonical
-vocabulary；不能只依赖 “member count >= 2” 冒充语义完整性。
-
-required-role policy 必须同时落在：
-
-- `CommitArtifactSetAsync()`：拒绝提交缺少 required roles 的新 activation；
-- readiness/validator：把旧任意-role activation 诊断为“不满足 current membership policy”，而不是
-  raw corruption；
-- Prepared v2 validator：再做 defense-in-depth member assertion。
+`autobiography`、`world-understanding` 是当前 ChatSession 应用的最低上下文策略，应由上层
+provisioning / planner 在提交前检查，并由应用层测试固定。其他应用可以使用不同 role vocabulary，
+而不需要修改 SessionJournal core。Prepared 继续 exact assertion 实际被选中的整个 set，但不解释
+role 的业务含义。
 
 ## 2. 本轮目标与非目标
 
@@ -294,18 +289,23 @@ unsupported schema，而不是普通 corruption 或 full replay fallback。
    - rewind 到 activation 之前同样 fail-fast；
    - Prepared 前 member 丢失 fail-fast；
    - setup mutation 后仍能用 anchor-to-boundary suffix 得到最新 governing setup。
-3. 确定 coherent membership 的 canonical role vocabulary；推荐 required roles 为
-   `autobiography` 与 `world-understanding`，允许额外 roles。
-   - 同时收紧 `CommitArtifactSetAsync()`；
-   - readiness/validator 将旧的不完整 activation 报为 not-ready；
-   - 不把 membership policy failure 伪装为 raw corruption。
-4. 删除仅指向 full-raw 的模糊 aliases：
+3. 增加 public typed not-ready exception/reason code，并在 `SendAsync` 与
+   AwaitingAgentAction completion routing 复用同一 preflight：
+   - current lineage 上不存在 activation 时报告 `ActiveArtifactSetRequired`；
+   - exact sidecar member 缺失或不可用时报告 member unavailable；
+   - sidecar 的 id/kind/target/common anchor/coverage setup/contribution hash 与 activation
+     不一致时报告 member mismatch；
+   - raw codec、Parent、lineage 与 setup reference corruption 继续走原有 corruption
+     exception，不伪装成 readiness。
+4. `SessionJournal` core 不检查 `autobiography` / `world-understanding` 等应用 role；
+   required-role policy 由 ChatSession provisioning / planner 负责。
+5. 删除仅指向 full-raw 的模糊 aliases：
    - `SessionRequestManifestDefaults.SelectionPolicyId`
    - `PlannerFingerprint`
    - `RenderingProfileId`
    - `ContextRendererId`
    - `ContextRendererFingerprint`
-5. 将少量仍使用 alias 的测试改成显式 current policy constant。
+6. 将少量仍使用 alias 的测试改成显式 current policy constant。
 
 **fresh-session gate**
 
@@ -317,7 +317,7 @@ unsupported schema，而不是普通 corruption 或 full replay fallback。
 - derived 写失败不得污染 raw execution chain。
 
 若当前产品只从已有历史/import 启动，则可以暂不实现 genesis，但必须接受
-`ArtifactSetRequired` 是正式 readiness 状态，不能用 full-raw 恢复可用性。
+`ActiveArtifactSetRequired` 是正式 readiness reason，不能用 full-raw 恢复可用性。
 
 **验收**
 

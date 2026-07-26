@@ -19,40 +19,44 @@ internal sealed record SessionTailContextProjectionResult(
 internal static class SessionTailContextProjection {
     public static async ValueTask<SessionTailContextProjectionResult> MaterializeAsync(
         SessionJournalEventReader reader,
-        string sessionJournalPath,
         EventAddress expectedParent,
         SessionGoverningSetup currentGoverningSetup,
         SessionGoverningSetup anchorSetup,
-        ImmutableArray<string> artifactIds,
+        ImmutableArray<DerivedRecapArtifact> artifacts,
         CancellationToken cancellationToken
     ) {
         ArgumentNullException.ThrowIfNull(reader);
         ArgumentNullException.ThrowIfNull(currentGoverningSetup);
         ArgumentNullException.ThrowIfNull(anchorSetup);
-        if (artifactIds.Length < 2
-            || artifactIds.Any(string.IsNullOrWhiteSpace)
-            || artifactIds.Distinct(StringComparer.Ordinal).Count() != artifactIds.Length) {
+        if (artifacts.Length < 2
+            || artifacts
+                .Select(static artifact => artifact.ArtifactId)
+                .Any(string.IsNullOrWhiteSpace)
+            || artifacts
+                .Select(static artifact => artifact.ArtifactId)
+                .Distinct(StringComparer.Ordinal)
+                .Count() != artifacts.Length) {
             throw new ArgumentException(
-                "Artifact-tail materialization requires at least two distinct exact artifact ids.",
-                nameof(artifactIds)
+                "Artifact-tail materialization requires at least two distinct exact artifacts.",
+                nameof(artifacts)
             );
         }
 
-        var store = DerivedRecapStore.Open(sessionJournalPath);
-        var artifacts = new List<DerivedRecapArtifact>(artifactIds.Length);
-        foreach (string artifactId in artifactIds) {
-            DerivedRecapArtifact artifact = await store
-                .TryReadArtifactAsync(artifactId, cancellationToken)
-                .ConfigureAwait(false)
-                ?? throw new InvalidDataException($"Exact recap artifact '{artifactId}' was not found or is unusable.");
-            if (!string.Equals(artifact.ArtifactId, artifactId, StringComparison.Ordinal)
-                || !string.Equals(artifact.Status, DerivedRecapArtifactStatus.Produced, StringComparison.Ordinal)) {
-                throw new InvalidDataException($"Recap artifact '{artifactId}' is not a produced exact artifact.");
+        foreach (DerivedRecapArtifact artifact in artifacts) {
+            if (!string.Equals(
+                    artifact.Status,
+                    DerivedRecapArtifactStatus.Produced,
+                    StringComparison.Ordinal
+                )) {
+                throw new InvalidDataException(
+                    $"Recap artifact '{artifact.ArtifactId}' is not a produced exact artifact."
+                );
             }
             if (artifact.AnchorRawEvent != artifact.SourceEndInclusive) {
-                throw new InvalidDataException($"Recap artifact '{artifactId}' anchor must equal sourceEndInclusive.");
+                throw new InvalidDataException(
+                    $"Recap artifact '{artifact.ArtifactId}' anchor must equal sourceEndInclusive."
+                );
             }
-            artifacts.Add(artifact);
         }
         EventAddress commonAnchor = artifacts[0].AnchorRawEvent;
         if (artifacts.Any(artifact => artifact.AnchorRawEvent != commonAnchor)) {

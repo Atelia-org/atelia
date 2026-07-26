@@ -145,12 +145,6 @@ internal static class SessionRequestManifestDefaults {
     public const string CoherentArtifactTailContextRendererFingerprint =
         "atelia.session-journal.coherent-artifact-tail.v1";
 
-    // Existing aliases remain the full-raw defaults so current callers and wire bytes do not drift.
-    public const string SelectionPolicyId = FullRawSelectionPolicyId;
-    public const string PlannerFingerprint = FullRawPlannerFingerprint;
-    public const string RenderingProfileId = FullRawRenderingProfileId;
-    public const string ContextRendererId = FullRawContextRendererId;
-    public const string ContextRendererFingerprint = FullRawContextRendererFingerprint;
     public const string ReasoningCodecSetFingerprint = "atelia.reasoning-codec-set.v1";
     public const string CanonicalRequestCodecId = "atelia.completion-request.canonical-json.v1";
     public const string ToolCodecId = "atelia.tool-definition.canonical-json.v1";

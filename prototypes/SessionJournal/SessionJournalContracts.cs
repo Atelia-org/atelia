@@ -106,6 +106,36 @@ public sealed record ResumeOutcome(
     IReadOnlyList<string>? Errors = null
 );
 
+/// <summary>
+/// Stable reason why an online completion route cannot currently be entered.
+/// Raw journal corruption and lineage violations are deliberately reported by
+/// their existing exceptions instead of being mapped to this readiness surface.
+/// </summary>
+public enum SessionJournalNotReadyReason {
+    ActiveArtifactSetRequired,
+    ArtifactSetMemberUnavailable,
+    ArtifactSetMemberMismatch,
+}
+
+/// <summary>
+/// Indicates that the durable raw lineage is valid, but an online completion
+/// prerequisite is absent or its rebuildable derived material is unusable.
+/// </summary>
+public sealed class SessionJournalNotReadyException : InvalidOperationException {
+    public SessionJournalNotReadyException(
+        SessionJournalNotReadyReason reason,
+        string message,
+        string? artifactId = null
+    ) : base(message) {
+        Reason = reason;
+        ArtifactId = artifactId;
+    }
+
+    public SessionJournalNotReadyReason Reason { get; }
+
+    public string? ArtifactId { get; }
+}
+
 public sealed class SessionJournalTurnAbortedException : InvalidOperationException {
     public SessionJournalTurnAbortedException(
         string message,

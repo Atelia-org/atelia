@@ -189,13 +189,13 @@ public sealed class SessionJournalEngine : IDisposable {
         }
         if (_runtime?.RequestContextPolicy ==
             SessionRequestContextPolicy.RequireActiveArtifactSet) {
-            _ = ResolveActiveArtifactSet(
+            _ = await EnsureActiveArtifactSetReadyAsync(
                 recovery.Head
                     ?? throw new InvalidDataException(
                         "Active artifact-set policy requires a raw session head."
                     ),
                 cancellationToken
-            );
+            ).ConfigureAwait(false);
         }
         EventAddress observationAddress = AppendExpected(
             SessionEventKind.ObservationAccepted,
@@ -841,22 +841,21 @@ public sealed class SessionJournalEngine : IDisposable {
             completionBoundary,
             cancellationToken
         );
-        SessionActiveArtifactSet activeArtifactSet = ResolveActiveArtifactSet(
+        ReadyActiveArtifactSet readyArtifactSet =
+            await EnsureActiveArtifactSetReadyAsync(
             completionBoundary,
             cancellationToken
-        );
+        ).ConfigureAwait(false);
+        SessionActiveArtifactSet activeArtifactSet = readyArtifactSet.Active;
         SessionTailContextProjectionResult tail = await SessionTailContextProjection.MaterializeAsync(
             _reader,
-            Path,
             completionBoundary,
             governingSetup,
             ReadSetupFromReferences(
                 activeArtifactSet.Body.CommonAnchor,
                 activeArtifactSet.Body.CoverageSetups
             ),
-            activeArtifactSet.Body.Members
-                .Select(static member => member.ArtifactId)
-                .ToImmutableArray(),
+            readyArtifactSet.Artifacts,
             cancellationToken
         ).ConfigureAwait(false);
         _lastTailProjectionDiagnostics = tail.Diagnostics;
@@ -1593,9 +1592,96 @@ public sealed class SessionJournalEngine : IDisposable {
             }
             cursor = header.Parent;
         }
-        throw new InvalidOperationException(
-            "Request context policy RequireActiveArtifactSet requires a durable ArtifactSetCommitted ancestor."
+        throw new SessionJournalNotReadyException(
+            SessionJournalNotReadyReason.ActiveArtifactSetRequired,
+            "Online completion requires a durable ArtifactSetCommitted ancestor on the current lineage."
         );
+    }
+
+    private async ValueTask<ReadyActiveArtifactSet> EnsureActiveArtifactSetReadyAsync(
+        EventAddress completionBoundary,
+        CancellationToken cancellationToken
+    ) {
+        SessionActiveArtifactSet active =
+            ResolveActiveArtifactSet(completionBoundary, cancellationToken);
+        DerivedRecapStore store = DerivedRecapStore.Open(Path);
+        var artifacts =
+            ImmutableArray.CreateBuilder<DerivedRecapArtifact>(
+                active.Body.Members.Length
+            );
+        foreach (SessionArtifactSetMember member in active.Body.Members) {
+            cancellationToken.ThrowIfCancellationRequested();
+            DerivedRecapArtifact artifact = await store
+                .TryReadArtifactAsync(member.ArtifactId, cancellationToken)
+                .ConfigureAwait(false)
+                ?? throw new SessionJournalNotReadyException(
+                    SessionJournalNotReadyReason.ArtifactSetMemberUnavailable,
+                    $"Active artifact-set member '{member.ArtifactId}' is missing or unusable.",
+                    member.ArtifactId
+                );
+
+            SessionRequestArtifactInput contribution;
+            try {
+                contribution =
+                    SessionTailContextProjection.CreateArtifactInput(artifact);
+            }
+            catch (InvalidDataException ex) {
+                throw new SessionJournalNotReadyException(
+                    SessionJournalNotReadyReason.ArtifactSetMemberMismatch,
+                    $"Active artifact-set member '{member.ArtifactId}' cannot produce its committed context contribution: {ex.Message}",
+                    member.ArtifactId
+                );
+            }
+
+            bool exactIdentityMatches =
+                string.Equals(
+                    artifact.ArtifactId,
+                    member.ArtifactId,
+                    StringComparison.Ordinal
+                )
+                && string.Equals(
+                    artifact.ArtifactKind,
+                    member.ArtifactKind,
+                    StringComparison.Ordinal
+                )
+                && artifact.Target == member.Target
+                && artifact.AnchorRawEvent == active.Body.CommonAnchor
+                && artifact.SourceEndInclusive == active.Body.CommonAnchor
+                && artifact.GoverningRuntimeConfigSetup
+                    == active.Body.CoverageSetups.RuntimeConfig.Address
+                && artifact.GoverningSystemPromptSetup
+                    == active.Body.CoverageSetups.SystemPrompt.Address
+                && string.Equals(
+                    contribution.ContentSha256,
+                    member.ContentSha256,
+                    StringComparison.Ordinal
+                );
+            if (!exactIdentityMatches) {
+                throw new SessionJournalNotReadyException(
+                    SessionJournalNotReadyReason.ArtifactSetMemberMismatch,
+                    $"Active artifact-set member '{member.ArtifactId}' does not match its committed identity, coverage, or context contribution.",
+                    member.ArtifactId
+                );
+            }
+            artifacts.Add(artifact);
+        }
+        ImmutableArray<DerivedRecapArtifact> readyArtifacts =
+            artifacts.MoveToImmutable();
+        ValidateArtifactSetLineage(
+            completionBoundary,
+            active.Body.CommonAnchor,
+            readyArtifacts.Select(static artifact => artifact.SourceRawHead),
+            cancellationToken
+        );
+        SessionTailContextProjection.ValidateReplaySafeBoundary(
+            _reader,
+            active.Body.CommonAnchor
+        );
+        _ = ReadSetupFromReferences(
+            active.Body.CommonAnchor,
+            active.Body.CoverageSetups
+        );
+        return new ReadyActiveArtifactSet(active, readyArtifacts);
     }
 
     private SessionActiveArtifactSet ReadActiveArtifactSet(
@@ -1953,6 +2039,11 @@ public sealed class SessionJournalEngine : IDisposable {
         string RawRangeSha256,
         ImmutableArray<SessionRequestArtifactInput> ArtifactInputs,
         SessionArtifactSetReference? ActiveArtifactSet = null
+    );
+
+    private sealed record ReadyActiveArtifactSet(
+        SessionActiveArtifactSet Active,
+        ImmutableArray<DerivedRecapArtifact> Artifacts
     );
 
     private sealed record FullRawRequestContext(
