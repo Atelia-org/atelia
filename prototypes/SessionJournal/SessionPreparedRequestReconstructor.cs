@@ -127,6 +127,15 @@ internal static class SessionPreparedRequestReconstructor {
                 systemPrompt.Content,
                 rawEvents
             ),
+            SessionRequestManifestDefaults.CoherentArtifactTailSelectionPolicyId => ReconstructCoherentArtifactTail(
+                reader,
+                manifest,
+                authoritativeRawEndInclusive,
+                runtimeConfig,
+                systemPrompt.Content,
+                rawEvents,
+                cancellationToken
+            ),
             string unsupported => throw new NotSupportedException(
                 $"Unsupported selection policy '{unsupported}'."
             )
@@ -253,6 +262,81 @@ internal static class SessionPreparedRequestReconstructor {
         context.AddRange(snapshotContext);
         context.AddRange(folded.Context);
 
+        return new CompletionRequest(
+            manifest.Parameters.ModelId,
+            expandedSystemPrompt,
+            context.MoveToImmutable(),
+            manifest.ToolSet.Definitions,
+            manifest.Parameters.MaxTokens
+        );
+    }
+
+    private static CompletionRequest ReconstructCoherentArtifactTail(
+        SessionJournalEventReader reader,
+        CompletionRequestPreparedBody manifest,
+        EventAddress rawEndInclusive,
+        SessionRuntimeConfiguration referencedRuntime,
+        string referencedSystemPrompt,
+        IReadOnlyList<DecodedSessionEvent> rawEvents,
+        CancellationToken cancellationToken
+    ) {
+        EventAddress rawStartExclusive = manifest.Plan.RawStartExclusive
+            ?? throw new InvalidDataException("Coherent artifact-set tail reconstruction requires rawStartExclusive.");
+        SessionExecutionRecovery seedRecovery =
+            SessionExecutionTailResolver.Resolve(reader, rawStartExclusive, cancellationToken);
+        SessionExecutionRecovery finalRecovery =
+            SessionExecutionTailResolver.Resolve(reader, rawEndInclusive, cancellationToken);
+        if (finalRecovery.State.Phase != SessionExecutionPhase.AwaitingAgentAction
+            || finalRecovery.State.HeadKind is not (
+                SessionEventKind.ObservationAccepted
+                or SessionEventKind.ToolResultObserved
+            )) {
+            throw new InvalidDataException(
+                "Coherent artifact-set tail boundary must be ObservationAccepted or a dependency-closed ToolResultObserved."
+            );
+        }
+        ValidateAttemptBoundary(
+            manifest,
+            rawEvents[^1],
+            finalRecovery.State.ActiveCorrelationId
+        );
+
+        var seed = new SessionGoverningSetup(
+            rawStartExclusive,
+            manifest.Setups.RuntimeConfig.Address,
+            referencedRuntime,
+            manifest.Setups.SystemPrompt.Address,
+            referencedSystemPrompt
+        );
+        SessionTailContextProjection.TailFoldResult folded =
+            SessionTailContextProjection.FoldSuffix(seed, rawEvents, seedRecovery);
+        if (folded.GoverningSetup.Head != rawEndInclusive
+            || folded.GoverningSetup.RuntimeConfigSetupAddress != manifest.Setups.RuntimeConfig.Address
+            || folded.GoverningSetup.SystemPromptSetupAddress != manifest.Setups.SystemPrompt.Address
+            || folded.GoverningSetup.RuntimeConfig != referencedRuntime
+            || !string.Equals(folded.GoverningSetup.SystemPrompt, referencedSystemPrompt, StringComparison.Ordinal)
+            || folded.ToolExecutionSequenceCheckpoint != manifest.Execution.LastIssuedToolExecutionSequence
+            || folded.ToolExecutionSequenceCheckpoint != finalRecovery.State.ToolExecutionSequenceCheckpoint
+            || !string.Equals(folded.ActiveCorrelationId, finalRecovery.State.ActiveCorrelationId, StringComparison.Ordinal)) {
+            throw new InvalidDataException(
+                "Coherent artifact-set tail fold does not match its pinned setup or exact final recovery."
+            );
+        }
+
+        SessionRequestArtifactContextSnapshot aggregate =
+            SessionTailContextProjection.AggregateContextSnapshots(
+                manifest.Plan.ArtifactInputs
+            );
+        (string expandedSystemPrompt, ImmutableArray<IHistoryMessage> snapshotContext) =
+            SessionTailContextProjection.ExpandContextSnapshot(
+                referencedSystemPrompt,
+                aggregate
+            );
+        var context = ImmutableArray.CreateBuilder<IHistoryMessage>(
+            snapshotContext.Length + folded.Context.Count
+        );
+        context.AddRange(snapshotContext);
+        context.AddRange(folded.Context);
         return new CompletionRequest(
             manifest.Parameters.ModelId,
             expandedSystemPrompt,

@@ -11,7 +11,7 @@ internal sealed record SessionTailContextProjectionResult(
     ImmutableArray<IHistoryMessage> Context,
     EventAddress RawStartExclusive,
     string RawRangeSha256,
-    SessionRequestArtifactInput ArtifactInput,
+    ImmutableArray<SessionRequestArtifactInput> ArtifactInputs,
     SessionGoverningSetup FinalGoverningSetup,
     SessionTailProjectionDiagnostics Diagnostics
 );
@@ -31,34 +31,51 @@ internal static class SessionTailContextProjection {
         ArgumentNullException.ThrowIfNull(options);
         ArgumentNullException.ThrowIfNull(resolveGoverningSetup);
 
-        DerivedRecapArtifact artifact = await DerivedRecapStore.Open(sessionJournalPath)
-            .TryReadArtifactAsync(options.ArtifactId, cancellationToken)
-            .ConfigureAwait(false)
-            ?? throw new InvalidDataException($"Exact recap artifact '{options.ArtifactId}' was not found or is unusable.");
-        if (!string.Equals(artifact.ArtifactId, options.ArtifactId, StringComparison.Ordinal)
-            || !string.Equals(artifact.Status, DerivedRecapArtifactStatus.Produced, StringComparison.Ordinal)) {
-            throw new InvalidDataException($"Recap artifact '{options.ArtifactId}' is not a produced exact artifact.");
+        var store = DerivedRecapStore.Open(sessionJournalPath);
+        var artifacts = new List<DerivedRecapArtifact>(options.ArtifactIds.Length);
+        foreach (string artifactId in options.ArtifactIds) {
+            DerivedRecapArtifact artifact = await store
+                .TryReadArtifactAsync(artifactId, cancellationToken)
+                .ConfigureAwait(false)
+                ?? throw new InvalidDataException($"Exact recap artifact '{artifactId}' was not found or is unusable.");
+            if (!string.Equals(artifact.ArtifactId, artifactId, StringComparison.Ordinal)
+                || !string.Equals(artifact.Status, DerivedRecapArtifactStatus.Produced, StringComparison.Ordinal)) {
+                throw new InvalidDataException($"Recap artifact '{artifactId}' is not a produced exact artifact.");
+            }
+            if (artifact.AnchorRawEvent != artifact.SourceEndInclusive) {
+                throw new InvalidDataException($"Recap artifact '{artifactId}' anchor must equal sourceEndInclusive.");
+            }
+            artifacts.Add(artifact);
         }
-        if (artifact.AnchorRawEvent != artifact.SourceEndInclusive) {
-            throw new InvalidDataException("Recap artifact anchor must equal sourceEndInclusive.");
+        EventAddress commonAnchor = artifacts[0].AnchorRawEvent;
+        if (artifacts.Any(artifact => artifact.AnchorRawEvent != commonAnchor)) {
+            throw new InvalidDataException("A coherent artifact set requires one common anchor.");
         }
-        if (artifact.AnchorRawEvent == expectedParent) {
+        if (commonAnchor == expectedParent) {
             throw new InvalidDataException(
-                "Recap artifact anchor must be a strict ancestor of the current ObservationAccepted boundary."
+                "Coherent artifact-set anchor must be a strict ancestor of the current completion boundary."
             );
         }
 
         IReadOnlyList<EventAddress> suffixAddresses = CollectAndValidateSuffix(
             reader,
             expectedParent,
-            artifact.AnchorRawEvent,
-            artifact.SourceRawHead,
+            commonAnchor,
+            artifacts.Select(static artifact => artifact.SourceRawHead).ToHashSet(),
             cancellationToken,
             out int headerVisitCount
         );
-        ValidateReplaySafeBoundary(reader, artifact.AnchorRawEvent);
+        ValidateReplaySafeBoundary(reader, commonAnchor);
 
-        SessionGoverningSetup anchorSetup = resolveGoverningSetup(artifact.AnchorRawEvent, cancellationToken);
+        SessionGoverningSetup anchorSetup = resolveGoverningSetup(commonAnchor, cancellationToken);
+        foreach (DerivedRecapArtifact artifact in artifacts) {
+            if (artifact.GoverningRuntimeConfigSetup != anchorSetup.RuntimeConfigSetupAddress
+                || artifact.GoverningSystemPromptSetup != anchorSetup.SystemPromptSetupAddress) {
+                throw new InvalidDataException(
+                    $"Recap artifact '{artifact.ArtifactId}' governing setup does not match its common anchor."
+                );
+            }
+        }
         var suffixEntries = new List<SessionRawRangeHashEntry>(suffixAddresses.Count);
         var suffixEvents = new List<DecodedSessionEvent>(suffixAddresses.Count);
         foreach (EventAddress address in suffixAddresses) {
@@ -78,11 +95,15 @@ internal static class SessionTailContextProjection {
         }
 
         string rawRangeSha256 = SessionRawRangeHasher.Compute(
-            artifact.AnchorRawEvent,
+            commonAnchor,
             expectedParent,
             suffixEntries
         );
-        TailFoldResult folded = FoldSuffix(anchorSetup, suffixEvents);
+        SessionExecutionRecovery anchorRecovery =
+            SessionExecutionTailResolver.Resolve(reader, commonAnchor, cancellationToken);
+        SessionExecutionRecovery currentRecovery =
+            SessionExecutionTailResolver.Resolve(reader, expectedParent, cancellationToken);
+        TailFoldResult folded = FoldSuffix(anchorSetup, suffixEvents, anchorRecovery);
         if (currentGoverningSetup.Head != expectedParent
             || folded.GoverningSetup.Head != expectedParent
             || folded.GoverningSetup.RuntimeConfigSetupAddress != currentGoverningSetup.RuntimeConfigSetupAddress
@@ -91,13 +112,35 @@ internal static class SessionTailContextProjection {
             || !string.Equals(folded.GoverningSetup.SystemPrompt, currentGoverningSetup.SystemPrompt, StringComparison.Ordinal)) {
             throw new InvalidDataException("Tail projection governing setup does not match the exact current-head governing setup.");
         }
+        if (folded.ToolExecutionSequenceCheckpoint != currentRecovery.State.ToolExecutionSequenceCheckpoint
+            || !string.Equals(
+                folded.ActiveCorrelationId,
+                currentRecovery.State.ActiveCorrelationId,
+                StringComparison.Ordinal
+            )) {
+            throw new InvalidDataException(
+                "Tail projection execution checkpoint or correlation does not match exact current recovery."
+            );
+        }
 
-        RenderedMemoryPack rendered = artifact.MemoryPack.Render();
-        var contextSnapshot = new SessionRequestArtifactContextSnapshot(
-            rendered.SystemPromptFragment,
-            rendered.ObservationMessage,
-            rendered.ActionMessage
-        );
+        var contributions = artifacts
+            .Select(CreateTargetContribution)
+            .OrderBy(static item => item.Carrier)
+            .ThenBy(static item => item.BlockKey, StringComparer.Ordinal)
+            .ToArray();
+        var targets = new HashSet<MemoryPackBlockPath>();
+        foreach (TargetContribution contribution in contributions) {
+            if (!targets.Add(new MemoryPackBlockPath(contribution.Carrier, contribution.BlockKey))) {
+                throw new InvalidDataException(
+                    $"Coherent artifact set contains duplicate target '{contribution.Carrier}/{contribution.BlockKey}'."
+                );
+            }
+        }
+        ImmutableArray<SessionRequestArtifactInput> artifactInputs = [
+            .. contributions.Select(static item => item.ArtifactInput)
+        ];
+        SessionRequestArtifactContextSnapshot contextSnapshot =
+            AggregateContextSnapshots(artifactInputs);
         (string systemPrompt, ImmutableArray<IHistoryMessage> headerContext) = ExpandContextSnapshot(
             folded.GoverningSetup.SystemPrompt,
             contextSnapshot
@@ -109,14 +152,9 @@ internal static class SessionTailContextProjection {
         return new SessionTailContextProjectionResult(
             systemPrompt,
             context.MoveToImmutable(),
-            artifact.AnchorRawEvent,
+            commonAnchor,
             rawRangeSha256,
-            new SessionRequestArtifactInput(
-                artifact.ArtifactId,
-                artifact.ArtifactKind,
-                SessionArtifactContextSnapshotHasher.ComputeSha256(contextSnapshot),
-                contextSnapshot
-            ),
+            artifactInputs,
             folded.GoverningSetup,
             new SessionTailProjectionDiagnostics(
                 headerVisitCount,
@@ -130,24 +168,24 @@ internal static class SessionTailContextProjection {
         SessionJournalEventReader reader,
         EventAddress expectedParent,
         EventAddress anchor,
-        EventAddress sourceRawHead,
+        IReadOnlySet<EventAddress> sourceRawHeads,
         CancellationToken cancellationToken,
         out int headerVisitCount
     ) {
         var reverseSuffix = new List<EventAddress>();
         EventAddress? cursor = expectedParent;
-        bool sawSourceHead = false;
+        var unseenSourceHeads = new HashSet<EventAddress>(sourceRawHeads);
         headerVisitCount = 0;
         while (cursor is { } address) {
             cancellationToken.ThrowIfCancellationRequested();
             EventFrameHeader header = reader.ReadEventHeaderPreview(address).Unwrap();
             headerVisitCount++;
             ValidateSessionHeader(address, header);
-            if (address == sourceRawHead) { sawSourceHead = true; }
+            unseenSourceHeads.Remove(address);
             if (address == anchor) {
-                if (!sawSourceHead) {
+                if (unseenSourceHeads.Count > 0) {
                     throw new InvalidDataException(
-                        "Recap artifact sourceRawHead is not on the current lineage at or after its anchor."
+                        "At least one recap artifact sourceRawHead is not on the current lineage at or after its anchor."
                     );
                 }
                 reverseSuffix.Reverse();
@@ -188,7 +226,8 @@ internal static class SessionTailContextProjection {
 
     internal static TailFoldResult FoldSuffix(
         SessionGoverningSetup seed,
-        IReadOnlyList<DecodedSessionEvent> events
+        IReadOnlyList<DecodedSessionEvent> events,
+        SessionExecutionRecovery? executionSeed = null
     ) {
         EventAddress runtimeAddress = seed.RuntimeConfigSetupAddress;
         SessionRuntimeConfiguration runtimeConfig = seed.RuntimeConfig;
@@ -199,8 +238,13 @@ internal static class SessionTailContextProjection {
         var observedResults = new Dictionary<string, ToolResultObservedBody>(StringComparer.Ordinal);
         RawToolCall? pendingCall = null;
         bool pendingStarted = false;
-        long? executionSequenceCheckpoint = null;
+        long? executionSequenceCheckpoint =
+            executionSeed?.State.ToolExecutionSequenceCheckpoint;
+        string? activeCorrelationId = executionSeed?.State.ActiveCorrelationId;
         SessionToolRuntimeIdentity? pendingToolRuntimeIdentity = null;
+        CompletionRequestPreparedBody? sourcePrepared = null;
+        string? activeAttemptId = null;
+        SessionEventKind? priorKind = executionSeed?.State.HeadKind;
 
         foreach (DecodedSessionEvent ev in events) {
             switch (ev.Kind) {
@@ -215,14 +259,40 @@ internal static class SessionTailContextProjection {
                     systemPrompt = RequireBody<SystemPromptSetupBody>(ev).Content;
                     break;
                 case SessionEventKind.SessionCreated:
-                case SessionEventKind.CompletionAttemptRestarted:
                 case SessionEventKind.CompletionAttemptFailed:
                     EnsureNoOpenTool(ev, openAction);
                     break;
+                case SessionEventKind.CompletionAttemptRestarted: {
+                    EnsureNoOpenTool(ev, openAction);
+                    CompletionAttemptRestartedBody restarted =
+                        RequireBody<CompletionAttemptRestartedBody>(ev);
+                    if (sourcePrepared is null
+                        || !string.Equals(restarted.ReplacesAttemptId, activeAttemptId, StringComparison.Ordinal)) {
+                        throw new InvalidDataException(
+                            $"{ev.Kind} at {ev.Address} does not replace the active suffix Prepared attempt."
+                        );
+                    }
+                    activeAttemptId = restarted.AttemptId;
+                    break;
+                }
                 case SessionEventKind.CompletionRequestPrepared: {
                     EnsureNoOpenTool(ev, openAction);
                     CompletionRequestPreparedBody prepared =
                         RequireBody<CompletionRequestPreparedBody>(ev);
+                    string expectedReason = priorKind switch {
+                        SessionEventKind.ObservationAccepted => "observation",
+                        SessionEventKind.ToolResultObserved => "tool-continuation",
+                        _ => throw new InvalidDataException(
+                            $"{ev.Kind} at {ev.Address} does not follow a completion boundary."
+                        )
+                    };
+                    if (!string.Equals(prepared.Attempt.Reason, expectedReason, StringComparison.Ordinal)
+                        || !string.Equals(prepared.Plan.Reason, expectedReason, StringComparison.Ordinal)
+                        || !string.Equals(prepared.Attempt.CorrelationId, activeCorrelationId, StringComparison.Ordinal)) {
+                        throw new InvalidDataException(
+                            $"{ev.Kind} at {ev.Address} reason or correlation does not match its suffix completion boundary."
+                        );
+                    }
                     if (executionSequenceCheckpoint is long current
                         && prepared.Execution.LastIssuedToolExecutionSequence != current) {
                         throw new InvalidDataException(
@@ -231,11 +301,18 @@ internal static class SessionTailContextProjection {
                     }
                     executionSequenceCheckpoint =
                         prepared.Execution.LastIssuedToolExecutionSequence;
+                    sourcePrepared = prepared;
+                    activeAttemptId = prepared.Attempt.AttemptId;
+                    activeCorrelationId = prepared.Attempt.CorrelationId;
                     break;
                 }
                 case SessionEventKind.ObservationAccepted:
                     EnsureNoOpenTool(ev, openAction);
                     context.Add(new ObservationMessage(RequireBody<ObservationAcceptedBody>(ev).Content));
+                    activeCorrelationId =
+                        $"atelia.session-journal.turn.v1:{EventAddressTextCodec.Format(ev.Address)}";
+                    sourcePrepared = null;
+                    activeAttemptId = null;
                     break;
                 case SessionEventKind.AgentActionProduced:
                 case SessionEventKind.ImportedAgentAction: {
@@ -252,6 +329,18 @@ internal static class SessionTailContextProjection {
                     }
                     executionSequenceCheckpoint =
                         actionBody.Execution.LastIssuedToolExecutionSequence;
+                    if (ev.Kind == SessionEventKind.AgentActionProduced) {
+                        if (sourcePrepared is null
+                            || !string.Equals(actionBody.CorrelationId, sourcePrepared.Attempt.CorrelationId, StringComparison.Ordinal)
+                            || actionBody.Execution != sourcePrepared.Execution
+                            || action.ToolCalls.Count > 0
+                                && actionBody.ToolRuntimeIdentity != sourcePrepared.ToolSet.RuntimeIdentity) {
+                            throw new InvalidDataException(
+                                $"{ev.Kind} at {ev.Address} does not match its suffix Prepared snapshot."
+                            );
+                        }
+                    }
+                    activeCorrelationId = actionBody.CorrelationId;
                     context.Add(action);
                     if (action.ToolCalls.Count > 0) {
                         pendingToolRuntimeIdentity = actionBody.ToolRuntimeIdentity
@@ -309,6 +398,7 @@ internal static class SessionTailContextProjection {
                 default:
                     throw new InvalidDataException($"Unsupported suffix event kind '{ev.Kind}'.");
             }
+            priorKind = ev.Kind;
         }
         if (openAction is not null || pendingCall is not null || pendingStarted) {
             throw new InvalidDataException("Recap raw suffix ends with unresolved tool dependencies.");
@@ -323,7 +413,70 @@ internal static class SessionTailContextProjection {
                 promptAddress,
                 systemPrompt
             ),
-            context
+            context,
+            activeCorrelationId,
+            executionSequenceCheckpoint ?? 0
+        );
+    }
+
+    internal static SessionRequestArtifactContextSnapshot AggregateContextSnapshots(
+        IReadOnlyList<SessionRequestArtifactInput> inputs
+    ) => new(
+        JoinSnapshotField(inputs, static snapshot => snapshot.SystemPromptFragment),
+        JoinSnapshotField(inputs, static snapshot => snapshot.ObservationMessage),
+        JoinSnapshotField(inputs, static snapshot => snapshot.ActionMessage)
+    );
+
+    private static string JoinSnapshotField(
+        IReadOnlyList<SessionRequestArtifactInput> inputs,
+        Func<SessionRequestArtifactContextSnapshot, string> selector
+    ) => string.Join(
+        "\n\n",
+        inputs.Select(input => selector(input.ContextSnapshot))
+            .Where(static value => !string.IsNullOrWhiteSpace(value))
+    );
+
+    private static TargetContribution CreateTargetContribution(DerivedRecapArtifact artifact) {
+        if (!artifact.MemoryPack.TryGetBlock(artifact.Target, out MemoryPackBlock block)) {
+            throw new InvalidDataException(
+                $"Recap artifact '{artifact.ArtifactId}' is missing its target block."
+            );
+        }
+        var singleton = new MemoryPack();
+        singleton.GetCarrier(artifact.Target.Carrier).Add(
+            artifact.Target.BlockKey,
+            new MemoryPackBlock(block.Text)
+        );
+        RenderedMemoryPack rendered = singleton.Render();
+        var snapshot = artifact.Target.Carrier switch {
+            MemoryPackCarrier.System => new SessionRequestArtifactContextSnapshot(
+                rendered.SystemPromptFragment,
+                "",
+                ""
+            ),
+            MemoryPackCarrier.Observation => new SessionRequestArtifactContextSnapshot(
+                "",
+                rendered.ObservationMessage,
+                ""
+            ),
+            MemoryPackCarrier.Action => new SessionRequestArtifactContextSnapshot(
+                "",
+                "",
+                rendered.ActionMessage
+            ),
+            _ => throw new InvalidDataException(
+                $"Unsupported recap target carrier '{artifact.Target.Carrier}'."
+            )
+        };
+        return new TargetContribution(
+            artifact.Target.Carrier,
+            artifact.Target.BlockKey,
+            new SessionRequestArtifactInput(
+                artifact.ArtifactId,
+                artifact.ArtifactKind,
+                SessionArtifactContextSnapshotHasher.ComputeSha256(snapshot),
+                snapshot
+            )
         );
     }
 
@@ -346,7 +499,7 @@ internal static class SessionTailContextProjection {
         if (!string.IsNullOrEmpty(snapshot.ActionMessage)) {
             context.Add(new ActionMessage([new ActionBlock.Text(snapshot.ActionMessage)]));
         }
-        return (systemPrompt.ToString(), context.MoveToImmutable());
+        return (systemPrompt.ToString(), context.ToImmutable());
     }
 
     private static ToolResultsMessage ProjectToolResults(
@@ -408,6 +561,14 @@ internal static class SessionTailContextProjection {
 
     internal sealed record TailFoldResult(
         SessionGoverningSetup GoverningSetup,
-        IReadOnlyList<IHistoryMessage> Context
+        IReadOnlyList<IHistoryMessage> Context,
+        string? ActiveCorrelationId,
+        long ToolExecutionSequenceCheckpoint
+    );
+
+    private sealed record TargetContribution(
+        MemoryPackCarrier Carrier,
+        string BlockKey,
+        SessionRequestArtifactInput ArtifactInput
     );
 }

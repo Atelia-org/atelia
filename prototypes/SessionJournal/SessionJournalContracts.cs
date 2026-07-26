@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using Atelia.Completion.Abstractions;
 using Atelia.Completion.Tools;
 using Atelia.EventJournal;
@@ -80,10 +81,26 @@ public sealed record SessionRuntime(
     SessionToolRuntimeIdentity? ToolRuntimeIdentity = null
 );
 
-public sealed record SessionTailProjectionOptions(string ArtifactId) {
-    public string ArtifactId { get; init; } = string.IsNullOrWhiteSpace(ArtifactId)
-        ? throw new ArgumentException("Tail projection artifact id cannot be empty.", nameof(ArtifactId))
-        : ArtifactId;
+public sealed record SessionTailProjectionOptions {
+    public SessionTailProjectionOptions(params string[] artifactIds) {
+        ArgumentNullException.ThrowIfNull(artifactIds);
+        if (artifactIds.Length < 2) {
+            throw new ArgumentException(
+                "Coherent artifact-tail projection requires at least two exact artifact ids.",
+                nameof(artifactIds)
+            );
+        }
+        if (artifactIds.Any(string.IsNullOrWhiteSpace)
+            || artifactIds.Distinct(StringComparer.Ordinal).Count() != artifactIds.Length) {
+            throw new ArgumentException(
+                "Coherent artifact-tail projection artifact ids must be non-empty and distinct.",
+                nameof(artifactIds)
+            );
+        }
+        ArtifactIds = [.. artifactIds];
+    }
+
+    public ImmutableArray<string> ArtifactIds { get; }
 }
 
 public sealed record TurnResult(

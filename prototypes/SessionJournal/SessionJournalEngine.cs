@@ -163,7 +163,11 @@ public sealed class SessionJournalEngine : IDisposable {
         ValidateRequired(observation, nameof(observation));
         if (_runtime?.TailProjection is not null) {
             SessionRuntime runtime = RequireRuntime();
-            _ = RequireEmptyTailToolSet(runtime);
+            ImmutableArray<ToolDefinition> visibleTools =
+                runtime.ToolSession?.VisibleDefinitions ?? ImmutableArray<ToolDefinition>.Empty;
+            if (!visibleTools.IsEmpty) {
+                _ = RequireToolRuntimeIdentity(runtime, visibleTools);
+            }
         }
 
         SessionExecutionRecovery recovery = ResolveExecutionTail(
@@ -502,14 +506,7 @@ public sealed class SessionJournalEngine : IDisposable {
         }
         SessionRuntime runtime = RequireRuntime();
         if (runtime.TailProjection is not null) {
-            _ = RequireEmptyTailToolSet(runtime);
-            if (recovery.State.HeadKind !=
-                SessionEventKind.ObservationAccepted) {
-                throw new NotSupportedException(
-                    "Explicit artifact-tail completion from a settled ToolResult is deferred to CS-3D4."
-                );
-            }
-            return await CompleteTailObservationAsync(
+            return await CompleteArtifactTailAsync(
                 runtime,
                 recovery,
                 observer,
@@ -656,38 +653,44 @@ public sealed class SessionJournalEngine : IDisposable {
         );
     }
 
-    private async Task<TurnResult> CompleteTailObservationAsync(
+    private async Task<TurnResult> CompleteArtifactTailAsync(
         SessionRuntime runtime,
         SessionExecutionRecovery recovery,
         CompletionStreamObserver? observer,
         CancellationToken cancellationToken
     ) {
-        EventAddress observationAddress = recovery.Head
+        EventAddress completionBoundary = recovery.Head
             ?? throw new InvalidDataException(
-                "Artifact-tail completion requires an exact observation head."
+                "Artifact-tail completion requires an exact completion boundary."
             );
         if (recovery.State.Phase !=
                 SessionExecutionPhase.AwaitingAgentAction
-            || recovery.State.HeadKind !=
-                SessionEventKind.ObservationAccepted) {
+            || recovery.State.HeadKind is not (
+                SessionEventKind.ObservationAccepted
+                or SessionEventKind.ToolResultObserved
+            )) {
             throw new InvalidOperationException(
-                "Artifact-tail completion currently supports only ObservationAccepted recovery boundaries."
+                "Artifact-tail completion requires ObservationAccepted or a dependency-closed ToolResultObserved boundary."
             );
         }
-        ImmutableArray<ToolDefinition> tools = RequireEmptyTailToolSet(runtime);
+        ImmutableArray<ToolDefinition> tools =
+            runtime.ToolSession?.VisibleDefinitions ?? ImmutableArray<ToolDefinition>.Empty;
+        if (!tools.IsEmpty) {
+            _ = RequireToolRuntimeIdentity(runtime, tools);
+        }
         _lastTailProjectionDiagnostics = default;
         SessionCompletionTargetIdentity completionTarget = runtime.CompletionTarget
             ?? throw new InvalidOperationException(
                 "SessionJournal runtime requires non-secret CompletionTarget identity before a durable completion request can be prepared."
             );
         SessionGoverningSetup governingSetup = EnsureGoverningSetupCursor(
-            observationAddress,
+            completionBoundary,
             cancellationToken
         );
         SessionTailContextProjectionResult tail = await SessionTailContextProjection.MaterializeAsync(
             _reader,
             Path,
-            observationAddress,
+            completionBoundary,
             governingSetup,
             runtime.TailProjection!,
             ResolveGoverningSetup,
@@ -697,14 +700,14 @@ public sealed class SessionJournalEngine : IDisposable {
         var materialization = new RequestContextMaterialization(
             tail.SystemPrompt,
             tail.Context,
-            SessionRequestManifestDefaults.ExplicitArtifactTailSelectionPolicyId,
-            SessionRequestManifestDefaults.ExplicitArtifactTailPlannerFingerprint,
-            SessionRequestManifestDefaults.ExplicitArtifactTailRenderingProfileId,
-            SessionRequestManifestDefaults.ExplicitArtifactTailContextRendererId,
-            SessionRequestManifestDefaults.ExplicitArtifactTailContextRendererFingerprint,
+            SessionRequestManifestDefaults.CoherentArtifactTailSelectionPolicyId,
+            SessionRequestManifestDefaults.CoherentArtifactTailPlannerFingerprint,
+            SessionRequestManifestDefaults.CoherentArtifactTailRenderingProfileId,
+            SessionRequestManifestDefaults.CoherentArtifactTailContextRendererId,
+            SessionRequestManifestDefaults.CoherentArtifactTailContextRendererFingerprint,
             tail.RawStartExclusive,
             tail.RawRangeSha256,
-            [tail.ArtifactInput]
+            tail.ArtifactInputs
         );
         var request = new CompletionRequest(
             ModelId: governingSetup.RuntimeConfig.ModelId,
@@ -717,7 +720,7 @@ public sealed class SessionJournalEngine : IDisposable {
         CommittedCompletionResult committed =
             await ExecutePreparedCompletionAsync(
             request,
-            observationAddress,
+            completionBoundary,
             governingSetup,
             completionTarget,
             runtime,
@@ -725,13 +728,15 @@ public sealed class SessionJournalEngine : IDisposable {
             materialization,
             recovery.State.ActiveCorrelationId
                 ?? throw new InvalidDataException(
-                    "Artifact-tail observation requires an active correlation id."
+                    "Artifact-tail completion requires an active correlation id."
                 ),
-            reason: "observation",
+            reason: recovery.State.HeadKind == SessionEventKind.ToolResultObserved
+                ? "tool-continuation"
+                : "observation",
             new SessionExecutionCheckpoint(
                 recovery.State.ToolExecutionSequenceCheckpoint
             ),
-            allowResultToolCalls: false,
+            allowResultToolCalls: !tools.IsEmpty,
             observer,
             cancellationToken
         ).ConfigureAwait(false);
@@ -739,6 +744,13 @@ public sealed class SessionJournalEngine : IDisposable {
             committed.ActionAddress,
             cancellationToken
         );
+        if (actionRecovery.State.Phase == SessionExecutionPhase.AwaitingToolExecution) {
+            return await ContinueToolLoopAsync(
+                actionRecovery,
+                observer,
+                cancellationToken
+            ).ConfigureAwait(false);
+        }
         if (actionRecovery.State.Phase != SessionExecutionPhase.Idle) {
             throw new InvalidDataException(
                 $"Artifact-tail terminal Action resolved to unexpected phase '{actionRecovery.State.Phase}'."
@@ -1219,17 +1231,6 @@ public sealed class SessionJournalEngine : IDisposable {
         cursor = ResolveGoverningSetup(expectedHead, cancellationToken);
         _governingSetupCursor = cursor;
         return cursor;
-    }
-
-    private static ImmutableArray<ToolDefinition> RequireEmptyTailToolSet(SessionRuntime runtime) {
-        ImmutableArray<ToolDefinition> tools =
-            runtime.ToolSession?.VisibleDefinitions ?? ImmutableArray<ToolDefinition>.Empty;
-        if (!tools.IsEmpty) {
-            throw new NotSupportedException(
-                "Explicit artifact tail projection supports completion requests without tools only."
-            );
-        }
-        return tools;
     }
 
     private CompletionRequestPreparedBody BuildRequestManifest(

@@ -517,7 +517,7 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
             path,
             CreateRuntime(
                 sourceClient,
-                tailProjection: new SessionTailProjectionOptions(artifact.ArtifactId)
+                tailProjection: TailOptions(artifact)
             ),
             new SessionJournalTestHooks(SessionJournalFailpoint.AfterRequestPreparedCommitted)
         )) {
@@ -531,6 +531,12 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
         );
         File.Delete(artifactPath);
         Assert.False(File.Exists(artifactPath));
+        foreach (string inputArtifactId in artifact.InputArtifacts) {
+            File.Delete(Path.Combine(
+                DerivedRecapStore.Open(path).ArtifactsDirectory,
+                $"{inputArtifactId}.json"
+            ));
+        }
 
         var recoveryClient = new ScriptedClient();
         recoveryClient.Enqueue(request => Success(request, "inline recovery"));
@@ -539,7 +545,7 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
             CreateRuntime(
                 recoveryClient,
                 recoveryPolicy: SessionPreparedCompletionRecoveryPolicy.RestartWithNewAttempt,
-                tailProjection: new SessionTailProjectionOptions(artifact.ArtifactId)
+                tailProjection: TailOptions(artifact)
             )
         );
         int projectionCountBeforeResume = reopened.FullProjectionInvocationCount;
@@ -610,7 +616,7 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
                 client,
                 recoveryTools,
                 recoveryPolicy: SessionPreparedCompletionRecoveryPolicy.RestartWithNewAttempt,
-                tailProjection: new SessionTailProjectionOptions(artifact.ArtifactId)
+                tailProjection: TailOptions(artifact)
             )
         )) {
             ResumeOutcome recovered = await reopened.ResumeAsync(CancellationToken.None);
@@ -619,7 +625,7 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
             client.Enqueue(request => Success(request, "next tail answer"));
             reopened.UseRuntime(CreateRuntime(
                 client,
-                tailProjection: new SessionTailProjectionOptions(artifact.ArtifactId)
+                tailProjection: TailOptions(artifact)
             ));
             int projectionCountBeforeTailSend = reopened.FullProjectionInvocationCount;
 
@@ -728,12 +734,39 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
         SessionGoverningSetup setup
     ) {
         var memoryPack = new MemoryPack();
-        memoryPack.System.Add("policy", new MemoryPackBlock("memory system"));
-        memoryPack.Observation.Add("summary", new MemoryPackBlock("memory observation"));
-        memoryPack.Action.Add("self", new MemoryPackBlock("memory action"));
+        memoryPack.System.Add("stale.system", new MemoryPackBlock("stale system"));
+        memoryPack.Observation.Add(
+            "roleplay.world-understanding",
+            new MemoryPackBlock("memory observation")
+        );
+        memoryPack.Action.Add(
+            "roleplay.first-person-autobiography",
+            new MemoryPackBlock("memory action")
+        );
+        memoryPack.Action.Add("stale.action", new MemoryPackBlock("stale action"));
+        DerivedRecapArtifact autobiographyArtifact = await DerivedRecapStore.Open(path).WriteProducedAsync(
+            new DerivedRecapWriteRequest(
+                ArtifactKind: "autobiography",
+                ProfileId: "recovery-tests-autobiography",
+                Producer: "tests",
+                ProducerFingerprint: "recovery-tests-v1",
+                SourceRawHead: anchor,
+                SourceStartExclusive: null,
+                SourceEndInclusive: anchor,
+                AnchorRawEvent: anchor,
+                GoverningRuntimeConfigSetup: setup.RuntimeConfigSetupAddress,
+                GoverningSystemPromptSetup: setup.SystemPromptSetupAddress,
+                PreviousArtifact: null,
+                Target: new MemoryPackBlockPath(
+                    MemoryPackCarrier.Action,
+                    "roleplay.first-person-autobiography"
+                ),
+                MemoryPack: memoryPack
+            )
+        );
         return await DerivedRecapStore.Open(path).WriteProducedAsync(new DerivedRecapWriteRequest(
-            ArtifactKind: DerivedRecapArtifactKinds.RollingSummary,
-            ProfileId: "recovery-tests",
+            ArtifactKind: "world-understanding",
+            ProfileId: "recovery-tests-world",
             Producer: "tests",
             ProducerFingerprint: "recovery-tests-v1",
             SourceRawHead: anchor,
@@ -743,10 +776,17 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
             GoverningRuntimeConfigSetup: setup.RuntimeConfigSetupAddress,
             GoverningSystemPromptSetup: setup.SystemPromptSetupAddress,
             PreviousArtifact: null,
-            Target: new MemoryPackBlockPath(MemoryPackCarrier.Observation, "summary"),
+            InputArtifacts: [autobiographyArtifact.ArtifactId],
+            Target: new MemoryPackBlockPath(
+                MemoryPackCarrier.Observation,
+                "roleplay.world-understanding"
+            ),
             MemoryPack: memoryPack
         ));
     }
+
+    private static SessionTailProjectionOptions TailOptions(DerivedRecapArtifact artifact)
+        => new(artifact.ArtifactId, Assert.Single(artifact.InputArtifacts));
 
     private static EventAddress ReadHead(string path) {
         using var journal = EventJournal.EventJournal.OpenExisting(path);

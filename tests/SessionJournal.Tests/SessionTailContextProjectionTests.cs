@@ -31,7 +31,6 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
         EventAddress anchor;
         EventAddress runtimeB;
         EventAddress promptB;
-        RenderedMemoryPack rendered;
         int fullProjectionCountBeforeSend;
 
         using (var engine = SessionJournalEngine.Create(
@@ -45,7 +44,6 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
             );
             SessionGoverningSetup anchorSetup = engine.ResolveGoverningSetup(anchor);
             var memoryPack = CreateMemoryPack();
-            rendered = memoryPack.Render();
             artifact = await WriteArtifactAsync(
                 path,
                 anchor,
@@ -58,7 +56,7 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
                 new SessionRuntimeConfiguration("model-B", "surface-B", SessionJournalDefaults.Schema)
             );
             promptB = engine.AppendSystemPromptSetup("system-B");
-            engine.UseRuntime(CreateRuntime(client, artifact.ArtifactId));
+            engine.UseRuntime(CreateRuntime(client, artifact));
             fullProjectionCountBeforeSend = engine.FullProjectionInvocationCount;
 
             TurnResult result = await engine.SendAsync("new observation", CancellationToken.None);
@@ -77,13 +75,28 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
 
         CompletionRequest request = Assert.Single(client.Requests);
         Assert.Equal("model-B", request.ModelId);
-        Assert.Equal($"system-B\n\n{rendered.SystemPromptFragment}", request.SystemPrompt);
+        Assert.Equal("system-B", request.SystemPrompt);
+        Assert.DoesNotContain("stale", request.SystemPrompt, StringComparison.Ordinal);
         Assert.DoesNotContain(request.Context, static message => message is SessionContextHeader);
         Assert.Collection(
             request.Context,
-            first => Assert.Equal(rendered.ObservationMessage, Assert.IsType<ObservationMessage>(first).Content),
-            second => Assert.Equal(rendered.ActionMessage, Assert.IsType<ActionMessage>(second).GetFlattenedText()),
+            first => Assert.Equal(
+                "## roleplay.world-understanding\n\nmemory observation",
+                Assert.IsType<ObservationMessage>(first).Content
+            ),
+            second => Assert.Equal(
+                "## roleplay.first-person-autobiography\n\nmemory action",
+                Assert.IsType<ActionMessage>(second).GetFlattenedText()
+            ),
             third => Assert.Equal("new observation", Assert.IsType<ObservationMessage>(third).Content)
+        );
+        Assert.DoesNotContain(
+            request.Context,
+            message => (
+                message is ActionMessage action
+                    ? action.GetFlattenedText()
+                    : Assert.IsAssignableFrom<ObservationMessage>(message).Content ?? ""
+            ).Contains("stale", StringComparison.Ordinal)
         );
 
         EventAddress prepared = Assert.Single(ReadAddressesByKind(path, SessionEventKind.CompletionRequestPrepared));
@@ -97,14 +110,37 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
                 )
             );
         }
-        Assert.Equal(SessionRequestManifestDefaults.ExplicitArtifactTailSelectionPolicyId, manifest.Plan.SelectionPolicyId);
+        Assert.Equal(SessionRequestManifestDefaults.CoherentArtifactTailSelectionPolicyId, manifest.Plan.SelectionPolicyId);
         Assert.Equal(anchor, manifest.Plan.RawStartExclusive);
-        SessionRequestArtifactInput input = Assert.Single(manifest.Plan.ArtifactInputs);
-        Assert.Equal(artifact.ArtifactId, input.ArtifactId);
-        Assert.Equal(rendered.SystemPromptFragment, input.ContextSnapshot.SystemPromptFragment);
-        Assert.Equal(rendered.ObservationMessage, input.ContextSnapshot.ObservationMessage);
-        Assert.Equal(rendered.ActionMessage, input.ContextSnapshot.ActionMessage);
-        Assert.Equal(SessionArtifactContextSnapshotHasher.ComputeSha256(input.ContextSnapshot), input.ContentSha256);
+        Assert.Equal(2, manifest.Plan.ArtifactInputs.Length);
+        Assert.Collection(
+            manifest.Plan.ArtifactInputs,
+            observation => {
+                Assert.Equal(artifact.ArtifactId, observation.ArtifactId);
+                Assert.Equal("", observation.ContextSnapshot.SystemPromptFragment);
+                Assert.Equal(
+                    "## roleplay.world-understanding\n\nmemory observation",
+                    observation.ContextSnapshot.ObservationMessage
+                );
+                Assert.Equal("", observation.ContextSnapshot.ActionMessage);
+            },
+            autobiography => {
+                Assert.Equal(Assert.Single(artifact.InputArtifacts), autobiography.ArtifactId);
+                Assert.Equal("", autobiography.ContextSnapshot.SystemPromptFragment);
+                Assert.Equal("", autobiography.ContextSnapshot.ObservationMessage);
+                Assert.Equal(
+                    "## roleplay.first-person-autobiography\n\nmemory action",
+                    autobiography.ContextSnapshot.ActionMessage
+                );
+            }
+        );
+        Assert.All(
+            manifest.Plan.ArtifactInputs,
+            input => Assert.Equal(
+                SessionArtifactContextSnapshotHasher.ComputeSha256(input.ContextSnapshot),
+                input.ContentSha256
+            )
+        );
         Assert.Equal(SessionRequestCanonicalizer.CreateCommitment(request), manifest.Commitment);
         Assert.Equal(runtimeB, manifest.Setups.RuntimeConfig.Address);
         Assert.Equal(promptB, manifest.Setups.SystemPrompt.Address);
@@ -137,7 +173,7 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
             new ActionMessage([new ActionBlock.Text("resumed answer")]),
             new CompletionDescriptor("tail-client", "tail-api-v1", request.ModelId)
         ));
-        using var reopened = SessionJournalEngine.Open(path, CreateRuntime(client, artifact.ArtifactId));
+        using var reopened = SessionJournalEngine.Open(path, CreateRuntime(client, artifact));
         int projectionCountBeforeResume = reopened.FullProjectionInvocationCount;
 
         ResumeOutcome outcome = await reopened.ResumeAsync(CancellationToken.None);
@@ -146,6 +182,107 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
         Assert.Equal("resumed answer", outcome.Message?.GetFlattenedText());
         Assert.Equal(projectionCountBeforeResume, reopened.FullProjectionInvocationCount);
         Assert.Single(client.Requests);
+    }
+
+    [Fact]
+    public async Task SendAsync_CoherentArtifactTail_ToolContinuationKeepsVisibleToolsAndNeverProjects() {
+        string path = NewJournalPath();
+        DerivedRecapArtifact artifact;
+        using (var setup = SessionJournalEngine.Create(
+            path,
+            new SessionCreateOptions("model-A", "system-A", "surface-A")
+        )) {
+            setup.AppendObservation("old");
+            EventAddress anchor = setup.AppendImportedAgentAction(
+                new ActionMessage([new ActionBlock.Text("old answer")]),
+                new CompletionDescriptor("import", "import-v1", "model-A")
+            );
+            artifact = await WriteArtifactAsync(
+                path,
+                anchor,
+                anchor,
+                setup.ResolveGoverningSetup(anchor),
+                CreateMemoryPack()
+            );
+        }
+
+        int response = 0;
+        var client = new CapturingCompletionClient(request => {
+            int currentResponse = response++;
+            return currentResponse switch {
+            0 => new CompletionResult(
+                new ActionMessage([
+                    new ActionBlock.ToolCall(
+                        new RawToolCall("noop", "call-1", "{}")
+                    )
+                ]),
+                new CompletionDescriptor("tail-client", "tail-api-v1", request.ModelId)
+            ),
+            1 => new CompletionResult(
+                new ActionMessage([
+                    new ActionBlock.ToolCall(
+                        new RawToolCall("noop", "call-2", "{}")
+                    )
+                ]),
+                new CompletionDescriptor("tail-client", "tail-api-v1", request.ModelId)
+            ),
+            _ => new CompletionResult(
+                new ActionMessage([new ActionBlock.Text("after tool")]),
+                new CompletionDescriptor("tail-client", "tail-api-v1", request.ModelId)
+            )
+            };
+        });
+        ToolSession tools = new ToolRegistry([new NoopTool()]).CreateSession();
+        using var engine = SessionJournalEngine.Open(
+            path,
+            CreateRuntime(client, artifact, tools, TestToolRuntimeIdentity)
+        );
+        int projectionCount = engine.FullProjectionInvocationCount;
+
+        TurnResult result = await engine.SendAsync("use tool", CancellationToken.None);
+
+        Assert.Equal("after tool", result.Message.GetFlattenedText());
+        Assert.Equal(projectionCount, engine.FullProjectionInvocationCount);
+        Assert.Equal(3, client.Requests.Count);
+        Assert.All(client.Requests, request => Assert.Single(request.Tools));
+        AssertToolDependencyTail(client.Requests[1], "call-1");
+        AssertToolDependencyTail(client.Requests[2], "call-2");
+        Assert.IsType<ActionMessage>(client.Requests[2].Context[^4]);
+        Assert.IsType<ToolResultsMessage>(client.Requests[2].Context[^3]);
+        engine.Dispose();
+        CompletionRequestPreparedBody[] manifests = ReadAddressesByKind(
+                path,
+                SessionEventKind.CompletionRequestPrepared
+            )
+            .Select(address => ReadPrepared(path, address))
+            .ToArray();
+        Assert.Equal(
+            ["observation", "tool-continuation", "tool-continuation"],
+            manifests.Select(static manifest => manifest.Attempt.Reason).ToArray()
+        );
+        Assert.All(
+            manifests,
+            manifest => {
+                Assert.Equal(
+                    SessionRequestManifestDefaults.CoherentArtifactTailSelectionPolicyId,
+                    manifest.Plan.SelectionPolicyId
+                );
+                Assert.Equal(2, manifest.Plan.ArtifactInputs.Length);
+                Assert.Single(manifest.ToolSet.Definitions);
+                Assert.Equal(TestToolRuntimeIdentity, manifest.ToolSet.RuntimeIdentity);
+            }
+        );
+    }
+
+    private static void AssertToolDependencyTail(
+        CompletionRequest request,
+        string expectedCallId
+    ) {
+        ActionMessage action = Assert.IsType<ActionMessage>(request.Context[^2]);
+        Assert.Equal(expectedCallId, Assert.Single(action.ToolCalls).ToolCallId);
+        ToolResultsMessage results =
+            Assert.IsType<ToolResultsMessage>(request.Context[^1]);
+        Assert.Equal(expectedCallId, Assert.Single(results.Results).ToolCallId);
     }
 
     [Fact]
@@ -171,7 +308,7 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
     }
 
     [Fact]
-    public async Task SendAsync_TailRuntimeWithVisibleTools_FailsBeforeObservationOrFullProjection() {
+    public async Task SendAsync_TailRuntimeWithVisibleToolsWithoutIdentity_FailsBeforeObservationOrFullProjection() {
         string path = NewJournalPath();
         var client = new CapturingCompletionClient(_ => throw new InvalidOperationException("must not call provider"));
         ToolSession toolSession = new ToolRegistry([new NoopTool()]).CreateSession();
@@ -182,11 +319,11 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
         )) {
             int projectionCountBeforeSend = engine.FullProjectionInvocationCount;
 
-            NotSupportedException error = await Assert.ThrowsAsync<NotSupportedException>(
+            InvalidOperationException error = await Assert.ThrowsAsync<InvalidOperationException>(
                 () => engine.SendAsync("new observation", CancellationToken.None)
             );
 
-            Assert.Contains("without tools", error.Message, StringComparison.Ordinal);
+            Assert.Contains("ToolRuntimeIdentity", error.Message, StringComparison.Ordinal);
             Assert.Equal(projectionCountBeforeSend, engine.FullProjectionInvocationCount);
             Assert.Empty(client.Requests);
         }
@@ -225,7 +362,7 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
                 engine.ResolveGoverningSetup(anchor),
                 CreateMemoryPack()
             );
-            engine.UseRuntime(CreateRuntime(client, artifact.ArtifactId));
+            engine.UseRuntime(CreateRuntime(client, artifact));
             int projectionCountBeforeSend = engine.FullProjectionInvocationCount;
 
             SessionJournalTurnAbortedException error =
@@ -296,7 +433,7 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
             engine.ResolveGoverningSetup(created),
             CreateMemoryPack()
         );
-        engine.UseRuntime(CreateRuntime(client, artifact.ArtifactId));
+        engine.UseRuntime(CreateRuntime(client, artifact));
         int projectionCountBeforeSend = engine.FullProjectionInvocationCount;
 
         await engine.SendAsync("first observation", CancellationToken.None);
@@ -412,7 +549,7 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
             setup,
             CreateMemoryPack()
         );
-        engine.UseRuntime(CreateRuntime(client, artifact.ArtifactId));
+        engine.UseRuntime(CreateRuntime(client, artifact));
 
         InvalidDataException error = await Assert.ThrowsAsync<InvalidDataException>(
             () => engine.SendAsync("new", CancellationToken.None)
@@ -512,7 +649,7 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
         }
 
         var client = new CapturingCompletionClient(_ => throw new InvalidOperationException("must not call provider"));
-        using var reopened = SessionJournalEngine.Open(path, CreateRuntime(client, artifact.ArtifactId));
+        using var reopened = SessionJournalEngine.Open(path, CreateRuntime(client, artifact));
         InvalidDataException error = await Assert.ThrowsAsync<InvalidDataException>(
             () => reopened.SendAsync("next", CancellationToken.None)
         );
@@ -550,9 +687,20 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
 
     private static MemoryPack CreateMemoryPack() {
         var memoryPack = new MemoryPack();
-        memoryPack.System.Add("policy", new MemoryPackBlock("memory system"));
-        memoryPack.Observation.Add("summary", new MemoryPackBlock("memory observation"));
-        memoryPack.Action.Add("self", new MemoryPackBlock("memory action"));
+        memoryPack.System.Add("stale.system", new MemoryPackBlock("stale system"));
+        memoryPack.Observation.Add(
+            "roleplay.world-understanding",
+            new MemoryPackBlock("memory observation")
+        );
+        memoryPack.Observation.Add(
+            "stale.observation",
+            new MemoryPackBlock("stale observation")
+        );
+        memoryPack.Action.Add(
+            "roleplay.first-person-autobiography",
+            new MemoryPackBlock("memory action")
+        );
+        memoryPack.Action.Add("stale.action", new MemoryPackBlock("stale action"));
         return memoryPack;
     }
 
@@ -563,10 +711,34 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
         SessionGoverningSetup setup,
         MemoryPack memoryPack
     ) {
-        var target = new MemoryPackBlockPath(MemoryPackCarrier.Observation, "summary");
+        var autobiographyTarget = new MemoryPackBlockPath(
+            MemoryPackCarrier.Action,
+            "roleplay.first-person-autobiography"
+        );
+        DerivedRecapArtifact autobiographyArtifact = await DerivedRecapStore.Open(path).WriteProducedAsync(
+            new DerivedRecapWriteRequest(
+                ArtifactKind: "autobiography",
+                ProfileId: "tail-tests-autobiography",
+                Producer: "tests",
+                ProducerFingerprint: "tail-tests-v1",
+                SourceRawHead: sourceRawHead,
+                SourceStartExclusive: null,
+                SourceEndInclusive: anchor,
+                AnchorRawEvent: anchor,
+                GoverningRuntimeConfigSetup: setup.RuntimeConfigSetupAddress,
+                GoverningSystemPromptSetup: setup.SystemPromptSetupAddress,
+                PreviousArtifact: null,
+                Target: autobiographyTarget,
+                MemoryPack: memoryPack
+            )
+        );
+        var target = new MemoryPackBlockPath(
+            MemoryPackCarrier.Observation,
+            "roleplay.world-understanding"
+        );
         return await DerivedRecapStore.Open(path).WriteProducedAsync(new DerivedRecapWriteRequest(
-            ArtifactKind: DerivedRecapArtifactKinds.RollingSummary,
-            ProfileId: "tail-tests",
+            ArtifactKind: "world-understanding",
+            ProfileId: "tail-tests-world",
             Producer: "tests",
             ProducerFingerprint: "tail-tests-v1",
             SourceRawHead: sourceRawHead,
@@ -576,6 +748,7 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
             GoverningRuntimeConfigSetup: setup.RuntimeConfigSetupAddress,
             GoverningSystemPromptSetup: setup.SystemPromptSetupAddress,
             PreviousArtifact: null,
+            InputArtifacts: [autobiographyArtifact.ArtifactId],
             Target: target,
             MemoryPack: memoryPack
         ));
@@ -583,8 +756,9 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
 
     private static SessionRuntime CreateRuntime(
         CapturingCompletionClient client,
-        string artifactId,
-        ToolSession? toolSession = null
+        DerivedRecapArtifact artifact,
+        ToolSession? toolSession = null,
+        SessionToolRuntimeIdentity? toolRuntimeIdentity = null
     )
         => new(
             CompletionClient: client,
@@ -596,8 +770,49 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
                 "tail-adapter-v1"
             ),
             MaxTokens: 512,
-            TailProjection: new SessionTailProjectionOptions(artifactId)
+            ToolRuntimeIdentity: toolRuntimeIdentity,
+            TailProjection: new SessionTailProjectionOptions(
+                artifact.ArtifactId,
+                Assert.Single(artifact.InputArtifacts)
+            )
         );
+
+    private static CompletionRequestPreparedBody ReadPrepared(
+        string path,
+        EventAddress address
+    ) {
+        using var engine = SessionJournalEngine.Open(path);
+        return Assert.IsType<CompletionRequestPreparedBody>(
+            SessionEventCodec.Decode(
+                SessionEventKind.CompletionRequestPrepared,
+                engine.ReadPayloadBytes(address),
+                out _
+            )
+        );
+    }
+
+    private static SessionToolRuntimeIdentity TestToolRuntimeIdentity { get; } =
+        new("tail-tool-host", "tail-tools-v1", "tail-capabilities-v1");
+
+    private static SessionRuntime CreateRuntime(
+        CapturingCompletionClient client,
+        string artifactId,
+        ToolSession? toolSession = null
+    ) => new(
+        CompletionClient: client,
+        ToolSession: toolSession,
+        CompletionTarget: new SessionCompletionTargetIdentity(
+            "tail-connection",
+            "test",
+            "tail-connection-v1",
+            "tail-adapter-v1"
+        ),
+        MaxTokens: 512,
+        TailProjection: new SessionTailProjectionOptions(
+            artifactId,
+            artifactId + "-set-member"
+        )
+    );
 
     private static SessionRuntime CreateFullRuntime(CapturingCompletionClient client)
         => new(

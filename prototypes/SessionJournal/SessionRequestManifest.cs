@@ -124,6 +124,16 @@ internal static class SessionRequestManifestDefaults {
     public const string ExplicitArtifactTailContextRendererFingerprint =
         "atelia.session-journal.explicit-artifact-tail.v1";
 
+    public const string CoherentArtifactTailSelectionPolicyId = "coherent-artifact-tail";
+    public const string CoherentArtifactTailPlannerFingerprint =
+        "atelia.session-journal.coherent-artifact-tail-planner.v1";
+    public const string CoherentArtifactTailRenderingProfileId =
+        "atelia.session-journal.coherent-artifact-tail-rendering.v1";
+    public const string CoherentArtifactTailContextRendererId =
+        "atelia.session-journal.coherent-artifact-tail.v1";
+    public const string CoherentArtifactTailContextRendererFingerprint =
+        "atelia.session-journal.coherent-artifact-tail.v1";
+
     // Existing aliases remain the full-raw defaults so current callers and wire bytes do not drift.
     public const string SelectionPolicyId = FullRawSelectionPolicyId;
     public const string PlannerFingerprint = FullRawPlannerFingerprint;

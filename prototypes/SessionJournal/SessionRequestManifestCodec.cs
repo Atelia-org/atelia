@@ -211,6 +211,47 @@ internal static class SessionRequestManifestCodec {
                 ValidateArtifactInput(body.Plan.ArtifactInputs[0]);
                 break;
 
+            case SessionRequestManifestDefaults.CoherentArtifactTailSelectionPolicyId:
+                ValidatePolicyIdentities(
+                    body,
+                    SessionRequestManifestDefaults.CoherentArtifactTailPlannerFingerprint,
+                    SessionRequestManifestDefaults.CoherentArtifactTailRenderingProfileId,
+                    SessionRequestManifestDefaults.CoherentArtifactTailContextRendererId,
+                    SessionRequestManifestDefaults.CoherentArtifactTailContextRendererFingerprint
+                );
+                if (body.Plan.RawStartExclusive is null) {
+                    throw new InvalidDataException("coherent-artifact-tail plans require plan.rawStartExclusive.");
+                }
+                if (body.Plan.ArtifactInputs.Length < 2) {
+                    throw new InvalidDataException(
+                        "coherent-artifact-tail plans require at least two plan.artifactInputs entries."
+                    );
+                }
+                if (!body.Plan.RecalledInputs.IsEmpty) {
+                    throw new InvalidDataException(
+                        "coherent-artifact-tail plans require plan.recalledInputs to be empty."
+                    );
+                }
+                var artifactIds = new HashSet<string>(StringComparer.Ordinal);
+                foreach (SessionRequestArtifactInput input in body.Plan.ArtifactInputs) {
+                    ValidateArtifactInput(input);
+                    int populatedCarriers =
+                        (string.IsNullOrWhiteSpace(input.ContextSnapshot.SystemPromptFragment) ? 0 : 1)
+                        + (string.IsNullOrWhiteSpace(input.ContextSnapshot.ObservationMessage) ? 0 : 1)
+                        + (string.IsNullOrWhiteSpace(input.ContextSnapshot.ActionMessage) ? 0 : 1);
+                    if (populatedCarriers != 1) {
+                        throw new InvalidDataException(
+                            "coherent-artifact-tail contributions must populate exactly one contextSnapshot carrier."
+                        );
+                    }
+                    if (!artifactIds.Add(input.ArtifactId)) {
+                        throw new InvalidDataException(
+                            "coherent-artifact-tail plans require exact artifact ids to be unique."
+                        );
+                    }
+                }
+                break;
+
             default:
                 throw new NotSupportedException(
                     $"Unsupported selection policy '{body.Plan.SelectionPolicyId}'."
