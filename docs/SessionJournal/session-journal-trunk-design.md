@@ -21,7 +21,7 @@ Raw Event Journal（事实源）+ Recoverable Execution State Machine（执行�
 | 领域事件 envelope + EventKind | ContextPlanner / 预算化上下文选择 |
 | 逐事件落盘的 tool-loop 状态机 | DerivedArtifact / recap / 自传 / 世界理解 |
 | full replay audit reducer + tail execution recovery | Retrieval read models（FTS/向量/图） |
-| full-raw / explicit-artifact-tail minimal plan + canonical request manifest | 预算化 selection policy（CS-6） |
+| full-raw / explicit-artifact-tail / coherent-artifact-tail minimal plan + canonical request manifest | 预算化 selection policy（CS-6） |
 | reopen 恢复、failpoint 测试 | exactly-once 补偿、非幂等工具暂停协议 |
 
 主干与 roadmap 阶段对应：本文 = **CS-0（reducer/replay contract）+ CS-1（raw 垂直切片）+ CS-3/CS-4 的执行机骨架**的收敛实现基线。
@@ -33,7 +33,8 @@ Raw Event Journal（事实源）+ Recoverable Execution State Machine（执行�
 3. **请求持久化**：CS-3A 已在每次 completion 调用前提交合并式
    `completion-request-prepared`：内嵌 minimal `ContextPlan` 与 canonical request manifest。首版
    selection policy 是 full raw；CS-3B 增加调用方指定 exact artifact 的
-   `explicit-artifact-tail`。manifest 引用 setup/raw 范围，内联当前尚无独立 object store 的完整
+   `explicit-artifact-tail`，CS-3D4 再增加 exact 多成员、支持 visible tools 的
+   `coherent-artifact-tail`。manifest 引用 setup/raw 范围，内联当前尚无独立 object store 的完整
    tool-definition snapshot；tail plan 还内联有界的 materialized artifact header，使可删除 derived
    artifact 不成为 prepared request 的恢复依赖，但仍不复制整份 rendered request body。
 
@@ -325,14 +326,19 @@ result 都是非法 raw chain，fail-fast 且不递增 execution sequence。
 - CS-3B 为 `explicit-artifact-tail + ObservationAccepted + no tools` 增加 bounded recent-idle fast
   path，并把该 request context materialization 切到 dependency-closed suffix，不调用 `Project()`；
   CS-3D3 后其他 execution phase 也由 tail resolver 路由。显式 `Project()` / `ReplayHistory()` 保持
-  full semantics；legacy full-raw 每次 request 仍显式物化一次完整 Context，留待 CS-3D4 降级。
+  full semantics；legacy full-raw 每次 request 仍显式物化一次完整 Context，CS-3D4 不隐藏这项
+  legacy policy 成本，而是让 normal long-session policy 改走下一条 coherent 路径。
+- CS-3D4 的 normal long-session policy 使用至少两个 distinct exact artifact members；每个 member
+  只贡献自己的 target block，并要求共享 coverage anchor、source head 位于当前 Parent lineage。
+  Observation 与 fully-settled ToolResult 共用 coherent set + dependency-closed suffix projector；
+  visible definitions 与 tool implementation/capability identity 一并固定。
 - fast path 的 idle validator 会局部证明 bootstrap、live/imported terminal Action 与 failed attempt
   的直接因果边；不能只凭最近非 setup event 的 kind 接受边界。CS-3C 允许 validated full-raw
   `tool-continuation` manifest 的 terminal Action/Failure 成为下一次 tail Send 的闭合边界，但不把
   任意 imported ToolResult 当作 tail projector 起点。
 - 该 bounded proof 信任更早 prefix 来自受控 writer；它不是任意低层 raw 篡改下的 full reducer
   equivalence。若要接纳不可信 raw import，需先完整验证或引入 execution checkpoint / suffix-local DFA。
-- 不在 CS-3B 实现 latest artifact 选择、多 artifact composition、预算、retrieval 或完整 planner；
-  runtime 只接收 exact artifact id。
+- 不实现 latest artifact ranking、预算、retrieval 或完整 planner；CS-3D4 runtime 仍只接受调用方
+  明确给出的 exact artifact set。
 - 不实现非幂等工具补偿（保留插槽）。
 - 不做多 Parent merge、GC/repack（EventJournal 本身也不做）。

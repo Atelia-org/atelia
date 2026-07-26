@@ -637,8 +637,13 @@ canonical request。execution resolver 本身不读取 artifact 文本。
 > recovery，并以 10001-turn fixture 证明 Idle recovery reads 不随冷前缀增长。legacy full-raw 每个
 > provider request 仍显式保留一次 Context `Project()`。Started 的 operation id + reserved sequence
 > 已贯通到 `ToolExecutionContext`；空 durable tool set 的违规 tool-call response 会落 known failure，
-> Prepared restart 的合法 tool response 则可在同一次 Resume 中闭环。下一步 CS-3D4 才把正常
-> Observation 与 ToolResult completion 都迁到 coherent artifact set + dependency-closed suffix。
+> Prepared restart 的合法 tool response 则可在同一次 Resume 中闭环。CS-3D4 已采用新的
+> `coherent-artifact-tail` policy：至少两个 exact members 共享 coverage anchor，每个 artifact 只贡献
+> 自己的 target block；Observation 与 fully-settled ToolResult 共用 dependency-closed suffix，并把
+> visible tools/runtime identity 固定进 committed manifest。旧 `explicit-artifact-tail.v1` 只保留
+> 已提交 request 的 exact reopen 语义。连续两轮 tool continuation 的三次 provider request 均保持
+> `FullProjectionInvocationCount` 不变；Prepared 后删除所有 selected sidecar members 仍可 exact
+> restart。下一步进入 CS-3D5 的 legacy / 性能收口和后续 active ArtifactSet durable activation。
 
 ### CS-4：可恢复 Tool Loop
 

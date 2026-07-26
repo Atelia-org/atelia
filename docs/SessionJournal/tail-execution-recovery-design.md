@@ -1,6 +1,6 @@
 # SessionJournal Tail-only Execution Recovery Design
 
-> **状态**：Design Baseline / CS-3D0、CS-3D1、CS-3D2、CS-3D3 已实施，CS-3D4 待实施
+> **状态**：Design Baseline / CS-3D0、CS-3D1、CS-3D2、CS-3D3、CS-3D4 已实施
 > **日期**：2026-07-26
 > **建议路线编号**：CS-3D
 > **前置实现**：CS-3A governing setup checkpoint、CS-3B dependency-closed tail context、
@@ -94,14 +94,15 @@ dependencies，而不是假定“回溯到最近一条用户消息”。
     全部由 `SessionExecutionTailResolver` 路由；Action/Started/Result append 后按返回的 exact address
     重新 resolve。
   - legacy `full-raw` 模式仍在每次新 completion request 前显式调用一次 `Project()` 物化 Context；
-    这是 request-context policy 的已知成本，不再参与 phase 判定。CS-3D4 才负责消除正常长会话的这次
-    full materialization。
+    这是该 legacy request-context policy 的显式成本，不参与 phase 判定。配置
+    `coherent-artifact-tail` 的正常长会话已由 CS-3D4 消除这次 full materialization。
 - `prototypes/SessionJournal/SessionReducer.cs`
   - 同时累计 config、system prompt、完整 context 与 execution state。
   - full reducer 已消费 D1 的 durable execution checkpoint；它不再通过从 root 计数
     `ToolResultObserved` 推断 sequence，但仍会为审计语义解码完整历史。
 - `prototypes/SessionJournal/SessionTailContextProjection.cs`
-  - 已能从 artifact anchor fold dependency-closed suffix。
+  - 已能从 coherent artifact-set common anchor fold dependency-closed Observation / settled
+    ToolResult suffix，并把 visible tool snapshot 纳入 prepared request。
   - 这是 request context projector，不是通用 execution reducer。
 - `prototypes/SessionJournal/SessionPreparedRequestReconstructor.cs`
   - `explicit-artifact-tail` 只读 manifest 固化的 snapshot + suffix。
@@ -574,18 +575,76 @@ runtime identity 和 capability policy 通过后才能产生外部调用。
 
 ### CS-3D4：Artifact-tail completion 泛化
 
+> **状态**：已实施
+
 目标：恢复到 `AwaitingAgentAction` 后，Observation 和 tool continuation 都不再借 full context 发请求。
 
-- 引入 exact coherent ArtifactSet selection；至少组合 autobiography 与 world-understanding。
-- 把 explicit tail materialization 扩展到 dependency-closed ToolResult boundary 和 visible tools。
-- 将 D1 已固定的 tool implementation/capability snapshot 纳入 artifact-tail manifest 重建验证。
-- committed manifest 继续支持 artifact 删除后的 exact reopen。
+- 新请求使用独立的 `coherent-artifact-tail` policy；旧
+  `explicit-artifact-tail.v1` 只保留已 committed 单 artifact request 的 exact reopen 语义，不能在
+  原 fingerprint 下悄悄改变 renderer。
+- 上层 caller 选择至少两个 distinct exact artifact id，不读取 `latest`；这组 ids 是本切片的
+  membership assertion。SessionJournal 验证 coverage coherence，不在 generic persistence 层硬编码
+  roleplay autobiography/world-understanding 的 block key。每个 artifact **只贡献其
+  `Target` block**；按 `System -> Observation -> Action`、同 carrier 内 `BlockKey` ordinal 组成一个
+  aggregate snapshot。不得拼接每个 artifact 携带的完整 working `MemoryPack`，否则两个 maintainer
+  会重复或混入彼此的旧 block。
+- coherent set v1 要求每个成员 produced/exact-id 可验证、`AnchorRawEvent == SourceEndInclusive`、
+  共享 common anchor、target 不重复、各 `SourceRawHead` 都位于
+  `current boundary -> common anchor` 的真实 Parent lineage，且成员记录的 governing setup refs 与
+  anchor-as-of setup 一致。不同 maintainer 可以有不同 `SourceRawHead`，不强求伪造同时生成。
+- `RawStartExclusive` 固定为 common anchor；suffix 可以结束在新 Observation，或经 tail execution
+  resolver 证明已 dependency-closed 的 `ToolResultObserved`。后一种边界的 reason、correlation 与
+  last-issued tool sequence 必须与 exact recovery state 一致。
+- visible tool definitions 及 D1 固定的 implementation/capability runtime identity 一并进入
+  manifest。suffix fold 还要验证 Action 继承其 source Prepared 的 runtime identity，Started 再继承
+  Action identity；不能只凭最终 head kind 判断 tool dependency 已闭合。
+- manifest 的每个 artifact input 内联 singleton target contribution snapshot。reconstructor 按
+  manifest 顺序聚合这些 contribution，再展开一次；因此 committed manifest 继续支持所有 sidecar
+  artifact 删除后的 exact reopen，且不重新运行 planner。
+- Prepared 前任一 exact member 缺失/不 coherent 时 fail-fast，不 append Prepared、不调用 provider；
+  调用方可以恢复 sidecar 或显式提供另一组 exact selection 后重试，不能静默退回 full raw。
 
 验收：
 
 - 长历史上的 observation completion 与多轮 tool continuation 均不调用 `Project()`。
 - 两种 maintainer artifact 的 lineage/coherence 可审计。
 - sidecar 在 Prepared 后删除仍可恢复；Prepared 前缺失则 fail-fast/重新规划。
+
+实际落点：
+
+- `SessionTailProjectionOptions` 冻结至少两个 distinct exact artifact ids；runtime 不读取
+  `latest`。新 manifest 使用 `coherent-artifact-tail` 的独立 planner/rendering/renderer
+  identities，旧 `explicit-artifact-tail.v1` reconstructor 保持原单 artifact/no-tools 语义。
+- `SessionTailContextProjection` exact load 全体成员，验证 common anchor、每个 source head 的当前
+  Parent-lineage membership、anchor-as-of setup refs、replay-safe boundary 与 duplicate target。
+  每个成员经 singleton `MemoryPack.Render()` 只产生 target contribution；按
+  carrier + block key 排序后聚合，其他 working-pack blocks 不进入 request。
+- projector 以 exact anchor recovery 为 execution seed，fold suffix 时校验
+  setup/bootstrap/Failure/Prepared/Restarted/Imported/Produced Action/Started/Result 的 suffix-local
+  phase、Parent、attempt、reason/correlation/checkpoint 与 runtime identity；最终 fold phase 再与
+  exact current recovery 对照。这样较早的 malformed Failure/Setup/ImportedAction 不会被后续合法
+  near-tail checkpoint 掩盖。
+- Engine 的 artifact-tail completion 同时接受 Observation 与 fully-settled ToolResult；visible
+  definitions 和非空 runtime identity 固定进 manifest。工具返回后重新 resolve exact Result head，
+  继续走同一 artifact-tail path，不调用 `Project()`。
+- coherent reconstructor 只消费 manifest inline target contributions、exact raw suffix、setup refs
+  与 tool snapshot。测试在 Prepared 后删除全部 selected sidecar files，仍能 restart 并得到相同
+  canonical request；Prepared 前缺 member 则在 append/provider 前失败。
+- 工具验收覆盖连续两轮 tool call、三次 provider request；每次 request 都携带相同 visible tool
+  snapshot，且 `FullProjectionInvocationCount` 不变。legacy v1 还覆盖 anchor 本身为 Observation、
+  suffix 首事件为 Prepared 的 committed exact reopen。`SessionJournal.Tests` 为 185/185。
+
+已知 provenance 边界：manifest durable 保存 exact artifact ids/kinds、common anchor、每个 singleton
+contribution 及其 hash，足以审计 selection 与重建 exact request；profile、target、
+`previousArtifact` / `inputArtifacts` 的完整 lineage 细节仍由 exact sidecar artifact 承载。若未来要求
+“sidecar 已删除后仍能独立展开完整 artifact lineage”，应版本化扩展 artifact input provenance，
+不能在当前 renderer fingerprint 下改变 body shape。
+
+同样需要准确区分两层 coherence：D4 校验的是 caller-selected members 具有共同 coverage anchor、
+正确 setup/current lineage 与不重复 target；“active set 必须包含 autobiography +
+world-understanding，且二者属于同一次原子 activation”是后续 `ArtifactSetCommitted` /
+Context Planner 的 semantic membership policy。`DerivedRecapArtifact.InputArtifacts` 是 producer
+dependency/lineage，不等价于 active-set membership，不能拿它猜后一条合同。
 
 ### CS-3D5：Legacy 与性能收口
 
@@ -627,16 +686,19 @@ runtime identity 和 capability policy 通过后才能产生外部调用。
 
 ## 13. 下一次 Coding Session 的起点
 
-从 **CS-3D4** 开始。D3 已让 tail state 判定和 online mutation/transition 退出 full replay；下一步
-只处理“LLM 看见什么”：
+从 **CS-3D5：Legacy 与性能收口** 开始。D4 已让配置了 exact coherent ArtifactSet 的 normal
+Observation 与 tool continuation 在 0 `Project()` 下构造 request；下一步不再扩 execution resolver
+DFA，而是：
 
-1. 定义 exact coherent ArtifactSet selection，至少组合 autobiography 与 world-understanding。
-2. 把 explicit artifact-tail materialization 从 Observation 扩展到 dependency-closed settled
-   ToolResult，并纳入 visible tools/runtime identity。
-3. 将 legacy `MaterializeFullRawRequestContext()` 从正常长会话路径降级为显式 bootstrap/fallback；
-   不用隐藏的 root replay 冒充 artifact-tail。
-4. 对 Observation 与 tool continuation 分别证明长冷前缀下 0 `Project()`，并保留 committed manifest
-   在 sidecar 删除后的 exact reconstruction。
+1. 为旧 import/full-raw repo 提供显式 offline validate/migrate/checkpoint 路径，明确哪些 session
+   仍会按 legacy request policy 读取全 raw。
+2. 给 Observation 与多轮 tool continuation 增加 10k+ cold-prefix 的 header/payload/decoded-bytes
+   对照，确认 governing setup 与 artifact anchor 的选择没有把 O(全历史) 悄悄带回来。
+3. 补齐 coherent selection 的独立 corruption cases（anchor mismatch、off-lineage source head、
+   setup mismatch、duplicate target）和 Action-vs-Prepared runtime snapshot tamper case。
+4. 评估 durable `ArtifactSetCommitted` / active-set activation（CS-5/CS-6）如何向
+   `SessionTailProjectionOptions` 提供 exact ids；当前 runtime 仍要求调用方显式给出集合，不查
+   `latest`。
 
-不要在 D4 修改 execution resolver DFA 或重新引入 state cache；D3 的 `SessionExecutionRecovery` 已是
-online driver 的单一状态真源。
+不要为性能收口重新引入 state/context cache；raw Parent lineage、committed manifest 与 exact artifact
+ids 仍是单一事实与 provenance 边界。
