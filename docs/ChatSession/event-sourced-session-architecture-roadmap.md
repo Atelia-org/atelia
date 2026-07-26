@@ -643,7 +643,16 @@ canonical request。execution resolver 本身不读取 artifact 文本。
 > visible tools/runtime identity 固定进 committed manifest。旧 `explicit-artifact-tail.v1` 只保留
 > 已提交 request 的 exact reopen 语义。连续两轮 tool continuation 的三次 provider request 均保持
 > `FullProjectionInvocationCount` 不变；Prepared 后删除所有 selected sidecar members 仍可 exact
-> restart。下一步进入 CS-3D5 的 legacy / 性能收口和后续 active ArtifactSet durable activation。
+> restart。CS-3D5 已新增 raw kind 12 `ArtifactSetCommitted`：原子固定 policy、common anchor、
+> coverage/current setup refs 与 canonical role members；coherent Prepared 通过 address/schema/hash
+> exact reference 传播 activation。runtime 默认要求 durable active set，只有显式 `LegacyFullRaw`
+> 才允许 live full replay。离线 `validate-session-journal` 做 strict full-vs-tail validation，
+> `checkpoint-artifact-set-session-journal` 只 append 一条 activation；`import-session-journal` 明确为
+> legacy export → current wire 的新 repo 迁移。1 vs 10001 cold-turn 的 Observation 和两轮 tool
+> continuation 验收中，header/payload/logical bytes/peak-live 均恒定，chronological/full projection
+> 均为 0，且三次 provider request 已逐阶段对照。strict validator 使用真正只读的 EventJournal
+> open，逐历史 activation/setup/Prepared 证明 provenance；坏 active tail 只报错且 repo bytes 不变。
+> 至此 CS-3D0～D5 主线闭合。
 
 ### CS-4：可恢复 Tool Loop
 

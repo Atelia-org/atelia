@@ -1,6 +1,6 @@
 # SessionJournal Configuration Access Notes
 
-> 状态：CS-3A + CS-3B + CS-3C + CS-3D0 + CS-3D1 + CS-3D2 + CS-3D3 Implemented
+> 状态：CS-3A + CS-3B + CS-3C + CS-3D0～CS-3D5 Implemented
 > 日期：2026-07-26
 > 相关文档：[SessionJournal 主干设计基线](session-journal-trunk-design.md)、
 > [Tail-only Execution Recovery Design](tail-execution-recovery-design.md)、
@@ -45,8 +45,15 @@ authoritative parent scan
 + minimal ContextPlan / canonical request manifest
 ```
 
-独立 projection cache 不是当前前置条件。只有在 tail projection 落地后，benchmark 仍证明“首次、无
-manifest 的长历史 governing setup scan”不可接受，才单独设计它的信任与校验合同。
+独立 projection cache 不是当前前置条件。CS-3D5 已用 raw `ArtifactSetCommitted` 同时固定
+coverage/current setup refs：首次 active-set request 命中 activation，后续 request 命中近头
+Prepared checkpoint。1 vs 10001 cold-turn 验收已证明正常 Observation 与多轮 tool continuation 的
+setup/request reads 不随冷前缀增长，因此不需要再发明 setup cache。
+
+这里必须区分 online 与 offline：online 一跳 hint 信任受控 writer 写出的 CRC/exact-ref raw；
+`validate-session-journal` 则对每个历史 activation 的 common anchor 和 coverage/current setup
+边界重新从完整 Parent chain 证明，并逐 Prepared 重建 canonical request。错误 hint 在 offline
+validation 中 fail-fast，不会被接受为迁移后的合法 repo。
 
 ## 2. 当前实现事实
 
@@ -456,11 +463,13 @@ near-head checkpoint 恢复。Planner policy 可以先选择 full raw fallback�
 - create 时 cursor 已绑定；open 时 lazy；普通 append 推进 head，setup append 替换对应 pointer，任何
   observed-head/CAS 失配都使 cursor 失效。
 
-### CS-3B：Tail Projection Contract（已实施）
+### CS-3B：Tail Projection Contract（已实施，runtime selection 已由 CS-3D5 durable activation 取代）
 
 实际落点：
 
-- `SessionRuntime.TailProjection` 接收 exact artifact id；不新增 latest/ranking policy。
+- CS-3B 最初由 `SessionRuntime.TailProjection` 接收 exact artifact id；CS-3D5 已删除该进程内选择，
+  改由 raw `ArtifactSetCommitted` 原子固定 role→exact artifact membership，runtime 默认
+  `RequireActiveArtifactSet`。始终不读取 latest/ranking index 决定 active set。
 - derived store 读取时重算完整 artifact identity，使 exact id 覆盖 renderer 实际消费的整个
   `MemoryPack`，而不只是 target block。
 - 新增严格的 `explicit-artifact-tail` plan/renderer identities；full-raw bytes 与旧 identity 保持不变。

@@ -1,6 +1,6 @@
 # SessionJournal Tail-only Execution Recovery Design
 
-> **状态**：Design Baseline / CS-3D0、CS-3D1、CS-3D2、CS-3D3、CS-3D4 已实施
+> **状态**：Implemented Baseline / CS-3D0～CS-3D5 已实施
 > **日期**：2026-07-26
 > **建议路线编号**：CS-3D
 > **前置实现**：CS-3A governing setup checkpoint、CS-3B dependency-closed tail context、
@@ -612,9 +612,10 @@ runtime identity 和 capability policy 通过后才能产生外部调用。
 
 实际落点：
 
-- `SessionTailProjectionOptions` 冻结至少两个 distinct exact artifact ids；runtime 不读取
-  `latest`。新 manifest 使用 `coherent-artifact-tail` 的独立 planner/rendering/renderer
-  identities，旧 `explicit-artifact-tail.v1` reconstructor 保持原单 artifact/no-tools 语义。
+- D4 初版曾由 `SessionTailProjectionOptions` 冻结至少两个 distinct exact artifact ids；runtime 不
+  读取 `latest`。CS-3D5 随后删除这一进程内输入，改由 raw activation 提供 exact ids。manifest 继续
+  使用 `coherent-artifact-tail` 的独立 planner/rendering/renderer identities，旧
+  `explicit-artifact-tail.v1` reconstructor 保持原单 artifact/no-tools 语义。
 - `SessionTailContextProjection` exact load 全体成员，验证 common anchor、每个 source head 的当前
   Parent-lineage membership、anchor-as-of setup refs、replay-safe boundary 与 duplicate target。
   每个成员经 singleton `MemoryPack.Render()` 只产生 target contribution；按
@@ -648,10 +649,95 @@ dependency/lineage，不等价于 active-set membership，不能拿它猜后一�
 
 ### CS-3D5：Legacy 与性能收口
 
+> **状态**：已实施
+
 - 为旧 import/full-raw repo 提供显式 offline validate/migrate/checkpoint 命令。
 - benchmark header visits、payload reads、decoded bytes 与 peak memory；不以易抖动 wall-clock 作为唯一
   验收。
 - 清理仅为 live full replay 保留的内部耦合。
+
+实际落点：
+
+- 新增 raw kind 12 `ArtifactSetCommitted`。event address 本身是 activation identity；body 只保存
+  membership policy/fingerprint、common coverage anchor、coverage/current governing setup 的
+  address/schema/payload-hash refs，以及按 role canonical 排序的 exact members。member 固定
+  role、artifact id/kind、target 与 singleton contribution hash，不把 `MemoryPack` 或 request snapshot
+  复制进 raw。
+- `CommitArtifactSetAsync()` 只允许 exact idle head，以 full parent-lineage/coherence validation 读取
+  exact sidecars，校验共同 anchor、source head、setup、唯一 role/id/target 和 contribution hash，再以
+  exact-head CAS 原子 append。sidecar 仍是可删除的 derived payload；activation raw event 是“哪一组
+  exact artifacts 生效”的权威事实。
+- coherent Prepared 的 plan 固定 activation 的 `{ address, bodySchemaVersion, payloadSha256 }` exact
+  reference，并继续内联 provider-facing singleton contributions。online active-set resolver 从
+  completion boundary 回溯：直接遇到 activation 即命中；遇到近头 coherent Prepared 则由 exact
+  reference 恢复并核对 member assertion，不读取 `latest`、dedicated ref 或 state cache。该一跳
+  fast path 延续 SessionJournal online path 的受控 writer 信任边界；对离线导入或低层构造的 raw，
+  strict validator 会逐 Prepared 重建 canonical request，并证明它引用的是 authoritative raw range
+  中最后一个 activation，不能让旧或 divergent activation 冒充当前集合。
+- activation 同时保存 coverage-anchor 与 activation-current setup refs。首次 Observation request 可从
+  activation 的 current refs 取得 governing setup；artifact projector 从 coverage refs 直接取得
+  anchor seed。两者都验证 kind/schema/payload hash，消除了“setup 长期不变时每轮回溯到 root”的隐藏
+  O(history)。
+- `SessionRuntime` 默认 `RequireActiveArtifactSet`；缺 activation/member 时在 append
+  Prepared/provider 前 fail-fast，绝不静默 full replay。只有显式
+  `SessionRequestContextPolicy.LegacyFullRaw` 才生成 live full-raw request；public `Project()` /
+  `ReplayHistory()` 与 committed full-raw reconstruction 仍保留完整审计语义。
+- 本次为 breaking wire upgrade：`SessionContextPlan` 现在显式保存 nullable
+  `activeArtifactSet`，新 coherent plans 要求非空 reference。旧实验 journal 若包含早期 Prepared
+  bytes，必须走离线重建/版本化迁移，不能用缺省字段猜测过去；仅含 current imported raw facts 的 repo
+  可直接 validate，再在 artifacts 就绪后 append activation。
+
+离线收口：
+
+- `import-session-journal` 被明确界定为 legacy upgrade export → current SessionJournal wire 的迁移：
+  写入新 repo 与 ordinal→address mapping，不原地改 immutable raw。没有旧 codec 时不声称能迁移任意
+  旧 SessionJournal wire。
+- `validate-session-journal` 通过 `EventJournal.OpenReadOnlyExisting()` 手工沿 Parent 做
+  cycle/continuity 检查与 strict payload decode，再比较 full reducer 和 exact-head tail resolver，
+  报告 setup、Prepared policy counts、logical payload bytes 与 active-set readiness。每个
+  `ArtifactSetCommitted` 的 common anchor、coverage/current governing setup refs 都按其历史边界
+  验证；每个 Prepared 都走 canonical reconstruction，coherent Prepared 还必须引用截至其 parent 的
+  effective/latest activation。
+- strict read-only open 把只读合同下沉到 active event RBF、ref-op-log 和 live ref object：
+  不 recovery/truncate/rotate，不创建 refs/cache 目录，不读写/删除 disk ForwardPlan。malformed active
+  event/ref-op/ref-object tail 均 fail-fast；测试逐文件比较 length + SHA-256，证明失败前后 repo bytes
+  不变。为完成 inventory/ref validation，它有意 O(raw inventory)，只服务 offline administration，
+  不进入 online tail recovery。
+- `checkpoint-artifact-set-session-journal --member role=id ...` 先 full validate，再调用上述 exact
+  commit API，并 post-validate 只新增一条可用 activation；旧 events/manifests 与 derived files 均不
+  改写。
+
+性能观测与验收：
+
+- `SessionJournalEventReader` 现在统计 header visits、payload reads、成功读取的
+  `LogicalPayloadByteCount`、chronological reads/events 与 `Project()` 次数。SessionJournal-owned
+  frame lease 另统计 current/peak live logical payload bytes；重复 dispose 幂等，失败读取只增加 read
+  count，不增加 bytes。
+- 1 与 10001 个 closed imported turns 的真实对照，分别覆盖 Observation completion，以及两轮 tool
+  continuation/三次 provider request。两组的 header reads、payload reads、logical bytes 与 peak-live
+  bytes 完全相同，current-live、chronological chain/event、full projection 均为 0；三次 provider
+  request 还逐次比较各阶段增量，避免多阶段回归在 aggregate 中互相抵消。
+- 测试还发现并修复 `BuildOperationId` 使用默认 `EventAddress.ToString()` 时 payload 长度随物理坐标
+  文本变化的问题；现在使用固定宽度 canonical `EventAddressTextCodec`。
+- `PeakLiveLogicalPayloadBytes` 是确定性的同时存活 logical frame payload 指标，不等价于 compressed
+  stored bytes、ArrayPool capacity、decoded object graph 或 derived sidecar/MemoryPack 内存。后几项若
+  需要，应另设指标；不把 GC/working-set 或 wall-clock 抖动值作为单元验收门槛。
+
+验收证据：
+
+- `SessionJournal.Tests`：194/194。
+- `ChatSession.BacktestCli.Tests`：35/35。
+- `RbfFileFactoryTests`：8/8；`RbfSegmentStore.Tests`：18/18；`EventJournal.Tests`：38/38。
+- SessionJournal project references 中没有 `Agent.Core`。
+
+已知剩余边界：
+
+- CLI 的 prevalidate → commit 跨进程窗口不是一个事务；真正的 mutation 仍由
+  `CommitArtifactSetAsync()` 对它自己观察到的 exact head 做 CAS，postvalidate 还要求 event count
+  恰好 +1。若未来需要“必须基于 prevalidated head”这一更强管理合同，应把 expected head 显式传入
+  commit API。
+- active member sidecar 在 Prepared 前删除会造成可诊断的 liveness failure；Prepared 后仍从 inline
+  manifest exact reopen。这是 raw activation 与 derived content 的有意边界。
 
 ## 11. 测试矩阵
 
@@ -686,19 +772,20 @@ dependency/lineage，不等价于 active-set membership，不能拿它猜后一�
 
 ## 13. 下一次 Coding Session 的起点
 
-从 **CS-3D5：Legacy 与性能收口** 开始。D4 已让配置了 exact coherent ArtifactSet 的 normal
-Observation 与 tool continuation 在 0 `Project()` 下构造 request；下一步不再扩 execution resolver
-DFA，而是：
+CS-3D 的 tail execution recovery 主线已闭合。下一轮更自然的起点不是继续扩 resolver DFA，而是从
+以下相邻能力中选择一个独立切片：
 
-1. 为旧 import/full-raw repo 提供显式 offline validate/migrate/checkpoint 路径，明确哪些 session
-   仍会按 legacy request policy 读取全 raw。
-2. 给 Observation 与多轮 tool continuation 增加 10k+ cold-prefix 的 header/payload/decoded-bytes
-   对照，确认 governing setup 与 artifact anchor 的选择没有把 O(全历史) 悄悄带回来。
-3. 补齐 coherent selection 的独立 corruption cases（anchor mismatch、off-lineage source head、
-   setup mismatch、duplicate target）和 Action-vs-Prepared runtime snapshot tamper case。
-4. 评估 durable `ArtifactSetCommitted` / active-set activation（CS-5/CS-6）如何向
-   `SessionTailProjectionOptions` 提供 exact ids；当前 runtime 仍要求调用方显式给出集合，不查
-   `latest`。
+1. 为 non-idempotent / externally queryable tools 设计跨进程 lease、result lookup 与
+   reconcile/pause policy；当前 durable operation id/sequence 只提供 identity，不提供 exactly-once。
+2. 在 durable activation 之上实现真正的 Context Planner/ArtifactSet semantic policy 与 budget；
+   SessionJournal core 目前只持久化 caller 提交的 role membership，不硬编码 autobiography /
+   world-understanding 的应用层规则。
+3. 若管理工具需要更强事务语义，把 offline validator 返回的 exact head 显式传入 artifact-set commit，
+   收掉 prevalidate→commit 的跨进程 TOCTOU。
+4. 若要把 online trust boundary 从“受控 writer”提升为“任意低层 raw 也即时自证”，需另行设计
+   bounded authenticated checkpoint；不要把 strict offline 的 O(raw inventory) validation 偷渡进
+   online resolver。当前 divergent/旧 activation、错误 historical coverage/current setup refs 已由
+   offline validator fail-fast。
 
-不要为性能收口重新引入 state/context cache；raw Parent lineage、committed manifest 与 exact artifact
-ids 仍是单一事实与 provenance 边界。
+继续保持：不引入 state/context cache，不读取 `latest` 决定 active membership；raw Parent lineage、
+`ArtifactSetCommitted`、committed manifest 与 exact artifact ids 是 provenance 边界。

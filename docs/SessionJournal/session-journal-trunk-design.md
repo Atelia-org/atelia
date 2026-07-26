@@ -267,8 +267,9 @@ public sealed record SessionRuntime(
     ToolSession? ToolSession,
     SessionCompletionTargetIdentity? CompletionTarget,
     int? MaxTokens,
-    SessionTailProjectionOptions? TailProjection,
-    SessionPreparedCompletionRecoveryPolicy PreparedCompletionRecoveryPolicy
+    SessionRequestContextPolicy RequestContextPolicy,
+    SessionPreparedCompletionRecoveryPolicy PreparedCompletionRecoveryPolicy,
+    SessionToolRuntimeIdentity? ToolRuntimeIdentity
 );
 ```
 
@@ -332,13 +333,24 @@ result 都是非法 raw chain，fail-fast 且不递增 execution sequence。
   只贡献自己的 target block，并要求共享 coverage anchor、source head 位于当前 Parent lineage。
   Observation 与 fully-settled ToolResult 共用 coherent set + dependency-closed suffix projector；
   visible definitions 与 tool implementation/capability identity 一并固定。
+- CS-3D5 新增 raw kind 12 `ArtifactSetCommitted`，原子保存 policy、common anchor、coverage/current
+  setup refs 与 canonical role members。`SessionRuntime` 默认 `RequireActiveArtifactSet`，online
+  planner 从 activation 或近头 Prepared exact reference 恢复 active ids；只有显式 `LegacyFullRaw`
+  才允许 live root-to-head request materialization。
+- offline `validate-session-journal` 负责 strict full validation/full-vs-tail differential，
+  `checkpoint-artifact-set-session-journal` 只追加一条 activation；legacy export 继续通过
+  `import-session-journal` 写入新 current-wire repo，不原地改旧 raw。
+- offline validator 使用 `EventJournal.OpenReadOnlyExisting()`：active event/ref-op/ref-object
+  全部只读验证而不 recovery，逐个 activation 复核 historical governing setup，逐个 Prepared
+  exact reconstruct。该 O(raw inventory) 路径是导入/审计门，不进入 online recovery。
 - fast path 的 idle validator 会局部证明 bootstrap、live/imported terminal Action 与 failed attempt
   的直接因果边；不能只凭最近非 setup event 的 kind 接受边界。CS-3C 允许 validated full-raw
   `tool-continuation` manifest 的 terminal Action/Failure 成为下一次 tail Send 的闭合边界，但不把
   任意 imported ToolResult 当作 tail projector 起点。
 - 该 bounded proof 信任更早 prefix 来自受控 writer；它不是任意低层 raw 篡改下的 full reducer
   equivalence。若要接纳不可信 raw import，需先完整验证或引入 execution checkpoint / suffix-local DFA。
-- 不实现 latest artifact ranking、预算、retrieval 或完整 planner；CS-3D4 runtime 仍只接受调用方
-  明确给出的 exact artifact set。
+- 不实现 latest artifact ranking、预算、retrieval 或完整 planner；CS-3D5 raw activation 持久化上游
+  caller 明确提交的 exact role membership，但 SessionJournal core 不猜 semantic policy，也不从
+  `DerivedRecapArtifact.InputArtifacts` 推导 active set。
 - 不实现非幂等工具补偿（保留插槽）。
 - 不做多 Parent merge、GC/repack（EventJournal 本身也不做）。

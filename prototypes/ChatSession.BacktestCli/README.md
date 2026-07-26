@@ -106,8 +106,10 @@ resolver，检查 governing setup、Prepared request policy 分布，并检查�
   不可用。
 
 `--report-json` 可选，但必须位于输入 repo 外；命令不会写 raw、derived index 或 EventJournal
-forward-plan cache。raw/wire 不兼容、Parent/correlation/checkpoint 等不变量破坏时命令以非零状态失败，
-而不是输出一份貌似可用的报告。
+forward-plan cache。底层 events、ref-op-log、live ref objects 均以严格只读方式打开；需要 recovery
+的 active tail 只报错、不截断。validator 会逐历史 activation/setup/Prepared 完整验证，因此成本是
+有意的 O(raw inventory)，不用于 online recovery。raw/wire 不兼容、Parent/correlation/checkpoint
+等不变量破坏时命令以非零状态失败，而不是输出一份貌似可用的报告。
 
 ### checkpoint-artifact-set-session-journal
 
