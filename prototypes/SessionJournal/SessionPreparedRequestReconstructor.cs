@@ -113,6 +113,19 @@ internal static class SessionPreparedRequestReconstructor {
         );
         ArtifactSetCommittedBody activation =
             ValidateActiveArtifactSetReference(reader, manifest, rawEvents);
+        SessionGoverningSetup coverageSeed = ReadSetupFromReferences(
+            reader,
+            activation.CommonAnchor,
+            activation.CoverageSetups,
+            cancellationToken
+        );
+        ValidateActivationCurrentSetups(
+            reader,
+            manifest.Plan.ActiveArtifactSet.Address,
+            activation,
+            rawEvents,
+            cancellationToken
+        );
         CompletionRequest request = ReconstructCoherentArtifactTail(
             reader,
             manifest,
@@ -121,6 +134,7 @@ internal static class SessionPreparedRequestReconstructor {
             systemPrompt.Content,
             rawEvents,
             activation,
+            coverageSeed,
             cancellationToken
         );
 
@@ -152,6 +166,7 @@ internal static class SessionPreparedRequestReconstructor {
         string referencedSystemPrompt,
         IReadOnlyList<DecodedSessionEvent> rawEvents,
         ArtifactSetCommittedBody activation,
+        SessionGoverningSetup coverageSeed,
         CancellationToken cancellationToken
     ) {
         EventAddress rawStartExclusive = manifest.Plan.RawStartExclusive;
@@ -174,15 +189,12 @@ internal static class SessionPreparedRequestReconstructor {
             finalRecovery.State.ActiveCorrelationId
         );
 
-        var seed = new SessionGoverningSetup(
-            rawStartExclusive,
-            manifest.Setups.RuntimeConfig.Address,
-            referencedRuntime,
-            manifest.Setups.SystemPrompt.Address,
-            referencedSystemPrompt
-        );
         SessionTailContextProjection.TailFoldResult folded =
-            SessionTailContextProjection.FoldSuffix(seed, rawEvents, seedRecovery);
+            SessionTailContextProjection.FoldSuffix(
+                coverageSeed,
+                rawEvents,
+                seedRecovery
+            );
         if (folded.GoverningSetup.Head != rawEndInclusive
             || folded.GoverningSetup.RuntimeConfigSetupAddress != manifest.Setups.RuntimeConfig.Address
             || folded.GoverningSetup.SystemPromptSetupAddress != manifest.Setups.SystemPrompt.Address
@@ -319,6 +331,105 @@ internal static class SessionPreparedRequestReconstructor {
             );
         }
         return activation;
+    }
+
+    private static SessionGoverningSetup ReadSetupFromReferences(
+        SessionJournalEventReader reader,
+        EventAddress head,
+        SessionGoverningSetupReferences references,
+        CancellationToken cancellationToken
+    ) {
+        SessionRuntimeConfiguration runtime =
+            ReadAndValidateSetupReference<SessionRuntimeConfiguration>(
+                reader,
+                references.RuntimeConfig,
+                SessionEventKind.RuntimeConfigSetup,
+                cancellationToken
+            );
+        SystemPromptSetupBody prompt =
+            ReadAndValidateSetupReference<SystemPromptSetupBody>(
+                reader,
+                references.SystemPrompt,
+                SessionEventKind.SystemPromptSetup,
+                cancellationToken
+            );
+        return new SessionGoverningSetup(
+            head,
+            references.RuntimeConfig.Address,
+            runtime,
+            references.SystemPrompt.Address,
+            prompt.Content
+        );
+    }
+
+    private static void ValidateActivationCurrentSetups(
+        SessionJournalEventReader reader,
+        EventAddress activationAddress,
+        ArtifactSetCommittedBody activation,
+        IReadOnlyList<DecodedSessionEvent> rawEvents,
+        CancellationToken cancellationToken
+    ) {
+        SessionSetupReference runtime = activation.CoverageSetups.RuntimeConfig;
+        SessionSetupReference prompt = activation.CoverageSetups.SystemPrompt;
+        bool foundActivation = false;
+        foreach (DecodedSessionEvent ev in rawEvents) {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (ev.Address == activationAddress) {
+                foundActivation = true;
+                break;
+            }
+            if (ev.Kind == SessionEventKind.RuntimeConfigSetup) {
+                runtime = ReadExactSetupReference(
+                    reader,
+                    ev.Address,
+                    SessionEventKind.RuntimeConfigSetup
+                );
+            }
+            else if (ev.Kind == SessionEventKind.SystemPromptSetup) {
+                prompt = ReadExactSetupReference(
+                    reader,
+                    ev.Address,
+                    SessionEventKind.SystemPromptSetup
+                );
+            }
+        }
+        if (!foundActivation) {
+            throw new InvalidDataException(
+                "Referenced active ArtifactSetCommitted is outside the authoritative raw range."
+            );
+        }
+
+        var expected = new SessionGoverningSetupReferences(runtime, prompt);
+        if (activation.CurrentSetups != expected) {
+            throw new InvalidDataException(
+                "ArtifactSetCommitted currentSetups do not match the exact setup stream folded from commonAnchor through its Parent."
+            );
+        }
+    }
+
+    private static SessionSetupReference ReadExactSetupReference(
+        SessionJournalEventReader reader,
+        EventAddress address,
+        SessionEventKind expectedKind
+    ) {
+        using SessionJournalEventFrame frame = reader.ReadEvent(address).Unwrap();
+        ValidateSessionHeader(address, frame.Header);
+        var actualKind = (SessionEventKind)frame.Header.OpaqueEventKind;
+        if (actualKind != expectedKind) {
+            throw new InvalidDataException(
+                $"Expected '{expectedKind}' setup at {address}, got '{actualKind}'."
+            );
+        }
+        _ = SessionEventCodec.Decode(
+            actualKind,
+            frame.Payload,
+            out int bodySchemaVersion
+        );
+        return new SessionSetupReference(
+            address,
+            bodySchemaVersion,
+            SessionRequestCanonicalizer.Sha256Hex(frame.Payload)
+        );
     }
 
     private static IReadOnlyList<DecodedSessionEvent> ReadAndValidateRawRange(

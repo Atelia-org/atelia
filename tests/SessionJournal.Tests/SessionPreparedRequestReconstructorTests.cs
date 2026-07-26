@@ -126,6 +126,122 @@ public sealed class SessionPreparedRequestReconstructorTests : IDisposable {
     }
 
     [Fact]
+    public void Reconstruct_RejectsPreparedSetupsFromSideBranchEvenWithRecomputedRequestCommitment() {
+        string path = NewJournalPath();
+        using EventJournal.EventJournal journal = CreateJournal(path);
+        Scenario scenario = CreateToolContinuationScenario(journal);
+        const string sideBranch = "side";
+        journal.CreateBranch(sideBranch, scenario.Prompt).Unwrap();
+        EventAddress sideRuntime = Commit(
+            journal,
+            sideBranch,
+            scenario.Prompt,
+            SessionEventKind.RuntimeConfigSetup,
+            new SessionRuntimeConfiguration(
+                "model-side",
+                "surface-side",
+                SessionJournalDefaults.Schema
+            )
+        );
+        EventAddress sidePrompt = Commit(
+            journal,
+            sideBranch,
+            sideRuntime,
+            SessionEventKind.SystemPromptSetup,
+            new SystemPromptSetupBody("system-side")
+        );
+        var forgedRequest = new CompletionRequest(
+            "model-side",
+            scenario.ExpectedRequest.SystemPrompt.Replace(
+                "system-A",
+                "system-side",
+                StringComparison.Ordinal
+            ),
+            scenario.ExpectedRequest.Context,
+            scenario.ExpectedRequest.Tools,
+            scenario.ExpectedRequest.MaxTokens
+        );
+        CompletionRequestPreparedBody forged = scenario.Manifest with {
+            Setups = new SessionGoverningSetupReferences(
+                CreateSetupReference(journal, sideRuntime),
+                CreateSetupReference(journal, sidePrompt)
+            ),
+            Parameters = scenario.Manifest.Parameters with {
+                ModelId = forgedRequest.ModelId
+            },
+            Commitment = SessionRequestCanonicalizer.CreateCommitment(
+                forgedRequest
+            )
+        };
+
+        InvalidDataException error = Assert.Throws<InvalidDataException>(() =>
+            SessionPreparedRequestReconstructor.Reconstruct(
+                journal,
+                forged,
+                scenario.RawEnd
+            )
+        );
+
+        Assert.Contains(
+            "pinned setup",
+            error.Message,
+            StringComparison.Ordinal
+        );
+    }
+
+    [Fact]
+    public void Reconstruct_RejectsCorruptActivationCoverageAndCurrentExactReferences() {
+        string coveragePath = NewJournalPath();
+        using (EventJournal.EventJournal journal = CreateJournal(coveragePath)) {
+            Scenario scenario = CreateToolContinuationScenario(
+                journal,
+                body => body with {
+                    CoverageSetups = body.CoverageSetups with {
+                        RuntimeConfig = body.CoverageSetups.RuntimeConfig with {
+                            PayloadSha256 = new string('0', 64)
+                        }
+                    }
+                }
+            );
+
+            Assert.Throws<InvalidDataException>(() =>
+                SessionPreparedRequestReconstructor.Reconstruct(
+                    journal,
+                    scenario.Manifest,
+                    scenario.RawEnd
+                )
+            );
+        }
+
+        string currentPath = NewJournalPath();
+        using (EventJournal.EventJournal journal = CreateJournal(currentPath)) {
+            Scenario scenario = CreateToolContinuationScenario(
+                journal,
+                body => body with {
+                    CurrentSetups = body.CurrentSetups with {
+                        SystemPrompt = body.CurrentSetups.SystemPrompt with {
+                            PayloadSha256 = new string('0', 64)
+                        }
+                    }
+                }
+            );
+
+            InvalidDataException error = Assert.Throws<InvalidDataException>(
+                () => SessionPreparedRequestReconstructor.Reconstruct(
+                    journal,
+                    scenario.Manifest,
+                    scenario.RawEnd
+                )
+            );
+            Assert.Contains(
+                "currentSetups",
+                error.Message,
+                StringComparison.Ordinal
+            );
+        }
+    }
+
+    [Fact]
     public void CoherentRecipe_RejectsSnapshotCarrierMismatchAgainstActivationTarget() {
         SessionRequestArtifactInput system = Artifact(
             "system",
@@ -196,7 +312,9 @@ public sealed class SessionPreparedRequestReconstructorTests : IDisposable {
     }
 
     private static Scenario CreateToolContinuationScenario(
-        EventJournal.EventJournal journal
+        EventJournal.EventJournal journal,
+        Func<ArtifactSetCommittedBody, ArtifactSetCommittedBody>?
+            mutateActivation = null
     ) {
         EventAddress runtime = Commit(
             journal,
@@ -258,6 +376,9 @@ public sealed class SessionPreparedRequestReconstructorTests : IDisposable {
                 )
             ]
         );
+        if (mutateActivation is not null) {
+            activationBody = mutateActivation(activationBody);
+        }
         EventAddress activation = Commit(
             journal,
             created,
@@ -401,6 +522,8 @@ public sealed class SessionPreparedRequestReconstructorTests : IDisposable {
             checkpoint: 1
         );
         return new Scenario(
+            runtime,
+            prompt,
             created,
             observed,
             rawAddresses,
@@ -534,8 +657,22 @@ public sealed class SessionPreparedRequestReconstructorTests : IDisposable {
         EventAddress? expectedParent,
         SessionEventKind kind,
         object body
-    ) => journal.CommitToRef(
+    ) => Commit(
+        journal,
         SessionJournalDefaults.MainBranchName,
+        expectedParent,
+        kind,
+        body
+    );
+
+    private static EventAddress Commit(
+        EventJournal.EventJournal journal,
+        string branchName,
+        EventAddress? expectedParent,
+        SessionEventKind kind,
+        object body
+    ) => journal.CommitToRef(
+        branchName,
         expectedParent,
         SessionEventCodec.Encode(kind, body),
         opaqueEventKind: (uint)kind,
@@ -564,6 +701,8 @@ public sealed class SessionPreparedRequestReconstructorTests : IDisposable {
     }
 
     private sealed record Scenario(
+        EventAddress Runtime,
+        EventAddress Prompt,
         EventAddress Created,
         EventAddress RawEnd,
         IReadOnlyList<EventAddress> RawAddresses,
