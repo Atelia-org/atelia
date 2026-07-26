@@ -10,8 +10,7 @@ namespace Atelia.SessionJournal;
 internal sealed record SessionRequestAttempt(
     string AttemptId,
     string CorrelationId,
-    string Reason,
-    string? ReplacesAttemptId
+    string Reason
 );
 
 /// <summary>
@@ -19,17 +18,10 @@ internal sealed record SessionRequestAttempt(
 /// raw end/based-on head; it is intentionally not repeated in this body.
 /// </summary>
 internal sealed record SessionContextPlan(
-    string SelectionPolicyId,
-    string PlannerFingerprint,
-    EventAddress? RawStartExclusive,
+    EventAddress RawStartExclusive,
     string RawRangeSha256,
     ImmutableArray<SessionRequestArtifactInput> ArtifactInputs,
-    ImmutableArray<SessionRequestRecalledInput> RecalledInputs,
-    string RenderingProfileId,
-    string ModelProfileId,
-    int EstimatedInputTokens,
-    string Reason,
-    SessionArtifactSetReference? ActiveArtifactSet = null
+    SessionArtifactSetReference ActiveArtifactSet
 );
 
 internal sealed record SessionRequestArtifactInput(
@@ -43,11 +35,6 @@ internal sealed record SessionRequestArtifactContextSnapshot(
     string SystemPromptFragment,
     string ObservationMessage,
     string ActionMessage
-);
-
-internal sealed record SessionRequestRecalledInput(
-    string SourceId,
-    string ContentSha256
 );
 
 internal sealed record SessionArtifactSetReference(
@@ -93,23 +80,18 @@ internal sealed record SessionRequestToolSet(
     SessionToolRuntimeIdentity? RuntimeIdentity
 );
 
-internal sealed record SessionRequestRendering(
-    string ContextRendererId,
-    string ContextRendererFingerprint,
-    string CanonicalRequestCodecId,
-    string ToolCodecId,
-    string ReasoningCodecSetFingerprint
+internal sealed record SessionRequestRecipe(
+    string RecipeId,
+    string CanonicalRequestCodecId
 );
 
 internal sealed record SessionRequestTarget(
     SessionCompletionTargetIdentity Connection,
-    string CompletionSurfaceId,
     string ClientName,
     string ApiSpecId
 );
 
 internal sealed record SessionRequestCommitment(
-    string Algorithm,
     int ByteLength,
     string Sha256
 );
@@ -119,34 +101,8 @@ internal static class SessionRequestManifestDefaults {
         "atelia.session-journal.active-artifact-set.v1";
     public const string ActiveArtifactSetPolicyFingerprint =
         "atelia.session-journal.active-artifact-set.v1";
-    public const string FullRawSelectionPolicyId = "full-raw";
-    public const string FullRawPlannerFingerprint = "atelia.session-journal.full-raw-planner.v1";
-    public const string FullRawRenderingProfileId = "atelia.session-journal.full-raw-rendering.v1";
-    public const string FullRawContextRendererId = "atelia.session-journal.full-raw.v1";
-    public const string FullRawContextRendererFingerprint = "atelia.session-journal.full-raw.v1";
-
-    public const string ExplicitArtifactTailSelectionPolicyId = "explicit-artifact-tail";
-    public const string ExplicitArtifactTailPlannerFingerprint =
-        "atelia.session-journal.explicit-artifact-tail-planner.v1";
-    public const string ExplicitArtifactTailRenderingProfileId =
-        "atelia.session-journal.explicit-artifact-tail-rendering.v1";
-    public const string ExplicitArtifactTailContextRendererId =
-        "atelia.session-journal.explicit-artifact-tail.v1";
-    public const string ExplicitArtifactTailContextRendererFingerprint =
-        "atelia.session-journal.explicit-artifact-tail.v1";
-
-    public const string CoherentArtifactTailSelectionPolicyId = "coherent-artifact-tail";
-    public const string CoherentArtifactTailPlannerFingerprint =
-        "atelia.session-journal.coherent-artifact-tail-planner.v1";
-    public const string CoherentArtifactTailRenderingProfileId =
-        "atelia.session-journal.coherent-artifact-tail-rendering.v1";
-    public const string CoherentArtifactTailContextRendererId =
-        "atelia.session-journal.coherent-artifact-tail.v1";
-    public const string CoherentArtifactTailContextRendererFingerprint =
-        "atelia.session-journal.coherent-artifact-tail.v1";
-
-    public const string ReasoningCodecSetFingerprint = "atelia.reasoning-codec-set.v1";
+    public const string RecipeId =
+        "atelia.session-journal.coherent-artifact-tail.recipe.v1";
     public const string CanonicalRequestCodecId = "atelia.completion-request.canonical-json.v1";
     public const string ToolCodecId = "atelia.tool-definition.canonical-json.v1";
-    public const string CommitmentAlgorithm = "sha-256";
 }

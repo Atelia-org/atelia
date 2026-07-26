@@ -40,7 +40,7 @@ public sealed record SessionJournalOfflineValidationReport(
     string? SystemPromptSetup,
     string? ModelId,
     string? CompletionSurfaceId,
-    IReadOnlyDictionary<string, int> PreparedPolicyCounts,
+    int PreparedRequestCount,
     SessionJournalOfflineArtifactSetReport? ActiveArtifactSet,
     string Readiness
 );
@@ -63,8 +63,7 @@ public static class SessionJournalOfflineValidator {
         IReadOnlyList<DecodedSessionEvent> chronologicalEvents;
         SessionProjection projection;
         SessionExecutionRecovery recovery;
-        SortedDictionary<string, int> preparedPolicyCounts =
-            new(StringComparer.Ordinal);
+        int preparedRequestCount = 0;
         RawArtifactSetActivation? latestArtifactSet = null;
         var artifactSets = new Dictionary<EventAddress, RawArtifactSetActivation>();
         long logicalPayloadBytes = 0;
@@ -115,13 +114,8 @@ public static class SessionJournalOfflineValidator {
                         address,
                         frame.Header.Parent
                     ));
-                    if (body is CompletionRequestPreparedBody prepared) {
-                        preparedPolicyCounts.TryGetValue(
-                            prepared.Plan.SelectionPolicyId,
-                            out int count
-                        );
-                        preparedPolicyCounts[prepared.Plan.SelectionPolicyId] =
-                            checked(count + 1);
+                    if (body is CompletionRequestPreparedBody) {
+                        preparedRequestCount = checked(preparedRequestCount + 1);
                     }
                     else if (body is ArtifactSetCommittedBody artifactSet) {
                         ValidateSetupReference(
@@ -326,7 +320,7 @@ public static class SessionJournalOfflineValidator {
                 ),
             governingSetup?.RuntimeConfig.ModelId,
             governingSetup?.RuntimeConfig.CompletionSurfaceId,
-            preparedPolicyCounts,
+            preparedRequestCount,
             artifactSetReport,
             readiness
         );
@@ -512,16 +506,16 @@ public static class SessionJournalOfflineValidator {
                 continue;
             }
 
-            if (ev.Kind == SessionEventKind.CompletionRequestPrepared
-                && ((CompletionRequestPreparedBody)ev.Body).Plan.SelectionPolicyId
-                    == SessionRequestManifestDefaults.CoherentArtifactTailSelectionPolicyId) {
+            if (ev.Kind == SessionEventKind.CompletionRequestPrepared) {
                 CompletionRequestPreparedBody prepared =
                     (CompletionRequestPreparedBody)ev.Body;
                 if (activeArtifactSet is null
                     || prepared.Plan.ActiveArtifactSet
-                        != activeArtifactSet.Reference) {
+                        != activeArtifactSet.Reference
+                    || prepared.Plan.RawStartExclusive
+                        != activeArtifactSet.Body.CommonAnchor) {
                     throw new InvalidDataException(
-                        $"Coherent CompletionRequestPrepared at {ev.Address} does not reference the latest active ArtifactSetCommitted event."
+                        $"CompletionRequestPrepared at {ev.Address} does not reference the latest active ArtifactSetCommitted event and its common anchor."
                     );
                 }
                 ValidatePreparedArtifactMemberAssertion(
@@ -536,25 +530,10 @@ public static class SessionJournalOfflineValidator {
         CompletionRequestPreparedBody prepared,
         ArtifactSetCommittedBody activation
     ) {
-        var asserted = prepared.Plan.ArtifactInputs
-            .Select(static input => (
-                input.ArtifactId,
-                input.ArtifactKind,
-                input.ContentSha256
-            ))
-            .OrderBy(static item => item.ArtifactId, StringComparer.Ordinal);
-        var activated = activation.Members
-            .Select(static member => (
-                member.ArtifactId,
-                member.ArtifactKind,
-                member.ContentSha256
-            ))
-            .OrderBy(static item => item.ArtifactId, StringComparer.Ordinal);
-        if (!asserted.SequenceEqual(activated)) {
-            throw new InvalidDataException(
-                "Coherent CompletionRequestPrepared artifact inputs do not exactly match the latest activation."
-            );
-        }
+        _ = SessionCoherentRequestRecipe.ValidateAndAggregate(
+            prepared.Plan.ArtifactInputs,
+            activation
+        );
     }
 
     private static void ValidatePreparedRequestReconstructions(

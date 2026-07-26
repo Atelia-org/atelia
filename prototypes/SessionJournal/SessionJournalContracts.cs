@@ -258,7 +258,7 @@ internal sealed record CompletionRequestPreparedBody(
     SessionGoverningSetupReferences Setups,
     SessionRequestParameters Parameters,
     SessionRequestToolSet ToolSet,
-    SessionRequestRendering Rendering,
+    SessionRequestRecipe Recipe,
     SessionRequestTarget Target,
     SessionRequestCommitment Commitment
 );

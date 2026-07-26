@@ -103,7 +103,7 @@ internal static class SessionPreparedRequestReconstructor {
             cancellationToken
         );
 
-        ValidateRuntimeAndTarget(manifest, runtimeConfig);
+        ValidateRuntime(manifest, runtimeConfig);
         IReadOnlyList<DecodedSessionEvent> rawEvents = ReadAndValidateRawRange(
             reader,
             manifest.Plan.RawStartExclusive,
@@ -111,45 +111,21 @@ internal static class SessionPreparedRequestReconstructor {
             manifest.Plan.RawRangeSha256,
             cancellationToken
         );
-        if (manifest.Plan.SelectionPolicyId
-            == SessionRequestManifestDefaults.CoherentArtifactTailSelectionPolicyId) {
+        ArtifactSetCommittedBody activation =
             ValidateActiveArtifactSetReference(reader, manifest, rawEvents);
-        }
-
-        CompletionRequest request = manifest.Plan.SelectionPolicyId switch {
-            SessionRequestManifestDefaults.FullRawSelectionPolicyId => ReconstructFullRaw(
-                manifest,
-                authoritativeRawEndInclusive,
-                runtimeConfig,
-                systemPrompt.Content,
-                rawEvents
-            ),
-            SessionRequestManifestDefaults.ExplicitArtifactTailSelectionPolicyId => ReconstructExplicitArtifactTail(
-                reader,
-                manifest,
-                authoritativeRawEndInclusive,
-                runtimeConfig,
-                systemPrompt.Content,
-                rawEvents,
-                cancellationToken
-            ),
-            SessionRequestManifestDefaults.CoherentArtifactTailSelectionPolicyId => ReconstructCoherentArtifactTail(
-                reader,
-                manifest,
-                authoritativeRawEndInclusive,
-                runtimeConfig,
-                systemPrompt.Content,
-                rawEvents,
-                cancellationToken
-            ),
-            string unsupported => throw new NotSupportedException(
-                $"Unsupported selection policy '{unsupported}'."
-            )
-        };
+        CompletionRequest request = ReconstructCoherentArtifactTail(
+            reader,
+            manifest,
+            authoritativeRawEndInclusive,
+            runtimeConfig,
+            systemPrompt.Content,
+            rawEvents,
+            activation,
+            cancellationToken
+        );
 
         byte[] canonicalBytes = SessionRequestCanonicalizer.Canonicalize(request);
         var actualCommitment = new SessionRequestCommitment(
-            SessionRequestManifestDefaults.CommitmentAlgorithm,
             canonicalBytes.Length,
             SessionRequestCanonicalizer.Sha256Hex(canonicalBytes)
         );
@@ -168,127 +144,6 @@ internal static class SessionPreparedRequestReconstructor {
         );
     }
 
-    private static CompletionRequest ReconstructFullRaw(
-        CompletionRequestPreparedBody manifest,
-        EventAddress rawEndInclusive,
-        SessionRuntimeConfiguration referencedRuntime,
-        string referencedSystemPrompt,
-        IReadOnlyList<DecodedSessionEvent> rawEvents
-    ) {
-        SessionProjection projection = SessionReducer.Reduce(rawEvents);
-        if (projection.Head != rawEndInclusive
-            || projection.ExecutionState.Phase != SessionExecutionPhase.AwaitingAgentAction) {
-            throw new InvalidDataException(
-                "Full-raw request boundary must reduce to an exact awaiting-agent-action head."
-            );
-        }
-        if (projection.Config != referencedRuntime
-            || !string.Equals(projection.SystemPrompt, referencedSystemPrompt, StringComparison.Ordinal)) {
-            throw new InvalidDataException(
-                "Full-raw governing setup does not match the setup payloads pinned by the manifest."
-            );
-        }
-
-        EventAddress? finalRuntimeSetup = null;
-        EventAddress? finalSystemPromptSetup = null;
-        foreach (DecodedSessionEvent ev in rawEvents) {
-            if (ev.Kind == SessionEventKind.RuntimeConfigSetup) {
-                finalRuntimeSetup = ev.Address;
-            }
-            else if (ev.Kind == SessionEventKind.SystemPromptSetup) {
-                finalSystemPromptSetup = ev.Address;
-            }
-        }
-        if (finalRuntimeSetup != manifest.Setups.RuntimeConfig.Address
-            || finalSystemPromptSetup != manifest.Setups.SystemPrompt.Address) {
-            throw new InvalidDataException(
-                "Full-raw setup references do not identify the final governing setup events in the raw range."
-            );
-        }
-
-        ValidateAttemptBoundary(manifest, rawEvents[^1], projection.ExecutionState.ActiveCorrelationId);
-        return new CompletionRequest(
-            manifest.Parameters.ModelId,
-            referencedSystemPrompt,
-            projection.Context,
-            manifest.ToolSet.Definitions,
-            manifest.Parameters.MaxTokens
-        );
-    }
-
-    private static CompletionRequest ReconstructExplicitArtifactTail(
-        SessionJournalEventReader reader,
-        CompletionRequestPreparedBody manifest,
-        EventAddress rawEndInclusive,
-        SessionRuntimeConfiguration referencedRuntime,
-        string referencedSystemPrompt,
-        IReadOnlyList<DecodedSessionEvent> rawEvents,
-        CancellationToken cancellationToken
-    ) {
-        EventAddress rawStartExclusive = manifest.Plan.RawStartExclusive
-            ?? throw new InvalidDataException("Explicit artifact tail reconstruction requires rawStartExclusive.");
-        SessionRequestArtifactInput artifactInput = manifest.Plan.ArtifactInputs.Single();
-        DecodedSessionEvent finalEvent = rawEvents[^1];
-        ValidateAttemptBoundary(manifest, finalEvent, expectedCorrelationId: null);
-        if (finalEvent.Kind != SessionEventKind.ObservationAccepted) {
-            throw new InvalidDataException(
-                "Explicit artifact tail request boundary must end at ObservationAccepted."
-            );
-        }
-
-        var seed = new SessionGoverningSetup(
-            rawStartExclusive,
-            manifest.Setups.RuntimeConfig.Address,
-            referencedRuntime,
-            manifest.Setups.SystemPrompt.Address,
-            referencedSystemPrompt
-        );
-        SessionExecutionRecovery executionSeed =
-            SessionExecutionTailResolver.Resolve(
-                reader,
-                rawStartExclusive,
-                cancellationToken
-            );
-        SessionTailContextProjection.TailFoldResult folded =
-            SessionTailContextProjection.FoldSuffix(
-                seed,
-                rawEvents,
-                executionSeed
-            );
-        if (folded.GoverningSetup.Head != rawEndInclusive
-            || folded.GoverningSetup.RuntimeConfigSetupAddress != manifest.Setups.RuntimeConfig.Address
-            || folded.GoverningSetup.SystemPromptSetupAddress != manifest.Setups.SystemPrompt.Address
-            || folded.GoverningSetup.RuntimeConfig != referencedRuntime
-            || !string.Equals(
-                folded.GoverningSetup.SystemPrompt,
-                referencedSystemPrompt,
-                StringComparison.Ordinal
-            )) {
-            throw new InvalidDataException(
-                "Explicit artifact tail governing setup does not match the setup payloads pinned by the manifest."
-            );
-        }
-
-        (string expandedSystemPrompt, ImmutableArray<IHistoryMessage> snapshotContext) =
-            SessionTailContextProjection.ExpandContextSnapshot(
-                referencedSystemPrompt,
-                artifactInput.ContextSnapshot
-            );
-        var context = ImmutableArray.CreateBuilder<IHistoryMessage>(
-            snapshotContext.Length + folded.Context.Count
-        );
-        context.AddRange(snapshotContext);
-        context.AddRange(folded.Context);
-
-        return new CompletionRequest(
-            manifest.Parameters.ModelId,
-            expandedSystemPrompt,
-            context.MoveToImmutable(),
-            manifest.ToolSet.Definitions,
-            manifest.Parameters.MaxTokens
-        );
-    }
-
     private static CompletionRequest ReconstructCoherentArtifactTail(
         SessionJournalEventReader reader,
         CompletionRequestPreparedBody manifest,
@@ -296,10 +151,10 @@ internal static class SessionPreparedRequestReconstructor {
         SessionRuntimeConfiguration referencedRuntime,
         string referencedSystemPrompt,
         IReadOnlyList<DecodedSessionEvent> rawEvents,
+        ArtifactSetCommittedBody activation,
         CancellationToken cancellationToken
     ) {
-        EventAddress rawStartExclusive = manifest.Plan.RawStartExclusive
-            ?? throw new InvalidDataException("Coherent artifact-set tail reconstruction requires rawStartExclusive.");
+        EventAddress rawStartExclusive = manifest.Plan.RawStartExclusive;
         SessionExecutionRecovery seedRecovery =
             SessionExecutionTailResolver.Resolve(reader, rawStartExclusive, cancellationToken);
         SessionExecutionRecovery finalRecovery =
@@ -343,11 +198,12 @@ internal static class SessionPreparedRequestReconstructor {
         }
 
         SessionRequestArtifactContextSnapshot aggregate =
-            SessionTailContextProjection.AggregateContextSnapshots(
-                manifest.Plan.ArtifactInputs
+            SessionCoherentRequestRecipe.ValidateAndAggregate(
+                manifest.Plan.ArtifactInputs,
+                activation
             );
         (string expandedSystemPrompt, ImmutableArray<IHistoryMessage> snapshotContext) =
-            SessionTailContextProjection.ExpandContextSnapshot(
+            SessionCoherentRequestRecipe.Expand(
                 referencedSystemPrompt,
                 aggregate
             );
@@ -392,7 +248,6 @@ internal static class SessionPreparedRequestReconstructor {
         }
 
         if (!string.Equals(manifest.Attempt.Reason, expectedReason, StringComparison.Ordinal)
-            || !string.Equals(manifest.Plan.Reason, expectedReason, StringComparison.Ordinal)
             || !string.Equals(manifest.Attempt.CorrelationId, correlationId, StringComparison.Ordinal)) {
             throw new InvalidDataException(
                 "Completion request reason or correlation id does not match its authoritative raw boundary."
@@ -400,31 +255,23 @@ internal static class SessionPreparedRequestReconstructor {
         }
     }
 
-    private static void ValidateRuntimeAndTarget(
+    private static void ValidateRuntime(
         CompletionRequestPreparedBody manifest,
         SessionRuntimeConfiguration runtimeConfig
     ) {
-        if (!string.Equals(manifest.Parameters.ModelId, runtimeConfig.ModelId, StringComparison.Ordinal)
-            || !string.Equals(
-                manifest.Target.CompletionSurfaceId,
-                runtimeConfig.CompletionSurfaceId,
-                StringComparison.Ordinal
-            )) {
+        if (!string.Equals(manifest.Parameters.ModelId, runtimeConfig.ModelId, StringComparison.Ordinal)) {
             throw new InvalidDataException(
-                "Manifest request parameters or target surface do not match the referenced runtime configuration."
+                "Manifest request model does not match the referenced runtime configuration."
             );
         }
     }
 
-    private static void ValidateActiveArtifactSetReference(
+    private static ArtifactSetCommittedBody ValidateActiveArtifactSetReference(
         SessionJournalEventReader reader,
         CompletionRequestPreparedBody manifest,
         IReadOnlyList<DecodedSessionEvent> rawEvents
     ) {
-        SessionArtifactSetReference reference = manifest.Plan.ActiveArtifactSet
-            ?? throw new InvalidDataException(
-                "Coherent artifact-tail manifest requires an active artifact-set reference."
-            );
+        SessionArtifactSetReference reference = manifest.Plan.ActiveArtifactSet;
         DecodedSessionEvent? latestActivation = null;
         for (int i = rawEvents.Count - 1; i >= 0; i--) {
             if (rawEvents[i].Kind == SessionEventKind.ArtifactSetCommitted) {
@@ -466,30 +313,17 @@ internal static class SessionPreparedRequestReconstructor {
             );
         }
         var activation = (ArtifactSetCommittedBody)decoded;
-        var asserted = manifest.Plan.ArtifactInputs
-            .Select(static input => (
-                input.ArtifactId,
-                input.ArtifactKind,
-                input.ContentSha256
-            ))
-            .OrderBy(static item => item.ArtifactId, StringComparer.Ordinal);
-        var activated = activation.Members
-            .Select(static member => (
-                member.ArtifactId,
-                member.ArtifactKind,
-                member.ContentSha256
-            ))
-            .OrderBy(static item => item.ArtifactId, StringComparer.Ordinal);
-        if (!asserted.SequenceEqual(activated)) {
+        if (manifest.Plan.RawStartExclusive != activation.CommonAnchor) {
             throw new InvalidDataException(
-                "Prepared artifact inputs do not exactly match the referenced activation."
+                "Prepared plan.rawStartExclusive must equal the exact activation commonAnchor."
             );
         }
+        return activation;
     }
 
     private static IReadOnlyList<DecodedSessionEvent> ReadAndValidateRawRange(
         SessionJournalEventReader reader,
-        EventAddress? rawStartExclusive,
+        EventAddress rawStartExclusive,
         EventAddress rawEndInclusive,
         string expectedRawRangeSha256,
         CancellationToken cancellationToken

@@ -328,50 +328,17 @@ public sealed class SessionCompletionAttemptRestartedTests {
         EventAddress prompt
     ) {
         ImmutableArray<ToolDefinition> tools = ImmutableArray<ToolDefinition>.Empty;
-        return new CompletionRequestPreparedBody(
-            new SessionRequestAttempt(attemptId, correlationId, "observation", null),
-            new SessionExecutionCheckpoint(0),
-            new SessionContextPlan(
-                SessionRequestManifestDefaults.FullRawSelectionPolicyId,
-                SessionRequestManifestDefaults.FullRawPlannerFingerprint,
-                null,
-                new string('a', 64),
-                [],
-                [],
-                SessionRequestManifestDefaults.FullRawRenderingProfileId,
-                "runtime-model",
-                1,
-                "observation"
-            ),
-            new SessionGoverningSetupReferences(
-                new SessionSetupReference(runtime, 1, new string('b', 64)),
-                new SessionSetupReference(prompt, 1, new string('c', 64))
-            ),
-            new SessionRequestParameters("runtime-model", null),
-            new SessionRequestToolSet(
-                SessionRequestManifestDefaults.ToolCodecId,
-                SessionRequestCanonicalizer.ComputeToolSetSha256(tools),
-                tools,
-                RuntimeIdentity: null
-            ),
-            new SessionRequestRendering(
-                SessionRequestManifestDefaults.FullRawContextRendererId,
-                SessionRequestManifestDefaults.FullRawContextRendererFingerprint,
-                SessionRequestManifestDefaults.CanonicalRequestCodecId,
-                SessionRequestManifestDefaults.ToolCodecId,
-                SessionRequestManifestDefaults.ReasoningCodecSetFingerprint
-            ),
-            new SessionRequestTarget(
-                new SessionCompletionTargetIdentity("connection", "kind", "fingerprint", "adapter"),
-                "surface",
-                "client",
-                "api"
-            ),
-            new SessionRequestCommitment(
-                SessionRequestManifestDefaults.CommitmentAlgorithm,
-                1,
-                new string('d', 64)
-            )
+        return PreparedV2Fixture.Create(
+            attemptId,
+            correlationId,
+            "observation",
+            runtime,
+            prompt,
+            runtime,
+            prompt,
+            "runtime-model",
+            tools,
+            toolRuntimeIdentity: null
         );
     }
 
@@ -380,7 +347,13 @@ public sealed class SessionCompletionAttemptRestartedTests {
         object body,
         EventAddress address,
         EventAddress? parent
-    ) => new(kind, 1, body, address, parent);
+    ) => new(
+        kind,
+        kind == SessionEventKind.CompletionRequestPrepared ? 2 : 1,
+        body,
+        address,
+        parent
+    );
 
     private static EventAddress Address(int ticket)
         => EventAddressTextCodec.Parse($"ej1:{ticket:x16}0000000100000000");

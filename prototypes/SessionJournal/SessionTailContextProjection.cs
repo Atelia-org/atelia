@@ -1,5 +1,4 @@
 using System.Collections.Immutable;
-using System.Text;
 using Atelia.Completion.Abstractions;
 using Atelia.EventJournal;
 using Atelia.SessionJournal.Derived;
@@ -141,7 +140,9 @@ internal static class SessionTailContextProjection {
 
         var contributions = artifacts
             .Select(CreateTargetContribution)
-            .OrderBy(static item => item.Carrier)
+            .OrderBy(static item =>
+                SessionCoherentRequestRecipe.GetCarrierRank(item.Carrier)
+            )
             .ThenBy(static item => item.BlockKey, StringComparer.Ordinal)
             .ToArray();
         var targets = new HashSet<(MemoryPackCarrier Carrier, string BlockKey)>();
@@ -156,8 +157,8 @@ internal static class SessionTailContextProjection {
             .. contributions.Select(static item => item.ArtifactInput)
         ];
         SessionRequestArtifactContextSnapshot contextSnapshot =
-            AggregateContextSnapshots(artifactInputs);
-        (string systemPrompt, ImmutableArray<IHistoryMessage> headerContext) = ExpandContextSnapshot(
+            SessionCoherentRequestRecipe.Aggregate(artifactInputs);
+        (string systemPrompt, ImmutableArray<IHistoryMessage> headerContext) = SessionCoherentRequestRecipe.Expand(
             folded.GoverningSetup.SystemPrompt,
             contextSnapshot
         );
@@ -369,8 +370,7 @@ internal static class SessionTailContextProjection {
                     CompletionRequestPreparedBody prepared =
                         RequireBody<CompletionRequestPreparedBody>(ev);
                     if (phase != SessionExecutionPhase.AwaitingAgentAction
-                        || sourcePrepared is not null
-                        || prepared.Attempt.ReplacesAttemptId is not null) {
+                        || sourcePrepared is not null) {
                         throw new InvalidDataException(
                             $"{ev.Kind} at {ev.Address} requires an unprepared suffix completion boundary."
                         );
@@ -383,7 +383,6 @@ internal static class SessionTailContextProjection {
                         )
                     };
                     if (!string.Equals(prepared.Attempt.Reason, expectedReason, StringComparison.Ordinal)
-                        || !string.Equals(prepared.Plan.Reason, expectedReason, StringComparison.Ordinal)
                         || !string.Equals(prepared.Attempt.CorrelationId, activeCorrelationId, StringComparison.Ordinal)) {
                         throw new InvalidDataException(
                             $"{ev.Kind} at {ev.Address} reason or correlation does not match its suffix completion boundary."
@@ -628,23 +627,6 @@ internal static class SessionTailContextProjection {
         }
     }
 
-    internal static SessionRequestArtifactContextSnapshot AggregateContextSnapshots(
-        IReadOnlyList<SessionRequestArtifactInput> inputs
-    ) => new(
-        JoinSnapshotField(inputs, static snapshot => snapshot.SystemPromptFragment),
-        JoinSnapshotField(inputs, static snapshot => snapshot.ObservationMessage),
-        JoinSnapshotField(inputs, static snapshot => snapshot.ActionMessage)
-    );
-
-    private static string JoinSnapshotField(
-        IReadOnlyList<SessionRequestArtifactInput> inputs,
-        Func<SessionRequestArtifactContextSnapshot, string> selector
-    ) => string.Join(
-        "\n\n",
-        inputs.Select(input => selector(input.ContextSnapshot))
-            .Where(static value => !string.IsNullOrWhiteSpace(value))
-    );
-
     private static TargetContribution CreateTargetContribution(DerivedRecapArtifact artifact) {
         SessionRequestArtifactInput input = CreateArtifactInput(artifact);
         return new TargetContribution(
@@ -694,28 +676,6 @@ internal static class SessionTailContextProjection {
             SessionArtifactContextSnapshotHasher.ComputeSha256(snapshot),
             snapshot
         );
-    }
-
-    internal static (string SystemPrompt, ImmutableArray<IHistoryMessage> Context) ExpandContextSnapshot(
-        string baseSystemPrompt,
-        SessionRequestArtifactContextSnapshot snapshot
-    ) {
-        ArgumentNullException.ThrowIfNull(baseSystemPrompt);
-        ArgumentNullException.ThrowIfNull(snapshot);
-        var systemPrompt = new StringBuilder(baseSystemPrompt);
-        var context = ImmutableArray.CreateBuilder<IHistoryMessage>(2);
-        if (!string.IsNullOrWhiteSpace(snapshot.SystemPromptFragment)) {
-            // This separator participates in the canonical request commitment and must not vary by OS.
-            if (systemPrompt.Length > 0) { systemPrompt.Append("\n\n"); }
-            systemPrompt.Append(snapshot.SystemPromptFragment.Trim());
-        }
-        if (!string.IsNullOrWhiteSpace(snapshot.ObservationMessage)) {
-            context.Add(new ObservationMessage(snapshot.ObservationMessage));
-        }
-        if (!string.IsNullOrEmpty(snapshot.ActionMessage)) {
-            context.Add(new ActionMessage([new ActionBlock.Text(snapshot.ActionMessage)]));
-        }
-        return (systemPrompt.ToString(), context.ToImmutable());
     }
 
     private static ToolResultsMessage ProjectToolResults(

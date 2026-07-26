@@ -708,11 +708,6 @@ public sealed class SessionJournalEngine : IDisposable {
         var materialization = new RequestContextMaterialization(
             tail.SystemPrompt,
             tail.Context,
-            SessionRequestManifestDefaults.CoherentArtifactTailSelectionPolicyId,
-            SessionRequestManifestDefaults.CoherentArtifactTailPlannerFingerprint,
-            SessionRequestManifestDefaults.CoherentArtifactTailRenderingProfileId,
-            SessionRequestManifestDefaults.CoherentArtifactTailContextRendererId,
-            SessionRequestManifestDefaults.CoherentArtifactTailContextRendererFingerprint,
             tail.RawStartExclusive,
             tail.RawRangeSha256,
             tail.ArtifactInputs,
@@ -1263,21 +1258,13 @@ public sealed class SessionJournalEngine : IDisposable {
             new SessionRequestAttempt(
                 $"attempt-{Guid.NewGuid():N}",
                 correlationId,
-                reason,
-                ReplacesAttemptId: null
+                reason
             ),
             executionCheckpoint,
             new SessionContextPlan(
-                SelectionPolicyId: materialization.SelectionPolicyId,
-                PlannerFingerprint: materialization.PlannerFingerprint,
                 RawStartExclusive: materialization.RawStartExclusive,
                 RawRangeSha256: materialization.RawRangeSha256,
                 ArtifactInputs: materialization.ArtifactInputs,
-                RecalledInputs: ImmutableArray<SessionRequestRecalledInput>.Empty,
-                RenderingProfileId: materialization.RenderingProfileId,
-                ModelProfileId: request.ModelId,
-                EstimatedInputTokens: checked((commitment.ByteLength + 3) / 4),
-                Reason: reason,
                 ActiveArtifactSet: materialization.ActiveArtifactSet
             ),
             new SessionGoverningSetupReferences(
@@ -1291,16 +1278,12 @@ public sealed class SessionJournalEngine : IDisposable {
                 tools,
                 tools.IsEmpty ? null : RequireToolRuntimeIdentity(runtime, tools)
             ),
-            new SessionRequestRendering(
-                ContextRendererId: materialization.ContextRendererId,
-                ContextRendererFingerprint: materialization.ContextRendererFingerprint,
-                CanonicalRequestCodecId: SessionRequestManifestDefaults.CanonicalRequestCodecId,
-                ToolCodecId: SessionRequestManifestDefaults.ToolCodecId,
-                ReasoningCodecSetFingerprint: SessionRequestManifestDefaults.ReasoningCodecSetFingerprint
+            new SessionRequestRecipe(
+                RecipeId: SessionRequestManifestDefaults.RecipeId,
+                CanonicalRequestCodecId: SessionRequestManifestDefaults.CanonicalRequestCodecId
             ),
             new SessionRequestTarget(
                 completionTarget,
-                governingSetup.RuntimeConfig.CompletionSurfaceId,
                 runtime.CompletionClient.Name,
                 runtime.CompletionClient.ApiSpecId
             ),
@@ -1426,12 +1409,12 @@ public sealed class SessionJournalEngine : IDisposable {
                     frame.Payload,
                     out _
                 );
-                if (manifest.Plan.ActiveArtifactSet is { } reference) {
-                    SessionActiveArtifactSet resolved =
-                        ReadActiveArtifactSet(reference.Address, reference);
-                    ValidateManifestArtifactSetAssertion(manifest, resolved.Body);
-                    return resolved;
-                }
+                SessionArtifactSetReference reference =
+                    manifest.Plan.ActiveArtifactSet;
+                SessionActiveArtifactSet resolved =
+                    ReadActiveArtifactSet(reference.Address, reference);
+                ValidateManifestArtifactSetAssertion(manifest, resolved.Body);
+                return resolved;
             }
             if (kind == SessionEventKind.SessionCreated) {
                 break;
@@ -1663,27 +1646,15 @@ public sealed class SessionJournalEngine : IDisposable {
         CompletionRequestPreparedBody manifest,
         ArtifactSetCommittedBody activation
     ) {
-        var asserted = manifest.Plan.ArtifactInputs
-            .Select(static input => (
-                input.ArtifactId,
-                input.ArtifactKind,
-                input.ContentSha256
-            ))
-            .OrderBy(static item => item.ArtifactId, StringComparer.Ordinal)
-            .ToArray();
-        var activated = activation.Members
-            .Select(static member => (
-                member.ArtifactId,
-                member.ArtifactKind,
-                member.ContentSha256
-            ))
-            .OrderBy(static item => item.ArtifactId, StringComparer.Ordinal)
-            .ToArray();
-        if (!asserted.SequenceEqual(activated)) {
+        if (manifest.Plan.RawStartExclusive != activation.CommonAnchor) {
             throw new InvalidDataException(
-                "Prepared artifact inputs do not exactly assert the referenced active artifact-set members."
+                "Prepared plan.rawStartExclusive does not match its asserted ArtifactSet commonAnchor."
             );
         }
+        _ = SessionCoherentRequestRecipe.ValidateAndAggregate(
+            manifest.Plan.ArtifactInputs,
+            activation
+        );
     }
 
     private EventAddress Append(SessionEventKind kind, object body) {
@@ -1967,15 +1938,10 @@ public sealed class SessionJournalEngine : IDisposable {
     private sealed record RequestContextMaterialization(
         string SystemPrompt,
         IReadOnlyList<IHistoryMessage> Context,
-        string SelectionPolicyId,
-        string PlannerFingerprint,
-        string RenderingProfileId,
-        string ContextRendererId,
-        string ContextRendererFingerprint,
-        EventAddress? RawStartExclusive,
+        EventAddress RawStartExclusive,
         string RawRangeSha256,
         ImmutableArray<SessionRequestArtifactInput> ArtifactInputs,
-        SessionArtifactSetReference? ActiveArtifactSet = null
+        SessionArtifactSetReference ActiveArtifactSet
     );
 
     private sealed record ReadyActiveArtifactSet(

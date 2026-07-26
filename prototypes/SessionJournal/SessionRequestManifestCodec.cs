@@ -18,7 +18,7 @@ internal static class SessionRequestManifestCodec {
             WriteSetups(writer, body.Setups);
             WriteParameters(writer, body.Parameters);
             WriteToolSet(writer, body.ToolSet);
-            WriteRendering(writer, body.Rendering);
+            WriteRecipe(writer, body.Recipe);
             WriteTarget(writer, body.Target);
             WriteCommitment(writer, body.Commitment);
             writer.WriteEndObject();
@@ -36,7 +36,7 @@ internal static class SessionRequestManifestCodec {
             "setups",
             "parameters",
             "toolSet",
-            "rendering",
+            "recipe",
             "target",
             "commitment"
         );
@@ -47,7 +47,7 @@ internal static class SessionRequestManifestCodec {
             ReadSetups(ReadRequiredObject(body, "setups")),
             ReadParameters(ReadRequiredObject(body, "parameters")),
             ReadToolSet(ReadRequiredObject(body, "toolSet")),
-            ReadRendering(ReadRequiredObject(body, "rendering")),
+            ReadRecipe(ReadRequiredObject(body, "recipe")),
             ReadTarget(ReadRequiredObject(body, "target")),
             ReadCommitment(ReadRequiredObject(body, "commitment"))
         );
@@ -60,11 +60,6 @@ internal static class SessionRequestManifestCodec {
         RequireText(body.Attempt.AttemptId, "attempt.attemptId");
         RequireText(body.Attempt.CorrelationId, "attempt.correlationId");
         RequireText(body.Attempt.Reason, "attempt.reason");
-        if (body.Attempt.ReplacesAttemptId is not null) {
-            throw new InvalidDataException(
-                "completion-request-prepared attempt.replacesAttemptId must be null; retries are represented by completion-attempt-restarted."
-            );
-        }
         if (body.Execution.LastIssuedToolExecutionSequence < 0) {
             throw new ArgumentOutOfRangeException(
                 nameof(body),
@@ -72,25 +67,32 @@ internal static class SessionRequestManifestCodec {
             );
         }
 
-        RequireText(body.Plan.SelectionPolicyId, "plan.selectionPolicyId");
-        RequireText(body.Plan.PlannerFingerprint, "plan.plannerFingerprint");
-        if (body.Plan.RawStartExclusive is EventAddress rawStartExclusive) {
-            _ = EventAddressTextCodec.Format(rawStartExclusive);
-        }
+        _ = EventAddressTextCodec.Format(body.Plan.RawStartExclusive);
         RequireSha256(body.Plan.RawRangeSha256, "plan.rawRangeSha256");
-        RequireText(body.Plan.RenderingProfileId, "plan.renderingProfileId");
-        RequireText(body.Plan.ModelProfileId, "plan.modelProfileId");
-        RequireText(body.Plan.Reason, "plan.reason");
-        if (body.Plan.EstimatedInputTokens < 0) {
-            throw new ArgumentOutOfRangeException(nameof(body), "plan.estimatedInputTokens cannot be negative.");
+        if (body.Plan.ArtifactInputs.Length < 2) {
+            throw new InvalidDataException(
+                "Prepared v2 requires at least two plan.artifactInputs entries."
+            );
         }
-        if (!string.Equals(body.Attempt.Reason, body.Plan.Reason, StringComparison.Ordinal)) {
-            throw new InvalidDataException("attempt.reason must match plan.reason.");
+        ValidateArtifactSetReference(body.Plan.ActiveArtifactSet);
+        var artifactIds = new HashSet<string>(StringComparer.Ordinal);
+        foreach (SessionRequestArtifactInput input in body.Plan.ArtifactInputs) {
+            ValidateArtifactInput(input);
+            int populatedCarriers =
+                (string.IsNullOrWhiteSpace(input.ContextSnapshot.SystemPromptFragment) ? 0 : 1)
+                + (string.IsNullOrWhiteSpace(input.ContextSnapshot.ObservationMessage) ? 0 : 1)
+                + (string.IsNullOrWhiteSpace(input.ContextSnapshot.ActionMessage) ? 0 : 1);
+            if (populatedCarriers != 1) {
+                throw new InvalidDataException(
+                    "Prepared v2 artifact contributions must populate exactly one contextSnapshot carrier."
+                );
+            }
+            if (!artifactIds.Add(input.ArtifactId)) {
+                throw new InvalidDataException(
+                    "Prepared v2 requires exact artifact ids to be unique."
+                );
+            }
         }
-        if (!string.Equals(body.Plan.ModelProfileId, body.Parameters.ModelId, StringComparison.Ordinal)) {
-            throw new InvalidDataException("plan.modelProfileId must match parameters.modelId.");
-        }
-        ValidatePlanPolicy(body);
 
         ValidateSetup(body.Setups.RuntimeConfig, "setups.runtimeConfig");
         ValidateSetup(body.Setups.SystemPrompt, "setups.systemPrompt");
@@ -121,177 +123,34 @@ internal static class SessionRequestManifestCodec {
             );
         }
 
-        RequireText(body.Rendering.ContextRendererId, "rendering.contextRendererId");
-        RequireText(body.Rendering.ContextRendererFingerprint, "rendering.contextRendererFingerprint");
+        RequireText(body.Recipe.RecipeId, "recipe.recipeId");
         if (!string.Equals(
-                body.Rendering.ReasoningCodecSetFingerprint,
-                SessionRequestManifestDefaults.ReasoningCodecSetFingerprint,
+                body.Recipe.RecipeId,
+                SessionRequestManifestDefaults.RecipeId,
                 StringComparison.Ordinal
             )) {
             throw new NotSupportedException(
-                $"Unsupported reasoning codec set fingerprint '{body.Rendering.ReasoningCodecSetFingerprint}'."
+                $"Unsupported request recipe '{body.Recipe.RecipeId}'."
             );
         }
         if (!string.Equals(
-                body.Rendering.CanonicalRequestCodecId,
+                body.Recipe.CanonicalRequestCodecId,
                 SessionRequestManifestDefaults.CanonicalRequestCodecId,
                 StringComparison.Ordinal
             )) {
-            throw new NotSupportedException($"Unsupported canonical request codec '{body.Rendering.CanonicalRequestCodecId}'.");
+            throw new NotSupportedException(
+                $"Unsupported canonical request codec '{body.Recipe.CanonicalRequestCodecId}'."
+            );
         }
-        if (!string.Equals(body.Rendering.ToolCodecId, body.ToolSet.CodecId, StringComparison.Ordinal)) {
-            throw new InvalidDataException("rendering.toolCodecId must match toolSet.codecId.");
-        }
-        RequireText(body.Rendering.ReasoningCodecSetFingerprint, "rendering.reasoningCodecSetFingerprint");
 
         ValidateConnection(body.Target.Connection);
-        RequireText(body.Target.CompletionSurfaceId, "target.completionSurfaceId");
         RequireText(body.Target.ClientName, "target.clientName");
         RequireText(body.Target.ApiSpecId, "target.apiSpecId");
 
-        if (!string.Equals(
-                body.Commitment.Algorithm,
-                SessionRequestManifestDefaults.CommitmentAlgorithm,
-                StringComparison.Ordinal
-            )) {
-            throw new NotSupportedException($"Unsupported request commitment algorithm '{body.Commitment.Algorithm}'.");
-        }
         if (body.Commitment.ByteLength <= 0) {
             throw new ArgumentOutOfRangeException(nameof(body), "commitment.byteLength must be positive.");
         }
         RequireSha256(body.Commitment.Sha256, "commitment.sha256");
-    }
-
-    private static void ValidatePlanPolicy(CompletionRequestPreparedBody body) {
-        switch (body.Plan.SelectionPolicyId) {
-            case SessionRequestManifestDefaults.FullRawSelectionPolicyId:
-                ValidatePolicyIdentities(
-                    body,
-                    SessionRequestManifestDefaults.FullRawPlannerFingerprint,
-                    SessionRequestManifestDefaults.FullRawRenderingProfileId,
-                    SessionRequestManifestDefaults.FullRawContextRendererId,
-                    SessionRequestManifestDefaults.FullRawContextRendererFingerprint
-                );
-                if (body.Plan.RawStartExclusive is not null) {
-                    throw new InvalidDataException("full-raw plans require plan.rawStartExclusive to be null.");
-                }
-                if (!body.Plan.ArtifactInputs.IsEmpty || !body.Plan.RecalledInputs.IsEmpty) {
-                    throw new InvalidDataException(
-                        "full-raw plans require plan.artifactInputs and plan.recalledInputs to be empty."
-                    );
-                }
-                if (body.Plan.ActiveArtifactSet is not null) {
-                    throw new InvalidDataException("full-raw plans require plan.activeArtifactSet to be null.");
-                }
-                break;
-
-            case SessionRequestManifestDefaults.ExplicitArtifactTailSelectionPolicyId:
-                ValidatePolicyIdentities(
-                    body,
-                    SessionRequestManifestDefaults.ExplicitArtifactTailPlannerFingerprint,
-                    SessionRequestManifestDefaults.ExplicitArtifactTailRenderingProfileId,
-                    SessionRequestManifestDefaults.ExplicitArtifactTailContextRendererId,
-                    SessionRequestManifestDefaults.ExplicitArtifactTailContextRendererFingerprint
-                );
-                if (body.Plan.RawStartExclusive is null) {
-                    throw new InvalidDataException("explicit-artifact-tail plans require plan.rawStartExclusive.");
-                }
-                if (body.Plan.ArtifactInputs.Length != 1) {
-                    throw new InvalidDataException(
-                        "explicit-artifact-tail plans require exactly one plan.artifactInputs entry."
-                    );
-                }
-                if (!body.Plan.RecalledInputs.IsEmpty) {
-                    throw new InvalidDataException(
-                        "explicit-artifact-tail plans require plan.recalledInputs to be empty."
-                    );
-                }
-                if (!body.ToolSet.Definitions.IsEmpty) {
-                    throw new InvalidDataException(
-                        "explicit-artifact-tail plans require an empty tool definition set."
-                    );
-                }
-                if (body.Plan.ActiveArtifactSet is not null) {
-                    throw new InvalidDataException(
-                        "legacy explicit-artifact-tail plans require plan.activeArtifactSet to be null."
-                    );
-                }
-                ValidateArtifactInput(body.Plan.ArtifactInputs[0]);
-                break;
-
-            case SessionRequestManifestDefaults.CoherentArtifactTailSelectionPolicyId:
-                ValidatePolicyIdentities(
-                    body,
-                    SessionRequestManifestDefaults.CoherentArtifactTailPlannerFingerprint,
-                    SessionRequestManifestDefaults.CoherentArtifactTailRenderingProfileId,
-                    SessionRequestManifestDefaults.CoherentArtifactTailContextRendererId,
-                    SessionRequestManifestDefaults.CoherentArtifactTailContextRendererFingerprint
-                );
-                if (body.Plan.RawStartExclusive is null) {
-                    throw new InvalidDataException("coherent-artifact-tail plans require plan.rawStartExclusive.");
-                }
-                if (body.Plan.ArtifactInputs.Length < 2) {
-                    throw new InvalidDataException(
-                        "coherent-artifact-tail plans require at least two plan.artifactInputs entries."
-                    );
-                }
-                if (!body.Plan.RecalledInputs.IsEmpty) {
-                    throw new InvalidDataException(
-                        "coherent-artifact-tail plans require plan.recalledInputs to be empty."
-                    );
-                }
-                ValidateArtifactSetReference(
-                    body.Plan.ActiveArtifactSet
-                        ?? throw new InvalidDataException(
-                            "coherent-artifact-tail plans require plan.activeArtifactSet."
-                        )
-                );
-                var artifactIds = new HashSet<string>(StringComparer.Ordinal);
-                foreach (SessionRequestArtifactInput input in body.Plan.ArtifactInputs) {
-                    ValidateArtifactInput(input);
-                    int populatedCarriers =
-                        (string.IsNullOrWhiteSpace(input.ContextSnapshot.SystemPromptFragment) ? 0 : 1)
-                        + (string.IsNullOrWhiteSpace(input.ContextSnapshot.ObservationMessage) ? 0 : 1)
-                        + (string.IsNullOrWhiteSpace(input.ContextSnapshot.ActionMessage) ? 0 : 1);
-                    if (populatedCarriers != 1) {
-                        throw new InvalidDataException(
-                            "coherent-artifact-tail contributions must populate exactly one contextSnapshot carrier."
-                        );
-                    }
-                    if (!artifactIds.Add(input.ArtifactId)) {
-                        throw new InvalidDataException(
-                            "coherent-artifact-tail plans require exact artifact ids to be unique."
-                        );
-                    }
-                }
-                break;
-
-            default:
-                throw new NotSupportedException(
-                    $"Unsupported selection policy '{body.Plan.SelectionPolicyId}'."
-                );
-        }
-    }
-
-    private static void ValidatePolicyIdentities(
-        CompletionRequestPreparedBody body,
-        string plannerFingerprint,
-        string renderingProfileId,
-        string contextRendererId,
-        string contextRendererFingerprint
-    ) {
-        if (!string.Equals(body.Plan.PlannerFingerprint, plannerFingerprint, StringComparison.Ordinal)
-            || !string.Equals(body.Plan.RenderingProfileId, renderingProfileId, StringComparison.Ordinal)
-            || !string.Equals(body.Rendering.ContextRendererId, contextRendererId, StringComparison.Ordinal)
-            || !string.Equals(
-                body.Rendering.ContextRendererFingerprint,
-                contextRendererFingerprint,
-                StringComparison.Ordinal
-            )) {
-            throw new NotSupportedException(
-                $"Selection policy '{body.Plan.SelectionPolicyId}' contains mismatched planner or rendering identities."
-            );
-        }
     }
 
     private static void ValidateArtifactInput(SessionRequestArtifactInput input) {
@@ -328,7 +187,6 @@ internal static class SessionRequestManifestCodec {
         writer.WriteString("attemptId", value.AttemptId);
         writer.WriteString("correlationId", value.CorrelationId);
         writer.WriteString("reason", value.Reason);
-        WriteNullableString(writer, "replacesAttemptId", value.ReplacesAttemptId);
         writer.WriteEndObject();
     }
 
@@ -340,9 +198,10 @@ internal static class SessionRequestManifestCodec {
 
     private static void WritePlan(Utf8JsonWriter writer, SessionContextPlan value) {
         writer.WriteStartObject("plan");
-        writer.WriteString("selectionPolicyId", value.SelectionPolicyId);
-        writer.WriteString("plannerFingerprint", value.PlannerFingerprint);
-        WriteNullableAddress(writer, "rawStartExclusive", value.RawStartExclusive);
+        writer.WriteString(
+            "rawStartExclusive",
+            EventAddressTextCodec.Format(value.RawStartExclusive)
+        );
         writer.WriteString("rawRangeSha256", value.RawRangeSha256);
         writer.WriteStartArray("artifactInputs");
         foreach (SessionRequestArtifactInput input in value.ArtifactInputs) {
@@ -358,19 +217,7 @@ internal static class SessionRequestManifestCodec {
             writer.WriteEndObject();
         }
         writer.WriteEndArray();
-        writer.WriteStartArray("recalledInputs");
-        foreach (SessionRequestRecalledInput input in value.RecalledInputs) {
-            writer.WriteStartObject();
-            writer.WriteString("sourceId", input.SourceId);
-            writer.WriteString("contentSha256", input.ContentSha256);
-            writer.WriteEndObject();
-        }
-        writer.WriteEndArray();
         WriteArtifactSetReference(writer, value.ActiveArtifactSet);
-        writer.WriteString("renderingProfileId", value.RenderingProfileId);
-        writer.WriteString("modelProfileId", value.ModelProfileId);
-        writer.WriteNumber("estimatedInputTokens", value.EstimatedInputTokens);
-        writer.WriteString("reason", value.Reason);
         writer.WriteEndObject();
     }
 
@@ -414,13 +261,10 @@ internal static class SessionRequestManifestCodec {
         writer.WriteEndObject();
     }
 
-    private static void WriteRendering(Utf8JsonWriter writer, SessionRequestRendering value) {
-        writer.WriteStartObject("rendering");
-        writer.WriteString("contextRendererId", value.ContextRendererId);
-        writer.WriteString("contextRendererFingerprint", value.ContextRendererFingerprint);
+    private static void WriteRecipe(Utf8JsonWriter writer, SessionRequestRecipe value) {
+        writer.WriteStartObject("recipe");
+        writer.WriteString("recipeId", value.RecipeId);
         writer.WriteString("canonicalRequestCodecId", value.CanonicalRequestCodecId);
-        writer.WriteString("toolCodecId", value.ToolCodecId);
-        writer.WriteString("reasoningCodecSetFingerprint", value.ReasoningCodecSetFingerprint);
         writer.WriteEndObject();
     }
 
@@ -432,7 +276,6 @@ internal static class SessionRequestManifestCodec {
         writer.WriteString("connectionFingerprint", value.Connection.ConnectionFingerprint);
         writer.WriteString("requestAdapterFingerprint", value.Connection.RequestAdapterFingerprint);
         writer.WriteEndObject();
-        writer.WriteString("completionSurfaceId", value.CompletionSurfaceId);
         writer.WriteString("clientName", value.ClientName);
         writer.WriteString("apiSpecId", value.ApiSpecId);
         writer.WriteEndObject();
@@ -440,19 +283,17 @@ internal static class SessionRequestManifestCodec {
 
     private static void WriteCommitment(Utf8JsonWriter writer, SessionRequestCommitment value) {
         writer.WriteStartObject("commitment");
-        writer.WriteString("algorithm", value.Algorithm);
         writer.WriteNumber("byteLength", value.ByteLength);
         writer.WriteString("sha256", value.Sha256);
         writer.WriteEndObject();
     }
 
     private static SessionRequestAttempt ReadAttempt(JsonElement element) {
-        RequireExactProperties(element, "attempt", "attemptId", "correlationId", "reason", "replacesAttemptId");
+        RequireExactProperties(element, "attempt", "attemptId", "correlationId", "reason");
         return new(
             ReadRequiredString(element, "attemptId"),
             ReadRequiredString(element, "correlationId"),
-            ReadRequiredString(element, "reason"),
-            ReadNullableString(element, "replacesAttemptId")
+            ReadRequiredString(element, "reason")
         );
     }
 
@@ -467,47 +308,26 @@ internal static class SessionRequestManifestCodec {
         RequireExactProperties(
             element,
             "plan",
-            "selectionPolicyId",
-            "plannerFingerprint",
             "rawStartExclusive",
             "rawRangeSha256",
             "artifactInputs",
-            "recalledInputs",
-            "activeArtifactSet",
-            "renderingProfileId",
-            "modelProfileId",
-            "estimatedInputTokens",
-            "reason"
+            "activeArtifactSet"
         );
         var artifacts = ReadArray(element, "artifactInputs")
             .Select(ReadArtifactInput)
             .ToImmutableArray();
-        var recalled = ReadArray(element, "recalledInputs")
-            .Select(ReadRecalledInput)
-            .ToImmutableArray();
         return new SessionContextPlan(
-            ReadRequiredString(element, "selectionPolicyId"),
-            ReadRequiredString(element, "plannerFingerprint"),
-            ReadNullableAddress(element, "rawStartExclusive"),
+            ReadRequiredAddress(element, "rawStartExclusive"),
             ReadRequiredString(element, "rawRangeSha256"),
             artifacts,
-            recalled,
-            ReadRequiredString(element, "renderingProfileId"),
-            ReadRequiredString(element, "modelProfileId"),
-            ReadRequiredInt32(element, "estimatedInputTokens"),
-            ReadRequiredString(element, "reason"),
             ReadArtifactSetReference(element)
         );
     }
 
     private static void WriteArtifactSetReference(
         Utf8JsonWriter writer,
-        SessionArtifactSetReference? reference
+        SessionArtifactSetReference reference
     ) {
-        if (reference is null) {
-            writer.WriteNull("activeArtifactSet");
-            return;
-        }
         writer.WriteStartObject("activeArtifactSet");
         writer.WriteString("address", EventAddressTextCodec.Format(reference.Address));
         writer.WriteNumber("bodySchemaVersion", reference.BodySchemaVersion);
@@ -515,13 +335,12 @@ internal static class SessionRequestManifestCodec {
         writer.WriteEndObject();
     }
 
-    private static SessionArtifactSetReference? ReadArtifactSetReference(
+    private static SessionArtifactSetReference ReadArtifactSetReference(
         JsonElement plan
     ) {
         if (!plan.TryGetProperty("activeArtifactSet", out JsonElement element)) {
             throw new InvalidDataException("plan.activeArtifactSet is required.");
         }
-        if (element.ValueKind == JsonValueKind.Null) { return null; }
         RequireExactProperties(
             element,
             "active artifact set reference",
@@ -568,14 +387,6 @@ internal static class SessionRequestManifestCodec {
         );
     }
 
-    private static SessionRequestRecalledInput ReadRecalledInput(JsonElement element) {
-        RequireExactProperties(element, "recalled input", "sourceId", "contentSha256");
-        return new(
-            ReadRequiredString(element, "sourceId"),
-            ReadRequiredString(element, "contentSha256")
-        );
-    }
-
     private static SessionGoverningSetupReferences ReadSetups(JsonElement element) {
         RequireExactProperties(element, "setups", "runtimeConfig", "systemPrompt");
         return new(
@@ -613,22 +424,16 @@ internal static class SessionRequestManifestCodec {
         );
     }
 
-    private static SessionRequestRendering ReadRendering(JsonElement element) {
+    private static SessionRequestRecipe ReadRecipe(JsonElement element) {
         RequireExactProperties(
             element,
-            "rendering",
-            "contextRendererId",
-            "contextRendererFingerprint",
-            "canonicalRequestCodecId",
-            "toolCodecId",
-            "reasoningCodecSetFingerprint"
+            "recipe",
+            "recipeId",
+            "canonicalRequestCodecId"
         );
         return new(
-            ReadRequiredString(element, "contextRendererId"),
-            ReadRequiredString(element, "contextRendererFingerprint"),
-            ReadRequiredString(element, "canonicalRequestCodecId"),
-            ReadRequiredString(element, "toolCodecId"),
-            ReadRequiredString(element, "reasoningCodecSetFingerprint")
+            ReadRequiredString(element, "recipeId"),
+            ReadRequiredString(element, "canonicalRequestCodecId")
         );
     }
 
@@ -637,7 +442,6 @@ internal static class SessionRequestManifestCodec {
             element,
             "target",
             "connection",
-            "completionSurfaceId",
             "clientName",
             "apiSpecId"
         );
@@ -657,16 +461,14 @@ internal static class SessionRequestManifestCodec {
                 ReadRequiredString(connection, "connectionFingerprint"),
                 ReadRequiredString(connection, "requestAdapterFingerprint")
             ),
-            ReadRequiredString(element, "completionSurfaceId"),
             ReadRequiredString(element, "clientName"),
             ReadRequiredString(element, "apiSpecId")
         );
     }
 
     private static SessionRequestCommitment ReadCommitment(JsonElement element) {
-        RequireExactProperties(element, "commitment", "algorithm", "byteLength", "sha256");
+        RequireExactProperties(element, "commitment", "byteLength", "sha256");
         return new(
-            ReadRequiredString(element, "algorithm"),
             ReadRequiredInt32(element, "byteLength"),
             ReadRequiredString(element, "sha256")
         );
@@ -753,15 +555,6 @@ internal static class SessionRequestManifestCodec {
         }
     }
 
-    private static void WriteNullableAddress(Utf8JsonWriter writer, string propertyName, EventAddress? value) {
-        if (value is EventAddress address) {
-            writer.WriteString(propertyName, EventAddressTextCodec.Format(address));
-        }
-        else {
-            writer.WriteNull(propertyName);
-        }
-    }
-
     private static JsonElement ReadRequiredObject(JsonElement element, string propertyName) {
         JsonElement property = ReadRequiredProperty(element, propertyName);
         RequireObject(property, propertyName);
@@ -788,15 +581,6 @@ internal static class SessionRequestManifestCodec {
             : throw new InvalidDataException($"Required string property '{propertyName}' is invalid.");
     }
 
-    private static string? ReadNullableString(JsonElement element, string propertyName) {
-        JsonElement property = ReadRequiredProperty(element, propertyName);
-        return property.ValueKind switch {
-            JsonValueKind.Null => null,
-            JsonValueKind.String => property.GetString(),
-            _ => throw new InvalidDataException($"Nullable string property '{propertyName}' is invalid.")
-        };
-    }
-
     private static int ReadRequiredInt32(JsonElement element, string propertyName) {
         JsonElement property = ReadRequiredProperty(element, propertyName);
         return property.ValueKind == JsonValueKind.Number && property.TryGetInt32(out int value)
@@ -821,17 +605,6 @@ internal static class SessionRequestManifestCodec {
 
     private static EventAddress ReadRequiredAddress(JsonElement element, string propertyName) {
         string value = ReadRequiredString(element, propertyName);
-        try {
-            return EventAddressTextCodec.Parse(value);
-        }
-        catch (FormatException ex) {
-            throw new InvalidDataException($"EventAddress property '{propertyName}' is invalid.", ex);
-        }
-    }
-
-    private static EventAddress? ReadNullableAddress(JsonElement element, string propertyName) {
-        string? value = ReadNullableString(element, propertyName);
-        if (value is null) { return null; }
         try {
             return EventAddressTextCodec.Parse(value);
         }

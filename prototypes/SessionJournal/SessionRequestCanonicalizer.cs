@@ -61,7 +61,6 @@ internal static class SessionRequestCanonicalizer {
     public static SessionRequestCommitment CreateCommitment(CompletionRequest request) {
         byte[] bytes = Canonicalize(request);
         return new SessionRequestCommitment(
-            SessionRequestManifestDefaults.CommitmentAlgorithm,
             bytes.Length,
             Sha256Hex(bytes)
         );

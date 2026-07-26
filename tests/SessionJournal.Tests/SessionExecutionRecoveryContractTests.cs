@@ -576,55 +576,18 @@ public sealed class SessionExecutionRecoveryContractTests : IDisposable {
             new ToolDefinition("alpha", "Alpha", new ToolSchema.Object()),
             new ToolDefinition("beta", "Beta", new ToolSchema.Object())
         ];
-        return new CompletionRequestPreparedBody(
-            new SessionRequestAttempt(attemptId, correlationId, reason, null),
-            new SessionExecutionCheckpoint(checkpoint),
-            new SessionContextPlan(
-                SessionRequestManifestDefaults.FullRawSelectionPolicyId,
-                SessionRequestManifestDefaults.FullRawPlannerFingerprint,
-                RawStartExclusive: null,
-                RawRangeSha256: new string('a', 64),
-                ArtifactInputs: [],
-                RecalledInputs: [],
-                SessionRequestManifestDefaults.FullRawRenderingProfileId,
-                ModelProfileId: "model-A",
-                EstimatedInputTokens: 1,
-                reason
-            ),
-            new SessionGoverningSetupReferences(
-                new SessionSetupReference(runtime, 1, new string('b', 64)),
-                new SessionSetupReference(prompt, 1, new string('c', 64))
-            ),
-            new SessionRequestParameters("model-A", MaxTokens: null),
-            new SessionRequestToolSet(
-                SessionRequestManifestDefaults.ToolCodecId,
-                SessionRequestCanonicalizer.ComputeToolSetSha256(tools),
-                tools,
-                ToolRuntimeIdentity
-            ),
-            new SessionRequestRendering(
-                SessionRequestManifestDefaults.FullRawContextRendererId,
-                SessionRequestManifestDefaults.FullRawContextRendererFingerprint,
-                SessionRequestManifestDefaults.CanonicalRequestCodecId,
-                SessionRequestManifestDefaults.ToolCodecId,
-                SessionRequestManifestDefaults.ReasoningCodecSetFingerprint
-            ),
-            new SessionRequestTarget(
-                new SessionCompletionTargetIdentity(
-                    "connection",
-                    "test",
-                    "connection-fingerprint",
-                    "adapter-fingerprint"
-                ),
-                "surface-A",
-                "scripted",
-                "test-api-v1"
-            ),
-            new SessionRequestCommitment(
-                SessionRequestManifestDefaults.CommitmentAlgorithm,
-                ByteLength: 1,
-                Sha256: new string('d', 64)
-            )
+        return PreparedV2Fixture.Create(
+            attemptId,
+            correlationId,
+            reason,
+            runtime,
+            prompt,
+            runtime,
+            prompt,
+            "model-A",
+            tools,
+            ToolRuntimeIdentity,
+            checkpoint
         );
     }
 
@@ -639,7 +602,13 @@ public sealed class SessionExecutionRecoveryContractTests : IDisposable {
         object body,
         EventAddress address,
         EventAddress? parent
-    ) => new(kind, BodySchemaVersion: 1, body, address, parent);
+    ) => new(
+        kind,
+        BodySchemaVersion: kind == SessionEventKind.CompletionRequestPrepared ? 2 : 1,
+        body,
+        address,
+        parent
+    );
 
     private static EventAddress Address(int ticket)
         => EventAddressTextCodec.Parse($"ej1:{ticket:x16}0000000100000000");

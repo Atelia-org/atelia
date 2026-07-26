@@ -581,11 +581,6 @@ internal static class SessionExecutionTailResolver {
                 break;
             }
 
-            if (sourceManifest.Attempt.ReplacesAttemptId is not null) {
-                throw new InvalidDataException(
-                    $"Source CompletionRequestPrepared at {sourcePreparedAddress} must not replace another attempt."
-                );
-            }
             var seenAttemptIds = new HashSet<string>(StringComparer.Ordinal);
             if (string.IsNullOrWhiteSpace(sourceManifest.Attempt.AttemptId)
                 || !seenAttemptIds.Add(sourceManifest.Attempt.AttemptId)) {
@@ -636,15 +631,6 @@ internal static class SessionExecutionTailResolver {
                 ?? throw new InvalidDataException(
                     $"CompletionRequestPrepared at {chain.SourcePreparedAddress} requires a completion boundary parent."
                 );
-            if (!string.Equals(
-                    chain.SourceManifest.Attempt.Reason,
-                    chain.SourceManifest.Plan.Reason,
-                    StringComparison.Ordinal
-                )) {
-                throw new InvalidDataException(
-                    $"Prepared dependency at {terminalAddress} has mismatched attempt and plan reasons."
-                );
-            }
             if (string.IsNullOrWhiteSpace(
                     chain.SourceManifest.Attempt.CorrelationId
                 )) {

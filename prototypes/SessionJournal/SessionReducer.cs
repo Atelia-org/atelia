@@ -131,11 +131,6 @@ internal static class SessionReducer {
                             $"{ev.Kind} at {ev.Address} reason '{body.Attempt.Reason}' does not match predecessor '{headKind}'."
                         );
                     }
-                    if (body.Attempt.ReplacesAttemptId is not null) {
-                        throw new InvalidDataException(
-                            $"{ev.Kind} at {ev.Address} must introduce the source attempt rather than replace another attempt."
-                        );
-                    }
                     if (body.Execution.LastIssuedToolExecutionSequence != toolExecutionSequenceCheckpoint) {
                         throw new InvalidDataException(
                             $"{ev.Kind} at {ev.Address} checkpoint {body.Execution.LastIssuedToolExecutionSequence} "

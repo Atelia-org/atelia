@@ -112,7 +112,7 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
                 )
             );
         }
-        Assert.Equal(SessionRequestManifestDefaults.CoherentArtifactTailSelectionPolicyId, manifest.Plan.SelectionPolicyId);
+        Assert.Equal(SessionRequestManifestDefaults.RecipeId, manifest.Recipe.RecipeId);
         Assert.Equal(anchor, manifest.Plan.RawStartExclusive);
         Assert.Equal(2, manifest.Plan.ArtifactInputs.Length);
         Assert.Collection(
@@ -273,10 +273,7 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
         Assert.All(
             manifests,
             manifest => {
-                Assert.Equal(
-                    SessionRequestManifestDefaults.CoherentArtifactTailSelectionPolicyId,
-                    manifest.Plan.SelectionPolicyId
-                );
+                Assert.Equal(SessionRequestManifestDefaults.RecipeId, manifest.Recipe.RecipeId);
                 Assert.Equal(2, manifest.Plan.ArtifactInputs.Length);
                 Assert.Single(manifest.ToolSet.Definitions);
                 Assert.Equal(TestToolRuntimeIdentity, manifest.ToolSet.RuntimeIdentity);
@@ -1471,14 +1468,14 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
     }
 
     [Fact]
-    public void ExpandContextSnapshot_MatchesLegacyFixedRendererAndNeverReturnsHeaderMessage() {
+    public void CoherentRecipeExpand_NeverReturnsHeaderMessage() {
         var snapshot = new SessionRequestArtifactContextSnapshot(
             "  memory system  ",
             "memory observation",
             "memory action"
         );
 
-        var (systemPrompt, context) = SessionTailContextProjection.ExpandContextSnapshot(
+        var (systemPrompt, context) = SessionCoherentRequestRecipe.Expand(
             "base system",
             snapshot
         );

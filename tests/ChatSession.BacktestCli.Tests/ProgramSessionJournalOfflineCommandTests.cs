@@ -53,9 +53,20 @@ public sealed class ProgramSessionJournalOfflineCommandTests : IDisposable {
         Assert.Equal(0, exitCode);
         Assert.Equal(before, CaptureRepositoryFileHashes(repoPath));
         Assert.True(File.Exists(reportPath));
+        string reportJson = File.ReadAllText(reportPath);
+        Assert.Contains(
+            "\"preparedRequestCount\"",
+            reportJson,
+            StringComparison.Ordinal
+        );
+        Assert.DoesNotContain(
+            "\"preparedPolicyCounts\"",
+            reportJson,
+            StringComparison.Ordinal
+        );
         SessionJournalOfflineValidationReport report =
             JsonSerializer.Deserialize<SessionJournalOfflineValidationReport>(
-                File.ReadAllText(reportPath),
+                reportJson,
                 WebJsonOptions
             ) ?? throw new Xunit.Sdk.XunitException(
                 "Validation report did not deserialize."
@@ -68,6 +79,7 @@ public sealed class ProgramSessionJournalOfflineCommandTests : IDisposable {
         Assert.Equal(SessionExecutionPhase.Idle, report.ExecutionPhase);
         Assert.True(report.EventCount >= 5);
         Assert.True(report.LogicalPayloadBytes > 0);
+        Assert.Equal(0, report.PreparedRequestCount);
     }
 
     [Fact]

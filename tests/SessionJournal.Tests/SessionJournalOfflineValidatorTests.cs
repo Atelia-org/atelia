@@ -269,11 +269,11 @@ public sealed class SessionJournalOfflineValidatorTests : IDisposable {
         SessionArtifactSetReference activeArtifactSet
     ) {
         SessionRequestArtifactContextSnapshot aggregate =
-            SessionTailContextProjection.AggregateContextSnapshots(
+            SessionCoherentRequestRecipe.Aggregate(
                 artifactInputs
             );
         (string systemPrompt, ImmutableArray<IHistoryMessage> headerContext) =
-            SessionTailContextProjection.ExpandContextSnapshot(
+            SessionCoherentRequestRecipe.Expand(
                 "system-A",
                 aggregate
             );
@@ -293,13 +293,10 @@ public sealed class SessionJournalOfflineValidatorTests : IDisposable {
             new SessionRequestAttempt(
                 "attempt-01",
                 $"atelia.session-journal.turn.v1:{EventAddressTextCodec.Format(rawEndInclusive)}",
-                reason,
-                ReplacesAttemptId: null
+                reason
             ),
             new SessionExecutionCheckpoint(0),
             new SessionContextPlan(
-                SessionRequestManifestDefaults.CoherentArtifactTailSelectionPolicyId,
-                SessionRequestManifestDefaults.CoherentArtifactTailPlannerFingerprint,
                 rawStartExclusive,
                 ComputeRawRangeSha256(
                     journal,
@@ -308,11 +305,6 @@ public sealed class SessionJournalOfflineValidatorTests : IDisposable {
                     rawAddresses
                 ),
                 artifactInputs,
-                ImmutableArray<SessionRequestRecalledInput>.Empty,
-                SessionRequestManifestDefaults.CoherentArtifactTailRenderingProfileId,
-                "model-A",
-                checked((commitment.ByteLength + 3) / 4),
-                reason,
                 activeArtifactSet
             ),
             new SessionGoverningSetupReferences(
@@ -328,12 +320,9 @@ public sealed class SessionJournalOfflineValidatorTests : IDisposable {
                 ImmutableArray<ToolDefinition>.Empty,
                 RuntimeIdentity: null
             ),
-            new SessionRequestRendering(
-                SessionRequestManifestDefaults.CoherentArtifactTailContextRendererId,
-                SessionRequestManifestDefaults.CoherentArtifactTailContextRendererFingerprint,
-                SessionRequestManifestDefaults.CanonicalRequestCodecId,
-                SessionRequestManifestDefaults.ToolCodecId,
-                SessionRequestManifestDefaults.ReasoningCodecSetFingerprint
+            new SessionRequestRecipe(
+                SessionRequestManifestDefaults.RecipeId,
+                SessionRequestManifestDefaults.CanonicalRequestCodecId
             ),
             new SessionRequestTarget(
                 new SessionCompletionTargetIdentity(
@@ -342,7 +331,6 @@ public sealed class SessionJournalOfflineValidatorTests : IDisposable {
                     "connection-fingerprint-A",
                     "adapter-fingerprint-A"
                 ),
-                "surface-A",
                 "client-A",
                 "api-A"
             ),

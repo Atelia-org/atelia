@@ -1,6 +1,6 @@
 # CS-3D6：Coherent-only Request Manifest 化简计划
 
-> **状态**：Implementation in progress / D6A、D6B、D6C1、D6C2 已实施
+> **状态**：Implementation in progress / D6A、D6B、D6C1、D6C2、D6D 已实施；D6E pending
 > **日期**：2026-07-27
 > **前置基线**：[Tail-only Execution Recovery Design](tail-execution-recovery-design.md)
 > **来源调研**：[Tail Execution Recovery 化简调研](tail-execution-recovery-simplification-study.md)
@@ -521,6 +521,32 @@ D6D 将只修改 `CompletionRequestPrepared` 的 expected version。
 - Prepared 后删除 sidecar仍 exact reopen；
 - tool definitions/runtime identity、target identity mismatch 仍 fail-fast；
 - reducer/tail resolver 对所有 durable heads 状态一致。
+
+**D6D 实施记录（2026-07-27）**
+
+- `CompletionRequestPrepared` 已原子切换为 body schema v2，其余 11 个 event kind 保持 v1；
+  v1 Prepared 在 body parse 前明确报 unsupported，不双读、不猜测旧字段。
+- Prepared v2 已删除 replacement、selection/planner/rendering/model/token/recalled 等 legacy
+  policy 表面；`plan` 只保留 non-null raw start、raw hash、inline artifact inputs 与 exact active
+  ArtifactSet ref，顶层 `recipe` 固定新 identity
+  `atelia.session-journal.coherent-artifact-tail.recipe.v1` 与 canonical request codec。
+- online Engine 仍是唯一 writer；reconstructor 已删除 full-raw / explicit 分支，只接受 coherent
+  recipe，并验证 pinned runtime model、exact setups、latest activation、raw start 等于
+  `commonAnchor`、dispatch/tools/commitment。
+- `SessionCoherentRequestRecipe` 限域拥有 System → Observation → Action、BlockKey ordinal 的
+  contribution 顺序与 aggregate/expand 语义；reopen 按 activation target canonical order
+  逐项验证 artifact id/kind/hash 与唯一 snapshot carrier，不接管 ArtifactSet membership、
+  lineage 或 latest policy。
+- reducer、tail resolver 与 suffix fold 统一从 `Attempt.Reason` 读取 Prepared boundary reason；
+  `CompletionAttemptRestarted.ReplacesAttemptId` 保持不变。Offline validator 对每个 Prepared
+  无条件执行 coherent reconstruction，报告字段收为 `PreparedRequestCount`，CLI JSON 测试已同步。
+- legacy codec/reconstructor 专用 fixtures 已删除；operational oracle fixtures 迁为结构合法的 v2
+  coherent sentinel。新增 literal v2 golden、v1 version gate、strict shape、recipe/codec、
+  target order/carrier、rawStart/commonAnchor，以及 opaque reasoning + tool call + ToolResult exact
+  reopen 覆盖。
+- 验证证据：D6D focused tests `34/34`、`SessionJournal.Tests` `219/219`、10k request-context
+  performance tests `2/2`、`ChatSession.BacktestCli.Tests` `35/35`；SessionJournal 与 Backtest CLI
+  build 均为 0 warning，且 SessionJournal project references 不含 `Agent.Core`。
 
 ### CS-3D6E：Legacy fixture 与验证收口
 

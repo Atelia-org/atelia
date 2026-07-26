@@ -750,10 +750,7 @@ public sealed class SessionJournalEngineTests : IDisposable {
         var manifest = Assert.IsType<CompletionRequestPreparedBody>(
             SessionEventCodec.Decode(SessionEventKind.CompletionRequestPrepared, inspection.ReadPayloadBytes(preparedAddress), out _)
         );
-        Assert.Equal(
-            SessionRequestManifestDefaults.CoherentArtifactTailSelectionPolicyId,
-            manifest.Plan.SelectionPolicyId
-        );
+        Assert.Equal(SessionRequestManifestDefaults.RecipeId, manifest.Recipe.RecipeId);
         Assert.Equal(activated.CommonAnchor, manifest.Plan.RawStartExclusive);
         Assert.Equal(
             activated.Activation,
@@ -765,7 +762,6 @@ public sealed class SessionJournalEngineTests : IDisposable {
         Assert.Equal(64, manifest.Plan.RawRangeSha256.Length);
         Assert.Equal("model-A", manifest.Parameters.ModelId);
         Assert.Empty(manifest.ToolSet.Definitions);
-        Assert.Equal("surface-A", manifest.Target.CompletionSurfaceId);
         Assert.Equal(SessionRequestCanonicalizer.CreateCommitment(client.Requests.Single()), manifest.Commitment);
     }
 
@@ -1210,8 +1206,7 @@ public sealed class SessionJournalEngineTests : IDisposable {
             Attempt = sourceBody.Attempt with {
                 CorrelationId = $"atelia.session-journal.turn.v1:{EventAddressTextCodec.Format(targetObservation)}",
                 Reason = "tool-continuation"
-            },
-            Plan = sourceBody.Plan with { Reason = "tool-continuation" }
+            }
         };
         using (var journal = EventJournal.EventJournal.OpenExisting(targetPath)) {
             journal.CommitToRef(
