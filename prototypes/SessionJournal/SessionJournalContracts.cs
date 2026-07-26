@@ -303,6 +303,7 @@ internal sealed record SessionArtifactSetMember(
 
 internal sealed record SessionActiveArtifactSet(
     EventAddress Address,
+    EventAddress Parent,
     ArtifactSetCommittedBody Body,
     SessionArtifactSetReference Reference
 );

@@ -165,10 +165,10 @@ public sealed class SessionJournalEngine : IDisposable {
         CancellationToken cancellationToken = default
     ) {
         ThrowIfDisposed();
+        SessionRuntime runtime = RequireRuntime();
         ValidateRequired(observation, nameof(observation));
-        if (_runtime?.RequestContextPolicy ==
+        if (runtime.RequestContextPolicy ==
             SessionRequestContextPolicy.RequireActiveArtifactSet) {
-            SessionRuntime runtime = RequireRuntime();
             ImmutableArray<ToolDefinition> visibleTools =
                 runtime.ToolSession?.VisibleDefinitions ?? ImmutableArray<ToolDefinition>.Empty;
             if (!visibleTools.IsEmpty) {
@@ -187,7 +187,7 @@ public sealed class SessionJournalEngine : IDisposable {
                 $"SendAsync requires an idle or explicitly failed turn boundary. Current phase is '{recovery.State.Phase}'; call ResumeAsync first."
             );
         }
-        if (_runtime?.RequestContextPolicy ==
+        if (runtime.RequestContextPolicy ==
             SessionRequestContextPolicy.RequireActiveArtifactSet) {
             _ = await EnsureActiveArtifactSetReadyAsync(
                 recovery.Head
@@ -847,7 +847,7 @@ public sealed class SessionJournalEngine : IDisposable {
             cancellationToken
         ).ConfigureAwait(false);
         SessionActiveArtifactSet activeArtifactSet = readyArtifactSet.Active;
-        SessionTailContextProjectionResult tail = await SessionTailContextProjection.MaterializeAsync(
+        SessionTailContextProjectionResult tail = SessionTailContextProjection.Materialize(
             _reader,
             completionBoundary,
             governingSetup,
@@ -857,7 +857,7 @@ public sealed class SessionJournalEngine : IDisposable {
             ),
             readyArtifactSet.Artifacts,
             cancellationToken
-        ).ConfigureAwait(false);
+        );
         _lastTailProjectionDiagnostics = tail.Diagnostics;
         var materialization = new RequestContextMaterialization(
             tail.SystemPrompt,
@@ -1604,6 +1604,20 @@ public sealed class SessionJournalEngine : IDisposable {
     ) {
         SessionActiveArtifactSet active =
             ResolveActiveArtifactSet(completionBoundary, cancellationToken);
+        ValidateActiveArtifactSetRawLineage(
+            completionBoundary,
+            active,
+            cancellationToken
+        );
+        _ = ReadSetupFromReferences(
+            active.Body.CommonAnchor,
+            active.Body.CoverageSetups
+        );
+        HashSet<EventAddress> allowedSourceHeads =
+            CollectArtifactCoverageIntervalAndValidateCurrentSetups(
+                active,
+                cancellationToken
+            );
         DerivedRecapStore store = DerivedRecapStore.Open(Path);
         var artifacts =
             ImmutableArray.CreateBuilder<DerivedRecapArtifact>(
@@ -1663,25 +1677,102 @@ public sealed class SessionJournalEngine : IDisposable {
                     member.ArtifactId
                 );
             }
+            ValidateArtifactSourceHead(allowedSourceHeads, artifact);
             artifacts.Add(artifact);
         }
         ImmutableArray<DerivedRecapArtifact> readyArtifacts =
             artifacts.MoveToImmutable();
-        ValidateArtifactSetLineage(
-            completionBoundary,
-            active.Body.CommonAnchor,
-            readyArtifacts.Select(static artifact => artifact.SourceRawHead),
-            cancellationToken
-        );
         SessionTailContextProjection.ValidateReplaySafeBoundary(
             _reader,
             active.Body.CommonAnchor
         );
-        _ = ReadSetupFromReferences(
-            active.Body.CommonAnchor,
-            active.Body.CoverageSetups
-        );
         return new ReadyActiveArtifactSet(active, readyArtifacts);
+    }
+
+    private void ValidateActiveArtifactSetRawLineage(
+        EventAddress completionBoundary,
+        SessionActiveArtifactSet active,
+        CancellationToken cancellationToken
+    ) {
+        EventAddress? cursor = completionBoundary;
+        while (cursor is { } address && address != active.Address) {
+            cancellationToken.ThrowIfCancellationRequested();
+            EventFrameHeader header =
+                _reader.ReadEventHeaderPreview(address).Unwrap();
+            ValidateSessionHeaderPreview(address, header);
+            cursor = header.Parent;
+        }
+        if (cursor != active.Address) {
+            throw new InvalidDataException(
+                "Referenced active ArtifactSetCommitted is not on the current completion-boundary lineage."
+            );
+        }
+    }
+
+    private HashSet<EventAddress>
+        CollectArtifactCoverageIntervalAndValidateCurrentSetups(
+        SessionActiveArtifactSet active,
+        CancellationToken cancellationToken
+    ) {
+        var allowedSourceHeads = new HashSet<EventAddress>();
+        SessionSetupReference? runtimeOverride = null;
+        SessionSetupReference? promptOverride = null;
+        EventAddress? cursor = active.Parent;
+        while (cursor is { } address) {
+            cancellationToken.ThrowIfCancellationRequested();
+            EventFrameHeader header =
+                _reader.ReadEventHeaderPreview(address).Unwrap();
+            ValidateSessionHeaderPreview(address, header);
+            var kind = (SessionEventKind)header.OpaqueEventKind;
+            if (kind == SessionEventKind.RuntimeConfigSetup
+                && runtimeOverride is null) {
+                runtimeOverride = CreateSetupReference(
+                    address,
+                    SessionEventKind.RuntimeConfigSetup
+                );
+            }
+            else if (kind == SessionEventKind.SystemPromptSetup
+                && promptOverride is null) {
+                promptOverride = CreateSetupReference(
+                    address,
+                    SessionEventKind.SystemPromptSetup
+                );
+            }
+            allowedSourceHeads.Add(address);
+            if (address == active.Body.CommonAnchor) {
+                var expectedCurrent = new SessionGoverningSetupReferences(
+                    runtimeOverride
+                        ?? active.Body.CoverageSetups.RuntimeConfig,
+                    promptOverride
+                        ?? active.Body.CoverageSetups.SystemPrompt
+                );
+                if (active.Body.CurrentSetups != expectedCurrent) {
+                    throw new InvalidDataException(
+                        "ArtifactSetCommitted currentSetups do not match the authoritative governing setup folded from commonAnchor through its Parent."
+                    );
+                }
+                return allowedSourceHeads;
+            }
+            cursor = header.Parent;
+        }
+        throw new InvalidDataException(
+            "ArtifactSetCommitted commonAnchor is not on its Parent lineage."
+        );
+    }
+
+    internal static void ValidateArtifactSourceHead(
+        IReadOnlySet<EventAddress> allowedSourceHeads,
+        DerivedRecapArtifact artifact
+    ) {
+        ArgumentNullException.ThrowIfNull(allowedSourceHeads);
+        ArgumentNullException.ThrowIfNull(artifact);
+        if (!allowedSourceHeads.Contains(artifact.SourceRawHead)) {
+            throw new SessionJournalNotReadyException(
+                SessionJournalNotReadyReason.ArtifactSetMemberMismatch,
+                $"Active artifact-set member '{artifact.ArtifactId}' sourceRawHead is outside the committed coverage interval.",
+                artifact.ArtifactId
+            );
+        }
     }
 
     private SessionActiveArtifactSet ReadActiveArtifactSet(
@@ -1713,6 +1804,10 @@ public sealed class SessionJournalEngine : IDisposable {
         }
         return new SessionActiveArtifactSet(
             address,
+            frame.Header.Parent
+                ?? throw new InvalidDataException(
+                    "ArtifactSetCommitted cannot be a root event."
+                ),
             (ArtifactSetCommittedBody)decoded,
             reference
         );

@@ -17,7 +17,7 @@ internal sealed record SessionTailContextProjectionResult(
 );
 
 internal static class SessionTailContextProjection {
-    public static async ValueTask<SessionTailContextProjectionResult> MaterializeAsync(
+    public static SessionTailContextProjectionResult Materialize(
         SessionJournalEventReader reader,
         EventAddress expectedParent,
         SessionGoverningSetup currentGoverningSetup,

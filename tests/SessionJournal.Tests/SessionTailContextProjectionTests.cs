@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using Atelia.Completion.Abstractions;
 using Atelia.Completion.Tools;
 using Atelia.EventJournal;
@@ -483,6 +484,26 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
     }
 
     [Fact]
+    public async Task SendAsync_MissingRuntimeFailsBeforeReadinessOrObservation() {
+        string path = NewJournalPath();
+        using var engine = SessionJournalEngine.Create(
+            path,
+            new SessionCreateOptions("model-A", "system-A", "surface-A")
+        );
+        EventAddress? head = engine.ResolveExecutionTail().Head;
+        int projectionCount = engine.FullProjectionInvocationCount;
+
+        InvalidOperationException error =
+            await Assert.ThrowsAsync<InvalidOperationException>(
+                () => engine.SendAsync("must not append", CancellationToken.None)
+            );
+
+        Assert.Contains("runtime is required", error.Message, StringComparison.Ordinal);
+        Assert.Equal(head, engine.ResolveExecutionTail().Head);
+        Assert.Equal(projectionCount, engine.FullProjectionInvocationCount);
+    }
+
+    [Fact]
     public async Task ResumeAsync_ObservationWithoutActivationIsTypedNotReadyBeforePreparedProviderOrProjection() {
         string path = NewJournalPath();
         EventAddress observation;
@@ -550,6 +571,7 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
             path,
             CreateRuntime(client, artifact)
         );
+        int projectionCount = reopened.FullProjectionInvocationCount;
 
         SessionJournalNotReadyException error =
             await Assert.ThrowsAsync<SessionJournalNotReadyException>(
@@ -561,6 +583,7 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
             error.Reason
         );
         Assert.Equal(preActivation, reopened.ResolveExecutionTail().Head);
+        Assert.Equal(projectionCount, reopened.FullProjectionInvocationCount);
         Assert.Empty(client.Requests);
     }
 
@@ -598,6 +621,7 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
             path,
             CreateRuntime(client, artifact)
         );
+        int projectionCount = reopened.FullProjectionInvocationCount;
 
         SessionJournalNotReadyException error =
             await Assert.ThrowsAsync<SessionJournalNotReadyException>(
@@ -610,6 +634,421 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
         );
         Assert.Equal(artifact.WorldUnderstanding.ArtifactId, error.ArtifactId);
         Assert.Equal(activation, reopened.ResolveExecutionTail().Head);
+        Assert.Equal(projectionCount, reopened.FullProjectionInvocationCount);
+        Assert.Empty(client.Requests);
+    }
+
+    [Fact]
+    public async Task SendAsync_ActivationMemberIdentityMismatchIsTypedNotReadyBeforeObservation() {
+        string path = NewJournalPath();
+        EventAddress validActivation;
+        ArtifactSetCommittedBody validBody;
+        TestArtifactSet artifact;
+        using (var setup = SessionJournalEngine.Create(
+            path,
+            new SessionCreateOptions("model-A", "system-A", "surface-A")
+        )) {
+            EventAddress anchor = setup.Project().Head!.Value;
+            artifact = await WriteArtifactAsync(
+                path,
+                anchor,
+                sourceRawHead: anchor,
+                setup.ResolveGoverningSetup(anchor),
+                CreateMemoryPack()
+            );
+            validActivation =
+                await setup.CommitArtifactSetAsync(Selections(artifact));
+            validBody = ReadArtifactSetBody(setup, validActivation);
+        }
+        ArtifactSetCommittedBody forgedBody = validBody with {
+            Members = [
+                validBody.Members[0] with {
+                    ArtifactKind = $"{validBody.Members[0].ArtifactKind}-forged"
+                },
+                .. validBody.Members.Skip(1)
+            ]
+        };
+        EventAddress forgedActivation;
+        using (var journal = EventJournal.EventJournal.OpenExisting(path)) {
+            forgedActivation = Commit(
+                journal,
+                validActivation,
+                SessionEventKind.ArtifactSetCommitted,
+                forgedBody
+            );
+        }
+
+        var client = new CapturingCompletionClient(
+            _ => throw new InvalidOperationException("must not call provider")
+        );
+        using var reopened = SessionJournalEngine.Open(
+            path,
+            CreateRuntime(client, artifact)
+        );
+        int projectionCount = reopened.FullProjectionInvocationCount;
+
+        SessionJournalNotReadyException error =
+            await Assert.ThrowsAsync<SessionJournalNotReadyException>(
+                () => reopened.SendAsync("must not append", CancellationToken.None)
+            );
+
+        Assert.Equal(
+            SessionJournalNotReadyReason.ArtifactSetMemberMismatch,
+            error.Reason
+        );
+        Assert.Equal(validBody.Members[0].ArtifactId, error.ArtifactId);
+        Assert.Equal(forgedActivation, reopened.ResolveExecutionTail().Head);
+        Assert.Equal(projectionCount, reopened.FullProjectionInvocationCount);
+        Assert.Empty(client.Requests);
+    }
+
+    [Fact]
+    public async Task SendAsync_SourceRawHeadBeforeAnchorIsTypedNotReadyBeforeObservation() {
+        string path = NewJournalPath();
+        EventAddress beforeAnchor;
+        EventAddress anchor;
+        TestArtifactSet artifact;
+        ArtifactSetCommittedBody body;
+        using (var setup = SessionJournalEngine.Create(
+            path,
+            new SessionCreateOptions("model-A", "system-A", "surface-A")
+        )) {
+            beforeAnchor = setup.Project().Head!.Value;
+            setup.AppendObservation("covered observation");
+            anchor = setup.AppendImportedAgentAction(
+                new ActionMessage([new ActionBlock.Text("covered answer")]),
+                new CompletionDescriptor("import", "import-v1", "model-A")
+            );
+            SessionGoverningSetup anchorSetup =
+                setup.ResolveGoverningSetup(anchor);
+            artifact = await WriteArtifactAsync(
+                path,
+                anchor,
+                sourceRawHead: beforeAnchor,
+                anchorSetup,
+                CreateMemoryPack()
+            );
+            body = CreateArtifactSetBody(
+                setup,
+                anchor,
+                anchorSetup,
+                anchorSetup,
+                artifact
+            );
+        }
+        EventAddress activation;
+        using (var journal = EventJournal.EventJournal.OpenExisting(path)) {
+            activation = Commit(
+                journal,
+                anchor,
+                SessionEventKind.ArtifactSetCommitted,
+                body
+            );
+        }
+
+        var client = new CapturingCompletionClient(
+            _ => throw new InvalidOperationException("must not call provider")
+        );
+        using var reopened = SessionJournalEngine.Open(
+            path,
+            CreateRuntime(client, artifact)
+        );
+        int projectionCount = reopened.FullProjectionInvocationCount;
+
+        SessionJournalNotReadyException error =
+            await Assert.ThrowsAsync<SessionJournalNotReadyException>(
+                () => reopened.SendAsync("must not append", CancellationToken.None)
+            );
+
+        Assert.Equal(
+            SessionJournalNotReadyReason.ArtifactSetMemberMismatch,
+            error.Reason
+        );
+        Assert.NotNull(error.ArtifactId);
+        Assert.Equal(activation, reopened.ResolveExecutionTail().Head);
+        Assert.Equal(projectionCount, reopened.FullProjectionInvocationCount);
+        Assert.Empty(client.Requests);
+    }
+
+    [Fact]
+    public async Task SendAsync_SourceRawHeadOffActivationLineageIsTypedNotReadyBeforeObservation() {
+        string path = NewJournalPath();
+        EventAddress anchor;
+        SessionGoverningSetup anchorSetup;
+        using (var setup = SessionJournalEngine.Create(
+            path,
+            new SessionCreateOptions("model-A", "system-A", "surface-A")
+        )) {
+            anchor = setup.Project().Head!.Value;
+            anchorSetup = setup.ResolveGoverningSetup(anchor);
+        }
+        EventAddress offBranchSource;
+        using (var journal = EventJournal.EventJournal.OpenExisting(path)) {
+            journal.CreateBranch("off", anchor).Unwrap();
+            offBranchSource = CommitToBranch(
+                journal,
+                "off",
+                anchor,
+                SessionEventKind.ObservationAccepted,
+                new ObservationAcceptedBody("off branch")
+            );
+        }
+        TestArtifactSet artifact = await WriteArtifactAsync(
+            path,
+            anchor,
+            sourceRawHead: offBranchSource,
+            anchorSetup,
+            CreateMemoryPack()
+        );
+        ArtifactSetCommittedBody body;
+        using (var setup = SessionJournalEngine.Open(path)) {
+            body = CreateArtifactSetBody(
+                setup,
+                anchor,
+                anchorSetup,
+                anchorSetup,
+                artifact
+            );
+        }
+        EventAddress activation;
+        using (var journal = EventJournal.EventJournal.OpenExisting(path)) {
+            activation = Commit(
+                journal,
+                anchor,
+                SessionEventKind.ArtifactSetCommitted,
+                body
+            );
+        }
+
+        var client = new CapturingCompletionClient(
+            _ => throw new InvalidOperationException("must not call provider")
+        );
+        using var reopened = SessionJournalEngine.Open(
+            path,
+            CreateRuntime(client, artifact)
+        );
+        int projectionCount = reopened.FullProjectionInvocationCount;
+
+        SessionJournalNotReadyException error =
+            await Assert.ThrowsAsync<SessionJournalNotReadyException>(
+                () => reopened.SendAsync("must not append", CancellationToken.None)
+            );
+
+        Assert.Equal(
+            SessionJournalNotReadyReason.ArtifactSetMemberMismatch,
+            error.Reason
+        );
+        Assert.NotNull(error.ArtifactId);
+        Assert.Equal(activation, reopened.ResolveExecutionTail().Head);
+        Assert.Equal(projectionCount, reopened.FullProjectionInvocationCount);
+        Assert.Empty(client.Requests);
+    }
+
+    [Fact]
+    public async Task SourceRawHeadAtActivationAddressIsRejectedAsAfterCoverageInterval() {
+        string path = NewJournalPath();
+        TestArtifactSet artifact;
+        EventAddress anchor;
+        EventAddress activation;
+        var client = new CapturingCompletionClient(
+            _ => throw new InvalidOperationException("must not call provider")
+        );
+        using var engine = SessionJournalEngine.Create(
+            path,
+            new SessionCreateOptions("model-A", "system-A", "surface-A"),
+            CreateRuntime(client, "unused")
+        );
+        anchor = engine.Project().Head!.Value;
+        artifact = await WriteArtifactAsync(
+            path,
+            anchor,
+            sourceRawHead: anchor,
+            engine.ResolveGoverningSetup(anchor),
+            CreateMemoryPack()
+        );
+        activation = await engine.CommitArtifactSetAsync(Selections(artifact));
+        // A persisted activation cannot commit an artifact whose identity refers
+        // to that activation without creating a content-address cycle. Exercise
+        // the upper-bound predicate directly with the activation address.
+        DerivedRecapArtifact afterCoverage =
+            artifact.Autobiography with { SourceRawHead = activation };
+        int projectionCount = engine.FullProjectionInvocationCount;
+
+        SessionJournalNotReadyException error =
+            Assert.Throws<SessionJournalNotReadyException>(
+                () => SessionJournalEngine.ValidateArtifactSourceHead(
+                    new HashSet<EventAddress> { anchor },
+                    afterCoverage
+                )
+            );
+
+        Assert.Equal(
+            SessionJournalNotReadyReason.ArtifactSetMemberMismatch,
+            error.Reason
+        );
+        Assert.Equal(afterCoverage.ArtifactId, error.ArtifactId);
+        Assert.Equal(activation, engine.ResolveExecutionTail().Head);
+        Assert.Equal(projectionCount, engine.FullProjectionInvocationCount);
+        Assert.Empty(client.Requests);
+    }
+
+    [Fact]
+    public async Task SendAsync_StaleActivationCurrentSetupsIsRawCorruptionBeforeObservation() {
+        string path = NewJournalPath();
+        TestArtifactSet artifact;
+        ArtifactSetCommittedBody staleBody;
+        EventAddress setupMutation;
+        using (var setup = SessionJournalEngine.Create(
+            path,
+            new SessionCreateOptions("model-A", "system-A", "surface-A")
+        )) {
+            EventAddress anchor = setup.Project().Head!.Value;
+            artifact = await WriteArtifactAsync(
+                path,
+                anchor,
+                sourceRawHead: anchor,
+                setup.ResolveGoverningSetup(anchor),
+                CreateMemoryPack()
+            );
+            EventAddress validActivation =
+                await setup.CommitArtifactSetAsync(Selections(artifact));
+            staleBody = ReadArtifactSetBody(setup, validActivation);
+            setupMutation = setup.AppendSystemPromptSetup("system-B");
+        }
+        EventAddress staleActivation;
+        using (var journal = EventJournal.EventJournal.OpenExisting(path)) {
+            staleActivation = Commit(
+                journal,
+                setupMutation,
+                SessionEventKind.ArtifactSetCommitted,
+                staleBody
+            );
+        }
+
+        var client = new CapturingCompletionClient(
+            _ => throw new InvalidOperationException("must not call provider")
+        );
+        using var reopened = SessionJournalEngine.Open(
+            path,
+            CreateRuntime(client, artifact)
+        );
+        int projectionCount = reopened.FullProjectionInvocationCount;
+
+        InvalidDataException error =
+            await Assert.ThrowsAsync<InvalidDataException>(
+                () => reopened.SendAsync("must not append", CancellationToken.None)
+            );
+
+        Assert.Contains("currentSetups", error.Message, StringComparison.Ordinal);
+        Assert.Equal(staleActivation, reopened.ResolveExecutionTail().Head);
+        Assert.Equal(projectionCount, reopened.FullProjectionInvocationCount);
+        Assert.Empty(client.Requests);
+    }
+
+    [Fact]
+    public async Task ResumeAsync_CrossBranchPreparedActivationReferenceIsRawCorruptionBeforeProvider() {
+        string path = NewJournalPath();
+        TestArtifactSet artifact;
+        EventAddress mainActivation;
+        ArtifactSetCommittedBody activationBody;
+        using (var setup = SessionJournalEngine.Create(
+            path,
+            new SessionCreateOptions("model-A", "system-A", "surface-A")
+        )) {
+            EventAddress anchor = setup.Project().Head!.Value;
+            artifact = await WriteArtifactAsync(
+                path,
+                anchor,
+                sourceRawHead: anchor,
+                setup.ResolveGoverningSetup(anchor),
+                CreateMemoryPack()
+            );
+            mainActivation =
+                await setup.CommitArtifactSetAsync(Selections(artifact));
+            activationBody = ReadArtifactSetBody(setup, mainActivation);
+        }
+        EventAddress offBranchActivation;
+        using (var journal = EventJournal.EventJournal.OpenExisting(path)) {
+            journal.CreateBranch("off-activation", mainActivation).Unwrap();
+            offBranchActivation = CommitToBranch(
+                journal,
+                "off-activation",
+                mainActivation,
+                SessionEventKind.ArtifactSetCommitted,
+                activationBody
+            );
+        }
+
+        var client = new CapturingCompletionClient(
+            _ => throw new InvalidOperationException("must not call provider")
+        );
+        CompletionRequestPreparedBody validPreparedBody;
+        SessionArtifactSetReference offBranchReference;
+        EventAddress validPrepared;
+        using (var preparing = SessionJournalEngine.OpenForTest(
+            path,
+            CreateRuntime(client, artifact),
+            new SessionJournalTestHooks(
+                SessionJournalFailpoint.AfterRequestPreparedCommitted
+            )
+        )) {
+            await Assert.ThrowsAsync<SessionJournalFailpointException>(
+                () => preparing.SendAsync(
+                    "prepare cross-branch fixture",
+                    CancellationToken.None
+                )
+            );
+            validPrepared = preparing.ResolveExecutionTail().Head!.Value;
+            validPreparedBody = Assert.IsType<CompletionRequestPreparedBody>(
+                SessionEventCodec.Decode(
+                    SessionEventKind.CompletionRequestPrepared,
+                    preparing.ReadPayloadBytes(validPrepared),
+                    out _
+                )
+            );
+            offBranchReference = CreateArtifactSetReference(
+                preparing,
+                offBranchActivation
+            );
+        }
+        EventAddress forgedPrepared;
+        using (var journal = EventJournal.EventJournal.OpenExisting(path)) {
+            EventFrameHeader preparedHeader =
+                journal.ReadEventHeaderPreview(validPrepared).Unwrap();
+            EventAddress observation = preparedHeader.Parent!.Value;
+            RefId main = journal
+                .OpenBranch(SessionJournalDefaults.MainBranchName)
+                .Unwrap();
+            Assert.True(
+                journal.MoveRef(main, validPrepared, observation).Unwrap()
+            );
+            forgedPrepared = Commit(
+                journal,
+                observation,
+                SessionEventKind.CompletionRequestPrepared,
+                validPreparedBody with {
+                    Plan = validPreparedBody.Plan with {
+                        ActiveArtifactSet = offBranchReference
+                    }
+                }
+            );
+        }
+
+        SessionRuntime recoveryRuntime = CreateRuntime(client, artifact) with {
+            PreparedCompletionRecoveryPolicy =
+                SessionPreparedCompletionRecoveryPolicy.RestartWithNewAttempt
+        };
+        using var reopened = SessionJournalEngine.Open(path, recoveryRuntime);
+        int projectionCount = reopened.FullProjectionInvocationCount;
+
+        InvalidDataException error =
+            await Assert.ThrowsAsync<InvalidDataException>(
+                () => reopened.ResumeAsync(CancellationToken.None)
+            );
+
+        Assert.Contains("latest activation", error.Message, StringComparison.Ordinal);
+        Assert.Equal(forgedPrepared, reopened.ResolveExecutionTail().Head);
+        Assert.Equal(projectionCount, reopened.FullProjectionInvocationCount);
         Assert.Empty(client.Requests);
     }
 
@@ -1010,6 +1449,107 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
         );
     }
 
+    private static ArtifactSetCommittedBody ReadArtifactSetBody(
+        SessionJournalEngine engine,
+        EventAddress address
+    ) => Assert.IsType<ArtifactSetCommittedBody>(
+        SessionEventCodec.Decode(
+            SessionEventKind.ArtifactSetCommitted,
+            engine.ReadPayloadBytes(address),
+            out _
+        )
+    );
+
+    private static SessionArtifactSetReference CreateArtifactSetReference(
+        SessionJournalEngine engine,
+        EventAddress address
+    ) {
+        byte[] payload = engine.ReadPayloadBytes(address);
+        _ = SessionEventCodec.Decode(
+            SessionEventKind.ArtifactSetCommitted,
+            payload,
+            out int version
+        );
+        return new SessionArtifactSetReference(
+            address,
+            version,
+            SessionRequestCanonicalizer.Sha256Hex(payload)
+        );
+    }
+
+    private static ArtifactSetCommittedBody CreateArtifactSetBody(
+        SessionJournalEngine engine,
+        EventAddress commonAnchor,
+        SessionGoverningSetup coverageSetup,
+        SessionGoverningSetup currentSetup,
+        TestArtifactSet artifact
+    ) {
+        ImmutableArray<SessionArtifactSetMember> members = [
+            .. new[] {
+                (
+                    RoleId: "world-understanding",
+                    Artifact: artifact.WorldUnderstanding
+                ),
+                (
+                    RoleId: "autobiography",
+                    Artifact: artifact.Autobiography
+                )
+            }
+                .OrderBy(static item => item.RoleId, StringComparer.Ordinal)
+                .Select(static item => {
+                    SessionRequestArtifactInput input =
+                        SessionTailContextProjection.CreateArtifactInput(
+                            item.Artifact
+                        );
+                    return new SessionArtifactSetMember(
+                        item.RoleId,
+                        item.Artifact.ArtifactId,
+                        item.Artifact.ArtifactKind,
+                        item.Artifact.Target,
+                        input.ContentSha256
+                    );
+                })
+        ];
+        return new ArtifactSetCommittedBody(
+            SessionRequestManifestDefaults.ActiveArtifactSetPolicyId,
+            SessionRequestManifestDefaults.ActiveArtifactSetPolicyFingerprint,
+            commonAnchor,
+            CreateSetupReferences(engine, coverageSetup),
+            CreateSetupReferences(engine, currentSetup),
+            members
+        );
+    }
+
+    private static SessionGoverningSetupReferences CreateSetupReferences(
+        SessionJournalEngine engine,
+        SessionGoverningSetup setup
+    ) => new(
+        CreateSetupReference(
+            engine,
+            setup.RuntimeConfigSetupAddress,
+            SessionEventKind.RuntimeConfigSetup
+        ),
+        CreateSetupReference(
+            engine,
+            setup.SystemPromptSetupAddress,
+            SessionEventKind.SystemPromptSetup
+        )
+    );
+
+    private static SessionSetupReference CreateSetupReference(
+        SessionJournalEngine engine,
+        EventAddress address,
+        SessionEventKind kind
+    ) {
+        byte[] payload = engine.ReadPayloadBytes(address);
+        _ = SessionEventCodec.Decode(kind, payload, out int version);
+        return new SessionSetupReference(
+            address,
+            version,
+            SessionRequestCanonicalizer.Sha256Hex(payload)
+        );
+    }
+
     private static SessionToolRuntimeIdentity TestToolRuntimeIdentity { get; } =
         new("tail-tool-host", "tail-tools-v1", "tail-capabilities-v1");
 
@@ -1081,6 +1621,20 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
         object body
     ) => journal.CommitToRef(
         SessionJournalDefaults.MainBranchName,
+        expectedHead,
+        SessionEventCodec.Encode(kind, body),
+        opaqueEventKind: (uint)kind,
+        hint: default
+    ).Unwrap().EventAddress;
+
+    private static EventAddress CommitToBranch(
+        EventJournal.EventJournal journal,
+        string branchName,
+        EventAddress expectedHead,
+        SessionEventKind kind,
+        object body
+    ) => journal.CommitToRef(
+        branchName,
         expectedHead,
         SessionEventCodec.Encode(kind, body),
         opaqueEventKind: (uint)kind,
