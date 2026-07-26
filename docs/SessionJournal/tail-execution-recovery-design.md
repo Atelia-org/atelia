@@ -356,9 +356,10 @@ Prepared 提交前可以重新选择 artifact set；Prepared 提交后禁止重�
 
 ### 8.4 Bootstrap 与 artifact 不可用
 
-首次 artifact 尚未产生且 raw history 仍在明确预算内时，planner 可以提交显式 `full-raw` bootstrap
-plan。长历史没有可用 coherent artifact set 时，不得把 root replay 当成无声兜底；应先触发/等待
-maintainer 重建，或把 session 置为可诊断的 paused 状态。
+online bootstrap 必须先由上层 provisioning 在 replay-safe anchor 产生所需 derived artifacts 并
+提交 coherent `ArtifactSetCommitted`。没有可用 coherent set 时不得提交 Observation 或把 root replay
+当成兜底；应先触发/等待 maintainer 重建，或把 session 置为可诊断的 not-ready/paused 状态。旧
+`full-raw` / `explicit-artifact-tail` 仅保留为 D6D 前 historical Prepared reader。
 
 Prepared 提交前 artifact 缺失属于 planning/liveness 问题；Prepared 提交后则由 manifest 内联 snapshot
 保证恢复，不再依赖 sidecar 是否存在。

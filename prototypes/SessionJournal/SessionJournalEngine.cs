@@ -1886,10 +1886,23 @@ public sealed class SessionJournalEngine : IDisposable {
                 "A tool-bearing request requires at least one visible tool definition."
             );
         }
-        return runtime.ToolRuntimeIdentity
+        SessionToolRuntimeIdentity identity = runtime.ToolRuntimeIdentity
             ?? throw new InvalidOperationException(
                 "A tool-bearing SessionJournal runtime requires a non-secret ToolRuntimeIdentity."
             );
+        ValidateRequired(
+            identity.HostId,
+            "ToolRuntimeIdentity.HostId"
+        );
+        ValidateRequired(
+            identity.ImplementationSetFingerprint,
+            "ToolRuntimeIdentity.ImplementationSetFingerprint"
+        );
+        ValidateRequired(
+            identity.CapabilitySetFingerprint,
+            "ToolRuntimeIdentity.CapabilitySetFingerprint"
+        );
+        return identity;
     }
 
     private void TriggerFailpoint(SessionJournalFailpoint failpoint) {

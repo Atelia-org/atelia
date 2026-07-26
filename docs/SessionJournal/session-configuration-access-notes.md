@@ -557,9 +557,10 @@ runtime identity gate 通过后才可执行。Started 的 `operationId` 与 rese
 `ToolExecutionContext`，供工具实现幂等/result lookup/reconcile；它本身不承诺 exactly-once。
 public `Project()` / `ReplayHistory()` 仍保留 full semantics。
 
-需要准确区分：D3 消除的是 **execution routing 的 full replay**。legacy `full-raw` 每次新 completion
-request 仍显式调用一次 `Project()` 物化 Context，旧 full-raw Prepared reconstruction 也仍可读完整
-raw range；这是 D4 前诚实保留的 request-context 成本，不是 resolver fallback。
+需要准确区分：D3 消除的是 **execution routing 的 full replay**；D6C1 又删除了 live full-raw
+writer。online request 现在只走 coherent artifact-tail，不再调用 `Project()` 物化 Context。旧
+full-raw / explicit Prepared reconstruction 仅作为 D6D 前过渡 reader，仍按历史合同读取其 raw
+range；public `Project()` / `ReplayHistory()` 只保留为显式审计与 reference oracle。
 
 CS-3D4 已实施为新的 `coherent-artifact-tail` policy，而不是原地改变已 committed 的
 `explicit-artifact-tail.v1`：
@@ -646,8 +647,8 @@ Tail execution recovery：
   chronological-chain/full-projection reads 为 0。
 - online Idle `ResumeAsync` 在 1 turn 与 10001 turns 下均只读 2 header + 2 payload，且
   chronological/full-projection 计数为 0。
-- setup/import boundary routing 不调用 `Project()`；legacy full-raw 每个 provider request 的
-  projection delta 精确为 1，额外 post-Action/post-Result transition 不再 full replay。
+- setup/import boundary 与所有 online provider request 都不调用 `Project()`；public full
+  projection 仅由显式审计/reference-oracle 调用计数。
 - tool-call permission 取决于 durable tool set 非空；空 tool set 的 initial/restarted response 若违规
   含 tool call，必须 durable fail 为 `atelia.host.unsupported-tool-call`，不得停留在 uncertain
   Prepared。
@@ -672,9 +673,9 @@ Tail execution recovery：
 CS-3A/B/C 已证明 **tail request construction + persisted request recovery** 的最小合同；
 CS-3D1/D2/D3 已证明 **durable operational checkpoint + pure tail execution projection + resolver
 driven online execution**；CS-3D4 又让配置了 exact coherent ArtifactSet 的 normal Observation 与
-fully-settled ToolResult request context 退出 full `Project()`。下一步是 CS-3D5 的 legacy /
-复杂度收口，以及后续 active ArtifactSet 的 durable activation；显式审计 API 与 legacy full-raw
-合同继续保留完整历史语义。
+fully-settled ToolResult request context 退出 full `Project()`；CS-3D5/D6C1 又完成 durable
+ArtifactSet activation 与 coherent-only online writer。public 审计 API 继续保留完整历史语义；旧
+full-raw / explicit reader 只过渡保留至 D6D wire cutover，不是长期 runtime 合同。
 
 正常运行时把内存中的两个 governing setup 地址写入每次 completion 前提交的
 `ContextPlan` / canonical request manifest；重启后从 head 扫描局部尾段，命中最近 checkpoint 后各一次

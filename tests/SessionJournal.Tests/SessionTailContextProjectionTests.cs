@@ -340,6 +340,67 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
         Assert.Empty(ReadAddressesByKind(path, SessionEventKind.ObservationAccepted));
     }
 
+    [Theory]
+    [InlineData("host")]
+    [InlineData("implementation")]
+    [InlineData("capability")]
+    public async Task SendAsync_InvalidToolRuntimeIdentityFailsBeforeMutation(
+        string invalidField
+    ) {
+        string path = NewJournalPath();
+        var client = new CapturingCompletionClient(
+            _ => throw new InvalidOperationException("must not call provider")
+        );
+        ToolSession toolSession =
+            new ToolRegistry([new NoopTool()]).CreateSession();
+        SessionToolRuntimeIdentity identity = invalidField switch {
+            "host" => TestToolRuntimeIdentity with { HostId = " " },
+            "implementation" => TestToolRuntimeIdentity with {
+                ImplementationSetFingerprint = ""
+            },
+            "capability" => TestToolRuntimeIdentity with {
+                CapabilitySetFingerprint = "\t"
+            },
+            _ => throw new Xunit.Sdk.XunitException(
+                $"Unknown invalid field '{invalidField}'."
+            )
+        };
+        using (var engine = SessionJournalEngine.Create(
+            path,
+            new SessionCreateOptions("model-A", "system-A", "surface-A"),
+            CreateRuntime(
+                client,
+                "unused",
+                toolSession
+            ) with { ToolRuntimeIdentity = identity }
+        )) {
+            EventAddress? head = engine.ResolveExecutionTail().Head;
+            int projectionCount = engine.FullProjectionInvocationCount;
+
+            ArgumentException error =
+                await Assert.ThrowsAsync<ArgumentException>(
+                    () => engine.SendAsync(
+                        "must not append",
+                        CancellationToken.None
+                    )
+                );
+
+            Assert.Contains("ToolRuntimeIdentity", error.ParamName);
+            Assert.Equal(head, engine.ResolveExecutionTail().Head);
+            Assert.Equal(projectionCount, engine.FullProjectionInvocationCount);
+            Assert.Empty(client.Requests);
+        }
+        Assert.Empty(
+            ReadAddressesByKind(path, SessionEventKind.ObservationAccepted)
+        );
+        Assert.Empty(
+            ReadAddressesByKind(
+                path,
+                SessionEventKind.CompletionRequestPrepared
+            )
+        );
+    }
+
     [Fact]
     public async Task SendAsync_TailProviderToolCall_PersistsKnownFailureAndAllowsNextObservation() {
         string path = NewJournalPath();
