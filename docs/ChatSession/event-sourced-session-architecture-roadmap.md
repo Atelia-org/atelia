@@ -634,8 +634,9 @@ canonical request。execution resolver 本身不读取 artifact 文本。
 > imported tool continuation 为找 active correlation 回溯到最初 Observation。resolver 已通过 full
 > reducer differential、branch/rewind、malformed tail 与 cold-prefix bounded-read 验证。CS-3D3
 > 已让 `ResumeAsync`、`SendAsync`、setup/import boundary 与 tool loop 使用 current/exact-head
-> recovery，并以 10001-turn fixture 证明 Idle recovery reads 不随冷前缀增长。legacy full-raw 每个
-> provider request 仍显式保留一次 Context `Project()`。Started 的 operation id + reserved sequence
+> recovery，并以 10001-turn fixture 证明 Idle recovery reads 不随冷前缀增长。D6C1 已删除 live
+> full-raw writer；online provider request 不再调用 Context `Project()`。Started 的 operation id +
+> reserved sequence
 > 已贯通到 `ToolExecutionContext`；空 durable tool set 的违规 tool-call response 会落 known failure，
 > Prepared restart 的合法 tool response 则可在同一次 Resume 中闭环。CS-3D4 已采用新的
 > `coherent-artifact-tail` policy：至少两个 exact members 共享 coverage anchor，每个 artifact 只贡献
@@ -645,8 +646,9 @@ canonical request。execution resolver 本身不读取 artifact 文本。
 > `FullProjectionInvocationCount` 不变；Prepared 后删除所有 selected sidecar members 仍可 exact
 > restart。CS-3D5 已新增 raw kind 12 `ArtifactSetCommitted`：原子固定 policy、common anchor、
 > coverage/current setup refs 与 canonical role members；coherent Prepared 通过 address/schema/hash
-> exact reference 传播 activation。runtime 默认要求 durable active set，只有显式 `LegacyFullRaw`
-> 才允许 live full replay。离线 `validate-session-journal` 做 strict full-vs-tail validation，
+> exact reference 传播 activation。D6C1 后 runtime 不再暴露 request-context selector，online writer
+> 仅允许 coherent artifact-tail；旧 full-raw / explicit reader 只过渡保留至 D6D。离线
+> `validate-session-journal` 做 strict full-vs-tail validation，
 > `checkpoint-artifact-set-session-journal` 只 append 一条 activation；`import-session-journal` 明确为
 > legacy export → current wire 的新 repo 迁移。1 vs 10001 cold-turn 的 Observation 和两轮 tool
 > continuation 验收中，header/payload/logical bytes/peak-live 均恒定，chronological/full projection

@@ -95,9 +95,9 @@ dependencies，而不是假定“回溯到最近一条用户消息”。
   - CS-3D3 后 `ResumeAsync()`、`SendAsync()`、setup/import boundary 与 tool-loop transition
     全部由 `SessionExecutionTailResolver` 路由；Action/Started/Result append 后按返回的 exact address
     重新 resolve。
-  - legacy `full-raw` 模式仍在每次新 completion request 前显式调用一次 `Project()` 物化 Context；
-    这是该 legacy request-context policy 的显式成本，不参与 phase 判定。配置
-    `coherent-artifact-tail` 的正常长会话已由 CS-3D4 消除这次 full materialization。
+  - D6C1 后 online writer 只使用 `coherent-artifact-tail`，不调用 `Project()` 物化 request
+    Context。旧 `full-raw` / `explicit-artifact-tail` 只剩 D6D 前 historical Prepared reader，
+    不再有 runtime opt-in 或 live writer。
 - `prototypes/SessionJournal/SessionReducer.cs`
   - 同时累计 config、system prompt、完整 context 与 execution state。
   - full reducer 已消费 D1 的 durable execution checkpoint；它不再通过从 root 计数

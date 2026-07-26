@@ -165,13 +165,14 @@ public sealed class SessionJournalEngine : IDisposable {
         CancellationToken cancellationToken = default
     ) {
         ThrowIfDisposed();
-        SessionRuntime runtime = RequireRuntime();
         ValidateRequired(observation, nameof(observation));
+        SessionRuntime runtime = RequireRuntime();
         ImmutableArray<ToolDefinition> visibleTools =
             runtime.ToolSession?.VisibleDefinitions ?? ImmutableArray<ToolDefinition>.Empty;
         if (!visibleTools.IsEmpty) {
             _ = RequireToolRuntimeIdentity(runtime, visibleTools);
         }
+        _ = ValidateRuntimePlanningPrerequisites(runtime);
 
         SessionExecutionRecovery recovery = ResolveExecutionTail(
             cancellationToken
@@ -680,10 +681,8 @@ public sealed class SessionJournalEngine : IDisposable {
             _ = RequireToolRuntimeIdentity(runtime, tools);
         }
         _lastTailProjectionDiagnostics = default;
-        SessionCompletionTargetIdentity completionTarget = runtime.CompletionTarget
-            ?? throw new InvalidOperationException(
-                "SessionJournal runtime requires non-secret CompletionTarget identity before a durable completion request can be prepared."
-            );
+        SessionCompletionTargetIdentity completionTarget =
+            ValidateRuntimePlanningPrerequisites(runtime);
         SessionGoverningSetup governingSetup = EnsureGoverningSetupCursor(
             completionBoundary,
             cancellationToken
@@ -1836,6 +1835,44 @@ public sealed class SessionJournalEngine : IDisposable {
 
     private SessionRuntime RequireRuntime()
         => _runtime ?? throw new InvalidOperationException("SessionJournal runtime is required for SendAsync/ResumeAsync.");
+
+    private static SessionCompletionTargetIdentity
+        ValidateRuntimePlanningPrerequisites(SessionRuntime runtime) {
+        ArgumentNullException.ThrowIfNull(runtime);
+        SessionCompletionTargetIdentity target = runtime.CompletionTarget
+            ?? throw new InvalidOperationException(
+                "SessionJournal runtime requires non-secret CompletionTarget identity before request planning."
+            );
+        ValidateRequired(
+            target.ConnectionId,
+            "CompletionTarget.ConnectionId"
+        );
+        ValidateRequired(target.Kind, "CompletionTarget.Kind");
+        ValidateRequired(
+            target.ConnectionFingerprint,
+            "CompletionTarget.ConnectionFingerprint"
+        );
+        ValidateRequired(
+            target.RequestAdapterFingerprint,
+            "CompletionTarget.RequestAdapterFingerprint"
+        );
+        ArgumentNullException.ThrowIfNull(runtime.CompletionClient);
+        ValidateRequired(
+            runtime.CompletionClient.Name,
+            "CompletionClient.Name"
+        );
+        ValidateRequired(
+            runtime.CompletionClient.ApiSpecId,
+            "CompletionClient.ApiSpecId"
+        );
+        if (runtime.MaxTokens is <= 0) {
+            throw new ArgumentOutOfRangeException(
+                nameof(runtime),
+                "SessionJournal runtime MaxTokens must be positive when specified."
+            );
+        }
+        return target;
+    }
 
     private static ToolSession RequireToolSession(SessionRuntime runtime)
         => runtime.ToolSession ?? throw new InvalidOperationException("SessionJournal runtime requires a ToolSession for tool execution.");

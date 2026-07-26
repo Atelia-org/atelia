@@ -493,6 +493,12 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
         EventAddress? head = engine.ResolveExecutionTail().Head;
         int projectionCount = engine.FullProjectionInvocationCount;
 
+        ArgumentException argumentError =
+            await Assert.ThrowsAsync<ArgumentException>(
+                () => engine.SendAsync(" ", CancellationToken.None)
+            );
+        Assert.Equal("observation", argumentError.ParamName);
+
         InvalidOperationException error =
             await Assert.ThrowsAsync<InvalidOperationException>(
                 () => engine.SendAsync("must not append", CancellationToken.None)
@@ -501,6 +507,84 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
         Assert.Contains("runtime is required", error.Message, StringComparison.Ordinal);
         Assert.Equal(head, engine.ResolveExecutionTail().Head);
         Assert.Equal(projectionCount, engine.FullProjectionInvocationCount);
+    }
+
+    [Theory]
+    [InlineData("missing-target")]
+    [InlineData("invalid-target-field")]
+    [InlineData("invalid-client-name")]
+    [InlineData("invalid-client-api")]
+    [InlineData("nonpositive-max-tokens")]
+    public async Task SendAsync_InvalidPlanningPrerequisiteFailsBeforeObservation(
+        string scenario
+    ) {
+        string path = NewJournalPath();
+        TestArtifactSet artifact;
+        EventAddress activation;
+        using (var setup = SessionJournalEngine.Create(
+            path,
+            new SessionCreateOptions("model-A", "system-A", "surface-A")
+        )) {
+            EventAddress anchor = setup.Project().Head!.Value;
+            artifact = await WriteArtifactAsync(
+                path,
+                anchor,
+                sourceRawHead: anchor,
+                setup.ResolveGoverningSetup(anchor),
+                CreateMemoryPack()
+            );
+            activation = await setup.CommitArtifactSetAsync(Selections(artifact));
+        }
+
+        var client = new CapturingCompletionClient(
+            _ => throw new InvalidOperationException("must not call provider"),
+            name: scenario == "invalid-client-name" ? " " : "tail-client",
+            apiSpecId: scenario == "invalid-client-api" ? "" : "tail-api-v1"
+        );
+        SessionRuntime runtime = CreateRuntime(client, artifact);
+        runtime = scenario switch {
+            "missing-target" => runtime with { CompletionTarget = null },
+            "invalid-target-field" => runtime with {
+                CompletionTarget = runtime.CompletionTarget! with {
+                    ConnectionId = " "
+                }
+            },
+            "nonpositive-max-tokens" => runtime with { MaxTokens = 0 },
+            _ => runtime
+        };
+        using (var reopened = SessionJournalEngine.Open(
+            path,
+            runtime
+        )) {
+            int projectionCount = reopened.FullProjectionInvocationCount;
+
+            Exception? error = await Record.ExceptionAsync(
+                () => reopened.SendAsync(
+                    "must not append",
+                    CancellationToken.None
+                )
+            );
+
+            Assert.NotNull(error);
+            if (scenario == "missing-target") {
+                Assert.IsType<InvalidOperationException>(error);
+            }
+            else {
+                Assert.IsAssignableFrom<ArgumentException>(error);
+            }
+            Assert.Equal(activation, reopened.ResolveExecutionTail().Head);
+            Assert.Equal(projectionCount, reopened.FullProjectionInvocationCount);
+            Assert.Empty(client.Requests);
+        }
+        Assert.Empty(
+            ReadAddressesByKind(path, SessionEventKind.ObservationAccepted)
+        );
+        Assert.Empty(
+            ReadAddressesByKind(
+                path,
+                SessionEventKind.CompletionRequestPrepared
+            )
+        );
     }
 
     [Fact]
@@ -1653,13 +1737,15 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
     }
 
     private sealed class CapturingCompletionClient(
-        Func<CompletionRequest, CompletionResult> response
+        Func<CompletionRequest, CompletionResult> response,
+        string name = "tail-client",
+        string apiSpecId = "tail-api-v1"
     ) : ICompletionClient {
         private readonly Func<CompletionRequest, CompletionResult> _response = response;
 
-        public string Name => "tail-client";
+        public string Name { get; } = name;
 
-        public string ApiSpecId => "tail-api-v1";
+        public string ApiSpecId { get; } = apiSpecId;
 
         public List<CompletionRequest> Requests { get; } = [];
 
