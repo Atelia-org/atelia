@@ -6,6 +6,11 @@
 > **目标**：在继续 Context Planner、provider capability 与 tool reconcile 之前，识别能够减少协议、
 > 实现和测试复杂度的重构机会；不以牺牲 crash recovery、raw provenance 或 bounded reads 换取表面简洁。
 
+> **2026-07-27 后续决策**：不采纳 §3.1 的 configuration 合并，保留 runtime/system-prompt 双 setup
+> stream；近期优先逐步收口为 coherent-only request manifest。实施路线以
+> [CS-3D6：Coherent-only Request Manifest 化简计划](coherent-request-manifest-simplification-plan.md)
+> 为准。本报告其余候选仍是调研输入，不代表已排期。
+
 ## 0. 结论摘要
 
 当前实现不是“基本路线错误”。以下复杂度属于问题本身，不能删：
@@ -27,9 +32,10 @@
 4. full reducer、artifact suffix fold、tail resolver、reconstructor 与 offline validator 多次复述
    operational legality。
 
-本报告建议：**停止在 v1 上继续加字段，先规划一次 SessionJournal wire v2 归一化。**
+原始调研建议：**停止在 v1 上继续加字段，先规划一次 SessionJournal wire v2 归一化。**
 
-推荐目标不是推倒 tail-only 架构，而是把它收束为：
+当时提出的完整候选目标如下；后续决策只先采纳其中的 coherent-only Prepared/manifest 收口，其余
+项目继续保留为未排期候选：
 
 ```text
 一个完整 SessionConfiguration fact
@@ -136,8 +142,9 @@ Context Planner、retriever 或多 renderer 出现时再设计对应 schema，�
 
 ## 3. 推荐的目标协议
 
-### 3.1 Configuration：两条 sticky stream 收成一个完整 fact
+### 3.1 Configuration：两条 sticky stream 收成一个完整 fact（未采纳）
 
+以下是调研时的候选方案，后续决策认为近期收益不足以支持其 wire 与语义改动，**本轮不实施**。
 当前 bootstrap 是：
 
 ```text
@@ -373,6 +380,9 @@ tail resolver 可以复用纯 validators，但应保留独立 collection 和 che
 `DependencyClosedSeed`；mid-tool seed 必须拒绝。
 
 ## 4. Legacy 与 manifest 收口
+
+本节候选已进一步收束为可调度的 [CS-3D6 实施计划](coherent-request-manifest-simplification-plan.md)。
+该计划保留双 setup、Attempt 与 ArtifactSet wire，并只安排一次 Prepared v2 cutover。
 
 ### 4.1 直接删除的候选
 
