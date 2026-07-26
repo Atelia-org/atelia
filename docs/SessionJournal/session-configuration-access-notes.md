@@ -1,6 +1,6 @@
 # SessionJournal Configuration Access Notes
 
-> 状态：CS-3A + CS-3B + CS-3C + CS-3D0 + CS-3D1 + CS-3D2 Implemented
+> 状态：CS-3A + CS-3B + CS-3C + CS-3D0 + CS-3D1 + CS-3D2 + CS-3D3 Implemented
 > 日期：2026-07-26
 > 相关文档：[SessionJournal 主干设计基线](session-journal-trunk-design.md)、
 > [Tail-only Execution Recovery Design](tail-execution-recovery-design.md)、
@@ -531,7 +531,7 @@ id，不能只给 reopen 临时加 lookup。当前显式 restart 还假定调用
 driver；head CAS 能阻止两个结果同时接到同一 active attempt，却无法撤销已经并发发出的 provider
 调用。跨进程 lease / single-flight 属于后续 capability。
 
-### CS-3D1 / CS-3D2（已实施）与后续
+### CS-3D1 / CS-3D2 / CS-3D3（已实施）与后续
 
 CS-3D1 已把 last-issued tool sequence、Started reservation/result sequence、operation id 与 tool
 runtime identity 变成近头 durable facts。CS-3D2 已新增独立
@@ -542,11 +542,21 @@ Action 还新增 required `correlationId`：live 值继承 Prepared；import 值
 ToolResult completion boundary。这样 Action 本身就是 correlation + sequence 的 trust cut，连续 imported
 tool continuation 不必追到最初 Observation。
 
+CS-3D3 已让 `ResumeAsync()`、`SendAsync()`、setup/import boundary 与 tool-loop transition 统一消费
+current/exact-head recovery；Started/Result append 使用 recovery address 做 CAS，pending tool 在 durable
+runtime identity gate 通过后才可执行。Started 的 `operationId` 与 reserved sequence 会一并传入
+`ToolExecutionContext`，供工具实现幂等/result lookup/reconcile；它本身不承诺 exactly-once。
+public `Project()` / `ReplayHistory()` 仍保留 full semantics。
+
+需要准确区分：D3 消除的是 **execution routing 的 full replay**。legacy `full-raw` 每次新 completion
+request 仍显式调用一次 `Project()` 物化 Context，旧 full-raw Prepared reconstruction 也仍可读完整
+raw range；这是 D4 前诚实保留的 request-context 成本，不是 resolver fallback。
+
 后续仍需：
 
-- CS-3D3 把 `ResumeAsync`、tool loop、setup/import boundary 等 online driver 全部切到 resolver。
 - CS-3D4 让 tool continuation 的 request context 来自 coherent artifact set + dependency-closed
-  suffix，而不是 full `SessionProjection.Context`。
+  suffix，并让正常长会话的 Observation completion 也不再依赖 full
+  `SessionProjection.Context`。
 
 不能把 CS-3 的 context fold 静默推广成通用 execution reducer seed，也不能让 resolver 越过最近
 Prepared/Action checkpoint 重验完整 autonomous loop。具体职责、事件协议和实施切片见
@@ -609,6 +619,15 @@ Tail execution recovery：
 - branch、rewind、divergent head 只消费各自真实 Parent lineage，不查询物理 latest。
 - 1 turn 与 32 turns 冷前缀下，terminal Action 与新 Prepared 的 header/payload reads 相同；
   chronological-chain/full-projection reads 为 0。
+- online Idle `ResumeAsync` 在 1 turn 与 10001 turns 下均只读 2 header + 2 payload，且
+  chronological/full-projection 计数为 0。
+- setup/import boundary routing 不调用 `Project()`；legacy full-raw 每个 provider request 的
+  projection delta 精确为 1，额外 post-Action/post-Result transition 不再 full replay。
+- tool-call permission 取决于 durable tool set 非空；空 tool set 的 initial/restarted response 若违规
+  含 tool call，必须 durable fail 为 `atelia.host.unsupported-tool-call`，不得停留在 uncertain
+  Prepared。
+- Prepared restart 的合法 tool response 在一次 `ResumeAsync()` 中完成工具循环；首次执行与 Started
+  reopen retry 时，工具观察到相同 operation id + reserved sequence。
 
 ## 10. 暂不采用的方案
 
@@ -626,9 +645,9 @@ Tail execution recovery：
 ## 11. 一句话决议
 
 CS-3A/B/C 已证明 **tail request construction + persisted request recovery** 的最小合同；
-CS-3D1/D2 已证明 **durable operational checkpoint + pure tail execution projection**。下一步
-CS-3D3 是让所有 online execution driver 使用该 resolver、完全退出 full `Project()`，但不要求审计
-API 放弃完整历史。
+CS-3D1/D2/D3 已证明 **durable operational checkpoint + pure tail execution projection + resolver
+driven online execution**。下一步 CS-3D4 是让正常长会话的 request context 也退出 full
+`Project()`；显式审计 API 与 legacy full-raw 合同仍可保留完整历史语义。
 
 正常运行时把内存中的两个 governing setup 地址写入每次 completion 前提交的
 `ContextPlan` / canonical request manifest；重启后从 head 扫描局部尾段，命中最近 checkpoint 后各一次

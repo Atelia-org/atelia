@@ -175,6 +175,11 @@ end，不能把 Restarted.Parent 误当 request raw end。completion 成功产�
 import 值取 append 前的 Observation/settled ToolResult execution state。即使 terminal Action 的派生
 state 随后清空 correlation，raw body 仍保留它作为近头 provenance/checkpoint。
 
+`tool-execution-started.operationId` 不只是恢复 driver 的内部标签：reserved execution 时必须与
+`executionSequence` 一并进入 `ToolExecutionContext`。同一 Started 的 uncertain retry 因而向工具暴露
+相同 operation identity；具体 idempotency/result lookup/reconcile 策略仍由 tool capability/driver
+实现，不能仅凭该字段宣称 exactly-once。
+
 > raw Action 存 provider adapter 规范化后的完整 `ActionMessage`，**不做** persistence/context sanitization（对比老 `ChatSessionEngine.SanitizeForPersistence`，`ChatSessionEngine.cs:107-126`，那是落盘前剥 inline-think/丢空块）。是否剥 reasoning/think/空块、能否跨 provider 回灌，由 **projection/request renderer** 在构造 `CompletionRequest` 时决定。raw fact 与 provider-native wire log 不是同一层——后者（HTTP headers、临时字段、敏感内容）若需要另存 provider call forensic log，不进 raw session event。
 
 ### 2.4 配置也是事件
@@ -319,7 +324,8 @@ result 都是非法 raw chain，fail-fast 且不递增 execution sequence。
   policy 仍留待后续 capability。
 - CS-3B 为 `explicit-artifact-tail + ObservationAccepted + no tools` 增加 bounded recent-idle fast
   path，并把该 request context materialization 切到 dependency-closed suffix，不调用 `Project()`；
-  显式 `Project()` / `ReplayHistory()` 与其他 execution phase 仍是 full replay。
+  CS-3D3 后其他 execution phase 也由 tail resolver 路由。显式 `Project()` / `ReplayHistory()` 保持
+  full semantics；legacy full-raw 每次 request 仍显式物化一次完整 Context，留待 CS-3D4 降级。
 - fast path 的 idle validator 会局部证明 bootstrap、live/imported terminal Action 与 failed attempt
   的直接因果边；不能只凭最近非 setup event 的 kind 接受边界。CS-3C 允许 validated full-raw
   `tool-continuation` manifest 的 terminal Action/Failure 成为下一次 tail Send 的闭合边界，但不把

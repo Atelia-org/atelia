@@ -1,6 +1,6 @@
 # SessionJournal Tail-only Execution Recovery Design
 
-> **状态**：Design Baseline / CS-3D0、CS-3D1、CS-3D2 已实施，CS-3D3 待实施
+> **状态**：Design Baseline / CS-3D0、CS-3D1、CS-3D2、CS-3D3 已实施，CS-3D4 待实施
 > **日期**：2026-07-26
 > **建议路线编号**：CS-3D
 > **前置实现**：CS-3A governing setup checkpoint、CS-3B dependency-closed tail context、
@@ -90,9 +90,12 @@ dependencies，而不是假定“回溯到最近一条用户消息”。
 
 - `prototypes/SessionJournal/SessionJournalEngine.cs`
   - `Project()` / `ReplayHistory()`：完整 `ReadChronologicalChain`。
-  - `ResumeAsync()`：Prepared/Restarted 与窄 observation-tail 有 fast path，其余 phase 回落到
-    `Project()`。
-  - `ContinueToolLoopAsync()`：每次 append tool result 后再次 `Project()`。
+  - CS-3D3 后 `ResumeAsync()`、`SendAsync()`、setup/import boundary 与 tool-loop transition
+    全部由 `SessionExecutionTailResolver` 路由；Action/Started/Result append 后按返回的 exact address
+    重新 resolve。
+  - legacy `full-raw` 模式仍在每次新 completion request 前显式调用一次 `Project()` 物化 Context；
+    这是 request-context policy 的已知成本，不再参与 phase 判定。CS-3D4 才负责消除正常长会话的这次
+    full materialization。
 - `prototypes/SessionJournal/SessionReducer.cs`
   - 同时累计 config、system prompt、完整 context 与 execution state。
   - full reducer 已消费 D1 的 durable execution checkpoint；它不再通过从 root 计数
@@ -107,8 +110,8 @@ dependencies，而不是假定“回溯到最近一条用户消息”。
 已有 fast path 应复用，不应另造第二套 attempt/setup 解析：
 
 - `ResolveGoverningSetup`。
-- `ResolvePreparedAttemptIdentityChain`。
-- `ValidateTailIdleBoundary` 及 live/failed terminal 的局部因果验证。
+- `SessionExecutionTailResolver` 内的 P/R identity chain、live/imported terminal 与 setup-run
+  validators。
 - manifest 中的 setup refs、attempt identity、correlation 与 exact canonical commitment。
 
 ## 4. 正确性与信任边界
@@ -398,10 +401,11 @@ runtime identity 和 capability policy 通过后才能产生外部调用。
 - 新增 full reducer reference-oracle matrix，冻结 Empty、Idle、AwaitingAgentAction、
   AwaitingCompletion、AwaitingToolExecution、TurnFailed 各 phase 的必要字段；后续 D2 differential
   tests 应复用同一语义合同。
-- 冷前缀 baseline 证明：`T` 个已闭合 imported turns 的 Idle `ResumeAsync` 当前读取
+- D0 当时的冷前缀 baseline 证明：`T` 个已闭合 imported turns 的 Idle `ResumeAsync` 曾读取
   `3 + 2T` 个 payload、返回同样数量的 chronological events，并调用一次 full `Project()`；Prepared
   `RefuseUncertain` 在不同前缀长度下始终只读一个 head header 与一个 Prepared payload，不调用
-  chronological chain / `Project()`。
+  chronological chain / `Project()`。CS-3D3 已把 Idle 基线翻转为 1 turn 与 10001 turns 相同的
+  2 header + 2 payload、0 chronological chain、0 `Project()`。
 
 相关文件：
 
@@ -508,7 +512,10 @@ runtime identity 和 capability policy 通过后才能产生外部调用。
 
 ### CS-3D3：Engine driver 切换
 
-目标：在线恢复路径彻底脱离 `Project()`。
+> **状态**：已实施
+
+目标：在线 execution routing / transition 彻底脱离 `Project()`；request-context materialization
+继续服从已提交或即将提交的显式 selection policy。
 
 - `ResumeAsync()` 所有 phase 改用 tail resolver。
 - `ContinueToolLoopAsync()` 每次 append 后增量重解新 tail，不再 `Project()`。
@@ -518,9 +525,52 @@ runtime identity 和 capability policy 通过后才能产生外部调用。
 
 验收：
 
-- 所有 online phase 的 `FullProjectionInvocationCount` 保持不变。
-- 10k+ 冷历史前缀不增加恢复 payload reads。
+- routing-only phase 的 `FullProjectionInvocationCount` 保持不变；artifact-tail Observation
+  completion 仍为 0。
+- legacy `full-raw` 每个新 provider request 允许且只允许一次明确的 `Project()` 作为 Context
+  materialization；不能把 reducer 内联/改名来伪造计数为 0。
+- 10k+ 冷历史前缀不增加 execution recovery payload reads；旧 full-raw request/reconstruction
+  仍可按其合同读取全 raw。
 - exact-head CAS/failpoint 行为与原实现一致。
+
+实际落点：
+
+- `SendAsync()`、`ResumeAsync()`、setup mutation 与 imported Action append 统一从 current-head
+  `ResolveExecutionTail()` 获取 phase/state；mutation 均以 `recovery.Head` 作为
+  `AppendExpected` parent。
+- `CompleteAwaitingAgentActionAsync(recovery)` 是唯一 completion routing 入口。artifact-tail 目前只
+  接受 Observation；settled ToolResult 明确报 D4 尚未实现。legacy full-raw 经命名明确的
+  `MaterializeFullRawRequestContext()` 调用一次 public `Project()`，并要求 full projection 的
+  exact head/state 与 recovery 一致。
+- completion helper 返回 committed `ActionAddress`；普通 completion 与 Prepared restart 都从该
+  exact address 重新 resolve。若 Action 含 tools，同一次 driver 调用继续进入 tool loop。
+- tool Started/Result 分别以旧 recovery head / exact Started address 做 CAS append；每次 append 后
+  只 resolve 返回的新 address。runtime implementation/capability identity 在新 Started 和外部调用前
+  验证；reopen 已处于 Started 时还会先确认 main head 未漂移。durable `operationId` 与 reserved
+  sequence 一并传入 `ToolExecutionContext`，因此首次执行和 Started reopen retry 对工具可见的是同一
+  operation identity。
+- provider response 是否允许含 tool calls 由 durable tool set 是否非空决定，而不是只看
+  `full-raw` selection policy。空 tool set 的 initial/restarted request 若收到 tool call，会提交
+  `atelia.host.unsupported-tool-call` known failure，不留下可被再次 restart 的伪 uncertain Prepared。
+- Prepared restart 的合法 tool-call response 会在同一次 `ResumeAsync()` 中完成
+  Action -> Started -> external tool -> Result -> continuation completion，并继续使用 manifest 固定的
+  runtime identity。
+- failpoint 仍紧贴 Observation、Prepared/Restarted、Action、Started、external-before-Result、
+  Result 的原 crash window。Result CAS 若在外部副作用后失败，durable Started 仍保留相同
+  operation id + reserved sequence 供 reopen。
+- 删除 Engine 中旧 `ReadEventKind`、tail boundary/checkpoint walkers 与重复 Prepared routing
+  bypass；public `Project()` / `ReplayHistory()` 保持完整审计语义。
+- 复杂度测试覆盖 1 与 10001 个已闭合 imported turns：Idle `ResumeAsync` 均为 2 header +
+  2 payload、0 chronological、0 full projection。full-raw 无工具和 tool continuation 则断言
+  projection delta 精确等于 provider request 数，不再有 post-Action/post-Result routing replay。
+
+已知边界：
+
+- 对尚未 Started 的 pending call，Started CAS 是外部执行前的 durable claim。
+- 对已经停在 Started 的两个并发 driver，调用前 head check 只能拒绝已知 stale driver，不能消除
+  check 与外部副作用之间的 TOCTOU，也不提供 exactly-once。跨进程 lease、tool idempotency/result
+  lookup 与 reconcile/pause 仍属于后续 capability；`operationId` 只是让工具拥有实现这些策略的稳定
+  identity，并不自动提供策略本身。
 
 ### CS-3D4：Artifact-tail completion 泛化
 
@@ -557,12 +607,13 @@ runtime identity 和 capability policy 通过后才能产生外部调用。
 | Artifact | coherent set、anchor 不可达、成员 lineage 不一致、Prepared 后 sidecar 删除 |
 | Branch | fork、rewind、divergent checkpoint |
 | Corruption | 错 Parent、错 attempt、错 correlation、乱序/重复 tool result、sequence 回退 |
-| Complexity | 10k+ 冷前缀下 header/payload read delta 不随 prefix 增长 |
+| Complexity | 10k+ 冷前缀下 execution-routing read delta 不随 prefix 增长；request reads 按 plan kind 单独断言 |
 
 测试采用两类断言：
 
 1. **语义断言**：tail recovery state 与 full reducer oracle 一致。
-2. **复杂度断言**：online driver 不调用 `Project()`，读取量只随 operational tail/suffix 变化。
+2. **复杂度断言**：execution routing 不调用 `Project()`，读取量只随 operational tail 变化；
+   artifact-tail request 只随 artifact/suffix 变化；legacy full-raw 的全历史成本必须显式计量。
 
 ## 12. 明确否决的捷径
 
@@ -576,15 +627,16 @@ runtime identity 和 capability policy 通过后才能产生外部调用。
 
 ## 13. 下一次 Coding Session 的起点
 
-从 **CS-3D3** 开始。D2 已把协议正确性与纯读取 resolver 独立验证；下一步才迁移 online driver：
+从 **CS-3D4** 开始。D3 已让 tail state 判定和 online mutation/transition 退出 full replay；下一步
+只处理“LLM 看见什么”：
 
-1. `ResumeAsync()` 所有 phase 统一使用 current-head `ResolveExecutionTail()`，移除非 fast path 的
-   `Project()` routing。
-2. `ContinueToolLoopAsync()` 在 Started/Result append 后重新 resolve exact new head，不再 full replay。
-3. `SendAsync()`、setup mutation 与 import append 的 boundary/state 检查逐步改用 resolver；每条路径都
-   保留 expected-head CAS 与 runtime identity gate。
-4. 用 D0 diagnostics 证明所有 online phase 的 `FullProjectionInvocationCount` 不增长；public
-   `Project()` / `ReplayHistory()` 继续保留完整审计语义。
+1. 定义 exact coherent ArtifactSet selection，至少组合 autobiography 与 world-understanding。
+2. 把 explicit artifact-tail materialization 从 Observation 扩展到 dependency-closed settled
+   ToolResult，并纳入 visible tools/runtime identity。
+3. 将 legacy `MaterializeFullRawRequestContext()` 从正常长会话路径降级为显式 bootstrap/fallback；
+   不用隐藏的 root replay 冒充 artifact-tail。
+4. 对 Observation 与 tool continuation 分别证明长冷前缀下 0 `Project()`，并保留 committed manifest
+   在 sidecar 删除后的 exact reconstruction。
 
-不要在 D3 顺手展开 ArtifactSet/request-context 工作；Observation 与 ToolResult 的 artifact-tail
-泛化仍属于 D4。这样继续保持“tail state 判定”和“LLM 看见什么”两个风险面分离。
+不要在 D4 修改 execution resolver DFA 或重新引入 state cache；D3 的 `SessionExecutionRecovery` 已是
+online driver 的单一状态真源。

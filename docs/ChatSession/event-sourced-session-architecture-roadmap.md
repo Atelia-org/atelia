@@ -632,8 +632,13 @@ canonical request。execution resolver 本身不读取 artifact 文本。
 > facts，并用 `ToolSession.ExecuteReservedAsync` 保证外部工具收到已落盘的确切 sequence。CS-3D2
 > 已实现纯读取 `SessionExecutionTailResolver`，并把 correlationId 固定进 Action checkpoint，避免
 > imported tool continuation 为找 active correlation 回溯到最初 Observation。resolver 已通过 full
-> reducer differential、branch/rewind、malformed tail 与 cold-prefix bounded-read 验证；下一步
-> CS-3D3 才会用它替代所有 online `Project()` routing。
+> reducer differential、branch/rewind、malformed tail 与 cold-prefix bounded-read 验证。CS-3D3
+> 已让 `ResumeAsync`、`SendAsync`、setup/import boundary 与 tool loop 使用 current/exact-head
+> recovery，并以 10001-turn fixture 证明 Idle recovery reads 不随冷前缀增长。legacy full-raw 每个
+> provider request 仍显式保留一次 Context `Project()`。Started 的 operation id + reserved sequence
+> 已贯通到 `ToolExecutionContext`；空 durable tool set 的违规 tool-call response 会落 known failure，
+> Prepared restart 的合法 tool response 则可在同一次 Resume 中闭环。下一步 CS-3D4 才把正常
+> Observation 与 ToolResult completion 都迁到 coherent artifact set + dependency-closed suffix。
 
 ### CS-4：可恢复 Tool Loop
 
