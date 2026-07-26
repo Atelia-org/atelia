@@ -217,6 +217,7 @@ public sealed class SessionPreparedRequestReconstructorTests : IDisposable {
             new AgentActionProducedBody(
                 action,
                 new CompletionDescriptor("import", "import-v1", "model-A"),
+                $"atelia.session-journal.turn.v1:{EventAddressTextCodec.Format(observation)}",
                 new SessionExecutionCheckpoint(0),
                 ToolRuntimeIdentity
             )

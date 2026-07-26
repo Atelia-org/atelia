@@ -138,6 +138,7 @@ internal static class SessionEventCodec {
         ArgumentNullException.ThrowIfNull(body);
         ArgumentNullException.ThrowIfNull(body.Action);
         ArgumentNullException.ThrowIfNull(body.Invocation);
+        ValidateRequired(body.CorrelationId, nameof(body.CorrelationId));
         ValidateExecutionCheckpoint(body.Execution, "agent-action-produced execution");
         if (body.Action.ToolCalls.Count == 0) {
             if (body.ToolRuntimeIdentity is not null) {
@@ -172,6 +173,7 @@ internal static class SessionEventCodec {
             writer.WriteString("apiSpecId", body.Invocation.ApiSpecId);
             writer.WriteString("model", body.Invocation.Model);
             writer.WriteEndObject();
+            writer.WriteString("correlationId", body.CorrelationId);
             WriteExecutionCheckpoint(writer, "execution", body.Execution);
             WriteToolRuntimeIdentity(writer, "toolRuntimeIdentity", body.ToolRuntimeIdentity);
             writer.WriteEndObject();
@@ -322,6 +324,7 @@ internal static class SessionEventCodec {
             "agent-action-produced body",
             "action",
             "invocation",
+            "correlationId",
             "execution",
             "toolRuntimeIdentity"
         );
@@ -348,6 +351,7 @@ internal static class SessionEventCodec {
         var result = new AgentActionProducedBody(
             action,
             invocation,
+            ReadRequiredString(body, "correlationId"),
             ReadExecutionCheckpoint(ReadRequiredObject(body, "execution")),
             ReadToolRuntimeIdentity(body, "toolRuntimeIdentity")
         );

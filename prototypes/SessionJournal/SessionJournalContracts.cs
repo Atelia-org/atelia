@@ -199,6 +199,7 @@ internal sealed record ObservationAcceptedBody(string Content);
 internal sealed record AgentActionProducedBody(
     ActionMessage Action,
     CompletionDescriptor Invocation,
+    string CorrelationId,
     SessionExecutionCheckpoint Execution,
     SessionToolRuntimeIdentity? ToolRuntimeIdentity
 );
@@ -264,6 +265,25 @@ internal readonly record struct SessionTailProjectionDiagnostics(
     int HeaderVisitCount,
     int SuffixPayloadReadCount,
     int SuffixEventCount
+);
+
+internal sealed record SessionExecutionRecovery(
+    EventAddress? Head,
+    SessionExecutionState State,
+    SessionExecutionRecoveryBoundary Boundary,
+    SessionExecutionRecoveryDiagnostics Diagnostics
+);
+
+internal sealed record SessionExecutionRecoveryBoundary(
+    EventAddress? SourcePrepared,
+    EventAddress? SourceAction,
+    EventAddress? SourceObservation,
+    EventAddress? LatestExecutionCheckpoint
+);
+
+internal readonly record struct SessionExecutionRecoveryDiagnostics(
+    int HeaderReadCount,
+    int PayloadReadCount
 );
 
 internal readonly record struct SessionJournalReadDiagnostics(

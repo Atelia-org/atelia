@@ -57,6 +57,29 @@ public sealed class SessionJournalEngine : IDisposable {
         };
     }
 
+    internal SessionExecutionRecovery ResolveExecutionTail(
+        CancellationToken cancellationToken = default
+    ) {
+        ThrowIfDisposed();
+        return SessionExecutionTailResolver.Resolve(
+            _reader,
+            _journal.GetHead(_mainRef),
+            cancellationToken
+        );
+    }
+
+    internal SessionExecutionRecovery ResolveExecutionTail(
+        EventAddress exactHead,
+        CancellationToken cancellationToken = default
+    ) {
+        ThrowIfDisposed();
+        return SessionExecutionTailResolver.Resolve(
+            _reader,
+            exactHead,
+            cancellationToken
+        );
+    }
+
     public static SessionJournalEngine Create(string path, SessionCreateOptions options)
         => CreateCore(path, options, runtime: null, testHooks: null);
 
@@ -275,6 +298,10 @@ public sealed class SessionJournalEngine : IDisposable {
             new AgentActionProducedBody(
                 action,
                 invocation,
+                projection.ExecutionState.ActiveCorrelationId
+                    ?? throw new InvalidDataException(
+                        "An imported agent action requires an active completion-boundary correlation id."
+                    ),
                 new SessionExecutionCheckpoint(
                     projection.ExecutionState.ToolExecutionSequenceCheckpoint
                 ),
@@ -731,6 +758,7 @@ public sealed class SessionJournalEngine : IDisposable {
             new AgentActionProducedBody(
                 result.Message,
                 result.Invocation,
+                manifest.Attempt.CorrelationId,
                 manifest.Execution,
                 result.Message.ToolCalls.Count == 0
                     ? null
@@ -778,7 +806,7 @@ public sealed class SessionJournalEngine : IDisposable {
         CompletionStreamObserver? observer,
         CancellationToken cancellationToken
     ) {
-        PreparedAttemptIdentityChain chain = ResolvePreparedAttemptIdentityChain(
+        SessionExecutionTailResolver.PreparedAttemptIdentityChain chain = ResolvePreparedAttemptIdentityChain(
             activeAttemptHead,
             cancellationToken
         );
@@ -839,91 +867,14 @@ public sealed class SessionJournalEngine : IDisposable {
         );
     }
 
-    private PreparedAttemptIdentityChain ResolvePreparedAttemptIdentityChain(
+    private SessionExecutionTailResolver.PreparedAttemptIdentityChain ResolvePreparedAttemptIdentityChain(
         EventAddress activeAttemptHead,
         CancellationToken cancellationToken
-    ) {
-        var newestToOldestRestarts =
-            new List<(EventAddress Address, EventAddress Parent, CompletionAttemptRestartedBody Body)>();
-        EventAddress cursor = activeAttemptHead;
-        CompletionRequestPreparedBody sourceManifest;
-        EventAddress sourcePreparedAddress;
-        EventAddress? sourcePreparedParent;
-        while (true) {
-            cancellationToken.ThrowIfCancellationRequested();
-            using EventFrame frame = _reader.ReadEvent(cursor).Unwrap();
-            ValidateSessionHeaderPreview(cursor, frame.Header);
-            var kind = (SessionEventKind)frame.Header.OpaqueEventKind;
-            object body = SessionEventCodec.Decode(kind, frame.Payload, out _);
-            if (kind == SessionEventKind.CompletionAttemptRestarted) {
-                EventAddress parent = frame.Header.Parent
-                    ?? throw new InvalidDataException(
-                        $"CompletionAttemptRestarted at {cursor} requires an active-attempt parent."
-                    );
-                var restart = body as CompletionAttemptRestartedBody
-                    ?? throw new InvalidDataException(
-                        $"CompletionAttemptRestarted at {cursor} decoded to an unexpected body."
-                    );
-                newestToOldestRestarts.Add((cursor, parent, restart));
-                cursor = parent;
-                continue;
-            }
-            if (kind != SessionEventKind.CompletionRequestPrepared) {
-                throw new InvalidDataException(
-                    $"Prepared recovery chain reached '{kind}' at {cursor} instead of CompletionRequestPrepared."
-                );
-            }
-            sourceManifest = body as CompletionRequestPreparedBody
-                ?? throw new InvalidDataException(
-                    $"CompletionRequestPrepared at {cursor} decoded to an unexpected body."
-                );
-            sourcePreparedAddress = cursor;
-            sourcePreparedParent = frame.Header.Parent;
-            break;
-        }
-
-        if (sourceManifest.Attempt.ReplacesAttemptId is not null) {
-            throw new InvalidDataException(
-                $"Source CompletionRequestPrepared at {sourcePreparedAddress} must not replace another attempt."
-            );
-        }
-        var seenAttemptIds = new HashSet<string>(StringComparer.Ordinal);
-        if (!seenAttemptIds.Add(sourceManifest.Attempt.AttemptId)) {
-            throw new InvalidDataException("Source prepared attempt id is invalid.");
-        }
-        EventAddress expectedParent = sourcePreparedAddress;
-        string activeAttemptId = sourceManifest.Attempt.AttemptId;
-        foreach (var restartEntry in newestToOldestRestarts.AsEnumerable().Reverse()) {
-            CompletionAttemptRestartedBody restart = restartEntry.Body;
-            if (restartEntry.Parent != expectedParent
-                || restart.SourcePreparedAddress != sourcePreparedAddress
-                || !string.Equals(
-                    restart.ReplacesAttemptId,
-                    activeAttemptId,
-                    StringComparison.Ordinal
-                )
-                || !seenAttemptIds.Add(restart.AttemptId)) {
-                throw new InvalidDataException(
-                    $"CompletionAttemptRestarted at {restartEntry.Address} does not strictly continue the source attempt chain."
-                );
-            }
-            expectedParent = restartEntry.Address;
-            activeAttemptId = restart.AttemptId;
-        }
-        if (expectedParent != activeAttemptHead) {
-            throw new InvalidDataException(
-                "Prepared recovery chain does not terminate at the current active attempt head."
-            );
-        }
-
-        return new PreparedAttemptIdentityChain(
-            sourcePreparedAddress,
-            sourcePreparedParent,
-            expectedParent,
-            activeAttemptId,
-            sourceManifest
-        );
-    }
+    ) => SessionExecutionTailResolver.ResolvePreparedAttemptIdentityChain(
+        _reader,
+        activeAttemptHead,
+        cancellationToken
+    );
 
     private static void ValidateRecoveryRuntimeCompatibility(
         SessionRuntime runtime,
@@ -1116,229 +1067,19 @@ public sealed class SessionJournalEngine : IDisposable {
         EventAddress boundaryHead,
         CancellationToken cancellationToken
     ) {
-        EventAddress? cursor = boundaryHead;
-        while (cursor is { } address) {
-            cancellationToken.ThrowIfCancellationRequested();
-            EventFrameHeader header = _reader.ReadEventHeaderPreview(address).Unwrap();
-            ValidateSessionHeaderPreview(address, header);
-            var kind = (SessionEventKind)header.OpaqueEventKind;
-            if (kind is SessionEventKind.RuntimeConfigSetup or SessionEventKind.SystemPromptSetup) {
-                cursor = header.Parent;
-                continue;
-            }
-
-            using EventFrame frame = _reader.ReadEvent(address).Unwrap();
-            ValidateSessionHeaderPreview(address, frame.Header);
-            object body = SessionEventCodec.Decode(kind, frame.Payload, out _);
-            switch (kind) {
-                case SessionEventKind.SessionCreated when body is SessionCreatedBody:
-                    ValidateTailBootstrapChain(address, frame.Header.Parent);
-                    return;
-                case SessionEventKind.CompletionAttemptFailed
-                    when body is CompletionAttemptFailedBody failure:
-                    ValidateTailFailedBoundary(
-                        address,
-                        frame.Header.Parent,
-                        failure,
-                        cancellationToken
-                    );
-                    return;
-                case SessionEventKind.AgentActionProduced when body is AgentActionProducedBody action:
-                    ValidateTailTerminalAction(address, action);
-                    ValidateTailLiveActionBoundary(
-                        address,
-                        frame.Header.Parent,
-                        cancellationToken
-                    );
-                    return;
-                case SessionEventKind.ImportedAgentAction when body is AgentActionProducedBody action:
-                    ValidateTailTerminalAction(address, action);
-                    ValidateTailImportedActionBoundary(address, frame.Header.Parent);
-                    return;
-                case SessionEventKind.AgentActionProduced:
-                case SessionEventKind.ImportedAgentAction:
-                    throw new InvalidOperationException(
-                        $"Explicit artifact tail action boundary at {address} decoded to an unexpected body."
-                    );
-                default:
-                    throw new InvalidOperationException(
-                        $"Explicit artifact tail SendAsync requires an idle boundary, got '{kind}' at {address}."
-                    );
-            }
-        }
-
-        throw new InvalidDataException("Explicit artifact tail idle boundary reached the journal root unexpectedly.");
-    }
-
-    private void ValidateTailBootstrapChain(
-        EventAddress createdAddress,
-        EventAddress? promptAddress
-    ) {
-        EventAddress prompt = promptAddress
-            ?? throw new InvalidDataException(
-                $"SessionCreated at {createdAddress} requires a bootstrap SystemPromptSetup parent."
-            );
-        (EventAddress? runtimeAddress, object promptBody) = ReadTailEvent(
-            prompt,
-            SessionEventKind.SystemPromptSetup
-        );
-        if (promptBody is not SystemPromptSetupBody) {
-            throw new InvalidDataException(
-                $"Bootstrap SystemPromptSetup at {prompt} decoded to an unexpected body."
-            );
-        }
-        EventAddress runtime = runtimeAddress
-            ?? throw new InvalidDataException(
-                $"Bootstrap SystemPromptSetup at {prompt} requires a RuntimeConfigSetup parent."
-            );
-        (EventAddress? rootParent, object runtimeBody) = ReadTailEvent(
-            runtime,
-            SessionEventKind.RuntimeConfigSetup
-        );
-        if (runtimeBody is not SessionRuntimeConfiguration || rootParent is not null) {
-            throw new InvalidDataException(
-                $"Bootstrap RuntimeConfigSetup at {runtime} must be the SessionJournal root."
-            );
-        }
-    }
-
-    private void ValidateTailFailedBoundary(
-        EventAddress failureAddress,
-        EventAddress? activeAttemptAddress,
-        CompletionAttemptFailedBody failure,
-        CancellationToken cancellationToken
-    ) {
-        EventAddress activeAttempt = activeAttemptAddress
-            ?? throw new InvalidDataException(
-                $"CompletionAttemptFailed at {failureAddress} requires an active completion attempt parent."
-            );
-        PreparedAttemptIdentityChain chain = ResolvePreparedAttemptIdentityChain(
-            activeAttempt,
+        SessionExecutionRecovery recovery = SessionExecutionTailResolver.Resolve(
+            _reader,
+            boundaryHead,
             cancellationToken
         );
-        ValidateTailSourceCompletionBoundary(chain, failureAddress);
-        if (!string.Equals(failure.AttemptId, chain.ActiveAttemptId, StringComparison.Ordinal)) {
-            throw new InvalidDataException(
-                $"CompletionAttemptFailed at {failureAddress} does not match active attempt '{chain.ActiveAttemptId}'."
-            );
-        }
-    }
-
-    private void ValidateTailLiveActionBoundary(
-        EventAddress actionAddress,
-        EventAddress? activeAttemptAddress,
-        CancellationToken cancellationToken
-    ) {
-        EventAddress activeAttempt = activeAttemptAddress
-            ?? throw new InvalidDataException(
-                $"AgentActionProduced at {actionAddress} requires an active completion attempt parent."
-            );
-        PreparedAttemptIdentityChain chain = ResolvePreparedAttemptIdentityChain(
-            activeAttempt,
-            cancellationToken
-        );
-        ValidateTailSourceCompletionBoundary(chain, actionAddress);
-    }
-
-    private void ValidateTailSourceCompletionBoundary(
-        PreparedAttemptIdentityChain chain,
-        EventAddress terminalAddress
-    ) {
-        EventAddress sourceBoundaryAddress = chain.SourcePreparedParent
-            ?? throw new InvalidDataException(
-                $"Tail source CompletionRequestPrepared at {chain.SourcePreparedAddress} requires a completion boundary parent."
-            );
-        EventFrameHeader sourceBoundaryHeader =
-            _reader.ReadEventHeaderPreview(sourceBoundaryAddress).Unwrap();
-        ValidateSessionHeaderPreview(sourceBoundaryAddress, sourceBoundaryHeader);
-        var sourceBoundaryKind =
-            (SessionEventKind)sourceBoundaryHeader.OpaqueEventKind;
-        string reason = chain.SourceManifest.Attempt.Reason;
-        if (!string.Equals(
-                chain.SourceManifest.Plan.Reason,
-                reason,
-                StringComparison.Ordinal
-            )) {
-            throw new InvalidDataException(
-                $"Tail terminal event at {terminalAddress} has mismatched attempt and plan reasons."
-            );
-        }
-
-        switch (reason) {
-            case "observation": {
-                if (sourceBoundaryKind != SessionEventKind.ObservationAccepted
-                    || !string.Equals(
-                        chain.SourceManifest.Attempt.CorrelationId,
-                        BuildCorrelationId(sourceBoundaryAddress),
-                        StringComparison.Ordinal
-                    )) {
-                    throw new InvalidDataException(
-                        $"Tail terminal event at {terminalAddress} must originate from its directly preceding ObservationAccepted address with matching correlation."
-                    );
-                }
-                break;
-            }
-            case "tool-continuation":
-                if (sourceBoundaryKind != SessionEventKind.ToolResultObserved) {
-                    throw new InvalidDataException(
-                        $"Tail terminal event at {terminalAddress} declares a tool continuation whose source parent is '{sourceBoundaryKind}'."
-                    );
-                }
-                // The source Prepared was committed by the validated writer and was fully
-                // reconstructed before restart dispatch. The original observation may be far
-                // behind this bounded proof, so its correlation id remains a trusted manifest fact.
-                break;
-            default:
-                throw new InvalidDataException(
-                    $"Tail terminal event at {terminalAddress} has unsupported source reason '{reason}'."
-                );
-        }
-    }
-
-    private void ValidateTailImportedActionBoundary(
-        EventAddress actionAddress,
-        EventAddress? observationAddress
-    ) {
-        EventAddress observation = observationAddress
-            ?? throw new InvalidDataException(
-                $"ImportedAgentAction at {actionAddress} requires an ObservationAccepted parent."
-            );
-        var (_, observationBody) = ReadTailEvent(
-            observation,
-            SessionEventKind.ObservationAccepted
-        );
-        if (observationBody is not ObservationAcceptedBody) {
-            throw new InvalidDataException(
-                $"ImportedAgentAction at {actionAddress} has an invalid ObservationAccepted parent body."
-            );
-        }
-    }
-
-    private static void ValidateTailTerminalAction(
-        EventAddress actionAddress,
-        AgentActionProducedBody action
-    ) {
-        if (action.Action.ToolCalls.Count > 0) {
+        if (recovery.State.Phase is not (
+            SessionExecutionPhase.Idle
+            or SessionExecutionPhase.TurnFailed
+        )) {
             throw new InvalidOperationException(
-                $"Explicit artifact tail SendAsync requires a terminal action without tool calls at {actionAddress}."
+                $"Explicit artifact tail SendAsync requires an idle boundary (or failed terminal), got '{recovery.State.Phase}' at {boundaryHead}."
             );
         }
-    }
-
-    private (EventAddress? Parent, object Body) ReadTailEvent(
-        EventAddress address,
-        SessionEventKind expectedKind
-    ) {
-        using EventFrame frame = _reader.ReadEvent(address).Unwrap();
-        ValidateSessionHeaderPreview(address, frame.Header);
-        var actualKind = (SessionEventKind)frame.Header.OpaqueEventKind;
-        if (actualKind != expectedKind) {
-            throw new InvalidDataException(
-                $"Tail boundary expected '{expectedKind}' at {address}, got '{actualKind}'."
-            );
-        }
-        object body = SessionEventCodec.Decode(actualKind, frame.Payload, out _);
-        return (frame.Header.Parent, body);
     }
 
     private SessionEventKind ReadEventKind(EventAddress address) {
@@ -1793,14 +1534,6 @@ public sealed class SessionJournalEngine : IDisposable {
         EventAddress? RawStartExclusive,
         string RawRangeSha256,
         ImmutableArray<SessionRequestArtifactInput> ArtifactInputs
-    );
-
-    private sealed record PreparedAttemptIdentityChain(
-        EventAddress SourcePreparedAddress,
-        EventAddress? SourcePreparedParent,
-        EventAddress ActiveAttemptAddress,
-        string ActiveAttemptId,
-        CompletionRequestPreparedBody SourceManifest
     );
 
     private static string BuildTurnAbortMessage(CompletionTermination termination) {

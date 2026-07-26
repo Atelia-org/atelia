@@ -71,6 +71,7 @@ public sealed class SessionExecutionRecoveryContractTests : IDisposable {
                     new ActionBlock.ToolCall(call2)
                 ]),
                 Invocation(),
+                correlation,
                 new SessionExecutionCheckpoint(0),
                 ToolRuntimeIdentity
             ),
@@ -347,6 +348,7 @@ public sealed class SessionExecutionRecoveryContractTests : IDisposable {
                         new AgentActionProducedBody(
                             new ActionMessage([new ActionBlock.Text("done")]),
                             Invocation(),
+                            correlation,
                             new SessionExecutionCheckpoint(0),
                             ToolRuntimeIdentity: null
                         ),
@@ -369,6 +371,7 @@ public sealed class SessionExecutionRecoveryContractTests : IDisposable {
                         new AgentActionProducedBody(
                             new ActionMessage([new ActionBlock.Text("imported")]),
                             Invocation(),
+                            correlation,
                             new SessionExecutionCheckpoint(0),
                             ToolRuntimeIdentity: null
                         ),
@@ -392,6 +395,7 @@ public sealed class SessionExecutionRecoveryContractTests : IDisposable {
                         new AgentActionProducedBody(
                             new ActionMessage([new ActionBlock.Text("done")]),
                             Invocation(),
+                            correlation,
                             new SessionExecutionCheckpoint(0),
                             ToolRuntimeIdentity: null
                         ),
@@ -520,12 +524,13 @@ public sealed class SessionExecutionRecoveryContractTests : IDisposable {
         EventAddress head = journal.GetHead(main)
             ?? throw new InvalidDataException("Created SessionJournal has no head.");
         for (int i = 0; i < turnCount; i++) {
-            head = Commit(
+            EventAddress observation = Commit(
                 journal,
                 head,
                 SessionEventKind.ObservationAccepted,
                 new ObservationAcceptedBody($"observation-{i}")
             );
+            head = observation;
             head = Commit(
                 journal,
                 head,
@@ -533,6 +538,7 @@ public sealed class SessionExecutionRecoveryContractTests : IDisposable {
                 new AgentActionProducedBody(
                     new ActionMessage([new ActionBlock.Text($"action-{i}")]),
                     Invocation(),
+                    BuildCorrelationId(observation),
                     new SessionExecutionCheckpoint(0),
                     ToolRuntimeIdentity: null
                 )

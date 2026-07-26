@@ -651,10 +651,15 @@ public sealed class SessionJournalEngineTests : IDisposable {
             ),
             CreateRuntime(new ScriptedCompletionClient(), toolSession)
         )) {
-            engine.AppendObservation("need lookup");
+            EventAddress observationAddress = engine.AppendObservation("need lookup");
             actionAddress = engine.AppendImportedAgentAction(action, invocation);
             string actionJson = System.Text.Encoding.UTF8.GetString(engine.ReadPayloadBytes(actionAddress));
-            Assert.Equal("{\"v\":1,\"body\":{\"action\":[{\"kind\":\"text\",\"content\":\"I will call a tool.\"},{\"kind\":\"tool-call\",\"toolName\":\"lookup\",\"toolCallId\":\"call-1\",\"rawArgumentsJson\":\"{\\\"q\\\":\\\"x\\\"}\"}],\"invocation\":{\"providerId\":\"fake-provider\",\"apiSpecId\":\"fake-api-v1\",\"model\":\"model-A\"},\"execution\":{\"lastIssuedToolExecutionSequence\":0},\"toolRuntimeIdentity\":{\"hostId\":\"test-tool-host\",\"implementationSetFingerprint\":\"test-tool-implementations-v1\",\"capabilitySetFingerprint\":\"test-tool-capabilities-v1\"}}}", actionJson);
+            Assert.Equal(
+                "{\"v\":1,\"body\":{\"action\":[{\"kind\":\"text\",\"content\":\"I will call a tool.\"},{\"kind\":\"tool-call\",\"toolName\":\"lookup\",\"toolCallId\":\"call-1\",\"rawArgumentsJson\":\"{\\\"q\\\":\\\"x\\\"}\"}],\"invocation\":{\"providerId\":\"fake-provider\",\"apiSpecId\":\"fake-api-v1\",\"model\":\"model-A\"},\"correlationId\":\"atelia.session-journal.turn.v1:"
+                    + EventAddressTextCodec.Format(observationAddress)
+                    + "\",\"execution\":{\"lastIssuedToolExecutionSequence\":0},\"toolRuntimeIdentity\":{\"hostId\":\"test-tool-host\",\"implementationSetFingerprint\":\"test-tool-implementations-v1\",\"capabilitySetFingerprint\":\"test-tool-capabilities-v1\"}}}",
+                actionJson
+            );
         }
 
         using var reopened = SessionJournalEngine.Open(path);
@@ -1737,6 +1742,9 @@ public sealed class SessionJournalEngineTests : IDisposable {
         };
         string payload = "{\"v\":1,\"body\":{\"action\":" + actionBlocks
             + ",\"invocation\":{\"providerId\":\"import\",\"apiSpecId\":\"import-v1\",\"model\":\"model-A\"}"
+            + ",\"correlationId\":\"atelia.session-journal.turn.v1:"
+            + EventAddressTextCodec.Format(observation)
+            + "\""
             + ",\"execution\":{\"lastIssuedToolExecutionSequence\":0}"
             + ",\"toolRuntimeIdentity\":{\"hostId\":\"test-tool-host\",\"implementationSetFingerprint\":\"test-tool-implementations-v1\",\"capabilitySetFingerprint\":\"test-tool-capabilities-v1\"}}}";
         using (var journal = EventJournal.EventJournal.OpenExisting(path)) {

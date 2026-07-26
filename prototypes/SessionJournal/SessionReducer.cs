@@ -216,6 +216,16 @@ internal static class SessionReducer {
                         );
                     }
                     var body = RequireBody<AgentActionProducedBody>(ev);
+                    if (activeCorrelationId is null
+                        || !string.Equals(
+                            body.CorrelationId,
+                            activeCorrelationId,
+                            StringComparison.Ordinal
+                        )) {
+                        throw new InvalidDataException(
+                            $"{ev.Kind} at {ev.Address} correlation id does not match its active completion boundary."
+                        );
+                    }
                     ValidateActionToolCalls(ev, body.Action);
                     if (body.Execution.LastIssuedToolExecutionSequence != toolExecutionSequenceCheckpoint) {
                         throw new InvalidDataException(

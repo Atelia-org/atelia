@@ -105,6 +105,7 @@ public sealed class SessionCompletionAttemptRestartedTests {
                 new AgentActionProducedBody(
                     new ActionMessage([new ActionBlock.Text("done")]),
                     new CompletionDescriptor("provider", "api", "runtime-model"),
+                    $"atelia.session-journal.turn.v1:{EventAddressTextCodec.Format(Address(4))}",
                     new SessionExecutionCheckpoint(0),
                     ToolRuntimeIdentity: null
                 ),
@@ -213,6 +214,7 @@ public sealed class SessionCompletionAttemptRestartedTests {
             SessionEventKind.AgentActionProduced => new AgentActionProducedBody(
                 new ActionMessage([new ActionBlock.Text("done")]),
                 new CompletionDescriptor("provider", "api", "runtime-model"),
+                $"atelia.session-journal.turn.v1:{EventAddressTextCodec.Format(Address(4))}",
                 new SessionExecutionCheckpoint(0),
                 ToolRuntimeIdentity: null
             ),

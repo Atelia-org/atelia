@@ -325,6 +325,7 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
                 ? new AgentActionProducedBody(
                     new ActionMessage([new ActionBlock.Text("orphan action")]),
                     new CompletionDescriptor("tail-client", "tail-api-v1", "model-A"),
+                    $"atelia.session-journal.turn.v1:{EventAddressTextCodec.Format(observation)}",
                     new SessionExecutionCheckpoint(0),
                     ToolRuntimeIdentity: null
                 )
@@ -431,6 +432,7 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
         EventAddress toolAction;
         EventAddress toolResult;
         EventAddress finalAction;
+        EventAddress sourceObservation;
         using (var engine = SessionJournalEngine.Create(
             path,
             new SessionCreateOptions("model-A", "system-A", "surface-A"),
@@ -444,7 +446,7 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
                 )
             )
         )) {
-            engine.AppendObservation("use tool");
+            sourceObservation = engine.AppendObservation("use tool");
             toolAction = engine.AppendImportedAgentAction(
                 new ActionMessage([
                     new ActionBlock.ToolCall(new RawToolCall("lookup", "call-1", "{}"))
@@ -489,6 +491,7 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
                 new AgentActionProducedBody(
                     new ActionMessage([new ActionBlock.Text("done")]),
                     new CompletionDescriptor("import", "import-v1", "model-A"),
+                    $"atelia.session-journal.turn.v1:{EventAddressTextCodec.Format(sourceObservation)}",
                     new SessionExecutionCheckpoint(1),
                     ToolRuntimeIdentity: null
                 )
@@ -514,7 +517,11 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
             () => reopened.SendAsync("next", CancellationToken.None)
         );
 
-        Assert.Contains("ObservationAccepted", error.Message, StringComparison.Ordinal);
+        Assert.Contains(
+            boundary == "tool-action" ? "action with" : "ToolResultObserved",
+            error.Message,
+            StringComparison.Ordinal
+        );
         Assert.Empty(client.Requests);
     }
 
