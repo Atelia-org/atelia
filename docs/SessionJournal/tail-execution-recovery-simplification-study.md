@@ -1,361 +1,335 @@
-# SessionJournal Tail Execution Recovery 化简调研
+# SessionJournal Tail Execution Recovery 后续化简候选
 
-> **状态**：Research Snapshot / 已采纳的 coherent-only 子集由 CS-3D6 实施完成
+> **状态**：Current Research / CS-3D6 后候选集
 > **日期**：2026-07-27
-> **调研对象**：[Tail-only Execution Recovery Design](tail-execution-recovery-design.md)
-> **目标**：在继续 Context Planner、provider capability 与 tool reconcile 之前，识别能够减少协议、
-> 实现和测试复杂度的重构机会；不以牺牲 crash recovery、raw provenance 或 bounded reads 换取表面简洁。
+> **当前基线**：[Tail-only Execution Recovery Design](tail-execution-recovery-design.md)
+> **已完成计划**：
+> [CS-3D6：Coherent-only Request Manifest 化简计划](done/coherent-request-manifest-simplification-plan.md)
+> **目标**：只保留在 current trunk 上仍成立的化简候选；不以牺牲 crash recovery、raw provenance、
+> exact reopen 或 bounded reads 换取表面简洁。
 
-> **2026-07-27 后续决策**：不采纳 §3.1 的 configuration 合并，保留 runtime/system-prompt 双 setup
-> stream；近期优先逐步收口为 coherent-only request manifest。实施路线以
-> [CS-3D6：Coherent-only Request Manifest 化简计划](coherent-request-manifest-simplification-plan.md)
-> 为准。该子集现已完成：Prepared v2、single coherent recipe、legacy reader/writer 删除与真实迁移
-> 验收均已落地。本报告其余候选仍是调研输入，不代表已排期；下文的“当前”描述是调研时快照，不应
-> 覆盖 2026-07-27 D6E 后的 current trunk。
+## 0. 当前结论
 
-## 0. 结论摘要
+CS-3D6 已经完成 request manifest 的主要收口：online 只有 coherent artifact-tail、
+`CompletionRequestPrepared` 只有 v2、legacy reader/writer 已删除，并已用真实 legacy import、两个
+maintainer artifact 和一次 exact checkpoint 验收。已实施内容不在本文重复，详见
+[归档计划](done/coherent-request-manifest-simplification-plan.md)。
 
-当前实现不是“基本路线错误”。以下复杂度属于问题本身，不能删：
+当前仍值得研究的化简候选只有四组：
 
-- provider request 与 tool side effect 的 crash window；
-- 多 tool call 的 dependency closure；
-- exact request reopen；
-- raw Parent lineage、setup 与 artifact provenance；
-- full audit 与 bounded online recovery 的分离。
+1. **Request snapshot spike**：比较 current recipe-authoritative reopen 与 exact canonical request
+   snapshot；先测 stored bytes 和恢复开销，不先改 wire。
+2. **Attempt 对称化**：把“request 已 durable”和“某次 provider attempt 已开始”拆成不同事件，
+   统一首次调用与 retry。
+3. **ArtifactSet definition / activation 解耦**：先确认 active/default set 是否真是长期 session
+   state，再决定是否取消 current latest-equals-selected 约束。
+4. **共享正向 operational semantics**：减少 full reducer、suffix fold 和 validator 的规则复述，
+   但保留独立 reverse tail collector。
 
-但 CS-3A～D5 分片逐层推进后，确实沉积了四类可以化简的偶然复杂度：
+`SessionJournalEngine` 的职责拆分仍有价值，但应作为上述语义收口的结构性后续，而不是先移动代码。
 
-1. `CompletionRequestPrepared` 同时充当 request snapshot 与首次 attempt，后续 attempt 却由
-   `CompletionAttemptRestarted` 表达，状态机不对称。
-2. `full-raw`、`explicit-artifact-tail`、`coherent-artifact-tail` 三套 manifest policy 仍共存，
-   其中前两套已是 legacy 表面。
-3. `ArtifactSetCommitted` 同时承担 coherent set definition、latest-active selection 与 setup
-   checkpoint；这会妨碍未来 planner 选择更早 ArtifactSet。
-4. full reducer、artifact suffix fold、tail resolver、reconstructor 与 offline validator 多次复述
-   operational legality。
+以下方向不再是本文候选：
 
-原始调研建议：**停止在 v1 上继续加字段，先规划一次 SessionJournal wire v2 归一化。**
+- 合并 `RuntimeConfigSetup` / `SystemPromptSetup`：此前已决定保留两条 sticky stream。
+- 恢复 `full-raw`、`explicit-artifact-tail` 或 bounded `bootstrap-raw` policy：这会倒退已经确立的
+  coherent ArtifactSet readiness 合同。
+- 为旧 Prepared 增加 compatibility decoder、缺省字段推断或 root replay fallback。
+- 再规划一次覆盖所有 event kind 的“大一统 wire v2”：current codec 已支持 per-kind body schema
+  version，后续只升级真正发生变化的 kind。
 
-当时提出的完整候选目标如下；后续决策只先采纳其中的 coherent-only Prepared/manifest 收口，其余
-项目继续保留为未排期候选：
+## 1. Current trunk 基线
+
+### 1.1 当前实现事实
+
+request preparation 与 reopen 现在只有一个 wire shape：
 
 ```text
-一个完整 SessionConfiguration fact
-+ 一个 immutable coherent ArtifactSet definition
-+ 一个每次 request 的 exact Prepared snapshot / provenance
-+ 一个对称的 CompletionAttemptStarted
-+ 一个共享的 forward operational transition kernel
-+ 一个仍然独立的 reverse dependency collector
+exact coherent ArtifactSet
++ dependency-closed raw suffix
++ paired governing setup refs
++ visible tool/runtime identity
++ dispatch target
+-> CompletionRequestPrepared v2
 ```
 
-其中最高杠杆但需要先实验的选择是：
+具体事实：
 
-> 让 `CompletionRequestPrepared` 直接持久化压缩后的 exact canonical request bytes，并把
-> ContextPlan 降为 provenance/audit；online reopen 不再重新运行 renderer 和 suffix fold。
+- online completion 必须先有 current-lineage 上可用的 `ArtifactSetCommitted`；没有 artifact set 时明确
+  not-ready，不回退到 full history。
+- Prepared 内联 exact artifact context snapshots、tool definitions 和 identity/provenance；raw suffix
+  仍以 address/hash + deterministic recipe 重建。
+- Prepared 后即使 derived sidecar 被删除，`SessionPreparedRequestReconstructor` 仍能 exact reopen。
+- `RuntimeConfigSetup` 与 `SystemPromptSetup` 保持两条独立 sticky stream，Prepared pin 两条 exact refs。
+- `SessionExecutionTailResolver` 独立反向收集 operational dependencies；online routing 不调用
+  `Project()`。
+- `SessionReducer` 继续提供 root-to-head full audit/oracle；`SessionTailContextProjection.FoldSuffix`
+  是 seeded request-context fold；offline validator 仍对不可信 raw 做完整只读验证。
+- `CompletionRequestPrepared` 同时建立首次 attempt identity；retry 由
+  `CompletionAttemptRestarted` 表示。
+- `ArtifactSetCommitted` 同时扮演 coherent set definition 和 active/latest checkpoint；current Engine
+  选择 completion boundary 最近的合法 activation。
 
-这会以可测量的 raw storage 增长换取显著更小的恢复协议。由于 SessionJournal request 本来受 LLM
-context window 约束，且 EventJournal 默认使用 zlib，这个方向值得优先做 stored-byte spike；但在得到
-真实数据前，不应把它直接定为新 wire。
+### 1.2 当前规模
 
-## 1. 调研范围与证据
+截至本次刷新，恢复主链十个核心文件约 **7,622 LOC**：
 
-### 1.1 当前规模
-
-恢复主链的十个核心文件约 **7,961 LOC**：
-
-| 区域 | 当前 LOC |
+| 区域 | LOC |
 | --- | ---: |
-| `SessionJournalEngine` | 1,988 |
-| `SessionExecutionTailResolver` | 956 |
-| `SessionTailContextProjection` | 787 |
-| `SessionPreparedRequestReconstructor` | 598 |
-| `SessionReducer` | 622 |
-| `SessionJournalOfflineValidator` | 626 |
-| event + manifest codecs | 1,875 |
-| contracts + manifest records | 509 |
+| `SessionJournalEngine` | 1,972 |
+| `SessionExecutionTailResolver` | 942 |
+| `SessionTailContextProjection` | 751 |
+| `SessionPreparedRequestReconstructor` | 543 |
+| `SessionReducer` | 617 |
+| `SessionJournalOfflineValidator` | 605 |
+| event + manifest codecs | 1,709 |
+| contracts + manifest records | 483 |
 
-`SessionJournal.Tests` 约 **9,866 LOC**。大测试面本身不是坏事，但相当一部分矩阵在重复证明三套
-request policy 和多套 operational DFA。
+`SessionJournal.Tests` 约 **10,713 LOC**。这些数字不是删代码 KPI，只说明 request reconstruction、
+attempt chain、ArtifactSet activation 与 operational legality 仍有足够大的维护面，值得继续寻找语义级
+化简。
 
-### 1.2 语义复述
+### 1.3 不可删除的复杂度
 
-同一组 12 个 `SessionEventKind` 被以下路径分别解释：
+以下属于问题本身：
 
-- `SessionReducer`：full root-to-head fold；
-- `SessionExecutionTailResolver`：reverse dependency collection；
-- `SessionTailContextProjection.FoldSuffix`：seeded forward fold；
-- `SessionPreparedRequestReconstructor`：request boundary/replay validation；
-- `SessionJournalOfflineValidator`：full chronology/provenance validation。
-
-不能把它们粗暴合成一个“万能 reducer”：reverse collector 决定读取复杂度，full/suffix fold 决定正向
-legality，它们职责不同。但正向 transition 和纯 validator 不应继续复述。
-
-### 1.3 Legacy 表面（调研时快照，D6D 已删除）
-
-调研时 online writer 实际只有：
-
-- 默认 `RequireActiveArtifactSet` → `coherent-artifact-tail`；
-- 显式 `LegacyFullRaw` → `full-raw`。
-
-`explicit-artifact-tail` 已没有 writer，只为旧 committed Prepared reopen 保留。仓库内也没有真实
-production caller 选择 `LegacyFullRaw`。本项目尚未发布、旧实验 journal 可重建，因此继续维护这两套
-协议的收益低于其认知和测试成本。
-
-### 1.4 Manifest 冗余
-
-当前 manifest 至少有 13 个硬编码、互相等值或尚无 producer 的字段：
-
-- `PlannerFingerprint`、`RenderingProfileId`、renderer id/fingerprint 都由 policy 固定映射；
-- `ModelProfileId == Parameters.ModelId`；
-- `Plan.Reason == Attempt.Reason`，而 reason 又可由 raw boundary kind 推导；
-- `RecalledInputs` 永远为空；
-- `EstimatedInputTokens` 只是 `byteLength / 4`；
-- `Rendering.ToolCodecId == ToolSet.CodecId`，且 codec id 是全局常量；
-- canonical codec / reasoning codec fingerprints 是全局常量；
-- commitment algorithm 固定为 SHA-256；
-- `Target.CompletionSurfaceId` 重复 governing runtime config。
-
-这些字段看似为未来扩展留槽，实际却让当前 codec 必须维护 hard-coded identity tuple。真正的
-Context Planner、retriever 或多 renderer 出现时再设计对应 schema，比提前持久化空槽更简单。
-
-## 2. 哪些复杂度必须保留
-
-化简不能破坏以下不变量：
-
-1. raw SessionJournal 仍是 execution correctness source。
+1. raw Parent lineage 是 execution correctness source。
 2. online reopen / routing 不得静默 root replay。
-3. Prepared 后不能重新运行 planner；必须 exact reopen 当时 request。
-4. provider/tool 外部调用前必须先有 durable identity / reservation。
-5. tool result 必须按 Action 声明顺序 join，不能只看 append 顺序。
+3. Prepared 后不得重新规划；provider-facing request 必须 exact reopen。
+4. provider/tool 外部调用前必须有 durable identity / reservation。
+5. tool result 必须按 Action 声明顺序与 durable sequence join。
 6. ArtifactSet coherence 与 per-request selection 必须可审计。
-7. sidecar/index 丢失不能改写已提交 request 的内容。
-8. full `Project()` / `ReplayHistory()` 继续保留审计语义。
-9. offline untrusted import 继续 strict、read-only、O(raw inventory) 验证。
-10. branch/rewind 只能沿 current Parent lineage 解析。
+7. sidecar/index 丢失不能改写 committed request。
+8. branch/rewind 只能沿 current Parent lineage 解析。
+9. full audit projection 与 bounded online recovery 必须继续分离。
+10. offline untrusted import 必须 strict、read-only、O(raw inventory) 验证。
 
-因此以下“化简”仍应否决：
+因此仍应否决：
 
-- 恢复找不到 checkpoint 时自动 full replay；
-- 固定 N events 的 tail window；
-- 删除 `ToolExecutionStarted`，把外部调用与 Result 合并；
+- 找不到 checkpoint 时自动 full replay；
+- 固定 N events/turns 的 tail window；
+- 删除 `ToolExecutionStarted` 并把外部调用与 Result 合并；
 - 让 Artifact/MemoryPack 决定 pending execution；
 - 缓存完整 `SessionProjection`；
-- 让 reverse tail resolver 为了复用而改成 forward full fold。
+- 为了复用，把 reverse tail resolver 改成 forward full fold。
 
-## 3. 推荐的目标协议
+## 2. 候选 A：Exact request snapshot spike
 
-### 3.1 Configuration：两条 sticky stream 收成一个完整 fact（未采纳）
+### 2.1 当前问题
 
-以下是调研时的候选方案，后续决策认为近期收益不足以支持其 wire 与语义改动，**本轮不实施**。
-当前 bootstrap 是：
+Prepared v2 已经只有一个 coherent recipe，但 exact reopen 仍需要：
+
+1. 读取 paired setup payload；
+2. 读取并验证 exact raw range；
+3. 读取 referenced `ArtifactSetCommitted`；
+4. seed 并运行 dependency-closed suffix fold；
+5. 聚合 inline artifact snapshots；
+6. 重新执行 canonical recipe；
+7. 对比 commitment。
+
+这条路径正确且 bounded，但 renderer、suffix fold 和 reconstructor 仍处在 online correctness core。
+`SessionPreparedRequestReconstructor` 的 543 LOC 不是 legacy policy 分支，而是 current recipe 本身的
+证明成本。
+
+### 2.2 两种权威形态
+
+| 方案 | Online reopen | 主要代价 |
+| --- | --- | --- |
+| R：current recipe-authoritative | 重新读取 refs、fold、render，再校验 commitment | renderer 与 fold 版本长期属于恢复合同 |
+| S：snapshot-authoritative | 读取 snapshot、校验 hash、decode request | 每个 Prepared 在 raw 中复制 bounded request bytes |
+
+S 的候选形状：
 
 ```text
-RuntimeConfigSetup
--> SystemPromptSetup
--> SessionCreated
-```
-
-每个 Prepared、ArtifactSet 与 setup resolver 都要携带或收集一对 setup refs。建议 v2 改为：
-
-```text
-SessionCreated {
-  configuration: {
-    runtime: { modelId, completionSurfaceId, schema },
-    systemPrompt
-  }
-}
-
-SessionConfigurationChanged {
-  configuration: complete snapshot
+CompletionRequestPrepared {
+  canonicalRequestCodecId,
+  canonicalRequestBytes,
+  canonicalRequestSha256,
+  provenance: {
+    governingSetupRefs,
+    rawRange,
+    artifactSetRef,
+    contributionHashes
+  },
+  executionAndDispatchIdentity
 }
 ```
 
-任何 runtime 或 prompt mutation 都写一份完整 snapshot，不保存 patch。
+online reopen 只信 committed snapshot + commitment；offline audit 可以选择重新运行 current recipe 并
+对比 snapshot，但不能把昂贵 rematerialization 继续当成 online 前置条件。
 
-收益：
+### 2.3 只做 spike，不先采纳
 
-- root 不变量变成真正的 `SessionCreated`；
-- governing configuration 从“两次定位 + 两次读取”变成一个 exact reference；
-- 删除 bootstrap 三事件特判；
-- Prepared、ArtifactSet、reconstructor、offline validator 的 paired setup fields/validators 减半；
-- 不再需要分别维护 prompt/config cursor 地址。
+必须在真实 autobiography + world-understanding、Observation completion 与 multi-tool continuation 上
+比较：
 
-代价是单独修改 runtime config 时会重复 system prompt bytes。setup mutation 相对 request/turn 很少，
-且 EventJournal 默认 zlib；这里应优先选择简单、完整的 state fact。
+- canonical request logical bytes；
+- current Prepared logical/stored bytes；
+- snapshot Prepared logical/stored bytes；
+- 100 / 1,000 requests 的累计 raw amplification；
+- reopen header visits、payload reads、decoded bytes 与 peak live bytes；
+- EventJournal 压缩后重复 system prompt、artifact snapshot、tools 和 suffix 的实际增量。
 
-### 3.2 Prepared 与 Attempt 必须对称
+决策不应只看倍数：还要设单 request 和长期 session 的绝对存储预算。若 snapshot 的存储成本不可接受，
+继续保留 current recipe 是完全合法的结论；这时应转向候选 D，减少 recipe 各实现间的规则复述。
 
-当前 `CompletionRequestPrepared` 同时表示：
+### 2.4 不应混入 spike 的改动
 
-- request 已 materialize；
-- 首次 provider attempt 可能已经开始。
+- 不同时修改 Attempt state machine。
+- 不同时改变 ArtifactSet latest/selection 语义。
+- 不恢复第二种 bootstrap/full-raw Prepared shape。
+- 不因 snapshot 可 reopen 就删除 provenance；raw range、setup 与 artifact selection 仍需审计。
 
-而后续 retry 才写 `CompletionAttemptRestarted`。Prepared 后、provider 调用前崩溃会被误归入
-uncertain window。
+## 3. 候选 B：Prepared 与 provider attempt 对称化
 
-建议 v2：
+### 3.1 当前不对称
+
+current event flow：
 
 ```text
 completion boundary
--> CompletionRequestPrepared       // request durable，尚未调用 provider
--> CompletionAttemptStarted        // 每次调用前都写；自己的 address 是 attempt identity
+-> CompletionRequestPrepared       // request durable，同时是首次 active attempt
+-> AgentActionProduced | CompletionAttemptFailed
+
+CompletionRequestPrepared
+-> CompletionAttemptRestarted      // 第二次及以后 attempt
 -> AgentActionProduced | CompletionAttemptFailed
 ```
 
-retry 也写同一种 `CompletionAttemptStarted`，并 exact-reference 原 Prepared。
+Prepared commit 后、provider 实际发送前发生崩溃，与“请求已发送但结果未知”共享同一个恢复状态。首次
+attempt 和 restart 也由两种 body、两套 chain validation/failpoint 分支表达。
 
-由此可以删除：
-
-- `CompletionAttemptRestarted`；
-- `ReplacesAttemptId`；
-- Prepared 中永远为 null 的 replacement 字段；
-- Failure 中重复的 attempt id；
-- restart attempt-id uniqueness chain；
-- initial/restart 两套 provider routing 与 failpoint 分支。
-
-Prepared head 是安全的 `ReadyToDispatch`；AttemptStarted head 才是 uncertain external call。仍须承认：
-durable Started 与真实网络发送不能原子化，provider idempotency/result lookup/reconcile 仍是最终解。
-
-Attempt identity 建议直接使用 `CompletionAttemptStarted` 的 `EventAddress`。若 provider 需要字符串
-idempotency key，可在 append 成功后 canonical format 该地址。每个 Started 可携带 exact Prepared ref，
-保持 O(1) request lookup，不必沿 retry chain 回溯。
-
-### 3.3 Prepared：把“恢复事实”与“选择解释”分层
-
-当前 `SessionContextPlan` 同时是：
-
-- planner audit；
-- renderer recipe；
-- request reconstruction input；
-- active ArtifactSet assertion；
-- 部分 attempt metadata。
-
-v2 应至少拆成两个概念：
+### 3.2 候选目标
 
 ```text
-SelectionAudit
-  planner/policy identity
-  chosen ArtifactSet / raw range / recalled items
-  budget and explanation
-
-PreparedRequest
-  exact governing configuration ref
-  exact request payload or exact reconstruction recipe
-  tool runtime identity
-  dispatch target identity
-  request commitment
-  execution checkpoint
+completion boundary
+-> CompletionRequestPrepared       // request durable，尚未声明调用 provider
+-> CompletionAttemptStarted        // 每一次调用前都写
+-> AgentActionProduced | CompletionAttemptFailed
 ```
 
-没有真实 producer 的 recall、budget、estimator 字段不要先进入 wire；等 Context Planner 实施时再加入
-`SelectionAudit` 的版本化 schema。
+retry 继续引用 exact source Prepared，但与首次调用使用同一种 `CompletionAttemptStarted`。
 
-这里要区分 **selection strategy** 与 **Prepared wire shape**。删除 legacy `full-raw` codec 不代表
-新会话在首个 ArtifactSet 产生前不能请求 LLM。planner 仍需有一个严格受预算约束的
-`bootstrap-raw` 选择：
+潜在收益：
 
-- 仅当从 governing configuration / session root 到 boundary 的 raw suffix 未超过明确预算时可选；
-- 超预算且尚无 coherent ArtifactSet 时，返回“需要先建 artifact”的 liveness 结果，不能静默 full replay；
-- 若采用 snapshot-authoritative，bootstrap 与 artifact-tail 最终都编码成同一种 Prepared snapshot，
-  差异只留在 `SelectionAudit`；
-- 若保留 recipe-authoritative，则 v2 至少需要 bounded bootstrap recipe 与 coherent artifact recipe，
-  但两者应共享统一 envelope，不能复活三套 manifest/reconstructor。
+- Prepared head 可明确表示 `ReadyToDispatch`；
+- AttemptStarted head 才进入 uncertain external-call window；
+- 首次与 retry 共用同一个 routing、identity chain 和 validator；
+- 可删除 `CompletionAttemptRestarted`、`ReplacesAttemptId` 与 initial/restart 两套状态分支；
+- attempt identity 可考虑直接使用 Started event address，减少另造字符串 identity。
 
-#### 推荐先做的 stored-byte spike
+### 3.3 不能夸大的收益
 
-比较两种权威形态：
+`CompletionAttemptStarted` 仍不能原子化“raw event durable”与“网络请求已经被 provider 接收”。它只把
+安全的 Prepared 状态与 uncertain attempt 状态分开。真正的 exactly-once 仍需要 provider idempotency
+key、result lookup 或显式 reconcile policy。
 
-| 方案 | 恢复 | 主要代价 |
-| --- | --- | --- |
-| R：引用式 recipe | 读取 config/raw/artifact refs 并重新 fold/render | reconstructor 与 renderer version 长期进入 correctness core |
-| S：exact canonical snapshot | 读取 Prepared、校验 hash、decode request | 每次 request 在 raw 中复制 bounded context bytes |
+实施前必须决定：
 
-本报告倾向 **S：snapshot-authoritative + provenance-auditable**：
+- Started event address 是否足以作为内部 attempt identity；
+- provider idempotency key 如何从 durable identity 派生；
+- Prepared 状态 reopen 后是自动 dispatch，还是由显式 driver policy 决定；
+- Started 后无 terminal result 时的 refuse/lookup/restart 合同；
+- v1 kind 的实验 journal 是重建还是离线迁移；不得加入 silent compatibility。
 
-- Prepared 保存 canonical request bytes、codec id 与 SHA-256；
-- Plan 仍记录 raw range、ArtifactSet、contribution hashes 等 provenance；
-- online reopen 只读取 snapshot，不重新运行 renderer；
-- offline validator 可选择重新 materialize 并对比 snapshot，作为昂贵审计，而不是 online correctness
-  前置条件。
+### 3.4 建议切片
 
-理由：
+1. 先写 event-sequence truth table 与 failpoint matrix，不改 production。
+2. 为首次/retry 建立同一 oracle tests。
+3. 对涉及的 event kind 单独升级 body schema；不发动全局 wire cut。
+4. 切换 Engine、tail resolver、full reducer、offline validator。
+5. 删除旧 Restarted kind/path 与重复 fixtures。
+6. 重跑 exact-head CAS、provider failure/reopen 和 1-vs-10001 gates。
 
-- request 大小已经受模型 context window 上限约束；
-- 当前 manifest 已内联 artifact contribution 与 tool definitions；
-- 新增的主要重复只是 bounded raw suffix；
-- EventJournal 默认 zlib，长文本和重复 context 通常可压缩；
-- 可直接删除三 policy reconstructor dispatch 和 renderer fingerprint tuple。
+## 4. 候选 C：ArtifactSet definition 与 active/default selection 解耦
 
-但这会改变 roadmap 早期“引用式优先”的选择，必须先在真实 autobiography/world-understanding +
-multi-tool request 上测量：
+### 4.1 当前混责
 
-- logical request bytes；
-- 当前 manifest stored bytes；
-- snapshot manifest stored bytes；
-- 100 / 1,000 requests 的累计 raw amplification；
-- reopen payload reads、decoded bytes 与 peak live bytes。
+`ArtifactSetCommitted` 当前同时表达：
 
-建议门槛：若 snapshot stored bytes 增长处于可接受的固定倍数/绝对预算，选择 S；否则保留 R，但仍只支持
-一个 v2 coherent recipe，删除 legacy policy 与冗余 identity fields。
-
-### 3.4 ArtifactSet：保留 definition，拆掉 latest-active 混责
-
-coherent ArtifactSet 是长期概念，不建议直接删除。但当前 `ArtifactSetCommitted` 同时表示：
-
-1. immutable set definition；
+1. coherent member set 的 durable definition；
 2. session 当前 active/default set；
-3. activation parent 的 setup checkpoint；
-4. 下一次 request 必须选择 latest activation。
+3. activation Parent 时的 governing setup checkpoint；
+4. online planner 必须选择的 nearest/latest set。
 
-第 4 条与 roadmap 的 planner 候选策略冲突：planner 应允许选择“更早 ArtifactSet + 更长 suffix”。
-
-建议目标：
+Engine、reconstructor 与 offline validator 都会验证 Prepared 引用 raw range 中最新的合法 activation。
+这在没有 Context Planner 时提供了清晰、bounded 的 default，但会阻止未来 planner 选择：
 
 ```text
-ArtifactSetCommitted
-  = immutable coherent candidate definition
-
-ContextPlan / SelectionAudit
-  = 本次 request 实际选择哪个 exact set
-
-ArtifactSetActivated / ContextDefaultsChanged
-  = 只有产品真的需要“session 默认 set”时才引入
+更早但仍 coherent 的 ArtifactSet + 更长但仍在预算内的 raw suffix
 ```
 
-不要在 generic SessionJournal core 中把 nearest/latest set 当成必选 set。
+### 4.2 先做产品语义决定
 
-当前 body 也可瘦身。由于 `ArtifactId` 已 commitment 整个 artifact identity，候选形状可以接近：
+在改 wire 前先回答：
+
+> active/default ArtifactSet 是否是用户可观察、需要跨 request 持久化的 session state？
+
+- **若不是**：`ArtifactSetCommitted` 只需定义 immutable candidate，本次选择完全由 Prepared
+  provenance 表达。
+- **若是**：definition 与 activation 应拆成不同概念；默认 activation 可以影响 planner 默认值，但不应
+  自动等价于“本次 request 唯一合法选择”。
+
+不要在问题尚未回答时仅为减少字段而改 body。
+
+### 4.3 可能的目标形状
 
 ```text
 ArtifactSetCommitted {
-  policySchemaId,
   commonAnchor,
-  coverageConfigurationRef,
+  coverageSetups,
   members: [{ roleId, artifactId }]
+}
+
+ArtifactSetActivated / ContextDefaultsChanged   // 仅在产品确实需要时
+
+CompletionRequestPrepared {
+  exact selected ArtifactSet ref,
+  exact raw suffix provenance,
+  ...
 }
 ```
 
-可删除或迁出：
+候选瘦身项包括：
 
-- activation-current setups：属于 recovery/default activation，不属于 set definition；
-- member 的 artifact kind、target、contribution hash：可由 exact artifact identity 验证；
-- 值相同的 policy id + fingerprint 二元组。
+- 将 activation-current setups 从 immutable definition 移出；
+- 评估 member 的 artifact kind、target、content hash 是否能由 exact artifact identity 验证；
+- 删除值相同的 policy id + fingerprint 二元组。
 
-Prepared 后的 exact reopen 继续由 request snapshot 或 inline per-role contribution 保证；Prepared 前
-sidecar 删除仍是 planner liveness failure，除非未来把 artifact content 提升到 durable Artifact Journal。
+这些删除必须逐项证明仍能在 Prepared **之前**验证 coherence、branch lineage 和 sidecar member；
+不能依赖 Prepared 后的 inline snapshot 倒推 activation 合法性。
 
-### 3.5 Operational semantics：一个 forward kernel，保留 reverse collector
+### 4.4 与应用层 role 的边界
 
-建议提取两个内部组件，而不是引入庞大接口层：
+SessionJournal core 继续只验证 role/member 的结构性 coherence，不硬编码 `autobiography` 或
+`world-understanding`。哪些 role 构成 ChatSession 的最低可用 set，仍属于上层 provisioning/planner
+合同。
+
+## 5. 候选 D：共享正向 operational semantics
+
+### 5.1 仍存在的复述
+
+同一组 `SessionEventKind` 仍被多条路径解释：
+
+- `SessionReducer`：full root-to-head audit fold；
+- `SessionExecutionTailResolver`：reverse dependency collection；
+- `SessionTailContextProjection.FoldSuffix`：seeded forward context fold；
+- `SessionPreparedRequestReconstructor`：request boundary 与 exact reopen validation；
+- `SessionJournalOfflineValidator`：full chronology/provenance validation。
+
+它们不能被粗暴合成“万能 reducer”。reverse collector 决定 online read complexity；full/suffix fold
+决定正向 legality；offline validator 面向不可信 raw。真正可共享的是无 IO、无 collection policy 的
+局部规则。
+
+### 5.2 建议边界
 
 #### `SessionEventSemantics`
 
-统一纯 helper/validator：
+集中纯 helper/validator，例如：
 
-- header/body validation；
-- completion boundary/correlation；
+- header/body 与 direct-parent legality；
+- completion boundary、correlation 与 reason；
 - action/tool call identity；
-- setup/config exact reference；
+- setup exact reference；
 - ArtifactSet membership assertion；
 - reserved tool sequence/runtime identity。
 
@@ -365,231 +339,148 @@ sidecar 删除仍是 planner liveness failure，除非未来把 artifact content
 
 - `FromEmpty()`：供 full reducer；
 - `FromDependencyClosed(seed)`：供 suffix projection；
-- `Apply(event)`：唯一正向 legality transition；
-- 输出完整 `SessionExecutionState` 和可选 conversation effects。
+- `Apply(event)`：统一正向 execution legality；
+- 输出 `SessionExecutionState` 和可选 conversation effects。
 
-wrapper 决定累积 full context、suffix context 或只取 execution state。
+wrapper 决定是否积累完整 context、suffix context，或只消费 execution state。
 
 明确不合并：
 
 - `SessionExecutionTailResolver` 的 reverse dependency collection；
-- `SessionPreparedRequestReconstructor` / offline validator 的编排职责。
+- reconstructor 的 request/provenance 编排；
+- offline validator 的全库 inventory 与 untrusted-boundary 职责。
 
-tail resolver 可以复用纯 validators，但应保留独立 collection 和 checkpoint cut，避免破坏 bounded reads，
-也保留一定的 full-vs-tail differential 独立性。
+### 5.3 更小的先行切口
 
-当前 `FoldSuffix` 的 nullable seed / `InferSeedPhase` API 比真实合同更宽，应改为显式
-`DependencyClosedSeed`；mid-tool seed 必须拒绝。
+`FoldSuffix` 当前仍接受 nullable execution seed，并用 `InferSeedPhase` 扩大输入合同。可以先引入显式
+`DependencyClosedSeed`：
 
-## 4. Legacy 与 manifest 收口
+- seed 必须来自 validated tail recovery；
+- 明确允许的 anchor phase/head kind；
+- mid-tool/open-action seed fail-fast；
+- setup 与 tool execution checkpoint 一起进入 seed。
 
-本节候选已进一步收束为可调度的 [CS-3D6 实施计划](coherent-request-manifest-simplification-plan.md)。
-该计划保留双 setup、Attempt 与 ArtifactSet wire，并只安排一次 Prepared v2 cutover。
+这个切口不改变 wire，也不要求立即统一 full reducer，适合先验证 shared kernel 的真实收益。
 
-### 4.1 直接删除的候选
+### 5.4 防止“共享”破坏 oracle
 
-建议不再为旧实验 journal 保留 runtime/wire compatibility：
+- 保留 full-vs-tail differential tests。
+- reverse collector 不直接调用 full fold。
+- shared helper 不读取 journal、不决定 walk/stop boundary。
+- mutation corpus 应逐字段破坏 Parent、attempt、setup、tool sequence 与 artifact provenance。
+- 不以减少异常消息数量作为成功标准；目标是让同一 legality rule 只有一个权威实现。
 
-- 删除 `SessionRequestContextPolicy.LegacyFullRaw` 与 live full-raw materializer；
-- 删除无 writer 的 `explicit-artifact-tail`；
-- v2 不 decode 旧 full-raw/explicit Prepared；
-- 删除指向 full-raw 的 `SessionRequestManifestDefaults` alias；
-- `Project()` / `ReplayHistory()` 保留 full semantics，但不再用于 live request。
+## 6. 候选 E：Engine 职责拆分
 
-删除的是“无界 root-to-boundary materialization 与 legacy wire”，不是新会话 bootstrap 能力。S0/S2
-必须同时确定上一节的 bounded `bootstrap-raw` selection；否则默认要求 active ArtifactSet 的 engine
-无法服务刚创建的 session。
+`SessionJournalEngine` 当前约 1,972 LOC，同时承担 public facade、exact-head CAS、setup mutation、
+artifact readiness、request preparation、provider dispatch、tool loop 与 recovery routing。
 
-真实 legacy upgrade export 不包含这些新式 Prepared；它仍可通过 `import-session-journal` 写入 v2。
-包含旧 Prepared 的实验 repo 应重建，不应给 v2 留 compatibility branches。
-
-### 4.2 v2 manifest 至少应删除
-
-- `Attempt.ReplacesAttemptId`；
-- duplicated plan/attempt reason；
-- `Plan.ModelProfileId`；
-- placeholder `RecalledInputs`；
-- fake `EstimatedInputTokens`；
-- hard-coded planner/rendering identity tuple；
-- 重复的 tool codec id；
-- fixed commitment algorithm；
-- 重复的 completion surface。
-
-应保留：
-
-- exact request bytes或单一 recipe；
-- governing configuration ref；
-- raw range/hash 与 exact ArtifactSet/provenance；
-- tool definitions 或 snapshot 中的 tools；
-- tool runtime implementation/capability identity；
-- dispatch connection/adapter/client identity；
-- request codec id + SHA-256；
-- last-issued tool execution sequence；
-- completion boundary identity。
-
-## 5. 实现结构上的次级机会
-
-协议收口后再拆 `SessionJournalEngine`。在 wire 未稳定前机械分文件只会移动复杂度。
-
-建议最终内部职责：
+长期内部职责可以接近：
 
 ```text
 SessionJournalEngine             public facade / exact-head CAS
 SessionRecoveryService           reverse tail collection
-SessionRequestCoordinator        plan, prepare, dispatch, reopen
+SessionRequestCoordinator        prepare, commit, dispatch, reopen
 SessionToolLoopDriver             reserve, execute, observe
-SessionConfigurationResolver     one sticky configuration fact
-SessionAuditProjector            full replay + offline oracle
+SessionArtifactSetResolver        readiness / selection validation
+SessionAuditProjector             full replay + offline oracle
 ```
 
-不要求为每项引入 interface；内部 sealed class + 明确输入输出即可。
+这不是要求每项都引入 interface。优先使用 internal sealed class + 明确输入输出，保留 Engine 作为
+transaction/CAS owner。
 
-测试应从大量 hand-built policy fixture 迁向：
+拆分时机：
 
-- 一个 current-wire coherent fixture builder；
-- legal trace generator；
-- deterministic one-field mutation corpus；
-- full fold / suffix fold / tail resolver state differential；
-- 少量 canonical wire goldens；
-- 1 vs 10k/10001 complexity invariants。
+- request coordinator 最好在 snapshot/recipe 决策之后稳定；
+- provider driver 最好在 Attempt 对称化之后稳定；
+- ArtifactSet resolver 最好在 definition/activation 语义明确之后稳定；
+- 与这些候选无关的纯 setup/readiness helper 可以提前移动，但每次移动都应证明行为与计数器不变。
 
-这能删除 legacy fixture 复制，同时比冻结异常整句文本更稳。
+因此本项是结构性收口，不应成为独立“大搬家”。
 
-## 6. 两条可选路线
+## 7. 建议研究与实施顺序
 
-### 路线 A：保守、行为保持
+### P0：Request snapshot stored-byte spike
 
-1. 抽 `SessionEventSemantics`。
-2. shadow 实现 `SessionOperationalFold`。
-3. 迁移 `FoldSuffix` 与 `SessionReducer`。
-4. 统一 exact-reference helpers。
-5. 拆 Engine 文件。
+只增加 benchmark/报告，不改 wire。产出明确的 storage/read/memory 数据与采用/否决结论。
 
-预期净删约 250～400 production LOC，主要收益是减少语义漂移；wire 与旧 request policies 不变。
+### P1：Dependency-closed seed 与 pure semantics 小切口
 
-局限：最重的 manifest/reconstructor/attempt/activation 复杂度仍在。
+先收紧 `FoldSuffix` 输入合同，再提取少量已被三个以上 consumer 复述的纯 validator。每个切口保持
+full-vs-tail differential 与 1-vs-10001 指标。
 
-### 路线 B：一次 wire v2 归一化（推荐）
+### P2：Attempt symmetry ADR 与实现
 
-先做 stored-byte spike 与 ArtifactSet semantic decision，然后：
+先冻结 crash-state truth table、provider policy 和 failpoint matrix，再做单-kind/相关-kind wire cut。
+它与 request snapshot 可以独立决策，不应打包成一次大迁移。
 
-1. 删除 live full-raw 与 explicit legacy，测试迁到 current coherent fixture。
-2. 用完整 `SessionConfiguration` 取代双 setup stream。
-3. 拆 `Prepared` / `AttemptStarted`，首次与 retry 对称。
-4. 采用 snapshot-authoritative，或单一 coherent recipe 的 Prepared v2。
-5. 把 ArtifactSet 收成 immutable candidate，取消 latest-only selection。
-6. wire 稳定后提取 forward operational kernel。
-7. 最后拆 Engine、合并测试矩阵并重跑真实 import。
+### P3：ArtifactSet 产品语义决定
 
-预期可以删除：
+等 Context Planner/default-selection 需求足够具体后，决定：
 
-- legacy live materializer 约 120～140 LOC；
-- legacy policy codec/reconstructor 约 250～400 LOC；
-- 约 500～800 LOC policy-specific tests/fixtures；
-- request snapshot 若采用，可进一步大幅缩小 598 LOC reconstructor；
-- shared kernel 再净删约 250～400 LOC。
+- immutable definitions only；或
+- definition + explicit default activation。
 
-这些是方向性估算，目标不是追逐 LOC，而是把“需要同时理解的协议”从三套收成一套。
+只有决定完成后才设计瘦身 body 和 selection validator。
 
-## 7. 推荐实施顺序
+### P4：Shared operational fold 与 Engine 收口
 
-### S0：三项决策实验
+根据 P1 的实际净收益决定是否继续形成完整 kernel。随后按已经稳定的 request、attempt、ArtifactSet
+边界拆 Engine。
 
-- **S0a Request snapshot storage spike**：真实 artifact-tail + multi-tool requests，比较 recipe/snapshot
-  stored bytes 与 reopen reads。
-- **S0b ArtifactSet semantics**：确认 `active/default set` 是否为用户可见的长期 session state。
-  - 若不是：只保留 immutable set + per-request plan。
-  - 若是：definition 与 activation 分事件，不再 latest-equals-selected。
-- **S0c Bootstrap semantics**：确定首个 coherent ArtifactSet 前允许的 raw budget、超预算 liveness
-  结果，以及它如何归一到同一个 Prepared wire。
+这条顺序刻意避免再次制造一个同时修改 Configuration、Prepared、Attempt 与 ArtifactSet 的整体 wire
+迁移。current per-kind versioning 允许每个候选独立设计、独立 review、独立重建实验 journal。
 
-产出：wire v2 ADR，尚不改 production protocol。
+## 8. 共同验收闸门
 
-### S1：Current-wire test foundation
-
-- 建立 coherent fixture builder；
-- 把通用 engine/reopen/failpoint tests 从 full-raw fixture 迁出；
-- 保留当前 bytes，先证明迁移不改变行为。
-
-### S2：Request/Attempt v2
-
-- 删除 legacy policies；
-- 引入 Prepared-only + AttemptStarted；
-- 采用 S0 选定的 snapshot 或 single-recipe manifest；
-- 删除 duplicate fields 与 attempt-id replacement chain；
-- 不保留 v1 decode compatibility。
-
-### S3：Configuration v2
-
-- `SessionCreated` 内嵌完整 configuration；
-- 增加 full-snapshot `SessionConfigurationChanged`；
-- paired setup refs/cursor/validators 收成一个。
-
-### S4：ArtifactSet role split
-
-- slim immutable set definition；
-- planner 按 request 选择 exact set；
-- 只有确认需要时才新增 default activation；
-- offline validator 不再要求 Prepared 引用 raw range 中“最后一个”set。
-
-### S5：Operational kernel
-
-- 先 shared semantics；
-- 再 shadow kernel；
-- 迁移 suffix fold 与 full reducer；
-- tail resolver 只 selective reuse validators；
-- 删除旧 switches。
-
-### S6：结构与迁移收口
-
-- 拆 Engine；
-- 删除 legacy tests/helpers；
-- 重跑 legacy export → v2 import；
-- 重建 DerivedRecap / ArtifactSet；
-- strict offline validate；
-- 更新 roadmap 与主干设计。
-
-S2～S4 是同一个 wire v2 cutover 的三个实现工作包，不应把中间形态宣传为可长期保留的兼容合同。
-可以按小 commit 逐步实现和 review，但只在三者全部完成后重建实验 journal、生成新 golden 并宣布 v2
-baseline，避免先造“新 request + 旧双 setup + 旧 latest activation”后又为它维护迁移路径。
-
-## 8. 验收闸门
-
-每个切片至少保持：
+所有候选实施时都必须保持：
 
 - `TailResolver(head).State == FullFold(head).ExecutionState`；
 - branch/rewind/divergent refs fail-fast；
 - Prepared 后 sidecar 删除仍 exact reopen；
-- Prepared head 明确 safe-to-dispatch，AttemptStarted head 明确 uncertain；
 - tool operation id + reserved sequence 在所有 failpoint 后稳定；
 - 1 vs 10001 cold prefix 的 online header/payload/decoded bytes 不增长；
-- online `ChronologicalChainReadCount == 0`、`FullProjectionInvocationCount == 0`；
+- online `ChronologicalChainReadCount == 0`；
+- online `FullProjectionInvocationCount == 0`；
 - offline validator 严格只读，坏 tail 不修复原 repo；
-- SessionJournal 不依赖 Agent.Core；
-- real legacy export 能导入新 repo 并通过 validator；
-- fresh session 在预算内可 bootstrap，超预算且无 ArtifactSet 时显式停止而非 root replay；
-- worktree 中不存在旧 policy alias、compat decoder 或 silent full replay。
+- SessionJournal 不依赖 `Agent.Core`；
+- real legacy export 可导入全新 repo，并能建立 coherent ArtifactSet；
+- worktree 中不重新出现 legacy policy alias、compat decoder 或 silent full replay。
 
 若采用 request snapshot，额外验收：
 
 - snapshot SHA 与 canonical bytes exact；
 - provider-facing request 与 prepare 时逐字节相同；
-- stored-byte benchmark 达到 S0 设定门槛；
-- snapshot decode 不依赖当前 renderer/planner；
+- stored-byte benchmark 达到 P0 设定的绝对预算；
+- snapshot decode 不依赖 current renderer/planner；
 - selection provenance 仍可离线审计。
 
-## 9. 最终建议
+若采用 Attempt 对称化，额外验收：
 
-不要立即从 `SessionJournalEngine` 抽一批 helper 就宣布“复杂度已经解决”。那只能改善文件形状，无法减少
-协议数量。
+- Prepared-only head 与 AttemptStarted head 的恢复 phase 明确不同；
+- 首次与 retry 使用同一 attempt event 和 driver；
+- Started 前/后所有 failpoint 的 refuse/lookup/restart 行为有确定测试；
+- exact-head CAS 与 attempt identity 在 crash/reopen 后稳定。
 
-当前最合适的路线是：
+若调整 ArtifactSet 语义，额外验收：
 
-1. 先做 request snapshot storage spike；
-2. 明确 ArtifactSet definition 与 activation 的产品语义；
-3. 冻结一个 single-policy、symmetric-attempt、single-configuration 的 wire v2；
-4. 利用项目未发布、journal 可重建的窗口一次性切断 legacy；
-5. wire 稳定后再抽共享 operational kernel。
+- definition、default activation 与 per-request selection 三者不再混用；
+- planner 可选的 set 必须在 current Parent lineage 上且 coverage/setup coherence 可验证；
+- Prepared 始终 pin exact selected set；
+- Prepared 前缺 member 明确 not-ready，不能借 Prepared snapshot 自证。
 
-D5 的价值没有被否定：它证明了 bounded recovery 所需的事实边界。现在要做的是把这些已验证事实重新
-排列成更少、更正交的协议，而不是继续在过渡形状上叠加 Context Planner 和 provider capability。
+## 9. 给后续 Coding Agent 的决策原则
+
+不要把“文件变小”当成协议已经化简。下一阶段优先回答三个可证伪的问题：
+
+1. exact request snapshot 的真实存储成本，是否值得换掉 recipe reconstruction correctness core？
+2. active/default ArtifactSet 是否真是产品状态，还是 current planner 尚未出现时的临时选择策略？
+3. 哪些 legality rule 确实在三个以上路径复述，提取后又不会损害 full-vs-tail oracle 独立性？
+
+Attempt 对称化的问题则更明确：它能澄清 durable request 与 uncertain provider call 的状态边界，但不能
+替代 provider idempotency/reconcile。只有在这条边界的 driver policy 也被写清楚后，wire 化简才是
+完整的。
+
+当前 trunk 已经证明 tail-only recovery 与 coherent artifact context 能工作。后续化简应以“小实验、
+单语义切片、per-kind wire cut”为单位推进，不再为已删除的 legacy 表面付费，也不再把多个尚未决策的
+协议一次性绑在一起。
