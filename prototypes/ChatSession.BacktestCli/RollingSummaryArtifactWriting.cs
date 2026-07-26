@@ -61,7 +61,6 @@ internal sealed class SessionJournalDerivedRecapWriter
     private readonly string _producerFingerprint;
     private int _prepareState;
     private EventAddress _sourceRawHead;
-    private SJ.SessionGoverningSetup? _governingSetup;
     private RollingSummaryArtifactLink? _previous;
 
     private SessionJournalDerivedRecapWriter(
@@ -111,9 +110,8 @@ internal sealed class SessionJournalDerivedRecapWriter
         }
 
         ct.ThrowIfCancellationRequested();
-        SJ.SessionGoverningSetup governingSetup;
         using (var engine = SJ.SessionJournalEngine.Open(_repoPath)) {
-            governingSetup = engine.ResolveGoverningSetup(sourceRawHead, ct);
+            _ = engine.ResolveGoverningSetup(sourceRawHead, ct);
         }
 
         DerivedRecapArtifact? latest = await _store.TryReadLatestAsync(_lineageKey, ct).ConfigureAwait(false);
@@ -125,7 +123,6 @@ internal sealed class SessionJournalDerivedRecapWriter
         }
 
         _sourceRawHead = sourceRawHead;
-        _governingSetup = governingSetup;
         Volatile.Write(ref _prepareState, 2);
     }
 
@@ -151,8 +148,13 @@ internal sealed class SessionJournalDerivedRecapWriter
                 );
             }
 
-            SJ.SessionGoverningSetup governingSetup = _governingSetup
-                ?? throw new InvalidOperationException("Rolling summary artifact writer governing setup is unavailable.");
+            SJ.SessionGoverningSetup governingSetup;
+            using (var engine = SJ.SessionJournalEngine.Open(_repoPath)) {
+                governingSetup = engine.ResolveGoverningSetup(
+                    candidate.SourceEndInclusive,
+                    ct
+                );
+            }
             var request = new DerivedRecapWriteRequest(
                 ArtifactKind: DerivedRecapArtifactKinds.RollingSummary,
                 ProfileId: _profile.MaintainerId,

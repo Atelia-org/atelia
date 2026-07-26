@@ -164,9 +164,11 @@ public sealed class RollingSummaryReplaySourceTests : IDisposable {
     public async Task ArtifactWriter_SuccessWritesLinkedArtifactWithSnapshotProvenance() {
         string repoPath = CreateSessionJournalWithGoverningPromptChange();
         SessionHistoryReplaySnapshot replay = ReadHistoryReplay(repoPath);
-        SJ.SessionGoverningSetup governingSetup;
+        SJ.SessionGoverningSetup sourceHeadSetup;
         using (var engine = SJ.SessionJournalEngine.Open(repoPath)) {
-            governingSetup = engine.ResolveGoverningSetup(EventAddressTextCodec.Parse(replay.SourceRawHead));
+            sourceHeadSetup = engine.ResolveGoverningSetup(
+                EventAddressTextCodec.Parse(replay.SourceRawHead)
+            );
         }
         var runner = CreateRunner(
             SessionJournalRollingSummaryReplaySource.Open(repoPath),
@@ -187,13 +189,29 @@ public sealed class RollingSummaryReplaySourceTests : IDisposable {
         var store = DerivedRecapStore.Open(repoPath);
         var artifact = await store.TryReadArtifactAsync(record.ArtifactId);
         Assert.NotNull(artifact);
+        SJ.SessionGoverningSetup anchorSetup;
+        using (var engine = SJ.SessionJournalEngine.Open(repoPath)) {
+            anchorSetup = engine.ResolveGoverningSetup(
+                artifact.AnchorRawEvent
+            );
+        }
         Assert.Equal(DerivedRecapArtifactKinds.RollingSummary, artifact.ArtifactKind);
         Assert.Equal(EventAddressTextCodec.Parse(record.SourceRawHead!), artifact.SourceRawHead);
         Assert.Null(artifact.SourceStartExclusive);
         Assert.Equal(EventAddressTextCodec.Parse(record.SourceEndInclusive!), artifact.SourceEndInclusive);
         Assert.Equal(artifact.SourceEndInclusive, artifact.AnchorRawEvent);
-        Assert.Equal(governingSetup.RuntimeConfigSetupAddress, artifact.GoverningRuntimeConfigSetup);
-        Assert.Equal(governingSetup.SystemPromptSetupAddress, artifact.GoverningSystemPromptSetup);
+        Assert.NotEqual(
+            sourceHeadSetup.SystemPromptSetupAddress,
+            anchorSetup.SystemPromptSetupAddress
+        );
+        Assert.Equal(
+            anchorSetup.RuntimeConfigSetupAddress,
+            artifact.GoverningRuntimeConfigSetup
+        );
+        Assert.Equal(
+            anchorSetup.SystemPromptSetupAddress,
+            artifact.GoverningSystemPromptSetup
+        );
         Assert.Equal("rolling-summary", artifact.ProfileId);
         Assert.Equal(record.Invocation, artifact.Invocation);
         Assert.Equal(record.CallLogPaths, artifact.CallLogPaths);
