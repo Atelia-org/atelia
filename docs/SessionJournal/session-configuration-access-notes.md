@@ -398,7 +398,7 @@ artifact 被删除，CS-3C 仍可从 raw manifest 内联 snapshot、raw suffix�
 ## 8. 推荐的下一步工作包
 
 > **历史实施记录（CS-3A～C）**：以下三节保留当时的 v1/full-raw/explicit 增量落点，帮助解释
-> 决策演进；D6D 已删除这些 legacy policy 与 reader。current 合同以本文 §2、§8 和
+> 决策演进；D6D 已删除这些 legacy policy 与 reader。current 合同以本文 §2、§7 和
 > `CompletionRequestPrepared` v2 为准。
 
 ### CS-3A：Minimal Plan/Manifest Checkpoint（历史实施记录）
