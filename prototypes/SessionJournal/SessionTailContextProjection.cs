@@ -243,7 +243,9 @@ internal static class SessionTailContextProjection {
         string? activeCorrelationId = executionSeed?.State.ActiveCorrelationId;
         SessionToolRuntimeIdentity? pendingToolRuntimeIdentity = null;
         CompletionRequestPreparedBody? sourcePrepared = null;
+        EventAddress? sourcePreparedAddress = null;
         string? activeAttemptId = null;
+        EventAddress? activeAttemptAddress = null;
         SessionEventKind? priorKind = executionSeed?.State.HeadKind;
 
         foreach (DecodedSessionEvent ev in events) {
@@ -267,12 +269,16 @@ internal static class SessionTailContextProjection {
                     CompletionAttemptRestartedBody restarted =
                         RequireBody<CompletionAttemptRestartedBody>(ev);
                     if (sourcePrepared is null
+                        || sourcePreparedAddress is null
+                        || restarted.SourcePreparedAddress != sourcePreparedAddress
+                        || ev.Parent != activeAttemptAddress
                         || !string.Equals(restarted.ReplacesAttemptId, activeAttemptId, StringComparison.Ordinal)) {
                         throw new InvalidDataException(
                             $"{ev.Kind} at {ev.Address} does not replace the active suffix Prepared attempt."
                         );
                     }
                     activeAttemptId = restarted.AttemptId;
+                    activeAttemptAddress = ev.Address;
                     break;
                 }
                 case SessionEventKind.CompletionRequestPrepared: {
@@ -302,7 +308,9 @@ internal static class SessionTailContextProjection {
                     executionSequenceCheckpoint =
                         prepared.Execution.LastIssuedToolExecutionSequence;
                     sourcePrepared = prepared;
+                    sourcePreparedAddress = ev.Address;
                     activeAttemptId = prepared.Attempt.AttemptId;
+                    activeAttemptAddress = ev.Address;
                     activeCorrelationId = prepared.Attempt.CorrelationId;
                     break;
                 }
@@ -312,7 +320,9 @@ internal static class SessionTailContextProjection {
                     activeCorrelationId =
                         $"atelia.session-journal.turn.v1:{EventAddressTextCodec.Format(ev.Address)}";
                     sourcePrepared = null;
+                    sourcePreparedAddress = null;
                     activeAttemptId = null;
+                    activeAttemptAddress = null;
                     break;
                 case SessionEventKind.AgentActionProduced:
                 case SessionEventKind.ImportedAgentAction: {
@@ -330,17 +340,25 @@ internal static class SessionTailContextProjection {
                     executionSequenceCheckpoint =
                         actionBody.Execution.LastIssuedToolExecutionSequence;
                     if (ev.Kind == SessionEventKind.AgentActionProduced) {
+                        SessionToolRuntimeIdentity? expectedRuntimeIdentity =
+                            action.ToolCalls.Count == 0
+                                ? null
+                                : sourcePrepared?.ToolSet.RuntimeIdentity;
                         if (sourcePrepared is null
+                            || ev.Parent != activeAttemptAddress
                             || !string.Equals(actionBody.CorrelationId, sourcePrepared.Attempt.CorrelationId, StringComparison.Ordinal)
                             || actionBody.Execution != sourcePrepared.Execution
-                            || action.ToolCalls.Count > 0
-                                && actionBody.ToolRuntimeIdentity != sourcePrepared.ToolSet.RuntimeIdentity) {
+                            || actionBody.ToolRuntimeIdentity != expectedRuntimeIdentity) {
                             throw new InvalidDataException(
                                 $"{ev.Kind} at {ev.Address} does not match its suffix Prepared snapshot."
                             );
                         }
                     }
                     activeCorrelationId = actionBody.CorrelationId;
+                    sourcePrepared = null;
+                    sourcePreparedAddress = null;
+                    activeAttemptId = null;
+                    activeAttemptAddress = null;
                     context.Add(action);
                     if (action.ToolCalls.Count > 0) {
                         pendingToolRuntimeIdentity = actionBody.ToolRuntimeIdentity
