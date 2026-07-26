@@ -174,20 +174,31 @@ public sealed class SessionJournalRequestContextPerformanceTests : IDisposable {
     private static async ValueTask<RequestCost> CompleteObservationAsync(
         string path
     ) {
+        SessionJournalEngine? observedEngine = null;
+        SessionJournalReadDiagnostics previousProviderReads = default;
+        var providerReadDeltas =
+            new List<SessionJournalReadDiagnostics>();
         var client = new CapturingCompletionClient(request =>
             new CompletionResult(
                 new ActionMessage([
                     new ActionBlock.Text("observation-complete")
                 ]),
                 Invocation(request)
+            ),
+            _ => CaptureProviderReadDelta(
+                observedEngine,
+                ref previousProviderReads,
+                providerReadDeltas
             )
         );
         using var engine = SessionJournalEngine.Open(
             path,
             CreateRuntime(client)
         );
+        observedEngine = engine;
         SessionJournalReadDiagnostics before =
             engine.CaptureReadDiagnostics();
+        previousProviderReads = before;
 
         TurnResult result = await engine.SendAsync(
             "measured-observation",
@@ -199,12 +210,16 @@ public sealed class SessionJournalRequestContextPerformanceTests : IDisposable {
             result.Message.GetFlattenedText()
         );
         Assert.Single(client.Requests);
-        return CaptureCost(engine, before);
+        return CaptureCost(engine, before, providerReadDeltas);
     }
 
     private static async ValueTask<RequestCost>
         CompleteTwoToolContinuationsAsync(string path) {
         int responseIndex = 0;
+        SessionJournalEngine? observedEngine = null;
+        SessionJournalReadDiagnostics previousProviderReads = default;
+        var providerReadDeltas =
+            new List<SessionJournalReadDiagnostics>();
         var client = new CapturingCompletionClient(request =>
             responseIndex++ switch {
                 0 => new CompletionResult(
@@ -229,7 +244,12 @@ public sealed class SessionJournalRequestContextPerformanceTests : IDisposable {
                     ]),
                     Invocation(request)
                 )
-            }
+            },
+            _ => CaptureProviderReadDelta(
+                observedEngine,
+                ref previousProviderReads,
+                providerReadDeltas
+            )
         );
         var tool = new NoopTool();
         ToolSession tools =
@@ -238,8 +258,10 @@ public sealed class SessionJournalRequestContextPerformanceTests : IDisposable {
             path,
             CreateRuntime(client, tools)
         );
+        observedEngine = engine;
         SessionJournalReadDiagnostics before =
             engine.CaptureReadDiagnostics();
+        previousProviderReads = before;
 
         TurnResult result = await engine.SendAsync(
             "measured-tools",
@@ -259,12 +281,13 @@ public sealed class SessionJournalRequestContextPerformanceTests : IDisposable {
                 StringComparison.Ordinal
             )
         );
-        return CaptureCost(engine, before);
+        return CaptureCost(engine, before, providerReadDeltas);
     }
 
     private static RequestCost CaptureCost(
         SessionJournalEngine engine,
-        SessionJournalReadDiagnostics before
+        SessionJournalReadDiagnostics before,
+        IReadOnlyList<SessionJournalReadDiagnostics> providerReadDeltas
     ) {
         SessionJournalReadDiagnostics reads =
             engine.CaptureReadDiagnostics() - before;
@@ -278,7 +301,20 @@ public sealed class SessionJournalRequestContextPerformanceTests : IDisposable {
         Assert.Equal(0, reads.ChronologicalChainReadCount);
         Assert.Equal(0, reads.ChronologicalEventCount);
         Assert.Equal(0, reads.FullProjectionInvocationCount);
-        return new RequestCost(reads, lifetime);
+        Assert.NotEmpty(providerReadDeltas);
+        Assert.All(providerReadDeltas, static providerReads => {
+            Assert.True(providerReads.HeaderPreviewReadCount > 0);
+            Assert.True(providerReads.PayloadReadCount > 0);
+            Assert.True(providerReads.LogicalPayloadByteCount > 0);
+            Assert.Equal(0, providerReads.ChronologicalChainReadCount);
+            Assert.Equal(0, providerReads.ChronologicalEventCount);
+            Assert.Equal(0, providerReads.FullProjectionInvocationCount);
+        });
+        return new RequestCost(
+            reads,
+            lifetime,
+            providerReadDeltas.ToArray()
+        );
     }
 
     private static void AssertInvariantCost(
@@ -301,6 +337,23 @@ public sealed class SessionJournalRequestContextPerformanceTests : IDisposable {
             shortPrefix.Lifetime.PeakLiveLogicalPayloadBytes,
             longPrefix.Lifetime.PeakLiveLogicalPayloadBytes
         );
+        Assert.Equal(
+            shortPrefix.ProviderReadDeltas,
+            longPrefix.ProviderReadDeltas
+        );
+    }
+
+    private static void CaptureProviderReadDelta(
+        SessionJournalEngine? engine,
+        ref SessionJournalReadDiagnostics previous,
+        ICollection<SessionJournalReadDiagnostics> destination
+    ) {
+        SessionJournalReadDiagnostics current =
+            (engine ?? throw new InvalidOperationException(
+                "The measured engine must be assigned before provider invocation."
+            )).CaptureReadDiagnostics();
+        destination.Add(current - previous);
+        previous = current;
     }
 
     private static async ValueTask<TestArtifactSet> WriteArtifactSetAsync(
@@ -435,7 +488,8 @@ public sealed class SessionJournalRequestContextPerformanceTests : IDisposable {
 
     private sealed record RequestCost(
         SessionJournalReadDiagnostics Reads,
-        SessionJournalPayloadLifetimeDiagnostics Lifetime
+        SessionJournalPayloadLifetimeDiagnostics Lifetime,
+        IReadOnlyList<SessionJournalReadDiagnostics> ProviderReadDeltas
     );
 
     private sealed record TestArtifactSet(
@@ -470,10 +524,12 @@ public sealed class SessionJournalRequestContextPerformanceTests : IDisposable {
     }
 
     private sealed class CapturingCompletionClient(
-        Func<CompletionRequest, CompletionResult> response
+        Func<CompletionRequest, CompletionResult> response,
+        Action<CompletionRequest>? onRequest = null
     ) : ICompletionClient {
         private readonly Func<CompletionRequest, CompletionResult> _response =
             response;
+        private readonly Action<CompletionRequest>? _onRequest = onRequest;
 
         public string Name => "performance-client";
 
@@ -489,6 +545,7 @@ public sealed class SessionJournalRequestContextPerformanceTests : IDisposable {
             _ = observer;
             cancellationToken.ThrowIfCancellationRequested();
             Requests.Add(request);
+            _onRequest?.Invoke(request);
             return Task.FromResult(_response(request));
         }
     }
