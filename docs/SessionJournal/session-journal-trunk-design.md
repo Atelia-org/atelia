@@ -1,7 +1,7 @@
 # SessionJournal 主干设计基线
 
-> **状态**：Trunk Design Baseline + CS-3A/B/C + CS-3D0 Diagnostics
-> **日期**：2026-07-26
+> **状态**：Current Trunk / CS-3A～CS-3D6 coherent-only Prepared v2
+> **日期**：2026-07-27
 > **底层依赖**：[EventJournal 使用指南](../../src/EventJournal/README.md)、[EventJournal 功能需求与粗粒度设计基线](../EventJournal/event-journal-requirements-and-design.md)
 > **上层路线图**：[ChatSession 事件源与长期上下文架构路线图](../ChatSession/event-sourced-session-architecture-roadmap.md)
 > **后续恢复设计**：[Tail-only Execution Recovery Design](tail-execution-recovery-design.md)
@@ -19,9 +19,9 @@ Raw Event Journal（事实源）+ Recoverable Execution State Machine（执行�
 |:---|:---|
 | 单 store = 单 session、`main` branch | 多 session、跨 session 知识 artifact |
 | 领域事件 envelope + EventKind | ContextPlanner / 预算化上下文选择 |
-| 逐事件落盘的 tool-loop 状态机 | DerivedArtifact / recap / 自传 / 世界理解 |
+| 逐事件落盘的 tool-loop 状态机 | 应用层 maintainer 内容策略 / retrieval |
 | full replay audit reducer + tail execution recovery | Retrieval read models（FTS/向量/图） |
-| full-raw / explicit-artifact-tail / coherent-artifact-tail minimal plan + canonical request manifest | 预算化 selection policy（CS-6） |
+| coherent ArtifactSet + dependency-closed suffix + Prepared v2 exact manifest | 预算化 selection policy（CS-6） |
 | reopen 恢复、failpoint 测试 | exactly-once 补偿、非幂等工具暂停协议 |
 
 主干与 roadmap 阶段对应：本文 = **CS-0（reducer/replay contract）+ CS-1（raw 垂直切片）+ CS-3/CS-4 的执行机骨架**的收敛实现基线。
@@ -30,13 +30,16 @@ Raw Event Journal（事实源）+ Recoverable Execution State Machine（执行�
 
 1. **项目位置**：`prototypes/SessionJournal`，命名空间 `Atelia.SessionJournal`。老 `ChatSession` 原地不动，留作对照与迁移源。
 2. **工具粒度**：每次工具调用落 **两个事件**（`tool-execution-started` + `tool-result-observed`）。崩溃点精确到"哪个调用在途"。
-3. **请求持久化**：CS-3A 已在每次 completion 调用前提交合并式
-   `completion-request-prepared`：内嵌 minimal `ContextPlan` 与 canonical request manifest。首版
-   selection policy 是 full raw；CS-3B 增加调用方指定 exact artifact 的
-   `explicit-artifact-tail`，CS-3D4 再增加 exact 多成员、支持 visible tools 的
-   `coherent-artifact-tail`。manifest 引用 setup/raw 范围，内联当前尚无独立 object store 的完整
-   tool-definition snapshot；tail plan 还内联有界的 materialized artifact header，使可删除 derived
-   artifact 不成为 prepared request 的恢复依赖，但仍不复制整份 rendered request body。
+3. **请求持久化**：每次 completion 调用前提交 `completion-request-prepared` v2。current wire 只有
+   coherent artifact-tail recipe：exact `ArtifactSetCommitted` + dependency-closed raw suffix +
+   paired setup refs + visible tool/runtime identity + inline singleton artifact contributions +
+   canonical commitment。D6D 前的 full-raw / explicit policy 已从 codec/reconstructor 删除；旧实验
+   journal 走离线重建，不加 compatibility reader。
+
+CS-3D6 后 online `Open` / `ResumeAsync` / `SendAsync` / tool loop 全部使用
+`SessionExecutionTailResolver`；Prepared reconstruction 以 activation `coverageSetups` 为 seed，
+验证 `currentSetups` 与 suffix fold 的最终 paired setup。完整 `Project()` / `ReplayHistory()` 只作为
+显式 audit/reference oracle，strict offline validator 才有意执行全链 inventory。
 
 ## 1. 核心洞察：链头决定恢复入口，replay 补全执行状态
 
@@ -83,11 +86,10 @@ ToolResult                           还有未结算 call? → 下一个 ToolSta
 - `Prepared` / `Restarted` 后崩 → 投影为 `AwaitingCompletion`。默认 `RefuseUncertain` 不调用
   provider、不改 journal；显式 `RestartWithNewAttempt` 从 source manifest 重建同一 canonical
   request，先 append 新 Restarted，再调用。
-- provider 明确返回 `Incomplete` / `Failed`，或 host 已收到 response 但确认它违反已提交的 request
-  policy → append `completion-attempt-failed` 后抛出；reopen 投影为 `TurnFailed`。例如
-  `explicit-artifact-tail` 的 success response 含 tool calls 时，使用保留 reason
-  `atelia.host.unsupported-tool-call`。transport exception / cancellation 没有已知 outcome，仍停在
-  `AwaitingCompletion`，不得伪造失败事实。
+- provider 明确返回 `Incomplete` / `Failed`，或 host 已收到 response 但确认它违反已提交 request
+  snapshot（例如 durable tool set 为空却返回 tool call）→ append
+  `completion-attempt-failed` 后抛出；reopen 投影为 `TurnFailed`。transport exception /
+  cancellation 没有已知 outcome，仍停在 `AwaitingCompletion`，不得伪造失败事实。
 - `ToolStarted` 后、`ToolResult` 前崩 → 该工具**可能已执行**。主干默认工具幂等（见 §6），安全重跑；非幂等工具的 uncertain/paused 协议留给 CS-4 完整版。
 - `Action` 后崩 → 按 kind 继续结算工具或续环。
 
@@ -243,10 +245,11 @@ var outcome = journal.CommitToRef(
 ```
 
 - 恢复读头：`journal.OpenBranch("main")` → `journal.GetHead(refId)` → `ReadEventHeaderPreview(head)` 取 kind。
-- 上下文重建：`journal.ReadChronologicalChain(head)` → 逐个 `ReadEvent` 解 envelope → reducer。
+- 显式审计投影：`journal.ReadChronologicalChain(head)` → 逐个 `ReadEvent` 解 envelope → reducer。
+  online execution/request recovery 禁止借此隐式回退。
 - rewind / reroll：EventJournal 原生支持（`MoveRef` / `ForkBranch` / reflog）。主干不主动做 UI，但状态机不假设线性——从历史事件 fork 出替代未来是近主干的快速跟进项，不需要重构。
 
-## 5. 主干 API 形状（待实现，非最终 spec）
+## 5. 主干 API 形状（历史基线示意；current 以代码为准）
 
 ```csharp
 public sealed class SessionJournalEngine : IDisposable {
@@ -323,11 +326,9 @@ result 都是非法 raw chain，fail-fast 且不递增 execution sequence。
 - CS-3D1 已让 manifest 固定 tool implementation/capability runtime identity；recovered response
   只有在当前 host identity 精确匹配时才可进入 durable tool dispatch。跨实现升级的 reconcile/pause
   policy 仍留待后续 capability。
-- CS-3B 为 `explicit-artifact-tail + ObservationAccepted + no tools` 增加 bounded recent-idle fast
-  path，并把该 request context materialization 切到 dependency-closed suffix，不调用 `Project()`；
-  CS-3D3 后其他 execution phase 也由 tail resolver 路由。显式 `Project()` / `ReplayHistory()` 保持
-  full semantics；legacy full-raw 每次 request 仍显式物化一次完整 Context，CS-3D4 不隐藏这项
-  legacy policy 成本，而是让 normal long-session policy 改走下一条 coherent 路径。
+- CS-3B 的 explicit/no-tools fast path 是历史台阶；CS-3D3 后所有 execution phase 由 tail resolver
+  路由，D6D 后 current request 只走 coherent Prepared v2。显式 `Project()` / `ReplayHistory()`
+  保持 full semantics，但 online 不存在 legacy full-raw fallback。
 - CS-3D4 的 normal long-session policy 使用至少两个 distinct exact artifact members；每个 member
   只贡献自己的 target block，并要求共享 coverage anchor、source head 位于当前 Parent lineage。
   Observation 与 fully-settled ToolResult 共用 coherent set + dependency-closed suffix projector；
@@ -343,9 +344,9 @@ result 都是非法 raw chain，fail-fast 且不递增 execution sequence。
   全部只读验证而不 recovery，逐个 activation 复核 historical governing setup，逐个 Prepared
   exact reconstruct。该 O(raw inventory) 路径是导入/审计门，不进入 online recovery。
 - fast path 的 idle validator 会局部证明 bootstrap、live/imported terminal Action 与 failed attempt
-  的直接因果边；不能只凭最近非 setup event 的 kind 接受边界。CS-3C 允许 validated full-raw
-  `tool-continuation` manifest 的 terminal Action/Failure 成为下一次 tail Send 的闭合边界，但不把
-  任意 imported ToolResult 当作 tail projector 起点。
+  的直接因果边；不能只凭最近非 setup event 的 kind 接受边界。coherent v2 的
+  `tool-continuation` terminal Action/Failure 可成为下一次 tail Send 的闭合边界，但不能把任意
+  imported ToolResult 当作 tail projector 起点。
 - 该 bounded proof 信任更早 prefix 来自受控 writer；它不是任意低层 raw 篡改下的 full reducer
   equivalence。若要接纳不可信 raw import，需先完整验证或引入 execution checkpoint / suffix-local DFA。
 - 不实现 latest artifact ranking、预算、retrieval 或完整 planner；CS-3D5 raw activation 持久化上游

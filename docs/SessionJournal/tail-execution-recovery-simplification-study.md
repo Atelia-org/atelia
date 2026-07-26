@@ -1,6 +1,6 @@
 # SessionJournal Tail Execution Recovery 化简调研
 
-> **状态**：Research Report / 尚未实施
+> **状态**：Research Snapshot / 已采纳的 coherent-only 子集由 CS-3D6 实施完成
 > **日期**：2026-07-27
 > **调研对象**：[Tail-only Execution Recovery Design](tail-execution-recovery-design.md)
 > **目标**：在继续 Context Planner、provider capability 与 tool reconcile 之前，识别能够减少协议、
@@ -9,7 +9,9 @@
 > **2026-07-27 后续决策**：不采纳 §3.1 的 configuration 合并，保留 runtime/system-prompt 双 setup
 > stream；近期优先逐步收口为 coherent-only request manifest。实施路线以
 > [CS-3D6：Coherent-only Request Manifest 化简计划](coherent-request-manifest-simplification-plan.md)
-> 为准。本报告其余候选仍是调研输入，不代表已排期。
+> 为准。该子集现已完成：Prepared v2、single coherent recipe、legacy reader/writer 删除与真实迁移
+> 验收均已落地。本报告其余候选仍是调研输入，不代表已排期；下文的“当前”描述是调研时快照，不应
+> 覆盖 2026-07-27 D6E 后的 current trunk。
 
 ## 0. 结论摘要
 
@@ -88,9 +90,9 @@ request policy 和多套 operational DFA。
 不能把它们粗暴合成一个“万能 reducer”：reverse collector 决定读取复杂度，full/suffix fold 决定正向
 legality，它们职责不同。但正向 transition 和纯 validator 不应继续复述。
 
-### 1.3 Legacy 表面
+### 1.3 Legacy 表面（调研时快照，D6D 已删除）
 
-当前 online writer 实际只有：
+调研时 online writer 实际只有：
 
 - 默认 `RequireActiveArtifactSet` → `coherent-artifact-tail`；
 - 显式 `LegacyFullRaw` → `full-raw`。

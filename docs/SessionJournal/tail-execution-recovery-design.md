@@ -1,7 +1,7 @@
 # SessionJournal Tail-only Execution Recovery Design
 
-> **状态**：Implemented Baseline / CS-3D0～CS-3D5 已实施
-> **日期**：2026-07-26
+> **状态**：Implemented / CS-3D0～CS-3D6 已完成
+> **日期**：2026-07-27
 > **建议路线编号**：CS-3D
 > **前置实现**：CS-3A governing setup checkpoint、CS-3B dependency-closed tail context、
 > CS-3C committed request recovery
@@ -18,7 +18,7 @@
 同时构造完整 conversation context 与 execution state。这个实现仍可作为审计、迁移和测试 oracle，
 但**不得继续作为在线 reopen / resume 的默认依赖**。
 
-后续主线必须拆成两个彼此独立的投影：
+当前主线已经拆成两个彼此独立的投影：
 
 1. **Execution Recovery Projection**：只回答“链头现在处于什么 phase，下一合法动作是什么，执行该动作还缺
    哪些局部依赖”。它从 head 沿 Parent 反向读取当前 operational tail，绝不物化完整 conversation。
@@ -70,7 +70,8 @@ dependencies，而不是假定“回溯到最近一条用户消息”。
 - 不缓存完整 `SessionProjection.Context`。
 - 不用固定 event 数/turn 数截断代替 dependency closure。
 - 不从 `latest` index 隐式挑 artifact；Context Planner 必须提交 exact selection。
-- 不声称旧的 `full-raw` Prepared manifest 能在不读旧 raw 的情况下 exact 重建。
+- 不为 D6D 前的 `full-raw` / `explicit-artifact-tail` Prepared wire 保留 compatibility reader；
+  旧实验 journal 通过离线重建迁移，不由 current codec 猜测。
 - 不在本切片解决 provider-side idempotency/result lookup 或非幂等工具的完整补偿策略。
 
 ## 2. 三类投影必须分离
@@ -81,7 +82,7 @@ dependencies，而不是假定“回溯到最近一条用户消息”。
 | Tail Execution Projection | 现在应执行什么 | head 附近 operational tail + raw checkpoints | 最小 execution state | O(局部依赖) |
 | Request Context Projection | 下一次 LLM 看见什么 | exact artifact set + dependency-closed suffix + setup | bounded canonical request | O(artifact + suffix) |
 
-`SessionReducer` 是第一行的正确性 oracle；拟新增的 `SessionExecutionTailResolver` 属于第二行；现有
+`SessionReducer` 是第一行的正确性 oracle；`SessionExecutionTailResolver` 属于第二行；现有
 `SessionTailContextProjection` 及后续 Context Planner 属于第三行。
 
 这三者不能再通过“先构造完整 `SessionProjection`，然后只取其中一个字段”耦合。
@@ -95,9 +96,9 @@ dependencies，而不是假定“回溯到最近一条用户消息”。
   - CS-3D3 后 `ResumeAsync()`、`SendAsync()`、setup/import boundary 与 tool-loop transition
     全部由 `SessionExecutionTailResolver` 路由；Action/Started/Result append 后按返回的 exact address
     重新 resolve。
-  - D6C1 后 online writer 只使用 `coherent-artifact-tail`，不调用 `Project()` 物化 request
-    Context。旧 `full-raw` / `explicit-artifact-tail` 只剩 D6D 前 historical Prepared reader，
-    不再有 runtime opt-in 或 live writer。
+  - D6D 后 online writer 与 current Prepared v2 codec/reconstructor 只接受 coherent
+    artifact-tail recipe，不调用 `Project()` 物化 request Context。D6D 前的 full-raw /
+    explicit reader 只属于历史，不存在于 current runtime。
 - `prototypes/SessionJournal/SessionReducer.cs`
   - 同时累计 config、system prompt、完整 context 与 execution state。
   - full reducer 已消费 D1 的 durable execution checkpoint；它不再通过从 root 计数
@@ -107,8 +108,10 @@ dependencies，而不是假定“回溯到最近一条用户消息”。
     ToolResult suffix，并把 visible tool snapshot 纳入 prepared request。
   - 这是 request context projector，不是通用 execution reducer。
 - `prototypes/SessionJournal/SessionPreparedRequestReconstructor.cs`
-  - `explicit-artifact-tail` 只读 manifest 固化的 snapshot + suffix。
-  - 旧 `full-raw` manifest 仍按合同读取 `[root, raw end]`。
+  - 只从 committed Prepared v2 的 exact activation、inline artifact contributions、setup refs、
+    dependency-closed suffix 与 tool snapshot 重建 canonical request。
+  - activation `coverageSetups` 是 suffix fold seed；fold 后的 governing setup 必须与 Prepared exact
+    refs 一致，不能让 Prepared 自证自己的 setup。
 
 已有 fast path 应复用，不应另造第二套 attempt/setup 解析：
 
@@ -325,18 +328,19 @@ coherent active artifact set
 identity。v1 宜要求每个被激活 block 都明确覆盖到同一个 `RawStartExclusive`，避免较新的某个 block
 与较旧 suffix 发生隐式重复。不能假定两个 maintainer 各自的“latest”天然组成 coherent snapshot。
 
-现有 `DerivedRecapArtifact.MemoryPack` 和 exact artifact tail 是可复用基础，但当前运行时仍只接受一个
-exact `ArtifactId`；多 maintainer coherent activation 属于后续 ArtifactSet/Context Planner 切片。
+这曾是 D4 前的 gap；当前 runtime 已由 raw `ArtifactSetCommitted` 接受多个 exact members，并按
+canonical role/target 聚合。未来 Context Planner 仍负责预算化选择，但不再需要发明第二种 request
+shape。
 
 ### 8.2 Observation 与 tool continuation 统一
 
-现有 explicit tail path 只承诺：
+历史 explicit tail path 只承诺：
 
 ```text
 ObservationAccepted + no visible tools
 ```
 
-下一阶段要把 request boundary 泛化为 dependency-closed completion boundary：
+当前 coherent v2 已把 request boundary 泛化为 dependency-closed completion boundary：
 
 - 新 observation；
 - 当前 Action 的全部 tool calls 已有 ToolResult；
@@ -351,15 +355,15 @@ Prepared 提交前可以重新选择 artifact set；Prepared 提交后禁止重�
 足以 exact 重建 canonical request 的有界 materialized snapshot，因此 derived artifact 删除不会破坏
 在途 request。
 
-旧 `full-raw` manifest 的 exact recovery 仍是 O(全历史)。这是旧请求合同的真实成本，不应通过偷偷改用
-新 recap 改写过去；正常新请求应默认产生 artifact-tail manifest，使它逐渐退出热路径。
+D6D 前 `full-raw` manifest 的 O(全历史) 成本是历史背景；current codec 不再读取该 wire，也不会
+偷偷改用新 recap 猜测旧请求。旧实验 journal 必须离线重建。
 
 ### 8.4 Bootstrap 与 artifact 不可用
 
 online bootstrap 必须先由上层 provisioning 在 replay-safe anchor 产生所需 derived artifacts 并
 提交 coherent `ArtifactSetCommitted`。没有可用 coherent set 时不得提交 Observation 或把 root replay
 当成兜底；应先触发/等待 maintainer 重建，或把 session 置为可诊断的 not-ready/paused 状态。旧
-`full-raw` / `explicit-artifact-tail` 仅保留为 D6D 前 historical Prepared reader。
+`full-raw` / `explicit-artifact-tail` 只存在于 D6D 前历史文档，current reader 已删除。
 
 Prepared 提交前 artifact 缺失属于 planning/liveness 问题；Prepared 提交后则由 manifest 内联 snapshot
 保证恢复，不再依赖 sidecar 是否存在。
@@ -552,8 +556,8 @@ runtime identity 和 capability policy 通过后才能产生外部调用。
   验证；reopen 已处于 Started 时还会先确认 main head 未漂移。durable `operationId` 与 reserved
   sequence 一并传入 `ToolExecutionContext`，因此首次执行和 Started reopen retry 对工具可见的是同一
   operation identity。
-- provider response 是否允许含 tool calls 由 durable tool set 是否非空决定，而不是只看
-  `full-raw` selection policy。空 tool set 的 initial/restarted request 若收到 tool call，会提交
+- provider response 是否允许含 tool calls 由 durable tool set 是否非空决定。空 tool set 的
+  initial/restarted request 若收到 tool call，会提交
   `atelia.host.unsupported-tool-call` known failure，不留下可被再次 restart 的伪 uncertain Prepared。
 - Prepared restart 的合法 tool-call response 会在同一次 `ResumeAsync()` 中完成
   Action -> Started -> external tool -> Result -> continuation completion，并继续使用 manifest 固定的
@@ -564,8 +568,8 @@ runtime identity 和 capability policy 通过后才能产生外部调用。
 - 删除 Engine 中旧 `ReadEventKind`、tail boundary/checkpoint walkers 与重复 Prepared routing
   bypass；public `Project()` / `ReplayHistory()` 保持完整审计语义。
 - 复杂度测试覆盖 1 与 10001 个已闭合 imported turns：Idle `ResumeAsync` 均为 2 header +
-  2 payload、0 chronological、0 full projection。full-raw 无工具和 tool continuation 则断言
-  projection delta 精确等于 provider request 数，不再有 post-Action/post-Result routing replay。
+  2 payload、0 chronological、0 full projection。D6D 后 request-context performance fixture 已
+  迁为 coherent v2，不再保留 full-raw provider-path oracle。
 
 已知边界：
 
@@ -578,6 +582,8 @@ runtime identity 和 capability policy 通过后才能产生外部调用。
 ### CS-3D4：Artifact-tail completion 泛化
 
 > **状态**：已实施
+> **历史说明**：本节保留 D4 当时的增量演进记录；其中 explicit reader/进程内 selection 已由 D6D
+> current wire 删除，当前合同以本文件 §3 与 D6 计划完成记录为准。
 
 目标：恢复到 `AwaitingAgentAction` 后，Observation 和 tool continuation 都不再借 full context 发请求。
 
@@ -616,8 +622,8 @@ runtime identity 和 capability policy 通过后才能产生外部调用。
 
 - D4 初版曾由 `SessionTailProjectionOptions` 冻结至少两个 distinct exact artifact ids；runtime 不
   读取 `latest`。CS-3D5 随后删除这一进程内输入，改由 raw activation 提供 exact ids。manifest 继续
-  使用 `coherent-artifact-tail` 的独立 planner/rendering/renderer identities，旧
-  `explicit-artifact-tail.v1` reconstructor 保持原单 artifact/no-tools 语义。
+  使用 coherent artifact-tail 的独立 identities；D6D 随后删除了
+  `explicit-artifact-tail.v1` reconstructor 与这些冗余 policy 字段。
 - `SessionTailContextProjection` exact load 全体成员，验证 common anchor、每个 source head 的当前
   Parent-lineage membership、anchor-as-of setup refs、replay-safe boundary 与 duplicate target。
   每个成员经 singleton `MemoryPack.Render()` 只产生 target contribution；按
@@ -634,8 +640,8 @@ runtime identity 和 capability policy 通过后才能产生外部调用。
   与 tool snapshot。测试在 Prepared 后删除全部 selected sidecar files，仍能 restart 并得到相同
   canonical request；Prepared 前缺 member 则在 append/provider 前失败。
 - 工具验收覆盖连续两轮 tool call、三次 provider request；每次 request 都携带相同 visible tool
-  snapshot，且 `FullProjectionInvocationCount` 不变。legacy v1 还覆盖 anchor 本身为 Observation、
-  suffix 首事件为 Prepared 的 committed exact reopen。`SessionJournal.Tests` 为 185/185。
+  snapshot，且 `FullProjectionInvocationCount` 不变。D4 当时的 legacy v1 fixture 后来迁到
+  coherent v2/current-wire oracle。
 
 已知 provenance 边界：manifest durable 保存 exact artifact ids/kinds、common anchor、每个 singleton
 contribution 及其 hash，足以审计 selection 与重建 exact request；profile、target、
@@ -652,6 +658,8 @@ dependency/lineage，不等价于 active-set membership，不能拿它猜后一�
 ### CS-3D5：Legacy 与性能收口
 
 > **状态**：已实施
+> **历史说明**：D5 先建立迁移、activation、validator 与性能闸门；D6D 已完成 Prepared v2
+> coherent-only wire cut，以下“过渡 reader”描述不再是 current runtime。
 
 - 为旧 import/full-raw repo 提供显式 offline validate/migrate/checkpoint 命令。
 - benchmark header visits、payload reads、decoded bytes 与 peak memory；不以易抖动 wall-clock 作为唯一
@@ -682,12 +690,11 @@ dependency/lineage，不等价于 active-set membership，不能拿它猜后一�
   O(history)。
 - `SessionRuntime` 不再暴露 request-context policy selector；online writer 只有 coherent
   artifact-tail。缺 activation/member 时在 append Observation/Prepared/provider 前 fail-fast，绝不
-  静默 full replay。public `Project()` / `ReplayHistory()` 仍保留完整审计语义；D6D 前 committed
-  full-raw/explicit Prepared reader 仅作为过渡历史读取面保留，不存在对应 live writer。
-- 本次为 breaking wire upgrade：`SessionContextPlan` 现在显式保存 nullable
-  `activeArtifactSet`，新 coherent plans 要求非空 reference。旧实验 journal 若包含早期 Prepared
-  bytes，必须走离线重建/版本化迁移，不能用缺省字段猜测过去；仅含 current imported raw facts 的 repo
-  可直接 validate，再在 artifacts 就绪后 append activation。
+  静默 full replay。public `Project()` / `ReplayHistory()` 仍保留完整审计语义；Prepared v2 的
+  `activeArtifactSet` 为 required exact reference，current runtime 不再读取旧 policy。
+- D6D 是 breaking wire upgrade：旧实验 journal 若包含早期 Prepared bytes，必须走离线重建/
+  版本化迁移，不能用缺省字段猜测过去；仅含 current imported raw facts 的 repo 可直接 validate，
+  再在 artifacts 就绪后 append activation。
 
 离线收口：
 
@@ -696,7 +703,7 @@ dependency/lineage，不等价于 active-set membership，不能拿它猜后一�
   旧 SessionJournal wire。
 - `validate-session-journal` 通过 `EventJournal.OpenReadOnlyExisting()` 手工沿 Parent 做
   cycle/continuity 检查与 strict payload decode，再比较 full reducer 和 exact-head tail resolver，
-  报告 setup、Prepared policy counts、logical payload bytes 与 active-set readiness。每个
+  报告 setup、`PreparedRequestCount`、logical payload bytes 与 active-set readiness。每个
   `ArtifactSetCommitted` 的 common anchor、coverage/current governing setup refs 都按其历史边界
   验证；每个 Prepared 都走 canonical reconstruction，coherent Prepared 还必须引用截至其 parent 的
   effective/latest activation。
@@ -760,7 +767,7 @@ dependency/lineage，不等价于 active-set membership，不能拿它猜后一�
 
 1. **语义断言**：tail recovery state 与 full reducer oracle 一致。
 2. **复杂度断言**：execution routing 不调用 `Project()`，读取量只随 operational tail 变化；
-   artifact-tail request 只随 artifact/suffix 变化；legacy full-raw 的全历史成本必须显式计量。
+   artifact-tail request 只随 artifact/suffix 变化；current online path 不存在 full-raw fallback。
 
 ## 12. 明确否决的捷径
 

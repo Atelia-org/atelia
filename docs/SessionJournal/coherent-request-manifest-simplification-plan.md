@@ -1,6 +1,6 @@
 # CS-3D6：Coherent-only Request Manifest 化简计划
 
-> **状态**：Implementation in progress / D6A、D6B、D6C1、D6C2、D6D 已实施；D6E pending
+> **状态**：Complete / CS-3D6A～D6E 已实施并验收
 > **日期**：2026-07-27
 > **前置基线**：[Tail-only Execution Recovery Design](tail-execution-recovery-design.md)
 > **来源调研**：[Tail Execution Recovery 化简调研](tail-execution-recovery-simplification-study.md)
@@ -591,6 +591,8 @@ policy。
    - `tail-execution-recovery-design.md`
    - `session-configuration-access-notes.md`
    - `session-journal-trunk-design.md`
+   - `event-sourced-session-architecture-roadmap.md`
+   - `tail-execution-recovery-simplification-study.md`
    - `ChatSession.BacktestCli/README.md`
    - 本计划状态与完成证据。
 4. 搜索并清零陈旧名称：
@@ -606,6 +608,43 @@ policy。
    ```
 
 文档中的历史说明可保留，但必须明确标记为 archived history，不能描述为当前可调用路径。
+
+**D6E 实施与真实证据（2026-07-27）**
+
+- 所有真实运行都使用新 run-id，不覆盖/删除既有
+  `gitignore/session-journal/cyber-copy-upgraded` 或其他 repo，不使用 `--force`。Completion
+  connection 只按 id `dsv4p` 加载；未读取或输出 secret，request/response call log 只保存在
+  gitignored evidence。
+- 首次 run
+  `gitignore/session-journal/cyber-copy-d6e-20260727-060114` 在 checkpoint append 前安全失败：
+  maintainer artifact 把早期 `anchorRawEvent` 与后期 `sourceRawHead` governing setup 错配。
+  失败后只读 inventory 证明 head 未变、148 events、Prepared 0、无 active set、readiness 仍为
+  `needs-artifact-set-checkpoint`，即零 `ArtifactSetCommitted` append；未重复 checkpoint。
+- blocker 由独立提交 `f310f6a2` 修复并 review：`SessionJournalDerivedRecapWriter` 写 artifact 时按
+  exact `candidate.SourceEndInclusive`/anchor 解析 governing setup，不再缓存 source-head setup；
+  prompt mutation regression 明确证明两者不同并要求 artifact pin anchor-as-of setup。
+- 成功 run：
+  - repo：`gitignore/session-journal/cyber-copy-d6e-20260727-061650`
+  - evidence：`gitignore/backtest/session-journal-d6e-20260727-061650`
+  - import/validate-before：148 events、474439 logical payload bytes、Prepared 0、无 activation、
+    `needs-artifact-set-checkpoint`
+  - `autobiographical-rewrite --max-epochs 1`：一次 `dsv4p` call、唯一 succeeded artifact
+    `rr_0000011d0400_62e5771dfbaa3bf4`
+  - `world-understanding-rewrite --max-epochs 1`：一次 `dsv4p` call、唯一 succeeded artifact
+    `rr_0000011d0400_6e0a1a69f2a2f859`
+  - 两成员共享 anchor `ej1:0000011d0400027d0000000100000000`，并共享 anchor-as-of runtime/prompt
+    setup；严格 jq 校验 ID 唯一、不同、target/anchor/setup 一致。
+  - checkpoint 只执行一次，head 从 `ej1:00000486cc0004330000000100000000` 推进到
+    `ej1:000004979c0001870000000100000000`；validate-after 为 149 events、475915 logical bytes、
+    Prepared 0、两个 exact members available/usable、`active-coherent`。
+- 不把 real maintainer 混同于在线 execution 验收：当前 CLI 没有 `SessionJournalEngine.SendAsync` /
+  multi-tool smoke command，且让真实 provider 确定地产生指定 tool topology 不可靠。步骤 7/8 由已有
+  deterministic Engine/failpoint、Prepared reopen、sidecar deletion 与 1-vs-10001 structural
+  performance gates 提供证据；若需要真实 provider online smoke，应另开 runtime/CLI slice。
+- final gates：`SessionJournal.Tests` `230/230`、10k request-context performance `2/2`、
+  `ChatSession.BacktestCli.Tests` `35/35`；SessionJournal、Backtest CLI 与 CLI tests build 均为
+  0 warning。current `.cs/.csproj` 禁用 legacy policy 名称为 0，SessionJournal project reference
+  不含 `Agent.Core`。
 
 ## 6. 真实迁移与验收流程
 
@@ -625,8 +664,8 @@ Observation 与 ImportedAction，因此不依赖被删除的 request policy。�
    -> world-understanding=<id>
 6. validate-session-journal
    -> active-coherent
-7. 用 SessionJournalEngine 执行 Observation completion
-8. 执行至少一次 multi-tool continuation / reopen
+7. deterministic SessionJournalEngine Observation completion gates
+8. deterministic multi-tool continuation / reopen / long-prefix gates
 ```
 
 关键输入：

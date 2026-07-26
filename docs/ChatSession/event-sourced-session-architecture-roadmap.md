@@ -1,7 +1,7 @@
 # ChatSession 事件源与长期上下文架构路线图
 
-> **状态**：Architecture Baseline / Roadmap
-> **日期**：2026-07-22
+> **状态**：Architecture Roadmap / CS-3D6 current trunk implemented
+> **日期**：2026-07-27（保留下文早期日期作为实施历史）
 > **底层依赖**：[EventJournal 功能需求与粗粒度设计基线](../EventJournal/event-journal-requirements-and-design.md)
 > **相关既有研究**：[Dynamic Logical Context Store for Long-Running Role-Play Agents](../Galatea/backlog/idea/dynamic-logical-context-store-for-long-running-role-play-agents.md)
 
@@ -655,6 +655,23 @@ canonical request。execution resolver 本身不读取 artifact 文本。
 > 均为 0，且三次 provider request 已逐阶段对照。strict validator 使用真正只读的 EventJournal
 > open，逐历史 activation/setup/Prepared 证明 provenance；坏 active tail 只报错且 repo bytes 不变。
 > 至此 CS-3D0～D5 主线闭合。
+
+> **2026-07-27 current 状态**：CS-3D6 已完成 `CompletionRequestPrepared` v2 coherent-only wire
+> cutover。online writer、codec 与 `SessionPreparedRequestReconstructor` 只接受
+> `exact ArtifactSetCommitted + dependency-closed suffix` recipe；D6D 前的 full-raw /
+> explicit Prepared reader、policy alias 与 compatibility fallback 已删除。reconstructor 从 exact
+> activation `coverageSetups` seed suffix fold，并验证 activation `currentSetups` 与 Prepared 最终
+> paired setup，避免 Prepared setup 自证循环。`PreparedRequestCount` 取代 policy distribution。
+>
+> D6E 用新的 real repo
+> `gitignore/session-journal/cyber-copy-d6e-20260727-061650` 完成 legacy import（148 events、
+> 474439 logical payload bytes、Prepared 0、not-ready）→ `dsv4p` autobiography/world-understanding
+> 各一次 → exact two-member checkpoint → strict validate（149 events、475915 bytes、Prepared 0、
+> `active-coherent`）。第一次独立 run 在 append 前安全发现 recap setup 错绑 source head；inventory
+> 证明零 activation append，`f310f6a2` 将 artifact governing setup 改为 anchor-as-of 后，第二 run
+> 成功。真实 CLI 没有 online Send/tool-loop smoke，因此步骤 7/8 继续由 deterministic Engine、
+> failpoint 与 1-vs-10001 performance gates 验收；不把非确定的真实 provider tool behavior 混入迁移
+> closeout。
 
 ### CS-4：可恢复 Tool Loop
 

@@ -1,17 +1,17 @@
 # SessionJournal Configuration Access Notes
 
-> 状态：CS-3A + CS-3B + CS-3C + CS-3D0～CS-3D5 Implemented
-> 日期：2026-07-26
+> 状态：CS-3A～CS-3D6 Implemented / coherent-only Prepared v2
+> 日期：2026-07-27
 > 相关文档：[SessionJournal 主干设计基线](session-journal-trunk-design.md)、
 > [Tail-only Execution Recovery Design](tail-execution-recovery-design.md)、
 > [ChatSession 事件源与长期上下文架构路线图](../ChatSession/event-sourced-session-architecture-roadmap.md)
 
 ## 1. 结论
 
-CS-5-lite 完成后，主线已进入 roadmap 的 **最小 CS-3：可恢复 Completion**。CS-3A 已落地 minimal
-`ContextPlan`、canonical request manifest 与 governing setup checkpoint；CS-3B 又落地了由调用方指定
-exact artifact 的 dependency-closed tail context projection；CS-3C 进一步让 prepare/reopen 共用同一个
-canonical request reconstructor，并以显式的新 attempt 恢复 outcome 不确定的 Prepared。
+CS-5-lite 之后，CS-3A～D6 已完成最小可恢复 Completion 主线：paired setup checkpoint、
+dependency-closed artifact tail、pure execution tail resolver、durable tool identity、
+`ArtifactSetCommitted` activation，以及 coherent-only `CompletionRequestPrepared` v2。prepare/reopen
+共用同一个 canonical request reconstructor；outcome 不确定的 Prepared 通过显式新 attempt 恢复。
 
 **赞同把已提交的 ContextPlan / request manifest 用作重启时的 governing setup 加速点。**准确场景是：
 
@@ -80,31 +80,26 @@ manifest 的 setup lineage 绑定是 **validated writer invariant**：append man
 Parent 做 ref CAS。reopen 不再用 O(N) scan 重证祖先关系，否则会抵消 checkpoint 的收益；它信任 checked
 raw manifest 的语义事实，同时独立验证所引用 payload 的 kind/schema/hash。
 
-同时要注意：显式调用 `Project()` / `ReplayHistory()` 以及非 CS-3B phase 的通用 execution recovery，
-当前仍通过 `ReadChronologicalChain` 解码完整 raw chain。CS-3B 只为
-`explicit-artifact-tail + ObservationAccepted + no tools` 建立窄 fast path：
+显式调用 `Project()` / `ReplayHistory()` 仍通过 `ReadChronologicalChain` 解码完整 raw chain，但这只
+属于审计/reference oracle。所有 online execution phase 已由 `SessionExecutionTailResolver` 路由；
+Observation 与 dependency-closed ToolResult 的 request context 都走 coherent ArtifactSet + suffix：
 
 - `SendAsync` 沿最近的 setup run 找到 idle predecessor，并对 bootstrap、live/imported terminal
   Action 或 failed attempt 做有界局部因果证明，再以 CAS append observation。
-- observation-head `ResumeAsync` 验证该 observation 的 direct predecessor 通过同一 idle-boundary
-  合同；它不会仅凭链头 kind 猜测 reducer 状态。
-- 随后的 request preparation 从 exact observation address、governing setup、artifact 与 raw suffix
-  构造，不调用 `Project()`。
+- `ResumeAsync`、setup/import mutation 与 tool-loop 每次 append 后都从 exact new head 重解
+  operational tail，不凭链头 kind 猜状态。
+- request preparation 从 exact activation、governing setup、inline artifact contributions 与 raw
+  suffix 构造；current Prepared v2 codec/reconstructor 只接受 coherent recipe，不调用 `Project()`。
 
 这里采用与 setup checkpoint 相同的 **validated-writer trust model**：局部证明信任更早 prefix 已经由
 SessionJournal 的受控 writer / artifact provenance 校验，不试图把任意低层伪造 raw chain 重新做一次
 full-history reducer validation。若未来允许不可信 raw import 直接进入 fast path，必须先做完整验真，或
 增加 suffix-local execution DFA / 更强 checkpoint，不能继续把 bounded proof 当作全链等价证明。
 
-因此 CS-3B 收掉了该无工具 observation request path 的 full-history context materialization；CS-3C 又
-让 `explicit-artifact-tail` 的 Prepared reopen 直接从链头进入 manifest-only reconstruction，不调用
-`Project()`。这仍不能被描述成“整个 SessionJournal 已经 O(tail) reopen”：full-raw reconstruction 与
-其他 execution phase 仍可能完整 replay，后续 execution checkpoint/recovery 工作还要继续缩短重启路径。
-
-下一阶段已收束为 [CS-3D Tail-only Execution Recovery](tail-execution-recovery-design.md)：在线恢复只
-重建最小 execution state，不构造完整 conversation；需要调用 LLM 时，再由 coherent recap/artifact
-set（rolling 第一人称自传、world-understanding 等）与 dependency-closed raw suffix 构造 bounded
-request context。完整 `Project()` 只保留为显式审计/迁移 API 与 reference oracle。
+CS-3B/C 的早期 explicit/full-raw 形状只保留为历史演进记录；D6D 已删除其 current reader、writer 与
+compat decoder。当前可以准确描述为：online recovery 是 tail-only，online request 是
+coherent-artifact-tail-only；只有显式 `Project()` / `ReplayHistory()` 与 strict offline validator
+有意支付 O(全历史) 成本。
 
 ## 3. 必须分开的三个问题
 
@@ -369,21 +364,20 @@ provider-facing request：
 当前 Derived Recap Artifact 的：
 
 - `AnchorRawEvent` 是 producer 已吸收范围的 coverage high-watermark。
-- `GoverningRuntimeConfigSetup` / `GoverningSystemPromptSetup` 是按 artifact 的
-  `SourceRawHead` resolve，而不是按 `AnchorRawEvent` resolve。
+- `GoverningRuntimeConfigSetup` / `GoverningSystemPromptSetup` 必须按 exact
+  `AnchorRawEvent == SourceEndInclusive` resolve，并可作为 anchor-as-of seed。
 
-因此不能把 artifact 的 `Governing*` refs 当成 anchor 位置的 reducer seed。
+D6E 真实验收发现旧 writer 曾把 `SourceRawHead` setup 错写到早期 anchor；checkpoint 在 append 前
+安全拒绝且 inventory 证明零 activation append。`f310f6a2` 已修复为逐 artifact 按
+`candidate.SourceEndInclusive` resolve，并用 prompt mutation regression 锁定该不变量。
 
 另外，rolling split 可能让 fragment 结束在声明 tool calls 的 `AgentActionProduced`，而
 `(AnchorRawEvent, currentHead]` 从 `ToolExecutionStarted` / `ToolResultObserved` 开始。这样的 tail
 缺少 `openAction`，现有 reducer 会正确拒绝。
 
-ContextPlan 必须验证 `RawStartExclusive` 是 dependency-closed boundary，而不是机械令
-`RawStartExclusive = AnchorRawEvent`。不安全时应换用更早的 safe artifact 或 full-raw fallback；
-不能把透明 overlap 当成 reducer 实现细节。
-
-CS-3B 没有实现“自动换用更早 artifact”的 planner。调用方若希望 fallback，必须在提交 manifest 前明确
-选择 full raw 或另一个 exact artifact；一旦 `completion-request-prepared` 已提交，恢复不得重新规划。
+ContextPlan 仍必须验证 anchor 是 replay-safe coverage boundary，且 `(anchor, raw end]` 对当前 request
+dependency-closed；coverage 与 dependency closure 不是同一概念。不安全时应换用更早的 coherent
+ArtifactSet 或报告 not-ready，不能回退 full raw，也不能把透明 overlap 当成 reducer 实现细节。
 
 ### 7.4 可删除 artifact 与 prepared request 恢复
 
@@ -391,7 +385,7 @@ CS-3B 没有实现“自动换用更早 artifact”的 planner。调用方若希
 `completion-request-prepared` 必须足够封闭，使 CS-3C 能恢复同一个 request。只在 manifest 中保存
 `ArtifactId + hash` 会让“删除 derived store”破坏已提交 request，这是不合法的。
 
-因此 `explicit-artifact-tail` manifest 的单个 artifact input 同时保存：
+因此 current coherent Prepared v2 的每个 artifact input 同时保存：
 
 - exact artifact id / kind，用于 selection provenance；
 - materialized header 的三段 exact string snapshot；
@@ -403,7 +397,11 @@ artifact 被删除，CS-3C 仍可从 raw manifest 内联 snapshot、raw suffix�
 
 ## 8. 推荐的下一步工作包
 
-### CS-3A：Minimal Plan/Manifest Checkpoint（已实施）
+> **历史实施记录（CS-3A～C）**：以下三节保留当时的 v1/full-raw/explicit 增量落点，帮助解释
+> 决策演进；D6D 已删除这些 legacy policy 与 reader。current 合同以本文 §2、§8 和
+> `CompletionRequestPrepared` v2 为准。
+
+### CS-3A：Minimal Plan/Manifest Checkpoint（历史实施记录）
 
 范围：
 
@@ -454,7 +452,7 @@ near-head checkpoint 恢复。Planner policy 可以先选择 full raw fallback�
 - provider 明确返回 `Incomplete` / `Failed`，或 host 在收到 success response 后发现结果违反已经提交的
   request policy 时，写 kind 9 `completion-attempt-failed`，保存 attempt id、
   termination/reason/detail/errors，并投影为可替换 setup、可接收下一条 observation 的
-  `TurnFailed`。当前 `explicit-artifact-tail` 收到 tool calls 时使用保留 reason
+  `TurnFailed`。当时 `explicit-artifact-tail` 收到 tool calls 时使用保留 reason
   `atelia.host.unsupported-tool-call`。transport exception/cancellation 没有已知 outcome，仍保留
   prepared/`AwaitingCompletion`。
 - legacy/manual Action 走独立 kind 10 `imported-agent-action`；reopen 后不再把“缺少 prepared 的普通
@@ -463,7 +461,7 @@ near-head checkpoint 恢复。Planner policy 可以先选择 full raw fallback�
 - create 时 cursor 已绑定；open 时 lazy；普通 append 推进 head，setup append 替换对应 pointer，任何
   observed-head/CAS 失配都使 cursor 失效。
 
-### CS-3B：Tail Projection Contract（已实施，runtime selection 已由 CS-3D5 durable activation 取代）
+### CS-3B：Tail Projection Contract（历史实施记录，selection 已由 durable activation 取代）
 
 实际落点：
 
@@ -500,16 +498,16 @@ near-head checkpoint 恢复。Planner policy 可以先选择 full raw fallback�
 这一包证明“只读取明确 raw suffix 仍能确定性构造合法 request context，并保持 setup/context fold
 一致”，不新增完整 planner policy，也不声称通用 execution `Project()` 已经 tail-only。
 
-### CS-3C：Canonical Request Recovery（已实施）
+### CS-3C：Canonical Request Recovery（历史实施记录）
 
 实际落点：
 
 - 新增唯一的 `SessionPreparedRequestReconstructor`。prepare 前以
   `manifest + authoritative raw end` 重建，reopen 以 source Prepared 的 `Header.Parent` 为 raw end；
   两者最终都比较 exact canonical bytes/length/SHA-256，不再保留只检查 artifact prefix 的旁路。
-- full-raw 重读并验证 `[root, raw end]`，复用完整 `SessionReducer`；explicit-artifact-tail 只读取
-  `(RawStartExclusive, raw end]`，使用 manifest 内联 snapshot + 同一个 suffix fold，不打开
-  `DerivedRecapStore`。
+- current reconstructor 只读取 `(RawStartExclusive, raw end]`，以 activation coverage seed、
+  manifest inline contributions 与同一个 suffix fold 重建，不打开 `DerivedRecapStore`；full-raw /
+  explicit 分支已由 D6D 删除。
 - setup refs、raw range、reason/correlation、model/surface、tool snapshot、renderer/codec identity 与
   commitment 任一不一致，都在 journal mutation 和 provider call 前 fail-fast。
 - 当前 runtime 只用于 dispatch compatibility：`CompletionTarget`、client name/API 与 visible tool
@@ -527,8 +525,8 @@ near-head checkpoint 恢复。Planner policy 可以先选择 full raw fallback�
   仍留下该 attempt 的 uncertain `AwaitingCompletion`。下一次显式 restart 会再写一个新 attempt，不把
   新调用伪装成旧调用。
 - CS-3D1 已在 manifest 同时固定 tool definitions 与 tool implementation/capability runtime identity；
-  recovery 重发 exact full-raw request 后，只有当前 host identity 精确匹配才能进入 durable tool
-  dispatch。artifact-tail 当前仍维持 no-tools 合同。
+  recovery 重发 exact coherent request 后，只有当前 host identity 精确匹配才能进入 durable tool
+  dispatch；Observation 与 dependency-closed ToolResult continuation 都支持 visible tools。
 - tail Prepared 即使 sidecar artifact 已删除，也能仅凭内联 snapshot 恢复，且不调用 `Project()`。
 - provider success envelope 的 invocation identity 与 committed target 不一致时，以
   `atelia.host.invalid-completion-invocation` 写 durable kind 9，而不留下伪 uncertain Prepared。
@@ -557,10 +555,10 @@ runtime identity gate 通过后才可执行。Started 的 `operationId` 与 rese
 `ToolExecutionContext`，供工具实现幂等/result lookup/reconcile；它本身不承诺 exactly-once。
 public `Project()` / `ReplayHistory()` 仍保留 full semantics。
 
-需要准确区分：D3 消除的是 **execution routing 的 full replay**；D6C1 又删除了 live full-raw
-writer。online request 现在只走 coherent artifact-tail，不再调用 `Project()` 物化 Context。旧
-full-raw / explicit Prepared reconstruction 仅作为 D6D 前过渡 reader，仍按历史合同读取其 raw
-range；public `Project()` / `ReplayHistory()` 只保留为显式审计与 reference oracle。
+需要准确区分：D3 消除的是 **execution routing 的 full replay**；D6D 又把 Prepared current wire
+收为 coherent-only v2。online request 不调用 `Project()` 物化 Context；D6D 前的 full-raw /
+explicit reader 只是本文件的历史，不存在于 current codec/reconstructor。public `Project()` /
+`ReplayHistory()` 只保留为显式审计与 reference oracle。
 
 CS-3D4 已实施为新的 `coherent-artifact-tail` policy，而不是原地改变已 committed 的
 `explicit-artifact-tail.v1`：
@@ -581,6 +579,11 @@ CS-3D4 已实施为新的 `coherent-artifact-tail` policy，而不是原地改�
 实际测试已覆盖 normal Observation 与连续两轮 tool continuation 在 0 `Project()` 下调用 LLM。Prepared 前
 缺 artifact/coherence 失败时不提交 manifest；Prepared 后即使所有 sidecar 成员被删除，仍按 committed
 manifest exact reopen。
+
+D6D 尾修还把 exact activation `coverageSetups` 作为 suffix fold seed，并从 common anchor 到
+activation Parent 验证 `currentSetups`。最终 fold 得到的 paired setup 必须与 Prepared refs 完全一致；
+因此即使把旁支 setup 写进 Prepared 并重算 request commitment，也不能形成自证循环。runtime-only /
+prompt-only 的 post-activation mutation 仍由 suffix 正确吸收。
 
 不能把 CS-3 的 context fold 静默推广成通用 execution reducer seed，也不能让 resolver 越过最近
 Prepared/Action checkpoint 重验完整 autonomous loop。具体职责、事件协议和实施切片见
@@ -608,8 +611,8 @@ Tail projection：
 - artifact + suffix request：确定性可重建、dependency-closed、provenance 可审计；不要求等价于
   full-raw prompt。
 - tail 内有 setup change：最终 config/system prompt 与 full projection 相同。
-- artifact anchor 非安全边界：选择更早 safe artifact 或 full-raw fallback，不从 mid-tool 强行
-  reduce，也不默认注入 overlap。
+- artifact anchor 非安全边界：选择更早 safe artifact 或报告 not-ready，不从 mid-tool 强行
+  reduce，也不回退 full raw。
 - artifact 的 `SourceRawHead` setup refs 不误当 anchor seed。
 - Prepared 前删除任一 selected derived artifact：显式 selection fail-fast，不提交 Prepared，也不
   静默退化为 full raw；恢复 artifact 或显式改选后可重试。
@@ -631,8 +634,7 @@ Request recovery：
   exception/cancellation：仍为 `AwaitingCompletion`，不伪造 outcome。
 - 当前 config/max tokens/tail option 或 planner 升级：不改变旧 manifest 的恢复结果；dispatch
   connection/client/tool definitions 漂移则在新 attempt 提交前拒绝。
-- 删除 derived artifact：已 committed `explicit-artifact-tail` / `coherent-artifact-tail` request
-  仍可由内联 snapshot 恢复。
+- 删除 derived artifact：已 committed coherent Prepared v2 仍可由内联 snapshot 恢复。
 - recovered response 含 tool calls：当前 host tool runtime identity 必须与 manifest 精确一致；否则在
   新 Started 或外部 dispatch 前 fail-fast。
 
@@ -674,8 +676,8 @@ CS-3A/B/C 已证明 **tail request construction + persisted request recovery** �
 CS-3D1/D2/D3 已证明 **durable operational checkpoint + pure tail execution projection + resolver
 driven online execution**；CS-3D4 又让配置了 exact coherent ArtifactSet 的 normal Observation 与
 fully-settled ToolResult request context 退出 full `Project()`；CS-3D5/D6C1 又完成 durable
-ArtifactSet activation 与 coherent-only online writer。public 审计 API 继续保留完整历史语义；旧
-full-raw / explicit reader 只过渡保留至 D6D wire cutover，不是长期 runtime 合同。
+ArtifactSet activation 与 coherent-only Prepared v2。public 审计 API 继续保留完整历史语义；旧
+full-raw / explicit reader 已在 D6D wire cutover 删除，不是 current runtime 合同。
 
 正常运行时把内存中的两个 governing setup 地址写入每次 completion 前提交的
 `ContextPlan` / canonical request manifest；重启后从 head 扫描局部尾段，命中最近 checkpoint 后各一次

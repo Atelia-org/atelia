@@ -98,8 +98,10 @@ dotnet run --project prototypes/ChatSession.BacktestCli -- validate-session-jour
 ```
 
 validator 会逐 event 严格 decode、计算 logical payload bytes，以 full reducer 对照 exact-head tail
-resolver，检查 governing setup、Prepared request policy 分布，并检查最后一个 raw
-`ArtifactSetCommitted` 及其 exact sidecar members。readiness 为：
+resolver，检查 governing setup、`PreparedRequestCount`，并对每个 Prepared v2 执行 exact coherent
+request reconstruction；同时检查最后一个 raw `ArtifactSetCommitted` 及其 exact sidecar members。
+当前 wire 只有 coherent artifact-tail Prepared v2，不再读取早期 full-raw / explicit Prepared。
+readiness 为：
 
 - `active-coherent`：存在可用的 durable active ArtifactSet。
 - `needs-artifact-set-checkpoint`：尚无 activation，或 activation 指向的 exact sidecar member 已缺失/
@@ -185,6 +187,34 @@ latest artifact materialize 后只 replay anchor 之后的 tail。
 两个正式 preset 的 profile/target lineage 不同，因此可以在同一个新 repo 上各运行一次；第二个
 preset 的 root artifact 不会把第一个 preset 的 artifact 设为 `previousArtifact`。但同一 preset
 不能在未清理其既有 lineage 时直接重复 full replay。
+
+### D6E 可审计迁移与 readiness 验收
+
+正式验收应始终使用一个不存在的、带 run-id 的新 repo 和独立 evidence 目录，不覆盖已有实验 repo，
+也不使用 `--force`：
+
+```text
+inspect legacy export
+-> import-session-journal 到新 repo
+-> validate：needs-artifact-set-checkpoint / PreparedRequestCount=0
+-> autobiographical-rewrite --max-epochs 1
+-> world-understanding-rewrite --max-epochs 1
+-> 严格提取各自唯一 succeeded artifact id，并验证共同 anchor/setup
+-> checkpoint 两个 exact members，一次且仅一次
+-> validate：active-coherent / 两成员可用 / eventCount 恰好 +1
+```
+
+maintainer JSONL 与 Completion call log 应仅写入 `gitignore/backtest/<run-id>/`；源码文档只记录
+artifact id、anchor、计数和 readiness，不复制请求/响应内容，也不读取或输出 connection secret。
+checkpoint 失败后必须先重新 validate/inventory：若 event/head 未变，可以保留该 run 做 forensic
+evidence；不要在无法确定是否 append 时重复 checkpoint。
+
+2026-07-27 的 D6E 真实验收使用
+`gitignore/session-journal/cyber-copy-d6e-20260727-061650`，对应 evidence 位于
+`gitignore/backtest/session-journal-d6e-20260727-061650`。导入后为 148 events、
+474439 logical payload bytes、`PreparedRequestCount=0`、`needs-artifact-set-checkpoint`；两个
+`dsv4p` maintainer 各一次调用并产生共同 anchor 的 exact artifact，checkpoint 后为 149 events、
+475915 logical payload bytes、两个成员可用且 `active-coherent`。
 
 若要验证 derived artifact 可重建，只删除该 repo 的 derived recap store，保留 raw repo：
 
