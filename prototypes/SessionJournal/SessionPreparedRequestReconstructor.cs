@@ -42,7 +42,7 @@ internal static class SessionPreparedRequestReconstructor {
         ArgumentNullException.ThrowIfNull(reader);
         cancellationToken.ThrowIfCancellationRequested();
 
-        using EventFrame frame = reader.ReadEvent(sourcePreparedAddress).Unwrap();
+        using SessionJournalEventFrame frame = reader.ReadEvent(sourcePreparedAddress).Unwrap();
         ValidateSessionHeader(sourcePreparedAddress, frame.Header);
         var kind = (SessionEventKind)frame.Header.OpaqueEventKind;
         if (kind != SessionEventKind.CompletionRequestPrepared) {
@@ -430,7 +430,7 @@ internal static class SessionPreparedRequestReconstructor {
                 "Referenced active artifact set is not on the authoritative raw request range."
             );
         }
-        using EventFrame frame = reader.ReadEvent(reference.Address).Unwrap();
+        using SessionJournalEventFrame frame = reader.ReadEvent(reference.Address).Unwrap();
         ValidateSessionHeader(reference.Address, frame.Header);
         if ((SessionEventKind)frame.Header.OpaqueEventKind
             != SessionEventKind.ArtifactSetCommitted) {
@@ -491,7 +491,7 @@ internal static class SessionPreparedRequestReconstructor {
                 ?? throw new InvalidDataException(
                     $"Raw start '{rawStartExclusive}' is not an ancestor of raw end '{rawEndInclusive}'."
                 );
-            using EventFrame frame = reader.ReadEvent(address).Unwrap();
+            using SessionJournalEventFrame frame = reader.ReadEvent(address).Unwrap();
             ValidateSessionHeader(address, frame.Header);
             var kind = (SessionEventKind)frame.Header.OpaqueEventKind;
             object body = SessionEventCodec.Decode(kind, frame.Payload, out int bodySchemaVersion);
@@ -543,7 +543,7 @@ internal static class SessionPreparedRequestReconstructor {
         CancellationToken cancellationToken
     ) where T : class {
         cancellationToken.ThrowIfCancellationRequested();
-        using EventFrame frame = reader.ReadEvent(reference.Address).Unwrap();
+        using SessionJournalEventFrame frame = reader.ReadEvent(reference.Address).Unwrap();
         ValidateSessionHeader(reference.Address, frame.Header);
         var actualKind = (SessionEventKind)frame.Header.OpaqueEventKind;
         if (actualKind != expectedKind) {

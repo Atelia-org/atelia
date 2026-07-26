@@ -91,7 +91,7 @@ internal static class SessionTailContextProjection {
         var suffixEvents = new List<DecodedSessionEvent>(suffixAddresses.Count);
         foreach (EventAddress address in suffixAddresses) {
             cancellationToken.ThrowIfCancellationRequested();
-            using EventFrame frame = reader.ReadEvent(address).Unwrap();
+            using SessionJournalEventFrame frame = reader.ReadEvent(address).Unwrap();
             ValidateSessionHeader(address, frame.Header);
             var kind = (SessionEventKind)frame.Header.OpaqueEventKind;
             object body = SessionEventCodec.Decode(kind, frame.Payload, out int bodySchemaVersion);
@@ -211,7 +211,7 @@ internal static class SessionTailContextProjection {
     }
 
     internal static void ValidateReplaySafeBoundary(SessionJournalEventReader reader, EventAddress anchor) {
-        using EventFrame frame = reader.ReadEvent(anchor).Unwrap();
+        using SessionJournalEventFrame frame = reader.ReadEvent(anchor).Unwrap();
         ValidateSessionHeader(anchor, frame.Header);
         var kind = (SessionEventKind)frame.Header.OpaqueEventKind;
         object body = SessionEventCodec.Decode(kind, frame.Payload, out _);

@@ -58,6 +58,10 @@ public sealed class SessionJournalEngine : IDisposable {
         };
     }
 
+    internal SessionJournalPayloadLifetimeDiagnostics
+        CapturePayloadLifetimeDiagnostics()
+        => _reader.CapturePayloadLifetimeDiagnostics();
+
     internal SessionExecutionRecovery ResolveExecutionTail(
         CancellationToken cancellationToken = default
     ) {
@@ -487,7 +491,7 @@ public sealed class SessionJournalEngine : IDisposable {
                     or SessionEventKind.ArtifactSetCommitted
                 )
                 && (runtimeConfigSetupAddress is null || systemPromptSetupAddress is null)) {
-                using EventFrame manifestFrame = _reader.ReadEvent(address).Unwrap();
+                using SessionJournalEventFrame manifestFrame = _reader.ReadEvent(address).Unwrap();
                 payloadReadCount++;
                 manifestPayloadReadCount++;
                 object decoded = SessionEventCodec.Decode(kind, manifestFrame.Payload, out _);
@@ -555,7 +559,7 @@ public sealed class SessionJournalEngine : IDisposable {
 
     public byte[] ReadPayloadBytes(EventAddress address) {
         ThrowIfDisposed();
-        using EventFrame frame = _reader.ReadEvent(address).Unwrap();
+        using SessionJournalEventFrame frame = _reader.ReadEvent(address).Unwrap();
         return frame.Payload.ToArray();
     }
 
@@ -624,7 +628,7 @@ public sealed class SessionJournalEngine : IDisposable {
         var events = new List<DecodedSessionEvent>(chain.Count);
         foreach (EventAddress address in chain) {
             cancellationToken.ThrowIfCancellationRequested();
-            using EventFrame frame = _reader.ReadEvent(address).Unwrap();
+            using SessionJournalEventFrame frame = _reader.ReadEvent(address).Unwrap();
             ValidateSessionHeaderPreview(address, frame.Header);
 
             var kind = (SessionEventKind)frame.Header.OpaqueEventKind;
@@ -1475,7 +1479,7 @@ public sealed class SessionJournalEngine : IDisposable {
     }
 
     private SessionSetupReference CreateSetupReference(EventAddress address, SessionEventKind expectedKind) {
-        using EventFrame frame = _reader.ReadEvent(address).Unwrap();
+        using SessionJournalEventFrame frame = _reader.ReadEvent(address).Unwrap();
         ValidateSessionHeaderPreview(address, frame.Header);
         var actualKind = (SessionEventKind)frame.Header.OpaqueEventKind;
         if (actualKind != expectedKind) {
@@ -1571,7 +1575,7 @@ public sealed class SessionJournalEngine : IDisposable {
                 return ReadActiveArtifactSet(address, expectedReference: null);
             }
             if (kind == SessionEventKind.CompletionRequestPrepared) {
-                using EventFrame frame = _reader.ReadEvent(address).Unwrap();
+                using SessionJournalEventFrame frame = _reader.ReadEvent(address).Unwrap();
                 var manifest = (CompletionRequestPreparedBody)SessionEventCodec.Decode(
                     kind,
                     frame.Payload,
@@ -1598,7 +1602,7 @@ public sealed class SessionJournalEngine : IDisposable {
         EventAddress address,
         SessionArtifactSetReference? expectedReference
     ) {
-        using EventFrame frame = _reader.ReadEvent(address).Unwrap();
+        using SessionJournalEventFrame frame = _reader.ReadEvent(address).Unwrap();
         ValidateSessionHeaderPreview(address, frame.Header);
         if ((SessionEventKind)frame.Header.OpaqueEventKind
             != SessionEventKind.ArtifactSetCommitted) {
@@ -1690,7 +1694,7 @@ public sealed class SessionJournalEngine : IDisposable {
         var entries = new List<SessionRawRangeHashEntry>(chain.Count);
         foreach (EventAddress address in chain) {
             cancellationToken.ThrowIfCancellationRequested();
-            using EventFrame frame = _reader.ReadEvent(address).Unwrap();
+            using SessionJournalEventFrame frame = _reader.ReadEvent(address).Unwrap();
             ValidateSessionHeaderPreview(address, frame.Header);
             var kind = (SessionEventKind)frame.Header.OpaqueEventKind;
             _ = SessionEventCodec.Decode(kind, frame.Payload, out int bodySchemaVersion);
@@ -1798,7 +1802,7 @@ public sealed class SessionJournalEngine : IDisposable {
     }
 
     private SessionRuntimeConfiguration ReadRuntimeConfigSetup(EventAddress address) {
-        using EventFrame frame = _reader.ReadEvent(address).Unwrap();
+        using SessionJournalEventFrame frame = _reader.ReadEvent(address).Unwrap();
         ValidateSessionHeaderPreview(address, frame.Header);
         var kind = (SessionEventKind)frame.Header.OpaqueEventKind;
         if (kind != SessionEventKind.RuntimeConfigSetup) {
@@ -1815,7 +1819,7 @@ public sealed class SessionJournalEngine : IDisposable {
         SessionEventKind expectedKind,
         ref int payloadReadCount
     ) where T : class {
-        using EventFrame frame = _reader.ReadEvent(reference.Address).Unwrap();
+        using SessionJournalEventFrame frame = _reader.ReadEvent(reference.Address).Unwrap();
         payloadReadCount++;
         ValidateSessionHeaderPreview(reference.Address, frame.Header);
         var actualKind = (SessionEventKind)frame.Header.OpaqueEventKind;
@@ -1844,7 +1848,7 @@ public sealed class SessionJournalEngine : IDisposable {
     }
 
     private string ReadSystemPromptSetup(EventAddress address) {
-        using EventFrame frame = _reader.ReadEvent(address).Unwrap();
+        using SessionJournalEventFrame frame = _reader.ReadEvent(address).Unwrap();
         ValidateSessionHeaderPreview(address, frame.Header);
         var kind = (SessionEventKind)frame.Header.OpaqueEventKind;
         if (kind != SessionEventKind.SystemPromptSetup) {
@@ -1914,7 +1918,9 @@ public sealed class SessionJournalEngine : IDisposable {
 
     private static string BuildOperationId(EventAddress? head, RawToolCall call) {
         ArgumentNullException.ThrowIfNull(call);
-        string turnKey = head?.ToString() ?? "no-head";
+        string turnKey = head is { } address
+            ? EventAddressTextCodec.Format(address)
+            : "no-head";
         return $"atelia.session-journal.tool.v1:{turnKey}:{call.ToolCallId}";
     }
 

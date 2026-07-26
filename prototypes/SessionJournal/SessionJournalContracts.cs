@@ -319,6 +319,7 @@ internal readonly record struct SessionExecutionRecoveryDiagnostics(
 internal readonly record struct SessionJournalReadDiagnostics(
     long HeaderPreviewReadCount,
     long PayloadReadCount,
+    long LogicalPayloadByteCount,
     long ChronologicalChainReadCount,
     long ChronologicalEventCount,
     long FullProjectionInvocationCount
@@ -329,6 +330,9 @@ internal readonly record struct SessionJournalReadDiagnostics(
     ) => new(
         HeaderPreviewReadCount: checked(end.HeaderPreviewReadCount - start.HeaderPreviewReadCount),
         PayloadReadCount: checked(end.PayloadReadCount - start.PayloadReadCount),
+        LogicalPayloadByteCount: checked(
+            end.LogicalPayloadByteCount - start.LogicalPayloadByteCount
+        ),
         ChronologicalChainReadCount: checked(
             end.ChronologicalChainReadCount - start.ChronologicalChainReadCount
         ),
@@ -340,3 +344,8 @@ internal readonly record struct SessionJournalReadDiagnostics(
         )
     );
 }
+
+internal readonly record struct SessionJournalPayloadLifetimeDiagnostics(
+    long CurrentLiveLogicalPayloadBytes,
+    long PeakLiveLogicalPayloadBytes
+);

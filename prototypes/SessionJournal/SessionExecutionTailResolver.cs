@@ -866,7 +866,7 @@ internal static class SessionExecutionTailResolver {
         ) {
             _cancellationToken.ThrowIfCancellationRequested();
             PayloadReadCount++;
-            using EventFrame frame = _reader.ReadEvent(address).Unwrap();
+            using SessionJournalEventFrame frame = _reader.ReadEvent(address).Unwrap();
             ValidateHeader(address, frame.Header);
             var kind = (SessionEventKind)frame.Header.OpaqueEventKind;
             if (expectedKind is { } expected && kind != expected) {

@@ -447,16 +447,12 @@ public sealed class SessionExecutionRecoveryContractTests : IDisposable {
         SessionJournalReadDiagnostics delta =
             reopened.CaptureReadDiagnostics() - before;
         Assert.False(outcome.Advanced);
-        Assert.Equal(
-            new SessionJournalReadDiagnostics(
-                HeaderPreviewReadCount: 2,
-                PayloadReadCount: 2,
-                ChronologicalChainReadCount: 0,
-                ChronologicalEventCount: 0,
-                FullProjectionInvocationCount: 0
-            ),
-            delta
-        );
+        Assert.Equal(2, delta.HeaderPreviewReadCount);
+        Assert.Equal(2, delta.PayloadReadCount);
+        Assert.True(delta.LogicalPayloadByteCount > 0);
+        Assert.Equal(0, delta.ChronologicalChainReadCount);
+        Assert.Equal(0, delta.ChronologicalEventCount);
+        Assert.Equal(0, delta.FullProjectionInvocationCount);
     }
 
     [Theory]
@@ -489,16 +485,12 @@ public sealed class SessionExecutionRecoveryContractTests : IDisposable {
 
         SessionJournalReadDiagnostics delta =
             reopened.CaptureReadDiagnostics() - before;
-        Assert.Equal(
-            new SessionJournalReadDiagnostics(
-                HeaderPreviewReadCount: 1,
-                PayloadReadCount: 2,
-                ChronologicalChainReadCount: 0,
-                ChronologicalEventCount: 0,
-                FullProjectionInvocationCount: 0
-            ),
-            delta
-        );
+        Assert.Equal(1, delta.HeaderPreviewReadCount);
+        Assert.Equal(2, delta.PayloadReadCount);
+        Assert.True(delta.LogicalPayloadByteCount > 0);
+        Assert.Equal(0, delta.ChronologicalChainReadCount);
+        Assert.Equal(0, delta.ChronologicalEventCount);
+        Assert.Equal(0, delta.FullProjectionInvocationCount);
         Assert.Equal(0, client.Calls);
     }
 
