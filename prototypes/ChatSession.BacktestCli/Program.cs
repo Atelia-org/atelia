@@ -38,6 +38,9 @@ internal static partial class Program {
             return command switch {
                 "inspect" => RunInspect(options),
                 "import-session-journal" => RunImportSessionJournal(options),
+                "validate-session-journal" => RunValidateSessionJournalAsync(options).GetAwaiter().GetResult(),
+                "checkpoint-artifact-set-session-journal" =>
+                    RunCheckpointArtifactSetSessionJournalAsync(options).GetAwaiter().GetResult(),
                 "llm-smoke" => RunLlmSmokeAsync(options, completionClientFactory).GetAwaiter().GetResult(),
                 "replay-pattern-count" => RunReplayPatternCount(options),
                 "replay-rolling-summary" => RunReplayRollingSummaryAsync(options, completionClientFactory).GetAwaiter().GetResult(),
@@ -162,6 +165,144 @@ internal static partial class Program {
         }
 
         return 0;
+    }
+
+    private static async Task<int> RunValidateSessionJournalAsync(
+        CliOptions options
+    ) {
+        string inputPath = options.Require("input");
+        string? reportPath = options.Get("report-json");
+        EnsurePathChainHasNoReparsePoint(inputPath, "--input");
+        if (!string.IsNullOrWhiteSpace(reportPath)) {
+            EnsurePathChainHasNoReparsePoint(reportPath, "--report-json");
+            EnsurePathIsOutsideRepository(
+                inputPath,
+                reportPath,
+                "--report-json"
+            );
+        }
+
+        SJ.SessionJournalOfflineValidationReport report =
+            await SJ.SessionJournalOfflineValidator.ValidateAsync(
+                inputPath,
+                CancellationToken.None
+            ).ConfigureAwait(false);
+        if (!string.IsNullOrWhiteSpace(reportPath)) {
+            WriteJsonAtomically(reportPath, report);
+        }
+
+        PrintSessionJournalValidation(report);
+        if (!string.IsNullOrWhiteSpace(reportPath)) {
+            Console.WriteLine($"report: {Path.GetFullPath(reportPath)}");
+        }
+        return 0;
+    }
+
+    private static async Task<int> RunCheckpointArtifactSetSessionJournalAsync(
+        CliOptions options
+    ) {
+        string inputPath = options.Require("input");
+        EnsurePathChainHasNoReparsePoint(inputPath, "--input");
+        IReadOnlyList<string?> memberValues = options.GetAll("member");
+        if (memberValues.Count < 2) {
+            throw new ArgumentException(
+                "checkpoint-artifact-set-session-journal requires at least two repeated --member <role>=<artifact-id> options."
+            );
+        }
+        var members = memberValues.Select(ParseArtifactSetMember).ToArray();
+
+        SJ.SessionJournalOfflineValidationReport before =
+            await SJ.SessionJournalOfflineValidator.ValidateAsync(
+                inputPath,
+                CancellationToken.None
+            ).ConfigureAwait(false);
+        using (var engine = SJ.SessionJournalEngine.Open(inputPath)) {
+            _ = await engine.CommitArtifactSetAsync(
+                members,
+                CancellationToken.None
+            ).ConfigureAwait(false);
+        }
+        SJ.SessionJournalOfflineValidationReport after =
+            await SJ.SessionJournalOfflineValidator.ValidateAsync(
+                inputPath,
+                CancellationToken.None
+            ).ConfigureAwait(false);
+        if (after.EventCount != checked(before.EventCount + 1)
+            || after.ActiveArtifactSet is null
+            || !string.Equals(
+                after.Readiness,
+                SJ.SessionJournalOfflineReadiness.ActiveCoherent,
+                StringComparison.Ordinal
+            )) {
+            throw new InvalidDataException(
+                "Artifact-set checkpoint did not produce exactly one usable ArtifactSetCommitted event."
+            );
+        }
+
+        Console.WriteLine($"oldHead: {before.Head ?? "(none)"}");
+        Console.WriteLine($"newHead: {after.Head ?? "(none)"}");
+        Console.WriteLine(
+            $"anchor: {after.ActiveArtifactSet.CommonAnchor}"
+        );
+        Console.WriteLine(
+            $"roles: {string.Join(",", after.ActiveArtifactSet.Members.Select(static member => member.RoleId))}"
+        );
+        Console.WriteLine($"readiness: {after.Readiness}");
+        return 0;
+    }
+
+    private static SJ.SessionArtifactSetMemberSelection ParseArtifactSetMember(
+        string? value
+    ) {
+        if (string.IsNullOrWhiteSpace(value)) {
+            throw new ArgumentException(
+                "--member requires a non-empty <role>=<artifact-id> value."
+            );
+        }
+        int separator = value.IndexOf('=');
+        if (separator <= 0
+            || separator == value.Length - 1
+            || value.IndexOf('=', separator + 1) >= 0) {
+            throw new ArgumentException(
+                $"Invalid --member '{value}'; expected exactly <role>=<artifact-id>."
+            );
+        }
+        return new SJ.SessionArtifactSetMemberSelection(
+            value[..separator],
+            value[(separator + 1)..]
+        );
+    }
+
+    private static void PrintSessionJournalValidation(
+        SJ.SessionJournalOfflineValidationReport report
+    ) {
+        Console.WriteLine($"head: {report.Head ?? "(none)"}");
+        Console.WriteLine($"events: {report.EventCount}");
+        Console.WriteLine($"logicalPayloadBytes: {report.LogicalPayloadBytes}");
+        Console.WriteLine($"phase: {report.ExecutionPhase}");
+        Console.WriteLine($"readiness: {report.Readiness}");
+        Console.WriteLine(
+            $"activeArtifactSet: {report.ActiveArtifactSet?.Address ?? "(none)"}"
+        );
+    }
+
+    private static void WriteJsonAtomically<T>(string path, T value) {
+        string fullPath = Path.GetFullPath(path);
+        Directory.CreateDirectory(Path.GetDirectoryName(fullPath) ?? ".");
+        string temporaryPath =
+            $"{fullPath}.tmp-{Guid.NewGuid():N}";
+        try {
+            File.WriteAllText(
+                temporaryPath,
+                JsonSerializer.Serialize(value, JsonOptions),
+                Encoding.UTF8
+            );
+            File.Move(temporaryPath, fullPath, overwrite: true);
+        }
+        catch {
+            TryDeleteFile(temporaryPath);
+            throw;
+        }
     }
 
     private static async Task<int> RunLlmSmokeAsync(
@@ -487,6 +628,8 @@ internal static partial class Program {
         Console.WriteLine("Commands:");
         Console.WriteLine("  inspect --input <path>");
         Console.WriteLine("  import-session-journal --input <path> --output <repo-dir> [--force] [--report-md <path>]");
+        Console.WriteLine("  validate-session-journal --input <repo-dir> [--report-json <path-outside-repo>]");
+        Console.WriteLine("  checkpoint-artifact-set-session-journal --input <repo-dir> --member <role>=<artifact-id> --member <role>=<artifact-id> [...]");
         Console.WriteLine("  llm-smoke --connections <path> [--connection <id>] [--call-log-dir <dir>] [--message <text>]");
         Console.WriteLine("  replay-pattern-count --input <path> --output <jsonl> [--report-md <path>] [--threshold-tokens <n>] [--respect-original-compaction]");
         Console.WriteLine("  replay-rolling-summary --input <path> --output <jsonl> --connections <path> [--preset autobiographical-rewrite|world-understanding-rewrite] [--connection <id>] [--call-log-dir <dir>] [--threshold-tokens <n>] [--max-epochs <n>] [--system-prompt <path>] [--prompt <path>]");
@@ -541,37 +684,49 @@ internal static partial class Program {
 }
 
 internal sealed class CliOptions {
-    private readonly Dictionary<string, string?> _values;
+    private readonly Dictionary<string, List<string?>> _values;
 
-    private CliOptions(Dictionary<string, string?> values) {
+    private CliOptions(Dictionary<string, List<string?>> values) {
         _values = values;
     }
 
     public static CliOptions Parse(string[] args) {
-        var values = new Dictionary<string, string?>(StringComparer.Ordinal);
+        var values = new Dictionary<string, List<string?>>(StringComparer.Ordinal);
         for (var index = 0; index < args.Length; index++) {
             var arg = args[index];
             if (!arg.StartsWith("--", StringComparison.Ordinal)) { throw new ArgumentException($"Unexpected argument '{arg}'."); }
             var key = arg[2..];
             if (string.IsNullOrWhiteSpace(key)) { throw new ArgumentException("Empty option name."); }
+            if (!values.TryGetValue(key, out List<string?>? occurrences)) {
+                occurrences = new List<string?>();
+                values.Add(key, occurrences);
+            }
             if (index + 1 >= args.Length || args[index + 1].StartsWith("--", StringComparison.Ordinal)) {
-                values[key] = null;
+                occurrences.Add(null);
                 continue;
             }
 
-            values[key] = args[++index];
+            occurrences.Add(args[++index]);
         }
 
         return new CliOptions(values);
     }
 
     public string Require(string key) {
-        if (!_values.TryGetValue(key, out var value) || string.IsNullOrWhiteSpace(value)) { throw new ArgumentException($"Missing required option --{key}."); }
+        var value = Get(key);
+        if (string.IsNullOrWhiteSpace(value)) { throw new ArgumentException($"Missing required option --{key}."); }
         return value;
     }
 
     public string? Get(string key)
-        => _values.TryGetValue(key, out var value) ? value : null;
+        => _values.TryGetValue(key, out List<string?>? values)
+            ? values[^1]
+            : null;
+
+    public IReadOnlyList<string?> GetAll(string key)
+        => _values.TryGetValue(key, out List<string?>? values)
+            ? values.AsReadOnly()
+            : Array.AsReadOnly(Array.Empty<string?>());
 
     public int GetInt(string key, int defaultValue) {
         var value = Get(key);

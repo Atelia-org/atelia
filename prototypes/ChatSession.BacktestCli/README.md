@@ -82,6 +82,51 @@ dotnet run --project prototypes/ChatSession.BacktestCli -- import-session-journa
 - `--force`：删除并重建整个目标 repo；只应用于已经确认可替换的输出路径。
 - `--report-md <path>`：可选，写出 legacy ordinal 到新 `EventAddress` 的映射。
 
+这是明确的 **legacy export → current SessionJournal wire** 离线迁移：命令创建一个新 repo，并记录
+legacy ordinal 到新 `EventAddress` 的映射。它不会、也不能原地改写已有 SessionJournal 的 immutable
+raw events。若未来要迁移旧版 SessionJournal wire，必须提供对应旧 codec、写入另一个新 repo，并重新
+生成所有 address-sensitive derived artifacts；当前命令不会猜测或兼容任意未知旧 wire。
+
+### validate-session-journal
+
+对当前 main Parent chain 做完整、严格、只读的 offline validation：
+
+```bash
+dotnet run --project prototypes/ChatSession.BacktestCli -- validate-session-journal \
+  --input gitignore/session-journal/cyber-copy-upgraded \
+  --report-json gitignore/backtest/session-journal-validation.json
+```
+
+validator 会逐 event 严格 decode、计算 logical payload bytes，以 full reducer 对照 exact-head tail
+resolver，检查 governing setup、Prepared request policy 分布，并检查最后一个 raw
+`ArtifactSetCommitted` 及其 exact sidecar members。readiness 为：
+
+- `active-coherent`：存在可用的 durable active ArtifactSet。
+- `needs-artifact-set-checkpoint`：尚无 activation，或 activation 指向的 exact sidecar member 已缺失/
+  不可用。
+
+`--report-json` 可选，但必须位于输入 repo 外；命令不会写 raw、derived index 或 EventJournal
+forward-plan cache。raw/wire 不兼容、Parent/correlation/checkpoint 等不变量破坏时命令以非零状态失败，
+而不是输出一份貌似可用的报告。
+
+### checkpoint-artifact-set-session-journal
+
+在已生成至少两个 common-anchor exact artifacts 后，显式提交一次 durable active-set activation：
+
+```bash
+dotnet run --project prototypes/ChatSession.BacktestCli -- \
+  checkpoint-artifact-set-session-journal \
+  --input gitignore/session-journal/cyber-copy-upgraded \
+  --member autobiography=<autobiography-artifact-id> \
+  --member world-understanding=<world-understanding-artifact-id>
+```
+
+`--member <role>=<artifact-id>` 可重复，role 和 artifact id 都必须唯一。命令先运行上述只读
+validation，再验证 exact artifact 的 common anchor、setup、current Parent lineage、target
+contribution hash，并以 exact-head CAS **只追加一条** `ArtifactSetCommitted`。旧 event/manifest 和
+derived files 均不改写；缺 member、duplicate role/id、anchor/setup/lineage 不一致或当前 head 不是合法
+idle boundary 时不 append。
+
 ### replay-rolling-summary-session-journal
 
 从 `SessionJournal` raw repo 的 addressed history replay 运行 maintainer。成功 completion 会先写入
