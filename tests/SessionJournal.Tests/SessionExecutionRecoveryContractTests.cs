@@ -434,8 +434,8 @@ public sealed class SessionExecutionRecoveryContractTests : IDisposable {
 
     [Theory]
     [InlineData(1)]
-    [InlineData(32)]
-    public async Task ResumeIdle_ColdPrefixDiagnosticsExposeCurrentFullReplayBaseline(
+    [InlineData(10001)]
+    public async Task ResumeIdle_ColdPrefixDiagnosticsStayTailBounded(
         int turnCount
     ) {
         string path = CreateColdIdleJournal(turnCount);
@@ -446,15 +446,14 @@ public sealed class SessionExecutionRecoveryContractTests : IDisposable {
 
         SessionJournalReadDiagnostics delta =
             reopened.CaptureReadDiagnostics() - before;
-        long expectedEventCount = 3 + 2 * turnCount;
         Assert.False(outcome.Advanced);
         Assert.Equal(
             new SessionJournalReadDiagnostics(
-                HeaderPreviewReadCount: 1,
-                PayloadReadCount: expectedEventCount,
-                ChronologicalChainReadCount: 1,
-                ChronologicalEventCount: expectedEventCount,
-                FullProjectionInvocationCount: 1
+                HeaderPreviewReadCount: 2,
+                PayloadReadCount: 2,
+                ChronologicalChainReadCount: 0,
+                ChronologicalEventCount: 0,
+                FullProjectionInvocationCount: 0
             ),
             delta
         );
@@ -493,7 +492,7 @@ public sealed class SessionExecutionRecoveryContractTests : IDisposable {
         Assert.Equal(
             new SessionJournalReadDiagnostics(
                 HeaderPreviewReadCount: 1,
-                PayloadReadCount: 1,
+                PayloadReadCount: 2,
                 ChronologicalChainReadCount: 0,
                 ChronologicalEventCount: 0,
                 FullProjectionInvocationCount: 0
@@ -512,7 +511,15 @@ public sealed class SessionExecutionRecoveryContractTests : IDisposable {
     }
 
     private string CreateColdIdleJournal(int turnCount) {
-        string path = NewJournalPath();
+        string tempRoot = Directory.Exists("/dev/shm")
+            ? "/dev/shm"
+            : Path.GetTempPath();
+        string path = Path.Combine(
+            tempRoot,
+            "atelia-session-journal-cold-prefix-tests",
+            Guid.NewGuid().ToString("N")
+        );
+        _tempDirectories.Add(path);
         using (SessionJournalEngine.Create(
             path,
             new SessionCreateOptions("model-A", "system-A", "surface-A")

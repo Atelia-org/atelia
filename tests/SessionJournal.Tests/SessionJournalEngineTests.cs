@@ -698,7 +698,9 @@ public sealed class SessionJournalEngineTests : IDisposable {
             CreateRuntime(client)
         );
 
+        int projectionCountBeforeSend = engine.FullProjectionInvocationCount;
         TurnResult result = await engine.SendAsync("hello", CancellationToken.None);
+        Assert.Equal(client.Calls, engine.FullProjectionInvocationCount - projectionCountBeforeSend);
         SessionProjection projection = engine.Project();
 
         Assert.Equal("answer", result.Message.GetFlattenedText());
@@ -727,6 +729,29 @@ public sealed class SessionJournalEngineTests : IDisposable {
         Assert.Empty(manifest.ToolSet.Definitions);
         Assert.Equal("surface-A", manifest.Target.CompletionSurfaceId);
         Assert.Equal(SessionRequestCanonicalizer.CreateCommitment(client.Requests.Single()), manifest.Commitment);
+    }
+
+    [Fact]
+    public void BoundaryMutations_UseTailRecoveryWithoutFullProjection() {
+        string path = NewJournalPath();
+        using var engine = SessionJournalEngine.Create(
+            path,
+            new SessionCreateOptions("model-A", "system-A", "surface-A")
+        );
+        int projectionCountBeforeMutations = engine.FullProjectionInvocationCount;
+
+        engine.AppendRuntimeConfigSetup(
+            new SessionRuntimeConfiguration("model-B", "surface-B", SessionJournalDefaults.Schema)
+        );
+        engine.AppendSystemPromptSetup("system-B");
+        engine.AppendObservation("imported observation");
+        engine.AppendImportedAgentAction(
+            new ActionMessage([new ActionBlock.Text("imported answer")]),
+            new CompletionDescriptor("import", "import-v1", "model-B")
+        );
+
+        Assert.Equal(projectionCountBeforeMutations, engine.FullProjectionInvocationCount);
+        Assert.Equal(SessionExecutionPhase.Idle, engine.ResolveExecutionTail().State.Phase);
     }
 
     [Fact]
@@ -1234,7 +1259,9 @@ public sealed class SessionJournalEngineTests : IDisposable {
             new SessionCreateOptions("model-A", "system-A", "surface-A"),
             CreateRuntime(client, toolSession)
         )) {
+            int projectionCountBeforeSend = engine.FullProjectionInvocationCount;
             TurnResult turn = await engine.SendAsync("need lookup", CancellationToken.None);
+            Assert.Equal(client.Calls, engine.FullProjectionInvocationCount - projectionCountBeforeSend);
             SessionProjection projection = engine.Project();
 
             Assert.Equal("final", turn.Message.GetFlattenedText());

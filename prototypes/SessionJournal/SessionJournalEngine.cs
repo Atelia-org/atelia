@@ -164,33 +164,35 @@ public sealed class SessionJournalEngine : IDisposable {
         if (_runtime?.TailProjection is not null) {
             SessionRuntime runtime = RequireRuntime();
             _ = RequireEmptyTailToolSet(runtime);
-            EventAddress expectedHead = _journal.GetHead(_mainRef)
-                ?? throw new InvalidOperationException("SendAsync requires an initialized SessionJournal.");
-            ValidateTailIdleBoundary(expectedHead, cancellationToken);
-            EventAddress observationAddress = AppendExpected(
-                SessionEventKind.ObservationAccepted,
-                new ObservationAcceptedBody(observation),
-                expectedHead,
-                requireBoundSetupCursor: false
-            );
-            TriggerFailpoint(SessionJournalFailpoint.AfterObservationCommitted);
-            return await CompletePendingObservationAsync(
-                observer,
-                cancellationToken,
-                expectedTailObservation: observationAddress
-            ).ConfigureAwait(false);
         }
 
-        var projection = Project(cancellationToken);
-        if (projection.ExecutionState.Phase is not (SessionExecutionPhase.Idle or SessionExecutionPhase.TurnFailed)) {
+        SessionExecutionRecovery recovery = ResolveExecutionTail(
+            cancellationToken
+        );
+        if (recovery.State.Phase is not (
+            SessionExecutionPhase.Idle
+            or SessionExecutionPhase.TurnFailed
+        )) {
             throw new InvalidOperationException(
-                $"SendAsync requires an idle or explicitly failed turn boundary. Current phase is '{projection.ExecutionState.Phase}'; call ResumeAsync first."
+                $"SendAsync requires an idle or explicitly failed turn boundary. Current phase is '{recovery.State.Phase}'; call ResumeAsync first."
             );
         }
-
-        AppendObservation(observation);
+        EventAddress observationAddress = AppendExpected(
+            SessionEventKind.ObservationAccepted,
+            new ObservationAcceptedBody(observation),
+            recovery.Head,
+            requireBoundSetupCursor: false
+        );
         TriggerFailpoint(SessionJournalFailpoint.AfterObservationCommitted);
-        return await CompletePendingObservationAsync(observer, cancellationToken).ConfigureAwait(false);
+        SessionExecutionRecovery observationRecovery = ResolveExecutionTail(
+            observationAddress,
+            cancellationToken
+        );
+        return await CompleteAwaitingAgentActionAsync(
+            observationRecovery,
+            observer,
+            cancellationToken
+        ).ConfigureAwait(false);
     }
 
     public async Task<ResumeOutcome> ResumeAsync(CancellationToken cancellationToken = default)
@@ -201,47 +203,33 @@ public sealed class SessionJournalEngine : IDisposable {
         CancellationToken cancellationToken = default
     ) {
         ThrowIfDisposed();
-        if (_journal.GetHead(_mainRef) is { } preparedHead) {
-            SessionEventKind preparedHeadKind = ReadEventKind(preparedHead);
-            if (preparedHeadKind is SessionEventKind.CompletionRequestPrepared
-                or SessionEventKind.CompletionAttemptRestarted) {
-                return await ResumePreparedCompletionAsync(
-                    preparedHead,
-                    observer,
-                    cancellationToken
-                ).ConfigureAwait(false);
-            }
-        }
-
-        if (_runtime?.TailProjection is not null
-            && _journal.GetHead(_mainRef) is { } tailHead
-            && ReadEventKind(tailHead) == SessionEventKind.ObservationAccepted) {
-            SessionRuntime runtime = RequireRuntime();
-            _ = RequireEmptyTailToolSet(runtime);
-            ValidateTailObservationBoundary(tailHead, cancellationToken);
-            return ToResumeOutcome(
-                await CompletePendingObservationAsync(
-                    observer,
-                    cancellationToken,
-                    expectedTailObservation: tailHead
-                ).ConfigureAwait(false)
-            );
-        }
-
-        SessionProjection projection = Project(cancellationToken);
-        return projection.ExecutionState.Phase switch {
+        SessionExecutionRecovery recovery = ResolveExecutionTail(
+            cancellationToken
+        );
+        return recovery.State.Phase switch {
             SessionExecutionPhase.Empty or SessionExecutionPhase.Idle or SessionExecutionPhase.TurnFailed =>
                 new ResumeOutcome(Advanced: false),
             SessionExecutionPhase.AwaitingAgentAction => ToResumeOutcome(
-                await CompletePendingObservationAsync(observer, cancellationToken).ConfigureAwait(false)
+                await CompleteAwaitingAgentActionAsync(
+                    recovery,
+                    observer,
+                    cancellationToken
+                ).ConfigureAwait(false)
             ),
-            SessionExecutionPhase.AwaitingCompletion => throw new InvalidOperationException(
-                "The current completion request is already durably prepared. CS-3A does not resend or replan it; canonical request recovery is implemented by CS-3C."
-            ),
+            SessionExecutionPhase.AwaitingCompletion =>
+                await ResumePreparedCompletionAsync(
+                    recovery,
+                    observer,
+                    cancellationToken
+                ).ConfigureAwait(false),
             SessionExecutionPhase.AwaitingToolExecution => ToResumeOutcome(
-                await ContinueToolLoopAsync(projection, observer, cancellationToken).ConfigureAwait(false)
+                await ContinueToolLoopAsync(
+                    recovery,
+                    observer,
+                    cancellationToken
+                ).ConfigureAwait(false)
             ),
-            _ => throw new InvalidOperationException($"Unknown SessionJournal execution phase '{projection.ExecutionState.Phase}'.")
+            _ => throw new InvalidOperationException($"Unknown SessionJournal execution phase '{recovery.State.Phase}'.")
         };
     }
 
@@ -253,34 +241,50 @@ public sealed class SessionJournalEngine : IDisposable {
     public EventAddress AppendRuntimeConfigSetup(SessionRuntimeConfiguration configuration) {
         ArgumentNullException.ThrowIfNull(configuration);
         ValidateRuntimeConfiguration(configuration);
-        SessionProjection projection = Project();
-        if (projection.ExecutionState.Phase is not (SessionExecutionPhase.Idle or SessionExecutionPhase.TurnFailed)) {
+        SessionExecutionRecovery recovery = ResolveExecutionTail();
+        if (recovery.State.Phase is not (
+            SessionExecutionPhase.Idle
+            or SessionExecutionPhase.TurnFailed
+        )) {
             throw new InvalidOperationException(
-                $"AppendRuntimeConfigSetup requires an idle or explicitly failed turn boundary. Current phase is '{projection.ExecutionState.Phase}'."
+                $"AppendRuntimeConfigSetup requires an idle or explicitly failed turn boundary. Current phase is '{recovery.State.Phase}'."
             );
         }
 
-        return Append(SessionEventKind.RuntimeConfigSetup, configuration);
+        return AppendExpected(
+            SessionEventKind.RuntimeConfigSetup,
+            configuration,
+            recovery.Head,
+            requireBoundSetupCursor: false
+        );
     }
 
     public EventAddress AppendSystemPromptSetup(string systemPrompt) {
         if (systemPrompt is null) { throw new ArgumentNullException(nameof(systemPrompt)); }
-        SessionProjection projection = Project();
-        if (projection.ExecutionState.Phase is not (SessionExecutionPhase.Idle or SessionExecutionPhase.TurnFailed)) {
+        SessionExecutionRecovery recovery = ResolveExecutionTail();
+        if (recovery.State.Phase is not (
+            SessionExecutionPhase.Idle
+            or SessionExecutionPhase.TurnFailed
+        )) {
             throw new InvalidOperationException(
-                $"AppendSystemPromptSetup requires an idle or explicitly failed turn boundary. Current phase is '{projection.ExecutionState.Phase}'."
+                $"AppendSystemPromptSetup requires an idle or explicitly failed turn boundary. Current phase is '{recovery.State.Phase}'."
             );
         }
 
-        return Append(SessionEventKind.SystemPromptSetup, new SystemPromptSetupBody(systemPrompt));
+        return AppendExpected(
+            SessionEventKind.SystemPromptSetup,
+            new SystemPromptSetupBody(systemPrompt),
+            recovery.Head,
+            requireBoundSetupCursor: false
+        );
     }
 
     public EventAddress AppendImportedAgentAction(ActionMessage action, CompletionDescriptor invocation) {
         ArgumentNullException.ThrowIfNull(action);
         ArgumentNullException.ThrowIfNull(invocation);
-        SessionProjection projection = Project();
-        if (projection.ExecutionState.Phase != SessionExecutionPhase.AwaitingAgentAction
-            || projection.ExecutionState.HeadKind is not (SessionEventKind.ObservationAccepted or SessionEventKind.ToolResultObserved)) {
+        SessionExecutionRecovery recovery = ResolveExecutionTail();
+        if (recovery.State.Phase != SessionExecutionPhase.AwaitingAgentAction
+            || recovery.State.HeadKind is not (SessionEventKind.ObservationAccepted or SessionEventKind.ToolResultObserved)) {
             throw new InvalidOperationException(
                 "AppendImportedAgentAction requires an unprepared observation or settled tool-result completion boundary."
             );
@@ -293,20 +297,22 @@ public sealed class SessionJournalEngine : IDisposable {
                 runtime.ToolSession?.VisibleDefinitions ?? ImmutableArray<ToolDefinition>.Empty
             );
         }
-        return Append(
+        return AppendExpected(
             SessionEventKind.ImportedAgentAction,
             new AgentActionProducedBody(
                 action,
                 invocation,
-                projection.ExecutionState.ActiveCorrelationId
+                recovery.State.ActiveCorrelationId
                     ?? throw new InvalidDataException(
                         "An imported agent action requires an active completion-boundary correlation id."
                     ),
                 new SessionExecutionCheckpoint(
-                    projection.ExecutionState.ToolExecutionSequenceCheckpoint
+                    recovery.State.ToolExecutionSequenceCheckpoint
                 ),
                 toolRuntimeIdentity
-            )
+            ),
+            recovery.Head,
+            requireBoundSetupCursor: false
         );
     }
 
@@ -482,51 +488,129 @@ public sealed class SessionJournalEngine : IDisposable {
         return events;
     }
 
-    private async Task<TurnResult> CompletePendingObservationAsync(
+    private async Task<TurnResult> CompleteAwaitingAgentActionAsync(
+        SessionExecutionRecovery recovery,
         CompletionStreamObserver? observer,
-        CancellationToken cancellationToken,
-        EventAddress? expectedTailObservation = null
+        CancellationToken cancellationToken
     ) {
+        if (recovery.Head is not { } expectedParent
+            || recovery.State.Phase !=
+                SessionExecutionPhase.AwaitingAgentAction) {
+            throw new InvalidOperationException(
+                $"Completion requires an exact '{SessionExecutionPhase.AwaitingAgentAction}' recovery boundary."
+            );
+        }
         SessionRuntime runtime = RequireRuntime();
         if (runtime.TailProjection is not null) {
-            EventAddress observationAddress = expectedTailObservation
-                ?? throw new InvalidOperationException(
-                    "Explicit artifact tail completion requires an exact ObservationAccepted address."
+            _ = RequireEmptyTailToolSet(runtime);
+            if (recovery.State.HeadKind !=
+                SessionEventKind.ObservationAccepted) {
+                throw new NotSupportedException(
+                    "Explicit artifact-tail completion from a settled ToolResult is deferred to CS-3D4."
                 );
+            }
             return await CompleteTailObservationAsync(
                 runtime,
-                observationAddress,
+                recovery,
                 observer,
                 cancellationToken
             ).ConfigureAwait(false);
         }
-        if (expectedTailObservation is not null) {
-            throw new InvalidOperationException("A tail observation address was supplied without tail projection.");
-        }
+        FullRawRequestContext fullRaw = MaterializeFullRawRequestContext(
+            recovery,
+            runtime,
+            cancellationToken
+        );
+        CommittedCompletionResult committed =
+            await ExecutePreparedCompletionAsync(
+            fullRaw.Request,
+            expectedParent,
+            fullRaw.GoverningSetup,
+            fullRaw.CompletionTarget,
+            runtime,
+            fullRaw.Tools,
+            fullRaw.Materialization,
+            fullRaw.CorrelationId,
+            fullRaw.Reason,
+            new SessionExecutionCheckpoint(
+                recovery.State.ToolExecutionSequenceCheckpoint
+            ),
+            allowResultToolCalls: true,
+            observer,
+            cancellationToken
+        ).ConfigureAwait(false);
 
-        SessionProjection projection = Project(cancellationToken);
-        if (projection.ExecutionState.Phase != SessionExecutionPhase.AwaitingAgentAction) {
-            throw new InvalidOperationException(
-                $"Completion can resume only from '{SessionExecutionPhase.AwaitingAgentAction}', got '{projection.ExecutionState.Phase}'."
+        SessionExecutionRecovery actionRecovery = ResolveExecutionTail(
+            committed.ActionAddress,
+            cancellationToken
+        );
+        if (actionRecovery.State.Phase ==
+            SessionExecutionPhase.AwaitingToolExecution) {
+            return await ContinueToolLoopAsync(
+                actionRecovery,
+                observer,
+                cancellationToken
+            ).ConfigureAwait(false);
+        }
+        if (actionRecovery.State.Phase != SessionExecutionPhase.Idle) {
+            throw new InvalidDataException(
+                $"Committed terminal Action resolved to unexpected phase '{actionRecovery.State.Phase}'."
             );
         }
 
+        return new TurnResult(
+            committed.Result.Message,
+            committed.Result.Invocation,
+            FreezeErrors(committed.Result.Errors)
+        );
+    }
+
+    private FullRawRequestContext MaterializeFullRawRequestContext(
+        SessionExecutionRecovery recovery,
+        SessionRuntime runtime,
+        CancellationToken cancellationToken
+    ) {
+        SessionProjection projection = Project(cancellationToken);
+        if (projection.Head != recovery.Head
+            || projection.ExecutionState != recovery.State) {
+            throw new InvalidDataException(
+                "Full-raw request projection does not match the exact execution recovery boundary."
+            );
+        }
         SessionRuntimeConfiguration config = projection.Config
-            ?? throw new InvalidDataException("SessionJournal projection is missing session configuration.");
+            ?? throw new InvalidDataException(
+                "SessionJournal projection is missing session configuration."
+            );
         string systemPrompt = projection.SystemPrompt
-            ?? throw new InvalidDataException("SessionJournal projection is missing system prompt.");
-        SessionCompletionTargetIdentity completionTarget = runtime.CompletionTarget
+            ?? throw new InvalidDataException(
+                "SessionJournal projection is missing system prompt."
+            );
+        SessionCompletionTargetIdentity completionTarget =
+            runtime.CompletionTarget
             ?? throw new InvalidOperationException(
                 "SessionJournal runtime requires non-secret CompletionTarget identity before a durable completion request can be prepared."
             );
-        ImmutableArray<ToolDefinition> tools = runtime.ToolSession?.VisibleDefinitions ?? ImmutableArray<ToolDefinition>.Empty;
-
-        EventAddress expectedParent = projection.Head
-            ?? throw new InvalidDataException("AwaitingAgentAction projection requires a raw head.");
-        SessionGoverningSetup governingSetup = EnsureGoverningSetupCursor(expectedParent, cancellationToken);
+        ImmutableArray<ToolDefinition> tools =
+            runtime.ToolSession?.VisibleDefinitions
+            ?? ImmutableArray<ToolDefinition>.Empty;
+        EventAddress expectedParent = recovery.Head
+            ?? throw new InvalidDataException(
+                "AwaitingAgentAction recovery requires a raw head."
+            );
+        SessionGoverningSetup governingSetup =
+            EnsureGoverningSetupCursor(
+                expectedParent,
+                cancellationToken
+            );
         if (governingSetup.RuntimeConfig != config
-            || !string.Equals(governingSetup.SystemPrompt, systemPrompt, StringComparison.Ordinal)) {
-            throw new InvalidDataException("Governing setup cursor does not match the exact current projection.");
+            || !string.Equals(
+                governingSetup.SystemPrompt,
+                systemPrompt,
+                StringComparison.Ordinal
+            )) {
+            throw new InvalidDataException(
+                "Governing setup cursor does not match the exact current projection."
+            );
         }
 
         _lastTailProjectionDiagnostics = default;
@@ -539,10 +623,13 @@ public sealed class SessionJournalEngine : IDisposable {
             SessionRequestManifestDefaults.FullRawContextRendererId,
             SessionRequestManifestDefaults.FullRawContextRendererFingerprint,
             RawStartExclusive: null,
-            ComputeRawRangeSha256(rawStartExclusive: null, expectedParent, cancellationToken),
+            ComputeRawRangeSha256(
+                rawStartExclusive: null,
+                expectedParent,
+                cancellationToken
+            ),
             ImmutableArray<SessionRequestArtifactInput>.Empty
         );
-
         var request = new CompletionRequest(
             ModelId: config.ModelId,
             SystemPrompt: materialization.SystemPrompt,
@@ -550,45 +637,45 @@ public sealed class SessionJournalEngine : IDisposable {
             Tools: tools,
             MaxTokens: runtime.MaxTokens
         );
-
-        string correlationId = projection.ExecutionState.ActiveCorrelationId
-            ?? throw new InvalidDataException("AwaitingAgentAction requires an active correlation id.");
-        string reason = projection.ExecutionState.HeadKind == SessionEventKind.ToolResultObserved
-            ? "tool-continuation"
-            : "observation";
-        CompletionResult result = await ExecutePreparedCompletionAsync(
+        string correlationId = recovery.State.ActiveCorrelationId
+            ?? throw new InvalidDataException(
+                "AwaitingAgentAction requires an active correlation id."
+            );
+        string reason = recovery.State.HeadKind ==
+            SessionEventKind.ToolResultObserved
+                ? "tool-continuation"
+                : "observation";
+        return new FullRawRequestContext(
             request,
-            expectedParent,
             governingSetup,
             completionTarget,
-            runtime,
             tools,
             materialization,
             correlationId,
-            reason,
-            new SessionExecutionCheckpoint(
-                projection.ExecutionState.ToolExecutionSequenceCheckpoint
-            ),
-            allowResultToolCalls: true,
-            observer,
-            cancellationToken
-        ).ConfigureAwait(false);
-
-        projection = Project(cancellationToken);
-        if (projection.ExecutionState.Phase == SessionExecutionPhase.AwaitingToolExecution) { return await ContinueToolLoopAsync(projection, observer, cancellationToken).ConfigureAwait(false); }
-
-        return new TurnResult(result.Message, result.Invocation, FreezeErrors(result.Errors));
+            reason
+        );
     }
 
     private async Task<TurnResult> CompleteTailObservationAsync(
         SessionRuntime runtime,
-        EventAddress observationAddress,
+        SessionExecutionRecovery recovery,
         CompletionStreamObserver? observer,
         CancellationToken cancellationToken
     ) {
+        EventAddress observationAddress = recovery.Head
+            ?? throw new InvalidDataException(
+                "Artifact-tail completion requires an exact observation head."
+            );
+        if (recovery.State.Phase !=
+                SessionExecutionPhase.AwaitingAgentAction
+            || recovery.State.HeadKind !=
+                SessionEventKind.ObservationAccepted) {
+            throw new InvalidOperationException(
+                "Artifact-tail completion currently supports only ObservationAccepted recovery boundaries."
+            );
+        }
         ImmutableArray<ToolDefinition> tools = RequireEmptyTailToolSet(runtime);
         _lastTailProjectionDiagnostics = default;
-        ValidateTailObservationBoundary(observationAddress, cancellationToken);
         SessionCompletionTargetIdentity completionTarget = runtime.CompletionTarget
             ?? throw new InvalidOperationException(
                 "SessionJournal runtime requires non-secret CompletionTarget identity before a durable completion request can be prepared."
@@ -627,7 +714,8 @@ public sealed class SessionJournalEngine : IDisposable {
             MaxTokens: runtime.MaxTokens
         );
 
-        CompletionResult result = await ExecutePreparedCompletionAsync(
+        CommittedCompletionResult committed =
+            await ExecutePreparedCompletionAsync(
             request,
             observationAddress,
             governingSetup,
@@ -635,17 +723,35 @@ public sealed class SessionJournalEngine : IDisposable {
             runtime,
             tools,
             materialization,
-            BuildCorrelationId(observationAddress),
+            recovery.State.ActiveCorrelationId
+                ?? throw new InvalidDataException(
+                    "Artifact-tail observation requires an active correlation id."
+                ),
             reason: "observation",
-            ResolveExecutionCheckpoint(observationAddress, cancellationToken),
+            new SessionExecutionCheckpoint(
+                recovery.State.ToolExecutionSequenceCheckpoint
+            ),
             allowResultToolCalls: false,
             observer,
             cancellationToken
         ).ConfigureAwait(false);
-        return new TurnResult(result.Message, result.Invocation, FreezeErrors(result.Errors));
+        SessionExecutionRecovery actionRecovery = ResolveExecutionTail(
+            committed.ActionAddress,
+            cancellationToken
+        );
+        if (actionRecovery.State.Phase != SessionExecutionPhase.Idle) {
+            throw new InvalidDataException(
+                $"Artifact-tail terminal Action resolved to unexpected phase '{actionRecovery.State.Phase}'."
+            );
+        }
+        return new TurnResult(
+            committed.Result.Message,
+            committed.Result.Invocation,
+            FreezeErrors(committed.Result.Errors)
+        );
     }
 
-    private async Task<CompletionResult> ExecutePreparedCompletionAsync(
+    private async Task<CommittedCompletionResult> ExecutePreparedCompletionAsync(
         CompletionRequest request,
         EventAddress expectedParent,
         SessionGoverningSetup governingSetup,
@@ -693,7 +799,7 @@ public sealed class SessionJournalEngine : IDisposable {
         ).ConfigureAwait(false);
     }
 
-    private async Task<CompletionResult> ExecuteCommittedCompletionAttemptAsync(
+    private async Task<CommittedCompletionResult> ExecuteCommittedCompletionAttemptAsync(
         CompletionRequest request,
         EventAddress activeAttemptAddress,
         string activeAttemptId,
@@ -753,7 +859,7 @@ public sealed class SessionJournalEngine : IDisposable {
             );
         }
         TriggerFailpoint(SessionJournalFailpoint.AfterCompletionBeforeActionCommitted);
-        AppendExpected(
+        EventAddress actionAddress = AppendExpected(
             SessionEventKind.AgentActionProduced,
             new AgentActionProducedBody(
                 result.Message,
@@ -771,7 +877,7 @@ public sealed class SessionJournalEngine : IDisposable {
             requireBoundSetupCursor: false
         );
         TriggerFailpoint(SessionJournalFailpoint.AfterActionCommitted);
-        return result;
+        return new CommittedCompletionResult(result, actionAddress);
     }
 
     private void ThrowKnownHostFailure(
@@ -802,14 +908,25 @@ public sealed class SessionJournalEngine : IDisposable {
     }
 
     private async Task<ResumeOutcome> ResumePreparedCompletionAsync(
-        EventAddress activeAttemptHead,
+        SessionExecutionRecovery recovery,
         CompletionStreamObserver? observer,
         CancellationToken cancellationToken
     ) {
-        SessionExecutionTailResolver.PreparedAttemptIdentityChain chain = ResolvePreparedAttemptIdentityChain(
-            activeAttemptHead,
-            cancellationToken
-        );
+        if (recovery.State.Phase !=
+                SessionExecutionPhase.AwaitingCompletion
+            || recovery.Boundary.SourcePrepared is not {
+            } sourcePreparedAddress
+            || recovery.State.ActiveCompletionAttemptAddress is not {
+            } activeAttemptAddress
+            || recovery.State.PendingCompletionAttemptId is not {
+            } activeAttemptId
+            || recovery.State.PendingRequestPreparedAddress !=
+                sourcePreparedAddress
+            || recovery.Head != activeAttemptAddress) {
+            throw new InvalidDataException(
+                "Prepared recovery is missing its exact durable attempt boundary."
+            );
+        }
         SessionPreparedCompletionRecoveryPolicy policy =
             _runtime?.PreparedCompletionRecoveryPolicy
             ?? SessionPreparedCompletionRecoveryPolicy.RefuseUncertain;
@@ -826,55 +943,81 @@ public sealed class SessionJournalEngine : IDisposable {
         }
 
         SessionRuntime runtime = RequireRuntime();
-        ValidateRecoveryRuntimeCompatibility(runtime, chain.SourceManifest);
         SessionPreparedRequestReconstruction reconstruction =
             SessionPreparedRequestReconstructor.Reconstruct(
                 _reader,
-                chain.SourcePreparedAddress,
+                sourcePreparedAddress,
                 cancellationToken
             );
+        CompletionRequestPreparedBody manifest =
+            reconstruction.Manifest;
+        if (!string.Equals(
+                manifest.Attempt.CorrelationId,
+                recovery.State.ActiveCorrelationId,
+                StringComparison.Ordinal
+            )
+            || manifest.Execution.LastIssuedToolExecutionSequence !=
+                recovery.State.ToolExecutionSequenceCheckpoint) {
+            throw new InvalidDataException(
+                "Prepared reconstruction does not match the resolved execution checkpoint."
+            );
+        }
+        ValidateRecoveryRuntimeCompatibility(runtime, manifest);
         string restartedAttemptId = $"attempt-{Guid.NewGuid():N}";
         EventAddress restartedAddress = AppendExpected(
             SessionEventKind.CompletionAttemptRestarted,
             new CompletionAttemptRestartedBody(
                 restartedAttemptId,
-                chain.ActiveAttemptId,
-                chain.SourcePreparedAddress
+                activeAttemptId,
+                sourcePreparedAddress
             ),
-            chain.ActiveAttemptAddress,
+            activeAttemptAddress,
             requireBoundSetupCursor: false
         );
         TriggerFailpoint(SessionJournalFailpoint.AfterCompletionAttemptRestartedCommitted);
 
         bool sourceAllowsToolCalls = string.Equals(
-            chain.SourceManifest.Plan.SelectionPolicyId,
+            manifest.Plan.SelectionPolicyId,
             SessionRequestManifestDefaults.FullRawSelectionPolicyId,
             StringComparison.Ordinal
         );
-        CompletionResult result = await ExecuteCommittedCompletionAttemptAsync(
+        CommittedCompletionResult committed =
+            await ExecuteCommittedCompletionAttemptAsync(
             reconstruction.Request,
             restartedAddress,
             restartedAttemptId,
-            chain.SourceManifest,
+            manifest,
             runtime,
             sourceAllowsToolCalls,
             observer,
             cancellationToken
         ).ConfigureAwait(false);
 
-        return ToResumeOutcome(
-            new TurnResult(result.Message, result.Invocation, FreezeErrors(result.Errors))
+        SessionExecutionRecovery actionRecovery = ResolveExecutionTail(
+            committed.ActionAddress,
+            cancellationToken
         );
+        if (actionRecovery.State.Phase ==
+            SessionExecutionPhase.AwaitingToolExecution) {
+            return ToResumeOutcome(
+                await ContinueToolLoopAsync(
+                    actionRecovery,
+                    observer,
+                    cancellationToken
+                ).ConfigureAwait(false)
+            );
+        }
+        if (actionRecovery.State.Phase != SessionExecutionPhase.Idle) {
+            throw new InvalidDataException(
+                $"Recovered terminal Action resolved to unexpected phase '{actionRecovery.State.Phase}'."
+            );
+        }
+        return ToResumeOutcome(new TurnResult(
+            committed.Result.Message,
+            committed.Result.Invocation,
+            FreezeErrors(committed.Result.Errors)
+        ));
     }
-
-    private SessionExecutionTailResolver.PreparedAttemptIdentityChain ResolvePreparedAttemptIdentityChain(
-        EventAddress activeAttemptHead,
-        CancellationToken cancellationToken
-    ) => SessionExecutionTailResolver.ResolvePreparedAttemptIdentityChain(
-        _reader,
-        activeAttemptHead,
-        cancellationToken
-    );
 
     private static void ValidateRecoveryRuntimeCompatibility(
         SessionRuntime runtime,
@@ -913,15 +1056,22 @@ public sealed class SessionJournalEngine : IDisposable {
     }
 
     private async Task<TurnResult> ContinueToolLoopAsync(
-        SessionProjection projection,
+        SessionExecutionRecovery recovery,
         CompletionStreamObserver? observer,
         CancellationToken cancellationToken
     ) {
+        if (recovery.Head is null
+            || recovery.State.Phase !=
+                SessionExecutionPhase.AwaitingToolExecution) {
+            throw new InvalidDataException(
+                "Tool continuation requires an exact AwaitingToolExecution recovery boundary."
+            );
+        }
         SessionRuntime runtime = RequireRuntime();
         ToolSession toolSession = RequireToolSession(runtime);
-        if (projection.ExecutionState.PendingToolCall is null) { throw new InvalidDataException("AwaitingToolExecution requires a pending tool call."); }
+        if (recovery.State.PendingToolCall is null) { throw new InvalidDataException("AwaitingToolExecution requires a pending tool call."); }
         SessionToolRuntimeIdentity expectedToolRuntimeIdentity =
-            projection.ExecutionState.PendingToolRuntimeIdentity
+            recovery.State.PendingToolRuntimeIdentity
                 ?? throw new InvalidDataException(
                     "AwaitingToolExecution requires a durable pending tool runtime identity."
                 );
@@ -931,40 +1081,67 @@ public sealed class SessionJournalEngine : IDisposable {
             );
         }
 
-        RawToolCall toolCall = projection.ExecutionState.PendingToolCall;
+        RawToolCall toolCall = recovery.State.PendingToolCall;
         long reservedExecutionSequence =
-            projection.ExecutionState.ToolExecutionSequenceCheckpoint;
-        if (!projection.ExecutionState.PendingToolExecutionStarted) {
-            string operationId = projection.ExecutionState.PendingOperationId ?? BuildOperationId(projection.Head, toolCall);
+            recovery.State.ToolExecutionSequenceCheckpoint;
+        if (!recovery.State.PendingToolExecutionStarted) {
+            string operationId = recovery.State.PendingOperationId
+                ?? BuildOperationId(recovery.Head, toolCall);
             reservedExecutionSequence = checked(reservedExecutionSequence + 1);
-            AppendToolExecutionStarted(
+            EventAddress startedAddress = AppendToolExecutionStarted(
                 toolCall,
                 operationId,
                 reservedExecutionSequence,
-                expectedToolRuntimeIdentity
+                expectedToolRuntimeIdentity,
+                recovery.Head
             );
             TriggerFailpoint(SessionJournalFailpoint.AfterToolStartedCommitted);
+            recovery = ResolveExecutionTail(
+                startedAddress,
+                cancellationToken
+            );
+        }
+        if (!recovery.State.PendingToolExecutionStarted
+            || recovery.State.PendingOperationId is null
+            || recovery.State.ToolExecutionSequenceCheckpoint !=
+                reservedExecutionSequence) {
+            throw new InvalidDataException(
+                "Resolved tool execution does not preserve its durable Started reservation."
+            );
         }
 
+        EnsureCurrentHead(recovery.Head);
         ToolCallExecutionResult executionResult = await toolSession.ExecuteReservedAsync(
             toolCall,
             reservedExecutionSequence,
             cancellationToken
         ).ConfigureAwait(false);
         TriggerFailpoint(SessionJournalFailpoint.AfterToolExecutionBeforeResultCommitted);
-        AppendToolResultObserved(executionResult, reservedExecutionSequence);
+        EventAddress resultAddress = AppendToolResultObserved(
+            executionResult,
+            reservedExecutionSequence,
+            recovery.Head
+        );
         TriggerFailpoint(SessionJournalFailpoint.AfterToolResultCommitted);
 
-        SessionProjection refreshed = Project(cancellationToken);
-        return refreshed.ExecutionState.Phase switch {
-            SessionExecutionPhase.AwaitingToolExecution => await ContinueToolLoopAsync(refreshed, observer, cancellationToken).ConfigureAwait(false),
-            SessionExecutionPhase.AwaitingAgentAction => await CompletePendingObservationAsync(observer, cancellationToken).ConfigureAwait(false),
-            SessionExecutionPhase.Idle => new TurnResult(
-                new ActionMessage(Array.Empty<ActionBlock>()),
-                new CompletionDescriptor(runtime.CompletionClient.Name, runtime.CompletionClient.ApiSpecId, refreshed.Config?.ModelId ?? string.Empty),
-                null
-            ),
-            _ => throw new InvalidOperationException($"Tool loop cannot continue from phase '{refreshed.ExecutionState.Phase}'.")
+        SessionExecutionRecovery refreshed = ResolveExecutionTail(
+            resultAddress,
+            cancellationToken
+        );
+        return refreshed.State.Phase switch {
+            SessionExecutionPhase.AwaitingToolExecution =>
+                await ContinueToolLoopAsync(
+                    refreshed,
+                    observer,
+                    cancellationToken
+                ).ConfigureAwait(false),
+            SessionExecutionPhase.AwaitingAgentAction =>
+                await CompleteAwaitingAgentActionAsync(
+                    refreshed,
+                    observer,
+                    cancellationToken
+                ).ConfigureAwait(false),
+            _ => throw new InvalidOperationException($"Tool loop cannot continue from phase '{refreshed.State.Phase}'.")
         };
     }
 
@@ -972,7 +1149,8 @@ public sealed class SessionJournalEngine : IDisposable {
         RawToolCall call,
         string operationId,
         long executionSequence,
-        SessionToolRuntimeIdentity toolRuntimeIdentity
+        SessionToolRuntimeIdentity toolRuntimeIdentity,
+        EventAddress? expectedHead
     ) {
         ArgumentNullException.ThrowIfNull(call);
         ValidateRequired(call.ToolCallId, nameof(call.ToolCallId));
@@ -980,7 +1158,7 @@ public sealed class SessionJournalEngine : IDisposable {
         ValidateRequired(call.RawArgumentsJson, nameof(call.RawArgumentsJson));
         ValidateRequired(operationId, nameof(operationId));
         ArgumentNullException.ThrowIfNull(toolRuntimeIdentity);
-        return Append(
+        return AppendExpected(
             SessionEventKind.ToolExecutionStarted,
             new ToolExecutionStartedBody(
                 call.ToolCallId,
@@ -989,16 +1167,19 @@ public sealed class SessionJournalEngine : IDisposable {
                 operationId,
                 executionSequence,
                 toolRuntimeIdentity
-            )
+            ),
+            expectedHead,
+            requireBoundSetupCursor: false
         );
     }
 
     private EventAddress AppendToolResultObserved(
         ToolCallExecutionResult result,
-        long executionSequence
+        long executionSequence,
+        EventAddress? expectedHead
     ) {
         ArgumentNullException.ThrowIfNull(result);
-        return Append(
+        return AppendExpected(
             SessionEventKind.ToolResultObserved,
             new ToolResultObservedBody(
                 result.ToolCallId,
@@ -1006,8 +1187,19 @@ public sealed class SessionJournalEngine : IDisposable {
                 executionSequence,
                 result.ExecuteResult.Status,
                 result.ExecuteResult.Blocks
-            )
+            ),
+            expectedHead,
+            requireBoundSetupCursor: false
         );
+    }
+
+    private void EnsureCurrentHead(EventAddress? expectedHead) {
+        EventAddress? observedHead = _journal.GetHead(_mainRef);
+        if (observedHead != expectedHead) {
+            throw new InvalidOperationException(
+                $"Tool execution recovery is stale. Expected current head '{expectedHead}', observed '{observedHead}'."
+            );
+        }
     }
 
     private SessionGoverningSetup EnsureGoverningSetupCursor(
@@ -1029,112 +1221,6 @@ public sealed class SessionJournalEngine : IDisposable {
         cursor = ResolveGoverningSetup(expectedHead, cancellationToken);
         _governingSetupCursor = cursor;
         return cursor;
-    }
-
-    private void ValidateTailObservationBoundary(
-        EventAddress observationAddress,
-        CancellationToken cancellationToken
-    ) {
-        EventAddress? observedHead = _journal.GetHead(_mainRef);
-        if (observedHead != observationAddress) {
-            throw new InvalidOperationException(
-                $"Explicit artifact tail completion expected ObservationAccepted head '{observationAddress}', observed '{observedHead}'."
-            );
-        }
-
-        using EventFrame frame = _reader.ReadEvent(observationAddress).Unwrap();
-        ValidateSessionHeaderPreview(observationAddress, frame.Header);
-        var kind = (SessionEventKind)frame.Header.OpaqueEventKind;
-        if (kind != SessionEventKind.ObservationAccepted) {
-            throw new InvalidOperationException(
-                $"Explicit artifact tail completion requires ObservationAccepted head, got '{kind}'."
-            );
-        }
-        object body = SessionEventCodec.Decode(kind, frame.Payload, out _);
-        if (body is not ObservationAcceptedBody) {
-            throw new InvalidDataException(
-                $"ObservationAccepted at {observationAddress} decoded to unexpected body type '{body.GetType().Name}'."
-            );
-        }
-        EventAddress parent = frame.Header.Parent
-            ?? throw new InvalidDataException(
-                $"ObservationAccepted at {observationAddress} requires an idle predecessor."
-            );
-        ValidateTailIdleBoundary(parent, cancellationToken);
-    }
-
-    private void ValidateTailIdleBoundary(
-        EventAddress boundaryHead,
-        CancellationToken cancellationToken
-    ) {
-        SessionExecutionRecovery recovery = SessionExecutionTailResolver.Resolve(
-            _reader,
-            boundaryHead,
-            cancellationToken
-        );
-        if (recovery.State.Phase is not (
-            SessionExecutionPhase.Idle
-            or SessionExecutionPhase.TurnFailed
-        )) {
-            throw new InvalidOperationException(
-                $"Explicit artifact tail SendAsync requires an idle boundary (or failed terminal), got '{recovery.State.Phase}' at {boundaryHead}."
-            );
-        }
-    }
-
-    private SessionEventKind ReadEventKind(EventAddress address) {
-        EventFrameHeader header = _reader.ReadEventHeaderPreview(address).Unwrap();
-        ValidateSessionHeaderPreview(address, header);
-        return (SessionEventKind)header.OpaqueEventKind;
-    }
-
-    private SessionExecutionCheckpoint ResolveExecutionCheckpoint(
-        EventAddress head,
-        CancellationToken cancellationToken
-    ) {
-        EventAddress? cursor = head;
-        while (cursor is { } address) {
-            cancellationToken.ThrowIfCancellationRequested();
-            EventFrameHeader header = _reader.ReadEventHeaderPreview(address).Unwrap();
-            ValidateSessionHeaderPreview(address, header);
-            var kind = (SessionEventKind)header.OpaqueEventKind;
-            switch (kind) {
-                case SessionEventKind.SessionCreated:
-                    return new SessionExecutionCheckpoint(0);
-                case SessionEventKind.CompletionRequestPrepared:
-                case SessionEventKind.AgentActionProduced:
-                case SessionEventKind.ImportedAgentAction:
-                case SessionEventKind.ToolExecutionStarted:
-                case SessionEventKind.ToolResultObserved: {
-                    using EventFrame frame = _reader.ReadEvent(address).Unwrap();
-                    object body = SessionEventCodec.Decode(kind, frame.Payload, out _);
-                    return kind switch {
-                        SessionEventKind.CompletionRequestPrepared =>
-                            ((CompletionRequestPreparedBody)body).Execution,
-                        SessionEventKind.AgentActionProduced or SessionEventKind.ImportedAgentAction =>
-                            ((AgentActionProducedBody)body).Execution,
-                        SessionEventKind.ToolExecutionStarted =>
-                            new SessionExecutionCheckpoint(
-                                ((ToolExecutionStartedBody)body).ExecutionSequence
-                            ),
-                        SessionEventKind.ToolResultObserved =>
-                            new SessionExecutionCheckpoint(
-                                ((ToolResultObservedBody)body).ExecutionSequence
-                            ),
-                        _ => throw new InvalidOperationException(
-                            $"Unhandled execution checkpoint event kind '{kind}'."
-                        )
-                    };
-                }
-                default:
-                    cursor = header.Parent;
-                    break;
-            }
-        }
-
-        throw new InvalidDataException(
-            $"Execution checkpoint resolution from head '{head}' did not reach SessionCreated."
-        );
     }
 
     private static ImmutableArray<ToolDefinition> RequireEmptyTailToolSet(SessionRuntime runtime) {
@@ -1534,6 +1620,21 @@ public sealed class SessionJournalEngine : IDisposable {
         EventAddress? RawStartExclusive,
         string RawRangeSha256,
         ImmutableArray<SessionRequestArtifactInput> ArtifactInputs
+    );
+
+    private sealed record FullRawRequestContext(
+        CompletionRequest Request,
+        SessionGoverningSetup GoverningSetup,
+        SessionCompletionTargetIdentity CompletionTarget,
+        ImmutableArray<ToolDefinition> Tools,
+        RequestContextMaterialization Materialization,
+        string CorrelationId,
+        string Reason
+    );
+
+    private sealed record CommittedCompletionResult(
+        CompletionResult Result,
+        EventAddress ActionAddress
     );
 
     private static string BuildTurnAbortMessage(CompletionTermination termination) {

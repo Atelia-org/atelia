@@ -161,11 +161,11 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
         engine.UseRuntime(CreateRuntime(client, "missing-artifact"));
         int projectionCountBeforeResume = engine.FullProjectionInvocationCount;
 
-        InvalidOperationException error = await Assert.ThrowsAsync<InvalidOperationException>(
+        InvalidDataException error = await Assert.ThrowsAsync<InvalidDataException>(
             () => engine.ResumeAsync(CancellationToken.None)
         );
 
-        Assert.Contains("idle boundary", error.Message, StringComparison.Ordinal);
+        Assert.Contains("idle or failed boundary", error.Message, StringComparison.Ordinal);
         Assert.Equal(projectionCountBeforeResume, engine.FullProjectionInvocationCount);
         Assert.Empty(client.Requests);
     }
