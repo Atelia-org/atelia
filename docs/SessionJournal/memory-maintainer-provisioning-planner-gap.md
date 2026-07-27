@@ -561,7 +561,7 @@ artifact id、anchor、计数、readiness 和测试结果。
 
 相关设计背景：
 
-- `docs/ChatSession/event-sourced-session-architecture-roadmap.md`
+- `docs/SessionJournal/event-sourced-session-architecture-roadmap.md`
 - `docs/Galatea/memory-content-implementation-notes.md`
 - `docs/SessionJournal/tail-execution-recovery-design.md`
 - `docs/SessionJournal/tail-execution-recovery-simplification-study.md`

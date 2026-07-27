@@ -739,241 +739,97 @@ SessionJournal 项目族中建立能力，而不是改造旧 ChatSession。
 
 ## 12. 分阶段路线图
 
-### CS-0：领域 Schema 与 Replay Contract
+`CS-*` 是早期实施过程中形成的阶段标识。为保持代码、测试和既有设计文档的引用连续性，本文继续
+使用这些编号；它们不表示新功能属于 ChatSession，也不构成“升级旧 ChatSession”的计划。
 
-产出：ChatSession event envelope、首批 EventKind、版本演进规则、事件到当前 projection 的纯 replay reducer。
+### 12.1 已建立的 SessionJournal 基线
 
-验收：
+以下能力已经在新的 SessionJournal family 中建立，后续工作应把它们当作 current baseline，而不是
+重新领取的待办：
 
-- 给定 event sequence，可确定性重建当前 messages/config/execution status。
-- 未知 schema/version fail-fast 或按明确兼容规则跳过。
-- reducer 不访问 LLM、工具或外部索引。
+- **CS-0 / CS-1：raw core 与 replay。** SessionJournal 已具备领域 event schema、canonical
+  codec、append-only parent chain、基础 reducer、branch/replay，以及 observation/action/setup 和
+  completion/tool execution identity。具体 current wire 以
+  [SessionJournal 主干设计基线](session-journal-trunk-design.md)和代码为准。
+- **CS-2：单向 legacy import。** `ChatSession.LegacyExportCli` 可把旧 repo 导出为 versioned
+  JSON/Markdown，`SessionJournal.Cli import-legacy-json` 通过自身 anti-corruption DTO 创建新的
+  SessionJournal repo。普通 observation/action/setup 历史可映射；旧 compaction/recap 被视为
+  derived 信息而跳过，tool execution 与 `revert-turn` 因无法无损表达 current correlation、
+  checkpoint 或 branch 语义而 fail-fast。该管线不修改旧 repo、不双写，详见
+  [CLI 拆分与迁移边界](../ChatSession/legacy-export-and-sessionjournal-cli-split.md)。
+- **CS-2.5 / CS-5-lite：derived recap 试验基线。** 已建立可删除、可重建的 sidecar recap store，
+  addressed replay provenance，以及由 `SessionJournal.Cli run-memory-maintainer` 驱动 concrete
+  `MemoryMaintainer` 的开发入口。它证明了 raw authority、artifact lineage 和 tail anchor，但当前
+  store/split/runner 仍是通向独立 DerivedMemory 的 interim implementation，详见
+  [CS-5-lite 完成记录](done/cs-5-lite-sessionjournal-derived-recap-store.md)。
+- **CS-3 / CS-3D0～D7：coherent-only request 与 tail recovery。** current trunk 已实现
+  `CompletionRequestPrepared` v3、Prepared/Started attempt 对称性、exact reopen、raw-only
+  `SessionExecutionTailResolver`、durable tool identity/checkpoint，以及不随冷历史线性增长的 online
+  recovery。current request 仍通过 raw `ArtifactSetCommitted` 激活 coherent context；这是下一阶段
+  要拆除的过渡边界，不是长期设计。实施事实和历史决策分别见
+  [Tail-only Execution Recovery Design](tail-execution-recovery-design.md)、
+  [Coherent-only Manifest 完成计划](done/coherent-request-manifest-simplification-plan.md)与
+  [Prepared / Provider Attempt 对称化](done/prepared-provider-attempt-symmetry-design.md)。
 
-### CS-1：Raw EventJournal 垂直切片
+这些完成记录保留历史 wire 与阶段名，用于解释 current code 为什么如此；它们不覆盖下节已经批准的
+长期依赖方向。
 
-依赖：EventJournal EJ-0 至 EJ-3。
+### 12.2 当前主路线：DM-0～DM-8
 
-产出：创建 session、追加 observation/action、读取 head、顺序 replay、branch fork。
+当前实施权威是
+[DerivedMemory 可替换子系统与 Shared Epoch 实施方案](derived-memory-subsystem-implementation-plan.md)。
+应按其中的依赖顺序逐片实施、审阅和提交；本文只保留路线级摘要，避免复制 exact contract 或 migration
+细节。
 
-验收：
+1. **DM-0 — Cross-assembly contracts**：在 SessionJournal contracts 中定义 store-neutral
+   candidate、selection 与 materialization 边界，先固定正确的依赖方向。
+2. **DM-1 — Neutral request materialization**：让 raw core 从中立 candidate/materialized input
+   构造 request，不再认识 concrete recap store shape。
+3. **DM-2 — Self-contained Prepared v4**：把 exact canonical context 与 raw-start setup
+   provenance 固定在 Prepared 中，使 exact reopen 不依赖可删除的 derived repository。
+4. **DM-3 — 独立 DerivedMemory assembly 与 provider cutover**：建立单向依赖 SessionJournal
+   contracts 的 concrete derived store/provider，并由 CLI/Host composition root 注入。
+5. **DM-4 — 删除 raw activation**：移除 raw `ArtifactSetCommitted` 及其 activation
+   validators；raw chain 不再引用 derived artifact/set identity。
+6. **DM-5 — Shared epoch planner**：在 DerivedMemory 中持久化统一的 history epoch、计划配置和
+   ledger，使多个 roles 消费同一 exact coverage boundary。
+7. **DM-6 — Epoch-bound maintainer runner**：maintainer 只执行既定 epoch；split/threshold
+   ownership 从 runner 收回 planner，支持独立 prompt-tuning 与重试。
+8. **DM-7 — Orchestration 与 publication**：协调多个 producer、partial settlement 和原子
+   ArtifactSet publication；只有完整 coherent set 才成为候选。
+9. **DM-8 — Online lifecycle 与 selection**：由 Host 组合 planning、maintenance 与 provider；
+   首先支持 latest/Nth，再推进 budgeted、branch-aware 的可解释选择。
 
-- 一个无工具 turn 可写入并 reopen。
-- 原始事件不会因投影变化消失。
-- 从历史 Event 创建 branch 后可产生替代未来。
+这条路线的关键不是把文件机械搬到新项目，而是先解除 raw materialization 和 Prepared 对 concrete
+derived shape 的依赖，再建立独立 DerivedMemory，最后删除 raw activation。不得为了缩短过渡期让
+SessionJournal raw core 反向引用 Maintainers/DerivedMemory，也不得把 concrete derived identity
+重新写进 raw wire。
 
-### CS-2：Legacy Import 与 Projection 对照
+### 12.3 后续能力
 
-产出：把现有 `chat-session-legacy-upgrade-export.json` 导入 raw events；用 reducer 生成与旧 repo 等价的可见历史。
+DM-0～DM-8 建立正确的 authority、ownership 与 online composition 后，再推进以下能力：
 
-验收：
-
-- `cyber-copy-upgraded` 的 observation/action/recap 顺序可对照。
-- legacy-inferred metadata 继续保留来源标记。
-- 导入不修改旧 repo。
-
-### CS-2.5 / CS-5-lite：SessionJournal Derived Recap Store 与 RollingSummary Replay
-
-产出：把 `prototypes/SessionJournal.Cli/MemoryMaintainerRun.cs` 从 legacy event source 迁移到新的
-SessionJournal repo forward replay；建立 recap 类 derived artifact 的最小磁盘 / 内存结构；用现有
-`RewriteMemoryBlockMaintainer` 生成可加载 rolling summary，并记录 raw source range、anchor、profile、
-invocation、`runtime-config-setup` 与 `system-prompt-setup` provenance。
-
-本阶段不实现完整 CS-5 ArtifactSet / retrieval / planner，只为后续 tail-only projection 准备真实 recap anchor。
-
-验收：
-
-- 能从 `import-legacy-json` 生成的 SessionJournal repo 顺序 replay raw observation/action/tool-result。
-- Rolling summary 不写回 raw event chain；derived store 可删除、可重建、可加载。
-- 每个 recap artifact 能说明覆盖到哪个 raw head / source range，并能追溯所用 profile、上一个 artifact 与 LLM invocation。
-- 后续 tail projection 可把最新 recap materialize 为 `ContextHeader` / observation header，并从 anchor 之后 replay raw suffix。
-
-### CS-3：可恢复的无工具 Completion
-
-产出：最小 `ContextPlan` 形状、引用式 canonical request manifest 恢复合同、completion attempt、Action 逐步落盘。turn 完成隐式判定（Action 无 tool call），不落独立 TurnCompleted 事件。若 CS-5-lite 已落地，本阶段可以引用 recap anchor 构造 tail projection；否则只使用 raw suffix fallback。本阶段仍不设计完整 ArtifactSet、retrieval 候选比较或高级预算策略。
-
-> **2026-07-26 历史进度（D6D/D7 前）**：CS-3A 已实现合并式
-> `completion-request-prepared` v1、full-raw minimal plan、
-> canonical request commitment、exact-head governing setup cursor 与 near-head setup checkpoint。
-> CS-3B 已实现调用方指定 exact artifact 的 `explicit-artifact-tail`：验证
-> `currentHead -> SourceRawHead -> AnchorRawEvent` Parent ancestry，以 boundary-as-of setup fold
-> dependency-closed suffix，并把 materialized artifact header 的有界 snapshot 内联进 manifest，避免
-> 可删除 derived store 破坏 prepared request 的恢复合同。该切片只替换 request context
-> materialization，并为无工具 observation `SendAsync` / `ResumeAsync` 增加不调用 `Project()` 的
-> bounded recent-idle fast path；通用 execution projection 与其他 phase 仍是 full replay。
-> CS-3C 已实现单一 `SessionPreparedRequestReconstructor`，在 prepare 前与 reopen 时都从 manifest
-> references 重建并核对 exact canonical bytes。此处记录的是 D7 前历史合同；current Prepared-only
-> 自动派发，Started 才默认 `Refuse`；显式 `RestartWithNewAttempt` 形成 `P -> S1 -> S2` 地址链。
-> explicit-artifact-tail 的 reopen 使用内联 snapshot，不依赖 derived sidecar，也不调用 `Project()`。
-> 默认 refusal 与 tail terminal validation 只做近头 attempt topology proof，不会借 reconstructor
-> 暗中退化为 full replay；后者同时支持 observation source，以及由 validated full-raw writer 提交的
-> tool-continuation source terminal。CS-3D1 已在 manifest 固定 tool implementation/capability runtime
-> identity；recovered response 只有在当前 host identity 精确匹配时才能进入 durable tool dispatch。
-> provider 已明确返回的 non-success，以及 host 收到 response 后确认其违反已提交 request policy 的
-> known rejection，另以 `completion-attempt-failed` 持久化；例如 tail no-tool policy 遇到 tool calls
-> 使用 `atelia.host.unsupported-tool-call`。transport/cancellation 仍保持 prepared uncertain。
-> legacy/manual Action 使用独立 `imported-agent-action`，不与 live completion Action 混淆。详见
-> [SessionJournal Configuration Access Notes](../SessionJournal/session-configuration-access-notes.md)。
-
-验收：
-
-- 在 request 前后、response 前后注入崩溃，reopen 后状态明确。
-- 已准备 request 只从 manifest 引用的旧 raw/config/schema/profile 重建，不因当前配置变化被悄悄替换。
-- duplicate attempt 有不同 identity 和可审计原因。
-
-### CS-3D：Tail-only Execution Recovery
-
-产出：把在线 execution recovery 与完整 conversation projection 分离；从 ref head 沿 Parent 反向解析
-当前 attempt/action/tool dependencies 和近头 execution checkpoint，恢复最小 `SessionExecutionState`。
-`Project()` / `ReplayHistory()` 保留完整审计语义，但退出 `Open` / `ResumeAsync` / `SendAsync` /
-tool-loop driver 的默认路径。
-
-需要调用 LLM 时，正常长会话不物化 root-to-head conversation，而由 coherent recap/artifact set
-（rolling 第一人称自传、world-understanding 等）加 dependency-closed raw suffix 构造 bounded
-canonical request。execution resolver 本身不读取 artifact 文本。
-
-本阶段同时把全局 `ToolExecutionSequenceCheckpoint` 改成近头 durable fact：tool execution 在外部调用前
-先持久化 reserved sequence/operation id，Started/Result 使用并校验同一 identity。
-
-验收：
-
-- Observation、Prepared/Started、Failure、Action、ToolStarted、ToolResult 和 Idle 恢复均不调用
-  `Project()`。
-- tail execution state 与 full reducer reference oracle 一致。
-- 10k+ 冷历史前缀不增加正常 reopen 的 payload reads；读取量只随当前 operational dependency span
-  增长。
-- Observation 与 dependency-closed ToolResult 后的下一次 completion 都使用 artifact set + raw suffix，
-  不回退到完整 conversation。
-
-详细设计见
-[SessionJournal Tail-only Execution Recovery Design](../SessionJournal/tail-execution-recovery-design.md)。
-
-> **2026-07-26 历史进度（D6D/D7 前）**：CS-3D0 已增加统一的 SessionJournal logical-read
-> diagnostics 与 full reducer
-> reference-oracle phase matrix；CS-3D1 已把 last-issued tool sequence、reserved Started/Result
-> sequence 与 implementation/capability runtime identity 变成 Prepared/Action/tool tail 中的 durable
-> facts，并用 `ToolSession.ExecuteReservedAsync` 保证外部工具收到已落盘的确切 sequence。CS-3D2
-> 已实现纯读取 `SessionExecutionTailResolver`，并把 correlationId 固定进 Action checkpoint，避免
-> imported tool continuation 为找 active correlation 回溯到最初 Observation。resolver 已通过 full
-> reducer differential、branch/rewind、malformed tail 与 cold-prefix bounded-read 验证。CS-3D3
-> 已让 `ResumeAsync`、`SendAsync`、setup/import boundary 与 tool loop 使用 current/exact-head
-> recovery，并以 10001-turn fixture 证明 Idle recovery reads 不随冷前缀增长。D6C1 已删除 live
-> full-raw writer；online provider request 不再调用 Context `Project()`。Started 的 operation id +
-> reserved sequence
-> 已贯通到 `ToolExecutionContext`；空 durable tool set 的违规 tool-call response 会落 known failure，
-> D7 前 Prepared restart 的合法 tool response 则可在同一次 Resume 中闭环。CS-3D4 已采用新的
-> `coherent-artifact-tail` policy：至少两个 exact members 共享 coverage anchor，每个 artifact 只贡献
-> 自己的 target block；Observation 与 fully-settled ToolResult 共用 dependency-closed suffix，并把
-> visible tools/runtime identity 固定进 committed manifest。D6D 前旧
-> `explicit-artifact-tail.v1` 仍保留已提交 request 的 exact reopen 语义。连续两轮 tool
-> continuation 的三次 provider request 均保持
-> `FullProjectionInvocationCount` 不变；Prepared 后删除所有 selected sidecar members 仍可 exact
-> restart。CS-3D5 已新增 raw kind 12 `ArtifactSetCommitted`：原子固定 policy、common anchor、
-> coverage/current setup refs 与 canonical role members；coherent Prepared 通过 address/schema/hash
-> exact reference 传播 activation。D6C1 后 runtime 不再暴露 request-context selector，online writer
-> 仅允许 coherent artifact-tail；旧 full-raw / explicit reader 只过渡保留至 D6D。离线
-> `validate` 做 strict full-vs-tail validation，
-> `checkpoint-artifact-set` 只 append 一条 activation；`import-legacy-json` 明确为
-> legacy export → current wire 的新 repo 迁移。1 vs 10001 cold-turn 的 Observation 和两轮 tool
-> continuation 验收中，header/payload/logical bytes/peak-live 均恒定，chronological/full projection
-> 均为 0，且三次 provider request 已逐阶段对照。strict validator 使用真正只读的 EventJournal
-> open，逐历史 activation/setup/Prepared 证明 provenance；坏 active tail 只报错且 repo bytes 不变。
-> 至此 CS-3D0～D5 主线闭合。
-
-> **2026-07-27 current 状态**：CS-3D6 已完成 `CompletionRequestPrepared` v2 coherent-only wire
-> cutover。online writer、codec 与 `SessionPreparedRequestReconstructor` 只接受
-> `exact ArtifactSetCommitted + dependency-closed suffix` recipe；D6D 前的 full-raw /
-> explicit Prepared reader、policy alias 与 compatibility fallback 已删除。reconstructor 从 exact
-> activation `coverageSetups` seed suffix fold，并验证 activation `currentSetups` 与 Prepared 最终
-> paired setup，避免 Prepared setup 自证循环。`PreparedRequestCount` 取代 policy distribution。
->
-> D6E 用新的 real repo
-> `gitignore/session-journal/cyber-copy-d6e-20260727-061650` 完成 legacy import（148 events、
-> 474439 logical payload bytes、Prepared 0、not-ready）→ `dsv4p` autobiography/world-understanding
-> 各一次 → exact two-member checkpoint → strict validate（149 events、475915 bytes、Prepared 0、
-> `active-coherent`）。第一次独立 run 在 append 前安全发现 recap setup 错绑 source head；inventory
-> 证明零 activation append，`f310f6a2` 将 artifact governing setup 改为 anchor-as-of 后，第二 run
-> 成功。真实 CLI 没有 online Send/tool-loop smoke，因此步骤 7/8 继续由 deterministic Engine、
-> failpoint 与 1-vs-10001 performance gates 验收；不把非确定的真实 provider tool behavior 混入迁移
-> closeout。
-
-> **2026-07-27 CS-3D7**：Prepared/provider attempt 已完成对称化。Prepared 升为 v3 并以
-> `origin={correlationId,reason}` 取代 attempt；kind 11 retired，新增 kind 13
-> `CompletionAttemptStarted` 严格空 body。Prepared-only head 是
-> `AwaitingCompletionDispatch`，显式 Resume 自动重建/验证并先写 Started；Started head 才是 uncertain
-> `AwaitingCompletion`，默认 `Refuse`，显式 retry 追加下一个 Started。Action/Failed 只允许直接继承
-> 最新 Started。详见
-> [D7 设计记录](../SessionJournal/done/prepared-provider-attempt-symmetry-design.md)。
-
-> **2026-07-27 后续目标**：current raw kind 12 是已实施基线，不是长期 ArtifactSet 边界。候选 C
-> 将删除 raw `ArtifactSetCommitted`，把具体 derived memory 实现迁入独立可替换程序集，并让 Prepared
-> 自包含 exact context 与 raw-start setup provenance。`SessionExecutionTailResolver` 继续 raw-only；
-> provider 只参与未 Prepared 的 request planning。详见
-> [化简调研 §4](../SessionJournal/tail-execution-recovery-simplification-study.md)。
-
-### CS-4：可恢复 Tool Loop
-
-产出：tool started/result/uncertain 事件、idempotency contract、恢复驱动器。
-
-验收：
-
-- 幂等工具在每个 failpoint 后可安全恢复。
-- 可查询工具先 reconcile 再行动。
-- 非幂等不可查询工具进入 paused/uncertain，不盲重试。
-- 多轮 tool calls 后仍能确定性 replay 到相同 loop state。
-
-### CS-5：Artifact Journal 与现有 Rewrite Profiles
-
-产出：独立 DerivedMemory 子系统、shared history epoch planner/config/ledger、Artifact
-schema/lineage、immutable derived ArtifactSet publication 与 store-neutral candidate provider；把
-Autobiography 与 World Understanding 写入 artifact store。
-
-验收：
-
-- 每个 artifact 可追溯 raw range、旧 artifact、profile 和 invocation。
-- 两个 maintainer 消费同一 exact epoch；只在 coherent set 完成后一起成为可选 candidate。
-- 单个 maintainer 可针对既有 epoch 独立 prompt-tuning，不产生 role-local split。
-- producer 失败不破坏上一 active set。
-- MemoryPack 可由 artifact set materialize。
-- raw SessionJournal 不引用 derived artifact/set ids，`SessionJournal.csproj` 不引用 concrete
-  DerivedMemory 项目。
-
-### CS-6：Context Planner v1
-
-产出：在 CS-3 已锁定的 `ContextPlan` / request manifest 恢复合同上，增加 artifact anchor、raw suffix、retrieval 候选比较、预算分配与可解释选择。CS-6 不重新定义 canonical request manifest 的恢复权威性。
-
-验收：
-
-- 能在“最新 artifact + 短 suffix”和“旧 artifact + 长 suffix”间做可解释选择。
-- token budget 分项可审计。
-- 同一已提交 manifest 在软件配置变化后仍可复现原 canonical request。
-
-### CS-7：Retrieval Read Models
-
-产出：先实现一个真实后端，建议从 SQLite FTS 或简单 entity/open-thread index 开始；随后再评估向量与图。
-
-验收：
-
-- 删除索引后可从 journal 重建。
-- 索引不可用时 planner 可降级。
-- 实际召回地址进入 ContextPlan。
-- backtest 能比较无召回与有召回的上下文质量/成本。
-
-### CS-8：切换权威源与清理旧路径
-
-产出：新 session 默认 EventJournal；旧 StateJournal session 只读迁移；删除长期双写和 destructive compaction 主路径。
-
-验收：
-
-- 新 session 生命周期不依赖 StateJournal message deque。
-- migration 有校验报告和可回滚输入备份。
-- 旧 exporter / diagnostics 仍能读取归档数据。
-- 文档明确 StateJournal projection 是否保留及其可重建性。
+- **CS-4 后续：tool capability 与 uncertain hardening。** current trunk 已有可恢复 tool loop、
+  reserved sequence/operation identity、Started/Result 和 tail recovery；后续不是从零重建，而是扩展
+  capability declaration、provider/result lookup、reconcile policy，以及非幂等且不可查询工具的
+  paused/uncertain 人工处置。
+- **Budgeted Context Planner。** 在 Prepared exact-reopen contract 之上，对 coherent set、raw
+  dependency-closed suffix 和 retrieval candidates 做分项预算、质量/成本比较与可解释选择；planning
+  只能发生在尚未 Prepared 的阶段。
+- **Retrieval read models。** 先落一个可从 raw/derived provenance 重建的真实 backend，再评估
+  full-text、entity/open-thread、vector 与 graph 的组合。索引失效不得破坏基本 session recovery。
+- **Branch UX 与 derived reuse。** 明确 rewind/fork 的用户模型、branch-aware candidate selection、
+  跨 branch artifact reuse 与多 Parent/merge 的取舍；branch 仍由 raw parent relation 表达，而非删除
+  或改写旧历史。
+- **持续性的 legacy interop / 归档。** 维持旧 exporter 和迁移验证，记录 unsupported history 的
+  显式限制，并在迁移完成后归档旧 ChatSession。不会把旧 ChatSession 切换为 SessionJournal 权威源，
+  不建立双写，也不让新 Host 依赖旧项目。
 
 ## 13. 每个后续会话的交付模板
 
 为避免多会话递归推进时重新扩大范围，每个任务应说明：
 
-1. **所属阶段**：例如 `EJ-2` 或 `CS-4`。
+1. **所属阶段**：例如 `DM-2` 或后续 `CS-4` hardening。
 2. **输入文档**：引用本文与更窄的 Decision/Spec。
 3. **唯一核心假设**：本次改动试图验证什么。
 4. **持久化边界**：哪些 bytes/events 成为新的 Canonical Source。
@@ -981,31 +837,42 @@ Autobiography 与 World Understanding 写入 artifact store。
 6. **兼容策略**：新项目早期优先彻底重构，不默认保留兼容 wrapper。
 7. **可执行验收**：focused tests、reopen、replay、failpoint 或 backtest。
 8. **未解决问题**：只记录，不在任务外顺手扩张。
+9. **Ownership**：本次变更属于 raw core、Maintainers、DerivedMemory，还是 CLI/Host composition；
+   若跨层，说明最小 contract 和依赖方向。
+10. **Legacy guard**：确认是否误改旧 ChatSession、引入 SessionJournal → ChatSession 产品依赖，
+    或建立任何双写/持续同步路径；除修复迁移阻断缺陷外，三者都应为“否”。
 
 推荐一次会话只闭合一个可运行垂直切片。例如
 “Observation → RequestPrepared → AttemptStarted → Action → reopen replay”优于一次性创建十几个空接口。
 
-## 14. 开放问题
+## 14. 已解决边界与开放问题
 
-### 14.1 近期必须决定
+### 14.1 已解决的边界
 
-1. ChatSession event envelope 的 exact schema 与 codec。
-2. raw event、artifact 和 ref 是共用一个 EventJournal store，还是每 session / 每类 journal 分开。
-3. ArtifactSet 的一致性规则与 profile identity。
-4. canonical request manifest 的引用粒度、hash 规则及敏感信息处理。
-5. tool operation id 的生成规则和工具能力声明。
-6. replay reducer 的状态模型，特别是未完成 turn 和并行 tool calls。
-7. legacy event source 到新 EventKind 的映射。
+- SessionJournal 已拥有自己的 event schema、per-kind codec 与 canonical persistence contract；它不是
+  ChatSession envelope 的新版本。
+- 基础 reducer、completion attempt topology、tool sequence/operation/correlation identity 和
+  tail execution recovery 已落地。
+- 普通 legacy observation/action/setup 已有单向 JSON 映射；无法诚实迁移的 tool/revert history
+  fail-fast，不再以“以后补 metadata”掩盖语义缺口。
+- raw SessionJournal events 是唯一 correctness source；derived store、indexes、recap 和 ArtifactSet
+  可删除、可重建。
+- concrete Maintainers/DerivedMemory 单向依赖 SessionJournal contracts；raw core 不反向引用它们，
+  CLI/Host 是 composition root。
 
-### 14.2 有真实负载后再决定
+### 14.2 仍开放的问题
 
-1. 向量数据库、图数据库或混合 retrieval backend。
-2. artifact 自动 supersession / confidence 模型。
-3. 多 Parent merge 与跨 branch artifact 复用。
-4. 多 session 共用 knowledge artifacts。
-5. EventJournal GC/repack 与冷存储。
-6. planner 学习型 ranking、成本模型和自动评测。
-7. provider-side request/result lookup 的统一抽象。
+1. DM-0 contracts 的 exact shape：candidate enumeration、selection request、materialized context 与
+   branch-aware lookup 的最小稳定表面。
+2. Prepared v4 自包含 exact canonical bytes 的空间成本、重复数据与敏感内容处理取舍。
+3. DerivedMemory repository layout、shared epoch schema、partial-success settlement、ArtifactSet
+   publication 和 online selection 的 exact contract。
+4. provider-side request/result lookup 与 reconcile 的统一抽象，尤其是 crash window 中 provider
+   已完成但 host 未落 durable result 的情况。
+5. 非幂等、不可查询工具的最终 uncertain/paused 操作协议与人工介入 UX。
+6. 第一个 retrieval backend，以及 provenance、降级、rebuild 和 quality/cost evaluation 的共同
+   验收形状。
+7. branch UX、跨 branch derived reuse、多 Parent merge，以及 branch-aware budgeted selection。
 
 ## 15. 架构成功标准
 
@@ -1018,5 +885,10 @@ Autobiography 与 World Understanding 写入 artifact store。
 - rewind / reroll 通过 branch 表达，不靠删除历史伪造过去。
 - retrieval index 全部丢失后，session 仍可从 journals 恢复基本运行。
 - 新 maintainer、retriever 或模型版本可以重算解释层，而不改写 raw truth。
+- 所有新能力都在 SessionJournal family 及其附属新项目中实现，不要求修改旧 ChatSession。
+- SessionJournal 产品依赖图不包含 ChatSession；迁移只经 versioned exchange format 单向发生且不双写。
+- SessionJournal raw core 不反向引用 Maintainers 或 DerivedMemory；CLI/Host 通过 contracts 组合
+  concrete implementations。
+- 删除整个 derived store 不会破坏 raw audit，也不会使已经持久化的 Prepared 无法 exact reopen。
 
 这组性质比“当前 prompt 是否更聪明”更重要：它们构成长期自主 Agent 能持续演化而不失去可追溯性的工程地基。

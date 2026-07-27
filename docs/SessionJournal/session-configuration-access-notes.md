@@ -4,7 +4,7 @@
 > 日期：2026-07-27
 > 相关文档：[SessionJournal 主干设计基线](session-journal-trunk-design.md)、
 > [Tail-only Execution Recovery Design](tail-execution-recovery-design.md)、
-> [ChatSession 事件源与长期上下文架构路线图](../ChatSession/event-sourced-session-architecture-roadmap.md)
+> [SessionJournal 事件源会话与长期上下文架构路线图](event-sourced-session-architecture-roadmap.md)
 
 > **后续边界说明（2026-07-27）**：本文记录的 raw `ArtifactSetCommitted` setup checkpoint 是
 > CS-3D5～D7 的 current implementation fact，不是长期目标。候选 C 删除 raw activation 后，近头

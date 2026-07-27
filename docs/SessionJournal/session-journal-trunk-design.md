@@ -3,7 +3,7 @@
 > **状态**：Current Trunk / CS-3A～CS-3D7 coherent-only Prepared v3
 > **日期**：2026-07-27
 > **底层依赖**：[EventJournal 使用指南](../../src/EventJournal/README.md)、[EventJournal 功能需求与粗粒度设计基线](../EventJournal/event-journal-requirements-and-design.md)
-> **上层路线图**：[ChatSession 事件源与长期上下文架构路线图](../ChatSession/event-sourced-session-architecture-roadmap.md)
+> **上层路线图**：[SessionJournal 事件源会话与长期上下文架构路线图](event-sourced-session-architecture-roadmap.md)
 > **后续恢复设计**：[Tail-only Execution Recovery Design](tail-execution-recovery-design.md)
 > **替代对象**：`prototypes/ChatSession`（StateJournal deque + 整轮末尾 commit）
 

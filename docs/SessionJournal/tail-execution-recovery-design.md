@@ -8,7 +8,7 @@
 > **相关文档**：
 > [Configuration Access Notes](session-configuration-access-notes.md)、
 > [SessionJournal 主干设计](session-journal-trunk-design.md)、
-> [ChatSession 架构路线图](../ChatSession/event-sourced-session-architecture-roadmap.md)、
+> [SessionJournal 架构路线图](event-sourced-session-architecture-roadmap.md)、
 > [CS-3D 实施后化简调研](tail-execution-recovery-simplification-study.md)、
 > [CS-3D6 Coherent-only Manifest 化简计划](done/coherent-request-manifest-simplification-plan.md)
 > **D7 协议修订**：[Prepared / Provider Attempt 对称化](done/prepared-provider-attempt-symmetry-design.md)

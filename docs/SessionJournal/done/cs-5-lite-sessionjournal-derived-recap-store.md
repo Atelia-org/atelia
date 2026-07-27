@@ -2,7 +2,7 @@
 
 > 状态：Implemented / CS-5-lite Complete
 > 日期：2026-07-26
-> 上层路线图：[ChatSession 事件源与长期上下文架构路线图](event-sourced-session-architecture-roadmap.md)
+> 上层路线图：[SessionJournal 事件源会话与长期上下文架构路线图](../event-sourced-session-architecture-roadmap.md)
 > 相关设计：[SessionJournal Configuration Access Notes](../SessionJournal/session-configuration-access-notes.md)
 >
 > 后续收口（2026-07-27）：本文记录 CS-5-lite 落地时的 rolling-summary 术语。
@@ -81,7 +81,7 @@ SessionJournal raw repo
 
 设计文档：
 
-- [event-sourced-session-architecture-roadmap.md](event-sourced-session-architecture-roadmap.md)
+- [event-sourced-session-architecture-roadmap.md](../event-sourced-session-architecture-roadmap.md)
   总路线图；CS-2.5 / CS-5-lite 已作为 CS-3 tail projection 前置切片记录。
 - [session-configuration-access-notes.md](../SessionJournal/session-configuration-access-notes.md)
   governing setup resolver、near-head hint、recap anchor 与 tail projection 的关系。

@@ -6,7 +6,7 @@
 > **上游决策**：
 > [Tail Execution Recovery 化简调研 §4](tail-execution-recovery-simplification-study.md)、
 > [MemoryMaintainer Provisioning / Planner 功能缺口](memory-maintainer-provisioning-planner-gap.md)、
-> [事件源与长期上下文架构路线图](../ChatSession/event-sourced-session-architecture-roadmap.md)
+> [SessionJournal 事件源会话与长期上下文架构路线图](event-sourced-session-architecture-roadmap.md)
 > **用途**：供后续 Coding Agent 按依赖顺序领取单一分片，完成设计复核、实现、测试、审阅、修复和提交。
 
 ## 0. 执行结论
