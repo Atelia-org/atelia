@@ -1,6 +1,6 @@
 using Atelia.SessionJournal;
 
-namespace Atelia.ChatSession.Memory;
+namespace Atelia.SessionJournal.Maintainers;
 
 internal static class EmbeddedMemoryRewriteProfileLoader {
     public static MemoryRewriteProfile Read(

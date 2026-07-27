@@ -1,6 +1,6 @@
 # Galatea Memory Substrate 工程设计草案
 
-> 状态：已实现，并于 2026-07-22 按 `memory-maintainer-slimming-refactor.md` 收缩公共合同。本文只讨论内容无关的软件工程 substrate，不讨论 Galatea Memory Pack 里应该有哪些具体主题、信念、关系通道或心智理论分类。
+> 状态：已实现，并于 2026-07-22 按 `backlog/done/memory-maintainer-slimming-refactor.md` 收缩公共合同。本文只讨论内容无关的软件工程 substrate，不讨论 Galatea Memory Pack 里应该有哪些具体主题、信念、关系通道或心智理论分类。
 
 ## 1. 目标
 

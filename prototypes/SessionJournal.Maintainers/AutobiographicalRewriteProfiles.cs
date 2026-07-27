@@ -1,14 +1,14 @@
 using Atelia.SessionJournal;
 
-namespace Atelia.ChatSession.Memory;
+namespace Atelia.SessionJournal.Maintainers;
 
 public static class AutobiographicalRewriteProfiles {
     public const string MaintainerId = "roleplay.first-person-autobiography.rewrite";
 
-    private const string EnglishSystemResourceName = "Atelia.ChatSession.Memory.Prompts.AutobiographicalRewrite.en.System.md";
-    private const string EnglishUserResourceName = "Atelia.ChatSession.Memory.Prompts.AutobiographicalRewrite.en.User.md";
-    private const string SimplifiedChineseSystemResourceName = "Atelia.ChatSession.Memory.Prompts.AutobiographicalRewrite.zh-CN.System.md";
-    private const string SimplifiedChineseUserResourceName = "Atelia.ChatSession.Memory.Prompts.AutobiographicalRewrite.zh-CN.User.md";
+    private const string EnglishSystemResourceName = "Atelia.SessionJournal.Maintainers.Prompts.AutobiographicalRewrite.en.System.md";
+    private const string EnglishUserResourceName = "Atelia.SessionJournal.Maintainers.Prompts.AutobiographicalRewrite.en.User.md";
+    private const string SimplifiedChineseSystemResourceName = "Atelia.SessionJournal.Maintainers.Prompts.AutobiographicalRewrite.zh-CN.System.md";
+    private const string SimplifiedChineseUserResourceName = "Atelia.SessionJournal.Maintainers.Prompts.AutobiographicalRewrite.zh-CN.User.md";
 
     public static MemoryRewriteProfile English { get; } = Read(
         EnglishSystemResourceName,

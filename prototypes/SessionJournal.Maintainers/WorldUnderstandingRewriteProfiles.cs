@@ -1,14 +1,14 @@
 using Atelia.SessionJournal;
 
-namespace Atelia.ChatSession.Memory;
+namespace Atelia.SessionJournal.Maintainers;
 
 public static class WorldUnderstandingRewriteProfiles {
     public const string MaintainerId = "roleplay.world-understanding.rewrite";
 
-    private const string EnglishSystemResourceName = "Atelia.ChatSession.Memory.Prompts.WorldUnderstandingRewrite.en.System.md";
-    private const string EnglishUserResourceName = "Atelia.ChatSession.Memory.Prompts.WorldUnderstandingRewrite.en.User.md";
-    private const string SimplifiedChineseSystemResourceName = "Atelia.ChatSession.Memory.Prompts.WorldUnderstandingRewrite.zh-CN.System.md";
-    private const string SimplifiedChineseUserResourceName = "Atelia.ChatSession.Memory.Prompts.WorldUnderstandingRewrite.zh-CN.User.md";
+    private const string EnglishSystemResourceName = "Atelia.SessionJournal.Maintainers.Prompts.WorldUnderstandingRewrite.en.System.md";
+    private const string EnglishUserResourceName = "Atelia.SessionJournal.Maintainers.Prompts.WorldUnderstandingRewrite.en.User.md";
+    private const string SimplifiedChineseSystemResourceName = "Atelia.SessionJournal.Maintainers.Prompts.WorldUnderstandingRewrite.zh-CN.System.md";
+    private const string SimplifiedChineseUserResourceName = "Atelia.SessionJournal.Maintainers.Prompts.WorldUnderstandingRewrite.zh-CN.User.md";
 
     public static MemoryRewriteProfile English { get; } = Read(
         EnglishSystemResourceName,

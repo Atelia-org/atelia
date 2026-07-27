@@ -1,10 +1,10 @@
 using Atelia.ChatSession;
-using Atelia.ChatSession.Memory;
 using Atelia.Completion;
 using Atelia.Completion.Abstractions;
 using Atelia.EventJournal;
 using Atelia.SessionJournal;
 using Atelia.SessionJournal.Derived;
+using Atelia.SessionJournal.Maintainers;
 using SJ = Atelia.SessionJournal;
 
 namespace ChatSessionBacktestCli;

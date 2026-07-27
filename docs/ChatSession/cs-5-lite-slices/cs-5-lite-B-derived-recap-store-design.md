@@ -46,7 +46,9 @@ B0 已经把 memory substrate 的长期归属收到 `prototypes/SessionJournal`�
 - `MemoryPackSnapshotDto` 如果存在，应定位为 store wire DTO / codec 内部模型，而不是调用方长期手写的主模型。
 - C/D 分片负责从 addressed replay 构造 `RecentHistorySlice`，调用新的 `Atelia.SessionJournal`
   maintainer/orchestrator，并把成功后的 `MemoryPack` 写入 B。
-- 后续另开迁移分片评估 `prototypes/ChatSession.Memory` 改名为更中性的 maintainer 实现项目；这不阻塞 B。
+- 后续迁移已将该项目收口为
+  `prototypes/SessionJournal.Maintainers` concrete MemoryMaintainer companion assembly；
+  这不改变本分片的 DerivedRecapStore 设计。
 
 推荐后续迁移方向：
 

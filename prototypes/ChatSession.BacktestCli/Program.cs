@@ -2,9 +2,9 @@ using System.Text;
 using System.Text.Encodings.Web;
 using System.Text.Json;
 using Atelia.ChatSession;
-using Atelia.ChatSession.Memory;
 using Atelia.Completion;
 using Atelia.Completion.Abstractions;
+using Atelia.SessionJournal.Maintainers;
 using SJ = Atelia.SessionJournal;
 
 namespace ChatSessionBacktestCli;

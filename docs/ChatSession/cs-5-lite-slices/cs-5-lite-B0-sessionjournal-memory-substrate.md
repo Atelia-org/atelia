@@ -5,6 +5,10 @@
 > 父任务：[CS-5-lite](../cs-5-lite-sessionjournal-derived-recap-store.md)
 > 前置：[CS-5-lite-A Addressed Replay Cursor](cs-5-lite-A-addressed-replay-cursor.md)
 > 后续：[CS-5-lite-B Derived Recap Store](cs-5-lite-B-derived-recap-store.md)
+>
+> **后续改名（2026-07-27）**：本文保留 B0 当时的项目名与“不在本分片改名”范围；
+> 现行项目已改为 `prototypes/SessionJournal.Maintainers`，测试项目已改为
+> `tests/SessionJournal.Maintainers.Tests`。
 
 ## 1. 目标
 

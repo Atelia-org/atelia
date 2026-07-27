@@ -107,9 +107,9 @@ SessionJournal raw repo
   旧 ChatSession legacy memory substrate；新分片不应围绕它设计正式 API。
 - [ChatSessionContracts.cs](../../prototypes/ChatSession/ChatSessionContracts.cs)
   `ContextHeader`、`RecapMessage`、`RecapSourceAnchor` 等旧 ChatSession context projection 类型。
-- [AutobiographicalRewriteProfiles.cs](../../prototypes/ChatSession.Memory/AutobiographicalRewriteProfiles.cs)
+- [AutobiographicalRewriteProfiles.cs](../../prototypes/SessionJournal.Maintainers/AutobiographicalRewriteProfiles.cs)
   后续可复用 profile 示例。
-- [WorldUnderstandingRewriteProfiles.cs](../../prototypes/ChatSession.Memory/WorldUnderstandingRewriteProfiles.cs)
+- [WorldUnderstandingRewriteProfiles.cs](../../prototypes/SessionJournal.Maintainers/WorldUnderstandingRewriteProfiles.cs)
   后续可复用 profile 示例。
 
 底层遍历相关：

@@ -110,7 +110,7 @@ Agent Host / ChatSession.BacktestCli
 │   └── coherent context candidate provider
 │        └── 单向引用 Atelia.SessionJournal contracts
 │
-└── Atelia.ChatSession.Memory
+└── Atelia.SessionJournal.Maintainers
     └── autobiography / world-understanding profiles 与应用 role policy
 ```
 
@@ -121,7 +121,8 @@ Agent Host / ChatSession.BacktestCli
 - 第一阶段 contracts 继续定义在 SessionJournal，不提前增加
   `SessionJournal.Abstractions` 第三程序集；
 - DerivedMemory 内部可以有 repository/store interfaces，但不能把具体存储 API 作为 raw core contract；
-- `ChatSession.Memory` 不反向依赖 concrete SessionJournal Engine；
+- `SessionJournal.Maintainers` 是只依赖 SessionJournal contracts 的 concrete
+  MemoryMaintainer companion assembly；SessionJournal raw core 不反向依赖它；
 - `SessionJournal` 不依赖 `Agent.Core`。
 
 ## 3. 跨边界 contract shape

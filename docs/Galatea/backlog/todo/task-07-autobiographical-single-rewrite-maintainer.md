@@ -3,7 +3,7 @@
 > 状态：已完成，并由后续瘦身重构取代原“并存”方案
 > 当前决策：主线只保留单次完整 Rewrite；两阶段 Text Edit Agent 已从主线删除
 > 归档入口：tag `memory-maintainer-agentic-experiment-v1`
-> 现行设计：`docs/Galatea/memory-maintainer-slimming-refactor.md`
+> 现行设计：`docs/Galatea/backlog/done/memory-maintainer-slimming-refactor.md`
 
 本文以下内容保留为当时的成本调查与 Rewrite 方案形成过程。文件名仍位于 `backlog/todo` 仅为保留历史链接，不代表还有待实施工作；其中旧类型、命令和 preset 只存在于归档 tag。
 

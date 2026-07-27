@@ -15,7 +15,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="../../prototypes/ChatSession.Memory/ChatSession.Memory.csproj" />
+    <ProjectReference Include="../../prototypes/SessionJournal.Maintainers/SessionJournal.Maintainers.csproj" />
   </ItemGroup>
 
 </Project>

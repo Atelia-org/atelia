@@ -355,7 +355,8 @@ dotnet run --project prototypes/ChatSession.BacktestCli -- llm-smoke \
 - `ChatSession`：legacy event source DTO、读取和投影，以及共享 history split policy。
 - `SessionJournal`：raw journal replay、address/provenance、`MemoryPack`、maintainer/orchestrator substrate
   和 `DerivedRecapStore`。
-- `ChatSession.Memory`：`AutobiographicalRewriteProfiles`、
+- `SessionJournal.Maintainers`：依赖 SessionJournal contracts 的 concrete
+  MemoryMaintainer companion assembly，当前提供 `AutobiographicalRewriteProfiles`、
   `WorldUnderstandingRewriteProfiles` 等内容层 profile。
 - `Completion`：connection loader/registry、真实 provider client 和 `LoggingCompletionClient`。
 

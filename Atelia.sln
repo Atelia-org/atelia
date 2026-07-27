@@ -83,9 +83,9 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Galatea.Server", "prototype
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ChatSession.BacktestCli", "prototypes\ChatSession.BacktestCli\ChatSession.BacktestCli.csproj", "{0CFC07EF-9E0E-40AF-A6F5-9FCCF8198DA6}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ChatSession.Memory", "prototypes\ChatSession.Memory\ChatSession.Memory.csproj", "{09870F62-53FB-4698-A725-59466AAD8B4E}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SessionJournal.Maintainers", "prototypes\SessionJournal.Maintainers\SessionJournal.Maintainers.csproj", "{09870F62-53FB-4698-A725-59466AAD8B4E}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ChatSession.Memory.Tests", "tests\ChatSession.Memory.Tests\ChatSession.Memory.Tests.csproj", "{B229B3C9-58A8-4761-8CFC-36E4D305CF1D}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SessionJournal.Maintainers.Tests", "tests\SessionJournal.Maintainers.Tests\SessionJournal.Maintainers.Tests.csproj", "{B229B3C9-58A8-4761-8CFC-36E4D305CF1D}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RbfSegmentStore", "src\RbfSegmentStore\RbfSegmentStore.csproj", "{16FE7DA3-B7B9-43FA-BA51-92242DBF8474}"
 EndProject

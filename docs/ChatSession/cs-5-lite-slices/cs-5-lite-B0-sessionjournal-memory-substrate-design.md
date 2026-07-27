@@ -3,6 +3,10 @@
 > 状态：Design + Implementation Plan
 > 日期：2026-07-25
 > 对应 brief：[CS-5-lite-B0: SessionJournal Memory Substrate 上移](cs-5-lite-B0-sessionjournal-memory-substrate.md)
+>
+> **后续改名（2026-07-27）**：本文保留 B0 当时的项目名、命名空间和非目标；
+> concrete companion assembly 现为 `prototypes/SessionJournal.Maintainers`
+> / `Atelia.SessionJournal.Maintainers`。
 
 ## 1. 结论
 

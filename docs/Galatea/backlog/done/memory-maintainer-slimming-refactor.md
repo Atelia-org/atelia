@@ -123,7 +123,7 @@ tool-loop 是具体实现的内部机制，不进入所有 maintainer 的公共�
 ```bash
 git show memory-maintainer-agentic-experiment-v1:prototypes/ChatSession.Memory/MemoryDocumentAgentLoop.cs
 git show memory-maintainer-agentic-experiment-v1:prototypes/ChatSession.Memory/AutobiographicalMemoryMaintainer.cs
-git diff memory-maintainer-agentic-experiment-v1..HEAD -- prototypes/ChatSession.Memory prototypes/ChatSession.BacktestCli
+git diff memory-maintainer-agentic-experiment-v1..HEAD -- prototypes/ChatSession.Memory prototypes/SessionJournal.Maintainers prototypes/ChatSession.BacktestCli
 ```
 
 不要为了参考旧实现而在主线恢复兼容层；若未来实验值得继续，应从当时已知的后端、召回合同和质量指标出发建立新的垂直切片。

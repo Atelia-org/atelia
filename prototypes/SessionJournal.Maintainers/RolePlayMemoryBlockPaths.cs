@@ -1,6 +1,6 @@
 using Atelia.SessionJournal;
 
-namespace Atelia.ChatSession.Memory;
+namespace Atelia.SessionJournal.Maintainers;
 
 public static class RolePlayMemoryBlockPaths {
     public const string WorldUnderstandingBlockKey = "roleplay.world-understanding";

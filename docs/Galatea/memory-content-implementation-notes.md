@@ -66,14 +66,19 @@ MemoryPackCarrier.Action / roleplay.first-person-autobiography
 
 ## 4. 工程落点
 
-新建 `prototypes/ChatSession.Memory` 作为代码容器。名字刻意不叫 `ChatSession.MemoryMaintainers`，因为后续还会容纳：
+`prototypes/SessionJournal.Maintainers` 是依赖 `Atelia.SessionJournal` contracts 的
+concrete MemoryMaintainer companion assembly。它不属于 SessionJournal raw core，raw core
+也不得反向引用它。
+
+该项目容纳：
 
 - 内容 maintainer preset。
-- 纯分析型 analyzer。
-- 动态维护与召回用 indexer。
-- 与 MemoryPack 内容治理相关的 helper。
+- 与具体 maintainer 直接关联的 profile、prompt、target path 与 factory。
+- 具体 maintainer 所需的窄职责 helper。
 
-该项目只直接依赖 `ChatSession`，不依赖 `Completion.Tools` 或具体 Role-Play 应用。Galatea、FamilyChat 或 Backtest CLI 都可以直接引用这些 profiles。
+planner、artifact/store、epoch coordination、provisioning、orchestration、
+publication，以及独立 analyzer/indexer 不因“与 memory 有关”而自动进入本项目；
+它们应归属 derived-memory subsystem 或 host composition root。
 
 ## 5. 实现形态
 

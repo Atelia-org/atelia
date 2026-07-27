@@ -121,7 +121,8 @@ commit。provider 不能直接返回 ready-made `CompletionRequest` 绕过这些
 
 ### 3.2 应用层内容 profiles
 
-`prototypes/ChatSession.Memory/` 当前提供首批 Role-Play 内容策略：
+`prototypes/SessionJournal.Maintainers/` 当前作为依赖 SessionJournal contracts 的
+concrete MemoryMaintainer companion assembly，提供首批 Role-Play 内容策略：
 
 - `AutobiographicalRewriteProfiles`；
 - `WorldUnderstandingRewriteProfiles`；
@@ -219,7 +220,7 @@ role/profile id
   -> IMemoryBlockMaintainer
 ```
 
-SessionJournal core 不应引用 `ChatSession.Memory`，也不应硬编码 `autobiography`、
+SessionJournal core 不应引用 `SessionJournal.Maintainers`，也不应硬编码 `autobiography`、
 `world-understanding` 或未来的 indexer/analyzer 类型。
 
 ### 5.3 Incremental lineage recovery
@@ -396,7 +397,7 @@ derived set 的 default/latest index 只是可重建选择加速。若需要记�
 后续具体设计应至少保持：
 
 1. raw SessionJournal events 是 execution/history 正确性来源；derived artifacts/indexes 可删除重建。
-2. SessionJournal raw core 不解释应用 role 名称，不依赖 `ChatSession.Memory` 或 concrete
+2. SessionJournal raw core 不解释应用 role 名称，不依赖 `SessionJournal.Maintainers` 或 concrete
    DerivedMemory 程序集；依赖方向只能是 concrete derived implementation -> SessionJournal contracts。
 3. 每个 maintainer 只能更新声明的唯一 target block。
 4. history partition 由 coherence-group epoch planner 统一决定，不能由单个 maintainer 的
@@ -549,7 +550,7 @@ artifact id、anchor、计数、readiness 和测试结果。
 - `prototypes/SessionJournal/SessionCoherentRequestRecipe.cs`
 - `prototypes/SessionJournal.DerivedMemory/`（目标新程序集；暂名，当前不存在）
 - `prototypes/SessionJournal.DerivedMemory/DerivedArtifactSetStore.cs`（目标 concrete store，当前不存在）
-- `prototypes/ChatSession.Memory/`
+- `prototypes/SessionJournal.Maintainers/`
 - `prototypes/ChatSession.BacktestCli/RollingSummaryReplay.cs`
 - `prototypes/ChatSession.BacktestCli/RollingSummaryArtifactWriting.cs`
 - `prototypes/ChatSession.BacktestCli/Program.cs`
