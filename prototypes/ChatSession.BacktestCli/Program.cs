@@ -38,6 +38,8 @@ internal static partial class Program {
             return command switch {
                 "inspect" => RunInspect(options),
                 "export-legacy-upgrade" => RunExportLegacyUpgrade(options),
+                "export-legacy-upgrade-markdown" =>
+                    RunExportLegacyUpgradeMarkdown(options),
                 "import-session-journal" => RunImportSessionJournal(options),
                 "validate-session-journal" => RunValidateSessionJournalAsync(options).GetAwaiter().GetResult(),
                 "checkpoint-artifact-set-session-journal" =>
@@ -103,6 +105,31 @@ internal static partial class Program {
             exportOptions
         );
         WriteTextAtomically(outputPath, json);
+
+        Console.WriteLine($"input: {Path.GetFullPath(inputPath)}");
+        Console.WriteLine($"branchName: {branchName}");
+        Console.WriteLine($"output: {Path.GetFullPath(outputPath)}");
+        return 0;
+    }
+
+    private static int RunExportLegacyUpgradeMarkdown(CliOptions options) {
+        string inputPath = options.Require("input");
+        string outputPath = options.Require("output");
+        string branchName = options.Get("branch") ?? "main";
+        var exportOptions = new ChatSessionLegacyUpgradeMarkdownExportOptions(
+            IncludeWarnings: !options.HasFlag("exclude-warnings")
+        );
+        EnsurePathChainHasNoReparsePoint(inputPath, "--input");
+        EnsurePathChainHasNoReparsePoint(outputPath, "--output");
+        EnsurePathIsOutsideRepository(inputPath, outputPath, "--output");
+
+        string markdown =
+            ChatSessionLegacyUpgradeMarkdownExporter.ExportMarkdown(
+                inputPath,
+                branchName,
+                exportOptions
+            );
+        WriteTextAtomically(outputPath, markdown);
 
         Console.WriteLine($"input: {Path.GetFullPath(inputPath)}");
         Console.WriteLine($"branchName: {branchName}");
@@ -678,6 +705,7 @@ internal static partial class Program {
         Console.WriteLine("Commands:");
         Console.WriteLine("  inspect --input <path>");
         Console.WriteLine("  export-legacy-upgrade --input <repo-dir> --output <json> [--branch <name>] [--compact]");
+        Console.WriteLine("  export-legacy-upgrade-markdown --input <repo-dir> --output <md> [--branch <name>] [--exclude-warnings]");
         Console.WriteLine("  import-session-journal --input <path> --output <repo-dir> [--force] [--report-md <path>]");
         Console.WriteLine("  validate-session-journal --input <repo-dir> [--report-json <path-outside-repo>]");
         Console.WriteLine("  checkpoint-artifact-set-session-journal --input <repo-dir> --member <role>=<artifact-id> --member <role>=<artifact-id> [...]");

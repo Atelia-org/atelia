@@ -38,6 +38,24 @@ dotnet run --project prototypes/ChatSession.BacktestCli -- export-legacy-upgrade
 `appendedMessages`”，允许一次追加 `1..N` 条消息；旧版 repo 可能分别持久化 observation 和 action，
 不能假设它一定是恰好两条的完整回合。
 
+### export-legacy-upgrade-markdown
+
+读取旧版 `ChatSession` repo，通过 `ChatSessionLegacyUpgradeMarkdownExporter` 导出适合人工阅读或
+LLM 消费的 fenced Markdown transcript。路径边界与 atomic publish 规则和 JSON 导出命令相同。
+
+```bash
+dotnet run --project prototypes/ChatSession.BacktestCli -- export-legacy-upgrade-markdown \
+  --input prototypes/FamilyChat.Server/.atelia/family-chat/sessions/<session-repo> \
+  --output gitignore/migrations/<session-name>.md
+```
+
+参数：
+
+- `--input <repo-dir>`：旧版 `ChatSession` repo。
+- `--output <md>`：Markdown 输出路径；父目录会自动创建，已有文件会被 atomic replace。
+- `--branch <name>`：要导出的 branch，默认 `main`。
+- `--exclude-warnings`：不把 exporter warnings 写入 Markdown；默认保留。
+
 ### inspect
 
 检查 legacy export 的 schema、branch、事件数量和 message kind 分布。
