@@ -207,6 +207,30 @@ public sealed class SessionContextCandidateContractTests : IDisposable {
     }
 
     [Fact]
+    public void Validator_RejectsMoreThanHardCapEvenWhenProviderReportsSmallCount() {
+        Fixture fixture = CreateFixture();
+        var overflowing = new CountMismatchContributionList(
+            reportedCount: 1,
+            Enumerable.Range(0, 129)
+                .Select(index => Contribution(
+                    MemoryPackCarrier.Observation,
+                    $"block-{index}",
+                    $"memory-{index}",
+                    fixture.Anchor
+                ))
+                .ToArray()
+        );
+        SessionContextCandidate candidate = new(
+            fixture.Anchor,
+            fixture.AnchorSetups,
+            overflowing
+        );
+
+        Assert.Throws<InvalidDataException>(() => Validate(fixture, candidate));
+        Assert.Equal(1, overflowing.EnumerationCount);
+    }
+
+    [Fact]
     public void SessionJournalProjectFile_DoesNotReferenceConcreteDerivedOrHostAssemblies() {
         string repoRoot = FindRepositoryRoot();
         string project = File.ReadAllText(Path.Combine(
