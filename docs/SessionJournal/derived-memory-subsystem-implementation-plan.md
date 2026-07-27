@@ -18,9 +18,12 @@
 DerivedMemory 重构不能简化成“定义几个接口，然后把 `DerivedRecapStore.cs` 移到新项目”。current
 SessionJournal 仍在三个层面依赖 concrete derived shape：
 
-1. request materializer 直接接收 `DerivedRecapArtifact`；
+1. request materializer 已直接消费 normalized `SessionContextCandidate`，但 pre-Prepared 的 legacy
+   bridge 仍从 concrete `DerivedRecapArtifact` / store 取得该 candidate；
 2. `CompletionRequestPrepared` v4 已保存 self-contained exact context snapshots 与两端 setup refs；
-3. reconstructor 不再读取 raw `ArtifactSetCommitted`，而以 `RawStartSetups` 取得 suffix fold seed。
+3. reconstructor 以 `RawStartSetups` 取得 suffix fold seed，不解析或依赖 raw
+   `ArtifactSetCommitted` 的 activation/member 语义；DM-4 前 kind 12 若位于 exact raw range，仍按通用
+   raw event decode/fold。
 
 若此时先物理搬文件，`SessionJournal.csproj` 就会被迫引用 concrete DerivedMemory 项目，依赖方向仍然
 错误。
@@ -347,8 +350,8 @@ concrete store 类型。
   `CreateOneHotSnapshot()` 通过既有 singleton `MemoryPack.Render()` recipe 变为 request snapshot；
 - `LegacyArtifactContextCandidateAdapter` 是唯一 kind-12/store → candidate bridge，明确标注 DM-3
   删除；它继续验证 Produced、artifact/source coverage、governing setup、member identity、target block
-  与 v3 snapshot hash，并保留 per-member not-ready artifact id；
-- `LegacyArtifactContextSnapshotFactory` 则只服务 current v3/kind-12 commit 与 offline validation；它不属于
+  与 legacy snapshot hash，并保留 per-member not-ready artifact id；
+- `LegacyArtifactContextSnapshotFactory` 则只服务 legacy kind-12 commit 与 offline validation；它不属于
   planning adapter，故在 DM-3 后继续存在，并随 DM-4 删除 raw kind-12 一并删除；
 - Prepared v4 直接保存 core-rendered `ExactContextInputs`，adapter 不再传递 legacy artifact identity。
   DM-0 text hash 约束 raw block text；v4 snapshot hash 约束最终 request snapshot，二者刻意独立。
