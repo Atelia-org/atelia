@@ -161,6 +161,12 @@ public sealed class SessionPreparedRequestReconstructorTests : IDisposable {
             scenario.ExpectedRequest.MaxTokens
         );
         CompletionRequestPreparedBody forged = scenario.Manifest with {
+            Plan = scenario.Manifest.Plan with {
+                RawStartSetups = new SessionGoverningSetupReferences(
+                    CreateSetupReference(journal, sideRuntime),
+                    CreateSetupReference(journal, sidePrompt)
+                )
+            },
             Setups = new SessionGoverningSetupReferences(
                 CreateSetupReference(journal, sideRuntime),
                 CreateSetupReference(journal, sidePrompt)
@@ -182,10 +188,42 @@ public sealed class SessionPreparedRequestReconstructorTests : IDisposable {
         );
 
         Assert.Contains(
-            "pinned setup",
+            "rawStartSetups",
             error.Message,
             StringComparison.Ordinal
         );
+    }
+
+    [Fact]
+    public void Reconstruct_RejectsStaleRawStartSetupsEvenWithRecomputedRequestCommitment() {
+        string path = NewJournalPath();
+        using EventJournal.EventJournal journal = CreateJournal(path);
+        Scenario scenario = CreateToolContinuationScenario(journal, useNewerAnchorSetup: true);
+        EventAddress newerRuntime = journal.ReadEventHeaderChecked(scenario.Created).Unwrap().Parent!.Value;
+        EventAddress originalCreated = journal.ReadEventHeaderChecked(newerRuntime).Unwrap().Parent!.Value;
+        EventAddress stalePrompt = journal.ReadEventHeaderChecked(originalCreated).Unwrap().Parent!.Value;
+        EventAddress staleRuntime = journal.ReadEventHeaderChecked(stalePrompt).Unwrap().Parent!.Value;
+        var staleSetups = new SessionGoverningSetupReferences(
+            CreateSetupReference(journal, staleRuntime),
+            CreateSetupReference(journal, stalePrompt)
+        );
+        var forgedRequest = scenario.ExpectedRequest with {
+            ModelId = "model-A",
+            SystemPrompt = scenario.ExpectedRequest.SystemPrompt.Replace(
+                "system-B", "system-A", StringComparison.Ordinal
+            )
+        };
+        CompletionRequestPreparedBody forged = scenario.Manifest with {
+            Plan = scenario.Manifest.Plan with { RawStartSetups = staleSetups },
+            Setups = staleSetups,
+            Parameters = scenario.Manifest.Parameters with { ModelId = "model-A" },
+            Commitment = SessionRequestCanonicalizer.CreateCommitment(forgedRequest)
+        };
+
+        InvalidDataException error = Assert.Throws<InvalidDataException>(() =>
+            SessionPreparedRequestReconstructor.Reconstruct(journal, forged, scenario.RawEnd)
+        );
+        Assert.Contains("rawStartSetups", error.Message, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -384,7 +422,8 @@ public sealed class SessionPreparedRequestReconstructorTests : IDisposable {
         Func<ArtifactSetCommittedBody, ArtifactSetCommittedBody>?
             mutateActivation = null,
         Func<ToolExecutionStartedBody, ToolExecutionStartedBody>?
-            mutateStarted = null
+            mutateStarted = null,
+        bool useNewerAnchorSetup = false
     ) {
         EventAddress runtime = Commit(
             journal,
@@ -408,6 +447,24 @@ public sealed class SessionPreparedRequestReconstructorTests : IDisposable {
             SessionEventKind.SessionCreated,
             new SessionCreatedBody()
         );
+        EventAddress governingRuntime = runtime;
+        EventAddress governingPrompt = prompt;
+        EventAddress anchor = created;
+        string modelId = "model-A";
+        string baseSystemPrompt = "system-A";
+        if (useNewerAnchorSetup) {
+            governingRuntime = Commit(
+                journal, created, SessionEventKind.RuntimeConfigSetup,
+                new SessionRuntimeConfiguration("model-B", "surface-B", SessionJournalDefaults.Schema)
+            );
+            governingPrompt = Commit(
+                journal, governingRuntime, SessionEventKind.SystemPromptSetup,
+                new SystemPromptSetupBody("system-B")
+            );
+            anchor = governingPrompt;
+            modelId = "model-B";
+            baseSystemPrompt = "system-B";
+        }
         SessionRequestArtifactInput system = Artifact(
             "artifact-system",
             "rolling-summary",
@@ -420,13 +477,13 @@ public sealed class SessionPreparedRequestReconstructorTests : IDisposable {
         );
         ImmutableArray<SessionRequestArtifactInput> inputs = [system, world];
         SessionGoverningSetupReferences setups = new(
-            CreateSetupReference(journal, runtime),
-            CreateSetupReference(journal, prompt)
+            CreateSetupReference(journal, governingRuntime),
+            CreateSetupReference(journal, governingPrompt)
         );
         var activationBody = new ArtifactSetCommittedBody(
             SessionRequestManifestDefaults.ActiveArtifactSetPolicyId,
             SessionRequestManifestDefaults.ActiveArtifactSetPolicyFingerprint,
-            created,
+            anchor,
             setups,
             setups,
             [
@@ -451,7 +508,7 @@ public sealed class SessionPreparedRequestReconstructorTests : IDisposable {
         }
         EventAddress activation = Commit(
             journal,
-            created,
+            anchor,
             SessionEventKind.ArtifactSetCommitted,
             activationBody
         );
@@ -468,14 +525,14 @@ public sealed class SessionPreparedRequestReconstructorTests : IDisposable {
         ];
         (string systemPrompt, ImmutableArray<IHistoryMessage> header) =
             SessionCoherentRequestRecipe.Expand(
-                "system-A",
+                baseSystemPrompt,
                 SessionCoherentRequestRecipe.Aggregate(inputs.Select(static input => input.ContextSnapshot).ToArray())
             );
         var initialContext = ImmutableArray.CreateBuilder<IHistoryMessage>();
         initialContext.AddRange(header);
         initialContext.Add(new ObservationMessage("hello"));
         var initialRequest = new CompletionRequest(
-            "model-A",
+            modelId,
             systemPrompt,
             initialContext.ToImmutable(),
             tools
@@ -485,9 +542,9 @@ public sealed class SessionPreparedRequestReconstructorTests : IDisposable {
         CompletionRequestPreparedBody initialManifest = CreateManifest(
             journal,
             initialRequest,
-            runtime,
-            prompt,
-            created,
+            governingRuntime,
+            governingPrompt,
+            anchor,
             observation,
             [activation, observation],
             inputs,
@@ -571,7 +628,7 @@ public sealed class SessionPreparedRequestReconstructorTests : IDisposable {
         continuationContext.Add(actionMessage);
         continuationContext.Add(new ToolResultsMessage(null, [result]));
         var continuationRequest = new CompletionRequest(
-            "model-A",
+            modelId,
             systemPrompt,
             continuationContext.ToImmutable(),
             tools
@@ -588,9 +645,9 @@ public sealed class SessionPreparedRequestReconstructorTests : IDisposable {
         CompletionRequestPreparedBody continuationManifest = CreateManifest(
             journal,
             continuationRequest,
-            runtime,
-            prompt,
-            created,
+            governingRuntime,
+            governingPrompt,
+            anchor,
             observed,
             rawAddresses,
             inputs,
@@ -600,9 +657,9 @@ public sealed class SessionPreparedRequestReconstructorTests : IDisposable {
             checkpoint: 1
         );
         return new Scenario(
-            runtime,
-            prompt,
-            created,
+            governingRuntime,
+            governingPrompt,
+            anchor,
             observed,
             rawAddresses,
             continuationRequest,

@@ -10,16 +10,6 @@ namespace Atelia.SessionJournal;
 /// Prepared v4 execution recovery.
 /// </summary>
 internal static class SessionCoherentRequestRecipe {
-    public static int GetCarrierRank(MemoryPackCarrier carrier)
-        => carrier switch {
-            MemoryPackCarrier.System => 0,
-            MemoryPackCarrier.Observation => 1,
-            MemoryPackCarrier.Action => 2,
-            _ => throw new InvalidDataException(
-                $"Unsupported coherent request carrier '{carrier}'."
-            )
-        };
-
     public static SessionRequestArtifactContextSnapshot AggregateExactInputs(
         IReadOnlyList<SessionRequestContextInput> inputs
     ) => Aggregate([

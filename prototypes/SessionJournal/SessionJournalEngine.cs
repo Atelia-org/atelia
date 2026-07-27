@@ -463,99 +463,12 @@ public sealed class SessionJournalEngine : IDisposable {
     public SessionGoverningSetup ResolveGoverningSetup(EventAddress head, CancellationToken cancellationToken = default) {
         ThrowIfDisposed();
         _lastGoverningSetupResolutionDiagnostics = default;
-
-        EventAddress? cursor = head;
-        EventAddress? runtimeConfigSetupAddress = null;
-        EventAddress? systemPromptSetupAddress = null;
-        SessionRuntimeConfiguration? runtimeConfig = null;
-        string? systemPrompt = null;
-        int headerVisitCount = 0;
-        int payloadReadCount = 0;
-        int manifestPayloadReadCount = 0;
-
-        while (cursor is { } address && (runtimeConfigSetupAddress is null || systemPromptSetupAddress is null)) {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            EventFrameHeader header = _reader.ReadEventHeaderPreview(address).Unwrap();
-            headerVisitCount++;
-            ValidateSessionHeaderPreview(address, header);
-
-            var kind = (SessionEventKind)header.OpaqueEventKind;
-            if (kind == SessionEventKind.RuntimeConfigSetup && runtimeConfigSetupAddress is null) {
-                runtimeConfigSetupAddress = address;
-            }
-            else if (kind == SessionEventKind.SystemPromptSetup && systemPromptSetupAddress is null) {
-                systemPromptSetupAddress = address;
-            }
-            else if (kind is (
-                    SessionEventKind.CompletionRequestPrepared
-                    or SessionEventKind.ArtifactSetCommitted
-                )
-                && (runtimeConfigSetupAddress is null || systemPromptSetupAddress is null)) {
-                using SessionJournalEventFrame manifestFrame = _reader.ReadEvent(address).Unwrap();
-                payloadReadCount++;
-                manifestPayloadReadCount++;
-                object decoded = SessionEventCodec.Decode(kind, manifestFrame.Payload, out _);
-                SessionGoverningSetupReferences setupReferences = decoded switch {
-                    CompletionRequestPreparedBody manifest => manifest.Setups,
-                    ArtifactSetCommittedBody activation => activation.CurrentSetups,
-                    _ => throw new InvalidDataException(
-                        $"setup checkpoint at {address} decoded to '{decoded.GetType().Name}'."
-                    )
-                };
-
-                if (runtimeConfigSetupAddress is null) {
-                    runtimeConfig = ReadAndValidateSetupReference<SessionRuntimeConfiguration>(
-                        setupReferences.RuntimeConfig,
-                        SessionEventKind.RuntimeConfigSetup,
-                        ref payloadReadCount
-                    );
-                    runtimeConfigSetupAddress = setupReferences.RuntimeConfig.Address;
-                }
-                if (systemPromptSetupAddress is null) {
-                    SystemPromptSetupBody prompt = ReadAndValidateSetupReference<SystemPromptSetupBody>(
-                        setupReferences.SystemPrompt,
-                        SessionEventKind.SystemPromptSetup,
-                        ref payloadReadCount
-                    );
-                    systemPrompt = prompt.Content;
-                    systemPromptSetupAddress = setupReferences.SystemPrompt.Address;
-                }
-            }
-
-            cursor = header.Parent;
-        }
-
-        if (runtimeConfigSetupAddress is null) {
-            throw new InvalidDataException($"SessionJournal governing setup for head {head} is missing runtime-config-setup on its parent chain.");
-        }
-
-        if (systemPromptSetupAddress is null) {
-            throw new InvalidDataException($"SessionJournal governing setup for head {head} is missing system-prompt-setup on its parent chain.");
-        }
-
-        if (runtimeConfig is null) {
-            runtimeConfig = ReadRuntimeConfigSetup(runtimeConfigSetupAddress.Value);
-            payloadReadCount++;
-        }
-        if (systemPrompt is null) {
-            systemPrompt = ReadSystemPromptSetup(systemPromptSetupAddress.Value);
-            payloadReadCount++;
-        }
-
-        _lastGoverningSetupResolutionDiagnostics = new(
-            headerVisitCount,
-            payloadReadCount,
-            manifestPayloadReadCount
-        );
-
-        return new SessionGoverningSetup(
-            head,
-            runtimeConfigSetupAddress.Value,
-            runtimeConfig,
-            systemPromptSetupAddress.Value,
-            systemPrompt
-        );
+        SessionAuthoritativeGoverningSetupResolver.Result result =
+            SessionAuthoritativeGoverningSetupResolver.Resolve(
+                _reader, head, allowLegacyArtifactSetCheckpoint: true, cancellationToken
+            );
+        _lastGoverningSetupResolutionDiagnostics = result.Diagnostics;
+        return result.Setup;
     }
 
     public byte[] ReadPayloadBytes(EventAddress address) {

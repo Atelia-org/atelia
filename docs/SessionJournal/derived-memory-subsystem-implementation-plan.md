@@ -63,14 +63,18 @@ DM-8  Online lifecycle + budgeted set selection
 
 - `prototypes/SessionJournal/SessionRequestManifest.cs`
   - `SessionContextPlan` 保存 `RawStartSetups + ExactContextInputs`；
-  - artifact input 仍包含 `ArtifactId / ArtifactKind`。
+  - Prepared exact input 只保存 rendered snapshot/hash，不包含 artifact identity。
 - `prototypes/SessionJournal/SessionPreparedRequestReconstructor.cs`
   - exact reopen 只读取 Prepared 所钉死的 raw range、两端 setup refs 与 exact context inputs；
   - fold seed 来自 `plan.rawStartSetups`；
-  - 不读取或验证 `ArtifactSetCommitted`。
+  - 不解析或依赖 `ArtifactSetCommitted` 的 activation/member/selection 语义；DM-4 前 Engine 的
+    pre-Prepared legacy planning resolver 仍可把其 coverage/current setup pair 当作 checkpoint，但
+    Prepared v4 reconstructor 不会。若 kind 12 位于 exact raw range，它仍只是通用 raw event
+    decoder/fold 所处理的一项历史事件。
 - `prototypes/SessionJournal/SessionTailContextProjection.cs`
-  - `Materialize()` 直接接收 `ImmutableArray<DerivedRecapArtifact>`；
-  - concrete artifact validation、raw suffix fold 和 request rendering 混在一起。
+  - `Materialize()` 只接收 normalized candidate；
+  - concrete legacy artifact validation 已收在 temporary adapter，raw suffix fold 和 request rendering
+    留在 core。
 - `prototypes/SessionJournal/SessionJournalEngine.cs`
   - 直接 `DerivedRecapStore.Open(Path)`；
   - 负责 raw activation resolution、sidecar readiness、materialization、Prepared 与 dispatch。
@@ -346,14 +350,19 @@ concrete store 类型。
   与 v3 snapshot hash，并保留 per-member not-ready artifact id；
 - `LegacyArtifactContextSnapshotFactory` 则只服务 current v3/kind-12 commit 与 offline validation；它不属于
   planning adapter，故在 DM-3 后继续存在，并随 DM-4 删除 raw kind-12 一并删除；
-- Prepared v3 仍由 adapter 在 core-rendered snapshots 上重建 legacy `ArtifactInputs`，因而 wire 与
-  canonical request 不变。DM-0 text hash 约束 raw block text；v3 snapshot hash 约束含 carrier fields
-  与 request rendering 的最终 snapshot，二者刻意独立。
+- Prepared v4 直接保存 core-rendered `ExactContextInputs`，adapter 不再传递 legacy artifact identity。
+  DM-0 text hash 约束 raw block text；v4 snapshot hash 约束最终 request snapshot，二者刻意独立。
 
 性能说明：validator 向 materializer 交付同一次 Parent walk 冻结的 suffix addresses，故未新增 cold-prefix
 walk，header/decoded suffix 复杂度保持原有量级；legacy bridge 目前仍让 validator 对 activation coverage 的
 两条 setup exact refs 各重读一次 payload，故不宣称 payload-read count 绝对不变。DM-3 provider cutover
 把 anchor proof 与 provider result 合并时再收掉该 legacy-only recheck。
+
+DM-2 的 Prepared v4 reopen 仍是 bounded：anchor 之前若存在可信的 earlier Prepared checkpoint，shared
+resolver 只读该近头 checkpoint 与两条 setup payload；它绝不把当前正被重建的 manifest 当作证明。反之，
+在 DM-2→DM-3 的 legacy-only pre-Prepared planning 窗口，首次 anchor 若只有远处 setup 而无 earlier
+Prepared checkpoint，authoritative proof 可能 header-only 回扫冷前缀；这是显式过渡成本，DM-3 provider
+cutover 不得通过把 raw activation reference 回塞 Prepared 来掩盖它。
 
 ### 主要落点
 

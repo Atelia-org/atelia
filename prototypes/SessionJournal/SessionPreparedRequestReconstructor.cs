@@ -90,12 +90,40 @@ internal static class SessionPreparedRequestReconstructor {
         cancellationToken.ThrowIfCancellationRequested();
         SessionRequestManifestCodec.Validate(manifest);
 
+        IReadOnlyList<DecodedSessionEvent> rawEvents = ReadAndValidateRawRange(
+            reader,
+            manifest.Plan.RawStartExclusive,
+            authoritativeRawEndInclusive,
+            manifest.Plan.RawRangeSha256,
+            cancellationToken
+        );
+        SessionGoverningSetup authoritativeRawStart =
+            SessionAuthoritativeGoverningSetupResolver.Resolve(
+                reader,
+                manifest.Plan.RawStartExclusive,
+                allowLegacyArtifactSetCheckpoint: false,
+                cancellationToken
+            ).Setup;
         SessionGoverningSetup rawStartSetup = ReadSetupFromReferences(
             reader,
             manifest.Plan.RawStartExclusive,
             manifest.Plan.RawStartSetups,
             cancellationToken
         );
+        if (rawStartSetup.RuntimeConfigSetupAddress
+                != authoritativeRawStart.RuntimeConfigSetupAddress
+            || rawStartSetup.SystemPromptSetupAddress
+                != authoritativeRawStart.SystemPromptSetupAddress
+            || rawStartSetup.RuntimeConfig != authoritativeRawStart.RuntimeConfig
+            || !string.Equals(
+                rawStartSetup.SystemPrompt,
+                authoritativeRawStart.SystemPrompt,
+                StringComparison.Ordinal
+            )) {
+            throw new InvalidDataException(
+                "Prepared v4 plan.rawStartSetups do not match the authoritative governing setup at rawStartExclusive."
+            );
+        }
         SessionRuntimeConfiguration runtimeConfig = ReadAndValidateSetupReference<SessionRuntimeConfiguration>(
             reader,
             manifest.Setups.RuntimeConfig,
@@ -110,13 +138,6 @@ internal static class SessionPreparedRequestReconstructor {
         );
 
         ValidateRuntime(manifest, runtimeConfig);
-        IReadOnlyList<DecodedSessionEvent> rawEvents = ReadAndValidateRawRange(
-            reader,
-            manifest.Plan.RawStartExclusive,
-            authoritativeRawEndInclusive,
-            manifest.Plan.RawRangeSha256,
-            cancellationToken
-        );
         CompletionRequest request = ReconstructExactContextTail(
             reader,
             manifest,

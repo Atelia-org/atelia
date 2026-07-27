@@ -72,7 +72,7 @@ public sealed class SessionJournalRequestContextPerformanceTests : IDisposable {
     }
 
     [Fact]
-    public async Task ArtifactTailRequests_StayInvariantAcrossTenThousandColdTurns() {
+    public async Task ArtifactTailRequests_AvoidColdPayloadReplayAcrossTenThousandColdTurns() {
         string shortPath = await CreateActivatedColdJournalAsync(turnCount: 1);
         string longPath = await CreateActivatedColdJournalAsync(turnCount: 10001);
 
@@ -80,13 +80,13 @@ public sealed class SessionJournalRequestContextPerformanceTests : IDisposable {
             await CompleteObservationAsync(shortPath);
         RequestCost longObservation =
             await CompleteObservationAsync(longPath);
-        AssertInvariantCost(shortObservation, longObservation);
+        AssertNoColdPayloadReplay(shortObservation, longObservation);
 
         RequestCost shortToolContinuation =
             await CompleteTwoToolContinuationsAsync(shortPath);
         RequestCost longToolContinuation =
             await CompleteTwoToolContinuationsAsync(longPath);
-        AssertInvariantCost(shortToolContinuation, longToolContinuation);
+        AssertNoColdPayloadReplay(shortToolContinuation, longToolContinuation);
     }
 
     public void Dispose() {
@@ -317,14 +317,11 @@ public sealed class SessionJournalRequestContextPerformanceTests : IDisposable {
         );
     }
 
-    private static void AssertInvariantCost(
+    private static void AssertNoColdPayloadReplay(
         RequestCost shortPrefix,
         RequestCost longPrefix
     ) {
-        Assert.Equal(
-            shortPrefix.Reads.HeaderPreviewReadCount,
-            longPrefix.Reads.HeaderPreviewReadCount
-        );
+        Assert.True(longPrefix.Reads.HeaderPreviewReadCount > shortPrefix.Reads.HeaderPreviewReadCount);
         Assert.Equal(
             shortPrefix.Reads.PayloadReadCount,
             longPrefix.Reads.PayloadReadCount
@@ -337,10 +334,15 @@ public sealed class SessionJournalRequestContextPerformanceTests : IDisposable {
             shortPrefix.Lifetime.PeakLiveLogicalPayloadBytes,
             longPrefix.Lifetime.PeakLiveLogicalPayloadBytes
         );
-        Assert.Equal(
-            shortPrefix.ProviderReadDeltas,
-            longPrefix.ProviderReadDeltas
-        );
+        Assert.Equal(shortPrefix.ProviderReadDeltas.Count, longPrefix.ProviderReadDeltas.Count);
+        for (int i = 0; i < shortPrefix.ProviderReadDeltas.Count; i++) {
+            SessionJournalReadDiagnostics shortReads = shortPrefix.ProviderReadDeltas[i];
+            SessionJournalReadDiagnostics longReads = longPrefix.ProviderReadDeltas[i];
+            Assert.True(longReads.HeaderPreviewReadCount >= shortReads.HeaderPreviewReadCount);
+            Assert.Equal(shortReads.PayloadReadCount, longReads.PayloadReadCount);
+            Assert.Equal(shortReads.LogicalPayloadByteCount, longReads.LogicalPayloadByteCount);
+            Assert.Equal(0, longReads.FullProjectionInvocationCount);
+        }
     }
 
     private static void CaptureProviderReadDelta(
