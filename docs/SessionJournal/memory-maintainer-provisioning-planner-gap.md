@@ -11,15 +11,14 @@
 ## 1. 一句话结论
 
 当前代码已经具备“一个 maintainer 维护一个 `MemoryPack` 文本块”、同 snapshot 并行执行的
-substrate，以及将多个 exact derived artifacts 汇合成 `ArtifactSetCommitted` 的底层机制；但尚未具备
+substrate，以及将多个 exact derived artifacts 发布为 derived-only coherent ArtifactSet 的底层机制；但尚未具备
 一个通用的 Agent/Session 上层 provisioner/planner，去声明一类 Session 需要哪些 memory roles、何时运行
 哪些 maintainer、如何先生成所有 maintainer 共享的 history coverage epoch、如何恢复各自 lineage、
 如何并行生成同一 epoch 的结果，以及何时把完整结果集原子发布为可供 online completion 使用的
 coherent ArtifactSet。
 
-`ArtifactSetCommitted` 是 current trunk 的 raw event，不是目标边界。后续候选 C 已决定将 coherent
-ArtifactSet definition/publication 移入 derived sidecar；raw SessionJournal 不再引用 derived set 或
-artifact id。详见
+候选 C / DM-4 已将 coherent ArtifactSet definition/publication 移入 derived sidecar；raw
+SessionJournal 不再引用 derived set 或 artifact id。详见
 [`tail-execution-recovery-simplification-study.md` §4](tail-execution-recovery-simplification-study.md)。
 
 Derived ArtifactSet 也不应只是“仍放在 SessionJournal 程序集里的另一种 store”。其具体维护、存储、

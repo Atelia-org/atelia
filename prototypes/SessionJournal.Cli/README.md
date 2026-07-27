@@ -124,7 +124,8 @@ dotnet run --project prototypes/SessionJournal.Cli -- \
 `--expected-previous` 是强制 CAS：genesis 明确写 `none`，后续写 exact `das_...`
 id。CLI 从 members 的唯一 common anchor 读取 raw-authoritative governing setup
 address/schema/payload hash；setup refs 不能由参数伪造。发布只写
-`derived/memory/v1/sets` 与 latest pointer，不写 raw kind 12。
+`derived/memory/v1/sets` 与 latest pointer；raw SessionJournal 不写任何 derived-set
+definition/activation event。
 
 ### list-derived-artifact-sets
 

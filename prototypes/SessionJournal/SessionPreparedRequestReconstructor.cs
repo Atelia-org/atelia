@@ -101,7 +101,6 @@ internal static class SessionPreparedRequestReconstructor {
             SessionAuthoritativeGoverningSetupResolver.Resolve(
                 reader,
                 manifest.Plan.RawStartExclusive,
-                allowLegacyArtifactSetCheckpoint: false,
                 cancellationToken
             ).Setup;
         SessionGoverningSetup rawStartSetup = ReadSetupFromReferences(

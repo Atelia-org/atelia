@@ -70,7 +70,7 @@ public sealed class SessionPreparedRequestReconstructorTests : IDisposable {
     }
 
     [Fact]
-    public void Reconstruct_RejectsRawStartActivationOrderAndCommitmentDrift() {
+    public void Reconstruct_RejectsRawStartOrderAndCommitmentDrift() {
         string path = NewJournalPath();
         using EventJournal.EventJournal journal = CreateJournal(path);
         Scenario scenario = CreateToolContinuationScenario(journal);
@@ -227,45 +227,6 @@ public sealed class SessionPreparedRequestReconstructorTests : IDisposable {
     }
 
     [Fact]
-    public void Reconstruct_IgnoresCorruptLegacyActivationReferences() {
-        string coveragePath = NewJournalPath();
-        using (EventJournal.EventJournal journal = CreateJournal(coveragePath)) {
-            Scenario scenario = CreateToolContinuationScenario(
-                journal,
-                body => body with {
-                    CoverageSetups = body.CoverageSetups with {
-                        RuntimeConfig = body.CoverageSetups.RuntimeConfig with {
-                            PayloadSha256 = new string('0', 64)
-                        }
-                    }
-                }
-            );
-
-            _ = SessionPreparedRequestReconstructor.Reconstruct(
-                journal, scenario.Manifest, scenario.RawEnd
-            );
-        }
-
-        string currentPath = NewJournalPath();
-        using (EventJournal.EventJournal journal = CreateJournal(currentPath)) {
-            Scenario scenario = CreateToolContinuationScenario(
-                journal,
-                body => body with {
-                    CurrentSetups = body.CurrentSetups with {
-                        SystemPrompt = body.CurrentSetups.SystemPrompt with {
-                            PayloadSha256 = new string('0', 64)
-                        }
-                    }
-                }
-            );
-
-            _ = SessionPreparedRequestReconstructor.Reconstruct(
-                journal, scenario.Manifest, scenario.RawEnd
-            );
-        }
-    }
-
-    [Fact]
     public void Reconstruct_RejectsRawRangeSetupModelAndCorrelationCorruption() {
         string path = NewJournalPath();
         using EventJournal.EventJournal journal = CreateJournal(path);
@@ -419,8 +380,6 @@ public sealed class SessionPreparedRequestReconstructorTests : IDisposable {
 
     private static Scenario CreateToolContinuationScenario(
         EventJournal.EventJournal journal,
-        Func<ArtifactSetCommittedBody, ArtifactSetCommittedBody>?
-            mutateActivation = null,
         Func<ToolExecutionStartedBody, ToolExecutionStartedBody>?
             mutateStarted = null,
         bool useNewerAnchorSetup = false
@@ -465,58 +424,23 @@ public sealed class SessionPreparedRequestReconstructorTests : IDisposable {
             modelId = "model-B";
             baseSystemPrompt = "system-B";
         }
-        SessionRequestArtifactInput system = Artifact(
-            "artifact-system",
-            "rolling-summary",
-            new SessionRequestArtifactContextSnapshot("memory system", "", "")
-        );
-        SessionRequestArtifactInput world = Artifact(
-            "artifact-world",
-            "world-understanding",
-            new SessionRequestArtifactContextSnapshot("", "memory world", "")
-        );
-        ImmutableArray<SessionRequestArtifactInput> inputs = [system, world];
-        SessionGoverningSetupReferences setups = new(
-            CreateSetupReference(journal, governingRuntime),
-            CreateSetupReference(journal, governingPrompt)
-        );
-        var activationBody = new ArtifactSetCommittedBody(
-            SessionRequestManifestDefaults.ActiveArtifactSetPolicyId,
-            SessionRequestManifestDefaults.ActiveArtifactSetPolicyFingerprint,
-            anchor,
-            setups,
-            setups,
-            [
-                new SessionArtifactSetMember(
-                    "system",
-                    system.ArtifactId,
-                    system.ArtifactKind,
-                    new MemoryPackBlockPath(MemoryPackCarrier.System, "system"),
-                    system.ContentSha256
-                ),
-                new SessionArtifactSetMember(
-                    "world",
-                    world.ArtifactId,
-                    world.ArtifactKind,
-                    new MemoryPackBlockPath(MemoryPackCarrier.Observation, "world"),
-                    world.ContentSha256
-                )
-            ]
-        );
-        if (mutateActivation is not null) {
-            activationBody = mutateActivation(activationBody);
-        }
-        EventAddress activation = Commit(
-            journal,
-            anchor,
-            SessionEventKind.ArtifactSetCommitted,
-            activationBody
-        );
-        SessionArtifactSetReference activationReference =
-            CreateArtifactSetReference(journal, activation);
+        var systemSnapshot =
+            new SessionRequestArtifactContextSnapshot("memory system", "", "");
+        var worldSnapshot =
+            new SessionRequestArtifactContextSnapshot("", "memory world", "");
+        ImmutableArray<SessionRequestContextInput> inputs = [
+            new(
+                SessionArtifactContextSnapshotHasher.ComputeSha256(systemSnapshot),
+                systemSnapshot
+            ),
+            new(
+                SessionArtifactContextSnapshotHasher.ComputeSha256(worldSnapshot),
+                worldSnapshot
+            )
+        ];
         EventAddress observation = Commit(
             journal,
-            activation,
+            anchor,
             SessionEventKind.ObservationAccepted,
             new ObservationAcceptedBody("hello")
         );
@@ -546,9 +470,8 @@ public sealed class SessionPreparedRequestReconstructorTests : IDisposable {
             governingPrompt,
             anchor,
             observation,
-            [activation, observation],
+            [observation],
             inputs,
-            activationReference,
             "observation",
             correlation,
             checkpoint: 0
@@ -634,7 +557,6 @@ public sealed class SessionPreparedRequestReconstructorTests : IDisposable {
             tools
         );
         EventAddress[] rawAddresses = [
-            activation,
             observation,
             initialPrepared,
             completionStarted,
@@ -651,7 +573,6 @@ public sealed class SessionPreparedRequestReconstructorTests : IDisposable {
             observed,
             rawAddresses,
             inputs,
-            activationReference,
             "tool-continuation",
             correlation,
             checkpoint: 1
@@ -675,13 +596,11 @@ public sealed class SessionPreparedRequestReconstructorTests : IDisposable {
         EventAddress rawStart,
         EventAddress rawEnd,
         IReadOnlyList<EventAddress> rawAddresses,
-        ImmutableArray<SessionRequestArtifactInput> inputs,
-        SessionArtifactSetReference activation,
+        ImmutableArray<SessionRequestContextInput> inputs,
         string reason,
         string correlation,
         long checkpoint
     ) {
-        _ = activation;
         return new(
         new SessionRequestOrigin(correlation, reason),
         new SessionExecutionCheckpoint(checkpoint),
@@ -692,9 +611,7 @@ public sealed class SessionPreparedRequestReconstructorTests : IDisposable {
                 CreateSetupReference(journal, runtime),
                 CreateSetupReference(journal, prompt)
             ),
-            inputs.Select(static input => new SessionRequestContextInput(
-                input.ContentSha256, input.ContextSnapshot
-            )).ToImmutableArray()
+            inputs
         ),
         new SessionGoverningSetupReferences(
             CreateSetupReference(journal, runtime),
@@ -725,17 +642,6 @@ public sealed class SessionPreparedRequestReconstructorTests : IDisposable {
         );
     }
 
-    private static SessionRequestArtifactInput Artifact(
-        string artifactId,
-        string artifactKind,
-        SessionRequestArtifactContextSnapshot snapshot
-    ) => new(
-        artifactId,
-        artifactKind,
-        SessionArtifactContextSnapshotHasher.ComputeSha256(snapshot),
-        snapshot
-    );
-
     private static SessionSetupReference CreateSetupReference(
         EventJournal.EventJournal journal,
         EventAddress address
@@ -743,23 +649,6 @@ public sealed class SessionPreparedRequestReconstructorTests : IDisposable {
         using EventFrame frame = journal.ReadEvent(address).Unwrap();
         var kind = (SessionEventKind)frame.Header.OpaqueEventKind;
         _ = SessionEventCodec.Decode(kind, frame.Payload, out int version);
-        return new(
-            address,
-            version,
-            SessionRequestCanonicalizer.Sha256Hex(frame.Payload)
-        );
-    }
-
-    private static SessionArtifactSetReference CreateArtifactSetReference(
-        EventJournal.EventJournal journal,
-        EventAddress address
-    ) {
-        using EventFrame frame = journal.ReadEvent(address).Unwrap();
-        _ = SessionEventCodec.Decode(
-            SessionEventKind.ArtifactSetCommitted,
-            frame.Payload,
-            out int version
-        );
         return new(
             address,
             version,

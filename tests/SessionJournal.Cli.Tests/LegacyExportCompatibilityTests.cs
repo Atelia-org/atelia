@@ -1,6 +1,7 @@
 using Atelia.ChatSession;
 using Atelia.Completion;
 using Atelia.Completion.Abstractions;
+using Atelia.EventJournal;
 using Atelia.SessionJournal.Cli;
 using Xunit;
 using SJ = Atelia.SessionJournal;
@@ -26,7 +27,7 @@ public sealed class LegacyExportCompatibilityTests : IDisposable {
     }
 
     [Fact]
-    public void ChatSessionExporterJsonImportsIntoSessionJournalCli() {
+    public async Task ChatSessionExporterJsonImportsIntoSessionJournalCli() {
         Directory.CreateDirectory(_tempRoot);
         string sourceJson = Path.Combine(_tempRoot, "source.json");
         string legacyRepo = Path.Combine(_tempRoot, "legacy-repo");
@@ -100,10 +101,12 @@ public sealed class LegacyExportCompatibilityTests : IDisposable {
         );
 
         Assert.Equal(0, exitCode);
-        using var engine = SJ.SessionJournalEngine.Open(
+        SJ.SessionProjection projection;
+        using (var engine = SJ.SessionJournalEngine.Open(
             sessionJournalRepo
-        );
-        SJ.SessionProjection projection = engine.Project();
+        )) {
+            projection = engine.Project();
+        }
         Assert.Collection(
             projection.Context,
             message => Assert.Equal(
@@ -114,6 +117,29 @@ public sealed class LegacyExportCompatibilityTests : IDisposable {
                 "world",
                 Assert.IsType<ActionMessage>(message)
                     .GetFlattenedText()
+            )
+        );
+        _ = await SJ.SessionJournalOfflineValidator.ValidateAsync(
+            sessionJournalRepo
+        );
+        using EventJournal.EventJournal journal =
+            EventJournal.EventJournal.OpenReadOnlyExisting(
+                sessionJournalRepo
+            );
+        RefId main = journal.OpenBranch(
+            SJ.SessionJournalDefaults.MainBranchName
+        ).Unwrap();
+        EventAddress head = journal.GetHead(main)!.Value;
+        Assert.All(
+            journal.ReadChronologicalChain(head, checkedRead: true).Unwrap(),
+            address => Assert.True(
+                Enum.IsDefined(
+                    typeof(SJ.SessionEventKind),
+                    journal.ReadEventHeaderPreview(address)
+                        .Unwrap()
+                        .OpaqueEventKind
+                ),
+                $"Imported raw event at {address} has an unknown kind."
             )
         );
     }

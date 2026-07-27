@@ -118,7 +118,7 @@ public sealed class ProgramDerivedMemoryCommandTests : IDisposable {
         Assert.NotNull(candidate);
         Assert.Equal(2, candidate.Contributions.Count);
         Assert.Equal(before, ReadRawSnapshot(fixture.Path));
-        Assert.Equal(0, before.Kind12Count);
+        Assert.Equal(0, before.UnknownEventKindCount);
         Assert.Empty(Directory.EnumerateFiles(
             _tempRoot,
             ".*.tmp",
@@ -689,12 +689,12 @@ public sealed class ProgramDerivedMemoryCommandTests : IDisposable {
                     .Unwrap()
                     .PayloadLength
             ),
-            chain.Count(address =>
+            chain.Count(address => !Enum.IsDefined(
+                typeof(SJ.SessionEventKind),
                 journal.ReadEventHeaderPreview(address)
                     .Unwrap()
                     .OpaqueEventKind
-                == (uint)SJ.SessionEventKind.ArtifactSetCommitted
-            ),
+            )),
             HashRawFiles(path)
         );
     }
@@ -732,7 +732,7 @@ public sealed class ProgramDerivedMemoryCommandTests : IDisposable {
         EventAddress Head,
         int EventCount,
         long LogicalPayloadBytes,
-        int Kind12Count,
+        int UnknownEventKindCount,
         string RawFilesSha256
     );
 

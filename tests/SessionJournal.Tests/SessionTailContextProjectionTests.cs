@@ -719,7 +719,7 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
-    public async Task SendAsync_SetupMutationAfterActivationUsesLatestSetup(
+    public async Task SendAsync_SetupMutationAfterCandidateAnchorUsesLatestSetup(
         bool mutateRuntime
     ) {
         string path = NewJournalPath();

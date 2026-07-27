@@ -1,4 +1,3 @@
-using System.Collections.Immutable;
 using Atelia.Completion.Abstractions;
 using Atelia.Completion.Tools;
 using Atelia.EventJournal;
@@ -22,7 +21,6 @@ public enum SessionEventKind : uint {
     CompletionAttemptFailed = 9,
     ImportedAgentAction = 10,
     // 11 is retired. It was the opaque CompletionAttemptRestarted event.
-    ArtifactSetCommitted = 12,
     CompletionAttemptStarted = 13,
 }
 
@@ -311,47 +309,6 @@ internal sealed record CompletionAttemptFailedBody(
 );
 
 internal sealed record CompletionAttemptStartedBody;
-
-internal sealed record ArtifactSetCommittedBody(
-    string PolicyId,
-    string PolicyFingerprint,
-    EventAddress CommonAnchor,
-    SessionGoverningSetupReferences CoverageSetups,
-    SessionGoverningSetupReferences CurrentSetups,
-    ImmutableArray<SessionArtifactSetMember> Members
-);
-
-internal sealed record SessionArtifactSetMember(
-    string RoleId,
-    string ArtifactId,
-    string ArtifactKind,
-    MemoryPackBlockPath Target,
-    string ContentSha256
-);
-
-/// <summary>
-/// Legacy raw ArtifactSetCommitted member snapshot. This remains through DM-4 and is deliberately
-/// outside CompletionRequestPrepared v4.
-/// </summary>
-internal sealed record SessionRequestArtifactInput(
-    string ArtifactId,
-    string ArtifactKind,
-    string ContentSha256,
-    SessionRequestArtifactContextSnapshot ContextSnapshot
-);
-
-internal sealed record SessionArtifactSetReference(
-    EventAddress Address,
-    int BodySchemaVersion,
-    string PayloadSha256
-);
-
-internal sealed record SessionActiveArtifactSet(
-    EventAddress Address,
-    EventAddress Parent,
-    ArtifactSetCommittedBody Body,
-    SessionArtifactSetReference Reference
-);
 
 internal readonly record struct DecodedSessionEvent(
     SessionEventKind Kind,

@@ -332,21 +332,34 @@ public sealed class SessionJournalEngine : IDisposable {
         );
     }
 
+    /// <summary>
+    /// Resolves governing setup through the actual Parent lineage, using a controlled-writer
+    /// Prepared event as a bounded checkpoint when encountered. Checkpoint setup payloads are
+    /// revalidated by kind, schema, and hash; this online path trusts append-time
+    /// reconstruction/canonical validation, bound-cursor validation, and head CAS instead of
+    /// repeating an O(N) latest-ancestor proof. Untrusted imported journals require full offline
+    /// validation before online use.
+    /// </summary>
     public SessionGoverningSetup ResolveGoverningSetup(EventAddress head, CancellationToken cancellationToken = default) {
         ThrowIfDisposed();
         _lastGoverningSetupResolutionDiagnostics = default;
         SessionAuthoritativeGoverningSetupResolver.Result result =
             SessionAuthoritativeGoverningSetupResolver.Resolve(
-                _reader, head, allowLegacyArtifactSetCheckpoint: true, cancellationToken
+                _reader,
+                head,
+                cancellationToken
             );
         _lastGoverningSetupResolutionDiagnostics = result.Diagnostics;
         return result.Setup;
     }
 
     /// <summary>
-    /// Resolves the exact raw setup facts governing <paramref name="head"/>. Legacy kind-12
-    /// checkpoints are deliberately disabled: callers receive addresses proven by the raw setup
-    /// streams plus the exact schema/hash identity of each referenced payload.
+    /// Resolves the raw setup facts governing <paramref name="head"/> through direct Parent
+    /// lineage events or a controlled-writer Prepared checkpoint. Returned references have exact
+    /// kind/schema/hash identity. A checkpoint hit does not repeat an O(N) proof that its
+    /// references are the latest setup ancestors; it relies on append-time exact reconstruction,
+    /// bound-cursor validation, and head CAS. Untrusted imported journals must first pass full
+    /// offline validation.
     /// </summary>
     public SessionContextAnchorSetupReferences
         ResolveContextAnchorSetupReferences(
@@ -358,7 +371,6 @@ public sealed class SessionJournalEngine : IDisposable {
             SessionAuthoritativeGoverningSetupResolver.Resolve(
                 _reader,
                 head,
-                allowLegacyArtifactSetCheckpoint: false,
                 cancellationToken
             );
         SessionSetupReference runtime = CreateSetupReference(
@@ -527,7 +539,6 @@ public sealed class SessionJournalEngine : IDisposable {
             SessionAuthoritativeGoverningSetupResolver.Resolve(
                 _reader,
                 selectedCandidate.RawStartExclusive,
-                allowLegacyArtifactSetCheckpoint: false,
                 cancellationToken
             ).Setup;
         ValidatedSessionContextCandidate candidate =
@@ -1115,7 +1126,6 @@ public sealed class SessionJournalEngine : IDisposable {
             SessionAuthoritativeGoverningSetupResolver.Resolve(
                 _reader,
                 expectedHead,
-                allowLegacyArtifactSetCheckpoint: false,
                 cancellationToken
             );
         _lastGoverningSetupResolutionDiagnostics = result.Diagnostics;

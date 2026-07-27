@@ -21,7 +21,7 @@ public sealed class DerivedArtifactSetEngineIntegrationTests : IDisposable {
     }
 
     [Fact]
-    public async Task ConcreteProvider_DrivesObservationCompletionWithoutRawActivation() {
+    public async Task ConcreteProvider_DrivesObservationCompletionWithoutRawMutation() {
         PublishedFixture fixture = await CreatePublishedFixtureAsync();
         var client = new CapturingClient("online answer");
         EventAddress headBefore = ReadRawSnapshot(fixture.Path).Head;
@@ -60,7 +60,7 @@ public sealed class DerivedArtifactSetEngineIntegrationTests : IDisposable {
         );
         RawSnapshot after = ReadRawSnapshot(fixture.Path);
         Assert.NotEqual(headBefore, after.Head);
-        Assert.Equal(0, after.Kind12Count);
+        Assert.Equal(0, after.UnknownEventKindCount);
     }
 
     [Fact]
@@ -127,7 +127,10 @@ public sealed class DerivedArtifactSetEngineIntegrationTests : IDisposable {
         Assert.False(Directory.Exists(
             Path.Combine(fixture.Path, "derived")
         ));
-        Assert.Equal(0, ReadRawSnapshot(fixture.Path).Kind12Count);
+        Assert.Equal(
+            0,
+            ReadRawSnapshot(fixture.Path).UnknownEventKindCount
+        );
     }
 
     private async ValueTask<PublishedFixture> CreatePublishedFixtureAsync() {
@@ -298,12 +301,12 @@ public sealed class DerivedArtifactSetEngineIntegrationTests : IDisposable {
         return new RawSnapshot(
             head,
             chain.Count,
-            chain.Count(address =>
+            chain.Count(address => !Enum.IsDefined(
+                typeof(SessionEventKind),
                 journal.ReadEventHeaderPreview(address)
                     .Unwrap()
                     .OpaqueEventKind
-                == (uint)SessionEventKind.ArtifactSetCommitted
-            )
+            ))
         );
     }
 
@@ -349,6 +352,6 @@ public sealed class DerivedArtifactSetEngineIntegrationTests : IDisposable {
     private sealed record RawSnapshot(
         EventAddress Head,
         int EventCount,
-        int Kind12Count
+        int UnknownEventKindCount
     );
 }

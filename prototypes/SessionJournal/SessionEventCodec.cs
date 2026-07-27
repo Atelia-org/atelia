@@ -1,5 +1,4 @@
 using System.Buffers;
-using System.Collections.Immutable;
 using System.Text;
 using System.Text.Json;
 using Atelia.Completion.Abstractions;
@@ -28,7 +27,6 @@ internal static class SessionEventCodec {
             SessionEventKind.CompletionRequestPrepared => EncodeCompletionRequestPrepared((CompletionRequestPreparedBody)body, bodySchemaVersion),
             SessionEventKind.CompletionAttemptFailed => EncodeCompletionAttemptFailed((CompletionAttemptFailedBody)body, bodySchemaVersion),
             SessionEventKind.ImportedAgentAction => EncodeAgentActionProduced((AgentActionProducedBody)body, bodySchemaVersion),
-            SessionEventKind.ArtifactSetCommitted => EncodeArtifactSetCommitted((ArtifactSetCommittedBody)body, bodySchemaVersion),
             SessionEventKind.CompletionAttemptStarted => EncodeCompletionAttemptStarted((CompletionAttemptStartedBody)body, bodySchemaVersion),
             _ => throw new NotSupportedException($"Session event kind '{kind}' is not implemented.")
         };
@@ -57,10 +55,6 @@ internal static class SessionEventCodec {
             or SessionEventKind.CompletionRequestPrepared
             or SessionEventKind.CompletionAttemptFailed
             or SessionEventKind.CompletionAttemptStarted) {
-            // ArtifactSetCommitted is also an exact envelope below.
-            RequireExactProperties(root, $"{kind} envelope", "v", "body");
-        }
-        if (kind == SessionEventKind.ArtifactSetCommitted) {
             RequireExactProperties(root, $"{kind} envelope", "v", "body");
         }
 
@@ -75,7 +69,6 @@ internal static class SessionEventCodec {
             SessionEventKind.CompletionRequestPrepared => SessionRequestManifestCodec.Decode(body),
             SessionEventKind.CompletionAttemptFailed => DecodeCompletionAttemptFailed(body),
             SessionEventKind.ImportedAgentAction => DecodeAgentActionProduced(body, bodySchemaVersion),
-            SessionEventKind.ArtifactSetCommitted => DecodeArtifactSetCommitted(body),
             SessionEventKind.CompletionAttemptStarted => DecodeCompletionAttemptStarted(body),
             _ => throw new NotSupportedException($"Session event kind '{kind}' is not implemented.")
         };
@@ -93,7 +86,6 @@ internal static class SessionEventCodec {
             SessionEventKind.CompletionRequestPrepared => 4,
             SessionEventKind.CompletionAttemptFailed => 2,
             SessionEventKind.ImportedAgentAction => 1,
-            SessionEventKind.ArtifactSetCommitted => 1,
             SessionEventKind.CompletionAttemptStarted => 1,
             _ => throw new NotSupportedException($"Session event kind '{kind}' is not implemented.")
         };
@@ -345,43 +337,6 @@ internal static class SessionEventCodec {
         return buffer.WrittenMemory.ToArray();
     }
 
-    private static byte[] EncodeArtifactSetCommitted(
-        ArtifactSetCommittedBody body,
-        int bodySchemaVersion
-    ) {
-        ValidateArtifactSetCommitted(body);
-        var buffer = new ArrayBufferWriter<byte>();
-        using (var writer = new Utf8JsonWriter(buffer, WriterOptions)) {
-            WriteEnvelopeStart(writer, bodySchemaVersion);
-            writer.WriteStartObject("body");
-            writer.WriteString("policyId", body.PolicyId);
-            writer.WriteString("policyFingerprint", body.PolicyFingerprint);
-            writer.WriteString("commonAnchor", EventAddressTextCodec.Format(body.CommonAnchor));
-            WriteSetupReferences(writer, "coverageSetups", body.CoverageSetups);
-            WriteSetupReferences(writer, "currentSetups", body.CurrentSetups);
-            writer.WriteStartArray("members");
-            foreach (SessionArtifactSetMember member in body.Members) {
-                writer.WriteStartObject();
-                writer.WriteString("roleId", member.RoleId);
-                writer.WriteString("artifactId", member.ArtifactId);
-                writer.WriteString("artifactKind", member.ArtifactKind);
-                writer.WriteStartObject("target");
-                writer.WriteString(
-                    "carrier",
-                    MemoryPackCarrierTokens.ToStorageToken(member.Target.Carrier)
-                );
-                writer.WriteString("blockKey", member.Target.BlockKey);
-                writer.WriteEndObject();
-                writer.WriteString("contentSha256", member.ContentSha256);
-                writer.WriteEndObject();
-            }
-            writer.WriteEndArray();
-            writer.WriteEndObject();
-            writer.WriteEndObject();
-        }
-        return buffer.WrittenMemory.ToArray();
-    }
-
     private static SessionRuntimeConfiguration DecodeRuntimeConfiguration(JsonElement body) {
         RequireObject(body, "runtime-config-setup body");
         return new SessionRuntimeConfiguration(
@@ -554,198 +509,6 @@ internal static class SessionEventCodec {
             throw new InvalidDataException("completion-attempt-started body must be empty.");
         }
         return new CompletionAttemptStartedBody();
-    }
-
-    private static ArtifactSetCommittedBody DecodeArtifactSetCommitted(JsonElement body) {
-        RequireExactProperties(
-            body,
-            "artifact-set-committed body",
-            "policyId",
-            "policyFingerprint",
-            "commonAnchor",
-            "coverageSetups",
-            "currentSetups",
-            "members"
-        );
-        EventAddress commonAnchor = EventAddressTextCodec.Parse(
-            ReadRequiredString(body, "commonAnchor")
-        );
-        JsonElement membersElement = body.GetProperty("members");
-        if (membersElement.ValueKind != JsonValueKind.Array) {
-            throw new InvalidDataException("artifact-set-committed members must be an array.");
-        }
-        var members = ImmutableArray.CreateBuilder<SessionArtifactSetMember>();
-        foreach (JsonElement member in membersElement.EnumerateArray()) {
-            RequireExactProperties(
-                member,
-                "artifact-set member",
-                "roleId",
-                "artifactId",
-                "artifactKind",
-                "target",
-                "contentSha256"
-            );
-            JsonElement target = member.GetProperty("target");
-            RequireExactProperties(target, "artifact-set member target", "carrier", "blockKey");
-            if (!MemoryPackCarrierTokens.TryParseStorageToken(
-                    ReadRequiredString(target, "carrier"),
-                    out MemoryPackCarrier carrier
-                )) {
-                throw new InvalidDataException("artifact-set member target carrier is unknown.");
-            }
-            members.Add(new SessionArtifactSetMember(
-                ReadRequiredString(member, "roleId"),
-                ReadRequiredString(member, "artifactId"),
-                ReadRequiredString(member, "artifactKind"),
-                new MemoryPackBlockPath(
-                    carrier,
-                    ReadRequiredString(target, "blockKey")
-                ),
-                ReadRequiredString(member, "contentSha256")
-            ));
-        }
-        var result = new ArtifactSetCommittedBody(
-            ReadRequiredString(body, "policyId"),
-            ReadRequiredString(body, "policyFingerprint"),
-            commonAnchor,
-            ReadSetupReferences(body.GetProperty("coverageSetups")),
-            ReadSetupReferences(body.GetProperty("currentSetups")),
-            members.ToImmutable()
-        );
-        ValidateArtifactSetCommitted(result);
-        return result;
-    }
-
-    private static void WriteSetupReferences(
-        Utf8JsonWriter writer,
-        string propertyName,
-        SessionGoverningSetupReferences references
-    ) {
-        writer.WriteStartObject(propertyName);
-        WriteSetupReference(writer, "runtimeConfig", references.RuntimeConfig);
-        WriteSetupReference(writer, "systemPrompt", references.SystemPrompt);
-        writer.WriteEndObject();
-    }
-
-    private static void WriteSetupReference(
-        Utf8JsonWriter writer,
-        string propertyName,
-        SessionSetupReference reference
-    ) {
-        writer.WriteStartObject(propertyName);
-        writer.WriteString("address", EventAddressTextCodec.Format(reference.Address));
-        writer.WriteNumber("bodySchemaVersion", reference.BodySchemaVersion);
-        writer.WriteString("payloadSha256", reference.PayloadSha256);
-        writer.WriteEndObject();
-    }
-
-    private static SessionGoverningSetupReferences ReadSetupReferences(
-        JsonElement element
-    ) {
-        RequireExactProperties(
-            element,
-            "artifact-set setup references",
-            "runtimeConfig",
-            "systemPrompt"
-        );
-        return new SessionGoverningSetupReferences(
-            ReadSetupReference(element.GetProperty("runtimeConfig")),
-            ReadSetupReference(element.GetProperty("systemPrompt"))
-        );
-    }
-
-    private static SessionSetupReference ReadSetupReference(JsonElement element) {
-        RequireExactProperties(
-            element,
-            "artifact-set setup reference",
-            "address",
-            "bodySchemaVersion",
-            "payloadSha256"
-        );
-        return new SessionSetupReference(
-            EventAddressTextCodec.Parse(ReadRequiredString(element, "address")),
-            ReadRequiredInt32(element, "bodySchemaVersion"),
-            ReadRequiredString(element, "payloadSha256")
-        );
-    }
-
-    private static void ValidateArtifactSetCommitted(ArtifactSetCommittedBody body) {
-        ArgumentNullException.ThrowIfNull(body);
-        ValidateRequired(body.PolicyId, nameof(body.PolicyId));
-        ValidateRequired(body.PolicyFingerprint, nameof(body.PolicyFingerprint));
-        if (!string.Equals(
-                body.PolicyId,
-                SessionRequestManifestDefaults.ActiveArtifactSetPolicyId,
-                StringComparison.Ordinal
-            )
-            || !string.Equals(
-                body.PolicyFingerprint,
-                SessionRequestManifestDefaults.ActiveArtifactSetPolicyFingerprint,
-                StringComparison.Ordinal
-            )) {
-            throw new NotSupportedException(
-                $"Unsupported artifact-set policy '{body.PolicyId}'."
-            );
-        }
-        ValidateArtifactSetupReferences(body.CoverageSetups);
-        ValidateArtifactSetupReferences(body.CurrentSetups);
-        if (body.Members.Length < 2) {
-            throw new InvalidDataException("ArtifactSetCommitted requires at least two members.");
-        }
-        var roles = new HashSet<string>(StringComparer.Ordinal);
-        var artifacts = new HashSet<string>(StringComparer.Ordinal);
-        var targets = new HashSet<(MemoryPackCarrier Carrier, string BlockKey)>();
-        string? priorRole = null;
-        foreach (SessionArtifactSetMember member in body.Members) {
-            ValidateRequired(member.RoleId, nameof(member.RoleId));
-            ValidateRequired(member.ArtifactId, nameof(member.ArtifactId));
-            ValidateRequired(member.ArtifactKind, nameof(member.ArtifactKind));
-            if (priorRole is not null
-                && string.CompareOrdinal(priorRole, member.RoleId) >= 0) {
-                throw new InvalidDataException(
-                    "ArtifactSetCommitted members must be uniquely ordered by roleId."
-                );
-            }
-            priorRole = member.RoleId;
-            if (!roles.Add(member.RoleId)
-                || !artifacts.Add(member.ArtifactId)
-                || !targets.Add((
-                    member.Target.Carrier,
-                    member.Target.BlockKey
-                ))) {
-                throw new InvalidDataException(
-                    "ArtifactSetCommitted members require unique roles, artifact ids, and targets."
-                );
-            }
-            if (member.ContentSha256.Length != 64
-                || member.ContentSha256.Any(static ch =>
-                    ch is not (>= '0' and <= '9')
-                    && ch is not (>= 'a' and <= 'f'))) {
-                throw new InvalidDataException(
-                    "ArtifactSetCommitted member contentSha256 must be lowercase SHA-256."
-                );
-            }
-        }
-    }
-
-    private static void ValidateArtifactSetupReferences(
-        SessionGoverningSetupReferences references
-    ) {
-        foreach (SessionSetupReference reference in new[] {
-            references.RuntimeConfig,
-            references.SystemPrompt
-        }) {
-            _ = EventAddressTextCodec.Format(reference.Address);
-            if (reference.BodySchemaVersion <= 0
-                || reference.PayloadSha256.Length != 64
-                || reference.PayloadSha256.Any(static ch =>
-                    ch is not (>= '0' and <= '9')
-                    && ch is not (>= 'a' and <= 'f'))) {
-                throw new InvalidDataException(
-                    "ArtifactSetCommitted setup reference is invalid."
-                );
-            }
-        }
     }
 
     private static void WriteEnvelopeStart(

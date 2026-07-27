@@ -1,11 +1,17 @@
 # SessionJournal 事件源会话与长期上下文架构路线图
 
-> **状态**：Architecture Roadmap / current baseline CS-3D7 / active plan DM-0～DM-8
+> **状态**：Architecture Roadmap / current baseline CS-3D7 + DM-0～DM-4 /
+> active plan DM-5～DM-8
 > **日期**：2026-07-28
 > **底层依赖**：[EventJournal 功能需求与粗粒度设计基线](../EventJournal/event-journal-requirements-and-design.md)
 > **相关既有研究**：[Dynamic Logical Context Store for Long-Running Role-Play Agents](../Galatea/backlog/idea/dynamic-logical-context-store-for-long-running-role-play-agents.md)
 > **后续实施计划**：
 > [DerivedMemory 可替换子系统与 Shared Epoch 实施方案](derived-memory-subsystem-implementation-plan.md)
+
+> **DM-4 supersession（2026-07-28）**：本文后续章节中仍出现的 Prepared v3、raw
+> derived-set activation、manual checkpoint 与 concrete store in core 均是路线演进记录，不是
+> current contract。当前以 Prepared v4 + store-neutral candidate + derived-only ArtifactSet 为唯一
+> 实现路径；raw audit 和 Prepared exact reopen 不打开 DerivedMemory。
 
 ## 1. 文档定位
 
@@ -95,8 +101,8 @@ address/range/setup refs，对实际进入 provider
 request 的 derived memory contribution 则保存 exact context snapshot 或 canonical request bytes。
 Prepared 不引用 derived artifact/set id，也不要求 derived store 在 reopen 时仍存在；planner/renderer
 版本变化不能改写已经 Prepared 的外部调用事实。若要审计 derived selection，可在可重建 usage index 中
-记录 `preparedAddress -> derivedSetId`。current Prepared v3 仍含 raw activation/artifact identity，
-属于 §6.2、§7.3 记录的待拆 interim。
+记录 `preparedAddress -> derivedSetId`。current Prepared v4 已采用 exact context snapshots 与
+raw provenance，不再含 raw activation/artifact identity。
 
 ### decision [S-SJ-EXECUTION-INCREMENTAL] 执行状态逐步事件化
 
@@ -156,9 +162,9 @@ SessionJournal.Cli / Agent Host
 ChatSession.LegacyExportCli ──> Atelia.ChatSession   # frozen migration island
 ```
 
-current trunk 尚未完全达到这张图：`DerivedRecapStore` 与 raw `ArtifactSetCommitted` 仍位于
-SessionJournal core。它们是明确的 interim bridge，将按 DerivedMemory 实施计划依序拆除，不能反过来
-被解释为 target ownership。
+DM-0～DM-4 后 current trunk 已达到这张程序集依赖图：concrete recap/set storage 与 selection
+位于 DerivedMemory，SessionJournal raw core 只消费 store-neutral candidate contract，且 raw event
+inventory 不含 derived-set activation。
 
 ## 5. Raw Event Journal
 
@@ -778,11 +784,11 @@ SessionJournal 项目族中建立能力，而不是改造旧 ChatSession。
   `MemoryMaintainer` 的开发入口。它证明了 raw authority、artifact lineage 和 tail anchor，但当前
   store/split/runner 仍是通向独立 DerivedMemory 的 interim implementation，详见
   [CS-5-lite 完成记录](done/cs-5-lite-sessionjournal-derived-recap-store.md)。
-- **CS-3 / CS-3D0～D7：coherent-only request 与 tail recovery。** current trunk 已实现
+- **CS-3 / CS-3D0～D7：coherent-only request 与 tail recovery。** 该阶段实现了
   `CompletionRequestPrepared` v3、Prepared/Started attempt 对称性、exact reopen、raw-only
   `SessionExecutionTailResolver`、durable tool identity/checkpoint，以及不随冷历史线性增长的 online
-  recovery。current request 仍通过 raw `ArtifactSetCommitted` 激活 coherent context；这是下一阶段
-  要拆除的过渡边界，不是长期设计。实施事实和历史决策分别见
+  recovery。它当时仍以 raw activation 取得 coherent context；该过渡边界现已由 DM-0～DM-4
+  拆除。实施事实和历史决策分别见
   [Tail-only Execution Recovery Design](tail-execution-recovery-design.md)、
   [Coherent-only Manifest 完成计划](done/coherent-request-manifest-simplification-plan.md)与
   [Prepared / Provider Attempt 对称化](done/prepared-provider-attempt-symmetry-design.md)。
@@ -790,22 +796,22 @@ SessionJournal 项目族中建立能力，而不是改造旧 ChatSession。
 这些完成记录保留历史 wire 与阶段名，用于解释 current code 为什么如此；它们不覆盖下节已经批准的
 长期依赖方向。
 
-### 12.2 当前主路线：DM-0～DM-8
+### 12.2 当前主路线：DM-5～DM-8
 
 当前实施权威是
 [DerivedMemory 可替换子系统与 Shared Epoch 实施方案](derived-memory-subsystem-implementation-plan.md)。
 应按其中的依赖顺序逐片实施、审阅和提交；本文只保留路线级摘要，避免复制 exact contract 或 migration
 细节。
 
-1. **DM-0 — Cross-assembly contracts**：在 SessionJournal contracts 中定义 store-neutral
+1. **DM-0 — Cross-assembly contracts（已完成）**：在 SessionJournal contracts 中定义 store-neutral
    candidate、selection 与 materialization 边界，先固定正确的依赖方向。
-2. **DM-1 — Neutral request materialization**：让 raw core 从中立 candidate/materialized input
+2. **DM-1 — Neutral request materialization（已完成）**：让 raw core 从中立 candidate/materialized input
    构造 request，不再认识 concrete recap store shape。
-3. **DM-2 — Self-contained Prepared v4**：把 exact canonical context 与 raw-start setup
+3. **DM-2 — Self-contained Prepared v4（已完成）**：把 exact canonical context 与 raw-start setup
    provenance 固定在 Prepared 中，使 exact reopen 不依赖可删除的 derived repository。
-4. **DM-3 — 独立 DerivedMemory assembly 与 provider cutover**：建立单向依赖 SessionJournal
+4. **DM-3 — 独立 DerivedMemory assembly 与 provider cutover（已完成）**：建立单向依赖 SessionJournal
    contracts 的 concrete derived store/provider，并由 CLI/Host composition root 注入。
-5. **DM-4 — 删除 raw activation**：移除 raw `ArtifactSetCommitted` 及其 activation
+5. **DM-4 — 删除 raw activation（已完成）**：移除 raw derived-set activation 及其
    validators；raw chain 不再引用 derived artifact/set identity。
 6. **DM-5 — Shared epoch planner**：在 DerivedMemory 中持久化统一的 history epoch、计划配置和
    ledger，使多个 roles 消费同一 exact coverage boundary。
@@ -871,26 +877,24 @@ DM-0～DM-8 建立正确的 authority、ownership 与 online composition 后，�
   tail execution recovery 已落地。
 - 普通 legacy observation/action/setup 已有单向 JSON 映射；无法诚实迁移的 tool/revert history
   fail-fast，不再以“以后补 metadata”掩盖语义缺口。
-- raw SessionJournal events 是唯一 correctness source；derived sidecar、indexes、recap，以及 target
-  DerivedMemory 中的 ArtifactSet 可删除、可重建。current raw `ArtifactSetCommitted` 在 DM-4 删除
-  该 wire 之前仍是 raw fact，不能当作可删除的 derived record。
+- raw SessionJournal events 是唯一 correctness source；derived sidecar、indexes、recap，以及
+  DerivedMemory 中的 ArtifactSet 可删除、可重建。raw inventory 不再包含 derived-set
+  definition/activation。
 - concrete companion 的依赖方向已经确定：`SessionJournal.Maintainers` 已单向依赖 SessionJournal
   contracts；未来 DerivedMemory 必须遵守同一方向，raw core 不得反向引用；CLI/Host 是 composition
   root。
 
 ### 14.2 仍开放的问题
 
-1. DM-0 contracts 的 exact shape：candidate enumeration、selection request、materialized context 与
-   branch-aware lookup 的最小稳定表面。
-2. Prepared v4 自包含 exact canonical bytes 的空间成本、重复数据与敏感内容处理取舍。
-3. DerivedMemory repository layout、shared epoch schema、partial-success settlement、ArtifactSet
+1. Prepared v4 自包含 exact context snapshots 的空间成本、重复数据与敏感内容处理取舍。
+2. shared epoch schema、partial-success settlement、ArtifactSet
    publication 和 online selection 的 exact contract。
-4. provider-side request/result lookup 与 reconcile 的统一抽象，尤其是 crash window 中 provider
+3. provider-side request/result lookup 与 reconcile 的统一抽象，尤其是 crash window 中 provider
    已完成但 host 未落 durable result 的情况。
-5. 非幂等、不可查询工具的最终 uncertain/paused 操作协议与人工介入 UX。
-6. 第一个 retrieval backend，以及 provenance、降级、rebuild 和 quality/cost evaluation 的共同
+4. 非幂等、不可查询工具的最终 uncertain/paused 操作协议与人工介入 UX。
+5. 第一个 retrieval backend，以及 provenance、降级、rebuild 和 quality/cost evaluation 的共同
    验收形状。
-7. branch UX、跨 branch derived reuse、多 Parent merge，以及 branch-aware budgeted selection。
+6. branch UX、跨 branch derived reuse、多 Parent merge，以及 branch-aware budgeted selection。
 
 ## 15. 架构成功标准
 

@@ -3,9 +3,13 @@ using Atelia.EventJournal;
 namespace Atelia.SessionJournal;
 
 /// <summary>
-/// Resolves the governing setup pair from the authoritative Parent lineage. Prepared checkpoints
-/// are only bounded read hints; every referenced setup payload is still verified. Legacy kind 12
-/// checkpoints are opt-in for pre-DM-4 online planning and are never used by Prepared v4 reopen.
+/// Resolves the governing setup pair by walking the actual Parent lineage until direct setup
+/// events or a controlled-writer Prepared checkpoint are reached. A checkpoint hit revalidates
+/// each referenced payload's kind, schema, and hash, but deliberately does not perform an O(N)
+/// ancestry proof that those references are the latest setup events on the checkpoint lineage.
+/// This bounded online trust is safe because the writer appends Prepared only after exact request
+/// reconstruction/canonical validation, a bound setup cursor check, and head CAS. Journals from
+/// untrusted import paths must pass full offline validation before this resolver is used online.
 /// </summary>
 internal static class SessionAuthoritativeGoverningSetupResolver {
     internal sealed record Result(
@@ -16,7 +20,6 @@ internal static class SessionAuthoritativeGoverningSetupResolver {
     public static Result Resolve(
         SessionJournalEventReader reader,
         EventAddress head,
-        bool allowLegacyArtifactSetCheckpoint,
         CancellationToken cancellationToken = default
     ) {
         ArgumentNullException.ThrowIfNull(reader);
@@ -41,19 +44,16 @@ internal static class SessionAuthoritativeGoverningSetupResolver {
             else if (kind == SessionEventKind.SystemPromptSetup && promptAddress is null) {
                 promptAddress = address;
             }
-            else if (kind == SessionEventKind.CompletionRequestPrepared
-                || (allowLegacyArtifactSetCheckpoint && kind == SessionEventKind.ArtifactSetCommitted)) {
+            else if (kind == SessionEventKind.CompletionRequestPrepared) {
                 using SessionJournalEventFrame frame = reader.ReadEvent(address).Unwrap();
                 payloadReads++;
                 checkpointPayloadReads++;
                 object body = SessionEventCodec.Decode(kind, frame.Payload, out _);
-                SessionGoverningSetupReferences references = body switch {
-                    CompletionRequestPreparedBody prepared => prepared.Setups,
-                    ArtifactSetCommittedBody activation when allowLegacyArtifactSetCheckpoint => activation.CurrentSetups,
-                    _ => throw new InvalidDataException(
+                SessionGoverningSetupReferences references =
+                    (body as CompletionRequestPreparedBody)?.Setups
+                    ?? throw new InvalidDataException(
                         $"Setup checkpoint at {address} decoded to '{body.GetType().Name}'."
-                    )
-                };
+                    );
                 if (runtimeAddress is null) {
                     runtime = ReadSetup<SessionRuntimeConfiguration>(
                         reader, references.RuntimeConfig, SessionEventKind.RuntimeConfigSetup, ref payloadReads

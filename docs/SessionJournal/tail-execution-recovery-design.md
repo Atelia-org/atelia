@@ -13,19 +13,22 @@
 > [CS-3D6 Coherent-only Manifest 化简计划](done/coherent-request-manifest-simplification-plan.md)
 > **D7 协议修订**：[Prepared / Provider Attempt 对称化](done/prepared-provider-attempt-symmetry-design.md)
 
-> **Prepared v4 supersession（2026-07-28）**：本文下文出现的 Prepared v3、exact activation 或
-> inline artifact identity 均为当时实现记录，已由
+> **Prepared v4 / DM-4 supersession（2026-07-28）**：本文下文出现的 Prepared v3、exact
+> activation、raw derived-set event 或 inline artifact identity 均为历史实现记录，已由
 > [Derived Memory Subsystem Implementation Plan](derived-memory-subsystem-implementation-plan.md) 的 DM-2
 > breaking wire 替代。current Prepared 保存 `RawStartSetups + ExactContextInputs`：anchor setup refs
-> 必须再由 authoritative Parent-lineage resolver 复核，不能自证；reconstructor 不依赖 raw
-> `ArtifactSetCommitted` 的 activation/member/selection 语义。DM-4 前只有 Engine 的 pre-Prepared
-> legacy planning resolver 可把其 setup pair 作为 checkpoint；Prepared v4 reconstructor 不会。若 kind 12
-> 落在已承诺的 exact raw suffix 内，它仍作为通用 raw event 被 decode/fold，而不是 context provenance
-> source。
+> 由 controlled writer 在 append 前通过 request reconstruction、canonical exact check、
+> bound setup cursor 与 head CAS 固定。online resolver 从真实 Parent lineage 遇到 Prepared 后，会
+> 重验其 setup refs 的 kind/schema/hash，但刻意不再 O(N) 回扫来证明它们是该 Prepared ancestry 上
+> 最新的 setup；这是 validated-writer trust boundary，不是 ticket 自证。来自不可信 import 的
+> journal 必须先通过 full offline validation，之后才可进入 online resolution。reconstructor 不依赖 raw
+> derived-set definition/member/selection。DM-4 已从 raw event inventory、codec、reducer、tail resolver、
+> setup resolver 与 offline validator 删除该 activation surface；没有 compatibility decoder 或
+> fallback。Prepared 是唯一近头 raw setup hint；hint 之前的真实 Parent walk仍是查找路径，但不会
+> 在每次 online 命中后重复完整 ancestry 证明。
 
-> **后续架构方向（2026-07-27）**：本文保留 CS-3D0～D7 当时的已实施 wire/验收事实，包括 raw
-> `ArtifactSetCommitted`。它不是 Derived ArtifactSet 的长期程序集边界。后续候选 C 将删除 raw
-> activation，把 artifact/set 的维护、存储、lineage、indexes 与 selection 移入独立可替换的
+> **后续架构方向（2026-07-28）**：本文保留 CS-3D0～D7 当时的历史 wire/验收事实。候选 C / DM-4
+> 已删除 raw activation，把 artifact/set 的维护、存储、lineage、indexes 与 selection 移入独立可替换的
 > DerivedMemory 子系统；SessionJournal 只定义 store-neutral coherent context candidate contract。
 > `SessionExecutionTailResolver` 始终保持 raw-only，只有未 Prepared 的 request-context
 > planning/materialization 注入该 provider；Prepared/Started exact reopen 不读取 derived subsystem。

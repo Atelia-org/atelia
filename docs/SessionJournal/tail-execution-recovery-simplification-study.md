@@ -59,9 +59,9 @@ exact coherent ArtifactSet
 
 具体事实：
 
-- online completion 必须先有 current-lineage 上可用的 `ArtifactSetCommitted`；没有 artifact set 时明确
-  not-ready，不回退到 full history。
-- Prepared 内联 exact artifact context snapshots、tool definitions 和 identity/provenance；raw suffix
+- online completion 必须先有 provider 返回并经 raw core 验证的 coherent context candidate；没有
+  candidate 时明确 not-ready，不回退到 full history。
+- Prepared v4 内联 exact context snapshots、tool definitions 和 raw identity/provenance；raw suffix
   仍以 address/hash + deterministic recipe 重建。
 - Prepared 后即使 derived sidecar 被删除，`SessionPreparedRequestReconstructor` 仍能 exact reopen。
 - `RuntimeConfigSetup` 与 `SystemPromptSetup` 保持两条独立 sticky stream，Prepared pin 两条 exact refs。
@@ -71,9 +71,8 @@ exact coherent ArtifactSet
   是 seeded request-context fold；offline validator 仍对不可信 raw 做完整只读验证。
 - `CompletionRequestPrepared` 只保存 request origin；每次 dispatch 由严格空 body 的
   `CompletionAttemptStarted` 表示，其 event address 是内部 attempt identity。
-- `ArtifactSetCommitted` 同时扮演 coherent set definition 和 active/latest checkpoint；current Engine
-  从最近 raw activation 或更近的 Prepared-pinned reference 恢复它，而 latest-only validators 使两者在
-  合法历史上语义相同。
+- coherent set definition、latest/default selection 与 publication 已归属 DerivedMemory；current
+  Engine 不在 raw Parent chain 中恢复或激活 derived set。
 
 ### 1.2 当前规模
 
@@ -190,7 +189,14 @@ online reopen 只信 committed snapshot + commitment；offline audit 可以选�
 该候选已由 CS-3D7 实施并从研究列表移除。current truth table、wire cut、recovery policy 与验收
 证据见 [Prepared / Provider Attempt 对称化设计](done/prepared-provider-attempt-symmetry-design.md)。
 
-## 4. 候选 C：ArtifactSet 从 raw activation 解耦
+## 4. 已采纳 C：ArtifactSet 从 raw activation 解耦
+
+> **实施状态（2026-07-28）**：候选 C 已由
+> [DerivedMemory 可替换子系统与 Shared Epoch 实施方案](derived-memory-subsystem-implementation-plan.md)
+> 的 DM-0～DM-4 落地。current raw event inventory 不含 derived-set
+> definition/activation；ArtifactSet 只存在于 DerivedMemory 并单向引用 raw provenance；
+> Prepared v4 内联 exact context snapshots，因而 exact reopen 与 raw audit 均不依赖
+> DerivedMemory。以下内容仅保留为决策与迁移理由，不再描述 current implementation。
 
 ### 4.1 修订后的边界判断
 

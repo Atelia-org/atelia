@@ -94,12 +94,6 @@ internal sealed record SessionRequestCommitment(
 );
 
 internal static class SessionRequestManifestDefaults {
-    // Legacy raw ArtifactSetCommitted policy constants.  Keep through DM-4; Prepared v4 does not
-    // reference this policy.
-    public const string ActiveArtifactSetPolicyId =
-        "atelia.session-journal.active-artifact-set.v1";
-    public const string ActiveArtifactSetPolicyFingerprint =
-        "atelia.session-journal.active-artifact-set.v1";
     public const string RecipeId =
         "atelia.session-journal.coherent-artifact-tail.recipe.v1";
     public const string CanonicalRequestCodecId = "atelia.completion-request.canonical-json.v1";

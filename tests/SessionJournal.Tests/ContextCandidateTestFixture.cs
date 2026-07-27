@@ -4,7 +4,7 @@ namespace Atelia.SessionJournal.Tests;
 
 /// <summary>
 /// Provider-route fixture that creates a store-neutral candidate without writing a
-/// DerivedRecap artifact or raw ArtifactSetCommitted event.
+/// DerivedRecap artifact.
 /// </summary>
 internal static class ContextCandidateTestFixture {
     internal static TestContextCandidateFixture CreateAtCurrentHead(

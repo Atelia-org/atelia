@@ -209,21 +209,6 @@ internal static class SessionTailContextProjection {
                     activeCorrelationId = null;
                     phase = SessionExecutionPhase.Idle;
                     break;
-                case SessionEventKind.ArtifactSetCommitted:
-                    EnsureNoOpenTool(ev, openAction);
-                    _ = RequireBody<ArtifactSetCommittedBody>(ev);
-                    if (phase is not (
-                        SessionExecutionPhase.Idle
-                        or SessionExecutionPhase.TurnFailed
-                    )
-                        || sourcePrepared is not null) {
-                        throw new InvalidDataException(
-                            $"{ev.Kind} at {ev.Address} must appear at an idle or failed suffix boundary."
-                        );
-                    }
-                    activeCorrelationId = null;
-                    phase = SessionExecutionPhase.Idle;
-                    break;
                 case SessionEventKind.CompletionAttemptFailed: {
                     EnsureNoOpenTool(ev, openAction);
                     _ = RequireBody<CompletionAttemptFailedBody>(ev);
@@ -476,7 +461,6 @@ internal static class SessionTailContextProjection {
             or SessionEventKind.SystemPromptSetup =>
                 SessionExecutionPhase.Empty,
         SessionEventKind.SessionCreated
-            or SessionEventKind.ArtifactSetCommitted
             or SessionEventKind.AgentActionProduced
             or SessionEventKind.ImportedAgentAction =>
                 SessionExecutionPhase.Idle,

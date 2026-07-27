@@ -1,6 +1,6 @@
 # DerivedMemory 可替换子系统与 Shared Epoch 实施方案
 
-> **状态**：In Progress；DM-0～DM-3C 已完成，下一片 DM-4
+> **状态**：In Progress；DM-0～DM-4 已完成，下一片 DM-5
 > **日期**：2026-07-27
 > **最新代码对齐**：2026-07-28；已纳入
 > `ChatSession.LegacyExportCli` / `SessionJournal.Cli` 拆分与
@@ -21,9 +21,8 @@ SessionJournal 仍在三个层面依赖 concrete derived shape：
 1. request materializer 已直接消费 normalized `SessionContextCandidate`，但 pre-Prepared 的 legacy
    bridge 仍从 concrete `DerivedRecapArtifact` / store 取得该 candidate；
 2. `CompletionRequestPrepared` v4 已保存 self-contained exact context snapshots 与两端 setup refs；
-3. reconstructor 以 `RawStartSetups` 取得 suffix fold seed，不解析或依赖 raw
-   `ArtifactSetCommitted` 的 activation/member 语义；DM-4 前 kind 12 若位于 exact raw range，仍按通用
-   raw event decode/fold。
+3. reconstructor 以 `RawStartSetups` 取得 suffix fold seed；raw event inventory 不再包含
+   derived-set definition/activation，Prepared reopen 与 raw audit 均不读取 DerivedMemory。
 
 若此时先物理搬文件，`SessionJournal.csproj` 就会被迫引用 concrete DerivedMemory 项目，依赖方向仍然
 错误。
@@ -39,7 +38,7 @@ DM-2  Self-contained Prepared v4
   ↓
 DM-3  DerivedMemory assembly + provider cutover
   ↓
-DM-4  Remove raw ArtifactSetCommitted
+DM-4  Remove raw derived-set activation  ✓
   ↓
 DM-5  Shared DerivedArtifactEpochPlanner
   ↓
@@ -62,7 +61,7 @@ DM-8  Online lifecycle + budgeted set selection
 
 ### 1.1 Current implementation facts
 
-DM-3B 后的当前主要入口：
+DM-4 后的当前主要入口：
 
 - `prototypes/SessionJournal/SessionRequestManifest.cs`
   - `SessionContextPlan` 保存 `RawStartSetups + ExactContextInputs`；
@@ -70,10 +69,7 @@ DM-3B 后的当前主要入口：
 - `prototypes/SessionJournal/SessionPreparedRequestReconstructor.cs`
   - exact reopen 只读取 Prepared 所钉死的 raw range、两端 setup refs 与 exact context inputs；
   - fold seed 来自 `plan.rawStartSetups`；
-  - 不解析或依赖 `ArtifactSetCommitted` 的 activation/member/selection 语义；DM-4 前 Engine 的
-    pre-Prepared legacy planning resolver 仍可把其 coverage/current setup pair 当作 checkpoint，但
-    Prepared v4 reconstructor 不会。若 kind 12 位于 exact raw range，它仍只是通用 raw event
-    decoder/fold 所处理的一项历史事件。
+  - 不解析 derived artifact/set identity；raw range 只包含现行 SessionJournal events。
 - `prototypes/SessionJournal/SessionTailContextProjection.cs`
   - `Materialize()` 只接收 normalized candidate；
   - raw suffix fold 和 request rendering 留在 core，不引用 concrete derived types。
@@ -598,19 +594,19 @@ DerivedMemory。这样避免物理搬家与 Prepared wire cut 同时扩大。
 - provider 缺失时 pre-Prepared 明确 not-ready；
 - Prepared 后 provider/sidecar 删除仍 exact reopen。
 
-## 9. DM-4：删除 raw ArtifactSetCommitted
+## 9. DM-4：删除 raw derived-set activation
+
+> **实施状态（2026-07-28）**：完成。以下为已落地的 cutover 合同与验收结果。
 
 ### 目标
 
 移除 raw/derived 反向引用和 current activation 兼容表面，完成候选 C 的 semantic cutover。
 
-### 删除或收缩
+### 已删除或收缩
 
-- `SessionEventKind.ArtifactSetCommitted`；
-- `ArtifactSetCommittedBody` / `SessionActiveArtifactSet`；
+- raw derived-set event kind、body、member/reference contracts；
 - event codec/schema/goldens；
 - reducer/tail-resolver idle-boundary 分支；
-- kind-12 remaining raw contracts/validators；
 - latest-equals-selected/raw activation validators；
 - offline readiness report 的 active raw set；
 - activation setup checkpoint 逻辑。
@@ -619,14 +615,20 @@ DerivedMemory。这样避免物理搬家与 Prepared wire cut 同时扩大。
 
 - near-head Prepared 继续提供 current setup hint；
 - pre-first-Prepared derived candidate/epoch 可以提供可重建 hint；
-- raw header parent walk 始终 authoritative fallback；
+- online 沿真实 Parent lineage 回溯；命中受控 writer 产生的 Prepared 后，重验 referenced setup
+  payload 的 kind/schema/hash，但不再 O(N) 证明它们是该 Prepared ancestry 上最新的 setup；
+- Prepared append 前必须完成 request reconstruction、canonical exact check、bound setup cursor
+  validation 与 head CAS；这是 bounded checkpoint 的 writer trust boundary；
+- 不可信 import 必须先通过 full offline validation，不能直接把任意 schema-valid Prepared 当作
+  online hint；
+- 未命中 Prepared 时，raw header parent walk 是 authoritative fallback；
 - hint 缺失只能增加 reads，不能改变答案；
 - 不引入 dedicated config ref 或 full root projection cache。
 
 ### Migration
 
-- 旧实验 repo 不保留 kind 12 compatibility decode；
-- 从 legacy export 重新 import，或使用显式 offline raw migration；
+- 旧实验 repo 不保留 retired wire compatibility decode；
+- 从 legacy export 重新 import 到 fresh repository；DM-4 不提供 in-place raw wire migration；
 - 删除/rebuild derived repository；
 - 用 derived-only set publication 恢复 online readiness。
 
@@ -638,7 +640,9 @@ DerivedMemory。这样避免物理搬家与 Prepared wire cut 同时扩大。
 - tail resolver 与 full reducer execution state differential 通过；
 - real legacy export 可导入全新 repo；
 - no compatibility alias/decoder/silent full replay；
-- code search 不再出现 raw `ArtifactSetCommitted` production surface。
+- production/test code search 不再出现 retired raw activation surface；
+- CLI 与 DerivedMemory E2E 通过“raw opaque kind 全部属于当前
+  `SessionEventKind` inventory”检查守住 breaking-wire 边界。
 
 ## 10. DM-5：Shared DerivedArtifactEpochPlanner
 

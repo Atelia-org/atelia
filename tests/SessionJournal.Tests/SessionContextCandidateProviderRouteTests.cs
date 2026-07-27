@@ -65,7 +65,6 @@ public sealed class SessionContextCandidateProviderRouteTests : IDisposable {
             Assert.Equal(observation, source.Requests[1].CompletionBoundary);
             Assert.Equal(1, client.Calls);
         }
-        Assert.Empty(ReadAddressesByKind(path, SessionEventKind.ArtifactSetCommitted));
     }
 
     [Theory]
@@ -147,77 +146,6 @@ public sealed class SessionContextCandidateProviderRouteTests : IDisposable {
         );
         Assert.Equal(3, client.Calls);
         Assert.Equal(2, tool.Calls);
-        Assert.Empty(ReadAddressesByKind(path, SessionEventKind.ArtifactSetCommitted));
-    }
-
-    [Fact]
-    public async Task ReopenPlanning_IgnoresSchemaValidLegacyCurrentSetupCheckpoint() {
-        string path = NewJournalPath();
-        TestContextCandidateFixture fixture;
-        using (var created = SessionJournalEngine.Create(path, CreateOptions())) {
-            fixture = ContextCandidateTestFixture.CreateAtCurrentHead(created);
-        }
-        SessionGoverningSetupReferences correct = ToInternalReferences(
-            fixture.Candidate.AnchorSetups
-        );
-        var corruptCurrent = new SessionGoverningSetupReferences(
-            correct.SystemPrompt,
-            correct.RuntimeConfig
-        );
-        var legacy = new ArtifactSetCommittedBody(
-            SessionRequestManifestDefaults.ActiveArtifactSetPolicyId,
-            SessionRequestManifestDefaults.ActiveArtifactSetPolicyFingerprint,
-            fixture.Anchor,
-            correct,
-            corruptCurrent,
-            [
-                Member(
-                    "autobiography",
-                    MemoryPackCarrier.Action,
-                    "fixture.autobiography"
-                ),
-                Member(
-                    "world-understanding",
-                    MemoryPackCarrier.Observation,
-                    "fixture.world-understanding"
-                )
-            ]
-        );
-        using (var journal = EventJournal.EventJournal.OpenExisting(path)) {
-            Commit(
-                journal,
-                fixture.Anchor,
-                SessionEventKind.ArtifactSetCommitted,
-                legacy
-            );
-        }
-        var client = new ScriptedClient();
-        client.Enqueue(Terminal("done"));
-        var source = new TestContextCandidateSource(fixture.Candidate);
-
-        using (var reopened = SessionJournalEngine.Open(
-            path,
-            CreateRuntime(client, source)
-        )) {
-            await reopened.SendAsync("strict setup", CancellationToken.None);
-        }
-
-        EventAddress prepared = Assert.Single(
-            ReadAddressesByKind(path, SessionEventKind.CompletionRequestPrepared)
-        );
-        CompletionRequestPreparedBody body = ReadBody<CompletionRequestPreparedBody>(
-            path,
-            prepared,
-            SessionEventKind.CompletionRequestPrepared
-        );
-        Assert.Equal(
-            correct.RuntimeConfig.Address,
-            body.Setups.RuntimeConfig.Address
-        );
-        Assert.Equal(
-            correct.SystemPrompt.Address,
-            body.Setups.SystemPrompt.Address
-        );
     }
 
     [Fact]
@@ -312,46 +240,6 @@ public sealed class SessionContextCandidateProviderRouteTests : IDisposable {
 
     private static CompletionDescriptor Descriptor(CompletionRequest request)
         => new("candidate-test-client", "candidate-test-api-v1", request.ModelId);
-
-    private static SessionGoverningSetupReferences ToInternalReferences(
-        SessionContextAnchorSetupReferences references
-    ) => new(
-        ToInternalReference(references.RuntimeConfig),
-        ToInternalReference(references.SystemPrompt)
-    );
-
-    private static SessionSetupReference ToInternalReference(
-        SessionContextSetupReference reference
-    ) => new(
-        reference.Address,
-        reference.BodySchemaVersion,
-        reference.PayloadSha256
-    );
-
-    private static SessionArtifactSetMember Member(
-        string roleId,
-        MemoryPackCarrier carrier,
-        string blockKey
-    ) => new(
-        roleId,
-        $"artifact-{roleId}",
-        roleId,
-        new MemoryPackBlockPath(carrier, blockKey),
-        new string('a', 64)
-    );
-
-    private static EventAddress Commit(
-        EventJournal.EventJournal journal,
-        EventAddress expectedHead,
-        SessionEventKind kind,
-        object body
-    ) => journal.CommitToRef(
-        SessionJournalDefaults.MainBranchName,
-        expectedHead,
-        SessionEventCodec.Encode(kind, body),
-        opaqueEventKind: (uint)kind,
-        hint: default
-    ).Unwrap().EventAddress;
 
     private static EventAddress[] ReadAddressesByKind(
         string path,

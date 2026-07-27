@@ -7,7 +7,7 @@ namespace Atelia.SessionJournal.Tests;
 
 /// <summary>
 /// Historical test-fixture name retained only inside the test assembly. It now creates a
-/// store-neutral provider candidate and writes neither a derived artifact nor raw kind 12.
+/// store-neutral provider candidate and writes no derived artifact.
 /// </summary>
 internal static class CoherentArtifactSetTestFixture {
     internal const int ArtifactContextMessageCount = 2;

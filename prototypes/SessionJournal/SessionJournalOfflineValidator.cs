@@ -36,7 +36,6 @@ public static class SessionJournalOfflineValidator {
         SessionProjection projection;
         SessionExecutionRecovery recovery;
         int preparedRequestCount = 0;
-        var artifactSets = new Dictionary<EventAddress, RawArtifactSetActivation>();
         long logicalPayloadBytes = 0;
 
         using (var journal =
@@ -88,41 +87,6 @@ public static class SessionJournalOfflineValidator {
                     if (body is CompletionRequestPreparedBody) {
                         preparedRequestCount = checked(preparedRequestCount + 1);
                     }
-                    else if (body is ArtifactSetCommittedBody artifactSet) {
-                        ValidateSetupReference(
-                            journal,
-                            artifactSet.CoverageSetups.RuntimeConfig,
-                            SessionEventKind.RuntimeConfigSetup
-                        );
-                        ValidateSetupReference(
-                            journal,
-                            artifactSet.CoverageSetups.SystemPrompt,
-                            SessionEventKind.SystemPromptSetup
-                        );
-                        ValidateSetupReference(
-                            journal,
-                            artifactSet.CurrentSetups.RuntimeConfig,
-                            SessionEventKind.RuntimeConfigSetup
-                        );
-                        ValidateSetupReference(
-                            journal,
-                            artifactSet.CurrentSetups.SystemPrompt,
-                            SessionEventKind.SystemPromptSetup
-                        );
-                        var activation = new RawArtifactSetActivation(
-                            address,
-                            frame.Header.Parent,
-                            artifactSet,
-                            new SessionArtifactSetReference(
-                                address,
-                                bodySchemaVersion,
-                                SessionRequestCanonicalizer.Sha256Hex(
-                                    frame.Payload
-                                )
-                            )
-                        );
-                        artifactSets.Add(address, activation);
-                    }
                     cursor = frame.Header.Parent;
                 }
 
@@ -145,10 +109,6 @@ public static class SessionJournalOfflineValidator {
                     );
                 }
 
-                ValidateArtifactSetAndPreparedProvenance(
-                    reverseEvents,
-                    artifactSets
-                );
                 ValidatePreparedRequestReconstructions(
                     journal,
                     reverseEvents,
@@ -270,64 +230,6 @@ public static class SessionJournalOfflineValidator {
         );
     }
 
-    private static void ValidateArtifactSetAndPreparedProvenance(
-        IReadOnlyList<DecodedSessionEvent> chronologicalEvents,
-        IReadOnlyDictionary<EventAddress, RawArtifactSetActivation> artifactSets
-    ) {
-        var governingSetups = new Dictionary<
-            EventAddress,
-            (EventAddress? RuntimeConfig, EventAddress? SystemPrompt)
-        >();
-        EventAddress? runtimeConfig = null;
-        EventAddress? systemPrompt = null;
-        foreach (DecodedSessionEvent ev in chronologicalEvents) {
-            if (ev.Kind == SessionEventKind.RuntimeConfigSetup) {
-                runtimeConfig = ev.Address;
-            }
-            else if (ev.Kind == SessionEventKind.SystemPromptSetup) {
-                systemPrompt = ev.Address;
-            }
-            governingSetups.Add(ev.Address, (runtimeConfig, systemPrompt));
-
-            if (ev.Kind == SessionEventKind.ArtifactSetCommitted) {
-                RawArtifactSetActivation activation = artifactSets[ev.Address];
-                EventAddress parent = activation.Parent
-                    ?? throw new InvalidDataException(
-                        $"ArtifactSetCommitted at {activation.Address} requires an exact raw parent."
-                    );
-                if (!governingSetups.TryGetValue(
-                        activation.Body.CommonAnchor,
-                        out var coverage
-                    )
-                    || !governingSetups.TryGetValue(parent, out var current)
-                    || coverage.RuntimeConfig is null
-                    || coverage.SystemPrompt is null
-                    || current.RuntimeConfig is null
-                    || current.SystemPrompt is null) {
-                    throw new InvalidDataException(
-                        $"ArtifactSetCommitted at {activation.Address} has a common anchor or setup boundary outside the current raw lineage."
-                    );
-                }
-                if (activation.Body.CoverageSetups.RuntimeConfig.Address
-                        != coverage.RuntimeConfig
-                    || activation.Body.CoverageSetups.SystemPrompt.Address
-                        != coverage.SystemPrompt
-                    || activation.Body.CurrentSetups.RuntimeConfig.Address
-                        != current.RuntimeConfig
-                    || activation.Body.CurrentSetups.SystemPrompt.Address
-                        != current.SystemPrompt) {
-                    throw new InvalidDataException(
-                        $"ArtifactSetCommitted at {activation.Address} setup references do not match its authoritative raw boundaries."
-                    );
-                }
-                continue;
-            }
-
-            // Prepared v4 is self-contained.  Its exact raw-range/setup/context assertions are
-            // validated by SessionPreparedRequestReconstructor below, independently of raw kind 12.
-        }
-    }
-
     private static void ValidatePreparedRequestReconstructions(
         EventJournal.EventJournal journal,
         IReadOnlyList<DecodedSessionEvent> chronologicalEvents,
@@ -346,36 +248,6 @@ public static class SessionJournalOfflineValidator {
         }
     }
 
-    private static void ValidateSetupReference(
-        EventJournal.EventJournal journal,
-        SessionSetupReference reference,
-        SessionEventKind expectedKind
-    ) {
-        using EventFrame frame = journal.ReadEvent(reference.Address).Unwrap();
-        ValidateHeader(reference.Address, frame.Header);
-        var actualKind = (SessionEventKind)frame.Header.OpaqueEventKind;
-        if (actualKind != expectedKind) {
-            throw new InvalidDataException(
-                $"ArtifactSetCommitted setup reference expected '{expectedKind}' at {reference.Address}, got '{actualKind}'."
-            );
-        }
-        _ = SessionEventCodec.Decode(
-            actualKind,
-            frame.Payload,
-            out int bodySchemaVersion
-        );
-        if (bodySchemaVersion != reference.BodySchemaVersion
-            || !string.Equals(
-                SessionRequestCanonicalizer.Sha256Hex(frame.Payload),
-                reference.PayloadSha256,
-                StringComparison.Ordinal
-            )) {
-            throw new InvalidDataException(
-                $"ArtifactSetCommitted setup reference is stale or corrupt at {reference.Address}."
-            );
-        }
-    }
-
     private static void ValidateHeader(
         EventAddress address,
         EventFrameHeader header
@@ -387,11 +259,4 @@ public static class SessionJournalOfflineValidator {
             );
         }
     }
-
-    private sealed record RawArtifactSetActivation(
-        EventAddress Address,
-        EventAddress? Parent,
-        ArtifactSetCommittedBody Body,
-        SessionArtifactSetReference Reference
-    );
 }

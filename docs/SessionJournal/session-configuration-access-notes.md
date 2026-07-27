@@ -1,23 +1,23 @@
 # SessionJournal Configuration Access Notes
 
-> 状态：CS-3A～CS-3D7 Implemented / coherent-only Prepared v3
+> 状态：CS-3A～CS-3D7 Implemented / Prepared v4 / DM-4 raw activation removal
 > 日期：2026-07-27
 > 相关文档：[SessionJournal 主干设计基线](session-journal-trunk-design.md)、
 > [Tail-only Execution Recovery Design](tail-execution-recovery-design.md)、
 > [SessionJournal 事件源会话与长期上下文架构路线图](event-sourced-session-architecture-roadmap.md)
 
-> **后续边界说明（2026-07-27）**：本文记录的 raw `ArtifactSetCommitted` setup checkpoint 是
-> CS-3D5～D7 的 current implementation fact，不是长期目标。候选 C 删除 raw activation 后，近头
-> Prepared 继续提供 raw setup hint；首次 Prepared 前可由可重建 DerivedMemory hint 加速，但
+> **DM-4 边界说明（2026-07-28）**：本文下文记录的 raw derived-set setup checkpoint 是
+> CS-3D5～D7 的历史实现，不再是 current contract。raw activation 已删除；近头 Prepared
+> 提供 raw setup hint，首次 Prepared 前可由可重建 DerivedMemory candidate hint 加速，但
 > authoritative fallback 仍是 raw header parent walk。DerivedMemory 作为独立可替换程序集只参与未
 > Prepared 的 context planning，不能进入 `SessionExecutionTailResolver` 或 Prepared exact reopen。
 > 详见 [化简调研 §4](tail-execution-recovery-simplification-study.md)。
 
 ## 1. 结论
 
-CS-5-lite 之后，CS-3A～D7 已完成最小可恢复 Completion 主线：paired setup checkpoint、
-dependency-closed artifact tail、pure execution tail resolver、durable tool identity、
-`ArtifactSetCommitted` activation，以及 coherent-only `CompletionRequestPrepared` v3。prepare/reopen
+CS-5-lite 之后，CS-3A～D7 与 DM-4 已完成最小可恢复 Completion 主线：paired setup checkpoint、
+dependency-closed artifact tail、pure execution tail resolver、durable tool identity，以及
+self-contained `CompletionRequestPrepared` v4。prepare/reopen
 共用同一个 canonical request reconstructor；Prepared-only 可安全派发，只有已写
 `CompletionAttemptStarted` 的 provider attempt 才属于 outcome uncertain。
 
