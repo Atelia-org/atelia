@@ -9,11 +9,10 @@ namespace Atelia.SessionJournal;
 /// a chronological chain.
 /// </summary>
 internal static class SessionExecutionTailResolver {
-    internal sealed record PreparedAttemptIdentityChain(
+    internal sealed record PreparedAttemptChain(
         EventAddress SourcePreparedAddress,
         EventAddress? SourcePreparedParent,
-        EventAddress ActiveAttemptAddress,
-        string ActiveAttemptId,
+        EventAddress? ActiveAttemptAddress,
         CompletionRequestPreparedBody SourceManifest
     );
 
@@ -71,7 +70,7 @@ internal static class SessionExecutionTailResolver {
                     ResolveArtifactSet(head),
                 SessionEventKind.ObservationAccepted => ResolveObservation(head),
                 SessionEventKind.CompletionRequestPrepared
-                    or SessionEventKind.CompletionAttemptRestarted =>
+                    or SessionEventKind.CompletionAttemptStarted =>
                     ResolvePrepared(head, kind),
                 SessionEventKind.CompletionAttemptFailed => ResolveFailure(head),
                 SessionEventKind.AgentActionProduced
@@ -264,8 +263,8 @@ internal static class SessionExecutionTailResolver {
             EventAddress head,
             SessionEventKind headKind
         ) {
-            PreparedAttemptIdentityChain chain =
-                ResolvePreparedAttemptIdentityChain(head);
+            PreparedAttemptChain chain =
+                ResolvePreparedAttemptChain(head);
             SourceBoundary source = ValidatePreparedSourceBoundary(
                 chain,
                 terminalAddress: head
@@ -273,16 +272,17 @@ internal static class SessionExecutionTailResolver {
             return Recovery(
                 head,
                 new SessionExecutionState(
-                    SessionExecutionPhase.AwaitingCompletion,
+                    headKind == SessionEventKind.CompletionRequestPrepared
+                        ? SessionExecutionPhase.AwaitingCompletionDispatch
+                        : SessionExecutionPhase.AwaitingCompletion,
                     headKind,
                     ToolExecutionSequenceCheckpoint:
                         chain.SourceManifest.Execution
                             .LastIssuedToolExecutionSequence,
                     PendingRequestPreparedAddress:
                         chain.SourcePreparedAddress,
-                    PendingCompletionAttemptId: chain.ActiveAttemptId,
                     ActiveCorrelationId:
-                        chain.SourceManifest.Attempt.CorrelationId,
+                        chain.SourceManifest.Origin.CorrelationId,
                     ActiveCompletionAttemptAddress:
                         chain.ActiveAttemptAddress
                 ),
@@ -307,16 +307,12 @@ internal static class SessionExecutionTailResolver {
                 ?? throw new InvalidDataException(
                     $"CompletionAttemptFailed at {head} requires an active attempt parent."
                 );
-            PreparedAttemptIdentityChain chain =
-                ResolvePreparedAttemptIdentityChain(activeAttempt);
+            PreparedAttemptChain chain =
+                ResolvePreparedAttemptChain(activeAttempt);
             _ = ValidatePreparedSourceBoundary(chain, head);
-            if (!string.Equals(
-                    failure.AttemptId,
-                    chain.ActiveAttemptId,
-                    StringComparison.Ordinal
-                )) {
+            if (chain.ActiveAttemptAddress != activeAttempt) {
                 throw new InvalidDataException(
-                    $"CompletionAttemptFailed at {head} does not match active attempt '{chain.ActiveAttemptId}'."
+                    $"CompletionAttemptFailed at {head} does not directly descend from the latest active attempt."
                 );
             }
             return Recovery(
@@ -546,27 +542,24 @@ internal static class SessionExecutionTailResolver {
             );
         }
 
-        internal PreparedAttemptIdentityChain ResolvePreparedAttemptIdentityChain(
+        internal PreparedAttemptChain ResolvePreparedAttemptChain(
             EventAddress activeAttemptHead
         ) {
-            var newestToOldestRestarts =
-                new List<(EventAddress Address, EventAddress Parent, CompletionAttemptRestartedBody Body)>();
+            var newestToOldestStarts =
+                new List<(EventAddress Address, EventAddress Parent)>();
             EventAddress cursor = activeAttemptHead;
             CompletionRequestPreparedBody sourceManifest;
             EventAddress sourcePreparedAddress;
             EventAddress? sourcePreparedParent;
             while (true) {
                 DecodedSessionEvent ev = ReadDecoded(cursor);
-                if (ev.Kind == SessionEventKind.CompletionAttemptRestarted) {
+                if (ev.Kind == SessionEventKind.CompletionAttemptStarted) {
                     EventAddress parent = ev.Parent
                         ?? throw new InvalidDataException(
-                            $"CompletionAttemptRestarted at {cursor} requires an active-attempt parent."
+                            $"CompletionAttemptStarted at {cursor} requires a Prepared or prior Started parent."
                         );
-                    newestToOldestRestarts.Add((
-                        cursor,
-                        parent,
-                        RequireBody<CompletionAttemptRestartedBody>(ev)
-                    ));
+                    _ = RequireBody<CompletionAttemptStartedBody>(ev);
+                    newestToOldestStarts.Add((cursor, parent));
                     cursor = parent;
                     continue;
                 }
@@ -581,32 +574,16 @@ internal static class SessionExecutionTailResolver {
                 break;
             }
 
-            var seenAttemptIds = new HashSet<string>(StringComparer.Ordinal);
-            if (string.IsNullOrWhiteSpace(sourceManifest.Attempt.AttemptId)
-                || !seenAttemptIds.Add(sourceManifest.Attempt.AttemptId)) {
-                throw new InvalidDataException(
-                    $"Source CompletionRequestPrepared at {sourcePreparedAddress} has an invalid attempt id."
-                );
-            }
             EventAddress expectedParent = sourcePreparedAddress;
-            string activeAttemptId = sourceManifest.Attempt.AttemptId;
-            foreach (var entry in newestToOldestRestarts.AsEnumerable().Reverse()) {
-                CompletionAttemptRestartedBody restart = entry.Body;
-                if (entry.Parent != expectedParent
-                    || restart.SourcePreparedAddress != sourcePreparedAddress
-                    || !string.Equals(
-                        restart.ReplacesAttemptId,
-                        activeAttemptId,
-                        StringComparison.Ordinal
-                    )
-                    || string.IsNullOrWhiteSpace(restart.AttemptId)
-                    || !seenAttemptIds.Add(restart.AttemptId)) {
+            EventAddress? activeAttemptAddress = null;
+            foreach (var entry in newestToOldestStarts.AsEnumerable().Reverse()) {
+                if (entry.Parent != expectedParent) {
                     throw new InvalidDataException(
-                        $"CompletionAttemptRestarted at {entry.Address} does not strictly continue the source attempt chain."
+                        $"CompletionAttemptStarted at {entry.Address} does not strictly continue the source attempt chain."
                     );
                 }
                 expectedParent = entry.Address;
-                activeAttemptId = restart.AttemptId;
+                activeAttemptAddress = entry.Address;
             }
             if (expectedParent != activeAttemptHead) {
                 throw new InvalidDataException(
@@ -614,17 +591,16 @@ internal static class SessionExecutionTailResolver {
                 );
             }
 
-            return new PreparedAttemptIdentityChain(
+            return new PreparedAttemptChain(
                 sourcePreparedAddress,
                 sourcePreparedParent,
-                expectedParent,
-                activeAttemptId,
+                activeAttemptAddress,
                 sourceManifest
             );
         }
 
         private SourceBoundary ValidatePreparedSourceBoundary(
-            PreparedAttemptIdentityChain chain,
+            PreparedAttemptChain chain,
             EventAddress terminalAddress
         ) {
             EventAddress sourceAddress = chain.SourcePreparedParent
@@ -632,14 +608,14 @@ internal static class SessionExecutionTailResolver {
                     $"CompletionRequestPrepared at {chain.SourcePreparedAddress} requires a completion boundary parent."
                 );
             if (string.IsNullOrWhiteSpace(
-                    chain.SourceManifest.Attempt.CorrelationId
+                    chain.SourceManifest.Origin.CorrelationId
                 )) {
                 throw new InvalidDataException(
                     $"CompletionRequestPrepared at {chain.SourcePreparedAddress} requires a correlation id."
                 );
             }
 
-            switch (chain.SourceManifest.Attempt.Reason) {
+            switch (chain.SourceManifest.Origin.Reason) {
                 case "observation": {
                     DecodedSessionEvent observation = ReadDecoded(
                         sourceAddress,
@@ -647,7 +623,7 @@ internal static class SessionExecutionTailResolver {
                     );
                     _ = RequireBody<ObservationAcceptedBody>(observation);
                     if (!string.Equals(
-                            chain.SourceManifest.Attempt.CorrelationId,
+                            chain.SourceManifest.Origin.CorrelationId,
                             BuildCorrelationId(sourceAddress),
                             StringComparison.Ordinal
                         )) {
@@ -681,7 +657,7 @@ internal static class SessionExecutionTailResolver {
                 }
                 default:
                     throw new InvalidDataException(
-                        $"CompletionRequestPrepared at {chain.SourcePreparedAddress} has unsupported reason '{chain.SourceManifest.Attempt.Reason}'."
+                        $"CompletionRequestPrepared at {chain.SourcePreparedAddress} has unsupported reason '{chain.SourceManifest.Origin.Reason}'."
                     );
             }
         }
@@ -695,15 +671,20 @@ internal static class SessionExecutionTailResolver {
                     $"{actionEvent.Kind} at {actionEvent.Address} requires a completion boundary parent."
                 );
             if (actionEvent.Kind == SessionEventKind.AgentActionProduced) {
-                PreparedAttemptIdentityChain chain =
-                    ResolvePreparedAttemptIdentityChain(parent);
+                PreparedAttemptChain chain =
+                    ResolvePreparedAttemptChain(parent);
+                if (chain.ActiveAttemptAddress != parent) {
+                    throw new InvalidDataException(
+                        $"{actionEvent.Kind} at {actionEvent.Address} must directly descend from CompletionAttemptStarted."
+                    );
+                }
                 SourceBoundary source = ValidatePreparedSourceBoundary(
                     chain,
                     actionEvent.Address
                 );
                 if (!string.Equals(
                         action.CorrelationId,
-                        chain.SourceManifest.Attempt.CorrelationId,
+                        chain.SourceManifest.Origin.CorrelationId,
                         StringComparison.Ordinal
                     )) {
                     throw new InvalidDataException(
@@ -922,7 +903,7 @@ internal static class SessionExecutionTailResolver {
             CompletionRequestPreparedBody manifest,
             EventAddress? sourceParent
         ) => string.Equals(
-                manifest.Attempt.Reason,
+                manifest.Origin.Reason,
                 "observation",
                 StringComparison.Ordinal
             )

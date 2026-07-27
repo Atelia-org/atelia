@@ -259,8 +259,8 @@ internal static class SessionPreparedRequestReconstructor {
                 );
         }
 
-        if (!string.Equals(manifest.Attempt.Reason, expectedReason, StringComparison.Ordinal)
-            || !string.Equals(manifest.Attempt.CorrelationId, correlationId, StringComparison.Ordinal)) {
+        if (!string.Equals(manifest.Origin.Reason, expectedReason, StringComparison.Ordinal)
+            || !string.Equals(manifest.Origin.CorrelationId, correlationId, StringComparison.Ordinal)) {
             throw new InvalidDataException(
                 "Completion request reason or correlation id does not match its authoritative raw boundary."
             );

@@ -325,7 +325,7 @@ public sealed class SessionJournalEngineTests : IDisposable {
         SessionGoverningSetup fromCheckpoint = engine.ResolveGoverningSetup(actionHead);
         Assert.Equal("model-A", fromCheckpoint.RuntimeConfig.ModelId);
         Assert.Equal("system-A", fromCheckpoint.SystemPrompt);
-        Assert.Equal(2, engine.LastGoverningSetupResolutionDiagnostics.HeaderVisitCount);
+        Assert.Equal(3, engine.LastGoverningSetupResolutionDiagnostics.HeaderVisitCount);
         Assert.Equal(1, engine.LastGoverningSetupResolutionDiagnostics.ManifestPayloadReadCount);
 
         EventAddress runtimeB = engine.AppendRuntimeConfigSetup(
@@ -740,10 +740,12 @@ public sealed class SessionJournalEngineTests : IDisposable {
 
         EventAddress observationAddress = Assert.Single(ReadJournalAddressesByKind(path, SessionEventKind.ObservationAccepted));
         EventAddress preparedAddress = Assert.Single(ReadJournalAddressesByKind(path, SessionEventKind.CompletionRequestPrepared));
+        EventAddress startedAddress = Assert.Single(ReadJournalAddressesByKind(path, SessionEventKind.CompletionAttemptStarted));
         EventAddress actionAddress = Assert.Single(ReadJournalAddressesByKind(path, SessionEventKind.AgentActionProduced));
         using (var journal = EventJournal.EventJournal.OpenExisting(path)) {
             Assert.Equal(observationAddress, journal.ReadEventHeaderChecked(preparedAddress).Unwrap().Parent);
-            Assert.Equal(preparedAddress, journal.ReadEventHeaderChecked(actionAddress).Unwrap().Parent);
+            Assert.Equal(preparedAddress, journal.ReadEventHeaderChecked(startedAddress).Unwrap().Parent);
+            Assert.Equal(startedAddress, journal.ReadEventHeaderChecked(actionAddress).Unwrap().Parent);
         }
 
         using var inspection = SessionJournalEngine.Open(path);
@@ -857,7 +859,7 @@ public sealed class SessionJournalEngineTests : IDisposable {
     }
 
     [Fact]
-    public async Task SendAsync_AfterRequestPreparedCommitted_LeavesDurableAwaitingCompletionBeforeProviderCall() {
+    public async Task SendAsync_AfterRequestPreparedCommitted_LeavesSafeDispatchBoundary() {
         string path = NewJournalPath();
         var client = new ScriptedCompletionClient();
         using (var engine = SessionJournalEngine.CreateForTest(
@@ -876,18 +878,26 @@ public sealed class SessionJournalEngineTests : IDisposable {
 
             Assert.Equal(SessionJournalFailpoint.AfterRequestPreparedCommitted, ex.Failpoint);
             SessionExecutionState state = engine.Project().ExecutionState;
-            Assert.Equal(SessionExecutionPhase.AwaitingCompletion, state.Phase);
+            Assert.Equal(SessionExecutionPhase.AwaitingCompletionDispatch, state.Phase);
             Assert.Equal(SessionEventKind.CompletionRequestPrepared, state.HeadKind);
             Assert.Equal(engine.Project().Head, state.PendingRequestPreparedAddress);
-            Assert.False(string.IsNullOrWhiteSpace(state.PendingCompletionAttemptId));
+            Assert.Null(state.ActiveCompletionAttemptAddress);
             Assert.False(string.IsNullOrWhiteSpace(state.ActiveCorrelationId));
             Assert.Equal(0, client.Calls);
         }
 
+        client.Enqueue(request => new CompletionResult(
+            new ActionMessage([new ActionBlock.Text("resumed")]),
+            new CompletionDescriptor("scripted", "test-api-v1", request.ModelId)
+        ));
         using var reopened = SessionJournalEngine.Open(path, CreateRuntime(client));
-        Assert.Equal(SessionExecutionPhase.AwaitingCompletion, reopened.Project().ExecutionState.Phase);
-        await Assert.ThrowsAsync<InvalidOperationException>(() => reopened.ResumeAsync(CancellationToken.None));
-        Assert.Equal(0, client.Calls);
+        Assert.Equal(
+            SessionExecutionPhase.AwaitingCompletionDispatch,
+            reopened.Project().ExecutionState.Phase
+        );
+        ResumeOutcome outcome = await reopened.ResumeAsync(CancellationToken.None);
+        Assert.True(outcome.Advanced);
+        Assert.Equal(1, client.Calls);
     }
 
     [Theory]
@@ -925,15 +935,16 @@ public sealed class SessionJournalEngineTests : IDisposable {
             SessionExecutionState state = engine.Project().ExecutionState;
             Assert.Equal(SessionExecutionPhase.TurnFailed, state.Phase);
             Assert.Null(state.PendingRequestPreparedAddress);
-            Assert.Null(state.PendingCompletionAttemptId);
             Assert.Null(state.ActiveCorrelationId);
         }
 
         EventAddress prepared = Assert.Single(ReadJournalAddressesByKind(path, SessionEventKind.CompletionRequestPrepared));
+        EventAddress started = Assert.Single(ReadJournalAddressesByKind(path, SessionEventKind.CompletionAttemptStarted));
         EventAddress failed = Assert.Single(ReadJournalAddressesByKind(path, SessionEventKind.CompletionAttemptFailed));
         Assert.Empty(ReadJournalAddressesByKind(path, SessionEventKind.AgentActionProduced));
         using (var journal = EventJournal.EventJournal.OpenExisting(path)) {
-            Assert.Equal(prepared, journal.ReadEventHeaderChecked(failed).Unwrap().Parent);
+            Assert.Equal(prepared, journal.ReadEventHeaderChecked(started).Unwrap().Parent);
+            Assert.Equal(started, journal.ReadEventHeaderChecked(failed).Unwrap().Parent);
         }
         using var reopened = SessionJournalEngine.Open(path);
         Assert.Equal(SessionExecutionPhase.TurnFailed, reopened.Project().ExecutionState.Phase);
@@ -1119,7 +1130,7 @@ public sealed class SessionJournalEngineTests : IDisposable {
     }
 
     [Fact]
-    public async Task Project_CompletionAttemptFailedWithMismatchedAttemptId_Throws() {
+    public async Task Project_CompletionAttemptFailedWithoutStarted_Throws() {
         string path = NewJournalPath();
         var client = new ScriptedCompletionClient();
         EventAddress prepared;
@@ -1146,7 +1157,6 @@ public sealed class SessionJournalEngineTests : IDisposable {
                 SessionEventCodec.Encode(
                     SessionEventKind.CompletionAttemptFailed,
                     new CompletionAttemptFailedBody(
-                        "different-attempt",
                         CompletionTerminationKind.Failed,
                         null,
                         null,
@@ -1203,7 +1213,7 @@ public sealed class SessionJournalEngineTests : IDisposable {
             targetObservation = target.AppendObservation("target");
         }
         CompletionRequestPreparedBody forged = sourceBody with {
-            Attempt = sourceBody.Attempt with {
+            Origin = sourceBody.Origin with {
                 CorrelationId = $"atelia.session-journal.turn.v1:{EventAddressTextCodec.Format(targetObservation)}",
                 Reason = "tool-continuation"
             }
@@ -1335,7 +1345,7 @@ public sealed class SessionJournalEngineTests : IDisposable {
             SessionExecutionState state = engine.Project().ExecutionState;
             Assert.Equal(SessionExecutionPhase.AwaitingCompletion, state.Phase);
             Assert.NotNull(state.PendingRequestPreparedAddress);
-            Assert.False(string.IsNullOrWhiteSpace(state.PendingCompletionAttemptId));
+            Assert.NotNull(state.ActiveCompletionAttemptAddress);
             Assert.Equal(1, firstClient.Calls);
         }
 
@@ -1345,7 +1355,7 @@ public sealed class SessionJournalEngineTests : IDisposable {
             () => reopened.ResumeAsync(CancellationToken.None)
         );
 
-        Assert.Contains("RefuseUncertain", resumeError.Message, StringComparison.Ordinal);
+        Assert.Contains("Refuse", resumeError.Message, StringComparison.Ordinal);
         Assert.Equal(SessionExecutionPhase.AwaitingCompletion, reopened.Project().ExecutionState.Phase);
         Assert.Equal(0, resumeClient.Calls);
     }

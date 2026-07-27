@@ -232,7 +232,13 @@ public sealed class SessionJournalEngine : IDisposable {
                 ).ConfigureAwait(false)
             ),
             SessionExecutionPhase.AwaitingCompletion =>
-                await ResumePreparedCompletionAsync(
+                await ResumeCompletionAsync(
+                    recovery,
+                    observer,
+                    cancellationToken
+                ).ConfigureAwait(false),
+            SessionExecutionPhase.AwaitingCompletionDispatch =>
+                await ResumeCompletionAsync(
                     recovery,
                     observer,
                     cancellationToken
@@ -802,11 +808,37 @@ public sealed class SessionJournalEngine : IDisposable {
             requireBoundSetupCursor: true
         );
         TriggerFailpoint(SessionJournalFailpoint.AfterRequestPreparedCommitted);
-
-        return await ExecuteCommittedCompletionAttemptAsync(
+        return await StartAndExecuteCompletionAttemptAsync(
             request,
             preparedAddress,
-            manifest.Attempt.AttemptId,
+            manifest,
+            runtime,
+            allowResultToolCalls,
+            observer,
+            cancellationToken
+        ).ConfigureAwait(false);
+    }
+
+    private async Task<CommittedCompletionResult> StartAndExecuteCompletionAttemptAsync(
+        CompletionRequest request,
+        EventAddress expectedParent,
+        CompletionRequestPreparedBody manifest,
+        SessionRuntime runtime,
+        bool allowResultToolCalls,
+        CompletionStreamObserver? observer,
+        CancellationToken cancellationToken
+    ) {
+        cancellationToken.ThrowIfCancellationRequested();
+        EventAddress startedAddress = AppendExpected(
+            SessionEventKind.CompletionAttemptStarted,
+            new CompletionAttemptStartedBody(),
+            expectedParent,
+            requireBoundSetupCursor: false
+        );
+        TriggerFailpoint(SessionJournalFailpoint.AfterCompletionAttemptStartedCommitted);
+        return await ExecuteCommittedCompletionAttemptAsync(
+            request,
+            startedAddress,
             manifest,
             runtime,
             allowResultToolCalls,
@@ -818,7 +850,6 @@ public sealed class SessionJournalEngine : IDisposable {
     private async Task<CommittedCompletionResult> ExecuteCommittedCompletionAttemptAsync(
         CompletionRequest request,
         EventAddress activeAttemptAddress,
-        string activeAttemptId,
         CompletionRequestPreparedBody manifest,
         SessionRuntime runtime,
         bool allowResultToolCalls,
@@ -835,7 +866,6 @@ public sealed class SessionJournalEngine : IDisposable {
             AppendExpected(
                 SessionEventKind.CompletionAttemptFailed,
                 new CompletionAttemptFailedBody(
-                    activeAttemptId,
                     result.Termination.Kind,
                     result.Termination.ProviderReason,
                     result.Termination.Detail,
@@ -859,7 +889,6 @@ public sealed class SessionJournalEngine : IDisposable {
         if (invocationMismatch is not null) {
             ThrowKnownHostFailure(
                 activeAttemptAddress,
-                activeAttemptId,
                 InvalidCompletionInvocationReason,
                 invocationMismatch
             );
@@ -869,7 +898,6 @@ public sealed class SessionJournalEngine : IDisposable {
                 "Provider returned tool calls for a request whose durable policy supports no tools.";
             ThrowKnownHostFailure(
                 activeAttemptAddress,
-                activeAttemptId,
                 UnsupportedTailToolCallReason,
                 detail
             );
@@ -880,7 +908,7 @@ public sealed class SessionJournalEngine : IDisposable {
             new AgentActionProducedBody(
                 result.Message,
                 result.Invocation,
-                manifest.Attempt.CorrelationId,
+                manifest.Origin.CorrelationId,
                 manifest.Execution,
                 result.Message.ToolCalls.Count == 0
                     ? null
@@ -898,7 +926,6 @@ public sealed class SessionJournalEngine : IDisposable {
 
     private void ThrowKnownHostFailure(
         EventAddress activeAttemptAddress,
-        string activeAttemptId,
         string reason,
         string detail
     ) {
@@ -907,7 +934,6 @@ public sealed class SessionJournalEngine : IDisposable {
         AppendExpected(
             SessionEventKind.CompletionAttemptFailed,
             new CompletionAttemptFailedBody(
-                activeAttemptId,
                 hostFailure.Kind,
                 hostFailure.ProviderReason,
                 hostFailure.Detail,
@@ -923,38 +949,50 @@ public sealed class SessionJournalEngine : IDisposable {
         );
     }
 
-    private async Task<ResumeOutcome> ResumePreparedCompletionAsync(
+    private async Task<ResumeOutcome> ResumeCompletionAsync(
         SessionExecutionRecovery recovery,
         CompletionStreamObserver? observer,
         CancellationToken cancellationToken
     ) {
-        if (recovery.State.Phase !=
-                SessionExecutionPhase.AwaitingCompletion
+        if (recovery.State.Phase is not (
+                SessionExecutionPhase.AwaitingCompletionDispatch
+                or SessionExecutionPhase.AwaitingCompletion)
             || recovery.Boundary.SourcePrepared is not {
             } sourcePreparedAddress
-            || recovery.State.ActiveCompletionAttemptAddress is not {
-            } activeAttemptAddress
-            || recovery.State.PendingCompletionAttemptId is not {
-            } activeAttemptId
             || recovery.State.PendingRequestPreparedAddress !=
                 sourcePreparedAddress
-            || recovery.Head != activeAttemptAddress) {
+            || recovery.Head is not { } activeHead) {
             throw new InvalidDataException(
                 "Prepared recovery is missing its exact durable attempt boundary."
             );
         }
-        SessionPreparedCompletionRecoveryPolicy policy =
-            _runtime?.PreparedCompletionRecoveryPolicy
-            ?? SessionPreparedCompletionRecoveryPolicy.RefuseUncertain;
-        if (policy == SessionPreparedCompletionRecoveryPolicy.RefuseUncertain) {
-            throw new InvalidOperationException(
-                "The current completion attempt has an uncertain outcome. "
-                + "Recovery policy RefuseUncertain does not call the provider or mutate the journal."
+        bool uncertain =
+            recovery.State.Phase == SessionExecutionPhase.AwaitingCompletion;
+        if (uncertain
+            && recovery.State.ActiveCompletionAttemptAddress != activeHead) {
+            throw new InvalidDataException(
+                "Uncertain completion recovery is missing its exact active Started boundary."
             );
         }
-        if (policy != SessionPreparedCompletionRecoveryPolicy.RestartWithNewAttempt) {
+        if (!uncertain
+            && recovery.State.ActiveCompletionAttemptAddress is not null) {
+            throw new InvalidDataException(
+                "Prepared-only recovery must not expose an active Started boundary."
+            );
+        }
+        SessionUncertainCompletionRecoveryPolicy policy =
+            _runtime?.UncertainCompletionRecoveryPolicy
+            ?? SessionUncertainCompletionRecoveryPolicy.Refuse;
+        if (uncertain && policy == SessionUncertainCompletionRecoveryPolicy.Refuse) {
+            throw new InvalidOperationException(
+                "The current completion attempt has an uncertain outcome. "
+                + "Recovery policy Refuse does not call the provider or mutate the journal."
+            );
+        }
+        if (uncertain
+            && policy != SessionUncertainCompletionRecoveryPolicy.RestartWithNewAttempt) {
             throw new NotSupportedException(
-                $"Unsupported prepared completion recovery policy '{policy}'."
+                $"Unsupported uncertain completion recovery policy '{policy}'."
             );
         }
 
@@ -968,7 +1006,7 @@ public sealed class SessionJournalEngine : IDisposable {
         CompletionRequestPreparedBody manifest =
             reconstruction.Manifest;
         if (!string.Equals(
-                manifest.Attempt.CorrelationId,
+                manifest.Origin.CorrelationId,
                 recovery.State.ActiveCorrelationId,
                 StringComparison.Ordinal
             )
@@ -979,32 +1017,19 @@ public sealed class SessionJournalEngine : IDisposable {
             );
         }
         ValidateRecoveryRuntimeCompatibility(runtime, manifest);
-        string restartedAttemptId = $"attempt-{Guid.NewGuid():N}";
-        EventAddress restartedAddress = AppendExpected(
-            SessionEventKind.CompletionAttemptRestarted,
-            new CompletionAttemptRestartedBody(
-                restartedAttemptId,
-                activeAttemptId,
-                sourcePreparedAddress
-            ),
-            activeAttemptAddress,
-            requireBoundSetupCursor: false
-        );
-        TriggerFailpoint(SessionJournalFailpoint.AfterCompletionAttemptRestartedCommitted);
 
         bool sourceAllowsToolCalls =
             !manifest.ToolSet.Definitions.IsEmpty;
         CommittedCompletionResult committed =
-            await ExecuteCommittedCompletionAttemptAsync(
-            reconstruction.Request,
-            restartedAddress,
-            restartedAttemptId,
-            manifest,
-            runtime,
-            sourceAllowsToolCalls,
-            observer,
-            cancellationToken
-        ).ConfigureAwait(false);
+            await StartAndExecuteCompletionAttemptAsync(
+                reconstruction.Request,
+                activeHead,
+                manifest,
+                runtime,
+                sourceAllowsToolCalls,
+                observer,
+                cancellationToken
+            ).ConfigureAwait(false);
 
         SessionExecutionRecovery actionRecovery = ResolveExecutionTail(
             committed.ActionAddress,
@@ -1255,8 +1280,7 @@ public sealed class SessionJournalEngine : IDisposable {
         ArgumentNullException.ThrowIfNull(executionCheckpoint);
         SessionRequestCommitment commitment = SessionRequestCanonicalizer.CreateCommitment(request);
         var manifest = new CompletionRequestPreparedBody(
-            new SessionRequestAttempt(
-                $"attempt-{Guid.NewGuid():N}",
+            new SessionRequestOrigin(
                 correlationId,
                 reason
             ),

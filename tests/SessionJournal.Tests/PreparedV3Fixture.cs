@@ -4,9 +4,8 @@ using Atelia.EventJournal;
 
 namespace Atelia.SessionJournal.Tests;
 
-internal static class PreparedV2Fixture {
+internal static class PreparedV3Fixture {
     public static CompletionRequestPreparedBody Create(
-        string attemptId,
         string correlationId,
         string reason,
         EventAddress rawStartExclusive,
@@ -29,7 +28,7 @@ internal static class PreparedV2Fixture {
             new SessionRequestArtifactContextSnapshot("", "fixture observation", "")
         );
         return new CompletionRequestPreparedBody(
-            new SessionRequestAttempt(attemptId, correlationId, reason),
+            new SessionRequestOrigin(correlationId, reason),
             new SessionExecutionCheckpoint(checkpoint),
             new SessionContextPlan(
                 rawStartExclusive,

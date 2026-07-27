@@ -10,7 +10,7 @@ public sealed class SessionEventBodySchemaVersionTests {
             foreach (SessionEventKind kind in Enum.GetValues<SessionEventKind>()) {
                 data.Add(
                     kind,
-                    kind == SessionEventKind.CompletionRequestPrepared ? 2 : 1
+                    ExpectedVersion(kind)
                 );
             }
             return data;
@@ -18,14 +18,14 @@ public sealed class SessionEventBodySchemaVersionTests {
     }
 
     [Fact]
-    public void ExpectedVersionMap_DefinesPreparedV2AndV1ForEveryOtherKind() {
+    public void ExpectedVersionMap_DefinesPreparedV3FailureV2AndV1ForOtherKinds() {
         SessionEventKind[] kinds = Enum.GetValues<SessionEventKind>();
 
         Assert.NotEmpty(kinds);
         Assert.All(
             kinds,
             kind => Assert.Equal(
-                kind == SessionEventKind.CompletionRequestPrepared ? 2 : 1,
+                ExpectedVersion(kind),
                 SessionEventCodec.GetExpectedBodySchemaVersion(kind)
             )
         );
@@ -64,17 +64,31 @@ public sealed class SessionEventBodySchemaVersionTests {
     }
 
     [Fact]
-    public void PreparedV1_IsUnsupportedBeforeMalformedBodyIsParsed() {
+    public void PreparedV2_IsUnsupportedBeforeMalformedBodyIsParsed() {
         var error = Assert.Throws<NotSupportedException>(() =>
             SessionEventCodec.Decode(
                 SessionEventKind.CompletionRequestPrepared,
-                """{"v":1,"body":"malformed-v1"}"""u8,
+                """{"v":2,"body":"malformed-v2"}"""u8,
                 out _
             )
         );
 
-        Assert.Contains("actual=1", error.Message, StringComparison.Ordinal);
-        Assert.Contains("expected=2", error.Message, StringComparison.Ordinal);
+        Assert.Contains("actual=2", error.Message, StringComparison.Ordinal);
+        Assert.Contains("expected=3", error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void FailedV1AndRetiredKind11AreUnsupported() {
+        Assert.Throws<NotSupportedException>(() =>
+            SessionEventCodec.Decode(
+                SessionEventKind.CompletionAttemptFailed,
+                """{"v":1,"body":{}}"""u8,
+                out _
+            )
+        );
+        Assert.Throws<NotSupportedException>(() =>
+            SessionEventCodec.GetExpectedBodySchemaVersion((SessionEventKind)11)
+        );
     }
 
     [Fact]
@@ -91,4 +105,11 @@ public sealed class SessionEventBodySchemaVersionTests {
             SessionEventCodec.Decode(unknown, "not-json"u8, out _)
         );
     }
+
+    private static int ExpectedVersion(SessionEventKind kind)
+        => kind switch {
+            SessionEventKind.CompletionRequestPrepared => 3,
+            SessionEventKind.CompletionAttemptFailed => 2,
+            _ => 1
+        };
 }

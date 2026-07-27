@@ -21,14 +21,16 @@ public enum SessionEventKind : uint {
     CompletionRequestPrepared = 8,
     CompletionAttemptFailed = 9,
     ImportedAgentAction = 10,
-    CompletionAttemptRestarted = 11,
+    // 11 is retired. It was the opaque CompletionAttemptRestarted event.
     ArtifactSetCommitted = 12,
+    CompletionAttemptStarted = 13,
 }
 
 public enum SessionExecutionPhase {
     Empty,
     Idle,
     AwaitingAgentAction,
+    AwaitingCompletionDispatch,
     AwaitingCompletion,
     AwaitingToolExecution,
     TurnFailed,
@@ -66,8 +68,8 @@ public sealed record SessionToolRuntimeIdentity(
     string CapabilitySetFingerprint
 );
 
-public enum SessionPreparedCompletionRecoveryPolicy {
-    RefuseUncertain,
+public enum SessionUncertainCompletionRecoveryPolicy {
+    Refuse,
     RestartWithNewAttempt,
 }
 
@@ -76,8 +78,8 @@ public sealed record SessionRuntime(
     ToolSession? ToolSession = null,
     SessionCompletionTargetIdentity? CompletionTarget = null,
     int? MaxTokens = null,
-    SessionPreparedCompletionRecoveryPolicy PreparedCompletionRecoveryPolicy =
-        SessionPreparedCompletionRecoveryPolicy.RefuseUncertain,
+    SessionUncertainCompletionRecoveryPolicy UncertainCompletionRecoveryPolicy =
+        SessionUncertainCompletionRecoveryPolicy.Refuse,
     SessionToolRuntimeIdentity? ToolRuntimeIdentity = null
 );
 
@@ -148,7 +150,7 @@ internal enum SessionJournalFailpoint {
     None,
     AfterObservationCommitted,
     AfterRequestPreparedCommitted,
-    AfterCompletionAttemptRestartedCommitted,
+    AfterCompletionAttemptStartedCommitted,
     AfterCompletionBeforeActionCommitted,
     AfterActionCommitted,
     AfterToolStartedCommitted,
@@ -180,7 +182,6 @@ public sealed record SessionExecutionState(
     bool PendingToolExecutionStarted = false,
     long ToolExecutionSequenceCheckpoint = 0,
     EventAddress? PendingRequestPreparedAddress = null,
-    string? PendingCompletionAttemptId = null,
     string? ActiveCorrelationId = null,
     EventAddress? ActiveCompletionAttemptAddress = null,
     SessionToolRuntimeIdentity? PendingToolRuntimeIdentity = null
@@ -252,7 +253,7 @@ internal sealed record ToolResultObservedBody(
 );
 
 internal sealed record CompletionRequestPreparedBody(
-    SessionRequestAttempt Attempt,
+    SessionRequestOrigin Origin,
     SessionExecutionCheckpoint Execution,
     SessionContextPlan Plan,
     SessionGoverningSetupReferences Setups,
@@ -264,18 +265,13 @@ internal sealed record CompletionRequestPreparedBody(
 );
 
 internal sealed record CompletionAttemptFailedBody(
-    string AttemptId,
     CompletionTerminationKind TerminationKind,
     string? ProviderReason,
     string? Detail,
     IReadOnlyList<string> Errors
 );
 
-internal sealed record CompletionAttemptRestartedBody(
-    string AttemptId,
-    string ReplacesAttemptId,
-    EventAddress SourcePreparedAddress
-);
+internal sealed record CompletionAttemptStartedBody;
 
 internal sealed record ArtifactSetCommittedBody(
     string PolicyId,

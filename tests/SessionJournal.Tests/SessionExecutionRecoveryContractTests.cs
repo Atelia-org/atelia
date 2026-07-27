@@ -32,6 +32,7 @@ public sealed class SessionExecutionRecoveryContractTests : IDisposable {
         EventAddress terminalAction = Address(14);
         EventAddress importedAction = Address(15);
         EventAddress promptAfterIdle = Address(16);
+        EventAddress completionStarted = Address(17);
         string correlation = BuildCorrelationId(observation);
         var call1 = new RawToolCall("alpha", "call-1", """{"n":1}""");
         var call2 = new RawToolCall("beta", "call-2", """{"n":2}""");
@@ -59,7 +60,7 @@ public sealed class SessionExecutionRecoveryContractTests : IDisposable {
         );
         DecodedSessionEvent preparedEvent = Event(
             SessionEventKind.CompletionRequestPrepared,
-            PreparedBody("attempt-1", correlation, "observation", runtime, prompt),
+            PreparedBody(correlation, "observation", runtime, prompt),
             prepared,
             observation
         );
@@ -76,6 +77,12 @@ public sealed class SessionExecutionRecoveryContractTests : IDisposable {
                 ToolRuntimeIdentity
             ),
             action,
+            completionStarted
+        );
+        DecodedSessionEvent completionStartedEvent = Event(
+            SessionEventKind.CompletionAttemptStarted,
+            new CompletionAttemptStartedBody(),
+            completionStarted,
             prepared
         );
         DecodedSessionEvent started1Event = Event(
@@ -130,24 +137,19 @@ public sealed class SessionExecutionRecoveryContractTests : IDisposable {
         );
         DecodedSessionEvent continuationPreparedEvent = Event(
             SessionEventKind.CompletionRequestPrepared,
-            PreparedBody("attempt-2", correlation, "tool-continuation", runtime, prompt, checkpoint: 2),
+            PreparedBody(correlation, "tool-continuation", runtime, prompt, checkpoint: 2),
             continuationPrepared,
             result2
         );
         DecodedSessionEvent restartedEvent = Event(
-            SessionEventKind.CompletionAttemptRestarted,
-            new CompletionAttemptRestartedBody(
-                "attempt-3",
-                "attempt-2",
-                continuationPrepared
-            ),
+            SessionEventKind.CompletionAttemptStarted,
+            new CompletionAttemptStartedBody(),
             restarted,
             continuationPrepared
         );
         DecodedSessionEvent failedEvent = Event(
             SessionEventKind.CompletionAttemptFailed,
             new CompletionAttemptFailedBody(
-                "attempt-3",
                 CompletionTerminationKind.Failed,
                 "provider",
                 "known failure",
@@ -176,17 +178,21 @@ public sealed class SessionExecutionRecoveryContractTests : IDisposable {
                 "prepared",
                 [.. bootstrap, observationEvent, preparedEvent],
                 new SessionExecutionState(
-                    SessionExecutionPhase.AwaitingCompletion,
+                    SessionExecutionPhase.AwaitingCompletionDispatch,
                     SessionEventKind.CompletionRequestPrepared,
                     PendingRequestPreparedAddress: prepared,
-                    PendingCompletionAttemptId: "attempt-1",
-                    ActiveCorrelationId: correlation,
-                    ActiveCompletionAttemptAddress: prepared
+                    ActiveCorrelationId: correlation
                 )
             ),
             Scenario(
                 "action-with-tools",
-                [.. bootstrap, observationEvent, preparedEvent, actionEvent],
+                [
+                    .. bootstrap,
+                    observationEvent,
+                    preparedEvent,
+                    completionStartedEvent,
+                    actionEvent
+                ],
                 new SessionExecutionState(
                     SessionExecutionPhase.AwaitingToolExecution,
                     SessionEventKind.AgentActionProduced,
@@ -197,7 +203,14 @@ public sealed class SessionExecutionRecoveryContractTests : IDisposable {
             ),
             Scenario(
                 "tool-started",
-                [.. bootstrap, observationEvent, preparedEvent, actionEvent, started1Event],
+                [
+                    .. bootstrap,
+                    observationEvent,
+                    preparedEvent,
+                    completionStartedEvent,
+                    actionEvent,
+                    started1Event
+                ],
                 new SessionExecutionState(
                     SessionExecutionPhase.AwaitingToolExecution,
                     SessionEventKind.ToolExecutionStarted,
@@ -215,6 +228,7 @@ public sealed class SessionExecutionRecoveryContractTests : IDisposable {
                     .. bootstrap,
                     observationEvent,
                     preparedEvent,
+                    completionStartedEvent,
                     actionEvent,
                     started1Event,
                     result1Event
@@ -234,6 +248,7 @@ public sealed class SessionExecutionRecoveryContractTests : IDisposable {
                     .. bootstrap,
                     observationEvent,
                     preparedEvent,
+                    completionStartedEvent,
                     actionEvent,
                     started1Event,
                     result1Event,
@@ -256,6 +271,7 @@ public sealed class SessionExecutionRecoveryContractTests : IDisposable {
                     .. bootstrap,
                     observationEvent,
                     preparedEvent,
+                    completionStartedEvent,
                     actionEvent,
                     started1Event,
                     result1Event,
@@ -275,6 +291,7 @@ public sealed class SessionExecutionRecoveryContractTests : IDisposable {
                     .. bootstrap,
                     observationEvent,
                     preparedEvent,
+                    completionStartedEvent,
                     actionEvent,
                     started1Event,
                     result1Event,
@@ -283,13 +300,11 @@ public sealed class SessionExecutionRecoveryContractTests : IDisposable {
                     continuationPreparedEvent
                 ],
                 new SessionExecutionState(
-                    SessionExecutionPhase.AwaitingCompletion,
+                    SessionExecutionPhase.AwaitingCompletionDispatch,
                     SessionEventKind.CompletionRequestPrepared,
                     ToolExecutionSequenceCheckpoint: 2,
                     PendingRequestPreparedAddress: continuationPrepared,
-                    PendingCompletionAttemptId: "attempt-2",
-                    ActiveCorrelationId: correlation,
-                    ActiveCompletionAttemptAddress: continuationPrepared
+                    ActiveCorrelationId: correlation
                 )
             ),
             Scenario(
@@ -298,6 +313,7 @@ public sealed class SessionExecutionRecoveryContractTests : IDisposable {
                     .. bootstrap,
                     observationEvent,
                     preparedEvent,
+                    completionStartedEvent,
                     actionEvent,
                     started1Event,
                     result1Event,
@@ -308,10 +324,9 @@ public sealed class SessionExecutionRecoveryContractTests : IDisposable {
                 ],
                 new SessionExecutionState(
                     SessionExecutionPhase.AwaitingCompletion,
-                    SessionEventKind.CompletionAttemptRestarted,
+                    SessionEventKind.CompletionAttemptStarted,
                     ToolExecutionSequenceCheckpoint: 2,
                     PendingRequestPreparedAddress: continuationPrepared,
-                    PendingCompletionAttemptId: "attempt-3",
                     ActiveCorrelationId: correlation,
                     ActiveCompletionAttemptAddress: restarted
                 )
@@ -322,6 +337,7 @@ public sealed class SessionExecutionRecoveryContractTests : IDisposable {
                     .. bootstrap,
                     observationEvent,
                     preparedEvent,
+                    completionStartedEvent,
                     actionEvent,
                     started1Event,
                     result1Event,
@@ -343,6 +359,7 @@ public sealed class SessionExecutionRecoveryContractTests : IDisposable {
                     .. bootstrap,
                     observationEvent,
                     preparedEvent,
+                    completionStartedEvent,
                     Event(
                         SessionEventKind.AgentActionProduced,
                         new AgentActionProducedBody(
@@ -353,7 +370,7 @@ public sealed class SessionExecutionRecoveryContractTests : IDisposable {
                             ToolRuntimeIdentity: null
                         ),
                         terminalAction,
-                        prepared
+                        completionStarted
                     )
                 ],
                 new SessionExecutionState(
@@ -390,6 +407,7 @@ public sealed class SessionExecutionRecoveryContractTests : IDisposable {
                     .. bootstrap,
                     observationEvent,
                     preparedEvent,
+                    completionStartedEvent,
                     Event(
                         SessionEventKind.AgentActionProduced,
                         new AgentActionProducedBody(
@@ -400,7 +418,7 @@ public sealed class SessionExecutionRecoveryContractTests : IDisposable {
                             ToolRuntimeIdentity: null
                         ),
                         terminalAction,
-                        prepared
+                        completionStarted
                     ),
                     Event(
                         SessionEventKind.SystemPromptSetup,
@@ -458,7 +476,7 @@ public sealed class SessionExecutionRecoveryContractTests : IDisposable {
     [Theory]
     [InlineData(1)]
     [InlineData(32)]
-    public async Task ResumePreparedRefusal_DiagnosticsStayLocalAcrossColdPrefixLengths(
+    public async Task ResumeStartedRefusal_DiagnosticsStayLocalAcrossColdPrefixLengths(
         int turnCount
     ) {
         string path = CreateColdIdleJournal(turnCount);
@@ -468,7 +486,7 @@ public sealed class SessionExecutionRecoveryContractTests : IDisposable {
             path,
             runtime,
             new SessionJournalTestHooks(
-                SessionJournalFailpoint.AfterRequestPreparedCommitted
+                SessionJournalFailpoint.AfterCompletionAttemptStartedCommitted
             )
         )) {
             await CoherentArtifactSetTestFixture.ActivateAtCurrentHeadAsync(
@@ -491,7 +509,7 @@ public sealed class SessionExecutionRecoveryContractTests : IDisposable {
         SessionJournalReadDiagnostics delta =
             reopened.CaptureReadDiagnostics() - before;
         Assert.Equal(1, delta.HeaderPreviewReadCount);
-        Assert.Equal(2, delta.PayloadReadCount);
+        Assert.Equal(3, delta.PayloadReadCount);
         Assert.True(delta.LogicalPayloadByteCount > 0);
         Assert.Equal(0, delta.ChronologicalChainReadCount);
         Assert.Equal(0, delta.ChronologicalEventCount);
@@ -565,7 +583,6 @@ public sealed class SessionExecutionRecoveryContractTests : IDisposable {
     ).Unwrap().EventAddress;
 
     private static CompletionRequestPreparedBody PreparedBody(
-        string attemptId,
         string correlationId,
         string reason,
         EventAddress runtime,
@@ -576,8 +593,7 @@ public sealed class SessionExecutionRecoveryContractTests : IDisposable {
             new ToolDefinition("alpha", "Alpha", new ToolSchema.Object()),
             new ToolDefinition("beta", "Beta", new ToolSchema.Object())
         ];
-        return PreparedV2Fixture.Create(
-            attemptId,
+        return PreparedV3Fixture.Create(
             correlationId,
             reason,
             runtime,

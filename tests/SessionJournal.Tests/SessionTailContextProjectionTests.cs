@@ -268,7 +268,7 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
             .ToArray();
         Assert.Equal(
             ["observation", "tool-continuation", "tool-continuation"],
-            manifests.Select(static manifest => manifest.Attempt.Reason).ToArray()
+            manifests.Select(static manifest => manifest.Origin.Reason).ToArray()
         );
         Assert.All(
             manifests,
@@ -402,7 +402,6 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
     public async Task SendAsync_TailProviderToolCall_PersistsKnownFailureAndAllowsNextObservation() {
         string path = NewJournalPath();
         int responseIndex = 0;
-        string? failedAttemptId = null;
         var client = new CapturingCompletionClient(request => {
             ActionMessage message = responseIndex++ == 0
                 ? new ActionMessage([
@@ -456,7 +455,6 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
             );
             Assert.Equal(CompletionTerminationKind.Failed, failure.TerminationKind);
             Assert.Equal("atelia.host.unsupported-tool-call", failure.ProviderReason);
-            failedAttemptId = failure.AttemptId;
 
             int projectionCountBeforeRecovery = engine.FullProjectionInvocationCount;
             TurnResult recovered = await engine.SendAsync(
@@ -470,17 +468,6 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
         Assert.Equal(2, ReadAddressesByKind(path, SessionEventKind.CompletionRequestPrepared).Length);
         Assert.Single(ReadAddressesByKind(path, SessionEventKind.CompletionAttemptFailed));
         Assert.Single(ReadAddressesByKind(path, SessionEventKind.AgentActionProduced));
-        EventAddress firstPrepared =
-            ReadAddressesByKind(path, SessionEventKind.CompletionRequestPrepared)[0];
-        using var inspection = SessionJournalEngine.Open(path);
-        CompletionRequestPreparedBody prepared = Assert.IsType<CompletionRequestPreparedBody>(
-            SessionEventCodec.Decode(
-                SessionEventKind.CompletionRequestPrepared,
-                inspection.ReadPayloadBytes(firstPrepared),
-                out _
-            )
-        );
-        Assert.Equal(prepared.Attempt.AttemptId, failedAttemptId);
     }
 
     [Fact]
@@ -1177,8 +1164,8 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
         }
 
         SessionRuntime recoveryRuntime = CreateRuntime(client, artifact) with {
-            PreparedCompletionRecoveryPolicy =
-                SessionPreparedCompletionRecoveryPolicy.RestartWithNewAttempt
+            UncertainCompletionRecoveryPolicy =
+                SessionUncertainCompletionRecoveryPolicy.RestartWithNewAttempt
         };
         using var reopened = SessionJournalEngine.Open(path, recoveryRuntime);
         int projectionCount = reopened.FullProjectionInvocationCount;
@@ -1281,7 +1268,7 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
     }
 
     [Fact]
-    public async Task SendAsync_FailedBoundaryAttemptMismatch_FailsLocalCausalityProof() {
+    public async Task SendAsync_FailedBoundaryWithoutStarted_FailsLocalCausalityProof() {
         string path = NewJournalPath();
         var sourceClient = new CapturingCompletionClient(
             _ => throw new InvalidOperationException("failpoint must run first")
@@ -1309,7 +1296,6 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
                 prepared,
                 SessionEventKind.CompletionAttemptFailed,
                 new CompletionAttemptFailedBody(
-                    "different-attempt",
                     CompletionTerminationKind.Failed,
                     "test",
                     "mismatch",
@@ -1327,7 +1313,7 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
             () => reopened.SendAsync("must reject", CancellationToken.None)
         );
 
-        Assert.Contains("does not match active attempt", error.Message, StringComparison.Ordinal);
+        Assert.Contains("latest active attempt", error.Message, StringComparison.Ordinal);
         Assert.Empty(client.Requests);
     }
 

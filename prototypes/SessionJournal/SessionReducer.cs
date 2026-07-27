@@ -27,8 +27,6 @@ internal static class SessionReducer {
         EventAddress? pendingRequestPreparedAddress = null;
         CompletionRequestPreparedBody? pendingRequestManifest = null;
         EventAddress? activeCompletionAttemptAddress = null;
-        string? pendingCompletionAttemptId = null;
-        HashSet<string>? seenCompletionAttemptIds = null;
         string? activeCorrelationId = null;
 
         foreach (DecodedSessionEvent ev in events) {
@@ -61,8 +59,6 @@ internal static class SessionReducer {
                     pendingRequestPreparedAddress = null;
                     pendingRequestManifest = null;
                     activeCompletionAttemptAddress = null;
-                    pendingCompletionAttemptId = null;
-                    seenCompletionAttemptIds = null;
                     activeCorrelationId = null;
                     break;
                 }
@@ -104,8 +100,6 @@ internal static class SessionReducer {
                     pendingRequestPreparedAddress = null;
                     pendingRequestManifest = null;
                     activeCompletionAttemptAddress = null;
-                    pendingCompletionAttemptId = null;
-                    seenCompletionAttemptIds = null;
                     activeCorrelationId = BuildCorrelationId(ev.Address);
                     break;
                 }
@@ -120,15 +114,15 @@ internal static class SessionReducer {
                         );
                     }
                     if (activeCorrelationId is null
-                        || !string.Equals(body.Attempt.CorrelationId, activeCorrelationId, StringComparison.Ordinal)) {
+                        || !string.Equals(body.Origin.CorrelationId, activeCorrelationId, StringComparison.Ordinal)) {
                         throw new InvalidDataException($"{ev.Kind} at {ev.Address} has a correlation id that does not match the active turn.");
                     }
                     string expectedReason = headKind == SessionEventKind.ObservationAccepted
                         ? "observation"
                         : "tool-continuation";
-                    if (!string.Equals(body.Attempt.Reason, expectedReason, StringComparison.Ordinal)) {
+                    if (!string.Equals(body.Origin.Reason, expectedReason, StringComparison.Ordinal)) {
                         throw new InvalidDataException(
-                            $"{ev.Kind} at {ev.Address} reason '{body.Attempt.Reason}' does not match predecessor '{headKind}'."
+                            $"{ev.Kind} at {ev.Address} reason '{body.Origin.Reason}' does not match predecessor '{headKind}'."
                         );
                     }
                     if (body.Execution.LastIssuedToolExecutionSequence != toolExecutionSequenceCheckpoint) {
@@ -139,54 +133,28 @@ internal static class SessionReducer {
                     }
                     pendingRequestPreparedAddress = ev.Address;
                     pendingRequestManifest = body;
-                    activeCompletionAttemptAddress = ev.Address;
-                    pendingCompletionAttemptId = body.Attempt.AttemptId;
-                    seenCompletionAttemptIds = new HashSet<string>(StringComparer.Ordinal) {
-                        body.Attempt.AttemptId
-                    };
+                    activeCompletionAttemptAddress = null;
                     break;
                 }
-                case SessionEventKind.CompletionAttemptRestarted: {
+                case SessionEventKind.CompletionAttemptStarted: {
                     EnsureSessionCreated(ev, sessionCreated);
-                    var body = RequireBody<CompletionAttemptRestartedBody>(ev);
+                    _ = RequireBody<CompletionAttemptStartedBody>(ev);
                     if (headKind is not (SessionEventKind.CompletionRequestPrepared
-                            or SessionEventKind.CompletionAttemptRestarted)
-                        || pendingRequestPreparedAddress is not { } sourcePreparedAddress
-                        || activeCompletionAttemptAddress is not { } activeAttemptAddress
-                        || pendingCompletionAttemptId is not { } activeAttemptId
-                        || seenCompletionAttemptIds is null
-                        || ev.Parent != activeAttemptAddress) {
+                            or SessionEventKind.CompletionAttemptStarted)
+                        || pendingRequestPreparedAddress is null
+                        || ev.Parent != (activeCompletionAttemptAddress
+                            ?? pendingRequestPreparedAddress)) {
                         throw new InvalidDataException(
-                            $"{ev.Kind} at {ev.Address} must directly follow the active completion attempt."
-                        );
-                    }
-                    if (body.SourcePreparedAddress != sourcePreparedAddress) {
-                        throw new InvalidDataException(
-                            $"{ev.Kind} at {ev.Address} does not preserve the source completion-request-prepared address."
-                        );
-                    }
-                    if (!string.Equals(body.ReplacesAttemptId, activeAttemptId, StringComparison.Ordinal)) {
-                        throw new InvalidDataException(
-                            $"{ev.Kind} at {ev.Address} does not replace the active completion attempt."
-                        );
-                    }
-                    if (string.IsNullOrWhiteSpace(body.AttemptId)
-                        || string.IsNullOrWhiteSpace(body.ReplacesAttemptId)
-                        || string.Equals(body.AttemptId, body.ReplacesAttemptId, StringComparison.Ordinal)
-                        || !seenCompletionAttemptIds.Add(body.AttemptId)) {
-                        throw new InvalidDataException(
-                            $"{ev.Kind} at {ev.Address} must introduce an attempt id that is non-empty and distinct across the entire active attempt chain."
+                            $"{ev.Kind} at {ev.Address} must directly follow the Prepared event or latest active completion attempt."
                         );
                     }
                     activeCompletionAttemptAddress = ev.Address;
-                    pendingCompletionAttemptId = body.AttemptId;
                     break;
                 }
                 case SessionEventKind.CompletionAttemptFailed: {
                     EnsureSessionCreated(ev, sessionCreated);
                     var body = RequireBody<CompletionAttemptFailedBody>(ev);
-                    if (headKind is not (SessionEventKind.CompletionRequestPrepared
-                            or SessionEventKind.CompletionAttemptRestarted)
+                    if (headKind != SessionEventKind.CompletionAttemptStarted
                         || pendingRequestPreparedAddress is null
                         || activeCompletionAttemptAddress is not { } activeAttemptAddress
                         || ev.Parent != activeAttemptAddress) {
@@ -194,14 +162,9 @@ internal static class SessionReducer {
                             $"{ev.Kind} at {ev.Address} must directly follow the active completion attempt."
                         );
                     }
-                    if (!string.Equals(body.AttemptId, pendingCompletionAttemptId, StringComparison.Ordinal)) {
-                        throw new InvalidDataException($"{ev.Kind} at {ev.Address} does not match the active completion attempt.");
-                    }
                     pendingRequestPreparedAddress = null;
                     pendingRequestManifest = null;
                     activeCompletionAttemptAddress = null;
-                    pendingCompletionAttemptId = null;
-                    seenCompletionAttemptIds = null;
                     activeCorrelationId = null;
                     break;
                 }
@@ -272,8 +235,6 @@ internal static class SessionReducer {
                     pendingRequestPreparedAddress = null;
                     pendingRequestManifest = null;
                     activeCompletionAttemptAddress = null;
-                    pendingCompletionAttemptId = null;
-                    seenCompletionAttemptIds = null;
                     if (body.Action.ToolCalls.Count == 0) {
                         activeCorrelationId = null;
                         pendingToolRuntimeIdentity = null;
@@ -371,7 +332,6 @@ internal static class SessionReducer {
             toolExecutionSequenceCheckpoint,
             pendingRequestPreparedAddress,
             activeCompletionAttemptAddress,
-            pendingCompletionAttemptId,
             activeCorrelationId
         );
         return new SessionProjection(
@@ -402,7 +362,6 @@ internal static class SessionReducer {
         long toolExecutionSequenceCheckpoint,
         EventAddress? pendingRequestPreparedAddress,
         EventAddress? activeCompletionAttemptAddress,
-        string? pendingCompletionAttemptId,
         string? activeCorrelationId
     )
         => headKind switch {
@@ -421,12 +380,18 @@ internal static class SessionReducer {
                 ToolExecutionSequenceCheckpoint: toolExecutionSequenceCheckpoint,
                 ActiveCorrelationId: activeCorrelationId
             ),
-            SessionEventKind.CompletionRequestPrepared or SessionEventKind.CompletionAttemptRestarted => new SessionExecutionState(
+            SessionEventKind.CompletionRequestPrepared => new SessionExecutionState(
+                SessionExecutionPhase.AwaitingCompletionDispatch,
+                headKind,
+                ToolExecutionSequenceCheckpoint: toolExecutionSequenceCheckpoint,
+                PendingRequestPreparedAddress: pendingRequestPreparedAddress,
+                ActiveCorrelationId: activeCorrelationId
+            ),
+            SessionEventKind.CompletionAttemptStarted => new SessionExecutionState(
                 SessionExecutionPhase.AwaitingCompletion,
                 headKind,
                 ToolExecutionSequenceCheckpoint: toolExecutionSequenceCheckpoint,
                 PendingRequestPreparedAddress: pendingRequestPreparedAddress,
-                PendingCompletionAttemptId: pendingCompletionAttemptId,
                 ActiveCorrelationId: activeCorrelationId,
                 ActiveCompletionAttemptAddress: activeCompletionAttemptAddress
             ),

@@ -234,7 +234,7 @@ internal static class SessionTailContextProjection {
             case SessionEventKind.ToolExecutionStarted:
             case SessionEventKind.ToolResultObserved:
             case SessionEventKind.CompletionRequestPrepared:
-            case SessionEventKind.CompletionAttemptRestarted:
+            case SessionEventKind.CompletionAttemptStarted:
                 throw new InvalidDataException($"Recap artifact anchor kind '{kind}' is not replay-safe in CS-3B.");
             default:
                 throw new InvalidDataException($"Unsupported recap artifact anchor kind '{kind}'.");
@@ -263,9 +263,7 @@ internal static class SessionTailContextProjection {
         SessionToolRuntimeIdentity? pendingToolRuntimeIdentity = null;
         CompletionRequestPreparedBody? sourcePrepared = null;
         EventAddress? sourcePreparedAddress = null;
-        string? activeAttemptId = null;
         EventAddress? activeAttemptAddress = null;
-        HashSet<string>? seenAttemptIds = null;
         SessionEventKind? priorKind = executionSeed?.State.HeadKind;
         EventAddress? priorAddress = executionSeed?.Head ?? seed.Head;
 
@@ -324,45 +322,37 @@ internal static class SessionTailContextProjection {
                     break;
                 case SessionEventKind.CompletionAttemptFailed: {
                     EnsureNoOpenTool(ev, openAction);
-                    CompletionAttemptFailedBody failed =
-                        RequireBody<CompletionAttemptFailedBody>(ev);
+                    _ = RequireBody<CompletionAttemptFailedBody>(ev);
                     if (phase != SessionExecutionPhase.AwaitingCompletion
                         || sourcePrepared is null
-                        || ev.Parent != activeAttemptAddress
-                        || !string.Equals(failed.AttemptId, activeAttemptId, StringComparison.Ordinal)) {
+                        || ev.Parent != activeAttemptAddress) {
                         throw new InvalidDataException(
                             $"{ev.Kind} at {ev.Address} does not fail the active suffix completion attempt."
                         );
                     }
                     sourcePrepared = null;
                     sourcePreparedAddress = null;
-                    activeAttemptId = null;
                     activeAttemptAddress = null;
-                    seenAttemptIds = null;
                     activeCorrelationId = null;
                     phase = SessionExecutionPhase.TurnFailed;
                     break;
                 }
-                case SessionEventKind.CompletionAttemptRestarted: {
+                case SessionEventKind.CompletionAttemptStarted: {
                     EnsureNoOpenTool(ev, openAction);
-                    CompletionAttemptRestartedBody restarted =
-                        RequireBody<CompletionAttemptRestartedBody>(ev);
-                    if (phase != SessionExecutionPhase.AwaitingCompletion
+                    _ = RequireBody<CompletionAttemptStartedBody>(ev);
+                    if (phase is not (
+                            SessionExecutionPhase.AwaitingCompletionDispatch
+                            or SessionExecutionPhase.AwaitingCompletion)
                         || sourcePrepared is null
                         || sourcePreparedAddress is null
-                        || seenAttemptIds is null
-                        || restarted.SourcePreparedAddress != sourcePreparedAddress
-                        || ev.Parent != activeAttemptAddress
-                        || !string.Equals(restarted.ReplacesAttemptId, activeAttemptId, StringComparison.Ordinal)
-                        || string.IsNullOrWhiteSpace(restarted.AttemptId)
-                        || string.Equals(restarted.AttemptId, restarted.ReplacesAttemptId, StringComparison.Ordinal)
-                        || !seenAttemptIds.Add(restarted.AttemptId)) {
+                        || ev.Parent != (activeAttemptAddress
+                            ?? sourcePreparedAddress)) {
                         throw new InvalidDataException(
-                            $"{ev.Kind} at {ev.Address} does not replace the active suffix Prepared attempt."
+                            $"{ev.Kind} at {ev.Address} does not continue the active suffix Prepared attempt chain."
                         );
                     }
-                    activeAttemptId = restarted.AttemptId;
                     activeAttemptAddress = ev.Address;
+                    phase = SessionExecutionPhase.AwaitingCompletion;
                     break;
                 }
                 case SessionEventKind.CompletionRequestPrepared: {
@@ -382,8 +372,8 @@ internal static class SessionTailContextProjection {
                             $"{ev.Kind} at {ev.Address} does not follow a completion boundary."
                         )
                     };
-                    if (!string.Equals(prepared.Attempt.Reason, expectedReason, StringComparison.Ordinal)
-                        || !string.Equals(prepared.Attempt.CorrelationId, activeCorrelationId, StringComparison.Ordinal)) {
+                    if (!string.Equals(prepared.Origin.Reason, expectedReason, StringComparison.Ordinal)
+                        || !string.Equals(prepared.Origin.CorrelationId, activeCorrelationId, StringComparison.Ordinal)) {
                         throw new InvalidDataException(
                             $"{ev.Kind} at {ev.Address} reason or correlation does not match its suffix completion boundary."
                         );
@@ -398,13 +388,9 @@ internal static class SessionTailContextProjection {
                         prepared.Execution.LastIssuedToolExecutionSequence;
                     sourcePrepared = prepared;
                     sourcePreparedAddress = ev.Address;
-                    activeAttemptId = prepared.Attempt.AttemptId;
-                    activeAttemptAddress = ev.Address;
-                    seenAttemptIds = new HashSet<string>(StringComparer.Ordinal) {
-                        prepared.Attempt.AttemptId
-                    };
-                    activeCorrelationId = prepared.Attempt.CorrelationId;
-                    phase = SessionExecutionPhase.AwaitingCompletion;
+                    activeAttemptAddress = null;
+                    activeCorrelationId = prepared.Origin.CorrelationId;
+                    phase = SessionExecutionPhase.AwaitingCompletionDispatch;
                     break;
                 }
                 case SessionEventKind.ObservationAccepted:
@@ -422,9 +408,7 @@ internal static class SessionTailContextProjection {
                         $"atelia.session-journal.turn.v1:{EventAddressTextCodec.Format(ev.Address)}";
                     sourcePrepared = null;
                     sourcePreparedAddress = null;
-                    activeAttemptId = null;
                     activeAttemptAddress = null;
-                    seenAttemptIds = null;
                     phase = SessionExecutionPhase.AwaitingAgentAction;
                     break;
                 case SessionEventKind.AgentActionProduced:
@@ -470,7 +454,8 @@ internal static class SessionTailContextProjection {
                                 : sourcePrepared?.ToolSet.RuntimeIdentity;
                         if (sourcePrepared is null
                             || ev.Parent != activeAttemptAddress
-                            || !string.Equals(actionBody.CorrelationId, sourcePrepared.Attempt.CorrelationId, StringComparison.Ordinal)
+                            || activeAttemptAddress is null
+                            || !string.Equals(actionBody.CorrelationId, sourcePrepared.Origin.CorrelationId, StringComparison.Ordinal)
                             || actionBody.Execution != sourcePrepared.Execution
                             || actionBody.ToolRuntimeIdentity != expectedRuntimeIdentity) {
                             throw new InvalidDataException(
@@ -481,9 +466,7 @@ internal static class SessionTailContextProjection {
                     activeCorrelationId = actionBody.CorrelationId;
                     sourcePrepared = null;
                     sourcePreparedAddress = null;
-                    activeAttemptId = null;
                     activeAttemptAddress = null;
-                    seenAttemptIds = null;
                     context.Add(action);
                     if (action.ToolCalls.Count > 0) {
                         pendingToolRuntimeIdentity = actionBody.ToolRuntimeIdentity
@@ -596,8 +579,9 @@ internal static class SessionTailContextProjection {
         SessionEventKind.ObservationAccepted
             or SessionEventKind.ToolResultObserved =>
                 SessionExecutionPhase.AwaitingAgentAction,
-        SessionEventKind.CompletionRequestPrepared
-            or SessionEventKind.CompletionAttemptRestarted =>
+        SessionEventKind.CompletionRequestPrepared =>
+                SessionExecutionPhase.AwaitingCompletionDispatch,
+        SessionEventKind.CompletionAttemptStarted =>
                 SessionExecutionPhase.AwaitingCompletion,
         SessionEventKind.CompletionAttemptFailed =>
             SessionExecutionPhase.TurnFailed,

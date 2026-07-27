@@ -367,10 +367,10 @@ stateDiagram-v2
   attempt 替代，再发起调用。
 - 不得把新 completion 假装成旧 attempt 的同一响应。
 
-当前 CS-3C 的无 capability fallback 使用 `completion-attempt-restarted`：source Prepared manifest
-保持 request 唯一真源，Restarted 以 Parent 串联 active attempt，并记录新/replaces attempt id。
+current 无 capability fallback 使用 `completion-attempt-started`：source Prepared manifest
+保持 request 唯一真源，Started 以 Parent 串联 active attempt，event address 即内部 attempt identity。
 `RestartWithNewAttempt` 是明确的 at-least-once 选择；它保留审计身份，但无法排除旧 attempt 已在 provider
-侧成功或产生费用。默认 `RefuseUncertain` 不进行外部调用。显式 restart 当前要求调用方独占 branch
+侧成功或产生费用。默认 `Refuse` 不进行外部调用。显式 retry 当前要求调用方独占 branch
 driver；CAS 可以保护 journal attachment，但无法撤回已经并发发出的 provider 请求，跨进程
 lease / single-flight 留给 provider capability 阶段。
 
@@ -580,8 +580,8 @@ invocation、`runtime-config-setup` 与 `system-prompt-setup` provenance。
 > materialization，并为无工具 observation `SendAsync` / `ResumeAsync` 增加不调用 `Project()` 的
 > bounded recent-idle fast path；通用 execution projection 与其他 phase 仍是 full replay。
 > CS-3C 已实现单一 `SessionPreparedRequestReconstructor`，在 prepare 前与 reopen 时都从 manifest
-> references 重建并核对 exact canonical bytes。Prepared/Restarted 默认 `RefuseUncertain`；显式
-> `RestartWithNewAttempt` 会先提交 kind 11，形成 `P -> R1 -> R2` 可审计 attempt 链，再调用 provider。
+> references 重建并核对 exact canonical bytes。此处记录的是 D7 前历史合同；current Prepared-only
+> 自动派发，Started 才默认 `Refuse`；显式 `RestartWithNewAttempt` 形成 `P -> S1 -> S2` 地址链。
 > explicit-artifact-tail 的 reopen 使用内联 snapshot，不依赖 derived sidecar，也不调用 `Project()`。
 > 默认 refusal 与 tail terminal validation 只做近头 attempt topology proof，不会借 reconstructor
 > 暗中退化为 full replay；后者同时支持 observation source，以及由 validated full-raw writer 提交的
@@ -615,7 +615,7 @@ canonical request。execution resolver 本身不读取 artifact 文本。
 
 验收：
 
-- Observation、Prepared/Restarted、Failure、Action、ToolStarted、ToolResult 和 Idle 恢复均不调用
+- Observation、Prepared/Started、Failure、Action、ToolStarted、ToolResult 和 Idle 恢复均不调用
   `Project()`。
 - tail execution state 与 full reducer reference oracle 一致。
 - 10k+ 冷历史前缀不增加正常 reopen 的 payload reads；读取量只随当前 operational dependency span
@@ -672,6 +672,14 @@ canonical request。execution resolver 本身不读取 artifact 文本。
 > 成功。真实 CLI 没有 online Send/tool-loop smoke，因此步骤 7/8 继续由 deterministic Engine、
 > failpoint 与 1-vs-10001 performance gates 验收；不把非确定的真实 provider tool behavior 混入迁移
 > closeout。
+
+> **2026-07-27 CS-3D7**：Prepared/provider attempt 已完成对称化。Prepared 升为 v3 并以
+> `origin={correlationId,reason}` 取代 attempt；kind 11 retired，新增 kind 13
+> `CompletionAttemptStarted` 严格空 body。Prepared-only head 是
+> `AwaitingCompletionDispatch`，显式 Resume 自动重建/验证并先写 Started；Started head 才是 uncertain
+> `AwaitingCompletion`，默认 `Refuse`，显式 retry 追加下一个 Started。Action/Failed 只允许直接继承
+> 最新 Started。详见
+> [D7 设计记录](../SessionJournal/done/prepared-provider-attempt-symmetry-design.md)。
 
 ### CS-4：可恢复 Tool Loop
 

@@ -8,7 +8,6 @@ public sealed class SessionCompletionFailureCodecTests {
     [Fact]
     public void CompletionAttemptFailed_RoundtripsCanonicalPayload() {
         var body = new CompletionAttemptFailedBody(
-            "attempt-1",
             CompletionTerminationKind.Incomplete,
             "length",
             "max tokens",
@@ -20,8 +19,7 @@ public sealed class SessionCompletionFailureCodecTests {
             SessionEventCodec.Decode(SessionEventKind.CompletionAttemptFailed, encoded, out int version)
         );
 
-        Assert.Equal(1, version);
-        Assert.Equal(body.AttemptId, decoded.AttemptId);
+        Assert.Equal(2, version);
         Assert.Equal(body.TerminationKind, decoded.TerminationKind);
         Assert.Equal(body.ProviderReason, decoded.ProviderReason);
         Assert.Equal(body.Detail, decoded.Detail);
@@ -30,10 +28,10 @@ public sealed class SessionCompletionFailureCodecTests {
     }
 
     [Theory]
-    [InlineData("{\"v\":1,\"unknown\":true,\"body\":{\"attemptId\":\"a\",\"terminationKind\":\"failed\",\"providerReason\":null,\"detail\":null,\"errors\":[]}}")]
-    [InlineData("{\"v\":1,\"body\":{\"attemptId\":\"a\",\"attemptId\":\"b\",\"terminationKind\":\"failed\",\"providerReason\":null,\"detail\":null,\"errors\":[]}}")]
-    [InlineData("{\"v\":1,\"body\":{\"attemptId\":\"a\",\"terminationKind\":\"completed\",\"providerReason\":null,\"detail\":null,\"errors\":[]}}")]
-    [InlineData("{\"v\":1,\"body\":{\"attemptId\":\"a\",\"terminationKind\":\"failed\",\"providerReason\":null,\"detail\":null,\"errors\":[],\"unknown\":true}}")]
+    [InlineData("{\"v\":2,\"unknown\":true,\"body\":{\"terminationKind\":\"failed\",\"providerReason\":null,\"detail\":null,\"errors\":[]}}")]
+    [InlineData("{\"v\":2,\"body\":{\"terminationKind\":\"failed\",\"terminationKind\":\"incomplete\",\"providerReason\":null,\"detail\":null,\"errors\":[]}}")]
+    [InlineData("{\"v\":2,\"body\":{\"terminationKind\":\"completed\",\"providerReason\":null,\"detail\":null,\"errors\":[]}}")]
+    [InlineData("{\"v\":2,\"body\":{\"terminationKind\":\"failed\",\"providerReason\":null,\"detail\":null,\"errors\":[],\"unknown\":true}}")]
     public void CompletionAttemptFailed_StrictDecodeRejectsInvalidPayload(string json) {
         Assert.Throws<InvalidDataException>(() => SessionEventCodec.Decode(
             SessionEventKind.CompletionAttemptFailed,

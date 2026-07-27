@@ -1,29 +1,28 @@
 # SessionJournal Tail Execution Recovery 后续化简候选
 
-> **状态**：Current Research / CS-3D6 后候选集
+> **状态**：Current Research / CS-3D7 后候选集
 > **日期**：2026-07-27
 > **当前基线**：[Tail-only Execution Recovery Design](tail-execution-recovery-design.md)
 > **已完成计划**：
 > [CS-3D6：Coherent-only Request Manifest 化简计划](done/coherent-request-manifest-simplification-plan.md)
+> [CS-3D7：Prepared / Provider Attempt 对称化](done/prepared-provider-attempt-symmetry-design.md)
 > **目标**：只保留在 current trunk 上仍成立的化简候选；不以牺牲 crash recovery、raw provenance、
 > exact reopen 或 bounded reads 换取表面简洁。
 
 ## 0. 当前结论
 
-CS-3D6 已经完成 request manifest 的主要收口：online 只有 coherent artifact-tail、
-`CompletionRequestPrepared` 只有 v2、legacy reader/writer 已删除，并已用真实 legacy import、两个
+CS-3D6 已经完成 request manifest 的主要收口；CS-3D7 又将 Prepared 与 provider attempt 分离：
+online 只有 coherent artifact-tail，`CompletionRequestPrepared` 只有 v3，legacy reader/writer 已删除，并已用真实 legacy import、两个
 maintainer artifact 和一次 exact checkpoint 验收。已实施内容不在本文重复，详见
 [归档计划](done/coherent-request-manifest-simplification-plan.md)。
 
-当前仍值得研究的化简候选只有四组：
+当前仍值得研究的化简候选只有三组：
 
 1. **Request snapshot spike**：比较 current recipe-authoritative reopen 与 exact canonical request
    snapshot；先测 stored bytes 和恢复开销，不先改 wire。
-2. **Attempt 对称化**：把“request 已 durable”和“某次 provider attempt 已开始”拆成不同事件，
-   统一首次调用与 retry。
-3. **ArtifactSet definition / activation 解耦**：先确认 active/default set 是否真是长期 session
+2. **ArtifactSet definition / activation 解耦**：先确认 active/default set 是否真是长期 session
    state，再决定是否取消 current latest-equals-selected 约束。
-4. **共享正向 operational semantics**：减少 full reducer、suffix fold 和 validator 的规则复述，
+3. **共享正向 operational semantics**：减少 full reducer、suffix fold 和 validator 的规则复述，
    但保留独立 reverse tail collector。
 
 `SessionJournalEngine` 的职责拆分仍有价值，但应作为上述语义收口的结构性后续，而不是先移动代码。
@@ -49,7 +48,8 @@ exact coherent ArtifactSet
 + paired governing setup refs
 + visible tool/runtime identity
 + dispatch target
--> CompletionRequestPrepared v2
+-> CompletionRequestPrepared v3
+-> CompletionAttemptStarted
 ```
 
 具体事实：
@@ -64,8 +64,8 @@ exact coherent ArtifactSet
   `Project()`。
 - `SessionReducer` 继续提供 root-to-head full audit/oracle；`SessionTailContextProjection.FoldSuffix`
   是 seeded request-context fold；offline validator 仍对不可信 raw 做完整只读验证。
-- `CompletionRequestPrepared` 同时建立首次 attempt identity；retry 由
-  `CompletionAttemptRestarted` 表示。
+- `CompletionRequestPrepared` 只保存 request origin；每次 dispatch 由严格空 body 的
+  `CompletionAttemptStarted` 表示，其 event address 是内部 attempt identity。
 - `ArtifactSetCommitted` 同时扮演 coherent set definition 和 active/latest checkpoint；current Engine
   选择 completion boundary 最近的合法 activation。
 
@@ -116,7 +116,7 @@ attempt chain、ArtifactSet activation 与 operational legality 仍有足够大�
 
 ### 2.1 当前问题
 
-Prepared v2 已经只有一个 coherent recipe，但 exact reopen 仍需要：
+Prepared v3 已经只有一个 coherent recipe，但 exact reopen 仍需要：
 
 1. 读取 paired setup payload；
 2. 读取并验证 exact raw range；
@@ -179,66 +179,10 @@ online reopen 只信 committed snapshot + commitment；offline audit 可以选�
 - 不恢复第二种 bootstrap/full-raw Prepared shape。
 - 不因 snapshot 可 reopen 就删除 provenance；raw range、setup 与 artifact selection 仍需审计。
 
-## 3. 候选 B：Prepared 与 provider attempt 对称化
+## 3. 已采纳 B：Prepared 与 provider attempt 对称化
 
-### 3.1 当前不对称
-
-current event flow：
-
-```text
-completion boundary
--> CompletionRequestPrepared       // request durable，同时是首次 active attempt
--> AgentActionProduced | CompletionAttemptFailed
-
-CompletionRequestPrepared
--> CompletionAttemptRestarted      // 第二次及以后 attempt
--> AgentActionProduced | CompletionAttemptFailed
-```
-
-Prepared commit 后、provider 实际发送前发生崩溃，与“请求已发送但结果未知”共享同一个恢复状态。首次
-attempt 和 restart 也由两种 body、两套 chain validation/failpoint 分支表达。
-
-### 3.2 候选目标
-
-```text
-completion boundary
--> CompletionRequestPrepared       // request durable，尚未声明调用 provider
--> CompletionAttemptStarted        // 每一次调用前都写
--> AgentActionProduced | CompletionAttemptFailed
-```
-
-retry 继续引用 exact source Prepared，但与首次调用使用同一种 `CompletionAttemptStarted`。
-
-潜在收益：
-
-- Prepared head 可明确表示 `ReadyToDispatch`；
-- AttemptStarted head 才进入 uncertain external-call window；
-- 首次与 retry 共用同一个 routing、identity chain 和 validator；
-- 可删除 `CompletionAttemptRestarted`、`ReplacesAttemptId` 与 initial/restart 两套状态分支；
-- attempt identity 可考虑直接使用 Started event address，减少另造字符串 identity。
-
-### 3.3 不能夸大的收益
-
-`CompletionAttemptStarted` 仍不能原子化“raw event durable”与“网络请求已经被 provider 接收”。它只把
-安全的 Prepared 状态与 uncertain attempt 状态分开。真正的 exactly-once 仍需要 provider idempotency
-key、result lookup 或显式 reconcile policy。
-
-实施前必须决定：
-
-- Started event address 是否足以作为内部 attempt identity；
-- provider idempotency key 如何从 durable identity 派生；
-- Prepared 状态 reopen 后是自动 dispatch，还是由显式 driver policy 决定；
-- Started 后无 terminal result 时的 refuse/lookup/restart 合同；
-- v1 kind 的实验 journal 是重建还是离线迁移；不得加入 silent compatibility。
-
-### 3.4 建议切片
-
-1. 先写 event-sequence truth table 与 failpoint matrix，不改 production。
-2. 为首次/retry 建立同一 oracle tests。
-3. 对涉及的 event kind 单独升级 body schema；不发动全局 wire cut。
-4. 切换 Engine、tail resolver、full reducer、offline validator。
-5. 删除旧 Restarted kind/path 与重复 fixtures。
-6. 重跑 exact-head CAS、provider failure/reopen 和 1-vs-10001 gates。
+该候选已由 CS-3D7 实施并从研究列表移除。current truth table、wire cut、recovery policy 与验收
+证据见 [Prepared / Provider Attempt 对称化设计](done/prepared-provider-attempt-symmetry-design.md)。
 
 ## 4. 候选 C：ArtifactSet definition 与 active/default selection 解耦
 

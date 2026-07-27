@@ -5,10 +5,10 @@ using Atelia.EventJournal;
 namespace Atelia.SessionJournal;
 
 /// <summary>
-/// Identity and replacement relationship of one durable completion attempt.
+/// Stable origin metadata for one prepared request. Provider-attempt identity is
+/// the address of the CompletionAttemptStarted event and is deliberately absent here.
 /// </summary>
-internal sealed record SessionRequestAttempt(
-    string AttemptId,
+internal sealed record SessionRequestOrigin(
     string CorrelationId,
     string Reason
 );

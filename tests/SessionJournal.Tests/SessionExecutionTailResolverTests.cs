@@ -58,7 +58,6 @@ public sealed class SessionExecutionTailResolverTests : IDisposable {
             observation,
             SessionEventKind.CompletionRequestPrepared,
             PreparedBody(
-                "attempt-1",
                 correlation,
                 "observation",
                 runtime,
@@ -69,12 +68,8 @@ public sealed class SessionExecutionTailResolverTests : IDisposable {
         EventAddress restarted = Commit(
             journal,
             prepared,
-            SessionEventKind.CompletionAttemptRestarted,
-            new CompletionAttemptRestartedBody(
-                "attempt-2",
-                "attempt-1",
-                prepared
-            )
+            SessionEventKind.CompletionAttemptStarted,
+            new CompletionAttemptStartedBody()
         );
         EventAddress action = Commit(
             journal,
@@ -133,7 +128,6 @@ public sealed class SessionExecutionTailResolverTests : IDisposable {
             result2,
             SessionEventKind.CompletionRequestPrepared,
             PreparedBody(
-                "attempt-3",
                 correlation,
                 "tool-continuation",
                 runtime,
@@ -141,12 +135,17 @@ public sealed class SessionExecutionTailResolverTests : IDisposable {
                 checkpoint: 2
             )
         );
-        EventAddress failed = Commit(
+        EventAddress completionStarted = Commit(
             journal,
             continuationPrepared,
+            SessionEventKind.CompletionAttemptStarted,
+            new CompletionAttemptStartedBody()
+        );
+        EventAddress failed = Commit(
+            journal,
+            completionStarted,
             SessionEventKind.CompletionAttemptFailed,
             new CompletionAttemptFailedBody(
-                "attempt-3",
                 CompletionTerminationKind.Failed,
                 "provider-failure",
                 "expected",
@@ -276,7 +275,6 @@ public sealed class SessionExecutionTailResolverTests : IDisposable {
             observation,
             SessionEventKind.CompletionRequestPrepared,
             PreparedBody(
-                "pending-attempt",
                 Correlation(observation),
                 "observation",
                 bootstrap[0],
@@ -290,7 +288,7 @@ public sealed class SessionExecutionTailResolverTests : IDisposable {
             SessionExecutionTailResolver.Resolve(reader, prepared);
 
         Assert.Equal(
-            SessionExecutionPhase.AwaitingCompletion,
+            SessionExecutionPhase.AwaitingCompletionDispatch,
             recovery.State.Phase
         );
         Assert.Equal(2, recovery.Diagnostics.PayloadReadCount);
@@ -506,7 +504,6 @@ public sealed class SessionExecutionTailResolverTests : IDisposable {
     [InlineData("wrong-correlation")]
     [InlineData("wrong-checkpoint")]
     [InlineData("wrong-runtime")]
-    [InlineData("wrong-attempt")]
     [InlineData("duplicate-call-id")]
     [InlineData("result-before-start")]
     [InlineData("out-of-order-start")]
@@ -548,7 +545,6 @@ public sealed class SessionExecutionTailResolverTests : IDisposable {
             observation,
             SessionEventKind.CompletionRequestPrepared,
             PreparedBody(
-                "attempt-1",
                 correlation,
                 "observation",
                 runtime,
@@ -556,30 +552,12 @@ public sealed class SessionExecutionTailResolverTests : IDisposable {
                 checkpoint: 0
             )
         );
-        if (mutation == "wrong-attempt") {
-            EventAddress malformedRestart = Commit(
-                journal,
-                prepared,
-                SessionEventKind.CompletionAttemptRestarted,
-                new CompletionAttemptRestartedBody(
-                    "attempt-2",
-                    "not-attempt-1",
-                    prepared
-                )
-            );
-            var attemptReader = new SessionJournalEventReader(journal);
-            Assert.Throws<InvalidDataException>(() =>
-                SessionExecutionTailResolver.Resolve(
-                    attemptReader,
-                    malformedRestart
-                )
-            );
-            Assert.Equal(
-                0,
-                attemptReader.CaptureDiagnostics().ChronologicalChainReadCount
-            );
-            return;
-        }
+        EventAddress completionStarted = Commit(
+            journal,
+            prepared,
+            SessionEventKind.CompletionAttemptStarted,
+            new CompletionAttemptStartedBody()
+        );
         RawToolCall[] calls = mutation == "duplicate-call-id"
             ? [
                 new RawToolCall("alpha", "call-1", "{}"),
@@ -591,7 +569,7 @@ public sealed class SessionExecutionTailResolverTests : IDisposable {
             ];
         EventAddress action = Commit(
             journal,
-            prepared,
+            completionStarted,
             mutation == "wrong-parent"
                 ? SessionEventKind.ImportedAgentAction
                 : SessionEventKind.AgentActionProduced,
@@ -826,7 +804,6 @@ public sealed class SessionExecutionTailResolverTests : IDisposable {
     );
 
     private static CompletionRequestPreparedBody PreparedBody(
-        string attemptId,
         string correlation,
         string reason,
         EventAddress runtime,
@@ -837,8 +814,7 @@ public sealed class SessionExecutionTailResolverTests : IDisposable {
             new ToolDefinition("alpha", "Alpha", new ToolSchema.Object()),
             new ToolDefinition("beta", "Beta", new ToolSchema.Object())
         ];
-        return PreparedV2Fixture.Create(
-            attemptId,
+        return PreparedV3Fixture.Create(
             correlation,
             reason,
             runtime,

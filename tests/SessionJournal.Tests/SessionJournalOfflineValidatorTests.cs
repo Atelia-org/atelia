@@ -217,12 +217,17 @@ public sealed class SessionJournalOfflineValidatorTests : IDisposable {
                 SessionEventKind.CompletionRequestPrepared,
                 corrupt
             );
-            _ = Commit(
+            EventAddress started = Commit(
                 journal,
                 corruptPrepared,
+                SessionEventKind.CompletionAttemptStarted,
+                new CompletionAttemptStartedBody()
+            );
+            _ = Commit(
+                journal,
+                started,
                 SessionEventKind.CompletionAttemptFailed,
                 new CompletionAttemptFailedBody(
-                    corrupt.Attempt.AttemptId,
                     CompletionTerminationKind.Failed,
                     "offline-test",
                     "terminal",
@@ -290,8 +295,7 @@ public sealed class SessionJournalOfflineValidatorTests : IDisposable {
             SessionRequestCanonicalizer.CreateCommitment(request);
         string reason = "observation";
         return new CompletionRequestPreparedBody(
-            new SessionRequestAttempt(
-                "attempt-01",
+            new SessionRequestOrigin(
                 $"atelia.session-journal.turn.v1:{EventAddressTextCodec.Format(rawEndInclusive)}",
                 reason
             ),

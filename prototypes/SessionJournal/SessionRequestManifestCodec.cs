@@ -12,7 +12,7 @@ internal static class SessionRequestManifestCodec {
         var buffer = new ArrayBufferWriter<byte>();
         using (var writer = new Utf8JsonWriter(buffer, SessionRequestCanonicalizer.WriterOptions)) {
             writer.WriteStartObject();
-            WriteAttempt(writer, body.Attempt);
+            WriteOrigin(writer, body.Origin);
             WriteExecution(writer, body.Execution);
             WritePlan(writer, body.Plan);
             WriteSetups(writer, body.Setups);
@@ -30,7 +30,7 @@ internal static class SessionRequestManifestCodec {
         RequireExactProperties(
             body,
             "completion-request-prepared body",
-            "attempt",
+            "origin",
             "execution",
             "plan",
             "setups",
@@ -41,7 +41,7 @@ internal static class SessionRequestManifestCodec {
             "commitment"
         );
         var result = new CompletionRequestPreparedBody(
-            ReadAttempt(ReadRequiredObject(body, "attempt")),
+            ReadOrigin(ReadRequiredObject(body, "origin")),
             ReadExecution(ReadRequiredObject(body, "execution")),
             ReadPlan(ReadRequiredObject(body, "plan")),
             ReadSetups(ReadRequiredObject(body, "setups")),
@@ -57,9 +57,8 @@ internal static class SessionRequestManifestCodec {
 
     public static void Validate(CompletionRequestPreparedBody body) {
         ArgumentNullException.ThrowIfNull(body);
-        RequireText(body.Attempt.AttemptId, "attempt.attemptId");
-        RequireText(body.Attempt.CorrelationId, "attempt.correlationId");
-        RequireText(body.Attempt.Reason, "attempt.reason");
+        RequireText(body.Origin.CorrelationId, "origin.correlationId");
+        RequireText(body.Origin.Reason, "origin.reason");
         if (body.Execution.LastIssuedToolExecutionSequence < 0) {
             throw new ArgumentOutOfRangeException(
                 nameof(body),
@@ -71,7 +70,7 @@ internal static class SessionRequestManifestCodec {
         RequireSha256(body.Plan.RawRangeSha256, "plan.rawRangeSha256");
         if (body.Plan.ArtifactInputs.Length < 2) {
             throw new InvalidDataException(
-                "Prepared v2 requires at least two plan.artifactInputs entries."
+                "Prepared v3 requires at least two plan.artifactInputs entries."
             );
         }
         ValidateArtifactSetReference(body.Plan.ActiveArtifactSet);
@@ -84,12 +83,12 @@ internal static class SessionRequestManifestCodec {
                 + (string.IsNullOrWhiteSpace(input.ContextSnapshot.ActionMessage) ? 0 : 1);
             if (populatedCarriers != 1) {
                 throw new InvalidDataException(
-                    "Prepared v2 artifact contributions must populate exactly one contextSnapshot carrier."
+                    "Prepared v3 artifact contributions must populate exactly one contextSnapshot carrier."
                 );
             }
             if (!artifactIds.Add(input.ArtifactId)) {
                 throw new InvalidDataException(
-                    "Prepared v2 requires exact artifact ids to be unique."
+                    "Prepared v3 requires exact artifact ids to be unique."
                 );
             }
         }
@@ -182,9 +181,8 @@ internal static class SessionRequestManifestCodec {
         );
     }
 
-    private static void WriteAttempt(Utf8JsonWriter writer, SessionRequestAttempt value) {
-        writer.WriteStartObject("attempt");
-        writer.WriteString("attemptId", value.AttemptId);
+    private static void WriteOrigin(Utf8JsonWriter writer, SessionRequestOrigin value) {
+        writer.WriteStartObject("origin");
         writer.WriteString("correlationId", value.CorrelationId);
         writer.WriteString("reason", value.Reason);
         writer.WriteEndObject();
@@ -288,10 +286,9 @@ internal static class SessionRequestManifestCodec {
         writer.WriteEndObject();
     }
 
-    private static SessionRequestAttempt ReadAttempt(JsonElement element) {
-        RequireExactProperties(element, "attempt", "attemptId", "correlationId", "reason");
+    private static SessionRequestOrigin ReadOrigin(JsonElement element) {
+        RequireExactProperties(element, "origin", "correlationId", "reason");
         return new(
-            ReadRequiredString(element, "attemptId"),
             ReadRequiredString(element, "correlationId"),
             ReadRequiredString(element, "reason")
         );

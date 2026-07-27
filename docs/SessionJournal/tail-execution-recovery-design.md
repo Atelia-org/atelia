@@ -1,6 +1,6 @@
 # SessionJournal Tail-only Execution Recovery Design
 
-> **状态**：Implemented / CS-3D0～CS-3D6 已完成
+> **状态**：Implemented / CS-3D0～CS-3D7 已完成
 > **日期**：2026-07-27
 > **建议路线编号**：CS-3D
 > **前置实现**：CS-3A governing setup checkpoint、CS-3B dependency-closed tail context、
@@ -11,6 +11,7 @@
 > [ChatSession 架构路线图](../ChatSession/event-sourced-session-architecture-roadmap.md)、
 > [CS-3D 实施后化简调研](tail-execution-recovery-simplification-study.md)、
 > [CS-3D6 Coherent-only Manifest 化简计划](done/coherent-request-manifest-simplification-plan.md)
+> **D7 协议修订**：[Prepared / Provider Attempt 对称化](done/prepared-provider-attempt-symmetry-design.md)
 
 ## 0. 给后续 Coding Agent 的结论
 
@@ -48,7 +49,8 @@ dependencies，而不是假定“回溯到最近一条用户消息”。
 
 - reopen 后从 ref head 路由，无需先执行 root-to-head replay。
 - 对所有 execution phase 恢复最小、确定性的 `SessionExecutionState`：
-  `Idle`、`TurnFailed`、`AwaitingAgentAction`、`AwaitingCompletion`、
+  `Idle`、`TurnFailed`、`AwaitingAgentAction`、`AwaitingCompletionDispatch`、
+  `AwaitingCompletion`、
   `AwaitingToolExecution`。
 - 找回当前 active attempt、correlation、pending tool call、operation id、started/result settlement 与
   tool execution sequence，不加载旧 conversation。
@@ -96,7 +98,7 @@ dependencies，而不是假定“回溯到最近一条用户消息”。
   - CS-3D3 后 `ResumeAsync()`、`SendAsync()`、setup/import boundary 与 tool-loop transition
     全部由 `SessionExecutionTailResolver` 路由；Action/Started/Result append 后按返回的 exact address
     重新 resolve。
-  - D6D 后 online writer 与 current Prepared v2 codec/reconstructor 只接受 coherent
+  - D7 后 online writer 与 current Prepared v3 codec/reconstructor 只接受 coherent
     artifact-tail recipe，不调用 `Project()` 物化 request Context。D6D 前的 full-raw /
     explicit reader 只属于历史，不存在于 current runtime。
 - `prototypes/SessionJournal/SessionReducer.cs`
@@ -108,7 +110,7 @@ dependencies，而不是假定“回溯到最近一条用户消息”。
     ToolResult suffix，并把 visible tool snapshot 纳入 prepared request。
   - 这是 request context projector，不是通用 execution reducer。
 - `prototypes/SessionJournal/SessionPreparedRequestReconstructor.cs`
-  - 只从 committed Prepared v2 的 exact activation、inline artifact contributions、setup refs、
+  - 只从 committed Prepared v3 的 exact activation、inline artifact contributions、setup refs、
     dependency-closed suffix 与 tool snapshot 重建 canonical request。
   - activation `coverageSetups` 是 suffix fold seed；fold 后的 governing setup 必须与 Prepared exact
     refs 一致，不能让 Prepared 自证自己的 setup。
@@ -116,9 +118,10 @@ dependencies，而不是假定“回溯到最近一条用户消息”。
 已有 fast path 应复用，不应另造第二套 attempt/setup 解析：
 
 - `ResolveGoverningSetup`。
-- `SessionExecutionTailResolver` 内的 P/R identity chain、live/imported terminal 与 setup-run
+- `SessionExecutionTailResolver` 内的 Prepared/Started address chain、live/imported terminal 与 setup-run
   validators。
-- manifest 中的 setup refs、attempt identity、correlation 与 exact canonical commitment。
+- manifest 中的 setup refs、origin correlation 与 exact canonical commitment；attempt identity 是
+  `CompletionAttemptStarted` event address。
 
 ## 4. 正确性与信任边界
 
@@ -162,9 +165,13 @@ Open(repo)
        Idle / TurnFailed:
          wait for observation or setup mutation
 
+       AwaitingCompletionDispatch:
+         reconstruct and validate committed request
+         append CompletionAttemptStarted, then dispatch
+
        AwaitingCompletion:
-         resolve P/R identity chain
-         apply Refuse / lookup / explicit restart policy
+         resolve Prepared/Started address chain
+         apply Refuse / explicit restart policy
          reconstruct only committed request
 
        AwaitingToolExecution:
@@ -215,19 +222,21 @@ internal sealed record SessionExecutionRecoveryBoundary(
 | `RuntimeConfigSetup` / `SystemPromptSetup` | 跳过连续 setup run，验证前驱是 idle/failed terminal；phase 保持静止 |
 | `SessionCreated` | 验证三事件 bootstrap；`Idle`，tool sequence = 0 |
 | `ObservationAccepted` | direct parent 必须是合法 idle boundary；`AwaitingAgentAction`，correlation 由 observation address 派生 |
-| `CompletionRequestPrepared` / `CompletionAttemptRestarted` | 复用 P/R identity-chain resolver；`AwaitingCompletion` |
-| `CompletionAttemptFailed` | 验证 direct active attempt 与 attempt id；`TurnFailed` |
+| `CompletionRequestPrepared` | 验证 source boundary；`AwaitingCompletionDispatch`，active attempt 为空 |
+| `CompletionAttemptStarted` | 沿连续 Started Parent 回到 source Prepared；`AwaitingCompletion`，head address 即 active attempt |
+| `CompletionAttemptFailed` | 验证 direct parent 是最新 Started；`TurnFailed` |
 | terminal `AgentActionProduced` / `ImportedAgentAction` | 验证来源与无未结算 calls；`Idle` |
 | Action 含 tool calls | 保存 action 与声明顺序；首个 call pending |
 | `ToolExecutionStarted` | 回溯到当前 Action，join call id/name/args；恢复同一 operation 与 reserved sequence |
 | `ToolResultObserved` | 只收集当前 Action 之后的 starts/results；按 Action 声明顺序决定下一个 pending call，全部结算则 `AwaitingAgentAction` |
 
-Prepared/Restarted 控制事件不进入 conversation context，但它们是 execution recovery 的权威
+Prepared/Started 控制事件不进入 conversation context，但它们是 execution recovery 的权威
 checkpoint。Action 的多个 tool results 必须继续按声明顺序 join，而不是按 append 顺序推断。
 
 ### 6.3 Imported path
 
-live Action 必须从 active Prepared/Restarted 产生，可直接从 manifest 取得 correlation 与 checkpoint。
+live Action 必须从 active Started 产生；沿 Started Parent 找到 source Prepared 后，可从 manifest
+取得 correlation 与 checkpoint。
 manual/legacy `ImportedAgentAction` 没有 manifest，因此新 schema 应携带最小 execution checkpoint，或在
 导入完成时追加一个明确 checkpoint。
 
@@ -407,11 +416,11 @@ runtime identity 和 capability policy 通过后才能产生外部调用。
   `SessionJournalReadDiagnostics`。它计量 SessionJournal 发起的逻辑 API reads，不冒充底层物理 IO、
   page cache 或解压字节统计。
 - 新增 full reducer reference-oracle matrix，冻结 Empty、Idle、AwaitingAgentAction、
-  AwaitingCompletion、AwaitingToolExecution、TurnFailed 各 phase 的必要字段；后续 D2 differential
+  AwaitingCompletionDispatch、AwaitingCompletion、AwaitingToolExecution、TurnFailed 各 phase 的必要字段；后续 D2 differential
   tests 应复用同一语义合同。
 - D0 当时的冷前缀 baseline 证明：`T` 个已闭合 imported turns 的 Idle `ResumeAsync` 曾读取
-  `3 + 2T` 个 payload、返回同样数量的 chronological events，并调用一次 full `Project()`；Prepared
-  `RefuseUncertain` 在不同前缀长度下始终只读一个 head header 与一个 Prepared payload，不调用
+  `3 + 2T` 个 payload、返回同样数量的 chronological events，并调用一次 full `Project()`；D7 后
+  Started `Refuse` 在不同前缀长度下始终只读局部 Started/Prepared/source proof，不重建 request、不调用
   chronological chain / `Project()`。CS-3D3 已把 Idle 基线翻转为 1 turn 与 10001 turns 相同的
   2 header + 2 payload、0 chronological chain、0 `Project()`。
 
@@ -690,7 +699,7 @@ dependency/lineage，不等价于 active-set membership，不能拿它猜后一�
   O(history)。
 - `SessionRuntime` 不再暴露 request-context policy selector；online writer 只有 coherent
   artifact-tail。缺 activation/member 时在 append Observation/Prepared/provider 前 fail-fast，绝不
-  静默 full replay。public `Project()` / `ReplayHistory()` 仍保留完整审计语义；Prepared v2 的
+  静默 full replay。public `Project()` / `ReplayHistory()` 仍保留完整审计语义；current Prepared v3 的
   `activeArtifactSet` 为 required exact reference，current runtime 不再读取旧 policy。
 - D6D 是 breaking wire upgrade：旧实验 journal 若包含早期 Prepared bytes，必须走离线重建/
   版本化迁移，不能用缺省字段猜测过去；仅含 current imported raw facts 的 repo 可直接 validate，

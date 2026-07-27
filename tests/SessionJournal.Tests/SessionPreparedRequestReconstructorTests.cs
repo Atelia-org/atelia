@@ -282,7 +282,7 @@ public sealed class SessionPreparedRequestReconstructorTests : IDisposable {
                 }
             },
             ["correlation"] = scenario.Manifest with {
-                Attempt = scenario.Manifest.Attempt with {
+                Origin = scenario.Manifest.Origin with {
                     CorrelationId = "correlation-corrupt"
                 }
             }
@@ -559,9 +559,15 @@ public sealed class SessionPreparedRequestReconstructorTests : IDisposable {
                 new RawToolCall("sample", "call-1", """{"value":1}""")
             )
         ]);
-        EventAddress action = Commit(
+        EventAddress completionStarted = Commit(
             journal,
             initialPrepared,
+            SessionEventKind.CompletionAttemptStarted,
+            new CompletionAttemptStartedBody()
+        );
+        EventAddress action = Commit(
+            journal,
+            completionStarted,
             SessionEventKind.AgentActionProduced,
             new AgentActionProducedBody(
                 actionMessage,
@@ -621,6 +627,7 @@ public sealed class SessionPreparedRequestReconstructorTests : IDisposable {
             activation,
             observation,
             initialPrepared,
+            completionStarted,
             action,
             started,
             observed
@@ -664,7 +671,7 @@ public sealed class SessionPreparedRequestReconstructorTests : IDisposable {
         string correlation,
         long checkpoint
     ) => new(
-        new SessionRequestAttempt($"attempt-{Guid.NewGuid():N}", correlation, reason),
+        new SessionRequestOrigin(correlation, reason),
         new SessionExecutionCheckpoint(checkpoint),
         new SessionContextPlan(
             rawStart,
