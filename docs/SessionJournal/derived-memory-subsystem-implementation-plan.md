@@ -2,11 +2,15 @@
 
 > **状态**：Approved / 待逐片实施
 > **日期**：2026-07-27
+> **最新代码对齐**：2026-07-28；已纳入
+> `ChatSession.LegacyExportCli` / `SessionJournal.Cli` 拆分与
+> `SessionJournal.Maintainers` companion assembly
 > **目标基线**：CS-3D7 current trunk；后续以 breaking wire / derived rebuild 方式演进
 > **上游决策**：
 > [Tail Execution Recovery 化简调研 §4](tail-execution-recovery-simplification-study.md)、
 > [MemoryMaintainer Provisioning / Planner 功能缺口](memory-maintainer-provisioning-planner-gap.md)、
-> [SessionJournal 事件源会话与长期上下文架构路线图](event-sourced-session-architecture-roadmap.md)
+> [SessionJournal 事件源会话与长期上下文架构路线图](event-sourced-session-architecture-roadmap.md)、
+> [Legacy ChatSession Export / SessionJournal CLI 拆分](../ChatSession/legacy-export-and-sessionjournal-cli-split.md)
 > **用途**：供后续 Coding Agent 按依赖顺序领取单一分片，完成设计复核、实现、测试、审阅、修复和提交。
 
 ## 0. 执行结论
@@ -76,8 +80,45 @@ DM-8  Online lifecycle + budgeted set selection
 - `prototypes/SessionJournal.Cli/MemoryMaintainerRun.cs`
   - 每个 maintainer runner 独立解释 threshold 并计算 split；
   - SessionJournal 模式仍从 raw root + empty `MemoryPack` full replay。
+- `prototypes/SessionJournal.Cli/MemoryMaintainerHistorySplitPolicy.cs`
+  - 当前 synthetic sliding-prefix 切分 policy 已与旧 ChatSession 实现隔离；
+  - 它是 maintainer 开发入口的临时 policy，不是未来 shared epoch authority。
+- `prototypes/SessionJournal.Cli/MemoryMaintainerArtifactWriting.cs`
+  - 当前 artifact writer 与 producer fingerprint 仍直接使用 core 内的 `DerivedRecapStore`。
+- `prototypes/SessionJournal.Maintainers/`
+  - 已作为只依赖 SessionJournal contracts 的 companion assembly；
+  - 当前拥有 autobiography / world-understanding 的 profiles、embedded prompts 和 target paths；
+  - generic `RewriteMemoryBlockMaintainer`、`MemoryMaintenanceOrchestrator` 与 mutable `MemoryPack`
+    仍暂留在 `SessionJournal/SessionMemoryContracts.cs`。
 
-### 1.2 已确定的长期边界
+### 1.2 已完成的 CLI / Maintainers 边界
+
+原 `ChatSession.BacktestCli` 已拆分并退役，不再作为本计划的实施入口：
+
+```text
+legacy ChatSession repo
+  -> ChatSession.LegacyExportCli export-json
+  -> atelia.chat-session.legacy-upgrade-export.v1
+  -> SessionJournal.Cli import-legacy-json
+  -> current SessionJournal repo
+```
+
+- `ChatSession.LegacyExportCli` 只依赖旧 `ChatSession`，只负责 JSON/Markdown export；
+- `SessionJournal.Cli` product project 不依赖 `ChatSession`，负责 import、validate、maintainer
+  开发运行和当前 artifact/set 离线命令；
+- `SessionJournal.Maintainers` 只依赖 `SessionJournal`，承载 application-specific maintainer
+  policy；
+- producer/consumer compatibility 由版本化 JSON schema 与两侧测试锁定，不建立 shared legacy
+  contracts assembly；
+- `SessionJournal.Cli.Tests` 可以为 exchange-schema compatibility 同时引用两侧 product
+  assembly；这一 test-only edge 不得进入 `SessionJournal.Cli`；
+- `ChatSession.LegacyExportCli` 不参与未来 DerivedMemory composition、epoch planning 或 online
+  lifecycle。
+
+这次拆分已经完成了 composition root 和 concrete policy 的初步分层，但没有提前完成
+DerivedMemory：store、planner、runner substrate 和 raw/derived 解耦仍是 DM-0～DM-8 的工作。
+
+### 1.3 已确定的长期边界
 
 - raw SessionJournal event sequence 是 execution/history correctness source；
 - derived config、epochs、artifacts、sets 和 indexes 不进入 raw Parent sequence；
@@ -111,7 +152,10 @@ Agent Host / SessionJournal.Cli
 │        └── 单向引用 Atelia.SessionJournal contracts
 │
 └── Atelia.SessionJournal.Maintainers
-    └── autobiography / world-understanding profiles 与应用 role policy
+    └── concrete maintainer implementations、profiles、prompts、targets 与应用 role policy
+
+ChatSession.LegacyExportCli
+└── Atelia.ChatSession                           # frozen migration island
 ```
 
 约束：
@@ -123,6 +167,8 @@ Agent Host / SessionJournal.Cli
 - DerivedMemory 内部可以有 repository/store interfaces，但不能把具体存储 API 作为 raw core contract；
 - `SessionJournal.Maintainers` 是只依赖 SessionJournal contracts 的 concrete
   MemoryMaintainer companion assembly；SessionJournal raw core 不反向依赖它；
+- `SessionJournal.Cli` 是当前离线 composition root；长期 Agent Host 也遵循相同依赖方向；
+- `ChatSession.LegacyExportCli` 不得引用 SessionJournal、Maintainers 或 DerivedMemory；
 - `SessionJournal` 不依赖 `Agent.Core`。
 
 ## 3. 跨边界 contract shape
@@ -370,18 +416,24 @@ tests/SessionJournal.DerivedMemory.Tests/
 - derived-only exact set publication；
 - repository-bound atomic write/lock/path-hardening。
 
-暂不强制同时迁移：
+DM-3 明确保留现有 producer surfaces，不与 store/provider cutover 同时搬迁：
 
-- `RewriteMemoryBlockMaintainer`；
-- `MemoryMaintenanceOrchestrator`；
-- mutable `MemoryPack`；
-- application profiles。
+- `RewriteMemoryBlockMaintainer`、`MemoryMaintenanceOrchestrator` 与 mutable `MemoryPack`
+  暂留 SessionJournal；
+- application profiles、prompts 与 target paths 留在 `SessionJournal.Maintainers`；
+- current runner/composition 留在 `SessionJournal.Cli`。
 
-这些在 DM-6/DM-7 随 producer ownership 迁移，避免物理搬家与 Prepared wire cut 同时扩大。
+generic producer substrate 的最终归属在 DM-6/DM-7 复核；application-specific policy 不迁入
+DerivedMemory。这样避免物理搬家与 Prepared wire cut 同时扩大。
 
 ### Composition
 
-- SessionJournal.Cli/Agent Host 同时引用 SessionJournal 与 DerivedMemory；
+- `SessionJournal.Cli` 增加对 DerivedMemory 的引用，并继续组合 SessionJournal、
+  SessionJournal.Maintainers 与 Completion；
+- 长期 Agent Host 同样只在 composition root 同时引用这些程序集；
+- `SessionJournal.Maintainers` 继续只依赖 SessionJournal contracts，不因 store/provider
+  cutover 反向依赖 DerivedMemory；
+- `ChatSession.LegacyExportCli` 的引用图和命令保持不变；
 - provider instance 与一个 SessionJournal repo/session 绑定；
 - Engine/request coordinator 只保存 interface；
 - `SessionJournal.Open(path)` 无 provider 仍支持 raw-only surfaces；
@@ -389,7 +441,7 @@ tests/SessionJournal.DerivedMemory.Tests/
 
 ### CLI transition
 
-- 增加 derived-only set publish/inventory 能力；
+- 在 `SessionJournal.Cli` 增加 derived-only set publish/inventory 能力；
 - current `checkpoint-artifact-set` 不再作为长期 writer；
 - 新 writer 不追加 raw kind 12；
 - raw kind 12 reader 可只为 DM-3 这一过渡分片暂存，DM-4 立即删除；
@@ -422,7 +474,7 @@ tests/SessionJournal.DerivedMemory.Tests/
 - `ResolveActiveArtifactSet()` / `EnsureActiveArtifactSetReadyAsync()`；
 - latest-equals-selected/raw activation validators；
 - offline readiness report 的 active raw set；
-- SessionJournal CLI raw checkpoint command；
+- `SessionJournal.Cli checkpoint-artifact-set` raw checkpoint command；
 - activation setup checkpoint 逻辑。
 
 ### Governing setup hint
@@ -559,7 +611,8 @@ boundary alignment 可以使 epoch 大小不同。同步要求是共享 exact ep
 
 ### 主要变化
 
-- SessionJournal 正式 runner 从 `--threshold-tokens` 驱动改为 `--epoch <id>`；
+- `SessionJournal.Cli run-memory-maintainer` 的正式模式从 `--threshold-tokens` 驱动改为
+  `--epoch <id>`；
 - threshold/split 只存在于 DM-5 planner；
 - runner 从 previous set/role artifact 恢复 old block；
 - 只读取 epoch 的 exact raw range；
@@ -583,8 +636,10 @@ run-memory-maintainer
   [--system-prompt ... --prompt ... --connection ...]
 ```
 
-拆分后 legacy export backtest 已退役；当前 `SessionJournal.Cli` 的 threshold/full-replay
+拆分后 legacy backtest runner 已退役；当前 `SessionJournal.Cli` 的 threshold/full-replay
 模式只是过渡性 maintainer 开发入口。DerivedMemory production mode 不再允许 role-local split。
+`--profile` 解析与 concrete factory/descriptor 来自 `SessionJournal.Maintainers`，epoch lookup、
+range materialization 与 artifact persistence 来自 DerivedMemory。
 
 ### 验收
 
@@ -629,16 +684,24 @@ run-memory-maintainer
 
 ### Ownership migration
 
-本片完成 producer substrate 的最终归属复核：
+本片完成 producer substrate 的最终归属复核。已经形成的程序集边界应作为默认方向：
 
-- `RewriteMemoryBlockMaintainer`；
-- `MemoryMaintenanceOrchestrator`；
-- mutable `MemoryPack` / drafts；
-- `RecentHistorySlice`；
-- application profile contracts。
+- `SessionJournal.Maintainers` 保留/接收 concrete maintainer implementations、
+  profiles、embedded prompts、target paths、factories 与窄职责 producer helpers；
+- DerivedMemory 接收 epoch-bound runner、multi-role orchestration、settlement、artifact/set
+  publication 与 repository lifecycle；
+- SessionJournal 只保留跨边界所需的 store-neutral request candidate、raw history/provenance
+  以及最小 maintainer input/output contracts；
+- `RewriteMemoryBlockMaintainer`、`MemoryRewriteProfile`、
+  `MemoryMaintenanceOrchestrator`、mutable `MemoryPack` / drafts 与
+  `RecentHistorySlice` 逐一按上述规则复核，不因当前同处
+  `SessionMemoryContracts.cs` 就整体搬入同一目标程序集；
+- `SessionJournal.Cli` 只保留参数解析、composition、路径安全、reporting 和显式运维命令。
 
-目标是 raw SessionJournal 只保留 request-facing normalized contribution/context contracts；具体 rewrite
-与 orchestration 位于 DerivedMemory 或更窄的 shared memory substrate。不要保留两份实现。
+目标是 raw SessionJournal 不拥有 concrete producer policy 或 derived orchestration。具体 rewrite
+实现优先属于 Maintainers，跨 maintainer 的 durable orchestration 属于 DerivedMemory；若 DM-7
+复核发现两者确需共享 neutral producer model，再引入更窄 substrate，而不是让 Maintainers 与
+DerivedMemory 互相引用或保留两份实现。
 
 ### 验收
 
@@ -713,12 +776,12 @@ ordinal 不等价于 cost；第一版 `NthPrevious` 是可解释控制面，budg
 
 | 变化 | 权威迁移方式 | 明确禁止 |
 | --- | --- | --- |
-| Prepared v3 -> v4 | legacy export 重新 import；盘点非幂等外部副作用 | compatibility decoder、缺省字段、自证 fallback |
+| Prepared v3 -> v4 | `ChatSession.LegacyExportCli export-json` 后由 `SessionJournal.Cli import-legacy-json` 导入新 repo；盘点非幂等外部副作用 | compatibility decoder、缺省字段、自证 fallback |
 | 删除 raw kind 12 | 新 repo/import 或显式 offline raw migration | 保留 retired kind writer、把 derived id 改名后继续写 raw |
 | DerivedRecapStore -> DerivedMemory schema | 删除/rebuild derived repository，或显式 derived migrator | 让 raw validity 依赖旧 sidecar |
 | artifact 增加 epoch identity | 按 raw + config 重跑 planner/maintainers | 从 common anchor 猜 epoch id |
 | planner config 更新 | 新 immutable config snapshot，只影响未来 epoch | 用 current config 重解释历史 epoch |
-| CLI threshold -> epoch runner | legacy mode保留；SessionJournal mode显式 `--epoch` | 每个 role 独立 threshold 后偶然拼 set |
+| CLI threshold -> epoch runner | 删除过渡 threshold/full-replay mode；`SessionJournal.Cli` 显式 `--epoch` | 把旧 Backtest runner 复活为 compatibility mode、每个 role 独立 threshold 后偶然拼 set |
 
 实验项目尚未发布，不为 retired wire 保留长期兼容面。每次 breaking cut 必须更新：
 
@@ -745,11 +808,19 @@ ordinal 不等价于 cost；第一版 `NthPrevious` 是可解释控制面，budg
   - candidate provider；
   - epoch planner；
   - maintainer settlement/publication。
+- `tests/SessionJournal.Maintainers.Tests`
+  - stable maintainer/profile/target identity；
+  - embedded prompt/profile loading；
+  - concrete producer behavior 与 prompt override；
+  - 不承担 epoch/store/selection tests。
 - `tests/SessionJournal.Cli.Tests`
   - composition；
   - CLI parsing/path safety/atomic reports；
   - plan/run/publish workflow；
-  - legacy import/rebuild E2E。
+  - legacy import/rebuild E2E 与 producer/consumer exchange-schema compatibility。
+- `tests/ChatSession.LegacyExportCli.Tests`
+  - legacy export command、schema、只读/path-safety 与 atomic publish 行为；
+  - 不新增 DerivedMemory workflow tests。
 
 ### 15.2 Metrics
 
@@ -777,7 +848,9 @@ dotnet test <project> -m:1 -nr:false --no-restore
 
 - `SessionJournal.Tests`；
 - `SessionJournal.DerivedMemory.Tests`（DM-3 起）；
+- `SessionJournal.Maintainers.Tests`（涉及 concrete producer/profile 起）；
 - `SessionJournal.Cli.Tests`（涉及 CLI 起）；
+- `ChatSession.LegacyExportCli.Tests`（仅当 legacy exchange schema/export surface 被触及）；
 - relevant Completion/EventJournal tests；
 - zero-warning build。
 
@@ -817,6 +890,10 @@ surface。
 - `prototypes/SessionJournal/SessionJournalEngine.cs`
 - `prototypes/SessionJournal/SessionExecutionTailResolver.cs`
 - `prototypes/SessionJournal/DerivedRecapStore.cs`
+- `prototypes/SessionJournal.Cli/SessionJournal.Cli.csproj`
+- `prototypes/SessionJournal.Cli/MemoryMaintainerRun.cs`
+- `prototypes/SessionJournal.Maintainers/SessionJournal.Maintainers.csproj`
+- `prototypes/SessionJournal.Maintainers/README.md`
 - `tests/SessionJournal.Tests/`
 - 本文 §2、§3、§5
 
