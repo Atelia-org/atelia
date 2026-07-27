@@ -325,7 +325,7 @@ result 都是非法 raw chain，fail-fast 且不递增 execution sequence。
 - `src/EventJournal`：全部落盘/遍历/branch/恢复原语。**零改动**接入。
 - memory rewrite profiles（`prototypes/SessionJournal.Maintainers`）：作为下游
   concrete MemoryMaintainer companion assembly，主干**不接**；下一步先通过
-  [CS-5-lite](../ChatSession/cs-5-lite-sessionjournal-derived-recap-store.md) 接入
+  [CS-5-lite](done/cs-5-lite-sessionjournal-derived-recap-store.md) 接入
   SessionJournal forward replay 和 derived recap store，再进入完整 DerivedArtifact / ArtifactSet 切片（CS-5）。
 
 ## 9. 明确不做（防止范围蔓延）

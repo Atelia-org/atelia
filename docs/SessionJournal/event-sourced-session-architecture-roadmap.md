@@ -1,11 +1,11 @@
 # SessionJournal 事件源会话与长期上下文架构路线图
 
-> **状态**：Architecture Roadmap / `Atelia.SessionJournal` family 现行路线图
-> **日期**：2026-07-28（保留下文早期日期作为实施历史）
+> **状态**：Architecture Roadmap / current baseline CS-3D7 / active plan DM-0～DM-8
+> **日期**：2026-07-28
 > **底层依赖**：[EventJournal 功能需求与粗粒度设计基线](../EventJournal/event-journal-requirements-and-design.md)
 > **相关既有研究**：[Dynamic Logical Context Store for Long-Running Role-Play Agents](../Galatea/backlog/idea/dynamic-logical-context-store-for-long-running-role-play-agents.md)
 > **后续实施计划**：
-> [DerivedMemory 可替换子系统与 Shared Epoch 实施方案](../SessionJournal/derived-memory-subsystem-implementation-plan.md)
+> [DerivedMemory 可替换子系统与 Shared Epoch 实施方案](derived-memory-subsystem-implementation-plan.md)
 
 ## 1. 文档定位
 
@@ -34,7 +34,7 @@
 - SessionJournal family 中各程序集分别拥有哪一层能力。
 - 如何分阶段完成 current interim 到 target architecture 的切换。
 
-本文不是每种 payload 的最终 wire spec，也不要求首个实现会话建成完整 Memory OS。后续会话应从本文的阶段列表领取一个垂直切片，产出更窄的 Decision/Spec/实现与测试。
+本文不是每种 payload 的最终 wire spec，也不要求单个后续会话建成完整 Memory OS。后续会话应从本文的阶段列表领取一个垂直切片，产出更窄的 Decision/Spec/实现与测试。
 
 ## 2. 建立新系统所解决的问题
 
@@ -74,33 +74,37 @@ MemoryMaintainer 属于 `Atelia.SessionJournal.Maintainers`；派生存储、epo
 anti-corruption DTO 导入 JSON，不引用 ChatSession 产品程序集。导入不会建立两代 repo 之间的运行时
 同步关系。
 
-### decision [S-CS-RAW-EVENTS-AUTHORITATIVE] Raw Events 是长期事实源
+### decision [S-SJ-RAW-EVENTS-AUTHORITATIVE] Raw Events 是长期事实源
 
 Agent 实际接收、生成和执行过的内容，以不可变 raw events 保存。compaction、摘要更新或上下文切换不得删除或改写 raw events。
 
-### decision [S-CS-ARTIFACTS-DERIVED] Memory Artifacts 是派生解释
+### decision [S-SJ-ARTIFACTS-DERIVED] Memory Artifacts 是派生解释
 
 Recap、Autobiography、World Understanding、关系状态、开放线索等都是由 raw events 和既有 artifacts 推导出的版本化产物。它们可以被替换、废弃或重算，但不能冒充原始体验。
 
-### decision [S-CS-PROJECTION-NOT-SSOT] MemoryPack 是 Context Projection
+### decision [S-SJ-PROJECTION-NOT-SSOT] MemoryPack 是 Context Projection
 
 现有 `MemoryPack` 继续作为“本轮上下文需要的有序文本块投影”是有价值的，但它不再是长期记忆的唯一事实源。它应由选定的 artifact set 和其他固定配置 materialize。
 
-### decision [S-CS-CONTEXT-PLAN-PERSISTED] 实际上下文选择必须持久化
+### decision [S-SJ-CONTEXT-PLAN-PERSISTED] 实际上下文选择必须持久化
 
 每次 completion 前，系统必须保存精确 `ContextPlan` 和 canonical request manifest。崩溃恢复不能仅凭“当前配置 + 当前 head”重新运行 planner，因为配置、索引和 token estimator 可能已经变化。
 
-canonical request manifest 对 raw facts 采用 exact address/range/setup refs，对实际进入 provider
+这条 decision 描述 target contract。canonical request manifest 对 raw facts 采用 exact
+address/range/setup refs，对实际进入 provider
 request 的 derived memory contribution 则保存 exact context snapshot 或 canonical request bytes。
 Prepared 不引用 derived artifact/set id，也不要求 derived store 在 reopen 时仍存在；planner/renderer
 版本变化不能改写已经 Prepared 的外部调用事实。若要审计 derived selection，可在可重建 usage index 中
-记录 `preparedAddress -> derivedSetId`。
+记录 `preparedAddress -> derivedSetId`。current Prepared v3 仍含 raw activation/artifact identity，
+属于 §6.2、§7.3 记录的待拆 interim。
 
-### decision [S-CS-EXECUTION-INCREMENTAL] 执行状态逐步事件化
+### decision [S-SJ-EXECUTION-INCREMENTAL] 执行状态逐步事件化
 
-Observation、completion request、agent action、tool intent、tool result 和 turn completion 必须在各自边界逐步持久化。不能继续把整个 tool-loop 当成一个只在末尾 commit 的内存事务。
+Observation、completion request、agent action、tool intent 和 tool result 必须在各自边界逐步持久化。
+turn completion 若可由这些 raw facts 唯一确定，则保持为派生状态；只有出现不可推导的额外领域承诺时
+才增加显式事件。不能继续把整个 tool-loop 当成一个只在末尾 commit 的内存事务。
 
-### decision [S-CS-INDEXES-REBUILDABLE] Retrieval Index 不进入正确性核心
+### decision [S-SJ-INDEXES-REBUILDABLE] Retrieval Index 不进入正确性核心
 
 全文、向量、实体图、时间索引和统计 read model 必须能从 raw events / artifacts 重建。索引损坏或丢失会降低召回能力，但不得改变历史事实或使 session 无法恢复。
 
@@ -365,10 +369,12 @@ selected ArtifactSet
 ```
 
 `RewriteMemoryBlockMaintainer` 已作为首批 artifact producer 使用：输入旧 artifact + raw range，输出
-完整新 artifact。CS-5-lite 已验证 recap 可 materialize 为 `ContextHeader` 形态的 observation/action
-header，并以真实 anchor 之后的 raw suffix 保留近期细节；没有可用 anchor 时使用朴素 raw suffix
-fallback。后续工作是在保持这一 raw/artifact 语义的前提下，把 persistence、shared epoch、set
-publication 和 selection 移到正确的 DerivedMemory ownership，而不是把能力回迁到 ChatSession。
+完整新 artifact。CS-5-lite 与后续 current trunk 已验证 recap 可以 materialize 为
+`ContextHeader` 形态的 observation/action header，并以真实 anchor 之后的 raw suffix 保留近期细节。
+朴素 raw suffix/full replay 只用于 offline bootstrap、maintainer 输入与显式审计；current online
+没有 coherent candidate 时保持 not-ready，不允许静默 fallback。后续工作是在保持这一
+raw/artifact 语义的前提下，把 persistence、shared epoch、set publication 和 selection 移到正确的
+DerivedMemory ownership，而不是把能力回迁到 ChatSession。
 
 ## 7. Context Planner（Target Architecture）
 
@@ -517,8 +523,9 @@ stateDiagram-v2
 ```
 
 图中的 `Idle`、`TurnFailed` 是 reducer/tail resolver 推导的 phase，不是同名 raw event。current turn
-completion 同样是隐式派生状态：Action 无 tool call，或最近 Action 的全部 tool call 已结算，即可由
-raw history 确定性判断；不存在 `TurnCompleted` event。
+completion 同样是隐式派生状态：只有 continuation completion 最终产生不含 tool call 的 Action 才进入
+Idle；某个 Action 的全部 tool calls 已结算只形成下一次 completion 的 continuation boundary。
+不存在 `TurnCompleted` event。
 
 ### 8.2 Current Completion 恢复语义
 
@@ -552,6 +559,11 @@ completion correlation、attempt address、tool-call identity、reserved sequenc
 durable/deterministic identity，恢复不能重新随机生成。它们解决的是“这次 intent 和观察结果属于谁”，
 并不单独提供外部世界 exactly-once。
 
+current `ResumeAsync` 遇到已提交但尚无 result 的 `ToolExecutionStarted` 时，会复用 durable
+operation id / sequence 直接重执行工具并补写 `ToolResultObserved`。因此 current 自动恢复只对幂等
+工具，或能按该 operation id 自行去重的工具安全；非幂等且不可查询的工具目前不得接入这条自动恢复
+路径。
+
 ### 8.4 Future hardening：uncertain 与 capability-aware recovery
 
 Journal 只能保证 intent 和观察结果可恢复，不能单独保证外部副作用 exactly-once。完整协议仍需按工具
@@ -565,15 +577,16 @@ Journal 只能保证 intent 和观察结果可恢复，不能单独保证外部�
 | 非幂等且不可查询 | 写入 uncertain/paused 事实，停止自动推进并请求人工或领域补偿 |
 
 `ToolExecutionUncertain`、`TurnPaused` 及其 reducer/driver 语义目前尚未实现；provider lookup/reconcile
-也尚未接入。尤其对于付款、发送消息、删除资源等非幂等且不可查询的工具，不能把 current
-started/result 骨架描述成完整恢复协议，更不能在 crash 后盲目重试。
+也尚未接入。current runtime 无法自动识别或安全处置付款、发送消息、删除资源等非幂等且不可查询的
+工具；Host 必须不将其接入自动恢复路径。不能把 started/result 骨架描述成完整恢复协议，更不能在
+crash 后盲目重试。
 
 ### 8.5 Turn completion 的 current 语义
 
-current 不需要也不存在 `TurnCompleted` event。turn completion 是从 Action 与其 tool results
-确定性派生的状态；raw Action、Started、Result 等事实仍逐条保留。未来只有当产品需要表达无法从 raw
-tail 推导的额外领域承诺时，才应另行设计显式 completion/paused event，而不是预先把派生摘要写成第二
-真源。
+current 不需要也不存在 `TurnCompleted` event。只有不含 tool call 的最终 Action 表示隐式 turn
+completion；tool results 全部结算后仍需 continuation completion，不能提前判定 turn done。raw
+Action、Started、Result 等事实仍逐条保留。未来只有当产品需要表达无法从 raw tail 推导的额外领域
+承诺时，才应另行设计显式 completion/paused event，而不是预先把派生摘要写成第二真源。
 
 ## 9. Dynamic Retrieval（Future DerivedMemory Read Model）
 
@@ -748,8 +761,9 @@ SessionJournal 项目族中建立能力，而不是改造旧 ChatSession。
 重新领取的待办：
 
 - **CS-0 / CS-1：raw core 与 replay。** SessionJournal 已具备领域 event schema、canonical
-  codec、append-only parent chain、基础 reducer、branch/replay，以及 observation/action/setup 和
-  completion/tool execution identity。具体 current wire 以
+  codec、append-only parent chain、基础 reducer/replay，以及 observation/action/setup 和
+  completion/tool execution identity。EventJournal branch primitives 已存在，但完整 SessionJournal
+  branch UX 仍属于后续能力。具体 current wire 以
   [SessionJournal 主干设计基线](session-journal-trunk-design.md)和代码为准。
 - **CS-2：单向 legacy import。** `ChatSession.LegacyExportCli` 可把旧 repo 导出为 versioned
   JSON/Markdown，`SessionJournal.Cli import-legacy-json` 通过自身 anti-corruption DTO 创建新的
@@ -809,10 +823,10 @@ SessionJournal raw core 反向引用 Maintainers/DerivedMemory，也不得把 co
 
 DM-0～DM-8 建立正确的 authority、ownership 与 online composition 后，再推进以下能力：
 
-- **CS-4 后续：tool capability 与 uncertain hardening。** current trunk 已有可恢复 tool loop、
-  reserved sequence/operation identity、Started/Result 和 tail recovery；后续不是从零重建，而是扩展
-  capability declaration、provider/result lookup、reconcile policy，以及非幂等且不可查询工具的
-  paused/uncertain 人工处置。
+- **CS-4 后续：tool capability 与 uncertain hardening。** current trunk 已有在幂等/operation-id
+  去重假设下可恢复的 tool loop，以及 reserved sequence/operation identity、Started/Result 和 tail
+  recovery；后续不是从零重建，而是扩展 capability declaration、provider/result lookup、reconcile
+  policy，以及非幂等且不可查询工具的 paused/uncertain 人工处置。
 - **Budgeted Context Planner。** 在 Prepared exact-reopen contract 之上，对 coherent set、raw
   dependency-closed suffix 和 retrieval candidates 做分项预算、质量/成本比较与可解释选择；planning
   只能发生在尚未 Prepared 的阶段。
@@ -855,10 +869,12 @@ DM-0～DM-8 建立正确的 authority、ownership 与 online composition 后，�
   tail execution recovery 已落地。
 - 普通 legacy observation/action/setup 已有单向 JSON 映射；无法诚实迁移的 tool/revert history
   fail-fast，不再以“以后补 metadata”掩盖语义缺口。
-- raw SessionJournal events 是唯一 correctness source；derived store、indexes、recap 和 ArtifactSet
-  可删除、可重建。
-- concrete Maintainers/DerivedMemory 单向依赖 SessionJournal contracts；raw core 不反向引用它们，
-  CLI/Host 是 composition root。
+- raw SessionJournal events 是唯一 correctness source；derived sidecar、indexes、recap，以及 target
+  DerivedMemory 中的 ArtifactSet 可删除、可重建。current raw `ArtifactSetCommitted` 在 DM-4 删除
+  该 wire 之前仍是 raw fact，不能当作可删除的 derived record。
+- concrete companion 的依赖方向已经确定：`SessionJournal.Maintainers` 已单向依赖 SessionJournal
+  contracts；未来 DerivedMemory 必须遵守同一方向，raw core 不得反向引用；CLI/Host 是 composition
+  root。
 
 ### 14.2 仍开放的问题
 

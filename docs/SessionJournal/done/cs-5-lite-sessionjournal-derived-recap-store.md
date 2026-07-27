@@ -3,12 +3,12 @@
 > 状态：Implemented / CS-5-lite Complete
 > 日期：2026-07-26
 > 上层路线图：[SessionJournal 事件源会话与长期上下文架构路线图](../event-sourced-session-architecture-roadmap.md)
-> 相关设计：[SessionJournal Configuration Access Notes](../SessionJournal/session-configuration-access-notes.md)
+> 相关设计：[SessionJournal Configuration Access Notes](../session-configuration-access-notes.md)
 >
 > 后续收口（2026-07-27）：本文记录 CS-5-lite 落地时的 rolling-summary 术语。
 > `ChatSession.BacktestCli` 随后拆分，现行代码入口是
 > `SessionJournal.Cli run-memory-maintainer`；legacy replay adapter 已删除。详见
-> [CLI 拆分说明](legacy-export-and-sessionjournal-cli-split.md)。
+> [CLI 拆分说明](../../ChatSession/legacy-export-and-sessionjournal-cli-split.md)。
 
 ## 1. 文档目的
 
@@ -83,45 +83,45 @@ SessionJournal raw repo
 
 - [event-sourced-session-architecture-roadmap.md](../event-sourced-session-architecture-roadmap.md)
   总路线图；CS-2.5 / CS-5-lite 已作为 CS-3 tail projection 前置切片记录。
-- [session-configuration-access-notes.md](../SessionJournal/session-configuration-access-notes.md)
+- [session-configuration-access-notes.md](../session-configuration-access-notes.md)
   governing setup resolver、near-head hint、recap anchor 与 tail projection 的关系。
-- [session-journal-trunk-design.md](../SessionJournal/session-journal-trunk-design.md)
+- [session-journal-trunk-design.md](../session-journal-trunk-design.md)
   SessionJournal raw event schema、EventKind、canonical JSON、执行机边界。
-- [memory-backtest-cli-plan.md](memory-backtest-cli-plan.md)
+- [memory-backtest-cli-plan.md](../../ChatSession/memory-backtest-cli-plan.md)
   旧 backtest CLI 与 rolling summary replay 的设计背景。
 
 主要代码入口：
 
-- [MemoryMaintainerRun.cs](../../prototypes/SessionJournal.Cli/MemoryMaintainerRun.cs)
+- [MemoryMaintainerRun.cs](../../../prototypes/SessionJournal.Cli/MemoryMaintainerRun.cs)
   SessionJournal maintainer runner、addressed source 与 run record。
-- [MemoryMaintainerArtifactWriting.cs](../../prototypes/SessionJournal.Cli/MemoryMaintainerArtifactWriting.cs)
+- [MemoryMaintainerArtifactWriting.cs](../../../prototypes/SessionJournal.Cli/MemoryMaintainerArtifactWriting.cs)
   SessionJournal Derived Recap writer、producer fingerprint、lineage preflight 与写入边界。
-- [Program.cs](../../prototypes/SessionJournal.Cli/Program.cs)
+- [Program.cs](../../../prototypes/SessionJournal.Cli/Program.cs)
   SessionJournal CLI 命令入口、connection 配置和 maintainer profile 参数。
-- [SessionJournalLegacyImporter.cs](../../prototypes/SessionJournal.Cli/SessionJournalLegacyImporter.cs)
+- [SessionJournalLegacyImporter.cs](../../../prototypes/SessionJournal.Cli/SessionJournalLegacyImporter.cs)
   legacy export -> SessionJournal repo importer；已跳过 legacy recap / compaction。
-- [SessionJournalEngine.cs](../../prototypes/SessionJournal/SessionJournalEngine.cs)
+- [SessionJournalEngine.cs](../../../prototypes/SessionJournal/SessionJournalEngine.cs)
   SessionJournal open/project/append/resolver 主入口。
-- [SessionReducer.cs](../../prototypes/SessionJournal/SessionReducer.cs)
+- [SessionReducer.cs](../../../prototypes/SessionJournal/SessionReducer.cs)
   raw events -> `SessionProjection` 的纯 reducer。
-- [SessionJournalContracts.cs](../../prototypes/SessionJournal/SessionJournalContracts.cs)
+- [SessionJournalContracts.cs](../../../prototypes/SessionJournal/SessionJournalContracts.cs)
   `SessionEventKind`、`SessionProjection`、`SessionGoverningSetup` 等契约。
-- [SessionMemoryContracts.cs](../../prototypes/SessionJournal/SessionMemoryContracts.cs)
+- [SessionMemoryContracts.cs](../../../prototypes/SessionJournal/SessionMemoryContracts.cs)
   新 SessionJournal 主干的 `MemoryPack`、`SessionContextHeader`、maintainer/orchestrator substrate。
-- [ChatSession Legacy Memory Substrate 退役](legacy-memory-substrate-retirement.md)
+- [ChatSession Legacy Memory Substrate 退役](../../ChatSession/legacy-memory-substrate-retirement.md)
   记录旧 ChatSession duplicate substrate 及 session-level maintainer API 的最终删除边界。
-- [ChatSessionContracts.cs](../../prototypes/ChatSession/ChatSessionContracts.cs)
+- [ChatSessionContracts.cs](../../../prototypes/ChatSession/ChatSessionContracts.cs)
   `ContextHeader`、`RecapMessage`、`RecapSourceAnchor` 等旧 ChatSession context projection 类型。
-- [AutobiographicalRewriteProfiles.cs](../../prototypes/SessionJournal.Maintainers/AutobiographicalRewriteProfiles.cs)
+- [AutobiographicalRewriteProfiles.cs](../../../prototypes/SessionJournal.Maintainers/AutobiographicalRewriteProfiles.cs)
   后续可复用 profile 示例。
-- [WorldUnderstandingRewriteProfiles.cs](../../prototypes/SessionJournal.Maintainers/WorldUnderstandingRewriteProfiles.cs)
+- [WorldUnderstandingRewriteProfiles.cs](../../../prototypes/SessionJournal.Maintainers/WorldUnderstandingRewriteProfiles.cs)
   后续可复用 profile 示例。
 
 底层遍历相关：
 
-- [EventJournal.cs](../../src/EventJournal/EventJournal.cs)
+- [EventJournal.cs](../../../src/EventJournal/EventJournal.cs)
   `ReadEvent`、`ReadEventHeaderPreview`、`ReadChronologicalChain` 等。
-- [EventJournal.ForwardPlan.cs](../../src/EventJournal/EventJournal.ForwardPlan.cs)
+- [EventJournal.ForwardPlan.cs](../../../src/EventJournal/EventJournal.ForwardPlan.cs)
   EventJournal forward replay / cache / tail merge 现有能力。
 
 ## 6. 建议数据模型
