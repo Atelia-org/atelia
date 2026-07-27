@@ -183,8 +183,9 @@ public interface ICoherentContextCandidateSource {
 }
 ```
 
-如果 DM-0 研究证明 branch-aware `NthPrevious(n)` 需要 bounded enumeration，可以改为返回有序 candidate
-batch；不得因此把 derived repository、artifact ids 或 concrete EventJournal ownership 暴露给 core。
+DM-0 已实现单候选 `Latest` contract。将来如果 branch-aware `NthPrevious(n)` 确实需要 bounded
+enumeration，才增加有序 candidate batch；不得因此把 derived repository、artifact ids 或 concrete
+EventJournal ownership 暴露给 core。
 
 ### 3.1 Selection request
 
@@ -192,9 +193,11 @@ batch；不得因此把 derived repository、artifact ids 或 concrete EventJour
 
 - exact completion boundary；
 - selection mode（DM-0/DM-3 第一版只需 Latest）；
-- raw suffix/context budget hints；
+- 可选 raw suffix token budget hint；
 - coherence group / application policy token；
-- 可选最大 candidate/diagnostic budget。
+
+单候选 `SelectAsync` 不提前携带 `maxCandidates`；它在没有 batch 语义时只是伪配置。诊断与 cost
+单位也不进入 DM-0 contract，避免让无消费、无上界的字段成为跨程序集负担。
 
 ### 3.2 Candidate
 
@@ -203,18 +206,23 @@ batch；不得因此把 derived repository、artifact ids 或 concrete EventJour
 ```text
 SessionContextCandidate {
   rawStartExclusive,
-  rawStartSetups,
-  minimal raw coverage/source provenance,
+  anchorSetups { runtimeConfig, systemPrompt },  // address + body schema + payload sha256
   contributions: [{
     carrier,
     blockKey,
     exactText,
-    contentSha256
-  }],
-  estimatedCost?,
-  opaqueDiagnostics?
+    contentCodecId,
+    contentSha256,
+    sourceRawHead
+  }]
 }
 ```
+
+`contentSha256` 的 domain/codec 固定为
+`atelia.session-journal.context-contribution-text-sha256.v1`：对 UTF-8 exact text 以前缀化 domain
+分隔后计算 SHA-256。它不复用含 artifact identity 的旧 hash，故可直接作为 DM-1 neutral renderer 的
+输入验证。`sourceRawHead` 是每个 contribution 的 raw provenance；core 要求其落在
+`rawStartExclusive..completionBoundary` 的真实 Parent 区间内。
 
 不得成为 cross-boundary contract 的字段：
 
@@ -242,7 +250,7 @@ SessionJournal 仍负责：
 - raw source/setup refs 位于真实 Parent lineage；
 - replay-safe/dependency-safe boundary；
 - contribution target 合法、唯一且有界；
-- deterministic contribution order；
+- 对合法 unordered contributions 以 `carrier rank + blockKey` 作 canonical normalization；
 - dependency-closed suffix fold；
 - current setup/tool/runtime/target validation；
 - canonical request 与 exact-head Prepared CAS。
@@ -273,6 +281,20 @@ raw/derived 双 writer 变成长期兼容层。
 冻结 SessionJournal 与可替换 DerivedMemory 之间的最小语义接口，用 fake provider 证明 raw core 不需要
 concrete store 类型。
 
+### 实施状态（2026-07-28）
+
+已完成并以独立 commit 落地：
+
+- `SessionContextCandidateContracts.cs` 提供 public single-candidate source/request/setup/contribution
+  contracts；
+- `SessionContextCandidateValidator.cs` 以 caller 已 authoritative resolve 的
+  `SessionGoverningSetup` 为 seed，验证它的 `Head == rawStartExclusive`，而不复制一条冷历史 setup
+  resolver；
+- validator 以 header-only 回溯验证 strict anchor 与 source heads，按需读取 anchor setup payload
+  验证 kind/schema/hash，并 canonicalize contributions；
+- fake source fixtures 覆盖 unordered legal input 与所有 raw-facing negative cases；
+- `SessionJournal.csproj` architecture guard 锁定其不引用 Maintainers、DerivedMemory 或 Agent.Core。
+
 ### 主要落点
 
 - 新增 `prototypes/SessionJournal/SessionContextCandidateContracts.cs`（暂名）；
@@ -294,7 +316,8 @@ concrete store 类型。
 ### 验收
 
 - fake provider 可表达一个合法 candidate；
-- divergent anchor、stale setup、duplicate target、空/越界 contribution fail-fast；
+- divergent/equal anchor、setup ref mismatch、source head 越界、duplicate target、invalid carrier、
+  hash/text/size fail-fast；
 - provider 缺失不影响 raw `Open`、`Project()`、`ReplayHistory()`、tail recovery；
 - `SessionExecutionTailResolver` API/reads 不变化；
 - current production request path 尚未切换。
