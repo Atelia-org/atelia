@@ -344,9 +344,16 @@ concrete store 类型。
 - `LegacyArtifactContextCandidateAdapter` 是唯一 kind-12/store → candidate bridge，明确标注 DM-3
   删除；它继续验证 Produced、artifact/source coverage、governing setup、member identity、target block
   与 v3 snapshot hash，并保留 per-member not-ready artifact id；
+- `LegacyArtifactContextSnapshotFactory` 则只服务 current v3/kind-12 commit 与 offline validation；它不属于
+  planning adapter，故在 DM-3 后继续存在，并随 DM-4 删除 raw kind-12 一并删除；
 - Prepared v3 仍由 adapter 在 core-rendered snapshots 上重建 legacy `ArtifactInputs`，因而 wire 与
   canonical request 不变。DM-0 text hash 约束 raw block text；v3 snapshot hash 约束含 carrier fields
   与 request rendering 的最终 snapshot，二者刻意独立。
+
+性能说明：validator 向 materializer 交付同一次 Parent walk 冻结的 suffix addresses，故未新增 cold-prefix
+walk，header/decoded suffix 复杂度保持原有量级；legacy bridge 目前仍让 validator 对 activation coverage 的
+两条 setup exact refs 各重读一次 payload，故不宣称 payload-read count 绝对不变。DM-3 provider cutover
+把 anchor proof 与 provider result 合并时再收掉该 legacy-only recheck。
 
 ### 主要落点
 
@@ -465,6 +472,10 @@ DM-3 明确保留现有 producer surfaces，不与 store/provider cutover 同时
 - application profiles、prompts 与 target paths 留在 `SessionJournal.Maintainers`；
 - current runner/composition 留在 `SessionJournal.Cli`。
 
+DM-3 同时删除 `LegacyArtifactContextCandidateAdapter`：DerivedMemory provider 直接产出 neutral
+candidate，不再需要 raw activation/store 到 candidate 的同程序集桥接。`LegacyArtifactContextSnapshotFactory`
+仍暂留给 v3/kind-12 commit 与 offline validation，直到 DM-4。
+
 generic producer substrate 的最终归属在 DM-6/DM-7 复核；application-specific policy 不迁入
 DerivedMemory。这样避免物理搬家与 Prepared wire cut 同时扩大。
 
@@ -513,6 +524,7 @@ DerivedMemory。这样避免物理搬家与 Prepared wire cut 同时扩大。
 - event codec/schema/goldens；
 - reducer/tail-resolver idle-boundary 分支；
 - `CommitArtifactSetAsync()`；
+- `LegacyArtifactContextSnapshotFactory`；
 - `ResolveActiveArtifactSet()` / `EnsureActiveArtifactSetReadyAsync()`；
 - latest-equals-selected/raw activation validators；
 - offline readiness report 的 active raw set；

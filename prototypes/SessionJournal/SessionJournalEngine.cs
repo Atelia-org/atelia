@@ -354,7 +354,7 @@ public sealed class SessionJournalEngine : IDisposable {
                 .OrderBy(static item => item.RoleId, StringComparer.Ordinal)
                 .Select(static item => {
                     SessionRequestArtifactInput input =
-                        LegacyArtifactContextCandidateAdapter.CreateLegacyArtifactInput(
+                        LegacyArtifactContextSnapshotFactory.CreateLegacyArtifactInput(
                             item.Artifact
                         );
                     return new SessionArtifactSetMember(
@@ -1503,8 +1503,9 @@ public sealed class SessionJournalEngine : IDisposable {
         }
         ImmutableArray<DerivedRecapArtifact> readyArtifacts =
             artifacts.MoveToImmutable();
+        ReadyActiveArtifactSet ready;
         try {
-            return new ReadyActiveArtifactSet(
+            ready = new ReadyActiveArtifactSet(
                 active,
                 LegacyArtifactContextCandidateAdapter.Create(
                     active,
@@ -1526,6 +1527,13 @@ public sealed class SessionJournalEngine : IDisposable {
                 $"Active artifact set cannot produce its exact context candidate: {ex.Message}"
             );
         }
+        // This readiness check runs before SendAsync appends an observation. The candidate validator
+        // repeats it after append as a defense-in-depth raw-boundary proof.
+        SessionTailContextProjection.ValidateReplaySafeBoundary(
+            _reader,
+            active.Body.CommonAnchor
+        );
+        return ready;
     }
 
     private void ValidateActiveArtifactSetRawLineage(

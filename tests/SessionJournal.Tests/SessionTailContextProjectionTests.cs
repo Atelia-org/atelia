@@ -1453,6 +1453,119 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
         Assert.Empty(client.Requests);
     }
 
+    [Theory]
+    [InlineData("tool-action")]
+    [InlineData("tool-result")]
+    public async Task SendAsync_RawActivationWithNonReplaySafeAnchor_FailsBeforeObservationMutation(
+        string boundary
+    ) {
+        string path = NewJournalPath();
+        EventAddress toolAction;
+        EventAddress toolResult;
+        EventAddress finalAction;
+        EventAddress sourceObservation;
+        using (var engine = SessionJournalEngine.Create(
+            path,
+            new SessionCreateOptions("model-A", "system-A", "surface-A"),
+            new SessionRuntime(
+                new CapturingCompletionClient(_ => throw new InvalidOperationException("unused")),
+                new ToolRegistry([new NoopTool("lookup")]).CreateSession(),
+                ToolRuntimeIdentity: TestToolRuntimeIdentity
+            )
+        )) {
+            sourceObservation = engine.AppendObservation("use tool");
+            toolAction = engine.AppendImportedAgentAction(
+                new ActionMessage([
+                    new ActionBlock.ToolCall(new RawToolCall("lookup", "call-1", "{}"))
+                ]),
+                new CompletionDescriptor("import", "import-v1", "model-A")
+            );
+        }
+        using (var journal = EventJournal.EventJournal.OpenExisting(path)) {
+            EventAddress started = Commit(
+                journal,
+                toolAction,
+                SessionEventKind.ToolExecutionStarted,
+                new ToolExecutionStartedBody(
+                    "call-1",
+                    "lookup",
+                    "{}",
+                    "op-1",
+                    1,
+                    TestToolRuntimeIdentity
+                )
+            );
+            toolResult = Commit(
+                journal,
+                started,
+                SessionEventKind.ToolResultObserved,
+                new ToolResultObservedBody(
+                    "call-1",
+                    "lookup",
+                    1,
+                    ToolExecutionStatus.Success,
+                    [new ToolResultBlock.Text("result")]
+                )
+            );
+            finalAction = Commit(
+                journal,
+                toolResult,
+                SessionEventKind.ImportedAgentAction,
+                new AgentActionProducedBody(
+                    new ActionMessage([new ActionBlock.Text("done")]),
+                    new CompletionDescriptor("import", "import-v1", "model-A"),
+                    $"atelia.session-journal.turn.v1:{EventAddressTextCodec.Format(sourceObservation)}",
+                    new SessionExecutionCheckpoint(1),
+                    ToolRuntimeIdentity: null
+                )
+            );
+        }
+
+        EventAddress anchor = boundary == "tool-action" ? toolAction : toolResult;
+        TestArtifactSet artifact;
+        ArtifactSetCommittedBody body;
+        using (var setup = SessionJournalEngine.Open(path)) {
+            SessionGoverningSetup anchorSetup = setup.ResolveGoverningSetup(anchor);
+            artifact = await WriteArtifactAsync(
+                path,
+                anchor,
+                sourceRawHead: finalAction,
+                anchorSetup,
+                CreateMemoryPack()
+            );
+            body = CreateArtifactSetBody(
+                setup,
+                anchor,
+                anchorSetup,
+                setup.ResolveGoverningSetup(finalAction),
+                artifact
+            );
+        }
+        EventAddress activation;
+        using (var journal = EventJournal.EventJournal.OpenExisting(path)) {
+            activation = Commit(
+                journal,
+                finalAction,
+                SessionEventKind.ArtifactSetCommitted,
+                body
+            );
+        }
+
+        var client = new CapturingCompletionClient(
+            _ => throw new InvalidOperationException("must not call provider")
+        );
+        using var reopened = SessionJournalEngine.Open(path, CreateRuntime(client, artifact));
+        int projectionCount = reopened.FullProjectionInvocationCount;
+
+        InvalidDataException error = await Assert.ThrowsAsync<InvalidDataException>(
+            () => reopened.SendAsync("must not append", CancellationToken.None)
+        );
+
+        Assert.Equal(activation, reopened.ResolveExecutionTail().Head);
+        Assert.Equal(projectionCount, reopened.FullProjectionInvocationCount);
+        Assert.Empty(client.Requests);
+    }
+
     [Fact]
     public void CoherentRecipeExpand_NeverReturnsHeaderMessage() {
         var snapshot = new SessionRequestArtifactContextSnapshot(
@@ -1631,7 +1744,7 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
                 .OrderBy(static item => item.RoleId, StringComparer.Ordinal)
                 .Select(static item => {
                     SessionRequestArtifactInput input =
-                        LegacyArtifactContextCandidateAdapter.CreateLegacyArtifactInput(
+                        LegacyArtifactContextSnapshotFactory.CreateLegacyArtifactInput(
                             item.Artifact
                         );
                     return new SessionArtifactSetMember(

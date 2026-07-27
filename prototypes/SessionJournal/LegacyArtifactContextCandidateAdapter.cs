@@ -53,7 +53,8 @@ internal sealed class LegacyArtifactContextCandidateAdapter {
             MemoryPackBlock block;
             try {
                 ValidateLegacyArtifact(active, member, artifact, allowedSourceHeads);
-                SessionRequestArtifactInput legacyInput = CreateLegacyArtifactInput(artifact);
+                SessionRequestArtifactInput legacyInput =
+                    LegacyArtifactContextSnapshotFactory.CreateLegacyArtifactInput(artifact);
                 if (!string.Equals(
                         legacyInput.ContentSha256,
                         member.ContentSha256,
@@ -136,26 +137,6 @@ internal sealed class LegacyArtifactContextCandidateAdapter {
             ));
         }
         return inputs.MoveToImmutable();
-    }
-
-    internal static SessionRequestArtifactInput CreateLegacyArtifactInput(
-        DerivedRecapArtifact artifact
-    ) {
-        ArgumentNullException.ThrowIfNull(artifact);
-        if (!artifact.MemoryPack.TryGetBlock(artifact.Target, out MemoryPackBlock block)
-            || !string.Equals(block.Text, artifact.Content, StringComparison.Ordinal)) {
-            throw new InvalidDataException(
-                $"Recap artifact '{artifact.ArtifactId}' is missing its exact target block content."
-            );
-        }
-        SessionRequestArtifactContextSnapshot snapshot =
-            SessionCoherentRequestRecipe.CreateOneHotSnapshot(artifact.Target, block.Text);
-        return new SessionRequestArtifactInput(
-            artifact.ArtifactId,
-            artifact.ArtifactKind,
-            SessionArtifactContextSnapshotHasher.ComputeSha256(snapshot),
-            snapshot
-        );
     }
 
     private static void ValidateLegacyArtifact(

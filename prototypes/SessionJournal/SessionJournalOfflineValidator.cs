@@ -381,7 +381,7 @@ public static class SessionJournalOfflineValidator {
             return "Exact artifact source provenance is not on the current raw lineage.";
         }
         SessionRequestArtifactInput input =
-            LegacyArtifactContextCandidateAdapter.CreateLegacyArtifactInput(artifact);
+            LegacyArtifactContextSnapshotFactory.CreateLegacyArtifactInput(artifact);
         if (!string.Equals(
                 input.ContentSha256,
                 member.ContentSha256,
