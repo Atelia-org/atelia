@@ -7,6 +7,13 @@
 > **后续恢复设计**：[Tail-only Execution Recovery Design](tail-execution-recovery-design.md)
 > **替代对象**：`prototypes/ChatSession`（StateJournal deque + 整轮末尾 commit）
 
+> **后续边界说明（2026-07-27）**：本文描述 current trunk 的已实施基线，因此仍如实记录 raw
+> `ArtifactSetCommitted` 与 Prepared v3。长期方向已在
+> [Tail Execution Recovery 化简调研 §4](tail-execution-recovery-simplification-study.md) 中修订：
+> raw sequence 不再引用 derived ids；具体 Derived ArtifactSet 实现迁入单向引用 SessionJournal
+> contracts 的独立可替换程序集；SessionJournal 仅在未 Prepared 的 request planning 阶段消费
+> store-neutral candidate，raw tail recovery 与 Prepared reopen 不依赖该子系统。
+
 ## 0. 定位与边界
 
 `Atelia.SessionJournal`（落地在 `prototypes/SessionJournal`）是长寿命 LLM-Agent 的

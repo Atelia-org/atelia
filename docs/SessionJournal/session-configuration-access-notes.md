@@ -6,6 +6,13 @@
 > [Tail-only Execution Recovery Design](tail-execution-recovery-design.md)、
 > [ChatSession 事件源与长期上下文架构路线图](../ChatSession/event-sourced-session-architecture-roadmap.md)
 
+> **后续边界说明（2026-07-27）**：本文记录的 raw `ArtifactSetCommitted` setup checkpoint 是
+> CS-3D5～D7 的 current implementation fact，不是长期目标。候选 C 删除 raw activation 后，近头
+> Prepared 继续提供 raw setup hint；首次 Prepared 前可由可重建 DerivedMemory hint 加速，但
+> authoritative fallback 仍是 raw header parent walk。DerivedMemory 作为独立可替换程序集只参与未
+> Prepared 的 context planning，不能进入 `SessionExecutionTailResolver` 或 Prepared exact reopen。
+> 详见 [化简调研 §4](tail-execution-recovery-simplification-study.md)。
+
 ## 1. 结论
 
 CS-5-lite 之后，CS-3A～D7 已完成最小可恢复 Completion 主线：paired setup checkpoint、

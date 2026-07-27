@@ -171,6 +171,12 @@ symlink/reparse point。
 | `autobiographical-rewrite` | `Action / roleplay.first-person-autobiography` | 将新经历融入第一人称自传并完整重写。 |
 | `world-understanding-rewrite` | `Observation / roleplay.world-understanding` | 维护事实档案和世界认知地图。 |
 
+> **当前限制**：SessionJournal replay 的 `--threshold-tokens` 是 maintainer-runner-local 参数。
+> 每个 preset 独立累计 active history，达到阈值后再用
+> `HistoryWindowSplitPolicy.FindHalfContextSplitPoint()` 计算自己的 `splitIndex`。两个命令使用完全相同
+> raw input、estimator、threshold 和 replay 起点时通常得到同一 anchor，但系统没有持久化的 shared
+> partition identity；这不能作为 coherent ArtifactSet 的长期同步合同。
+
 输出 JSONL schema 为 `atelia.chat-session.memory-maintainer-backtest.v2`。除调用、target、split 和状态信息外，
 SessionJournal 成功 record 还包含：
 
@@ -187,6 +193,69 @@ latest artifact materialize 后只 replay anchor 之后的 tail。
 两个正式 preset 的 profile/target lineage 不同，因此可以在同一个新 repo 上各运行一次；第二个
 preset 的 root artifact 不会把第一个 preset 的 artifact 设为 `previousArtifact`。但同一 preset
 不能在未清理其既有 lineage 时直接重复 full replay。
+
+### Shared coverage epoch 的目标形态（尚未实现）
+
+日常 SessionJournal 中，history 如何滑出 recent context 与“注册了几个 MemoryMaintainer”无关。同一
+`coherenceGroup`（例如 core-memory 中的 autobiography + world-understanding）应先由 Derived
+Artifact Epoch Planner 生成一个 immutable shared plan，再让所有 maintainer 消费：
+
+```text
+planner config
+  minimumRecentTokens
+  epochTriggerTokens
+  tokenEstimatorId
+  dependencyBoundaryPolicyId
+  topologyVersion
+
+epoch plan
+  epochId
+  previousEpoch
+  plannedAtRawHead
+  exact sourceStartExclusive/sourceEndInclusive
+  common anchor + setup refs
+  config fingerprint
+```
+
+config 只定义未来怎样切；epoch ledger 固定历史实际上怎样切了。它们属于独立 DerivedMemory
+repository，不写入 raw SessionJournal。概念上的 repo 布局可以是：
+
+```text
+derived/memory/v1/
+  planner-config.json          # current config pointer
+  planner-configs/<hash>.json  # immutable snapshots
+  epochs/<epoch-id>.json       # immutable actual partitions
+  artifacts/...
+  sets/...
+  indexes/...
+```
+
+第一版触发规则是：先保留至少 `minimumRecentTokens` 的最新 dependency-closed suffix；更旧且可安全滑出
+的 prefix 达到 `epochTriggerTokens` 时，先 durable 写一个 epoch plan，再并行运行该 group 的 required
+maintainers。split 必须对齐 replay-safe/dependency-safe boundary，所以各 epoch 大小可以不同；同步
+要求是共享 exact epochId/range，而不是每块大小相同。
+
+prompt-tuning 不应再通过修改 `--threshold-tokens` 让单个 maintainer 重新切 history。目标 CLI 会把
+planning 与 producer execution 分开，下面只是意图示意，不是当前可用命令：
+
+```text
+plan-derived-artifact-epochs --input <repo> --config <config>
+run-memory-maintainer --input <repo> --epoch <epoch-id> --preset <name> [prompt overrides]
+run-memory-maintainers --input <repo> --epoch <epoch-id>               # online parallel group
+publish-derived-artifact-set --input <repo> --epoch <epoch-id> --candidate ...
+```
+
+同一 role 可以针对同一 epoch 独立重跑多个 prompt/model candidate；这些运行不能移动 epoch cursor。
+最终 set 从每个 required role 中显式选一个同 epoch candidate，全部成功后才发布。若某 maintainer
+判断内容无需变化，也应以显式 no-change/identity result 结算该 epoch，而不是拿上一 epoch artifact
+冒充同步成员。
+
+因此当前命令的 `--threshold-tokens` 将继续作为 legacy/backtest 实验入口，直至 shared epoch planner
+落地；D6E 中两个 preset 得到共同 anchor 是一次有效验收结果，但不是 durable synchronization
+机制。目标设计见
+[`memory-maintainer-provisioning-planner-gap.md`](../../docs/SessionJournal/memory-maintainer-provisioning-planner-gap.md)
+§5.4；具体实施顺序见
+[`derived-memory-subsystem-implementation-plan.md`](../../docs/SessionJournal/derived-memory-subsystem-implementation-plan.md)。
 
 ### D6E 可审计迁移与 readiness 验收
 
@@ -247,6 +316,11 @@ dotnet run --project prototypes/ChatSession.BacktestCli -- llm-smoke \
 - `ChatSession.Memory`：`AutobiographicalRewriteProfiles`、
   `WorldUnderstandingRewriteProfiles` 等内容层 profile。
 - `Completion`：connection loader/registry、真实 provider client 和 `LoggingCompletionClient`。
+
+以上是 current implementation dependency。目标形态中，`DerivedRecapStore`、shared epoch
+planner/ledger、MemoryMaintainer orchestration 与 ArtifactSet publication 将迁入独立 DerivedMemory
+程序集；CLI 作为 composition root 同时引用 SessionJournal contracts 和 concrete DerivedMemory
+implementation。
 
 推荐先导入 repo，再用 `--max-epochs 1` 分别审阅 JSONL、artifact 和 call log；确认输出后再提高 epoch
 数量。真实 LLM 输出和日志应写到 `gitignore/backtest/...`，避免把大体积或敏感上下文放入源码 diff。

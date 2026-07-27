@@ -1,9 +1,11 @@
 # ChatSession 事件源与长期上下文架构路线图
 
-> **状态**：Architecture Roadmap / CS-3D6 current trunk implemented
+> **状态**：Architecture Roadmap / CS-3D7 current trunk implemented；ArtifactSet raw/assembly 解耦待实施
 > **日期**：2026-07-27（保留下文早期日期作为实施历史）
 > **底层依赖**：[EventJournal 功能需求与粗粒度设计基线](../EventJournal/event-journal-requirements-and-design.md)
 > **相关既有研究**：[Dynamic Logical Context Store for Long-Running Role-Play Agents](../Galatea/backlog/idea/dynamic-logical-context-store-for-long-running-role-play-agents.md)
+> **后续实施计划**：
+> [DerivedMemory 可替换子系统与 Shared Epoch 实施方案](../SessionJournal/derived-memory-subsystem-implementation-plan.md)
 
 ## 1. 文档定位
 
@@ -56,7 +58,11 @@ Recap、Autobiography、World Understanding、关系状态、开放线索等都�
 
 每次 completion 前，系统必须保存精确 `ContextPlan` 和 canonical request manifest。崩溃恢复不能仅凭“当前配置 + 当前 head”重新运行 planner，因为配置、索引和 token estimator 可能已经变化。
 
-canonical request manifest 优先采用**引用式**形态：记录 raw events、artifacts、tool schema、配置与 renderer/model profile 的稳定地址、版本和 hash，使系统能重建同一个 canonical request；不默认把超大 request body 值拷贝进一个自包含事件。
+canonical request manifest 对 raw facts 采用 exact address/range/setup refs，对实际进入 provider
+request 的 derived memory contribution 则保存 exact context snapshot 或 canonical request bytes。
+Prepared 不引用 derived artifact/set id，也不要求 derived store 在 reopen 时仍存在；planner/renderer
+版本变化不能改写已经 Prepared 的外部调用事实。若要审计 derived selection，可在可重建 usage index 中
+记录 `preparedAddress -> derivedSetId`。
 
 ### decision [S-CS-EXECUTION-INCREMENTAL] 执行状态逐步事件化
 
@@ -85,12 +91,18 @@ flowchart TD
 | 层 | Canonical Data | 主要职责 |
 |:---|:---------------|:---------|
 | Raw Event Journal | 不可变 session events | 保存发生过什么、维持版本树与回放顺序 |
-| Derived Artifact Journal | 带 provenance 的不可变 artifacts | 保存系统如何解释和压缩历史 |
+| Derived Artifact Journal | config snapshots、coverage epochs、artifacts、ArtifactSets | 保存系统如何分块、解释和压缩历史 |
 | Retrieval Read Models | 可重建索引 | 按语义、实体、时间、关键词发现候选材料 |
 | Context Planner | 持久化 ContextPlan | 在 token/cost/latency 预算内选择 exact context |
 | Execution State Machine | 逐步执行事件 | 驱动 completion/tool-loop，并从任意持久边界恢复 |
 
-这些层可以物理共用同一个 EventJournal store，也可以使用多个 store；逻辑上的权威边界不能因为物理共置而消失。
+DerivedMemory repository 可以物理附着在 SessionJournal repo 下，也可以使用独立 store，但不能把
+derived plans/artifacts/sets 写入 raw Parent sequence；逻辑上的权威边界不能因为物理共置而消失。
+
+程序集边界采用依赖倒置：SessionJournal 定义 store-neutral context candidate contract；具体 Derived
+Artifact/ArtifactSet store、maintainer orchestration、lineage/indexes 与 selection 位于独立可替换
+DerivedMemory 程序集，并单向引用 SessionJournal contracts。composition root 同时引用两边并注入
+provider。
 
 ## 5. Raw Event Journal
 
@@ -218,14 +230,34 @@ Artifact 本身 append-only。所谓“最新版”由 lineage、ArtifactSet 或
 
 Autobiography 与 World Understanding 可能并行生成，但一次上下文不应偶然混用不同 source head 的半套结果。
 
-建议增加 `ArtifactSetCommitted`：
+ArtifactSet 应作为 derived subsystem 内的 immutable record：
 
-- 引用一组完整 artifact addresses。
-- 记录共同或各自的 source raw head。
-- 记录 set profile / purpose。
-- 只有 set commit 成功后，Context Planner 才把整组作为候选。
+- 引用一组完整 exact artifact members；
+- 引用一个在 producer 调用前已持久化的 shared coverage epoch；同一 coherence group 的 required
+  members 必须共享 exact `epochId` 与 raw range；
+- 记录 common anchor、source raw provenance、coverage setup refs、set policy/producer fingerprint；
+- 维护自身 previous-set lineage 与可重建 latest/default indexes；
+- 只有 derived publication 成功后，Context Planner 才把整组作为候选。
 
 若其中一个 maintainer 失败，旧 active set 保持可用；已成功写出的单个 artifact 可以留作诊断或未来复用，但不自动进入当前 coherent set。
+
+history 分块是 maintainer 之前的公共 planning 结果。DerivedMemory subsystem 应保存 versioned split
+config 和 immutable epoch ledger：config 记录 token estimator、最小 recent suffix、触发阈值与
+dependency-safe boundary policy；epoch record 固定实际 raw range/anchor/setup/config fingerprint。
+日常运行并行启动同 epoch 的 maintainers，prompt-tuning 则可独立重跑其中一个 role，但不能重新计算
+split。同步来自 shared epoch identity，而不是进程启动时间或恰好相同的 `--threshold-tokens`。
+
+主 raw SessionJournal 不追加 `ArtifactSetCommitted` 或其他 derived-set activation，也不引用 artifact/set
+id。引用方向只能是 derived artifact/set -> raw addresses。某次 completion 实际使用的 memory 文本，
+在 `CompletionRequestPrepared` 中以 exact context snapshot/canonical request + raw provenance
+提升为 execution fact；Prepared 不需要反向引用 derived id，之后的 exact reopen 也不读取 derived
+store。
+
+Derived ArtifactSet 的具体维护、存储、lineage、indexes 和 candidate discovery 应位于独立、可替换的
+DerivedMemory 程序集。该程序集单向引用 SessionJournal 定义的 store-neutral coherent context
+candidate contracts；Agent Host/Backtest CLI 作为 composition root 同时引用两者并注入实现。
+`SessionExecutionTailResolver` 保持 raw-only，只有尚未 Prepared 的 request-context planning /
+materialization 使用 candidate provider。
 
 ### 6.5 MemoryPack 的新角色
 
@@ -261,7 +293,8 @@ derived context 承担。raw suffix 只负责保留 anchor 之后仍需逐事件
 1. 最新 coherent artifact set + 最短 raw suffix。
 2. 更早 artifact set + 更长 raw suffix。
 3. 最新 artifact set + 当前任务相关 recalled artifacts / raw ranges。
-4. 无 artifact 的纯 raw 回放，用于 bootstrap、审计或小历史。
+4. 无 artifact 的纯 raw 回放只用于 offline bootstrap/maintainer 输入与显式审计；online completion
+   没有 coherent candidate 时应 not-ready，不静默退回 full raw。
 
 Planner 应比较信息完整性、token、费用、延迟和 staleness，而不是永远在固定阈值切“前一半”。
 
@@ -272,10 +305,10 @@ Planner 应比较信息完整性、token、费用、延迟和 staleness，而不
 ```csharp
 public sealed record ContextPlan(
     EventAddress RawHead,
-    EventAddress? ArtifactSet,
     EventAddress? RawStartExclusive,
     EventAddress RawEndInclusive,
-    IReadOnlyList<EventAddress> RecalledItems,
+    ContextHeaderSnapshot DerivedContext,
+    IReadOnlyList<EventAddress> RecalledRawItems,
     string RenderingProfileId,
     string ModelProfileId,
     string PlannerFingerprint,
@@ -288,16 +321,22 @@ public sealed record ContextPlan(
 精确字段后续可调整，但必须固定四类事实：
 
 - planner 基于哪个 raw head 作出决定。
-- 选择了哪组 artifacts 和 raw range。
+- 选择了哪些 materialized derived contributions 和 raw range。
 - 选择了哪些动态召回项。
 - 使用哪版 planner、rendering、model、token、retriever 与 ranker policy。
 
-### 7.3 引用式 Canonical Request Manifest
+若该 `ContextPlan` 进入 raw Prepared，它不能保存 derived set/artifact id。用于解释“哪个 set 产生了
+这些 contribution”的 selection record 位于 derived usage index，并以
+`preparedAddress -> derivedSetId/epochId` 单向引用 raw。
+
+### 7.3 Self-contained Canonical Request Manifest
 
 只保存 ContextPlan 仍不足以精确恢复，因为 renderer、prompt template 或 serializer 可能升级。`CompletionRequestPrepared` 应保存：
 
 - 可逐字节重建 canonical `CompletionRequest` 的完整 manifest。
-- 被引用 raw event / artifact / tool schema / config event 的地址、版本和必要 hash。
+- 被引用 raw event / setup / tool schema / config event 的地址、版本和必要 hash。
+- 实际进入 request 的 derived context contribution snapshot 或 canonical bytes；不引用 derived
+  artifact/set id 作为 reopen 依赖。
 - renderer、serializer、prompt template、tool rendering、model profile 的 fingerprint。
 - request hash。
 - completion surface / model / connection identity。
@@ -305,9 +344,10 @@ public sealed record ContextPlan(
   `CompletionAttemptStarted` event address 给出。
 - 关联 ContextPlan event。
 
-为了控制存储增长，首选 manifest **引用已存在的 event / artifact bytes**，而不是把超大 request body 整包复制到 request event。manifest 本身必须足够封闭：恢复时只允许读取 manifest 指向的持久对象并使用 manifest 记录的 renderer/serializer 版本重建 request；不得重新运行 planner 或用“当前最新配置”替换 manifest 中的旧引用。
-
-若后续发现 renderer/serializer 演进导致逐字节重建成本过高，可为小请求或调试模式增加可选 body snapshot，但这不是默认权威形态。
+raw suffix 可以继续用 exact address/range/hash 与 deterministic fold 重建；derived memory 则必须在
+Prepared 中提升为 exact snapshot/canonical bytes，因为它所在的 sidecar 可删除、实现可替换。恢复时
+不得重新打开 DerivedMemory、重新运行 planner，或用“当前最新配置”替换已经 Prepared 的内容。
+snapshot-vs-recipe 的 stored-byte 权衡仍可单独 benchmark，但不能重新引入 raw -> derived id 依赖。
 
 权威边界必须单一：
 
@@ -326,7 +366,16 @@ Planner 至少区分：
 - tool schema budget。
 - expected completion output reserve。
 
-当前 `threshold-tokens = 24000` 可继续作为触发 artifact maintenance 的实验参数，但不应成为长期存储格式或唯一切分规则。
+当前 maintainer-local `threshold-tokens = 24000` 只能作为 legacy/backtest 实验参数。长期由
+Derived Artifact Epoch Planner 统一配置：
+
+- `minimumRecentTokens`：始终保留的最新 dependency-closed suffix；
+- `epochTriggerTokens`：可滑出 eligible prefix 达到多少后创建新 epoch；
+- token estimator / dependency boundary policy / headroom 与 hard-limit；
+- immutable epoch plan：保存最终实际 raw range，允许因 boundary alignment 而大小不一。
+
+所有同一 coherence group maintainers 消费同一 epoch plan；prompt-tuning 只替换某 role 在该 epoch 的
+producer candidate，不重新切分 history。
 
 ### 7.5 选择结果也是事实
 
@@ -502,6 +551,10 @@ producer 可以基于同一 `SourceRawHead` 并行运行。完成时：
 - `MemoryMaintenanceOrchestrator`：同 snapshot 并行生成结果并形成 coherent update 的原型。
 - `HistoryWindowSplitPolicy`：迁移期与 backtest 基线，不再是最终 Planner 的唯一策略。
 - legacy upgrade export / importer：旧 session 到 raw events 的迁移输入。
+
+通用的上层 provisioning/planner 尚未实现：当前缺少 role catalog、增量 lineage recovery、maintenance
+shared coverage epoch config/ledger、partial-success 结算和自动 coherent publication。后续设计入口见
+[`memory-maintainer-provisioning-planner-gap.md`](../SessionJournal/memory-maintainer-provisioning-planner-gap.md)。
 
 需要改变的是持久化归属和 provenance，而不是把已验证的 Rewrite 执行器推倒重写。
 
@@ -690,6 +743,12 @@ canonical request。execution resolver 本身不读取 artifact 文本。
 > 最新 Started。详见
 > [D7 设计记录](../SessionJournal/done/prepared-provider-attempt-symmetry-design.md)。
 
+> **2026-07-27 后续目标**：current raw kind 12 是已实施基线，不是长期 ArtifactSet 边界。候选 C
+> 将删除 raw `ArtifactSetCommitted`，把具体 derived memory 实现迁入独立可替换程序集，并让 Prepared
+> 自包含 exact context 与 raw-start setup provenance。`SessionExecutionTailResolver` 继续 raw-only；
+> provider 只参与未 Prepared 的 request planning。详见
+> [化简调研 §4](../SessionJournal/tail-execution-recovery-simplification-study.md)。
+
 ### CS-4：可恢复 Tool Loop
 
 产出：tool started/result/uncertain 事件、idempotency contract、恢复驱动器。
@@ -703,14 +762,19 @@ canonical request。execution resolver 本身不读取 artifact 文本。
 
 ### CS-5：Artifact Journal 与现有 Rewrite Profiles
 
-产出：Artifact schema、lineage、ArtifactSetCommitted；把 Autobiography 与 World Understanding 写入 artifact store。
+产出：独立 DerivedMemory 子系统、shared history epoch planner/config/ledger、Artifact
+schema/lineage、immutable derived ArtifactSet publication 与 store-neutral candidate provider；把
+Autobiography 与 World Understanding 写入 artifact store。
 
 验收：
 
 - 每个 artifact 可追溯 raw range、旧 artifact、profile 和 invocation。
-- 两个 maintainer 只在 coherent set 完成后一起激活。
+- 两个 maintainer 消费同一 exact epoch；只在 coherent set 完成后一起成为可选 candidate。
+- 单个 maintainer 可针对既有 epoch 独立 prompt-tuning，不产生 role-local split。
 - producer 失败不破坏上一 active set。
 - MemoryPack 可由 artifact set materialize。
+- raw SessionJournal 不引用 derived artifact/set ids，`SessionJournal.csproj` 不引用 concrete
+  DerivedMemory 项目。
 
 ### CS-6：Context Planner v1
 

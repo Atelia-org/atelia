@@ -13,6 +13,15 @@
 > [CS-3D6 Coherent-only Manifest 化简计划](done/coherent-request-manifest-simplification-plan.md)
 > **D7 协议修订**：[Prepared / Provider Attempt 对称化](done/prepared-provider-attempt-symmetry-design.md)
 
+> **后续架构方向（2026-07-27）**：本文保留 CS-3D0～D7 当时的已实施 wire/验收事实，包括 raw
+> `ArtifactSetCommitted`。它不是 Derived ArtifactSet 的长期程序集边界。后续候选 C 将删除 raw
+> activation，把 artifact/set 的维护、存储、lineage、indexes 与 selection 移入独立可替换的
+> DerivedMemory 子系统；SessionJournal 只定义 store-neutral coherent context candidate contract。
+> `SessionExecutionTailResolver` 始终保持 raw-only，只有未 Prepared 的 request-context
+> planning/materialization 注入该 provider；Prepared/Started exact reopen 不读取 derived subsystem。
+> 目标设计见 [化简调研 §4](tail-execution-recovery-simplification-study.md) 和
+> [MemoryMaintainer Provisioning / Planner 功能缺口备忘](memory-maintainer-provisioning-planner-gap.md)。
+
 ## 0. 给后续 Coding Agent 的结论
 
 当前 `SessionJournalEngine.Project()` 会从 ref root 正向解码到 ref head，并用 `SessionReducer`
