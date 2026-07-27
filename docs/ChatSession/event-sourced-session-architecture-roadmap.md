@@ -255,7 +255,7 @@ store。
 
 Derived ArtifactSet 的具体维护、存储、lineage、indexes 和 candidate discovery 应位于独立、可替换的
 DerivedMemory 程序集。该程序集单向引用 SessionJournal 定义的 store-neutral coherent context
-candidate contracts；Agent Host/Backtest CLI 作为 composition root 同时引用两者并注入实现。
+candidate contracts；Agent Host/SessionJournal CLI 作为 composition root 同时引用两者并注入实现。
 `SessionExecutionTailResolver` 保持 raw-only，只有尚未 Prepared 的 request-context planning /
 materialization 使用 candidate provider。
 
@@ -612,7 +612,7 @@ Context Planner 选择 artifact anchor + raw suffix
 
 ### CS-2.5 / CS-5-lite：SessionJournal Derived Recap Store 与 RollingSummary Replay
 
-产出：把 `prototypes/ChatSession.BacktestCli/RollingSummaryReplay.cs` 从 legacy event source 迁移到新的
+产出：把 `prototypes/SessionJournal.Cli/MemoryMaintainerRun.cs` 从 legacy event source 迁移到新的
 SessionJournal repo forward replay；建立 recap 类 derived artifact 的最小磁盘 / 内存结构；用现有
 `RewriteMemoryBlockMaintainer` 生成可加载 rolling summary，并记录 raw source range、anchor、profile、
 invocation、`runtime-config-setup` 与 `system-prompt-setup` provenance。
@@ -621,7 +621,7 @@ invocation、`runtime-config-setup` 与 `system-prompt-setup` provenance。
 
 验收：
 
-- 能从 `import-session-journal` 生成的 SessionJournal repo 顺序 replay raw observation/action/tool-result。
+- 能从 `import-legacy-json` 生成的 SessionJournal repo 顺序 replay raw observation/action/tool-result。
 - Rolling summary 不写回 raw event chain；derived store 可删除、可重建、可加载。
 - 每个 recap artifact 能说明覆盖到哪个 raw head / source range，并能追溯所用 profile、上一个 artifact 与 LLM invocation。
 - 后续 tail projection 可把最新 recap materialize 为 `ContextHeader` / observation header，并从 anchor 之后 replay raw suffix。
@@ -710,8 +710,8 @@ canonical request。execution resolver 本身不读取 artifact 文本。
 > coverage/current setup refs 与 canonical role members；coherent Prepared 通过 address/schema/hash
 > exact reference 传播 activation。D6C1 后 runtime 不再暴露 request-context selector，online writer
 > 仅允许 coherent artifact-tail；旧 full-raw / explicit reader 只过渡保留至 D6D。离线
-> `validate-session-journal` 做 strict full-vs-tail validation，
-> `checkpoint-artifact-set-session-journal` 只 append 一条 activation；`import-session-journal` 明确为
+> `validate` 做 strict full-vs-tail validation，
+> `checkpoint-artifact-set` 只 append 一条 activation；`import-legacy-json` 明确为
 > legacy export → current wire 的新 repo 迁移。1 vs 10001 cold-turn 的 Observation 和两轮 tool
 > continuation 验收中，header/payload/logical bytes/peak-live 均恒定，chronological/full projection
 > 均为 0，且三次 provider request 已逐阶段对照。strict validator 使用真正只读的 EventJournal

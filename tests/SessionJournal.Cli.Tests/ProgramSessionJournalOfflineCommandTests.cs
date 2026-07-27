@@ -5,11 +5,11 @@ using Atelia.Completion.Abstractions;
 using Atelia.EventJournal;
 using Atelia.SessionJournal;
 using Atelia.SessionJournal.Derived;
-using ChatSessionBacktestCli;
+using Atelia.SessionJournal.Cli;
 using SJ = Atelia.SessionJournal;
 using Xunit;
 
-namespace Atelia.ChatSession.BacktestCli.Tests;
+namespace Atelia.SessionJournal.Cli.Tests;
 
 public sealed class ProgramSessionJournalOfflineCommandTests : IDisposable {
     private static readonly JsonSerializerOptions WebJsonOptions =
@@ -43,7 +43,7 @@ public sealed class ProgramSessionJournalOfflineCommandTests : IDisposable {
 
         int exitCode = Program.MainCore(
             [
-                "validate-session-journal",
+                "validate",
                 "--input", repoPath,
                 "--report-json", reportPath
             ],
@@ -98,7 +98,7 @@ public sealed class ProgramSessionJournalOfflineCommandTests : IDisposable {
 
         int exitCode = Program.MainCore(
             [
-                "checkpoint-artifact-set-session-journal",
+                "checkpoint-artifact-set",
                 "--input", repoPath,
                 "--member", $"autobiography={autobiography.ArtifactId}",
                 "--member", $"world-understanding={world.ArtifactId}"
@@ -147,19 +147,19 @@ public sealed class ProgramSessionJournalOfflineCommandTests : IDisposable {
             await SessionJournalOfflineValidator.ValidateAsync(repoPath);
         string[] args = failure switch {
             "missing" => [
-                "checkpoint-artifact-set-session-journal",
+                "checkpoint-artifact-set",
                 "--input", repoPath,
                 "--member", $"autobiography={autobiography.ArtifactId}",
                 "--member", "world-understanding=missing-artifact"
             ],
             "duplicate-role" => [
-                "checkpoint-artifact-set-session-journal",
+                "checkpoint-artifact-set",
                 "--input", repoPath,
                 "--member", $"memory={autobiography.ArtifactId}",
                 "--member", $"memory={world.ArtifactId}"
             ],
             "bad-member" => [
-                "checkpoint-artifact-set-session-journal",
+                "checkpoint-artifact-set",
                 "--input", repoPath,
                 "--member", $"autobiography={autobiography.ArtifactId}",
                 "--member", "not-an-assignment"

@@ -73,7 +73,7 @@ DM-8  Online lifecycle + budgeted set selection
 - `prototypes/SessionJournal/DerivedRecapStore.cs`
   - concrete sidecar persistence、artifact DTO、indexes、identity 与 rebuild logic 位于 raw core
     程序集。
-- `prototypes/ChatSession.BacktestCli/RollingSummaryReplay.cs`
+- `prototypes/SessionJournal.Cli/MemoryMaintainerRun.cs`
   - 每个 maintainer runner 独立解释 threshold 并计算 split；
   - SessionJournal 模式仍从 raw root + empty `MemoryPack` full replay。
 
@@ -92,7 +92,7 @@ DM-8  Online lifecycle + budgeted set selection
 ## 2. 目标程序集与 authority 图
 
 ```text
-Agent Host / ChatSession.BacktestCli
+Agent Host / SessionJournal.Cli
 ├── Atelia.SessionJournal
 │   ├── raw event codec / reducer / tail resolver
 │   ├── candidate contracts
@@ -381,7 +381,7 @@ tests/SessionJournal.DerivedMemory.Tests/
 
 ### Composition
 
-- BacktestCli/Agent Host 同时引用 SessionJournal 与 DerivedMemory；
+- SessionJournal.Cli/Agent Host 同时引用 SessionJournal 与 DerivedMemory；
 - provider instance 与一个 SessionJournal repo/session 绑定；
 - Engine/request coordinator 只保存 interface；
 - `SessionJournal.Open(path)` 无 provider 仍支持 raw-only surfaces；
@@ -390,7 +390,7 @@ tests/SessionJournal.DerivedMemory.Tests/
 ### CLI transition
 
 - 增加 derived-only set publish/inventory 能力；
-- current `checkpoint-artifact-set-session-journal` 不再作为长期 writer；
+- current `checkpoint-artifact-set` 不再作为长期 writer；
 - 新 writer 不追加 raw kind 12；
 - raw kind 12 reader 可只为 DM-3 这一过渡分片暂存，DM-4 立即删除；
 - 不保留双 writer 或 silent import。
@@ -422,7 +422,7 @@ tests/SessionJournal.DerivedMemory.Tests/
 - `ResolveActiveArtifactSet()` / `EnsureActiveArtifactSetReadyAsync()`；
 - latest-equals-selected/raw activation validators；
 - offline readiness report 的 active raw set；
-- Backtest CLI raw checkpoint command；
+- SessionJournal CLI raw checkpoint command；
 - activation setup checkpoint 逻辑。
 
 ### Governing setup hint
@@ -579,12 +579,12 @@ boundary alignment 可以使 epoch 大小不同。同步要求是共享 exact ep
 run-memory-maintainer
   --input <repo>
   --epoch <epoch-id>
-  --preset <role>
+  --profile <role>
   [--system-prompt ... --prompt ... --connection ...]
 ```
 
-legacy export backtest 可以保留原 threshold 命令；SessionJournal production mode 不再允许 role-local
-split。
+拆分后 legacy export backtest 已退役；当前 `SessionJournal.Cli` 的 threshold/full-replay
+模式只是过渡性 maintainer 开发入口。DerivedMemory production mode 不再允许 role-local split。
 
 ### 验收
 
@@ -745,7 +745,7 @@ ordinal 不等价于 cost；第一版 `NthPrevious` 是可解释控制面，budg
   - candidate provider；
   - epoch planner；
   - maintainer settlement/publication。
-- `tests/ChatSession.BacktestCli.Tests`
+- `tests/SessionJournal.Cli.Tests`
   - composition；
   - CLI parsing/path safety/atomic reports；
   - plan/run/publish workflow；
@@ -777,7 +777,7 @@ dotnet test <project> -m:1 -nr:false --no-restore
 
 - `SessionJournal.Tests`；
 - `SessionJournal.DerivedMemory.Tests`（DM-3 起）；
-- `ChatSession.BacktestCli.Tests`（涉及 CLI 起）；
+- `SessionJournal.Cli.Tests`（涉及 CLI 起）；
 - relevant Completion/EventJournal tests；
 - zero-warning build。
 

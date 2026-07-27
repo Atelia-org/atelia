@@ -16,3 +16,8 @@
 
 稳定的 maintainer ID 和 target block key 是持久化身份。移动或重命名实现类型时，
 不得隐式改变这些身份。
+
+离线开发 composition root 是
+[`SessionJournal.Cli`](../SessionJournal.Cli/README.md)：它选择 concrete profile，
+注入 Completion client，并从 addressed `SessionJournalEngine.ReplayHistory()` 运行
+maintainer。CLI 和本 companion assembly 都不会被 SessionJournal raw core 反向引用。

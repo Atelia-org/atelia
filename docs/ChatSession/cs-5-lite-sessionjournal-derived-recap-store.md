@@ -4,6 +4,11 @@
 > 日期：2026-07-26
 > 上层路线图：[ChatSession 事件源与长期上下文架构路线图](event-sourced-session-architecture-roadmap.md)
 > 相关设计：[SessionJournal Configuration Access Notes](../SessionJournal/session-configuration-access-notes.md)
+>
+> 后续收口（2026-07-27）：本文记录 CS-5-lite 落地时的 rolling-summary 术语。
+> `ChatSession.BacktestCli` 随后拆分，现行代码入口是
+> `SessionJournal.Cli run-memory-maintainer`；legacy replay adapter 已删除。详见
+> [CLI 拆分说明](legacy-export-and-sessionjournal-cli-split.md)。
 
 ## 1. 文档目的
 
@@ -24,12 +29,12 @@ store，如何把现有 rolling summary replay 从 legacy export 迁到新的 Se
   是 derived artifacts，不是 raw facts。
 - `SessionJournalEngine.ResolveGoverningSetup(head)` 已能沿 parent chain 只读 header preview，解析
   `head` as-of 最近的 `runtime-config-setup` 与 `system-prompt-setup`，再只读这两个 setup payload。
-- `prototypes/ChatSession.BacktestCli/RollingSummaryReplay.cs` 已把 runner 与输入源解耦；legacy export
-  与 addressed SessionJournal replay 共用 `_activeHistory`、`MemoryPack`、split policy 和
-  `RewriteMemoryBlockMaintainer` 主链。
+- `prototypes/SessionJournal.Cli/MemoryMaintainerRun.cs` 使用 addressed SessionJournal replay、
+  `_activeHistory`、`MemoryPack`、runner-local split policy 和
+  `RewriteMemoryBlockMaintainer` 主链；拆分后的产品 runner 不再接受 legacy export stream。
 - `DerivedRecapStore` 与 `SessionJournalDerivedRecapWriter` 已把成功候选写成带 raw range、governing
   setup、invocation 和 call-log provenance 的 derived artifact，不修改 raw event chain。
-- 正式 CLI `replay-rolling-summary-session-journal` 已接通上述主链，并完成 scripted E2E 与真实
+- 正式 CLI `run-memory-maintainer` 已接通上述主链，并完成 scripted E2E 与真实
   `dsv4p` 双 preset 验收。
 
 当前设计判断：
@@ -87,13 +92,13 @@ SessionJournal raw repo
 
 主要代码入口：
 
-- [RollingSummaryReplay.cs](../../prototypes/ChatSession.BacktestCli/RollingSummaryReplay.cs)
-  legacy 与 SessionJournal 共用的 rolling summary runner、source abstraction 与 replay record。
-- [RollingSummaryArtifactWriting.cs](../../prototypes/ChatSession.BacktestCli/RollingSummaryArtifactWriting.cs)
+- [MemoryMaintainerRun.cs](../../prototypes/SessionJournal.Cli/MemoryMaintainerRun.cs)
+  SessionJournal maintainer runner、addressed source 与 run record。
+- [MemoryMaintainerArtifactWriting.cs](../../prototypes/SessionJournal.Cli/MemoryMaintainerArtifactWriting.cs)
   SessionJournal Derived Recap writer、producer fingerprint、lineage preflight 与写入边界。
-- [Program.cs](../../prototypes/ChatSession.BacktestCli/Program.cs)
-  Backtest CLI 命令入口、connection 配置、rolling summary 参数。
-- [SessionJournalLegacyImporter.cs](../../prototypes/ChatSession.BacktestCli/SessionJournalLegacyImporter.cs)
+- [Program.cs](../../prototypes/SessionJournal.Cli/Program.cs)
+  SessionJournal CLI 命令入口、connection 配置和 maintainer profile 参数。
+- [SessionJournalLegacyImporter.cs](../../prototypes/SessionJournal.Cli/SessionJournalLegacyImporter.cs)
   legacy export -> SessionJournal repo importer；已跳过 legacy recap / compaction。
 - [SessionJournalEngine.cs](../../prototypes/SessionJournal/SessionJournalEngine.cs)
   SessionJournal open/project/append/resolver 主入口。
@@ -218,7 +223,7 @@ bootstrap 工具，不是长期主要机制。
 
 自动 E2E 与真实 `dsv4p` 验收已经证明：
 
-- 从 `import-session-journal` 生成的 repo 运行 rolling summary replay。
+- 从 `import-legacy-json` 生成的 repo 运行 rolling summary replay。
 - replay 不依赖 legacy export JSON 的 message stream。
 - raw SessionJournal event chain 未被写入 recap / compaction event。
 - derived recap artifact 能 reopen 后加载。
@@ -232,7 +237,7 @@ bootstrap 工具，不是长期主要机制。
 实现采用独立命令，避免 legacy JSON 与 repo 目录发生输入格式二义性：
 
 ```bash
-dotnet run --project prototypes/ChatSession.BacktestCli -- replay-rolling-summary-session-journal \
+dotnet run --project prototypes/SessionJournal.Cli -- run-memory-maintainer \
   --input gitignore/session-journal/cyber-copy-upgraded \
   --threshold-tokens 24000 \
   --connections prototypes/Galatea/.atelia/galatea/connections.json \
@@ -240,11 +245,11 @@ dotnet run --project prototypes/ChatSession.BacktestCli -- replay-rolling-summar
   --output gitignore/backtest/session-journal-rolling-summary.jsonl \
   --call-log-dir gitignore/backtest/session-journal-rolling-summary-calls \
   --max-epochs 1 \
-  --preset autobiographical-rewrite
+  --profile autobiographical-rewrite
 ```
 
-旧 `replay-rolling-summary` 保持 legacy-only 且不写 artifact；新命令显式装配 SessionJournal
-source + writer。
+legacy `replay-rolling-summary` 已随 BacktestCli 退役；现行命令只装配 SessionJournal
+addressed source + writer。
 
 ## 11. 已定决策与后续问题
 

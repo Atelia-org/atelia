@@ -721,10 +721,10 @@ dependency/lineage，不等价于 active-set membership，不能拿它猜后一�
 
 离线收口：
 
-- `import-session-journal` 被明确界定为 legacy upgrade export → current SessionJournal wire 的迁移：
+- `import-legacy-json` 被明确界定为 legacy upgrade export → current SessionJournal wire 的迁移：
   写入新 repo 与 ordinal→address mapping，不原地改 immutable raw。没有旧 codec 时不声称能迁移任意
   旧 SessionJournal wire。
-- `validate-session-journal` 通过 `EventJournal.OpenReadOnlyExisting()` 手工沿 Parent 做
+- `validate` 通过 `EventJournal.OpenReadOnlyExisting()` 手工沿 Parent 做
   cycle/continuity 检查与 strict payload decode，再比较 full reducer 和 exact-head tail resolver，
   报告 setup、`PreparedRequestCount`、logical payload bytes 与 active-set readiness。每个
   `ArtifactSetCommitted` 的 common anchor、coverage/current governing setup refs 都按其历史边界
@@ -735,7 +735,7 @@ dependency/lineage，不等价于 active-set membership，不能拿它猜后一�
   event/ref-op/ref-object tail 均 fail-fast；测试逐文件比较 length + SHA-256，证明失败前后 repo bytes
   不变。为完成 inventory/ref validation，它有意 O(raw inventory)，只服务 offline administration，
   不进入 online tail recovery。
-- `checkpoint-artifact-set-session-journal --member role=id ...` 先 full validate，再调用上述 exact
+- `checkpoint-artifact-set --member role=id ...` 先 full validate，再调用上述 exact
   commit API，并 post-validate 只新增一条可用 activation；旧 events/manifests 与 derived files 均不
   改写。
 
@@ -758,7 +758,7 @@ dependency/lineage，不等价于 active-set membership，不能拿它猜后一�
 验收证据：
 
 - `SessionJournal.Tests`：194/194。
-- `ChatSession.BacktestCli.Tests`：35/35。
+- `SessionJournal.Cli.Tests`：35/35。
 - `RbfFileFactoryTests`：8/8；`RbfSegmentStore.Tests`：18/18；`EventJournal.Tests`：38/38。
 - SessionJournal project references 中没有 `Agent.Core`。
 

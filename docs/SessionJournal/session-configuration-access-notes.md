@@ -59,7 +59,7 @@ Prepared checkpoint。1 vs 10001 cold-turn 验收已证明正常 Observation 与
 setup/request reads 不随冷前缀增长，因此不需要再发明 setup cache。
 
 这里必须区分 online 与 offline：online 一跳 hint 信任受控 writer 写出的 CRC/exact-ref raw；
-`validate-session-journal` 则对每个历史 activation 的 common anchor 和 coverage/current setup
+`validate` 则对每个历史 activation 的 common anchor 和 coverage/current setup
 边界重新从完整 Parent chain 证明，并逐 Prepared 重建 canonical request。错误 hint 在 offline
 validation 中 fail-fast，不会被接受为迁移后的合法 repo。
 

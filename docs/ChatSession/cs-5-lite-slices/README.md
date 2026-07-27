@@ -3,6 +3,12 @@
 > 状态：Implemented / A–E Complete
 > 日期：2026-07-26
 > 父任务：[CS-5-lite: SessionJournal Derived Recap Store + RollingSummary Replay](../cs-5-lite-sessionjournal-derived-recap-store.md)
+>
+> 后续收口（2026-07-27）：本目录记录拆分前的 A-E 实施历史。原
+> `ChatSession.BacktestCli` 已拆为 `ChatSession.LegacyExportCli` 与
+> `SessionJournal.Cli`，legacy replay 实验入口已删除；现行命令为
+> `import-legacy-json` / `run-memory-maintainer`。详见
+> [CLI 拆分说明](../legacy-export-and-sessionjournal-cli-split.md)。
 
 ## 目的
 

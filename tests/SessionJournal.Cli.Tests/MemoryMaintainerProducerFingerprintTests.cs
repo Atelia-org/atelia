@@ -1,16 +1,16 @@
 using System.Text.RegularExpressions;
 using Atelia.Completion;
 using Atelia.Completion.Abstractions;
-using ChatSessionBacktestCli;
+using Atelia.SessionJournal.Cli;
 using SJ = Atelia.SessionJournal;
 using Xunit;
 
-namespace Atelia.ChatSession.BacktestCli.Tests;
+namespace Atelia.SessionJournal.Cli.Tests;
 
-public sealed class RollingSummaryProducerFingerprintTests {
+public sealed class MemoryMaintainerProducerFingerprintTests {
     [Fact]
     public void Fingerprint_IsStableAndExcludesOperationalIdentityAndSecrets() {
-        ReplayMemoryMaintainerProfile profile = CreateProfile();
+        MemoryMaintainerRunProfile profile = CreateProfile();
         var client = new FingerprintCompletionClient("client-a", "api-a");
         CompletionConnectionConfig connection = CreateConnection();
 
@@ -32,13 +32,13 @@ public sealed class RollingSummaryProducerFingerprintTests {
 
     [Fact]
     public void Fingerprint_ChangesWithEveryIncludedSemanticFieldFamily() {
-        ReplayMemoryMaintainerProfile profile = CreateProfile();
+        MemoryMaintainerRunProfile profile = CreateProfile();
         var client = new FingerprintCompletionClient("client-a", "api-a");
         CompletionConnectionConfig connection = CreateConnection();
         string baseline = Compute(profile, client, connection);
 
         var variants = new Dictionary<string, string>(StringComparer.Ordinal) {
-            ["profile preset"] = Compute(CreateProfile(presetName: "preset-b"), client, connection),
+            ["profile name"] = Compute(CreateProfile(profileName: "preset-b"), client, connection),
             ["maintainer id"] = Compute(CreateProfile(maintainerId: "maintainer-b"), client, connection),
             ["target carrier"] = Compute(CreateProfile(targetCarrier: SJ.MemoryPackCarrier.Action), client, connection),
             ["target block"] = Compute(CreateProfile(targetBlockId: "summary-b"), client, connection),
@@ -61,20 +61,20 @@ public sealed class RollingSummaryProducerFingerprintTests {
     }
 
     private static string Compute(
-        ReplayMemoryMaintainerProfile profile,
+        MemoryMaintainerRunProfile profile,
         ICompletionClient client,
         CompletionConnectionConfig connection
     ) => SessionJournalDerivedRecapWriter.ComputeProducerFingerprint(profile, client, connection);
 
-    private static ReplayMemoryMaintainerProfile CreateProfile(
-        string presetName = "preset-a",
+    private static MemoryMaintainerRunProfile CreateProfile(
+        string profileName = "preset-a",
         string maintainerId = "maintainer-a",
         SJ.MemoryPackCarrier targetCarrier = SJ.MemoryPackCarrier.Observation,
         string targetBlockId = "summary-a",
         string systemPrompt = "system-a",
         string userPrompt = "user-a"
     ) => new(
-        presetName,
+        profileName,
         new SJ.MemoryRewriteProfile(
             maintainerId,
             new SJ.MemoryPackBlockPath(targetCarrier, targetBlockId),

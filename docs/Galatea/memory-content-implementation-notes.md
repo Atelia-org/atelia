@@ -4,7 +4,7 @@
 
 ## 1. 当前判断
 
-`RewriteMemoryBlockMaintainer` 是当前内容 maintainer 的统一执行器：它读取 MemoryPack render 与即将滑出窗口的上下文片段，单次 completion 返回完整新版 block。旧 block 已位于 MemoryPack context header，不会在末尾 instruction 中重复注入。Backtest CLI 已用真实 Galatea legacy export 和真实 LLM API 跑通 rolling summary 多 epoch。
+`RewriteMemoryBlockMaintainer` 是当前内容 maintainer 的统一执行器：它读取 MemoryPack render 与即将滑出窗口的上下文片段，单次 completion 返回完整新版 block。旧 block 已位于 MemoryPack context header，不会在末尾 instruction 中重复注入。拆分前的 Backtest CLI 已用真实 Galatea legacy export 和真实 LLM API 跑通 rolling summary 多 epoch。
 
 这里的关键变化不是 substrate，而是内容目标：
 
@@ -89,17 +89,19 @@ publication，以及独立 analyzer/indexer 不因“与 memory 有关”而自�
 
 每个 profile 提供 `Id`、`Target`、system prompt 与 user prompt；中文为默认值，英文仍可显式选择。通用 `RewriteMemoryBlockMaintainer` 负责一次调用、reasoning 过滤和完整外层 Markdown fence 归一化。
 
-## 6. Backtest CLI 的角色
+## 6. SessionJournal CLI 的角色
 
-Backtest CLI 继续作为调 prompt 的实验台。后续命令可以支持：
+`SessionJournal.Cli run-memory-maintainer` 作为调 prompt 的实验台。当前通过
+`--profile` 选择：
 
 ```text
---preset rolling-summary
---preset world-understanding-rewrite
---preset autobiographical-rewrite
+--profile world-understanding-rewrite
+--profile autobiographical-rewrite
 ```
 
-第一轮仍然可以单 block 回测，等两个 block prompt 稳定后，再让 runner 并行运行两个 maintainer，并在 JSONL 中分别记录 old/new preview、call log 和状态。
+第一轮仍然是单 block 运行，并在 JSONL 中记录 old/new preview、call log 和状态。
+等两个 block prompt 稳定后，并行 multi-maintainer/shared epoch 应迁入计划中的
+DerivedMemory orchestration，而不是继续扩张 raw SessionJournal core。
 
 ## 7. 后续问题
 

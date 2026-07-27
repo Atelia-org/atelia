@@ -266,6 +266,12 @@ var markdown = ChatSessionMarkdownExporter.Export(records);
 
 `ChatSessionHistoryRecord` 会保留 durable record index、原始 kind、timestamp、provider-facing `IHistoryMessage` 投影，以及 recap 的 `RecapSourceAnchor`。导出器支持 include / skip recap；旧 recap 没有 anchor 时会标记为 `unresolved-recap`，不会假装已经展开。
 
+若目标是归档旧 repo 或迁移到 `SessionJournal`，使用独立的
+[`ChatSession.LegacyExportCli`](../ChatSession.LegacyExportCli/README.md) 生成
+版本化 JSON/Markdown；后续 JSON 导入由
+[`SessionJournal.Cli`](../SessionJournal.Cli/README.md) 完成。旧 `ChatSession`
+程序集不会因此依赖新的 SessionJournal 栈。
+
 ---
 
 ## 6. 重开、重来、压缩历史

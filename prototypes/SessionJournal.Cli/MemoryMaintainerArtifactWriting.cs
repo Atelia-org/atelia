@@ -8,64 +8,67 @@ using Atelia.SessionJournal;
 using Atelia.SessionJournal.Derived;
 using SJ = Atelia.SessionJournal;
 
-namespace ChatSessionBacktestCli;
+namespace Atelia.SessionJournal.Cli;
 
-internal interface IRollingSummaryArtifactWriter {
+internal interface IMemoryMaintainerArtifactWriter {
     string RequiredSourceKind { get; }
 
     ValueTask PrepareAsync(EventAddress sourceRawHead, CancellationToken ct);
 
-    ValueTask<RollingSummaryArtifactLink> WriteProducedAsync(
-        RollingSummaryArtifactCandidate candidate,
+    ValueTask<MemoryMaintainerArtifactLink> WriteProducedAsync(
+        MemoryMaintainerArtifactCandidate candidate,
         CancellationToken ct
     );
 }
 
-internal sealed record RollingSummaryArtifactCandidate(
+internal sealed record MemoryMaintainerArtifactCandidate(
     EventAddress SourceEndInclusive,
     SJ.MemoryPack UpdatedMemoryPack,
     SJ.MemoryBlockMaintenanceResult MaintenanceResult,
     IReadOnlyList<string> CallLogPaths
 );
 
-internal sealed record RollingSummaryArtifactLink(
+internal sealed record MemoryMaintainerArtifactLink(
     string ArtifactId,
     string ArtifactPath,
     EventAddress AnchorRawEvent,
     string? PreviousArtifact
 );
 
-internal sealed class RollingSummaryArtifactWriteException : Exception {
-    public RollingSummaryArtifactWriteException(string message, Exception innerException)
+internal sealed class MemoryMaintainerArtifactWriteException : Exception {
+    public MemoryMaintainerArtifactWriteException(string message, Exception innerException)
         : base(message, innerException) {
     }
 }
 
 internal sealed class SessionJournalDerivedRecapWriter
-    : IRollingSummaryArtifactWriter, IRollingSummaryRepositoryBound {
-    public const string Producer = "ChatSession.BacktestCli/replay-rolling-summary-session-journal";
-    public const string FingerprintSchema = "atelia.chat-session.rolling-summary-producer-fingerprint.v1";
+    : IMemoryMaintainerArtifactWriter, IMemoryMaintainerRepositoryBound {
+    public const string Producer = "SessionJournal.Cli/run-memory-maintainer";
+    public const string FingerprintSchema =
+        "atelia.session-journal.memory-maintainer-producer-fingerprint.v1";
     public const string AddressedReplayAdapterVersion = "session-journal-addressed-replay-v1";
-    public const string SplitPolicyVersion = "history-window-half-context-v1";
-    public const string TokenEstimatorVersion = "backtest-text-estimator-v1";
+    public const string SplitPolicyVersion =
+        "memory-maintainer-half-context-v1";
+    public const string TokenEstimatorVersion =
+        "memory-maintainer-text-estimator-v1";
 
     private static readonly JsonSerializerOptions FingerprintJsonOptions = new() {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase
     };
 
     private readonly string _repoPath;
-    private readonly ReplayMemoryMaintainerProfile _profile;
+    private readonly MemoryMaintainerRunProfile _profile;
     private readonly DerivedRecapStore _store;
     private readonly DerivedRecapLineageKey _lineageKey;
     private readonly SemaphoreSlim _writeGate = new(1, 1);
     private readonly string _producerFingerprint;
     private int _prepareState;
     private EventAddress _sourceRawHead;
-    private RollingSummaryArtifactLink? _previous;
+    private MemoryMaintainerArtifactLink? _previous;
 
     private SessionJournalDerivedRecapWriter(
         string repoPath,
-        ReplayMemoryMaintainerProfile profile,
+        MemoryMaintainerRunProfile profile,
         ICompletionClient client,
         CompletionConnectionConfig connection
     ) {
@@ -80,12 +83,12 @@ internal sealed class SessionJournalDerivedRecapWriter
         _producerFingerprint = ComputeProducerFingerprint(profile, client, connection);
     }
 
-    public string RequiredSourceKind => RollingSummaryReplaySourceKinds.SessionJournal;
+    public string RequiredSourceKind => MemoryMaintainerReplaySourceKinds.SessionJournal;
     public string RepositoryPath => _repoPath;
 
     public static SessionJournalDerivedRecapWriter Open(
         string sessionJournalRepoPath,
-        ReplayMemoryMaintainerProfile profile,
+        MemoryMaintainerRunProfile profile,
         ICompletionClient client,
         CompletionConnectionConfig connection
     ) {
@@ -106,7 +109,9 @@ internal sealed class SessionJournalDerivedRecapWriter
 
     public async ValueTask PrepareAsync(EventAddress sourceRawHead, CancellationToken ct) {
         if (Interlocked.CompareExchange(ref _prepareState, 1, 0) != 0) {
-            throw new InvalidOperationException("Rolling summary artifact writer can only be prepared once.");
+            throw new InvalidOperationException(
+                "Memory maintainer artifact writer can only be prepared once."
+            );
         }
 
         ct.ThrowIfCancellationRequested();
@@ -117,7 +122,7 @@ internal sealed class SessionJournalDerivedRecapWriter
         DerivedRecapArtifact? latest = await _store.TryReadLatestAsync(_lineageKey, ct).ConfigureAwait(false);
         if (latest is not null) {
             throw new InvalidOperationException(
-                $"Rolling summary artifact writer requires an empty target lineage '{_lineageKey}', "
+                $"Memory maintainer artifact writer requires an empty target lineage '{_lineageKey}', "
                 + $"but found usable latest artifact '{latest.ArtifactId}'."
             );
         }
@@ -126,13 +131,15 @@ internal sealed class SessionJournalDerivedRecapWriter
         Volatile.Write(ref _prepareState, 2);
     }
 
-    public async ValueTask<RollingSummaryArtifactLink> WriteProducedAsync(
-        RollingSummaryArtifactCandidate candidate,
+    public async ValueTask<MemoryMaintainerArtifactLink> WriteProducedAsync(
+        MemoryMaintainerArtifactCandidate candidate,
         CancellationToken ct
     ) {
         ArgumentNullException.ThrowIfNull(candidate);
         if (Volatile.Read(ref _prepareState) != 2) {
-            throw new InvalidOperationException("Rolling summary artifact writer must be prepared before writing.");
+            throw new InvalidOperationException(
+                "Memory maintainer artifact writer must be prepared before writing."
+            );
         }
 
         ValidateCandidate(candidate);
@@ -143,7 +150,7 @@ internal sealed class SessionJournalDerivedRecapWriter
             string? expectedPreviousArtifact = _previous?.ArtifactId;
             if (!string.Equals(latest?.ArtifactId, expectedPreviousArtifact, StringComparison.Ordinal)) {
                 throw new InvalidOperationException(
-                    $"Rolling summary artifact lineage '{_lineageKey}' latest artifact changed. "
+                    $"Memory maintainer artifact lineage '{_lineageKey}' latest artifact changed. "
                     + $"Expected '{expectedPreviousArtifact ?? "<none>"}', got '{latest?.ArtifactId ?? "<none>"}'."
                 );
             }
@@ -179,13 +186,13 @@ internal sealed class SessionJournalDerivedRecapWriter
                 artifact = await _store.WriteProducedAsync(request, ct).ConfigureAwait(false);
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) {
-                throw new RollingSummaryArtifactWriteException(
-                    $"Failed to write rolling summary artifact for source end '{EventAddressTextCodec.Format(candidate.SourceEndInclusive)}'.",
+                throw new MemoryMaintainerArtifactWriteException(
+                    $"Failed to write memory maintainer artifact for source end '{EventAddressTextCodec.Format(candidate.SourceEndInclusive)}'.",
                     ex
                 );
             }
 
-            var link = new RollingSummaryArtifactLink(
+            var link = new MemoryMaintainerArtifactLink(
                 ArtifactId: artifact.ArtifactId,
                 ArtifactPath: Path.GetFullPath(Path.Combine(_store.ArtifactsDirectory, $"{artifact.ArtifactId}.json")),
                 AnchorRawEvent: artifact.AnchorRawEvent,
@@ -200,12 +207,15 @@ internal sealed class SessionJournalDerivedRecapWriter
     }
 
     private async ValueTask<FileStream> AcquireStoreWriteLockAsync(CancellationToken ct) {
-        string lockPath = Path.Combine(_store.StoreRoot, ".rolling-summary-writer.lock");
+        string lockPath = Path.Combine(
+            _store.StoreRoot,
+            ".memory-maintainer-writer.lock"
+        );
         try {
             Directory.CreateDirectory(_store.StoreRoot);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) {
-            throw new RollingSummaryArtifactWriteException(
+            throw new MemoryMaintainerArtifactWriteException(
                 $"Failed to prepare the derived recap store write lock '{lockPath}'.",
                 ex
             );
@@ -226,7 +236,7 @@ internal sealed class SessionJournalDerivedRecapWriter
                 );
             }
             catch (UnauthorizedAccessException ex) {
-                throw new RollingSummaryArtifactWriteException(
+                throw new MemoryMaintainerArtifactWriteException(
                     $"Access was denied while acquiring the derived recap store write lock '{lockPath}'.",
                     ex
                 );
@@ -237,14 +247,14 @@ internal sealed class SessionJournalDerivedRecapWriter
             }
         }
 
-        throw new RollingSummaryArtifactWriteException(
+        throw new MemoryMaintainerArtifactWriteException(
             $"Timed out while acquiring the derived recap store write lock '{lockPath}'.",
             lastContention ?? new IOException("The derived recap store write lock was unavailable.")
         );
     }
 
     internal static string ComputeProducerFingerprint(
-        ReplayMemoryMaintainerProfile profile,
+        MemoryMaintainerRunProfile profile,
         ICompletionClient client,
         CompletionConnectionConfig connection
     ) {
@@ -252,7 +262,7 @@ internal sealed class SessionJournalDerivedRecapWriter
         ArgumentNullException.ThrowIfNull(client);
         ArgumentNullException.ThrowIfNull(connection);
 
-        var dto = new RollingSummaryProducerFingerprintDto(
+        var dto = new MemoryMaintainerProducerFingerprintDto(
             Schema: FingerprintSchema,
             Producer: Producer,
             ArtifactSchema: DerivedRecapStore.ArtifactSchema,
@@ -260,7 +270,7 @@ internal sealed class SessionJournalDerivedRecapWriter
             AddressedReplayAdapterVersion: AddressedReplayAdapterVersion,
             SplitPolicyVersion: SplitPolicyVersion,
             TokenEstimatorVersion: TokenEstimatorVersion,
-            ProfilePresetName: profile.PresetName,
+            ProfileName: profile.ProfileName,
             MaintainerId: profile.MaintainerId,
             TargetCarrier: SJ.MemoryPackCarrierTokens.ToStorageToken(profile.Target.Carrier),
             TargetBlockId: profile.Target.BlockKey,
@@ -279,7 +289,7 @@ internal sealed class SessionJournalDerivedRecapWriter
         return $"sha256:{hash}";
     }
 
-    private void ValidateCandidate(RollingSummaryArtifactCandidate candidate) {
+    private void ValidateCandidate(MemoryMaintainerArtifactCandidate candidate) {
         ArgumentNullException.ThrowIfNull(candidate.UpdatedMemoryPack);
         ArgumentNullException.ThrowIfNull(candidate.MaintenanceResult);
         ArgumentNullException.ThrowIfNull(candidate.CallLogPaths);
@@ -304,7 +314,7 @@ internal sealed class SessionJournalDerivedRecapWriter
     }
 }
 
-internal sealed record RollingSummaryProducerFingerprintDto(
+internal sealed record MemoryMaintainerProducerFingerprintDto(
     [property: JsonPropertyOrder(0)] string Schema,
     [property: JsonPropertyOrder(1)] string Producer,
     [property: JsonPropertyOrder(2)] string ArtifactSchema,
@@ -312,7 +322,7 @@ internal sealed record RollingSummaryProducerFingerprintDto(
     [property: JsonPropertyOrder(4)] string AddressedReplayAdapterVersion,
     [property: JsonPropertyOrder(5)] string SplitPolicyVersion,
     [property: JsonPropertyOrder(6)] string TokenEstimatorVersion,
-    [property: JsonPropertyOrder(7)] string ProfilePresetName,
+    [property: JsonPropertyOrder(7)] string ProfileName,
     [property: JsonPropertyOrder(8)] string MaintainerId,
     [property: JsonPropertyOrder(9)] string TargetCarrier,
     [property: JsonPropertyOrder(10)] string TargetBlockId,

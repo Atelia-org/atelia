@@ -1,5 +1,11 @@
 # ChatSession Legacy Memory Substrate 退役
 
+> 后续收口（2026-07-27）：本文记录删除 legacy memory substrate 当时的边界。
+> 随后原 `ChatSession.BacktestCli` 又拆成
+> `ChatSession.LegacyExportCli` 与 `SessionJournal.Cli`；legacy pattern/LLM replay
+> 已删除。现行状态见
+> [CLI 拆分说明](legacy-export-and-sessionjournal-cli-split.md)。
+
 > 状态：Design + Implemented
 > 日期：2026-07-27
 > 后继实现：

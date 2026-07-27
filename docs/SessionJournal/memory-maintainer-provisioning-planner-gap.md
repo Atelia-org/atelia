@@ -27,10 +27,11 @@ lineage、indexes、provisioning 和 candidate discovery 应进入独立、可�
 SessionJournal 只定义并消费 store-neutral 的 coherent context candidate contract。Host/composition
 root 同时引用两边并负责注入具体实现。
 
-目前 `autobiography` 与 `world-understanding` 的成功链路仍主要依靠 Backtest CLI 分别运行两个 preset，
+目前 `autobiography` 与 `world-understanding` 的成功链路仍主要依靠
+`SessionJournal.Cli run-memory-maintainer` 分别运行两个 profile，
 再由操作者显式执行 artifact-set checkpoint。它是可靠的验收管线，不是最终的在线编排实现。
 
-另一个已确认的缺口是：当前每个 backtest runner 独立解释 `--threshold-tokens` 并计算 split。相同 raw
+另一个已确认的缺口是：当前每个 CLI runner 独立解释 `--threshold-tokens` 并计算 split。相同 raw
 输入、token estimator 和阈值通常会偶然得到相同 anchor，但分块没有 durable shared identity；
 prompt-tuning 改阈值、改变 replay 起点或升级 estimator 后，各 role artifact 会落入不同 coverage，
 无法直接组成同步的 DerivedArtifactSet。因此 shared epoch planning 必须早于通用并行
@@ -63,7 +64,7 @@ store-neutral context candidate 交接；不会把 concrete artifact/set referen
 长期目标依赖图：
 
 ```text
-Agent Host / Backtest CLI / composition root
+Agent Host / SessionJournal CLI / composition root
 ├── Atelia.SessionJournal
 │   ├── raw event / tail execution recovery
 │   ├── coherent context candidate contracts
@@ -167,14 +168,14 @@ import raw SessionJournal
   -> 单独运行 world-understanding-rewrite
   -> 写 world-understanding artifact
   -> 操作者提取两个 artifact id
-  -> checkpoint-artifact-set-session-journal --member ...
+  -> checkpoint-artifact-set --member ...
   -> ArtifactSetCommitted
   -> online SendAsync / ResumeAsync 可用
 ```
 
 这个链路有以下限制：
 
-1. Backtest CLI 一次只创建一个 maintainer；没有实际使用 orchestrator 的多 maintainer 并行能力。
+1. SessionJournal CLI 一次只创建一个 maintainer；没有实际使用 orchestrator 的多 maintainer 并行能力。
 2. SessionJournal artifact runner 当前从 raw root 和空 `MemoryPack` 开始 full replay，并要求目标
    lineage 为空；不能从 latest artifact anchor 增量续跑。
 3. 每个 runner 都用自己的 `--threshold-tokens` 和 active-history buffer 决定 split；两个 producer
@@ -322,7 +323,7 @@ core-memory group 可包含 autobiography + world-understanding；按客户动�
 - online：planner 创建一个 epoch 后，针对固定 input snapshot 并行启动该 group 的所有 registered
   required maintainers；
 - retry/restart：只重开同一 epoch 中未结算的 role，不重新计算 split；
-- prompt-tuning：CLI 以 `--epoch <id> --role/preset <name>` 读取既有 plan，允许覆盖 prompt/model 并
+- prompt-tuning：未来 CLI 以 `--epoch <id> --profile <name>` 读取既有 plan，允许覆盖 prompt/model 并
   写出 alternative candidate；
 - evaluation/publication：明确选择每个 required role 在该 epoch 的一个 exact candidate，全部满足后
   才发布 DerivedArtifactSet；
@@ -443,7 +444,7 @@ derived set 的 default/latest index 只是可重建选择加速。若需要记�
 - 用 fake provider 建立 raw ancestor/setup/replay-safe/duplicate-target 与 exact-head CAS 的 core tests；
 - 先给 current `DerivedRecapStore` 增加 adapter，使 Engine/materializer 不再接触 concrete
   `DerivedRecapArtifact`；
-- 建立独立 DerivedMemory 项目并迁移 store/set/index/provider，由 Backtest CLI/Agent host 注入；
+- 建立独立 DerivedMemory 项目并迁移 store/set/index/provider，由 SessionJournal CLI/Agent host 注入；
 - 保持 raw-only `Open`、tail recovery、audit 与 Prepared reopen 在 provider 缺失时可用。
 
 第一步只做依赖倒置和等价适配，不同时删除 raw kind 12 或迁移全部 maintainer substrate。后续 Prepared
@@ -553,9 +554,9 @@ artifact id、anchor、计数、readiness 和测试结果。
 - `prototypes/SessionJournal.DerivedMemory/`（目标新程序集；暂名，当前不存在）
 - `prototypes/SessionJournal.DerivedMemory/DerivedArtifactSetStore.cs`（目标 concrete store，当前不存在）
 - `prototypes/SessionJournal.Maintainers/`
-- `prototypes/ChatSession.BacktestCli/RollingSummaryReplay.cs`
-- `prototypes/ChatSession.BacktestCli/RollingSummaryArtifactWriting.cs`
-- `prototypes/ChatSession.BacktestCli/Program.cs`
+- `prototypes/SessionJournal.Cli/MemoryMaintainerRun.cs`
+- `prototypes/SessionJournal.Cli/MemoryMaintainerArtifactWriting.cs`
+- `prototypes/SessionJournal.Cli/Program.cs`
 - `docs/ChatSession/legacy-memory-substrate-retirement.md`（legacy 重复 substrate 的退役决策）
 
 相关设计背景：

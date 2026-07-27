@@ -1,26 +1,23 @@
-using Atelia.ChatSession;
 using Atelia.Completion;
 using Atelia.Completion.Abstractions;
 using Atelia.EventJournal;
 using Atelia.SessionJournal;
-using Atelia.SessionJournal.Derived;
-using Atelia.SessionJournal.Maintainers;
 using SJ = Atelia.SessionJournal;
 
-namespace ChatSessionBacktestCli;
+namespace Atelia.SessionJournal.Cli;
 
-internal interface IRollingSummaryReplaySource {
+internal interface IMemoryMaintainerReplaySource {
     string SourceKind { get; }
 
-    IAsyncEnumerable<RollingSummaryReplayStep> ReadStepsAsync(CancellationToken ct);
+    IAsyncEnumerable<MemoryMaintainerReplayStep> ReadStepsAsync(CancellationToken ct);
 }
 
-internal interface IRollingSummaryRepositoryBound {
+internal interface IMemoryMaintainerRepositoryBound {
     string RepositoryPath { get; }
 }
 
-internal sealed record RollingSummaryReplayMessage {
-    public RollingSummaryReplayMessage(
+internal sealed record MemoryMaintainerReplayMessage {
+    public MemoryMaintainerReplayMessage(
         IHistoryMessage message,
         EventAddress? sourceStartInclusive = null,
         EventAddress? sourceEndInclusive = null
@@ -40,14 +37,14 @@ internal sealed record RollingSummaryReplayMessage {
     public EventAddress? SourceEndInclusive { get; }
 }
 
-internal sealed record RollingSummaryReplayStep(
-    RollingSummaryReplaySourceCursor TriggerCursor,
-    IReadOnlyList<RollingSummaryReplayMessage> AppendedEntries,
+internal sealed record MemoryMaintainerReplayStep(
+    MemoryMaintainerReplayCursor TriggerCursor,
+    IReadOnlyList<MemoryMaintainerReplayMessage> AppendedEntries,
     bool IsTriggerBoundary,
     bool ResetActiveHistory = false
 );
 
-internal sealed record RollingSummaryReplaySourceCursor(
+internal sealed record MemoryMaintainerReplayCursor(
     string SourceKind,
     string SourceId,
     long? EventOrdinal = null,
@@ -55,92 +52,29 @@ internal sealed record RollingSummaryReplaySourceCursor(
     EventAddress? SourceRawHead = null
 );
 
-internal static class RollingSummaryReplaySourceKinds {
-    public const string LegacyChatSessionExport = "legacy-chat-session-export";
+internal static class MemoryMaintainerReplaySourceKinds {
     public const string SessionJournal = "session-journal";
 }
 
-internal sealed class LegacyRollingSummaryReplaySource : IRollingSummaryReplaySource {
-    private readonly ChatSessionLegacyEventSource _eventSource;
-
-    public LegacyRollingSummaryReplaySource(ChatSessionLegacyEventSource eventSource)
-        => _eventSource = eventSource ?? throw new ArgumentNullException(nameof(eventSource));
-
-    public string SourceKind => RollingSummaryReplaySourceKinds.LegacyChatSessionExport;
-
-    public async IAsyncEnumerable<RollingSummaryReplayStep> ReadStepsAsync([System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct) {
-        _ = Task.CompletedTask;
-        for (int position = 0; position < _eventSource.Events.Count; position++) {
-            ct.ThrowIfCancellationRequested();
-            var replayEvent = _eventSource.Events[position];
-            if (replayEvent.Ordinal != position) { throw new InvalidDataException($"Event ordinal mismatch at index {position}: {replayEvent.Ordinal}."); }
-            if (replayEvent.Ordinal < 0) { throw new InvalidDataException("Replay event ordinal cannot be negative."); }
-
-            var cursor = CreateCursor(replayEvent);
-            switch (replayEvent.Kind) {
-                case ChatSessionLegacyEventKinds.InitialState:
-                    yield return new RollingSummaryReplayStep(
-                        cursor,
-                        ToReplayMessages(replayEvent.Messages),
-                        IsTriggerBoundary: false,
-                        ResetActiveHistory: true
-                    );
-                    break;
-                case ChatSessionLegacyEventKinds.ModelTurn:
-                    yield return new RollingSummaryReplayStep(
-                        cursor,
-                        ToReplayMessages(replayEvent.AppendedMessages),
-                        IsTriggerBoundary: true
-                    );
-                    break;
-                case ChatSessionLegacyEventKinds.UpdateSystemPrompt:
-                case ChatSessionLegacyEventKinds.Compaction:
-                case ChatSessionLegacyEventKinds.RedundantSave:
-                    break;
-                default:
-                    throw new NotSupportedException($"Event kind '{replayEvent.Kind}' is not supported by rolling summary replay.");
-            }
-        }
-
-        await Task.CompletedTask.ConfigureAwait(false);
-    }
-
-    private static RollingSummaryReplaySourceCursor CreateCursor(ChatSessionLegacyReplayEvent replayEvent)
-        => new(
-            SourceKind: RollingSummaryReplaySourceKinds.LegacyChatSessionExport,
-            SourceId: replayEvent.Commit ?? replayEvent.Ordinal.ToString(System.Globalization.CultureInfo.InvariantCulture),
-            EventOrdinal: replayEvent.Ordinal,
-            EventCommit: replayEvent.Commit
-        );
-
-    private static IReadOnlyList<RollingSummaryReplayMessage> ToReplayMessages(IReadOnlyList<ChatSessionLegacyMessageDto>? messages)
-        => messages is null || messages.Count == 0
-            ? Array.AsReadOnly(Array.Empty<RollingSummaryReplayMessage>())
-            : Array.AsReadOnly(messages
-                .Select(ChatSessionLegacyEventSourceProjection.ToHistoryMessage)
-                .Select(static message => new RollingSummaryReplayMessage(message))
-                .ToArray());
-}
-
-internal sealed class SessionJournalRollingSummaryReplaySource
-    : IRollingSummaryReplaySource, IRollingSummaryRepositoryBound {
+internal sealed class SessionJournalMemoryMaintainerReplaySource
+    : IMemoryMaintainerReplaySource, IMemoryMaintainerRepositoryBound {
     private readonly string _repoPath;
 
-    private SessionJournalRollingSummaryReplaySource(string repoPath)
+    private SessionJournalMemoryMaintainerReplaySource(string repoPath)
         => _repoPath = repoPath;
 
-    public string SourceKind => RollingSummaryReplaySourceKinds.SessionJournal;
+    public string SourceKind => MemoryMaintainerReplaySourceKinds.SessionJournal;
     public string RepositoryPath => _repoPath;
 
-    public static SessionJournalRollingSummaryReplaySource Open(string sessionJournalRepoPath) {
+    public static SessionJournalMemoryMaintainerReplaySource Open(string sessionJournalRepoPath) {
         if (string.IsNullOrWhiteSpace(sessionJournalRepoPath)) {
             throw new ArgumentException("SessionJournal repo path cannot be empty.", nameof(sessionJournalRepoPath));
         }
 
-        return new SessionJournalRollingSummaryReplaySource(Path.GetFullPath(sessionJournalRepoPath));
+        return new SessionJournalMemoryMaintainerReplaySource(Path.GetFullPath(sessionJournalRepoPath));
     }
 
-    public async IAsyncEnumerable<RollingSummaryReplayStep> ReadStepsAsync([System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct) {
+    public async IAsyncEnumerable<MemoryMaintainerReplayStep> ReadStepsAsync([System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct) {
         SJ.SessionHistoryReplay replay;
         using (var engine = SJ.SessionJournalEngine.Open(_repoPath)) {
             replay = engine.ReplayHistory(ct);
@@ -148,15 +82,15 @@ internal sealed class SessionJournalRollingSummaryReplaySource
 
         foreach (SJ.AddressedSessionHistoryMessage addressed in replay.Messages) {
             ct.ThrowIfCancellationRequested();
-            var cursor = new RollingSummaryReplaySourceCursor(
-                SourceKind: RollingSummaryReplaySourceKinds.SessionJournal,
+            var cursor = new MemoryMaintainerReplayCursor(
+                SourceKind: MemoryMaintainerReplaySourceKinds.SessionJournal,
                 SourceId: EventAddressTextCodec.Format(addressed.SourceEndInclusive),
                 SourceRawHead: replay.SourceRawHead
             );
-            yield return new RollingSummaryReplayStep(
+            yield return new MemoryMaintainerReplayStep(
                 cursor,
                 Array.AsReadOnly([
-                    new RollingSummaryReplayMessage(
+                    new MemoryMaintainerReplayMessage(
                         addressed.Message,
                         addressed.SourceStartInclusive,
                         addressed.SourceEndInclusive
@@ -170,29 +104,29 @@ internal sealed class SessionJournalRollingSummaryReplaySource
     }
 }
 
-internal sealed class RollingSummaryReplayRunner {
-    private readonly IRollingSummaryReplaySource _source;
+internal sealed class MemoryMaintainerReplayRunner {
+    private readonly IMemoryMaintainerReplaySource _source;
     private readonly ICompletionClient _client;
     private readonly CompletionConnectionConfig _connection;
-    private readonly ReplayMemoryMaintainerProfile _profile;
-    private readonly IRollingSummaryArtifactWriter? _artifactWriter;
+    private readonly MemoryMaintainerRunProfile _profile;
+    private readonly IMemoryMaintainerArtifactWriter? _artifactWriter;
     private readonly string _command;
     private readonly string _callLogDir;
     private readonly int _thresholdTokens;
     private readonly int _maxEpochs;
-    private readonly List<RollingSummaryReplayMessage> _activeHistory = [];
+    private readonly List<MemoryMaintainerReplayMessage> _activeHistory = [];
     private SJ.MemoryPack _memoryPack = new();
 
-    public RollingSummaryReplayRunner(
-        IRollingSummaryReplaySource source,
+    public MemoryMaintainerReplayRunner(
+        IMemoryMaintainerReplaySource source,
         ICompletionClient client,
         CompletionConnectionConfig connection,
-        ReplayMemoryMaintainerProfile profile,
+        MemoryMaintainerRunProfile profile,
         string callLogDir,
         int thresholdTokens,
         int maxEpochs,
-        IRollingSummaryArtifactWriter? artifactWriter = null,
-        string command = "replay-rolling-summary"
+        IMemoryMaintainerArtifactWriter? artifactWriter = null,
+        string command = "run-memory-maintainer"
     ) {
         _source = source ?? throw new ArgumentNullException(nameof(source));
         _client = client ?? throw new ArgumentNullException(nameof(client));
@@ -205,8 +139,8 @@ internal sealed class RollingSummaryReplayRunner {
                 nameof(artifactWriter)
             );
         }
-        if (artifactWriter is IRollingSummaryRepositoryBound repositoryBoundWriter) {
-            if (source is not IRollingSummaryRepositoryBound repositoryBoundSource ||
+        if (artifactWriter is IMemoryMaintainerRepositoryBound repositoryBoundWriter) {
+            if (source is not IMemoryMaintainerRepositoryBound repositoryBoundSource ||
                 !PathsEqual(repositoryBoundSource.RepositoryPath, repositoryBoundWriter.RepositoryPath)) {
                 throw new ArgumentException(
                     "Repository-bound replay source and artifact writer must target the same SessionJournal repository.",
@@ -225,7 +159,7 @@ internal sealed class RollingSummaryReplayRunner {
 
     public bool HadFailure { get; private set; }
 
-    public async IAsyncEnumerable<RollingSummaryReplayRecord> RunAsync([System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct) {
+    public async IAsyncEnumerable<MemoryMaintainerRunRecord> RunAsync([System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct) {
         int epochIndex = 0;
         bool hasObservedSourceRawHead = false;
         EventAddress? expectedSourceRawHead = null;
@@ -246,12 +180,13 @@ internal sealed class RollingSummaryReplayRunner {
             if (epochIndex >= _maxEpochs) { yield break; }
 
             var activeMessages = _activeHistory.Select(static entry => entry.Message).ToArray();
-            int estimatedTokens = BacktestTextUtil.EstimateTokens(activeMessages);
+            int estimatedTokens = MemoryMaintainerTextUtil.EstimateTokens(activeMessages);
             if (estimatedTokens < _thresholdTokens) { continue; }
 
-            int splitIndex = HistoryWindowSplitPolicy.FindHalfContextSplitPoint(
+            int splitIndex =
+                MemoryMaintainerHistorySplitPolicy.FindHalfContextSplitPoint(
                 activeMessages,
-                static message => (ulong)BacktestTextUtil.EstimateTokens(message)
+                static message => (ulong)MemoryMaintainerTextUtil.EstimateTokens(message)
             );
             if (splitIndex < 0) { continue; }
 
@@ -259,14 +194,14 @@ internal sealed class RollingSummaryReplayRunner {
             (EventAddress? fragmentSourceStartInclusive, EventAddress? fragmentSourceEndInclusive)
                 = GetFragmentSourceRange(fragmentEntries, step.TriggerCursor);
             var fragment = fragmentEntries.Select(static entry => entry.Message).ToArray();
-            int beforeMaxCallId = RollingSummaryCallLogUtil.GetMaxCallId(_callLogDir);
+            int beforeMaxCallId = MemoryMaintainerCallLogUtil.GetMaxCallId(_callLogDir);
             string callLogPath = Path.Combine(Path.GetFullPath(_callLogDir), $"{beforeMaxCallId + 1:0000}.json");
             var oldBlock = _memoryPack.TryGetBlock(_profile.Target, out var found) ? found : new SJ.MemoryPackBlock(string.Empty);
             var recentHistory = new SJ.RecentHistorySlice(
                 SJ.ContextHeaderSnapshot.FromRenderedMemoryPack(_memoryPack.Render()),
                 fragment,
                 SourceId: step.TriggerCursor.SourceId,
-                EstimatedTokens: (ulong)BacktestTextUtil.EstimateTokens(fragment)
+                EstimatedTokens: (ulong)MemoryMaintainerTextUtil.EstimateTokens(fragment)
             );
 
             var loggingClient = new LoggingCompletionClient(
@@ -315,7 +250,7 @@ internal sealed class RollingSummaryReplayRunner {
                 callLogPath = callLogPaths[0];
             }
 
-            RollingSummaryArtifactLink? artifactLink = null;
+            MemoryMaintainerArtifactLink? artifactLink = null;
             if (exception is null && _artifactWriter is not null) {
                 if (step.TriggerCursor.SourceRawHead is null ||
                     fragmentSourceStartInclusive is null ||
@@ -327,7 +262,7 @@ internal sealed class RollingSummaryReplayRunner {
 
                 try {
                     artifactLink = await _artifactWriter.WriteProducedAsync(
-                        new RollingSummaryArtifactCandidate(
+                        new MemoryMaintainerArtifactCandidate(
                             sourceEndInclusive,
                             batch!.UpdatedMemoryPack,
                             result!,
@@ -336,7 +271,7 @@ internal sealed class RollingSummaryReplayRunner {
                         ct
                     ).ConfigureAwait(false);
                 }
-                catch (RollingSummaryArtifactWriteException ex) {
+                catch (MemoryMaintainerArtifactWriteException ex) {
                     HadFailure = true;
                     exception = ex;
                 }
@@ -347,7 +282,7 @@ internal sealed class RollingSummaryReplayRunner {
                 _activeHistory.RemoveRange(0, splitIndex);
             }
 
-            yield return RollingSummaryReplayRecord.Create(
+            yield return MemoryMaintainerRunRecord.Create(
                 epochIndex,
                 step.TriggerCursor,
                 fragmentSourceStartInclusive,
@@ -372,7 +307,7 @@ internal sealed class RollingSummaryReplayRunner {
     }
 
     private void ValidateStepSource(
-        RollingSummaryReplayStep step,
+        MemoryMaintainerReplayStep step,
         ref bool hasObservedSourceRawHead,
         ref EventAddress? expectedSourceRawHead
     ) {
@@ -392,21 +327,25 @@ internal sealed class RollingSummaryReplayRunner {
     }
 
     private static (EventAddress? StartInclusive, EventAddress? EndInclusive) GetFragmentSourceRange(
-        IReadOnlyList<RollingSummaryReplayMessage> fragmentEntries,
-        RollingSummaryReplaySourceCursor triggerCursor
+        IReadOnlyList<MemoryMaintainerReplayMessage> fragmentEntries,
+        MemoryMaintainerReplayCursor triggerCursor
     ) {
         if (fragmentEntries.Count == 0) {
-            throw new InvalidDataException("Rolling summary split produced an empty fragment.");
+            throw new InvalidDataException(
+                "Memory maintainer split produced an empty fragment."
+            );
         }
 
         bool isAddressed = fragmentEntries[0].SourceStartInclusive.HasValue;
         if (fragmentEntries.Any(entry => entry.SourceStartInclusive.HasValue != isAddressed)) {
-            throw new InvalidDataException("Rolling summary fragment cannot mix addressed and unaddressed messages.");
+            throw new InvalidDataException(
+                "Memory maintainer fragment cannot mix addressed and unaddressed messages."
+            );
         }
 
         if (isAddressed != triggerCursor.SourceRawHead.HasValue) {
             throw new InvalidDataException(
-                "Rolling summary fragment address state must match the trigger cursor source raw head state."
+                "Memory maintainer fragment address state must match the trigger cursor source raw head state."
             );
         }
 
@@ -424,15 +363,15 @@ internal sealed class RollingSummaryReplayRunner {
         );
 }
 
-internal sealed record ReplayMemoryMaintainerProfile(
-    string PresetName,
+internal sealed record MemoryMaintainerRunProfile(
+    string ProfileName,
     SJ.MemoryRewriteProfile RewriteProfile
 ) {
     public string MaintainerId => RewriteProfile.Id;
     public SJ.MemoryPackBlockPath Target => RewriteProfile.Target;
 }
 
-internal static class RollingSummaryCallLogUtil {
+internal static class MemoryMaintainerCallLogUtil {
     public static int GetMaxCallId(string callLogDir) {
         if (!Directory.Exists(callLogDir)) { return 0; }
 
@@ -447,9 +386,9 @@ internal static class RollingSummaryCallLogUtil {
     }
 }
 
-internal sealed record RollingSummaryReplayRecord(
+internal sealed record MemoryMaintainerRunRecord(
     string Schema,
-    string PresetName,
+    string ProfileName,
     int EpochIndex,
     string SourceKind,
     string SourceId,
@@ -458,7 +397,7 @@ internal sealed record RollingSummaryReplayRecord(
     string? SourceRawHead,
     string? SourceStartInclusive,
     string? SourceEndInclusive,
-    string ReplayMode,
+    string RunMode,
     int ThresholdTokens,
     int EstimatedTokens,
     int SplitIndex,
@@ -466,8 +405,8 @@ internal sealed record RollingSummaryReplayRecord(
     int RemainingActiveMessageCount,
     string TargetCarrier,
     string TargetBlockId,
-    MemoryBlockPreview? OldBlock,
-    MemoryBlockPreview? NewBlock,
+    MemoryBlockTextPreview? OldBlock,
+    MemoryBlockTextPreview? NewBlock,
     string CallLogPath,
     IReadOnlyList<string> CallLogPaths,
     string? ArtifactId,
@@ -480,27 +419,27 @@ internal sealed record RollingSummaryReplayRecord(
     CompletionDescriptor? Invocation,
     IReadOnlyList<string>? Errors
 ) {
-    public static RollingSummaryReplayRecord Create(
+    public static MemoryMaintainerRunRecord Create(
         int epochIndex,
-        RollingSummaryReplaySourceCursor cursor,
+        MemoryMaintainerReplayCursor cursor,
         EventAddress? sourceStartInclusive,
         EventAddress? sourceEndInclusive,
         int thresholdTokens,
         int estimatedTokens,
         int splitIndex,
         int remainingActiveMessageCount,
-        ReplayMemoryMaintainerProfile profile,
+        MemoryMaintainerRunProfile profile,
         string? oldBlockText,
         string? newBlockText,
         string callLogPath,
         IReadOnlyList<string> callLogPaths,
         SJ.MemoryBlockMaintenanceResult? result,
         Exception? exception,
-        RollingSummaryArtifactLink? artifactLink
+        MemoryMaintainerArtifactLink? artifactLink
     ) {
         return new(
-            Schema: "atelia.chat-session.memory-maintainer-backtest.v2",
-            PresetName: profile.PresetName,
+            Schema: "atelia.session-journal.memory-maintainer-run.v1",
+            ProfileName: profile.ProfileName,
             EpochIndex: epochIndex,
             SourceKind: cursor.SourceKind,
             SourceId: cursor.SourceId,
@@ -509,7 +448,7 @@ internal sealed record RollingSummaryReplayRecord(
             SourceRawHead: FormatAddress(cursor.SourceRawHead),
             SourceStartInclusive: FormatAddress(sourceStartInclusive),
             SourceEndInclusive: FormatAddress(sourceEndInclusive),
-            ReplayMode: "ignore-original-compaction.synthetic-sliding-prefix",
+            RunMode: "full-replay.synthetic-sliding-prefix",
             ThresholdTokens: thresholdTokens,
             EstimatedTokens: estimatedTokens,
             SplitIndex: splitIndex,
@@ -517,8 +456,8 @@ internal sealed record RollingSummaryReplayRecord(
             RemainingActiveMessageCount: remainingActiveMessageCount,
             TargetCarrier: SJ.MemoryPackCarrierTokens.ToStorageToken(profile.Target.Carrier),
             TargetBlockId: profile.Target.BlockKey,
-            OldBlock: BacktestOutputUtil.CreateBlockPreview(oldBlockText),
-            NewBlock: BacktestOutputUtil.CreateBlockPreview(newBlockText),
+            OldBlock: MemoryMaintainerOutputUtil.CreateBlockPreview(oldBlockText),
+            NewBlock: MemoryMaintainerOutputUtil.CreateBlockPreview(newBlockText),
             CallLogPath: callLogPath,
             CallLogPaths: callLogPaths,
             ArtifactId: artifactLink?.ArtifactId,

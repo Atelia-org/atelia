@@ -1,22 +1,21 @@
 using System.Text.Json;
-using Atelia.ChatSession;
 using Atelia.Completion;
 using Atelia.Completion.Abstractions;
 using Atelia.SessionJournal;
 using Atelia.SessionJournal.Derived;
-using ChatSessionBacktestCli;
+using Atelia.SessionJournal.Cli;
 using SJ = Atelia.SessionJournal;
 using Xunit;
 using Xunit.Sdk;
 
-namespace Atelia.ChatSession.BacktestCli.Tests;
+namespace Atelia.SessionJournal.Cli.Tests;
 
 public sealed class ProgramSessionJournalE2ETests : IDisposable {
     private static readonly JsonSerializerOptions WebJsonOptions = new(JsonSerializerDefaults.Web);
 
     private readonly string _tempRoot = Path.Combine(
         Path.GetTempPath(),
-        "atelia-backtest-cli-e2e",
+        "atelia-session-journal-cli-e2e",
         Guid.NewGuid().ToString("N")
     );
 
@@ -43,7 +42,7 @@ public sealed class ProgramSessionJournalE2ETests : IDisposable {
 
         int importExitCode = Program.MainCore(
             [
-                "import-session-journal",
+                "import-legacy-json",
                 "--input", legacyPath,
                 "--output", repoPath
             ],
@@ -71,8 +70,16 @@ public sealed class ProgramSessionJournalE2ETests : IDisposable {
 
         Assert.Equal(0, firstExitCode);
         Assert.Equal(1, factory.CompletionCallCount);
-        RollingSummaryReplayRecord firstRecord = ReadSingleRecord(firstOutputPath);
-        Assert.Equal(RollingSummaryReplaySourceKinds.SessionJournal, firstRecord.SourceKind);
+        MemoryMaintainerRunRecord firstRecord = ReadSingleRecord(firstOutputPath);
+        Assert.Equal(
+            "atelia.session-journal.memory-maintainer-run.v1",
+            firstRecord.Schema
+        );
+        Assert.Equal(
+            "autobiographical-rewrite",
+            firstRecord.ProfileName
+        );
+        Assert.Equal(MemoryMaintainerReplaySourceKinds.SessionJournal, firstRecord.SourceKind);
         Assert.Equal(rawBefore.SourceRawHead, firstRecord.SourceRawHead);
         Assert.NotNull(firstRecord.SourceStartInclusive);
         Assert.NotNull(firstRecord.SourceEndInclusive);
@@ -88,7 +95,7 @@ public sealed class ProgramSessionJournalE2ETests : IDisposable {
         Assert.True(Path.IsPathFullyQualified(firstCallLogPath));
         Assert.True(File.Exists(firstCallLogPath));
         Assert.Equal(
-            "replay-rolling-summary-session-journal",
+            "run-memory-maintainer",
             ReadCallLogCommand(firstCallLogPath)
         );
 
@@ -96,6 +103,10 @@ public sealed class ProgramSessionJournalE2ETests : IDisposable {
         DerivedRecapArtifact? firstArtifact = await store.TryReadArtifactAsync(firstRecord.ArtifactId);
         Assert.NotNull(firstArtifact);
         Assert.Equal(DerivedRecapArtifactKinds.RollingSummary, firstArtifact.ArtifactKind);
+        Assert.Equal(
+            SessionJournalDerivedRecapWriter.Producer,
+            firstArtifact.Producer
+        );
         Assert.Equal(rawBefore.SourceRawHead, EventAddressTextCodec.Format(firstArtifact.SourceRawHead));
         Assert.Null(firstArtifact.SourceStartExclusive);
         Assert.Equal(firstRecord.SourceEndInclusive, EventAddressTextCodec.Format(firstArtifact.SourceEndInclusive));
@@ -126,7 +137,7 @@ public sealed class ProgramSessionJournalE2ETests : IDisposable {
         Assert.Equal(1, rejectedExitCode);
         Assert.Equal(callCountBeforeRejectedReplay, factory.CompletionCallCount);
         Assert.Equal(firstOutputBytes, File.ReadAllBytes(firstOutputPath));
-        RollingSummaryReplayRecord preservedRecord = ReadSingleRecord(firstOutputPath);
+        MemoryMaintainerRunRecord preservedRecord = ReadSingleRecord(firstOutputPath);
         Assert.Equal(firstRecord.ArtifactId, preservedRecord.ArtifactId);
         Assert.Equal(firstRecord.SourceEndInclusive, preservedRecord.SourceEndInclusive);
         Assert.Equal(firstRecord.Status, preservedRecord.Status);
@@ -152,12 +163,12 @@ public sealed class ProgramSessionJournalE2ETests : IDisposable {
 
         Assert.Equal(0, regeneratedExitCode);
         Assert.Equal(callCountBeforeRejectedReplay + 1, factory.CompletionCallCount);
-        RollingSummaryReplayRecord regeneratedRecord = ReadSingleRecord(regeneratedOutputPath);
+        MemoryMaintainerRunRecord regeneratedRecord = ReadSingleRecord(regeneratedOutputPath);
         Assert.Equal("succeeded", regeneratedRecord.Status);
         Assert.NotNull(regeneratedRecord.ArtifactId);
         string regeneratedCallLogPath = Assert.Single(regeneratedRecord.CallLogPaths);
         Assert.Equal(
-            "replay-rolling-summary-session-journal",
+            "run-memory-maintainer",
             ReadCallLogCommand(regeneratedCallLogPath)
         );
         var regeneratedStore = DerivedRecapStore.Open(repoPath);
@@ -177,59 +188,6 @@ public sealed class ProgramSessionJournalE2ETests : IDisposable {
     }
 
     [Fact]
-    public void InjectedFactory_DrivesLlmSmokeAndLegacyRollingWithExactCommandContexts() {
-        Directory.CreateDirectory(_tempRoot);
-        string legacyPath = Path.Combine(_tempRoot, "legacy.json");
-        string connectionsPath = Path.Combine(_tempRoot, "connections.json");
-        WriteLegacyExport(legacyPath, turnCount: 3);
-        WriteConnections(connectionsPath);
-        var factory = new ScriptedCompletionClientFactory("summary-e2e");
-        string smokeCallLogDir = Path.Combine(_tempRoot, "smoke-calls");
-
-        int smokeExitCode = Program.MainCore(
-            [
-                "llm-smoke",
-                "--connections", connectionsPath,
-                "--connection", "scripted",
-                "--call-log-dir", smokeCallLogDir
-            ],
-            factory
-        );
-
-        Assert.Equal(0, smokeExitCode);
-        Assert.Equal(1, factory.CompletionCallCount);
-        Assert.Equal(
-            "llm-smoke",
-            ReadCallLogCommand(Assert.Single(Directory.EnumerateFiles(smokeCallLogDir, "*.json")))
-        );
-
-        string legacyOutputPath = Path.Combine(_tempRoot, "legacy-rolling.jsonl");
-        string legacyCallLogDir = Path.Combine(_tempRoot, "legacy-rolling-calls");
-        int legacyExitCode = Program.MainCore(
-            [
-                "replay-rolling-summary",
-                "--input", legacyPath,
-                "--output", legacyOutputPath,
-                "--connections", connectionsPath,
-                "--connection", "scripted",
-                "--call-log-dir", legacyCallLogDir,
-                "--threshold-tokens", "1",
-                "--max-epochs", "1",
-                "--preset", "autobiographical-rewrite"
-            ],
-            factory
-        );
-
-        Assert.Equal(0, legacyExitCode);
-        Assert.Equal(2, factory.CompletionCallCount);
-        RollingSummaryReplayRecord record = ReadSingleRecord(legacyOutputPath);
-        Assert.Equal(RollingSummaryReplaySourceKinds.LegacyChatSessionExport, record.SourceKind);
-        Assert.Null(record.ArtifactId);
-        string callLogPath = Assert.Single(record.CallLogPaths);
-        Assert.Equal("replay-rolling-summary", ReadCallLogCommand(callLogPath));
-    }
-
-    [Fact]
     public void SessionJournalCommand_RejectsRepositoryContainedOutputAndCallLogPathsBeforeWrites() {
         Directory.CreateDirectory(_tempRoot);
         string legacyPath = Path.Combine(_tempRoot, "legacy.json");
@@ -243,7 +201,7 @@ public sealed class ProgramSessionJournalE2ETests : IDisposable {
             0,
             Program.MainCore(
                 [
-                    "import-session-journal",
+                    "import-legacy-json",
                     "--input", legacyPath,
                     "--output", repoPath
                 ],
@@ -305,7 +263,7 @@ public sealed class ProgramSessionJournalE2ETests : IDisposable {
             0,
             Program.MainCore(
                 [
-                    "import-session-journal",
+                    "import-legacy-json",
                     "--input", legacyPath,
                     "--output", repoPath
                 ],
@@ -414,7 +372,7 @@ public sealed class ProgramSessionJournalE2ETests : IDisposable {
         string callLogDir
     ) => Program.MainCore(
         [
-            "replay-rolling-summary-session-journal",
+            "run-memory-maintainer",
             "--input", repoPath,
             "--output", outputPath,
             "--connections", connectionsPath,
@@ -422,14 +380,14 @@ public sealed class ProgramSessionJournalE2ETests : IDisposable {
             "--call-log-dir", callLogDir,
             "--threshold-tokens", "1",
             "--max-epochs", "1",
-            "--preset", "autobiographical-rewrite"
+            "--profile", "autobiographical-rewrite"
         ],
         factory
     );
 
-    private static RollingSummaryReplayRecord ReadSingleRecord(string path) {
+    private static MemoryMaintainerRunRecord ReadSingleRecord(string path) {
         string line = Assert.Single(File.ReadAllLines(path));
-        return JsonSerializer.Deserialize<RollingSummaryReplayRecord>(line, WebJsonOptions)
+        return JsonSerializer.Deserialize<MemoryMaintainerRunRecord>(line, WebJsonOptions)
             ?? throw new InvalidDataException("Replay output record is empty.");
     }
 
@@ -493,35 +451,30 @@ public sealed class ProgramSessionJournalE2ETests : IDisposable {
     }
 
     private static void WriteLegacyExport(string path, int turnCount) {
-        var events = new List<ChatSessionLegacyReplayEvent> {
+        var events = new List<LegacyChatSessionEvent> {
             new() {
                 Ordinal = 0,
-                Commit = "commit-0",
-                Kind = ChatSessionLegacyEventKinds.InitialState,
-                Root = new ChatSessionLegacyRootMetadataDto {
-                    Kind = "chat-session",
-                    SchemaVersion = 1,
+                Kind = LegacyChatSessionEventKinds.InitialState,
+                Root = new LegacyChatSessionRoot {
                     ApiSpecId = "legacy-upgrade-export",
                     CompletionSurfaceId = "surface-a",
                     ModelId = "model-a",
                     SystemPrompt = "system-a"
-                },
-                Messages = []
+                }
             }
         };
         for (int turn = 1; turn <= turnCount; turn++) {
-            events.Add(new ChatSessionLegacyReplayEvent {
+            events.Add(new LegacyChatSessionEvent {
                 Ordinal = turn,
-                Commit = $"commit-{turn}",
-                Kind = ChatSessionLegacyEventKinds.ModelTurn,
+                Kind = LegacyChatSessionEventKinds.ModelTurn,
                 AppendedMessages = [
-                    new ChatSessionLegacyMessageDto {
+                    new LegacyChatSessionMessage {
                         Kind = "observation",
                         Content = $"observation {turn}"
                     },
-                    new ChatSessionLegacyMessageDto {
+                    new LegacyChatSessionMessage {
                         Kind = "action",
-                        Action = new ChatSessionLegacyActionMessageDto {
+                        Action = new LegacyChatSessionAction {
                             Blocks = [
                                 new SerializedActionBlock(
                                     ActionMessageSerialization.BlockKindText,
@@ -538,14 +491,17 @@ public sealed class ProgramSessionJournalE2ETests : IDisposable {
             });
         }
 
-        var source = new ChatSessionLegacyEventSource {
-            Schema = ChatSessionLegacyEventSourceSchema.SchemaId,
+        var source = new LegacyChatSessionExport {
+            Schema = LegacyChatSessionExportSchema.SchemaId,
             BranchName = "main",
             Events = events
         };
         File.WriteAllText(
             path,
-            JsonSerializer.Serialize(source, ChatSessionLegacyEventSourceReader.JsonOptions)
+            JsonSerializer.Serialize(
+                source,
+                LegacyChatSessionExportReader.JsonOptions
+            )
         );
     }
 

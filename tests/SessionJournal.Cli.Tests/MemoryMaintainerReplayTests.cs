@@ -1,16 +1,15 @@
-using Atelia.ChatSession;
 using Atelia.Completion;
 using Atelia.Completion.Abstractions;
 using Atelia.EventJournal;
 using Atelia.SessionJournal;
 using Atelia.SessionJournal.Derived;
-using ChatSessionBacktestCli;
+using Atelia.SessionJournal.Cli;
 using SJ = Atelia.SessionJournal;
 using Xunit;
 
-namespace Atelia.ChatSession.BacktestCli.Tests;
+namespace Atelia.SessionJournal.Cli.Tests;
 
-public sealed class RollingSummaryReplaySourceTests : IDisposable {
+public sealed class MemoryMaintainerReplayTests : IDisposable {
     private readonly List<string> _tempDirectories = [];
 
     public void Dispose() {
@@ -25,52 +24,15 @@ public sealed class RollingSummaryReplaySourceTests : IDisposable {
     }
 
     [Fact]
-    public async Task LegacySource_PreservesExistingTriggerShape() {
-        var runner = CreateRunner(new LegacyRollingSummaryReplaySource(CreateLegacyEventSource()));
-
-        var records = await RunAllAsync(runner);
-
-        var record = Assert.Single(records);
-        Assert.Equal(RollingSummaryReplaySourceKinds.LegacyChatSessionExport, record.SourceKind);
-        Assert.Equal("commit-1", record.SourceId);
-        Assert.Equal(1, record.EventOrdinal);
-        Assert.Equal("commit-1", record.EventCommit);
-        Assert.Null(record.SourceRawHead);
-        Assert.Null(record.SourceStartInclusive);
-        Assert.Null(record.SourceEndInclusive);
-        Assert.Equal(2, record.SplitIndex);
-        Assert.Equal(2, record.RemainingActiveMessageCount);
-        Assert.Equal("succeeded", record.Status);
-    }
-
-    [Fact]
-    public async Task LegacySource_OrdinalMismatchThrowsInvalidDataException() {
-        var source = new LegacyRollingSummaryReplaySource(new ChatSessionLegacyEventSource {
-            Schema = ChatSessionLegacyEventSourceSchema.SchemaId,
-            Events = [
-                new ChatSessionLegacyReplayEvent {
-                    Ordinal = 1,
-                    Commit = "commit-1",
-                    Kind = ChatSessionLegacyEventKinds.InitialState,
-                    Messages = []
-                }
-            ]
-        });
-
-        var ex = await Assert.ThrowsAsync<InvalidDataException>(() => DrainAsync(source));
-        Assert.Contains("Event ordinal mismatch", ex.Message, StringComparison.Ordinal);
-    }
-
-    [Fact]
     public async Task SessionJournalSource_UsesAddressedReplayAndSameRunner() {
         string repoPath = CreateSessionJournalWithTwoTurns();
         SessionHistoryReplaySnapshot replay = ReadHistoryReplay(repoPath);
-        var runner = CreateRunner(SessionJournalRollingSummaryReplaySource.Open(repoPath));
+        var runner = CreateRunner(SessionJournalMemoryMaintainerReplaySource.Open(repoPath));
 
         var records = await RunAllAsync(runner);
 
         var record = Assert.Single(records);
-        Assert.Equal(RollingSummaryReplaySourceKinds.SessionJournal, record.SourceKind);
+        Assert.Equal(MemoryMaintainerReplaySourceKinds.SessionJournal, record.SourceKind);
         Assert.Null(record.EventOrdinal);
         Assert.Null(record.EventCommit);
         Assert.NotNull(record.SourceRawHead);
@@ -91,7 +53,7 @@ public sealed class RollingSummaryReplaySourceTests : IDisposable {
         string repoPath = NewTempPath();
         using (SJ.SessionJournalEngine.Create(repoPath, new SJ.SessionCreateOptions("model-a", "system", "surface"))) {
         }
-        var runner = CreateRunner(SessionJournalRollingSummaryReplaySource.Open(repoPath));
+        var runner = CreateRunner(SessionJournalMemoryMaintainerReplaySource.Open(repoPath));
 
         var records = await RunAllAsync(runner);
 
@@ -100,7 +62,10 @@ public sealed class RollingSummaryReplaySourceTests : IDisposable {
 
     [Fact]
     public async Task Runner_RemovesSlidingPrefixAfterSuccessfulMaintainer() {
-        var runner = CreateRunner(new LegacyRollingSummaryReplaySource(CreateLegacyEventSource()));
+        string repoPath = CreateSessionJournalWithTwoTurns();
+        var runner = CreateRunner(
+            SessionJournalMemoryMaintainerReplaySource.Open(repoPath)
+        );
 
         var records = await RunAllAsync(runner);
 
@@ -115,7 +80,7 @@ public sealed class RollingSummaryReplaySourceTests : IDisposable {
         string repoPath = CreateSessionJournalWithTurns(3);
         SessionHistoryReplaySnapshot replay = ReadHistoryReplay(repoPath);
         var runner = CreateRunner(
-            SessionJournalRollingSummaryReplaySource.Open(repoPath),
+            SessionJournalMemoryMaintainerReplaySource.Open(repoPath),
             maxEpochs: 2
         );
 
@@ -144,7 +109,7 @@ public sealed class RollingSummaryReplaySourceTests : IDisposable {
         string repoPath = CreateSessionJournalWithTwoTurns();
         SessionHistoryReplaySnapshot replay = ReadHistoryReplay(repoPath);
         var runner = CreateRunner(
-            SessionJournalRollingSummaryReplaySource.Open(repoPath),
+            SessionJournalMemoryMaintainerReplaySource.Open(repoPath),
             new ThrowingCompletionClient()
         );
 
@@ -171,7 +136,7 @@ public sealed class RollingSummaryReplaySourceTests : IDisposable {
             );
         }
         var runner = CreateRunner(
-            SessionJournalRollingSummaryReplaySource.Open(repoPath),
+            SessionJournalMemoryMaintainerReplaySource.Open(repoPath),
             artifactRepoPath: repoPath
         );
 
@@ -227,7 +192,7 @@ public sealed class RollingSummaryReplaySourceTests : IDisposable {
     public async Task ArtifactWriter_ConsecutiveEpochsBuildsRunLocalLineage() {
         string repoPath = CreateSessionJournalWithTurns(3);
         var runner = CreateRunner(
-            SessionJournalRollingSummaryReplaySource.Open(repoPath),
+            SessionJournalMemoryMaintainerReplaySource.Open(repoPath),
             maxEpochs: 2,
             artifactRepoPath: repoPath
         );
@@ -258,7 +223,7 @@ public sealed class RollingSummaryReplaySourceTests : IDisposable {
     public async Task ArtifactWriter_MaintainerFailureDoesNotWriteProducedArtifact() {
         string repoPath = CreateSessionJournalWithTwoTurns();
         var runner = CreateRunner(
-            SessionJournalRollingSummaryReplaySource.Open(repoPath),
+            SessionJournalMemoryMaintainerReplaySource.Open(repoPath),
             new ThrowingCompletionClient(),
             artifactRepoPath: repoPath
         );
@@ -287,7 +252,7 @@ public sealed class RollingSummaryReplaySourceTests : IDisposable {
         string repoPath = CreateSessionJournalWithTwoTurns();
         var writer = new ThrowingArtifactWriter();
         var runner = CreateRunner(
-            SessionJournalRollingSummaryReplaySource.Open(repoPath),
+            SessionJournalMemoryMaintainerReplaySource.Open(repoPath),
             artifactWriter: writer
         );
 
@@ -296,7 +261,7 @@ public sealed class RollingSummaryReplaySourceTests : IDisposable {
         var record = Assert.Single(records);
         Assert.True(runner.HadFailure);
         Assert.Equal("failed", record.Status);
-        Assert.Equal(typeof(RollingSummaryArtifactWriteException).FullName, record.ExceptionType);
+        Assert.Equal(typeof(MemoryMaintainerArtifactWriteException).FullName, record.ExceptionType);
         Assert.NotNull(record.NewBlock);
         Assert.NotNull(record.Invocation);
         Assert.NotEmpty(record.CallLogPaths);
@@ -313,14 +278,14 @@ public sealed class RollingSummaryReplaySourceTests : IDisposable {
         string repoPath = CreateSessionJournalWithTwoTurns();
         var firstClient = new ScriptedCompletionClient("summary");
         var firstRunner = CreateRunner(
-            SessionJournalRollingSummaryReplaySource.Open(repoPath),
+            SessionJournalMemoryMaintainerReplaySource.Open(repoPath),
             firstClient,
             artifactRepoPath: repoPath
         );
         _ = await RunAllAsync(firstRunner);
         var secondClient = new ScriptedCompletionClient("summary");
         var secondRunner = CreateRunner(
-            SessionJournalRollingSummaryReplaySource.Open(repoPath),
+            SessionJournalMemoryMaintainerReplaySource.Open(repoPath),
             secondClient,
             artifactRepoPath: repoPath
         );
@@ -338,33 +303,33 @@ public sealed class RollingSummaryReplaySourceTests : IDisposable {
         EventAddress sourceRawHead = EventAddressTextCodec.Parse(replay.SourceRawHead);
         var client = new ScriptedCompletionClient("summary");
         CompletionConnectionConfig connection = CreateTestConnection();
-        ReplayMemoryMaintainerProfile profile = CreateTestProfile();
+        MemoryMaintainerRunProfile profile = CreateTestProfile();
         var firstWriter = SessionJournalDerivedRecapWriter.Open(repoPath, profile, client, connection);
         var secondWriter = SessionJournalDerivedRecapWriter.Open(repoPath, profile, client, connection);
         await firstWriter.PrepareAsync(sourceRawHead, CancellationToken.None);
         await secondWriter.PrepareAsync(sourceRawHead, CancellationToken.None);
-        RollingSummaryArtifactCandidate firstCandidate = CreateArtifactCandidate(
+        MemoryMaintainerArtifactCandidate firstCandidate = CreateArtifactCandidate(
             profile,
             EventAddressTextCodec.Parse(replay.Messages[1].SourceEndInclusive),
             "summary-a"
         );
-        RollingSummaryArtifactCandidate secondCandidate = CreateArtifactCandidate(
+        MemoryMaintainerArtifactCandidate secondCandidate = CreateArtifactCandidate(
             profile,
             EventAddressTextCodec.Parse(replay.Messages[3].SourceEndInclusive),
             "summary-b"
         );
 
-        Task<RollingSummaryArtifactLink> firstTask = firstWriter
+        Task<MemoryMaintainerArtifactLink> firstTask = firstWriter
             .WriteProducedAsync(firstCandidate, CancellationToken.None)
             .AsTask();
-        Task<RollingSummaryArtifactLink> secondTask = secondWriter
+        Task<MemoryMaintainerArtifactLink> secondTask = secondWriter
             .WriteProducedAsync(secondCandidate, CancellationToken.None)
             .AsTask();
         await Assert.ThrowsAnyAsync<Exception>(() => Task.WhenAll(firstTask, secondTask));
 
-        Task<RollingSummaryArtifactLink>[] tasks = [firstTask, secondTask];
+        Task<MemoryMaintainerArtifactLink>[] tasks = [firstTask, secondTask];
         _ = Assert.Single(tasks, static task => task.IsCompletedSuccessfully);
-        Task<RollingSummaryArtifactLink> failedTask = Assert.Single(tasks, static task => task.IsFaulted);
+        Task<MemoryMaintainerArtifactLink> failedTask = Assert.Single(tasks, static task => task.IsFaulted);
         Assert.IsType<InvalidOperationException>(failedTask.Exception!.InnerException);
         var store = DerivedRecapStore.Open(repoPath);
         Assert.Single(Directory.EnumerateFiles(store.ArtifactsDirectory, "*.json"));
@@ -383,7 +348,7 @@ public sealed class RollingSummaryReplaySourceTests : IDisposable {
         );
 
         var ex = Assert.Throws<ArgumentException>(() => CreateRunner(
-            SessionJournalRollingSummaryReplaySource.Open(sourceRepoPath),
+            SessionJournalMemoryMaintainerReplaySource.Open(sourceRepoPath),
             client,
             artifactWriter: writer
         ));
@@ -393,11 +358,12 @@ public sealed class RollingSummaryReplaySourceTests : IDisposable {
     }
 
     [Fact]
-    public void ArtifactWriter_LegacySourceIsRejectedAtCompositionBoundary() {
+    public void ArtifactWriter_WrongSourceKindIsRejectedAtCompositionBoundary() {
         var client = new ScriptedCompletionClient("summary");
+        var source = new StaticReplaySource("custom", []);
 
         var ex = Assert.Throws<ArgumentException>(() => CreateRunner(
-            new LegacyRollingSummaryReplaySource(CreateLegacyEventSource()),
+            source,
             client,
             artifactWriter: new ThrowingArtifactWriter()
         ));
@@ -408,7 +374,7 @@ public sealed class RollingSummaryReplaySourceTests : IDisposable {
 
     [Fact]
     public void ReplayMessage_RejectsPartialRawRange() {
-        Assert.Throws<ArgumentException>(() => new RollingSummaryReplayMessage(
+        Assert.Throws<ArgumentException>(() => new MemoryMaintainerReplayMessage(
             new ObservationMessage("hello"),
             sourceStartInclusive: Address(1),
             sourceEndInclusive: null
@@ -421,13 +387,13 @@ public sealed class RollingSummaryReplaySourceTests : IDisposable {
         var source = new StaticReplaySource(
             "custom",
             [
-                new RollingSummaryReplayStep(
-                    new RollingSummaryReplaySourceCursor("custom", "trigger", SourceRawHead: Address(9)),
+                new MemoryMaintainerReplayStep(
+                    new MemoryMaintainerReplayCursor("custom", "trigger", SourceRawHead: Address(9)),
                     [
-                        new RollingSummaryReplayMessage(new ObservationMessage("hello 1"), Address(1), Address(1)),
-                        new RollingSummaryReplayMessage(new ActionMessage([new ActionBlock.Text("answer 1")])),
-                        new RollingSummaryReplayMessage(new ObservationMessage("hello 2"), Address(2), Address(2)),
-                        new RollingSummaryReplayMessage(new ActionMessage([new ActionBlock.Text("answer 2")]), Address(3), Address(3))
+                        new MemoryMaintainerReplayMessage(new ObservationMessage("hello 1"), Address(1), Address(1)),
+                        new MemoryMaintainerReplayMessage(new ActionMessage([new ActionBlock.Text("answer 1")])),
+                        new MemoryMaintainerReplayMessage(new ObservationMessage("hello 2"), Address(2), Address(2)),
+                        new MemoryMaintainerReplayMessage(new ActionMessage([new ActionBlock.Text("answer 2")]), Address(3), Address(3))
                     ],
                     IsTriggerBoundary: true
                 )
@@ -447,13 +413,13 @@ public sealed class RollingSummaryReplaySourceTests : IDisposable {
         var source = new StaticReplaySource(
             "custom",
             [
-                new RollingSummaryReplayStep(
-                    new RollingSummaryReplaySourceCursor("custom", "trigger"),
+                new MemoryMaintainerReplayStep(
+                    new MemoryMaintainerReplayCursor("custom", "trigger"),
                     [
-                        new RollingSummaryReplayMessage(new ObservationMessage("hello 1"), Address(1), Address(1)),
-                        new RollingSummaryReplayMessage(new ActionMessage([new ActionBlock.Text("answer 1")]), Address(2), Address(2)),
-                        new RollingSummaryReplayMessage(new ObservationMessage("hello 2"), Address(3), Address(3)),
-                        new RollingSummaryReplayMessage(new ActionMessage([new ActionBlock.Text("answer 2")]), Address(4), Address(4))
+                        new MemoryMaintainerReplayMessage(new ObservationMessage("hello 1"), Address(1), Address(1)),
+                        new MemoryMaintainerReplayMessage(new ActionMessage([new ActionBlock.Text("answer 1")]), Address(2), Address(2)),
+                        new MemoryMaintainerReplayMessage(new ObservationMessage("hello 2"), Address(3), Address(3)),
+                        new MemoryMaintainerReplayMessage(new ActionMessage([new ActionBlock.Text("answer 2")]), Address(4), Address(4))
                     ],
                     IsTriggerBoundary: true
                 )
@@ -472,13 +438,13 @@ public sealed class RollingSummaryReplaySourceTests : IDisposable {
         var source = new StaticReplaySource(
             "custom",
             [
-                new RollingSummaryReplayStep(
-                    new RollingSummaryReplaySourceCursor("custom", "step-1", SourceRawHead: Address(1)),
+                new MemoryMaintainerReplayStep(
+                    new MemoryMaintainerReplayCursor("custom", "step-1", SourceRawHead: Address(1)),
                     [],
                     IsTriggerBoundary: false
                 ),
-                new RollingSummaryReplayStep(
-                    new RollingSummaryReplaySourceCursor("custom", "step-2", SourceRawHead: Address(2)),
+                new MemoryMaintainerReplayStep(
+                    new MemoryMaintainerReplayCursor("custom", "step-2", SourceRawHead: Address(2)),
                     [],
                     IsTriggerBoundary: false
                 )
@@ -496,8 +462,8 @@ public sealed class RollingSummaryReplaySourceTests : IDisposable {
         var source = new StaticReplaySource(
             "custom",
             [
-                new RollingSummaryReplayStep(
-                    new RollingSummaryReplaySourceCursor("other", "step-1"),
+                new MemoryMaintainerReplayStep(
+                    new MemoryMaintainerReplayCursor("other", "step-1"),
                     [],
                     IsTriggerBoundary: false
                 )
@@ -510,16 +476,16 @@ public sealed class RollingSummaryReplaySourceTests : IDisposable {
         Assert.Contains("does not match step source kind", ex.Message, StringComparison.Ordinal);
     }
 
-    private RollingSummaryReplayRunner CreateRunner(
-        IRollingSummaryReplaySource source,
+    private MemoryMaintainerReplayRunner CreateRunner(
+        IMemoryMaintainerReplaySource source,
         ICompletionClient? client = null,
         int maxEpochs = 1,
         string? artifactRepoPath = null,
-        IRollingSummaryArtifactWriter? artifactWriter = null
+        IMemoryMaintainerArtifactWriter? artifactWriter = null
     ) {
         client ??= new ScriptedCompletionClient("summary");
         CompletionConnectionConfig connection = CreateTestConnection();
-        ReplayMemoryMaintainerProfile profile = CreateTestProfile();
+        MemoryMaintainerRunProfile profile = CreateTestProfile();
         if (artifactRepoPath is not null) {
             if (artifactWriter is not null) {
                 throw new ArgumentException("Specify either an artifact repo path or an artifact writer, not both.");
@@ -532,7 +498,7 @@ public sealed class RollingSummaryReplaySourceTests : IDisposable {
             );
         }
 
-        return new RollingSummaryReplayRunner(
+        return new MemoryMaintainerReplayRunner(
             source,
             client,
             connection,
@@ -553,7 +519,7 @@ public sealed class RollingSummaryReplaySourceTests : IDisposable {
             BaseAddress: "http://localhost"
         );
 
-    private static ReplayMemoryMaintainerProfile CreateTestProfile()
+    private static MemoryMaintainerRunProfile CreateTestProfile()
         => new(
             "test",
             new SJ.MemoryRewriteProfile(
@@ -564,14 +530,14 @@ public sealed class RollingSummaryReplaySourceTests : IDisposable {
             )
         );
 
-    private static RollingSummaryArtifactCandidate CreateArtifactCandidate(
-        ReplayMemoryMaintainerProfile profile,
+    private static MemoryMaintainerArtifactCandidate CreateArtifactCandidate(
+        MemoryMaintainerRunProfile profile,
         EventAddress sourceEndInclusive,
         string summary
     ) {
         var memoryPack = new SJ.MemoryPack();
         memoryPack.Observation.Add(profile.Target.BlockKey, new SJ.MemoryPackBlock(summary));
-        return new RollingSummaryArtifactCandidate(
+        return new MemoryMaintainerArtifactCandidate(
             sourceEndInclusive,
             memoryPack,
             new SJ.MemoryBlockMaintenanceResult(
@@ -584,44 +550,14 @@ public sealed class RollingSummaryReplaySourceTests : IDisposable {
         );
     }
 
-    private static async Task<IReadOnlyList<RollingSummaryReplayRecord>> RunAllAsync(RollingSummaryReplayRunner runner) {
-        var records = new List<RollingSummaryReplayRecord>();
+    private static async Task<IReadOnlyList<MemoryMaintainerRunRecord>> RunAllAsync(MemoryMaintainerReplayRunner runner) {
+        var records = new List<MemoryMaintainerRunRecord>();
         await foreach (var record in runner.RunAsync(CancellationToken.None)) {
             records.Add(record);
         }
 
         return records;
     }
-
-    private static async Task DrainAsync(IRollingSummaryReplaySource source) {
-        await foreach (var _ in source.ReadStepsAsync(CancellationToken.None)) {
-        }
-    }
-
-    private static ChatSessionLegacyEventSource CreateLegacyEventSource()
-        => new() {
-            Schema = ChatSessionLegacyEventSourceSchema.SchemaId,
-            Events = [
-                new ChatSessionLegacyReplayEvent {
-                    Ordinal = 0,
-                    Commit = "commit-0",
-                    Kind = ChatSessionLegacyEventKinds.InitialState,
-                    Messages = [
-                        Observation("hello 1"),
-                        Action("answer 1")
-                    ]
-                },
-                new ChatSessionLegacyReplayEvent {
-                    Ordinal = 1,
-                    Commit = "commit-1",
-                    Kind = ChatSessionLegacyEventKinds.ModelTurn,
-                    AppendedMessages = [
-                        Observation("hello 2"),
-                        Action("answer 2")
-                    ]
-                }
-            ]
-        };
 
     private static EventAddress Address(uint segmentNumber)
         => new(Ticket: default, SegmentNumber: segmentNumber, Hint: default);
@@ -676,31 +612,8 @@ public sealed class RollingSummaryReplaySourceTests : IDisposable {
         );
     }
 
-    private static ChatSessionLegacyMessageDto Observation(string text)
-        => new() {
-            Kind = "observation",
-            Content = text
-        };
-
-    private static ChatSessionLegacyMessageDto Action(string text)
-        => new() {
-            Kind = "action",
-            Action = new ChatSessionLegacyActionMessageDto {
-                Blocks = [
-                    new SerializedActionBlock(
-                        ActionMessageSerialization.BlockKindText,
-                        text,
-                        ToolName: null,
-                        ToolCallId: null,
-                        RawArgumentsJson: null,
-                        Reasoning: null
-                    )
-                ]
-            }
-        };
-
     private string NewTempPath() {
-        string path = Path.Combine(Path.GetTempPath(), "atelia-backtest-cli-tests", Guid.NewGuid().ToString("N"));
+        string path = Path.Combine(Path.GetTempPath(), "atelia-session-journal-cli-tests", Guid.NewGuid().ToString("N"));
         _tempDirectories.Add(path);
         return path;
     }
@@ -744,8 +657,8 @@ public sealed class RollingSummaryReplaySourceTests : IDisposable {
         }
     }
 
-    private sealed class ThrowingArtifactWriter : IRollingSummaryArtifactWriter {
-        public string RequiredSourceKind => RollingSummaryReplaySourceKinds.SessionJournal;
+    private sealed class ThrowingArtifactWriter : IMemoryMaintainerArtifactWriter {
+        public string RequiredSourceKind => MemoryMaintainerReplaySourceKinds.SessionJournal;
 
         public int WriteCount { get; private set; }
 
@@ -755,34 +668,34 @@ public sealed class RollingSummaryReplaySourceTests : IDisposable {
             return ValueTask.CompletedTask;
         }
 
-        public ValueTask<RollingSummaryArtifactLink> WriteProducedAsync(
-            RollingSummaryArtifactCandidate candidate,
+        public ValueTask<MemoryMaintainerArtifactLink> WriteProducedAsync(
+            MemoryMaintainerArtifactCandidate candidate,
             CancellationToken ct
         ) {
             _ = candidate;
             ct.ThrowIfCancellationRequested();
             WriteCount++;
-            throw new RollingSummaryArtifactWriteException(
+            throw new MemoryMaintainerArtifactWriteException(
                 "Scripted artifact write failure.",
                 new IOException("disk unavailable")
             );
         }
     }
 
-    private sealed class StaticReplaySource : IRollingSummaryReplaySource {
-        private readonly IReadOnlyList<RollingSummaryReplayStep> _steps;
+    private sealed class StaticReplaySource : IMemoryMaintainerReplaySource {
+        private readonly IReadOnlyList<MemoryMaintainerReplayStep> _steps;
 
-        public StaticReplaySource(string sourceKind, IReadOnlyList<RollingSummaryReplayStep> steps) {
+        public StaticReplaySource(string sourceKind, IReadOnlyList<MemoryMaintainerReplayStep> steps) {
             SourceKind = sourceKind;
             _steps = steps;
         }
 
         public string SourceKind { get; }
 
-        public async IAsyncEnumerable<RollingSummaryReplayStep> ReadStepsAsync(
+        public async IAsyncEnumerable<MemoryMaintainerReplayStep> ReadStepsAsync(
             [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct
         ) {
-            foreach (RollingSummaryReplayStep step in _steps) {
+            foreach (MemoryMaintainerReplayStep step in _steps) {
                 ct.ThrowIfCancellationRequested();
                 yield return step;
             }

@@ -2,10 +2,10 @@ using System.Security.Cryptography;
 using Atelia.Completion;
 using Atelia.Completion.Abstractions;
 using Atelia.SessionJournal;
-using ChatSessionBacktestCli;
+using Atelia.SessionJournal.Cli;
 using Xunit;
 
-namespace Atelia.ChatSession.BacktestCli.Tests;
+namespace Atelia.SessionJournal.Cli.Tests;
 
 public sealed class ProgramSessionJournalReadOnlyValidationTests
     : IDisposable {
@@ -60,7 +60,7 @@ public sealed class ProgramSessionJournalReadOnlyValidationTests
 
         int exitCode = Program.MainCore(
             [
-                "validate-session-journal",
+                "validate",
                 "--input", repoPath
             ],
             ThrowingCompletionClientFactory.Instance

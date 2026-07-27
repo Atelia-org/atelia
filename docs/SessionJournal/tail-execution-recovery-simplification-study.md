@@ -268,7 +268,7 @@ Derived ArtifactSet 的具体维护、持久化、lineage、indexes 和 candidat
 `Atelia.SessionJournal` 程序集。目标依赖图是：
 
 ```text
-Agent Host / Backtest CLI / composition root
+Agent Host / SessionJournal.Cli / composition root
 ├── Atelia.SessionJournal
 │   ├── raw event / execution recovery
 │   ├── coherent context candidate contracts

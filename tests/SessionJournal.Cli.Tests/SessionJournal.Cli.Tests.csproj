@@ -15,7 +15,8 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="../../prototypes/ChatSession.BacktestCli/ChatSession.BacktestCli.csproj" />
+    <ProjectReference Include="../../prototypes/SessionJournal.Cli/SessionJournal.Cli.csproj" />
+    <!-- Test-only producer/consumer compatibility coverage. The product CLI does not reference ChatSession. -->
     <ProjectReference Include="../../prototypes/ChatSession/ChatSession.csproj" />
     <ProjectReference Include="../../prototypes/Completion/Completion.csproj" />
     <ProjectReference Include="../../prototypes/Completion.Abstractions/Completion.Abstractions.csproj" />

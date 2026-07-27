@@ -5,10 +5,11 @@
 > forward replay，并把 rolling summary 写入 derived recap store。任务简报见
 > [CS-5-lite: SessionJournal Derived Recap Store + RollingSummary Replay](cs-5-lite-sessionjournal-derived-recap-store.md)。
 >
-> 2026-07-27 收口：旧 `Atelia.ChatSession` memory substrate 已删除，本文正文中的
-> 旧类型归属保留为实施历史。现行 LLM maintainer 使用
-> `Atelia.SessionJournal` contracts；确定性 `replay-pattern-count` 只保留普通字符串状态，
-> 不依赖任一 MemoryPack 实现。
+> 2026-07-27 最终收口：旧 `Atelia.ChatSession` memory substrate 已删除，原
+> `ChatSession.BacktestCli` 也已拆为只读
+> `ChatSession.LegacyExportCli` 与独立 `SessionJournal.Cli`。本文正文中的旧命令、
+> `replay-pattern-count` 和 legacy LLM replay 均为实施历史；现行入口见
+> [Legacy ChatSession Export / SessionJournal CLI 拆分](legacy-export-and-sessionjournal-cli-split.md)。
 
 ## 1. 背景
 

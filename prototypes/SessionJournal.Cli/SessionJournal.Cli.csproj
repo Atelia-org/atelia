@@ -8,7 +8,6 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="../ChatSession/ChatSession.csproj" />
     <ProjectReference Include="../SessionJournal.Maintainers/SessionJournal.Maintainers.csproj" />
     <ProjectReference Include="../Completion/Completion.csproj" />
     <ProjectReference Include="../SessionJournal/SessionJournal.csproj" />

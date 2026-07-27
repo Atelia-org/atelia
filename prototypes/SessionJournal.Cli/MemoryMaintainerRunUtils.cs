@@ -1,20 +1,19 @@
 using System.Text.RegularExpressions;
-using Atelia.ChatSession;
 using Atelia.Completion.Abstractions;
+using Atelia.SessionJournal;
 
-namespace ChatSessionBacktestCli;
+namespace Atelia.SessionJournal.Cli;
 
-internal static partial class BacktestTextUtil {
+internal static partial class MemoryMaintainerTextUtil {
     public static string FlattenMessageText(IHistoryMessage message)
         => message switch {
-            ContextHeader contextHeader => string.Join('\n',
+            SessionContextHeader contextHeader => string.Join('\n',
                 new[] {
                     contextHeader.SystemPromptFragment,
                     contextHeader.ObservationMessage,
                     contextHeader.ActionMessage?.GetFlattenedText()
                 }.Where(static text => !string.IsNullOrEmpty(text))
             ),
-            RecapMessage recap => recap.Content ?? string.Empty,
             ToolResultsMessage toolResults => toolResults.Content ?? string.Empty,
             ObservationMessage observation => observation.Content ?? string.Empty,
             ActionMessage action => action.GetFlattenedText(),
@@ -34,14 +33,14 @@ internal static partial class BacktestTextUtil {
     private static partial Regex WhitespacePattern();
 }
 
-internal static class BacktestOutputUtil {
-    public static MemoryBlockPreview? CreateBlockPreview(string? text, int tailPreviewChars = 600) {
+internal static class MemoryMaintainerOutputUtil {
+    public static MemoryBlockTextPreview? CreateBlockPreview(string? text, int tailPreviewChars = 600) {
         if (text is null) { return null; }
         var tailPreview = text.Length <= tailPreviewChars
             ? text
             : text[^tailPreviewChars..];
-        return new MemoryBlockPreview(text.Length, tailPreview);
+        return new MemoryBlockTextPreview(text.Length, tailPreview);
     }
 }
 
-internal sealed record MemoryBlockPreview(int Length, string TailPreview);
+internal sealed record MemoryBlockTextPreview(int Length, string TailPreview);
