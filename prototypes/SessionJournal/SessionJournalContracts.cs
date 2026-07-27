@@ -80,8 +80,57 @@ public sealed record SessionRuntime(
     int? MaxTokens = null,
     SessionUncertainCompletionRecoveryPolicy UncertainCompletionRecoveryPolicy =
         SessionUncertainCompletionRecoveryPolicy.Refuse,
-    SessionToolRuntimeIdentity? ToolRuntimeIdentity = null
+    SessionToolRuntimeIdentity? ToolRuntimeIdentity = null,
+    ICoherentContextCandidateSource? ContextCandidateSource = null,
+    SessionContextSelectionOptions? ContextSelection = null
 );
+
+/// <summary>
+/// Runtime-local policy for choosing a coherent derived context candidate. It is deliberately
+/// smaller than <see cref="SessionContextSelectionRequest"/>: the engine supplies the exact
+/// completion boundary, while the host supplies only its selection preference.
+/// </summary>
+public sealed record SessionContextSelectionOptions(
+    string CoherenceGroup,
+    SessionContextSelectionMode Mode = SessionContextSelectionMode.Latest,
+    int? RawSuffixTokenBudget = null
+) {
+    public static SessionContextSelectionOptions Default { get; } = new("default");
+
+    public void ValidateShape() {
+        if (Mode != SessionContextSelectionMode.Latest) {
+            throw new ArgumentOutOfRangeException(
+                nameof(Mode),
+                Mode,
+                "Unsupported context selection mode."
+            );
+        }
+        if (string.IsNullOrWhiteSpace(CoherenceGroup)) {
+            throw new ArgumentException(
+                "Coherence group cannot be empty.",
+                nameof(CoherenceGroup)
+            );
+        }
+        if (RawSuffixTokenBudget is <= 0) {
+            throw new ArgumentOutOfRangeException(
+                nameof(RawSuffixTokenBudget),
+                "Raw suffix token budget must be positive when specified."
+            );
+        }
+    }
+
+    public SessionContextSelectionRequest CreateRequest(EventAddress completionBoundary) {
+        ValidateShape();
+        var request = new SessionContextSelectionRequest(
+            completionBoundary,
+            Mode,
+            CoherenceGroup,
+            RawSuffixTokenBudget
+        );
+        request.ValidateShape();
+        return request;
+    }
+}
 
 public sealed record SessionArtifactSetMemberSelection(
     string RoleId,
@@ -107,6 +156,10 @@ public sealed record ResumeOutcome(
 /// their existing exceptions instead of being mapped to this readiness surface.
 /// </summary>
 public enum SessionJournalNotReadyReason {
+    ContextCandidateSourceRequired,
+    ContextCandidateUnavailable,
+
+    // Transitional legacy reasons. DM-3B removes the raw ArtifactSetCommitted online path.
     ActiveArtifactSetRequired,
     ArtifactSetMemberUnavailable,
     ArtifactSetMemberMismatch,

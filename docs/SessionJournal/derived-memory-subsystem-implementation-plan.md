@@ -468,6 +468,22 @@ CompletionRequestPrepared v4 {
 建立 concrete 可替换子系统，使未 Prepared 的 context planning 只通过注入 provider；停止新增 raw
 ArtifactSet activation。
 
+### DM-3A 实施状态（2026-07-28）
+
+已先完成 core-only 的 provider cutover，尚未搬迁 concrete store 或命令：
+
+- `SessionRuntime` 可注入 `ICoherentContextCandidateSource` 与最小的 selection options；
+- 仅 `AwaitingAgentAction` 的 pre-Prepared planning 调用 provider；它返回的候选仍由 core
+  用 authoritative Parent-chain setup resolver（明确禁用 kind 12 checkpoint）和 candidate validator
+  验证，再交给既有 materializer；
+- `SendAsync()` 在 Observation append 前检查 provider 配置；选择结果为空会保留已追加的
+  `AwaitingAgentAction`，供之后 `ResumeAsync()` 重试；
+- Prepared/Started reopen、`Open()`、`Project()`、`ReplayHistory()` 与 tail resolver 均不需要
+  provider，也不会调用它；
+- 旧 kind-12/store/adapter 已离开 online route，但显式 legacy writer/store 仍保留到 DM-3B；
+  本阶段不以 compatibility fallback 重新接回 online route，也不把尚可显式调用的过渡 surface
+  误称为已删除或不可达。
+
 ### 新项目
 
 ```text
@@ -493,9 +509,10 @@ DM-3 明确保留现有 producer surfaces，不与 store/provider cutover 同时
 - application profiles、prompts 与 target paths 留在 `SessionJournal.Maintainers`；
 - current runner/composition 留在 `SessionJournal.Cli`。
 
-DM-3 同时删除 `LegacyArtifactContextCandidateAdapter`：DerivedMemory provider 直接产出 neutral
-candidate，不再需要 raw activation/store 到 candidate 的同程序集桥接。`LegacyArtifactContextSnapshotFactory`
-仍暂留给 v3/kind-12 commit 与 offline validation，直到 DM-4。
+DM-3B 删除 `LegacyArtifactContextCandidateAdapter` 以及 online raw activation writer/store coupling：
+DerivedMemory provider 直接产出 neutral candidate，不再需要 raw activation/store 到 candidate 的同程序集桥接。
+`LegacyArtifactContextSnapshotFactory` 和 kind-12 codec/read-only surfaces 则保留到 DM-4，避免把
+wire deletion 与此 assembly cutover 混在同一 review 中。
 
 generic producer substrate 的最终归属在 DM-6/DM-7 复核；application-specific policy 不迁入
 DerivedMemory。这样避免物理搬家与 Prepared wire cut 同时扩大。
@@ -513,12 +530,12 @@ DerivedMemory。这样避免物理搬家与 Prepared wire cut 同时扩大。
 - `SessionJournal.Open(path)` 无 provider 仍支持 raw-only surfaces；
 - online planning 入口明确要求 provider。
 
-### CLI transition
+### CLI transition（DM-3B）
 
 - 在 `SessionJournal.Cli` 增加 derived-only set publish/inventory 能力；
 - current `checkpoint-artifact-set` 不再作为长期 writer；
 - 新 writer 不追加 raw kind 12；
-- raw kind 12 reader 可只为 DM-3 这一过渡分片暂存，DM-4 立即删除；
+- raw kind 12 reader 只为 DM-3B/DM-4 之间的只读过渡暂存，DM-4 删除；
 - 不保留双 writer 或 silent import。
 
 ### 验收
@@ -544,12 +561,11 @@ DerivedMemory。这样避免物理搬家与 Prepared wire cut 同时扩大。
 - `ArtifactSetCommittedBody` / `SessionActiveArtifactSet`；
 - event codec/schema/goldens；
 - reducer/tail-resolver idle-boundary 分支；
-- `CommitArtifactSetAsync()`；
 - `LegacyArtifactContextSnapshotFactory`；
-- `ResolveActiveArtifactSet()` / `EnsureActiveArtifactSetReadyAsync()`；
 - latest-equals-selected/raw activation validators；
 - offline readiness report 的 active raw set；
-- `SessionJournal.Cli checkpoint-artifact-set` raw checkpoint command；
+- `SessionJournal.Cli checkpoint-artifact-set` raw checkpoint command（writer/coupling 已由 DM-3B
+  删除；此处清理命令及其 read-only residue）；
 - activation setup checkpoint 逻辑。
 
 ### Governing setup hint

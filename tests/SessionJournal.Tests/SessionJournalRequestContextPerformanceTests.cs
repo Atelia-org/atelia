@@ -73,19 +73,21 @@ public sealed class SessionJournalRequestContextPerformanceTests : IDisposable {
 
     [Fact]
     public async Task ArtifactTailRequests_AvoidColdPayloadReplayAcrossTenThousandColdTurns() {
-        string shortPath = await CreateActivatedColdJournalAsync(turnCount: 1);
-        string longPath = await CreateActivatedColdJournalAsync(turnCount: 10001);
+        ActivatedColdJournal shortJournal =
+            await CreateActivatedColdJournalAsync(turnCount: 1);
+        ActivatedColdJournal longJournal =
+            await CreateActivatedColdJournalAsync(turnCount: 10001);
 
         RequestCost shortObservation =
-            await CompleteObservationAsync(shortPath);
+            await CompleteObservationAsync(shortJournal);
         RequestCost longObservation =
-            await CompleteObservationAsync(longPath);
+            await CompleteObservationAsync(longJournal);
         AssertNoColdPayloadReplay(shortObservation, longObservation);
 
         RequestCost shortToolContinuation =
-            await CompleteTwoToolContinuationsAsync(shortPath);
+            await CompleteTwoToolContinuationsAsync(shortJournal);
         RequestCost longToolContinuation =
-            await CompleteTwoToolContinuationsAsync(longPath);
+            await CompleteTwoToolContinuationsAsync(longJournal);
         AssertNoColdPayloadReplay(shortToolContinuation, longToolContinuation);
     }
 
@@ -102,7 +104,7 @@ public sealed class SessionJournalRequestContextPerformanceTests : IDisposable {
         }
     }
 
-    private async ValueTask<string> CreateActivatedColdJournalAsync(
+    private async ValueTask<ActivatedColdJournal> CreateActivatedColdJournalAsync(
         int turnCount
     ) {
         string path = NewPath();
@@ -168,11 +170,19 @@ public sealed class SessionJournalRequestContextPerformanceTests : IDisposable {
                 artifacts.Autobiography.ArtifactId
             )
         ]);
-        return path;
+        return new ActivatedColdJournal(
+            path,
+            CoherentArtifactSetTestFixture.CreateCandidate(
+                anchor,
+                setup,
+                artifacts.WorldUnderstanding,
+                artifacts.Autobiography
+            )
+        );
     }
 
     private static async ValueTask<RequestCost> CompleteObservationAsync(
-        string path
+        ActivatedColdJournal journal
     ) {
         SessionJournalEngine? observedEngine = null;
         SessionJournalReadDiagnostics previousProviderReads = default;
@@ -192,8 +202,8 @@ public sealed class SessionJournalRequestContextPerformanceTests : IDisposable {
             )
         );
         using var engine = SessionJournalEngine.Open(
-            path,
-            CreateRuntime(client)
+            journal.Path,
+            CreateRuntime(client, contextCandidate: journal.Candidate)
         );
         observedEngine = engine;
         SessionJournalReadDiagnostics before =
@@ -214,7 +224,7 @@ public sealed class SessionJournalRequestContextPerformanceTests : IDisposable {
     }
 
     private static async ValueTask<RequestCost>
-        CompleteTwoToolContinuationsAsync(string path) {
+        CompleteTwoToolContinuationsAsync(ActivatedColdJournal journal) {
         int responseIndex = 0;
         SessionJournalEngine? observedEngine = null;
         SessionJournalReadDiagnostics previousProviderReads = default;
@@ -255,8 +265,8 @@ public sealed class SessionJournalRequestContextPerformanceTests : IDisposable {
         ToolSession tools =
             new ToolRegistry([tool]).CreateSession();
         using var engine = SessionJournalEngine.Open(
-            path,
-            CreateRuntime(client, tools)
+            journal.Path,
+            CreateRuntime(client, tools, journal.Candidate)
         );
         observedEngine = engine;
         SessionJournalReadDiagnostics before =
@@ -430,7 +440,8 @@ public sealed class SessionJournalRequestContextPerformanceTests : IDisposable {
 
     private static SessionRuntime CreateRuntime(
         CapturingCompletionClient client,
-        ToolSession? tools = null
+        ToolSession? tools = null,
+        SessionContextCandidate? contextCandidate = null
     ) => new(
         CompletionClient: client,
         ToolSession: tools,
@@ -447,7 +458,8 @@ public sealed class SessionJournalRequestContextPerformanceTests : IDisposable {
                 "performance-tool-host",
                 "performance-tools-v1",
                 "performance-capabilities-v1"
-            )
+            ),
+        ContextCandidateSource: new TestContextCandidateSource(contextCandidate)
     );
 
     private static CompletionDescriptor Invocation(
@@ -492,6 +504,11 @@ public sealed class SessionJournalRequestContextPerformanceTests : IDisposable {
         SessionJournalReadDiagnostics Reads,
         SessionJournalPayloadLifetimeDiagnostics Lifetime,
         IReadOnlyList<SessionJournalReadDiagnostics> ProviderReadDeltas
+    );
+
+    private sealed record ActivatedColdJournal(
+        string Path,
+        SessionContextCandidate Candidate
     );
 
     private sealed record TestArtifactSet(

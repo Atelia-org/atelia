@@ -13,11 +13,13 @@ internal static class CoherentArtifactSetTestFixture {
         ActivateAtCurrentHeadAsync(
             string journalPath,
             SessionJournalEngine engine,
+            TestContextCandidateSource candidateSource,
             string fixtureId = "default",
             CancellationToken cancellationToken = default
         ) {
         ArgumentException.ThrowIfNullOrWhiteSpace(journalPath);
         ArgumentNullException.ThrowIfNull(engine);
+        ArgumentNullException.ThrowIfNull(candidateSource);
         ArgumentException.ThrowIfNullOrWhiteSpace(fixtureId);
 
         SessionExecutionRecovery recovery =
@@ -86,11 +88,65 @@ internal static class CoherentArtifactSetTestFixture {
             ],
             cancellationToken
         ).ConfigureAwait(false);
+        SessionContextCandidate candidate = CreateCandidate(anchor, setup, world, autobiography);
+        candidateSource.Candidate = candidate;
         return new ActivatedCoherentArtifactSet(
             anchor,
             activation,
             world,
-            autobiography
+            autobiography,
+            candidate
+        );
+    }
+
+    internal static SessionContextCandidate CreateCandidate(
+        EventAddress anchor,
+        SessionGoverningSetup setup,
+        params DerivedRecapArtifact[] artifacts
+    ) {
+        return new SessionContextCandidate(
+            anchor,
+            new SessionContextAnchorSetupReferences(
+                CreateSetupReference(
+                    setup.RuntimeConfigSetupAddress,
+                    SessionEventKind.RuntimeConfigSetup,
+                    setup.RuntimeConfig
+                ),
+                CreateSetupReference(
+                    setup.SystemPromptSetupAddress,
+                    SessionEventKind.SystemPromptSetup,
+                    new SystemPromptSetupBody(setup.SystemPrompt)
+                )
+            ),
+            artifacts.Select(static artifact => {
+                Assert.True(
+                    artifact.MemoryPack.TryGetBlock(
+                        artifact.Target,
+                        out MemoryPackBlock block
+                    )
+                );
+                return new SessionContextContribution(
+                    artifact.Target,
+                    block.Text,
+                    SessionContextContributionHasher.CodecId,
+                    SessionContextContributionHasher.ComputeSha256(block.Text),
+                    artifact.SourceRawHead
+                );
+            }).ToImmutableArray()
+        );
+    }
+
+    private static SessionContextSetupReference CreateSetupReference(
+        EventAddress address,
+        SessionEventKind kind,
+        object body
+    ) {
+        byte[] payload = SessionEventCodec.Encode(kind, body);
+        _ = SessionEventCodec.Decode(kind, payload, out int version);
+        return new SessionContextSetupReference(
+            address,
+            version,
+            SessionRequestCanonicalizer.Sha256Hex(payload)
         );
     }
 
@@ -152,5 +208,6 @@ internal sealed record ActivatedCoherentArtifactSet(
     EventAddress CommonAnchor,
     EventAddress Activation,
     DerivedRecapArtifact WorldUnderstanding,
-    DerivedRecapArtifact Autobiography
+    DerivedRecapArtifact Autobiography,
+    SessionContextCandidate Candidate
 );

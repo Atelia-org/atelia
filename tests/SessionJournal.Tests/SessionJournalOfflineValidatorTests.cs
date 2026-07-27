@@ -142,6 +142,7 @@ public sealed class SessionJournalOfflineValidatorTests : IDisposable {
         string path = NewPath();
         var client = new NeverCalledCompletionClient();
         EventAddress prepared;
+        var candidateSource = new TestContextCandidateSource();
         using (var engine = SessionJournalEngine.CreateForTest(
             path,
             new SessionCreateOptions(
@@ -156,7 +157,8 @@ public sealed class SessionJournalOfflineValidatorTests : IDisposable {
                     "test",
                     "offline-validation-v1",
                     "offline-adapter-v1"
-                )
+                ),
+                ContextCandidateSource: candidateSource
             ),
             new SessionJournalTestHooks(
                 SessionJournalFailpoint.AfterRequestPreparedCommitted
@@ -165,6 +167,7 @@ public sealed class SessionJournalOfflineValidatorTests : IDisposable {
             await CoherentArtifactSetTestFixture.ActivateAtCurrentHeadAsync(
                 path,
                 engine,
+                candidateSource,
                 fixtureId: "offline-validator-historical-prepared"
             );
             await Assert.ThrowsAsync<SessionJournalFailpointException>(

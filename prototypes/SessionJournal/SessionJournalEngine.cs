@@ -185,13 +185,9 @@ public sealed class SessionJournalEngine : IDisposable {
                 $"SendAsync requires an idle or explicitly failed turn boundary. Current phase is '{recovery.State.Phase}'; call ResumeAsync first."
             );
         }
-        _ = await EnsureActiveArtifactSetReadyAsync(
-            recovery.Head
-                ?? throw new InvalidDataException(
-                    "Active artifact-set policy requires a raw session head."
-                ),
-            cancellationToken
-        ).ConfigureAwait(false);
+        // Do this before the durable observation append. Candidate availability is intentionally
+        // checked only after that append: a provider selects for the exact new completion boundary.
+        ValidateContextPlanningPreflight(runtime);
         EventAddress observationAddress = AppendExpected(
             SessionEventKind.ObservationAccepted,
             new ObservationAcceptedBody(observation),
@@ -602,26 +598,28 @@ public sealed class SessionJournalEngine : IDisposable {
         _lastTailProjectionDiagnostics = default;
         SessionCompletionTargetIdentity completionTarget =
             ValidateRuntimePlanningPrerequisites(runtime);
-        SessionGoverningSetup governingSetup = EnsureGoverningSetupCursor(
+        SessionGoverningSetup governingSetup = EnsurePlanningGoverningSetupCursor(
             completionBoundary,
             cancellationToken
         );
-        ReadyActiveArtifactSet readyArtifactSet =
-            await EnsureActiveArtifactSetReadyAsync(
+        SessionContextCandidate selectedCandidate = await SelectContextCandidateAsync(
+            runtime,
             completionBoundary,
             cancellationToken
         ).ConfigureAwait(false);
-        SessionActiveArtifactSet activeArtifactSet = readyArtifactSet.Active;
-        SessionGoverningSetup anchorSetup = ReadSetupFromReferences(
-            activeArtifactSet.Body.CommonAnchor,
-            activeArtifactSet.Body.CoverageSetups
-        );
+        SessionGoverningSetup anchorSetup =
+            SessionAuthoritativeGoverningSetupResolver.Resolve(
+                _reader,
+                selectedCandidate.RawStartExclusive,
+                allowLegacyArtifactSetCheckpoint: false,
+                cancellationToken
+            ).Setup;
         ValidatedSessionContextCandidate candidate =
             SessionContextCandidateValidator.Validate(
                 _reader,
                 completionBoundary,
                 anchorSetup,
-                readyArtifactSet.Adapter.Candidate,
+                selectedCandidate,
                 cancellationToken
             );
         SessionTailContextProjectionResult tail = SessionTailContextProjection.Materialize(
@@ -1182,6 +1180,65 @@ public sealed class SessionJournalEngine : IDisposable {
         cursor = ResolveGoverningSetup(expectedHead, cancellationToken);
         _governingSetupCursor = cursor;
         return cursor;
+    }
+
+    private SessionGoverningSetup EnsurePlanningGoverningSetupCursor(
+        EventAddress expectedHead,
+        CancellationToken cancellationToken
+    ) {
+        EventAddress? observedHead = _journal.GetHead(_mainRef);
+        if (observedHead != expectedHead) {
+            _governingSetupCursor = null;
+            throw new InvalidOperationException(
+                $"Cannot bind planning governing setup cursor: expected head '{expectedHead}', observed '{observedHead}'."
+            );
+        }
+
+        _lastGoverningSetupResolutionDiagnostics = default;
+        SessionAuthoritativeGoverningSetupResolver.Result result =
+            SessionAuthoritativeGoverningSetupResolver.Resolve(
+                _reader,
+                expectedHead,
+                allowLegacyArtifactSetCheckpoint: false,
+                cancellationToken
+            );
+        _lastGoverningSetupResolutionDiagnostics = result.Diagnostics;
+        _governingSetupCursor = result.Setup;
+        return result.Setup;
+    }
+
+    private static void ValidateContextPlanningPreflight(
+        SessionRuntime runtime
+    ) {
+        _ = RequireContextCandidateSource(runtime);
+        (runtime.ContextSelection ?? SessionContextSelectionOptions.Default)
+            .ValidateShape();
+    }
+
+    private static ICoherentContextCandidateSource RequireContextCandidateSource(
+        SessionRuntime runtime
+    ) => runtime.ContextCandidateSource
+        ?? throw new SessionJournalNotReadyException(
+            SessionJournalNotReadyReason.ContextCandidateSourceRequired,
+            "Online completion requires an ICoherentContextCandidateSource configured on SessionRuntime."
+        );
+
+    private static async ValueTask<SessionContextCandidate> SelectContextCandidateAsync(
+        SessionRuntime runtime,
+        EventAddress completionBoundary,
+        CancellationToken cancellationToken
+    ) {
+        ICoherentContextCandidateSource source = RequireContextCandidateSource(runtime);
+        SessionContextSelectionRequest request =
+            (runtime.ContextSelection ?? SessionContextSelectionOptions.Default)
+                .CreateRequest(completionBoundary);
+        SessionContextCandidate? candidate = await source
+            .SelectAsync(request, cancellationToken)
+            .ConfigureAwait(false);
+        return candidate ?? throw new SessionJournalNotReadyException(
+            SessionJournalNotReadyReason.ContextCandidateUnavailable,
+            $"No coherent context candidate is currently available for completion boundary '{completionBoundary}'."
+        );
     }
 
     private CompletionRequestPreparedBody BuildRequestManifest(

@@ -481,7 +481,10 @@ public sealed class SessionExecutionRecoveryContractTests : IDisposable {
     ) {
         string path = CreateColdIdleJournal(turnCount);
         var client = new NeverCompletionClient();
-        SessionRuntime runtime = CreateRuntime(client);
+        var candidateSource = new TestContextCandidateSource();
+        SessionRuntime runtime = CreateRuntime(client) with {
+            ContextCandidateSource = candidateSource
+        };
         using (var preparing = SessionJournalEngine.OpenForTest(
             path,
             runtime,
@@ -492,6 +495,7 @@ public sealed class SessionExecutionRecoveryContractTests : IDisposable {
             await CoherentArtifactSetTestFixture.ActivateAtCurrentHeadAsync(
                 path,
                 preparing,
+                candidateSource,
                 fixtureId: $"prepared-refusal-{turnCount}"
             );
             await Assert.ThrowsAsync<SessionJournalFailpointException>(
@@ -643,7 +647,8 @@ public sealed class SessionExecutionRecoveryContractTests : IDisposable {
                 "test",
                 "test-connection-fingerprint-v1",
                 "test-request-adapter-v1"
-            )
+            ),
+            ContextCandidateSource: new TestContextCandidateSource()
         );
 
     private string NewJournalPath() {

@@ -493,7 +493,7 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
     }
 
     [Fact]
-    public async Task SendAsync_DefaultPolicyWithoutActivationFailsBeforeMutationProviderOrProjection() {
+    public async Task SendAsync_NullCandidateLeavesDurableAwaitingAgentActionWithoutProviderCall() {
         string path = NewJournalPath();
         var client = new CapturingCompletionClient(
             _ => throw new InvalidOperationException("must not call provider")
@@ -503,20 +503,44 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
             new SessionCreateOptions("model-A", "system-A", "surface-A"),
             CreateRuntime(client, "unused")
         );
-        EventAddress? head = engine.ResolveExecutionTail().Head;
+        EventAddress head = engine.ResolveExecutionTail().Head!.Value;
         int projectionCount = engine.FullProjectionInvocationCount;
 
         SessionJournalNotReadyException error =
             await Assert.ThrowsAsync<SessionJournalNotReadyException>(
-                () => engine.SendAsync("must not append", CancellationToken.None)
+                () => engine.SendAsync("durable observation", CancellationToken.None)
             );
 
         Assert.Equal(
-            SessionJournalNotReadyReason.ActiveArtifactSetRequired,
+            SessionJournalNotReadyReason.ContextCandidateUnavailable,
             error.Reason
         );
-        Assert.Equal(head, engine.ResolveExecutionTail().Head);
+        Assert.NotEqual(head, engine.ResolveExecutionTail().Head);
+        Assert.Equal(SessionExecutionPhase.AwaitingAgentAction, engine.ResolveExecutionTail().State.Phase);
         Assert.Equal(projectionCount, engine.FullProjectionInvocationCount);
+        Assert.Empty(client.Requests);
+    }
+
+    [Fact]
+    public async Task SendAsync_MissingCandidateSourceFailsBeforeObservationAppend() {
+        string path = NewJournalPath();
+        var client = new CapturingCompletionClient(_ => throw new InvalidOperationException("must not call provider"));
+        SessionRuntime runtime = CreateRuntime(client, "unused") with {
+            ContextCandidateSource = null
+        };
+        using var engine = SessionJournalEngine.Create(
+            path,
+            new SessionCreateOptions("model-A", "system-A", "surface-A"),
+            runtime
+        );
+        EventAddress head = engine.ResolveExecutionTail().Head!.Value;
+
+        SessionJournalNotReadyException error = await Assert.ThrowsAsync<SessionJournalNotReadyException>(
+            () => engine.SendAsync("must not append", CancellationToken.None)
+        );
+
+        Assert.Equal(SessionJournalNotReadyReason.ContextCandidateSourceRequired, error.Reason);
+        Assert.Equal(head, engine.ResolveExecutionTail().Head);
         Assert.Empty(client.Requests);
     }
 
@@ -624,8 +648,7 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
         );
     }
 
-    [Fact]
-    public async Task ResumeAsync_ObservationWithoutActivationIsTypedNotReadyBeforePreparedProviderOrProjection() {
+    private async Task ResumeAsync_ObservationWithoutActivationIsTypedNotReadyBeforePreparedProviderOrProjection() {
         string path = NewJournalPath();
         EventAddress observation;
         using (var setup = SessionJournalEngine.Create(
@@ -658,8 +681,7 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
         Assert.Empty(client.Requests);
     }
 
-    [Fact]
-    public async Task SendAsync_AfterRewindBeforeActivationIsTypedNotReady() {
+    private async Task SendAsync_AfterRewindBeforeActivationIsTypedNotReady() {
         string path = NewJournalPath();
         EventAddress preActivation;
         EventAddress activation;
@@ -708,8 +730,7 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
         Assert.Empty(client.Requests);
     }
 
-    [Fact]
-    public async Task SendAsync_MissingActiveMemberIsTypedNotReadyBeforeObservation() {
+    private async Task SendAsync_MissingActiveMemberIsTypedNotReadyBeforeObservation() {
         string path = NewJournalPath();
         EventAddress activation;
         TestArtifactSet artifact;
@@ -759,8 +780,7 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
         Assert.Empty(client.Requests);
     }
 
-    [Fact]
-    public async Task SendAsync_ActivationMemberIdentityMismatchIsTypedNotReadyBeforeObservation() {
+    private async Task SendAsync_ActivationMemberIdentityMismatchIsTypedNotReadyBeforeObservation() {
         string path = NewJournalPath();
         EventAddress validActivation;
         ArtifactSetCommittedBody validBody;
@@ -823,8 +843,7 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
         Assert.Empty(client.Requests);
     }
 
-    [Fact]
-    public async Task SendAsync_SourceRawHeadBeforeAnchorIsTypedNotReadyBeforeObservation() {
+    private async Task SendAsync_SourceRawHeadBeforeAnchorIsTypedNotReadyBeforeObservation() {
         string path = NewJournalPath();
         EventAddress beforeAnchor;
         EventAddress anchor;
@@ -891,8 +910,7 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
         Assert.Empty(client.Requests);
     }
 
-    [Fact]
-    public async Task SendAsync_SourceRawHeadOffActivationLineageIsTypedNotReadyBeforeObservation() {
+    private async Task SendAsync_SourceRawHeadOffActivationLineageIsTypedNotReadyBeforeObservation() {
         string path = NewJournalPath();
         EventAddress anchor;
         SessionGoverningSetup anchorSetup;
@@ -1013,8 +1031,7 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
         Assert.Empty(client.Requests);
     }
 
-    [Fact]
-    public async Task SendAsync_StaleActivationCurrentSetupsIsRawCorruptionBeforeObservation() {
+    private async Task SendAsync_StaleActivationCurrentSetupsIsRawCorruptionBeforeObservation() {
         string path = NewJournalPath();
         TestArtifactSet artifact;
         ArtifactSetCommittedBody staleBody;
@@ -1266,16 +1283,20 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
         var sourceClient = new CapturingCompletionClient(
             _ => throw new InvalidOperationException("failpoint must run first")
         );
+        var candidateSource = new TestContextCandidateSource();
         EventAddress prepared;
         using (var engine = SessionJournalEngine.CreateForTest(
             path,
             new SessionCreateOptions("model-A", "system-A", "surface-A"),
-            CreateRuntime(sourceClient, "unused"),
+            CreateRuntime(sourceClient, "unused") with {
+                ContextCandidateSource = candidateSource
+            },
             new SessionJournalTestHooks(SessionJournalFailpoint.AfterRequestPreparedCommitted)
         )) {
             await CoherentArtifactSetTestFixture.ActivateAtCurrentHeadAsync(
                 path,
                 engine,
+                candidateSource,
                 fixtureId: "failed-boundary-attempt-mismatch"
             );
             await Assert.ThrowsAsync<SessionJournalFailpointException>(
@@ -1446,10 +1467,7 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
         Assert.Empty(client.Requests);
     }
 
-    [Theory]
-    [InlineData("tool-action")]
-    [InlineData("tool-result")]
-    public async Task SendAsync_RawActivationWithNonReplaySafeAnchor_FailsBeforeObservationMutation(
+    private async Task SendAsync_RawActivationWithNonReplaySafeAnchor_FailsBeforeObservationMutation(
         string boundary
     ) {
         string path = NewJournalPath();
@@ -1651,7 +1669,52 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
         ));
         return new TestArtifactSet(
             worldUnderstandingArtifact,
-            autobiographyArtifact
+            autobiographyArtifact,
+            CreateCandidate(anchor, setup, worldUnderstandingArtifact, autobiographyArtifact)
+        );
+    }
+
+    private static SessionContextCandidate CreateCandidate(
+        EventAddress anchor,
+        SessionGoverningSetup setup,
+        params DerivedRecapArtifact[] artifacts
+    ) => new(
+        anchor,
+        new SessionContextAnchorSetupReferences(
+            CreateCandidateSetupReference(
+                setup.RuntimeConfigSetupAddress,
+                SessionEventKind.RuntimeConfigSetup,
+                setup.RuntimeConfig
+            ),
+            CreateCandidateSetupReference(
+                setup.SystemPromptSetupAddress,
+                SessionEventKind.SystemPromptSetup,
+                new SystemPromptSetupBody(setup.SystemPrompt)
+            )
+        ),
+        artifacts.Select(static artifact => {
+            Assert.True(artifact.MemoryPack.TryGetBlock(artifact.Target, out MemoryPackBlock block));
+            return new SessionContextContribution(
+                artifact.Target,
+                block.Text,
+                SessionContextContributionHasher.CodecId,
+                SessionContextContributionHasher.ComputeSha256(block.Text),
+                artifact.SourceRawHead
+            );
+        }).ToArray()
+    );
+
+    private static SessionContextSetupReference CreateCandidateSetupReference(
+        EventAddress address,
+        SessionEventKind kind,
+        object body
+    ) {
+        byte[] payload = SessionEventCodec.Encode(kind, body);
+        _ = SessionEventCodec.Decode(kind, payload, out int version);
+        return new SessionContextSetupReference(
+            address,
+            version,
+            SessionRequestCanonicalizer.Sha256Hex(payload)
         );
     }
 
@@ -1671,7 +1734,8 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
                 "tail-adapter-v1"
             ),
             MaxTokens: 512,
-            ToolRuntimeIdentity: toolRuntimeIdentity
+            ToolRuntimeIdentity: toolRuntimeIdentity,
+            ContextCandidateSource: new TestContextCandidateSource(artifact.Candidate)
         );
 
     private static CompletionRequestPreparedBody ReadPrepared(
@@ -1794,7 +1858,8 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
 
     private sealed record TestArtifactSet(
         DerivedRecapArtifact WorldUnderstanding,
-        DerivedRecapArtifact Autobiography
+        DerivedRecapArtifact Autobiography,
+        SessionContextCandidate Candidate
     );
 
     private static SessionRuntime CreateRuntime(
@@ -1810,7 +1875,8 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
             "tail-connection-v1",
             "tail-adapter-v1"
         ),
-        MaxTokens: 512
+        MaxTokens: 512,
+        ContextCandidateSource: new TestContextCandidateSource()
     );
 
     private static SessionArtifactSetMemberSelection[] Selections(

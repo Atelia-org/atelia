@@ -40,7 +40,13 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
             path,
             CreateRuntime(client)
         );
-        using (var reopened = SessionJournalEngine.Open(path, CreateRuntime(client))) {
+        var recoverySource = new TestContextCandidateSource();
+        using (var reopened = SessionJournalEngine.Open(
+            path,
+            CreateRuntime(client) with {
+                ContextCandidateSource = recoverySource
+            }
+        )) {
             InvalidOperationException error = await Assert.ThrowsAsync<InvalidOperationException>(
                 () => reopened.ResumeAsync(CancellationToken.None)
             );
@@ -49,6 +55,7 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
         Assert.Equal(prepared, ReadHead(path));
         Assert.Single(ReadAddressesByKind(path, SessionEventKind.CompletionAttemptStarted));
         Assert.Equal(0, client.Calls);
+        Assert.Equal(0, recoverySource.SelectionCount);
     }
 
     [Fact]
@@ -298,13 +305,21 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
         string path = NewJournalPath();
         var sourceClient = new ScriptedClient();
         var sourceTool = new RecordingTool("lookup");
+        SessionRuntime sourceRuntime = CreateRuntime(
+            sourceClient,
+            new ToolRegistry([sourceTool]).CreateSession()
+        );
         _ = await CreateUncertainAsync(
             path,
-            CreateRuntime(
-                sourceClient,
-                new ToolRegistry([sourceTool]).CreateSession()
-            )
+            sourceRuntime
         );
+        SessionContextCandidate candidate =
+            Assert.IsType<TestContextCandidateSource>(
+                sourceRuntime.ContextCandidateSource
+            ).Candidate
+            ?? throw new InvalidOperationException(
+                "Prepared recovery fixture did not publish its context candidate."
+            );
         var recoveryClient = new ScriptedClient();
         recoveryClient.Enqueue(request => new CompletionResult(
             new ActionMessage([
@@ -322,7 +337,8 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
                 recoveryClient,
                 new ToolRegistry([recoveryTool]).CreateSession(),
                 recoveryPolicy:
-                    SessionUncertainCompletionRecoveryPolicy.RestartWithNewAttempt
+                    SessionUncertainCompletionRecoveryPolicy.RestartWithNewAttempt,
+                contextCandidate: candidate
             )
         )) {
             ResumeOutcome outcome =
@@ -421,11 +437,14 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
     public async Task SendFailpoint_AfterProviderBeforeAction_CanRestartWithNewAttempt() {
         string path = NewJournalPath();
         var client = new ScriptedClient();
+        var candidateSource = new TestContextCandidateSource();
         client.Enqueue(request => Success(request, "uncertain first result"));
         using (var engine = SessionJournalEngine.CreateForTest(
             path,
             new SessionCreateOptions("model-A", "system-A", "surface-A"),
-            CreateRuntime(client),
+            CreateRuntime(client) with {
+                ContextCandidateSource = candidateSource
+            },
             new SessionJournalTestHooks(
                 SessionJournalFailpoint.AfterCompletionBeforeActionCommitted
             )
@@ -433,6 +452,7 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
             await CoherentArtifactSetTestFixture.ActivateAtCurrentHeadAsync(
                 path,
                 engine,
+                candidateSource,
                 fixtureId: "provider-before-action"
             );
             await Assert.ThrowsAsync<SessionJournalFailpointException>(
@@ -555,7 +575,10 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
         var sourceClient = new ScriptedClient();
         using (var source = SessionJournalEngine.OpenForTest(
             path,
-            CreateRuntime(sourceClient),
+            CreateRuntime(
+                sourceClient,
+                contextCandidate: artifact.Candidate
+            ),
             new SessionJournalTestHooks(SessionJournalFailpoint.AfterRequestPreparedCommitted)
         )) {
             await Assert.ThrowsAsync<SessionJournalFailpointException>(
@@ -575,12 +598,13 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
 
         var recoveryClient = new ScriptedClient();
         recoveryClient.Enqueue(request => Success(request, "inline recovery"));
+        var recoverySource = new TestContextCandidateSource();
         using var reopened = SessionJournalEngine.Open(
             path,
             CreateRuntime(
                 recoveryClient,
                 recoveryPolicy: SessionUncertainCompletionRecoveryPolicy.RestartWithNewAttempt
-            )
+            ) with { ContextCandidateSource = recoverySource }
         );
         int projectionCountBeforeResume = reopened.FullProjectionInvocationCount;
 
@@ -589,6 +613,7 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
         Assert.Equal("inline recovery", outcome.Message?.GetFlattenedText());
         Assert.Equal(projectionCountBeforeResume, reopened.FullProjectionInvocationCount);
         Assert.Single(recoveryClient.Requests);
+        Assert.Equal(0, recoverySource.SelectionCount);
     }
 
     [Fact]
@@ -624,7 +649,11 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
         client.Enqueue(_ => throw new IOException("transport after tool result"));
         using (var engine = SessionJournalEngine.Open(
             path,
-            CreateRuntime(client, initialTools)
+            CreateRuntime(
+                client,
+                initialTools,
+                contextCandidate: artifact.Candidate
+            )
         )) {
             await Assert.ThrowsAsync<IOException>(
                 () => engine.SendAsync("tool turn", CancellationToken.None)
@@ -650,14 +679,18 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
             CreateRuntime(
                 client,
                 recoveryTools,
-                recoveryPolicy: SessionUncertainCompletionRecoveryPolicy.RestartWithNewAttempt
+                recoveryPolicy: SessionUncertainCompletionRecoveryPolicy.RestartWithNewAttempt,
+                contextCandidate: artifact.Candidate
             )
         )) {
             ResumeOutcome recovered = await reopened.ResumeAsync(CancellationToken.None);
             Assert.Equal("recovered terminal", recovered.Message?.GetFlattenedText());
 
             client.Enqueue(request => Success(request, "next tail answer"));
-            reopened.UseRuntime(CreateRuntime(client));
+            reopened.UseRuntime(CreateRuntime(
+                client,
+                contextCandidate: artifact.Candidate
+            ));
             int projectionCountBeforeTailSend = reopened.FullProjectionInvocationCount;
 
             TurnResult next = await reopened.SendAsync(
@@ -719,6 +752,9 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
         string path,
         SessionRuntime runtime
     ) {
+        var candidateSource = Assert.IsType<TestContextCandidateSource>(
+            runtime.ContextCandidateSource
+        );
         using var engine = SessionJournalEngine.CreateForTest(
             path,
             new SessionCreateOptions("model-A", "system-A", "surface-A"),
@@ -728,6 +764,7 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
         await CoherentArtifactSetTestFixture.ActivateAtCurrentHeadAsync(
             path,
             engine,
+            candidateSource,
             fixtureId: "prepared-recovery"
         );
         await Assert.ThrowsAsync<SessionJournalFailpointException>(
@@ -761,14 +798,16 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
         SessionUncertainCompletionRecoveryPolicy recoveryPolicy =
             SessionUncertainCompletionRecoveryPolicy.Refuse,
         int? maxTokens = 256,
-        SessionToolRuntimeIdentity? toolRuntimeIdentity = null
+        SessionToolRuntimeIdentity? toolRuntimeIdentity = null,
+        SessionContextCandidate? contextCandidate = null
     ) => new(
         CompletionClient: client,
         ToolSession: tools,
         CompletionTarget: target ?? DefaultTarget,
         MaxTokens: maxTokens,
         UncertainCompletionRecoveryPolicy: recoveryPolicy,
-        ToolRuntimeIdentity: toolRuntimeIdentity ?? ToolRuntimeIdentity
+        ToolRuntimeIdentity: toolRuntimeIdentity ?? ToolRuntimeIdentity,
+        ContextCandidateSource: new TestContextCandidateSource(contextCandidate)
     );
 
     private static CompletionResult Success(CompletionRequest request, string text)
@@ -837,7 +876,13 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
         ));
         return new TestArtifactSet(
             worldUnderstandingArtifact,
-            autobiographyArtifact
+            autobiographyArtifact,
+            CoherentArtifactSetTestFixture.CreateCandidate(
+                anchor,
+                setup,
+                worldUnderstandingArtifact,
+                autobiographyArtifact
+            )
         );
     }
 
@@ -853,7 +898,8 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
 
     private sealed record TestArtifactSet(
         DerivedRecapArtifact WorldUnderstanding,
-        DerivedRecapArtifact Autobiography
+        DerivedRecapArtifact Autobiography,
+        SessionContextCandidate Candidate
     );
 
     private static EventAddress ReadHead(string path) {
