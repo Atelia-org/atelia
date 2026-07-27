@@ -370,29 +370,40 @@ header，并以真实 anchor 之后的 raw suffix 保留近期细节；没有可
 fallback。后续工作是在保持这一 raw/artifact 语义的前提下，把 persistence、shared epoch、set
 publication 和 selection 移到正确的 DerivedMemory ownership，而不是把能力回迁到 ChatSession。
 
-## 7. Context Planner
+## 7. Context Planner（Target Architecture）
 
-### 7.1 Planner 的问题
+### 7.1 Current 边界：coherent-only，不是通用预算规划器
 
-真正要优化的不是“最近保留多少条”，而是：在固定预算下，哪组 artifact anchor、raw suffix 和召回材料最能支持下一次行动。
+current online request path 只接受已经激活的 exact coherent ArtifactSet，并把它与
+dependency-closed raw suffix 物化为 request。若当前 lineage 没有可用 coherent set，或任一 member
+缺失、内容不匹配，系统返回明确的 not-ready；不会静默退回 full raw。这条窄路径已经验证
+tail-only request/recovery，但它还不是会比较多个候选、分配 token budget 或执行 retrieval 的通用
+Context Planner。
 
-tail-only projection 的边界优先来自 recap / artifact anchor，而不是临时的固定 turn 截断。对长寿命 autonomous /
-role-play Agent，历史不一定自然分成 user turn；长期连续性主要由 rolling summary、自传、world understanding 等
-derived context 承担。raw suffix 只负责保留 anchor 之后仍需逐事件呈现的近期细节。
+current 内部虽有 `SessionContextPlan`，它只描述 Prepared v3 的固定
+`coherent-artifact-tail` recipe：raw start、raw range hash、内联 artifact inputs，以及 raw
+`ActiveArtifactSet` exact reference。它不是已冻结的 planner 公共 contract，也不表示 §7.2 的完整
+target 已经实现。
 
-基础候选策略：
+### 7.2 Target：在预算内选择上下文
+
+真正要优化的不是“最近保留多少条”，而是：在固定预算下，哪组 artifact anchor、raw suffix 和召回
+材料最能支持下一次行动。tail-only projection 的边界优先来自 recap / artifact anchor，而不是临时
+固定的 turn 截断。对长寿命 autonomous / role-play Agent，长期连续性主要由 rolling summary、自传、
+world understanding 等 derived context 承担；raw suffix 只保留 anchor 之后仍需逐事件呈现的近期
+细节。
+
+target planner 可以比较：
 
 1. 最新 coherent artifact set + 最短 raw suffix。
 2. 更早 artifact set + 更长 raw suffix。
-3. 最新 artifact set + 当前任务相关 recalled artifacts / raw ranges。
-4. 无 artifact 的纯 raw 回放只用于 offline bootstrap/maintainer 输入与显式审计；online completion
-   没有 coherent candidate 时应 not-ready，不静默退回 full raw。
+3. coherent artifact set + 当前任务相关的 recalled artifacts / raw ranges。
+4. 无可用 derived candidate 时的明确 not-ready 或显式 offline/bootstrap 路径。
 
-Planner 应比较信息完整性、token、费用、延迟和 staleness，而不是永远在固定阈值切“前一半”。
+比较维度包括信息完整性、token、费用、延迟和 staleness。online 是否允许某种降级由届时明确的
+readiness policy 决定，不能把 current coherent-only 规则悄悄改成 full-raw fallback。
 
-### 7.2 ContextPlan
-
-建议持久化：
+下面的 record 只是用于讨论 target 信息形状的概念草图，不是 current API，也不冻结字段：
 
 ```csharp
 public sealed record ContextPlan(
@@ -410,46 +421,42 @@ public sealed record ContextPlan(
 );
 ```
 
-精确字段后续可调整，但必须固定四类事实：
+无论最终类型如何，selection audit 至少要说明：
 
 - planner 基于哪个 raw head 作出决定。
-- 选择了哪些 materialized derived contributions 和 raw range。
-- 选择了哪些动态召回项。
+- 哪些 materialized derived contributions 与 raw range 实际进入 request。
+- 哪些动态召回项实际进入 request。
 - 使用哪版 planner、rendering、model、token、retriever 与 ranker policy。
 
-若该 `ContextPlan` 进入 raw Prepared，它不能保存 derived set/artifact id。用于解释“哪个 set 产生了
-这些 contribution”的 selection record 位于 derived usage index，并以
-`preparedAddress -> derivedSetId/epochId` 单向引用 raw。
+### 7.3 Prepared v3 基线与 self-contained Prepared v4 目标
 
-### 7.3 Self-contained Canonical Request Manifest
+current `CompletionRequestPrepared` v3 已内联 artifact contribution snapshots、governing setup
+references、tool definitions/runtime identity、request target 与 canonical request commitment，能够在
+derived sidecar 删除后重建已 Prepared request。但 `SessionContextPlan.ArtifactInputs` 仍带 exact
+artifact ids，并保存 raw `ActiveArtifactSet` reference；reconstructor 仍需沿 raw activation 验证
+coherence。这是 current interim wire，不是最终依赖方向。
 
-只保存 ContextPlan 仍不足以精确恢复，因为 renderer、prompt template 或 serializer 可能升级。`CompletionRequestPrepared` 应保存：
+DM-2 的 target 是 self-contained Prepared v4：
 
-- 可逐字节重建 canonical `CompletionRequest` 的完整 manifest。
-- 被引用 raw event / setup / tool schema / config event 的地址、版本和必要 hash。
-- 实际进入 request 的 derived context contribution snapshot 或 canonical bytes；不引用 derived
-  artifact/set id 作为 reopen 依赖。
-- renderer、serializer、prompt template、tool rendering、model profile 的 fingerprint。
-- request hash。
-- completion surface / model / connection identity。
-- durable request origin（correlation id 与 reason）；attempt identity 不属于 Prepared，而由后续
-  `CompletionAttemptStarted` event address 给出。
-- 关联 ContextPlan event。
+- 固定可逐字节重建 canonical `CompletionRequest` 的 exact context / manifest。
+- 保存必要的 raw range、setup、tool schema/config provenance 与 hash。
+- 固定 renderer、serializer、prompt template、tool rendering、model/connection identity 和 request
+  commitment。
+- 保存 durable request origin；attempt identity 继续由后续 `CompletionAttemptStarted` event address
+  表达。
+- 不保存 derived artifact/set/epoch id，不以 DerivedMemory 或 raw activation 作为 reopen 依赖。
 
-raw suffix 可以继续用 exact address/range/hash 与 deterministic fold 重建；derived memory 则必须在
-Prepared 中提升为 exact snapshot/canonical bytes，因为它所在的 sidecar 可删除、实现可替换。恢复时
-不得重新打开 DerivedMemory、重新运行 planner，或用“当前最新配置”替换已经 Prepared 的内容。
-snapshot-vs-recipe 的 stored-byte 权衡仍可单独 benchmark，但不能重新引入 raw -> derived id 依赖。
+raw suffix 可用 exact address/range/hash 与 deterministic fold 重建；derived contribution 则必须在
+Prepared 中提升为 exact snapshot 或 canonical bytes。恢复时不得重新打开 DerivedMemory、重新运行
+planner，或用“当前最新配置”替换已经 Prepared 的内容。
 
-权威边界必须单一：
+canonical request manifest 是崩溃恢复和重发的 Canonical Source。ContextPlan/selection record 只负责
+解释“为何选择这些材料”；需要关联具体 derived candidate 时，由可重建的 derived usage index 以
+`preparedAddress -> derivedSetId/epochId` 单向引用 raw Prepared。
 
-- canonical request manifest 是崩溃恢复和重发的 Canonical Source。
-- `ContextPlan` 是选择过程的结构化解释与审计记录，不得替代 request manifest 参与恢复重建。
-- `PlannerFingerprint` 应覆盖 planner recipe、token policy、retriever/ranker 配置及其关键版本；它用于解释和复现实验，不改变“恢复直接使用已持久化 manifest”的规则。
+### 7.4 Target Token Budget
 
-### 7.4 Token Budget
-
-Planner 至少区分：
+未来 planner 至少区分：
 
 - fixed system / identity budget。
 - artifact budget。
@@ -458,111 +465,131 @@ Planner 至少区分：
 - tool schema budget。
 - expected completion output reserve。
 
-当前 maintainer-local `threshold-tokens = 24000` 只能作为 legacy/backtest 实验参数。长期由
-Derived Artifact Epoch Planner 统一配置：
+`SessionJournal.Cli run-memory-maintainer --threshold-tokens` 只是 maintainer runner-local 的开发参数，
+控制本次离线 synthetic split；它既不是 online Context Planner budget，也不是 shared maintenance
+epoch 配置。长期的 DerivedMemory epoch planner 才会统一决定：
 
-- `minimumRecentTokens`：始终保留的最新 dependency-closed suffix；
-- `epochTriggerTokens`：可滑出 eligible prefix 达到多少后创建新 epoch；
-- token estimator / dependency boundary policy / headroom 与 hard-limit；
-- immutable epoch plan：保存最终实际 raw range，允许因 boundary alignment 而大小不一。
+- `minimumRecentTokens`：始终保留的最新 dependency-closed suffix。
+- `epochTriggerTokens`：eligible prefix 达到多少后创建新 epoch。
+- token estimator、dependency boundary policy、headroom 与 hard limit。
+- immutable epoch plan 的实际 raw range；boundary alignment 可使每个 epoch 大小不同。
 
-所有同一 coherence group maintainers 消费同一 epoch plan；prompt-tuning 只替换某 role 在该 epoch 的
-producer candidate，不重新切分 history。
+同一 coherence group 的 maintainers 应消费同一 epoch plan。针对某个 role 做 prompt tuning 时，只替换
+该 epoch 的 producer candidate，不重新切分 history。
 
 ### 7.5 选择结果也是事实
 
-Retrieval index 可以重建，查询结果却可能因模型、索引版本或时间变化。凡是实际进入 completion request 的 recalled item，都必须写入 ContextPlan / request manifest。这样未来能够解释模型为什么在当时看到了这些材料，并能从 manifest 指向的稳定地址重建同一请求。
+Retrieval index 可以重建，查询结果却可能随模型、索引版本或时间变化。未来凡实际进入 completion
+request 的 recalled item，都必须被 Prepared 的 exact request materialization 固定，并由
+ContextPlan/selection record 留下解释。这样既不把可删索引升级为事实源，也能回答模型当时实际看到了
+什么。
 
 ## 8. 可恢复 Execution State Machine
 
-### 8.1 状态流
+### 8.1 Current 已实施骨架
+
+current raw protocol 已包含：
+
+- `CompletionRequestPrepared` v3：保存 durable request origin 与可重建的 canonical request。
+- `CompletionAttemptStarted`：严格空 body，event address 是物理 provider attempt identity。
+- `CompletionAttemptFailed`：记录 provider 明确 non-success 或 host-known rejection。
+- `AgentActionProduced` / `ImportedAgentAction`：区分 live completion 与 legacy/manual import。
+- `ToolExecutionStarted` / `ToolResultObserved`：在外部工具调用前固定 intent，调用后记录观察结果。
+
+在线恢复走 `SessionExecutionTailResolver` 的 tail-only 路径，不默认 full replay；完整
+`SessionReducer` 继续作为 reference oracle，并以 differential tests 校验 tail resolver 的语义。current
+状态流可概括为：
 
 ```mermaid
 stateDiagram-v2
     [*] --> ObservationAccepted
-    ObservationAccepted --> RequestPrepared
-    RequestPrepared --> AttemptStarted
-    AttemptStarted --> AttemptStarted: explicit retry
-    AttemptStarted --> ActionProduced
-    AttemptStarted --> CompletionFailed
-    ActionProduced --> ToolStarted: has tool calls
-    ActionProduced --> TurnCompleted: no tool calls
-    ToolStarted --> ToolResult
-    ToolStarted --> ToolUncertain
-    ToolResult --> RequestPrepared: continue loop
-    ToolUncertain --> TurnPaused
-    CompletionFailed --> [*]
-    TurnPaused --> [*]
-    TurnCompleted --> [*]
+    ObservationAccepted --> CompletionRequestPrepared
+    CompletionRequestPrepared --> CompletionAttemptStarted: dispatch
+    CompletionAttemptStarted --> CompletionAttemptStarted: explicit retry
+    CompletionAttemptStarted --> AgentActionProduced: success
+    CompletionAttemptStarted --> CompletionAttemptFailed: known non-success
+    AgentActionProduced --> Idle: no tool calls (derived)
+    AgentActionProduced --> ToolExecutionStarted: has pending tool call
+    ToolExecutionStarted --> ToolResultObserved
+    ToolResultObserved --> ToolExecutionStarted: more pending calls
+    ToolResultObserved --> CompletionRequestPrepared: all calls settled
+    CompletionAttemptFailed --> TurnFailed: derived phase
 ```
 
-每条箭头都由已持久化 Event 驱动。恢复时读取 branch head 和最近未闭合 correlation id，即可确定下一合法动作。
+图中的 `Idle`、`TurnFailed` 是 reducer/tail resolver 推导的 phase，不是同名 raw event。current turn
+completion 同样是隐式派生状态：Action 无 tool call，或最近 Action 的全部 tool call 已结算，即可由
+raw history 确定性判断；不存在 `TurnCompleted` event。
 
-### 8.2 Completion 恢复
+### 8.2 Current Completion 恢复语义
 
-发送请求前先写 `completion-request-prepared`。可能的崩溃窗口：
+崩溃窗口按 Prepared 与 Started 分开：
 
-- prepared 前崩溃：安全地重新规划。
-- prepared 后、发送前崩溃：发送已保存 request。
-- 发送后、响应持久化前崩溃：响应是否生成可能不确定。
+- Prepared 前崩溃：尚无 committed request，可重新进入 planning。
+- Prepared 已提交、Started 前崩溃：phase 为 `AwaitingCompletionDispatch`；显式 Resume 从 Prepared
+  重建并验证同一 request，先追加 Started，再调用 provider。
+- Started 已提交、Action/Failed 前崩溃：phase 为 `AwaitingCompletion`，物理调用 outcome uncertain。
 
-对最后一种情况：
+Started 以 Parent 串联 source Prepared 与后续 retry；Prepared 始终是 request 唯一真源。current 默认
+`Refuse` 不会在 uncertain Started 上发起新的外部调用。只有调用方显式选择
+`RestartWithNewAttempt`，系统才追加新的 Started 并执行 at-least-once retry；新 completion 不会被
+伪装成旧 attempt 的响应。显式 retry 当前还要求调用方独占 branch driver；CAS 只能保护 journal
+attachment，不能撤回并发发出的 provider request。
 
-- provider 支持 idempotency / result lookup 时，以 `CompletionAttemptStarted` address 绑定
-  provider idempotency key / response handle 后查询或重试。
-- provider 不支持时，默认停在 uncertain；只有显式 recovery policy 授权后，才先追加一个以旧
-  Started 为 Parent 的新 Started，再发起新的物理调用。
-- 不得把新 completion 假装成旧 attempt 的同一响应。
+current 尚未实现 provider capability discovery、按 provider handle/result lookup、reconcile 或
+跨进程 lease/single-flight。因此“支持幂等 key 的 provider 可自动安全恢复”仍是 future hardening，
+不能据现有 Started 链宣称已经具备。
 
-current 无 capability fallback 使用 `completion-attempt-started`：source Prepared manifest
-保持 request 唯一真源，Started 以 Parent 串联 active attempt，event address 即内部 attempt identity。
-`RestartWithNewAttempt` 是明确的 at-least-once 选择；它保留审计身份，但无法排除旧 attempt 已在 provider
-侧成功或产生费用。默认 `Refuse` 不进行外部调用。显式 retry 当前要求调用方独占 branch
-driver；CAS 可以保护 journal attachment，但无法撤回已经并发发出的 provider 请求，跨进程
-lease / single-flight 留给 provider capability 阶段。
+### 8.3 Current Tool 协议与 identity
 
-completion 通常没有外部业务副作用，但会产生费用，因此 attempt history 仍应保留。
+current 工具路径已经采用 started/result 两阶段协议：
 
-### 8.3 Tool 执行协议
+1. `ToolExecutionStarted` 在外部调用前保存 tool call、validated arguments、reserved
+   execution sequence、deterministic operation id 和固定的 tool runtime identity。
+2. host 使用同一 operation id / execution sequence 执行工具。
+3. 已知结果写成 `ToolResultObserved`；多个结果按原 Action 中 tool-call 声明顺序投影。
 
-工具调用至少分三步：
+completion correlation、attempt address、tool-call identity、reserved sequence 与 operation id 都是
+durable/deterministic identity，恢复不能重新随机生成。它们解决的是“这次 intent 和观察结果属于谁”，
+并不单独提供外部世界 exactly-once。
 
-1. 持久化 `tool-execution-started`，包含 tool call、validated arguments、operation id / idempotency key。
-2. 执行工具。
-3. 持久化 `tool-result-observed` 或 `tool-execution-uncertain`。
+### 8.4 Future hardening：uncertain 与 capability-aware recovery
 
-operation id 应由 session / turn / tool call identity 确定性产生，不能每次恢复随机生成。
+Journal 只能保证 intent 和观察结果可恢复，不能单独保证外部副作用 exactly-once。完整协议仍需按工具
+能力补齐：
 
-### 8.4 Exactly-Once 边界
-
-Journal 只能保证 intent 和观察结果可恢复，不能单独保证外部世界 exactly-once。
-
-工具应按能力分级：
-
-| Tool 能力 | 恢复策略 |
-|:----------|:---------|
-| 原生 idempotency key | 使用同一 key 安全重试 |
-| 可按 operation id 查询状态 | 先查询，再决定补写结果或重试 |
+| Tool 能力 | Future 恢复策略 |
+|:----------|:----------------|
+| 原生 idempotency key | 复用同一 deterministic operation id 安全重试 |
+| 可按 operation id 查询状态 | 先 lookup/reconcile，再补写结果或决定重试 |
 | 事务性本地工具 | journal 与本地事务按专门协议协调 |
-| 非幂等且不可查询 | 标记 `uncertain`，暂停并请求人工/领域补偿 |
+| 非幂等且不可查询 | 写入 uncertain/paused 事实，停止自动推进并请求人工或领域补偿 |
 
-系统绝不能在 crash 后盲目重试“付款、发送消息、删除资源”等非幂等工具。
+`ToolExecutionUncertain`、`TurnPaused` 及其 reducer/driver 语义目前尚未实现；provider lookup/reconcile
+也尚未接入。尤其对于付款、发送消息、删除资源等非幂等且不可查询的工具，不能把 current
+started/result 骨架描述成完整恢复协议，更不能在 crash 后盲目重试。
 
-### 8.5 TurnCompleted 的意义
+### 8.5 Turn completion 的 current 语义
 
-`turn-completed` 是领域完成标记，不是此前所有 events 的聚合存储。它可记录最终 Action 地址、工具结果范围和状态摘要，但 raw event 仍逐条保留。
+current 不需要也不存在 `TurnCompleted` event。turn completion 是从 Action 与其 tool results
+确定性派生的状态；raw Action、Started、Result 等事实仍逐条保留。未来只有当产品需要表达无法从 raw
+tail 推导的额外领域承诺时，才应另行设计显式 completion/paused event，而不是预先把派生摘要写成第二
+真源。
 
-## 9. Dynamic Retrieval
+## 9. Dynamic Retrieval（Future DerivedMemory Read Model）
 
-### 9.1 独立 Read Path
+### 9.1 尚未实现的独立 Read Path
 
-动态召回不属于 `IMemoryBlockMaintainer`。Maintainer/producer 在写入与巩固路径生成 artifacts；Retriever 在每次 ContextPlan 前从 read models 选择候选材料。
+Dynamic Retrieval 当前尚未实现，也没有冻结 `IMemoryRetriever`、`IContextMemorySource` 等公共接口。
+它属于未来 DerivedMemory/read-model 层：maintainer/producer 在写入与巩固路径生成 artifacts，
+retriever 在尚未 Prepared 的 request planning 阶段选择候选材料。它不属于
+`IMemoryBlockMaintainer`，也不参与已 Prepared request 的 reopen。
 
-未来可根据真实后端定义 `IMemoryRetriever` 或 `IContextMemorySource`，但应先完成一个端到端 backend，再固化公共接口。
+应先完成一个真实 backend 的端到端切片，再从使用证据中提炼公共 contract，避免先围绕假想的向量库
+冻结接口。
 
-### 9.2 可组合索引
+### 9.2 候选索引方向
 
-长期 Role-Play / Agent memory 不应押注单一向量库：
+长期 Role-Play / Agent memory 不应押注单一索引：
 
 - 全文 / FTS：专有名词、代码、原话、路径和精确事实。
 - 向量：语义相似的经历与主题。
@@ -571,102 +598,144 @@ Journal 只能保证 intent 和观察结果可恢复，不能单独保证外部�
 - Artifact lineage index：查同 kind 最新版本、source head 与 supersession。
 - Open-thread index：尚未闭合的问题、计划和承诺。
 
-候选可由多个 retriever 汇合，再由 ranker / planner 在预算内选择。索引只保存 address 和派生特征，不复制成为新的事实源。
+未来可由多个 retriever 汇合候选，再由 ranker/planner 在预算内选择。索引只保存 raw/derived address
+和可重建特征，不复制成为新的事实源；具体组合、打分与 contract 仍是开放设计。
 
-### 9.3 Rebuild 与版本
+### 9.3 Rebuild、版本与降级
 
-每个 index 应记录：
+未来每个 index 至少应记录：
 
 - index schema/version。
 - source raw/artifact high-watermark。
 - embedding/model/tokenizer fingerprint（若适用）。
 - rebuild 状态与错误。
 
-索引落后时系统可以降级到 recent raw + artifacts；不能因向量库不可用而无法恢复基本会话。
+索引缺失或落后不应破坏 raw replay、Prepared recovery 或基本审计。尚未 Prepared 的 online request
+如何降级，则必须服从当时明确的 readiness policy；在 current coherent-only 基线上，最多是不使用
+dynamic recall，不能借“索引降级”静默绕过 coherent ArtifactSet 要求。
 
 ## 10. Artifact Maintenance 调度
 
-### 10.1 Cursor，而不是删除前缀
+### 10.1 Current gap：单 profile 离线 runner
 
-每个 artifact profile 保存自己的 source cursor：
+current `SessionJournal.Cli run-memory-maintainer` 是面向 maintainer 开发的离线 runner，而不是
+DerivedMemory scheduler：
 
-- 上一版吸收到哪个 raw Event。
-- 本轮计划吸收哪个范围。
-- 生成结果对应哪个 source head。
+- 每次只运行一个显式 `--profile`。
+- 从 SessionJournal root 做一次 full `ReplayHistory()`，不是从 durable cursor 增量恢复。
+- maintainer 输入使用 empty `MemoryPack`，尚未加载上一版 role artifact 形成 lineage update。
+- 使用 CLI 自有 `MemoryMaintainerHistorySplitPolicy` 与 `--threshold-tokens` 做 runner-local synthetic
+  half-context split。
+- 生成结果可以写入 derived recap store，但不会自动建立 shared epoch、并行调度多个 role 或发布
+  coherent active set。
 
-cursor 必须在 source branch / raw Parent lineage 的作用域内解释，不是 store 级全局 ordinal。发生 rewind、reroll 或从历史 Event 分叉后，新 branch 必须从该 lineage 上可达的 artifact/cursor 起步；另一个 branch 上更“靠后”的 cursor 不能直接跳过当前 branch 尚未吸收的 raw events。
+这条路径的价值是验证 concrete `MemoryMaintainer`、raw provenance、artifact writing 与重复实验；不能
+把它描述成已经落地的 provisioning/planner。
 
-“即将滑出上下文”仍是触发维护的好时机，但维护完成后不删除 raw prefix，只推进 artifact lineage / active set。
+### 10.2 Future：shared epoch 与 cursor
 
-### 10.2 触发条件
+未来 DerivedMemory scheduler 应先持久化 shared immutable coverage epoch，再让同一 coherence group
+的 maintainers 消费同一 exact raw range。每个 profile/role 的 lineage 需要说明：
 
-调度器可以组合：
+- 上一版 artifact 吸收到哪个 raw Event。
+- 本轮 epoch 计划吸收哪个 raw range。
+- 生成结果基于哪个 `SourceRawHead`、哪个旧 artifact 与哪版 producer。
 
-- context token pressure。
-- 未吸收 raw token / event 数量。
-- artifact age / staleness。
-- scene 或 episode 边界。
-- turn idle 时间。
-- 显式人工请求。
-- profile-specific high watermark。
+cursor 必须在 source branch/raw Parent lineage 中解释，不是 store 级全局 ordinal。发生 rewind、
+reroll 或从历史 Event 分叉后，新 branch 只能从该 lineage 可达的 artifact/cursor 起步，不能借用另
+一 branch 更靠后的 cursor 跳过 raw events。
 
-不同 artifact kind 不必同频更新。World Understanding、自传、开放线索和向量索引可以有独立 cursor 与成本策略。
+“即将滑出上下文”仍可作为触发信号，但维护完成后不删除 raw prefix，只推进 derived lineage 与
+candidate publication。
 
-### 10.3 并行与过期结果
+### 10.3 Future 触发、并行与结算
 
-producer 可以基于同一 `SourceRawHead` 并行运行。完成时：
+scheduler 可以组合 context token pressure、未吸收 raw token/event 数、artifact age、scene/episode
+边界、turn idle、人工请求与 profile-specific high watermark。不同 artifact kind 可以有不同成本与
+更新频率，但 coherent roles 必须共享 coverage epoch。
 
-- 结果始终可以作为带 provenance 的 artifact 保存。
-- 只有满足 ArtifactSet policy 的组合才能成为 active set。
-- raw branch 已前进不自动使结果无效；它只是覆盖到较早 head，Planner 需要追加更长 raw suffix。
-- 不得把 artifact 的 source head 偷换成 producer 完成时的最新 head。
+producer 可基于同一 `SourceRawHead` 并行运行。完成时：
 
-## 11. StateJournal 与现有代码的迁移定位
+- 结果作为带 provenance 的 candidate 保存。
+- 只有满足 coherence/publication policy 的组合才能发布为 immutable ArtifactSet。
+- partial failure 不破坏上一版可用 set。
+- raw branch 已前进不篡改 candidate 的 source head；planner 只需在使用时追加更长 raw suffix。
+- prompt-tuning 可以针对既有 epoch 重跑单个 role，不产生新的 role-local split。
 
-### 11.1 StateJournal 的后续角色
+通用 provisioning/planner 仍缺少 role catalog、增量 lineage recovery、shared coverage epoch
+config/ledger、partial-success 结算和自动 coherent publication。后续实施入口见
+[`memory-maintainer-provisioning-planner-gap.md`](memory-maintainer-provisioning-planner-gap.md)。
 
-新架构中，StateJournal 不再作为 ChatSession 长期历史的主导 SSOT。它仍可用于：
+## 11. 项目边界与 Legacy 迁移
 
-- 早期迁移期的现有 session 读取。
-- 可丢弃、可重建的 materialized projection。
-- 适合对象图事务的其他领域状态。
+### 11.1 两个独立系统，不升级旧 ChatSession
 
-不应长期维持“EventJournal raw history 与 StateJournal message deque 双写且都自称权威”的状态。迁移完成后必须明确唯一事实源。
+新的 SessionJournal 从建立之初就是独立的 raw-event authority，不是把旧 ChatSession 的内部
+StateJournal 原地改造成 EventJournal。边界原则是：
 
-### 11.2 现有 Memory substrate 的复用
+- 旧 `prototypes/ChatSession` 与其 StateJournal message deque 保持 frozen，只承担归档读取与迁移
+  数据导出；不继续加入 SessionJournal execution、memory 或 planner 新功能。
+- 新功能和新架构只进入 `prototypes/SessionJournal` 及
+  `SessionJournal.Maintainers`、`SessionJournal.Cli`、未来 DerivedMemory 等附属新项目。
+- 新 SessionJournal 不读写旧 deque，不与旧 StateJournal 双写，也不把旧 store 当作自己的
+  projection/cache。
+- StateJournal 在其他领域仍可继续使用；这里冻结的是旧 ChatSession storage 模型，不是否定
+  StateJournal 本身。
 
-以下资产继续有价值：
+因此这里不存在“先双写、再把旧 ChatSession 的 SSOT 切到 EventJournal”的迁移期。新 session 直接在
+SessionJournal 创建；旧 session 如需延续，则经过一次性、可审计的数据迁移。
 
-- `MemoryPack` / `MemoryPackDraft`：上下文投影。
-- `MemoryRewriteProfile`：artifact producer 配置。
-- `RewriteMemoryBlockMaintainer`：短文本 artifact 的低成本 producer。
-- `MemoryMaintenanceOrchestrator`：同 snapshot 并行生成结果并形成 coherent update 的原型。
-- `HistoryWindowSplitPolicy`：迁移期与 backtest 基线，不再是最终 Planner 的唯一策略。
-- legacy upgrade export / importer：旧 session 到 raw events 的迁移输入。
+### 11.2 当前 Legacy 迁移管线
 
-通用的上层 provisioning/planner 尚未实现：当前缺少 role catalog、增量 lineage recovery、maintenance
-shared coverage epoch config/ledger、partial-success 结算和自动 coherent publication。后续设计入口见
-[`memory-maintainer-provisioning-planner-gap.md`](../SessionJournal/memory-maintainer-provisioning-planner-gap.md)。
+当前迁移边界是显式文件协议：
 
-需要改变的是持久化归属和 provenance，而不是把已验证的 Rewrite 执行器推倒重写。
+```text
+ChatSession.LegacyExportCli
+    -> versioned legacy JSON
+    -> SessionJournal.Cli anti-corruption DTO
+    -> new SessionJournal repository
+```
 
-### 11.3 Compaction 的新语义
+[`ChatSession.LegacyExportCli`](../../prototypes/ChatSession.LegacyExportCli/README.md) 是唯一理解旧
+ChatSession storage/types 的 exporter；[`SessionJournal.Cli`](../../prototypes/SessionJournal.Cli/README.md)
+只解析自己的 anti-corruption DTO，不引用 ChatSession 产品程序集。旧 repo 始终只读，导入结果写入
+新的 SessionJournal repo，因而迁移失败不会把旧数据改成半升级状态。
 
-现有 compaction 是：
+current importer 只迁移能诚实映射为新 raw facts 的基本 observation/action/setup 历史。旧
+compaction/recap 属于 derived 信息，会被跳过；包含 tool execution 或 revert-turn 的历史因缺少足够
+correlation、operation/checkpoint 或 branch 语义而 fail-fast，不能伪造为新的 SessionJournal
+事实。迁移是有损边界时必须显式报错的 upgrade/import，不是持续同步或兼容读取层。
+
+### 11.3 Memory 代码归属与 split policy
+
+旧 ChatSession 中曾经实现一半的 memory substrate 已拆除。新 contracts 位于 SessionJournal，
+concrete `MemoryMaintainer` 位于 companion assembly `Atelia.SessionJournal.Maintainers`；能力不会回迁
+到旧 ChatSession，也不以引用旧类型的方式“复用”。
+
+旧 `HistoryWindowSplitPolicy` 属于旧 ChatSession/backtest 语境，不是新架构的可复用资产。current
+`SessionJournal.Cli` 自有的 `MemoryMaintainerHistorySplitPolicy` 只是为了独立开发 maintainer 而提供的
+synthetic half-context split，同样不是未来 Context Planner 或 shared epoch policy。长期切分责任属于
+DerivedMemory scheduler/epoch planner。
+
+### 11.4 Compaction 的新语义
+
+旧 ChatSession compaction 的语义近似：
 
 ```text
 messages = recap + recent suffix
 ```
 
-新架构中它被拆为：
+新 SessionJournal 不执行这种 destructive history mutation。新架构中的对应能力是：
 
 ```text
-raw events 保持不变
-artifact producer 追加 recap/artifacts
-Context Planner 选择 artifact anchor + raw suffix
+raw SessionJournal events 保持不变
+DerivedMemory producer 生成带 provenance 的 recap/artifacts
+Context Planner 选择 materialized artifacts + dependency-closed raw suffix
 ```
 
-因此“compact”不再是 destructive history mutation，而是生成新解释并改变 context projection。
+因此新系统中的“compaction”只能是可删除、可重建的 derived projection/maintenance，不是 raw
+SessionJournal core 的写前缀、删前缀或旧 deque 升级逻辑。这一边界也使 §12 后续阶段应被理解为在新
+SessionJournal 项目族中建立能力，而不是改造旧 ChatSession。
 
 ## 12. 分阶段路线图
 
