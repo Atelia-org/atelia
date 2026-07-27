@@ -1533,6 +1533,78 @@ public sealed class FamilyChatServerTests {
         }
     }
 
+    [Fact]
+    public void ChatSessionLegacyUpgradeExporter_ExportJson_PreservesSingleMessageLegacyAppend() {
+        string tempDir = CreateTempDirectory();
+        string repoDir = Path.Combine(tempDir, "repo");
+        try {
+            string eventSourcePath = Path.Combine(tempDir, "single-append.json");
+            File.WriteAllText(
+                eventSourcePath,
+                """
+                {
+                  "schema": "atelia.chat-session.legacy-upgrade-export.v1",
+                  "branchName": "main",
+                  "events": [
+                    {
+                      "ordinal": 0,
+                      "commit": "initial",
+                      "kind": "initial-state",
+                      "root": {
+                        "kind": "chat-session",
+                        "schemaVersion": 2,
+                        "completionSurfaceId": "surface-a",
+                        "modelId": "model-a",
+                        "systemPrompt": "system"
+                      },
+                      "messages": []
+                    },
+                    {
+                      "ordinal": 1,
+                      "commit": "observation",
+                      "kind": "model-turn",
+                      "appendedMessages": [
+                        {
+                          "kind": "observation",
+                          "content": "one legacy message"
+                        }
+                      ]
+                    }
+                  ]
+                }
+                """
+            );
+            ChatSessionLegacyEventSourceImporter.Import(
+                eventSourcePath,
+                repoDir
+            );
+            StripBranchReflogNotes(repoDir, "main");
+
+            string json = ChatSessionLegacyUpgradeExporter.ExportJson(repoDir);
+
+            using var document = JsonDocument.Parse(json);
+            JsonElement timeline = document.RootElement.GetProperty("timeline");
+            Assert.Equal(
+                "model-turn",
+                timeline[1]
+                    .GetProperty("commitMetadata")
+                    .GetProperty("commitKind")
+                    .GetString()
+            );
+            JsonElement appended = document.RootElement
+                .GetProperty("events")[1]
+                .GetProperty("appendedMessages");
+            Assert.Equal(1, appended.GetArrayLength());
+            Assert.Equal(
+                "one legacy message",
+                appended[0].GetProperty("content").GetString()
+            );
+        }
+        finally {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
         [Fact]
         public void ChatSessionLegacyUpgradeMarkdownExporter_ExportMarkdownFromJson_WritesPlainTranscriptFences() {
                 const string json = """

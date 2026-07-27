@@ -14,6 +14,30 @@ tool-loop。已归档的 Recording / Compression / two-stage Text Edit Agent 实
 
 ## Legacy 输入命令
 
+### export-legacy-upgrade
+
+读取旧版 `ChatSession` repo，通过 `ChatSessionLegacyUpgradeExporter` 导出用于迁移的
+legacy upgrade JSON。该命令不会修改输入 repo；默认输出格式化 JSON，使用 `--compact` 可输出紧凑 JSON。
+输出必须位于输入 repo 外，且通过同目录临时文件 atomic replace 发布；输入、输出路径链不能包含
+symlink/reparse point。
+
+```bash
+dotnet run --project prototypes/ChatSession.BacktestCli -- export-legacy-upgrade \
+  --input prototypes/FamilyChat.Server/.atelia/family-chat/sessions/<session-repo> \
+  --output gitignore/migrations/<session-name>.json
+```
+
+参数：
+
+- `--input <repo-dir>`：旧版 `ChatSession` repo。
+- `--output <json>`：迁移 JSON 输出路径；父目录会自动创建，已有文件会被覆盖。
+- `--branch <name>`：要导出的 branch，默认 `main`。
+- `--compact`：关闭格式化缩进。
+
+在 legacy-inferred 历史中，`model-turn` 表示“保持既有 message prefix 并追加
+`appendedMessages`”，允许一次追加 `1..N` 条消息；旧版 repo 可能分别持久化 observation 和 action，
+不能假设它一定是恰好两条的完整回合。
+
 ### inspect
 
 检查 legacy export 的 schema、branch、事件数量和 message kind 分布。

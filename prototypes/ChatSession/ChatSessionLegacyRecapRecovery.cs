@@ -246,7 +246,10 @@ public static class ChatSessionLegacyRecapRecovery {
                 && string.Equals(added[0].Kind, MessageRecord.KindObservation, StringComparison.Ordinal)
                 && string.Equals(added[1].Kind, MessageRecord.KindAction, StringComparison.Ordinal)) { return new ChatSessionCommitAttribution(ChatSessionCommitAttributionKind.ModelTurn, "previous messages are preserved and the commit appends one observation/action turn"); }
 
-            return new ChatSessionCommitAttribution(ChatSessionCommitAttributionKind.Other, "previous messages are preserved, but appended records do not match one normal model turn");
+            return new ChatSessionCommitAttribution(
+                ChatSessionCommitAttributionKind.ModelTurn,
+                $"previous messages are preserved and the commit appends {added.Length} legacy message record(s)"
+            );
         }
 
         if (delta < 0 && IsPrefix(currentSnapshot.Records, previousSnapshot.Records)) {

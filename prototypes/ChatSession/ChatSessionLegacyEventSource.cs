@@ -13,6 +13,7 @@ public static class ChatSessionLegacyEventKinds {
     public const string InitialState = "initial-state";
     public const string ModelTurn = "model-turn";
     public const string Compaction = "compaction";
+    public const string RevertTurn = "revert-turn";
     public const string UpdateSystemPrompt = "update-system-prompt";
     public const string RedundantSave = "redundant-save";
 }
@@ -36,6 +37,7 @@ public sealed record ChatSessionLegacyReplayEvent {
     public ChatSessionLegacyRootMetadataDto? Root { get; init; }
     public IReadOnlyList<ChatSessionLegacyMessageDto>? Messages { get; init; }
     public IReadOnlyList<ChatSessionLegacyMessageDto>? AppendedMessages { get; init; }
+    public IReadOnlyList<ChatSessionLegacyMessageDto>? RemovedMessages { get; init; }
     public ChatSessionLegacySourceRangeDto? SourceRange { get; init; }
     public int? RecapIndex { get; init; }
     public ChatSessionLegacyMessageDto? RecapMessage { get; init; }
@@ -260,6 +262,9 @@ public sealed class ChatSessionLegacyReplayCursor {
 
                 ApplyCompaction(replayEvent);
                 return true;
+            case ChatSessionLegacyEventKinds.RevertTurn:
+                ApplyRevertTurn(replayEvent);
+                return true;
             case ChatSessionLegacyEventKinds.UpdateSystemPrompt:
                 ApplySystemPromptChange(replayEvent);
                 return true;
@@ -298,6 +303,49 @@ public sealed class ChatSessionLegacyReplayCursor {
         var change = replayEvent.SystemPromptChange ?? throw new InvalidDataException("update-system-prompt event is missing systemPromptChange.");
         Root = (Root ?? new ChatSessionLegacyRootMetadataDto()) with { SystemPrompt = change.NewSystemPrompt ?? string.Empty };
     }
+
+    private void ApplyRevertTurn(ChatSessionLegacyReplayEvent replayEvent) {
+        IReadOnlyList<ChatSessionLegacyMessageDto> removedMessages =
+            RequireMessages(replayEvent.RemovedMessages, replayEvent.Kind);
+        if (removedMessages.Count == 0 || removedMessages.Count > _currentMessages.Count) {
+            throw new InvalidDataException(
+                $"Invalid revert-turn removedMessages count {removedMessages.Count} for current message count {_currentMessages.Count}."
+            );
+        }
+
+        int activeStart = _currentMessages.Count - removedMessages.Count;
+        for (int removedIndex = 0;
+            removedIndex < removedMessages.Count;
+            removedIndex++) {
+            if (!LegacyMessagesEqual(
+                _currentMessages[activeStart + removedIndex],
+                removedMessages[removedIndex]
+            )) {
+                throw new InvalidDataException(
+                    $"revert-turn removedMessages does not exactly match the current history tail at removed index {removedIndex}."
+                );
+            }
+        }
+        _currentMessages.RemoveRange(
+            activeStart,
+            removedMessages.Count
+        );
+    }
+
+    private static bool LegacyMessagesEqual(
+        ChatSessionLegacyMessageDto left,
+        ChatSessionLegacyMessageDto right
+    ) => string.Equals(
+        JsonSerializer.Serialize(
+            left,
+            ChatSessionLegacyEventSourceReader.JsonOptions
+        ),
+        JsonSerializer.Serialize(
+            right,
+            ChatSessionLegacyEventSourceReader.JsonOptions
+        ),
+        StringComparison.Ordinal
+    );
 
     private static List<ChatSessionLegacyMessageDto> RequireMessages(IReadOnlyList<ChatSessionLegacyMessageDto>? messages, string eventKind)
         => messages is null ? throw new InvalidDataException($"{eventKind} event is missing messages.") : messages.ToList();
