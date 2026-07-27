@@ -292,6 +292,9 @@ concrete store 类型。
   resolver；
 - validator 以 header-only 回溯验证 strict anchor 与 source heads，按需读取 anchor setup payload
   验证 kind/schema/hash，并 canonicalize contributions；
+- provider supplied `IReadOnlyList` 在 validator 入口以单次、最多 128 项的 immutable snapshot 冻结；
+  Count 不作为 trust input，后续 lineage、hash、target 与排序验证只消费同一 snapshot，避免 lazy/mutable
+  provider 在多次枚举之间注入未验证 contribution；
 - fake source fixtures 覆盖 unordered legal input 与所有 raw-facing negative cases；
 - `SessionJournal.csproj` architecture guard 锁定其不引用 Maintainers、DerivedMemory 或 Agent.Core。
 

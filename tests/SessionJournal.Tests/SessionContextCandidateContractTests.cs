@@ -153,6 +153,60 @@ public sealed class SessionContextCandidateContractTests : IDisposable {
     }
 
     [Fact]
+    public void Validator_SnapshotsProviderContributionsBeforeLineageAndContentValidation() {
+        Fixture fixture = CreateFixture();
+        SessionContextContribution accepted = Contribution(
+            MemoryPackCarrier.Observation,
+            "world",
+            "accepted memory",
+            fixture.Anchor
+        );
+        SessionContextContribution injectedAfterValidation = Contribution(
+            MemoryPackCarrier.Action,
+            "injected",
+            "injected memory",
+            fixture.BeforeAnchor
+        ) with { ContentSha256 = new string('f', 64) };
+        var unstable = new ChangesAfterFirstEnumerationList(
+            [accepted],
+            [injectedAfterValidation]
+        );
+        SessionContextCandidate candidate = new(
+            fixture.Anchor,
+            fixture.AnchorSetups,
+            unstable
+        );
+
+        ValidatedSessionContextCandidate validated = Validate(fixture, candidate);
+
+        SessionContextContribution only = Assert.Single(validated.CanonicalContributions);
+        Assert.Equal("accepted memory", only.ExactText);
+        Assert.Equal(1, unstable.EnumerationCount);
+    }
+
+    [Fact]
+    public void Validator_UsesBoundedEnumerationSnapshotInsteadOfUntrustedCount() {
+        Fixture fixture = CreateFixture();
+        var countMismatch = new CountMismatchContributionList(
+            reportedCount: 0,
+            [
+                Contribution(MemoryPackCarrier.Observation, "world", "world memory", fixture.Anchor),
+                Contribution(MemoryPackCarrier.Action, "self", "self memory", fixture.Boundary)
+            ]
+        );
+        SessionContextCandidate candidate = new(
+            fixture.Anchor,
+            fixture.AnchorSetups,
+            countMismatch
+        );
+
+        ValidatedSessionContextCandidate validated = Validate(fixture, candidate);
+
+        Assert.Equal(2, validated.CanonicalContributions.Length);
+        Assert.Equal(1, countMismatch.EnumerationCount);
+    }
+
+    [Fact]
     public void SessionJournalProjectFile_DoesNotReferenceConcreteDerivedOrHostAssemblies() {
         string repoRoot = FindRepositoryRoot();
         string project = File.ReadAllText(Path.Combine(
@@ -280,5 +334,48 @@ public sealed class SessionContextCandidateContractTests : IDisposable {
             cancellationToken.ThrowIfCancellationRequested();
             return ValueTask.FromResult<SessionContextCandidate?>(candidate);
         }
+    }
+
+    private sealed class ChangesAfterFirstEnumerationList(
+        IReadOnlyList<SessionContextContribution> first,
+        IReadOnlyList<SessionContextContribution> later
+    ) : IReadOnlyList<SessionContextContribution> {
+        private readonly IReadOnlyList<SessionContextContribution> _first = first;
+        private readonly IReadOnlyList<SessionContextContribution> _later = later;
+
+        public int EnumerationCount { get; private set; }
+
+        public int Count => _first.Count;
+
+        public SessionContextContribution this[int index] => _first[index];
+
+        public IEnumerator<SessionContextContribution> GetEnumerator() {
+            EnumerationCount++;
+            return (EnumerationCount == 1 ? _first : _later).GetEnumerator();
+        }
+
+        System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator()
+            => GetEnumerator();
+    }
+
+    private sealed class CountMismatchContributionList(
+        int reportedCount,
+        IReadOnlyList<SessionContextContribution> contents
+    ) : IReadOnlyList<SessionContextContribution> {
+        private readonly IReadOnlyList<SessionContextContribution> _contents = contents;
+
+        public int EnumerationCount { get; private set; }
+
+        public int Count => reportedCount;
+
+        public SessionContextContribution this[int index] => _contents[index];
+
+        public IEnumerator<SessionContextContribution> GetEnumerator() {
+            EnumerationCount++;
+            return _contents.GetEnumerator();
+        }
+
+        System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator()
+            => GetEnumerator();
     }
 }

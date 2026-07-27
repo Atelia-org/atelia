@@ -37,13 +37,15 @@ internal static class SessionContextCandidateValidator {
         if (anchorGoverningSetup.Head != candidate.RawStartExclusive) {
             throw new InvalidDataException("Context candidate anchor governing setup must be resolved at rawStartExclusive.");
         }
-        if (candidate.Contributions.Count is < 1 or > MaxContributionCount) {
+        ImmutableArray<SessionContextContribution> contributions = SnapshotContributions(
+            candidate.Contributions
+        );
+        if (contributions.IsDefaultOrEmpty) {
             throw new InvalidDataException($"Context candidate must contain 1 through {MaxContributionCount} contributions.");
         }
 
         var sourceHeads = new HashSet<EventAddress>();
-        foreach (SessionContextContribution contribution in candidate.Contributions) {
-            ArgumentNullException.ThrowIfNull(contribution);
+        foreach (SessionContextContribution contribution in contributions) {
             if (contribution.SourceRawHead == default) {
                 throw new InvalidDataException("Context candidate contribution sourceRawHead cannot be the default EventAddress.");
             }
@@ -63,8 +65,27 @@ internal static class SessionContextCandidateValidator {
         return new ValidatedSessionContextCandidate(
             candidate.RawStartExclusive,
             anchorGoverningSetup,
-            NormalizeContributions(candidate.Contributions)
+            NormalizeContributions(contributions)
         );
+    }
+
+    /// <summary>
+    /// Establishes the contract trust boundary. Provider collections may be lazy or mutable; no raw
+    /// validation may observe them more than once. Count is intentionally not consulted because an
+    /// adversarial IReadOnlyList can make it disagree with enumeration.
+    /// </summary>
+    private static ImmutableArray<SessionContextContribution> SnapshotContributions(
+        IReadOnlyList<SessionContextContribution> contributions
+    ) {
+        var builder = ImmutableArray.CreateBuilder<SessionContextContribution>();
+        foreach (SessionContextContribution contribution in contributions) {
+            if (builder.Count == MaxContributionCount) {
+                throw new InvalidDataException($"Context candidate must contain at most {MaxContributionCount} contributions.");
+            }
+            ArgumentNullException.ThrowIfNull(contribution);
+            builder.Add(contribution);
+        }
+        return builder.ToImmutable();
     }
 
     private static void ValidateAnchorAncestryAndSourceHeads(
@@ -143,11 +164,10 @@ internal static class SessionContextCandidateValidator {
     }
 
     private static ImmutableArray<SessionContextContribution> NormalizeContributions(
-        IReadOnlyList<SessionContextContribution> contributions
+        ImmutableArray<SessionContextContribution> contributions
     ) {
         var targets = new HashSet<(MemoryPackCarrier Carrier, string BlockKey)>();
         foreach (SessionContextContribution contribution in contributions) {
-            ArgumentNullException.ThrowIfNull(contribution);
             ArgumentNullException.ThrowIfNull(contribution.Target);
             if (!Enum.IsDefined(contribution.Target.Carrier)) {
                 throw new InvalidDataException("Context candidate contribution has an unsupported carrier.");
