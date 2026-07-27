@@ -641,6 +641,421 @@ public sealed class DerivedArtifactSetStoreTests : IDisposable {
         Assert.Equal(fixture.Anchor, candidate.RawStartExclusive);
     }
 
+    [Fact]
+    public async Task InventoryAndValidation_EmptyDerivedStateIsValidAndReadOnly() {
+        string path = NewPath();
+        Directory.CreateDirectory(path);
+        DerivedMemoryRepository repository = DerivedMemoryRepository.Open(path);
+
+        DerivedArtifactSetInventory inventory =
+            await repository.ArtifactSets.ReadInventoryAsync();
+        DerivedMemoryValidationReport report = await repository.ValidateAsync();
+
+        Assert.Empty(inventory.Sets);
+        Assert.Empty(inventory.LatestPointers);
+        Assert.Equal(
+            new DerivedMemoryValidationReport(0, 0, 0, 0),
+            report
+        );
+        Assert.False(Directory.Exists(repository.DerivedRoot));
+    }
+
+    [Fact]
+    public async Task Inventory_IsStableAndValidationCountsOrphanArtifactsWithoutWriting() {
+        Fixture fixture = await CreateFixtureAsync();
+        DerivedArtifactSet first =
+            await fixture.Repository.ArtifactSets.PublishAsync(
+                fixture.Publication(
+                    [fixture.FirstSelection, fixture.SecondSelection],
+                    expectedPrevious: null
+                )
+            );
+        _ = await fixture.Repository.ArtifactSets.PublishAsync(
+            fixture.Publication(
+                [fixture.FirstSelection, fixture.SecondSelection],
+                first.SetId
+            )
+        );
+        var earlierPolicy = fixture.Policy with {
+            PolicyId = "aaa-policy"
+        };
+        _ = await fixture.Repository.ArtifactSets.PublishAsync(
+            fixture.Publication(
+                [fixture.FirstSelection, fixture.SecondSelection],
+                expectedPrevious: null
+            ) with {
+                Policy = earlierPolicy
+            }
+        );
+        _ = await WriteArtifactAsync(
+            fixture.Repository,
+            "orphan-profile",
+            new MemoryPackBlockPath(
+                MemoryPackCarrier.Action,
+                "orphan.block"
+            ),
+            "orphan text",
+            fixture.Anchor,
+            fixture.AnchorSetups.RuntimeConfig.Address,
+            fixture.AnchorSetups.SystemPrompt.Address
+        );
+        Dictionary<string, byte[]> before = SnapshotDerivedFiles(
+            fixture.Repository.DerivedRoot
+        );
+
+        DerivedArtifactSetInventory firstRead =
+            await fixture.Repository.ArtifactSets.ReadInventoryAsync();
+        DerivedArtifactSetInventory secondRead =
+            await fixture.Repository.ArtifactSets.ReadInventoryAsync();
+        DerivedMemoryValidationReport report =
+            await fixture.Repository.ValidateAsync();
+
+        Assert.Equal(
+            firstRead.Sets.Select(static set => set.SetId),
+            secondRead.Sets.Select(static set => set.SetId)
+        );
+        Assert.Equal(
+            firstRead.LatestPointers.Select(static pointer => pointer.SetId),
+            secondRead.LatestPointers.Select(static pointer => pointer.SetId)
+        );
+        Assert.Equal(
+            firstRead.Sets.OrderBy(
+                static set => (
+                    set.LineageKey,
+                    set.CoherenceGroup,
+                    set.PolicyId,
+                    set.PolicyFingerprint,
+                    set.SetId
+                )
+            ),
+            firstRead.Sets
+        );
+        Assert.Equal(
+            ["aaa-policy", "test-policy", "test-policy"],
+            firstRead.Sets.Select(static set => set.PolicyId)
+        );
+        Assert.Equal(
+            new DerivedMemoryValidationReport(3, 3, 2, 2),
+            report
+        );
+        AssertDerivedFilesEqual(
+            before,
+            SnapshotDerivedFiles(fixture.Repository.DerivedRoot)
+        );
+    }
+
+    [Fact]
+    public async Task Inventory_AllowsMissingPointerButValidationRejectsIt() {
+        Fixture fixture = await CreateFixtureAsync();
+        _ = await fixture.Repository.ArtifactSets.PublishAsync(
+            fixture.Publication(
+                [fixture.FirstSelection, fixture.SecondSelection],
+                expectedPrevious: null
+            )
+        );
+        File.Delete(Assert.Single(Directory.EnumerateFiles(
+            fixture.Repository.ArtifactSets.LatestPointersDirectory
+        )));
+
+        DerivedArtifactSetInventory inventory =
+            await fixture.Repository.ArtifactSets.ReadInventoryAsync();
+
+        Assert.Single(inventory.Sets);
+        Assert.Empty(inventory.LatestPointers);
+        await Assert.ThrowsAsync<InvalidDataException>(
+            async () => await fixture.Repository.ValidateAsync()
+        );
+    }
+
+    [Fact]
+    public async Task Validation_RejectsStalePointer() {
+        Fixture fixture = await CreateFixtureAsync();
+        DerivedArtifactSet first =
+            await fixture.Repository.ArtifactSets.PublishAsync(
+                fixture.Publication(
+                    [fixture.FirstSelection, fixture.SecondSelection],
+                    expectedPrevious: null
+                )
+            );
+        _ = await fixture.Repository.ArtifactSets.PublishAsync(
+            fixture.Publication(
+                [fixture.FirstSelection, fixture.SecondSelection],
+                first.SetId
+            )
+        );
+        string pointerPath = Assert.Single(Directory.EnumerateFiles(
+            fixture.Repository.ArtifactSets.LatestPointersDirectory
+        ));
+        JsonObject pointer = JsonNode.Parse(
+            await File.ReadAllTextAsync(pointerPath)
+        )!.AsObject();
+        pointer["setId"] = first.SetId;
+        await File.WriteAllTextAsync(pointerPath, pointer.ToJsonString());
+
+        InvalidDataException error =
+            await Assert.ThrowsAsync<InvalidDataException>(
+                async () => await fixture.Repository.ValidateAsync()
+            );
+
+        Assert.Contains("stale", error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Inventory_PreservesForkForDiagnosisButValidationRejectsIt() {
+        Fixture fixture = await CreateFixtureAsync();
+        _ = await fixture.Repository.ArtifactSets.PublishAsync(
+            fixture.Publication(
+                [fixture.FirstSelection, fixture.SecondSelection],
+                expectedPrevious: null
+            )
+        );
+        string pointerPath = Assert.Single(Directory.EnumerateFiles(
+            fixture.Repository.ArtifactSets.LatestPointersDirectory
+        ));
+        File.Delete(pointerPath);
+        DerivedRecapArtifact replacement = await WriteArtifactAsync(
+            fixture.Repository,
+            "fork-profile",
+            fixture.Policy.Roles[0].Target,
+            "fork text",
+            fixture.Anchor,
+            fixture.AnchorSetups.RuntimeConfig.Address,
+            fixture.AnchorSetups.SystemPrompt.Address
+        );
+        _ = await fixture.Repository.ArtifactSets.PublishAsync(
+            fixture.Publication(
+                [
+                    new DerivedArtifactSetMemberSelection(
+                        fixture.FirstSelection.RoleId,
+                        replacement.ArtifactId
+                    ),
+                    fixture.SecondSelection
+                ],
+                expectedPrevious: null
+            )
+        );
+
+        DerivedArtifactSetInventory inventory =
+            await fixture.Repository.ArtifactSets.ReadInventoryAsync();
+
+        Assert.Equal(2, inventory.Sets.Count);
+        Assert.Single(inventory.LatestPointers);
+        InvalidDataException error =
+            await Assert.ThrowsAsync<InvalidDataException>(
+                async () => await fixture.Repository.ValidateAsync()
+            );
+        Assert.Contains("forked", error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Validation_RejectsMissingPredecessorAndSameKeyRoleDrift() {
+        Fixture missing = await CreateFixtureAsync();
+        DerivedArtifactSet predecessor =
+            await missing.Repository.ArtifactSets.PublishAsync(
+                missing.Publication(
+                    [missing.FirstSelection, missing.SecondSelection],
+                    expectedPrevious: null
+                )
+            );
+        _ = await missing.Repository.ArtifactSets.PublishAsync(
+            missing.Publication(
+                [missing.FirstSelection, missing.SecondSelection],
+                predecessor.SetId
+            )
+        );
+        File.Delete(Path.Combine(
+            missing.Repository.ArtifactSets.SetsDirectory,
+            $"{predecessor.SetId}.json"
+        ));
+        InvalidDataException missingError =
+            await Assert.ThrowsAsync<InvalidDataException>(
+                async () => await missing.Repository.ValidateAsync()
+            );
+        Assert.Contains(
+            "missing previous",
+            missingError.Message,
+            StringComparison.Ordinal
+        );
+
+        Fixture drift = await CreateFixtureAsync();
+        _ = await drift.Repository.ArtifactSets.PublishAsync(
+            drift.Publication(
+                [drift.FirstSelection, drift.SecondSelection],
+                expectedPrevious: null
+            )
+        );
+        string driftPointer = Assert.Single(Directory.EnumerateFiles(
+            drift.Repository.ArtifactSets.LatestPointersDirectory
+        ));
+        File.Delete(driftPointer);
+        var changedRolesPolicy = drift.Policy with {
+            Roles = [
+                drift.Policy.Roles[0] with { Required = false },
+                drift.Policy.Roles[1]
+            ]
+        };
+        _ = await drift.Repository.ArtifactSets.PublishAsync(
+            drift.Publication(
+                [drift.FirstSelection, drift.SecondSelection],
+                expectedPrevious: null
+            ) with {
+                Policy = changedRolesPolicy
+            }
+        );
+        InvalidDataException driftError =
+            await Assert.ThrowsAsync<InvalidDataException>(
+                async () => await drift.Repository.ValidateAsync()
+            );
+        Assert.Contains(
+            "role-snapshot drift",
+            driftError.Message,
+            StringComparison.Ordinal
+        );
+    }
+
+    [Fact]
+    public void ExactKeyLineageValidator_RejectsCycle() {
+        InvalidDataException error = Assert.Throws<InvalidDataException>(
+            () => DerivedMemoryRepository.ValidateExactKeyLineage(
+                [
+                    new DerivedArtifactSetLineageNode("a", "b"),
+                    new DerivedArtifactSetLineageNode("b", "a")
+                ]
+            )
+        );
+
+        Assert.Contains("cycle", error.Message, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("artifact")]
+    [InlineData("set")]
+    [InlineData("pointer")]
+    public async Task InventoryAndValidation_CorruptPersistedObjectFails(
+        string target
+    ) {
+        Fixture fixture = await CreateFixtureAsync();
+        DerivedArtifactSet set =
+            await fixture.Repository.ArtifactSets.PublishAsync(
+                fixture.Publication(
+                    [fixture.FirstSelection, fixture.SecondSelection],
+                    expectedPrevious: null
+                )
+            );
+        string path = target switch {
+            "artifact" => Path.Combine(
+                fixture.Repository.Recaps.ArtifactsDirectory,
+                $"{fixture.FirstSelection.ArtifactId}.json"
+            ),
+            "set" => Path.Combine(
+                fixture.Repository.ArtifactSets.SetsDirectory,
+                $"{set.SetId}.json"
+            ),
+            "pointer" => Assert.Single(Directory.EnumerateFiles(
+                fixture.Repository.ArtifactSets.LatestPointersDirectory
+            )),
+            _ => throw new ArgumentOutOfRangeException(nameof(target))
+        };
+        await File.WriteAllTextAsync(path, "{ malformed");
+
+        await Assert.ThrowsAsync<InvalidDataException>(
+            async () => await fixture.Repository.ArtifactSets
+                .ReadInventoryAsync()
+        );
+        await Assert.ThrowsAsync<InvalidDataException>(
+            async () => await fixture.Repository.ValidateAsync()
+        );
+    }
+
+    [Theory]
+    [InlineData("address")]
+    [InlineData("token")]
+    [InlineData("target")]
+    public async Task PersistedShapeFailuresAreAlwaysInvalidData(
+        string corruption
+    ) {
+        Fixture fixture = await CreateFixtureAsync();
+        _ = await fixture.Repository.ArtifactSets.PublishAsync(
+            fixture.Publication(
+                [fixture.FirstSelection, fixture.SecondSelection],
+                expectedPrevious: null
+            )
+        );
+        string setPath = Assert.Single(Directory.EnumerateFiles(
+            fixture.Repository.ArtifactSets.SetsDirectory
+        ));
+        JsonObject root = JsonNode.Parse(
+            await File.ReadAllTextAsync(setPath)
+        )!.AsObject();
+        switch (corruption) {
+            case "address":
+                root["commonAnchor"] = "syntactically-invalid-address";
+                break;
+            case "token":
+                root["policyId"] = "";
+                break;
+            case "target":
+                root["roleRequirements"]![0]!["target"]!["blockKey"] = "";
+                break;
+            default:
+                throw new ArgumentOutOfRangeException(nameof(corruption));
+        }
+        await File.WriteAllTextAsync(setPath, root.ToJsonString());
+
+        await Assert.ThrowsAsync<InvalidDataException>(
+            async () => await fixture.Repository.ArtifactSets
+                .ReadInventoryAsync()
+        );
+        await Assert.ThrowsAsync<InvalidDataException>(
+            async () => await fixture.Repository.ValidateAsync()
+        );
+    }
+
+    [Theory]
+    [InlineData("sets")]
+    [InlineData("pointers")]
+    [InlineData("artifacts")]
+    public async Task EmptyInternalStoreSymlinkFailsBeforeEnumeration(
+        string targetKind
+    ) {
+        string repoPath = NewPath();
+        Directory.CreateDirectory(repoPath);
+        DerivedMemoryRepository repository =
+            DerivedMemoryRepository.Open(repoPath);
+        string targetPath = targetKind switch {
+            "sets" => repository.ArtifactSets.SetsDirectory,
+            "pointers" =>
+                repository.ArtifactSets.LatestPointersDirectory,
+            "artifacts" => repository.Recaps.ArtifactsDirectory,
+            _ => throw new ArgumentOutOfRangeException(nameof(targetKind))
+        };
+        string external = NewPath();
+        Directory.CreateDirectory(external);
+        Directory.CreateDirectory(
+            Path.GetDirectoryName(targetPath)!
+        );
+        try {
+            Directory.CreateSymbolicLink(targetPath, external);
+        }
+        catch (Exception exception) when (
+            exception is UnauthorizedAccessException
+                or IOException
+                or PlatformNotSupportedException
+        ) {
+            return;
+        }
+
+        if (targetKind is "sets" or "pointers") {
+            await Assert.ThrowsAsync<InvalidDataException>(
+                async () => await repository.ArtifactSets
+                    .ReadInventoryAsync()
+            );
+        }
+        await Assert.ThrowsAsync<InvalidDataException>(
+            async () => await repository.ValidateAsync()
+        );
+    }
+
     private async ValueTask<Fixture> CreateFixtureAsync() {
         string path = NewPath();
         EventAddress runtime;
@@ -795,6 +1210,31 @@ public sealed class DerivedArtifactSetStoreTests : IDisposable {
             EventJournal.EventJournal.OpenReadOnlyExisting(path);
         RefId main = journal.OpenBranch("main").Unwrap();
         return journal.GetHead(main)!.Value;
+    }
+
+    private static Dictionary<string, byte[]> SnapshotDerivedFiles(
+        string derivedRoot
+    ) => !Directory.Exists(derivedRoot)
+        ? []
+        : Directory
+            .EnumerateFiles(derivedRoot, "*", SearchOption.AllDirectories)
+            .ToDictionary(
+                path => Path.GetRelativePath(derivedRoot, path),
+                File.ReadAllBytes,
+                StringComparer.Ordinal
+            );
+
+    private static void AssertDerivedFilesEqual(
+        IReadOnlyDictionary<string, byte[]> expected,
+        IReadOnlyDictionary<string, byte[]> actual
+    ) {
+        Assert.Equal(
+            expected.Keys.OrderBy(static key => key, StringComparer.Ordinal),
+            actual.Keys.OrderBy(static key => key, StringComparer.Ordinal)
+        );
+        foreach ((string path, byte[] bytes) in expected) {
+            Assert.Equal(bytes, actual[path]);
+        }
     }
 
     private string NewPath() {

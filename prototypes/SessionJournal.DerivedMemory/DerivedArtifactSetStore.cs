@@ -232,6 +232,125 @@ public sealed class DerivedArtifactSetStore {
             .ConfigureAwait(false);
     }
 
+    public async ValueTask<DerivedArtifactSetInventory> ReadInventoryAsync(
+        CancellationToken cancellationToken = default
+    ) => await ReadInventoryAsync(
+            strictArtifactsById: null,
+            cancellationToken
+        )
+        .ConfigureAwait(false);
+
+    internal async ValueTask<DerivedArtifactSetInventory> ReadInventoryAsync(
+        IReadOnlyDictionary<string, DerivedRecapArtifact>?
+            strictArtifactsById,
+        CancellationToken cancellationToken
+    ) {
+        var sets = new List<DerivedArtifactSet>();
+        var memberArtifactCache =
+            strictArtifactsById is null
+                ? new Dictionary<string, DerivedRecapArtifact>(
+                    StringComparer.Ordinal
+                )
+                : null;
+        DerivedMemoryPathGuard.EnsureSafeDescendant(
+            _repository.SessionJournalRepositoryPath,
+            SetsDirectory
+        );
+        if (Directory.Exists(SetsDirectory)) {
+            foreach (string path in EnumeratePersistedJsonFiles(
+                         SetsDirectory,
+                         "Derived ArtifactSet"
+                     )) {
+                cancellationToken.ThrowIfCancellationRequested();
+                DerivedArtifactSetDto dto = await ReadDtoRequiredAsync(
+                        path,
+                        cancellationToken
+                    )
+                    .ConfigureAwait(false);
+                DerivedArtifactSet set = MaterializeAndValidateSelf(dto);
+                RequireExactSetFileName(path, set.SetId);
+                foreach (DerivedArtifactSetMember member in set.Members) {
+                    DerivedRecapArtifact artifact;
+                    if (strictArtifactsById is not null) {
+                        artifact = strictArtifactsById.TryGetValue(
+                            member.ArtifactId,
+                            out DerivedRecapArtifact? strictArtifact
+                        )
+                            ? strictArtifact
+                            : throw new InvalidDataException(
+                                $"ArtifactSet member '{member.ArtifactId}' is missing."
+                            );
+                    }
+                    else if (!memberArtifactCache!.TryGetValue(
+                                 member.ArtifactId,
+                                 out artifact!
+                             )) {
+                        artifact = await _repository.Recaps
+                            .TryReadArtifactAsync(
+                                member.ArtifactId,
+                                cancellationToken
+                            )
+                            .ConfigureAwait(false)
+                            ?? throw new InvalidDataException(
+                                $"ArtifactSet member '{member.ArtifactId}' is missing or unusable."
+                            );
+                        memberArtifactCache.Add(
+                            member.ArtifactId,
+                            artifact
+                        );
+                    }
+                    ValidateArtifactAgainstMember(
+                        artifact,
+                        member,
+                        set.CommonAnchor,
+                        set.AnchorSetups
+                    );
+                }
+                sets.Add(set);
+            }
+        }
+
+        var pointers = new List<DerivedArtifactSetLatestPointer>();
+        DerivedMemoryPathGuard.EnsureSafeDescendant(
+            _repository.SessionJournalRepositoryPath,
+            LatestPointersDirectory
+        );
+        if (Directory.Exists(LatestPointersDirectory)) {
+            foreach (string path in EnumeratePersistedJsonFiles(
+                         LatestPointersDirectory,
+                         "Derived ArtifactSet latest pointer"
+                     )) {
+                cancellationToken.ThrowIfCancellationRequested();
+                pointers.Add(
+                    await ReadAndValidatePointerSelfAsync(
+                            path,
+                            cancellationToken
+                        )
+                        .ConfigureAwait(false)
+                );
+            }
+        }
+
+        return new DerivedArtifactSetInventory(
+            Array.AsReadOnly([
+                .. sets
+                    .OrderBy(static set => set.LineageKey, StringComparer.Ordinal)
+                    .ThenBy(static set => set.CoherenceGroup, StringComparer.Ordinal)
+                    .ThenBy(static set => set.PolicyId, StringComparer.Ordinal)
+                    .ThenBy(static set => set.PolicyFingerprint, StringComparer.Ordinal)
+                    .ThenBy(static set => set.SetId, StringComparer.Ordinal)
+            ]),
+            Array.AsReadOnly([
+                .. pointers
+                    .OrderBy(static pointer => pointer.LineageKey, StringComparer.Ordinal)
+                    .ThenBy(static pointer => pointer.CoherenceGroup, StringComparer.Ordinal)
+                    .ThenBy(static pointer => pointer.PolicyId, StringComparer.Ordinal)
+                    .ThenBy(static pointer => pointer.PolicyFingerprint, StringComparer.Ordinal)
+                    .ThenBy(static pointer => pointer.SetId, StringComparer.Ordinal)
+            ])
+        );
+    }
+
     public async ValueTask<DerivedArtifactSet?> RebuildLatestPointerAsync(
         DerivedArtifactSetPolicy policy,
         string lineageKey,
@@ -597,6 +716,92 @@ public sealed class DerivedArtifactSetStore {
         return pointer;
     }
 
+    private async ValueTask<DerivedArtifactSetLatestPointer>
+        ReadAndValidatePointerSelfAsync(
+        string path,
+        CancellationToken cancellationToken
+    ) {
+        DerivedArtifactSetLatestPointerDto? dto;
+        try {
+            DerivedMemoryPathGuard.EnsureSafeDescendant(
+                _repository.SessionJournalRepositoryPath,
+                path
+            );
+            await using FileStream stream = File.OpenRead(path);
+            EnsureStreamWithinLimit(
+                stream,
+                MaxLatestPointerFileBytes,
+                "Derived ArtifactSet latest pointer",
+                path
+            );
+            dto = await JsonSerializer.DeserializeAsync<
+                    DerivedArtifactSetLatestPointerDto
+                >(stream, JsonOptions, cancellationToken)
+                .ConfigureAwait(false);
+        }
+        catch (JsonException exception) {
+            throw new InvalidDataException(
+                $"Derived ArtifactSet latest pointer is malformed: {path}",
+                exception
+            );
+        }
+        if (dto is null
+            || !string.Equals(
+                dto.Schema,
+                LatestPointerSchema,
+                StringComparison.Ordinal
+            )) {
+            throw new InvalidDataException(
+                $"Derived ArtifactSet latest pointer schema is invalid: {path}"
+            );
+        }
+        try {
+            DerivedArtifactSetPolicy.ValidateLineageKey(dto.LineageKey);
+            DerivedArtifactSetPolicy.ValidateToken(
+                dto.CoherenceGroup,
+                nameof(dto.CoherenceGroup)
+            );
+            DerivedArtifactSetPolicy.ValidateToken(
+                dto.PolicyId,
+                nameof(dto.PolicyId)
+            );
+            DerivedArtifactSetPolicy.ValidateToken(
+                dto.PolicyFingerprint,
+                nameof(dto.PolicyFingerprint)
+            );
+            ValidateSetId(dto.SetId);
+        }
+        catch (ArgumentException exception) {
+            throw new InvalidDataException(
+                $"Derived ArtifactSet latest pointer identity is invalid: {path}",
+                exception
+            );
+        }
+        string expectedFileName =
+            ComputeLatestKey(
+                dto.LineageKey,
+                dto.CoherenceGroup,
+                dto.PolicyId,
+                dto.PolicyFingerprint
+            ) + ".json";
+        if (!string.Equals(
+                Path.GetFileName(path),
+                expectedFileName,
+                StringComparison.Ordinal
+            )) {
+            throw new InvalidDataException(
+                $"Derived ArtifactSet latest pointer filename does not match its exact key: {path}"
+            );
+        }
+        return new DerivedArtifactSetLatestPointer(
+            dto.LineageKey,
+            dto.CoherenceGroup,
+            dto.PolicyId,
+            dto.PolicyFingerprint,
+            dto.SetId
+        );
+    }
+
     private async ValueTask<DerivedArtifactSet> ReadSetRequiredAsync(
         string setId,
         DerivedArtifactSetPolicy policy,
@@ -666,24 +871,16 @@ public sealed class DerivedArtifactSetStore {
         DerivedArtifactSetPolicy policy,
         string lineageKey
     ) {
-        if (!string.Equals(dto.Schema, SetSchema, StringComparison.Ordinal)
+        DerivedArtifactSet set = MaterializeAndValidateSelf(dto);
+        if (!string.Equals(set.LineageKey, lineageKey, StringComparison.Ordinal)
             || !string.Equals(
-                dto.LineageKey,
-                lineageKey,
-                StringComparison.Ordinal
-            )
-            || !string.Equals(
-                dto.CoherenceGroup,
+                set.CoherenceGroup,
                 policy.CoherenceGroup,
                 StringComparison.Ordinal
             )
+            || !string.Equals(set.PolicyId, policy.PolicyId, StringComparison.Ordinal)
             || !string.Equals(
-                dto.PolicyId,
-                policy.PolicyId,
-                StringComparison.Ordinal
-            )
-            || !string.Equals(
-                dto.PolicyFingerprint,
+                set.PolicyFingerprint,
                 policy.PolicyFingerprint,
                 StringComparison.Ordinal
             )) {
@@ -691,17 +888,60 @@ public sealed class DerivedArtifactSetStore {
                 "Derived ArtifactSet schema, lineage, or policy mismatch."
             );
         }
-        DerivedArtifactSetRoleRequirement[] persistedRoleRequirements =
-            MaterializeRoleRequirements(dto.RoleRequirements);
         DerivedArtifactSetRoleRequirement[] callerRoleRequirements =
             CanonicalizeRoleRequirements(
                 policy.ValidateAndSnapshot().Values
             );
-        if (!persistedRoleRequirements.SequenceEqual(
+        if (!set.RoleRequirements.SequenceEqual(
                 callerRoleRequirements
             )) {
             throw new InvalidDataException(
                 "Derived ArtifactSet role requirements do not match the caller policy."
+            );
+        }
+        return set;
+    }
+
+    private static DerivedArtifactSet MaterializeAndValidateSelf(
+        DerivedArtifactSetDto dto
+    ) {
+        try {
+            return MaterializeAndValidateSelfCore(dto);
+        }
+        catch (Exception exception) when (
+            exception is ArgumentException or FormatException
+        ) {
+            throw new InvalidDataException(
+                "Derived ArtifactSet contains an invalid persisted value.",
+                exception
+            );
+        }
+    }
+
+    private static DerivedArtifactSet MaterializeAndValidateSelfCore(
+        DerivedArtifactSetDto dto
+    ) {
+        if (!string.Equals(dto.Schema, SetSchema, StringComparison.Ordinal)) {
+            throw new InvalidDataException(
+                "Derived ArtifactSet schema is invalid."
+            );
+        }
+        DerivedArtifactSetRoleRequirement[] persistedRoleRequirements =
+            MaterializeRoleRequirements(dto.RoleRequirements);
+        var persistedPolicy = new DerivedArtifactSetPolicy(
+            dto.PolicyId,
+            dto.PolicyFingerprint,
+            dto.CoherenceGroup,
+            persistedRoleRequirements
+        );
+        try {
+            DerivedArtifactSetPolicy.ValidateLineageKey(dto.LineageKey);
+            _ = persistedPolicy.ValidateAndSnapshot();
+        }
+        catch (ArgumentException exception) {
+            throw new InvalidDataException(
+                "Derived ArtifactSet lineage or policy identity is invalid.",
+                exception
             );
         }
         IReadOnlyDictionary<string, DerivedArtifactSetRoleRequirement> roles =
@@ -804,8 +1044,8 @@ public sealed class DerivedArtifactSetStore {
         }
         DerivedArtifactSetMember[] frozenMembers = [.. members];
         var identity = CreateIdentityDto(
-            lineageKey,
-            policy,
+            dto.LineageKey,
+            persistedPolicy,
             persistedRoleRequirements,
             dto.PreviousSetId,
             commonAnchor,
@@ -823,10 +1063,10 @@ public sealed class DerivedArtifactSetStore {
         }
         return new DerivedArtifactSet(
             dto.SetId,
-            lineageKey,
-            policy.CoherenceGroup,
-            policy.PolicyId,
-            policy.PolicyFingerprint,
+            dto.LineageKey,
+            dto.CoherenceGroup,
+            dto.PolicyId,
+            dto.PolicyFingerprint,
             Array.AsReadOnly(persistedRoleRequirements),
             dto.PreviousSetId,
             commonAnchor,
@@ -951,7 +1191,15 @@ public sealed class DerivedArtifactSetStore {
         string path,
         string setId
     ) {
-        ValidateSetId(setId);
+        try {
+            ValidateSetId(setId);
+        }
+        catch (ArgumentException exception) {
+            throw new InvalidDataException(
+                $"Derived ArtifactSet id is invalid in persisted file: {path}",
+                exception
+            );
+        }
         if (!string.Equals(
                 Path.GetFileName(path),
                 $"{setId}.json",
@@ -1004,15 +1252,47 @@ public sealed class DerivedArtifactSetStore {
     private static string ComputeLatestKey(
         DerivedArtifactSetPolicy policy,
         string lineageKey
+    ) => ComputeLatestKey(
+        lineageKey,
+        policy.CoherenceGroup,
+        policy.PolicyId,
+        policy.PolicyFingerprint
+    );
+
+    private static string ComputeLatestKey(
+        string lineageKey,
+        string coherenceGroup,
+        string policyId,
+        string policyFingerprint
     ) {
         string identity = string.Join(
             '\0',
             lineageKey,
-            policy.CoherenceGroup,
-            policy.PolicyId,
-            policy.PolicyFingerprint
+            coherenceGroup,
+            policyId,
+            policyFingerprint
         );
         return "latest_" + ComputeDomainHash(LatestKeyDomain, identity);
+    }
+
+    private static IEnumerable<string> EnumeratePersistedJsonFiles(
+        string directory,
+        string description
+    ) {
+        foreach (string path in Directory
+                     .EnumerateFiles(directory)
+                     .OrderBy(static path => Path.GetFileName(path), StringComparer.Ordinal)) {
+            if (!string.Equals(
+                    Path.GetExtension(path),
+                    ".json",
+                    StringComparison.Ordinal
+                )) {
+                throw new InvalidDataException(
+                    $"{description} directory contains an unexpected file: {path}"
+                );
+            }
+            yield return path;
+        }
     }
 
     private static string ComputeSetId(

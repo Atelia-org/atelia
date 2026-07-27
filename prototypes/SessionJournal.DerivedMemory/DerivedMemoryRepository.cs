@@ -51,6 +51,155 @@ public sealed class DerivedMemoryRepository {
         return new DerivedMemoryRepository(fullPath);
     }
 
+    public async ValueTask<DerivedMemoryValidationReport> ValidateAsync(
+        CancellationToken cancellationToken = default
+    ) {
+        cancellationToken.ThrowIfCancellationRequested();
+        IReadOnlyList<DerivedRecapArtifact> artifacts =
+            await Recaps.ReadInventoryStrictAsync(cancellationToken)
+                .ConfigureAwait(false);
+        IReadOnlyDictionary<string, DerivedRecapArtifact> artifactsById =
+            artifacts.ToDictionary(
+                static artifact => artifact.ArtifactId,
+                StringComparer.Ordinal
+            );
+        DerivedArtifactSetInventory inventory =
+            await ArtifactSets.ReadInventoryAsync(
+                    artifactsById,
+                    cancellationToken
+                )
+                .ConfigureAwait(false);
+
+        var setsByKey = inventory.Sets
+            .GroupBy(DerivedArtifactSetExactKey.FromSet)
+            .ToDictionary(
+                static group => group.Key,
+                static group => (IReadOnlyList<DerivedArtifactSet>)[.. group]
+            );
+        var pointersByKey = inventory.LatestPointers
+            .GroupBy(DerivedArtifactSetExactKey.FromPointer)
+            .ToDictionary(
+                static group => group.Key,
+                static group =>
+                    (IReadOnlyList<DerivedArtifactSetLatestPointer>)[.. group]
+            );
+
+        foreach ((DerivedArtifactSetExactKey key,
+                     IReadOnlyList<DerivedArtifactSet> sets) in setsByKey) {
+            IReadOnlyList<DerivedArtifactSetRoleRequirement> roleSnapshot =
+                sets[0].RoleRequirements;
+            if (sets.Skip(1).Any(
+                    set => !set.RoleRequirements.SequenceEqual(roleSnapshot)
+                )) {
+                throw new InvalidDataException(
+                    $"ArtifactSet exact key '{key}' contains role-snapshot drift."
+                );
+            }
+            string tipId = ValidateExactKeyLineage(
+                [
+                    .. sets.Select(
+                        static set => new DerivedArtifactSetLineageNode(
+                            set.SetId,
+                            set.PreviousSetId
+                        )
+                    )
+                ]
+            );
+            if (!pointersByKey.TryGetValue(
+                    key,
+                    out IReadOnlyList<DerivedArtifactSetLatestPointer>? pointers
+                )
+                || pointers.Count != 1) {
+                throw new InvalidDataException(
+                    $"ArtifactSet exact key '{key}' requires exactly one latest pointer."
+                );
+            }
+            if (!string.Equals(
+                    pointers[0].SetId,
+                    tipId,
+                    StringComparison.Ordinal
+                )) {
+                throw new InvalidDataException(
+                    $"ArtifactSet exact key '{key}' latest pointer is stale."
+                );
+            }
+        }
+        foreach (DerivedArtifactSetExactKey pointerKey in pointersByKey.Keys) {
+            if (!setsByKey.ContainsKey(pointerKey)) {
+                throw new InvalidDataException(
+                    $"ArtifactSet latest pointer '{pointerKey}' has no matching sets."
+                );
+            }
+        }
+
+        return new DerivedMemoryValidationReport(
+            artifacts.Count,
+            inventory.Sets.Count,
+            inventory.LatestPointers.Count,
+            setsByKey.Count
+        );
+    }
+
+    internal static string ValidateExactKeyLineage(
+        IReadOnlyList<DerivedArtifactSetLineageNode> nodes
+    ) {
+        if (nodes.Count == 0) {
+            throw new ArgumentException(
+                "ArtifactSet lineage requires at least one node.",
+                nameof(nodes)
+            );
+        }
+        var byId = new Dictionary<string, DerivedArtifactSetLineageNode>(
+            StringComparer.Ordinal
+        );
+        foreach (DerivedArtifactSetLineageNode node in nodes) {
+            if (!byId.TryAdd(node.SetId, node)) {
+                throw new InvalidDataException(
+                    $"Duplicate ArtifactSet id '{node.SetId}'."
+                );
+            }
+        }
+        foreach (DerivedArtifactSetLineageNode node in nodes) {
+            if (node.PreviousSetId is { } previous
+                && !byId.ContainsKey(previous)) {
+                throw new InvalidDataException(
+                    $"ArtifactSet '{node.SetId}' references missing previous set '{previous}'."
+                );
+            }
+        }
+
+        var completed = new HashSet<string>(StringComparer.Ordinal);
+        foreach (DerivedArtifactSetLineageNode start in nodes) {
+            var visiting = new HashSet<string>(StringComparer.Ordinal);
+            DerivedArtifactSetLineageNode? cursor = start;
+            while (cursor is not null && !completed.Contains(cursor.SetId)) {
+                if (!visiting.Add(cursor.SetId)) {
+                    throw new InvalidDataException(
+                        "Derived ArtifactSet lineage contains a cycle."
+                    );
+                }
+                cursor = cursor.PreviousSetId is { } previous
+                    ? byId[previous]
+                    : null;
+            }
+            completed.UnionWith(visiting);
+        }
+
+        var predecessorIds = nodes
+            .Where(static node => node.PreviousSetId is not null)
+            .Select(static node => node.PreviousSetId!)
+            .ToHashSet(StringComparer.Ordinal);
+        DerivedArtifactSetLineageNode[] tips = [
+            .. nodes.Where(node => !predecessorIds.Contains(node.SetId))
+        ];
+        if (tips.Length != 1) {
+            throw new InvalidDataException(
+                "Derived ArtifactSet lineage is forked or disconnected."
+            );
+        }
+        return tips[0].SetId;
+    }
+
     internal async ValueTask<FileStream> AcquireWriteLockAsync(
         CancellationToken cancellationToken
     ) {
@@ -182,6 +331,39 @@ public sealed class DerivedMemoryRepository {
             // Best-effort cleanup of a file created by this operation only.
         }
     }
+}
+
+internal sealed record DerivedArtifactSetLineageNode(
+    string SetId,
+    string? PreviousSetId
+);
+
+internal readonly record struct DerivedArtifactSetExactKey(
+    string LineageKey,
+    string CoherenceGroup,
+    string PolicyId,
+    string PolicyFingerprint
+) {
+    public static DerivedArtifactSetExactKey FromSet(
+        DerivedArtifactSet set
+    ) => new(
+        set.LineageKey,
+        set.CoherenceGroup,
+        set.PolicyId,
+        set.PolicyFingerprint
+    );
+
+    public static DerivedArtifactSetExactKey FromPointer(
+        DerivedArtifactSetLatestPointer pointer
+    ) => new(
+        pointer.LineageKey,
+        pointer.CoherenceGroup,
+        pointer.PolicyId,
+        pointer.PolicyFingerprint
+    );
+
+    public override string ToString() =>
+        $"{LineageKey}|{CoherenceGroup}|{PolicyId}|{PolicyFingerprint}";
 }
 
 internal static class DerivedMemoryPathGuard {

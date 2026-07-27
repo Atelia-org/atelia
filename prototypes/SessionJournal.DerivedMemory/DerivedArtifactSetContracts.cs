@@ -139,6 +139,24 @@ public sealed record DerivedArtifactSetPublicationRequest(
     string? ExpectedPreviousSetId
 );
 
+/// <summary>
+/// Stable, content-free inventory of every persisted ArtifactSet and latest pointer.
+/// The inventory is diagnostic: graph and pointer completeness are enforced by
+/// <see cref="DerivedMemoryRepository.ValidateAsync"/>, not by inventory reads.
+/// </summary>
+public sealed record DerivedArtifactSetInventory(
+    IReadOnlyList<DerivedArtifactSet> Sets,
+    IReadOnlyList<DerivedArtifactSetLatestPointer> LatestPointers
+);
+
+public sealed record DerivedArtifactSetLatestPointer(
+    string LineageKey,
+    string CoherenceGroup,
+    string PolicyId,
+    string PolicyFingerprint,
+    string SetId
+);
+
 public sealed class DerivedArtifactSetConcurrencyException
     : InvalidOperationException {
     public DerivedArtifactSetConcurrencyException(string message)

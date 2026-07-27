@@ -372,6 +372,131 @@ public sealed class DerivedRecapStoreTests : IDisposable {
         Assert.Equal("answer", Assert.IsType<ActionMessage>(projectionAfter.Context[1]).GetFlattenedText());
     }
 
+    [Fact]
+    public async Task StrictValidation_RejectsRenamedArtifactWhileTolerantRebuildRemainsCompatible() {
+        AddressSet addresses = CreateAddresses();
+        string repoPath = NewRepoPath();
+        DerivedRecapStore store = OpenStore(repoPath);
+        DerivedRecapArtifact artifact = await store.WriteProducedAsync(
+            CreateRequest(addresses, "summary v1")
+        );
+        string original = Path.Combine(
+            store.ArtifactsDirectory,
+            $"{artifact.ArtifactId}.json"
+        );
+        File.Copy(
+            original,
+            Path.Combine(store.ArtifactsDirectory, "renamed.json")
+        );
+
+        DerivedRecapLatestIndex tolerant =
+            await store.RebuildLatestIndexAsync();
+        Assert.Single(tolerant.Items);
+        await Assert.ThrowsAsync<InvalidDataException>(
+            async () => await DerivedMemoryRepository
+                .Open(repoPath)
+                .ValidateAsync()
+        );
+    }
+
+    [Fact]
+    public async Task StrictValidation_RejectsUnknownFieldWhileTolerantReadAndRebuildRemainCompatible() {
+        AddressSet addresses = CreateAddresses();
+        string repoPath = NewRepoPath();
+        DerivedRecapStore store = OpenStore(repoPath);
+        DerivedRecapArtifact artifact = await store.WriteProducedAsync(
+            CreateRequest(addresses, "summary v1")
+        );
+        string path = Path.Combine(
+            store.ArtifactsDirectory,
+            $"{artifact.ArtifactId}.json"
+        );
+        JsonObject root = JsonNode.Parse(
+            await File.ReadAllTextAsync(path)
+        )!.AsObject();
+        root["futureField"] = "ignored by tolerant reads";
+        await File.WriteAllTextAsync(path, root.ToJsonString());
+
+        Assert.NotNull(
+            await store.TryReadArtifactAsync(artifact.ArtifactId)
+        );
+        Assert.Single((await store.RebuildLatestIndexAsync()).Items);
+        await Assert.ThrowsAsync<InvalidDataException>(
+            async () => await DerivedMemoryRepository
+                .Open(repoPath)
+                .ValidateAsync()
+        );
+    }
+
+    [Fact]
+    public async Task StrictValidation_CapsArtifactBeforeDeserializeButTolerantReadsRemainCompatible() {
+        AddressSet addresses = CreateAddresses();
+        string repoPath = NewRepoPath();
+        DerivedRecapStore store = OpenStore(repoPath);
+        DerivedRecapArtifact artifact = await store.WriteProducedAsync(
+            CreateRequest(addresses, "summary v1")
+        );
+        string path = Path.Combine(
+            store.ArtifactsDirectory,
+            $"{artifact.ArtifactId}.json"
+        );
+        long paddingLength = checked(
+            DerivedRecapStore.MaxArtifactFileBytes
+            - new FileInfo(path).Length
+            + 1
+        );
+        await File.AppendAllTextAsync(
+            path,
+            new string(' ', checked((int)paddingLength))
+        );
+
+        Assert.NotNull(
+            await store.TryReadArtifactAsync(artifact.ArtifactId)
+        );
+        Assert.Single((await store.RebuildLatestIndexAsync()).Items);
+        InvalidDataException error =
+            await Assert.ThrowsAsync<InvalidDataException>(
+                async () => await DerivedMemoryRepository
+                    .Open(repoPath)
+                    .ValidateAsync()
+            );
+        Assert.Contains(
+            $"{DerivedRecapStore.MaxArtifactFileBytes}-byte limit",
+            error.Message,
+            StringComparison.Ordinal
+        );
+    }
+
+    [Fact]
+    public async Task Writer_RejectsArtifactWhoseUtf8WireExceedsStrictCap() {
+        AddressSet addresses = CreateAddresses();
+        string repoPath = NewRepoPath();
+        DerivedRecapStore store = OpenStore(repoPath);
+
+        InvalidDataException error =
+            await Assert.ThrowsAsync<InvalidDataException>(
+                async () => await store.WriteProducedAsync(
+                    CreateRequest(
+                        addresses,
+                        new string(
+                            'x',
+                            checked((int)
+                                DerivedRecapStore.MaxArtifactFileBytes)
+                        )
+                    )
+                )
+            );
+
+        Assert.Contains(
+            $"{DerivedRecapStore.MaxArtifactFileBytes}-byte limit",
+            error.Message,
+            StringComparison.Ordinal
+        );
+        Assert.False(Directory.Exists(store.ArtifactsDirectory));
+        Assert.False(File.Exists(store.LatestIndexPath));
+        Assert.False(Directory.Exists(Path.Combine(repoPath, "derived")));
+    }
+
     private DerivedRecapWriteRequest CreateRequest(
         AddressSet addresses,
         string summary,

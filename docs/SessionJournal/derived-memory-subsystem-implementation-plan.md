@@ -1,6 +1,6 @@
 # DerivedMemory 可替换子系统与 Shared Epoch 实施方案
 
-> **状态**：In Progress；DM-0～DM-3B 已完成，下一片 DM-3C
+> **状态**：In Progress；DM-0～DM-3C 已完成，下一片 DM-4
 > **日期**：2026-07-27
 > **最新代码对齐**：2026-07-28；已纳入
 > `ChatSession.LegacyExportCli` / `SessionJournal.Cli` 拆分与
@@ -113,8 +113,8 @@ legacy ChatSession repo
 ```
 
 - `ChatSession.LegacyExportCli` 只依赖旧 `ChatSession`，只负责 JSON/Markdown export；
-- `SessionJournal.Cli` product project 不依赖 `ChatSession`，负责 import、validate、maintainer
-  开发运行和 raw validate；derived set 的 publish/list composition command 延后到 DM-3C；
+- `SessionJournal.Cli` product project 不依赖 `ChatSession`，负责 import、raw/derived validate、
+  maintainer 开发运行，并已在 DM-3C 接收 derived set publish/list/rebuild composition command；
 - `SessionJournal.Maintainers` 只依赖 `SessionJournal`，承载 application-specific maintainer
   policy；
 - producer/consumer compatibility 由版本化 JSON schema 与两侧测试锁定，不建立 shared legacy
@@ -560,10 +560,29 @@ DerivedMemory。这样避免物理搬家与 Prepared wire cut 同时扩大。
 
 ### CLI transition（DM-3C）
 
-- 增加 derived-only set publish/inventory 能力；
-- 命令只写 derived repository，不追加 raw kind 12；
-- 不把 usage index 或 fake epoch 偷渡进第一版 command；
-- raw kind 12 reader 只为 DM-3B/DM-4 之间的只读过渡暂存，DM-4 删除；
+- 已增加 `publish-derived-artifact-set`、`list-derived-artifact-sets`、
+  `validate-derived-memory` 与 `rebuild-derived-artifact-set-latest`；
+- publish 要求 explicit expected-previous CAS，members 必须共享 common anchor；CLI
+  从该 raw anchor 调用 strict setup helper，用户不能提交 setup refs；
+- public inventory 只暴露 content-free stable records，不暴露正文/路径，也不要求 caller
+  提供 policy 才能 self-validate persisted role snapshot；
+- inventory 严格读取 set/pointer/member derived consistency，但允许 missing/stale pointer、
+  fork/cycle 留给诊断；repository validation 进一步要求每个 exact key role snapshot
+  一致、完整无环单 tip 且 pointer exact 指向 tip；
+- validation 是纯读取：空 derived 合法，不 rebuild、不创建 derived 目录/lock；orphan
+  artifacts 合法；
+- artifact strict inventory 与 writer 共享 8 MiB file/UTF-8 wire byte cap；strict reader
+  在 deserialize 前拒绝超限文件，writer 在任何 artifact/index/directory mutation 前拒绝
+  超限 candidate。derived 是可重建数据，因此这是 v1 direct cutover，不保留超限
+  compatibility writer；
+- 普通 artifact tolerant read/latest-index rebuild 的既有容错语义保持不变；8 MiB cap
+  属于 repository strict validation 与新 writer contract；
+- report 使用版本化 stable CLI DTO，位于 repo 外并 atomic publish；commands 拒绝未知
+  option 与重复 scalar；
+- 命令只写 derived repository，不追加 raw kind 12；E2E 锁定 publish 前后 raw
+  head/event count/logical payload bytes/raw file hash 不变；
+- 不把 usage index、online host composition 或 fake epoch 偷渡进第一版 command；
+- raw kind 12 reader 只为 DM-3C/DM-4 之间的只读过渡暂存，DM-4 删除；
 - 不保留双 writer 或 silent import。
 
 ### 验收

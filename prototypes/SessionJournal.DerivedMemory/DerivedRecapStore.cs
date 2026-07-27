@@ -15,12 +15,18 @@ public sealed class DerivedRecapStore {
     public const string ArtifactSchema = "atelia.session-journal.derived-recap.v1";
     public const string MemoryPackSnapshotSchema = "atelia.session-journal.memory-pack.snapshot.v1";
     public const string LatestIndexSchema = "atelia.session-journal.derived-recap.latest-index.v1";
+    public const long MaxArtifactFileBytes = 8 * 1024 * 1024;
 
     private static readonly JsonSerializerOptions JsonOptions = new() {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         DefaultIgnoreCondition = JsonIgnoreCondition.Never,
         WriteIndented = true,
         Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping
+    };
+    private static readonly JsonSerializerOptions StrictJsonOptions = new(
+        JsonOptions
+    ) {
+        UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow
     };
 
     private readonly DerivedMemoryRepository _repository;
@@ -52,12 +58,6 @@ public sealed class DerivedRecapStore {
         ArgumentNullException.ThrowIfNull(request);
         request.Validate();
         ct.ThrowIfCancellationRequested();
-
-        await using FileStream writeLock = await _repository
-            .AcquireWriteLockAsync(ct)
-            .ConfigureAwait(false);
-        _repository.EnsureDirectory(ArtifactsDirectory);
-        _repository.EnsureDirectory(IndexesDirectory);
 
         var target = DerivedRecapTarget.FromMemoryPackBlockPath(request.Target);
         string lineageKey = DerivedRecapLineageKey.Create(
@@ -102,6 +102,24 @@ public sealed class DerivedRecapStore {
             EventAddressTextCodec.Format(request.SourceEndInclusive),
             ComputeCanonicalSha256Hex(identity)
         );
+        DateTimeOffset createdUtc =
+            request.CreatedUtc ?? DateTimeOffset.UtcNow;
+        // Reserve the longest suffix the bounded int collision loop can emit, so no later
+        // collision-dependent serialization can cross the cap after index/directory mutation.
+        EnsureArtifactSerializedSize(Serialize(
+            DerivedRecapArtifactDto.FromIdentity(
+                $"{baseArtifactId}_{int.MaxValue.ToString(CultureInfo.InvariantCulture)}",
+                createdUtc,
+                identity
+            )
+        ));
+
+        await using FileStream writeLock = await _repository
+            .AcquireWriteLockAsync(ct)
+            .ConfigureAwait(false);
+        _repository.EnsureDirectory(ArtifactsDirectory);
+        _repository.EnsureDirectory(IndexesDirectory);
+
         DerivedRecapLatestIndex currentIndex =
             await RebuildLatestIndexUnderLockAsync(ct).ConfigureAwait(false);
         string? currentArtifactId = currentIndex.Items.TryGetValue(
@@ -117,10 +135,11 @@ public sealed class DerivedRecapStore {
         while (true) {
             dto = DerivedRecapArtifactDto.FromIdentity(
                 ArtifactId: artifactId,
-                CreatedUtc: request.CreatedUtc ?? DateTimeOffset.UtcNow,
+                CreatedUtc: createdUtc,
                 identity
             );
             json = Serialize(dto);
+            EnsureArtifactSerializedSize(json);
             string finalPath = GetArtifactPath(artifactId);
             if (!File.Exists(finalPath)) { break; }
 
@@ -212,6 +231,108 @@ public sealed class DerivedRecapStore {
 
         var dto = await TryReadArtifactDtoAsync(path, ct).ConfigureAwait(false);
         return dto is null ? null : Materialize(dto);
+    }
+
+    internal async ValueTask<IReadOnlyList<DerivedRecapArtifact>>
+        ReadInventoryStrictAsync(
+        CancellationToken ct
+    ) {
+        DerivedMemoryPathGuard.EnsureSafeDescendant(
+            _repository.SessionJournalRepositoryPath,
+            ArtifactsDirectory
+        );
+        if (!Directory.Exists(ArtifactsDirectory)) {
+            return Array.Empty<DerivedRecapArtifact>();
+        }
+        var artifacts = new List<DerivedRecapArtifact>();
+        foreach (string path in Directory
+                     .EnumerateFiles(ArtifactsDirectory)
+                     .OrderBy(
+                         static path => Path.GetFileName(path),
+                         StringComparer.Ordinal
+                     )) {
+            ct.ThrowIfCancellationRequested();
+            if (!string.Equals(
+                    Path.GetExtension(path),
+                    ".json",
+                    StringComparison.Ordinal
+                )) {
+                throw new InvalidDataException(
+                    $"Derived recap artifact directory contains an unexpected file: {path}"
+                );
+            }
+            DerivedRecapArtifactDto? dto;
+            try {
+                DerivedMemoryPathGuard.EnsureSafeDescendant(
+                    _repository.SessionJournalRepositoryPath,
+                    path
+                );
+                await using FileStream stream = File.OpenRead(path);
+                if (stream.Length > MaxArtifactFileBytes) {
+                    throw new InvalidDataException(
+                        $"Derived recap artifact exceeds its {MaxArtifactFileBytes}-byte limit: {path}"
+                    );
+                }
+                dto = await JsonSerializer.DeserializeAsync<
+                        DerivedRecapArtifactDto
+                    >(stream, StrictJsonOptions, ct)
+                    .ConfigureAwait(false);
+            }
+            catch (InvalidDataException) {
+                throw;
+            }
+            catch (Exception exception) when (
+                exception is JsonException
+                    or IOException
+                    or UnauthorizedAccessException
+            ) {
+                throw new InvalidDataException(
+                    $"Derived recap artifact is unreadable or malformed: {path}",
+                    exception
+                );
+            }
+            if (!IsUsableArtifact(dto)) {
+                throw new InvalidDataException(
+                    $"Derived recap artifact is invalid: {path}"
+                );
+            }
+            if (!string.Equals(
+                    Path.GetFileName(path),
+                    $"{dto!.ArtifactId}.json",
+                    StringComparison.Ordinal
+                )) {
+                throw new InvalidDataException(
+                    $"Derived recap artifact filename does not match its artifact id: {path}"
+                );
+            }
+            try {
+                artifacts.Add(Materialize(dto));
+            }
+            catch (Exception exception) when (
+                exception is ArgumentException
+                    or InvalidDataException
+                    or NullReferenceException
+            ) {
+                throw new InvalidDataException(
+                    $"Derived recap artifact cannot be materialized: {path}",
+                    exception
+                );
+            }
+        }
+        return Array.AsReadOnly([
+            .. artifacts.OrderBy(
+                static artifact => artifact.ArtifactId,
+                StringComparer.Ordinal
+            )
+        ]);
+    }
+
+    private static void EnsureArtifactSerializedSize(string json) {
+        if (Encoding.UTF8.GetByteCount(json) > MaxArtifactFileBytes) {
+            throw new InvalidDataException(
+                $"Derived recap artifact exceeds its {MaxArtifactFileBytes}-byte limit."
+            );
+        }
     }
 
     public async ValueTask<DerivedRecapLatestIndex> RebuildLatestIndexAsync(

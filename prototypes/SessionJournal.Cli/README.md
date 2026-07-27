@@ -88,6 +88,89 @@ dotnet run --project prototypes/SessionJournal.Cli -- validate \
 
 report 必须在 repo 外。validator 不修复或截断 raw/refs。
 
+## DerivedMemory ArtifactSet 运维命令
+
+以下命令只操作可重建的 `derived/` 子系统。它们不会向 raw SessionJournal
+追加 event，也不会创建 Completion client。所有命令都拒绝未知 option；标量 option
+重复出现也会 fail fast。`--report-json` 必须位于 input repo 外，并通过同目录临时文件
+atomic publish。
+
+role/target 使用 `role=carrier/block-key`，其中 carrier 只能是 `system`、
+`observation` 或 `action`。block key 可以继续包含 `/`。member 使用
+`role=artifact-id`。通常可写 `--key value`；若合法 value 本身以 `--` 开头，
+使用 conventional inline form `--key=--value`（例如
+`--required-role=--role=observation/--block`），避免与下一个 option 混淆。
+
+### publish-derived-artifact-set
+
+从已经存在的 exact artifacts 发布 immutable coherent set：
+
+```bash
+dotnet run --project prototypes/SessionJournal.Cli -- \
+  publish-derived-artifact-set \
+  --input gitignore/session-journal/<session> \
+  --lineage main \
+  --coherence-group roleplay.default \
+  --policy-id roleplay-memory \
+  --policy-fingerprint roleplay-memory-v1 \
+  --required-role autobiography=action/roleplay.first-person-autobiography \
+  --required-role world=observation/roleplay.world-understanding \
+  --member autobiography=<artifact-id> \
+  --member world=<artifact-id> \
+  --expected-previous none \
+  --report-json gitignore/reports/publish-set.json
+```
+
+`--expected-previous` 是强制 CAS：genesis 明确写 `none`，后续写 exact `das_...`
+id。CLI 从 members 的唯一 common anchor 读取 raw-authoritative governing setup
+address/schema/payload hash；setup refs 不能由参数伪造。发布只写
+`derived/memory/v1/sets` 与 latest pointer，不写 raw kind 12。
+
+### list-derived-artifact-sets
+
+```bash
+dotnet run --project prototypes/SessionJournal.Cli -- \
+  list-derived-artifact-sets \
+  --input gitignore/session-journal/<session> \
+  --report-json gitignore/reports/derived-inventory.json
+```
+
+inventory 严格验证每个 set/pointer 的 self identity 与 exact member artifact，
+并按 exact key/id 稳定排序。它有意保留 missing/stale pointer、fork/cycle 供诊断；
+这些 topology 问题不会让 list 失败。
+
+### validate-derived-memory
+
+```bash
+dotnet run --project prototypes/SessionJournal.Cli -- \
+  validate-derived-memory \
+  --input gitignore/session-journal/<session> \
+  --report-json gitignore/reports/derived-validation.json
+```
+
+严格、只读验证所有 artifact/set/pointer，以及每个 exact key 的 canonical role
+snapshot、完整无环单 tip lineage 和 `latest pointer == tip`。未被 set 使用的
+orphan artifact 合法，便于 prompt tuning 保存 alternatives。空 derived repo
+也合法。该命令不 rebuild、不创建目录或 lock。
+
+### rebuild-derived-artifact-set-latest
+
+```bash
+dotnet run --project prototypes/SessionJournal.Cli -- \
+  rebuild-derived-artifact-set-latest \
+  --input gitignore/session-journal/<session> \
+  --lineage main \
+  --coherence-group roleplay.default \
+  --policy-id roleplay-memory \
+  --policy-fingerprint roleplay-memory-v1 \
+  --required-role autobiography=action/roleplay.first-person-autobiography \
+  --required-role world=observation/roleplay.world-understanding
+```
+
+该命令只重建一个 exact lineage/coherence/policy/role-snapshot key 的 latest
+pointer。没有 matching set、missing predecessor、role drift、fork 或 cycle
+都会 fail fast，不会猜测 tie-break。
+
 ## llm-smoke
 
 发送一次最小 Completion 请求，用于验证 connection/provider/call-log：

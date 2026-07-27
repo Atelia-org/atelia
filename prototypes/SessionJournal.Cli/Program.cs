@@ -55,6 +55,22 @@ internal static class Program {
                     )
                     .GetAwaiter()
                     .GetResult(),
+                "publish-derived-artifact-set" =>
+                    DerivedMemoryCommands.PublishAsync(options)
+                        .GetAwaiter()
+                        .GetResult(),
+                "list-derived-artifact-sets" =>
+                    DerivedMemoryCommands.ListAsync(options)
+                        .GetAwaiter()
+                        .GetResult(),
+                "validate-derived-memory" =>
+                    DerivedMemoryCommands.ValidateAsync(options)
+                        .GetAwaiter()
+                        .GetResult(),
+                "rebuild-derived-artifact-set-latest" =>
+                    DerivedMemoryCommands.RebuildLatestAsync(options)
+                        .GetAwaiter()
+                        .GetResult(),
                 _ => Fail($"Unknown command '{command}'.")
             };
         }
@@ -409,7 +425,7 @@ internal static class Program {
             ? null
             : File.ReadAllText(path, Encoding.UTF8);
 
-    private static void EnsurePathChainHasNoReparsePoint(
+    internal static void EnsurePathChainHasNoReparsePoint(
         string path,
         string optionName
     ) {
@@ -438,7 +454,7 @@ internal static class Program {
         }
     }
 
-    private static void EnsurePathIsOutsideRepository(
+    internal static void EnsurePathIsOutsideRepository(
         string repositoryPath,
         string candidatePath,
         string optionName
@@ -520,7 +536,7 @@ internal static class Program {
             ? StringComparison.OrdinalIgnoreCase
             : StringComparison.Ordinal;
 
-    private static void WriteJsonAtomically<T>(string path, T value) {
+    internal static void WriteJsonAtomically<T>(string path, T value) {
         string fullPath = Path.GetFullPath(path);
         Directory.CreateDirectory(
             Path.GetDirectoryName(fullPath) ?? "."
@@ -611,6 +627,32 @@ internal static class Program {
             + "[--connection <id>] [--call-log-dir <dir>] "
             + "[--threshold-tokens <n>] [--max-epochs <n>] "
             + "[--system-prompt <path>] [--prompt <path>]"
+        );
+        Console.WriteLine(
+            "  publish-derived-artifact-set --input <repo-dir> "
+            + "--lineage <key> --coherence-group <token> "
+            + "--policy-id <token> --policy-fingerprint <token> "
+            + "--required-role <role=carrier/block> "
+            + "[--optional-role <role=carrier/block>] "
+            + "--member <role=artifact-id> "
+            + "--expected-previous <none|set-id> "
+            + "[--report-json <path-outside-repo>]"
+        );
+        Console.WriteLine(
+            "  list-derived-artifact-sets --input <repo-dir> "
+            + "[--report-json <path-outside-repo>]"
+        );
+        Console.WriteLine(
+            "  validate-derived-memory --input <repo-dir> "
+            + "[--report-json <path-outside-repo>]"
+        );
+        Console.WriteLine(
+            "  rebuild-derived-artifact-set-latest --input <repo-dir> "
+            + "--lineage <key> --coherence-group <token> "
+            + "--policy-id <token> --policy-fingerprint <token> "
+            + "--required-role <role=carrier/block> "
+            + "[--optional-role <role=carrier/block>] "
+            + "[--report-json <path-outside-repo>]"
         );
     }
 }

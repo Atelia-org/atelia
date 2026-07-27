@@ -17,7 +17,9 @@ internal sealed class CliOptions {
                     $"Unexpected argument '{arg}'."
                 );
             }
-            string key = arg[2..];
+            string option = arg[2..];
+            int equals = option.IndexOf('=', StringComparison.Ordinal);
+            string key = equals < 0 ? option : option[..equals];
             if (string.IsNullOrWhiteSpace(key)) {
                 throw new ArgumentException("Empty option name.");
             }
@@ -27,6 +29,10 @@ internal sealed class CliOptions {
                 )) {
                 occurrences = [];
                 values.Add(key, occurrences);
+            }
+            if (equals >= 0) {
+                occurrences.Add(option[(equals + 1)..]);
+                continue;
             }
             if (index + 1 >= args.Length
                 || args[index + 1].StartsWith(
@@ -85,5 +91,66 @@ internal sealed class CliOptions {
             : throw new ArgumentException(
                 $"--{key} accepts only true or false."
             );
+    }
+
+    public void EnsureOnly(params string[] allowedKeys) {
+        var allowed = allowedKeys.ToHashSet(StringComparer.Ordinal);
+        string? unexpected = _values.Keys
+            .OrderBy(static key => key, StringComparer.Ordinal)
+            .FirstOrDefault(key => !allowed.Contains(key));
+        if (unexpected is not null) {
+            throw new ArgumentException(
+                $"Unknown option --{unexpected}."
+            );
+        }
+    }
+
+    public string RequireSingle(string key) {
+        if (!_values.TryGetValue(key, out List<string?>? values)
+            || values.Count == 0
+            || string.IsNullOrWhiteSpace(values[0])) {
+            throw new ArgumentException(
+                $"Missing required option --{key}."
+            );
+        }
+        if (values.Count != 1) {
+            throw new ArgumentException(
+                $"Option --{key} must be specified exactly once."
+            );
+        }
+        return values[0]!;
+    }
+
+    public string? GetOptionalSingle(string key) {
+        if (!_values.TryGetValue(key, out List<string?>? values)) {
+            return null;
+        }
+        if (values.Count != 1 || string.IsNullOrWhiteSpace(values[0])) {
+            throw new ArgumentException(
+                $"Option --{key} accepts exactly one non-empty value."
+            );
+        }
+        return values[0];
+    }
+
+    public IReadOnlyList<string> RequireRepeated(string key) {
+        IReadOnlyList<string> values = GetRepeated(key);
+        return values.Count == 0
+            ? throw new ArgumentException(
+                $"Missing required option --{key}."
+            )
+            : values;
+    }
+
+    public IReadOnlyList<string> GetRepeated(string key) {
+        if (!_values.TryGetValue(key, out List<string?>? values)) {
+            return Array.Empty<string>();
+        }
+        if (values.Any(static value => string.IsNullOrWhiteSpace(value))) {
+            throw new ArgumentException(
+                $"Option --{key} requires a non-empty value for every occurrence."
+            );
+        }
+        return Array.AsReadOnly([.. values.Select(static value => value!)]);
     }
 }
