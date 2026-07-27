@@ -7,6 +7,7 @@ using Atelia.EventJournal;
 namespace Atelia.SessionJournal;
 
 internal static class SessionRequestManifestCodec {
+    private const int MaxExactContextInputCount = 128;
     public static byte[] Encode(CompletionRequestPreparedBody body) {
         Validate(body);
         var buffer = new ArrayBufferWriter<byte>();
@@ -68,27 +69,27 @@ internal static class SessionRequestManifestCodec {
 
         _ = EventAddressTextCodec.Format(body.Plan.RawStartExclusive);
         RequireSha256(body.Plan.RawRangeSha256, "plan.rawRangeSha256");
-        if (body.Plan.ArtifactInputs.Length < 2) {
+        ValidateSetup(body.Plan.RawStartSetups.RuntimeConfig, "plan.rawStartSetups.runtimeConfig");
+        ValidateSetup(body.Plan.RawStartSetups.SystemPrompt, "plan.rawStartSetups.systemPrompt");
+        if (body.Plan.ExactContextInputs.IsEmpty) {
             throw new InvalidDataException(
-                "Prepared v3 requires at least two plan.artifactInputs entries."
+                "Prepared v4 requires at least one plan.exactContextInputs entry."
             );
         }
-        ValidateArtifactSetReference(body.Plan.ActiveArtifactSet);
-        var artifactIds = new HashSet<string>(StringComparer.Ordinal);
-        foreach (SessionRequestArtifactInput input in body.Plan.ArtifactInputs) {
-            ValidateArtifactInput(input);
+        if (body.Plan.ExactContextInputs.Length > MaxExactContextInputCount) {
+            throw new InvalidDataException(
+                $"Prepared v4 plan.exactContextInputs cannot exceed {MaxExactContextInputCount} entries."
+            );
+        }
+        foreach (SessionRequestContextInput input in body.Plan.ExactContextInputs) {
+            ValidateExactContextInput(input);
             int populatedCarriers =
                 (string.IsNullOrWhiteSpace(input.ContextSnapshot.SystemPromptFragment) ? 0 : 1)
                 + (string.IsNullOrWhiteSpace(input.ContextSnapshot.ObservationMessage) ? 0 : 1)
                 + (string.IsNullOrWhiteSpace(input.ContextSnapshot.ActionMessage) ? 0 : 1);
             if (populatedCarriers != 1) {
                 throw new InvalidDataException(
-                    "Prepared v3 artifact contributions must populate exactly one contextSnapshot carrier."
-                );
-            }
-            if (!artifactIds.Add(input.ArtifactId)) {
-                throw new InvalidDataException(
-                    "Prepared v3 requires exact artifact ids to be unique."
+                    "Prepared v4 exact context inputs must populate exactly one contextSnapshot carrier."
                 );
             }
         }
@@ -152,33 +153,16 @@ internal static class SessionRequestManifestCodec {
         RequireSha256(body.Commitment.Sha256, "commitment.sha256");
     }
 
-    private static void ValidateArtifactInput(SessionRequestArtifactInput input) {
+    private static void ValidateExactContextInput(SessionRequestContextInput input) {
         ArgumentNullException.ThrowIfNull(input);
-        RequireText(input.ArtifactId, "plan.artifactInputs[].artifactId");
-        RequireText(input.ArtifactKind, "plan.artifactInputs[].artifactKind");
-        RequireSha256(input.ContentSha256, "plan.artifactInputs[].contentSha256");
+        RequireSha256(input.ContentSha256, "plan.exactContextInputs[].contentSha256");
         SessionArtifactContextSnapshotHasher.ValidateSnapshot(input.ContextSnapshot);
         string actualContentHash = SessionArtifactContextSnapshotHasher.ComputeSha256(input.ContextSnapshot);
         if (!string.Equals(input.ContentSha256, actualContentHash, StringComparison.Ordinal)) {
             throw new InvalidDataException(
-                "plan.artifactInputs[].contentSha256 does not match the exact materialized contextSnapshot."
+                "plan.exactContextInputs[].contentSha256 does not match the exact materialized contextSnapshot."
             );
         }
-    }
-
-    private static void ValidateArtifactSetReference(
-        SessionArtifactSetReference reference
-    ) {
-        _ = EventAddressTextCodec.Format(reference.Address);
-        if (reference.BodySchemaVersion <= 0) {
-            throw new InvalidDataException(
-                "plan.activeArtifactSet.bodySchemaVersion must be positive."
-            );
-        }
-        RequireSha256(
-            reference.PayloadSha256,
-            "plan.activeArtifactSet.payloadSha256"
-        );
     }
 
     private static void WriteOrigin(Utf8JsonWriter writer, SessionRequestOrigin value) {
@@ -201,11 +185,13 @@ internal static class SessionRequestManifestCodec {
             EventAddressTextCodec.Format(value.RawStartExclusive)
         );
         writer.WriteString("rawRangeSha256", value.RawRangeSha256);
-        writer.WriteStartArray("artifactInputs");
-        foreach (SessionRequestArtifactInput input in value.ArtifactInputs) {
+        writer.WriteStartObject("rawStartSetups");
+        WriteSetup(writer, "runtimeConfig", value.RawStartSetups.RuntimeConfig);
+        WriteSetup(writer, "systemPrompt", value.RawStartSetups.SystemPrompt);
+        writer.WriteEndObject();
+        writer.WriteStartArray("exactContextInputs");
+        foreach (SessionRequestContextInput input in value.ExactContextInputs) {
             writer.WriteStartObject();
-            writer.WriteString("artifactId", input.ArtifactId);
-            writer.WriteString("artifactKind", input.ArtifactKind);
             writer.WriteString("contentSha256", input.ContentSha256);
             writer.WriteStartObject("contextSnapshot");
             writer.WriteString("systemPromptFragment", input.ContextSnapshot.SystemPromptFragment);
@@ -215,7 +201,6 @@ internal static class SessionRequestManifestCodec {
             writer.WriteEndObject();
         }
         writer.WriteEndArray();
-        WriteArtifactSetReference(writer, value.ActiveArtifactSet);
         writer.WriteEndObject();
     }
 
@@ -307,63 +292,27 @@ internal static class SessionRequestManifestCodec {
             "plan",
             "rawStartExclusive",
             "rawRangeSha256",
-            "artifactInputs",
-            "activeArtifactSet"
+            "rawStartSetups",
+            "exactContextInputs"
         );
-        var artifacts = ReadArray(element, "artifactInputs")
-            .Select(ReadArtifactInput)
+        var exactContextInputs = ReadArray(element, "exactContextInputs")
+            .Select(ReadExactContextInput)
             .ToImmutableArray();
         return new SessionContextPlan(
             ReadRequiredAddress(element, "rawStartExclusive"),
             ReadRequiredString(element, "rawRangeSha256"),
-            artifacts,
-            ReadArtifactSetReference(element)
+            ReadSetups(ReadRequiredObject(element, "rawStartSetups")),
+            exactContextInputs
         );
     }
-
-    private static void WriteArtifactSetReference(
-        Utf8JsonWriter writer,
-        SessionArtifactSetReference reference
-    ) {
-        writer.WriteStartObject("activeArtifactSet");
-        writer.WriteString("address", EventAddressTextCodec.Format(reference.Address));
-        writer.WriteNumber("bodySchemaVersion", reference.BodySchemaVersion);
-        writer.WriteString("payloadSha256", reference.PayloadSha256);
-        writer.WriteEndObject();
-    }
-
-    private static SessionArtifactSetReference ReadArtifactSetReference(
-        JsonElement plan
-    ) {
-        if (!plan.TryGetProperty("activeArtifactSet", out JsonElement element)) {
-            throw new InvalidDataException("plan.activeArtifactSet is required.");
-        }
+    private static SessionRequestContextInput ReadExactContextInput(JsonElement element) {
         RequireExactProperties(
             element,
-            "active artifact set reference",
-            "address",
-            "bodySchemaVersion",
-            "payloadSha256"
-        );
-        return new SessionArtifactSetReference(
-            EventAddressTextCodec.Parse(ReadRequiredString(element, "address")),
-            ReadRequiredInt32(element, "bodySchemaVersion"),
-            ReadRequiredString(element, "payloadSha256")
-        );
-    }
-
-    private static SessionRequestArtifactInput ReadArtifactInput(JsonElement element) {
-        RequireExactProperties(
-            element,
-            "artifact input",
-            "artifactId",
-            "artifactKind",
+            "exact context input",
             "contentSha256",
             "contextSnapshot"
         );
         return new(
-            ReadRequiredString(element, "artifactId"),
-            ReadRequiredString(element, "artifactKind"),
             ReadRequiredString(element, "contentSha256"),
             ReadArtifactContextSnapshot(ReadRequiredObject(element, "contextSnapshot"))
         );

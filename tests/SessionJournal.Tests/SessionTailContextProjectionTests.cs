@@ -114,14 +114,10 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
         }
         Assert.Equal(SessionRequestManifestDefaults.RecipeId, manifest.Recipe.RecipeId);
         Assert.Equal(anchor, manifest.Plan.RawStartExclusive);
-        Assert.Equal(2, manifest.Plan.ArtifactInputs.Length);
+        Assert.Equal(2, manifest.Plan.ExactContextInputs.Length);
         Assert.Collection(
-            manifest.Plan.ArtifactInputs,
+            manifest.Plan.ExactContextInputs,
             observation => {
-                Assert.Equal(
-                    artifact.WorldUnderstanding.ArtifactId,
-                    observation.ArtifactId
-                );
                 Assert.Equal("", observation.ContextSnapshot.SystemPromptFragment);
                 Assert.Equal(
                     "## roleplay.world-understanding\n\nmemory observation",
@@ -130,10 +126,6 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
                 Assert.Equal("", observation.ContextSnapshot.ActionMessage);
             },
             autobiography => {
-                Assert.Equal(
-                    artifact.Autobiography.ArtifactId,
-                    autobiography.ArtifactId
-                );
                 Assert.Equal("", autobiography.ContextSnapshot.SystemPromptFragment);
                 Assert.Equal("", autobiography.ContextSnapshot.ObservationMessage);
                 Assert.Equal(
@@ -143,7 +135,7 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
             }
         );
         Assert.All(
-            manifest.Plan.ArtifactInputs,
+            manifest.Plan.ExactContextInputs,
             input => Assert.Equal(
                 SessionArtifactContextSnapshotHasher.ComputeSha256(input.ContextSnapshot),
                 input.ContentSha256
@@ -274,7 +266,7 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
             manifests,
             manifest => {
                 Assert.Equal(SessionRequestManifestDefaults.RecipeId, manifest.Recipe.RecipeId);
-                Assert.Equal(2, manifest.Plan.ArtifactInputs.Length);
+                Assert.Equal(2, manifest.Plan.ExactContextInputs.Length);
                 Assert.Single(manifest.ToolSet.Definitions);
                 Assert.Equal(TestToolRuntimeIdentity, manifest.ToolSet.RuntimeIdentity);
             }
@@ -1075,7 +1067,7 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
     }
 
     [Fact]
-    public async Task ResumeAsync_CrossBranchPreparedActivationReferenceIsRawCorruptionBeforeProvider() {
+    public async Task ResumeAsync_CrossBranchPreparedRawStartSetupIsRawCorruptionBeforeProvider() {
         string path = NewJournalPath();
         TestArtifactSet artifact;
         EventAddress mainActivation;
@@ -1112,7 +1104,6 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
             _ => throw new InvalidOperationException("must not call provider")
         );
         CompletionRequestPreparedBody validPreparedBody;
-        SessionArtifactSetReference offBranchReference;
         EventAddress validPrepared;
         using (var preparing = SessionJournalEngine.OpenForTest(
             path,
@@ -1135,10 +1126,6 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
                     out _
                 )
             );
-            offBranchReference = CreateArtifactSetReference(
-                preparing,
-                offBranchActivation
-            );
         }
         EventAddress forgedPrepared;
         using (var journal = EventJournal.EventJournal.OpenExisting(path)) {
@@ -1157,7 +1144,13 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
                 SessionEventKind.CompletionRequestPrepared,
                 validPreparedBody with {
                     Plan = validPreparedBody.Plan with {
-                        ActiveArtifactSet = offBranchReference
+                        RawStartSetups = validPreparedBody.Plan.RawStartSetups with {
+                            RuntimeConfig = new SessionSetupReference(
+                                offBranchActivation,
+                                1,
+                                new string('e', 64)
+                            )
+                        }
                     }
                 }
             );
@@ -1175,7 +1168,7 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
                 () => reopened.ResumeAsync(CancellationToken.None)
             );
 
-        Assert.Contains("latest activation", error.Message, StringComparison.Ordinal);
+        Assert.Contains("RuntimeConfigSetup", error.Message, StringComparison.Ordinal);
         Assert.Equal(forgedPrepared, reopened.ResolveExecutionTail().Head);
         Assert.Equal(projectionCount, reopened.FullProjectionInvocationCount);
         Assert.Empty(client.Requests);

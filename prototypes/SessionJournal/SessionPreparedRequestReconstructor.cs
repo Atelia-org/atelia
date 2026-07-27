@@ -90,6 +90,12 @@ internal static class SessionPreparedRequestReconstructor {
         cancellationToken.ThrowIfCancellationRequested();
         SessionRequestManifestCodec.Validate(manifest);
 
+        SessionGoverningSetup rawStartSetup = ReadSetupFromReferences(
+            reader,
+            manifest.Plan.RawStartExclusive,
+            manifest.Plan.RawStartSetups,
+            cancellationToken
+        );
         SessionRuntimeConfiguration runtimeConfig = ReadAndValidateSetupReference<SessionRuntimeConfiguration>(
             reader,
             manifest.Setups.RuntimeConfig,
@@ -111,30 +117,14 @@ internal static class SessionPreparedRequestReconstructor {
             manifest.Plan.RawRangeSha256,
             cancellationToken
         );
-        ArtifactSetCommittedBody activation =
-            ValidateActiveArtifactSetReference(reader, manifest, rawEvents);
-        SessionGoverningSetup coverageSeed = ReadSetupFromReferences(
-            reader,
-            activation.CommonAnchor,
-            activation.CoverageSetups,
-            cancellationToken
-        );
-        ValidateActivationCurrentSetups(
-            reader,
-            manifest.Plan.ActiveArtifactSet.Address,
-            activation,
-            rawEvents,
-            cancellationToken
-        );
-        CompletionRequest request = ReconstructCoherentArtifactTail(
+        CompletionRequest request = ReconstructExactContextTail(
             reader,
             manifest,
             authoritativeRawEndInclusive,
             runtimeConfig,
             systemPrompt.Content,
             rawEvents,
-            activation,
-            coverageSeed,
+            rawStartSetup,
             cancellationToken
         );
 
@@ -158,15 +148,14 @@ internal static class SessionPreparedRequestReconstructor {
         );
     }
 
-    private static CompletionRequest ReconstructCoherentArtifactTail(
+    private static CompletionRequest ReconstructExactContextTail(
         SessionJournalEventReader reader,
         CompletionRequestPreparedBody manifest,
         EventAddress rawEndInclusive,
         SessionRuntimeConfiguration referencedRuntime,
         string referencedSystemPrompt,
         IReadOnlyList<DecodedSessionEvent> rawEvents,
-        ArtifactSetCommittedBody activation,
-        SessionGoverningSetup coverageSeed,
+        SessionGoverningSetup rawStartSetup,
         CancellationToken cancellationToken
     ) {
         EventAddress rawStartExclusive = manifest.Plan.RawStartExclusive;
@@ -180,7 +169,7 @@ internal static class SessionPreparedRequestReconstructor {
                 or SessionEventKind.ToolResultObserved
             )) {
             throw new InvalidDataException(
-                "Coherent artifact-set tail boundary must be ObservationAccepted or a dependency-closed ToolResultObserved."
+                "Prepared v4 tail boundary must be ObservationAccepted or a dependency-closed ToolResultObserved."
             );
         }
         ValidateAttemptBoundary(
@@ -191,7 +180,7 @@ internal static class SessionPreparedRequestReconstructor {
 
         SessionTailContextProjection.TailFoldResult folded =
             SessionTailContextProjection.FoldSuffix(
-                coverageSeed,
+                rawStartSetup,
                 rawEvents,
                 seedRecovery
             );
@@ -205,15 +194,12 @@ internal static class SessionPreparedRequestReconstructor {
             || folded.ToolExecutionSequenceCheckpoint != finalRecovery.State.ToolExecutionSequenceCheckpoint
             || !string.Equals(folded.ActiveCorrelationId, finalRecovery.State.ActiveCorrelationId, StringComparison.Ordinal)) {
             throw new InvalidDataException(
-                "Coherent artifact-set tail fold does not match its pinned setup or exact final recovery."
+                "Prepared v4 tail fold does not match its pinned setup or exact final recovery."
             );
         }
 
         SessionRequestArtifactContextSnapshot aggregate =
-            SessionCoherentRequestRecipe.ValidateAndAggregate(
-                manifest.Plan.ArtifactInputs,
-                activation
-            );
+            SessionCoherentRequestRecipe.AggregateExactInputs(manifest.Plan.ExactContextInputs);
         (string expandedSystemPrompt, ImmutableArray<IHistoryMessage> snapshotContext) =
             SessionCoherentRequestRecipe.Expand(
                 referencedSystemPrompt,
@@ -278,61 +264,6 @@ internal static class SessionPreparedRequestReconstructor {
         }
     }
 
-    private static ArtifactSetCommittedBody ValidateActiveArtifactSetReference(
-        SessionJournalEventReader reader,
-        CompletionRequestPreparedBody manifest,
-        IReadOnlyList<DecodedSessionEvent> rawEvents
-    ) {
-        SessionArtifactSetReference reference = manifest.Plan.ActiveArtifactSet;
-        DecodedSessionEvent? latestActivation = null;
-        for (int i = rawEvents.Count - 1; i >= 0; i--) {
-            if (rawEvents[i].Kind == SessionEventKind.ArtifactSetCommitted) {
-                latestActivation = rawEvents[i];
-                break;
-            }
-        }
-        if (latestActivation is null) {
-            throw new InvalidDataException(
-                "Coherent artifact-tail raw range contains no active ArtifactSetCommitted event."
-            );
-        }
-        if (latestActivation.Value.Address != reference.Address) {
-            throw new InvalidDataException(
-                "Referenced active artifact set is not the latest activation on the authoritative raw request range."
-            );
-        }
-        using SessionJournalEventFrame frame = reader.ReadEvent(reference.Address).Unwrap();
-        ValidateSessionHeader(reference.Address, frame.Header);
-        if ((SessionEventKind)frame.Header.OpaqueEventKind
-            != SessionEventKind.ArtifactSetCommitted) {
-            throw new InvalidDataException(
-                "Active artifact-set reference does not point to ArtifactSetCommitted."
-            );
-        }
-        object decoded = SessionEventCodec.Decode(
-            SessionEventKind.ArtifactSetCommitted,
-            frame.Payload,
-            out int version
-        );
-        if (version != reference.BodySchemaVersion
-            || !string.Equals(
-                SessionRequestCanonicalizer.Sha256Hex(frame.Payload),
-                reference.PayloadSha256,
-                StringComparison.Ordinal
-            )) {
-            throw new InvalidDataException(
-                "Active artifact-set reference does not match exact raw bytes."
-            );
-        }
-        var activation = (ArtifactSetCommittedBody)decoded;
-        if (manifest.Plan.RawStartExclusive != activation.CommonAnchor) {
-            throw new InvalidDataException(
-                "Prepared plan.rawStartExclusive must equal the exact activation commonAnchor."
-            );
-        }
-        return activation;
-    }
-
     private static SessionGoverningSetup ReadSetupFromReferences(
         SessionJournalEventReader reader,
         EventAddress head,
@@ -359,76 +290,6 @@ internal static class SessionPreparedRequestReconstructor {
             runtime,
             references.SystemPrompt.Address,
             prompt.Content
-        );
-    }
-
-    private static void ValidateActivationCurrentSetups(
-        SessionJournalEventReader reader,
-        EventAddress activationAddress,
-        ArtifactSetCommittedBody activation,
-        IReadOnlyList<DecodedSessionEvent> rawEvents,
-        CancellationToken cancellationToken
-    ) {
-        SessionSetupReference runtime = activation.CoverageSetups.RuntimeConfig;
-        SessionSetupReference prompt = activation.CoverageSetups.SystemPrompt;
-        bool foundActivation = false;
-        foreach (DecodedSessionEvent ev in rawEvents) {
-            cancellationToken.ThrowIfCancellationRequested();
-            if (ev.Address == activationAddress) {
-                foundActivation = true;
-                break;
-            }
-            if (ev.Kind == SessionEventKind.RuntimeConfigSetup) {
-                runtime = ReadExactSetupReference(
-                    reader,
-                    ev.Address,
-                    SessionEventKind.RuntimeConfigSetup
-                );
-            }
-            else if (ev.Kind == SessionEventKind.SystemPromptSetup) {
-                prompt = ReadExactSetupReference(
-                    reader,
-                    ev.Address,
-                    SessionEventKind.SystemPromptSetup
-                );
-            }
-        }
-        if (!foundActivation) {
-            throw new InvalidDataException(
-                "Referenced active ArtifactSetCommitted is outside the authoritative raw range."
-            );
-        }
-
-        var expected = new SessionGoverningSetupReferences(runtime, prompt);
-        if (activation.CurrentSetups != expected) {
-            throw new InvalidDataException(
-                "ArtifactSetCommitted currentSetups do not match the exact setup stream folded from commonAnchor through its Parent."
-            );
-        }
-    }
-
-    private static SessionSetupReference ReadExactSetupReference(
-        SessionJournalEventReader reader,
-        EventAddress address,
-        SessionEventKind expectedKind
-    ) {
-        using SessionJournalEventFrame frame = reader.ReadEvent(address).Unwrap();
-        ValidateSessionHeader(address, frame.Header);
-        var actualKind = (SessionEventKind)frame.Header.OpaqueEventKind;
-        if (actualKind != expectedKind) {
-            throw new InvalidDataException(
-                $"Expected '{expectedKind}' setup at {address}, got '{actualKind}'."
-            );
-        }
-        _ = SessionEventCodec.Decode(
-            actualKind,
-            frame.Payload,
-            out int bodySchemaVersion
-        );
-        return new SessionSetupReference(
-            address,
-            bodySchemaVersion,
-            SessionRequestCanonicalizer.Sha256Hex(frame.Payload)
         );
     }
 

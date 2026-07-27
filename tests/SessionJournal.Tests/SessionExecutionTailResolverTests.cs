@@ -814,7 +814,7 @@ public sealed class SessionExecutionTailResolverTests : IDisposable {
             new ToolDefinition("alpha", "Alpha", new ToolSchema.Object()),
             new ToolDefinition("beta", "Beta", new ToolSchema.Object())
         ];
-        return PreparedV3Fixture.Create(
+        return PreparedV4Fixture.Create(
             correlation,
             reason,
             runtime,

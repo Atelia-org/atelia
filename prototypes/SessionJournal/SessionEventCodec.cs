@@ -90,7 +90,7 @@ internal static class SessionEventCodec {
             SessionEventKind.AgentActionProduced => 1,
             SessionEventKind.ToolExecutionStarted => 1,
             SessionEventKind.ToolResultObserved => 1,
-            SessionEventKind.CompletionRequestPrepared => 3,
+            SessionEventKind.CompletionRequestPrepared => 4,
             SessionEventKind.CompletionAttemptFailed => 2,
             SessionEventKind.ImportedAgentAction => 1,
             SessionEventKind.ArtifactSetCommitted => 1,

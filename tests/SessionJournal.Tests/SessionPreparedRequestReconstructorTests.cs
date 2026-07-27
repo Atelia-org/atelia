@@ -84,28 +84,27 @@ public sealed class SessionPreparedRequestReconstructorTests : IDisposable {
             scenario.RawEnd,
             [scenario.Created, .. scenario.RawAddresses]
         );
-        InvalidDataException anchorError = Assert.Throws<InvalidDataException>(
-            () => SessionPreparedRequestReconstructor.Reconstruct(
-                journal,
-                scenario.Manifest with {
-                    Plan = scenario.Manifest.Plan with {
-                        RawStartExclusive = promptParent,
-                        RawRangeSha256 = expandedHash
-                    }
-                },
-                scenario.RawEnd
-            )
+        _ = SessionPreparedRequestReconstructor.Reconstruct(
+            journal,
+            scenario.Manifest with {
+                Plan = scenario.Manifest.Plan with {
+                    RawStartExclusive = promptParent,
+                    RawRangeSha256 = expandedHash
+                }
+            },
+            scenario.RawEnd
         );
-        Assert.Contains("commonAnchor", anchorError.Message, StringComparison.Ordinal);
 
         Assert.Throws<InvalidDataException>(() =>
             SessionPreparedRequestReconstructor.Reconstruct(
                 journal,
                 scenario.Manifest with {
                     Plan = scenario.Manifest.Plan with {
-                        ArtifactInputs = [
-                            scenario.Manifest.Plan.ArtifactInputs[1],
-                            scenario.Manifest.Plan.ArtifactInputs[0]
+                        ExactContextInputs = [
+                            scenario.Manifest.Plan.ExactContextInputs[0] with {
+                                ContentSha256 = new string('0', 64)
+                            },
+                            scenario.Manifest.Plan.ExactContextInputs[1]
                         ]
                     }
                 },
@@ -190,7 +189,7 @@ public sealed class SessionPreparedRequestReconstructorTests : IDisposable {
     }
 
     [Fact]
-    public void Reconstruct_RejectsCorruptActivationCoverageAndCurrentExactReferences() {
+    public void Reconstruct_IgnoresCorruptLegacyActivationReferences() {
         string coveragePath = NewJournalPath();
         using (EventJournal.EventJournal journal = CreateJournal(coveragePath)) {
             Scenario scenario = CreateToolContinuationScenario(
@@ -204,12 +203,8 @@ public sealed class SessionPreparedRequestReconstructorTests : IDisposable {
                 }
             );
 
-            Assert.Throws<InvalidDataException>(() =>
-                SessionPreparedRequestReconstructor.Reconstruct(
-                    journal,
-                    scenario.Manifest,
-                    scenario.RawEnd
-                )
+            _ = SessionPreparedRequestReconstructor.Reconstruct(
+                journal, scenario.Manifest, scenario.RawEnd
             );
         }
 
@@ -226,17 +221,8 @@ public sealed class SessionPreparedRequestReconstructorTests : IDisposable {
                 }
             );
 
-            InvalidDataException error = Assert.Throws<InvalidDataException>(
-                () => SessionPreparedRequestReconstructor.Reconstruct(
-                    journal,
-                    scenario.Manifest,
-                    scenario.RawEnd
-                )
-            );
-            Assert.Contains(
-                "currentSetups",
-                error.Message,
-                StringComparison.Ordinal
+            _ = SessionPreparedRequestReconstructor.Reconstruct(
+                journal, scenario.Manifest, scenario.RawEnd
             );
         }
     }
@@ -354,47 +340,17 @@ public sealed class SessionPreparedRequestReconstructorTests : IDisposable {
     }
 
     [Fact]
-    public void CoherentRecipe_RejectsSnapshotCarrierMismatchAgainstActivationTarget() {
-        SessionRequestArtifactInput system = Artifact(
-            "system",
-            "kind",
-            new SessionRequestArtifactContextSnapshot("", "wrong carrier", "")
+    public void PreparedV4_RejectsMultiCarrierExactContextInput() {
+        CompletionRequestPreparedBody manifest = PreparedV4Fixture.Create(
+            "correlation", "observation", Address(1), Address(2), Address(3), Address(4),
+            "model", [], null
         );
-        SessionRequestArtifactInput world = Artifact(
-            "world",
-            "kind",
-            new SessionRequestArtifactContextSnapshot("", "world", "")
-        );
-        var activation = new ArtifactSetCommittedBody(
-            SessionRequestManifestDefaults.ActiveArtifactSetPolicyId,
-            SessionRequestManifestDefaults.ActiveArtifactSetPolicyFingerprint,
-            Address(1),
-            SetupReferences(),
-            SetupReferences(),
-            [
-                new SessionArtifactSetMember(
-                    "system",
-                    system.ArtifactId,
-                    system.ArtifactKind,
-                    new MemoryPackBlockPath(MemoryPackCarrier.System, "system"),
-                    system.ContentSha256
-                ),
-                new SessionArtifactSetMember(
-                    "world",
-                    world.ArtifactId,
-                    world.ArtifactKind,
-                    new MemoryPackBlockPath(MemoryPackCarrier.Observation, "world"),
-                    world.ContentSha256
-                )
-            ]
-        );
-
-        Assert.Throws<InvalidDataException>(() =>
-            SessionCoherentRequestRecipe.ValidateAndAggregate(
-                [system, world],
-                activation
-            )
-        );
+        SessionRequestContextInput first = manifest.Plan.ExactContextInputs[0];
+        Assert.Throws<InvalidDataException>(() => SessionRequestManifestCodec.Validate(
+            manifest with { Plan = manifest.Plan with {
+                ExactContextInputs = [first with { ContextSnapshot = new("a", "b", "") }, manifest.Plan.ExactContextInputs[1]]
+            }}
+        ));
     }
 
     [Fact]
@@ -513,10 +469,7 @@ public sealed class SessionPreparedRequestReconstructorTests : IDisposable {
         (string systemPrompt, ImmutableArray<IHistoryMessage> header) =
             SessionCoherentRequestRecipe.Expand(
                 "system-A",
-                SessionCoherentRequestRecipe.ValidateAndAggregate(
-                    inputs,
-                    activationBody
-                )
+                SessionCoherentRequestRecipe.Aggregate(inputs.Select(static input => input.ContextSnapshot).ToArray())
             );
         var initialContext = ImmutableArray.CreateBuilder<IHistoryMessage>();
         initialContext.AddRange(header);
@@ -670,14 +623,21 @@ public sealed class SessionPreparedRequestReconstructorTests : IDisposable {
         string reason,
         string correlation,
         long checkpoint
-    ) => new(
+    ) {
+        _ = activation;
+        return new(
         new SessionRequestOrigin(correlation, reason),
         new SessionExecutionCheckpoint(checkpoint),
         new SessionContextPlan(
             rawStart,
             ComputeRawRangeSha256(journal, rawStart, rawEnd, rawAddresses),
-            inputs,
-            activation
+            new SessionGoverningSetupReferences(
+                CreateSetupReference(journal, runtime),
+                CreateSetupReference(journal, prompt)
+            ),
+            inputs.Select(static input => new SessionRequestContextInput(
+                input.ContentSha256, input.ContextSnapshot
+            )).ToImmutableArray()
         ),
         new SessionGoverningSetupReferences(
             CreateSetupReference(journal, runtime),
@@ -705,7 +665,8 @@ public sealed class SessionPreparedRequestReconstructorTests : IDisposable {
             "api-A"
         ),
         SessionRequestCanonicalizer.CreateCommitment(request)
-    );
+        );
+    }
 
     private static SessionRequestArtifactInput Artifact(
         string artifactId,

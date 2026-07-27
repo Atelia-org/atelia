@@ -9,14 +9,8 @@ namespace Atelia.SessionJournal;
 /// candidate contract. Delete with the concrete provider cutover in DM-3; it is not a second policy.
 /// </summary>
 internal sealed class LegacyArtifactContextCandidateAdapter {
-    private readonly ImmutableDictionary<MemoryPackBlockPath, LegacyArtifactIdentity> _identities;
-
-    private LegacyArtifactContextCandidateAdapter(
-        SessionContextCandidate candidate,
-        ImmutableDictionary<MemoryPackBlockPath, LegacyArtifactIdentity> identities
-    ) {
+    private LegacyArtifactContextCandidateAdapter(SessionContextCandidate candidate) {
         Candidate = candidate;
-        _identities = identities;
     }
 
     public SessionContextCandidate Candidate { get; }
@@ -42,7 +36,6 @@ internal sealed class LegacyArtifactContextCandidateAdapter {
         }
 
         var contributions = ImmutableArray.CreateBuilder<SessionContextContribution>(artifacts.Length);
-        var identities = ImmutableDictionary.CreateBuilder<MemoryPackBlockPath, LegacyArtifactIdentity>();
         foreach (SessionArtifactSetMember member in active.Body.Members) {
             if (!artifactsById.TryGetValue(member.ArtifactId, out DerivedRecapArtifact? artifact)) {
                 throw new LegacyArtifactContextCandidateMismatchException(
@@ -77,16 +70,6 @@ internal sealed class LegacyArtifactContextCandidateAdapter {
                     exception
                 );
             }
-            if (!identities.TryAdd(
-                    artifact.Target,
-                    new LegacyArtifactIdentity(
-                        artifact.ArtifactId,
-                        artifact.ArtifactKind,
-                        member.ContentSha256
-                    )
-                )) {
-                throw new InvalidDataException("Active artifact-set members must have unique target blocks.");
-            }
             contributions.Add(new SessionContextContribution(
                 artifact.Target,
                 block.Text,
@@ -104,39 +87,7 @@ internal sealed class LegacyArtifactContextCandidateAdapter {
             ),
             contributions.ToImmutable()
         );
-        return new LegacyArtifactContextCandidateAdapter(candidate, identities.ToImmutable());
-    }
-
-    public ImmutableArray<SessionRequestArtifactInput> CreateV3ArtifactInputs(
-        ImmutableArray<SessionContextContribution> canonicalContributions,
-        ImmutableArray<SessionRequestArtifactContextSnapshot> contextSnapshots
-    ) {
-        if (canonicalContributions.Length != contextSnapshots.Length
-            || canonicalContributions.Length != _identities.Count) {
-            throw new InvalidDataException("Legacy artifact identity mapping does not match materialized candidate contributions.");
-        }
-
-        var inputs = ImmutableArray.CreateBuilder<SessionRequestArtifactInput>(contextSnapshots.Length);
-        for (int i = 0; i < contextSnapshots.Length; i++) {
-            SessionContextContribution contribution = canonicalContributions[i];
-            if (!_identities.TryGetValue(contribution.Target, out LegacyArtifactIdentity? identity)) {
-                throw new InvalidDataException("Materialized candidate target is not part of the legacy active artifact set.");
-            }
-            SessionRequestArtifactContextSnapshot snapshot = contextSnapshots[i];
-            string snapshotHash = SessionArtifactContextSnapshotHasher.ComputeSha256(snapshot);
-            if (!string.Equals(snapshotHash, identity.CommittedSnapshotSha256, StringComparison.Ordinal)) {
-                throw new InvalidDataException(
-                    $"Legacy artifact '{identity.ArtifactId}' does not match its committed context snapshot."
-                );
-            }
-            inputs.Add(new SessionRequestArtifactInput(
-                identity.ArtifactId,
-                identity.ArtifactKind,
-                snapshotHash,
-                snapshot
-            ));
-        }
-        return inputs.MoveToImmutable();
+        return new LegacyArtifactContextCandidateAdapter(candidate);
     }
 
     private static void ValidateLegacyArtifact(
@@ -164,11 +115,6 @@ internal sealed class LegacyArtifactContextCandidateAdapter {
         SessionSetupReference reference
     ) => new(reference.Address, reference.BodySchemaVersion, reference.PayloadSha256);
 
-    private sealed record LegacyArtifactIdentity(
-        string ArtifactId,
-        string ArtifactKind,
-        string CommittedSnapshotSha256
-    );
 }
 
 internal sealed class LegacyArtifactContextCandidateMismatchException : IOException {

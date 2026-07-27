@@ -290,6 +290,23 @@ internal sealed record SessionArtifactSetMember(
     string ContentSha256
 );
 
+/// <summary>
+/// Legacy raw ArtifactSetCommitted member snapshot. This remains through DM-4 and is deliberately
+/// outside CompletionRequestPrepared v4.
+/// </summary>
+internal sealed record SessionRequestArtifactInput(
+    string ArtifactId,
+    string ArtifactKind,
+    string ContentSha256,
+    SessionRequestArtifactContextSnapshot ContextSnapshot
+);
+
+internal sealed record SessionArtifactSetReference(
+    EventAddress Address,
+    int BodySchemaVersion,
+    string PayloadSha256
+);
+
 internal sealed record SessionActiveArtifactSet(
     EventAddress Address,
     EventAddress Parent,

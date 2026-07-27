@@ -506,34 +506,9 @@ public static class SessionJournalOfflineValidator {
                 continue;
             }
 
-            if (ev.Kind == SessionEventKind.CompletionRequestPrepared) {
-                CompletionRequestPreparedBody prepared =
-                    (CompletionRequestPreparedBody)ev.Body;
-                if (activeArtifactSet is null
-                    || prepared.Plan.ActiveArtifactSet
-                        != activeArtifactSet.Reference
-                    || prepared.Plan.RawStartExclusive
-                        != activeArtifactSet.Body.CommonAnchor) {
-                    throw new InvalidDataException(
-                        $"CompletionRequestPrepared at {ev.Address} does not reference the latest active ArtifactSetCommitted event and its common anchor."
-                    );
-                }
-                ValidatePreparedArtifactMemberAssertion(
-                    prepared,
-                    activeArtifactSet.Body
-                );
-            }
+            // Prepared v4 is self-contained.  Its exact raw-range/setup/context assertions are
+            // validated by SessionPreparedRequestReconstructor below, independently of raw kind 12.
         }
-    }
-
-    private static void ValidatePreparedArtifactMemberAssertion(
-        CompletionRequestPreparedBody prepared,
-        ArtifactSetCommittedBody activation
-    ) {
-        _ = SessionCoherentRequestRecipe.ValidateAndAggregate(
-            prepared.Plan.ArtifactInputs,
-            activation
-        );
     }
 
     private static void ValidatePreparedRequestReconstructions(

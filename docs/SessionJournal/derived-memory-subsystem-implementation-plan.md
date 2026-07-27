@@ -19,8 +19,8 @@ DerivedMemory 重构不能简化成“定义几个接口，然后把 `DerivedRec
 SessionJournal 仍在三个层面依赖 concrete derived shape：
 
 1. request materializer 直接接收 `DerivedRecapArtifact`；
-2. `CompletionRequestPrepared` 仍保存 exact raw `ActiveArtifactSet` reference 和 artifact ids；
-3. reconstructor 仍读取 raw `ArtifactSetCommitted` 取得 coverage seed 并验证 latest activation。
+2. `CompletionRequestPrepared` v4 已保存 self-contained exact context snapshots 与两端 setup refs；
+3. reconstructor 不再读取 raw `ArtifactSetCommitted`，而以 `RawStartSetups` 取得 suffix fold seed。
 
 若此时先物理搬文件，`SessionJournal.csproj` 就会被迫引用 concrete DerivedMemory 项目，依赖方向仍然
 错误。
@@ -62,12 +62,12 @@ DM-8  Online lifecycle + budgeted set selection
 当前主要入口：
 
 - `prototypes/SessionJournal/SessionRequestManifest.cs`
-  - `SessionContextPlan` 保存 `ArtifactInputs + ActiveArtifactSet`；
+  - `SessionContextPlan` 保存 `RawStartSetups + ExactContextInputs`；
   - artifact input 仍包含 `ArtifactId / ArtifactKind`。
 - `prototypes/SessionJournal/SessionPreparedRequestReconstructor.cs`
-  - exact reopen 会读取 `ArtifactSetCommitted`；
-  - coverage setup seed 来自 activation；
-  - 会验证 referenced activation 位于 authoritative raw range。
+  - exact reopen 只读取 Prepared 所钉死的 raw range、两端 setup refs 与 exact context inputs；
+  - fold seed 来自 `plan.rawStartSetups`；
+  - 不读取或验证 `ArtifactSetCommitted`。
 - `prototypes/SessionJournal/SessionTailContextProjection.cs`
   - `Materialize()` 直接接收 `ImmutableArray<DerivedRecapArtifact>`；
   - concrete artifact validation、raw suffix fold 和 request rendering 混在一起。
@@ -381,6 +381,15 @@ walk，header/decoded suffix 复杂度保持原有量级；legacy bridge 目前�
 - concrete adapter 有 focused equivalence tests。
 
 ## 7. DM-2：Self-contained Prepared v4
+
+### 实施状态（2026-07-28）
+
+已完成 v4 breaking wire cutover：`plan.rawStartSetups` 提供 anchor fold seed，
+`exactContextInputs` 仅保存已进入 request 的 one-hot snapshot/hash；Prepared 不再保存或反查
+activation、artifact/set/epoch id。旧 v3 明确因 body schema mismatch 被拒绝，不提供 compatibility
+decode、默认字段或 root replay fallback。raw kind 12 仍只服务 DM-2 至 DM-3 的 pre-Prepared legacy
+planning bridge；在这个短过渡期，跨过历史 Prepared 寻找它可能增加 header scan，DM-3 provider cutover
+必须紧接收口，不能把 activation hint 回塞进 v4。
 
 ### 目标
 

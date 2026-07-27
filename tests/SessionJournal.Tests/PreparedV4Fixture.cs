@@ -4,7 +4,7 @@ using Atelia.EventJournal;
 
 namespace Atelia.SessionJournal.Tests;
 
-internal static class PreparedV3Fixture {
+internal static class PreparedV4Fixture {
     public static CompletionRequestPreparedBody Create(
         string correlationId,
         string reason,
@@ -17,14 +17,11 @@ internal static class PreparedV3Fixture {
         SessionToolRuntimeIdentity? toolRuntimeIdentity,
         long checkpoint = 0
     ) {
-        SessionRequestArtifactInput system = Artifact(
-            "fixture-system",
-            "fixture",
+        _ = activeArtifactSetAddress;
+        SessionRequestContextInput system = ContextInput(
             new SessionRequestArtifactContextSnapshot("fixture system", "", "")
         );
-        SessionRequestArtifactInput observation = Artifact(
-            "fixture-observation",
-            "fixture",
+        SessionRequestContextInput observation = ContextInput(
             new SessionRequestArtifactContextSnapshot("", "fixture observation", "")
         );
         return new CompletionRequestPreparedBody(
@@ -33,12 +30,11 @@ internal static class PreparedV3Fixture {
             new SessionContextPlan(
                 rawStartExclusive,
                 new string('a', 64),
-                [system, observation],
-                new SessionArtifactSetReference(
-                    activeArtifactSetAddress,
-                    1,
-                    new string('e', 64)
-                )
+                new SessionGoverningSetupReferences(
+                    new SessionSetupReference(runtimeSetup, 1, new string('b', 64)),
+                    new SessionSetupReference(promptSetup, 1, new string('c', 64))
+                ),
+                [system, observation]
             ),
             new SessionGoverningSetupReferences(
                 new SessionSetupReference(runtimeSetup, 1, new string('b', 64)),
@@ -69,13 +65,9 @@ internal static class PreparedV3Fixture {
         );
     }
 
-    private static SessionRequestArtifactInput Artifact(
-        string artifactId,
-        string artifactKind,
+    private static SessionRequestContextInput ContextInput(
         SessionRequestArtifactContextSnapshot snapshot
     ) => new(
-        artifactId,
-        artifactKind,
         SessionArtifactContextSnapshotHasher.ComputeSha256(snapshot),
         snapshot
     );

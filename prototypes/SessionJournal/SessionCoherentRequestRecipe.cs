@@ -5,8 +5,9 @@ using Atelia.Completion.Abstractions;
 namespace Atelia.SessionJournal;
 
 /// <summary>
-/// Version-owned coherent artifact contribution ordering and expansion.
-/// ArtifactSet membership, lineage, and latest-selection policy remain outside this recipe.
+/// Version-owned exact request-context aggregation and expansion.
+/// Candidate selection, artifact membership, lineage, and latest-selection policy remain outside
+/// Prepared v4 execution recovery.
 /// </summary>
 internal static class SessionCoherentRequestRecipe {
     public static int GetCarrierRank(MemoryPackCarrier carrier)
@@ -19,41 +20,8 @@ internal static class SessionCoherentRequestRecipe {
             )
         };
 
-    public static SessionRequestArtifactContextSnapshot ValidateAndAggregate(
-        IReadOnlyList<SessionRequestArtifactInput> inputs,
-        ArtifactSetCommittedBody activation
-    ) {
-        ArgumentNullException.ThrowIfNull(inputs);
-        ArgumentNullException.ThrowIfNull(activation);
-        SessionArtifactSetMember[] canonicalMembers = [
-            .. activation.Members
-                .OrderBy(static member => GetCarrierRank(member.Target.Carrier))
-                .ThenBy(static member => member.Target.BlockKey, StringComparer.Ordinal)
-        ];
-        if (inputs.Count != canonicalMembers.Length) {
-            throw new InvalidDataException(
-                "Prepared artifact inputs do not exactly match the referenced activation."
-            );
-        }
-
-        for (int i = 0; i < canonicalMembers.Length; i++) {
-            SessionRequestArtifactInput input = inputs[i];
-            SessionArtifactSetMember member = canonicalMembers[i];
-            if (!string.Equals(input.ArtifactId, member.ArtifactId, StringComparison.Ordinal)
-                || !string.Equals(input.ArtifactKind, member.ArtifactKind, StringComparison.Ordinal)
-                || !string.Equals(input.ContentSha256, member.ContentSha256, StringComparison.Ordinal)
-                || GetSnapshotCarrier(input.ContextSnapshot) != member.Target.Carrier) {
-                throw new InvalidDataException(
-                    "Prepared artifact inputs do not match activation target order, identity, kind, hash, or carrier."
-                );
-            }
-        }
-
-        return Aggregate(inputs);
-    }
-
-    public static SessionRequestArtifactContextSnapshot Aggregate(
-        IReadOnlyList<SessionRequestArtifactInput> inputs
+    public static SessionRequestArtifactContextSnapshot AggregateExactInputs(
+        IReadOnlyList<SessionRequestContextInput> inputs
     ) => Aggregate([
         .. inputs.Select(static input => input.ContextSnapshot)
     ]);
@@ -131,19 +99,4 @@ internal static class SessionCoherentRequestRecipe {
             .Where(static value => !string.IsNullOrWhiteSpace(value))
     );
 
-    private static MemoryPackCarrier GetSnapshotCarrier(
-        SessionRequestArtifactContextSnapshot snapshot
-    ) {
-        bool hasSystem = !string.IsNullOrWhiteSpace(snapshot.SystemPromptFragment);
-        bool hasObservation = !string.IsNullOrWhiteSpace(snapshot.ObservationMessage);
-        bool hasAction = !string.IsNullOrWhiteSpace(snapshot.ActionMessage);
-        if ((hasSystem ? 1 : 0) + (hasObservation ? 1 : 0) + (hasAction ? 1 : 0) != 1) {
-            throw new InvalidDataException(
-                "A coherent artifact snapshot must populate exactly one carrier."
-            );
-        }
-        if (hasSystem) { return MemoryPackCarrier.System; }
-        if (hasObservation) { return MemoryPackCarrier.Observation; }
-        return MemoryPackCarrier.Action;
-    }
 }

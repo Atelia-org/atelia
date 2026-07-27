@@ -754,13 +754,7 @@ public sealed class SessionJournalEngineTests : IDisposable {
         );
         Assert.Equal(SessionRequestManifestDefaults.RecipeId, manifest.Recipe.RecipeId);
         Assert.Equal(activated.CommonAnchor, manifest.Plan.RawStartExclusive);
-        Assert.Equal(
-            activated.Activation,
-            Assert.IsType<SessionArtifactSetReference>(
-                manifest.Plan.ActiveArtifactSet
-            ).Address
-        );
-        Assert.Equal(2, manifest.Plan.ArtifactInputs.Length);
+        Assert.Equal(2, manifest.Plan.ExactContextInputs.Length);
         Assert.Equal(64, manifest.Plan.RawRangeSha256.Length);
         Assert.Equal("model-A", manifest.Parameters.ModelId);
         Assert.Empty(manifest.ToolSet.Definitions);

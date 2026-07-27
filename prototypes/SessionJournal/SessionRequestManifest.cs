@@ -20,13 +20,16 @@ internal sealed record SessionRequestOrigin(
 internal sealed record SessionContextPlan(
     EventAddress RawStartExclusive,
     string RawRangeSha256,
-    ImmutableArray<SessionRequestArtifactInput> ArtifactInputs,
-    SessionArtifactSetReference ActiveArtifactSet
+    SessionGoverningSetupReferences RawStartSetups,
+    ImmutableArray<SessionRequestContextInput> ExactContextInputs
 );
 
-internal sealed record SessionRequestArtifactInput(
-    string ArtifactId,
-    string ArtifactKind,
+/// <summary>
+/// An exact, already-rendered contribution to a prepared provider request.  This is an execution
+/// fact, not an artifact identity: it intentionally carries no derived-store, epoch, target, or
+/// renderer input provenance.
+/// </summary>
+internal sealed record SessionRequestContextInput(
     string ContentSha256,
     SessionRequestArtifactContextSnapshot ContextSnapshot
 );
@@ -35,12 +38,6 @@ internal sealed record SessionRequestArtifactContextSnapshot(
     string SystemPromptFragment,
     string ObservationMessage,
     string ActionMessage
-);
-
-internal sealed record SessionArtifactSetReference(
-    EventAddress Address,
-    int BodySchemaVersion,
-    string PayloadSha256
 );
 
 /// <summary>
@@ -97,6 +94,8 @@ internal sealed record SessionRequestCommitment(
 );
 
 internal static class SessionRequestManifestDefaults {
+    // Legacy raw ArtifactSetCommitted policy constants.  Keep through DM-4; Prepared v4 does not
+    // reference this policy.
     public const string ActiveArtifactSetPolicyId =
         "atelia.session-journal.active-artifact-set.v1";
     public const string ActiveArtifactSetPolicyFingerprint =

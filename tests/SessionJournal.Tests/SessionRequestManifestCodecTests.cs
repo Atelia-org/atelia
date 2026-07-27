@@ -9,15 +9,13 @@ namespace Atelia.SessionJournal.Tests;
 public sealed class SessionRequestManifestCodecTests {
     private static readonly EventAddress RawStart =
         EventAddressTextCodec.Parse("ej1:00000000000000010000000100000000");
-    private static readonly EventAddress Activation =
-        EventAddressTextCodec.Parse("ej1:00000000000000020000000100000000");
     private static readonly EventAddress RuntimeSetup =
         EventAddressTextCodec.Parse("ej1:00000000000000030000000100000000");
     private static readonly EventAddress PromptSetup =
         EventAddressTextCodec.Parse("ej1:00000000000000040000000100000000");
 
     [Fact]
-    public void CompletionRequestPreparedV3_RoundtripsCanonicalLiteralGolden() {
+    public void CompletionRequestPreparedV4_RoundtripsCanonicalLiteralGolden() {
         CompletionRequestPreparedBody body = CreateManifest();
 
         byte[] encoded = SessionEventCodec.Encode(
@@ -32,7 +30,7 @@ public sealed class SessionRequestManifestCodecTests {
             )
         );
 
-        Assert.Equal(3, version);
+        Assert.Equal(4, version);
         Assert.Equal(encoded, SessionEventCodec.Encode(
             SessionEventKind.CompletionRequestPrepared,
             decoded
@@ -41,10 +39,10 @@ public sealed class SessionRequestManifestCodecTests {
         Assert.Equal(body.Execution, decoded.Execution);
         Assert.Equal(body.Plan.RawStartExclusive, decoded.Plan.RawStartExclusive);
         Assert.Equal(body.Plan.RawRangeSha256, decoded.Plan.RawRangeSha256);
-        Assert.True(body.Plan.ArtifactInputs.SequenceEqual(
-            decoded.Plan.ArtifactInputs
+        Assert.True(body.Plan.ExactContextInputs.SequenceEqual(
+            decoded.Plan.ExactContextInputs
         ));
-        Assert.Equal(body.Plan.ActiveArtifactSet, decoded.Plan.ActiveArtifactSet);
+        Assert.Equal(body.Plan.RawStartSetups, decoded.Plan.RawStartSetups);
         Assert.Equal(body.Setups, decoded.Setups);
         Assert.Equal(body.Parameters, decoded.Parameters);
         Assert.Equal(body.ToolSet.Sha256, decoded.ToolSet.Sha256);
@@ -53,7 +51,7 @@ public sealed class SessionRequestManifestCodecTests {
         Assert.Equal(body.Commitment, decoded.Commitment);
         Assert.Equal(
             """
-            {"v":3,"body":{"origin":{"correlationId":"correlation-01","reason":"observation"},"execution":{"lastIssuedToolExecutionSequence":17},"plan":{"rawStartExclusive":"ej1:00000000000000010000000100000000","rawRangeSha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","artifactInputs":[{"artifactId":"artifact-system","artifactKind":"rolling-summary","contentSha256":"e6babf8c03395cef81dcfa83a6dbb4ec4a8892a9fe188a4b37d99123b79b67df","contextSnapshot":{"systemPromptFragment":"system recap","observationMessage":"","actionMessage":""}},{"artifactId":"artifact-world","artifactKind":"world-understanding","contentSha256":"60b37427fabe85d010aa6c32e7b5239eda1d3cc0472fc9a02ae6027f3aba4d02","contextSnapshot":{"systemPromptFragment":"","observationMessage":"world recap","actionMessage":""}}],"activeArtifactSet":{"address":"ej1:00000000000000020000000100000000","bodySchemaVersion":1,"payloadSha256":"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"}},"setups":{"runtimeConfig":{"address":"ej1:00000000000000030000000100000000","bodySchemaVersion":1,"payloadSha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},"systemPrompt":{"address":"ej1:00000000000000040000000100000000","bodySchemaVersion":1,"payloadSha256":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"}},"parameters":{"modelId":"model-A","maxTokens":4096},"toolSet":{"codecId":"atelia.tool-definition.canonical-json.v1","sha256":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","runtimeIdentity":null,"definitions":[]},"recipe":{"recipeId":"atelia.session-journal.coherent-artifact-tail.recipe.v1","canonicalRequestCodecId":"atelia.completion-request.canonical-json.v1"},"target":{"connection":{"connectionId":"connection-A","kind":"test","connectionFingerprint":"connection-fingerprint-A","requestAdapterFingerprint":"adapter-fingerprint-A"},"clientName":"client-A","apiSpecId":"api-A"},"commitment":{"byteLength":123,"sha256":"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"}}}
+            {"v":4,"body":{"origin":{"correlationId":"correlation-01","reason":"observation"},"execution":{"lastIssuedToolExecutionSequence":17},"plan":{"rawStartExclusive":"ej1:00000000000000010000000100000000","rawRangeSha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","rawStartSetups":{"runtimeConfig":{"address":"ej1:00000000000000030000000100000000","bodySchemaVersion":1,"payloadSha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},"systemPrompt":{"address":"ej1:00000000000000040000000100000000","bodySchemaVersion":1,"payloadSha256":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"}},"exactContextInputs":[{"contentSha256":"e6babf8c03395cef81dcfa83a6dbb4ec4a8892a9fe188a4b37d99123b79b67df","contextSnapshot":{"systemPromptFragment":"system recap","observationMessage":"","actionMessage":""}},{"contentSha256":"60b37427fabe85d010aa6c32e7b5239eda1d3cc0472fc9a02ae6027f3aba4d02","contextSnapshot":{"systemPromptFragment":"","observationMessage":"world recap","actionMessage":""}}]},"setups":{"runtimeConfig":{"address":"ej1:00000000000000030000000100000000","bodySchemaVersion":1,"payloadSha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},"systemPrompt":{"address":"ej1:00000000000000040000000100000000","bodySchemaVersion":1,"payloadSha256":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"}},"parameters":{"modelId":"model-A","maxTokens":4096},"toolSet":{"codecId":"atelia.tool-definition.canonical-json.v1","sha256":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","runtimeIdentity":null,"definitions":[]},"recipe":{"recipeId":"atelia.session-journal.coherent-artifact-tail.recipe.v1","canonicalRequestCodecId":"atelia.completion-request.canonical-json.v1"},"target":{"connection":{"connectionId":"connection-A","kind":"test","connectionFingerprint":"connection-fingerprint-A","requestAdapterFingerprint":"adapter-fingerprint-A"},"clientName":"client-A","apiSpecId":"api-A"},"commitment":{"byteLength":123,"sha256":"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"}}}
             """.Trim(),
             Encoding.UTF8.GetString(encoded)
         );
@@ -67,7 +65,7 @@ public sealed class SessionRequestManifestCodecTests {
     [InlineData("\"commitment\":{\"byteLength\":", "\"commitment\":{\"unknown\":true,\"byteLength\":")]
     [InlineData("\"correlationId\":\"correlation-01\",", "\"correlationId\":\"duplicate\",\"correlationId\":\"correlation-01\",")]
     [InlineData("\"recipeId\":\"atelia.session-journal.coherent-artifact-tail.recipe.v1\",", "\"recipeId\":\"duplicate\",\"recipeId\":\"atelia.session-journal.coherent-artifact-tail.recipe.v1\",")]
-    public void CompletionRequestPreparedV3_StrictDecodeRejectsUnknownOrDuplicateProperties(
+    public void CompletionRequestPreparedV4_StrictDecodeRejectsUnknownOrDuplicateProperties(
         string marker,
         string replacement
     ) {
@@ -79,8 +77,8 @@ public sealed class SessionRequestManifestCodecTests {
     [Theory]
     [InlineData("\"recipe\":{", "\"removedRecipe\":{")]
     [InlineData("\"rawStartExclusive\":", "\"removedRawStart\":")]
-    [InlineData("\"activeArtifactSet\":", "\"removedArtifactSet\":")]
-    public void CompletionRequestPreparedV3_StrictDecodeRejectsMissingRequiredProperties(
+    [InlineData("\"rawStartSetups\":", "\"removedRawStartSetups\":")]
+    public void CompletionRequestPreparedV4_StrictDecodeRejectsMissingRequiredProperties(
         string marker,
         string replacement
     ) {
@@ -108,26 +106,29 @@ public sealed class SessionRequestManifestCodecTests {
     }
 
     [Fact]
-    public void ManifestValidation_RequiresExactArtifactsAndToolRuntimeIdentity() {
+    public void ManifestValidation_RequiresExactContextInputsAndToolRuntimeIdentity() {
         CompletionRequestPreparedBody body = CreateManifest();
-        SessionRequestArtifactInput first = body.Plan.ArtifactInputs[0];
+        SessionRequestContextInput first = body.Plan.ExactContextInputs[0];
 
         Assert.Throws<InvalidDataException>(() => SessionRequestManifestCodec.Validate(
-            body with { Plan = body.Plan with { ArtifactInputs = [first] } }
+            body with { Plan = body.Plan with { ExactContextInputs = [] } }
         ));
+        SessionRequestManifestCodec.Validate(body with {
+            Plan = body.Plan with { ExactContextInputs = [first] }
+        });
         Assert.Throws<InvalidDataException>(() => SessionRequestManifestCodec.Validate(
             body with {
                 Plan = body.Plan with {
-                    ArtifactInputs = [first, first]
+                    ExactContextInputs = Enumerable.Repeat(first, 129).ToImmutableArray()
                 }
             }
         ));
         Assert.Throws<InvalidDataException>(() => SessionRequestManifestCodec.Validate(
             body with {
                 Plan = body.Plan with {
-                    ArtifactInputs = [
+                    ExactContextInputs = [
                         first with { ContentSha256 = new string('0', 64) },
-                        body.Plan.ArtifactInputs[1]
+                        body.Plan.ExactContextInputs[1]
                     ]
                 }
             }
@@ -191,7 +192,7 @@ public sealed class SessionRequestManifestCodecTests {
     }
 
     [Fact]
-    public void CompletionRequestPreparedV3_PreservesAbsentNullAndNumericToolDefaults() {
+    public void CompletionRequestPreparedV4_PreservesAbsentNullAndNumericToolDefaults() {
         CompletionRequestPreparedBody body = CreateManifest(
             CreateToolDefinitions()
         );
@@ -233,7 +234,7 @@ public sealed class SessionRequestManifestCodecTests {
     }
 
     [Fact]
-    public void CompletionRequestPreparedV3_RoundtripsComprehensiveNestedToolSchemasInOrder() {
+    public void CompletionRequestPreparedV4_RoundtripsComprehensiveNestedToolSchemasInOrder() {
         CompletionRequestPreparedBody body = CreateManifest(
             CreateComprehensiveToolDefinitions()
         );
@@ -425,7 +426,7 @@ public sealed class SessionRequestManifestCodecTests {
     }
 
     [Fact]
-    public void CompletionRequestPreparedV3_StrictDecodeRejectsNestedSnapshotAndToolSchemaDrift() {
+    public void CompletionRequestPreparedV4_StrictDecodeRejectsNestedSnapshotAndToolSchemaDrift() {
         string canonical = EncodeManifestJson(CreateToolDefinitions());
         (string Marker, string Replacement)[] mutations = [
             (
@@ -461,14 +462,10 @@ public sealed class SessionRequestManifestCodecTests {
         ImmutableArray<ToolDefinition>? requestedTools = null
     ) {
         ImmutableArray<ToolDefinition> tools = requestedTools ?? [];
-        SessionRequestArtifactInput system = Artifact(
-            "artifact-system",
-            "rolling-summary",
+        SessionRequestContextInput system = ContextInput(
             new SessionRequestArtifactContextSnapshot("system recap", "", "")
         );
-        SessionRequestArtifactInput world = Artifact(
-            "artifact-world",
-            "world-understanding",
+        SessionRequestContextInput world = ContextInput(
             new SessionRequestArtifactContextSnapshot("", "world recap", "")
         );
         return new CompletionRequestPreparedBody(
@@ -480,12 +477,11 @@ public sealed class SessionRequestManifestCodecTests {
             new SessionContextPlan(
                 RawStart,
                 new string('a', 64),
-                [system, world],
-                new SessionArtifactSetReference(
-                    Activation,
-                    1,
-                    new string('e', 64)
-                )
+                new SessionGoverningSetupReferences(
+                    new SessionSetupReference(RuntimeSetup, 1, new string('b', 64)),
+                    new SessionSetupReference(PromptSetup, 1, new string('c', 64))
+                ),
+                [system, world]
             ),
             new SessionGoverningSetupReferences(
                 new SessionSetupReference(
@@ -530,13 +526,9 @@ public sealed class SessionRequestManifestCodecTests {
         );
     }
 
-    private static SessionRequestArtifactInput Artifact(
-        string id,
-        string kind,
+    private static SessionRequestContextInput ContextInput(
         SessionRequestArtifactContextSnapshot snapshot
     ) => new(
-        id,
-        kind,
         SessionArtifactContextSnapshotHasher.ComputeSha256(snapshot),
         snapshot
     );

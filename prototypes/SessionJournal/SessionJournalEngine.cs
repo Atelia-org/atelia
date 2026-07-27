@@ -717,19 +717,16 @@ public sealed class SessionJournalEngine : IDisposable {
             candidate,
             cancellationToken
         );
-        ImmutableArray<SessionRequestArtifactInput> artifactInputs =
-            readyArtifactSet.Adapter.CreateV3ArtifactInputs(
-                candidate.CanonicalContributions,
-                tail.ContextSnapshots
-            );
         _lastTailProjectionDiagnostics = tail.Diagnostics;
         var materialization = new RequestContextMaterialization(
             tail.SystemPrompt,
             tail.Context,
             tail.RawStartExclusive,
             tail.RawRangeSha256,
-            artifactInputs,
-            activeArtifactSet.Reference
+            CreateSetupReferences(candidate.AnchorGoverningSetup),
+            tail.ContextSnapshots.Select(static snapshot => new SessionRequestContextInput(
+                SessionArtifactContextSnapshotHasher.ComputeSha256(snapshot), snapshot
+            )).ToImmutableArray()
         );
         var request = new CompletionRequest(
             ModelId: governingSetup.RuntimeConfig.ModelId,
@@ -1300,8 +1297,8 @@ public sealed class SessionJournalEngine : IDisposable {
             new SessionContextPlan(
                 RawStartExclusive: materialization.RawStartExclusive,
                 RawRangeSha256: materialization.RawRangeSha256,
-                ArtifactInputs: materialization.ArtifactInputs,
-                ActiveArtifactSet: materialization.ActiveArtifactSet
+                RawStartSetups: materialization.RawStartSetups,
+                ExactContextInputs: materialization.ExactContextInputs
             ),
             new SessionGoverningSetupReferences(
                 CreateSetupReference(governingSetup.RuntimeConfigSetupAddress, SessionEventKind.RuntimeConfigSetup),
@@ -1436,21 +1433,7 @@ public sealed class SessionJournalEngine : IDisposable {
             ValidateSessionHeaderPreview(address, header);
             var kind = (SessionEventKind)header.OpaqueEventKind;
             if (kind == SessionEventKind.ArtifactSetCommitted) {
-                return ReadActiveArtifactSet(address, expectedReference: null);
-            }
-            if (kind == SessionEventKind.CompletionRequestPrepared) {
-                using SessionJournalEventFrame frame = _reader.ReadEvent(address).Unwrap();
-                var manifest = (CompletionRequestPreparedBody)SessionEventCodec.Decode(
-                    kind,
-                    frame.Payload,
-                    out _
-                );
-                SessionArtifactSetReference reference =
-                    manifest.Plan.ActiveArtifactSet;
-                SessionActiveArtifactSet resolved =
-                    ReadActiveArtifactSet(reference.Address, reference);
-                ValidateManifestArtifactSetAssertion(manifest, resolved.Body);
-                return resolved;
+                return ReadActiveArtifactSet(address);
             }
             if (kind == SessionEventKind.SessionCreated) {
                 break;
@@ -1622,10 +1605,7 @@ public sealed class SessionJournalEngine : IDisposable {
         }
     }
 
-    private SessionActiveArtifactSet ReadActiveArtifactSet(
-        EventAddress address,
-        SessionArtifactSetReference? expectedReference
-    ) {
+    private SessionActiveArtifactSet ReadActiveArtifactSet(EventAddress address) {
         using SessionJournalEventFrame frame = _reader.ReadEvent(address).Unwrap();
         ValidateSessionHeaderPreview(address, frame.Header);
         if ((SessionEventKind)frame.Header.OpaqueEventKind
@@ -1644,11 +1624,6 @@ public sealed class SessionJournalEngine : IDisposable {
             version,
             SessionRequestCanonicalizer.Sha256Hex(frame.Payload)
         );
-        if (expectedReference is not null && expectedReference != reference) {
-            throw new InvalidDataException(
-                "Prepared active artifact-set reference does not match exact raw bytes."
-            );
-        }
         return new SessionActiveArtifactSet(
             address,
             frame.Header.Parent
@@ -1657,21 +1632,6 @@ public sealed class SessionJournalEngine : IDisposable {
                 ),
             (ArtifactSetCommittedBody)decoded,
             reference
-        );
-    }
-
-    private static void ValidateManifestArtifactSetAssertion(
-        CompletionRequestPreparedBody manifest,
-        ArtifactSetCommittedBody activation
-    ) {
-        if (manifest.Plan.RawStartExclusive != activation.CommonAnchor) {
-            throw new InvalidDataException(
-                "Prepared plan.rawStartExclusive does not match its asserted ArtifactSet commonAnchor."
-            );
-        }
-        _ = SessionCoherentRequestRecipe.ValidateAndAggregate(
-            manifest.Plan.ArtifactInputs,
-            activation
         );
     }
 
@@ -1958,8 +1918,8 @@ public sealed class SessionJournalEngine : IDisposable {
         IReadOnlyList<IHistoryMessage> Context,
         EventAddress RawStartExclusive,
         string RawRangeSha256,
-        ImmutableArray<SessionRequestArtifactInput> ArtifactInputs,
-        SessionArtifactSetReference ActiveArtifactSet
+        SessionGoverningSetupReferences RawStartSetups,
+        ImmutableArray<SessionRequestContextInput> ExactContextInputs
     );
 
     private sealed record ReadyActiveArtifactSet(

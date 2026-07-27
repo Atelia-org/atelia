@@ -9,7 +9,7 @@ public sealed class SessionJournalOfflineValidatorTests : IDisposable {
     private readonly List<string> _paths = [];
 
     [Fact]
-    public async Task RejectsPreparedThatReferencesSupersededActivation() {
+    public async Task AcceptsPreparedIndependentOfSupersededActivation() {
         string path = NewPath();
         EventAddress activationA;
         using (EventJournal.EventJournal journal = CreateJournal(path)) {
@@ -68,17 +68,7 @@ public sealed class SessionJournalOfflineValidatorTests : IDisposable {
             );
         }
 
-        InvalidDataException error =
-            await Assert.ThrowsAsync<InvalidDataException>(
-                async () => await SessionJournalOfflineValidator.ValidateAsync(
-                    path
-                )
-            );
-        Assert.Contains(
-            "latest active",
-            error.Message,
-            StringComparison.Ordinal
-        );
+        _ = await SessionJournalOfflineValidator.ValidateAsync(path);
     }
 
     [Fact]
@@ -275,7 +265,7 @@ public sealed class SessionJournalOfflineValidatorTests : IDisposable {
     ) {
         SessionRequestArtifactContextSnapshot aggregate =
             SessionCoherentRequestRecipe.Aggregate(
-                artifactInputs
+                artifactInputs.Select(static input => input.ContextSnapshot).ToArray()
             );
         (string systemPrompt, ImmutableArray<IHistoryMessage> headerContext) =
             SessionCoherentRequestRecipe.Expand(
@@ -294,6 +284,7 @@ public sealed class SessionJournalOfflineValidatorTests : IDisposable {
         SessionRequestCommitment commitment =
             SessionRequestCanonicalizer.CreateCommitment(request);
         string reason = "observation";
+        _ = activeArtifactSet;
         return new CompletionRequestPreparedBody(
             new SessionRequestOrigin(
                 $"atelia.session-journal.turn.v1:{EventAddressTextCodec.Format(rawEndInclusive)}",
@@ -308,8 +299,13 @@ public sealed class SessionJournalOfflineValidatorTests : IDisposable {
                     rawEndInclusive,
                     rawAddresses
                 ),
-                artifactInputs,
-                activeArtifactSet
+                new SessionGoverningSetupReferences(
+                    CreateSetupReference(journal, runtime),
+                    CreateSetupReference(journal, prompt)
+                ),
+                artifactInputs.Select(static input => new SessionRequestContextInput(
+                    input.ContentSha256, input.ContextSnapshot
+                )).ToImmutableArray()
             ),
             new SessionGoverningSetupReferences(
                 CreateSetupReference(journal, runtime),

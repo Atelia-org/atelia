@@ -18,7 +18,7 @@ public sealed class SessionEventBodySchemaVersionTests {
     }
 
     [Fact]
-    public void ExpectedVersionMap_DefinesPreparedV3FailureV2AndV1ForOtherKinds() {
+    public void ExpectedVersionMap_DefinesPreparedV4FailureV2AndV1ForOtherKinds() {
         SessionEventKind[] kinds = Enum.GetValues<SessionEventKind>();
 
         Assert.NotEmpty(kinds);
@@ -74,7 +74,21 @@ public sealed class SessionEventBodySchemaVersionTests {
         );
 
         Assert.Contains("actual=2", error.Message, StringComparison.Ordinal);
-        Assert.Contains("expected=3", error.Message, StringComparison.Ordinal);
+        Assert.Contains("expected=4", error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void PreparedV3_IsUnsupportedBeforeMalformedBodyIsParsed() {
+        var error = Assert.Throws<NotSupportedException>(() =>
+            SessionEventCodec.Decode(
+                SessionEventKind.CompletionRequestPrepared,
+                """{"v":3,"body":"malformed-v3"}"""u8,
+                out _
+            )
+        );
+
+        Assert.Contains("actual=3", error.Message, StringComparison.Ordinal);
+        Assert.Contains("expected=4", error.Message, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -108,7 +122,7 @@ public sealed class SessionEventBodySchemaVersionTests {
 
     private static int ExpectedVersion(SessionEventKind kind)
         => kind switch {
-            SessionEventKind.CompletionRequestPrepared => 3,
+            SessionEventKind.CompletionRequestPrepared => 4,
             SessionEventKind.CompletionAttemptFailed => 2,
             _ => 1
         };
