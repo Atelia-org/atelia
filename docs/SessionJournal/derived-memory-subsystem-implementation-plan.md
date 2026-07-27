@@ -332,6 +332,22 @@ concrete store 类型。
 让 SessionJournal request materializer 只消费 normalized candidate，不再认识
 `DerivedRecapArtifact` / `DerivedRecapStore`。
 
+### 实施状态（2026-07-28）
+
+已完成：
+
+- `ValidatedSessionContextCandidate` 现冻结 completion boundary、canonical contributions、
+  anchor setup、一次 lineage walk 的 chronological suffix addresses（exclusive anchor / inclusive
+  boundary）及 header diagnostics；materializer 直接消费它，不重复 Parent walk；
+- `SessionTailContextProjection` 不再引用 DerivedRecap 类型；raw block text 由 core 的
+  `CreateOneHotSnapshot()` 通过既有 singleton `MemoryPack.Render()` recipe 变为 request snapshot；
+- `LegacyArtifactContextCandidateAdapter` 是唯一 kind-12/store → candidate bridge，明确标注 DM-3
+  删除；它继续验证 Produced、artifact/source coverage、governing setup、member identity、target block
+  与 v3 snapshot hash，并保留 per-member not-ready artifact id；
+- Prepared v3 仍由 adapter 在 core-rendered snapshots 上重建 legacy `ArtifactInputs`，因而 wire 与
+  canonical request 不变。DM-0 text hash 约束 raw block text；v3 snapshot hash 约束含 carrier fields
+  与 request rendering 的最终 snapshot，二者刻意独立。
+
 ### 主要落点
 
 - 拆分 `SessionTailContextProjection`：

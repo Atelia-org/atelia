@@ -1631,7 +1631,7 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
                 .OrderBy(static item => item.RoleId, StringComparer.Ordinal)
                 .Select(static item => {
                     SessionRequestArtifactInput input =
-                        SessionTailContextProjection.CreateArtifactInput(
+                        LegacyArtifactContextCandidateAdapter.CreateLegacyArtifactInput(
                             item.Artifact
                         );
                     return new SessionArtifactSetMember(

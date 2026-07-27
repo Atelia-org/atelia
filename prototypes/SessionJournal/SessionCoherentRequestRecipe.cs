@@ -54,11 +54,49 @@ internal static class SessionCoherentRequestRecipe {
 
     public static SessionRequestArtifactContextSnapshot Aggregate(
         IReadOnlyList<SessionRequestArtifactInput> inputs
+    ) => Aggregate([
+        .. inputs.Select(static input => input.ContextSnapshot)
+    ]);
+
+    public static SessionRequestArtifactContextSnapshot Aggregate(
+        IReadOnlyList<SessionRequestArtifactContextSnapshot> snapshots
     ) => new(
-        JoinSnapshotField(inputs, static snapshot => snapshot.SystemPromptFragment),
-        JoinSnapshotField(inputs, static snapshot => snapshot.ObservationMessage),
-        JoinSnapshotField(inputs, static snapshot => snapshot.ActionMessage)
+        JoinSnapshotField(snapshots, static snapshot => snapshot.SystemPromptFragment),
+        JoinSnapshotField(snapshots, static snapshot => snapshot.ObservationMessage),
+        JoinSnapshotField(snapshots, static snapshot => snapshot.ActionMessage)
     );
+
+    /// <summary>
+    /// Renders one raw derived block through the core-owned MemoryPack recipe. Providers never supply
+    /// request-format decoration such as block headings.
+    /// </summary>
+    public static SessionRequestArtifactContextSnapshot CreateOneHotSnapshot(
+        MemoryPackBlockPath target,
+        string exactText
+    ) {
+        ArgumentNullException.ThrowIfNull(target);
+        ArgumentNullException.ThrowIfNull(exactText);
+        var singleton = new MemoryPack();
+        singleton.GetCarrier(target.Carrier).Add(
+            target.BlockKey,
+            new MemoryPackBlock(exactText)
+        );
+        RenderedMemoryPack rendered = singleton.Render();
+        return target.Carrier switch {
+            MemoryPackCarrier.System => new SessionRequestArtifactContextSnapshot(
+                rendered.SystemPromptFragment, "", ""
+            ),
+            MemoryPackCarrier.Observation => new SessionRequestArtifactContextSnapshot(
+                "", rendered.ObservationMessage, ""
+            ),
+            MemoryPackCarrier.Action => new SessionRequestArtifactContextSnapshot(
+                "", "", rendered.ActionMessage
+            ),
+            _ => throw new InvalidDataException(
+                $"Unsupported coherent request carrier '{target.Carrier}'."
+            )
+        };
+    }
 
     public static (
         string SystemPrompt,
@@ -85,11 +123,11 @@ internal static class SessionCoherentRequestRecipe {
     }
 
     private static string JoinSnapshotField(
-        IReadOnlyList<SessionRequestArtifactInput> inputs,
+        IReadOnlyList<SessionRequestArtifactContextSnapshot> snapshots,
         Func<SessionRequestArtifactContextSnapshot, string> selector
     ) => string.Join(
         "\n\n",
-        inputs.Select(input => selector(input.ContextSnapshot))
+        snapshots.Select(selector)
             .Where(static value => !string.IsNullOrWhiteSpace(value))
     );
 

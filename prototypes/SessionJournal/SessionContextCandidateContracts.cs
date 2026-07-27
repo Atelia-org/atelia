@@ -112,7 +112,10 @@ public static class SessionContextContributionHasher {
 /// authoritative anchor setup and canonical contribution order.
 /// </summary>
 internal sealed record ValidatedSessionContextCandidate(
+    EventAddress CompletionBoundary,
     EventAddress RawStartExclusive,
     SessionGoverningSetup AnchorGoverningSetup,
-    ImmutableArray<SessionContextContribution> CanonicalContributions
+    ImmutableArray<SessionContextContribution> CanonicalContributions,
+    ImmutableArray<EventAddress> SuffixAddresses,
+    int HeaderVisitCount
 );

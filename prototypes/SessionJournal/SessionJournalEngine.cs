@@ -354,7 +354,7 @@ public sealed class SessionJournalEngine : IDisposable {
                 .OrderBy(static item => item.RoleId, StringComparer.Ordinal)
                 .Select(static item => {
                     SessionRequestArtifactInput input =
-                        SessionTailContextProjection.CreateArtifactInput(
+                        LegacyArtifactContextCandidateAdapter.CreateLegacyArtifactInput(
                             item.Artifact
                         );
                     return new SessionArtifactSetMember(
@@ -699,24 +699,36 @@ public sealed class SessionJournalEngine : IDisposable {
             cancellationToken
         ).ConfigureAwait(false);
         SessionActiveArtifactSet activeArtifactSet = readyArtifactSet.Active;
+        SessionGoverningSetup anchorSetup = ReadSetupFromReferences(
+            activeArtifactSet.Body.CommonAnchor,
+            activeArtifactSet.Body.CoverageSetups
+        );
+        ValidatedSessionContextCandidate candidate =
+            SessionContextCandidateValidator.Validate(
+                _reader,
+                completionBoundary,
+                anchorSetup,
+                readyArtifactSet.Adapter.Candidate,
+                cancellationToken
+            );
         SessionTailContextProjectionResult tail = SessionTailContextProjection.Materialize(
             _reader,
-            completionBoundary,
             governingSetup,
-            ReadSetupFromReferences(
-                activeArtifactSet.Body.CommonAnchor,
-                activeArtifactSet.Body.CoverageSetups
-            ),
-            readyArtifactSet.Artifacts,
+            candidate,
             cancellationToken
         );
+        ImmutableArray<SessionRequestArtifactInput> artifactInputs =
+            readyArtifactSet.Adapter.CreateV3ArtifactInputs(
+                candidate.CanonicalContributions,
+                tail.ContextSnapshots
+            );
         _lastTailProjectionDiagnostics = tail.Diagnostics;
         var materialization = new RequestContextMaterialization(
             tail.SystemPrompt,
             tail.Context,
             tail.RawStartExclusive,
             tail.RawRangeSha256,
-            tail.ArtifactInputs,
+            artifactInputs,
             activeArtifactSet.Reference
         );
         var request = new CompletionRequest(
@@ -1487,59 +1499,33 @@ public sealed class SessionJournalEngine : IDisposable {
                     member.ArtifactId
                 );
 
-            SessionRequestArtifactInput contribution;
-            try {
-                contribution =
-                    SessionTailContextProjection.CreateArtifactInput(artifact);
-            }
-            catch (InvalidDataException ex) {
-                throw new SessionJournalNotReadyException(
-                    SessionJournalNotReadyReason.ArtifactSetMemberMismatch,
-                    $"Active artifact-set member '{member.ArtifactId}' cannot produce its committed context contribution: {ex.Message}",
-                    member.ArtifactId
-                );
-            }
-
-            bool exactIdentityMatches =
-                string.Equals(
-                    artifact.ArtifactId,
-                    member.ArtifactId,
-                    StringComparison.Ordinal
-                )
-                && string.Equals(
-                    artifact.ArtifactKind,
-                    member.ArtifactKind,
-                    StringComparison.Ordinal
-                )
-                && artifact.Target == member.Target
-                && artifact.AnchorRawEvent == active.Body.CommonAnchor
-                && artifact.SourceEndInclusive == active.Body.CommonAnchor
-                && artifact.GoverningRuntimeConfigSetup
-                    == active.Body.CoverageSetups.RuntimeConfig.Address
-                && artifact.GoverningSystemPromptSetup
-                    == active.Body.CoverageSetups.SystemPrompt.Address
-                && string.Equals(
-                    contribution.ContentSha256,
-                    member.ContentSha256,
-                    StringComparison.Ordinal
-                );
-            if (!exactIdentityMatches) {
-                throw new SessionJournalNotReadyException(
-                    SessionJournalNotReadyReason.ArtifactSetMemberMismatch,
-                    $"Active artifact-set member '{member.ArtifactId}' does not match its committed identity, coverage, or context contribution.",
-                    member.ArtifactId
-                );
-            }
-            ValidateArtifactSourceHead(allowedSourceHeads, artifact);
             artifacts.Add(artifact);
         }
         ImmutableArray<DerivedRecapArtifact> readyArtifacts =
             artifacts.MoveToImmutable();
-        SessionTailContextProjection.ValidateReplaySafeBoundary(
-            _reader,
-            active.Body.CommonAnchor
-        );
-        return new ReadyActiveArtifactSet(active, readyArtifacts);
+        try {
+            return new ReadyActiveArtifactSet(
+                active,
+                LegacyArtifactContextCandidateAdapter.Create(
+                    active,
+                    readyArtifacts,
+                    allowedSourceHeads
+                )
+            );
+        }
+        catch (LegacyArtifactContextCandidateMismatchException ex) {
+            throw new SessionJournalNotReadyException(
+                SessionJournalNotReadyReason.ArtifactSetMemberMismatch,
+                $"Active artifact set cannot produce its exact context candidate: {ex.Message}",
+                ex.ArtifactId
+            );
+        }
+        catch (InvalidDataException ex) {
+            throw new SessionJournalNotReadyException(
+                SessionJournalNotReadyReason.ArtifactSetMemberMismatch,
+                $"Active artifact set cannot produce its exact context candidate: {ex.Message}"
+            );
+        }
     }
 
     private void ValidateActiveArtifactSetRawLineage(
@@ -1970,7 +1956,7 @@ public sealed class SessionJournalEngine : IDisposable {
 
     private sealed record ReadyActiveArtifactSet(
         SessionActiveArtifactSet Active,
-        ImmutableArray<DerivedRecapArtifact> Artifacts
+        LegacyArtifactContextCandidateAdapter Adapter
     );
 
     private sealed record CommittedCompletionResult(

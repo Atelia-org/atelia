@@ -51,7 +51,7 @@ internal static class SessionContextCandidateValidator {
             }
             sourceHeads.Add(contribution.SourceRawHead);
         }
-        ValidateAnchorAncestryAndSourceHeads(
+        ValidatedRawInterval interval = ValidateAnchorAncestryAndSourceHeads(
             reader,
             completionBoundary,
             candidate.RawStartExclusive,
@@ -63,9 +63,12 @@ internal static class SessionContextCandidateValidator {
         ValidateAnchorSetupReferences(reader, candidate.AnchorSetups, anchorGoverningSetup);
 
         return new ValidatedSessionContextCandidate(
+            completionBoundary,
             candidate.RawStartExclusive,
             anchorGoverningSetup,
-            NormalizeContributions(contributions)
+            NormalizeContributions(contributions),
+            interval.SuffixAddresses,
+            interval.HeaderVisitCount
         );
     }
 
@@ -88,17 +91,20 @@ internal static class SessionContextCandidateValidator {
         return builder.ToImmutable();
     }
 
-    private static void ValidateAnchorAncestryAndSourceHeads(
+    private static ValidatedRawInterval ValidateAnchorAncestryAndSourceHeads(
         SessionJournalEventReader reader,
         EventAddress completionBoundary,
         EventAddress anchor,
         HashSet<EventAddress> sourceHeads,
         CancellationToken cancellationToken
     ) {
+        var reverseSuffix = new List<EventAddress>();
+        int headerVisitCount = 0;
         EventAddress? cursor = completionBoundary;
         while (cursor is { } address) {
             cancellationToken.ThrowIfCancellationRequested();
             EventFrameHeader header = reader.ReadEventHeaderPreview(address).Unwrap();
+            headerVisitCount++;
             ValidateSessionHeader(address, header);
             sourceHeads.Remove(address);
             if (address == anchor) {
@@ -107,8 +113,13 @@ internal static class SessionContextCandidateValidator {
                         "At least one context contribution sourceRawHead is not on the authoritative interval from anchor through completionBoundary."
                     );
                 }
-                return;
+                reverseSuffix.Reverse();
+                return new ValidatedRawInterval(
+                    [.. reverseSuffix],
+                    headerVisitCount
+                );
             }
+            reverseSuffix.Add(address);
             cursor = header.Parent;
         }
 
@@ -222,4 +233,9 @@ internal static class SessionContextCandidateValidator {
             throw new InvalidDataException($"Invalid SessionJournal event header at {address}.");
         }
     }
+
+    private sealed record ValidatedRawInterval(
+        ImmutableArray<EventAddress> SuffixAddresses,
+        int HeaderVisitCount
+    );
 }

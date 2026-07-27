@@ -44,6 +44,11 @@ public sealed class SessionContextCandidateContractTests : IDisposable {
         Assert.Equal(fixture.Anchor, validated.RawStartExclusive);
         Assert.Equal(fixture.Anchor, validated.AnchorGoverningSetup.Head);
         Assert.Collection(
+            validated.SuffixAddresses,
+            address => Assert.Equal(fixture.Boundary, address)
+        );
+        Assert.Equal(2, validated.HeaderVisitCount);
+        Assert.Collection(
             validated.CanonicalContributions,
             observation => Assert.Equal(MemoryPackCarrier.Observation, observation.Target.Carrier),
             action => Assert.Equal(MemoryPackCarrier.Action, action.Target.Carrier)
