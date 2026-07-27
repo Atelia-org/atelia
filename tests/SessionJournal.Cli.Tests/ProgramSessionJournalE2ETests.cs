@@ -2,7 +2,7 @@ using System.Text.Json;
 using Atelia.Completion;
 using Atelia.Completion.Abstractions;
 using Atelia.SessionJournal;
-using Atelia.SessionJournal.Derived;
+using Atelia.SessionJournal.DerivedMemory;
 using Atelia.SessionJournal.Cli;
 using SJ = Atelia.SessionJournal;
 using Xunit;
@@ -99,7 +99,7 @@ public sealed class ProgramSessionJournalE2ETests : IDisposable {
             ReadCallLogCommand(firstCallLogPath)
         );
 
-        var store = DerivedRecapStore.Open(repoPath);
+        var store = DerivedMemoryRepository.Open(repoPath).Recaps;
         DerivedRecapArtifact? firstArtifact = await store.TryReadArtifactAsync(firstRecord.ArtifactId);
         Assert.NotNull(firstArtifact);
         Assert.Equal(DerivedRecapArtifactKinds.RollingSummary, firstArtifact.ArtifactKind);
@@ -171,7 +171,7 @@ public sealed class ProgramSessionJournalE2ETests : IDisposable {
             "run-memory-maintainer",
             ReadCallLogCommand(regeneratedCallLogPath)
         );
-        var regeneratedStore = DerivedRecapStore.Open(repoPath);
+        var regeneratedStore = DerivedMemoryRepository.Open(repoPath).Recaps;
         DerivedRecapArtifact? regeneratedArtifact = await regeneratedStore.TryReadArtifactAsync(
             regeneratedRecord.ArtifactId
         );

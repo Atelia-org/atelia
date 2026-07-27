@@ -132,11 +132,6 @@ public sealed record SessionContextSelectionOptions(
     }
 }
 
-public sealed record SessionArtifactSetMemberSelection(
-    string RoleId,
-    string ArtifactId
-);
-
 public sealed record TurnResult(
     ActionMessage Message,
     CompletionDescriptor Invocation,
@@ -158,11 +153,6 @@ public sealed record ResumeOutcome(
 public enum SessionJournalNotReadyReason {
     ContextCandidateSourceRequired,
     ContextCandidateUnavailable,
-
-    // Transitional legacy reasons. DM-3B removes the raw ArtifactSetCommitted online path.
-    ActiveArtifactSetRequired,
-    ArtifactSetMemberUnavailable,
-    ArtifactSetMemberMismatch,
 }
 
 /// <summary>
@@ -172,16 +162,12 @@ public enum SessionJournalNotReadyReason {
 public sealed class SessionJournalNotReadyException : InvalidOperationException {
     public SessionJournalNotReadyException(
         SessionJournalNotReadyReason reason,
-        string message,
-        string? artifactId = null
+        string message
     ) : base(message) {
         Reason = reason;
-        ArtifactId = artifactId;
     }
 
     public SessionJournalNotReadyReason Reason { get; }
-
-    public string? ArtifactId { get; }
 }
 
 public sealed class SessionJournalTurnAbortedException : InvalidOperationException {

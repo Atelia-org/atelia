@@ -349,7 +349,8 @@ result 都是非法 raw chain，fail-fast 且不递增 execution sequence。
   setup refs 与 canonical role members。D6C1 后 `SessionRuntime` 不再暴露 request-context policy；
   online planner 只从 activation 或近头 Prepared exact reference 恢复 active ids，不再存在 live
   root-to-head request materialization。
-- offline `validate` 负责 strict full validation/full-vs-tail differential，
+- 以下为 CS-3D5 的历史 offline 形状；DM-3B 已删除 checkpoint command 与 validate 的 derived
+  readiness fields。offline `validate` 负责 strict full validation/full-vs-tail differential，
   `checkpoint-artifact-set` 只追加一条 activation；legacy export 继续通过
   `import-legacy-json` 写入新 current-wire repo，不原地改旧 raw。
 - offline validator 使用 `EventJournal.OpenReadOnlyExisting()`：active event/ref-op/ref-object

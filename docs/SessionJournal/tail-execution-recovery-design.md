@@ -427,7 +427,8 @@ runtime identity 和 capability policy 通过后才能产生外部调用。
   Idle、setup run。
 - 测试明确区分 audit full replay 与 online recovery reads。
 
-实际落点：
+历史实际落点（CS-3D5/D6；DM-3B 已删除 writer/command/online activation route，
+DM-4 再删除剩余 kind-12 raw reader/validator）：
 
 - 新增 `SessionJournalEventReader`，统一承接 Engine、Prepared reconstructor 与 tail context projector
   的逻辑读取；累计 header preview、payload read、chronological-chain 调用及返回 event 数。

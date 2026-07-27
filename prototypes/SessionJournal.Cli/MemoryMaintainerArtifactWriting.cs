@@ -5,7 +5,7 @@ using Atelia.Completion;
 using Atelia.Completion.Abstractions;
 using Atelia.EventJournal;
 using Atelia.SessionJournal;
-using Atelia.SessionJournal.Derived;
+using Atelia.SessionJournal.DerivedMemory;
 using SJ = Atelia.SessionJournal;
 
 namespace Atelia.SessionJournal.Cli;
@@ -74,7 +74,7 @@ internal sealed class SessionJournalDerivedRecapWriter
     ) {
         _repoPath = repoPath;
         _profile = profile;
-        _store = DerivedRecapStore.Open(repoPath);
+        _store = DerivedMemoryRepository.Open(repoPath).Recaps;
         _lineageKey = DerivedRecapLineageKey.Create(
             DerivedRecapArtifactKinds.RollingSummary,
             profile.MaintainerId,
@@ -145,7 +145,6 @@ internal sealed class SessionJournalDerivedRecapWriter
         ValidateCandidate(candidate);
         await _writeGate.WaitAsync(ct).ConfigureAwait(false);
         try {
-            await using FileStream storeWriteLock = await AcquireStoreWriteLockAsync(ct).ConfigureAwait(false);
             DerivedRecapArtifact? latest = await _store.TryReadLatestAsync(_lineageKey, ct).ConfigureAwait(false);
             string? expectedPreviousArtifact = _previous?.ArtifactId;
             if (!string.Equals(latest?.ArtifactId, expectedPreviousArtifact, StringComparison.Ordinal)) {
@@ -204,53 +203,6 @@ internal sealed class SessionJournalDerivedRecapWriter
         finally {
             _writeGate.Release();
         }
-    }
-
-    private async ValueTask<FileStream> AcquireStoreWriteLockAsync(CancellationToken ct) {
-        string lockPath = Path.Combine(
-            _store.StoreRoot,
-            ".memory-maintainer-writer.lock"
-        );
-        try {
-            Directory.CreateDirectory(_store.StoreRoot);
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) {
-            throw new MemoryMaintainerArtifactWriteException(
-                $"Failed to prepare the derived recap store write lock '{lockPath}'.",
-                ex
-            );
-        }
-
-        IOException? lastContention = null;
-        const int maxAttempts = 400;
-        for (int attempt = 0; attempt < maxAttempts; attempt++) {
-            ct.ThrowIfCancellationRequested();
-            try {
-                return new FileStream(
-                    lockPath,
-                    FileMode.OpenOrCreate,
-                    FileAccess.ReadWrite,
-                    FileShare.None,
-                    bufferSize: 1,
-                    FileOptions.Asynchronous
-                );
-            }
-            catch (UnauthorizedAccessException ex) {
-                throw new MemoryMaintainerArtifactWriteException(
-                    $"Access was denied while acquiring the derived recap store write lock '{lockPath}'.",
-                    ex
-                );
-            }
-            catch (IOException ex) {
-                lastContention = ex;
-                await Task.Delay(TimeSpan.FromMilliseconds(25), ct).ConfigureAwait(false);
-            }
-        }
-
-        throw new MemoryMaintainerArtifactWriteException(
-            $"Timed out while acquiring the derived recap store write lock '{lockPath}'.",
-            lastContention ?? new IOException("The derived recap store write lock was unavailable.")
-        );
     }
 
     internal static string ComputeProducerFingerprint(

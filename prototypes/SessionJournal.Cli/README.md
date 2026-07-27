@@ -88,20 +88,6 @@ dotnet run --project prototypes/SessionJournal.Cli -- validate \
 
 report 必须在 repo 外。validator 不修复或截断 raw/refs。
 
-## checkpoint-artifact-set
-
-在至少两个 exact artifacts 具有 common anchor 后提交一次 activation：
-
-```bash
-dotnet run --project prototypes/SessionJournal.Cli -- \
-  checkpoint-artifact-set \
-  --input gitignore/session-journal/<session> \
-  --member autobiography=<artifact-id> \
-  --member world-understanding=<artifact-id>
-```
-
-命令先验证 repo，成功时只追加一条 `ArtifactSetCommitted`。
-
 ## llm-smoke
 
 发送一次最小 Completion 请求，用于验证 connection/provider/call-log：

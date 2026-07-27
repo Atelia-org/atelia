@@ -1,6 +1,6 @@
 # DerivedMemory 可替换子系统与 Shared Epoch 实施方案
 
-> **状态**：Approved / 待逐片实施
+> **状态**：In Progress；DM-0～DM-3B 已完成，下一片 DM-3C
 > **日期**：2026-07-27
 > **最新代码对齐**：2026-07-28；已纳入
 > `ChatSession.LegacyExportCli` / `SessionJournal.Cli` 拆分与
@@ -62,7 +62,7 @@ DM-8  Online lifecycle + budgeted set selection
 
 ### 1.1 Current implementation facts
 
-当前主要入口：
+DM-3B 后的当前主要入口：
 
 - `prototypes/SessionJournal/SessionRequestManifest.cs`
   - `SessionContextPlan` 保存 `RawStartSetups + ExactContextInputs`；
@@ -76,14 +76,15 @@ DM-8  Online lifecycle + budgeted set selection
     decoder/fold 所处理的一项历史事件。
 - `prototypes/SessionJournal/SessionTailContextProjection.cs`
   - `Materialize()` 只接收 normalized candidate；
-  - concrete legacy artifact validation 已收在 temporary adapter，raw suffix fold 和 request rendering
-    留在 core。
+  - raw suffix fold 和 request rendering 留在 core，不引用 concrete derived types。
 - `prototypes/SessionJournal/SessionJournalEngine.cs`
-  - 直接 `DerivedRecapStore.Open(Path)`；
-  - 负责 raw activation resolution、sidecar readiness、materialization、Prepared 与 dispatch。
-- `prototypes/SessionJournal/DerivedRecapStore.cs`
-  - concrete sidecar persistence、artifact DTO、indexes、identity 与 rebuild logic 位于 raw core
-    程序集。
+  - pre-Prepared planning 只消费注入的 `ICoherentContextCandidateSource`；
+  - 不打开 DerivedMemory，也不再提供 raw ArtifactSet writer；Prepared 与 dispatch 仍属 core。
+- `prototypes/SessionJournal.DerivedMemory/`
+  - 拥有 `DerivedMemoryRepository`、`DerivedRecapStore`、derived-only
+    `DerivedArtifactSetStore` 与 concrete candidate provider；
+  - 只引用 SessionJournal，artifact 物理布局仍兼容 `derived/recaps/v1/`，set/pointer 位于
+    `derived/memory/v1/`。
 - `prototypes/SessionJournal.Cli/MemoryMaintainerRun.cs`
   - 每个 maintainer runner 独立解释 threshold 并计算 split；
   - SessionJournal 模式仍从 raw root + empty `MemoryPack` full replay。
@@ -91,7 +92,8 @@ DM-8  Online lifecycle + budgeted set selection
   - 当前 synthetic sliding-prefix 切分 policy 已与旧 ChatSession 实现隔离；
   - 它是 maintainer 开发入口的临时 policy，不是未来 shared epoch authority。
 - `prototypes/SessionJournal.Cli/MemoryMaintainerArtifactWriting.cs`
-  - 当前 artifact writer 与 producer fingerprint 仍直接使用 core 内的 `DerivedRecapStore`。
+  - artifact writer 经 `DerivedMemoryRepository.Recaps` 写入；
+  - repository-wide lock 与 expected-previous CAS 属于 DerivedMemory store，不在 CLI 外挂第二把锁。
 - `prototypes/SessionJournal.Maintainers/`
   - 已作为只依赖 SessionJournal contracts 的 companion assembly；
   - 当前拥有 autobiography / world-understanding 的 profiles、embedded prompts 和 target paths；
@@ -112,7 +114,7 @@ legacy ChatSession repo
 
 - `ChatSession.LegacyExportCli` 只依赖旧 `ChatSession`，只负责 JSON/Markdown export；
 - `SessionJournal.Cli` product project 不依赖 `ChatSession`，负责 import、validate、maintainer
-  开发运行和当前 artifact/set 离线命令；
+  开发运行和 raw validate；derived set 的 publish/list composition command 延后到 DM-3C；
 - `SessionJournal.Maintainers` 只依赖 `SessionJournal`，承载 application-specific maintainer
   policy；
 - producer/consumer compatibility 由版本化 JSON schema 与两侧测试锁定，不建立 shared legacy
@@ -491,12 +493,11 @@ prototypes/SessionJournal.DerivedMemory/
 tests/SessionJournal.DerivedMemory.Tests/
 ```
 
-第一阶段迁入/新增：
+DM-3B 已迁入/新增：
 
 - `DerivedRecapStore` 与 artifact schema/DTO/identity/indexes；
 - `DerivedMemoryRepository`；
 - `DerivedArtifactSetStore`；
-- derived usage/audit index；
 - current artifact -> normalized contribution renderer；
 - `ICoherentContextCandidateSource` concrete implementation；
 - derived-only exact set publication；
@@ -509,10 +510,14 @@ DM-3 明确保留现有 producer surfaces，不与 store/provider cutover 同时
 - application profiles、prompts 与 target paths 留在 `SessionJournal.Maintainers`；
 - current runner/composition 留在 `SessionJournal.Cli`。
 
-DM-3B 删除 `LegacyArtifactContextCandidateAdapter` 以及 online raw activation writer/store coupling：
+DM-3B 已删除 `LegacyArtifactContextCandidateAdapter` 以及 online raw activation writer/store coupling：
 DerivedMemory provider 直接产出 neutral candidate，不再需要 raw activation/store 到 candidate 的同程序集桥接。
-`LegacyArtifactContextSnapshotFactory` 和 kind-12 codec/read-only surfaces 则保留到 DM-4，避免把
-wire deletion 与此 assembly cutover 混在同一 review 中。
+原计划认为 `LegacyArtifactContextSnapshotFactory` 必须保留到 DM-4；实施复核发现它只被已删除的
+writer/offline sidecar readiness 消费，因此与 writer 一并删除。kind-12 codec、reducer/tail
+read-only legality 与 offline raw provenance 验证仍保留到 DM-4。
+
+DM-3B 没有伪造 epoch，也没有加入尚无消费者的 usage/audit index。shared epoch authority 仍从 DM-5
+开始；不能为了让 set 看似“同步”而把当前 anchor 包装成假的 epoch。
 
 generic producer substrate 的最终归属在 DM-6/DM-7 复核；application-specific policy 不迁入
 DerivedMemory。这样避免物理搬家与 Prepared wire cut 同时扩大。
@@ -530,11 +535,34 @@ DerivedMemory。这样避免物理搬家与 Prepared wire cut 同时扩大。
 - `SessionJournal.Open(path)` 无 provider 仍支持 raw-only surfaces；
 - online planning 入口明确要求 provider。
 
-### CLI transition（DM-3B）
+### DM-3B 实施状态（2026-07-28）
 
-- 在 `SessionJournal.Cli` 增加 derived-only set publish/inventory 能力；
-- current `checkpoint-artifact-set` 不再作为长期 writer；
-- 新 writer 不追加 raw kind 12；
+- 新程序集与测试项目已经进入 solution，core 与 core tests 均无反向 project reference；
+- artifact store 完整搬出 core，保留原 artifact schema/path；新 repository 统一负责 path/reparse
+  hardening、bounded lock 与 same-directory atomic replace；
+- derived-only set 使用 deterministic full hash id、strict schema、exact previous CAS、immutable set
+  与 atomic latest pointer；pointer 丢失只在完整无环 lineage 的 unique tip 下重建，fork/cycle
+  fail-fast；
+- set identity 持久化 canonical role requirements（role/target/required）并纳入 hash，读取时 caller
+  policy 必须 exact match；set/pointer 在 JSON decode 前分别受 1 MiB / 64 KiB stream-length 上限；
+- set policy 的 required/optional roles 是上层数据，不硬编码 autobiography/world-understanding；
+- concrete provider 只读 DerivedMemory，不打开 Engine/EventJournal；core 用 authoritative raw
+  validator 复核其 anchor/setup/source assertions；
+- DM-3B `Latest` provider 把 `RawSuffixTokenBudget` 仅视为 non-binding hint，不承诺 budgeted
+  selection 或 older-set search；
+- public strict anchor helper 返回 exact setup address/schema/payload hash，供发布前在仍持有 raw
+  Engine 的 composition code 调用；
+- CLI maintainer writer 已迁到 `DerivedMemoryRepository.Recaps`；raw
+  `checkpoint-artifact-set` command、parser/help/tests 和 offline sidecar readiness/active fields 已删除；
+- Observation integration 已证明 publish 不改变 raw head/event count、online 不写 kind 12；
+  Prepared failpoint 后删除整个 `derived/` 并在不注入 provider 的情况下仍按 canonical bytes exact
+  reopen。
+
+### CLI transition（DM-3C）
+
+- 增加 derived-only set publish/inventory 能力；
+- 命令只写 derived repository，不追加 raw kind 12；
+- 不把 usage index 或 fake epoch 偷渡进第一版 command；
 - raw kind 12 reader 只为 DM-3B/DM-4 之间的只读过渡暂存，DM-4 删除；
 - 不保留双 writer 或 silent import。
 
@@ -545,7 +573,9 @@ DerivedMemory。这样避免物理搬家与 Prepared wire cut 同时扩大。
 - SessionJournal.Tests 用 fake provider 覆盖 core；
 - concrete persistence/provider tests 位于 DerivedMemory.Tests；
 - 手工 exact autobiography + world-understanding artifacts 可发布 derived set；
-- provider 返回 candidate 后可完成 Observation/ToolResult completion；
+- provider 返回 candidate 后可完成 Observation completion；dependency-closed ToolResult
+  continuation 继续由 core fake-provider suite 覆盖，concrete provider integration 可在 DM-3C
+  command/fixture 成熟后补强；
 - provider 缺失时 pre-Prepared 明确 not-ready；
 - Prepared 后 provider/sidecar 删除仍 exact reopen。
 
@@ -561,11 +591,9 @@ DerivedMemory。这样避免物理搬家与 Prepared wire cut 同时扩大。
 - `ArtifactSetCommittedBody` / `SessionActiveArtifactSet`；
 - event codec/schema/goldens；
 - reducer/tail-resolver idle-boundary 分支；
-- `LegacyArtifactContextSnapshotFactory`；
+- kind-12 remaining raw contracts/validators；
 - latest-equals-selected/raw activation validators；
 - offline readiness report 的 active raw set；
-- `SessionJournal.Cli checkpoint-artifact-set` raw checkpoint command（writer/coupling 已由 DM-3B
-  删除；此处清理命令及其 read-only residue）；
 - activation setup checkpoint 逻辑。
 
 ### Governing setup hint

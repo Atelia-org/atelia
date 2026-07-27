@@ -251,9 +251,11 @@ EventJournal branch primitive 就宣称产品能力已经实现。
 它们不是 raw experience，也不属于旧 ChatSession。目标 ownership 是独立、可替换的
 `Atelia.SessionJournal.DerivedMemory`（暂名）；该 subsystem 可以删除并由 raw SessionJournal 重建。
 
-### 6.2 Current interim baseline
+### 6.2 Historical interim baseline（已由 DM-3B 取代）
 
-CS-5-lite 已完成，不再是待验证建议。current trunk 已具备：
+以下记录 CS-5-lite/CS-3D5 当时的过渡实现，不描述 current trunk。DM-3B 已将 store/set/provider
+搬入 `Atelia.SessionJournal.DerivedMemory`，删除 raw activation writer/manual checkpoint command，
+Prepared v4 也不再引用 derived identity：
 
 - `DerivedRecapStore`：位于 `Atelia.SessionJournal` core 内，使用 session repo 下的
   `derived/recaps/v1/` sidecar 保存可删除、可重建的 recap artifacts/indexes；

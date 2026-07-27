@@ -43,10 +43,6 @@ internal static class Program {
                 "validate" => RunValidateAsync(options)
                     .GetAwaiter()
                     .GetResult(),
-                "checkpoint-artifact-set" =>
-                    RunCheckpointArtifactSetAsync(options)
-                        .GetAwaiter()
-                        .GetResult(),
                 "llm-smoke" => RunLlmSmokeAsync(
                         options,
                         completionClientFactory
@@ -169,85 +165,6 @@ internal static class Program {
         return 0;
     }
 
-    private static async Task<int> RunCheckpointArtifactSetAsync(
-        CliOptions options
-    ) {
-        string inputPath = options.Require("input");
-        EnsurePathChainHasNoReparsePoint(inputPath, "--input");
-        IReadOnlyList<string?> memberValues = options.GetAll("member");
-        if (memberValues.Count < 2) {
-            throw new ArgumentException(
-                "checkpoint-artifact-set requires at least two repeated "
-                + "--member <role>=<artifact-id> options."
-            );
-        }
-        SJ.SessionArtifactSetMemberSelection[] members = memberValues
-            .Select(ParseArtifactSetMember)
-            .ToArray();
-
-        SJ.SessionJournalOfflineValidationReport before =
-            await SJ.SessionJournalOfflineValidator.ValidateAsync(
-                inputPath,
-                CancellationToken.None
-            ).ConfigureAwait(false);
-        using (SJ.SessionJournalEngine engine =
-               SJ.SessionJournalEngine.Open(inputPath)) {
-            _ = await engine.CommitArtifactSetAsync(
-                members,
-                CancellationToken.None
-            ).ConfigureAwait(false);
-        }
-        SJ.SessionJournalOfflineValidationReport after =
-            await SJ.SessionJournalOfflineValidator.ValidateAsync(
-                inputPath,
-                CancellationToken.None
-            ).ConfigureAwait(false);
-        if (after.EventCount != checked(before.EventCount + 1)
-            || after.ActiveArtifactSet is null
-            || !string.Equals(
-                after.Readiness,
-                SJ.SessionJournalOfflineReadiness.ActiveCoherent,
-                StringComparison.Ordinal
-            )) {
-            throw new InvalidDataException(
-                "Artifact-set checkpoint did not produce exactly one usable "
-                + "ArtifactSetCommitted event."
-            );
-        }
-
-        Console.WriteLine($"oldHead: {before.Head ?? "(none)"}");
-        Console.WriteLine($"newHead: {after.Head ?? "(none)"}");
-        Console.WriteLine($"anchor: {after.ActiveArtifactSet.CommonAnchor}");
-        Console.WriteLine(
-            $"roles: {string.Join(",", after.ActiveArtifactSet.Members.Select(static member => member.RoleId))}"
-        );
-        Console.WriteLine($"readiness: {after.Readiness}");
-        return 0;
-    }
-
-    private static SJ.SessionArtifactSetMemberSelection ParseArtifactSetMember(
-        string? value
-    ) {
-        if (string.IsNullOrWhiteSpace(value)) {
-            throw new ArgumentException(
-                "--member requires a non-empty <role>=<artifact-id> value."
-            );
-        }
-        int separator = value.IndexOf('=');
-        if (separator <= 0
-            || separator == value.Length - 1
-            || value.IndexOf('=', separator + 1) >= 0) {
-            throw new ArgumentException(
-                $"Invalid --member '{value}'; expected exactly "
-                + "<role>=<artifact-id>."
-            );
-        }
-        return new SJ.SessionArtifactSetMemberSelection(
-            value[..separator],
-            value[(separator + 1)..]
-        );
-    }
-
     private static void PrintValidation(
         SJ.SessionJournalOfflineValidationReport report
     ) {
@@ -257,11 +174,6 @@ internal static class Program {
             $"logicalPayloadBytes: {report.LogicalPayloadBytes}"
         );
         Console.WriteLine($"phase: {report.ExecutionPhase}");
-        Console.WriteLine($"readiness: {report.Readiness}");
-        Console.WriteLine(
-            $"activeArtifactSet: "
-            + $"{report.ActiveArtifactSet?.Address ?? "(none)"}"
-        );
     }
 
     private static async Task<int> RunLlmSmokeAsync(
@@ -686,11 +598,6 @@ internal static class Program {
         Console.WriteLine(
             "  validate --input <repo-dir> "
             + "[--report-json <path-outside-repo>]"
-        );
-        Console.WriteLine(
-            "  checkpoint-artifact-set --input <repo-dir> "
-            + "--member <role>=<artifact-id> "
-            + "--member <role>=<artifact-id> [...]"
         );
         Console.WriteLine(
             "  llm-smoke --connections <path> [--connection <id>] "

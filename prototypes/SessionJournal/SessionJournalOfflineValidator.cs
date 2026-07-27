@@ -1,32 +1,6 @@
-using System.Collections.Immutable;
 using Atelia.EventJournal;
-using Atelia.SessionJournal.Derived;
 
 namespace Atelia.SessionJournal;
-
-public static class SessionJournalOfflineReadiness {
-    public const string ActiveCoherent = "active-coherent";
-    public const string NeedsArtifactSetCheckpoint = "needs-artifact-set-checkpoint";
-}
-
-public sealed record SessionJournalOfflineArtifactMemberReport(
-    string RoleId,
-    string ArtifactId,
-    bool Available,
-    string? ArtifactKind,
-    string? Target,
-    string? Anchor,
-    string? Issue
-);
-
-public sealed record SessionJournalOfflineArtifactSetReport(
-    string Address,
-    string PolicyId,
-    string PolicyFingerprint,
-    string CommonAnchor,
-    IReadOnlyList<SessionJournalOfflineArtifactMemberReport> Members,
-    bool IsUsable
-);
 
 public sealed record SessionJournalOfflineValidationReport(
     string RepositoryPath,
@@ -40,9 +14,7 @@ public sealed record SessionJournalOfflineValidationReport(
     string? SystemPromptSetup,
     string? ModelId,
     string? CompletionSurfaceId,
-    int PreparedRequestCount,
-    SessionJournalOfflineArtifactSetReport? ActiveArtifactSet,
-    string Readiness
+    int PreparedRequestCount
 );
 
 /// <summary>
@@ -51,7 +23,7 @@ public sealed record SessionJournalOfflineValidationReport(
 /// with the online tail resolver at the exact same head.
 /// </summary>
 public static class SessionJournalOfflineValidator {
-    public static async ValueTask<SessionJournalOfflineValidationReport> ValidateAsync(
+    public static ValueTask<SessionJournalOfflineValidationReport> ValidateAsync(
         string repositoryPath,
         CancellationToken cancellationToken = default
     ) {
@@ -64,7 +36,6 @@ public static class SessionJournalOfflineValidator {
         SessionProjection projection;
         SessionExecutionRecovery recovery;
         int preparedRequestCount = 0;
-        RawArtifactSetActivation? latestArtifactSet = null;
         var artifactSets = new Dictionary<EventAddress, RawArtifactSetActivation>();
         long logicalPayloadBytes = 0;
 
@@ -151,7 +122,6 @@ public static class SessionJournalOfflineValidator {
                             )
                         );
                         artifactSets.Add(address, activation);
-                        latestArtifactSet ??= activation;
                     }
                     cursor = frame.Header.Parent;
                 }
@@ -216,91 +186,9 @@ public static class SessionJournalOfflineValidator {
                     "Full SessionJournal projection and governing setup resolver disagree."
                 );
             }
-            if (latestArtifactSet is { } setupActivation) {
-                SessionGoverningSetup coverage =
-                    ResolveGoverningSetup(
-                        chronologicalEvents,
-                        setupActivation.Body.CommonAnchor,
-                        cancellationToken
-                    );
-                EventAddress activationParent = setupActivation.Parent
-                    ?? throw new InvalidDataException(
-                        "ArtifactSetCommitted requires an exact raw parent."
-                    );
-                SessionGoverningSetup current =
-                    ResolveGoverningSetup(
-                        chronologicalEvents,
-                        activationParent,
-                        cancellationToken
-                    );
-                if (coverage.RuntimeConfigSetupAddress
-                        != setupActivation.Body.CoverageSetups.RuntimeConfig.Address
-                    || coverage.SystemPromptSetupAddress
-                        != setupActivation.Body.CoverageSetups.SystemPrompt.Address
-                    || current.RuntimeConfigSetupAddress
-                        != setupActivation.Body.CurrentSetups.RuntimeConfig.Address
-                    || current.SystemPromptSetupAddress
-                        != setupActivation.Body.CurrentSetups.SystemPrompt.Address) {
-                    throw new InvalidDataException(
-                        "ArtifactSetCommitted setup references do not match their authoritative raw boundaries."
-                    );
-                }
-            }
         }
 
-        SessionJournalOfflineArtifactSetReport? artifactSetReport = null;
-        if (latestArtifactSet is { } active) {
-            var chainPositions = chain
-                .Select(static (address, index) => (address, index))
-                .ToDictionary(static item => item.address, static item => item.index);
-            var memberReports =
-                new List<SessionJournalOfflineArtifactMemberReport>(
-                    active.Body.Members.Length
-                );
-            var store = DerivedRecapStore.Open(fullPath);
-            foreach (SessionArtifactSetMember member in active.Body.Members) {
-                cancellationToken.ThrowIfCancellationRequested();
-                DerivedRecapArtifact? artifact = await store
-                    .TryReadArtifactAsync(member.ArtifactId, cancellationToken)
-                    .ConfigureAwait(false);
-                string? issue = ValidateArtifactMember(
-                    artifact,
-                    member,
-                    active.Body,
-                    chainPositions,
-                    active.Parent
-                );
-                memberReports.Add(new SessionJournalOfflineArtifactMemberReport(
-                    member.RoleId,
-                    member.ArtifactId,
-                    Available: issue is null,
-                    artifact?.ArtifactKind,
-                    artifact is null
-                        ? null
-                        : $"{artifact.Target.Carrier}/{artifact.Target.BlockKey}",
-                    artifact is null
-                        ? null
-                        : EventAddressTextCodec.Format(artifact.AnchorRawEvent),
-                    issue
-                ));
-            }
-
-            bool isUsable = memberReports.All(static member => member.Available);
-            artifactSetReport = new SessionJournalOfflineArtifactSetReport(
-                EventAddressTextCodec.Format(active.Address),
-                active.Body.PolicyId,
-                active.Body.PolicyFingerprint,
-                EventAddressTextCodec.Format(active.Body.CommonAnchor),
-                memberReports.AsReadOnly(),
-                isUsable
-            );
-        }
-
-        string readiness =
-            artifactSetReport?.IsUsable == true
-                ? SessionJournalOfflineReadiness.ActiveCoherent
-                : SessionJournalOfflineReadiness.NeedsArtifactSetCheckpoint;
-        return new SessionJournalOfflineValidationReport(
+        return ValueTask.FromResult(new SessionJournalOfflineValidationReport(
             fullPath,
             EventAddressTextCodec.FormatNullable(head),
             chain.Count,
@@ -320,76 +208,8 @@ public static class SessionJournalOfflineValidator {
                 ),
             governingSetup?.RuntimeConfig.ModelId,
             governingSetup?.RuntimeConfig.CompletionSurfaceId,
-            preparedRequestCount,
-            artifactSetReport,
-            readiness
-        );
-    }
-
-    private static string? ValidateArtifactMember(
-        DerivedRecapArtifact? artifact,
-        SessionArtifactSetMember member,
-        ArtifactSetCommittedBody activeSet,
-        IReadOnlyDictionary<EventAddress, int> chainPositions,
-        EventAddress? activationParent
-    ) {
-        if (artifact is null) {
-            return "Exact artifact is missing or unusable.";
-        }
-        if (!string.Equals(
-                artifact.Status,
-                DerivedRecapArtifactStatus.Produced,
-                StringComparison.Ordinal
-            )) {
-            return "Exact artifact is not produced.";
-        }
-        if (!string.Equals(
-                artifact.ArtifactId,
-                member.ArtifactId,
-                StringComparison.Ordinal
-            )
-            || !string.Equals(
-                artifact.ArtifactKind,
-                member.ArtifactKind,
-                StringComparison.Ordinal
-            )
-            || artifact.Target != member.Target) {
-            return "Exact artifact identity does not match the committed member.";
-        }
-        if (artifact.AnchorRawEvent != activeSet.CommonAnchor
-            || artifact.SourceEndInclusive != activeSet.CommonAnchor) {
-            return "Exact artifact does not share the committed common anchor.";
-        }
-        if (artifact.GoverningRuntimeConfigSetup
-                != activeSet.CoverageSetups.RuntimeConfig.Address
-            || artifact.GoverningSystemPromptSetup
-                != activeSet.CoverageSetups.SystemPrompt.Address) {
-            return "Exact artifact governing setup does not match the committed coverage setup.";
-        }
-        if (!chainPositions.TryGetValue(
-                artifact.SourceRawHead,
-                out int sourcePosition
-            )
-            || !chainPositions.TryGetValue(
-                artifact.AnchorRawEvent,
-                out int anchorPosition
-            )
-            || activationParent is not { } parent
-            || !chainPositions.TryGetValue(parent, out int activationParentPosition)
-            || sourcePosition < anchorPosition
-            || sourcePosition > activationParentPosition) {
-            return "Exact artifact source provenance is not on the current raw lineage.";
-        }
-        SessionRequestArtifactInput input =
-            LegacyArtifactContextSnapshotFactory.CreateLegacyArtifactInput(artifact);
-        if (!string.Equals(
-                input.ContentSha256,
-                member.ContentSha256,
-                StringComparison.Ordinal
-            )) {
-            return "Exact artifact target contribution hash does not match the committed member.";
-        }
-        return null;
+            preparedRequestCount
+        ));
     }
 
     private static SessionGoverningSetup ResolveGoverningSetup(
@@ -460,8 +280,6 @@ public static class SessionJournalOfflineValidator {
         >();
         EventAddress? runtimeConfig = null;
         EventAddress? systemPrompt = null;
-        RawArtifactSetActivation? activeArtifactSet = null;
-
         foreach (DecodedSessionEvent ev in chronologicalEvents) {
             if (ev.Kind == SessionEventKind.RuntimeConfigSetup) {
                 runtimeConfig = ev.Address;
@@ -502,7 +320,6 @@ public static class SessionJournalOfflineValidator {
                         $"ArtifactSetCommitted at {activation.Address} setup references do not match its authoritative raw boundaries."
                     );
                 }
-                activeArtifactSet = activation;
                 continue;
             }
 

@@ -1,7 +1,6 @@
 using Atelia.Completion.Abstractions;
 using Atelia.Completion.Tools;
 using Atelia.EventJournal;
-using Atelia.SessionJournal.Derived;
 using Xunit;
 
 namespace Atelia.SessionJournal.Tests;
@@ -153,31 +152,15 @@ public sealed class SessionJournalRequestContextPerformanceTests : IDisposable {
         }
 
         using var activating = SessionJournalEngine.Open(path);
-        SessionGoverningSetup setup =
-            activating.ResolveGoverningSetup(anchor);
-        TestArtifactSet artifacts = await WriteArtifactSetAsync(
-            path,
-            anchor,
-            setup
-        );
-        await activating.CommitArtifactSetAsync([
-            new SessionArtifactSetMemberSelection(
-                "world-understanding",
-                artifacts.WorldUnderstanding.ArtifactId
-            ),
-            new SessionArtifactSetMemberSelection(
-                "autobiography",
-                artifacts.Autobiography.ArtifactId
-            )
-        ]);
+        TestContextCandidateFixture fixture =
+            ContextCandidateTestFixture.CreateAtCurrentHead(
+                activating,
+                "cold-prefix"
+            );
+        Assert.Equal(anchor, fixture.Anchor);
         return new ActivatedColdJournal(
             path,
-            CoherentArtifactSetTestFixture.CreateCandidate(
-                anchor,
-                setup,
-                artifacts.WorldUnderstanding,
-                artifacts.Autobiography
-            )
+            fixture.Candidate
         );
     }
 
@@ -368,76 +351,6 @@ public sealed class SessionJournalRequestContextPerformanceTests : IDisposable {
         previous = current;
     }
 
-    private static async ValueTask<TestArtifactSet> WriteArtifactSetAsync(
-        string path,
-        EventAddress anchor,
-        SessionGoverningSetup setup
-    ) {
-        var memoryPack = new MemoryPack();
-        memoryPack.Observation.Add(
-            "roleplay.world-understanding",
-            new MemoryPackBlock("bounded world")
-        );
-        memoryPack.Action.Add(
-            "roleplay.first-person-autobiography",
-            new MemoryPackBlock("bounded self")
-        );
-        DerivedRecapStore store = DerivedRecapStore.Open(path);
-        DerivedRecapArtifact world = await store.WriteProducedAsync(
-            CreateArtifactWriteRequest(
-                "world-understanding",
-                "performance-world",
-                new MemoryPackBlockPath(
-                    MemoryPackCarrier.Observation,
-                    "roleplay.world-understanding"
-                ),
-                anchor,
-                setup,
-                memoryPack
-            )
-        );
-        DerivedRecapArtifact autobiography =
-            await store.WriteProducedAsync(
-                CreateArtifactWriteRequest(
-                    "autobiography",
-                    "performance-autobiography",
-                    new MemoryPackBlockPath(
-                        MemoryPackCarrier.Action,
-                        "roleplay.first-person-autobiography"
-                    ),
-                    anchor,
-                    setup,
-                    memoryPack
-                )
-            );
-        return new TestArtifactSet(world, autobiography);
-    }
-
-    private static DerivedRecapWriteRequest CreateArtifactWriteRequest(
-        string artifactKind,
-        string profileId,
-        MemoryPackBlockPath target,
-        EventAddress anchor,
-        SessionGoverningSetup setup,
-        MemoryPack memoryPack
-    ) => new(
-        ArtifactKind: artifactKind,
-        ProfileId: profileId,
-        Producer: "performance-tests",
-        ProducerFingerprint: "performance-tests-v1",
-        SourceRawHead: anchor,
-        SourceStartExclusive: null,
-        SourceEndInclusive: anchor,
-        AnchorRawEvent: anchor,
-        GoverningRuntimeConfigSetup:
-            setup.RuntimeConfigSetupAddress,
-        GoverningSystemPromptSetup:
-            setup.SystemPromptSetupAddress,
-        PreviousArtifact: null,
-        Target: target,
-        MemoryPack: memoryPack
-    );
-
     private static SessionRuntime CreateRuntime(
         CapturingCompletionClient client,
         ToolSession? tools = null,
@@ -509,11 +422,6 @@ public sealed class SessionJournalRequestContextPerformanceTests : IDisposable {
     private sealed record ActivatedColdJournal(
         string Path,
         SessionContextCandidate Candidate
-    );
-
-    private sealed record TestArtifactSet(
-        DerivedRecapArtifact WorldUnderstanding,
-        DerivedRecapArtifact Autobiography
     );
 
     private sealed class NoopTool : ITool {

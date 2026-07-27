@@ -9,7 +9,7 @@ using Atelia.Completion.Abstractions;
 using Atelia.Diagnostics;
 using Atelia.EventJournal;
 
-namespace Atelia.SessionJournal.Derived;
+namespace Atelia.SessionJournal.DerivedMemory;
 
 public sealed class DerivedRecapStore {
     public const string ArtifactSchema = "atelia.session-journal.derived-recap.v1";
@@ -23,11 +23,15 @@ public sealed class DerivedRecapStore {
         Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping
     };
 
-    private readonly string _repoRoot;
+    private readonly DerivedMemoryRepository _repository;
 
-    private DerivedRecapStore(string repoRoot) {
-        _repoRoot = repoRoot;
-        StoreRoot = Path.Combine(_repoRoot, "derived", "recaps", "v1");
+    internal DerivedRecapStore(DerivedMemoryRepository repository) {
+        _repository = repository;
+        StoreRoot = Path.Combine(
+            repository.DerivedRoot,
+            "recaps",
+            "v1"
+        );
         ArtifactsDirectory = Path.Combine(StoreRoot, "artifacts");
         IndexesDirectory = Path.Combine(StoreRoot, "indexes");
         LatestIndexPath = Path.Combine(IndexesDirectory, "latest-by-profile.json");
@@ -41,14 +45,6 @@ public sealed class DerivedRecapStore {
 
     public string LatestIndexPath { get; }
 
-    public static DerivedRecapStore Open(string sessionJournalRepoPath) {
-        if (string.IsNullOrWhiteSpace(sessionJournalRepoPath)) {
-            throw new ArgumentException("SessionJournal repo path cannot be empty.", nameof(sessionJournalRepoPath));
-        }
-
-        return new DerivedRecapStore(Path.GetFullPath(sessionJournalRepoPath));
-    }
-
     public async ValueTask<DerivedRecapArtifact> WriteProducedAsync(
         DerivedRecapWriteRequest request,
         CancellationToken ct = default
@@ -57,8 +53,11 @@ public sealed class DerivedRecapStore {
         request.Validate();
         ct.ThrowIfCancellationRequested();
 
-        Directory.CreateDirectory(ArtifactsDirectory);
-        Directory.CreateDirectory(IndexesDirectory);
+        await using FileStream writeLock = await _repository
+            .AcquireWriteLockAsync(ct)
+            .ConfigureAwait(false);
+        _repository.EnsureDirectory(ArtifactsDirectory);
+        _repository.EnsureDirectory(IndexesDirectory);
 
         var target = DerivedRecapTarget.FromMemoryPackBlockPath(request.Target);
         string lineageKey = DerivedRecapLineageKey.Create(
@@ -103,6 +102,14 @@ public sealed class DerivedRecapStore {
             EventAddressTextCodec.Format(request.SourceEndInclusive),
             ComputeCanonicalSha256Hex(identity)
         );
+        DerivedRecapLatestIndex currentIndex =
+            await RebuildLatestIndexUnderLockAsync(ct).ConfigureAwait(false);
+        string? currentArtifactId = currentIndex.Items.TryGetValue(
+            new DerivedRecapLineageKey(lineageKey),
+            out DerivedRecapLatestIndexItem? currentItem
+        )
+            ? currentItem.ArtifactId
+            : null;
         string artifactId = baseArtifactId;
         string json;
         DerivedRecapArtifactDto dto;
@@ -120,7 +127,13 @@ public sealed class DerivedRecapStore {
             var existingDto = await TryReadArtifactDtoAsync(finalPath, ct).ConfigureAwait(false);
             if (existingDto is not null &&
                 string.Equals(ComputeIdentityHash(existingDto), ComputeCanonicalSha256Hex(identity), StringComparison.Ordinal)) {
-                await RebuildLatestIndexAsync(ct).ConfigureAwait(false);
+                ValidateExpectedPrevious(
+                    lineageKey,
+                    currentArtifactId,
+                    request.PreviousArtifact,
+                    artifactId
+                );
+                await RebuildLatestIndexUnderLockAsync(ct).ConfigureAwait(false);
                 return Materialize(existingDto);
             }
 
@@ -128,9 +141,46 @@ public sealed class DerivedRecapStore {
             suffix++;
         }
 
-        await WriteFileAtomicallyAsync(GetArtifactPath(artifactId), json, overwrite: false, ct).ConfigureAwait(false);
-        await RebuildLatestIndexAsync(ct).ConfigureAwait(false);
+        ValidateExpectedPrevious(
+            lineageKey,
+            currentArtifactId,
+            request.PreviousArtifact,
+            artifactId
+        );
+        await _repository.WriteFileAtomicallyAsync(
+                GetArtifactPath(artifactId),
+                json,
+                overwrite: false,
+                ct
+            )
+            .ConfigureAwait(false);
+        await RebuildLatestIndexUnderLockAsync(ct).ConfigureAwait(false);
         return Materialize(dto);
+    }
+
+    private static void ValidateExpectedPrevious(
+        string lineageKey,
+        string? currentArtifactId,
+        string? expectedPreviousArtifactId,
+        string candidateArtifactId
+    ) {
+        if (string.Equals(
+                currentArtifactId,
+                candidateArtifactId,
+                StringComparison.Ordinal
+            )
+            || string.Equals(
+                currentArtifactId,
+                expectedPreviousArtifactId,
+                StringComparison.Ordinal
+            )) {
+            return;
+        }
+        throw new InvalidOperationException(
+            $"Derived recap lineage '{lineageKey}' latest artifact changed. "
+            + $"Expected '{expectedPreviousArtifactId ?? "<none>"}', "
+            + $"observed '{currentArtifactId ?? "<none>"}'."
+        );
     }
 
     public async ValueTask<DerivedRecapArtifact?> TryReadLatestAsync(
@@ -167,8 +217,16 @@ public sealed class DerivedRecapStore {
     public async ValueTask<DerivedRecapLatestIndex> RebuildLatestIndexAsync(
         CancellationToken ct = default
     ) {
-        Directory.CreateDirectory(ArtifactsDirectory);
-        Directory.CreateDirectory(IndexesDirectory);
+        await using FileStream writeLock = await _repository
+            .AcquireWriteLockAsync(ct)
+            .ConfigureAwait(false);
+        return await RebuildLatestIndexUnderLockAsync(ct).ConfigureAwait(false);
+    }
+
+    private async ValueTask<DerivedRecapLatestIndex>
+        RebuildLatestIndexUnderLockAsync(CancellationToken ct) {
+        _repository.EnsureDirectory(ArtifactsDirectory);
+        _repository.EnsureDirectory(IndexesDirectory);
 
         var artifacts = new List<DerivedRecapArtifactDto>();
         foreach (string path in Directory.EnumerateFiles(ArtifactsDirectory, "*.json")) {
@@ -198,7 +256,13 @@ public sealed class DerivedRecapStore {
             RebuiltUtc: DateTimeOffset.UtcNow,
             Items: items
         );
-        await WriteFileAtomicallyAsync(LatestIndexPath, Serialize(indexDto), overwrite: true, ct).ConfigureAwait(false);
+        await _repository.WriteFileAtomicallyAsync(
+                LatestIndexPath,
+                Serialize(indexDto),
+                overwrite: true,
+                ct
+            )
+            .ConfigureAwait(false);
         return Materialize(indexDto);
     }
 
@@ -206,6 +270,10 @@ public sealed class DerivedRecapStore {
         if (!File.Exists(LatestIndexPath)) { return null; }
 
         try {
+            DerivedMemoryPathGuard.EnsureSafeDescendant(
+                _repository.SessionJournalRepositoryPath,
+                LatestIndexPath
+            );
             await using var stream = File.OpenRead(LatestIndexPath);
             var dto = await JsonSerializer.DeserializeAsync<DerivedRecapLatestIndexDto>(stream, JsonOptions, ct).ConfigureAwait(false);
             if (!IsUsableLatestIndex(dto)) { return null; }
@@ -219,6 +287,10 @@ public sealed class DerivedRecapStore {
 
     private async ValueTask<DerivedRecapArtifactDto?> TryReadArtifactDtoAsync(string path, CancellationToken ct) {
         try {
+            DerivedMemoryPathGuard.EnsureSafeDescendant(
+                _repository.SessionJournalRepositoryPath,
+                path
+            );
             await using var stream = File.OpenRead(path);
             var dto = await JsonSerializer.DeserializeAsync<DerivedRecapArtifactDto>(stream, JsonOptions, ct).ConfigureAwait(false);
             if (IsUsableArtifact(dto)) { return dto; }
@@ -340,7 +412,12 @@ public sealed class DerivedRecapStore {
         }
 
         return artifacts
-            .OrderBy(static artifact => EventAddressTextCodec.GetPhysicalCoordinateSortKey(artifact.SourceEndInclusive), StringComparer.Ordinal)
+            .OrderBy(
+                static artifact => GetPhysicalCoordinateSortKey(
+                    artifact.SourceEndInclusive
+                ),
+                StringComparer.Ordinal
+            )
             .ThenBy(static artifact => artifact.CreatedUtc)
             .ThenBy(static artifact => artifact.ArtifactId, StringComparer.Ordinal)
             .Last();
@@ -405,33 +482,6 @@ public sealed class DerivedRecapStore {
 
     private string GetArtifactPath(string artifactId)
         => Path.Combine(ArtifactsDirectory, $"{artifactId}.json");
-
-    private static async Task WriteFileAtomicallyAsync(
-        string finalPath,
-        string content,
-        bool overwrite,
-        CancellationToken ct
-    ) {
-        Directory.CreateDirectory(Path.GetDirectoryName(finalPath) ?? ".");
-        string tempPath = finalPath + "." + Guid.NewGuid().ToString("N", CultureInfo.InvariantCulture) + ".tmp";
-        await File.WriteAllTextAsync(tempPath, content, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false), ct).ConfigureAwait(false);
-        try {
-            File.Move(tempPath, finalPath, overwrite);
-        }
-        catch {
-            TryDelete(tempPath);
-            throw;
-        }
-    }
-
-    private static void TryDelete(string path) {
-        try {
-            if (File.Exists(path)) { File.Delete(path); }
-        }
-        catch {
-            // Best-effort cleanup.
-        }
-    }
 
     private static string GetArtifactKindPrefix(string artifactKind)
         => string.Equals(artifactKind, DerivedRecapArtifactKinds.RollingSummary, StringComparison.Ordinal)
@@ -534,6 +584,16 @@ public sealed class DerivedRecapStore {
 
     private static string ComputeSha256Hex(string value)
         => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value))).ToLowerInvariant();
+
+    private static string GetPhysicalCoordinateSortKey(string value) {
+        if (!EventAddressTextCodec.TryParse(value, out EventAddress address)) {
+            return string.Empty;
+        }
+        return string.Create(
+            CultureInfo.InvariantCulture,
+            $"{address.SegmentNumber:x8}:{address.Ticket.Offset:x16}:{address.Ticket.Length:x8}:{address.Hint.Packed:x8}"
+        );
+    }
 
     private static IReadOnlyList<string> FreezeStrings(IReadOnlyList<string>? values)
         => values is null || values.Count == 0

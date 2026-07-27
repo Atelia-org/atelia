@@ -1,7 +1,6 @@
 using Atelia.Completion.Abstractions;
 using Atelia.Completion.Tools;
 using Atelia.EventJournal;
-using Atelia.SessionJournal.Derived;
 using Xunit;
 
 namespace Atelia.SessionJournal.Tests;
@@ -553,31 +552,27 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
     }
 
     [Fact]
-    public async Task ResumeAsync_TailPreparedAfterArtifactDeletion_ReconstructsInlineWithoutProject() {
+    public async Task ResumeAsync_TailPreparedWithoutCandidateProvider_ReconstructsInlineWithoutProject() {
         string path = NewJournalPath();
-        TestArtifactSet artifact;
+        TestContextCandidateFixture candidateFixture;
         using (var setup = SessionJournalEngine.Create(
             path,
             new SessionCreateOptions("model-A", "system-A", "surface-A")
         )) {
             setup.AppendObservation("old");
-            EventAddress anchor = setup.AppendImportedAgentAction(
+            _ = setup.AppendImportedAgentAction(
                 new ActionMessage([new ActionBlock.Text("old answer")]),
                 new CompletionDescriptor("import", "import-v1", "model-A")
             );
-            artifact = await WriteArtifactAsync(
-                path,
-                anchor,
-                setup.ResolveGoverningSetup(anchor)
-            );
-            await setup.CommitArtifactSetAsync(Selections(artifact));
+            candidateFixture =
+                ContextCandidateTestFixture.CreateAtCurrentHead(setup);
         }
         var sourceClient = new ScriptedClient();
         using (var source = SessionJournalEngine.OpenForTest(
             path,
             CreateRuntime(
                 sourceClient,
-                contextCandidate: artifact.Candidate
+                contextCandidate: candidateFixture.Candidate
             ),
             new SessionJournalTestHooks(SessionJournalFailpoint.AfterRequestPreparedCommitted)
         )) {
@@ -585,17 +580,6 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
                 () => source.SendAsync("tail observation", CancellationToken.None)
             );
         }
-        string artifactPath = Path.Combine(
-            DerivedRecapStore.Open(path).ArtifactsDirectory,
-            $"{artifact.WorldUnderstanding.ArtifactId}.json"
-        );
-        File.Delete(artifactPath);
-        Assert.False(File.Exists(artifactPath));
-        File.Delete(Path.Combine(
-            DerivedRecapStore.Open(path).ArtifactsDirectory,
-            $"{artifact.Autobiography.ArtifactId}.json"
-        ));
-
         var recoveryClient = new ScriptedClient();
         recoveryClient.Enqueue(request => Success(request, "inline recovery"));
         var recoverySource = new TestContextCandidateSource();
@@ -619,22 +603,18 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
     [Fact]
     public async Task ResumeAsync_ToolContinuationTerminal_AllowsNextCoherentSend() {
         string path = NewJournalPath();
-        TestArtifactSet artifact;
+        TestContextCandidateFixture candidateFixture;
         using (var setup = SessionJournalEngine.Create(
             path,
             new SessionCreateOptions("model-A", "system-A", "surface-A")
         )) {
             setup.AppendObservation("old");
-            EventAddress anchor = setup.AppendImportedAgentAction(
+            _ = setup.AppendImportedAgentAction(
                 new ActionMessage([new ActionBlock.Text("old answer")]),
                 new CompletionDescriptor("import", "import-v1", "model-A")
             );
-            artifact = await WriteArtifactAsync(
-                path,
-                anchor,
-                setup.ResolveGoverningSetup(anchor)
-            );
-            await setup.CommitArtifactSetAsync(Selections(artifact));
+            candidateFixture =
+                ContextCandidateTestFixture.CreateAtCurrentHead(setup);
         }
 
         var tool = new RecordingTool("lookup");
@@ -652,7 +632,7 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
             CreateRuntime(
                 client,
                 initialTools,
-                contextCandidate: artifact.Candidate
+                contextCandidate: candidateFixture.Candidate
             )
         )) {
             await Assert.ThrowsAsync<IOException>(
@@ -680,7 +660,7 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
                 client,
                 recoveryTools,
                 recoveryPolicy: SessionUncertainCompletionRecoveryPolicy.RestartWithNewAttempt,
-                contextCandidate: artifact.Candidate
+                contextCandidate: candidateFixture.Candidate
             )
         )) {
             ResumeOutcome recovered = await reopened.ResumeAsync(CancellationToken.None);
@@ -689,7 +669,7 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
             client.Enqueue(request => Success(request, "next tail answer"));
             reopened.UseRuntime(CreateRuntime(
                 client,
-                contextCandidate: artifact.Candidate
+                    contextCandidate: candidateFixture.Candidate
             ));
             int projectionCountBeforeTailSend = reopened.FullProjectionInvocationCount;
 
@@ -818,89 +798,6 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
 
     private static CompletionDescriptor Descriptor(CompletionRequest request)
         => new("recovery-client", "recovery-api-v1", request.ModelId);
-
-    private static async ValueTask<TestArtifactSet> WriteArtifactAsync(
-        string path,
-        EventAddress anchor,
-        SessionGoverningSetup setup
-    ) {
-        var memoryPack = new MemoryPack();
-        memoryPack.System.Add("stale.system", new MemoryPackBlock("stale system"));
-        memoryPack.Observation.Add(
-            "roleplay.world-understanding",
-            new MemoryPackBlock("memory observation")
-        );
-        memoryPack.Action.Add(
-            "roleplay.first-person-autobiography",
-            new MemoryPackBlock("memory action")
-        );
-        memoryPack.Action.Add("stale.action", new MemoryPackBlock("stale action"));
-        DerivedRecapArtifact autobiographyArtifact = await DerivedRecapStore.Open(path).WriteProducedAsync(
-            new DerivedRecapWriteRequest(
-                ArtifactKind: "autobiography",
-                ProfileId: "recovery-tests-autobiography",
-                Producer: "tests",
-                ProducerFingerprint: "recovery-tests-v1",
-                SourceRawHead: anchor,
-                SourceStartExclusive: null,
-                SourceEndInclusive: anchor,
-                AnchorRawEvent: anchor,
-                GoverningRuntimeConfigSetup: setup.RuntimeConfigSetupAddress,
-                GoverningSystemPromptSetup: setup.SystemPromptSetupAddress,
-                PreviousArtifact: null,
-                Target: new MemoryPackBlockPath(
-                    MemoryPackCarrier.Action,
-                    "roleplay.first-person-autobiography"
-                ),
-                MemoryPack: memoryPack
-            )
-        );
-        DerivedRecapArtifact worldUnderstandingArtifact =
-            await DerivedRecapStore.Open(path).WriteProducedAsync(new DerivedRecapWriteRequest(
-            ArtifactKind: "world-understanding",
-            ProfileId: "recovery-tests-world",
-            Producer: "tests",
-            ProducerFingerprint: "recovery-tests-v1",
-            SourceRawHead: anchor,
-            SourceStartExclusive: null,
-            SourceEndInclusive: anchor,
-            AnchorRawEvent: anchor,
-            GoverningRuntimeConfigSetup: setup.RuntimeConfigSetupAddress,
-            GoverningSystemPromptSetup: setup.SystemPromptSetupAddress,
-            PreviousArtifact: null,
-            Target: new MemoryPackBlockPath(
-                MemoryPackCarrier.Observation,
-                "roleplay.world-understanding"
-            ),
-            MemoryPack: memoryPack
-        ));
-        return new TestArtifactSet(
-            worldUnderstandingArtifact,
-            autobiographyArtifact,
-            CoherentArtifactSetTestFixture.CreateCandidate(
-                anchor,
-                setup,
-                worldUnderstandingArtifact,
-                autobiographyArtifact
-            )
-        );
-    }
-
-    private static SessionArtifactSetMemberSelection[] Selections(
-        TestArtifactSet artifact
-    ) => [
-        new(
-            "world-understanding",
-            artifact.WorldUnderstanding.ArtifactId
-        ),
-        new("autobiography", artifact.Autobiography.ArtifactId)
-    ];
-
-    private sealed record TestArtifactSet(
-        DerivedRecapArtifact WorldUnderstanding,
-        DerivedRecapArtifact Autobiography,
-        SessionContextCandidate Candidate
-    );
 
     private static EventAddress ReadHead(string path) {
         using var journal = EventJournal.EventJournal.OpenExisting(path);

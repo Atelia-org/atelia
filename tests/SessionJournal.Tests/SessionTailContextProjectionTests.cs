@@ -2,7 +2,6 @@ using System.Collections.Immutable;
 using Atelia.Completion.Abstractions;
 using Atelia.Completion.Tools;
 using Atelia.EventJournal;
-using Atelia.SessionJournal.Derived;
 using Xunit;
 
 namespace Atelia.SessionJournal.Tests;
@@ -28,7 +27,7 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
             new ActionMessage([new ActionBlock.Text("tail answer")]),
             new CompletionDescriptor("tail-client", "tail-api-v1", request.ModelId)
         ));
-        TestArtifactSet artifact;
+        SessionContextCandidate candidate;
         EventAddress anchor;
         EventAddress runtimeB;
         EventAddress promptB;
@@ -43,22 +42,13 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
                 new ActionMessage([new ActionBlock.Text("old answer")]),
                 new CompletionDescriptor("import", "import-v1", "model-A")
             );
-            SessionGoverningSetup anchorSetup = engine.ResolveGoverningSetup(anchor);
-            var memoryPack = CreateMemoryPack();
-            artifact = await WriteArtifactAsync(
-                path,
-                anchor,
-                sourceRawHead: anchor,
-                anchorSetup,
-                memoryPack
-            );
+            candidate = CreateCandidate(engine, anchor);
 
             runtimeB = engine.AppendRuntimeConfigSetup(
                 new SessionRuntimeConfiguration("model-B", "surface-B", SessionJournalDefaults.Schema)
             );
             promptB = engine.AppendSystemPromptSetup("system-B");
-            await engine.CommitArtifactSetAsync(Selections(artifact));
-            engine.UseRuntime(CreateRuntime(client, artifact));
+            engine.UseRuntime(CreateRuntime(client, candidate));
             fullProjectionCountBeforeSend = engine.FullProjectionInvocationCount;
 
             TurnResult result = await engine.SendAsync("new observation", CancellationToken.None);
@@ -66,9 +56,9 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
             Assert.Equal("tail answer", result.Message.GetFlattenedText());
             Assert.Equal(
                 new SessionTailProjectionDiagnostics(
-                    HeaderVisitCount: 5,
-                    SuffixPayloadReadCount: 4,
-                    SuffixEventCount: 4
+                    HeaderVisitCount: 4,
+                    SuffixPayloadReadCount: 3,
+                    SuffixEventCount: 3
                 ),
                 engine.LastTailProjectionDiagnostics
             );
@@ -149,7 +139,7 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
     [Fact]
     public async Task ResumeAsync_ExactObservationTail_DoesNotInvokeFullProjection() {
         string path = NewJournalPath();
-        TestArtifactSet artifact;
+        SessionContextCandidate candidate;
         using (var engine = SessionJournalEngine.Create(
             path,
             new SessionCreateOptions("model-A", "system-A", "surface-A")
@@ -159,14 +149,7 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
                 new ActionMessage([new ActionBlock.Text("old answer")]),
                 new CompletionDescriptor("import", "import-v1", "model-A")
             );
-            artifact = await WriteArtifactAsync(
-                path,
-                anchor,
-                sourceRawHead: anchor,
-                engine.ResolveGoverningSetup(anchor),
-                CreateMemoryPack()
-            );
-            await engine.CommitArtifactSetAsync(Selections(artifact));
+            candidate = CreateCandidate(engine, anchor);
             engine.AppendObservation("resume observation");
         }
 
@@ -174,7 +157,10 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
             new ActionMessage([new ActionBlock.Text("resumed answer")]),
             new CompletionDescriptor("tail-client", "tail-api-v1", request.ModelId)
         ));
-        using var reopened = SessionJournalEngine.Open(path, CreateRuntime(client, artifact));
+        using var reopened = SessionJournalEngine.Open(
+            path,
+            CreateRuntime(client, candidate)
+        );
         int projectionCountBeforeResume = reopened.FullProjectionInvocationCount;
 
         ResumeOutcome outcome = await reopened.ResumeAsync(CancellationToken.None);
@@ -188,7 +174,7 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
     [Fact]
     public async Task SendAsync_CoherentArtifactTail_ToolContinuationKeepsVisibleToolsAndNeverProjects() {
         string path = NewJournalPath();
-        TestArtifactSet artifact;
+        SessionContextCandidate candidate;
         using (var setup = SessionJournalEngine.Create(
             path,
             new SessionCreateOptions("model-A", "system-A", "surface-A")
@@ -198,14 +184,7 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
                 new ActionMessage([new ActionBlock.Text("old answer")]),
                 new CompletionDescriptor("import", "import-v1", "model-A")
             );
-            artifact = await WriteArtifactAsync(
-                path,
-                anchor,
-                anchor,
-                setup.ResolveGoverningSetup(anchor),
-                CreateMemoryPack()
-            );
-            await setup.CommitArtifactSetAsync(Selections(artifact));
+            candidate = CreateCandidate(setup, anchor);
         }
 
         int response = 0;
@@ -237,7 +216,7 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
         ToolSession tools = new ToolRegistry([new NoopTool()]).CreateSession();
         using var engine = SessionJournalEngine.Open(
             path,
-            CreateRuntime(client, artifact, tools, TestToolRuntimeIdentity)
+            CreateRuntime(client, candidate, tools, TestToolRuntimeIdentity)
         );
         int projectionCount = engine.FullProjectionInvocationCount;
 
@@ -414,15 +393,9 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
                 new ActionMessage([new ActionBlock.Text("old answer")]),
                 new CompletionDescriptor("import", "import-v1", "model-A")
             );
-            TestArtifactSet artifact = await WriteArtifactAsync(
-                path,
-                anchor,
-                sourceRawHead: anchor,
-                engine.ResolveGoverningSetup(anchor),
-                CreateMemoryPack()
-            );
-            await engine.CommitArtifactSetAsync(Selections(artifact));
-            engine.UseRuntime(CreateRuntime(client, artifact));
+            SessionContextCandidate candidate =
+                CreateCandidate(engine, anchor);
+            engine.UseRuntime(CreateRuntime(client, candidate));
             int projectionCountBeforeSend = engine.FullProjectionInvocationCount;
 
             SessionJournalTurnAbortedException error =
@@ -474,15 +447,9 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
             new SessionCreateOptions("model-A", "system-A", "surface-A")
         );
         EventAddress created = engine.Project().Head!.Value;
-        TestArtifactSet artifact = await WriteArtifactAsync(
-            path,
-            created,
-            sourceRawHead: created,
-            engine.ResolveGoverningSetup(created),
-            CreateMemoryPack()
-        );
-        await engine.CommitArtifactSetAsync(Selections(artifact));
-        engine.UseRuntime(CreateRuntime(client, artifact));
+        SessionContextCandidate candidate =
+            CreateCandidate(engine, created);
+        engine.UseRuntime(CreateRuntime(client, candidate));
         int projectionCountBeforeSend = engine.FullProjectionInvocationCount;
 
         await engine.SendAsync("first observation", CancellationToken.None);
@@ -580,21 +547,15 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
         string scenario
     ) {
         string path = NewJournalPath();
-        TestArtifactSet artifact;
-        EventAddress activation;
+        SessionContextCandidate candidate;
+        EventAddress head;
         using (var setup = SessionJournalEngine.Create(
             path,
             new SessionCreateOptions("model-A", "system-A", "surface-A")
         )) {
             EventAddress anchor = setup.Project().Head!.Value;
-            artifact = await WriteArtifactAsync(
-                path,
-                anchor,
-                sourceRawHead: anchor,
-                setup.ResolveGoverningSetup(anchor),
-                CreateMemoryPack()
-            );
-            activation = await setup.CommitArtifactSetAsync(Selections(artifact));
+            candidate = CreateCandidate(setup, anchor);
+            head = setup.ResolveExecutionTail().Head!.Value;
         }
 
         var client = new CapturingCompletionClient(
@@ -602,7 +563,7 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
             name: scenario == "invalid-client-name" ? " " : "tail-client",
             apiSpecId: scenario == "invalid-client-api" ? "" : "tail-api-v1"
         );
-        SessionRuntime runtime = CreateRuntime(client, artifact);
+        SessionRuntime runtime = CreateRuntime(client, candidate);
         runtime = scenario switch {
             "missing-target" => runtime with { CompletionTarget = null },
             "invalid-target-field" => runtime with {
@@ -633,7 +594,7 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
             else {
                 Assert.IsAssignableFrom<ArgumentException>(error);
             }
-            Assert.Equal(activation, reopened.ResolveExecutionTail().Head);
+            Assert.Equal(head, reopened.ResolveExecutionTail().Head);
             Assert.Equal(projectionCount, reopened.FullProjectionInvocationCount);
             Assert.Empty(client.Requests);
         }
@@ -648,472 +609,32 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
         );
     }
 
-    private async Task ResumeAsync_ObservationWithoutActivationIsTypedNotReadyBeforePreparedProviderOrProjection() {
-        string path = NewJournalPath();
-        EventAddress observation;
-        using (var setup = SessionJournalEngine.Create(
-            path,
-            new SessionCreateOptions("model-A", "system-A", "surface-A")
-        )) {
-            observation = setup.AppendObservation("resume without artifacts");
-        }
-
-        var client = new CapturingCompletionClient(
-            _ => throw new InvalidOperationException("must not call provider")
-        );
-        using var reopened = SessionJournalEngine.Open(
-            path,
-            CreateRuntime(client, "unused")
-        );
-        int projectionCount = reopened.FullProjectionInvocationCount;
-
-        SessionJournalNotReadyException error =
-            await Assert.ThrowsAsync<SessionJournalNotReadyException>(
-                () => reopened.ResumeAsync(CancellationToken.None)
-            );
-
-        Assert.Equal(
-            SessionJournalNotReadyReason.ActiveArtifactSetRequired,
-            error.Reason
-        );
-        Assert.Equal(observation, reopened.ResolveExecutionTail().Head);
-        Assert.Equal(projectionCount, reopened.FullProjectionInvocationCount);
-        Assert.Empty(client.Requests);
-    }
-
-    private async Task SendAsync_AfterRewindBeforeActivationIsTypedNotReady() {
-        string path = NewJournalPath();
-        EventAddress preActivation;
-        EventAddress activation;
-        TestArtifactSet artifact;
-        using (var setup = SessionJournalEngine.Create(
-            path,
-            new SessionCreateOptions("model-A", "system-A", "surface-A")
-        )) {
-            preActivation = setup.Project().Head!.Value;
-            artifact = await WriteArtifactAsync(
-                path,
-                preActivation,
-                sourceRawHead: preActivation,
-                setup.ResolveGoverningSetup(preActivation),
-                CreateMemoryPack()
-            );
-            activation = await setup.CommitArtifactSetAsync(Selections(artifact));
-        }
-        using (var journal = EventJournal.EventJournal.OpenExisting(path)) {
-            RefId main = journal
-                .OpenBranch(SessionJournalDefaults.MainBranchName)
-                .Unwrap();
-            Assert.True(journal.MoveRef(main, activation, preActivation).Unwrap());
-        }
-
-        var client = new CapturingCompletionClient(
-            _ => throw new InvalidOperationException("must not call provider")
-        );
-        using var reopened = SessionJournalEngine.Open(
-            path,
-            CreateRuntime(client, artifact)
-        );
-        int projectionCount = reopened.FullProjectionInvocationCount;
-
-        SessionJournalNotReadyException error =
-            await Assert.ThrowsAsync<SessionJournalNotReadyException>(
-                () => reopened.SendAsync("must not append", CancellationToken.None)
-            );
-
-        Assert.Equal(
-            SessionJournalNotReadyReason.ActiveArtifactSetRequired,
-            error.Reason
-        );
-        Assert.Equal(preActivation, reopened.ResolveExecutionTail().Head);
-        Assert.Equal(projectionCount, reopened.FullProjectionInvocationCount);
-        Assert.Empty(client.Requests);
-    }
-
-    private async Task SendAsync_MissingActiveMemberIsTypedNotReadyBeforeObservation() {
-        string path = NewJournalPath();
-        EventAddress activation;
-        TestArtifactSet artifact;
-        using (var setup = SessionJournalEngine.Create(
-            path,
-            new SessionCreateOptions("model-A", "system-A", "surface-A")
-        )) {
-            EventAddress anchor = setup.Project().Head!.Value;
-            artifact = await WriteArtifactAsync(
-                path,
-                anchor,
-                sourceRawHead: anchor,
-                setup.ResolveGoverningSetup(anchor),
-                CreateMemoryPack()
-            );
-            activation = await setup.CommitArtifactSetAsync(Selections(artifact));
-        }
-        DerivedRecapStore store = DerivedRecapStore.Open(path);
-        File.Delete(
-            System.IO.Path.Combine(
-                store.ArtifactsDirectory,
-                $"{artifact.WorldUnderstanding.ArtifactId}.json"
-            )
-        );
-
-        var client = new CapturingCompletionClient(
-            _ => throw new InvalidOperationException("must not call provider")
-        );
-        using var reopened = SessionJournalEngine.Open(
-            path,
-            CreateRuntime(client, artifact)
-        );
-        int projectionCount = reopened.FullProjectionInvocationCount;
-
-        SessionJournalNotReadyException error =
-            await Assert.ThrowsAsync<SessionJournalNotReadyException>(
-                () => reopened.SendAsync("must not append", CancellationToken.None)
-            );
-
-        Assert.Equal(
-            SessionJournalNotReadyReason.ArtifactSetMemberUnavailable,
-            error.Reason
-        );
-        Assert.Equal(artifact.WorldUnderstanding.ArtifactId, error.ArtifactId);
-        Assert.Equal(activation, reopened.ResolveExecutionTail().Head);
-        Assert.Equal(projectionCount, reopened.FullProjectionInvocationCount);
-        Assert.Empty(client.Requests);
-    }
-
-    private async Task SendAsync_ActivationMemberIdentityMismatchIsTypedNotReadyBeforeObservation() {
-        string path = NewJournalPath();
-        EventAddress validActivation;
-        ArtifactSetCommittedBody validBody;
-        TestArtifactSet artifact;
-        using (var setup = SessionJournalEngine.Create(
-            path,
-            new SessionCreateOptions("model-A", "system-A", "surface-A")
-        )) {
-            EventAddress anchor = setup.Project().Head!.Value;
-            artifact = await WriteArtifactAsync(
-                path,
-                anchor,
-                sourceRawHead: anchor,
-                setup.ResolveGoverningSetup(anchor),
-                CreateMemoryPack()
-            );
-            validActivation =
-                await setup.CommitArtifactSetAsync(Selections(artifact));
-            validBody = ReadArtifactSetBody(setup, validActivation);
-        }
-        ArtifactSetCommittedBody forgedBody = validBody with {
-            Members = [
-                validBody.Members[0] with {
-                    ArtifactKind = $"{validBody.Members[0].ArtifactKind}-forged"
-                },
-                .. validBody.Members.Skip(1)
-            ]
-        };
-        EventAddress forgedActivation;
-        using (var journal = EventJournal.EventJournal.OpenExisting(path)) {
-            forgedActivation = Commit(
-                journal,
-                validActivation,
-                SessionEventKind.ArtifactSetCommitted,
-                forgedBody
-            );
-        }
-
-        var client = new CapturingCompletionClient(
-            _ => throw new InvalidOperationException("must not call provider")
-        );
-        using var reopened = SessionJournalEngine.Open(
-            path,
-            CreateRuntime(client, artifact)
-        );
-        int projectionCount = reopened.FullProjectionInvocationCount;
-
-        SessionJournalNotReadyException error =
-            await Assert.ThrowsAsync<SessionJournalNotReadyException>(
-                () => reopened.SendAsync("must not append", CancellationToken.None)
-            );
-
-        Assert.Equal(
-            SessionJournalNotReadyReason.ArtifactSetMemberMismatch,
-            error.Reason
-        );
-        Assert.Equal(validBody.Members[0].ArtifactId, error.ArtifactId);
-        Assert.Equal(forgedActivation, reopened.ResolveExecutionTail().Head);
-        Assert.Equal(projectionCount, reopened.FullProjectionInvocationCount);
-        Assert.Empty(client.Requests);
-    }
-
-    private async Task SendAsync_SourceRawHeadBeforeAnchorIsTypedNotReadyBeforeObservation() {
-        string path = NewJournalPath();
-        EventAddress beforeAnchor;
-        EventAddress anchor;
-        TestArtifactSet artifact;
-        ArtifactSetCommittedBody body;
-        using (var setup = SessionJournalEngine.Create(
-            path,
-            new SessionCreateOptions("model-A", "system-A", "surface-A")
-        )) {
-            beforeAnchor = setup.Project().Head!.Value;
-            setup.AppendObservation("covered observation");
-            anchor = setup.AppendImportedAgentAction(
-                new ActionMessage([new ActionBlock.Text("covered answer")]),
-                new CompletionDescriptor("import", "import-v1", "model-A")
-            );
-            SessionGoverningSetup anchorSetup =
-                setup.ResolveGoverningSetup(anchor);
-            artifact = await WriteArtifactAsync(
-                path,
-                anchor,
-                sourceRawHead: beforeAnchor,
-                anchorSetup,
-                CreateMemoryPack()
-            );
-            body = CreateArtifactSetBody(
-                setup,
-                anchor,
-                anchorSetup,
-                anchorSetup,
-                artifact
-            );
-        }
-        EventAddress activation;
-        using (var journal = EventJournal.EventJournal.OpenExisting(path)) {
-            activation = Commit(
-                journal,
-                anchor,
-                SessionEventKind.ArtifactSetCommitted,
-                body
-            );
-        }
-
-        var client = new CapturingCompletionClient(
-            _ => throw new InvalidOperationException("must not call provider")
-        );
-        using var reopened = SessionJournalEngine.Open(
-            path,
-            CreateRuntime(client, artifact)
-        );
-        int projectionCount = reopened.FullProjectionInvocationCount;
-
-        SessionJournalNotReadyException error =
-            await Assert.ThrowsAsync<SessionJournalNotReadyException>(
-                () => reopened.SendAsync("must not append", CancellationToken.None)
-            );
-
-        Assert.Equal(
-            SessionJournalNotReadyReason.ArtifactSetMemberMismatch,
-            error.Reason
-        );
-        Assert.NotNull(error.ArtifactId);
-        Assert.Equal(activation, reopened.ResolveExecutionTail().Head);
-        Assert.Equal(projectionCount, reopened.FullProjectionInvocationCount);
-        Assert.Empty(client.Requests);
-    }
-
-    private async Task SendAsync_SourceRawHeadOffActivationLineageIsTypedNotReadyBeforeObservation() {
-        string path = NewJournalPath();
-        EventAddress anchor;
-        SessionGoverningSetup anchorSetup;
-        using (var setup = SessionJournalEngine.Create(
-            path,
-            new SessionCreateOptions("model-A", "system-A", "surface-A")
-        )) {
-            anchor = setup.Project().Head!.Value;
-            anchorSetup = setup.ResolveGoverningSetup(anchor);
-        }
-        EventAddress offBranchSource;
-        using (var journal = EventJournal.EventJournal.OpenExisting(path)) {
-            journal.CreateBranch("off", anchor).Unwrap();
-            offBranchSource = CommitToBranch(
-                journal,
-                "off",
-                anchor,
-                SessionEventKind.ObservationAccepted,
-                new ObservationAcceptedBody("off branch")
-            );
-        }
-        TestArtifactSet artifact = await WriteArtifactAsync(
-            path,
-            anchor,
-            sourceRawHead: offBranchSource,
-            anchorSetup,
-            CreateMemoryPack()
-        );
-        ArtifactSetCommittedBody body;
-        using (var setup = SessionJournalEngine.Open(path)) {
-            body = CreateArtifactSetBody(
-                setup,
-                anchor,
-                anchorSetup,
-                anchorSetup,
-                artifact
-            );
-        }
-        EventAddress activation;
-        using (var journal = EventJournal.EventJournal.OpenExisting(path)) {
-            activation = Commit(
-                journal,
-                anchor,
-                SessionEventKind.ArtifactSetCommitted,
-                body
-            );
-        }
-
-        var client = new CapturingCompletionClient(
-            _ => throw new InvalidOperationException("must not call provider")
-        );
-        using var reopened = SessionJournalEngine.Open(
-            path,
-            CreateRuntime(client, artifact)
-        );
-        int projectionCount = reopened.FullProjectionInvocationCount;
-
-        SessionJournalNotReadyException error =
-            await Assert.ThrowsAsync<SessionJournalNotReadyException>(
-                () => reopened.SendAsync("must not append", CancellationToken.None)
-            );
-
-        Assert.Equal(
-            SessionJournalNotReadyReason.ArtifactSetMemberMismatch,
-            error.Reason
-        );
-        Assert.NotNull(error.ArtifactId);
-        Assert.Equal(activation, reopened.ResolveExecutionTail().Head);
-        Assert.Equal(projectionCount, reopened.FullProjectionInvocationCount);
-        Assert.Empty(client.Requests);
-    }
-
-    [Fact]
-    public async Task SourceRawHeadAtActivationAddressIsRejectedAsAfterCoverageInterval() {
-        string path = NewJournalPath();
-        TestArtifactSet artifact;
-        EventAddress anchor;
-        EventAddress activation;
-        var client = new CapturingCompletionClient(
-            _ => throw new InvalidOperationException("must not call provider")
-        );
-        using var engine = SessionJournalEngine.Create(
-            path,
-            new SessionCreateOptions("model-A", "system-A", "surface-A"),
-            CreateRuntime(client, "unused")
-        );
-        anchor = engine.Project().Head!.Value;
-        artifact = await WriteArtifactAsync(
-            path,
-            anchor,
-            sourceRawHead: anchor,
-            engine.ResolveGoverningSetup(anchor),
-            CreateMemoryPack()
-        );
-        activation = await engine.CommitArtifactSetAsync(Selections(artifact));
-        // A persisted activation cannot commit an artifact whose identity refers
-        // to that activation without creating a content-address cycle. Exercise
-        // the upper-bound predicate directly with the activation address.
-        DerivedRecapArtifact afterCoverage =
-            artifact.Autobiography with { SourceRawHead = activation };
-        int projectionCount = engine.FullProjectionInvocationCount;
-
-        SessionJournalNotReadyException error =
-            Assert.Throws<SessionJournalNotReadyException>(
-                () => SessionJournalEngine.ValidateArtifactSourceHead(
-                    new HashSet<EventAddress> { anchor },
-                    afterCoverage
-                )
-            );
-
-        Assert.Equal(
-            SessionJournalNotReadyReason.ArtifactSetMemberMismatch,
-            error.Reason
-        );
-        Assert.Equal(afterCoverage.ArtifactId, error.ArtifactId);
-        Assert.Equal(activation, engine.ResolveExecutionTail().Head);
-        Assert.Equal(projectionCount, engine.FullProjectionInvocationCount);
-        Assert.Empty(client.Requests);
-    }
-
-    private async Task SendAsync_StaleActivationCurrentSetupsIsRawCorruptionBeforeObservation() {
-        string path = NewJournalPath();
-        TestArtifactSet artifact;
-        ArtifactSetCommittedBody staleBody;
-        EventAddress setupMutation;
-        using (var setup = SessionJournalEngine.Create(
-            path,
-            new SessionCreateOptions("model-A", "system-A", "surface-A")
-        )) {
-            EventAddress anchor = setup.Project().Head!.Value;
-            artifact = await WriteArtifactAsync(
-                path,
-                anchor,
-                sourceRawHead: anchor,
-                setup.ResolveGoverningSetup(anchor),
-                CreateMemoryPack()
-            );
-            EventAddress validActivation =
-                await setup.CommitArtifactSetAsync(Selections(artifact));
-            staleBody = ReadArtifactSetBody(setup, validActivation);
-            setupMutation = setup.AppendSystemPromptSetup("system-B");
-        }
-        EventAddress staleActivation;
-        using (var journal = EventJournal.EventJournal.OpenExisting(path)) {
-            staleActivation = Commit(
-                journal,
-                setupMutation,
-                SessionEventKind.ArtifactSetCommitted,
-                staleBody
-            );
-        }
-
-        var client = new CapturingCompletionClient(
-            _ => throw new InvalidOperationException("must not call provider")
-        );
-        using var reopened = SessionJournalEngine.Open(
-            path,
-            CreateRuntime(client, artifact)
-        );
-        int projectionCount = reopened.FullProjectionInvocationCount;
-
-        InvalidDataException error =
-            await Assert.ThrowsAsync<InvalidDataException>(
-                () => reopened.SendAsync("must not append", CancellationToken.None)
-            );
-
-        Assert.Contains("currentSetups", error.Message, StringComparison.Ordinal);
-        Assert.Equal(staleActivation, reopened.ResolveExecutionTail().Head);
-        Assert.Equal(projectionCount, reopened.FullProjectionInvocationCount);
-        Assert.Empty(client.Requests);
-    }
 
     [Fact]
     public async Task ResumeAsync_CrossBranchPreparedRawStartSetupIsRawCorruptionBeforeProvider() {
         string path = NewJournalPath();
-        TestArtifactSet artifact;
-        EventAddress mainActivation;
-        ArtifactSetCommittedBody activationBody;
+        SessionContextCandidate candidate;
+        EventAddress mainHead;
         using (var setup = SessionJournalEngine.Create(
             path,
             new SessionCreateOptions("model-A", "system-A", "surface-A")
         )) {
-            EventAddress anchor = setup.Project().Head!.Value;
-            artifact = await WriteArtifactAsync(
-                path,
-                anchor,
-                sourceRawHead: anchor,
-                setup.ResolveGoverningSetup(anchor),
-                CreateMemoryPack()
-            );
-            mainActivation =
-                await setup.CommitArtifactSetAsync(Selections(artifact));
-            activationBody = ReadArtifactSetBody(setup, mainActivation);
+            mainHead = setup.Project().Head!.Value;
+            candidate = CreateCandidate(setup, mainHead);
         }
-        EventAddress offBranchActivation;
+        EventAddress offBranchRuntimeSetup;
         using (var journal = EventJournal.EventJournal.OpenExisting(path)) {
-            journal.CreateBranch("off-activation", mainActivation).Unwrap();
-            offBranchActivation = CommitToBranch(
+            journal.CreateBranch("off-setup", mainHead).Unwrap();
+            offBranchRuntimeSetup = CommitToBranch(
                 journal,
-                "off-activation",
-                mainActivation,
-                SessionEventKind.ArtifactSetCommitted,
-                activationBody
+                "off-setup",
+                mainHead,
+                SessionEventKind.RuntimeConfigSetup,
+                new SessionRuntimeConfiguration(
+                    "off-model",
+                    "off-surface",
+                    SessionJournalDefaults.Schema
+                )
             );
         }
 
@@ -1124,7 +645,7 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
         EventAddress validPrepared;
         using (var preparing = SessionJournalEngine.OpenForTest(
             path,
-            CreateRuntime(client, artifact),
+            CreateRuntime(client, candidate),
             new SessionJournalTestHooks(
                 SessionJournalFailpoint.AfterRequestPreparedCommitted
             )
@@ -1163,7 +684,7 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
                     Plan = validPreparedBody.Plan with {
                         RawStartSetups = validPreparedBody.Plan.RawStartSetups with {
                             RuntimeConfig = new SessionSetupReference(
-                                offBranchActivation,
+                                offBranchRuntimeSetup,
                                 1,
                                 new string('e', 64)
                             )
@@ -1173,7 +694,7 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
             );
         }
 
-        SessionRuntime recoveryRuntime = CreateRuntime(client, artifact) with {
+        SessionRuntime recoveryRuntime = CreateRuntime(client, candidate) with {
             UncertainCompletionRecoveryPolicy =
                 SessionUncertainCompletionRecoveryPolicy.RestartWithNewAttempt
         };
@@ -1185,7 +706,11 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
                 () => reopened.ResumeAsync(CancellationToken.None)
             );
 
-        Assert.Contains("RuntimeConfigSetup", error.Message, StringComparison.Ordinal);
+        Assert.Contains(
+            "Setup reference payload hash mismatch",
+            error.Message,
+            StringComparison.Ordinal
+        );
         Assert.Equal(forgedPrepared, reopened.ResolveExecutionTail().Head);
         Assert.Equal(projectionCount, reopened.FullProjectionInvocationCount);
         Assert.Empty(client.Requests);
@@ -1202,20 +727,13 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
             new ActionMessage([new ActionBlock.Text("tail answer")]),
             new CompletionDescriptor("tail-client", "tail-api-v1", request.ModelId)
         ));
-        TestArtifactSet artifact;
+        SessionContextCandidate candidate;
         using (var engine = SessionJournalEngine.Create(
             path,
             new SessionCreateOptions("model-A", "system-A", "surface-A")
         )) {
             EventAddress anchor = engine.Project().Head!.Value;
-            artifact = await WriteArtifactAsync(
-                path,
-                anchor,
-                sourceRawHead: anchor,
-                engine.ResolveGoverningSetup(anchor),
-                CreateMemoryPack()
-            );
-            await engine.CommitArtifactSetAsync(Selections(artifact));
+            candidate = CreateCandidate(engine, anchor);
             if (mutateRuntime) {
                 engine.AppendRuntimeConfigSetup(
                     new SessionRuntimeConfiguration(
@@ -1228,7 +746,7 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
             else {
                 engine.AppendSystemPromptSetup("system-B");
             }
-            engine.UseRuntime(CreateRuntime(client, artifact));
+            engine.UseRuntime(CreateRuntime(client, candidate));
 
             _ = await engine.SendAsync("new observation", CancellationToken.None);
         }
@@ -1332,7 +850,7 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
     }
 
     [Fact]
-    public async Task SendAsync_ArtifactSourceHeadEarlierThanAnchor_FailsBeforeProvider() {
+    public async Task SendAsync_CandidateSourceHeadEarlierThanAnchor_FailsBeforeCompletion() {
         string path = NewJournalPath();
         var client = new CapturingCompletionClient(_ => throw new InvalidOperationException("must not call provider"));
         using var engine = SessionJournalEngine.Create(
@@ -1344,17 +862,18 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
             new ActionMessage([new ActionBlock.Text("old answer")]),
             new CompletionDescriptor("import", "import-v1", "model-A")
         );
-        SessionGoverningSetup setup = engine.ResolveGoverningSetup(anchor);
-        TestArtifactSet artifact = await WriteArtifactAsync(
-            path,
+        SessionGoverningSetup setup =
+            engine.ResolveGoverningSetup(anchor);
+        SessionContextCandidate candidate = CreateCandidate(
+            engine,
             anchor,
-            sourceRawHead: setup.RuntimeConfigSetupAddress,
-            setup,
-            CreateMemoryPack()
+            setup.RuntimeConfigSetupAddress
         );
+        engine.UseRuntime(CreateRuntime(client, candidate));
         InvalidDataException error = await Assert.ThrowsAsync<InvalidDataException>(
-            async () => await engine.CommitArtifactSetAsync(
-                Selections(artifact)
+            () => engine.SendAsync(
+                "invalid candidate",
+                CancellationToken.None
             )
         );
 
@@ -1365,7 +884,7 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
     [Theory]
     [InlineData("tool-action")]
     [InlineData("tool-result")]
-    public async Task SendAsync_ImportedToolResultContinuation_RejectsNonReplaySafeArtifactAnchorBeforeProvider(
+    public async Task SendAsync_ImportedToolResultContinuation_RejectsNonReplaySafeCandidateAnchor(
         string boundary
     ) {
         string path = NewJournalPath();
@@ -1439,20 +958,25 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
         }
 
         EventAddress anchor = boundary == "tool-action" ? toolAction : toolResult;
-        TestArtifactSet artifact;
         InvalidDataException error;
         using (var engine = SessionJournalEngine.Open(path)) {
-            SessionGoverningSetup setup = engine.ResolveGoverningSetup(anchor);
-            artifact = await WriteArtifactAsync(
-                path,
+            SessionContextCandidate candidate = CreateCandidate(
+                engine,
                 anchor,
-                sourceRawHead: finalAction,
-                setup,
-                CreateMemoryPack()
+                finalAction
             );
+            engine.UseRuntime(CreateRuntime(
+                new CapturingCompletionClient(
+                    _ => throw new InvalidOperationException(
+                        "must not call completion"
+                    )
+                ),
+                candidate
+            ));
             error = await Assert.ThrowsAsync<InvalidDataException>(
-                async () => await engine.CommitArtifactSetAsync(
-                    Selections(artifact)
+                () => engine.SendAsync(
+                    "invalid anchor",
+                    CancellationToken.None
                 )
             );
         }
@@ -1467,115 +991,6 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
         Assert.Empty(client.Requests);
     }
 
-    private async Task SendAsync_RawActivationWithNonReplaySafeAnchor_FailsBeforeObservationMutation(
-        string boundary
-    ) {
-        string path = NewJournalPath();
-        EventAddress toolAction;
-        EventAddress toolResult;
-        EventAddress finalAction;
-        EventAddress sourceObservation;
-        using (var engine = SessionJournalEngine.Create(
-            path,
-            new SessionCreateOptions("model-A", "system-A", "surface-A"),
-            new SessionRuntime(
-                new CapturingCompletionClient(_ => throw new InvalidOperationException("unused")),
-                new ToolRegistry([new NoopTool("lookup")]).CreateSession(),
-                ToolRuntimeIdentity: TestToolRuntimeIdentity
-            )
-        )) {
-            sourceObservation = engine.AppendObservation("use tool");
-            toolAction = engine.AppendImportedAgentAction(
-                new ActionMessage([
-                    new ActionBlock.ToolCall(new RawToolCall("lookup", "call-1", "{}"))
-                ]),
-                new CompletionDescriptor("import", "import-v1", "model-A")
-            );
-        }
-        using (var journal = EventJournal.EventJournal.OpenExisting(path)) {
-            EventAddress started = Commit(
-                journal,
-                toolAction,
-                SessionEventKind.ToolExecutionStarted,
-                new ToolExecutionStartedBody(
-                    "call-1",
-                    "lookup",
-                    "{}",
-                    "op-1",
-                    1,
-                    TestToolRuntimeIdentity
-                )
-            );
-            toolResult = Commit(
-                journal,
-                started,
-                SessionEventKind.ToolResultObserved,
-                new ToolResultObservedBody(
-                    "call-1",
-                    "lookup",
-                    1,
-                    ToolExecutionStatus.Success,
-                    [new ToolResultBlock.Text("result")]
-                )
-            );
-            finalAction = Commit(
-                journal,
-                toolResult,
-                SessionEventKind.ImportedAgentAction,
-                new AgentActionProducedBody(
-                    new ActionMessage([new ActionBlock.Text("done")]),
-                    new CompletionDescriptor("import", "import-v1", "model-A"),
-                    $"atelia.session-journal.turn.v1:{EventAddressTextCodec.Format(sourceObservation)}",
-                    new SessionExecutionCheckpoint(1),
-                    ToolRuntimeIdentity: null
-                )
-            );
-        }
-
-        EventAddress anchor = boundary == "tool-action" ? toolAction : toolResult;
-        TestArtifactSet artifact;
-        ArtifactSetCommittedBody body;
-        using (var setup = SessionJournalEngine.Open(path)) {
-            SessionGoverningSetup anchorSetup = setup.ResolveGoverningSetup(anchor);
-            artifact = await WriteArtifactAsync(
-                path,
-                anchor,
-                sourceRawHead: finalAction,
-                anchorSetup,
-                CreateMemoryPack()
-            );
-            body = CreateArtifactSetBody(
-                setup,
-                anchor,
-                anchorSetup,
-                setup.ResolveGoverningSetup(finalAction),
-                artifact
-            );
-        }
-        EventAddress activation;
-        using (var journal = EventJournal.EventJournal.OpenExisting(path)) {
-            activation = Commit(
-                journal,
-                finalAction,
-                SessionEventKind.ArtifactSetCommitted,
-                body
-            );
-        }
-
-        var client = new CapturingCompletionClient(
-            _ => throw new InvalidOperationException("must not call provider")
-        );
-        using var reopened = SessionJournalEngine.Open(path, CreateRuntime(client, artifact));
-        int projectionCount = reopened.FullProjectionInvocationCount;
-
-        InvalidDataException error = await Assert.ThrowsAsync<InvalidDataException>(
-            () => reopened.SendAsync("must not append", CancellationToken.None)
-        );
-
-        Assert.Equal(activation, reopened.ResolveExecutionTail().Head);
-        Assert.Equal(projectionCount, reopened.FullProjectionInvocationCount);
-        Assert.Empty(client.Requests);
-    }
 
     [Fact]
     public void CoherentRecipeExpand_NeverReturnsHeaderMessage() {
@@ -1600,131 +1015,56 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
         Assert.DoesNotContain(context, static message => message is SessionContextHeader);
     }
 
-    private static MemoryPack CreateMemoryPack() {
-        var memoryPack = new MemoryPack();
-        memoryPack.System.Add("stale.system", new MemoryPackBlock("stale system"));
-        memoryPack.Observation.Add(
-            "roleplay.world-understanding",
-            new MemoryPackBlock("memory observation")
-        );
-        memoryPack.Observation.Add(
-            "stale.observation",
-            new MemoryPackBlock("stale observation")
-        );
-        memoryPack.Action.Add(
-            "roleplay.first-person-autobiography",
-            new MemoryPackBlock("memory action")
-        );
-        memoryPack.Action.Add("stale.action", new MemoryPackBlock("stale action"));
-        return memoryPack;
-    }
-
-    private static async ValueTask<TestArtifactSet> WriteArtifactAsync(
-        string path,
-        EventAddress anchor,
-        EventAddress sourceRawHead,
-        SessionGoverningSetup setup,
-        MemoryPack memoryPack
-    ) {
-        var autobiographyTarget = new MemoryPackBlockPath(
-            MemoryPackCarrier.Action,
-            "roleplay.first-person-autobiography"
-        );
-        DerivedRecapArtifact autobiographyArtifact = await DerivedRecapStore.Open(path).WriteProducedAsync(
-            new DerivedRecapWriteRequest(
-                ArtifactKind: "autobiography",
-                ProfileId: "tail-tests-autobiography",
-                Producer: "tests",
-                ProducerFingerprint: "tail-tests-v1",
-                SourceRawHead: sourceRawHead,
-                SourceStartExclusive: null,
-                SourceEndInclusive: anchor,
-                AnchorRawEvent: anchor,
-                GoverningRuntimeConfigSetup: setup.RuntimeConfigSetupAddress,
-                GoverningSystemPromptSetup: setup.SystemPromptSetupAddress,
-                PreviousArtifact: null,
-                Target: autobiographyTarget,
-                MemoryPack: memoryPack
-            )
-        );
-        var target = new MemoryPackBlockPath(
-            MemoryPackCarrier.Observation,
-            "roleplay.world-understanding"
-        );
-        DerivedRecapArtifact worldUnderstandingArtifact =
-            await DerivedRecapStore.Open(path).WriteProducedAsync(new DerivedRecapWriteRequest(
-            ArtifactKind: "world-understanding",
-            ProfileId: "tail-tests-world",
-            Producer: "tests",
-            ProducerFingerprint: "tail-tests-v1",
-            SourceRawHead: sourceRawHead,
-            SourceStartExclusive: null,
-            SourceEndInclusive: anchor,
-            AnchorRawEvent: anchor,
-            GoverningRuntimeConfigSetup: setup.RuntimeConfigSetupAddress,
-            GoverningSystemPromptSetup: setup.SystemPromptSetupAddress,
-            PreviousArtifact: null,
-            Target: target,
-            MemoryPack: memoryPack
-        ));
-        return new TestArtifactSet(
-            worldUnderstandingArtifact,
-            autobiographyArtifact,
-            CreateCandidate(anchor, setup, worldUnderstandingArtifact, autobiographyArtifact)
-        );
-    }
 
     private static SessionContextCandidate CreateCandidate(
+        SessionJournalEngine engine,
         EventAddress anchor,
-        SessionGoverningSetup setup,
-        params DerivedRecapArtifact[] artifacts
+        EventAddress? sourceRawHead = null
     ) => new(
         anchor,
-        new SessionContextAnchorSetupReferences(
-            CreateCandidateSetupReference(
-                setup.RuntimeConfigSetupAddress,
-                SessionEventKind.RuntimeConfigSetup,
-                setup.RuntimeConfig
+        engine.ResolveContextAnchorSetupReferences(anchor),
+        [
+            ContextCandidateTestFixture.Contribution(
+                MemoryPackCarrier.Observation,
+                "roleplay.world-understanding",
+                "memory observation",
+                sourceRawHead ?? anchor
             ),
-            CreateCandidateSetupReference(
-                setup.SystemPromptSetupAddress,
-                SessionEventKind.SystemPromptSetup,
-                new SystemPromptSetupBody(setup.SystemPrompt)
+            ContextCandidateTestFixture.Contribution(
+                MemoryPackCarrier.Action,
+                "roleplay.first-person-autobiography",
+                "memory action",
+                sourceRawHead ?? anchor
             )
-        ),
-        artifacts.Select(static artifact => {
-            Assert.True(artifact.MemoryPack.TryGetBlock(artifact.Target, out MemoryPackBlock block));
-            return new SessionContextContribution(
-                artifact.Target,
-                block.Text,
-                SessionContextContributionHasher.CodecId,
-                SessionContextContributionHasher.ComputeSha256(block.Text),
-                artifact.SourceRawHead
-            );
-        }).ToArray()
+        ]
     );
-
-    private static SessionContextSetupReference CreateCandidateSetupReference(
-        EventAddress address,
-        SessionEventKind kind,
-        object body
-    ) {
-        byte[] payload = SessionEventCodec.Encode(kind, body);
-        _ = SessionEventCodec.Decode(kind, payload, out int version);
-        return new SessionContextSetupReference(
-            address,
-            version,
-            SessionRequestCanonicalizer.Sha256Hex(payload)
-        );
-    }
 
     private static SessionRuntime CreateRuntime(
         CapturingCompletionClient client,
-        TestArtifactSet artifact,
+        SessionContextCandidate candidate,
         ToolSession? toolSession = null,
         SessionToolRuntimeIdentity? toolRuntimeIdentity = null
-    )
-        => new(
+    ) => new(
+        CompletionClient: client,
+        ToolSession: toolSession,
+        CompletionTarget: new SessionCompletionTargetIdentity(
+            "tail-connection",
+            "test",
+            "tail-connection-v1",
+            "tail-adapter-v1"
+        ),
+        MaxTokens: 512,
+        ToolRuntimeIdentity: toolRuntimeIdentity,
+        ContextCandidateSource: new TestContextCandidateSource(candidate)
+    );
+
+    private static SessionRuntime CreateRuntime(
+        CapturingCompletionClient client,
+        string unusedCandidateId,
+        ToolSession? toolSession = null
+    ) {
+        _ = unusedCandidateId;
+        return new SessionRuntime(
             CompletionClient: client,
             ToolSession: toolSession,
             CompletionTarget: new SessionCompletionTargetIdentity(
@@ -1734,9 +1074,9 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
                 "tail-adapter-v1"
             ),
             MaxTokens: 512,
-            ToolRuntimeIdentity: toolRuntimeIdentity,
-            ContextCandidateSource: new TestContextCandidateSource(artifact.Candidate)
+            ContextCandidateSource: new TestContextCandidateSource()
         );
+    }
 
     private static CompletionRequestPreparedBody ReadPrepared(
         string path,
@@ -1752,142 +1092,8 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
         );
     }
 
-    private static ArtifactSetCommittedBody ReadArtifactSetBody(
-        SessionJournalEngine engine,
-        EventAddress address
-    ) => Assert.IsType<ArtifactSetCommittedBody>(
-        SessionEventCodec.Decode(
-            SessionEventKind.ArtifactSetCommitted,
-            engine.ReadPayloadBytes(address),
-            out _
-        )
-    );
-
-    private static SessionArtifactSetReference CreateArtifactSetReference(
-        SessionJournalEngine engine,
-        EventAddress address
-    ) {
-        byte[] payload = engine.ReadPayloadBytes(address);
-        _ = SessionEventCodec.Decode(
-            SessionEventKind.ArtifactSetCommitted,
-            payload,
-            out int version
-        );
-        return new SessionArtifactSetReference(
-            address,
-            version,
-            SessionRequestCanonicalizer.Sha256Hex(payload)
-        );
-    }
-
-    private static ArtifactSetCommittedBody CreateArtifactSetBody(
-        SessionJournalEngine engine,
-        EventAddress commonAnchor,
-        SessionGoverningSetup coverageSetup,
-        SessionGoverningSetup currentSetup,
-        TestArtifactSet artifact
-    ) {
-        ImmutableArray<SessionArtifactSetMember> members = [
-            .. new[] {
-                (
-                    RoleId: "world-understanding",
-                    Artifact: artifact.WorldUnderstanding
-                ),
-                (
-                    RoleId: "autobiography",
-                    Artifact: artifact.Autobiography
-                )
-            }
-                .OrderBy(static item => item.RoleId, StringComparer.Ordinal)
-                .Select(static item => {
-                    SessionRequestArtifactInput input =
-                        LegacyArtifactContextSnapshotFactory.CreateLegacyArtifactInput(
-                            item.Artifact
-                        );
-                    return new SessionArtifactSetMember(
-                        item.RoleId,
-                        item.Artifact.ArtifactId,
-                        item.Artifact.ArtifactKind,
-                        item.Artifact.Target,
-                        input.ContentSha256
-                    );
-                })
-        ];
-        return new ArtifactSetCommittedBody(
-            SessionRequestManifestDefaults.ActiveArtifactSetPolicyId,
-            SessionRequestManifestDefaults.ActiveArtifactSetPolicyFingerprint,
-            commonAnchor,
-            CreateSetupReferences(engine, coverageSetup),
-            CreateSetupReferences(engine, currentSetup),
-            members
-        );
-    }
-
-    private static SessionGoverningSetupReferences CreateSetupReferences(
-        SessionJournalEngine engine,
-        SessionGoverningSetup setup
-    ) => new(
-        CreateSetupReference(
-            engine,
-            setup.RuntimeConfigSetupAddress,
-            SessionEventKind.RuntimeConfigSetup
-        ),
-        CreateSetupReference(
-            engine,
-            setup.SystemPromptSetupAddress,
-            SessionEventKind.SystemPromptSetup
-        )
-    );
-
-    private static SessionSetupReference CreateSetupReference(
-        SessionJournalEngine engine,
-        EventAddress address,
-        SessionEventKind kind
-    ) {
-        byte[] payload = engine.ReadPayloadBytes(address);
-        _ = SessionEventCodec.Decode(kind, payload, out int version);
-        return new SessionSetupReference(
-            address,
-            version,
-            SessionRequestCanonicalizer.Sha256Hex(payload)
-        );
-    }
-
     private static SessionToolRuntimeIdentity TestToolRuntimeIdentity { get; } =
         new("tail-tool-host", "tail-tools-v1", "tail-capabilities-v1");
-
-    private sealed record TestArtifactSet(
-        DerivedRecapArtifact WorldUnderstanding,
-        DerivedRecapArtifact Autobiography,
-        SessionContextCandidate Candidate
-    );
-
-    private static SessionRuntime CreateRuntime(
-        CapturingCompletionClient client,
-        string artifactId,
-        ToolSession? toolSession = null
-    ) => new(
-        CompletionClient: client,
-        ToolSession: toolSession,
-        CompletionTarget: new SessionCompletionTargetIdentity(
-            "tail-connection",
-            "test",
-            "tail-connection-v1",
-            "tail-adapter-v1"
-        ),
-        MaxTokens: 512,
-        ContextCandidateSource: new TestContextCandidateSource()
-    );
-
-    private static SessionArtifactSetMemberSelection[] Selections(
-        TestArtifactSet artifact
-    ) => [
-        new(
-            "world-understanding",
-            artifact.WorldUnderstanding.ArtifactId
-        ),
-        new("autobiography", artifact.Autobiography.ArtifactId)
-    ];
 
     private sealed class NoopTool(string name = "noop") : ITool {
         public ToolDefinition Definition { get; } =

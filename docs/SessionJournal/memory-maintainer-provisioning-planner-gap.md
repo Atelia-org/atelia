@@ -143,23 +143,16 @@ artifact 固定自己的：
 - previous/input artifact lineage；
 - target block、content hash、invocation。
 
-`SessionJournalEngine.CommitArtifactSetAsync()` 已能验证一组 exact artifacts 的 common anchor、setup、
-Parent lineage、target uniqueness 与 contribution identity，然后以 exact-head CAS 追加
-`ArtifactSetCommitted`。
-
-online completion 已只接受 coherent artifact-tail：选中 ArtifactSet 的 exact target contributions，加上
-dependency-closed raw suffix。Prepared manifest 会固定 exact ArtifactSet reference 和 inline request
-snapshots；Prepared 之后即使 sidecar 删除，canonical request 仍可 reopen。
-
-以上是 **current implementation fact**，不是长期目标。raw kind 12 使 raw history 反向引用
-rebuildable sidecar，并让 derived producer/prompt/topology 变化不断追加主链事件。候选 C 将以独立
-DerivedMemory 程序集内部的 `DerivedArtifactSetStore` 和 capability-oriented candidate provider
-替代 raw activation；Prepared 只保留实际进入 request 的 exact snapshots、raw range/hash 和 raw
-setup refs。
+DM-3B 已把上述历史 interim activation 路径替换为独立
+`Atelia.SessionJournal.DerivedMemory`：derived-only `DerivedArtifactSetStore` 发布 exact set，
+capability-oriented provider 返回 neutral candidate，raw core authoritative validation 后拼接
+dependency-closed suffix。Prepared 只保留实际进入 request 的 exact snapshots、raw range/hash 和
+raw setup refs；Prepared 后即使整个 `derived/` 删除也可 exact reopen。raw kind 12 的剩余
+codec/read-only legality 将在 DM-4 删除。
 
 ## 4. 当前实际链路
 
-当前正式原型链路是：
+DM-3B 后的正式原型链路是：
 
 ```text
 import raw SessionJournal
@@ -167,15 +160,15 @@ import raw SessionJournal
   -> 写 autobiography artifact
   -> 单独运行 world-understanding-rewrite
   -> 写 world-understanding artifact
-  -> 操作者提取两个 artifact id
-  -> checkpoint-artifact-set --member ...
-  -> ArtifactSetCommitted
+  -> host/composition code 以 strict anchor setup refs 发布 derived-only ArtifactSet
+  -> 注入 DerivedArtifactSetContextCandidateSource
   -> online SendAsync / ResumeAsync 可用
 ```
 
 这个链路有以下限制：
 
-1. SessionJournal CLI 一次只创建一个 maintainer；没有实际使用 orchestrator 的多 maintainer 并行能力。
+1. SessionJournal CLI 一次只创建一个 maintainer；DM-3C 尚未提供 derived set publish/list command，
+   也没有实际使用 orchestrator 的多 maintainer 并行能力。
 2. SessionJournal artifact runner 当前从 raw root 和空 `MemoryPack` 开始 full replay，并要求目标
    lineage 为空；不能从 latest artifact anchor 增量续跑。
 3. 每个 runner 都用自己的 `--threshold-tokens` 和 active-history buffer 决定 split；两个 producer

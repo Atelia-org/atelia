@@ -38,9 +38,10 @@ CLI 只负责参数、路径安全和 atomic publish。
 - 产品引用图中没有 `ChatSession`。
 - `import-legacy-json` 通过 CLI 自有 anti-corruption DTO 读取交换 JSON。
 - `run-memory-maintainer` 使用 `SessionJournalEngine.ReplayHistory()` 的 addressed
-  provenance、`MemoryMaintenanceOrchestrator` 与 `DerivedRecapStore`。
-- `validate`、`checkpoint-artifact-set`、`llm-smoke` 继续作为 SessionJournal
-  离线开发支持。
+  provenance、`MemoryMaintenanceOrchestrator` 与
+  `SessionJournal.DerivedMemory.DerivedRecapStore`。
+- `validate`、`llm-smoke` 继续作为 SessionJournal 离线开发支持；历史 raw
+  `checkpoint-artifact-set` 已在 DM-3B 删除，后续 derived-only publish/list 属于 DM-3C。
 
 升级 JSON 是两个产品程序集之间唯一的正式边界。DTO 不放进 SessionJournal raw core，
 也不建立共享 legacy-contract assembly；producer/consumer 的兼容性由 schema id 和

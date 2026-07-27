@@ -2,7 +2,7 @@ using Atelia.Completion;
 using Atelia.Completion.Abstractions;
 using Atelia.EventJournal;
 using Atelia.SessionJournal;
-using Atelia.SessionJournal.Derived;
+using Atelia.SessionJournal.DerivedMemory;
 using Atelia.SessionJournal.Cli;
 using SJ = Atelia.SessionJournal;
 using Xunit;
@@ -151,7 +151,7 @@ public sealed class MemoryMaintainerReplayTests : IDisposable {
         Assert.Null(record.PreviousArtifact);
         Assert.NotEmpty(record.CallLogPaths);
 
-        var store = DerivedRecapStore.Open(repoPath);
+        var store = DerivedMemoryRepository.Open(repoPath).Recaps;
         var artifact = await store.TryReadArtifactAsync(record.ArtifactId);
         Assert.NotNull(artifact);
         SJ.SessionGoverningSetup anchorSetup;
@@ -200,7 +200,7 @@ public sealed class MemoryMaintainerReplayTests : IDisposable {
         var records = await RunAllAsync(runner);
 
         Assert.Equal(2, records.Count);
-        var store = DerivedRecapStore.Open(repoPath);
+        var store = DerivedMemoryRepository.Open(repoPath).Recaps;
         var first = await store.TryReadArtifactAsync(records[0].ArtifactId!);
         var second = await store.TryReadArtifactAsync(records[1].ArtifactId!);
         Assert.NotNull(first);
@@ -237,7 +237,7 @@ public sealed class MemoryMaintainerReplayTests : IDisposable {
         Assert.Null(record.AnchorRawEvent);
         Assert.Null(record.PreviousArtifact);
         Assert.Equal(4, record.RemainingActiveMessageCount);
-        var store = DerivedRecapStore.Open(repoPath);
+        var store = DerivedMemoryRepository.Open(repoPath).Recaps;
         Assert.Empty(Directory.EnumerateFiles(store.ArtifactsDirectory, "*.json"));
         var lineage = DerivedRecapLineageKey.Create(
             DerivedRecapArtifactKinds.RollingSummary,
@@ -331,7 +331,7 @@ public sealed class MemoryMaintainerReplayTests : IDisposable {
         _ = Assert.Single(tasks, static task => task.IsCompletedSuccessfully);
         Task<MemoryMaintainerArtifactLink> failedTask = Assert.Single(tasks, static task => task.IsFaulted);
         Assert.IsType<InvalidOperationException>(failedTask.Exception!.InnerException);
-        var store = DerivedRecapStore.Open(repoPath);
+        var store = DerivedMemoryRepository.Open(repoPath).Recaps;
         Assert.Single(Directory.EnumerateFiles(store.ArtifactsDirectory, "*.json"));
     }
 

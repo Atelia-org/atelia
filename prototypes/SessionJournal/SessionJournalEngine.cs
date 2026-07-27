@@ -2,7 +2,6 @@ using System.Collections.Immutable;
 using Atelia.Completion.Abstractions;
 using Atelia.Completion.Tools;
 using Atelia.EventJournal;
-using Atelia.SessionJournal.Derived;
 
 namespace Atelia.SessionJournal;
 
@@ -255,129 +254,6 @@ public sealed class SessionJournalEngine : IDisposable {
         return Append(SessionEventKind.ObservationAccepted, new ObservationAcceptedBody(content));
     }
 
-    public async ValueTask<EventAddress> CommitArtifactSetAsync(
-        IReadOnlyList<SessionArtifactSetMemberSelection> members,
-        CancellationToken cancellationToken = default
-    ) {
-        ThrowIfDisposed();
-        ArgumentNullException.ThrowIfNull(members);
-        if (members.Count < 2) {
-            throw new ArgumentException(
-                "An active artifact set requires at least two exact members.",
-                nameof(members)
-            );
-        }
-        SessionExecutionRecovery recovery = ResolveExecutionTail(cancellationToken);
-        if (recovery.Head is not { } expectedHead
-            || recovery.State.Phase != SessionExecutionPhase.Idle) {
-            throw new InvalidOperationException(
-                "ArtifactSetCommitted requires an exact idle SessionJournal head."
-            );
-        }
-        var roles = new HashSet<string>(StringComparer.Ordinal);
-        var artifactIds = new HashSet<string>(StringComparer.Ordinal);
-        foreach (SessionArtifactSetMemberSelection member in members) {
-            ValidateRequired(member.RoleId, nameof(member.RoleId));
-            ValidateRequired(member.ArtifactId, nameof(member.ArtifactId));
-            if (!roles.Add(member.RoleId) || !artifactIds.Add(member.ArtifactId)) {
-                throw new ArgumentException(
-                    "Artifact set roles and exact artifact ids must be unique.",
-                    nameof(members)
-                );
-            }
-        }
-
-        DerivedRecapStore store = DerivedRecapStore.Open(Path);
-        var artifacts = new List<(string RoleId, DerivedRecapArtifact Artifact)>(
-            members.Count
-        );
-        foreach (SessionArtifactSetMemberSelection member in members) {
-            DerivedRecapArtifact artifact = await store
-                .TryReadArtifactAsync(member.ArtifactId, cancellationToken)
-                .ConfigureAwait(false)
-                ?? throw new InvalidDataException(
-                    $"Exact artifact '{member.ArtifactId}' was not found or is unusable."
-                );
-            artifacts.Add((member.RoleId, artifact));
-        }
-        EventAddress commonAnchor = artifacts[0].Artifact.AnchorRawEvent;
-        if (artifacts.Any(item =>
-                item.Artifact.AnchorRawEvent != commonAnchor
-                || item.Artifact.SourceEndInclusive != commonAnchor)) {
-            throw new InvalidDataException(
-                "Active artifact-set members require one common exact coverage anchor."
-            );
-        }
-        var targets = new HashSet<(MemoryPackCarrier Carrier, string BlockKey)>();
-        foreach ((_, DerivedRecapArtifact artifact) in artifacts) {
-            if (!targets.Add((
-                    artifact.Target.Carrier,
-                    artifact.Target.BlockKey
-                ))) {
-                throw new InvalidDataException(
-                    "Active artifact-set members require unique target blocks."
-                );
-            }
-        }
-        ValidateArtifactSetLineage(
-            expectedHead,
-            commonAnchor,
-            artifacts.Select(static item => item.Artifact.SourceRawHead),
-            cancellationToken
-        );
-        SessionTailContextProjection.ValidateReplaySafeBoundary(
-            _reader,
-            commonAnchor
-        );
-        SessionGoverningSetup coverageSetup =
-            ResolveGoverningSetup(commonAnchor, cancellationToken);
-        foreach ((_, DerivedRecapArtifact artifact) in artifacts) {
-            if (artifact.GoverningRuntimeConfigSetup
-                    != coverageSetup.RuntimeConfigSetupAddress
-                || artifact.GoverningSystemPromptSetup
-                    != coverageSetup.SystemPromptSetupAddress) {
-                throw new InvalidDataException(
-                    $"Artifact '{artifact.ArtifactId}' governing setup does not match the common anchor."
-                );
-            }
-        }
-        SessionGoverningSetup currentSetup = EnsureGoverningSetupCursor(
-            expectedHead,
-            cancellationToken
-        );
-        ImmutableArray<SessionArtifactSetMember> committedMembers = [
-            .. artifacts
-                .OrderBy(static item => item.RoleId, StringComparer.Ordinal)
-                .Select(static item => {
-                    SessionRequestArtifactInput input =
-                        LegacyArtifactContextSnapshotFactory.CreateLegacyArtifactInput(
-                            item.Artifact
-                        );
-                    return new SessionArtifactSetMember(
-                        item.RoleId,
-                        item.Artifact.ArtifactId,
-                        item.Artifact.ArtifactKind,
-                        item.Artifact.Target,
-                        input.ContentSha256
-                    );
-                })
-        ];
-        var body = new ArtifactSetCommittedBody(
-            SessionRequestManifestDefaults.ActiveArtifactSetPolicyId,
-            SessionRequestManifestDefaults.ActiveArtifactSetPolicyFingerprint,
-            commonAnchor,
-            CreateSetupReferences(coverageSetup),
-            CreateSetupReferences(currentSetup),
-            committedMembers
-        );
-        return AppendExpected(
-            SessionEventKind.ArtifactSetCommitted,
-            body,
-            expectedHead,
-            requireBoundSetupCursor: true
-        );
-    }
-
     public EventAddress AppendRuntimeConfigSetup(SessionRuntimeConfiguration configuration) {
         ArgumentNullException.ThrowIfNull(configuration);
         ValidateRuntimeConfiguration(configuration);
@@ -465,6 +341,46 @@ public sealed class SessionJournalEngine : IDisposable {
             );
         _lastGoverningSetupResolutionDiagnostics = result.Diagnostics;
         return result.Setup;
+    }
+
+    /// <summary>
+    /// Resolves the exact raw setup facts governing <paramref name="head"/>. Legacy kind-12
+    /// checkpoints are deliberately disabled: callers receive addresses proven by the raw setup
+    /// streams plus the exact schema/hash identity of each referenced payload.
+    /// </summary>
+    public SessionContextAnchorSetupReferences
+        ResolveContextAnchorSetupReferences(
+        EventAddress head,
+        CancellationToken cancellationToken = default
+    ) {
+        ThrowIfDisposed();
+        SessionAuthoritativeGoverningSetupResolver.Result result =
+            SessionAuthoritativeGoverningSetupResolver.Resolve(
+                _reader,
+                head,
+                allowLegacyArtifactSetCheckpoint: false,
+                cancellationToken
+            );
+        SessionSetupReference runtime = CreateSetupReference(
+            result.Setup.RuntimeConfigSetupAddress,
+            SessionEventKind.RuntimeConfigSetup
+        );
+        SessionSetupReference prompt = CreateSetupReference(
+            result.Setup.SystemPromptSetupAddress,
+            SessionEventKind.SystemPromptSetup
+        );
+        return new SessionContextAnchorSetupReferences(
+            new SessionContextSetupReference(
+                runtime.Address,
+                runtime.BodySchemaVersion,
+                runtime.PayloadSha256
+            ),
+            new SessionContextSetupReference(
+                prompt.Address,
+                prompt.BodySchemaVersion,
+                prompt.PayloadSha256
+            )
+        );
     }
 
     public byte[] ReadPayloadBytes(EventAddress address) {
@@ -1363,248 +1279,6 @@ public sealed class SessionJournalEngine : IDisposable {
         );
     }
 
-    private void ValidateArtifactSetLineage(
-        EventAddress currentHead,
-        EventAddress commonAnchor,
-        IEnumerable<EventAddress> sourceHeads,
-        CancellationToken cancellationToken
-    ) {
-        var unseen = new HashSet<EventAddress>(sourceHeads);
-        EventAddress? cursor = currentHead;
-        while (cursor is { } address) {
-            cancellationToken.ThrowIfCancellationRequested();
-            unseen.Remove(address);
-            EventFrameHeader header = _reader.ReadEventHeaderPreview(address).Unwrap();
-            ValidateSessionHeaderPreview(address, header);
-            if (address == commonAnchor) {
-                if (unseen.Count != 0) {
-                    throw new InvalidDataException(
-                        "At least one artifact sourceRawHead is off the current lineage or before the common anchor."
-                    );
-                }
-                return;
-            }
-            cursor = header.Parent;
-        }
-        throw new InvalidDataException(
-            "Artifact-set common anchor is not on the current lineage."
-        );
-    }
-
-    private SessionActiveArtifactSet ResolveActiveArtifactSet(
-        EventAddress completionBoundary,
-        CancellationToken cancellationToken
-    ) {
-        EventAddress? cursor = completionBoundary;
-        while (cursor is { } address) {
-            cancellationToken.ThrowIfCancellationRequested();
-            EventFrameHeader header =
-                _reader.ReadEventHeaderPreview(address).Unwrap();
-            ValidateSessionHeaderPreview(address, header);
-            var kind = (SessionEventKind)header.OpaqueEventKind;
-            if (kind == SessionEventKind.ArtifactSetCommitted) {
-                return ReadActiveArtifactSet(address);
-            }
-            if (kind == SessionEventKind.SessionCreated) {
-                break;
-            }
-            cursor = header.Parent;
-        }
-        throw new SessionJournalNotReadyException(
-            SessionJournalNotReadyReason.ActiveArtifactSetRequired,
-            "Online completion requires a durable ArtifactSetCommitted ancestor on the current lineage."
-        );
-    }
-
-    private async ValueTask<ReadyActiveArtifactSet> EnsureActiveArtifactSetReadyAsync(
-        EventAddress completionBoundary,
-        CancellationToken cancellationToken
-    ) {
-        SessionActiveArtifactSet active =
-            ResolveActiveArtifactSet(completionBoundary, cancellationToken);
-        ValidateActiveArtifactSetRawLineage(
-            completionBoundary,
-            active,
-            cancellationToken
-        );
-        _ = ReadSetupFromReferences(
-            active.Body.CommonAnchor,
-            active.Body.CoverageSetups
-        );
-        HashSet<EventAddress> allowedSourceHeads =
-            CollectArtifactCoverageIntervalAndValidateCurrentSetups(
-                active,
-                cancellationToken
-            );
-        DerivedRecapStore store = DerivedRecapStore.Open(Path);
-        var artifacts =
-            ImmutableArray.CreateBuilder<DerivedRecapArtifact>(
-                active.Body.Members.Length
-            );
-        foreach (SessionArtifactSetMember member in active.Body.Members) {
-            cancellationToken.ThrowIfCancellationRequested();
-            DerivedRecapArtifact artifact = await store
-                .TryReadArtifactAsync(member.ArtifactId, cancellationToken)
-                .ConfigureAwait(false)
-                ?? throw new SessionJournalNotReadyException(
-                    SessionJournalNotReadyReason.ArtifactSetMemberUnavailable,
-                    $"Active artifact-set member '{member.ArtifactId}' is missing or unusable.",
-                    member.ArtifactId
-                );
-
-            artifacts.Add(artifact);
-        }
-        ImmutableArray<DerivedRecapArtifact> readyArtifacts =
-            artifacts.MoveToImmutable();
-        ReadyActiveArtifactSet ready;
-        try {
-            ready = new ReadyActiveArtifactSet(
-                active,
-                LegacyArtifactContextCandidateAdapter.Create(
-                    active,
-                    readyArtifacts,
-                    allowedSourceHeads
-                )
-            );
-        }
-        catch (LegacyArtifactContextCandidateMismatchException ex) {
-            throw new SessionJournalNotReadyException(
-                SessionJournalNotReadyReason.ArtifactSetMemberMismatch,
-                $"Active artifact set cannot produce its exact context candidate: {ex.Message}",
-                ex.ArtifactId
-            );
-        }
-        catch (InvalidDataException ex) {
-            throw new SessionJournalNotReadyException(
-                SessionJournalNotReadyReason.ArtifactSetMemberMismatch,
-                $"Active artifact set cannot produce its exact context candidate: {ex.Message}"
-            );
-        }
-        // This readiness check runs before SendAsync appends an observation. The candidate validator
-        // repeats it after append as a defense-in-depth raw-boundary proof.
-        SessionTailContextProjection.ValidateReplaySafeBoundary(
-            _reader,
-            active.Body.CommonAnchor
-        );
-        return ready;
-    }
-
-    private void ValidateActiveArtifactSetRawLineage(
-        EventAddress completionBoundary,
-        SessionActiveArtifactSet active,
-        CancellationToken cancellationToken
-    ) {
-        EventAddress? cursor = completionBoundary;
-        while (cursor is { } address && address != active.Address) {
-            cancellationToken.ThrowIfCancellationRequested();
-            EventFrameHeader header =
-                _reader.ReadEventHeaderPreview(address).Unwrap();
-            ValidateSessionHeaderPreview(address, header);
-            cursor = header.Parent;
-        }
-        if (cursor != active.Address) {
-            throw new InvalidDataException(
-                "Referenced active ArtifactSetCommitted is not on the current completion-boundary lineage."
-            );
-        }
-    }
-
-    private HashSet<EventAddress>
-        CollectArtifactCoverageIntervalAndValidateCurrentSetups(
-        SessionActiveArtifactSet active,
-        CancellationToken cancellationToken
-    ) {
-        var allowedSourceHeads = new HashSet<EventAddress>();
-        SessionSetupReference? runtimeOverride = null;
-        SessionSetupReference? promptOverride = null;
-        EventAddress? cursor = active.Parent;
-        while (cursor is { } address) {
-            cancellationToken.ThrowIfCancellationRequested();
-            EventFrameHeader header =
-                _reader.ReadEventHeaderPreview(address).Unwrap();
-            ValidateSessionHeaderPreview(address, header);
-            var kind = (SessionEventKind)header.OpaqueEventKind;
-            if (kind == SessionEventKind.RuntimeConfigSetup
-                && runtimeOverride is null) {
-                runtimeOverride = CreateSetupReference(
-                    address,
-                    SessionEventKind.RuntimeConfigSetup
-                );
-            }
-            else if (kind == SessionEventKind.SystemPromptSetup
-                && promptOverride is null) {
-                promptOverride = CreateSetupReference(
-                    address,
-                    SessionEventKind.SystemPromptSetup
-                );
-            }
-            allowedSourceHeads.Add(address);
-            if (address == active.Body.CommonAnchor) {
-                var expectedCurrent = new SessionGoverningSetupReferences(
-                    runtimeOverride
-                        ?? active.Body.CoverageSetups.RuntimeConfig,
-                    promptOverride
-                        ?? active.Body.CoverageSetups.SystemPrompt
-                );
-                if (active.Body.CurrentSetups != expectedCurrent) {
-                    throw new InvalidDataException(
-                        "ArtifactSetCommitted currentSetups do not match the authoritative governing setup folded from commonAnchor through its Parent."
-                    );
-                }
-                return allowedSourceHeads;
-            }
-            cursor = header.Parent;
-        }
-        throw new InvalidDataException(
-            "ArtifactSetCommitted commonAnchor is not on its Parent lineage."
-        );
-    }
-
-    internal static void ValidateArtifactSourceHead(
-        IReadOnlySet<EventAddress> allowedSourceHeads,
-        DerivedRecapArtifact artifact
-    ) {
-        ArgumentNullException.ThrowIfNull(allowedSourceHeads);
-        ArgumentNullException.ThrowIfNull(artifact);
-        if (!allowedSourceHeads.Contains(artifact.SourceRawHead)) {
-            throw new SessionJournalNotReadyException(
-                SessionJournalNotReadyReason.ArtifactSetMemberMismatch,
-                $"Active artifact-set member '{artifact.ArtifactId}' sourceRawHead is outside the committed coverage interval.",
-                artifact.ArtifactId
-            );
-        }
-    }
-
-    private SessionActiveArtifactSet ReadActiveArtifactSet(EventAddress address) {
-        using SessionJournalEventFrame frame = _reader.ReadEvent(address).Unwrap();
-        ValidateSessionHeaderPreview(address, frame.Header);
-        if ((SessionEventKind)frame.Header.OpaqueEventKind
-            != SessionEventKind.ArtifactSetCommitted) {
-            throw new InvalidDataException(
-                $"Active artifact-set reference at {address} is not ArtifactSetCommitted."
-            );
-        }
-        object decoded = SessionEventCodec.Decode(
-            SessionEventKind.ArtifactSetCommitted,
-            frame.Payload,
-            out int version
-        );
-        var reference = new SessionArtifactSetReference(
-            address,
-            version,
-            SessionRequestCanonicalizer.Sha256Hex(frame.Payload)
-        );
-        return new SessionActiveArtifactSet(
-            address,
-            frame.Header.Parent
-                ?? throw new InvalidDataException(
-                    "ArtifactSetCommitted cannot be a root event."
-                ),
-            (ArtifactSetCommittedBody)decoded,
-            reference
-        );
-    }
-
     private EventAddress Append(SessionEventKind kind, object body) {
         ThrowIfDisposed();
         EventAddress? expectedHead = _journal.GetHead(_mainRef);
@@ -1890,11 +1564,6 @@ public sealed class SessionJournalEngine : IDisposable {
         string RawRangeSha256,
         SessionGoverningSetupReferences RawStartSetups,
         ImmutableArray<SessionRequestContextInput> ExactContextInputs
-    );
-
-    private sealed record ReadyActiveArtifactSet(
-        SessionActiveArtifactSet Active,
-        LegacyArtifactContextCandidateAdapter Adapter
     );
 
     private sealed record CommittedCompletionResult(

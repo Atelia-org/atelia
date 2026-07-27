@@ -1,10 +1,10 @@
 using System.Text.Json.Nodes;
 using Atelia.Completion.Abstractions;
 using Atelia.EventJournal;
-using Atelia.SessionJournal.Derived;
+using Atelia.SessionJournal.DerivedMemory;
 using Xunit;
 
-namespace Atelia.SessionJournal.Tests;
+namespace Atelia.SessionJournal.DerivedMemory.Tests;
 
 public sealed class DerivedRecapStoreTests : IDisposable {
     private readonly List<string> _tempDirectories = new();
@@ -24,7 +24,7 @@ public sealed class DerivedRecapStoreTests : IDisposable {
     public async Task WriteProduced_CreatesArtifactAndLatestIndex_ThenReopenReadsLatest() {
         var addresses = CreateAddresses();
         string repoPath = NewRepoPath();
-        var store = DerivedRecapStore.Open(repoPath);
+        var store = OpenStore(repoPath);
 
         var artifact = await store.WriteProducedAsync(CreateRequest(addresses, summary: "summary v1"));
 
@@ -34,7 +34,7 @@ public sealed class DerivedRecapStoreTests : IDisposable {
         Assert.True(artifact.MemoryPack.TryGetBlock(artifact.Target, out var block));
         Assert.Equal("summary v1", block.Text);
 
-        var reopened = DerivedRecapStore.Open(repoPath);
+        var reopened = OpenStore(repoPath);
         var latest = await reopened.TryReadLatestAsync(artifact.LineageKey);
 
         Assert.NotNull(latest);
@@ -46,7 +46,7 @@ public sealed class DerivedRecapStoreTests : IDisposable {
     public async Task RebuildLatestIndex_AfterIndexDeleted_SelectsPreviousArtifactSuccessor() {
         var addresses = CreateAddresses();
         string repoPath = NewRepoPath();
-        var store = DerivedRecapStore.Open(repoPath);
+        var store = OpenStore(repoPath);
 
         var first = await store.WriteProducedAsync(CreateRequest(addresses, summary: "summary v1"));
         var second = await store.WriteProducedAsync(CreateRequest(
@@ -72,7 +72,7 @@ public sealed class DerivedRecapStoreTests : IDisposable {
     public async Task CorruptIndex_DoesNotLoseArtifacts_AndRebuilds() {
         var addresses = CreateAddresses();
         string repoPath = NewRepoPath();
-        var store = DerivedRecapStore.Open(repoPath);
+        var store = OpenStore(repoPath);
         var artifact = await store.WriteProducedAsync(CreateRequest(addresses, summary: "summary v1"));
         await File.WriteAllTextAsync(store.LatestIndexPath, "{not json");
 
@@ -86,7 +86,7 @@ public sealed class DerivedRecapStoreTests : IDisposable {
     public async Task WriteProduced_SameIdentityWithDifferentCreatedUtc_ReusesArtifactId() {
         var addresses = CreateAddresses();
         string repoPath = NewRepoPath();
-        var store = DerivedRecapStore.Open(repoPath);
+        var store = OpenStore(repoPath);
         var request = CreateRequest(addresses, summary: "summary v1") with { CreatedUtc = null };
 
         var first = await store.WriteProducedAsync(request);
@@ -98,10 +98,45 @@ public sealed class DerivedRecapStoreTests : IDisposable {
     }
 
     [Fact]
+    public async Task WriteProduced_RejectsStalePreviousAcrossRepositoryInstances() {
+        var addresses = CreateAddresses();
+        string repoPath = NewRepoPath();
+        var firstStore = OpenStore(repoPath);
+        DerivedRecapArtifact first = await firstStore.WriteProducedAsync(
+            CreateRequest(addresses, summary: "summary v1")
+        );
+        var secondStore = DerivedMemoryRepository.Open(repoPath).Recaps;
+        _ = await secondStore.WriteProducedAsync(
+            CreateRequest(
+                addresses,
+                summary: "summary v2",
+                previousArtifact: first.ArtifactId
+            )
+        );
+
+        InvalidOperationException error =
+            await Assert.ThrowsAsync<InvalidOperationException>(
+                async () => await firstStore.WriteProducedAsync(
+                    CreateRequest(
+                        addresses,
+                        summary: "stale parallel result",
+                        previousArtifact: first.ArtifactId
+                    )
+                )
+            );
+
+        Assert.Contains(
+            "latest artifact changed",
+            error.Message,
+            StringComparison.Ordinal
+        );
+    }
+
+    [Fact]
     public async Task CorruptArtifact_IsSkippedDuringRebuild() {
         var addresses = CreateAddresses();
         string repoPath = NewRepoPath();
-        var store = DerivedRecapStore.Open(repoPath);
+        var store = OpenStore(repoPath);
         var artifact = await store.WriteProducedAsync(CreateRequest(addresses, summary: "summary v1"));
         Directory.CreateDirectory(store.ArtifactsDirectory);
         await File.WriteAllTextAsync(Path.Combine(store.ArtifactsDirectory, "broken.json"), "{not json");
@@ -117,7 +152,7 @@ public sealed class DerivedRecapStoreTests : IDisposable {
     public async Task ContentTargetMismatch_IsSkippedDuringRebuild() {
         var addresses = CreateAddresses();
         string repoPath = NewRepoPath();
-        var store = DerivedRecapStore.Open(repoPath);
+        var store = OpenStore(repoPath);
         var artifact = await store.WriteProducedAsync(CreateRequest(addresses, summary: "summary v1"));
         string artifactPath = Path.Combine(store.ArtifactsDirectory, $"{artifact.ArtifactId}.json");
         string json = await File.ReadAllTextAsync(artifactPath);
@@ -137,7 +172,7 @@ public sealed class DerivedRecapStoreTests : IDisposable {
     public async Task NonTargetMemoryPackMutation_InvalidatesArtifactIdentity() {
         var addresses = CreateAddresses();
         string repoPath = NewRepoPath();
-        var store = DerivedRecapStore.Open(repoPath);
+        var store = OpenStore(repoPath);
         DerivedRecapWriteRequest request = CreateRequest(addresses, summary: "summary v1");
         request.MemoryPack.System.Add("policy", new MemoryPackBlock("system memory"));
         var artifact = await store.WriteProducedAsync(request);
@@ -155,7 +190,7 @@ public sealed class DerivedRecapStoreTests : IDisposable {
     [Fact]
     public async Task MissingContentAndMemoryPackArtifact_IsSkippedDuringRebuild() {
         string repoPath = NewRepoPath();
-        var store = DerivedRecapStore.Open(repoPath);
+        var store = OpenStore(repoPath);
         Directory.CreateDirectory(store.ArtifactsDirectory);
         await File.WriteAllTextAsync(
             Path.Combine(store.ArtifactsDirectory, "missing-fields.json"),
@@ -182,7 +217,7 @@ public sealed class DerivedRecapStoreTests : IDisposable {
     public async Task TryReadLatestAsync_RebuildsWhenIndexContainsInvalidEntry() {
         var addresses = CreateAddresses();
         string repoPath = NewRepoPath();
-        var store = DerivedRecapStore.Open(repoPath);
+        var store = OpenStore(repoPath);
         var artifact = await store.WriteProducedAsync(CreateRequest(addresses, summary: "summary v1"));
         await File.WriteAllTextAsync(
             store.LatestIndexPath,
@@ -215,7 +250,7 @@ public sealed class DerivedRecapStoreTests : IDisposable {
     public async Task MemoryPackSchemaMismatchArtifact_IsSkippedDuringRebuild() {
         var addresses = CreateAddresses();
         string repoPath = NewRepoPath();
-        var store = DerivedRecapStore.Open(repoPath);
+        var store = OpenStore(repoPath);
         var artifact = await store.WriteProducedAsync(CreateRequest(addresses, summary: "summary v1"));
         string artifactPath = Path.Combine(store.ArtifactsDirectory, $"{artifact.ArtifactId}.json");
         var root = JsonNode.Parse(await File.ReadAllTextAsync(artifactPath))!.AsObject();
@@ -232,7 +267,7 @@ public sealed class DerivedRecapStoreTests : IDisposable {
     public async Task RebuildLatestIndex_DuplicateArtifactIdFiles_DoesNotThrow() {
         var addresses = CreateAddresses();
         string repoPath = NewRepoPath();
-        var store = DerivedRecapStore.Open(repoPath);
+        var store = OpenStore(repoPath);
         var artifact = await store.WriteProducedAsync(CreateRequest(addresses, summary: "summary v1"));
         string artifactPath = Path.Combine(store.ArtifactsDirectory, $"{artifact.ArtifactId}.json");
         File.Copy(artifactPath, Path.Combine(store.ArtifactsDirectory, "copied-artifact.json"));
@@ -248,7 +283,7 @@ public sealed class DerivedRecapStoreTests : IDisposable {
     public async Task DuplicateMemoryPackBlockKeyArtifact_IsSkipped() {
         var addresses = CreateAddresses();
         string repoPath = NewRepoPath();
-        var store = DerivedRecapStore.Open(repoPath);
+        var store = OpenStore(repoPath);
         var artifact = await store.WriteProducedAsync(CreateRequest(addresses, summary: "summary v1"));
         string artifactPath = Path.Combine(store.ArtifactsDirectory, $"{artifact.ArtifactId}.json");
         var root = JsonNode.Parse(await File.ReadAllTextAsync(artifactPath))!.AsObject();
@@ -287,7 +322,9 @@ public sealed class DerivedRecapStoreTests : IDisposable {
     [Fact]
     public async Task WriteProduced_RejectsDefaultEventAddress() {
         var addresses = CreateAddresses() with { SourceEndInclusive = default };
-        var store = DerivedRecapStore.Open(NewRepoPath());
+        string repoPath = NewRepoPath();
+        Directory.CreateDirectory(repoPath);
+        var store = OpenStore(repoPath);
 
         await Assert.ThrowsAsync<ArgumentException>(
             async () => await store.WriteProducedAsync(CreateRequest(addresses, summary: "summary v1"))
@@ -313,7 +350,7 @@ public sealed class DerivedRecapStoreTests : IDisposable {
             contextBefore = projection.Context;
         }
 
-        var store = DerivedRecapStore.Open(repoPath);
+        var store = OpenStore(repoPath);
         await store.WriteProducedAsync(CreateRequest(
             new AddressSet(
                 sourceRawHead,
@@ -380,6 +417,11 @@ public sealed class DerivedRecapStoreTests : IDisposable {
             GoverningRuntimeConfigSetup: runtime,
             GoverningSystemPromptSetup: prompt
         );
+    }
+
+    private static DerivedRecapStore OpenStore(string repositoryPath) {
+        Directory.CreateDirectory(repositoryPath);
+        return DerivedMemoryRepository.Open(repositoryPath).Recaps;
     }
 
     private string NewRepoPath() {
