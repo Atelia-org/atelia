@@ -1,7 +1,7 @@
-# ChatSession 事件源与长期上下文架构路线图
+# SessionJournal 事件源会话与长期上下文架构路线图
 
-> **状态**：Architecture Roadmap / CS-3D7 current trunk implemented；ArtifactSet raw/assembly 解耦待实施
-> **日期**：2026-07-27（保留下文早期日期作为实施历史）
+> **状态**：Architecture Roadmap / `Atelia.SessionJournal` family 现行路线图
+> **日期**：2026-07-28（保留下文早期日期作为实施历史）
 > **底层依赖**：[EventJournal 功能需求与粗粒度设计基线](../EventJournal/event-journal-requirements-and-design.md)
 > **相关既有研究**：[Dynamic Logical Context Store for Long-Running Role-Play Agents](../Galatea/backlog/idea/dynamic-logical-context-store-for-long-running-role-play-agents.md)
 > **后续实施计划**：
@@ -9,7 +9,20 @@
 
 ## 1. 文档定位
 
-本文记录 ChatSession / Galatea 从“StateJournal 当前工作态 + 定期压缩”演进到“不可变事件源 + 可重建派生产物 + 精确上下文规划 + 可恢复执行”的总体路线。
+本文记录如何建立以 `Atelia.SessionJournal` 为 raw correctness core 的新一代会话系统：
+不可变事件源、可重建派生记忆、精确上下文规划与可恢复执行。它是
+`Atelia.SessionJournal` 及其 companion projects 的现行架构路线图，而不是旧
+`Atelia.ChatSession` 的升级计划。
+
+旧 ChatSession 已冻结，只承担三种角色：
+
+- 作为早期“StateJournal 当前工作态 + 定期压缩”方案的历史背景；
+- 作为一次性、只读的数据迁移源，由 `ChatSession.LegacyExportCli` 导出；
+- 在完成迁移验证后归档。
+
+新功能、新 wire contract 和新架构只在 SessionJournal family 及其附属项目中实施。两代系统之间
+不双写、不共享 mutable state，也不把新功能回流到旧项目；迁移方向始终是
+`ChatSession -> legacy JSON -> SessionJournal`。
 
 它回答：
 
@@ -18,13 +31,14 @@
 - 每次 completion 的上下文如何动态选择并精确复现。
 - tool-loop 如何逐步持久化并在崩溃后恢复。
 - 全文、向量和图召回应放在哪一层。
-- 如何分阶段替换当前 ChatSession/StateJournal 路径。
+- SessionJournal family 中各程序集分别拥有哪一层能力。
+- 如何分阶段完成 current interim 到 target architecture 的切换。
 
 本文不是每种 payload 的最终 wire spec，也不要求首个实现会话建成完整 Memory OS。后续会话应从本文的阶段列表领取一个垂直切片，产出更窄的 Decision/Spec/实现与测试。
 
-## 2. 当前问题
+## 2. 建立新系统所解决的问题
 
-当前 ChatSession 以 StateJournal root 和 durable deque 表达会话工作态：
+旧 ChatSession 曾以 StateJournal root 和 durable deque 表达会话工作态：
 
 - 普通 turn 完成后整体 commit。
 - compaction 用 Recap 替换旧消息前缀。
@@ -38,9 +52,27 @@
 3. Recap、自传、世界理解等派生解释被当作“当前文本块”，缺少统一 provenance 与版本 lineage。
 4. 上下文主要由固定 recent window 构造，难以在不同 artifact anchor、raw suffix 和动态召回之间做预算化选择。
 
-下一代架构的目标不是给现有 deque 旁边补一份 raw log，而是重新划分事实源、解释层、投影层和执行状态。
+SessionJournal 不在旧 deque 旁边补 raw log，而是从新的 storage/wire boundary 建立事实源、解释层、
+投影层和执行状态。旧实现只帮助识别需求和提供迁移样本，不约束新系统的领域模型。
 
 ## 3. 核心决策
+
+### decision [S-SJ-LEGACY-FROZEN] 旧 ChatSession 冻结
+
+旧 ChatSession 不接受 SessionJournal 新能力、不参与双写，也不作为新 host 的依赖。允许的维护仅限于
+保持 legacy export 可用和修复阻断迁移的缺陷；迁移完成后整体归档。
+
+### decision [S-SJ-NEW-WORK-OWNERSHIP] 新工作归属 SessionJournal family
+
+raw event、recovery contract 与 request execution 属于 `Atelia.SessionJournal`；concrete
+MemoryMaintainer 属于 `Atelia.SessionJournal.Maintainers`；派生存储、epoch、artifact/set publication
+和 retrieval 属于未来独立 DerivedMemory；CLI/Agent Host 作为 composition root 组合这些能力。
+
+### decision [S-SJ-MIGRATION-ONE-WAY] Legacy migration 单向且经中立交换格式
+
+`ChatSession.LegacyExportCli` 只读取旧 repo 并导出 JSON/Markdown。`SessionJournal.Cli` 通过自身的
+anti-corruption DTO 导入 JSON，不引用 ChatSession 产品程序集。导入不会建立两代 repo 之间的运行时
+同步关系。
 
 ### decision [S-CS-RAW-EVENTS-AUTHORITATIVE] Raw Events 是长期事实源
 
@@ -99,10 +131,30 @@ flowchart TD
 DerivedMemory repository 可以物理附着在 SessionJournal repo 下，也可以使用独立 store，但不能把
 derived plans/artifacts/sets 写入 raw Parent sequence；逻辑上的权威边界不能因为物理共置而消失。
 
-程序集边界采用依赖倒置：SessionJournal 定义 store-neutral context candidate contract；具体 Derived
-Artifact/ArtifactSet store、maintainer orchestration、lineage/indexes 与 selection 位于独立可替换
-DerivedMemory 程序集，并单向引用 SessionJournal contracts。composition root 同时引用两边并注入
-provider。
+### 4.1 Ownership 与依赖方向
+
+| 项目 / 程序集 | Ownership | 依赖约束 |
+|:---------------|:----------|:---------|
+| `Atelia.SessionJournal` | raw event codec、reducer、tail recovery、request preparation/execution，以及 store-neutral derived-context contracts | raw core 不引用 concrete maintainer 或未来 DerivedMemory |
+| `Atelia.SessionJournal.Maintainers` | concrete MemoryMaintainer、profiles、prompts、target paths 与窄职责 helpers | 作为 companion assembly 单向依赖 SessionJournal contracts |
+| `Atelia.SessionJournal.DerivedMemory`（暂名、未来） | epochs、artifacts、ArtifactSets、lineage/indexes、selection 与 publication | 单向依赖 SessionJournal 的 neutral contracts；其记录只向 raw address 建立引用 |
+| `SessionJournal.Cli` / Agent Host | composition root、迁移导入、离线开发运行、provider/tool 注入 | 可以同时引用上述项目，但不把应用 policy 推回 raw core |
+| `ChatSession.LegacyExportCli` | 旧 ChatSession 数据的 JSON/Markdown 出口 | 只依赖旧 ChatSession；不依赖 SessionJournal，也不承担新功能 |
+
+目标依赖图如下：
+
+```text
+SessionJournal.Cli / Agent Host
+├── Atelia.SessionJournal
+├── Atelia.SessionJournal.Maintainers ──> Atelia.SessionJournal
+└── Atelia.SessionJournal.DerivedMemory ─> Atelia.SessionJournal
+
+ChatSession.LegacyExportCli ──> Atelia.ChatSession   # frozen migration island
+```
+
+current trunk 尚未完全达到这张图：`DerivedRecapStore` 与 raw `ArtifactSetCommitted` 仍位于
+SessionJournal core。它们是明确的 interim bridge，将按 DerivedMemory 实施计划依序拆除，不能反过来
+被解释为 target ownership。
 
 ## 5. Raw Event Journal
 
@@ -110,47 +162,45 @@ provider。
 
 Raw Event Journal 保存“Agent 生命周期中确实发生过的事情”，包括外部输入、模型输出、工具交互和控制状态。它是审计、回放、迁移和所有派生分析的根。
 
-EventJournal 只看到 bytes；`Atelia.ChatSession` 在 payload 中定义 versioned envelope 和 event kind。
+EventJournal 负责 frame、`Parent` 与 opaque kind；`Atelia.SessionJournal` 解释
+`EventJournal` header 中的 numeric kind，并以 canonical JSON `{ "v": ..., "body": ... }`
+编码每种 kind 自己的 versioned payload。`EventAddress` 提供 store 内身份和 Parent 顺序，不以时间戳
+或另造 ordinal 冒充因果顺序。
 
-### 5.2 建议的事件信封
+### 5.2 Current wire baseline
 
-后续 wire spec 应至少表达：
+current trunk 的 schema 是 `atelia.session-journal.trunk.v1`。已实现的
+`SessionEventKind` 如下；名称是 C# contract，持久化判别器是 EventJournal header 中的整数值：
 
-| 字段 | 含义 |
-|:-----|:-----|
-| `Schema` | ChatSession event schema id / version |
-| `SessionId` | 逻辑 session 身份；单 store 单 session 时仍可保留用于导出 |
-| `EventKind` | 领域事件判别器 |
-| `CorrelationId` | 同一 turn / maintenance job / tool-loop 的关联 id |
-| `CausationEvent` | 直接导致本事件的上层事件，可选 |
-| `OccurredAtUtc` | 外部时间，若业务需要；不能替代 Parent 顺序 |
-| `Body` | event-kind-specific payload |
+| Kind | 值 | Current 语义 |
+|:-----|---:|:-------------|
+| `RuntimeConfigSetup` | 1 | model、completion surface 与 session schema 从此边界起生效 |
+| `SystemPromptSetup` | 2 | system prompt snapshot 从此边界起生效 |
+| `SessionCreated` | 3 | session 初始化完成 marker |
+| `ObservationAccepted` | 4 | 外部 observation 已持久化 |
+| `AgentActionProduced` | 5 | online completion response 已规范化并持久化 |
+| `ToolExecutionStarted` | 6 | tool side effect 前的 durable intent / execution identity |
+| `ToolResultObserved` | 7 | 与 execution 对应的 tool result 已持久化 |
+| `CompletionRequestPrepared` | 8 | canonical request manifest 与 durable request origin 已持久化 |
+| `CompletionAttemptFailed` | 9 | 已知 provider/host failure 已持久化 |
+| `ImportedAgentAction` | 10 | 迁移导入的 action；不伪装成 online provider completion |
+| — | 11 | 已退役；曾用于 opaque `CompletionAttemptRestarted`，不得复用 |
+| `ArtifactSetCommitted` | 12 | interim coherent artifact-set activation；target 将移出 raw |
+| `CompletionAttemptStarted` | 13 | provider dispatch claim；event address 是 attempt identity |
 
-`EventAddress` 已经提供 store 内唯一身份和 Parent 顺序，不应再用时间戳或自增 ordinal 冒充因果顺序。
+每种 payload 版本独立推进；不能把上表的 header kind 数值、payload `v` 和 repository schema 混为一个
+版本号。codec 只接受它明确支持的 kind/version，未知 kind 和不受支持的 payload version 必须失败，
+不得静默降级。
 
-### 5.3 首轮 EventKind
+### 5.3 Future semantic boundaries
 
-建议按“实际发生的边界”建模，而不是按当前方法名照搬：
+下列边界仍是路线图语义，不应被描述为已实现的 event kind：
 
-| EventKind | 含义 |
-|:----------|:-----|
-| `runtime-config-setup` | model、completion surface 等 runtime config snapshot 从此位置起生效 |
-| `system-prompt-setup` | system prompt snapshot 从此位置起生效 |
-| `session-created` | session 初始化完成 marker |
-| `observation-accepted` | 外部 observation 已进入 session |
-| `context-plan-committed` | 已选定本次 completion 的 exact inputs |
-| `completion-request-prepared` | canonical request manifest 与 durable request origin 已持久化；尚未产生 provider attempt |
-| `completion-attempt-started` | provider dispatch claim 已持久化；event address 是内部 attempt identity |
-| `completion-attempt-failed` | provider 或 host 已知的 completion failure/rejection 已持久化 |
-| `agent-action-produced` | completion response 已接收并规范化为 ActionMessage |
-| `tool-execution-started` | 工具副作用前已保存 intent 与 idempotency key |
-| `tool-result-observed` | 工具返回结果已持久化 |
-| `tool-execution-uncertain` | 无法判断副作用是否发生，需要查询或人工处理 |
-| `turn-completed` | 本轮达到无未处理 tool call 的完成状态 |
-| `turn-failed` | 本轮以可诊断失败结束 |
-| `turn-paused` | 本轮等待人工、资源或外部事件 |
-
-`completion-request-prepared` 与 `context-plan-committed` 可以在 MVP 合并为一个 payload；概念上仍应区分“选择了什么”和“如何从已持久化事实重建实际发给 completion client 的 canonical request”。
+- `ToolExecutionUncertain`：无法证明副作用是否发生，需要查询、人工处理或 capability-specific recovery。
+- 显式 `TurnCompleted`、`TurnFailed`、`TurnPaused`：当仅靠 current tail phase 不足以表达产品语义时再引入。
+- 独立 `ContextPlanCommitted`：只有需要把 planning 与 Prepared 分成两个 durable boundary 时才引入；
+  current 将 selection plan 包含在 `CompletionRequestPrepared` 中。
+- provider retry / rejection 的更细分类：应由明确 recovery contract 驱动，不提前枚举空事件。
 
 ### 5.4 Raw 与 operational event 的边界
 
@@ -165,18 +215,21 @@ provider-native 临时字段不应未经筛选整包回写。Canonical event sch
 
 ### 5.5 分支、rewind 与替代未来
 
-ChatSession branch 直接映射到 EventJournal branch：
+EventJournal 的 Parent lineage 和 repository/branch primitives 为未来 rewind、reroll 与替代未来提供
+底层能力，但 current SessionJournal 尚未交付完整 branch UX。目标语义是：
 
-- 正常会话沿当前 branch 追加。
-- rewind 不删除 Event，而是移动 ref 或从历史 Event 创建新 branch。
-- reroll 从同一个 Observation/ContextPlan 附近产生替代 AgentAction 分支。
-- 被放弃的未来仍可通过 reflog 或显式 branch 保留。
+- 正常会话沿选定 branch/ref 追加；
+- rewind 不删除 event，而是移动 ref 或从历史 event 创建新 branch；
+- reroll 从同一 durable boundary 附近产生替代 action 分支；
+- 被放弃的未来仍可通过明确的 retention/reflog policy 查阅；
+- 上层 UI 区分“当前有效父链”和“曾发生但当前不可达的旁支”。
 
-上层 UI 必须区分“当前有效父链”和“曾发生但当前不可达的旁支”。
+这些语义需要后续单独定义 branch identity、ref ownership、retention 和 UI contract；不能仅因底层已有
+EventJournal branch primitive 就宣称产品能力已经实现。
 
 ## 6. Derived Artifact Journal
 
-### 6.1 统一概念
+### 6.1 Target 概念
 
 以下内容统一称为 `DerivedContextArtifact`：
 
@@ -191,9 +244,34 @@ ChatSession branch 直接映射到 EventJournal branch：
 
 这些 artifact 的内容形状可以是 Markdown、JSON、图节点或其他二进制格式。统一的是 provenance 与生命周期，不是正文 schema。
 
-### 6.2 Artifact 最小字段
+它们不是 raw experience，也不属于旧 ChatSession。目标 ownership 是独立、可替换的
+`Atelia.SessionJournal.DerivedMemory`（暂名）；该 subsystem 可以删除并由 raw SessionJournal 重建。
 
-建议 schema 至少包含：
+### 6.2 Current interim baseline
+
+CS-5-lite 已完成，不再是待验证建议。current trunk 已具备：
+
+- `DerivedRecapStore`：位于 `Atelia.SessionJournal` core 内，使用 session repo 下的
+  `derived/recaps/v1/` sidecar 保存可删除、可重建的 recap artifacts/indexes；
+- addressed replay：MemoryMaintainer runner 从 `ReplayHistory()` 取得 raw provenance，以实际吸收
+  fragment 的末事件形成 `anchorRawEvent`；
+- `Atelia.SessionJournal.Maintainers`：保存 concrete `RewriteMemoryBlockMaintainer` profiles，不被
+  raw core 反向引用；
+- `SessionJournal.Cli run-memory-maintainer`：离线运行 maintainer 并发布 derived artifact；
+- `SessionJournal.Cli checkpoint-artifact-set`：由开发者手动选择 exact members，在 raw chain
+  追加 interim `ArtifactSetCommitted`；
+- coherent request/recovery：current `CompletionRequestPrepared` v3 引用 exact
+  `ArtifactSetCommitted`，并内联 selected artifact context snapshots，使 sidecar 删除后仍可重建
+  canonical request。
+
+这条路径证明了 artifact persistence、provenance anchor、tail-only projection、coherent request 和
+Prepared/attempt recovery，但它不是最终程序集或 authority 边界。尤其是 `DerivedRecapStore` 位于
+core、raw `ArtifactSetCommitted` 引用 derived ids、manual checkpoint，以及 Prepared 仍引用 raw
+activation，都是已知 interim coupling。
+
+### 6.3 Target Artifact 最小字段
+
+未来 DerivedMemory schema 至少包含：
 
 | 字段 | 含义 |
 |:-----|:-----|
@@ -214,7 +292,7 @@ ChatSession branch 直接映射到 EventJournal branch：
 
 Artifact 本身 append-only。所谓“最新版”由 lineage、ArtifactSet 或可重建索引确定，不通过原地更新 `EventAddress -> mutable value` 字典实现。
 
-### 6.3 Provenance 不变量
+### 6.4 Provenance 不变量
 
 任何进入长期上下文的 artifact 都应能回答：
 
@@ -226,7 +304,7 @@ Artifact 本身 append-only。所谓“最新版”由 lineage、ArtifactSet 或
 
 这使 analyzer 升级后可以重建，并允许人工比较“同一原始经历的不同解释”。
 
-### 6.4 Coherent Artifact Set
+### 6.5 Target Coherent Artifact Set
 
 Autobiography 与 World Understanding 可能并行生成，但一次上下文不应偶然混用不同 source head 的半套结果。
 
@@ -241,25 +319,40 @@ ArtifactSet 应作为 derived subsystem 内的 immutable record：
 
 若其中一个 maintainer 失败，旧 active set 保持可用；已成功写出的单个 artifact 可以留作诊断或未来复用，但不自动进入当前 coherent set。
 
-history 分块是 maintainer 之前的公共 planning 结果。DerivedMemory subsystem 应保存 versioned split
+history 分块是 maintainer 之前的公共 planning 结果。未来 DerivedMemory subsystem 应保存 versioned split
 config 和 immutable epoch ledger：config 记录 token estimator、最小 recent suffix、触发阈值与
 dependency-safe boundary policy；epoch record 固定实际 raw range/anchor/setup/config fingerprint。
 日常运行并行启动同 epoch 的 maintainers，prompt-tuning 则可独立重跑其中一个 role，但不能重新计算
 split。同步来自 shared epoch identity，而不是进程启动时间或恰好相同的 `--threshold-tokens`。
 
-主 raw SessionJournal 不追加 `ArtifactSetCommitted` 或其他 derived-set activation，也不引用 artifact/set
-id。引用方向只能是 derived artifact/set -> raw addresses。某次 completion 实际使用的 memory 文本，
-在 `CompletionRequestPrepared` 中以 exact context snapshot/canonical request + raw provenance
-提升为 execution fact；Prepared 不需要反向引用 derived id，之后的 exact reopen 也不读取 derived
-store。
+### 6.6 从 interim 切换到 target
 
-Derived ArtifactSet 的具体维护、存储、lineage、indexes 和 candidate discovery 应位于独立、可替换的
-DerivedMemory 程序集。该程序集单向引用 SessionJournal 定义的 store-neutral coherent context
-candidate contracts；Agent Host/SessionJournal CLI 作为 composition root 同时引用两者并注入实现。
-`SessionExecutionTailResolver` 保持 raw-only，只有尚未 Prepared 的 request-context planning /
-materialization 使用 candidate provider。
+最终边界与 current 的差异必须显式迁移：
 
-### 6.5 MemoryPack 的新角色
+| 关注点 | Current interim | Target |
+|:-------|:----------------|:-------|
+| Derived store | `DerivedRecapStore` 在 SessionJournal core，repo-local sidecar | 独立 DerivedMemory assembly/repository |
+| Coverage 协调 | 每个 runner 独立 split，人工组合 | shared immutable epoch 先于 maintainers 持久化 |
+| Set publication | CLI 手动 checkpoint；raw kind 12 `ArtifactSetCommitted` 激活 | DerivedMemory 内 immutable ArtifactSet publication/index |
+| 引用方向 | raw activation 和 Prepared 仍含 artifact/set identity | 只允许 derived -> raw address/range/setup refs |
+| Prepared recovery | v3 内联 contribution snapshot，但仍引用 raw activation | Prepared self-contained：exact context/canonical request + raw provenance，不读取 DerivedMemory |
+| Composition | SessionJournal engine 直接打开 sidecar | Host/CLI 注入 store-neutral candidate provider |
+
+目标 raw SessionJournal 不追加 `ArtifactSetCommitted` 或其他 derived-set activation，也不引用
+artifact/set/epoch id。某次 completion 实际使用的 derived memory 必须在
+`CompletionRequestPrepared` 中以 exact context snapshot 或 canonical request bytes 提升为 execution
+fact；exact reopen 不打开 DerivedMemory，也不重新运行 planner。用于审计 selection 的
+`preparedAddress -> derivedSetId/epochId` 记录属于可重建 derived usage index。
+
+迁移按专门实施计划的依赖顺序进行：先建立 cross-assembly neutral contracts 和 neutral request
+materialization，再切换 self-contained Prepared，之后才移动 concrete store、删除 raw
+`ArtifactSetCommitted`，最后引入 shared epoch、并行 orchestration 与 online selection。不能先搬
+`DerivedRecapStore.cs`，否则 raw core 会被迫反向依赖 concrete DerivedMemory。
+
+`SessionExecutionTailResolver` 始终 raw-only；DerivedMemory 缺失只阻止尚未 Prepared 的 context
+planning，不应破坏已 Prepared request 的恢复。
+
+### 6.7 MemoryPack 的新角色
 
 `MemoryPack` 变为 materialized context view：
 
@@ -271,12 +364,11 @@ selected ArtifactSet
 -> ContextHeader projection
 ```
 
-现有 `RewriteMemoryBlockMaintainer` 可作为首批 artifact producer 继续使用：输入旧 artifact + raw range，输出完整新 artifact。变化在于结果先写入 Artifact Journal 和 ArtifactSet，而不是只覆盖一个当前 block。
-
-近期实施可先走一个 **CS-5-lite** 桥接形态：不实现完整 ArtifactSet policy / retrieval / 多 artifact 一致性选择，只把
-Rolling Summary / recap 作为第一类可加载 derived artifact 保存。它的主要价值是为后续 tail-only projection 提供真实
-anchor：Context Planner 可把 recap materialize 为 `ContextHeader` 形态的 observation header，并可选附带 action
-header；随后只 replay anchor 之后的 raw suffix。没有 recap anchor 时才退回朴素 raw suffix fallback。
+`RewriteMemoryBlockMaintainer` 已作为首批 artifact producer 使用：输入旧 artifact + raw range，输出
+完整新 artifact。CS-5-lite 已验证 recap 可 materialize 为 `ContextHeader` 形态的 observation/action
+header，并以真实 anchor 之后的 raw suffix 保留近期细节；没有可用 anchor 时使用朴素 raw suffix
+fallback。后续工作是在保持这一 raw/artifact 语义的前提下，把 persistence、shared epoch、set
+publication 和 selection 移到正确的 DerivedMemory ownership，而不是把能力回迁到 ChatSession。
 
 ## 7. Context Planner
 
