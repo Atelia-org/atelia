@@ -399,8 +399,11 @@ artifact 被删除，CS-3C 仍可从 raw manifest 内联 snapshot、raw suffix�
 ## 8. 推荐的下一步工作包
 
 > **历史实施记录（CS-3A～C）**：以下三节保留当时的 v1/full-raw/explicit 增量落点，帮助解释
-> 决策演进；D6D 已删除这些 legacy policy 与 reader。current 合同以本文 §2、§7 和
-> `CompletionRequestPrepared` v3 + `CompletionAttemptStarted` 为准。
+> 决策演进；其中“Prepared 直接承载 attempt / Restarted”只描述 D7 前协议，不能作为现行实现指引。
+> D6D 已删除这些 legacy policy 与 reader；current 合同以本文 §2、§7 和
+> `CompletionRequestPrepared` v3 + `CompletionAttemptStarted` 为准：Prepared-only 是
+> `AwaitingCompletionDispatch`，每次物理调用前追加 Started，且 Action/Failed 只能直接继承最新
+> Started。
 
 ### CS-3A：Minimal Plan/Manifest Checkpoint（历史实施记录）
 
@@ -411,7 +414,7 @@ artifact 被删除，CS-3C 仍可从 raw manifest 内联 snapshot、raw suffix�
 - 一开始就定义完整、可恢复同一 canonical request 的 manifest schema，包括：
   - 由 frame `Header.Parent` 表达的 plan raw head / raw end，以及两个 governing setup event 地址。
   - raw range / artifact 的稳定地址、版本与必要 hash。
-  - 当前没有 immutable tool-schema store，因此首版保存完整、可逆、content-addressed 的 inline
+  - 当时没有 immutable tool-schema store，因此首版保存完整、可逆、content-addressed 的 inline
     `ToolDefinition` set snapshot；不伪造 tool schema address。
   - renderer / serializer / prompt / model / connection identity 与 fingerprint。
   - provider-neutral canonical `CompletionRequest` bytes 的 hash、attempt id、correlation id；该 hash
@@ -421,8 +424,9 @@ artifact 被删除，CS-3C 仍可从 raw manifest 内联 snapshot、raw suffix�
 - 增加 `completion-request-prepared` event kind / codec。
 - reducer 将该 event 投影为 `RequestPrepared` / `AwaitingCompletion` execution phase；它对 rendered
   conversation context 与 governing setup 都是中性的。
-- 正常首次 completion 成功后，`agent-action-produced.Header.Parent` 直接指向 source Prepared；CS-3C
-  restart 后则指向当前 Restarted。两者都以因果边绑定 active attempt，body 不重复保存 Parent。
+- D7 前，正常首次 completion 成功后，`agent-action-produced.Header.Parent` 直接指向 source
+  Prepared；CS-3C restart 后则指向当时的 Restarted。两者都以因果边绑定当时的 active attempt，
+  body 不重复保存 Parent。
   import/manual action 走显式 unprepared append 入口。
 - 在发送 completion 前提交该 event。
 - 让 `ResolveGoverningSetup` 在 Parent 回溯中使用最近 checkpoint，并逐字段合并 checkpoint 之后的新
@@ -448,7 +452,7 @@ near-head checkpoint 恢复。Planner policy 可以先选择 full raw fallback�
 - 每次 completion（含 tool-loop 续环）都在 provider 调用前提交 manifest；成功 action 直接以 prepared
   event 为 Parent。prepared 对 conversation context 中性。
 - reopen 到 prepared 时投影为 `AwaitingCompletion`。CS-3A 阶段的 `ResumeAsync` 先 fail-fast；CS-3C
-  已替换为 committed-manifest reconstruction + 显式 recovery policy，不使用当前 config/head
+  已替换为 committed-manifest reconstruction + 显式 recovery policy，不使用运行时最新 config/head
   重新规划。
 - provider 明确返回 `Incomplete` / `Failed`，或 host 在收到 success response 后发现结果违反已经提交的
   request policy 时，写 kind 9 `completion-attempt-failed`，保存 attempt id、
@@ -457,7 +461,7 @@ near-head checkpoint 恢复。Planner policy 可以先选择 full raw fallback�
   `atelia.host.unsupported-tool-call`。transport exception/cancellation 没有已知 outcome，仍保留
   prepared/`AwaitingCompletion`。
 - legacy/manual Action 走独立 kind 10 `imported-agent-action`；reopen 后不再把“缺少 prepared 的普通
-  Action”猜成 import。live kind 5 Action 必须直接继承当前 active attempt（source Prepared 或
+  Action”猜成 import。D7 前的 live kind 5 Action 必须直接继承当时的 active attempt（source Prepared 或
   Restarted）。
 - create 时 cursor 已绑定；open 时 lazy；普通 append 推进 head，setup append 替换对应 pointer，任何
   observed-head/CAS 失配都使 cursor 失效。
@@ -474,18 +478,18 @@ near-head checkpoint 恢复。Planner policy 可以先选择 full raw fallback�
 - 新增严格的 `explicit-artifact-tail` plan/renderer identities；full-raw bytes 与旧 identity 保持不变。
 - manifest 内联 exact materialized header snapshot 及其 canonical hash，derived artifact 删除不影响已
   prepared request 的恢复合同。
-- 验证 current head、artifact source head 与 anchor 的 Parent ancestry/order；只读取并 hash
-  `(AnchorRawEvent, current observation]`。
+- 验证 projection head、artifact source head 与 anchor 的 Parent ancestry/order；只读取并 hash
+  `(AnchorRawEvent, boundary observation]`。
 - 以 `ResolveGoverningSetup(anchor)` 取得 boundary-as-of seed，让 suffix setup events 更新，并与 exact
-  current-head governing setup 地址和值对照。
+  projection-head governing setup 地址和值对照。
 - 专用 projector 严格 fold observation/action/tool start/result 的 context dependencies；不冒充完整
   execution reducer。
 - 固定展开 artifact header，再构造最终 provider-facing `CompletionRequest` 与 canonical commitment。
 - 只支持 observation boundary、空 tool definitions；mid-tool / dependency-open anchor fail-fast。
 - `SendAsync` 与 observation-head `ResumeAsync` 使用 bounded recent-idle validator 进入 tail fast path；
   validator 不只检查 kind，还证明 bootstrap setup chain、live Action 的
-  `Observation -> Prepared -> Action`、failed attempt 的 attempt binding，以及 imported Action 的
-  observation parent。CS-3C 另允许由 validated full-raw writer 产生的
+  D7 前的 `Observation -> Prepared -> Action`、failed attempt binding，以及 imported Action 的
+  observation parent。CS-3C 当时另允许由 validated full-raw writer 产生的
   `ToolResult -> Prepared[/Restarted] -> terminal Action/Failure` 作为下一次 tail Send 的近头闭合
   边界；它只信任已提交 manifest 中较远的 observation correlation，不把任意 imported ToolResult
   当作可从中间启动 tail projection 的入口。测试以 full-projection invocation delta 证明成功路径不调用
@@ -501,22 +505,25 @@ near-head checkpoint 恢复。Planner policy 可以先选择 full raw fallback�
 
 ### CS-3C：Canonical Request Recovery（历史实施记录）
 
-> 本节记录 D7 前的 P/R 协议事实。current P/S 合同以
-> [CS-3D7 设计收口](done/prepared-provider-attempt-symmetry-design.md) 为准；旧 kind 11 已 retired。
+> 本节只记录 D7 前的 P/R 协议事实；下文的 Restarted、attempt id 与旧 recovery policy 均非 current
+> API。current P/S 合同以
+> [CS-3D7 设计收口](done/prepared-provider-attempt-symmetry-design.md) 为准：Prepared v3 保存
+> request/origin，Started event address 保存 attempt identity，live terminal topology 只有
+> `Prepared -> Started+ -> Action/Failed`；旧 kind 11 已 retired。
 
 实际落点：
 
 - 新增唯一的 `SessionPreparedRequestReconstructor`。prepare 前以
   `manifest + authoritative raw end` 重建，reopen 以 source Prepared 的 `Header.Parent` 为 raw end；
   两者最终都比较 exact canonical bytes/length/SHA-256，不再保留只检查 artifact prefix 的旁路。
-- current reconstructor 只读取 `(RawStartExclusive, raw end]`，以 activation coverage seed、
+- D7 前该 reconstructor 只读取 `(RawStartExclusive, raw end]`，以 activation coverage seed、
   manifest inline contributions 与同一个 suffix fold 重建，不打开 `DerivedRecapStore`；full-raw /
   explicit 分支已由 D6D 删除。
 - setup refs、raw range、reason/correlation、model/surface、tool snapshot、renderer/codec identity 与
   commitment 任一不一致，都在 journal mutation 和 provider call 前 fail-fast。
-- 当前 runtime 只用于 dispatch compatibility：`CompletionTarget`、client name/API 与 visible tool
+- D7 前 runtime 只用于 dispatch compatibility：`CompletionTarget`、client name/API 与 visible tool
   definitions 必须和 manifest 精确匹配；request 的 model、prompt、max tokens、tools 与 context 始终取
-  committed manifest/references，不能被当前 runtime 覆盖。
+  committed manifest/references，不能被 runtime-latest 值覆盖。
 - 新增 kind 11 `completion-attempt-restarted`。source Prepared 始终是 canonical request 唯一真源；
   Restarted 的 Parent 指向前一个 active attempt，body 保存新 attempt id、被替代 id 与 source
   Prepared address。连续崩溃形成 `P -> R1 -> R2 ...`，每次新的 provider call 都有独立、可审计的
@@ -524,12 +531,12 @@ near-head checkpoint 恢复。Planner policy 可以先选择 full raw fallback�
 - `SessionRuntime.PreparedCompletionRecoveryPolicy` 默认 `RefuseUncertain`，保证 reopen 不自动增加 LLM
   调用或费用；该路径只验证近头 P/R attempt topology，不 materialize raw request。只有显式选择
   `RestartWithNewAttempt` 时，engine 才重建并验证 request、CAS 提交 Restarted、再调用 provider。
-  当前 `ICompletionClient` 没有 provider lookup/idempotency 合同，因此不复用旧 attempt。
-- Action / known failure 必须直接继承当前 active Prepared/Restarted；transport exception/cancellation
+  当时 `ICompletionClient` 没有 provider lookup/idempotency 合同，因此不复用旧 attempt。
+- Action / known failure 必须直接继承当时的 active Prepared/Restarted；transport exception/cancellation
   仍留下该 attempt 的 uncertain `AwaitingCompletion`。下一次显式 restart 会再写一个新 attempt，不把
   新调用伪装成旧调用。
 - CS-3D1 已在 manifest 同时固定 tool definitions 与 tool implementation/capability runtime identity；
-  recovery 重发 exact coherent request 后，只有当前 host identity 精确匹配才能进入 durable tool
+  recovery 重发 exact coherent request 后，只有 dispatching host identity 精确匹配才能进入 durable tool
   dispatch；Observation 与 dependency-closed ToolResult continuation 都支持 visible tools。
 - tail Prepared 即使 sidecar artifact 已删除，也能仅凭内联 snapshot 恢复，且不调用 `Project()`。
 - provider success envelope 的 invocation identity 与 committed target 不一致时，以
@@ -538,7 +545,7 @@ near-head checkpoint 恢复。Planner policy 可以先选择 full raw fallback�
 这里的 Restarted 解决的是“新调用不能冒充旧 attempt”的审计正确性，**不消除**无幂等 provider 的重复
 费用或重复生成可能性；旧 attempt 可能已经在 provider 侧成功。未来 provider capability 接入后，可以
 在 active attempt 上先 lookup / 使用原生 idempotency key；但首次 dispatch 也必须绑定 durable attempt
-id，不能只给 reopen 临时加 lookup。当前显式 restart 还假定调用方独占该 branch 的 completion
+id，不能只给 reopen 临时加 lookup。D7 前的显式 restart 还假定调用方独占该 branch 的 completion
 driver；head CAS 能阻止两个结果同时接到同一 active attempt，却无法撤销已经并发发出的 provider
 调用。跨进程 lease / single-flight 属于后续 capability。
 
@@ -645,7 +652,8 @@ Request recovery：
 
 Tail execution recovery：
 
-- exact-head 的 Empty/Setup/Created/Observation/P/R/Failure/Action/Started/Result state 与 full reducer
+- exact-head 的 Empty/Setup/Created/Observation/Prepared/CompletionAttemptStarted/Failure/Action/ToolStarted/Result
+  state 与 full reducer
   oracle 一致。
 - tool tail 按 Action 声明顺序 join；错 Parent/attempt/correlation/checkpoint/runtime identity、
   result-before-start、乱序 call 与 duplicate call id fail-fast。
@@ -656,11 +664,11 @@ Tail execution recovery：
   chronological/full-projection 计数为 0。
 - setup/import boundary 与所有 online provider request 都不调用 `Project()`；public full
   projection 仅由显式审计/reference-oracle 调用计数。
-- tool-call permission 取决于 durable tool set 非空；空 tool set 的 initial/restarted response 若违规
+- tool-call permission 取决于 durable tool set 非空；空 tool set 的 initial/retry attempt response 若违规
   含 tool call，必须 durable fail 为 `atelia.host.unsupported-tool-call`，不得停留在 uncertain
   Prepared。
-- Prepared restart 的合法 tool response 在一次 `ResumeAsync()` 中完成工具循环；首次执行与 Started
-  reopen retry 时，工具观察到相同 operation id + reserved sequence。
+- Prepared dispatch/retry 的合法 tool response 在一次 `ResumeAsync()` 中完成工具循环；首次执行与
+  Started reopen retry 时，工具观察到相同 operation id + reserved sequence。
 
 ## 10. 暂不采用的方案
 
@@ -672,8 +680,9 @@ Tail execution recovery：
 - 机械令 `RawStartExclusive = artifact.AnchorRawEvent`：coverage anchor 不等于 dependency boundary。
 - 现在实现完整 CS-6 Context Planner：CS-3 只需要最小 plan/manifest 与确定性恢复合同。
 - 立即新增 dedicated config ref 或通用 nearest-kind index：先让 raw manifest checkpoint 经真实负载验证。
-- 在没有 provider lookup/idempotency 能力时直接复用旧 attempt id 重发：这会把新的物理调用伪装成旧
-  attempt；CS-3C 改为显式 Restarted + 新 attempt id。
+- 在没有 provider lookup/idempotency 能力时复用旧 attempt identity 重发：这会把新的物理调用伪装成
+  旧 attempt。D7 的 current 合同要求显式授权后追加新的 `CompletionAttemptStarted`；其 event
+  address 是新 attempt identity。
 
 ## 11. 一句话决议
 

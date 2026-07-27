@@ -72,7 +72,7 @@ dependency-closed raw suffix 单独物化。详见
 链头 kind                     下一合法动作
 ──────────────────────────────────────────────────
 ∅ / SessionCreated / ConfigChanged  等 observation
-Observation                          append Prepared → 跑 completion → append Action
+Observation                          append Prepared；随后 append CompletionAttemptStarted → 跑 completion → append Action
 CompletionRequestPrepared             自动重建/验证 → append Started → 调用 provider
 CompletionAttemptStarted              默认拒绝 uncertain；显式 policy → 重建/验证 → append 新 Started → 调用
 CompletionAttemptFailed              已知 completion rejection/failure 已落盘；可等新 observation
@@ -80,7 +80,7 @@ Action(含 tool call)                 取首个未结算 call → append ToolSta
 Action(无 tool call)                 turn 结束 → 等 observation
 ToolStarted                          执行该工具 → append ToolResult
 ToolResult                           还有未结算 call? → 下一个 ToolStarted
-                                     否则 → append Prepared → 跑 completion → append Action（续环）
+                                     否则 → append Prepared；随后 append CompletionAttemptStarted → 跑 completion → append Action（续环）
 ```
 
 崩溃窗口天然编码在链头 + replay projection：

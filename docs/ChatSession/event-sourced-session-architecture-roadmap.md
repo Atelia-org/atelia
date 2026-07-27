@@ -127,7 +127,9 @@ EventJournal 只看到 bytes；`Atelia.ChatSession` 在 payload 中定义 versio
 | `session-created` | session 初始化完成 marker |
 | `observation-accepted` | 外部 observation 已进入 session |
 | `context-plan-committed` | 已选定本次 completion 的 exact inputs |
-| `completion-request-prepared` | canonical request manifest 与 attempt identity 已持久化 |
+| `completion-request-prepared` | canonical request manifest 与 durable request origin 已持久化；尚未产生 provider attempt |
+| `completion-attempt-started` | provider dispatch claim 已持久化；event address 是内部 attempt identity |
+| `completion-attempt-failed` | provider 或 host 已知的 completion failure/rejection 已持久化 |
 | `agent-action-produced` | completion response 已接收并规范化为 ActionMessage |
 | `tool-execution-started` | 工具副作用前已保存 intent 与 idempotency key |
 | `tool-result-observed` | 工具返回结果已持久化 |
@@ -299,7 +301,8 @@ public sealed record ContextPlan(
 - renderer、serializer、prompt template、tool rendering、model profile 的 fingerprint。
 - request hash。
 - completion surface / model / connection identity。
-- attempt id 与 correlation id。
+- durable request origin（correlation id 与 reason）；attempt identity 不属于 Prepared，而由后续
+  `CompletionAttemptStarted` event address 给出。
 - 关联 ContextPlan event。
 
 为了控制存储增长，首选 manifest **引用已存在的 event / artifact bytes**，而不是把超大 request body 整包复制到 request event。manifest 本身必须足够封闭：恢复时只允许读取 manifest 指向的持久对象并使用 manifest 记录的 renderer/serializer 版本重建 request；不得重新运行 planner 或用“当前最新配置”替换 manifest 中的旧引用。
@@ -337,15 +340,17 @@ Retrieval index 可以重建，查询结果却可能因模型、索引版本或�
 stateDiagram-v2
     [*] --> ObservationAccepted
     ObservationAccepted --> RequestPrepared
-    RequestPrepared --> ActionProduced
-    RequestPrepared --> TurnFailed
+    RequestPrepared --> AttemptStarted
+    AttemptStarted --> AttemptStarted: explicit retry
+    AttemptStarted --> ActionProduced
+    AttemptStarted --> CompletionFailed
     ActionProduced --> ToolStarted: has tool calls
     ActionProduced --> TurnCompleted: no tool calls
     ToolStarted --> ToolResult
     ToolStarted --> ToolUncertain
     ToolResult --> RequestPrepared: continue loop
     ToolUncertain --> TurnPaused
-    TurnFailed --> [*]
+    CompletionFailed --> [*]
     TurnPaused --> [*]
     TurnCompleted --> [*]
 ```
@@ -362,9 +367,10 @@ stateDiagram-v2
 
 对最后一种情况：
 
-- provider 支持 idempotency / result lookup 时，用 attempt id 查询或重试。
-- provider 不支持时，默认停在 uncertain；只有显式 recovery policy 授权后，才先记录旧 attempt 被新的
-  attempt 替代，再发起调用。
+- provider 支持 idempotency / result lookup 时，以 `CompletionAttemptStarted` address 绑定
+  provider idempotency key / response handle 后查询或重试。
+- provider 不支持时，默认停在 uncertain；只有显式 recovery policy 授权后，才先追加一个以旧
+  Started 为 Parent 的新 Started，再发起新的物理调用。
 - 不得把新 completion 假装成旧 attempt 的同一响应。
 
 current 无 capability fallback 使用 `completion-attempt-started`：source Prepared manifest
@@ -571,7 +577,8 @@ invocation、`runtime-config-setup` 与 `system-prompt-setup` provenance。
 
 产出：最小 `ContextPlan` 形状、引用式 canonical request manifest 恢复合同、completion attempt、Action 逐步落盘。turn 完成隐式判定（Action 无 tool call），不落独立 TurnCompleted 事件。若 CS-5-lite 已落地，本阶段可以引用 recap anchor 构造 tail projection；否则只使用 raw suffix fallback。本阶段仍不设计完整 ArtifactSet、retrieval 候选比较或高级预算策略。
 
-> 2026-07-26 进度：CS-3A 已实现合并式 `completion-request-prepared` v1、full-raw minimal plan、
+> **2026-07-26 历史进度（D6D/D7 前）**：CS-3A 已实现合并式
+> `completion-request-prepared` v1、full-raw minimal plan、
 > canonical request commitment、exact-head governing setup cursor 与 near-head setup checkpoint。
 > CS-3B 已实现调用方指定 exact artifact 的 `explicit-artifact-tail`：验证
 > `currentHead -> SourceRawHead -> AnchorRawEvent` Parent ancestry，以 boundary-as-of setup fold
@@ -626,7 +633,8 @@ canonical request。execution resolver 本身不读取 artifact 文本。
 详细设计见
 [SessionJournal Tail-only Execution Recovery Design](../SessionJournal/tail-execution-recovery-design.md)。
 
-> 2026-07-26 进度：CS-3D0 已增加统一的 SessionJournal logical-read diagnostics 与 full reducer
+> **2026-07-26 历史进度（D6D/D7 前）**：CS-3D0 已增加统一的 SessionJournal logical-read
+> diagnostics 与 full reducer
 > reference-oracle phase matrix；CS-3D1 已把 last-issued tool sequence、reserved Started/Result
 > sequence 与 implementation/capability runtime identity 变成 Prepared/Action/tool tail 中的 durable
 > facts，并用 `ToolSession.ExecuteReservedAsync` 保证外部工具收到已落盘的确切 sequence。CS-3D2
@@ -638,11 +646,12 @@ canonical request。execution resolver 本身不读取 artifact 文本。
 > full-raw writer；online provider request 不再调用 Context `Project()`。Started 的 operation id +
 > reserved sequence
 > 已贯通到 `ToolExecutionContext`；空 durable tool set 的违规 tool-call response 会落 known failure，
-> Prepared restart 的合法 tool response 则可在同一次 Resume 中闭环。CS-3D4 已采用新的
+> D7 前 Prepared restart 的合法 tool response 则可在同一次 Resume 中闭环。CS-3D4 已采用新的
 > `coherent-artifact-tail` policy：至少两个 exact members 共享 coverage anchor，每个 artifact 只贡献
 > 自己的 target block；Observation 与 fully-settled ToolResult 共用 dependency-closed suffix，并把
-> visible tools/runtime identity 固定进 committed manifest。旧 `explicit-artifact-tail.v1` 只保留
-> 已提交 request 的 exact reopen 语义。连续两轮 tool continuation 的三次 provider request 均保持
+> visible tools/runtime identity 固定进 committed manifest。D6D 前旧
+> `explicit-artifact-tail.v1` 仍保留已提交 request 的 exact reopen 语义。连续两轮 tool
+> continuation 的三次 provider request 均保持
 > `FullProjectionInvocationCount` 不变；Prepared 后删除所有 selected sidecar members 仍可 exact
 > restart。CS-3D5 已新增 raw kind 12 `ArtifactSetCommitted`：原子固定 policy、common anchor、
 > coverage/current setup refs 与 canonical role members；coherent Prepared 通过 address/schema/hash
@@ -748,7 +757,8 @@ canonical request。execution resolver 本身不读取 artifact 文本。
 7. **可执行验收**：focused tests、reopen、replay、failpoint 或 backtest。
 8. **未解决问题**：只记录，不在任务外顺手扩张。
 
-推荐一次会话只闭合一个可运行垂直切片。例如“Observation → RequestPrepared → Action → reopen replay”优于一次性创建十几个空接口。
+推荐一次会话只闭合一个可运行垂直切片。例如
+“Observation → RequestPrepared → AttemptStarted → Action → reopen replay”优于一次性创建十几个空接口。
 
 ## 14. 开放问题
 

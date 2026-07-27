@@ -404,7 +404,8 @@ runtime identity 和 capability policy 通过后才能产生外部调用。
 
 验收：
 
-- phase matrix 覆盖 Observation、P/R、Failure、Action、Started、Result、Idle、setup run。
+- phase matrix 覆盖 Observation、Prepared/CompletionAttemptStarted、Failure、Action、ToolStarted、Result、
+  Idle、setup run。
 - 测试明确区分 audit full replay 与 online recovery reads。
 
 实际落点：
@@ -478,7 +479,7 @@ runtime identity 和 capability policy 通过后才能产生外部调用。
 目标：实现独立、纯读取、不构造 Context 的 tail execution projection。
 
 - 按 §6 的 head-kind DFA 实现反向 dependency collection。
-- 复用 setup、P/R identity 与 tail terminal validators。
+- 复用 setup、Prepared/CompletionAttemptStarted identity 与 tail terminal validators。
 - 对受控 writer 产生的合法 fixtures，与 full reducer 的 `ExecutionState` 做 differential tests。
 - 对分支、rewind、错 Parent、错 attempt、乱序 tool result、重复 call id fail-fast。
 
@@ -496,14 +497,16 @@ runtime identity 和 capability policy 通过后才能产生外部调用。
   Prepared/Action/Observation/latest-checkpoint boundary 与本次 header/payload logical read diagnostics。
   Engine 暴露 current-head 与 exact-head internal 入口，供 CS-3D3 driver 切换；本切片没有把
   `ResumeAsync` / tool loop 的 phase routing 全部迁过去。
-- setup/bootstrap、Observation、P/R/Failure、live/import Action、Started/Result 分别按 §6 DFA
+- setup/bootstrap、Observation、Prepared/CompletionAttemptStarted/Failure、live/import Action、
+  ToolStarted/Result 分别按 §6 DFA
   收集依赖。tool tail 回溯到当前 Action 后反转，并按 Action 声明顺序正向验证
   `Started -> Result`、call id/name/raw args、runtime identity 与 reserved sequence。
 - 连续 setup run 的 Parent 导航仍先读 header，但 run 内每个 setup payload 都 exact decode；因此损坏的
   near-head setup 不会被仅凭 kind 误判为 Idle。新 Observation 会开启新的 boundary provenance：
   清空上一轮 source Prepared/Action，只保留本 Observation 与继承的 latest checkpoint。
-- P/R identity-chain resolver 从 Engine 抽到 resolver 成为共享单一路径；Engine 既有
-  recent-idle validator 也委托 tail resolver，不再维护第二套 bootstrap/terminal attempt topology。
+- Prepared/CompletionAttemptStarted identity-chain resolver 从 Engine 抽到 resolver 成为共享单一路径；
+  Engine 既有 recent-idle validator 也委托 tail resolver，不再维护第二套
+  bootstrap/terminal attempt topology。
 - validated-writer trust cut 明确停在最近 Prepared/Action durable checkpoint：Prepared 验 direct
   source kind/reason/correlation/checkpoint，但不递归重验更旧 autonomous loop；Imported-after-Result
   最多回收前一 Action 的完整 tool span，证明 Result 已 fully settled 后即停。
@@ -566,13 +569,14 @@ runtime identity 和 capability policy 通过后才能产生外部调用。
   sequence 一并传入 `ToolExecutionContext`，因此首次执行和 Started reopen retry 对工具可见的是同一
   operation identity。
 - provider response 是否允许含 tool calls 由 durable tool set 是否非空决定。空 tool set 的
-  initial/restarted request 若收到 tool call，会提交
+  initial/retry attempt response 若收到 tool call，会提交
   `atelia.host.unsupported-tool-call` known failure，不留下可被再次 restart 的伪 uncertain Prepared。
-- Prepared restart 的合法 tool-call response 会在同一次 `ResumeAsync()` 中完成
-  Action -> Started -> external tool -> Result -> continuation completion，并继续使用 manifest 固定的
-  runtime identity。
-- failpoint 仍紧贴 Observation、Prepared/Restarted、Action、Started、external-before-Result、
-  Result 的原 crash window。Result CAS 若在外部副作用后失败，durable Started 仍保留相同
+- Prepared dispatch/retry 的合法 tool-call response 会在同一次 `ResumeAsync()` 中完成
+  Action -> ToolStarted -> external tool -> Result -> continuation completion，并继续使用 manifest
+  固定的 runtime identity。
+- failpoint 仍紧贴 Observation、Prepared/CompletionAttemptStarted、Action、ToolStarted、
+  external-before-Result、Result 的原 crash window。Result CAS 若在外部副作用后失败，durable
+  ToolStarted 仍保留相同
   operation id + reserved sequence 供 reopen。
 - 删除 Engine 中旧 `ReadEventKind`、tail boundary/checkpoint walkers 与重复 Prepared routing
   bypass；public `Project()` / `ReplayHistory()` 保持完整审计语义。
@@ -638,7 +642,8 @@ runtime identity 和 capability policy 通过后才能产生外部调用。
   每个成员经 singleton `MemoryPack.Render()` 只产生 target contribution；按
   carrier + block key 排序后聚合，其他 working-pack blocks 不进入 request。
 - projector 以 exact anchor recovery 为 execution seed，fold suffix 时校验
-  setup/bootstrap/Failure/Prepared/Restarted/Imported/Produced Action/Started/Result 的 suffix-local
+  setup/bootstrap/Failure/Prepared/CompletionAttemptStarted/Imported/Produced
+  Action/ToolStarted/Result 的 suffix-local
   phase、Parent、attempt、reason/correlation/checkpoint 与 runtime identity；最终 fold phase 再与
   exact current recovery 对照。这样较早的 malformed Failure/Setup/ImportedAction 不会被后续合法
   near-tail checkpoint 掩盖。
@@ -763,7 +768,7 @@ dependency/lineage，不等价于 active-set membership，不能拿它猜后一�
 
 | 维度 | 用例 |
 | --- | --- |
-| Head phase | Empty/Idle/Failed/Observation/P/R/Action/Started/Result |
+| Head phase | Empty/Idle/Failed/Observation/Prepared/CompletionAttemptStarted/Action/ToolStarted/Result |
 | Tool calls | 0、1、多个；每个 start/result failpoint |
 | Completion | observation、tool-continuation、known failure、uncertain restart |
 | Setup | 尾段无变化、prompt-only、runtime-only、两者变化 |
