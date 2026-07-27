@@ -7,6 +7,10 @@
 > **后续改名（2026-07-27）**：本文保留 B0 当时的项目名、命名空间和非目标；
 > concrete companion assembly 现为 `prototypes/SessionJournal.Maintainers`
 > / `Atelia.SessionJournal.Maintainers`。
+>
+> **后续退役（2026-07-27）**：B0 当时允许短期并存的旧 ChatSession substrate
+> 已删除；现行边界见
+> [ChatSession Legacy Memory Substrate 退役](../legacy-memory-substrate-retirement.md)。
 
 ## 1. 结论
 

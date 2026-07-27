@@ -9,6 +9,10 @@
 > **后续改名（2026-07-27）**：本文保留 B0 当时的项目名与“不在本分片改名”范围；
 > 现行项目已改为 `prototypes/SessionJournal.Maintainers`，测试项目已改为
 > `tests/SessionJournal.Maintainers.Tests`。
+>
+> **后续退役（2026-07-27）**：B0 当时短期保留的
+> `prototypes/ChatSession/MemorySubstrate.cs` 已删除；本文正文保留当时迁移范围，
+> 现行边界见 [ChatSession Legacy Memory Substrate 退役](../legacy-memory-substrate-retirement.md)。
 
 ## 1. 目标
 

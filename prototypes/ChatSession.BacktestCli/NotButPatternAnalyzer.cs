@@ -7,6 +7,7 @@ namespace ChatSessionBacktestCli;
 
 internal static partial class NotButPatternAnalyzer {
     public const string MaintainerId = "pattern-count.not-but";
+    public const string TargetCarrier = "Action";
     public const string BlockId = "galatea.pattern.not-but-count";
 
     public static PatternAnalysis Analyze(IReadOnlyList<IHistoryMessage> messages) {
@@ -52,7 +53,7 @@ internal static partial class NotButPatternAnalyzer {
             HistoryMessageCount: step.MessageCount,
             EstimatedTokens: estimatedTokens,
             MaintainerId: MaintainerId,
-            TargetCarrier: MemoryPackCarrier.Action.ToString(),
+            TargetCarrier: TargetCarrier,
             TargetBlockId: BlockId,
             OldBlock: BacktestOutputUtil.CreateBlockPreview(oldBlockText),
             NewBlock: BacktestOutputUtil.CreateBlockPreview(newBlockText)!,

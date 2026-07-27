@@ -4,6 +4,11 @@
 > 后续演进：legacy export replay 已完成早期验证；下一步应迁移到 SessionJournal raw event
 > forward replay，并把 rolling summary 写入 derived recap store。任务简报见
 > [CS-5-lite: SessionJournal Derived Recap Store + RollingSummary Replay](cs-5-lite-sessionjournal-derived-recap-store.md)。
+>
+> 2026-07-27 收口：旧 `Atelia.ChatSession` memory substrate 已删除，本文正文中的
+> 旧类型归属保留为实施历史。现行 LLM maintainer 使用
+> `Atelia.SessionJournal` contracts；确定性 `replay-pattern-count` 只保留普通字符串状态，
+> 不依赖任一 MemoryPack 实现。
 
 ## 1. 背景
 

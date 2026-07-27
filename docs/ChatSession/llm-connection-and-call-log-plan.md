@@ -1,6 +1,10 @@
 # LLM Connection 与 Call Log 基础设施设计备忘
 
 > 状态：设计备忘。用途是支撑 `ChatSession.BacktestCli replay-rolling-summary`，并为后续 Galatea / FamilyChat 复用统一的 LLM connection 管理与完整调用日志打基础。
+>
+> 后续收口（2026-07-27）：本文涉及的旧 ChatSession MemoryPack/maintainer substrate
+> 已退役；现行 rolling-summary 路径使用 `Atelia.SessionJournal` contracts。正文保留当时
+> connection/call-log 设计语境。
 
 ## 1. 动机
 

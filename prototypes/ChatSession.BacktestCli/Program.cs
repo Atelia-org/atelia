@@ -148,7 +148,7 @@ internal static partial class Program {
 
         var eventSource = ChatSessionLegacyEventSourceReader.Read(inputPath);
         var cursor = new ChatSessionLegacyReplayCursor(eventSource, mode);
-        var memoryPack = new MemoryPack();
+        string? previousBlock = null;
         var lastRecord = default(PatternReplayRecord);
         var recordCount = 0;
 
@@ -162,23 +162,20 @@ internal static partial class Program {
             var estimatedTokens = BacktestTextUtil.EstimateTokens(historyMessages);
             if (estimatedTokens < thresholdTokens) { continue; }
 
-            var oldBlock = memoryPack.Action.GetValueOrDefault(NotButPatternAnalyzer.BlockId);
-            var oldCount = NotButPatternAnalyzer.ExtractCount(oldBlock?.Text);
+            var oldCount = NotButPatternAnalyzer.ExtractCount(previousBlock);
             var analysis = NotButPatternAnalyzer.Analyze(historyMessages);
             var newBlock = NotButPatternAnalyzer.RenderBlock(analysis);
-            var draft = new MemoryPackDraft(memoryPack);
-            draft.UpsertBlock(new MemoryPackBlockPath(MemoryPackCarrier.Action, NotButPatternAnalyzer.BlockId), newBlock);
-            memoryPack = draft.Build();
 
             var record = NotButPatternAnalyzer.CreateReplayRecord(
                 step,
                 estimatedTokens,
-                oldBlock?.Text,
+                previousBlock,
                 newBlock,
                 analysis,
                 oldCount
             );
             writer.WriteLine(JsonSerializer.Serialize(record, JsonOptions));
+            previousBlock = newBlock;
             lastRecord = record;
             recordCount++;
         }

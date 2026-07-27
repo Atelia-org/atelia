@@ -1,6 +1,9 @@
 # Galatea Memory Agents 设计草案
 
-> 状态：设计确认稿 v0。目标是把 `raw-thinking.md` 中的概念整理成后续可实现的软件工程方案。
+> 状态：历史设计确认稿 v0。本文中的 ChatSession memory-maintainer MVP 已于
+> 2026-07-27 退役；现行 substrate 位于
+> `prototypes/SessionJournal/SessionMemoryContracts.cs`，concrete profiles 位于
+> `prototypes/SessionJournal.Maintainers/`。正文保留概念形成过程，不再描述现行 ChatSession API。
 > 范围：`prototypes/Galatea` 的轻量级记忆增强、上下文维护、自我提示权。
 
 ## 1. 目标

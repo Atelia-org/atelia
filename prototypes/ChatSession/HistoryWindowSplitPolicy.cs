@@ -5,8 +5,7 @@ namespace Atelia.ChatSession;
 public static class HistoryWindowSplitPolicy {
     public static int FindHalfContextSplitPoint(
         IReadOnlyList<IHistoryMessage> messages,
-        Func<IHistoryMessage, ulong> estimateTokens,
-        bool allowActionToObservationBoundary = false
+        Func<IHistoryMessage, ulong> estimateTokens
     ) {
         ArgumentNullException.ThrowIfNull(messages);
         ArgumentNullException.ThrowIfNull(estimateTokens);
@@ -31,14 +30,6 @@ public static class HistoryWindowSplitPolicy {
                 lastValidSuffixStart = suffixStart;
                 if (cumulativeTokens >= halfTokens) { return suffixStart; }
             }
-
-            if (allowActionToObservationBoundary
-                && MessageEndsWithAction(messages[i])
-                && messages[i + 1].Kind == HistoryMessageKind.Observation) {
-                int suffixStart = i + 1;
-                lastValidSuffixStart = suffixStart;
-                if (cumulativeTokens >= halfTokens) { return suffixStart; }
-            }
         }
 
         return lastValidSuffixStart;
@@ -51,9 +42,6 @@ public static class HistoryWindowSplitPolicy {
          && splitIndex < messages.Count - 1
          && IsObservationLike(messages[splitIndex])
          && messages[splitIndex + 1].Kind == HistoryMessageKind.Action;
-
-    private static bool MessageEndsWithAction(IHistoryMessage message)
-        => message is ActionMessage || message is ContextHeader { ActionMessage: not null };
 
     private static bool IsObservationLike(IHistoryMessage message)
         => message.Kind is HistoryMessageKind.Observation or HistoryMessageKind.ToolResults;

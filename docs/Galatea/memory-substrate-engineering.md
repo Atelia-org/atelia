@@ -1,6 +1,10 @@
 # Galatea Memory Substrate 工程设计草案
 
-> 状态：已实现，并于 2026-07-22 按 `backlog/done/memory-maintainer-slimming-refactor.md` 收缩公共合同。本文只讨论内容无关的软件工程 substrate，不讨论 Galatea Memory Pack 里应该有哪些具体主题、信念、关系通道或心智理论分类。
+> 状态：历史设计。2026-07-22 曾在 ChatSession 中实现并收缩公共合同；
+> 2026-07-27 旧实现与 `RunMemoryMaintainersAsync(...)` 已退役，权威实现迁至
+> `prototypes/SessionJournal/SessionMemoryContracts.cs`。退役边界见
+> `docs/ChatSession/legacy-memory-substrate-retirement.md`。本文正文保留当时设计，
+> 不再描述现行 ChatSession API。
 
 ## 1. 目标
 

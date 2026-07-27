@@ -103,8 +103,8 @@ SessionJournal raw repo
   `SessionEventKind`、`SessionProjection`、`SessionGoverningSetup` 等契约。
 - [SessionMemoryContracts.cs](../../prototypes/SessionJournal/SessionMemoryContracts.cs)
   新 SessionJournal 主干的 `MemoryPack`、`SessionContextHeader`、maintainer/orchestrator substrate。
-- [MemorySubstrate.cs](../../prototypes/ChatSession/MemorySubstrate.cs)
-  旧 ChatSession legacy memory substrate；新分片不应围绕它设计正式 API。
+- [ChatSession Legacy Memory Substrate 退役](legacy-memory-substrate-retirement.md)
+  记录旧 ChatSession duplicate substrate 及 session-level maintainer API 的最终删除边界。
 - [ChatSessionContracts.cs](../../prototypes/ChatSession/ChatSessionContracts.cs)
   `ContextHeader`、`RecapMessage`、`RecapSourceAnchor` 等旧 ChatSession context projection 类型。
 - [AutobiographicalRewriteProfiles.cs](../../prototypes/SessionJournal.Maintainers/AutobiographicalRewriteProfiles.cs)

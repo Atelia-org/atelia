@@ -6,6 +6,43 @@ namespace Atelia.SessionJournal.Tests;
 
 public sealed class SessionMemorySubstrateTests {
     [Fact]
+    public void MemoryPack_Render_UsesThreeCarriersInStableOrder() {
+        var pack = new MemoryPack();
+        pack.System.Add("system.a", new MemoryPackBlock("alpha"));
+        pack.System.Add("system.b", new MemoryPackBlock("beta"));
+        pack.Observation.Add("observation.a", new MemoryPackBlock("gamma"));
+        pack.Action.Add("action.a", new MemoryPackBlock("delta"));
+
+        var rendered = pack.Render();
+
+        Assert.Equal("## system.a\n\nalpha\n\n## system.b\n\nbeta", rendered.SystemPromptFragment);
+        Assert.Equal("## observation.a\n\ngamma", rendered.ObservationMessage);
+        Assert.Equal("## action.a\n\ndelta", rendered.ActionMessage);
+    }
+
+    [Fact]
+    public void MemoryPackDraft_DoesNotMutateBaseAndPreservesExistingPosition() {
+        var pack = new MemoryPack();
+        pack.System.Add("a", new MemoryPackBlock("old-a"));
+        pack.System.Add("b", new MemoryPackBlock("old-b"));
+        pack.System.Add("c", new MemoryPackBlock("old-c"));
+
+        var draft = new MemoryPackDraft(pack);
+        draft.ReplaceBlock(new MemoryPackBlockPath(MemoryPackCarrier.System, "a"), "new-a");
+        draft.UpsertBlock(new MemoryPackBlockPath(MemoryPackCarrier.System, "b"), "new-b");
+        draft.UpsertBlock(new MemoryPackBlockPath(MemoryPackCarrier.System, "d"), "new-d", order: 2);
+        Assert.True(draft.RemoveBlock(new MemoryPackBlockPath(MemoryPackCarrier.System, "c")));
+        var built = draft.Build();
+
+        Assert.Equal(["a", "b", "c"], pack.System.Keys.ToArray());
+        Assert.Equal("old-a", pack.System["a"].Text);
+        Assert.Equal("old-b", pack.System["b"].Text);
+        Assert.Equal(["a", "b", "d"], built.System.Keys.ToArray());
+        Assert.Equal("new-a", built.System["a"].Text);
+        Assert.Equal("new-b", built.System["b"].Text);
+    }
+
+    [Fact]
     public void RenderedMemoryPack_ToSessionContextHeader_UsesSessionJournalHeaderType() {
         var pack = new MemoryPack();
         pack.System.Add("policy", new MemoryPackBlock("stay focused"));
@@ -58,6 +95,59 @@ public sealed class SessionMemorySubstrateTests {
         Assert.Equal("new", updated.Text);
         Assert.True(pack.TryGetBlock(maintainer.Target, out var original));
         Assert.Equal("old", original.Text);
+    }
+
+    [Fact]
+    public async Task MemoryMaintenanceOrchestrator_RunAsync_CreatesMissingTargetFromEmptyOldBlock() {
+        var pack = new MemoryPack();
+        var target = new MemoryPackBlockPath(MemoryPackCarrier.Action, "new-block");
+        var maintainer = new StubMaintainer(
+            "maintainer.new",
+            target,
+            request => {
+                Assert.Equal(string.Empty, request.OldBlock.Text);
+                return "created";
+            }
+        );
+
+        var result = await MemoryMaintenanceOrchestrator.RunAsync(
+            pack,
+            new RecentHistorySlice(ContextHeaderSnapshot.Empty, [new ObservationMessage("hello")]),
+            [maintainer],
+            CancellationToken.None
+        );
+
+        Assert.False(pack.Action.ContainsKey(target.BlockKey));
+        Assert.Equal("created", result.UpdatedMemoryPack.Action[target.BlockKey].Text);
+    }
+
+    [Fact]
+    public async Task MemoryMaintenanceOrchestrator_RunAsync_RejectsDuplicateTargets() {
+        var target = new MemoryPackBlockPath(MemoryPackCarrier.System, "same");
+
+        await Assert.ThrowsAsync<ArgumentException>(
+            () => MemoryMaintenanceOrchestrator.RunAsync(
+                new MemoryPack(),
+                new RecentHistorySlice(ContextHeaderSnapshot.Empty, Array.Empty<IHistoryMessage>()),
+                [
+                    new StubMaintainer("first", target, "one"),
+                    new StubMaintainer("second", target, "two"),
+                ],
+                CancellationToken.None
+            )
+        );
+    }
+
+    [Fact]
+    public async Task MemoryMaintenanceOrchestrator_RunAsync_RejectsEmptyMaintainerList() {
+        await Assert.ThrowsAsync<ArgumentException>(
+            () => MemoryMaintenanceOrchestrator.RunAsync(
+                new MemoryPack(),
+                new RecentHistorySlice(ContextHeaderSnapshot.Empty, Array.Empty<IHistoryMessage>()),
+                Array.Empty<IMemoryBlockMaintainer>(),
+                CancellationToken.None
+            )
+        );
     }
 
     [Fact]
@@ -134,12 +224,20 @@ public sealed class SessionMemorySubstrateTests {
         );
 
     private sealed class StubMaintainer : IMemoryBlockMaintainer {
-        private readonly string _newText;
+        private readonly Func<MemoryBlockMaintenanceRequest, string> _maintain;
 
-        public StubMaintainer(string id, MemoryPackBlockPath target, string newText) {
+        public StubMaintainer(string id, MemoryPackBlockPath target, string newText)
+            : this(id, target, _ => newText) {
+        }
+
+        public StubMaintainer(
+            string id,
+            MemoryPackBlockPath target,
+            Func<MemoryBlockMaintenanceRequest, string> maintain
+        ) {
             Id = id;
             Target = target;
-            _newText = newText;
+            _maintain = maintain;
         }
 
         public string Id { get; }
@@ -150,12 +248,11 @@ public sealed class SessionMemorySubstrateTests {
             MemoryBlockMaintenanceRequest request,
             CancellationToken ct
         ) {
-            _ = request;
             ct.ThrowIfCancellationRequested();
             return ValueTask.FromResult(new MemoryBlockMaintenanceResult(
                 Id,
                 Target,
-                new MemoryPackBlock(_newText)
+                new MemoryPackBlock(_maintain(request))
             ));
         }
     }

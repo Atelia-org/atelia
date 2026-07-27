@@ -32,22 +32,6 @@ public sealed record ContextHeader(
     public HistoryMessageKind Kind => HistoryMessageKind.ContextHeader;
 }
 
-public sealed record MemoryMaintenanceRequest(
-    MemoryPack MemoryPack,
-    IReadOnlyList<IMemoryBlockMaintainer> Maintainers,
-    bool AllowActionToObservationBoundary = true
-);
-
-public sealed record MemoryMaintenanceResult(
-    bool Completed,
-    CompactionFailureReason? FailureReason,
-    int SplitIndex,
-    IReadOnlyList<MemoryBlockMaintenanceResult> MaintainerResults,
-    int HistoryCountBefore,
-    ulong TokensBefore,
-    MemoryPack? UpdatedMemoryPack
-);
-
 public sealed record RecapSourceAnchor(
     string SourceHeadBeforeCompaction,
     string SourceBranchName,

@@ -9,6 +9,8 @@
 > **项目改名（2026-07-27）**：本文中的 `ChatSession.Memory` / `Atelia.ChatSession.Memory`
 > 是研究发生时的历史名称；现行 concrete companion assembly 为
 > `SessionJournal.Maintainers` / `Atelia.SessionJournal.Maintainers`。
+> 同期旧 `ChatSessionEngine.RunMemoryMaintainersAsync(...)` 与
+> `prototypes/ChatSession/MemorySubstrate.cs` 也已退役，正文仅保留历史语境。
 
 ## 1. 结论摘要
 

@@ -472,9 +472,11 @@ self-contained wire cut、raw activation 删除和 producer 迁移应各自 revi
 - 同一 role 可用不同 prompt/model 对同一 epoch 生成多个 candidate，不移动 epoch cursor；
 - 证明新增第三个测试 role不修改 SessionJournal core。
 
-同时调查 `prototypes/ChatSession/MemorySubstrate.cs` 与
-`prototypes/SessionJournal/SessionMemoryContracts.cs` 的重复实现。若要抽取独立 substrate 项目，应作为
-有意识的 dependency refactor，不在两份实现上继续扩展新功能。
+重复 substrate 调查已于 2026-07-27 收口：旧
+`prototypes/ChatSession/MemorySubstrate.cs` 及其 session-level maintainer API 已删除，
+`prototypes/SessionJournal/SessionMemoryContracts.cs` 是唯一继续演化的实现。详见
+[ChatSession Legacy Memory Substrate 退役](../ChatSession/legacy-memory-substrate-retirement.md)。
+若未来抽取独立 substrate 项目，仍应作为有意识的 dependency refactor，而不是重新复制一份实现。
 
 ### MMP-C：coherence-group epoch 与并行 producer
 
@@ -554,7 +556,7 @@ artifact id、anchor、计数、readiness 和测试结果。
 - `prototypes/ChatSession.BacktestCli/RollingSummaryReplay.cs`
 - `prototypes/ChatSession.BacktestCli/RollingSummaryArtifactWriting.cs`
 - `prototypes/ChatSession.BacktestCli/Program.cs`
-- `prototypes/ChatSession/MemorySubstrate.cs`（legacy/重复 substrate，需调查）
+- `docs/ChatSession/legacy-memory-substrate-retirement.md`（legacy 重复 substrate 的退役决策）
 
 相关设计背景：
 

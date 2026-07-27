@@ -13,7 +13,10 @@ public sealed partial class ChatSessionEngine {
         ThrowIfDisposed();
 
         var messages = MessageRecord.ToHistoryMessages(_messages);
-        int splitIndex = FindHalfContextSplitPoint(messages);
+        int splitIndex = HistoryWindowSplitPolicy.FindHalfContextSplitPoint(
+            messages,
+            ChatSessionTokenEstimator.Estimate
+        );
         DebugUtil.Info(
             "ChatSession.Compaction",
             $"CompactAsync start: head={PersistedHeadAddress}, messages={messages.Count}, splitIndex={splitIndex}, firstKinds={DescribeLeadingKinds(messages)}"
@@ -48,88 +51,8 @@ public sealed partial class ChatSessionEngine {
             .ConfigureAwait(false);
     }
 
-    public async Task<MemoryMaintenanceResult> RunMemoryMaintainersAsync(
-        MemoryMaintenanceRequest request,
-        CancellationToken ct = default
-    ) {
-        ThrowIfDisposed();
-        ArgumentNullException.ThrowIfNull(request);
-        ArgumentNullException.ThrowIfNull(request.Maintainers);
-
-        var maintainers = request.Maintainers.ToArray();
-        if (maintainers.Length == 0) { throw new ArgumentException("At least one memory maintainer is required.", nameof(request)); }
-        MemoryMaintenanceOrchestrator.ValidateMaintainers(maintainers);
-
-        var messages = MessageRecord.ToHistoryMessages(_messages);
-        var tokensBefore = ChatSessionTokenEstimator.Estimate(messages);
-        int splitIndex = FindHalfContextSplitPoint(messages, request.AllowActionToObservationBoundary);
-        DebugUtil.Info(
-            "ChatSession.MemoryMaintenance",
-            $"RunMemoryMaintainersAsync start: head={PersistedHeadAddress}, messages={messages.Count}, splitIndex={splitIndex}, maintainers={maintainers.Length}, firstKinds={DescribeLeadingKinds(messages)}"
-        );
-        if (splitIndex < 0) {
-            return new MemoryMaintenanceResult(
-                Completed: false,
-                FailureReason: CompactionFailureReason.NoValidSplitPoint,
-                SplitIndex: splitIndex,
-                MaintainerResults: Array.Empty<MemoryBlockMaintenanceResult>(),
-                HistoryCountBefore: messages.Count,
-                TokensBefore: tokensBefore,
-                UpdatedMemoryPack: null
-            );
-        }
-
-        var fragment = CreateHistorySlice(messages, 0, splitIndex);
-        var recentHistory = new RecentHistorySlice(
-            PriorContext: ContextHeaderSnapshot.FromRenderedMemoryPack(request.MemoryPack.Render()),
-            Messages: fragment,
-            SourceId: PersistedHeadAddress?.ToString(),
-            EstimatedTokens: ChatSessionTokenEstimator.Estimate(fragment)
-        );
-
-        var batch = await MemoryMaintenanceOrchestrator.RunAsync(
-            request.MemoryPack,
-            recentHistory,
-            maintainers,
-            ct
-        ).ConfigureAwait(false);
-        DebugUtil.Info(
-            "ChatSession.MemoryMaintenance",
-            $"RunMemoryMaintainersAsync completed: head={PersistedHeadAddress}, splitIndex={splitIndex}, results={batch.Results.Count}"
-        );
-
-        return new MemoryMaintenanceResult(
-            Completed: true,
-            FailureReason: null,
-            SplitIndex: splitIndex,
-            MaintainerResults: batch.Results,
-            HistoryCountBefore: messages.Count,
-            TokensBefore: tokensBefore,
-            UpdatedMemoryPack: batch.UpdatedMemoryPack
-        );
-    }
-
-    internal static int FindHalfContextSplitPoint(
-        IReadOnlyList<IHistoryMessage> messages,
-        bool allowActionToObservationBoundary = false
-    ) => HistoryWindowSplitPolicy.FindHalfContextSplitPoint(
-        messages,
-        ChatSessionTokenEstimator.Estimate,
-        allowActionToObservationBoundary
-    );
-
     private static bool IsValidSplitPoint(IReadOnlyList<IHistoryMessage> messages, int splitIndex)
         => HistoryWindowSplitPolicy.IsObservationToActionBoundary(messages, splitIndex);
-
-    private static IReadOnlyList<IHistoryMessage> CreateHistorySlice(
-        IReadOnlyList<IHistoryMessage> messages,
-        int startIndex,
-        int count
-    ) {
-        var result = new IHistoryMessage[count];
-        for (int i = 0; i < count; i++) { result[i] = messages[startIndex + i]; }
-        return result;
-    }
 
     private static List<IHistoryMessage> ProjectForSummarization(
         IReadOnlyList<IHistoryMessage> prefix,
