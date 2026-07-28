@@ -1661,7 +1661,7 @@ public sealed class DerivedArtifactEpochPlannerTests : IDisposable {
             journal,
             prompt,
             SessionEventKind.SessionCreated,
-            new SessionCreatedBody()
+            new SessionCreatedBody(SessionCreationOrigin.Native)
         );
         EventAddress observation = CommitRaw(
             journal,

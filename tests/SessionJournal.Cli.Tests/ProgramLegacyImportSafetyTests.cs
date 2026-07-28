@@ -1,6 +1,8 @@
+using System.Text;
 using System.Text.Json;
 using Atelia.Completion;
 using Atelia.Completion.Abstractions;
+using Atelia.EventJournal;
 using Atelia.SessionJournal.Cli;
 using Xunit;
 using Xunit.Sdk;
@@ -99,6 +101,13 @@ public sealed class ProgramLegacyImportSafetyTests : IDisposable {
         );
 
         Assert.Equal(0, exitCode);
+        Assert.Equal(
+            """{"v":2,"body":{"origin":"legacy-import"}}""",
+            ReadPayloadJson(
+                outputPath,
+                SJ.SessionEventKind.SessionCreated
+            )
+        );
         using var engine = SJ.SessionJournalEngine.Open(outputPath);
         Assert.Collection(
             engine.Project().Context,
@@ -391,6 +400,33 @@ public sealed class ProgramLegacyImportSafetyTests : IDisposable {
                 LegacyChatSessionExportReader.JsonOptions
             )
         );
+    }
+
+    private static string ReadPayloadJson(
+        string path,
+        SJ.SessionEventKind kind
+    ) {
+        using var journal =
+            Atelia.EventJournal.EventJournal.OpenExisting(path);
+        RefId main = journal.OpenBranch(
+            SJ.SessionJournalDefaults.MainBranchName
+        ).Unwrap();
+        EventAddress head = journal.GetHead(main)
+            ?? throw new InvalidDataException(
+                "Imported SessionJournal has no head."
+            );
+        EventAddress address = journal.ReadChronologicalChain(
+                head,
+                checkedRead: true
+            )
+            .Unwrap()
+            .Single(candidate =>
+                journal.ReadEventHeaderPreview(candidate)
+                    .Unwrap()
+                    .OpaqueEventKind == (uint)kind
+            );
+        using EventFrame frame = journal.ReadEvent(address).Unwrap();
+        return Encoding.UTF8.GetString(frame.Payload);
     }
 
     private sealed class ThrowingCompletionClientFactory

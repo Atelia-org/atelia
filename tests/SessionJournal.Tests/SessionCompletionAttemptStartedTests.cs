@@ -161,7 +161,7 @@ public sealed class SessionCompletionAttemptStartedTests {
             ),
             Event(
                 SessionEventKind.SessionCreated,
-                new SessionCreatedBody(),
+                new SessionCreatedBody(SessionCreationOrigin.Native),
                 created,
                 prompt
             ),

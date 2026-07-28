@@ -49,7 +49,7 @@ public sealed class SessionExecutionTailResolverTests : IDisposable {
             journal,
             prompt,
             SessionEventKind.SessionCreated,
-            new SessionCreatedBody()
+            new SessionCreatedBody(SessionCreationOrigin.Native)
         );
         EventAddress observation = Commit(
             journal,
@@ -565,7 +565,7 @@ public sealed class SessionExecutionTailResolverTests : IDisposable {
             journal,
             prompt,
             SessionEventKind.SessionCreated,
-            new SessionCreatedBody()
+            new SessionCreatedBody(SessionCreationOrigin.Native)
         );
         EventAddress observation = Commit(
             journal,
@@ -707,7 +707,7 @@ public sealed class SessionExecutionTailResolverTests : IDisposable {
             journal,
             prompt,
             SessionEventKind.SessionCreated,
-            new SessionCreatedBody()
+            new SessionCreatedBody(SessionCreationOrigin.Native)
         );
         EventAddress observation = Commit(
             journal,
@@ -1164,7 +1164,7 @@ public sealed class SessionExecutionTailResolverTests : IDisposable {
             journal,
             prompt,
             SessionEventKind.SessionCreated,
-            new SessionCreatedBody()
+            new SessionCreatedBody(SessionCreationOrigin.Native)
         );
         EventAddress malformed = journal.CommitToRef(
             SessionJournalDefaults.MainBranchName,
@@ -1217,7 +1217,7 @@ public sealed class SessionExecutionTailResolverTests : IDisposable {
             journal,
             head,
             SessionEventKind.SessionCreated,
-            new SessionCreatedBody()
+            new SessionCreatedBody(SessionCreationOrigin.Native)
         );
         for (int i = 0; i < turns; i++) {
             EventAddress observation = Commit(

@@ -18,7 +18,7 @@ public sealed class SessionEventBodySchemaVersionTests {
     }
 
     [Fact]
-    public void ExpectedVersionMap_DefinesPreparedV5RuntimeAndFailureV2AndV1ForOtherKinds() {
+    public void ExpectedVersionMap_DefinesPreparedV5AndCurrentPerKindVersions() {
         SessionEventKind[] kinds = Enum.GetValues<SessionEventKind>();
 
         Assert.NotEmpty(kinds);
@@ -41,6 +41,51 @@ public sealed class SessionEventBodySchemaVersionTests {
         Assert.Equal(
             """{"v":1,"body":{"content":"hello"}}""",
             Encoding.UTF8.GetString(payload)
+        );
+    }
+
+    [Theory]
+    [InlineData(SessionCreationOrigin.Native, "native")]
+    [InlineData(SessionCreationOrigin.LegacyImport, "legacy-import")]
+    public void SessionCreatedV2_RequiresCanonicalOrigin(
+        SessionCreationOrigin origin,
+        string token
+    ) {
+        byte[] payload = SessionEventCodec.Encode(
+            SessionEventKind.SessionCreated,
+            new SessionCreatedBody(origin)
+        );
+
+        Assert.Equal(
+            $"{{\"v\":2,\"body\":{{\"origin\":\"{token}\"}}}}",
+            Encoding.UTF8.GetString(payload)
+        );
+        var decoded = Assert.IsType<SessionCreatedBody>(
+            SessionEventCodec.Decode(
+                SessionEventKind.SessionCreated,
+                payload,
+                out int version
+            )
+        );
+        Assert.Equal(2, version);
+        Assert.Equal(origin, decoded.Origin);
+    }
+
+    [Fact]
+    public void SessionCreatedV1AndUnknownOrigin_AreRejected() {
+        Assert.Throws<NotSupportedException>(() =>
+            SessionEventCodec.Decode(
+                SessionEventKind.SessionCreated,
+                """{"v":1,"body":{}}"""u8,
+                out _
+            )
+        );
+        Assert.Throws<InvalidDataException>(() =>
+            SessionEventCodec.Decode(
+                SessionEventKind.SessionCreated,
+                """{"v":2,"body":{"origin":"unknown"}}"""u8,
+                out _
+            )
         );
     }
 
@@ -138,6 +183,7 @@ public sealed class SessionEventBodySchemaVersionTests {
         => kind switch {
             SessionEventKind.CompletionRequestPrepared => 5,
             SessionEventKind.RuntimeConfigSetup => 2,
+            SessionEventKind.SessionCreated => 2,
             SessionEventKind.CompletionAttemptFailed => 2,
             _ => 1
         };

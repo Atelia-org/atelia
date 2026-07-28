@@ -139,7 +139,7 @@ public sealed class SessionJournalOfflineValidatorTests : IDisposable {
                 journal,
                 prompt,
                 SessionEventKind.SessionCreated,
-                new SessionCreatedBody()
+                new SessionCreatedBody(SessionCreationOrigin.Native)
             );
             _ = journal.CommitToRef(
                 SessionJournalDefaults.MainBranchName,

@@ -1192,7 +1192,10 @@ public sealed class SessionJournalEngine : IDisposable {
             SessionRuntimeConfiguration runtimeConfig = options.ToRuntimeConfiguration();
             EventAddress runtimeAddress = engine.Append(SessionEventKind.RuntimeConfigSetup, runtimeConfig);
             EventAddress promptAddress = engine.Append(SessionEventKind.SystemPromptSetup, new SystemPromptSetupBody(options.SystemPrompt));
-            EventAddress createdAddress = engine.Append(SessionEventKind.SessionCreated, new SessionCreatedBody());
+            EventAddress createdAddress = engine.Append(
+                SessionEventKind.SessionCreated,
+                new SessionCreatedBody(options.Origin)
+            );
             engine._governingSetupCursor = new SessionGoverningSetup(
                 createdAddress,
                 runtimeAddress,
@@ -2943,6 +2946,13 @@ public sealed class SessionJournalEngine : IDisposable {
             throw new ArgumentOutOfRangeException(
                 nameof(options.DerivedContextNthPrevious),
                 "Derived context nth-previous ordinal cannot be negative."
+            );
+        }
+        if (!Enum.IsDefined(options.Origin)) {
+            throw new ArgumentOutOfRangeException(
+                nameof(options.Origin),
+                options.Origin,
+                "Unknown session creation origin."
             );
         }
         if (options.SystemPrompt is null) { throw new ArgumentNullException(nameof(options.SystemPrompt)); }

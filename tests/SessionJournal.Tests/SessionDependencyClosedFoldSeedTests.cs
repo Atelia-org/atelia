@@ -98,7 +98,7 @@ public sealed class SessionDependencyClosedFoldSeedTests {
             );
         DecodedSessionEvent created = Event(
             SessionEventKind.SessionCreated,
-            new SessionCreatedBody(),
+            new SessionCreatedBody(SessionCreationOrigin.Native),
             Head,
             PromptSetup
         );

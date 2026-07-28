@@ -97,7 +97,8 @@ internal static class SessionJournalLegacyImporter {
                             currentSystemPrompt,
                             currentConfiguration.CompletionSurfaceId,
                             currentConfiguration.Schema,
-                            DerivedContextNthPrevious: 0
+                            DerivedContextNthPrevious: 0,
+                            Origin: SessionCreationOrigin.LegacyImport
                         ));
                         runtimeConfigSetupCount++;
                         systemPromptSetupCount++;

@@ -262,7 +262,7 @@ public sealed class SessionHistoryPlanningTests : IDisposable {
                 journal,
                 prompt,
                 SessionEventKind.SessionCreated,
-                new SessionCreatedBody()
+                new SessionCreatedBody(SessionCreationOrigin.Native)
             );
             start = cursor;
             for (int i = 0; i < coldTurnCount; i++) {
@@ -386,7 +386,7 @@ public sealed class SessionHistoryPlanningTests : IDisposable {
                 journal,
                 prompt,
                 SessionEventKind.SessionCreated,
-                new SessionCreatedBody()
+                new SessionCreatedBody(SessionCreationOrigin.Native)
             );
             EventAddress observation = Commit(
                 journal,

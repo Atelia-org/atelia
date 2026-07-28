@@ -46,7 +46,10 @@ public sealed class SessionJournalEngineTests : IDisposable {
         Assert.Equal(3, payloads.Length);
         Assert.Equal("{\"v\":2,\"body\":{\"modelId\":\"model-A\",\"completionSurfaceId\":\"surface-A\",\"schema\":\"atelia.session-journal.trunk.v1\",\"derivedContext\":{\"nthPrevious\":0}}}", payloads[0]);
         Assert.Equal("{\"v\":1,\"body\":{\"content\":\"system-A\"}}", payloads[1]);
-        Assert.Equal("{\"v\":1,\"body\":{}}", payloads[2]);
+        Assert.Equal(
+            "{\"v\":2,\"body\":{\"origin\":\"native\"}}",
+            payloads[2]
+        );
         Assert.NotNull(projection.Config);
         Assert.Equal("model-A", projection.Config.ModelId);
         Assert.Equal("system-A", projection.SystemPrompt);

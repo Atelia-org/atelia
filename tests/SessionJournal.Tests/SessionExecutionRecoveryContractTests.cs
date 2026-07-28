@@ -50,7 +50,7 @@ public sealed class SessionExecutionRecoveryContractTests : IDisposable {
                 prompt,
                 runtime
             ),
-            Event(SessionEventKind.SessionCreated, new SessionCreatedBody(), created, prompt)
+            Event(SessionEventKind.SessionCreated, new SessionCreatedBody(SessionCreationOrigin.Native), created, prompt)
         ];
         DecodedSessionEvent observationEvent = Event(
             SessionEventKind.ObservationAccepted,

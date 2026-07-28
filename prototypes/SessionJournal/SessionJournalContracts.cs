@@ -49,7 +49,8 @@ public sealed record SessionCreateOptions(
     string SystemPrompt,
     string CompletionSurfaceId,
     string Schema = SessionJournalDefaults.Schema,
-    int DerivedContextNthPrevious = 0
+    int DerivedContextNthPrevious = 0,
+    SessionCreationOrigin Origin = SessionCreationOrigin.Native
 ) {
     public SessionRuntimeConfiguration ToRuntimeConfiguration()
         => new(
@@ -60,6 +61,11 @@ public sealed record SessionCreateOptions(
                 DerivedContextNthPrevious
             )
         );
+}
+
+public enum SessionCreationOrigin {
+    Native,
+    LegacyImport,
 }
 
 /// <summary>
@@ -270,7 +276,9 @@ public sealed record SessionGoverningSetup(
     string SystemPrompt
 );
 
-internal sealed record SessionCreatedBody;
+internal sealed record SessionCreatedBody(
+    SessionCreationOrigin Origin
+);
 
 internal sealed record SystemPromptSetupBody(string Content);
 

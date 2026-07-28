@@ -407,7 +407,7 @@ public sealed class SessionPreparedRequestReconstructorTests : IDisposable {
             journal,
             prompt,
             SessionEventKind.SessionCreated,
-            new SessionCreatedBody()
+            new SessionCreatedBody(SessionCreationOrigin.Native)
         );
         EventAddress governingRuntime = runtime;
         EventAddress governingPrompt = prompt;

@@ -784,7 +784,7 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
                     new SessionExecutionCheckpoint(0),
                     ToolRuntimeIdentity: null
                 )
-                : new SessionCreatedBody();
+                : new SessionCreatedBody(SessionCreationOrigin.Native);
             _ = Commit(journal, observation, forgedKind, body);
         }
 

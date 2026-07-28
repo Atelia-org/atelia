@@ -51,7 +51,8 @@ internal static class SessionEventCodec {
         if (kind is SessionEventKind.RuntimeConfigSetup
             || SessionOperationalSemantics.IsActionKind(kind)
             || SessionOperationalSemantics.IsToolSegmentKind(kind)
-            || kind is SessionEventKind.CompletionRequestPrepared
+            || kind is SessionEventKind.SessionCreated
+            or SessionEventKind.CompletionRequestPrepared
             or SessionEventKind.CompletionAttemptFailed
             or SessionEventKind.CompletionAttemptStarted) {
             RequireExactProperties(root, $"{kind} envelope", "v", "body");
@@ -77,7 +78,7 @@ internal static class SessionEventCodec {
         => kind switch {
             SessionEventKind.RuntimeConfigSetup => 2,
             SessionEventKind.SystemPromptSetup => 1,
-            SessionEventKind.SessionCreated => 1,
+            SessionEventKind.SessionCreated => 2,
             SessionEventKind.ObservationAccepted => 1,
             SessionEventKind.AgentActionProduced => 1,
             SessionEventKind.ToolExecutionStarted => 1,
@@ -154,6 +155,18 @@ internal static class SessionEventCodec {
         using (var writer = new Utf8JsonWriter(buffer, WriterOptions)) {
             WriteEnvelopeStart(writer, bodySchemaVersion);
             writer.WriteStartObject("body");
+            writer.WriteString(
+                "origin",
+                body.Origin switch {
+                    SessionCreationOrigin.Native => "native",
+                    SessionCreationOrigin.LegacyImport => "legacy-import",
+                    _ => throw new ArgumentOutOfRangeException(
+                        nameof(body),
+                        body.Origin,
+                        "Unknown session creation origin."
+                    )
+                }
+            );
             writer.WriteEndObject();
             writer.WriteEndObject();
         }
@@ -398,11 +411,16 @@ internal static class SessionEventCodec {
 
     private static SessionCreatedBody DecodeSessionCreated(JsonElement body) {
         RequireObject(body, "session-created body");
-        if (body.EnumerateObject().Any()) {
-            throw new InvalidDataException("session-created body must be empty.");
-        }
-
-        return new SessionCreatedBody();
+        RequireExactProperties(body, "session-created body", "origin");
+        return new SessionCreatedBody(
+            ReadRequiredString(body, "origin") switch {
+                "native" => SessionCreationOrigin.Native,
+                "legacy-import" => SessionCreationOrigin.LegacyImport,
+                string origin => throw new InvalidDataException(
+                    $"Unknown session creation origin '{origin}'."
+                )
+            }
+        );
     }
 
     private static ObservationAcceptedBody DecodeObservationAccepted(JsonElement body) {
