@@ -82,6 +82,54 @@ artifact schema v2 是直接切换：旧 `derived/recaps/v1/` 与
 latest-by-profile index 已退役，不做 silent compatibility。derived 数据可删除并由
 planner/runner/publisher 重建；raw events 仍是唯一 correctness source。
 
+## run-derived-memory-orchestration
+
+这是 DM-7 的日常 maintenance transaction 入口。命令对一个 exact epoch 固定一次
+immutable input/history snapshot，按 role provisioning 并行运行所有尚未结算的
+maintainer；每个成功 role 先持久化 artifact，再写 immutable settlement。required
+roles 全部结算后，才以 exact transaction 原子发布一个 ArtifactSet。失败、取消或进程
+重启不会发布半套 set；required 闭合后先写 immutable finalization intent，冻结
+included settlements 与 omitted optional roles，再发布 exact set。重跑相同 job 在 intent
+前只执行缺失 role；intent 后只补 publish/验证 exact set，旧 latest set 保持可用。
+
+```bash
+dotnet run --project prototypes/SessionJournal.Cli -- \
+  run-derived-memory-orchestration \
+  --input gitignore/session-journal/<session> \
+  --epoch dae_<...> \
+  --role required:autobiographical-rewrite:produce \
+  --role required:world-understanding-rewrite:produce \
+  --policy-id roleplay-memory \
+  --policy-fingerprint roleplay-memory-v1 \
+  --candidate-prefix daily \
+  --attempt-id attempt-1 \
+  --connections prototypes/Galatea/.atelia/galatea/connections.json \
+  --connection dsv4p \
+  --output gitignore/backtest/<run>/orchestration.json \
+  --call-log-dir gitignore/backtest/<run>/calls
+```
+
+role mode 有三种：
+
+- `produce`：调用对应 concrete maintainer，需要 Completion connection；
+- `identity`：显式写一个 current-epoch identity artifact；旧 role 缺失时从空 block
+  开始，不创建 Completion client；
+- `select-existing:<artifact-id>`：选择一个 exact alternative candidate；transaction
+  会校验 artifact 的 epoch、role、target、producer、prompt/model、candidate/attempt
+  全部 identity，而不只校验 id。它也不创建 Completion client。
+
+仅当至少一个 role 为 `produce` 时才要求 `--connections`，并创建 call-log 目录。
+transaction id 由 exact epoch、policy/topology 与完整 provisioning/job identity
+确定；prompt/model、candidate/attempt 或 mode 变化会创建新 transaction，不会偷用旧
+settlement。
+
+两个 maintainer 命令都在读取 connections/prompt、创建 output/call-log、构造
+Completion client 或调用 LLM 前完成统一 path preflight：input repo、connections、
+system prompt、user prompt 都是 readonly inputs；output file 与 call-log directory
+不得与任一 readonly path 相同、互为 ancestor/descendant，所有路径链也拒绝
+symlink/reparse point。orchestration 的 policy/role provisioning 纯结构检查同样早于
+任何 writable side effect。
+
 ## validate
 
 严格、只读验证 SessionJournal：
@@ -97,9 +145,9 @@ report 必须在 repo 外。validator 不修复或截断 raw/refs。
 ## DerivedMemory ArtifactSet 运维命令
 
 以下命令只操作可重建的 `derived/` 子系统。它们不会向 raw SessionJournal
-追加 event，也不会创建 Completion client。所有命令都拒绝未知 option；标量 option
-重复出现也会 fail fast。`--report-json` 必须位于 input repo 外，并通过同目录临时文件
-atomic publish。
+追加 event。除上述 orchestration 的 `produce` mode 外，运维命令不会创建 Completion
+client。所有命令都拒绝未知 option；标量 option 重复出现也会 fail fast。
+`--report-json` 必须位于 input repo 外，并通过同目录临时文件 atomic publish。
 
 role/target 使用 `role=carrier/block-key`，其中 carrier 只能是 `system`、
 `observation` 或 `action`。block key 可以继续包含 `/`。member 使用
@@ -109,27 +157,24 @@ role/target 使用 `role=carrier/block-key`，其中 carrier 只能是 `system`�
 
 ### publish-derived-artifact-set
 
-从已经存在的 exact artifacts 发布 immutable coherent set：
+从已经 durability-settled 的 exact orchestration transaction 发布 immutable coherent
+set。这个命令是低层运维入口；日常路径应使用
+`run-derived-memory-orchestration`：
 
 ```bash
 dotnet run --project prototypes/SessionJournal.Cli -- \
   publish-derived-artifact-set \
   --input gitignore/session-journal/<session> \
-  --lineage main \
-  --coherence-group roleplay.default \
-  --policy-id roleplay-memory \
-  --policy-fingerprint roleplay-memory-v1 \
-  --required-role autobiography=action/roleplay.first-person-autobiography \
-  --required-role world=observation/roleplay.world-understanding \
+  --transaction dmt_<...> \
   --member autobiography=<artifact-id> \
-  --member world=<artifact-id> \
-  --expected-previous none \
+  --member world-understanding=<artifact-id> \
   --report-json gitignore/reports/publish-set.json
 ```
 
-`--expected-previous` 是强制 CAS：genesis 明确写 `none`，后续写 exact `das_...`
-id。CLI 从 members 的唯一 common anchor 读取 raw-authoritative governing setup
-address/schema/payload hash；setup refs 不能由参数伪造。发布只写
+CLI 从 durable transaction 得到 policy、exact epoch/input set 与 role provisioning，
+并要求 members 与 immutable settlements 完全相等。previous-set CAS 固定为
+`epoch.inputSetId`，不能由参数伪造；CLI 从 members 的唯一 common anchor 读取
+raw-authoritative governing setup address/schema/payload hash。发布只写
 `derived/memory/v1/sets` 与 latest pointer；raw SessionJournal 不写任何 derived-set
 definition/activation event。
 
@@ -155,8 +200,12 @@ dotnet run --project prototypes/SessionJournal.Cli -- \
   --report-json gitignore/reports/derived-validation.json
 ```
 
-严格、只读验证所有 artifact/set/pointer，以及每个 exact key 的 canonical role
-snapshot、完整无环单 tip lineage 和 `latest pointer == tip`。未被 set 使用的
+严格、只读验证所有 artifact/epoch/transaction/settlement/set/pointer，以及每个 exact
+key 的 canonical role snapshot、完整无环单 tip lineage 和
+`latest pointer == tip`。每个 set 必须闭包到 exact transaction、epoch 与全部 durable
+settlements/finalization；intent-before-set 是合法可恢复状态，已有 set 则必须等于
+intent 的 exact expected set。validation report 同时计数 transactions、role
+settlements 与 finalizations。未被 set 使用的
 orphan artifact 合法，便于 prompt tuning 保存 alternatives。空 derived repo
 也合法。DM-5 起 validation report schema 是
 `atelia.session-journal.cli.derived-memory-validation.v2`，新增 planner config/current

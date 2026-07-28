@@ -902,6 +902,27 @@ range materialization 与 artifact persistence 来自 DerivedMemory。
 
 ## 12. DM-7：Parallel Orchestration 与 ArtifactSet Publication
 
+> **实施状态（2026-07-28）**：已完成。DerivedMemory 现拥有 deterministic
+> transaction/job identity、typed required/optional provisioning、共享一次
+> exact-epoch snapshot 的并行 runner、immutable per-role settlement、missing-role
+> resume、`changed` / `unchanged` / `identity` outcome，以及只在 required roles
+> 闭合后先写的 immutable finalization intent。intent 冻结 included settlements、
+> omitted optional roles 与 exact expected set；crash/reopen 不会重试已冻结的
+> optional omission，并可从 intent-before-set 或 set-before-return 两侧幂等收口。
+> reopen 只有在 latest 已指向 exact set、或已沿同 exact policy lineage 前进到其后代时
+> 才报告完成；missing pointer 先按 unique tip 严格重建，绝不把 descendant pointer
+> 回退到旧 transaction 的 set，divergent pointer 明确 fail-fast。
+> ArtifactSet v2 直接绑定 exact epoch、transaction、
+> topology、完整 provisioning 和 settlements；发布前后均重新验证 current raw
+> lineage authority。`SessionJournal.Cli run-derived-memory-orchestration` 提供显式
+> run/resume composition；只有 `produce` role 需要 Completion connection，
+> `identity` 与 exact `select-existing` 不创建 LLM client。旧 set schema 与绕过
+> transaction 的 publication 参数没有 compatibility path。
+> 两个 maintainer CLI 在读取 connections/prompt、创建目录/client 或调用 LLM 前，统一
+> 拒绝 readonly inputs 与 output/call-log 的 exact/ancestor/descendant 冲突及
+> symlink/reparse path；orchestration role/policy 结构也在任何 writable side effect
+> 前完成验证。
+
 ### 目标
 
 把 shared epoch、role provisioning、parallel producer、partial settlement 和 atomic set publication
@@ -1130,27 +1151,14 @@ fakes 完成验收。
 DM-3/DM-4 应连续调度，但仍保持独立 review/commit，以便确认新 provider path 先可用，再删除旧 raw
 surface。
 
-## 17. 下一步：领取 DM-7
+## 17. 下一步：领取 DM-8
 
-下一次 Coding Agent 应只实施 **DM-7：Parallel Orchestration 与 ArtifactSet
-Publication**。开始前重点阅读：
+下一次 Coding Agent 应只实施 **DM-8：Online Lifecycle 与 Budgeted
+Selection**。开始前重点阅读本文 §12、§13、§15，以及 DerivedMemory 当前的
+epoch planner、orchestration transaction、ArtifactSet v2 与
+`SessionJournalContextCandidateProvider`。
 
-- `prototypes/SessionJournal/SessionHistoryPlanning.cs`
-- `prototypes/SessionJournal.DerivedMemory/DerivedArtifactEpochContracts.cs`
-- `prototypes/SessionJournal.DerivedMemory/DerivedArtifactEpochPlanner.cs`
-- `prototypes/SessionJournal.DerivedMemory/DerivedMemoryArtifactStore.cs`
-- `prototypes/SessionJournal.DerivedMemory/DerivedMemoryMaintainerRunner.cs`
-- `prototypes/SessionJournal.Cli/SessionJournal.Cli.csproj`
-- `prototypes/SessionJournal.Cli/MemoryMaintainerRun.cs`
-- `prototypes/SessionJournal.Maintainers/SessionJournal.Maintainers.csproj`
-- `prototypes/SessionJournal.Maintainers/README.md`
-- `tests/SessionJournal.Tests/`
-- 本文 §11、§12、§15
-
-DM-7 完成标志不是“并发启动两个 task”，而是：
-
-- required roles 共享同一 immutable epoch/input snapshot；
-- partial candidate 可恢复，但不会发布半套 set；
-- candidate 选择与 set publication 有 durable settlement/原子边界；
-- 新增第三个 role 不修改 SessionJournal core；
-- DM-6 的 independent tuning/alternative candidates 仍可单独使用。
+不要把 DM-7 的显式 orchestration 命令误当作 online engine 自动 maintenance。
+DM-8 需要另行闭合 safe-boundary lifecycle、budgeted set selection、maintenance
+headroom 与 explicit backpressure；不得重新引入 full-raw fallback，也不得让 raw
+SessionJournal 反向拥有 concrete maintainer policy。

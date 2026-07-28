@@ -135,25 +135,42 @@ public sealed class DerivedArtifactSetEngineIntegrationTests : IDisposable {
 
     private async ValueTask<PublishedFixture> CreatePublishedFixtureAsync() {
         string path = NewPath();
-        EventAddress anchor;
+        DerivedArtifactEpochPlan epoch;
+        DerivedMemoryRepository repository;
         SessionContextAnchorSetupReferences anchorSetups;
         using (var engine = SessionJournalEngine.Create(
             path,
             new SessionCreateOptions("model-A", "system-A", "surface-A")
         )) {
             engine.AppendObservation("old observation");
-            anchor = engine.AppendImportedAgentAction(
+            _ = engine.AppendImportedAgentAction(
                 new ActionMessage([
                     new ActionBlock.Text("old answer")
                 ]),
                 new CompletionDescriptor("import", "import-v1", "model-A")
             );
-            anchorSetups =
-                engine.ResolveContextAnchorSetupReferences(anchor);
+            repository = DerivedMemoryRepository.Open(path);
+            _ = await repository.EpochPlanner.ConfigureAsync(
+                new(
+                    "main",
+                    "integration-group",
+                    "integration-topology-v1",
+                    1,
+                    1,
+                    1,
+                    1_000
+                ),
+                null
+            );
+            epoch = (await repository.EpochPlanner.PlanAsync(
+                engine,
+                new("main", "integration-group", null, null)
+            )).Epoch!;
+            anchorSetups = engine.ResolveContextAnchorSetupReferences(
+                epoch.SourceEndInclusive
+            );
         }
         RawSnapshot rawBefore = ReadRawSnapshot(path);
-        DerivedMemoryRepository repository =
-            DerivedMemoryRepository.Open(path);
         var worldTarget = new MemoryPackBlockPath(
             MemoryPackCarrier.Observation,
             "memory.world"
@@ -167,7 +184,7 @@ public sealed class DerivedArtifactSetEngineIntegrationTests : IDisposable {
             "world-profile",
             worldTarget,
             "derived world",
-            anchor,
+            epoch,
             anchorSetups
         );
         DerivedMemoryArtifact self = await WriteArtifactAsync(
@@ -175,7 +192,7 @@ public sealed class DerivedArtifactSetEngineIntegrationTests : IDisposable {
             "self-profile",
             selfTarget,
             "derived self",
-            anchor,
+            epoch,
             anchorSetups
         );
         var policy = new DerivedArtifactSetPolicy(
@@ -193,10 +210,18 @@ public sealed class DerivedArtifactSetEngineIntegrationTests : IDisposable {
                 )
             ]
         );
-        _ = await repository.ArtifactSets.PublishAsync(
-            new DerivedArtifactSetPublicationRequest(
+        DerivedMemoryOrchestrationTransaction transaction =
+            await DerivedArtifactSetTestFactory
+                .CreateSettledTransactionAsync(
+                    repository,
+                    epoch,
+                    policy,
+                    [world, self]
+                );
+        using (var authorityEngine = SessionJournalEngine.Open(path)) {
+            var publication = new DerivedArtifactSetPublicationRequest(
                 policy,
-                "main",
+                transaction,
                 anchorSetups,
                 [
                     new DerivedArtifactSetMemberSelection(
@@ -209,8 +234,25 @@ public sealed class DerivedArtifactSetEngineIntegrationTests : IDisposable {
                     )
                 ],
                 ExpectedPreviousSetId: null
-            )
-        );
+            );
+            DerivedArtifactSet prepared =
+                await repository.ArtifactSets.PreparePublicationAsync(
+                    authorityEngine,
+                    publication
+                );
+            _ = await repository.Orchestrations
+                .GetOrCreateFinalizationAsync(
+                    transaction,
+                    anchorSetups,
+                    await repository.Orchestrations
+                        .ReadSettlementsAsync(transaction),
+                    prepared.SetId
+                );
+            _ = await repository.ArtifactSets.PublishAsync(
+                authorityEngine,
+                publication
+            );
+        }
         RawSnapshot rawAfter = ReadRawSnapshot(path);
         Assert.Equal(rawBefore, rawAfter);
 
@@ -231,19 +273,43 @@ public sealed class DerivedArtifactSetEngineIntegrationTests : IDisposable {
         string profileId,
         MemoryPackBlockPath target,
         string text,
-        EventAddress anchor,
+        DerivedArtifactEpochPlan epoch,
         SessionContextAnchorSetupReferences setups
     ) {
-        return await DerivedMemoryArtifactTestFactory.WriteGenesisAsync(
-            repository,
+        string roleId =
             profileId.EndsWith("-profile", StringComparison.Ordinal)
                 ? profileId[..^"-profile".Length]
-                : profileId,
-            profileId,
-            target,
-            text,
-            anchor,
-            setups
+                : profileId;
+        var draft = new MemoryPackDraft(new MemoryPack());
+        draft.UpsertBlock(target, text);
+        const string fingerprint =
+            "sha256:2222222222222222222222222222222222222222222222222222222222222222";
+        return await repository.Artifacts.WriteCandidateAsync(
+            new DerivedMemoryArtifactWriteRequest(
+                epoch.EpochId,
+                DerivedMemoryMaintainerRunner.GetEpochPlanFingerprint(
+                    epoch
+                ),
+                roleId,
+                profileId,
+                "tests",
+                fingerprint,
+                fingerprint,
+                fingerprint,
+                "candidate-1",
+                "attempt-1",
+                epoch.PlannedAtRawHead,
+                epoch.SourceStartExclusive,
+                epoch.SourceEndInclusive,
+                epoch.SourceEndInclusive,
+                epoch.RawStartSetups,
+                setups,
+                null,
+                null,
+                [],
+                target,
+                draft.Build()
+            )
         );
     }
 

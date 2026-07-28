@@ -98,6 +98,7 @@ public sealed class DerivedMemoryArtifactStore {
             DerivedMemoryArtifactContentDto.Inline(targetBlock.Text),
             request.Invocation,
             FreezeStrings(request.CallLogPaths),
+            request.Outcome,
             DerivedMemoryArtifactStatus.Produced
         );
 
@@ -317,6 +318,7 @@ public sealed class DerivedMemoryArtifactStore {
             || dto.Content is null
             || dto.InputMembers is null
             || dto.CallLogPaths is null
+            || !DerivedMemoryArtifactOutcomes.IsDefined(dto.Outcome)
             || !string.Equals(
                 dto.Status,
                 DerivedMemoryArtifactStatus.Produced,
@@ -486,6 +488,7 @@ public sealed class DerivedMemoryArtifactStore {
         dto.Content.Text,
         dto.Invocation,
         dto.CallLogPaths,
+        dto.Outcome,
         dto.Status
     );
 
@@ -536,6 +539,7 @@ public sealed class DerivedMemoryArtifactStore {
             dto.Content,
             dto.Invocation,
             dto.CallLogPaths,
+            dto.Outcome,
             dto.Status
         )
     );
@@ -700,7 +704,8 @@ public sealed record DerivedMemoryArtifactWriteRequest(
     MemoryPack MemoryPack,
     CompletionDescriptor? Invocation = null,
     IReadOnlyList<string>? CallLogPaths = null,
-    DateTimeOffset? CreatedUtc = null
+    DateTimeOffset? CreatedUtc = null,
+    string Outcome = DerivedMemoryArtifactOutcomes.Changed
 ) {
     public void Validate() {
         RequireHashId(EpochId, "dae_", nameof(EpochId));
@@ -716,6 +721,12 @@ public sealed record DerivedMemoryArtifactWriteRequest(
         RequireFingerprint(ModelFingerprint, nameof(ModelFingerprint));
         RequireToken(CandidateId, nameof(CandidateId));
         RequireToken(AttemptId, nameof(AttemptId));
+        if (!DerivedMemoryArtifactOutcomes.IsDefined(Outcome)) {
+            throw new ArgumentException(
+                "Derived-memory artifact outcome is invalid.",
+                nameof(Outcome)
+            );
+        }
         RequireAddress(SourceRawHead, nameof(SourceRawHead));
         RequireAddress(SourceStartExclusive, nameof(SourceStartExclusive));
         RequireAddress(SourceEndInclusive, nameof(SourceEndInclusive));
@@ -952,6 +963,7 @@ public sealed record DerivedMemoryArtifact(
     string Content,
     CompletionDescriptor? Invocation,
     IReadOnlyList<string> CallLogPaths,
+    string Outcome,
     string Status
 );
 
@@ -961,6 +973,15 @@ public static class DerivedMemoryArtifactKinds {
 
 public static class DerivedMemoryArtifactStatus {
     public const string Produced = "produced";
+}
+
+public static class DerivedMemoryArtifactOutcomes {
+    public const string Changed = "changed";
+    public const string Unchanged = "unchanged";
+    public const string Identity = "identity";
+
+    internal static bool IsDefined(string? value) =>
+        value is Changed or Unchanged or Identity;
 }
 
 internal sealed record DerivedMemoryArtifactDto(
@@ -995,7 +1016,8 @@ internal sealed record DerivedMemoryArtifactDto(
     [property: JsonPropertyOrder(25)] DerivedMemoryArtifactContentDto Content,
     [property: JsonPropertyOrder(26)] CompletionDescriptor? Invocation,
     [property: JsonPropertyOrder(27)] IReadOnlyList<string> CallLogPaths,
-    [property: JsonPropertyOrder(28)] string Status
+    [property: JsonPropertyOrder(28)] string Outcome,
+    [property: JsonPropertyOrder(29)] string Status
 ) {
     public static DerivedMemoryArtifactDto FromIdentity(
         string artifactId,
@@ -1030,6 +1052,7 @@ internal sealed record DerivedMemoryArtifactDto(
         identity.Content,
         identity.Invocation,
         identity.CallLogPaths,
+        identity.Outcome,
         identity.Status
     );
 }
@@ -1061,6 +1084,7 @@ internal sealed record DerivedMemoryArtifactIdentityDto(
     DerivedMemoryArtifactContentDto Content,
     CompletionDescriptor? Invocation,
     IReadOnlyList<string> CallLogPaths,
+    string Outcome,
     string Status
 );
 

@@ -9,14 +9,14 @@ namespace Atelia.SessionJournal.DerivedMemory;
 
 public sealed class DerivedArtifactSetStore {
     public const string SetSchema =
-        "atelia.session-journal.derived-artifact-set.v1";
+        "atelia.session-journal.derived-artifact-set.v2";
     public const string LatestPointerSchema =
-        "atelia.session-journal.derived-artifact-set.latest-pointer.v1";
+        "atelia.session-journal.derived-artifact-set.latest-pointer.v2";
     public const long MaxSetFileBytes = 1024 * 1024;
     public const long MaxLatestPointerFileBytes = 64 * 1024;
 
     private const string SetIdDomain =
-        "atelia.session-journal.derived-artifact-set-id.v1";
+        "atelia.session-journal.derived-artifact-set-id.v2";
     private const string LatestKeyDomain =
         "atelia.session-journal.derived-artifact-set-latest-key.v1";
     private const int MaxMemberCount = 128;
@@ -51,16 +51,21 @@ public sealed class DerivedArtifactSetStore {
 
     public string LatestPointersDirectory { get; }
 
-    public async ValueTask<DerivedArtifactSet> PublishAsync(
+    public async ValueTask<DerivedArtifactSet> PreparePublicationAsync(
+        SessionJournalEngine engine,
         DerivedArtifactSetPublicationRequest request,
         CancellationToken cancellationToken = default
     ) {
+        ArgumentNullException.ThrowIfNull(engine);
         ArgumentNullException.ThrowIfNull(request);
         ArgumentNullException.ThrowIfNull(request.Policy);
+        ArgumentNullException.ThrowIfNull(request.Transaction);
         ArgumentNullException.ThrowIfNull(request.AnchorSetups);
         ArgumentNullException.ThrowIfNull(request.Members);
         IReadOnlyDictionary<string, DerivedArtifactSetRoleRequirement> roles =
             request.Policy.ValidateAndSnapshot();
+        RequireMatchingRepository(engine);
+        ValidateTransaction(request, roles);
         DerivedArtifactSetPolicy.ValidateLineageKey(request.LineageKey);
         ValidateSetupReferences(request.AnchorSetups);
         if (request.ExpectedPreviousSetId is not null) {
@@ -68,6 +73,91 @@ public sealed class DerivedArtifactSetStore {
         }
         DerivedArtifactSetMemberSelection[] selections =
             SnapshotSelections(request.Members);
+        _ = await ValidatePublicationClosureAsync(
+                engine,
+                request,
+                selections,
+                cancellationToken
+            )
+            .ConfigureAwait(false);
+        return await CreateSetAsync(
+                request,
+                roles,
+                selections,
+                cancellationToken
+            )
+            .ConfigureAwait(false);
+    }
+
+    internal async ValueTask<DerivedArtifactSet>
+        RebuildFinalizedCandidateAsync(
+        DerivedMemoryOrchestrationTransaction transaction,
+        DerivedMemoryOrchestrationFinalization finalization,
+        CancellationToken cancellationToken = default
+    ) {
+        ArgumentNullException.ThrowIfNull(transaction);
+        ArgumentNullException.ThrowIfNull(finalization);
+        var policy = new DerivedArtifactSetPolicy(
+            transaction.PolicyId,
+            transaction.PolicyFingerprint,
+            transaction.CoherenceGroup,
+            transaction.Roles.Select(static role =>
+                new DerivedArtifactSetRoleRequirement(
+                    role.RoleId,
+                    role.Target,
+                    role.Required
+                )).ToArray()
+        );
+        var request = new DerivedArtifactSetPublicationRequest(
+            policy,
+            transaction,
+            finalization.AnchorSetups,
+            finalization.IncludedSettlements.Select(
+                static settlement =>
+                    new DerivedArtifactSetMemberSelection(
+                        settlement.RoleId,
+                        settlement.ArtifactId
+                    )
+            ).ToArray(),
+            finalization.ExpectedPreviousSetId
+        );
+        IReadOnlyDictionary<string, DerivedArtifactSetRoleRequirement> roles =
+            policy.ValidateAndSnapshot();
+        ValidateTransaction(request, roles);
+        ValidateSetupReferences(finalization.AnchorSetups);
+        DerivedArtifactSet candidate = await CreateSetAsync(
+                request,
+                roles,
+                SnapshotSelections(request.Members),
+                cancellationToken
+            )
+            .ConfigureAwait(false);
+        ValidateFinalizationCandidate(finalization, candidate);
+        return candidate;
+    }
+
+    public async ValueTask<DerivedArtifactSet> PublishAsync(
+        SessionJournalEngine engine,
+        DerivedArtifactSetPublicationRequest request,
+        CancellationToken cancellationToken = default
+    ) {
+        DerivedArtifactSet candidate =
+            await PreparePublicationAsync(
+                    engine,
+                    request,
+                    cancellationToken
+                )
+                .ConfigureAwait(false);
+        DerivedMemoryOrchestrationFinalization finalization =
+            await _repository.Orchestrations.TryReadFinalizationAsync(
+                    request.Transaction,
+                    cancellationToken
+                )
+                .ConfigureAwait(false)
+            ?? throw new InvalidDataException(
+                $"Orchestration transaction '{request.Transaction.TransactionId}' is not finalized."
+            );
+        ValidateFinalizationCandidate(finalization, candidate);
 
         await using FileStream writeLock = await _repository
             .AcquireWriteLockAsync(cancellationToken)
@@ -83,14 +173,6 @@ public sealed class DerivedArtifactSetStore {
                 )
                 .ConfigureAwait(false);
         string? currentSetId = currentPointer?.SetId;
-
-        DerivedArtifactSet candidate = await CreateSetAsync(
-                request,
-                roles,
-                selections,
-                cancellationToken
-            )
-            .ConfigureAwait(false);
 
         if (string.Equals(
                 currentSetId,
@@ -181,6 +263,66 @@ public sealed class DerivedArtifactSetStore {
             )
             .ConfigureAwait(false);
         return candidate;
+    }
+
+    private static void ValidateFinalizationCandidate(
+        DerivedMemoryOrchestrationFinalization finalization,
+        DerivedArtifactSet candidate
+    ) {
+        if (!string.Equals(
+                finalization.ExpectedSetId,
+                candidate.SetId,
+                StringComparison.Ordinal
+            )
+            || !string.Equals(
+                finalization.TransactionId,
+                candidate.TransactionId,
+                StringComparison.Ordinal
+            )
+            || !string.Equals(
+                finalization.ExpectedPreviousSetId,
+                candidate.PreviousSetId,
+                StringComparison.Ordinal
+            )
+            || finalization.AnchorSetups != candidate.AnchorSetups) {
+            throw new InvalidDataException(
+                "ArtifactSet candidate does not match its durable finalization."
+            );
+        }
+        DerivedArtifactSetMember[] members = [
+            .. candidate.Members.OrderBy(
+                static member => member.RoleId,
+                StringComparer.Ordinal
+            )
+        ];
+        DerivedMemoryRoleSettlement[] settlements = [
+            .. finalization.IncludedSettlements.OrderBy(
+                static settlement => settlement.RoleId,
+                StringComparer.Ordinal
+            )
+        ];
+        if (members.Length != settlements.Length
+            || members.Where((member, index) =>
+                    !string.Equals(
+                        member.RoleId,
+                        settlements[index].RoleId,
+                        StringComparison.Ordinal
+                    )
+                    || !string.Equals(
+                        member.ArtifactId,
+                        settlements[index].ArtifactId,
+                        StringComparison.Ordinal
+                    )
+                    || !string.Equals(
+                        member.Outcome,
+                        settlements[index].ArtifactOutcome,
+                        StringComparison.Ordinal
+                    ))
+                .Any()) {
+            throw new InvalidDataException(
+                "ArtifactSet members do not match their durable finalization."
+            );
+        }
     }
 
     public async ValueTask<DerivedArtifactSet?> TryReadLatestAsync(
@@ -538,12 +680,236 @@ public sealed class DerivedArtifactSetStore {
         return artifact;
     }
 
+    private async ValueTask<DerivedArtifactEpochPlan>
+        ValidatePublicationClosureAsync(
+        SessionJournalEngine engine,
+        DerivedArtifactSetPublicationRequest request,
+        IReadOnlyList<DerivedArtifactSetMemberSelection> selections,
+        CancellationToken cancellationToken
+    ) {
+        DerivedMemoryOrchestrationTransaction durableTransaction =
+            await _repository.Orchestrations.TryReadTransactionAsync(
+                    request.Transaction.TransactionId,
+                    cancellationToken
+                )
+                .ConfigureAwait(false)
+            ?? throw new InvalidDataException(
+                $"Orchestration transaction '{request.Transaction.TransactionId}' is missing."
+            );
+        if (!DerivedMemoryOrchestrationStore.TransactionsEquivalent(
+                durableTransaction,
+                request.Transaction
+            )) {
+            throw new InvalidDataException(
+                "ArtifactSet publication transaction does not match its durable snapshot."
+            );
+        }
+        IReadOnlyList<DerivedMemoryRoleSettlement> settlements =
+            await _repository.Orchestrations.ReadSettlementsAsync(
+                    durableTransaction,
+                    cancellationToken
+                )
+                .ConfigureAwait(false);
+        IReadOnlyDictionary<string, DerivedMemoryRoleSettlement>
+            settlementsByRole = settlements.ToDictionary(
+                static item => item.RoleId,
+                StringComparer.Ordinal
+            );
+        foreach (DerivedMemoryRoleProvisioning required in
+                 durableTransaction.Roles.Where(
+                     static role => role.Required
+                 )) {
+            if (!settlementsByRole.ContainsKey(required.RoleId)) {
+                throw new InvalidDataException(
+                    $"Required role '{required.RoleId}' is not durably settled."
+                );
+            }
+        }
+        foreach (DerivedArtifactSetMemberSelection selection in
+                 selections) {
+            if (!settlementsByRole.TryGetValue(
+                    selection.RoleId,
+                    out DerivedMemoryRoleSettlement? settlement
+                )
+                || !string.Equals(
+                    settlement.ArtifactId,
+                    selection.ArtifactId,
+                    StringComparison.Ordinal
+                )) {
+                throw new InvalidDataException(
+                    $"ArtifactSet member '{selection.RoleId}' is not the exact durable settlement."
+                );
+            }
+        }
+        DerivedArtifactEpochPlan epoch =
+            await _repository.EpochPlanner.TryReadEpochAsync(
+                    durableTransaction.EpochId,
+                    cancellationToken
+                )
+                .ConfigureAwait(false)
+            ?? throw new InvalidDataException(
+                $"Transaction epoch '{durableTransaction.EpochId}' is missing."
+            );
+        if (!string.Equals(
+                durableTransaction.EpochPlanFingerprint,
+                DerivedMemoryMaintainerRunner.GetEpochPlanFingerprint(
+                    epoch
+                ),
+                StringComparison.Ordinal
+            )
+            || !string.Equals(
+                durableTransaction.LineageKey,
+                epoch.LineageKey,
+                StringComparison.Ordinal
+            )
+            || !string.Equals(
+                durableTransaction.CoherenceGroup,
+                epoch.CoherenceGroup,
+                StringComparison.Ordinal
+            )
+            || !string.Equals(
+                durableTransaction.TopologyVersion,
+                epoch.TopologyVersion,
+                StringComparison.Ordinal
+            )
+            || !string.Equals(
+                durableTransaction.InputSetId,
+                epoch.InputSetId,
+                StringComparison.Ordinal
+            )) {
+            throw new InvalidDataException(
+                "Orchestration transaction does not match its exact epoch."
+            );
+        }
+        await ValidateCurrentLineageAuthorityAsync(
+                engine,
+                epoch,
+                request.AnchorSetups,
+                cancellationToken
+            )
+            .ConfigureAwait(false);
+        return epoch;
+    }
+
+    private async ValueTask ValidateCurrentLineageAuthorityAsync(
+        SessionJournalEngine engine,
+        DerivedArtifactEpochPlan epoch,
+        SessionContextAnchorSetupReferences expectedAnchorSetups,
+        CancellationToken cancellationToken
+    ) {
+        DerivedArtifactPlannerConfig config =
+            await _repository.EpochPlanner.TryReadConfigAsync(
+                    epoch.ConfigId,
+                    cancellationToken
+                )
+                .ConfigureAwait(false)
+            ?? throw new InvalidDataException(
+                $"Epoch planner config '{epoch.ConfigId}' is missing."
+            );
+        DerivedArtifactEpochRawAuthorityValidation authority =
+            DerivedMemoryEngineReadGate.Run(
+                engine,
+                () => _repository.EpochPlanner
+                    .ValidateRawAuthorityDetailed(
+                    engine,
+                    [epoch],
+                    [config],
+                    cancellationToken
+                )
+            );
+        if (!authority.EndSetupsByEpochId.TryGetValue(
+                epoch.EpochId,
+                out SessionContextAnchorSetupReferences? setups
+            )
+            || setups != expectedAnchorSetups) {
+            throw new InvalidDataException(
+                $"Epoch '{epoch.EpochId}' current-lineage anchor authority changed."
+            );
+        }
+    }
+
+    private static void ValidateTransaction(
+        DerivedArtifactSetPublicationRequest request,
+        IReadOnlyDictionary<string, DerivedArtifactSetRoleRequirement> roles
+    ) {
+        DerivedMemoryOrchestrationTransaction transaction =
+            request.Transaction;
+        if (!string.Equals(
+                transaction.LineageKey,
+                request.LineageKey,
+                StringComparison.Ordinal
+            )
+            || !string.Equals(
+                transaction.CoherenceGroup,
+                request.Policy.CoherenceGroup,
+                StringComparison.Ordinal
+            )
+            || !string.Equals(
+                transaction.PolicyId,
+                request.Policy.PolicyId,
+                StringComparison.Ordinal
+            )
+            || !string.Equals(
+                transaction.PolicyFingerprint,
+                request.Policy.PolicyFingerprint,
+                StringComparison.Ordinal
+            )
+            || !string.Equals(
+                request.ExpectedPreviousSetId,
+                transaction.InputSetId,
+                StringComparison.Ordinal
+            )) {
+            throw new ArgumentException(
+                "ArtifactSet publication policy/input does not match its transaction.",
+                nameof(request)
+            );
+        }
+        DerivedMemoryRoleProvisioning[] provisioning =
+            DerivedMemoryOrchestrationStore.ValidateAndCanonicalize(
+                request.Policy,
+                transaction.Roles
+            );
+        if (!provisioning.SequenceEqual(transaction.Roles)
+            || roles.Count != provisioning.Length) {
+            throw new ArgumentException(
+                "ArtifactSet transaction role provisioning is not canonical.",
+                nameof(request)
+            );
+        }
+        ValidateTransactionIdentityShape(transaction);
+    }
+
+    private void RequireMatchingRepository(SessionJournalEngine engine) {
+        string enginePath = Path.TrimEndingDirectorySeparator(
+            Path.GetFullPath(engine.Path)
+        );
+        string repositoryPath = Path.TrimEndingDirectorySeparator(
+            Path.GetFullPath(
+                _repository.SessionJournalRepositoryPath
+            )
+        );
+        StringComparison comparison = OperatingSystem.IsWindows()
+            ? StringComparison.OrdinalIgnoreCase
+            : StringComparison.Ordinal;
+        if (!string.Equals(enginePath, repositoryPath, comparison)) {
+            throw new ArgumentException(
+                "SessionJournal engine belongs to a different repository.",
+                nameof(engine)
+            );
+        }
+    }
+
     private async ValueTask<DerivedArtifactSet> CreateSetAsync(
         DerivedArtifactSetPublicationRequest request,
         IReadOnlyDictionary<string, DerivedArtifactSetRoleRequirement> roles,
         IReadOnlyList<DerivedArtifactSetMemberSelection> selections,
         CancellationToken cancellationToken
     ) {
+        IReadOnlyDictionary<string, DerivedMemoryRoleProvisioning>
+            provisioning = request.Transaction.Roles.ToDictionary(
+                static role => role.RoleId,
+                StringComparer.Ordinal
+            );
         var selectedRoles = new HashSet<string>(StringComparer.Ordinal);
         var artifactIds = new HashSet<string>(StringComparer.Ordinal);
         var targets =
@@ -590,6 +956,20 @@ public sealed class DerivedArtifactSetStore {
                     $"Artifact '{artifact.ArtifactId}' target does not match role '{selection.RoleId}'."
                 );
             }
+            DerivedMemoryRoleProvisioning provision =
+                provisioning[selection.RoleId];
+            var settlement = new DerivedMemoryRoleSettlement(
+                request.Transaction.TransactionId,
+                selection.RoleId,
+                artifact.ArtifactId,
+                artifact.Outcome
+            );
+            DerivedMemoryOrchestrationStore.ValidateArtifact(
+                request.Transaction,
+                provision,
+                settlement,
+                artifact
+            );
             if (!targets.Add((
                     artifact.Target.Carrier,
                     artifact.Target.BlockKey
@@ -630,7 +1010,8 @@ public sealed class DerivedArtifactSetStore {
                 artifact.Target,
                 SessionContextContributionHasher.CodecId,
                 SessionContextContributionHasher.ComputeSha256(block.Text),
-                artifact.SourceRawHead
+                artifact.SourceRawHead,
+                artifact.Outcome
             ));
         }
         foreach (DerivedArtifactSetRoleRequirement required in
@@ -656,7 +1037,7 @@ public sealed class DerivedArtifactSetStore {
         DerivedArtifactSetRoleRequirement[] canonicalRoleRequirements =
             CanonicalizeRoleRequirements(roles.Values);
         var identity = CreateIdentityDto(
-            request.LineageKey,
+            request.Transaction,
             request.Policy,
             canonicalRoleRequirements,
             request.ExpectedPreviousSetId,
@@ -667,11 +1048,17 @@ public sealed class DerivedArtifactSetStore {
         string setId = ComputeSetId(identity);
         return new DerivedArtifactSet(
             setId,
-            request.LineageKey,
+            request.Transaction.TransactionId,
+            request.Transaction.JobFingerprint,
+            request.Transaction.EpochId,
+            request.Transaction.EpochPlanFingerprint,
+            request.Transaction.LineageKey,
             request.Policy.CoherenceGroup,
+            request.Transaction.TopologyVersion,
             request.Policy.PolicyId,
             request.Policy.PolicyFingerprint,
             Array.AsReadOnly(canonicalRoleRequirements),
+            request.Transaction.Roles,
             request.ExpectedPreviousSetId,
             commonAnchor.Value,
             request.AnchorSetups,
@@ -1016,6 +1403,25 @@ public sealed class DerivedArtifactSetStore {
                 static role => role.RoleId,
                 StringComparer.Ordinal
             );
+        DerivedMemoryRoleProvisioning[] persistedProvisioning =
+            MaterializeRoleProvisioning(
+                dto.RoleProvisioning,
+                persistedPolicy
+            );
+        var transaction = new DerivedMemoryOrchestrationTransaction(
+            dto.TransactionId,
+            dto.JobFingerprint,
+            dto.EpochId,
+            dto.EpochPlanFingerprint,
+            dto.LineageKey,
+            dto.CoherenceGroup,
+            dto.TopologyVersion,
+            dto.PreviousSetId,
+            dto.PolicyId,
+            dto.PolicyFingerprint,
+            Array.AsReadOnly(persistedProvisioning)
+        );
+        ValidateTransactionIdentityShape(transaction);
         ValidateSetId(dto.SetId);
         if (dto.PreviousSetId is not null) {
             ValidateSetId(dto.PreviousSetId);
@@ -1084,7 +1490,10 @@ public sealed class DerivedArtifactSetStore {
                     SessionContextContributionHasher.CodecId,
                     StringComparison.Ordinal
                 )
-                || !IsLowerSha256(member.ContentSha256)) {
+                || !IsLowerSha256(member.ContentSha256)
+                || !DerivedMemoryArtifactOutcomes.IsDefined(
+                    member.Outcome
+                )) {
                 throw new InvalidDataException(
                     "Derived ArtifactSet member content identity is invalid."
                 );
@@ -1098,7 +1507,8 @@ public sealed class DerivedArtifactSetStore {
                 target,
                 member.ContentCodecId,
                 member.ContentSha256,
-                sourceRawHead
+                sourceRawHead,
+                member.Outcome
             ));
         }
         foreach (DerivedArtifactSetRoleRequirement required in
@@ -1111,7 +1521,7 @@ public sealed class DerivedArtifactSetStore {
         }
         DerivedArtifactSetMember[] frozenMembers = [.. members];
         var identity = CreateIdentityDto(
-            dto.LineageKey,
+            transaction,
             persistedPolicy,
             persistedRoleRequirements,
             dto.PreviousSetId,
@@ -1130,11 +1540,17 @@ public sealed class DerivedArtifactSetStore {
         }
         return new DerivedArtifactSet(
             dto.SetId,
+            dto.TransactionId,
+            dto.JobFingerprint,
+            dto.EpochId,
+            dto.EpochPlanFingerprint,
             dto.LineageKey,
             dto.CoherenceGroup,
+            dto.TopologyVersion,
             dto.PolicyId,
             dto.PolicyFingerprint,
             Array.AsReadOnly(persistedRoleRequirements),
+            Array.AsReadOnly(persistedProvisioning),
             dto.PreviousSetId,
             commonAnchor,
             setups,
@@ -1173,6 +1589,11 @@ public sealed class DerivedArtifactSetStore {
             || artifact.AnchorRawEvent != commonAnchor
             || artifact.SourceEndInclusive != commonAnchor
             || artifact.AnchorSetups != anchorSetups
+            || !string.Equals(
+                artifact.Outcome,
+                member.Outcome,
+                StringComparison.Ordinal
+            )
             || !artifact.MemoryPack.TryGetBlock(
                 artifact.Target,
                 out MemoryPackBlock block
@@ -1227,6 +1648,22 @@ public sealed class DerivedArtifactSetStore {
     ) =>
         string.Equals(left.SetId, right.SetId, StringComparison.Ordinal)
         && string.Equals(
+            left.TransactionId,
+            right.TransactionId,
+            StringComparison.Ordinal
+        )
+        && string.Equals(
+            left.JobFingerprint,
+            right.JobFingerprint,
+            StringComparison.Ordinal
+        )
+        && string.Equals(left.EpochId, right.EpochId, StringComparison.Ordinal)
+        && string.Equals(
+            left.EpochPlanFingerprint,
+            right.EpochPlanFingerprint,
+            StringComparison.Ordinal
+        )
+        && string.Equals(
             left.LineageKey,
             right.LineageKey,
             StringComparison.Ordinal
@@ -1234,6 +1671,11 @@ public sealed class DerivedArtifactSetStore {
         && string.Equals(
             left.CoherenceGroup,
             right.CoherenceGroup,
+            StringComparison.Ordinal
+        )
+        && string.Equals(
+            left.TopologyVersion,
+            right.TopologyVersion,
             StringComparison.Ordinal
         )
         && string.Equals(
@@ -1247,6 +1689,7 @@ public sealed class DerivedArtifactSetStore {
             StringComparison.Ordinal
         )
         && left.RoleRequirements.SequenceEqual(right.RoleRequirements)
+        && left.RoleProvisioning.SequenceEqual(right.RoleProvisioning)
         && string.Equals(
             left.PreviousSetId,
             right.PreviousSetId,
@@ -1393,11 +1836,17 @@ public sealed class DerivedArtifactSetStore {
         new(
             SetSchema,
             set.SetId,
+            set.TransactionId,
+            set.JobFingerprint,
+            set.EpochId,
+            set.EpochPlanFingerprint,
             set.LineageKey,
             set.CoherenceGroup,
+            set.TopologyVersion,
             set.PolicyId,
             set.PolicyFingerprint,
             set.RoleRequirements.Select(ToDto).ToArray(),
+            set.RoleProvisioning.Select(ToDto).ToArray(),
             set.PreviousSetId,
             EventAddressTextCodec.Format(set.CommonAnchor),
             ToDto(set.AnchorSetups),
@@ -1405,7 +1854,7 @@ public sealed class DerivedArtifactSetStore {
         );
 
     private static DerivedArtifactSetIdentityDto CreateIdentityDto(
-        string lineageKey,
+        DerivedMemoryOrchestrationTransaction transaction,
         DerivedArtifactSetPolicy policy,
         IReadOnlyList<DerivedArtifactSetRoleRequirement> roleRequirements,
         string? previousSetId,
@@ -1414,11 +1863,17 @@ public sealed class DerivedArtifactSetStore {
         IReadOnlyList<DerivedArtifactSetMember> members
     ) => new(
         SetSchema,
-        lineageKey,
+        transaction.TransactionId,
+        transaction.JobFingerprint,
+        transaction.EpochId,
+        transaction.EpochPlanFingerprint,
+        transaction.LineageKey,
         policy.CoherenceGroup,
+        transaction.TopologyVersion,
         policy.PolicyId,
         policy.PolicyFingerprint,
         roleRequirements.Select(ToDto).ToArray(),
+        transaction.Roles.Select(ToDto).ToArray(),
         previousSetId,
         EventAddressTextCodec.Format(commonAnchor),
         ToDto(setups),
@@ -1437,7 +1892,28 @@ public sealed class DerivedArtifactSetStore {
         ),
         member.ContentCodecId,
         member.ContentSha256,
-        EventAddressTextCodec.Format(member.SourceRawHead)
+        EventAddressTextCodec.Format(member.SourceRawHead),
+        member.Outcome
+    );
+
+    private static DerivedArtifactSetRoleProvisioningDto ToDto(
+        DerivedMemoryRoleProvisioning role
+    ) => new(
+        role.RoleId,
+        role.ProfileId,
+        new DerivedArtifactSetTargetDto(
+            MemoryPackCarrierTokens.ToStorageToken(role.Target.Carrier),
+            role.Target.BlockKey
+        ),
+        role.Required,
+        role.Producer,
+        role.ProducerFingerprint,
+        role.PromptFingerprint,
+        role.ModelFingerprint,
+        role.ExecutionMode,
+        role.CandidateId,
+        role.AttemptId,
+        role.SelectedArtifactId
     );
 
     private static DerivedArtifactSetRoleRequirementDto ToDto(
@@ -1539,6 +2015,120 @@ public sealed class DerivedArtifactSetStore {
         }
         return [.. requirements];
     }
+
+    private static DerivedMemoryRoleProvisioning[]
+        MaterializeRoleProvisioning(
+        IReadOnlyList<DerivedArtifactSetRoleProvisioningDto>? dtos,
+        DerivedArtifactSetPolicy policy
+    ) {
+        if (dtos is null) {
+            throw new InvalidDataException(
+                "Derived ArtifactSet role provisioning is missing."
+            );
+        }
+        DerivedMemoryRoleProvisioning[] roles = [
+            .. dtos.Select(dto => {
+                if (dto is null) {
+                    throw new InvalidDataException(
+                        "Derived ArtifactSet contains null role provisioning."
+                    );
+                }
+                return new DerivedMemoryRoleProvisioning(
+                    dto.RoleId,
+                    dto.ProfileId,
+                    MaterializeTarget(dto.Target),
+                    dto.Required,
+                    dto.Producer,
+                    dto.ProducerFingerprint,
+                    dto.PromptFingerprint,
+                    dto.ModelFingerprint,
+                    dto.ExecutionMode,
+                    dto.CandidateId,
+                    dto.AttemptId,
+                    dto.SelectedArtifactId
+                );
+            })
+        ];
+        try {
+            DerivedMemoryRoleProvisioning[] canonical =
+                DerivedMemoryOrchestrationStore.ValidateAndCanonicalize(
+                    policy,
+                    roles
+                );
+            if (!canonical.SequenceEqual(roles)) {
+                throw new InvalidDataException(
+                    "Derived ArtifactSet role provisioning is not in canonical order."
+                );
+            }
+            return canonical;
+        }
+        catch (ArgumentException exception) {
+            throw new InvalidDataException(
+                "Derived ArtifactSet role provisioning is invalid.",
+                exception
+            );
+        }
+    }
+
+    private static void ValidateTransactionIdentityShape(
+        DerivedMemoryOrchestrationTransaction transaction
+    ) {
+        ValidateHashIdentity(
+            transaction.TransactionId,
+            "dmt_",
+            "transaction id"
+        );
+        ValidateHashIdentity(
+            transaction.EpochId,
+            "dae_",
+            "epoch id"
+        );
+        if (!IsSha256Fingerprint(transaction.JobFingerprint)
+            || !IsSha256Fingerprint(
+                transaction.EpochPlanFingerprint
+            )) {
+            throw new InvalidDataException(
+                "Derived ArtifactSet transaction fingerprints are invalid."
+            );
+        }
+        DerivedArtifactSetPolicy.ValidateLineageKey(
+            transaction.LineageKey
+        );
+        DerivedArtifactSetPolicy.ValidateToken(
+            transaction.CoherenceGroup,
+            nameof(transaction.CoherenceGroup)
+        );
+        DerivedArtifactSetPolicy.ValidateToken(
+            transaction.TopologyVersion,
+            nameof(transaction.TopologyVersion)
+        );
+        if (transaction.InputSetId is not null) {
+            ValidateSetId(transaction.InputSetId);
+        }
+    }
+
+    private static void ValidateHashIdentity(
+        string value,
+        string prefix,
+        string description
+    ) {
+        if (value is null
+            || value.Length != 68
+            || !value.StartsWith(prefix, StringComparison.Ordinal)
+            || !value.AsSpan(4).ToString().All(
+                static ch => ch is >= '0' and <= '9'
+                    or >= 'a' and <= 'f'
+            )) {
+            throw new InvalidDataException(
+                $"Derived ArtifactSet {description} is invalid."
+            );
+        }
+    }
+
+    private static bool IsSha256Fingerprint(string? value) =>
+        value is { Length: 71 }
+        && value.StartsWith("sha256:", StringComparison.Ordinal)
+        && IsLowerSha256(value[7..]);
 
     private static DerivedArtifactSetSetupReferencesDto ToDto(
         SessionContextAnchorSetupReferences references
@@ -1666,33 +2256,47 @@ public sealed class DerivedArtifactSetStore {
 internal sealed record DerivedArtifactSetDto(
     [property: JsonPropertyOrder(0)] string Schema,
     [property: JsonPropertyOrder(1)] string SetId,
-    [property: JsonPropertyOrder(2)] string LineageKey,
-    [property: JsonPropertyOrder(3)] string CoherenceGroup,
-    [property: JsonPropertyOrder(4)] string PolicyId,
-    [property: JsonPropertyOrder(5)] string PolicyFingerprint,
-    [property: JsonPropertyOrder(6)]
+    [property: JsonPropertyOrder(2)] string TransactionId,
+    [property: JsonPropertyOrder(3)] string JobFingerprint,
+    [property: JsonPropertyOrder(4)] string EpochId,
+    [property: JsonPropertyOrder(5)] string EpochPlanFingerprint,
+    [property: JsonPropertyOrder(6)] string LineageKey,
+    [property: JsonPropertyOrder(7)] string CoherenceGroup,
+    [property: JsonPropertyOrder(8)] string TopologyVersion,
+    [property: JsonPropertyOrder(9)] string PolicyId,
+    [property: JsonPropertyOrder(10)] string PolicyFingerprint,
+    [property: JsonPropertyOrder(11)]
         IReadOnlyList<DerivedArtifactSetRoleRequirementDto> RoleRequirements,
-    [property: JsonPropertyOrder(7)] string? PreviousSetId,
-    [property: JsonPropertyOrder(8)] string CommonAnchor,
-    [property: JsonPropertyOrder(9)]
+    [property: JsonPropertyOrder(12)]
+        IReadOnlyList<DerivedArtifactSetRoleProvisioningDto> RoleProvisioning,
+    [property: JsonPropertyOrder(13)] string? PreviousSetId,
+    [property: JsonPropertyOrder(14)] string CommonAnchor,
+    [property: JsonPropertyOrder(15)]
         DerivedArtifactSetSetupReferencesDto AnchorSetups,
-    [property: JsonPropertyOrder(10)]
+    [property: JsonPropertyOrder(16)]
         IReadOnlyList<DerivedArtifactSetMemberDto> Members
 );
 
 internal sealed record DerivedArtifactSetIdentityDto(
     [property: JsonPropertyOrder(0)] string Schema,
-    [property: JsonPropertyOrder(1)] string LineageKey,
-    [property: JsonPropertyOrder(2)] string CoherenceGroup,
-    [property: JsonPropertyOrder(3)] string PolicyId,
-    [property: JsonPropertyOrder(4)] string PolicyFingerprint,
-    [property: JsonPropertyOrder(5)]
+    [property: JsonPropertyOrder(1)] string TransactionId,
+    [property: JsonPropertyOrder(2)] string JobFingerprint,
+    [property: JsonPropertyOrder(3)] string EpochId,
+    [property: JsonPropertyOrder(4)] string EpochPlanFingerprint,
+    [property: JsonPropertyOrder(5)] string LineageKey,
+    [property: JsonPropertyOrder(6)] string CoherenceGroup,
+    [property: JsonPropertyOrder(7)] string TopologyVersion,
+    [property: JsonPropertyOrder(8)] string PolicyId,
+    [property: JsonPropertyOrder(9)] string PolicyFingerprint,
+    [property: JsonPropertyOrder(10)]
         IReadOnlyList<DerivedArtifactSetRoleRequirementDto> RoleRequirements,
-    [property: JsonPropertyOrder(6)] string? PreviousSetId,
-    [property: JsonPropertyOrder(7)] string CommonAnchor,
-    [property: JsonPropertyOrder(8)]
+    [property: JsonPropertyOrder(11)]
+        IReadOnlyList<DerivedArtifactSetRoleProvisioningDto> RoleProvisioning,
+    [property: JsonPropertyOrder(12)] string? PreviousSetId,
+    [property: JsonPropertyOrder(13)] string CommonAnchor,
+    [property: JsonPropertyOrder(14)]
         DerivedArtifactSetSetupReferencesDto AnchorSetups,
-    [property: JsonPropertyOrder(9)]
+    [property: JsonPropertyOrder(15)]
         IReadOnlyList<DerivedArtifactSetMemberDto> Members
 );
 
@@ -1709,7 +2313,23 @@ internal sealed record DerivedArtifactSetMemberDto(
     [property: JsonPropertyOrder(3)] DerivedArtifactSetTargetDto Target,
     [property: JsonPropertyOrder(4)] string ContentCodecId,
     [property: JsonPropertyOrder(5)] string ContentSha256,
-    [property: JsonPropertyOrder(6)] string SourceRawHead
+    [property: JsonPropertyOrder(6)] string SourceRawHead,
+    [property: JsonPropertyOrder(7)] string Outcome
+);
+
+internal sealed record DerivedArtifactSetRoleProvisioningDto(
+    [property: JsonPropertyOrder(0)] string RoleId,
+    [property: JsonPropertyOrder(1)] string ProfileId,
+    [property: JsonPropertyOrder(2)] DerivedArtifactSetTargetDto Target,
+    [property: JsonPropertyOrder(3)] bool Required,
+    [property: JsonPropertyOrder(4)] string Producer,
+    [property: JsonPropertyOrder(5)] string ProducerFingerprint,
+    [property: JsonPropertyOrder(6)] string PromptFingerprint,
+    [property: JsonPropertyOrder(7)] string ModelFingerprint,
+    [property: JsonPropertyOrder(8)] string ExecutionMode,
+    [property: JsonPropertyOrder(9)] string CandidateId,
+    [property: JsonPropertyOrder(10)] string AttemptId,
+    [property: JsonPropertyOrder(11)] string? SelectedArtifactId
 );
 
 internal sealed record DerivedArtifactSetTargetDto(

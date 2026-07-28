@@ -11,7 +11,8 @@ public sealed record DerivedMemoryMaintainerRunRequest(
     string PromptFingerprint,
     string ModelFingerprint,
     string CandidateId,
-    string AttemptId
+    string AttemptId,
+    string? OutcomeOverride = null
 );
 
 public sealed record DerivedMemoryMaintainerRunResult(
@@ -21,6 +22,33 @@ public sealed record DerivedMemoryMaintainerRunResult(
     MemoryBlockMaintenanceResult MaintenanceResult,
     SessionHistoryPlanningDiagnostics ReadDiagnostics
 );
+
+public sealed class DerivedMemoryMaintainerSnapshot {
+    internal DerivedMemoryMaintainerSnapshot(
+        DerivedArtifactEpochPlan epoch,
+        MemoryPack inputMemoryPack,
+        IReadOnlyList<DerivedMemoryArtifactInputMember> inputMembers,
+        RecentHistorySlice recentHistory,
+        SessionContextAnchorSetupReferences anchorSetups,
+        SessionHistoryPlanningDiagnostics readDiagnostics
+    ) {
+        Epoch = epoch;
+        InputMemoryPack = inputMemoryPack;
+        InputMembers = inputMembers;
+        RecentHistory = recentHistory;
+        AnchorSetups = anchorSetups;
+        ReadDiagnostics = readDiagnostics;
+    }
+
+    public DerivedArtifactEpochPlan Epoch { get; }
+    public RecentHistorySlice RecentHistory { get; }
+    public SessionContextAnchorSetupReferences AnchorSetups { get; }
+    public SessionHistoryPlanningDiagnostics ReadDiagnostics { get; }
+    internal MemoryPack InputMemoryPack { get; }
+    internal IReadOnlyList<DerivedMemoryArtifactInputMember> InputMembers {
+        get;
+    }
+}
 
 /// <summary>
 /// Runs one concrete maintainer against one immutable durable epoch. It neither plans/splits
@@ -46,27 +74,38 @@ public sealed class DerivedMemoryMaintainerRunner {
         ArgumentNullException.ThrowIfNull(engine);
         ArgumentNullException.ThrowIfNull(request);
         ArgumentNullException.ThrowIfNull(maintainer);
-        ValidateRequest(request);
-        if (!string.Equals(
-                maintainer.Id,
-                request.ProfileId,
-                StringComparison.Ordinal
-            )) {
-            throw new ArgumentException(
-                "Maintainer id does not match the requested profile id.",
-                nameof(maintainer)
-            );
-        }
+        DerivedMemoryMaintainerSnapshot snapshot = await PrepareAsync(
+                engine,
+                request.EpochId,
+                cancellationToken
+            )
+            .ConfigureAwait(false);
+        return await RunPreparedAsync(
+                snapshot,
+                request,
+                maintainer,
+                captureCallLogPaths,
+                cancellationToken
+            )
+            .ConfigureAwait(false);
+    }
 
+    public async ValueTask<DerivedMemoryMaintainerSnapshot> PrepareAsync(
+        SessionJournalEngine engine,
+        string epochId,
+        CancellationToken cancellationToken = default
+    ) {
+        ArgumentNullException.ThrowIfNull(engine);
+        RequireToken(epochId, nameof(epochId));
         RequireMatchingRepository(engine);
         DerivedArtifactEpochPlan epoch =
             await _repository.EpochPlanner.TryReadEpochAsync(
-                    request.EpochId,
+                    epochId,
                     cancellationToken
                 )
                 .ConfigureAwait(false)
             ?? throw new InvalidDataException(
-                $"Derived artifact epoch '{request.EpochId}' does not exist."
+                $"Derived artifact epoch '{epochId}' does not exist."
             );
         DerivedArtifactPlannerConfig config =
             await _repository.EpochPlanner.TryReadConfigAsync(
@@ -90,24 +129,24 @@ public sealed class DerivedMemoryMaintainerRunner {
 
         InputSnapshot input = await RestoreInputSnapshotAsync(
                 epoch,
-                request.RoleId,
-                maintainer.Target,
                 cancellationToken
             )
             .ConfigureAwait(false);
 
-        SessionHistoryPlanningSeed planningSeed =
-            engine.CreateHistoryPlanningSeed(
-                epoch.SourceStartExclusive,
-                epoch.RawStartSetups,
-                cancellationToken
-            );
         SessionHistoryPlanningWindow window =
-            engine.ReadHistoryPlanningWindowAt(
-                epoch.SourceEndInclusive,
-                planningSeed,
-                cancellationToken
-            );
+            DerivedMemoryEngineReadGate.Run(engine, () => {
+                SessionHistoryPlanningSeed planningSeed =
+                    engine.CreateHistoryPlanningSeed(
+                        epoch.SourceStartExclusive,
+                        epoch.RawStartSetups,
+                        cancellationToken
+                    );
+                return engine.ReadHistoryPlanningWindowAt(
+                    epoch.SourceEndInclusive,
+                    planningSeed,
+                    cancellationToken
+                );
+            });
         ValidateExactWindow(epoch, window);
 
         var recentHistory = new RecentHistorySlice(
@@ -120,18 +159,79 @@ public sealed class DerivedMemoryMaintainerRunner {
             SourceId: epoch.EpochId,
             EstimatedTokens: checked((ulong)epoch.MeasuredTokens)
         );
+        return new DerivedMemoryMaintainerSnapshot(
+            epoch,
+            input.MemoryPack,
+            input.InputMembers,
+            recentHistory,
+            window.EndSetups,
+            window.Diagnostics
+        );
+    }
+
+    public async ValueTask<DerivedMemoryMaintainerRunResult>
+        RunPreparedAsync(
+        DerivedMemoryMaintainerSnapshot snapshot,
+        DerivedMemoryMaintainerRunRequest request,
+        IMemoryBlockMaintainer maintainer,
+        Func<IReadOnlyList<string>>? captureCallLogPaths = null,
+        CancellationToken cancellationToken = default
+    ) {
+        ArgumentNullException.ThrowIfNull(snapshot);
+        ArgumentNullException.ThrowIfNull(request);
+        ArgumentNullException.ThrowIfNull(maintainer);
+        ValidateRequest(request);
+        if (!string.Equals(
+                snapshot.Epoch.EpochId,
+                request.EpochId,
+                StringComparison.Ordinal
+            )) {
+            throw new ArgumentException(
+                "Prepared snapshot does not match the requested epoch.",
+                nameof(snapshot)
+            );
+        }
+        if (!string.Equals(
+                maintainer.Id,
+                request.ProfileId,
+                StringComparison.Ordinal
+            )) {
+            throw new ArgumentException(
+                "Maintainer id does not match the requested profile id.",
+                nameof(maintainer)
+            );
+        }
+        DerivedMemoryArtifactInputMember? previousRole =
+            snapshot.InputMembers.SingleOrDefault(member =>
+                string.Equals(
+                    member.RoleId,
+                    request.RoleId,
+                    StringComparison.Ordinal
+                ));
+        if (previousRole is not null
+            && previousRole.Target != maintainer.Target) {
+            throw new InvalidDataException(
+                $"Input role '{request.RoleId}' target does not match the maintainer."
+            );
+        }
+        MemoryPackBlock oldBlock = snapshot.InputMemoryPack.TryGetBlock(
+            maintainer.Target,
+            out MemoryPackBlock? found
+        )
+            ? found
+            : new MemoryPackBlock(string.Empty);
         MemoryBlockMaintenanceResult maintenanceResult =
             await maintainer.MaintainAsync(
                     new MemoryBlockMaintenanceRequest(
-                        recentHistory,
-                        input.OldBlock
+                        snapshot.RecentHistory,
+                        oldBlock
                     ),
                     cancellationToken
                 )
                 .ConfigureAwait(false);
         ValidateMaintenanceResult(maintainer, maintenanceResult);
 
-        var draft = new MemoryPackDraft(input.MemoryPack);
+        var draft = new MemoryPackDraft(snapshot.InputMemoryPack);
         draft.UpsertBlock(
             maintenanceResult.Target,
             maintenanceResult.NewBlock.Text
@@ -141,9 +241,17 @@ public sealed class DerivedMemoryMaintainerRunner {
             captureCallLogPaths?.Invoke()
             ?? Array.Empty<string>();
 
+        string outcome = request.OutcomeOverride
+            ?? (string.Equals(
+                    oldBlock.Text,
+                    maintenanceResult.NewBlock.Text,
+                    StringComparison.Ordinal
+                )
+                ? DerivedMemoryArtifactOutcomes.Unchanged
+                : DerivedMemoryArtifactOutcomes.Changed);
         var artifactRequest = new DerivedMemoryArtifactWriteRequest(
-            epoch.EpochId,
-            GetEpochPlanFingerprint(epoch),
+            snapshot.Epoch.EpochId,
+            GetEpochPlanFingerprint(snapshot.Epoch),
             request.RoleId,
             request.ProfileId,
             request.Producer,
@@ -152,20 +260,22 @@ public sealed class DerivedMemoryMaintainerRunner {
             request.ModelFingerprint,
             request.CandidateId,
             request.AttemptId,
-            epoch.PlannedAtRawHead,
-            epoch.SourceStartExclusive,
-            epoch.SourceEndInclusive,
-            epoch.SourceEndInclusive,
-            epoch.RawStartSetups,
-            window.EndSetups,
-            epoch.InputSetId,
-            input.PreviousRoleArtifact,
-            input.InputMembers,
+            snapshot.Epoch.PlannedAtRawHead,
+            snapshot.Epoch.SourceStartExclusive,
+            snapshot.Epoch.SourceEndInclusive,
+            snapshot.Epoch.SourceEndInclusive,
+            snapshot.Epoch.RawStartSetups,
+            snapshot.AnchorSetups,
+            snapshot.Epoch.InputSetId,
+            previousRole?.ArtifactId,
+            snapshot.InputMembers,
             maintainer.Target,
             updatedPack,
             maintenanceResult.Invocation,
             callLogPaths
-        );
+        ) with {
+            Outcome = outcome
+        };
         DerivedMemoryArtifact artifact =
             await _repository.Artifacts.WriteCandidateAsync(
                     artifactRequest,
@@ -173,11 +283,11 @@ public sealed class DerivedMemoryMaintainerRunner {
                 )
                 .ConfigureAwait(false);
         return new DerivedMemoryMaintainerRunResult(
-            epoch,
+            snapshot.Epoch,
             artifact,
-            input.OldBlock,
+            oldBlock,
             maintenanceResult,
-            window.Diagnostics
+            snapshot.ReadDiagnostics
         );
     }
 
@@ -197,8 +307,6 @@ public sealed class DerivedMemoryMaintainerRunner {
 
     private async ValueTask<InputSnapshot> RestoreInputSnapshotAsync(
         DerivedArtifactEpochPlan epoch,
-        string roleId,
-        MemoryPackBlockPath target,
         CancellationToken cancellationToken
     ) {
         if (epoch.InputSetId is null) {
@@ -209,8 +317,6 @@ public sealed class DerivedMemoryMaintainerRunner {
             }
             return new InputSnapshot(
                 new MemoryPack(),
-                new MemoryPackBlock(string.Empty),
-                null,
                 Array.Empty<DerivedMemoryArtifactInputMember>()
             );
         }
@@ -238,19 +344,6 @@ public sealed class DerivedMemoryMaintainerRunner {
             )) {
             throw new InvalidDataException(
                 $"Epoch '{epoch.EpochId}' input set does not match its exact start boundary and planner key."
-            );
-        }
-
-        DerivedArtifactSetMember? roleMember =
-            inputSet.Members.SingleOrDefault(member =>
-                string.Equals(
-                    member.RoleId,
-                    roleId,
-                    StringComparison.Ordinal
-                ));
-        if (roleMember is not null && roleMember.Target != target) {
-            throw new InvalidDataException(
-                $"Input role '{roleId}' target does not match the maintainer."
             );
         }
 
@@ -299,10 +392,6 @@ public sealed class DerivedMemoryMaintainerRunner {
         MemoryPack restored = draft.Build();
         return new InputSnapshot(
             restored,
-            restored.TryGetBlock(target, out MemoryPackBlock? oldBlock)
-                ? oldBlock
-                : new MemoryPackBlock(string.Empty),
-            roleMember?.ArtifactId,
             inputMembers.AsReadOnly()
         );
     }
@@ -348,6 +437,17 @@ public sealed class DerivedMemoryMaintainerRunner {
         RequireToken(request.Producer, nameof(request.Producer));
         RequireToken(request.CandidateId, nameof(request.CandidateId));
         RequireToken(request.AttemptId, nameof(request.AttemptId));
+        if (request.OutcomeOverride is not null
+            && !string.Equals(
+                request.OutcomeOverride,
+                DerivedMemoryArtifactOutcomes.Identity,
+                StringComparison.Ordinal
+            )) {
+            throw new ArgumentException(
+                "Only the explicit identity outcome may override producer result classification.",
+                nameof(request.OutcomeOverride)
+            );
+        }
         RequireFingerprint(
             request.ProducerFingerprint,
             nameof(request.ProducerFingerprint)
@@ -416,8 +516,6 @@ public sealed class DerivedMemoryMaintainerRunner {
 
     private sealed record InputSnapshot(
         MemoryPack MemoryPack,
-        MemoryPackBlock OldBlock,
-        string? PreviousRoleArtifact,
         IReadOnlyList<DerivedMemoryArtifactInputMember> InputMembers
     );
 }

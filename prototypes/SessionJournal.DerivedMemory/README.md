@@ -7,6 +7,8 @@
 - `derived/memory/v1/` coherent ArtifactSet、exact-previous CAS 和 latest pointer；
 - shared `DerivedArtifactEpochPlanner` 的 immutable config lineage、epoch ledger 与
   rebuildable current/latest indexes；
+- deterministic multi-role orchestration transaction、immutable role settlement、
+  durable finalization intent、missing-role resume 与 required-role closure；
 - 把已发布的 exact set 投影为 `ICoherentContextCandidateSource`。
 
 DM-6 candidate store 不再维护 role-local latest pointer。`DerivedMemoryArtifactStore`
@@ -59,12 +61,30 @@ window 直接从已解码 suffix/fold 回传 `EndSetups`。global validation 仍
 address/schema/payload-hash coherence，下一 epoch 恢复输入时再把 set anchor 与其
 `RawStartSetups` exact 对齐。
 
-`SessionJournal.Cli` composition root 提供 exact-epoch maintainer run、ArtifactSet
-publish/list/validate/rebuild，以及 planner configure/plan/list 命令；本程序集仍不反向
-依赖 CLI。multi-role settlement/publication 与 online lifecycle 属于后续 DM-7/DM-8。
+`DerivedMemoryOrchestrator` 对一个 exact epoch 只物化一次 immutable input/history
+snapshot，并用 `Task.WhenAll` 并行执行尚未 settlement 的独立 roles。artifact persistence
+与 `derived/memory/v1/settlements/<transaction>/` 下的 durable success settlement 分层；
+required role 失败时保留已成功 partial candidates/settlements，但绝不发布半套 set。
+transaction/job identity 包含 policy、topology、完整 role provisioning 与
+candidate/attempt；改变 job 会创建新 transaction，重跑同一 job 只补缺失 role。
+required roles 闭合后先写 immutable finalization intent，冻结 exact included
+settlements、omitted optional roles、expected previous 与 expected set id。reopen
+遇到 intent 时不再运行任何 role：expected set 缺失就续 publish，已存在则 exact
+验证 latest；latest 为该 set 或其同 exact-key 后代时 short-circuit，missing pointer
+通过 unique-tip rebuild 恢复且不回退 descendant，divergent pointer fail-fast。即使
+latest 已继续推进也不会误重开已完成 transaction。ArtifactSet v2
+只能从 exact durable transaction/finalization 发布，并在 CAS 前复核 current raw lineage
+authority。
 
-Artifact 文件 strict read/write 上限为 8 MiB，ArtifactSet 为 1 MiB，latest pointer
-为 64 KiB；planner config、epoch、pointer 分别为 64 KiB、128 KiB、32 KiB。strict read
+`SessionJournal.Cli` composition root 提供 exact-epoch single-maintainer tuning、
+multi-role orchestration run/resume、ArtifactSet publish/list/validate/rebuild，以及
+planner configure/plan/list 命令；本程序集仍不反向依赖 CLI。online lifecycle 与
+budgeted/NthPrevious selection 属于后续 DM-8。
+
+Artifact 文件 strict read/write 上限为 8 MiB，ArtifactSet 与 orchestration transaction
+为 1 MiB，finalization 为 256 KiB，latest pointer 与 role settlement 为 64 KiB；
+planner config、epoch、pointer
+分别为 64 KiB、128 KiB、32 KiB。strict read
 上限都在 JSON deserialize 前按 file byte length 检查；writer
 按 UTF-8 serialized byte count 使用同一 artifact 上限，并在创建 derived 目录或 artifact
 前 fail fast。8 MiB 是 derived-rebuildable v2 的直接 cutover，不为超限旧实验

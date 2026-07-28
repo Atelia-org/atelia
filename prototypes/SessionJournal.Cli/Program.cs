@@ -55,6 +55,13 @@ internal static class Program {
                     )
                     .GetAwaiter()
                     .GetResult(),
+                "run-derived-memory-orchestration" =>
+                    RunDerivedMemoryOrchestrationAsync(
+                            options,
+                            completionClientFactory
+                        )
+                        .GetAwaiter()
+                        .GetResult(),
                 "publish-derived-artifact-set" =>
                     DerivedMemoryCommands.PublishAsync(options)
                         .GetAwaiter()
@@ -291,12 +298,30 @@ internal static class Program {
             ?? DefaultMaintainerCallLogDir;
         string attemptId =
             options.GetOptionalSingle("attempt-id") ?? "attempt-1";
+        string? systemPromptPath =
+            options.GetOptionalSingle("system-prompt");
+        string? userPromptPath =
+            options.GetOptionalSingle("prompt");
 
-        EnsurePathChainHasNoReparsePoint(inputPath, "--input");
-        EnsurePathChainHasNoReparsePoint(outputPath, "--output");
-        EnsurePathChainHasNoReparsePoint(
-            callLogDir,
-            "--call-log-dir"
+        ValidateReadOnlyWritablePaths(
+            [
+                (inputPath, "--input"),
+                (connectionsPath, "--connections"),
+                .. systemPromptPath is null
+                    ? []
+                    : new[] {
+                        (systemPromptPath, "--system-prompt")
+                    },
+                .. userPromptPath is null
+                    ? []
+                    : new[] {
+                        (userPromptPath, "--prompt")
+                    }
+            ],
+            [
+                (outputPath, "--output"),
+                (callLogDir, "--call-log-dir")
+            ]
         );
         EnsurePathIsOutsideRepository(
             inputPath,
@@ -321,9 +346,9 @@ internal static class Program {
         }
 
         string? systemPromptOverride =
-            ReadPromptOrNull(options.GetOptionalSingle("system-prompt"));
+            ReadPromptOrNull(systemPromptPath);
         string? userPromptOverride =
-            ReadPromptOrNull(options.GetOptionalSingle("prompt"));
+            ReadPromptOrNull(userPromptPath);
 
         CompletionConnectionsFileConfig connections =
             CompletionConnectionConfigLoader.LoadFile(connectionsPath);
@@ -416,6 +441,354 @@ internal static class Program {
         return 0;
     }
 
+    private static async Task<int> RunDerivedMemoryOrchestrationAsync(
+        CliOptions options,
+        ICompletionClientFactory completionClientFactory
+    ) {
+        options.EnsureOnly(
+            "input",
+            "epoch",
+            "role",
+            "policy-id",
+            "policy-fingerprint",
+            "output",
+            "connections",
+            "connection",
+            "call-log-dir",
+            "candidate-prefix",
+            "attempt-id"
+        );
+        string inputPath = options.RequireSingle("input");
+        string epochId = options.RequireSingle("epoch");
+        string outputPath = options.RequireSingle("output");
+        string candidatePrefix =
+            options.GetOptionalSingle("candidate-prefix")
+            ?? "daily";
+        string attemptId =
+            options.GetOptionalSingle("attempt-id") ?? "attempt-1";
+        RoleSpec[] roleSpecs = [
+            .. options.RequireRepeated("role")
+                .Select(ParseRoleSpec)
+        ];
+        if (roleSpecs.Length == 0) {
+            throw new ArgumentException(
+                "At least one --role is required."
+            );
+        }
+        bool needsProducer = roleSpecs.Any(spec => string.Equals(
+            spec.ExecutionMode,
+            DerivedMemoryRoleExecutionModes.Produce,
+            StringComparison.Ordinal
+        ));
+        string? connectionsPath =
+            options.GetOptionalSingle("connections");
+        string? requestedConnectionId =
+            options.GetOptionalSingle("connection");
+        string? callLogDir = options.GetOptionalSingle("call-log-dir");
+        if (needsProducer && connectionsPath is null) {
+            throw new ArgumentException(
+                "--connections is required when any role uses produce."
+            );
+        }
+        if (needsProducer) {
+            callLogDir ??= DefaultMaintainerCallLogDir;
+        }
+
+        ValidateReadOnlyWritablePaths(
+            connectionsPath is null
+                ? [(inputPath, "--input")]
+                : [
+                    (inputPath, "--input"),
+                    (connectionsPath, "--connections")
+                ],
+            callLogDir is null
+                ? [(outputPath, "--output")]
+                : [
+                    (outputPath, "--output"),
+                    (callLogDir, "--call-log-dir")
+                ]
+        );
+        EnsurePathIsOutsideRepository(
+            inputPath,
+            outputPath,
+            "--output"
+        );
+        if (callLogDir is not null) {
+            EnsurePathIsOutsideRepository(
+                inputPath,
+                callLogDir,
+                "--call-log-dir"
+            );
+            EnsurePathsDoNotNest(
+                outputPath,
+                callLogDir,
+                "--output and --call-log-dir must be disjoint paths."
+            );
+        }
+        string fullOutputPath = Path.GetFullPath(outputPath);
+        if (Directory.Exists(fullOutputPath)) {
+            throw new ArgumentException(
+                "--output must be a file path, not an existing directory."
+            );
+        }
+
+        MemoryMaintainerProfileDescriptor[] profiles = [
+            .. roleSpecs.Select(spec =>
+                MemoryMaintainerProfileCatalog.Resolve(spec.ProfileName))
+        ];
+        DerivedMemoryRepository repository =
+            DerivedMemoryRepository.Open(inputPath);
+        DerivedArtifactEpochPlan epoch =
+            await repository.EpochPlanner.TryReadEpochAsync(epochId)
+                .ConfigureAwait(false)
+            ?? throw new InvalidDataException(
+                $"Derived artifact epoch '{epochId}' does not exist."
+            );
+        var policy = new DerivedArtifactSetPolicy(
+            options.RequireSingle("policy-id"),
+            options.RequireSingle("policy-fingerprint"),
+            epoch.CoherenceGroup,
+            roleSpecs.Zip(
+                profiles,
+                static (spec, profile) =>
+                    new DerivedArtifactSetRoleRequirement(
+                        profile.RoleId,
+                        profile.RewriteProfile.Target,
+                        spec.Required
+                    )
+            ).ToArray()
+        );
+        const string preflightFingerprint =
+            "sha256:0000000000000000000000000000000000000000000000000000000000000000";
+        DerivedMemoryOrchestrationStore
+            .ValidateProvisioningStructure(
+                policy,
+                roleSpecs.Zip(
+                    profiles,
+                    (spec, profile) =>
+                        new DerivedMemoryRoleProvisioning(
+                            profile.RoleId,
+                            profile.RewriteProfile.Id,
+                            profile.RewriteProfile.Target,
+                            spec.Required,
+                            "preflight",
+                            preflightFingerprint,
+                            preflightFingerprint,
+                            preflightFingerprint,
+                            spec.ExecutionMode,
+                            $"{candidatePrefix}-{profile.RoleId}",
+                            attemptId,
+                            spec.SelectedArtifactId
+                        )
+                ).ToArray()
+            );
+
+        Directory.CreateDirectory(
+            Path.GetDirectoryName(fullOutputPath) ?? "."
+        );
+        if (callLogDir is not null) {
+            Directory.CreateDirectory(callLogDir);
+        }
+        using CompletionConnectionRegistry? registry = needsProducer
+            ? new CompletionConnectionRegistry(
+                CompletionConnectionConfigLoader.LoadFile(
+                    connectionsPath!
+                ),
+                completionClientFactory
+            )
+            : null;
+        if (registry is not null) {
+            ValidateRequestedConnection(
+                registry,
+                requestedConnectionId
+            );
+        }
+        CompletionConnectionConfig? connection =
+            registry?.Resolve(requestedConnectionId);
+        ICompletionClient? client = connection is null
+            ? null
+            : registry!.GetClient(connection.Id);
+        var executions = new List<DerivedMemoryRoleExecution>(
+            profiles.Length
+        );
+        for (int index = 0; index < profiles.Length; index++) {
+            RoleSpec spec = roleSpecs[index];
+            MemoryMaintainerProfileDescriptor profile = profiles[index];
+            bool produce = string.Equals(
+                spec.ExecutionMode,
+                DerivedMemoryRoleExecutionModes.Produce,
+                StringComparison.Ordinal
+            );
+            DerivedMemoryArtifact? selectedArtifact =
+                spec.SelectedArtifactId is null
+                    ? null
+                    : await repository.Artifacts
+                        .TryReadArtifactAsync(spec.SelectedArtifactId)
+                        .ConfigureAwait(false)
+                    ?? throw new InvalidDataException(
+                        $"Selected artifact '{spec.SelectedArtifactId}' does not exist."
+                    );
+            if (selectedArtifact is not null
+                && (!string.Equals(
+                        selectedArtifact.RoleId,
+                        profile.RoleId,
+                        StringComparison.Ordinal
+                    )
+                    || !string.Equals(
+                        selectedArtifact.ProfileId,
+                        profile.RewriteProfile.Id,
+                        StringComparison.Ordinal
+                    )
+                    || selectedArtifact.Target
+                        != profile.RewriteProfile.Target)) {
+                throw new InvalidDataException(
+                    $"Selected artifact '{selectedArtifact.ArtifactId}' does not match profile '{profile.ProfileName}'."
+                );
+            }
+            LoggingCompletionClient? loggingClient = produce
+                ? new LoggingCompletionClient(
+                    client!,
+                    connection!,
+                    callLogDir!,
+                    new CompletionCallLogContext(
+                        Command:
+                            "run-derived-memory-orchestration",
+                        MaintainerId: profile.RewriteProfile.Id,
+                        TargetCarrier:
+                            SJ.MemoryPackCarrierTokens
+                                .ToStorageToken(
+                                    profile.RewriteProfile.Target.Carrier
+                                ),
+                        TargetBlockId:
+                            profile.RewriteProfile.Target.BlockKey
+                    )
+                )
+                : null;
+            string producer = selectedArtifact?.Producer
+                ?? (produce
+                    ? MemoryMaintainerProducerIdentity.Producer
+                    : MemoryMaintainerProducerIdentity.IdentityProducer);
+            string producerFingerprint =
+                selectedArtifact?.ProducerFingerprint
+                ?? (produce
+                    ? MemoryMaintainerProducerIdentity
+                        .ComputeProducerFingerprint(
+                            profile,
+                            client!,
+                            connection!
+                        )
+                    : MemoryMaintainerProducerIdentity
+                        .ComputeIdentityProducerFingerprint(profile));
+            var provisioning = new DerivedMemoryRoleProvisioning(
+                profile.RoleId,
+                profile.RewriteProfile.Id,
+                profile.RewriteProfile.Target,
+                spec.Required,
+                producer,
+                producerFingerprint,
+                selectedArtifact?.PromptFingerprint
+                    ?? profile.PromptFingerprint,
+                selectedArtifact?.ModelFingerprint
+                    ?? (produce
+                        ? MemoryMaintainerProducerIdentity
+                            .ComputeModelFingerprint(
+                                client!,
+                                connection!
+                            )
+                        : MemoryMaintainerProducerIdentity
+                            .ComputeIdentityModelFingerprint()),
+                spec.ExecutionMode,
+                selectedArtifact?.CandidateId
+                    ?? $"{candidatePrefix}-{profile.RoleId}",
+                selectedArtifact?.AttemptId ?? attemptId,
+                spec.SelectedArtifactId
+            );
+            executions.Add(new DerivedMemoryRoleExecution(
+                provisioning,
+                produce
+                    ? profile.Create(
+                        loggingClient!,
+                        connection!.ModelId
+                    )
+                    : null,
+                loggingClient is null
+                    ? null
+                    : () => loggingClient.WrittenCallLogPaths
+            ));
+        }
+
+        using var engine = SJ.SessionJournalEngine.Open(inputPath);
+        DerivedMemoryOrchestrationResult result =
+            await new DerivedMemoryOrchestrator(repository).RunAsync(
+                    engine,
+                    new DerivedMemoryOrchestrationRequest(
+                        epochId,
+                        policy,
+                        executions.AsReadOnly()
+                    ),
+                    CancellationToken.None
+                )
+                .ConfigureAwait(false);
+        var record = new DerivedMemoryOrchestrationRunRecord(
+            "atelia.session-journal.derived-memory-orchestration-run.v1",
+            result.Status.ToString(),
+            result.Transaction.TransactionId,
+            result.Transaction.JobFingerprint,
+            result.Transaction.EpochId,
+            result.PublishedSet?.SetId,
+            result.Settlements,
+            result.Failures
+        );
+        WriteJsonAtomically(fullOutputPath, record);
+        Console.WriteLine($"transaction: {record.TransactionId}");
+        Console.WriteLine($"status: {record.Status}");
+        Console.WriteLine(
+            $"set: {record.PublishedSetId ?? "<none>"}"
+        );
+        Console.WriteLine($"output: {fullOutputPath}");
+        return result.Status == DerivedMemoryOrchestrationStatus.Published
+            ? 0
+            : 2;
+    }
+
+    private static RoleSpec ParseRoleSpec(string value) {
+        string[] parts = value.Split(':', 4);
+        if (parts.Length is < 3 or > 4) {
+            throw new ArgumentException(
+                "--role must be required|optional:<profile>:produce|identity|select-existing[:artifact-id]."
+            );
+        }
+        bool required = parts[0] switch {
+            "required" => true,
+            "optional" => false,
+            _ => throw new ArgumentException(
+                "--role requirement must be 'required' or 'optional'."
+            )
+        };
+        string mode = parts[2];
+        if (!DerivedMemoryRoleExecutionModes.IsDefined(mode)) {
+            throw new ArgumentException(
+                $"Unsupported --role execution mode '{mode}'."
+            );
+        }
+        bool select = string.Equals(
+            mode,
+            DerivedMemoryRoleExecutionModes.SelectExisting,
+            StringComparison.Ordinal
+        );
+        if (select != (parts.Length == 4)) {
+            throw new ArgumentException(
+                "select-existing requires one exact artifact id; other modes forbid it."
+            );
+        }
+        return new RoleSpec(
+            required,
+            parts[1],
+            mode,
+            parts.Length == 4 ? parts[3] : null
+        );
+    }
+
     private static void ValidateRequestedConnection(
         CompletionConnectionRegistry registry,
         string? requestedConnectionId
@@ -460,6 +833,29 @@ internal static class Program {
             string? parentPath = Path.GetDirectoryName(currentPath);
             if (parentPath is null) { break; }
             currentPath = parentPath;
+        }
+    }
+
+    private static void ValidateReadOnlyWritablePaths(
+        IReadOnlyList<(string Path, string Option)> readOnlyPaths,
+        IReadOnlyList<(string Path, string Option)> writablePaths
+    ) {
+        foreach ((string path, string option) in readOnlyPaths) {
+            EnsurePathChainHasNoReparsePoint(path, option);
+        }
+        foreach ((string path, string option) in writablePaths) {
+            EnsurePathChainHasNoReparsePoint(path, option);
+        }
+        foreach ((string writablePath, string writableOption) in
+                 writablePaths) {
+            foreach ((string readOnlyPath, string readOnlyOption) in
+                     readOnlyPaths) {
+                EnsurePathsDoNotNest(
+                    writablePath,
+                    readOnlyPath,
+                    $"{writableOption} and {readOnlyOption} must be disjoint paths."
+                );
+            }
         }
     }
 
@@ -565,6 +961,13 @@ internal static class Program {
             ? StringComparison.OrdinalIgnoreCase
             : StringComparison.Ordinal;
 
+    private sealed record RoleSpec(
+        bool Required,
+        string ProfileName,
+        string ExecutionMode,
+        string? SelectedArtifactId
+    );
+
     internal static void WriteJsonAtomically<T>(string path, T value) {
         string fullPath = Path.GetFullPath(path);
         Directory.CreateDirectory(
@@ -659,13 +1062,20 @@ internal static class Program {
             + "[--system-prompt <path>] [--prompt <path>]"
         );
         Console.WriteLine(
-            "  publish-derived-artifact-set --input <repo-dir> "
-            + "--lineage <key> --coherence-group <token> "
+            "  run-derived-memory-orchestration --input <repo-dir> "
+            + "--epoch <epoch-id> "
+            + "--role <required|optional:profile:produce|identity"
+            + "|select-existing[:artifact-id]> "
             + "--policy-id <token> --policy-fingerprint <token> "
-            + "--required-role <role=carrier/block> "
-            + "[--optional-role <role=carrier/block>] "
+            + "--output <json> "
+            + "[--connections <path> --connection <id> "
+            + "--call-log-dir <dir>] "
+            + "[--candidate-prefix <token>] [--attempt-id <token>]"
+        );
+        Console.WriteLine(
+            "  publish-derived-artifact-set --input <repo-dir> "
+            + "--transaction <dmt-id> "
             + "--member <role=artifact-id> "
-            + "--expected-previous <none|set-id> "
             + "[--report-json <path-outside-repo>]"
         );
         Console.WriteLine(

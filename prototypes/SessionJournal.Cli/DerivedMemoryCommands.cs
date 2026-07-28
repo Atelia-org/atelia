@@ -195,30 +195,14 @@ internal static class DerivedMemoryCommands {
     public static async Task<int> PublishAsync(CliOptions options) {
         options.EnsureOnly(
             "input",
-            "lineage",
-            "coherence-group",
-            "policy-id",
-            "policy-fingerprint",
-            "required-role",
-            "optional-role",
+            "transaction",
             "member",
-            "expected-previous",
             "report-json"
         );
         string inputPath = options.RequireSingle("input");
-        string lineageKey = options.RequireSingle("lineage");
-        DerivedArtifactSetPolicy policy = ParsePolicy(options);
+        string transactionId = options.RequireSingle("transaction");
         IReadOnlyList<DerivedArtifactSetMemberSelection> members =
             ParseMembers(options.RequireRepeated("member"));
-        string expectedPreviousText =
-            options.RequireSingle("expected-previous");
-        string? expectedPrevious = string.Equals(
-            expectedPreviousText,
-            "none",
-            StringComparison.Ordinal
-        )
-            ? null
-            : expectedPreviousText;
         string? reportPath = PreparePaths(
             inputPath,
             options.GetOptionalSingle("report-json")
@@ -226,6 +210,25 @@ internal static class DerivedMemoryCommands {
 
         DerivedMemoryRepository repository =
             DerivedMemoryRepository.Open(inputPath);
+        DerivedMemoryOrchestrationTransaction transaction =
+            await repository.Orchestrations.TryReadTransactionAsync(
+                    transactionId
+                )
+                .ConfigureAwait(false)
+            ?? throw new InvalidDataException(
+                $"Orchestration transaction '{transactionId}' is missing."
+            );
+        var policy = new DerivedArtifactSetPolicy(
+            transaction.PolicyId,
+            transaction.PolicyFingerprint,
+            transaction.CoherenceGroup,
+            transaction.Roles.Select(static role =>
+                new DerivedArtifactSetRoleRequirement(
+                    role.RoleId,
+                    role.Target,
+                    role.Required
+                )).ToArray()
+        );
         EventAddress? commonAnchor = null;
         foreach (DerivedArtifactSetMemberSelection member in members) {
             DerivedMemoryArtifact artifact = await repository.Artifacts
@@ -254,16 +257,59 @@ internal static class DerivedMemoryCommands {
                 commonAnchor.Value
             );
         }
+        using var publicationEngine =
+            SJ.SessionJournalEngine.Open(inputPath);
+        var publication = new DerivedArtifactSetPublicationRequest(
+            policy,
+            transaction,
+            setups,
+            members,
+            transaction.InputSetId
+        );
+        DerivedArtifactSet prepared =
+            await repository.ArtifactSets.PreparePublicationAsync(
+                    publicationEngine,
+                    publication
+                )
+                .ConfigureAwait(false);
+        IReadOnlyDictionary<string, DerivedMemoryRoleSettlement>
+            settlements =
+                (await repository.Orchestrations.ReadSettlementsAsync(
+                    transaction
+                ).ConfigureAwait(false)).ToDictionary(
+                    static settlement => settlement.RoleId,
+                    StringComparer.Ordinal
+                );
+        DerivedMemoryRoleSettlement[] included = [
+            .. members.Select(member =>
+                settlements.TryGetValue(
+                    member.RoleId,
+                    out DerivedMemoryRoleSettlement? settlement
+                )
+                && string.Equals(
+                    settlement.ArtifactId,
+                    member.ArtifactId,
+                    StringComparison.Ordinal
+                )
+                    ? settlement
+                    : throw new InvalidDataException(
+                        $"ArtifactSet member '{member.RoleId}' is not its exact durable settlement."
+                    ))
+        ];
+        _ = await repository.Orchestrations
+            .GetOrCreateFinalizationAsync(
+                transaction,
+                setups,
+                included,
+                prepared.SetId
+            )
+            .ConfigureAwait(false);
         DerivedArtifactSet set =
             await repository.ArtifactSets.PublishAsync(
-                new DerivedArtifactSetPublicationRequest(
-                    policy,
-                    lineageKey,
-                    setups,
-                    members,
-                    expectedPrevious
+                    publicationEngine,
+                    publication
                 )
-            ).ConfigureAwait(false);
+                .ConfigureAwait(false);
         var report = new DerivedArtifactSetOperationReport(
             OperationSchema,
             "publish",
@@ -338,7 +384,10 @@ internal static class DerivedMemoryCommands {
             validation.PlannerConfigCount,
             validation.CurrentPlannerConfigCount,
             validation.ArtifactEpochCount,
-            validation.LatestArtifactEpochCount
+            validation.LatestArtifactEpochCount,
+            validation.OrchestrationTransactionCount,
+            validation.RoleSettlementCount,
+            validation.OrchestrationFinalizationCount
         );
         WriteOptionalReport(reportPath, report);
         Console.WriteLine($"artifacts: {report.ArtifactCount}");
@@ -354,6 +403,15 @@ internal static class DerivedMemoryCommands {
         Console.WriteLine($"artifactEpochs: {report.ArtifactEpochCount}");
         Console.WriteLine(
             $"latestArtifactEpochs: {report.LatestArtifactEpochCount}"
+        );
+        Console.WriteLine(
+            $"orchestrationTransactions: {report.OrchestrationTransactionCount}"
+        );
+        Console.WriteLine(
+            $"roleSettlements: {report.RoleSettlementCount}"
+        );
+        Console.WriteLine(
+            $"orchestrationFinalizations: {report.OrchestrationFinalizationCount}"
         );
         PrintReportPath(reportPath);
         return 0;
@@ -703,7 +761,10 @@ internal sealed record DerivedMemoryValidationCliReport(
     int PlannerConfigCount,
     int CurrentPlannerConfigCount,
     int ArtifactEpochCount,
-    int LatestArtifactEpochCount
+    int LatestArtifactEpochCount,
+    int OrchestrationTransactionCount,
+    int RoleSettlementCount,
+    int OrchestrationFinalizationCount
 );
 
 internal sealed record PlannerConfigOperationReport(

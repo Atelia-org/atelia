@@ -162,39 +162,8 @@ public sealed class DerivedArtifactEpochPlannerTests : IDisposable {
                 engine,
                 new("main", "memory-pack", null, null)
             )).Epoch!;
-        DerivedArtifactSet correct =
-            await PublishInputSetAsync(repository, engine, first);
-        var wrongPolicy = new DerivedArtifactSetPolicy(
-            "wrong-policy",
-            "wrong-policy-v1",
-            "other-group",
-            correct.RoleRequirements
-        );
-        DerivedArtifactSet wrong =
-            await repository.ArtifactSets.PublishAsync(
-                new DerivedArtifactSetPublicationRequest(
-                    wrongPolicy,
-                    first.LineageKey,
-                    first.RawStartSetups,
-                    [
-                        new DerivedArtifactSetMemberSelection(
-                            correct.Members[0].RoleId,
-                            correct.Members[0].ArtifactId
-                        )
-                    ],
-                    ExpectedPreviousSetId: null
-                )
-            );
+        _ = await PublishInputSetAsync(repository, engine, first);
         AppendTurns(engine, 5, "second");
-        EventAddress wrongAnchor = engine.Project().Head!.Value;
-        DerivedArtifactSet wrongAnchorSet =
-            await PublishSetAtAnchorAsync(
-                repository,
-                first.LineageKey,
-                first.CoherenceGroup,
-                wrongAnchor,
-                engine.ResolveContextAnchorSetupReferences(wrongAnchor)
-            );
 
         await Assert.ThrowsAsync<ArgumentException>(
             async () => await repository.EpochPlanner.PlanAsync(
@@ -210,28 +179,6 @@ public sealed class DerivedArtifactEpochPlannerTests : IDisposable {
                     "memory-pack",
                     first.EpochId,
                     "das_" + new string('a', 64)
-                )
-            )
-        );
-        await Assert.ThrowsAsync<InvalidDataException>(
-            async () => await repository.EpochPlanner.PlanAsync(
-                engine,
-                new(
-                    "main",
-                    "memory-pack",
-                    first.EpochId,
-                    wrongAnchorSet.SetId
-                )
-            )
-        );
-        await Assert.ThrowsAsync<InvalidDataException>(
-            async () => await repository.EpochPlanner.PlanAsync(
-                engine,
-                new(
-                    "main",
-                    "memory-pack",
-                    first.EpochId,
-                    wrong.SetId
                 )
             )
         );
@@ -620,18 +567,6 @@ public sealed class DerivedArtifactEpochPlannerTests : IDisposable {
         DerivedArtifactSet correct =
             await PublishInputSetAsync(repository, engine, first);
         AppendTurns(engine, 5, "second");
-        EventAddress wrongAnchor =
-            engine.ReadCurrentLineageHeaders().CapturedHead;
-        DerivedArtifactSet wrong =
-            await PublishSetAtAnchorAsync(
-                repository,
-                first.LineageKey,
-                first.CoherenceGroup,
-                wrongAnchor,
-                engine.ResolveContextAnchorSetupReferences(
-                    wrongAnchor
-                )
-            );
         DerivedArtifactEpochPlan second =
             (await repository.EpochPlanner.PlanAsync(
                 engine,
@@ -653,7 +588,7 @@ public sealed class DerivedArtifactEpochPlannerTests : IDisposable {
             JsonObject root = (JsonObject)JsonNode.Parse(
                 await File.ReadAllTextAsync(secondPath)
             )!;
-            root["inputSetId"] = wrong.SetId;
+            root["inputSetId"] = "das_" + new string('f', 64);
             string replacementId = RecomputeEpochId(root);
             root["epochId"] = replacementId;
             await File.WriteAllTextAsync(
@@ -1892,7 +1827,7 @@ public sealed class DerivedArtifactEpochPlannerTests : IDisposable {
             );
         var policy = new DerivedArtifactSetPolicy(
             "test-policy",
-            "test-policy-v1-" + profileId,
+            "test-policy-v1",
             previous.CoherenceGroup,
             [
                 new DerivedArtifactSetRoleRequirement(
@@ -1901,68 +1836,26 @@ public sealed class DerivedArtifactEpochPlannerTests : IDisposable {
                 )
             ]
         );
-        return await repository.ArtifactSets.PublishAsync(
-            new DerivedArtifactSetPublicationRequest(
-                policy,
-                previous.LineageKey,
-                artifact.AnchorSetups,
-                [
-                    new DerivedArtifactSetMemberSelection(
-                        "test-role",
-                        artifact.ArtifactId
-                    )
-                ],
-                ExpectedPreviousSetId: null
-            )
-        );
-    }
-
-    private static async ValueTask<DerivedArtifactSet>
-        PublishSetAtAnchorAsync(
-        DerivedMemoryRepository repository,
-        string lineage,
-        string coherenceGroup,
-        EventAddress anchor,
-        SessionContextAnchorSetupReferences setups
-    ) {
-        var target = new MemoryPackBlockPath(
-            MemoryPackCarrier.System,
-            "memory.wrong-anchor"
-        );
-        DerivedMemoryArtifact artifact =
-            await DerivedMemoryArtifactTestFactory.WriteGenesisAsync(
-                repository,
-                "wrong-anchor-role",
-                "wrong-anchor-profile",
-                target,
-                "wrong anchor memory",
-                anchor,
-                setups
-            );
-        var policy = new DerivedArtifactSetPolicy(
-            "wrong-anchor-policy",
-            "wrong-anchor-policy-v1",
-            coherenceGroup,
+        DerivedMemoryOrchestrationTransaction transaction =
+            await DerivedArtifactSetTestFactory
+                .CreateSettledTransactionAsync(
+                    repository,
+                    previous,
+                    policy,
+                    [artifact]
+                );
+        return await DerivedArtifactSetTestFactory.FinalizeAndPublishAsync(
+            repository,
+            engine,
+            policy,
+            transaction,
+            artifact.AnchorSetups,
             [
-                new DerivedArtifactSetRoleRequirement(
-                    "wrong-anchor-role",
-                    target
+                new DerivedArtifactSetMemberSelection(
+                    "test-role",
+                    artifact.ArtifactId
                 )
             ]
-        );
-        return await repository.ArtifactSets.PublishAsync(
-            new DerivedArtifactSetPublicationRequest(
-                policy,
-                lineage,
-                setups,
-                [
-                    new DerivedArtifactSetMemberSelection(
-                        "wrong-anchor-role",
-                        artifact.ArtifactId
-                    )
-                ],
-                ExpectedPreviousSetId: null
-            )
         );
     }
 

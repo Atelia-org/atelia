@@ -20,6 +20,7 @@ public sealed class DerivedMemoryRepository {
         Artifacts = new DerivedMemoryArtifactStore(this);
         ArtifactSets = new DerivedArtifactSetStore(this);
         EpochPlanner = new DerivedArtifactEpochPlanner(this);
+        Orchestrations = new DerivedMemoryOrchestrationStore(this);
     }
 
     public string SessionJournalRepositoryPath { get; }
@@ -33,6 +34,8 @@ public sealed class DerivedMemoryRepository {
     public DerivedArtifactSetStore ArtifactSets { get; }
 
     public DerivedArtifactEpochPlanner EpochPlanner { get; }
+
+    public DerivedMemoryOrchestrationStore Orchestrations { get; }
 
     internal string WriteLockPath { get; }
 
@@ -92,6 +95,9 @@ public sealed class DerivedMemoryRepository {
                 .ConfigureAwait(false);
         DerivedArtifactEpochInventory epochInventory =
             await EpochPlanner.ReadInventoryAsync(cancellationToken)
+                .ConfigureAwait(false);
+        DerivedMemoryOrchestrationInventory orchestrationInventory =
+            await Orchestrations.ReadInventoryAsync(cancellationToken)
                 .ConfigureAwait(false);
         DerivedArtifactEpochPlanner.ValidateInventory(
             epochInventory,
@@ -177,6 +183,16 @@ public sealed class DerivedMemoryRepository {
             epochsById,
             setsById
         );
+        ValidateSetOrchestrationDependencies(
+            inventory.Sets,
+            epochsById,
+            orchestrationInventory
+        );
+        await ValidateFinalizationCandidateIdentitiesAsync(
+                orchestrationInventory,
+                cancellationToken
+            )
+            .ConfigureAwait(false);
 
         SessionJournalEngine? ownedEngine = null;
         try {
@@ -211,8 +227,233 @@ public sealed class DerivedMemoryRepository {
             epochInventory.Configs.Count,
             epochInventory.CurrentConfigs.Count,
             epochInventory.Epochs.Count,
-            epochInventory.LatestEpochs.Count
+            epochInventory.LatestEpochs.Count,
+            orchestrationInventory.Transactions.Count,
+            orchestrationInventory.Settlements.Count,
+            orchestrationInventory.Finalizations.Count
         );
+    }
+
+    private static void ValidateSetOrchestrationDependencies(
+        IReadOnlyList<DerivedArtifactSet> sets,
+        IReadOnlyDictionary<string, DerivedArtifactEpochPlan> epochsById,
+        DerivedMemoryOrchestrationInventory orchestrationInventory
+    ) {
+        IReadOnlyDictionary<string, DerivedMemoryOrchestrationTransaction>
+            transactions = orchestrationInventory.Transactions.ToDictionary(
+                static transaction => transaction.TransactionId,
+                StringComparer.Ordinal
+            );
+        var settlements = orchestrationInventory.Settlements
+            .GroupBy(static settlement => settlement.TransactionId)
+            .ToDictionary(
+                static group => group.Key,
+                static group => group.ToDictionary(
+                    settlement => settlement.RoleId,
+                    StringComparer.Ordinal
+                ),
+                StringComparer.Ordinal
+            );
+        IReadOnlyDictionary<string, DerivedMemoryOrchestrationFinalization>
+            finalizations = orchestrationInventory.Finalizations
+                .ToDictionary(
+                    static finalization => finalization.TransactionId,
+                    StringComparer.Ordinal
+                );
+        foreach (DerivedMemoryOrchestrationTransaction transaction in
+                 orchestrationInventory.Transactions) {
+            if (!epochsById.TryGetValue(
+                    transaction.EpochId,
+                    out DerivedArtifactEpochPlan? epoch
+                )
+                || !string.Equals(
+                    transaction.EpochPlanFingerprint,
+                    DerivedMemoryMaintainerRunner
+                        .GetEpochPlanFingerprint(epoch),
+                    StringComparison.Ordinal
+                )
+                || !string.Equals(
+                    transaction.LineageKey,
+                    epoch.LineageKey,
+                    StringComparison.Ordinal
+                )
+                || !string.Equals(
+                    transaction.CoherenceGroup,
+                    epoch.CoherenceGroup,
+                    StringComparison.Ordinal
+                )
+                || !string.Equals(
+                    transaction.TopologyVersion,
+                    epoch.TopologyVersion,
+                    StringComparison.Ordinal
+                )
+                || !string.Equals(
+                    transaction.InputSetId,
+                    epoch.InputSetId,
+                    StringComparison.Ordinal
+                )) {
+                throw new InvalidDataException(
+                    $"Orchestration transaction '{transaction.TransactionId}' does not match its exact epoch."
+                );
+            }
+        }
+        foreach (DerivedMemoryOrchestrationFinalization finalization in
+                 orchestrationInventory.Finalizations) {
+            Dictionary<string, DerivedMemoryRoleSettlement> durable =
+                settlements.TryGetValue(
+                    finalization.TransactionId,
+                    out Dictionary<string, DerivedMemoryRoleSettlement>?
+                        value
+                )
+                    ? value
+                    : throw new InvalidDataException(
+                        $"Finalization '{finalization.TransactionId}' has no durable settlements."
+                    );
+            foreach (DerivedMemoryRoleSettlement included in
+                     finalization.IncludedSettlements) {
+                if (!durable.TryGetValue(
+                        included.RoleId,
+                        out DerivedMemoryRoleSettlement? settlement
+                    )
+                    || settlement != included) {
+                    throw new InvalidDataException(
+                        $"Finalization '{finalization.TransactionId}' does not reference an exact durable settlement."
+                    );
+                }
+            }
+            DerivedArtifactSet[] published = [
+                .. sets.Where(set => string.Equals(
+                    set.TransactionId,
+                    finalization.TransactionId,
+                    StringComparison.Ordinal
+                ))
+            ];
+            if (published.Length > 1
+                || published.Length == 1
+                    && !string.Equals(
+                        published[0].SetId,
+                        finalization.ExpectedSetId,
+                        StringComparison.Ordinal
+                    )) {
+                throw new InvalidDataException(
+                    $"Finalization '{finalization.TransactionId}' does not close to one exact set."
+                );
+            }
+        }
+        foreach (DerivedArtifactSet set in sets) {
+            if (!epochsById.TryGetValue(
+                    set.EpochId,
+                    out DerivedArtifactEpochPlan? epoch
+                )
+                || !transactions.TryGetValue(
+                    set.TransactionId,
+                    out DerivedMemoryOrchestrationTransaction? transaction
+                )
+                || !finalizations.TryGetValue(
+                    set.TransactionId,
+                    out DerivedMemoryOrchestrationFinalization?
+                        finalization
+                )
+                || !string.Equals(
+                    finalization.ExpectedSetId,
+                    set.SetId,
+                    StringComparison.Ordinal
+                )
+                || !DerivedMemoryOrchestrationStore
+                    .TransactionsEquivalent(
+                        transaction,
+                        new DerivedMemoryOrchestrationTransaction(
+                            set.TransactionId,
+                            set.JobFingerprint,
+                            set.EpochId,
+                            set.EpochPlanFingerprint,
+                            set.LineageKey,
+                            set.CoherenceGroup,
+                            set.TopologyVersion,
+                            set.PreviousSetId,
+                            set.PolicyId,
+                            set.PolicyFingerprint,
+                            set.RoleProvisioning
+                        )
+                    )
+                || !string.Equals(
+                    set.EpochPlanFingerprint,
+                    DerivedMemoryMaintainerRunner
+                        .GetEpochPlanFingerprint(epoch),
+                    StringComparison.Ordinal
+                )
+                || !string.Equals(
+                    set.PreviousSetId,
+                    epoch.InputSetId,
+                    StringComparison.Ordinal
+                )
+                || set.CommonAnchor != epoch.SourceEndInclusive) {
+                throw new InvalidDataException(
+                    $"ArtifactSet '{set.SetId}' does not match its exact epoch/transaction closure."
+                );
+            }
+            if (!settlements.TryGetValue(
+                    set.TransactionId,
+                    out Dictionary<string, DerivedMemoryRoleSettlement>?
+                        byRole
+                )) {
+                throw new InvalidDataException(
+                    $"ArtifactSet '{set.SetId}' transaction has no settlements."
+                );
+            }
+            foreach (DerivedArtifactSetMember member in set.Members) {
+                if (!byRole.TryGetValue(
+                        member.RoleId,
+                        out DerivedMemoryRoleSettlement? settlement
+                    )
+                    || !string.Equals(
+                        settlement.ArtifactId,
+                        member.ArtifactId,
+                        StringComparison.Ordinal
+                    )
+                    || !string.Equals(
+                        settlement.ArtifactOutcome,
+                        member.Outcome,
+                        StringComparison.Ordinal
+                    )) {
+                    throw new InvalidDataException(
+                        $"ArtifactSet '{set.SetId}' member is not its exact durable settlement."
+                    );
+                }
+            }
+        }
+    }
+
+    private async ValueTask ValidateFinalizationCandidateIdentitiesAsync(
+        DerivedMemoryOrchestrationInventory orchestrationInventory,
+        CancellationToken cancellationToken
+    ) {
+        IReadOnlyDictionary<string, DerivedMemoryOrchestrationTransaction>
+            transactions = orchestrationInventory.Transactions.ToDictionary(
+                static transaction => transaction.TransactionId,
+                StringComparer.Ordinal
+            );
+        foreach (DerivedMemoryOrchestrationFinalization finalization in
+                 orchestrationInventory.Finalizations) {
+            DerivedMemoryOrchestrationTransaction transaction =
+                transactions[finalization.TransactionId];
+            DerivedArtifactSet candidate =
+                await ArtifactSets.RebuildFinalizedCandidateAsync(
+                        transaction,
+                        finalization,
+                        cancellationToken
+                    )
+                    .ConfigureAwait(false);
+            if (!string.Equals(
+                    candidate.SetId,
+                    finalization.ExpectedSetId,
+                    StringComparison.Ordinal
+                )) {
+                throw new InvalidDataException(
+                    $"Finalization '{finalization.TransactionId}' expected set identity is invalid."
+                );
+            }
+        }
     }
 
     private static void ValidateArtifactEpochDependencies(

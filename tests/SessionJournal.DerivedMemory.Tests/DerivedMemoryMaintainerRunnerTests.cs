@@ -142,20 +142,27 @@ public sealed class DerivedMemoryMaintainerRunnerTests : IDisposable {
                 )
             ]
         );
-        DerivedArtifactSet inputSet =
-            await repository.ArtifactSets.PublishAsync(
-                new DerivedArtifactSetPublicationRequest(
+        DerivedMemoryOrchestrationTransaction transaction =
+            await DerivedArtifactSetTestFactory
+                .CreateSettledTransactionAsync(
+                    repository,
+                    first,
                     policy,
-                    first.LineageKey,
-                    old.AnchorSetups,
-                    [
-                        new DerivedArtifactSetMemberSelection(
-                            "old-role",
-                            old.ArtifactId
-                        )
-                    ],
-                    null
-                )
+                    [old]
+                );
+        DerivedArtifactSet inputSet =
+            await DerivedArtifactSetTestFactory.FinalizeAndPublishAsync(
+                repository,
+                engine,
+                policy,
+                transaction,
+                old.AnchorSetups,
+                [
+                    new DerivedArtifactSetMemberSelection(
+                        "old-role",
+                        old.ArtifactId
+                    )
+                ]
             );
         AppendTurns(engine, 7, "second");
         DerivedArtifactEpochPlan second =

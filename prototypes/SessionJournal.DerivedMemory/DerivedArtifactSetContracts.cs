@@ -115,16 +115,23 @@ public sealed record DerivedArtifactSetMember(
     MemoryPackBlockPath Target,
     string ContentCodecId,
     string ContentSha256,
-    EventAddress SourceRawHead
+    EventAddress SourceRawHead,
+    string Outcome
 );
 
 public sealed record DerivedArtifactSet(
     string SetId,
+    string TransactionId,
+    string JobFingerprint,
+    string EpochId,
+    string EpochPlanFingerprint,
     string LineageKey,
     string CoherenceGroup,
+    string TopologyVersion,
     string PolicyId,
     string PolicyFingerprint,
     IReadOnlyList<DerivedArtifactSetRoleRequirement> RoleRequirements,
+    IReadOnlyList<DerivedMemoryRoleProvisioning> RoleProvisioning,
     string? PreviousSetId,
     EventAddress CommonAnchor,
     SessionContextAnchorSetupReferences AnchorSetups,
@@ -133,11 +140,13 @@ public sealed record DerivedArtifactSet(
 
 public sealed record DerivedArtifactSetPublicationRequest(
     DerivedArtifactSetPolicy Policy,
-    string LineageKey,
+    DerivedMemoryOrchestrationTransaction Transaction,
     SessionContextAnchorSetupReferences AnchorSetups,
     IReadOnlyList<DerivedArtifactSetMemberSelection> Members,
     string? ExpectedPreviousSetId
-);
+) {
+    public string LineageKey => Transaction.LineageKey;
+}
 
 /// <summary>
 /// Stable, content-free inventory of every persisted ArtifactSet and latest pointer.

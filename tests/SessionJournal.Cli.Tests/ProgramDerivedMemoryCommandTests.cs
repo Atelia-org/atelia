@@ -319,7 +319,7 @@ public sealed class ProgramDerivedMemoryCommandTests : IDisposable {
     }
 
     [Fact]
-    public async Task Fork_ListDiagnosesButValidateAndRebuildFail() {
+    public async Task ImmutableSettlementPreventsForkAndRebuildRestores() {
         Fixture fixture = await CreateFixtureAsync();
         Assert.Equal(0, Run(PublishArgs(fixture, "none")));
         string pointer = Assert.Single(Directory.EnumerateFiles(
@@ -337,7 +337,7 @@ public sealed class ProgramDerivedMemoryCommandTests : IDisposable {
             fixture.Policy.Roles[0].RoleId
         );
         Assert.Equal(
-            0,
+            1,
             Run(PublishArgs(
                 fixture with {
                     FirstArtifactId = replacement.ArtifactId
@@ -360,7 +360,14 @@ public sealed class ProgramDerivedMemoryCommandTests : IDisposable {
                 "--input", fixture.Path
             ])
         );
-        Assert.Equal(1, Run(RebuildArgs(fixture)));
+        Assert.Equal(0, Run(RebuildArgs(fixture)));
+        Assert.Equal(
+            0,
+            Run([
+                "validate-derived-memory",
+                "--input", fixture.Path
+            ])
+        );
     }
 
     [Theory]
@@ -612,19 +619,36 @@ public sealed class ProgramDerivedMemoryCommandTests : IDisposable {
             fixture.Setups,
             "--zeta"
         );
+        var policy = new DerivedArtifactSetPolicy(
+            "--policy",
+            "--fingerprint",
+            fixture.Epoch.CoherenceGroup,
+            [
+                new DerivedArtifactSetRoleRequirement(
+                    "--alpha",
+                    fixture.Policy.Roles[0].Target
+                ),
+                new DerivedArtifactSetRoleRequirement(
+                    "--zeta",
+                    fixture.Policy.Roles[1].Target
+                )
+            ]
+        );
+        DerivedMemoryOrchestrationTransaction transaction =
+            await DerivedArtifactSetTestFactoryForCli
+                .CreateSettledTransactionAsync(
+                    fixture.Repository,
+                    fixture.Epoch,
+                    policy,
+                    [alpha, zeta]
+                );
 
         int exitCode = Run([
             "publish-derived-artifact-set",
             $"--input={fixture.Path}",
-            "--lineage=--main",
-            "--coherence-group=--group",
-            "--policy-id=--policy",
-            "--policy-fingerprint=--fingerprint",
-            "--required-role=--alpha=observation/memory.alpha",
-            "--required-role=--zeta=system/memory.zeta",
+            $"--transaction={transaction.TransactionId}",
             $"--member=--alpha={alpha.ArtifactId}",
-            $"--member=--zeta={zeta.ArtifactId}",
-            "--expected-previous=none"
+            $"--member=--zeta={zeta.ArtifactId}"
         ]);
 
         Assert.Equal(0, exitCode);
@@ -632,8 +656,8 @@ public sealed class ProgramDerivedMemoryCommandTests : IDisposable {
             (await fixture.Repository.ArtifactSets.ReadInventoryAsync())
                 .Sets
         );
-        Assert.Equal("--main", set.LineageKey);
-        Assert.Equal("--group", set.CoherenceGroup);
+        Assert.Equal(fixture.LineageKey, set.LineageKey);
+        Assert.Equal(fixture.Epoch.CoherenceGroup, set.CoherenceGroup);
         Assert.Equal("--policy", set.PolicyId);
         Assert.Equal(
             ["--alpha", "--zeta"],
@@ -656,6 +680,164 @@ public sealed class ProgramDerivedMemoryCommandTests : IDisposable {
             "--role=observation/--block",
             Assert.Single(options.RequireRepeated("required-role"))
         );
+    }
+
+    [Fact]
+    public async Task OrchestrationCommandRunsTwoProfilesAndPublishesSet() {
+        Fixture fixture = await CreateFixtureAsync();
+        RawSnapshot before = ReadRawSnapshot(fixture.Path);
+        string connectionsPath = Path.Combine(
+            _tempRoot,
+            "orchestration-connections.json"
+        );
+        string outputPath = Path.Combine(
+            _tempRoot,
+            "orchestration-result.json"
+        );
+        string callLogDir = Path.Combine(
+            _tempRoot,
+            "orchestration-calls"
+        );
+        WriteConnections(connectionsPath);
+        var factory = new ConcurrentScriptedCompletionClientFactory(
+            "rewritten memory"
+        );
+
+        int exitCode = Program.MainCore([
+            "run-derived-memory-orchestration",
+            "--input", fixture.Path,
+            "--epoch", fixture.Epoch.EpochId,
+            "--role",
+            "required:autobiographical-rewrite:produce",
+            "--role",
+            "required:world-understanding-rewrite:produce",
+            "--policy-id", "daily-memory",
+            "--policy-fingerprint", "daily-memory-v1",
+            "--output", outputPath,
+            "--connections", connectionsPath,
+            "--call-log-dir", callLogDir
+        ], factory);
+
+        Assert.Equal(0, exitCode);
+        Assert.Equal(2, factory.CompletionCallCount);
+        Assert.True(File.Exists(outputPath));
+        DerivedArtifactSet set = Assert.Single(
+            (await fixture.Repository.ArtifactSets.ReadInventoryAsync())
+                .Sets
+        );
+        Assert.Equal(
+            ["autobiography", "world-understanding"],
+            set.Members.Select(static member => member.RoleId)
+        );
+        Assert.Equal(before, ReadRawSnapshot(fixture.Path));
+    }
+
+    [Fact]
+    public async Task IdentityOnlyOrchestrationNeedsNoConnection() {
+        Fixture fixture = await CreateFixtureAsync();
+        string outputPath = Path.Combine(
+            _tempRoot,
+            "identity-orchestration-result.json"
+        );
+
+        int exitCode = Program.MainCore([
+            "run-derived-memory-orchestration",
+            "--input", fixture.Path,
+            "--epoch", fixture.Epoch.EpochId,
+            "--role",
+            "required:autobiographical-rewrite:identity",
+            "--role",
+            "required:world-understanding-rewrite:identity",
+            "--policy-id", "identity-memory",
+            "--policy-fingerprint", "identity-memory-v1",
+            "--output", outputPath
+        ], ThrowingCompletionClientFactory.Instance);
+
+        Assert.Equal(0, exitCode);
+        DerivedArtifactSet set = Assert.Single(
+            (await fixture.Repository.ArtifactSets.ReadInventoryAsync())
+                .Sets
+        );
+        Assert.All(set.Members, member => Assert.Equal(
+            DerivedMemoryArtifactOutcomes.Identity,
+            member.Outcome
+        ));
+    }
+
+    [Fact]
+    public void OrchestrationOutputCannotOverwriteConnections() {
+        Directory.CreateDirectory(_tempRoot);
+        string connectionsPath = Path.Combine(
+            _tempRoot,
+            "orchestration-protected-connections.json"
+        );
+        string callsPath = Path.Combine(_tempRoot, "protected-calls");
+        WriteConnections(connectionsPath);
+        byte[] original = File.ReadAllBytes(connectionsPath);
+        var factory = new ConcurrentScriptedCompletionClientFactory(
+            "must-not-run"
+        );
+
+        int exitCode = Program.MainCore([
+            "run-derived-memory-orchestration",
+            "--input", Path.Combine(_tempRoot, "missing-journal"),
+            "--epoch", "dae_" + new string('1', 64),
+            "--role",
+            "required:autobiographical-rewrite:produce",
+            "--policy-id", "daily-memory",
+            "--policy-fingerprint", "daily-memory-v1",
+            "--output", connectionsPath,
+            "--connections", connectionsPath,
+            "--call-log-dir", callsPath
+        ], factory);
+
+        Assert.Equal(1, exitCode);
+        Assert.Equal(0, factory.CreateCallCount);
+        Assert.Equal(0, factory.CompletionCallCount);
+        Assert.Equal(original, File.ReadAllBytes(connectionsPath));
+        Assert.False(Directory.Exists(callsPath));
+    }
+
+    [Fact]
+    public async Task DuplicateOrchestrationRoleFailsBeforeDirectoriesOrClient() {
+        Fixture fixture = await CreateFixtureAsync();
+        string connectionsPath = Path.Combine(
+            _tempRoot,
+            "duplicate-role-connections.json"
+        );
+        string outputPath = Path.Combine(
+            _tempRoot,
+            "duplicate-role-output.json"
+        );
+        string callsPath = Path.Combine(
+            _tempRoot,
+            "duplicate-role-calls"
+        );
+        WriteConnections(connectionsPath);
+        var factory = new ConcurrentScriptedCompletionClientFactory(
+            "must-not-run"
+        );
+
+        int exitCode = Program.MainCore([
+            "run-derived-memory-orchestration",
+            "--input", fixture.Path,
+            "--epoch", fixture.Epoch.EpochId,
+            "--role",
+            "required:autobiographical-rewrite:produce",
+            "--role",
+            "required:autobiographical-rewrite:produce",
+            "--policy-id", "daily-memory",
+            "--policy-fingerprint", "daily-memory-v1",
+            "--output", outputPath,
+            "--connections", connectionsPath,
+            "--call-log-dir", callsPath
+        ], factory);
+
+        Assert.Equal(1, exitCode);
+        Assert.Equal(0, factory.CreateCallCount);
+        Assert.Equal(0, factory.CompletionCallCount);
+        Assert.False(File.Exists(outputPath));
+        Assert.False(Directory.Exists(callsPath));
     }
 
     private async ValueTask<Fixture> CreateFixtureAsync() {
@@ -750,11 +932,20 @@ public sealed class ProgramDerivedMemoryCommandTests : IDisposable {
                 )
             ]
         );
+        DerivedMemoryOrchestrationTransaction transaction =
+            await DerivedArtifactSetTestFactoryForCli
+                .CreateSettledTransactionAsync(
+                    repository,
+                    epoch,
+                    policy,
+                    [first, second]
+                );
         return new Fixture(
             path,
             repository,
             policy,
             epoch,
+            transaction,
             "main",
             anchor,
             setups,
@@ -813,21 +1004,69 @@ public sealed class ProgramDerivedMemoryCommandTests : IDisposable {
         var args = new List<string> {
             "publish-derived-artifact-set",
             "--input", fixture.Path,
-            "--lineage", fixture.LineageKey,
-            "--coherence-group", fixture.Policy.CoherenceGroup,
-            "--policy-id", fixture.Policy.PolicyId,
-            "--policy-fingerprint", fixture.Policy.PolicyFingerprint,
-            "--required-role", "alpha-role=observation/memory.alpha",
-            "--required-role", "zeta-role=system/memory.zeta",
+            "--transaction", fixture.Transaction.TransactionId,
             "--member", $"alpha-role={fixture.FirstArtifactId}",
-            "--member", $"zeta-role={fixture.SecondArtifactId}",
-            "--expected-previous", expectedPrevious
+            "--member", $"zeta-role={fixture.SecondArtifactId}"
         };
         if (reportPath is not null) {
             args.Add("--report-json");
             args.Add(reportPath);
         }
         return [.. args];
+    }
+
+    private static class DerivedArtifactSetTestFactoryForCli {
+        public static async ValueTask<
+            DerivedMemoryOrchestrationTransaction
+        > CreateSettledTransactionAsync(
+            DerivedMemoryRepository repository,
+            DerivedArtifactEpochPlan epoch,
+            DerivedArtifactSetPolicy policy,
+            IReadOnlyList<DerivedMemoryArtifact> artifacts
+        ) {
+            IReadOnlyDictionary<string, DerivedMemoryArtifact> byRole =
+                artifacts.ToDictionary(
+                    static artifact => artifact.RoleId,
+                    StringComparer.Ordinal
+                );
+            DerivedMemoryRoleProvisioning[] roles = [
+                .. policy.Roles.Select(requirement => {
+                    DerivedMemoryArtifact artifact =
+                        byRole[requirement.RoleId];
+                    return new DerivedMemoryRoleProvisioning(
+                        artifact.RoleId,
+                        artifact.ProfileId,
+                        artifact.Target,
+                        requirement.Required,
+                        artifact.Producer,
+                        artifact.ProducerFingerprint,
+                        artifact.PromptFingerprint,
+                        artifact.ModelFingerprint,
+                        DerivedMemoryRoleExecutionModes.Produce,
+                        artifact.CandidateId,
+                        artifact.AttemptId
+                    );
+                })
+            ];
+            DerivedMemoryOrchestrationTransaction transaction =
+                await repository.Orchestrations.GetOrCreateAsync(
+                    epoch,
+                    policy,
+                    roles
+                );
+            foreach (DerivedMemoryArtifact artifact in artifacts) {
+                _ = await repository.Orchestrations.SettleAsync(
+                    transaction,
+                    new DerivedMemoryRoleSettlement(
+                        transaction.TransactionId,
+                        artifact.RoleId,
+                        artifact.ArtifactId,
+                        artifact.Outcome
+                    )
+                );
+            }
+            return transaction;
+        }
     }
 
     private static string[] RebuildArgs(Fixture fixture) => [
@@ -873,6 +1112,22 @@ public sealed class ProgramDerivedMemoryCommandTests : IDisposable {
         );
     }
 
+    private static void WriteConnections(string path) {
+        var config = new CompletionConnectionsFileConfig(
+            [
+                new CompletionConnectionConfig(
+                    "scripted",
+                    "scripted",
+                    "model-a",
+                    "surface-a",
+                    "http://localhost/"
+                )
+            ],
+            "scripted"
+        );
+        File.WriteAllText(path, JsonSerializer.Serialize(config));
+    }
+
     private static string HashRawFiles(string path) {
         using var hash = IncrementalHash.CreateHash(
             HashAlgorithmName.SHA256
@@ -896,6 +1151,7 @@ public sealed class ProgramDerivedMemoryCommandTests : IDisposable {
         DerivedMemoryRepository Repository,
         DerivedArtifactSetPolicy Policy,
         DerivedArtifactEpochPlan Epoch,
+        DerivedMemoryOrchestrationTransaction Transaction,
         string LineageKey,
         EventAddress Anchor,
         SJ.SessionContextAnchorSetupReferences Setups,
@@ -921,5 +1177,47 @@ public sealed class ProgramDerivedMemoryCommandTests : IDisposable {
         ) => throw new InvalidOperationException(
             $"Derived-memory command must not create completion client '{connection.Id}'."
         );
+    }
+
+    private sealed class ConcurrentScriptedCompletionClientFactory(
+        string responseText
+    ) : ICompletionClientFactory {
+        private readonly ConcurrentScriptedCompletionClient _client =
+            new(responseText);
+
+        public int CreateCallCount { get; private set; }
+        public int CompletionCallCount => _client.CallCount;
+
+        public ICompletionClient Create(
+            CompletionConnectionConfig connection
+        ) {
+            CreateCallCount++;
+            return _client;
+        }
+    }
+
+    private sealed class ConcurrentScriptedCompletionClient(
+        string responseText
+    ) : ICompletionClient {
+        private int _callCount;
+
+        public string Name => "scripted";
+        public string ApiSpecId => "test-api-v1";
+        public int CallCount => Volatile.Read(ref _callCount);
+
+        public Task<CompletionResult> StreamCompletionAsync(
+            CompletionRequest request,
+            CompletionStreamObserver? observer,
+            CancellationToken cancellationToken = default
+        ) {
+            cancellationToken.ThrowIfCancellationRequested();
+            _ = Interlocked.Increment(ref _callCount);
+            return Task.FromResult(new CompletionResult(
+                new ActionMessage([
+                    new ActionBlock.Text(responseText)
+                ]),
+                CompletionDescriptor.From(this, request)
+            ));
+        }
     }
 }

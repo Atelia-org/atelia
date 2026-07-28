@@ -335,6 +335,103 @@ public sealed class ProgramSessionJournalE2ETests : IDisposable {
         );
     }
 
+    [Fact]
+    public void OutputCannotOverwriteConnectionsBeforeFactoryOrReads() {
+        Directory.CreateDirectory(_tempRoot);
+        string connectionsPath =
+            Path.Combine(_tempRoot, "connections.json");
+        string callsPath = Path.Combine(_tempRoot, "calls");
+        WriteConnections(connectionsPath);
+        byte[] original = File.ReadAllBytes(connectionsPath);
+        var factory =
+            new ScriptedCompletionClientFactory("must-not-run");
+
+        int exitCode = Program.MainCore(
+            Command(
+                Path.Combine(_tempRoot, "journal"),
+                connectionsPath,
+                connectionsPath,
+                callsPath,
+                "dae_" + new string('1', 64),
+                "candidate"
+            ),
+            factory
+        );
+
+        Assert.Equal(1, exitCode);
+        Assert.Equal(0, factory.CreateCallCount);
+        Assert.Equal(0, factory.CompletionCallCount);
+        Assert.Equal(original, File.ReadAllBytes(connectionsPath));
+        Assert.False(Directory.Exists(callsPath));
+    }
+
+    [Fact]
+    public void OutputCannotOverwritePromptBeforeFactoryOrReads() {
+        Directory.CreateDirectory(_tempRoot);
+        string connectionsPath =
+            Path.Combine(_tempRoot, "connections.json");
+        string promptPath = Path.Combine(_tempRoot, "prompt.txt");
+        string callsPath = Path.Combine(_tempRoot, "calls");
+        WriteConnections(connectionsPath);
+        File.WriteAllText(promptPath, "original prompt");
+        byte[] original = File.ReadAllBytes(promptPath);
+        var factory =
+            new ScriptedCompletionClientFactory("must-not-run");
+        string[] command = [
+            .. Command(
+                Path.Combine(_tempRoot, "journal"),
+                connectionsPath,
+                promptPath,
+                callsPath,
+                "dae_" + new string('1', 64),
+                "candidate"
+            ),
+            "--system-prompt", promptPath
+        ];
+
+        int exitCode = Program.MainCore(command, factory);
+
+        Assert.Equal(1, exitCode);
+        Assert.Equal(0, factory.CreateCallCount);
+        Assert.Equal(0, factory.CompletionCallCount);
+        Assert.Equal(original, File.ReadAllBytes(promptPath));
+        Assert.False(Directory.Exists(callsPath));
+    }
+
+    [Fact]
+    public void CallLogCannotContainInputRepository() {
+        Directory.CreateDirectory(_tempRoot);
+        string container = Path.Combine(_tempRoot, "container");
+        string repoPath = Path.Combine(container, "journal");
+        string connectionsPath =
+            Path.Combine(_tempRoot, "connections.json");
+        string outputPath = Path.Combine(
+            _tempRoot,
+            "outside",
+            "report.json"
+        );
+        WriteConnections(connectionsPath);
+        var factory =
+            new ScriptedCompletionClientFactory("must-not-run");
+
+        int exitCode = Program.MainCore(
+            Command(
+                repoPath,
+                connectionsPath,
+                outputPath,
+                container,
+                "dae_" + new string('1', 64),
+                "candidate"
+            ),
+            factory
+        );
+
+        Assert.Equal(1, exitCode);
+        Assert.Equal(0, factory.CreateCallCount);
+        Assert.Equal(0, factory.CompletionCallCount);
+        Assert.False(File.Exists(outputPath));
+    }
+
     public void Dispose() {
         try {
             if (Directory.Exists(_tempRoot)) {
@@ -413,10 +510,14 @@ public sealed class ProgramSessionJournalE2ETests : IDisposable {
     ) : ICompletionClientFactory {
         private readonly ScriptedCompletionClient _client =
             new(responseText);
+        public int CreateCallCount { get; private set; }
         public int CompletionCallCount => _client.CallCount;
         public ICompletionClient Create(
             CompletionConnectionConfig connection
-        ) => _client;
+        ) {
+            CreateCallCount++;
+            return _client;
+        }
     }
 
     private sealed class ScriptedCompletionClient(string responseText)

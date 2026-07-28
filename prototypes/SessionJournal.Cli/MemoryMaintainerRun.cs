@@ -14,6 +14,8 @@ namespace Atelia.SessionJournal.Cli;
 internal static class MemoryMaintainerProducerIdentity {
     public const string Producer =
         "SessionJournal.Cli/run-memory-maintainer";
+    public const string IdentityProducer =
+        "Atelia.SessionJournal.DerivedMemory/identity-maintainer";
     public const string FingerprintSchema =
         "atelia.session-journal.epoch-memory-maintainer-producer.v2";
 
@@ -64,6 +66,29 @@ internal static class MemoryMaintainerProducerIdentity {
         client.ApiSpecId
     ));
 
+    public static string ComputeIdentityProducerFingerprint(
+        MemoryMaintainerProfileDescriptor profile
+    ) {
+        ArgumentNullException.ThrowIfNull(profile);
+        return ComputeFingerprint(new IdentityProducerFingerprintDto(
+            "atelia.session-journal.derived-memory-identity-producer.v1",
+            IdentityProducer,
+            DerivedMemoryArtifactStore.ArtifactSchema,
+            profile.ProfileName,
+            profile.RoleId,
+            profile.RewriteProfile.Id,
+            SJ.MemoryPackCarrierTokens.ToStorageToken(
+                profile.RewriteProfile.Target.Carrier
+            ),
+            profile.RewriteProfile.Target.BlockKey
+        ));
+    }
+
+    public static string ComputeIdentityModelFingerprint() =>
+        ComputeFingerprint(new IdentityModelFingerprintDto(
+            "atelia.session-journal.derived-memory-no-model.v1"
+        ));
+
     private static string ComputeFingerprint<T>(T value) {
         byte[] bytes = JsonSerializer.SerializeToUtf8Bytes(
             value,
@@ -101,6 +126,21 @@ internal static class MemoryMaintainerProducerIdentity {
         [property: JsonPropertyOrder(4)] int? MaxTokens,
         [property: JsonPropertyOrder(5)] string ClientName,
         [property: JsonPropertyOrder(6)] string ClientApiSpecId
+    );
+
+    private sealed record IdentityProducerFingerprintDto(
+        [property: JsonPropertyOrder(0)] string Schema,
+        [property: JsonPropertyOrder(1)] string Producer,
+        [property: JsonPropertyOrder(2)] string ArtifactSchema,
+        [property: JsonPropertyOrder(3)] string ProfileName,
+        [property: JsonPropertyOrder(4)] string RoleId,
+        [property: JsonPropertyOrder(5)] string MaintainerId,
+        [property: JsonPropertyOrder(6)] string TargetCarrier,
+        [property: JsonPropertyOrder(7)] string TargetBlockId
+    );
+
+    private sealed record IdentityModelFingerprintDto(
+        [property: JsonPropertyOrder(0)] string Schema
     );
 }
 
@@ -175,3 +215,14 @@ internal sealed record MemoryMaintainerRunRecord(
         );
     }
 }
+
+internal sealed record DerivedMemoryOrchestrationRunRecord(
+    string Schema,
+    string Status,
+    string TransactionId,
+    string JobFingerprint,
+    string EpochId,
+    string? PublishedSetId,
+    IReadOnlyList<DerivedMemoryRoleSettlement> Settlements,
+    IReadOnlyList<DerivedMemoryRoleFailure> Failures
+);

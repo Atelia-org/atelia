@@ -12,5 +12,8 @@ public sealed record DerivedMemoryValidationReport(
     int PlannerConfigCount = 0,
     int CurrentPlannerConfigCount = 0,
     int ArtifactEpochCount = 0,
-    int LatestArtifactEpochCount = 0
+    int LatestArtifactEpochCount = 0,
+    int OrchestrationTransactionCount = 0,
+    int RoleSettlementCount = 0,
+    int OrchestrationFinalizationCount = 0
 );

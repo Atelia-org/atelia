@@ -21,6 +21,7 @@ structured JSON，不以 NUL delimiter 拼接两个 prompt。
 离线开发 composition root 是
 [`SessionJournal.Cli`](../SessionJournal.Cli/README.md)：它通过
 `MemoryMaintainerProfileCatalog` 解析 stable role/profile descriptor，注入 Completion
-client，并把 concrete maintainer 交给 DerivedMemory 的 exact-epoch runner。history
-切分、epoch lookup 与 artifact persistence 不属于本程序集。CLI 和本 companion
-assembly 都不会被 SessionJournal raw core 反向引用。
+client，并把 concrete maintainer 交给 DerivedMemory 的 exact-epoch runner 或 multi-role
+orchestrator。history 切分、epoch lookup、transaction/settlement 与 artifact/set
+persistence 不属于本程序集。CLI 和本 companion assembly 都不会被 SessionJournal raw
+core 反向引用。
