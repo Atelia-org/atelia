@@ -188,7 +188,13 @@ internal static class SessionReducer {
                             $"{ev.Kind} at {ev.Address} correlation id does not match its active completion boundary."
                         );
                     }
-                    ValidateActionToolCalls(ev, body.Action);
+                    ThrowIfOperationalViolation(
+                        ev,
+                        SessionOperationalSemantics
+                            .ValidateActionToolDeclarations(
+                                body.Action
+                            )
+                    );
                     if (body.Execution.LastIssuedToolExecutionSequence != toolExecutionSequenceCheckpoint) {
                         throw new InvalidDataException(
                             $"{ev.Kind} at {ev.Address} checkpoint {body.Execution.LastIssuedToolExecutionSequence} "
@@ -201,16 +207,25 @@ internal static class SessionReducer {
                             : isPreparedAction
                                 ? pendingRequestManifest?.ToolSet.RuntimeIdentity
                                 : body.ToolRuntimeIdentity;
-                    if (body.ToolRuntimeIdentity != expectedToolRuntimeIdentity) {
-                        throw new InvalidDataException(
-                            $"{ev.Kind} at {ev.Address} tool runtime identity does not match its durable request source."
-                        );
-                    }
-                    if (body.Action.ToolCalls.Count > 0 && body.ToolRuntimeIdentity is null) {
-                        throw new InvalidDataException(
-                            $"{ev.Kind} at {ev.Address} contains tool calls without a durable tool runtime identity."
-                        );
-                    }
+                    ThrowIfOperationalViolation(
+                        ev,
+                        SessionOperationalSemantics
+                            .ValidateToolRuntimeIdentityMatch(
+                                expectedToolRuntimeIdentity,
+                                body.ToolRuntimeIdentity
+                            )
+                    );
+                    ThrowIfOperationalViolation(
+                        ev,
+                        SessionOperationalSemantics
+                            .ValidateRequiredToolRuntimeIdentity(
+                                body.Action,
+                                body.ToolRuntimeIdentity
+                            )
+                    );
+                    // Full replay preserves the imported wire contract:
+                    // a terminal ImportedAgentAction may carry source runtime
+                    // identity even though it declares no tool calls.
                     context.Add(body.Action);
                     addressedMessages?.Add(new AddressedSessionHistoryMessage(body.Action, ev.Address, ev.Address));
                     openAction = body.Action.ToolCalls.Count == 0 ? null : body.Action;
@@ -240,20 +255,32 @@ internal static class SessionReducer {
                     if (pendingToolExecutionStarted || pendingOperationId is not null) {
                         throw new InvalidDataException($"{ev.Kind} at {ev.Address} duplicates an already-started tool execution.");
                     }
-                    EnsureMatchesPendingToolCall(ev, pendingToolCall, body.ToolCallId, body.ToolName, body.RawArgumentsJson);
-                    if (pendingToolRuntimeIdentity is null
-                        || body.ToolRuntimeIdentity != pendingToolRuntimeIdentity) {
-                        throw new InvalidDataException(
-                            $"{ev.Kind} at {ev.Address} tool runtime identity does not match the pending Action."
-                        );
-                    }
-                    long expectedExecutionSequence = checked(toolExecutionSequenceCheckpoint + 1);
-                    if (body.ExecutionSequence != expectedExecutionSequence) {
-                        throw new InvalidDataException(
-                            $"{ev.Kind} at {ev.Address} sequence {body.ExecutionSequence} "
-                            + $"must reserve next sequence {expectedExecutionSequence}."
-                        );
-                    }
+                    ThrowIfOperationalViolation(
+                        ev,
+                        SessionOperationalSemantics
+                            .ValidatePendingToolCallMatch(
+                                pendingToolCall,
+                                body.ToolCallId,
+                                body.ToolName,
+                                body.RawArgumentsJson
+                            )
+                    );
+                    ThrowIfOperationalViolation(
+                        ev,
+                        SessionOperationalSemantics
+                            .ValidateToolRuntimeIdentityMatch(
+                                pendingToolRuntimeIdentity,
+                                body.ToolRuntimeIdentity
+                            )
+                    );
+                    ThrowIfOperationalViolation(
+                        ev,
+                        SessionOperationalSemantics
+                            .ValidateReservedStartSequence(
+                                toolExecutionSequenceCheckpoint,
+                                body.ExecutionSequence
+                            )
+                    );
                     pendingOperationId = body.OperationId;
                     pendingToolExecutionStarted = true;
                     toolExecutionSequenceCheckpoint = body.ExecutionSequence;
@@ -269,13 +296,24 @@ internal static class SessionReducer {
                     if (!pendingToolExecutionStarted || pendingOperationId is null) {
                         throw new InvalidDataException($"{ev.Kind} at {ev.Address} requires a preceding start for the current tool call.");
                     }
-                    EnsureMatchesPendingToolCall(ev, pendingToolCall, body.ToolCallId, body.ToolName, rawArgumentsJson: null);
-                    if (body.ExecutionSequence != toolExecutionSequenceCheckpoint) {
-                        throw new InvalidDataException(
-                            $"{ev.Kind} at {ev.Address} sequence {body.ExecutionSequence} "
-                            + $"does not match the active reserved sequence {toolExecutionSequenceCheckpoint}."
-                        );
-                    }
+                    ThrowIfOperationalViolation(
+                        ev,
+                        SessionOperationalSemantics
+                            .ValidatePendingToolCallMatch(
+                                pendingToolCall,
+                                body.ToolCallId,
+                                body.ToolName,
+                                rawArgumentsJson: null
+                            )
+                    );
+                    ThrowIfOperationalViolation(
+                        ev,
+                        SessionOperationalSemantics
+                            .ValidateReservedResultSequence(
+                                toolExecutionSequenceCheckpoint,
+                                body.ExecutionSequence
+                            )
+                    );
                     if (observedResults.ContainsKey(body.ToolCallId)) {
                         throw new InvalidDataException($"{ev.Kind} at {ev.Address} duplicates result for tool call '{body.ToolCallId}'.");
                     }
@@ -286,7 +324,12 @@ internal static class SessionReducer {
                     lastObservedToolResultAddress = ev.Address;
                     pendingOperationId = null;
                     pendingToolExecutionStarted = false;
-                    pendingToolCall = NextPendingToolCall(openAction!, observedResults);
+                    pendingToolCall =
+                        SessionOperationalSemantics
+                            .SelectNextPendingDeclaredCall(
+                                openAction!,
+                                observedResults
+                            );
                     if (pendingToolCall is null) {
                         ToolResultsMessage message = ProjectToolResults(openAction!, observedResults);
                         context.Add(message);
@@ -458,14 +501,6 @@ internal static class SessionReducer {
             );
     }
 
-    private static RawToolCall? NextPendingToolCall(ActionMessage action, IReadOnlyDictionary<string, ToolResultObservedBody> observedResults) {
-        foreach (RawToolCall call in action.ToolCalls) {
-            if (!observedResults.ContainsKey(call.ToolCallId)) { return call; }
-        }
-
-        return null;
-    }
-
     private static ToolResultsMessage ProjectToolResults(ActionMessage action, IReadOnlyDictionary<string, ToolResultObservedBody> observedResults) {
         var results = new ToolResult[action.ToolCalls.Count];
         for (int i = 0; i < action.ToolCalls.Count; i++) {
@@ -515,46 +550,16 @@ internal static class SessionReducer {
         }
     }
 
-    private static void EnsureMatchesPendingToolCall(
+    private static void ThrowIfOperationalViolation(
         DecodedSessionEvent ev,
-        RawToolCall pending,
-        string toolCallId,
-        string toolName,
-        string? rawArgumentsJson
+        SessionOperationalViolation? violation
     ) {
-        if (!string.Equals(pending.ToolCallId, toolCallId, StringComparison.Ordinal)) {
-            throw new InvalidDataException(
-                $"{ev.Kind} at {ev.Address} targets tool call '{toolCallId}' while current pending call is '{pending.ToolCallId}'."
-            );
-        }
-        if (!string.Equals(pending.ToolName, toolName, StringComparison.Ordinal)) {
-            throw new InvalidDataException(
-                $"{ev.Kind} at {ev.Address} tool name '{toolName}' does not match current pending tool '{pending.ToolName}'."
-            );
-        }
-        if (rawArgumentsJson is not null
-            && !string.Equals(pending.RawArgumentsJson, rawArgumentsJson, StringComparison.Ordinal)) {
-            throw new InvalidDataException(
-                $"{ev.Kind} at {ev.Address} raw arguments do not match current pending tool call '{pending.ToolCallId}'."
-            );
-        }
-    }
-
-    private static void ValidateActionToolCalls(DecodedSessionEvent ev, ActionMessage action) {
-        var toolCallIds = new HashSet<string>(StringComparer.Ordinal);
-        foreach (RawToolCall call in action.ToolCalls) {
-            if (string.IsNullOrWhiteSpace(call.ToolCallId)
-                || string.IsNullOrWhiteSpace(call.ToolName)
-                || string.IsNullOrWhiteSpace(call.RawArgumentsJson)) {
-                throw new InvalidDataException(
-                    $"{ev.Kind} at {ev.Address} contains a tool call with an empty id, name, or raw arguments."
+        if (violation is { } value) {
+            throw SessionOperationalSemantics
+                .CreateInvalidDataException(
+                    $"{ev.Kind} at {ev.Address}",
+                    value
                 );
-            }
-            if (!toolCallIds.Add(call.ToolCallId)) {
-                throw new InvalidDataException(
-                    $"{ev.Kind} at {ev.Address} contains duplicate tool call id '{call.ToolCallId}'."
-                );
-            }
         }
     }
 

@@ -409,25 +409,32 @@ internal static class SessionExecutionTailResolver {
                         }
                         ToolExecutionStartedBody started =
                             RequireBody<ToolExecutionStartedBody>(ev);
-                        EnsureMatches(
+                        ThrowIfOperationalViolation(
                             ev,
-                            call,
-                            started.ToolCallId,
-                            started.ToolName,
-                            started.RawArgumentsJson
+                            SessionOperationalSemantics
+                                .ValidatePendingToolCallMatch(
+                                    call,
+                                    started.ToolCallId,
+                                    started.ToolName,
+                                    started.RawArgumentsJson
+                                )
                         );
-                        if (started.ToolRuntimeIdentity !=
-                            action.ToolRuntimeIdentity) {
-                            throw new InvalidDataException(
-                                $"{ev.Kind} at {ev.Address} tool runtime identity does not match its Action."
-                            );
-                        }
-                        long expected = checked(checkpoint + 1);
-                        if (started.ExecutionSequence != expected) {
-                            throw new InvalidDataException(
-                                $"{ev.Kind} at {ev.Address} sequence {started.ExecutionSequence} must reserve {expected}."
-                            );
-                        }
+                        ThrowIfOperationalViolation(
+                            ev,
+                            SessionOperationalSemantics
+                                .ValidateToolRuntimeIdentityMatch(
+                                    action.ToolRuntimeIdentity,
+                                    started.ToolRuntimeIdentity
+                                )
+                        );
+                        ThrowIfOperationalViolation(
+                            ev,
+                            SessionOperationalSemantics
+                                .ValidateReservedStartSequence(
+                                    checkpoint,
+                                    started.ExecutionSequence
+                                )
+                        );
                         activeStart = started;
                         checkpoint = started.ExecutionSequence;
                         latestCheckpoint = ev.Address;
@@ -441,19 +448,24 @@ internal static class SessionExecutionTailResolver {
                                 $"{ev.Kind} at {ev.Address} requires the declared call's preceding start."
                             );
                         }
-                        EnsureMatches(
+                        ThrowIfOperationalViolation(
                             ev,
-                            call,
-                            result.ToolCallId,
-                            result.ToolName,
-                            rawArgumentsJson: null
+                            SessionOperationalSemantics
+                                .ValidatePendingToolCallMatch(
+                                    call,
+                                    result.ToolCallId,
+                                    result.ToolName,
+                                    rawArgumentsJson: null
+                                )
                         );
-                        if (result.ExecutionSequence !=
-                            activeStart.ExecutionSequence) {
-                            throw new InvalidDataException(
-                                $"{ev.Kind} at {ev.Address} sequence does not match its reserved start."
-                            );
-                        }
+                        ThrowIfOperationalViolation(
+                            ev,
+                            SessionOperationalSemantics
+                                .ValidateReservedResultSequence(
+                                    activeStart.ExecutionSequence,
+                                    result.ExecutionSequence
+                                )
+                        );
                         activeStart = null;
                         callIndex++;
                         latestCheckpoint = ev.Address;
@@ -669,11 +681,14 @@ internal static class SessionExecutionTailResolver {
                     action.Action.ToolCalls.Count == 0
                         ? null
                         : chain.SourceManifest.ToolSet.RuntimeIdentity;
-                if (action.ToolRuntimeIdentity != expectedIdentity) {
-                    throw new InvalidDataException(
-                        $"{actionEvent.Kind} at {actionEvent.Address} tool runtime identity does not match its source Prepared."
-                    );
-                }
+                ThrowIfOperationalViolation(
+                    actionEvent,
+                    SessionOperationalSemantics
+                        .ValidateToolRuntimeIdentityMatch(
+                            expectedIdentity,
+                            action.ToolRuntimeIdentity
+                        )
+                );
                 return new ActionSource(
                     chain.SourcePreparedAddress,
                     source.SourceObservation
@@ -750,52 +765,41 @@ internal static class SessionExecutionTailResolver {
                     $"{actionEvent.Kind} at {actionEvent.Address} has a negative execution checkpoint."
                 );
             }
-            var callIds = new HashSet<string>(StringComparer.Ordinal);
-            foreach (RawToolCall call in action.Action.ToolCalls) {
-                if (string.IsNullOrWhiteSpace(call.ToolCallId)
-                    || string.IsNullOrWhiteSpace(call.ToolName)
-                    || string.IsNullOrWhiteSpace(call.RawArgumentsJson)
-                    || !callIds.Add(call.ToolCallId)) {
-                    throw new InvalidDataException(
-                        $"{actionEvent.Kind} at {actionEvent.Address} contains invalid or duplicate tool call identity."
-                    );
-                }
-            }
-            if (action.Action.ToolCalls.Count == 0
-                ? action.ToolRuntimeIdentity is not null
-                : action.ToolRuntimeIdentity is null) {
-                throw new InvalidDataException(
-                    $"{actionEvent.Kind} at {actionEvent.Address} has an invalid tool runtime identity shape."
-                );
-            }
+            ThrowIfOperationalViolation(
+                actionEvent,
+                SessionOperationalSemantics
+                    .ValidateActionToolDeclarations(
+                        action.Action
+                    )
+            );
+            ThrowIfOperationalViolation(
+                actionEvent,
+                SessionOperationalSemantics
+                    .ValidateRequiredToolRuntimeIdentity(
+                        action.Action,
+                        action.ToolRuntimeIdentity
+                    )
+            );
+            ThrowIfOperationalViolation(
+                actionEvent,
+                SessionOperationalSemantics
+                    .ValidateUnexpectedToolRuntimeIdentity(
+                        action.Action,
+                        action.ToolRuntimeIdentity
+                    )
+            );
         }
 
-        private static void EnsureMatches(
+        private static void ThrowIfOperationalViolation(
             DecodedSessionEvent ev,
-            RawToolCall pending,
-            string toolCallId,
-            string toolName,
-            string? rawArgumentsJson
+            SessionOperationalViolation? violation
         ) {
-            if (!string.Equals(
-                    pending.ToolCallId,
-                    toolCallId,
-                    StringComparison.Ordinal
-                )
-                || !string.Equals(
-                    pending.ToolName,
-                    toolName,
-                    StringComparison.Ordinal
-                )
-                || rawArgumentsJson is not null
-                    && !string.Equals(
-                        pending.RawArgumentsJson,
-                        rawArgumentsJson,
-                        StringComparison.Ordinal
-                    )) {
-                throw new InvalidDataException(
-                    $"{ev.Kind} at {ev.Address} does not match the next declared tool call '{pending.ToolCallId}'."
-                );
+            if (violation is { } value) {
+                throw SessionOperationalSemantics
+                    .CreateInvalidDataException(
+                        $"{ev.Kind} at {ev.Address}",
+                        value
+                    );
             }
         }
 

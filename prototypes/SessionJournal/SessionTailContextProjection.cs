@@ -211,7 +211,11 @@ internal static class SessionTailContextProjection {
                     AgentActionProducedBody actionBody =
                         RequireBody<AgentActionProducedBody>(ev);
                     ActionMessage action = actionBody.Action;
-                    ValidateToolCalls(ev, action);
+                    ThrowIfOperationalViolation(
+                        ev,
+                        SessionOperationalSemantics
+                            .ValidateActionToolDeclarations(action)
+                    );
                     bool isPreparedAction =
                         ev.Kind == SessionEventKind.AgentActionProduced
                         && phase == SessionExecutionPhase.AwaitingCompletion;
@@ -250,13 +254,37 @@ internal static class SessionTailContextProjection {
                             || ev.Parent != activeAttemptAddress
                             || activeAttemptAddress is null
                             || !string.Equals(actionBody.CorrelationId, sourcePrepared.Origin.CorrelationId, StringComparison.Ordinal)
-                            || actionBody.Execution != sourcePrepared.Execution
-                            || actionBody.ToolRuntimeIdentity != expectedRuntimeIdentity) {
+                            || actionBody.Execution != sourcePrepared.Execution) {
                             throw new InvalidDataException(
                                 $"{ev.Kind} at {ev.Address} does not match its suffix Prepared snapshot."
                             );
                         }
+                        ThrowIfOperationalViolation(
+                            ev,
+                            SessionOperationalSemantics
+                                .ValidateToolRuntimeIdentityMatch(
+                                    expectedRuntimeIdentity,
+                                    actionBody
+                                        .ToolRuntimeIdentity
+                                )
+                        );
                     }
+                    ThrowIfOperationalViolation(
+                        ev,
+                        SessionOperationalSemantics
+                            .ValidateRequiredToolRuntimeIdentity(
+                                action,
+                                actionBody.ToolRuntimeIdentity
+                            )
+                    );
+                    ThrowIfOperationalViolation(
+                        ev,
+                        SessionOperationalSemantics
+                            .ValidateUnexpectedToolRuntimeIdentity(
+                                action,
+                                actionBody.ToolRuntimeIdentity
+                            )
+                    );
                     activeCorrelationId = actionBody.CorrelationId;
                     sourcePrepared = null;
                     sourcePreparedAddress = null;
@@ -268,10 +296,8 @@ internal static class SessionTailContextProjection {
                         ev.Address
                     ));
                     if (action.ToolCalls.Count > 0) {
-                        pendingToolRuntimeIdentity = actionBody.ToolRuntimeIdentity
-                            ?? throw new InvalidDataException(
-                                $"{ev.Kind} at {ev.Address} has tool calls without runtime identity."
-                            );
+                        pendingToolRuntimeIdentity =
+                            actionBody.ToolRuntimeIdentity;
                         openAction = action;
                         observedResults.Clear();
                         pendingCall = action.ToolCalls[0];
@@ -281,11 +307,6 @@ internal static class SessionTailContextProjection {
                         phase = SessionExecutionPhase.AwaitingToolExecution;
                     }
                     else {
-                        if (actionBody.ToolRuntimeIdentity is not null) {
-                            throw new InvalidDataException(
-                                $"{ev.Kind} at {ev.Address} has a runtime identity without tool calls."
-                            );
-                        }
                         activeCorrelationId = null;
                         phase = SessionExecutionPhase.Idle;
                     }
@@ -299,16 +320,32 @@ internal static class SessionTailContextProjection {
                         throw new InvalidDataException($"{ev.Kind} at {ev.Address} has no unstarted suffix-local pending tool call.");
                     }
                     ToolExecutionStartedBody started = RequireBody<ToolExecutionStartedBody>(ev);
-                    EnsurePendingMatches(ev, pendingCall, started.ToolCallId, started.ToolName, started.RawArgumentsJson);
-                    if (pendingToolRuntimeIdentity != started.ToolRuntimeIdentity
-                        || started.ExecutionSequence
-                            != checked(
-                                executionSequenceCheckpoint + 1
-                            )) {
-                        throw new InvalidDataException(
-                            $"{ev.Kind} at {ev.Address} does not match the pending runtime identity and next reserved sequence."
-                        );
-                    }
+                    ThrowIfOperationalViolation(
+                        ev,
+                        SessionOperationalSemantics
+                            .ValidatePendingToolCallMatch(
+                                pendingCall,
+                                started.ToolCallId,
+                                started.ToolName,
+                                started.RawArgumentsJson
+                            )
+                    );
+                    ThrowIfOperationalViolation(
+                        ev,
+                        SessionOperationalSemantics
+                            .ValidateToolRuntimeIdentityMatch(
+                                pendingToolRuntimeIdentity,
+                                started.ToolRuntimeIdentity
+                            )
+                    );
+                    ThrowIfOperationalViolation(
+                        ev,
+                        SessionOperationalSemantics
+                            .ValidateReservedStartSequence(
+                                executionSequenceCheckpoint,
+                                started.ExecutionSequence
+                            )
+                    );
                     executionSequenceCheckpoint = started.ExecutionSequence;
                     pendingStarted = true;
                     break;
@@ -321,18 +358,35 @@ internal static class SessionTailContextProjection {
                         throw new InvalidDataException($"{ev.Kind} at {ev.Address} has no started suffix-local pending tool call.");
                     }
                     ToolResultObservedBody result = RequireBody<ToolResultObservedBody>(ev);
-                    EnsurePendingMatches(ev, pendingCall, result.ToolCallId, result.ToolName, rawArgumentsJson: null);
-                    if (result.ExecutionSequence != executionSequenceCheckpoint) {
-                        throw new InvalidDataException(
-                            $"{ev.Kind} at {ev.Address} does not repeat the active reserved sequence."
-                        );
-                    }
+                    ThrowIfOperationalViolation(
+                        ev,
+                        SessionOperationalSemantics
+                            .ValidatePendingToolCallMatch(
+                                pendingCall,
+                                result.ToolCallId,
+                                result.ToolName,
+                                rawArgumentsJson: null
+                            )
+                    );
+                    ThrowIfOperationalViolation(
+                        ev,
+                        SessionOperationalSemantics
+                            .ValidateReservedResultSequence(
+                                executionSequenceCheckpoint,
+                                result.ExecutionSequence
+                            )
+                    );
                     if (!observedResults.TryAdd(result.ToolCallId, result)) {
                         throw new InvalidDataException($"{ev.Kind} at {ev.Address} duplicates suffix tool result '{result.ToolCallId}'.");
                     }
                     firstObservedToolResultAddress ??= ev.Address;
                     lastObservedToolResultAddress = ev.Address;
-                    pendingCall = openAction.ToolCalls.FirstOrDefault(call => !observedResults.ContainsKey(call.ToolCallId));
+                    pendingCall =
+                        SessionOperationalSemantics
+                            .SelectNextPendingDeclaredCall(
+                                openAction,
+                                observedResults
+                            );
                     pendingStarted = false;
                     if (pendingCall is null) {
                         ToolResultsMessage toolResults =
@@ -424,30 +478,16 @@ internal static class SessionTailContextProjection {
         return new ToolResultsMessage(content: null, results);
     }
 
-    private static void ValidateToolCalls(DecodedSessionEvent ev, ActionMessage action) {
-        var ids = new HashSet<string>(StringComparer.Ordinal);
-        foreach (RawToolCall call in action.ToolCalls) {
-            if (string.IsNullOrWhiteSpace(call.ToolCallId)
-                || string.IsNullOrWhiteSpace(call.ToolName)
-                || string.IsNullOrWhiteSpace(call.RawArgumentsJson)
-                || !ids.Add(call.ToolCallId)) {
-                throw new InvalidDataException($"{ev.Kind} at {ev.Address} contains invalid or duplicate tool calls.");
-            }
-        }
-    }
-
-    private static void EnsurePendingMatches(
+    private static void ThrowIfOperationalViolation(
         DecodedSessionEvent ev,
-        RawToolCall pending,
-        string callId,
-        string toolName,
-        string? rawArgumentsJson
+        SessionOperationalViolation? violation
     ) {
-        if (!string.Equals(pending.ToolCallId, callId, StringComparison.Ordinal)
-            || !string.Equals(pending.ToolName, toolName, StringComparison.Ordinal)
-            || rawArgumentsJson is not null
-                && !string.Equals(pending.RawArgumentsJson, rawArgumentsJson, StringComparison.Ordinal)) {
-            throw new InvalidDataException($"{ev.Kind} at {ev.Address} does not match the current suffix pending tool call.");
+        if (violation is { } value) {
+            throw SessionOperationalSemantics
+                .CreateInvalidDataException(
+                    $"{ev.Kind} at {ev.Address}",
+                    value
+                );
         }
     }
 
