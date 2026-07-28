@@ -1,6 +1,6 @@
 # DerivedMemory 可替换子系统与 Shared Epoch 实施方案
 
-> **状态**：In Progress；DM-0～DM-6 已完成，下一片 DM-7
+> **状态**：Implemented；DM-0～DM-8 已完成，等待最终独立审阅与提交
 > **日期**：2026-07-27
 > **最新代码对齐**：2026-07-28；已纳入
 > `ChatSession.LegacyExportCli` / `SessionJournal.Cli` 拆分与
@@ -19,7 +19,7 @@
 SessionJournal 对 concrete derived shape 的依赖。DM-0～DM-4 已完成这项切割，当前状态为：
 
 1. request materializer 只消费 normalized `SessionContextCandidate`，不认识 artifact/store；
-2. `CompletionRequestPrepared` v4 已保存 self-contained exact context snapshots 与两端 setup refs；
+2. `CompletionRequestPrepared` v5 已保存 self-contained exact context snapshots 与两端 setup refs；
 3. reconstructor 以 `RawStartSetups` 取得 suffix fold seed；raw event inventory 不再包含
    derived-set definition/activation，Prepared reopen 与 raw audit 均不读取 DerivedMemory。
 
@@ -63,7 +63,8 @@ DM-8  Online lifecycle + budgeted set selection
 DM-4 后的当前主要入口：
 
 - `prototypes/SessionJournal/SessionRequestManifest.cs`
-  - `SessionContextPlan` 保存 `RawStartSetups + ExactContextInputs`；
+  - `SessionContextPlan` 保存 `RawStartSetups + ExactContextInputs`；current Prepared v5
+    允许严格的零输入 bootstrap snapshot；
   - Prepared exact input 只保存 rendered snapshot/hash，不包含 artifact identity。
 - `prototypes/SessionJournal/SessionPreparedRequestReconstructor.cs`
   - exact reopen 只读取 Prepared 所钉死的 raw range、两端 setup refs 与 exact context inputs；
@@ -173,31 +174,39 @@ ChatSession.LegacyExportCli
 
 ## 3. 跨边界 contract shape
 
-本计划冻结语义，不锁死最终 C# record 名称。推荐能力合同：
+DM-8 已把最初的单候选合同升级为 bounded two-phase contract。discovery 只返回
+content-free descriptor；core 完成 raw authority/cost 筛选后才逐个 materialize exact
+derived text，从而避免枚举候选时同时持有多个完整 ArtifactSet：
 
 ```csharp
 public interface ICoherentContextCandidateSource {
-    ValueTask<SessionContextCandidate?> SelectAsync(
+    ValueTask<SessionContextCandidateDiscovery> DiscoverAsync(
         SessionContextSelectionRequest request,
+        CancellationToken cancellationToken);
+
+    ValueTask<SessionContextCandidate> MaterializeAsync(
+        SessionContextCandidateDescriptor descriptor,
         CancellationToken cancellationToken);
 }
 ```
 
-DM-0 已实现单候选 `Latest` contract。将来如果 branch-aware `NthPrevious(n)` 确实需要 bounded
-enumeration，才增加有序 candidate batch；不得因此把 derived repository、artifact ids 或 concrete
-EventJournal ownership 暴露给 core。
+provider 的 `Handle` 是 opaque exact identity；core 不解析 artifact/set id。`EmptyLineage`
+只表示经 strict store lookup / latest rebuild 后确认的真实空 lineage，missing/stale pointer
+不能伪装为 bootstrap。
 
 ### 3.1 Selection request
 
 至少表达：
 
 - exact completion boundary；
-- selection mode（DM-0/DM-3 第一版只需 Latest）；
-- 可选 raw suffix token budget hint；
+- selection mode：`Latest`、`NthPrevious`、`Budgeted`；
+- 可选 raw suffix 与 total canonical request token budget；
 - coherence group / application policy token；
+- bounded candidate count 与 zero-based nth ordinal。
 
-单候选 `SelectAsync` 不提前携带 `maxCandidates`；它在没有 batch 语义时只是伪配置。诊断与 cost
-单位也不进入 DM-0 contract，避免让无消费、无上界的字段成为跨程序集负担。
+`Latest` discovery 只返回 1 个 descriptor；`NthPrevious(n)` 只返回 `n + 1`；
+`Budgeted` 最多返回显式 `MaxCandidateCount`（current default 32、hard maximum 64）。
+ordinal 只表示 lineage 次序，绝不被当作 suffix cost。
 
 ### 3.2 Candidate
 
@@ -217,6 +226,9 @@ SessionContextCandidate {
   }]
 }
 ```
+
+discovery descriptor 只包含 `Handle + Ordinal + RawStartExclusive + AnchorSetups`；
+`contributions` 只在 materialization 阶段出现。
 
 `contentSha256` 的 domain/codec 固定为
 `atelia.session-journal.context-contribution-text-sha256.v1`：对 UTF-8 exact text 以前缀化 domain
@@ -302,7 +314,8 @@ concrete store 类型。
 
 - 新增 `prototypes/SessionJournal/SessionContextCandidateContracts.cs`（暂名）；
 - 新增 fake-provider contract tests；
-- 决定 `SelectAsync` 与 bounded ordered candidates 的最小第一版形状；
+- 历史第一版采用 `SelectAsync`；DM-8 已按实际 budgeted selection 需求升级为 bounded
+  `DiscoverAsync + MaterializeAsync`；
 - 决定 provider 如何取得 branch-aware 只读信息：
   - 优先返回 provenance 后由 core authoritative validation；
   - 若确需 lineage capability，只暴露窄 read-only abstraction，不暴露 Engine ownership。
@@ -986,6 +999,9 @@ DerivedMemory 互相引用或保留两份实现。
 
 ## 13. DM-8：Online Lifecycle 与 Budgeted Selection
 
+> **实施状态（2026-07-28）**：完成。core/DerivedMemory/CLI 已切到 bounded two-phase
+> discovery/materialization、Prepared v5 strict bootstrap、shared estimator 与 online lifecycle。
+
 ### 目标
 
 把 planner/maintenance/provider 接入 Session 日常运行，并支持 recent-history 长短的可解释选择。
@@ -1006,6 +1022,15 @@ safe online boundary
 旧 set 在新 set 完成前继续可选。threshold 必须保留 maintenance headroom；若 suffix 到 hard limit 而
 required set 未完成，进入 explicit backpressure/not-ready，不允许 silent full raw fallback。
 
+current `DerivedMemoryOnlineLifecycleCoordinator` 同时实现 neutral lifecycle 与 candidate source：
+
+- 构造函数接收 exact policy、lineage 与 host-bound role executions，不读取 Maintainers catalog
+  或 connections；
+- 若存在 pending epoch，先 resume/run DM-7，再考虑 successor，避免越过未完成 epoch；
+- maintainer 失败但旧 usable set 尚未触及 hard limit 时，旧 set 继续服务；超过 scheduling
+  headroom/hard limit 则返回显式 backpressure；
+- callback 只能写 derived state；core 在 callback 前后验证 exact raw head，禁止偷偷追加 raw event。
+
 ### Selection progression
 
 1. `Latest`：最新 current-lineage usable set；
@@ -1020,6 +1045,12 @@ required set 未完成，进入 explicit backpressure/not-ready，不允许 sile
 
 ordinal 不等价于 cost；第一版 `NthPrevious` 是可解释控制面，budgeted comparison 是长期主路径。
 
+DM-8 current evaluator 在 core 中完成真实成本判断：同一 planning window 只 decode/fold 一次；
+suffix cost 使用 `SessionHistoryTokenEstimator`，total budget 则对最终形状
+`CompletionRequest` 的 canonical bytes 估算。`Budgeted` 先试满足 raw budget 的最旧 candidate，
+再按 total budget 向较新 set 收缩；derived text 每次只 materialize 一个。最终 candidate 会再次
+验证 exact descriptor/content 与 total budget。
+
 ### Restart phases
 
 - raw tail recovery：不访问 DerivedMemory；
@@ -1029,6 +1060,15 @@ ordinal 不等价于 cost；第一版 `NthPrevious` 是可解释控制面，budg
 - `SendAsync`：在 raw mutation/provider call 前完成 memory readiness preflight；append Observation 后按
   exact boundary 重新 materialize；
 - provider 缺失/损坏：derived-not-ready，不是 raw corruption。
+
+`SendAsync` 在 append Observation 前执行 lifecycle + candidate/total-budget preflight；失败时
+raw head/event count 不变。append 成功后必须按新 exact boundary 再执行 lifecycle 与选择，不能
+复用旧 candidate。ToolResult continuation 在 dependency-closed
+`AwaitingAgentAction` boundary 走同一路径。Prepared/Started reopen 永远不调用 lifecycle/provider。
+
+真实空 lineage 的 bootstrap 采用 Prepared v5 的零个 `ExactContextInputs`，raw suffix 必须落在
+显式 `BootstrapRawSuffixTokenBudget` 内；不创建伪 artifact/空 contribution。第一个真实 set
+发布后 provider 返回 candidates，bootstrap 自动失效。
 
 ### 验收
 
@@ -1042,11 +1082,29 @@ ordinal 不等价于 cost；第一版 `NthPrevious` 是可解释控制面，budg
   publication、online completion 与 restart；
 - 源码/报告不泄露 connection secrets 或完整敏感请求内容。
 
+### Real acceptance evidence（2026-07-28）
+
+在全新临时 repo `gitignore/dm8-real-whc5bJ/session` 上，从
+`cyber-copy-upgraded/chat-session-legacy-upgrade-export.json` 导入 71 对
+observation/action；raw import 验证通过。online lifecycle 规划 epoch
+`dae_b5fd9314…cc630`，两个真实 `dsv4p` maintainer 在相差约 41 ms 的时间点并行启动，
+分别约 402 s / 588 s 完成；2 artifacts、2 durable settlements 与 finalization 完整发布为
+set `das_b8b88e36…19f83b`。最终 raw/derived offline validation 均通过，Prepared v5 数量为 1。
+
+agent completion 未闭合：provider 连续返回 `503 model_not_found / no available channel`。首次失败后
+raw 正确停在 `AwaitingCompletion`；修复后的 CLI restart 从同一 Prepared exact request 进入
+`ResumeAsync`，显式 `restart-new-attempt` 只新增 agent attempt，未重跑 maintainer。外部成功结果
+不能伪造，因此本次证据明确分为“maintainers + coherent set 成功”和“agent provider availability
+阻塞”。deterministic reopen test 已覆盖失败后第二次 CLI 只增加 1 次 provider call、最终回到
+Idle；10k cold-prefix performance test 继续证明 online `FullProjectionInvocationCount` 不变且
+payload reads 不随 selected anchor 之前的历史增长。
+
 ## 14. Migration 与 schema 边界
 
 | 变化 | 权威迁移方式 | 明确禁止 |
 | --- | --- | --- |
 | Prepared v3 -> v4 | `ChatSession.LegacyExportCli export-json` 后由 `SessionJournal.Cli import-legacy-json` 导入新 repo；盘点非幂等外部副作用 | compatibility decoder、缺省字段、自证 fallback |
+| Prepared v4 -> v5 | 同上；这是为 strict zero-input bootstrap 所做的 direct wire cut，新 repo/import 后重建 derived | v4 compatibility reader、把空 artifact 伪装成 bootstrap |
 | 删除 raw kind 12 | 新 repo/import 或显式 offline raw migration | 保留 retired kind writer、把 derived id 改名后继续写 raw |
 | DerivedRecapStore -> DerivedMemory schema | 删除/rebuild derived repository，或显式 derived migrator | 让 raw validity 依赖旧 sidecar |
 | artifact 增加 epoch identity | 按 raw + config 重跑 planner/maintainers | 从 common anchor 猜 epoch id |
@@ -1077,7 +1135,8 @@ ordinal 不等价于 cost；第一版 `NthPrevious` 是可解释控制面，budg
   - repository atomicity/index rebuild；
   - candidate provider；
   - epoch planner；
-  - maintainer settlement/publication。
+  - maintainer settlement/publication；
+  - lifecycle pending-before-successor、旧 set 可用性、backpressure 与 bounded discovery。
 - `tests/SessionJournal.Maintainers.Tests`
   - stable maintainer/profile/target identity；
   - embedded prompt/profile loading；
@@ -1087,6 +1146,7 @@ ordinal 不等价于 cost；第一版 `NthPrevious` 是可解释控制面，budg
   - composition；
   - CLI parsing/path safety/atomic reports；
   - plan/run/publish workflow；
+  - deterministic online maintenance + agent completion；
   - legacy import/rebuild E2E 与 producer/consumer exchange-schema compatibility。
 - `tests/ChatSession.LegacyExportCli.Tests`
   - legacy export command、schema、只读/path-safety 与 atomic publish 行为；
@@ -1104,6 +1164,8 @@ ordinal 不等价于 cost；第一版 `NthPrevious` 是可解释控制面，budg
 - peak live payload/materialized context；
 - epoch planned range/cost；
 - maintainer/provider invocation count；
+- discovered/materialized candidate count 与 selected ordinal；
+- raw-suffix / total-request estimated tokens；
 - artifacts/set publications。
 
 ### 15.3 Standard verification
@@ -1151,14 +1213,21 @@ fakes 完成验收。
 DM-3/DM-4 应连续调度，但仍保持独立 review/commit，以便确认新 provider path 先可用，再删除旧 raw
 surface。
 
-## 17. 下一步：领取 DM-8
+## 17. 实施收口
 
-下一次 Coding Agent 应只实施 **DM-8：Online Lifecycle 与 Budgeted
-Selection**。开始前重点阅读本文 §12、§13、§15，以及 DerivedMemory 当前的
-epoch planner、orchestration transaction、ArtifactSet v2 与
-`SessionJournalContextCandidateProvider`。
+DM-0～DM-8 的计划能力均已落地。current online composition root 是
+`SessionJournal.Cli run-online-turn`：它把 concrete maintainer role bindings、Completion
+connection、`DerivedMemoryOnlineLifecycleCoordinator` 和 raw engine 组合起来；core 项目仍不
+引用 DerivedMemory/Maintainers。命令按 boundary 选择 `SendAsync` 或 `ResumeAsync`；uncertain
+attempt 缺省拒绝，只有 operator 显式选择 `restart-new-attempt` 才会发起新 provider attempt。
 
-不要把 DM-7 的显式 orchestration 命令误当作 online engine 自动 maintenance。
-DM-8 需要另行闭合 safe-boundary lifecycle、budgeted set selection、maintenance
-headroom 与 explicit backpressure；不得重新引入 full-raw fallback，也不得让 raw
-SessionJournal 反向拥有 concrete maintainer policy。
+收口闸门：
+
+1. independent review 检查 authority、crash/reopen、bounded read 与 pre-append side effect；
+2. 全量 relevant tests 与 zero-warning solution build；
+3. 新临时 repo 经 legacy import、shared epoch、两个真实 `dsv4p` maintainer、ArtifactSet
+   publication、online completion 与 restart 验收；
+4. 只记录 content-free ids/status/metrics，不提交 connection secret、call log 或完整 request。
+
+后续 retrieval、多 coherence group 组合、动态 maintainer provisioning UI 属于新计划，不应继续
+塞入 DM-8。

@@ -11,6 +11,392 @@ public sealed class DerivedMemoryOrchestratorTests : IDisposable {
     private readonly List<SessionJournalEngine> _engines = [];
 
     [Fact]
+    public async Task MaterializeFailsFastWhenDiscoveredSetWasDeleted() {
+        Fixture fixture = await CreateFixtureAsync(roleCount: 1);
+        var maintainer = new FakeMaintainer(
+            "alpha-profile",
+            fixture.Policy.Roles[0].Target,
+            "ephemeral memory"
+        );
+        var coordinator =
+            new DerivedMemoryOnlineLifecycleCoordinator(
+                fixture.Repository,
+                fixture.Policy,
+                "main",
+                [Execution(fixture, 0, maintainer)]
+            );
+        _ = await coordinator.PrepareAsync(
+            fixture.Engine,
+            new(
+                fixture.RawHead,
+                SessionExecutionPhase.Idle
+            ),
+            CancellationToken.None
+        );
+        SessionContextCandidateDiscovery discovery =
+            await coordinator.DiscoverAsync(
+                new(
+                    fixture.RawHead,
+                    SessionContextSelectionMode.Latest,
+                    fixture.Policy.CoherenceGroup
+                ),
+                CancellationToken.None
+            );
+        SessionContextCandidateDescriptor descriptor =
+            Assert.Single(discovery.Candidates);
+        File.Delete(Path.Combine(
+            fixture.Repository.ArtifactSets.SetsDirectory,
+            $"{descriptor.Handle}.json"
+        ));
+
+        InvalidDataException error =
+            await Assert.ThrowsAsync<InvalidDataException>(
+                async () => await coordinator.MaterializeAsync(
+                    descriptor,
+                    CancellationToken.None
+                )
+            );
+
+        Assert.Contains(
+            "no longer available",
+            error.Message,
+            StringComparison.OrdinalIgnoreCase
+        );
+    }
+
+    [Fact]
+    public async Task OnlineLifecycleResumesPendingEpochBeforePlanningSuccessor() {
+        Fixture fixture = await CreateFixtureAsync(roleCount: 1);
+        var firstMaintainer = new FakeMaintainer(
+            "alpha-profile",
+            fixture.Policy.Roles[0].Target,
+            "first memory"
+        );
+        DerivedMemoryRoleExecution firstExecution =
+            Execution(fixture, 0, firstMaintainer);
+        var coordinator =
+            new DerivedMemoryOnlineLifecycleCoordinator(
+                fixture.Repository,
+                fixture.Policy,
+                "main",
+                [firstExecution]
+            );
+
+        SessionMemoryLifecycleResult first =
+            await coordinator.PrepareAsync(
+                fixture.Engine,
+                new(
+                    fixture.RawHead,
+                    SessionExecutionPhase.Idle
+                ),
+                CancellationToken.None
+            );
+
+        Assert.Equal(
+            SessionMemoryLifecycleStatus.Ready,
+            first.Status
+        );
+        Assert.Equal(1, firstMaintainer.CallCount);
+        DerivedArtifactSet firstSet =
+            (await fixture.Repository.ArtifactSets
+                .TryReadLatestAsync(
+                    fixture.Policy,
+                    "main"
+                ))!;
+        Assert.Equal(fixture.Epoch.EpochId, firstSet.EpochId);
+        DerivedArtifactEpochPlan stillLatest =
+            (await fixture.Repository.EpochPlanner
+                .TryReadLatestEpochAsync(
+                    fixture.Epoch.Key
+                ))!;
+        Assert.Equal(
+            fixture.Epoch.EpochId,
+            stillLatest.EpochId
+        );
+
+        fixture.Engine.AppendObservation("after first set");
+        _ = fixture.Engine.AppendImportedAgentAction(
+            new ActionMessage([
+                new ActionBlock.Text("new answer")
+            ]),
+            new CompletionDescriptor(
+                "import",
+                "v1",
+                "model-a"
+            )
+        );
+        fixture.Engine.AppendObservation(
+            "second turn after first set"
+        );
+        EventAddress advanced =
+            fixture.Engine.AppendImportedAgentAction(
+                new ActionMessage([
+                    new ActionBlock.Text("second answer")
+                ]),
+                new CompletionDescriptor(
+                    "import",
+                    "v1",
+                    "model-a"
+                )
+            );
+        var secondMaintainer = new FakeMaintainer(
+            "alpha-profile",
+            fixture.Policy.Roles[0].Target,
+            "second memory"
+        );
+        var secondCoordinator =
+            new DerivedMemoryOnlineLifecycleCoordinator(
+                fixture.Repository,
+                fixture.Policy,
+                "main",
+                [Execution(fixture, 0, secondMaintainer)]
+            );
+
+        SessionMemoryLifecycleResult second =
+            await secondCoordinator.PrepareAsync(
+                fixture.Engine,
+                new(
+                    advanced,
+                    SessionExecutionPhase.Idle
+                ),
+                CancellationToken.None
+            );
+
+        Assert.Equal(
+            SessionMemoryLifecycleStatus.Ready,
+            second.Status
+        );
+        Assert.Equal(1, secondMaintainer.CallCount);
+        DerivedArtifactSet secondSet =
+            (await fixture.Repository.ArtifactSets
+                .TryReadLatestAsync(
+                    fixture.Policy,
+                    "main"
+                ))!;
+        Assert.Equal(firstSet.SetId, secondSet.PreviousSetId);
+        DerivedArtifactEpochPlan secondEpoch =
+            (await fixture.Repository.EpochPlanner
+                .TryReadLatestEpochAsync(
+                    fixture.Epoch.Key
+                ))!;
+        Assert.Equal(
+            fixture.Epoch.EpochId,
+            secondEpoch.PreviousEpochId
+        );
+        Assert.Equal(secondEpoch.EpochId, secondSet.EpochId);
+        SessionContextCandidateDiscovery latest =
+            await secondCoordinator.DiscoverAsync(
+                new(
+                    advanced,
+                    SessionContextSelectionMode.Latest,
+                    fixture.Policy.CoherenceGroup
+                ),
+                CancellationToken.None
+            );
+        Assert.Single(latest.Candidates);
+        SessionContextCandidateDiscovery nth =
+            await secondCoordinator.DiscoverAsync(
+                new(
+                    advanced,
+                    SessionContextSelectionMode.NthPrevious,
+                    fixture.Policy.CoherenceGroup,
+                    NthPreviousOrdinal: 1
+                ),
+                CancellationToken.None
+            );
+        Assert.Equal(2, nth.Candidates.Count);
+        SessionContextCandidateDiscovery budgeted =
+            await secondCoordinator.DiscoverAsync(
+                new(
+                    advanced,
+                    SessionContextSelectionMode.Budgeted,
+                    fixture.Policy.CoherenceGroup,
+                    RawSuffixTokenBudget: 10_000
+                ),
+                CancellationToken.None
+            );
+        Assert.Equal(2, budgeted.Candidates.Count);
+    }
+
+    [Fact]
+    public async Task OnlineLifecycleFailureKeepsOldSetUsableBelowHardLimit() {
+        Fixture fixture = await CreateFixtureAsync(roleCount: 1);
+        var successful = new FakeMaintainer(
+            "alpha-profile",
+            fixture.Policy.Roles[0].Target,
+            "usable memory"
+        );
+        var first =
+            new DerivedMemoryOnlineLifecycleCoordinator(
+                fixture.Repository,
+                fixture.Policy,
+                "main",
+                [Execution(fixture, 0, successful)]
+            );
+        Assert.Equal(
+            SessionMemoryLifecycleStatus.Ready,
+            (await first.PrepareAsync(
+                fixture.Engine,
+                new(
+                    fixture.RawHead,
+                    SessionExecutionPhase.Idle
+                ),
+                CancellationToken.None
+            )).Status
+        );
+        DerivedArtifactSet oldSet =
+            (await fixture.Repository.ArtifactSets
+                .TryReadLatestAsync(
+                    fixture.Policy,
+                    "main"
+                ))!;
+        fixture.Engine.AppendObservation("trigger failure");
+        _ = fixture.Engine.AppendImportedAgentAction(
+            new ActionMessage([
+                new ActionBlock.Text("answer")
+            ]),
+            new CompletionDescriptor(
+                "import",
+                "v1",
+                "model-a"
+            )
+        );
+        fixture.Engine.AppendObservation(
+            "second trigger failure turn"
+        );
+        EventAddress advanced =
+            fixture.Engine.AppendImportedAgentAction(
+                new ActionMessage([
+                    new ActionBlock.Text("second answer")
+                ]),
+                new CompletionDescriptor(
+                    "import",
+                    "v1",
+                    "model-a"
+                )
+            );
+        var failing = new FakeMaintainer(
+            "alpha-profile",
+            fixture.Policy.Roles[0].Target,
+            exception: new InvalidOperationException(
+                "producer unavailable"
+            )
+        );
+        var second =
+            new DerivedMemoryOnlineLifecycleCoordinator(
+                fixture.Repository,
+                fixture.Policy,
+                "main",
+                [Execution(fixture, 0, failing)]
+            );
+
+        SessionMemoryLifecycleResult result =
+            await second.PrepareAsync(
+                fixture.Engine,
+                new(
+                    advanced,
+                    SessionExecutionPhase.Idle
+                ),
+                CancellationToken.None
+            );
+
+        Assert.Equal(
+            SessionMemoryLifecycleStatus.Ready,
+            result.Status
+        );
+        Assert.Equal(1, failing.CallCount);
+        Assert.Equal(
+            oldSet.SetId,
+            (await fixture.Repository.ArtifactSets
+                .TryReadLatestAsync(
+                    fixture.Policy,
+                    "main"
+                ))!.SetId
+        );
+        SessionContextCandidateDiscovery discovery =
+            await second.DiscoverAsync(
+                new(
+                    advanced,
+                    SessionContextSelectionMode.Latest,
+                    fixture.Policy.CoherenceGroup
+                ),
+                CancellationToken.None
+            );
+        Assert.Equal(
+            SessionContextCandidateDiscoveryStatus.Candidates,
+            discovery.Status
+        );
+        Assert.Equal(oldSet.CommonAnchor, Assert.Single(
+            discovery.Candidates
+        ).RawStartExclusive);
+    }
+
+    [Fact]
+    public async Task OnlineLifecycleProjectedObservationUsesExplicitBackpressureWithoutRawMutation() {
+        Fixture fixture = await CreateFixtureAsync(roleCount: 1);
+        var coordinator =
+            new DerivedMemoryOnlineLifecycleCoordinator(
+                fixture.Repository,
+                fixture.Policy,
+                "main",
+                [
+                    Execution(
+                        fixture,
+                        0,
+                        new FakeMaintainer(
+                            "alpha-profile",
+                            fixture.Policy.Roles[0].Target,
+                            "usable"
+                        )
+                    )
+                ]
+            );
+        Assert.Equal(
+            SessionMemoryLifecycleStatus.Ready,
+            (await coordinator.PrepareAsync(
+                fixture.Engine,
+                new(
+                    fixture.RawHead,
+                    SessionExecutionPhase.Idle
+                ),
+                CancellationToken.None
+            )).Status
+        );
+        EventAddress head =
+            fixture.Engine.ReadCurrentLineageHeaders()
+                .CapturedHead;
+        int eventCount =
+            fixture.Engine.ReadCurrentLineageHeaders()
+                .HeadToRoot.Count;
+
+        SessionMemoryLifecycleResult result =
+            await coordinator.PrepareAsync(
+                fixture.Engine,
+                new(
+                    head,
+                    SessionExecutionPhase.Idle,
+                    new string('x', 4_000)
+                ),
+                CancellationToken.None
+            );
+
+        Assert.Equal(
+            SessionMemoryLifecycleStatus.Backpressure,
+            result.Status
+        );
+        Assert.Equal(
+            head,
+            fixture.Engine.ReadCurrentLineageHeaders()
+                .CapturedHead
+        );
+        Assert.Equal(
+            eventCount,
+            fixture.Engine.ReadCurrentLineageHeaders()
+                .HeadToRoot.Count
+        );
+    }
+
+    [Fact]
     public async Task RequiredRolesRunInParallelAgainstOnePreparedSnapshot() {
         Fixture fixture = await CreateFixtureAsync();
         var gate = new ParallelGate(2);

@@ -18,7 +18,7 @@ public sealed class SessionEventBodySchemaVersionTests {
     }
 
     [Fact]
-    public void ExpectedVersionMap_DefinesPreparedV4FailureV2AndV1ForOtherKinds() {
+    public void ExpectedVersionMap_DefinesPreparedV5FailureV2AndV1ForOtherKinds() {
         SessionEventKind[] kinds = Enum.GetValues<SessionEventKind>();
 
         Assert.NotEmpty(kinds);
@@ -74,7 +74,7 @@ public sealed class SessionEventBodySchemaVersionTests {
         );
 
         Assert.Contains("actual=2", error.Message, StringComparison.Ordinal);
-        Assert.Contains("expected=4", error.Message, StringComparison.Ordinal);
+        Assert.Contains("expected=5", error.Message, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -88,7 +88,21 @@ public sealed class SessionEventBodySchemaVersionTests {
         );
 
         Assert.Contains("actual=3", error.Message, StringComparison.Ordinal);
-        Assert.Contains("expected=4", error.Message, StringComparison.Ordinal);
+        Assert.Contains("expected=5", error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void PreparedV4_IsUnsupportedBeforeMalformedBodyIsParsed() {
+        var error = Assert.Throws<NotSupportedException>(() =>
+            SessionEventCodec.Decode(
+                SessionEventKind.CompletionRequestPrepared,
+                """{"v":4,"body":"malformed-v4"}"""u8,
+                out _
+            )
+        );
+
+        Assert.Contains("actual=4", error.Message, StringComparison.Ordinal);
+        Assert.Contains("expected=5", error.Message, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -122,7 +136,7 @@ public sealed class SessionEventBodySchemaVersionTests {
 
     private static int ExpectedVersion(SessionEventKind kind)
         => kind switch {
-            SessionEventKind.CompletionRequestPrepared => 4,
+            SessionEventKind.CompletionRequestPrepared => 5,
             SessionEventKind.CompletionAttemptFailed => 2,
             _ => 1
         };

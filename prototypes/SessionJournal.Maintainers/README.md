@@ -22,6 +22,7 @@ structured JSON，不以 NUL delimiter 拼接两个 prompt。
 [`SessionJournal.Cli`](../SessionJournal.Cli/README.md)：它通过
 `MemoryMaintainerProfileCatalog` 解析 stable role/profile descriptor，注入 Completion
 client，并把 concrete maintainer 交给 DerivedMemory 的 exact-epoch runner 或 multi-role
-orchestrator。history 切分、epoch lookup、transaction/settlement 与 artifact/set
+orchestrator；online `run-online-turn` 也由 CLI 把相同 exact role executions 注入 generic
+DerivedMemory lifecycle coordinator。history 切分、epoch lookup、transaction/settlement 与 artifact/set
 persistence 不属于本程序集。CLI 和本 companion assembly 都不会被 SessionJournal raw
 core 反向引用。

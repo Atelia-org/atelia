@@ -15,7 +15,7 @@ public sealed class SessionRequestManifestCodecTests {
         EventAddressTextCodec.Parse("ej1:00000000000000040000000100000000");
 
     [Fact]
-    public void CompletionRequestPreparedV4_RoundtripsCanonicalLiteralGolden() {
+    public void CompletionRequestPreparedV5_RoundtripsCanonicalLiteralGolden() {
         CompletionRequestPreparedBody body = CreateManifest();
 
         byte[] encoded = SessionEventCodec.Encode(
@@ -30,7 +30,7 @@ public sealed class SessionRequestManifestCodecTests {
             )
         );
 
-        Assert.Equal(4, version);
+        Assert.Equal(5, version);
         Assert.Equal(encoded, SessionEventCodec.Encode(
             SessionEventKind.CompletionRequestPrepared,
             decoded
@@ -51,7 +51,7 @@ public sealed class SessionRequestManifestCodecTests {
         Assert.Equal(body.Commitment, decoded.Commitment);
         Assert.Equal(
             """
-            {"v":4,"body":{"origin":{"correlationId":"correlation-01","reason":"observation"},"execution":{"lastIssuedToolExecutionSequence":17},"plan":{"rawStartExclusive":"ej1:00000000000000010000000100000000","rawRangeSha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","rawStartSetups":{"runtimeConfig":{"address":"ej1:00000000000000030000000100000000","bodySchemaVersion":1,"payloadSha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},"systemPrompt":{"address":"ej1:00000000000000040000000100000000","bodySchemaVersion":1,"payloadSha256":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"}},"exactContextInputs":[{"contentSha256":"e6babf8c03395cef81dcfa83a6dbb4ec4a8892a9fe188a4b37d99123b79b67df","contextSnapshot":{"systemPromptFragment":"system recap","observationMessage":"","actionMessage":""}},{"contentSha256":"60b37427fabe85d010aa6c32e7b5239eda1d3cc0472fc9a02ae6027f3aba4d02","contextSnapshot":{"systemPromptFragment":"","observationMessage":"world recap","actionMessage":""}}]},"setups":{"runtimeConfig":{"address":"ej1:00000000000000030000000100000000","bodySchemaVersion":1,"payloadSha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},"systemPrompt":{"address":"ej1:00000000000000040000000100000000","bodySchemaVersion":1,"payloadSha256":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"}},"parameters":{"modelId":"model-A","maxTokens":4096},"toolSet":{"codecId":"atelia.tool-definition.canonical-json.v1","sha256":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","runtimeIdentity":null,"definitions":[]},"recipe":{"recipeId":"atelia.session-journal.coherent-artifact-tail.recipe.v1","canonicalRequestCodecId":"atelia.completion-request.canonical-json.v1"},"target":{"connection":{"connectionId":"connection-A","kind":"test","connectionFingerprint":"connection-fingerprint-A","requestAdapterFingerprint":"adapter-fingerprint-A"},"clientName":"client-A","apiSpecId":"api-A"},"commitment":{"byteLength":123,"sha256":"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"}}}
+            {"v":5,"body":{"origin":{"correlationId":"correlation-01","reason":"observation"},"execution":{"lastIssuedToolExecutionSequence":17},"plan":{"rawStartExclusive":"ej1:00000000000000010000000100000000","rawRangeSha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","rawStartSetups":{"runtimeConfig":{"address":"ej1:00000000000000030000000100000000","bodySchemaVersion":1,"payloadSha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},"systemPrompt":{"address":"ej1:00000000000000040000000100000000","bodySchemaVersion":1,"payloadSha256":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"}},"exactContextInputs":[{"contentSha256":"e6babf8c03395cef81dcfa83a6dbb4ec4a8892a9fe188a4b37d99123b79b67df","contextSnapshot":{"systemPromptFragment":"system recap","observationMessage":"","actionMessage":""}},{"contentSha256":"60b37427fabe85d010aa6c32e7b5239eda1d3cc0472fc9a02ae6027f3aba4d02","contextSnapshot":{"systemPromptFragment":"","observationMessage":"world recap","actionMessage":""}}]},"setups":{"runtimeConfig":{"address":"ej1:00000000000000030000000100000000","bodySchemaVersion":1,"payloadSha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},"systemPrompt":{"address":"ej1:00000000000000040000000100000000","bodySchemaVersion":1,"payloadSha256":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"}},"parameters":{"modelId":"model-A","maxTokens":4096},"toolSet":{"codecId":"atelia.tool-definition.canonical-json.v1","sha256":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","runtimeIdentity":null,"definitions":[]},"recipe":{"recipeId":"atelia.session-journal.coherent-artifact-tail.recipe.v1","canonicalRequestCodecId":"atelia.completion-request.canonical-json.v1"},"target":{"connection":{"connectionId":"connection-A","kind":"test","connectionFingerprint":"connection-fingerprint-A","requestAdapterFingerprint":"adapter-fingerprint-A"},"clientName":"client-A","apiSpecId":"api-A"},"commitment":{"byteLength":123,"sha256":"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"}}}
             """.Trim(),
             Encoding.UTF8.GetString(encoded)
         );
@@ -65,7 +65,7 @@ public sealed class SessionRequestManifestCodecTests {
     [InlineData("\"commitment\":{\"byteLength\":", "\"commitment\":{\"unknown\":true,\"byteLength\":")]
     [InlineData("\"correlationId\":\"correlation-01\",", "\"correlationId\":\"duplicate\",\"correlationId\":\"correlation-01\",")]
     [InlineData("\"recipeId\":\"atelia.session-journal.coherent-artifact-tail.recipe.v1\",", "\"recipeId\":\"duplicate\",\"recipeId\":\"atelia.session-journal.coherent-artifact-tail.recipe.v1\",")]
-    public void CompletionRequestPreparedV4_StrictDecodeRejectsUnknownOrDuplicateProperties(
+    public void CompletionRequestPreparedV5_StrictDecodeRejectsUnknownOrDuplicateProperties(
         string marker,
         string replacement
     ) {
@@ -78,7 +78,7 @@ public sealed class SessionRequestManifestCodecTests {
     [InlineData("\"recipe\":{", "\"removedRecipe\":{")]
     [InlineData("\"rawStartExclusive\":", "\"removedRawStart\":")]
     [InlineData("\"rawStartSetups\":", "\"removedRawStartSetups\":")]
-    public void CompletionRequestPreparedV4_StrictDecodeRejectsMissingRequiredProperties(
+    public void CompletionRequestPreparedV5_StrictDecodeRejectsMissingRequiredProperties(
         string marker,
         string replacement
     ) {
@@ -106,13 +106,17 @@ public sealed class SessionRequestManifestCodecTests {
     }
 
     [Fact]
-    public void ManifestValidation_RequiresExactContextInputsAndToolRuntimeIdentity() {
+    public void ManifestValidation_AllowsExactEmptyMemoryAndRequiresToolRuntimeIdentity() {
         CompletionRequestPreparedBody body = CreateManifest();
         SessionRequestContextInput first = body.Plan.ExactContextInputs[0];
 
-        Assert.Throws<InvalidDataException>(() => SessionRequestManifestCodec.Validate(
-            body with { Plan = body.Plan with { ExactContextInputs = [] } }
-        ));
+        SessionRequestManifestCodec.Validate(
+            body with {
+                Plan = body.Plan with {
+                    ExactContextInputs = []
+                }
+            }
+        );
         SessionRequestManifestCodec.Validate(body with {
             Plan = body.Plan with { ExactContextInputs = [first] }
         });
@@ -192,7 +196,7 @@ public sealed class SessionRequestManifestCodecTests {
     }
 
     [Fact]
-    public void CompletionRequestPreparedV4_PreservesAbsentNullAndNumericToolDefaults() {
+    public void CompletionRequestPreparedV5_PreservesAbsentNullAndNumericToolDefaults() {
         CompletionRequestPreparedBody body = CreateManifest(
             CreateToolDefinitions()
         );
@@ -234,7 +238,7 @@ public sealed class SessionRequestManifestCodecTests {
     }
 
     [Fact]
-    public void CompletionRequestPreparedV4_RoundtripsComprehensiveNestedToolSchemasInOrder() {
+    public void CompletionRequestPreparedV5_RoundtripsComprehensiveNestedToolSchemasInOrder() {
         CompletionRequestPreparedBody body = CreateManifest(
             CreateComprehensiveToolDefinitions()
         );
@@ -426,7 +430,7 @@ public sealed class SessionRequestManifestCodecTests {
     }
 
     [Fact]
-    public void CompletionRequestPreparedV4_StrictDecodeRejectsNestedSnapshotAndToolSchemaDrift() {
+    public void CompletionRequestPreparedV5_StrictDecodeRejectsNestedSnapshotAndToolSchemaDrift() {
         string canonical = EncodeManifestJson(CreateToolDefinitions());
         (string Marker, string Replacement)[] mutations = [
             (

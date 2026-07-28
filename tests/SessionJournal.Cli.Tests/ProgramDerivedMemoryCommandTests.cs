@@ -107,15 +107,23 @@ public sealed class ProgramDerivedMemoryCommandTests : IDisposable {
             fixture.Policy,
             fixture.LineageKey
         );
-        SJ.SessionContextCandidate? candidate = await provider.SelectAsync(
-            new SJ.SessionContextSelectionRequest(
-                fixture.Anchor,
-                SJ.SessionContextSelectionMode.Latest,
-                fixture.Policy.CoherenceGroup
-            ),
-            CancellationToken.None
+        SJ.SessionContextCandidateDiscovery discovery =
+            await provider.DiscoverAsync(
+                new SJ.SessionContextSelectionRequest(
+                    fixture.Anchor,
+                    SJ.SessionContextSelectionMode.Latest,
+                    fixture.Policy.CoherenceGroup
+                ),
+                CancellationToken.None
+            );
+        SJ.SessionContextCandidateDescriptor descriptor = Assert.Single(
+            discovery.Candidates
         );
-        Assert.NotNull(candidate);
+        SJ.SessionContextCandidate candidate =
+            await provider.MaterializeAsync(
+                descriptor,
+                CancellationToken.None
+            );
         Assert.Equal(2, candidate.Contributions.Count);
         Assert.Equal(before, ReadRawSnapshot(fixture.Path));
         Assert.Equal(0, before.UnknownEventKindCount);
@@ -840,6 +848,171 @@ public sealed class ProgramDerivedMemoryCommandTests : IDisposable {
         Assert.False(Directory.Exists(callsPath));
     }
 
+    [Fact]
+    public async Task OnlineTurnRunsPendingMaintenanceAndAgentCompletion() {
+        Fixture fixture = await CreateFixtureAsync();
+        RawSnapshot before = ReadRawSnapshot(fixture.Path);
+        string connectionsPath = Path.Combine(
+            _tempRoot,
+            "online-turn-connections.json"
+        );
+        string outputPath = Path.Combine(
+            _tempRoot,
+            "online-turn-result.json"
+        );
+        string callLogDir = Path.Combine(
+            _tempRoot,
+            "online-turn-calls"
+        );
+        WriteConnections(connectionsPath);
+        var factory = new ConcurrentScriptedCompletionClientFactory(
+            "rewritten memory"
+        );
+
+        int exitCode = Program.MainCore([
+            "run-online-turn",
+            "--input", fixture.Path,
+            "--message", "new observation",
+            "--role",
+            "required:autobiographical-rewrite:produce",
+            "--role",
+            "required:world-understanding-rewrite:produce",
+            "--policy-id", "daily-memory",
+            "--policy-fingerprint", "daily-memory-v1",
+            "--connections", connectionsPath,
+            "--call-log-dir", callLogDir,
+            "--output", outputPath,
+            "--coherence-group", "test-group",
+            "--selection", "latest",
+            "--bootstrap-budget", "1000"
+        ], factory);
+
+        Assert.Equal(0, exitCode);
+        // The fixture starts with one pending epoch. Preflight settles it,
+        // then the intentionally tiny planner threshold schedules the newly
+        // appended observation as a second epoch before the agent completion.
+        Assert.Equal(5, factory.CompletionCallCount);
+        Assert.True(File.Exists(outputPath));
+        using JsonDocument output = JsonDocument.Parse(
+            File.ReadAllText(outputPath)
+        );
+        Assert.Equal(
+            "atelia.session-journal.online-turn-run.v1",
+            output.RootElement.GetProperty("schema").GetString()
+        );
+        Assert.NotEqual(
+            before.Head,
+            ReadRawSnapshot(fixture.Path).Head
+        );
+        Assert.Equal(
+            2,
+            (await fixture.Repository.ArtifactSets
+                .ReadInventoryAsync()).Sets.Count
+        );
+    }
+
+    [Fact]
+    public async Task DuplicateOnlineRoleFailsBeforeDirectoriesOrClient() {
+        Fixture fixture = await CreateFixtureAsync();
+        string connectionsPath = Path.Combine(
+            _tempRoot,
+            "duplicate-online-role-connections.json"
+        );
+        string outputPath = Path.Combine(
+            _tempRoot,
+            "duplicate-online-role-output.json"
+        );
+        string callsPath = Path.Combine(
+            _tempRoot,
+            "duplicate-online-role-calls"
+        );
+        WriteConnections(connectionsPath);
+        var factory = new ConcurrentScriptedCompletionClientFactory(
+            "must-not-run"
+        );
+
+        int exitCode = Program.MainCore([
+            "run-online-turn",
+            "--input", fixture.Path,
+            "--message", "new observation",
+            "--role",
+            "required:autobiographical-rewrite:produce",
+            "--role",
+            "required:autobiographical-rewrite:produce",
+            "--policy-id", "daily-memory",
+            "--policy-fingerprint", "daily-memory-v1",
+            "--connections", connectionsPath,
+            "--call-log-dir", callsPath,
+            "--output", outputPath,
+            "--coherence-group", "test-group"
+        ], factory);
+
+        Assert.Equal(1, exitCode);
+        Assert.Equal(0, factory.CreateCallCount);
+        Assert.Equal(0, factory.CompletionCallCount);
+        Assert.False(File.Exists(outputPath));
+        Assert.False(Directory.Exists(callsPath));
+    }
+
+    [Fact]
+    public async Task OnlineTurnDefaultsToRefuseThenExplicitlyReopensPrepared() {
+        Fixture fixture = await CreateFixtureAsync();
+        string connectionsPath = Path.Combine(
+            _tempRoot,
+            "online-reopen-connections.json"
+        );
+        string outputPath = Path.Combine(
+            _tempRoot,
+            "online-reopen-result.json"
+        );
+        string callLogDir = Path.Combine(
+            _tempRoot,
+            "online-reopen-calls"
+        );
+        WriteConnections(connectionsPath);
+        var factory = new ConcurrentScriptedCompletionClientFactory(
+            "rewritten memory",
+            failAtCall: 5
+        );
+        string[] args = [
+            "run-online-turn",
+            "--input", fixture.Path,
+            "--message", "new observation",
+            "--role",
+            "required:autobiographical-rewrite:produce",
+            "--role",
+            "required:world-understanding-rewrite:produce",
+            "--policy-id", "daily-memory",
+            "--policy-fingerprint", "daily-memory-v1",
+            "--connections", connectionsPath,
+            "--call-log-dir", callLogDir,
+            "--output", outputPath,
+            "--coherence-group", "test-group",
+            "--uncertain-recovery", "restart-new-attempt"
+        ];
+
+        Assert.Equal(1, Program.MainCore(args, factory));
+        Assert.Equal(5, factory.CompletionCallCount);
+        Assert.False(File.Exists(outputPath));
+
+        Assert.Equal(
+            1,
+            Program.MainCore(args[..^2], factory)
+        );
+        Assert.Equal(5, factory.CompletionCallCount);
+        Assert.False(File.Exists(outputPath));
+
+        Assert.Equal(0, Program.MainCore(args, factory));
+        Assert.Equal(6, factory.CompletionCallCount);
+        Assert.True(File.Exists(outputPath));
+        using SJ.SessionJournalEngine reopened =
+            SJ.SessionJournalEngine.Open(fixture.Path);
+        Assert.Equal(
+            SJ.SessionExecutionPhase.Idle,
+            reopened.InspectExecutionBoundary().Phase
+        );
+    }
+
     private async ValueTask<Fixture> CreateFixtureAsync() {
         Directory.CreateDirectory(_tempRoot);
         string path = Path.Combine(
@@ -1180,10 +1353,11 @@ public sealed class ProgramDerivedMemoryCommandTests : IDisposable {
     }
 
     private sealed class ConcurrentScriptedCompletionClientFactory(
-        string responseText
+        string responseText,
+        int? failAtCall = null
     ) : ICompletionClientFactory {
         private readonly ConcurrentScriptedCompletionClient _client =
-            new(responseText);
+            new(responseText, failAtCall);
 
         public int CreateCallCount { get; private set; }
         public int CompletionCallCount => _client.CallCount;
@@ -1197,7 +1371,8 @@ public sealed class ProgramDerivedMemoryCommandTests : IDisposable {
     }
 
     private sealed class ConcurrentScriptedCompletionClient(
-        string responseText
+        string responseText,
+        int? failAtCall = null
     ) : ICompletionClient {
         private int _callCount;
 
@@ -1211,7 +1386,12 @@ public sealed class ProgramDerivedMemoryCommandTests : IDisposable {
             CancellationToken cancellationToken = default
         ) {
             cancellationToken.ThrowIfCancellationRequested();
-            _ = Interlocked.Increment(ref _callCount);
+            int call = Interlocked.Increment(ref _callCount);
+            if (call == failAtCall) {
+                throw new HttpRequestException(
+                    "scripted uncertain provider failure"
+                );
+            }
             return Task.FromResult(new CompletionResult(
                 new ActionMessage([
                     new ActionBlock.Text(responseText)

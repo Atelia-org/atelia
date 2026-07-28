@@ -37,6 +37,7 @@ public sealed record SessionHistoryPlanningWindow(
     EventAddress StartExclusive,
     SessionContextAnchorSetupReferences StartSetups,
     SessionContextAnchorSetupReferences EndSetups,
+    IReadOnlyList<EventAddress> RawAddresses,
     IReadOnlyList<SessionHistoryPlanningUnit> Units,
     IReadOnlyList<SessionHistoryPlanningBoundary> ReplaySafeBoundaries,
     IReadOnlyDictionary<
@@ -44,7 +45,17 @@ public sealed record SessionHistoryPlanningWindow(
         SessionContextAnchorSetupReferences
     > ReplaySafeBoundarySetups,
     SessionHistoryPlanningDiagnostics Diagnostics
-);
+) {
+    internal IReadOnlyList<SessionRawRangeHashEntry> RawHashEntries {
+        get;
+        init;
+    } = Array.Empty<SessionRawRangeHashEntry>();
+
+    internal SessionTailContextProjection.TailFoldResult? Folded {
+        get;
+        init;
+    }
+}
 
 /// <summary>
 /// One header-only node on the captured current main Parent lineage.

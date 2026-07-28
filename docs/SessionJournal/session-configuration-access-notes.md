@@ -1,23 +1,23 @@
 # SessionJournal Configuration Access Notes
 
-> 状态：CS-3A～CS-3D7 Implemented / Prepared v4 / DM-4 raw activation removal
+> 状态：CS-3A～CS-3D7 + DM-0～DM-8 Implemented / Prepared v5
 > 日期：2026-07-27
 > 相关文档：[SessionJournal 主干设计基线](session-journal-trunk-design.md)、
 > [Tail-only Execution Recovery Design](tail-execution-recovery-design.md)、
 > [SessionJournal 事件源会话与长期上下文架构路线图](event-sourced-session-architecture-roadmap.md)
 
-> **DM-4 边界说明（2026-07-28）**：本文下文记录的 raw derived-set setup checkpoint 是
+> **DM-8 边界说明（2026-07-28）**：本文下文记录的 raw derived-set setup checkpoint 是
 > CS-3D5～D7 的历史实现，不再是 current contract。raw activation 已删除；近头 Prepared
 > 提供 raw setup hint，首次 Prepared 前可由可重建 DerivedMemory candidate hint 加速，但
 > authoritative fallback 仍是 raw header parent walk。DerivedMemory 作为独立可替换程序集只参与未
 > Prepared 的 context planning，不能进入 `SessionExecutionTailResolver` 或 Prepared exact reopen。
-> 详见 [化简调研 §4](tail-execution-recovery-simplification-study.md)。
+> 详见 [DerivedMemory 实施方案](derived-memory-subsystem-implementation-plan.md)。
 
 ## 1. 结论
 
-CS-5-lite 之后，CS-3A～D7 与 DM-4 已完成最小可恢复 Completion 主线：paired setup checkpoint、
+CS-5-lite 之后，CS-3A～D7 与 DM-0～DM-8 已完成最小可恢复 Completion 主线：paired setup checkpoint、
 dependency-closed artifact tail、pure execution tail resolver、durable tool identity，以及
-self-contained `CompletionRequestPrepared` v4。prepare/reopen
+self-contained `CompletionRequestPrepared` v5。prepare/reopen
 共用同一个 canonical request reconstructor；Prepared-only 可安全派发，只有已写
 `CompletionAttemptStarted` 的 provider attempt 才属于 outcome uncertain。
 
@@ -96,8 +96,9 @@ Observation 与 dependency-closed ToolResult 的 request context 都走 coherent
   Action 或 failed attempt 做有界局部因果证明，再以 CAS append observation。
 - `ResumeAsync`、setup/import mutation 与 tool-loop 每次 append 后都从 exact new head 重解
   operational tail，不凭链头 kind 猜状态。
-- request preparation 从 exact activation、governing setup、inline artifact contributions 与 raw
-  suffix 构造；current Prepared v3 codec/reconstructor 只接受 coherent recipe，不调用 `Project()`。
+- request preparation 从 store-neutral coherent candidate、governing setup、exact contributions 与
+  raw suffix 构造；current Prepared v5 codec/reconstructor 只接受 coherent recipe，不调用
+  `Project()`。
 
 这里采用与 setup checkpoint 相同的 **validated-writer trust model**：局部证明信任更早 prefix 已经由
 SessionJournal 的受控 writer / artifact provenance 校验，不试图把任意低层伪造 raw chain 重新做一次
@@ -393,22 +394,22 @@ ArtifactSet 或报告 not-ready，不能回退 full raw，也不能把透明 ove
 `completion-request-prepared` 必须足够封闭，使 CS-3C 能恢复同一个 request。只在 manifest 中保存
 `ArtifactId + hash` 会让“删除 derived store”破坏已提交 request，这是不合法的。
 
-因此 current coherent Prepared v3 的每个 artifact input 同时保存：
+因此 current coherent Prepared v5 的每个 exact context input 保存：
 
-- exact artifact id / kind，用于 selection provenance；
-- materialized header 的三段 exact string snapshot；
+- carrier 与 materialized header 的 exact string snapshot，不保存 artifact/set identity；
 - 对该 snapshot 使用 domain tag 与 32-bit big-endian 长度前缀计算的 SHA-256。
 
-snapshot 有明确大小上限。artifact 只参与 manifest 提交前的选择和校验；manifest 提交后，即使 derived
-artifact 被删除，CS-3C 仍可从 raw manifest 内联 snapshot、raw suffix、setup refs 与 renderer identity
-重建同一 provider-neutral request。这里内联的是有界 recap header，不是复制整份 rendered request。
+snapshot 有明确大小上限；strict empty-lineage bootstrap 则精确保存零个 inputs。artifact 只参与
+manifest 提交前的选择和校验；manifest 提交后，即使 derived store 被删除，CS-3C 仍可从 raw manifest
+内联 snapshot、raw suffix、setup refs 与 renderer identity 重建同一 provider-neutral request。
+这里内联的是有界 context header，不是复制整份 rendered request。
 
 ## 8. 推荐的下一步工作包
 
 > **历史实施记录（CS-3A～C）**：以下三节保留当时的 v1/full-raw/explicit 增量落点，帮助解释
 > 决策演进；其中“Prepared 直接承载 attempt / Restarted”只描述 D7 前协议，不能作为现行实现指引。
 > D6D 已删除这些 legacy policy 与 reader；current 合同以本文 §2、§7 和
-> `CompletionRequestPrepared` v3 + `CompletionAttemptStarted` 为准：Prepared-only 是
+> `CompletionRequestPrepared` v5 + `CompletionAttemptStarted` 为准：Prepared-only 是
 > `AwaitingCompletionDispatch`，每次物理调用前追加 Started，且 Action/Failed 只能直接继承最新
 > Started。
 
@@ -514,8 +515,9 @@ near-head checkpoint 恢复。Planner policy 可以先选择 full raw fallback�
 
 > 本节只记录 D7 前的 P/R 协议事实；下文的 Restarted、attempt id 与旧 recovery policy 均非 current
 > API。current P/S 合同以
-> [CS-3D7 设计收口](done/prepared-provider-attempt-symmetry-design.md) 为准：Prepared v3 保存
-> request/origin，Started event address 保存 attempt identity，live terminal topology 只有
+> [CS-3D7 设计收口](done/prepared-provider-attempt-symmetry-design.md) 固定的 attempt topology 为准；
+> 该文当时使用 Prepared v3，DM-8 已把 current request wire 升级为 Prepared v5。
+> Prepared 保存 request/origin，Started event address 保存 attempt identity，live terminal topology 只有
 > `Prepared -> Started+ -> Action/Failed`；旧 kind 11 已 retired。
 
 实际落点：
@@ -653,7 +655,7 @@ Request recovery：
   exception/cancellation：仍为 `AwaitingCompletion`，不伪造 outcome。
 - 当前 config/max tokens/tail option 或 planner 升级：不改变旧 manifest 的恢复结果；dispatch
   connection/client/tool definitions 漂移则在新 attempt 提交前拒绝。
-- 删除 derived artifact：已 committed coherent Prepared v3 仍可由内联 snapshot 恢复。
+- 删除 derived artifact：已 committed coherent Prepared v5 仍可由内联 snapshot 恢复。
 - recovered response 含 tool calls：当前 host tool runtime identity 必须与 manifest 精确一致；否则在
   新 Started 或外部 dispatch 前 fail-fast。
 
@@ -697,7 +699,9 @@ CS-3A/B/C 已证明 **tail request construction + persisted request recovery** �
 CS-3D1/D2/D3 已证明 **durable operational checkpoint + pure tail execution projection + resolver
 driven online execution**；CS-3D4 又让配置了 exact coherent ArtifactSet 的 normal Observation 与
 fully-settled ToolResult request context 退出 full `Project()`；CS-3D5/D6C1 又完成 durable
-ArtifactSet activation 与 coherent-only Prepared，D7 将 current wire 收为 Prepared v3 + Started。
+ArtifactSet activation 与 coherent-only Prepared；这是 D7 当时的 Prepared v3 + Started
+历史收口。DM-2/DM-8 随后把 current wire 升级为 self-contained Prepared v5，并删除 raw
+ArtifactSet activation。
 public 审计 API 继续保留完整历史语义；旧
 full-raw / explicit reader 已在 D6D wire cutover 删除，不是 current runtime 合同。
 

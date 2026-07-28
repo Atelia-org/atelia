@@ -1,13 +1,13 @@
 # SessionJournal 主干设计基线
 
-> **状态**：Current Trunk / CS-3A～CS-3D7 coherent-only Prepared v3
+> **状态**：Historical Trunk Baseline / CS-3A～CS-3D7 coherent-only Prepared v3
 > **日期**：2026-07-27
 > **底层依赖**：[EventJournal 使用指南](../../src/EventJournal/README.md)、[EventJournal 功能需求与粗粒度设计基线](../EventJournal/event-journal-requirements-and-design.md)
 > **上层路线图**：[SessionJournal 事件源会话与长期上下文架构路线图](event-sourced-session-architecture-roadmap.md)
 > **后续恢复设计**：[Tail-only Execution Recovery Design](tail-execution-recovery-design.md)
 > **替代对象**：`prototypes/ChatSession`（StateJournal deque + 整轮末尾 commit）
 
-> **后续边界说明（2026-07-27）**：本文描述 current trunk 的已实施基线，因此仍如实记录 raw
+> **后续边界说明（2026-07-28）**：本文描述 D7 当时的已实施基线，因此仍如实记录 raw
 > `ArtifactSetCommitted` 与 Prepared v3。长期方向已在
 > [Tail Execution Recovery 化简调研 §4](tail-execution-recovery-simplification-study.md) 中修订：
 > raw sequence 不再引用 derived ids；具体 Derived ArtifactSet 实现迁入单向引用 SessionJournal
@@ -339,7 +339,8 @@ result 都是非法 raw chain，fail-fast 且不递增 execution sequence。
   只有在当前 host identity 精确匹配时才可进入 durable tool dispatch。跨实现升级的 reconcile/pause
   policy 仍留待后续 capability。
 - CS-3B 的 explicit/no-tools fast path 是历史台阶；CS-3D3 后所有 execution phase 由 tail resolver
-  路由，D7 后 current request 只走 coherent Prepared v3 + Started。显式 `Project()` / `ReplayHistory()`
+  路由，D7 当时 request 只走 coherent Prepared v3 + Started。DM-8 current wire 已升级为
+  Prepared v5 + Started，且 raw activation 已删除。显式 `Project()` / `ReplayHistory()`
   保持 full semantics，但 online 不存在 legacy full-raw fallback。
 - CS-3D4 的 normal long-session policy 使用至少两个 distinct exact artifact members；每个 member
   只贡献自己的 target block，并要求共享 coverage anchor、source head 位于当前 Parent lineage。

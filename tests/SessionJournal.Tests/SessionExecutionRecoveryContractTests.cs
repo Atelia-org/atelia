@@ -597,7 +597,7 @@ public sealed class SessionExecutionRecoveryContractTests : IDisposable {
             new ToolDefinition("alpha", "Alpha", new ToolSchema.Object()),
             new ToolDefinition("beta", "Beta", new ToolSchema.Object())
         ];
-        return PreparedV4Fixture.Create(
+        return PreparedV5Fixture.Create(
             correlationId,
             reason,
             runtime,

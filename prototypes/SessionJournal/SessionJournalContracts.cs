@@ -34,6 +34,16 @@ public enum SessionExecutionPhase {
     TurnFailed,
 }
 
+/// <summary>
+/// Minimal store-neutral online boundary inspection. It exposes no projection, context, derived
+/// identity, or pending request body.
+/// </summary>
+public sealed record SessionExecutionBoundaryInspection(
+    EventAddress? Head,
+    SessionExecutionPhase Phase,
+    SessionEventKind? HeadKind
+);
+
 public sealed record SessionCreateOptions(
     string ModelId,
     string SystemPrompt,
@@ -80,7 +90,8 @@ public sealed record SessionRuntime(
         SessionUncertainCompletionRecoveryPolicy.Refuse,
     SessionToolRuntimeIdentity? ToolRuntimeIdentity = null,
     ICoherentContextCandidateSource? ContextCandidateSource = null,
-    SessionContextSelectionOptions? ContextSelection = null
+    SessionContextSelectionOptions? ContextSelection = null,
+    ISessionMemoryLifecycleCoordinator? MemoryLifecycle = null
 );
 
 /// <summary>
@@ -91,12 +102,16 @@ public sealed record SessionRuntime(
 public sealed record SessionContextSelectionOptions(
     string CoherenceGroup,
     SessionContextSelectionMode Mode = SessionContextSelectionMode.Latest,
-    int? RawSuffixTokenBudget = null
+    long? RawSuffixTokenBudget = null,
+    long? TotalContextTokenBudget = null,
+    int NthPreviousOrdinal = 0,
+    int MaxCandidateCount = 32,
+    long? BootstrapRawSuffixTokenBudget = null
 ) {
     public static SessionContextSelectionOptions Default { get; } = new("default");
 
     public void ValidateShape() {
-        if (Mode != SessionContextSelectionMode.Latest) {
+        if (!Enum.IsDefined(Mode)) {
             throw new ArgumentOutOfRangeException(
                 nameof(Mode),
                 Mode,
@@ -115,6 +130,52 @@ public sealed record SessionContextSelectionOptions(
                 "Raw suffix token budget must be positive when specified."
             );
         }
+        if (TotalContextTokenBudget is <= 0) {
+            throw new ArgumentOutOfRangeException(
+                nameof(TotalContextTokenBudget),
+                "Total context token budget must be positive when specified."
+            );
+        }
+        if (BootstrapRawSuffixTokenBudget is <= 0) {
+            throw new ArgumentOutOfRangeException(
+                nameof(BootstrapRawSuffixTokenBudget),
+                "Bootstrap raw suffix token budget must be positive when specified."
+            );
+        }
+        if (NthPreviousOrdinal < 0) {
+            throw new ArgumentOutOfRangeException(
+                nameof(NthPreviousOrdinal),
+                "Nth-previous ordinal cannot be negative."
+            );
+        }
+        if (Mode != SessionContextSelectionMode.NthPrevious
+            && NthPreviousOrdinal != 0) {
+            throw new ArgumentException(
+                "A non-zero nth-previous ordinal requires NthPrevious mode.",
+                nameof(NthPreviousOrdinal)
+            );
+        }
+        if (Mode == SessionContextSelectionMode.Budgeted
+            && RawSuffixTokenBudget is null
+            && TotalContextTokenBudget is null) {
+            throw new ArgumentException(
+                "Budgeted selection requires a raw-suffix or total-context token budget."
+            );
+        }
+        if (MaxCandidateCount is <= 0
+            or > SessionContextSelectionRequest.MaximumCandidateCount) {
+            throw new ArgumentOutOfRangeException(
+                nameof(MaxCandidateCount),
+                $"Candidate count must be between 1 and {SessionContextSelectionRequest.MaximumCandidateCount}."
+            );
+        }
+        if (Mode == SessionContextSelectionMode.NthPrevious
+            && NthPreviousOrdinal >= MaxCandidateCount) {
+            throw new ArgumentException(
+                "Nth-previous ordinal must be smaller than the candidate discovery bound.",
+                nameof(NthPreviousOrdinal)
+            );
+        }
     }
 
     public SessionContextSelectionRequest CreateRequest(EventAddress completionBoundary) {
@@ -123,7 +184,10 @@ public sealed record SessionContextSelectionOptions(
             completionBoundary,
             Mode,
             CoherenceGroup,
-            RawSuffixTokenBudget
+            RawSuffixTokenBudget,
+            TotalContextTokenBudget,
+            NthPreviousOrdinal,
+            MaxCandidateCount
         );
         request.ValidateShape();
         return request;
@@ -151,6 +215,8 @@ public sealed record ResumeOutcome(
 public enum SessionJournalNotReadyReason {
     ContextCandidateSourceRequired,
     ContextCandidateUnavailable,
+    MemoryMaintenanceBackpressure,
+    MemoryMaintenanceUnavailable,
 }
 
 /// <summary>

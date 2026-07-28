@@ -120,7 +120,7 @@ internal static class SessionPreparedRequestReconstructor {
                 StringComparison.Ordinal
             )) {
             throw new InvalidDataException(
-                "Prepared v4 plan.rawStartSetups do not match the authoritative governing setup at rawStartExclusive."
+                "Prepared v5 plan.rawStartSetups do not match the authoritative governing setup at rawStartExclusive."
             );
         }
         SessionRuntimeConfiguration runtimeConfig = ReadAndValidateSetupReference<SessionRuntimeConfiguration>(
@@ -189,7 +189,7 @@ internal static class SessionPreparedRequestReconstructor {
                 or SessionEventKind.ToolResultObserved
             )) {
             throw new InvalidDataException(
-                "Prepared v4 tail boundary must be ObservationAccepted or a dependency-closed ToolResultObserved."
+                "Prepared v5 tail boundary must be ObservationAccepted or a dependency-closed ToolResultObserved."
             );
         }
         ValidateAttemptBoundary(
@@ -214,7 +214,7 @@ internal static class SessionPreparedRequestReconstructor {
             || folded.ToolExecutionSequenceCheckpoint != finalRecovery.State.ToolExecutionSequenceCheckpoint
             || !string.Equals(folded.ActiveCorrelationId, finalRecovery.State.ActiveCorrelationId, StringComparison.Ordinal)) {
             throw new InvalidDataException(
-                "Prepared v4 tail fold does not match its pinned setup or exact final recovery."
+                "Prepared v5 tail fold does not match its pinned setup or exact final recovery."
             );
         }
 

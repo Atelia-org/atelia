@@ -19,7 +19,7 @@ public sealed class DerivedArtifactEpochPlanner {
     public const string EpochPointerSchema =
         "atelia.session-journal.derived-artifact-epoch-pointer.v1";
     public const string TokenEstimatorId =
-        "atelia.session-journal.flattened-text-token-estimator.v1";
+        SessionHistoryTokenEstimator.EstimatorId;
     public const string BoundaryPolicyId =
         "atelia.session-journal.dependency-closed-replay-safe-boundary.v1";
     public const string HardLimitPolicyId =
@@ -220,6 +220,24 @@ public sealed class DerivedArtifactEpochPlanner {
                 .ConfigureAwait(false);
     }
 
+    public async ValueTask<DerivedArtifactEpochPlan?>
+        TryReadLatestEpochAsync(
+        DerivedArtifactPlannerKey key,
+        CancellationToken cancellationToken = default
+    ) {
+        ValidateKey(key);
+        DerivedArtifactEpochLatestPointer? pointer =
+            await TryReadEpochPointerAsync(key, cancellationToken)
+                .ConfigureAwait(false);
+        return pointer is null
+            ? null
+            : await ReadEpochRequiredAsync(
+                    pointer.EpochId,
+                    cancellationToken
+                )
+                .ConfigureAwait(false);
+    }
+
     public async ValueTask<DerivedArtifactEpochPlanningResult> PlanAsync(
         SessionJournalEngine engine,
         DerivedArtifactEpochPlanningRequest request,
@@ -312,7 +330,7 @@ public sealed class DerivedArtifactEpochPlanner {
                 cancellationToken
             );
         long[] unitCosts = window.Units
-            .Select(static unit => EstimateTokens(unit.Message))
+            .Select(static unit => SessionHistoryTokenEstimator.Estimate(unit.Message))
             .ToArray();
         long totalTokens = SumChecked(unitCosts, unitCosts.Length);
         CandidateBoundary? selected = SelectBoundary(
@@ -790,7 +808,7 @@ public sealed class DerivedArtifactEpochPlanner {
                 );
             }
             long[] unitCosts = window.Units
-                .Select(static unit => EstimateTokens(unit.Message))
+                .Select(static unit => SessionHistoryTokenEstimator.Estimate(unit.Message))
                 .ToArray();
             long totalTokens =
                 SumChecked(unitCosts, unitCosts.Length);
@@ -1227,24 +1245,6 @@ public sealed class DerivedArtifactEpochPlanner {
         && current.BoundaryPolicyId == definition.BoundaryPolicyId
         && current.HardLimitPolicyId == definition.HardLimitPolicyId
         && current.GenesisPolicyId == definition.GenesisPolicyId;
-
-    private static long EstimateTokens(IHistoryMessage message) {
-        string text = message switch {
-            SessionContextHeader header => string.Join(
-                '\n',
-                new[] {
-                    header.SystemPromptFragment,
-                    header.ObservationMessage,
-                    header.ActionMessage?.GetFlattenedText()
-                }.Where(static value => !string.IsNullOrEmpty(value))
-            ),
-            ToolResultsMessage results => results.Content ?? string.Empty,
-            ObservationMessage observation => observation.Content ?? string.Empty,
-            ActionMessage action => action.GetFlattenedText(),
-            _ => message.ToString() ?? string.Empty
-        };
-        return Math.Max(1, text.Length / 3);
-    }
 
     private static DerivedArtifactEpochPlanningDiagnostics CreateDiagnostics(
         SessionHistoryPlanningWindow window,

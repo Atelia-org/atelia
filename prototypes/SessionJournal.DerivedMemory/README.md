@@ -9,16 +9,20 @@
   rebuildable current/latest indexes；
 - deterministic multi-role orchestration transaction、immutable role settlement、
   durable finalization intent、missing-role resume 与 required-role closure；
-- 把已发布的 exact set 投影为 `ICoherentContextCandidateSource`。
+- 把已发布的 exact set 投影为 bounded two-phase `ICoherentContextCandidateSource`；
+- 通过 `DerivedMemoryOnlineLifecycleCoordinator` 在 safe raw boundary 组合 shared epoch
+  planning、pending-first maintenance、ArtifactSet publication 与显式 backpressure。
 
 DM-6 candidate store 不再维护 role-local latest pointer。`DerivedMemoryArtifactStore`
 只接受 v2 exact-epoch identity，并允许同一 role/epoch 的 prompt/model tuning 结果
 append-only 共存；只有 ArtifactSet publication 才决定 candidate 是否可选择。旧
 `derived/recaps/v1/`、latest-by-profile 与 linear recap CAS 已直接退役。
 
-DM-3B provider 只实现 `Latest`。`RawSuffixTokenBudget` 会验证形状，但在这一版只是
-non-binding hint：provider 不搜索更早 set，也不保证 raw suffix 落入该预算。budgeted/NthPrevious
-selection 属于后续版本。
+DM-8 provider 支持 `Latest`、`NthPrevious` 与 `Budgeted`：discovery 阶段只返回
+content-free descriptors，materialization 才读取 exact member text。`Latest` 最多发现 1 个，
+`NthPrevious(n)` 最多发现 `n + 1`，`Budgeted` 受 core request 的 candidate bound 限制。
+ordinal 不是 cost；raw suffix 与 total canonical request budget 由 SessionJournal core 用共享
+estimator 和 raw authority window 计算。
 
 边界约束：
 
@@ -31,6 +35,10 @@ selection 属于后续版本。
 - provider 返回的 raw-facing assertions 仍由 SessionJournal authoritative validator 复核；
 - Prepared 已保存进入 provider request 的 exact snapshots，故 Prepared 后删除整个
   `derived/` 仍可恢复。
+
+真实空 lineage 通过 strict `EmptyLineage` 状态进入 bounded bootstrap；missing/stale latest
+pointer 会先 rebuild，不能伪装为空。bootstrap 不创建空 artifact，而由 Prepared v5 的零个
+`ExactContextInputs` 固化 exact request。首个真实 ArtifactSet 发布后 bootstrap 自动失效。
 
 DM-5 planner 在任何 maintainer/LLM 执行前，只通过 SessionJournal 暴露的
 `ReadHistoryPlanningWindow()` 读取 bounded、dependency-closed suffix。config key 是
@@ -78,8 +86,7 @@ authority。
 
 `SessionJournal.Cli` composition root 提供 exact-epoch single-maintainer tuning、
 multi-role orchestration run/resume、ArtifactSet publish/list/validate/rebuild，以及
-planner configure/plan/list 命令；本程序集仍不反向依赖 CLI。online lifecycle 与
-budgeted/NthPrevious selection 属于后续 DM-8。
+planner configure/plan/list 和 `run-online-turn` 命令；本程序集仍不反向依赖 CLI。
 
 Artifact 文件 strict read/write 上限为 8 MiB，ArtifactSet 与 orchestration transaction
 为 1 MiB，finalization 为 256 KiB，latest pointer 与 role settlement 为 64 KiB；

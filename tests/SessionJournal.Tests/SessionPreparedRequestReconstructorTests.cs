@@ -339,8 +339,8 @@ public sealed class SessionPreparedRequestReconstructorTests : IDisposable {
     }
 
     [Fact]
-    public void PreparedV4_RejectsMultiCarrierExactContextInput() {
-        CompletionRequestPreparedBody manifest = PreparedV4Fixture.Create(
+    public void PreparedV5_RejectsMultiCarrierExactContextInput() {
+        CompletionRequestPreparedBody manifest = PreparedV5Fixture.Create(
             "correlation", "observation", Address(1), Address(2), Address(3), Address(4),
             "model", [], null
         );

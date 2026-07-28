@@ -13,10 +13,11 @@
 > [CS-3D6 Coherent-only Manifest 化简计划](done/coherent-request-manifest-simplification-plan.md)
 > **D7 协议修订**：[Prepared / Provider Attempt 对称化](done/prepared-provider-attempt-symmetry-design.md)
 
-> **Prepared v4 / DM-4 supersession（2026-07-28）**：本文下文出现的 Prepared v3、exact
+> **Prepared v5 / DM-8 supersession（2026-07-28）**：本文下文出现的 Prepared v3、exact
 > activation、raw derived-set event 或 inline artifact identity 均为历史实现记录，已由
-> [Derived Memory Subsystem Implementation Plan](derived-memory-subsystem-implementation-plan.md) 的 DM-2
-> breaking wire 替代。current Prepared 保存 `RawStartSetups + ExactContextInputs`：anchor setup refs
+> [Derived Memory Subsystem Implementation Plan](derived-memory-subsystem-implementation-plan.md) 的
+> DM-2/DM-8 breaking wire 替代。current Prepared v5 保存
+> `RawStartSetups + ExactContextInputs`：anchor setup refs
 > 由 controlled writer 在 append 前通过 request reconstruction、canonical exact check、
 > bound setup cursor 与 head CAS 固定。online resolver 从真实 Parent lineage 遇到 Prepared 后，会
 > 重验其 setup refs 的 kind/schema/hash，但刻意不再 O(N) 回扫来证明它们是该 Prepared ancestry 上
@@ -120,7 +121,8 @@ dependencies，而不是假定“回溯到最近一条用户消息”。
   - CS-3D3 后 `ResumeAsync()`、`SendAsync()`、setup/import boundary 与 tool-loop transition
     全部由 `SessionExecutionTailResolver` 路由；Action/Started/Result append 后按返回的 exact address
     重新 resolve。
-  - D7 后 online writer 与 current Prepared v3 codec/reconstructor 只接受 coherent
+  - D7 后 online writer 已收为 coherent recipe；DM-8 的 current Prepared v5
+    codec/reconstructor 继续只接受该单一路径，并允许 strict empty-lineage bootstrap 的零 inputs，
     artifact-tail recipe，不调用 `Project()` 物化 request Context。D6D 前的 full-raw /
     explicit reader 只属于历史，不存在于 current runtime。
 - `prototypes/SessionJournal/SessionReducer.cs`
@@ -716,7 +718,8 @@ dependency/lineage，不等价于 active-set membership，不能拿它猜后一�
   exact artifacts 生效”的权威事实。
 - coherent Prepared 的 plan 固定 activation 的 `{ address, bodySchemaVersion, payloadSha256 }` exact
   reference，并继续内联 provider-facing singleton contributions。online active-set resolver 从
-  completion boundary 回溯：直接遇到 activation 即命中；遇到近头 coherent Prepared 则由 exact
+  以下 activation 描述是 D6/D7 历史实现：completion boundary 回溯当时直接遇到 activation 即命中；
+  遇到近头 coherent Prepared 则由 exact
   reference 恢复并核对 member assertion，不读取 `latest`、dedicated ref 或 state cache。该一跳
   fast path 延续 SessionJournal online path 的受控 writer 信任边界；对离线导入或低层构造的 raw，
   strict validator 会逐 Prepared 重建 canonical request，并证明它引用的是 authoritative raw range
@@ -725,10 +728,12 @@ dependency/lineage，不等价于 active-set membership，不能拿它猜后一�
   activation 的 current refs 取得 governing setup；artifact projector 从 coverage refs 直接取得
   anchor seed。两者都验证 kind/schema/payload hash，消除了“setup 长期不变时每轮回溯到 root”的隐藏
   O(history)。
-- `SessionRuntime` 不再暴露 request-context policy selector；online writer 只有 coherent
+- D7 历史 `SessionRuntime` 不再暴露 request-context policy selector；online writer 只有 coherent
   artifact-tail。缺 activation/member 时在 append Observation/Prepared/provider 前 fail-fast，绝不
-  静默 full replay。public `Project()` / `ReplayHistory()` 仍保留完整审计语义；current Prepared v3 的
-  `activeArtifactSet` 为 required exact reference，current runtime 不再读取旧 policy。
+  静默 full replay。public `Project()` / `ReplayHistory()` 仍保留完整审计语义；当时 Prepared v3 的
+  `activeArtifactSet` 为 required exact reference。DM-4/DM-8 已删除 raw activation/reference；
+  current Prepared v5 保存 exact context snapshots，unprepared planning 由 host 注入 two-phase
+  candidate source。
 - D6D 是 breaking wire upgrade：旧实验 journal 若包含早期 Prepared bytes，必须走离线重建/
   版本化迁移，不能用缺省字段猜测过去；仅含 current imported raw facts 的 repo 可直接 validate，
   再在 artifacts 就绪后 append activation。

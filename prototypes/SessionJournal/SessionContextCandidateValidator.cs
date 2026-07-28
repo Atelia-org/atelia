@@ -17,7 +17,8 @@ internal static class SessionContextCandidateValidator {
         EventAddress completionBoundary,
         SessionGoverningSetup anchorGoverningSetup,
         SessionContextCandidate candidate,
-        CancellationToken cancellationToken = default
+        CancellationToken cancellationToken = default,
+        bool allowEmptyContributions = false
     ) {
         ArgumentNullException.ThrowIfNull(reader);
         ArgumentNullException.ThrowIfNull(anchorGoverningSetup);
@@ -40,7 +41,8 @@ internal static class SessionContextCandidateValidator {
         ImmutableArray<SessionContextContribution> contributions = SnapshotContributions(
             candidate.Contributions
         );
-        if (contributions.IsDefaultOrEmpty) {
+        if (contributions.IsDefaultOrEmpty
+            && !allowEmptyContributions) {
             throw new InvalidDataException($"Context candidate must contain 1 through {MaxContributionCount} contributions.");
         }
 
@@ -70,6 +72,46 @@ internal static class SessionContextCandidateValidator {
             interval.SuffixAddresses,
             interval.HeaderVisitCount
         );
+    }
+
+    internal static ImmutableArray<SessionContextContribution>
+        ValidateMaterializedCandidate(
+        SessionContextCandidateDescriptor descriptor,
+        SessionContextCandidate candidate,
+        IReadOnlySet<EventAddress> allowedSourceHeads,
+        bool allowEmpty
+    ) {
+        ArgumentNullException.ThrowIfNull(descriptor);
+        ArgumentNullException.ThrowIfNull(candidate);
+        ArgumentNullException.ThrowIfNull(allowedSourceHeads);
+        if (candidate.RawStartExclusive != descriptor.RawStartExclusive
+            || candidate.AnchorSetups != descriptor.AnchorSetups) {
+            throw new InvalidDataException(
+                "Materialized context candidate does not match its discovered descriptor."
+            );
+        }
+        ArgumentNullException.ThrowIfNull(candidate.Contributions);
+        ImmutableArray<SessionContextContribution> contributions =
+            SnapshotContributions(candidate.Contributions);
+        if (contributions.IsDefaultOrEmpty) {
+            if (allowEmpty) {
+                return ImmutableArray<SessionContextContribution>.Empty;
+            }
+            throw new InvalidDataException(
+                $"Context candidate must contain 1 through {MaxContributionCount} contributions."
+            );
+        }
+        foreach (SessionContextContribution contribution
+                 in contributions) {
+            if (!allowedSourceHeads.Contains(
+                    contribution.SourceRawHead
+                )) {
+                throw new InvalidDataException(
+                    "A materialized contribution sourceRawHead is outside its authoritative raw interval."
+                );
+            }
+        }
+        return NormalizeContributions(contributions);
     }
 
     /// <summary>

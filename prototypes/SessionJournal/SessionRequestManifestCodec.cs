@@ -71,14 +71,9 @@ internal static class SessionRequestManifestCodec {
         RequireSha256(body.Plan.RawRangeSha256, "plan.rawRangeSha256");
         ValidateSetup(body.Plan.RawStartSetups.RuntimeConfig, "plan.rawStartSetups.runtimeConfig");
         ValidateSetup(body.Plan.RawStartSetups.SystemPrompt, "plan.rawStartSetups.systemPrompt");
-        if (body.Plan.ExactContextInputs.IsEmpty) {
-            throw new InvalidDataException(
-                "Prepared v4 requires at least one plan.exactContextInputs entry."
-            );
-        }
         if (body.Plan.ExactContextInputs.Length > MaxExactContextInputCount) {
             throw new InvalidDataException(
-                $"Prepared v4 plan.exactContextInputs cannot exceed {MaxExactContextInputCount} entries."
+                $"Prepared v5 plan.exactContextInputs cannot exceed {MaxExactContextInputCount} entries."
             );
         }
         foreach (SessionRequestContextInput input in body.Plan.ExactContextInputs) {
@@ -89,7 +84,7 @@ internal static class SessionRequestManifestCodec {
                 + (string.IsNullOrWhiteSpace(input.ContextSnapshot.ActionMessage) ? 0 : 1);
             if (populatedCarriers != 1) {
                 throw new InvalidDataException(
-                    "Prepared v4 exact context inputs must populate exactly one contextSnapshot carrier."
+                    "Prepared v5 exact context inputs must populate exactly one contextSnapshot carrier."
                 );
             }
         }

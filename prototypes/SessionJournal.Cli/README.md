@@ -130,6 +130,51 @@ system prompt、user prompt 都是 readonly inputs；output file 与 call-log di
 symlink/reparse point。orchestration 的 policy/role provisioning 纯结构检查同样早于
 任何 writable side effect。
 
+## run-online-turn
+
+这是 DM-8 的最小 online composition/acceptance 入口。命令把 planner、pending-first
+maintenance、coherent candidate provider 和 SessionJournal engine 组合起来：在 Observation
+append 前先做 lifecycle + context budget preflight，append 后再按新 exact head 重新维护/选择，
+最后提交 Prepared v5 并调用 agent Completion。
+
+```bash
+dotnet run --project prototypes/SessionJournal.Cli -- \
+  run-online-turn \
+  --input gitignore/session-journal/<session> \
+  --message "continue" \
+  --role required:autobiographical-rewrite:produce \
+  --role required:world-understanding-rewrite:produce \
+  --policy-id roleplay-memory \
+  --policy-fingerprint roleplay-memory-v1 \
+  --coherence-group memory-pack \
+  --connections prototypes/Galatea/.atelia/galatea/connections.json \
+  --connection dsv4p \
+  --selection budgeted \
+  --raw-suffix-budget 32000 \
+  --total-context-budget 64000 \
+  --bootstrap-budget 32000 \
+  --uncertain-recovery refuse \
+  --output gitignore/backtest/<run>/online-turn.json \
+  --call-log-dir gitignore/backtest/<run>/calls
+```
+
+`--selection` 接受 `latest`、`budgeted` 或 `nth:<zero-based-ordinal>`。budgeted 未显式给
+raw/total budget 时，以 planner 的 `hardLimit - schedulingHeadroom` 作为 raw budget；
+`--bootstrap-budget` 是 strict empty-lineage 唯一 raw-only 入口，不会创建伪 artifact。当前 CLI
+便利入口只接受 `produce` roles；generic lifecycle coordinator 本身不依赖 Maintainers catalog
+或 Completion connection，长期 host 可注入其他 exact role executions。
+
+若 lifecycle/backpressure、candidate 或 total-budget preflight 失败，Observation 尚未 append，
+raw head/event count 不变。Prepared/Started reopen 不再调用 maintainer/provider。输出 report
+只含 head、phase、provider/API/model、agent text hash 与 error count；完整 request/action 只留在
+显式 call-log 目录，不会写入 report。output、call-log、input repo 与 connections 的路径边界和
+`run-derived-memory-orchestration` 一样在 client/目录/LLM side effect 前验证。
+
+命令在 idle/failed boundary 使用 `--message` 调用 `SendAsync`；若打开时已处于
+AwaitingAgentAction/Prepared/Started/tool continuation，则调用 `ResumeAsync`，不会重复 append
+message。uncertain provider attempt 缺省 `--uncertain-recovery refuse`；operator 只有明确接受潜在
+重复外部调用时，才可指定 `restart-new-attempt`。
+
 ## validate
 
 严格、只读验证 SessionJournal：

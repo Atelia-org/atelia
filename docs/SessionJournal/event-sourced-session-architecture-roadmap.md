@@ -1,17 +1,17 @@
 # SessionJournal 事件源会话与长期上下文架构路线图
 
-> **状态**：Architecture Roadmap / current baseline CS-3D7 + DM-0～DM-4 /
-> active plan DM-5～DM-8
+> **状态**：Architecture Roadmap / current baseline CS-3D7 + DM-0～DM-8
 > **日期**：2026-07-28
 > **底层依赖**：[EventJournal 功能需求与粗粒度设计基线](../EventJournal/event-journal-requirements-and-design.md)
 > **相关既有研究**：[Dynamic Logical Context Store for Long-Running Role-Play Agents](../Galatea/backlog/idea/dynamic-logical-context-store-for-long-running-role-play-agents.md)
 > **后续实施计划**：
 > [DerivedMemory 可替换子系统与 Shared Epoch 实施方案](derived-memory-subsystem-implementation-plan.md)
 
-> **DM-4 supersession（2026-07-28）**：本文后续章节中仍出现的 Prepared v3、raw
+> **DM-8 supersession（2026-07-28）**：本文后续章节中仍出现的 Prepared v3、raw
 > derived-set activation、manual checkpoint 与 concrete store in core 均是路线演进记录，不是
-> current contract。当前以 Prepared v4 + store-neutral candidate + derived-only ArtifactSet 为唯一
-> 实现路径；raw audit 和 Prepared exact reopen 不打开 DerivedMemory。
+> current contract。当前以 Prepared v5 + bounded two-phase store-neutral candidate +
+> derived-only ArtifactSet 为唯一实现路径；raw audit 和 Prepared exact reopen 不打开
+> DerivedMemory。unprepared online planning 由 host 注入 lifecycle/provider。
 
 ## 1. 文档定位
 
@@ -101,7 +101,7 @@ address/range/setup refs，对实际进入 provider
 request 的 derived memory contribution 则保存 exact context snapshot 或 canonical request bytes。
 Prepared 不引用 derived artifact/set id，也不要求 derived store 在 reopen 时仍存在；planner/renderer
 版本变化不能改写已经 Prepared 的外部调用事实。若要审计 derived selection，可在可重建 usage index 中
-记录 `preparedAddress -> derivedSetId`。current Prepared v4 已采用 exact context snapshots 与
+记录 `preparedAddress -> derivedSetId`。current Prepared v5 已采用 exact context snapshots 与
 raw provenance，不再含 raw activation/artifact identity。
 
 ### decision [S-SJ-EXECUTION-INCREMENTAL] 执行状态逐步事件化
@@ -261,7 +261,7 @@ EventJournal branch primitive 就宣称产品能力已经实现。
 
 以下记录 CS-5-lite/CS-3D5 当时的过渡实现，不描述 current trunk。DM-3B 已将 store/set/provider
 搬入 `Atelia.SessionJournal.DerivedMemory`，删除 raw activation writer/manual checkpoint command，
-Prepared v4 也不再引用 derived identity：
+DM-3B/DM-2 阶段的 Prepared v4 也不再引用 derived identity：
 
 - `DerivedRecapStore`：位于 `Atelia.SessionJournal` core 内，使用 session repo 下的
   `derived/recaps/v1/` sidecar 保存可删除、可重建的 recap artifacts/indexes；
@@ -272,7 +272,7 @@ Prepared v4 也不再引用 derived identity：
 - `SessionJournal.Cli run-memory-maintainer`：离线运行 maintainer 并发布 derived artifact；
 - `SessionJournal.Cli checkpoint-artifact-set`：由开发者手动选择 exact members，在 raw chain
   追加 interim `ArtifactSetCommitted`；
-- coherent request/recovery：current `CompletionRequestPrepared` v3 引用 exact
+- coherent request/recovery：当时的 `CompletionRequestPrepared` v3 引用 exact
   `ArtifactSetCommitted`，并内联 selected artifact context snapshots，使 sidecar 删除后仍可重建
   canonical request。
 
@@ -388,16 +388,15 @@ DerivedMemory ownership，而不是把能力回迁到 ChatSession。
 
 ### 7.1 Current 边界：coherent-only，不是通用预算规划器
 
-current online request path 只接受已经激活的 exact coherent ArtifactSet，并把它与
-dependency-closed raw suffix 物化为 request。若当前 lineage 没有可用 coherent set，或任一 member
-缺失、内容不匹配，系统返回明确的 not-ready；不会静默退回 full raw。这条窄路径已经验证
-tail-only request/recovery，但它还不是会比较多个候选、分配 token budget 或执行 retrieval 的通用
-Context Planner。
+current online request path 只接受 host 注入的 coherent candidate source；core 通过 bounded
+two-phase discovery/materialization 比较 `Latest`、`NthPrevious` 或 `Budgeted` candidates，并把
+选中 candidate 与 dependency-closed raw suffix 物化为 request。真实空 lineage 只有在显式 bootstrap
+budget 内才可使用零 inputs；不会静默退回无界 full raw。retrieval 与多 coherence-group 组合仍未实现。
 
-current 内部虽有 `SessionContextPlan`，它只描述 Prepared v3 的固定
-`coherent-artifact-tail` recipe：raw start、raw range hash、内联 artifact inputs，以及 raw
-`ActiveArtifactSet` exact reference。它不是已冻结的 planner 公共 contract，也不表示 §7.2 的完整
-target 已经实现。
+current 内部 `SessionContextPlan` 描述 Prepared v5 的单一 coherent recipe：raw start、raw range
+hash、exact context snapshots 与 paired setup refs，不含 raw `ActiveArtifactSet` reference。
+Prepared 是 execution fact；candidate selection policy 仍是 host/runtime contract，不是 raw planner
+公共 contract。
 
 ### 7.2 Target：在预算内选择上下文
 
@@ -442,15 +441,16 @@ public sealed record ContextPlan(
 - 哪些动态召回项实际进入 request。
 - 使用哪版 planner、rendering、model、token、retriever 与 ranker policy。
 
-### 7.3 Prepared v3 基线与 self-contained Prepared v4 目标
+### 7.3 Historical：Prepared v3 基线与 self-contained Prepared v4 目标
 
-current `CompletionRequestPrepared` v3 已内联 artifact contribution snapshots、governing setup
+DM-2 之前的 `CompletionRequestPrepared` v3 已内联 artifact contribution snapshots、governing setup
 references、tool definitions/runtime identity、request target 与 canonical request commitment，能够在
 derived sidecar 删除后重建已 Prepared request。但 `SessionContextPlan.ArtifactInputs` 仍带 exact
 artifact ids，并保存 raw `ActiveArtifactSet` reference；reconstructor 仍需沿 raw activation 验证
-coherence。这是 current interim wire，不是最终依赖方向。
+coherence。这是当时的 interim wire，不是 current 依赖方向。
 
-DM-2 的 target 是 self-contained Prepared v4：
+DM-2 当时的 target 是 self-contained Prepared v4；DM-8 后 current wire 已进一步升级为
+Prepared v5，以 strict zero-input bootstrap 表达真实空 lineage：
 
 - 固定可逐字节重建 canonical `CompletionRequest` 的 exact context / manifest。
 - 保存必要的 raw range、setup、tool schema/config provenance 与 hash。

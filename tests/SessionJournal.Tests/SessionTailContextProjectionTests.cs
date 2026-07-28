@@ -460,7 +460,7 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
     }
 
     [Fact]
-    public async Task SendAsync_NullCandidateLeavesDurableAwaitingAgentActionWithoutProviderCall() {
+    public async Task SendAsync_NullCandidateFailsBeforeObservationOrCompletionCall() {
         string path = NewJournalPath();
         var client = new CapturingCompletionClient(
             _ => throw new InvalidOperationException("must not call provider")
@@ -482,8 +482,11 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
             SessionJournalNotReadyReason.ContextCandidateUnavailable,
             error.Reason
         );
-        Assert.NotEqual(head, engine.ResolveExecutionTail().Head);
-        Assert.Equal(SessionExecutionPhase.AwaitingAgentAction, engine.ResolveExecutionTail().State.Phase);
+        Assert.Equal(head, engine.ResolveExecutionTail().Head);
+        Assert.Equal(
+            SessionExecutionPhase.Idle,
+            engine.ResolveExecutionTail().State.Phase
+        );
         Assert.Equal(projectionCount, engine.FullProjectionInvocationCount);
         Assert.Empty(client.Requests);
     }

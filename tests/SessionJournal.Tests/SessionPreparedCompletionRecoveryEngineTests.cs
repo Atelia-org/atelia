@@ -40,10 +40,17 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
             CreateRuntime(client)
         );
         var recoverySource = new TestContextCandidateSource();
+        var lifecycle = new TestMemoryLifecycle {
+            Result = new(
+                SessionMemoryLifecycleStatus.Unavailable,
+                "must not run"
+            )
+        };
         using (var reopened = SessionJournalEngine.Open(
             path,
             CreateRuntime(client) with {
-                ContextCandidateSource = recoverySource
+                ContextCandidateSource = recoverySource,
+                MemoryLifecycle = lifecycle
             }
         )) {
             InvalidOperationException error = await Assert.ThrowsAsync<InvalidOperationException>(
@@ -55,6 +62,7 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
         Assert.Single(ReadAddressesByKind(path, SessionEventKind.CompletionAttemptStarted));
         Assert.Equal(0, client.Calls);
         Assert.Equal(0, recoverySource.SelectionCount);
+        Assert.Equal(0, lifecycle.InvocationCount);
     }
 
     [Fact]

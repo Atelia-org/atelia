@@ -36,8 +36,14 @@ public sealed class SessionContextCandidateContractTests : IDisposable {
         );
         request.ValidateShape();
 
-        SessionContextCandidate selected = Assert.IsType<SessionContextCandidate>(
-            await source.SelectAsync(request, CancellationToken.None)
+        SessionContextCandidateDiscovery discovery =
+            await source.DiscoverAsync(
+                request,
+                CancellationToken.None
+            );
+        SessionContextCandidate selected = await source.MaterializeAsync(
+            Assert.Single(discovery.Candidates),
+            CancellationToken.None
         );
         ValidatedSessionContextCandidate validated = Validate(fixture, selected);
 
@@ -355,13 +361,33 @@ public sealed class SessionContextCandidateContractTests : IDisposable {
 
     private sealed class FakeCandidateSource(SessionContextCandidate candidate)
         : ICoherentContextCandidateSource {
-        public ValueTask<SessionContextCandidate?> SelectAsync(
+        public ValueTask<SessionContextCandidateDiscovery> DiscoverAsync(
             SessionContextSelectionRequest request,
             CancellationToken cancellationToken
         ) {
             request.ValidateShape();
             cancellationToken.ThrowIfCancellationRequested();
-            return ValueTask.FromResult<SessionContextCandidate?>(candidate);
+            return ValueTask.FromResult(
+                new SessionContextCandidateDiscovery(
+                    SessionContextCandidateDiscoveryStatus.Candidates,
+                    new[] {
+                        new SessionContextCandidateDescriptor(
+                            "contract-test",
+                            0,
+                            candidate.RawStartExclusive,
+                            candidate.AnchorSetups
+                        )
+                    }
+                )
+            );
+        }
+
+        public ValueTask<SessionContextCandidate> MaterializeAsync(
+            SessionContextCandidateDescriptor descriptor,
+            CancellationToken cancellationToken
+        ) {
+            cancellationToken.ThrowIfCancellationRequested();
+            return ValueTask.FromResult(candidate);
         }
     }
 

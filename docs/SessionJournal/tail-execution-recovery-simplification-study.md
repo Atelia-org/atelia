@@ -1,6 +1,6 @@
 # SessionJournal Tail Execution Recovery 后续化简候选
 
-> **状态**：Current Research / CS-3D7 后候选集
+> **状态**：Current Research / CS-3D7 + DM-0～DM-8 后候选集
 > **日期**：2026-07-27
 > **当前基线**：[Tail-only Execution Recovery Design](tail-execution-recovery-design.md)
 > **已完成计划**：
@@ -13,30 +13,34 @@
 
 ## 0. 当前结论
 
-CS-3D6 已经完成 request manifest 的主要收口；CS-3D7 又将 Prepared 与 provider attempt 分离：
-online 只有 coherent artifact-tail，`CompletionRequestPrepared` 只有 v3，legacy reader/writer 已删除，并已用真实 legacy import、两个
-maintainer artifact 和一次 exact checkpoint 验收。已实施内容不在本文重复，详见
+CS-3D6 已经完成 request manifest 的主要收口；CS-3D7 当时又将 Prepared 与 provider attempt 分离：
+当时 online 只有 coherent artifact-tail，`CompletionRequestPrepared` 只有 v3，legacy
+reader/writer 已删除，并用真实 legacy import、两个 maintainer artifact 和一次 exact checkpoint
+验收。已实施内容不在本文重复，详见
 [归档计划](done/coherent-request-manifest-simplification-plan.md)。
 
-当前仍值得研究的化简候选只有三组：
+随后 DM-0～DM-8 已完成 candidate contract 倒置、Prepared v5、raw activation 删除、
+DerivedMemory assembly、shared epoch、并行 orchestration 与 online lifecycle。本文 §4 保留为
+决策演进说明；current contract 以
+[DerivedMemory 实施方案](derived-memory-subsystem-implementation-plan.md)为准。
+
+当前仍值得研究的化简候选只有两组：
 
 1. **Request snapshot spike**：比较 current recipe-authoritative reopen 与 exact canonical request
    snapshot；先测 stored bytes 和恢复开销，不先改 wire。
-2. **ArtifactSet 从 raw activation 与 raw-core 程序集解耦**：ArtifactSet 保持 derived、只单向引用
-   raw；具体维护/存储/选择实现迁入可替换子系统，SessionJournal 只消费中性的 coherent context
-   candidate；同一 coherence group 由 shared epoch planner 先固定 history coverage，再运行各
-   maintainer；Prepared 只固化实际进入 request 的精确 context snapshot 与 raw provenance。
-3. **共享正向 operational semantics**：减少 full reducer、suffix fold 和 validator 的规则复述，
+2. **共享正向 operational semantics**：减少 full reducer、suffix fold 和 validator 的规则复述，
    但保留独立 reverse tail collector。
 
-`SessionJournalEngine` 的一般职责拆分仍应等语义收口后再做；但候选 C 所要求的程序集依赖倒置不是普通
-“移动代码”，而是 raw/derived 正确性边界的一部分，应随候选 C 一起冻结并分阶段落地。
+ArtifactSet/raw-core 解耦与 shared epoch 已由 DM-0～DM-8 完成，本文只在 §4 留一句历史决策摘要；
+实施细节统一指向 DerivedMemory implementation plan。`SessionJournalEngine` 的一般职责拆分仍应等
+语义收口后再做。
 
 以下方向不再是本文候选：
 
 - 合并 `RuntimeConfigSetup` / `SystemPromptSetup`：此前已决定保留两条 sticky stream。
-- 恢复 `full-raw`、`explicit-artifact-tail` 或 bounded `bootstrap-raw` policy：这会倒退已经确立的
-  coherent ArtifactSet readiness 合同。
+- 恢复 legacy `full-raw`、`explicit-artifact-tail` 或任何 silent/unbounded raw fallback。current
+  唯一例外是 DM-8 strict `EmptyLineage` + 显式 `BootstrapRawSuffixTokenBudget` 的 bounded
+  empty-memory bootstrap；它会写 Prepared v5 零 inputs，并在首个真实 set 发布后自动失效。
 - 为旧 Prepared 增加 compatibility decoder、缺省字段推断或 root replay fallback。
 - 再规划一次覆盖所有 event kind 的“大一统 wire v2”：current codec 已支持 per-kind body schema
   version，后续只升级真正发生变化的 kind。
@@ -53,7 +57,7 @@ exact coherent ArtifactSet
 + paired governing setup refs
 + visible tool/runtime identity
 + dispatch target
--> CompletionRequestPrepared v3
+-> CompletionRequestPrepared v5
 -> CompletionAttemptStarted
 ```
 
@@ -61,7 +65,7 @@ exact coherent ArtifactSet
 
 - online completion 必须先有 provider 返回并经 raw core 验证的 coherent context candidate；没有
   candidate 时明确 not-ready，不回退到 full history。
-- Prepared v4 内联 exact context snapshots、tool definitions 和 raw identity/provenance；raw suffix
+- Prepared v5 内联 exact context snapshots、tool definitions 和 raw identity/provenance；raw suffix
   仍以 address/hash + deterministic recipe 重建。
 - Prepared 后即使 derived sidecar 被删除，`SessionPreparedRequestReconstructor` 仍能 exact reopen。
 - `RuntimeConfigSetup` 与 `SystemPromptSetup` 保持两条独立 sticky stream，Prepared pin 两条 exact refs。
@@ -119,27 +123,29 @@ attempt chain、ArtifactSet activation 与 operational legality 仍有足够大�
 
 ## 2. 候选 A：Exact request snapshot spike
 
-### 2.1 当前问题
+> 原 spike 以 Prepared v3 + raw `ArtifactSetCommitted` 为基线，已被 DM-2/DM-8 淘汰。以下仅保留
+> 按 current Prepared v5 重新表述后的研究问题；不能直接照旧方案施工。
 
-Prepared v3 已经只有一个 coherent recipe，但 exact reopen 仍需要：
+### 2.1 Current Prepared v5 问题
+
+Prepared v5 已经只有一个 coherent recipe，且不引用 derived identity；exact reopen 仍需要：
 
 1. 读取 paired setup payload；
 2. 读取并验证 exact raw range；
-3. 读取 referenced `ArtifactSetCommitted`；
-4. seed 并运行 dependency-closed suffix fold；
-5. 聚合 inline artifact snapshots；
-6. 重新执行 canonical recipe；
-7. 对比 commitment。
+3. seed 并运行 dependency-closed suffix fold；
+4. 聚合零个或多个 inline exact context snapshots；
+5. 重新执行 canonical recipe；
+6. 对比 commitment。
 
 这条路径正确且 bounded，但 renderer、suffix fold 和 reconstructor 仍处在 online correctness core。
-`SessionPreparedRequestReconstructor` 的 543 LOC 不是 legacy policy 分支，而是 current recipe 本身的
-证明成本。
+是否值得再保存 canonical request bytes，必须以 v5 的真实 stored bytes/read diagnostics 重新测量，
+不能沿用 v3/raw activation 时期的数据。
 
 ### 2.2 两种权威形态
 
 | 方案 | Online reopen | 主要代价 |
 | --- | --- | --- |
-| R：current recipe-authoritative | 重新读取 refs、fold、render，再校验 commitment | renderer 与 fold 版本长期属于恢复合同 |
+| R：current v5 recipe-authoritative | 重新读取 refs、fold、render，再校验 commitment | renderer 与 fold 版本长期属于恢复合同 |
 | S：snapshot-authoritative | 读取 snapshot、校验 hash、decode request | 每个 Prepared 在 raw 中复制 bounded request bytes |
 
 S 的候选形状：
@@ -152,14 +158,13 @@ CompletionRequestPrepared {
   provenance: {
     governingSetupRefs,
     rawRange,
-    artifactSetRef,
-    contributionHashes
+    exactContextInputHashes
   },
   executionAndDispatchIdentity
 }
 ```
 
-online reopen 只信 committed snapshot + commitment；offline audit 可以选择重新运行 current recipe 并
+online reopen 只信 committed snapshot + commitment；offline audit 可以选择重新运行 v5 recipe 并
 对比 snapshot，但不能把昂贵 rematerialization 继续当成 online 前置条件。
 
 ### 2.3 只做 spike，不先采纳
@@ -195,7 +200,7 @@ online reopen 只信 committed snapshot + commitment；offline audit 可以选�
 > [DerivedMemory 可替换子系统与 Shared Epoch 实施方案](derived-memory-subsystem-implementation-plan.md)
 > 的 DM-0～DM-4 落地。current raw event inventory 不含 derived-set
 > definition/activation；ArtifactSet 只存在于 DerivedMemory 并单向引用 raw provenance；
-> Prepared v4 内联 exact context snapshots，因而 exact reopen 与 raw audit 均不依赖
+> Prepared v5 内联 exact context snapshots，因而 exact reopen 与 raw audit 均不依赖
 > DerivedMemory。以下内容仅保留为决策与迁移理由，不再描述 current implementation。
 
 ### 4.1 修订后的边界判断
@@ -295,22 +300,25 @@ contracts 足够稳定或需要更小依赖面时，再抽取独立 abstractions
 
 SessionJournal 依赖的应是能力合同，而不是存储合同。推荐概念名
 `ICoherentContextCandidateSource` / `ISessionContextCandidateProvider`，而不是
-`IDerivedArtifactSetStore`。一个最小调用形状概念上为：
+`IDerivedArtifactSetStore`。current DM-8 调用形状已经落为 bounded two-phase：
 
 ```csharp
-ValueTask<SessionContextCandidate?> SelectAsync(
+ValueTask<SessionContextCandidateDiscovery> DiscoverAsync(
     SessionContextSelectionRequest request,
+    CancellationToken cancellationToken);
+
+ValueTask<SessionContextCandidate> MaterializeAsync(
+    SessionContextCandidateDescriptor descriptor,
     CancellationToken cancellationToken);
 ```
 
-返回值是 store-neutral 的 materialization candidate，至少包含：
+discovery 只返回 content-free exact descriptor；materialization candidate 至少包含：
 
 ```text
 RawStartExclusive
 RawStartSetups
 minimal raw coverage/source provenance
 Contributions: [{ carrier, blockKey, exactText }]
-optional estimated cost / opaque diagnostics
 ```
 
 它不向 SessionJournal 暴露 artifact 文件路径、latest index、store schema、maintainer/profile 类型，也

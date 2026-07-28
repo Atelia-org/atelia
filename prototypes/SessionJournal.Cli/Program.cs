@@ -62,6 +62,12 @@ internal static class Program {
                         )
                         .GetAwaiter()
                         .GetResult(),
+                "run-online-turn" => RunOnlineTurnAsync(
+                        options,
+                        completionClientFactory
+                    )
+                    .GetAwaiter()
+                    .GetResult(),
                 "publish-derived-artifact-set" =>
                     DerivedMemoryCommands.PublishAsync(options)
                         .GetAwaiter()
@@ -751,6 +757,443 @@ internal static class Program {
             : 2;
     }
 
+    private static async Task<int> RunOnlineTurnAsync(
+        CliOptions options,
+        ICompletionClientFactory completionClientFactory
+    ) {
+        options.EnsureOnly(
+            "input",
+            "message",
+            "role",
+            "policy-id",
+            "policy-fingerprint",
+            "connections",
+            "connection",
+            "call-log-dir",
+            "output",
+            "selection",
+            "raw-suffix-budget",
+            "total-context-budget",
+            "bootstrap-budget",
+            "coherence-group",
+            "uncertain-recovery"
+        );
+        string inputPath = options.RequireSingle("input");
+        string message = options.RequireSingle("message");
+        string connectionsPath =
+            options.RequireSingle("connections");
+        string outputPath = options.RequireSingle("output");
+        string callLogDir =
+            options.GetOptionalSingle("call-log-dir")
+            ?? DefaultMaintainerCallLogDir;
+        string? requestedConnectionId =
+            options.GetOptionalSingle("connection");
+        RoleSpec[] roleSpecs = [
+            .. options.RequireRepeated("role")
+                .Select(ParseRoleSpec)
+        ];
+        if (roleSpecs.Length == 0
+            || roleSpecs.Any(static role =>
+                !string.Equals(
+                    role.ExecutionMode,
+                    DerivedMemoryRoleExecutionModes.Produce,
+                    StringComparison.Ordinal
+                ))) {
+            throw new ArgumentException(
+                "run-online-turn requires at least one --role and currently accepts produce roles only."
+            );
+        }
+        ValidateReadOnlyWritablePaths(
+            [
+                (inputPath, "--input"),
+                (connectionsPath, "--connections")
+            ],
+            [
+                (outputPath, "--output"),
+                (callLogDir, "--call-log-dir")
+            ]
+        );
+        EnsurePathIsOutsideRepository(
+            inputPath,
+            outputPath,
+            "--output"
+        );
+        EnsurePathIsOutsideRepository(
+            inputPath,
+            callLogDir,
+            "--call-log-dir"
+        );
+        EnsurePathsDoNotNest(
+            outputPath,
+            callLogDir,
+            "--output and --call-log-dir must be disjoint paths."
+        );
+
+        MemoryMaintainerProfileDescriptor[] profiles = [
+            .. roleSpecs.Select(spec =>
+                MemoryMaintainerProfileCatalog.Resolve(
+                    spec.ProfileName
+                ))
+        ];
+        DerivedMemoryRepository repository =
+            DerivedMemoryRepository.Open(inputPath);
+        DerivedArtifactPlannerKey key = new(
+            SJ.SessionJournalDefaults.MainBranchName,
+            options.GetOptionalSingle("coherence-group")
+                ?? "memory-pack"
+        );
+        DerivedArtifactPlannerConfig config =
+            await repository.EpochPlanner
+                .TryReadCurrentConfigAsync(key)
+                .ConfigureAwait(false)
+            ?? throw new InvalidDataException(
+                $"No current planner config exists for '{key.LineageKey}/{key.CoherenceGroup}'."
+            );
+        var policy = new DerivedArtifactSetPolicy(
+            options.RequireSingle("policy-id"),
+            options.RequireSingle("policy-fingerprint"),
+            config.CoherenceGroup,
+            roleSpecs.Zip(
+                profiles,
+                static (spec, profile) =>
+                    new DerivedArtifactSetRoleRequirement(
+                        profile.RoleId,
+                        profile.RewriteProfile.Target,
+                        spec.Required
+                    )
+            ).ToArray()
+        );
+        const string preflightFingerprint =
+            "sha256:0000000000000000000000000000000000000000000000000000000000000000";
+        DerivedMemoryOrchestrationStore
+            .ValidateProvisioningStructure(
+                policy,
+                roleSpecs.Zip(
+                    profiles,
+                    static (spec, profile) =>
+                        new DerivedMemoryRoleProvisioning(
+                            profile.RoleId,
+                            profile.RewriteProfile.Id,
+                            profile.RewriteProfile.Target,
+                            spec.Required,
+                            "preflight",
+                            preflightFingerprint,
+                            preflightFingerprint,
+                            preflightFingerprint,
+                            spec.ExecutionMode,
+                            $"online-{profile.RoleId}",
+                            "online-attempt-1"
+                        )
+                ).ToArray()
+            );
+
+        Directory.CreateDirectory(
+            Path.GetDirectoryName(
+                Path.GetFullPath(outputPath)
+            ) ?? "."
+        );
+        Directory.CreateDirectory(callLogDir);
+        using var registry =
+            new CompletionConnectionRegistry(
+                CompletionConnectionConfigLoader.LoadFile(
+                    connectionsPath
+                ),
+                completionClientFactory
+            );
+        ValidateRequestedConnection(
+            registry,
+            requestedConnectionId
+        );
+        CompletionConnectionConfig connection =
+            registry.Resolve(requestedConnectionId);
+        ICompletionClient client =
+            registry.GetClient(connection.Id);
+        var executions =
+            new List<DerivedMemoryRoleExecution>(
+                profiles.Length
+            );
+        for (int index = 0; index < profiles.Length; index++) {
+            MemoryMaintainerProfileDescriptor profile =
+                profiles[index];
+            RoleSpec spec = roleSpecs[index];
+            var maintainerClient =
+                new LoggingCompletionClient(
+                    client,
+                    connection,
+                    callLogDir,
+                    new CompletionCallLogContext(
+                        Command: "run-online-turn/maintenance",
+                        MaintainerId:
+                            profile.RewriteProfile.Id,
+                        TargetCarrier:
+                            SJ.MemoryPackCarrierTokens
+                                .ToStorageToken(
+                                    profile.RewriteProfile
+                                        .Target.Carrier
+                                ),
+                        TargetBlockId:
+                            profile.RewriteProfile
+                                .Target.BlockKey
+                    )
+                );
+            executions.Add(
+                new DerivedMemoryRoleExecution(
+                    new DerivedMemoryRoleProvisioning(
+                        profile.RoleId,
+                        profile.RewriteProfile.Id,
+                        profile.RewriteProfile.Target,
+                        spec.Required,
+                        MemoryMaintainerProducerIdentity
+                            .Producer,
+                        MemoryMaintainerProducerIdentity
+                            .ComputeProducerFingerprint(
+                                profile,
+                                client,
+                                connection
+                            ),
+                        profile.PromptFingerprint,
+                        MemoryMaintainerProducerIdentity
+                            .ComputeModelFingerprint(
+                                client,
+                                connection
+                            ),
+                        DerivedMemoryRoleExecutionModes
+                            .Produce,
+                        $"online-{profile.RoleId}",
+                        "online-attempt-1"
+                    ),
+                    profile.Create(
+                        maintainerClient,
+                        connection.ModelId
+                    ),
+                    () => maintainerClient
+                        .WrittenCallLogPaths
+                )
+            );
+        }
+        var coordinator =
+            new DerivedMemoryOnlineLifecycleCoordinator(
+                repository,
+                policy,
+                SJ.SessionJournalDefaults.MainBranchName,
+                executions.AsReadOnly()
+            );
+        var agentClient = new LoggingCompletionClient(
+            client,
+            connection,
+            callLogDir,
+            new CompletionCallLogContext(
+                Command: "run-online-turn/agent"
+            )
+        );
+        SJ.SessionContextSelectionOptions selection =
+            ParseOnlineSelection(options, config);
+        SJ.SessionUncertainCompletionRecoveryPolicy recoveryPolicy =
+            ParseUncertainCompletionRecoveryPolicy(
+                options.GetOptionalSingle("uncertain-recovery")
+            );
+        var runtime = new SJ.SessionRuntime(
+            agentClient,
+            CompletionTarget: new(
+                connection.Id,
+                connection.Kind,
+                MemoryMaintainerProducerIdentity
+                    .ComputeConnectionFingerprint(connection),
+                MemoryMaintainerProducerIdentity
+                    .ComputeRequestAdapterFingerprint(
+                        client,
+                        connection
+                    )
+            ),
+            MaxTokens: connection.MaxTokens,
+            UncertainCompletionRecoveryPolicy:
+                recoveryPolicy,
+            ContextCandidateSource: coordinator,
+            ContextSelection: selection,
+            MemoryLifecycle: coordinator
+        );
+        using var engine =
+            SJ.SessionJournalEngine.Open(
+                inputPath,
+                runtime
+            );
+        SJ.SessionExecutionBoundaryInspection initialBoundary =
+            engine.InspectExecutionBoundary();
+        ActionMessage resultMessage;
+        CompletionDescriptor resultInvocation;
+        IReadOnlyList<string>? resultErrors;
+        if (initialBoundary.Phase is
+            SJ.SessionExecutionPhase.Idle
+            or SJ.SessionExecutionPhase.TurnFailed) {
+            SJ.TurnResult result = await engine.SendAsync(
+                    message,
+                    CancellationToken.None
+                )
+                .ConfigureAwait(false);
+            resultMessage = result.Message;
+            resultInvocation = result.Invocation;
+            resultErrors = result.Errors;
+        }
+        else {
+            SJ.ResumeOutcome resumed = await engine.ResumeAsync(
+                    CancellationToken.None
+                )
+                .ConfigureAwait(false);
+            if (!resumed.Advanced
+                || resumed.Message is null
+                || resumed.Invocation is null) {
+                throw new InvalidOperationException(
+                    $"run-online-turn could not advance restart phase '{initialBoundary.Phase}'."
+                );
+            }
+            resultMessage = resumed.Message;
+            resultInvocation = resumed.Invocation;
+            resultErrors = resumed.Errors;
+        }
+        SJ.SessionExecutionBoundaryInspection boundary =
+            engine.InspectExecutionBoundary();
+        var record = new OnlineTurnRunRecord(
+            "atelia.session-journal.online-turn-run.v1",
+            boundary.Head is { } head
+                ? SJ.EventAddressTextCodec
+                    .Format(head)
+                : null,
+            boundary.Phase.ToString(),
+            resultInvocation.ProviderId,
+            resultInvocation.ApiSpecId,
+            resultInvocation.Model,
+            Convert.ToHexStringLower(
+                System.Security.Cryptography.SHA256
+                    .HashData(
+                        Encoding.UTF8.GetBytes(
+                            resultMessage
+                                .GetFlattenedText()
+                        )
+                    )
+            ),
+            resultErrors?.Count ?? 0
+        );
+        WriteJsonAtomically(outputPath, record);
+        Console.WriteLine($"head: {record.Head}");
+        Console.WriteLine($"phase: {record.Phase}");
+        Console.WriteLine($"output: {Path.GetFullPath(outputPath)}");
+        return 0;
+    }
+
+    private static SJ.SessionUncertainCompletionRecoveryPolicy
+        ParseUncertainCompletionRecoveryPolicy(string? value) {
+        value ??= "refuse";
+        return value switch {
+            "refuse" =>
+                SJ.SessionUncertainCompletionRecoveryPolicy.Refuse,
+            "restart-new-attempt" =>
+                SJ.SessionUncertainCompletionRecoveryPolicy
+                    .RestartWithNewAttempt,
+            _ => throw new ArgumentException(
+                "--uncertain-recovery must be refuse or restart-new-attempt."
+            )
+        };
+    }
+
+    private static SJ.SessionContextSelectionOptions
+        ParseOnlineSelection(
+        CliOptions options,
+        DerivedArtifactPlannerConfig config
+    ) {
+        string value =
+            options.GetOptionalSingle("selection")
+            ?? "latest";
+        SJ.SessionContextSelectionMode mode;
+        int ordinal = 0;
+        if (string.Equals(
+                value,
+                "latest",
+                StringComparison.Ordinal
+            )) {
+            mode = SJ.SessionContextSelectionMode.Latest;
+        }
+        else if (string.Equals(
+                     value,
+                     "budgeted",
+                     StringComparison.Ordinal
+                 )) {
+            mode = SJ.SessionContextSelectionMode.Budgeted;
+        }
+        else if (value.StartsWith(
+                     "nth:",
+                     StringComparison.Ordinal
+                 )
+                 && int.TryParse(
+                     value.AsSpan(4),
+                     out ordinal
+                 )
+                 && ordinal >= 0) {
+            mode = SJ.SessionContextSelectionMode.NthPrevious;
+        }
+        else {
+            throw new ArgumentException(
+                "--selection must be latest, budgeted, or nth:<zero-based-ordinal>."
+            );
+        }
+        long? rawBudget = ParsePositiveLong(
+            options.GetOptionalSingle(
+                "raw-suffix-budget"
+            ),
+            "--raw-suffix-budget"
+        );
+        long? totalBudget = ParsePositiveLong(
+            options.GetOptionalSingle(
+                "total-context-budget"
+            ),
+            "--total-context-budget"
+        );
+        if (mode
+                == SJ.SessionContextSelectionMode.Budgeted
+            && rawBudget is null
+            && totalBudget is null) {
+            rawBudget = checked(
+                config.HardLimitTokens
+                - config.SchedulingHeadroomTokens
+            );
+        }
+        long bootstrapBudget =
+            ParsePositiveLong(
+                options.GetOptionalSingle(
+                    "bootstrap-budget"
+                ),
+                "--bootstrap-budget"
+            )
+            ?? checked(
+                config.HardLimitTokens
+                - config.SchedulingHeadroomTokens
+            );
+        return new(
+            config.CoherenceGroup,
+            mode,
+            rawBudget,
+            totalBudget,
+            ordinal,
+            BootstrapRawSuffixTokenBudget:
+                bootstrapBudget
+        );
+    }
+
+    private static long? ParsePositiveLong(
+        string? value,
+        string option
+    ) {
+        if (value is null) {
+            return null;
+        }
+        if (!long.TryParse(value, out long parsed)
+            || parsed <= 0) {
+            throw new ArgumentException(
+                $"{option} must be a positive Int64."
+            );
+        }
+        return parsed;
+    }
+
     private static RoleSpec ParseRoleSpec(string value) {
         string[] parts = value.Split(':', 4);
         if (parts.Length is < 3 or > 4) {
@@ -1071,6 +1514,19 @@ internal static class Program {
             + "[--connections <path> --connection <id> "
             + "--call-log-dir <dir>] "
             + "[--candidate-prefix <token>] [--attempt-id <token>]"
+        );
+        Console.WriteLine(
+            "  run-online-turn --input <repo-dir> --message <text> "
+            + "--role <required|optional:profile:produce> "
+            + "--policy-id <token> --policy-fingerprint <token> "
+            + "--connections <path> [--connection <id>] "
+            + "--output <json> [--call-log-dir <dir>] "
+            + "[--selection latest|budgeted|nth:<n>] "
+            + "[--raw-suffix-budget <n>] "
+            + "[--total-context-budget <n>] "
+            + "[--bootstrap-budget <n>] "
+            + "[--coherence-group <token>] "
+            + "[--uncertain-recovery refuse|restart-new-attempt]"
         );
         Console.WriteLine(
             "  publish-derived-artifact-set --input <repo-dir> "

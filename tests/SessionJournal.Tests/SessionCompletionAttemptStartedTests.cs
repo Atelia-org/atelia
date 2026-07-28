@@ -186,7 +186,7 @@ public sealed class SessionCompletionAttemptStartedTests {
     ) {
         ImmutableArray<ToolDefinition> tools =
             ImmutableArray<ToolDefinition>.Empty;
-        return PreparedV4Fixture.Create(
+        return PreparedV5Fixture.Create(
             correlationId,
             "observation",
             runtime,

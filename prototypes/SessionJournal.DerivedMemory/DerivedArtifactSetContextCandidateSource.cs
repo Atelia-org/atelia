@@ -1,10 +1,9 @@
 namespace Atelia.SessionJournal.DerivedMemory;
 
 /// <summary>
-/// Concrete Latest provider over one derived-only ArtifactSet lineage. It never opens or reads the
-/// raw SessionJournal; raw ancestry and setup assertions remain authoritative core validations.
-/// In DM-3B, <see cref="SessionContextSelectionRequest.RawSuffixTokenBudget"/> is a non-binding
-/// planning hint: Latest selection does not search older sets or guarantee that budget.
+/// Bounded two-phase provider over one exact ArtifactSet lineage. Discovery reads set metadata
+/// only; exact contribution text is loaded only for a descriptor selected by SessionJournal raw
+/// authority. This provider never opens the raw journal.
 /// </summary>
 public sealed class DerivedArtifactSetContextCandidateSource
     : ICoherentContextCandidateSource {
@@ -26,30 +25,119 @@ public sealed class DerivedArtifactSetContextCandidateSource
         _lineageKey = lineageKey;
     }
 
-    public async ValueTask<SessionContextCandidate?> SelectAsync(
+    public async ValueTask<SessionContextCandidateDiscovery> DiscoverAsync(
         SessionContextSelectionRequest request,
         CancellationToken cancellationToken
     ) {
         ArgumentNullException.ThrowIfNull(request);
         request.ValidateShape();
-        if (request.Mode != SessionContextSelectionMode.Latest
-            || !string.Equals(
+        if (!string.Equals(
                 request.CoherenceGroup,
                 _policy.CoherenceGroup,
                 StringComparison.Ordinal
             )) {
-            return null;
+            return new(
+                SessionContextCandidateDiscoveryStatus.Candidates,
+                Array.Empty<SessionContextCandidateDescriptor>()
+            );
         }
 
-        DerivedArtifactSet? set = await _repository.ArtifactSets
+        DerivedArtifactSet? current = await _repository.ArtifactSets
             .TryReadLatestAsync(
                 _policy,
                 _lineageKey,
                 cancellationToken
             )
             .ConfigureAwait(false);
-        if (set is null) {
-            return null;
+        if (current is null) {
+            // A missing pointer is never evidence of an empty lineage. Strict rebuild either
+            // proves an empty set inventory, recovers the unique tip, or fails on corruption.
+            current = await _repository.ArtifactSets
+                .RebuildLatestPointerAsync(
+                    _policy,
+                    _lineageKey,
+                    cancellationToken
+                )
+                .ConfigureAwait(false);
+        }
+        if (current is null) {
+            return new(
+                SessionContextCandidateDiscoveryStatus.EmptyLineage,
+                Array.Empty<SessionContextCandidateDescriptor>()
+            );
+        }
+
+        int requestedCount = request.Mode switch {
+            SessionContextSelectionMode.Latest => 1,
+            SessionContextSelectionMode.NthPrevious =>
+                checked(request.NthPreviousOrdinal + 1),
+            SessionContextSelectionMode.Budgeted =>
+                request.MaxCandidateCount,
+            _ => throw new ArgumentOutOfRangeException(
+                nameof(request.Mode),
+                request.Mode,
+                "Unsupported context selection mode."
+            )
+        };
+        var descriptors =
+            new List<SessionContextCandidateDescriptor>(
+                requestedCount
+            );
+        var visited = new HashSet<string>(StringComparer.Ordinal);
+        while (current is not null
+               && descriptors.Count < requestedCount) {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (!visited.Add(current.SetId)) {
+                throw new InvalidDataException(
+                    "ArtifactSet candidate lineage contains a cycle."
+                );
+            }
+            descriptors.Add(new(
+                current.SetId,
+                descriptors.Count,
+                current.CommonAnchor,
+                current.AnchorSetups
+            ));
+            current = current.PreviousSetId is { } previous
+                ? await _repository.ArtifactSets.TryReadAsync(
+                        previous,
+                        _policy,
+                        _lineageKey,
+                        cancellationToken
+                    )
+                    .ConfigureAwait(false)
+                    ?? throw new InvalidDataException(
+                        $"ArtifactSet candidate lineage references missing previous set '{previous}'."
+                    )
+                : null;
+        }
+        return new(
+            SessionContextCandidateDiscoveryStatus.Candidates,
+            descriptors.AsReadOnly()
+        );
+    }
+
+    public async ValueTask<SessionContextCandidate> MaterializeAsync(
+        SessionContextCandidateDescriptor descriptor,
+        CancellationToken cancellationToken
+    ) {
+        ArgumentNullException.ThrowIfNull(descriptor);
+        DerivedArtifactSet set = await _repository.ArtifactSets
+            .TryReadAsync(
+                descriptor.Handle,
+                _policy,
+                _lineageKey,
+                cancellationToken
+            )
+            .ConfigureAwait(false)
+            ?? throw new InvalidDataException(
+                $"Discovered ArtifactSet '{descriptor.Handle}' is no longer available."
+            );
+        if (set.CommonAnchor != descriptor.RawStartExclusive
+            || set.AnchorSetups != descriptor.AnchorSetups) {
+            throw new InvalidDataException(
+                $"Discovered ArtifactSet '{descriptor.Handle}' changed before materialization."
+            );
         }
 
         var contributions = new List<SessionContextContribution>(
@@ -80,7 +168,7 @@ public sealed class DerivedArtifactSetContextCandidateSource
                 member.SourceRawHead
             ));
         }
-        return new SessionContextCandidate(
+        return new(
             set.CommonAnchor,
             set.AnchorSetups,
             contributions.AsReadOnly()
