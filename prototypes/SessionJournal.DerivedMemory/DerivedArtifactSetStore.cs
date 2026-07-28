@@ -240,6 +240,26 @@ public sealed class DerivedArtifactSetStore {
         )
         .ConfigureAwait(false);
 
+    /// <summary>
+    /// Reads one exact persisted set while validating its identity and every referenced artifact.
+    /// This is intentionally independent of a current policy pointer.
+    /// </summary>
+    public async ValueTask<DerivedArtifactSet?> TryReadExactAsync(
+        string setId,
+        CancellationToken cancellationToken = default
+    ) {
+        ValidateSetId(setId);
+        DerivedArtifactSetInventory inventory =
+            await ReadInventoryAsync(cancellationToken).ConfigureAwait(false);
+        return inventory.Sets.SingleOrDefault(
+            set => string.Equals(
+                set.SetId,
+                setId,
+                StringComparison.Ordinal
+            )
+        );
+    }
+
     internal async ValueTask<DerivedArtifactSetInventory> ReadInventoryAsync(
         IReadOnlyDictionary<string, DerivedRecapArtifact>?
             strictArtifactsById,

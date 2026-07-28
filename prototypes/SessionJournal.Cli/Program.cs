@@ -71,6 +71,18 @@ internal static class Program {
                     DerivedMemoryCommands.RebuildLatestAsync(options)
                         .GetAwaiter()
                         .GetResult(),
+                "configure-derived-artifact-planner" =>
+                    DerivedMemoryCommands.ConfigurePlannerAsync(options)
+                        .GetAwaiter()
+                        .GetResult(),
+                "plan-derived-artifact-epoch" =>
+                    DerivedMemoryCommands.PlanEpochAsync(options)
+                        .GetAwaiter()
+                        .GetResult(),
+                "list-derived-artifact-epochs" =>
+                    DerivedMemoryCommands.ListEpochsAsync(options)
+                        .GetAwaiter()
+                        .GetResult(),
                 _ => Fail($"Unknown command '{command}'.")
             };
         }
@@ -652,6 +664,26 @@ internal static class Program {
             + "--policy-id <token> --policy-fingerprint <token> "
             + "--required-role <role=carrier/block> "
             + "[--optional-role <role=carrier/block>] "
+            + "[--report-json <path-outside-repo>]"
+        );
+        Console.WriteLine(
+            "  configure-derived-artifact-planner --input <repo-dir> "
+            + "--lineage <key> --coherence-group <token> "
+            + "--topology-version <token> "
+            + "--minimum-recent-tokens <n> --epoch-trigger-tokens <n> "
+            + "--scheduling-headroom-tokens <n> --hard-limit-tokens <n> "
+            + "--expected-current <none|config-id> "
+            + "[--report-json <path-outside-repo>]"
+        );
+        Console.WriteLine(
+            "  plan-derived-artifact-epoch --input <repo-dir> "
+            + "--lineage <key> --coherence-group <token> "
+            + "--expected-previous <none|epoch-id> "
+            + "--input-set <none|set-id> "
+            + "[--report-json <path-outside-repo>]"
+        );
+        Console.WriteLine(
+            "  list-derived-artifact-epochs --input <repo-dir> "
             + "[--report-json <path-outside-repo>]"
         );
     }

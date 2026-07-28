@@ -1,6 +1,6 @@
 # DerivedMemory 可替换子系统与 Shared Epoch 实施方案
 
-> **状态**：In Progress；DM-0～DM-4 已完成，下一片 DM-5
+> **状态**：In Progress；DM-0～DM-5 已完成，下一片 DM-6
 > **日期**：2026-07-27
 > **最新代码对齐**：2026-07-28；已纳入
 > `ChatSession.LegacyExportCli` / `SessionJournal.Cli` 拆分与
@@ -646,6 +646,13 @@ DerivedMemory。这样避免物理搬家与 Prepared wire cut 同时扩大。
 
 ## 10. DM-5：Shared DerivedArtifactEpochPlanner
 
+> **实施状态（2026-07-28）**：已完成。实现位于
+> `SessionJournal/SessionHistoryPlanning.cs`、
+> `SessionJournal.DerivedMemory/DerivedArtifactEpochPlanner.cs` 与
+> `DerivedArtifactEpochContracts.cs`；CLI 使用 singular
+> `configure-derived-artifact-planner` / `plan-derived-artifact-epoch` /
+> `list-derived-artifact-epochs`。
+
 ### 目标
 
 在任何 LLM maintainer 调用前，统一决定同一 coherence group 的 history coverage，解决 daily parallel
@@ -657,16 +664,20 @@ maintenance 与 independent prompt-tuning 的同步问题。
 
 ```text
 derived/memory/v1/
-  planner-config.json
   planner-configs/<config-hash>.json
   epochs/<epoch-id>.json
-  artifacts/...
   sets/...
-  indexes/...
+  indexes/
+    current-planner-configs/<key-hash>.json
+    latest-epochs/<key-hash>.json
+    latest-sets/...
 ```
 
-`planner-config.json` 是 current pointer；旧 immutable config snapshot 和 epoch plan append-only。
-config 不进入 raw event sequence。
+planner key 的长期形状是 exact `lineageKey + coherenceGroup`；但 v1 authority 明确只接受
+`lineageKey == SessionJournalDefaults.MainBranchName`，不能把任意 token 当作已经具备 branch-aware
+能力。未来支持多 branch 时必须先提供 exact ref/lineage authority，再放宽该约束。config snapshot 自带
+`previousConfigId`，因此 config history 与 epoch ledger 都是 append-only、可验证的单 tip
+lineage；current/latest 文件只是可重建 pointer。config 不进入 raw event sequence。
 
 ### Planner config
 
@@ -680,6 +691,10 @@ config 不进入 raw event sequence。
 - scheduling headroom；
 - hard-limit/backpressure policy；
 - planner schema/fingerprint。
+
+v1 config 要求
+`hardLimit > minimumRecent + epochTrigger + schedulingHeadroom`；否则正常 epoch trigger
+在 backpressure 前永远不可达，configure 必须 fail fast（包括 checked cost overflow）。
 
 ### Epoch plan
 
@@ -701,7 +716,14 @@ DerivedArtifactEpochPlan {
 ```
 
 `epochId` 由 immutable identity 决定，不使用 wall-clock/run id。config 回答“未来怎样切”，ledger
-回答“历史实际上怎样切了”。
+回答“历史实际上怎样切了”。planning diagnostics 随 epoch 持久化用于观测，但不进入
+`epochId` identity，避免 cache/hint 命中差异改变 coverage identity。
+
+genesis 的 `previousEpochId` 与 `inputSetId` 必须同时为空，对应显式
+`empty-memory-pack` policy。非 genesis 二者必须同时存在；input set 需要通过 exact
+self-validation，并满足同 lineage/coherence group 且
+`CommonAnchor == previousEpoch.SourceEndInclusive`。repository strict validation 会再次
+交叉验证该约束，不能只依赖 plan-time 检查。
 
 ### Trigger rule
 
@@ -719,11 +741,45 @@ boundary alignment 可以使 epoch 大小不同。同步要求是共享 exact ep
 
 - DerivedMemory planner/config/epoch codecs；
 - deterministic identity/hash；
-- branch-aware previous epoch/index；
+- current-main-bound previous epoch/index；多 branch authority 后续显式扩展；
 - atomic compare-and-publish；
 - header-first addressed raw range planner；
-- CLI `plan-derived-artifact-epochs` / `list-derived-artifact-epochs`（命名可在本片设计复核）；
+- CLI configure/plan/list 与 content-free atomic reports；
 - diagnostics：headers、payloads、decoded bytes、selected boundary/cost。
+
+planning 采用两阶段协议：先在 derived write lock 外捕获 immutable config、读取 raw planning
+window 并计算 candidate；随后所有 `Planned`、`AlreadyPlanned`、`BelowTrigger` 与
+backpressure 终态都进入同一个短锁线性化点，重读 exact current config/latest pointer。
+并发 direct-child 只有在 previous/input identity 与 captured raw head 都相同时才作为幂等重试；
+pointer 已推进到 grandchild 或无关 successor 必须报 concurrency。raw scan 不进入 derived
+repository 长锁。
+
+`SessionJournal.ReadCurrentLineageHeaders()` 提供一次 store-neutral、header-only 的 current-main
+snapshot（captured head、head-to-root address/parent/kind、read diagnostics），不 decode payload、
+不调用 `Project()`。`ReadHistoryPlanningSeeds()` 用同一次 current-lineage pass 从 root 向 head
+只解 setup payload，为多个 epoch starts 生成 core-owned verified seeds；historical planning
+oracle 随后按 exact `plannedAt` + seed 增量重放各 epoch window，不会为 stable-root legacy
+setup 产生 E 次全链回溯。
+
+repository strict validation 与 latest-epoch pointer rebuild 会：
+
+- 验证每个 epoch 的 `start < end <= plannedAt` 且三者仍位于 current lineage；
+- 强制 genesis start 是该 lineage 的 `SessionCreated`；
+- exact 比较 core-produced start setup refs；
+- 按 epoch immutable config 重跑 token estimator 与 `SelectBoundary`，要求 selected
+  replay-safe boundary、measured cost 与 deterministic semantic diagnostics exact 一致；
+- rebuild pointer 前执行与 strict validation 等价的 config/topology/non-genesis exact
+  ArtifactSet dependency closure。
+
+因此 derived JSON/hash 自洽但 genesis 跳过历史、source end 落在 multi-tool 中间、
+选择了另一个合法 boundary、篡改 cost，或已因 rewind/divergence 脱离 current main 的 epoch，
+都不能通过 validate，也不能被 rebuild 成 current latest pointer。historical oracle 允许读取
+对应增量 window payload，但不调用 `Project()` 或物化 start 之前的完整 conversation。
+
+epoch file 与 latest pointer 的发布仍是 crash-safe 两步。由于 observational diagnostics 不进入
+`epochId`，pointer 写前发现同 ID orphan file 时会 strict decode 并采用 first-writer durable
+observations；但 decoded event/unit/boundary counts 与 total/eligible/retained costs 等 semantic
+diagnostics 必须和当前重算一致，否则拒绝，不以 full-DTO collision 或覆盖方式处理。
 
 ### 非目标
 
@@ -739,10 +795,17 @@ boundary alignment 可以使 epoch 大小不同。同步要求是共享 exact ep
 - config 更新只影响未来 epoch；
 - restart 不重新规划已 durable epoch；
 - concurrent planners 对同 previous epoch 原子收口；
-- branch/rewind 拒绝 divergent epoch；
+- 非 `main` key fail fast，rewind/divergence 拒绝脱离 current-main 的 epoch；
 - 允许 boundary-aligned 非等大 epochs；
 - 10k+ cold prefix 不增加增量 planning payload reads；
 - 无 artifact genesis 行为有显式 policy/test。
+
+10k 验收使用 1 vs 10,001 个真实 imported cold turns、真实 EventFrame parent chain 和单次
+ref move，对比相同 recent suffix 的 payload reads、decoded bytes 与 decoded event count。
+在没有近头 Prepared/setup checkpoint 的 legacy lineage 上，governing setup proof 仍可能
+产生随 cold prefix 增长的 **header-only** visits；DM-5 不声称消除了这项旧链 header scan。
+Linux 测试 fixture 优先放在 `/dev/shm`，只避免 durable fixture 构造退化成物理盘 fsync
+benchmark，不改变 EventJournal durability API。
 
 ## 11. DM-6：Epoch-bound Independent Maintainer Runner
 
@@ -1023,21 +1086,20 @@ fakes 完成验收。
 DM-3/DM-4 应连续调度，但仍保持独立 review/commit，以便确认新 provider path 先可用，再删除旧 raw
 surface。
 
-## 17. 下一步：领取 DM-0
+## 17. 下一步：领取 DM-6
 
-下一次 Coding Agent 应只实施 **DM-0：Cross-assembly Contracts**。开始前重点阅读：
+下一次 Coding Agent 应只实施 **DM-6：Epoch-bound Independent Maintainer Runner**。开始前重点阅读：
 
-- `prototypes/SessionJournal/SessionRequestManifest.cs`
-- `prototypes/SessionJournal/SessionTailContextProjection.cs`
-- `prototypes/SessionJournal/SessionJournalEngine.cs`
-- `prototypes/SessionJournal/SessionExecutionTailResolver.cs`
-- `prototypes/SessionJournal/DerivedRecapStore.cs`
+- `prototypes/SessionJournal/SessionHistoryPlanning.cs`
+- `prototypes/SessionJournal.DerivedMemory/DerivedArtifactEpochContracts.cs`
+- `prototypes/SessionJournal.DerivedMemory/DerivedArtifactEpochPlanner.cs`
+- `prototypes/SessionJournal.DerivedMemory/DerivedRecapStore.cs`
 - `prototypes/SessionJournal.Cli/SessionJournal.Cli.csproj`
 - `prototypes/SessionJournal.Cli/MemoryMaintainerRun.cs`
 - `prototypes/SessionJournal.Maintainers/SessionJournal.Maintainers.csproj`
 - `prototypes/SessionJournal.Maintainers/README.md`
 - `tests/SessionJournal.Tests/`
-- 本文 §2、§3、§5
+- 本文 §10、§11、§15
 
 DM-0 完成标志不是“新建了 interface 文件”，而是：
 

@@ -119,36 +119,42 @@ internal static class SessionTailContextProjection {
         );
     }
 
-    internal static void ValidateReplaySafeBoundary(SessionJournalEventReader reader, EventAddress anchor) {
-        using SessionJournalEventFrame frame = reader.ReadEvent(anchor).Unwrap();
-        ValidateSessionHeader(anchor, frame.Header);
-        var kind = (SessionEventKind)frame.Header.OpaqueEventKind;
-        object body = SessionEventCodec.Decode(kind, frame.Payload, out _);
-        switch (kind) {
-            case SessionEventKind.RuntimeConfigSetup:
-            case SessionEventKind.SystemPromptSetup:
-            case SessionEventKind.SessionCreated:
-            case SessionEventKind.ObservationAccepted:
-            case SessionEventKind.CompletionAttemptFailed:
-                return;
-            case SessionEventKind.AgentActionProduced:
-            case SessionEventKind.ImportedAgentAction:
-                if (((AgentActionProducedBody)body).Action.ToolCalls.Count == 0) { return; }
-                throw new InvalidDataException("Recap artifact anchor is an action with outstanding tool dependencies.");
-            case SessionEventKind.ToolExecutionStarted:
-            case SessionEventKind.ToolResultObserved:
-            case SessionEventKind.CompletionRequestPrepared:
-            case SessionEventKind.CompletionAttemptStarted:
-                throw new InvalidDataException($"Recap artifact anchor kind '{kind}' is not replay-safe in CS-3B.");
-            default:
-                throw new InvalidDataException($"Unsupported recap artifact anchor kind '{kind}'.");
+    internal static SessionExecutionRecovery ValidateReplaySafeBoundary(
+        SessionJournalEventReader reader,
+        EventAddress anchor,
+        CancellationToken cancellationToken = default
+    ) {
+        SessionExecutionRecovery recovery =
+            SessionExecutionTailResolver.Resolve(
+                reader,
+                anchor,
+                cancellationToken
+            );
+        if (!IsReplaySafeRecovery(recovery)) {
+            throw new InvalidDataException(
+                $"Session history anchor '{anchor}' in phase "
+                + $"'{recovery.State.Phase}' is not replay-safe."
+            );
         }
+        return recovery;
     }
+
+    internal static bool IsReplaySafeRecovery(
+        SessionExecutionRecovery recovery
+    ) => recovery.State.Phase is (
+        SessionExecutionPhase.Empty
+        or SessionExecutionPhase.Idle
+        or SessionExecutionPhase.AwaitingAgentAction
+        or SessionExecutionPhase.TurnFailed
+    );
 
     internal static TailFoldResult FoldSuffix(
         SessionGoverningSetup seed,
         IReadOnlyList<DecodedSessionEvent> events,
-        SessionExecutionRecovery? executionSeed = null
+        SessionExecutionRecovery? executionSeed = null,
+        ICollection<AddressedSessionHistoryMessage>? addressedMessages = null,
+        ICollection<SessionHistoryPlanningBoundary>?
+            replaySafeBoundaries = null
     ) {
         EventAddress runtimeAddress = seed.RuntimeConfigSetupAddress;
         SessionRuntimeConfiguration runtimeConfig = seed.RuntimeConfig;
@@ -168,6 +174,8 @@ internal static class SessionTailContextProjection {
         CompletionRequestPreparedBody? sourcePrepared = null;
         EventAddress? sourcePreparedAddress = null;
         EventAddress? activeAttemptAddress = null;
+        EventAddress? firstObservedToolResultAddress = null;
+        EventAddress? lastObservedToolResultAddress = null;
         SessionEventKind? priorKind = executionSeed?.State.HeadKind;
         EventAddress? priorAddress = executionSeed?.Head ?? seed.Head;
 
@@ -292,7 +300,15 @@ internal static class SessionTailContextProjection {
                             $"{ev.Kind} at {ev.Address} must appear at an idle or failed suffix boundary."
                         );
                     }
-                    context.Add(new ObservationMessage(RequireBody<ObservationAcceptedBody>(ev).Content));
+                    var observation = new ObservationMessage(
+                        RequireBody<ObservationAcceptedBody>(ev).Content
+                    );
+                    context.Add(observation);
+                    addressedMessages?.Add(new AddressedSessionHistoryMessage(
+                        observation,
+                        ev.Address,
+                        ev.Address
+                    ));
                     activeCorrelationId =
                         $"atelia.session-journal.turn.v1:{EventAddressTextCodec.Format(ev.Address)}";
                     sourcePrepared = null;
@@ -357,6 +373,11 @@ internal static class SessionTailContextProjection {
                     sourcePreparedAddress = null;
                     activeAttemptAddress = null;
                     context.Add(action);
+                    addressedMessages?.Add(new AddressedSessionHistoryMessage(
+                        action,
+                        ev.Address,
+                        ev.Address
+                    ));
                     if (action.ToolCalls.Count > 0) {
                         pendingToolRuntimeIdentity = actionBody.ToolRuntimeIdentity
                             ?? throw new InvalidDataException(
@@ -366,6 +387,8 @@ internal static class SessionTailContextProjection {
                         observedResults.Clear();
                         pendingCall = action.ToolCalls[0];
                         pendingStarted = false;
+                        firstObservedToolResultAddress = null;
+                        lastObservedToolResultAddress = null;
                         phase = SessionExecutionPhase.AwaitingToolExecution;
                     }
                     else {
@@ -416,19 +439,49 @@ internal static class SessionTailContextProjection {
                     if (!observedResults.TryAdd(result.ToolCallId, result)) {
                         throw new InvalidDataException($"{ev.Kind} at {ev.Address} duplicates suffix tool result '{result.ToolCallId}'.");
                     }
+                    firstObservedToolResultAddress ??= ev.Address;
+                    lastObservedToolResultAddress = ev.Address;
                     pendingCall = openAction.ToolCalls.FirstOrDefault(call => !observedResults.ContainsKey(call.ToolCallId));
                     pendingStarted = false;
                     if (pendingCall is null) {
-                        context.Add(ProjectToolResults(openAction, observedResults));
+                        ToolResultsMessage toolResults =
+                            ProjectToolResults(openAction, observedResults);
+                        context.Add(toolResults);
+                        addressedMessages?.Add(
+                            new AddressedSessionHistoryMessage(
+                                toolResults,
+                                firstObservedToolResultAddress.Value,
+                                lastObservedToolResultAddress.Value
+                            )
+                        );
                         openAction = null;
                         observedResults.Clear();
                         pendingToolRuntimeIdentity = null;
+                        firstObservedToolResultAddress = null;
+                        lastObservedToolResultAddress = null;
                         phase = SessionExecutionPhase.AwaitingAgentAction;
                     }
                     break;
                 }
                 default:
                     throw new InvalidDataException($"Unsupported suffix event kind '{ev.Kind}'.");
+            }
+            if (phase is (
+                    SessionExecutionPhase.Empty
+                    or SessionExecutionPhase.Idle
+                    or SessionExecutionPhase.AwaitingAgentAction
+                    or SessionExecutionPhase.TurnFailed
+                )
+                && openAction is null
+                && pendingCall is null
+                && !pendingStarted
+                && sourcePrepared is null) {
+                replaySafeBoundaries?.Add(
+                    new SessionHistoryPlanningBoundary(
+                        ev.Address,
+                        context.Count
+                    )
+                );
             }
             priorKind = ev.Kind;
             priorAddress = ev.Address;

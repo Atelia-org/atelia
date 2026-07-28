@@ -8,5 +8,9 @@ public sealed record DerivedMemoryValidationReport(
     int ArtifactCount,
     int ArtifactSetCount,
     int LatestPointerCount,
-    int ExactArtifactSetKeyCount
+    int ExactArtifactSetKeyCount,
+    int PlannerConfigCount = 0,
+    int CurrentPlannerConfigCount = 0,
+    int ArtifactEpochCount = 0,
+    int LatestArtifactEpochCount = 0
 );

@@ -155,6 +155,427 @@ public sealed class SessionJournalEngine : IDisposable {
         );
     }
 
+    /// <summary>
+    /// Captures the current main Parent lineage using event headers only. The returned order is
+    /// head-to-root and is bound to one captured ref head; no payload is read or decoded.
+    /// </summary>
+    public SessionCurrentLineageSnapshot ReadCurrentLineageHeaders(
+        CancellationToken cancellationToken = default
+    ) {
+        ThrowIfDisposed();
+        EventAddress capturedHead = _journal.GetHead(_mainRef)
+            ?? throw new InvalidOperationException(
+                "Current-lineage inspection requires a non-empty SessionJournal."
+            );
+        SessionJournalReadDiagnostics before =
+            _reader.CaptureDiagnostics();
+        var entries = new List<SessionCurrentLineageHeader>();
+        var visited = new HashSet<EventAddress>();
+        EventAddress? cursor = capturedHead;
+        while (cursor is { } address) {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (!visited.Add(address)) {
+                throw new InvalidDataException(
+                    $"SessionJournal current main Parent chain contains a cycle at {address}."
+                );
+            }
+            EventFrameHeader header =
+                _reader.ReadEventHeaderPreview(address).Unwrap();
+            ValidateSessionHeaderPreview(address, header);
+            entries.Add(new SessionCurrentLineageHeader(
+                address,
+                header.Parent,
+                (SessionEventKind)header.OpaqueEventKind
+            ));
+            cursor = header.Parent;
+        }
+        SessionJournalReadDiagnostics after =
+            _reader.CaptureDiagnostics();
+        return new SessionCurrentLineageSnapshot(
+            capturedHead,
+            entries.AsReadOnly(),
+            new SessionCurrentLineageDiagnostics(
+                after.HeaderPreviewReadCount
+                    - before.HeaderPreviewReadCount,
+                after.PayloadReadCount - before.PayloadReadCount,
+                after.LogicalPayloadByteCount
+                    - before.LogicalPayloadByteCount
+            )
+        );
+    }
+
+    /// <summary>
+    /// Resolves setup seeds for multiple current-main planning starts with one header walk. Only
+    /// setup-event payloads are decoded; ordinary history payloads remain unread.
+    /// </summary>
+    public SessionHistoryPlanningSeedBatch ReadHistoryPlanningSeeds(
+        IEnumerable<EventAddress> starts,
+        CancellationToken cancellationToken = default
+    ) {
+        ThrowIfDisposed();
+        ArgumentNullException.ThrowIfNull(starts);
+        EventAddress[] requested = [.. starts.Distinct()];
+        if (requested.Any(static address => address == default)) {
+            throw new ArgumentException(
+                "Planning seed addresses cannot be default.",
+                nameof(starts)
+            );
+        }
+        EventAddress capturedHead = _journal.GetHead(_mainRef)
+            ?? throw new InvalidOperationException(
+                "Planning seed resolution requires a non-empty SessionJournal."
+            );
+        SessionJournalReadDiagnostics before =
+            _reader.CaptureDiagnostics();
+        var headers = new List<SessionCurrentLineageHeader>();
+        var visited = new HashSet<EventAddress>();
+        EventAddress? cursor = capturedHead;
+        while (cursor is { } address) {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (!visited.Add(address)) {
+                throw new InvalidDataException(
+                    $"SessionJournal current main Parent chain contains a cycle at {address}."
+                );
+            }
+            EventFrameHeader header =
+                _reader.ReadEventHeaderPreview(address).Unwrap();
+            ValidateSessionHeaderPreview(address, header);
+            headers.Add(new(
+                address,
+                header.Parent,
+                (SessionEventKind)header.OpaqueEventKind
+            ));
+            cursor = header.Parent;
+        }
+        var requestedSet = requested.ToHashSet();
+        var seeds = new List<SessionHistoryPlanningSeed>(
+            requested.Length
+        );
+        EventAddress? runtimeAddress = null;
+        SessionRuntimeConfiguration? runtimeConfig = null;
+        SessionContextSetupReference? runtimeReference = null;
+        EventAddress? promptAddress = null;
+        string? systemPrompt = null;
+        SessionContextSetupReference? promptReference = null;
+        for (int index = headers.Count - 1; index >= 0; index--) {
+            cancellationToken.ThrowIfCancellationRequested();
+            SessionCurrentLineageHeader header = headers[index];
+            if (header.Kind is SessionEventKind.RuntimeConfigSetup
+                or SessionEventKind.SystemPromptSetup) {
+                using SessionJournalEventFrame frame =
+                    _reader.ReadEvent(header.Address).Unwrap();
+                ValidateSessionHeaderPreview(
+                    header.Address,
+                    frame.Header
+                );
+                object body = SessionEventCodec.Decode(
+                    header.Kind,
+                    frame.Payload,
+                    out int schemaVersion
+                );
+                var reference =
+                    new SessionContextSetupReference(
+                        header.Address,
+                        schemaVersion,
+                        SessionRequestCanonicalizer.Sha256Hex(
+                            frame.Payload
+                        )
+                    );
+                if (header.Kind
+                    == SessionEventKind.RuntimeConfigSetup) {
+                    runtimeAddress = header.Address;
+                    runtimeConfig = body
+                        as SessionRuntimeConfiguration
+                        ?? throw new InvalidDataException(
+                            $"runtime-config-setup at {header.Address} decoded to an unexpected body."
+                        );
+                    runtimeReference = reference;
+                }
+                else {
+                    promptAddress = header.Address;
+                    systemPrompt = body is SystemPromptSetupBody prompt
+                        ? prompt.Content
+                        : throw new InvalidDataException(
+                            $"system-prompt-setup at {header.Address} decoded to an unexpected body."
+                        );
+                    promptReference = reference;
+                }
+            }
+            if (!requestedSet.Contains(header.Address)) {
+                continue;
+            }
+            if (runtimeAddress is null
+                || runtimeConfig is null
+                || runtimeReference is null
+                || promptAddress is null
+                || systemPrompt is null
+                || promptReference is null) {
+                throw new InvalidDataException(
+                    $"Planning start '{header.Address}' has no complete governing setup."
+                );
+            }
+            seeds.Add(new SessionHistoryPlanningSeed(
+                Path,
+                header.Address,
+                new(
+                    runtimeReference,
+                    promptReference
+                ),
+                new SessionGoverningSetup(
+                    header.Address,
+                    runtimeAddress.Value,
+                    runtimeConfig,
+                    promptAddress.Value,
+                    systemPrompt
+                )
+            ));
+        }
+        if (seeds.Count != requested.Length) {
+            throw new InvalidDataException(
+                "One or more planning seed addresses are outside the current main lineage."
+            );
+        }
+        SessionJournalReadDiagnostics after =
+            _reader.CaptureDiagnostics();
+        var diagnostics = new SessionCurrentLineageDiagnostics(
+            after.HeaderPreviewReadCount
+                - before.HeaderPreviewReadCount,
+            after.PayloadReadCount - before.PayloadReadCount,
+            after.LogicalPayloadByteCount
+                - before.LogicalPayloadByteCount
+        );
+        return new SessionHistoryPlanningSeedBatch(
+            new SessionCurrentLineageSnapshot(
+                capturedHead,
+                headers.AsReadOnly(),
+                new(
+                    headers.Count,
+                    PayloadReads: 0,
+                    DecodedPayloadBytes: 0
+                )
+            ),
+            seeds.AsReadOnly(),
+            diagnostics
+        );
+    }
+
+    /// <summary>
+    /// Reads only the raw interval after a replay-safe start boundary and materializes
+    /// dependency-closed history units for derived planning. A null start selects the unique
+    /// SessionCreated event on the captured main lineage. This API never constructs full history
+    /// before the returned start boundary.
+    /// </summary>
+    public SessionHistoryPlanningWindow ReadHistoryPlanningWindow(
+        EventAddress? startExclusive = null,
+        CancellationToken cancellationToken = default
+    ) {
+        ThrowIfDisposed();
+        EventAddress observedHead = _journal.GetHead(_mainRef)
+            ?? throw new InvalidOperationException(
+                "History planning requires a non-empty SessionJournal."
+            );
+        return ReadHistoryPlanningWindowAt(
+            observedHead,
+            startExclusive,
+            cancellationToken
+        );
+    }
+
+    /// <summary>
+    /// Replays one dependency-closed planning interval at an exact historical head. The caller
+    /// supplies the captured head rather than reading the current ref, allowing offline validators
+    /// to reproduce an immutable epoch without constructing conversation history before the
+    /// requested start. A null start resolves the SessionCreated boundary on that exact lineage.
+    /// </summary>
+    public SessionHistoryPlanningWindow ReadHistoryPlanningWindowAt(
+        EventAddress capturedHead,
+        EventAddress? startExclusive = null,
+        CancellationToken cancellationToken = default
+    ) => ReadHistoryPlanningWindowAtCore(
+        capturedHead,
+        startExclusive,
+        planningSeed: null,
+        cancellationToken
+    );
+
+    public SessionHistoryPlanningWindow ReadHistoryPlanningWindowAt(
+        EventAddress capturedHead,
+        SessionHistoryPlanningSeed planningSeed,
+        CancellationToken cancellationToken = default
+    ) {
+        ArgumentNullException.ThrowIfNull(planningSeed);
+        return ReadHistoryPlanningWindowAtCore(
+            capturedHead,
+            planningSeed.Address,
+            planningSeed,
+            cancellationToken
+        );
+    }
+
+    private SessionHistoryPlanningWindow
+        ReadHistoryPlanningWindowAtCore(
+        EventAddress capturedHead,
+        EventAddress? startExclusive,
+        SessionHistoryPlanningSeed? planningSeed,
+        CancellationToken cancellationToken
+    ) {
+        ThrowIfDisposed();
+        if (capturedHead == default) {
+            throw new ArgumentException(
+                "Historical planning head cannot be the default EventAddress.",
+                nameof(capturedHead)
+            );
+        }
+        if (startExclusive == default(EventAddress)) {
+            throw new ArgumentException(
+                "History planning start cannot be the default EventAddress.",
+                nameof(startExclusive)
+            );
+        }
+        SessionJournalReadDiagnostics before =
+            _reader.CaptureDiagnostics();
+        var reverseAddresses = new List<EventAddress>();
+        EventAddress? cursor = capturedHead;
+        EventAddress? resolvedStart = null;
+        while (cursor is { } address) {
+            cancellationToken.ThrowIfCancellationRequested();
+            EventFrameHeader header =
+                _reader.ReadEventHeaderPreview(address).Unwrap();
+            ValidateSessionHeaderPreview(address, header);
+            var kind = (SessionEventKind)header.OpaqueEventKind;
+            if (startExclusive is { } requestedStart) {
+                if (address == requestedStart) {
+                    resolvedStart = address;
+                    break;
+                }
+            }
+            else if (kind == SessionEventKind.SessionCreated) {
+                resolvedStart = address;
+                break;
+            }
+            reverseAddresses.Add(address);
+            cursor = header.Parent;
+        }
+        if (resolvedStart is null) {
+            throw new InvalidDataException(
+                startExclusive is null
+                    ? "SessionJournal lineage has no SessionCreated planning boundary."
+                    : "History planning start is not an ancestor of the captured raw head."
+            );
+        }
+
+        SessionExecutionRecovery executionSeed =
+            SessionTailContextProjection.ValidateReplaySafeBoundary(
+            _reader,
+            resolvedStart.Value,
+            cancellationToken
+        );
+        reverseAddresses.Reverse();
+        var events = new List<DecodedSessionEvent>(
+            reverseAddresses.Count
+        );
+        foreach (EventAddress address in reverseAddresses) {
+            cancellationToken.ThrowIfCancellationRequested();
+            using SessionJournalEventFrame frame =
+                _reader.ReadEvent(address).Unwrap();
+            ValidateSessionHeaderPreview(address, frame.Header);
+            var kind = (SessionEventKind)frame.Header.OpaqueEventKind;
+            object body = SessionEventCodec.Decode(
+                kind,
+                frame.Payload,
+                out int bodySchemaVersion
+            );
+            events.Add(new DecodedSessionEvent(
+                kind,
+                bodySchemaVersion,
+                body,
+                address,
+                frame.Header.Parent
+            ));
+        }
+
+        SessionGoverningSetup seed;
+        SessionContextAnchorSetupReferences startSetups;
+        if (planningSeed is null) {
+            seed = ResolveGoverningSetup(
+                resolvedStart.Value,
+                cancellationToken
+            );
+            SessionSetupReference runtime = CreateSetupReference(
+                seed.RuntimeConfigSetupAddress,
+                SessionEventKind.RuntimeConfigSetup
+            );
+            SessionSetupReference prompt = CreateSetupReference(
+                seed.SystemPromptSetupAddress,
+                SessionEventKind.SystemPromptSetup
+            );
+            startSetups = new(
+                new SessionContextSetupReference(
+                    runtime.Address,
+                    runtime.BodySchemaVersion,
+                    runtime.PayloadSha256
+                ),
+                new SessionContextSetupReference(
+                    prompt.Address,
+                    prompt.BodySchemaVersion,
+                    prompt.PayloadSha256
+                )
+            );
+        }
+        else {
+            if (planningSeed.Address != resolvedStart.Value
+                || !string.Equals(
+                    System.IO.Path.GetFullPath(
+                        planningSeed.OwnerPath
+                    ),
+                    System.IO.Path.GetFullPath(Path),
+                    OperatingSystem.IsWindows()
+                        ? StringComparison.OrdinalIgnoreCase
+                        : StringComparison.Ordinal
+                )) {
+                throw new ArgumentException(
+                    "Planning seed does not belong to this SessionJournal boundary.",
+                    nameof(planningSeed)
+                );
+            }
+            seed = planningSeed.GoverningSetup;
+            startSetups = planningSeed.Setups;
+        }
+        var addressedMessages = new List<AddressedSessionHistoryMessage>();
+        var boundaries = new List<SessionHistoryPlanningBoundary>();
+        _ = SessionTailContextProjection.FoldSuffix(
+            seed,
+            events,
+            executionSeed,
+            addressedMessages,
+            boundaries
+        );
+        var units = addressedMessages
+            .Select(static addressed => new SessionHistoryPlanningUnit(
+                addressed.Message,
+                addressed.SourceStartInclusive,
+                addressed.SourceEndInclusive
+            ))
+            .ToArray();
+        SessionJournalReadDiagnostics after =
+            _reader.CaptureDiagnostics();
+        return new SessionHistoryPlanningWindow(
+            capturedHead,
+            resolvedStart.Value,
+            startSetups,
+            Array.AsReadOnly(units),
+            boundaries.AsReadOnly(),
+            new SessionHistoryPlanningDiagnostics(
+                after.HeaderPreviewReadCount
+                    - before.HeaderPreviewReadCount,
+                after.PayloadReadCount - before.PayloadReadCount,
+                after.LogicalPayloadByteCount
+                    - before.LogicalPayloadByteCount,
+                events.Count
+            )
+        );
+    }
+
     public async Task<TurnResult> SendAsync(string observation, CancellationToken cancellationToken = default)
         => await SendAsync(observation, observer: null, cancellationToken).ConfigureAwait(false);
 

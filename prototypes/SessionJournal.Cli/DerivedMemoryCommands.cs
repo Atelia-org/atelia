@@ -10,7 +10,187 @@ internal static class DerivedMemoryCommands {
     private const string InventorySchema =
         "atelia.session-journal.cli.derived-artifact-set-inventory.v1";
     private const string ValidationSchema =
-        "atelia.session-journal.cli.derived-memory-validation.v1";
+        "atelia.session-journal.cli.derived-memory-validation.v2";
+    private const string PlannerConfigOperationSchema =
+        "atelia.session-journal.cli.derived-artifact-planner-config-operation.v1";
+    private const string EpochOperationSchema =
+        "atelia.session-journal.cli.derived-artifact-epoch-operation.v1";
+    private const string EpochInventorySchema =
+        "atelia.session-journal.cli.derived-artifact-epoch-inventory.v1";
+
+    public static async Task<int> ConfigurePlannerAsync(
+        CliOptions options
+    ) {
+        options.EnsureOnly(
+            "input",
+            "lineage",
+            "coherence-group",
+            "topology-version",
+            "minimum-recent-tokens",
+            "epoch-trigger-tokens",
+            "scheduling-headroom-tokens",
+            "hard-limit-tokens",
+            "expected-current",
+            "report-json"
+        );
+        string inputPath = options.RequireSingle("input");
+        string? reportPath = PreparePaths(
+            inputPath,
+            options.GetOptionalSingle("report-json")
+        );
+        string? expectedCurrent = ParseOptionalIdentity(
+            options.RequireSingle("expected-current")
+        );
+        var definition = new DerivedArtifactPlannerConfigDefinition(
+            options.RequireSingle("lineage"),
+            options.RequireSingle("coherence-group"),
+            options.RequireSingle("topology-version"),
+            ParsePositiveLong(options, "minimum-recent-tokens"),
+            ParsePositiveLong(options, "epoch-trigger-tokens"),
+            ParseNonNegativeLong(
+                options,
+                "scheduling-headroom-tokens"
+            ),
+            ParsePositiveLong(options, "hard-limit-tokens")
+        );
+        DerivedArtifactPlannerConfig config =
+            await DerivedMemoryRepository.Open(inputPath)
+                .EpochPlanner.ConfigureAsync(
+                    definition,
+                    expectedCurrent
+                )
+                .ConfigureAwait(false);
+        var report = new PlannerConfigOperationReport(
+            PlannerConfigOperationSchema,
+            ToSummary(config)
+        );
+        WriteOptionalReport(reportPath, report);
+        Console.WriteLine($"configId: {config.ConfigId}");
+        Console.WriteLine(
+            $"previousConfigId: {config.PreviousConfigId ?? "none"}"
+        );
+        Console.WriteLine(
+            $"key: {config.LineageKey}|{config.CoherenceGroup}"
+        );
+        PrintReportPath(reportPath);
+        return 0;
+    }
+
+    public static async Task<int> PlanEpochAsync(CliOptions options) {
+        options.EnsureOnly(
+            "input",
+            "lineage",
+            "coherence-group",
+            "expected-previous",
+            "input-set",
+            "report-json"
+        );
+        string inputPath = options.RequireSingle("input");
+        string? reportPath = PreparePaths(
+            inputPath,
+            options.GetOptionalSingle("report-json")
+        );
+        string? expectedPrevious = ParseOptionalIdentity(
+            options.RequireSingle("expected-previous")
+        );
+        string? inputSet = ParseOptionalIdentity(
+            options.RequireSingle("input-set")
+        );
+        if ((expectedPrevious is null) != (inputSet is null)) {
+            throw new ArgumentException(
+                "Genesis requires --expected-previous none and --input-set none; non-genesis requires both exact ids."
+            );
+        }
+        DerivedMemoryRepository repository =
+            DerivedMemoryRepository.Open(inputPath);
+        using SJ.SessionJournalEngine engine =
+            SJ.SessionJournalEngine.Open(inputPath);
+        DerivedArtifactEpochPlanningResult result =
+            await repository.EpochPlanner.PlanAsync(
+                    engine,
+                    new DerivedArtifactEpochPlanningRequest(
+                        options.RequireSingle("lineage"),
+                        options.RequireSingle("coherence-group"),
+                        expectedPrevious,
+                        inputSet
+                    )
+                )
+                .ConfigureAwait(false);
+        var report = new EpochOperationReport(
+            EpochOperationSchema,
+            result.Status.ToString(),
+            ToSummary(result.Config),
+            result.Epoch is null ? null : ToSummary(result.Epoch),
+            ToSummary(result.Diagnostics)
+        );
+        WriteOptionalReport(reportPath, report);
+        Console.WriteLine($"status: {report.Status}");
+        Console.WriteLine(
+            $"epochId: {report.Epoch?.EpochId ?? "none"}"
+        );
+        Console.WriteLine(
+            $"headers: {report.Diagnostics.HeaderVisits}"
+        );
+        Console.WriteLine(
+            $"payloads: {report.Diagnostics.PayloadReads}"
+        );
+        Console.WriteLine(
+            $"decodedBytes: {report.Diagnostics.DecodedPayloadBytes}"
+        );
+        Console.WriteLine(
+            $"eligibleTokens: {report.Diagnostics.EligibleTokens}"
+        );
+        Console.WriteLine(
+            $"retainedRecentTokens: {report.Diagnostics.RetainedRecentTokens}"
+        );
+        PrintReportPath(reportPath);
+        return 0;
+    }
+
+    public static async Task<int> ListEpochsAsync(CliOptions options) {
+        options.EnsureOnly("input", "report-json");
+        string inputPath = options.RequireSingle("input");
+        string? reportPath = PreparePaths(
+            inputPath,
+            options.GetOptionalSingle("report-json")
+        );
+        DerivedArtifactEpochInventory inventory =
+            await DerivedMemoryRepository.Open(inputPath)
+                .EpochPlanner.ReadInventoryAsync()
+                .ConfigureAwait(false);
+        var report = new EpochInventoryReport(
+            EpochInventorySchema,
+            [.. inventory.Configs.Select(ToSummary)],
+            [
+                .. inventory.CurrentConfigs.Select(
+                    static pointer => new PlannerConfigPointerSummary(
+                        pointer.LineageKey,
+                        pointer.CoherenceGroup,
+                        pointer.ConfigId
+                    )
+                )
+            ],
+            [.. inventory.Epochs.Select(ToSummary)],
+            [
+                .. inventory.LatestEpochs.Select(
+                    static pointer => new EpochPointerSummary(
+                        pointer.LineageKey,
+                        pointer.CoherenceGroup,
+                        pointer.EpochId
+                    )
+                )
+            ]
+        );
+        WriteOptionalReport(reportPath, report);
+        Console.WriteLine($"plannerConfigs: {report.Configs.Count}");
+        Console.WriteLine(
+            $"currentPlannerConfigs: {report.CurrentConfigs.Count}"
+        );
+        Console.WriteLine($"epochs: {report.Epochs.Count}");
+        Console.WriteLine($"latestEpochs: {report.LatestEpochs.Count}");
+        PrintReportPath(reportPath);
+        return 0;
+    }
 
     public static async Task<int> PublishAsync(CliOptions options) {
         options.EnsureOnly(
@@ -154,13 +334,27 @@ internal static class DerivedMemoryCommands {
             validation.ArtifactCount,
             validation.ArtifactSetCount,
             validation.LatestPointerCount,
-            validation.ExactArtifactSetKeyCount
+            validation.ExactArtifactSetKeyCount,
+            validation.PlannerConfigCount,
+            validation.CurrentPlannerConfigCount,
+            validation.ArtifactEpochCount,
+            validation.LatestArtifactEpochCount
         );
         WriteOptionalReport(reportPath, report);
         Console.WriteLine($"artifacts: {report.ArtifactCount}");
         Console.WriteLine($"sets: {report.ArtifactSetCount}");
         Console.WriteLine($"latestPointers: {report.LatestPointerCount}");
         Console.WriteLine($"exactKeys: {report.ExactArtifactSetKeyCount}");
+        Console.WriteLine(
+            $"plannerConfigs: {report.PlannerConfigCount}"
+        );
+        Console.WriteLine(
+            $"currentPlannerConfigs: {report.CurrentPlannerConfigCount}"
+        );
+        Console.WriteLine($"artifactEpochs: {report.ArtifactEpochCount}");
+        Console.WriteLine(
+            $"latestArtifactEpochs: {report.LatestArtifactEpochCount}"
+        );
         PrintReportPath(reportPath);
         return 0;
     }
@@ -304,6 +498,47 @@ internal static class DerivedMemoryCommands {
         return reportPath;
     }
 
+    private static string? ParseOptionalIdentity(string value) =>
+        string.Equals(value, "none", StringComparison.Ordinal)
+            ? null
+            : value;
+
+    private static long ParsePositiveLong(
+        CliOptions options,
+        string name
+    ) {
+        string value = options.RequireSingle(name);
+        return long.TryParse(
+                value,
+                System.Globalization.NumberStyles.None,
+                System.Globalization.CultureInfo.InvariantCulture,
+                out long parsed
+            )
+            && parsed > 0
+            ? parsed
+            : throw new ArgumentException(
+                $"--{name} must be a positive base-10 integer."
+            );
+    }
+
+    private static long ParseNonNegativeLong(
+        CliOptions options,
+        string name
+    ) {
+        string value = options.RequireSingle(name);
+        return long.TryParse(
+                value,
+                System.Globalization.NumberStyles.None,
+                System.Globalization.CultureInfo.InvariantCulture,
+                out long parsed
+            )
+            && parsed >= 0
+            ? parsed
+            : throw new ArgumentException(
+                $"--{name} must be a non-negative base-10 integer."
+            );
+    }
+
     private static void WriteOptionalReport<T>(
         string? reportPath,
         T report
@@ -396,6 +631,55 @@ internal static class DerivedMemoryCommands {
 
     private static string FormatKey(DerivedArtifactSetPointerReport pointer) =>
         $"{pointer.LineageKey}|{pointer.CoherenceGroup}|{pointer.PolicyId}|{pointer.PolicyFingerprint}";
+
+    private static PlannerConfigSummary ToSummary(
+        DerivedArtifactPlannerConfig config
+    ) => new(
+        config.ConfigId,
+        config.LineageKey,
+        config.CoherenceGroup,
+        config.PreviousConfigId,
+        config.TopologyVersion,
+        config.MinimumRecentTokens,
+        config.EpochTriggerTokens,
+        config.SchedulingHeadroomTokens,
+        config.HardLimitTokens,
+        config.TokenEstimatorId,
+        config.BoundaryPolicyId,
+        config.HardLimitPolicyId,
+        config.GenesisPolicyId
+    );
+
+    private static EpochSummary ToSummary(
+        DerivedArtifactEpochPlan epoch
+    ) => new(
+        epoch.EpochId,
+        epoch.LineageKey,
+        epoch.CoherenceGroup,
+        epoch.TopologyVersion,
+        epoch.ConfigId,
+        epoch.PreviousEpochId,
+        epoch.InputSetId,
+        EventAddressTextCodec.Format(epoch.PlannedAtRawHead),
+        EventAddressTextCodec.Format(epoch.SourceStartExclusive),
+        EventAddressTextCodec.Format(epoch.SourceEndInclusive),
+        epoch.MeasuredTokens,
+        ToSummary(epoch.PlanningDiagnostics)
+    );
+
+    private static EpochDiagnosticsSummary ToSummary(
+        DerivedArtifactEpochPlanningDiagnostics diagnostics
+    ) => new(
+        diagnostics.HeaderVisits,
+        diagnostics.PayloadReads,
+        diagnostics.DecodedPayloadBytes,
+        diagnostics.DecodedEventCount,
+        diagnostics.DependencyClosedUnitCount,
+        diagnostics.ReplaySafeBoundaryCount,
+        diagnostics.TotalTokens,
+        diagnostics.EligibleTokens,
+        diagnostics.RetainedRecentTokens
+    );
 }
 
 internal sealed record DerivedArtifactSetOperationReport(
@@ -415,7 +699,87 @@ internal sealed record DerivedMemoryValidationCliReport(
     int ArtifactCount,
     int ArtifactSetCount,
     int LatestPointerCount,
-    int ExactArtifactSetKeyCount
+    int ExactArtifactSetKeyCount,
+    int PlannerConfigCount,
+    int CurrentPlannerConfigCount,
+    int ArtifactEpochCount,
+    int LatestArtifactEpochCount
+);
+
+internal sealed record PlannerConfigOperationReport(
+    string Schema,
+    PlannerConfigSummary Config
+);
+
+internal sealed record EpochOperationReport(
+    string Schema,
+    string Status,
+    PlannerConfigSummary Config,
+    EpochSummary? Epoch,
+    EpochDiagnosticsSummary Diagnostics
+);
+
+internal sealed record EpochInventoryReport(
+    string Schema,
+    IReadOnlyList<PlannerConfigSummary> Configs,
+    IReadOnlyList<PlannerConfigPointerSummary> CurrentConfigs,
+    IReadOnlyList<EpochSummary> Epochs,
+    IReadOnlyList<EpochPointerSummary> LatestEpochs
+);
+
+internal sealed record PlannerConfigSummary(
+    string ConfigId,
+    string LineageKey,
+    string CoherenceGroup,
+    string? PreviousConfigId,
+    string TopologyVersion,
+    long MinimumRecentTokens,
+    long EpochTriggerTokens,
+    long SchedulingHeadroomTokens,
+    long HardLimitTokens,
+    string TokenEstimatorId,
+    string BoundaryPolicyId,
+    string HardLimitPolicyId,
+    string GenesisPolicyId
+);
+
+internal sealed record PlannerConfigPointerSummary(
+    string LineageKey,
+    string CoherenceGroup,
+    string ConfigId
+);
+
+internal sealed record EpochSummary(
+    string EpochId,
+    string LineageKey,
+    string CoherenceGroup,
+    string TopologyVersion,
+    string ConfigId,
+    string? PreviousEpochId,
+    string? InputSetId,
+    string PlannedAtRawHead,
+    string SourceStartExclusive,
+    string SourceEndInclusive,
+    long MeasuredTokens,
+    EpochDiagnosticsSummary PlanningDiagnostics
+);
+
+internal sealed record EpochPointerSummary(
+    string LineageKey,
+    string CoherenceGroup,
+    string EpochId
+);
+
+internal sealed record EpochDiagnosticsSummary(
+    long HeaderVisits,
+    long PayloadReads,
+    long DecodedPayloadBytes,
+    int DecodedEventCount,
+    int DependencyClosedUnitCount,
+    int ReplaySafeBoundaryCount,
+    long TotalTokens,
+    long EligibleTokens,
+    long RetainedRecentTokens
 );
 
 internal sealed record DerivedArtifactSetSummaryReport(

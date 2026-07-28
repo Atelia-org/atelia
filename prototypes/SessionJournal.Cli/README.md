@@ -152,7 +152,10 @@ dotnet run --project prototypes/SessionJournal.Cli -- \
 严格、只读验证所有 artifact/set/pointer，以及每个 exact key 的 canonical role
 snapshot、完整无环单 tip lineage 和 `latest pointer == tip`。未被 set 使用的
 orphan artifact 合法，便于 prompt tuning 保存 alternatives。空 derived repo
-也合法。该命令不 rebuild、不创建目录或 lock。
+也合法。DM-5 起 validation report schema 是
+`atelia.session-journal.cli.derived-memory-validation.v2`，新增 planner config/current
+与 epoch/latest counts；这是 pre-release direct cutover，不输出旧 v1 shape。该命令不
+rebuild、不创建目录或 lock。
 
 ### rebuild-derived-artifact-set-latest
 
@@ -171,6 +174,67 @@ dotnet run --project prototypes/SessionJournal.Cli -- \
 该命令只重建一个 exact lineage/coherence/policy/role-snapshot key 的 latest
 pointer。没有 matching set、missing predecessor、role drift、fork 或 cycle
 都会 fail fast，不会猜测 tie-break。
+
+## Shared DerivedArtifactEpochPlanner 命令
+
+这些命令只规划 shared history coverage；不会调用 LLM、运行 maintainer、发布
+ArtifactSet 或写 raw event。
+
+DM-5 v1 的 `--lineage` 只接受 `main`。参数仍显式进入 durable key/report，但在具备真正的
+ref/lineage authority 前，不把任意 token 伪装成 branch-aware planning。
+
+### configure-derived-artifact-planner
+
+```bash
+dotnet run --project prototypes/SessionJournal.Cli -- \
+  configure-derived-artifact-planner \
+  --input gitignore/session-journal/<session> \
+  --lineage main \
+  --coherence-group roleplay.default \
+  --topology-version roleplay-memory-v1 \
+  --minimum-recent-tokens 24000 \
+  --epoch-trigger-tokens 12000 \
+  --scheduling-headroom-tokens 8000 \
+  --hard-limit-tokens 64000 \
+  --expected-current none
+```
+
+config 是 immutable lineage；更新时把 `--expected-current` 改为当前 `dpc_...` id。
+相同 definition 的重试幂等，真实 cutover 只影响未来 epoch。
+`hard-limit-tokens` 必须严格大于
+`minimum-recent-tokens + epoch-trigger-tokens + scheduling-headroom-tokens`，
+保证正常 trigger 在 backpressure 前可达。
+
+### plan-derived-artifact-epoch
+
+```bash
+dotnet run --project prototypes/SessionJournal.Cli -- \
+  plan-derived-artifact-epoch \
+  --input gitignore/session-journal/<session> \
+  --lineage main \
+  --coherence-group roleplay.default \
+  --expected-previous none \
+  --input-set none \
+  --report-json gitignore/reports/plan-epoch.json
+```
+
+genesis 必须同时使用两个 `none`。后续规划必须同时给出 exact previous `dae_...`
+与真实 input `das_...`；input set 必须属于同 lineage/coherence group，且 common
+anchor 必须与 previous epoch 终点完全一致。每次调用最多发布一个 epoch；未达到
+trigger 会报告 `BelowTrigger`，达到 hard limit 但没有合法 boundary 会显式
+backpressure。
+
+### list-derived-artifact-epochs
+
+```bash
+dotnet run --project prototypes/SessionJournal.Cli -- \
+  list-derived-artifact-epochs \
+  --input gitignore/session-journal/<session> \
+  --report-json gitignore/reports/epoch-inventory.json
+```
+
+报告稳定排序且 content-free，只包含 config/epoch identity、raw addresses、cost 与
+read diagnostics，不包含 conversation 或 derived block 文本。
 
 ## llm-smoke
 

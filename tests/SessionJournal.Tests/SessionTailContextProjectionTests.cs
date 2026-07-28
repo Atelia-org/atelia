@@ -882,10 +882,11 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
     }
 
     [Theory]
-    [InlineData("tool-action")]
-    [InlineData("tool-result")]
-    public async Task SendAsync_ImportedToolResultContinuation_RejectsNonReplaySafeCandidateAnchor(
-        string boundary
+    [InlineData("tool-action", false)]
+    [InlineData("tool-result", true)]
+    public async Task SendAsync_ImportedToolResultContinuation_UsesStateAwareReplaySafeCandidateAnchor(
+        string boundary,
+        bool expectedAccepted
     ) {
         string path = NewJournalPath();
         EventAddress toolAction;
@@ -958,37 +959,46 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
         }
 
         EventAddress anchor = boundary == "tool-action" ? toolAction : toolResult;
-        InvalidDataException error;
+        var client = new CapturingCompletionClient(
+            request => new CompletionResult(
+                new ActionMessage([new ActionBlock.Text("accepted")]),
+                new CompletionDescriptor(
+                    "tail-client",
+                    "tail-api-v1",
+                    request.ModelId
+                )
+            )
+        );
         using (var engine = SessionJournalEngine.Open(path)) {
             SessionContextCandidate candidate = CreateCandidate(
                 engine,
                 anchor,
                 finalAction
             );
-            engine.UseRuntime(CreateRuntime(
-                new CapturingCompletionClient(
-                    _ => throw new InvalidOperationException(
-                        "must not call completion"
-                    )
-                ),
-                candidate
-            ));
-            error = await Assert.ThrowsAsync<InvalidDataException>(
-                () => engine.SendAsync(
+            engine.UseRuntime(CreateRuntime(client, candidate));
+            if (expectedAccepted) {
+                _ = await engine.SendAsync(
                     "invalid anchor",
                     CancellationToken.None
-                )
-            );
+                );
+            }
+            else {
+                InvalidDataException error =
+                    await Assert.ThrowsAsync<InvalidDataException>(
+                        () => engine.SendAsync(
+                            "invalid anchor",
+                            CancellationToken.None
+                        )
+                    );
+                Assert.Contains(
+                    "not replay-safe",
+                    error.Message,
+                    StringComparison.Ordinal
+                );
+            }
         }
 
-        var client = new CapturingCompletionClient(_ => throw new InvalidOperationException("must not call provider"));
-
-        Assert.Contains(
-            boundary == "tool-action" ? "action with" : "ToolResultObserved",
-            error.Message,
-            StringComparison.Ordinal
-        );
-        Assert.Empty(client.Requests);
+        Assert.Equal(expectedAccepted ? 1 : 0, client.Requests.Count);
     }
 
 

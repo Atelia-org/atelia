@@ -94,7 +94,7 @@ public sealed class ProgramDerivedMemoryCommandTests : IDisposable {
             File.ReadAllText(validateReport)
         );
         Assert.Equal(
-            "atelia.session-journal.cli.derived-memory-validation.v1",
+            "atelia.session-journal.cli.derived-memory-validation.v2",
             validation.RootElement.GetProperty("schema").GetString()
         );
         Assert.Equal(
@@ -123,6 +123,135 @@ public sealed class ProgramDerivedMemoryCommandTests : IDisposable {
             _tempRoot,
             ".*.tmp",
             SearchOption.AllDirectories
+        ));
+    }
+
+    [Fact]
+    public async Task ConfigurePlanListEpochs_AreContentFreeAndRawExact() {
+        Fixture fixture = await CreateFixtureAsync();
+        RawSnapshot before = ReadRawSnapshot(fixture.Path);
+        string configReport = Path.Combine(_tempRoot, "config.json");
+        string planReport = Path.Combine(_tempRoot, "epoch.json");
+        string listReport = Path.Combine(_tempRoot, "epochs.json");
+        string validateReport = Path.Combine(
+            _tempRoot,
+            "epoch-validation.json"
+        );
+
+        Assert.Equal(0, Run([
+            "configure-derived-artifact-planner",
+            "--input", fixture.Path,
+            "--lineage", "main",
+            "--coherence-group", "memory-pack",
+            "--topology-version", "topology-v1",
+            "--minimum-recent-tokens", "1",
+            "--epoch-trigger-tokens", "1",
+            "--scheduling-headroom-tokens", "1",
+            "--hard-limit-tokens", "100",
+            "--expected-current", "none",
+            "--report-json", configReport
+        ]));
+        Assert.Equal(0, Run([
+            "plan-derived-artifact-epoch",
+            "--input", fixture.Path,
+            "--lineage", "main",
+            "--coherence-group", "memory-pack",
+            "--expected-previous", "none",
+            "--input-set", "none",
+            "--report-json", planReport
+        ]));
+        Assert.Equal(0, Run([
+            "list-derived-artifact-epochs",
+            "--input", fixture.Path,
+            "--report-json", listReport
+        ]));
+        Assert.Equal(0, Run([
+            "validate-derived-memory",
+            "--input", fixture.Path,
+            "--report-json", validateReport
+        ]));
+
+        using JsonDocument plan = JsonDocument.Parse(
+            File.ReadAllText(planReport)
+        );
+        Assert.Equal(
+            "atelia.session-journal.cli.derived-artifact-epoch-operation.v1",
+            plan.RootElement.GetProperty("schema").GetString()
+        );
+        Assert.StartsWith(
+            "dae_",
+            plan.RootElement.GetProperty("epoch")
+                .GetProperty("epochId")
+                .GetString(),
+            StringComparison.Ordinal
+        );
+        string reports = File.ReadAllText(configReport)
+            + File.ReadAllText(planReport)
+            + File.ReadAllText(listReport)
+            + File.ReadAllText(validateReport);
+        Assert.DoesNotContain(
+            "old observation",
+            reports,
+            StringComparison.Ordinal
+        );
+        Assert.DoesNotContain(
+            "old action",
+            reports,
+            StringComparison.Ordinal
+        );
+        using JsonDocument validation = JsonDocument.Parse(
+            File.ReadAllText(validateReport)
+        );
+        Assert.Equal(
+            "atelia.session-journal.cli.derived-memory-validation.v2",
+            validation.RootElement.GetProperty("schema").GetString()
+        );
+        Assert.Equal(
+            1,
+            validation.RootElement
+                .GetProperty("plannerConfigCount")
+                .GetInt32()
+        );
+        Assert.Equal(
+            1,
+            validation.RootElement
+                .GetProperty("artifactEpochCount")
+                .GetInt32()
+        );
+        Assert.Equal(before, ReadRawSnapshot(fixture.Path));
+        Assert.Empty(Directory.EnumerateFiles(
+            _tempRoot,
+            ".*.tmp",
+            SearchOption.AllDirectories
+        ));
+    }
+
+    [Fact]
+    public async Task EpochCommands_RejectBadNumbersAndMixedGenesis() {
+        Fixture fixture = await CreateFixtureAsync();
+        string[] configure = [
+            "configure-derived-artifact-planner",
+            "--input", fixture.Path,
+            "--lineage", "main",
+            "--coherence-group", "memory-pack",
+            "--topology-version", "topology-v1",
+            "--minimum-recent-tokens", "not-a-number",
+            "--epoch-trigger-tokens", "1",
+            "--scheduling-headroom-tokens", "1",
+            "--hard-limit-tokens", "100",
+            "--expected-current", "none"
+        ];
+        Assert.Equal(1, Run(configure));
+        Assert.Equal(1, Run([
+            "plan-derived-artifact-epoch",
+            "--input", fixture.Path,
+            "--lineage", "main",
+            "--coherence-group", "memory-pack",
+            "--expected-previous", "none",
+            "--input-set", "das_" + new string('a', 64)
+        ]));
+        Assert.False(Directory.Exists(
+            fixture.Repository.EpochPlanner.EpochsDirectory
         ));
     }
 

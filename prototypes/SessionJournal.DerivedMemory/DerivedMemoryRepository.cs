@@ -19,6 +19,7 @@ public sealed class DerivedMemoryRepository {
         WriteLockPath = Path.Combine(DerivedRoot, ".derived-memory.lock");
         Recaps = new DerivedRecapStore(this);
         ArtifactSets = new DerivedArtifactSetStore(this);
+        EpochPlanner = new DerivedArtifactEpochPlanner(this);
     }
 
     public string SessionJournalRepositoryPath { get; }
@@ -30,6 +31,8 @@ public sealed class DerivedMemoryRepository {
     public DerivedRecapStore Recaps { get; }
 
     public DerivedArtifactSetStore ArtifactSets { get; }
+
+    public DerivedArtifactEpochPlanner EpochPlanner { get; }
 
     internal string WriteLockPath { get; }
 
@@ -53,6 +56,24 @@ public sealed class DerivedMemoryRepository {
 
     public async ValueTask<DerivedMemoryValidationReport> ValidateAsync(
         CancellationToken cancellationToken = default
+    ) => await ValidateCoreAsync(
+            engine: null,
+            cancellationToken
+        )
+        .ConfigureAwait(false);
+
+    public async ValueTask<DerivedMemoryValidationReport> ValidateAsync(
+        SessionJournalEngine engine,
+        CancellationToken cancellationToken = default
+    ) {
+        ArgumentNullException.ThrowIfNull(engine);
+        return await ValidateCoreAsync(engine, cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    private async ValueTask<DerivedMemoryValidationReport> ValidateCoreAsync(
+        SessionJournalEngine? engine,
+        CancellationToken cancellationToken
     ) {
         cancellationToken.ThrowIfCancellationRequested();
         IReadOnlyList<DerivedRecapArtifact> artifacts =
@@ -69,6 +90,16 @@ public sealed class DerivedMemoryRepository {
                     cancellationToken
                 )
                 .ConfigureAwait(false);
+        DerivedArtifactEpochInventory epochInventory =
+            await EpochPlanner.ReadInventoryAsync(cancellationToken)
+                .ConfigureAwait(false);
+        DerivedArtifactEpochPlanner.ValidateInventory(
+            epochInventory,
+            inventory.Sets.ToDictionary(
+                static set => set.SetId,
+                StringComparer.Ordinal
+            )
+        );
 
         var setsByKey = inventory.Sets
             .GroupBy(DerivedArtifactSetExactKey.FromSet)
@@ -132,11 +163,34 @@ public sealed class DerivedMemoryRepository {
             }
         }
 
+        SessionJournalEngine? ownedEngine = null;
+        try {
+            if (epochInventory.Epochs.Count > 0) {
+                SessionJournalEngine authorityEngine = engine
+                    ?? (ownedEngine = SessionJournalEngine.Open(
+                        SessionJournalRepositoryPath
+                    ));
+                _ = EpochPlanner.ValidateRawAuthority(
+                    authorityEngine,
+                    epochInventory.Epochs,
+                    epochInventory.Configs,
+                    cancellationToken
+                );
+            }
+        }
+        finally {
+            ownedEngine?.Dispose();
+        }
+
         return new DerivedMemoryValidationReport(
             artifacts.Count,
             inventory.Sets.Count,
             inventory.LatestPointers.Count,
-            setsByKey.Count
+            setsByKey.Count,
+            epochInventory.Configs.Count,
+            epochInventory.CurrentConfigs.Count,
+            epochInventory.Epochs.Count,
+            epochInventory.LatestEpochs.Count
         );
     }
 

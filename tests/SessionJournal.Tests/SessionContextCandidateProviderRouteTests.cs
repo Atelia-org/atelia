@@ -193,7 +193,7 @@ public sealed class SessionContextCandidateProviderRouteTests : IDisposable {
         );
 
         Assert.Contains(
-            "outstanding tool dependencies",
+            "not replay-safe",
             error.Message,
             StringComparison.OrdinalIgnoreCase
         );
