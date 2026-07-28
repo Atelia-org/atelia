@@ -56,7 +56,7 @@ public sealed record SessionMemoryLifecycleResult(
 
 /// <summary>
 /// An exact provider-facing request for one context candidate. The source owns lineage traversal;
-/// token budgets remain runtime-local guards and never influence which candidate is selected.
+/// request-size guards never influence which candidate is selected.
 /// </summary>
 public sealed record SessionContextSelectionRequest(
     EventAddress CompletionBoundary,

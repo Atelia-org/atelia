@@ -785,9 +785,7 @@ internal static class Program {
             "connection",
             "call-log-dir",
             "output",
-            "raw-suffix-budget",
-            "total-context-budget",
-            "bootstrap-budget",
+            "maximum-canonical-request-bytes",
             "coherence-group",
             "uncertain-recovery"
         );
@@ -1007,8 +1005,12 @@ internal static class Program {
                 Command: "run-online-turn/agent"
             )
         );
-        SJ.SessionContextBudgetOptions budgets =
-            ParseOnlineBudgets(options, config);
+        long? maximumCanonicalRequestBytes = ParsePositiveLong(
+            options.GetOptionalSingle(
+                "maximum-canonical-request-bytes"
+            ),
+            "--maximum-canonical-request-bytes"
+        );
         SJ.SessionUncertainCompletionRecoveryPolicy recoveryPolicy =
             ParseUncertainCompletionRecoveryPolicy(
                 options.GetOptionalSingle("uncertain-recovery")
@@ -1030,7 +1032,8 @@ internal static class Program {
             UncertainCompletionRecoveryPolicy:
             recoveryPolicy,
             ContextCandidateSource: coordinator,
-            ContextBudgets: budgets,
+            MaximumCanonicalRequestBytes:
+            maximumCanonicalRequestBytes,
             MemoryLifecycle: coordinator
         );
         engine.UseRuntime(runtime);
@@ -1112,42 +1115,6 @@ internal static class Program {
                 "--uncertain-recovery must be refuse or restart-new-attempt."
             )
         };
-    }
-
-    private static SJ.SessionContextBudgetOptions
-        ParseOnlineBudgets(
-        CliOptions options,
-        DerivedArtifactPlannerConfig config
-    ) {
-        long? rawBudget = ParsePositiveLong(
-            options.GetOptionalSingle(
-                "raw-suffix-budget"
-            ),
-            "--raw-suffix-budget"
-        );
-        long? totalBudget = ParsePositiveLong(
-            options.GetOptionalSingle(
-                "total-context-budget"
-            ),
-            "--total-context-budget"
-        );
-        long bootstrapBudget =
-            ParsePositiveLong(
-                options.GetOptionalSingle(
-                    "bootstrap-budget"
-                ),
-                "--bootstrap-budget"
-            )
-            ?? checked(
-                config.HardLimitTokens
-                - config.SchedulingHeadroomTokens
-            );
-        return new(
-            rawBudget,
-            totalBudget,
-            BootstrapRawSuffixTokenBudget:
-                bootstrapBudget
-        );
     }
 
     private static long? ParsePositiveLong(
@@ -1495,9 +1462,7 @@ internal static class Program {
             + "--policy-id <token> --policy-fingerprint <token> "
             + "--connections <path> [--connection <id>] "
             + "--output <json> [--call-log-dir <dir>] "
-            + "[--raw-suffix-budget <n>] "
-            + "[--total-context-budget <n>] "
-            + "[--bootstrap-budget <n>] "
+            + "[--maximum-canonical-request-bytes <n>] "
             + "[--coherence-group <token>] "
             + "[--uncertain-recovery refuse|restart-new-attempt]"
         );

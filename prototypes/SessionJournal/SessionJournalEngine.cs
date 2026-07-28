@@ -6,6 +6,9 @@ using Atelia.EventJournal;
 namespace Atelia.SessionJournal;
 
 public sealed class SessionJournalEngine : IDisposable {
+    public const string CanonicalRequestBytesMetricId =
+        "atelia.session-journal.canonical-request-json-utf8-bytes.v1";
+
     private const string UnsupportedTailToolCallReason = "atelia.host.unsupported-tool-call";
     private const string InvalidCompletionInvocationReason =
         "atelia.host.invalid-completion-invocation";
@@ -1320,7 +1323,6 @@ public sealed class SessionJournalEngine : IDisposable {
             runtime,
             completionBoundary,
             governingSetup,
-            tools,
             cancellationToken
         ).ConfigureAwait(false);
         SessionContextCandidate selectedCandidate = selection.Candidate;
@@ -1350,15 +1352,17 @@ public sealed class SessionJournalEngine : IDisposable {
             Tools: tools,
             MaxTokens: runtime.MaxTokens
         );
-        SessionContextBudgetOptions budgets =
-            runtime.ContextBudgets
-            ?? SessionContextBudgetOptions.Default;
-        if (budgets.TotalContextTokenBudget
-                is long totalBudget
-            && SessionHistoryTokenEstimator
-                .EstimateCanonicalRequest(request) > totalBudget) {
+        if (runtime.MaximumCanonicalRequestBytes
+                is long maximumCanonicalRequestBytes
+            && SessionRequestCanonicalizer.Canonicalize(request)
+                is { Length: var actualCanonicalRequestBytes }
+            && actualCanonicalRequestBytes
+                > maximumCanonicalRequestBytes) {
             throw new InvalidDataException(
-                "Selected context exceeded the total budget after exact final materialization."
+                "Canonical request byte guard rejected the exact final request "
+                + $"before Prepared: metric={CanonicalRequestBytesMetricId}, "
+                + $"actualBytes={actualCanonicalRequestBytes}, "
+                + $"maximumBytes={maximumCanonicalRequestBytes}."
             );
         }
 
@@ -2025,8 +2029,12 @@ public sealed class SessionJournalEngine : IDisposable {
         SessionRuntime runtime
     ) {
         _ = RequireContextCandidateSource(runtime);
-        (runtime.ContextBudgets ?? SessionContextBudgetOptions.Default)
-            .ValidateShape();
+        if (runtime.MaximumCanonicalRequestBytes is <= 0) {
+            throw new ArgumentOutOfRangeException(
+                nameof(runtime.MaximumCanonicalRequestBytes),
+                "Maximum canonical request bytes must be positive when specified."
+            );
+        }
     }
 
     private async ValueTask PrepareMemoryLifecycleAsync(
@@ -2091,9 +2099,6 @@ public sealed class SessionJournalEngine : IDisposable {
         ImmutableArray<ToolDefinition> tools,
         CancellationToken cancellationToken
     ) {
-        SessionContextBudgetOptions budgets =
-            runtime.ContextBudgets
-            ?? SessionContextBudgetOptions.Default;
         SessionGoverningSetup governingSetup =
             EnsurePlanningGoverningSetupCursor(
                 currentBoundary,
@@ -2113,39 +2118,17 @@ public sealed class SessionJournalEngine : IDisposable {
         ArgumentNullException.ThrowIfNull(selection);
         var projectedObservation =
             new ObservationMessage(pendingObservation);
-        long projectedObservationTokens =
-            SessionHistoryTokenEstimator.Estimate(
-                projectedObservation
-            );
         if (selection.Status
             == SessionContextCandidateSelectionStatus.EmptyLineage) {
             RequireNoSelectedDescriptor(selection);
-            long bootstrapBudget =
-                budgets.BootstrapRawSuffixTokenBudget
-                ?? throw new SessionJournalNotReadyException(
-                    SessionJournalNotReadyReason.ContextCandidateUnavailable,
-                    "The derived candidate lineage is empty and bounded empty-memory bootstrap is not configured."
-                );
             SessionHistoryPlanningWindow bootstrap =
                 ReadHistoryPlanningWindowAt(
                     currentBoundary,
                     startExclusive: null,
                     cancellationToken
                 );
-            long bootstrapRawTokens = checked(
-                SumUnitTokens(bootstrap.Units, 0)
-                + projectedObservationTokens
-            );
-            if (bootstrapRawTokens > bootstrapBudget
-                || budgets.RawSuffixTokenBudget is long bootstrapRawBudget
-                    && bootstrapRawTokens > bootstrapRawBudget) {
-                throw new SessionJournalNotReadyException(
-                    SessionJournalNotReadyReason.ContextCandidateUnavailable,
-                    "The projected empty-memory bootstrap raw suffix exceeds its configured budget."
-                );
-            }
-            long bootstrapTotalTokens =
-                EstimateCandidateRequestTokens(
+            CompletionRequest bootstrapProjectedRequest =
+                BuildProjectedCompletionRequest(
                     runtime,
                     governingSetup,
                     tools,
@@ -2155,14 +2138,10 @@ public sealed class SessionJournalEngine : IDisposable {
                     >.Empty,
                     projectedObservation
                 );
-            if (budgets.TotalContextTokenBudget
-                    is long bootstrapTotalBudget
-                && bootstrapTotalTokens > bootstrapTotalBudget) {
-                throw new SessionJournalNotReadyException(
-                    SessionJournalNotReadyReason.ContextCandidateUnavailable,
-                    "The projected empty-memory bootstrap request exceeds its configured total context budget."
-                );
-            }
+            EnforceProjectedCanonicalRequestByteGuard(
+                runtime,
+                bootstrapProjectedRequest
+            );
             return;
         }
         if (selection.Status
@@ -2187,17 +2166,6 @@ public sealed class SessionJournalEngine : IDisposable {
                 seed,
                 cancellationToken
             );
-        long rawTokens = checked(
-            SumUnitTokens(window.Units, 0)
-            + projectedObservationTokens
-        );
-        if (budgets.RawSuffixTokenBudget is long rawBudget
-            && rawTokens > rawBudget) {
-            throw new SessionJournalNotReadyException(
-                SessionJournalNotReadyReason.ContextCandidateUnavailable,
-                "The exact coherent context candidate exceeds the projected raw suffix budget."
-            );
-        }
         SessionContextCandidate candidate = await source
             .MaterializeAsync(descriptor, cancellationToken)
             .ConfigureAwait(false);
@@ -2208,7 +2176,8 @@ public sealed class SessionJournalEngine : IDisposable {
                 CreateAllowedSourceHeads(window, descriptor.RawStartExclusive),
                 allowEmpty: false
             );
-        long totalTokens = EstimateCandidateRequestTokens(
+        CompletionRequest projectedRequest =
+            BuildProjectedCompletionRequest(
             runtime,
             governingSetup,
             tools,
@@ -2216,13 +2185,10 @@ public sealed class SessionJournalEngine : IDisposable {
             contributions,
             projectedObservation
         );
-        if (budgets.TotalContextTokenBudget is long totalBudget
-            && totalTokens > totalBudget) {
-            throw new SessionJournalNotReadyException(
-                SessionJournalNotReadyReason.ContextCandidateUnavailable,
-                "The exact coherent context candidate exceeds the projected total context budget."
-            );
-        }
+        EnforceProjectedCanonicalRequestByteGuard(
+            runtime,
+            projectedRequest
+        );
     }
 
     private static ICoherentContextCandidateSource RequireContextCandidateSource(
@@ -2237,13 +2203,9 @@ public sealed class SessionJournalEngine : IDisposable {
         SessionRuntime runtime,
         EventAddress completionBoundary,
         SessionGoverningSetup governingSetup,
-        ImmutableArray<ToolDefinition> tools,
         CancellationToken cancellationToken
     ) {
         ICoherentContextCandidateSource source = RequireContextCandidateSource(runtime);
-        SessionContextBudgetOptions budgets =
-            runtime.ContextBudgets
-            ?? SessionContextBudgetOptions.Default;
         SessionContextSelectionRequest request =
             new(
                 completionBoundary,
@@ -2258,11 +2220,7 @@ public sealed class SessionJournalEngine : IDisposable {
             == SessionContextCandidateSelectionStatus.EmptyLineage) {
             RequireNoSelectedDescriptor(selection);
             return SelectBootstrapCandidate(
-                runtime,
                 completionBoundary,
-                governingSetup,
-                tools,
-                budgets,
                 cancellationToken
             );
         }
@@ -2289,14 +2247,6 @@ public sealed class SessionJournalEngine : IDisposable {
                 seed,
                 cancellationToken
             );
-        long rawTokens = SumUnitTokens(window.Units, 0);
-        if (budgets.RawSuffixTokenBudget is long rawBudget
-            && rawTokens > rawBudget) {
-            throw new SessionJournalNotReadyException(
-                SessionJournalNotReadyReason.ContextCandidateUnavailable,
-                $"The exact coherent context candidate exceeds the configured raw suffix budget at completion boundary '{completionBoundary}'."
-            );
-        }
         SessionContextCandidate candidate = await source
             .MaterializeAsync(descriptor, cancellationToken)
             .ConfigureAwait(false);
@@ -2307,80 +2257,28 @@ public sealed class SessionJournalEngine : IDisposable {
                 CreateAllowedSourceHeads(window, descriptor.RawStartExclusive),
                 allowEmpty: false
             );
-        long totalTokens = EstimateCandidateRequestTokens(
-            runtime,
-            governingSetup,
-            tools,
-            window,
-            contributions
-        );
-        if (budgets.TotalContextTokenBudget is long totalBudget
-            && totalTokens > totalBudget) {
-            throw new SessionJournalNotReadyException(
-                SessionJournalNotReadyReason.ContextCandidateUnavailable,
-                $"The exact coherent context candidate exceeds the configured total context budget at completion boundary '{completionBoundary}'."
-            );
-        }
         return new SelectedContextCandidate(
             candidate with { Contributions = contributions },
-            IsBootstrap: false,
             window
         );
     }
 
     private SelectedContextCandidate SelectBootstrapCandidate(
-        SessionRuntime runtime,
         EventAddress completionBoundary,
-        SessionGoverningSetup governingSetup,
-        ImmutableArray<ToolDefinition> tools,
-        SessionContextBudgetOptions budgets,
         CancellationToken cancellationToken
     ) {
-        long bootstrapBudget =
-            budgets.BootstrapRawSuffixTokenBudget
-            ?? throw new SessionJournalNotReadyException(
-                SessionJournalNotReadyReason.ContextCandidateUnavailable,
-                "The derived candidate lineage is empty and bounded empty-memory bootstrap is not configured."
-            );
         SessionHistoryPlanningWindow window =
             ReadHistoryPlanningWindowAt(
                 completionBoundary,
                 startExclusive: null,
                 cancellationToken
             );
-        long rawTokens = SumUnitTokens(
-            window.Units,
-            startIndex: 0
-        );
-        if (rawTokens > bootstrapBudget
-            || budgets.RawSuffixTokenBudget is long rawBudget
-                && rawTokens > rawBudget) {
-            throw new SessionJournalNotReadyException(
-                SessionJournalNotReadyReason.ContextCandidateUnavailable,
-                "The empty-memory bootstrap raw suffix exceeds its configured budget."
-            );
-        }
-        long totalTokens = EstimateCandidateRequestTokens(
-            runtime,
-            governingSetup,
-            tools,
-            window,
-            ImmutableArray<SessionContextContribution>.Empty
-        );
-        if (budgets.TotalContextTokenBudget is long totalBudget
-            && totalTokens > totalBudget) {
-            throw new SessionJournalNotReadyException(
-                SessionJournalNotReadyReason.ContextCandidateUnavailable,
-                "The empty-memory bootstrap request exceeds its configured total context budget."
-            );
-        }
         return new SelectedContextCandidate(
             new SessionContextCandidate(
                 window.StartExclusive,
                 window.StartSetups,
                 Array.Empty<SessionContextContribution>()
             ),
-            IsBootstrap: true,
             window
         );
     }
@@ -2419,22 +2317,6 @@ public sealed class SessionJournalEngine : IDisposable {
         }
     }
 
-    private static long SumUnitTokens(
-        IReadOnlyList<SessionHistoryPlanningUnit> units,
-        int startIndex
-    ) {
-        long total = 0;
-        for (int index = startIndex; index < units.Count; index++) {
-            total = checked(
-                total
-                + SessionHistoryTokenEstimator.Estimate(
-                    units[index].Message
-                )
-            );
-        }
-        return total;
-    }
-
     private static HashSet<EventAddress> CreateAllowedSourceHeads(
         SessionHistoryPlanningWindow window,
         EventAddress anchor
@@ -2465,7 +2347,7 @@ public sealed class SessionJournalEngine : IDisposable {
         );
     }
 
-    private static long EstimateCandidateRequestTokens(
+    private static CompletionRequest BuildProjectedCompletionRequest(
         SessionRuntime runtime,
         SessionGoverningSetup governingSetup,
         ImmutableArray<ToolDefinition> tools,
@@ -2503,14 +2385,34 @@ public sealed class SessionJournalEngine : IDisposable {
         if (projectedMessage is not null) {
             context.Add(projectedMessage);
         }
-        return SessionHistoryTokenEstimator.EstimateCanonicalRequest(
-            new CompletionRequest(
-                governingSetup.RuntimeConfig.ModelId,
-                systemPrompt,
-                context.MoveToImmutable(),
-                tools,
-                runtime.MaxTokens
-            )
+        return new CompletionRequest(
+            governingSetup.RuntimeConfig.ModelId,
+            systemPrompt,
+            context.MoveToImmutable(),
+            tools,
+            runtime.MaxTokens
+        );
+    }
+
+    private static void EnforceProjectedCanonicalRequestByteGuard(
+        SessionRuntime runtime,
+        CompletionRequest request
+    ) {
+        if (runtime.MaximumCanonicalRequestBytes
+                is not long maximumCanonicalRequestBytes) {
+            return;
+        }
+        int actualCanonicalRequestBytes =
+            SessionRequestCanonicalizer.Canonicalize(request).Length;
+        if (actualCanonicalRequestBytes <= maximumCanonicalRequestBytes) {
+            return;
+        }
+        throw new SessionJournalNotReadyException(
+            SessionJournalNotReadyReason.ContextCandidateUnavailable,
+            "Canonical request byte guard rejected the projected request "
+            + $"before Observation append: metric={CanonicalRequestBytesMetricId}, "
+            + $"actualBytes={actualCanonicalRequestBytes}, "
+            + $"maximumBytes={maximumCanonicalRequestBytes}."
         );
     }
 
@@ -2986,7 +2888,6 @@ public sealed class SessionJournalEngine : IDisposable {
 
     private sealed record SelectedContextCandidate(
         SessionContextCandidate Candidate,
-        bool IsBootstrap,
         SessionHistoryPlanningWindow Window
     );
 

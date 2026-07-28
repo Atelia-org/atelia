@@ -443,11 +443,7 @@ public sealed class SessionJournalEngineTests : IDisposable {
 
         _candidateSource.IsEmptyLineage = true;
         var client = new ScriptedCompletionClient();
-        SessionRuntime runtime = CreateRuntime(client) with {
-            ContextBudgets = new SessionContextBudgetOptions(
-                BootstrapRawSuffixTokenBudget: 4096
-            )
-        };
+        SessionRuntime runtime = CreateRuntime(client);
         EventAddress preparedHead;
         using (var preparing = SessionJournalEngine.OpenForTest(
             path,

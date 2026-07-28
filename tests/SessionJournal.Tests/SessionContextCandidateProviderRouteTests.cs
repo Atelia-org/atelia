@@ -79,12 +79,12 @@ public sealed class SessionContextCandidateProviderRouteTests : IDisposable {
     }
 
     [Fact]
-    public async Task InvalidBudgetOptions_FailBeforeObservationOrSelection() {
+    public async Task InvalidCanonicalRequestByteGuard_FailsBeforeObservationOrSelection() {
         string path = NewJournalPath();
         var client = new ScriptedClient();
         var source = new TestContextCandidateSource();
         SessionRuntime runtime = CreateRuntime(client, source) with {
-            ContextBudgets = new(RawSuffixTokenBudget: 0)
+            MaximumCanonicalRequestBytes = 0
         };
         using var engine = SessionJournalEngine.Create(
             path,
@@ -213,7 +213,7 @@ public sealed class SessionContextCandidateProviderRouteTests : IDisposable {
     }
 
     [Fact]
-    public async Task ProjectedTotalBudgetFailure_DoesNotAppendObservation() {
+    public async Task ProjectedCanonicalRequestByteGuardFailure_DoesNotAppendObservation() {
         string path = NewJournalPath();
         var client = new ScriptedClient();
         var source = new TestContextCandidateSource();
@@ -221,10 +221,7 @@ public sealed class SessionContextCandidateProviderRouteTests : IDisposable {
             path,
             CreateOptions(),
             CreateRuntime(client, source) with {
-                ContextBudgets =
-                    new SessionContextBudgetOptions(
-                        TotalContextTokenBudget: 1
-                    )
+                MaximumCanonicalRequestBytes = 1
             }
         );
         TestContextCandidateFixture fixture =
@@ -269,12 +266,7 @@ public sealed class SessionContextCandidateProviderRouteTests : IDisposable {
         var source = new TestContextCandidateSource {
             IsEmptyLineage = true
         };
-        SessionRuntime runtime = CreateRuntime(client, source) with {
-            ContextBudgets =
-                new SessionContextBudgetOptions(
-                    BootstrapRawSuffixTokenBudget: 4096
-                )
-        };
+        SessionRuntime runtime = CreateRuntime(client, source);
         using (var engine =
                SessionJournalEngine.CreateForTest(
                    path,
@@ -497,11 +489,7 @@ public sealed class SessionContextCandidateProviderRouteTests : IDisposable {
         source.Candidates = [newer, older];
         engine.UseRuntime(
             CreateRuntime(client, source) with {
-                ContextBudgets =
-                    new SessionContextBudgetOptions(
-                        RawSuffixTokenBudget: 10_000,
-                        TotalContextTokenBudget: 1_000
-                    )
+                MaximumCanonicalRequestBytes = 1_000
             }
         );
 

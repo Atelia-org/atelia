@@ -3,8 +3,8 @@ using Atelia.Completion.Abstractions;
 namespace Atelia.SessionJournal;
 
 /// <summary>
-/// Shared deterministic estimator used by both derived epoch planning and online raw-suffix
-/// selection. It is approximate, but its version and rendering rules are a single contract.
+/// Shared deterministic estimator used for derived epoch scheduling and backpressure. It is
+/// approximate, but its version and rendering rules are a single persisted planner contract.
 /// </summary>
 public static class SessionHistoryTokenEstimator {
     public const string EstimatorId =
@@ -27,17 +27,5 @@ public static class SessionHistoryTokenEstimator {
             _ => message.ToString() ?? string.Empty
         };
         return Math.Max(1, text.Length / 3);
-    }
-
-    /// <summary>
-    /// Measures the exact canonical request representation used for Prepared commitment. Candidate
-    /// total-budget checks must construct the final request shape and use this method.
-    /// </summary>
-    public static long EstimateCanonicalRequest(CompletionRequest request) {
-        ArgumentNullException.ThrowIfNull(request);
-        return Math.Max(
-            1,
-            SessionRequestCanonicalizer.Canonicalize(request).Length / 3
-        );
     }
 }

@@ -104,42 +104,9 @@ public sealed record SessionRuntime(
         SessionUncertainCompletionRecoveryPolicy.Refuse,
     SessionToolRuntimeIdentity? ToolRuntimeIdentity = null,
     ICoherentContextCandidateSource? ContextCandidateSource = null,
-    SessionContextBudgetOptions? ContextBudgets = null,
+    long? MaximumCanonicalRequestBytes = null,
     ISessionMemoryLifecycleCoordinator? MemoryLifecycle = null
 );
-
-/// <summary>
-/// Runtime-local token guards for one already-selected exact candidate. Budgets never cause
-/// candidate fallback or influence derived lineage traversal.
-/// </summary>
-public sealed record SessionContextBudgetOptions(
-    long? RawSuffixTokenBudget = null,
-    long? TotalContextTokenBudget = null,
-    long? BootstrapRawSuffixTokenBudget = null
-) {
-    public static SessionContextBudgetOptions Default { get; } = new();
-
-    public void ValidateShape() {
-        if (RawSuffixTokenBudget is <= 0) {
-            throw new ArgumentOutOfRangeException(
-                nameof(RawSuffixTokenBudget),
-                "Raw suffix token budget must be positive when specified."
-            );
-        }
-        if (TotalContextTokenBudget is <= 0) {
-            throw new ArgumentOutOfRangeException(
-                nameof(TotalContextTokenBudget),
-                "Total context token budget must be positive when specified."
-            );
-        }
-        if (BootstrapRawSuffixTokenBudget is <= 0) {
-            throw new ArgumentOutOfRangeException(
-                nameof(BootstrapRawSuffixTokenBudget),
-                "Bootstrap raw suffix token budget must be positive when specified."
-            );
-        }
-    }
-}
 
 public sealed record TurnResult(
     ActionMessage Message,

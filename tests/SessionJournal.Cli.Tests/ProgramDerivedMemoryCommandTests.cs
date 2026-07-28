@@ -1133,9 +1133,7 @@ public sealed class ProgramDerivedMemoryCommandTests : IDisposable {
                 "connection",
                 "call-log-dir",
                 "output",
-                "raw-suffix-budget",
-                "total-context-budget",
-                "bootstrap-budget",
+                "maximum-canonical-request-bytes",
                 "coherence-group",
                 "uncertain-recovery"
             )
@@ -1191,8 +1189,7 @@ public sealed class ProgramDerivedMemoryCommandTests : IDisposable {
             "--connections", connectionsPath,
             "--call-log-dir", callLogDir,
             "--output", outputPath,
-            "--coherence-group", "test-group",
-            "--bootstrap-budget", "1000"
+            "--coherence-group", "test-group"
         ], factory);
 
         Assert.Equal(0, exitCode);
