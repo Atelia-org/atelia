@@ -10,6 +10,7 @@
 > [SessionJournal 主干设计](session-journal-trunk-design.md)、
 > [SessionJournal 架构路线图](event-sourced-session-architecture-roadmap.md)、
 > [CS-3D 实施后化简调研](tail-execution-recovery-simplification-study.md)、
+> [候选 D0/D1 实施计划](tail-operational-semantics-simplification-plan.md)、
 > [CS-3D6 Coherent-only Manifest 化简计划](done/coherent-request-manifest-simplification-plan.md)
 > **D7 协议修订**：[Prepared / Provider Attempt 对称化](done/prepared-provider-attempt-symmetry-design.md)
 

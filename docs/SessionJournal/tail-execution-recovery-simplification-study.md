@@ -8,6 +8,8 @@
 > **已完成计划**：
 > [CS-3D6：Coherent-only Request Manifest](done/coherent-request-manifest-simplification-plan.md)、
 > [CS-3D7：Prepared / Provider Attempt 对称化](done/prepared-provider-attempt-symmetry-design.md)
+> **已批准待实施**：
+> [候选 D0/D1：Dependency-closed Fold Seed 与共享 Operational Semantics](tail-operational-semantics-simplification-plan.md)
 > **目标**：只保留 current trunk 上尚未实施的化简候选；不以牺牲 crash recovery、raw
 > provenance、exact reopen 或 bounded reads 换取表面简洁。
 
@@ -30,7 +32,7 @@ CS-3D6/D7 与 DM-0～DM-8 已完成以下收口：
 当前仍值得研究的只有：
 
 1. **候选 A：Exact request snapshot spike**；
-2. **候选 D：显式 dependency-closed fold seed，再评估共享正向 semantics**；
+2. **候选 D：D0/D1 已完成具体设计，等待分片实施；D2 仍须 go/no-go**；
 3. **候选 E：Engine 职责拆分**，但只在 A/D 稳定后推进。
 
 明确不再考虑：
@@ -100,70 +102,26 @@ S 的 provenance 仍须保存 governing setup refs、raw range 与 exact context
 
 ## 3. 候选 D：共享正向 operational semantics
 
-### 3.1 仍存在的复述
+本候选的 D0/D1 已完成代码核对与具体设计，实施合同、边界矩阵、工作包与 review checklist 统一见
+[Dependency-closed Fold Seed 与共享 Operational Semantics 实施计划](tail-operational-semantics-simplification-plan.md)。
 
-full reducer、dependency-closed suffix fold、online boundary validator 与部分 importer checks 都会解释：
+保留在本调研中的结论只有：
 
-- event kind 对 phase 的转移；
-- Action/tool-call declaration；
-- ToolStarted/ToolResult 的 sequence、correlation 与 completion；
-- setup/config event 对 open tool state 的影响；
-- terminal Action/Failure 的合法 predecessor。
+- D0 先删除无 production caller 的旧 single-candidate validation/materialization path，再删除
+  nullable fold seed、不可达 `InferSeedPhase` 与 checkpoint fallback，并把 governing setup 与
+  exact recovery 绑定到同一 raw anchor；
+- D1 只共享无 IO、无 traversal 的 kind/phase classification、correlation identity 与局部
+  Action/tool validators；
+- terminal Action、dependency-closed ToolResult 与 replay-safe barrier 都依赖 state/body，不能简化为
+  kind-only predicate；
+- Legacy importer 验证旧 export grammar，不属于 current raw operational semantics；offline
+  validator 编排 full reducer 与 tail resolver，也不是第四套正向状态机；
+- full reducer、suffix projector 与 reverse tail resolver 继续分别拥有 traversal authority；
+- D2 的 pure operational fold 只在 D0/D1 与 differential matrix 完成后重新决策，优先 spike
+  Action/tool segment，不默认全面实施。
 
-重复规则增加漂移风险，但 reverse tail collector 的依赖发现方向与 forward fold 不同，不应强行合并。
-
-### 3.2 已证实的低风险切口：显式 `DependencyClosedSeed`
-
-current `SessionTailContextProjection.FoldSuffix(...)` 接受 nullable
-`SessionExecutionRecovery? executionSeed`，并在缺失时通过 private
-`InferSeedPhase(headKind)` 猜测初始 phase。实际 fold 只读取 recovery 的一个很小子集：
-
-- seed head / head kind；
-- exact execution phase；
-- tool execution sequence checkpoint；
-- active correlation id。
-
-这暴露了一个仍未实施、且比“大一统 fold”更独立的化简机会：定义一个显式、不可空、已通过
-dependency closure 验证的 `DependencyClosedSeed`（最终命名由具体设计确认），由调用方在进入 fold
-前构造。`FoldSuffix` 只消费这份 bounded seed，不再同时承担“没有 recovery 时如何猜 phase”的策略。
-
-预期收益：
-
-- 删除 nullable execution seed 与 `InferSeedPhase` 这条隐式双路径；
-- 让 planner materialization 与 Prepared v5 reconstruction 共用同一种 fold 前置条件；
-- 把 dependency closure / replay-safe boundary 的证明留在 resolver/caller，fold 只做确定性正向转移；
-- 为 differential tests 提供可直接构造、字段最小的 seed contract。
-
-实施前须逐个核对 empty-lineage、setup-only genesis、Observation 与 dependency-closed ToolResult 四类合法
-边界，不能用默认 phase 掩盖缺失证明；这项切口不改变 wire、traversal authority 或 public API。
-
-### 3.3 后续边界
-
-先提取无 IO、无 traversal、无 storage 的纯语义小核：
-
-```text
-SessionEventSemantics
-  - kind classification
-  - terminal/reset/barrier predicates
-  - local transition validation
-
-SessionOperationalFold
-  - seed + one decoded event -> next bounded operational state
-```
-
-消费者继续各自拥有 traversal：
-
-- `SessionReducer`：root-to-head full audit；
-- suffix projector：seeded forward range；
-- `SessionExecutionTailResolver`：head-to-root dependency collection；
-- offline validator：untrusted inventory/read boundary。
-
-### 3.4 后续小切口
-
-完成显式 seed 后，再考虑共享稳定、无上下文的 classification 与 error vocabulary；随后用
-differential tests 证明 full reducer、suffix fold 与 tail resolver 的合法/非法矩阵不变。不要把
-classification/error vocabulary 与 `DependencyClosedSeed` 塞进同一提交，也不要直接发起覆盖所有
-event kind 的“大一统 fold”重写。
+候选 A 的 measurement 不是 D0/D1 的技术前置条件，但必须在 D2 go/no-go 前完成，因为
+snapshot-authoritative Prepared 可能改变 request reconstruction 对 forward fold 的长期需求。
 
 ## 4. 候选 E：Engine 职责拆分
 
@@ -185,16 +143,17 @@ SessionContextPreparationCoordinator
 SessionCompletionDriver
 ```
 
-但这不是当前优先切片。若在语义仍重复时先拆文件，只会把耦合变成跨类跳转。应先完成候选 A 的数据
-决策与候选 D 的纯语义小核，再按稳定调用图拆 Engine；public surface 暂不改变。
+但这不是当前优先切片。若在语义仍重复时先拆文件，只会把耦合变成跨类跳转。应先完成候选 D0/D1，
+再结合候选 A 数据与 D2 go/no-go 得到稳定调用图，之后才拆 Engine；public surface 暂不改变。
 
 ## 5. 推荐研究顺序
 
-1. **A0：Prepared v5 snapshot measurement spike**：只产数据与结论；
-2. **D0：显式 `DependencyClosedSeed`**：删除 nullable seed / `InferSeedPhase`，独立 review +
-   boundary matrix tests；
-3. **D1：classification/error vocabulary**：仅在 D0 后独立评估与实施；
-4. **D2：pure operational fold 可行性**：仅在 D1 显示真实收益时推进；
+1. **D0：显式 dependency-closed fold seed**：按已批准计划删除 nullable seed /
+   `InferSeedPhase`，独立 review + boundary matrix tests；
+2. **D1：pure classification、local validators、internal violation vocabulary 与 differential
+   matrix**：按已批准计划分小包实施；
+3. **A0：Prepared v5 snapshot measurement spike**：可与 D0/D1 独立安排，但须在 D2 前完成；
+4. **D2：pure operational fold 可行性**：仅在 D1 显示真实收益、且 A0 数据支持时推进；
 5. **E：Engine split**：最后按稳定语义边界实施。
 
 Prepared/attempt 对称化、ArtifactSet/raw 解耦、shared epoch、online lifecycle 与 budgeted selection
