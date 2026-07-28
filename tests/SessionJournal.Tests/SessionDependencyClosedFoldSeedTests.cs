@@ -298,14 +298,33 @@ public sealed class SessionDependencyClosedFoldSeedTests {
                 )
             )
         );
+    }
+
+    [Theory]
+    [InlineData(
+        SessionExecutionPhase.Empty,
+        SessionEventKind.SystemPromptSetup
+    )]
+    [InlineData(
+        SessionExecutionPhase.Idle,
+        SessionEventKind.SessionCreated
+    )]
+    [InlineData(
+        SessionExecutionPhase.TurnFailed,
+        SessionEventKind.CompletionAttemptFailed
+    )]
+    public void Create_RejectsStaleCorrelationOutsideAwaitingAgentAction(
+        SessionExecutionPhase phase,
+        SessionEventKind headKind
+    ) {
         Assert.Throws<InvalidDataException>(
             () => SessionDependencyClosedFoldSeed.Create(
                 Setup(Head),
                 Recovery(
                     Head,
                     new SessionExecutionState(
-                        SessionExecutionPhase.Idle,
-                        SessionEventKind.SessionCreated,
+                        phase,
+                        headKind,
                         ActiveCorrelationId: "stale"
                     )
                 )
