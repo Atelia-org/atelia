@@ -277,6 +277,10 @@ public sealed class SessionContextCandidateProviderRouteTests : IDisposable {
                            .AfterRequestPreparedCommitted
                    )
                )) {
+            engine.AppendRuntimeConfigSetup(
+                CreateOptions().ToRuntimeConfiguration()
+            );
+            engine.AppendSystemPromptSetup("updated bootstrap prompt");
             SessionJournalFailpointException error =
                 await Assert.ThrowsAsync<
                     SessionJournalFailpointException
@@ -326,6 +330,122 @@ public sealed class SessionContextCandidateProviderRouteTests : IDisposable {
         Assert.Equal(1, client.Calls);
         Assert.Equal(0, reopened.FullProjectionInvocationCount);
         Assert.Equal(2, source.SelectionCount);
+    }
+
+    [Fact]
+    public async Task EmptyLineageBootstrap_ObservationCrashReopensExactFirstObservation() {
+        string path = NewJournalPath();
+        var client = new ScriptedClient();
+        var source = new TestContextCandidateSource {
+            IsEmptyLineage = true
+        };
+        SessionRuntime runtime = CreateRuntime(client, source);
+        using (var engine =
+               SessionJournalEngine.CreateForTest(
+                   path,
+                   CreateOptions(),
+                   runtime,
+                   new SessionJournalTestHooks(
+                       SessionJournalFailpoint
+                           .AfterObservationCommitted
+                   )
+               )) {
+            SessionJournalFailpointException error =
+                await Assert.ThrowsAsync<
+                    SessionJournalFailpointException
+                >(
+                    () => engine.SendAsync(
+                        "crash after observation",
+                        CancellationToken.None
+                    )
+                );
+            Assert.Equal(
+                SessionJournalFailpoint.AfterObservationCommitted,
+                error.Failpoint
+            );
+            Assert.Equal(
+                SessionExecutionPhase.AwaitingAgentAction,
+                engine.InspectExecutionBoundary().Phase
+            );
+        }
+
+        client.Enqueue(Terminal("resumed"));
+        using (var reopened = SessionJournalEngine.Open(path, runtime)) {
+            ResumeOutcome outcome = await reopened.ResumeAsync(
+                CancellationToken.None
+            );
+
+            Assert.True(outcome.Advanced);
+            Assert.Equal(
+                "resumed",
+                outcome.Message!.GetFlattenedText()
+            );
+            Assert.Equal(1, client.Calls);
+        }
+        Assert.Single(
+            ReadAddressesByKind(
+                path,
+                SessionEventKind.CompletionRequestPrepared
+            )
+        );
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task LegacyImportEmptyLineage_RejectsBootstrapBeforeLifecycle(
+        bool observationAlreadyPersisted
+    ) {
+        string path = NewJournalPath();
+        var client = new ScriptedClient();
+        var source = new TestContextCandidateSource {
+            IsEmptyLineage = true
+        };
+        var lifecycle = new TestMemoryLifecycle();
+        SessionRuntime runtime = CreateRuntime(client, source) with {
+            MemoryLifecycle = lifecycle
+        };
+        using var engine = SessionJournalEngine.Create(
+            path,
+            CreateOptions() with {
+                Origin = SessionCreationOrigin.LegacyImport
+            }
+        );
+        if (observationAlreadyPersisted) {
+            engine.AppendObservation("imported pending observation");
+        }
+        engine.UseRuntime(runtime);
+        EventAddress head = engine.InspectExecutionBoundary().Head!.Value;
+        int eventCount =
+            engine.ReadCurrentLineageHeaders().HeadToRoot.Count;
+
+        SessionJournalNotReadyException error =
+            await Assert.ThrowsAsync<SessionJournalNotReadyException>(
+                () => observationAlreadyPersisted
+                    ? engine.ResumeAsync(CancellationToken.None)
+                    : engine.SendAsync(
+                        "must remain ephemeral",
+                        CancellationToken.None
+                    )
+            );
+
+        Assert.Equal(
+            SessionJournalNotReadyReason.ContextCandidateUnavailable,
+            error.Reason
+        );
+        Assert.Contains(
+            "native",
+            error.Message,
+            StringComparison.OrdinalIgnoreCase
+        );
+        Assert.Equal(0, lifecycle.InvocationCount);
+        Assert.Equal(0, source.MaterializationCount);
+        Assert.Equal(0, client.Calls);
+        Assert.Equal(head, engine.InspectExecutionBoundary().Head);
+        Assert.Equal(
+            eventCount,
+            engine.ReadCurrentLineageHeaders().HeadToRoot.Count
+        );
     }
 
     [Fact]
@@ -610,7 +730,7 @@ public sealed class SessionContextCandidateProviderRouteTests : IDisposable {
                 Assert.Null(toolResult.PendingObservation);
             }
         );
-        Assert.Equal(3, source.SelectionCount);
+        Assert.Equal(6, source.SelectionCount);
         Assert.Equal(0, engine.FullProjectionInvocationCount);
     }
 
@@ -648,7 +768,7 @@ public sealed class SessionContextCandidateProviderRouteTests : IDisposable {
             StringComparison.OrdinalIgnoreCase
         );
         Assert.Equal(1, lifecycle.InvocationCount);
-        Assert.Equal(0, source.SelectionCount);
+        Assert.Equal(1, source.SelectionCount);
         Assert.Equal(0, client.Calls);
         Assert.Equal(
             SessionExecutionPhase.AwaitingAgentAction,

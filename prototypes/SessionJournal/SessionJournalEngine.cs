@@ -920,9 +920,18 @@ public sealed class SessionJournalEngine : IDisposable {
                 $"SendAsync requires an idle or explicitly failed turn boundary. Current phase is '{recovery.State.Phase}'; call ResumeAsync first."
             );
         }
-        // Do this before the durable observation append. Candidate availability is intentionally
-        // checked only after that append: a provider selects for the exact new completion boundary.
+        // Empty-lineage bootstrap is proven before lifecycle work so invalid genesis topology
+        // cannot trigger maintainer completion or durable raw effects. Exact selection is repeated
+        // after lifecycle because maintenance may publish a new set at the current boundary.
         ValidateContextPlanningPreflight(runtime);
+        await PreflightFreshBootstrapBeforeMemoryLifecycleAsync(
+                runtime,
+                recovery,
+                observation,
+                visibleTools,
+                cancellationToken
+            )
+            .ConfigureAwait(false);
         await PrepareMemoryLifecycleAsync(
                 runtime,
                 recovery,
@@ -932,6 +941,7 @@ public sealed class SessionJournalEngine : IDisposable {
             .ConfigureAwait(false);
         await ValidatePendingObservationContextReadinessAsync(
                 runtime,
+                recovery,
                 recovery.Head!.Value,
                 observation,
                 visibleTools,
@@ -1300,13 +1310,7 @@ public sealed class SessionJournalEngine : IDisposable {
                 "Artifact-tail completion requires ObservationAccepted or a dependency-closed ToolResultObserved boundary."
             );
         }
-        await PrepareMemoryLifecycleAsync(
-                runtime,
-                recovery,
-                pendingObservation: null,
-                cancellationToken
-            )
-            .ConfigureAwait(false);
+        ValidateContextPlanningPreflight(runtime);
         ImmutableArray<ToolDefinition> tools =
             runtime.ToolSession?.VisibleDefinitions ?? ImmutableArray<ToolDefinition>.Empty;
         if (!tools.IsEmpty) {
@@ -1319,8 +1323,24 @@ public sealed class SessionJournalEngine : IDisposable {
             completionBoundary,
             cancellationToken
         );
+        await PreflightFreshBootstrapBeforeMemoryLifecycleAsync(
+                runtime,
+                recovery,
+                pendingObservation: null,
+                tools,
+                cancellationToken
+            )
+            .ConfigureAwait(false);
+        await PrepareMemoryLifecycleAsync(
+                runtime,
+                recovery,
+                pendingObservation: null,
+                cancellationToken
+            )
+            .ConfigureAwait(false);
         SelectedContextCandidate selection = await SelectContextCandidateAsync(
             runtime,
+            recovery,
             completionBoundary,
             governingSetup,
             cancellationToken
@@ -2037,6 +2057,200 @@ public sealed class SessionJournalEngine : IDisposable {
         }
     }
 
+    private async ValueTask
+        PreflightFreshBootstrapBeforeMemoryLifecycleAsync(
+        SessionRuntime runtime,
+        SessionExecutionRecovery recovery,
+        string? pendingObservation,
+        ImmutableArray<ToolDefinition> tools,
+        CancellationToken cancellationToken
+    ) {
+        if (runtime.MemoryLifecycle is null) {
+            return;
+        }
+        EventAddress boundary = recovery.Head
+            ?? throw new InvalidDataException(
+                "Fresh bootstrap preflight requires an exact raw boundary."
+            );
+        SessionGoverningSetup governingSetup =
+            EnsurePlanningGoverningSetupCursor(
+                boundary,
+                cancellationToken
+            );
+        ICoherentContextCandidateSource source =
+            RequireContextCandidateSource(runtime);
+        SessionContextCandidateSelection selection = await source
+            .SelectAsync(
+                new SessionContextSelectionRequest(
+                    boundary,
+                    governingSetup.RuntimeConfig
+                        .DerivedContext.NthPrevious
+                ),
+                cancellationToken
+            )
+            .ConfigureAwait(false);
+        ArgumentNullException.ThrowIfNull(selection);
+        EnsureCurrentHead(boundary);
+        switch (selection.Status) {
+            case SessionContextCandidateSelectionStatus.Selected:
+                _ = RequireSelectedDescriptor(selection);
+                return;
+            case SessionContextCandidateSelectionStatus.OrdinalUnavailable:
+                RequireNoSelectedDescriptor(selection);
+                return;
+            case SessionContextCandidateSelectionStatus.EmptyLineage:
+                RequireNoSelectedDescriptor(selection);
+                break;
+            default:
+                throw new InvalidDataException(
+                    $"Unknown context candidate selection status '{selection.Status}'."
+                );
+        }
+
+        FreshBootstrapBoundary expectedBoundary =
+            pendingObservation is null
+                ? FreshBootstrapBoundary.ActiveFirstObservation
+                : FreshBootstrapBoundary.PreAppend;
+        _ = ValidateFreshBootstrapTopology(
+            boundary,
+            recovery,
+            expectedBoundary,
+            cancellationToken
+        );
+        SessionHistoryPlanningWindow window =
+            ReadHistoryPlanningWindowAt(
+                boundary,
+                startExclusive: null,
+                cancellationToken
+            );
+        CompletionRequest projectedRequest =
+            BuildProjectedCompletionRequest(
+                runtime,
+                governingSetup,
+                tools,
+                window,
+                ImmutableArray<SessionContextContribution>.Empty,
+                pendingObservation is null
+                    ? null
+                    : new ObservationMessage(pendingObservation)
+            );
+        EnforceProjectedCanonicalRequestByteGuard(
+            runtime,
+            projectedRequest
+        );
+    }
+
+    private EventAddress ValidateFreshBootstrapTopology(
+        EventAddress selectedHead,
+        SessionExecutionRecovery recovery,
+        FreshBootstrapBoundary expectedBoundary,
+        CancellationToken cancellationToken
+    ) {
+        if (recovery.Head != selectedHead) {
+            throw new InvalidDataException(
+                "Fresh bootstrap recovery is not bound to the selected raw head."
+            );
+        }
+
+        EventAddress? cursor;
+        switch (expectedBoundary) {
+            case FreshBootstrapBoundary.PreAppend:
+                if (recovery.State.Phase != SessionExecutionPhase.Idle) {
+                    throw FreshBootstrapUnavailable(
+                        "Pre-append bootstrap requires a fresh idle boundary."
+                    );
+                }
+                cursor = selectedHead;
+                break;
+            case FreshBootstrapBoundary.ActiveFirstObservation:
+                if (recovery.State.Phase
+                        != SessionExecutionPhase.AwaitingAgentAction
+                    || recovery.State.HeadKind
+                        != SessionEventKind.ObservationAccepted
+                    || recovery.Boundary.SourcePrepared is not null
+                    || recovery.Boundary.SourceObservation
+                        != selectedHead) {
+                    throw FreshBootstrapUnavailable(
+                        "Recovery bootstrap requires the exact active first ObservationAccepted boundary."
+                    );
+                }
+                EventFrameHeader observationHeader =
+                    _reader.ReadEventHeaderPreview(selectedHead).Unwrap();
+                ValidateSessionHeaderPreview(
+                    selectedHead,
+                    observationHeader
+                );
+                if ((SessionEventKind)observationHeader.OpaqueEventKind
+                        != SessionEventKind.ObservationAccepted
+                    || observationHeader.Parent is null) {
+                    throw FreshBootstrapUnavailable(
+                        "Recovery bootstrap head is not a valid ObservationAccepted event."
+                    );
+                }
+                cursor = observationHeader.Parent;
+                break;
+            default:
+                throw new ArgumentOutOfRangeException(
+                    nameof(expectedBoundary),
+                    expectedBoundary,
+                    "Unknown fresh bootstrap boundary."
+                );
+        }
+
+        var visited = new HashSet<EventAddress>();
+        while (cursor is { } address) {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (!visited.Add(address)) {
+                throw new InvalidDataException(
+                    $"Fresh bootstrap Parent chain contains a cycle at {address}."
+                );
+            }
+            EventFrameHeader header =
+                _reader.ReadEventHeaderPreview(address).Unwrap();
+            ValidateSessionHeaderPreview(address, header);
+            var kind = (SessionEventKind)header.OpaqueEventKind;
+            if (SessionOperationalSemantics.IsSetupKind(kind)) {
+                cursor = header.Parent;
+                continue;
+            }
+            if (kind != SessionEventKind.SessionCreated) {
+                throw FreshBootstrapUnavailable(
+                    "Fresh bootstrap requires only setup updates after SessionCreated; "
+                    + $"encountered '{kind}' at {address}."
+                );
+            }
+            using SessionJournalEventFrame frame =
+                _reader.ReadEvent(address).Unwrap();
+            ValidateSessionHeaderPreview(address, frame.Header);
+            SessionCreatedBody created = SessionEventCodec.Decode(
+                    SessionEventKind.SessionCreated,
+                    frame.Payload,
+                    out _
+                )
+                as SessionCreatedBody
+                ?? throw new InvalidDataException(
+                    $"SessionCreated at {address} decoded to an unexpected body."
+                );
+            if (created.Origin != SessionCreationOrigin.Native) {
+                throw FreshBootstrapUnavailable(
+                    "Fresh bootstrap requires a native SessionCreated origin; "
+                    + $"actual origin is '{created.Origin}'."
+                );
+            }
+            EnsureCurrentHead(selectedHead);
+            return address;
+        }
+        throw FreshBootstrapUnavailable(
+            "Fresh bootstrap ancestry has no SessionCreated boundary."
+        );
+    }
+
+    private static SessionJournalNotReadyException
+        FreshBootstrapUnavailable(string detail) => new(
+        SessionJournalNotReadyReason.ContextCandidateUnavailable,
+        detail
+    );
+
     private async ValueTask PrepareMemoryLifecycleAsync(
         SessionRuntime runtime,
         SessionExecutionRecovery recovery,
@@ -2094,6 +2308,7 @@ public sealed class SessionJournalEngine : IDisposable {
     private async ValueTask
         ValidatePendingObservationContextReadinessAsync(
         SessionRuntime runtime,
+        SessionExecutionRecovery recovery,
         EventAddress currentBoundary,
         string pendingObservation,
         ImmutableArray<ToolDefinition> tools,
@@ -2121,6 +2336,12 @@ public sealed class SessionJournalEngine : IDisposable {
         if (selection.Status
             == SessionContextCandidateSelectionStatus.EmptyLineage) {
             RequireNoSelectedDescriptor(selection);
+            _ = ValidateFreshBootstrapTopology(
+                currentBoundary,
+                recovery,
+                FreshBootstrapBoundary.PreAppend,
+                cancellationToken
+            );
             SessionHistoryPlanningWindow bootstrap =
                 ReadHistoryPlanningWindowAt(
                     currentBoundary,
@@ -2201,6 +2422,7 @@ public sealed class SessionJournalEngine : IDisposable {
 
     private async ValueTask<SelectedContextCandidate> SelectContextCandidateAsync(
         SessionRuntime runtime,
+        SessionExecutionRecovery recovery,
         EventAddress completionBoundary,
         SessionGoverningSetup governingSetup,
         CancellationToken cancellationToken
@@ -2219,6 +2441,12 @@ public sealed class SessionJournalEngine : IDisposable {
         if (selection.Status
             == SessionContextCandidateSelectionStatus.EmptyLineage) {
             RequireNoSelectedDescriptor(selection);
+            _ = ValidateFreshBootstrapTopology(
+                completionBoundary,
+                recovery,
+                FreshBootstrapBoundary.ActiveFirstObservation,
+                cancellationToken
+            );
             return SelectBootstrapCandidate(
                 completionBoundary,
                 cancellationToken
@@ -2410,7 +2638,7 @@ public sealed class SessionJournalEngine : IDisposable {
         throw new SessionJournalNotReadyException(
             SessionJournalNotReadyReason.ContextCandidateUnavailable,
             "Canonical request byte guard rejected the projected request "
-            + $"before Observation append: metric={CanonicalRequestBytesMetricId}, "
+            + $"before online request side effects: metric={CanonicalRequestBytesMetricId}, "
             + $"actualBytes={actualCanonicalRequestBytes}, "
             + $"maximumBytes={maximumCanonicalRequestBytes}."
         );
@@ -2890,6 +3118,11 @@ public sealed class SessionJournalEngine : IDisposable {
         SessionContextCandidate Candidate,
         SessionHistoryPlanningWindow Window
     );
+
+    private enum FreshBootstrapBoundary {
+        PreAppend,
+        ActiveFirstObservation,
+    }
 
     private sealed record CommittedCompletionResult(
         CompletionResult Result,
