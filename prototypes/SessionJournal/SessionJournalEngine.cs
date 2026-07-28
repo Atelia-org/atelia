@@ -16,7 +16,8 @@ public sealed class SessionJournalEngine : IDisposable {
 
     private readonly EventJournal.EventJournal _journal;
     private readonly SessionJournalEventReader _reader;
-    private readonly RefId _mainRef;
+    private readonly string _branchName;
+    private readonly RefId _branchRefId;
     private readonly SessionJournalTestHooks _testHooks;
     private SessionRuntime? _runtime;
     private SessionGoverningSetup? _governingSetupCursor;
@@ -27,18 +28,22 @@ public sealed class SessionJournalEngine : IDisposable {
 
     private SessionJournalEngine(
         EventJournal.EventJournal journal,
-        RefId mainRef,
+        string branchName,
+        RefId branchRefId,
         SessionRuntime? runtime,
         SessionJournalTestHooks? testHooks
     ) {
         _journal = journal;
         _reader = new SessionJournalEventReader(journal);
-        _mainRef = mainRef;
+        _branchName = branchName;
+        _branchRefId = branchRefId;
         _runtime = runtime;
         _testHooks = testHooks ?? new SessionJournalTestHooks();
     }
 
     public string Path => _journal.JournalPath;
+    public string BranchName => _branchName;
+    public RefId BranchRefId => _branchRefId;
 
     internal GoverningSetupResolutionDiagnostics LastGoverningSetupResolutionDiagnostics
         => _lastGoverningSetupResolutionDiagnostics;
@@ -67,7 +72,7 @@ public sealed class SessionJournalEngine : IDisposable {
         ThrowIfDisposed();
         return SessionExecutionTailResolver.Resolve(
             _reader,
-            _journal.GetHead(_mainRef),
+            _journal.GetHead(_branchRefId),
             cancellationToken
         );
     }
@@ -106,23 +111,74 @@ public sealed class SessionJournalEngine : IDisposable {
     ) => CreateCore(path, options, runtime, testHooks, journalOptions);
 
     public static SessionJournalEngine Open(string path)
-        => OpenCore(path, runtime: null, testHooks: null);
+        => OpenCore(
+            path,
+            SessionJournalDefaults.MainBranchName,
+            runtime: null,
+            testHooks: null
+        );
 
     public static SessionJournalEngine Open(string path, SessionRuntime runtime)
-        => OpenCore(path, runtime, testHooks: null);
+        => OpenCore(
+            path,
+            SessionJournalDefaults.MainBranchName,
+            runtime,
+            testHooks: null
+        );
+
+    public static SessionJournalEngine Open(string path, string branchName)
+        => OpenCore(path, branchName, runtime: null, testHooks: null);
+
+    public static SessionJournalEngine Open(
+        string path,
+        string branchName,
+        SessionRuntime runtime
+    ) => OpenCore(path, branchName, runtime, testHooks: null);
 
     internal static SessionJournalEngine OpenForTest(
         string path,
         SessionRuntime runtime,
         SessionJournalTestHooks testHooks
-    ) => OpenCore(path, runtime, testHooks);
+    ) => OpenCore(
+        path,
+        SessionJournalDefaults.MainBranchName,
+        runtime,
+        testHooks
+    );
+
+    internal static SessionJournalEngine OpenForTest(
+        string path,
+        string branchName,
+        SessionRuntime runtime,
+        SessionJournalTestHooks testHooks
+    ) => OpenCore(path, branchName, runtime, testHooks);
 
     internal static SessionJournalEngine OpenForTest(
         string path,
         SessionRuntime? runtime,
         SessionJournalTestHooks testHooks,
         EventJournalOptions journalOptions
-    ) => OpenCore(path, runtime, testHooks, journalOptions);
+    ) => OpenCore(
+        path,
+        SessionJournalDefaults.MainBranchName,
+        runtime,
+        testHooks,
+        journalOptions
+    );
+
+    internal static SessionJournalEngine OpenForTest(
+        string path,
+        string branchName,
+        SessionRuntime? runtime,
+        SessionJournalTestHooks testHooks,
+        EventJournalOptions journalOptions
+    ) => OpenCore(
+        path,
+        branchName,
+        runtime,
+        testHooks,
+        journalOptions
+    );
 
     public void UseRuntime(SessionRuntime runtime) {
         ThrowIfDisposed();
@@ -132,7 +188,7 @@ public sealed class SessionJournalEngine : IDisposable {
     public SessionProjection Project(CancellationToken cancellationToken = default) {
         ThrowIfDisposed();
         _fullProjectionInvocationCount++;
-        EventAddress? head = _journal.GetHead(_mainRef);
+        EventAddress? head = _journal.GetHead(_branchRefId);
         if (head is null) { return SessionReducer.Empty; }
 
         return SessionReducer.Reduce(ReadDecodedChronologicalEvents(head.Value, cancellationToken));
@@ -140,7 +196,7 @@ public sealed class SessionJournalEngine : IDisposable {
 
     public SessionHistoryReplay ReplayHistory(CancellationToken cancellationToken = default) {
         ThrowIfDisposed();
-        EventAddress? head = _journal.GetHead(_mainRef);
+        EventAddress? head = _journal.GetHead(_branchRefId);
         if (head is null) { return SessionHistoryReplay.Empty; }
 
         var messages = new List<AddressedSessionHistoryMessage>();
@@ -169,14 +225,14 @@ public sealed class SessionJournalEngine : IDisposable {
     }
 
     /// <summary>
-    /// Captures the current main Parent lineage using event headers only. The returned order is
+    /// Captures the selected branch Parent lineage using event headers only. The returned order is
     /// head-to-root and is bound to one captured ref head; no payload is read or decoded.
     /// </summary>
     public SessionCurrentLineageSnapshot ReadCurrentLineageHeaders(
         CancellationToken cancellationToken = default
     ) {
         ThrowIfDisposed();
-        EventAddress capturedHead = _journal.GetHead(_mainRef)
+        EventAddress capturedHead = _journal.GetHead(_branchRefId)
             ?? throw new InvalidOperationException(
                 "Current-lineage inspection requires a non-empty SessionJournal."
             );
@@ -189,7 +245,7 @@ public sealed class SessionJournalEngine : IDisposable {
             cancellationToken.ThrowIfCancellationRequested();
             if (!visited.Add(address)) {
                 throw new InvalidDataException(
-                    $"SessionJournal current main Parent chain contains a cycle at {address}."
+                    $"SessionJournal selected branch Parent chain contains a cycle at {address}."
                 );
             }
             EventFrameHeader header =
@@ -218,7 +274,7 @@ public sealed class SessionJournalEngine : IDisposable {
     }
 
     /// <summary>
-    /// Resolves setup seeds for multiple current-main planning starts with one header walk. Only
+    /// Resolves setup seeds for multiple selected-branch planning starts with one header walk. Only
     /// setup-event payloads are decoded; ordinary history payloads remain unread.
     /// </summary>
     public SessionHistoryPlanningSeedBatch ReadHistoryPlanningSeeds(
@@ -234,7 +290,7 @@ public sealed class SessionJournalEngine : IDisposable {
                 nameof(starts)
             );
         }
-        EventAddress capturedHead = _journal.GetHead(_mainRef)
+        EventAddress capturedHead = _journal.GetHead(_branchRefId)
             ?? throw new InvalidOperationException(
                 "Planning seed resolution requires a non-empty SessionJournal."
             );
@@ -247,7 +303,7 @@ public sealed class SessionJournalEngine : IDisposable {
             cancellationToken.ThrowIfCancellationRequested();
             if (!visited.Add(address)) {
                 throw new InvalidDataException(
-                    $"SessionJournal current main Parent chain contains a cycle at {address}."
+                    $"SessionJournal selected branch Parent chain contains a cycle at {address}."
                 );
             }
             EventFrameHeader header =
@@ -346,7 +402,7 @@ public sealed class SessionJournalEngine : IDisposable {
         }
         if (seeds.Count != requested.Length) {
             throw new InvalidDataException(
-                "One or more planning seed addresses are outside the current main lineage."
+                "One or more planning seed addresses are outside the selected branch lineage."
             );
         }
         SessionJournalReadDiagnostics after =
@@ -376,7 +432,7 @@ public sealed class SessionJournalEngine : IDisposable {
     /// <summary>
     /// Reads only the raw interval after a replay-safe start boundary and materializes
     /// dependency-closed history units for derived planning. A null start selects the unique
-    /// SessionCreated event on the captured main lineage. This API never constructs full history
+    /// SessionCreated event on the captured selected branch lineage. This API never constructs full history
     /// before the returned start boundary.
     /// </summary>
     public SessionHistoryPlanningWindow ReadHistoryPlanningWindow(
@@ -384,7 +440,7 @@ public sealed class SessionJournalEngine : IDisposable {
         CancellationToken cancellationToken = default
     ) {
         ThrowIfDisposed();
-        EventAddress observedHead = _journal.GetHead(_mainRef)
+        EventAddress observedHead = _journal.GetHead(_branchRefId)
             ?? throw new InvalidOperationException(
                 "History planning requires a non-empty SessionJournal."
             );
@@ -1032,9 +1088,17 @@ public sealed class SessionJournalEngine : IDisposable {
 
         var journal = EventJournal.EventJournal.CreateNew(path, journalOptions ?? DefaultJournalOptions);
         try {
-            journal.CreateBranch(SessionJournalDefaults.MainBranchName, startPoint: null).Unwrap();
-            RefId mainRef = journal.OpenBranch(SessionJournalDefaults.MainBranchName).Unwrap();
-            var engine = new SessionJournalEngine(journal, mainRef, runtime, testHooks);
+            RefId mainRef = journal.CreateBranch(
+                SessionJournalDefaults.MainBranchName,
+                startPoint: null
+            ).Unwrap();
+            var engine = new SessionJournalEngine(
+                journal,
+                SessionJournalDefaults.MainBranchName,
+                mainRef,
+                runtime,
+                testHooks
+            );
             SessionRuntimeConfiguration runtimeConfig = options.ToRuntimeConfiguration();
             EventAddress runtimeAddress = engine.Append(SessionEventKind.RuntimeConfigSetup, runtimeConfig);
             EventAddress promptAddress = engine.Append(SessionEventKind.SystemPromptSetup, new SystemPromptSetupBody(options.SystemPrompt));
@@ -1056,14 +1120,22 @@ public sealed class SessionJournalEngine : IDisposable {
 
     private static SessionJournalEngine OpenCore(
         string path,
+        string branchName,
         SessionRuntime? runtime,
         SessionJournalTestHooks? testHooks,
         EventJournalOptions? journalOptions = null
     ) {
+        ArgumentException.ThrowIfNullOrWhiteSpace(branchName);
         var journal = EventJournal.EventJournal.OpenExisting(path, journalOptions ?? DefaultJournalOptions);
         try {
-            RefId mainRef = journal.OpenBranch(SessionJournalDefaults.MainBranchName).Unwrap();
-            return new SessionJournalEngine(journal, mainRef, runtime, testHooks);
+            RefId branchRefId = journal.OpenBranch(branchName).Unwrap();
+            return new SessionJournalEngine(
+                journal,
+                branchName,
+                branchRefId,
+                runtime,
+                testHooks
+            );
         }
         catch {
             journal.Dispose();
@@ -1803,7 +1875,7 @@ public sealed class SessionJournalEngine : IDisposable {
     }
 
     private void EnsureCurrentHead(EventAddress? expectedHead) {
-        EventAddress? observedHead = _journal.GetHead(_mainRef);
+        EventAddress? observedHead = _journal.GetHead(_branchRefId);
         if (observedHead != expectedHead) {
             throw new InvalidOperationException(
                 $"Tool execution recovery is stale. Expected current head '{expectedHead}', observed '{observedHead}'."
@@ -1819,7 +1891,7 @@ public sealed class SessionJournalEngine : IDisposable {
             return cursor;
         }
 
-        EventAddress? observedHead = _journal.GetHead(_mainRef);
+        EventAddress? observedHead = _journal.GetHead(_branchRefId);
         if (observedHead != expectedHead) {
             _governingSetupCursor = null;
             throw new InvalidOperationException(
@@ -1836,7 +1908,7 @@ public sealed class SessionJournalEngine : IDisposable {
         EventAddress expectedHead,
         CancellationToken cancellationToken
     ) {
-        EventAddress? observedHead = _journal.GetHead(_mainRef);
+        EventAddress? observedHead = _journal.GetHead(_branchRefId);
         if (observedHead != expectedHead) {
             _governingSetupCursor = null;
             throw new InvalidOperationException(
@@ -1877,7 +1949,7 @@ public sealed class SessionJournalEngine : IDisposable {
             ?? throw new InvalidDataException(
                 "Online memory lifecycle requires an exact non-empty raw boundary."
             );
-        EventAddress? expectedHead = _journal.GetHead(_mainRef);
+        EventAddress? expectedHead = _journal.GetHead(_branchRefId);
         if (expectedHead != boundary) {
             throw new InvalidOperationException(
                 "Online memory lifecycle boundary is stale before preparation."
@@ -2639,7 +2711,7 @@ public sealed class SessionJournalEngine : IDisposable {
 
     private EventAddress Append(SessionEventKind kind, object body) {
         ThrowIfDisposed();
-        EventAddress? expectedHead = _journal.GetHead(_mainRef);
+        EventAddress? expectedHead = _journal.GetHead(_branchRefId);
         return AppendExpected(kind, body, expectedHead, requireBoundSetupCursor: false);
     }
 
@@ -2650,7 +2722,7 @@ public sealed class SessionJournalEngine : IDisposable {
         bool requireBoundSetupCursor
     ) {
         ThrowIfDisposed();
-        EventAddress? observedHead = _journal.GetHead(_mainRef);
+        EventAddress? observedHead = _journal.GetHead(_branchRefId);
         if (observedHead != expectedHead) {
             _governingSetupCursor = null;
             throw new InvalidOperationException(
@@ -2669,7 +2741,7 @@ public sealed class SessionJournalEngine : IDisposable {
         try {
             _testHooks.BeforeCommit?.Invoke(kind);
             EventAddress committed = _journal.CommitToRef(
-                SessionJournalDefaults.MainBranchName,
+                _branchRefId,
                 expectedHead,
                 payload,
                 opaqueEventKind: (uint)kind,

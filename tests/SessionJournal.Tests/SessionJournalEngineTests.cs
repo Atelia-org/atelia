@@ -57,6 +57,232 @@ public sealed class SessionJournalEngineTests : IDisposable {
     }
 
     [Fact]
+    public void Open_SelectedBranchBindsIdentityAndIsolatesProjectionLineageAndPlanning() {
+        string path = NewJournalPath();
+        EventAddress mainHead;
+        RefId mainRef;
+        using (var created = SessionJournalEngine.Create(
+            path,
+            new SessionCreateOptions("model-A", "system-A", "surface-A")
+        )) {
+            Assert.Equal(SessionJournalDefaults.MainBranchName, created.BranchName);
+            mainRef = created.BranchRefId;
+            mainHead = created.InspectExecutionBoundary().Head!.Value;
+        }
+
+        RefId featureRef;
+        using (var journal = EventJournal.EventJournal.OpenExisting(path)) {
+            featureRef = journal.ForkBranch(
+                "feature",
+                mainRef,
+                mainHead
+            ).Unwrap();
+        }
+
+        EventAddress featureHead;
+        using (var feature = SessionJournalEngine.Open(path, "feature")) {
+            Assert.Equal("feature", feature.BranchName);
+            Assert.Equal(featureRef, feature.BranchRefId);
+            feature.AppendRuntimeConfigSetup(
+                new SessionRuntimeConfiguration(
+                    "model-feature",
+                    "surface-feature",
+                    SessionJournalDefaults.Schema
+                )
+            );
+            featureHead = feature.AppendSystemPromptSetup("system-feature");
+
+            SessionProjection featureProjection = feature.Project();
+            Assert.Equal("model-feature", featureProjection.Config!.ModelId);
+            Assert.Equal("system-feature", featureProjection.SystemPrompt);
+            Assert.Equal(
+                featureHead,
+                feature.ReadCurrentLineageHeaders().CapturedHead
+            );
+            SessionHistoryPlanningSeedBatch seeds =
+                feature.ReadHistoryPlanningSeeds([featureHead]);
+            Assert.Equal(featureHead, seeds.Lineage.CapturedHead);
+            Assert.Equal(
+                "model-feature",
+                Assert.Single(seeds.Seeds).GoverningSetup.RuntimeConfig.ModelId
+            );
+        }
+
+        using var main = SessionJournalEngine.Open(path);
+        Assert.Equal(SessionJournalDefaults.MainBranchName, main.BranchName);
+        Assert.Equal(mainRef, main.BranchRefId);
+        Assert.Equal(mainHead, main.InspectExecutionBoundary().Head);
+        SessionProjection mainProjection = main.Project();
+        Assert.Equal("model-A", mainProjection.Config!.ModelId);
+        Assert.Equal("system-A", mainProjection.SystemPrompt);
+    }
+
+    [Fact]
+    public void Open_MissingOrArchivedBranchFailsBeforeEventMutation() {
+        string path = NewJournalPath();
+        EventAddress mainHead;
+        RefId mainRef;
+        using (var created = SessionJournalEngine.Create(
+            path,
+            new SessionCreateOptions("model-A", "system-A", "surface-A")
+        )) {
+            mainRef = created.BranchRefId;
+            mainHead = created.InspectExecutionBoundary().Head!.Value;
+        }
+        using (var journal = EventJournal.EventJournal.OpenExisting(path)) {
+            RefId archivedRef = journal.ForkBranch(
+                "archived",
+                mainRef,
+                mainHead
+            ).Unwrap();
+            Assert.True(journal.ArchiveRef(archivedRef, mainHead).Unwrap());
+        }
+        long eventBytesBefore = GetEventStoreLength(path);
+
+        InvalidOperationException missing = Assert.Throws<InvalidOperationException>(
+            () => SessionJournalEngine.Open(path, "missing")
+        );
+        InvalidOperationException archivedError = Assert.Throws<InvalidOperationException>(
+            () => SessionJournalEngine.Open(path, "archived")
+        );
+
+        Assert.Contains("EventJournal.BranchNotFound", missing.Message);
+        Assert.Contains("EventJournal.BranchNotFound", archivedError.Message);
+        Assert.Equal(eventBytesBefore, GetEventStoreLength(path));
+        using var journalAfter = EventJournal.EventJournal.OpenExisting(path);
+        Assert.Equal(mainHead, journalAfter.GetHead(mainRef));
+    }
+
+    [Fact]
+    public void Open_AfterDisposedEngineObservesExternalMoveOfSelectedBranch() {
+        string path = NewJournalPath();
+        EventAddress forkPoint;
+        RefId mainRef;
+        using (var created = SessionJournalEngine.Create(
+            path,
+            new SessionCreateOptions("model-A", "system-A", "surface-A")
+        )) {
+            mainRef = created.BranchRefId;
+            forkPoint = created.InspectExecutionBoundary().Head!.Value;
+        }
+        RefId featureRef;
+        using (var journal = EventJournal.EventJournal.OpenExisting(path)) {
+            featureRef = journal.ForkBranch(
+                "feature",
+                mainRef,
+                forkPoint
+            ).Unwrap();
+        }
+
+        EventAddress advancedHead;
+        using (var feature = SessionJournalEngine.Open(path, "feature")) {
+            advancedHead = feature.AppendObservation("temporary feature work");
+        }
+        using (var journal = EventJournal.EventJournal.OpenExisting(path)) {
+            Assert.True(journal.MoveRef(
+                featureRef,
+                advancedHead,
+                forkPoint
+            ).Unwrap());
+        }
+
+        using var reopened = SessionJournalEngine.Open(path, "feature");
+        Assert.Equal(featureRef, reopened.BranchRefId);
+        Assert.Equal(forkPoint, reopened.InspectExecutionBoundary().Head);
+        Assert.Empty(reopened.Project().Context);
+    }
+
+    [Fact]
+    public async Task SelectedBranch_SendThenResumeAdvancesOnlyBoundRef() {
+        string path = NewJournalPath();
+        EventAddress mainHead;
+        RefId mainRef;
+        using (var created = SessionJournalEngine.Create(
+            path,
+            new SessionCreateOptions("model-A", "system-A", "surface-A")
+        )) {
+            mainRef = created.BranchRefId;
+            mainHead = created.InspectExecutionBoundary().Head!.Value;
+        }
+        RefId featureRef;
+        using (var journal = EventJournal.EventJournal.OpenExisting(path)) {
+            featureRef = journal.ForkBranch(
+                "feature",
+                mainRef,
+                mainHead
+            ).Unwrap();
+        }
+
+        _candidateSource.IsEmptyLineage = true;
+        var client = new ScriptedCompletionClient();
+        SessionRuntime runtime = CreateRuntime(client) with {
+            ContextSelection = new SessionContextSelectionOptions(
+                "default",
+                BootstrapRawSuffixTokenBudget: 4096
+            )
+        };
+        EventAddress preparedHead;
+        using (var preparing = SessionJournalEngine.OpenForTest(
+            path,
+            "feature",
+            runtime,
+            new SessionJournalTestHooks(
+                SessionJournalFailpoint.AfterRequestPreparedCommitted
+            )
+        )) {
+            SessionJournalFailpointException error =
+                await Assert.ThrowsAsync<SessionJournalFailpointException>(
+                    () => preparing.SendAsync(
+                        "feature observation",
+                        CancellationToken.None
+                    )
+                );
+            Assert.Equal(
+                SessionJournalFailpoint.AfterRequestPreparedCommitted,
+                error.Failpoint
+            );
+            preparedHead = preparing.InspectExecutionBoundary().Head!.Value;
+            Assert.Equal(0, client.Calls);
+        }
+
+        using (var journal = EventJournal.EventJournal.OpenExisting(path)) {
+            Assert.Equal(mainHead, journal.GetHead(mainRef));
+            Assert.Equal(preparedHead, journal.GetHead(featureRef));
+        }
+
+        client.Enqueue(request => new CompletionResult(
+            new ActionMessage([new ActionBlock.Text("feature resumed")]),
+            new CompletionDescriptor(
+                "scripted",
+                "test-api-v1",
+                request.ModelId
+            )
+        ));
+        using (var resumed = SessionJournalEngine.Open(
+            path,
+            "feature",
+            runtime with {
+                ContextCandidateSource = null,
+                MemoryLifecycle = null
+            }
+        )) {
+            ResumeOutcome outcome = await resumed.ResumeAsync(
+                CancellationToken.None
+            );
+            Assert.True(outcome.Advanced);
+            Assert.Equal(
+                "feature resumed",
+                outcome.Message!.GetFlattenedText()
+            );
+            Assert.Equal(SessionExecutionPhase.Idle, resumed.Project().ExecutionState.Phase);
+        }
+
+        using var journalAfter = EventJournal.EventJournal.OpenExisting(path);
+        Assert.Equal(mainHead, journalAfter.GetHead(mainRef));
+        Assert.NotEqual(preparedHead, journalAfter.GetHead(featureRef));
+    }
+
+    [Fact]
     public void AppendObservationAndAction_ReopenRebuildsContextAndConfigFromJournal() {
         string path = NewJournalPath();
         var invocation = new CompletionDescriptor("fake-provider", "fake-api-v1", "model-A");
@@ -2369,4 +2595,12 @@ public sealed class SessionJournalEngineTests : IDisposable {
         _tempDirectories.Add(path);
         return path;
     }
+
+    private static long GetEventStoreLength(string journalPath)
+        => Directory.EnumerateFiles(
+                Path.Combine(journalPath, "events"),
+                "*.rbf",
+                SearchOption.AllDirectories
+            )
+            .Sum(static path => new FileInfo(path).Length);
 }

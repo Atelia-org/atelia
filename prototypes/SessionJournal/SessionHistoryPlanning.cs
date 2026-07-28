@@ -58,7 +58,7 @@ public sealed record SessionHistoryPlanningWindow(
 }
 
 /// <summary>
-/// One header-only node on the captured current main Parent lineage.
+/// One header-only node on the captured selected branch Parent lineage.
 /// </summary>
 public sealed record SessionCurrentLineageHeader(
     EventAddress Address,
@@ -73,7 +73,7 @@ public sealed record SessionCurrentLineageDiagnostics(
 );
 
 /// <summary>
-/// Store-neutral header-only snapshot of the current main lineage. Entries are ordered from
+/// Store-neutral header-only snapshot of the selected branch lineage. Entries are ordered from
 /// captured head toward the root. No event payload is read or decoded while producing it.
 /// </summary>
 public sealed record SessionCurrentLineageSnapshot(
