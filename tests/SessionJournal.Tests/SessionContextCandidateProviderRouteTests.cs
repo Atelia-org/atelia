@@ -222,6 +222,102 @@ public sealed class SessionContextCandidateProviderRouteTests : IDisposable {
     }
 
     [Fact]
+    public async Task DivergentCandidateAnchor_FailsRawAuthorityBeforeObservation() {
+        string path = NewJournalPath();
+        var client = new ScriptedClient();
+        var source = new TestContextCandidateSource();
+        TestContextCandidateFixture fixture;
+        using (var setup = SessionJournalEngine.Create(
+            path,
+            CreateOptions()
+        )) {
+            fixture =
+                ContextCandidateTestFixture.CreateAtCurrentHead(setup);
+        }
+        EventAddress divergent;
+        using (var journal =
+               EventJournal.EventJournal.OpenExisting(path)) {
+            journal.CreateBranch("off", fixture.Anchor).Unwrap();
+            divergent = journal.CommitToRef(
+                "off",
+                fixture.Anchor,
+                SessionEventCodec.Encode(
+                    SessionEventKind.ObservationAccepted,
+                    new ObservationAcceptedBody("off-main")
+                ),
+                opaqueEventKind:
+                    (uint)SessionEventKind.ObservationAccepted,
+                hint: default
+            ).Unwrap().EventAddress;
+        }
+        source.Candidate = fixture.Candidate with {
+            RawStartExclusive = divergent,
+            Contributions = new[] {
+                ContextCandidateTestFixture.Contribution(
+                    MemoryPackCarrier.Observation,
+                    "fixture.world-understanding",
+                    "divergent memory",
+                    divergent
+                )
+            }
+        };
+        using var engine = SessionJournalEngine.Open(
+            path,
+            CreateRuntime(client, source)
+        );
+        EventAddress head =
+            engine.ResolveExecutionTail().Head!.Value;
+
+        await Assert.ThrowsAsync<InvalidDataException>(
+            () => engine.SendAsync(
+                "must not persist",
+                CancellationToken.None
+            )
+        );
+
+        Assert.Equal(head, engine.ResolveExecutionTail().Head);
+        Assert.Equal(1, source.SelectionCount);
+        Assert.Equal(0, source.MaterializationCount);
+        Assert.Equal(0, client.Calls);
+    }
+
+    [Fact]
+    public async Task ForgedAnchorSetupHash_FailsRawAuthorityBeforeObservation() {
+        string path = NewJournalPath();
+        var client = new ScriptedClient();
+        var source = new TestContextCandidateSource();
+        using var engine = SessionJournalEngine.Create(
+            path,
+            CreateOptions(),
+            CreateRuntime(client, source)
+        );
+        TestContextCandidateFixture fixture =
+            ContextCandidateTestFixture.CreateAtCurrentHead(engine);
+        source.Candidate = fixture.Candidate with {
+            AnchorSetups = fixture.Candidate.AnchorSetups with {
+                SystemPrompt =
+                    fixture.Candidate.AnchorSetups.SystemPrompt with {
+                        PayloadSha256 = new string('0', 64)
+                    }
+            }
+        };
+        EventAddress head =
+            engine.ResolveExecutionTail().Head!.Value;
+
+        await Assert.ThrowsAsync<InvalidDataException>(
+            () => engine.SendAsync(
+                "must not persist",
+                CancellationToken.None
+            )
+        );
+
+        Assert.Equal(head, engine.ResolveExecutionTail().Head);
+        Assert.Equal(1, source.SelectionCount);
+        Assert.Equal(0, source.MaterializationCount);
+        Assert.Equal(0, client.Calls);
+    }
+
+    [Fact]
     public async Task ProjectedTotalBudgetFailure_DoesNotAppendObservation() {
         string path = NewJournalPath();
         var client = new ScriptedClient();

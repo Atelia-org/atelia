@@ -1,225 +1,225 @@
-using System.Security.Cryptography;
 using Atelia.Completion.Abstractions;
 using Atelia.EventJournal;
 using Xunit;
 
 namespace Atelia.SessionJournal.Tests;
 
-public sealed class SessionContextCandidateContractTests : IDisposable {
-    private readonly List<string> _tempDirectories = [];
-
-    public void Dispose() {
-        foreach (string path in _tempDirectories) {
-            try {
-                if (Directory.Exists(path)) { Directory.Delete(path, recursive: true); }
-            }
-            catch {
-                // Best-effort cleanup for test journals.
-            }
-        }
-    }
+public sealed class SessionContextCandidateMaterializationContractTests {
+    private static readonly EventAddress RuntimeSetup = Address(1);
+    private static readonly EventAddress PromptSetup = Address(2);
+    private static readonly EventAddress Anchor = Address(3);
+    private static readonly EventAddress Boundary = Address(4);
+    private static readonly SessionContextAnchorSetupReferences AnchorSetups =
+        new(
+            new SessionContextSetupReference(
+                RuntimeSetup,
+                1,
+                new string('a', 64)
+            ),
+            new SessionContextSetupReference(
+                PromptSetup,
+                1,
+                new string('b', 64)
+            )
+        );
+    private static readonly SessionContextCandidateDescriptor Descriptor =
+        new("contract-test", 0, Anchor, AnchorSetups);
+    private static readonly IReadOnlySet<EventAddress> AllowedSourceHeads =
+        new HashSet<EventAddress> { Anchor, Boundary };
 
     [Fact]
-    public async Task FakeSource_LegalUnorderedCandidate_IsNormalizedAndValidated() {
-        Fixture fixture = CreateFixture();
+    public void MaterializedCandidate_LegalUnorderedContributions_AreNormalized() {
         SessionContextCandidate candidate = CreateCandidate(
-            fixture,
-            Contribution(MemoryPackCarrier.Action, "autobiography", "action memory", fixture.Boundary),
-            Contribution(MemoryPackCarrier.Observation, "world", "observation memory", fixture.Anchor)
+            Contribution(
+                MemoryPackCarrier.Action,
+                "autobiography",
+                "action memory",
+                Boundary
+            ),
+            Contribution(
+                MemoryPackCarrier.Observation,
+                "world",
+                "observation memory",
+                Anchor
+            )
         );
-        ICoherentContextCandidateSource source = new FakeCandidateSource(candidate);
-        var request = new SessionContextSelectionRequest(
-            fixture.Boundary,
-            SessionContextSelectionMode.Latest,
-            "roleplay.default",
-            RawSuffixTokenBudget: 4096
-        );
-        request.ValidateShape();
 
-        SessionContextCandidateDiscovery discovery =
-            await source.DiscoverAsync(
-                request,
-                CancellationToken.None
-            );
-        SessionContextCandidate selected = await source.MaterializeAsync(
-            Assert.Single(discovery.Candidates),
-            CancellationToken.None
-        );
-        ValidatedSessionContextCandidate validated = Validate(fixture, selected);
+        IReadOnlyList<SessionContextContribution> validated =
+            Validate(candidate);
 
-        Assert.Equal(fixture.Anchor, validated.RawStartExclusive);
-        Assert.Equal(fixture.Anchor, validated.AnchorGoverningSetup.Head);
         Assert.Collection(
-            validated.SuffixAddresses,
-            address => Assert.Equal(fixture.Boundary, address)
+            validated,
+            observation => Assert.Equal(
+                MemoryPackCarrier.Observation,
+                observation.Target.Carrier
+            ),
+            action => Assert.Equal(
+                MemoryPackCarrier.Action,
+                action.Target.Carrier
+            )
         );
-        Assert.Equal(2, validated.HeaderVisitCount);
-        Assert.Collection(
-            validated.CanonicalContributions,
-            observation => Assert.Equal(MemoryPackCarrier.Observation, observation.Target.Carrier),
-            action => Assert.Equal(MemoryPackCarrier.Action, action.Target.Carrier)
-        );
     }
 
     [Fact]
-    public void Validator_RejectsEqualAnchor() {
-        Fixture fixture = CreateFixture();
+    public void MaterializedCandidate_RejectsDescriptorMismatch() {
         SessionContextCandidate candidate = CreateCandidate(
-            fixture,
-            Contribution(MemoryPackCarrier.Observation, "world", "memory", fixture.Boundary)
-        ) with { RawStartExclusive = fixture.Boundary };
-
-        Assert.Throws<InvalidDataException>(() => Validate(fixture, candidate));
-    }
-
-    [Fact]
-    public void Validator_RejectsDivergentAnchor() {
-        Fixture fixture = CreateFixture();
-        EventAddress divergent;
-        using (var journal = EventJournal.EventJournal.OpenExisting(fixture.Path)) {
-            journal.CreateBranch("off", fixture.Anchor).Unwrap();
-            divergent = journal.CommitToRef(
-                "off",
-                fixture.Anchor,
-                SessionEventCodec.Encode(
-                    SessionEventKind.ObservationAccepted,
-                    new ObservationAcceptedBody("off-main")
-                ),
-                opaqueEventKind: (uint)SessionEventKind.ObservationAccepted,
-                hint: default
-            ).Unwrap().EventAddress;
-        }
-        SessionContextCandidate candidate = CreateCandidate(
-            fixture,
-            Contribution(MemoryPackCarrier.Observation, "world", "memory", divergent)
-        ) with { RawStartExclusive = divergent };
-
-        Assert.Throws<InvalidDataException>(() => Validate(fixture, candidate));
-    }
-
-    [Fact]
-    public void Validator_RejectsAnchorSetupReferenceMismatch() {
-        Fixture fixture = CreateFixture();
-        SessionContextCandidate candidate = CreateCandidate(
-            fixture,
-            Contribution(MemoryPackCarrier.Observation, "world", "memory", fixture.Anchor)
+            Contribution(
+                MemoryPackCarrier.Observation,
+                "world",
+                "memory",
+                Anchor
+            )
         ) with {
-            AnchorSetups = fixture.AnchorSetups with {
-                SystemPrompt = fixture.AnchorSetups.SystemPrompt with {
+            AnchorSetups = AnchorSetups with {
+                SystemPrompt = AnchorSetups.SystemPrompt with {
                     PayloadSha256 = new string('0', 64)
                 }
             }
         };
 
-        Assert.Throws<InvalidDataException>(() => Validate(fixture, candidate));
+        Assert.Throws<InvalidDataException>(
+            () => Validate(candidate)
+        );
     }
 
     [Fact]
-    public void Validator_RejectsSourceHeadOutsideAuthoritativeInterval() {
-        Fixture fixture = CreateFixture();
+    public void MaterializedCandidate_RejectsSourceHeadOutsideAuthoritativeInterval() {
         SessionContextCandidate candidate = CreateCandidate(
-            fixture,
-            Contribution(MemoryPackCarrier.Observation, "world", "memory", fixture.BeforeAnchor)
+            Contribution(
+                MemoryPackCarrier.Observation,
+                "world",
+                "memory",
+                Address(5)
+            )
         );
 
-        Assert.Throws<InvalidDataException>(() => Validate(fixture, candidate));
+        Assert.Throws<InvalidDataException>(
+            () => Validate(candidate)
+        );
     }
 
     [Fact]
-    public void Validator_RejectsDuplicateTargetAndInvalidCarrier() {
-        Fixture fixture = CreateFixture();
+    public void MaterializedCandidate_RejectsDuplicateTargetAndInvalidCarrier() {
         SessionContextCandidate duplicate = CreateCandidate(
-            fixture,
-            Contribution(MemoryPackCarrier.Observation, "world", "first", fixture.Anchor),
-            Contribution(MemoryPackCarrier.Observation, "world", "second", fixture.Boundary)
+            Contribution(
+                MemoryPackCarrier.Observation,
+                "world",
+                "first",
+                Anchor
+            ),
+            Contribution(
+                MemoryPackCarrier.Observation,
+                "world",
+                "second",
+                Boundary
+            )
         );
-        Assert.Throws<InvalidDataException>(() => Validate(fixture, duplicate));
+        Assert.Throws<InvalidDataException>(
+            () => Validate(duplicate)
+        );
 
         SessionContextCandidate invalidCarrier = CreateCandidate(
-            fixture,
-            Contribution((MemoryPackCarrier)99, "invalid", "memory", fixture.Anchor)
+            Contribution(
+                (MemoryPackCarrier)99,
+                "invalid",
+                "memory",
+                Anchor
+            )
         );
-        Assert.Throws<InvalidDataException>(() => Validate(fixture, invalidCarrier));
+        Assert.Throws<InvalidDataException>(
+            () => Validate(invalidCarrier)
+        );
     }
 
     [Fact]
-    public void Validator_RejectsBadHashAndOversizedText() {
-        Fixture fixture = CreateFixture();
+    public void MaterializedCandidate_RejectsBadHashAndOversizedText() {
         SessionContextContribution badHash = Contribution(
             MemoryPackCarrier.Observation,
             "world",
             "memory",
-            fixture.Anchor
+            Anchor
         ) with { ContentSha256 = new string('f', 64) };
-        Assert.Throws<InvalidDataException>(() => Validate(fixture, CreateCandidate(fixture, badHash)));
+        Assert.Throws<InvalidDataException>(
+            () => Validate(CreateCandidate(badHash))
+        );
 
         string oversizedText = new('x', 256 * 1024 + 1);
         SessionContextContribution oversized = Contribution(
             MemoryPackCarrier.Observation,
             "world",
             oversizedText,
-            fixture.Anchor
+            Anchor
         );
-        Assert.Throws<InvalidDataException>(() => Validate(fixture, CreateCandidate(fixture, oversized)));
+        Assert.Throws<InvalidDataException>(
+            () => Validate(CreateCandidate(oversized))
+        );
     }
 
     [Fact]
-    public void Validator_SnapshotsProviderContributionsBeforeLineageAndContentValidation() {
-        Fixture fixture = CreateFixture();
+    public void MaterializedCandidate_SnapshotsProviderContributionsBeforeValidation() {
         SessionContextContribution accepted = Contribution(
             MemoryPackCarrier.Observation,
             "world",
             "accepted memory",
-            fixture.Anchor
+            Anchor
         );
         SessionContextContribution injectedAfterValidation = Contribution(
             MemoryPackCarrier.Action,
             "injected",
             "injected memory",
-            fixture.BeforeAnchor
+            Address(5)
         ) with { ContentSha256 = new string('f', 64) };
         var unstable = new ChangesAfterFirstEnumerationList(
             [accepted],
             [injectedAfterValidation]
         );
-        SessionContextCandidate candidate = new(
-            fixture.Anchor,
-            fixture.AnchorSetups,
+        var candidate = new SessionContextCandidate(
+            Anchor,
+            AnchorSetups,
             unstable
         );
 
-        ValidatedSessionContextCandidate validated = Validate(fixture, candidate);
+        SessionContextContribution only =
+            Assert.Single(Validate(candidate));
 
-        SessionContextContribution only = Assert.Single(validated.CanonicalContributions);
         Assert.Equal("accepted memory", only.ExactText);
         Assert.Equal(1, unstable.EnumerationCount);
     }
 
     [Fact]
-    public void Validator_UsesBoundedEnumerationSnapshotInsteadOfUntrustedCount() {
-        Fixture fixture = CreateFixture();
+    public void MaterializedCandidate_UsesBoundedSnapshotInsteadOfUntrustedCount() {
         var countMismatch = new CountMismatchContributionList(
             reportedCount: 0,
             [
-                Contribution(MemoryPackCarrier.Observation, "world", "world memory", fixture.Anchor),
-                Contribution(MemoryPackCarrier.Action, "self", "self memory", fixture.Boundary)
+                Contribution(
+                    MemoryPackCarrier.Observation,
+                    "world",
+                    "world memory",
+                    Anchor
+                ),
+                Contribution(
+                    MemoryPackCarrier.Action,
+                    "self",
+                    "self memory",
+                    Boundary
+                )
             ]
         );
-        SessionContextCandidate candidate = new(
-            fixture.Anchor,
-            fixture.AnchorSetups,
+        var candidate = new SessionContextCandidate(
+            Anchor,
+            AnchorSetups,
             countMismatch
         );
 
-        ValidatedSessionContextCandidate validated = Validate(fixture, candidate);
+        IReadOnlyList<SessionContextContribution> validated =
+            Validate(candidate);
 
-        Assert.Equal(2, validated.CanonicalContributions.Length);
+        Assert.Equal(2, validated.Count);
         Assert.Equal(1, countMismatch.EnumerationCount);
     }
 
     [Fact]
-    public void Validator_RejectsMoreThanHardCapEvenWhenProviderReportsSmallCount() {
-        Fixture fixture = CreateFixture();
+    public void MaterializedCandidate_RejectsMoreThanHardCapDespiteReportedCount() {
         var overflowing = new CountMismatchContributionList(
             reportedCount: 1,
             Enumerable.Range(0, 129)
@@ -227,17 +227,19 @@ public sealed class SessionContextCandidateContractTests : IDisposable {
                     MemoryPackCarrier.Observation,
                     $"block-{index}",
                     $"memory-{index}",
-                    fixture.Anchor
+                    Anchor
                 ))
                 .ToArray()
         );
-        SessionContextCandidate candidate = new(
-            fixture.Anchor,
-            fixture.AnchorSetups,
+        var candidate = new SessionContextCandidate(
+            Anchor,
+            AnchorSetups,
             overflowing
         );
 
-        Assert.Throws<InvalidDataException>(() => Validate(fixture, candidate));
+        Assert.Throws<InvalidDataException>(
+            () => Validate(candidate)
+        );
         Assert.Equal(1, overflowing.EnumerationCount);
     }
 
@@ -251,56 +253,35 @@ public sealed class SessionContextCandidateContractTests : IDisposable {
             "SessionJournal.csproj"
         ));
 
-        Assert.DoesNotContain("SessionJournal.Maintainers", project, StringComparison.Ordinal);
-        Assert.DoesNotContain("SessionJournal.DerivedMemory", project, StringComparison.Ordinal);
-        Assert.DoesNotContain("Agent.Core", project, StringComparison.Ordinal);
-    }
-
-    private Fixture CreateFixture() {
-        string path = NewJournalPath();
-        using var engine = SessionJournalEngine.Create(
-            path,
-            new SessionCreateOptions("model-A", "system-A", "surface-A")
+        Assert.DoesNotContain(
+            "SessionJournal.Maintainers",
+            project,
+            StringComparison.Ordinal
         );
-        EventAddress beforeAnchor = engine.Project().Head
-            ?? throw new InvalidDataException("New SessionJournal has no setup head.");
-        EventAddress anchor = engine.AppendObservation("anchor observation");
-        EventAddress boundary = engine.AppendImportedAgentAction(
-            new ActionMessage([new ActionBlock.Text("anchor action")]),
-            new CompletionDescriptor("import", "import-v1", "model-A")
+        Assert.DoesNotContain(
+            "SessionJournal.DerivedMemory",
+            project,
+            StringComparison.Ordinal
         );
-        SessionGoverningSetup setup = engine.ResolveGoverningSetup(anchor);
-        return new Fixture(
-            path,
-            beforeAnchor,
-            anchor,
-            boundary,
-            setup,
-            new SessionContextAnchorSetupReferences(
-                CreateSetupReference(engine, setup.RuntimeConfigSetupAddress, SessionEventKind.RuntimeConfigSetup),
-                CreateSetupReference(engine, setup.SystemPromptSetupAddress, SessionEventKind.SystemPromptSetup)
-            )
+        Assert.DoesNotContain(
+            "Agent.Core",
+            project,
+            StringComparison.Ordinal
         );
     }
 
-    private static SessionContextSetupReference CreateSetupReference(
-        SessionJournalEngine engine,
-        EventAddress address,
-        SessionEventKind kind
-    ) {
-        byte[] payload = engine.ReadPayloadBytes(address);
-        _ = SessionEventCodec.Decode(kind, payload, out int schemaVersion);
-        return new SessionContextSetupReference(
-            address,
-            schemaVersion,
-            Convert.ToHexStringLower(SHA256.HashData(payload))
-        );
-    }
+    private static IReadOnlyList<SessionContextContribution> Validate(
+        SessionContextCandidate candidate
+    ) => SessionContextCandidateValidator.ValidateMaterializedCandidate(
+        Descriptor,
+        candidate,
+        AllowedSourceHeads,
+        allowEmpty: false
+    );
 
     private static SessionContextCandidate CreateCandidate(
-        Fixture fixture,
         params SessionContextContribution[] contributions
-    ) => new(fixture.Anchor, fixture.AnchorSetups, contributions);
+    ) => new(Anchor, AnchorSetups, contributions);
 
     private static SessionContextContribution Contribution(
         MemoryPackCarrier carrier,
@@ -315,88 +296,40 @@ public sealed class SessionContextCandidateContractTests : IDisposable {
         sourceRawHead
     );
 
-    private static ValidatedSessionContextCandidate Validate(
-        Fixture fixture,
-        SessionContextCandidate candidate
-    ) {
-        using var journal = EventJournal.EventJournal.OpenExisting(fixture.Path);
-        var reader = new SessionJournalEventReader(journal);
-        return SessionContextCandidateValidator.Validate(
-            reader,
-            fixture.Boundary,
-            fixture.AnchorSetup,
-            candidate
+    private static EventAddress Address(ulong ticket)
+        => EventAddressTextCodec.Parse(
+            $"ej1:{ticket:x16}0000000100000000"
         );
-    }
 
     private static string FindRepositoryRoot() {
-        for (DirectoryInfo? cursor = new DirectoryInfo(AppContext.BaseDirectory);
-             cursor is not null;
-             cursor = cursor.Parent) {
-            if (File.Exists(Path.Combine(cursor.FullName, "prototypes", "SessionJournal", "SessionJournal.csproj"))) {
+        for (
+            DirectoryInfo? cursor =
+                new DirectoryInfo(AppContext.BaseDirectory);
+            cursor is not null;
+            cursor = cursor.Parent
+        ) {
+            if (File.Exists(Path.Combine(
+                    cursor.FullName,
+                    "prototypes",
+                    "SessionJournal",
+                    "SessionJournal.csproj"
+                ))) {
                 return cursor.FullName;
             }
         }
-        throw new DirectoryNotFoundException("Could not locate the Atelia repository root from the test assembly path.");
-    }
-
-    private string NewJournalPath() {
-        string path = Path.Combine(
-            Path.GetTempPath(),
-            "atelia-session-context-candidate-contract-tests",
-            Guid.NewGuid().ToString("N")
+        throw new DirectoryNotFoundException(
+            "Could not locate the Atelia repository root from the test assembly path."
         );
-        _tempDirectories.Add(path);
-        return path;
-    }
-
-    private sealed record Fixture(
-        string Path,
-        EventAddress BeforeAnchor,
-        EventAddress Anchor,
-        EventAddress Boundary,
-        SessionGoverningSetup AnchorSetup,
-        SessionContextAnchorSetupReferences AnchorSetups
-    );
-
-    private sealed class FakeCandidateSource(SessionContextCandidate candidate)
-        : ICoherentContextCandidateSource {
-        public ValueTask<SessionContextCandidateDiscovery> DiscoverAsync(
-            SessionContextSelectionRequest request,
-            CancellationToken cancellationToken
-        ) {
-            request.ValidateShape();
-            cancellationToken.ThrowIfCancellationRequested();
-            return ValueTask.FromResult(
-                new SessionContextCandidateDiscovery(
-                    SessionContextCandidateDiscoveryStatus.Candidates,
-                    new[] {
-                        new SessionContextCandidateDescriptor(
-                            "contract-test",
-                            0,
-                            candidate.RawStartExclusive,
-                            candidate.AnchorSetups
-                        )
-                    }
-                )
-            );
-        }
-
-        public ValueTask<SessionContextCandidate> MaterializeAsync(
-            SessionContextCandidateDescriptor descriptor,
-            CancellationToken cancellationToken
-        ) {
-            cancellationToken.ThrowIfCancellationRequested();
-            return ValueTask.FromResult(candidate);
-        }
     }
 
     private sealed class ChangesAfterFirstEnumerationList(
         IReadOnlyList<SessionContextContribution> first,
         IReadOnlyList<SessionContextContribution> later
     ) : IReadOnlyList<SessionContextContribution> {
-        private readonly IReadOnlyList<SessionContextContribution> _first = first;
-        private readonly IReadOnlyList<SessionContextContribution> _later = later;
+        private readonly IReadOnlyList<SessionContextContribution> _first =
+            first;
+        private readonly IReadOnlyList<SessionContextContribution> _later =
+            later;
 
         public int EnumerationCount { get; private set; }
 
@@ -406,10 +339,15 @@ public sealed class SessionContextCandidateContractTests : IDisposable {
 
         public IEnumerator<SessionContextContribution> GetEnumerator() {
             EnumerationCount++;
-            return (EnumerationCount == 1 ? _first : _later).GetEnumerator();
+            return (
+                EnumerationCount == 1
+                    ? _first
+                    : _later
+            ).GetEnumerator();
         }
 
-        System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator()
+        System.Collections.IEnumerator
+            System.Collections.IEnumerable.GetEnumerator()
             => GetEnumerator();
     }
 
@@ -417,20 +355,23 @@ public sealed class SessionContextCandidateContractTests : IDisposable {
         int reportedCount,
         IReadOnlyList<SessionContextContribution> contents
     ) : IReadOnlyList<SessionContextContribution> {
-        private readonly IReadOnlyList<SessionContextContribution> _contents = contents;
+        private readonly IReadOnlyList<SessionContextContribution> _contents =
+            contents;
 
         public int EnumerationCount { get; private set; }
 
         public int Count => reportedCount;
 
-        public SessionContextContribution this[int index] => _contents[index];
+        public SessionContextContribution this[int index] =>
+            _contents[index];
 
         public IEnumerator<SessionContextContribution> GetEnumerator() {
             EnumerationCount++;
             return _contents.GetEnumerator();
         }
 
-        System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator()
+        System.Collections.IEnumerator
+            System.Collections.IEnumerable.GetEnumerator()
             => GetEnumerator();
     }
 }

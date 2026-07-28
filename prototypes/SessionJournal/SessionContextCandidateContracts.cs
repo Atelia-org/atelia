@@ -1,4 +1,3 @@
-using System.Collections.Immutable;
 using System.Security.Cryptography;
 using System.Text;
 using Atelia.EventJournal;
@@ -209,16 +208,3 @@ public static class SessionContextContributionHasher {
         return Convert.ToHexStringLower(SHA256.HashData(input));
     }
 }
-
-/// <summary>
-/// Core-normalized form of a candidate. It is intentionally internal: only SessionJournal needs the
-/// authoritative anchor setup and canonical contribution order.
-/// </summary>
-internal sealed record ValidatedSessionContextCandidate(
-    EventAddress CompletionBoundary,
-    EventAddress RawStartExclusive,
-    SessionGoverningSetup AnchorGoverningSetup,
-    ImmutableArray<SessionContextContribution> CanonicalContributions,
-    ImmutableArray<EventAddress> SuffixAddresses,
-    int HeaderVisitCount
-);

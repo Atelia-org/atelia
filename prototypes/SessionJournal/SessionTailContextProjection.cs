@@ -15,110 +15,6 @@ internal sealed record SessionTailContextProjectionResult(
 );
 
 internal static class SessionTailContextProjection {
-    public static SessionTailContextProjectionResult Materialize(
-        SessionJournalEventReader reader,
-        SessionGoverningSetup currentGoverningSetup,
-        ValidatedSessionContextCandidate candidate,
-        CancellationToken cancellationToken
-    ) {
-        ArgumentNullException.ThrowIfNull(reader);
-        ArgumentNullException.ThrowIfNull(currentGoverningSetup);
-        ArgumentNullException.ThrowIfNull(candidate);
-        EventAddress expectedParent = candidate.CompletionBoundary;
-        EventAddress commonAnchor = candidate.RawStartExclusive;
-        if (currentGoverningSetup.Head != expectedParent) {
-            throw new InvalidDataException(
-                "Tail projection current governing setup must be pinned to the validated completion boundary."
-            );
-        }
-        if (candidate.AnchorGoverningSetup.Head != commonAnchor) {
-            throw new InvalidDataException(
-                "Tail projection anchor governing setup must be pinned to the validated rawStartExclusive."
-            );
-        }
-
-        ImmutableArray<EventAddress> suffixAddresses = candidate.SuffixAddresses;
-        var suffixEntries = new List<SessionRawRangeHashEntry>(suffixAddresses.Length);
-        var suffixEvents = new List<DecodedSessionEvent>(suffixAddresses.Length);
-        foreach (EventAddress address in suffixAddresses) {
-            cancellationToken.ThrowIfCancellationRequested();
-            using SessionJournalEventFrame frame = reader.ReadEvent(address).Unwrap();
-            ValidateSessionHeader(address, frame.Header);
-            var kind = (SessionEventKind)frame.Header.OpaqueEventKind;
-            object body = SessionEventCodec.Decode(kind, frame.Payload, out int bodySchemaVersion);
-            suffixEvents.Add(new DecodedSessionEvent(kind, bodySchemaVersion, body, address, frame.Header.Parent));
-            suffixEntries.Add(new SessionRawRangeHashEntry(
-                address,
-                frame.Header.Parent,
-                frame.Header.OpaqueEventKind,
-                bodySchemaVersion,
-                SessionRequestCanonicalizer.Sha256Hex(frame.Payload)
-            ));
-        }
-
-        string rawRangeSha256 = SessionRawRangeHasher.Compute(
-            commonAnchor,
-            expectedParent,
-            suffixEntries
-        );
-        SessionExecutionRecovery anchorRecovery =
-            SessionExecutionTailResolver.Resolve(reader, commonAnchor, cancellationToken);
-        SessionExecutionRecovery currentRecovery =
-            SessionExecutionTailResolver.Resolve(reader, expectedParent, cancellationToken);
-        TailFoldResult folded = FoldSuffix(candidate.AnchorGoverningSetup, suffixEvents, anchorRecovery);
-        if (currentGoverningSetup.Head != expectedParent
-            || folded.GoverningSetup.Head != expectedParent
-            || folded.GoverningSetup.RuntimeConfigSetupAddress != currentGoverningSetup.RuntimeConfigSetupAddress
-            || folded.GoverningSetup.SystemPromptSetupAddress != currentGoverningSetup.SystemPromptSetupAddress
-            || folded.GoverningSetup.RuntimeConfig != currentGoverningSetup.RuntimeConfig
-            || !string.Equals(folded.GoverningSetup.SystemPrompt, currentGoverningSetup.SystemPrompt, StringComparison.Ordinal)) {
-            throw new InvalidDataException("Tail projection governing setup does not match the exact current-head governing setup.");
-        }
-        if (folded.Phase != currentRecovery.State.Phase
-            || folded.ToolExecutionSequenceCheckpoint != currentRecovery.State.ToolExecutionSequenceCheckpoint
-            || !string.Equals(
-                folded.ActiveCorrelationId,
-                currentRecovery.State.ActiveCorrelationId,
-                StringComparison.Ordinal
-            )) {
-            throw new InvalidDataException(
-                "Tail projection execution checkpoint or correlation does not match exact current recovery."
-            );
-        }
-
-        ImmutableArray<SessionRequestArtifactContextSnapshot> contextSnapshots = [
-            .. candidate.CanonicalContributions.Select(static contribution =>
-                SessionCoherentRequestRecipe.CreateOneHotSnapshot(
-                    contribution.Target,
-                    contribution.ExactText
-                )
-            )
-        ];
-        SessionRequestArtifactContextSnapshot contextSnapshot =
-            SessionCoherentRequestRecipe.Aggregate(contextSnapshots);
-        (string systemPrompt, ImmutableArray<IHistoryMessage> headerContext) = SessionCoherentRequestRecipe.Expand(
-            folded.GoverningSetup.SystemPrompt,
-            contextSnapshot
-        );
-        var context = ImmutableArray.CreateBuilder<IHistoryMessage>(headerContext.Length + folded.Context.Count);
-        context.AddRange(headerContext);
-        context.AddRange(folded.Context);
-
-        return new SessionTailContextProjectionResult(
-            systemPrompt,
-            context.MoveToImmutable(),
-            commonAnchor,
-            rawRangeSha256,
-            contextSnapshots,
-            folded.GoverningSetup,
-            new SessionTailProjectionDiagnostics(
-                candidate.HeaderVisitCount,
-                suffixEvents.Count,
-                suffixEvents.Count
-            )
-        );
-    }
-
     internal static SessionExecutionRecovery ValidateReplaySafeBoundary(
         SessionJournalEventReader reader,
         EventAddress anchor,
@@ -601,13 +497,6 @@ internal static class SessionTailContextProjection {
     private static T RequireBody<T>(DecodedSessionEvent ev) where T : class
         => ev.Body as T
             ?? throw new InvalidDataException($"{ev.Kind} at {ev.Address} decoded to unexpected body type.");
-
-    private static void ValidateSessionHeader(EventAddress address, EventFrameHeader header) {
-        if (!Enum.IsDefined(typeof(SessionEventKind), header.OpaqueEventKind)
-            || header.Hint != default(AddressHint)) {
-            throw new InvalidDataException($"Invalid SessionJournal event header at {address}.");
-        }
-    }
 
     internal sealed record TailFoldResult(
         SessionGoverningSetup GoverningSetup,
