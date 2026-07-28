@@ -223,9 +223,9 @@ internal static class SessionReducer {
                                 body.ToolRuntimeIdentity
                             )
                     );
-                    // Full replay preserves the imported wire contract:
-                    // a terminal ImportedAgentAction may carry source runtime
-                    // identity even though it declares no tool calls.
+                    // Imported tool Actions only need a self-contained,
+                    // non-null runtime identity; live tool Actions must also
+                    // match their durable Prepared snapshot.
                     context.Add(body.Action);
                     addressedMessages?.Add(new AddressedSessionHistoryMessage(body.Action, ev.Address, ev.Address));
                     openAction = body.Action.ToolCalls.Count == 0 ? null : body.Action;
