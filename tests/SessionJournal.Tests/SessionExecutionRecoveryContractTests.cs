@@ -503,6 +503,10 @@ public sealed class SessionExecutionRecoveryContractTests : IDisposable {
             );
         }
 
+        int selectionCountBeforeResume =
+            candidateSource.SelectionCount;
+        int materializationCountBeforeResume =
+            candidateSource.MaterializationCount;
         using var reopened = SessionJournalEngine.Open(path, runtime);
         SessionJournalReadDiagnostics before = reopened.CaptureReadDiagnostics();
 
@@ -519,6 +523,14 @@ public sealed class SessionExecutionRecoveryContractTests : IDisposable {
         Assert.Equal(0, delta.ChronologicalEventCount);
         Assert.Equal(0, delta.FullProjectionInvocationCount);
         Assert.Equal(0, client.Calls);
+        Assert.Equal(
+            selectionCountBeforeResume,
+            candidateSource.SelectionCount
+        );
+        Assert.Equal(
+            materializationCountBeforeResume,
+            candidateSource.MaterializationCount
+        );
     }
 
     public void Dispose() {

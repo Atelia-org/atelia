@@ -13,10 +13,14 @@ public sealed class SessionExecutionTailResolverTests : IDisposable {
         "tail-implementations-v1",
         "tail-capabilities-v1"
     );
+    private const string ToolRuntimeIdentityJson =
+        "\"toolRuntimeIdentity\":{\"hostId\":\"tail-host\","
+        + "\"implementationSetFingerprint\":\"tail-implementations-v1\","
+        + "\"capabilitySetFingerprint\":\"tail-capabilities-v1\"}";
     private readonly List<string> _paths = [];
 
     [Fact]
-    public void Resolve_AllDurableHeadPhases_MatchesFullReducerOracle() {
+    public void DurableHeadDifferentialMatrix_MatchesFullFoldAndResolverContracts() {
         string path = NewPath();
         var calls = new[] {
             new RawToolCall("alpha", "call-1", """{"n":1}"""),
@@ -71,9 +75,15 @@ public sealed class SessionExecutionTailResolverTests : IDisposable {
             SessionEventKind.CompletionAttemptStarted,
             new CompletionAttemptStartedBody()
         );
-        EventAddress action = Commit(
+        EventAddress restartedAgain = Commit(
             journal,
             restarted,
+            SessionEventKind.CompletionAttemptStarted,
+            new CompletionAttemptStartedBody()
+        );
+        EventAddress action = Commit(
+            journal,
+            restartedAgain,
             SessionEventKind.AgentActionProduced,
             new AgentActionProducedBody(
                 new ActionMessage(calls.Select(call =>
@@ -177,55 +187,206 @@ public sealed class SessionExecutionTailResolverTests : IDisposable {
             new SystemPromptSetupBody("system-B")
         );
 
-        EventAddress[] heads = [
-            runtime,
-            prompt,
+        EventAddress liveObservation = CommitScenarioObservation(
+            journal,
+            "live-terminal",
             created,
-            observation,
-            prepared,
-            restarted,
-            action,
-            started1,
-            result1,
-            started2,
-            result2,
-            continuationPrepared,
-            failed,
-            observationAfterFailure,
-            imported,
-            setup
-        ];
-        foreach (EventAddress head in heads) {
-            SessionExecutionState expected = FullOracle(journal, head);
-            var reader = new SessionJournalEventReader(journal);
-            SessionExecutionRecovery actual =
-                SessionExecutionTailResolver.Resolve(reader, head);
-            Assert.True(
-                expected == actual.State,
-                $"Head {head} differed.{Environment.NewLine}Expected: {expected}{Environment.NewLine}Actual:   {actual.State}"
+            "live terminal"
+        );
+        EventAddress livePrepared = CommitToBranch(
+            journal,
+            "live-terminal",
+            liveObservation,
+            SessionEventKind.CompletionRequestPrepared,
+            PreparedBody(
+                Correlation(liveObservation),
+                "observation",
+                runtime,
+                prompt,
+                checkpoint: 0
+            )
+        );
+        EventAddress liveAttempt = CommitToBranch(
+            journal,
+            "live-terminal",
+            livePrepared,
+            SessionEventKind.CompletionAttemptStarted,
+            new CompletionAttemptStartedBody()
+        );
+        EventAddress liveAttemptAgain = CommitToBranch(
+            journal,
+            "live-terminal",
+            liveAttempt,
+            SessionEventKind.CompletionAttemptStarted,
+            new CompletionAttemptStartedBody()
+        );
+        EventAddress liveTerminal = CommitToBranch(
+            journal,
+            "live-terminal",
+            liveAttemptAgain,
+            SessionEventKind.AgentActionProduced,
+            new AgentActionProducedBody(
+                new ActionMessage([new ActionBlock.Text("live done")]),
+                Invocation(),
+                Correlation(liveObservation),
+                new SessionExecutionCheckpoint(0),
+                ToolRuntimeIdentity: null
+            )
+        );
+
+        EventAddress singleObservation = CommitScenarioObservation(
+            journal,
+            "single-tool",
+            created,
+            "single tool"
+        );
+        RawToolCall singleCall =
+            new("alpha", "single-call", """{"n":1}""");
+        EventAddress singleAction = CommitToBranch(
+            journal,
+            "single-tool",
+            singleObservation,
+            SessionEventKind.ImportedAgentAction,
+            new AgentActionProducedBody(
+                new ActionMessage([
+                    new ActionBlock.ToolCall(singleCall)
+                ]),
+                Invocation(),
+                Correlation(singleObservation),
+                new SessionExecutionCheckpoint(0),
+                ToolIdentity
+            )
+        );
+        EventAddress singleStarted = CommitToBranch(
+            journal,
+            "single-tool",
+            singleAction,
+            SessionEventKind.ToolExecutionStarted,
+            new ToolExecutionStartedBody(
+                singleCall.ToolCallId,
+                singleCall.ToolName,
+                singleCall.RawArgumentsJson,
+                "single-operation",
+                1,
+                ToolIdentity
+            )
+        );
+        EventAddress singleResult = CommitToBranch(
+            journal,
+            "single-tool",
+            singleStarted,
+            SessionEventKind.ToolResultObserved,
+            Result(
+                singleCall.ToolCallId,
+                singleCall.ToolName,
+                1
+            )
+        );
+
+        var scenarios = new[] {
+            Scenario("genesis-created", prompt, created, foldable: true),
+            Scenario("observation", created, observation, foldable: true),
+            Scenario("prepared", created, prepared, foldable: true),
+            Scenario("attempt", created, restarted, foldable: true),
+            Scenario(
+                "repeated-attempt",
+                created,
+                restartedAgain,
+                foldable: true
+            ),
+            Scenario("multi-tool-action", created, action, foldable: false),
+            Scenario(
+                "multi-tool-first-start",
+                created,
+                started1,
+                foldable: false
+            ),
+            Scenario(
+                "multi-tool-partial-result",
+                created,
+                result1,
+                foldable: false
+            ),
+            Scenario(
+                "multi-tool-next-start",
+                created,
+                started2,
+                foldable: false
+            ),
+            Scenario(
+                "multi-tool-final-result",
+                created,
+                result2,
+                foldable: true
+            ),
+            Scenario(
+                "settled-continuation-prepared",
+                created,
+                continuationPrepared,
+                foldable: true
+            ),
+            Scenario("known-failure", created, failed, foldable: true),
+            Scenario(
+                "failed-to-observation",
+                created,
+                observationAfterFailure,
+                foldable: true
+            ),
+            Scenario(
+                "imported-terminal",
+                created,
+                imported,
+                foldable: true
+            ),
+            Scenario(
+                "terminal-to-setup",
+                created,
+                setup,
+                foldable: true
+            ),
+            Scenario(
+                "live-terminal-after-repeated-attempt",
+                created,
+                liveTerminal,
+                foldable: true
+            ),
+            Scenario(
+                "single-tool-action",
+                created,
+                singleAction,
+                foldable: false
+            ),
+            Scenario(
+                "single-tool-start",
+                created,
+                singleStarted,
+                foldable: false
+            ),
+            Scenario(
+                "single-tool-final-result",
+                created,
+                singleResult,
+                foldable: true
+            )
+        };
+
+        Assert.Equal(
+            1,
+            AssertResolverMatchesFull(journal, runtime)
+                .Diagnostics.PayloadReadCount
+        );
+        Assert.Equal(
+            2,
+            AssertResolverMatchesFull(journal, prompt)
+                .Diagnostics.PayloadReadCount
+        );
+        foreach (DifferentialScenario scenario in scenarios) {
+            AssertDifferentialScenario(
+                journal,
+                runtime,
+                prompt,
+                scenario
             );
-            SessionJournalReadDiagnostics reads = reader.CaptureDiagnostics();
-            Assert.Equal(0, reads.ChronologicalChainReadCount);
-            Assert.Equal(0, reads.FullProjectionInvocationCount);
-            Assert.Equal(
-                actual.Diagnostics.HeaderReadCount,
-                reads.HeaderPreviewReadCount
-            );
-            Assert.Equal(
-                actual.Diagnostics.PayloadReadCount,
-                reads.PayloadReadCount
-            );
-            if (head == observation || head == observationAfterFailure) {
-                Assert.Null(actual.Boundary.SourcePrepared);
-                Assert.Null(actual.Boundary.SourceAction);
-                Assert.Equal(head, actual.Boundary.SourceObservation);
-            }
-            if (head == runtime) {
-                Assert.Equal(1, actual.Diagnostics.PayloadReadCount);
-            }
-            if (head == prompt) {
-                Assert.Equal(2, actual.Diagnostics.PayloadReadCount);
-            }
         }
     }
 
@@ -501,13 +662,25 @@ public sealed class SessionExecutionTailResolverTests : IDisposable {
 
     [Theory]
     [InlineData("wrong-parent")]
+    [InlineData("wrong-attempt")]
     [InlineData("wrong-correlation")]
     [InlineData("wrong-checkpoint")]
     [InlineData("wrong-runtime")]
+    [InlineData("missing-runtime")]
+    [InlineData("extra-runtime")]
     [InlineData("duplicate-call-id")]
     [InlineData("result-before-start")]
+    [InlineData("duplicate-start")]
+    [InlineData("duplicate-result")]
     [InlineData("out-of-order-start")]
-    public void Resolve_MalformedOperationalTail_FailsFast(string mutation) {
+    [InlineData("arguments-mismatch")]
+    [InlineData("sequence-gap")]
+    [InlineData("sequence-repeat")]
+    [InlineData("setup-pending-prepared")]
+    [InlineData("setup-pending-tool")]
+    public void MalformedOperationalMatrix_FullAndResolverFailFast(
+        string mutation
+    ) {
         string path = NewPath();
         using var journal = EventJournal.EventJournal.CreateNew(path);
         journal.CreateBranch(SessionJournalDefaults.MainBranchName, null).Unwrap();
@@ -540,6 +713,31 @@ public sealed class SessionExecutionTailResolverTests : IDisposable {
             new ObservationAcceptedBody("observe")
         );
         string correlation = Correlation(observation);
+
+        if (mutation == "wrong-parent") {
+            EventAddress wrongParentHead = Commit(
+                journal,
+                observation,
+                SessionEventKind.ToolExecutionStarted,
+                new ToolExecutionStartedBody(
+                    "call-1",
+                    "alpha",
+                    "{}",
+                    "operation-1",
+                    1,
+                    ToolIdentity
+                )
+            );
+            AssertMalformedConsumerMatrix(
+                journal,
+                runtime,
+                prompt,
+                created,
+                wrongParentHead
+            );
+            return;
+        }
+
         EventAddress prepared = Commit(
             journal,
             observation,
@@ -552,28 +750,64 @@ public sealed class SessionExecutionTailResolverTests : IDisposable {
                 checkpoint: 0
             )
         );
+        if (mutation == "setup-pending-prepared") {
+            EventAddress pendingSetup = Commit(
+                journal,
+                prepared,
+                SessionEventKind.SystemPromptSetup,
+                new SystemPromptSetupBody("not allowed")
+            );
+            AssertMalformedConsumerMatrix(
+                journal,
+                runtime,
+                prompt,
+                created,
+                pendingSetup
+            );
+            return;
+        }
+        if (mutation == "wrong-attempt") {
+            EventAddress wrongAttemptHead = Commit(
+                journal,
+                prepared,
+                SessionEventKind.AgentActionProduced,
+                new AgentActionProducedBody(
+                    new ActionMessage([
+                        new ActionBlock.Text("skipped attempt")
+                    ]),
+                    Invocation(),
+                    correlation,
+                    new SessionExecutionCheckpoint(0),
+                    ToolRuntimeIdentity: null
+                )
+            );
+            AssertMalformedConsumerMatrix(
+                journal,
+                runtime,
+                prompt,
+                created,
+                wrongAttemptHead
+            );
+            return;
+        }
         EventAddress completionStarted = Commit(
             journal,
             prepared,
             SessionEventKind.CompletionAttemptStarted,
             new CompletionAttemptStartedBody()
         );
-        RawToolCall[] calls = mutation == "duplicate-call-id"
-            ? [
+        RawToolCall[] calls = mutation switch {
+            "extra-runtime" => [],
+            "duplicate-call-id" => [
                 new RawToolCall("alpha", "call-1", "{}"),
                 new RawToolCall("beta", "call-1", "{}")
-            ]
-            : [
+            ],
+            _ => [
                 new RawToolCall("alpha", "call-1", "{}"),
                 new RawToolCall("beta", "call-2", "{}")
-            ];
-        EventAddress action = Commit(
-            journal,
-            completionStarted,
-            mutation == "wrong-parent"
-                ? SessionEventKind.ImportedAgentAction
-                : SessionEventKind.AgentActionProduced,
-            new AgentActionProducedBody(
+            ]
+        };
+        var actionBody = new AgentActionProducedBody(
                 new ActionMessage(calls.Select(call =>
                     (ActionBlock)new ActionBlock.ToolCall(call)
                 ).ToArray()),
@@ -582,39 +816,302 @@ public sealed class SessionExecutionTailResolverTests : IDisposable {
                 new SessionExecutionCheckpoint(
                     mutation == "wrong-checkpoint" ? 9 : 0
                 ),
-                mutation == "wrong-runtime"
-                    ? ToolIdentity with { HostId = "other-host" }
-                    : ToolIdentity
+                mutation switch {
+                    "wrong-runtime" =>
+                        ToolIdentity with { HostId = "other-host" },
+                    "missing-runtime" => null,
+                    _ => ToolIdentity
+                }
+            );
+        EventAddress action;
+        if (mutation == "missing-runtime") {
+            AgentActionProducedBody validBody = actionBody with {
+                ToolRuntimeIdentity = ToolIdentity
+            };
+            byte[] validPayload = SessionEventCodec.Encode(
+                SessionEventKind.AgentActionProduced,
+                validBody
+            );
+            action = CommitRawMutation(
+                journal,
+                completionStarted,
+                SessionEventKind.AgentActionProduced,
+                validPayload,
+                ToolRuntimeIdentityJson,
+                "\"toolRuntimeIdentity\":null"
+            );
+        }
+        else if (mutation == "extra-runtime") {
+            AgentActionProducedBody validBody = actionBody with {
+                ToolRuntimeIdentity = null
+            };
+            byte[] validPayload = SessionEventCodec.Encode(
+                SessionEventKind.AgentActionProduced,
+                validBody
+            );
+            action = CommitRawMutation(
+                journal,
+                completionStarted,
+                SessionEventKind.AgentActionProduced,
+                validPayload,
+                "\"toolRuntimeIdentity\":null",
+                ToolRuntimeIdentityJson
+            );
+        }
+        else {
+            action = Commit(
+                journal,
+                completionStarted,
+                SessionEventKind.AgentActionProduced,
+                actionBody
+            );
+        }
+
+        EventAddress malformedHead;
+        switch (mutation) {
+            case "result-before-start":
+                malformedHead = Commit(
+                    journal,
+                    action,
+                    SessionEventKind.ToolResultObserved,
+                    Result("call-1", "alpha", 1)
+                );
+                break;
+            case "out-of-order-start":
+                malformedHead = Commit(
+                    journal,
+                    action,
+                    SessionEventKind.ToolExecutionStarted,
+                    new ToolExecutionStartedBody(
+                        "call-2",
+                        "beta",
+                        "{}",
+                        "operation-2",
+                        1,
+                        ToolIdentity
+                    )
+                );
+                break;
+            case "arguments-mismatch":
+                malformedHead = Commit(
+                    journal,
+                    action,
+                    SessionEventKind.ToolExecutionStarted,
+                    new ToolExecutionStartedBody(
+                        "call-1",
+                        "alpha",
+                        """{"wrong":true}""",
+                        "operation-1",
+                        1,
+                        ToolIdentity
+                    )
+                );
+                break;
+            case "sequence-gap":
+                malformedHead = Commit(
+                    journal,
+                    action,
+                    SessionEventKind.ToolExecutionStarted,
+                    new ToolExecutionStartedBody(
+                        "call-1",
+                        "alpha",
+                        "{}",
+                        "operation-1",
+                        2,
+                        ToolIdentity
+                    )
+                );
+                break;
+            case "duplicate-start": {
+                EventAddress firstStart = Commit(
+                    journal,
+                    action,
+                    SessionEventKind.ToolExecutionStarted,
+                    new ToolExecutionStartedBody(
+                        "call-1",
+                        "alpha",
+                        "{}",
+                        "operation-1",
+                        1,
+                        ToolIdentity
+                    )
+                );
+                malformedHead = Commit(
+                    journal,
+                    firstStart,
+                    SessionEventKind.ToolExecutionStarted,
+                    new ToolExecutionStartedBody(
+                        "call-1",
+                        "alpha",
+                        "{}",
+                        "operation-duplicate",
+                        2,
+                        ToolIdentity
+                    )
+                );
+                break;
+            }
+            case "duplicate-result": {
+                EventAddress firstStart = Commit(
+                    journal,
+                    action,
+                    SessionEventKind.ToolExecutionStarted,
+                    new ToolExecutionStartedBody(
+                        "call-1",
+                        "alpha",
+                        "{}",
+                        "operation-1",
+                        1,
+                        ToolIdentity
+                    )
+                );
+                EventAddress firstResult = Commit(
+                    journal,
+                    firstStart,
+                    SessionEventKind.ToolResultObserved,
+                    Result("call-1", "alpha", 1)
+                );
+                malformedHead = Commit(
+                    journal,
+                    firstResult,
+                    SessionEventKind.ToolResultObserved,
+                    Result("call-1", "alpha", 1)
+                );
+                break;
+            }
+            case "sequence-repeat": {
+                EventAddress firstStart = Commit(
+                    journal,
+                    action,
+                    SessionEventKind.ToolExecutionStarted,
+                    new ToolExecutionStartedBody(
+                        "call-1",
+                        "alpha",
+                        "{}",
+                        "operation-1",
+                        1,
+                        ToolIdentity
+                    )
+                );
+                EventAddress firstResult = Commit(
+                    journal,
+                    firstStart,
+                    SessionEventKind.ToolResultObserved,
+                    Result("call-1", "alpha", 1)
+                );
+                malformedHead = Commit(
+                    journal,
+                    firstResult,
+                    SessionEventKind.ToolExecutionStarted,
+                    new ToolExecutionStartedBody(
+                        "call-2",
+                        "beta",
+                        "{}",
+                        "operation-2",
+                        1,
+                        ToolIdentity
+                    )
+                );
+                break;
+            }
+            case "setup-pending-tool":
+                malformedHead = Commit(
+                    journal,
+                    action,
+                    SessionEventKind.RuntimeConfigSetup,
+                    new SessionRuntimeConfiguration(
+                        "model-B",
+                        "surface-B",
+                        SessionJournalDefaults.Schema
+                    )
+                );
+                break;
+            default:
+                malformedHead = action;
+                break;
+        }
+
+        AssertMalformedConsumerMatrix(
+            journal,
+            runtime,
+            prompt,
+            created,
+            malformedHead,
+            canDecodeSuffix: mutation is not (
+                "missing-runtime"
+                or "extra-runtime"
             )
         );
-        EventAddress malformedHead = mutation switch {
-            "result-before-start" => Commit(
-                journal,
-                action,
-                SessionEventKind.ToolResultObserved,
-                Result("call-1", "alpha", 1)
-            ),
-            "out-of-order-start" => Commit(
-                journal,
-                action,
-                SessionEventKind.ToolExecutionStarted,
-                new ToolExecutionStartedBody(
-                    "call-2",
-                    "beta",
-                    "{}",
-                    "operation-2",
-                    1,
-                    ToolIdentity
-                )
-            ),
-            _ => action
-        };
+    }
+
+    private static void AssertMalformedConsumerMatrix(
+        EventJournal.EventJournal journal,
+        EventAddress runtime,
+        EventAddress prompt,
+        EventAddress cut,
+        EventAddress malformedHead,
+        bool canDecodeSuffix = true
+    ) {
+        Assert.Throws<InvalidDataException>(() =>
+            FullOracle(journal, malformedHead)
+        );
         var reader = new SessionJournalEventReader(journal);
 
         Assert.Throws<InvalidDataException>(() =>
-            SessionExecutionTailResolver.Resolve(reader, malformedHead)
+            SessionExecutionTailResolver.Resolve(
+                reader,
+                malformedHead
+            )
         );
-        Assert.Equal(0, reader.CaptureDiagnostics().ChronologicalChainReadCount);
+        Assert.Equal(
+            0,
+            reader.CaptureDiagnostics()
+                .ChronologicalChainReadCount
+        );
+        Assert.Equal(
+            0,
+            reader.CaptureDiagnostics()
+                .FullProjectionInvocationCount
+        );
+        if (!canDecodeSuffix) {
+            // Runtime identity presence is also a codec-owned wire
+            // invariant. The raw mutation proves both audit routes reject
+            // it before a decoded suffix exists for FoldSuffix.
+            return;
+        }
+
+        SessionExecutionRecovery cutRecovery =
+            SessionExecutionTailResolver.Resolve(
+                new SessionJournalEventReader(journal),
+                cut
+            );
+        SessionDependencyClosedFoldSeed seed =
+            SessionDependencyClosedFoldSeed.Create(
+                new SessionGoverningSetup(
+                    cut,
+                    runtime,
+                    new SessionRuntimeConfiguration(
+                        "model-A",
+                        "surface-A",
+                        SessionJournalDefaults.Schema
+                    ),
+                    prompt,
+                    "system"
+                ),
+                cutRecovery
+            );
+        IReadOnlyList<DecodedSessionEvent> suffix =
+            ReadDecodedSuffix(
+                journal,
+                cut,
+                malformedHead
+            );
+        Assert.Throws<InvalidDataException>(() =>
+            SessionTailContextProjection.FoldSuffix(
+                seed,
+                suffix
+            )
+        );
     }
 
     [Fact]
@@ -738,7 +1235,216 @@ public sealed class SessionExecutionTailResolverTests : IDisposable {
         return path;
     }
 
+    private static DifferentialScenario Scenario(
+        string name,
+        EventAddress cut,
+        EventAddress head,
+        bool foldable
+    ) => new(name, cut, head, foldable);
+
+    private static EventAddress CommitScenarioObservation(
+        EventJournal.EventJournal journal,
+        string branchName,
+        EventAddress parent,
+        string content
+    ) {
+        journal.CreateBranch(branchName, parent).Unwrap();
+        return CommitToBranch(
+            journal,
+            branchName,
+            parent,
+            SessionEventKind.ObservationAccepted,
+            new ObservationAcceptedBody(content)
+        );
+    }
+
+    private static SessionExecutionRecovery AssertResolverMatchesFull(
+        EventJournal.EventJournal journal,
+        EventAddress head
+    ) {
+        SessionExecutionState expected = FullOracle(journal, head);
+        var reader = new SessionJournalEventReader(journal);
+
+        SessionExecutionRecovery actual =
+            SessionExecutionTailResolver.Resolve(reader, head);
+
+        Assert.True(
+            expected == actual.State,
+            $"Head {head} differed.{Environment.NewLine}"
+                + $"Expected: {expected}{Environment.NewLine}"
+                + $"Actual:   {actual.State}"
+        );
+        AssertResolverDiagnostics(reader, actual);
+        return actual;
+    }
+
+    private static void AssertDifferentialScenario(
+        EventJournal.EventJournal journal,
+        EventAddress runtime,
+        EventAddress prompt,
+        DifferentialScenario scenario
+    ) {
+        SessionExecutionState expected =
+            FullOracle(journal, scenario.Head);
+        var reader = new SessionJournalEventReader(journal);
+        SessionExecutionRecovery resolved =
+            SessionExecutionTailResolver.Resolve(
+                reader,
+                scenario.Head
+            );
+        Assert.True(
+            expected == resolved.State,
+            $"Resolver scenario '{scenario.Name}' differed."
+                + $"{Environment.NewLine}Expected: {expected}"
+                + $"{Environment.NewLine}Actual:   {resolved.State}"
+        );
+        AssertResolverDiagnostics(reader, resolved);
+        if (expected.HeadKind
+            == SessionEventKind.ObservationAccepted) {
+            Assert.Null(resolved.Boundary.SourcePrepared);
+            Assert.Null(resolved.Boundary.SourceAction);
+            Assert.Equal(
+                scenario.Head,
+                resolved.Boundary.SourceObservation
+            );
+        }
+
+        SessionExecutionRecovery cutRecovery =
+            SessionExecutionTailResolver.Resolve(
+                new SessionJournalEventReader(journal),
+                scenario.Cut
+            );
+        var setup = new SessionGoverningSetup(
+            scenario.Cut,
+            runtime,
+            new SessionRuntimeConfiguration(
+                "model-A",
+                "surface-A",
+                SessionJournalDefaults.Schema
+            ),
+            prompt,
+            "system-A"
+        );
+        SessionDependencyClosedFoldSeed seed =
+            SessionDependencyClosedFoldSeed.Create(
+                setup,
+                cutRecovery
+            );
+        IReadOnlyList<DecodedSessionEvent> suffix =
+            ReadDecodedSuffix(
+                journal,
+                scenario.Cut,
+                scenario.Head
+        );
+        if (!scenario.Foldable) {
+            // A request-context fold cannot materialize a suffix whose
+            // final Action/tool dependency is still open.
+            Assert.Throws<InvalidDataException>(() =>
+                SessionTailContextProjection.FoldSuffix(
+                    seed,
+                    suffix
+                )
+            );
+            Assert.Equal(
+                SessionExecutionPhase.AwaitingToolExecution,
+                expected.Phase
+            );
+            Assert.NotNull(expected.PendingToolCall);
+            return;
+        }
+
+        var replaySafeBoundaries =
+            new List<SessionHistoryPlanningBoundary>();
+        SessionTailContextProjection.TailFoldResult folded =
+            SessionTailContextProjection.FoldSuffix(
+                seed,
+                suffix,
+                replaySafeBoundaries: replaySafeBoundaries
+            );
+
+        Assert.Equal(scenario.Head, folded.GoverningSetup.Head);
+        Assert.Equal(expected.Phase, folded.Phase);
+        Assert.Equal(
+            expected.ToolExecutionSequenceCheckpoint,
+            folded.ToolExecutionSequenceCheckpoint
+        );
+        Assert.Equal(
+            expected.ActiveCorrelationId,
+            folded.ActiveCorrelationId
+        );
+        SessionEventKind foldedHeadKind = suffix.Count == 0
+            ? seed.HeadKind
+            : suffix[^1].Kind;
+        Assert.Equal(expected.HeadKind, foldedHeadKind);
+        bool replaySafe =
+            SessionOperationalSemantics.IsReplaySafePhase(
+                expected.Phase
+            );
+        Assert.Equal(
+            replaySafe,
+            SessionOperationalSemantics.IsReplaySafePhase(
+                folded.Phase
+            )
+        );
+        Assert.Equal(
+            replaySafe,
+            replaySafeBoundaries.Any(
+                boundary => boundary.Address == scenario.Head
+            )
+        );
+    }
+
+    private static void AssertResolverDiagnostics(
+        SessionJournalEventReader reader,
+        SessionExecutionRecovery recovery
+    ) {
+        SessionJournalReadDiagnostics reads =
+            reader.CaptureDiagnostics();
+        Assert.Equal(0, reads.ChronologicalChainReadCount);
+        Assert.Equal(0, reads.ChronologicalEventCount);
+        Assert.Equal(0, reads.FullProjectionInvocationCount);
+        Assert.Equal(
+            recovery.Diagnostics.HeaderReadCount,
+            reads.HeaderPreviewReadCount
+        );
+        Assert.Equal(
+            recovery.Diagnostics.PayloadReadCount,
+            reads.PayloadReadCount
+        );
+    }
+
     private static SessionExecutionState FullOracle(
+        EventJournal.EventJournal journal,
+        EventAddress head
+    ) =>
+        SessionReducer.Reduce(
+            ReadDecodedChain(journal, head)
+        ).ExecutionState;
+
+    private static IReadOnlyList<DecodedSessionEvent>
+        ReadDecodedSuffix(
+        EventJournal.EventJournal journal,
+        EventAddress cut,
+        EventAddress head
+    ) {
+        IReadOnlyList<DecodedSessionEvent> chain =
+            ReadDecodedChain(journal, head);
+        int cutIndex = -1;
+        for (int i = 0; i < chain.Count; i++) {
+            if (chain[i].Address == cut) {
+                cutIndex = i;
+                break;
+            }
+        }
+        Assert.True(
+            cutIndex >= 0,
+            $"Cut {cut} is not an ancestor of head {head}."
+        );
+        return chain.Skip(cutIndex + 1).ToArray();
+    }
+
+    private static IReadOnlyList<DecodedSessionEvent>
+        ReadDecodedChain(
         EventJournal.EventJournal journal,
         EventAddress head
     ) {
@@ -761,7 +1467,7 @@ public sealed class SessionExecutionTailResolverTests : IDisposable {
                 frame.Header.Parent
             ));
         }
-        return SessionReducer.Reduce(events).ExecutionState;
+        return events;
     }
 
     private static EventAddress Commit(
@@ -776,6 +1482,39 @@ public sealed class SessionExecutionTailResolverTests : IDisposable {
         opaqueEventKind: (uint)kind,
         hint: default
     ).Unwrap().EventAddress;
+
+    private static EventAddress CommitRawMutation(
+        EventJournal.EventJournal journal,
+        EventAddress parent,
+        SessionEventKind kind,
+        byte[] validPayload,
+        string oldFragment,
+        string newFragment
+    ) {
+        string validJson = Encoding.UTF8.GetString(validPayload);
+        Assert.Contains(
+            oldFragment,
+            validJson,
+            StringComparison.Ordinal
+        );
+        string malformedJson = validJson.Replace(
+            oldFragment,
+            newFragment,
+            StringComparison.Ordinal
+        );
+        Assert.DoesNotContain(
+            oldFragment,
+            malformedJson,
+            StringComparison.Ordinal
+        );
+        return journal.CommitToRef(
+            SessionJournalDefaults.MainBranchName,
+            parent,
+            Encoding.UTF8.GetBytes(malformedJson),
+            opaqueEventKind: (uint)kind,
+            hint: default
+        ).Unwrap().EventAddress;
+    }
 
     private static EventAddress CommitToBranch(
         EventJournal.EventJournal journal,
@@ -843,4 +1582,11 @@ public sealed class SessionExecutionTailResolverTests : IDisposable {
         _paths.Add(path);
         return path;
     }
+
+    private sealed record DifferentialScenario(
+        string Name,
+        EventAddress Cut,
+        EventAddress Head,
+        bool Foldable
+    );
 }

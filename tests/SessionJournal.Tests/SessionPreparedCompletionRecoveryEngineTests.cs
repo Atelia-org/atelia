@@ -606,6 +606,7 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
         Assert.Equal(projectionCountBeforeResume, reopened.FullProjectionInvocationCount);
         Assert.Single(recoveryClient.Requests);
         Assert.Equal(0, recoverySource.SelectionCount);
+        Assert.Equal(0, recoverySource.MaterializationCount);
     }
 
     [Fact]
