@@ -59,7 +59,46 @@ public sealed class DerivedMemoryRepository {
         return new DerivedMemoryRepository(fullPath);
     }
 
-    public async ValueTask<DerivedMemoryValidationReport> ValidateAsync(
+    public DerivedMemoryBranchScope Bind(SessionJournalEngine engine) {
+        ArgumentNullException.ThrowIfNull(engine);
+        RequireMatchingRepository(engine);
+        DerivedArtifactSetPolicy.ValidateBranchRefId(
+            engine.BranchRefId
+        );
+        return new(
+            this,
+            engine.BranchName,
+            engine.BranchRefId
+        );
+    }
+
+    internal void RequireScope(DerivedMemoryBranchScope scope) {
+        ArgumentNullException.ThrowIfNull(scope);
+        if (!ReferenceEquals(scope.Repository, this)) {
+            throw new ArgumentException(
+                "Derived-memory branch scope belongs to a different repository.",
+                nameof(scope)
+            );
+        }
+    }
+
+    internal void RequireEngine(
+        SessionJournalEngine engine,
+        DerivedMemoryBranchScope scope
+    ) {
+        ArgumentNullException.ThrowIfNull(engine);
+        RequireScope(scope);
+        RequireMatchingRepository(engine);
+        if (engine.BranchRefId != scope.BranchRefId) {
+            throw new ArgumentException(
+                "SessionJournal engine belongs to a different branch ref.",
+                nameof(engine)
+            );
+        }
+    }
+
+    public async ValueTask<DerivedMemoryValidationReport>
+        ValidateAllActiveBranchesAsync(
         CancellationToken cancellationToken = default
     ) => await ValidateCoreAsync(
             engine: null,
@@ -67,7 +106,8 @@ public sealed class DerivedMemoryRepository {
         )
         .ConfigureAwait(false);
 
-    public async ValueTask<DerivedMemoryValidationReport> ValidateAsync(
+    public async ValueTask<DerivedMemoryValidationReport>
+        ValidateBranchAsync(
         SessionJournalEngine engine,
         CancellationToken cancellationToken = default
     ) {
@@ -81,6 +121,8 @@ public sealed class DerivedMemoryRepository {
         CancellationToken cancellationToken
     ) {
         cancellationToken.ThrowIfCancellationRequested();
+        DerivedMemoryBranchScope? scope =
+            engine is null ? null : Bind(engine);
         IReadOnlyList<DerivedMemoryArtifact> artifacts =
             await Artifacts.ReadInventoryStrictAsync(cancellationToken)
                 .ConfigureAwait(false);
@@ -101,6 +143,81 @@ public sealed class DerivedMemoryRepository {
         DerivedMemoryOrchestrationInventory orchestrationInventory =
             await Orchestrations.ReadInventoryAsync(cancellationToken)
                 .ConfigureAwait(false);
+        if (scope is not null) {
+            RefId branchRefId = scope.BranchRefId;
+            epochInventory = new(
+                [
+                    .. epochInventory.Configs.Where(
+                        config => config.BranchRefId == branchRefId
+                    )
+                ],
+                [
+                    .. epochInventory.CurrentConfigs.Where(
+                        pointer => pointer.BranchRefId == branchRefId
+                    )
+                ],
+                [
+                    .. epochInventory.Epochs.Where(
+                        epoch => epoch.BranchRefId == branchRefId
+                    )
+                ],
+                [
+                    .. epochInventory.LatestEpochs.Where(
+                        pointer => pointer.BranchRefId == branchRefId
+                    )
+                ]
+            );
+            var epochIds = epochInventory.Epochs
+                .Select(static epoch => epoch.EpochId)
+                .ToHashSet(StringComparer.Ordinal);
+            artifacts = [
+                .. artifacts.Where(
+                    artifact => epochIds.Contains(artifact.EpochId)
+                )
+            ];
+            inventory = new(
+                [
+                    .. inventory.Sets.Where(
+                        set => set.BranchRefId == branchRefId
+                    )
+                ],
+                [
+                    .. inventory.LatestPointers.Where(
+                        pointer => pointer.BranchRefId == branchRefId
+                    )
+                ]
+            );
+            var transactionIds = orchestrationInventory.Transactions
+                .Where(
+                    transaction =>
+                        transaction.BranchRefId == branchRefId
+                )
+                .Select(static transaction => transaction.TransactionId)
+                .ToHashSet(StringComparer.Ordinal);
+            orchestrationInventory = new(
+                [
+                    .. orchestrationInventory.Transactions.Where(
+                        transaction => transactionIds.Contains(
+                            transaction.TransactionId
+                        )
+                    )
+                ],
+                [
+                    .. orchestrationInventory.Settlements.Where(
+                        settlement => transactionIds.Contains(
+                            settlement.TransactionId
+                        )
+                    )
+                ],
+                [
+                    .. orchestrationInventory.Finalizations.Where(
+                        finalization => transactionIds.Contains(
+                            finalization.TransactionId
+                        )
+                    )
+                ]
+            );
+        }
         DerivedArtifactEpochPlanner.ValidateInventory(
             epochInventory,
             inventory.Sets.ToDictionary(
@@ -196,29 +313,43 @@ public sealed class DerivedMemoryRepository {
             )
             .ConfigureAwait(false);
 
-        SessionJournalEngine? ownedEngine = null;
-        try {
-            if (epochInventory.Epochs.Count > 0) {
-                SessionJournalEngine authorityEngine = engine
-                    ?? (ownedEngine = SessionJournalEngine.Open(
-                        SessionJournalRepositoryPath
-                    ));
+        if (engine is not null) {
+            DerivedArtifactEpochPlan[] branchEpochs = [
+                .. epochInventory.Epochs
+            ];
+            if (branchEpochs.Length > 0) {
                 DerivedArtifactEpochRawAuthorityValidation
                     rawAuthority =
                     EpochPlanner.ValidateRawAuthorityDetailed(
-                    authorityEngine,
-                    epochInventory.Epochs,
-                    epochInventory.Configs,
-                    cancellationToken
-                );
+                        engine,
+                        branchEpochs,
+                        epochInventory.Configs,
+                        cancellationToken
+                    );
+                HashSet<string> branchEpochIds = branchEpochs
+                    .Select(static epoch => epoch.EpochId)
+                    .ToHashSet(StringComparer.Ordinal);
                 ValidateArtifactAnchorAuthority(
-                    artifacts,
+                    [
+                        .. artifacts.Where(
+                            artifact => branchEpochIds.Contains(
+                                artifact.EpochId
+                            )
+                        )
+                    ],
                     rawAuthority.EndSetupsByEpochId
                 );
             }
         }
-        finally {
-            ownedEngine?.Dispose();
+        else {
+            await ValidateAllRawAuthorityAsync(
+                    artifacts,
+                    inventory,
+                    epochInventory,
+                    orchestrationInventory,
+                    cancellationToken
+                )
+                .ConfigureAwait(false);
         }
 
         return new DerivedMemoryValidationReport(
@@ -234,6 +365,123 @@ public sealed class DerivedMemoryRepository {
             orchestrationInventory.Settlements.Count,
             orchestrationInventory.Finalizations.Count
         );
+    }
+
+    private async ValueTask ValidateAllRawAuthorityAsync(
+        IReadOnlyList<DerivedMemoryArtifact> artifacts,
+        DerivedArtifactSetInventory setInventory,
+        DerivedArtifactEpochInventory epochInventory,
+        DerivedMemoryOrchestrationInventory orchestrationInventory,
+        CancellationToken cancellationToken
+    ) {
+        var persistedRefs = new HashSet<RefId>();
+        persistedRefs.UnionWith(
+            epochInventory.Configs.Select(
+                static config => config.BranchRefId
+            )
+        );
+        persistedRefs.UnionWith(
+            epochInventory.CurrentConfigs.Select(
+                static pointer => pointer.BranchRefId
+            )
+        );
+        persistedRefs.UnionWith(
+            epochInventory.Epochs.Select(
+                static epoch => epoch.BranchRefId
+            )
+        );
+        persistedRefs.UnionWith(
+            epochInventory.LatestEpochs.Select(
+                static pointer => pointer.BranchRefId
+            )
+        );
+        persistedRefs.UnionWith(
+            setInventory.Sets.Select(
+                static set => set.BranchRefId
+            )
+        );
+        persistedRefs.UnionWith(
+            setInventory.LatestPointers.Select(
+                static pointer => pointer.BranchRefId
+            )
+        );
+        persistedRefs.UnionWith(
+            orchestrationInventory.Transactions.Select(
+                static transaction => transaction.BranchRefId
+            )
+        );
+        if (persistedRefs.Count == 0) {
+            return;
+        }
+
+        var activeNames = new Dictionary<RefId, string>();
+        using (EventJournal.EventJournal journal =
+               EventJournal.EventJournal.OpenReadOnlyExisting(
+                   SessionJournalRepositoryPath
+               )) {
+            foreach (string branchName in journal.ListBranches()) {
+                RefId branchRefId =
+                    journal.OpenBranch(branchName).Unwrap();
+                if (!activeNames.TryAdd(branchRefId, branchName)) {
+                    throw new InvalidDataException(
+                        $"Active branch ref '{branchRefId.ToHexString()}' has multiple names."
+                    );
+                }
+            }
+        }
+        foreach (RefId branchRefId in persistedRefs) {
+            if (!activeNames.ContainsKey(branchRefId)) {
+                throw new InvalidDataException(
+                    $"Derived-memory branch ref '{branchRefId.ToHexString()}' is not active."
+                );
+            }
+        }
+
+        var endSetupsByEpochId =
+            new Dictionary<
+                string,
+                SessionContextAnchorSetupReferences
+            >(StringComparer.Ordinal);
+        foreach (IGrouping<RefId, DerivedArtifactEpochPlan> group in
+                 epochInventory.Epochs.GroupBy(
+                     static epoch => epoch.BranchRefId
+                 )) {
+            cancellationToken.ThrowIfCancellationRequested();
+            string branchName = activeNames[group.Key];
+            using SessionJournalEngine branchEngine =
+                SessionJournalEngine.Open(
+                    SessionJournalRepositoryPath,
+                    branchName
+                );
+            if (branchEngine.BranchRefId != group.Key) {
+                throw new InvalidDataException(
+                    $"Active branch '{branchName}' changed while derived-memory validation was opening it."
+                );
+            }
+            DerivedArtifactEpochRawAuthorityValidation rawAuthority =
+                EpochPlanner.ValidateRawAuthorityDetailed(
+                    branchEngine,
+                    group,
+                    epochInventory.Configs.Where(
+                        config => config.BranchRefId == group.Key
+                    ),
+                    cancellationToken
+                );
+            foreach ((string epochId,
+                         SessionContextAnchorSetupReferences setups) in
+                     rawAuthority.EndSetupsByEpochId) {
+                if (!endSetupsByEpochId.TryAdd(epochId, setups)) {
+                    throw new InvalidDataException(
+                        $"Derived artifact epoch '{epochId}' appears in multiple branch groups."
+                    );
+                }
+            }
+        }
+        ValidateArtifactAnchorAuthority(
+            artifacts,
+            endSetupsByEpochId
+        );
+        await ValueTask.CompletedTask;
     }
 
     private static void ValidateSetOrchestrationDependencies(
@@ -750,6 +998,28 @@ public sealed class DerivedMemoryRepository {
         catch {
             TryDeleteTemporaryFile(temporaryPath);
             throw;
+        }
+    }
+
+    private void RequireMatchingRepository(SessionJournalEngine engine) {
+        string enginePath = Path.TrimEndingDirectorySeparator(
+            Path.GetFullPath(engine.Path)
+        );
+        string repositoryPath = Path.TrimEndingDirectorySeparator(
+            Path.GetFullPath(SessionJournalRepositoryPath)
+        );
+        StringComparison comparison = OperatingSystem.IsWindows()
+            ? StringComparison.OrdinalIgnoreCase
+            : StringComparison.Ordinal;
+        if (!string.Equals(
+                enginePath,
+                repositoryPath,
+                comparison
+            )) {
+            throw new ArgumentException(
+                "SessionJournal engine belongs to a different repository.",
+                nameof(engine)
+            );
         }
     }
 

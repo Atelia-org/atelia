@@ -84,10 +84,12 @@ public sealed class DerivedArtifactEpochPlanner {
         BeforeLinearizationAsync { get; set; }
 
     public async ValueTask<DerivedArtifactPlannerConfig> ConfigureAsync(
+        DerivedMemoryBranchScope scope,
         DerivedArtifactPlannerConfigDefinition definition,
         string? expectedCurrentConfigId,
         CancellationToken cancellationToken = default
     ) {
+        _repository.RequireScope(scope);
         ValidateConfigDefinition(definition);
         if (expectedCurrentConfigId is not null) {
             ValidateConfigId(expectedCurrentConfigId);
@@ -98,7 +100,7 @@ public sealed class DerivedArtifactEpochPlanner {
             .ConfigureAwait(false);
         EnsureDirectories();
         var key = new DerivedArtifactPlannerKey(
-            definition.BranchRefId,
+            scope.BranchRefId,
             definition.CoherenceGroup
         );
         DerivedArtifactPlannerConfigPointer? current =
@@ -133,7 +135,11 @@ public sealed class DerivedArtifactEpochPlanner {
             );
         }
         DerivedArtifactPlannerConfig candidate =
-            CreateConfig(definition, expectedCurrentConfigId);
+            CreateConfig(
+                scope.BranchRefId,
+                definition,
+                expectedCurrentConfigId
+            );
         if (string.Equals(
                 current?.ConfigId,
                 candidate.ConfigId,
@@ -180,9 +186,15 @@ public sealed class DerivedArtifactEpochPlanner {
     }
 
     public async ValueTask<DerivedArtifactPlannerConfig?> TryReadCurrentConfigAsync(
-        DerivedArtifactPlannerKey key,
+        DerivedMemoryBranchScope scope,
+        string coherenceGroup,
         CancellationToken cancellationToken = default
     ) {
+        _repository.RequireScope(scope);
+        var key = new DerivedArtifactPlannerKey(
+            scope.BranchRefId,
+            coherenceGroup
+        );
         ValidateKey(key);
         DerivedArtifactPlannerConfigPointer? pointer =
             await TryReadConfigPointerAsync(key, cancellationToken)
@@ -224,9 +236,15 @@ public sealed class DerivedArtifactEpochPlanner {
 
     public async ValueTask<DerivedArtifactEpochPlan?>
         TryReadLatestEpochAsync(
-        DerivedArtifactPlannerKey key,
+        DerivedMemoryBranchScope scope,
+        string coherenceGroup,
         CancellationToken cancellationToken = default
     ) {
+        _repository.RequireScope(scope);
+        var key = new DerivedArtifactPlannerKey(
+            scope.BranchRefId,
+            coherenceGroup
+        );
         ValidateKey(key);
         DerivedArtifactEpochLatestPointer? pointer =
             await TryReadEpochPointerAsync(key, cancellationToken)
@@ -247,13 +265,13 @@ public sealed class DerivedArtifactEpochPlanner {
     ) {
         ArgumentNullException.ThrowIfNull(engine);
         ArgumentNullException.ThrowIfNull(request);
+        DerivedMemoryBranchScope scope = _repository.Bind(engine);
         var key = new DerivedArtifactPlannerKey(
-            request.BranchRefId,
+            scope.BranchRefId,
             request.CoherenceGroup
         );
         ValidateKey(key);
         ValidatePlanningRequest(request);
-        RequireMatchingRepository(engine);
 
         DerivedArtifactPlannerConfigPointer configPointer =
             await TryReadConfigPointerAsync(key, cancellationToken)
@@ -554,9 +572,15 @@ public sealed class DerivedArtifactEpochPlanner {
 
     public async ValueTask<DerivedArtifactPlannerConfig?>
         RebuildCurrentConfigPointerAsync(
-        DerivedArtifactPlannerKey key,
+        DerivedMemoryBranchScope scope,
+        string coherenceGroup,
         CancellationToken cancellationToken = default
     ) {
+        _repository.RequireScope(scope);
+        var key = new DerivedArtifactPlannerKey(
+            scope.BranchRefId,
+            coherenceGroup
+        );
         ValidateKey(key);
         await using FileStream writeLock = await _repository
             .AcquireWriteLockAsync(cancellationToken)
@@ -588,29 +612,16 @@ public sealed class DerivedArtifactEpochPlanner {
 
     public async ValueTask<DerivedArtifactEpochPlan?>
         RebuildLatestEpochPointerAsync(
-        DerivedArtifactPlannerKey key,
-        CancellationToken cancellationToken = default
-    ) {
-        using SessionJournalEngine engine =
-            SessionJournalEngine.Open(
-                _repository.SessionJournalRepositoryPath
-            );
-        return await RebuildLatestEpochPointerAsync(
-                engine,
-                key,
-                cancellationToken
-            )
-            .ConfigureAwait(false);
-    }
-
-    public async ValueTask<DerivedArtifactEpochPlan?>
-        RebuildLatestEpochPointerAsync(
         SessionJournalEngine engine,
-        DerivedArtifactPlannerKey key,
+        string coherenceGroup,
         CancellationToken cancellationToken = default
     ) {
         ArgumentNullException.ThrowIfNull(engine);
-        RequireMatchingRepository(engine);
+        DerivedMemoryBranchScope scope = _repository.Bind(engine);
+        var key = new DerivedArtifactPlannerKey(
+            scope.BranchRefId,
+            coherenceGroup
+        );
         ValidateKey(key);
         await using FileStream writeLock = await _repository
             .AcquireWriteLockAsync(cancellationToken)
@@ -667,7 +678,9 @@ public sealed class DerivedArtifactEpochPlanner {
             validationInventory.Epochs.Where(
                 epoch => epoch.Key == key
             ),
-            inventory.Configs,
+            inventory.Configs.Where(
+                config => config.BranchRefId == scope.BranchRefId
+            ),
             cancellationToken
         );
         await WritePointerAsync(
@@ -706,13 +719,27 @@ public sealed class DerivedArtifactEpochPlanner {
         ArgumentNullException.ThrowIfNull(engine);
         ArgumentNullException.ThrowIfNull(epochs);
         ArgumentNullException.ThrowIfNull(configs);
-        RequireMatchingRepository(engine);
+        DerivedMemoryBranchScope scope = _repository.Bind(engine);
         DerivedArtifactEpochPlan[] materialized = [.. epochs];
+        if (materialized.Any(
+                epoch => epoch.BranchRefId != scope.BranchRefId
+            )) {
+            throw new InvalidDataException(
+                "Derived artifact epoch belongs to a different branch ref."
+            );
+        }
         IReadOnlyDictionary<string, DerivedArtifactPlannerConfig>
             configsById = configs.ToDictionary(
                 static config => config.ConfigId,
                 StringComparer.Ordinal
             );
+        if (configsById.Values.Any(
+                config => config.BranchRefId != scope.BranchRefId
+            )) {
+            throw new InvalidDataException(
+                "Derived artifact planner config belongs to a different branch ref."
+            );
+        }
         SessionHistoryPlanningSeedBatch seedBatch =
             engine.ReadHistoryPlanningSeeds(
                 materialized.Select(
@@ -1148,10 +1175,10 @@ public sealed class DerivedArtifactEpochPlanner {
         DerivedArtifactPlannerConfigDefinition definition
     ) {
         ArgumentNullException.ThrowIfNull(definition);
-        ValidateKey(new DerivedArtifactPlannerKey(
-            definition.BranchRefId,
-            definition.CoherenceGroup
-        ));
+        DerivedArtifactSetPolicy.ValidateToken(
+            definition.CoherenceGroup,
+            nameof(definition.CoherenceGroup)
+        );
         ValidateToken(definition.TopologyVersion, nameof(definition.TopologyVersion));
         RequireKnown(definition.TokenEstimatorId, TokenEstimatorId, nameof(definition.TokenEstimatorId));
         RequireKnown(definition.BoundaryPolicyId, BoundaryPolicyId, nameof(definition.BoundaryPolicyId));
@@ -1183,6 +1210,7 @@ public sealed class DerivedArtifactEpochPlanner {
     }
 
     private static DerivedArtifactPlannerConfig CreateConfig(
+        RefId branchRefId,
         DerivedArtifactPlannerConfigDefinition definition,
         string? previousConfigId
     ) {
@@ -1192,7 +1220,7 @@ public sealed class DerivedArtifactEpochPlanner {
         }
         var identity = new PlannerConfigIdentityDto(
             ConfigSchema,
-            definition.BranchRefId,
+            branchRefId,
             definition.CoherenceGroup,
             previousConfigId,
             definition.TopologyVersion,
@@ -1214,7 +1242,7 @@ public sealed class DerivedArtifactEpochPlanner {
         );
         return new DerivedArtifactPlannerConfig(
             id,
-            definition.BranchRefId,
+            branchRefId,
             definition.CoherenceGroup,
             previousConfigId,
             definition.TopologyVersion,
@@ -1232,8 +1260,7 @@ public sealed class DerivedArtifactEpochPlanner {
     private static bool HasSameDefinition(
         DerivedArtifactPlannerConfig current,
         DerivedArtifactPlannerConfigDefinition definition
-    ) => current.BranchRefId == definition.BranchRefId
-        && current.CoherenceGroup == definition.CoherenceGroup
+    ) => current.CoherenceGroup == definition.CoherenceGroup
         && current.TopologyVersion == definition.TopologyVersion
         && current.MinimumRecentTokens == definition.MinimumRecentTokens
         && current.EpochTriggerTokens == definition.EpochTriggerTokens
@@ -1456,28 +1483,6 @@ public sealed class DerivedArtifactEpochPlanner {
             path
         );
 
-    private void RequireMatchingRepository(SessionJournalEngine engine) {
-        string enginePath = Path.TrimEndingDirectorySeparator(
-            Path.GetFullPath(engine.Path)
-        );
-        string repositoryPath = Path.TrimEndingDirectorySeparator(
-            Path.GetFullPath(_repository.SessionJournalRepositoryPath)
-        );
-        StringComparison comparison = OperatingSystem.IsWindows()
-            ? StringComparison.OrdinalIgnoreCase
-            : StringComparison.Ordinal;
-        if (!string.Equals(
-                enginePath,
-                repositoryPath,
-                comparison
-            )) {
-            throw new ArgumentException(
-                "SessionJournal engine belongs to a different repository.",
-                nameof(engine)
-            );
-        }
-    }
-
     private async ValueTask<T> ReadDtoAsync<T>(
         string path,
         long maxBytes,
@@ -1542,7 +1547,6 @@ public sealed class DerivedArtifactEpochPlanner {
             throw new InvalidDataException("Planner config schema is invalid.");
         }
         var definition = new DerivedArtifactPlannerConfigDefinition(
-                dto.BranchRefId,
                 dto.CoherenceGroup,
                 dto.TopologyVersion,
                 dto.MinimumRecentTokens,
@@ -1555,7 +1559,11 @@ public sealed class DerivedArtifactEpochPlanner {
                 dto.GenesisPolicyId
             );
         DerivedArtifactPlannerConfig computed =
-            CreateConfig(definition, dto.PreviousConfigId);
+            CreateConfig(
+                dto.BranchRefId,
+                definition,
+                dto.PreviousConfigId
+            );
         if (computed.ConfigId != dto.ConfigId) {
             throw new InvalidDataException(
                 $"Planner config '{dto.ConfigId}' identity hash is invalid."

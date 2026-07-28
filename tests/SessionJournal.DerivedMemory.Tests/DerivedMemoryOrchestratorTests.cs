@@ -22,7 +22,7 @@ public sealed class DerivedMemoryOrchestratorTests : IDisposable {
             new DerivedMemoryOnlineLifecycleCoordinator(
                 fixture.Repository,
                 fixture.Policy,
-                fixture.Engine.BranchRefId,
+                fixture.Repository.Bind(fixture.Engine),
                 [Execution(fixture, 0, maintainer)]
             );
         _ = await coordinator.PrepareAsync(
@@ -78,7 +78,7 @@ public sealed class DerivedMemoryOrchestratorTests : IDisposable {
             new DerivedMemoryOnlineLifecycleCoordinator(
                 fixture.Repository,
                 fixture.Policy,
-                fixture.Engine.BranchRefId,
+                fixture.Repository.Bind(fixture.Engine),
                 [firstExecution]
             );
 
@@ -101,13 +101,14 @@ public sealed class DerivedMemoryOrchestratorTests : IDisposable {
             (await fixture.Repository.ArtifactSets
                 .TryReadLatestAsync(
                     fixture.Policy,
-                    fixture.Engine.BranchRefId
+                    fixture.Repository.Bind(fixture.Engine)
                 ))!;
         Assert.Equal(fixture.Epoch.EpochId, firstSet.EpochId);
         DerivedArtifactEpochPlan stillLatest =
             (await fixture.Repository.EpochPlanner
                 .TryReadLatestEpochAsync(
-                    fixture.Epoch.Key
+                    fixture.Repository.Bind(fixture.Engine),
+                    fixture.Epoch.CoherenceGroup
                 ))!;
         Assert.Equal(
             fixture.Epoch.EpochId,
@@ -148,7 +149,7 @@ public sealed class DerivedMemoryOrchestratorTests : IDisposable {
             new DerivedMemoryOnlineLifecycleCoordinator(
                 fixture.Repository,
                 fixture.Policy,
-                fixture.Engine.BranchRefId,
+                fixture.Repository.Bind(fixture.Engine),
                 [Execution(fixture, 0, secondMaintainer)]
             );
 
@@ -171,13 +172,14 @@ public sealed class DerivedMemoryOrchestratorTests : IDisposable {
             (await fixture.Repository.ArtifactSets
                 .TryReadLatestAsync(
                     fixture.Policy,
-                    fixture.Engine.BranchRefId
+                    fixture.Repository.Bind(fixture.Engine)
                 ))!;
         Assert.Equal(firstSet.SetId, secondSet.PreviousSetId);
         DerivedArtifactEpochPlan secondEpoch =
             (await fixture.Repository.EpochPlanner
                 .TryReadLatestEpochAsync(
-                    fixture.Epoch.Key
+                    fixture.Repository.Bind(fixture.Engine),
+                    fixture.Epoch.CoherenceGroup
                 ))!;
         Assert.Equal(
             fixture.Epoch.EpochId,
@@ -230,7 +232,7 @@ public sealed class DerivedMemoryOrchestratorTests : IDisposable {
             new DerivedMemoryOnlineLifecycleCoordinator(
                 fixture.Repository,
                 fixture.Policy,
-                fixture.Engine.BranchRefId,
+                fixture.Repository.Bind(fixture.Engine),
                 [Execution(fixture, 0, successful)]
             );
         Assert.Equal(
@@ -248,7 +250,7 @@ public sealed class DerivedMemoryOrchestratorTests : IDisposable {
             (await fixture.Repository.ArtifactSets
                 .TryReadLatestAsync(
                     fixture.Policy,
-                    fixture.Engine.BranchRefId
+                    fixture.Repository.Bind(fixture.Engine)
                 ))!;
         fixture.Engine.AppendObservation("trigger failure");
         _ = fixture.Engine.AppendImportedAgentAction(
@@ -286,7 +288,7 @@ public sealed class DerivedMemoryOrchestratorTests : IDisposable {
             new DerivedMemoryOnlineLifecycleCoordinator(
                 fixture.Repository,
                 fixture.Policy,
-                fixture.Engine.BranchRefId,
+                fixture.Repository.Bind(fixture.Engine),
                 [Execution(fixture, 0, failing)]
             );
 
@@ -367,7 +369,7 @@ public sealed class DerivedMemoryOrchestratorTests : IDisposable {
             new DerivedMemoryOnlineLifecycleCoordinator(
                 fixture.Repository,
                 fixture.Policy,
-                fixture.Engine.BranchRefId,
+                fixture.Repository.Bind(fixture.Engine),
                 [
                     Execution(fixture, 0, completedAlpha),
                     Execution(fixture, 1, interruptedZeta)
@@ -391,7 +393,7 @@ public sealed class DerivedMemoryOrchestratorTests : IDisposable {
         Assert.Equal(1, completedAlpha.CallCount);
         Assert.Equal(1, interruptedZeta.CallCount);
         DerivedMemoryValidationReport partial =
-            await fixture.Repository.ValidateAsync(
+            await fixture.Repository.ValidateBranchAsync(
                 fixture.Engine
             );
         Assert.Equal(1, partial.ArtifactEpochCount);
@@ -426,7 +428,7 @@ public sealed class DerivedMemoryOrchestratorTests : IDisposable {
             new DerivedMemoryOnlineLifecycleCoordinator(
                 reopenedRepository,
                 fixture.Policy,
-                fixture.Engine.BranchRefId,
+                reopenedRepository.Bind(reopened),
                 [
                     Execution(fixture, 0, mustNotRepeatAlpha),
                     Execution(fixture, 1, recoveredZeta)
@@ -450,7 +452,7 @@ public sealed class DerivedMemoryOrchestratorTests : IDisposable {
         Assert.Equal(0, mustNotRepeatAlpha.CallCount);
         Assert.Equal(1, recoveredZeta.CallCount);
         DerivedMemoryValidationReport recovered =
-            await reopenedRepository.ValidateAsync(reopened);
+            await reopenedRepository.ValidateBranchAsync(reopened);
         Assert.Equal(1, recovered.ArtifactEpochCount);
         Assert.Equal(1, recovered.OrchestrationTransactionCount);
         Assert.Equal(2, recovered.RoleSettlementCount);
@@ -469,7 +471,7 @@ public sealed class DerivedMemoryOrchestratorTests : IDisposable {
             (await reopenedRepository.ArtifactSets
                 .TryReadLatestAsync(
                     fixture.Policy,
-                    fixture.Engine.BranchRefId
+                    reopenedRepository.Bind(reopened)
                 ))!;
         Assert.Equal(fixture.Epoch.EpochId, published.EpochId);
     }
@@ -481,7 +483,7 @@ public sealed class DerivedMemoryOrchestratorTests : IDisposable {
             new DerivedMemoryOnlineLifecycleCoordinator(
                 fixture.Repository,
                 fixture.Policy,
-                fixture.Engine.BranchRefId,
+                fixture.Repository.Bind(fixture.Engine),
                 [
                     Execution(
                         fixture,
@@ -623,7 +625,7 @@ public sealed class DerivedMemoryOrchestratorTests : IDisposable {
             fixture.Repository.ArtifactSets.LatestPointersDirectory
         ));
         DerivedMemoryValidationReport partialValidation =
-            await fixture.Repository.ValidateAsync(fixture.Engine);
+            await fixture.Repository.ValidateBranchAsync(fixture.Engine);
         Assert.Equal(
             1,
             partialValidation.OrchestrationTransactionCount
@@ -1119,7 +1121,7 @@ public sealed class DerivedMemoryOrchestratorTests : IDisposable {
             fixture.Repository.ArtifactSets.SetsDirectory
         ));
         DerivedMemoryValidationReport pending =
-            await fixture.Repository.ValidateAsync(fixture.Engine);
+            await fixture.Repository.ValidateBranchAsync(fixture.Engine);
         Assert.Equal(0, pending.ArtifactSetCount);
         Assert.Equal(1, pending.OrchestrationFinalizationCount);
         var mustNotRun = new FakeMaintainer(
@@ -1234,7 +1236,7 @@ public sealed class DerivedMemoryOrchestratorTests : IDisposable {
         );
 
         await Assert.ThrowsAsync<InvalidDataException>(
-            async () => await fixture.Repository.ValidateAsync(
+            async () => await fixture.Repository.ValidateBranchAsync(
                 fixture.Engine
             )
         );
@@ -1318,7 +1320,6 @@ public sealed class DerivedMemoryOrchestratorTests : IDisposable {
             (await firstFixture.Repository.EpochPlanner.PlanAsync(
                 firstFixture.Engine,
                 new(
-                    firstFixture.Epoch.BranchRefId,
                     firstFixture.Epoch.CoherenceGroup,
                     firstFixture.Epoch.EpochId,
                     first.PublishedSet!.SetId
@@ -1407,7 +1408,6 @@ public sealed class DerivedMemoryOrchestratorTests : IDisposable {
             (await firstFixture.Repository.EpochPlanner.PlanAsync(
                 firstFixture.Engine,
                 new(
-                    firstFixture.Epoch.BranchRefId,
                     firstFixture.Epoch.CoherenceGroup,
                     firstFixture.Epoch.EpochId,
                     first.PublishedSet!.SetId
@@ -1577,8 +1577,8 @@ public sealed class DerivedMemoryOrchestratorTests : IDisposable {
         DerivedMemoryRepository repository =
             DerivedMemoryRepository.Open(path);
         _ = await repository.EpochPlanner.ConfigureAsync(
+            repository.Bind(engine),
             new(
-                engine.BranchRefId,
                 "memory-pack",
                 "topology-v1",
                 1,
@@ -1591,7 +1591,7 @@ public sealed class DerivedMemoryOrchestratorTests : IDisposable {
         DerivedArtifactEpochPlan epoch =
             (await repository.EpochPlanner.PlanAsync(
                 engine,
-                new(engine.BranchRefId, "memory-pack", null, null)
+                new("memory-pack", null, null)
             )).Epoch!;
         var roles = new[] {
             new DerivedArtifactSetRoleRequirement(

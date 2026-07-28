@@ -169,7 +169,6 @@ public sealed class DerivedMemoryMaintainerRunnerTests : IDisposable {
             (await repository.EpochPlanner.PlanAsync(
                 engine,
                 new(
-                    first.BranchRefId,
                     first.CoherenceGroup,
                     first.EpochId,
                     inputSet.SetId
@@ -203,7 +202,7 @@ public sealed class DerivedMemoryMaintainerRunnerTests : IDisposable {
             StringComparison.Ordinal
         );
         DerivedMemoryValidationReport validation =
-            await repository.ValidateAsync(engine);
+            await repository.ValidateBranchAsync(engine);
         Assert.Equal(2, validation.ArtifactCount);
     }
 
@@ -240,7 +239,7 @@ public sealed class DerivedMemoryMaintainerRunnerTests : IDisposable {
                 );
 
         DerivedMemoryValidationReport valid =
-            await repository.ValidateAsync(engine);
+            await repository.ValidateBranchAsync(engine);
         Assert.Equal(1, valid.ArtifactCount);
         Assert.Equal(0, valid.ArtifactSetCount);
 
@@ -290,7 +289,7 @@ public sealed class DerivedMemoryMaintainerRunnerTests : IDisposable {
 
         InvalidDataException error =
             await Assert.ThrowsAsync<InvalidDataException>(
-                async () => await repository.ValidateAsync(engine)
+                async () => await repository.ValidateBranchAsync(engine)
             );
         Assert.Contains(
             drift == "raw-start"
@@ -335,8 +334,8 @@ public sealed class DerivedMemoryMaintainerRunnerTests : IDisposable {
         SessionJournalEngine engine
     ) {
         _ = await repository.EpochPlanner.ConfigureAsync(
+            repository.Bind(engine),
             new DerivedArtifactPlannerConfigDefinition(
-                engine.BranchRefId,
                 "memory-pack",
                 "topology-v1",
                 MinimumRecentTokens: 10,
@@ -348,7 +347,7 @@ public sealed class DerivedMemoryMaintainerRunnerTests : IDisposable {
         );
         return (await repository.EpochPlanner.PlanAsync(
             engine,
-            new(engine.BranchRefId, "memory-pack", null, null)
+            new("memory-pack", null, null)
         )).Epoch!;
     }
 

@@ -1,5 +1,4 @@
 using Atelia.Completion.Abstractions;
-using Atelia.EventJournal;
 
 namespace Atelia.SessionJournal.DerivedMemory;
 
@@ -13,7 +12,7 @@ public sealed class DerivedMemoryOnlineLifecycleCoordinator
     : ISessionMemoryLifecycleCoordinator, ICoherentContextCandidateSource {
     private readonly DerivedMemoryRepository _repository;
     private readonly DerivedArtifactSetPolicy _policy;
-    private readonly RefId _branchRefId;
+    private readonly DerivedMemoryBranchScope _scope;
     private readonly IReadOnlyList<DerivedMemoryRoleExecution> _roles;
     private readonly DerivedMemoryOrchestrator _orchestrator;
     private readonly DerivedArtifactSetContextCandidateSource _candidates;
@@ -21,14 +20,15 @@ public sealed class DerivedMemoryOnlineLifecycleCoordinator
     public DerivedMemoryOnlineLifecycleCoordinator(
         DerivedMemoryRepository repository,
         DerivedArtifactSetPolicy policy,
-        RefId branchRefId,
+        DerivedMemoryBranchScope scope,
         IReadOnlyList<DerivedMemoryRoleExecution> roles
     ) {
         _repository = repository
             ?? throw new ArgumentNullException(nameof(repository));
         _policy = policy
             ?? throw new ArgumentNullException(nameof(policy));
-        _branchRefId = branchRefId;
+        _repository.RequireScope(scope);
+        _scope = scope;
         ArgumentNullException.ThrowIfNull(roles);
         _roles = Array.AsReadOnly(roles.ToArray());
         DerivedMemoryOrchestrationStore.ValidateProvisioningStructure(
@@ -39,7 +39,7 @@ public sealed class DerivedMemoryOnlineLifecycleCoordinator
             }).ToArray()
         );
         _orchestrator = new(repository);
-        _candidates = new(repository, policy, branchRefId);
+        _candidates = new(repository, policy, scope);
     }
 
     public ValueTask<SessionContextCandidateDiscovery> DiscoverAsync(
@@ -59,6 +59,7 @@ public sealed class DerivedMemoryOnlineLifecycleCoordinator
     ) {
         ArgumentNullException.ThrowIfNull(engine);
         ArgumentNullException.ThrowIfNull(request);
+        _repository.RequireEngine(engine, _scope);
         if (request.Boundary == default
             || request.Phase is not (
                 SessionExecutionPhase.Idle
@@ -79,13 +80,13 @@ public sealed class DerivedMemoryOnlineLifecycleCoordinator
             );
         }
 
-        var key = new DerivedArtifactPlannerKey(
-            _branchRefId,
-            _policy.CoherenceGroup
-        );
         DerivedArtifactPlannerConfig? config =
             await _repository.EpochPlanner
-                .TryReadCurrentConfigAsync(key, cancellationToken)
+                .TryReadCurrentConfigAsync(
+                    _scope,
+                    _policy.CoherenceGroup,
+                    cancellationToken
+                )
                 .ConfigureAwait(false);
         if (config is null) {
             return new(
@@ -94,17 +95,24 @@ public sealed class DerivedMemoryOnlineLifecycleCoordinator
             );
         }
         DerivedArtifactSet? latestSet =
-            await ReadLatestSetStrictAsync(cancellationToken)
+            await ReadLatestSetStrictAsync(
+                    engine,
+                    cancellationToken
+                )
                 .ConfigureAwait(false);
         DerivedArtifactEpochPlan? latestEpoch =
             await _repository.EpochPlanner
-                .TryReadLatestEpochAsync(key, cancellationToken)
+                .TryReadLatestEpochAsync(
+                    _scope,
+                    _policy.CoherenceGroup,
+                    cancellationToken
+                )
                 .ConfigureAwait(false);
         if (latestEpoch is null) {
             latestEpoch = await _repository.EpochPlanner
                 .RebuildLatestEpochPointerAsync(
                     engine,
-                    key,
+                    _policy.CoherenceGroup,
                     cancellationToken
                 )
                 .ConfigureAwait(false);
@@ -138,7 +146,6 @@ public sealed class DerivedMemoryOnlineLifecycleCoordinator
                 planned = await _repository.EpochPlanner.PlanAsync(
                         engine,
                         new DerivedArtifactEpochPlanningRequest(
-                            _branchRefId,
                             _policy.CoherenceGroup,
                             latestEpoch?.EpochId,
                             latestSet?.SetId
@@ -212,20 +219,21 @@ public sealed class DerivedMemoryOnlineLifecycleCoordinator
 
     private async ValueTask<DerivedArtifactSet?>
         ReadLatestSetStrictAsync(
+        SessionJournalEngine engine,
         CancellationToken cancellationToken
     ) {
         DerivedArtifactSet? set =
             await _repository.ArtifactSets.TryReadLatestAsync(
                     _policy,
-                    _branchRefId,
+                    _scope,
                     cancellationToken
                 )
                 .ConfigureAwait(false);
         return set
             ?? await _repository.ArtifactSets
                 .RebuildLatestPointerAsync(
+                    engine,
                     _policy,
-                    _branchRefId,
                     cancellationToken
                 )
                 .ConfigureAwait(false);

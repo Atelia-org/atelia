@@ -42,7 +42,6 @@ internal static class DerivedMemoryCommands {
             options.RequireSingle("expected-current")
         );
         var definition = new DerivedArtifactPlannerConfigDefinition(
-            RefId.ParseHex(options.RequireSingle("lineage")).Unwrap(),
             options.RequireSingle("coherence-group"),
             options.RequireSingle("topology-version"),
             ParsePositiveLong(options, "minimum-recent-tokens"),
@@ -53,9 +52,21 @@ internal static class DerivedMemoryCommands {
             ),
             ParsePositiveLong(options, "hard-limit-tokens")
         );
+        DerivedMemoryRepository repository =
+            DerivedMemoryRepository.Open(inputPath);
+        using SJ.SessionJournalEngine engine =
+            SJ.SessionJournalEngine.Open(inputPath);
+        DerivedMemoryBranchScope scope = repository.Bind(engine);
+        if (RefId.ParseHex(
+                options.RequireSingle("lineage")
+            ).Unwrap() != scope.BranchRefId) {
+            throw new ArgumentException(
+                "--lineage does not match the selected default branch."
+            );
+        }
         DerivedArtifactPlannerConfig config =
-            await DerivedMemoryRepository.Open(inputPath)
-                .EpochPlanner.ConfigureAsync(
+            await repository.EpochPlanner.ConfigureAsync(
+                    scope,
                     definition,
                     expectedCurrent
                 )
@@ -109,9 +120,6 @@ internal static class DerivedMemoryCommands {
             await repository.EpochPlanner.PlanAsync(
                     engine,
                     new DerivedArtifactEpochPlanningRequest(
-                        RefId.ParseHex(
-                            options.RequireSingle("lineage")
-                        ).Unwrap(),
                         options.RequireSingle("coherence-group"),
                         expectedPrevious,
                         inputSet
@@ -375,7 +383,7 @@ internal static class DerivedMemoryCommands {
         );
         DerivedMemoryValidationReport validation =
             await DerivedMemoryRepository.Open(inputPath)
-                .ValidateAsync()
+                .ValidateAllActiveBranchesAsync()
                 .ConfigureAwait(false);
         var report = new DerivedMemoryValidationCliReport(
             ValidationSchema,
@@ -439,11 +447,19 @@ internal static class DerivedMemoryCommands {
             inputPath,
             options.GetOptionalSingle("report-json")
         );
+        DerivedMemoryRepository repository =
+            DerivedMemoryRepository.Open(inputPath);
+        using SJ.SessionJournalEngine engine =
+            SJ.SessionJournalEngine.Open(inputPath);
+        if (engine.BranchRefId != branchRefId) {
+            throw new ArgumentException(
+                "--lineage does not match the selected default branch."
+            );
+        }
         DerivedArtifactSet? set =
-            await DerivedMemoryRepository.Open(inputPath)
-                .ArtifactSets.RebuildLatestPointerAsync(
-                    policy,
-                    branchRefId
+            await repository.ArtifactSets.RebuildLatestPointerAsync(
+                    engine,
+                    policy
                 )
                 .ConfigureAwait(false);
         if (set is null) {

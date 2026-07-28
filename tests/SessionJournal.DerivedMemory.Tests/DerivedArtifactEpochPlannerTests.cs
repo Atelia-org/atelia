@@ -41,7 +41,8 @@ public sealed class DerivedArtifactEpochPlannerTests : IDisposable {
         );
 
         _ = await repository.EpochPlanner.ConfigureAsync(
-            Definition(engine.BranchRefId),
+            repository.Bind(engine),
+            Definition(),
             null
         );
         string configPath = Assert.Single(
@@ -66,7 +67,8 @@ public sealed class DerivedArtifactEpochPlannerTests : IDisposable {
         DerivedMemoryRepository repository =
             DerivedMemoryRepository.Open(path);
         _ = await repository.EpochPlanner.ConfigureAsync(
-            Definition(engine.BranchRefId),
+            repository.Bind(engine),
+            Definition(),
             null
         );
         string configPath = Assert.Single(
@@ -96,20 +98,21 @@ public sealed class DerivedArtifactEpochPlannerTests : IDisposable {
         DerivedMemoryRepository repository =
             DerivedMemoryRepository.Open(path);
         DerivedArtifactPlannerConfigDefinition definition =
-            Definition(engine.BranchRefId);
+            Definition();
 
         DerivedArtifactPlannerConfig config =
             await repository.EpochPlanner.ConfigureAsync(
+                repository.Bind(engine),
                 definition,
                 expectedCurrentConfigId: null
             );
         DerivedArtifactPlannerConfig configRetry =
             await repository.EpochPlanner.ConfigureAsync(
+                repository.Bind(engine),
                 definition,
                 expectedCurrentConfigId: null
             );
         var request = new DerivedArtifactEpochPlanningRequest(
-            engine.BranchRefId,
             "memory-pack",
             ExpectedPreviousEpochId: null,
             InputSetId: null
@@ -151,14 +154,14 @@ public sealed class DerivedArtifactEpochPlannerTests : IDisposable {
             DerivedMemoryRepository.Open(path);
         DerivedArtifactPlannerConfig firstConfig =
             await repository.EpochPlanner.ConfigureAsync(
-                Definition(engine.BranchRefId),
+                repository.Bind(engine),
+                Definition(),
                 null
             );
         DerivedArtifactEpochPlan first =
             (await repository.EpochPlanner.PlanAsync(
                 engine,
                 new(
-                    engine.BranchRefId,
                     "memory-pack",
                     null,
                     null
@@ -169,7 +172,8 @@ public sealed class DerivedArtifactEpochPlannerTests : IDisposable {
 
         DerivedArtifactPlannerConfig secondConfig =
             await repository.EpochPlanner.ConfigureAsync(
-                Definition(engine.BranchRefId) with {
+                repository.Bind(engine),
+                Definition() with {
                     TopologyVersion = "topology-v2",
                     EpochTriggerTokens = 2
                 },
@@ -180,14 +184,14 @@ public sealed class DerivedArtifactEpochPlannerTests : IDisposable {
             (await repository.EpochPlanner.PlanAsync(
                 engine,
                 new(
-                    engine.BranchRefId,
                     "memory-pack",
                     first.EpochId,
                     inputSet.SetId
                 )
             )).Epoch!;
         _ = await repository.EpochPlanner.ConfigureAsync(
-            Definition(engine.BranchRefId) with {
+            repository.Bind(engine),
+            Definition() with {
                 TopologyVersion = "topology-v3",
                 EpochTriggerTokens = 3
             },
@@ -197,7 +201,6 @@ public sealed class DerivedArtifactEpochPlannerTests : IDisposable {
             await repository.EpochPlanner.PlanAsync(
                 engine,
                 new(
-                    engine.BranchRefId,
                     "memory-pack",
                     first.EpochId,
                     inputSet.SetId
@@ -230,13 +233,14 @@ public sealed class DerivedArtifactEpochPlannerTests : IDisposable {
         DerivedMemoryRepository repository =
             DerivedMemoryRepository.Open(path);
         _ = await repository.EpochPlanner.ConfigureAsync(
-            Definition(engine.BranchRefId),
+            repository.Bind(engine),
+            Definition(),
             null
         );
         DerivedArtifactEpochPlan first =
             (await repository.EpochPlanner.PlanAsync(
                 engine,
-                new(engine.BranchRefId, "memory-pack", null, null)
+                new("memory-pack", null, null)
             )).Epoch!;
         _ = await PublishInputSetAsync(repository, engine, first);
         AppendTurns(engine, 5, "second");
@@ -244,14 +248,13 @@ public sealed class DerivedArtifactEpochPlannerTests : IDisposable {
         await Assert.ThrowsAsync<ArgumentException>(
             async () => await repository.EpochPlanner.PlanAsync(
                 engine,
-                new(engine.BranchRefId, "memory-pack", first.EpochId, null)
+                new("memory-pack", first.EpochId, null)
             )
         );
         await Assert.ThrowsAsync<InvalidDataException>(
             async () => await repository.EpochPlanner.PlanAsync(
                 engine,
                 new(
-                    engine.BranchRefId,
                     "memory-pack",
                     first.EpochId,
                     "das_" + new string('a', 64)
@@ -268,11 +271,11 @@ public sealed class DerivedArtifactEpochPlannerTests : IDisposable {
         DerivedMemoryRepository repository =
             DerivedMemoryRepository.Open(path);
         _ = await repository.EpochPlanner.ConfigureAsync(
-            Definition(engine.BranchRefId),
+            repository.Bind(engine),
+            Definition(),
             null
         );
         var request = new DerivedArtifactEpochPlanningRequest(
-            engine.BranchRefId,
             "memory-pack",
             null,
             null
@@ -330,18 +333,18 @@ public sealed class DerivedArtifactEpochPlannerTests : IDisposable {
         string path = NewPath();
         using var engine = CreateSession(path);
         DerivedArtifactPlannerConfigDefinition definition = terminal switch {
-            "below-trigger" => Definition(engine.BranchRefId) with {
+            "below-trigger" => Definition() with {
                 MinimumRecentTokens = 10,
                 EpochTriggerTokens = 1_000,
                 HardLimitTokens = 10_000
             },
-            "backpressure" => Definition(engine.BranchRefId) with {
+            "backpressure" => Definition() with {
                 MinimumRecentTokens = 100,
                 EpochTriggerTokens = 10,
                 SchedulingHeadroomTokens = 1,
                 HardLimitTokens = 112
             },
-            _ => Definition(engine.BranchRefId)
+            _ => Definition()
         };
         if (terminal == "backpressure") {
             _ = engine.AppendObservation(new string('o', 210));
@@ -367,11 +370,11 @@ public sealed class DerivedArtifactEpochPlannerTests : IDisposable {
             DerivedMemoryRepository.Open(path);
         DerivedArtifactPlannerConfig config =
             await repository.EpochPlanner.ConfigureAsync(
+                repository.Bind(engine),
                 definition,
                 null
             );
         var request = new DerivedArtifactEpochPlanningRequest(
-            engine.BranchRefId,
             "memory-pack",
             null,
             null
@@ -395,6 +398,7 @@ public sealed class DerivedArtifactEpochPlannerTests : IDisposable {
             repository.EpochPlanner.PlanAsync(engine, request).AsTask();
         await reached.Task;
         _ = await repository.EpochPlanner.ConfigureAsync(
+            repository.Bind(engine),
             definition with {
                 TopologyVersion = "topology-after-snapshot"
             },
@@ -416,13 +420,14 @@ public sealed class DerivedArtifactEpochPlannerTests : IDisposable {
         DerivedMemoryRepository repository =
             DerivedMemoryRepository.Open(path);
         _ = await repository.EpochPlanner.ConfigureAsync(
-            Definition(engine.BranchRefId),
+            repository.Bind(engine),
+            Definition(),
             null
         );
         DerivedArtifactEpochPlan first =
             (await repository.EpochPlanner.PlanAsync(
                 engine,
-                new(engine.BranchRefId, "memory-pack", null, null)
+                new("memory-pack", null, null)
             )).Epoch!;
         DerivedArtifactSet input =
             await PublishInputSetAsync(repository, engine, first);
@@ -430,7 +435,6 @@ public sealed class DerivedArtifactEpochPlannerTests : IDisposable {
         _ = await repository.EpochPlanner.PlanAsync(
             engine,
             new(
-                engine.BranchRefId,
                 "memory-pack",
                 first.EpochId,
                 input.SetId
@@ -443,7 +447,7 @@ public sealed class DerivedArtifactEpochPlannerTests : IDisposable {
             DerivedArtifactEpochConcurrencyException
         >(async () => await repository.EpochPlanner.PlanAsync(
             engine,
-            new(engine.BranchRefId, "memory-pack", null, null)
+            new("memory-pack", null, null)
         ));
         SessionJournalReadDiagnostics after =
             engine.CaptureReadDiagnostics();
@@ -464,7 +468,6 @@ public sealed class DerivedArtifactEpochPlannerTests : IDisposable {
         >(async () => await repository.EpochPlanner.PlanAsync(
             engine,
             new(
-                engine.BranchRefId,
                 "memory-pack",
                 "dae_" + new string('e', 64),
                 "das_" + new string('f', 64)
@@ -483,12 +486,13 @@ public sealed class DerivedArtifactEpochPlannerTests : IDisposable {
         DerivedMemoryRepository repository =
             DerivedMemoryRepository.Open(path);
         _ = await repository.EpochPlanner.ConfigureAsync(
-            Definition(engine.BranchRefId),
+            repository.Bind(engine),
+            Definition(),
             null
         );
         _ = await repository.EpochPlanner.PlanAsync(
             engine,
-            new(engine.BranchRefId, "memory-pack", null, null)
+            new("memory-pack", null, null)
         );
         File.Delete(Assert.Single(
             Directory.EnumerateFiles(
@@ -497,16 +501,16 @@ public sealed class DerivedArtifactEpochPlannerTests : IDisposable {
         ));
 
         await Assert.ThrowsAsync<InvalidDataException>(
-            async () => await repository.ValidateAsync(engine)
+            async () => await repository.ValidateBranchAsync(engine)
         );
         DerivedArtifactEpochPlan? rebuilt =
             await repository.EpochPlanner.RebuildLatestEpochPointerAsync(
                 engine,
-                new(engine.BranchRefId, "memory-pack")
+                "memory-pack"
             );
         Assert.NotNull(rebuilt);
         DerivedMemoryValidationReport report =
-            await repository.ValidateAsync(engine);
+            await repository.ValidateBranchAsync(engine);
         Assert.Equal(1, report.ArtifactEpochCount);
         Assert.Equal(1, report.LatestArtifactEpochCount);
     }
@@ -519,12 +523,13 @@ public sealed class DerivedArtifactEpochPlannerTests : IDisposable {
         DerivedMemoryRepository repository =
             DerivedMemoryRepository.Open(path);
         _ = await repository.EpochPlanner.ConfigureAsync(
-            Definition(engine.BranchRefId),
+            repository.Bind(engine),
+            Definition(),
             null
         );
         _ = await repository.EpochPlanner.PlanAsync(
             engine,
-            new(engine.BranchRefId, "memory-pack", null, null)
+            new("memory-pack", null, null)
         );
         File.Delete(Assert.Single(Directory.EnumerateFiles(
             repository.EpochPlanner.LatestEpochsDirectory
@@ -537,7 +542,7 @@ public sealed class DerivedArtifactEpochPlannerTests : IDisposable {
             async () => await repository.EpochPlanner
                 .RebuildLatestEpochPointerAsync(
                     engine,
-                    new(engine.BranchRefId, "memory-pack")
+                    "memory-pack"
                 )
         );
         Assert.Empty(Directory.EnumerateFiles(
@@ -557,12 +562,13 @@ public sealed class DerivedArtifactEpochPlannerTests : IDisposable {
             DerivedMemoryRepository repository =
                 DerivedMemoryRepository.Open(path);
             _ = await repository.EpochPlanner.ConfigureAsync(
-                Definition(engine.BranchRefId),
+                repository.Bind(engine),
+                Definition(),
                 null
             );
             first = (await repository.EpochPlanner.PlanAsync(
                 engine,
-                new(engine.BranchRefId, "memory-pack", null, null)
+                new("memory-pack", null, null)
             )).Epoch!;
             inputSet = await PublishInputSetAsync(
                 repository,
@@ -591,7 +597,6 @@ public sealed class DerivedArtifactEpochPlannerTests : IDisposable {
             async () => await reopenedRepository.EpochPlanner.PlanAsync(
                 reopened,
                 new(
-                    reopened.BranchRefId,
                     "memory-pack",
                     first.EpochId,
                     inputSet.SetId
@@ -599,7 +604,7 @@ public sealed class DerivedArtifactEpochPlannerTests : IDisposable {
             )
         );
         await Assert.ThrowsAsync<InvalidDataException>(
-            async () => await reopenedRepository.ValidateAsync(reopened)
+            async () => await reopenedRepository.ValidateBranchAsync(reopened)
         );
         File.Delete(Assert.Single(
             Directory.EnumerateFiles(
@@ -610,7 +615,7 @@ public sealed class DerivedArtifactEpochPlannerTests : IDisposable {
             async () => await reopenedRepository.EpochPlanner
                 .RebuildLatestEpochPointerAsync(
                     reopened,
-                    new(reopened.BranchRefId, "memory-pack")
+                    "memory-pack"
                 )
         );
         Assert.Empty(
@@ -632,13 +637,14 @@ public sealed class DerivedArtifactEpochPlannerTests : IDisposable {
         DerivedMemoryRepository repository =
             DerivedMemoryRepository.Open(path);
         _ = await repository.EpochPlanner.ConfigureAsync(
-            Definition(engine.BranchRefId),
+            repository.Bind(engine),
+            Definition(),
             null
         );
         DerivedArtifactEpochPlan first =
             (await repository.EpochPlanner.PlanAsync(
                 engine,
-                new(engine.BranchRefId, "memory-pack", null, null)
+                new("memory-pack", null, null)
             )).Epoch!;
         DerivedArtifactSet correct =
             await PublishInputSetAsync(repository, engine, first);
@@ -647,7 +653,6 @@ public sealed class DerivedArtifactEpochPlannerTests : IDisposable {
             (await repository.EpochPlanner.PlanAsync(
                 engine,
                 new(
-                    engine.BranchRefId,
                     "memory-pack",
                     first.EpochId,
                     correct.SetId
@@ -687,7 +692,7 @@ public sealed class DerivedArtifactEpochPlannerTests : IDisposable {
             async () => await repository.EpochPlanner
                 .RebuildLatestEpochPointerAsync(
                     engine,
-                    new(engine.BranchRefId, "memory-pack")
+                    "memory-pack"
                 )
         );
         Assert.Empty(Directory.EnumerateFiles(
@@ -703,12 +708,14 @@ public sealed class DerivedArtifactEpochPlannerTests : IDisposable {
             DerivedMemoryRepository.Open(path);
         DerivedArtifactPlannerConfig first =
             await repository.EpochPlanner.ConfigureAsync(
-                Definition(engine.BranchRefId),
+                repository.Bind(engine),
+                Definition(),
                 null
             );
         DerivedArtifactPlannerConfig second =
             await repository.EpochPlanner.ConfigureAsync(
-                Definition(engine.BranchRefId) with {
+                repository.Bind(engine),
+                Definition() with {
                     TopologyVersion = "topology-v2"
                 },
                 first.ConfigId
@@ -721,11 +728,12 @@ public sealed class DerivedArtifactEpochPlannerTests : IDisposable {
 
         DerivedArtifactPlannerConfig? rebuilt =
             await repository.EpochPlanner.RebuildCurrentConfigPointerAsync(
-                new(engine.BranchRefId, "memory-pack")
+                repository.Bind(engine),
+                "memory-pack"
             );
 
         Assert.Equal(second.ConfigId, rebuilt!.ConfigId);
-        _ = await repository.ValidateAsync();
+        _ = await repository.ValidateBranchAsync(engine);
     }
 
     [Fact]
@@ -736,7 +744,8 @@ public sealed class DerivedArtifactEpochPlannerTests : IDisposable {
             DerivedMemoryRepository repository =
                 DerivedMemoryRepository.Open(belowPath);
             _ = await repository.EpochPlanner.ConfigureAsync(
-                Definition(belowEngine.BranchRefId) with {
+                repository.Bind(belowEngine),
+                Definition() with {
                     MinimumRecentTokens = 10,
                     EpochTriggerTokens = 1_000,
                     HardLimitTokens = 10_000
@@ -746,7 +755,7 @@ public sealed class DerivedArtifactEpochPlannerTests : IDisposable {
             DerivedArtifactEpochPlanningResult below =
                 await repository.EpochPlanner.PlanAsync(
                     belowEngine,
-                    new(belowEngine.BranchRefId, "memory-pack", null, null)
+                    new("memory-pack", null, null)
                 );
             Assert.Equal(
                 DerivedArtifactEpochPlanningStatus.BelowTrigger,
@@ -767,7 +776,8 @@ public sealed class DerivedArtifactEpochPlannerTests : IDisposable {
         DerivedMemoryRepository hardRepository =
             DerivedMemoryRepository.Open(hardPath);
         _ = await hardRepository.EpochPlanner.ConfigureAsync(
-            Definition(hardEngine.BranchRefId) with {
+            hardRepository.Bind(hardEngine),
+            Definition() with {
                 MinimumRecentTokens = 100,
                 EpochTriggerTokens = 10,
                 SchedulingHeadroomTokens = 1,
@@ -778,7 +788,7 @@ public sealed class DerivedArtifactEpochPlannerTests : IDisposable {
         await Assert.ThrowsAsync<DerivedArtifactEpochBackpressureException>(
             async () => await hardRepository.EpochPlanner.PlanAsync(
                 hardEngine,
-                new(hardEngine.BranchRefId, "memory-pack", null, null)
+                new("memory-pack", null, null)
             )
         );
     }
@@ -791,12 +801,14 @@ public sealed class DerivedArtifactEpochPlannerTests : IDisposable {
             DerivedMemoryRepository.Open(path);
         DerivedArtifactPlannerConfig configA =
             await repository.EpochPlanner.ConfigureAsync(
-            Definition(engine.BranchRefId),
+            repository.Bind(engine),
+            Definition(),
             null
         );
         await Assert.ThrowsAsync<DerivedArtifactEpochConcurrencyException>(
             async () => await repository.EpochPlanner.ConfigureAsync(
-                Definition(engine.BranchRefId) with {
+                repository.Bind(engine),
+                Definition() with {
                     TopologyVersion = "topology-stale"
                 },
                 null
@@ -804,20 +816,23 @@ public sealed class DerivedArtifactEpochPlannerTests : IDisposable {
         );
         DerivedArtifactPlannerConfig configB =
             await repository.EpochPlanner.ConfigureAsync(
-                Definition(engine.BranchRefId) with {
+                repository.Bind(engine),
+                Definition() with {
                     TopologyVersion = "topology-B"
                 },
                 configA.ConfigId
             );
         DerivedArtifactPlannerConfig configC =
             await repository.EpochPlanner.ConfigureAsync(
-                Definition(engine.BranchRefId),
+                repository.Bind(engine),
+                Definition(),
                 configB.ConfigId
             );
         Assert.Equal(configB.ConfigId, configC.PreviousConfigId);
         await Assert.ThrowsAsync<DerivedArtifactEpochConcurrencyException>(
             async () => await repository.EpochPlanner.ConfigureAsync(
-                Definition(engine.BranchRefId),
+                repository.Bind(engine),
+                Definition(),
                 configA.ConfigId
             )
         );
@@ -827,14 +842,15 @@ public sealed class DerivedArtifactEpochPlannerTests : IDisposable {
             )
         ));
         _ = await repository.EpochPlanner.ConfigureAsync(
-            Definition(engine.BranchRefId) with {
+            repository.Bind(engine),
+            Definition() with {
                 TopologyVersion = "topology-fork"
             },
             null
         );
 
         await Assert.ThrowsAsync<InvalidDataException>(
-            async () => await repository.ValidateAsync()
+            async () => await repository.ValidateAllActiveBranchesAsync()
         );
     }
 
@@ -842,12 +858,14 @@ public sealed class DerivedArtifactEpochPlannerTests : IDisposable {
     public async Task ConfigRejectsUnreachableHardLimitAndBudgetOverflow() {
         string path = NewPath();
         using var engine = CreateSession(path);
-        DerivedArtifactEpochPlanner planner =
-            DerivedMemoryRepository.Open(path).EpochPlanner;
+        DerivedMemoryRepository repository =
+            DerivedMemoryRepository.Open(path);
+        DerivedArtifactEpochPlanner planner = repository.EpochPlanner;
 
         await Assert.ThrowsAsync<ArgumentOutOfRangeException>(
             async () => await planner.ConfigureAsync(
-                Definition(engine.BranchRefId) with {
+                repository.Bind(engine),
+                Definition() with {
                     MinimumRecentTokens = 10,
                     EpochTriggerTokens = 10,
                     SchedulingHeadroomTokens = 10,
@@ -858,19 +876,12 @@ public sealed class DerivedArtifactEpochPlannerTests : IDisposable {
         );
         await Assert.ThrowsAsync<ArgumentOutOfRangeException>(
             async () => await planner.ConfigureAsync(
-                Definition(engine.BranchRefId) with {
+                repository.Bind(engine),
+                Definition() with {
                     MinimumRecentTokens = long.MaxValue,
                     EpochTriggerTokens = 1,
                     SchedulingHeadroomTokens = 1,
                     HardLimitTokens = long.MaxValue
-                },
-                null
-            )
-        );
-        await Assert.ThrowsAsync<ArgumentException>(
-            async () => await planner.ConfigureAsync(
-                Definition(engine.BranchRefId) with {
-                    BranchRefId = default
                 },
                 null
             )
@@ -887,7 +898,8 @@ public sealed class DerivedArtifactEpochPlannerTests : IDisposable {
         DerivedMemoryRepository repositoryA =
             DerivedMemoryRepository.Open(repositoryAPath);
         _ = await repositoryA.EpochPlanner.ConfigureAsync(
-            Definition(engineA.BranchRefId),
+            repositoryA.Bind(engineA),
+            Definition(),
             null
         );
         IReadOnlyDictionary<string, string> filesBefore =
@@ -900,7 +912,7 @@ public sealed class DerivedArtifactEpochPlannerTests : IDisposable {
         await Assert.ThrowsAsync<ArgumentException>(
             async () => await repositoryA.EpochPlanner.PlanAsync(
                 engineB,
-                new(engineA.BranchRefId, "memory-pack", null, null)
+                new("memory-pack", null, null)
             )
         );
 
@@ -933,12 +945,13 @@ public sealed class DerivedArtifactEpochPlannerTests : IDisposable {
             DerivedMemoryRepository repository =
                 DerivedMemoryRepository.Open(path);
             _ = await repository.EpochPlanner.ConfigureAsync(
-                Definition(engine.BranchRefId),
+                repository.Bind(engine),
+                Definition(),
                 null
             );
             first = (await repository.EpochPlanner.PlanAsync(
                 engine,
-                new(engine.BranchRefId, "memory-pack", null, null)
+                new("memory-pack", null, null)
             )).Epoch!;
         }
         using var reopened = SessionJournalEngine.Open(path);
@@ -947,7 +960,7 @@ public sealed class DerivedArtifactEpochPlannerTests : IDisposable {
         DerivedArtifactEpochPlanningResult retry =
             await reopenedRepository.EpochPlanner.PlanAsync(
                 reopened,
-                new(reopened.BranchRefId, "memory-pack", null, null)
+                new("memory-pack", null, null)
             );
 
         Assert.Equal(
@@ -973,13 +986,14 @@ public sealed class DerivedArtifactEpochPlannerTests : IDisposable {
         DerivedMemoryRepository repository =
             DerivedMemoryRepository.Open(path);
         _ = await repository.EpochPlanner.ConfigureAsync(
-            Definition(engine.BranchRefId),
+            repository.Bind(engine),
+            Definition(),
             null
         );
         DerivedArtifactEpochPlan first =
             (await repository.EpochPlanner.PlanAsync(
                 engine,
-                new(engine.BranchRefId, "memory-pack", null, null)
+                new("memory-pack", null, null)
             )).Epoch!;
         File.Delete(Assert.Single(
             Directory.EnumerateFiles(
@@ -1016,7 +1030,7 @@ public sealed class DerivedArtifactEpochPlannerTests : IDisposable {
             await Assert.ThrowsAsync<InvalidDataException>(
                 async () => await repository.EpochPlanner.PlanAsync(
                     engine,
-                    new(engine.BranchRefId, "memory-pack", null, null)
+                    new("memory-pack", null, null)
                 )
             );
             Assert.Empty(Directory.EnumerateFiles(
@@ -1027,7 +1041,7 @@ public sealed class DerivedArtifactEpochPlannerTests : IDisposable {
             DerivedArtifactEpochPlanningResult recovered =
                 await repository.EpochPlanner.PlanAsync(
                     engine,
-                    new(engine.BranchRefId, "memory-pack", null, null)
+                    new("memory-pack", null, null)
                 );
             Assert.Equal(first.EpochId, recovered.Epoch!.EpochId);
             Assert.Equal(
@@ -1054,12 +1068,13 @@ public sealed class DerivedArtifactEpochPlannerTests : IDisposable {
         DerivedMemoryRepository repository =
             DerivedMemoryRepository.Open(path);
         _ = await repository.EpochPlanner.ConfigureAsync(
-            Definition(engine.BranchRefId),
+            repository.Bind(engine),
+            Definition(),
             null
         );
         _ = await repository.EpochPlanner.PlanAsync(
             engine,
-            new(engine.BranchRefId, "memory-pack", null, null)
+            new("memory-pack", null, null)
         );
         string configPath = Assert.Single(
             Directory.EnumerateFiles(
@@ -1124,7 +1139,7 @@ public sealed class DerivedArtifactEpochPlannerTests : IDisposable {
                 .ReadInventoryAsync()
         );
         await Assert.ThrowsAsync<InvalidDataException>(
-            async () => await repository.ValidateAsync()
+            async () => await repository.ValidateAllActiveBranchesAsync()
         );
     }
 
@@ -1153,7 +1168,8 @@ public sealed class DerivedArtifactEpochPlannerTests : IDisposable {
 
         await Assert.ThrowsAsync<InvalidDataException>(
             async () => await repository.EpochPlanner.ConfigureAsync(
-                Definition(engine.BranchRefId),
+                repository.Bind(engine),
+                Definition(),
                 null
             )
         );
@@ -1206,12 +1222,13 @@ public sealed class DerivedArtifactEpochPlannerTests : IDisposable {
         DerivedMemoryRepository repository =
             DerivedMemoryRepository.Open(path);
         _ = await repository.EpochPlanner.ConfigureAsync(
-            Definition(engine.BranchRefId),
+            repository.Bind(engine),
+            Definition(),
             null
         );
         _ = await repository.EpochPlanner.PlanAsync(
             engine,
-            new(engine.BranchRefId, "memory-pack", null, null)
+            new("memory-pack", null, null)
         );
         File.Delete(Assert.Single(
             Directory.EnumerateFiles(
@@ -1221,7 +1238,7 @@ public sealed class DerivedArtifactEpochPlannerTests : IDisposable {
         AppendTurns(engine, 2, "divergent");
         _ = await repository.EpochPlanner.PlanAsync(
             engine,
-            new(engine.BranchRefId, "memory-pack", null, null)
+            new("memory-pack", null, null)
         );
 
         Assert.Equal(
@@ -1230,13 +1247,13 @@ public sealed class DerivedArtifactEpochPlannerTests : IDisposable {
                 .Epochs.Count
         );
         await Assert.ThrowsAsync<InvalidDataException>(
-            async () => await repository.ValidateAsync()
+            async () => await repository.ValidateAllActiveBranchesAsync()
         );
         await Assert.ThrowsAsync<InvalidDataException>(
             async () => await repository.EpochPlanner
                 .RebuildLatestEpochPointerAsync(
                     engine,
-                    new(engine.BranchRefId, "memory-pack")
+                    "memory-pack"
                 )
         );
     }
@@ -1249,12 +1266,13 @@ public sealed class DerivedArtifactEpochPlannerTests : IDisposable {
         DerivedMemoryRepository repository =
             DerivedMemoryRepository.Open(path);
         _ = await repository.EpochPlanner.ConfigureAsync(
-            Definition(engine.BranchRefId),
+            repository.Bind(engine),
+            Definition(),
             null
         );
         _ = await repository.EpochPlanner.PlanAsync(
             engine,
-            new(engine.BranchRefId, "memory-pack", null, null)
+            new("memory-pack", null, null)
         );
         string epochPath = Assert.Single(
             Directory.EnumerateFiles(
@@ -1291,14 +1309,14 @@ public sealed class DerivedArtifactEpochPlannerTests : IDisposable {
             await repository.EpochPlanner.ReadInventoryAsync();
         Assert.Single(inventory.Epochs);
         await Assert.ThrowsAsync<InvalidDataException>(
-            async () => await repository.ValidateAsync(engine)
+            async () => await repository.ValidateBranchAsync(engine)
         );
         File.Delete(pointerPath);
         await Assert.ThrowsAsync<InvalidDataException>(
             async () => await repository.EpochPlanner
                 .RebuildLatestEpochPointerAsync(
                     engine,
-                    new(engine.BranchRefId, "memory-pack")
+                    "memory-pack"
                 )
         );
         Assert.Empty(Directory.EnumerateFiles(
@@ -1321,12 +1339,13 @@ public sealed class DerivedArtifactEpochPlannerTests : IDisposable {
         DerivedMemoryRepository repository =
             DerivedMemoryRepository.Open(path);
         _ = await repository.EpochPlanner.ConfigureAsync(
-            Definition(engine.BranchRefId),
+            repository.Bind(engine),
+            Definition(),
             null
         );
         _ = await repository.EpochPlanner.PlanAsync(
             engine,
-            new(engine.BranchRefId, "memory-pack", null, null)
+            new("memory-pack", null, null)
         );
         string epochPath = Assert.Single(
             Directory.EnumerateFiles(
@@ -1431,7 +1450,7 @@ public sealed class DerivedArtifactEpochPlannerTests : IDisposable {
             (await repository.EpochPlanner.ReadInventoryAsync()).Epochs
         );
         await Assert.ThrowsAsync<InvalidDataException>(
-            async () => await repository.ValidateAsync(engine)
+            async () => await repository.ValidateBranchAsync(engine)
         );
     }
 
@@ -1443,18 +1462,19 @@ public sealed class DerivedArtifactEpochPlannerTests : IDisposable {
         DerivedMemoryRepository repository =
             DerivedMemoryRepository.Open(path);
         _ = await repository.EpochPlanner.ConfigureAsync(
-            Definition(engine.BranchRefId),
+            repository.Bind(engine),
+            Definition(),
             null
         );
         _ = await repository.EpochPlanner.PlanAsync(
             engine,
-            new(engine.BranchRefId, "memory-pack", null, null)
+            new("memory-pack", null, null)
         );
         SessionJournalReadDiagnostics before =
             engine.CaptureReadDiagnostics();
 
         DerivedMemoryValidationReport report =
-            await repository.ValidateAsync(engine);
+            await repository.ValidateBranchAsync(engine);
 
         SessionJournalReadDiagnostics after =
             engine.CaptureReadDiagnostics();
@@ -1476,7 +1496,8 @@ public sealed class DerivedArtifactEpochPlannerTests : IDisposable {
         DerivedMemoryRepository repository =
             DerivedMemoryRepository.Open(path);
         _ = await repository.EpochPlanner.ConfigureAsync(
-            Definition(engine.BranchRefId),
+            repository.Bind(engine),
+            Definition(),
             null
         );
         DerivedArtifactEpochPlan? previous = null;
@@ -1486,7 +1507,6 @@ public sealed class DerivedArtifactEpochPlannerTests : IDisposable {
             previous = (await repository.EpochPlanner.PlanAsync(
                 engine,
                 new(
-                    engine.BranchRefId,
                     "memory-pack",
                     previous?.EpochId,
                     input?.SetId
@@ -1504,7 +1524,7 @@ public sealed class DerivedArtifactEpochPlannerTests : IDisposable {
         SessionJournalReadDiagnostics before =
             engine.CaptureReadDiagnostics();
 
-        _ = await repository.ValidateAsync(engine);
+        _ = await repository.ValidateBranchAsync(engine);
 
         SessionJournalReadDiagnostics after =
             engine.CaptureReadDiagnostics();
@@ -1529,7 +1549,8 @@ public sealed class DerivedArtifactEpochPlannerTests : IDisposable {
         DerivedMemoryRepository repository =
             DerivedMemoryRepository.Open(path);
         _ = await repository.EpochPlanner.ConfigureAsync(
-            Definition(engine.BranchRefId) with {
+            repository.Bind(engine),
+            Definition() with {
                 MinimumRecentTokens = 1,
                 EpochTriggerTokens = 1,
                 SchedulingHeadroomTokens = 1,
@@ -1540,7 +1561,7 @@ public sealed class DerivedArtifactEpochPlannerTests : IDisposable {
         DerivedArtifactEpochPlan original =
             (await repository.EpochPlanner.PlanAsync(
                 engine,
-                new(engine.BranchRefId, "memory-pack", null, null)
+                new("memory-pack", null, null)
             )).Epoch!;
         Assert.DoesNotContain(
             engine.ReadHistoryPlanningWindowAt(
@@ -1585,7 +1606,7 @@ public sealed class DerivedArtifactEpochPlannerTests : IDisposable {
             (await repository.EpochPlanner.ReadInventoryAsync()).Epochs
         );
         await Assert.ThrowsAsync<InvalidDataException>(
-            async () => await repository.ValidateAsync(engine)
+            async () => await repository.ValidateBranchAsync(engine)
         );
     }
 
@@ -1775,11 +1796,8 @@ public sealed class DerivedArtifactEpochPlannerTests : IDisposable {
         }
     }
 
-    private static DerivedArtifactPlannerConfigDefinition Definition(
-        RefId branchRefId
-    ) =>
+    private static DerivedArtifactPlannerConfigDefinition Definition() =>
         new(
-            branchRefId,
             "memory-pack",
             "topology-v1",
             MinimumRecentTokens: 10,
@@ -1817,7 +1835,7 @@ public sealed class DerivedArtifactEpochPlannerTests : IDisposable {
             }
         );
         byte[] prefix = Encoding.UTF8.GetBytes(
-            "atelia.session-journal.derived-artifact-epoch-id.v1\0"
+            "atelia.session-journal.derived-artifact-epoch-id.v2\0"
         );
         byte[] value = Encoding.UTF8.GetBytes(canonical);
         byte[] input = new byte[prefix.Length + value.Length];

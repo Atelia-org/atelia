@@ -20,15 +20,14 @@ internal sealed class DerivedMemoryBranchRefIdJsonConverter
             ?? throw new JsonException(
                 "Derived-memory branchRefId cannot be null."
             );
-        try {
-            return RefId.ParseHex(text).Unwrap();
-        }
-        catch (FormatException exception) {
+        var parsed = RefId.ParseHex(text);
+        if (!parsed.TryUnwrap(out RefId value, out var error)) {
             throw new JsonException(
                 "Derived-memory branchRefId must contain exactly 16 lowercase hexadecimal characters.",
-                exception
+                new FormatException(error.Message)
             );
         }
+        return value;
     }
 
     public override void Write(

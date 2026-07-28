@@ -135,7 +135,7 @@ public sealed class DerivedMemoryArtifactStoreTests : IDisposable {
         await File.WriteAllTextAsync(path, json.ToJsonString());
 
         await Assert.ThrowsAsync<InvalidDataException>(
-            async () => await fixture.Repository.ValidateAsync()
+            async () => await fixture.Repository.ValidateAllActiveBranchesAsync()
         );
     }
 
@@ -170,7 +170,7 @@ public sealed class DerivedMemoryArtifactStoreTests : IDisposable {
         await File.WriteAllTextAsync(path, json.ToJsonString());
 
         await Assert.ThrowsAsync<InvalidDataException>(
-            async () => await fixture.Repository.ValidateAsync()
+            async () => await fixture.Repository.ValidateAllActiveBranchesAsync()
         );
     }
 
@@ -402,7 +402,7 @@ public sealed class DerivedMemoryArtifactStoreTests : IDisposable {
         }
 
         await Assert.ThrowsAsync<InvalidDataException>(
-            async () => await fixture.Repository.ValidateAsync()
+            async () => await fixture.Repository.ValidateAllActiveBranchesAsync()
         );
     }
 

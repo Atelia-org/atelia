@@ -9,7 +9,6 @@ public sealed record DerivedArtifactPlannerKey(
 );
 
 public sealed record DerivedArtifactPlannerConfigDefinition(
-    RefId BranchRefId,
     string CoherenceGroup,
     string TopologyVersion,
     long MinimumRecentTokens,
@@ -117,7 +116,6 @@ public sealed record DerivedArtifactEpochPlanningResult(
 );
 
 public sealed record DerivedArtifactEpochPlanningRequest(
-    RefId BranchRefId,
     string CoherenceGroup,
     string? ExpectedPreviousEpochId,
     string? InputSetId

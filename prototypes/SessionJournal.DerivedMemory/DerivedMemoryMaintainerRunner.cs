@@ -97,7 +97,7 @@ public sealed class DerivedMemoryMaintainerRunner {
     ) {
         ArgumentNullException.ThrowIfNull(engine);
         RequireToken(epochId, nameof(epochId));
-        RequireMatchingRepository(engine);
+        DerivedMemoryBranchScope scope = _repository.Bind(engine);
         DerivedArtifactEpochPlan epoch =
             await _repository.EpochPlanner.TryReadEpochAsync(
                     epochId,
@@ -107,6 +107,11 @@ public sealed class DerivedMemoryMaintainerRunner {
             ?? throw new InvalidDataException(
                 $"Derived artifact epoch '{epochId}' does not exist."
             );
+        if (epoch.BranchRefId != scope.BranchRefId) {
+            throw new InvalidDataException(
+                $"Derived artifact epoch '{epochId}' belongs to a different branch ref."
+            );
+        }
         DerivedArtifactPlannerConfig config =
             await _repository.EpochPlanner.TryReadConfigAsync(
                     epoch.ConfigId,
@@ -456,30 +461,6 @@ public sealed class DerivedMemoryMaintainerRunner {
             request.ModelFingerprint,
             nameof(request.ModelFingerprint)
         );
-    }
-
-    private void RequireMatchingRepository(SessionJournalEngine engine) {
-        string enginePath = Path.TrimEndingDirectorySeparator(
-            Path.GetFullPath(engine.Path)
-        );
-        string repositoryPath = Path.TrimEndingDirectorySeparator(
-            Path.GetFullPath(
-                _repository.SessionJournalRepositoryPath
-            )
-        );
-        StringComparison comparison = OperatingSystem.IsWindows()
-            ? StringComparison.OrdinalIgnoreCase
-            : StringComparison.Ordinal;
-        if (!string.Equals(
-                enginePath,
-                repositoryPath,
-                comparison
-            )) {
-            throw new ArgumentException(
-                "SessionJournal engine belongs to a different repository.",
-                nameof(engine)
-            );
-        }
     }
 
     private static void RequireToken(string value, string parameterName) {

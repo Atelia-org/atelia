@@ -133,10 +133,78 @@ public sealed class DerivedArtifactSetEngineIntegrationTests : IDisposable {
         );
     }
 
+    [Fact]
+    public async Task RewindBehindPublishedSetFailsOnlineValidationAndRebuildWithoutDerivedMutation() {
+        PublishedFixture fixture = await CreatePublishedFixtureAsync();
+        EventAddress currentHead = ReadRawSnapshot(fixture.Path).Head;
+        SessionContextCandidateDescriptor descriptor = Assert.Single(
+            (await fixture.Provider.DiscoverAsync(
+                new(
+                    currentHead,
+                    SessionContextSelectionMode.Latest,
+                    fixture.CoherenceGroup
+                ),
+                CancellationToken.None
+            )).Candidates
+        );
+        using (var journal =
+               EventJournal.EventJournal.OpenExisting(fixture.Path)) {
+            RefId main = journal.OpenBranch(
+                SessionJournalDefaults.MainBranchName
+            ).Unwrap();
+            EventAddress rewindTarget = journal
+                .ReadEventHeaderPreview(descriptor.RawStartExclusive)
+                .Unwrap()
+                .Parent!.Value;
+            Assert.True(
+                journal.MoveRef(
+                    main,
+                    currentHead,
+                    rewindTarget
+                ).Unwrap()
+            );
+        }
+        IReadOnlyDictionary<string, string> derivedBefore =
+            SnapshotDerivedFiles(fixture.Repository.MemoryRoot);
+        var client = new CapturingClient("must not be called");
+        using var reopened = SessionJournalEngine.Open(
+            fixture.Path,
+            CreateRuntime(
+                client,
+                fixture.Provider,
+                fixture.CoherenceGroup
+            )
+        );
+
+        await Assert.ThrowsAsync<InvalidDataException>(
+            async () => await reopened.SendAsync(
+                "after rewind",
+                CancellationToken.None
+            )
+        );
+        Assert.Empty(client.Requests);
+        await Assert.ThrowsAsync<InvalidDataException>(
+            async () =>
+                await fixture.Repository.ValidateBranchAsync(reopened)
+        );
+        await Assert.ThrowsAsync<InvalidDataException>(
+            async () => await fixture.Repository.ArtifactSets
+                .RebuildLatestPointerAsync(
+                    reopened,
+                    fixture.Policy
+                )
+        );
+        Assert.Equal(
+            derivedBefore,
+            SnapshotDerivedFiles(fixture.Repository.MemoryRoot)
+        );
+    }
+
     private async ValueTask<PublishedFixture> CreatePublishedFixtureAsync() {
         string path = NewPath();
         DerivedArtifactEpochPlan epoch;
         DerivedMemoryRepository repository;
+        DerivedMemoryBranchScope scope;
         SessionContextAnchorSetupReferences anchorSetups;
         using (var engine = SessionJournalEngine.Create(
             path,
@@ -150,9 +218,10 @@ public sealed class DerivedArtifactSetEngineIntegrationTests : IDisposable {
                 new CompletionDescriptor("import", "import-v1", "model-A")
             );
             repository = DerivedMemoryRepository.Open(path);
+            scope = repository.Bind(engine);
             _ = await repository.EpochPlanner.ConfigureAsync(
+                scope,
                 new(
-                    engine.BranchRefId,
                     "integration-group",
                     "integration-topology-v1",
                     1,
@@ -164,7 +233,7 @@ public sealed class DerivedArtifactSetEngineIntegrationTests : IDisposable {
             );
             epoch = (await repository.EpochPlanner.PlanAsync(
                 engine,
-                new(engine.BranchRefId, "integration-group", null, null)
+                new("integration-group", null, null)
             )).Epoch!;
             anchorSetups = engine.ResolveContextAnchorSetupReferences(
                 epoch.SourceEndInclusive
@@ -218,6 +287,7 @@ public sealed class DerivedArtifactSetEngineIntegrationTests : IDisposable {
                     policy,
                     [world, self]
                 );
+        DerivedArtifactSet published;
         using (var authorityEngine = SessionJournalEngine.Open(path)) {
             var publication = new DerivedArtifactSetPublicationRequest(
                 policy,
@@ -248,7 +318,7 @@ public sealed class DerivedArtifactSetEngineIntegrationTests : IDisposable {
                         .ReadSettlementsAsync(transaction),
                     prepared.SetId
                 );
-            _ = await repository.ArtifactSets.PublishAsync(
+            published = await repository.ArtifactSets.PublishAsync(
                 authorityEngine,
                 publication
             );
@@ -258,12 +328,15 @@ public sealed class DerivedArtifactSetEngineIntegrationTests : IDisposable {
 
         return new PublishedFixture(
             path,
+            repository,
+            policy,
             new DerivedArtifactSetContextCandidateSource(
                 repository,
                 policy,
-                epoch.BranchRefId
+                scope
             ),
-            policy.CoherenceGroup
+            policy.CoherenceGroup,
+            published
         );
     }
 
@@ -353,6 +426,19 @@ public sealed class DerivedArtifactSetEngineIntegrationTests : IDisposable {
         );
     }
 
+    private static IReadOnlyDictionary<string, string>
+        SnapshotDerivedFiles(string root) =>
+        Directory.EnumerateFiles(
+                root,
+                "*",
+                SearchOption.AllDirectories
+            )
+            .ToDictionary(
+                path => Path.GetRelativePath(root, path),
+                File.ReadAllText,
+                StringComparer.Ordinal
+            );
+
     private string NewPath() {
         string path = Path.Combine(
             Path.GetTempPath(),
@@ -388,8 +474,11 @@ public sealed class DerivedArtifactSetEngineIntegrationTests : IDisposable {
 
     private sealed record PublishedFixture(
         string Path,
+        DerivedMemoryRepository Repository,
+        DerivedArtifactSetPolicy Policy,
         DerivedArtifactSetContextCandidateSource Provider,
-        string CoherenceGroup
+        string CoherenceGroup,
+        DerivedArtifactSet Set
     );
 
     private sealed record RawSnapshot(

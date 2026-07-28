@@ -66,9 +66,15 @@ public sealed class DerivedArtifactSetStore {
         ArgumentNullException.ThrowIfNull(request.Members);
         IReadOnlyDictionary<string, DerivedArtifactSetRoleRequirement> roles =
             request.Policy.ValidateAndSnapshot();
-        RequireMatchingRepository(engine);
+        DerivedMemoryBranchScope scope = _repository.Bind(engine);
         ValidateTransaction(request, roles);
         DerivedArtifactSetPolicy.ValidateBranchRefId(request.BranchRefId);
+        if (request.BranchRefId != scope.BranchRefId) {
+            throw new ArgumentException(
+                "ArtifactSet publication belongs to a different branch ref.",
+                nameof(request)
+            );
+        }
         ValidateSetupReferences(request.AnchorSetups);
         if (request.ExpectedPreviousSetId is not null) {
             ValidateSetId(request.ExpectedPreviousSetId);
@@ -329,6 +335,20 @@ public sealed class DerivedArtifactSetStore {
 
     public async ValueTask<DerivedArtifactSet?> TryReadLatestAsync(
         DerivedArtifactSetPolicy policy,
+        DerivedMemoryBranchScope scope,
+        CancellationToken cancellationToken = default
+    ) {
+        _repository.RequireScope(scope);
+        return await TryReadLatestAsync(
+                policy,
+                scope.BranchRefId,
+                cancellationToken
+            )
+            .ConfigureAwait(false);
+    }
+
+    internal async ValueTask<DerivedArtifactSet?> TryReadLatestAsync(
+        DerivedArtifactSetPolicy policy,
         RefId branchRefId,
         CancellationToken cancellationToken = default
     ) {
@@ -354,6 +374,22 @@ public sealed class DerivedArtifactSetStore {
     }
 
     public async ValueTask<DerivedArtifactSet?> TryReadAsync(
+        string setId,
+        DerivedArtifactSetPolicy policy,
+        DerivedMemoryBranchScope scope,
+        CancellationToken cancellationToken = default
+    ) {
+        _repository.RequireScope(scope);
+        return await TryReadAsync(
+                setId,
+                policy,
+                scope.BranchRefId,
+                cancellationToken
+            )
+            .ConfigureAwait(false);
+    }
+
+    internal async ValueTask<DerivedArtifactSet?> TryReadAsync(
         string setId,
         DerivedArtifactSetPolicy policy,
         RefId branchRefId,
@@ -549,6 +585,59 @@ public sealed class DerivedArtifactSetStore {
     }
 
     public async ValueTask<DerivedArtifactSet?> RebuildLatestPointerAsync(
+        SessionJournalEngine engine,
+        DerivedArtifactSetPolicy policy,
+        CancellationToken cancellationToken = default
+    ) {
+        ArgumentNullException.ThrowIfNull(engine);
+        DerivedMemoryBranchScope scope = _repository.Bind(engine);
+        DerivedArtifactEpochInventory inventory =
+            await _repository.EpochPlanner.ReadInventoryAsync(
+                    cancellationToken
+                )
+                .ConfigureAwait(false);
+        DerivedArtifactEpochPlan[] epochs = [
+            .. inventory.Epochs.Where(
+                epoch => epoch.BranchRefId == scope.BranchRefId
+            )
+        ];
+        if (epochs.Length == 0) {
+            DerivedArtifactSet? existing = await TryReadLatestAsync(
+                    policy,
+                    scope.BranchRefId,
+                    cancellationToken
+                )
+                .ConfigureAwait(false);
+            if (existing is not null) {
+                throw new InvalidDataException(
+                    "An ArtifactSet lineage exists without a branch-scoped epoch lineage."
+                );
+            }
+        }
+        else {
+            _ = DerivedMemoryEngineReadGate.Run(
+                engine,
+                () => _repository.EpochPlanner
+                    .ValidateRawAuthorityDetailed(
+                        engine,
+                        epochs,
+                        inventory.Configs.Where(
+                            config => config.BranchRefId
+                                == scope.BranchRefId
+                        ),
+                        cancellationToken
+                    )
+            );
+        }
+        return await RebuildLatestPointerAsync(
+                policy,
+                scope.BranchRefId,
+                cancellationToken
+            )
+            .ConfigureAwait(false);
+    }
+
+    internal async ValueTask<DerivedArtifactSet?> RebuildLatestPointerAsync(
         DerivedArtifactSetPolicy policy,
         RefId branchRefId,
         CancellationToken cancellationToken = default
@@ -868,26 +957,6 @@ public sealed class DerivedArtifactSetStore {
             );
         }
         ValidateTransactionIdentityShape(transaction);
-    }
-
-    private void RequireMatchingRepository(SessionJournalEngine engine) {
-        string enginePath = Path.TrimEndingDirectorySeparator(
-            Path.GetFullPath(engine.Path)
-        );
-        string repositoryPath = Path.TrimEndingDirectorySeparator(
-            Path.GetFullPath(
-                _repository.SessionJournalRepositoryPath
-            )
-        );
-        StringComparison comparison = OperatingSystem.IsWindows()
-            ? StringComparison.OrdinalIgnoreCase
-            : StringComparison.Ordinal;
-        if (!string.Equals(enginePath, repositoryPath, comparison)) {
-            throw new ArgumentException(
-                "SessionJournal engine belongs to a different repository.",
-                nameof(engine)
-            );
-        }
     }
 
     private async ValueTask<DerivedArtifactSet> CreateSetAsync(

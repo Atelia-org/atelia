@@ -361,8 +361,8 @@ public sealed class DerivedArtifactSetStoreTests : IDisposable {
         DerivedMemoryRepository repository =
             DerivedMemoryRepository.Open(path);
         _ = await repository.EpochPlanner.ConfigureAsync(
+            repository.Bind(engine),
             new(
-                engine.BranchRefId,
                 "memory-pack",
                 "topology-v1",
                 1,
@@ -375,7 +375,7 @@ public sealed class DerivedArtifactSetStoreTests : IDisposable {
         DerivedArtifactEpochPlan epoch =
             (await repository.EpochPlanner.PlanAsync(
                 engine,
-                new(engine.BranchRefId, "memory-pack", null, null)
+                new("memory-pack", null, null)
             )).Epoch!;
         SessionContextAnchorSetupReferences setups =
             engine.ResolveContextAnchorSetupReferences(
