@@ -136,7 +136,8 @@ symlink/reparse point。orchestration 的 policy/role provisioning 纯结构检�
 
 这是 DM-8 的最小 online composition/acceptance 入口。命令把 planner、pending-first
 maintenance、coherent candidate provider 和 SessionJournal engine 组合起来：在 Observation
-append 前先做 lifecycle + context budget preflight，append 后再按新 exact head 重新维护/选择，
+append 前先做 fresh-bootstrap 与 request-size preflight，再执行 lifecycle；append 后按新 exact
+head 重新维护/选择，
 最后提交 Prepared v5 并调用 agent Completion。
 
 ```bash
@@ -152,9 +153,7 @@ dotnet run --project prototypes/SessionJournal.Cli -- \
   --coherence-group memory-pack \
   --connections prototypes/Galatea/.atelia/galatea/connections.json \
   --connection dsv4p \
-  --raw-suffix-budget 32000 \
-  --total-context-budget 64000 \
-  --bootstrap-budget 32000 \
+  --maximum-canonical-request-bytes 262144 \
   --uncertain-recovery refuse \
   --output gitignore/backtest/<run>/online-turn.json \
   --call-log-dir gitignore/backtest/<run>/calls
@@ -162,14 +161,15 @@ dotnet run --project prototypes/SessionJournal.Cli -- \
 
 candidate ordinal 不再是 `run-online-turn` runtime flag；它由 selected branch 上 governing
 `RuntimeConfigSetup` v2 的 `derivedContext.nthPrevious` 唯一决定，`0` 表示 latest。
-`--raw-suffix-budget`、`--total-context-budget` 与 `--bootstrap-budget` 目前仍映射到
-`SessionRuntime.ContextBudgets`，只拒绝已经精确选中的 candidate，不执行 candidate fallback；
-这些临时 budget flags 的进一步化简属于 P4。`--bootstrap-budget` 是 strict empty-lineage
-唯一 raw-only 入口，不会创建伪 artifact。当前 CLI
+`--maximum-canonical-request-bytes` 是可选的 final request guard；它测量 Prepared commitment
+所用 canonical request JSON 的精确 UTF-8 byte length，不是 provider/model token count 或
+context-window 保证，也不参与 candidate selection/fallback。strict empty-lineage bootstrap
+由 native fresh-genesis raw topology 启用，不再有独立 bootstrap budget，也不会创建伪 artifact。
+当前 CLI
 便利入口只接受 `produce` roles；generic lifecycle coordinator 本身不依赖 Maintainers catalog
 或 Completion connection，长期 host 可注入其他 exact role executions。
 
-若 lifecycle/backpressure、candidate 或 total-budget preflight 失败，Observation 尚未 append，
+若 fresh-bootstrap、lifecycle/backpressure、candidate 或 canonical-byte preflight 失败，Observation 尚未 append，
 raw head/event count 不变。Prepared/Started reopen 不再调用 maintainer/provider。输出 report
 只含 head、phase、provider/API/model、agent text hash 与 error count；完整 request/action 只留在
 显式 call-log 目录，不会写入 report。output、call-log、input repo 与 connections 的路径边界和

@@ -1154,6 +1154,36 @@ public sealed class ProgramDerivedMemoryCommandTests : IDisposable {
         Assert.False(Directory.Exists(callLogDir));
     }
 
+    [Theory]
+    [InlineData("raw-suffix-budget")]
+    [InlineData("total-context-budget")]
+    [InlineData("bootstrap-budget")]
+    public void OnlineTurnRejectsRetiredBudgetFlags(string option) {
+        CliOptions parsed = CliOptions.Parse([
+            $"--{option}", "1000"
+        ]);
+
+        ArgumentException error = Assert.Throws<ArgumentException>(
+            () => parsed.EnsureOnly(
+                "input",
+                "branch",
+                "message",
+                "role",
+                "policy-id",
+                "policy-fingerprint",
+                "connections",
+                "connection",
+                "call-log-dir",
+                "output",
+                "maximum-canonical-request-bytes",
+                "coherence-group",
+                "uncertain-recovery"
+            )
+        );
+
+        Assert.Equal($"Unknown option --{option}.", error.Message);
+    }
+
     [Fact]
     public async Task OnlineTurnRunsPendingMaintenanceAndAgentCompletion() {
         Fixture fixture = await CreateFixtureAsync();
@@ -1174,6 +1204,16 @@ public sealed class ProgramDerivedMemoryCommandTests : IDisposable {
         var factory = new ConcurrentScriptedCompletionClientFactory(
             "rewritten memory"
         );
+        Assert.Equal(
+            0,
+            RunInitialOnlinePolicyOrchestration(
+                fixture,
+                connectionsPath,
+                callLogDir,
+                outputPath + ".initial-orchestration",
+                factory
+            )
+        );
 
         int exitCode = Program.MainCore([
             "run-online-turn",
@@ -1193,9 +1233,9 @@ public sealed class ProgramDerivedMemoryCommandTests : IDisposable {
         ], factory);
 
         Assert.Equal(0, exitCode);
-        // The fixture starts with one pending epoch. Preflight settles it,
-        // then the intentionally tiny planner threshold schedules the newly
-        // appended observation as a second epoch before the agent completion.
+        // Offline publication establishes the first coherent set. The
+        // intentionally tiny planner threshold then schedules the newly
+        // appended observation before the agent completion.
         Assert.Equal(5, factory.CompletionCallCount);
         Assert.True(File.Exists(outputPath));
         using JsonDocument output = JsonDocument.Parse(
@@ -1288,6 +1328,16 @@ public sealed class ProgramDerivedMemoryCommandTests : IDisposable {
             "rewritten memory",
             failAtCall: 5
         );
+        Assert.Equal(
+            0,
+            RunInitialOnlinePolicyOrchestration(
+                fixture,
+                connectionsPath,
+                callLogDir,
+                outputPath + ".initial-orchestration",
+                factory
+            )
+        );
         string[] args = [
             "run-online-turn",
             "--input", fixture.Path,
@@ -1326,6 +1376,30 @@ public sealed class ProgramDerivedMemoryCommandTests : IDisposable {
             SJ.SessionExecutionPhase.Idle,
             reopened.InspectExecutionBoundary().Phase
         );
+    }
+
+    private static int RunInitialOnlinePolicyOrchestration(
+        Fixture fixture,
+        string connectionsPath,
+        string callLogDir,
+        string outputPath,
+        ICompletionClientFactory completionClientFactory
+    ) {
+        return Program.MainCore([
+            "run-derived-memory-orchestration",
+            "--input", fixture.Path,
+            "--branch", fixture.Scope.BranchName,
+            "--epoch", fixture.Epoch.EpochId,
+            "--role",
+            "required:autobiographical-rewrite:produce",
+            "--role",
+            "required:world-understanding-rewrite:produce",
+            "--policy-id", "daily-memory",
+            "--policy-fingerprint", "daily-memory-v1",
+            "--output", outputPath,
+            "--connections", connectionsPath,
+            "--call-log-dir", callLogDir
+        ], completionClientFactory);
     }
 
     private async ValueTask<Fixture> CreateFixtureAsync() {

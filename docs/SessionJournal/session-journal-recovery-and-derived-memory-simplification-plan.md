@@ -1,6 +1,6 @@
 # SessionJournal 恢复与 DerivedMemory 化简：阶段情况与后续计划
 
-> **状态**：Active Shape/Plan；P1、P2、P3 已实施，P4～P6 待实施
+> **状态**：Active Shape/Plan；P1～P4 已实施，P5～P6 待实施
 > **日期**：2026-07-29
 > **适用基线**：current Prepared v5 + DM-0～DM-8
 > **相关文档**：
@@ -128,6 +128,7 @@ strict bootstrap 不证明“这个 branch 从未发布过 DerivedArtifactSet”
 
 - provider 报告 selected branch 的 published coherent set lineage 为空，而不是 pointer 损坏、
   lineage 断裂或暂时查找失败；
+- durable `SessionCreated` origin 必须是 `native`；`legacy-import` 不进入 online bootstrap；
 - raw Parent ancestry 上不存在任何 `CompletionRequestPrepared`；
 - raw tail 精确满足以下两个等价 bootstrap boundary 之一：
   - **A — pre-append**：从 `SessionCreated` 到 selected head 只有 governing
@@ -347,7 +348,7 @@ ownership 描述能力归属，不要求每类必须对应一个程序集。P5 �
 | **P1** | `SessionJournalEngine.cs`、`SessionHistoryPlanning.cs`、`SessionJournalOfflineValidator.cs`；EventJournal `RefId` / `OpenBranch` / `CommitToRef` | existing active branch name 只在 Open 时解析；Engine lifetime 绑定 exact `RefId`，所有 head/read/append/CAS 使用该 ref；pre-P1 name-only `CommitToRef("main", ...)` 退出 append path | 无 raw event wire 变化 | 新增 branch-scoped `Open`/inspection；`main` overload 仅为 default；必要时给 EventJournal 增加 RefId-bound commit | P1 不改 CLI；branch selector 延后至 P2，与 DerivedMemory lineage authority 和 composition 联合 cutover，避免暴露只能驱动 raw Engine 的半成品入口 | `SessionJournalEngineTests`、tail/recovery/planning tests；增加 archive/rebind race 覆盖；更新 active API docs | `Atelia.SessionJournal`，必要时先扩 `Atelia.EventJournal` |
 | **P2** | `DerivedMemoryRepository.cs`、`DerivedArtifactEpochPlanner.cs`、`DerivedArtifactSetStore.cs`、`DerivedArtifactSetContextCandidateSource.cs`、`DerivedMemoryOnlineLifecycleCoordinator.cs`、DerivedMemory contracts | planner/config/epoch/set/latest 均绑定 Engine 暴露的 RefId-derived identity；path-only authority check 退役；每 branch 独立 lineage | **新的 DerivedMemory storage/schema generation**；旧 branch-name key 与新 RefId key 不混读、不 fallback | derived planning/publication/rebuild/validation 接受或验证 exact engine lineage | `configure/plan/run/publish/rebuild/validate/run-online-turn` 以 `--branch` 为人类 selector，不再接受可与 Engine 冲突的自由 durable identity | epoch/set/integration/orchestration tests、CLI E2E；更新 DerivedMemory current docs | `SessionJournal.DerivedMemory`，随后 `SessionJournal.Cli` |
 | **P3** | `SessionJournalContracts.cs`、`SessionEventCodec.cs`、`SessionContextCandidateContracts.cs`、`SessionJournalEngine.cs`、DerivedMemory candidate source | durable `nthPrevious` 成为唯一 Agent-controlled ordinal；exact nth 不跳坏 set；zero-input bootstrap exception 保留，fresh-topology eligibility 由 P4 实现 | `RuntimeConfigSetup` body **v1 → v2**；只写/读 v2，不提供 v1 compatibility decoder | 删除 `SessionRuntime.ContextSelection`、`Latest` / `Budgeted` modes、candidate-list fallback 与 public `MaxCandidateCount` | host 只 provision 单 active domain/provider；不再解析或注入 runtime selection flags | codec/golden、governing setup、candidate route、Prepared reopen、CLI tests；更新 wire/current docs | `Atelia.SessionJournal`，同一 cutover 内跟进 DerivedMemory/CLI |
-| **P4** | `SessionJournalEngine` selection/cost helpers、`SessionHistoryTokenEstimator`、planner hard-limit/backpressure config、online coordinator | 删除多 candidate cost search 与 raw/bootstrap selection budgets；保留命名诚实的 final-request guard 和 planner backpressure；以 raw header walk 判定 fresh-genesis 的 pre-append 与 exact/recovery bootstrap boundaries | 预期不改 raw wire；若 derived planner 持久字段变化，必须另行 version，而非原地改 v1 | 收窄 runtime/request budget API；不得把 estimator 称为真实 tokenizer | 删除 selection-mode/budget flags；保留 planner threshold/backpressure 配置 | budget/bootstrap pre-append、post-observation crash/reopen、import/performance/backpressure tests；更新 estimator 与 CLI docs | `Atelia.SessionJournal` + composition；planner schema 变化时含 DerivedMemory |
+| **P4** | `SessionJournalEngine` selection/cost helpers、`SessionHistoryTokenEstimator`、planner hard-limit/backpressure config、online coordinator | **已完成**：删除 raw/bootstrap/total token budgets；保留 exact canonical request UTF-8 byte guard 和 planner backpressure；以 raw header walk 判定 fresh-genesis 的 pre-append 与 exact/recovery bootstrap boundaries | `SessionCreated` body **v1 → v2**，required `origin=native|legacy-import`；无 v1 fallback。planner persisted shape/id/schema v2 不变 | 删除 `SessionContextBudgetOptions`；新增单一 `MaximumCanonicalRequestBytes`，不宣称 tokenizer | 删除三个 budget flags，新增 `--maximum-canonical-request-bytes`；planner threshold/backpressure flags 保留 | byte guard/bootstrap pre-append、post-observation crash/reopen、import/performance/backpressure tests；更新 estimator 与 CLI docs | `Atelia.SessionJournal` + composition（完成） |
 | **P5** | `SessionReducer.cs`、`SessionJournalOfflineValidator.cs`、`SessionJournalEngine.Project/ReplayHistory`、legacy importer、CLI `validate` | full reducer 退出 online/public core surface，但完整 raw/import audit 不降级 | 无 raw/derived wire 变化 | 删除 `Project()` / `ReplayHistory()` public surface；建立窄 offline/recovery API | importer/validate 切到 companion audit；online composition 不引用 full reducer | offline validator、import safety、corruption、differential tests；更新 usage/roadmap | 先建立 offline/recovery companion 与 callers，再从 `Atelia.SessionJournal` 删除 surface |
 | **P6** | `DerivedMemoryOrchestrationContracts.cs`、`DerivedMemoryOrchestrationStore.cs`、`DerivedMemoryOrchestrator.cs`、`DerivedArtifactSetStore.cs` | 已 settlement role 重启不重跑；保留最小 settlement、finalization 与 required-role atomic publication；只删经证据证明重复的 identity | 删除任何 persisted/hashed identity 字段都必须创建**独立 DerivedMemory schema generation**；不得借 P2 generation 偷渡或原地重解释 | orchestration API 可收窄，但 exact resume/publish identity 必须仍可验证 | orchestration run/resume/report 随最小 contract 收窄；不修改 raw wire | failpoint/resume、partial settlement、finalization-after-crash、atomic publish tests；更新 DerivedMemory ops docs | `Atelia.SessionJournal.DerivedMemory` |
 
@@ -357,10 +358,11 @@ ownership 描述能力归属，不要求每类必须对应一个程序集。P5 �
 | --- | --- | --- | --- | --- |
 | Raw `CompletionRequestPrepared` | body v5，self-contained exact context/request manifest | P1～P6 均保持 v5 exact reopen 语义；不得重新引入 derived id 或 reopen-time selection | 已 Prepared recovery 永不访问 DerivedMemory；任何字段变化需独立 wire decision，不在本轮顺手修改 | 无 |
 | Raw `RuntimeConfigSetup` | **P3 已完成**：body v2，required `derivedContext.nthPrevious >= 0`；ordinal 只来自 governing setup | 已删除 runtime/CLI ordinal source，只写/读 v2 | **不提供 v1 decoder/fallback**；codec goldens、setup hash/provenance 与 import/create callers 已更新 | P3（完成） |
+| Raw `SessionCreated` | **P4 已完成**：body v2，required `origin=native|legacy-import` | public create 默认/显式写 native；legacy importer 写 legacy-import；strict bootstrap 只接受 native | **不提供 v1 decoder/fallback**；origin 是区分 native first-observation crash 与 imported pending observation 所需的 durable fact | P4（完成） |
 | DerivedMemory lineage/storage | **P2 已完成**：`derived/memory/v2/`；durable identity 使用 canonical lowercase `RefId`；config/epoch/transaction 为 v2，set/latest 为 v3 | P2 已按 RefId-derived identity 完成 generation cutover；planner、set/latest、epoch、orchestration 使用同一 opaque identity | v1 generation inert；不混读、不自动迁移、不设 compatibility branch；derived 数据可从 raw 重建 | P2（完成） |
-| Planner config / epoch thresholds | P2 后 config/epoch/pointers 均为 v2，包含 scheduling headroom、hard limit/backpressure policy | P4 删除 candidate selection budgets 时不得删除 epoch scheduling/backpressure；若字段/identity bytes 变化，升级 derived schema | 不把旧 bytes 按新含义读取；pointer/index 仍可从 immutable generation 重建 | P4（仅在 persisted shape 改变时） |
+| Planner config / epoch thresholds | P2 后 config/epoch/pointers 均为 v2，包含 scheduling headroom、hard limit/backpressure policy | P4 已保留全部 epoch scheduling/backpressure 字段、estimator id 与 identity bytes | persisted shape 未变化，继续使用 v2；pointer/index 仍可从 immutable generation 重建 | P4（完成，无 schema 变化） |
 | Orchestration transaction / settlement / finalization | P2 后 transaction 为 v2，settlement/finalization 保持 v1；identity/fingerprint 同时服务 retry、audit 与 set identity | P6 保留 exact resume 所需最小记录；若删除任何 persisted 或 hash-domain identity 字段，必须作**独立于 P2**的 schema generation decision | 不允许同 schema token 下改变 identity/hash bytes；是否删除每个字段由 P6 caller、failpoint、audit 证据决定 | P6 |
-| Bootstrap eligibility | current 以 empty lineage + bootstrap budget 进入 zero-input path | P4 改为 healthy empty lineage + raw ancestry 无 Prepared，并接受 fresh setup-only predecessor 的 pre-append boundary，或其后恰有一个 active first observation 的 exact/recovery boundary | 只限制 online bootstrap，不限制 import/offline maintenance/rebuild 在首个 Prepared 前发布真实 set；曾发布但未被 Prepared 使用的 set 删除后仍可 bootstrap | P4 |
+| Bootstrap eligibility | **P4 已完成**：healthy empty lineage + native creation origin + raw ancestry 无 Prepared；接受 fresh setup-only predecessor 的 pre-append boundary，或其后恰有一个 active first observation 的 exact/recovery boundary | lifecycle 前先做 read-only empty-lineage/topology/byte preflight，之后重新 exact selection | 只限制 online bootstrap，不限制 import/offline maintenance/rebuild 发布真实 set；曾发布但未被 Prepared 使用的 set 删除后仍可 bootstrap | P4（完成） |
 
 P2 与 P6 的 derived generation 不得合并成一句“反正 derived 可重建”：P2 已确定改变 lineage authority，
 而 P6 尚未确定删除哪些 identity。若两包最终恰好落入同一物理 generation，也必须由 P6 明确证明
@@ -417,10 +419,10 @@ pre-P1 baseline 曾包含以下 raw authority split，P1 已解决并留下 focu
 
 | Surface | Current fact | P0 标记 | 后续改动包 |
 | --- | --- | --- | --- |
-| `SessionJournal.Cli run-online-turn` | **P3 后**要求 `--branch`，只打开一次 selected Engine、绑定单一 DerivedMemory provider/domain；ordinal 来自 governing setup；仍注入 raw/total/bootstrap runtime budgets | branch 与 ordinal authority 已闭合；budget flags 留待 P4 化简 | P4 删除/收窄 runtime budget flags |
+| `SessionJournal.Cli run-online-turn` | **P4 后**要求 `--branch`，ordinal 来自 governing setup；只保留可选 `--maximum-canonical-request-bytes`，三个旧 budget flags 已拒绝 | branch、ordinal、fresh bootstrap 与 request-size authority 已闭合 | P4（完成） |
 | DerivedMemory ops CLI | branch-local `configure/plan/run/publish/rebuild` 要求 `--branch`；`validate` 不带 branch 验证所有 active refs、带 branch 验证 exact selected ref；list 是 global inventory | P2 已闭合 branch name selector、durable RefId identity 与 Engine authority | P2（完成） |
 | raw Engine tests | 大量普通断言把 `Project()` 当作 head/state getter；另有 tail/performance tests 明确断言 0 full projection | 便捷调用不构成保留 public full projection 的理由 | P1 已补 branch tests；P5 替换便捷调用并迁 audit oracle |
-| candidate route tests | 已覆盖 durable exact ordinal、setup update/reopen、selection-time lifecycle、exact budget reject、bootstrap 与 lifecycle callback | P3 已删除 mode/list/fallback coverage；P4 再以 fresh-topology bootstrap 与 final guard 替换临时 budget coverage | P3（完成）/P4 |
+| candidate route tests | 已覆盖 durable exact ordinal、setup update/reopen、selection-time lifecycle、canonical-byte guard、native fresh bootstrap、observation crash/reopen 与 imported rejection | P3/P4 已删除 mode/list/fallback 与临时 budget coverage | P3/P4（完成） |
 | DerivedMemory planner/set tests | 已覆盖 A/B branch config/epoch/set/latest/provider 隔离、exact/global validation、archive + same-name recreate、foreign scope、rewind stale-future、pointer rebuild 与 raw authority | P2 branch-aware matrix 已形成；P3～P6 继续复用这些边界 | P2（完成） |
 | orchestration tests | 已覆盖 partial settlement、cancellation、optional omission、finalization 后续发布、pointer rebuild 与 corruption | P6 必须保留的 contract tests；字段化简不得降低 missing-role-only resume/atomic publication 覆盖 | P6 |
 | active roadmap | 同时记录 historical evolution、current DM-8 和未来方向；仍有 Prepared v3、Budgeted 长期 target、full reducer core residency 等过期叙事 | P0 直接修正，并链接本文作为 P1～P6 active target | P0 |
@@ -569,7 +571,7 @@ keys。
   `SessionRuntime.ContextSelection` 与 CLI `--selection` 已删除；
 - 未 Prepared request 在 lifecycle 之后按 exact governing setup 选择；Prepared v5 exact reopen
   不访问 DerivedMemory，未改变 wire；
-- 临时 `SessionRuntime.ContextBudgets` 只拒绝 exact candidate，留待 P4 继续化简。
+- P4 已删除临时 `SessionRuntime.ContextBudgets`，改用 exact canonical request byte guard。
 
 目标：
 
@@ -594,12 +596,17 @@ keys。
 
 ### P4：Budget 与 estimator 化简
 
+> **实施状态：完成。** Commits：`d492b080`（SessionCreated v2 origin）、
+> `af46044e`（canonical request byte guard）、`234a37db`（fresh bootstrap topology）。
+> 最终 metric 是 canonical request JSON 的精确 UTF-8 byte length，不是 token estimate。
+> DerivedMemory planner estimator、thresholds、hard-limit/backpressure 与 v2 persisted schema 均未改变。
+
 目标：
 
 - 删除用于自动 candidate search 的 cost state；
 - 删除 raw suffix/bootstrap selection budgets；
-- 盘点并收成最小的 non-selection hard-limit 集合；面向最终 request 的 estimate guard 使用命名诚实的
-  deterministic metric；
+- 盘点并收成最小的 non-selection hard-limit 集合；面向最终 request 使用 canonical JSON UTF-8
+  byte length 的 deterministic guard；
 - planner thresholds 只负责 maintenance scheduling，不暗中改写 Agent 的 nth choice。
 
 验收：
@@ -710,11 +717,12 @@ runtime selection 与新 durable selection。P5 应在 bounded planning caller �
 - automatic `Budgeted` candidate search 可以删除；它与 epoch planner 职责不同，但不符合 Agent
   明确 ordinal 的控制语义；
 - raw/bootstrap selection budgets 可删；保留最小 non-selection hard limits，其中最终 exact
-  request 使用命名诚实的 estimate guard；
+  request 使用 canonical JSON UTF-8 byte guard；
 - shared epoch 与 atomic ArtifactSet publication 是必要能力；
 - full reducer 对 online recovery 没有直接价值，应退出 production 主表面；
 - orchestration/settlement/finalization 服务 maintenance crash resume；保留成功 role 不重跑、
   durable finalization 与 atomic publication，重复 identity 的删除范围由 P6 证据决定。
 
-P1 raw Engine boundary、P2 branch-aware DerivedMemory 与 P3 durable exact ordinal 已是现行 contract；P4～P6 尚未落实的
-方向继续以 current implementation 作为可运行基线。
+P1 raw Engine boundary、P2 branch-aware DerivedMemory、P3 durable exact ordinal 与 P4 strict
+fresh bootstrap/canonical-byte guard 已是现行 contract；P5～P6 尚未落实的方向继续以 current
+implementation 作为可运行基线。

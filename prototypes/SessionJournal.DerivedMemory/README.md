@@ -25,8 +25,10 @@ DM-8 provider 只支持精确的 `NthPrevious(n)`；`n = 0` 就是 latest。sele
 latest pointer 缺失时 selection 只从 immutable sets 证明 unique tip，不修复 pointer；
 持久 rebuild 只能走带 Engine raw-authority gate 的 maintenance/ops API。ordinal 来自
 governing `RuntimeConfigSetup` v2 的 `derivedContext.nthPrevious`，不由 provider request
-budget 或 host runtime flag 决定。raw suffix 与 total canonical request budget 只是对
-exact candidate 的 runtime guard，超限时拒绝，不会自动改选另一个 set。
+budget 或 host runtime flag 决定。唯一 request-size guard 是
+`MaximumCanonicalRequestBytes`：它测量 SessionJournal canonical request JSON 的精确 UTF-8
+byte length，超限时拒绝，不会自动改选另一个 set；该值不是 provider tokenizer 或 context
+window。
 
 边界约束：
 
@@ -41,9 +43,14 @@ exact candidate 的 runtime guard，超限时拒绝，不会自动改选另一�
 - Prepared 已保存进入 provider request 的 exact snapshots，故 Prepared 后删除整个
   `derived/` 仍可恢复。
 
-真实空 lineage 通过 strict `EmptyLineage` 状态进入 bounded bootstrap；missing latest
-pointer 必须先通过 immutable sets 的 unique-tip discovery 证明，不能伪装为空。bootstrap 不创建空 artifact，而由 Prepared v5 的零个
-`ExactContextInputs` 固化 exact request。首个真实 ArtifactSet 发布后 bootstrap 自动失效。
+真实空 lineage 只有在 raw branch 仍是 native fresh-genesis topology 时才能 bootstrap：
+`SessionCreated` 后只能有 setup updates，或再有恰一个 active first `ObservationAccepted`。
+`SessionCreated.origin=legacy-import`、任一 Prepared/action/import/tool/attempt/failure/history
+fact 都拒绝 bootstrap。missing latest pointer 必须先通过 immutable sets 的 unique-tip discovery
+证明，不能伪装为空。bootstrap 不创建空 artifact，而由 Prepared v5 的零个
+`ExactContextInputs` 固化 exact request。一旦 raw ancestry 写入 Prepared，即使 derived lineage
+后来被删空也不会再次 bootstrap；反之，未被 Prepared 使用的 set 删除后仍可按 fresh topology
+bootstrap。
 
 DM-5 planner 在任何 maintainer/LLM 执行前，只通过 SessionJournal 暴露的
 `ReadHistoryPlanningWindow()` 读取 bounded、dependency-closed suffix。config key 是

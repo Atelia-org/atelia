@@ -22,7 +22,7 @@ CS-3D6/D7 与 DM-0～DM-8 已完成以下收口：
 - raw Parent chain 不含 ArtifactSet definition/activation，DerivedMemory 只单向引用 raw；
 - candidate contract 是 bounded two-phase discovery/materialization；
 - shared epoch、parallel role settlement、ArtifactSet publication、online lifecycle、
-  strict empty-lineage bootstrap 与 budgeted selection 已实施；
+  durable exact ordinal、native fresh-genesis bootstrap 与 canonical request byte guard 已实施；
 - online execution 不调用 `Project()`；Prepared/Started exact reopen 不打开 DerivedMemory。
 
 已采纳的 Prepared/attempt 对称化与 ArtifactSet/raw-core 解耦不再作为候选展开。后者的最终设计、
@@ -43,9 +43,11 @@ CS-3D6/D7 与 DM-0～DM-8 已完成以下收口：
 - 用完整 `SessionProjection` cache 替代 tail recovery；
 - 把 reverse tail collector 合并进 forward full reducer。
 
-current 唯一 raw-only bootstrap 是 strict `EmptyLineage` + 显式
-`BootstrapRawSuffixTokenBudget`；它提交 Prepared v5 零 inputs，并在首个真实 set 发布后自动失效，
-不属于 legacy fallback。
+current 唯一 raw-only bootstrap 要求 provider 报告 healthy `EmptyLineage`，同时 raw ancestry
+是 `SessionCreated.origin=native` 的 fresh-genesis topology：pre-append 只有 setup updates，或其后
+恰有一个 active first observation。它提交 Prepared v5 零 inputs，不创建伪 set；Prepared 一旦
+出现便永久关闭该 raw lineage 的 bootstrap。最终 request 只受 canonical JSON UTF-8 byte guard
+约束，该 metric 不是 provider tokenizer。
 
 ## 1. 不可删除的复杂度
 

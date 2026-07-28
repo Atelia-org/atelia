@@ -248,6 +248,13 @@ public sealed class SessionContextCandidateProviderRouteTests : IDisposable {
                 .ContextCandidateUnavailable,
             error.Reason
         );
+        Assert.Contains(
+            SessionJournalEngine.CanonicalRequestBytesMetricId,
+            error.Message,
+            StringComparison.Ordinal
+        );
+        Assert.Contains("actualBytes=", error.Message);
+        Assert.Contains("maximumBytes=1", error.Message);
         Assert.Equal(head, engine.InspectExecutionBoundary().Head);
         Assert.Equal(
             eventCount,
@@ -446,6 +453,174 @@ public sealed class SessionContextCandidateProviderRouteTests : IDisposable {
             eventCount,
             engine.ReadCurrentLineageHeaders().HeadToRoot.Count
         );
+    }
+
+    [Fact]
+    public async Task CanonicalRequestByteGuard_AllowsExactBootstrapBoundary() {
+        const string observation = "exact byte boundary";
+        string path = NewJournalPath();
+        var client = new ScriptedClient();
+        client.Enqueue(Terminal("done"));
+        var source = new TestContextCandidateSource {
+            IsEmptyLineage = true
+        };
+        int exactBytes = SessionRequestCanonicalizer.Canonicalize(
+            new CompletionRequest(
+                "model-A",
+                "system-A",
+                [new ObservationMessage(observation)],
+                [],
+                MaxTokens: 256
+            )
+        ).Length;
+        SessionRuntime runtime = CreateRuntime(client, source) with {
+            MaximumCanonicalRequestBytes = exactBytes
+        };
+        using var engine = SessionJournalEngine.Create(
+            path,
+            CreateOptions(),
+            runtime
+        );
+
+        TurnResult result = await engine.SendAsync(
+            observation,
+            CancellationToken.None
+        );
+
+        Assert.Equal("done", result.Message.GetFlattenedText());
+        Assert.Equal(1, client.Calls);
+    }
+
+    [Fact]
+    public async Task PreparedHistoryWithDeletedDerivedLineage_CannotBootstrapAgain() {
+        string path = NewJournalPath();
+        var client = new ScriptedClient();
+        client.Enqueue(Terminal("first"));
+        var source = new TestContextCandidateSource();
+        using var engine = SessionJournalEngine.Create(
+            path,
+            CreateOptions(),
+            CreateRuntime(client, source)
+        );
+        source.Candidate = ContextCandidateTestFixture
+            .CreateAtCurrentHead(engine)
+            .Candidate;
+        _ = await engine.SendAsync(
+            "first observation",
+            CancellationToken.None
+        );
+        EventAddress settledHead =
+            engine.InspectExecutionBoundary().Head!.Value;
+        int eventCount =
+            engine.ReadCurrentLineageHeaders().HeadToRoot.Count;
+        source.Candidate = null;
+        source.IsEmptyLineage = true;
+
+        SessionJournalNotReadyException error =
+            await Assert.ThrowsAsync<SessionJournalNotReadyException>(
+                () => engine.SendAsync(
+                    "must not bootstrap twice",
+                    CancellationToken.None
+                )
+            );
+
+        Assert.Contains(
+            nameof(SessionEventKind.AgentActionProduced),
+            error.Message,
+            StringComparison.Ordinal
+        );
+        Assert.Equal(settledHead, engine.InspectExecutionBoundary().Head);
+        Assert.Equal(
+            eventCount,
+            engine.ReadCurrentLineageHeaders().HeadToRoot.Count
+        );
+        Assert.Equal(1, client.Calls);
+    }
+
+    [Fact]
+    public async Task PublishedButUnusedCandidateCanDisappearBeforeFreshBootstrap() {
+        string path = NewJournalPath();
+        var client = new ScriptedClient();
+        client.Enqueue(Terminal("bootstrapped"));
+        var source = new TestContextCandidateSource();
+        using var engine = SessionJournalEngine.Create(
+            path,
+            CreateOptions(),
+            CreateRuntime(client, source)
+        );
+        source.Candidate = ContextCandidateTestFixture
+            .CreateAtCurrentHead(engine)
+            .Candidate;
+        source.Candidate = null;
+        source.IsEmptyLineage = true;
+
+        TurnResult result = await engine.SendAsync(
+            "fresh after deletion",
+            CancellationToken.None
+        );
+
+        Assert.Equal(
+            "bootstrapped",
+            result.Message.GetFlattenedText()
+        );
+        Assert.Equal(1, client.Calls);
+    }
+
+    [Fact]
+    public async Task EmptyLineageToolResultContinuation_IsNotFreshBootstrap() {
+        string path = NewJournalPath();
+        var client = new ScriptedClient();
+        client.Enqueue(ToolCall("lookup", "call-1"));
+        var source = new TestContextCandidateSource();
+        var tool = new RecordingTool("lookup");
+        SessionRuntime runtime = CreateRuntime(
+            client,
+            source,
+            new ToolRegistry([tool]).CreateSession()
+        );
+        using (var engine =
+               SessionJournalEngine.CreateForTest(
+                   path,
+                   CreateOptions(),
+                   runtime,
+                   new SessionJournalTestHooks(
+                       SessionJournalFailpoint
+                           .AfterToolResultCommitted
+                   )
+               )) {
+            source.Candidate = ContextCandidateTestFixture
+                .CreateAtCurrentHead(engine)
+                .Candidate;
+            _ = await Assert.ThrowsAsync<
+                SessionJournalFailpointException
+            >(
+                () => engine.SendAsync(
+                    "use tool",
+                    CancellationToken.None
+                )
+            );
+        }
+        source.Candidate = null;
+        source.IsEmptyLineage = true;
+        using var reopened = SessionJournalEngine.Open(path, runtime);
+        EventAddress toolResultHead =
+            reopened.InspectExecutionBoundary().Head!.Value;
+
+        SessionJournalNotReadyException error =
+            await Assert.ThrowsAsync<SessionJournalNotReadyException>(
+                () => reopened.ResumeAsync(CancellationToken.None)
+            );
+
+        Assert.Contains(
+            "active first ObservationAccepted",
+            error.Message,
+            StringComparison.Ordinal
+        );
+        Assert.Equal(
+            toolResultHead,
+            reopened.InspectExecutionBoundary().Head
+        );
+        Assert.Equal(1, client.Calls);
     }
 
     [Fact]
