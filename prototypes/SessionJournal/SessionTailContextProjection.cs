@@ -25,7 +25,9 @@ internal static class SessionTailContextProjection {
                 anchor,
                 cancellationToken
             );
-        if (!IsReplaySafeRecovery(recovery)) {
+        if (!SessionOperationalSemantics.IsReplaySafePhase(
+                recovery.State.Phase
+            )) {
             throw new InvalidDataException(
                 $"Session history anchor '{anchor}' in phase "
                 + $"'{recovery.State.Phase}' is not replay-safe."
@@ -33,15 +35,6 @@ internal static class SessionTailContextProjection {
         }
         return recovery;
     }
-
-    internal static bool IsReplaySafeRecovery(
-        SessionExecutionRecovery recovery
-    ) => recovery.State.Phase is (
-        SessionExecutionPhase.Empty
-        or SessionExecutionPhase.Idle
-        or SessionExecutionPhase.AwaitingAgentAction
-        or SessionExecutionPhase.TurnFailed
-    );
 
     internal static TailFoldResult FoldSuffix(
         SessionDependencyClosedFoldSeed seed,
@@ -133,9 +126,8 @@ internal static class SessionTailContextProjection {
                 case SessionEventKind.CompletionAttemptStarted: {
                     EnsureNoOpenTool(ev, openAction);
                     _ = RequireBody<CompletionAttemptStartedBody>(ev);
-                    if (phase is not (
-                            SessionExecutionPhase.AwaitingCompletionDispatch
-                            or SessionExecutionPhase.AwaitingCompletion)
+                    if (!SessionOperationalSemantics
+                            .IsPreparedOrAttemptPhase(phase)
                         || sourcePrepared is null
                         || sourcePreparedAddress is null
                         || ev.Parent != (activeAttemptAddress
@@ -188,10 +180,8 @@ internal static class SessionTailContextProjection {
                 }
                 case SessionEventKind.ObservationAccepted:
                     EnsureNoOpenTool(ev, openAction);
-                    if (phase is not (
-                        SessionExecutionPhase.Idle
-                        or SessionExecutionPhase.TurnFailed
-                    )) {
+                    if (!SessionOperationalSemantics
+                            .IsIdleOrFailedPhase(phase)) {
                         throw new InvalidDataException(
                             $"{ev.Kind} at {ev.Address} must appear at an idle or failed suffix boundary."
                         );
@@ -206,7 +196,10 @@ internal static class SessionTailContextProjection {
                         ev.Address
                     ));
                     activeCorrelationId =
-                        $"atelia.session-journal.turn.v1:{EventAddressTextCodec.Format(ev.Address)}";
+                        SessionOperationalSemantics
+                            .BuildObservationCorrelationId(
+                                ev.Address
+                            );
                     sourcePrepared = null;
                     sourcePreparedAddress = null;
                     activeAttemptAddress = null;
@@ -364,11 +357,8 @@ internal static class SessionTailContextProjection {
                 default:
                     throw new InvalidDataException($"Unsupported suffix event kind '{ev.Kind}'.");
             }
-            if (phase is (
-                    SessionExecutionPhase.Empty
-                    or SessionExecutionPhase.Idle
-                    or SessionExecutionPhase.AwaitingAgentAction
-                    or SessionExecutionPhase.TurnFailed
+            if (SessionOperationalSemantics.IsReplaySafePhase(
+                    phase
                 )
                 && openAction is null
                 && pendingCall is null
@@ -412,11 +402,9 @@ internal static class SessionTailContextProjection {
     ) {
         EnsureNoOpenTool(ev, openAction);
         if (sourcePrepared is not null
-            || phase is not (
-                SessionExecutionPhase.Empty
-                or SessionExecutionPhase.Idle
-                or SessionExecutionPhase.TurnFailed
-            )) {
+            || phase != SessionExecutionPhase.Empty
+                && !SessionOperationalSemantics
+                    .IsIdleOrFailedPhase(phase)) {
             throw new InvalidDataException(
                 $"{ev.Kind} at {ev.Address} must appear only at a setup, idle, or failed suffix boundary."
             );

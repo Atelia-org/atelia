@@ -254,7 +254,10 @@ internal static class SessionPreparedRequestReconstructor {
             case SessionEventKind.ObservationAccepted:
                 expectedReason = "observation";
                 correlationId =
-                    $"atelia.session-journal.turn.v1:{EventAddressTextCodec.Format(finalEvent.Address)}";
+                    SessionOperationalSemantics
+                        .BuildObservationCorrelationId(
+                            finalEvent.Address
+                        );
                 break;
             case SessionEventKind.ToolResultObserved:
                 expectedReason = "tool-continuation";

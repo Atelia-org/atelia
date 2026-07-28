@@ -70,7 +70,10 @@ internal sealed record SessionDependencyClosedFoldSeed {
                 "A dependency-closed fold seed cannot retain pending operational state."
             );
         }
-        if (!IsLegalPhaseAndHeadKind(state.Phase, headKind)) {
+        if (!SessionOperationalSemantics.IsReplaySafePhase(
+                state.Phase
+            )
+            || !IsLegalPhaseAndHeadKind(state.Phase, headKind)) {
             throw new InvalidDataException(
                 $"Execution phase '{state.Phase}' and head kind '{headKind}' "
                 + "do not form a dependency-closed fold boundary."

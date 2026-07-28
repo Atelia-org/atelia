@@ -273,8 +273,9 @@ public sealed class SessionJournalEngine : IDisposable {
         for (int index = headers.Count - 1; index >= 0; index--) {
             cancellationToken.ThrowIfCancellationRequested();
             SessionCurrentLineageHeader header = headers[index];
-            if (header.Kind is SessionEventKind.RuntimeConfigSetup
-                or SessionEventKind.SystemPromptSetup) {
+            if (SessionOperationalSemantics.IsSetupKind(
+                    header.Kind
+                )) {
                 using SessionJournalEventFrame frame =
                     _reader.ReadEvent(header.Address).Unwrap();
                 ValidateSessionHeaderPreview(
@@ -575,8 +576,7 @@ public sealed class SessionJournalEngine : IDisposable {
                 frame.Payload,
                 out int bodySchemaVersion
             );
-            if (kind is SessionEventKind.RuntimeConfigSetup
-                or SessionEventKind.SystemPromptSetup) {
+            if (SessionOperationalSemantics.IsSetupKind(kind)) {
                 suffixSetupReferences.Add(
                     address,
                     new SessionContextSetupReference(
@@ -777,10 +777,9 @@ public sealed class SessionJournalEngine : IDisposable {
         SessionExecutionRecovery recovery = ResolveExecutionTail(
             cancellationToken
         );
-        if (recovery.State.Phase is not (
-            SessionExecutionPhase.Idle
-            or SessionExecutionPhase.TurnFailed
-        )) {
+        if (!SessionOperationalSemantics.IsIdleOrFailedPhase(
+                recovery.State.Phase
+            )) {
             throw new InvalidOperationException(
                 $"SendAsync requires an idle or explicitly failed turn boundary. Current phase is '{recovery.State.Phase}'; call ResumeAsync first."
             );
@@ -874,10 +873,9 @@ public sealed class SessionJournalEngine : IDisposable {
         ArgumentNullException.ThrowIfNull(configuration);
         ValidateRuntimeConfiguration(configuration);
         SessionExecutionRecovery recovery = ResolveExecutionTail();
-        if (recovery.State.Phase is not (
-            SessionExecutionPhase.Idle
-            or SessionExecutionPhase.TurnFailed
-        )) {
+        if (!SessionOperationalSemantics.IsIdleOrFailedPhase(
+                recovery.State.Phase
+            )) {
             throw new InvalidOperationException(
                 $"AppendRuntimeConfigSetup requires an idle or explicitly failed turn boundary. Current phase is '{recovery.State.Phase}'."
             );
@@ -894,10 +892,9 @@ public sealed class SessionJournalEngine : IDisposable {
     public EventAddress AppendSystemPromptSetup(string systemPrompt) {
         if (systemPrompt is null) { throw new ArgumentNullException(nameof(systemPrompt)); }
         SessionExecutionRecovery recovery = ResolveExecutionTail();
-        if (recovery.State.Phase is not (
-            SessionExecutionPhase.Idle
-            or SessionExecutionPhase.TurnFailed
-        )) {
+        if (!SessionOperationalSemantics.IsIdleOrFailedPhase(
+                recovery.State.Phase
+            )) {
             throw new InvalidOperationException(
                 $"AppendSystemPromptSetup requires an idle or explicitly failed turn boundary. Current phase is '{recovery.State.Phase}'."
             );
@@ -1527,9 +1524,9 @@ public sealed class SessionJournalEngine : IDisposable {
         CompletionStreamObserver? observer,
         CancellationToken cancellationToken
     ) {
-        if (recovery.State.Phase is not (
-                SessionExecutionPhase.AwaitingCompletionDispatch
-                or SessionExecutionPhase.AwaitingCompletion)
+        if (!SessionOperationalSemantics.IsPreparedOrAttemptPhase(
+                recovery.State.Phase
+            )
             || recovery.Boundary.SourcePrepared is not {
             } sourcePreparedAddress
             || recovery.State.PendingRequestPreparedAddress !=
@@ -2933,9 +2930,6 @@ public sealed class SessionJournalEngine : IDisposable {
 
     private static IReadOnlyList<string>? FreezeErrors(IReadOnlyList<string>? errors)
         => errors is null ? null : Array.AsReadOnly(errors.ToArray());
-
-    private static string BuildCorrelationId(EventAddress observationAddress)
-        => $"atelia.session-journal.turn.v1:{EventAddressTextCodec.Format(observationAddress)}";
 
     private static string BuildOperationId(EventAddress? head, RawToolCall call) {
         ArgumentNullException.ThrowIfNull(call);

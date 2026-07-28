@@ -85,7 +85,11 @@ internal static class SessionReducer {
                     pendingRequestPreparedAddress = null;
                     pendingRequestManifest = null;
                     activeCompletionAttemptAddress = null;
-                    activeCorrelationId = BuildCorrelationId(ev.Address);
+                    activeCorrelationId =
+                        SessionOperationalSemantics
+                            .BuildObservationCorrelationId(
+                                ev.Address
+                            );
                     break;
                 }
                 case SessionEventKind.CompletionRequestPrepared: {
@@ -557,6 +561,4 @@ internal static class SessionReducer {
     private static T RequireBody<T>(DecodedSessionEvent ev) where T : class
         => ev.Body as T ?? throw new InvalidDataException($"Event kind '{ev.Kind}' body is not '{typeof(T).Name}'.");
 
-    private static string BuildCorrelationId(EventAddress observationAddress)
-        => $"atelia.session-journal.turn.v1:{EventAddressTextCodec.Format(observationAddress)}";
 }

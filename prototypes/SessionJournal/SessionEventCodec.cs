@@ -48,11 +48,9 @@ internal static class SessionEventCodec {
         if (!root.TryGetProperty("body", out JsonElement body)) {
             throw new InvalidDataException("Session event envelope is missing required property 'body'.");
         }
-        if (kind is SessionEventKind.AgentActionProduced
-            or SessionEventKind.ImportedAgentAction
-            or SessionEventKind.ToolExecutionStarted
-            or SessionEventKind.ToolResultObserved
-            or SessionEventKind.CompletionRequestPrepared
+        if (SessionOperationalSemantics.IsActionKind(kind)
+            || SessionOperationalSemantics.IsToolSegmentKind(kind)
+            || kind is SessionEventKind.CompletionRequestPrepared
             or SessionEventKind.CompletionAttemptFailed
             or SessionEventKind.CompletionAttemptStarted) {
             RequireExactProperties(root, $"{kind} envelope", "v", "body");

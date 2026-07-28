@@ -63,7 +63,7 @@ internal static class SessionExecutionTailResolver {
             EventFrameHeader header = ReadHeader(head);
             var kind = (SessionEventKind)header.OpaqueEventKind;
             return kind switch {
-                SessionEventKind.RuntimeConfigSetup or SessionEventKind.SystemPromptSetup =>
+                _ when SessionOperationalSemantics.IsSetupKind(kind) =>
                     ResolveSetupRun(head, kind),
                 SessionEventKind.SessionCreated => ResolveCreated(head),
                 SessionEventKind.ObservationAccepted => ResolveObservation(head),
@@ -71,11 +71,11 @@ internal static class SessionExecutionTailResolver {
                     or SessionEventKind.CompletionAttemptStarted =>
                     ResolvePrepared(head, kind),
                 SessionEventKind.CompletionAttemptFailed => ResolveFailure(head),
-                SessionEventKind.AgentActionProduced
-                    or SessionEventKind.ImportedAgentAction =>
+                _ when SessionOperationalSemantics.IsActionKind(kind) =>
                     ResolveAction(head, kind, validateSource: true),
-                SessionEventKind.ToolExecutionStarted
-                    or SessionEventKind.ToolResultObserved =>
+                _ when SessionOperationalSemantics.IsToolSegmentKind(
+                    kind
+                ) =>
                     ResolveToolSegment(head, validateActionSource: true),
                 _ => throw new InvalidDataException(
                     $"Unsupported SessionJournal execution head kind '{kind}' at {head}."
@@ -93,10 +93,7 @@ internal static class SessionExecutionTailResolver {
             while (cursor is { } address) {
                 EventFrameHeader header = ReadHeader(address);
                 var kind = (SessionEventKind)header.OpaqueEventKind;
-                if (kind is not (
-                    SessionEventKind.RuntimeConfigSetup
-                    or SessionEventKind.SystemPromptSetup
-                )) {
+                if (!SessionOperationalSemantics.IsSetupKind(kind)) {
                     break;
                 }
                 DecodedSessionEvent setup = ReadDecoded(address, kind);
@@ -129,10 +126,9 @@ internal static class SessionExecutionTailResolver {
             }
 
             SessionExecutionRecovery predecessor = ResolveHead(cursor.Value);
-            if (predecessor.State.Phase is not (
-                SessionExecutionPhase.Idle
-                or SessionExecutionPhase.TurnFailed
-            )) {
+            if (!SessionOperationalSemantics.IsIdleOrFailedPhase(
+                    predecessor.State.Phase
+                )) {
                 throw new InvalidDataException(
                     $"Setup run ending at {head} must descend from an idle or failed terminal boundary."
                 );
@@ -198,15 +194,16 @@ internal static class SessionExecutionTailResolver {
                     $"ObservationAccepted at {head} requires an idle predecessor."
                 );
             SessionExecutionRecovery idle = ResolveHead(parent);
-            if (idle.State.Phase is not (
-                SessionExecutionPhase.Idle
-                or SessionExecutionPhase.TurnFailed
-            )) {
+            if (!SessionOperationalSemantics.IsIdleOrFailedPhase(
+                    idle.State.Phase
+                )) {
                 throw new InvalidDataException(
                     $"ObservationAccepted at {head} must directly descend from an idle or failed boundary."
                 );
             }
-            string correlationId = BuildCorrelationId(head);
+            string correlationId =
+                SessionOperationalSemantics
+                    .BuildObservationCorrelationId(head);
             return Recovery(
                 head,
                 new SessionExecutionState(
@@ -357,8 +354,9 @@ internal static class SessionExecutionTailResolver {
             DecodedSessionEvent actionEvent;
             while (true) {
                 DecodedSessionEvent current = ReadDecoded(cursor);
-                if (current.Kind is SessionEventKind.ToolExecutionStarted
-                    or SessionEventKind.ToolResultObserved) {
+                if (SessionOperationalSemantics.IsToolSegmentKind(
+                        current.Kind
+                    )) {
                     reverse.Add(current);
                     cursor = current.Parent
                         ?? throw new InvalidDataException(
@@ -366,8 +364,9 @@ internal static class SessionExecutionTailResolver {
                         );
                     continue;
                 }
-                if (current.Kind is SessionEventKind.AgentActionProduced
-                    or SessionEventKind.ImportedAgentAction) {
+                if (SessionOperationalSemantics.IsActionKind(
+                        current.Kind
+                    )) {
                     actionEvent = current;
                     break;
                 }
@@ -591,7 +590,10 @@ internal static class SessionExecutionTailResolver {
                     _ = RequireBody<ObservationAcceptedBody>(observation);
                     if (!string.Equals(
                             chain.SourceManifest.Origin.CorrelationId,
-                            BuildCorrelationId(sourceAddress),
+                            SessionOperationalSemantics
+                                .BuildObservationCorrelationId(
+                                    sourceAddress
+                                ),
                             StringComparison.Ordinal
                         )) {
                         throw new InvalidDataException(
@@ -690,7 +692,10 @@ internal static class SessionExecutionTailResolver {
                     _ = RequireBody<ObservationAcceptedBody>(observation);
                     if (!string.Equals(
                             action.CorrelationId,
-                            BuildCorrelationId(parent),
+                            SessionOperationalSemantics
+                                .BuildObservationCorrelationId(
+                                    parent
+                                ),
                             StringComparison.Ordinal
                         )) {
                         throw new InvalidDataException(
@@ -862,9 +867,6 @@ internal static class SessionExecutionTailResolver {
                 ?? throw new InvalidDataException(
                     $"Event kind '{ev.Kind}' at {ev.Address} body is not '{typeof(T).Name}'."
                 );
-
-        private static string BuildCorrelationId(EventAddress observationAddress)
-            => $"atelia.session-journal.turn.v1:{EventAddressTextCodec.Format(observationAddress)}";
 
         private static EventAddress? TryObservationSource(
             CompletionRequestPreparedBody manifest,
