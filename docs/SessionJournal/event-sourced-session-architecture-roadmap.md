@@ -1,17 +1,27 @@
 # SessionJournal 事件源会话与长期上下文架构路线图
 
-> **状态**：Architecture Roadmap / current baseline CS-3D7 + DM-0～DM-8
-> **日期**：2026-07-28
+> **状态**：Architecture Roadmap / current baseline CS-3D7 + DM-0～DM-8 / active target P1～P6
+> **日期**：2026-07-29
 > **底层依赖**：[EventJournal 功能需求与粗粒度设计基线](../EventJournal/event-journal-requirements-and-design.md)
 > **相关既有研究**：[Dynamic Logical Context Store for Long-Running Role-Play Agents](../Galatea/backlog/idea/dynamic-logical-context-store-for-long-running-role-play-agents.md)
 > **后续实施计划**：
-> [DerivedMemory 可替换子系统与 Shared Epoch 实施方案](derived-memory-subsystem-implementation-plan.md)
+> [SessionJournal 恢复与 DerivedMemory 化简](session-journal-recovery-and-derived-memory-simplification-plan.md)
+>
+> **已完成实施记录**：
+> [DerivedMemory 可替换子系统与 Shared Epoch 实施方案](done/derived-memory-subsystem-implementation-plan.md)
 
 > **DM-8 supersession（2026-07-28）**：本文后续章节中仍出现的 Prepared v3、raw
 > derived-set activation、manual checkpoint 与 concrete store in core 均是路线演进记录，不是
 > current contract。当前以 Prepared v5 + bounded two-phase store-neutral candidate +
 > derived-only ArtifactSet 为唯一实现路径；raw audit 和 Prepared exact reopen 不打开
 > DerivedMemory。unprepared online planning 由 host 注入 lifecycle/provider。
+>
+> **P0 active-target supersession（2026-07-29）**：DM-8 的 `Latest` / `NthPrevious` /
+> `Budgeted`、runtime-local selection 与 full reducer residency 仍是 current implementation fact，
+> 不是长期保留承诺。active target 是 existing active branch + lifetime-bound `RefId`、
+> `RuntimeConfigSetup` durable exact ordinal、无自动 candidate fallback、保留 shared epoch
+> backpressure，以及把 full replay/audit 迁出 online core。P1～P6 的 cutover 与验收以
+> [化简计划](session-journal-recovery-and-derived-memory-simplification-plan.md)为准。
 
 ## 1. 文档定位
 
@@ -122,9 +132,9 @@ flowchart TD
     A[Raw Event Journal] --> B[Derived Artifact Journal]
     A --> C[Retrieval Read Models]
     B --> C
-    A --> D[Context Planner]
+    A --> D[Context Selection / Request Materialization]
     B --> D
-    C --> D
+    C -. future retrieval policy .-> D
     D --> E[Recoverable Execution State Machine]
     E --> A
 ```
@@ -136,11 +146,13 @@ flowchart TD
 | Raw Event Journal | 不可变 session events | 保存发生过什么、维持版本树与回放顺序 |
 | Derived Artifact Journal | config snapshots、coverage epochs、artifacts、ArtifactSets | 保存系统如何分块、解释和压缩历史 |
 | Retrieval Read Models | 可重建索引 | 按语义、实体、时间、关键词发现候选材料 |
-| Context Planner | 持久化 ContextPlan | 在 token/cost/latency 预算内选择 exact context |
+| Context Selection / Request Materialization | Prepared 中的 exact request materialization | 近期按 durable exact ordinal 选择 coherent set、拼接 dependency-closed raw suffix，并执行 final hard guard |
 | Execution State Machine | 逐步执行事件 | 驱动 completion/tool-loop，并从任意持久边界恢复 |
 
 DerivedMemory repository 可以物理附着在 SessionJournal repo 下，也可以使用独立 store，但不能把
 derived plans/artifacts/sets 写入 raw Parent sequence；逻辑上的权威边界不能因为物理共置而消失。
+retrieval/model-assisted selection 仍是 future capability；接入时必须先定义 durable Agent policy 与
+Prepared audit contract，不能借宽泛的 planner 名称把 automatic budget fallback 预设为目标。
 
 ### 4.1 Ownership 与依赖方向
 
@@ -328,7 +340,8 @@ ArtifactSet 已作为 derived subsystem 内的 immutable record：
   members 必须共享 exact `epochId` 与 raw range；
 - 记录 common anchor、source raw provenance、coverage setup refs、set policy/producer fingerprint；
 - 维护自身 previous-set lineage 与可重建 latest/default indexes；
-- 只有 derived publication 成功后，Context Planner 才把整组作为候选。
+- 只有 derived publication 成功后，Context Selection / Request Materialization 才能把整组用于
+  exact ordinal request。
 
 若其中一个 maintainer 失败，旧 active set 保持可用；已成功写出的单个 artifact 可以留作诊断或未来复用，但不自动进入当前 coherent set。
 
@@ -381,67 +394,64 @@ selected ArtifactSet
 `RewriteMemoryBlockMaintainer` 已作为首批 artifact producer 使用：输入旧 artifact + raw range，输出
 完整新 artifact。CS-5-lite 与后续 current trunk 已验证 recap 可以 materialize 为
 `ContextHeader` 形态的 observation/action header，并以真实 anchor 之后的 raw suffix 保留近期细节。
-朴素 raw suffix/full replay 只用于 offline bootstrap、maintainer 输入与显式审计；current online
-没有 coherent candidate 时保持 not-ready，不允许静默 fallback。后续工作是在保持这一
-raw/artifact 语义的前提下，把 persistence、shared epoch、set publication 和 selection 移到正确的
-DerivedMemory ownership，而不是把能力回迁到 ChatSession。
+full replay 只用于显式 offline audit；maintainer 输入使用 addressed bounded planning window。
+current online 没有 coherent candidate 时保持 not-ready，不允许静默 full-raw fallback。DM-8
+current 有 bounded empty-lineage bootstrap；P4 active target 还要把它收紧为受 raw
+fresh-genesis topology 约束的 strict bootstrap，而不是 normal fallback。后续工作是在保持这一
+raw/artifact 语义的前提下，按
+[P1～P6 active plan](session-journal-recovery-and-derived-memory-simplification-plan.md)
+化简 branch、selection、audit 与 orchestration 边界，而不是把能力回迁到 ChatSession。
 
-## 7. Context Planner（Target Architecture）
+## 7. Context Selection（Current DM-8 与 P3/P4 active target）
 
 ### 7.1 Current 边界：coherent-only，不是通用预算规划器
 
 current online request path 只接受 host 注入的 coherent candidate source；core 通过 bounded
-two-phase discovery/materialization 比较 `Latest`、`NthPrevious` 或 `Budgeted` candidates，并把
-选中 candidate 与 dependency-closed raw suffix 物化为 request。真实空 lineage 只有在显式 bootstrap
-budget 内才可使用零 inputs；不会静默退回无界 full raw。retrieval 与多 coherence-group 组合仍未实现。
+two-phase discovery/materialization 按 `Latest`、`NthPrevious` 或 `Budgeted` 处理 candidates，并把
+选中 candidate 与 dependency-closed raw suffix 物化为 request。三个 budget 字段都是 current
+request-policy knobs，而不是 `Budgeted` mode 私有配置：
+
+- `RawSuffixTokenBudget` 会过滤 `Latest`、`NthPrevious` 与 `Budgeted` 的 candidate；
+- `TotalContextTokenBudget` 会在 materialization 后 guard 三种 mode 的 request；
+- `BootstrapRawSuffixTokenBudget` 专门启用并限制 empty-lineage zero-input bootstrap，bootstrap
+  同时仍受适用的 raw/total budget 约束。
+
+`Latest` / `NthPrevious` 只尝试其指定 candidate，超限即 not-ready；只有 `Budgeted` 会在多个
+candidate 中继续自动 fallback，并且要求至少配置 raw 或 total budget。current 不会静默退回无界
+full raw，retrieval 与多 coherence-group 组合仍未实现。
 
 current 内部 `SessionContextPlan` 描述 Prepared v5 的单一 coherent recipe：raw start、raw range
 hash、exact context snapshots 与 paired setup refs，不含 raw `ActiveArtifactSet` reference。
 Prepared 是 execution fact；candidate selection policy 仍是 host/runtime contract，不是 raw planner
 公共 contract。
 
-### 7.2 Target：在预算内选择上下文
+### 7.2 Active target：Agent-controlled exact ordinal
 
-真正要优化的不是“最近保留多少条”，而是：在固定预算下，哪组 artifact anchor、raw suffix 和召回
-材料最能支持下一次行动。tail-only projection 的边界优先来自 recap / artifact anchor，而不是临时
-固定的 turn 截断。对长寿命 autonomous / role-play Agent，长期连续性主要由 rolling summary、自传、
-world understanding 等 derived context 承担；raw suffix 只保留 anchor 之后仍需逐事件呈现的近期
-细节。
+P3/P4 active target 不再建设 automatic budget candidate planner。Agent 通过 governing
+`RuntimeConfigSetup` 持久化 `nthPrevious`：`0` 选择 selected branch 当前 published coherent set
+lineage 的最新 set，`n` 选择沿 `PreviousSetId` 向前的精确第 n 个 set。tail-only projection 的边界
+仍来自该 set 的 raw anchor；更旧 set 自然产生更长 recent raw suffix。
 
-target planner 可以比较：
+selection 必须满足：
 
-1. 最新 coherent artifact set + 最短 raw suffix。
-2. 更早 artifact set + 更长 raw suffix。
-3. coherent artifact set + 当前任务相关的 recalled artifacts / raw ranges。
-4. 无可用 derived candidate 时的明确 not-ready 或显式 offline/bootstrap 路径。
+- ordinal 是唯一 Agent-controlled durable source；host/runtime 不再注入第二份选择；
+- exact nth link 缺失、损坏、越界或 raw anchor 无法验证时显式 not-ready，不跳过、不重编号；
+- provider 保留 descriptor/materialization 两阶段，但只服务 bounded IO 与 raw authority proof，
+  不返回一组 candidates 供 core 自动试选；
+- strict bootstrap 只识别 first-online-request 的 fresh-genesis topology，不证明“从未发布 set”：
+  provider 必须报告 healthy empty lineage，raw ancestry 必须无 Prepared；raw tail 可以处于
+  `SessionCreated` 后只有 governing setup 更新的 pre-append boundary，也可以在该 fresh predecessor
+  后恰有一个 active first `ObservationAccepted` 的 exact/recovery boundary。后者覆盖 `Send` append
+  observation 后、Prepared 前的第二阶段与 crash/reopen；该 observation 后不得再有
+  history/execution-bearing fact，也不允许把任意历史 observation 当成 fresh；
+- fresh genesis 上未被 Prepared 使用的 derived set 即使曾发布后又删空，仍允许 bootstrap，不影响
+  raw correctness；imported/legacy non-genesis history 不允许 bootstrap，但 offline maintainers /
+  rebuild 可以在首个 Prepared 前发布 set，online 再按 exact ordinal 使用；
+- selected exact request 超过 hard guard 时 fail-fast，不自动换另一个 set；
+- Prepared v5 固定实际 request；之后 setup、latest pointer 或 DerivedMemory 变化都不触发重选。
 
-比较维度包括信息完整性、token、费用、延迟和 staleness。online 是否允许某种降级由届时明确的
-readiness policy 决定，不能把 current coherent-only 规则悄悄改成 full-raw fallback。
-
-下面的 record 只是用于讨论 target 信息形状的概念草图，不是 current API，也不冻结字段：
-
-```csharp
-public sealed record ContextPlan(
-    EventAddress RawHead,
-    EventAddress? RawStartExclusive,
-    EventAddress RawEndInclusive,
-    ContextHeaderSnapshot DerivedContext,
-    IReadOnlyList<EventAddress> RecalledRawItems,
-    string RenderingProfileId,
-    string ModelProfileId,
-    string PlannerFingerprint,
-    ulong EstimatedTokens,
-    ContextBudgetBreakdown Budget,
-    string SelectionReason
-);
-```
-
-无论最终类型如何，selection audit 至少要说明：
-
-- planner 基于哪个 raw head 作出决定。
-- 哪些 materialized derived contributions 与 raw range 实际进入 request。
-- 哪些动态召回项实际进入 request。
-- 使用哪版 planner、rendering、model、token、retriever 与 ranker policy。
+若未来引入 retrieval、多 selection domain 或模型辅助选择，必须另立 durable Agent policy 与
+Prepared audit contract；它们不是本轮保留 current `Budgeted` mode 的理由。
 
 ### 7.3 Historical：Prepared v3 基线与 self-contained Prepared v4 目标
 
@@ -452,7 +462,8 @@ artifact ids，并保存 raw `ActiveArtifactSet` reference；reconstructor 仍�
 coherence。这是当时的 interim wire，不是 current 依赖方向。
 
 DM-2 当时的 target 是 self-contained Prepared v4；DM-8 后 current wire 已进一步升级为
-Prepared v5，以 strict zero-input bootstrap 表达真实空 lineage：
+Prepared v5，并能 self-contain zero-input bootstrap request。该 wire 表达能力与 §7.2 的
+fresh-genesis topology eligibility 是两个独立问题：
 
 - 固定可逐字节重建 canonical `CompletionRequest` 的 exact context / manifest。
 - 保存必要的 raw range、setup、tool schema/config provenance 与 hash。
@@ -470,16 +481,14 @@ canonical request manifest 是崩溃恢复和重发的 Canonical Source。Contex
 解释“为何选择这些材料”；需要关联具体 derived candidate 时，由可重建的 derived usage index 以
 `preparedAddress -> derivedSetId/epochId` 单向引用 raw Prepared。
 
-### 7.4 Target Token Budget
+### 7.4 Scheduling threshold 与 request hard guard
 
-未来 planner 至少区分：
+P4 明确区分两条职责：
 
-- fixed system / identity budget。
-- artifact budget。
-- recent raw suffix budget。
-- dynamic recall budget。
-- tool schema budget。
-- expected completion output reserve。
+- DerivedMemory epoch planner 的 thresholds 决定何时维护 shared epoch，并在维护落后时提供 explicit
+  backpressure；
+- online request hard guard 只检查 Agent 已选择的 exact ordinal request 是否可物理提交，超限即
+  fail-fast，不参与 candidate selection。
 
 Historical CS-5-lite 曾由
 `SessionJournal.Cli run-memory-maintainer --threshold-tokens` 在 runner 内执行 synthetic split；该
@@ -494,6 +503,13 @@ exact epoch，不拥有 split policy。current DerivedMemory epoch planner 统�
 同一 coherence group 的 maintainers 消费同一 epoch plan。针对某个 role 做 prompt tuning 时，只替换
 该 epoch 的 producer candidate，不重新切分 history。
 
+current `RawSuffixTokenBudget`、`TotalContextTokenBudget` 与
+`BootstrapRawSuffixTokenBudget` 是 request-policy/budget knobs：前两者也过滤或 guard
+`Latest` / `NthPrevious`，而 `Budgeted` 使用其中至少一个预算在多个 candidates 间自动 fallback；
+第三个只启用/限制 bootstrap。active target 将三者连同 automatic fallback 删除，改成 exact ordinal
+之后的一次 final request guard。该 guard 使用 deterministic estimate 时必须如实命名；current
+canonical JSON byte length 粗略换算不等于真实 model tokenizer 或 provider context window。
+
 ### 7.5 选择结果也是事实
 
 Retrieval index 可以重建，查询结果却可能随模型、索引版本或时间变化。未来凡实际进入 completion
@@ -507,15 +523,18 @@ ContextPlan/selection record 留下解释。这样既不把可删索引升级为
 
 current raw protocol 已包含：
 
-- `CompletionRequestPrepared` v3：保存 durable request origin 与可重建的 canonical request。
+- `CompletionRequestPrepared` v5：保存 durable request origin、exact context/setup/tool facts 与
+  可逐字节重建的 canonical request commitment。
 - `CompletionAttemptStarted`：严格空 body，event address 是物理 provider attempt identity。
 - `CompletionAttemptFailed`：记录 provider 明确 non-success 或 host-known rejection。
 - `AgentActionProduced` / `ImportedAgentAction`：区分 live completion 与 legacy/manual import。
 - `ToolExecutionStarted` / `ToolResultObserved`：在外部工具调用前固定 intent，调用后记录观察结果。
 
-在线恢复走 `SessionExecutionTailResolver` 的 tail-only 路径，不默认 full replay；完整
-`SessionReducer` 继续作为 reference oracle，并以 differential tests 校验 tail resolver 的语义。current
-状态流可概括为：
+在线恢复走 `SessionExecutionTailResolver` 的 tail-only 路径，不默认 full replay。current
+`SessionReducer` / `Project()` / `ReplayHistory()` 仍提供显式 full audit 与 differential tests，
+但 P5 active target 会把有价值的 full audit/import/recovery checks 迁入 offline/recovery companion，
+并从 online core public/runtime surface 删除 full projection。它从来不是 tail recovery 的运行时
+fallback。current 状态流可概括为：
 
 ```mermaid
 stateDiagram-v2
@@ -751,7 +770,7 @@ messages = recap + recent suffix
 ```text
 raw SessionJournal events 保持不变
 DerivedMemory producer 生成带 provenance 的 recap/artifacts
-Context Planner 选择 materialized artifacts + dependency-closed raw suffix
+Context Selection / Request Materialization 按 exact ordinal 拼接 artifacts + dependency-closed raw suffix
 ```
 
 因此新系统中的“compaction”只能是可删除、可重建的 derived projection/maintenance，不是 raw
@@ -799,7 +818,7 @@ SessionJournal 项目族中建立能力，而不是改造旧 ChatSession。
 ### 12.2 已完成主路线：DM-0～DM-8
 
 当前实施权威是
-[DerivedMemory 可替换子系统与 Shared Epoch 实施方案](derived-memory-subsystem-implementation-plan.md)。
+[DerivedMemory 可替换子系统与 Shared Epoch 实施方案](done/derived-memory-subsystem-implementation-plan.md)。
 已按其中的依赖顺序逐片实施、审阅和提交；本文只保留路线级摘要，避免复制 exact contract 或
 migration 细节。
 
@@ -808,7 +827,8 @@ migration 细节。
 2. **DM-1 — Neutral request materialization（已完成）**：让 raw core 从中立 candidate/materialized input
    构造 request，不再认识 concrete recap store shape。
 3. **DM-2 — Self-contained Prepared（已完成）**：把 exact canonical context 与 raw-start setup
-   provenance 固定在 Prepared 中；DM-8 current wire 为 v5，并支持 strict zero-input bootstrap。
+   provenance 固定在 Prepared 中；DM-8 current wire 为 v5，并能 self-contain zero-input
+   bootstrap request。
 4. **DM-3 — 独立 DerivedMemory assembly 与 provider cutover（已完成）**：建立单向依赖 SessionJournal
    contracts 的 concrete derived store/provider，并由 CLI/Host composition root 注入。
 5. **DM-4 — 删除 raw activation（已完成）**：移除 raw derived-set activation 及其
@@ -820,7 +840,8 @@ migration 细节。
 8. **DM-7 — Orchestration 与 publication（已完成）**：协调多个 producer、partial settlement 和原子
    ArtifactSet publication；只有完整 coherent set 才成为候选。
 9. **DM-8 — Online lifecycle 与 selection（已完成）**：由 Host 组合 planning、maintenance 与
-   provider；支持 latest/Nth/budgeted、strict bootstrap、restart resume 与 explicit backpressure。
+   provider；支持 latest/Nth/budgeted、bounded empty-lineage bootstrap、restart resume 与 explicit
+   backpressure。§7.2 更严格的 fresh-genesis topology eligibility 属于 P4 active target。
 
 这条路线的关键不是把文件机械搬到新项目，而是先解除 raw materialization 和 Prepared 对 concrete
 derived shape 的依赖，再建立独立 DerivedMemory，最后删除 raw activation。不得为了缩短过渡期让
@@ -835,9 +856,10 @@ DM-0～DM-8 建立正确的 authority、ownership 与 online composition 后，�
   去重假设下可恢复的 tool loop，以及 reserved sequence/operation identity、Started/Result 和 tail
   recovery；后续不是从零重建，而是扩展 capability declaration、provider/result lookup、reconcile
   policy，以及非幂等且不可查询工具的 paused/uncertain 人工处置。
-- **Budgeted Context Planner。** 在 Prepared exact-reopen contract 之上，对 coherent set、raw
-  dependency-closed suffix 和 retrieval candidates 做分项预算、质量/成本比较与可解释选择；planning
-  只能发生在尚未 Prepared 的阶段。
+- **Branch-aware durable ordinal selection。** 按 P1～P4 让 Engine lifetime 绑定 selected active
+  branch 的稳定 `RefId`，DerivedMemory 使用同一 lineage identity，Agent 通过
+  `RuntimeConfigSetup.nthPrevious` 选择 exact set；删除 automatic candidate fallback，同时保留
+  planner backpressure 与 final request hard guard。
 - **Retrieval read models。** 先落一个可从 raw/derived provenance 重建的真实 backend，再评估
   full-text、entity/open-thread、vector 与 graph 的组合。索引失效不得破坏基本 session recovery。
 - **Branch UX 与 derived reuse。** 明确 rewind/fork 的用户模型、branch-aware candidate selection、
@@ -894,11 +916,13 @@ DM-0～DM-8 建立正确的 authority、ownership 与 online composition 后，�
 3. 非幂等、不可查询工具的最终 uncertain/paused 操作协议与人工介入 UX。
 4. 第一个 retrieval backend，以及 provenance、降级、rebuild 和 quality/cost evaluation 的共同
    验收形状。
-5. branch UX、跨 branch derived reuse、多 Parent merge，以及 branch-aware budgeted selection。
+5. branch UX、跨 branch derived reuse、多 Parent merge，以及超出单 active domain 的
+   branch-aware durable selection policy。
 
 ## 15. 架构成功标准
 
-当路线完成到 Context Planner 与可恢复 tool-loop 时，系统应具备以下性质：
+当路线完成到 Context Selection / Request Materialization 与可恢复 tool-loop 时，系统应具备以下
+性质：
 
 - 任意 compaction 或 maintainer 都不会抹去原始经历。
 - 任意 artifact 都能追溯到 raw source 和 producer。
