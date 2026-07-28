@@ -33,17 +33,14 @@ public sealed class DerivedMemoryOrchestratorTests : IDisposable {
             ),
             CancellationToken.None
         );
-        SessionContextCandidateDiscovery discovery =
-            await coordinator.DiscoverAsync(
-                new(
-                    fixture.RawHead,
-                    SessionContextSelectionMode.Latest,
-                    fixture.Policy.CoherenceGroup
-                ),
+        SessionContextCandidateSelection selection =
+            await coordinator.SelectAsync(
+                new(fixture.RawHead, 0),
                 CancellationToken.None
             );
+        Assert.NotNull(selection.Candidate);
         SessionContextCandidateDescriptor descriptor =
-            Assert.Single(discovery.Candidates);
+            selection.Candidate;
         File.Delete(Path.Combine(
             fixture.Repository.ArtifactSets.SetsDirectory,
             $"{descriptor.Handle}.json"
@@ -186,38 +183,19 @@ public sealed class DerivedMemoryOrchestratorTests : IDisposable {
             secondEpoch.PreviousEpochId
         );
         Assert.Equal(secondEpoch.EpochId, secondSet.EpochId);
-        SessionContextCandidateDiscovery latest =
-            await secondCoordinator.DiscoverAsync(
-                new(
-                    advanced,
-                    SessionContextSelectionMode.Latest,
-                    fixture.Policy.CoherenceGroup
-                ),
+        SessionContextCandidateSelection latest =
+            await secondCoordinator.SelectAsync(
+                new(advanced, 0),
                 CancellationToken.None
             );
-        Assert.Single(latest.Candidates);
-        SessionContextCandidateDiscovery nth =
-            await secondCoordinator.DiscoverAsync(
-                new(
-                    advanced,
-                    SessionContextSelectionMode.NthPrevious,
-                    fixture.Policy.CoherenceGroup,
-                    NthPreviousOrdinal: 1
-                ),
+        Assert.NotNull(latest.Candidate);
+        SessionContextCandidateSelection nth =
+            await secondCoordinator.SelectAsync(
+                new(advanced, 1),
                 CancellationToken.None
             );
-        Assert.Equal(2, nth.Candidates.Count);
-        SessionContextCandidateDiscovery budgeted =
-            await secondCoordinator.DiscoverAsync(
-                new(
-                    advanced,
-                    SessionContextSelectionMode.Budgeted,
-                    fixture.Policy.CoherenceGroup,
-                    RawSuffixTokenBudget: 10_000
-                ),
-                CancellationToken.None
-            );
-        Assert.Equal(2, budgeted.Candidates.Count);
+        Assert.NotNull(nth.Candidate);
+        Assert.NotEqual(latest.Candidate.Handle, nth.Candidate.Handle);
     }
 
     [Fact]
@@ -315,22 +293,20 @@ public sealed class DerivedMemoryOrchestratorTests : IDisposable {
                     fixture.Engine.BranchRefId
                 ))!.SetId
         );
-        SessionContextCandidateDiscovery discovery =
-            await second.DiscoverAsync(
-                new(
-                    advanced,
-                    SessionContextSelectionMode.Latest,
-                    fixture.Policy.CoherenceGroup
-                ),
+        SessionContextCandidateSelection selection =
+            await second.SelectAsync(
+                new(advanced, 0),
                 CancellationToken.None
             );
         Assert.Equal(
-            SessionContextCandidateDiscoveryStatus.Candidates,
-            discovery.Status
+            SessionContextCandidateSelectionStatus.Selected,
+            selection.Status
         );
-        Assert.Equal(oldSet.CommonAnchor, Assert.Single(
-            discovery.Candidates
-        ).RawStartExclusive);
+        Assert.NotNull(selection.Candidate);
+        Assert.Equal(
+            oldSet.CommonAnchor,
+            selection.Candidate.RawStartExclusive
+        );
     }
 
     [Fact]

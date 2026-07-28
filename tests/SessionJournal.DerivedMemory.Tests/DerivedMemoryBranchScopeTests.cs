@@ -114,20 +114,20 @@ public sealed class DerivedMemoryBranchScopeTests : IDisposable {
             Policy,
             branchScope
         );
-        Assert.Equal(
-            mainSet.SetId,
-            Assert.Single((await mainSource.DiscoverAsync(
+        SessionContextCandidateSelection mainSelection =
+            await mainSource.SelectAsync(
                 SelectionRequest(mainSet.CommonAnchor),
                 CancellationToken.None
-            )).Candidates).Handle
-        );
-        Assert.Equal(
-            branchSet.SetId,
-            Assert.Single((await branchSource.DiscoverAsync(
+            );
+        SessionContextCandidateSelection branchSelection =
+            await branchSource.SelectAsync(
                 SelectionRequest(branchSet.CommonAnchor),
                 CancellationToken.None
-            )).Candidates).Handle
-        );
+            );
+        Assert.NotNull(mainSelection.Candidate);
+        Assert.NotNull(branchSelection.Candidate);
+        Assert.Equal(mainSet.SetId, mainSelection.Candidate.Handle);
+        Assert.Equal(branchSet.SetId, branchSelection.Candidate.Handle);
 
         DerivedMemoryValidationReport report =
             await repository.ValidateAllActiveBranchesAsync();
@@ -323,11 +323,7 @@ public sealed class DerivedMemoryBranchScopeTests : IDisposable {
 
     private static SessionContextSelectionRequest SelectionRequest(
         EventAddress completionBoundary
-    ) => new(
-        completionBoundary,
-        SessionContextSelectionMode.Latest,
-        "memory-pack"
-    );
+    ) => new(completionBoundary, 0);
 
     private string NewPath() {
         string path = Path.Combine(

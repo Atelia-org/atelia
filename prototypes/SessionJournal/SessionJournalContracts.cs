@@ -91,39 +91,47 @@ public sealed record SessionRuntime(
     SessionToolRuntimeIdentity? ToolRuntimeIdentity = null,
     ICoherentContextCandidateSource? ContextCandidateSource = null,
     SessionContextSelectionOptions? ContextSelection = null,
+    SessionContextBudgetOptions? ContextBudgets = null,
     ISessionMemoryLifecycleCoordinator? MemoryLifecycle = null
 );
 
 /// <summary>
-/// Runtime-local policy for choosing a coherent derived context candidate. It is deliberately
-/// smaller than <see cref="SessionContextSelectionRequest"/>: the engine supplies the exact
-/// completion boundary, while the host supplies only its selection preference.
+/// Temporary runtime-local ordinal policy. P3-B moves this durable choice into RuntimeConfigSetup.
 /// </summary>
 public sealed record SessionContextSelectionOptions(
-    string CoherenceGroup,
-    SessionContextSelectionMode Mode = SessionContextSelectionMode.Latest,
-    long? RawSuffixTokenBudget = null,
-    long? TotalContextTokenBudget = null,
-    int NthPreviousOrdinal = 0,
-    int MaxCandidateCount = 32,
-    long? BootstrapRawSuffixTokenBudget = null
+    int NthPrevious = 0
 ) {
-    public static SessionContextSelectionOptions Default { get; } = new("default");
+    public static SessionContextSelectionOptions Default { get; } = new();
 
     public void ValidateShape() {
-        if (!Enum.IsDefined(Mode)) {
+        if (NthPrevious < 0) {
             throw new ArgumentOutOfRangeException(
-                nameof(Mode),
-                Mode,
-                "Unsupported context selection mode."
+                nameof(NthPrevious),
+                "Nth-previous ordinal cannot be negative."
             );
         }
-        if (string.IsNullOrWhiteSpace(CoherenceGroup)) {
-            throw new ArgumentException(
-                "Coherence group cannot be empty.",
-                nameof(CoherenceGroup)
-            );
-        }
+    }
+
+    public SessionContextSelectionRequest CreateRequest(EventAddress completionBoundary) {
+        ValidateShape();
+        var request = new SessionContextSelectionRequest(completionBoundary, NthPrevious);
+        request.ValidateShape();
+        return request;
+    }
+}
+
+/// <summary>
+/// Runtime-local token guards for one already-selected exact candidate. Budgets never cause
+/// candidate fallback or influence derived lineage traversal.
+/// </summary>
+public sealed record SessionContextBudgetOptions(
+    long? RawSuffixTokenBudget = null,
+    long? TotalContextTokenBudget = null,
+    long? BootstrapRawSuffixTokenBudget = null
+) {
+    public static SessionContextBudgetOptions Default { get; } = new();
+
+    public void ValidateShape() {
         if (RawSuffixTokenBudget is <= 0) {
             throw new ArgumentOutOfRangeException(
                 nameof(RawSuffixTokenBudget),
@@ -142,55 +150,6 @@ public sealed record SessionContextSelectionOptions(
                 "Bootstrap raw suffix token budget must be positive when specified."
             );
         }
-        if (NthPreviousOrdinal < 0) {
-            throw new ArgumentOutOfRangeException(
-                nameof(NthPreviousOrdinal),
-                "Nth-previous ordinal cannot be negative."
-            );
-        }
-        if (Mode != SessionContextSelectionMode.NthPrevious
-            && NthPreviousOrdinal != 0) {
-            throw new ArgumentException(
-                "A non-zero nth-previous ordinal requires NthPrevious mode.",
-                nameof(NthPreviousOrdinal)
-            );
-        }
-        if (Mode == SessionContextSelectionMode.Budgeted
-            && RawSuffixTokenBudget is null
-            && TotalContextTokenBudget is null) {
-            throw new ArgumentException(
-                "Budgeted selection requires a raw-suffix or total-context token budget."
-            );
-        }
-        if (MaxCandidateCount is <= 0
-            or > SessionContextSelectionRequest.MaximumCandidateCount) {
-            throw new ArgumentOutOfRangeException(
-                nameof(MaxCandidateCount),
-                $"Candidate count must be between 1 and {SessionContextSelectionRequest.MaximumCandidateCount}."
-            );
-        }
-        if (Mode == SessionContextSelectionMode.NthPrevious
-            && NthPreviousOrdinal >= MaxCandidateCount) {
-            throw new ArgumentException(
-                "Nth-previous ordinal must be smaller than the candidate discovery bound.",
-                nameof(NthPreviousOrdinal)
-            );
-        }
-    }
-
-    public SessionContextSelectionRequest CreateRequest(EventAddress completionBoundary) {
-        ValidateShape();
-        var request = new SessionContextSelectionRequest(
-            completionBoundary,
-            Mode,
-            CoherenceGroup,
-            RawSuffixTokenBudget,
-            TotalContextTokenBudget,
-            NthPreviousOrdinal,
-            MaxCandidateCount
-        );
-        request.ValidateShape();
-        return request;
     }
 }
 

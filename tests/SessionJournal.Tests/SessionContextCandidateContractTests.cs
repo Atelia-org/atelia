@@ -23,7 +23,7 @@ public sealed class SessionContextCandidateMaterializationContractTests {
             )
         );
     private static readonly SessionContextCandidateDescriptor Descriptor =
-        new("contract-test", 0, Anchor, AnchorSetups);
+        new("contract-test", Anchor, AnchorSetups);
     private static readonly IReadOnlySet<EventAddress> AllowedSourceHeads =
         new HashSet<EventAddress> { Anchor, Boundary };
 

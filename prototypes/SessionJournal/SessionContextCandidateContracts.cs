@@ -10,7 +10,7 @@ namespace Atelia.SessionJournal;
 /// assertion before a candidate can influence request materialization.
 /// </summary>
 public interface ICoherentContextCandidateSource {
-    ValueTask<SessionContextCandidateDiscovery> DiscoverAsync(
+    ValueTask<SessionContextCandidateSelection> SelectAsync(
         SessionContextSelectionRequest request,
         CancellationToken cancellationToken
     );
@@ -55,98 +55,43 @@ public sealed record SessionMemoryLifecycleResult(
 }
 
 /// <summary>
-/// Selection policy understood by the core contract. More modes require an explicit contract revision.
-/// </summary>
-public enum SessionContextSelectionMode {
-    Latest = 0,
-    NthPrevious = 1,
-    Budgeted = 2,
-}
-
-/// <summary>
-/// A bounded, provider-facing request for a context candidate. These hints are not raw correctness facts.
+/// An exact provider-facing request for one context candidate. The source owns lineage traversal;
+/// token budgets remain runtime-local guards and never influence which candidate is selected.
 /// </summary>
 public sealed record SessionContextSelectionRequest(
     EventAddress CompletionBoundary,
-    SessionContextSelectionMode Mode,
-    string CoherenceGroup,
-    long? RawSuffixTokenBudget = null,
-    long? TotalContextTokenBudget = null,
-    int NthPreviousOrdinal = 0,
-    int MaxCandidateCount = 32
+    int NthPrevious
 ) {
-    public const int MaximumCandidateCount = 64;
-
     public void ValidateShape() {
         if (CompletionBoundary == default) {
             throw new ArgumentException("Completion boundary cannot be the default EventAddress.", nameof(CompletionBoundary));
         }
-        if (!Enum.IsDefined(Mode)) {
-            throw new ArgumentOutOfRangeException(nameof(Mode), Mode, "Unsupported context selection mode.");
-        }
-        if (string.IsNullOrWhiteSpace(CoherenceGroup)) {
-            throw new ArgumentException("Coherence group cannot be empty.", nameof(CoherenceGroup));
-        }
-        if (RawSuffixTokenBudget is <= 0) {
-            throw new ArgumentOutOfRangeException(nameof(RawSuffixTokenBudget), "Raw suffix token budget must be positive when specified.");
-        }
-        if (TotalContextTokenBudget is <= 0) {
-            throw new ArgumentOutOfRangeException(nameof(TotalContextTokenBudget), "Total context token budget must be positive when specified.");
-        }
-        if (NthPreviousOrdinal < 0) {
-            throw new ArgumentOutOfRangeException(nameof(NthPreviousOrdinal), "Nth-previous ordinal cannot be negative.");
-        }
-        if (Mode != SessionContextSelectionMode.NthPrevious
-            && NthPreviousOrdinal != 0) {
-            throw new ArgumentException(
-                "A non-zero nth-previous ordinal requires NthPrevious mode.",
-                nameof(NthPreviousOrdinal)
-            );
-        }
-        if (Mode == SessionContextSelectionMode.Budgeted
-            && RawSuffixTokenBudget is null
-            && TotalContextTokenBudget is null) {
-            throw new ArgumentException(
-                "Budgeted selection requires a raw-suffix or total-context token budget."
-            );
-        }
-        if (MaxCandidateCount is <= 0 or > MaximumCandidateCount) {
-            throw new ArgumentOutOfRangeException(
-                nameof(MaxCandidateCount),
-                $"Candidate count must be between 1 and {MaximumCandidateCount}."
-            );
-        }
-        if (Mode == SessionContextSelectionMode.NthPrevious
-            && NthPreviousOrdinal >= MaxCandidateCount) {
-            throw new ArgumentException(
-                "Nth-previous ordinal must be smaller than the candidate discovery bound.",
-                nameof(NthPreviousOrdinal)
-            );
+        if (NthPrevious < 0) {
+            throw new ArgumentOutOfRangeException(nameof(NthPrevious), "Nth-previous ordinal cannot be negative.");
         }
     }
 }
 
-public enum SessionContextCandidateDiscoveryStatus {
-    Candidates = 0,
+public enum SessionContextCandidateSelectionStatus {
+    Selected = 0,
     EmptyLineage = 1,
+    OrdinalUnavailable = 2,
 }
 
 /// <summary>
-/// Lightweight, content-free discovery result. EmptyLineage is an authoritative derived-store
-/// statement: missing/stale indexes must be rebuilt and corrupt lineage must fail instead.
+/// Lightweight, content-free exact selection result. EmptyLineage means no set exists at all;
+/// OrdinalUnavailable means the lineage exists but is shorter than the requested ordinal.
 /// </summary>
-public sealed record SessionContextCandidateDiscovery(
-    SessionContextCandidateDiscoveryStatus Status,
-    IReadOnlyList<SessionContextCandidateDescriptor> Candidates
+public sealed record SessionContextCandidateSelection(
+    SessionContextCandidateSelectionStatus Status,
+    SessionContextCandidateDescriptor? Candidate
 );
 
 /// <summary>
-/// Opaque exact handle plus raw-facing facts required for one bounded authority pass. Ordinal is
-/// lineage position only; it is never interpreted as raw suffix cost.
+/// Opaque exact handle plus raw-facing facts required for one bounded authority pass.
 /// </summary>
 public sealed record SessionContextCandidateDescriptor(
     string Handle,
-    int Ordinal,
     EventAddress RawStartExclusive,
     SessionContextAnchorSetupReferences AnchorSetups
 );

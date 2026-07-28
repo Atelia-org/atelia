@@ -1347,10 +1347,10 @@ public sealed class SessionJournalEngine : IDisposable {
             Tools: tools,
             MaxTokens: runtime.MaxTokens
         );
-        SessionContextSelectionOptions selectionOptions =
-            runtime.ContextSelection
-            ?? SessionContextSelectionOptions.Default;
-        if (selectionOptions.TotalContextTokenBudget
+        SessionContextBudgetOptions budgets =
+            runtime.ContextBudgets
+            ?? SessionContextBudgetOptions.Default;
+        if (budgets.TotalContextTokenBudget
                 is long totalBudget
             && SessionHistoryTokenEstimator
                 .EstimateCanonicalRequest(request) > totalBudget) {
@@ -1452,10 +1452,9 @@ public sealed class SessionJournalEngine : IDisposable {
             ImmutableArray.CreateBuilder<IHistoryMessage>(
                 header.Length
                 + window.Units.Count
-                - selection.CompletedUnitCount
             );
         context.AddRange(header);
-        for (int index = selection.CompletedUnitCount;
+        for (int index = 0;
              index < window.Units.Count;
              index++) {
             context.Add(window.Units[index].Message);
@@ -2025,6 +2024,8 @@ public sealed class SessionJournalEngine : IDisposable {
         _ = RequireContextCandidateSource(runtime);
         (runtime.ContextSelection ?? SessionContextSelectionOptions.Default)
             .ValidateShape();
+        (runtime.ContextBudgets ?? SessionContextBudgetOptions.Default)
+            .ValidateShape();
     }
 
     private async ValueTask PrepareMemoryLifecycleAsync(
@@ -2089,23 +2090,20 @@ public sealed class SessionJournalEngine : IDisposable {
         ImmutableArray<ToolDefinition> tools,
         CancellationToken cancellationToken
     ) {
-        SessionContextSelectionOptions options =
+        SessionContextSelectionOptions selectionOptions =
             runtime.ContextSelection
             ?? SessionContextSelectionOptions.Default;
+        SessionContextBudgetOptions budgets =
+            runtime.ContextBudgets
+            ?? SessionContextBudgetOptions.Default;
         SessionContextSelectionRequest request =
-            options.CreateRequest(currentBoundary);
+            selectionOptions.CreateRequest(currentBoundary);
         ICoherentContextCandidateSource source =
             RequireContextCandidateSource(runtime);
-        SessionContextCandidateDiscovery discovery = await source
-            .DiscoverAsync(request, cancellationToken)
+        SessionContextCandidateSelection selection = await source
+            .SelectAsync(request, cancellationToken)
             .ConfigureAwait(false);
-        ArgumentNullException.ThrowIfNull(discovery);
-        ArgumentNullException.ThrowIfNull(discovery.Candidates);
-        SessionContextCandidateDescriptor[] descriptors =
-            SnapshotCandidateDescriptors(
-                discovery.Candidates,
-                request.MaxCandidateCount
-            );
+        ArgumentNullException.ThrowIfNull(selection);
         SessionGoverningSetup governingSetup =
             EnsurePlanningGoverningSetupCursor(
                 currentBoundary,
@@ -2117,15 +2115,11 @@ public sealed class SessionJournalEngine : IDisposable {
             SessionHistoryTokenEstimator.Estimate(
                 projectedObservation
             );
-        if (discovery.Status
-            == SessionContextCandidateDiscoveryStatus.EmptyLineage) {
-            if (descriptors.Length != 0) {
-                throw new InvalidDataException(
-                    "An empty candidate lineage cannot include descriptors."
-                );
-            }
+        if (selection.Status
+            == SessionContextCandidateSelectionStatus.EmptyLineage) {
+            RequireNoSelectedDescriptor(selection);
             long bootstrapBudget =
-                options.BootstrapRawSuffixTokenBudget
+                budgets.BootstrapRawSuffixTokenBudget
                 ?? throw new SessionJournalNotReadyException(
                     SessionJournalNotReadyReason.ContextCandidateUnavailable,
                     "The derived candidate lineage is empty and bounded empty-memory bootstrap is not configured."
@@ -2136,33 +2130,32 @@ public sealed class SessionJournalEngine : IDisposable {
                     startExclusive: null,
                     cancellationToken
                 );
-            long rawTokens = checked(
+            long bootstrapRawTokens = checked(
                 SumUnitTokens(bootstrap.Units, 0)
                 + projectedObservationTokens
             );
-            if (rawTokens > bootstrapBudget
-                || options.RawSuffixTokenBudget is long rawBudget
-                    && rawTokens > rawBudget) {
+            if (bootstrapRawTokens > bootstrapBudget
+                || budgets.RawSuffixTokenBudget is long bootstrapRawBudget
+                    && bootstrapRawTokens > bootstrapRawBudget) {
                 throw new SessionJournalNotReadyException(
                     SessionJournalNotReadyReason.ContextCandidateUnavailable,
                     "The projected empty-memory bootstrap raw suffix exceeds its configured budget."
                 );
             }
-            long totalTokens =
+            long bootstrapTotalTokens =
                 EstimateCandidateRequestTokens(
                     runtime,
                     governingSetup,
                     tools,
                     bootstrap,
-                    completedUnitCount: 0,
                     ImmutableArray<
                         SessionContextContribution
                     >.Empty,
                     projectedObservation
                 );
-            if (options.TotalContextTokenBudget
-                    is long totalBudget
-                && totalTokens > totalBudget) {
+            if (budgets.TotalContextTokenBudget
+                    is long bootstrapTotalBudget
+                && bootstrapTotalTokens > bootstrapTotalBudget) {
                 throw new SessionJournalNotReadyException(
                     SessionJournalNotReadyReason.ContextCandidateUnavailable,
                     "The projected empty-memory bootstrap request exceeds its configured total context budget."
@@ -2170,21 +2163,20 @@ public sealed class SessionJournalEngine : IDisposable {
             }
             return;
         }
-        if (discovery.Status
-                != SessionContextCandidateDiscoveryStatus.Candidates
-            || descriptors.Length == 0) {
+        if (selection.Status
+            == SessionContextCandidateSelectionStatus.OrdinalUnavailable) {
+            RequireNoSelectedDescriptor(selection);
             throw new SessionJournalNotReadyException(
                 SessionJournalNotReadyReason.ContextCandidateUnavailable,
-                "No coherent context candidate is available before the observation append."
+                "The requested coherent context candidate ordinal is unavailable before the observation append."
             );
         }
-        ValidateCandidateDescriptors(descriptors);
-        SessionContextCandidateDescriptor oldest =
-            descriptors[^1];
+        SessionContextCandidateDescriptor descriptor =
+            RequireSelectedDescriptor(selection);
         SessionHistoryPlanningSeed seed =
             CreateHistoryPlanningSeed(
-                oldest.RawStartExclusive,
-                oldest.AnchorSetups,
+                descriptor.RawStartExclusive,
+                descriptor.AnchorSetups,
                 cancellationToken
             );
         SessionHistoryPlanningWindow window =
@@ -2193,84 +2185,42 @@ public sealed class SessionJournalEngine : IDisposable {
                 seed,
                 cancellationToken
             );
-        CandidateCost[] measured =
-            MeasureCandidateCosts(window, descriptors)
-                .Select(candidate => candidate with {
-                    RawSuffixTokens = checked(
-                        candidate.RawSuffixTokens
-                        + projectedObservationTokens
-                    )
-                })
-                .ToArray();
-        foreach (CandidateCost attempt
-                 in SelectCandidateAttempts(request, measured)) {
-            SessionContextCandidate candidate = await source
-                .MaterializeAsync(
-                    attempt.Descriptor,
-                    cancellationToken
-                )
-                .ConfigureAwait(false);
-            ImmutableArray<SessionContextContribution>
-                contributions =
-                    SessionContextCandidateValidator
-                        .ValidateMaterializedCandidate(
-                            attempt.Descriptor,
-                            candidate,
-                            CreateAllowedSourceHeads(
-                                window,
-                                attempt.CompletedUnitCount,
-                                attempt.Descriptor
-                                    .RawStartExclusive
-                            ),
-                            allowEmpty: false
-                        );
-            long totalTokens =
-                EstimateCandidateRequestTokens(
-                    runtime,
-                    governingSetup,
-                    tools,
-                    window,
-                    attempt.CompletedUnitCount,
-                    contributions,
-                    projectedObservation
-                );
-            if (request.TotalContextTokenBudget
-                    is not long totalBudget
-                || totalTokens <= totalBudget) {
-                return;
-            }
-        }
-        throw new SessionJournalNotReadyException(
-            SessionJournalNotReadyReason.ContextCandidateUnavailable,
-            "No coherent context candidate fits the projected observation request budget."
+        long rawTokens = checked(
+            SumUnitTokens(window.Units, 0)
+            + projectedObservationTokens
         );
-    }
-
-    private static SessionContextCandidateDescriptor[]
-        SnapshotCandidateDescriptors(
-        IReadOnlyList<SessionContextCandidateDescriptor> candidates,
-        int maximumCount
-    ) {
-        ArgumentNullException.ThrowIfNull(candidates);
-        if (maximumCount <= 0) {
-            throw new ArgumentOutOfRangeException(
-                nameof(maximumCount)
+        if (budgets.RawSuffixTokenBudget is long rawBudget
+            && rawTokens > rawBudget) {
+            throw new SessionJournalNotReadyException(
+                SessionJournalNotReadyReason.ContextCandidateUnavailable,
+                "The exact coherent context candidate exceeds the projected raw suffix budget."
             );
         }
-        var snapshot =
-            new List<SessionContextCandidateDescriptor>(
-                maximumCount
+        SessionContextCandidate candidate = await source
+            .MaterializeAsync(descriptor, cancellationToken)
+            .ConfigureAwait(false);
+        ImmutableArray<SessionContextContribution> contributions =
+            SessionContextCandidateValidator.ValidateMaterializedCandidate(
+                descriptor,
+                candidate,
+                CreateAllowedSourceHeads(window, descriptor.RawStartExclusive),
+                allowEmpty: false
             );
-        foreach (SessionContextCandidateDescriptor candidate
-                 in candidates) {
-            if (snapshot.Count == maximumCount) {
-                throw new InvalidDataException(
-                    "Context candidate source exceeded the requested discovery bound."
-                );
-            }
-            snapshot.Add(candidate);
+        long totalTokens = EstimateCandidateRequestTokens(
+            runtime,
+            governingSetup,
+            tools,
+            window,
+            contributions,
+            projectedObservation
+        );
+        if (budgets.TotalContextTokenBudget is long totalBudget
+            && totalTokens > totalBudget) {
+            throw new SessionJournalNotReadyException(
+                SessionJournalNotReadyReason.ContextCandidateUnavailable,
+                "The exact coherent context candidate exceeds the projected total context budget."
+            );
         }
-        return [.. snapshot];
     }
 
     private static ICoherentContextCandidateSource RequireContextCandidateSource(
@@ -2289,53 +2239,45 @@ public sealed class SessionJournalEngine : IDisposable {
         CancellationToken cancellationToken
     ) {
         ICoherentContextCandidateSource source = RequireContextCandidateSource(runtime);
-        SessionContextSelectionOptions options =
+        SessionContextSelectionOptions selectionOptions =
             runtime.ContextSelection
             ?? SessionContextSelectionOptions.Default;
+        SessionContextBudgetOptions budgets =
+            runtime.ContextBudgets
+            ?? SessionContextBudgetOptions.Default;
         SessionContextSelectionRequest request =
-            options.CreateRequest(completionBoundary);
-        SessionContextCandidateDiscovery discovery = await source
-            .DiscoverAsync(request, cancellationToken)
+            selectionOptions.CreateRequest(completionBoundary);
+        SessionContextCandidateSelection selection = await source
+            .SelectAsync(request, cancellationToken)
             .ConfigureAwait(false);
-        ArgumentNullException.ThrowIfNull(discovery);
-        ArgumentNullException.ThrowIfNull(discovery.Candidates);
-        SessionContextCandidateDescriptor[] descriptors =
-            SnapshotCandidateDescriptors(
-                discovery.Candidates,
-                request.MaxCandidateCount
-            );
-        if (discovery.Status
-            == SessionContextCandidateDiscoveryStatus.EmptyLineage) {
-            if (descriptors.Length != 0) {
-                throw new InvalidDataException(
-                    "An empty candidate lineage cannot include descriptors."
-                );
-            }
+        ArgumentNullException.ThrowIfNull(selection);
+        if (selection.Status
+            == SessionContextCandidateSelectionStatus.EmptyLineage) {
+            RequireNoSelectedDescriptor(selection);
             return SelectBootstrapCandidate(
                 runtime,
                 completionBoundary,
                 governingSetup,
                 tools,
-                options,
+                budgets,
                 cancellationToken
             );
         }
-        if (discovery.Status
-                != SessionContextCandidateDiscoveryStatus.Candidates
-            || descriptors.Length == 0) {
+        if (selection.Status
+            == SessionContextCandidateSelectionStatus.OrdinalUnavailable) {
+            RequireNoSelectedDescriptor(selection);
             throw new SessionJournalNotReadyException(
                 SessionJournalNotReadyReason.ContextCandidateUnavailable,
-                $"No coherent context candidate is currently available for completion boundary '{completionBoundary}'."
+                $"The requested coherent context candidate ordinal is unavailable for completion boundary '{completionBoundary}'."
             );
         }
 
-        ValidateCandidateDescriptors(descriptors);
-        SessionContextCandidateDescriptor oldest =
-            descriptors[^1];
+        SessionContextCandidateDescriptor descriptor =
+            RequireSelectedDescriptor(selection);
         SessionHistoryPlanningSeed seed =
             CreateHistoryPlanningSeed(
-                oldest.RawStartExclusive,
-                oldest.AnchorSetups,
+                descriptor.RawStartExclusive,
+                descriptor.AnchorSetups,
                 cancellationToken
             );
         SessionHistoryPlanningWindow window =
@@ -2344,59 +2286,42 @@ public sealed class SessionJournalEngine : IDisposable {
                 seed,
                 cancellationToken
             );
-        CandidateCost[] costs = MeasureCandidateCosts(
-            window,
-            descriptors
-        );
-        IEnumerable<CandidateCost> attempts =
-            SelectCandidateAttempts(request, costs);
-        foreach (CandidateCost attempt in attempts) {
-            cancellationToken.ThrowIfCancellationRequested();
-            SessionContextCandidate candidate = await source
-                .MaterializeAsync(
-                    attempt.Descriptor,
-                    cancellationToken
-                )
-                .ConfigureAwait(false);
-            HashSet<EventAddress> allowedSources =
-                CreateAllowedSourceHeads(
-                    window,
-                    attempt.CompletedUnitCount,
-                    attempt.Descriptor.RawStartExclusive
-                );
-            ImmutableArray<SessionContextContribution>
-                contributions =
-                    SessionContextCandidateValidator
-                        .ValidateMaterializedCandidate(
-                            attempt.Descriptor,
-                            candidate,
-                            allowedSources,
-                            allowEmpty: false
-                        );
-            long totalTokens = EstimateCandidateRequestTokens(
-                runtime,
-                governingSetup,
-                tools,
-                window,
-                attempt.CompletedUnitCount,
-                contributions
-            );
-            if (request.TotalContextTokenBudget is long totalBudget
-                && totalTokens > totalBudget) {
-                continue;
-            }
-            return new SelectedContextCandidate(
-                candidate with {
-                    Contributions = contributions
-                },
-                IsBootstrap: false,
-                window,
-                attempt.CompletedUnitCount
+        long rawTokens = SumUnitTokens(window.Units, 0);
+        if (budgets.RawSuffixTokenBudget is long rawBudget
+            && rawTokens > rawBudget) {
+            throw new SessionJournalNotReadyException(
+                SessionJournalNotReadyReason.ContextCandidateUnavailable,
+                $"The exact coherent context candidate exceeds the configured raw suffix budget at completion boundary '{completionBoundary}'."
             );
         }
-        throw new SessionJournalNotReadyException(
-            SessionJournalNotReadyReason.ContextCandidateUnavailable,
-            $"No coherent context candidate fits the configured budget at completion boundary '{completionBoundary}'."
+        SessionContextCandidate candidate = await source
+            .MaterializeAsync(descriptor, cancellationToken)
+            .ConfigureAwait(false);
+        ImmutableArray<SessionContextContribution> contributions =
+            SessionContextCandidateValidator.ValidateMaterializedCandidate(
+                descriptor,
+                candidate,
+                CreateAllowedSourceHeads(window, descriptor.RawStartExclusive),
+                allowEmpty: false
+            );
+        long totalTokens = EstimateCandidateRequestTokens(
+            runtime,
+            governingSetup,
+            tools,
+            window,
+            contributions
+        );
+        if (budgets.TotalContextTokenBudget is long totalBudget
+            && totalTokens > totalBudget) {
+            throw new SessionJournalNotReadyException(
+                SessionJournalNotReadyReason.ContextCandidateUnavailable,
+                $"The exact coherent context candidate exceeds the configured total context budget at completion boundary '{completionBoundary}'."
+            );
+        }
+        return new SelectedContextCandidate(
+            candidate with { Contributions = contributions },
+            IsBootstrap: false,
+            window
         );
     }
 
@@ -2405,11 +2330,11 @@ public sealed class SessionJournalEngine : IDisposable {
         EventAddress completionBoundary,
         SessionGoverningSetup governingSetup,
         ImmutableArray<ToolDefinition> tools,
-        SessionContextSelectionOptions options,
+        SessionContextBudgetOptions budgets,
         CancellationToken cancellationToken
     ) {
         long bootstrapBudget =
-            options.BootstrapRawSuffixTokenBudget
+            budgets.BootstrapRawSuffixTokenBudget
             ?? throw new SessionJournalNotReadyException(
                 SessionJournalNotReadyReason.ContextCandidateUnavailable,
                 "The derived candidate lineage is empty and bounded empty-memory bootstrap is not configured."
@@ -2425,7 +2350,7 @@ public sealed class SessionJournalEngine : IDisposable {
             startIndex: 0
         );
         if (rawTokens > bootstrapBudget
-            || options.RawSuffixTokenBudget is long rawBudget
+            || budgets.RawSuffixTokenBudget is long rawBudget
                 && rawTokens > rawBudget) {
             throw new SessionJournalNotReadyException(
                 SessionJournalNotReadyReason.ContextCandidateUnavailable,
@@ -2437,10 +2362,9 @@ public sealed class SessionJournalEngine : IDisposable {
             governingSetup,
             tools,
             window,
-            completedUnitCount: 0,
             ImmutableArray<SessionContextContribution>.Empty
         );
-        if (options.TotalContextTokenBudget is long totalBudget
+        if (budgets.TotalContextTokenBudget is long totalBudget
             && totalTokens > totalBudget) {
             throw new SessionJournalNotReadyException(
                 SessionJournalNotReadyReason.ContextCandidateUnavailable,
@@ -2454,128 +2378,42 @@ public sealed class SessionJournalEngine : IDisposable {
                 Array.Empty<SessionContextContribution>()
             ),
             IsBootstrap: true,
-            window,
-            CompletedUnitCount: 0
+            window
         );
     }
 
-    private static void ValidateCandidateDescriptors(
-        IReadOnlyList<SessionContextCandidateDescriptor> descriptors
+    private static SessionContextCandidateDescriptor RequireSelectedDescriptor(
+        SessionContextCandidateSelection selection
     ) {
-        var handles = new HashSet<string>(StringComparer.Ordinal);
-        for (int index = 0; index < descriptors.Count; index++) {
-            SessionContextCandidateDescriptor descriptor =
-                descriptors[index]
-                ?? throw new InvalidDataException(
-                    "Context candidate discovery contains a null descriptor."
-                );
-            if (string.IsNullOrWhiteSpace(descriptor.Handle)
-                || descriptor.Handle.Length > 512
-                || descriptor.Handle.Contains('\0', StringComparison.Ordinal)
-                || descriptor.Ordinal != index
-                || descriptor.RawStartExclusive == default
-                || descriptor.AnchorSetups is null
-                || descriptor.AnchorSetups.RuntimeConfig is null
-                || descriptor.AnchorSetups.SystemPrompt is null
-                || !handles.Add(descriptor.Handle)) {
-                throw new InvalidDataException(
-                    "Context candidate descriptors must have unique bounded handles, contiguous ordinals, and complete raw anchor facts."
-                );
-            }
-        }
-    }
-
-    private static CandidateCost[] MeasureCandidateCosts(
-        SessionHistoryPlanningWindow window,
-        IReadOnlyList<SessionContextCandidateDescriptor> descriptors
-    ) {
-        var boundaries =
-            window.ReplaySafeBoundaries.ToDictionary(
-                static boundary => boundary.Address
-            );
-        var costs = new CandidateCost[descriptors.Count];
-        int priorCompleted = int.MaxValue;
-        for (int index = 0; index < descriptors.Count; index++) {
-            SessionContextCandidateDescriptor descriptor =
-                descriptors[index];
-            int completed;
-            SessionContextAnchorSetupReferences authoritativeSetups;
-            if (descriptor.RawStartExclusive
-                == window.StartExclusive) {
-                completed = 0;
-                authoritativeSetups = window.StartSetups;
-            }
-            else if (boundaries.TryGetValue(
-                    descriptor.RawStartExclusive,
-                    out SessionHistoryPlanningBoundary? boundary)
-                && window.ReplaySafeBoundarySetups.TryGetValue(
-                    descriptor.RawStartExclusive,
-                    out authoritativeSetups!
-                )) {
-                completed = boundary.CompletedUnitCount;
-            }
-            else {
-                throw new InvalidDataException(
-                    "A discovered context candidate anchor is not a replay-safe boundary on the authoritative raw interval."
-                );
-            }
-            if (authoritativeSetups != descriptor.AnchorSetups) {
-                throw new InvalidDataException(
-                    "A discovered context candidate setup snapshot does not match raw authority."
-                );
-            }
-            if (completed >= priorCompleted) {
-                throw new InvalidDataException(
-                    "Context candidate ordinals do not follow progressively older raw anchors."
-                );
-            }
-            priorCompleted = completed;
-            costs[index] = new CandidateCost(
-                descriptor,
-                completed,
-                SumUnitTokens(window.Units, completed)
-            );
-        }
-        if (costs[^1].Descriptor.RawStartExclusive
-            != window.StartExclusive) {
+        if (selection.Status
+                != SessionContextCandidateSelectionStatus.Selected
+            || selection.Candidate is not { } descriptor
+            || string.IsNullOrWhiteSpace(descriptor.Handle)
+            || descriptor.Handle.Length > 512
+            || descriptor.Handle.Contains('\0', StringComparison.Ordinal)
+            || descriptor.RawStartExclusive == default
+            || descriptor.AnchorSetups is null
+            || descriptor.AnchorSetups.RuntimeConfig is null
+            || descriptor.AnchorSetups.SystemPrompt is null) {
             throw new InvalidDataException(
-                "The oldest discovered context candidate does not match the bounded authority start."
+                "A selected context candidate must include one bounded handle and complete raw anchor facts."
             );
         }
-        return costs;
+        return descriptor;
     }
 
-    private static IEnumerable<CandidateCost> SelectCandidateAttempts(
-        SessionContextSelectionRequest request,
-        IReadOnlyList<CandidateCost> costs
+    private static void RequireNoSelectedDescriptor(
+        SessionContextCandidateSelection selection
     ) {
-        bool FitsRaw(CandidateCost candidate)
-            => request.RawSuffixTokenBudget is not long budget
-                || candidate.RawSuffixTokens <= budget;
-
-        return request.Mode switch {
-            SessionContextSelectionMode.Latest =>
-                FitsRaw(costs[0])
-                    ? new[] { costs[0] }
-                    : Array.Empty<CandidateCost>(),
-            SessionContextSelectionMode.NthPrevious =>
-                request.NthPreviousOrdinal < costs.Count
-                && FitsRaw(costs[request.NthPreviousOrdinal])
-                    ? new[] { costs[request.NthPreviousOrdinal] }
-                    : Array.Empty<CandidateCost>(),
-            SessionContextSelectionMode.Budgeted =>
-                costs.Where(FitsRaw)
-                    .OrderByDescending(
-                        static candidate =>
-                            candidate.Descriptor.Ordinal
-                    )
-                    .ToArray(),
-            _ => throw new ArgumentOutOfRangeException(
-                nameof(request.Mode),
-                request.Mode,
-                "Unsupported context selection mode."
-            )
-        };
+        if (selection.Candidate is not null
+            || selection.Status is not (
+                SessionContextCandidateSelectionStatus.EmptyLineage
+                or SessionContextCandidateSelectionStatus.OrdinalUnavailable
+            )) {
+            throw new InvalidDataException(
+                "A non-selected context candidate result cannot include a descriptor."
+            );
+        }
     }
 
     private static long SumUnitTokens(
@@ -2596,7 +2434,6 @@ public sealed class SessionJournalEngine : IDisposable {
 
     private static HashSet<EventAddress> CreateAllowedSourceHeads(
         SessionHistoryPlanningWindow window,
-        int completedUnitCount,
         EventAddress anchor
     ) {
         var allowed = new HashSet<EventAddress> { anchor };
@@ -2608,8 +2445,6 @@ public sealed class SessionJournalEngine : IDisposable {
              index++) {
             allowed.Add(window.RawAddresses[index]);
         }
-        // Completed unit count is validated independently against the replay-safe boundary map.
-        _ = completedUnitCount;
         return allowed;
     }
 
@@ -2632,7 +2467,6 @@ public sealed class SessionJournalEngine : IDisposable {
         SessionGoverningSetup governingSetup,
         ImmutableArray<ToolDefinition> tools,
         SessionHistoryPlanningWindow window,
-        int completedUnitCount,
         ImmutableArray<SessionContextContribution> contributions,
         IHistoryMessage? projectedMessage = null
     ) {
@@ -2655,11 +2489,10 @@ public sealed class SessionJournalEngine : IDisposable {
             ImmutableArray.CreateBuilder<IHistoryMessage>(
                 header.Length
                 + window.Units.Count
-                - completedUnitCount
                 + (projectedMessage is null ? 0 : 1)
             );
         context.AddRange(header);
-        for (int index = completedUnitCount;
+        for (int index = 0;
              index < window.Units.Count;
              index++) {
             context.Add(window.Units[index].Message);
@@ -3131,14 +2964,7 @@ public sealed class SessionJournalEngine : IDisposable {
     private sealed record SelectedContextCandidate(
         SessionContextCandidate Candidate,
         bool IsBootstrap,
-        SessionHistoryPlanningWindow Window,
-        int CompletedUnitCount
-    );
-
-    private sealed record CandidateCost(
-        SessionContextCandidateDescriptor Descriptor,
-        int CompletedUnitCount,
-        long RawSuffixTokens
+        SessionHistoryPlanningWindow Window
     );
 
     private sealed record CommittedCompletionResult(

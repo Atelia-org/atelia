@@ -1009,7 +1009,9 @@ internal static class Program {
             )
         );
         SJ.SessionContextSelectionOptions selection =
-            ParseOnlineSelection(options, config);
+            ParseOnlineSelection(options);
+        SJ.SessionContextBudgetOptions budgets =
+            ParseOnlineBudgets(options, config);
         SJ.SessionUncertainCompletionRecoveryPolicy recoveryPolicy =
             ParseUncertainCompletionRecoveryPolicy(
                 options.GetOptionalSingle("uncertain-recovery")
@@ -1032,6 +1034,7 @@ internal static class Program {
                 recoveryPolicy,
             ContextCandidateSource: coordinator,
             ContextSelection: selection,
+            ContextBudgets: budgets,
             MemoryLifecycle: coordinator
         );
         engine.UseRuntime(runtime);
@@ -1117,27 +1120,17 @@ internal static class Program {
 
     private static SJ.SessionContextSelectionOptions
         ParseOnlineSelection(
-        CliOptions options,
-        DerivedArtifactPlannerConfig config
+        CliOptions options
     ) {
         string value =
             options.GetOptionalSingle("selection")
             ?? "latest";
-        SJ.SessionContextSelectionMode mode;
         int ordinal = 0;
         if (string.Equals(
                 value,
                 "latest",
                 StringComparison.Ordinal
             )) {
-            mode = SJ.SessionContextSelectionMode.Latest;
-        }
-        else if (string.Equals(
-                     value,
-                     "budgeted",
-                     StringComparison.Ordinal
-                 )) {
-            mode = SJ.SessionContextSelectionMode.Budgeted;
         }
         else if (value.StartsWith(
                      "nth:",
@@ -1148,13 +1141,20 @@ internal static class Program {
                      out ordinal
                  )
                  && ordinal >= 0) {
-            mode = SJ.SessionContextSelectionMode.NthPrevious;
         }
         else {
             throw new ArgumentException(
-                "--selection must be latest, budgeted, or nth:<zero-based-ordinal>."
+                "--selection must be latest or nth:<zero-based-ordinal>."
             );
         }
+        return new(ordinal);
+    }
+
+    private static SJ.SessionContextBudgetOptions
+        ParseOnlineBudgets(
+        CliOptions options,
+        DerivedArtifactPlannerConfig config
+    ) {
         long? rawBudget = ParsePositiveLong(
             options.GetOptionalSingle(
                 "raw-suffix-budget"
@@ -1167,15 +1167,6 @@ internal static class Program {
             ),
             "--total-context-budget"
         );
-        if (mode
-                == SJ.SessionContextSelectionMode.Budgeted
-            && rawBudget is null
-            && totalBudget is null) {
-            rawBudget = checked(
-                config.HardLimitTokens
-                - config.SchedulingHeadroomTokens
-            );
-        }
         long bootstrapBudget =
             ParsePositiveLong(
                 options.GetOptionalSingle(
@@ -1188,11 +1179,8 @@ internal static class Program {
                 - config.SchedulingHeadroomTokens
             );
         return new(
-            config.CoherenceGroup,
-            mode,
             rawBudget,
             totalBudget,
-            ordinal,
             BootstrapRawSuffixTokenBudget:
                 bootstrapBudget
         );

@@ -137,16 +137,14 @@ public sealed class DerivedArtifactSetEngineIntegrationTests : IDisposable {
     public async Task RewindBehindPublishedSetFailsOnlineValidationAndRebuildWithoutDerivedMutation() {
         PublishedFixture fixture = await CreatePublishedFixtureAsync();
         EventAddress currentHead = ReadRawSnapshot(fixture.Path).Head;
-        SessionContextCandidateDescriptor descriptor = Assert.Single(
-            (await fixture.Provider.DiscoverAsync(
-                new(
-                    currentHead,
-                    SessionContextSelectionMode.Latest,
-                    fixture.CoherenceGroup
-                ),
+        SessionContextCandidateSelection selected =
+            await fixture.Provider.SelectAsync(
+                new(currentHead, 0),
                 CancellationToken.None
-            )).Candidates
-        );
+            );
+        Assert.NotNull(selected.Candidate);
+        SessionContextCandidateDescriptor descriptor =
+            selected.Candidate;
         using (var journal =
                EventJournal.EventJournal.OpenExisting(fixture.Path)) {
             RefId main = journal.OpenBranch(
@@ -169,16 +167,12 @@ public sealed class DerivedArtifactSetEngineIntegrationTests : IDisposable {
         )));
         IReadOnlyDictionary<string, string> derivedBefore =
             SnapshotDerivedFiles(fixture.Repository.MemoryRoot);
-        SessionContextCandidateDiscovery rediscovered =
-            await fixture.Provider.DiscoverAsync(
-                new(
-                    currentHead,
-                    SessionContextSelectionMode.Latest,
-                    fixture.CoherenceGroup
-                ),
+        SessionContextCandidateSelection rediscovered =
+            await fixture.Provider.SelectAsync(
+                new(currentHead, 0),
                 CancellationToken.None
             );
-        Assert.Single(rediscovered.Candidates);
+        Assert.NotNull(rediscovered.Candidate);
         Assert.Equal(
             derivedBefore,
             SnapshotDerivedFiles(fixture.Repository.MemoryRoot)
@@ -416,10 +410,7 @@ public sealed class DerivedArtifactSetEngineIntegrationTests : IDisposable {
             "integration-adapter-v1"
         ),
         MaxTokens: 256,
-        ContextCandidateSource: provider,
-        ContextSelection: new SessionContextSelectionOptions(
-            coherenceGroup
-        )
+        ContextCandidateSource: provider
     );
 
     private static RawSnapshot ReadRawSnapshot(string path) {

@@ -115,18 +115,14 @@ public sealed class ProgramDerivedMemoryCommandTests : IDisposable {
             fixture.Policy,
             fixture.Scope
         );
-        SJ.SessionContextCandidateDiscovery discovery =
-            await provider.DiscoverAsync(
-                new SJ.SessionContextSelectionRequest(
-                    fixture.Anchor,
-                    SJ.SessionContextSelectionMode.Latest,
-                    fixture.Policy.CoherenceGroup
-                ),
+        SJ.SessionContextCandidateSelection selection =
+            await provider.SelectAsync(
+                new SJ.SessionContextSelectionRequest(fixture.Anchor, 0),
                 CancellationToken.None
             );
-        SJ.SessionContextCandidateDescriptor descriptor = Assert.Single(
-            discovery.Candidates
-        );
+        Assert.NotNull(selection.Candidate);
+        SJ.SessionContextCandidateDescriptor descriptor =
+            selection.Candidate;
         SJ.SessionContextCandidate candidate =
             await provider.MaterializeAsync(
                 descriptor,
@@ -248,26 +244,20 @@ public sealed class ProgramDerivedMemoryCommandTests : IDisposable {
                 fixture.Policy,
                 featureScope
             );
-        string mainHandle = Assert.Single(
-            (await mainSource.DiscoverAsync(
-                new(
-                    raw.Head,
-                    SJ.SessionContextSelectionMode.Latest,
-                    fixture.Policy.CoherenceGroup
-                ),
+        SJ.SessionContextCandidateSelection mainSelection =
+            await mainSource.SelectAsync(
+                new(raw.Head, 0),
                 CancellationToken.None
-            )).Candidates
-        ).Handle;
-        string featureHandle = Assert.Single(
-            (await featureSource.DiscoverAsync(
-                new(
-                    raw.Head,
-                    SJ.SessionContextSelectionMode.Latest,
-                    fixture.Policy.CoherenceGroup
-                ),
+            );
+        SJ.SessionContextCandidateSelection featureSelection =
+            await featureSource.SelectAsync(
+                new(raw.Head, 0),
                 CancellationToken.None
-            )).Candidates
-        ).Handle;
+            );
+        Assert.NotNull(mainSelection.Candidate);
+        Assert.NotNull(featureSelection.Candidate);
+        string mainHandle = mainSelection.Candidate.Handle;
+        string featureHandle = featureSelection.Candidate.Handle;
         Assert.NotEqual(mainHandle, featureHandle);
 
         string mainReport = Path.Combine(_tempRoot, "validate-main.json");

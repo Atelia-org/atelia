@@ -405,8 +405,7 @@ public sealed class SessionJournalEngineTests : IDisposable {
         _candidateSource.IsEmptyLineage = true;
         var client = new ScriptedCompletionClient();
         SessionRuntime runtime = CreateRuntime(client) with {
-            ContextSelection = new SessionContextSelectionOptions(
-                "default",
+            ContextBudgets = new SessionContextBudgetOptions(
                 BootstrapRawSuffixTokenBudget: 4096
             )
         };

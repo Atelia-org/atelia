@@ -79,8 +79,7 @@ public sealed class SessionContextCandidateProviderRouteTests : IDisposable {
     }
 
     [Theory]
-    [InlineData("mode")]
-    [InlineData("coherence-group")]
+    [InlineData("ordinal")]
     [InlineData("token-budget")]
     public async Task InvalidSelectionOptions_FailBeforeObservationOrSelection(
         string invalidCase
@@ -88,19 +87,19 @@ public sealed class SessionContextCandidateProviderRouteTests : IDisposable {
         string path = NewJournalPath();
         var client = new ScriptedClient();
         var source = new TestContextCandidateSource();
-        SessionContextSelectionOptions options = invalidCase switch {
-            "mode" => new(
-                "default",
-                (SessionContextSelectionMode)42
-            ),
-            "coherence-group" => new(" "),
-            "token-budget" => new("default", RawSuffixTokenBudget: 0),
+        SessionRuntime runtime = invalidCase switch {
+            "ordinal" => CreateRuntime(client, source) with {
+                ContextSelection = new(-1)
+            },
+            "token-budget" => CreateRuntime(client, source) with {
+                ContextBudgets = new(RawSuffixTokenBudget: 0)
+            },
             _ => throw new ArgumentOutOfRangeException(nameof(invalidCase))
         };
         using var engine = SessionJournalEngine.Create(
             path,
             CreateOptions(),
-            CreateRuntime(client, source) with { ContextSelection = options }
+            runtime
         );
         EventAddress head = engine.ResolveExecutionTail().Head!.Value;
 
@@ -110,114 +109,6 @@ public sealed class SessionContextCandidateProviderRouteTests : IDisposable {
 
         Assert.Equal(head, engine.ResolveExecutionTail().Head);
         Assert.Equal(0, source.SelectionCount);
-        Assert.Equal(0, client.Calls);
-    }
-
-    [Fact]
-    public async Task PreAppendDiscoveryStopsAtBoundWithoutTrustingCountOrIndexer() {
-        string path = NewJournalPath();
-        var client = new ScriptedClient();
-        var source = new ScriptedDiscoverySource();
-        using var engine = SessionJournalEngine.Create(
-            path,
-            CreateOptions(),
-            CreateRuntime(client, source) with {
-                ContextSelection = new(
-                    "default",
-                    SessionContextSelectionMode.Latest,
-                    MaxCandidateCount: 64
-                )
-            }
-        );
-        TestContextCandidateFixture fixture =
-            ContextCandidateTestFixture.CreateAtCurrentHead(engine);
-        var descriptor = new SessionContextCandidateDescriptor(
-            "bounded",
-            0,
-            fixture.Candidate.RawStartExclusive,
-            fixture.Candidate.AnchorSetups
-        );
-        var candidates = new CountSpoofingCandidateList(
-            descriptor,
-            actualCount: 65
-        );
-        source.Enqueue(candidates, fixture.Candidate);
-        EventAddress head = engine.ResolveExecutionTail().Head!.Value;
-
-        InvalidDataException error =
-            await Assert.ThrowsAsync<InvalidDataException>(
-                () => engine.SendAsync(
-                    "must not persist",
-                    CancellationToken.None
-                )
-            );
-
-        Assert.Contains(
-            "discovery bound",
-            error.Message,
-            StringComparison.OrdinalIgnoreCase
-        );
-        Assert.Equal(1, candidates.EnumerationCount);
-        Assert.Equal(65, candidates.YieldCount);
-        Assert.Equal(head, engine.ResolveExecutionTail().Head);
-        Assert.Equal(0, source.MaterializationCount);
-        Assert.Equal(0, client.Calls);
-    }
-
-    [Fact]
-    public async Task PostAppendDiscoveryStopsAtBoundWithoutTrustingCountOrIndexer() {
-        string path = NewJournalPath();
-        var client = new ScriptedClient();
-        var source = new ScriptedDiscoverySource();
-        using var engine = SessionJournalEngine.Create(
-            path,
-            CreateOptions(),
-            CreateRuntime(client, source) with {
-                ContextSelection = new(
-                    "default",
-                    SessionContextSelectionMode.Latest,
-                    MaxCandidateCount: 64
-                )
-            }
-        );
-        TestContextCandidateFixture fixture =
-            ContextCandidateTestFixture.CreateAtCurrentHead(engine);
-        var descriptor = new SessionContextCandidateDescriptor(
-            "bounded",
-            0,
-            fixture.Candidate.RawStartExclusive,
-            fixture.Candidate.AnchorSetups
-        );
-        source.Enqueue(
-            new[] { descriptor },
-            fixture.Candidate
-        );
-        var candidates = new CountSpoofingCandidateList(
-            descriptor,
-            actualCount: 65
-        );
-        source.Enqueue(candidates, fixture.Candidate);
-
-        InvalidDataException error =
-            await Assert.ThrowsAsync<InvalidDataException>(
-                () => engine.SendAsync(
-                    "persist exactly once",
-                    CancellationToken.None
-                )
-            );
-
-        Assert.Contains(
-            "discovery bound",
-            error.Message,
-            StringComparison.OrdinalIgnoreCase
-        );
-        Assert.Equal(1, candidates.EnumerationCount);
-        Assert.Equal(65, candidates.YieldCount);
-        Assert.Equal(1, source.MaterializationCount);
-        Assert.Equal(
-            SessionExecutionPhase.AwaitingAgentAction,
-            engine.ResolveExecutionTail().State.Phase
-        );
         Assert.Equal(0, client.Calls);
     }
 
@@ -326,10 +217,8 @@ public sealed class SessionContextCandidateProviderRouteTests : IDisposable {
             path,
             CreateOptions(),
             CreateRuntime(client, source) with {
-                ContextSelection =
-                    new SessionContextSelectionOptions(
-                        "default",
-                        SessionContextSelectionMode.Latest,
+                ContextBudgets =
+                    new SessionContextBudgetOptions(
                         TotalContextTokenBudget: 1
                     )
             }
@@ -377,9 +266,8 @@ public sealed class SessionContextCandidateProviderRouteTests : IDisposable {
             IsEmptyLineage = true
         };
         SessionRuntime runtime = CreateRuntime(client, source) with {
-            ContextSelection =
-                new SessionContextSelectionOptions(
-                    "default",
+            ContextBudgets =
+                new SessionContextBudgetOptions(
                     BootstrapRawSuffixTokenBudget: 4096
                 )
         };
@@ -484,9 +372,7 @@ public sealed class SessionContextCandidateProviderRouteTests : IDisposable {
             CreateRuntime(client, source) with {
                 ContextSelection =
                     new SessionContextSelectionOptions(
-                        "default",
-                        SessionContextSelectionMode.NthPrevious,
-                        NthPreviousOrdinal: 1
+                        NthPrevious: 1
                     )
             }
         );
@@ -507,7 +393,7 @@ public sealed class SessionContextCandidateProviderRouteTests : IDisposable {
     }
 
     [Fact]
-    public async Task BudgetedFallsForwardWhenOlderCandidateExceedsTotalBudget() {
+    public async Task ExactCandidateBudgetFailureDoesNotFallBack() {
         string path = NewJournalPath();
         var client = new ScriptedClient();
         client.Enqueue(Terminal("done"));
@@ -557,26 +443,30 @@ public sealed class SessionContextCandidateProviderRouteTests : IDisposable {
             CreateRuntime(client, source) with {
                 ContextSelection =
                     new SessionContextSelectionOptions(
-                        "default",
-                        SessionContextSelectionMode.Budgeted,
+                        NthPrevious: 1
+                    ),
+                ContextBudgets =
+                    new SessionContextBudgetOptions(
                         RawSuffixTokenBudget: 10_000,
                         TotalContextTokenBudget: 1_000
                     )
             }
         );
 
-        _ = await engine.SendAsync(
-            "fit total budget",
-            CancellationToken.None
+        await Assert.ThrowsAsync<SessionJournalNotReadyException>(
+            () => engine.SendAsync(
+                "fit total budget",
+                CancellationToken.None
+            )
         );
 
-        Assert.Contains(
-            "test-candidate-1",
-            source.MaterializedHandles
+        Assert.All(
+            source.MaterializedHandles,
+            handle => Assert.Equal("test-candidate-1", handle)
         );
-        Assert.Equal(
+        Assert.DoesNotContain(
             "test-candidate-0",
-            source.MaterializedHandles[^1]
+            source.MaterializedHandles
         );
         Assert.Equal(0, engine.FullProjectionInvocationCount);
     }
@@ -900,90 +790,6 @@ public sealed class SessionContextCandidateProviderRouteTests : IDisposable {
             }
             return Task.FromResult(_responses.Dequeue()(request));
         }
-    }
-
-    private sealed class ScriptedDiscoverySource
-        : ICoherentContextCandidateSource {
-        private readonly Queue<(
-            IReadOnlyList<SessionContextCandidateDescriptor>
-                Descriptors,
-            SessionContextCandidate Candidate
-        )> _discoveries = [];
-        private SessionContextCandidate? _currentCandidate;
-
-        internal int MaterializationCount { get; private set; }
-
-        internal void Enqueue(
-            IReadOnlyList<SessionContextCandidateDescriptor>
-                descriptors,
-            SessionContextCandidate candidate
-        ) => _discoveries.Enqueue((descriptors, candidate));
-
-        public ValueTask<SessionContextCandidateDiscovery>
-            DiscoverAsync(
-            SessionContextSelectionRequest request,
-            CancellationToken cancellationToken
-        ) {
-            request.ValidateShape();
-            cancellationToken.ThrowIfCancellationRequested();
-            (
-                IReadOnlyList<SessionContextCandidateDescriptor>
-                    descriptors,
-                SessionContextCandidate candidate
-            ) = _discoveries.Dequeue();
-            _currentCandidate = candidate;
-            return ValueTask.FromResult(
-                new SessionContextCandidateDiscovery(
-                    SessionContextCandidateDiscoveryStatus
-                        .Candidates,
-                    descriptors
-                )
-            );
-        }
-
-        public ValueTask<SessionContextCandidate>
-            MaterializeAsync(
-            SessionContextCandidateDescriptor descriptor,
-            CancellationToken cancellationToken
-        ) {
-            _ = descriptor;
-            cancellationToken.ThrowIfCancellationRequested();
-            MaterializationCount++;
-            return ValueTask.FromResult(
-                _currentCandidate
-                ?? throw new InvalidOperationException(
-                    "No discovery preceded materialization."
-                )
-            );
-        }
-    }
-
-    private sealed class CountSpoofingCandidateList(
-        SessionContextCandidateDescriptor candidate,
-        int actualCount
-    ) : IReadOnlyList<SessionContextCandidateDescriptor> {
-        internal int EnumerationCount { get; private set; }
-        internal int YieldCount { get; private set; }
-
-        public int Count => 0;
-
-        public SessionContextCandidateDescriptor this[int index]
-            => throw new InvalidOperationException(
-                $"Indexer must not be trusted ({index})."
-            );
-
-        public IEnumerator<SessionContextCandidateDescriptor>
-            GetEnumerator() {
-            EnumerationCount++;
-            for (int index = 0; index < actualCount; index++) {
-                YieldCount++;
-                yield return candidate;
-            }
-        }
-
-        System.Collections.IEnumerator
-            System.Collections.IEnumerable.GetEnumerator()
-            => GetEnumerator();
     }
 
     private sealed class RecordingTool(string name) : ITool {

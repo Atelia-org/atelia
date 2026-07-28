@@ -42,10 +42,10 @@ public sealed class DerivedMemoryOnlineLifecycleCoordinator
         _candidates = new(repository, policy, scope);
     }
 
-    public ValueTask<SessionContextCandidateDiscovery> DiscoverAsync(
+    public ValueTask<SessionContextCandidateSelection> SelectAsync(
         SessionContextSelectionRequest request,
         CancellationToken cancellationToken
-    ) => _candidates.DiscoverAsync(request, cancellationToken);
+    ) => _candidates.SelectAsync(request, cancellationToken);
 
     public ValueTask<SessionContextCandidate> MaterializeAsync(
         SessionContextCandidateDescriptor descriptor,

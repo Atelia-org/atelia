@@ -1,7 +1,7 @@
 namespace Atelia.SessionJournal.DerivedMemory;
 
 /// <summary>
-/// Bounded two-phase provider over one exact ArtifactSet lineage. Discovery reads set metadata
+/// Exact two-phase provider over one ArtifactSet lineage. Selection reads set metadata
 /// only; exact contribution text is loaded only for a descriptor selected by SessionJournal raw
 /// authority. This provider never opens the raw journal.
 /// </summary>
@@ -25,22 +25,12 @@ public sealed class DerivedArtifactSetContextCandidateSource
         _scope = scope;
     }
 
-    public async ValueTask<SessionContextCandidateDiscovery> DiscoverAsync(
+    public async ValueTask<SessionContextCandidateSelection> SelectAsync(
         SessionContextSelectionRequest request,
         CancellationToken cancellationToken
     ) {
         ArgumentNullException.ThrowIfNull(request);
         request.ValidateShape();
-        if (!string.Equals(
-                request.CoherenceGroup,
-                _policy.CoherenceGroup,
-                StringComparison.Ordinal
-            )) {
-            return new(
-                SessionContextCandidateDiscoveryStatus.Candidates,
-                Array.Empty<SessionContextCandidateDescriptor>()
-            );
-        }
 
         DerivedArtifactSet? current = await _repository.ArtifactSets
             .TryReadLatestAsync(
@@ -63,59 +53,46 @@ public sealed class DerivedArtifactSetContextCandidateSource
         }
         if (current is null) {
             return new(
-                SessionContextCandidateDiscoveryStatus.EmptyLineage,
-                Array.Empty<SessionContextCandidateDescriptor>()
+                SessionContextCandidateSelectionStatus.EmptyLineage,
+                null
             );
         }
 
-        int requestedCount = request.Mode switch {
-            SessionContextSelectionMode.Latest => 1,
-            SessionContextSelectionMode.NthPrevious =>
-                checked(request.NthPreviousOrdinal + 1),
-            SessionContextSelectionMode.Budgeted =>
-                request.MaxCandidateCount,
-            _ => throw new ArgumentOutOfRangeException(
-                nameof(request.Mode),
-                request.Mode,
-                "Unsupported context selection mode."
-            )
-        };
-        var descriptors =
-            new List<SessionContextCandidateDescriptor>(
-                requestedCount
-            );
         var visited = new HashSet<string>(StringComparer.Ordinal);
-        while (current is not null
-               && descriptors.Count < requestedCount) {
+        for (int ordinal = 0; ; ordinal++) {
             cancellationToken.ThrowIfCancellationRequested();
             if (!visited.Add(current.SetId)) {
                 throw new InvalidDataException(
                     "ArtifactSet candidate lineage contains a cycle."
                 );
             }
-            descriptors.Add(new(
-                current.SetId,
-                descriptors.Count,
-                current.CommonAnchor,
-                current.AnchorSetups
-            ));
-            current = current.PreviousSetId is { } previous
-                ? await _repository.ArtifactSets.TryReadAsync(
-                        previous,
-                        _policy,
-                        _scope,
-                        cancellationToken
+            if (ordinal == request.NthPrevious) {
+                return new(
+                    SessionContextCandidateSelectionStatus.Selected,
+                    new SessionContextCandidateDescriptor(
+                        current.SetId,
+                        current.CommonAnchor,
+                        current.AnchorSetups
                     )
-                    .ConfigureAwait(false)
-                    ?? throw new InvalidDataException(
-                        $"ArtifactSet candidate lineage references missing previous set '{previous}'."
-                    )
-                : null;
+                );
+            }
+            if (current.PreviousSetId is not { } previous) {
+                return new(
+                    SessionContextCandidateSelectionStatus.OrdinalUnavailable,
+                    null
+                );
+            }
+            current = await _repository.ArtifactSets.TryReadAsync(
+                    previous,
+                    _policy,
+                    _scope,
+                    cancellationToken
+                )
+                .ConfigureAwait(false)
+                ?? throw new InvalidDataException(
+                    $"ArtifactSet candidate lineage references missing previous set '{previous}'."
+                );
         }
-        return new(
-            SessionContextCandidateDiscoveryStatus.Candidates,
-            descriptors.AsReadOnly()
-        );
     }
 
     public async ValueTask<SessionContextCandidate> MaterializeAsync(

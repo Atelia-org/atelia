@@ -31,7 +31,7 @@ internal sealed class TestContextCandidateSource : ICoherentContextCandidateSour
     internal IReadOnlyList<string> MaterializedHandles =>
         _materializedHandles;
 
-    public ValueTask<SessionContextCandidateDiscovery> DiscoverAsync(
+    public ValueTask<SessionContextCandidateSelection> SelectAsync(
         SessionContextSelectionRequest request,
         CancellationToken cancellationToken
     ) {
@@ -45,24 +45,27 @@ internal sealed class TestContextCandidateSource : ICoherentContextCandidateSour
                 ? Array.Empty<SessionContextCandidate>()
                 : new[] { Candidate });
         if (candidates.Count == 0) {
-            return ValueTask.FromResult(new SessionContextCandidateDiscovery(
+            return ValueTask.FromResult(new SessionContextCandidateSelection(
                 IsEmptyLineage
-                    ? SessionContextCandidateDiscoveryStatus.EmptyLineage
-                    : SessionContextCandidateDiscoveryStatus.Candidates,
-                Array.Empty<SessionContextCandidateDescriptor>()
+                    ? SessionContextCandidateSelectionStatus.EmptyLineage
+                    : SessionContextCandidateSelectionStatus.OrdinalUnavailable,
+                null
             ));
         }
-        return ValueTask.FromResult(new SessionContextCandidateDiscovery(
-            SessionContextCandidateDiscoveryStatus.Candidates,
-            candidates.Select(
-                static (candidate, index) =>
-                    new SessionContextCandidateDescriptor(
-                        $"test-candidate-{index}",
-                        index,
-                        candidate.RawStartExclusive,
-                        candidate.AnchorSetups
-                    )
-            ).ToArray()
+        if (request.NthPrevious >= candidates.Count) {
+            return ValueTask.FromResult(new SessionContextCandidateSelection(
+                SessionContextCandidateSelectionStatus.OrdinalUnavailable,
+                null
+            ));
+        }
+        SessionContextCandidate candidate = candidates[request.NthPrevious];
+        return ValueTask.FromResult(new SessionContextCandidateSelection(
+            SessionContextCandidateSelectionStatus.Selected,
+            new SessionContextCandidateDescriptor(
+                $"test-candidate-{request.NthPrevious}",
+                candidate.RawStartExclusive,
+                candidate.AnchorSetups
+            )
         ));
     }
 
