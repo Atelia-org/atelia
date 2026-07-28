@@ -332,6 +332,149 @@ public sealed class DerivedMemoryOrchestratorTests : IDisposable {
     }
 
     [Fact]
+    public async Task OnlineLifecycleHardLimitRestartAfterPartialFailureResumesDurablePendingWithoutDuplicatePlanning() {
+        Fixture fixture = await CreateFixtureAsync();
+        fixture.Engine.AppendObservation(
+            new string('x', 4_000)
+        );
+        EventAddress boundary =
+            fixture.Engine.AppendImportedAgentAction(
+                new ActionMessage([
+                    new ActionBlock.Text("large suffix answer")
+                ]),
+                new CompletionDescriptor(
+                    "import",
+                    "v1",
+                    "model-a"
+                )
+            );
+        int rawEventCount =
+            fixture.Engine.ReadCurrentLineageHeaders()
+                .HeadToRoot.Count;
+        var completedAlpha = new FakeMaintainer(
+            "alpha-profile",
+            fixture.Policy.Roles[0].Target,
+            "durable alpha"
+        );
+        var interruptedZeta = new FakeMaintainer(
+            "zeta-profile",
+            fixture.Policy.Roles[1].Target,
+            exception: new InvalidOperationException(
+                "controlled restart failure"
+            )
+        );
+        var interrupted =
+            new DerivedMemoryOnlineLifecycleCoordinator(
+                fixture.Repository,
+                fixture.Policy,
+                "main",
+                [
+                    Execution(fixture, 0, completedAlpha),
+                    Execution(fixture, 1, interruptedZeta)
+                ]
+            );
+
+        SessionMemoryLifecycleResult first =
+            await interrupted.PrepareAsync(
+                fixture.Engine,
+                new(
+                    boundary,
+                    SessionExecutionPhase.Idle
+                ),
+                CancellationToken.None
+            );
+
+        Assert.Equal(
+            SessionMemoryLifecycleStatus.Backpressure,
+            first.Status
+        );
+        Assert.Equal(1, completedAlpha.CallCount);
+        Assert.Equal(1, interruptedZeta.CallCount);
+        DerivedMemoryValidationReport partial =
+            await fixture.Repository.ValidateAsync(
+                fixture.Engine
+            );
+        Assert.Equal(1, partial.ArtifactEpochCount);
+        Assert.Equal(1, partial.OrchestrationTransactionCount);
+        Assert.Equal(1, partial.RoleSettlementCount);
+        Assert.Equal(
+            boundary,
+            fixture.Engine.ReadCurrentLineageHeaders()
+                .CapturedHead
+        );
+
+        _engines.Remove(fixture.Engine);
+        fixture.Engine.Dispose();
+        SessionJournalEngine reopened =
+            SessionJournalEngine.Open(fixture.Path);
+        _engines.Add(reopened);
+        DerivedMemoryRepository reopenedRepository =
+            DerivedMemoryRepository.Open(fixture.Path);
+        var mustNotRepeatAlpha = new FakeMaintainer(
+            "alpha-profile",
+            fixture.Policy.Roles[0].Target,
+            exception: new InvalidOperationException(
+                "settled alpha repeated after restart"
+            )
+        );
+        var recoveredZeta = new FakeMaintainer(
+            "zeta-profile",
+            fixture.Policy.Roles[1].Target,
+            "recovered zeta"
+        );
+        var resumed =
+            new DerivedMemoryOnlineLifecycleCoordinator(
+                reopenedRepository,
+                fixture.Policy,
+                "main",
+                [
+                    Execution(fixture, 0, mustNotRepeatAlpha),
+                    Execution(fixture, 1, recoveredZeta)
+                ]
+            );
+
+        SessionMemoryLifecycleResult second =
+            await resumed.PrepareAsync(
+                reopened,
+                new(
+                    boundary,
+                    SessionExecutionPhase.Idle
+                ),
+                CancellationToken.None
+            );
+
+        Assert.Equal(
+            SessionMemoryLifecycleStatus.Backpressure,
+            second.Status
+        );
+        Assert.Equal(0, mustNotRepeatAlpha.CallCount);
+        Assert.Equal(1, recoveredZeta.CallCount);
+        DerivedMemoryValidationReport recovered =
+            await reopenedRepository.ValidateAsync(reopened);
+        Assert.Equal(1, recovered.ArtifactEpochCount);
+        Assert.Equal(1, recovered.OrchestrationTransactionCount);
+        Assert.Equal(2, recovered.RoleSettlementCount);
+        Assert.Equal(1, recovered.ArtifactSetCount);
+        Assert.Equal(
+            boundary,
+            reopened.ReadCurrentLineageHeaders()
+                .CapturedHead
+        );
+        Assert.Equal(
+            rawEventCount,
+            reopened.ReadCurrentLineageHeaders()
+                .HeadToRoot.Count
+        );
+        DerivedArtifactSet published =
+            (await reopenedRepository.ArtifactSets
+                .TryReadLatestAsync(
+                    fixture.Policy,
+                    "main"
+                ))!;
+        Assert.Equal(fixture.Epoch.EpochId, published.EpochId);
+    }
+
+    [Fact]
     public async Task OnlineLifecycleProjectedObservationUsesExplicitBackpressureWithoutRawMutation() {
         Fixture fixture = await CreateFixtureAsync(roleCount: 1);
         var coordinator =

@@ -72,7 +72,8 @@ SessionJournal 不在旧 deque 旁边补 raw log，而是从新的 storage/wire 
 
 raw event、recovery contract 与 request execution 属于 `Atelia.SessionJournal`；concrete
 MemoryMaintainer 属于 `Atelia.SessionJournal.Maintainers`；派生存储、epoch、artifact/set publication
-和 retrieval 属于未来独立 DerivedMemory；CLI/Agent Host 作为 composition root 组合这些能力。
+和 retrieval 属于 current companion `Atelia.SessionJournal.DerivedMemory`；CLI/Agent Host 作为
+composition root 组合这些能力。
 
 ### decision [S-SJ-MIGRATION-ONE-WAY] Legacy migration 单向且经中立交换格式
 
@@ -145,9 +146,9 @@ derived plans/artifacts/sets 写入 raw Parent sequence；逻辑上的权威边�
 
 | 项目 / 程序集 | Ownership | 依赖约束 |
 |:---------------|:----------|:---------|
-| `Atelia.SessionJournal` | raw event codec、reducer、tail recovery、request preparation/execution，以及 store-neutral derived-context contracts | raw core 不引用 concrete maintainer 或未来 DerivedMemory |
+| `Atelia.SessionJournal` | raw event codec、reducer、tail recovery、request preparation/execution，以及 store-neutral derived-context contracts | raw core 不引用 concrete maintainer 或 DerivedMemory |
 | `Atelia.SessionJournal.Maintainers` | concrete MemoryMaintainer、profiles、prompts、target paths 与窄职责 helpers | 作为 companion assembly 单向依赖 SessionJournal contracts |
-| `Atelia.SessionJournal.DerivedMemory`（暂名、未来） | epochs、artifacts、ArtifactSets、lineage/indexes、selection 与 publication | 单向依赖 SessionJournal 的 neutral contracts；其记录只向 raw address 建立引用 |
+| `Atelia.SessionJournal.DerivedMemory` | epochs、artifacts、ArtifactSets、lineage/indexes、selection 与 publication | 单向依赖 SessionJournal 的 neutral contracts；其记录只向 raw address 建立引用 |
 | `SessionJournal.Cli` / Agent Host | composition root、迁移导入、离线开发运行、provider/tool 注入 | 可以同时引用上述项目，但不把应用 policy 推回 raw core |
 | `ChatSession.LegacyExportCli` | 旧 ChatSession 数据的 JSON/Markdown 出口 | 只依赖旧 ChatSession；不依赖 SessionJournal，也不承担新功能 |
 
@@ -195,7 +196,7 @@ current trunk 的 schema 是 `atelia.session-journal.trunk.v1`。已实现的
 | `CompletionAttemptFailed` | 9 | 已知 provider/host failure 已持久化 |
 | `ImportedAgentAction` | 10 | 迁移导入的 action；不伪装成 online provider completion |
 | — | 11 | 已退役；曾用于 opaque `CompletionAttemptRestarted`，不得复用 |
-| `ArtifactSetCommitted` | 12 | interim coherent artifact-set activation；target 将移出 raw |
+| — | 12 | 已退役；曾用于 interim `ArtifactSetCommitted`，不得复用 |
 | `CompletionAttemptStarted` | 13 | provider dispatch claim；event address 是 attempt identity |
 
 每种 payload 版本独立推进；不能把上表的 header kind 数值、payload `v` 和 repository schema 混为一个
@@ -254,8 +255,8 @@ EventJournal branch primitive 就宣称产品能力已经实现。
 
 这些 artifact 的内容形状可以是 Markdown、JSON、图节点或其他二进制格式。统一的是 provenance 与生命周期，不是正文 schema。
 
-它们不是 raw experience，也不属于旧 ChatSession。目标 ownership 是独立、可替换的
-`Atelia.SessionJournal.DerivedMemory`（暂名）；该 subsystem 可以删除并由 raw SessionJournal 重建。
+它们不是 raw experience，也不属于旧 ChatSession。current ownership 是独立、可替换的
+`Atelia.SessionJournal.DerivedMemory`；该 subsystem 可以删除并由 raw SessionJournal 重建。
 
 ### 6.2 Historical interim baseline（已由 DM-3B 取代）
 
@@ -283,7 +284,7 @@ activation，都是已知 interim coupling。
 
 ### 6.3 Target Artifact 最小字段
 
-未来 DerivedMemory schema 至少包含：
+current DerivedMemory schema 覆盖以下核心 provenance/lifecycle 信息：
 
 | 字段 | 含义 |
 |:-----|:-----|
@@ -316,11 +317,11 @@ Artifact 本身 append-only。所谓“最新版”由 lineage、ArtifactSet 或
 
 这使 analyzer 升级后可以重建，并允许人工比较“同一原始经历的不同解释”。
 
-### 6.5 Target Coherent Artifact Set
+### 6.5 Current Coherent Artifact Set
 
 Autobiography 与 World Understanding 可能并行生成，但一次上下文不应偶然混用不同 source head 的半套结果。
 
-ArtifactSet 应作为 derived subsystem 内的 immutable record：
+ArtifactSet 已作为 derived subsystem 内的 immutable record：
 
 - 引用一组完整 exact artifact members；
 - 引用一个在 producer 调用前已持久化的 shared coverage epoch；同一 coherence group 的 required
@@ -331,35 +332,36 @@ ArtifactSet 应作为 derived subsystem 内的 immutable record：
 
 若其中一个 maintainer 失败，旧 active set 保持可用；已成功写出的单个 artifact 可以留作诊断或未来复用，但不自动进入当前 coherent set。
 
-history 分块是 maintainer 之前的公共 planning 结果。未来 DerivedMemory subsystem 应保存 versioned split
+history 分块是 maintainer 之前的公共 planning 结果。DerivedMemory subsystem 已保存 versioned planner
 config 和 immutable epoch ledger：config 记录 token estimator、最小 recent suffix、触发阈值与
 dependency-safe boundary policy；epoch record 固定实际 raw range/anchor/setup/config fingerprint。
-日常运行并行启动同 epoch 的 maintainers，prompt-tuning 则可独立重跑其中一个 role，但不能重新计算
-split。同步来自 shared epoch identity，而不是进程启动时间或恰好相同的 `--threshold-tokens`。
+日常运行并行启动同 epoch 的 maintainers，prompt-tuning 可针对已持久化 epoch 独立重跑其中一个 role，
+而不重新计算 split。同步来自 shared epoch identity，而不是进程启动时间或恰好相同的
+`--threshold-tokens`。
 
-### 6.6 从 interim 切换到 target
+### 6.6 Historical interim-to-current migration（DM-0～DM-8 已完成）
 
-最终边界与 current 的差异必须显式迁移：
+下表记录已经完成的 authority/assembly 迁移，不是 future backlog：
 
-| 关注点 | Current interim | Target |
-|:-------|:----------------|:-------|
+| 关注点 | Historical interim | Current |
+|:-------|:-------------------|:--------|
 | Derived store | `DerivedRecapStore` 在 SessionJournal core，repo-local sidecar | 独立 DerivedMemory assembly/repository |
 | Coverage 协调 | 每个 runner 独立 split，人工组合 | shared immutable epoch 先于 maintainers 持久化 |
 | Set publication | CLI 手动 checkpoint；raw kind 12 `ArtifactSetCommitted` 激活 | DerivedMemory 内 immutable ArtifactSet publication/index |
-| 引用方向 | raw activation 和 Prepared 仍含 artifact/set identity | 只允许 derived -> raw address/range/setup refs |
-| Prepared recovery | v3 内联 contribution snapshot，但仍引用 raw activation | Prepared self-contained：exact context/canonical request + raw provenance，不读取 DerivedMemory |
-| Composition | SessionJournal engine 直接打开 sidecar | Host/CLI 注入 store-neutral candidate provider |
+| 引用方向 | raw activation 和 Prepared 含 artifact/set identity | 只允许 derived -> raw address/range/setup refs |
+| Prepared recovery | v3 内联 contribution snapshot，但仍引用 raw activation | Prepared v5 self-contained：exact context snapshot + raw provenance，不读取 DerivedMemory |
+| Composition | SessionJournal engine 直接打开 sidecar | Host/CLI 注入 store-neutral candidate provider/lifecycle |
 
-目标 raw SessionJournal 不追加 `ArtifactSetCommitted` 或其他 derived-set activation，也不引用
+current raw SessionJournal 不追加 `ArtifactSetCommitted` 或其他 derived-set activation，也不引用
 artifact/set/epoch id。某次 completion 实际使用的 derived memory 必须在
 `CompletionRequestPrepared` 中以 exact context snapshot 或 canonical request bytes 提升为 execution
 fact；exact reopen 不打开 DerivedMemory，也不重新运行 planner。用于审计 selection 的
 `preparedAddress -> derivedSetId/epochId` 记录属于可重建 derived usage index。
 
-迁移按专门实施计划的依赖顺序进行：先建立 cross-assembly neutral contracts 和 neutral request
-materialization，再切换 self-contained Prepared，之后才移动 concrete store、删除 raw
-`ArtifactSetCommitted`，最后引入 shared epoch、并行 orchestration 与 online selection。不能先搬
-`DerivedRecapStore.cs`，否则 raw core 会被迫反向依赖 concrete DerivedMemory。
+该迁移已按专门实施计划完成：先建立 cross-assembly neutral contracts 和 neutral request
+materialization，再切换 self-contained Prepared，之后移动 concrete store、删除 raw
+`ArtifactSetCommitted`，最后引入 shared epoch、并行 orchestration 与 online selection。这一顺序
+避免了 raw core 反向依赖 concrete DerivedMemory。
 
 `SessionExecutionTailResolver` 始终 raw-only；DerivedMemory 缺失只阻止尚未 Prepared 的 context
 planning，不应破坏已 Prepared request 的恢复。
@@ -479,16 +481,17 @@ canonical request manifest 是崩溃恢复和重发的 Canonical Source。Contex
 - tool schema budget。
 - expected completion output reserve。
 
-`SessionJournal.Cli run-memory-maintainer --threshold-tokens` 只是 maintainer runner-local 的开发参数，
-控制本次离线 synthetic split；它既不是 online Context Planner budget，也不是 shared maintenance
-epoch 配置。长期的 DerivedMemory epoch planner 才会统一决定：
+Historical CS-5-lite 曾由
+`SessionJournal.Cli run-memory-maintainer --threshold-tokens` 在 runner 内执行 synthetic split；该
+模式已经删除。current `run-memory-maintainer --epoch <epoch-id>` 只执行 DM-5 planner 预先持久化的
+exact epoch，不拥有 split policy。current DerivedMemory epoch planner 统一决定：
 
 - `minimumRecentTokens`：始终保留的最新 dependency-closed suffix。
 - `epochTriggerTokens`：eligible prefix 达到多少后创建新 epoch。
 - token estimator、dependency boundary policy、headroom 与 hard limit。
 - immutable epoch plan 的实际 raw range；boundary alignment 可使每个 epoch 大小不同。
 
-同一 coherence group 的 maintainers 应消费同一 epoch plan。针对某个 role 做 prompt tuning 时，只替换
+同一 coherence group 的 maintainers 消费同一 epoch plan。针对某个 role 做 prompt tuning 时，只替换
 该 epoch 的 producer candidate，不重新切分 history。
 
 ### 7.5 选择结果也是事实
@@ -596,13 +599,13 @@ completion；tool results 全部结算后仍需 continuation completion，不能
 Action、Started、Result 等事实仍逐条保留。未来只有当产品需要表达无法从 raw tail 推导的额外领域
 承诺时，才应另行设计显式 completion/paused event，而不是预先把派生摘要写成第二真源。
 
-## 9. Dynamic Retrieval（Future DerivedMemory Read Model）
+## 9. Dynamic Retrieval（Future Read Model）
 
 ### 9.1 尚未实现的独立 Read Path
 
 Dynamic Retrieval 当前尚未实现，也没有冻结 `IMemoryRetriever`、`IContextMemorySource` 等公共接口。
-它属于未来 DerivedMemory/read-model 层：maintainer/producer 在写入与巩固路径生成 artifacts，
-retriever 在尚未 Prepared 的 request planning 阶段选择候选材料。它不属于
+它属于 current DerivedMemory companion 的未来 retrieval/read-model 层：maintainer/producer
+在写入与巩固路径生成 artifacts，retriever 在尚未 Prepared 的 request planning 阶段选择候选材料。它不属于
 `IMemoryBlockMaintainer`，也不参与已 Prepared request 的 reopen。
 
 应先完成一个真实 backend 的端到端切片，再从使用证据中提炼公共 contract，避免先围绕假想的向量库
@@ -637,26 +640,23 @@ dynamic recall，不能借“索引降级”静默绕过 coherent ArtifactSet �
 
 ## 10. Artifact Maintenance 调度
 
-### 10.1 Current gap：单 profile 离线 runner
+### 10.1 Current development surface：single-profile epoch runner
 
 current `SessionJournal.Cli run-memory-maintainer` 是面向 maintainer 开发的离线 runner，而不是
-DerivedMemory scheduler：
+DerivedMemory online scheduler：
 
 - 每次只运行一个显式 `--profile`。
-- 从 SessionJournal root 做一次 full `ReplayHistory()`，不是从 durable cursor 增量恢复。
-- maintainer 输入使用 empty `MemoryPack`，尚未加载上一版 role artifact 形成 lineage update。
-- 使用 CLI 自有 `MemoryMaintainerHistorySplitPolicy` 与 `--threshold-tokens` 做 runner-local synthetic
-  half-context split。
-- 生成结果可以写入 derived recap store，但不会自动建立 shared epoch、并行调度多个 role 或发布
-  coherent active set。
+- 必须消费既有 durable epoch，不再自行 threshold/split。
+- non-genesis 从 exact input set 恢复 MemoryPack，支持同 epoch 的独立 prompt tuning。
+- 只写 alternative artifact candidate，不推进 shared epoch 或 latest set。
 
-这条路径的价值是验证 concrete `MemoryMaintainer`、raw provenance、artifact writing 与重复实验；不能
-把它描述成已经落地的 provisioning/planner。
+online provisioning/planning 由 DM-5～DM-8 的 lifecycle coordinator 负责，single-profile runner
+只保留开发与调优价值。
 
-### 10.2 Future：shared epoch 与 cursor
+### 10.2 Implemented：shared epoch 与 cursor
 
-未来 DerivedMemory scheduler 应先持久化 shared immutable coverage epoch，再让同一 coherence group
-的 maintainers 消费同一 exact raw range。每个 profile/role 的 lineage 需要说明：
+DerivedMemory scheduler 已先持久化 shared immutable coverage epoch，再让同一 coherence group
+的 maintainers 消费同一 exact raw range。每个 artifact/role lineage 固定：
 
 - 上一版 artifact 吸收到哪个 raw Event。
 - 本轮 epoch 计划吸收哪个 raw range。
@@ -669,11 +669,11 @@ reroll 或从历史 Event 分叉后，新 branch 只能从该 lineage 可达的 
 “即将滑出上下文”仍可作为触发信号，但维护完成后不删除 raw prefix，只推进 derived lineage 与
 candidate publication。
 
-### 10.3 Future 触发、并行与结算
+### 10.3 Implemented baseline：触发、并行与结算
 
-scheduler 可以组合 context token pressure、未吸收 raw token/event 数、artifact age、scene/episode
-边界、turn idle、人工请求与 profile-specific high watermark。不同 artifact kind 可以有不同成本与
-更新频率，但 coherent roles 必须共享 coverage epoch。
+current scheduler 使用 planner token thresholds、scheduling headroom、hard limit 与 safe online
+boundary；scene/episode、artifact age 与 profile-specific trigger 仍是未来扩展。coherent roles
+共享同一 coverage epoch。
 
 producer 可基于同一 `SourceRawHead` 并行运行。完成时：
 
@@ -683,9 +683,9 @@ producer 可基于同一 `SourceRawHead` 并行运行。完成时：
 - raw branch 已前进不篡改 candidate 的 source head；planner 只需在使用时追加更长 raw suffix。
 - prompt-tuning 可以针对既有 epoch 重跑单个 role，不产生新的 role-local split。
 
-通用 provisioning/planner 仍缺少 role catalog、增量 lineage recovery、shared coverage epoch
-config/ledger、partial-success 结算和自动 coherent publication。后续实施入口见
-[`memory-maintainer-provisioning-planner-gap.md`](memory-maintainer-provisioning-planner-gap.md)。
+host 通过 exact role executions 完成 provisioning；shared config/epoch ledger、partial-success
+settlement、restart resume、atomic publication 与 online backpressure 均已实施。原功能缺口已归档为
+[历史备忘](done/memory-maintainer-provisioning-planner-gap.md)。
 
 ## 11. 项目边界与 Legacy 迁移
 
@@ -697,7 +697,7 @@ StateJournal 原地改造成 EventJournal。边界原则是：
 - 旧 `prototypes/ChatSession` 与其 StateJournal message deque 保持 frozen，只承担归档读取与迁移
   数据导出；不继续加入 SessionJournal execution、memory 或 planner 新功能。
 - 新功能和新架构只进入 `prototypes/SessionJournal` 及
-  `SessionJournal.Maintainers`、`SessionJournal.Cli`、未来 DerivedMemory 等附属新项目。
+  `SessionJournal.Maintainers`、`SessionJournal.DerivedMemory`、`SessionJournal.Cli` 等附属项目。
 - 新 SessionJournal 不读写旧 deque，不与旧 StateJournal 双写，也不把旧 store 当作自己的
   projection/cache。
 - StateJournal 在其他领域仍可继续使用；这里冻结的是旧 ChatSession storage 模型，不是否定
@@ -733,10 +733,10 @@ correlation、operation/checkpoint 或 branch 语义而 fail-fast，不能伪造
 concrete `MemoryMaintainer` 位于 companion assembly `Atelia.SessionJournal.Maintainers`；能力不会回迁
 到旧 ChatSession，也不以引用旧类型的方式“复用”。
 
-旧 `HistoryWindowSplitPolicy` 属于旧 ChatSession/backtest 语境，不是新架构的可复用资产。current
-`SessionJournal.Cli` 自有的 `MemoryMaintainerHistorySplitPolicy` 只是为了独立开发 maintainer 而提供的
-synthetic half-context split，同样不是未来 Context Planner 或 shared epoch policy。长期切分责任属于
-DerivedMemory scheduler/epoch planner。
+旧 `HistoryWindowSplitPolicy` 属于旧 ChatSession/backtest 语境，不是新架构的可复用资产。
+CS-5-lite 过渡期的 `MemoryMaintainerHistorySplitPolicy` / synthetic half-context split 也已删除。
+current `SessionJournal.Cli run-memory-maintainer --epoch <epoch-id>` 只消费 durable epoch；切分责任已
+归 DM-5 DerivedMemory scheduler/epoch planner。
 
 ### 11.4 Compaction 的新语义
 
@@ -781,8 +781,8 @@ SessionJournal 项目族中建立能力，而不是改造旧 ChatSession。
   [CLI 拆分与迁移边界](../ChatSession/legacy-export-and-sessionjournal-cli-split.md)。
 - **CS-2.5 / CS-5-lite：derived recap 试验基线。** 已建立可删除、可重建的 sidecar recap store，
   addressed replay provenance，以及由 `SessionJournal.Cli run-memory-maintainer` 驱动 concrete
-  `MemoryMaintainer` 的开发入口。它证明了 raw authority、artifact lineage 和 tail anchor，但当前
-  store/split/runner 仍是通向独立 DerivedMemory 的 interim implementation，详见
+  `MemoryMaintainer` 的开发入口。它证明了 raw authority、artifact lineage 和 tail anchor；当时的
+  store/split/runner 已由 current DerivedMemory/epoch runner 取代，详见
   [CS-5-lite 完成记录](done/cs-5-lite-sessionjournal-derived-recap-store.md)。
 - **CS-3 / CS-3D0～D7：coherent-only request 与 tail recovery。** 该阶段实现了
   `CompletionRequestPrepared` v3、Prepared/Started attempt 对称性、exact reopen、raw-only
@@ -796,31 +796,31 @@ SessionJournal 项目族中建立能力，而不是改造旧 ChatSession。
 这些完成记录保留历史 wire 与阶段名，用于解释 current code 为什么如此；它们不覆盖下节已经批准的
 长期依赖方向。
 
-### 12.2 当前主路线：DM-5～DM-8
+### 12.2 已完成主路线：DM-0～DM-8
 
 当前实施权威是
 [DerivedMemory 可替换子系统与 Shared Epoch 实施方案](derived-memory-subsystem-implementation-plan.md)。
-应按其中的依赖顺序逐片实施、审阅和提交；本文只保留路线级摘要，避免复制 exact contract 或 migration
-细节。
+已按其中的依赖顺序逐片实施、审阅和提交；本文只保留路线级摘要，避免复制 exact contract 或
+migration 细节。
 
 1. **DM-0 — Cross-assembly contracts（已完成）**：在 SessionJournal contracts 中定义 store-neutral
    candidate、selection 与 materialization 边界，先固定正确的依赖方向。
 2. **DM-1 — Neutral request materialization（已完成）**：让 raw core 从中立 candidate/materialized input
    构造 request，不再认识 concrete recap store shape。
-3. **DM-2 — Self-contained Prepared v4（已完成）**：把 exact canonical context 与 raw-start setup
-   provenance 固定在 Prepared 中，使 exact reopen 不依赖可删除的 derived repository。
+3. **DM-2 — Self-contained Prepared（已完成）**：把 exact canonical context 与 raw-start setup
+   provenance 固定在 Prepared 中；DM-8 current wire 为 v5，并支持 strict zero-input bootstrap。
 4. **DM-3 — 独立 DerivedMemory assembly 与 provider cutover（已完成）**：建立单向依赖 SessionJournal
    contracts 的 concrete derived store/provider，并由 CLI/Host composition root 注入。
 5. **DM-4 — 删除 raw activation（已完成）**：移除 raw derived-set activation 及其
    validators；raw chain 不再引用 derived artifact/set identity。
-6. **DM-5 — Shared epoch planner**：在 DerivedMemory 中持久化统一的 history epoch、计划配置和
+6. **DM-5 — Shared epoch planner（已完成）**：在 DerivedMemory 中持久化统一的 history epoch、计划配置和
    ledger，使多个 roles 消费同一 exact coverage boundary。
-7. **DM-6 — Epoch-bound maintainer runner**：maintainer 只执行既定 epoch；split/threshold
+7. **DM-6 — Epoch-bound maintainer runner（已完成）**：maintainer 只执行既定 epoch；split/threshold
    ownership 从 runner 收回 planner，支持独立 prompt-tuning 与重试。
-8. **DM-7 — Orchestration 与 publication**：协调多个 producer、partial settlement 和原子
+8. **DM-7 — Orchestration 与 publication（已完成）**：协调多个 producer、partial settlement 和原子
    ArtifactSet publication；只有完整 coherent set 才成为候选。
-9. **DM-8 — Online lifecycle 与 selection**：由 Host 组合 planning、maintenance 与 provider；
-   首先支持 latest/Nth，再推进 budgeted、branch-aware 的可解释选择。
+9. **DM-8 — Online lifecycle 与 selection（已完成）**：由 Host 组合 planning、maintenance 与
+   provider；支持 latest/Nth/budgeted、strict bootstrap、restart resume 与 explicit backpressure。
 
 这条路线的关键不是把文件机械搬到新项目，而是先解除 raw materialization 和 Prepared 对 concrete
 derived shape 的依赖，再建立独立 DerivedMemory，最后删除 raw activation。不得为了缩短过渡期让
@@ -881,20 +881,20 @@ DM-0～DM-8 建立正确的 authority、ownership 与 online composition 后，�
   DerivedMemory 中的 ArtifactSet 可删除、可重建。raw inventory 不再包含 derived-set
   definition/activation。
 - concrete companion 的依赖方向已经确定：`SessionJournal.Maintainers` 已单向依赖 SessionJournal
-  contracts；未来 DerivedMemory 必须遵守同一方向，raw core 不得反向引用；CLI/Host 是 composition
+  contracts；`SessionJournal.DerivedMemory` 同样单向依赖 raw core，raw core 不得反向引用；
+  CLI/Host 是 composition
   root。
 
 ### 14.2 仍开放的问题
 
-1. Prepared v4 自包含 exact context snapshots 的空间成本、重复数据与敏感内容处理取舍。
-2. shared epoch schema、partial-success settlement、ArtifactSet
-   publication 和 online selection 的 exact contract。
-3. provider-side request/result lookup 与 reconcile 的统一抽象，尤其是 crash window 中 provider
+1. Prepared v5 exact context snapshots 与 canonical request snapshot 方案的空间成本、重复数据、
+   reopen reads 与敏感内容处理取舍。
+2. provider-side request/result lookup 与 reconcile 的统一抽象，尤其是 crash window 中 provider
    已完成但 host 未落 durable result 的情况。
-4. 非幂等、不可查询工具的最终 uncertain/paused 操作协议与人工介入 UX。
-5. 第一个 retrieval backend，以及 provenance、降级、rebuild 和 quality/cost evaluation 的共同
+3. 非幂等、不可查询工具的最终 uncertain/paused 操作协议与人工介入 UX。
+4. 第一个 retrieval backend，以及 provenance、降级、rebuild 和 quality/cost evaluation 的共同
    验收形状。
-6. branch UX、跨 branch derived reuse、多 Parent merge，以及 branch-aware budgeted selection。
+5. branch UX、跨 branch derived reuse、多 Parent merge，以及 branch-aware budgeted selection。
 
 ## 15. 架构成功标准
 

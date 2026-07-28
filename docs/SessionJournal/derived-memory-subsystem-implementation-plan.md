@@ -1,17 +1,19 @@
 # DerivedMemory 可替换子系统与 Shared Epoch 实施方案
 
-> **状态**：Implemented；DM-0～DM-8 已完成，等待最终独立审阅与提交
+> **状态**：Final Audited / Implemented / Committed
+> **主实施提交**：`db2c8df6 feat(session-journal): integrate online derived memory lifecycle`
+> **Closeout addendum**：restart/backpressure oracle、最终 real gate 与文档归档已独立审阅通过并提交
 > **日期**：2026-07-27
 > **最新代码对齐**：2026-07-28；已纳入
 > `ChatSession.LegacyExportCli` / `SessionJournal.Cli` 拆分与
 > `SessionJournal.Maintainers` companion assembly
-> **目标基线**：CS-3D7 current trunk；后续以 breaking wire / derived rebuild 方式演进
+> **目标基线**：current Prepared v5 + DM-0～DM-8；后续以 breaking wire / derived rebuild 方式演进
 > **上游决策**：
-> [Tail Execution Recovery 化简调研 §4](tail-execution-recovery-simplification-study.md)、
-> [MemoryMaintainer Provisioning / Planner 功能缺口](memory-maintainer-provisioning-planner-gap.md)、
+> [Tail Execution Recovery 化简调研](tail-execution-recovery-simplification-study.md)、
+> [MemoryMaintainer Provisioning / Planner 历史缺口](done/memory-maintainer-provisioning-planner-gap.md)、
 > [SessionJournal 事件源会话与长期上下文架构路线图](event-sourced-session-architecture-roadmap.md)、
 > [Legacy ChatSession Export / SessionJournal CLI 拆分](../ChatSession/legacy-export-and-sessionjournal-cli-split.md)
-> **用途**：供后续 Coding Agent 按依赖顺序领取单一分片，完成设计复核、实现、测试、审阅、修复和提交。
+> **用途**：记录已实施的 authority、contracts、迁移、验收与后续非目标；不再作为待领取分片计划。
 
 ## 0. 执行结论
 
@@ -29,23 +31,23 @@ contracts，composition root 同时组合 provider/maintainer/Completion。
 采用以下顺序：
 
 ```text
-DM-0  Cross-assembly contracts
+DM-0  Cross-assembly contracts  ✓
   ↓
-DM-1  Neutral request materialization
+DM-1  Neutral request materialization  ✓
   ↓
-DM-2  Self-contained Prepared v4
+DM-2  Self-contained Prepared v4（后由 DM-8 升级 v5） ✓
   ↓
-DM-3  DerivedMemory assembly + provider cutover
+DM-3  DerivedMemory assembly + provider cutover  ✓
   ↓
 DM-4  Remove raw derived-set activation  ✓
   ↓
-DM-5  Shared DerivedArtifactEpochPlanner
+DM-5  Shared DerivedArtifactEpochPlanner  ✓
   ↓
 DM-6  Epoch-bound independent maintainer runner  ✓
   ↓
-DM-7  Parallel orchestration + ArtifactSet publication
+DM-7  Parallel orchestration + ArtifactSet publication  ✓
   ↓
-DM-8  Online lifecycle + budgeted set selection
+DM-8  Online lifecycle + budgeted set selection  ✓
 ```
 
 核心排序理由：
@@ -113,11 +115,11 @@ legacy ChatSession repo
   contracts assembly；
 - `SessionJournal.Cli.Tests` 可以为 exchange-schema compatibility 同时引用两侧 product
   assembly；这一 test-only edge 不得进入 `SessionJournal.Cli`；
-- `ChatSession.LegacyExportCli` 不参与未来 DerivedMemory composition、epoch planning 或 online
+- `ChatSession.LegacyExportCli` 不参与 current 或后续 DerivedMemory composition、epoch planning 或 online
   lifecycle。
 
-这次拆分已经完成了 composition root 和 concrete policy 的初步分层，但没有提前完成
-DerivedMemory：store、planner、runner substrate 和 raw/derived 解耦仍是 DM-0～DM-8 的工作。
+这次拆分先完成了 composition root 和 concrete policy 的初步分层；随后 DM-0～DM-8 已完成
+DerivedMemory store、planner、runner substrate 和 raw/derived 解耦。
 
 ### 1.3 已确定的长期边界
 
@@ -1000,7 +1002,8 @@ DerivedMemory 互相引用或保留两份实现。
 ## 13. DM-8：Online Lifecycle 与 Budgeted Selection
 
 > **实施状态（2026-07-28）**：完成。core/DerivedMemory/CLI 已切到 bounded two-phase
-> discovery/materialization、Prepared v5 strict bootstrap、shared estimator 与 online lifecycle。
+> discovery/materialization、Prepared v5 strict bootstrap、shared estimator 与 online lifecycle；
+> hard-limit partial failure + dispose/reopen 组合 oracle 已覆盖 durable pending resume。
 
 ### 目标
 
@@ -1084,20 +1087,34 @@ raw head/event count 不变。append 成功后必须按新 exact boundary 再执
 
 ### Real acceptance evidence（2026-07-28）
 
-在全新临时 repo `gitignore/dm8-real-whc5bJ/session` 上，从
+第一阶段在全新临时 repo `gitignore/dm8-real-whc5bJ/session` 上，从
 `cyber-copy-upgraded/chat-session-legacy-upgrade-export.json` 导入 71 对
 observation/action；raw import 验证通过。online lifecycle 规划 epoch
 `dae_b5fd9314…cc630`，两个真实 `dsv4p` maintainer 在相差约 41 ms 的时间点并行启动，
 分别约 402 s / 588 s 完成；2 artifacts、2 durable settlements 与 finalization 完整发布为
 set `das_b8b88e36…19f83b`。最终 raw/derived offline validation 均通过，Prepared v5 数量为 1。
 
-agent completion 未闭合：provider 连续返回 `503 model_not_found / no available channel`。首次失败后
+agent completion 当时未闭合：provider 连续返回 `503 model_not_found / no available channel`。根因
+不是 DerivedMemory，而是 legacy import 保留了已下线的 `unsloth/qwen3.6` runtime setup。首次失败后
 raw 正确停在 `AwaitingCompletion`；修复后的 CLI restart 从同一 Prepared exact request 进入
 `ResumeAsync`，显式 `restart-new-attempt` 只新增 agent attempt，未重跑 maintainer。外部成功结果
-不能伪造，因此本次证据明确分为“maintainers + coherent set 成功”和“agent provider availability
-阻塞”。deterministic reopen test 已覆盖失败后第二次 CLI 只增加 1 次 provider call、最终回到
-Idle；10k cold-prefix performance test 继续证明 online `FullProjectionInvocationCount` 不变且
-payload reads 不随 selected anchor 之前的历史增长。
+不能伪造；这次失败揭示并修复了 CLI Send/Resume routing 与 explicit uncertain policy 缺口。
+
+最终 real gate 已由 fresh import 闭合：在 raw chain 追加与 `dsv4p` 匹配的
+`deepseek-v4-pro` + `openai-chat/deepseek-v4` runtime setup，复用同一 raw provenance 上已经 strict
+验证的 autobiography + world-understanding coherent set。第一轮真实 online turn 完成后 phase 为
+`Idle`；dispose/reopen 后第二轮同样成功回到 `Idle`。两个 content-free report 的
+`errorCount = 0`，未记录 response 正文、完整 request 或 connection secret。第二轮结束后的 strict
+validation 再次通过：raw head phase 为 `Idle`、inventory 为 157 events；derived inventory 为
+2 artifacts / 1 set / 1 latest pointer / 1 planner config / 1 epoch / 1 transaction /
+2 settlements / 1 finalization。
+
+deterministic tests 另证明：provider failure 后 CLI 默认 refuse 不重发，显式 restart 只增加一个
+attempt；hard-limit 下一个 required role 已 durable settlement、另一个 role 失败时返回
+backpressure，dispose/reopen 后只补缺失 role、不重复 epoch/transaction/已完成 role，发布 set 后若
+suffix 仍超限则继续显式 backpressure，raw head/event count 全程不变。10k cold-prefix performance
+test 继续证明 online `FullProjectionInvocationCount` 不变且 payload reads 不随 selected anchor
+之前的历史增长。
 
 ## 14. Migration 与 schema 边界
 
@@ -1137,6 +1154,7 @@ payload reads 不随 selected anchor 之前的历史增长。
   - epoch planner；
   - maintainer settlement/publication；
   - lifecycle pending-before-successor、旧 set 可用性、backpressure 与 bounded discovery。
+  - hard-limit partial settlement + dispose/reopen + pending resume 组合 oracle。
 - `tests/SessionJournal.Maintainers.Tests`
   - stable maintainer/profile/target identity；
   - embedded prompt/profile loading；
@@ -1221,13 +1239,14 @@ connection、`DerivedMemoryOnlineLifecycleCoordinator` 和 raw engine 组合起�
 引用 DerivedMemory/Maintainers。命令按 boundary 选择 `SendAsync` 或 `ResumeAsync`；uncertain
 attempt 缺省拒绝，只有 operator 显式选择 `restart-new-attempt` 才会发起新 provider attempt。
 
-收口闸门：
+已完成收口闸门：
 
-1. independent review 检查 authority、crash/reopen、bounded read 与 pre-append side effect；
-2. 全量 relevant tests 与 zero-warning solution build；
-3. 新临时 repo 经 legacy import、shared epoch、两个真实 `dsv4p` maintainer、ArtifactSet
-   publication、online completion 与 restart 验收；
-4. 只记录 content-free ids/status/metrics，不提交 connection secret、call log 或完整 request。
+1. independent review 已检查 authority、crash/reopen、bounded read 与 pre-append side effect；
+2. relevant full tests、hostile provider tests 与 zero-warning solution build 已通过；
+3. fresh legacy import、shared epoch、两个真实 `dsv4p` maintainer、ArtifactSet publication、
+   matching runtime setup、两轮 online completion 与 process reopen 已验收；
+4. real reports 只记录 content-free ids/status/metrics，没有提交 connection secret、call log 或完整
+   request。
 
 后续 retrieval、多 coherence group 组合、动态 maintainer provisioning UI 属于新计划，不应继续
 塞入 DM-8。

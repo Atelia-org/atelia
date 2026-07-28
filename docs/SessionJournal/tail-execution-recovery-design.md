@@ -33,8 +33,9 @@
 > DerivedMemory 子系统；SessionJournal 只定义 store-neutral coherent context candidate contract。
 > `SessionExecutionTailResolver` 始终保持 raw-only，只有未 Prepared 的 request-context
 > planning/materialization 注入该 provider；Prepared/Started exact reopen 不读取 derived subsystem。
-> 目标设计见 [化简调研 §4](tail-execution-recovery-simplification-study.md) 和
-> [MemoryMaintainer Provisioning / Planner 功能缺口备忘](memory-maintainer-provisioning-planner-gap.md)。
+> current 实施见
+> [DerivedMemory 实施方案](derived-memory-subsystem-implementation-plan.md)；原 provisioning 问题见
+> [历史缺口备忘](done/memory-maintainer-provisioning-planner-gap.md)。
 
 ## 0. 给后续 Coding Agent 的结论
 
