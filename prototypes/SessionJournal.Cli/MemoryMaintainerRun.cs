@@ -194,6 +194,8 @@ internal static class MemoryMaintainerProducerIdentity {
 
 internal sealed record MemoryMaintainerRunRecord(
     string Schema,
+    string BranchName,
+    string BranchRefId,
     string EpochId,
     string EpochPlanFingerprint,
     string RoleId,
@@ -220,13 +222,16 @@ internal sealed record MemoryMaintainerRunRecord(
     IReadOnlyList<string>? Errors
 ) {
     public static MemoryMaintainerRunRecord FromResult(
+        DerivedMemoryBranchScope branchScope,
         MemoryMaintainerProfileDescriptor profile,
         DerivedMemoryMaintainerRunResult result,
         string artifactsDirectory
     ) {
         DerivedMemoryArtifact artifact = result.Artifact;
         return new MemoryMaintainerRunRecord(
-            "atelia.session-journal.memory-maintainer-run.v2",
+            "atelia.session-journal.memory-maintainer-run.v3",
+            branchScope.BranchName,
+            branchScope.BranchRefId.ToHexString(),
             artifact.EpochId,
             artifact.EpochPlanFingerprint,
             artifact.RoleId,
@@ -266,6 +271,8 @@ internal sealed record MemoryMaintainerRunRecord(
 
 internal sealed record DerivedMemoryOrchestrationRunRecord(
     string Schema,
+    string BranchName,
+    string BranchRefId,
     string Status,
     string TransactionId,
     string JobFingerprint,
@@ -277,6 +284,8 @@ internal sealed record DerivedMemoryOrchestrationRunRecord(
 
 internal sealed record OnlineTurnRunRecord(
     string Schema,
+    string BranchName,
+    string BranchRefId,
     string? Head,
     string Phase,
     string ProviderId,

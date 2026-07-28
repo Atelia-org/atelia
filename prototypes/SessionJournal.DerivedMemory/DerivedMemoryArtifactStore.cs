@@ -41,6 +41,11 @@ public sealed class DerivedMemoryArtifactStore {
 
     public string ArtifactsDirectory { get; }
 
+    /// <summary>
+    /// Persists an append-only candidate staging artifact. A candidate carries no branch ref and
+    /// cannot become selectable until an engine-bound orchestration finalization and ArtifactSet
+    /// publication prove its durable epoch and raw-lineage closure.
+    /// </summary>
     public async ValueTask<DerivedMemoryArtifact> WriteCandidateAsync(
         DerivedMemoryArtifactWriteRequest request,
         CancellationToken cancellationToken = default

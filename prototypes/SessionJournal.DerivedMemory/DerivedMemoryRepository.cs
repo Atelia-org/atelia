@@ -112,6 +112,25 @@ public sealed class DerivedMemoryRepository {
         CancellationToken cancellationToken = default
     ) {
         ArgumentNullException.ThrowIfNull(engine);
+        if (!engine.IsReadOnly) {
+            throw new ArgumentException(
+                "Strict derived-memory branch validation requires a read-only SessionJournalEngine.",
+                nameof(engine)
+            );
+        }
+        _ = Bind(engine);
+        return await ValidateCoreAsync(engine, cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    // White-box semantic validation hook for tests that deliberately keep a writer engine open.
+    // Production strict validation must use ValidateBranchAsync/OpenReadOnly instead.
+    internal async ValueTask<DerivedMemoryValidationReport>
+        ValidateBranchAgainstOpenEngineAsync(
+        SessionJournalEngine engine,
+        CancellationToken cancellationToken = default
+    ) {
+        ArgumentNullException.ThrowIfNull(engine);
         return await ValidateCoreAsync(engine, cancellationToken)
             .ConfigureAwait(false);
     }
@@ -449,7 +468,7 @@ public sealed class DerivedMemoryRepository {
             cancellationToken.ThrowIfCancellationRequested();
             string branchName = activeNames[group.Key];
             using SessionJournalEngine branchEngine =
-                SessionJournalEngine.Open(
+                SessionJournalEngine.OpenReadOnly(
                     SessionJournalRepositoryPath,
                     branchName
                 );

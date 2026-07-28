@@ -18,6 +18,7 @@ public sealed class SessionJournalEngine : IDisposable {
     private readonly SessionJournalEventReader _reader;
     private readonly string _branchName;
     private readonly RefId _branchRefId;
+    private readonly bool _isReadOnly;
     private readonly SessionJournalTestHooks _testHooks;
     private SessionRuntime? _runtime;
     private SessionGoverningSetup? _governingSetupCursor;
@@ -30,6 +31,7 @@ public sealed class SessionJournalEngine : IDisposable {
         EventJournal.EventJournal journal,
         string branchName,
         RefId branchRefId,
+        bool isReadOnly,
         SessionRuntime? runtime,
         SessionJournalTestHooks? testHooks
     ) {
@@ -37,6 +39,7 @@ public sealed class SessionJournalEngine : IDisposable {
         _reader = new SessionJournalEventReader(journal);
         _branchName = branchName;
         _branchRefId = branchRefId;
+        _isReadOnly = isReadOnly;
         _runtime = runtime;
         _testHooks = testHooks ?? new SessionJournalTestHooks();
     }
@@ -44,6 +47,7 @@ public sealed class SessionJournalEngine : IDisposable {
     public string Path => _journal.JournalPath;
     public string BranchName => _branchName;
     public RefId BranchRefId => _branchRefId;
+    public bool IsReadOnly => _isReadOnly;
 
     internal GoverningSetupResolutionDiagnostics LastGoverningSetupResolutionDiagnostics
         => _lastGoverningSetupResolutionDiagnostics;
@@ -129,6 +133,69 @@ public sealed class SessionJournalEngine : IDisposable {
     public static SessionJournalEngine Open(string path, string branchName)
         => OpenCore(path, branchName, runtime: null, testHooks: null);
 
+    /// <summary>
+    /// Opens the active main branch for strict read-only inspection without raw-tail recovery.
+    /// </summary>
+    public static SessionJournalEngine OpenReadOnly(string path)
+        => OpenReadOnly(
+            path,
+            SessionJournalDefaults.MainBranchName
+        );
+
+    /// <summary>
+    /// Opens one existing active branch for strict read-only inspection without raw-tail recovery.
+    /// Runtime attachment, Send/Resume, and Append entrypoints fail before invoking collaborators
+    /// or changing repository files.
+    /// </summary>
+    public static SessionJournalEngine OpenReadOnly(
+        string path,
+        string branchName
+    ) => OpenReadOnlyCore(
+        path,
+        branchName,
+        runtime: null,
+        testHooks: null
+    );
+
+    internal static SessionJournalEngine OpenReadOnlyForTest(
+        string path,
+        SessionRuntime runtime,
+        SessionJournalTestHooks? testHooks = null
+    ) => OpenReadOnlyCore(
+        path,
+        SessionJournalDefaults.MainBranchName,
+        runtime,
+        testHooks
+    );
+
+    private static SessionJournalEngine OpenReadOnlyCore(
+        string path,
+        string branchName,
+        SessionRuntime? runtime,
+        SessionJournalTestHooks? testHooks
+    ) {
+        ArgumentException.ThrowIfNullOrWhiteSpace(branchName);
+        var journal = EventJournal.EventJournal.OpenReadOnlyExisting(
+            path,
+            DefaultJournalOptions
+        );
+        try {
+            RefId branchRefId = journal.OpenBranch(branchName).Unwrap();
+            return new SessionJournalEngine(
+                journal,
+                branchName,
+                branchRefId,
+                isReadOnly: true,
+                runtime,
+                testHooks
+            );
+        }
+        catch {
+            journal.Dispose();
+            throw;
+        }
+    }
+
     public static SessionJournalEngine Open(
         string path,
         string branchName,
@@ -181,7 +248,7 @@ public sealed class SessionJournalEngine : IDisposable {
     );
 
     public void UseRuntime(SessionRuntime runtime) {
-        ThrowIfDisposed();
+        ThrowIfReadOnlyMutation(nameof(UseRuntime));
         _runtime = runtime ?? throw new ArgumentNullException(nameof(runtime));
     }
 
@@ -812,15 +879,25 @@ public sealed class SessionJournalEngine : IDisposable {
             );
     }
 
-    public async Task<TurnResult> SendAsync(string observation, CancellationToken cancellationToken = default)
-        => await SendAsync(observation, observer: null, cancellationToken).ConfigureAwait(false);
+    public async Task<TurnResult> SendAsync(
+        string observation,
+        CancellationToken cancellationToken = default
+    ) {
+        ThrowIfReadOnlyMutation(nameof(SendAsync));
+        return await SendAsync(
+                observation,
+                observer: null,
+                cancellationToken
+            )
+            .ConfigureAwait(false);
+    }
 
     public async Task<TurnResult> SendAsync(
         string observation,
         CompletionStreamObserver? observer,
         CancellationToken cancellationToken = default
     ) {
-        ThrowIfDisposed();
+        ThrowIfReadOnlyMutation(nameof(SendAsync));
         ValidateRequired(observation, nameof(observation));
         SessionRuntime runtime = RequireRuntime();
         ImmutableArray<ToolDefinition> visibleTools =
@@ -876,14 +953,22 @@ public sealed class SessionJournalEngine : IDisposable {
         ).ConfigureAwait(false);
     }
 
-    public async Task<ResumeOutcome> ResumeAsync(CancellationToken cancellationToken = default)
-        => await ResumeAsync(observer: null, cancellationToken).ConfigureAwait(false);
+    public async Task<ResumeOutcome> ResumeAsync(
+        CancellationToken cancellationToken = default
+    ) {
+        ThrowIfReadOnlyMutation(nameof(ResumeAsync));
+        return await ResumeAsync(
+                observer: null,
+                cancellationToken
+            )
+            .ConfigureAwait(false);
+    }
 
     public async Task<ResumeOutcome> ResumeAsync(
         CompletionStreamObserver? observer,
         CancellationToken cancellationToken = default
     ) {
-        ThrowIfDisposed();
+        ThrowIfReadOnlyMutation(nameof(ResumeAsync));
         SessionExecutionRecovery recovery = ResolveExecutionTail(
             cancellationToken
         );
@@ -921,11 +1006,13 @@ public sealed class SessionJournalEngine : IDisposable {
     }
 
     public EventAddress AppendObservation(string content) {
+        ThrowIfReadOnlyMutation(nameof(AppendObservation));
         ValidateRequired(content, nameof(content));
         return Append(SessionEventKind.ObservationAccepted, new ObservationAcceptedBody(content));
     }
 
     public EventAddress AppendRuntimeConfigSetup(SessionRuntimeConfiguration configuration) {
+        ThrowIfReadOnlyMutation(nameof(AppendRuntimeConfigSetup));
         ArgumentNullException.ThrowIfNull(configuration);
         ValidateRuntimeConfiguration(configuration);
         SessionExecutionRecovery recovery = ResolveExecutionTail();
@@ -946,6 +1033,7 @@ public sealed class SessionJournalEngine : IDisposable {
     }
 
     public EventAddress AppendSystemPromptSetup(string systemPrompt) {
+        ThrowIfReadOnlyMutation(nameof(AppendSystemPromptSetup));
         if (systemPrompt is null) { throw new ArgumentNullException(nameof(systemPrompt)); }
         SessionExecutionRecovery recovery = ResolveExecutionTail();
         if (!SessionOperationalSemantics.IsIdleOrFailedPhase(
@@ -965,6 +1053,7 @@ public sealed class SessionJournalEngine : IDisposable {
     }
 
     public EventAddress AppendImportedAgentAction(ActionMessage action, CompletionDescriptor invocation) {
+        ThrowIfReadOnlyMutation(nameof(AppendImportedAgentAction));
         ArgumentNullException.ThrowIfNull(action);
         ArgumentNullException.ThrowIfNull(invocation);
         SessionExecutionRecovery recovery = ResolveExecutionTail();
@@ -1096,6 +1185,7 @@ public sealed class SessionJournalEngine : IDisposable {
                 journal,
                 SessionJournalDefaults.MainBranchName,
                 mainRef,
+                isReadOnly: false,
                 runtime,
                 testHooks
             );
@@ -1133,6 +1223,7 @@ public sealed class SessionJournalEngine : IDisposable {
                 journal,
                 branchName,
                 branchRefId,
+                isReadOnly: false,
                 runtime,
                 testHooks
             );
@@ -3069,5 +3160,14 @@ public sealed class SessionJournalEngine : IDisposable {
 
     private void ThrowIfDisposed() {
         ObjectDisposedException.ThrowIf(_disposed, this);
+    }
+
+    private void ThrowIfReadOnlyMutation(string operation) {
+        ThrowIfDisposed();
+        if (_isReadOnly) {
+            throw new InvalidOperationException(
+                $"SessionJournalEngine is read-only; mutation operation '{operation}' is not allowed."
+            );
+        }
     }
 }

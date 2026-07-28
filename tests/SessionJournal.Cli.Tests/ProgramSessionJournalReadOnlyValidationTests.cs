@@ -3,6 +3,7 @@ using Atelia.Completion;
 using Atelia.Completion.Abstractions;
 using Atelia.SessionJournal;
 using Atelia.SessionJournal.Cli;
+using Atelia.SessionJournal.DerivedMemory;
 using Xunit;
 
 namespace Atelia.SessionJournal.Cli.Tests;
@@ -34,26 +35,7 @@ public sealed class ProgramSessionJournalReadOnlyValidationTests
         string target
     ) {
         string repoPath = CreateJournal();
-        string activePath = target switch {
-            "event" => Path.Combine(
-                repoPath,
-                "events",
-                "buckets",
-                "000000",
-                "00000001.rbf"
-            ),
-            "ref-op" => Path.Combine(
-                repoPath,
-                "refs",
-                "ref-op-log.rbf"
-            ),
-            "ref-object" => Directory.GetFiles(
-                Path.Combine(repoPath, "refs", "objects"),
-                "*.rbf",
-                SearchOption.AllDirectories
-            ).Single(),
-            _ => throw new ArgumentOutOfRangeException(nameof(target))
-        };
+        string activePath = GetActiveTailPath(repoPath, target);
         File.AppendAllBytes(activePath, new byte[] { 0, 0, 0, 0 });
         IReadOnlyDictionary<string, FileSnapshot> before =
             CaptureRepositoryFiles(repoPath);
@@ -69,6 +51,79 @@ public sealed class ProgramSessionJournalReadOnlyValidationTests
         Assert.Equal(1, exitCode);
         Assert.Equal(before, CaptureRepositoryFiles(repoPath));
     }
+
+    [Theory]
+    [InlineData("event", false)]
+    [InlineData("event", true)]
+    [InlineData("ref-op", true)]
+    [InlineData("ref-object", true)]
+    public async Task ValidateDerivedMemory_MalformedActiveTailFailsWithoutRepair(
+        string target,
+        bool exactBranch
+    ) {
+        string repoPath = CreateJournal();
+        DerivedMemoryRepository repository =
+            DerivedMemoryRepository.Open(repoPath);
+        using (SessionJournalEngine engine =
+               SessionJournalEngine.Open(repoPath)) {
+            _ = await repository.EpochPlanner.ConfigureAsync(
+                repository.Bind(engine),
+                new DerivedArtifactPlannerConfigDefinition(
+                    "memory-pack",
+                    "topology-v1",
+                    1,
+                    1,
+                    1,
+                    1_000
+                ),
+                null
+            );
+        }
+        string activePath = GetActiveTailPath(repoPath, target);
+        File.AppendAllBytes(activePath, new byte[] { 0, 0, 0, 0 });
+        IReadOnlyDictionary<string, FileSnapshot> before =
+            CaptureRepositoryFiles(repoPath);
+
+        var args = new List<string> {
+                "validate-derived-memory",
+                "--input", repoPath
+        };
+        if (exactBranch) {
+            args.Add("--branch");
+            args.Add("main");
+        }
+        int exitCode = Program.MainCore(
+            [.. args],
+            ThrowingCompletionClientFactory.Instance
+        );
+
+        Assert.Equal(1, exitCode);
+        Assert.Equal(before, CaptureRepositoryFiles(repoPath));
+    }
+
+    private static string GetActiveTailPath(
+        string repoPath,
+        string target
+    ) => target switch {
+        "event" => Path.Combine(
+            repoPath,
+            "events",
+            "buckets",
+            "000000",
+            "00000001.rbf"
+        ),
+        "ref-op" => Path.Combine(
+            repoPath,
+            "refs",
+            "ref-op-log.rbf"
+        ),
+        "ref-object" => Directory.GetFiles(
+            Path.Combine(repoPath, "refs", "objects"),
+            "*.rbf",
+            SearchOption.AllDirectories
+        ).Single(),
+        _ => throw new ArgumentOutOfRangeException(nameof(target))
+    };
 
     private string CreateJournal() {
         string repoPath = Path.Combine(

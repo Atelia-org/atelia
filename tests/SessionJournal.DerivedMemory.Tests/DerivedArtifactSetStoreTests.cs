@@ -189,7 +189,7 @@ public sealed class DerivedArtifactSetStoreTests : IDisposable {
     }
 
     [Fact]
-    public async Task MissingLatestPointerRebuildsFromUniqueV2Tip() {
+    public async Task MissingLatestPointerRebuildsFromUniqueV3Tip() {
         Fixture fixture = await CreateFixtureAsync();
         DerivedArtifactSet published =
             await fixture.Repository.ArtifactSets.PublishAsync(
@@ -206,8 +206,8 @@ public sealed class DerivedArtifactSetStoreTests : IDisposable {
         ));
         DerivedArtifactSet rebuilt =
             await fixture.Repository.ArtifactSets.RebuildLatestPointerAsync(
-                fixture.Policy,
-                fixture.Epoch.BranchRefId
+                fixture.Engine,
+                fixture.Policy
             ) ?? throw new Xunit.Sdk.XunitException(
                 "Expected rebuilt set."
             );

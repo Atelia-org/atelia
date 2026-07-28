@@ -6,24 +6,24 @@ namespace Atelia.SessionJournal.Cli;
 
 internal static class DerivedMemoryCommands {
     private const string OperationSchema =
-        "atelia.session-journal.cli.derived-artifact-set-operation.v1";
+        "atelia.session-journal.cli.derived-artifact-set-operation.v2";
     private const string InventorySchema =
-        "atelia.session-journal.cli.derived-artifact-set-inventory.v1";
+        "atelia.session-journal.cli.derived-artifact-set-inventory.v2";
     private const string ValidationSchema =
-        "atelia.session-journal.cli.derived-memory-validation.v2";
+        "atelia.session-journal.cli.derived-memory-validation.v3";
     private const string PlannerConfigOperationSchema =
-        "atelia.session-journal.cli.derived-artifact-planner-config-operation.v1";
+        "atelia.session-journal.cli.derived-artifact-planner-config-operation.v2";
     private const string EpochOperationSchema =
-        "atelia.session-journal.cli.derived-artifact-epoch-operation.v1";
+        "atelia.session-journal.cli.derived-artifact-epoch-operation.v2";
     private const string EpochInventorySchema =
-        "atelia.session-journal.cli.derived-artifact-epoch-inventory.v1";
+        "atelia.session-journal.cli.derived-artifact-epoch-inventory.v2";
 
     public static async Task<int> ConfigurePlannerAsync(
         CliOptions options
     ) {
         options.EnsureOnly(
             "input",
-            "lineage",
+            "branch",
             "coherence-group",
             "topology-version",
             "minimum-recent-tokens",
@@ -34,6 +34,7 @@ internal static class DerivedMemoryCommands {
             "report-json"
         );
         string inputPath = options.RequireSingle("input");
+        string branchName = options.RequireSingle("branch");
         string? reportPath = PreparePaths(
             inputPath,
             options.GetOptionalSingle("report-json")
@@ -55,15 +56,8 @@ internal static class DerivedMemoryCommands {
         DerivedMemoryRepository repository =
             DerivedMemoryRepository.Open(inputPath);
         using SJ.SessionJournalEngine engine =
-            SJ.SessionJournalEngine.Open(inputPath);
+            SJ.SessionJournalEngine.Open(inputPath, branchName);
         DerivedMemoryBranchScope scope = repository.Bind(engine);
-        if (RefId.ParseHex(
-                options.RequireSingle("lineage")
-            ).Unwrap() != scope.BranchRefId) {
-            throw new ArgumentException(
-                "--lineage does not match the selected default branch."
-            );
-        }
         DerivedArtifactPlannerConfig config =
             await repository.EpochPlanner.ConfigureAsync(
                     scope,
@@ -73,6 +67,8 @@ internal static class DerivedMemoryCommands {
                 .ConfigureAwait(false);
         var report = new PlannerConfigOperationReport(
             PlannerConfigOperationSchema,
+            scope.BranchName,
+            scope.BranchRefId.ToHexString(),
             ToSummary(config)
         );
         WriteOptionalReport(reportPath, report);
@@ -90,13 +86,14 @@ internal static class DerivedMemoryCommands {
     public static async Task<int> PlanEpochAsync(CliOptions options) {
         options.EnsureOnly(
             "input",
-            "lineage",
+            "branch",
             "coherence-group",
             "expected-previous",
             "input-set",
             "report-json"
         );
         string inputPath = options.RequireSingle("input");
+        string branchName = options.RequireSingle("branch");
         string? reportPath = PreparePaths(
             inputPath,
             options.GetOptionalSingle("report-json")
@@ -115,7 +112,8 @@ internal static class DerivedMemoryCommands {
         DerivedMemoryRepository repository =
             DerivedMemoryRepository.Open(inputPath);
         using SJ.SessionJournalEngine engine =
-            SJ.SessionJournalEngine.Open(inputPath);
+            SJ.SessionJournalEngine.Open(inputPath, branchName);
+        DerivedMemoryBranchScope scope = repository.Bind(engine);
         DerivedArtifactEpochPlanningResult result =
             await repository.EpochPlanner.PlanAsync(
                     engine,
@@ -128,6 +126,8 @@ internal static class DerivedMemoryCommands {
                 .ConfigureAwait(false);
         var report = new EpochOperationReport(
             EpochOperationSchema,
+            scope.BranchName,
+            scope.BranchRefId.ToHexString(),
             result.Status.ToString(),
             ToSummary(result.Config),
             result.Epoch is null ? null : ToSummary(result.Epoch),
@@ -205,11 +205,23 @@ internal static class DerivedMemoryCommands {
     public static async Task<int> PublishAsync(CliOptions options) {
         options.EnsureOnly(
             "input",
+            "branch",
             "transaction",
             "member",
             "report-json"
         );
         string inputPath = options.RequireSingle("input");
+        string branchName = options.RequireSingle("branch");
+        DerivedMemoryRepository repository =
+            DerivedMemoryRepository.Open(inputPath);
+        using var publicationEngine =
+            SJ.SessionJournalEngine.OpenReadOnly(
+                inputPath,
+                branchName
+            );
+        DerivedMemoryBranchScope scope =
+            repository.Bind(publicationEngine);
+
         string transactionId = options.RequireSingle("transaction");
         IReadOnlyList<DerivedArtifactSetMemberSelection> members =
             ParseMembers(options.RequireRepeated("member"));
@@ -218,8 +230,6 @@ internal static class DerivedMemoryCommands {
             options.GetOptionalSingle("report-json")
         );
 
-        DerivedMemoryRepository repository =
-            DerivedMemoryRepository.Open(inputPath);
         DerivedMemoryOrchestrationTransaction transaction =
             await repository.Orchestrations.TryReadTransactionAsync(
                     transactionId
@@ -260,15 +270,10 @@ internal static class DerivedMemoryCommands {
             );
         }
 
-        SJ.SessionContextAnchorSetupReferences setups;
-        using (SJ.SessionJournalEngine engine =
-               SJ.SessionJournalEngine.Open(inputPath)) {
-            setups = engine.ResolveContextAnchorSetupReferences(
+        SJ.SessionContextAnchorSetupReferences setups =
+            publicationEngine.ResolveContextAnchorSetupReferences(
                 commonAnchor.Value
             );
-        }
-        using var publicationEngine =
-            SJ.SessionJournalEngine.Open(inputPath);
         var publication = new DerivedArtifactSetPublicationRequest(
             policy,
             transaction,
@@ -276,52 +281,16 @@ internal static class DerivedMemoryCommands {
             members,
             transaction.InputSetId
         );
-        DerivedArtifactSet prepared =
-            await repository.ArtifactSets.PreparePublicationAsync(
-                    publicationEngine,
-                    publication
-                )
-                .ConfigureAwait(false);
-        IReadOnlyDictionary<string, DerivedMemoryRoleSettlement>
-            settlements =
-                (await repository.Orchestrations.ReadSettlementsAsync(
-                    transaction
-                ).ConfigureAwait(false)).ToDictionary(
-                    static settlement => settlement.RoleId,
-                    StringComparer.Ordinal
-                );
-        DerivedMemoryRoleSettlement[] included = [
-            .. members.Select(member =>
-                settlements.TryGetValue(
-                    member.RoleId,
-                    out DerivedMemoryRoleSettlement? settlement
-                )
-                && string.Equals(
-                    settlement.ArtifactId,
-                    member.ArtifactId,
-                    StringComparison.Ordinal
-                )
-                    ? settlement
-                    : throw new InvalidDataException(
-                        $"ArtifactSet member '{member.RoleId}' is not its exact durable settlement."
-                    ))
-        ];
-        _ = await repository.Orchestrations
-            .GetOrCreateFinalizationAsync(
-                transaction,
-                setups,
-                included,
-                prepared.SetId
-            )
-            .ConfigureAwait(false);
         DerivedArtifactSet set =
-            await repository.ArtifactSets.PublishAsync(
+            await repository.ArtifactSets.FinalizeAndPublishAsync(
                     publicationEngine,
                     publication
                 )
                 .ConfigureAwait(false);
         var report = new DerivedArtifactSetOperationReport(
             OperationSchema,
+            scope.BranchName,
+            scope.BranchRefId.ToHexString(),
             "publish",
             ToSummary(set)
         );
@@ -375,18 +344,41 @@ internal static class DerivedMemoryCommands {
     }
 
     public static async Task<int> ValidateAsync(CliOptions options) {
-        options.EnsureOnly("input", "report-json");
+        options.EnsureOnly("input", "branch", "report-json");
         string inputPath = options.RequireSingle("input");
+        string? branchName = options.GetOptionalSingle("branch");
         string? reportPath = PreparePaths(
             inputPath,
             options.GetOptionalSingle("report-json")
         );
-        DerivedMemoryValidationReport validation =
-            await DerivedMemoryRepository.Open(inputPath)
+        DerivedMemoryRepository repository =
+            DerivedMemoryRepository.Open(inputPath);
+        DerivedMemoryValidationReport validation;
+        string? reportBranchName;
+        string? reportBranchRefId;
+        if (branchName is null) {
+            reportBranchName = null;
+            reportBranchRefId = null;
+            validation = await repository
                 .ValidateAllActiveBranchesAsync()
                 .ConfigureAwait(false);
+        }
+        else {
+            using SJ.SessionJournalEngine engine =
+                SJ.SessionJournalEngine.OpenReadOnly(
+                    inputPath,
+                    branchName
+                );
+            DerivedMemoryBranchScope scope = repository.Bind(engine);
+            reportBranchName = scope.BranchName;
+            reportBranchRefId = scope.BranchRefId.ToHexString();
+            validation = await repository.ValidateBranchAsync(engine)
+                .ConfigureAwait(false);
+        }
         var report = new DerivedMemoryValidationCliReport(
             ValidationSchema,
+            reportBranchName,
+            reportBranchRefId,
             validation.ArtifactCount,
             validation.ArtifactSetCount,
             validation.LatestPointerCount,
@@ -430,7 +422,7 @@ internal static class DerivedMemoryCommands {
     public static async Task<int> RebuildLatestAsync(CliOptions options) {
         options.EnsureOnly(
             "input",
-            "lineage",
+            "branch",
             "coherence-group",
             "policy-id",
             "policy-fingerprint",
@@ -439,9 +431,7 @@ internal static class DerivedMemoryCommands {
             "report-json"
         );
         string inputPath = options.RequireSingle("input");
-        RefId branchRefId = RefId.ParseHex(
-            options.RequireSingle("lineage")
-        ).Unwrap();
+        string branchName = options.RequireSingle("branch");
         DerivedArtifactSetPolicy policy = ParsePolicy(options);
         string? reportPath = PreparePaths(
             inputPath,
@@ -450,12 +440,8 @@ internal static class DerivedMemoryCommands {
         DerivedMemoryRepository repository =
             DerivedMemoryRepository.Open(inputPath);
         using SJ.SessionJournalEngine engine =
-            SJ.SessionJournalEngine.Open(inputPath);
-        if (engine.BranchRefId != branchRefId) {
-            throw new ArgumentException(
-                "--lineage does not match the selected default branch."
-            );
-        }
+            SJ.SessionJournalEngine.Open(inputPath, branchName);
+        DerivedMemoryBranchScope scope = repository.Bind(engine);
         DerivedArtifactSet? set =
             await repository.ArtifactSets.RebuildLatestPointerAsync(
                     engine,
@@ -469,6 +455,8 @@ internal static class DerivedMemoryCommands {
         }
         var report = new DerivedArtifactSetOperationReport(
             OperationSchema,
+            scope.BranchName,
+            scope.BranchRefId.ToHexString(),
             "rebuild-latest",
             ToSummary(set)
         );
@@ -762,6 +750,8 @@ internal static class DerivedMemoryCommands {
 
 internal sealed record DerivedArtifactSetOperationReport(
     string Schema,
+    string BranchName,
+    string BranchRefId,
     string Operation,
     DerivedArtifactSetSummaryReport Set
 );
@@ -774,6 +764,8 @@ internal sealed record DerivedArtifactSetInventoryReport(
 
 internal sealed record DerivedMemoryValidationCliReport(
     string Schema,
+    string? BranchName,
+    string? BranchRefId,
     int ArtifactCount,
     int ArtifactSetCount,
     int LatestPointerCount,
@@ -789,11 +781,15 @@ internal sealed record DerivedMemoryValidationCliReport(
 
 internal sealed record PlannerConfigOperationReport(
     string Schema,
+    string BranchName,
+    string BranchRefId,
     PlannerConfigSummary Config
 );
 
 internal sealed record EpochOperationReport(
     string Schema,
+    string BranchName,
+    string BranchRefId,
     string Status,
     PlannerConfigSummary Config,
     EpochSummary? Epoch,

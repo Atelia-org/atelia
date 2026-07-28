@@ -501,7 +501,7 @@ public sealed class DerivedArtifactEpochPlannerTests : IDisposable {
         ));
 
         await Assert.ThrowsAsync<InvalidDataException>(
-            async () => await repository.ValidateBranchAsync(engine)
+            async () => await repository.ValidateBranchAgainstOpenEngineAsync(engine)
         );
         DerivedArtifactEpochPlan? rebuilt =
             await repository.EpochPlanner.RebuildLatestEpochPointerAsync(
@@ -510,7 +510,7 @@ public sealed class DerivedArtifactEpochPlannerTests : IDisposable {
             );
         Assert.NotNull(rebuilt);
         DerivedMemoryValidationReport report =
-            await repository.ValidateBranchAsync(engine);
+            await repository.ValidateBranchAgainstOpenEngineAsync(engine);
         Assert.Equal(1, report.ArtifactEpochCount);
         Assert.Equal(1, report.LatestArtifactEpochCount);
     }
@@ -604,7 +604,7 @@ public sealed class DerivedArtifactEpochPlannerTests : IDisposable {
             )
         );
         await Assert.ThrowsAsync<InvalidDataException>(
-            async () => await reopenedRepository.ValidateBranchAsync(reopened)
+            async () => await reopenedRepository.ValidateBranchAgainstOpenEngineAsync(reopened)
         );
         File.Delete(Assert.Single(
             Directory.EnumerateFiles(
@@ -733,7 +733,7 @@ public sealed class DerivedArtifactEpochPlannerTests : IDisposable {
             );
 
         Assert.Equal(second.ConfigId, rebuilt!.ConfigId);
-        _ = await repository.ValidateBranchAsync(engine);
+        _ = await repository.ValidateBranchAgainstOpenEngineAsync(engine);
     }
 
     [Fact]
@@ -1309,7 +1309,7 @@ public sealed class DerivedArtifactEpochPlannerTests : IDisposable {
             await repository.EpochPlanner.ReadInventoryAsync();
         Assert.Single(inventory.Epochs);
         await Assert.ThrowsAsync<InvalidDataException>(
-            async () => await repository.ValidateBranchAsync(engine)
+            async () => await repository.ValidateBranchAgainstOpenEngineAsync(engine)
         );
         File.Delete(pointerPath);
         await Assert.ThrowsAsync<InvalidDataException>(
@@ -1450,7 +1450,7 @@ public sealed class DerivedArtifactEpochPlannerTests : IDisposable {
             (await repository.EpochPlanner.ReadInventoryAsync()).Epochs
         );
         await Assert.ThrowsAsync<InvalidDataException>(
-            async () => await repository.ValidateBranchAsync(engine)
+            async () => await repository.ValidateBranchAgainstOpenEngineAsync(engine)
         );
     }
 
@@ -1474,7 +1474,7 @@ public sealed class DerivedArtifactEpochPlannerTests : IDisposable {
             engine.CaptureReadDiagnostics();
 
         DerivedMemoryValidationReport report =
-            await repository.ValidateBranchAsync(engine);
+            await repository.ValidateBranchAgainstOpenEngineAsync(engine);
 
         SessionJournalReadDiagnostics after =
             engine.CaptureReadDiagnostics();
@@ -1524,7 +1524,7 @@ public sealed class DerivedArtifactEpochPlannerTests : IDisposable {
         SessionJournalReadDiagnostics before =
             engine.CaptureReadDiagnostics();
 
-        _ = await repository.ValidateBranchAsync(engine);
+        _ = await repository.ValidateBranchAgainstOpenEngineAsync(engine);
 
         SessionJournalReadDiagnostics after =
             engine.CaptureReadDiagnostics();
@@ -1606,7 +1606,7 @@ public sealed class DerivedArtifactEpochPlannerTests : IDisposable {
             (await repository.EpochPlanner.ReadInventoryAsync()).Epochs
         );
         await Assert.ThrowsAsync<InvalidDataException>(
-            async () => await repository.ValidateBranchAsync(engine)
+            async () => await repository.ValidateBranchAgainstOpenEngineAsync(engine)
         );
     }
 

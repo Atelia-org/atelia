@@ -281,6 +281,7 @@ internal static class Program {
     ) {
         options.EnsureOnly(
             "input",
+            "branch",
             "epoch",
             "profile",
             "output",
@@ -293,6 +294,7 @@ internal static class Program {
             "attempt-id"
         );
         string inputPath = options.RequireSingle("input");
+        string branchName = options.RequireSingle("branch");
         string epochId = options.RequireSingle("epoch");
         string profileName = options.RequireSingle("profile");
         string outputPath = options.RequireSingle("output");
@@ -350,6 +352,12 @@ internal static class Program {
                 "--output must be a file path, not an existing directory."
             );
         }
+        DerivedMemoryRepository repository =
+            DerivedMemoryRepository.Open(inputPath);
+        using var engine =
+            SJ.SessionJournalEngine.Open(inputPath, branchName);
+        DerivedMemoryBranchScope branchScope =
+            repository.Bind(engine);
 
         string? systemPromptOverride =
             ReadPromptOrNull(systemPromptPath);
@@ -400,10 +408,7 @@ internal static class Program {
             loggingClient,
             connection.ModelId
         );
-        DerivedMemoryRepository repository =
-            DerivedMemoryRepository.Open(inputPath);
         var runner = new DerivedMemoryMaintainerRunner(repository);
-        using var engine = SJ.SessionJournalEngine.Open(inputPath);
         DerivedMemoryMaintainerRunResult result = await runner.RunAsync(
                 engine,
                 new DerivedMemoryMaintainerRunRequest(
@@ -430,6 +435,7 @@ internal static class Program {
             .ConfigureAwait(false);
         MemoryMaintainerRunRecord record =
             MemoryMaintainerRunRecord.FromResult(
+                branchScope,
                 profile,
                 result,
                 repository.Artifacts.ArtifactsDirectory
@@ -453,6 +459,7 @@ internal static class Program {
     ) {
         options.EnsureOnly(
             "input",
+            "branch",
             "epoch",
             "role",
             "policy-id",
@@ -465,6 +472,7 @@ internal static class Program {
             "attempt-id"
         );
         string inputPath = options.RequireSingle("input");
+        string branchName = options.RequireSingle("branch");
         string epochId = options.RequireSingle("epoch");
         string outputPath = options.RequireSingle("output");
         string candidatePrefix =
@@ -537,13 +545,17 @@ internal static class Program {
                 "--output must be a file path, not an existing directory."
             );
         }
+        DerivedMemoryRepository repository =
+            DerivedMemoryRepository.Open(inputPath);
+        using var engine =
+            SJ.SessionJournalEngine.Open(inputPath, branchName);
+        DerivedMemoryBranchScope branchScope =
+            repository.Bind(engine);
 
         MemoryMaintainerProfileDescriptor[] profiles = [
             .. roleSpecs.Select(spec =>
                 MemoryMaintainerProfileCatalog.Resolve(spec.ProfileName))
         ];
-        DerivedMemoryRepository repository =
-            DerivedMemoryRepository.Open(inputPath);
         DerivedArtifactEpochPlan epoch =
             await repository.EpochPlanner.TryReadEpochAsync(epochId)
                 .ConfigureAwait(false)
@@ -723,7 +735,6 @@ internal static class Program {
             ));
         }
 
-        using var engine = SJ.SessionJournalEngine.Open(inputPath);
         DerivedMemoryOrchestrationResult result =
             await new DerivedMemoryOrchestrator(repository).RunAsync(
                     engine,
@@ -736,7 +747,9 @@ internal static class Program {
                 )
                 .ConfigureAwait(false);
         var record = new DerivedMemoryOrchestrationRunRecord(
-            "atelia.session-journal.derived-memory-orchestration-run.v1",
+            "atelia.session-journal.derived-memory-orchestration-run.v2",
+            branchScope.BranchName,
+            branchScope.BranchRefId.ToHexString(),
             result.Status.ToString(),
             result.Transaction.TransactionId,
             result.Transaction.JobFingerprint,
@@ -763,6 +776,7 @@ internal static class Program {
     ) {
         options.EnsureOnly(
             "input",
+            "branch",
             "message",
             "role",
             "policy-id",
@@ -779,6 +793,7 @@ internal static class Program {
             "uncertain-recovery"
         );
         string inputPath = options.RequireSingle("input");
+        string branchName = options.RequireSingle("branch");
         string message = options.RequireSingle("message");
         string connectionsPath =
             options.RequireSingle("connections");
@@ -828,6 +843,12 @@ internal static class Program {
             callLogDir,
             "--output and --call-log-dir must be disjoint paths."
         );
+        DerivedMemoryRepository repository =
+            DerivedMemoryRepository.Open(inputPath);
+        using var engine =
+            SJ.SessionJournalEngine.Open(inputPath, branchName);
+        DerivedMemoryBranchScope branchScope =
+            repository.Bind(engine);
 
         MemoryMaintainerProfileDescriptor[] profiles = [
             .. roleSpecs.Select(spec =>
@@ -835,14 +856,8 @@ internal static class Program {
                     spec.ProfileName
                 ))
         ];
-        DerivedMemoryRepository repository =
-            DerivedMemoryRepository.Open(inputPath);
-        using var branchIdentityEngine =
-            SJ.SessionJournalEngine.Open(inputPath);
-        DerivedMemoryBranchScope branchScope =
-            repository.Bind(branchIdentityEngine);
         DerivedArtifactPlannerKey key = new(
-            branchIdentityEngine.BranchRefId,
+            branchScope.BranchRefId,
             options.GetOptionalSingle("coherence-group")
                 ?? "memory-pack"
         );
@@ -1019,11 +1034,7 @@ internal static class Program {
             ContextSelection: selection,
             MemoryLifecycle: coordinator
         );
-        using var engine =
-            SJ.SessionJournalEngine.Open(
-                inputPath,
-                runtime
-            );
+        engine.UseRuntime(runtime);
         SJ.SessionExecutionBoundaryInspection initialBoundary =
             engine.InspectExecutionBoundary();
         ActionMessage resultMessage;
@@ -1060,7 +1071,9 @@ internal static class Program {
         SJ.SessionExecutionBoundaryInspection boundary =
             engine.InspectExecutionBoundary();
         var record = new OnlineTurnRunRecord(
-            "atelia.session-journal.online-turn-run.v1",
+            "atelia.session-journal.online-turn-run.v2",
+            branchScope.BranchName,
+            branchScope.BranchRefId.ToHexString(),
             boundary.Head is { } head
                 ? SJ.EventAddressTextCodec
                     .Format(head)
@@ -1502,7 +1515,8 @@ internal static class Program {
             + "[--call-log-dir <dir>] [--message <text>]"
         );
         Console.WriteLine(
-            "  run-memory-maintainer --input <repo-dir> --epoch <epoch-id> "
+            "  run-memory-maintainer --input <repo-dir> --branch <name> "
+            + "--epoch <epoch-id> "
             + "--profile <"
             + "autobiographical-rewrite"
             + "|world-understanding-rewrite> "
@@ -1513,7 +1527,7 @@ internal static class Program {
         );
         Console.WriteLine(
             "  run-derived-memory-orchestration --input <repo-dir> "
-            + "--epoch <epoch-id> "
+            + "--branch <name> --epoch <epoch-id> "
             + "--role <required|optional:profile:produce|identity"
             + "|select-existing[:artifact-id]> "
             + "--policy-id <token> --policy-fingerprint <token> "
@@ -1523,7 +1537,8 @@ internal static class Program {
             + "[--candidate-prefix <token>] [--attempt-id <token>]"
         );
         Console.WriteLine(
-            "  run-online-turn --input <repo-dir> --message <text> "
+            "  run-online-turn --input <repo-dir> --branch <name> "
+            + "--message <text> "
             + "--role <required|optional:profile:produce> "
             + "--policy-id <token> --policy-fingerprint <token> "
             + "--connections <path> [--connection <id>] "
@@ -1537,7 +1552,7 @@ internal static class Program {
         );
         Console.WriteLine(
             "  publish-derived-artifact-set --input <repo-dir> "
-            + "--transaction <dmt-id> "
+            + "--branch <name> --transaction <dmt-id> "
             + "--member <role=artifact-id> "
             + "[--report-json <path-outside-repo>]"
         );
@@ -1547,11 +1562,12 @@ internal static class Program {
         );
         Console.WriteLine(
             "  validate-derived-memory --input <repo-dir> "
+            + "[--branch <name>] "
             + "[--report-json <path-outside-repo>]"
         );
         Console.WriteLine(
             "  rebuild-derived-artifact-set-latest --input <repo-dir> "
-            + "--lineage <key> --coherence-group <token> "
+            + "--branch <name> --coherence-group <token> "
             + "--policy-id <token> --policy-fingerprint <token> "
             + "--required-role <role=carrier/block> "
             + "[--optional-role <role=carrier/block>] "
@@ -1559,7 +1575,7 @@ internal static class Program {
         );
         Console.WriteLine(
             "  configure-derived-artifact-planner --input <repo-dir> "
-            + "--lineage <key> --coherence-group <token> "
+            + "--branch <name> --coherence-group <token> "
             + "--topology-version <token> "
             + "--minimum-recent-tokens <n> --epoch-trigger-tokens <n> "
             + "--scheduling-headroom-tokens <n> --hard-limit-tokens <n> "
@@ -1568,7 +1584,7 @@ internal static class Program {
         );
         Console.WriteLine(
             "  plan-derived-artifact-epoch --input <repo-dir> "
-            + "--lineage <key> --coherence-group <token> "
+            + "--branch <name> --coherence-group <token> "
             + "--expected-previous <none|epoch-id> "
             + "--input-set <none|set-id> "
             + "[--report-json <path-outside-repo>]"

@@ -37,9 +37,10 @@ public sealed class ProgramSessionJournalE2ETests : IDisposable {
         AppendTurns(engine, 5);
         DerivedMemoryRepository repository =
             DerivedMemoryRepository.Open(repoPath);
+        DerivedMemoryBranchScope branchScope = repository.Bind(engine);
         _ = await repository.EpochPlanner.ConfigureAsync(
+            branchScope,
             new DerivedArtifactPlannerConfigDefinition(
-                "main",
                 "memory-pack",
                 "topology-v1",
                 10,
@@ -52,7 +53,7 @@ public sealed class ProgramSessionJournalE2ETests : IDisposable {
         DerivedArtifactEpochPlan epoch =
             (await repository.EpochPlanner.PlanAsync(
                 engine,
-                new("main", "memory-pack", null, null)
+                new("memory-pack", null, null)
             )).Epoch!;
         EventAddress rawHeadBefore =
             engine.ReadCurrentLineageHeaders().CapturedHead;
@@ -80,8 +81,13 @@ public sealed class ProgramSessionJournalE2ETests : IDisposable {
                 WebJsonOptions
             )!;
         Assert.Equal(
-            "atelia.session-journal.memory-maintainer-run.v2",
+            "atelia.session-journal.memory-maintainer-run.v3",
             record.Schema
+        );
+        Assert.Equal(branchScope.BranchName, record.BranchName);
+        Assert.Equal(
+            branchScope.BranchRefId.ToHexString(),
+            record.BranchRefId
         );
         Assert.Equal(epoch.EpochId, record.EpochId);
         Assert.Equal("autobiography", record.RoleId);
@@ -142,8 +148,8 @@ public sealed class ProgramSessionJournalE2ETests : IDisposable {
         DerivedMemoryRepository repository =
             DerivedMemoryRepository.Open(repoPath);
         _ = await repository.EpochPlanner.ConfigureAsync(
+            repository.Bind(engine),
             new(
-                "main",
                 "memory-pack",
                 "topology-v1",
                 10,
@@ -156,7 +162,7 @@ public sealed class ProgramSessionJournalE2ETests : IDisposable {
         DerivedArtifactEpochPlan epoch =
             (await repository.EpochPlanner.PlanAsync(
                 engine,
-                new("main", "memory-pack", null, null)
+                new("memory-pack", null, null)
             )).Epoch!;
         engine.Dispose();
         var factory = new ScriptedCompletionClientFactory("same text");
@@ -286,8 +292,8 @@ public sealed class ProgramSessionJournalE2ETests : IDisposable {
         DerivedMemoryRepository repository =
             DerivedMemoryRepository.Open(repoPath);
         _ = await repository.EpochPlanner.ConfigureAsync(
+            repository.Bind(engine),
             new(
-                "main",
                 "memory-pack",
                 "topology-v1",
                 10,
@@ -300,7 +306,7 @@ public sealed class ProgramSessionJournalE2ETests : IDisposable {
         DerivedArtifactEpochPlan epoch =
             (await repository.EpochPlanner.PlanAsync(
                 engine,
-                new("main", "memory-pack", null, null)
+                new("memory-pack", null, null)
             )).Epoch!;
         EventAddress rawHeadBefore =
             engine.ReadCurrentLineageHeaders().CapturedHead;
@@ -453,6 +459,7 @@ public sealed class ProgramSessionJournalE2ETests : IDisposable {
     ) => [
         "run-memory-maintainer",
         "--input", repositoryPath,
+        "--branch", "main",
         "--epoch", epochId,
         "--profile", "autobiographical-rewrite",
         "--output", outputPath,

@@ -65,7 +65,7 @@ public sealed class DerivedMemoryOrchestrationStore {
     public string SettlementsDirectory { get; }
     public string FinalizationsDirectory { get; }
 
-    public async ValueTask<DerivedMemoryOrchestrationTransaction>
+    internal async ValueTask<DerivedMemoryOrchestrationTransaction>
         GetOrCreateAsync(
         DerivedArtifactEpochPlan epoch,
         DerivedArtifactSetPolicy policy,
@@ -405,7 +405,7 @@ public sealed class DerivedMemoryOrchestrationStore {
         return finalization;
     }
 
-    public async ValueTask<DerivedMemoryOrchestrationFinalization>
+    internal async ValueTask<DerivedMemoryOrchestrationFinalization>
         GetOrCreateFinalizationAsync(
         DerivedMemoryOrchestrationTransaction transaction,
         SessionContextAnchorSetupReferences anchorSetups,
@@ -488,7 +488,7 @@ public sealed class DerivedMemoryOrchestrationStore {
         return candidate;
     }
 
-    public async ValueTask<DerivedMemoryRoleSettlement> SettleAsync(
+    internal async ValueTask<DerivedMemoryRoleSettlement> SettleAsync(
         DerivedMemoryOrchestrationTransaction transaction,
         DerivedMemoryRoleSettlement settlement,
         CancellationToken cancellationToken = default

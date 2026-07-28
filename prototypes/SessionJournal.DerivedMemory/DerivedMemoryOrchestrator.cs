@@ -220,8 +220,8 @@ public sealed class DerivedMemoryOrchestrator {
             if (latest is null) {
                 latest = await _repository.ArtifactSets
                     .RebuildLatestPointerAsync(
+                        engine,
                         policy,
-                        transaction.BranchRefId,
                         cancellationToken
                     )
                     .ConfigureAwait(false);

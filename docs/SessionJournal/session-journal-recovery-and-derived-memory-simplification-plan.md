@@ -1,6 +1,6 @@
 # SessionJournal 恢复与 DerivedMemory 化简：阶段情况与后续计划
 
-> **状态**：Active Shape/Plan / P0 contract inventory；target 尚未实施为 production behavior
+> **状态**：Active Shape/Plan；P1、P2 已实施，P3～P6 待实施
 > **日期**：2026-07-29
 > **适用基线**：current Prepared v5 + DM-0～DM-8
 > **相关文档**：
@@ -168,8 +168,8 @@ correctness。反之，imported/legacy raw history 已包含 history-bearing eve
 
 pre-P1 baseline 中 `SessionJournalEngine` 固定打开 `main`，DerivedArtifactEpochPlanner 也只接受
 current main。这不满足“从指定 active branch head 沿 Parent chain 恢复”的目标。P1 已完成 raw
-Engine 部分：调用方可选择 existing active branch，Engine lifetime 绑定 exact `RefId`；Derived
-planner / repository 的 main-only lineage authority 仍是 current fact，留给 P2。
+Engine，P2 已完成 DerivedMemory 与 CLI composition：调用方可选择 existing active branch，
+Engine lifetime 与 durable derived lineage 都绑定 exact `RefId`。
 
 目标 contract 应允许 composition root 显式选择 branch，例如：
 
@@ -186,11 +186,10 @@ EventJournal 的稳定 `RefId`（或由它构造的 opaque identity）。active 
 - **跨 branch 复用 DerivedArtifactSet**：后续目标，第一版可以明确不做。
 
 P1 已证实 raw Engine 改造不需要改变父链算法：Open 时解析 branch name，随后 head/read/append/CAS
-都使用 lifetime-bound `RefId`。剩余隐藏工作位于 DerivedMemory：latest pointer、epoch key、
-repository-wide validation、rewind 后 stale future、fork 后 set lineage ownership 都必须绑定同一个
-稳定 branch identity。对外宣称完整 branch-aware E2E 仍需要 P2 把 DerivedMemory 与 CLI composition
-同步切换；不能只停在 raw Engine 已接受 branch 字符串，也不能只验证 “engine 与 repository path
-相同”。
+都使用 lifetime-bound `RefId`。P2 进一步把 latest pointer、epoch/config key、ArtifactSet、
+transaction、repository validation、rewind stale-future 与 fork ownership 统一到 stable
+`RefId`。branch name 只在 composition root 选择 Engine；`DerivedMemoryBranchScope` 由 repository
+从 Engine 创建，调用方不能自由伪造 durable identity。
 
 ### 3.2 Context selection 成为 durable RuntimeConfigSetup policy
 
@@ -346,7 +345,7 @@ ownership 描述能力归属，不要求每类必须对应一个程序集。P5 �
 | 包 | 关键 symbols / files | 冻结目标 | Persistence / wire effect | Public API effect | CLI / composition effect | Focused tests / docs | First changing package |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | **P1** | `SessionJournalEngine.cs`、`SessionHistoryPlanning.cs`、`SessionJournalOfflineValidator.cs`；EventJournal `RefId` / `OpenBranch` / `CommitToRef` | existing active branch name 只在 Open 时解析；Engine lifetime 绑定 exact `RefId`，所有 head/read/append/CAS 使用该 ref；pre-P1 name-only `CommitToRef("main", ...)` 退出 append path | 无 raw event wire 变化 | 新增 branch-scoped `Open`/inspection；`main` overload 仅为 default；必要时给 EventJournal 增加 RefId-bound commit | P1 不改 CLI；branch selector 延后至 P2，与 DerivedMemory lineage authority 和 composition 联合 cutover，避免暴露只能驱动 raw Engine 的半成品入口 | `SessionJournalEngineTests`、tail/recovery/planning tests；增加 archive/rebind race 覆盖；更新 active API docs | `Atelia.SessionJournal`，必要时先扩 `Atelia.EventJournal` |
-| **P2** | `DerivedMemoryRepository.cs`、`DerivedArtifactEpochPlanner.cs`、`DerivedArtifactSetStore.cs`、`DerivedArtifactSetContextCandidateSource.cs`、`DerivedMemoryOnlineLifecycleCoordinator.cs`、DerivedMemory contracts | planner/config/epoch/set/latest 均绑定 Engine 暴露的 RefId-derived identity；path-only authority check 退役；每 branch 独立 lineage | **新的 DerivedMemory storage/schema generation**；旧 branch-name key 与新 RefId key 不混读、不 fallback | derived planning/publication/rebuild/validation 接受或验证 exact engine lineage | `configure/plan/run/publish/rebuild/validate/run-online-turn` 以 `--branch` 为人类 selector，不能让自由 `--lineage` 与 Engine 冲突 | epoch/set/integration/orchestration tests、CLI E2E；更新 DerivedMemory current docs | `SessionJournal.DerivedMemory`，随后 `SessionJournal.Cli` |
+| **P2** | `DerivedMemoryRepository.cs`、`DerivedArtifactEpochPlanner.cs`、`DerivedArtifactSetStore.cs`、`DerivedArtifactSetContextCandidateSource.cs`、`DerivedMemoryOnlineLifecycleCoordinator.cs`、DerivedMemory contracts | planner/config/epoch/set/latest 均绑定 Engine 暴露的 RefId-derived identity；path-only authority check 退役；每 branch 独立 lineage | **新的 DerivedMemory storage/schema generation**；旧 branch-name key 与新 RefId key 不混读、不 fallback | derived planning/publication/rebuild/validation 接受或验证 exact engine lineage | `configure/plan/run/publish/rebuild/validate/run-online-turn` 以 `--branch` 为人类 selector，不再接受可与 Engine 冲突的自由 durable identity | epoch/set/integration/orchestration tests、CLI E2E；更新 DerivedMemory current docs | `SessionJournal.DerivedMemory`，随后 `SessionJournal.Cli` |
 | **P3** | `SessionJournalContracts.cs`、`SessionEventCodec.cs`、`SessionContextCandidateContracts.cs`、`SessionJournalEngine.cs`、DerivedMemory candidate source | durable `nthPrevious` 成为唯一 Agent-controlled ordinal；exact nth 不跳坏 set；zero-input bootstrap exception 保留，fresh-topology eligibility 由 P4 实现 | `RuntimeConfigSetup` body **v1 → v2**；只写/读 v2，不提供 v1 compatibility decoder | 删除 `SessionRuntime.ContextSelection`、`Latest` / `Budgeted` modes、candidate-list fallback 与 public `MaxCandidateCount` | host 只 provision 单 active domain/provider；不再解析或注入 runtime selection flags | codec/golden、governing setup、candidate route、Prepared reopen、CLI tests；更新 wire/current docs | `Atelia.SessionJournal`，同一 cutover 内跟进 DerivedMemory/CLI |
 | **P4** | `SessionJournalEngine` selection/cost helpers、`SessionHistoryTokenEstimator`、planner hard-limit/backpressure config、online coordinator | 删除多 candidate cost search 与 raw/bootstrap selection budgets；保留命名诚实的 final-request guard 和 planner backpressure；以 raw header walk 判定 fresh-genesis 的 pre-append 与 exact/recovery bootstrap boundaries | 预期不改 raw wire；若 derived planner 持久字段变化，必须另行 version，而非原地改 v1 | 收窄 runtime/request budget API；不得把 estimator 称为真实 tokenizer | 删除 selection-mode/budget flags；保留 planner threshold/backpressure 配置 | budget/bootstrap pre-append、post-observation crash/reopen、import/performance/backpressure tests；更新 estimator 与 CLI docs | `Atelia.SessionJournal` + composition；planner schema 变化时含 DerivedMemory |
 | **P5** | `SessionReducer.cs`、`SessionJournalOfflineValidator.cs`、`SessionJournalEngine.Project/ReplayHistory`、legacy importer、CLI `validate` | full reducer 退出 online/public core surface，但完整 raw/import audit 不降级 | 无 raw/derived wire 变化 | 删除 `Project()` / `ReplayHistory()` public surface；建立窄 offline/recovery API | importer/validate 切到 companion audit；online composition 不引用 full reducer | offline validator、import safety、corruption、differential tests；更新 usage/roadmap | 先建立 offline/recovery companion 与 callers，再从 `Atelia.SessionJournal` 删除 surface |
@@ -358,9 +357,9 @@ ownership 描述能力归属，不要求每类必须对应一个程序集。P5 �
 | --- | --- | --- | --- | --- |
 | Raw `CompletionRequestPrepared` | body v5，self-contained exact context/request manifest | P1～P6 均保持 v5 exact reopen 语义；不得重新引入 derived id 或 reopen-time selection | 已 Prepared recovery 永不访问 DerivedMemory；任何字段变化需独立 wire decision，不在本轮顺手修改 | 无 |
 | Raw `RuntimeConfigSetup` | body v1：model、completion surface、schema；ordinal 仍在 `SessionRuntime` | P3 直接切到 body v2，加入 durable `derivedContext.nthPrevious`，并同时删除 runtime ordinal source | **不提供 v1 decoder/fallback**；更新 codec goldens、setup hash/provenance 与 import/create callers | P3 |
-| DerivedMemory lineage/storage | `derived/memory/v1/` 混合多种 v1/v2 record schema，durable `lineageKey` 实际限制为 `"main"` | P2 创建 RefId-derived 的新 storage/schema generation；canonical ids、planner key、set/latest/epoch/orchestration lineage 都使用同一 opaque identity | derived 数据可从 raw 重建；旧 branch-name generation 不与新 generation 混读、不自动迁移、不设 compatibility branch。具体目录/schema token 由 P2 Rule/Craft 固定 | P2 |
-| Planner config / epoch thresholds | current v1 config/epoch，包含 scheduling headroom、hard limit/backpressure policy | P4 删除 candidate selection budgets 时不得删除 epoch scheduling/backpressure；若字段/identity bytes 变化，升级 derived schema | 不把旧 bytes 按新含义读取；pointer/index 仍可从 immutable generation 重建 | P4（仅在 persisted shape 改变时） |
-| Orchestration transaction / settlement / finalization | current v1 records，identity/fingerprint 同时服务 retry、audit 与 set identity | P6 保留 exact resume 所需最小记录；若删除任何 persisted 或 hash-domain identity 字段，必须作**独立于 P2**的 schema generation decision | 不允许同 schema token 下改变 identity/hash bytes；是否删除每个字段由 P6 caller、failpoint、audit 证据决定 | P6 |
+| DerivedMemory lineage/storage | **P2 已完成**：`derived/memory/v2/`；durable identity 使用 canonical lowercase `RefId`；config/epoch/transaction 为 v2，set/latest 为 v3 | P2 已按 RefId-derived identity 完成 generation cutover；planner、set/latest、epoch、orchestration 使用同一 opaque identity | v1 generation inert；不混读、不自动迁移、不设 compatibility branch；derived 数据可从 raw 重建 | P2（完成） |
+| Planner config / epoch thresholds | P2 后 config/epoch/pointers 均为 v2，包含 scheduling headroom、hard limit/backpressure policy | P4 删除 candidate selection budgets 时不得删除 epoch scheduling/backpressure；若字段/identity bytes 变化，升级 derived schema | 不把旧 bytes 按新含义读取；pointer/index 仍可从 immutable generation 重建 | P4（仅在 persisted shape 改变时） |
+| Orchestration transaction / settlement / finalization | P2 后 transaction 为 v2，settlement/finalization 保持 v1；identity/fingerprint 同时服务 retry、audit 与 set identity | P6 保留 exact resume 所需最小记录；若删除任何 persisted 或 hash-domain identity 字段，必须作**独立于 P2**的 schema generation decision | 不允许同 schema token 下改变 identity/hash bytes；是否删除每个字段由 P6 caller、failpoint、audit 证据决定 | P6 |
 | Bootstrap eligibility | current 以 empty lineage + bootstrap budget 进入 zero-input path | P4 改为 healthy empty lineage + raw ancestry 无 Prepared，并接受 fresh setup-only predecessor 的 pre-append boundary，或其后恰有一个 active first observation 的 exact/recovery boundary | 只限制 online bootstrap，不限制 import/offline maintenance/rebuild 在首个 Prepared 前发布真实 set；曾发布但未被 Prepared 使用的 set 删除后仍可 bootstrap | P4 |
 
 P2 与 P6 的 derived generation 不得合并成一句“反正 derived 可重建”：P2 已确定改变 lineage authority，
@@ -376,10 +375,11 @@ pre-P1 baseline 曾包含以下 raw authority split，P1 已解决并留下 focu
   不同 ref。现在 Engine 在 Open 时保存 exact `BranchRefId`，所有 current head/read/append/CAS
   都使用它；测试覆盖 old ref 在 archive + same-name rebind 后不会跳转到 replacement ref。
 
-截至 P1 完成后，仍须在后续 cutover 中消除的 current authority split 包括：
+截至 P2 完成后，仍须在后续 cutover 中消除的 current authority split 包括：
 
-- DerivedMemory `lineageKey` 是自由 string，planner v1 又只接受 `"main"`，engine/repository
-  matching 只比较 path；branch selector、durable lineage 与 raw authority 尚未闭合；
+- P2 已消除 DerivedMemory 的自由 string identity：composition 先按 branch name 打开 Engine，
+  再用 `DerivedMemoryRepository.Bind(engine)` 取得 lifetime-bound exact `RefId` scope；
+  branch-local planning/publication/rebuild/validation 与 raw authority 已闭合；
 - Agent ordinal 当前来自 `SessionRuntime.ContextSelection` 和 CLI flags；P3 引入 durable setup 时若
   不同包删除旧入口，就会形成两个 selection authority；
 - full reducer、tail resolver 与 suffix fold 是三条不同 traversal。P5 可以把 full audit 移出
@@ -389,8 +389,9 @@ pre-P1 baseline 曾包含以下 raw authority split，P1 已解决并留下 focu
    append 必须针对该 lifetime-bound ref 做 expected-head CAS，不能每次 append 重新按 branch name
    lookup 后误写 archive/rebind 后的另一 ref。P1 的 branch isolation、closed/rebound ref 与
    selected-branch Send/Resume tests 已提供 evidence。
-2. **P1 + P2 release gate**：P1 可用 branch-neutral fake 验证 raw Engine，但只有 P2 完成 path +
-   exact lineage authority、branch-local pointer/epoch/set 后，才能宣称真实 DerivedMemory branch-aware。
+2. **P1 + P2 release gate（已满足）**：composition 先打开 selected Engine 再绑定 exact scope；
+   A/B branch 的 config、epoch、set、latest/provider 与 exact/global validation 已有 focused evidence，
+   archive + same-name recreate、foreign scope、rewind stale-future 也会 fail fast。
 3. **P3 single-source gate**：`RuntimeConfigSetup` v2 与 Engine/provider ordinal contract 必须同包
    cutover；不得同时保留 `SessionRuntime.ContextSelection`、CLI runtime selection flags 或另一份
    host ordinal fallback。host 只拥有固定 selection domain 的 provisioning，不拥有 Agent ordinal。
@@ -416,14 +417,14 @@ pre-P1 baseline 曾包含以下 raw authority split，P1 已解决并留下 focu
 
 | Surface | Current fact | P0 标记 | 后续改动包 |
 | --- | --- | --- | --- |
-| `SessionJournal.Cli run-online-turn` | 固定打开 `main`，自行解析 `latest` / `budgeted` / `nth:n` 和 raw/total/bootstrap budgets，再分别装配 Engine、candidate source 与 lifecycle | current behavior，不是 target contract；P1 也不改 CLI，避免 raw Engine 与 DerivedMemory 使用不同 lineage authority | P2 与 Engine RefId-derived lineage、DerivedMemory 和 composition 联合增加 branch selector；P3/P4 删除 runtime selection/budget flags |
-| DerivedMemory ops CLI | `configure/plan/run/publish/rebuild/validate` 接受自由 `lineageKey`，但 planner v1 实际只接受 `"main"` | 标记为 branch name、planner key 与 Engine authority 尚未闭合 | P2 |
+| `SessionJournal.Cli run-online-turn` | **P2 后**要求 `--branch`，只打开一次 selected Engine、绑定 DerivedMemory scope，再向同一 Engine 注入 runtime；仍自行解析 `latest` / `budgeted` / `nth:n` 和 raw/total/bootstrap budgets | branch authority 已闭合；selection/budget 仍是待删除的 current behavior | P3/P4 删除 runtime selection/budget flags |
+| DerivedMemory ops CLI | branch-local `configure/plan/run/publish/rebuild` 要求 `--branch`；`validate` 不带 branch 验证所有 active refs、带 branch 验证 exact selected ref；list 是 global inventory | P2 已闭合 branch name selector、durable RefId identity 与 Engine authority | P2（完成） |
 | raw Engine tests | 大量普通断言把 `Project()` 当作 head/state getter；另有 tail/performance tests 明确断言 0 full projection | 便捷调用不构成保留 public full projection 的理由 | P1 已补 branch tests；P5 替换便捷调用并迁 audit oracle |
 | candidate route tests | 覆盖 Latest/Nth/Budgeted、candidate bound、bootstrap budgets 和 lifecycle callback | current regression corpus；P3 用 durable ordinal 替换 mode coverage；P4 用 pre-append + post-observation crash/reopen fresh-topology bootstrap 与 final guard 替换 budget/bootstrap coverage，而非机械删除 | P3/P4 |
-| DerivedMemory planner/set tests | 覆盖 main-only rewind、pointer rebuild、raw authority 与 repository validation | 作为 P2 branch-aware matrix 的起点；当前 main-only 通过不代表多 branch 已闭合 | P2 |
+| DerivedMemory planner/set tests | 已覆盖 A/B branch config/epoch/set/latest/provider 隔离、exact/global validation、archive + same-name recreate、foreign scope、rewind stale-future、pointer rebuild 与 raw authority | P2 branch-aware matrix 已形成；P3～P6 继续复用这些边界 | P2（完成） |
 | orchestration tests | 已覆盖 partial settlement、cancellation、optional omission、finalization 后续发布、pointer rebuild 与 corruption | P6 必须保留的 contract tests；字段化简不得降低 missing-role-only resume/atomic publication 覆盖 | P6 |
 | active roadmap | 同时记录 historical evolution、current DM-8 和未来方向；仍有 Prepared v3、Budgeted 长期 target、full reducer core residency 等过期叙事 | P0 直接修正，并链接本文作为 P1～P6 active target | P0 |
-| DerivedMemory / CLI README | 对 Latest/Nth/Budgeted、main-only、settlement/finalization 和现有 flags 的描述与 current code 一致 | 继续作为 current behavior 文档；P0 不提前改成尚未实施的 target，只链接/区分本文 | P2～P6 随实现同步 |
+| DerivedMemory / CLI README | 已同步 P2 的 v2 generation、exact RefId scope、required `--branch` 与 exact/global validation；仍记录 Latest/Nth/Budgeted 和 settlement/finalization 的 current behavior | current behavior 文档；后续不得提前写成未实施 target | P3～P6 随实现同步 |
 | `docs/SessionJournal/done/**` 与 historical trunk baseline | 记录当时已实施设计和验收 | 保持 append-only 历史，不以新 target 回写旧结论 | 不修改 |
 | tail recovery research/study | 记录 D0/D1 与 DM-8 current facts，部分候选结论已被本文后续决策取代 | 作为研究背景；active 决策冲突时以本文为准 | 后续仅补 supersession note |
 
@@ -514,6 +515,27 @@ P0 只改变文档 authority，不改变 production behavior。完成必须同�
   DerivedMemory E2E 已 branch-aware。
 
 ### P2：Branch-aware DerivedMemory lineage
+
+实施状态（2026-07-29）：**已完成**。
+
+- 新 generation 固定为 `derived/memory/v2/`；planner config/epoch 使用 v2 schema，
+  ArtifactSet/latest 使用 v3 schema，transaction 使用 v2 schema。旧 v1 目录 inert，不混读、
+  不 fallback。
+- durable identity 全部使用 canonical lowercase `RefId`；fork 不继承 set/config lineage，archive
+  后同名重建得到新 ref，也不会继承旧 derived state。
+- branch-local API 由 `DerivedMemoryRepository.Bind(engine)` 提供 scope；wrong repository、
+  wrong ref 与 stale-future 在 derived/LLM side effect 前 fail-fast。
+- branch validation 只验证 selected ref；global validation 枚举全部 active refs，并拒绝 stored
+  non-active/archive ref；两者都通过 `SessionJournalEngine.OpenReadOnly` 读取 raw，malformed
+  active tail 不会被 validation recovery/truncate。
+- provider 的 missing-pointer fallback 只做 immutable unique-tip discovery；持久 pointer rebuild
+  必须先通过 selected Engine 的 raw-authority gate。orchestration raw mutations 不再是 public
+  surface，composition 通过 engine-bound Prepare → finalization → Publish API 完成发布。
+- CLI branch-local 命令统一使用 required `--branch <name>`；validation 不带 branch 时是 global，
+  带 branch 时是 exact-ref。
+- evidence 覆盖 A/B config/epoch/set/latest 独立、fork/同名重建、scoped/global validation、
+  pointer rebuild、wrong scope/engine 零写入、rewind 后 Send 零 LLM + validation/rebuild 失败且
+  derived files 不变，以及 CLI 两 branch E2E 与 missing/wrong branch 零副作用。
 
 目标：
 
@@ -633,15 +655,15 @@ failpoint、repository audit 与 set identity 证据逐项决定。任何 persis
 ```text
 P0 contract inventory
   -> P1 branch-scoped raw Engine [done]
-  -> P2 branch-aware DerivedMemory
+  -> P2 branch-aware DerivedMemory [done]
   -> P3 durable NthPrevious
   -> P4 budget/estimator cleanup
   -> P5 full reducer de-production
   -> P6 orchestration simplification
 ```
 
-P1 已建立 raw Engine 的 lifetime RefId boundary；P2 继续把 DerivedMemory 与 composition 绑定到同一
-lineage identity，避免 durable selection 继续固化 `main` 假设。P3/P4 连续完成，避免同时保留旧
+P1/P2 已把 raw Engine、DerivedMemory 与 composition 绑定到同一 lifetime/durable `RefId`
+authority。P3/P4 连续完成，避免同时保留旧
 runtime selection 与新 durable selection。P5 应在 bounded planning caller 已稳定后推进。P6 最后
 单独处理，因为它与 online tail recovery 正交；产品 contract 已确定为“成功 role 不重跑”，剩余
 工作是用证据收窄实现，而不是重新选择是否保留 crash resume。
@@ -669,8 +691,8 @@ runtime selection 与新 durable selection。P5 应在 bounded planning caller �
 
 用户反馈中的主要化简方向成立：
 
-- P1 已让 raw Engine 支持 existing active named branch 并绑定稳定 `RefId`；DerivedMemory
-  lineage/rewind 仍使完整 E2E 不止是一个字符串参数，留给 P2；
+- P1/P2 已让 raw Engine、DerivedMemory 与 CLI 支持 existing active named branch，并把 durable
+  lineage 与 rewind authority 绑定稳定 `RefId`；
 - selection policy 应 durable，`NthPrevious` 足以表达 Agent 的近期/远期聚焦；
 - `Latest` 可删除为 `n = 0`；
 - automatic `Budgeted` candidate search 可以删除；它与 epoch planner 职责不同，但不符合 Agent
@@ -682,5 +704,5 @@ runtime selection 与新 durable selection。P5 应在 bounded planning caller �
 - orchestration/settlement/finalization 服务 maintenance crash resume；保留成功 role 不重跑、
   durable finalization 与 atomic publication，重复 identity 的删除范围由 P6 证据决定。
 
-P1 raw Engine boundary 已是现行 contract；其余尚未落实的方向继续以 current implementation 作为
-可运行基线。本文不把 P2～P6 尚未实施的 target 写成现行 contract。
+P1 raw Engine boundary 与 P2 branch-aware DerivedMemory 已是现行 contract；P3～P6 尚未落实的
+方向继续以 current implementation 作为可运行基线。

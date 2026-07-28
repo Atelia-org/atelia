@@ -202,7 +202,7 @@ public sealed class DerivedMemoryMaintainerRunnerTests : IDisposable {
             StringComparison.Ordinal
         );
         DerivedMemoryValidationReport validation =
-            await repository.ValidateBranchAsync(engine);
+            await repository.ValidateBranchAgainstOpenEngineAsync(engine);
         Assert.Equal(2, validation.ArtifactCount);
     }
 
@@ -239,7 +239,7 @@ public sealed class DerivedMemoryMaintainerRunnerTests : IDisposable {
                 );
 
         DerivedMemoryValidationReport valid =
-            await repository.ValidateBranchAsync(engine);
+            await repository.ValidateBranchAgainstOpenEngineAsync(engine);
         Assert.Equal(1, valid.ArtifactCount);
         Assert.Equal(0, valid.ArtifactSetCount);
 
@@ -289,7 +289,7 @@ public sealed class DerivedMemoryMaintainerRunnerTests : IDisposable {
 
         InvalidDataException error =
             await Assert.ThrowsAsync<InvalidDataException>(
-                async () => await repository.ValidateBranchAsync(engine)
+                async () => await repository.ValidateBranchAgainstOpenEngineAsync(engine)
             );
         Assert.Contains(
             drift == "raw-start"

@@ -782,7 +782,7 @@ public sealed class DerivedArtifactEpochPlanner {
                     out int plannedPosition
                 )) {
                 throw new InvalidDataException(
-                    $"Epoch '{epoch.EpochId}' references raw addresses outside the current main lineage."
+                    $"Epoch '{epoch.EpochId}' references raw addresses outside the selected branch lineage."
                 );
             }
             if (startPosition <= endPosition
@@ -812,7 +812,7 @@ public sealed class DerivedArtifactEpochPlanner {
             }
             if (window.StartSetups != epoch.RawStartSetups) {
                 throw new InvalidDataException(
-                    $"Epoch '{epoch.EpochId}' raw-start setup references do not match the authoritative main lineage."
+                    $"Epoch '{epoch.EpochId}' raw-start setup references do not match the authoritative selected branch lineage."
                 );
             }
             if (!window.ReplaySafeBoundarySetups.TryGetValue(

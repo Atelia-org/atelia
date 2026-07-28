@@ -1,5 +1,6 @@
 using Atelia.Completion.Abstractions;
 using Atelia.EventJournal;
+using System.Reflection;
 using System.Text.Json.Nodes;
 using Xunit;
 
@@ -7,6 +8,27 @@ namespace Atelia.SessionJournal.DerivedMemory.Tests;
 
 public sealed class DerivedMemoryBranchScopeTests : IDisposable {
     private readonly List<string> _paths = [];
+
+    [Fact]
+    public void RawOrchestrationMutationsAreNotPublic() {
+        const BindingFlags publicInstance =
+            BindingFlags.Public | BindingFlags.Instance;
+        Type store = typeof(DerivedMemoryOrchestrationStore);
+
+        Assert.Null(store.GetMethod(
+            "GetOrCreateAsync",
+            publicInstance
+        ));
+        Assert.Null(store.GetMethod("SettleAsync", publicInstance));
+        Assert.Null(store.GetMethod(
+            "GetOrCreateFinalizationAsync",
+            publicInstance
+        ));
+        Assert.NotNull(typeof(DerivedArtifactSetStore).GetMethod(
+            nameof(DerivedArtifactSetStore.FinalizeAndPublishAsync),
+            publicInstance
+        ));
+    }
 
     [Fact]
     public async Task BranchScopedPlannerAndSetIndexesAreIndependentAndGloballyValid() {
@@ -123,7 +145,10 @@ public sealed class DerivedMemoryBranchScopeTests : IDisposable {
                 StringComparison.Ordinal
             ));
         File.Delete(branchPointerPath);
-        using (var main = SessionJournalEngine.Open(path, "main")) {
+        using (var main = SessionJournalEngine.OpenReadOnly(
+                   path,
+                   "main"
+               )) {
             DerivedMemoryValidationReport mainOnly =
                 await repository.ValidateBranchAsync(main);
             Assert.Equal(1, mainOnly.ArtifactSetCount);

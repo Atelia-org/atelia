@@ -61,12 +61,20 @@ public sealed class ProgramDerivedMemoryCommandTests : IDisposable {
             File.ReadAllText(publishReport)
         );
         Assert.Equal(
-            "atelia.session-journal.cli.derived-artifact-set-operation.v1",
+            "atelia.session-journal.cli.derived-artifact-set-operation.v2",
             publish.RootElement.GetProperty("schema").GetString()
         );
         Assert.Equal(
             "publish",
             publish.RootElement.GetProperty("operation").GetString()
+        );
+        Assert.Equal(
+            fixture.Scope.BranchName,
+            publish.RootElement.GetProperty("branchName").GetString()
+        );
+        Assert.Equal(
+            fixture.Scope.BranchRefId.ToHexString(),
+            publish.RootElement.GetProperty("branchRefId").GetString()
         );
         string setId = publish.RootElement
             .GetProperty("set")
@@ -82,7 +90,7 @@ public sealed class ProgramDerivedMemoryCommandTests : IDisposable {
             File.ReadAllText(listReport)
         );
         Assert.Equal(
-            "atelia.session-journal.cli.derived-artifact-set-inventory.v1",
+            "atelia.session-journal.cli.derived-artifact-set-inventory.v2",
             list.RootElement.GetProperty("schema").GetString()
         );
         Assert.Equal(1, list.RootElement.GetProperty("sets").GetArrayLength());
@@ -94,7 +102,7 @@ public sealed class ProgramDerivedMemoryCommandTests : IDisposable {
             File.ReadAllText(validateReport)
         );
         Assert.Equal(
-            "atelia.session-journal.cli.derived-memory-validation.v2",
+            "atelia.session-journal.cli.derived-memory-validation.v3",
             validation.RootElement.GetProperty("schema").GetString()
         );
         Assert.Equal(
@@ -105,7 +113,7 @@ public sealed class ProgramDerivedMemoryCommandTests : IDisposable {
         var provider = new DerivedArtifactSetContextCandidateSource(
             fixture.Repository,
             fixture.Policy,
-            fixture.LineageKey
+            fixture.Scope
         );
         SJ.SessionContextCandidateDiscovery discovery =
             await provider.DiscoverAsync(
@@ -135,6 +143,220 @@ public sealed class ProgramDerivedMemoryCommandTests : IDisposable {
     }
 
     [Fact]
+    public async Task BranchOptionTargetsTwoRefsAcrossPlannerPublishProviderAndValidation() {
+        Fixture fixture = await CreateFixtureAsync();
+        RawSnapshot raw = ReadRawSnapshot(fixture.Path);
+        RefId featureRef;
+        using (var journal =
+               EventJournal.EventJournal.OpenExisting(fixture.Path)) {
+            featureRef = journal.ForkBranch(
+                "feature",
+                fixture.Scope.BranchRefId,
+                raw.Head
+            ).Unwrap();
+        }
+        Assert.Equal(0, Run([
+            "configure-derived-artifact-planner",
+            "--input", fixture.Path,
+            "--branch", "feature",
+            "--coherence-group", "test-group",
+            "--topology-version", "topology-v1",
+            "--minimum-recent-tokens", "1",
+            "--epoch-trigger-tokens", "1",
+            "--scheduling-headroom-tokens", "1",
+            "--hard-limit-tokens", "1000",
+            "--expected-current", "none"
+        ]));
+        Assert.Equal(0, Run([
+            "plan-derived-artifact-epoch",
+            "--input", fixture.Path,
+            "--branch", "feature",
+            "--coherence-group", "test-group",
+            "--expected-previous", "none",
+            "--input-set", "none"
+        ]));
+
+        DerivedArtifactEpochInventory inventory =
+            await fixture.Repository.EpochPlanner.ReadInventoryAsync();
+        DerivedArtifactEpochPlan featureEpoch = Assert.Single(
+            inventory.Epochs,
+            epoch => epoch.BranchRefId == featureRef
+        );
+        DerivedMemoryBranchScope featureScope;
+        SJ.SessionContextAnchorSetupReferences featureSetups;
+        using (var feature =
+               SJ.SessionJournalEngine.Open(fixture.Path, "feature")) {
+            featureScope = fixture.Repository.Bind(feature);
+            featureSetups =
+                feature.ResolveContextAnchorSetupReferences(
+                    featureEpoch.SourceEndInclusive
+                );
+        }
+        DerivedMemoryArtifact featureAlpha = await WriteArtifactAsync(
+            fixture.Repository,
+            "feature-alpha",
+            fixture.Policy.Roles[0].Target,
+            "feature alpha",
+            featureEpoch,
+            featureEpoch.SourceEndInclusive,
+            featureSetups,
+            fixture.Policy.Roles[0].RoleId
+        );
+        DerivedMemoryArtifact featureZeta = await WriteArtifactAsync(
+            fixture.Repository,
+            "feature-zeta",
+            fixture.Policy.Roles[1].Target,
+            "feature zeta",
+            featureEpoch,
+            featureEpoch.SourceEndInclusive,
+            featureSetups,
+            fixture.Policy.Roles[1].RoleId
+        );
+        DerivedMemoryOrchestrationTransaction featureTransaction =
+            await DerivedArtifactSetTestFactoryForCli
+                .CreateSettledTransactionAsync(
+                    fixture.Repository,
+                    featureEpoch,
+                    fixture.Policy,
+                    [featureAlpha, featureZeta]
+                );
+
+        Assert.Equal(0, Run(PublishArgs(fixture, "none")));
+        Assert.Equal(0, Run([
+            "publish-derived-artifact-set",
+            "--input", fixture.Path,
+            "--branch", "feature",
+            "--transaction", featureTransaction.TransactionId,
+            "--member",
+            $"alpha-role={featureAlpha.ArtifactId}",
+            "--member",
+            $"zeta-role={featureZeta.ArtifactId}"
+        ]));
+
+        DerivedArtifactSetInventory sets =
+            await fixture.Repository.ArtifactSets.ReadInventoryAsync();
+        Assert.Equal(2, sets.Sets.Count);
+        Assert.Equal(2, sets.LatestPointers.Count);
+        var mainSource = new DerivedArtifactSetContextCandidateSource(
+            fixture.Repository,
+            fixture.Policy,
+            fixture.Scope
+        );
+        var featureSource =
+            new DerivedArtifactSetContextCandidateSource(
+                fixture.Repository,
+                fixture.Policy,
+                featureScope
+            );
+        string mainHandle = Assert.Single(
+            (await mainSource.DiscoverAsync(
+                new(
+                    raw.Head,
+                    SJ.SessionContextSelectionMode.Latest,
+                    fixture.Policy.CoherenceGroup
+                ),
+                CancellationToken.None
+            )).Candidates
+        ).Handle;
+        string featureHandle = Assert.Single(
+            (await featureSource.DiscoverAsync(
+                new(
+                    raw.Head,
+                    SJ.SessionContextSelectionMode.Latest,
+                    fixture.Policy.CoherenceGroup
+                ),
+                CancellationToken.None
+            )).Candidates
+        ).Handle;
+        Assert.NotEqual(mainHandle, featureHandle);
+
+        string mainReport = Path.Combine(_tempRoot, "validate-main.json");
+        string featureReport = Path.Combine(
+            _tempRoot,
+            "validate-feature.json"
+        );
+        Assert.Equal(0, Run([
+            "validate-derived-memory",
+            "--input", fixture.Path,
+            "--branch", "main",
+            "--report-json", mainReport
+        ]));
+        Assert.Equal(0, Run([
+            "validate-derived-memory",
+            "--input", fixture.Path,
+            "--branch", "feature",
+            "--report-json", featureReport
+        ]));
+        Assert.Equal(0, Run([
+            "validate-derived-memory",
+            "--input", fixture.Path
+        ]));
+        using JsonDocument featureValidation =
+            JsonDocument.Parse(File.ReadAllText(featureReport));
+        Assert.Equal(
+            featureRef.ToHexString(),
+            featureValidation.RootElement
+                .GetProperty("branchRefId")
+                .GetString()
+        );
+        Assert.Equal(
+            1,
+            featureValidation.RootElement
+                .GetProperty("artifactSetCount")
+                .GetInt32()
+        );
+    }
+
+    [Fact]
+    public async Task MissingOrWrongBranchFailsBeforeDerivedOrReportMutation() {
+        Fixture fixture = await CreateFixtureAsync();
+        RawSnapshot raw = ReadRawSnapshot(fixture.Path);
+        using (var journal =
+               EventJournal.EventJournal.OpenExisting(fixture.Path)) {
+            _ = journal.ForkBranch(
+                "feature",
+                fixture.Scope.BranchRefId,
+                raw.Head
+            ).Unwrap();
+        }
+        IReadOnlyDictionary<string, string> before =
+            SnapshotDerivedFiles(fixture.Repository.MemoryRoot);
+        string reportPath = Path.Combine(
+            _tempRoot,
+            "must-not-exist.json"
+        );
+
+        Assert.Equal(1, Run([
+            "configure-derived-artifact-planner",
+            "--input", fixture.Path,
+            "--branch", "missing",
+            "--coherence-group", "test-group",
+            "--topology-version", "topology-v1",
+            "--minimum-recent-tokens", "1",
+            "--epoch-trigger-tokens", "1",
+            "--scheduling-headroom-tokens", "1",
+            "--hard-limit-tokens", "1000",
+            "--expected-current", "none",
+            "--report-json", reportPath
+        ]));
+        Assert.Equal(1, Run([
+            "publish-derived-artifact-set",
+            "--input", fixture.Path,
+            "--branch", "feature",
+            "--transaction", fixture.Transaction.TransactionId,
+            "--member", $"alpha-role={fixture.FirstArtifactId}",
+            "--member", $"zeta-role={fixture.SecondArtifactId}",
+            "--report-json", reportPath
+        ]));
+
+        Assert.False(File.Exists(reportPath));
+        Assert.Equal(
+            before,
+            SnapshotDerivedFiles(fixture.Repository.MemoryRoot)
+        );
+    }
+
+    [Fact]
     public async Task ConfigurePlanListEpochs_AreContentFreeAndRawExact() {
         Fixture fixture = await CreateFixtureAsync();
         Directory.Delete(fixture.Repository.DerivedRoot, recursive: true);
@@ -150,7 +372,7 @@ public sealed class ProgramDerivedMemoryCommandTests : IDisposable {
         Assert.Equal(0, Run([
             "configure-derived-artifact-planner",
             "--input", fixture.Path,
-            "--lineage", "main",
+            "--branch", "main",
             "--coherence-group", "memory-pack",
             "--topology-version", "topology-v1",
             "--minimum-recent-tokens", "1",
@@ -163,7 +385,7 @@ public sealed class ProgramDerivedMemoryCommandTests : IDisposable {
         Assert.Equal(0, Run([
             "plan-derived-artifact-epoch",
             "--input", fixture.Path,
-            "--lineage", "main",
+            "--branch", "main",
             "--coherence-group", "memory-pack",
             "--expected-previous", "none",
             "--input-set", "none",
@@ -184,7 +406,7 @@ public sealed class ProgramDerivedMemoryCommandTests : IDisposable {
             File.ReadAllText(planReport)
         );
         Assert.Equal(
-            "atelia.session-journal.cli.derived-artifact-epoch-operation.v1",
+            "atelia.session-journal.cli.derived-artifact-epoch-operation.v2",
             plan.RootElement.GetProperty("schema").GetString()
         );
         Assert.StartsWith(
@@ -212,7 +434,7 @@ public sealed class ProgramDerivedMemoryCommandTests : IDisposable {
             File.ReadAllText(validateReport)
         );
         Assert.Equal(
-            "atelia.session-journal.cli.derived-memory-validation.v2",
+            "atelia.session-journal.cli.derived-memory-validation.v3",
             validation.RootElement.GetProperty("schema").GetString()
         );
         Assert.Equal(
@@ -242,7 +464,7 @@ public sealed class ProgramDerivedMemoryCommandTests : IDisposable {
         string[] configure = [
             "configure-derived-artifact-planner",
             "--input", fixture.Path,
-            "--lineage", "main",
+            "--branch", "main",
             "--coherence-group", "memory-pack",
             "--topology-version", "topology-v1",
             "--minimum-recent-tokens", "not-a-number",
@@ -255,7 +477,7 @@ public sealed class ProgramDerivedMemoryCommandTests : IDisposable {
         Assert.Equal(1, Run([
             "plan-derived-artifact-epoch",
             "--input", fixture.Path,
-            "--lineage", "main",
+            "--branch", "main",
             "--coherence-group", "memory-pack",
             "--expected-previous", "none",
             "--input-set", "das_" + new string('a', 64)
@@ -436,7 +658,7 @@ public sealed class ProgramDerivedMemoryCommandTests : IDisposable {
         Assert.Equal(1, Run([.. valid, "--unknown", "value"]));
         Assert.Equal(
             1,
-            Run([.. valid, "--lineage", "duplicate"])
+            Run([.. valid, "--branch", "duplicate"])
         );
         Assert.Equal(
             1,
@@ -654,6 +876,7 @@ public sealed class ProgramDerivedMemoryCommandTests : IDisposable {
         int exitCode = Run([
             "publish-derived-artifact-set",
             $"--input={fixture.Path}",
+            $"--branch={fixture.Scope.BranchName}",
             $"--transaction={transaction.TransactionId}",
             $"--member=--alpha={alpha.ArtifactId}",
             $"--member=--zeta={zeta.ArtifactId}"
@@ -664,7 +887,7 @@ public sealed class ProgramDerivedMemoryCommandTests : IDisposable {
             (await fixture.Repository.ArtifactSets.ReadInventoryAsync())
                 .Sets
         );
-        Assert.Equal(fixture.LineageKey, set.LineageKey);
+        Assert.Equal(fixture.Scope.BranchRefId, set.BranchRefId);
         Assert.Equal(fixture.Epoch.CoherenceGroup, set.CoherenceGroup);
         Assert.Equal("--policy", set.PolicyId);
         Assert.Equal(
@@ -677,13 +900,13 @@ public sealed class ProgramDerivedMemoryCommandTests : IDisposable {
     public void InlineSyntaxPreservesLeadingDashPathAndBlockValues() {
         CliOptions options = CliOptions.Parse([
             "--input=--repo",
-            "--lineage=--lineage",
+            "--branch=--branch",
             "--required-role=--role=observation/--block"
         ]);
 
-        options.EnsureOnly("input", "lineage", "required-role");
+        options.EnsureOnly("input", "branch", "required-role");
         Assert.Equal("--repo", options.RequireSingle("input"));
-        Assert.Equal("--lineage", options.RequireSingle("lineage"));
+        Assert.Equal("--branch", options.RequireSingle("branch"));
         Assert.Equal(
             "--role=observation/--block",
             Assert.Single(options.RequireRepeated("required-role"))
@@ -714,6 +937,7 @@ public sealed class ProgramDerivedMemoryCommandTests : IDisposable {
         int exitCode = Program.MainCore([
             "run-derived-memory-orchestration",
             "--input", fixture.Path,
+            "--branch", fixture.Scope.BranchName,
             "--epoch", fixture.Epoch.EpochId,
             "--role",
             "required:autobiographical-rewrite:produce",
@@ -729,6 +953,21 @@ public sealed class ProgramDerivedMemoryCommandTests : IDisposable {
         Assert.Equal(0, exitCode);
         Assert.Equal(2, factory.CompletionCallCount);
         Assert.True(File.Exists(outputPath));
+        using JsonDocument output = JsonDocument.Parse(
+            File.ReadAllText(outputPath)
+        );
+        Assert.Equal(
+            "atelia.session-journal.derived-memory-orchestration-run.v2",
+            output.RootElement.GetProperty("schema").GetString()
+        );
+        Assert.Equal(
+            fixture.Scope.BranchName,
+            output.RootElement.GetProperty("branchName").GetString()
+        );
+        Assert.Equal(
+            fixture.Scope.BranchRefId.ToHexString(),
+            output.RootElement.GetProperty("branchRefId").GetString()
+        );
         DerivedArtifactSet set = Assert.Single(
             (await fixture.Repository.ArtifactSets.ReadInventoryAsync())
                 .Sets
@@ -751,6 +990,7 @@ public sealed class ProgramDerivedMemoryCommandTests : IDisposable {
         int exitCode = Program.MainCore([
             "run-derived-memory-orchestration",
             "--input", fixture.Path,
+            "--branch", fixture.Scope.BranchName,
             "--epoch", fixture.Epoch.EpochId,
             "--role",
             "required:autobiographical-rewrite:identity",
@@ -789,6 +1029,7 @@ public sealed class ProgramDerivedMemoryCommandTests : IDisposable {
         int exitCode = Program.MainCore([
             "run-derived-memory-orchestration",
             "--input", Path.Combine(_tempRoot, "missing-journal"),
+            "--branch", "main",
             "--epoch", "dae_" + new string('1', 64),
             "--role",
             "required:autobiographical-rewrite:produce",
@@ -829,6 +1070,7 @@ public sealed class ProgramDerivedMemoryCommandTests : IDisposable {
         int exitCode = Program.MainCore([
             "run-derived-memory-orchestration",
             "--input", fixture.Path,
+            "--branch", fixture.Scope.BranchName,
             "--epoch", fixture.Epoch.EpochId,
             "--role",
             "required:autobiographical-rewrite:produce",
@@ -872,6 +1114,7 @@ public sealed class ProgramDerivedMemoryCommandTests : IDisposable {
         int exitCode = Program.MainCore([
             "run-online-turn",
             "--input", fixture.Path,
+            "--branch", fixture.Scope.BranchName,
             "--message", "new observation",
             "--role",
             "required:autobiographical-rewrite:produce",
@@ -897,8 +1140,16 @@ public sealed class ProgramDerivedMemoryCommandTests : IDisposable {
             File.ReadAllText(outputPath)
         );
         Assert.Equal(
-            "atelia.session-journal.online-turn-run.v1",
+            "atelia.session-journal.online-turn-run.v2",
             output.RootElement.GetProperty("schema").GetString()
+        );
+        Assert.Equal(
+            fixture.Scope.BranchName,
+            output.RootElement.GetProperty("branchName").GetString()
+        );
+        Assert.Equal(
+            fixture.Scope.BranchRefId.ToHexString(),
+            output.RootElement.GetProperty("branchRefId").GetString()
         );
         Assert.NotEqual(
             before.Head,
@@ -934,6 +1185,7 @@ public sealed class ProgramDerivedMemoryCommandTests : IDisposable {
         int exitCode = Program.MainCore([
             "run-online-turn",
             "--input", fixture.Path,
+            "--branch", fixture.Scope.BranchName,
             "--message", "new observation",
             "--role",
             "required:autobiographical-rewrite:produce",
@@ -977,6 +1229,7 @@ public sealed class ProgramDerivedMemoryCommandTests : IDisposable {
         string[] args = [
             "run-online-turn",
             "--input", fixture.Path,
+            "--branch", fixture.Scope.BranchName,
             "--message", "new observation",
             "--role",
             "required:autobiographical-rewrite:produce",
@@ -1023,6 +1276,7 @@ public sealed class ProgramDerivedMemoryCommandTests : IDisposable {
         SJ.SessionContextAnchorSetupReferences setups;
         DerivedArtifactEpochPlan epoch;
         DerivedMemoryRepository repository;
+        DerivedMemoryBranchScope scope;
         using (var engine = SJ.SessionJournalEngine.Create(
             path,
             new SJ.SessionCreateOptions(
@@ -1045,9 +1299,10 @@ public sealed class ProgramDerivedMemoryCommandTests : IDisposable {
                 );
             }
             repository = DerivedMemoryRepository.Open(path);
+            scope = repository.Bind(engine);
             _ = await repository.EpochPlanner.ConfigureAsync(
+                scope,
                 new DerivedArtifactPlannerConfigDefinition(
-                    "main",
                     "test-group",
                     "topology-v1",
                     1,
@@ -1059,7 +1314,7 @@ public sealed class ProgramDerivedMemoryCommandTests : IDisposable {
             );
             epoch = (await repository.EpochPlanner.PlanAsync(
                 engine,
-                new("main", "test-group", null, null)
+                new("test-group", null, null)
             )).Epoch!;
             anchor = epoch.SourceEndInclusive;
             setups = engine.ResolveContextAnchorSetupReferences(anchor);
@@ -1119,7 +1374,7 @@ public sealed class ProgramDerivedMemoryCommandTests : IDisposable {
             policy,
             epoch,
             transaction,
-            "main",
+            scope,
             anchor,
             setups,
             first.ArtifactId,
@@ -1177,6 +1432,7 @@ public sealed class ProgramDerivedMemoryCommandTests : IDisposable {
         var args = new List<string> {
             "publish-derived-artifact-set",
             "--input", fixture.Path,
+            "--branch", fixture.Scope.BranchName,
             "--transaction", fixture.Transaction.TransactionId,
             "--member", $"alpha-role={fixture.FirstArtifactId}",
             "--member", $"zeta-role={fixture.SecondArtifactId}"
@@ -1245,7 +1501,7 @@ public sealed class ProgramDerivedMemoryCommandTests : IDisposable {
     private static string[] RebuildArgs(Fixture fixture) => [
         "rebuild-derived-artifact-set-latest",
         "--input", fixture.Path,
-        "--lineage", fixture.LineageKey,
+        "--branch", fixture.Scope.BranchName,
         "--coherence-group", fixture.Policy.CoherenceGroup,
         "--policy-id", fixture.Policy.PolicyId,
         "--policy-fingerprint", fixture.Policy.PolicyFingerprint,
@@ -1319,13 +1575,26 @@ public sealed class ProgramDerivedMemoryCommandTests : IDisposable {
         return Convert.ToHexStringLower(hash.GetHashAndReset());
     }
 
+    private static IReadOnlyDictionary<string, string>
+        SnapshotDerivedFiles(string root) =>
+        Directory.EnumerateFiles(
+                root,
+                "*",
+                SearchOption.AllDirectories
+            )
+            .ToDictionary(
+                path => Path.GetRelativePath(root, path),
+                File.ReadAllText,
+                StringComparer.Ordinal
+            );
+
     private sealed record Fixture(
         string Path,
         DerivedMemoryRepository Repository,
         DerivedArtifactSetPolicy Policy,
         DerivedArtifactEpochPlan Epoch,
         DerivedMemoryOrchestrationTransaction Transaction,
-        string LineageKey,
+        DerivedMemoryBranchScope Scope,
         EventAddress Anchor,
         SJ.SessionContextAnchorSetupReferences Setups,
         string FirstArtifactId,

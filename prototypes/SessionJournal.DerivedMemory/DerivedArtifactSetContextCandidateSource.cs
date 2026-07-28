@@ -50,12 +50,13 @@ public sealed class DerivedArtifactSetContextCandidateSource
             )
             .ConfigureAwait(false);
         if (current is null) {
-            // A missing pointer is never evidence of an empty lineage. Strict rebuild either
-            // proves an empty set inventory, recovers the unique tip, or fails on corruption.
+            // A missing pointer is never evidence of an empty lineage. Discovery proves the
+            // unique immutable tip without repairing repository state; raw-authority-gated
+            // maintenance/ops paths own durable pointer rebuild.
             current = await _repository.ArtifactSets
-                .RebuildLatestPointerAsync(
+                .TryDiscoverLatestTipAsync(
                     _policy,
-                    _scope.BranchRefId,
+                    _scope,
                     cancellationToken
                 )
                 .ConfigureAwait(false);

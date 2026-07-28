@@ -3,8 +3,8 @@
 可替换的 SessionJournal derived-memory 子系统。它单向引用
 `Atelia.SessionJournal` 的 neutral candidate contracts，负责：
 
-- `derived/memory/v1/artifacts/` epoch-bound append-only candidate persistence；
-- `derived/memory/v1/` coherent ArtifactSet、exact-previous CAS 和 latest pointer；
+- `derived/memory/v2/artifacts/` epoch-bound append-only candidate persistence；
+- `derived/memory/v2/` coherent ArtifactSet、exact-previous CAS 和 latest pointer；
 - shared `DerivedArtifactEpochPlanner` 的 immutable config lineage、epoch ledger 与
   rebuildable current/latest indexes；
 - deterministic multi-role orchestration transaction、immutable role settlement、
@@ -21,15 +21,18 @@ append-only 共存；只有 ArtifactSet publication 才决定 candidate 是否�
 DM-8 provider 支持 `Latest`、`NthPrevious` 与 `Budgeted`：discovery 阶段只返回
 content-free descriptors，materialization 才读取 exact member text。`Latest` 最多发现 1 个，
 `NthPrevious(n)` 最多发现 `n + 1`，`Budgeted` 受 core request 的 candidate bound 限制。
+latest pointer 缺失时 discovery 只从 immutable sets 证明 unique tip，不修复 pointer；
+持久 rebuild 只能走带 Engine raw-authority gate 的 maintenance/ops API。
 ordinal 不是 cost；raw suffix 与 total canonical request budget 由 SessionJournal core 用共享
 estimator 和 raw authority window 计算。
 
 边界约束：
 
 - raw SessionJournal 不引用 artifact/set id；
-- online planner 由 composition root 传入已有 `SessionJournalEngine`；offline repository
-  validation/latest-epoch pointer rebuild 在未显式传入 engine 时可短暂打开它来证明 raw
-  authority，本项目仍不直接依赖 `EventJournal`；
+- branch-local planner、publication、rebuild 与 validation 由 composition root 先按 branch name
+  打开 `SessionJournalEngine`，再通过 `DerivedMemoryRepository.Bind(engine)` 获得不能自由伪造的
+  exact `RefId` scope；无 engine 的 global validation 枚举所有 active refs 并逐 ref 证明 raw
+  authority；
 - composition root 在发布前通过 SessionJournal 的 strict anchor helper 取得
   setup address/schema/payload hash；
 - provider 返回的 raw-facing assertions 仍由 SessionJournal authoritative validator 复核；
@@ -42,8 +45,9 @@ pointer 会先 rebuild，不能伪装为空。bootstrap 不创建空 artifact，
 
 DM-5 planner 在任何 maintainer/LLM 执行前，只通过 SessionJournal 暴露的
 `ReadHistoryPlanningWindow()` 读取 bounded、dependency-closed suffix。config key 是
-`lineageKey + coherenceGroup`，但 v1 只接受 current `main` lineage，尚不伪称支持 arbitrary
-branch token；config snapshot 与 epoch 都是 deterministic、append-only
+`BranchRefId + coherenceGroup`；branch name 只在 Engine Open 时作为 selector，durable
+config/epoch/set/latest/orchestration identity 一律保存 canonical lowercase `RefId`。config snapshot
+与 epoch 都是 deterministic、append-only
 identity，mutable pointer 只作为可重建 index。genesis 明确使用 empty-memory-pack policy；
 非 genesis epoch 必须绑定一个真实、self-validating 的 coherent ArtifactSet，且其
 `CommonAnchor` 必须等于 previous epoch 的 `SourceEndInclusive`。planner 不运行 maintainer、
@@ -52,7 +56,7 @@ identity，mutable pointer 只作为可重建 index。genesis 明确使用 empty
 raw scan/candidate computation 不持有 derived repository write lock；所有 planning 终态在
 短锁内重读 current config/latest pointer 后线性化。strict repository validation 与
 latest-epoch pointer rebuild 还会使用 core header-only snapshot 与 batched planning seeds
-验证 epoch raw interval/current-main membership；随后按 exact historical head 增量重放每个
+验证 epoch raw interval/selected-ref membership；随后按 exact historical head 增量重放每个
 window，并用该 epoch immutable config 重算 dependency-safe boundary 与 token cost。genesis
 必须从 SessionCreated 开始，multi-tool 中间 boundary、rewind/divergent epoch、wrong setup/cost
 即使 derived JSON/hash 自洽，也不能成为 current latest。batch seed 只解 setup payload，避免
@@ -71,7 +75,7 @@ address/schema/payload-hash coherence，下一 epoch 恢复输入时再把 set a
 
 `DerivedMemoryOrchestrator` 对一个 exact epoch 只物化一次 immutable input/history
 snapshot，并用 `Task.WhenAll` 并行执行尚未 settlement 的独立 roles。artifact persistence
-与 `derived/memory/v1/settlements/<transaction>/` 下的 durable success settlement 分层；
+与 `derived/memory/v2/settlements/<transaction>/` 下的 durable success settlement 分层；
 required role 失败时保留已成功 partial candidates/settlements，但绝不发布半套 set。
 transaction/job identity 包含 policy、topology、完整 role provisioning 与
 candidate/attempt；改变 job 会创建新 transaction，重跑同一 job 只补缺失 role。
@@ -80,13 +84,17 @@ settlements、omitted optional roles、expected previous 与 expected set id。r
 遇到 intent 时不再运行任何 role：expected set 缺失就续 publish，已存在则 exact
 验证 latest；latest 为该 set 或其同 exact-key 后代时 short-circuit，missing pointer
 通过 unique-tip rebuild 恢复且不回退 descendant，divergent pointer fail-fast。即使
-latest 已继续推进也不会误重开已完成 transaction。ArtifactSet v2
+latest 已继续推进也不会误重开已完成 transaction。ArtifactSet v3
 只能从 exact durable transaction/finalization 发布，并在 CAS 前复核 current raw lineage
-authority。
+authority。raw orchestration mutation 是 assembly-internal；外部 composition 通过
+engine-bound `FinalizeAndPublishAsync` 按 Prepare → durable finalization → Publish 顺序完成闭包。
 
 `SessionJournal.Cli` composition root 提供 exact-epoch single-maintainer tuning、
 multi-role orchestration run/resume、ArtifactSet publish/list/validate/rebuild，以及
 planner configure/plan/list 和 `run-online-turn` 命令；本程序集仍不反向依赖 CLI。
+
+所有 branch-local CLI 命令必须使用 `--branch <name>`；`validate-derived-memory` 不带 branch
+时验证全部 active refs，带 branch 时只验证该 exact ref。list 命令仍是 global inventory。
 
 Artifact 文件 strict read/write 上限为 8 MiB，ArtifactSet 与 orchestration transaction
 为 1 MiB，finalization 为 256 KiB，latest pointer 与 role settlement 为 64 KiB；
@@ -107,7 +115,8 @@ artifact id 是完整 canonical identity hash，不使用 collision suffix；exa
 collision 并 fail-fast。point reads 在 `File.Exists` 前检查完整路径链，dangling 或
 external symlink 不能伪装成 missing。
 
-global validation 会把每个 artifact 与 durable epoch/config 和 exact input set
+global/exact validation 通过 `SessionJournalEngine.OpenReadOnly` 检查 raw authority，malformed
+active tail 会 fail-fast 且不 recovery/truncate。validation 会把每个 artifact 与 durable epoch/config 和 exact input set
 dependency closure 交叉验证，并按 unique raw end 缓存复核 `AnchorSetups`。未被任何
 ArtifactSet 选择、但仍有完整 epoch closure 的 alternative candidate 是合法 orphan；
 缺 epoch 或 dependency snapshot 漂移的 detached artifact 非法。单 role runner 不执行

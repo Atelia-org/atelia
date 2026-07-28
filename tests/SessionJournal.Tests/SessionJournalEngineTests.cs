@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using Atelia.Completion.Abstractions;
 using Atelia.Completion.Tools;
 using Atelia.EventJournal;
@@ -115,6 +116,194 @@ public sealed class SessionJournalEngineTests : IDisposable {
         SessionProjection mainProjection = main.Project();
         Assert.Equal("model-A", mainProjection.Config!.ModelId);
         Assert.Equal("system-A", mainProjection.SystemPrompt);
+    }
+
+    [Fact]
+    public void OpenReadOnly_SelectedBranchBindsAndRejectsMutationWithoutFileChanges() {
+        string path = NewJournalPath();
+        EventAddress mainHead;
+        RefId mainRef;
+        using (var created = SessionJournalEngine.Create(
+            path,
+            new SessionCreateOptions(
+                "model-A",
+                "system-A",
+                "surface-A"
+            )
+        )) {
+            Assert.False(created.IsReadOnly);
+            mainHead = created.InspectExecutionBoundary().Head!.Value;
+            mainRef = created.BranchRefId;
+        }
+        RefId featureRef;
+        using (var journal = EventJournal.EventJournal.OpenExisting(path)) {
+            featureRef = journal.ForkBranch(
+                "feature",
+                mainRef,
+                mainHead
+            ).Unwrap();
+        }
+        using (SessionJournalEngine writable =
+               SessionJournalEngine.Open(path, "feature")) {
+            Assert.False(writable.IsReadOnly);
+        }
+        IReadOnlyDictionary<string, FileSnapshot> before =
+            CaptureRepositoryFiles(path);
+
+        using (SessionJournalEngine readOnly =
+               SessionJournalEngine.OpenReadOnly(path, "feature")) {
+            Assert.True(readOnly.IsReadOnly);
+            Assert.Equal("feature", readOnly.BranchName);
+            Assert.Equal(featureRef, readOnly.BranchRefId);
+            Assert.Equal(
+                mainHead,
+                readOnly.InspectExecutionBoundary().Head
+            );
+            AssertReadOnlyMutationRejected(
+                () => readOnly.UseRuntime(
+                    CreateRuntime(new ScriptedCompletionClient())
+                ),
+                nameof(SessionJournalEngine.UseRuntime)
+            );
+            AssertReadOnlyMutationRejected(
+                () => readOnly.AppendObservation("must not append"),
+                nameof(SessionJournalEngine.AppendObservation)
+            );
+            AssertReadOnlyMutationRejected(
+                () => readOnly.AppendRuntimeConfigSetup(
+                    new SessionRuntimeConfiguration(
+                        "model-B",
+                        "surface-B",
+                        SessionJournalDefaults.Schema
+                    )
+                ),
+                nameof(
+                    SessionJournalEngine.AppendRuntimeConfigSetup
+                )
+            );
+            AssertReadOnlyMutationRejected(
+                () => readOnly.AppendSystemPromptSetup(
+                    "must not append"
+                ),
+                nameof(
+                    SessionJournalEngine.AppendSystemPromptSetup
+                )
+            );
+            AssertReadOnlyMutationRejected(
+                () => readOnly.AppendImportedAgentAction(
+                    new ActionMessage([
+                        new ActionBlock.Text("must not append")
+                    ]),
+                    new CompletionDescriptor(
+                        "import",
+                        "import-v1",
+                        "model-A"
+                    )
+                ),
+                nameof(
+                    SessionJournalEngine.AppendImportedAgentAction
+                )
+            );
+        }
+
+        Assert.Equal(before, CaptureRepositoryFiles(path));
+    }
+
+    [Fact]
+    public async Task OpenReadOnly_SendAndResumeOverloadsFailBeforeRuntimeCollaborators() {
+        string path = NewJournalPath();
+        using (SessionJournalEngine created =
+               SessionJournalEngine.Create(
+                   path,
+                   new SessionCreateOptions(
+                       "model-A",
+                       "system-A",
+                       "surface-A"
+                   )
+               )) {
+        }
+        var client = new ScriptedCompletionClient();
+        var candidateSource = new TestContextCandidateSource {
+            IsEmptyLineage = true
+        };
+        var lifecycle = new TestMemoryLifecycle();
+        SessionRuntime runtime = CreateRuntime(
+            client,
+            candidateSource: candidateSource
+        ) with {
+            MemoryLifecycle = lifecycle
+        };
+        IReadOnlyDictionary<string, FileSnapshot> before =
+            CaptureRepositoryFiles(path);
+
+        using SessionJournalEngine readOnly =
+            SessionJournalEngine.OpenReadOnlyForTest(
+                path,
+                runtime
+            );
+        await AssertReadOnlyMutationRejectedAsync(
+            () => readOnly.SendAsync("must not send"),
+            nameof(SessionJournalEngine.SendAsync)
+        );
+        await AssertReadOnlyMutationRejectedAsync(
+            () => readOnly.SendAsync(
+                "must not send",
+                observer: null,
+                CancellationToken.None
+            ),
+            nameof(SessionJournalEngine.SendAsync)
+        );
+        await AssertReadOnlyMutationRejectedAsync(
+            () => readOnly.ResumeAsync(),
+            nameof(SessionJournalEngine.ResumeAsync)
+        );
+        await AssertReadOnlyMutationRejectedAsync(
+            () => readOnly.ResumeAsync(
+                observer: null,
+                CancellationToken.None
+            ),
+            nameof(SessionJournalEngine.ResumeAsync)
+        );
+
+        Assert.Equal(0, lifecycle.InvocationCount);
+        Assert.Equal(0, candidateSource.SelectionCount);
+        Assert.Equal(0, candidateSource.MaterializationCount);
+        Assert.Equal(0, client.Calls);
+        Assert.Equal(before, CaptureRepositoryFiles(path));
+    }
+
+    [Fact]
+    public void OpenReadOnly_MalformedEventTailFailsWithoutRecovery() {
+        string path = NewJournalPath();
+        using (SessionJournalEngine created =
+               SessionJournalEngine.Create(
+                   path,
+                   new SessionCreateOptions(
+                       "model-A",
+                       "system-A",
+                       "surface-A"
+                   )
+               )) {
+            created.AppendObservation("observation");
+        }
+        string activeEventPath = Directory.EnumerateFiles(
+                Path.Combine(path, "events"),
+                "*.rbf",
+                SearchOption.AllDirectories
+            )
+            .Single();
+        File.AppendAllBytes(
+            activeEventPath,
+            new byte[] { 0, 0, 0, 0 }
+        );
+        IReadOnlyDictionary<string, FileSnapshot> before =
+            CaptureRepositoryFiles(path);
+
+        _ = Assert.ThrowsAny<Exception>(
+            () => SessionJournalEngine.OpenReadOnly(path)
+        );
+
+        Assert.Equal(before, CaptureRepositoryFiles(path));
     }
 
     [Fact]
@@ -2603,4 +2792,48 @@ public sealed class SessionJournalEngineTests : IDisposable {
                 SearchOption.AllDirectories
             )
             .Sum(static path => new FileInfo(path).Length);
+
+    private static IReadOnlyDictionary<string, FileSnapshot>
+        CaptureRepositoryFiles(string path)
+        => Directory.EnumerateFiles(
+                path,
+                "*",
+                SearchOption.AllDirectories
+            )
+            .ToDictionary(
+                file => Path.GetRelativePath(path, file),
+                file => new FileSnapshot(
+                    new FileInfo(file).Length,
+                    Convert.ToHexStringLower(
+                        SHA256.HashData(File.ReadAllBytes(file))
+                    )
+                ),
+                StringComparer.Ordinal
+            );
+
+    private static void AssertReadOnlyMutationRejected(
+        Action action,
+        string operation
+    ) {
+        InvalidOperationException error =
+            Assert.Throws<InvalidOperationException>(action);
+        Assert.Equal(
+            $"SessionJournalEngine is read-only; mutation operation '{operation}' is not allowed.",
+            error.Message
+        );
+    }
+
+    private static async Task AssertReadOnlyMutationRejectedAsync(
+        Func<Task> action,
+        string operation
+    ) {
+        InvalidOperationException error =
+            await Assert.ThrowsAsync<InvalidOperationException>(action);
+        Assert.Equal(
+            $"SessionJournalEngine is read-only; mutation operation '{operation}' is not allowed.",
+            error.Message
+        );
+    }
+
+    private sealed record FileSnapshot(long Length, string Sha256);
 }

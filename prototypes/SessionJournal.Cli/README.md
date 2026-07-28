@@ -44,11 +44,12 @@ atomic publish。
 rewrite maintainer。runner 不重新遍历整段历史、不按 role 自行 threshold/split，
 也不推进 epoch 或 ArtifactSet pointer；它只物化该 epoch 的
 `(sourceStartExclusive, sourceEndInclusive]`，并输出 JSON report、Completion call
-log 与 append-only `derived/memory/v1/artifacts/` candidate：
+log 与 append-only `derived/memory/v2/artifacts/` candidate：
 
 ```bash
 dotnet run --project prototypes/SessionJournal.Cli -- run-memory-maintainer \
   --input gitignore/session-journal/<session> \
+  --branch main \
   --connections prototypes/Galatea/.atelia/galatea/connections.json \
   --connection dsv4p \
   --profile autobiographical-rewrite \
@@ -96,6 +97,7 @@ included settlements 与 omitted optional roles，再发布 exact set。重跑�
 dotnet run --project prototypes/SessionJournal.Cli -- \
   run-derived-memory-orchestration \
   --input gitignore/session-journal/<session> \
+  --branch main \
   --epoch dae_<...> \
   --role required:autobiographical-rewrite:produce \
   --role required:world-understanding-rewrite:produce \
@@ -141,6 +143,7 @@ append 前先做 lifecycle + context budget preflight，append 后再按新 exac
 dotnet run --project prototypes/SessionJournal.Cli -- \
   run-online-turn \
   --input gitignore/session-journal/<session> \
+  --branch main \
   --message "continue" \
   --role required:autobiographical-rewrite:produce \
   --role required:world-understanding-rewrite:produce \
@@ -210,6 +213,7 @@ set。这个命令是低层运维入口；日常路径应使用
 dotnet run --project prototypes/SessionJournal.Cli -- \
   publish-derived-artifact-set \
   --input gitignore/session-journal/<session> \
+  --branch main \
   --transaction dmt_<...> \
   --member autobiography=<artifact-id> \
   --member world-understanding=<artifact-id> \
@@ -220,7 +224,7 @@ CLI 从 durable transaction 得到 policy、exact epoch/input set 与 role provi
 并要求 members 与 immutable settlements 完全相等。previous-set CAS 固定为
 `epoch.inputSetId`，不能由参数伪造；CLI 从 members 的唯一 common anchor 读取
 raw-authoritative governing setup address/schema/payload hash。发布只写
-`derived/memory/v1/sets` 与 latest pointer；raw SessionJournal 不写任何 derived-set
+`derived/memory/v2/sets` 与 latest pointer；raw SessionJournal 不写任何 derived-set
 definition/activation event。
 
 ### list-derived-artifact-sets
@@ -253,9 +257,14 @@ intent 的 exact expected set。validation report 同时计数 transactions、ro
 settlements 与 finalizations。未被 set 使用的
 orphan artifact 合法，便于 prompt tuning 保存 alternatives。空 derived repo
 也合法。DM-5 起 validation report schema 是
-`atelia.session-journal.cli.derived-memory-validation.v2`，新增 planner config/current
+`atelia.session-journal.cli.derived-memory-validation.v3`，新增 planner config/current
 与 epoch/latest counts；这是 pre-release direct cutover，不输出旧 v1 shape。该命令不
 rebuild、不创建目录或 lock。
+
+不带 `--branch` 时按 RefId 分组验证所有 active branches，并拒绝任何仍被 durable
+derived records 引用但已 archive/non-active 的 ref；带 `--branch <name>` 时只验证该 Engine
+lifetime 绑定的 exact ref。两种模式都使用 raw journal 的 strict read-only open；
+malformed active tail 会失败但不会触发 recovery/truncation。
 
 ### rebuild-derived-artifact-set-latest
 
@@ -263,7 +272,7 @@ rebuild、不创建目录或 lock。
 dotnet run --project prototypes/SessionJournal.Cli -- \
   rebuild-derived-artifact-set-latest \
   --input gitignore/session-journal/<session> \
-  --lineage main \
+  --branch main \
   --coherence-group roleplay.default \
   --policy-id roleplay-memory \
   --policy-fingerprint roleplay-memory-v1 \
@@ -280,8 +289,10 @@ pointer。没有 matching set、missing predecessor、role drift、fork 或 cycl
 这些命令只规划 shared history coverage；不会调用 LLM、运行 maintainer、发布
 ArtifactSet 或写 raw event。
 
-DM-5 v1 的 `--lineage` 只接受 `main`。参数仍显式进入 durable key/report，但在具备真正的
-ref/lineage authority 前，不把任意 token 伪装成 branch-aware planning。
+所有 branch-local 命令先用 `--branch <name>` 打开 existing active branch，再从 Engine 绑定
+stable `RefId`。branch name 只是人类 selector；durable config/epoch/set/latest/report identity
+使用 canonical lowercase `branchRefId`。fork 与 archive 后同名重建都不会继承旧 ref 的
+DerivedMemory lineage。
 
 ### configure-derived-artifact-planner
 
@@ -289,7 +300,7 @@ ref/lineage authority 前，不把任意 token 伪装成 branch-aware planning�
 dotnet run --project prototypes/SessionJournal.Cli -- \
   configure-derived-artifact-planner \
   --input gitignore/session-journal/<session> \
-  --lineage main \
+  --branch main \
   --coherence-group roleplay.default \
   --topology-version roleplay-memory-v1 \
   --minimum-recent-tokens 24000 \
@@ -311,7 +322,7 @@ config 是 immutable lineage；更新时把 `--expected-current` 改为当前 `d
 dotnet run --project prototypes/SessionJournal.Cli -- \
   plan-derived-artifact-epoch \
   --input gitignore/session-journal/<session> \
-  --lineage main \
+  --branch main \
   --coherence-group roleplay.default \
   --expected-previous none \
   --input-set none \

@@ -97,6 +97,86 @@ public sealed class DerivedArtifactSetStore {
             .ConfigureAwait(false);
     }
 
+    /// <summary>
+    /// Freezes the exact durable publication closure before making the prepared set usable.
+    /// The transaction, settlements, epoch, and selected raw lineage are revalidated by
+    /// <see cref="PreparePublicationAsync"/> before finalization is written.
+    /// </summary>
+    public async ValueTask<DerivedArtifactSet> FinalizeAndPublishAsync(
+        SessionJournalEngine engine,
+        DerivedArtifactSetPublicationRequest request,
+        CancellationToken cancellationToken = default
+    ) {
+        DerivedArtifactSet prepared = await PreparePublicationAsync(
+                engine,
+                request,
+                cancellationToken
+            )
+            .ConfigureAwait(false);
+        DerivedMemoryOrchestrationTransaction durableTransaction =
+            await _repository.Orchestrations.TryReadTransactionAsync(
+                    request.Transaction.TransactionId,
+                    cancellationToken
+                )
+                .ConfigureAwait(false)
+            ?? throw new InvalidDataException(
+                $"Orchestration transaction '{request.Transaction.TransactionId}' is missing."
+            );
+        if (!DerivedMemoryOrchestrationStore.TransactionsEquivalent(
+                durableTransaction,
+                request.Transaction
+            )) {
+            throw new InvalidDataException(
+                "ArtifactSet publication transaction does not match its durable snapshot."
+            );
+        }
+        IReadOnlyDictionary<string, DerivedMemoryRoleSettlement>
+            settlementsByRole =
+                (await _repository.Orchestrations.ReadSettlementsAsync(
+                        durableTransaction,
+                        cancellationToken
+                    )
+                    .ConfigureAwait(false))
+                .ToDictionary(
+                    static settlement => settlement.RoleId,
+                    StringComparer.Ordinal
+                );
+        DerivedMemoryRoleSettlement[] included = [
+            .. SnapshotSelections(request.Members).Select(
+                selection => settlementsByRole.TryGetValue(
+                    selection.RoleId,
+                    out DerivedMemoryRoleSettlement? settlement
+                )
+                && string.Equals(
+                    settlement.ArtifactId,
+                    selection.ArtifactId,
+                    StringComparison.Ordinal
+                )
+                    ? settlement
+                    : throw new InvalidDataException(
+                        $"ArtifactSet member '{selection.RoleId}' is not its exact durable settlement."
+                    )
+            )
+        ];
+        _ = await _repository.Orchestrations
+            .GetOrCreateFinalizationAsync(
+                durableTransaction,
+                request.AnchorSetups,
+                included,
+                prepared.SetId,
+                cancellationToken
+            )
+            .ConfigureAwait(false);
+        return await PublishAsync(
+                engine,
+                request with {
+                    Transaction = durableTransaction
+                },
+                cancellationToken
+            )
+            .ConfigureAwait(false);
+    }
+
     internal async ValueTask<DerivedArtifactSet>
         RebuildFinalizedCandidateAsync(
         DerivedMemoryOrchestrationTransaction transaction,
@@ -373,6 +453,21 @@ public sealed class DerivedArtifactSetStore {
                 .ConfigureAwait(false);
     }
 
+    internal async ValueTask<DerivedArtifactSet?>
+        TryDiscoverLatestTipAsync(
+        DerivedArtifactSetPolicy policy,
+        DerivedMemoryBranchScope scope,
+        CancellationToken cancellationToken = default
+    ) {
+        _repository.RequireScope(scope);
+        return await ReadUniqueTipAsync(
+                policy,
+                scope.BranchRefId,
+                cancellationToken
+            )
+            .ConfigureAwait(false);
+    }
+
     public async ValueTask<DerivedArtifactSet?> TryReadAsync(
         string setId,
         DerivedArtifactSetPolicy policy,
@@ -613,6 +708,17 @@ public sealed class DerivedArtifactSetStore {
                     "An ArtifactSet lineage exists without a branch-scoped epoch lineage."
                 );
             }
+            DerivedArtifactSet? discovered = await ReadUniqueTipAsync(
+                    policy,
+                    scope.BranchRefId,
+                    cancellationToken
+                )
+                .ConfigureAwait(false);
+            if (discovered is not null) {
+                throw new InvalidDataException(
+                    "An ArtifactSet lineage exists without a branch-scoped epoch lineage."
+                );
+            }
         }
         else {
             _ = DerivedMemoryEngineReadGate.Run(
@@ -629,7 +735,7 @@ public sealed class DerivedArtifactSetStore {
                     )
             );
         }
-        return await RebuildLatestPointerAsync(
+        return await RebuildLatestPointerCoreAsync(
                 policy,
                 scope.BranchRefId,
                 cancellationToken
@@ -637,7 +743,8 @@ public sealed class DerivedArtifactSetStore {
             .ConfigureAwait(false);
     }
 
-    internal async ValueTask<DerivedArtifactSet?> RebuildLatestPointerAsync(
+    private async ValueTask<DerivedArtifactSet?>
+        RebuildLatestPointerCoreAsync(
         DerivedArtifactSetPolicy policy,
         RefId branchRefId,
         CancellationToken cancellationToken = default
@@ -649,8 +756,56 @@ public sealed class DerivedArtifactSetStore {
         await using FileStream writeLock = await _repository
             .AcquireWriteLockAsync(cancellationToken)
             .ConfigureAwait(false);
-        _repository.EnsureDirectory(SetsDirectory);
+        DerivedArtifactSet? tip = await ReadUniqueTipAsync(
+                policy,
+                branchRefId,
+                cancellationToken
+            )
+            .ConfigureAwait(false);
+        if (tip is null) {
+            return null;
+        }
         _repository.EnsureDirectory(LatestPointersDirectory);
+
+        var pointer = new DerivedArtifactSetLatestPointerDto(
+            LatestPointerSchema,
+            branchRefId,
+            policy.CoherenceGroup,
+            policy.PolicyId,
+            policy.PolicyFingerprint,
+            tip.SetId
+        );
+        string pointerJson = JsonSerializer.Serialize(pointer, JsonOptions);
+        EnsureSerializedSize(
+            pointerJson,
+            MaxLatestPointerFileBytes,
+            "Derived ArtifactSet latest pointer"
+        );
+        await _repository.WriteFileAtomicallyAsync(
+                GetLatestPointerPath(policy, branchRefId),
+                pointerJson,
+                overwrite: true,
+                cancellationToken
+            )
+            .ConfigureAwait(false);
+        return tip;
+    }
+
+    private async ValueTask<DerivedArtifactSet?> ReadUniqueTipAsync(
+        DerivedArtifactSetPolicy policy,
+        RefId branchRefId,
+        CancellationToken cancellationToken
+    ) {
+        ArgumentNullException.ThrowIfNull(policy);
+        _ = policy.ValidateAndSnapshot();
+        DerivedArtifactSetPolicy.ValidateBranchRefId(branchRefId);
+        DerivedMemoryPathGuard.EnsureSafeDescendant(
+            _repository.SessionJournalRepositoryPath,
+            SetsDirectory
+        );
+        if (!Directory.Exists(SetsDirectory)) {
+            return null;
+        }
 
         var matching = new Dictionary<string, DerivedArtifactSet>(
             StringComparer.Ordinal
@@ -721,28 +876,6 @@ public sealed class DerivedArtifactSetStore {
             );
         }
         ValidateCompleteAcyclicLineage(tips[0], matching);
-
-        var pointer = new DerivedArtifactSetLatestPointerDto(
-            LatestPointerSchema,
-            branchRefId,
-            policy.CoherenceGroup,
-            policy.PolicyId,
-            policy.PolicyFingerprint,
-            tips[0].SetId
-        );
-        string pointerJson = JsonSerializer.Serialize(pointer, JsonOptions);
-        EnsureSerializedSize(
-            pointerJson,
-            MaxLatestPointerFileBytes,
-            "Derived ArtifactSet latest pointer"
-        );
-        await _repository.WriteFileAtomicallyAsync(
-                GetLatestPointerPath(policy, branchRefId),
-                pointerJson,
-                overwrite: true,
-                cancellationToken
-            )
-            .ConfigureAwait(false);
         return tips[0];
     }
 

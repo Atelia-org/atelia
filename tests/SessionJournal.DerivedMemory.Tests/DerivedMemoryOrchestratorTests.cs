@@ -393,7 +393,7 @@ public sealed class DerivedMemoryOrchestratorTests : IDisposable {
         Assert.Equal(1, completedAlpha.CallCount);
         Assert.Equal(1, interruptedZeta.CallCount);
         DerivedMemoryValidationReport partial =
-            await fixture.Repository.ValidateBranchAsync(
+            await fixture.Repository.ValidateBranchAgainstOpenEngineAsync(
                 fixture.Engine
             );
         Assert.Equal(1, partial.ArtifactEpochCount);
@@ -452,7 +452,7 @@ public sealed class DerivedMemoryOrchestratorTests : IDisposable {
         Assert.Equal(0, mustNotRepeatAlpha.CallCount);
         Assert.Equal(1, recoveredZeta.CallCount);
         DerivedMemoryValidationReport recovered =
-            await reopenedRepository.ValidateBranchAsync(reopened);
+            await reopenedRepository.ValidateBranchAgainstOpenEngineAsync(reopened);
         Assert.Equal(1, recovered.ArtifactEpochCount);
         Assert.Equal(1, recovered.OrchestrationTransactionCount);
         Assert.Equal(2, recovered.RoleSettlementCount);
@@ -625,7 +625,7 @@ public sealed class DerivedMemoryOrchestratorTests : IDisposable {
             fixture.Repository.ArtifactSets.LatestPointersDirectory
         ));
         DerivedMemoryValidationReport partialValidation =
-            await fixture.Repository.ValidateBranchAsync(fixture.Engine);
+            await fixture.Repository.ValidateBranchAgainstOpenEngineAsync(fixture.Engine);
         Assert.Equal(
             1,
             partialValidation.OrchestrationTransactionCount
@@ -1121,7 +1121,7 @@ public sealed class DerivedMemoryOrchestratorTests : IDisposable {
             fixture.Repository.ArtifactSets.SetsDirectory
         ));
         DerivedMemoryValidationReport pending =
-            await fixture.Repository.ValidateBranchAsync(fixture.Engine);
+            await fixture.Repository.ValidateBranchAgainstOpenEngineAsync(fixture.Engine);
         Assert.Equal(0, pending.ArtifactSetCount);
         Assert.Equal(1, pending.OrchestrationFinalizationCount);
         var mustNotRun = new FakeMaintainer(
@@ -1236,7 +1236,7 @@ public sealed class DerivedMemoryOrchestratorTests : IDisposable {
         );
 
         await Assert.ThrowsAsync<InvalidDataException>(
-            async () => await fixture.Repository.ValidateBranchAsync(
+            async () => await fixture.Repository.ValidateBranchAgainstOpenEngineAsync(
                 fixture.Engine
             )
         );

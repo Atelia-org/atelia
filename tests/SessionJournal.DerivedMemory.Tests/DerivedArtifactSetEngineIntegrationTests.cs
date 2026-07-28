@@ -164,8 +164,25 @@ public sealed class DerivedArtifactSetEngineIntegrationTests : IDisposable {
                 ).Unwrap()
             );
         }
+        File.Delete(Assert.Single(Directory.EnumerateFiles(
+            fixture.Repository.ArtifactSets.LatestPointersDirectory
+        )));
         IReadOnlyDictionary<string, string> derivedBefore =
             SnapshotDerivedFiles(fixture.Repository.MemoryRoot);
+        SessionContextCandidateDiscovery rediscovered =
+            await fixture.Provider.DiscoverAsync(
+                new(
+                    currentHead,
+                    SessionContextSelectionMode.Latest,
+                    fixture.CoherenceGroup
+                ),
+                CancellationToken.None
+            );
+        Assert.Single(rediscovered.Candidates);
+        Assert.Equal(
+            derivedBefore,
+            SnapshotDerivedFiles(fixture.Repository.MemoryRoot)
+        );
         var client = new CapturingClient("must not be called");
         using var reopened = SessionJournalEngine.Open(
             fixture.Path,
@@ -185,7 +202,7 @@ public sealed class DerivedArtifactSetEngineIntegrationTests : IDisposable {
         Assert.Empty(client.Requests);
         await Assert.ThrowsAsync<InvalidDataException>(
             async () =>
-                await fixture.Repository.ValidateBranchAsync(reopened)
+                await fixture.Repository.ValidateBranchAgainstOpenEngineAsync(reopened)
         );
         await Assert.ThrowsAsync<InvalidDataException>(
             async () => await fixture.Repository.ArtifactSets

@@ -68,25 +68,7 @@ internal static class DerivedArtifactSetTestFactory {
             members,
             transaction.InputSetId
         );
-        DerivedArtifactSet prepared =
-            await repository.ArtifactSets.PreparePublicationAsync(
-                engine,
-                publication
-            );
-        IReadOnlyDictionary<string, DerivedMemoryRoleSettlement> durable =
-            (await repository.Orchestrations.ReadSettlementsAsync(
-                transaction
-            )).ToDictionary(
-                static settlement => settlement.RoleId,
-                StringComparer.Ordinal
-            );
-        _ = await repository.Orchestrations.GetOrCreateFinalizationAsync(
-            transaction,
-            anchorSetups,
-            members.Select(member => durable[member.RoleId]).ToArray(),
-            prepared.SetId
-        );
-        return await repository.ArtifactSets.PublishAsync(
+        return await repository.ArtifactSets.FinalizeAndPublishAsync(
             engine,
             publication
         );
