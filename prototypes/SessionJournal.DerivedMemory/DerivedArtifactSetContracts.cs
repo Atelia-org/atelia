@@ -68,8 +68,14 @@ public sealed record DerivedArtifactSetPolicy(
         return roles;
     }
 
-    internal static void ValidateLineageKey(string lineageKey) =>
-        ValidateToken(lineageKey, nameof(lineageKey));
+    internal static void ValidateBranchRefId(RefId branchRefId) {
+        if (branchRefId == default) {
+            throw new ArgumentException(
+                "Derived-memory branchRefId cannot be the default RefId.",
+                nameof(branchRefId)
+            );
+        }
+    }
 
     internal static void ValidateToken(string value, string parameterName) {
         if (string.IsNullOrWhiteSpace(value) || value.Length > 256) {
@@ -125,7 +131,7 @@ public sealed record DerivedArtifactSet(
     string JobFingerprint,
     string EpochId,
     string EpochPlanFingerprint,
-    string LineageKey,
+    RefId BranchRefId,
     string CoherenceGroup,
     string TopologyVersion,
     string PolicyId,
@@ -145,7 +151,7 @@ public sealed record DerivedArtifactSetPublicationRequest(
     IReadOnlyList<DerivedArtifactSetMemberSelection> Members,
     string? ExpectedPreviousSetId
 ) {
-    public string LineageKey => Transaction.LineageKey;
+    public RefId BranchRefId => Transaction.BranchRefId;
 }
 
 /// <summary>
@@ -159,7 +165,7 @@ public sealed record DerivedArtifactSetInventory(
 );
 
 public sealed record DerivedArtifactSetLatestPointer(
-    string LineageKey,
+    RefId BranchRefId,
     string CoherenceGroup,
     string PolicyId,
     string PolicyFingerprint,

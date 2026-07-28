@@ -1,3 +1,5 @@
+using Atelia.EventJournal;
+
 namespace Atelia.SessionJournal.DerivedMemory;
 
 /// <summary>
@@ -9,20 +11,20 @@ public sealed class DerivedArtifactSetContextCandidateSource
     : ICoherentContextCandidateSource {
     private readonly DerivedMemoryRepository _repository;
     private readonly DerivedArtifactSetPolicy _policy;
-    private readonly string _lineageKey;
+    private readonly RefId _branchRefId;
 
     public DerivedArtifactSetContextCandidateSource(
         DerivedMemoryRepository repository,
         DerivedArtifactSetPolicy policy,
-        string lineageKey
+        RefId branchRefId
     ) {
         _repository = repository
             ?? throw new ArgumentNullException(nameof(repository));
         _policy = policy
             ?? throw new ArgumentNullException(nameof(policy));
         _ = _policy.ValidateAndSnapshot();
-        DerivedArtifactSetPolicy.ValidateLineageKey(lineageKey);
-        _lineageKey = lineageKey;
+        DerivedArtifactSetPolicy.ValidateBranchRefId(branchRefId);
+        _branchRefId = branchRefId;
     }
 
     public async ValueTask<SessionContextCandidateDiscovery> DiscoverAsync(
@@ -45,7 +47,7 @@ public sealed class DerivedArtifactSetContextCandidateSource
         DerivedArtifactSet? current = await _repository.ArtifactSets
             .TryReadLatestAsync(
                 _policy,
-                _lineageKey,
+                _branchRefId,
                 cancellationToken
             )
             .ConfigureAwait(false);
@@ -55,7 +57,7 @@ public sealed class DerivedArtifactSetContextCandidateSource
             current = await _repository.ArtifactSets
                 .RebuildLatestPointerAsync(
                     _policy,
-                    _lineageKey,
+                    _branchRefId,
                     cancellationToken
                 )
                 .ConfigureAwait(false);
@@ -102,7 +104,7 @@ public sealed class DerivedArtifactSetContextCandidateSource
                 ? await _repository.ArtifactSets.TryReadAsync(
                         previous,
                         _policy,
-                        _lineageKey,
+                        _branchRefId,
                         cancellationToken
                     )
                     .ConfigureAwait(false)
@@ -126,7 +128,7 @@ public sealed class DerivedArtifactSetContextCandidateSource
             .TryReadAsync(
                 descriptor.Handle,
                 _policy,
-                _lineageKey,
+                _branchRefId,
                 cancellationToken
             )
             .ConfigureAwait(false)

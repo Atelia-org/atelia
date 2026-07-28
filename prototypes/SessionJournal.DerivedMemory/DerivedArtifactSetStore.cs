@@ -9,16 +9,16 @@ namespace Atelia.SessionJournal.DerivedMemory;
 
 public sealed class DerivedArtifactSetStore {
     public const string SetSchema =
-        "atelia.session-journal.derived-artifact-set.v2";
+        "atelia.session-journal.derived-artifact-set.v3";
     public const string LatestPointerSchema =
-        "atelia.session-journal.derived-artifact-set.latest-pointer.v2";
+        "atelia.session-journal.derived-artifact-set.latest-pointer.v3";
     public const long MaxSetFileBytes = 1024 * 1024;
     public const long MaxLatestPointerFileBytes = 64 * 1024;
 
     private const string SetIdDomain =
-        "atelia.session-journal.derived-artifact-set-id.v2";
+        "atelia.session-journal.derived-artifact-set-id.v3";
     private const string LatestKeyDomain =
-        "atelia.session-journal.derived-artifact-set-latest-key.v1";
+        "atelia.session-journal.derived-artifact-set-latest-key.v2";
     private const int MaxMemberCount = 128;
 
     private static readonly JsonSerializerOptions JsonOptions = new() {
@@ -26,13 +26,15 @@ public sealed class DerivedArtifactSetStore {
         DefaultIgnoreCondition = JsonIgnoreCondition.Never,
         WriteIndented = true,
         Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
-        UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow
+        UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow,
+        Converters = { new DerivedMemoryBranchRefIdJsonConverter() }
     };
     private static readonly JsonSerializerOptions IdentityJsonOptions = new() {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         DefaultIgnoreCondition = JsonIgnoreCondition.Never,
         WriteIndented = false,
-        Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping
+        Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+        Converters = { new DerivedMemoryBranchRefIdJsonConverter() }
     };
 
     private readonly DerivedMemoryRepository _repository;
@@ -66,7 +68,7 @@ public sealed class DerivedArtifactSetStore {
             request.Policy.ValidateAndSnapshot();
         RequireMatchingRepository(engine);
         ValidateTransaction(request, roles);
-        DerivedArtifactSetPolicy.ValidateLineageKey(request.LineageKey);
+        DerivedArtifactSetPolicy.ValidateBranchRefId(request.BranchRefId);
         ValidateSetupReferences(request.AnchorSetups);
         if (request.ExpectedPreviousSetId is not null) {
             ValidateSetId(request.ExpectedPreviousSetId);
@@ -168,7 +170,7 @@ public sealed class DerivedArtifactSetStore {
         DerivedArtifactSetLatestPointerDto? currentPointer =
             await TryReadLatestPointerDtoAsync(
                     request.Policy,
-                    request.LineageKey,
+                    request.BranchRefId,
                     cancellationToken
                 )
                 .ConfigureAwait(false);
@@ -182,7 +184,7 @@ public sealed class DerivedArtifactSetStore {
             DerivedArtifactSet existing = await ReadSetRequiredAsync(
                     candidate.SetId,
                     request.Policy,
-                    request.LineageKey,
+                    request.BranchRefId,
                     cancellationToken
                 )
                 .ConfigureAwait(false);
@@ -218,7 +220,7 @@ public sealed class DerivedArtifactSetStore {
             DerivedArtifactSet existing = await ReadSetRequiredAsync(
                     candidate.SetId,
                     request.Policy,
-                    request.LineageKey,
+                    request.BranchRefId,
                     cancellationToken
                 )
                 .ConfigureAwait(false);
@@ -240,7 +242,7 @@ public sealed class DerivedArtifactSetStore {
 
         var pointer = new DerivedArtifactSetLatestPointerDto(
             LatestPointerSchema,
-            request.LineageKey,
+            request.BranchRefId,
             request.Policy.CoherenceGroup,
             request.Policy.PolicyId,
             request.Policy.PolicyFingerprint,
@@ -255,7 +257,7 @@ public sealed class DerivedArtifactSetStore {
         await _repository.WriteFileAtomicallyAsync(
                 GetLatestPointerPath(
                     request.Policy,
-                    request.LineageKey
+                    request.BranchRefId
                 ),
                 pointerJson,
                 overwrite: true,
@@ -327,16 +329,16 @@ public sealed class DerivedArtifactSetStore {
 
     public async ValueTask<DerivedArtifactSet?> TryReadLatestAsync(
         DerivedArtifactSetPolicy policy,
-        string lineageKey,
+        RefId branchRefId,
         CancellationToken cancellationToken = default
     ) {
         ArgumentNullException.ThrowIfNull(policy);
         _ = policy.ValidateAndSnapshot();
-        DerivedArtifactSetPolicy.ValidateLineageKey(lineageKey);
+        DerivedArtifactSetPolicy.ValidateBranchRefId(branchRefId);
         DerivedArtifactSetLatestPointerDto? pointer =
             await TryReadLatestPointerDtoAsync(
                     policy,
-                    lineageKey,
+                    branchRefId,
                     cancellationToken
                 )
                 .ConfigureAwait(false);
@@ -345,7 +347,7 @@ public sealed class DerivedArtifactSetStore {
             : await ReadSetRequiredAsync(
                     pointer.SetId,
                     policy,
-                    lineageKey,
+                    branchRefId,
                     cancellationToken
                 )
                 .ConfigureAwait(false);
@@ -354,13 +356,13 @@ public sealed class DerivedArtifactSetStore {
     public async ValueTask<DerivedArtifactSet?> TryReadAsync(
         string setId,
         DerivedArtifactSetPolicy policy,
-        string lineageKey,
+        RefId branchRefId,
         CancellationToken cancellationToken = default
     ) {
         ValidateSetId(setId);
         ArgumentNullException.ThrowIfNull(policy);
         _ = policy.ValidateAndSnapshot();
-        DerivedArtifactSetPolicy.ValidateLineageKey(lineageKey);
+        DerivedArtifactSetPolicy.ValidateBranchRefId(branchRefId);
         string path = GetSetPath(setId);
         DerivedMemoryPathGuard.EnsureSafeDescendant(
             _repository.SessionJournalRepositoryPath,
@@ -372,7 +374,7 @@ public sealed class DerivedArtifactSetStore {
         return await ReadSetRequiredAsync(
                 setId,
                 policy,
-                lineageKey,
+                branchRefId,
                 cancellationToken
             )
             .ConfigureAwait(false);
@@ -529,7 +531,7 @@ public sealed class DerivedArtifactSetStore {
         return new DerivedArtifactSetInventory(
             Array.AsReadOnly([
                 .. sets
-                    .OrderBy(static set => set.LineageKey, StringComparer.Ordinal)
+                    .OrderBy(static set => set.BranchRefId.Packed)
                     .ThenBy(static set => set.CoherenceGroup, StringComparer.Ordinal)
                     .ThenBy(static set => set.PolicyId, StringComparer.Ordinal)
                     .ThenBy(static set => set.PolicyFingerprint, StringComparer.Ordinal)
@@ -537,7 +539,7 @@ public sealed class DerivedArtifactSetStore {
             ]),
             Array.AsReadOnly([
                 .. pointers
-                    .OrderBy(static pointer => pointer.LineageKey, StringComparer.Ordinal)
+                    .OrderBy(static pointer => pointer.BranchRefId.Packed)
                     .ThenBy(static pointer => pointer.CoherenceGroup, StringComparer.Ordinal)
                     .ThenBy(static pointer => pointer.PolicyId, StringComparer.Ordinal)
                     .ThenBy(static pointer => pointer.PolicyFingerprint, StringComparer.Ordinal)
@@ -548,12 +550,12 @@ public sealed class DerivedArtifactSetStore {
 
     public async ValueTask<DerivedArtifactSet?> RebuildLatestPointerAsync(
         DerivedArtifactSetPolicy policy,
-        string lineageKey,
+        RefId branchRefId,
         CancellationToken cancellationToken = default
     ) {
         ArgumentNullException.ThrowIfNull(policy);
         _ = policy.ValidateAndSnapshot();
-        DerivedArtifactSetPolicy.ValidateLineageKey(lineageKey);
+        DerivedArtifactSetPolicy.ValidateBranchRefId(branchRefId);
 
         await using FileStream writeLock = await _repository
             .AcquireWriteLockAsync(cancellationToken)
@@ -575,11 +577,7 @@ public sealed class DerivedArtifactSetStore {
                 )
                 .ConfigureAwait(false);
             RequireExactSetFileName(path, dto.SetId);
-            if (!string.Equals(
-                    dto.LineageKey,
-                    lineageKey,
-                    StringComparison.Ordinal
-                )
+            if (dto.BranchRefId != branchRefId
                 || !string.Equals(
                     dto.CoherenceGroup,
                     policy.CoherenceGroup,
@@ -600,7 +598,7 @@ public sealed class DerivedArtifactSetStore {
             DerivedArtifactSet set = MaterializeAndValidate(
                 dto,
                 policy,
-                lineageKey
+                branchRefId
             );
             if (!matching.TryAdd(set.SetId, set)) {
                 throw new InvalidDataException(
@@ -637,7 +635,7 @@ public sealed class DerivedArtifactSetStore {
 
         var pointer = new DerivedArtifactSetLatestPointerDto(
             LatestPointerSchema,
-            lineageKey,
+            branchRefId,
             policy.CoherenceGroup,
             policy.PolicyId,
             policy.PolicyFingerprint,
@@ -650,7 +648,7 @@ public sealed class DerivedArtifactSetStore {
             "Derived ArtifactSet latest pointer"
         );
         await _repository.WriteFileAtomicallyAsync(
-                GetLatestPointerPath(policy, lineageKey),
+                GetLatestPointerPath(policy, branchRefId),
                 pointerJson,
                 overwrite: true,
                 cancellationToken
@@ -757,11 +755,8 @@ public sealed class DerivedArtifactSetStore {
                 ),
                 StringComparison.Ordinal
             )
-            || !string.Equals(
-                durableTransaction.LineageKey,
-                epoch.LineageKey,
-                StringComparison.Ordinal
-            )
+            || durableTransaction.BranchRefId
+                != epoch.BranchRefId
             || !string.Equals(
                 durableTransaction.CoherenceGroup,
                 epoch.CoherenceGroup,
@@ -834,11 +829,7 @@ public sealed class DerivedArtifactSetStore {
     ) {
         DerivedMemoryOrchestrationTransaction transaction =
             request.Transaction;
-        if (!string.Equals(
-                transaction.LineageKey,
-                request.LineageKey,
-                StringComparison.Ordinal
-            )
+        if (transaction.BranchRefId != request.BranchRefId
             || !string.Equals(
                 transaction.CoherenceGroup,
                 request.Policy.CoherenceGroup,
@@ -1052,7 +1043,7 @@ public sealed class DerivedArtifactSetStore {
             request.Transaction.JobFingerprint,
             request.Transaction.EpochId,
             request.Transaction.EpochPlanFingerprint,
-            request.Transaction.LineageKey,
+            request.Transaction.BranchRefId,
             request.Policy.CoherenceGroup,
             request.Transaction.TopologyVersion,
             request.Policy.PolicyId,
@@ -1097,10 +1088,10 @@ public sealed class DerivedArtifactSetStore {
     private async ValueTask<DerivedArtifactSetLatestPointerDto?>
         TryReadLatestPointerDtoAsync(
         DerivedArtifactSetPolicy policy,
-        string lineageKey,
+        RefId branchRefId,
         CancellationToken cancellationToken
     ) {
-        string path = GetLatestPointerPath(policy, lineageKey);
+        string path = GetLatestPointerPath(policy, branchRefId);
         DerivedMemoryPathGuard.EnsureSafeDescendant(
             _repository.SessionJournalRepositoryPath,
             path
@@ -1138,11 +1129,7 @@ public sealed class DerivedArtifactSetStore {
                 LatestPointerSchema,
                 StringComparison.Ordinal
             )
-            || !string.Equals(
-                pointer.LineageKey,
-                lineageKey,
-                StringComparison.Ordinal
-            )
+            || pointer.BranchRefId != branchRefId
             || !string.Equals(
                 pointer.CoherenceGroup,
                 policy.CoherenceGroup,
@@ -1206,7 +1193,7 @@ public sealed class DerivedArtifactSetStore {
             );
         }
         try {
-            DerivedArtifactSetPolicy.ValidateLineageKey(dto.LineageKey);
+            DerivedArtifactSetPolicy.ValidateBranchRefId(dto.BranchRefId);
             DerivedArtifactSetPolicy.ValidateToken(
                 dto.CoherenceGroup,
                 nameof(dto.CoherenceGroup)
@@ -1229,7 +1216,7 @@ public sealed class DerivedArtifactSetStore {
         }
         string expectedFileName =
             ComputeLatestKey(
-                dto.LineageKey,
+                dto.BranchRefId,
                 dto.CoherenceGroup,
                 dto.PolicyId,
                 dto.PolicyFingerprint
@@ -1244,7 +1231,7 @@ public sealed class DerivedArtifactSetStore {
             );
         }
         return new DerivedArtifactSetLatestPointer(
-            dto.LineageKey,
+            dto.BranchRefId,
             dto.CoherenceGroup,
             dto.PolicyId,
             dto.PolicyFingerprint,
@@ -1255,7 +1242,7 @@ public sealed class DerivedArtifactSetStore {
     private async ValueTask<DerivedArtifactSet> ReadSetRequiredAsync(
         string setId,
         DerivedArtifactSetPolicy policy,
-        string lineageKey,
+        RefId branchRefId,
         CancellationToken cancellationToken
     ) {
         string path = GetSetPath(setId);
@@ -1276,7 +1263,7 @@ public sealed class DerivedArtifactSetStore {
         DerivedArtifactSet set = MaterializeAndValidate(
             dto,
             policy,
-            lineageKey
+            branchRefId
         );
         if (!string.Equals(set.SetId, setId, StringComparison.Ordinal)) {
             throw new InvalidDataException(
@@ -1323,10 +1310,10 @@ public sealed class DerivedArtifactSetStore {
     private static DerivedArtifactSet MaterializeAndValidate(
         DerivedArtifactSetDto dto,
         DerivedArtifactSetPolicy policy,
-        string lineageKey
+        RefId branchRefId
     ) {
         DerivedArtifactSet set = MaterializeAndValidateSelf(dto);
-        if (!string.Equals(set.LineageKey, lineageKey, StringComparison.Ordinal)
+        if (set.BranchRefId != branchRefId
             || !string.Equals(
                 set.CoherenceGroup,
                 policy.CoherenceGroup,
@@ -1389,7 +1376,7 @@ public sealed class DerivedArtifactSetStore {
             persistedRoleRequirements
         );
         try {
-            DerivedArtifactSetPolicy.ValidateLineageKey(dto.LineageKey);
+            DerivedArtifactSetPolicy.ValidateBranchRefId(dto.BranchRefId);
             _ = persistedPolicy.ValidateAndSnapshot();
         }
         catch (ArgumentException exception) {
@@ -1413,7 +1400,7 @@ public sealed class DerivedArtifactSetStore {
             dto.JobFingerprint,
             dto.EpochId,
             dto.EpochPlanFingerprint,
-            dto.LineageKey,
+            dto.BranchRefId,
             dto.CoherenceGroup,
             dto.TopologyVersion,
             dto.PreviousSetId,
@@ -1544,7 +1531,7 @@ public sealed class DerivedArtifactSetStore {
             dto.JobFingerprint,
             dto.EpochId,
             dto.EpochPlanFingerprint,
-            dto.LineageKey,
+            dto.BranchRefId,
             dto.CoherenceGroup,
             dto.TopologyVersion,
             dto.PolicyId,
@@ -1663,11 +1650,7 @@ public sealed class DerivedArtifactSetStore {
             right.EpochPlanFingerprint,
             StringComparison.Ordinal
         )
-        && string.Equals(
-            left.LineageKey,
-            right.LineageKey,
-            StringComparison.Ordinal
-        )
+        && left.BranchRefId == right.BranchRefId
         && string.Equals(
             left.CoherenceGroup,
             right.CoherenceGroup,
@@ -1755,31 +1738,31 @@ public sealed class DerivedArtifactSetStore {
 
     private string GetLatestPointerPath(
         DerivedArtifactSetPolicy policy,
-        string lineageKey
+        RefId branchRefId
     ) => Path.Combine(
         LatestPointersDirectory,
-        $"{ComputeLatestKey(policy, lineageKey)}.json"
+        $"{ComputeLatestKey(policy, branchRefId)}.json"
     );
 
     private static string ComputeLatestKey(
         DerivedArtifactSetPolicy policy,
-        string lineageKey
+        RefId branchRefId
     ) => ComputeLatestKey(
-        lineageKey,
+        branchRefId,
         policy.CoherenceGroup,
         policy.PolicyId,
         policy.PolicyFingerprint
     );
 
     private static string ComputeLatestKey(
-        string lineageKey,
+        RefId branchRefId,
         string coherenceGroup,
         string policyId,
         string policyFingerprint
     ) {
         string identity = string.Join(
             '\0',
-            lineageKey,
+            branchRefId.ToHexString(),
             coherenceGroup,
             policyId,
             policyFingerprint
@@ -1840,7 +1823,7 @@ public sealed class DerivedArtifactSetStore {
             set.JobFingerprint,
             set.EpochId,
             set.EpochPlanFingerprint,
-            set.LineageKey,
+            set.BranchRefId,
             set.CoherenceGroup,
             set.TopologyVersion,
             set.PolicyId,
@@ -1867,7 +1850,7 @@ public sealed class DerivedArtifactSetStore {
         transaction.JobFingerprint,
         transaction.EpochId,
         transaction.EpochPlanFingerprint,
-        transaction.LineageKey,
+        transaction.BranchRefId,
         policy.CoherenceGroup,
         transaction.TopologyVersion,
         policy.PolicyId,
@@ -2091,8 +2074,8 @@ public sealed class DerivedArtifactSetStore {
                 "Derived ArtifactSet transaction fingerprints are invalid."
             );
         }
-        DerivedArtifactSetPolicy.ValidateLineageKey(
-            transaction.LineageKey
+        DerivedArtifactSetPolicy.ValidateBranchRefId(
+            transaction.BranchRefId
         );
         DerivedArtifactSetPolicy.ValidateToken(
             transaction.CoherenceGroup,
@@ -2260,7 +2243,7 @@ internal sealed record DerivedArtifactSetDto(
     [property: JsonPropertyOrder(3)] string JobFingerprint,
     [property: JsonPropertyOrder(4)] string EpochId,
     [property: JsonPropertyOrder(5)] string EpochPlanFingerprint,
-    [property: JsonPropertyOrder(6)] string LineageKey,
+    [property: JsonPropertyOrder(6)] RefId BranchRefId,
     [property: JsonPropertyOrder(7)] string CoherenceGroup,
     [property: JsonPropertyOrder(8)] string TopologyVersion,
     [property: JsonPropertyOrder(9)] string PolicyId,
@@ -2283,7 +2266,7 @@ internal sealed record DerivedArtifactSetIdentityDto(
     [property: JsonPropertyOrder(2)] string JobFingerprint,
     [property: JsonPropertyOrder(3)] string EpochId,
     [property: JsonPropertyOrder(4)] string EpochPlanFingerprint,
-    [property: JsonPropertyOrder(5)] string LineageKey,
+    [property: JsonPropertyOrder(5)] RefId BranchRefId,
     [property: JsonPropertyOrder(6)] string CoherenceGroup,
     [property: JsonPropertyOrder(7)] string TopologyVersion,
     [property: JsonPropertyOrder(8)] string PolicyId,
@@ -2352,7 +2335,7 @@ internal sealed record DerivedArtifactSetSetupReferenceDto(
 
 internal sealed record DerivedArtifactSetLatestPointerDto(
     [property: JsonPropertyOrder(0)] string Schema,
-    [property: JsonPropertyOrder(1)] string LineageKey,
+    [property: JsonPropertyOrder(1)] RefId BranchRefId,
     [property: JsonPropertyOrder(2)] string CoherenceGroup,
     [property: JsonPropertyOrder(3)] string PolicyId,
     [property: JsonPropertyOrder(4)] string PolicyFingerprint,

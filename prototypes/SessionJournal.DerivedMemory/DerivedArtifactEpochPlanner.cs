@@ -11,13 +11,13 @@ namespace Atelia.SessionJournal.DerivedMemory;
 
 public sealed class DerivedArtifactEpochPlanner {
     public const string ConfigSchema =
-        "atelia.session-journal.derived-artifact-planner-config.v1";
+        "atelia.session-journal.derived-artifact-planner-config.v2";
     public const string ConfigPointerSchema =
-        "atelia.session-journal.derived-artifact-planner-config-pointer.v1";
+        "atelia.session-journal.derived-artifact-planner-config-pointer.v2";
     public const string EpochSchema =
-        "atelia.session-journal.derived-artifact-epoch.v1";
+        "atelia.session-journal.derived-artifact-epoch.v2";
     public const string EpochPointerSchema =
-        "atelia.session-journal.derived-artifact-epoch-pointer.v1";
+        "atelia.session-journal.derived-artifact-epoch-pointer.v2";
     public const string TokenEstimatorId =
         SessionHistoryTokenEstimator.EstimatorId;
     public const string BoundaryPolicyId =
@@ -32,24 +32,26 @@ public sealed class DerivedArtifactEpochPlanner {
     public const long MaxPointerFileBytes = 32 * 1024;
 
     private const string ConfigIdDomain =
-        "atelia.session-journal.derived-artifact-planner-config-id.v1";
+        "atelia.session-journal.derived-artifact-planner-config-id.v2";
     private const string EpochIdDomain =
-        "atelia.session-journal.derived-artifact-epoch-id.v1";
+        "atelia.session-journal.derived-artifact-epoch-id.v2";
     private const string KeyDomain =
-        "atelia.session-journal.derived-artifact-planner-key.v1";
+        "atelia.session-journal.derived-artifact-planner-key.v2";
 
     private static readonly JsonSerializerOptions JsonOptions = new() {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         DefaultIgnoreCondition = JsonIgnoreCondition.Never,
         WriteIndented = true,
         Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
-        UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow
+        UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow,
+        Converters = { new DerivedMemoryBranchRefIdJsonConverter() }
     };
     private static readonly JsonSerializerOptions IdentityJsonOptions = new() {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         DefaultIgnoreCondition = JsonIgnoreCondition.Never,
         WriteIndented = false,
-        Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping
+        Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+        Converters = { new DerivedMemoryBranchRefIdJsonConverter() }
     };
 
     private readonly DerivedMemoryRepository _repository;
@@ -96,7 +98,7 @@ public sealed class DerivedArtifactEpochPlanner {
             .ConfigureAwait(false);
         EnsureDirectories();
         var key = new DerivedArtifactPlannerKey(
-            definition.LineageKey,
+            definition.BranchRefId,
             definition.CoherenceGroup
         );
         DerivedArtifactPlannerConfigPointer? current =
@@ -167,7 +169,7 @@ public sealed class DerivedArtifactEpochPlanner {
                 GetConfigPointerPath(candidate.Key),
                 new PlannerConfigPointerDto(
                     ConfigPointerSchema,
-                    candidate.LineageKey,
+                    candidate.BranchRefId,
                     candidate.CoherenceGroup,
                     candidate.ConfigId
                 ),
@@ -246,7 +248,7 @@ public sealed class DerivedArtifactEpochPlanner {
         ArgumentNullException.ThrowIfNull(engine);
         ArgumentNullException.ThrowIfNull(request);
         var key = new DerivedArtifactPlannerKey(
-            request.LineageKey,
+            request.BranchRefId,
             request.CoherenceGroup
         );
         ValidateKey(key);
@@ -467,7 +469,7 @@ public sealed class DerivedArtifactEpochPlanner {
                 GetEpochPointerPath(durableCandidate.Key),
                 new EpochPointerDto(
                     EpochPointerSchema,
-                    durableCandidate.LineageKey,
+                    durableCandidate.BranchRefId,
                     durableCandidate.CoherenceGroup,
                     durableCandidate.EpochId
                 ),
@@ -510,7 +512,7 @@ public sealed class DerivedArtifactEpochPlanner {
                     .ConfigureAwait(false);
             DerivedArtifactPlannerConfigPointer pointer =
                 MaterializeConfigPointer(dto);
-            RequireFileName(path, ComputeKeyFileName(pointer.LineageKey, pointer.CoherenceGroup));
+            RequireFileName(path, ComputeKeyFileName(pointer.BranchRefId, pointer.CoherenceGroup));
             configPointers.Add(pointer);
         }
         var epochs = new List<DerivedArtifactEpochPlan>();
@@ -537,16 +539,16 @@ public sealed class DerivedArtifactEpochPlanner {
                 .ConfigureAwait(false);
             DerivedArtifactEpochLatestPointer pointer =
                 MaterializeEpochPointer(dto);
-            RequireFileName(path, ComputeKeyFileName(pointer.LineageKey, pointer.CoherenceGroup));
+            RequireFileName(path, ComputeKeyFileName(pointer.BranchRefId, pointer.CoherenceGroup));
             epochPointers.Add(pointer);
         }
         return new DerivedArtifactEpochInventory(
             Freeze(configs, static item => item.ConfigId),
             Freeze(configPointers, static item =>
-                $"{item.LineageKey}\0{item.CoherenceGroup}"),
+                $"{item.BranchRefId}\0{item.CoherenceGroup}"),
             Freeze(epochs, static item => item.EpochId),
             Freeze(epochPointers, static item =>
-                $"{item.LineageKey}\0{item.CoherenceGroup}")
+                $"{item.BranchRefId}\0{item.CoherenceGroup}")
         );
     }
 
@@ -574,7 +576,7 @@ public sealed class DerivedArtifactEpochPlanner {
                 GetConfigPointerPath(key),
                 new PlannerConfigPointerDto(
                     ConfigPointerSchema,
-                    key.LineageKey,
+                    key.BranchRefId,
                     key.CoherenceGroup,
                     tip.ConfigId
                 ),
@@ -639,7 +641,7 @@ public sealed class DerivedArtifactEpochPlanner {
                 )
                 .ConfigureAwait(false);
         DerivedArtifactEpochLatestPointer syntheticPointer = new(
-            key.LineageKey,
+            key.BranchRefId,
             key.CoherenceGroup,
             tip.EpochId
         );
@@ -647,7 +649,7 @@ public sealed class DerivedArtifactEpochPlanner {
             inventory with {
                 LatestEpochs = [
                     .. inventory.LatestEpochs.Where(pointer =>
-                        pointer.LineageKey != key.LineageKey
+                        pointer.BranchRefId != key.BranchRefId
                         || pointer.CoherenceGroup
                             != key.CoherenceGroup),
                     syntheticPointer
@@ -672,7 +674,7 @@ public sealed class DerivedArtifactEpochPlanner {
                 GetEpochPointerPath(key),
                 new EpochPointerDto(
                     EpochPointerSchema,
-                    key.LineageKey,
+                    key.BranchRefId,
                     key.CoherenceGroup,
                     tip.EpochId
                 ),
@@ -860,7 +862,7 @@ public sealed class DerivedArtifactEpochPlanner {
             );
             DerivedArtifactPlannerConfigPointer[] pointers = [
                 .. inventory.CurrentConfigs.Where(pointer =>
-                    pointer.LineageKey == group.Key.LineageKey
+                    pointer.BranchRefId == group.Key.BranchRefId
                     && pointer.CoherenceGroup == group.Key.CoherenceGroup)
             ];
             if (pointers.Length != 1
@@ -874,7 +876,7 @@ public sealed class DerivedArtifactEpochPlanner {
         foreach (DerivedArtifactPlannerConfigPointer pointer in
                  inventory.CurrentConfigs) {
             var key = new DerivedArtifactPlannerKey(
-                pointer.LineageKey,
+                pointer.BranchRefId,
                 pointer.CoherenceGroup
             );
             if (!configPointerKeys.Add(key)
@@ -930,11 +932,8 @@ public sealed class DerivedArtifactEpochPlanner {
                                 epoch.InputSetId!,
                                 out DerivedArtifactSet? inputSet
                             )
-                            || !string.Equals(
-                                inputSet.LineageKey,
-                                epoch.LineageKey,
-                                StringComparison.Ordinal
-                            )
+                            || inputSet.BranchRefId
+                                != epoch.BranchRefId
                             || !string.Equals(
                                 inputSet.CoherenceGroup,
                                 epoch.CoherenceGroup,
@@ -956,7 +955,7 @@ public sealed class DerivedArtifactEpochPlanner {
             );
             DerivedArtifactEpochLatestPointer[] pointers = [
                 .. inventory.LatestEpochs.Where(pointer =>
-                    pointer.LineageKey == group.Key.LineageKey
+                    pointer.BranchRefId == group.Key.BranchRefId
                     && pointer.CoherenceGroup == group.Key.CoherenceGroup)
             ];
             if (pointers.Length != 1
@@ -970,7 +969,7 @@ public sealed class DerivedArtifactEpochPlanner {
         foreach (DerivedArtifactEpochLatestPointer pointer in
                  inventory.LatestEpochs) {
             var key = new DerivedArtifactPlannerKey(
-                pointer.LineageKey,
+                pointer.BranchRefId,
                 pointer.CoherenceGroup
             );
             if (!epochPointerKeys.Contains(key)
@@ -1013,7 +1012,7 @@ public sealed class DerivedArtifactEpochPlanner {
             ?? throw new InvalidDataException(
                 $"Input ArtifactSet '{request.InputSetId}' is missing."
             );
-        if (!string.Equals(set.LineageKey, key.LineageKey, StringComparison.Ordinal)
+        if (set.BranchRefId != key.BranchRefId
             || !string.Equals(set.CoherenceGroup, key.CoherenceGroup, StringComparison.Ordinal)
             || set.CommonAnchor != previous.SourceEndInclusive) {
             throw new InvalidDataException(
@@ -1072,7 +1071,7 @@ public sealed class DerivedArtifactEpochPlanner {
     ) {
         var identity = new EpochIdentityDto(
             EpochSchema,
-            config.LineageKey,
+            config.BranchRefId,
             config.CoherenceGroup,
             config.TopologyVersion,
             config.ConfigId,
@@ -1093,7 +1092,7 @@ public sealed class DerivedArtifactEpochPlanner {
         );
         return new DerivedArtifactEpochPlan(
             epochId,
-            config.LineageKey,
+            config.BranchRefId,
             config.CoherenceGroup,
             config.TopologyVersion,
             config.ConfigId,
@@ -1113,7 +1112,7 @@ public sealed class DerivedArtifactEpochPlanner {
         DerivedArtifactEpochPlan candidate
     ) {
         if (durable.EpochId != candidate.EpochId
-            || durable.LineageKey != candidate.LineageKey
+            || durable.BranchRefId != candidate.BranchRefId
             || durable.CoherenceGroup != candidate.CoherenceGroup
             || durable.TopologyVersion != candidate.TopologyVersion
             || durable.ConfigId != candidate.ConfigId
@@ -1150,7 +1149,7 @@ public sealed class DerivedArtifactEpochPlanner {
     ) {
         ArgumentNullException.ThrowIfNull(definition);
         ValidateKey(new DerivedArtifactPlannerKey(
-            definition.LineageKey,
+            definition.BranchRefId,
             definition.CoherenceGroup
         ));
         ValidateToken(definition.TopologyVersion, nameof(definition.TopologyVersion));
@@ -1193,7 +1192,7 @@ public sealed class DerivedArtifactEpochPlanner {
         }
         var identity = new PlannerConfigIdentityDto(
             ConfigSchema,
-            definition.LineageKey,
+            definition.BranchRefId,
             definition.CoherenceGroup,
             previousConfigId,
             definition.TopologyVersion,
@@ -1215,7 +1214,7 @@ public sealed class DerivedArtifactEpochPlanner {
         );
         return new DerivedArtifactPlannerConfig(
             id,
-            definition.LineageKey,
+            definition.BranchRefId,
             definition.CoherenceGroup,
             previousConfigId,
             definition.TopologyVersion,
@@ -1233,7 +1232,7 @@ public sealed class DerivedArtifactEpochPlanner {
     private static bool HasSameDefinition(
         DerivedArtifactPlannerConfig current,
         DerivedArtifactPlannerConfigDefinition definition
-    ) => current.LineageKey == definition.LineageKey
+    ) => current.BranchRefId == definition.BranchRefId
         && current.CoherenceGroup == definition.CoherenceGroup
         && current.TopologyVersion == definition.TopologyVersion
         && current.MinimumRecentTokens == definition.MinimumRecentTokens
@@ -1543,7 +1542,7 @@ public sealed class DerivedArtifactEpochPlanner {
             throw new InvalidDataException("Planner config schema is invalid.");
         }
         var definition = new DerivedArtifactPlannerConfigDefinition(
-                dto.LineageKey,
+                dto.BranchRefId,
                 dto.CoherenceGroup,
                 dto.TopologyVersion,
                 dto.MinimumRecentTokens,
@@ -1572,10 +1571,10 @@ public sealed class DerivedArtifactEpochPlanner {
                 "Planner config pointer schema is invalid."
             );
         }
-        ValidateKey(new(dto.LineageKey, dto.CoherenceGroup));
+        ValidateKey(new(dto.BranchRefId, dto.CoherenceGroup));
         ValidateConfigId(dto.ConfigId);
         return new(
-            dto.LineageKey,
+            dto.BranchRefId,
             dto.CoherenceGroup,
             dto.ConfigId
         );
@@ -1588,9 +1587,9 @@ public sealed class DerivedArtifactEpochPlanner {
                 "Epoch latest pointer schema is invalid."
             );
         }
-        ValidateKey(new(dto.LineageKey, dto.CoherenceGroup));
+        ValidateKey(new(dto.BranchRefId, dto.CoherenceGroup));
         ValidateEpochId(dto.EpochId);
-        return new(dto.LineageKey, dto.CoherenceGroup, dto.EpochId);
+        return new(dto.BranchRefId, dto.CoherenceGroup, dto.EpochId);
     }
 
     private static DerivedArtifactEpochPlan MaterializeEpoch(EpochDto dto) {
@@ -1598,7 +1597,7 @@ public sealed class DerivedArtifactEpochPlanner {
             throw new InvalidDataException("Epoch schema is invalid.");
         }
         ValidateEpochId(dto.EpochId);
-        ValidateKey(new(dto.LineageKey, dto.CoherenceGroup));
+        ValidateKey(new(dto.BranchRefId, dto.CoherenceGroup));
         ValidateToken(dto.TopologyVersion, nameof(dto.TopologyVersion));
         ValidateConfigId(dto.ConfigId);
         if (dto.PreviousEpochId is not null) {
@@ -1632,7 +1631,7 @@ public sealed class DerivedArtifactEpochPlanner {
             FromDto(dto.PlanningDiagnostics);
         var identity = new EpochIdentityDto(
             EpochSchema,
-            dto.LineageKey,
+            dto.BranchRefId,
             dto.CoherenceGroup,
             dto.TopologyVersion,
             dto.ConfigId,
@@ -1661,7 +1660,7 @@ public sealed class DerivedArtifactEpochPlanner {
         }
         return new(
             dto.EpochId,
-            dto.LineageKey,
+            dto.BranchRefId,
             dto.CoherenceGroup,
             dto.TopologyVersion,
             dto.ConfigId,
@@ -1681,7 +1680,7 @@ public sealed class DerivedArtifactEpochPlanner {
     ) => new(
         ConfigSchema,
         config.ConfigId,
-        config.LineageKey,
+        config.BranchRefId,
         config.CoherenceGroup,
         config.PreviousConfigId,
         config.TopologyVersion,
@@ -1698,7 +1697,7 @@ public sealed class DerivedArtifactEpochPlanner {
     private static EpochDto ToDto(DerivedArtifactEpochPlan epoch) => new(
         EpochSchema,
         epoch.EpochId,
-        epoch.LineageKey,
+        epoch.BranchRefId,
         epoch.CoherenceGroup,
         epoch.TopologyVersion,
         epoch.ConfigId,
@@ -1807,20 +1806,22 @@ public sealed class DerivedArtifactEpochPlanner {
     private string GetConfigPointerPath(DerivedArtifactPlannerKey key) =>
         Path.Combine(
             CurrentConfigsDirectory,
-            ComputeKeyFileName(key.LineageKey, key.CoherenceGroup) + ".json"
+            ComputeKeyFileName(key.BranchRefId, key.CoherenceGroup) + ".json"
         );
     private string GetEpochPointerPath(DerivedArtifactPlannerKey key) =>
         Path.Combine(
             LatestEpochsDirectory,
-            ComputeKeyFileName(key.LineageKey, key.CoherenceGroup) + ".json"
+            ComputeKeyFileName(key.BranchRefId, key.CoherenceGroup) + ".json"
         );
 
     private static string ComputeKeyFileName(
-        string lineage,
+        RefId branchRefId,
         string coherence
     ) => "planner_" + ComputeHash(
         KeyDomain,
-        Encoding.UTF8.GetBytes(lineage + "\0" + coherence)
+        Encoding.UTF8.GetBytes(
+            branchRefId.ToHexString() + "\0" + coherence
+        )
     );
 
     private static void RequireFileName(string path, string identity) {
@@ -1837,17 +1838,7 @@ public sealed class DerivedArtifactEpochPlanner {
 
     private static void ValidateKey(DerivedArtifactPlannerKey key) {
         ArgumentNullException.ThrowIfNull(key);
-        DerivedArtifactSetPolicy.ValidateLineageKey(key.LineageKey);
-        if (!string.Equals(
-                key.LineageKey,
-                SessionJournalDefaults.MainBranchName,
-                StringComparison.Ordinal
-            )) {
-            throw new ArgumentException(
-                "Derived artifact epoch planner v1 supports only the current main SessionJournal lineage.",
-                nameof(key)
-            );
-        }
+        DerivedArtifactSetPolicy.ValidateBranchRefId(key.BranchRefId);
         DerivedArtifactSetPolicy.ValidateToken(
             key.CoherenceGroup,
             nameof(key.CoherenceGroup)
@@ -2004,7 +1995,7 @@ public sealed class DerivedArtifactEpochPlanner {
     }
 
     private static string FormatKey(DerivedArtifactPlannerKey key) =>
-        $"{key.LineageKey}|{key.CoherenceGroup}";
+        $"{key.BranchRefId}|{key.CoherenceGroup}";
 
     private sealed record CandidateBoundary(
         EventAddress Address,
@@ -2015,7 +2006,7 @@ public sealed class DerivedArtifactEpochPlanner {
 
     private sealed record PlannerConfigIdentityDto(
         string Schema,
-        string LineageKey,
+        RefId BranchRefId,
         string CoherenceGroup,
         string? PreviousConfigId,
         string TopologyVersion,
@@ -2032,7 +2023,7 @@ public sealed class DerivedArtifactEpochPlanner {
     private sealed record PlannerConfigDto(
         string Schema,
         string ConfigId,
-        string LineageKey,
+        RefId BranchRefId,
         string CoherenceGroup,
         string? PreviousConfigId,
         string TopologyVersion,
@@ -2048,14 +2039,14 @@ public sealed class DerivedArtifactEpochPlanner {
 
     private sealed record PlannerConfigPointerDto(
         string Schema,
-        string LineageKey,
+        RefId BranchRefId,
         string CoherenceGroup,
         string ConfigId
     );
 
     private sealed record EpochIdentityDto(
         string Schema,
-        string LineageKey,
+        RefId BranchRefId,
         string CoherenceGroup,
         string TopologyVersion,
         string ConfigId,
@@ -2071,7 +2062,7 @@ public sealed class DerivedArtifactEpochPlanner {
     private sealed record EpochDto(
         string Schema,
         string EpochId,
-        string LineageKey,
+        RefId BranchRefId,
         string CoherenceGroup,
         string TopologyVersion,
         string ConfigId,
@@ -2087,7 +2078,7 @@ public sealed class DerivedArtifactEpochPlanner {
 
     private sealed record EpochPointerDto(
         string Schema,
-        string LineageKey,
+        RefId BranchRefId,
         string CoherenceGroup,
         string EpochId
     );

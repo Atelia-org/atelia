@@ -4,12 +4,12 @@ using Atelia.SessionJournal;
 namespace Atelia.SessionJournal.DerivedMemory;
 
 public sealed record DerivedArtifactPlannerKey(
-    string LineageKey,
+    RefId BranchRefId,
     string CoherenceGroup
 );
 
 public sealed record DerivedArtifactPlannerConfigDefinition(
-    string LineageKey,
+    RefId BranchRefId,
     string CoherenceGroup,
     string TopologyVersion,
     long MinimumRecentTokens,
@@ -28,7 +28,7 @@ public sealed record DerivedArtifactPlannerConfigDefinition(
 
 public sealed record DerivedArtifactPlannerConfig(
     string ConfigId,
-    string LineageKey,
+    RefId BranchRefId,
     string CoherenceGroup,
     string? PreviousConfigId,
     string TopologyVersion,
@@ -42,11 +42,11 @@ public sealed record DerivedArtifactPlannerConfig(
     string GenesisPolicyId
 ) {
     public DerivedArtifactPlannerKey Key =>
-        new(LineageKey, CoherenceGroup);
+        new(BranchRefId, CoherenceGroup);
 }
 
 public sealed record DerivedArtifactPlannerConfigPointer(
-    string LineageKey,
+    RefId BranchRefId,
     string CoherenceGroup,
     string ConfigId
 );
@@ -65,7 +65,7 @@ public sealed record DerivedArtifactEpochPlanningDiagnostics(
 
 public sealed record DerivedArtifactEpochPlan(
     string EpochId,
-    string LineageKey,
+    RefId BranchRefId,
     string CoherenceGroup,
     string TopologyVersion,
     string ConfigId,
@@ -79,11 +79,11 @@ public sealed record DerivedArtifactEpochPlan(
     DerivedArtifactEpochPlanningDiagnostics PlanningDiagnostics
 ) {
     public DerivedArtifactPlannerKey Key =>
-        new(LineageKey, CoherenceGroup);
+        new(BranchRefId, CoherenceGroup);
 }
 
 public sealed record DerivedArtifactEpochLatestPointer(
-    string LineageKey,
+    RefId BranchRefId,
     string CoherenceGroup,
     string EpochId
 );
@@ -117,7 +117,7 @@ public sealed record DerivedArtifactEpochPlanningResult(
 );
 
 public sealed record DerivedArtifactEpochPlanningRequest(
-    string LineageKey,
+    RefId BranchRefId,
     string CoherenceGroup,
     string? ExpectedPreviousEpochId,
     string? InputSetId

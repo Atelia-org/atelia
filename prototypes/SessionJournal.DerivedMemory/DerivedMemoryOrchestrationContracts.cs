@@ -1,3 +1,5 @@
+using Atelia.EventJournal;
+
 namespace Atelia.SessionJournal.DerivedMemory;
 
 public static class DerivedMemoryRoleExecutionModes {
@@ -29,7 +31,7 @@ public sealed record DerivedMemoryOrchestrationTransaction(
     string JobFingerprint,
     string EpochId,
     string EpochPlanFingerprint,
-    string LineageKey,
+    RefId BranchRefId,
     string CoherenceGroup,
     string TopologyVersion,
     string? InputSetId,

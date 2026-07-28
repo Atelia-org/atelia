@@ -1,3 +1,5 @@
+using Atelia.EventJournal;
+
 namespace Atelia.SessionJournal.DerivedMemory;
 
 /// <summary>
@@ -211,7 +213,7 @@ public sealed class DerivedMemoryOrchestrator {
             DerivedArtifactSet? latest =
                 await _repository.ArtifactSets.TryReadLatestAsync(
                         policy,
-                        transaction.LineageKey,
+                        transaction.BranchRefId,
                         cancellationToken
                     )
                     .ConfigureAwait(false);
@@ -219,7 +221,7 @@ public sealed class DerivedMemoryOrchestrator {
                 latest = await _repository.ArtifactSets
                     .RebuildLatestPointerAsync(
                         policy,
-                        transaction.LineageKey,
+                        transaction.BranchRefId,
                         cancellationToken
                     )
                     .ConfigureAwait(false);
@@ -234,7 +236,7 @@ public sealed class DerivedMemoryOrchestrator {
                             latest,
                             existing.SetId,
                             policy,
-                            transaction.LineageKey,
+                            transaction.BranchRefId,
                             cancellationToken
                         )
                         .ConfigureAwait(false))) {
@@ -278,7 +280,7 @@ public sealed class DerivedMemoryOrchestrator {
         DerivedArtifactSet descendant,
         string ancestorSetId,
         DerivedArtifactSetPolicy policy,
-        string lineageKey,
+        RefId branchRefId,
         CancellationToken cancellationToken
     ) {
         var visited = new HashSet<string>(StringComparer.Ordinal);
@@ -300,7 +302,7 @@ public sealed class DerivedMemoryOrchestrator {
             current = await _repository.ArtifactSets.TryReadAsync(
                     previousSetId,
                     policy,
-                    lineageKey,
+                    branchRefId,
                     cancellationToken
                 )
                 .ConfigureAwait(false)

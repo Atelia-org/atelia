@@ -1,6 +1,8 @@
 using System.Globalization;
 using System.Text;
 
+using Atelia.EventJournal;
+
 namespace Atelia.SessionJournal.DerivedMemory;
 
 /// <summary>
@@ -15,7 +17,7 @@ public sealed class DerivedMemoryRepository {
     private DerivedMemoryRepository(string sessionJournalRepositoryPath) {
         SessionJournalRepositoryPath = sessionJournalRepositoryPath;
         DerivedRoot = Path.Combine(SessionJournalRepositoryPath, "derived");
-        MemoryRoot = Path.Combine(DerivedRoot, "memory", "v1");
+        MemoryRoot = Path.Combine(DerivedRoot, "memory", "v2");
         WriteLockPath = Path.Combine(DerivedRoot, ".derived-memory.lock");
         Artifacts = new DerivedMemoryArtifactStore(this);
         ArtifactSets = new DerivedArtifactSetStore(this);
@@ -272,11 +274,7 @@ public sealed class DerivedMemoryRepository {
                         .GetEpochPlanFingerprint(epoch),
                     StringComparison.Ordinal
                 )
-                || !string.Equals(
-                    transaction.LineageKey,
-                    epoch.LineageKey,
-                    StringComparison.Ordinal
-                )
+                || transaction.BranchRefId != epoch.BranchRefId
                 || !string.Equals(
                     transaction.CoherenceGroup,
                     epoch.CoherenceGroup,
@@ -367,7 +365,7 @@ public sealed class DerivedMemoryRepository {
                             set.JobFingerprint,
                             set.EpochId,
                             set.EpochPlanFingerprint,
-                            set.LineageKey,
+                            set.BranchRefId,
                             set.CoherenceGroup,
                             set.TopologyVersion,
                             set.PreviousSetId,
@@ -773,7 +771,7 @@ internal sealed record DerivedArtifactSetLineageNode(
 );
 
 internal readonly record struct DerivedArtifactSetExactKey(
-    string LineageKey,
+    RefId BranchRefId,
     string CoherenceGroup,
     string PolicyId,
     string PolicyFingerprint
@@ -781,7 +779,7 @@ internal readonly record struct DerivedArtifactSetExactKey(
     public static DerivedArtifactSetExactKey FromSet(
         DerivedArtifactSet set
     ) => new(
-        set.LineageKey,
+        set.BranchRefId,
         set.CoherenceGroup,
         set.PolicyId,
         set.PolicyFingerprint
@@ -790,14 +788,14 @@ internal readonly record struct DerivedArtifactSetExactKey(
     public static DerivedArtifactSetExactKey FromPointer(
         DerivedArtifactSetLatestPointer pointer
     ) => new(
-        pointer.LineageKey,
+        pointer.BranchRefId,
         pointer.CoherenceGroup,
         pointer.PolicyId,
         pointer.PolicyFingerprint
     );
 
     public override string ToString() =>
-        $"{LineageKey}|{CoherenceGroup}|{PolicyId}|{PolicyFingerprint}";
+        $"{BranchRefId}|{CoherenceGroup}|{PolicyId}|{PolicyFingerprint}";
 }
 
 internal static class DerivedMemoryPathGuard {

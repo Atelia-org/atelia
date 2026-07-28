@@ -22,7 +22,7 @@ public sealed class DerivedMemoryOrchestratorTests : IDisposable {
             new DerivedMemoryOnlineLifecycleCoordinator(
                 fixture.Repository,
                 fixture.Policy,
-                "main",
+                fixture.Engine.BranchRefId,
                 [Execution(fixture, 0, maintainer)]
             );
         _ = await coordinator.PrepareAsync(
@@ -78,7 +78,7 @@ public sealed class DerivedMemoryOrchestratorTests : IDisposable {
             new DerivedMemoryOnlineLifecycleCoordinator(
                 fixture.Repository,
                 fixture.Policy,
-                "main",
+                fixture.Engine.BranchRefId,
                 [firstExecution]
             );
 
@@ -101,7 +101,7 @@ public sealed class DerivedMemoryOrchestratorTests : IDisposable {
             (await fixture.Repository.ArtifactSets
                 .TryReadLatestAsync(
                     fixture.Policy,
-                    "main"
+                    fixture.Engine.BranchRefId
                 ))!;
         Assert.Equal(fixture.Epoch.EpochId, firstSet.EpochId);
         DerivedArtifactEpochPlan stillLatest =
@@ -148,7 +148,7 @@ public sealed class DerivedMemoryOrchestratorTests : IDisposable {
             new DerivedMemoryOnlineLifecycleCoordinator(
                 fixture.Repository,
                 fixture.Policy,
-                "main",
+                fixture.Engine.BranchRefId,
                 [Execution(fixture, 0, secondMaintainer)]
             );
 
@@ -171,7 +171,7 @@ public sealed class DerivedMemoryOrchestratorTests : IDisposable {
             (await fixture.Repository.ArtifactSets
                 .TryReadLatestAsync(
                     fixture.Policy,
-                    "main"
+                    fixture.Engine.BranchRefId
                 ))!;
         Assert.Equal(firstSet.SetId, secondSet.PreviousSetId);
         DerivedArtifactEpochPlan secondEpoch =
@@ -230,7 +230,7 @@ public sealed class DerivedMemoryOrchestratorTests : IDisposable {
             new DerivedMemoryOnlineLifecycleCoordinator(
                 fixture.Repository,
                 fixture.Policy,
-                "main",
+                fixture.Engine.BranchRefId,
                 [Execution(fixture, 0, successful)]
             );
         Assert.Equal(
@@ -248,7 +248,7 @@ public sealed class DerivedMemoryOrchestratorTests : IDisposable {
             (await fixture.Repository.ArtifactSets
                 .TryReadLatestAsync(
                     fixture.Policy,
-                    "main"
+                    fixture.Engine.BranchRefId
                 ))!;
         fixture.Engine.AppendObservation("trigger failure");
         _ = fixture.Engine.AppendImportedAgentAction(
@@ -286,7 +286,7 @@ public sealed class DerivedMemoryOrchestratorTests : IDisposable {
             new DerivedMemoryOnlineLifecycleCoordinator(
                 fixture.Repository,
                 fixture.Policy,
-                "main",
+                fixture.Engine.BranchRefId,
                 [Execution(fixture, 0, failing)]
             );
 
@@ -310,7 +310,7 @@ public sealed class DerivedMemoryOrchestratorTests : IDisposable {
             (await fixture.Repository.ArtifactSets
                 .TryReadLatestAsync(
                     fixture.Policy,
-                    "main"
+                    fixture.Engine.BranchRefId
                 ))!.SetId
         );
         SessionContextCandidateDiscovery discovery =
@@ -367,7 +367,7 @@ public sealed class DerivedMemoryOrchestratorTests : IDisposable {
             new DerivedMemoryOnlineLifecycleCoordinator(
                 fixture.Repository,
                 fixture.Policy,
-                "main",
+                fixture.Engine.BranchRefId,
                 [
                     Execution(fixture, 0, completedAlpha),
                     Execution(fixture, 1, interruptedZeta)
@@ -426,7 +426,7 @@ public sealed class DerivedMemoryOrchestratorTests : IDisposable {
             new DerivedMemoryOnlineLifecycleCoordinator(
                 reopenedRepository,
                 fixture.Policy,
-                "main",
+                fixture.Engine.BranchRefId,
                 [
                     Execution(fixture, 0, mustNotRepeatAlpha),
                     Execution(fixture, 1, recoveredZeta)
@@ -469,7 +469,7 @@ public sealed class DerivedMemoryOrchestratorTests : IDisposable {
             (await reopenedRepository.ArtifactSets
                 .TryReadLatestAsync(
                     fixture.Policy,
-                    "main"
+                    fixture.Engine.BranchRefId
                 ))!;
         Assert.Equal(fixture.Epoch.EpochId, published.EpochId);
     }
@@ -481,7 +481,7 @@ public sealed class DerivedMemoryOrchestratorTests : IDisposable {
             new DerivedMemoryOnlineLifecycleCoordinator(
                 fixture.Repository,
                 fixture.Policy,
-                "main",
+                fixture.Engine.BranchRefId,
                 [
                     Execution(
                         fixture,
@@ -1194,7 +1194,7 @@ public sealed class DerivedMemoryOrchestratorTests : IDisposable {
             first.PublishedSet.SetId,
             (await fixture.Repository.ArtifactSets.TryReadLatestAsync(
                 fixture.Policy,
-                fixture.Epoch.LineageKey
+                fixture.Epoch.BranchRefId
             ))!.SetId
         );
     }
@@ -1318,7 +1318,7 @@ public sealed class DerivedMemoryOrchestratorTests : IDisposable {
             (await firstFixture.Repository.EpochPlanner.PlanAsync(
                 firstFixture.Engine,
                 new(
-                    firstFixture.Epoch.LineageKey,
+                    firstFixture.Epoch.BranchRefId,
                     firstFixture.Epoch.CoherenceGroup,
                     firstFixture.Epoch.EpochId,
                     first.PublishedSet!.SetId
@@ -1373,7 +1373,7 @@ public sealed class DerivedMemoryOrchestratorTests : IDisposable {
             (await firstFixture.Repository.ArtifactSets
                 .TryReadLatestAsync(
                     firstFixture.Policy,
-                    firstFixture.Epoch.LineageKey
+                    firstFixture.Epoch.BranchRefId
                 ))!.SetId
         );
     }
@@ -1407,7 +1407,7 @@ public sealed class DerivedMemoryOrchestratorTests : IDisposable {
             (await firstFixture.Repository.EpochPlanner.PlanAsync(
                 firstFixture.Engine,
                 new(
-                    firstFixture.Epoch.LineageKey,
+                    firstFixture.Epoch.BranchRefId,
                     firstFixture.Epoch.CoherenceGroup,
                     firstFixture.Epoch.EpochId,
                     first.PublishedSet!.SetId
@@ -1459,7 +1459,7 @@ public sealed class DerivedMemoryOrchestratorTests : IDisposable {
             (await firstFixture.Repository.ArtifactSets
                 .TryReadLatestAsync(
                     firstFixture.Policy,
-                    firstFixture.Epoch.LineageKey
+                    firstFixture.Epoch.BranchRefId
                 ))!.SetId
         );
     }
@@ -1525,7 +1525,7 @@ public sealed class DerivedMemoryOrchestratorTests : IDisposable {
             fork.PublishedSet!.SetId,
             (await fixture.Repository.ArtifactSets.TryReadLatestAsync(
                 fixture.Policy,
-                fixture.Epoch.LineageKey
+                fixture.Epoch.BranchRefId
             ))!.SetId
         );
         Assert.NotEqual(
@@ -1578,7 +1578,7 @@ public sealed class DerivedMemoryOrchestratorTests : IDisposable {
             DerivedMemoryRepository.Open(path);
         _ = await repository.EpochPlanner.ConfigureAsync(
             new(
-                "main",
+                engine.BranchRefId,
                 "memory-pack",
                 "topology-v1",
                 1,
@@ -1591,7 +1591,7 @@ public sealed class DerivedMemoryOrchestratorTests : IDisposable {
         DerivedArtifactEpochPlan epoch =
             (await repository.EpochPlanner.PlanAsync(
                 engine,
-                new("main", "memory-pack", null, null)
+                new(engine.BranchRefId, "memory-pack", null, null)
             )).Epoch!;
         var roles = new[] {
             new DerivedArtifactSetRoleRequirement(

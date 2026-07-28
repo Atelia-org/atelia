@@ -3,12 +3,13 @@ using System.Text;
 using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Atelia.EventJournal;
 
 namespace Atelia.SessionJournal.DerivedMemory;
 
 public sealed class DerivedMemoryOrchestrationStore {
     public const string TransactionSchema =
-        "atelia.session-journal.derived-memory-transaction.v1";
+        "atelia.session-journal.derived-memory-transaction.v2";
     public const string SettlementSchema =
         "atelia.session-journal.derived-memory-role-settlement.v1";
     public const string FinalizationSchema =
@@ -18,9 +19,9 @@ public sealed class DerivedMemoryOrchestrationStore {
     public const long MaxFinalizationFileBytes = 256 * 1024;
 
     private const string JobFingerprintDomain =
-        "atelia.session-journal.derived-memory-job.v1";
+        "atelia.session-journal.derived-memory-job.v2";
     private const string TransactionIdDomain =
-        "atelia.session-journal.derived-memory-transaction-id.v1";
+        "atelia.session-journal.derived-memory-transaction-id.v2";
     private const string RoleFileDomain =
         "atelia.session-journal.derived-memory-settlement-role.v1";
 
@@ -29,13 +30,15 @@ public sealed class DerivedMemoryOrchestrationStore {
         DefaultIgnoreCondition = JsonIgnoreCondition.Never,
         WriteIndented = true,
         Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
-        UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow
+        UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow,
+        Converters = { new DerivedMemoryBranchRefIdJsonConverter() }
     };
     private static readonly JsonSerializerOptions IdentityJsonOptions = new() {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         DefaultIgnoreCondition = JsonIgnoreCondition.Never,
         WriteIndented = false,
-        Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping
+        Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+        Converters = { new DerivedMemoryBranchRefIdJsonConverter() }
     };
 
     private readonly DerivedMemoryRepository _repository;
@@ -88,7 +91,7 @@ public sealed class DerivedMemoryOrchestrationStore {
         var jobIdentity = new JobIdentityDto(
             epoch.EpochId,
             epochPlanFingerprint,
-            epoch.LineageKey,
+            epoch.BranchRefId,
             epoch.CoherenceGroup,
             epoch.TopologyVersion,
             epoch.InputSetId,
@@ -111,7 +114,7 @@ public sealed class DerivedMemoryOrchestrationStore {
             jobFingerprint,
             epoch.EpochId,
             epochPlanFingerprint,
-            epoch.LineageKey,
+            epoch.BranchRefId,
             epoch.CoherenceGroup,
             epoch.TopologyVersion,
             epoch.InputSetId,
@@ -780,11 +783,7 @@ public sealed class DerivedMemoryOrchestrationStore {
             right.EpochPlanFingerprint,
             StringComparison.Ordinal
         )
-        && string.Equals(
-            left.LineageKey,
-            right.LineageKey,
-            StringComparison.Ordinal
-        )
+        && left.BranchRefId == right.BranchRefId
         && string.Equals(
             left.CoherenceGroup,
             right.CoherenceGroup,
@@ -853,7 +852,7 @@ public sealed class DerivedMemoryOrchestrationStore {
             dto.JobFingerprint,
             dto.EpochId,
             dto.EpochPlanFingerprint,
-            dto.LineageKey,
+            dto.BranchRefId,
             dto.CoherenceGroup,
             dto.TopologyVersion,
             dto.InputSetId,
@@ -868,7 +867,7 @@ public sealed class DerivedMemoryOrchestrationStore {
                 new JobIdentityDto(
                     transaction.EpochId,
                     transaction.EpochPlanFingerprint,
-                    transaction.LineageKey,
+                    transaction.BranchRefId,
                     transaction.CoherenceGroup,
                     transaction.TopologyVersion,
                     transaction.InputSetId,
@@ -1156,7 +1155,7 @@ public sealed class DerivedMemoryOrchestrationStore {
         transaction.JobFingerprint,
         transaction.EpochId,
         transaction.EpochPlanFingerprint,
-        transaction.LineageKey,
+        transaction.BranchRefId,
         transaction.CoherenceGroup,
         transaction.TopologyVersion,
         transaction.InputSetId,
@@ -1391,7 +1390,7 @@ public sealed class DerivedMemoryOrchestrationStore {
     private sealed record JobIdentityDto(
         string EpochId,
         string EpochPlanFingerprint,
-        string LineageKey,
+        RefId BranchRefId,
         string CoherenceGroup,
         string TopologyVersion,
         string? InputSetId,
@@ -1413,7 +1412,7 @@ public sealed class DerivedMemoryOrchestrationStore {
         [property: JsonPropertyOrder(2)] string JobFingerprint,
         [property: JsonPropertyOrder(3)] string EpochId,
         [property: JsonPropertyOrder(4)] string EpochPlanFingerprint,
-        [property: JsonPropertyOrder(5)] string LineageKey,
+        [property: JsonPropertyOrder(5)] RefId BranchRefId,
         [property: JsonPropertyOrder(6)] string CoherenceGroup,
         [property: JsonPropertyOrder(7)] string TopologyVersion,
         [property: JsonPropertyOrder(8)] string? InputSetId,

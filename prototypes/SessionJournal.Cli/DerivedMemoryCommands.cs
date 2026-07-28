@@ -42,7 +42,7 @@ internal static class DerivedMemoryCommands {
             options.RequireSingle("expected-current")
         );
         var definition = new DerivedArtifactPlannerConfigDefinition(
-            options.RequireSingle("lineage"),
+            RefId.ParseHex(options.RequireSingle("lineage")).Unwrap(),
             options.RequireSingle("coherence-group"),
             options.RequireSingle("topology-version"),
             ParsePositiveLong(options, "minimum-recent-tokens"),
@@ -70,7 +70,7 @@ internal static class DerivedMemoryCommands {
             $"previousConfigId: {config.PreviousConfigId ?? "none"}"
         );
         Console.WriteLine(
-            $"key: {config.LineageKey}|{config.CoherenceGroup}"
+            $"key: {config.BranchRefId}|{config.CoherenceGroup}"
         );
         PrintReportPath(reportPath);
         return 0;
@@ -109,7 +109,9 @@ internal static class DerivedMemoryCommands {
             await repository.EpochPlanner.PlanAsync(
                     engine,
                     new DerivedArtifactEpochPlanningRequest(
-                        options.RequireSingle("lineage"),
+                        RefId.ParseHex(
+                            options.RequireSingle("lineage")
+                        ).Unwrap(),
                         options.RequireSingle("coherence-group"),
                         expectedPrevious,
                         inputSet
@@ -164,7 +166,7 @@ internal static class DerivedMemoryCommands {
             [
                 .. inventory.CurrentConfigs.Select(
                     static pointer => new PlannerConfigPointerSummary(
-                        pointer.LineageKey,
+                        pointer.BranchRefId.ToHexString(),
                         pointer.CoherenceGroup,
                         pointer.ConfigId
                     )
@@ -174,7 +176,7 @@ internal static class DerivedMemoryCommands {
             [
                 .. inventory.LatestEpochs.Select(
                     static pointer => new EpochPointerSummary(
-                        pointer.LineageKey,
+                        pointer.BranchRefId.ToHexString(),
                         pointer.CoherenceGroup,
                         pointer.EpochId
                     )
@@ -337,7 +339,7 @@ internal static class DerivedMemoryCommands {
             [
                 .. inventory.LatestPointers.Select(
                     static pointer => new DerivedArtifactSetPointerReport(
-                        pointer.LineageKey,
+                        pointer.BranchRefId.ToHexString(),
                         pointer.CoherenceGroup,
                         pointer.PolicyId,
                         pointer.PolicyFingerprint,
@@ -429,7 +431,9 @@ internal static class DerivedMemoryCommands {
             "report-json"
         );
         string inputPath = options.RequireSingle("input");
-        string lineageKey = options.RequireSingle("lineage");
+        RefId branchRefId = RefId.ParseHex(
+            options.RequireSingle("lineage")
+        ).Unwrap();
         DerivedArtifactSetPolicy policy = ParsePolicy(options);
         string? reportPath = PreparePaths(
             inputPath,
@@ -439,7 +443,7 @@ internal static class DerivedMemoryCommands {
             await DerivedMemoryRepository.Open(inputPath)
                 .ArtifactSets.RebuildLatestPointerAsync(
                     policy,
-                    lineageKey
+                    branchRefId
                 )
                 .ConfigureAwait(false);
         if (set is null) {
@@ -630,7 +634,7 @@ internal static class DerivedMemoryCommands {
         DerivedArtifactSet set
     ) => new(
         set.SetId,
-        set.LineageKey,
+        set.BranchRefId.ToHexString(),
         set.CoherenceGroup,
         set.PolicyId,
         set.PolicyFingerprint,
@@ -685,16 +689,16 @@ internal static class DerivedMemoryCommands {
         };
 
     private static string FormatKey(DerivedArtifactSetSummaryReport set) =>
-        $"{set.LineageKey}|{set.CoherenceGroup}|{set.PolicyId}|{set.PolicyFingerprint}";
+        $"{set.BranchRefId}|{set.CoherenceGroup}|{set.PolicyId}|{set.PolicyFingerprint}";
 
     private static string FormatKey(DerivedArtifactSetPointerReport pointer) =>
-        $"{pointer.LineageKey}|{pointer.CoherenceGroup}|{pointer.PolicyId}|{pointer.PolicyFingerprint}";
+        $"{pointer.BranchRefId}|{pointer.CoherenceGroup}|{pointer.PolicyId}|{pointer.PolicyFingerprint}";
 
     private static PlannerConfigSummary ToSummary(
         DerivedArtifactPlannerConfig config
     ) => new(
         config.ConfigId,
-        config.LineageKey,
+        config.BranchRefId.ToHexString(),
         config.CoherenceGroup,
         config.PreviousConfigId,
         config.TopologyVersion,
@@ -712,7 +716,7 @@ internal static class DerivedMemoryCommands {
         DerivedArtifactEpochPlan epoch
     ) => new(
         epoch.EpochId,
-        epoch.LineageKey,
+        epoch.BranchRefId.ToHexString(),
         epoch.CoherenceGroup,
         epoch.TopologyVersion,
         epoch.ConfigId,
@@ -790,7 +794,7 @@ internal sealed record EpochInventoryReport(
 
 internal sealed record PlannerConfigSummary(
     string ConfigId,
-    string LineageKey,
+    string BranchRefId,
     string CoherenceGroup,
     string? PreviousConfigId,
     string TopologyVersion,
@@ -805,14 +809,14 @@ internal sealed record PlannerConfigSummary(
 );
 
 internal sealed record PlannerConfigPointerSummary(
-    string LineageKey,
+    string BranchRefId,
     string CoherenceGroup,
     string ConfigId
 );
 
 internal sealed record EpochSummary(
     string EpochId,
-    string LineageKey,
+    string BranchRefId,
     string CoherenceGroup,
     string TopologyVersion,
     string ConfigId,
@@ -826,7 +830,7 @@ internal sealed record EpochSummary(
 );
 
 internal sealed record EpochPointerSummary(
-    string LineageKey,
+    string BranchRefId,
     string CoherenceGroup,
     string EpochId
 );
@@ -845,7 +849,7 @@ internal sealed record EpochDiagnosticsSummary(
 
 internal sealed record DerivedArtifactSetSummaryReport(
     string SetId,
-    string LineageKey,
+    string BranchRefId,
     string CoherenceGroup,
     string PolicyId,
     string PolicyFingerprint,
@@ -886,7 +890,7 @@ internal sealed record DerivedArtifactSetSetupReferenceReport(
 );
 
 internal sealed record DerivedArtifactSetPointerReport(
-    string LineageKey,
+    string BranchRefId,
     string CoherenceGroup,
     string PolicyId,
     string PolicyFingerprint,

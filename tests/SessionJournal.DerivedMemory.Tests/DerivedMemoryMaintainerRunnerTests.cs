@@ -169,7 +169,7 @@ public sealed class DerivedMemoryMaintainerRunnerTests : IDisposable {
             (await repository.EpochPlanner.PlanAsync(
                 engine,
                 new(
-                    first.LineageKey,
+                    first.BranchRefId,
                     first.CoherenceGroup,
                     first.EpochId,
                     inputSet.SetId
@@ -336,7 +336,7 @@ public sealed class DerivedMemoryMaintainerRunnerTests : IDisposable {
     ) {
         _ = await repository.EpochPlanner.ConfigureAsync(
             new DerivedArtifactPlannerConfigDefinition(
-                "main",
+                engine.BranchRefId,
                 "memory-pack",
                 "topology-v1",
                 MinimumRecentTokens: 10,
@@ -348,7 +348,7 @@ public sealed class DerivedMemoryMaintainerRunnerTests : IDisposable {
         );
         return (await repository.EpochPlanner.PlanAsync(
             engine,
-            new("main", "memory-pack", null, null)
+            new(engine.BranchRefId, "memory-pack", null, null)
         )).Epoch!;
     }
 

@@ -152,7 +152,7 @@ public sealed class DerivedArtifactSetEngineIntegrationTests : IDisposable {
             repository = DerivedMemoryRepository.Open(path);
             _ = await repository.EpochPlanner.ConfigureAsync(
                 new(
-                    "main",
+                    engine.BranchRefId,
                     "integration-group",
                     "integration-topology-v1",
                     1,
@@ -164,7 +164,7 @@ public sealed class DerivedArtifactSetEngineIntegrationTests : IDisposable {
             );
             epoch = (await repository.EpochPlanner.PlanAsync(
                 engine,
-                new("main", "integration-group", null, null)
+                new(engine.BranchRefId, "integration-group", null, null)
             )).Epoch!;
             anchorSetups = engine.ResolveContextAnchorSetupReferences(
                 epoch.SourceEndInclusive
@@ -261,7 +261,7 @@ public sealed class DerivedArtifactSetEngineIntegrationTests : IDisposable {
             new DerivedArtifactSetContextCandidateSource(
                 repository,
                 policy,
-                "main"
+                epoch.BranchRefId
             ),
             policy.CoherenceGroup
         );

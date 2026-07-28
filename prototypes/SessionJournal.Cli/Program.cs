@@ -837,8 +837,10 @@ internal static class Program {
         ];
         DerivedMemoryRepository repository =
             DerivedMemoryRepository.Open(inputPath);
+        using var branchIdentityEngine =
+            SJ.SessionJournalEngine.Open(inputPath);
         DerivedArtifactPlannerKey key = new(
-            SJ.SessionJournalDefaults.MainBranchName,
+            branchIdentityEngine.BranchRefId,
             options.GetOptionalSingle("coherence-group")
                 ?? "memory-pack"
         );
@@ -847,7 +849,7 @@ internal static class Program {
                 .TryReadCurrentConfigAsync(key)
                 .ConfigureAwait(false)
             ?? throw new InvalidDataException(
-                $"No current planner config exists for '{key.LineageKey}/{key.CoherenceGroup}'."
+                $"No current planner config exists for '{key.BranchRefId}/{key.CoherenceGroup}'."
             );
         var policy = new DerivedArtifactSetPolicy(
             options.RequireSingle("policy-id"),
@@ -975,7 +977,7 @@ internal static class Program {
             new DerivedMemoryOnlineLifecycleCoordinator(
                 repository,
                 policy,
-                SJ.SessionJournalDefaults.MainBranchName,
+                branchIdentityEngine.BranchRefId,
                 executions.AsReadOnly()
             );
         var agentClient = new LoggingCompletionClient(

@@ -332,11 +332,7 @@ public sealed class DerivedMemoryMaintainerRunner {
             );
         if (inputSet.CommonAnchor != epoch.SourceStartExclusive
             || inputSet.AnchorSetups != epoch.RawStartSetups
-            || !string.Equals(
-                inputSet.LineageKey,
-                epoch.LineageKey,
-                StringComparison.Ordinal
-            )
+            || inputSet.BranchRefId != epoch.BranchRefId
             || !string.Equals(
                 inputSet.CoherenceGroup,
                 epoch.CoherenceGroup,

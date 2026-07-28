@@ -9,7 +9,7 @@ public sealed class DerivedArtifactSetStoreTests : IDisposable {
     private readonly List<SessionJournalEngine> _engines = [];
 
     [Fact]
-    public async Task PublishedV2SetCarriesExactTransactionAndEpoch() {
+    public async Task PublishedV3SetCarriesExactTransactionAndEpoch() {
         Fixture fixture = await CreateFixtureAsync();
 
         DerivedArtifactSet set =
@@ -20,7 +20,7 @@ public sealed class DerivedArtifactSetStoreTests : IDisposable {
 
         Assert.Equal(
             DerivedArtifactSetStore.SetSchema,
-            "atelia.session-journal.derived-artifact-set.v2"
+            "atelia.session-journal.derived-artifact-set.v3"
         );
         Assert.Equal(
             fixture.Transaction.TransactionId,
@@ -146,7 +146,7 @@ public sealed class DerivedArtifactSetStoreTests : IDisposable {
             published.SetId,
             (await fixture.Repository.ArtifactSets.TryReadLatestAsync(
                 fixture.Policy,
-                fixture.Epoch.LineageKey
+                fixture.Epoch.BranchRefId
             ))!.SetId
         );
         Assert.Single(Directory.EnumerateFiles(
@@ -202,12 +202,12 @@ public sealed class DerivedArtifactSetStoreTests : IDisposable {
 
         Assert.Null(await fixture.Repository.ArtifactSets.TryReadLatestAsync(
             fixture.Policy,
-            fixture.Epoch.LineageKey
+            fixture.Epoch.BranchRefId
         ));
         DerivedArtifactSet rebuilt =
             await fixture.Repository.ArtifactSets.RebuildLatestPointerAsync(
                 fixture.Policy,
-                fixture.Epoch.LineageKey
+                fixture.Epoch.BranchRefId
             ) ?? throw new Xunit.Sdk.XunitException(
                 "Expected rebuilt set."
             );
@@ -217,7 +217,7 @@ public sealed class DerivedArtifactSetStoreTests : IDisposable {
             published.SetId,
             (await fixture.Repository.ArtifactSets.TryReadLatestAsync(
                 fixture.Policy,
-                fixture.Epoch.LineageKey
+                fixture.Epoch.BranchRefId
             ))!.SetId
         );
     }
@@ -238,7 +238,7 @@ public sealed class DerivedArtifactSetStoreTests : IDisposable {
             async () => await fixture.Repository.ArtifactSets
                 .TryReadLatestAsync(
                     fixture.Policy,
-                    fixture.Epoch.LineageKey
+                    fixture.Epoch.BranchRefId
                 )
         );
     }
@@ -362,7 +362,7 @@ public sealed class DerivedArtifactSetStoreTests : IDisposable {
             DerivedMemoryRepository.Open(path);
         _ = await repository.EpochPlanner.ConfigureAsync(
             new(
-                "main",
+                engine.BranchRefId,
                 "memory-pack",
                 "topology-v1",
                 1,
@@ -375,7 +375,7 @@ public sealed class DerivedArtifactSetStoreTests : IDisposable {
         DerivedArtifactEpochPlan epoch =
             (await repository.EpochPlanner.PlanAsync(
                 engine,
-                new("main", "memory-pack", null, null)
+                new(engine.BranchRefId, "memory-pack", null, null)
             )).Epoch!;
         SessionContextAnchorSetupReferences setups =
             engine.ResolveContextAnchorSetupReferences(
