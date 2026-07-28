@@ -347,11 +347,11 @@ concrete store 类型。
 让 SessionJournal request materializer 只消费 normalized candidate，不再认识
 `DerivedRecapArtifact` / `DerivedRecapStore`。
 
-### 实施状态（2026-07-28）
+### 实施状态（2026-07-28；历史落点）
 
 已完成：
 
-- `ValidatedSessionContextCandidate` 现冻结 completion boundary、canonical contributions、
+- DM-1 实施当时由 `ValidatedSessionContextCandidate` 冻结 completion boundary、canonical contributions、
   anchor setup、一次 lineage walk 的 chronological suffix addresses（exclusive anchor / inclusive
   boundary）及 header diagnostics；materializer 直接消费它，不重复 Parent walk；
 - `SessionTailContextProjection` 不再引用 DerivedRecap 类型；raw block text 由 core 的
@@ -364,25 +364,32 @@ concrete store 类型。
 - Prepared v4 直接保存 core-rendered `ExactContextInputs`，adapter 不再传递 legacy artifact identity。
   DM-0 text hash 约束 raw block text；v4 snapshot hash 约束最终 request snapshot，二者刻意独立。
 
-性能说明：validator 向 materializer 交付同一次 Parent walk 冻结的 suffix addresses，故未新增 cold-prefix
-walk，header/decoded suffix 复杂度保持原有量级；legacy bridge 目前仍让 validator 对 activation coverage 的
+后续 current-state 修订：tail operational simplification D0a（`b79d67f8`）确认上述
+single-candidate internal path 已无 production caller，因而删除了
+`ValidatedSessionContextCandidate`、`SessionContextCandidateValidator.Validate(...)` 与
+`SessionTailContextProjection.Materialize(...)`。current online route 使用 batch planning window +
+selected-context materialization；本节保留的是 DM-1 迁移历史，不再是 current internal API 清单。
+
+DM-1 当时的性能说明：validator 向 materializer 交付同一次 Parent walk 冻结的 suffix addresses，故未新增
+cold-prefix walk，header/decoded suffix 复杂度保持原有量级；legacy bridge 当时仍让 validator 对 activation coverage 的
 两条 setup exact refs 各重读一次 payload，故不宣称 payload-read count 绝对不变。DM-3 provider cutover
 把 anchor proof 与 provider result 合并时再收掉该 legacy-only recheck。
 
-DM-2 的 Prepared v4 reopen 仍是 bounded：anchor 之前若存在可信的 earlier Prepared checkpoint，shared
-resolver 只读该近头 checkpoint 与两条 setup payload；它绝不把当前正被重建的 manifest 当作证明。反之，
-在 DM-2→DM-3 的 legacy-only pre-Prepared planning 窗口，首次 anchor 若只有远处 setup 而无 earlier
-Prepared checkpoint，authoritative proof 可能 header-only 回扫冷前缀；这是显式过渡成本，DM-3 provider
-cutover 不得通过把 raw activation reference 回塞 Prepared 来掩盖它。
+DM-1/DM-2 当时的 Prepared v4 reopen 仍是 bounded：anchor 之前若存在可信的 earlier Prepared
+checkpoint，shared resolver 只读该近头 checkpoint 与两条 setup payload；它绝不把当前正被重建的
+manifest 当作证明。反之，在 DM-2→DM-3 的 legacy-only pre-Prepared planning 窗口，首次 anchor
+若只有远处 setup 而无 earlier Prepared checkpoint，authoritative proof 可能 header-only 回扫冷前缀；
+这是显式过渡成本，DM-3 provider cutover 不得通过把 raw activation reference 回塞 Prepared 来掩盖它。
 
-### 主要落点
+### 主要落点（DM-1 历史计划）
 
-- 拆分 `SessionTailContextProjection`：
+- 当时计划拆分 `SessionTailContextProjection`：
   - concrete artifact -> contribution 的转换留在临时 adapter；
   - raw ancestry/setup/suffix fold/rendering 留在 core；
-- `SessionTailContextProjection.Materialize()` 改为接收 normalized candidate；
+- 当时的 `SessionTailContextProjection.Materialize()` 改为接收 normalized candidate；该
+  single-candidate surface 后由 D0a 退役；
 - `RequestContextMaterialization` 不再保存 concrete artifact objects；
-- current activation/store path 通过同程序集临时 adapter 产生 candidate；
+- 当时的 activation/store path 通过同程序集临时 adapter 产生 candidate；
 - 明确 adapter 只服务 DM-1～DM-3 cutover，不扩展成第二套长期 policy。
 
 ### 非目标

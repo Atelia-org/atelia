@@ -1,6 +1,6 @@
 # SessionJournal Tail Execution Recovery 后续化简候选
 
-> **状态**：Current Research / CS-3D7 + DM-0～DM-8 后候选集
+> **状态**：Current Research / D0+D1 implemented；D2 deferred pending A0
 > **日期**：2026-07-28
 > **当前基线**：
 > [Tail-only Execution Recovery Design](tail-execution-recovery-design.md)、
@@ -8,10 +8,10 @@
 > **已完成计划**：
 > [CS-3D6：Coherent-only Request Manifest](done/coherent-request-manifest-simplification-plan.md)、
 > [CS-3D7：Prepared / Provider Attempt 对称化](done/prepared-provider-attempt-symmetry-design.md)
-> **已批准待实施**：
+> **已实施**：
 > [候选 D0/D1：Dependency-closed Fold Seed 与共享 Operational Semantics](tail-operational-semantics-simplification-plan.md)
-> **目标**：只保留 current trunk 上尚未实施的化简候选；不以牺牲 crash recovery、raw
-> provenance、exact reopen 或 bounded reads 换取表面简洁。
+> **目标**：保留 current trunk 上尚未实施的化简候选，并只为刚完成的 D0/D1 留下简短实施结论与
+> D2 决策；不以牺牲 crash recovery、raw provenance、exact reopen 或 bounded reads 换取表面简洁。
 
 ## 0. 当前结论
 
@@ -32,7 +32,7 @@ CS-3D6/D7 与 DM-0～DM-8 已完成以下收口：
 当前仍值得研究的只有：
 
 1. **候选 A：Exact request snapshot spike**；
-2. **候选 D：D0/D1 已完成具体设计，等待分片实施；D2 仍须 go/no-go**；
+2. **候选 D：D0/D1 已实施；D2 当前 Deferred / NO-GO，等待 A0 与复杂度收益证据**；
 3. **候选 E：Engine 职责拆分**，但只在 A/D 稳定后推进。
 
 明确不再考虑：
@@ -102,26 +102,37 @@ S 的 provenance 仍须保存 governing setup refs、raw range 与 exact context
 
 ## 3. 候选 D：共享正向 operational semantics
 
-本候选的 D0/D1 已完成代码核对与具体设计，实施合同、边界矩阵、工作包与 review checklist 统一见
+本候选的 D0/D1 已完成实施，提交、边界矩阵、测试证据与 D2 go/no-go 统一见
 [Dependency-closed Fold Seed 与共享 Operational Semantics 实施计划](tail-operational-semantics-simplification-plan.md)。
 
-保留在本调研中的结论只有：
+current 结论：
 
-- D0 先删除无 production caller 的旧 single-candidate validation/materialization path，再删除
+- D0 已删除无 production caller 的旧 single-candidate validation/materialization path、
   nullable fold seed、不可达 `InferSeedPhase` 与 checkpoint fallback，并把 governing setup 与
   exact recovery 绑定到同一 raw anchor；
-- D1 只共享无 IO、无 traversal 的 kind/phase classification、correlation identity 与局部
-  Action/tool validators；
+- D1 已共享无 IO、无 traversal 的 kind/phase classification、correlation identity 与局部
+  Action/tool validators，并建立 internal violation vocabulary；
+- D1c 已建立 19 legal / 17 illegal differential matrix；合法 open-tool final head 被明确分为
+  reducer/resolver pending-state oracle 与 suffix final-closure rejection，不伪造 dependency-closed
+  seed；
 - terminal Action、dependency-closed ToolResult 与 replay-safe barrier 都依赖 state/body，不能简化为
   kind-only predicate；
 - Legacy importer 验证旧 export grammar，不属于 current raw operational semantics；offline
   validator 编排 full reducer 与 tail resolver，也不是第四套正向状态机；
 - full reducer、suffix projector 与 reverse tail resolver 继续分别拥有 traversal authority；
-- D2 的 pure operational fold 只在 D0/D1 与 differential matrix 完成后重新决策，优先 spike
-  Action/tool segment，不默认全面实施。
+- D2 go/no-go 已完成，当前为 **Deferred / NO-GO**：D0/D1 相对设计基线 production 按
+  `git numstat` 粗指标净增 98 行；该数字不等同复杂度，但与 adapter/diagnostic 跳转和 shared-state
+  风险共同说明，更大 kernel 尚未证明会降低总体复杂性；
+- 若合并 Prepared/attempt/Action/tool semantics，共享 bounded state 将包含 Prepared summary、
+  active attempt、open Action、observed results、pending call/operation/runtime 与 recovery
+  provenance。它虽不是完整 conversation projection，却已接近完整 operational projection，尚未证明
+  可以避免 consumer mode；
+- A0 snapshot measurement 尚未实施，是 D2 的 hard blocker。DM lifecycle/performance tests
+  不能替代 snapshot logical/stored bytes、100/1,000 amplification 与压缩增量数据。
 
-候选 A 的 measurement 不是 D0/D1 的技术前置条件，但必须在 D2 go/no-go 前完成，因为
-snapshot-authoritative Prepared 可能改变 request reconstruction 对 forward fold 的长期需求。
+候选 A 的 measurement 不是 D0/D1 的技术前置条件，但必须在 D2 获得 **GO** 或下一次
+go/no-go 重审前完成，因为 snapshot-authoritative Prepared 可能改变 request reconstruction 对
+forward fold 的长期需求。由于该数据尚不存在，本轮不得开始 production D2 spike。
 
 ## 4. 候选 E：Engine 职责拆分
 
@@ -143,18 +154,18 @@ SessionContextPreparationCoordinator
 SessionCompletionDriver
 ```
 
-但这不是当前优先切片。若在语义仍重复时先拆文件，只会把耦合变成跨类跳转。应先完成候选 D0/D1，
-再结合候选 A 数据与 D2 go/no-go 得到稳定调用图，之后才拆 Engine；public surface 暂不改变。
+但这不是当前优先切片。D0/D1 已完成，A0 与 D2 尚未解锁；在长期 Prepared consumer graph
+未稳定前拆文件，只会把耦合变成跨类跳转。应先完成候选 A 数据并重新评估 D2，之后才决定是否拆
+Engine；public surface 暂不改变。
 
 ## 5. 推荐研究顺序
 
-1. **D0：显式 dependency-closed fold seed**：按已批准计划删除 nullable seed /
-   `InferSeedPhase`，独立 review + boundary matrix tests；
+1. **D0：显式 dependency-closed fold seed**：已完成；
 2. **D1：pure classification、local validators、internal violation vocabulary 与 differential
-   matrix**：按已批准计划分小包实施；
-3. **A0：Prepared v5 snapshot measurement spike**：可与 D0/D1 独立安排，但须在 D2 前完成；
-4. **D2：pure operational fold 可行性**：仅在 D1 显示真实收益、且 A0 数据支持时推进；
-5. **E：Engine split**：最后按稳定语义边界实施。
+   matrix**：已完成；
+3. **A0：Prepared v5 snapshot measurement spike**：下一项未完成的前置；
+4. **D2：pure operational fold 可行性**：当前 Deferred / NO-GO；A0 完成且能证明净化简后才重审；
+5. **E：Engine split**：继续延期，最后按稳定语义边界实施。
 
 Prepared/attempt 对称化、ArtifactSet/raw 解耦、shared epoch、online lifecycle 与 budgeted selection
 均已完成，不再列入未来 P2/P3。

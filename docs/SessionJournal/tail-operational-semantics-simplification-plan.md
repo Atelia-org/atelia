@@ -1,8 +1,9 @@
 # SessionJournal Dependency-closed Fold Seed 与共享 Operational Semantics 实施计划
 
-> **状态**：Approved Design / Ready for Implementation
+> **状态**：D0 / D1 Implemented；D2 Deferred / NO-GO pending A0
 > **日期**：2026-07-28
-> **适用基线**：current Prepared v5、CS-3D0～D7、DM-0～DM-8
+> **设计基线（实施前）**：Prepared v5、CS-3D0～D7、DM-0～DM-8；
+> 第 1～5 节中的 “current” 若未另行标注，均指提交 `92bd049d` 时的实施前基线
 > **来源**：
 > [Tail Execution Recovery 后续化简候选](tail-execution-recovery-simplification-study.md)
 > **相关实现记录**：
@@ -14,7 +15,7 @@
 
 ## 0. 执行结论
 
-候选 D 已具备分片实施条件，但不能解释为批准一次“大一统 operational fold”重写。
+候选 D 的 D0/D1 已按下列分片完成；这从未、也不能解释为批准一次“大一统 operational fold”重写。
 
 ```text
 Simplification-D0a Retire unused single-candidate path
@@ -27,10 +28,12 @@ Simplification-D1b Shared action/tool validators + violation vocabulary
   ↓
 Simplification-D1c Differential semantic matrix
   ↓
-Candidate-D2 go/no-go：局部 forward fold spike，而非默认全面重写
+Candidate-D2 go/no-go：Deferred / NO-GO pending A0
 ```
 
-本计划批准实施 D0 与 D1。D2 只保留为 D0/D1 完成后的重新决策点。
+本计划批准的 D0 与 D1 已实施。D2 已在 D1c 后完成 go/no-go 复核，当前结论为
+**Deferred / NO-GO**：不要在 production 中建立 `SessionOperationalFold`，见
+[§6](#6-d2-gono-go)。
 
 核心决议：
 
@@ -46,7 +49,41 @@ Candidate-D2 go/no-go：局部 forward fold spike，而非默认全面重写
 5. Legacy importer 验证的是旧 export grammar，不成为 current raw operational semantics
    的消费者。Offline validator 继续编排 full reducer 与 tail resolver，而不是建立第四套状态机。
 
-## 1. Current implementation facts
+### 0.1 实施记录与结果
+
+| 工作包 | 提交 | 结果 |
+| --- | --- | --- |
+| D0a | `b79d67f8`、`ce906d40` | 退役 single-candidate materialization/validation path，并清理其残留 projection 字段 |
+| D0b | `ac5e15f2`、`c17a0960` | 引入 anchor-bound、dependency-closed typed fold seed，并补齐 correlation rejection matrix |
+| D1a | `522c31b3` | 共享 kind/phase classification 与 observation correlation identity |
+| D1b | `5cca0dd2`、`b93263e3` | 共享 Action/tool local validators、internal violation vocabulary 与 renderer；修正文档性注释 |
+| D1c | `2f15c0d9` | 建立 legal/illegal differential matrix，并强化 Prepared/Started 不访问 candidate provider 的证据 |
+
+实际结果：
+
+- `SessionTailContextProjection.Materialize(...)`、
+  `ValidatedSessionContextCandidate` 与
+  `SessionContextCandidateValidator.Validate(...)` 已删除；
+- 两个 live fold caller 均通过同一个 `SessionDependencyClosedFoldSeed.Create(...)` 进入
+  `FoldSuffix(...)`；nullable seed、`InferSeedPhase(...)` 与 checkpoint fallback 已删除；
+- `SessionOperationalSemantics` 成为 classification、correlation、Action/tool local validator 与
+  violation code 的 single source；三种 projection 仍各自拥有 traversal、source proof 与输出；
+- legal matrix 有 19 个 scenario：13 个可做 full reducer / typed-seed fold / exact-head resolver
+  三方比较；6 个合法 open-tool head 只能做 reducer/resolver exact equality，并要求 request-context
+  fold 因 final dependency 未闭合而拒绝；
+- illegal matrix 覆盖 17 类 Parent/attempt/correlation/checkpoint/tool identity/order/sequence/setup
+  错误；codec-owned identity presence wire invariant 与 decoded operational validation 被明确分层；
+- 最终 `SessionJournal.Tests` 为 280/280，solution build 为 0 warning / 0 error；
+- 相对实施前计划提交 `92bd049d`，production 按 `git numstat` 粗指标为 731 行新增、633 行删除，
+  净增 98 行。行数不等同复杂度；D0 删除了真实 dead surface，D1 建立了 semantic single source，
+  但 adapter/diagnostic 跳转成本也真实存在。
+
+没有改变 raw wire、public API、online read authority 或程序集依赖方向。
+
+## 1. Pre-implementation facts（历史基线）
+
+本节记录为什么批准 D0/D1；其中 nullable seed、旧 single-candidate path 等描述已经由
+[§0.1](#01-实施记录与结果) 所列提交收口，不再代表 current code。
 
 ### 1.1 Nullable seed 已经没有生产必要
 
@@ -601,7 +638,7 @@ focused validator tests 对共享规则比较 violation code；三种 consumer �
 - branch/rewind 只读取 exact Parent lineage；
 - pure helper 不引入 payload copies 或完整 manifest/context cache。
 
-## 5. 实施工作包
+## 5. 实施工作包（历史执行计划）
 
 ### D0：Fold seed contract
 
@@ -679,30 +716,62 @@ D0 应保留两个独立、可单独 review 的提交：
 
 ## 6. D2 go/no-go
 
-D0/D1 完成后才能评估：
+### 6.1 2026-07-28 决策：Deferred / NO-GO
+
+当前**不实施**：
 
 ```text
 SessionOperationalFold
   seed + one decoded event -> next bounded operational state + semantic effects
 ```
 
-进入 D2 的必要条件：
+这不是对 pure forward fold 的永久否决，而是当前 hard prerequisites 未满足：
 
-- D1 实际删除了足够多的重复 validators/predicates；
-- differential matrix 能捕获 transition drift；
-- 已列出 shared internal state 所需的 Prepared summary、active attempt、open Action、
-  observed results、pending call/operation/runtime identity；
-- candidate A 的 snapshot measurement 已完成，能判断 Prepared reconstruction 是否仍是长期 fold
-  consumer；
-- spike 不要求 reverse resolver 放弃 bounded traversal。
+| 前置 | 复核结果 | 结论 |
+| --- | --- | --- |
+| D1 建立真实 single source | classification、correlation、Action/tool local validators 已共享 | 通过 |
+| differential matrix 可捕获 drift | 19 legal + 17 illegal matrix 已落地，且冻结 reads/provider gates | 通过 |
+| 更大 kernel 能降低总体复杂性 | production 相对基线按 `git numstat` 粗指标净增 98 行；行数不是复杂度本身，共享收益仍与 adapter/renderer 跳转成本并存，尚无“显著删分支”的实证 | 未通过 |
+| shared state 已证明小而稳定 | 可列出 bounded state，但它已横跨 Prepared、attempt、Action/tool 与 provenance boundary，adapter 形状尚未证明无需 consumer mode | 未通过 |
+| candidate A/A0 measurement 完成 | repo 中只有 measurement 要求，没有 benchmark/report/data；DM lifecycle、10k cold-prefix 与 exact reopen tests 不是 snapshot measurement | **hard blocker** |
+| reverse resolver 保持 bounded traversal | D1 后 reads 未回归；尚未对更大 forward kernel 做 production spike | 尚未被 D2 改动 |
 
-优先 spike Action/tool segment。只有证明：
+### 6.2 若做更大 fold，至少需要的 bounded state
 
-- reducer 与 suffix fold 的分支显著减少；
-- tail resolver 能复用 gathered segment 而不多读 payload；
-- 不需要 consumer mode flags；
+Action/tool-only kernel 已不只是 D1 的 context-free validator。为了同时服务三种消费者，至少需要：
 
-才考虑扩展到 Prepared/attempt transitions。
+- current head kind/address、phase、checkpoint、active correlation；
+- source Prepared 的 bounded summary（origin、execution、tool runtime identity）与 Prepared address；
+- active provider attempt address；
+- open Action 与声明顺序、observed result map、next pending call/index；
+- pending operation id、Started flag、reserved sequence、tool runtime identity；
+- source Observation/Action/latest checkpoint 等 recovery boundary provenance；
+- prior kind/address，以便 forward caller证明 direct Parent continuity。
+
+这些状态只在单个 in-flight Prepared/Action/tool segment 内有界，并非 fixed-size / O(1)；它们不等于
+完整 conversation projection，也不需要 governing setup value、DerivedMemory 或无界 history
+context。然而它们已经接近一份完整的 **operational** projection。full reducer
+需要 context/provenance effects，suffix fold 需要 planning boundaries 与 final dependency closure，
+reverse resolver 则先做 dependency discovery 再验证 gathered segment。若 kernel 为这些差异引入
+`Full` / `Suffix` / `Resolver` mode、consumer callback 或大批 adapter，化简目标即告失败。
+
+### 6.3 下一次解锁条件
+
+D2 只有同时满足以下条件才重新评估：
+
+1. 完成候选 A/A0 measurement，至少产出 canonical request、current Prepared v5 与 hypothetical
+   snapshot 的 logical/stored bytes、100/1,000 requests 累计 amplification，以及 reopen
+   reads/decoded bytes/peak live bytes；不得以 DM lifecycle 或 cold-prefix test 代替。
+2. A0 数据表明 recipe-authoritative Prepared reconstruction 仍是长期主线；若转向
+   snapshot-authoritative，先重画长期 consumer graph。
+3. 在非 production spike brief 中逐字段冻结上述 bounded state，并证明不需要 consumer mode、
+   traversal callback 或完整 projection。
+4. 对 Action/tool segment 给出可审阅的 before/after 预算：删除的 production branches/helpers
+   必须明显多于新增 kernel、adapter 与 renderer 跳转。
+5. spike 必须保持 resolver chronological reads 为零、bounded payload reads 不增加，并继续让
+   full audit、suffix output 与 reverse traversal 独立。
+
+满足这些条件后仍只优先 spike Action/tool segment；不能直接扩到 Prepared/attempt 全状态机。
 
 出现以下任一情况就停止 D2：
 
@@ -717,38 +786,39 @@ SessionOperationalFold
 
 ### Architecture
 
-- [ ] raw Parent chain 仍是 execution correctness authority。
-- [ ] SessionJournal 不依赖 DerivedMemory、Maintainers 或 Agent.Core。
-- [ ] reverse traversal 与 forward semantics 分离。
-- [ ] full audit、tail recovery、request context 三类 projection 仍然独立。
+- [x] raw Parent chain 仍是 execution correctness authority。
+- [x] SessionJournal 不依赖 DerivedMemory、Maintainers 或 Agent.Core。
+- [x] reverse traversal 与 forward semantics 分离。
+- [x] full audit、tail recovery、request context 三类 projection 仍然独立。
 
 ### D0
 
-- [ ] governing setup 与 recovery head exact 相等。
-- [ ] 已删除的 single-candidate path 确实没有 production caller，且 raw-authority coverage 已迁移。
-- [ ] seed phase/head-kind/correlation/pending-state matrix 被验证。
-- [ ] empty-lineage bootstrap 与 setup-only genesis 没有混淆。
-- [ ] `FoldSuffix` 没有 nullable execution seed。
-- [ ] `InferSeedPhase` 与 checkpoint fallback 已删除。
-- [ ] batch planning seed 没有新增 eager tail resolution。
+- [x] governing setup 与 recovery head exact 相等。
+- [x] 已删除的 single-candidate path 确实没有 production caller，且 raw-authority coverage 已迁移。
+- [x] seed phase/head-kind/correlation/pending-state matrix 被验证。
+- [x] empty-lineage bootstrap 与 setup-only genesis 没有混淆。
+- [x] `FoldSuffix` 没有 nullable execution seed。
+- [x] `InferSeedPhase` 与 checkpoint fallback 已删除。
+- [x] batch planning seed 没有新增 eager tail resolution。
 
 ### D1
 
-- [ ] 只共享 pure、local、deterministic semantics。
-- [ ] state-dependent 规则没有伪装成 kind-only predicate。
-- [ ] violation code 为 internal，public exception category 不变。
-- [ ] importer/offline validator 没有被错误并入 forward state machine。
-- [ ] differential matrix 同时覆盖合法与非法 transition。
+- [x] 只共享 pure、local、deterministic semantics。
+- [x] state-dependent 规则没有伪装成 kind-only predicate。
+- [x] violation code 为 internal，public exception category 不变。
+- [x] importer/offline validator 没有被错误并入 forward state machine。
+- [x] differential matrix 同时覆盖合法与非法 transition。
 
 ### Performance / recovery
 
-- [ ] `FullProjectionInvocationCount` 不增加。
-- [ ] 10k+ cold prefix 不增加 bounded-path payload reads。
-- [ ] Prepared/Started reopen 不访问 DerivedMemory。
-- [ ] exact-head CAS 与 uncertain policy 不变。
-- [ ] branch/rewind 仍只沿真实 Parent lineage。
+- [x] `FullProjectionInvocationCount` 不增加。
+- [x] 10k+ cold prefix 不增加 bounded-path payload reads。
+- [x] Prepared/Started reopen 不访问 DerivedMemory。
+- [x] exact-head CAS 与 uncertain policy 不变。
+- [x] branch/rewind 仍只沿真实 Parent lineage。
 
 ## 8. 给后续 Coding Agent 的一句话
 
-先把 suffix fold 的起点变成一个经过证明、绑定同一 raw anchor 的显式事实；再共享那些确实相同的
-局部规则。不要用“统一 semantics”之名统一 traversal、projection output 或整句异常文本。
+D0/D1 已把 suffix fold 起点变成 anchor-bound typed fact，并共享了确实相同的局部规则。现在不要
+继续写 `SessionOperationalFold`：先完成 A0 measurement，再用可量化的净删减、无 consumer mode
+与 reads 不回归证据重新申请 D2。
