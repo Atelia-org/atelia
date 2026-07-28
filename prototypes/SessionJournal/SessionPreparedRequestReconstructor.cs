@@ -181,6 +181,11 @@ internal static class SessionPreparedRequestReconstructor {
         EventAddress rawStartExclusive = manifest.Plan.RawStartExclusive;
         SessionExecutionRecovery seedRecovery =
             SessionExecutionTailResolver.Resolve(reader, rawStartExclusive, cancellationToken);
+        SessionDependencyClosedFoldSeed foldSeed =
+            SessionDependencyClosedFoldSeed.Create(
+                rawStartSetup,
+                seedRecovery
+            );
         SessionExecutionRecovery finalRecovery =
             SessionExecutionTailResolver.Resolve(reader, rawEndInclusive, cancellationToken);
         if (finalRecovery.State.Phase != SessionExecutionPhase.AwaitingAgentAction
@@ -200,9 +205,8 @@ internal static class SessionPreparedRequestReconstructor {
 
         SessionTailContextProjection.TailFoldResult folded =
             SessionTailContextProjection.FoldSuffix(
-                rawStartSetup,
-                rawEvents,
-                seedRecovery
+                foldSeed,
+                rawEvents
             );
         if (folded.GoverningSetup.Head != rawEndInclusive
             || folded.GoverningSetup.RuntimeConfigSetupAddress != manifest.Setups.RuntimeConfig.Address

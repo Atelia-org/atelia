@@ -44,35 +44,36 @@ internal static class SessionTailContextProjection {
     );
 
     internal static TailFoldResult FoldSuffix(
-        SessionGoverningSetup seed,
+        SessionDependencyClosedFoldSeed seed,
         IReadOnlyList<DecodedSessionEvent> events,
-        SessionExecutionRecovery? executionSeed = null,
         ICollection<AddressedSessionHistoryMessage>? addressedMessages = null,
         ICollection<SessionHistoryPlanningBoundary>?
             replaySafeBoundaries = null
     ) {
-        EventAddress runtimeAddress = seed.RuntimeConfigSetupAddress;
-        SessionRuntimeConfiguration runtimeConfig = seed.RuntimeConfig;
-        EventAddress promptAddress = seed.SystemPromptSetupAddress;
-        string systemPrompt = seed.SystemPrompt;
+        EventAddress runtimeAddress =
+            seed.GoverningSetup.RuntimeConfigSetupAddress;
+        SessionRuntimeConfiguration runtimeConfig =
+            seed.GoverningSetup.RuntimeConfig;
+        EventAddress promptAddress =
+            seed.GoverningSetup.SystemPromptSetupAddress;
+        string systemPrompt = seed.GoverningSetup.SystemPrompt;
         var context = new List<IHistoryMessage>();
         ActionMessage? openAction = null;
         var observedResults = new Dictionary<string, ToolResultObservedBody>(StringComparer.Ordinal);
         RawToolCall? pendingCall = null;
         bool pendingStarted = false;
-        long? executionSequenceCheckpoint =
-            executionSeed?.State.ToolExecutionSequenceCheckpoint;
-        string? activeCorrelationId = executionSeed?.State.ActiveCorrelationId;
-        SessionExecutionPhase phase = executionSeed?.State.Phase
-            ?? InferSeedPhase(executionSeed?.State.HeadKind);
+        long executionSequenceCheckpoint =
+            seed.ToolExecutionSequenceCheckpoint;
+        string? activeCorrelationId = seed.ActiveCorrelationId;
+        SessionExecutionPhase phase = seed.Phase;
         SessionToolRuntimeIdentity? pendingToolRuntimeIdentity = null;
         CompletionRequestPreparedBody? sourcePrepared = null;
         EventAddress? sourcePreparedAddress = null;
         EventAddress? activeAttemptAddress = null;
         EventAddress? firstObservedToolResultAddress = null;
         EventAddress? lastObservedToolResultAddress = null;
-        SessionEventKind? priorKind = executionSeed?.State.HeadKind;
-        EventAddress? priorAddress = executionSeed?.Head ?? seed.Head;
+        SessionEventKind? priorKind = seed.HeadKind;
+        EventAddress? priorAddress = seed.Head;
 
         foreach (DecodedSessionEvent ev in events) {
             if (ev.Parent != priorAddress) {
@@ -170,8 +171,8 @@ internal static class SessionTailContextProjection {
                             $"{ev.Kind} at {ev.Address} reason or correlation does not match its suffix completion boundary."
                         );
                     }
-                    if (executionSequenceCheckpoint is long current
-                        && prepared.Execution.LastIssuedToolExecutionSequence != current) {
+                    if (prepared.Execution.LastIssuedToolExecutionSequence
+                        != executionSequenceCheckpoint) {
                         throw new InvalidDataException(
                             $"{ev.Kind} at {ev.Address} changes the suffix execution checkpoint."
                         );
@@ -239,8 +240,8 @@ internal static class SessionTailContextProjection {
                             activeCorrelationId,
                             StringComparison.Ordinal
                         )
-                        || executionSequenceCheckpoint is long current
-                            && actionBody.Execution.LastIssuedToolExecutionSequence != current) {
+                        || actionBody.Execution.LastIssuedToolExecutionSequence
+                            != executionSequenceCheckpoint) {
                         throw new InvalidDataException(
                             $"{ev.Kind} at {ev.Address} changes the suffix correlation or execution checkpoint."
                         );
@@ -307,8 +308,10 @@ internal static class SessionTailContextProjection {
                     ToolExecutionStartedBody started = RequireBody<ToolExecutionStartedBody>(ev);
                     EnsurePendingMatches(ev, pendingCall, started.ToolCallId, started.ToolName, started.RawArgumentsJson);
                     if (pendingToolRuntimeIdentity != started.ToolRuntimeIdentity
-                        || executionSequenceCheckpoint is not long current
-                        || started.ExecutionSequence != checked(current + 1)) {
+                        || started.ExecutionSequence
+                            != checked(
+                                executionSequenceCheckpoint + 1
+                            )) {
                         throw new InvalidDataException(
                             $"{ev.Kind} at {ev.Address} does not match the pending runtime identity and next reserved sequence."
                         );
@@ -396,37 +399,10 @@ internal static class SessionTailContextProjection {
             ),
             context,
             activeCorrelationId,
-            executionSequenceCheckpoint ?? 0,
+            executionSequenceCheckpoint,
             phase
         );
     }
-
-    private static SessionExecutionPhase InferSeedPhase(
-        SessionEventKind? headKind
-    ) => headKind switch {
-        null
-            or SessionEventKind.RuntimeConfigSetup
-            or SessionEventKind.SystemPromptSetup =>
-                SessionExecutionPhase.Empty,
-        SessionEventKind.SessionCreated
-            or SessionEventKind.AgentActionProduced
-            or SessionEventKind.ImportedAgentAction =>
-                SessionExecutionPhase.Idle,
-        SessionEventKind.ObservationAccepted
-            or SessionEventKind.ToolResultObserved =>
-                SessionExecutionPhase.AwaitingAgentAction,
-        SessionEventKind.CompletionRequestPrepared =>
-                SessionExecutionPhase.AwaitingCompletionDispatch,
-        SessionEventKind.CompletionAttemptStarted =>
-                SessionExecutionPhase.AwaitingCompletion,
-        SessionEventKind.CompletionAttemptFailed =>
-            SessionExecutionPhase.TurnFailed,
-        SessionEventKind.ToolExecutionStarted =>
-            SessionExecutionPhase.AwaitingToolExecution,
-        _ => throw new InvalidDataException(
-            $"Cannot infer suffix seed phase for '{headKind}'."
-        )
-    };
 
     private static void EnsureSetupPhase(
         DecodedSessionEvent ev,

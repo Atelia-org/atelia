@@ -608,19 +608,19 @@ public sealed class SessionJournalEngine : IDisposable {
             );
         }
 
-        SessionGoverningSetup seed;
+        SessionGoverningSetup governingSetup;
         SessionContextAnchorSetupReferences startSetups;
         if (planningSeed is null) {
-            seed = ResolveGoverningSetup(
+            governingSetup = ResolveGoverningSetup(
                 resolvedStart.Value,
                 cancellationToken
             );
             SessionSetupReference runtime = CreateSetupReference(
-                seed.RuntimeConfigSetupAddress,
+                governingSetup.RuntimeConfigSetupAddress,
                 SessionEventKind.RuntimeConfigSetup
             );
             SessionSetupReference prompt = CreateSetupReference(
-                seed.SystemPromptSetupAddress,
+                governingSetup.SystemPromptSetupAddress,
                 SessionEventKind.SystemPromptSetup
             );
             startSetups = new(
@@ -637,19 +637,23 @@ public sealed class SessionJournalEngine : IDisposable {
             );
         }
         else {
-            seed = planningSeed.GoverningSetup;
+            governingSetup = planningSeed.GoverningSetup;
             startSetups = planningSeed.Setups;
         }
+        SessionDependencyClosedFoldSeed foldSeed =
+            SessionDependencyClosedFoldSeed.Create(
+                governingSetup,
+                executionSeed
+            );
         var addressedMessages = new List<AddressedSessionHistoryMessage>();
         var boundaries = new List<SessionHistoryPlanningBoundary>();
         SessionTailContextProjection.TailFoldResult folded =
             SessionTailContextProjection.FoldSuffix(
-            seed,
-            events,
-            executionSeed,
-            addressedMessages,
-            boundaries
-        );
+                foldSeed,
+                events,
+                addressedMessages,
+                boundaries
+            );
         var endSetups = new SessionContextAnchorSetupReferences(
             ResolveFoldedSetupReference(
                 folded.GoverningSetup.RuntimeConfigSetupAddress,

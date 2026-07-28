@@ -161,6 +161,36 @@ public sealed class SessionHistoryPlanningTests : IDisposable {
         Assert.Null(snapshot.HeadToRoot[^1].Parent);
     }
 
+    [Fact]
+    public void BatchSetupSeed_RemainsLazyAboutExecutionRecovery() {
+        string path = NewPath();
+        using var engine = SessionJournalEngine.Create(
+            path,
+            new SessionCreateOptions(
+                "model-A",
+                "system-A",
+                "surface-A"
+            )
+        );
+        EventAddress created =
+            engine.ResolveExecutionTail().Head!.Value;
+        long fullProjectionCount =
+            engine.FullProjectionInvocationCount;
+
+        SessionHistoryPlanningSeedBatch batch =
+            engine.ReadHistoryPlanningSeeds([created]);
+
+        SessionHistoryPlanningSeed seed =
+            Assert.Single(batch.Seeds);
+        Assert.Equal(created, seed.Address);
+        Assert.Null(seed.ExecutionRecovery);
+        Assert.Equal(2, batch.Diagnostics.PayloadReads);
+        Assert.Equal(
+            fullProjectionCount,
+            engine.FullProjectionInvocationCount
+        );
+    }
+
     private (
         SessionHistoryPlanningDiagnostics Window,
         SessionJournalReadDiagnostics Total
