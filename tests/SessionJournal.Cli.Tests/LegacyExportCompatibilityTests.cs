@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Atelia.ChatSession;
 using Atelia.Completion;
 using Atelia.Completion.Abstractions;
@@ -102,11 +103,34 @@ public sealed class LegacyExportCompatibilityTests : IDisposable {
 
         Assert.Equal(0, exitCode);
         SJ.SessionProjection projection;
+        int runtimeBodySchemaVersion;
+        int runtimeNthPrevious;
         using (var engine = SJ.SessionJournalEngine.Open(
             sessionJournalRepo
         )) {
             projection = engine.Project();
+            SJ.SessionGoverningSetup governing =
+                engine.ResolveGoverningSetup(
+                    projection.Head
+                    ?? throw new InvalidDataException(
+                        "Imported SessionJournal has no head."
+                    )
+                );
+            runtimeNthPrevious =
+                governing.RuntimeConfig.DerivedContext.NthPrevious;
+            using JsonDocument runtimePayload = JsonDocument.Parse(
+                engine.ReadPayloadBytes(
+                    governing.RuntimeConfigSetupAddress
+                )
+            );
+            runtimeBodySchemaVersion = runtimePayload.RootElement
+                .GetProperty("v")
+                .GetInt32();
         }
+        Assert.Equal(2, runtimeBodySchemaVersion);
+        Assert.Equal(0, runtimeNthPrevious);
+        Assert.NotNull(projection.Config);
+        Assert.Equal(0, projection.Config.DerivedContext.NthPrevious);
         Assert.Collection(
             projection.Context,
             message => Assert.Equal(

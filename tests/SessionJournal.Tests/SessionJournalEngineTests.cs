@@ -74,6 +74,23 @@ public sealed class SessionJournalEngineTests : IDisposable {
         Assert.Contains("actual=1, expected=2", error.Message);
     }
 
+    [Theory]
+    [InlineData("{\"v\":2,\"body\":{\"modelId\":\"model-A\",\"completionSurfaceId\":\"surface-A\",\"schema\":\"atelia.session-journal.trunk.v1\"}}")]
+    [InlineData("{\"v\":2,\"body\":{\"modelId\":\"model-A\",\"completionSurfaceId\":\"surface-A\",\"schema\":\"atelia.session-journal.trunk.v1\",\"derivedContext\":{\"nthPrevious\":0},\"extra\":true}}")]
+    [InlineData("{\"v\":2,\"body\":{\"modelId\":\"model-A\",\"completionSurfaceId\":\"surface-A\",\"schema\":\"atelia.session-journal.trunk.v1\",\"derivedContext\":{\"nthPrevious\":0,\"extra\":true}}}")]
+    [InlineData("{\"v\":2,\"body\":{\"modelId\":\"model-A\",\"completionSurfaceId\":\"surface-A\",\"schema\":\"atelia.session-journal.trunk.v1\",\"derivedContext\":{\"nthPrevious\":-1}}}")]
+    public void RuntimeConfigSetupV2_RequiresStrictNonNegativeDerivedContext(
+        string json
+    ) {
+        Assert.Throws<InvalidDataException>(
+            () => SessionEventCodec.Decode(
+                SessionEventKind.RuntimeConfigSetup,
+                System.Text.Encoding.UTF8.GetBytes(json),
+                out _
+            )
+        );
+    }
+
     [Fact]
     public void Open_SelectedBranchBindsIdentityAndIsolatesProjectionLineageAndPlanning() {
         string path = NewJournalPath();

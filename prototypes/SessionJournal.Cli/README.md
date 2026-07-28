@@ -152,7 +152,6 @@ dotnet run --project prototypes/SessionJournal.Cli -- \
   --coherence-group memory-pack \
   --connections prototypes/Galatea/.atelia/galatea/connections.json \
   --connection dsv4p \
-  --selection budgeted \
   --raw-suffix-budget 32000 \
   --total-context-budget 64000 \
   --bootstrap-budget 32000 \
@@ -161,9 +160,12 @@ dotnet run --project prototypes/SessionJournal.Cli -- \
   --call-log-dir gitignore/backtest/<run>/calls
 ```
 
-`--selection` 接受 `latest`、`budgeted` 或 `nth:<zero-based-ordinal>`。budgeted 未显式给
-raw/total budget 时，以 planner 的 `hardLimit - schedulingHeadroom` 作为 raw budget；
-`--bootstrap-budget` 是 strict empty-lineage 唯一 raw-only 入口，不会创建伪 artifact。当前 CLI
+candidate ordinal 不再是 `run-online-turn` runtime flag；它由 selected branch 上 governing
+`RuntimeConfigSetup` v2 的 `derivedContext.nthPrevious` 唯一决定，`0` 表示 latest。
+`--raw-suffix-budget`、`--total-context-budget` 与 `--bootstrap-budget` 目前仍映射到
+`SessionRuntime.ContextBudgets`，只拒绝已经精确选中的 candidate，不执行 candidate fallback；
+这些临时 budget flags 的进一步化简属于 P4。`--bootstrap-budget` 是 strict empty-lineage
+唯一 raw-only 入口，不会创建伪 artifact。当前 CLI
 便利入口只接受 `produce` roles；generic lifecycle coordinator 本身不依赖 Maintainers catalog
 或 Completion connection，长期 host 可注入其他 exact role executions。
 

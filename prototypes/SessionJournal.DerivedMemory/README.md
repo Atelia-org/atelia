@@ -9,7 +9,7 @@
   rebuildable current/latest indexes；
 - deterministic multi-role orchestration transaction、immutable role settlement、
   durable finalization intent、missing-role resume 与 required-role closure；
-- 把已发布的 exact set 投影为 bounded two-phase `ICoherentContextCandidateSource`；
+- 把已发布的 exact set 投影为 exact two-phase `ICoherentContextCandidateSource`；
 - 通过 `DerivedMemoryOnlineLifecycleCoordinator` 在 safe raw boundary 组合 shared epoch
   planning、pending-first maintenance、ArtifactSet publication 与显式 backpressure。
 
@@ -18,13 +18,15 @@ DM-6 candidate store 不再维护 role-local latest pointer。`DerivedMemoryArti
 append-only 共存；只有 ArtifactSet publication 才决定 candidate 是否可选择。旧
 `derived/recaps/v1/`、latest-by-profile 与 linear recap CAS 已直接退役。
 
-DM-8 provider 支持 `Latest`、`NthPrevious` 与 `Budgeted`：discovery 阶段只返回
-content-free descriptors，materialization 才读取 exact member text。`Latest` 最多发现 1 个，
-`NthPrevious(n)` 最多发现 `n + 1`，`Budgeted` 受 core request 的 candidate bound 限制。
-latest pointer 缺失时 discovery 只从 immutable sets 证明 unique tip，不修复 pointer；
-持久 rebuild 只能走带 Engine raw-authority gate 的 maintenance/ops API。
-ordinal 不是 cost；raw suffix 与 total canonical request budget 由 SessionJournal core 用共享
-estimator 和 raw authority window 计算。
+DM-8 provider 只支持精确的 `NthPrevious(n)`；`n = 0` 就是 latest。selection 阶段沿
+`PreviousSetId` 严格走到第 n 个 set，只返回一个 content-free descriptor，materialization
+才读取 exact member text。非空 lineage 太短返回 `OrdinalUnavailable`；中间 set 缺失、
+损坏或形成 cycle 都 fail-fast，不跳过、不重编号，也不转入 bootstrap。
+latest pointer 缺失时 selection 只从 immutable sets 证明 unique tip，不修复 pointer；
+持久 rebuild 只能走带 Engine raw-authority gate 的 maintenance/ops API。ordinal 来自
+governing `RuntimeConfigSetup` v2 的 `derivedContext.nthPrevious`，不由 provider request
+budget 或 host runtime flag 决定。raw suffix 与 total canonical request budget 只是对
+exact candidate 的 runtime guard，超限时拒绝，不会自动改选另一个 set。
 
 边界约束：
 
@@ -39,8 +41,8 @@ estimator 和 raw authority window 计算。
 - Prepared 已保存进入 provider request 的 exact snapshots，故 Prepared 后删除整个
   `derived/` 仍可恢复。
 
-真实空 lineage 通过 strict `EmptyLineage` 状态进入 bounded bootstrap；missing/stale latest
-pointer 会先 rebuild，不能伪装为空。bootstrap 不创建空 artifact，而由 Prepared v5 的零个
+真实空 lineage 通过 strict `EmptyLineage` 状态进入 bounded bootstrap；missing latest
+pointer 必须先通过 immutable sets 的 unique-tip discovery 证明，不能伪装为空。bootstrap 不创建空 artifact，而由 Prepared v5 的零个
 `ExactContextInputs` 固化 exact request。首个真实 ArtifactSet 发布后 bootstrap 自动失效。
 
 DM-5 planner 在任何 maintainer/LLM 执行前，只通过 SessionJournal 暴露的

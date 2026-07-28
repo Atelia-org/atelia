@@ -337,49 +337,58 @@ public sealed class SessionContextCandidateProviderRouteTests : IDisposable {
     }
 
     [Fact]
-    public async Task NthPreviousSelectsExactProviderOrdinal() {
+    public async Task RuntimeSetupUpdate_ReopenSelectsDurableExactOrdinal() {
         string path = NewJournalPath();
         var client = new ScriptedClient();
         client.Enqueue(Terminal("done"));
         var source = new TestContextCandidateSource();
-        using var engine = SessionJournalEngine.Create(
+        SessionContextCandidate older;
+        SessionContextCandidate newer;
+        using (var engine = SessionJournalEngine.Create(
             path,
-            CreateOptions() with {
-                DerivedContextNthPrevious = 1
-            },
+            CreateOptions(),
             CreateRuntime(client, source)
-        );
-        TestContextCandidateFixture older =
-            ContextCandidateTestFixture.CreateAtCurrentHead(
-                engine,
-                "older"
+        )) {
+            older = ContextCandidateTestFixture
+                .CreateAtCurrentHead(engine, "older")
+                .Candidate;
+            engine.AppendObservation("prior turn");
+            _ = engine.AppendImportedAgentAction(
+                new ActionMessage([
+                    new ActionBlock.Text("prior answer")
+                ]),
+                new CompletionDescriptor(
+                    "import",
+                    "v1",
+                    "model-A"
+                )
             );
-        engine.AppendObservation("prior turn");
-        _ = engine.AppendImportedAgentAction(
-            new ActionMessage([
-                new ActionBlock.Text("prior answer")
-            ]),
-            new CompletionDescriptor(
-                "import",
-                "v1",
-                "model-A"
-            )
-        );
-        TestContextCandidateFixture newer =
-            ContextCandidateTestFixture.CreateAtCurrentHead(
-                engine,
-                "newer"
+            newer = ContextCandidateTestFixture
+                .CreateAtCurrentHead(engine, "newer")
+                .Candidate;
+            engine.AppendRuntimeConfigSetup(
+                new SessionRuntimeConfiguration(
+                    "model-A",
+                    "surface-A",
+                    SessionJournalDefaults.Schema,
+                    new SessionDerivedContextConfiguration(1)
+                )
             );
+        }
         source.Candidates = [
-            newer.Candidate,
-            older.Candidate
+            newer,
+            older
         ];
-        engine.UseRuntime(CreateRuntime(client, source));
-
-        _ = await engine.SendAsync(
-            "choose older",
-            CancellationToken.None
-        );
+        using (var reopened = SessionJournalEngine.Open(
+            path,
+            CreateRuntime(client, source)
+        )) {
+            _ = await reopened.SendAsync(
+                "choose older",
+                CancellationToken.None
+            );
+            Assert.Equal(0, reopened.FullProjectionInvocationCount);
+        }
 
         Assert.All(
             source.MaterializedHandles,
@@ -388,7 +397,53 @@ public sealed class SessionContextCandidateProviderRouteTests : IDisposable {
                 handle
             )
         );
-        Assert.Equal(0, engine.FullProjectionInvocationCount);
+    }
+
+    [Fact]
+    public async Task LifecyclePublicationPrecedesDurableOrdinalSelection() {
+        string path = NewJournalPath();
+        var client = new ScriptedClient();
+        client.Enqueue(Terminal("done"));
+        var source = new TestContextCandidateSource();
+        var lifecycle = new TestMemoryLifecycle();
+        using var engine = SessionJournalEngine.Create(
+            path,
+            CreateOptions() with {
+                DerivedContextNthPrevious = 1
+            },
+            CreateRuntime(client, source) with {
+                MemoryLifecycle = lifecycle
+            }
+        );
+        SessionContextCandidate older =
+            ContextCandidateTestFixture
+                .CreateAtCurrentHead(engine, "older")
+                .Candidate;
+        SessionContextCandidate newer = older with {
+            Contributions = older.Contributions.Select(
+                contribution => contribution with {
+                    ExactText = contribution.ExactText + " newer",
+                    ContentSha256 =
+                        SessionContextContributionHasher.ComputeSha256(
+                            contribution.ExactText + " newer"
+                        )
+                }
+            ).ToArray()
+        };
+        source.Candidates = [older];
+        lifecycle.OnPrepare = (_, _) =>
+            source.Candidates = [newer, older];
+
+        _ = await engine.SendAsync(
+            "select after lifecycle",
+            CancellationToken.None
+        );
+
+        Assert.NotEmpty(source.MaterializedHandles);
+        Assert.All(
+            source.MaterializedHandles,
+            handle => Assert.Equal("test-candidate-1", handle)
+        );
     }
 
     [Fact]

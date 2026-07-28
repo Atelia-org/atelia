@@ -14,6 +14,14 @@
 > contracts 的独立可替换程序集；SessionJournal 仅在未 Prepared 的 request planning 阶段消费
 > store-neutral candidate，raw tail recovery 与 Prepared reopen 不依赖该子系统。
 
+> **Current P3 边界（2026-07-29）**：本文正文仍保留历史 Prepared v3 / CS-6 叙事；
+> current raw `RuntimeConfigSetup` 已是 strict body v2，required
+> `derivedContext.nthPrevious >= 0`。governing setup 是 ordinal 的唯一 durable source；
+> provider 只返回 exact nth 的单 candidate/status，不再存在 Latest/Budgeted mode、candidate
+> list fallback、`SessionRuntime.ContextSelection` 或 CLI `--selection`。Prepared v5 exact
+> reopen 仍不访问 DerivedMemory。现行计划与验收见
+> [恢复与 DerivedMemory 化简计划](session-journal-recovery-and-derived-memory-simplification-plan.md)。
+
 ## 0. 定位与边界
 
 `Atelia.SessionJournal`（落地在 `prototypes/SessionJournal`）是长寿命 LLM-Agent 的

@@ -1081,6 +1081,82 @@ public sealed class ProgramDerivedMemoryCommandTests : IDisposable {
     }
 
     [Fact]
+    public async Task OnlineTurnRejectsRetiredSelectionFlagWithoutSideEffects() {
+        Fixture fixture = await CreateFixtureAsync();
+        RawSnapshot rawBefore = ReadRawSnapshot(fixture.Path);
+        IReadOnlyDictionary<string, string> derivedBefore =
+            SnapshotDerivedFiles(fixture.Repository.MemoryRoot);
+        string connectionsPath = Path.Combine(
+            _tempRoot,
+            "retired-selection-connections.json"
+        );
+        string outputPath = Path.Combine(
+            _tempRoot,
+            "retired-selection-result.json"
+        );
+        string callLogDir = Path.Combine(
+            _tempRoot,
+            "retired-selection-calls"
+        );
+        WriteConnections(connectionsPath);
+        var factory = new ConcurrentScriptedCompletionClientFactory(
+            "must-not-run"
+        );
+        string[] args = [
+            "run-online-turn",
+            "--input", fixture.Path,
+            "--branch", fixture.Scope.BranchName,
+            "--message", "must remain ephemeral",
+            "--role",
+            "required:autobiographical-rewrite:produce",
+            "--role",
+            "required:world-understanding-rewrite:produce",
+            "--policy-id", "daily-memory",
+            "--policy-fingerprint", "daily-memory-v1",
+            "--connections", connectionsPath,
+            "--call-log-dir", callLogDir,
+            "--output", outputPath,
+            "--coherence-group", "test-group",
+            "--selection", "latest"
+        ];
+
+        CliOptions parsed = CliOptions.Parse(args.Skip(1).ToArray());
+        ArgumentException error = Assert.Throws<ArgumentException>(
+            () => parsed.EnsureOnly(
+                "input",
+                "branch",
+                "message",
+                "role",
+                "policy-id",
+                "policy-fingerprint",
+                "connections",
+                "connection",
+                "call-log-dir",
+                "output",
+                "raw-suffix-budget",
+                "total-context-budget",
+                "bootstrap-budget",
+                "coherence-group",
+                "uncertain-recovery"
+            )
+        );
+        Assert.Equal("Unknown option --selection.", error.Message);
+
+        int exitCode = Program.MainCore(args, factory);
+
+        Assert.Equal(1, exitCode);
+        Assert.Equal(0, factory.CreateCallCount);
+        Assert.Equal(0, factory.CompletionCallCount);
+        Assert.Equal(rawBefore, ReadRawSnapshot(fixture.Path));
+        Assert.Equal(
+            derivedBefore,
+            SnapshotDerivedFiles(fixture.Repository.MemoryRoot)
+        );
+        Assert.False(File.Exists(outputPath));
+        Assert.False(Directory.Exists(callLogDir));
+    }
+
+    [Fact]
     public async Task OnlineTurnRunsPendingMaintenanceAndAgentCompletion() {
         Fixture fixture = await CreateFixtureAsync();
         RawSnapshot before = ReadRawSnapshot(fixture.Path);

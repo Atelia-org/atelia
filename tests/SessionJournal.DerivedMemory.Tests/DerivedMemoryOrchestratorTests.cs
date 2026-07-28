@@ -196,6 +196,33 @@ public sealed class DerivedMemoryOrchestratorTests : IDisposable {
             );
         Assert.NotNull(nth.Candidate);
         Assert.NotEqual(latest.Candidate.Handle, nth.Candidate.Handle);
+        SessionContextCandidateSelection unavailable =
+            await secondCoordinator.SelectAsync(
+                new(advanced, 2),
+                CancellationToken.None
+            );
+        Assert.Equal(
+            SessionContextCandidateSelectionStatus.OrdinalUnavailable,
+            unavailable.Status
+        );
+        Assert.Null(unavailable.Candidate);
+
+        File.Delete(Path.Combine(
+            fixture.Repository.ArtifactSets.SetsDirectory,
+            $"{firstSet.SetId}.json"
+        ));
+        InvalidDataException missingLink =
+            await Assert.ThrowsAsync<InvalidDataException>(
+                async () => await secondCoordinator.SelectAsync(
+                    new(advanced, 1),
+                    CancellationToken.None
+                )
+            );
+        Assert.Contains(
+            "missing previous set",
+            missingLink.Message,
+            StringComparison.OrdinalIgnoreCase
+        );
     }
 
     [Fact]

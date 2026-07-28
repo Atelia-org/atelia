@@ -16,11 +16,12 @@
 > derived-only ArtifactSet 为唯一实现路径；raw audit 和 Prepared exact reopen 不打开
 > DerivedMemory。unprepared online planning 由 host 注入 lifecycle/provider。
 >
-> **P0 active-target supersession（2026-07-29）**：DM-8 的 `Latest` / `NthPrevious` /
-> `Budgeted`、runtime-local selection 与 full reducer residency 仍是 current implementation fact，
-> 不是长期保留承诺。active target 是 existing active branch + lifetime-bound `RefId`、
-> `RuntimeConfigSetup` durable exact ordinal、无自动 candidate fallback、保留 shared epoch
-> backpressure，以及把 full replay/audit 迁出 online core。P1～P6 的 cutover 与验收以
+> **P3 current supersession（2026-07-29）**：DM-8 的 `Latest` / `NthPrevious` /
+> `Budgeted` 与 runtime-local selection 现已是 historical implementation fact；current
+> contract 只保留 governing `RuntimeConfigSetup` v2 中 durable `derivedContext.nthPrevious`
+> 驱动的 exact single-candidate selection，无 automatic fallback。current architecture
+> 同时保留 existing active branch + lifetime-bound `RefId` 与 shared epoch backpressure；
+> 把 full replay/audit 迁出 online core 仍是后续目标。P1～P6 的 cutover 与验收以
 > [化简计划](session-journal-recovery-and-derived-memory-simplification-plan.md)为准。
 
 ## 1. 文档定位
@@ -402,56 +403,55 @@ raw/artifact 语义的前提下，按
 [P1～P6 active plan](session-journal-recovery-and-derived-memory-simplification-plan.md)
 化简 branch、selection、audit 与 orchestration 边界，而不是把能力回迁到 ChatSession。
 
-## 7. Context Selection（Current DM-8 与 P3/P4 active target）
+## 7. Context Selection（Current P3 与 P4 active target）
 
-### 7.1 Current 边界：coherent-only，不是通用预算规划器
+### 7.1 Current 边界：durable exact ordinal
 
 current online request path 只接受 host 注入的 coherent candidate source；core 通过 bounded
-two-phase discovery/materialization 按 `Latest`、`NthPrevious` 或 `Budgeted` 处理 candidates，并把
-选中 candidate 与 dependency-closed raw suffix 物化为 request。三个 budget 字段都是 current
-request-policy knobs，而不是 `Budgeted` mode 私有配置：
+two-phase selection/materialization 按 governing `RuntimeConfigSetup` v2 的
+`derivedContext.nthPrevious` 选择一个 exact candidate，并把它与 dependency-closed raw suffix
+物化为 request。`n = 0` 等价于 latest，但 production contract 不再保留 `Latest` mode。
+provider 只返回 `Selected`、`EmptyLineage` 或 `OrdinalUnavailable` 与至多一个 descriptor；
+lineage link 缺失/损坏或 ordinal 越界都不跳过、不重编号。
 
-- `RawSuffixTokenBudget` 会过滤 `Latest`、`NthPrevious` 与 `Budgeted` 的 candidate；
-- `TotalContextTokenBudget` 会在 materialization 后 guard 三种 mode 的 request；
-- `BootstrapRawSuffixTokenBudget` 专门启用并限制 empty-lineage zero-input bootstrap，bootstrap
-  同时仍受适用的 raw/total budget 约束。
-
-`Latest` / `NthPrevious` 只尝试其指定 candidate，超限即 not-ready；只有 `Budgeted` 会在多个
-candidate 中继续自动 fallback，并且要求至少配置 raw 或 total budget。current 不会静默退回无界
-full raw，retrieval 与多 coherence-group 组合仍未实现。
+current 仍有临时 `SessionRuntime.ContextBudgets`：raw/total budget 只 guard 已精确选中的
+candidate，bootstrap budget 只启用/限制 healthy empty-lineage zero-input bootstrap；任一超限都
+not-ready，绝不自动改选另一个 set。P4 将继续收窄/删除这些 budget 与 bootstrap knobs，并加入
+fresh-genesis topology eligibility。current 不会静默退回无界 full raw，retrieval 与多
+coherence-group 组合仍未实现。
 
 current 内部 `SessionContextPlan` 描述 Prepared v5 的单一 coherent recipe：raw start、raw range
 hash、exact context snapshots 与 paired setup refs，不含 raw `ActiveArtifactSet` reference。
-Prepared 是 execution fact；candidate selection policy 仍是 host/runtime contract，不是 raw planner
-公共 contract。
+Prepared 是 execution fact；ordinal policy 已是 raw governing setup 的 durable contract，而
+provider/domain 仍由 host provision。
 
-### 7.2 Active target：Agent-controlled exact ordinal
+### 7.2 Current exact ordinal invariants 与 P4 bootstrap target
 
-P3/P4 active target 不再建设 automatic budget candidate planner。Agent 通过 governing
+P3 已删除 automatic budget candidate planner。Agent 通过 governing
 `RuntimeConfigSetup` 持久化 `nthPrevious`：`0` 选择 selected branch 当前 published coherent set
 lineage 的最新 set，`n` 选择沿 `PreviousSetId` 向前的精确第 n 个 set。tail-only projection 的边界
 仍来自该 set 的 raw anchor；更旧 set 自然产生更长 recent raw suffix。
 
-selection 必须满足：
+P3 current exact selection 与 P4 strict bootstrap target 分别必须满足：
 
-- ordinal 是唯一 Agent-controlled durable source；host/runtime 不再注入第二份选择；
-- exact nth link 缺失、损坏、越界或 raw anchor 无法验证时显式 not-ready，不跳过、不重编号；
-- provider 保留 descriptor/materialization 两阶段，但只服务 bounded IO 与 raw authority proof，
+- **current**：ordinal 是唯一 Agent-controlled durable source；host/runtime 不再注入第二份选择；
+- **current**：exact nth link 缺失、损坏、越界或 raw anchor 无法验证时显式 not-ready，不跳过、不重编号；
+- **current**：provider 保留 descriptor/materialization 两阶段，但只服务 bounded IO 与 raw authority proof，
   不返回一组 candidates 供 core 自动试选；
-- strict bootstrap 只识别 first-online-request 的 fresh-genesis topology，不证明“从未发布 set”：
+- **P4 target**：strict bootstrap 只识别 first-online-request 的 fresh-genesis topology，不证明“从未发布 set”：
   provider 必须报告 healthy empty lineage，raw ancestry 必须无 Prepared；raw tail 可以处于
   `SessionCreated` 后只有 governing setup 更新的 pre-append boundary，也可以在该 fresh predecessor
   后恰有一个 active first `ObservationAccepted` 的 exact/recovery boundary。后者覆盖 `Send` append
   observation 后、Prepared 前的第二阶段与 crash/reopen；该 observation 后不得再有
   history/execution-bearing fact，也不允许把任意历史 observation 当成 fresh；
-- fresh genesis 上未被 Prepared 使用的 derived set 即使曾发布后又删空，仍允许 bootstrap，不影响
+- **P4 target**：fresh genesis 上未被 Prepared 使用的 derived set 即使曾发布后又删空，仍允许 bootstrap，不影响
   raw correctness；imported/legacy non-genesis history 不允许 bootstrap，但 offline maintainers /
   rebuild 可以在首个 Prepared 前发布 set，online 再按 exact ordinal 使用；
-- selected exact request 超过 hard guard 时 fail-fast，不自动换另一个 set；
-- Prepared v5 固定实际 request；之后 setup、latest pointer 或 DerivedMemory 变化都不触发重选。
+- **current**：selected exact request 超过 hard guard 时 fail-fast，不自动换另一个 set；
+- **current**：Prepared v5 固定实际 request；之后 setup、latest pointer 或 DerivedMemory 变化都不触发重选。
 
 若未来引入 retrieval、多 selection domain 或模型辅助选择，必须另立 durable Agent policy 与
-Prepared audit contract；它们不是本轮保留 current `Budgeted` mode 的理由。
+Prepared audit contract；它们不是恢复 historical `Budgeted` mode 的理由。
 
 ### 7.3 Historical：Prepared v3 基线与 self-contained Prepared v4 目标
 
@@ -504,10 +504,10 @@ exact epoch，不拥有 split policy。current DerivedMemory epoch planner 统�
 该 epoch 的 producer candidate，不重新切分 history。
 
 current `RawSuffixTokenBudget`、`TotalContextTokenBudget` 与
-`BootstrapRawSuffixTokenBudget` 是 request-policy/budget knobs：前两者也过滤或 guard
-`Latest` / `NthPrevious`，而 `Budgeted` 使用其中至少一个预算在多个 candidates 间自动 fallback；
-第三个只启用/限制 bootstrap。active target 将三者连同 automatic fallback 删除，改成 exact ordinal
-之后的一次 final request guard。该 guard 使用 deterministic estimate 时必须如实命名；current
+`BootstrapRawSuffixTokenBudget` 位于临时 `SessionRuntime.ContextBudgets`：它们只拒绝 exact
+candidate 或限制 empty-lineage bootstrap，不参与 selection，也不会 fallback。P4 target 将收窄/
+删除这些 knobs，改成 exact ordinal 之后的一次 final request guard，并收紧 fresh-genesis
+bootstrap eligibility。该 guard 使用 deterministic estimate 时必须如实命名；current
 canonical JSON byte length 粗略换算不等于真实 model tokenizer 或 provider context window。
 
 ### 7.5 选择结果也是事实
@@ -839,9 +839,10 @@ migration 细节。
    ownership 从 runner 收回 planner，支持独立 prompt-tuning 与重试。
 8. **DM-7 — Orchestration 与 publication（已完成）**：协调多个 producer、partial settlement 和原子
    ArtifactSet publication；只有完整 coherent set 才成为候选。
-9. **DM-8 — Online lifecycle 与 selection（已完成）**：由 Host 组合 planning、maintenance 与
-   provider；支持 latest/Nth/budgeted、bounded empty-lineage bootstrap、restart resume 与 explicit
-   backpressure。§7.2 更严格的 fresh-genesis topology eligibility 属于 P4 active target。
+9. **DM-8 — Online lifecycle 与 selection（已完成，selection 由 P3 supersede）**：由 Host 组合
+   planning、maintenance 与 provider；历史实现曾支持 latest/Nth/budgeted。current P3 只保留
+   durable exact nth、bounded empty-lineage bootstrap、restart resume 与 explicit backpressure；
+   §7.2 更严格的 fresh-genesis topology eligibility 与 budget 化简属于 P4 active target。
 
 这条路线的关键不是把文件机械搬到新项目，而是先解除 raw materialization 和 Prepared 对 concrete
 derived shape 的依赖，再建立独立 DerivedMemory，最后删除 raw activation。不得为了缩短过渡期让
