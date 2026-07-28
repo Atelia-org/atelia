@@ -48,7 +48,8 @@ internal static class SessionEventCodec {
         if (!root.TryGetProperty("body", out JsonElement body)) {
             throw new InvalidDataException("Session event envelope is missing required property 'body'.");
         }
-        if (SessionOperationalSemantics.IsActionKind(kind)
+        if (kind is SessionEventKind.RuntimeConfigSetup
+            || SessionOperationalSemantics.IsActionKind(kind)
             || SessionOperationalSemantics.IsToolSegmentKind(kind)
             || kind is SessionEventKind.CompletionRequestPrepared
             or SessionEventKind.CompletionAttemptFailed
@@ -74,7 +75,7 @@ internal static class SessionEventCodec {
 
     internal static int GetExpectedBodySchemaVersion(SessionEventKind kind)
         => kind switch {
-            SessionEventKind.RuntimeConfigSetup => 1,
+            SessionEventKind.RuntimeConfigSetup => 2,
             SessionEventKind.SystemPromptSetup => 1,
             SessionEventKind.SessionCreated => 1,
             SessionEventKind.ObservationAccepted => 1,
@@ -96,6 +97,13 @@ internal static class SessionEventCodec {
         ValidateRequired(body.ModelId, nameof(body.ModelId));
         ValidateRequired(body.CompletionSurfaceId, nameof(body.CompletionSurfaceId));
         ValidateRequired(body.Schema, nameof(body.Schema));
+        ArgumentNullException.ThrowIfNull(body.DerivedContext);
+        if (body.DerivedContext.NthPrevious < 0) {
+            throw new ArgumentOutOfRangeException(
+                nameof(body.DerivedContext.NthPrevious),
+                "Derived context nth-previous ordinal cannot be negative."
+            );
+        }
 
         var buffer = new ArrayBufferWriter<byte>();
         using (var writer = new Utf8JsonWriter(buffer, WriterOptions)) {
@@ -104,6 +112,12 @@ internal static class SessionEventCodec {
             writer.WriteString("modelId", body.ModelId);
             writer.WriteString("completionSurfaceId", body.CompletionSurfaceId);
             writer.WriteString("schema", body.Schema);
+            writer.WriteStartObject("derivedContext");
+            writer.WriteNumber(
+                "nthPrevious",
+                body.DerivedContext.NthPrevious
+            );
+            writer.WriteEndObject();
             writer.WriteEndObject();
             writer.WriteEndObject();
         }
@@ -337,10 +351,43 @@ internal static class SessionEventCodec {
 
     private static SessionRuntimeConfiguration DecodeRuntimeConfiguration(JsonElement body) {
         RequireObject(body, "runtime-config-setup body");
+        RequireExactProperties(
+            body,
+            "runtime-config-setup body",
+            "modelId",
+            "completionSurfaceId",
+            "schema",
+            "derivedContext"
+        );
+        if (!body.TryGetProperty(
+                "derivedContext",
+                out JsonElement derivedContext
+            )) {
+            throw new InvalidDataException(
+                "runtime-config-setup body is missing required property 'derivedContext'."
+            );
+        }
+        RequireObject(
+            derivedContext,
+            "runtime-config-setup derivedContext"
+        );
+        RequireExactProperties(
+            derivedContext,
+            "runtime-config-setup derivedContext",
+            "nthPrevious"
+        );
+        int nthPrevious =
+            ReadRequiredInt32(derivedContext, "nthPrevious");
+        if (nthPrevious < 0) {
+            throw new InvalidDataException(
+                "runtime-config-setup derivedContext.nthPrevious cannot be negative."
+            );
+        }
         return new SessionRuntimeConfiguration(
             ReadRequiredString(body, "modelId"),
             ReadRequiredString(body, "completionSurfaceId"),
-            ReadRequiredString(body, "schema")
+            ReadRequiredString(body, "schema"),
+            new SessionDerivedContextConfiguration(nthPrevious)
         );
     }
 

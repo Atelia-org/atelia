@@ -35,7 +35,8 @@ public sealed class SessionExecutionTailResolverTests : IDisposable {
             new SessionRuntimeConfiguration(
                 "model-A",
                 "surface-A",
-                SessionJournalDefaults.Schema
+                SessionJournalDefaults.Schema,
+                new(0)
             )
         );
         EventAddress prompt = Commit(
@@ -550,7 +551,8 @@ public sealed class SessionExecutionTailResolverTests : IDisposable {
             new SessionRuntimeConfiguration(
                 "model-A",
                 "surface-A",
-                SessionJournalDefaults.Schema
+                SessionJournalDefaults.Schema,
+                new(0)
             )
         );
         EventAddress prompt = Commit(
@@ -691,7 +693,8 @@ public sealed class SessionExecutionTailResolverTests : IDisposable {
             new SessionRuntimeConfiguration(
                 "model-A",
                 "surface-A",
-                SessionJournalDefaults.Schema
+                SessionJournalDefaults.Schema,
+                new(0)
             )
         );
         EventAddress prompt = Commit(
@@ -1022,7 +1025,8 @@ public sealed class SessionExecutionTailResolverTests : IDisposable {
                     new SessionRuntimeConfiguration(
                         "model-B",
                         "surface-B",
-                        SessionJournalDefaults.Schema
+                        SessionJournalDefaults.Schema,
+                        new(0)
                     )
                 );
                 break;
@@ -1093,7 +1097,8 @@ public sealed class SessionExecutionTailResolverTests : IDisposable {
                     new SessionRuntimeConfiguration(
                         "model-A",
                         "surface-A",
-                        SessionJournalDefaults.Schema
+                        SessionJournalDefaults.Schema,
+                        new(0)
                     ),
                     prompt,
                     "system"
@@ -1145,7 +1150,8 @@ public sealed class SessionExecutionTailResolverTests : IDisposable {
             new SessionRuntimeConfiguration(
                 "model-A",
                 "surface-A",
-                SessionJournalDefaults.Schema
+                SessionJournalDefaults.Schema,
+                new(0)
             )
         );
         EventAddress prompt = Commit(
@@ -1197,7 +1203,8 @@ public sealed class SessionExecutionTailResolverTests : IDisposable {
             new SessionRuntimeConfiguration(
                 "model-A",
                 "surface-A",
-                SessionJournalDefaults.Schema
+                SessionJournalDefaults.Schema,
+                new(0)
             )
         );
         head = Commit(
@@ -1320,7 +1327,8 @@ public sealed class SessionExecutionTailResolverTests : IDisposable {
             new SessionRuntimeConfiguration(
                 "model-A",
                 "surface-A",
-                SessionJournalDefaults.Schema
+                SessionJournalDefaults.Schema,
+                new(0)
             ),
             prompt,
             "system-A"

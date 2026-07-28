@@ -377,7 +377,8 @@ public sealed class SessionDependencyClosedFoldSeedTests {
             new SessionRuntimeConfiguration(
                 "model",
                 "surface",
-                SessionJournalDefaults.Schema
+                SessionJournalDefaults.Schema,
+                new(0)
             ),
             PromptSetup,
             "system"

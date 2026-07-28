@@ -18,7 +18,7 @@ public sealed class SessionEventBodySchemaVersionTests {
     }
 
     [Fact]
-    public void ExpectedVersionMap_DefinesPreparedV5FailureV2AndV1ForOtherKinds() {
+    public void ExpectedVersionMap_DefinesPreparedV5RuntimeAndFailureV2AndV1ForOtherKinds() {
         SessionEventKind[] kinds = Enum.GetValues<SessionEventKind>();
 
         Assert.NotEmpty(kinds);
@@ -137,6 +137,7 @@ public sealed class SessionEventBodySchemaVersionTests {
     private static int ExpectedVersion(SessionEventKind kind)
         => kind switch {
             SessionEventKind.CompletionRequestPrepared => 5,
+            SessionEventKind.RuntimeConfigSetup => 2,
             SessionEventKind.CompletionAttemptFailed => 2,
             _ => 1
         };

@@ -785,7 +785,6 @@ internal static class Program {
             "connection",
             "call-log-dir",
             "output",
-            "selection",
             "raw-suffix-budget",
             "total-context-budget",
             "bootstrap-budget",
@@ -1008,8 +1007,6 @@ internal static class Program {
                 Command: "run-online-turn/agent"
             )
         );
-        SJ.SessionContextSelectionOptions selection =
-            ParseOnlineSelection(options);
         SJ.SessionContextBudgetOptions budgets =
             ParseOnlineBudgets(options, config);
         SJ.SessionUncertainCompletionRecoveryPolicy recoveryPolicy =
@@ -1031,9 +1028,8 @@ internal static class Program {
             ),
             MaxTokens: connection.MaxTokens,
             UncertainCompletionRecoveryPolicy:
-                recoveryPolicy,
+            recoveryPolicy,
             ContextCandidateSource: coordinator,
-            ContextSelection: selection,
             ContextBudgets: budgets,
             MemoryLifecycle: coordinator
         );
@@ -1116,38 +1112,6 @@ internal static class Program {
                 "--uncertain-recovery must be refuse or restart-new-attempt."
             )
         };
-    }
-
-    private static SJ.SessionContextSelectionOptions
-        ParseOnlineSelection(
-        CliOptions options
-    ) {
-        string value =
-            options.GetOptionalSingle("selection")
-            ?? "latest";
-        int ordinal = 0;
-        if (string.Equals(
-                value,
-                "latest",
-                StringComparison.Ordinal
-            )) {
-        }
-        else if (value.StartsWith(
-                     "nth:",
-                     StringComparison.Ordinal
-                 )
-                 && int.TryParse(
-                     value.AsSpan(4),
-                     out ordinal
-                 )
-                 && ordinal >= 0) {
-        }
-        else {
-            throw new ArgumentException(
-                "--selection must be latest or nth:<zero-based-ordinal>."
-            );
-        }
-        return new(ordinal);
     }
 
     private static SJ.SessionContextBudgetOptions
@@ -1531,7 +1495,6 @@ internal static class Program {
             + "--policy-id <token> --policy-fingerprint <token> "
             + "--connections <path> [--connection <id>] "
             + "--output <json> [--call-log-dir <dir>] "
-            + "[--selection latest|budgeted|nth:<n>] "
             + "[--raw-suffix-budget <n>] "
             + "[--total-context-budget <n>] "
             + "[--bootstrap-budget <n>] "

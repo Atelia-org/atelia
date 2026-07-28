@@ -45,7 +45,7 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
             candidate = CreateCandidate(engine, anchor);
 
             runtimeB = engine.AppendRuntimeConfigSetup(
-                new SessionRuntimeConfiguration("model-B", "surface-B", SessionJournalDefaults.Schema)
+                new SessionRuntimeConfiguration("model-B", "surface-B", SessionJournalDefaults.Schema, new(0))
             );
             promptB = engine.AppendSystemPromptSetup("system-B");
             engine.UseRuntime(CreateRuntime(client, candidate));
@@ -636,7 +636,8 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
                 new SessionRuntimeConfiguration(
                     "off-model",
                     "off-surface",
-                    SessionJournalDefaults.Schema
+                    SessionJournalDefaults.Schema,
+                    new(0)
                 )
             );
         }
@@ -688,7 +689,7 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
                         RawStartSetups = validPreparedBody.Plan.RawStartSetups with {
                             RuntimeConfig = new SessionSetupReference(
                                 offBranchRuntimeSetup,
-                                1,
+                                2,
                                 new string('e', 64)
                             )
                         }
@@ -742,7 +743,8 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
                     new SessionRuntimeConfiguration(
                         "model-B",
                         "surface-B",
-                        SessionJournalDefaults.Schema
+                        SessionJournalDefaults.Schema,
+                        new(0)
                     )
                 );
             }

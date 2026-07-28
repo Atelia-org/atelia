@@ -1116,7 +1116,6 @@ public sealed class ProgramDerivedMemoryCommandTests : IDisposable {
             "--call-log-dir", callLogDir,
             "--output", outputPath,
             "--coherence-group", "test-group",
-            "--selection", "latest",
             "--bootstrap-budget", "1000"
         ], factory);
 

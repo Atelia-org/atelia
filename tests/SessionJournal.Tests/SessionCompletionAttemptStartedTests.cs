@@ -147,7 +147,8 @@ public sealed class SessionCompletionAttemptStartedTests {
                 new SessionRuntimeConfiguration(
                     "runtime-model",
                     "surface",
-                    SessionJournalDefaults.Schema
+                    SessionJournalDefaults.Schema,
+                    new(0)
                 ),
                 runtime,
                 null

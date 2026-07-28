@@ -1647,7 +1647,8 @@ public sealed class DerivedArtifactEpochPlannerTests : IDisposable {
             new SessionRuntimeConfiguration(
                 "model-A",
                 "surface-A",
-                SessionJournalDefaults.Schema
+                SessionJournalDefaults.Schema,
+                new(0)
             )
         );
         EventAddress prompt = CommitRaw(

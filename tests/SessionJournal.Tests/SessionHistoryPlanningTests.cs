@@ -212,7 +212,8 @@ public sealed class SessionHistoryPlanningTests : IDisposable {
             var runtimeBody = new SessionRuntimeConfiguration(
                     "model-A",
                     "surface-A",
-                    SessionJournalDefaults.Schema
+                    SessionJournalDefaults.Schema,
+                    new(0)
                 );
             byte[] runtimePayload = SessionEventCodec.Encode(
                 SessionEventKind.RuntimeConfigSetup,
@@ -371,7 +372,8 @@ public sealed class SessionHistoryPlanningTests : IDisposable {
                 new SessionRuntimeConfiguration(
                     "model-A",
                     "surface-A",
-                    SessionJournalDefaults.Schema
+                    SessionJournalDefaults.Schema,
+                    new(0)
                 )
             );
             EventAddress prompt = Commit(

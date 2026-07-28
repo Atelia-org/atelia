@@ -2022,8 +2022,6 @@ public sealed class SessionJournalEngine : IDisposable {
         SessionRuntime runtime
     ) {
         _ = RequireContextCandidateSource(runtime);
-        (runtime.ContextSelection ?? SessionContextSelectionOptions.Default)
-            .ValidateShape();
         (runtime.ContextBudgets ?? SessionContextBudgetOptions.Default)
             .ValidateShape();
     }
@@ -2090,25 +2088,26 @@ public sealed class SessionJournalEngine : IDisposable {
         ImmutableArray<ToolDefinition> tools,
         CancellationToken cancellationToken
     ) {
-        SessionContextSelectionOptions selectionOptions =
-            runtime.ContextSelection
-            ?? SessionContextSelectionOptions.Default;
         SessionContextBudgetOptions budgets =
             runtime.ContextBudgets
             ?? SessionContextBudgetOptions.Default;
+        SessionGoverningSetup governingSetup =
+            EnsurePlanningGoverningSetupCursor(
+                currentBoundary,
+                cancellationToken
+            );
         SessionContextSelectionRequest request =
-            selectionOptions.CreateRequest(currentBoundary);
+            new(
+                currentBoundary,
+                governingSetup.RuntimeConfig
+                    .DerivedContext.NthPrevious
+            );
         ICoherentContextCandidateSource source =
             RequireContextCandidateSource(runtime);
         SessionContextCandidateSelection selection = await source
             .SelectAsync(request, cancellationToken)
             .ConfigureAwait(false);
         ArgumentNullException.ThrowIfNull(selection);
-        SessionGoverningSetup governingSetup =
-            EnsurePlanningGoverningSetupCursor(
-                currentBoundary,
-                cancellationToken
-            );
         var projectedObservation =
             new ObservationMessage(pendingObservation);
         long projectedObservationTokens =
@@ -2239,14 +2238,15 @@ public sealed class SessionJournalEngine : IDisposable {
         CancellationToken cancellationToken
     ) {
         ICoherentContextCandidateSource source = RequireContextCandidateSource(runtime);
-        SessionContextSelectionOptions selectionOptions =
-            runtime.ContextSelection
-            ?? SessionContextSelectionOptions.Default;
         SessionContextBudgetOptions budgets =
             runtime.ContextBudgets
             ?? SessionContextBudgetOptions.Default;
         SessionContextSelectionRequest request =
-            selectionOptions.CreateRequest(completionBoundary);
+            new(
+                completionBoundary,
+                governingSetup.RuntimeConfig
+                    .DerivedContext.NthPrevious
+            );
         SessionContextCandidateSelection selection = await source
             .SelectAsync(request, cancellationToken)
             .ConfigureAwait(false);
@@ -2939,6 +2939,12 @@ public sealed class SessionJournalEngine : IDisposable {
         ValidateRequired(options.ModelId, nameof(options.ModelId));
         ValidateRequired(options.CompletionSurfaceId, nameof(options.CompletionSurfaceId));
         ValidateRequired(options.Schema, nameof(options.Schema));
+        if (options.DerivedContextNthPrevious < 0) {
+            throw new ArgumentOutOfRangeException(
+                nameof(options.DerivedContextNthPrevious),
+                "Derived context nth-previous ordinal cannot be negative."
+            );
+        }
         if (options.SystemPrompt is null) { throw new ArgumentNullException(nameof(options.SystemPrompt)); }
     }
 
@@ -2946,6 +2952,13 @@ public sealed class SessionJournalEngine : IDisposable {
         ValidateRequired(configuration.ModelId, nameof(configuration.ModelId));
         ValidateRequired(configuration.CompletionSurfaceId, nameof(configuration.CompletionSurfaceId));
         ValidateRequired(configuration.Schema, nameof(configuration.Schema));
+        ArgumentNullException.ThrowIfNull(configuration.DerivedContext);
+        if (configuration.DerivedContext.NthPrevious < 0) {
+            throw new ArgumentOutOfRangeException(
+                nameof(configuration.DerivedContext.NthPrevious),
+                "Derived context nth-previous ordinal cannot be negative."
+            );
+        }
     }
 
     private static void ValidateRequired(string value, string name) {

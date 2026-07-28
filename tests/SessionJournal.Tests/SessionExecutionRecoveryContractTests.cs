@@ -40,7 +40,7 @@ public sealed class SessionExecutionRecoveryContractTests : IDisposable {
         DecodedSessionEvent[] bootstrap = [
             Event(
                 SessionEventKind.RuntimeConfigSetup,
-                new SessionRuntimeConfiguration("model-A", "surface-A", SessionJournalDefaults.Schema),
+                new SessionRuntimeConfiguration("model-A", "surface-A", SessionJournalDefaults.Schema, new(0)),
                 runtime,
                 null
             ),

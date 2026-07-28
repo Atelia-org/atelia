@@ -78,23 +78,13 @@ public sealed class SessionContextCandidateProviderRouteTests : IDisposable {
         }
     }
 
-    [Theory]
-    [InlineData("ordinal")]
-    [InlineData("token-budget")]
-    public async Task InvalidSelectionOptions_FailBeforeObservationOrSelection(
-        string invalidCase
-    ) {
+    [Fact]
+    public async Task InvalidBudgetOptions_FailBeforeObservationOrSelection() {
         string path = NewJournalPath();
         var client = new ScriptedClient();
         var source = new TestContextCandidateSource();
-        SessionRuntime runtime = invalidCase switch {
-            "ordinal" => CreateRuntime(client, source) with {
-                ContextSelection = new(-1)
-            },
-            "token-budget" => CreateRuntime(client, source) with {
-                ContextBudgets = new(RawSuffixTokenBudget: 0)
-            },
-            _ => throw new ArgumentOutOfRangeException(nameof(invalidCase))
+        SessionRuntime runtime = CreateRuntime(client, source) with {
+            ContextBudgets = new(RawSuffixTokenBudget: 0)
         };
         using var engine = SessionJournalEngine.Create(
             path,
@@ -110,6 +100,20 @@ public sealed class SessionContextCandidateProviderRouteTests : IDisposable {
         Assert.Equal(head, engine.ResolveExecutionTail().Head);
         Assert.Equal(0, source.SelectionCount);
         Assert.Equal(0, client.Calls);
+    }
+
+    [Fact]
+    public void InvalidDurableOrdinal_FailsCreate() {
+        string path = NewJournalPath();
+
+        Assert.Throws<ArgumentOutOfRangeException>(
+            () => SessionJournalEngine.Create(
+                path,
+                CreateOptions() with {
+                    DerivedContextNthPrevious = -1
+                }
+            )
+        );
     }
 
     [Fact]
@@ -340,7 +344,9 @@ public sealed class SessionContextCandidateProviderRouteTests : IDisposable {
         var source = new TestContextCandidateSource();
         using var engine = SessionJournalEngine.Create(
             path,
-            CreateOptions(),
+            CreateOptions() with {
+                DerivedContextNthPrevious = 1
+            },
             CreateRuntime(client, source)
         );
         TestContextCandidateFixture older =
@@ -368,14 +374,7 @@ public sealed class SessionContextCandidateProviderRouteTests : IDisposable {
             newer.Candidate,
             older.Candidate
         ];
-        engine.UseRuntime(
-            CreateRuntime(client, source) with {
-                ContextSelection =
-                    new SessionContextSelectionOptions(
-                        NthPrevious: 1
-                    )
-            }
-        );
+        engine.UseRuntime(CreateRuntime(client, source));
 
         _ = await engine.SendAsync(
             "choose older",
@@ -400,7 +399,9 @@ public sealed class SessionContextCandidateProviderRouteTests : IDisposable {
         var source = new TestContextCandidateSource();
         using var engine = SessionJournalEngine.Create(
             path,
-            CreateOptions(),
+            CreateOptions() with {
+                DerivedContextNthPrevious = 1
+            },
             CreateRuntime(client, source)
         );
         TestContextCandidateFixture oldBase =
@@ -441,10 +442,6 @@ public sealed class SessionContextCandidateProviderRouteTests : IDisposable {
         source.Candidates = [newer, older];
         engine.UseRuntime(
             CreateRuntime(client, source) with {
-                ContextSelection =
-                    new SessionContextSelectionOptions(
-                        NthPrevious: 1
-                    ),
                 ContextBudgets =
                     new SessionContextBudgetOptions(
                         RawSuffixTokenBudget: 10_000,

@@ -139,7 +139,8 @@ public sealed class SessionPreparedRequestReconstructorTests : IDisposable {
             new SessionRuntimeConfiguration(
                 "model-side",
                 "surface-side",
-                SessionJournalDefaults.Schema
+                SessionJournalDefaults.Schema,
+                new(0)
             )
         );
         EventAddress sidePrompt = Commit(
@@ -257,7 +258,7 @@ public sealed class SessionPreparedRequestReconstructorTests : IDisposable {
                 Setups = scenario.Manifest.Setups with {
                     RuntimeConfig =
                         scenario.Manifest.Setups.RuntimeConfig with {
-                            BodySchemaVersion = 2
+                            BodySchemaVersion = 3
                         }
                 }
             },
@@ -363,7 +364,8 @@ public sealed class SessionPreparedRequestReconstructorTests : IDisposable {
             new SessionRuntimeConfiguration(
                 "model-A",
                 "surface-A",
-                SessionJournalDefaults.Schema
+                SessionJournalDefaults.Schema,
+                new(0)
             )
         );
 
@@ -391,7 +393,8 @@ public sealed class SessionPreparedRequestReconstructorTests : IDisposable {
             new SessionRuntimeConfiguration(
                 "model-A",
                 "surface-A",
-                SessionJournalDefaults.Schema
+                SessionJournalDefaults.Schema,
+                new(0)
             )
         );
         EventAddress prompt = Commit(
@@ -414,7 +417,7 @@ public sealed class SessionPreparedRequestReconstructorTests : IDisposable {
         if (useNewerAnchorSetup) {
             governingRuntime = Commit(
                 journal, created, SessionEventKind.RuntimeConfigSetup,
-                new SessionRuntimeConfiguration("model-B", "surface-B", SessionJournalDefaults.Schema)
+                new SessionRuntimeConfiguration("model-B", "surface-B", SessionJournalDefaults.Schema, new(0))
             );
             governingPrompt = Commit(
                 journal, governingRuntime, SessionEventKind.SystemPromptSetup,

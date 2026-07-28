@@ -48,10 +48,18 @@ public sealed record SessionCreateOptions(
     string ModelId,
     string SystemPrompt,
     string CompletionSurfaceId,
-    string Schema = SessionJournalDefaults.Schema
+    string Schema = SessionJournalDefaults.Schema,
+    int DerivedContextNthPrevious = 0
 ) {
     public SessionRuntimeConfiguration ToRuntimeConfiguration()
-        => new(ModelId, CompletionSurfaceId, Schema);
+        => new(
+            ModelId,
+            CompletionSurfaceId,
+            Schema,
+            new SessionDerivedContextConfiguration(
+                DerivedContextNthPrevious
+            )
+        );
 }
 
 /// <summary>
@@ -90,35 +98,9 @@ public sealed record SessionRuntime(
         SessionUncertainCompletionRecoveryPolicy.Refuse,
     SessionToolRuntimeIdentity? ToolRuntimeIdentity = null,
     ICoherentContextCandidateSource? ContextCandidateSource = null,
-    SessionContextSelectionOptions? ContextSelection = null,
     SessionContextBudgetOptions? ContextBudgets = null,
     ISessionMemoryLifecycleCoordinator? MemoryLifecycle = null
 );
-
-/// <summary>
-/// Temporary runtime-local ordinal policy. P3-B moves this durable choice into RuntimeConfigSetup.
-/// </summary>
-public sealed record SessionContextSelectionOptions(
-    int NthPrevious = 0
-) {
-    public static SessionContextSelectionOptions Default { get; } = new();
-
-    public void ValidateShape() {
-        if (NthPrevious < 0) {
-            throw new ArgumentOutOfRangeException(
-                nameof(NthPrevious),
-                "Nth-previous ordinal cannot be negative."
-            );
-        }
-    }
-
-    public SessionContextSelectionRequest CreateRequest(EventAddress completionBoundary) {
-        ValidateShape();
-        var request = new SessionContextSelectionRequest(completionBoundary, NthPrevious);
-        request.ValidateShape();
-        return request;
-    }
-}
 
 /// <summary>
 /// Runtime-local token guards for one already-selected exact candidate. Budgets never cause
@@ -233,7 +215,12 @@ internal sealed class SessionJournalFailpointException(SessionJournalFailpoint f
 public sealed record SessionRuntimeConfiguration(
     string ModelId,
     string CompletionSurfaceId,
-    string Schema
+    string Schema,
+    SessionDerivedContextConfiguration DerivedContext
+);
+
+public sealed record SessionDerivedContextConfiguration(
+    int NthPrevious
 );
 
 public sealed record SessionExecutionState(

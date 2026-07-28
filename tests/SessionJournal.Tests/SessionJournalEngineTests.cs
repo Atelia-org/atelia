@@ -44,7 +44,7 @@ public sealed class SessionJournalEngineTests : IDisposable {
         Assert.NotNull(projection.Head);
         string[] payloads = ReadJournalPayloadJson(path);
         Assert.Equal(3, payloads.Length);
-        Assert.Equal("{\"v\":1,\"body\":{\"modelId\":\"model-A\",\"completionSurfaceId\":\"surface-A\",\"schema\":\"atelia.session-journal.trunk.v1\"}}", payloads[0]);
+        Assert.Equal("{\"v\":2,\"body\":{\"modelId\":\"model-A\",\"completionSurfaceId\":\"surface-A\",\"schema\":\"atelia.session-journal.trunk.v1\",\"derivedContext\":{\"nthPrevious\":0}}}", payloads[0]);
         Assert.Equal("{\"v\":1,\"body\":{\"content\":\"system-A\"}}", payloads[1]);
         Assert.Equal("{\"v\":1,\"body\":{}}", payloads[2]);
         Assert.NotNull(projection.Config);
@@ -55,6 +55,23 @@ public sealed class SessionJournalEngineTests : IDisposable {
         Assert.Empty(projection.Context);
         Assert.Equal(SessionExecutionPhase.Idle, projection.ExecutionState.Phase);
         Assert.Equal(SessionEventKind.SessionCreated, projection.ExecutionState.HeadKind);
+    }
+
+    [Fact]
+    public void RuntimeConfigSetupV1_IsRejectedWithoutFallback() {
+        byte[] payload = System.Text.Encoding.UTF8.GetBytes(
+            "{\"v\":1,\"body\":{\"modelId\":\"model-A\",\"completionSurfaceId\":\"surface-A\",\"schema\":\"atelia.session-journal.trunk.v1\"}}"
+        );
+
+        NotSupportedException error = Assert.Throws<NotSupportedException>(
+            () => SessionEventCodec.Decode(
+                SessionEventKind.RuntimeConfigSetup,
+                payload,
+                out _
+            )
+        );
+
+        Assert.Contains("actual=1, expected=2", error.Message);
     }
 
     [Fact]
@@ -88,7 +105,8 @@ public sealed class SessionJournalEngineTests : IDisposable {
                 new SessionRuntimeConfiguration(
                     "model-feature",
                     "surface-feature",
-                    SessionJournalDefaults.Schema
+                    SessionJournalDefaults.Schema,
+                    new(0)
                 )
             );
             featureHead = feature.AppendSystemPromptSetup("system-feature");
@@ -174,7 +192,8 @@ public sealed class SessionJournalEngineTests : IDisposable {
                     new SessionRuntimeConfiguration(
                         "model-B",
                         "surface-B",
-                        SessionJournalDefaults.Schema
+                        SessionJournalDefaults.Schema,
+                        new(0)
                     )
                 ),
                 nameof(
@@ -601,11 +620,11 @@ public sealed class SessionJournalEngineTests : IDisposable {
                 new CompletionDescriptor("fake-provider", "fake-api-v1", "model-A")
             );
             EventAddress address = engine.AppendRuntimeConfigSetup(
-                new SessionRuntimeConfiguration("model-B", "surface-B", SessionJournalDefaults.Schema)
+                new SessionRuntimeConfiguration("model-B", "surface-B", SessionJournalDefaults.Schema, new(0))
             );
 
             string configJson = System.Text.Encoding.UTF8.GetString(engine.ReadPayloadBytes(address));
-            Assert.Equal("{\"v\":1,\"body\":{\"modelId\":\"model-B\",\"completionSurfaceId\":\"surface-B\",\"schema\":\"atelia.session-journal.trunk.v1\"}}", configJson);
+            Assert.Equal("{\"v\":2,\"body\":{\"modelId\":\"model-B\",\"completionSurfaceId\":\"surface-B\",\"schema\":\"atelia.session-journal.trunk.v1\",\"derivedContext\":{\"nthPrevious\":0}}}", configJson);
         }
 
         using var reopened = SessionJournalEngine.Open(path);
@@ -666,11 +685,11 @@ public sealed class SessionJournalEngineTests : IDisposable {
 
         using (var journal = EventJournal.EventJournal.CreateNew(path)) {
             journal.CreateBranch(SessionJournalDefaults.MainBranchName, startPoint: null).Unwrap();
-            runtimeA = CommitToMain(journal, null, SessionEventKind.RuntimeConfigSetup, "{\"v\":1,\"body\":{\"modelId\":\"model-A\",\"completionSurfaceId\":\"surface-A\",\"schema\":\"atelia.session-journal.trunk.v1\"}}");
+            runtimeA = CommitToMain(journal, null, SessionEventKind.RuntimeConfigSetup, "{\"v\":2,\"body\":{\"modelId\":\"model-A\",\"completionSurfaceId\":\"surface-A\",\"schema\":\"atelia.session-journal.trunk.v1\",\"derivedContext\":{\"nthPrevious\":0}}}");
             promptA = CommitToMain(journal, runtimeA, SessionEventKind.SystemPromptSetup, "{\"v\":1,\"body\":{\"content\":\"system-A\"}}");
             EventAddress created = CommitToMain(journal, promptA, SessionEventKind.SessionCreated, "{\"v\":1,\"body\":{}}");
             EventAddress malformedObservation = CommitToMain(journal, created, SessionEventKind.ObservationAccepted, "this is intentionally not json");
-            runtimeB = CommitToMain(journal, malformedObservation, SessionEventKind.RuntimeConfigSetup, "{\"v\":1,\"body\":{\"modelId\":\"model-B\",\"completionSurfaceId\":\"surface-B\",\"schema\":\"atelia.session-journal.trunk.v1\"}}");
+            runtimeB = CommitToMain(journal, malformedObservation, SessionEventKind.RuntimeConfigSetup, "{\"v\":2,\"body\":{\"modelId\":\"model-B\",\"completionSurfaceId\":\"surface-B\",\"schema\":\"atelia.session-journal.trunk.v1\",\"derivedContext\":{\"nthPrevious\":0}}}");
             EventAddress malformedAction = CommitToMain(journal, runtimeB, SessionEventKind.AgentActionProduced, "also intentionally not json");
             promptB = CommitToMain(journal, malformedAction, SessionEventKind.SystemPromptSetup, "{\"v\":1,\"body\":{\"content\":\"system-B\"}}");
         }
@@ -695,7 +714,7 @@ public sealed class SessionJournalEngineTests : IDisposable {
         EventAddress runtimeOnlyHead;
         using (var journal = EventJournal.EventJournal.CreateNew(missingPromptPath)) {
             journal.CreateBranch(SessionJournalDefaults.MainBranchName, startPoint: null).Unwrap();
-            runtimeOnlyHead = CommitToMain(journal, null, SessionEventKind.RuntimeConfigSetup, "{\"v\":1,\"body\":{\"modelId\":\"model-A\",\"completionSurfaceId\":\"surface-A\",\"schema\":\"atelia.session-journal.trunk.v1\"}}");
+            runtimeOnlyHead = CommitToMain(journal, null, SessionEventKind.RuntimeConfigSetup, "{\"v\":2,\"body\":{\"modelId\":\"model-A\",\"completionSurfaceId\":\"surface-A\",\"schema\":\"atelia.session-journal.trunk.v1\",\"derivedContext\":{\"nthPrevious\":0}}}");
         }
 
         using (var engine = SessionJournalEngine.Open(missingPromptPath)) {
@@ -745,7 +764,7 @@ public sealed class SessionJournalEngineTests : IDisposable {
         Assert.Equal(1, engine.LastGoverningSetupResolutionDiagnostics.ManifestPayloadReadCount);
 
         EventAddress runtimeB = engine.AppendRuntimeConfigSetup(
-            new SessionRuntimeConfiguration("model-B", "surface-B", SessionJournalDefaults.Schema)
+            new SessionRuntimeConfiguration("model-B", "surface-B", SessionJournalDefaults.Schema, new(0))
         );
         SessionGoverningSetup runtimeMerged = engine.ResolveGoverningSetup(runtimeB);
         Assert.Equal(runtimeB, runtimeMerged.RuntimeConfigSetupAddress);
@@ -917,7 +936,7 @@ public sealed class SessionJournalEngineTests : IDisposable {
 
         var configEx = Assert.Throws<InvalidOperationException>(
             () => engine.AppendRuntimeConfigSetup(
-                new SessionRuntimeConfiguration("model-B", "surface-B", SessionJournalDefaults.Schema)
+                new SessionRuntimeConfiguration("model-B", "surface-B", SessionJournalDefaults.Schema, new(0))
             )
         );
         Assert.Contains("requires an idle or explicitly failed turn boundary", configEx.Message, StringComparison.Ordinal);
@@ -967,7 +986,7 @@ public sealed class SessionJournalEngineTests : IDisposable {
         string path = NewJournalPath();
         using (var journal = EventJournal.EventJournal.CreateNew(path)) {
             journal.CreateBranch(SessionJournalDefaults.MainBranchName, startPoint: null).Unwrap();
-            CommitToMain(journal, null, SessionEventKind.RuntimeConfigSetup, "{\"v\":1,\"body\":{\"modelId\":\"model-A\",\"completionSurfaceId\":\"surface-A\",\"schema\":\"atelia.session-journal.trunk.v1\"}}");
+            CommitToMain(journal, null, SessionEventKind.RuntimeConfigSetup, "{\"v\":2,\"body\":{\"modelId\":\"model-A\",\"completionSurfaceId\":\"surface-A\",\"schema\":\"atelia.session-journal.trunk.v1\",\"derivedContext\":{\"nthPrevious\":0}}}");
             RefId main = journal.OpenBranch(SessionJournalDefaults.MainBranchName).Unwrap();
             EventAddress head = journal.GetHead(main) ?? throw new InvalidDataException("SessionJournal test journal has no head.");
             CommitToMain(journal, head, SessionEventKind.ObservationAccepted, "{\"v\":1,\"body\":{\"content\":\"hello\"}}");
@@ -1265,7 +1284,7 @@ public sealed class SessionJournalEngineTests : IDisposable {
         int projectionCountBeforeMutations = engine.FullProjectionInvocationCount;
 
         engine.AppendRuntimeConfigSetup(
-            new SessionRuntimeConfiguration("model-B", "surface-B", SessionJournalDefaults.Schema)
+            new SessionRuntimeConfiguration("model-B", "surface-B", SessionJournalDefaults.Schema, new(0))
         );
         engine.AppendSystemPromptSetup("system-B");
         engine.AppendObservation("imported observation");
@@ -1445,7 +1464,7 @@ public sealed class SessionJournalEngineTests : IDisposable {
         );
 
         engine.AppendRuntimeConfigSetup(
-            new SessionRuntimeConfiguration("model-B", "surface-B", SessionJournalDefaults.Schema)
+            new SessionRuntimeConfiguration("model-B", "surface-B", SessionJournalDefaults.Schema, new(0))
         );
         engine.AppendSystemPromptSetup("system-B");
         TurnResult result = await engine.SendAsync("second", CancellationToken.None);
@@ -1690,7 +1709,7 @@ public sealed class SessionJournalEngineTests : IDisposable {
             engine,
             _candidateSource
         );
-        engine.AppendRuntimeConfigSetup(new SessionRuntimeConfiguration("model-B", "surface-B", SessionJournalDefaults.Schema));
+        engine.AppendRuntimeConfigSetup(new SessionRuntimeConfiguration("model-B", "surface-B", SessionJournalDefaults.Schema, new(0)));
         engine.AppendSystemPromptSetup("system-B");
 
         TurnResult result = await engine.SendAsync("hello", CancellationToken.None);

@@ -17,7 +17,8 @@ public sealed class DerivedMemoryMaintainerRunnerTests : IDisposable {
             new SessionRuntimeConfiguration(
                 "model-B",
                 "surface-B",
-                SessionJournalDefaults.Schema
+                SessionJournalDefaults.Schema,
+                new(0)
             )
         );
         EventAddress promptSetup =

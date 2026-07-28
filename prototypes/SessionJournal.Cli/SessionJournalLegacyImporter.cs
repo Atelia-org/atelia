@@ -96,7 +96,8 @@ internal static class SessionJournalLegacyImporter {
                             currentConfiguration.ModelId,
                             currentSystemPrompt,
                             currentConfiguration.CompletionSurfaceId,
-                            currentConfiguration.Schema
+                            currentConfiguration.Schema,
+                            DerivedContextNthPrevious: 0
                         ));
                         runtimeConfigSetupCount++;
                         systemPromptSetupCount++;
@@ -603,7 +604,8 @@ internal static class SessionJournalLegacyImporter {
         return new SessionRuntimeConfiguration(
             RequireNonWhiteSpace(root.ModelId, "initial-state.root.modelId"),
             RequireNonWhiteSpace(root.CompletionSurfaceId, "initial-state.root.completionSurfaceId"),
-            SessionJournalDefaults.Schema
+            SessionJournalDefaults.Schema,
+            new SessionDerivedContextConfiguration(0)
         );
     }
 
