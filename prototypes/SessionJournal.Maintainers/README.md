@@ -1,7 +1,7 @@
 # SessionJournal.Maintainers
 
-`Atelia.SessionJournal.Maintainers` 是依赖 `Atelia.SessionJournal` contracts
-的 concrete MemoryMaintainer companion assembly。
+`Atelia.SessionJournal.Maintainers` 是依赖 `Atelia.SessionJournal` contracts 与
+`Atelia.Completion.Abstractions` 的 concrete MemoryMaintainer companion assembly。
 
 ## Ownership 边界
 
@@ -15,9 +15,12 @@
 - 应用级 role 始终是 SessionJournal raw event / recovery contracts 之外的 policy。
 
 稳定的 maintainer ID 和 target block key 是持久化身份。移动或重命名实现类型时，
-不得隐式改变这些身份。
+不得隐式改变这些身份。prompt fingerprint 使用带 schema 与字段边界的 canonical
+structured JSON，不以 NUL delimiter 拼接两个 prompt。
 
 离线开发 composition root 是
-[`SessionJournal.Cli`](../SessionJournal.Cli/README.md)：它选择 concrete profile，
-注入 Completion client，并从 addressed `SessionJournalEngine.ReplayHistory()` 运行
-maintainer。CLI 和本 companion assembly 都不会被 SessionJournal raw core 反向引用。
+[`SessionJournal.Cli`](../SessionJournal.Cli/README.md)：它通过
+`MemoryMaintainerProfileCatalog` 解析 stable role/profile descriptor，注入 Completion
+client，并把 concrete maintainer 交给 DerivedMemory 的 exact-epoch runner。history
+切分、epoch lookup 与 artifact persistence 不属于本程序集。CLI 和本 companion
+assembly 都不会被 SessionJournal raw core 反向引用。

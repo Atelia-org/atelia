@@ -2,6 +2,7 @@ using System.Text.RegularExpressions;
 using Atelia.Completion;
 using Atelia.Completion.Abstractions;
 using Atelia.SessionJournal.Cli;
+using Atelia.SessionJournal.Maintainers;
 using SJ = Atelia.SessionJournal;
 using Xunit;
 
@@ -10,7 +11,7 @@ namespace Atelia.SessionJournal.Cli.Tests;
 public sealed class MemoryMaintainerProducerFingerprintTests {
     [Fact]
     public void Fingerprint_IsStableAndExcludesOperationalIdentityAndSecrets() {
-        MemoryMaintainerRunProfile profile = CreateProfile();
+        MemoryMaintainerProfileDescriptor profile = CreateProfile();
         var client = new FingerprintCompletionClient("client-a", "api-a");
         CompletionConnectionConfig connection = CreateConnection();
 
@@ -32,13 +33,14 @@ public sealed class MemoryMaintainerProducerFingerprintTests {
 
     [Fact]
     public void Fingerprint_ChangesWithEveryIncludedSemanticFieldFamily() {
-        MemoryMaintainerRunProfile profile = CreateProfile();
+        MemoryMaintainerProfileDescriptor profile = CreateProfile();
         var client = new FingerprintCompletionClient("client-a", "api-a");
         CompletionConnectionConfig connection = CreateConnection();
         string baseline = Compute(profile, client, connection);
 
         var variants = new Dictionary<string, string>(StringComparer.Ordinal) {
             ["profile name"] = Compute(CreateProfile(profileName: "preset-b"), client, connection),
+            ["role id"] = Compute(CreateProfile(roleId: "role-b"), client, connection),
             ["maintainer id"] = Compute(CreateProfile(maintainerId: "maintainer-b"), client, connection),
             ["target carrier"] = Compute(CreateProfile(targetCarrier: SJ.MemoryPackCarrier.Action), client, connection),
             ["target block"] = Compute(CreateProfile(targetBlockId: "summary-b"), client, connection),
@@ -61,13 +63,18 @@ public sealed class MemoryMaintainerProducerFingerprintTests {
     }
 
     private static string Compute(
-        MemoryMaintainerRunProfile profile,
+        MemoryMaintainerProfileDescriptor profile,
         ICompletionClient client,
         CompletionConnectionConfig connection
-    ) => SessionJournalDerivedRecapWriter.ComputeProducerFingerprint(profile, client, connection);
+    ) => MemoryMaintainerProducerIdentity.ComputeProducerFingerprint(
+        profile,
+        client,
+        connection
+    );
 
-    private static MemoryMaintainerRunProfile CreateProfile(
+    private static MemoryMaintainerProfileDescriptor CreateProfile(
         string profileName = "preset-a",
+        string roleId = "role-a",
         string maintainerId = "maintainer-a",
         SJ.MemoryPackCarrier targetCarrier = SJ.MemoryPackCarrier.Observation,
         string targetBlockId = "summary-a",
@@ -75,6 +82,7 @@ public sealed class MemoryMaintainerProducerFingerprintTests {
         string userPrompt = "user-a"
     ) => new(
         profileName,
+        roleId,
         new SJ.MemoryRewriteProfile(
             maintainerId,
             new SJ.MemoryPackBlockPath(targetCarrier, targetBlockId),

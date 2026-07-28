@@ -95,6 +95,14 @@ public sealed record DerivedArtifactEpochInventory(
     IReadOnlyList<DerivedArtifactEpochLatestPointer> LatestEpochs
 );
 
+internal sealed record DerivedArtifactEpochRawAuthorityValidation(
+    SessionCurrentLineageSnapshot Lineage,
+    IReadOnlyDictionary<
+        string,
+        SessionContextAnchorSetupReferences
+    > EndSetupsByEpochId
+);
+
 public enum DerivedArtifactEpochPlanningStatus {
     Planned,
     AlreadyPlanned,

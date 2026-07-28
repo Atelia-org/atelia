@@ -1,6 +1,6 @@
 # DerivedMemory 可替换子系统与 Shared Epoch 实施方案
 
-> **状态**：In Progress；DM-0～DM-5 已完成，下一片 DM-6
+> **状态**：In Progress；DM-0～DM-6 已完成，下一片 DM-7
 > **日期**：2026-07-27
 > **最新代码对齐**：2026-07-28；已纳入
 > `ChatSession.LegacyExportCli` / `SessionJournal.Cli` 拆分与
@@ -15,17 +15,16 @@
 
 ## 0. 执行结论
 
-DerivedMemory 重构不能简化成“定义几个接口，然后把 `DerivedRecapStore.cs` 移到新项目”。current
-SessionJournal 仍在三个层面依赖 concrete derived shape：
+本计划最初不能简化成“定义几个接口，然后把旧 store 移到新项目”；必须先解除 raw
+SessionJournal 对 concrete derived shape 的依赖。DM-0～DM-4 已完成这项切割，当前状态为：
 
-1. request materializer 已直接消费 normalized `SessionContextCandidate`，但 pre-Prepared 的 legacy
-   bridge 仍从 concrete `DerivedRecapArtifact` / store 取得该 candidate；
+1. request materializer 只消费 normalized `SessionContextCandidate`，不认识 artifact/store；
 2. `CompletionRequestPrepared` v4 已保存 self-contained exact context snapshots 与两端 setup refs；
 3. reconstructor 以 `RawStartSetups` 取得 suffix fold seed；raw event inventory 不再包含
    derived-set definition/activation，Prepared reopen 与 raw audit 均不读取 DerivedMemory。
 
-若此时先物理搬文件，`SessionJournal.csproj` 就会被迫引用 concrete DerivedMemory 项目，依赖方向仍然
-错误。
+因此 `SessionJournal.csproj` 不引用 concrete DerivedMemory；DerivedMemory 单向引用 core
+contracts，composition root 同时组合 provider/maintainer/Completion。
 
 采用以下顺序：
 
@@ -42,7 +41,7 @@ DM-4  Remove raw derived-set activation  ✓
   ↓
 DM-5  Shared DerivedArtifactEpochPlanner
   ↓
-DM-6  Epoch-bound independent maintainer runner
+DM-6  Epoch-bound independent maintainer runner  ✓
   ↓
 DM-7  Parallel orchestration + ArtifactSet publication
   ↓
@@ -77,22 +76,18 @@ DM-4 后的当前主要入口：
   - pre-Prepared planning 只消费注入的 `ICoherentContextCandidateSource`；
   - 不打开 DerivedMemory，也不再提供 raw ArtifactSet writer；Prepared 与 dispatch 仍属 core。
 - `prototypes/SessionJournal.DerivedMemory/`
-  - 拥有 `DerivedMemoryRepository`、`DerivedRecapStore`、derived-only
-    `DerivedArtifactSetStore` 与 concrete candidate provider；
-  - 只引用 SessionJournal，artifact 物理布局仍兼容 `derived/recaps/v1/`，set/pointer 位于
+  - 拥有 `DerivedMemoryRepository`、`DerivedMemoryArtifactStore`、
+    `DerivedArtifactSetStore`、`DerivedArtifactEpochPlanner`、
+    `DerivedMemoryMaintainerRunner` 与 concrete candidate provider；
+  - 只引用 SessionJournal；artifact/set/epoch/pointer 全部位于
     `derived/memory/v1/`。
 - `prototypes/SessionJournal.Cli/MemoryMaintainerRun.cs`
-  - 每个 maintainer runner 独立解释 threshold 并计算 split；
-  - SessionJournal 模式仍从 raw root + empty `MemoryPack` full replay。
-- `prototypes/SessionJournal.Cli/MemoryMaintainerHistorySplitPolicy.cs`
-  - 当前 synthetic sliding-prefix 切分 policy 已与旧 ChatSession 实现隔离；
-  - 它是 maintainer 开发入口的临时 policy，不是未来 shared epoch authority。
-- `prototypes/SessionJournal.Cli/MemoryMaintainerArtifactWriting.cs`
-  - artifact writer 经 `DerivedMemoryRepository.Recaps` 写入；
-  - repository-wide lock 与 expected-previous CAS 属于 DerivedMemory store，不在 CLI 外挂第二把锁。
+  - `--epoch` 是唯一正式模式；旧 threshold/split/full replay 已删除；
+  - CLI 只组合 descriptor、Completion client、runner、call log 与 atomic report。
 - `prototypes/SessionJournal.Maintainers/`
-  - 已作为只依赖 SessionJournal contracts 的 companion assembly；
-  - 当前拥有 autobiography / world-understanding 的 profiles、embedded prompts 和 target paths；
+  - 已作为依赖 SessionJournal contracts 与 Completion.Abstractions 的 companion assembly；
+  - 当前拥有 autobiography / world-understanding 的 stable role/profile descriptor、
+    embedded prompts、target paths 与 concrete factory；
   - generic `RewriteMemoryBlockMaintainer`、`MemoryMaintenanceOrchestrator` 与 mutable `MemoryPack`
     仍暂留在 `SessionJournal/SessionMemoryContracts.cs`。
 
@@ -489,9 +484,9 @@ prototypes/SessionJournal.DerivedMemory/
 tests/SessionJournal.DerivedMemory.Tests/
 ```
 
-DM-3B 已迁入/新增：
+DM-3B 当时迁入/新增（artifact 部分已在 DM-6 再次 breaking cut）：
 
-- `DerivedRecapStore` 与 artifact schema/DTO/identity/indexes；
+- artifact store 与 schema/DTO/identity/indexes；
 - `DerivedMemoryRepository`；
 - `DerivedArtifactSetStore`；
 - current artifact -> normalized contribution renderer；
@@ -523,8 +518,8 @@ DerivedMemory。这样避免物理搬家与 Prepared wire cut 同时扩大。
 - `SessionJournal.Cli` 增加对 DerivedMemory 的引用，并继续组合 SessionJournal、
   SessionJournal.Maintainers 与 Completion；
 - 长期 Agent Host 同样只在 composition root 同时引用这些程序集；
-- `SessionJournal.Maintainers` 继续只依赖 SessionJournal contracts，不因 store/provider
-  cutover 反向依赖 DerivedMemory；
+- `SessionJournal.Maintainers` 依赖 SessionJournal contracts 与
+  Completion.Abstractions，但不因 store/provider cutover 反向依赖 DerivedMemory；
 - `ChatSession.LegacyExportCli` 的引用图和命令保持不变；
 - provider instance 与一个 SessionJournal repo/session 绑定；
 - Engine/request coordinator 只保存 interface；
@@ -534,7 +529,8 @@ DerivedMemory。这样避免物理搬家与 Prepared wire cut 同时扩大。
 ### DM-3B 实施状态（2026-07-28）
 
 - 新程序集与测试项目已经进入 solution，core 与 core tests 均无反向 project reference；
-- artifact store 完整搬出 core，保留原 artifact schema/path；新 repository 统一负责 path/reparse
+- artifact store 完整搬出 core；当时保留的 v1 schema/path 已由 DM-6 的
+  `derived/memory/v1/artifacts` v2 取代；repository 继续统一负责 path/reparse
   hardening、bounded lock 与 same-directory atomic replace；
 - derived-only set 使用 deterministic full hash id、strict schema、exact previous CAS、immutable set
   与 atomic latest pointer；pointer 丢失只在完整无环 lineage 的 unique tip 下重建，fork/cycle
@@ -548,7 +544,8 @@ DerivedMemory。这样避免物理搬家与 Prepared wire cut 同时扩大。
   selection 或 older-set search；
 - public strict anchor helper 返回 exact setup address/schema/payload hash，供发布前在仍持有 raw
   Engine 的 composition code 调用；
-- CLI maintainer writer 已迁到 `DerivedMemoryRepository.Recaps`；raw
+- CLI maintainer writer 当时迁入 DerivedMemory repository；DM-6 已进一步改为
+  `DerivedMemoryRepository.Artifacts + DerivedMemoryMaintainerRunner`；raw
   `checkpoint-artifact-set` command、parser/help/tests 和 offline sidecar readiness/active fields 已删除；
 - Observation integration 已证明 publish 不改变 raw head/event count、online 不写 kind 12；
   Prepared failpoint 后删除整个 `derived/` 并在不注入 provider 的情况下仍按 canonical bytes exact
@@ -809,6 +806,10 @@ benchmark，不改变 EventJournal durability API。
 
 ## 11. DM-6：Epoch-bound Independent Maintainer Runner
 
+> **实施状态（2026-07-28）**：完成。CLI、runner、artifact v2 与测试已切到
+> exact durable epoch；旧 threshold/full replay 和 recap latest-by-profile surface
+> 已直接退役。
+
 ### 目标
 
 让单个 maintainer 只消费 exact epoch plan；prompt/model tuning 可以独立重跑，但不能重新切分 history
@@ -841,8 +842,8 @@ run-memory-maintainer
   [--system-prompt ... --prompt ... --connection ...]
 ```
 
-拆分后 legacy backtest runner 已退役；当前 `SessionJournal.Cli` 的 threshold/full-replay
-模式只是过渡性 maintainer 开发入口。DerivedMemory production mode 不再允许 role-local split。
+拆分后 legacy backtest runner 与 threshold/full-replay 模式均已退役。
+DerivedMemory production mode 不再允许 role-local split。
 `--profile` 解析与 concrete factory/descriptor 来自 `SessionJournal.Maintainers`，epoch lookup、
 range materialization 与 artifact persistence 来自 DerivedMemory。
 
@@ -855,6 +856,49 @@ range materialization 与 artifact persistence 来自 DerivedMemory。
 - rerun 不覆盖旧 candidate；
 - writer failure 不推进任何 derived set index；
 - addressed provenance 的 end/anchor 来自实际 epoch fragment，不来自 trigger head。
+
+### DM-6 落地决策
+
+- `DerivedMemoryMaintainerRunner` 属于 DerivedMemory；它只读取 exact
+  epoch/config/input set dependency closure，并从 durable `RawStartSetups`
+  构造 repository-bound planning seed，再调用
+  `ReadHistoryPlanningWindowAt(sourceEndInclusive, seed)`。core seed 只重读两条 setup
+  payload 与 bounded execution recovery；window 从已解码 suffix/fold 直接回传
+  `EndSetups`，不从 end 回扫 root。global
+  repository validation 仍是运维命令，不成为每个 role run 的隐藏全量扫描。
+- `MemoryMaintainerProfileCatalog` 属于 Maintainers，拥有 stable role/profile、embedded
+  prompt 与 concrete factory；CLI 只负责 Completion client、fingerprint、路径与 report
+  composition。
+- artifact 直接切为唯一 v2 `DerivedMemoryArtifactStore`，物理位置
+  `derived/memory/v1/artifacts/`。identity 包含 epoch/plan、role/profile、exact
+  range/setup、input set/structured members、previous role artifact、
+  producer/prompt/model 与 candidate/attempt。store 是 append-only，没有 role-local
+  latest pointer 或 linear CAS；ArtifactSet publication 是唯一 selection boundary。
+- setup provenance 不压成模糊的一组地址：`RawStartSetups` 保存 exact epoch 起点的
+  fold seed，`AnchorSetups` 保存
+  `ResolveContextAnchorSetupReferences(SourceEndInclusive)` 的 exact 末端事实；两组均含
+  address/schema/payload hash。runner 复核 input set anchor 等于前者，set
+  publication/strict read 只把 member artifact 的后者与 set anchor exact 比较。
+- genesis 明确 empty `MemoryPack`。non-genesis 从 exact input set 恢复全部 blocks；若
+  topology 新增 role 而 input set 尚无该 role，则 old block/previous role artifact
+  显式为空，其他 blocks 仍进入 PriorContext。
+- exact retry 复用同一 artifact identity；改变 candidate/attempt 或 prompt/model
+  fingerprint 会追加 alternative，不覆盖旧 candidate。writer failure 不会触碰 set
+  pointer。
+- artifact id 使用完整 canonical identity hash，不存在 collision suffix；同路径的
+  strict same identity 是 durable retry，其他情况一律 corruption/hash-collision
+  fail-fast。writer 在 lock/directory 前完成 input member shape/uniqueness/hash/previous
+  relation 校验；exact point read 在 existence probe 前拒绝 symlink/reparse point。
+- global validation 交叉 artifact 与 durable epoch/config、raw range/setup、input set/member
+  snapshot/previous role，并按 unique raw end 缓存 anchor authority。未被 set 选择但
+  dependency closure 完整的 alternative candidate 仍是合法 orphan；无 epoch/closure 的
+  detached artifact 非法。runner 不调用 global audit。
+- prompt fingerprint 使用 schema-tagged canonical structured JSON，避免 delimiter
+  collision；CLI 在任何 Completion/目录/LLM side effect 前拒绝 output 与 call-log
+  exact 或双向 ancestor 冲突。
+- 这是 derived-rebuildable breaking cut：`derived/recaps/v1/`、
+  `DerivedRecapStore`、latest-by-profile、threshold replay tests/CLI options 均已删除，
+  不保留 compatibility path。
 
 ## 12. DM-7：Parallel Orchestration 与 ArtifactSet Publication
 
@@ -1086,24 +1130,27 @@ fakes 完成验收。
 DM-3/DM-4 应连续调度，但仍保持独立 review/commit，以便确认新 provider path 先可用，再删除旧 raw
 surface。
 
-## 17. 下一步：领取 DM-6
+## 17. 下一步：领取 DM-7
 
-下一次 Coding Agent 应只实施 **DM-6：Epoch-bound Independent Maintainer Runner**。开始前重点阅读：
+下一次 Coding Agent 应只实施 **DM-7：Parallel Orchestration 与 ArtifactSet
+Publication**。开始前重点阅读：
 
 - `prototypes/SessionJournal/SessionHistoryPlanning.cs`
 - `prototypes/SessionJournal.DerivedMemory/DerivedArtifactEpochContracts.cs`
 - `prototypes/SessionJournal.DerivedMemory/DerivedArtifactEpochPlanner.cs`
-- `prototypes/SessionJournal.DerivedMemory/DerivedRecapStore.cs`
+- `prototypes/SessionJournal.DerivedMemory/DerivedMemoryArtifactStore.cs`
+- `prototypes/SessionJournal.DerivedMemory/DerivedMemoryMaintainerRunner.cs`
 - `prototypes/SessionJournal.Cli/SessionJournal.Cli.csproj`
 - `prototypes/SessionJournal.Cli/MemoryMaintainerRun.cs`
 - `prototypes/SessionJournal.Maintainers/SessionJournal.Maintainers.csproj`
 - `prototypes/SessionJournal.Maintainers/README.md`
 - `tests/SessionJournal.Tests/`
-- 本文 §10、§11、§15
+- 本文 §11、§12、§15
 
-DM-0 完成标志不是“新建了 interface 文件”，而是：
+DM-7 完成标志不是“并发启动两个 task”，而是：
 
-- 合同没有泄漏 concrete derived storage；
-- fake candidate 足以表达合法/非法 raw-facing cases；
-- execution resolver 和 Prepared reopen 仍不依赖 provider；
-- 下一片 DM-1 可以在不重新设计跨程序集边界的前提下，把 materializer 切到 normalized candidate。
+- required roles 共享同一 immutable epoch/input snapshot；
+- partial candidate 可恢复，但不会发布半套 set；
+- candidate 选择与 set publication 有 durable settlement/原子边界；
+- 新增第三个 role 不修改 SessionJournal core；
+- DM-6 的 independent tuning/alternative candidates 仍可单独使用。

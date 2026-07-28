@@ -606,8 +606,8 @@ public sealed class DerivedArtifactEpochPlanner {
             "derived artifact epoch"
         );
         if (tip is null) { return null; }
-        IReadOnlyList<DerivedRecapArtifact> artifacts =
-            await _repository.Recaps.ReadInventoryStrictAsync(
+        IReadOnlyList<DerivedMemoryArtifact> artifacts =
+            await _repository.Artifacts.ReadInventoryStrictAsync(
                     cancellationToken
                 )
                 .ConfigureAwait(false);
@@ -669,6 +669,19 @@ public sealed class DerivedArtifactEpochPlanner {
         IEnumerable<DerivedArtifactEpochPlan> epochs,
         IEnumerable<DerivedArtifactPlannerConfig> configs,
         CancellationToken cancellationToken = default
+    ) => ValidateRawAuthorityDetailed(
+        engine,
+        epochs,
+        configs,
+        cancellationToken
+    ).Lineage;
+
+    internal DerivedArtifactEpochRawAuthorityValidation
+        ValidateRawAuthorityDetailed(
+        SessionJournalEngine engine,
+        IEnumerable<DerivedArtifactEpochPlan> epochs,
+        IEnumerable<DerivedArtifactPlannerConfig> configs,
+        CancellationToken cancellationToken = default
     ) {
         ArgumentNullException.ThrowIfNull(engine);
         ArgumentNullException.ThrowIfNull(epochs);
@@ -702,6 +715,11 @@ public sealed class DerivedArtifactEpochPlanner {
                 static item => item.Address,
                 static item => item.Index
             );
+        var endSetupsByEpochId =
+            new Dictionary<
+                string,
+                SessionContextAnchorSetupReferences
+            >(StringComparer.Ordinal);
         foreach (DerivedArtifactEpochPlan epoch in materialized) {
             ValidateKey(epoch.Key);
             if (!positions.TryGetValue(
@@ -750,6 +768,19 @@ public sealed class DerivedArtifactEpochPlanner {
                     $"Epoch '{epoch.EpochId}' raw-start setup references do not match the authoritative main lineage."
                 );
             }
+            if (!window.ReplaySafeBoundarySetups.TryGetValue(
+                    epoch.SourceEndInclusive,
+                    out SessionContextAnchorSetupReferences?
+                        sourceEndSetups
+                )) {
+                throw new InvalidDataException(
+                    $"Epoch '{epoch.EpochId}' source end is not a replay-safe planning boundary."
+                );
+            }
+            endSetupsByEpochId.Add(
+                epoch.EpochId,
+                sourceEndSetups
+            );
             if (!configsById.TryGetValue(
                     epoch.ConfigId,
                     out DerivedArtifactPlannerConfig? config
@@ -783,7 +814,13 @@ public sealed class DerivedArtifactEpochPlanner {
                 );
             }
         }
-        return snapshot;
+        return new DerivedArtifactEpochRawAuthorityValidation(
+            snapshot,
+            new System.Collections.ObjectModel.ReadOnlyDictionary<
+                string,
+                SessionContextAnchorSetupReferences
+            >(endSetupsByEpochId)
+        );
     }
 
     internal static void ValidateInventory(

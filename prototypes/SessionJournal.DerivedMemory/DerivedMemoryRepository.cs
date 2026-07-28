@@ -17,7 +17,7 @@ public sealed class DerivedMemoryRepository {
         DerivedRoot = Path.Combine(SessionJournalRepositoryPath, "derived");
         MemoryRoot = Path.Combine(DerivedRoot, "memory", "v1");
         WriteLockPath = Path.Combine(DerivedRoot, ".derived-memory.lock");
-        Recaps = new DerivedRecapStore(this);
+        Artifacts = new DerivedMemoryArtifactStore(this);
         ArtifactSets = new DerivedArtifactSetStore(this);
         EpochPlanner = new DerivedArtifactEpochPlanner(this);
     }
@@ -28,7 +28,7 @@ public sealed class DerivedMemoryRepository {
 
     public string MemoryRoot { get; }
 
-    public DerivedRecapStore Recaps { get; }
+    public DerivedMemoryArtifactStore Artifacts { get; }
 
     public DerivedArtifactSetStore ArtifactSets { get; }
 
@@ -76,10 +76,10 @@ public sealed class DerivedMemoryRepository {
         CancellationToken cancellationToken
     ) {
         cancellationToken.ThrowIfCancellationRequested();
-        IReadOnlyList<DerivedRecapArtifact> artifacts =
-            await Recaps.ReadInventoryStrictAsync(cancellationToken)
+        IReadOnlyList<DerivedMemoryArtifact> artifacts =
+            await Artifacts.ReadInventoryStrictAsync(cancellationToken)
                 .ConfigureAwait(false);
-        IReadOnlyDictionary<string, DerivedRecapArtifact> artifactsById =
+        IReadOnlyDictionary<string, DerivedMemoryArtifact> artifactsById =
             artifacts.ToDictionary(
                 static artifact => artifact.ArtifactId,
                 StringComparer.Ordinal
@@ -100,6 +100,16 @@ public sealed class DerivedMemoryRepository {
                 StringComparer.Ordinal
             )
         );
+        IReadOnlyDictionary<string, DerivedArtifactEpochPlan> epochsById =
+            epochInventory.Epochs.ToDictionary(
+                static epoch => epoch.EpochId,
+                StringComparer.Ordinal
+            );
+        IReadOnlyDictionary<string, DerivedArtifactSet> setsById =
+            inventory.Sets.ToDictionary(
+                static set => set.SetId,
+                StringComparer.Ordinal
+            );
 
         var setsByKey = inventory.Sets
             .GroupBy(DerivedArtifactSetExactKey.FromSet)
@@ -162,6 +172,11 @@ public sealed class DerivedMemoryRepository {
                 );
             }
         }
+        ValidateArtifactEpochDependencies(
+            artifacts,
+            epochsById,
+            setsById
+        );
 
         SessionJournalEngine? ownedEngine = null;
         try {
@@ -170,11 +185,17 @@ public sealed class DerivedMemoryRepository {
                     ?? (ownedEngine = SessionJournalEngine.Open(
                         SessionJournalRepositoryPath
                     ));
-                _ = EpochPlanner.ValidateRawAuthority(
+                DerivedArtifactEpochRawAuthorityValidation
+                    rawAuthority =
+                    EpochPlanner.ValidateRawAuthorityDetailed(
                     authorityEngine,
                     epochInventory.Epochs,
                     epochInventory.Configs,
                     cancellationToken
+                );
+                ValidateArtifactAnchorAuthority(
+                    artifacts,
+                    rawAuthority.EndSetupsByEpochId
                 );
             }
         }
@@ -192,6 +213,124 @@ public sealed class DerivedMemoryRepository {
             epochInventory.Epochs.Count,
             epochInventory.LatestEpochs.Count
         );
+    }
+
+    private static void ValidateArtifactEpochDependencies(
+        IReadOnlyList<DerivedMemoryArtifact> artifacts,
+        IReadOnlyDictionary<string, DerivedArtifactEpochPlan> epochsById,
+        IReadOnlyDictionary<string, DerivedArtifactSet> setsById
+    ) {
+        foreach (DerivedMemoryArtifact artifact in artifacts) {
+            if (!epochsById.TryGetValue(
+                    artifact.EpochId,
+                    out DerivedArtifactEpochPlan? epoch
+                )) {
+                throw new InvalidDataException(
+                    $"Derived-memory artifact '{artifact.ArtifactId}' references missing epoch '{artifact.EpochId}'."
+                );
+            }
+            if (!string.Equals(
+                    artifact.EpochPlanFingerprint,
+                    DerivedMemoryMaintainerRunner
+                        .GetEpochPlanFingerprint(epoch),
+                    StringComparison.Ordinal
+                )
+                || artifact.SourceRawHead != epoch.PlannedAtRawHead
+                || artifact.SourceStartExclusive
+                    != epoch.SourceStartExclusive
+                || artifact.SourceEndInclusive
+                    != epoch.SourceEndInclusive
+                || artifact.AnchorRawEvent
+                    != epoch.SourceEndInclusive
+                || artifact.RawStartSetups != epoch.RawStartSetups
+                || !string.Equals(
+                    artifact.InputSetId,
+                    epoch.InputSetId,
+                    StringComparison.Ordinal
+                )) {
+                throw new InvalidDataException(
+                    $"Derived-memory artifact '{artifact.ArtifactId}' does not match its durable epoch identity."
+                );
+            }
+
+            if (epoch.InputSetId is null) {
+                if (artifact.PreviousRoleArtifact is not null
+                    || artifact.InputMembers.Count != 0) {
+                    throw new InvalidDataException(
+                        $"Genesis artifact '{artifact.ArtifactId}' has non-empty input dependencies."
+                    );
+                }
+                continue;
+            }
+            if (!setsById.TryGetValue(
+                    epoch.InputSetId,
+                    out DerivedArtifactSet? inputSet
+                )) {
+                throw new InvalidDataException(
+                    $"Artifact '{artifact.ArtifactId}' input set '{epoch.InputSetId}' is missing."
+                );
+            }
+            DerivedMemoryArtifactInputMember[] expectedMembers = [
+                .. inputSet.Members
+                    .OrderBy(
+                        static member => member.RoleId,
+                        StringComparer.Ordinal
+                    )
+                    .Select(static member =>
+                        new DerivedMemoryArtifactInputMember(
+                            member.RoleId,
+                            member.ArtifactId,
+                            member.Target,
+                            member.ContentSha256
+                        ))
+            ];
+            if (!artifact.InputMembers.SequenceEqual(expectedMembers)) {
+                throw new InvalidDataException(
+                    $"Artifact '{artifact.ArtifactId}' input-member snapshot does not match epoch input set '{inputSet.SetId}'."
+                );
+            }
+            string? expectedPrevious = inputSet.Members
+                .SingleOrDefault(member => string.Equals(
+                    member.RoleId,
+                    artifact.RoleId,
+                    StringComparison.Ordinal
+                ))
+                ?.ArtifactId;
+            if (!string.Equals(
+                    artifact.PreviousRoleArtifact,
+                    expectedPrevious,
+                    StringComparison.Ordinal
+                )) {
+                throw new InvalidDataException(
+                    $"Artifact '{artifact.ArtifactId}' previous-role dependency does not match epoch input set."
+                );
+            }
+        }
+    }
+
+    private static void ValidateArtifactAnchorAuthority(
+        IReadOnlyList<DerivedMemoryArtifact> artifacts,
+        IReadOnlyDictionary<
+            string,
+            SessionContextAnchorSetupReferences
+        > endSetupsByEpochId
+    ) {
+        foreach (DerivedMemoryArtifact artifact in artifacts) {
+            SessionContextAnchorSetupReferences authoritative =
+                endSetupsByEpochId.TryGetValue(
+                    artifact.EpochId,
+                    out SessionContextAnchorSetupReferences? value
+                )
+                    ? value
+                    : throw new InvalidDataException(
+                        $"Artifact '{artifact.ArtifactId}' has no validated epoch-end setup authority."
+                    );
+            if (artifact.AnchorSetups != authoritative) {
+                throw new InvalidDataException(
+                    $"Artifact '{artifact.ArtifactId}' anchor setup references do not match raw authority."
+                );
+            }
+        }
     }
 
     internal static string ValidateExactKeyLineage(

@@ -220,6 +220,10 @@ public sealed class DerivedArtifactSetStore {
         _ = policy.ValidateAndSnapshot();
         DerivedArtifactSetPolicy.ValidateLineageKey(lineageKey);
         string path = GetSetPath(setId);
+        DerivedMemoryPathGuard.EnsureSafeDescendant(
+            _repository.SessionJournalRepositoryPath,
+            path
+        );
         if (!File.Exists(path)) {
             return null;
         }
@@ -249,26 +253,55 @@ public sealed class DerivedArtifactSetStore {
         CancellationToken cancellationToken = default
     ) {
         ValidateSetId(setId);
-        DerivedArtifactSetInventory inventory =
-            await ReadInventoryAsync(cancellationToken).ConfigureAwait(false);
-        return inventory.Sets.SingleOrDefault(
-            set => string.Equals(
-                set.SetId,
-                setId,
-                StringComparison.Ordinal
-            )
+        string path = GetSetPath(setId);
+        DerivedMemoryPathGuard.EnsureSafeDescendant(
+            _repository.SessionJournalRepositoryPath,
+            path
         );
+        if (!File.Exists(path)) {
+            return null;
+        }
+        DerivedArtifactSetDto dto = await ReadDtoRequiredAsync(
+                path,
+                cancellationToken
+            )
+            .ConfigureAwait(false);
+        DerivedArtifactSet set = MaterializeAndValidateSelf(dto);
+        RequireExactSetFileName(path, set.SetId);
+        if (!string.Equals(set.SetId, setId, StringComparison.Ordinal)) {
+            throw new InvalidDataException(
+                $"Derived ArtifactSet filename/id mismatch for '{setId}'."
+            );
+        }
+        foreach (DerivedArtifactSetMember member in set.Members) {
+            DerivedMemoryArtifact artifact =
+                await _repository.Artifacts.TryReadArtifactAsync(
+                        member.ArtifactId,
+                        cancellationToken
+                    )
+                    .ConfigureAwait(false)
+                ?? throw new InvalidDataException(
+                    $"ArtifactSet member '{member.ArtifactId}' is missing or unusable."
+                );
+            ValidateArtifactAgainstMember(
+                artifact,
+                member,
+                set.CommonAnchor,
+                set.AnchorSetups
+            );
+        }
+        return set;
     }
 
     internal async ValueTask<DerivedArtifactSetInventory> ReadInventoryAsync(
-        IReadOnlyDictionary<string, DerivedRecapArtifact>?
+        IReadOnlyDictionary<string, DerivedMemoryArtifact>?
             strictArtifactsById,
         CancellationToken cancellationToken
     ) {
         var sets = new List<DerivedArtifactSet>();
         var memberArtifactCache =
             strictArtifactsById is null
-                ? new Dictionary<string, DerivedRecapArtifact>(
+                ? new Dictionary<string, DerivedMemoryArtifact>(
                     StringComparer.Ordinal
                 )
                 : null;
@@ -290,11 +323,11 @@ public sealed class DerivedArtifactSetStore {
                 DerivedArtifactSet set = MaterializeAndValidateSelf(dto);
                 RequireExactSetFileName(path, set.SetId);
                 foreach (DerivedArtifactSetMember member in set.Members) {
-                    DerivedRecapArtifact artifact;
+                    DerivedMemoryArtifact artifact;
                     if (strictArtifactsById is not null) {
                         artifact = strictArtifactsById.TryGetValue(
                             member.ArtifactId,
-                            out DerivedRecapArtifact? strictArtifact
+                            out DerivedMemoryArtifact? strictArtifact
                         )
                             ? strictArtifact
                             : throw new InvalidDataException(
@@ -305,7 +338,7 @@ public sealed class DerivedArtifactSetStore {
                                  member.ArtifactId,
                                  out artifact!
                              )) {
-                        artifact = await _repository.Recaps
+                        artifact = await _repository.Artifacts
                             .TryReadArtifactAsync(
                                 member.ArtifactId,
                                 cancellationToken
@@ -484,13 +517,13 @@ public sealed class DerivedArtifactSetStore {
         return tips[0];
     }
 
-    internal async ValueTask<DerivedRecapArtifact>
+    internal async ValueTask<DerivedMemoryArtifact>
         ReadAndValidateMemberArtifactAsync(
         DerivedArtifactSet set,
         DerivedArtifactSetMember member,
         CancellationToken cancellationToken
     ) {
-        DerivedRecapArtifact artifact = await _repository.Recaps
+        DerivedMemoryArtifact artifact = await _repository.Artifacts
             .TryReadArtifactAsync(member.ArtifactId, cancellationToken)
             .ConfigureAwait(false)
             ?? throw new InvalidDataException(
@@ -534,7 +567,7 @@ public sealed class DerivedArtifactSetStore {
                     nameof(request)
                 );
             }
-            DerivedRecapArtifact artifact = await _repository.Recaps
+            DerivedMemoryArtifact artifact = await _repository.Artifacts
                 .TryReadArtifactAsync(
                     selection.ArtifactId,
                     cancellationToken
@@ -543,6 +576,15 @@ public sealed class DerivedArtifactSetStore {
                 ?? throw new InvalidDataException(
                     $"Exact derived artifact '{selection.ArtifactId}' is missing or unusable."
                 );
+            if (!string.Equals(
+                    artifact.RoleId,
+                    selection.RoleId,
+                    StringComparison.Ordinal
+                )) {
+                throw new InvalidDataException(
+                    $"Artifact '{artifact.ArtifactId}' role does not match selection '{selection.RoleId}'."
+                );
+            }
             if (artifact.Target != requirement.Target) {
                 throw new InvalidDataException(
                     $"Artifact '{artifact.ArtifactId}' target does not match role '{selection.RoleId}'."
@@ -563,12 +605,9 @@ public sealed class DerivedArtifactSetStore {
                     "Artifact-set members require one exact common coverage anchor."
                 );
             }
-            if (artifact.GoverningRuntimeConfigSetup
-                    != request.AnchorSetups.RuntimeConfig.Address
-                || artifact.GoverningSystemPromptSetup
-                    != request.AnchorSetups.SystemPrompt.Address) {
+            if (artifact.AnchorSetups != request.AnchorSetups) {
                 throw new InvalidDataException(
-                    $"Artifact '{artifact.ArtifactId}' governing setup does not match publication anchor setup."
+                    $"Artifact '{artifact.ArtifactId}' exact anchor setup references do not match publication."
                 );
             }
             if (!artifact.MemoryPack.TryGetBlock(
@@ -675,6 +714,10 @@ public sealed class DerivedArtifactSetStore {
         CancellationToken cancellationToken
     ) {
         string path = GetLatestPointerPath(policy, lineageKey);
+        DerivedMemoryPathGuard.EnsureSafeDescendant(
+            _repository.SessionJournalRepositoryPath,
+            path
+        );
         if (!File.Exists(path)) {
             return null;
         }
@@ -829,6 +872,10 @@ public sealed class DerivedArtifactSetStore {
         CancellationToken cancellationToken
     ) {
         string path = GetSetPath(setId);
+        DerivedMemoryPathGuard.EnsureSafeDescendant(
+            _repository.SessionJournalRepositoryPath,
+            path
+        );
         if (!File.Exists(path)) {
             throw new InvalidDataException(
                 $"Derived ArtifactSet '{setId}' is missing."
@@ -1096,14 +1143,19 @@ public sealed class DerivedArtifactSetStore {
     }
 
     private static void ValidateArtifactAgainstMember(
-        DerivedRecapArtifact artifact,
+        DerivedMemoryArtifact artifact,
         DerivedArtifactSetMember member,
         EventAddress commonAnchor,
         SessionContextAnchorSetupReferences anchorSetups
     ) {
         if (!string.Equals(
                 artifact.Status,
-                DerivedRecapArtifactStatus.Produced,
+                DerivedMemoryArtifactStatus.Produced,
+                StringComparison.Ordinal
+            )
+            || !string.Equals(
+                artifact.RoleId,
+                member.RoleId,
                 StringComparison.Ordinal
             )
             || !string.Equals(
@@ -1120,10 +1172,7 @@ public sealed class DerivedArtifactSetStore {
             || artifact.SourceRawHead != member.SourceRawHead
             || artifact.AnchorRawEvent != commonAnchor
             || artifact.SourceEndInclusive != commonAnchor
-            || artifact.GoverningRuntimeConfigSetup
-                != anchorSetups.RuntimeConfig.Address
-            || artifact.GoverningSystemPromptSetup
-                != anchorSetups.SystemPrompt.Address
+            || artifact.AnchorSetups != anchorSetups
             || !artifact.MemoryPack.TryGetBlock(
                 artifact.Target,
                 out MemoryPackBlock block

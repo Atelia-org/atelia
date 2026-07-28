@@ -3,13 +3,13 @@ using System.Text.Encodings.Web;
 using System.Text.Json;
 using Atelia.Completion;
 using Atelia.Completion.Abstractions;
+using Atelia.SessionJournal.DerivedMemory;
 using Atelia.SessionJournal.Maintainers;
 using SJ = Atelia.SessionJournal;
 
 namespace Atelia.SessionJournal.Cli;
 
 internal static class Program {
-    private const int DefaultThresholdTokens = 24_000;
     private const string DefaultLlmSmokeCallLogDir =
         "gitignore/session-journal/llm-smoke-calls";
     private const string DefaultMaintainerCallLogDir =
@@ -266,19 +266,31 @@ internal static class Program {
         CliOptions options,
         ICompletionClientFactory completionClientFactory
     ) {
-        string inputPath = options.Require("input");
-        string outputPath = options.Require("output");
-        string connectionsPath = options.Require("connections");
-        string? requestedConnectionId = options.Get("connection");
-        string callLogDir =
-            options.Get("call-log-dir") ?? DefaultMaintainerCallLogDir;
-        int thresholdTokens = options.GetInt(
-            "threshold-tokens",
-            DefaultThresholdTokens
+        options.EnsureOnly(
+            "input",
+            "epoch",
+            "profile",
+            "output",
+            "connections",
+            "connection",
+            "call-log-dir",
+            "system-prompt",
+            "prompt",
+            "candidate-id",
+            "attempt-id"
         );
-        int maxEpochs = options.GetInt("max-epochs", int.MaxValue);
-        string profileName =
-            options.Get("profile") ?? "autobiographical-rewrite";
+        string inputPath = options.RequireSingle("input");
+        string epochId = options.RequireSingle("epoch");
+        string profileName = options.RequireSingle("profile");
+        string outputPath = options.RequireSingle("output");
+        string connectionsPath = options.RequireSingle("connections");
+        string? requestedConnectionId =
+            options.GetOptionalSingle("connection");
+        string callLogDir =
+            options.GetOptionalSingle("call-log-dir")
+            ?? DefaultMaintainerCallLogDir;
+        string attemptId =
+            options.GetOptionalSingle("attempt-id") ?? "attempt-1";
 
         EnsurePathChainHasNoReparsePoint(inputPath, "--input");
         EnsurePathChainHasNoReparsePoint(outputPath, "--output");
@@ -296,11 +308,22 @@ internal static class Program {
             callLogDir,
             "--call-log-dir"
         );
+        EnsurePathsDoNotNest(
+            outputPath,
+            callLogDir,
+            "--output and --call-log-dir must be disjoint paths."
+        );
+        string fullOutputPath = Path.GetFullPath(outputPath);
+        if (Directory.Exists(fullOutputPath)) {
+            throw new ArgumentException(
+                "--output must be a file path, not an existing directory."
+            );
+        }
 
         string? systemPromptOverride =
-            ReadPromptOrNull(options.Get("system-prompt"));
+            ReadPromptOrNull(options.GetOptionalSingle("system-prompt"));
         string? userPromptOverride =
-            ReadPromptOrNull(options.Get("prompt"));
+            ReadPromptOrNull(options.GetOptionalSingle("prompt"));
 
         CompletionConnectionsFileConfig connections =
             CompletionConnectionConfigLoader.LoadFile(connectionsPath);
@@ -313,85 +336,84 @@ internal static class Program {
         CompletionConnectionConfig connection =
             registry.Resolve(requestedConnectionId);
         ICompletionClient client = registry.GetClient(connection.Id);
-        MemoryMaintainerRunProfile profile = CreateMaintainerProfile(
-            profileName,
-            systemPromptOverride,
-            userPromptOverride
-        );
-        SessionJournalMemoryMaintainerReplaySource source =
-            SessionJournalMemoryMaintainerReplaySource.Open(inputPath);
-        SessionJournalDerivedRecapWriter artifactWriter =
-            SessionJournalDerivedRecapWriter.Open(
-                inputPath,
-                profile,
-                client,
-                connection
-            );
+        MemoryMaintainerProfileDescriptor profile =
+            MemoryMaintainerProfileCatalog.Resolve(profileName)
+                .WithPromptOverrides(
+                    systemPromptOverride,
+                    userPromptOverride
+                );
+        string candidateId =
+            options.GetOptionalSingle("candidate-id")
+            ?? $"prompt-{profile.PromptFingerprint[7..23]}";
 
-        string fullOutputPath = Path.GetFullPath(outputPath);
         Directory.CreateDirectory(
             Path.GetDirectoryName(fullOutputPath) ?? "."
         );
         Directory.CreateDirectory(callLogDir);
 
-        var runner = new MemoryMaintainerReplayRunner(
-            source,
+        var loggingClient = new LoggingCompletionClient(
             client,
             connection,
-            profile,
             callLogDir,
-            thresholdTokens,
-            maxEpochs,
-            artifactWriter,
-            command: "run-memory-maintainer"
+            new CompletionCallLogContext(
+                Command: "run-memory-maintainer",
+                MaintainerId: profile.RewriteProfile.Id,
+                TargetCarrier:
+                    SJ.MemoryPackCarrierTokens.ToStorageToken(
+                        profile.RewriteProfile.Target.Carrier
+                    ),
+                TargetBlockId: profile.RewriteProfile.Target.BlockKey
+            )
         );
-        int recordCount = 0;
-        (string temporaryOutputPath, FileStream temporaryOutput) =
-            CreateTemporaryOutput(fullOutputPath);
-        try {
-            await using (temporaryOutput.ConfigureAwait(false)) {
-                await using var writer = new StreamWriter(
-                    temporaryOutput,
-                    Encoding.UTF8,
-                    bufferSize: 1024,
-                    leaveOpen: true
-                );
-                await foreach (
-                    MemoryMaintainerRunRecord record in runner.RunAsync(
-                        CancellationToken.None
-                    ).ConfigureAwait(false)
-                ) {
-                    await writer.WriteLineAsync(
-                        JsonSerializer.Serialize(record, JsonOptions)
-                    ).ConfigureAwait(false);
-                    await writer.FlushAsync(
-                        CancellationToken.None
-                    ).ConfigureAwait(false);
-                    recordCount++;
-                }
-                await temporaryOutput.FlushAsync(
-                    CancellationToken.None
-                ).ConfigureAwait(false);
-            }
-            File.Move(
-                temporaryOutputPath,
-                fullOutputPath,
-                overwrite: true
+        SJ.IMemoryBlockMaintainer maintainer = profile.Create(
+            loggingClient,
+            connection.ModelId
+        );
+        DerivedMemoryRepository repository =
+            DerivedMemoryRepository.Open(inputPath);
+        var runner = new DerivedMemoryMaintainerRunner(repository);
+        using var engine = SJ.SessionJournalEngine.Open(inputPath);
+        DerivedMemoryMaintainerRunResult result = await runner.RunAsync(
+                engine,
+                new DerivedMemoryMaintainerRunRequest(
+                    epochId,
+                    profile.RoleId,
+                    profile.RewriteProfile.Id,
+                    MemoryMaintainerProducerIdentity.Producer,
+                    MemoryMaintainerProducerIdentity
+                        .ComputeProducerFingerprint(
+                            profile,
+                            client,
+                            connection
+                        ),
+                    profile.PromptFingerprint,
+                    MemoryMaintainerProducerIdentity
+                        .ComputeModelFingerprint(client, connection),
+                    candidateId,
+                    attemptId
+                ),
+                maintainer,
+                () => loggingClient.WrittenCallLogPaths,
+                CancellationToken.None
+            )
+            .ConfigureAwait(false);
+        MemoryMaintainerRunRecord record =
+            MemoryMaintainerRunRecord.FromResult(
+                profile,
+                result,
+                repository.Artifacts.ArtifactsDirectory
             );
-        }
-        catch {
-            TryDeleteFile(temporaryOutputPath);
-            throw;
-        }
+        WriteJsonAtomically(fullOutputPath, record);
 
-        Console.WriteLine($"records: {recordCount}");
+        Console.WriteLine($"epoch: {record.EpochId}");
+        Console.WriteLine($"artifact: {record.ArtifactId}");
         Console.WriteLine($"connection: {connection.Id}");
         Console.WriteLine($"profile: {profile.ProfileName}");
         Console.WriteLine($"output: {outputPath}");
         Console.WriteLine(
             $"callLogDir: {Path.GetFullPath(callLogDir)}"
         );
-        return runner.HadFailure ? 1 : 0;
+        return 0;
     }
 
     private static void ValidateRequestedConnection(
@@ -405,31 +427,6 @@ internal static class Program {
                 + $"'{requestedConnectionId}'."
             );
         }
-    }
-
-    private static MemoryMaintainerRunProfile CreateMaintainerProfile(
-        string profileName,
-        string? systemPromptOverride,
-        string? userPromptOverride
-    ) {
-        SJ.MemoryRewriteProfile defaults = profileName switch {
-            "autobiographical-rewrite" =>
-                AutobiographicalRewriteProfiles.Default,
-            "world-understanding-rewrite" =>
-                WorldUnderstandingRewriteProfiles.Default,
-            _ => throw new ArgumentException(
-                $"Unsupported memory maintainer profile '{profileName}'."
-            )
-        };
-        return new MemoryMaintainerRunProfile(
-            profileName,
-            new SJ.MemoryRewriteProfile(
-                defaults.Id,
-                defaults.Target,
-                systemPromptOverride ?? defaults.SystemPrompt,
-                userPromptOverride ?? defaults.UserPrompt
-            )
-        );
     }
 
     private static string? ReadPromptOrNull(string? path)
@@ -522,6 +519,26 @@ internal static class Program {
             Path.GetFullPath(secondPath)
         );
         if (first.Equals(second, PathComparison)) {
+            throw new ArgumentException(errorMessage);
+        }
+    }
+
+    private static void EnsurePathsDoNotNest(
+        string firstPath,
+        string secondPath,
+        string errorMessage
+    ) {
+        string first = Path.TrimEndingDirectorySeparator(
+            Path.GetFullPath(firstPath)
+        );
+        string second = Path.TrimEndingDirectorySeparator(
+            Path.GetFullPath(secondPath)
+        );
+        string firstPrefix = first + Path.DirectorySeparatorChar;
+        string secondPrefix = second + Path.DirectorySeparatorChar;
+        if (first.Equals(second, PathComparison)
+            || first.StartsWith(secondPrefix, PathComparison)
+            || second.StartsWith(firstPrefix, PathComparison)) {
             throw new ArgumentException(errorMessage);
         }
     }
@@ -632,12 +649,13 @@ internal static class Program {
             + "[--call-log-dir <dir>] [--message <text>]"
         );
         Console.WriteLine(
-            "  run-memory-maintainer --input <repo-dir> --output <jsonl> "
-            + "--connections <path> "
-            + "[--profile autobiographical-rewrite"
-            + "|world-understanding-rewrite] "
+            "  run-memory-maintainer --input <repo-dir> --epoch <epoch-id> "
+            + "--profile <"
+            + "autobiographical-rewrite"
+            + "|world-understanding-rewrite> "
+            + "--output <json> --connections <path> "
             + "[--connection <id>] [--call-log-dir <dir>] "
-            + "[--threshold-tokens <n>] [--max-epochs <n>] "
+            + "[--candidate-id <token>] [--attempt-id <token>] "
             + "[--system-prompt <path>] [--prompt <path>]"
         );
         Console.WriteLine(

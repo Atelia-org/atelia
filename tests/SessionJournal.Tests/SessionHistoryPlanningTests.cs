@@ -60,9 +60,15 @@ public sealed class SessionHistoryPlanningTests : IDisposable {
     [Fact]
     public void IncrementalWindow_DoesNotDecodeColdPrefix() {
         SessionHistoryPlanningDiagnostics small =
-            MeasureIncrementalWindow(coldTurnCount: 1);
+            MeasureIncrementalWindow(
+                coldTurnCount: 1,
+                useDurableSeed: false
+            ).Window;
         SessionHistoryPlanningDiagnostics large =
-            MeasureIncrementalWindow(coldTurnCount: 10_001);
+            MeasureIncrementalWindow(
+                coldTurnCount: 10_001,
+                useDurableSeed: false
+            ).Window;
 
         Assert.Equal(small.PayloadReads, large.PayloadReads);
         Assert.Equal(
@@ -74,6 +80,29 @@ public sealed class SessionHistoryPlanningTests : IDisposable {
             large.HeaderVisits > small.HeaderVisits,
             "The raw setup proof remains header-only across the cold prefix."
         );
+    }
+
+    [Fact]
+    public void DurableSetupSeed_KeepsTenThousandTurnColdPrefixOutOfReads() {
+        SessionJournalReadDiagnostics small =
+            MeasureIncrementalWindow(
+                coldTurnCount: 1,
+                useDurableSeed: true
+            ).Total;
+        SessionJournalReadDiagnostics large =
+            MeasureIncrementalWindow(
+                coldTurnCount: 10_001,
+                useDurableSeed: true
+            ).Total;
+
+        Assert.Equal(small.HeaderPreviewReadCount, large.HeaderPreviewReadCount);
+        Assert.Equal(small.PayloadReadCount, large.PayloadReadCount);
+        Assert.Equal(
+            small.LogicalPayloadByteCount,
+            large.LogicalPayloadByteCount
+        );
+        Assert.Equal(0, small.FullProjectionInvocationCount);
+        Assert.Equal(0, large.FullProjectionInvocationCount);
     }
 
     [Fact]
@@ -132,38 +161,75 @@ public sealed class SessionHistoryPlanningTests : IDisposable {
         Assert.Null(snapshot.HeadToRoot[^1].Parent);
     }
 
-    private SessionHistoryPlanningDiagnostics MeasureIncrementalWindow(
-        int coldTurnCount
+    private (
+        SessionHistoryPlanningDiagnostics Window,
+        SessionJournalReadDiagnostics Total
+    ) MeasureIncrementalWindow(
+        int coldTurnCount,
+        bool useDurableSeed
     ) {
         Assert.True(coldTurnCount >= 1);
         string path = NewPath();
         EventAddress start;
         EventAddress head;
+        SessionContextAnchorSetupReferences setups;
         using (EventJournal.EventJournal journal =
                EventJournal.EventJournal.CreateNew(path)) {
             RefId main = journal.CreateBranch(
                 SessionJournalDefaults.MainBranchName,
                 startPoint: null
             ).Unwrap();
-            EventAddress cursor = AppendRaw(
-                journal,
-                parent: null,
-                SessionEventKind.RuntimeConfigSetup,
-                new SessionRuntimeConfiguration(
+            var runtimeBody = new SessionRuntimeConfiguration(
                     "model-A",
                     "surface-A",
                     SessionJournalDefaults.Schema
+                );
+            byte[] runtimePayload = SessionEventCodec.Encode(
+                SessionEventKind.RuntimeConfigSetup,
+                runtimeBody
+            );
+            EventAddress runtime = journal.AppendEventFrame(
+                parent: null,
+                runtimePayload,
+                opaqueEventKind:
+                    (uint)SessionEventKind.RuntimeConfigSetup,
+                hint: default
+            ).Unwrap();
+            var promptBody = new SystemPromptSetupBody("system-A");
+            byte[] promptPayload = SessionEventCodec.Encode(
+                SessionEventKind.SystemPromptSetup,
+                promptBody
+            );
+            EventAddress prompt = journal.AppendEventFrame(
+                runtime,
+                promptPayload,
+                opaqueEventKind:
+                    (uint)SessionEventKind.SystemPromptSetup,
+                hint: default
+            ).Unwrap();
+            setups = new SessionContextAnchorSetupReferences(
+                new SessionContextSetupReference(
+                    runtime,
+                    SessionEventCodec.GetExpectedBodySchemaVersion(
+                        SessionEventKind.RuntimeConfigSetup
+                    ),
+                    SessionRequestCanonicalizer.Sha256Hex(
+                        runtimePayload
+                    )
+                ),
+                new SessionContextSetupReference(
+                    prompt,
+                    SessionEventCodec.GetExpectedBodySchemaVersion(
+                        SessionEventKind.SystemPromptSetup
+                    ),
+                    SessionRequestCanonicalizer.Sha256Hex(
+                        promptPayload
+                    )
                 )
             );
-            cursor = AppendRaw(
+            EventAddress cursor = AppendRaw(
                 journal,
-                cursor,
-                SessionEventKind.SystemPromptSetup,
-                new SystemPromptSetupBody("system-A")
-            );
-            cursor = AppendRaw(
-                journal,
-                cursor,
+                prompt,
                 SessionEventKind.SessionCreated,
                 new SessionCreatedBody()
             );
@@ -218,8 +284,15 @@ public sealed class SessionHistoryPlanningTests : IDisposable {
             engine.FullProjectionInvocationCount;
         SessionJournalReadDiagnostics before =
             engine.CaptureReadDiagnostics();
-        SessionHistoryPlanningWindow window =
-            engine.ReadHistoryPlanningWindow(start);
+        SessionHistoryPlanningWindow window;
+        if (useDurableSeed) {
+            SessionHistoryPlanningSeed seed =
+                engine.CreateHistoryPlanningSeed(start, setups);
+            window = engine.ReadHistoryPlanningWindowAt(head, seed);
+        }
+        else {
+            window = engine.ReadHistoryPlanningWindow(start);
+        }
         SessionJournalReadDiagnostics after =
             engine.CaptureReadDiagnostics();
 
@@ -231,21 +304,23 @@ public sealed class SessionHistoryPlanningTests : IDisposable {
         Assert.Equal(4, window.Units.Count);
         Assert.Equal(4, window.Diagnostics.DecodedEventCount);
         Assert.Equal(4, window.ReplaySafeBoundaries.Count);
-        Assert.Equal(
-            after.HeaderPreviewReadCount
-                - before.HeaderPreviewReadCount,
-            window.Diagnostics.HeaderVisits
-        );
-        Assert.Equal(
-            after.PayloadReadCount - before.PayloadReadCount,
-            window.Diagnostics.PayloadReads
-        );
-        Assert.Equal(
-            after.LogicalPayloadByteCount
-                - before.LogicalPayloadByteCount,
-            window.Diagnostics.DecodedPayloadBytes
-        );
-        return window.Diagnostics;
+        if (!useDurableSeed) {
+            Assert.Equal(
+                after.HeaderPreviewReadCount
+                    - before.HeaderPreviewReadCount,
+                window.Diagnostics.HeaderVisits
+            );
+            Assert.Equal(
+                after.PayloadReadCount - before.PayloadReadCount,
+                window.Diagnostics.PayloadReads
+            );
+            Assert.Equal(
+                after.LogicalPayloadByteCount
+                    - before.LogicalPayloadByteCount,
+                window.Diagnostics.DecodedPayloadBytes
+            );
+        }
+        return (window.Diagnostics, after - before);
     }
 
     [Fact]

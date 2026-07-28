@@ -36,8 +36,13 @@ public sealed record SessionHistoryPlanningWindow(
     EventAddress ObservedRawHead,
     EventAddress StartExclusive,
     SessionContextAnchorSetupReferences StartSetups,
+    SessionContextAnchorSetupReferences EndSetups,
     IReadOnlyList<SessionHistoryPlanningUnit> Units,
     IReadOnlyList<SessionHistoryPlanningBoundary> ReplaySafeBoundaries,
+    IReadOnlyDictionary<
+        EventAddress,
+        SessionContextAnchorSetupReferences
+    > ReplaySafeBoundarySetups,
     SessionHistoryPlanningDiagnostics Diagnostics
 );
 
@@ -75,16 +80,19 @@ public sealed class SessionHistoryPlanningSeed {
         string ownerPath,
         EventAddress address,
         SessionContextAnchorSetupReferences setups,
-        SessionGoverningSetup governingSetup
+        SessionGoverningSetup governingSetup,
+        SessionExecutionRecovery? executionRecovery = null
     ) {
         OwnerPath = ownerPath;
         Address = address;
         Setups = setups;
         GoverningSetup = governingSetup;
+        ExecutionRecovery = executionRecovery;
     }
 
     internal string OwnerPath { get; }
     internal SessionGoverningSetup GoverningSetup { get; }
+    internal SessionExecutionRecovery? ExecutionRecovery { get; }
 
     public EventAddress Address { get; }
     public SessionContextAnchorSetupReferences Setups { get; }

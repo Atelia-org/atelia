@@ -162,7 +162,7 @@ public sealed class DerivedArtifactSetEngineIntegrationTests : IDisposable {
             MemoryPackCarrier.Action,
             "memory.self"
         );
-        DerivedRecapArtifact world = await WriteArtifactAsync(
+        DerivedMemoryArtifact world = await WriteArtifactAsync(
             repository,
             "world-profile",
             worldTarget,
@@ -170,7 +170,7 @@ public sealed class DerivedArtifactSetEngineIntegrationTests : IDisposable {
             anchor,
             anchorSetups
         );
-        DerivedRecapArtifact self = await WriteArtifactAsync(
+        DerivedMemoryArtifact self = await WriteArtifactAsync(
             repository,
             "self-profile",
             selfTarget,
@@ -225,7 +225,7 @@ public sealed class DerivedArtifactSetEngineIntegrationTests : IDisposable {
         );
     }
 
-    private static async ValueTask<DerivedRecapArtifact>
+    private static async ValueTask<DerivedMemoryArtifact>
         WriteArtifactAsync(
         DerivedMemoryRepository repository,
         string profileId,
@@ -234,39 +234,16 @@ public sealed class DerivedArtifactSetEngineIntegrationTests : IDisposable {
         EventAddress anchor,
         SessionContextAnchorSetupReferences setups
     ) {
-        var memoryPack = new MemoryPack();
-        switch (target.Carrier) {
-            case MemoryPackCarrier.Observation:
-                memoryPack.Observation.Add(
-                    target.BlockKey,
-                    new MemoryPackBlock(text)
-                );
-                break;
-            case MemoryPackCarrier.Action:
-                memoryPack.Action.Add(
-                    target.BlockKey,
-                    new MemoryPackBlock(text)
-                );
-                break;
-            default:
-                throw new ArgumentOutOfRangeException(nameof(target));
-        }
-        return await repository.Recaps.WriteProducedAsync(
-            new DerivedRecapWriteRequest(
-                DerivedRecapArtifactKinds.RollingSummary,
-                profileId,
-                "integration-tests",
-                "integration-tests-v1",
-                anchor,
-                SourceStartExclusive: null,
-                anchor,
-                anchor,
-                setups.RuntimeConfig.Address,
-                setups.SystemPrompt.Address,
-                PreviousArtifact: null,
-                target,
-                memoryPack
-            )
+        return await DerivedMemoryArtifactTestFactory.WriteGenesisAsync(
+            repository,
+            profileId.EndsWith("-profile", StringComparison.Ordinal)
+                ? profileId[..^"-profile".Length]
+                : profileId,
+            profileId,
+            target,
+            text,
+            anchor,
+            setups
         );
     }
 

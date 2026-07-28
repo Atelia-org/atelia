@@ -3,11 +3,16 @@
 可替换的 SessionJournal derived-memory 子系统。它单向引用
 `Atelia.SessionJournal` 的 neutral candidate contracts，负责：
 
-- `derived/recaps/v1/` artifact persistence 与 rebuildable latest index；
+- `derived/memory/v1/artifacts/` epoch-bound append-only candidate persistence；
 - `derived/memory/v1/` coherent ArtifactSet、exact-previous CAS 和 latest pointer；
 - shared `DerivedArtifactEpochPlanner` 的 immutable config lineage、epoch ledger 与
   rebuildable current/latest indexes；
 - 把已发布的 exact set 投影为 `ICoherentContextCandidateSource`。
+
+DM-6 candidate store 不再维护 role-local latest pointer。`DerivedMemoryArtifactStore`
+只接受 v2 exact-epoch identity，并允许同一 role/epoch 的 prompt/model tuning 结果
+append-only 共存；只有 ArtifactSet publication 才决定 candidate 是否可选择。旧
+`derived/recaps/v1/`、latest-by-profile 与 linear recap CAS 已直接退役。
 
 DM-3B provider 只实现 `Latest`。`RawSuffixTokenBudget` 会验证形状，但在这一版只是
 non-binding hint：provider 不搜索更早 set，也不保证 raw suffix 落入该预算。budgeted/NthPrevious
@@ -43,19 +48,40 @@ window，并用该 epoch immutable config 重算 dependency-safe boundary 与 to
 即使 derived JSON/hash 自洽，也不能成为 current latest。batch seed 只解 setup payload，避免
 多 epoch legacy stable-root setup 验证退化成 E 次全链回溯；整个路径不调用 `Project()`。
 
-`SessionJournal.Cli` composition root 提供 ArtifactSet publish/list/validate/rebuild，以及
-planner configure/plan/list 命令；本程序集仍不反向依赖 CLI。usage index 与 online
-lifecycle 属于后续 DM-7/DM-8。
+`DerivedMemoryMaintainerRunner` 只 lookup exact epoch/config/input set，并调用
+core 的 durable setup-seed API 验证 `RawStartSetups` 的两个 exact payload 与 bounded
+execution recovery，再用 `ReadHistoryPlanningWindowAt(sourceEnd, seed)` 物化 exact
+range；不会为了一个 role run 扫描/验证全 repository，也不会从 epoch end 回扫 root。
+window 直接从已解码 suffix/fold 回传 `EndSetups`。global validation 仍属于运维命令。input set 缺新 role
+时以 empty old block 启动，同时把其他 role blocks 作为 PriorContext。artifact v2 明确
+区分两组 typed setup provenance：`RawStartSetups` 必须等于 epoch 起点 fold seed，
+`AnchorSetups` 来自 exact epoch 末端；ArtifactSet publication 只与后一组做 exact
+address/schema/payload-hash coherence，下一 epoch 恢复输入时再把 set anchor 与其
+`RawStartSetups` exact 对齐。
+
+`SessionJournal.Cli` composition root 提供 exact-epoch maintainer run、ArtifactSet
+publish/list/validate/rebuild，以及 planner configure/plan/list 命令；本程序集仍不反向
+依赖 CLI。multi-role settlement/publication 与 online lifecycle 属于后续 DM-7/DM-8。
 
 Artifact 文件 strict read/write 上限为 8 MiB，ArtifactSet 为 1 MiB，latest pointer
 为 64 KiB；planner config、epoch、pointer 分别为 64 KiB、128 KiB、32 KiB。strict read
 上限都在 JSON deserialize 前按 file byte length 检查；writer
-按 UTF-8 serialized byte count 使用同一 artifact 上限，并在创建 derived 目录、artifact
-或 index 前 fail fast。8 MiB 是 derived-rebuildable v1 的直接 cutover，不为超限旧实验
+按 UTF-8 serialized byte count 使用同一 artifact 上限，并在创建 derived 目录或 artifact
+前 fail fast。8 MiB 是 derived-rebuildable v2 的直接 cutover，不为超限旧实验
 artifact 增加 compatibility 分支；删除并重跑 maintainer 即可重建。
 
-普通 `TryReadArtifactAsync` / latest-index rebuild 继续维持既有 tolerant 语义：未知字段、
-重复副本等旧 sidecar 问题可被读取或跳过并重建。repository strict validation 才要求所有
-artifact 文件满足 filename/schema/identity/8 MiB 上限。set JSON 持久化 canonical role
+普通 `TryReadArtifactAsync` 对单个 malformed candidate 返回 unusable；repository strict
+validation 要求所有 artifact 文件满足 filename/schema/identity/8 MiB 上限。set JSON 持久化 canonical role
 requirements，它们属于 set identity/hash；caller policy 的 role snapshot 必须 exact
 match。这是尚未发布阶段对 v1 的直接 breaking 修正，不读取缺少 role snapshot 的旧实验 set。
+
+artifact id 是完整 canonical identity hash，不使用 collision suffix；exact retry
+复用 durable existing，同路径若不是同一 strict identity 则视为 corruption/hash
+collision 并 fail-fast。point reads 在 `File.Exists` 前检查完整路径链，dangling 或
+external symlink 不能伪装成 missing。
+
+global validation 会把每个 artifact 与 durable epoch/config 和 exact input set
+dependency closure 交叉验证，并按 unique raw end 缓存复核 `AnchorSetups`。未被任何
+ArtifactSet 选择、但仍有完整 epoch closure 的 alternative candidate 是合法 orphan；
+缺 epoch 或 dependency snapshot 漂移的 detached artifact 非法。单 role runner 不执行
+这项 repository-wide audit，因此无关 malformed candidate 不阻断独立 prompt tuning。

@@ -17,7 +17,10 @@ public sealed class ArchitectureBoundaryTests {
             )
         );
         Assert.Equal(
-            ["../SessionJournal/SessionJournal.csproj"],
+            [
+                "../Completion.Abstractions/Completion.Abstractions.csproj",
+                "../SessionJournal/SessionJournal.csproj"
+            ],
             ReadProjectReferences(
                 root,
                 "prototypes/SessionJournal.Maintainers/"

@@ -40,9 +40,11 @@ atomic publish。
 
 ## run-memory-maintainer
 
-从 `SessionJournalEngine.ReplayHistory()` 读取带 raw address 的历史，按 runner-local
-synthetic sliding-prefix policy 触发一个 rewrite maintainer，并输出 JSONL、Completion
-call log 和 `derived/recaps/v1/` artifact：
+对一个已经由 `DerivedArtifactEpochPlanner` 持久化的 exact epoch 运行一个
+rewrite maintainer。runner 不重新遍历整段历史、不按 role 自行 threshold/split，
+也不推进 epoch 或 ArtifactSet pointer；它只物化该 epoch 的
+`(sourceStartExclusive, sourceEndInclusive]`，并输出 JSON report、Completion call
+log 与 append-only `derived/memory/v1/artifacts/` candidate：
 
 ```bash
 dotnet run --project prototypes/SessionJournal.Cli -- run-memory-maintainer \
@@ -50,31 +52,35 @@ dotnet run --project prototypes/SessionJournal.Cli -- run-memory-maintainer \
   --connections prototypes/Galatea/.atelia/galatea/connections.json \
   --connection dsv4p \
   --profile autobiographical-rewrite \
-  --threshold-tokens 24000 \
-  --max-epochs 1 \
-  --output gitignore/backtest/<run>/result.jsonl \
+  --epoch dae_<...> \
+  --candidate-id prompt-tuning-a \
+  --attempt-id attempt-1 \
+  --output gitignore/backtest/<run>/result.json \
   --call-log-dir gitignore/backtest/<run>/calls
 ```
 
 可用 profile：
 
-| profile | target |
-| --- | --- |
-| `autobiographical-rewrite` | `action/roleplay.first-person-autobiography` |
-| `world-understanding-rewrite` | `observation/roleplay.world-understanding` |
+| profile | role | target |
+| --- | --- | --- |
+| `autobiographical-rewrite` | `autobiography` | `action/roleplay.first-person-autobiography` |
+| `world-understanding-rewrite` | `world-understanding` | `observation/roleplay.world-understanding` |
 
-可用覆盖参数为 `--system-prompt <path>` 与 `--prompt <path>`。输出与 call-log
-目录必须位于 input repo 外，JSONL 使用同目录临时文件 atomic publish。
+可用覆盖参数为 `--system-prompt <path>` 与 `--prompt <path>`；覆盖只改变
+prompt/producer fingerprint 和 candidate identity，不改变 durable epoch。输出与
+call-log 目录必须位于 input repo 外，且 `--output` 与 `--call-log-dir` 不得相同或
+互为 ancestor/descendant；这些冲突在创建 Completion client、目录或调用 LLM 前拒绝。
+report 使用同目录临时文件 atomic publish。
 
-当前 runner 从 raw history 起点和空 `MemoryPack` 开始 full replay；目标 lineage
-必须为空。CLI 拆分同时把 producer identity 更新为
-`SessionJournal.Cli/run-memory-maintainer`，所以旧 BacktestCli 生成的 derived store
-不会被当成当前 producer 的可续写状态。若要重跑，只删除精确的
-`<repo>/derived/recaps/v1/`；raw events 仍是唯一 correctness source。
+genesis epoch 使用显式 empty `MemoryPack`。non-genesis 从 epoch 的 exact input set
+恢复全部 role blocks；若 input set 尚无当前 role（例如 topology 新增 maintainer），
+该 role 的 old block 显式为空，但其他 blocks 仍作为 ContextHeader 输入。同一
+role/epoch 可保存多个 alternative candidates；只有后续
+`publish-derived-artifact-set` 才会让某个 candidate 进入可选择 set。
 
-该命令是 maintainer 开发入口，不是最终 shared epoch planner。它当前运行
-`RewriteMemoryBlockMaintainer`，profile 来自 `SessionJournal.Maintainers`；未来 concrete
-maintainer 类型可在此 composition root 增加 factory/descriptor，而不进入 raw core。
+artifact schema v2 是直接切换：旧 `derived/recaps/v1/` 与
+latest-by-profile index 已退役，不做 silent compatibility。derived 数据可删除并由
+planner/runner/publisher 重建；raw events 仍是唯一 correctness source。
 
 ## validate
 

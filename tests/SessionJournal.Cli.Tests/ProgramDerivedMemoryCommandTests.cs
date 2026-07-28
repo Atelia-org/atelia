@@ -129,6 +129,7 @@ public sealed class ProgramDerivedMemoryCommandTests : IDisposable {
     [Fact]
     public async Task ConfigurePlanListEpochs_AreContentFreeAndRawExact() {
         Fixture fixture = await CreateFixtureAsync();
+        Directory.Delete(fixture.Repository.DerivedRoot, recursive: true);
         RawSnapshot before = ReadRawSnapshot(fixture.Path);
         string configReport = Path.Combine(_tempRoot, "config.json");
         string planReport = Path.Combine(_tempRoot, "epoch.json");
@@ -229,6 +230,7 @@ public sealed class ProgramDerivedMemoryCommandTests : IDisposable {
     [Fact]
     public async Task EpochCommands_RejectBadNumbersAndMixedGenesis() {
         Fixture fixture = await CreateFixtureAsync();
+        Directory.Delete(fixture.Repository.DerivedRoot, recursive: true);
         string[] configure = [
             "configure-derived-artifact-planner",
             "--input", fixture.Path,
@@ -260,13 +262,15 @@ public sealed class ProgramDerivedMemoryCommandTests : IDisposable {
         Fixture fixture = await CreateFixtureAsync();
         Assert.Equal(0, Run(PublishArgs(fixture, "none")));
         RawSnapshot before = ReadRawSnapshot(fixture.Path);
-        DerivedRecapArtifact replacement = await WriteArtifactAsync(
+        DerivedMemoryArtifact replacement = await WriteArtifactAsync(
             fixture.Repository,
             "replacement",
             fixture.Policy.Roles[0].Target,
             "replacement text",
+            fixture.Epoch,
             fixture.Anchor,
-            fixture.Setups
+            fixture.Setups,
+            fixture.Policy.Roles[0].RoleId
         );
         string reportPath = Path.Combine(_tempRoot, "must-not-exist.json");
         string[] args = PublishArgs(
@@ -322,13 +326,15 @@ public sealed class ProgramDerivedMemoryCommandTests : IDisposable {
             fixture.Repository.ArtifactSets.LatestPointersDirectory
         ));
         File.Delete(pointer);
-        DerivedRecapArtifact replacement = await WriteArtifactAsync(
+        DerivedMemoryArtifact replacement = await WriteArtifactAsync(
             fixture.Repository,
             "fork",
             fixture.Policy.Roles[0].Target,
             "fork text",
+            fixture.Epoch,
             fixture.Anchor,
-            fixture.Setups
+            fixture.Setups,
+            fixture.Policy.Roles[0].RoleId
         );
         Assert.Equal(
             0,
@@ -369,7 +375,7 @@ public sealed class ProgramDerivedMemoryCommandTests : IDisposable {
         if (corruption == "malformed-artifact") {
             await File.WriteAllTextAsync(
                 Path.Combine(
-                    fixture.Repository.Recaps.ArtifactsDirectory,
+                    fixture.Repository.Artifacts.ArtifactsDirectory,
                     $"{fixture.FirstArtifactId}.json"
                 ),
                 "{ malformed"
@@ -503,7 +509,7 @@ public sealed class ProgramDerivedMemoryCommandTests : IDisposable {
             "sets" => fixture.Repository.ArtifactSets.SetsDirectory,
             "pointers" =>
                 fixture.Repository.ArtifactSets.LatestPointersDirectory,
-            "artifacts" => fixture.Repository.Recaps.ArtifactsDirectory,
+            "artifacts" => fixture.Repository.Artifacts.ArtifactsDirectory,
             _ => throw new ArgumentOutOfRangeException(nameof(targetKind))
         };
         if (Directory.Exists(targetPath)) {
@@ -586,6 +592,26 @@ public sealed class ProgramDerivedMemoryCommandTests : IDisposable {
     [Fact]
     public async Task InlineSyntaxCarriesLeadingDashIdentitiesAndRoles() {
         Fixture fixture = await CreateFixtureAsync();
+        DerivedMemoryArtifact alpha = await WriteArtifactAsync(
+            fixture.Repository,
+            "inline-alpha",
+            fixture.Policy.Roles[0].Target,
+            "inline alpha",
+            fixture.Epoch,
+            fixture.Anchor,
+            fixture.Setups,
+            "--alpha"
+        );
+        DerivedMemoryArtifact zeta = await WriteArtifactAsync(
+            fixture.Repository,
+            "inline-zeta",
+            fixture.Policy.Roles[1].Target,
+            "inline zeta",
+            fixture.Epoch,
+            fixture.Anchor,
+            fixture.Setups,
+            "--zeta"
+        );
 
         int exitCode = Run([
             "publish-derived-artifact-set",
@@ -596,8 +622,8 @@ public sealed class ProgramDerivedMemoryCommandTests : IDisposable {
             "--policy-fingerprint=--fingerprint",
             "--required-role=--alpha=observation/memory.alpha",
             "--required-role=--zeta=system/memory.zeta",
-            $"--member=--alpha={fixture.FirstArtifactId}",
-            $"--member=--zeta={fixture.SecondArtifactId}",
+            $"--member=--alpha={alpha.ArtifactId}",
+            $"--member=--zeta={zeta.ArtifactId}",
             "--expected-previous=none"
         ]);
 
@@ -640,6 +666,8 @@ public sealed class ProgramDerivedMemoryCommandTests : IDisposable {
         );
         EventAddress anchor;
         SJ.SessionContextAnchorSetupReferences setups;
+        DerivedArtifactEpochPlan epoch;
+        DerivedMemoryRepository repository;
         using (var engine = SJ.SessionJournalEngine.Create(
             path,
             new SJ.SessionCreateOptions(
@@ -648,17 +676,39 @@ public sealed class ProgramDerivedMemoryCommandTests : IDisposable {
                 "surface-A"
             )
         )) {
-            engine.AppendObservation("old observation");
-            anchor = engine.AppendImportedAgentAction(
-                new ActionMessage([
-                    new ActionBlock.Text("old action")
-                ]),
-                new CompletionDescriptor("import", "import-v1", "model-A")
+            for (int index = 0; index < 5; index++) {
+                engine.AppendObservation($"old observation {index}");
+                _ = engine.AppendImportedAgentAction(
+                    new ActionMessage([
+                        new ActionBlock.Text($"old action {index}")
+                    ]),
+                    new CompletionDescriptor(
+                        "import",
+                        "import-v1",
+                        "model-A"
+                    )
+                );
+            }
+            repository = DerivedMemoryRepository.Open(path);
+            _ = await repository.EpochPlanner.ConfigureAsync(
+                new DerivedArtifactPlannerConfigDefinition(
+                    "main",
+                    "test-group",
+                    "topology-v1",
+                    1,
+                    1,
+                    1,
+                    1_000
+                ),
+                null
             );
+            epoch = (await repository.EpochPlanner.PlanAsync(
+                engine,
+                new("main", "test-group", null, null)
+            )).Epoch!;
+            anchor = epoch.SourceEndInclusive;
             setups = engine.ResolveContextAnchorSetupReferences(anchor);
         }
-        DerivedMemoryRepository repository =
-            DerivedMemoryRepository.Open(path);
         var firstTarget = new SJ.MemoryPackBlockPath(
             SJ.MemoryPackCarrier.Observation,
             "memory.alpha"
@@ -667,19 +717,21 @@ public sealed class ProgramDerivedMemoryCommandTests : IDisposable {
             SJ.MemoryPackCarrier.System,
             "memory.zeta"
         );
-        DerivedRecapArtifact first = await WriteArtifactAsync(
+        DerivedMemoryArtifact first = await WriteArtifactAsync(
             repository,
             "alpha",
             firstTarget,
             "derived alpha text",
+            epoch,
             anchor,
             setups
         );
-        DerivedRecapArtifact second = await WriteArtifactAsync(
+        DerivedMemoryArtifact second = await WriteArtifactAsync(
             repository,
             "zeta",
             secondTarget,
             "derived zeta text",
+            epoch,
             anchor,
             setups
         );
@@ -702,6 +754,7 @@ public sealed class ProgramDerivedMemoryCommandTests : IDisposable {
             path,
             repository,
             policy,
+            epoch,
             "main",
             anchor,
             setups,
@@ -710,52 +763,44 @@ public sealed class ProgramDerivedMemoryCommandTests : IDisposable {
         );
     }
 
-    private static async ValueTask<DerivedRecapArtifact> WriteArtifactAsync(
+    private static async ValueTask<DerivedMemoryArtifact> WriteArtifactAsync(
         DerivedMemoryRepository repository,
         string profile,
         SJ.MemoryPackBlockPath target,
         string text,
+        DerivedArtifactEpochPlan epoch,
         EventAddress anchor,
-        SJ.SessionContextAnchorSetupReferences setups
+        SJ.SessionContextAnchorSetupReferences setups,
+        string? roleId = null
     ) {
-        var memoryPack = new SJ.MemoryPack();
-        switch (target.Carrier) {
-            case SJ.MemoryPackCarrier.System:
-                memoryPack.System.Add(
-                    target.BlockKey,
-                    new SJ.MemoryPackBlock(text)
-                );
-                break;
-            case SJ.MemoryPackCarrier.Observation:
-                memoryPack.Observation.Add(
-                    target.BlockKey,
-                    new SJ.MemoryPackBlock(text)
-                );
-                break;
-            case SJ.MemoryPackCarrier.Action:
-                memoryPack.Action.Add(
-                    target.BlockKey,
-                    new SJ.MemoryPackBlock(text)
-                );
-                break;
-            default:
-                throw new ArgumentOutOfRangeException(nameof(target));
-        }
-        return await repository.Recaps.WriteProducedAsync(
-            new DerivedRecapWriteRequest(
-                DerivedRecapArtifactKinds.RollingSummary,
+        var draft = new SJ.MemoryPackDraft(new SJ.MemoryPack());
+        draft.UpsertBlock(target, text);
+        const string fingerprint =
+            "sha256:2222222222222222222222222222222222222222222222222222222222222222";
+        return await repository.Artifacts.WriteCandidateAsync(
+            new DerivedMemoryArtifactWriteRequest(
+                epoch.EpochId,
+                DerivedMemoryMaintainerRunner
+                    .GetEpochPlanFingerprint(epoch),
+                roleId ?? $"{profile}-role",
                 profile,
                 "tests",
-                "tests-v1",
+                fingerprint,
+                fingerprint,
+                fingerprint,
+                "candidate-1",
+                "attempt-1",
+                epoch.PlannedAtRawHead,
+                epoch.SourceStartExclusive,
+                epoch.SourceEndInclusive,
                 anchor,
-                SourceStartExclusive: null,
-                anchor,
-                anchor,
-                setups.RuntimeConfig.Address,
-                setups.SystemPrompt.Address,
-                PreviousArtifact: null,
+                epoch.RawStartSetups,
+                setups,
+                null,
+                null,
+                [],
                 target,
-                memoryPack
+                draft.Build()
             )
         );
     }
@@ -850,6 +895,7 @@ public sealed class ProgramDerivedMemoryCommandTests : IDisposable {
         string Path,
         DerivedMemoryRepository Repository,
         DerivedArtifactSetPolicy Policy,
+        DerivedArtifactEpochPlan Epoch,
         string LineageKey,
         EventAddress Anchor,
         SJ.SessionContextAnchorSetupReferences Setups,

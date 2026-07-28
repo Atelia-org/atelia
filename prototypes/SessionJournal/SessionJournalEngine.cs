@@ -412,6 +412,60 @@ public sealed class SessionJournalEngine : IDisposable {
         );
     }
 
+    /// <summary>
+    /// Rehydrates one durable exact setup checkpoint into a repository-bound planning seed.
+    /// This reads only the two referenced setup payloads and the bounded execution dependency
+    /// closure at <paramref name="startExclusive"/>; it never searches toward the raw root for
+    /// governing configuration.
+    /// </summary>
+    public SessionHistoryPlanningSeed CreateHistoryPlanningSeed(
+        EventAddress startExclusive,
+        SessionContextAnchorSetupReferences setups,
+        CancellationToken cancellationToken = default
+    ) {
+        ThrowIfDisposed();
+        if (startExclusive == default) {
+            throw new ArgumentException(
+                "Planning seed address cannot be default.",
+                nameof(startExclusive)
+            );
+        }
+        ArgumentNullException.ThrowIfNull(setups);
+        SessionRuntimeConfiguration runtime =
+            ReadAndValidatePlanningSetupReference<
+                SessionRuntimeConfiguration
+            >(
+                setups.RuntimeConfig,
+                SessionEventKind.RuntimeConfigSetup,
+                cancellationToken
+            );
+        SystemPromptSetupBody prompt =
+            ReadAndValidatePlanningSetupReference<SystemPromptSetupBody>(
+                setups.SystemPrompt,
+                SessionEventKind.SystemPromptSetup,
+                cancellationToken
+            );
+        SessionExecutionRecovery executionRecovery =
+            SessionTailContextProjection.ValidateReplaySafeBoundary(
+                _reader,
+                startExclusive,
+                cancellationToken
+            );
+        return new SessionHistoryPlanningSeed(
+            Path,
+            startExclusive,
+            setups,
+            new SessionGoverningSetup(
+                startExclusive,
+                setups.RuntimeConfig.Address,
+                runtime,
+                setups.SystemPrompt.Address,
+                prompt.Content
+            ),
+            executionRecovery
+        );
+    }
+
     private SessionHistoryPlanningWindow
         ReadHistoryPlanningWindowAtCore(
         EventAddress capturedHead,
@@ -464,16 +518,35 @@ public sealed class SessionJournalEngine : IDisposable {
             );
         }
 
+        if (planningSeed is not null
+            && (planningSeed.Address != resolvedStart.Value
+                || !string.Equals(
+                    System.IO.Path.GetFullPath(
+                        planningSeed.OwnerPath
+                    ),
+                    System.IO.Path.GetFullPath(Path),
+                    OperatingSystem.IsWindows()
+                        ? StringComparison.OrdinalIgnoreCase
+                        : StringComparison.Ordinal
+                ))) {
+            throw new ArgumentException(
+                "Planning seed does not belong to this SessionJournal boundary.",
+                nameof(planningSeed)
+            );
+        }
         SessionExecutionRecovery executionSeed =
-            SessionTailContextProjection.ValidateReplaySafeBoundary(
-            _reader,
-            resolvedStart.Value,
-            cancellationToken
-        );
+            planningSeed?.ExecutionRecovery
+            ?? SessionTailContextProjection.ValidateReplaySafeBoundary(
+                _reader,
+                resolvedStart.Value,
+                cancellationToken
+            );
         reverseAddresses.Reverse();
         var events = new List<DecodedSessionEvent>(
             reverseAddresses.Count
         );
+        var suffixSetupReferences =
+            new Dictionary<EventAddress, SessionContextSetupReference>();
         foreach (EventAddress address in reverseAddresses) {
             cancellationToken.ThrowIfCancellationRequested();
             using SessionJournalEventFrame frame =
@@ -485,6 +558,19 @@ public sealed class SessionJournalEngine : IDisposable {
                 frame.Payload,
                 out int bodySchemaVersion
             );
+            if (kind is SessionEventKind.RuntimeConfigSetup
+                or SessionEventKind.SystemPromptSetup) {
+                suffixSetupReferences.Add(
+                    address,
+                    new SessionContextSetupReference(
+                        address,
+                        bodySchemaVersion,
+                        SessionRequestCanonicalizer.Sha256Hex(
+                            frame.Payload
+                        )
+                    )
+                );
+            }
             events.Add(new DecodedSessionEvent(
                 kind,
                 bodySchemaVersion,
@@ -523,33 +609,66 @@ public sealed class SessionJournalEngine : IDisposable {
             );
         }
         else {
-            if (planningSeed.Address != resolvedStart.Value
-                || !string.Equals(
-                    System.IO.Path.GetFullPath(
-                        planningSeed.OwnerPath
-                    ),
-                    System.IO.Path.GetFullPath(Path),
-                    OperatingSystem.IsWindows()
-                        ? StringComparison.OrdinalIgnoreCase
-                        : StringComparison.Ordinal
-                )) {
-                throw new ArgumentException(
-                    "Planning seed does not belong to this SessionJournal boundary.",
-                    nameof(planningSeed)
-                );
-            }
             seed = planningSeed.GoverningSetup;
             startSetups = planningSeed.Setups;
         }
         var addressedMessages = new List<AddressedSessionHistoryMessage>();
         var boundaries = new List<SessionHistoryPlanningBoundary>();
-        _ = SessionTailContextProjection.FoldSuffix(
+        SessionTailContextProjection.TailFoldResult folded =
+            SessionTailContextProjection.FoldSuffix(
             seed,
             events,
             executionSeed,
             addressedMessages,
             boundaries
         );
+        var endSetups = new SessionContextAnchorSetupReferences(
+            ResolveFoldedSetupReference(
+                folded.GoverningSetup.RuntimeConfigSetupAddress,
+                startSetups.RuntimeConfig,
+                suffixSetupReferences
+            ),
+            ResolveFoldedSetupReference(
+                folded.GoverningSetup.SystemPromptSetupAddress,
+                startSetups.SystemPrompt,
+                suffixSetupReferences
+            )
+        );
+        var boundaryAddresses = boundaries
+            .Select(static boundary => boundary.Address)
+            .ToHashSet();
+        var boundarySetups =
+            new Dictionary<
+                EventAddress,
+                SessionContextAnchorSetupReferences
+            >();
+        SessionContextSetupReference runtimeAtBoundary =
+            startSetups.RuntimeConfig;
+        SessionContextSetupReference promptAtBoundary =
+            startSetups.SystemPrompt;
+        foreach (DecodedSessionEvent ev in events) {
+            if (ev.Kind == SessionEventKind.RuntimeConfigSetup) {
+                runtimeAtBoundary = suffixSetupReferences[ev.Address];
+            }
+            else if (ev.Kind
+                     == SessionEventKind.SystemPromptSetup) {
+                promptAtBoundary = suffixSetupReferences[ev.Address];
+            }
+            if (boundaryAddresses.Contains(ev.Address)) {
+                boundarySetups.Add(
+                    ev.Address,
+                    new SessionContextAnchorSetupReferences(
+                        runtimeAtBoundary,
+                        promptAtBoundary
+                    )
+                );
+            }
+        }
+        if (boundarySetups.Count != boundaries.Count) {
+            throw new InvalidDataException(
+                "Planning fold did not produce exact setup references for every replay-safe boundary."
+            );
+        }
         var units = addressedMessages
             .Select(static addressed => new SessionHistoryPlanningUnit(
                 addressed.Message,
@@ -563,8 +682,13 @@ public sealed class SessionJournalEngine : IDisposable {
             capturedHead,
             resolvedStart.Value,
             startSetups,
+            endSetups,
             Array.AsReadOnly(units),
             boundaries.AsReadOnly(),
+            new System.Collections.ObjectModel.ReadOnlyDictionary<
+                EventAddress,
+                SessionContextAnchorSetupReferences
+            >(boundarySetups),
             new SessionHistoryPlanningDiagnostics(
                 after.HeaderPreviewReadCount
                     - before.HeaderPreviewReadCount,
@@ -574,6 +698,26 @@ public sealed class SessionJournalEngine : IDisposable {
                 events.Count
             )
         );
+    }
+
+    private static SessionContextSetupReference
+        ResolveFoldedSetupReference(
+        EventAddress address,
+        SessionContextSetupReference startReference,
+        IReadOnlyDictionary<EventAddress, SessionContextSetupReference>
+            suffixReferences
+    ) {
+        if (address == startReference.Address) {
+            return startReference;
+        }
+        return suffixReferences.TryGetValue(
+            address,
+            out SessionContextSetupReference? reference
+        )
+            ? reference
+            : throw new InvalidDataException(
+                $"Folded governing setup '{address}' has no exact payload reference."
+            );
     }
 
     public async Task<TurnResult> SendAsync(string observation, CancellationToken cancellationToken = default)
@@ -1840,6 +1984,50 @@ public sealed class SessionJournalEngine : IDisposable {
         return body as T
             ?? throw new InvalidDataException(
                 $"Setup checkpoint at {reference.Address} decoded to '{body.GetType().Name}', expected '{typeof(T).Name}'."
+            );
+    }
+
+    private T ReadAndValidatePlanningSetupReference<T>(
+        SessionContextSetupReference reference,
+        SessionEventKind expectedKind,
+        CancellationToken cancellationToken
+    ) where T : class {
+        ArgumentNullException.ThrowIfNull(reference);
+        cancellationToken.ThrowIfCancellationRequested();
+        using SessionJournalEventFrame frame =
+            _reader.ReadEvent(reference.Address).Unwrap();
+        ValidateSessionHeaderPreview(reference.Address, frame.Header);
+        var actualKind =
+            (SessionEventKind)frame.Header.OpaqueEventKind;
+        if (actualKind != expectedKind) {
+            throw new InvalidDataException(
+                $"Planning setup seed expected '{expectedKind}' at {reference.Address}, got '{actualKind}'."
+            );
+        }
+        object body = SessionEventCodec.Decode(
+            actualKind,
+            frame.Payload,
+            out int bodySchemaVersion
+        );
+        if (bodySchemaVersion != reference.BodySchemaVersion) {
+            throw new InvalidDataException(
+                $"Planning setup seed schema version mismatch at {reference.Address}: expected {reference.BodySchemaVersion}, got {bodySchemaVersion}."
+            );
+        }
+        string payloadSha256 =
+            SessionRequestCanonicalizer.Sha256Hex(frame.Payload);
+        if (!string.Equals(
+                payloadSha256,
+                reference.PayloadSha256,
+                StringComparison.Ordinal
+            )) {
+            throw new InvalidDataException(
+                $"Planning setup seed payload hash mismatch at {reference.Address}."
+            );
+        }
+        return body as T
+            ?? throw new InvalidDataException(
+                $"Planning setup seed at {reference.Address} decoded to '{body.GetType().Name}', expected '{typeof(T).Name}'."
             );
     }
 

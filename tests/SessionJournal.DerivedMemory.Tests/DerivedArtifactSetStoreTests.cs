@@ -99,14 +99,14 @@ public sealed class DerivedArtifactSetStoreTests : IDisposable {
                     first.SetId
                 )
             );
-        DerivedRecapArtifact replacement = await WriteArtifactAsync(
+        DerivedMemoryArtifact replacement = await WriteArtifactAsync(
             fixture.Repository,
             "alpha-profile-replacement",
             fixture.Policy.Roles[0].Target,
             "replacement alpha text",
             fixture.Anchor,
-            fixture.AnchorSetups.RuntimeConfig.Address,
-            fixture.AnchorSetups.SystemPrompt.Address
+            fixture.AnchorSetups,
+            fixture.Policy.Roles[0].RoleId
         );
 
         Assert.Equal(first.SetId, retry.SetId);
@@ -124,6 +124,28 @@ public sealed class DerivedArtifactSetStoreTests : IDisposable {
                     ],
                     first.SetId
                 )
+            )
+        );
+    }
+
+    [Fact]
+    public async Task PublishRequiresExactAnchorSetupHashes() {
+        Fixture fixture = await CreateFixtureAsync();
+        SessionContextAnchorSetupReferences mismatched =
+            fixture.AnchorSetups with {
+                RuntimeConfig = fixture.AnchorSetups.RuntimeConfig with {
+                    PayloadSha256 = new string('c', 64)
+                }
+            };
+
+        await Assert.ThrowsAsync<InvalidDataException>(
+            async () => await fixture.Repository.ArtifactSets.PublishAsync(
+                fixture.Publication(
+                    [fixture.FirstSelection, fixture.SecondSelection],
+                    expectedPrevious: null
+                ) with {
+                    AnchorSetups = mismatched
+                }
             )
         );
     }
@@ -220,14 +242,14 @@ public sealed class DerivedArtifactSetStoreTests : IDisposable {
             )
         );
         File.Delete(pointerPath);
-        DerivedRecapArtifact replacement = await WriteArtifactAsync(
+        DerivedMemoryArtifact replacement = await WriteArtifactAsync(
             fixture.Repository,
             "alpha-profile-fork",
             fixture.Policy.Roles[0].Target,
             "fork alpha text",
             fixture.Anchor,
-            fixture.AnchorSetups.RuntimeConfig.Address,
-            fixture.AnchorSetups.SystemPrompt.Address
+            fixture.AnchorSetups,
+            fixture.Policy.Roles[0].RoleId
         );
         _ = await fixture.Repository.ArtifactSets.PublishAsync(
             fixture.Publication(
@@ -303,7 +325,7 @@ public sealed class DerivedArtifactSetStoreTests : IDisposable {
             )
         );
         string artifactPath = Path.Combine(
-            fixture.Repository.Recaps.ArtifactsDirectory,
+            fixture.Repository.Artifacts.ArtifactsDirectory,
             $"{fixture.FirstSelection.ArtifactId}.json"
         );
         await File.WriteAllTextAsync(artifactPath, "{}");
@@ -661,7 +683,7 @@ public sealed class DerivedArtifactSetStoreTests : IDisposable {
     }
 
     [Fact]
-    public async Task Inventory_IsStableAndValidationCountsOrphanArtifactsWithoutWriting() {
+    public async Task Inventory_IsStableButGlobalValidationRejectsArtifactsWithoutEpoch() {
         Fixture fixture = await CreateFixtureAsync();
         DerivedArtifactSet first =
             await fixture.Repository.ArtifactSets.PublishAsync(
@@ -696,8 +718,7 @@ public sealed class DerivedArtifactSetStoreTests : IDisposable {
             ),
             "orphan text",
             fixture.Anchor,
-            fixture.AnchorSetups.RuntimeConfig.Address,
-            fixture.AnchorSetups.SystemPrompt.Address
+            fixture.AnchorSetups
         );
         Dictionary<string, byte[]> before = SnapshotDerivedFiles(
             fixture.Repository.DerivedRoot
@@ -707,8 +728,10 @@ public sealed class DerivedArtifactSetStoreTests : IDisposable {
             await fixture.Repository.ArtifactSets.ReadInventoryAsync();
         DerivedArtifactSetInventory secondRead =
             await fixture.Repository.ArtifactSets.ReadInventoryAsync();
-        DerivedMemoryValidationReport report =
-            await fixture.Repository.ValidateAsync();
+        InvalidDataException error =
+            await Assert.ThrowsAsync<InvalidDataException>(
+                async () => await fixture.Repository.ValidateAsync()
+            );
 
         Assert.Equal(
             firstRead.Sets.Select(static set => set.SetId),
@@ -734,10 +757,7 @@ public sealed class DerivedArtifactSetStoreTests : IDisposable {
             ["aaa-policy", "test-policy", "test-policy"],
             firstRead.Sets.Select(static set => set.PolicyId)
         );
-        Assert.Equal(
-            new DerivedMemoryValidationReport(3, 3, 2, 2),
-            report
-        );
+        Assert.Contains("missing epoch", error.Message);
         AssertDerivedFilesEqual(
             before,
             SnapshotDerivedFiles(fixture.Repository.DerivedRoot)
@@ -813,14 +833,14 @@ public sealed class DerivedArtifactSetStoreTests : IDisposable {
             fixture.Repository.ArtifactSets.LatestPointersDirectory
         ));
         File.Delete(pointerPath);
-        DerivedRecapArtifact replacement = await WriteArtifactAsync(
+        DerivedMemoryArtifact replacement = await WriteArtifactAsync(
             fixture.Repository,
             "fork-profile",
             fixture.Policy.Roles[0].Target,
             "fork text",
             fixture.Anchor,
-            fixture.AnchorSetups.RuntimeConfig.Address,
-            fixture.AnchorSetups.SystemPrompt.Address
+            fixture.AnchorSetups,
+            fixture.Policy.Roles[0].RoleId
         );
         _ = await fixture.Repository.ArtifactSets.PublishAsync(
             fixture.Publication(
@@ -944,7 +964,7 @@ public sealed class DerivedArtifactSetStoreTests : IDisposable {
             );
         string path = target switch {
             "artifact" => Path.Combine(
-                fixture.Repository.Recaps.ArtifactsDirectory,
+                fixture.Repository.Artifacts.ArtifactsDirectory,
                 $"{fixture.FirstSelection.ArtifactId}.json"
             ),
             "set" => Path.Combine(
@@ -1026,7 +1046,7 @@ public sealed class DerivedArtifactSetStoreTests : IDisposable {
             "sets" => repository.ArtifactSets.SetsDirectory,
             "pointers" =>
                 repository.ArtifactSets.LatestPointersDirectory,
-            "artifacts" => repository.Recaps.ArtifactsDirectory,
+            "artifacts" => repository.Artifacts.ArtifactsDirectory,
             _ => throw new ArgumentOutOfRangeException(nameof(targetKind))
         };
         string external = NewPath();
@@ -1092,23 +1112,33 @@ public sealed class DerivedArtifactSetStoreTests : IDisposable {
             MemoryPackCarrier.System,
             "memory.zeta"
         );
-        DerivedRecapArtifact first = await WriteArtifactAsync(
+        var anchorSetups = new SessionContextAnchorSetupReferences(
+            new SessionContextSetupReference(
+                runtime,
+                1,
+                new string('a', 64)
+            ),
+            new SessionContextSetupReference(
+                prompt,
+                1,
+                new string('b', 64)
+            )
+        );
+        DerivedMemoryArtifact first = await WriteArtifactAsync(
             repository,
             "alpha-profile",
             firstTarget,
             "alpha text",
             anchor,
-            runtime,
-            prompt
+            anchorSetups
         );
-        DerivedRecapArtifact second = await WriteArtifactAsync(
+        DerivedMemoryArtifact second = await WriteArtifactAsync(
             repository,
             "zeta-profile",
             secondTarget,
             "zeta text",
             anchor,
-            runtime,
-            prompt
+            anchorSetups
         );
         var policy = new DerivedArtifactSetPolicy(
             "test-policy",
@@ -1131,18 +1161,7 @@ public sealed class DerivedArtifactSetStoreTests : IDisposable {
             policy,
             LineageKey: "main/../../unsafe",
             anchor,
-            new SessionContextAnchorSetupReferences(
-                new SessionContextSetupReference(
-                    runtime,
-                    1,
-                    new string('a', 64)
-                ),
-                new SessionContextSetupReference(
-                    prompt,
-                    1,
-                    new string('b', 64)
-                )
-            ),
+            anchorSetups,
             new DerivedArtifactSetMemberSelection(
                 "alpha-role",
                 first.ArtifactId
@@ -1154,54 +1173,29 @@ public sealed class DerivedArtifactSetStoreTests : IDisposable {
         );
     }
 
-    private static async ValueTask<DerivedRecapArtifact> WriteArtifactAsync(
+    private static async ValueTask<DerivedMemoryArtifact> WriteArtifactAsync(
         DerivedMemoryRepository repository,
         string profile,
         MemoryPackBlockPath target,
         string text,
         EventAddress anchor,
-        EventAddress runtime,
-        EventAddress prompt
+        SessionContextAnchorSetupReferences setups,
+        string? roleId = null
     ) {
-        var memoryPack = new MemoryPack();
-        switch (target.Carrier) {
-            case MemoryPackCarrier.System:
-                memoryPack.System.Add(
-                    target.BlockKey,
-                    new MemoryPackBlock(text)
-                );
-                break;
-            case MemoryPackCarrier.Observation:
-                memoryPack.Observation.Add(
-                    target.BlockKey,
-                    new MemoryPackBlock(text)
-                );
-                break;
-            case MemoryPackCarrier.Action:
-                memoryPack.Action.Add(
-                    target.BlockKey,
-                    new MemoryPackBlock(text)
-                );
-                break;
-            default:
-                throw new ArgumentOutOfRangeException(nameof(target));
-        }
-        return await repository.Recaps.WriteProducedAsync(
-            new DerivedRecapWriteRequest(
-                DerivedRecapArtifactKinds.RollingSummary,
-                profile,
-                "tests",
-                "tests-v1",
-                anchor,
-                SourceStartExclusive: null,
-                anchor,
-                anchor,
-                runtime,
-                prompt,
-                PreviousArtifact: null,
-                target,
-                memoryPack
-            )
+        return await DerivedMemoryArtifactTestFactory.WriteGenesisAsync(
+            repository,
+            roleId
+                ?? $"{(profile.EndsWith(
+                        "-profile",
+                        StringComparison.Ordinal
+                    )
+                    ? profile[..^"-profile".Length]
+                    : profile)}-role",
+            profile,
+            target,
+            text,
+            anchor,
+            setups
         );
     }
 

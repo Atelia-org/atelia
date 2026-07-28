@@ -228,7 +228,7 @@ internal static class DerivedMemoryCommands {
             DerivedMemoryRepository.Open(inputPath);
         EventAddress? commonAnchor = null;
         foreach (DerivedArtifactSetMemberSelection member in members) {
-            DerivedRecapArtifact artifact = await repository.Recaps
+            DerivedMemoryArtifact artifact = await repository.Artifacts
                 .TryReadArtifactAsync(member.ArtifactId)
                 .ConfigureAwait(false)
                 ?? throw new InvalidDataException(

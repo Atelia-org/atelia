@@ -57,7 +57,7 @@ public sealed class DerivedArtifactSetContextCandidateSource
         );
         foreach (DerivedArtifactSetMember member in set.Members) {
             cancellationToken.ThrowIfCancellationRequested();
-            DerivedRecapArtifact artifact = await _repository.ArtifactSets
+            DerivedMemoryArtifact artifact = await _repository.ArtifactSets
                 .ReadAndValidateMemberArtifactAsync(
                     set,
                     member,

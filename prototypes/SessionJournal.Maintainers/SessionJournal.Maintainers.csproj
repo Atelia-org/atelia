@@ -7,6 +7,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <ProjectReference Include="../Completion.Abstractions/Completion.Abstractions.csproj" />
     <ProjectReference Include="../SessionJournal/SessionJournal.csproj" />
   </ItemGroup>
 

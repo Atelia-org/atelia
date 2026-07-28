@@ -89,7 +89,7 @@ public sealed class DerivedArtifactEpochPlannerTests : IDisposable {
                 )
             )).Epoch!;
         DerivedArtifactSet inputSet =
-            await PublishInputSetAsync(repository, first);
+            await PublishInputSetAsync(repository, engine, first);
 
         DerivedArtifactPlannerConfig secondConfig =
             await repository.EpochPlanner.ConfigureAsync(
@@ -163,7 +163,7 @@ public sealed class DerivedArtifactEpochPlannerTests : IDisposable {
                 new("main", "memory-pack", null, null)
             )).Epoch!;
         DerivedArtifactSet correct =
-            await PublishInputSetAsync(repository, first);
+            await PublishInputSetAsync(repository, engine, first);
         var wrongPolicy = new DerivedArtifactSetPolicy(
             "wrong-policy",
             "wrong-policy-v1",
@@ -402,7 +402,7 @@ public sealed class DerivedArtifactEpochPlannerTests : IDisposable {
                 new("main", "memory-pack", null, null)
             )).Epoch!;
         DerivedArtifactSet input =
-            await PublishInputSetAsync(repository, first);
+            await PublishInputSetAsync(repository, engine, first);
         AppendTurns(engine, 5, "second");
         _ = await repository.EpochPlanner.PlanAsync(
             engine,
@@ -541,7 +541,11 @@ public sealed class DerivedArtifactEpochPlannerTests : IDisposable {
                 engine,
                 new("main", "memory-pack", null, null)
             )).Epoch!;
-            inputSet = await PublishInputSetAsync(repository, first);
+            inputSet = await PublishInputSetAsync(
+                repository,
+                engine,
+                first
+            );
         }
         using (var journal =
                EventJournal.EventJournal.OpenExisting(path)) {
@@ -614,7 +618,7 @@ public sealed class DerivedArtifactEpochPlannerTests : IDisposable {
                 new("main", "memory-pack", null, null)
             )).Epoch!;
         DerivedArtifactSet correct =
-            await PublishInputSetAsync(repository, first);
+            await PublishInputSetAsync(repository, engine, first);
         AppendTurns(engine, 5, "second");
         EventAddress wrongAnchor =
             engine.ReadCurrentLineageHeaders().CapturedHead;
@@ -1479,6 +1483,7 @@ public sealed class DerivedArtifactEpochPlannerTests : IDisposable {
             )).Epoch!;
             input = await PublishInputSetAsync(
                 repository,
+                engine,
                 previous,
                 $"test-profile-{epoch}"
             );
@@ -1813,6 +1818,7 @@ public sealed class DerivedArtifactEpochPlannerTests : IDisposable {
     private static async ValueTask<DerivedArtifactSet>
         PublishInputSetAsync(
         DerivedMemoryRepository repository,
+        SessionJournalEngine engine,
         DerivedArtifactEpochPlan previous,
         string profileId = "test-profile"
     ) {
@@ -1820,27 +1826,68 @@ public sealed class DerivedArtifactEpochPlannerTests : IDisposable {
             MemoryPackCarrier.Observation,
             "memory.test"
         );
-        var pack = new MemoryPack();
-        pack.Observation.Add(
-            target.BlockKey,
-            new MemoryPackBlock("test memory")
-        );
-        DerivedRecapArtifact artifact =
-            await repository.Recaps.WriteProducedAsync(
-                new DerivedRecapWriteRequest(
-                    DerivedRecapArtifactKinds.RollingSummary,
+        IReadOnlyList<DerivedMemoryArtifactInputMember> inputMembers = [];
+        string? previousRoleArtifact = null;
+        if (previous.InputSetId is { } inputSetId) {
+            DerivedArtifactSet inputSet =
+                await repository.ArtifactSets.TryReadExactAsync(
+                    inputSetId
+                ) ?? throw new Xunit.Sdk.XunitException(
+                    $"Missing test input set '{inputSetId}'."
+                );
+            inputMembers = Array.AsReadOnly([
+                .. inputSet.Members
+                    .OrderBy(
+                        static member => member.RoleId,
+                        StringComparer.Ordinal
+                    )
+                    .Select(static member =>
+                        new DerivedMemoryArtifactInputMember(
+                            member.RoleId,
+                            member.ArtifactId,
+                            member.Target,
+                            member.ContentSha256
+                        ))
+            ]);
+            previousRoleArtifact = inputSet.Members
+                .SingleOrDefault(member => string.Equals(
+                    member.RoleId,
+                    "test-role",
+                    StringComparison.Ordinal
+                ))
+                ?.ArtifactId;
+        }
+        var draft = new MemoryPackDraft(new MemoryPack());
+        draft.UpsertBlock(target, "test memory");
+        const string fingerprint =
+            "sha256:2222222222222222222222222222222222222222222222222222222222222222";
+        DerivedMemoryArtifact artifact =
+            await repository.Artifacts.WriteCandidateAsync(
+                new DerivedMemoryArtifactWriteRequest(
+                    previous.EpochId,
+                    DerivedMemoryMaintainerRunner
+                        .GetEpochPlanFingerprint(previous),
+                    "test-role",
                     profileId,
                     "tests",
-                    "tests-v1",
-                    previous.SourceEndInclusive,
+                    fingerprint,
+                    fingerprint,
+                    fingerprint,
+                    "candidate-1",
+                    "attempt-1",
+                    previous.PlannedAtRawHead,
                     previous.SourceStartExclusive,
                     previous.SourceEndInclusive,
                     previous.SourceEndInclusive,
-                    previous.RawStartSetups.RuntimeConfig.Address,
-                    previous.RawStartSetups.SystemPrompt.Address,
-                    PreviousArtifact: null,
+                    previous.RawStartSetups,
+                    engine.ResolveContextAnchorSetupReferences(
+                        previous.SourceEndInclusive
+                    ),
+                    previous.InputSetId,
+                    previousRoleArtifact,
+                    inputMembers,
                     target,
-                    pack
+                    draft.Build()
                 )
             );
         var policy = new DerivedArtifactSetPolicy(
@@ -1858,7 +1905,7 @@ public sealed class DerivedArtifactEpochPlannerTests : IDisposable {
             new DerivedArtifactSetPublicationRequest(
                 policy,
                 previous.LineageKey,
-                previous.RawStartSetups,
+                artifact.AnchorSetups,
                 [
                     new DerivedArtifactSetMemberSelection(
                         "test-role",
@@ -1882,28 +1929,15 @@ public sealed class DerivedArtifactEpochPlannerTests : IDisposable {
             MemoryPackCarrier.System,
             "memory.wrong-anchor"
         );
-        var pack = new MemoryPack();
-        pack.System.Add(
-            target.BlockKey,
-            new MemoryPackBlock("wrong anchor memory")
-        );
-        DerivedRecapArtifact artifact =
-            await repository.Recaps.WriteProducedAsync(
-                new DerivedRecapWriteRequest(
-                    DerivedRecapArtifactKinds.RollingSummary,
-                    "wrong-anchor-profile",
-                    "tests",
-                    "tests-v1",
-                    anchor,
-                    SourceStartExclusive: null,
-                    anchor,
-                    anchor,
-                    setups.RuntimeConfig.Address,
-                    setups.SystemPrompt.Address,
-                    PreviousArtifact: null,
-                    target,
-                    pack
-                )
+        DerivedMemoryArtifact artifact =
+            await DerivedMemoryArtifactTestFactory.WriteGenesisAsync(
+                repository,
+                "wrong-anchor-role",
+                "wrong-anchor-profile",
+                target,
+                "wrong anchor memory",
+                anchor,
+                setups
             );
         var policy = new DerivedArtifactSetPolicy(
             "wrong-anchor-policy",

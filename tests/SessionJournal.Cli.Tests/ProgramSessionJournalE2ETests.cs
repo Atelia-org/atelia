@@ -1,348 +1,216 @@
 using System.Text.Json;
 using Atelia.Completion;
 using Atelia.Completion.Abstractions;
-using Atelia.SessionJournal;
-using Atelia.SessionJournal.DerivedMemory;
+using Atelia.EventJournal;
 using Atelia.SessionJournal.Cli;
-using SJ = Atelia.SessionJournal;
+using Atelia.SessionJournal.DerivedMemory;
 using Xunit;
-using Xunit.Sdk;
 
 namespace Atelia.SessionJournal.Cli.Tests;
 
 public sealed class ProgramSessionJournalE2ETests : IDisposable {
-    private static readonly JsonSerializerOptions WebJsonOptions = new(JsonSerializerDefaults.Web);
-
+    private static readonly JsonSerializerOptions WebJsonOptions =
+        new(JsonSerializerDefaults.Web);
     private readonly string _tempRoot = Path.Combine(
         Path.GetTempPath(),
         "atelia-session-journal-cli-e2e",
         Guid.NewGuid().ToString("N")
     );
 
-    public void Dispose() {
-        try {
-            if (Directory.Exists(_tempRoot)) {
-                Directory.Delete(_tempRoot, recursive: true);
-            }
-        }
-        catch {
-            // Best-effort cleanup for temp test directories.
-        }
-    }
-
     [Fact]
-    public async Task SessionJournalCommand_ImportsProducesRejectsExistingAndRegeneratesAfterExactDerivedDeletion() {
+    public async Task RunMemoryMaintainer_ConsumesExactEpochAndWritesV2Candidate() {
         Directory.CreateDirectory(_tempRoot);
-        string legacyPath = Path.Combine(_tempRoot, "legacy.json");
-        string repoPath = Path.Combine(_tempRoot, "session-journal");
-        string connectionsPath = Path.Combine(_tempRoot, "connections.json");
-        WriteLegacyExport(legacyPath, turnCount: 3);
+        string repoPath = Path.Combine(_tempRoot, "journal");
+        string connectionsPath =
+            Path.Combine(_tempRoot, "connections.json");
+        string outputPath = Path.Combine(_tempRoot, "report.json");
+        string callsPath = Path.Combine(_tempRoot, "calls");
         WriteConnections(connectionsPath);
-        var factory = new ScriptedCompletionClientFactory("summary-e2e");
+        using var engine = SessionJournalEngine.Create(
+            repoPath,
+            new SessionCreateOptions(
+                "model-a",
+                "system-a",
+                "surface-a"
+            )
+        );
+        AppendTurns(engine, 5);
+        DerivedMemoryRepository repository =
+            DerivedMemoryRepository.Open(repoPath);
+        _ = await repository.EpochPlanner.ConfigureAsync(
+            new DerivedArtifactPlannerConfigDefinition(
+                "main",
+                "memory-pack",
+                "topology-v1",
+                10,
+                10,
+                10,
+                1_000
+            ),
+            null
+        );
+        DerivedArtifactEpochPlan epoch =
+            (await repository.EpochPlanner.PlanAsync(
+                engine,
+                new("main", "memory-pack", null, null)
+            )).Epoch!;
+        EventAddress rawHeadBefore =
+            engine.ReadCurrentLineageHeaders().CapturedHead;
+        engine.Dispose();
+        var factory =
+            new ScriptedCompletionClientFactory("derived autobiography");
 
-        int importExitCode = Program.MainCore(
-            [
-                "import-legacy-json",
-                "--input", legacyPath,
-                "--output", repoPath
-            ],
+        int exitCode = Program.MainCore(
+            Command(
+                repoPath,
+                connectionsPath,
+                outputPath,
+                callsPath,
+                epoch.EpochId,
+                "candidate-a"
+            ),
             factory
         );
 
-        Assert.Equal(0, importExitCode);
-        Assert.Equal(0, factory.CompletionCallCount);
-        SessionHistorySnapshot rawBefore = ReadHistorySnapshot(repoPath);
-        Assert.Equal(6, rawBefore.Messages.Count);
-        SJ.SessionGoverningSetup governingSetup = ReadGoverningSetup(
-            repoPath,
-            EventAddressTextCodec.Parse(rawBefore.SourceRawHead)
-        );
-
-        string firstOutputPath = Path.Combine(_tempRoot, "first.jsonl");
-        string firstCallLogDir = Path.Combine(_tempRoot, "first-calls");
-        int firstExitCode = RunSessionJournalReplay(
-            factory,
-            repoPath,
-            connectionsPath,
-            firstOutputPath,
-            firstCallLogDir
-        );
-
-        Assert.Equal(0, firstExitCode);
+        Assert.Equal(0, exitCode);
         Assert.Equal(1, factory.CompletionCallCount);
-        MemoryMaintainerRunRecord firstRecord = ReadSingleRecord(firstOutputPath);
+        MemoryMaintainerRunRecord record =
+            JsonSerializer.Deserialize<MemoryMaintainerRunRecord>(
+                await File.ReadAllTextAsync(outputPath),
+                WebJsonOptions
+            )!;
         Assert.Equal(
-            "atelia.session-journal.memory-maintainer-run.v1",
-            firstRecord.Schema
+            "atelia.session-journal.memory-maintainer-run.v2",
+            record.Schema
+        );
+        Assert.Equal(epoch.EpochId, record.EpochId);
+        Assert.Equal("autobiography", record.RoleId);
+        Assert.Equal("candidate-a", record.CandidateId);
+        Assert.Equal(
+            EventAddressTextCodec.Format(epoch.SourceStartExclusive),
+            record.SourceStartExclusive
         );
         Assert.Equal(
-            "autobiographical-rewrite",
-            firstRecord.ProfileName
+            EventAddressTextCodec.Format(epoch.SourceEndInclusive),
+            record.SourceEndInclusive
         );
-        Assert.Equal(MemoryMaintainerReplaySourceKinds.SessionJournal, firstRecord.SourceKind);
-        Assert.Equal(rawBefore.SourceRawHead, firstRecord.SourceRawHead);
-        Assert.NotNull(firstRecord.SourceStartInclusive);
-        Assert.NotNull(firstRecord.SourceEndInclusive);
-        Assert.Equal("succeeded", firstRecord.Status);
-        Assert.NotNull(firstRecord.ArtifactId);
-        Assert.NotNull(firstRecord.ArtifactPath);
-        Assert.True(Path.IsPathFullyQualified(firstRecord.ArtifactPath));
-        Assert.True(File.Exists(firstRecord.ArtifactPath));
-        Assert.Equal(firstRecord.SourceEndInclusive, firstRecord.AnchorRawEvent);
-        Assert.Null(firstRecord.PreviousArtifact);
-        string firstCallLogPath = Assert.Single(firstRecord.CallLogPaths);
-        Assert.Equal(firstCallLogPath, firstRecord.CallLogPath);
-        Assert.True(Path.IsPathFullyQualified(firstCallLogPath));
-        Assert.True(File.Exists(firstCallLogPath));
+        Assert.True(File.Exists(record.ArtifactPath));
+        Assert.True(File.Exists(Assert.Single(record.CallLogPaths)));
+        DerivedMemoryArtifact artifact =
+            await repository.Artifacts.TryReadArtifactAsync(
+                record.ArtifactId
+            ) ?? throw new Xunit.Sdk.XunitException(
+                "Expected candidate artifact."
+            );
         Assert.Equal(
-            "run-memory-maintainer",
-            ReadCallLogCommand(firstCallLogPath)
+            DerivedMemoryArtifactKinds.MemoryBlock,
+            artifact.ArtifactKind
         );
-
-        var store = DerivedMemoryRepository.Open(repoPath).Recaps;
-        DerivedRecapArtifact? firstArtifact = await store.TryReadArtifactAsync(firstRecord.ArtifactId);
-        Assert.NotNull(firstArtifact);
-        Assert.Equal(DerivedRecapArtifactKinds.RollingSummary, firstArtifact.ArtifactKind);
+        Assert.Equal(epoch.EpochId, artifact.EpochId);
         Assert.Equal(
-            SessionJournalDerivedRecapWriter.Producer,
-            firstArtifact.Producer
+            "derived autobiography",
+            artifact.Content
         );
-        Assert.Equal(rawBefore.SourceRawHead, EventAddressTextCodec.Format(firstArtifact.SourceRawHead));
-        Assert.Null(firstArtifact.SourceStartExclusive);
-        Assert.Equal(firstRecord.SourceEndInclusive, EventAddressTextCodec.Format(firstArtifact.SourceEndInclusive));
-        Assert.Equal(firstArtifact.SourceEndInclusive, firstArtifact.AnchorRawEvent);
-        Assert.Equal(governingSetup.RuntimeConfigSetupAddress, firstArtifact.GoverningRuntimeConfigSetup);
-        Assert.Equal(governingSetup.SystemPromptSetupAddress, firstArtifact.GoverningSystemPromptSetup);
-        Assert.Null(firstArtifact.PreviousArtifact);
-        Assert.Empty(firstArtifact.InputArtifacts);
-        Assert.Equal(SJ.MemoryPackCarrier.Action, firstArtifact.Target.Carrier);
-        Assert.Equal("roleplay.first-person-autobiography", firstArtifact.Target.BlockKey);
-        Assert.Equal("summary-e2e", firstArtifact.Content);
-        Assert.True(firstArtifact.MemoryPack.TryGetBlock(firstArtifact.Target, out SJ.MemoryPackBlock? targetBlock));
-        Assert.Equal("summary-e2e", targetBlock.Text);
-        Assert.NotNull(firstArtifact.Invocation);
-        Assert.Equal(firstRecord.CallLogPaths, firstArtifact.CallLogPaths);
-        AssertHistoryUnchanged(rawBefore, ReadHistorySnapshot(repoPath));
-        byte[] firstOutputBytes = File.ReadAllBytes(firstOutputPath);
-
-        int callCountBeforeRejectedReplay = factory.CompletionCallCount;
-        int rejectedExitCode = RunSessionJournalReplay(
-            factory,
-            repoPath,
-            connectionsPath,
-            firstOutputPath,
-            Path.Combine(_tempRoot, "rejected-calls")
-        );
-
-        Assert.Equal(1, rejectedExitCode);
-        Assert.Equal(callCountBeforeRejectedReplay, factory.CompletionCallCount);
-        Assert.Equal(firstOutputBytes, File.ReadAllBytes(firstOutputPath));
-        MemoryMaintainerRunRecord preservedRecord = ReadSingleRecord(firstOutputPath);
-        Assert.Equal(firstRecord.ArtifactId, preservedRecord.ArtifactId);
-        Assert.Equal(firstRecord.SourceEndInclusive, preservedRecord.SourceEndInclusive);
-        Assert.Equal(firstRecord.Status, preservedRecord.Status);
-        Assert.Empty(Directory.EnumerateFiles(
-            Path.GetDirectoryName(firstOutputPath)!,
-            $".{Path.GetFileName(firstOutputPath)}.*.tmp"
+        using (SessionJournalEngine reopened =
+               SessionJournalEngine.Open(repoPath)) {
+            Assert.Equal(
+                rawHeadBefore,
+                reopened.ReadCurrentLineageHeaders().CapturedHead
+            );
+        }
+        Assert.False(Directory.Exists(
+            repository.ArtifactSets.LatestPointersDirectory
         ));
-        AssertHistoryUnchanged(rawBefore, ReadHistorySnapshot(repoPath));
-
-        string exactDerivedStoreRoot = Path.Combine(repoPath, "derived", "recaps", "v1");
-        Assert.Equal(Path.GetFullPath(store.StoreRoot), Path.GetFullPath(exactDerivedStoreRoot));
-        Directory.Delete(exactDerivedStoreRoot, recursive: true);
-        string regeneratedOutputPath = Path.Combine(_tempRoot, "regenerated.jsonl");
-        string regeneratedCallLogDir = Path.Combine(_tempRoot, "regenerated-calls");
-
-        int regeneratedExitCode = RunSessionJournalReplay(
-            factory,
-            repoPath,
-            connectionsPath,
-            regeneratedOutputPath,
-            regeneratedCallLogDir
-        );
-
-        Assert.Equal(0, regeneratedExitCode);
-        Assert.Equal(callCountBeforeRejectedReplay + 1, factory.CompletionCallCount);
-        MemoryMaintainerRunRecord regeneratedRecord = ReadSingleRecord(regeneratedOutputPath);
-        Assert.Equal("succeeded", regeneratedRecord.Status);
-        Assert.NotNull(regeneratedRecord.ArtifactId);
-        string regeneratedCallLogPath = Assert.Single(regeneratedRecord.CallLogPaths);
-        Assert.Equal(
-            "run-memory-maintainer",
-            ReadCallLogCommand(regeneratedCallLogPath)
-        );
-        var regeneratedStore = DerivedMemoryRepository.Open(repoPath).Recaps;
-        DerivedRecapArtifact? regeneratedArtifact = await regeneratedStore.TryReadArtifactAsync(
-            regeneratedRecord.ArtifactId
-        );
-        Assert.NotNull(regeneratedArtifact);
-        DerivedRecapLineageKey lineageKey = DerivedRecapLineageKey.Create(
-            DerivedRecapArtifactKinds.RollingSummary,
-            regeneratedArtifact.ProfileId,
-            regeneratedArtifact.Target
-        );
-        DerivedRecapArtifact? usableLatest = await regeneratedStore.TryReadLatestAsync(lineageKey);
-        Assert.NotNull(usableLatest);
-        Assert.Equal(regeneratedArtifact.ArtifactId, usableLatest.ArtifactId);
-        AssertHistoryUnchanged(rawBefore, ReadHistorySnapshot(repoPath));
     }
 
     [Fact]
-    public void SessionJournalCommand_RejectsRepositoryContainedOutputAndCallLogPathsBeforeWrites() {
+    public async Task AlternativeCandidateDoesNotOverwriteFirstCandidate() {
         Directory.CreateDirectory(_tempRoot);
-        string legacyPath = Path.Combine(_tempRoot, "legacy.json");
-        string repoPath = Path.Combine(_tempRoot, "session-journal");
-        string connectionsPath = Path.Combine(_tempRoot, "connections.json");
-        WriteLegacyExport(legacyPath, turnCount: 3);
+        string repoPath = Path.Combine(_tempRoot, "journal");
+        string connectionsPath =
+            Path.Combine(_tempRoot, "connections.json");
         WriteConnections(connectionsPath);
-        var factory = new ScriptedCompletionClientFactory("must-not-run");
+        using var engine = SessionJournalEngine.Create(
+            repoPath,
+            new SessionCreateOptions(
+                "model-a",
+                "system-a",
+                "surface-a"
+            )
+        );
+        AppendTurns(engine, 5);
+        DerivedMemoryRepository repository =
+            DerivedMemoryRepository.Open(repoPath);
+        _ = await repository.EpochPlanner.ConfigureAsync(
+            new(
+                "main",
+                "memory-pack",
+                "topology-v1",
+                10,
+                10,
+                10,
+                1_000
+            ),
+            null
+        );
+        DerivedArtifactEpochPlan epoch =
+            (await repository.EpochPlanner.PlanAsync(
+                engine,
+                new("main", "memory-pack", null, null)
+            )).Epoch!;
+        engine.Dispose();
+        var factory = new ScriptedCompletionClientFactory("same text");
+
+        Assert.Equal(0, Program.MainCore(
+            Command(
+                repoPath,
+                connectionsPath,
+                Path.Combine(_tempRoot, "a.json"),
+                Path.Combine(_tempRoot, "calls-a"),
+                epoch.EpochId,
+                "candidate-a"
+            ),
+            factory
+        ));
+        Assert.Equal(0, Program.MainCore(
+            Command(
+                repoPath,
+                connectionsPath,
+                Path.Combine(_tempRoot, "b.json"),
+                Path.Combine(_tempRoot, "calls-b"),
+                epoch.EpochId,
+                "candidate-b"
+            ),
+            factory
+        ));
 
         Assert.Equal(
-            0,
-            Program.MainCore(
-                [
-                    "import-legacy-json",
-                    "--input", legacyPath,
-                    "--output", repoPath
-                ],
-                factory
-            )
-        );
-        SessionHistorySnapshot rawBefore = ReadHistorySnapshot(repoPath);
-        string rawFilePath = Assert.Single(
+            2,
             Directory.EnumerateFiles(
-                Path.Combine(repoPath, "events"),
-                "*.rbf",
-                SearchOption.AllDirectories
-            )
+                repository.Artifacts.ArtifactsDirectory,
+                "*.json"
+            ).Count()
         );
-        byte[] rawFileBytes = File.ReadAllBytes(rawFilePath);
-
-        int containedOutputExitCode = RunSessionJournalReplay(
-            factory,
-            repoPath,
-            connectionsPath,
-            rawFilePath,
-            Path.Combine(_tempRoot, "outside-calls")
-        );
-
-        Assert.Equal(1, containedOutputExitCode);
-        Assert.Equal(0, factory.CompletionCallCount);
-        Assert.Equal(rawFileBytes, File.ReadAllBytes(rawFilePath));
-        AssertHistoryUnchanged(rawBefore, ReadHistorySnapshot(repoPath));
-
-        string outsideOutputPath = Path.Combine(_tempRoot, "outside.jsonl");
-        string containedCallLogDir = Path.Combine(repoPath, "forbidden-calls");
-        int containedCallLogExitCode = RunSessionJournalReplay(
-            factory,
-            repoPath,
-            connectionsPath,
-            outsideOutputPath,
-            containedCallLogDir
-        );
-
-        Assert.Equal(1, containedCallLogExitCode);
-        Assert.Equal(0, factory.CompletionCallCount);
-        Assert.False(File.Exists(outsideOutputPath));
-        Assert.False(Directory.Exists(containedCallLogDir));
-        Assert.Equal(rawFileBytes, File.ReadAllBytes(rawFilePath));
-        AssertHistoryUnchanged(rawBefore, ReadHistorySnapshot(repoPath));
     }
 
     [Fact]
-    public void SessionJournalCommand_RejectsSymlinkAliasesBeforeWrites() {
+    public void RetiredThresholdOptionIsRejectedBeforeCompletion() {
         Directory.CreateDirectory(_tempRoot);
-        string legacyPath = Path.Combine(_tempRoot, "legacy.json");
-        string repoPath = Path.Combine(_tempRoot, "session-journal");
-        string connectionsPath = Path.Combine(_tempRoot, "connections.json");
-        WriteLegacyExport(legacyPath, turnCount: 3);
+        string connectionsPath =
+            Path.Combine(_tempRoot, "connections.json");
         WriteConnections(connectionsPath);
-        var factory = new ScriptedCompletionClientFactory("must-not-run");
-
-        Assert.Equal(
-            0,
-            Program.MainCore(
-                [
-                    "import-legacy-json",
-                    "--input", legacyPath,
-                    "--output", repoPath
-                ],
-                factory
-            )
-        );
-        SessionHistorySnapshot rawBefore = ReadHistorySnapshot(repoPath);
-        string rawFilePath = Assert.Single(
-            Directory.EnumerateFiles(
-                Path.Combine(repoPath, "events"),
-                "*.rbf",
-                SearchOption.AllDirectories
-            )
-        );
-        byte[] rawFileBytes = File.ReadAllBytes(rawFilePath);
-
-        string repoAliasPath = Path.Combine(_tempRoot, "repo-alias");
-        CreateDirectorySymbolicLinkOrSkip(repoAliasPath, repoPath);
-        int repoAliasExitCode = RunSessionJournalReplay(
-            factory,
-            repoAliasPath,
-            connectionsPath,
-            rawFilePath,
-            Path.Combine(_tempRoot, "repo-alias-calls")
-        );
-
-        Assert.Equal(1, repoAliasExitCode);
-        Assert.Equal(0, factory.CompletionCallCount);
-        Assert.Equal(rawFileBytes, File.ReadAllBytes(rawFilePath));
-        AssertHistoryUnchanged(rawBefore, ReadHistorySnapshot(repoPath));
-
-        string rawParentPath = Path.GetDirectoryName(rawFilePath)!;
-        string outputParentAliasPath = Path.Combine(_tempRoot, "output-parent-alias");
-        CreateDirectorySymbolicLinkOrSkip(outputParentAliasPath, rawParentPath);
-        string aliasedOutputPath = Path.Combine(outputParentAliasPath, "must-not-exist.jsonl");
-        int outputAliasExitCode = RunSessionJournalReplay(
-            factory,
-            repoPath,
-            connectionsPath,
-            aliasedOutputPath,
-            Path.Combine(_tempRoot, "output-alias-calls")
-        );
-
-        Assert.Equal(1, outputAliasExitCode);
-        Assert.Equal(0, factory.CompletionCallCount);
-        Assert.False(File.Exists(Path.Combine(rawParentPath, "must-not-exist.jsonl")));
-        Assert.Equal(rawFileBytes, File.ReadAllBytes(rawFilePath));
-        AssertHistoryUnchanged(rawBefore, ReadHistorySnapshot(repoPath));
-
-        string callLogAliasPath = Path.Combine(_tempRoot, "call-log-alias");
-        CreateDirectorySymbolicLinkOrSkip(callLogAliasPath, rawParentPath);
-        string outsideOutputPath = Path.Combine(_tempRoot, "outside.jsonl");
-        int callLogAliasExitCode = RunSessionJournalReplay(
-            factory,
-            repoPath,
-            connectionsPath,
-            outsideOutputPath,
-            callLogAliasPath
-        );
-
-        Assert.Equal(1, callLogAliasExitCode);
-        Assert.Equal(0, factory.CompletionCallCount);
-        Assert.False(File.Exists(outsideOutputPath));
-        Assert.Equal(rawFileBytes, File.ReadAllBytes(rawFilePath));
-        AssertHistoryUnchanged(rawBefore, ReadHistorySnapshot(repoPath));
-    }
-
-    [Fact]
-    public void MainCore_MalformedConnectionsJsonReturnsFailureInsteadOfEscaping() {
-        Directory.CreateDirectory(_tempRoot);
-        string malformedConnectionsPath = Path.Combine(_tempRoot, "malformed-connections.json");
-        File.WriteAllText(malformedConnectionsPath, "{");
-        var factory = new ScriptedCompletionClientFactory("must-not-run");
+        var factory =
+            new ScriptedCompletionClientFactory("must-not-run");
 
         int exitCode = Program.MainCore(
             [
-                "llm-smoke",
-                "--connections", malformedConnectionsPath,
-                "--call-log-dir", Path.Combine(_tempRoot, "calls")
+                "run-memory-maintainer",
+                "--input", _tempRoot,
+                "--epoch", "dae_" + new string('1', 64),
+                "--profile", "autobiographical-rewrite",
+                "--output", Path.Combine(_tempRoot, "report.json"),
+                "--connections", connectionsPath,
+                "--threshold-tokens", "1"
             ],
             factory
         );
@@ -351,176 +219,210 @@ public sealed class ProgramSessionJournalE2ETests : IDisposable {
         Assert.Equal(0, factory.CompletionCallCount);
     }
 
-    private static void CreateDirectorySymbolicLinkOrSkip(string path, string targetPath) {
+    [Theory]
+    [InlineData("same")]
+    [InlineData("output-inside-calls")]
+    [InlineData("calls-inside-output")]
+    public void OutputAndCallLogOverlapIsRejectedBeforeSideEffects(
+        string shape
+    ) {
+        string repoPath = Path.Combine(_tempRoot, "journal");
+        string external = Path.Combine(_tempRoot, "external");
+        string outputPath = shape switch {
+            "same" => Path.Combine(external, "same"),
+            "output-inside-calls" =>
+                Path.Combine(external, "calls", "report.json"),
+            _ => Path.Combine(external, "report")
+        };
+        string callsPath = shape switch {
+            "same" => outputPath,
+            "output-inside-calls" =>
+                Path.Combine(external, "calls"),
+            _ => Path.Combine(outputPath, "calls")
+        };
+        var factory =
+            new ScriptedCompletionClientFactory("must-not-run");
+
+        int exitCode = Program.MainCore(
+            Command(
+                repoPath,
+                Path.Combine(_tempRoot, "connections.json"),
+                outputPath,
+                callsPath,
+                "dae_" + new string('1', 64),
+                "candidate"
+            ),
+            factory
+        );
+
+        Assert.Equal(1, exitCode);
+        Assert.Equal(0, factory.CompletionCallCount);
+        Assert.False(Directory.Exists(
+            Path.Combine(repoPath, "derived")
+        ));
+        Assert.False(File.Exists(outputPath));
+        Assert.False(Directory.Exists(callsPath));
+    }
+
+    [Fact]
+    public async Task ExistingOutputDirectoryIsRejectedBeforeSideEffects() {
+        Directory.CreateDirectory(_tempRoot);
+        string repoPath = Path.Combine(_tempRoot, "journal");
+        string connectionsPath =
+            Path.Combine(_tempRoot, "connections.json");
+        string outputPath = Path.Combine(_tempRoot, "existing-output");
+        string callsPath = Path.Combine(_tempRoot, "calls");
+        WriteConnections(connectionsPath);
+        Directory.CreateDirectory(outputPath);
+        using var engine = SessionJournalEngine.Create(
+            repoPath,
+            new SessionCreateOptions(
+                "model-a",
+                "system-a",
+                "surface-a"
+            )
+        );
+        AppendTurns(engine, 5);
+        DerivedMemoryRepository repository =
+            DerivedMemoryRepository.Open(repoPath);
+        _ = await repository.EpochPlanner.ConfigureAsync(
+            new(
+                "main",
+                "memory-pack",
+                "topology-v1",
+                10,
+                10,
+                10,
+                1_000
+            ),
+            null
+        );
+        DerivedArtifactEpochPlan epoch =
+            (await repository.EpochPlanner.PlanAsync(
+                engine,
+                new("main", "memory-pack", null, null)
+            )).Epoch!;
+        EventAddress rawHeadBefore =
+            engine.ReadCurrentLineageHeaders().CapturedHead;
+        engine.Dispose();
+        var factory =
+            new ScriptedCompletionClientFactory("must-not-run");
+
+        int exitCode = Program.MainCore(
+            Command(
+                repoPath,
+                connectionsPath,
+                outputPath,
+                callsPath,
+                epoch.EpochId,
+                "candidate"
+            ),
+            factory
+        );
+
+        Assert.Equal(1, exitCode);
+        Assert.Equal(0, factory.CompletionCallCount);
+        Assert.False(Directory.Exists(
+            repository.Artifacts.ArtifactsDirectory
+        ));
+        Assert.False(Directory.Exists(callsPath));
+        Assert.Empty(Directory.EnumerateFileSystemEntries(outputPath));
+        using SessionJournalEngine reopened =
+            SessionJournalEngine.Open(repoPath);
+        Assert.Equal(
+            rawHeadBefore,
+            reopened.ReadCurrentLineageHeaders().CapturedHead
+        );
+    }
+
+    public void Dispose() {
         try {
-            Directory.CreateSymbolicLink(path, targetPath);
+            if (Directory.Exists(_tempRoot)) {
+                Directory.Delete(_tempRoot, recursive: true);
+            }
         }
-        catch (Exception ex) when (
-            ex is IOException or NotSupportedException or UnauthorizedAccessException
-        ) {
-            throw SkipException.ForSkip(
-                $"Directory symbolic links are unavailable on this platform: {ex.Message}"
+        catch {
+            // Best-effort cleanup.
+        }
+    }
+
+    private static string[] Command(
+        string repositoryPath,
+        string connectionsPath,
+        string outputPath,
+        string callsPath,
+        string epochId,
+        string candidateId
+    ) => [
+        "run-memory-maintainer",
+        "--input", repositoryPath,
+        "--epoch", epochId,
+        "--profile", "autobiographical-rewrite",
+        "--output", outputPath,
+        "--connections", connectionsPath,
+        "--connection", "scripted",
+        "--call-log-dir", callsPath,
+        "--candidate-id", candidateId,
+        "--attempt-id", "attempt-1"
+    ];
+
+    private static void AppendTurns(
+        SessionJournalEngine engine,
+        int count
+    ) {
+        for (int index = 0; index < count; index++) {
+            _ = engine.AppendObservation(
+                $"observation-{index}-with-token-cost"
+            );
+            _ = engine.AppendImportedAgentAction(
+                new ActionMessage([
+                    new ActionBlock.Text(
+                        $"answer-{index}-with-token-cost"
+                    )
+                ]),
+                new CompletionDescriptor(
+                    "import",
+                    "import-v1",
+                    "model-a"
+                )
             );
         }
     }
 
-    private static int RunSessionJournalReplay(
-        ICompletionClientFactory factory,
-        string repoPath,
-        string connectionsPath,
-        string outputPath,
-        string callLogDir
-    ) => Program.MainCore(
-        [
-            "run-memory-maintainer",
-            "--input", repoPath,
-            "--output", outputPath,
-            "--connections", connectionsPath,
-            "--connection", "scripted",
-            "--call-log-dir", callLogDir,
-            "--threshold-tokens", "1",
-            "--max-epochs", "1",
-            "--profile", "autobiographical-rewrite"
-        ],
-        factory
-    );
-
-    private static MemoryMaintainerRunRecord ReadSingleRecord(string path) {
-        string line = Assert.Single(File.ReadAllLines(path));
-        return JsonSerializer.Deserialize<MemoryMaintainerRunRecord>(line, WebJsonOptions)
-            ?? throw new InvalidDataException("Replay output record is empty.");
-    }
-
-    private static string ReadCallLogCommand(string path) {
-        using JsonDocument document = JsonDocument.Parse(File.ReadAllText(path));
-        return document.RootElement
-            .GetProperty("context")
-            .GetProperty("command")
-            .GetString()
-            ?? throw new InvalidDataException("Call log command is empty.");
-    }
-
-    private static SessionHistorySnapshot ReadHistorySnapshot(string repoPath) {
-        using var engine = SJ.SessionJournalEngine.Open(repoPath);
-        SJ.SessionHistoryReplay replay = engine.ReplayHistory();
-        return new SessionHistorySnapshot(
-            EventAddressTextCodec.Format(replay.SourceRawHead!.Value),
-            replay.Messages.Select(static entry => new SessionHistoryMessageSnapshot(
-                entry.Message.Kind.ToString(),
-                entry.Message switch {
-                    ActionMessage action => action.GetFlattenedText(),
-                    ObservationMessage observation => observation.Content ?? string.Empty,
-                    _ => entry.Message.ToString() ?? string.Empty
-                },
-                EventAddressTextCodec.Format(entry.SourceStartInclusive),
-                EventAddressTextCodec.Format(entry.SourceEndInclusive)
-            )).ToArray()
-        );
-    }
-
-    private static SJ.SessionGoverningSetup ReadGoverningSetup(
-        string repoPath,
-        Atelia.EventJournal.EventAddress sourceRawHead
-    ) {
-        using var engine = SJ.SessionJournalEngine.Open(repoPath);
-        return engine.ResolveGoverningSetup(sourceRawHead);
-    }
-
-    private static void AssertHistoryUnchanged(
-        SessionHistorySnapshot expected,
-        SessionHistorySnapshot actual
-    ) {
-        Assert.Equal(expected.SourceRawHead, actual.SourceRawHead);
-        Assert.Equal(expected.Messages, actual.Messages);
-    }
-
     private static void WriteConnections(string path) {
         var config = new CompletionConnectionsFileConfig(
-            Connections: [
+            [
                 new CompletionConnectionConfig(
-                    Id: "scripted",
-                    Kind: "scripted",
-                    ModelId: "model-a",
-                    CompletionSurfaceId: "surface-a",
-                    BaseAddress: "http://localhost/"
+                    "scripted",
+                    "scripted",
+                    "model-a",
+                    "surface-a",
+                    "http://localhost/"
                 )
             ],
-            DefaultConnectionId: "scripted"
+            "scripted"
         );
-        File.WriteAllText(path, JsonSerializer.Serialize(config, WebJsonOptions));
-    }
-
-    private static void WriteLegacyExport(string path, int turnCount) {
-        var events = new List<LegacyChatSessionEvent> {
-            new() {
-                Ordinal = 0,
-                Kind = LegacyChatSessionEventKinds.InitialState,
-                Root = new LegacyChatSessionRoot {
-                    ApiSpecId = "legacy-upgrade-export",
-                    CompletionSurfaceId = "surface-a",
-                    ModelId = "model-a",
-                    SystemPrompt = "system-a"
-                }
-            }
-        };
-        for (int turn = 1; turn <= turnCount; turn++) {
-            events.Add(new LegacyChatSessionEvent {
-                Ordinal = turn,
-                Kind = LegacyChatSessionEventKinds.ModelTurn,
-                AppendedMessages = [
-                    new LegacyChatSessionMessage {
-                        Kind = "observation",
-                        Content = $"observation {turn}"
-                    },
-                    new LegacyChatSessionMessage {
-                        Kind = "action",
-                        Action = new LegacyChatSessionAction {
-                            Blocks = [
-                                new SerializedActionBlock(
-                                    ActionMessageSerialization.BlockKindText,
-                                    $"action {turn}",
-                                    ToolName: null,
-                                    ToolCallId: null,
-                                    RawArgumentsJson: null,
-                                    Reasoning: null
-                                )
-                            ]
-                        }
-                    }
-                ]
-            });
-        }
-
-        var source = new LegacyChatSessionExport {
-            Schema = LegacyChatSessionExportSchema.SchemaId,
-            BranchName = "main",
-            Events = events
-        };
         File.WriteAllText(
             path,
-            JsonSerializer.Serialize(
-                source,
-                LegacyChatSessionExportReader.JsonOptions
-            )
+            JsonSerializer.Serialize(config, WebJsonOptions)
         );
     }
 
-    private sealed class ScriptedCompletionClientFactory(string responseText) : ICompletionClientFactory {
-        private readonly ScriptedCompletionClient _client = new(responseText);
-
+    private sealed class ScriptedCompletionClientFactory(
+        string responseText
+    ) : ICompletionClientFactory {
+        private readonly ScriptedCompletionClient _client =
+            new(responseText);
         public int CompletionCallCount => _client.CallCount;
-
-        public ICompletionClient Create(CompletionConnectionConfig connection) {
-            _ = connection;
-            return _client;
-        }
+        public ICompletionClient Create(
+            CompletionConnectionConfig connection
+        ) => _client;
     }
 
-    private sealed class ScriptedCompletionClient(string responseText) : ICompletionClient {
+    private sealed class ScriptedCompletionClient(string responseText)
+        : ICompletionClient {
         public string Name => "scripted";
-
         public string ApiSpecId => "test-api-v1";
-
         public int CallCount { get; private set; }
 
         public Task<CompletionResult> StreamCompletionAsync(
@@ -528,25 +430,14 @@ public sealed class ProgramSessionJournalE2ETests : IDisposable {
             CompletionStreamObserver? observer,
             CancellationToken cancellationToken = default
         ) {
-            _ = observer;
             cancellationToken.ThrowIfCancellationRequested();
             CallCount++;
             return Task.FromResult(new CompletionResult(
-                new ActionMessage([new ActionBlock.Text(responseText)]),
+                new ActionMessage([
+                    new ActionBlock.Text(responseText)
+                ]),
                 CompletionDescriptor.From(this, request)
             ));
         }
     }
-
-    private sealed record SessionHistorySnapshot(
-        string SourceRawHead,
-        IReadOnlyList<SessionHistoryMessageSnapshot> Messages
-    );
-
-    private sealed record SessionHistoryMessageSnapshot(
-        string Kind,
-        string Text,
-        string SourceStartInclusive,
-        string SourceEndInclusive
-    );
 }
