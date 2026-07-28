@@ -10,7 +10,6 @@ internal sealed record SessionTailContextProjectionResult(
     EventAddress RawStartExclusive,
     string RawRangeSha256,
     ImmutableArray<SessionRequestArtifactContextSnapshot> ContextSnapshots,
-    SessionGoverningSetup FinalGoverningSetup,
     SessionTailProjectionDiagnostics Diagnostics
 );
 

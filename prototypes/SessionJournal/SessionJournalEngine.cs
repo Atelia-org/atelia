@@ -1318,7 +1318,6 @@ public sealed class SessionJournalEngine : IDisposable {
             selection.Candidate.RawStartExclusive,
             rawRangeSha256,
             snapshots,
-            folded.GoverningSetup,
             new SessionTailProjectionDiagnostics(
                 checked((int)window.Diagnostics.HeaderVisits),
                 checked((int)window.Diagnostics.PayloadReads),
