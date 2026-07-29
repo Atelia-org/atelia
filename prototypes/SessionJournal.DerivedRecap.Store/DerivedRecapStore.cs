@@ -14,6 +14,10 @@ internal sealed record RecapStoreTestHooks(
     Action? AfterResetQuarantine = null,
     Action? AfterResetNewRootCommit = null,
     Action? BeforePublicationSealInstall = null,
+    Action? BeforeSourceEnvelopeRecheck = null,
+    Action? BeforeBuildingSourceFinalRecheck = null,
+    Action<string>? BeforeAtomicFileReplace = null,
+    Action<string>? AfterAtomicFileReplace = null,
     Action<RecapIoPoint, string>? IoObserver = null
 );
 
@@ -140,13 +144,70 @@ public sealed class DerivedRecapStore {
             .ConfigureAwait(false);
     }
 
-    public async ValueTask CreateBuildingAsync(
+    public async ValueTask<PublishedRecapSourceReadResult>
+        ReadPublishedSourceAsync(
+        PublishedRecapDescriptor source,
+        IReadOnlyList<RecapBlockId> requiredBlocks,
+        CancellationToken cancellationToken = default
+    ) {
+        ArgumentNullException.ThrowIfNull(source);
+        ArgumentNullException.ThrowIfNull(requiredBlocks);
+        ValidateSourceDescriptor(source);
+        if (source.RefId != RefId) {
+            throw new ArgumentException(
+                "Published source descriptor belongs to another RefId.",
+                nameof(source)
+            );
+        }
+        EnsureScaffolding();
+        await using FileStream writeLock =
+            await _fileSystem.AcquireExclusiveLockAsync(
+                    _lockPath,
+                    cancellationToken
+                )
+                .ConfigureAwait(false);
+        await RequireReadyAsync(cancellationToken)
+            .ConfigureAwait(false);
+
+        SourceCaptureResult capture =
+            await CapturePublishedSourceAsync(
+                    source,
+                    requiredBlocks,
+                    cancellationToken
+                )
+                .ConfigureAwait(false);
+        if (capture is not SourceCaptureResult.Available available) {
+            return ToPublicSourceResult(capture);
+        }
+        _testHooks.BeforeSourceEnvelopeRecheck?.Invoke();
+        PublicationRecheck recheck =
+            await RecheckPublicationAsync(
+                source.SetAdmissionAnchor,
+                available.Capture.CanonicalEnvelope,
+                cancellationToken
+            )
+            .ConfigureAwait(false);
+        if (!recheck.IsExact) {
+            return new PublishedRecapSourceReadResult
+                .ChangedDuringRead(
+                    source.EnvelopeSha256,
+                    recheck.ObservedEnvelopeSha256
+                );
+        }
+        return new PublishedRecapSourceReadResult.Available(
+            new PublishedRecapSourceSnapshot(
+                source,
+                available.Capture.Publication,
+                available.Capture.FrozenInputs
+            )
+        );
+    }
+
+    public async ValueTask<CreateBuildingResult> CreateBuildingAsync(
         DerivedRecapSetManifest manifest,
-        IReadOnlyList<DerivedRecapFrozenInput> inputs,
         CancellationToken cancellationToken = default
     ) {
         ArgumentNullException.ThrowIfNull(manifest);
-        ArgumentNullException.ThrowIfNull(inputs);
         EnsureScaffolding();
         await using FileStream writeLock =
             await _fileSystem.AcquireExclusiveLockAsync(
@@ -163,21 +224,6 @@ public sealed class DerivedRecapStore {
             );
         }
 
-        FrozenInputIndex inputIndex =
-            ValidateAndIndexInputs(manifest, inputs);
-        if (manifest.Blocks.Any(
-                static plan =>
-                    plan is InheritRecapBlockPlan
-                    || plan is MaintainRecapBlockPlan {
-                        Source: ExistingRecapMaintainSource
-                    }
-            )) {
-            throw new NotSupportedException(
-                "R0 CreateBuilding supports only Empty Maintain "
-                + "sources. Existing/Inherit requires the R1 exact "
-                + "Published-source freeze protocol."
-            );
-        }
         string anchorToken = EventAddressFileNameCodec.Format(
             manifest.SetAdmissionAnchor
         );
@@ -196,6 +242,72 @@ public sealed class DerivedRecapStore {
                 + $"at {manifest.SetAdmissionAnchor}."
             );
         }
+
+        IReadOnlyList<SourceRequest> sourceRequests =
+            GetSourceRequests(manifest);
+        var captures = new List<PublishedSourceCapture>(
+            sourceRequests.Count
+        );
+        var frozenInputs = new List<DerivedRecapFrozenInput>();
+        foreach (SourceRequest request in sourceRequests) {
+            SourceCaptureResult result =
+                await CapturePublishedSourceAsync(
+                        request.Descriptor,
+                        request.BlockIds,
+                        cancellationToken
+                    )
+                    .ConfigureAwait(false);
+            switch (result) {
+                case SourceCaptureResult.Available available:
+                    DerivedRecapFrozenInput? mismatched =
+                        available.Capture.FrozenInputs.FirstOrDefault(
+                            input =>
+                                !string.Equals(
+                                    input.PayloadSha256,
+                                    request.ExpectedPayloadSha256[
+                                        input.RecapBlockId
+                                    ],
+                                    StringComparison.Ordinal
+                                )
+                        );
+                    if (mismatched is not null) {
+                        return new CreateBuildingResult
+                            .SourceUnavailable(
+                                request.Descriptor,
+                                [
+                                    new RecapStructuralDefect(
+                                        "SourceInputCommitmentMismatch",
+                                        $"Source block "
+                                        + $"'{mismatched.RecapBlockId}' "
+                                        + "does not match the frozen "
+                                        + "manifest input commitment."
+                                    )
+                                ]
+                            );
+                    }
+                    captures.Add(available.Capture);
+                    frozenInputs.AddRange(
+                        available.Capture.FrozenInputs
+                    );
+                    break;
+                case SourceCaptureResult.Changed changed:
+                    return new CreateBuildingResult.SourceChanged(
+                        request.Descriptor,
+                        changed.ObservedEnvelopeSha256
+                    );
+                case SourceCaptureResult.Unavailable unavailable:
+                    return new CreateBuildingResult.SourceUnavailable(
+                        request.Descriptor,
+                        unavailable.Defects
+                    );
+                default:
+                    throw new InvalidOperationException(
+                        "Unknown source capture result."
+                    );
+            }
+        }
+        FrozenInputIndex inputIndex =
+            ValidateAndIndexInputs(manifest, frozenInputs);
 
         string stagingPath = Path.Combine(
             _buildingRoot,
@@ -219,6 +331,26 @@ public sealed class DerivedRecapStore {
                 .ConfigureAwait(false);
         }
 
+        // All source bytes are now durable in the private staging
+        // directory. Recheck every distinct source as one snapshot before
+        // installing the manifest authority.
+        _testHooks.BeforeBuildingSourceFinalRecheck?.Invoke();
+        foreach (PublishedSourceCapture capture in captures) {
+            PublicationRecheck recheck =
+                await RecheckPublicationAsync(
+                    capture.Descriptor.SetAdmissionAnchor,
+                    capture.CanonicalEnvelope,
+                    cancellationToken
+                )
+                .ConfigureAwait(false);
+            if (!recheck.IsExact) {
+                return new CreateBuildingResult.SourceChanged(
+                    capture.Descriptor,
+                    recheck.ObservedEnvelopeSha256
+                );
+            }
+        }
+
         // Manifest is the Building authority and is installed only after
         // every frozen input is durable.
         await _fileSystem.WriteFileCreateNewAsync(
@@ -236,14 +368,19 @@ public sealed class DerivedRecapStore {
             buildingPath
         );
         _fileSystem.FlushDirectory(_buildingRoot);
+        return new CreateBuildingResult.Created(
+            new BuildingDescriptor(
+                RefId,
+                manifest.SetAdmissionAnchor,
+                manifest.ManifestPayloadSha256
+            )
+        );
     }
 
-    public async ValueTask WriteFinalBlockAsync(
+    public async ValueTask<BuildingReadResult> ReadBuildingAsync(
         EventAddress admissionAnchor,
-        DerivedRecapBlock block,
         CancellationToken cancellationToken = default
     ) {
-        ArgumentNullException.ThrowIfNull(block);
         EnsureScaffolding();
         await using FileStream writeLock =
             await _fileSystem.AcquireExclusiveLockAsync(
@@ -253,60 +390,239 @@ public sealed class DerivedRecapStore {
                 .ConfigureAwait(false);
         await RequireReadyAsync(cancellationToken)
             .ConfigureAwait(false);
-        string buildPath = GetBuildingPath(admissionAnchor);
-        DerivedRecapSetManifest manifest =
-            await ReadManifestRequiredAsync(
-                    buildPath,
+        return await ReadBuildingCoreAsync(
+                admissionAnchor,
+                cancellationToken
+            )
+            .ConfigureAwait(false);
+    }
+
+    public async ValueTask<BuildingBlockInspection>
+        InspectBuildingBlockAsync(
+        BuildingDescriptor building,
+        RecapBlockId blockId,
+        CancellationToken cancellationToken = default
+    ) {
+        ArgumentNullException.ThrowIfNull(building);
+        ArgumentNullException.ThrowIfNull(blockId);
+        EnsureScaffolding();
+        await using FileStream writeLock =
+            await _fileSystem.AcquireExclusiveLockAsync(
+                    _lockPath,
                     cancellationToken
                 )
                 .ConfigureAwait(false);
-        RecapBlockPlan plan = manifest.Blocks.SingleOrDefault(
-            candidate => candidate.RecapBlockId == block.RecapBlockId
-        ) ?? throw new InvalidDataException(
-            $"Recap block '{block.RecapBlockId}' is not in the manifest."
+        await RequireReadyAsync(cancellationToken)
+            .ConfigureAwait(false);
+        BuildingSnapshot snapshot =
+            await ReadExactBuildingRequiredAsync(
+                    building,
+                    cancellationToken
+                )
+                .ConfigureAwait(false);
+        return await InspectBuildingBlockCoreAsync(
+                snapshot,
+                blockId,
+                cancellationToken
+            )
+            .ConfigureAwait(false);
+    }
+
+    public async ValueTask<CheckpointWriteResult>
+        AdvanceRollingCheckpointAsync(
+        BuildingDescriptor building,
+        RecapBlockId blockId,
+        string expectedStateToken,
+        DerivedRecapBlock candidate,
+        CancellationToken cancellationToken = default
+    ) {
+        ArgumentNullException.ThrowIfNull(building);
+        ArgumentNullException.ThrowIfNull(blockId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(
+            expectedStateToken
         );
-        DerivedRecapCodec.ValidateBlock(block);
-        if (block.Target != plan.Target
-            || !string.Equals(
-                block.BlockPlanSha256,
-                DerivedRecapCodec.ComputeBlockPlanSha256(plan),
+        ArgumentNullException.ThrowIfNull(candidate);
+        EnsureScaffolding();
+        await using FileStream writeLock =
+            await _fileSystem.AcquireExclusiveLockAsync(
+                    _lockPath,
+                    cancellationToken
+                )
+                .ConfigureAwait(false);
+        await RequireReadyAsync(cancellationToken)
+            .ConfigureAwait(false);
+        BuildingSnapshot snapshot =
+            await ReadExactBuildingRequiredAsync(
+                    building,
+                    cancellationToken
+                )
+                .ConfigureAwait(false);
+        BuildingBlockInspection inspection =
+            await InspectBuildingBlockCoreAsync(
+                    snapshot,
+                    blockId,
+                    cancellationToken
+                )
+                .ConfigureAwait(false);
+        if (!string.Equals(
+                expectedStateToken,
+                inspection.Checkpoint.StateToken,
                 StringComparison.Ordinal
             )) {
-            throw new InvalidDataException(
-                "Recap block does not match its frozen block plan."
+            return new CheckpointWriteResult.Stale(
+                inspection.Checkpoint.StateToken
             );
         }
-        await ValidateFinalCursorAndInputAsync(
-                buildPath,
-                manifest,
-                plan,
-                block,
-                cancellationToken
-            )
-            .ConfigureAwait(false);
-        EnsureContentWithinPlanLimit(block.Content, plan);
-
-        string path = GetBlockFilePath(
-            Path.Combine(buildPath, "blocks"),
-            block.RecapBlockId
+        if (inspection.Plan is not MaintainRecapBlockPlan maintain) {
+            throw new InvalidDataException(
+                "Only Maintain blocks have rolling checkpoints."
+            );
+        }
+        int candidateEndpoint = ValidateCheckpointCandidate(
+            maintain,
+            candidate
         );
-        if (File.Exists(path)) {
-            DerivedRecapBlock existing =
-                await ReadBlockRequiredAsync(path, cancellationToken)
-                    .ConfigureAwait(false);
-            if (existing != block) {
-                throw new InvalidDataException(
-                    "Immutable final Recap block collision."
+        if (inspection.Checkpoint
+                is RollingRecapCheckpointHealth.Healthy healthy) {
+            if (healthy.Block == candidate) {
+                return new CheckpointWriteResult.AlreadyCurrent(
+                    healthy.StateToken
                 );
             }
-            return;
+            if (candidateEndpoint != healthy.EndpointIndex + 1) {
+                throw new InvalidDataException(
+                    "Checkpoint candidate must advance exactly one "
+                    + "frozen catch-up endpoint."
+                );
+            }
         }
-        await _fileSystem.WriteFileCreateNewAsync(
+        else if (candidateEndpoint != 0) {
+            throw new InvalidDataException(
+                "A missing or unusable checkpoint must restart at "
+                + "the first frozen catch-up endpoint."
+            );
+        }
+
+        string path = GetBlockFilePath(
+            Path.Combine(
+                GetBuildingPath(building.SetAdmissionAnchor),
+                "work"
+            ),
+            blockId
+        );
+        await _fileSystem.WriteFileAtomicReplaceAsync(
                 path,
-                DerivedRecapCodec.EncodeBlock(block),
+                DerivedRecapCodec.EncodeBlock(candidate),
+                () => _testHooks.BeforeAtomicFileReplace
+                    ?.Invoke(path),
+                () => _testHooks.AfterAtomicFileReplace
+                    ?.Invoke(path),
                 cancellationToken
             )
             .ConfigureAwait(false);
+        return new CheckpointWriteResult.Updated(
+            HealthyStateToken(candidate)
+        );
+    }
+
+    public async ValueTask<FinalBlockWriteResult>
+        EnsureFinalBlockAsync(
+        BuildingDescriptor building,
+        RecapBlockId blockId,
+        string expectedStateToken,
+        DerivedRecapBlock candidate,
+        CancellationToken cancellationToken = default
+    ) {
+        ArgumentNullException.ThrowIfNull(building);
+        ArgumentNullException.ThrowIfNull(blockId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(
+            expectedStateToken
+        );
+        ArgumentNullException.ThrowIfNull(candidate);
+        EnsureScaffolding();
+        await using FileStream writeLock =
+            await _fileSystem.AcquireExclusiveLockAsync(
+                    _lockPath,
+                    cancellationToken
+                )
+                .ConfigureAwait(false);
+        await RequireReadyAsync(cancellationToken)
+            .ConfigureAwait(false);
+        BuildingSnapshot snapshot =
+            await ReadExactBuildingRequiredAsync(
+                    building,
+                    cancellationToken
+                )
+                .ConfigureAwait(false);
+        BuildingBlockInspection inspection =
+            await InspectBuildingBlockCoreAsync(
+                    snapshot,
+                    blockId,
+                    cancellationToken
+                )
+                .ConfigureAwait(false);
+        if (!string.Equals(
+                expectedStateToken,
+                inspection.Final.StateToken,
+                StringComparison.Ordinal
+            )) {
+            return new FinalBlockWriteResult.Stale(
+                inspection.Final.StateToken
+            );
+        }
+        ValidateFinalCandidate(
+            snapshot,
+            inspection.Plan,
+            inspection.FrozenInput,
+            candidate
+        );
+        if (inspection.Final is FinalRecapBlockHealth.Healthy healthy) {
+            return healthy.Block == candidate
+                ? new FinalBlockWriteResult.AlreadyHealthy(
+                    healthy.Block,
+                    healthy.StateToken
+                )
+                : new FinalBlockWriteResult.HealthyConflict(
+                    healthy.Block,
+                    healthy.StateToken
+                );
+        }
+        if (inspection.Plan is MaintainRecapBlockPlan maintain
+            && (inspection.Checkpoint
+                    is not RollingRecapCheckpointHealth.Healthy
+                        checkpoint
+                || checkpoint.EndpointIndex
+                    != maintain.CatchUpThrough.Count - 1
+                || checkpoint.Block != candidate)) {
+            throw new InvalidDataException(
+                "Maintain final installation requires a healthy, "
+                + "byte-identical final-endpoint rolling checkpoint."
+            );
+        }
+
+        bool replacingDamaged =
+            inspection.Final is FinalRecapBlockHealth.Damaged;
+        string path = GetBlockFilePath(
+            Path.Combine(
+                GetBuildingPath(building.SetAdmissionAnchor),
+                "blocks"
+            ),
+            blockId
+        );
+        await _fileSystem.WriteFileAtomicReplaceAsync(
+                path,
+                DerivedRecapCodec.EncodeBlock(candidate),
+                () => _testHooks.BeforeAtomicFileReplace
+                    ?.Invoke(path),
+                () => _testHooks.AfterAtomicFileReplace
+                    ?.Invoke(path),
+                cancellationToken
+            )
+            .ConfigureAwait(false);
+        string stateToken = HealthyStateToken(candidate);
+        return replacingDamaged
+            ? new FinalBlockWriteResult.ReplacedDamaged(stateToken)
+            : new FinalBlockWriteResult.Installed(stateToken);
     }
 
     /// <summary>
@@ -1614,48 +1930,6 @@ public sealed class DerivedRecapStore {
         }
     }
 
-    private async ValueTask ValidateFinalCursorAndInputAsync(
-        string buildPath,
-        DerivedRecapSetManifest manifest,
-        RecapBlockPlan plan,
-        DerivedRecapBlock block,
-        CancellationToken cancellationToken
-    ) {
-        switch (plan) {
-            case MaintainRecapBlockPlan:
-                if (block.AbsorbedThrough
-                    != manifest.SetAdmissionAnchor) {
-                    throw new InvalidDataException(
-                        "Maintain final block must absorb through "
-                        + "SetAdmissionAnchor."
-                    );
-                }
-                break;
-            case InheritRecapBlockPlan:
-                DerivedRecapFrozenInput input =
-                    await ReadFrozenInputRequiredAsync(
-                            GetBlockFilePath(
-                                Path.Combine(buildPath, "inputs"),
-                                plan.RecapBlockId
-                            ),
-                            cancellationToken
-                        )
-                        .ConfigureAwait(false);
-                if (block.AbsorbedThrough != input.AbsorbedThrough
-                    || !string.Equals(
-                        block.Content,
-                        input.Content,
-                        StringComparison.Ordinal
-                    )) {
-                    throw new InvalidDataException(
-                        "Inherit final block must exactly copy its "
-                        + "frozen input content and cursor."
-                    );
-                }
-                break;
-        }
-    }
-
     private void FlushPublicationDependencies(
         string buildPath,
         DerivedRecapSetManifest manifest,
@@ -1738,6 +2012,711 @@ public sealed class DerivedRecapStore {
             )
             .ConfigureAwait(false);
         return DerivedRecapCodec.DecodePublication(bytes);
+    }
+
+    private async ValueTask<BuildingReadResult> ReadBuildingCoreAsync(
+        EventAddress admissionAnchor,
+        CancellationToken cancellationToken
+    ) {
+        string buildPath = GetBuildingPath(admissionAnchor);
+        if (!Directory.Exists(buildPath)) {
+            return new BuildingReadResult.Missing();
+        }
+        try {
+            _fileSystem.EnsureSafeDescendant(buildPath);
+            DerivedRecapSetManifest manifest =
+                await ReadManifestRequiredAsync(
+                        buildPath,
+                        cancellationToken
+                    )
+                    .ConfigureAwait(false);
+            if (manifest.RefId != RefId
+                || manifest.SetAdmissionAnchor != admissionAnchor) {
+                throw new InvalidDataException(
+                    "Building manifest identity does not match its path."
+                );
+            }
+            IReadOnlyList<DerivedRecapFrozenInput> inputs =
+                await ReadExpectedInputsAsync(
+                        buildPath,
+                        manifest,
+                        cancellationToken
+                    )
+                    .ConfigureAwait(false);
+            FrozenInputIndex index =
+                ValidateAndIndexInputs(manifest, inputs);
+            return new BuildingReadResult.Available(
+                new BuildingSnapshot(
+                    new BuildingDescriptor(
+                        RefId,
+                        admissionAnchor,
+                        manifest.ManifestPayloadSha256
+                    ),
+                    manifest,
+                    index.ById.ToImmutableDictionary()
+                )
+            );
+        }
+        catch (Exception exception)
+            when (exception is InvalidDataException
+                  or ArgumentException
+                  or NotSupportedException
+                  or IOException
+                  or UnauthorizedAccessException) {
+            return new BuildingReadResult.Invalid([
+                new RecapStructuralDefect(
+                    "BuildingInvalid",
+                    exception.Message
+                )
+            ]);
+        }
+    }
+
+    private async ValueTask<BuildingSnapshot>
+        ReadExactBuildingRequiredAsync(
+        BuildingDescriptor descriptor,
+        CancellationToken cancellationToken
+    ) {
+        if (descriptor.RefId != RefId) {
+            throw new ArgumentException(
+                "Building descriptor belongs to another RefId.",
+                nameof(descriptor)
+            );
+        }
+        DerivedRecapCodec.ValidateSha256(
+            descriptor.ManifestPayloadSha256,
+            "building.manifestPayloadSha256"
+        );
+        BuildingReadResult result = await ReadBuildingCoreAsync(
+                descriptor.SetAdmissionAnchor,
+                cancellationToken
+            )
+            .ConfigureAwait(false);
+        if (result is not BuildingReadResult.Available available) {
+            throw new InvalidDataException(
+                result is BuildingReadResult.Invalid invalid
+                    ? "Building is invalid: "
+                      + string.Join(
+                          "; ",
+                          invalid.Defects.Select(
+                              static defect =>
+                                  $"{defect.Code}: {defect.Detail}"
+                          )
+                      )
+                    : "Exact Building is missing."
+            );
+        }
+        if (!string.Equals(
+                available.Snapshot.Descriptor
+                    .ManifestPayloadSha256,
+                descriptor.ManifestPayloadSha256,
+                StringComparison.Ordinal
+            )) {
+            throw new InvalidDataException(
+                "Building descriptor no longer matches its manifest."
+            );
+        }
+        return available.Snapshot;
+    }
+
+    private async ValueTask<BuildingBlockInspection>
+        InspectBuildingBlockCoreAsync(
+        BuildingSnapshot snapshot,
+        RecapBlockId blockId,
+        CancellationToken cancellationToken
+    ) {
+        RecapBlockPlan plan =
+            snapshot.Manifest.Blocks.SingleOrDefault(
+                candidate => candidate.RecapBlockId == blockId
+            ) ?? throw new KeyNotFoundException(
+                $"Recap block '{blockId}' is not in the Building."
+            );
+        snapshot.FrozenInputs.TryGetValue(
+            blockId,
+            out DerivedRecapFrozenInput? input
+        );
+        string buildPath =
+            GetBuildingPath(snapshot.Descriptor.SetAdmissionAnchor);
+        FinalRecapBlockHealth final =
+            await InspectFinalBlockHealthAsync(
+                    snapshot,
+                    plan,
+                    input,
+                    GetBlockFilePath(
+                        Path.Combine(buildPath, "blocks"),
+                        blockId
+                    ),
+                    cancellationToken
+                )
+                .ConfigureAwait(false);
+        RollingRecapCheckpointHealth checkpoint =
+            await InspectCheckpointHealthAsync(
+                    plan,
+                    GetBlockFilePath(
+                        Path.Combine(buildPath, "work"),
+                        blockId
+                    ),
+                    cancellationToken
+                )
+                .ConfigureAwait(false);
+        return new BuildingBlockInspection(
+            snapshot.Descriptor,
+            plan,
+            input,
+            final,
+            checkpoint
+        );
+    }
+
+    private async ValueTask<FinalRecapBlockHealth>
+        InspectFinalBlockHealthAsync(
+        BuildingSnapshot snapshot,
+        RecapBlockPlan plan,
+        DerivedRecapFrozenInput? input,
+        string path,
+        CancellationToken cancellationToken
+    ) {
+        if (!File.Exists(path)) {
+            return new FinalRecapBlockHealth.Missing(
+                MissingStateToken
+            );
+        }
+        byte[] bytes;
+        try {
+            bytes = await _fileSystem.ReadBoundedAsync(
+                    path,
+                    MaxBlockBytes,
+                    cancellationToken
+                )
+                .ConfigureAwait(false);
+        }
+        catch (Exception exception)
+            when (exception is FileNotFoundException
+                  or DirectoryNotFoundException) {
+            return new FinalRecapBlockHealth.Missing(
+                MissingStateToken
+            );
+        }
+        catch (InvalidDataException exception) {
+            return new FinalRecapBlockHealth.Damaged(
+                [
+                    new RecapStructuralDefect(
+                        "FinalBlockDamaged",
+                        exception.Message
+                    )
+                ],
+                $"damaged:{_fileSystem.ComputeFileSha256(path)}"
+            );
+        }
+        try {
+            DerivedRecapBlock block =
+                DerivedRecapCodec.DecodeBlock(bytes);
+            ValidateFinalCandidate(snapshot, plan, input, block);
+            return new FinalRecapBlockHealth.Healthy(
+                block,
+                HealthyStateToken(block)
+            );
+        }
+        catch (Exception exception)
+            when (exception is InvalidDataException
+                  or ArgumentException
+                  or NotSupportedException) {
+            return new FinalRecapBlockHealth.Damaged(
+                [
+                    new RecapStructuralDefect(
+                        "FinalBlockDamaged",
+                        exception.Message
+                    )
+                ],
+                DamagedStateToken(bytes)
+            );
+        }
+    }
+
+    private async ValueTask<RollingRecapCheckpointHealth>
+        InspectCheckpointHealthAsync(
+        RecapBlockPlan plan,
+        string path,
+        CancellationToken cancellationToken
+    ) {
+        if (!File.Exists(path)) {
+            return new RollingRecapCheckpointHealth.Missing(
+                MissingStateToken
+            );
+        }
+        byte[] bytes;
+        try {
+            bytes = await _fileSystem.ReadBoundedAsync(
+                    path,
+                    MaxBlockBytes,
+                    cancellationToken
+                )
+                .ConfigureAwait(false);
+        }
+        catch (Exception exception)
+            when (exception is FileNotFoundException
+                  or DirectoryNotFoundException) {
+            return new RollingRecapCheckpointHealth.Missing(
+                MissingStateToken
+            );
+        }
+        catch (InvalidDataException exception) {
+            return new RollingRecapCheckpointHealth.Unusable(
+                [
+                    new RecapStructuralDefect(
+                        "CheckpointUnusable",
+                        exception.Message
+                    )
+                ],
+                $"damaged:{_fileSystem.ComputeFileSha256(path)}"
+            );
+        }
+        try {
+            if (plan is not MaintainRecapBlockPlan maintain) {
+                throw new InvalidDataException(
+                    "Inherit blocks must not have rolling checkpoints."
+                );
+            }
+            DerivedRecapBlock block =
+                DerivedRecapCodec.DecodeBlock(bytes);
+            int endpointIndex =
+                ValidateCheckpointCandidate(maintain, block);
+            return new RollingRecapCheckpointHealth.Healthy(
+                block,
+                endpointIndex,
+                HealthyStateToken(block)
+            );
+        }
+        catch (Exception exception)
+            when (exception is InvalidDataException
+                  or ArgumentException
+                  or NotSupportedException) {
+            return new RollingRecapCheckpointHealth.Unusable(
+                [
+                    new RecapStructuralDefect(
+                        "CheckpointUnusable",
+                        exception.Message
+                    )
+                ],
+                DamagedStateToken(bytes)
+            );
+        }
+    }
+
+    private static int ValidateCheckpointCandidate(
+        MaintainRecapBlockPlan plan,
+        DerivedRecapBlock candidate
+    ) {
+        ValidateBlockAgainstPlan(plan, candidate);
+        int endpointIndex = -1;
+        for (int index = 0;
+             index < plan.CatchUpThrough.Count;
+             index++) {
+            if (plan.CatchUpThrough[index]
+                == candidate.AbsorbedThrough) {
+                endpointIndex = index;
+                break;
+            }
+        }
+        if (endpointIndex < 0) {
+            throw new InvalidDataException(
+                "Rolling checkpoint cursor is outside the frozen "
+                + "catch-up route."
+            );
+        }
+        return endpointIndex;
+    }
+
+    private static void ValidateFinalCandidate(
+        BuildingSnapshot snapshot,
+        RecapBlockPlan plan,
+        DerivedRecapFrozenInput? input,
+        DerivedRecapBlock candidate
+    ) {
+        ValidateBlockAgainstPlan(plan, candidate);
+        switch (plan) {
+            case MaintainRecapBlockPlan:
+                if (candidate.AbsorbedThrough
+                    != snapshot.Manifest.SetAdmissionAnchor) {
+                    throw new InvalidDataException(
+                        "Maintain final block must absorb through "
+                        + "SetAdmissionAnchor."
+                    );
+                }
+                break;
+            case InheritRecapBlockPlan:
+                if (input is null
+                    || candidate.AbsorbedThrough
+                        != input.AbsorbedThrough
+                    || !string.Equals(
+                        candidate.Content,
+                        input.Content,
+                        StringComparison.Ordinal
+                    )) {
+                    throw new InvalidDataException(
+                        "Inherit final block must exactly copy its "
+                        + "frozen input content and cursor."
+                    );
+                }
+                break;
+        }
+    }
+
+    private static void ValidateBlockAgainstPlan(
+        RecapBlockPlan plan,
+        DerivedRecapBlock block
+    ) {
+        DerivedRecapCodec.ValidateBlock(block);
+        if (block.RecapBlockId != plan.RecapBlockId
+            || block.Target != plan.Target
+            || !string.Equals(
+                block.BlockPlanSha256,
+                DerivedRecapCodec.ComputeBlockPlanSha256(plan),
+                StringComparison.Ordinal
+            )) {
+            throw new InvalidDataException(
+                "Recap block does not match its frozen block plan."
+            );
+        }
+        EnsureContentWithinPlanLimit(block.Content, plan);
+    }
+
+    private const string MissingStateToken = "missing";
+
+    private static string HealthyStateToken(
+        DerivedRecapBlock block
+    ) => $"healthy:{block.PayloadSha256}";
+
+    private static string DamagedStateToken(
+        ReadOnlySpan<byte> bytes
+    ) => $"damaged:{DerivedRecapCodec.Sha256Hex(bytes)}";
+
+    private async ValueTask<SourceCaptureResult>
+        CapturePublishedSourceAsync(
+        PublishedRecapDescriptor source,
+        IReadOnlyList<RecapBlockId> requiredBlocks,
+        CancellationToken cancellationToken
+    ) {
+        string publishedPath =
+            GetPublishedPath(source.SetAdmissionAnchor);
+        if (!Directory.Exists(publishedPath)) {
+            return new SourceCaptureResult.Unavailable(
+                source.SetAdmissionAnchor,
+                [
+                    new RecapStructuralDefect(
+                        "SourcePublishedSetMissing",
+                        $"Published source '{source.SetAdmissionAnchor}' "
+                        + "is missing."
+                    )
+                ]);
+        }
+        try {
+            string publicationPath =
+                Path.Combine(publishedPath, "publication.json");
+            byte[] canonicalEnvelope =
+                await _fileSystem.ReadBoundedAsync(
+                        publicationPath,
+                        MaxPublicationBytes,
+                        cancellationToken
+                    )
+                    .ConfigureAwait(false);
+            PublishedRecapSet publication =
+                DerivedRecapCodec.DecodePublication(canonicalEnvelope);
+            if (publication.RefId != RefId
+                || publication.SetAdmissionAnchor
+                    != source.SetAdmissionAnchor) {
+                return new SourceCaptureResult.Unavailable(
+                    source.SetAdmissionAnchor,
+                    [
+                        new RecapStructuralDefect(
+                            "SourceIdentityMismatch",
+                            "Published source identity does not match "
+                            + "its descriptor."
+                        )
+                    ]);
+            }
+            if (!string.Equals(
+                    publication.EnvelopeSha256,
+                    source.EnvelopeSha256,
+                    StringComparison.Ordinal
+                )) {
+                return new SourceCaptureResult.Changed(
+                    source.EnvelopeSha256,
+                    publication.EnvelopeSha256
+                );
+            }
+            byte[] encoded =
+                DerivedRecapCodec.EncodePublication(publication);
+            if (!canonicalEnvelope.SequenceEqual(encoded)) {
+                return new SourceCaptureResult.Unavailable(
+                    source.SetAdmissionAnchor,
+                    [
+                        new RecapStructuralDefect(
+                            "SourceEnvelopeNonCanonical",
+                            "Published source envelope is not canonical."
+                        )
+                    ]);
+            }
+
+            var seen = new HashSet<RecapBlockId>();
+            var inputs = new List<DerivedRecapFrozenInput>(
+                requiredBlocks.Count
+            );
+            foreach (RecapBlockId blockId in requiredBlocks) {
+                ArgumentNullException.ThrowIfNull(blockId);
+                if (!seen.Add(blockId)) {
+                    return new SourceCaptureResult.Unavailable(
+                        source.SetAdmissionAnchor,
+                        [
+                            new RecapStructuralDefect(
+                                "SourceBlockRequestedTwice",
+                                $"Source block '{blockId}' was requested twice."
+                            )
+                        ]);
+                }
+                RecapBlockPlan? sourcePlan =
+                    publication.FrozenPlanSnapshot.Blocks
+                        .SingleOrDefault(
+                            candidate =>
+                                candidate.RecapBlockId == blockId
+                        );
+                RecapBlockCommitment? commitment =
+                    publication.BlockCommitments.SingleOrDefault(
+                        candidate =>
+                            candidate.RecapBlockId == blockId
+                    );
+                if (sourcePlan is null || commitment is null) {
+                    return new SourceCaptureResult.Unavailable(
+                        source.SetAdmissionAnchor,
+                        [
+                            new RecapStructuralDefect(
+                                "SourceBlockMissing",
+                                $"Published source does not contain block "
+                                + $"'{blockId}'."
+                            )
+                        ]);
+                }
+                DerivedRecapBlock block =
+                    await ReadBlockRequiredAsync(
+                            GetBlockFilePath(
+                                Path.Combine(publishedPath, "blocks"),
+                                blockId
+                            ),
+                            cancellationToken
+                        )
+                        .ConfigureAwait(false);
+                if (block.RecapBlockId != commitment.RecapBlockId
+                    || block.Target != commitment.Target
+                    || commitment.Target != sourcePlan.Target
+                    || block.AbsorbedThrough
+                        != commitment.AbsorbedThrough
+                    || !string.Equals(
+                        block.PayloadSha256,
+                        commitment.PayloadSha256,
+                        StringComparison.Ordinal
+                    )
+                    || !string.Equals(
+                        block.BlockPlanSha256,
+                        DerivedRecapCodec
+                            .ComputeBlockPlanSha256(sourcePlan),
+                        StringComparison.Ordinal
+                    )) {
+                    return new SourceCaptureResult.Unavailable(
+                        source.SetAdmissionAnchor,
+                        [
+                            new RecapStructuralDefect(
+                                "SourceBlockCommitmentMismatch",
+                                $"Published source block '{blockId}' does "
+                                + "not match its envelope commitment."
+                            )
+                        ]);
+                }
+                inputs.Add(DerivedRecapCodec.CreateFrozenInput(
+                    block.RecapBlockId,
+                    block.Target,
+                    block.AbsorbedThrough,
+                    block.Content
+                ));
+            }
+            return new SourceCaptureResult.Available(
+                new PublishedSourceCapture(
+                    source,
+                    publication,
+                    canonicalEnvelope,
+                    Array.AsReadOnly(inputs.ToArray())
+                )
+            );
+        }
+        catch (Exception exception)
+            when (exception is InvalidDataException
+                  or ArgumentException
+                  or NotSupportedException
+                  or IOException
+                  or UnauthorizedAccessException
+                  or InvalidOperationException) {
+            return new SourceCaptureResult.Unavailable(
+                source.SetAdmissionAnchor,
+                [
+                    new RecapStructuralDefect(
+                        "SourcePublishedSetInvalid",
+                        exception.Message
+                    )
+                ]);
+        }
+    }
+
+    private async ValueTask<PublicationRecheck>
+        RecheckPublicationAsync(
+        EventAddress sourceSetAnchor,
+        byte[] expectedCanonicalEnvelope,
+        CancellationToken cancellationToken
+    ) {
+        try {
+            byte[] observedBytes =
+                await _fileSystem.ReadBoundedAsync(
+                        Path.Combine(
+                            GetPublishedPath(sourceSetAnchor),
+                            "publication.json"
+                        ),
+                        MaxPublicationBytes,
+                        cancellationToken
+                    )
+                    .ConfigureAwait(false);
+            PublishedRecapSet observed =
+                DerivedRecapCodec.DecodePublication(observedBytes);
+            return new PublicationRecheck(
+                observedBytes.SequenceEqual(
+                    expectedCanonicalEnvelope
+                ),
+                observed.EnvelopeSha256
+            );
+        }
+        catch (Exception exception)
+            when (exception is InvalidDataException
+                  or ArgumentException
+                  or IOException
+                  or UnauthorizedAccessException
+                  or FileNotFoundException
+                  or DirectoryNotFoundException) {
+            return new PublicationRecheck(
+                IsExact: false,
+                ObservedEnvelopeSha256: null
+            );
+        }
+    }
+
+    private static PublishedRecapSourceReadResult
+        ToPublicSourceResult(SourceCaptureResult result)
+        => result switch {
+            SourceCaptureResult.Changed changed =>
+                new PublishedRecapSourceReadResult
+                    .SnapshotTokenMismatch(
+                        changed.ExpectedEnvelopeSha256,
+                        changed.ObservedEnvelopeSha256
+                    ),
+            SourceCaptureResult.Unavailable unavailable
+                when unavailable.Defects.Any(
+                    static defect =>
+                        defect.Code == "SourcePublishedSetMissing"
+                ) =>
+                new PublishedRecapSourceReadResult.Missing(
+                    unavailable.SourceSetAnchor
+                ),
+            SourceCaptureResult.Unavailable unavailable =>
+                new PublishedRecapSourceReadResult.Invalid(
+                    unavailable.Defects
+                ),
+            _ => throw new InvalidOperationException(
+                "Available source result requires a snapshot."
+            )
+        };
+
+    private static IReadOnlyList<SourceRequest> GetSourceRequests(
+        DerivedRecapSetManifest manifest
+    ) {
+        var byAnchor = new Dictionary<
+            EventAddress,
+            (PublishedRecapDescriptor Descriptor,
+                List<RecapBlockId> BlockIds,
+                Dictionary<RecapBlockId, string> ExpectedHashes)
+        >();
+        foreach (RecapBlockPlan plan in manifest.Blocks) {
+            PublishedRecapDescriptor? descriptor = plan switch {
+                InheritRecapBlockPlan inherit => new(
+                    manifest.RefId,
+                    inherit.SourceSetAnchor,
+                    inherit.SourcePublicationEnvelopeSha256
+                ),
+                MaintainRecapBlockPlan {
+                    Source: ExistingRecapMaintainSource existing
+                } => new(
+                    manifest.RefId,
+                    existing.SourceSetAnchor,
+                    existing.SourcePublicationEnvelopeSha256
+                ),
+                _ => null
+            };
+            if (descriptor is null) {
+                continue;
+            }
+            ValidateSourceDescriptor(descriptor);
+            if (byAnchor.TryGetValue(
+                    descriptor.SetAdmissionAnchor,
+                    out var group)) {
+                if (!string.Equals(
+                        group.Descriptor.EnvelopeSha256,
+                        descriptor.EnvelopeSha256,
+                        StringComparison.Ordinal
+                    )) {
+                    throw new InvalidDataException(
+                        "One manifest names conflicting source "
+                        + "snapshot tokens for the same source set."
+                    );
+                }
+                group.BlockIds.Add(plan.RecapBlockId);
+                group.ExpectedHashes.Add(
+                    plan.RecapBlockId,
+                    GetExpectedInputHash(plan)!
+                );
+            }
+            else {
+                byAnchor.Add(
+                    descriptor.SetAdmissionAnchor,
+                    (
+                        descriptor,
+                        [plan.RecapBlockId],
+                        new Dictionary<RecapBlockId, string> {
+                            [plan.RecapBlockId] =
+                                GetExpectedInputHash(plan)!
+                        }
+                    )
+                );
+            }
+        }
+        return Array.AsReadOnly(
+            byAnchor.Values.Select(
+                static group => new SourceRequest(
+                    group.Descriptor,
+                    Array.AsReadOnly(group.BlockIds.ToArray()),
+                    group.ExpectedHashes.ToImmutableDictionary()
+                )
+            ).ToArray()
+        );
+    }
+
+    private static void ValidateSourceDescriptor(
+        PublishedRecapDescriptor source
+    ) {
+        if (source.RefId.IsDefault) {
+            throw new ArgumentException(
+                "Published source descriptor has a default RefId.",
+                nameof(source)
+            );
+        }
+        DerivedRecapCodec.ValidateSha256(
+            source.EnvelopeSha256,
+            "source.envelopeSha256"
+        );
     }
 
     private string GetBuildingPath(EventAddress anchor)
@@ -1888,5 +2867,43 @@ public sealed class DerivedRecapStore {
             ById,
         IReadOnlyList<DerivedRecapFrozenInput> Ordered
     );
+
+    private sealed record SourceRequest(
+        PublishedRecapDescriptor Descriptor,
+        IReadOnlyList<RecapBlockId> BlockIds,
+        IReadOnlyDictionary<RecapBlockId, string>
+            ExpectedPayloadSha256
+    );
+
+    private sealed record PublishedSourceCapture(
+        PublishedRecapDescriptor Descriptor,
+        PublishedRecapSet Publication,
+        byte[] CanonicalEnvelope,
+        IReadOnlyList<DerivedRecapFrozenInput> FrozenInputs
+    );
+
+    private sealed record PublicationRecheck(
+        bool IsExact,
+        string? ObservedEnvelopeSha256
+    );
+
+    private abstract record SourceCaptureResult {
+        private SourceCaptureResult() {
+        }
+
+        public sealed record Available(
+            PublishedSourceCapture Capture
+        ) : SourceCaptureResult;
+
+        public sealed record Changed(
+            string ExpectedEnvelopeSha256,
+            string? ObservedEnvelopeSha256
+        ) : SourceCaptureResult;
+
+        public sealed record Unavailable(
+            EventAddress SourceSetAnchor,
+            IReadOnlyList<RecapStructuralDefect> Defects
+        ) : SourceCaptureResult;
+    }
 
 }

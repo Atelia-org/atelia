@@ -101,7 +101,7 @@ public sealed class DerivedRecapStoreTests {
                 [plan]
             );
 
-        await fixture.Store.CreateBuildingAsync(manifest, []);
+        await fixture.Store.CreateBuildingAsync(manifest);
         Assert.IsType<DerivedRecapSelection.EmptyLineage>(
             await fixture.Store.SelectNthPreviousAsync(lineage, 0)
         );
@@ -115,7 +115,9 @@ public sealed class DerivedRecapStoreTests {
                 anchor,
                 "finite recap"
             );
-        await fixture.Store.WriteFinalBlockAsync(anchor, block);
+        await RecapStoreTestDriver.InstallFinalAsync(
+            fixture.Store,
+            anchor, block);
         Assert.True(
             (await fixture.Publisher.CanPublishAsync(anchor))
                 .IsPublishable
@@ -157,8 +159,10 @@ public sealed class DerivedRecapStoreTests {
                 anchor,
                 [plan]
             );
-        await fixture.Store.CreateBuildingAsync(manifest, []);
-        await fixture.Store.WriteFinalBlockAsync(
+        await fixture.Store.CreateBuildingAsync(manifest);
+        await RecapStoreTestDriver.InstallFinalAsync(
+            fixture.Store,
+
             anchor,
             DerivedRecapCodec.CreateBlock(plan, anchor, "recap")
         );
@@ -208,8 +212,10 @@ public sealed class DerivedRecapStoreTests {
                 anchor,
                 [plan]
             );
-        await fixture.Store.CreateBuildingAsync(manifest, []);
-        await fixture.Store.WriteFinalBlockAsync(
+        await fixture.Store.CreateBuildingAsync(manifest);
+        await RecapStoreTestDriver.InstallFinalAsync(
+            fixture.Store,
+
             anchor,
             DerivedRecapCodec.CreateBlock(plan, anchor, "recap")
         );
@@ -378,8 +384,10 @@ public sealed class DerivedRecapStoreTests {
                 older,
                 [olderPlan]
             );
-        await fixture.Store.CreateBuildingAsync(olderManifest, []);
-        await fixture.Store.WriteFinalBlockAsync(
+        await fixture.Store.CreateBuildingAsync(olderManifest);
+        await RecapStoreTestDriver.InstallFinalAsync(
+            fixture.Store,
+
             older,
             DerivedRecapCodec.CreateBlock(
                 olderPlan,
@@ -410,29 +418,37 @@ public sealed class DerivedRecapStoreTests {
     }
 
     [Fact]
-    public async Task R0CreateRejectsInheritUntilExactSourceFreezeExists() {
+    public async Task CreateBuildingFreezesExactInheritSource() {
         using RecapStoreFixture fixture =
             await RecapStoreFixture.CreateAsync(historyPairs: 4);
         SessionCurrentLineageSnapshot lineage = fixture.Lineage();
         EventAddress target = lineage.HeadToRoot[0].Address;
         EventAddress source = lineage.HeadToRoot[2].Address;
+        EventAddress replayStart =
+            lineage.HeadToRoot[^1].Address;
         var id = new RecapBlockId("roleplay.self");
         var targetPath = new ContextHeaderBlockPath(
             ContextHeaderCarrier.System,
             id.Value
         );
+        PublishedRecapDescriptor published =
+            await fixture.PublishAsync(
+                source,
+                replayStart,
+                content: "source recap"
+            );
         DerivedRecapFrozenInput input =
             DerivedRecapCodec.CreateFrozenInput(
                 id,
                 targetPath,
-                target,
+                source,
                 "source recap"
             );
         var plan = new InheritRecapBlockPlan(
             id,
             targetPath,
             source,
-            new string('a', 64),
+            published.EnvelopeSha256,
             input.PayloadSha256
         );
         DerivedRecapSetManifest manifest =
@@ -441,12 +457,18 @@ public sealed class DerivedRecapStoreTests {
                 target,
                 [plan]
             );
-        await Assert.ThrowsAsync<NotSupportedException>(
-            async () =>
-                await fixture.Store.CreateBuildingAsync(
-                    manifest,
-                    [input]
-                )
+        CreateBuildingResult.Created created =
+            Assert.IsType<CreateBuildingResult.Created>(
+                await fixture.Store.CreateBuildingAsync(manifest)
+            );
+        BuildingReadResult.Available building =
+            Assert.IsType<BuildingReadResult.Available>(
+                await fixture.Store.ReadBuildingAsync(target)
+            );
+        Assert.Equal(created.Descriptor, building.Snapshot.Descriptor);
+        Assert.Equal(
+            input,
+            building.Snapshot.FrozenInputs[id]
         );
     }
 
@@ -532,8 +554,10 @@ public sealed class DerivedRecapStoreTests {
                 anchor,
                 [plan]
             );
-        await fixture.Store.CreateBuildingAsync(manifest, []);
-        await fixture.Store.WriteFinalBlockAsync(
+        await fixture.Store.CreateBuildingAsync(manifest);
+        await RecapStoreTestDriver.InstallFinalAsync(
+            fixture.Store,
+
             anchor,
             DerivedRecapCodec.CreateBlock(plan, anchor, "candidate")
         );
@@ -641,10 +665,12 @@ public sealed class DerivedRecapStoreTests {
                 anchor,
                 [plan]
             );
-        await fixture.Store.CreateBuildingAsync(manifest, []);
+        await fixture.Store.CreateBuildingAsync(manifest);
         DerivedRecapBlock block =
             DerivedRecapCodec.CreateBlock(plan, anchor, "old");
-        await fixture.Store.WriteFinalBlockAsync(anchor, block);
+        await RecapStoreTestDriver.InstallFinalAsync(
+            fixture.Store,
+            anchor, block);
         PublishedRecapDescriptor descriptor =
             await fixture.Publisher.PublishAsync(anchor);
         publicationPath = Path.Combine(

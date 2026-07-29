@@ -81,8 +81,10 @@ internal sealed class RecapStoreFixture : IDisposable {
                 anchor,
                 [plan]
             );
-        await Store.CreateBuildingAsync(manifest, []);
-        await Store.WriteFinalBlockAsync(
+        await Store.CreateBuildingAsync(manifest);
+        await RecapStoreTestDriver.InstallFinalAsync(
+            Store,
+
             anchor,
             DerivedRecapCodec.CreateBlock(plan, anchor, content)
         );

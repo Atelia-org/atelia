@@ -153,6 +153,64 @@ public sealed class DerivedRecapCrashRecoveryTests {
         }
     }
 
+    [Theory]
+    [InlineData("rolling-before-replace", false)]
+    [InlineData("rolling-after-replace", true)]
+    public async Task RollingCheckpointCrashExposesWholeOldOrNewFile(
+        string failpoint,
+        bool newCheckpointInstalled
+    ) {
+        if (!OperatingSystem.IsLinux()) {
+            return;
+        }
+        string path = await CreateRollingBuildingAsync();
+        try {
+            await RunCrashHarnessAsync(path, "rolling", failpoint);
+
+            using SessionJournalEngine engine =
+                SessionJournalEngine.Open(path);
+            DerivedRecapStore store = DerivedRecapStore.Open(
+                path,
+                engine.BranchRefId
+            );
+            BuildingReadResult.Available building =
+                Assert.IsType<BuildingReadResult.Available>(
+                    await store.ReadBuildingAsync(
+                        engine.ReadCurrentLineageHeaders()
+                            .CapturedHead
+                    )
+                );
+            RecapBlockPlan plan =
+                building.Snapshot.Manifest.Blocks.Single();
+            MaintainRecapBlockPlan maintain =
+                Assert.IsType<MaintainRecapBlockPlan>(plan);
+            BuildingBlockInspection inspection =
+                await store.InspectBuildingBlockAsync(
+                    building.Snapshot.Descriptor,
+                    plan.RecapBlockId
+                );
+            RollingRecapCheckpointHealth.Healthy checkpoint =
+                Assert.IsType<
+                    RollingRecapCheckpointHealth.Healthy
+                >(inspection.Checkpoint);
+            Assert.Equal(
+                newCheckpointInstalled
+                    ? maintain.CatchUpThrough[^1]
+                    : maintain.CatchUpThrough[0],
+                checkpoint.Block.AbsorbedThrough
+            );
+            Assert.Equal(
+                newCheckpointInstalled
+                    ? "new checkpoint"
+                    : "old checkpoint",
+                checkpoint.Block.Content
+            );
+        }
+        finally {
+            TryDelete(path);
+        }
+    }
+
     private static string CreateRawRepository() {
         string path = NewPath();
         using SessionJournalEngine engine = SessionJournalEngine.Create(
@@ -205,10 +263,72 @@ public sealed class DerivedRecapCrashRecoveryTests {
                 anchor,
                 [plan]
             );
-        await store.CreateBuildingAsync(manifest, []);
-        await store.WriteFinalBlockAsync(
+        await store.CreateBuildingAsync(manifest);
+        await RecapStoreTestDriver.InstallFinalAsync(
+            store,
+
             anchor,
             DerivedRecapCodec.CreateBlock(plan, anchor, "recap")
+        );
+        return path;
+    }
+
+    private static async ValueTask<string>
+        CreateRollingBuildingAsync() {
+        string path = CreateRawRepository();
+        using SessionJournalEngine engine =
+            SessionJournalEngine.Open(path);
+        engine.AppendObservation("second observation");
+        _ = engine.AppendImportedAgentAction(
+            new ActionMessage([
+                new ActionBlock.Text("second answer")
+            ]),
+            new CompletionDescriptor("import", "v1", "model-a")
+        );
+        DerivedRecapStore store = DerivedRecapStore.Open(
+            path,
+            engine.BranchRefId
+        );
+        await store.CreateAsync();
+        SessionCurrentLineageSnapshot lineage =
+            engine.ReadCurrentLineageHeaders();
+        EventAddress target = lineage.CapturedHead;
+        EventAddress firstEndpoint =
+            lineage.HeadToRoot[2].Address;
+        EventAddress replayStart =
+            lineage.HeadToRoot[^1].Address;
+        var plan = new MaintainRecapBlockPlan(
+            new RecapBlockId("roleplay.self"),
+            new ContextHeaderBlockPath(
+                ContextHeaderCarrier.System,
+                "roleplay.self"
+            ),
+            "roleplay.autobiographical",
+            new EmptyRecapMaintainSource(replayStart),
+            [firstEndpoint, target],
+            EmptyRecapPriorContext.Instance
+        );
+        DerivedRecapSetManifest manifest =
+            DerivedRecapCodec.CreateManifest(
+                engine.BranchRefId,
+                target,
+                [plan]
+            );
+        CreateBuildingResult.Created created =
+            Assert.IsType<CreateBuildingResult.Created>(
+                await store.CreateBuildingAsync(manifest)
+            );
+        _ = Assert.IsType<CheckpointWriteResult.Updated>(
+            await store.AdvanceRollingCheckpointAsync(
+                created.Descriptor,
+                plan.RecapBlockId,
+                "missing",
+                DerivedRecapCodec.CreateBlock(
+                    plan,
+                    firstEndpoint,
+                    "old checkpoint"
+                )
+            )
         );
         return path;
     }

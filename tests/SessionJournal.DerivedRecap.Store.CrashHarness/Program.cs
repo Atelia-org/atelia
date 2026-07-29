@@ -7,7 +7,8 @@ internal static class Program {
     public static async Task<int> Main(string[] args) {
         if (args.Length != 3) {
             Console.Error.WriteLine(
-                "usage: <create|publish|reset> <failpoint> <repository>"
+                "usage: <create|publish|reset|rolling> "
+                + "<failpoint> <repository>"
             );
             return 2;
         }
@@ -38,7 +39,15 @@ internal static class Program {
                     ? crash
                     : null,
             BeforePublicationSealInstall:
-                failpoint == "publication-before-seal" ? crash : null
+                failpoint == "publication-before-seal" ? crash : null,
+            BeforeAtomicFileReplace:
+                failpoint == "rolling-before-replace"
+                    ? _ => crash()
+                    : null,
+            AfterAtomicFileReplace:
+                failpoint == "rolling-after-replace"
+                    ? _ => crash()
+                    : null
         );
         DerivedRecapStore store = DerivedRecapStore.OpenForTest(
             repositoryPath,
@@ -58,6 +67,39 @@ internal static class Program {
                 break;
             case "reset":
                 await store.ResetAsync();
+                break;
+            case "rolling":
+                SessionCurrentLineageSnapshot lineage =
+                    engine.ReadCurrentLineageHeaders();
+                BuildingReadResult.Available building =
+                    await store.ReadBuildingAsync(lineage.CapturedHead)
+                        is BuildingReadResult.Available available
+                        ? available
+                        : throw new InvalidDataException(
+                            "Rolling crash fixture Building is unavailable."
+                        );
+                RecapBlockPlan plan =
+                    building.Snapshot.Manifest.Blocks.Single();
+                BuildingBlockInspection inspection =
+                    await store.InspectBuildingBlockAsync(
+                        building.Snapshot.Descriptor,
+                        plan.RecapBlockId
+                    );
+                MaintainRecapBlockPlan maintain =
+                    plan as MaintainRecapBlockPlan
+                    ?? throw new InvalidDataException(
+                        "Rolling crash fixture plan is not Maintain."
+                    );
+                await store.AdvanceRollingCheckpointAsync(
+                    building.Snapshot.Descriptor,
+                    plan.RecapBlockId,
+                    inspection.Checkpoint.StateToken,
+                    DerivedRecapCodec.CreateBlock(
+                        plan,
+                        maintain.CatchUpThrough[^1],
+                        "new checkpoint"
+                    )
+                );
                 break;
             default:
                 Console.Error.WriteLine(

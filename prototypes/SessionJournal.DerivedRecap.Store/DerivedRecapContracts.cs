@@ -220,3 +220,160 @@ public abstract record DerivedRecapSelection {
     public sealed record StoreUnavailable(string Reason)
         : DerivedRecapSelection;
 }
+
+public sealed record PublishedRecapSourceSnapshot(
+    PublishedRecapDescriptor Source,
+    PublishedRecapSet Publication,
+    IReadOnlyList<DerivedRecapFrozenInput> FrozenInputs
+);
+
+public abstract record PublishedRecapSourceReadResult {
+    private PublishedRecapSourceReadResult() {
+    }
+
+    public sealed record Available(PublishedRecapSourceSnapshot Snapshot)
+        : PublishedRecapSourceReadResult;
+
+    public sealed record Missing(EventAddress SourceSetAnchor)
+        : PublishedRecapSourceReadResult;
+
+    public sealed record SnapshotTokenMismatch(
+        string Expected,
+        string? Observed
+    ) : PublishedRecapSourceReadResult;
+
+    public sealed record ChangedDuringRead(
+        string Expected,
+        string? Observed
+    ) : PublishedRecapSourceReadResult;
+
+    public sealed record Invalid(
+        IReadOnlyList<RecapStructuralDefect> Defects
+    ) : PublishedRecapSourceReadResult;
+}
+
+public sealed record BuildingDescriptor(
+    RefId RefId,
+    EventAddress SetAdmissionAnchor,
+    string ManifestPayloadSha256
+);
+
+public sealed record BuildingSnapshot(
+    BuildingDescriptor Descriptor,
+    DerivedRecapSetManifest Manifest,
+    IReadOnlyDictionary<RecapBlockId, DerivedRecapFrozenInput>
+        FrozenInputs
+);
+
+public abstract record BuildingReadResult {
+    private BuildingReadResult() {
+    }
+
+    public sealed record Available(BuildingSnapshot Snapshot)
+        : BuildingReadResult;
+
+    public sealed record Missing : BuildingReadResult;
+
+    public sealed record Invalid(
+        IReadOnlyList<RecapStructuralDefect> Defects
+    ) : BuildingReadResult;
+}
+
+public abstract record CreateBuildingResult {
+    private CreateBuildingResult() {
+    }
+
+    public sealed record Created(BuildingDescriptor Descriptor)
+        : CreateBuildingResult;
+
+    public sealed record SourceUnavailable(
+        PublishedRecapDescriptor Source,
+        IReadOnlyList<RecapStructuralDefect> Defects
+    ) : CreateBuildingResult;
+
+    public sealed record SourceChanged(
+        PublishedRecapDescriptor Source,
+        string? ObservedEnvelopeSha256
+    ) : CreateBuildingResult;
+}
+
+public abstract record FinalRecapBlockHealth {
+    public abstract string StateToken { get; init; }
+
+    public sealed record Missing(string StateToken)
+        : FinalRecapBlockHealth;
+
+    public sealed record Healthy(
+        DerivedRecapBlock Block,
+        string StateToken
+    ) : FinalRecapBlockHealth;
+
+    public sealed record Damaged(
+        IReadOnlyList<RecapStructuralDefect> Defects,
+        string StateToken
+    ) : FinalRecapBlockHealth;
+}
+
+public abstract record RollingRecapCheckpointHealth {
+    public abstract string StateToken { get; init; }
+
+    public sealed record Missing(string StateToken)
+        : RollingRecapCheckpointHealth;
+
+    public sealed record Healthy(
+        DerivedRecapBlock Block,
+        int EndpointIndex,
+        string StateToken
+    ) : RollingRecapCheckpointHealth;
+
+    public sealed record Unusable(
+        IReadOnlyList<RecapStructuralDefect> Defects,
+        string StateToken
+    ) : RollingRecapCheckpointHealth;
+}
+
+public sealed record BuildingBlockInspection(
+    BuildingDescriptor Building,
+    RecapBlockPlan Plan,
+    DerivedRecapFrozenInput? FrozenInput,
+    FinalRecapBlockHealth Final,
+    RollingRecapCheckpointHealth Checkpoint
+);
+
+public abstract record CheckpointWriteResult {
+    private CheckpointWriteResult() {
+    }
+
+    public sealed record Updated(string StateToken)
+        : CheckpointWriteResult;
+
+    public sealed record AlreadyCurrent(string StateToken)
+        : CheckpointWriteResult;
+
+    public sealed record Stale(string CurrentStateToken)
+        : CheckpointWriteResult;
+}
+
+public abstract record FinalBlockWriteResult {
+    private FinalBlockWriteResult() {
+    }
+
+    public sealed record Installed(string StateToken)
+        : FinalBlockWriteResult;
+
+    public sealed record ReplacedDamaged(string StateToken)
+        : FinalBlockWriteResult;
+
+    public sealed record AlreadyHealthy(
+        DerivedRecapBlock Block,
+        string StateToken
+    ) : FinalBlockWriteResult;
+
+    public sealed record HealthyConflict(
+        DerivedRecapBlock Existing,
+        string StateToken
+    ) : FinalBlockWriteResult;
+
+    public sealed record Stale(string CurrentStateToken)
+        : FinalBlockWriteResult;
+}

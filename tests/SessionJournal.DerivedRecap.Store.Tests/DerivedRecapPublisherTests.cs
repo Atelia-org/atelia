@@ -75,8 +75,10 @@ public sealed class DerivedRecapPublisherTests {
                 capturedHead,
                 [plan]
             );
-        await fixture.Store.CreateBuildingAsync(manifest, []);
-        await fixture.Store.WriteFinalBlockAsync(
+        await fixture.Store.CreateBuildingAsync(manifest);
+        await RecapStoreTestDriver.InstallFinalAsync(
+            fixture.Store,
+
             capturedHead,
             DerivedRecapCodec.CreateBlock(
                 plan,
@@ -151,8 +153,10 @@ public sealed class DerivedRecapPublisherTests {
                 anchor,
                 [plan]
             );
-        await fixture.Store.CreateBuildingAsync(manifest, []);
-        await fixture.Store.WriteFinalBlockAsync(
+        await fixture.Store.CreateBuildingAsync(manifest);
+        await RecapStoreTestDriver.InstallFinalAsync(
+            fixture.Store,
+
             anchor,
             DerivedRecapCodec.CreateBlock(plan, anchor, "recap")
         );

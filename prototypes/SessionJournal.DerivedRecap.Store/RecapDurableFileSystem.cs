@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using System.Globalization;
 using System.Runtime.InteropServices;
+using System.Security.Cryptography;
 
 namespace Atelia.SessionJournal.DerivedRecap.Store;
 
@@ -120,6 +121,44 @@ internal sealed class RecapDurableFileSystem {
         return path;
     }
 
+    public async ValueTask WriteFileAtomicReplaceAsync(
+        string finalPath,
+        ReadOnlyMemory<byte> bytes,
+        Action? beforeReplace,
+        Action? afterReplace,
+        CancellationToken cancellationToken
+    ) {
+        string directory = Path.GetDirectoryName(finalPath)
+            ?? throw new InvalidDataException(
+                $"File has no parent directory: {finalPath}"
+            );
+        EnsureDirectoryDurable(directory);
+        EnsureSafeDescendant(finalPath);
+        string temporaryPath = Path.Combine(
+            directory,
+            $".{Path.GetFileName(finalPath)}."
+            + $"{Guid.NewGuid().ToString("N", CultureInfo.InvariantCulture)}.tmp"
+        );
+        try {
+            await WriteNewFileAndFlushAsync(
+                    temporaryPath,
+                    bytes,
+                    cancellationToken
+                )
+                .ConfigureAwait(false);
+            beforeReplace?.Invoke();
+            InstallTemporaryFileReplace(
+                temporaryPath,
+                finalPath
+            );
+            afterReplace?.Invoke();
+        }
+        catch {
+            TryDeleteFile(temporaryPath);
+            throw;
+        }
+    }
+
     public void InstallTemporaryFileCreateNew(
         string temporaryPath,
         string finalPath
@@ -139,6 +178,40 @@ internal sealed class RecapDurableFileSystem {
             );
         }
         File.Move(temporaryPath, finalPath, overwrite: false);
+        _observer?.Invoke(RecapIoPoint.FileInstalled, finalPath);
+        FlushDirectory(finalDirectory);
+    }
+
+    public void InstallTemporaryFileReplace(
+        string temporaryPath,
+        string finalPath
+    ) {
+        EnsureSafeDescendant(temporaryPath);
+        EnsureSafeDescendant(finalPath);
+        string temporaryDirectory =
+            Path.GetDirectoryName(temporaryPath)!;
+        string finalDirectory = Path.GetDirectoryName(finalPath)!;
+        if (!string.Equals(
+                temporaryDirectory,
+                finalDirectory,
+                StringComparison.Ordinal
+            )) {
+            throw new InvalidOperationException(
+                "Atomic file replacement requires one directory."
+            );
+        }
+        if (NativeRenameAt2(
+                AtCurrentWorkingDirectory,
+                temporaryPath,
+                AtCurrentWorkingDirectory,
+                finalPath,
+                flags: 0
+            ) != 0) {
+            throw NativeIOException(
+                "Atomic file replacement failed: "
+                + $"{temporaryPath} -> {finalPath}"
+            );
+        }
         _observer?.Invoke(RecapIoPoint.FileInstalled, finalPath);
         FlushDirectory(finalDirectory);
     }
@@ -188,6 +261,23 @@ internal sealed class RecapDurableFileSystem {
                 exception
             );
         }
+    }
+
+    public string ComputeFileSha256(string path) {
+        EnsureSafeDescendant(path);
+        using var stream = new FileStream(
+            path,
+            FileMode.Open,
+            FileAccess.Read,
+            FileShare.Read,
+            bufferSize: 64 * 1024,
+            FileOptions.SequentialScan
+        );
+        string hash = Convert.ToHexString(
+            SHA256.HashData(stream)
+        ).ToLowerInvariant();
+        EnsureSafeDescendant(path);
+        return hash;
     }
 
     public void FlushFile(string path) {
