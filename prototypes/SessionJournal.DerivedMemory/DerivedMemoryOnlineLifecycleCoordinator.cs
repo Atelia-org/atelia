@@ -59,6 +59,8 @@ public sealed class DerivedMemoryOnlineLifecycleCoordinator
     ) {
         ArgumentNullException.ThrowIfNull(engine);
         ArgumentNullException.ThrowIfNull(request);
+        ArgumentNullException.ThrowIfNull(request.Selection);
+        request.Selection.ValidateShape();
         _repository.RequireEngine(engine, _scope);
         if (request.Boundary == default
             || request.Phase is not (

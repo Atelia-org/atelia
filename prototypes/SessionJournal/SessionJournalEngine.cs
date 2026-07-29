@@ -2078,10 +2078,9 @@ public sealed class SessionJournalEngine : IDisposable {
             RequireContextCandidateSource(runtime);
         SessionContextCandidateSelection selection = await source
             .SelectAsync(
-                new SessionContextSelectionRequest(
+                CreateContextSelectionRequest(
                     boundary,
-                    governingSetup.RuntimeConfig
-                        .DerivedContext.NthPrevious
+                    governingSetup
                 ),
                 cancellationToken
             )
@@ -2278,7 +2277,13 @@ public sealed class SessionJournalEngine : IDisposable {
             .PrepareAsync(
                 this,
                 new SessionContextLifecycleRequest(
-                    boundary,
+                    CreateContextSelectionRequest(
+                        boundary,
+                        EnsurePlanningGoverningSetupCursor(
+                            boundary,
+                            cancellationToken
+                        )
+                    ),
                     recovery.State.Phase,
                     pendingObservation
                 ),
@@ -2324,10 +2329,9 @@ public sealed class SessionJournalEngine : IDisposable {
                 cancellationToken
             );
         SessionContextSelectionRequest request =
-            new(
+            CreateContextSelectionRequest(
                 currentBoundary,
-                governingSetup.RuntimeConfig
-                    .DerivedContext.NthPrevious
+                governingSetup
             );
         ICoherentContextCandidateSource source =
             RequireContextCandidateSource(runtime);
@@ -2420,6 +2424,27 @@ public sealed class SessionJournalEngine : IDisposable {
         );
     }
 
+    private static SessionContextSelectionRequest
+        CreateContextSelectionRequest(
+        EventAddress completionBoundary,
+        SessionGoverningSetup governingSetup
+    ) {
+        ArgumentNullException.ThrowIfNull(governingSetup);
+        if (governingSetup.Head != completionBoundary) {
+            throw new InvalidDataException(
+                "Context selection governing setup does not belong "
+                + "to the exact completion boundary."
+            );
+        }
+        var request = new SessionContextSelectionRequest(
+            completionBoundary,
+            governingSetup.RuntimeConfig
+                .DerivedContext.NthPrevious
+        );
+        request.ValidateShape();
+        return request;
+    }
+
     private static ICoherentContextCandidateSource RequireContextCandidateSource(
         SessionRuntime runtime
     ) => runtime.ContextCandidateSource
@@ -2437,10 +2462,9 @@ public sealed class SessionJournalEngine : IDisposable {
     ) {
         ICoherentContextCandidateSource source = RequireContextCandidateSource(runtime);
         SessionContextSelectionRequest request =
-            new(
+            CreateContextSelectionRequest(
                 completionBoundary,
-                governingSetup.RuntimeConfig
-                    .DerivedContext.NthPrevious
+                governingSetup
             );
         SessionContextCandidateSelection selection = await source
             .SelectAsync(request, cancellationToken)

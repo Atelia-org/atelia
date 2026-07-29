@@ -34,11 +34,24 @@ public interface ISessionContextLifecycleCoordinator {
     );
 }
 
-public sealed record SessionContextLifecycleRequest(
-    EventAddress Boundary,
-    SessionExecutionPhase Phase,
-    string? PendingObservation = null
-);
+public sealed record SessionContextLifecycleRequest {
+    public SessionContextLifecycleRequest(
+        SessionContextSelectionRequest selection,
+        SessionExecutionPhase phase,
+        string? pendingObservation = null
+    ) {
+        Selection = selection
+            ?? throw new ArgumentNullException(nameof(selection));
+        Selection.ValidateShape();
+        Phase = phase;
+        PendingObservation = pendingObservation;
+    }
+
+    public SessionContextSelectionRequest Selection { get; }
+    public EventAddress Boundary => Selection.CompletionBoundary;
+    public SessionExecutionPhase Phase { get; }
+    public string? PendingObservation { get; }
+}
 
 public enum SessionContextLifecycleStatus {
     Ready = 0,

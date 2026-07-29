@@ -762,8 +762,10 @@ public sealed class SessionContextCandidateProviderRouteTests : IDisposable {
         var client = new ScriptedClient();
         client.Enqueue(Terminal("done"));
         var source = new TestContextCandidateSource();
+        var lifecycle = new TestContextLifecycle();
         SessionContextCandidate older;
         SessionContextCandidate newer;
+        EventAddress runtimeUpdate;
         using (var engine = SessionJournalEngine.Create(
             path,
             CreateOptions(),
@@ -786,7 +788,7 @@ public sealed class SessionContextCandidateProviderRouteTests : IDisposable {
             newer = ContextCandidateTestFixture
                 .CreateAtCurrentHead(engine, "newer")
                 .Candidate;
-            engine.AppendRuntimeConfigSetup(
+            runtimeUpdate = engine.AppendRuntimeConfigSetup(
                 new SessionRuntimeConfiguration(
                     "model-A",
                     "surface-A",
@@ -801,7 +803,9 @@ public sealed class SessionContextCandidateProviderRouteTests : IDisposable {
         ];
         using (var reopened = SessionJournalEngine.Open(
             path,
-            CreateRuntime(client, source)
+            CreateRuntime(client, source) with {
+                ContextLifecycle = lifecycle
+            }
         )) {
             _ = await reopened.SendAsync(
                 "choose older",
@@ -815,6 +819,21 @@ public sealed class SessionContextCandidateProviderRouteTests : IDisposable {
                 "test-candidate-1",
                 handle
             )
+        );
+        Assert.NotEmpty(lifecycle.Requests);
+        Assert.Equal(
+            runtimeUpdate,
+            lifecycle.Requests[0].Selection.CompletionBoundary
+        );
+        Assert.All(
+            lifecycle.Requests,
+            request => {
+                Assert.Equal(
+                    request.Boundary,
+                    request.Selection.CompletionBoundary
+                );
+                Assert.Equal(1, request.Selection.NthPrevious);
+            }
         );
     }
 
@@ -862,6 +881,16 @@ public sealed class SessionContextCandidateProviderRouteTests : IDisposable {
         Assert.All(
             source.MaterializedHandles,
             handle => Assert.Equal("test-candidate-1", handle)
+        );
+        Assert.All(
+            lifecycle.Requests,
+            request => {
+                Assert.Equal(
+                    request.Boundary,
+                    request.Selection.CompletionBoundary
+                );
+                Assert.Equal(1, request.Selection.NthPrevious);
+            }
         );
     }
 

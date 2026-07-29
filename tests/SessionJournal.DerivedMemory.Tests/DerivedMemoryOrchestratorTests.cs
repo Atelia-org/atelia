@@ -29,7 +29,7 @@ public sealed class DerivedMemoryOrchestratorTests : IDisposable {
         _ = await coordinator.PrepareAsync(
             fixture.Engine,
             new(
-                fixture.RawHead,
+                new(fixture.RawHead, 0),
                 SessionExecutionPhase.Idle
             ),
             CancellationToken.None
@@ -84,7 +84,7 @@ public sealed class DerivedMemoryOrchestratorTests : IDisposable {
             await coordinator.PrepareAsync(
                 fixture.Engine,
                 new(
-                    fixture.RawHead,
+                    new(fixture.RawHead, 0),
                     SessionExecutionPhase.Idle
                 ),
                 CancellationToken.None
@@ -155,7 +155,7 @@ public sealed class DerivedMemoryOrchestratorTests : IDisposable {
             await secondCoordinator.PrepareAsync(
                 fixture.Engine,
                 new(
-                    advanced,
+                    new(advanced, 0),
                     SessionExecutionPhase.Idle
                 ),
                 CancellationToken.None
@@ -246,7 +246,7 @@ public sealed class DerivedMemoryOrchestratorTests : IDisposable {
             (await first.PrepareAsync(
                 fixture.Engine,
                 new(
-                    fixture.RawHead,
+                    new(fixture.RawHead, 0),
                     SessionExecutionPhase.Idle
                 ),
                 CancellationToken.None
@@ -302,7 +302,7 @@ public sealed class DerivedMemoryOrchestratorTests : IDisposable {
             await second.PrepareAsync(
                 fixture.Engine,
                 new(
-                    advanced,
+                    new(advanced, 0),
                     SessionExecutionPhase.Idle
                 ),
                 CancellationToken.None
@@ -384,7 +384,7 @@ public sealed class DerivedMemoryOrchestratorTests : IDisposable {
             await interrupted.PrepareAsync(
                 fixture.Engine,
                 new(
-                    boundary,
+                    new(boundary, 0),
                     SessionExecutionPhase.Idle
                 ),
                 CancellationToken.None
@@ -443,7 +443,7 @@ public sealed class DerivedMemoryOrchestratorTests : IDisposable {
             await resumed.PrepareAsync(
                 reopened,
                 new(
-                    boundary,
+                    new(boundary, 0),
                     SessionExecutionPhase.Idle
                 ),
                 CancellationToken.None
@@ -505,7 +505,7 @@ public sealed class DerivedMemoryOrchestratorTests : IDisposable {
             (await coordinator.PrepareAsync(
                 fixture.Engine,
                 new(
-                    fixture.RawHead,
+                    new(fixture.RawHead, 0),
                     SessionExecutionPhase.Idle
                 ),
                 CancellationToken.None
@@ -522,7 +522,7 @@ public sealed class DerivedMemoryOrchestratorTests : IDisposable {
             await coordinator.PrepareAsync(
                 fixture.Engine,
                 new(
-                    head,
+                    new(head, 0),
                     SessionExecutionPhase.Idle,
                     new string('x', 4_000)
                 ),
