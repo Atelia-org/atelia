@@ -91,7 +91,7 @@ internal static class SessionRequestCanonicalizer {
         );
     }
 
-    private static void WriteHistoryMessage(Utf8JsonWriter writer, IHistoryMessage message) {
+    internal static void WriteHistoryMessage(Utf8JsonWriter writer, IHistoryMessage message) {
         ArgumentNullException.ThrowIfNull(message);
         writer.WriteStartObject();
         switch (message) {
@@ -157,7 +157,7 @@ internal static class SessionRequestCanonicalizer {
         writer.WriteEndObject();
     }
 
-    private static void WriteToolResult(Utf8JsonWriter writer, ToolResult result) {
+    internal static void WriteToolResult(Utf8JsonWriter writer, ToolResult result) {
         ArgumentNullException.ThrowIfNull(result);
         writer.WriteStartObject();
         writer.WriteString("toolName", result.ToolName);

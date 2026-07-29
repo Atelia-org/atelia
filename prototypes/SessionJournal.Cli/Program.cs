@@ -6,6 +6,7 @@ using Atelia.Completion.Abstractions;
 using Atelia.SessionJournal.DerivedMemory;
 using Atelia.SessionJournal.Maintainers;
 using SJ = Atelia.SessionJournal;
+using SJO = Atelia.SessionJournal.Offline;
 
 namespace Atelia.SessionJournal.Cli;
 
@@ -178,8 +179,12 @@ internal static class Program {
     }
 
     private static async Task<int> RunValidateAsync(CliOptions options) {
-        string inputPath = options.Require("input");
-        string? reportPath = options.Get("report-json");
+        options.EnsureOnly("input", "branch", "report-json");
+        string inputPath = options.RequireSingle("input");
+        string branchName = options.GetOptionalSingle("branch")
+            ?? SJ.SessionJournalDefaults.MainBranchName;
+        string? reportPath =
+            options.GetOptionalSingle("report-json");
         EnsurePathChainHasNoReparsePoint(inputPath, "--input");
         if (!string.IsNullOrWhiteSpace(reportPath)) {
             EnsurePathChainHasNoReparsePoint(reportPath, "--report-json");
@@ -190,9 +195,10 @@ internal static class Program {
             );
         }
 
-        SJ.SessionJournalOfflineValidationReport report =
-            await SJ.SessionJournalOfflineValidator.ValidateAsync(
+        SJO.SessionJournalOfflineValidationReport report =
+            await SJO.SessionJournalOfflineValidator.ValidateAsync(
                 inputPath,
+                branchName,
                 CancellationToken.None
             ).ConfigureAwait(false);
         if (!string.IsNullOrWhiteSpace(reportPath)) {
@@ -207,7 +213,7 @@ internal static class Program {
     }
 
     private static void PrintValidation(
-        SJ.SessionJournalOfflineValidationReport report
+        SJO.SessionJournalOfflineValidationReport report
     ) {
         Console.WriteLine($"head: {report.Head ?? "(none)"}");
         Console.WriteLine($"events: {report.EventCount}");
@@ -1426,7 +1432,7 @@ internal static class Program {
             + "[--force] [--report-md <path>]"
         );
         Console.WriteLine(
-            "  validate --input <repo-dir> "
+            "  validate --input <repo-dir> [--branch <name>] "
             + "[--report-json <path-outside-repo>]"
         );
         Console.WriteLine(

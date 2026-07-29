@@ -6,6 +6,7 @@ using Atelia.EventJournal;
 using Atelia.SessionJournal.Cli;
 using Xunit;
 using SJ = Atelia.SessionJournal;
+using SJO = Atelia.SessionJournal.Offline;
 
 namespace Atelia.SessionJournal.Cli.Tests;
 
@@ -143,7 +144,7 @@ public sealed class LegacyExportCompatibilityTests : IDisposable {
                     .GetFlattenedText()
             )
         );
-        _ = await SJ.SessionJournalOfflineValidator.ValidateAsync(
+        _ = await SJO.SessionJournalOfflineValidator.ValidateAsync(
             sessionJournalRepo
         );
         using EventJournal.EventJournal journal =

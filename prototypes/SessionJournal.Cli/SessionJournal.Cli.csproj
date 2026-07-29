@@ -10,6 +10,7 @@
   <ItemGroup>
     <ProjectReference Include="../SessionJournal.Maintainers/SessionJournal.Maintainers.csproj" />
     <ProjectReference Include="../SessionJournal.DerivedMemory/SessionJournal.DerivedMemory.csproj" />
+    <ProjectReference Include="../SessionJournal.Offline/SessionJournal.Offline.csproj" />
     <ProjectReference Include="../Completion/Completion.csproj" />
     <ProjectReference Include="../SessionJournal/SessionJournal.csproj" />
   </ItemGroup>

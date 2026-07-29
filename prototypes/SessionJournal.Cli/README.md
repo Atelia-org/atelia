@@ -187,10 +187,19 @@ message。uncertain provider attempt 缺省 `--uncertain-recovery refuse`；oper
 ```bash
 dotnet run --project prototypes/SessionJournal.Cli -- validate \
   --input gitignore/session-journal/<session> \
+  --branch main \
   --report-json gitignore/session-journal-validation.json
 ```
 
-report 必须在 repo 外。validator 不修复或截断 raw/refs。
+`--branch` 选择一个 existing active branch，省略时默认 `main`。命令调用
+`Atelia.SessionJournal.Offline`：在 exact captured head 上检查完整 raw chain、所有 historical
+Prepared commitments、forward operational legality，并与 tail execution state / governing
+setup 做 differential。report 只含最终 phase/head-kind/sequence checkpoint、setup
+address/runtime config、system-prompt UTF-8 hash、counts、版本化 semantic history
+commitment 和 scan diagnostics；它不输出完整 execution state、明文 system prompt、
+tool raw arguments、operation/correlation id，也不物化 LLM context。semantic commitment
+复用 canonical request 的 history-value 语义并排除 raw address/execution metadata。report
+必须在 repo 外；validator 不修复或截断 raw/refs。
 
 ## DerivedMemory ArtifactSet 运维命令
 

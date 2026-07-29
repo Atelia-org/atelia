@@ -627,6 +627,13 @@ keys。
 
 ### P5：Full reducer 去生产化
 
+> **实施中**：P5-A 已在 core 提供 branch/exact-head checked normalized audit scan；
+> P5-B 已将 offline validator 迁入 `Atelia.SessionJournal.Offline` companion，并让 CLI
+> `validate --branch` 使用无 context 物化的 forward audit fold；公开 report 只保留最小
+> phase/setup/counts 与版本化 semantic history/system-prompt hashes，不输出完整 execution
+> state、明文 prompt 或 tool execution/correlation 细节。legacy importer 与
+> `Project()` / `ReplayHistory()` / `SessionReducer` 的迁移和删除仍属于后续 P5 包。
+
 目标：
 
 - 删除 online/runtime 对 `SessionReducer`、`Project()`、`ReplayHistory()` 的依赖和叙事；

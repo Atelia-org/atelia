@@ -26,7 +26,7 @@ public sealed record SessionJournalAuditSessionCreatedFact(
 ) : SessionJournalAuditFact;
 
 public sealed record SessionJournalAuditObservationFact(
-    string ContributionPayloadSha256
+    string SemanticContributionSha256
 ) : SessionJournalAuditFact;
 
 public sealed record SessionJournalAuditPreparedFact(
@@ -41,7 +41,7 @@ public sealed record SessionJournalAuditActionFact(
     string CorrelationId,
     long LastIssuedToolExecutionSequence,
     SessionToolRuntimeIdentity? ToolRuntimeIdentity,
-    string ContributionPayloadSha256
+    string SemanticContributionSha256
 ) : SessionJournalAuditFact;
 
 public sealed record SessionJournalAuditToolExecutionStartedFact(
@@ -58,7 +58,7 @@ public sealed record SessionJournalAuditToolResultObservedFact(
     string ToolName,
     long ExecutionSequence,
     ToolExecutionStatus Status,
-    string ContributionPayloadSha256
+    string SemanticResultSha256
 ) : SessionJournalAuditFact;
 
 public sealed record SessionJournalAuditCompletionAttemptStartedFact

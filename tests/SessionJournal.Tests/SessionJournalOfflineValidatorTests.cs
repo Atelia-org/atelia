@@ -1,5 +1,6 @@
 using Atelia.Completion.Abstractions;
 using Atelia.EventJournal;
+using Atelia.SessionJournal.Offline;
 using Xunit;
 
 namespace Atelia.SessionJournal.Tests;
@@ -167,9 +168,132 @@ public sealed class SessionJournalOfflineValidatorTests : IDisposable {
                 async () => await SessionJournalOfflineValidator.ValidateAsync(
                     path
                 )
+        );
+        Assert.Contains(
+            "Unknown SessionJournal event kind '12'",
+            error.Message,
+            StringComparison.Ordinal
+        );
+    }
+
+    [Theory]
+    [InlineData("correlation")]
+    [InlineData("checkpoint")]
+    public async Task ColdInvalidImportedAction_IsRejectedByForwardFold(
+        string corruption
+    ) {
+        string path = NewPath();
+        using (EventJournal.EventJournal journal = CreateJournal(path)) {
+            EventAddress runtime = Commit(
+                journal,
+                expectedParent: null,
+                SessionEventKind.RuntimeConfigSetup,
+                new SessionRuntimeConfiguration(
+                    "model-A",
+                    "surface-A",
+                    SessionJournalDefaults.Schema,
+                    new(0)
+                )
+            );
+            EventAddress prompt = Commit(
+                journal,
+                runtime,
+                SessionEventKind.SystemPromptSetup,
+                new SystemPromptSetupBody("system-A")
+            );
+            EventAddress created = Commit(
+                journal,
+                prompt,
+                SessionEventKind.SessionCreated,
+                new SessionCreatedBody(SessionCreationOrigin.Native)
+            );
+            EventAddress observation = Commit(
+                journal,
+                created,
+                SessionEventKind.ObservationAccepted,
+                new ObservationAcceptedBody("observation")
+            );
+            string expectedCorrelation =
+                "atelia.session-journal.turn.v1:"
+                + EventAddressTextCodec.Format(observation);
+            EventAddress action = Commit(
+                journal,
+                observation,
+                SessionEventKind.ImportedAgentAction,
+                new AgentActionProducedBody(
+                    new ActionMessage([
+                        new ActionBlock.Text("action")
+                    ]),
+                    new CompletionDescriptor(
+                        "import",
+                        "import-v1",
+                        "model-A"
+                    ),
+                    corruption == "correlation"
+                        ? "wrong-correlation"
+                        : expectedCorrelation,
+                    new SessionExecutionCheckpoint(
+                        corruption == "checkpoint" ? 7 : 0
+                    ),
+                    ToolRuntimeIdentity: null
+                )
+            );
+            EventAddress secondObservation = Commit(
+                journal,
+                action,
+                SessionEventKind.ObservationAccepted,
+                new ObservationAcceptedBody("newer observation")
+            );
+            string secondCorrelation =
+                "atelia.session-journal.turn.v1:"
+                + EventAddressTextCodec.Format(secondObservation);
+            EventAddress secondAction = Commit(
+                journal,
+                secondObservation,
+                SessionEventKind.ImportedAgentAction,
+                new AgentActionProducedBody(
+                    new ActionMessage([
+                        new ActionBlock.Text("newer action")
+                    ]),
+                    new CompletionDescriptor(
+                        "import",
+                        "import-v1",
+                        "model-A"
+                    ),
+                    secondCorrelation,
+                    new SessionExecutionCheckpoint(0),
+                    ToolRuntimeIdentity: null
+                )
+            );
+            _ = Commit(
+                journal,
+                secondAction,
+                SessionEventKind.SystemPromptSetup,
+                new SystemPromptSetupBody("system-B")
+            );
+        }
+
+        using (SessionJournalEngine readOnly =
+               SessionJournalEngine.OpenReadOnly(path)) {
+            SessionJournalAuditScanResult scan =
+                readOnly.ScanCheckedAuditEvents(_ => { });
+            Assert.Equal(
+                SessionExecutionPhase.Idle,
+                scan.ExecutionStateAtCapturedHead.Phase
+            );
+        }
+
+        InvalidDataException error =
+            await Assert.ThrowsAsync<InvalidDataException>(
+                async () =>
+                    await SessionJournalOfflineValidator.ValidateAsync(
+                        path
+                    )
             );
         Assert.Contains(
-            "Invalid SessionJournal event header",
+            corruption == "correlation"
+                ? "correlation id"
+                : "checkpoint",
             error.Message,
             StringComparison.Ordinal
         );

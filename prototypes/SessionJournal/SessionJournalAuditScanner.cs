@@ -201,13 +201,12 @@ internal static class SessionJournalAuditScanner {
         bodySchemaVersion,
         cached.Header.PayloadLength,
         payloadSha256,
-        CreateAuditFact(kind, body, payloadSha256)
+        CreateAuditFact(kind, body)
     );
 
     private static SessionJournalAuditFact CreateAuditFact(
         SessionEventKind kind,
-        object body,
-        string payloadSha256
+        object body
     ) => kind switch {
         SessionEventKind.RuntimeConfigSetup =>
             new SessionJournalAuditRuntimeConfigFact(
@@ -222,7 +221,9 @@ internal static class SessionJournalAuditScanner {
                 RequireBody<SessionCreatedBody>(kind, body).Origin
             ),
         SessionEventKind.ObservationAccepted =>
-            new SessionJournalAuditObservationFact(payloadSha256),
+            CreateObservationFact(
+                RequireBody<ObservationAcceptedBody>(kind, body)
+            ),
         SessionEventKind.CompletionRequestPrepared =>
             CreatePreparedFact(
                 RequireBody<CompletionRequestPreparedBody>(kind, body)
@@ -230,8 +231,7 @@ internal static class SessionJournalAuditScanner {
         SessionEventKind.AgentActionProduced
             or SessionEventKind.ImportedAgentAction =>
             CreateActionFact(
-                RequireBody<AgentActionProducedBody>(kind, body),
-                payloadSha256
+                RequireBody<AgentActionProducedBody>(kind, body)
             ),
         SessionEventKind.ToolExecutionStarted =>
             CreateToolExecutionStartedFact(
@@ -239,8 +239,7 @@ internal static class SessionJournalAuditScanner {
             ),
         SessionEventKind.ToolResultObserved =>
             CreateToolResultObservedFact(
-                RequireBody<ToolResultObservedBody>(kind, body),
-                payloadSha256
+                RequireBody<ToolResultObservedBody>(kind, body)
             ),
         SessionEventKind.CompletionAttemptStarted =>
             new SessionJournalAuditCompletionAttemptStartedFact(),
@@ -256,6 +255,15 @@ internal static class SessionJournalAuditScanner {
         )
     };
 
+    private static SessionJournalAuditObservationFact
+        CreateObservationFact(ObservationAcceptedBody body) =>
+        new(
+            SessionHistorySemanticCommitment
+                .ComputeObservationContributionSha256(
+                    new ObservationMessage(body.Content)
+                )
+        );
+
     private static SessionJournalAuditPreparedFact CreatePreparedFact(
         CompletionRequestPreparedBody body
     ) => new(
@@ -266,14 +274,14 @@ internal static class SessionJournalAuditScanner {
     );
 
     private static SessionJournalAuditActionFact CreateActionFact(
-        AgentActionProducedBody body,
-        string payloadSha256
+        AgentActionProducedBody body
     ) => new(
         Array.AsReadOnly(body.Action.ToolCalls.ToArray()),
         body.CorrelationId,
         body.Execution.LastIssuedToolExecutionSequence,
         body.ToolRuntimeIdentity,
-        payloadSha256
+        SessionHistorySemanticCommitment
+            .ComputeActionContributionSha256(body.Action)
     );
 
     private static SessionJournalAuditToolExecutionStartedFact
@@ -290,14 +298,20 @@ internal static class SessionJournalAuditScanner {
 
     private static SessionJournalAuditToolResultObservedFact
         CreateToolResultObservedFact(
-        ToolResultObservedBody body,
-        string payloadSha256
+        ToolResultObservedBody body
     ) => new(
         body.ToolCallId,
         body.ToolName,
         body.ExecutionSequence,
         body.Status,
-        payloadSha256
+        SessionHistorySemanticCommitment.ComputeToolResultSha256(
+            new ToolResult(
+                body.ToolName,
+                body.ToolCallId,
+                body.Status,
+                body.Blocks
+            )
+        )
     );
 
     private static T RequireBody<T>(
