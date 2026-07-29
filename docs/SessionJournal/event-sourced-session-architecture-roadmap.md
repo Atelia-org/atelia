@@ -6,8 +6,9 @@
 > **相关既有研究**：[Dynamic Logical Context Store for Long-Running Role-Play Agents](../Galatea/backlog/idea/dynamic-logical-context-store-for-long-running-role-play-agents.md)
 > **后续实施计划**：
 > [SessionJournal 恢复与 DerivedMemory 化简](session-journal-recovery-and-derived-memory-simplification-plan.md)、
-> [DerivedMemory Next 目标设计](derived-memory-next-target-design.md)、
-> [DerivedMemory Next 实现与替换计划](derived-memory-next-implementation-plan.md)
+> [EADR 核心概念](event-addressed-derived-recap-concepts.md)、
+> [Event-addressed Derived Recap V4 目标设计](event-addressed-derived-recap-v4-target-design.md)、
+> [EADR V4 实现与替换计划](event-addressed-derived-recap-v4-implementation-plan.md)
 >
 > **已完成实施记录**：
 > [DerivedMemory 可替换子系统与 Shared Epoch 实施方案](done/derived-memory-subsystem-implementation-plan.md)
@@ -26,6 +27,14 @@
 > P5 已把 full replay/audit 迁出 online core public/runtime surface；P6 已把 orchestration
 > finalization 收窄为 v2，并保留 per-role crash resume 与 atomic publication。验收记录以
 > [化简计划](session-journal-recovery-and-derived-memory-simplification-plan.md)为准。
+
+> **EADR V4 target supersession（2026-07-30）**：current implementation 仍是上述 P1～P6 /
+> DM-8 baseline，但下一代不再建设 immutable transaction workflow。目标拆为
+> `SessionJournal.DerivedRecap.Store`、`SessionJournal.DerivedRecap.Planner` 与
+> `SessionJournal.DerivedRecap.Maintainers`。Recap 是常驻、有限、替代 cold prefix 的前情提要；
+> Memory 保留给未来动态召回与图查询。V4 以 event-addressed Published directory保留“不跳过、
+> 不重编号”的 strict ordinal，以 per-block rolling checkpoint支持落后 cursor catch-up；目标术语
+> 与规则以上述 concepts/target 文档为准。
 
 ## 1. 文档定位
 
@@ -84,10 +93,12 @@ SessionJournal 不在旧 deque 旁边补 raw log，而是从新的 storage/wire 
 
 ### decision [S-SJ-NEW-WORK-OWNERSHIP] 新工作归属 SessionJournal family
 
-raw event、recovery contract 与 request execution 属于 `Atelia.SessionJournal`；concrete
-MemoryMaintainer 属于 `Atelia.SessionJournal.Maintainers`；派生存储、epoch、artifact/set publication
-和 retrieval 属于 current companion `Atelia.SessionJournal.DerivedMemory`；CLI/Agent Host 作为
-composition root 组合这些能力。
+raw event、recovery contract 与 request execution 属于 `Atelia.SessionJournal`；EADR V4 concrete
+recap maintainers 属于 `Atelia.SessionJournal.DerivedRecap.Maintainers`；派生文件与 point lookup
+属于 `Atelia.SessionJournal.DerivedRecap.Store`，PlannerConfig、raw-growth scheduling 和
+Maintain/Inherit orchestration 属于 `Atelia.SessionJournal.DerivedRecap.Planner`；CLI/Agent Host
+作为 composition root 组合这些能力。current `Atelia.SessionJournal.DerivedMemory` 与
+`Atelia.SessionJournal.Maintainers` 仍是待替换 baseline。
 
 ### decision [S-SJ-MIGRATION-ONE-WAY] Legacy migration 单向且经中立交换格式
 
@@ -99,13 +110,17 @@ anti-corruption DTO 导入 JSON，不引用 ChatSession 产品程序集。导入
 
 Agent 实际接收、生成和执行过的内容，以不可变 raw events 保存。compaction、摘要更新或上下文切换不得删除或改写 raw events。
 
-### decision [S-SJ-ARTIFACTS-DERIVED] Memory Artifacts 是派生解释
+### decision [S-SJ-ARTIFACTS-DERIVED] Recap 与 Memory read models 都是派生解释
 
-Recap、Autobiography、World Understanding、关系状态、开放线索等都是由 raw events 和既有 artifacts 推导出的版本化产物。它们可以被替换、废弃或重算，但不能冒充原始体验。
+常驻 Recap、未来动态 Memory index/retrieval view 都由 raw events派生，可以替换、废弃或重算，
+但不能冒充原始体验。EADR V4 只负责用有限 Recap近似 cold prefix；向量召回与多跳图查询属于未来
+Memory layer。
 
-### decision [S-SJ-PROJECTION-NOT-SSOT] MemoryPack 是 Context Projection
+### decision [S-SJ-PROJECTION-NOT-SSOT] Context projection 不是 SSOT
 
-现有 `MemoryPack` 继续作为“本轮上下文需要的有序文本块投影”是有价值的，但它不再是长期记忆的唯一事实源。它应由选定的 artifact set 和其他固定配置 materialize。
+“本轮上下文需要的有序文本块投影”是有价值的，但它不是长期记忆的唯一事实源。current
+`MemoryPack*` 是这一角色的现行实现；EADR R0 将其收窄为 `ContextHeader*`。该 projection 可由
+选定的 `DerivedRecapSet`、future Memory retrieval results 与其他固定配置共同 materialize。
 
 ### decision [S-SJ-CONTEXT-PLAN-PERSISTED] 实际上下文选择必须持久化
 
@@ -113,11 +128,14 @@ Recap、Autobiography、World Understanding、关系状态、开放线索等都�
 
 这条 decision 描述 target contract。canonical request manifest 对 raw facts 采用 exact
 address/range/setup refs，对实际进入 provider
-request 的 derived memory contribution 则保存 exact context snapshot 或 canonical request bytes。
+request 的 Recap / future Memory context contribution 则保存 exact context snapshot 或 canonical
+request bytes。
 Prepared 不引用 derived artifact/set id，也不要求 derived store 在 reopen 时仍存在；planner/renderer
 版本变化不能改写已经 Prepared 的外部调用事实。若要审计 derived selection，可在可重建 usage index 中
-记录 `preparedAddress -> derivedSetId`。current Prepared v5 已采用 exact context snapshots 与
-raw provenance，不再含 raw activation/artifact identity。
+记录 `preparedAddress -> selected source provenance`，例如 Recap 的
+`(RefId, SetAdmissionAnchor, publication envelope token)`；这不是新的 correctness identity。
+current Prepared v5 已采用 exact context snapshots 与 raw provenance，不再含 raw
+activation/artifact identity。
 
 ### decision [S-SJ-EXECUTION-INCREMENTAL] 执行状态逐步事件化
 
@@ -133,8 +151,8 @@ turn completion 若可由这些 raw facts 唯一确定，则保持为派生状�
 
 ```mermaid
 flowchart TD
-    A[Raw Event Journal] --> B[Derived Artifact Journal]
-    A --> C[Retrieval Read Models]
+    A[Raw Event Journal] --> B[Derived Recap Sidecar]
+    A --> C[Memory Retrieval Read Models]
     B --> C
     A --> D[Context Selection / Request Materialization]
     B --> D
@@ -148,13 +166,13 @@ flowchart TD
 | 层 | Canonical Data | 主要职责 |
 |:---|:---------------|:---------|
 | Raw Event Journal | 不可变 session events | 保存发生过什么、维持版本树与回放顺序 |
-| Derived Artifact Journal | config snapshots、coverage epochs、artifacts、ArtifactSets | 保存系统如何分块、解释和压缩历史 |
-| Retrieval Read Models | 可重建索引 | 按语义、实体、时间、关键词发现候选材料 |
-| Context Selection / Request Materialization | Prepared 中的 exact request materialization | 近期按 durable exact ordinal 选择 coherent set、拼接 dependency-closed raw suffix，并执行 final hard guard |
+| Derived Recap Sidecar | current P6 使用 epoch/artifact/set records；EADR V4 使用 event-addressed Building/Published Recap directories | 用有限、常驻 Recap近似 cold prefix，并保存 coherent online membership |
+| Memory Retrieval Read Models | 可重建索引 | 未来按语义、实体、时间、向量或图查询发现本次相关材料 |
+| Context Selection / Request Materialization | Prepared 中的 exact request materialization | 选择 Recap 与 future retrieved Memory，拼接 dependency-closed raw suffix，并执行 final hard guard |
 | Execution State Machine | 逐步执行事件 | 驱动 completion/tool-loop，并从任意持久边界恢复 |
 
-DerivedMemory repository 可以物理附着在 SessionJournal repo 下，也可以使用独立 store，但不能把
-derived plans/artifacts/sets 写入 raw Parent sequence；逻辑上的权威边界不能因为物理共置而消失。
+DerivedRecap Store 可以物理附着在 SessionJournal repo 下，也可以使用独立 store，但不能把
+derived plans/sets 写入 raw Parent sequence；逻辑上的权威边界不能因为物理共置而消失。
 retrieval/model-assisted selection 仍是 future capability；接入时必须先定义 durable Agent policy 与
 Prepared audit contract，不能借宽泛的 planner 名称把 automatic budget fallback 预设为目标。
 
@@ -162,9 +180,10 @@ Prepared audit contract，不能借宽泛的 planner 名称把 automatic budget 
 
 | 项目 / 程序集 | Ownership | 依赖约束 |
 |:---------------|:----------|:---------|
-| `Atelia.SessionJournal` | raw event codec、reducer、tail recovery、request preparation/execution，以及 store-neutral derived-context contracts | raw core 不引用 concrete maintainer 或 DerivedMemory |
-| `Atelia.SessionJournal.Maintainers` | concrete MemoryMaintainer、profiles、prompts、target paths 与窄职责 helpers | 作为 companion assembly 单向依赖 SessionJournal contracts |
-| `Atelia.SessionJournal.DerivedMemory` | epochs、artifacts、ArtifactSets、lineage/indexes、selection 与 publication | 单向依赖 SessionJournal 的 neutral contracts；其记录只向 raw address 建立引用 |
+| `Atelia.SessionJournal` | raw event codec、tail recovery、request preparation/execution，以及 store-neutral context contracts | raw core 不引用 concrete Recap/Memory implementation |
+| `Atelia.SessionJournal.DerivedRecap.Maintainers` | concrete recap maintainers、profiles、prompts 与 target paths | 单向依赖 SessionJournal contracts；future Memory有独立 components |
+| `Atelia.SessionJournal.DerivedRecap.Store` | event-addressed Building/Published directories、point validation、strict descriptor 与 structural defects | 不拥有 PlannerConfig、Maintainer 或 restore orchestration |
+| `Atelia.SessionJournal.DerivedRecap.Planner` | RecapPlannerConfig、raw-growth trigger、Maintain/Inherit、rolling catch-up 与 Resume/Restore | 依赖 Store 与 SessionJournal contracts；只接收注入的 `IRecapBlockMaintainer` |
 | `SessionJournal.Cli` / Agent Host | composition root、迁移导入、离线开发运行、provider/tool 注入 | 可以同时引用上述项目，但不把应用 policy 推回 raw core |
 | `ChatSession.LegacyExportCli` | 旧 ChatSession 数据的 JSON/Markdown 出口 | 只依赖旧 ChatSession；不依赖 SessionJournal，也不承担新功能 |
 
@@ -173,15 +192,17 @@ Prepared audit contract，不能借宽泛的 planner 名称把 automatic budget 
 ```text
 SessionJournal.Cli / Agent Host
 ├── Atelia.SessionJournal
-├── Atelia.SessionJournal.Maintainers ──> Atelia.SessionJournal
-└── Atelia.SessionJournal.DerivedMemory ─> Atelia.SessionJournal
+├── Atelia.SessionJournal.DerivedRecap.Maintainers ──> Atelia.SessionJournal
+├── Atelia.SessionJournal.DerivedRecap.Store ────────> Atelia.SessionJournal
+└── Atelia.SessionJournal.DerivedRecap.Planner ──────> Store + Atelia.SessionJournal
 
 ChatSession.LegacyExportCli ──> Atelia.ChatSession   # frozen migration island
 ```
 
-DM-0～DM-4 后 current trunk 已达到这张程序集依赖图：concrete recap/set storage 与 selection
-位于 DerivedMemory，SessionJournal raw core 只消费 store-neutral candidate contract，且 raw event
-inventory 不含 derived-set activation。
+current trunk 已达到 raw core 不反向引用 concrete DerivedMemory/Maintainers 的主依赖方向；上图是
+EADR V4 target，current trunk 仍使用 `Atelia.SessionJournal.DerivedMemory` 与
+`Atelia.SessionJournal.Maintainers`。R0 将 current MemoryPack projection收窄为 ContextHeader
+contract，并把 recap-specific maintainer一次性改名；raw event inventory仍不含 derived activation。
 
 ## 5. Raw Event Journal
 
@@ -254,11 +275,11 @@ EventJournal 的 Parent lineage 和 repository/branch primitives 为未来 rewin
 这些语义需要后续单独定义 branch identity、ref ownership、retention 和 UI contract；不能仅因底层已有
 EventJournal branch primitive 就宣称产品能力已经实现。
 
-## 6. Derived Artifact Journal
+## 6. Derived Recap Sidecar 与 future Memory
 
-### 6.1 Target 概念
+### 6.1 跨代稳定概念
 
-以下内容统一称为 `DerivedContextArtifact`：
+以下常驻 cold-prefix approximations 在 EADR V4 中统一称为 Recap：
 
 - Recap / rolling summary。
 - First-Person Autobiography。
@@ -269,7 +290,10 @@ EventJournal branch primitive 就宣称产品能力已经实现。
 - Open threads / promises / unresolved hooks。
 - Continuity、style 或 identity constraints。
 
-这些 artifact 的内容形状可以是 Markdown、JSON、图节点或其他二进制格式。统一的是 provenance 与生命周期，不是正文 schema。
+Recap blocks 的正文可以是 Markdown、JSON 或其他受限 payload。跨代稳定的是 raw authority、
+可重建性和 coherent request projection，不是 current P6 的 artifact identity/provenance schema。
+query-dependent vector/graph/entity recall 是未来 Memory能力，不进入 Recap set。EADR V4 正式词汇见
+[核心概念](event-addressed-derived-recap-concepts.md)。
 
 它们不是 raw experience，也不属于旧 ChatSession。current ownership 是独立、可替换的
 `Atelia.SessionJournal.DerivedMemory`；该 subsystem 可以删除并由 raw SessionJournal 重建。
@@ -298,9 +322,10 @@ Prepared/attempt recovery，但它不是最终程序集或 authority 边界。�
 core、raw `ArtifactSetCommitted` 引用 derived ids、manual checkpoint，以及 Prepared 仍引用 raw
 activation，都是已知 interim coupling。
 
-### 6.3 Target Artifact 最小字段
+### 6.3 Current P6 Artifact 字段（V4 不再作为 target）
 
-current DerivedMemory schema 覆盖以下核心 provenance/lifecycle 信息：
+current P6 DerivedMemory schema 覆盖以下 provenance/lifecycle 信息；它们记录现行实现，不是 EADR
+V4 必须保留的 target fields：
 
 | 字段 | 含义 |
 |:-----|:-----|
@@ -319,11 +344,13 @@ current DerivedMemory schema 覆盖以下核心 provenance/lifecycle 信息：
 | `Invocation` | 可选 completion / analyzer audit 摘要 |
 | `Status` | produced / rejected / superseded 等领域状态 |
 
-Artifact 本身 append-only。所谓“最新版”由 lineage、ArtifactSet 或可重建索引确定，不通过原地更新 `EventAddress -> mutable value` 字典实现。
+current P6 Artifact 本身 append-only，最新版由 lineage、ArtifactSet 或可重建索引确定。EADR V4
+改用 `SetAdmissionAnchor + per-block AbsorbedThrough` 与 Published directory membership，不保留
+`PreviousArtifact`、producer fingerprint 或 content-addressed identity 作为长期 target。
 
-### 6.4 Provenance 不变量
+### 6.4 Current P6 audit provenance（V4 非目标）
 
-任何进入长期上下文的 artifact 都应能回答：
+current P6 artifact 可以回答：
 
 1. 它由哪个 profile 和 producer 生成。
 2. 它读取了哪个 raw head、哪些 raw ranges。
@@ -331,9 +358,11 @@ Artifact 本身 append-only。所谓“最新版”由 lineage、ArtifactSet 或
 4. prompt/model/config 是否与当前版本相同。
 5. 它是否已被后续 artifact 取代。
 
-这使 analyzer 升级后可以重建，并允许人工比较“同一原始经历的不同解释”。
+这使 current analyzer 升级后可以审计并比较解释。V4 主动降低这项 audit 承诺：Store 只保证
+admission/cursor 如实、checksum/shape 可验证、Prepared exact bytes 不变；prompt/model/invocation
+审计若未来需要，应作为独立能力重新设计。
 
-### 6.5 Current Coherent Artifact Set
+### 6.5 Current P6 Coherent Artifact Set（V4 将替换）
 
 Autobiography 与 World Understanding 可能并行生成，但一次上下文不应偶然混用不同 source head 的半套结果。
 
@@ -356,6 +385,10 @@ dependency-safe boundary policy；epoch record 固定实际 raw range/anchor/set
 而不重新计算 split。同步来自 shared epoch identity，而不是进程启动时间或恰好相同的
 `--threshold-tokens`。
 
+EADR V4 保留“一组 Recap blocks 必须整体进入 online”的产品性质，但以 frozen Building、
+single rolling checkpoint 和原子 directory promotion 实现。strict ordinal计数 Published
+directories，不按当前 materializability重编号；current `PreviousSetId`/latest index不再是目标。
+
 ### 6.6 Historical interim-to-current migration（DM-0～DM-8 已完成）
 
 下表记录已经完成的 authority/assembly 迁移，不是 future backlog：
@@ -373,7 +406,8 @@ current raw SessionJournal 不追加 `ArtifactSetCommitted` 或其他 derived-se
 artifact/set/epoch id。某次 completion 实际使用的 derived memory 必须在
 `CompletionRequestPrepared` 中以 exact context snapshot 或 canonical request bytes 提升为 execution
 fact；exact reopen 不打开 DerivedMemory，也不重新运行 planner。用于审计 selection 的
-`preparedAddress -> derivedSetId/epochId` 记录属于可重建 derived usage index。
+`preparedAddress -> selected source provenance` 记录属于可重建 derived usage index；Recap
+provenance 使用 `(RefId, SetAdmissionAnchor, publication envelope token)`，不引入 SetId。
 
 该迁移已按专门实施计划完成：先建立 cross-assembly neutral contracts 和 neutral request
 materialization，再切换 self-contained Prepared，之后移动 concrete store、删除 raw
@@ -383,7 +417,7 @@ materialization，再切换 self-contained Prepared，之后移动 concrete stor
 `SessionExecutionTailResolver` 始终 raw-only；DerivedMemory 缺失只阻止尚未 Prepared 的 context
 planning，不应破坏已 Prepared request 的恢复。
 
-### 6.7 MemoryPack 的新角色
+### 6.7 Current MemoryPack role 与 EADR cutover
 
 `MemoryPack` 变为 materialized context view：
 
@@ -399,12 +433,16 @@ selected ArtifactSet
 完整新 artifact。CS-5-lite 与后续 current trunk 已验证 recap 可以 materialize 为
 `ContextHeader` 形态的 observation/action header，并以真实 anchor 之后的 raw suffix 保留近期细节。
 full replay 只用于显式 offline audit；maintainer 输入使用 addressed bounded planning window。
-current online 没有 coherent candidate 时保持 not-ready，不允许静默 full-raw fallback。DM-8
+current 与 V4 online 没有 coherent candidate 时都保持 not-ready，不允许静默 full-raw fallback。DM-8
 current empty-lineage bootstrap 已受 native raw fresh-genesis topology 约束，而不是 normal
 fallback。后续工作是在保持这一
 raw/artifact 语义的前提下，按
-[P1～P6 implemented plan](session-journal-recovery-and-derived-memory-simplification-plan.md)
-化简 branch、selection、audit 与 orchestration 边界，而不是把能力回迁到 ChatSession。
+[EADR V4 target](event-addressed-derived-recap-v4-target-design.md)
+替换 current DerivedMemory，而不是把能力回迁到 ChatSession。
+
+EADR R0 不保留宽泛 Memory naming：recap maintenance 改为 `IRecapBlockMaintainer`，
+`MemoryPack*` 这组实际只负责 ContextHeader projection 的类型改为 `ContextHeader*`。未来动态
+Memory retrieval仍可产出 neutral context contributions，但不进入 `DerivedRecapSet`。
 
 ## 7. Context Selection（Current P3/P4）
 
@@ -453,6 +491,17 @@ current exact selection 与 strict bootstrap 必须满足：
 - **current**：selected exact request 超过 hard guard 时 fail-fast，不自动换另一个 set；
 - **current**：Prepared v5 固定实际 request；之后 setup、latest pointer 或 DerivedMemory 变化都不触发重选。
 
+EADR V4 保留相同的 Agent-visible strict ordinal，但替换实现机制：
+
+- current P6 沿 immutable `PreviousSetId` lineage 解释 ordinal；
+- V4 从 exact completion boundary 沿 raw Parent lineage point lookup event-addressed Published
+  Recap directories；
+- V4 计数 Published membership，而不是当前可 materialize payload；exact set损坏时
+  Restore/not-ready，不跳过、不重编号；
+- V4 Building 与 block-local rolling checkpoint不进入 ordinal；
+- `SetAdmissionAnchor` 与 per-block `AbsorbedThrough` 分离，允许 block 暂缓后从真实旧 cursor
+  bounded catch up。
+
 若未来引入 retrieval、多 selection domain 或模型辅助选择，必须另立 durable Agent policy 与
 Prepared audit contract；它们不是恢复 historical `Budgeted` mode 的理由。
 
@@ -482,13 +531,14 @@ planner，或用“当前最新配置”替换已经 Prepared 的内容。
 
 canonical request manifest 是崩溃恢复和重发的 Canonical Source。ContextPlan/selection record 只负责
 解释“为何选择这些材料”；需要关联具体 derived candidate 时，由可重建的 derived usage index 以
-`preparedAddress -> derivedSetId/epochId` 单向引用 raw Prepared。
+`preparedAddress -> selected source provenance` 单向引用 raw Prepared；该 provenance 是审计信息，
+不是 reopen dependency 或新的 derived identity。
 
 ### 7.4 Scheduling threshold 与 request hard guard
 
 P4 明确区分两条职责：
 
-- DerivedMemory epoch planner 的 thresholds 决定何时维护 shared epoch，并在维护落后时提供 explicit
+- current DerivedMemory epoch planner、未来 V4 Planner 的 thresholds 都只决定何时维护与何时
   backpressure；
 - online request hard guard 只检查 Agent 已选择的 exact ordinal request 是否可物理提交，超限即
   fail-fast，不参与 candidate selection。
@@ -505,6 +555,10 @@ exact epoch，不拥有 split policy。current DerivedMemory epoch planner 统�
 
 同一 coherence group 的 maintainers 消费同一 epoch plan。针对某个 role 做 prompt tuning 时，只替换
 该 epoch 的 producer candidate，不重新切分 history。
+
+上述 epoch 是 current P6 实现。V4 不保留 shared epoch identity；它在 building manifest 中冻结公共
+`SetAdmissionAnchor`、per-block source cursor、bounded catch-up route 与 prior-context snapshot。
+多个 block 可以从不同 cursor 出发，但只发布一个 final common set。
 
 current 已删除 `RawSuffixTokenBudget`、`TotalContextTokenBudget`、
 `BootstrapRawSuffixTokenBudget` 与 `SessionRuntime.ContextBudgets`。唯一可选 guard 是
@@ -624,9 +678,10 @@ Action、Started、Result 等事实仍逐条保留。未来只有当产品需要
 ### 9.1 尚未实现的独立 Read Path
 
 Dynamic Retrieval 当前尚未实现，也没有冻结 `IMemoryRetriever`、`IContextMemorySource` 等公共接口。
-它属于 current DerivedMemory companion 的未来 retrieval/read-model 层：maintainer/producer
-在写入与巩固路径生成 artifacts，retriever 在尚未 Prepared 的 request planning 阶段选择候选材料。它不属于
-`IMemoryBlockMaintainer`，也不参与已 Prepared request 的 reopen。
+它属于 future Memory read-model layer，不属于 EADR Recap subsystem。retriever 在尚未 Prepared
+的 request planning 阶段按需选择候选材料；current `IMemoryBlockMaintainer` 只是等待 R0
+cutover 的 Recap maintenance baseline，future retrieval 不依赖它，也不参与已 Prepared request
+的 reopen。
 
 应先完成一个真实 backend 的端到端切片，再从使用证据中提炼公共 contract，避免先围绕假想的向量库
 冻结接口。
@@ -707,6 +762,21 @@ host 通过 exact role executions 完成 provisioning；shared config/epoch ledg
 settlement、restart resume、atomic publication 与 online backpressure 均已实施。原功能缺口已归档为
 [历史备忘](done/memory-maintainer-provisioning-planner-gap.md)。
 
+### 10.4 EADR V4 target：per-block cursor 与 rolling catch-up
+
+V4 以更小的 durable shape 替换 current epoch/job orchestration：
+
+- source inputs 与 manifest 先于 Maintainer 调用，冻结 common `SetAdmissionAnchor`；
+- 每个 block 保存独立 `AbsorbedThrough`，`Inherit` 不推进，`Maintain` 推进；
+- 落后 block 使用 ordered endpoints 与单个 rolling checkpoint分段 catch up，中间 endpoint不成为 set；
+- frozen prior context 不读取同一 building set 的 partial results；
+- CanPublish 后 atomic rename `building/<anchor>` 为 `published/<anchor>`；
+- Published directory固定 strict ordinal membership；payload damage由 Store defects +
+  Planner bounded Restore在同一 directory恢复，不回落旧 ordinal。
+
+具体定义以 [EADR 核心概念](event-addressed-derived-recap-concepts.md)和
+[V4 target](event-addressed-derived-recap-v4-target-design.md)为准。
+
 ## 11. 项目边界与 Legacy 迁移
 
 ### 11.1 两个独立系统，不升级旧 ChatSession
@@ -716,8 +786,8 @@ StateJournal 原地改造成 EventJournal。边界原则是：
 
 - 旧 `prototypes/ChatSession` 与其 StateJournal message deque 保持 frozen，只承担归档读取与迁移
   数据导出；不继续加入 SessionJournal execution、memory 或 planner 新功能。
-- 新功能和新架构只进入 `prototypes/SessionJournal` 及
-  `SessionJournal.Maintainers`、`SessionJournal.DerivedMemory`、`SessionJournal.Cli` 等附属项目。
+- 新功能和新架构只进入 `prototypes/SessionJournal` 及其 target companion projects 与
+  `SessionJournal.Cli`；current companion 名称及其 EADR replacement 见 §4.1。
 - 新 SessionJournal 不读写旧 deque，不与旧 StateJournal 双写，也不把旧 store 当作自己的
   projection/cache。
 - StateJournal 在其他领域仍可继续使用；这里冻结的是旧 ChatSession storage 模型，不是否定
@@ -747,7 +817,7 @@ compaction/recap 属于 derived 信息，会被跳过；包含 tool execution �
 correlation、operation/checkpoint 或 branch 语义而 fail-fast，不能伪造为新的 SessionJournal
 事实。迁移是有损边界时必须显式报错的 upgrade/import，不是持续同步或兼容读取层。
 
-### 11.3 Memory 代码归属与 split policy
+### 11.3 Current baseline：Memory 代码归属与 split policy
 
 旧 ChatSession 中曾经实现一半的 memory substrate 已拆除。新 contracts 位于 SessionJournal，
 concrete `MemoryMaintainer` 位于 companion assembly `Atelia.SessionJournal.Maintainers`；能力不会回迁
@@ -770,8 +840,9 @@ messages = recap + recent suffix
 
 ```text
 raw SessionJournal events 保持不变
-DerivedMemory producer 生成带 provenance 的 recap/artifacts
-Context Selection / Request Materialization 按 exact ordinal 拼接 artifacts + dependency-closed raw suffix
+current P6: DerivedMemory producer 生成带 provenance 的 recap/artifacts
+EADR target: DerivedRecap Maintainers 生成 Recap blocks，Store 发布 DerivedRecapSet
+Context Selection / Request Materialization 按 exact ordinal 拼接 Recap + dependency-closed raw suffix
 ```
 
 因此新系统中的“compaction”只能是可删除、可重建的 derived projection/maintenance，不是 raw
@@ -854,14 +925,17 @@ SessionJournal raw core 反向引用 Maintainers/DerivedMemory，也不得把 co
 
 DM-0～DM-8 建立正确的 authority、ownership 与 online composition 后，再推进以下能力：
 
+- **EADR V4 replacement。** 新建 DerivedRecap Store/Planner/Maintainers projects，以
+  event-addressed Building/Published directories、strict ordinal、per-block cursor、rolling
+  catch-up 和窄 Restore protocol替换 current P6 transaction workflow；不迁移 v2/v3 data。
 - **CS-4 后续：tool capability 与 uncertain hardening。** current trunk 已有在幂等/operation-id
   去重假设下可恢复的 tool loop，以及 reserved sequence/operation identity、Started/Result 和 tail
   recovery；后续不是从零重建，而是扩展 capability declaration、provider/result lookup、reconcile
   policy，以及非幂等且不可查询工具的 paused/uncertain 人工处置。
-- **Branch-aware durable ordinal selection。** 按 P1～P4 让 Engine lifetime 绑定 selected active
-  branch 的稳定 `RefId`，DerivedMemory 使用同一 lineage identity，Agent 通过
-  `RuntimeConfigSetup.nthPrevious` 选择 exact set；删除 automatic candidate fallback，同时保留
-  planner backpressure 与 final request hard guard。
+- **Branch-aware durable ordinal selection（current 已建立，V4 保持语义）。** Engine lifetime
+  绑定 selected active branch 的稳定 `RefId`，Agent 通过
+  `RuntimeConfigSetup.nthPrevious` 选择 exact set；V4 改变 publication/storage mechanism，但不恢复
+  automatic candidate fallback，并继续区分 planner backpressure 与 final request hard guard。
 - **Retrieval read models。** 先落一个可从 raw/derived provenance 重建的真实 backend，再评估
   full-text、entity/open-thread、vector 与 graph 的组合。索引失效不得破坏基本 session recovery。
 - **Branch UX 与 derived reuse。** 明确 rewind/fork 的用户模型、branch-aware candidate selection、
@@ -883,8 +957,8 @@ DM-0～DM-8 建立正确的 authority、ownership 与 online composition 后，�
 6. **兼容策略**：新项目早期优先彻底重构，不默认保留兼容 wrapper。
 7. **可执行验收**：focused tests、reopen、replay、failpoint 或 backtest。
 8. **未解决问题**：只记录，不在任务外顺手扩张。
-9. **Ownership**：本次变更属于 raw core、Maintainers、DerivedMemory，还是 CLI/Host composition；
-   若跨层，说明最小 contract 和依赖方向。
+9. **Ownership**：本次变更属于 raw core、DerivedRecap、future Memory、current baseline，还是
+   CLI/Host composition；若跨层，说明最小 contract 和依赖方向。
 10. **Legacy guard**：确认是否误改旧 ChatSession、引入 SessionJournal → ChatSession 产品依赖，
     或建立任何双写/持续同步路径；除修复迁移阻断缺陷外，三者都应为“否”。
 
@@ -905,9 +979,9 @@ DM-0～DM-8 建立正确的 authority、ownership 与 online composition 后，�
   DerivedMemory 中的 ArtifactSet 可删除、可重建。raw inventory 不再包含 derived-set
   definition/activation。
 - concrete companion 的依赖方向已经确定：`SessionJournal.Maintainers` 已单向依赖 SessionJournal
-  contracts；`SessionJournal.DerivedMemory` 同样单向依赖 raw core，raw core 不得反向引用；
-  CLI/Host 是 composition
-  root。
+  contracts；current `SessionJournal.DerivedMemory` 同样单向依赖 raw core。EADR target 由
+  `DerivedRecap.Store / Planner / Maintainers` 组成，并与 future Memory concrete
+  implementations 一样保持 raw-core 单向依赖；CLI/Host 是 composition root。
 
 ### 14.2 仍开放的问题
 
@@ -927,7 +1001,8 @@ DM-0～DM-8 建立正确的 authority、ownership 与 online composition 后，�
 性质：
 
 - 任意 compaction 或 maintainer 都不会抹去原始经历。
-- 任意 artifact 都能追溯到 raw source 和 producer。
+- 任意进入 V4 context 的 block 都能如实区分 set admission 与自身 absorbed cursor；producer/prompt
+  audit 若需要则由独立能力提供，不伪装成 raw correctness。
 - 任意 completion 都能回答“当时到底看到了什么”。
 - 任意 tool-loop 崩溃都能落入明确的可继续、可查询、失败或 uncertain 状态。
 - rewind / reroll 通过 branch 表达，不靠删除历史伪造过去。
@@ -935,8 +1010,8 @@ DM-0～DM-8 建立正确的 authority、ownership 与 online composition 后，�
 - 新 maintainer、retriever 或模型版本可以重算解释层，而不改写 raw truth。
 - 所有新能力都在 SessionJournal family 及其附属新项目中实现，不要求修改旧 ChatSession。
 - SessionJournal 产品依赖图不包含 ChatSession；迁移只经 versioned exchange format 单向发生且不双写。
-- SessionJournal raw core 不反向引用 Maintainers 或 DerivedMemory；CLI/Host 通过 contracts 组合
-  concrete implementations。
+- SessionJournal raw core 不反向引用 concrete Recap/Memory implementations；CLI/Host 通过
+  contracts 组合 concrete implementations。
 - 删除整个 derived store 不会破坏 raw audit，也不会使已经持久化的 Prepared 无法 exact reopen。
 
 这组性质比“当前 prompt 是否更聪明”更重要：它们构成长期自主 Agent 能持续演化而不失去可追溯性的工程地基。

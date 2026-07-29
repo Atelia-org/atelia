@@ -1,14 +1,22 @@
 # SessionJournal 恢复与 DerivedMemory 化简：阶段情况与后续计划
 
-> **状态**：Implemented Shape/Plan；P1～P6 已实施
+> **状态**：Implemented P1～P6 baseline；future target 已由 EADR V4 supersede
 > **日期**：2026-07-29
 > **适用基线**：current Prepared v5 + DM-0～DM-8
 > **相关文档**：
 > [事件源会话与长期上下文架构路线图](event-sourced-session-architecture-roadmap.md)、
 > [DerivedMemory 已实施方案](done/derived-memory-subsystem-implementation-plan.md)、
 > [Tail Execution Recovery 后续化简候选](tail-execution-recovery-simplification-study.md)、
-> [DerivedMemory Next 目标设计](derived-memory-next-target-design.md)、
-> [DerivedMemory Next 实现与替换计划](derived-memory-next-implementation-plan.md)
+> [EADR 核心概念](event-addressed-derived-recap-concepts.md)、
+> [Event-addressed Derived Recap V4 目标设计](event-addressed-derived-recap-v4-target-design.md)、
+> [EADR V4 实现与替换计划](event-addressed-derived-recap-v4-implementation-plan.md)
+
+> **EADR V4 supersession（2026-07-30）**：本文记录的 P1～P6 current baseline 与问题分析仍然有效；
+> 后续出现的 immutable epoch/job/settlement/finalization、反向 set lineage 和 latest pointer
+> 不再是目标实现。V4 将职责拆为 DerivedRecap Store、Planner 与 Maintainers：Recap 是常驻、
+> 有限、替代 cold prefix 的前情提要，Memory 保留给未来动态召回。V4 `NthPrevious` 沿 raw Parent
+> chain 计数 Published Recap directories；payload损坏时 exact ordinal not-ready，不跳过、不重编号。
+> 目标 vocabulary/Shape/Rule 以上述 concepts/V4 文档为准。
 
 ## 0. 文档目的
 
@@ -17,7 +25,7 @@ request exact-reopen、derived epoch planning、multi-role maintenance、Artifac
 online lifecycle。实现具备较强的 correctness，但生产代码、测试和概念数量已明显超过最初预期，
 人类维护者难以快速建立完整心智模型。
 
-本文不立即推翻 current implementation，也不把已经实现等同于已经确认长期保留。它重新固定近期目标：
+本文当时没有立即推翻 current implementation，也没有把已经实现等同于长期保留；P0～P6 当时固定了：
 
 1. SessionJournal 可以针对调用方指定的 existing active named branch 做 tail-only runtime recovery；
 2. `RuntimeConfigSetup` 持久化“使用第 n 个最近 DerivedArtifactSet”的 Agent 自主策略；
@@ -29,7 +37,8 @@ online lifecycle。实现具备较强的 correctness，但生产代码、测试�
    offline audit、recovery/fix tooling 或 test oracle 边界；
 8. 把 DerivedMemory 中其余能力翻译成可理解的职责，再分别决定保留、隔离或删除。
 
-本文是阶段性 Shape/Plan 文档。具体 wire shape、项目拆分和迁移提交仍需逐工作包设计与审阅。
+本文现在是 implemented baseline record。EADR V4 的具体 wire shape、项目拆分和迁移提交按新的
+target/implementation plan 逐工作包设计与审阅。
 
 ## 1. 原始目标的最小模型
 
@@ -309,6 +318,11 @@ protocol/audit substrate 或其他正常程序集边界解决访问问题。
 
 ## 4. 其余 DerivedMemory 术语的白话说明与阶段判断
 
+> 本节只解释 current P6 baseline 的命名与当时阶段判断。EADR V4 的 canonical vocabulary 已迁移到
+> [EADR 核心概念](event-addressed-derived-recap-concepts.md)；其中 Recap / Memory / Context、
+> Building / Published、SetAdmissionAnchor / AbsorbedThrough、Maintain / Inherit / rolling
+> catch-up、Resume / Restore / Rebuild 的定义不由本节覆盖。
+
 | Current 名称 | 实际解决的问题 | 阶段判断 |
 | --- | --- | --- |
 | orchestration transaction | 标识“一次让所有 role 维护同一 epoch”的工作 | 不属于 tail loader；启用自动维护时保留满足 missing-role-only resume 的最小 durable identity |
@@ -320,9 +334,10 @@ protocol/audit substrate 或其他正常程序集边界解决访问问题。
 | latest pointer rebuild | index 丢失时从 immutable sets 恢复 tip | 派生 index 的必要修复能力；branch-aware 改造后重新定义 |
 | producer/policy/job fingerprints | 判断一次重跑是否真的是同一输入、prompt、model 和 policy | **P6 KEEP**：transaction/job/producer/policy/topology/candidate/attempt identity 保留；跨库 generation 的 JobFingerprint/TransactionId 与 Candidate/Attempt 合并延后 |
 
-近期不尝试一次性删除这一整组能力。P6 已确认 maintenance crash resume 必须只补失败/缺失
-role；专项审查只决定满足该 contract 所需的最小 identity/fingerprint 集合，不再重新讨论是否保留
-settlement/finalization。
+这是 P6 当时的 implemented conclusion。EADR V4 重新确认的产品性质是：partial success可恢复、
+旧 Published Recap在新 publication前可用、strict ordinal不 fallback；它以 frozen manifest、
+single rolling checkpoint和 atomic Building→Published promotion实现，不继续保留
+settlement/finalization identity。
 
 ## 5. P0 Contract Inventory
 
@@ -662,6 +677,11 @@ keys。
 
 ### P6：Maintenance orchestration 专项化简（已完成）
 
+> 本节是 current implementation 的验收记录，不再是 future target。EADR V4 保留
+> missing-only resume、old-set-until-publication 与 strict ordinal 的用户可见性质，但用
+> frozen manifest/block、single rolling checkpoint 与 atomic Published directory取代
+> transaction/settlement/finalization。
+
 已确认 contract：
 
 - 多个长耗时 MemoryMaintainer 中任一 role 成功并 durable settlement 后，进程崩溃/reopen 不得重跑
@@ -727,7 +747,7 @@ crash-resume contract。
 
 ## 9. 当前阶段结论
 
-用户反馈中的主要化简方向成立：
+以下是 P1～P6 在 2026-07-29 形成的 current baseline 结论：
 
 - P1/P2 已让 raw Engine、DerivedMemory 与 CLI 支持 existing active named branch，并把 durable
   lineage 与 rewind authority 绑定稳定 `RefId`；
@@ -737,7 +757,9 @@ crash-resume contract。
   明确 ordinal 的控制语义；
 - raw/bootstrap selection budgets 可删；保留最小 non-selection hard limits，其中最终 exact
   request 使用 canonical JSON UTF-8 byte guard；
-- shared epoch 与 atomic ArtifactSet publication 是必要能力；
+- current P6 以 shared epoch 与 atomic ArtifactSet publication 满足 common planning 和 coherent
+  visibility；EADR V4 改以 common `SetAdmissionAnchor`、rolling catch-up 与 atomic Published
+  Recap directory满足相同产品性质；
 - full reducer 对 online recovery 没有直接价值，应退出 production 主表面；
 - orchestration/settlement/finalization 服务 maintenance crash resume；P6 已保留成功 role
   不重跑、durable finalization 与 atomic publication，并把 finalization 收窄为 v2；其余 identity
@@ -745,4 +767,5 @@ crash-resume contract。
 
 P1 raw Engine boundary、P2 branch-aware DerivedMemory、P3 durable exact ordinal 与 P4 strict
 fresh bootstrap/canonical-byte guard、P5 full reducer 去生产化与 P6 bounded finalization
-均已是现行 contract。
+均是现行 contract；长期 Recap target 已由 EADR V4 supersede，不能从本节的 **KEEP** 反推 V4
+仍必须保留 P6 identity/state machine。
