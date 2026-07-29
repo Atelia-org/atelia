@@ -1,3 +1,4 @@
+using System.Reflection;
 using Atelia.Data;
 using Atelia.EventJournal;
 using Atelia.SessionJournal.DerivedRecap.Store;
@@ -7,42 +8,92 @@ namespace Atelia.SessionJournal.DerivedRecap.Planner.Tests;
 
 public sealed class RecapPlanEvaluatorTests {
     [Fact]
-    public void BelowTriggerReturnsNoBuildWithoutCallingPolicy() {
-        TestModel model = TestModel.Create(rawGrowth: 2);
-        var policy = new StubPolicy(_ =>
-            throw new InvalidOperationException("must not be called"));
-
-        RecapPlanResult result = RecapPlanEvaluator.Evaluate(
-            model.Config,
-            model.Facts,
-            policy
+    public void BelowTriggerStopsBeforeSourceOrPolicyPhase() {
+        TestModel model = TestModel.Create(
+            trigger: 2,
+            hardLimit: 10
         );
 
-        var noBuild = Assert.IsType<RecapPlanResult.NoBuild>(result);
+        RecapSchedulingResult result =
+            RecapPlanEvaluator.EvaluateSchedule(
+                model.Config,
+                model.Scheduling
+            );
+
+        var noBuild =
+            Assert.IsType<RecapSchedulingResult.NoBuild>(result);
         Assert.Equal(
             RecapPlanReasons.BelowRawGrowthTrigger,
             noBuild.Reason
         );
-        Assert.Equal(0, policy.CallCount);
     }
 
     [Fact]
-    public void RawHardLimitReturnsUnavailableWithoutCallingPolicy() {
-        TestModel model = TestModel.Create(rawGrowth: 11);
-        var policy = new StubPolicy(_ =>
-            throw new InvalidOperationException("must not be called"));
-
-        RecapPlanResult result = RecapPlanEvaluator.Evaluate(
-            model.Config,
-            model.Facts,
-            policy
+    public void RawGrowthIsDerivedFromContiguousLatestAnchorIndex() {
+        TestModel model = TestModel.Create(
+            trigger: 0,
+            hardLimit: 10
         );
+
+        var ready = Assert.IsType<RecapSchedulingResult.Ready>(
+            RecapPlanEvaluator.EvaluateSchedule(
+                model.Config,
+                model.Scheduling
+            )
+        );
+
+        Assert.Equal(1, ready.RawGrowth);
+    }
+
+    [Fact]
+    public void RawHardLimitStopsBeforePolicyPhase() {
+        TestModel model = TestModel.Create(
+            trigger: 0,
+            hardLimit: 0
+        );
+
+        RecapSchedulingResult result =
+            RecapPlanEvaluator.EvaluateSchedule(
+                model.Config,
+                model.Scheduling
+            );
 
         AssertDefect(
             result,
             RecapPlanDefectCodes.RawGrowthHardLimitExceeded
         );
-        Assert.Equal(0, policy.CallCount);
+    }
+
+    [Fact]
+    public void PlanReadyCannotBeConstructedOutsideEvaluator() {
+        ConstructorInfo[] constructors =
+            typeof(RecapPlanResult.PlanReady).GetConstructors(
+                BindingFlags.Instance | BindingFlags.Public
+            );
+
+        Assert.Empty(constructors);
+    }
+
+    [Fact]
+    public void NullFirstLineageNodeReturnsUnavailable() {
+        TestModel model = TestModel.Create();
+        var malformed = new RecapSchedulingFacts(
+            model.Admission,
+            [null!],
+            [],
+            null
+        );
+
+        RecapSchedulingResult result =
+            RecapPlanEvaluator.EvaluateSchedule(
+                model.Config,
+                malformed
+            );
+
+        AssertDefect(
+            result,
+            RecapPlanDefectCodes.PlanningFactsInvalid
+        );
     }
 
     [Fact]
@@ -51,35 +102,217 @@ public sealed class RecapPlanEvaluatorTests {
         RecapBlockCatalogEntry entry = model.Config.Catalog[0];
 
         Assert.Throws<ArgumentException>(() =>
-            new RecapPlannerConfig(
-                [entry, entry with { }],
-                3,
-                10,
-                3,
-                3
-            )
+            model.NewConfig([entry, entry with { }])
         );
         Assert.Throws<ArgumentException>(() =>
-            new RecapPlannerConfig(
-                [
-                    entry,
-                    new RecapBlockCatalogEntry(
-                        new RecapBlockId("other"),
-                        entry.Target,
-                        "other-maintainer",
-                        1024
-                    )
-                ],
-                3,
-                10,
-                3,
-                3
-            )
+            model.NewConfig([
+                entry,
+                new RecapBlockCatalogEntry(
+                    new RecapBlockId("other"),
+                    entry.Target,
+                    "other-maintainer",
+                    1024
+                )
+            ])
         );
     }
 
     [Fact]
-    public void CatalogContentLimitCannotExceedNeutralContract() {
+    public void MaintainerIdMayBeSharedAcrossDistinctCatalogEntries() {
+        TestModel model = TestModel.Create();
+        RecapBlockCatalogEntry first = model.Config.Catalog[0];
+
+        RecapPlannerConfig config = model.NewConfig([
+            first,
+            new RecapBlockCatalogEntry(
+                new RecapBlockId("roleplay.self"),
+                new ContextHeaderBlockPath(
+                    ContextHeaderCarrier.System,
+                    "roleplay.self"
+                ),
+                first.MaintainerId,
+                1024
+            )
+        ]);
+
+        Assert.Equal(2, config.Catalog.Count);
+    }
+
+    [Fact]
+    public void ConflictingEnvelopeForSameBlockAndAnchorIsRejected() {
+        TestModel model = TestModel.Create();
+        RecapSchedulingResult.Ready schedule = model.Schedule();
+        var conflicting = new RecapPolicyFacts([
+            model.AvailableSource,
+            model.AvailableSource with {
+                Source = new RecapSourceIntent(
+                    model.SourceSet,
+                    new string('b', 64)
+                )
+            }
+        ]);
+        var policy = new StubPolicy(model.ValidMaintainIntent());
+
+        RecapPlanIntentResult result =
+            RecapPlanEvaluator.EvaluateIntent(
+                schedule,
+                conflicting,
+                policy
+            );
+
+        AssertDefect(
+            result,
+            RecapPlanDefectCodes.PlanningFactsInvalid
+        );
+        Assert.Equal(0, policy.CallCount);
+    }
+
+    [Fact]
+    public void InheritAndMaintainAreExplicitIntents() {
+        TestModel model = TestModel.Create(twoBlocks: true);
+        RecapSourceIntent source = model.AvailableSource.Source;
+        var decision = new RecapPlanningPolicyDecision.Build(
+            model.Admission,
+            [
+                new RecapBlockPlanningDecision.Inherit(
+                    model.ClientId,
+                    source
+                ),
+                new RecapBlockPlanningDecision.Maintain(
+                    model.SelfId,
+                    new RecapPlanningMaintainSource.Empty(model.A1),
+                    [model.A5, model.A11, model.Admission],
+                    EmptyRecapPriorContext.Instance
+                )
+            ]
+        );
+
+        RecapPlanIntentResult result = model.EvaluateIntent(decision);
+
+        var ready =
+            Assert.IsType<RecapPlanIntentResult.IntentReady>(result);
+        Assert.IsType<RecapBlockPlanningDecision.Inherit>(
+            ready.Intent.Blocks[0]
+        );
+        Assert.IsType<RecapBlockPlanningDecision.Maintain>(
+            ready.Intent.Blocks[1]
+        );
+    }
+
+    [Fact]
+    public void RouteMustStrictlyIncreaseAndEndAtAdmission() {
+        TestModel model = TestModel.Create();
+
+        RecapPlanIntentResult nonIncreasing = model.EvaluateIntent(
+            model.MaintainIntent([
+                model.A11,
+                model.A5,
+                model.Admission
+            ])
+        );
+        RecapPlanIntentResult wrongFinal = model.EvaluateIntent(
+            model.MaintainIntent([model.A5, model.A11])
+        );
+
+        AssertDefect(nonIncreasing, RecapPlanDefectCodes.RouteInvalid);
+        AssertDefect(wrongFinal, RecapPlanDefectCodes.RouteInvalid);
+    }
+
+    [Fact]
+    public void ExactSourceCursorAndInlinePriorAreValidatedPreflight() {
+        TestModel model = TestModel.Create();
+        RecapPlanIntentResult.IntentReady intent =
+            model.IntentReady(model.ValidMaintainIntent(
+                new InlineRecapPriorContext(
+                    model.A5,
+                    ContextHeaderSnapshot.Empty
+                )
+            ));
+
+        RecapPlanResult result = RecapPlanEvaluator.ValidatePlan(
+            intent,
+            model.Preflight()
+        );
+
+        AssertDefect(
+            result,
+            RecapPlanDefectCodes.PriorContextInvalid
+        );
+    }
+
+    [Fact]
+    public void ExistingRouteStartsAtExactSourceCursorNotContainer() {
+        TestModel model = TestModel.Create();
+        RecapPlanIntentResult.IntentReady intent =
+            model.IntentReady(model.ValidMaintainIntent());
+
+        RecapPlanResult result = RecapPlanEvaluator.ValidatePlan(
+            intent,
+            model.Preflight()
+        );
+
+        Assert.IsType<RecapPlanResult.PlanReady>(result);
+    }
+
+    [Fact]
+    public void RouteAndCallLimitsProvideIntentBackpressure() {
+        TestModel routeLimited = TestModel.Create(
+            maxRouteEndpoints: 2
+        );
+        TestModel callLimited = TestModel.Create(
+            maxMaintainerCalls: 2
+        );
+
+        AssertDefect(
+            routeLimited.EvaluateIntent(
+                routeLimited.ValidMaintainIntent()
+            ),
+            RecapPlanDefectCodes.RouteLimitExceeded
+        );
+        AssertDefect(
+            callLimited.EvaluateIntent(
+                callLimited.ValidMaintainIntent()
+            ),
+            RecapPlanDefectCodes.CallLimitExceeded
+        );
+    }
+
+    [Fact]
+    public void RawStepAndBuildCostsProvidePreCallBackpressure() {
+        TestModel stepLimited = TestModel.Create(
+            maxRawEventsPerStep: 1,
+            maxRawEventsPerBuild: 10
+        );
+        TestModel buildLimited = TestModel.Create(
+            maxRawEventsPerStep: 10,
+            maxRawEventsPerBuild: 3
+        );
+
+        RecapPlanResult step = RecapPlanEvaluator.ValidatePlan(
+            stepLimited.IntentReady(
+                stepLimited.ValidMaintainIntent()
+            ),
+            stepLimited.Preflight([2, 1, 1])
+        );
+        RecapPlanResult build = RecapPlanEvaluator.ValidatePlan(
+            buildLimited.IntentReady(
+                buildLimited.ValidMaintainIntent()
+            ),
+            buildLimited.Preflight([2, 1, 1])
+        );
+
+        AssertDefect(
+            step,
+            RecapPlanDefectCodes.RawStepLimitExceeded
+        );
+        AssertDefect(
+            build,
+            RecapPlanDefectCodes.RawBuildLimitExceeded
+        );
+    }
+
+    [Fact]
+    public void CatalogContentLimitUsesNeutralHardLimit() {
         TestModel model = TestModel.Create();
         RecapBlockCatalogEntry entry = model.Config.Catalog[0];
 
@@ -94,163 +327,26 @@ public sealed class RecapPlanEvaluatorTests {
         );
     }
 
-    [Fact]
-    public void InheritAndMaintainAreExplicitValidatedDiscriminants() {
-        TestModel model = TestModel.Create(twoBlocks: true);
-        var inherit = new RecapBlockPlanningDecision.Inherit(
-            model.ClientId,
-            model.SourceSet,
-            TestModel.Envelope
-        );
-        var maintain = new RecapBlockPlanningDecision.Maintain(
-            model.SelfId,
-            new RecapPlanningMaintainSource.Empty(model.A1),
-            [model.A5, model.A11, model.Admission],
-            EmptyRecapPriorContext.Instance
-        );
-
-        RecapPlanResult result = model.Evaluate(
-            new RecapPlanningPolicyDecision.Build(
-                model.Admission,
-                [inherit, maintain]
-            )
-        );
-
-        var ready = Assert.IsType<RecapPlanResult.PlanReady>(result);
-        Assert.IsType<RecapBlockPlanningDecision.Inherit>(
-            ready.Blocks[0]
-        );
-        Assert.IsType<RecapBlockPlanningDecision.Maintain>(
-            ready.Blocks[1]
-        );
-    }
-
-    [Fact]
-    public void ExistingRouteStartsAtFrozenCursorNotSourceContainer() {
-        TestModel model = TestModel.Create();
-        var maintain = new RecapBlockPlanningDecision.Maintain(
-            model.ClientId,
-            new RecapPlanningMaintainSource.Existing(
-                model.SourceSet,
-                TestModel.Envelope
-            ),
-            [model.A5, model.A11, model.Admission],
-            EmptyRecapPriorContext.Instance
-        );
-
-        RecapPlanResult result = model.Evaluate(
-            new RecapPlanningPolicyDecision.Build(
-                model.Admission,
-                [maintain]
-            )
-        );
-
-        Assert.IsType<RecapPlanResult.PlanReady>(result);
-    }
-
-    [Fact]
-    public void RouteMustStrictlyIncreaseAndEndAtAdmission() {
-        TestModel model = TestModel.Create();
-        RecapPlanResult nonIncreasing = model.Evaluate(
-            model.Maintain([model.A11, model.A5, model.Admission])
-        );
-        RecapPlanResult wrongFinal = model.Evaluate(
-            model.Maintain([model.A5, model.A11])
-        );
-
-        AssertDefect(nonIncreasing, RecapPlanDefectCodes.RouteInvalid);
-        AssertDefect(wrongFinal, RecapPlanDefectCodes.RouteInvalid);
-    }
-
-    [Fact]
-    public void PolicyCannotInventRawAdmissionOrPublishedSourceFacts() {
-        TestModel model = TestModel.Create();
-        EventAddress invented = TestModel.Address(99);
-        var unknownSource =
-            new RecapBlockPlanningDecision.Inherit(
-                model.ClientId,
-                model.SourceSet,
-                new string('b', 64)
-            );
-
-        RecapPlanResult result = model.Evaluate(
-            new RecapPlanningPolicyDecision.Build(
-                invented,
-                [unknownSource]
-            )
-        );
-
-        AssertDefect(result, RecapPlanDefectCodes.AdmissionInvalid);
-        AssertDefect(result, RecapPlanDefectCodes.SourceInvalid);
-    }
-
-    [Fact]
-    public void InlinePriorMustBeAncestorOfReplayStart() {
-        TestModel model = TestModel.Create();
-        var invalidPrior = new InlineRecapPriorContext(
-            model.A5,
-            ContextHeaderSnapshot.Empty
-        );
-
-        RecapPlanResult result = model.Evaluate(
-            model.Maintain(
-                [model.A5, model.A11, model.Admission],
-                invalidPrior
-            )
-        );
-
-        AssertDefect(
-            result,
-            RecapPlanDefectCodes.PriorContextInvalid
-        );
-    }
-
-    [Fact]
-    public void RouteAndAggregateCallLimitsProvideBackpressure() {
-        TestModel routeLimited = TestModel.Create(
-            maxRouteEndpoints: 2
-        );
-        TestModel callLimited = TestModel.Create(
-            maxMaintainerCalls: 2
-        );
-        RecapPlanningPolicyDecision route =
-            routeLimited.Maintain([
-                routeLimited.A5,
-                routeLimited.A11,
-                routeLimited.Admission
-            ]);
-        RecapPlanningPolicyDecision calls =
-            callLimited.Maintain([
-                callLimited.A5,
-                callLimited.A11,
-                callLimited.Admission
-            ]);
-
-        AssertDefect(
-            routeLimited.Evaluate(route),
-            RecapPlanDefectCodes.RouteLimitExceeded
-        );
-        AssertDefect(
-            callLimited.Evaluate(calls),
-            RecapPlanDefectCodes.CallLimitExceeded
-        );
-    }
-
     private static void AssertDefect(
-        RecapPlanResult result,
+        object result,
         string code
     ) {
-        var unavailable =
-            Assert.IsType<RecapPlanResult.Unavailable>(result);
-        Assert.Contains(
-            unavailable.Defects,
-            defect => defect.Code == code
-        );
+        IReadOnlyList<RecapPlanDefect> defects = result switch {
+            RecapSchedulingResult.Unavailable unavailable =>
+                unavailable.Defects,
+            RecapPlanIntentResult.Unavailable unavailable =>
+                unavailable.Defects,
+            RecapPlanResult.Unavailable unavailable =>
+                unavailable.Defects,
+            _ => throw new Xunit.Sdk.XunitException(
+                $"Expected unavailable result, got {result.GetType().Name}."
+            )
+        };
+        Assert.Contains(defects, defect => defect.Code == code);
     }
 
     private sealed class StubPolicy(
-        Func<RecapPlanningPolicyContext, RecapPlanningPolicyDecision>
-            decide
+        RecapPlanningPolicyDecision decision
     ) : IRecapPlanningPolicy {
         public int CallCount { get; private set; }
 
@@ -258,18 +354,19 @@ public sealed class RecapPlanEvaluatorTests {
             RecapPlanningPolicyContext context
         ) {
             CallCount++;
-            return decide(context);
+            return decision;
         }
     }
 
     private sealed class TestModel {
-        public const string Envelope =
+        private const string Envelope =
             "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
             + "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 
         private TestModel(
             RecapPlannerConfig config,
-            RecapPlanningFacts facts,
+            RecapSchedulingFacts scheduling,
+            RecapBlockSourceIntent availableSource,
             RecapBlockId clientId,
             RecapBlockId selfId,
             EventAddress admission,
@@ -279,7 +376,8 @@ public sealed class RecapPlanEvaluatorTests {
             EventAddress a1
         ) {
             Config = config;
-            Facts = facts;
+            Scheduling = scheduling;
+            AvailableSource = availableSource;
             ClientId = clientId;
             SelfId = selfId;
             Admission = admission;
@@ -290,7 +388,8 @@ public sealed class RecapPlanEvaluatorTests {
         }
 
         public RecapPlannerConfig Config { get; }
-        public RecapPlanningFacts Facts { get; }
+        public RecapSchedulingFacts Scheduling { get; }
+        public RecapBlockSourceIntent AvailableSource { get; }
         public RecapBlockId ClientId { get; }
         public RecapBlockId SelfId { get; }
         public EventAddress Admission { get; }
@@ -300,9 +399,12 @@ public sealed class RecapPlanEvaluatorTests {
         public EventAddress A1 { get; }
 
         public static TestModel Create(
-            int rawGrowth = 5,
+            int trigger = 1,
+            int hardLimit = 10,
             int maxRouteEndpoints = 3,
             int maxMaintainerCalls = 3,
+            int maxRawEventsPerStep = 10,
+            int maxRawEventsPerBuild = 30,
             bool twoBlocks = false
         ) {
             EventAddress admission = Address(6);
@@ -365,31 +467,27 @@ public sealed class RecapPlanEvaluatorTests {
                 ];
             var config = new RecapPlannerConfig(
                 catalog,
-                rawGrowthTrigger: 3,
-                rawGrowthHardLimit: 10,
+                trigger,
+                hardLimit,
                 maxRouteEndpoints,
-                maxMaintainerCalls
+                maxMaintainerCalls,
+                maxRawEventsPerStep,
+                maxRawEventsPerBuild
             );
-            RecapPublishedBlockFact[] sources = [
-                new(
-                    clientId,
-                    clientTarget,
-                    sourceSet,
-                    Envelope,
-                    a1
-                )
-            ];
-            var facts = new RecapPlanningFacts(
+            var scheduling = new RecapSchedulingFacts(
                 admission,
                 lineage,
                 [.. addresses],
-                sources,
-                sourceSet,
-                rawGrowth
+                sourceSet
+            );
+            var availableSource = new RecapBlockSourceIntent(
+                clientId,
+                new RecapSourceIntent(sourceSet, Envelope)
             );
             return new TestModel(
                 config,
-                facts,
+                scheduling,
+                availableSource,
                 clientId,
                 selfId,
                 admission,
@@ -400,17 +498,33 @@ public sealed class RecapPlanEvaluatorTests {
             );
         }
 
-        public RecapPlanningPolicyDecision Maintain(
+        public RecapPlannerConfig NewConfig(
+            IReadOnlyList<RecapBlockCatalogEntry> catalog
+        ) => new(
+            catalog,
+            Config.RawGrowthTrigger,
+            Config.RawGrowthHardLimit,
+            Config.MaxRouteEndpointsPerBlock,
+            Config.MaxMaintainerCallsPerBuild,
+            Config.MaxRawEventsPerStep,
+            Config.MaxRawEventsPerBuild
+        );
+
+        public RecapSchedulingResult.Ready Schedule()
+            => Assert.IsType<RecapSchedulingResult.Ready>(
+                RecapPlanEvaluator.EvaluateSchedule(Config, Scheduling)
+            );
+
+        public RecapPlanningPolicyDecision.Build MaintainIntent(
             IReadOnlyList<EventAddress> route,
             RecapPriorContext? prior = null
-        ) => new RecapPlanningPolicyDecision.Build(
+        ) => new(
             Admission,
             [
                 new RecapBlockPlanningDecision.Maintain(
                     ClientId,
                     new RecapPlanningMaintainSource.Existing(
-                        SourceSet,
-                        Envelope
+                        AvailableSource.Source
                     ),
                     route,
                     prior ?? EmptyRecapPriorContext.Instance
@@ -418,15 +532,51 @@ public sealed class RecapPlanEvaluatorTests {
             ]
         );
 
-        public RecapPlanResult Evaluate(
+        public RecapPlanningPolicyDecision.Build ValidMaintainIntent(
+            RecapPriorContext? prior = null
+        ) => MaintainIntent([A5, A11, Admission], prior);
+
+        public RecapPlanIntentResult EvaluateIntent(
             RecapPlanningPolicyDecision decision
-        ) => RecapPlanEvaluator.Evaluate(
-            Config,
-            Facts,
-            new StubPolicy(_ => decision)
+        ) => RecapPlanEvaluator.EvaluateIntent(
+            Schedule(),
+            new RecapPolicyFacts([AvailableSource]),
+            new StubPolicy(decision)
         );
 
-        internal static EventAddress Address(ulong value)
+        public RecapPlanIntentResult.IntentReady IntentReady(
+            RecapPlanningPolicyDecision decision
+        ) => Assert.IsType<RecapPlanIntentResult.IntentReady>(
+            EvaluateIntent(decision)
+        );
+
+        public RecapPlanPreflightFacts Preflight(
+            IReadOnlyList<int>? costs = null
+        ) {
+            IReadOnlyList<int> counts = costs ?? [1, 1, 1];
+            EventAddress[] starts = [A1, A5, A11];
+            EventAddress[] ends = [A5, A11, Admission];
+            return new RecapPlanPreflightFacts(
+                [
+                    new RecapSourceReplayFact(
+                        ClientId,
+                        AvailableSource.Source,
+                        A1
+                    )
+                ],
+                [
+                    .. counts.Select((count, index) =>
+                        new RecapPlannedStepCost(
+                            ClientId,
+                            starts[index],
+                            ends[index],
+                            count
+                        ))
+                ]
+            );
+        }
+
+        private static EventAddress Address(ulong value)
             => new(
                 SizedPtr.FromPacked(value),
                 1,

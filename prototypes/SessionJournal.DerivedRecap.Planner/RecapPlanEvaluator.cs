@@ -4,66 +4,114 @@ using Atelia.SessionJournal.DerivedRecap.Store;
 namespace Atelia.SessionJournal.DerivedRecap.Planner;
 
 public static class RecapPlanEvaluator {
-    public static RecapPlanResult Evaluate(
+    public static RecapSchedulingResult EvaluateSchedule(
         RecapPlannerConfig config,
-        RecapPlanningFacts facts,
-        IRecapPlanningPolicy policy
+        RecapSchedulingFacts facts
     ) {
         ArgumentNullException.ThrowIfNull(config);
         ArgumentNullException.ThrowIfNull(facts);
-        ArgumentNullException.ThrowIfNull(policy);
-
-        List<RecapPlanDefect> factDefects = ValidateFacts(facts);
-        if (factDefects.Count != 0) {
-            return Unavailable(factDefects);
+        List<RecapPlanDefect> defects = ValidateSchedulingFacts(
+            facts,
+            out Dictionary<EventAddress, int> lineage
+        );
+        if (defects.Count != 0) {
+            return ScheduleUnavailable(defects);
         }
-        if (facts.RawGrowth > config.RawGrowthHardLimit) {
-            return Unavailable(
+
+        int rawGrowth = facts.LatestPublishedSetAnchor is { } latest
+            ? lineage[latest]
+            : facts.HeadToRoot.Count;
+        if (rawGrowth > config.RawGrowthHardLimit) {
+            return ScheduleUnavailable(
                 RecapPlanDefectCodes.RawGrowthHardLimitExceeded,
-                $"Raw growth {facts.RawGrowth} exceeds hard limit "
+                $"Derived raw growth {rawGrowth} exceeds hard limit "
                 + $"{config.RawGrowthHardLimit}."
             );
         }
-        if (facts.RawGrowth < config.RawGrowthTrigger) {
-            return new RecapPlanResult.NoBuild(
+        if (rawGrowth < config.RawGrowthTrigger) {
+            return new RecapSchedulingResult.NoBuild(
                 RecapPlanReasons.BelowRawGrowthTrigger
             );
         }
+        return new RecapSchedulingResult.Ready(
+            config,
+            facts,
+            rawGrowth
+        );
+    }
 
-        RecapPlanningPolicyDecision decision =
-            policy.Decide(new RecapPlanningPolicyContext(config, facts));
+    public static RecapPlanIntentResult EvaluateIntent(
+        RecapSchedulingResult.Ready schedule,
+        RecapPolicyFacts policyFacts,
+        IRecapPlanningPolicy policy
+    ) {
+        ArgumentNullException.ThrowIfNull(schedule);
+        ArgumentNullException.ThrowIfNull(policyFacts);
+        ArgumentNullException.ThrowIfNull(policy);
+        List<RecapPlanDefect> sourceDefects =
+            ValidateSourceIntents(schedule.Facts, policyFacts);
+        if (sourceDefects.Count != 0) {
+            return IntentUnavailable(sourceDefects);
+        }
+
+        RecapPlanningPolicyDecision decision = policy.Decide(
+            new RecapPlanningPolicyContext(
+                schedule.Config,
+                schedule.Facts,
+                policyFacts
+            )
+        );
         if (decision is null) {
-            return Unavailable(
+            return IntentUnavailable(
                 RecapPlanDefectCodes.PolicyDecisionInvalid,
                 "Planning policy returned null."
             );
         }
         if (decision is RecapPlanningPolicyDecision.NoBuild noBuild) {
             return string.IsNullOrWhiteSpace(noBuild.Reason)
-                ? Unavailable(
+                ? IntentUnavailable(
                     RecapPlanDefectCodes.PolicyDecisionInvalid,
                     "Planning policy returned an empty NoBuild reason."
                 )
-                : new RecapPlanResult.NoBuild(noBuild.Reason);
+                : new RecapPlanIntentResult.NoBuild(noBuild.Reason);
         }
 
         var build = (RecapPlanningPolicyDecision.Build)decision;
-        List<RecapPlanDefect> defects =
-            ValidateBuild(config, facts, build);
+        List<RecapPlanDefect> defects = ValidateIntent(
+            schedule,
+            policyFacts,
+            build
+        );
         return defects.Count == 0
-            ? new RecapPlanResult.PlanReady(
-                config,
-                build.SetAdmissionAnchor,
-                Array.AsReadOnly([.. build.Blocks])
-            )
-            : Unavailable(defects);
+            ? new RecapPlanIntentResult.IntentReady(schedule, build)
+            : IntentUnavailable(defects);
     }
 
-    private static List<RecapPlanDefect> ValidateFacts(
-        RecapPlanningFacts facts
+    public static RecapPlanResult ValidatePlan(
+        RecapPlanIntentResult.IntentReady ready,
+        RecapPlanPreflightFacts preflight
+    ) {
+        ArgumentNullException.ThrowIfNull(ready);
+        ArgumentNullException.ThrowIfNull(preflight);
+        List<RecapPlanDefect> defects =
+            ValidatePreflight(ready, preflight);
+        return defects.Count == 0
+            ? new RecapPlanResult.PlanReady(
+                ready.Schedule,
+                ready.Intent,
+                preflight
+            )
+            : PlanUnavailable(defects);
+    }
+
+    private static List<RecapPlanDefect> ValidateSchedulingFacts(
+        RecapSchedulingFacts facts,
+        out Dictionary<EventAddress, int> lineage
     ) {
         var defects = new List<RecapPlanDefect>();
+        lineage = new Dictionary<EventAddress, int>();
         if (facts.HeadToRoot.Count == 0
+            || facts.HeadToRoot[0] is null
             || facts.HeadToRoot[0].Address != facts.CapturedHead) {
             Add(
                 defects,
@@ -72,12 +120,10 @@ public static class RecapPlanEvaluator {
             );
             return defects;
         }
-
-        var lineage = new HashSet<EventAddress>();
         for (int index = 0; index < facts.HeadToRoot.Count; index++) {
             SessionCurrentLineageHeader? node =
                 facts.HeadToRoot[index];
-            if (node is null || !lineage.Add(node.Address)) {
+            if (node is null || !lineage.TryAdd(node.Address, index)) {
                 Add(
                     defects,
                     RecapPlanDefectCodes.PlanningFactsInvalid,
@@ -87,7 +133,7 @@ public static class RecapPlanEvaluator {
             }
             EventAddress? expectedParent =
                 index + 1 < facts.HeadToRoot.Count
-                    ? facts.HeadToRoot[index + 1].Address
+                    ? facts.HeadToRoot[index + 1]?.Address
                     : null;
             if (node.Parent != expectedParent) {
                 Add(
@@ -98,8 +144,9 @@ public static class RecapPlanEvaluator {
                 return defects;
             }
         }
+        Dictionary<EventAddress, int> lineageSnapshot = lineage;
         if (facts.ReplaySafeBoundaries.Any(
-                boundary => !lineage.Contains(boundary)
+                boundary => !lineageSnapshot.ContainsKey(boundary)
             )
             || facts.ReplaySafeBoundaries.Distinct().Count()
                 != facts.ReplaySafeBoundaries.Count) {
@@ -110,33 +157,45 @@ public static class RecapPlanEvaluator {
             );
         }
         if (facts.LatestPublishedSetAnchor is { } latest
-            && !lineage.Contains(latest)) {
+            && !lineage.ContainsKey(latest)) {
             Add(
                 defects,
                 RecapPlanDefectCodes.PlanningFactsInvalid,
                 "Latest Published anchor is outside the raw lineage."
             );
         }
-        var sourceKeys = new HashSet<(
-            RecapBlockId RecapBlockId,
-            EventAddress SetAnchor,
-            string Envelope
+        return defects;
+    }
+
+    private static List<RecapPlanDefect> ValidateSourceIntents(
+        RecapSchedulingFacts scheduling,
+        RecapPolicyFacts policyFacts
+    ) {
+        var defects = new List<RecapPlanDefect>();
+        HashSet<EventAddress> lineage = scheduling.HeadToRoot
+            .Where(static node => node is not null)
+            .Select(static node => node.Address)
+            .ToHashSet();
+        var keys = new HashSet<(
+            RecapBlockId BlockId,
+            EventAddress SetAnchor
         )>();
-        foreach (RecapPublishedBlockFact? source
-                 in facts.PublishedBlocks) {
-            if (source is null
-                || !sourceKeys.Add((
-                    source.RecapBlockId,
-                    source.SourceSetAnchor,
-                    source.SourcePublicationEnvelopeSha256
+        foreach (RecapBlockSourceIntent? item
+                 in policyFacts.AvailableSources) {
+            if (item is null
+                || item.RecapBlockId is null
+                || item.Source is null
+                || !keys.Add((
+                    item.RecapBlockId,
+                    item.Source.SourceSetAnchor
                 ))
-                || !lineage.Contains(source.SourceSetAnchor)
-                || !lineage.Contains(source.AbsorbedThrough)) {
+                || !lineage.Contains(item.Source.SourceSetAnchor)) {
                 Add(
                     defects,
                     RecapPlanDefectCodes.PlanningFactsInvalid,
-                    "Published block facts are null, duplicate, or "
-                    + "outside the raw lineage."
+                    "Source intents are null, off-lineage, duplicate, "
+                    + "or contain conflicting envelopes for one "
+                    + "(RecapBlockId, SourceSetAnchor)."
                 );
                 break;
             }
@@ -144,24 +203,20 @@ public static class RecapPlanEvaluator {
         return defects;
     }
 
-    private static List<RecapPlanDefect> ValidateBuild(
-        RecapPlannerConfig config,
-        RecapPlanningFacts facts,
+    private static List<RecapPlanDefect> ValidateIntent(
+        RecapSchedulingResult.Ready schedule,
+        RecapPolicyFacts policyFacts,
         RecapPlanningPolicyDecision.Build build
     ) {
         var defects = new List<RecapPlanDefect>();
-        if (build.Blocks is null) {
-            Add(
-                defects,
-                RecapPlanDefectCodes.PolicyDecisionInvalid,
-                "Build block decisions are null."
-            );
-            return defects;
-        }
-
+        RecapPlannerConfig config = schedule.Config;
+        RecapSchedulingFacts facts = schedule.Facts;
         Dictionary<EventAddress, int> lineage = facts.HeadToRoot
             .Select((node, index) => (node.Address, index))
-            .ToDictionary(static pair => pair.Address, static pair => pair.index);
+            .ToDictionary(
+                static pair => pair.Address,
+                static pair => pair.index
+            );
         var replaySafe = facts.ReplaySafeBoundaries.ToHashSet();
         if (!lineage.TryGetValue(
                 build.SetAdmissionAnchor,
@@ -183,7 +238,6 @@ public static class RecapPlanEvaluator {
                 "SetAdmissionAnchor is not strictly newer than latest Published."
             );
         }
-
         if (build.Blocks.Count != config.Catalog.Count) {
             Add(
                 defects,
@@ -193,7 +247,7 @@ public static class RecapPlanEvaluator {
             return defects;
         }
 
-        long maintainerCalls = 0;
+        long calls = 0;
         for (int index = 0; index < config.Catalog.Count; index++) {
             RecapBlockCatalogEntry catalog = config.Catalog[index];
             RecapBlockPlanningDecision? decision =
@@ -207,95 +261,90 @@ public static class RecapPlanEvaluator {
                 );
                 continue;
             }
-
             switch (decision) {
                 case RecapBlockPlanningDecision.Inherit inherit:
-                    _ = FindAndValidateSource(
-                        facts,
+                    ValidateChosenSource(
+                        policyFacts,
                         lineage,
-                        catalog,
-                        inherit.SourceSetAnchor,
-                        inherit.SourcePublicationEnvelopeSha256,
+                        catalog.RecapBlockId,
+                        inherit.Source,
                         admissionIndex,
                         defects
                     );
                     break;
                 case RecapBlockPlanningDecision.Maintain maintain:
-                    ValidateMaintain(
+                    ValidateMaintainIntent(
                         config,
-                        facts,
+                        policyFacts,
                         lineage,
                         replaySafe,
-                        catalog,
                         maintain,
                         admissionIndex,
                         defects
                     );
-                    maintainerCalls +=
-                        maintain.CatchUpThrough?.Count ?? 0;
-                    break;
-                default:
-                    Add(
-                        defects,
-                        RecapPlanDefectCodes.PolicyDecisionInvalid,
-                        "Unknown Recap block decision."
-                    );
+                    calls += maintain.CatchUpThrough.Count;
                     break;
             }
         }
-
-        if (maintainerCalls > config.MaxMaintainerCallsPerBuild) {
+        if (calls > config.MaxMaintainerCallsPerBuild) {
             Add(
                 defects,
                 RecapPlanDefectCodes.CallLimitExceeded,
-                $"Plan requires {maintainerCalls} Maintainer calls; "
-                + $"limit is {config.MaxMaintainerCallsPerBuild}."
+                $"Plan requires {calls} Maintainer calls; limit is "
+                + $"{config.MaxMaintainerCallsPerBuild}."
             );
         }
         return defects;
     }
 
-    private static void ValidateMaintain(
+    private static void ValidateMaintainIntent(
         RecapPlannerConfig config,
-        RecapPlanningFacts facts,
+        RecapPolicyFacts policyFacts,
         IReadOnlyDictionary<EventAddress, int> lineage,
         IReadOnlySet<EventAddress> replaySafe,
-        RecapBlockCatalogEntry catalog,
         RecapBlockPlanningDecision.Maintain maintain,
         int admissionIndex,
         List<RecapPlanDefect> defects
     ) {
-        EventAddress? replayStart = maintain.Source switch {
-            RecapPlanningMaintainSource.Existing existing =>
-                FindAndValidateSource(
-                    facts,
+        switch (maintain.Source) {
+            case RecapPlanningMaintainSource.Existing existing:
+                ValidateChosenSource(
+                    policyFacts,
                     lineage,
-                    catalog,
-                    existing.SourceSetAnchor,
-                    existing.SourcePublicationEnvelopeSha256,
+                    maintain.RecapBlockId,
+                    existing.Source,
                     admissionIndex,
                     defects
-                )?.AbsorbedThrough,
-            RecapPlanningMaintainSource.Empty empty =>
-                empty.ReplayStartExclusive,
-            null => null,
-            _ => null
-        };
-        if (replayStart is not { } start
-            || !lineage.TryGetValue(start, out int previousIndex)
-            || previousIndex <= admissionIndex
-            || !replaySafe.Contains(start)) {
-            Add(
-                defects,
-                RecapPlanDefectCodes.SourceInvalid,
-                "Maintain replay start is not a replay-safe strict "
-                + "ancestor of admission."
-            );
-            return;
+                );
+                break;
+            case RecapPlanningMaintainSource.Empty empty:
+                if (!lineage.TryGetValue(
+                        empty.ReplayStartExclusive,
+                        out int startIndex
+                    )
+                    || startIndex <= admissionIndex
+                    || !replaySafe.Contains(
+                        empty.ReplayStartExclusive
+                    )) {
+                    Add(
+                        defects,
+                        RecapPlanDefectCodes.SourceInvalid,
+                        "Empty replay start is not a replay-safe "
+                        + "strict ancestor of admission."
+                    );
+                }
+                break;
+            default:
+                Add(
+                    defects,
+                    RecapPlanDefectCodes.SourceInvalid,
+                    "Maintain source intent is invalid."
+                );
+                break;
         }
 
-        IReadOnlyList<EventAddress>? route = maintain.CatchUpThrough;
-        if (route is null || route.Count == 0) {
+        IReadOnlyList<EventAddress> route = maintain.CatchUpThrough;
+        if (route.Count == 0) {
             Add(
                 defects,
                 RecapPlanDefectCodes.RouteInvalid,
@@ -307,36 +356,280 @@ public static class RecapPlanEvaluator {
             Add(
                 defects,
                 RecapPlanDefectCodes.RouteLimitExceeded,
-                $"Block '{catalog.RecapBlockId}' has {route.Count} "
+                $"Block '{maintain.RecapBlockId}' has {route.Count} "
                 + "route endpoints."
             );
         }
+        int? previousIndex = null;
         foreach (EventAddress endpoint in route) {
             if (!lineage.TryGetValue(endpoint, out int endpointIndex)
-                || endpointIndex >= previousIndex
+                || previousIndex is int previous
+                   && endpointIndex >= previous
                 || !replaySafe.Contains(endpoint)) {
                 Add(
                     defects,
                     RecapPlanDefectCodes.RouteInvalid,
-                    $"Block '{catalog.RecapBlockId}' route is not "
+                    $"Block '{maintain.RecapBlockId}' route is not "
                     + "strictly increasing over replay-safe boundaries."
                 );
                 break;
             }
             previousIndex = endpointIndex;
         }
-        if (route[^1] != facts.HeadToRoot[admissionIndex].Address) {
+        if (route[^1] != buildAdmission()) {
             Add(
                 defects,
                 RecapPlanDefectCodes.RouteInvalid,
-                $"Block '{catalog.RecapBlockId}' final endpoint is "
+                $"Block '{maintain.RecapBlockId}' final endpoint is "
                 + "not SetAdmissionAnchor."
             );
         }
 
+        EventAddress buildAdmission()
+            => lineage.Single(pair => pair.Value == admissionIndex).Key;
+    }
+
+    private static void ValidateChosenSource(
+        RecapPolicyFacts policyFacts,
+        IReadOnlyDictionary<EventAddress, int> lineage,
+        RecapBlockId blockId,
+        RecapSourceIntent? chosen,
+        int admissionIndex,
+        List<RecapPlanDefect> defects
+    ) {
+        if (chosen is null
+            || !policyFacts.AvailableSources.Any(candidate =>
+                candidate.RecapBlockId == blockId
+                && candidate.Source == chosen)
+            || !lineage.TryGetValue(
+                chosen.SourceSetAnchor,
+                out int sourceIndex
+            )
+            || sourceIndex <= admissionIndex) {
+            Add(
+                defects,
+                RecapPlanDefectCodes.SourceInvalid,
+                $"Block '{blockId}' source is not an available exact "
+                + "pre-freeze intent or strict admission ancestor."
+            );
+        }
+    }
+
+    private static List<RecapPlanDefect> ValidatePreflight(
+        RecapPlanIntentResult.IntentReady ready,
+        RecapPlanPreflightFacts preflight
+    ) {
+        var defects = new List<RecapPlanDefect>();
+        RecapPlannerConfig config = ready.Schedule.Config;
+        RecapSchedulingFacts facts = ready.Schedule.Facts;
+        RecapPlanningPolicyDecision.Build build = ready.Intent;
+        ValidatePreflightShape(preflight, defects);
+        if (defects.Count != 0) {
+            return defects;
+        }
+        Dictionary<EventAddress, int> lineage = facts.HeadToRoot
+            .Select((node, index) => (node.Address, index))
+            .ToDictionary(
+                static pair => pair.Address,
+                static pair => pair.index
+            );
+        int admissionIndex = lineage[build.SetAdmissionAnchor];
+        var usedSourceFacts = new HashSet<RecapBlockId>();
+        var expectedCosts = new List<RecapPlannedStepCost>();
+
+        foreach (RecapBlockPlanningDecision decision in build.Blocks) {
+            switch (decision) {
+                case RecapBlockPlanningDecision.Inherit inherit:
+                    _ = ResolveSourceStart(
+                        inherit.RecapBlockId,
+                        inherit.Source,
+                        preflight,
+                        lineage,
+                        admissionIndex,
+                        usedSourceFacts,
+                        defects
+                    );
+                    break;
+                case RecapBlockPlanningDecision.Maintain maintain:
+                    EventAddress? start = maintain.Source switch {
+                        RecapPlanningMaintainSource.Empty empty =>
+                            empty.ReplayStartExclusive,
+                        RecapPlanningMaintainSource.Existing existing =>
+                            ResolveSourceStart(
+                                maintain.RecapBlockId,
+                                existing.Source,
+                                preflight,
+                                lineage,
+                                admissionIndex,
+                                usedSourceFacts,
+                                defects
+                            ),
+                        _ => null
+                    };
+                    if (start is not { } previous) {
+                        break;
+                    }
+                    ValidateRouteFromStart(
+                        maintain,
+                        previous,
+                        lineage,
+                        facts.ReplaySafeBoundaries.ToHashSet(),
+                        defects
+                    );
+                    ValidatePriorContext(
+                        maintain,
+                        previous,
+                        lineage,
+                        defects
+                    );
+                    foreach (EventAddress endpoint
+                             in maintain.CatchUpThrough) {
+                        expectedCosts.Add(new RecapPlannedStepCost(
+                            maintain.RecapBlockId,
+                            previous,
+                            endpoint,
+                            RawEventCount: 0
+                        ));
+                        previous = endpoint;
+                    }
+                    break;
+            }
+        }
+        if (usedSourceFacts.Count
+            != preflight.SourceReplayFacts.Count) {
+            Add(
+                defects,
+                RecapPlanDefectCodes.PlanningFactsInvalid,
+                "Preflight contains an unused or duplicate source replay fact."
+            );
+        }
+        ValidateCosts(config, expectedCosts, preflight, defects);
+        return defects;
+    }
+
+    private static void ValidatePreflightShape(
+        RecapPlanPreflightFacts preflight,
+        List<RecapPlanDefect> defects
+    ) {
+        var sourceIds = new HashSet<RecapBlockId>();
+        foreach (RecapSourceReplayFact? fact
+                 in preflight.SourceReplayFacts) {
+            if (fact is null
+                || fact.RecapBlockId is null
+                || fact.Source is null
+                || fact.AbsorbedThrough == default
+                || !sourceIds.Add(fact.RecapBlockId)) {
+                Add(
+                    defects,
+                    RecapPlanDefectCodes.PlanningFactsInvalid,
+                    "Source replay facts are null, incomplete, or "
+                    + "duplicate."
+                );
+                return;
+            }
+        }
+        var stepKeys = new HashSet<(
+            RecapBlockId BlockId,
+            EventAddress Start,
+            EventAddress End
+        )>();
+        foreach (RecapPlannedStepCost? cost in preflight.StepCosts) {
+            if (cost is null
+                || cost.RecapBlockId is null
+                || cost.StartExclusive == default
+                || cost.EndInclusive == default
+                || !stepKeys.Add((
+                    cost.RecapBlockId,
+                    cost.StartExclusive,
+                    cost.EndInclusive
+                ))) {
+                Add(
+                    defects,
+                    RecapPlanDefectCodes.PlanningFactsInvalid,
+                    "Step cost facts are null, incomplete, or duplicate."
+                );
+                return;
+            }
+        }
+    }
+
+    private static EventAddress? ResolveSourceStart(
+        RecapBlockId blockId,
+        RecapSourceIntent source,
+        RecapPlanPreflightFacts preflight,
+        IReadOnlyDictionary<EventAddress, int> lineage,
+        int admissionIndex,
+        HashSet<RecapBlockId> used,
+        List<RecapPlanDefect> defects
+    ) {
+        RecapSourceReplayFact? fact =
+            preflight.SourceReplayFacts.SingleOrDefault(candidate =>
+                candidate.RecapBlockId == blockId
+                && candidate.Source == source);
+        if (fact is null
+            || !used.Add(blockId)
+            || !lineage.TryGetValue(
+                source.SourceSetAnchor,
+                out int sourceIndex
+            )
+            || !lineage.TryGetValue(
+                fact.AbsorbedThrough,
+                out int absorbedIndex
+            )
+            || sourceIndex <= admissionIndex
+            || absorbedIndex < sourceIndex) {
+            Add(
+                defects,
+                RecapPlanDefectCodes.SourceInvalid,
+                $"Block '{blockId}' exact source replay fact is "
+                + "missing, duplicate, or has an invalid cursor."
+            );
+            return null;
+        }
+        return fact.AbsorbedThrough;
+    }
+
+    private static void ValidateRouteFromStart(
+        RecapBlockPlanningDecision.Maintain maintain,
+        EventAddress start,
+        IReadOnlyDictionary<EventAddress, int> lineage,
+        IReadOnlySet<EventAddress> replaySafe,
+        List<RecapPlanDefect> defects
+    ) {
+        if (!lineage.TryGetValue(start, out int previousIndex)
+            || !replaySafe.Contains(start)) {
+            Add(
+                defects,
+                RecapPlanDefectCodes.SourceInvalid,
+                $"Block '{maintain.RecapBlockId}' replay start is not "
+                + "an exact replay-safe lineage boundary."
+            );
+            return;
+        }
+        foreach (EventAddress endpoint in maintain.CatchUpThrough) {
+            if (!lineage.TryGetValue(endpoint, out int endpointIndex)
+                || endpointIndex >= previousIndex) {
+                Add(
+                    defects,
+                    RecapPlanDefectCodes.RouteInvalid,
+                    $"Block '{maintain.RecapBlockId}' first endpoint "
+                    + "is not strictly newer than its exact source cursor."
+                );
+                return;
+            }
+            previousIndex = endpointIndex;
+        }
+    }
+
+    private static void ValidatePriorContext(
+        RecapBlockPlanningDecision.Maintain maintain,
+        EventAddress start,
+        IReadOnlyDictionary<EventAddress, int> lineage,
+        List<RecapPlanDefect> defects
+    ) {
         switch (maintain.PriorContext) {
             case EmptyRecapPriorContext:
-                break;
+                return;
             case InlineRecapPriorContext inline
                 when inline.Snapshot is not null
                      && lineage.TryGetValue(
@@ -344,56 +637,88 @@ public static class RecapPlanEvaluator {
                          out int priorIndex
                      )
                      && priorIndex >= lineage[start]:
-                break;
-            case InlineRecapPriorContext:
-            case null:
+                return;
             default:
                 Add(
                     defects,
                     RecapPlanDefectCodes.PriorContextInvalid,
-                    $"Block '{catalog.RecapBlockId}' prior context is "
-                    + "not an ancestor of its replay start."
+                    $"Block '{maintain.RecapBlockId}' prior context "
+                    + "is not an ancestor of its replay start."
                 );
-                break;
+                return;
         }
     }
 
-    private static RecapPublishedBlockFact? FindAndValidateSource(
-        RecapPlanningFacts facts,
-        IReadOnlyDictionary<EventAddress, int> lineage,
-        RecapBlockCatalogEntry catalog,
-        EventAddress sourceSetAnchor,
-        string sourceEnvelope,
-        int admissionIndex,
+    private static void ValidateCosts(
+        RecapPlannerConfig config,
+        IReadOnlyList<RecapPlannedStepCost> expected,
+        RecapPlanPreflightFacts preflight,
         List<RecapPlanDefect> defects
     ) {
-        RecapPublishedBlockFact? source =
-            facts.PublishedBlocks.SingleOrDefault(candidate =>
-                candidate.RecapBlockId == catalog.RecapBlockId
-                && candidate.SourceSetAnchor == sourceSetAnchor
-                && string.Equals(
-                    candidate.SourcePublicationEnvelopeSha256,
-                    sourceEnvelope,
-                    StringComparison.Ordinal
-                ));
-        if (source is null
-            || source.Target != catalog.Target
-            || !lineage.TryGetValue(sourceSetAnchor, out int sourceIndex)
-            || sourceIndex <= admissionIndex
-            || !lineage.TryGetValue(
-                source.AbsorbedThrough,
-                out int absorbedIndex
-            )
-            || absorbedIndex < sourceIndex) {
+        if (expected.Count != preflight.StepCosts.Count) {
             Add(
                 defects,
-                RecapPlanDefectCodes.SourceInvalid,
-                $"Block '{catalog.RecapBlockId}' source does not "
-                + "match supplied exact Published facts."
+                RecapPlanDefectCodes.PlanningFactsInvalid,
+                "Preflight step costs do not cover the exact planned route."
             );
-            return null;
+            return;
         }
-        return source;
+        long total = 0;
+        var used = new HashSet<int>();
+        foreach (RecapPlannedStepCost planned in expected) {
+            int match = -1;
+            for (int index = 0;
+                 index < preflight.StepCosts.Count;
+                 index++) {
+                RecapPlannedStepCost candidate =
+                    preflight.StepCosts[index];
+                if (!used.Contains(index)
+                    && candidate.RecapBlockId
+                        == planned.RecapBlockId
+                    && candidate.StartExclusive
+                        == planned.StartExclusive
+                    && candidate.EndInclusive
+                        == planned.EndInclusive) {
+                    match = index;
+                    break;
+                }
+            }
+            if (match < 0) {
+                Add(
+                    defects,
+                    RecapPlanDefectCodes.PlanningFactsInvalid,
+                    "A planned route step has no exact raw cost fact."
+                );
+                continue;
+            }
+            used.Add(match);
+            int count = preflight.StepCosts[match].RawEventCount;
+            if (count <= 0) {
+                Add(
+                    defects,
+                    RecapPlanDefectCodes.PlanningFactsInvalid,
+                    "Raw step cost must be positive."
+                );
+                continue;
+            }
+            if (count > config.MaxRawEventsPerStep) {
+                Add(
+                    defects,
+                    RecapPlanDefectCodes.RawStepLimitExceeded,
+                    $"Raw step cost {count} exceeds limit "
+                    + $"{config.MaxRawEventsPerStep}."
+                );
+            }
+            total += count;
+        }
+        if (total > config.MaxRawEventsPerBuild) {
+            Add(
+                defects,
+                RecapPlanDefectCodes.RawBuildLimitExceeded,
+                $"Raw build cost {total} exceeds limit "
+                + $"{config.MaxRawEventsPerBuild}."
+            );
+        }
     }
 
     private static RecapBlockId GetBlockId(
@@ -406,12 +731,27 @@ public static class RecapPlanEvaluator {
         _ => throw new ArgumentOutOfRangeException(nameof(decision))
     };
 
-    private static RecapPlanResult.Unavailable Unavailable(
+    private static RecapSchedulingResult.Unavailable
+        ScheduleUnavailable(
         string code,
         string detail
-    ) => Unavailable([new RecapPlanDefect(code, detail)]);
+    ) => ScheduleUnavailable([new RecapPlanDefect(code, detail)]);
 
-    private static RecapPlanResult.Unavailable Unavailable(
+    private static RecapSchedulingResult.Unavailable
+        ScheduleUnavailable(
+        IReadOnlyList<RecapPlanDefect> defects
+    ) => new(Array.AsReadOnly([.. defects]));
+
+    private static RecapPlanIntentResult.Unavailable IntentUnavailable(
+        string code,
+        string detail
+    ) => IntentUnavailable([new RecapPlanDefect(code, detail)]);
+
+    private static RecapPlanIntentResult.Unavailable IntentUnavailable(
+        IReadOnlyList<RecapPlanDefect> defects
+    ) => new(Array.AsReadOnly([.. defects]));
+
+    private static RecapPlanResult.Unavailable PlanUnavailable(
         IReadOnlyList<RecapPlanDefect> defects
     ) => new(Array.AsReadOnly([.. defects]));
 

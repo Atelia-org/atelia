@@ -42,7 +42,9 @@ public sealed class RecapPlannerConfig {
         int rawGrowthTrigger,
         int rawGrowthHardLimit,
         int maxRouteEndpointsPerBlock,
-        int maxMaintainerCallsPerBuild
+        int maxMaintainerCallsPerBuild,
+        int maxRawEventsPerStep,
+        int maxRawEventsPerBuild
     ) {
         ArgumentNullException.ThrowIfNull(catalog);
         if (catalog.Count is < 1
@@ -70,11 +72,20 @@ public sealed class RecapPlannerConfig {
                 nameof(maxMaintainerCallsPerBuild)
             );
         }
+        if (maxRawEventsPerStep <= 0) {
+            throw new ArgumentOutOfRangeException(
+                nameof(maxRawEventsPerStep)
+            );
+        }
+        if (maxRawEventsPerBuild <= 0) {
+            throw new ArgumentOutOfRangeException(
+                nameof(maxRawEventsPerBuild)
+            );
+        }
 
         RecapBlockCatalogEntry[] snapshot = [.. catalog];
         var ids = new HashSet<RecapBlockId>();
         var targets = new HashSet<ContextHeaderBlockPath>();
-        var maintainers = new HashSet<string>(StringComparer.Ordinal);
         foreach (RecapBlockCatalogEntry entry in snapshot) {
             ArgumentNullException.ThrowIfNull(entry);
             if (!ids.Add(entry.RecapBlockId)) {
@@ -89,12 +100,6 @@ public sealed class RecapPlannerConfig {
                     nameof(catalog)
                 );
             }
-            if (!maintainers.Add(entry.MaintainerId)) {
-                throw new ArgumentException(
-                    "Recap catalog MaintainerIds must be unique.",
-                    nameof(catalog)
-                );
-            }
         }
 
         Catalog = Array.AsReadOnly(snapshot);
@@ -102,6 +107,8 @@ public sealed class RecapPlannerConfig {
         RawGrowthHardLimit = rawGrowthHardLimit;
         MaxRouteEndpointsPerBlock = maxRouteEndpointsPerBlock;
         MaxMaintainerCallsPerBuild = maxMaintainerCallsPerBuild;
+        MaxRawEventsPerStep = maxRawEventsPerStep;
+        MaxRawEventsPerBuild = maxRawEventsPerBuild;
     }
 
     public IReadOnlyList<RecapBlockCatalogEntry> Catalog { get; }
@@ -109,19 +116,52 @@ public sealed class RecapPlannerConfig {
     public int RawGrowthHardLimit { get; }
     public int MaxRouteEndpointsPerBlock { get; }
     public int MaxMaintainerCallsPerBuild { get; }
+    public int MaxRawEventsPerStep { get; }
+    public int MaxRawEventsPerBuild { get; }
 }
 
-public sealed record RecapPublishedBlockFact {
-    public RecapPublishedBlockFact(
-        RecapBlockId recapBlockId,
-        ContextHeaderBlockPath target,
-        EventAddress sourceSetAnchor,
-        string sourcePublicationEnvelopeSha256,
-        EventAddress absorbedThrough
+/// <summary>
+/// Raw-only facts used before source reads or policy execution.
+/// </summary>
+public sealed class RecapSchedulingFacts {
+    public RecapSchedulingFacts(
+        EventAddress capturedHead,
+        IReadOnlyList<SessionCurrentLineageHeader> headToRoot,
+        IReadOnlyList<EventAddress> replaySafeBoundaries,
+        EventAddress? latestPublishedSetAnchor
     ) {
-        RecapBlockId = recapBlockId
-            ?? throw new ArgumentNullException(nameof(recapBlockId));
-        Target = target ?? throw new ArgumentNullException(nameof(target));
+        if (capturedHead == default) {
+            throw new ArgumentException(
+                "Captured head cannot be default.",
+                nameof(capturedHead)
+            );
+        }
+        ArgumentNullException.ThrowIfNull(headToRoot);
+        ArgumentNullException.ThrowIfNull(replaySafeBoundaries);
+        CapturedHead = capturedHead;
+        HeadToRoot = Array.AsReadOnly([.. headToRoot]);
+        ReplaySafeBoundaries =
+            Array.AsReadOnly([.. replaySafeBoundaries]);
+        LatestPublishedSetAnchor = latestPublishedSetAnchor;
+    }
+
+    public EventAddress CapturedHead { get; }
+    public IReadOnlyList<SessionCurrentLineageHeader> HeadToRoot {
+        get;
+    }
+    public IReadOnlyList<EventAddress> ReplaySafeBoundaries { get; }
+    public EventAddress? LatestPublishedSetAnchor { get; }
+}
+
+/// <summary>
+/// A pre-freeze source choice. R1B2 must bind this exact set token to the
+/// Store's full double-read frozen source snapshot before plan validation.
+/// </summary>
+public sealed record RecapSourceIntent {
+    public RecapSourceIntent(
+        EventAddress sourceSetAnchor,
+        string sourcePublicationEnvelopeSha256
+    ) {
         if (sourceSetAnchor == default) {
             throw new ArgumentException(
                 "Source set anchor cannot be default.",
@@ -136,138 +176,84 @@ public sealed record RecapPublishedBlockFact {
                     nameof(sourcePublicationEnvelopeSha256)
                 )
                 : sourcePublicationEnvelopeSha256;
-        if (absorbedThrough == default) {
-            throw new ArgumentException(
-                "AbsorbedThrough cannot be default.",
-                nameof(absorbedThrough)
-            );
-        }
-        AbsorbedThrough = absorbedThrough;
     }
 
-    public RecapBlockId RecapBlockId { get; }
-    public ContextHeaderBlockPath Target { get; }
     public EventAddress SourceSetAnchor { get; }
     public string SourcePublicationEnvelopeSha256 { get; }
-    public EventAddress AbsorbedThrough { get; }
+}
+
+public sealed record RecapBlockSourceIntent(
+    RecapBlockId RecapBlockId,
+    RecapSourceIntent Source
+);
+
+public sealed class RecapPolicyFacts {
+    public RecapPolicyFacts(
+        IReadOnlyList<RecapBlockSourceIntent> availableSources
+    ) {
+        ArgumentNullException.ThrowIfNull(availableSources);
+        AvailableSources = Array.AsReadOnly([.. availableSources]);
+    }
+
+    public IReadOnlyList<RecapBlockSourceIntent> AvailableSources {
+        get;
+    }
 }
 
 /// <summary>
-/// Immutable facts captured by a future engine-bound adapter. These values
-/// are validation input, not raw or Store authority by themselves.
+/// The source cursor reproduced from the exact frozen source snapshot.
+/// This is a Planner-neutral integration fact, not a Store snapshot type.
 /// </summary>
-public sealed class RecapPlanningFacts {
-    public RecapPlanningFacts(
-        EventAddress capturedHead,
-        IReadOnlyList<SessionCurrentLineageHeader> headToRoot,
-        IReadOnlyList<EventAddress> replaySafeBoundaries,
-        IReadOnlyList<RecapPublishedBlockFact> publishedBlocks,
-        EventAddress? latestPublishedSetAnchor,
-        int rawGrowth
-    ) {
-        if (capturedHead == default) {
-            throw new ArgumentException(
-                "Captured head cannot be default.",
-                nameof(capturedHead)
-            );
-        }
-        ArgumentNullException.ThrowIfNull(headToRoot);
-        ArgumentNullException.ThrowIfNull(replaySafeBoundaries);
-        ArgumentNullException.ThrowIfNull(publishedBlocks);
-        if (rawGrowth < 0) {
-            throw new ArgumentOutOfRangeException(nameof(rawGrowth));
-        }
+public sealed record RecapSourceReplayFact(
+    RecapBlockId RecapBlockId,
+    RecapSourceIntent Source,
+    EventAddress AbsorbedThrough
+);
 
-        CapturedHead = capturedHead;
-        HeadToRoot = Array.AsReadOnly([.. headToRoot]);
-        ReplaySafeBoundaries =
-            Array.AsReadOnly([.. replaySafeBoundaries]);
-        PublishedBlocks = Array.AsReadOnly([.. publishedBlocks]);
-        LatestPublishedSetAnchor = latestPublishedSetAnchor;
-        RawGrowth = rawGrowth;
+public sealed record RecapPlannedStepCost(
+    RecapBlockId RecapBlockId,
+    EventAddress StartExclusive,
+    EventAddress EndInclusive,
+    int RawEventCount
+);
+
+public sealed class RecapPlanPreflightFacts {
+    public RecapPlanPreflightFacts(
+        IReadOnlyList<RecapSourceReplayFact> sourceReplayFacts,
+        IReadOnlyList<RecapPlannedStepCost> stepCosts
+    ) {
+        ArgumentNullException.ThrowIfNull(sourceReplayFacts);
+        ArgumentNullException.ThrowIfNull(stepCosts);
+        SourceReplayFacts =
+            Array.AsReadOnly([.. sourceReplayFacts]);
+        StepCosts = Array.AsReadOnly([.. stepCosts]);
     }
 
-    public EventAddress CapturedHead { get; }
-    public IReadOnlyList<SessionCurrentLineageHeader> HeadToRoot { get; }
-    public IReadOnlyList<EventAddress> ReplaySafeBoundaries { get; }
-    public IReadOnlyList<RecapPublishedBlockFact> PublishedBlocks {
+    public IReadOnlyList<RecapSourceReplayFact> SourceReplayFacts {
         get;
     }
-    public EventAddress? LatestPublishedSetAnchor { get; }
-    public int RawGrowth { get; }
+    public IReadOnlyList<RecapPlannedStepCost> StepCosts { get; }
 }
 
 public abstract record RecapPlanningMaintainSource {
     private RecapPlanningMaintainSource() {
     }
 
-    public sealed record Existing : RecapPlanningMaintainSource {
-        public Existing(
-            EventAddress sourceSetAnchor,
-            string sourcePublicationEnvelopeSha256
-        ) {
-            if (sourceSetAnchor == default) {
-                throw new ArgumentException(
-                    "Source set anchor cannot be default.",
-                    nameof(sourceSetAnchor)
-                );
-            }
-            SourceSetAnchor = sourceSetAnchor;
-            SourcePublicationEnvelopeSha256 =
-                string.IsNullOrWhiteSpace(
-                    sourcePublicationEnvelopeSha256
-                )
-                    ? throw new ArgumentException(
-                        "Source publication token cannot be empty.",
-                        nameof(sourcePublicationEnvelopeSha256)
-                    )
-                    : sourcePublicationEnvelopeSha256;
-        }
+    public sealed record Existing(RecapSourceIntent Source)
+        : RecapPlanningMaintainSource;
 
-        public EventAddress SourceSetAnchor { get; }
-        public string SourcePublicationEnvelopeSha256 { get; }
-    }
-
-    public sealed record Empty : RecapPlanningMaintainSource {
-        public Empty(EventAddress replayStartExclusive) {
-            if (replayStartExclusive == default) {
-                throw new ArgumentException(
-                    "Replay start cannot be default.",
-                    nameof(replayStartExclusive)
-                );
-            }
-            ReplayStartExclusive = replayStartExclusive;
-        }
-
-        public EventAddress ReplayStartExclusive { get; }
-    }
+    public sealed record Empty(EventAddress ReplayStartExclusive)
+        : RecapPlanningMaintainSource;
 }
 
 public abstract record RecapBlockPlanningDecision {
     private RecapBlockPlanningDecision() {
     }
 
-    public sealed record Inherit : RecapBlockPlanningDecision {
-        public Inherit(
-            RecapBlockId recapBlockId,
-            EventAddress sourceSetAnchor,
-            string sourcePublicationEnvelopeSha256
-        ) {
-            RecapBlockId = recapBlockId
-                ?? throw new ArgumentNullException(nameof(recapBlockId));
-            var source = new RecapPlanningMaintainSource.Existing(
-                sourceSetAnchor,
-                sourcePublicationEnvelopeSha256
-            );
-            SourceSetAnchor = source.SourceSetAnchor;
-            SourcePublicationEnvelopeSha256 =
-                source.SourcePublicationEnvelopeSha256;
-        }
-
-        public RecapBlockId RecapBlockId { get; }
-        public EventAddress SourceSetAnchor { get; }
-        public string SourcePublicationEnvelopeSha256 { get; }
-    }
+    public sealed record Inherit(
+        RecapBlockId RecapBlockId,
+        RecapSourceIntent Source
+    ) : RecapBlockPlanningDecision;
 
     public sealed record Maintain : RecapBlockPlanningDecision {
         public Maintain(
@@ -324,13 +310,13 @@ public abstract record RecapPlanningPolicyDecision {
 
 public sealed record RecapPlanningPolicyContext(
     RecapPlannerConfig Config,
-    RecapPlanningFacts Facts
+    RecapSchedulingFacts Scheduling,
+    RecapPolicyFacts PolicyFacts
 );
 
 /// <summary>
-/// Pure synchronous policy seam. Implementations choose among supplied
-/// facts; the evaluator independently validates every returned address,
-/// source, mode, route, prior context, and limit.
+/// Pure synchronous policy seam. Policy output remains an intent and is
+/// independently validated against supplied raw/source/preflight facts.
 /// </summary>
 public interface IRecapPlanningPolicy {
     RecapPlanningPolicyDecision Decide(
@@ -340,21 +326,82 @@ public interface IRecapPlanningPolicy {
 
 public sealed record RecapPlanDefect(string Code, string Detail);
 
+public abstract record RecapSchedulingResult {
+    private RecapSchedulingResult() {
+    }
+
+    public sealed record NoBuild(string Reason)
+        : RecapSchedulingResult;
+
+    public sealed record Unavailable(
+        IReadOnlyList<RecapPlanDefect> Defects
+    ) : RecapSchedulingResult;
+
+    public sealed record Ready : RecapSchedulingResult {
+        internal Ready(
+            RecapPlannerConfig config,
+            RecapSchedulingFacts facts,
+            int rawGrowth
+        ) {
+            Config = config;
+            Facts = facts;
+            RawGrowth = rawGrowth;
+        }
+
+        public RecapPlannerConfig Config { get; }
+        public RecapSchedulingFacts Facts { get; }
+        public int RawGrowth { get; }
+    }
+}
+
+public abstract record RecapPlanIntentResult {
+    private RecapPlanIntentResult() {
+    }
+
+    public sealed record NoBuild(string Reason)
+        : RecapPlanIntentResult;
+
+    public sealed record Unavailable(
+        IReadOnlyList<RecapPlanDefect> Defects
+    ) : RecapPlanIntentResult;
+
+    public sealed record IntentReady : RecapPlanIntentResult {
+        internal IntentReady(
+            RecapSchedulingResult.Ready schedule,
+            RecapPlanningPolicyDecision.Build intent
+        ) {
+            Schedule = schedule;
+            Intent = intent;
+        }
+
+        public RecapSchedulingResult.Ready Schedule { get; }
+        public RecapPlanningPolicyDecision.Build Intent { get; }
+    }
+}
+
 public abstract record RecapPlanResult {
     private RecapPlanResult() {
     }
 
-    public sealed record NoBuild(string Reason) : RecapPlanResult;
-
-    public sealed record PlanReady(
-        RecapPlannerConfig Config,
-        EventAddress SetAdmissionAnchor,
-        IReadOnlyList<RecapBlockPlanningDecision> Blocks
-    ) : RecapPlanResult;
-
     public sealed record Unavailable(
         IReadOnlyList<RecapPlanDefect> Defects
     ) : RecapPlanResult;
+
+    public sealed record PlanReady : RecapPlanResult {
+        internal PlanReady(
+            RecapSchedulingResult.Ready schedule,
+            RecapPlanningPolicyDecision.Build intent,
+            RecapPlanPreflightFacts preflight
+        ) {
+            Schedule = schedule;
+            Intent = intent;
+            Preflight = preflight;
+        }
+
+        public RecapSchedulingResult.Ready Schedule { get; }
+        public RecapPlanningPolicyDecision.Build Intent { get; }
+        public RecapPlanPreflightFacts Preflight { get; }
+    }
 }
 
 public static class RecapPlanDefectCodes {
@@ -374,6 +421,10 @@ public static class RecapPlanDefectCodes {
         nameof(RouteLimitExceeded);
     public const string CallLimitExceeded =
         nameof(CallLimitExceeded);
+    public const string RawStepLimitExceeded =
+        nameof(RawStepLimitExceeded);
+    public const string RawBuildLimitExceeded =
+        nameof(RawBuildLimitExceeded);
 }
 
 public static class RecapPlanReasons {
