@@ -7,8 +7,8 @@
 > **目标设计**：
 > [Event-addressed Derived Recap V4](event-addressed-derived-recap-v4-target-design.md)
 > **兼容策略**：不迁移、不双写、不读取 current DerivedMemory v2/v3
-> **当前推进点**：R0 Contracts + Publish/Read vertical 已完成；R1 Planner +
-> Build/Resume vertical 已完成 package-local plan lock，正在实施 R1A Store substrate
+> **当前推进点**：R0 Contracts + Publish/Read vertical、R1 Planner +
+> Build/Resume vertical 已完成；R2 尚未启动
 
 ## 0. 原则
 
@@ -390,6 +390,34 @@ durable replace rolling；final endpoint checkpoint成功后才安装 final。�
 R1 明确不实现 Published Restore、exact-invalid online self-heal、recursive source repair、
 per-step prior context、checkpoint chain、Tag/LLM relevance policy、background scrub、CLI/R3
 cutover或 current DerivedMemory compatibility bridge。
+
+### R1 完成记录（2026-07-30）
+
+R1 已按 `Store substrate → pure planning authority → executor → independent review →
+crash acceptance → tail-fix` 关闭：
+
+| Commit | 内容 |
+|---|---|
+| `354d9a60` | exact Published source snapshot、Store-owned multi-source freeze、Building-local authority、rolling/final component CAS |
+| `fe458721` / `581f50fb` | pure planning contracts，以及 Schedule → Intent → exact preflight authority seal |
+| `b2a82c06` | engine/store-bound Planner executor、Maintain/Inherit、Building Resume与R0 Publisher集成 |
+| `f70387af` | earliest real block cursor boundary、Resume pre-LLM raw semantics、typed Store failures、engine-bound manifest前raw-head gate |
+| `91a64026` | Galatea、rolling/final checkpoint、alpha/zeta、multi-source与manifest-last真实进程 crash acceptance |
+| `dddd71bd` | 被更新 Published超越的旧 Building 在 Maintainer调用前稳定拒绝 |
+
+最终 acceptance证明：
+
+- Galatea client block在 A8/A12 两次 Inherit 后仍保持真实 `AbsorbedThrough=A1`，随后按
+  A5 → A11 → A20 catch up；A5/A11不成为 Published set、ordinal或 source；
+- child process在第一个 rolling checkpoint 后终止，reopen只补两个 suffix；final checkpoint
+  后、final install前终止，reopen新增 Maintainer调用为 0；
+- alpha final healthy、zeta失败时，reopen不重跑 alpha；
+- 两个 distinct Published sources全部复制后统一复核 envelope；任一变化都不安装 Building；
+- hidden staging manifest写入与 Building directory promotion两侧的真实进程终止分别只暴露
+  Missing或完整 Building；
+- Resume只信 Building-local manifest/inputs；source后续变化不改变 frozen plan；
+- Published Restore、online self-heal、recursive repair、CLI与旧 DerivedMemory删除仍保留给
+  R2/R3。
 
 ## 3. R2：Exact-slot Restore + Online lifecycle
 
