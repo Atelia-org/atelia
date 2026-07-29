@@ -63,7 +63,7 @@ public sealed class DerivedRecapPublisher {
         }
     }
 
-    private static void RequireSameBinding(
+    internal static void RequireSameBinding(
         DerivedRecapStore store,
         SessionJournalEngine engine
     ) {

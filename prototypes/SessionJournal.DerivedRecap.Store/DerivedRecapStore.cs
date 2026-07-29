@@ -20,7 +20,8 @@ internal sealed record RecapStoreTestHooks(
     Action<string>? BeforeAtomicFileReplace = null,
     Action<string>? AfterAtomicFileReplace = null,
     Action<RecapIoPoint, string>? IoObserver = null,
-    Action? BeforeRestorePublicationRead = null
+    Action? BeforeRestorePublicationRead = null,
+    Action? BeforeRestoreEnvelopeRawHeadRecheck = null
 );
 
 public sealed class DerivedRecapStore {
@@ -1103,6 +1104,602 @@ public sealed class DerivedRecapStore {
         }
     }
 
+    public async ValueTask<PublishedCheckpointWriteResult>
+        AdvancePublishedCheckpointAsync(
+        PublishedRestoreHandle handle,
+        RecapBlockId blockId,
+        string expectedStateToken,
+        DerivedRecapBlock candidate,
+        CancellationToken cancellationToken = default
+    ) {
+        ArgumentNullException.ThrowIfNull(handle);
+        ArgumentNullException.ThrowIfNull(blockId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(
+            expectedStateToken
+        );
+        ArgumentNullException.ThrowIfNull(candidate);
+        EnsureScaffolding();
+        await using FileStream writeLock =
+            await _fileSystem.AcquireExclusiveLockAsync(
+                    _lockPath,
+                    cancellationToken
+                )
+                .ConfigureAwait(false);
+        string? storeUnavailable =
+            await TryGetUnavailableReasonAsync(cancellationToken)
+                .ConfigureAwait(false);
+        if (storeUnavailable is not null) {
+            return new PublishedCheckpointWriteResult.Unavailable(
+                [
+                    new RecapStructuralDefect(
+                        "StoreUnavailable",
+                        storeUnavailable
+                    )
+                ]
+            );
+        }
+        RestoreHandleRead authority =
+            await ReadRestoreHandleAsync(
+                    handle,
+                    cancellationToken
+                )
+                .ConfigureAwait(false);
+        if (authority.IsStale) {
+            return new PublishedCheckpointWriteResult.Stale(null);
+        }
+        if (authority.Capture is not { } capture) {
+            return new PublishedCheckpointWriteResult.Unavailable(
+                authority.Defects
+            );
+        }
+        RecapBlockPlan? plan = capture.Manifest.Blocks
+            .SingleOrDefault(item => item.RecapBlockId == blockId);
+        if (plan is not MaintainRecapBlockPlan maintain) {
+            return new PublishedCheckpointWriteResult.Unavailable(
+                [
+                    new RecapStructuralDefect(
+                        "PublishedCheckpointPlanUnavailable",
+                        $"Block '{blockId}' is not a Maintain plan in "
+                        + "the exact restore authority."
+                    )
+                ]
+            );
+        }
+        string publishedPath =
+            GetPublishedPath(handle.SetAdmissionAnchor);
+        RollingRecapCheckpointHealth checkpoint =
+            await InspectCheckpointHealthAsync(
+                    maintain,
+                    GetBlockFilePath(
+                        Path.Combine(publishedPath, "work"),
+                        blockId
+                    ),
+                    cancellationToken
+                )
+                .ConfigureAwait(false);
+        if (!string.Equals(
+                expectedStateToken,
+                checkpoint.StateToken,
+                StringComparison.Ordinal
+            )) {
+            return new PublishedCheckpointWriteResult.Stale(
+                checkpoint.StateToken
+            );
+        }
+        int candidateEndpoint = ValidateCheckpointCandidate(
+            maintain,
+            candidate
+        );
+        if (checkpoint
+                is RollingRecapCheckpointHealth.Healthy healthy) {
+            if (healthy.Block == candidate) {
+                return new PublishedCheckpointWriteResult
+                    .AlreadyCurrent(healthy.StateToken);
+            }
+            if (candidateEndpoint != healthy.EndpointIndex + 1) {
+                throw new InvalidDataException(
+                    "Published checkpoint candidate must advance "
+                    + "exactly one frozen catch-up endpoint."
+                );
+            }
+        }
+        else if (candidateEndpoint != 0) {
+            throw new InvalidDataException(
+                "A missing or unusable Published checkpoint must "
+                + "restart at the first frozen catch-up endpoint."
+            );
+        }
+
+        string path = GetBlockFilePath(
+            Path.Combine(publishedPath, "work"),
+            blockId
+        );
+        await _fileSystem.WriteFileAtomicReplaceAsync(
+                path,
+                DerivedRecapCodec.EncodeBlock(candidate),
+                () => _testHooks.BeforeAtomicFileReplace
+                    ?.Invoke(path),
+                () => _testHooks.AfterAtomicFileReplace
+                    ?.Invoke(path),
+                cancellationToken
+            )
+            .ConfigureAwait(false);
+        return new PublishedCheckpointWriteResult.Updated(
+            HealthyStateToken(candidate)
+        );
+    }
+
+    public async ValueTask<PublishedFinalWriteResult>
+        InstallPublishedReplacementAsync(
+        PublishedRestoreHandle handle,
+        RecapBlockId blockId,
+        string expectedStateToken,
+        DerivedRecapBlock candidate,
+        CancellationToken cancellationToken = default
+    ) {
+        ArgumentNullException.ThrowIfNull(handle);
+        ArgumentNullException.ThrowIfNull(blockId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(
+            expectedStateToken
+        );
+        ArgumentNullException.ThrowIfNull(candidate);
+        EnsureScaffolding();
+        await using FileStream writeLock =
+            await _fileSystem.AcquireExclusiveLockAsync(
+                    _lockPath,
+                    cancellationToken
+                )
+                .ConfigureAwait(false);
+        string? storeUnavailable =
+            await TryGetUnavailableReasonAsync(cancellationToken)
+                .ConfigureAwait(false);
+        if (storeUnavailable is not null) {
+            return new PublishedFinalWriteResult.Unavailable(
+                [
+                    new RecapStructuralDefect(
+                        "StoreUnavailable",
+                        storeUnavailable
+                    )
+                ]
+            );
+        }
+        RestoreHandleRead authority =
+            await ReadRestoreHandleAsync(
+                    handle,
+                    cancellationToken
+                )
+                .ConfigureAwait(false);
+        if (authority.IsStale) {
+            return new PublishedFinalWriteResult.Stale(null);
+        }
+        if (authority.Capture is not { } capture) {
+            return new PublishedFinalWriteResult.Unavailable(
+                authority.Defects
+            );
+        }
+        RecapBlockPlan? plan = capture.Manifest.Blocks
+            .SingleOrDefault(item => item.RecapBlockId == blockId);
+        if (plan is null) {
+            return new PublishedFinalWriteResult.Unavailable(
+                [
+                    new RecapStructuralDefect(
+                        "PublishedFinalPlanUnavailable",
+                        $"Block '{blockId}' is not in the exact "
+                        + "restore authority."
+                    )
+                ]
+            );
+        }
+        string publishedPath =
+            GetPublishedPath(handle.SetAdmissionAnchor);
+        FrozenRecapInputHealth input =
+            await InspectPublishedFrozenInputAsync(
+                    publishedPath,
+                    plan,
+                    lineage: null,
+                    cancellationToken
+                )
+                .ConfigureAwait(false);
+        ValidateBlockAgainstPlan(plan, candidate);
+        if (plan is MaintainRecapBlockPlan
+            && candidate.AbsorbedThrough
+                != capture.Manifest.SetAdmissionAnchor) {
+            throw new InvalidDataException(
+                "Published Maintain final block must absorb through "
+                + "SetAdmissionAnchor."
+            );
+        }
+        if (plan is InheritRecapBlockPlan
+            && input is FrozenRecapInputHealth.Healthy
+                candidateInput) {
+            ValidateFinalCandidate(
+                capture.Manifest,
+                plan,
+                candidateInput.Input,
+                candidate
+            );
+        }
+        RecapBlockCommitment? commitment = capture.Publication?
+            .BlockCommitments.Single(
+                item => item.RecapBlockId == blockId
+            );
+        PublishedFinalInspection final =
+            await InspectPublishedFinalAsync(
+                    publishedPath,
+                    capture.Manifest,
+                    plan,
+                    input,
+                    commitment,
+                    lineage: null,
+                    cancellationToken
+                )
+                .ConfigureAwait(false);
+        if (!string.Equals(
+                expectedStateToken,
+                final.Health.StateToken,
+                StringComparison.Ordinal
+            )) {
+            return new PublishedFinalWriteResult.Stale(
+                final.Health.StateToken
+            );
+        }
+        if (final.Health
+                is FinalRecapBlockHealth.Healthy healthyFinal) {
+            return healthyFinal.Block == candidate
+                ? new PublishedFinalWriteResult.AlreadyHealthy(
+                    healthyFinal.Block,
+                    healthyFinal.StateToken
+                )
+                : new PublishedFinalWriteResult.HealthyConflict(
+                    healthyFinal.Block,
+                    healthyFinal.StateToken
+                );
+        }
+        if (plan is InheritRecapBlockPlan
+            && input is not FrozenRecapInputHealth.Healthy) {
+            return new PublishedFinalWriteResult.Unavailable(
+                RestoreDependencyDefects(plan, input)
+            );
+        }
+        DerivedRecapFrozenInput? frozenInput =
+            input is FrozenRecapInputHealth.Healthy healthyInput
+                ? healthyInput.Input
+                : null;
+        if (plan is InheritRecapBlockPlan) {
+            ValidateFinalCandidate(
+                capture.Manifest,
+                plan,
+                frozenInput,
+                candidate
+            );
+        }
+        if (plan is MaintainRecapBlockPlan maintain
+            && (await InspectCheckpointHealthAsync(
+                    maintain,
+                    GetBlockFilePath(
+                        Path.Combine(publishedPath, "work"),
+                        blockId
+                    ),
+                    cancellationToken
+                )
+                .ConfigureAwait(false)
+                is not RollingRecapCheckpointHealth.Healthy checkpoint
+                || checkpoint.EndpointIndex
+                    != maintain.CatchUpThrough.Count - 1
+                || checkpoint.Block != candidate)) {
+            throw new InvalidDataException(
+                "Published Maintain final installation requires a "
+                + "healthy, byte-identical final-endpoint checkpoint."
+            );
+        }
+
+        bool replacingDamaged =
+            final.Health is FinalRecapBlockHealth.Damaged;
+        string path = GetBlockFilePath(
+            Path.Combine(publishedPath, "blocks"),
+            blockId
+        );
+        await _fileSystem.WriteFileAtomicReplaceAsync(
+                path,
+                DerivedRecapCodec.EncodeBlock(candidate),
+                () => _testHooks.BeforeAtomicFileReplace
+                    ?.Invoke(path),
+                () => _testHooks.AfterAtomicFileReplace
+                    ?.Invoke(path),
+                cancellationToken
+            )
+            .ConfigureAwait(false);
+        string stateToken = HealthyStateToken(candidate);
+        return replacingDamaged
+            ? new PublishedFinalWriteResult
+                .ReplacedDamaged(stateToken)
+            : new PublishedFinalWriteResult.Installed(stateToken);
+    }
+
+    internal async ValueTask<PublishedEnvelopeCommitResult>
+        CommitPublishedEnvelopeTrustedAsync(
+        PublishedRestoreHandle handle,
+        IReadOnlyDictionary<RecapBlockId, string>
+            expectedFinalStateTokens,
+        SessionCurrentLineageSnapshot lineage,
+        EventAddress expectedRawHead,
+        Func<EventAddress?> readCurrentHead,
+        CancellationToken cancellationToken = default
+    ) {
+        ArgumentNullException.ThrowIfNull(handle);
+        ArgumentNullException.ThrowIfNull(expectedFinalStateTokens);
+        ArgumentNullException.ThrowIfNull(lineage);
+        ArgumentNullException.ThrowIfNull(readCurrentHead);
+        if (lineage.CapturedHead != expectedRawHead) {
+            return new PublishedEnvelopeCommitResult.Stale(
+                "RawHeadChanged",
+                "Captured raw lineage does not match the caller-frozen "
+                + "expected head."
+            );
+        }
+        var expectedTokens =
+            new Dictionary<RecapBlockId, string>();
+        foreach ((RecapBlockId blockId, string token)
+                 in expectedFinalStateTokens) {
+            ArgumentNullException.ThrowIfNull(blockId);
+            ArgumentException.ThrowIfNullOrWhiteSpace(token);
+            expectedTokens.Add(blockId, token);
+        }
+
+        EnsureScaffolding();
+        await using FileStream writeLock =
+            await _fileSystem.AcquireExclusiveLockAsync(
+                    _lockPath,
+                    cancellationToken
+                )
+                .ConfigureAwait(false);
+        string? storeUnavailable =
+            await TryGetUnavailableReasonAsync(cancellationToken)
+                .ConfigureAwait(false);
+        if (storeUnavailable is not null) {
+            return EnvelopeUnavailable(
+                "StoreUnavailable",
+                storeUnavailable
+            );
+        }
+        IReadOnlyDictionary<EventAddress, int> lineageIndex;
+        try {
+            lineageIndex = ValidateAndIndexLineage(lineage);
+        }
+        catch (Exception exception)
+            when (exception is InvalidDataException
+                  or ArgumentException) {
+            return EnvelopeUnavailable(
+                "RawLineageInvalid",
+                exception.Message
+            );
+        }
+        if (!lineageIndex.TryGetValue(
+                handle.SetAdmissionAnchor,
+                out int targetIndex
+            )) {
+            return EnvelopeUnavailable(
+                "AdmissionAnchorOffLineage",
+                "SetAdmissionAnchor is outside the caller-frozen "
+                + "raw lineage."
+            );
+        }
+
+        RestoreHandleRead authority =
+            await ReadRestoreHandleAsync(
+                    handle,
+                    cancellationToken
+                )
+                .ConfigureAwait(false);
+        if (authority.IsStale) {
+            return new PublishedEnvelopeCommitResult.Stale(
+                "RestoreAuthorityChanged",
+                "Published restore authority changed after inspection."
+            );
+        }
+        if (authority.Capture is not { } capture) {
+            return new PublishedEnvelopeCommitResult.Unavailable(
+                authority.Defects
+            );
+        }
+        if (expectedTokens.Count != capture.Manifest.Blocks.Count
+            || capture.Manifest.Blocks.Any(
+                plan => !expectedTokens.ContainsKey(plan.RecapBlockId)
+            )) {
+            return EnvelopeUnavailable(
+                "ExpectedFinalRosterInvalid",
+                "Expected final state tokens do not cover the exact "
+                + "frozen plan roster."
+            );
+        }
+        var planDefects = new List<RecapStructuralDefect>();
+        ValidatePlanLineage(
+            capture.Manifest,
+            lineageIndex,
+            targetIndex,
+            planDefects
+        );
+        if (planDefects.Count != 0) {
+            return new PublishedEnvelopeCommitResult.Unavailable(
+                Array.AsReadOnly(planDefects.ToArray())
+            );
+        }
+
+        string publishedPath =
+            GetPublishedPath(handle.SetAdmissionAnchor);
+        var inputs =
+            new Dictionary<RecapBlockId, FrozenRecapInputHealth>();
+        foreach (RecapBlockPlan plan in capture.Manifest.Blocks) {
+            FrozenRecapInputHealth input =
+                await InspectPublishedFrozenInputAsync(
+                        publishedPath,
+                        plan,
+                        lineageIndex,
+                        cancellationToken
+                    )
+                    .ConfigureAwait(false);
+            inputs.Add(plan.RecapBlockId, input);
+        }
+        if (capture.Kind
+                == PublishedRestoreAuthorityKind.ManifestWitness) {
+            var witnessDefects = new List<RecapStructuralDefect>();
+            foreach (RecapBlockPlan plan in capture.Manifest.Blocks) {
+                FrozenRecapInputHealth input =
+                    inputs[plan.RecapBlockId];
+                if (input
+                    is FrozenRecapInputHealth.NotRequired
+                        or FrozenRecapInputHealth.Healthy) {
+                    continue;
+                }
+                witnessDefects.AddRange(
+                    RestoreDependencyDefects(plan, input)
+                );
+            }
+            if (witnessDefects.Count != 0) {
+                return new PublishedEnvelopeCommitResult.Unavailable(
+                    Array.AsReadOnly(witnessDefects.ToArray())
+                );
+            }
+        }
+
+        IReadOnlyDictionary<RecapBlockId, RecapBlockCommitment>
+            commitments = capture.Publication is { } publication
+                ? publication.BlockCommitments.ToDictionary(
+                    static item => item.RecapBlockId
+                )
+                : ImmutableDictionary<
+                    RecapBlockId,
+                    RecapBlockCommitment
+                >.Empty;
+        var blocks = new List<DerivedRecapBlock>(
+            capture.Manifest.Blocks.Count
+        );
+        var contributions = new List<SessionContextContribution>(
+            capture.Manifest.Blocks.Count
+        );
+        foreach (RecapBlockPlan plan in capture.Manifest.Blocks) {
+            commitments.TryGetValue(
+                plan.RecapBlockId,
+                out RecapBlockCommitment? commitment
+            );
+            PublishedFinalInspection final =
+                await InspectPublishedFinalAsync(
+                        publishedPath,
+                        capture.Manifest,
+                        plan,
+                        inputs[plan.RecapBlockId],
+                        commitment,
+                        lineageIndex,
+                        cancellationToken
+                    )
+                    .ConfigureAwait(false);
+            if (!string.Equals(
+                    expectedTokens[plan.RecapBlockId],
+                    final.Health.StateToken,
+                    StringComparison.Ordinal
+                )) {
+                return new PublishedEnvelopeCommitResult.Stale(
+                    "FinalComponentChanged",
+                    $"Final block '{plan.RecapBlockId}' changed "
+                    + "after inspection."
+                );
+            }
+            if (final.Health
+                    is not FinalRecapBlockHealth.Healthy healthy) {
+                return new PublishedEnvelopeCommitResult.Unavailable(
+                    final.Health
+                        is FinalRecapBlockHealth.Damaged damaged
+                            ? damaged.Defects
+                            : [
+                                new RecapStructuralDefect(
+                                    "FinalBlockMissing",
+                                    $"Final block '{plan.RecapBlockId}' "
+                                    + "is missing."
+                                )
+                            ]
+                );
+            }
+            blocks.Add(healthy.Block);
+            contributions.Add(ToContribution(healthy.Block));
+        }
+        try {
+            ImmutableArray<SessionContextContribution> normalized =
+                SessionContextContributionContract
+                    .ValidateAndNormalize(contributions);
+            RequireCanonicalContributionOrder(
+                contributions,
+                normalized
+            );
+        }
+        catch (InvalidDataException exception) {
+            return EnvelopeUnavailable(
+                "ContributionSetInvalid",
+                exception.Message
+            );
+        }
+
+        PublishedRecapSet next =
+            DerivedRecapCodec.CreatePublication(
+                capture.Manifest,
+                Array.AsReadOnly(blocks.ToArray())
+            );
+        byte[] nextBytes =
+            DerivedRecapCodec.EncodePublication(next);
+        if (capture.Publication is { } current
+            && nextBytes.SequenceEqual(
+                DerivedRecapCodec.EncodePublication(current)
+            )) {
+            return new PublishedEnvelopeCommitResult
+                .AlreadyCommitted(
+                    new PublishedRecapDescriptor(
+                        RefId,
+                        handle.SetAdmissionAnchor,
+                        current.EnvelopeSha256
+                    )
+                );
+        }
+
+        string publicationPath =
+            Path.Combine(publishedPath, "publication.json");
+        try {
+            await _fileSystem.WriteFileAtomicReplaceAsync(
+                    publicationPath,
+                    nextBytes,
+                    () => {
+                        _testHooks
+                            .BeforeRestoreEnvelopeRawHeadRecheck
+                            ?.Invoke();
+                        EventAddress? observed = readCurrentHead();
+                        if (observed != expectedRawHead) {
+                            throw new RestoreRawHeadChangedException(
+                                expectedRawHead,
+                                observed
+                            );
+                        }
+                        _testHooks.BeforeAtomicFileReplace
+                            ?.Invoke(publicationPath);
+                    },
+                    () => _testHooks.AfterAtomicFileReplace
+                        ?.Invoke(publicationPath),
+                    cancellationToken
+                )
+                .ConfigureAwait(false);
+        }
+        catch (RestoreRawHeadChangedException exception) {
+            return new PublishedEnvelopeCommitResult.Stale(
+                "RawHeadChanged",
+                exception.Message
+            );
+        }
+        return new PublishedEnvelopeCommitResult.Committed(
+            new PublishedRecapDescriptor(
+                RefId,
+                handle.SetAdmissionAnchor,
+                next.EnvelopeSha256
+            )
+        );
+    }
+
     internal string GetBuildingPathForTest(EventAddress anchor)
         => GetBuildingPath(anchor);
 
@@ -2004,6 +2601,77 @@ public sealed class DerivedRecapStore {
         }
     }
 
+    private async ValueTask<RestoreHandleRead>
+        ReadRestoreHandleAsync(
+        PublishedRestoreHandle handle,
+        CancellationToken cancellationToken
+    ) {
+        if (handle.RefId != RefId) {
+            return new RestoreHandleRead(
+                null,
+                IsStale: false,
+                [
+                    new RecapStructuralDefect(
+                        "RestoreHandleRefMismatch",
+                        "Restore handle belongs to another RefId."
+                    )
+                ]
+            );
+        }
+        string publishedPath =
+            GetPublishedPath(handle.SetAdmissionAnchor);
+        if (!PathEntryExists(publishedPath)) {
+            return new RestoreHandleRead(
+                null,
+                IsStale: false,
+                [
+                    new RecapStructuralDefect(
+                        "PublishedMembershipMissing",
+                        "Exact Published directory membership is "
+                        + "missing."
+                    )
+                ]
+            );
+        }
+        _fileSystem.EnsureSafeDescendant(publishedPath);
+        RestoreAuthorityRead authority =
+            await ReadRestoreAuthorityAsync(
+                    publishedPath,
+                    handle.SetAdmissionAnchor,
+                    cancellationToken
+                )
+                .ConfigureAwait(false);
+        if (authority.Capture is not { } capture) {
+            return new RestoreHandleRead(
+                null,
+                IsStale: false,
+                authority.Defects
+            );
+        }
+        bool exact = capture.Kind == handle.AuthorityKind
+            && string.Equals(
+                capture.AuthorityStateToken,
+                handle.AuthorityStateToken,
+                StringComparison.Ordinal
+            )
+            && string.Equals(
+                capture.Manifest.ManifestPayloadSha256,
+                handle.ManifestPayloadSha256,
+                StringComparison.Ordinal
+            );
+        return exact
+            ? new RestoreHandleRead(
+                capture,
+                IsStale: false,
+                Array.Empty<RecapStructuralDefect>()
+            )
+            : new RestoreHandleRead(
+                null,
+                IsStale: true,
+                Array.Empty<RecapStructuralDefect>()
+            );
+    }
+
     private async ValueTask<RestoreAuthorityRead>
         ReadManifestWitnessAsync(
         string publishedPath,
@@ -2075,7 +2743,7 @@ public sealed class DerivedRecapStore {
         InspectPublishedFrozenInputAsync(
         string publishedPath,
         RecapBlockPlan plan,
-        IReadOnlyDictionary<EventAddress, int> lineage,
+        IReadOnlyDictionary<EventAddress, int>? lineage,
         CancellationToken cancellationToken
     ) {
         string? expectedHash = GetExpectedInputHash(plan);
@@ -2137,42 +2805,47 @@ public sealed class DerivedRecapStore {
                     "Frozen input does not match its exact block plan."
                 );
             }
-            var semanticDefects = new List<RecapStructuralDefect>();
-            var index = new Dictionary<
-                RecapBlockId,
-                DerivedRecapFrozenInput
-            > {
-                [plan.RecapBlockId] = input
-            };
-            EventAddress? sourceAnchor = plan switch {
-                InheritRecapBlockPlan inherit =>
-                    inherit.SourceSetAnchor,
-                MaintainRecapBlockPlan {
-                    Source: ExistingRecapMaintainSource existing
-                } => existing.SourceSetAnchor,
-                _ => null
-            };
-            ValidateFrozenSourceCursor(
-                sourceAnchor,
-                plan,
-                index,
-                lineage,
-                semanticDefects
-            );
-            if (plan is MaintainRecapBlockPlan maintain) {
-                ValidateExistingMaintainRoute(
-                    maintain,
+            if (lineage is not null) {
+                var semanticDefects =
+                    new List<RecapStructuralDefect>();
+                var index = new Dictionary<
+                    RecapBlockId,
+                    DerivedRecapFrozenInput
+                > {
+                    [plan.RecapBlockId] = input
+                };
+                EventAddress? sourceAnchor = plan switch {
+                    InheritRecapBlockPlan inherit =>
+                        inherit.SourceSetAnchor,
+                    MaintainRecapBlockPlan {
+                        Source: ExistingRecapMaintainSource existing
+                    } => existing.SourceSetAnchor,
+                    _ => null
+                };
+                ValidateFrozenSourceCursor(
+                    sourceAnchor,
                     plan,
                     index,
                     lineage,
                     semanticDefects
                 );
-            }
-            if (semanticDefects.Count != 0) {
-                return new FrozenRecapInputHealth.Damaged(
-                    Array.AsReadOnly(semanticDefects.ToArray()),
-                    $"damaged:{input.PayloadSha256}"
-                );
+                if (plan is MaintainRecapBlockPlan maintain) {
+                    ValidateExistingMaintainRoute(
+                        maintain,
+                        plan,
+                        index,
+                        lineage,
+                        semanticDefects
+                    );
+                }
+                if (semanticDefects.Count != 0) {
+                    return new FrozenRecapInputHealth.Damaged(
+                        Array.AsReadOnly(
+                            semanticDefects.ToArray()
+                        ),
+                        $"damaged:{input.PayloadSha256}"
+                    );
+                }
             }
             return new FrozenRecapInputHealth.Healthy(
                 input,
@@ -2202,7 +2875,7 @@ public sealed class DerivedRecapStore {
         RecapBlockPlan plan,
         FrozenRecapInputHealth inputHealth,
         RecapBlockCommitment? commitment,
-        IReadOnlyDictionary<EventAddress, int> lineage,
+        IReadOnlyDictionary<EventAddress, int>? lineage,
         CancellationToken cancellationToken
     ) {
         string path = GetBlockFilePath(
@@ -2321,7 +2994,7 @@ public sealed class DerivedRecapStore {
         DerivedRecapSetManifest manifest,
         RecapBlockPlan plan,
         DerivedRecapBlock block,
-        IReadOnlyDictionary<EventAddress, int> lineage
+        IReadOnlyDictionary<EventAddress, int>? lineage
     ) {
         switch (plan) {
             case MaintainRecapBlockPlan
@@ -2330,7 +3003,8 @@ public sealed class DerivedRecapStore {
                 throw new InvalidDataException(
                     "Committed Maintain block is not mode-final."
                 );
-            case InheritRecapBlockPlan inherit:
+            case InheritRecapBlockPlan inherit
+                when lineage is not null:
                 if (!lineage.TryGetValue(
                         inherit.SourceSetAnchor,
                         out int sourceIndex
@@ -2426,6 +3100,23 @@ public sealed class DerivedRecapStore {
         );
     }
 
+    private static IReadOnlyList<RecapStructuralDefect>
+        RestoreDependencyDefects(
+        RecapBlockPlan plan,
+        FrozenRecapInputHealth input
+    ) {
+        if (input is FrozenRecapInputHealth.Damaged damaged) {
+            return damaged.Defects;
+        }
+        return [
+            new RecapStructuralDefect(
+                "RestoreDependencyMissing",
+                $"Block '{plan.RecapBlockId}' required frozen input "
+                + "is missing."
+            )
+        ];
+    }
+
     private static PublishedRestoreInspectionResult.Unavailable
         RestoreUnavailable(
         EventAddress admissionAnchor,
@@ -2435,6 +3126,12 @@ public sealed class DerivedRecapStore {
         admissionAnchor,
         [new RecapStructuralDefect(code, detail)]
     );
+
+    private static PublishedEnvelopeCommitResult.Unavailable
+        EnvelopeUnavailable(
+        string code,
+        string detail
+    ) => new([new RecapStructuralDefect(code, detail)]);
 
     private async ValueTask<IReadOnlyList<RecapStructuralDefect>>
         ValidatePublishedAsync(
@@ -3708,10 +4405,29 @@ public sealed class DerivedRecapStore {
         IReadOnlyList<RecapStructuralDefect> Defects
     );
 
+    private sealed record RestoreHandleRead(
+        RestoreAuthorityCapture? Capture,
+        bool IsStale,
+        IReadOnlyList<RecapStructuralDefect> Defects
+    );
+
     private sealed record PublishedFinalInspection(
         FinalRecapBlockHealth Health,
         bool IsCommitted
     );
+
+    private sealed class RestoreRawHeadChangedException
+        : InvalidOperationException {
+        public RestoreRawHeadChangedException(
+            EventAddress expected,
+            EventAddress? observed
+        ) : base(
+            "Raw SessionJournal head changed before Published Recap "
+            + $"envelope replacement. Expected '{expected}', observed "
+            + $"'{observed}'."
+        ) {
+        }
+    }
 
     private sealed record FrozenInputIndex(
         IReadOnlyDictionary<RecapBlockId, DerivedRecapFrozenInput>

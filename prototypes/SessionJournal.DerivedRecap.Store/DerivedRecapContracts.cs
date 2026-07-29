@@ -485,3 +485,68 @@ public abstract record PublishedRestoreInspectionResult {
         IReadOnlyList<RecapStructuralDefect> Defects
     ) : PublishedRestoreInspectionResult;
 }
+
+public abstract record PublishedCheckpointWriteResult {
+    private PublishedCheckpointWriteResult() {
+    }
+
+    public sealed record Updated(string StateToken)
+        : PublishedCheckpointWriteResult;
+
+    public sealed record AlreadyCurrent(string StateToken)
+        : PublishedCheckpointWriteResult;
+
+    public sealed record Stale(string? CurrentStateToken)
+        : PublishedCheckpointWriteResult;
+
+    public sealed record Unavailable(
+        IReadOnlyList<RecapStructuralDefect> Defects
+    ) : PublishedCheckpointWriteResult;
+}
+
+public abstract record PublishedFinalWriteResult {
+    private PublishedFinalWriteResult() {
+    }
+
+    public sealed record Installed(string StateToken)
+        : PublishedFinalWriteResult;
+
+    public sealed record ReplacedDamaged(string StateToken)
+        : PublishedFinalWriteResult;
+
+    public sealed record AlreadyHealthy(
+        DerivedRecapBlock Block,
+        string StateToken
+    ) : PublishedFinalWriteResult;
+
+    public sealed record HealthyConflict(
+        DerivedRecapBlock Existing,
+        string StateToken
+    ) : PublishedFinalWriteResult;
+
+    public sealed record Stale(string? CurrentStateToken)
+        : PublishedFinalWriteResult;
+
+    public sealed record Unavailable(
+        IReadOnlyList<RecapStructuralDefect> Defects
+    ) : PublishedFinalWriteResult;
+}
+
+public abstract record PublishedEnvelopeCommitResult {
+    private PublishedEnvelopeCommitResult() {
+    }
+
+    public sealed record Committed(PublishedRecapDescriptor Descriptor)
+        : PublishedEnvelopeCommitResult;
+
+    public sealed record AlreadyCommitted(
+        PublishedRecapDescriptor Descriptor
+    ) : PublishedEnvelopeCommitResult;
+
+    public sealed record Stale(string Code, string Detail)
+        : PublishedEnvelopeCommitResult;
+
+    public sealed record Unavailable(
+        IReadOnlyList<RecapStructuralDefect> Defects
+    ) : PublishedEnvelopeCommitResult;
+}
