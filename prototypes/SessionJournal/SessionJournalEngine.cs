@@ -51,6 +51,17 @@ public sealed class SessionJournalEngine : IDisposable {
     public RefId BranchRefId => _branchRefId;
     public bool IsReadOnly => _isReadOnly;
 
+    /// <summary>
+    /// Reads the exact current head of the selected Ref without projecting
+    /// history or decoding an event payload. Derived sidecars use this only
+    /// as a stale-boundary guard around callbacks; raw authority remains in
+    /// this engine.
+    /// </summary>
+    public EventAddress? ReadCurrentHead() {
+        ThrowIfDisposed();
+        return _journal.GetHead(_branchRefId);
+    }
+
     internal GoverningSetupResolutionDiagnostics LastGoverningSetupResolutionDiagnostics
         => _lastGoverningSetupResolutionDiagnostics;
 
