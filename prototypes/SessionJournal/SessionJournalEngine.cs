@@ -27,7 +27,6 @@ public sealed class SessionJournalEngine : IDisposable {
     private SessionGoverningSetup? _governingSetupCursor;
     private GoverningSetupResolutionDiagnostics _lastGoverningSetupResolutionDiagnostics;
     private SessionTailProjectionDiagnostics _lastTailProjectionDiagnostics;
-    private int _fullProjectionInvocationCount;
     private bool _disposed;
 
     private SessionJournalEngine(
@@ -60,14 +59,8 @@ public sealed class SessionJournalEngine : IDisposable {
     internal SessionTailProjectionDiagnostics LastTailProjectionDiagnostics
         => _lastTailProjectionDiagnostics;
 
-    internal int FullProjectionInvocationCount => _fullProjectionInvocationCount;
-
-    internal SessionJournalReadDiagnostics CaptureReadDiagnostics() {
-        SessionJournalReadDiagnostics reads = _reader.CaptureDiagnostics();
-        return reads with {
-            FullProjectionInvocationCount = _fullProjectionInvocationCount
-        };
-    }
+    internal SessionJournalReadDiagnostics CaptureReadDiagnostics()
+        => _reader.CaptureDiagnostics();
 
     internal SessionJournalPayloadLifetimeDiagnostics
         CapturePayloadLifetimeDiagnostics()
@@ -285,32 +278,6 @@ public sealed class SessionJournalEngine : IDisposable {
             visitor,
             _testHooks.AfterAuditSnapshotValidated,
             cancellationToken
-        );
-    }
-
-    public SessionProjection Project(CancellationToken cancellationToken = default) {
-        ThrowIfDisposed();
-        _fullProjectionInvocationCount++;
-        EventAddress? head = _journal.GetHead(_branchRefId);
-        if (head is null) { return SessionReducer.Empty; }
-
-        return SessionReducer.Reduce(ReadDecodedChronologicalEvents(head.Value, cancellationToken));
-    }
-
-    public SessionHistoryReplay ReplayHistory(CancellationToken cancellationToken = default) {
-        ThrowIfDisposed();
-        EventAddress? head = _journal.GetHead(_branchRefId);
-        if (head is null) { return SessionHistoryReplay.Empty; }
-
-        var messages = new List<AddressedSessionHistoryMessage>();
-        SessionProjection projection = SessionReducer.Reduce(
-            ReadDecodedChronologicalEvents(head.Value, cancellationToken),
-            messages
-        );
-        return new SessionHistoryReplay(
-            head,
-            messages.Count == 0 ? Array.AsReadOnly(Array.Empty<AddressedSessionHistoryMessage>()) : Array.AsReadOnly(messages.ToArray()),
-            projection.ExecutionState
         );
     }
 
@@ -804,13 +771,13 @@ public sealed class SessionJournalEngine : IDisposable {
                 governingSetup,
                 executionSeed
             );
-        var addressedMessages = new List<AddressedSessionHistoryMessage>();
+        var units = new List<SessionHistoryPlanningUnit>();
         var boundaries = new List<SessionHistoryPlanningBoundary>();
         SessionTailContextProjection.TailFoldResult folded =
             SessionTailContextProjection.FoldSuffix(
                 foldSeed,
                 events,
-                addressedMessages,
+                units,
                 boundaries
             );
         var endSetups = new SessionContextAnchorSetupReferences(
@@ -860,13 +827,6 @@ public sealed class SessionJournalEngine : IDisposable {
                 "Planning fold did not produce exact setup references for every replay-safe boundary."
             );
         }
-        var units = addressedMessages
-            .Select(static addressed => new SessionHistoryPlanningUnit(
-                addressed.Message,
-                addressed.SourceStartInclusive,
-                addressed.SourceEndInclusive
-            ))
-            .ToArray();
         SessionJournalReadDiagnostics after =
             _reader.CaptureDiagnostics();
         return new SessionHistoryPlanningWindow(
@@ -875,7 +835,7 @@ public sealed class SessionJournalEngine : IDisposable {
             startSetups,
             endSetups,
             reverseAddresses.AsReadOnly(),
-            Array.AsReadOnly(units),
+            units.AsReadOnly(),
             boundaries.AsReadOnly(),
             new System.Collections.ObjectModel.ReadOnlyDictionary<
                 EventAddress,
@@ -1281,25 +1241,6 @@ public sealed class SessionJournalEngine : IDisposable {
             journal.Dispose();
             throw;
         }
-    }
-
-    private IReadOnlyList<DecodedSessionEvent> ReadDecodedChronologicalEvents(
-        EventAddress head,
-        CancellationToken cancellationToken
-    ) {
-        IReadOnlyList<EventAddress> chain = _reader.ReadChronologicalChain(head, checkedRead: true, cancellationToken: cancellationToken).Unwrap();
-        var events = new List<DecodedSessionEvent>(chain.Count);
-        foreach (EventAddress address in chain) {
-            cancellationToken.ThrowIfCancellationRequested();
-            using SessionJournalEventFrame frame = _reader.ReadEvent(address).Unwrap();
-            ValidateSessionHeaderPreview(address, frame.Header);
-
-            var kind = (SessionEventKind)frame.Header.OpaqueEventKind;
-            object body = SessionEventCodec.Decode(kind, frame.Payload, out int version);
-            events.Add(new DecodedSessionEvent(kind, version, body, address, frame.Header.Parent));
-        }
-
-        return events;
     }
 
     private async Task<TurnResult> CompleteAwaitingAgentActionAsync(

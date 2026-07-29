@@ -231,7 +231,10 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
             await Assert.ThrowsAsync<SessionJournalTurnAbortedException>(
                 () => reopened.ResumeAsync(CancellationToken.None)
             );
-            Assert.Equal(SessionExecutionPhase.TurnFailed, reopened.Project().ExecutionState.Phase);
+            Assert.Equal(
+                SessionExecutionPhase.TurnFailed,
+                reopened.InspectExecutionBoundary().Phase
+            );
         }
 
         EventAddress restarted =
@@ -598,12 +601,9 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
                 recoveryPolicy: SessionUncertainCompletionRecoveryPolicy.RestartWithNewAttempt
             ) with { ContextCandidateSource = recoverySource }
         );
-        int projectionCountBeforeResume = reopened.FullProjectionInvocationCount;
-
         ResumeOutcome outcome = await reopened.ResumeAsync(CancellationToken.None);
 
         Assert.Equal("inline recovery", outcome.Message?.GetFlattenedText());
-        Assert.Equal(projectionCountBeforeResume, reopened.FullProjectionInvocationCount);
         Assert.Single(recoveryClient.Requests);
         Assert.Equal(0, recoverySource.SelectionCount);
         Assert.Equal(0, recoverySource.MaterializationCount);
@@ -649,7 +649,7 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
             );
             Assert.Equal(
                 SessionExecutionPhase.AwaitingCompletion,
-                engine.Project().ExecutionState.Phase
+                engine.InspectExecutionBoundary().Phase
             );
         }
 
@@ -680,18 +680,12 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
                 client,
                     contextCandidate: candidateFixture.Candidate
             ));
-            int projectionCountBeforeTailSend = reopened.FullProjectionInvocationCount;
-
             TurnResult next = await reopened.SendAsync(
                 "next tail observation",
                 CancellationToken.None
             );
 
             Assert.Equal("next tail answer", next.Message.GetFlattenedText());
-            Assert.Equal(
-                projectionCountBeforeTailSend,
-                reopened.FullProjectionInvocationCount
-            );
         }
         Assert.Equal(1, tool.Calls);
     }
@@ -725,7 +719,7 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
             Assert.Contains("do not exactly match", error.Message, StringComparison.Ordinal);
             Assert.Equal(
                 SessionExecutionPhase.AwaitingCompletionDispatch,
-                reopened.Project().ExecutionState.Phase
+                reopened.InspectExecutionBoundary().Phase
             );
         }
         Assert.Equal(0, sourceTool.Calls);

@@ -1,6 +1,6 @@
 # SessionJournal Tail Execution Recovery 后续化简候选
 
-> **状态**：Current Research / D0+D1 implemented；D2 deferred pending A0
+> **状态**：Historical Research / D0+D1 implemented；其余候选由 active P1～P6 计划取代
 > **日期**：2026-07-28
 > **当前基线**：
 > [Tail-only Execution Recovery Design](tail-execution-recovery-design.md)、
@@ -12,6 +12,12 @@
 > [候选 D0/D1：Dependency-closed Fold Seed 与共享 Operational Semantics](tail-operational-semantics-simplification-plan.md)
 > **目标**：保留 current trunk 上尚未实施的化简候选，并只为刚完成的 D0/D1 留下简短实施结论与
 > D2 决策；不以牺牲 crash recovery、raw provenance、exact reopen 或 bounded reads 换取表面简洁。
+
+> **P5 supersession（2026-07-29）**：本文关于保留 public full projection/replay 与 production
+> reducer 的判断已经过期。P5-D 已删除这些 surface；current tail、bounded planning 与 Offline
+> audit 边界以
+> [恢复与 DerivedMemory 化简计划](session-journal-recovery-and-derived-memory-simplification-plan.md)
+> 为准。
 
 ## 0. 当前结论
 

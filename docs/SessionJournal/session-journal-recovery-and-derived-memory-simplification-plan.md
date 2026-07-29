@@ -1,6 +1,6 @@
 # SessionJournal 恢复与 DerivedMemory 化简：阶段情况与后续计划
 
-> **状态**：Active Shape/Plan；P1～P4 已实施，P5～P6 待实施
+> **状态**：Active Shape/Plan；P1～P5 已实施，P6 待实施
 > **日期**：2026-07-29
 > **适用基线**：current Prepared v5 + DM-0～DM-8
 > **相关文档**：
@@ -272,8 +272,8 @@ context-window hard limit。
 
 ### 3.5 Full reducer 退出 online/runtime 主表面
 
-current online path 已经不调用 `Project()`。下一步不应再把 full reducer 作为 online recovery 的
-长期前提或验收真源。
+P5 已确认 online recovery 不需要 full reducer，并已从 public/runtime core 删除 full
+projection/replay surface 与 production reducer。
 
 目标边界：
 
@@ -291,14 +291,11 @@ SessionJournal offline/test companion
 
 不能直接删文件后让 untrusted import、offline validation 或 maintainer provenance 失去检查。当前
 production caller 已经很少：online path 和 DerivedMemory/Maintainers 均不调用 full projection。
-截至 P5-C，legacy importer 已切到 Offline report + exact lineage/setup 验证，production
-`Project()` / `ReplayHistory()` C# caller 均已归零；tests 中仍保留 reference-oracle caller。
-因此 P5-D 再决定：
-
-- 删除 public `Project()`；
-- 用 bounded planning APIs 替代 current `ReplayHistory()` callers；
-- 将 full reducer 与 offline validator 移入 companion tooling；
-- 或仅在 tests 编译 reference reducer。
+P5 已完成：legacy importer 使用 Offline report + exact lineage/setup 验证；public full
+projection surface 与 production reducer 已删除。head/phase inspection 使用
+`InspectExecutionBoundary()`，完整 pending/checkpoint recovery 使用 internal
+`ResolveExecutionTail()`，setup 使用 exact head `ResolveGoverningSetup()`，history/provenance
+使用 bounded `ReadHistoryPlanningWindow[At]()`。
 
 验收重点不是“测试还引用 reducer”，而是 online/reopen 路径在没有 reducer 的 production dependency
 时仍覆盖全部 legal/illegal tail 状态。
@@ -334,8 +331,8 @@ settlement/finalization。
 
 | Ownership | Current symbols / files | Current 职责 | Target 边界 |
 | --- | --- | --- | --- |
-| **online core** | `SessionJournalEngine`、`SessionExecutionTailResolver`、`SessionAuthoritativeGoverningSetupResolver`、`SessionTailContextProjection`、`SessionContextCandidateContracts`、Prepared v5 codec/manifest，位于 `prototypes/SessionJournal/` | raw append/CAS、tail execution recovery、governing setup、bounded suffix fold、store-neutral candidate validation、request preparation/dispatch 与 exact reopen；`Project()` / `ReplayHistory()` 及 reducer 仍物理共置 | 绑定 selected active branch 的稳定 `RefId`；只保留 tail/bounded online path 与 neutral contracts；不引用 concrete DerivedMemory/Maintainers；full replay 不再是 public/runtime surface |
-| **offline audit** | `SessionReducer`、`SessionJournalOfflineValidator`、`SessionJournal.Cli validate`、legacy importer verification 与 differential tests | checked root-to-head replay、全链 codec/状态审计、import smoke verification、tail-vs-full oracle | 迁到明确的 `SessionJournal.Offline` / `SessionJournal.Recovery` companion 或 test-only oracle；允许付出 full replay 成本，但不得成为 online fallback，也不得因拆分削弱 import/validation |
+| **online core** | `SessionJournalEngine`、`SessionExecutionTailResolver`、`SessionAuthoritativeGoverningSetupResolver`、`SessionTailContextProjection`、`SessionContextCandidateContracts`、Prepared v5 codec/manifest，位于 `prototypes/SessionJournal/` | raw append/CAS、tail execution recovery、governing setup、bounded suffix fold、store-neutral candidate validation、request preparation/dispatch 与 exact reopen | **P5 已完成**：绑定 selected active branch 的稳定 `RefId`；只保留 tail/bounded online path 与 neutral contracts；不引用 concrete DerivedMemory/Maintainers；无 public full projection/replay surface |
+| **offline audit** | `SessionJournalOfflineValidator`、`SessionJournal.Cli validate`、legacy importer verification 与 corruption tests | checked root-to-head scan、全链 codec/状态审计、import smoke verification、与 exact-head tail/setup 结果交叉验证 | **P5 已完成**：位于明确的 `SessionJournal.Offline` companion；允许付出 full scan 成本，但不是 online fallback，也不向 core 反向泄漏依赖 |
 | **derived maintenance** | `DerivedArtifactEpochPlanner`、`DerivedMemoryArtifactStore`、`DerivedArtifactSetStore`、`DerivedArtifactSetContextCandidateSource`、`DerivedMemoryOrchestrator` / `DerivedMemoryOrchestrationStore`、`DerivedMemoryMaintainerRunner`，位于 `prototypes/SessionJournal.DerivedMemory/`；concrete profiles 位于 `SessionJournal.Maintainers` | shared epoch、candidate production、durable settlements/finalization、atomic ArtifactSet publication、latest/index rebuild、strict repository validation 与 online lifecycle | 使用 RefId-derived lineage generation；保留 shared epoch、backpressure、最小 settlement/finalization 与 atomic publication；selection 只按 exact `nthPrevious`；是否删除重复 identity 字段留给 P6 证据 |
 | **composition** | `SessionJournal.Cli` / Agent Host、`SessionRuntime`、connection/tool/role provisioning、`DerivedMemoryOnlineLifecycleCoordinator` 装配 | 选择 completion/tool/provider、注入 candidate source/lifecycle/runtime selection、配置 planner/policy、运行 online turn 与 ops commands | 按 active branch name 选择并先打开 Engine，再把其 lifetime-bound lineage identity 绑定到 DerivedMemory；host 固定每 branch 的单 active memory domain；Agent ordinal 来自 durable setup，不再由 runtime 注入第二份 |
 
@@ -350,7 +347,7 @@ ownership 描述能力归属，不要求每类必须对应一个程序集。P5 �
 | **P2** | `DerivedMemoryRepository.cs`、`DerivedArtifactEpochPlanner.cs`、`DerivedArtifactSetStore.cs`、`DerivedArtifactSetContextCandidateSource.cs`、`DerivedMemoryOnlineLifecycleCoordinator.cs`、DerivedMemory contracts | planner/config/epoch/set/latest 均绑定 Engine 暴露的 RefId-derived identity；path-only authority check 退役；每 branch 独立 lineage | **新的 DerivedMemory storage/schema generation**；旧 branch-name key 与新 RefId key 不混读、不 fallback | derived planning/publication/rebuild/validation 接受或验证 exact engine lineage | `configure/plan/run/publish/rebuild/validate/run-online-turn` 以 `--branch` 为人类 selector，不再接受可与 Engine 冲突的自由 durable identity | epoch/set/integration/orchestration tests、CLI E2E；更新 DerivedMemory current docs | `SessionJournal.DerivedMemory`，随后 `SessionJournal.Cli` |
 | **P3** | `SessionJournalContracts.cs`、`SessionEventCodec.cs`、`SessionContextCandidateContracts.cs`、`SessionJournalEngine.cs`、DerivedMemory candidate source | durable `nthPrevious` 成为唯一 Agent-controlled ordinal；exact nth 不跳坏 set；zero-input bootstrap exception 保留，fresh-topology eligibility 由 P4 实现 | `RuntimeConfigSetup` body **v1 → v2**；只写/读 v2，不提供 v1 compatibility decoder | 删除 `SessionRuntime.ContextSelection`、`Latest` / `Budgeted` modes、candidate-list fallback 与 public `MaxCandidateCount` | host 只 provision 单 active domain/provider；不再解析或注入 runtime selection flags | codec/golden、governing setup、candidate route、Prepared reopen、CLI tests；更新 wire/current docs | `Atelia.SessionJournal`，同一 cutover 内跟进 DerivedMemory/CLI |
 | **P4** | `SessionJournalEngine` selection/cost helpers、`SessionHistoryTokenEstimator`、planner hard-limit/backpressure config、online coordinator | **已完成**：删除 raw/bootstrap/total token budgets；保留 exact canonical request UTF-8 byte guard 和 planner backpressure；以 raw header walk 判定 fresh-genesis 的 pre-append 与 exact/recovery bootstrap boundaries | `SessionCreated` body **v1 → v2**，required `origin=native|legacy-import`；无 v1 fallback。planner persisted shape/id/schema v2 不变 | 删除 `SessionContextBudgetOptions`；新增单一 `MaximumCanonicalRequestBytes`，不宣称 tokenizer | 删除三个 budget flags，新增 `--maximum-canonical-request-bytes`；planner threshold/backpressure flags 保留 | byte guard/bootstrap pre-append、post-observation crash/reopen、import/performance/backpressure tests；更新 estimator 与 CLI docs | `Atelia.SessionJournal` + composition（完成） |
-| **P5** | `SessionReducer.cs`、`SessionJournalOfflineValidator.cs`、`SessionJournalEngine.Project/ReplayHistory`、legacy importer、CLI `validate` | full reducer 退出 online/public core surface，但完整 raw/import audit 不降级 | 无 raw/derived wire 变化 | 删除 `Project()` / `ReplayHistory()` public surface；建立窄 offline/recovery API | importer/validate 切到 companion audit；online composition 不引用 full reducer | offline validator、import safety、corruption、differential tests；更新 usage/roadmap | 先建立 offline/recovery companion 与 callers，再从 `Atelia.SessionJournal` 删除 surface |
+| **P5** | `SessionJournalOfflineValidator`、checked audit scan、legacy importer、CLI `validate`、tail/bounded tests | **已完成**：full reducer 退出 online/public core surface，完整 raw/import audit 不降级 | 无 raw/derived wire 变化 | 已删除 full projection/replay public surface；保留窄 inspection、tail recovery、setup 与 bounded planning API | importer/validate 已切到 companion audit；online composition 不引用 full reducer | offline validator、import safety、corruption、tail/fold legality；usage/roadmap 已更新 | P5-A～D（完成） |
 | **P6** | `DerivedMemoryOrchestrationContracts.cs`、`DerivedMemoryOrchestrationStore.cs`、`DerivedMemoryOrchestrator.cs`、`DerivedArtifactSetStore.cs` | 已 settlement role 重启不重跑；保留最小 settlement、finalization 与 required-role atomic publication；只删经证据证明重复的 identity | 删除任何 persisted/hashed identity 字段都必须创建**独立 DerivedMemory schema generation**；不得借 P2 generation 偷渡或原地重解释 | orchestration API 可收窄，但 exact resume/publish identity 必须仍可验证 | orchestration run/resume/report 随最小 contract 收窄；不修改 raw wire | failpoint/resume、partial settlement、finalization-after-crash、atomic publish tests；更新 DerivedMemory ops docs | `Atelia.SessionJournal.DerivedMemory` |
 
 ### 5.3 Persistence / wire ledger
@@ -422,7 +419,7 @@ pre-P1 baseline 曾包含以下 raw authority split，P1 已解决并留下 focu
 | --- | --- | --- | --- |
 | `SessionJournal.Cli run-online-turn` | **P4 后**要求 `--branch`，ordinal 来自 governing setup；只保留可选 `--maximum-canonical-request-bytes`，三个旧 budget flags 已拒绝 | branch、ordinal、fresh bootstrap 与 request-size authority 已闭合 | P4（完成） |
 | DerivedMemory ops CLI | branch-local `configure/plan/run/publish/rebuild` 要求 `--branch`；`validate` 不带 branch 验证所有 active refs、带 branch 验证 exact selected ref；list 是 global inventory | P2 已闭合 branch name selector、durable RefId identity 与 Engine authority | P2（完成） |
-| raw Engine tests | 大量普通断言把 `Project()` 当作 head/state getter；另有 tail/performance tests 明确断言 0 full projection | 便捷调用不构成保留 public full projection 的理由 | P1 已补 branch tests；P5 替换便捷调用并迁 audit oracle |
+| raw Engine tests | P5 前大量普通断言把 full projection 当作 head/state getter；tail/performance tests 另设 invocation counter | 便捷调用不构成保留 public full projection 的理由 | **P5 已完成**：head/phase、tail state、setup、history/provenance 分别迁到窄 API；删除 invocation counter 与复制的 full reducer oracle |
 | candidate route tests | 已覆盖 durable exact ordinal、setup update/reopen、selection-time lifecycle、canonical-byte guard、native fresh bootstrap、observation crash/reopen 与 imported rejection | P3/P4 已删除 mode/list/fallback 与临时 budget coverage | P3/P4（完成） |
 | DerivedMemory planner/set tests | 已覆盖 A/B branch config/epoch/set/latest/provider 隔离、exact/global validation、archive + same-name recreate、foreign scope、rewind stale-future、pointer rebuild 与 raw authority | P2 branch-aware matrix 已形成；P3～P6 继续复用这些边界 | P2（完成） |
 | orchestration tests | 已覆盖 partial settlement、cancellation、optional omission、finalization 后续发布、pointer rebuild 与 corruption | P6 必须保留的 contract tests；字段化简不得降低 missing-role-only resume/atomic publication 覆盖 | P6 |
@@ -628,15 +625,16 @@ keys。
 
 ### P5：Full reducer 去生产化
 
-> **实施中**：P5-A 已在 core 提供 branch/exact-head checked normalized audit scan；
+> **已完成**：P5-A 已在 core 提供 branch/exact-head checked normalized audit scan；
 > P5-B 已将 offline validator 迁入 `Atelia.SessionJournal.Offline` companion，并让 CLI
 > `validate --branch` 使用无 context 物化的 forward audit fold；公开 report 只保留最小
 > phase/setup/counts 与版本化 semantic history/system-prompt hashes，不输出完整 execution
 > state、明文 prompt 或 tool execution/correlation 细节。P5-C 已让 legacy importer
 > 独立计算 source semantic commitment，并用 Offline report + exact branch/ref/head、
 > lineage/mapping 与 governing setup 双重验证 staging/published target；production
-> `Project()` / `ReplayHistory()` caller 已归零。core public surface、`SessionReducer`
-> 与剩余 test oracle 的删除/收口仍属于 P5-D，尚未完成。
+> legacy full projection/replay caller 已归零。P5-D 已删除 core public full projection/replay
+> surface、production reducer、相关 diagnostics，并把 tests 迁到 tail recovery、exact setup、
+> bounded planning window 与 Offline validation。
 
 目标：
 
@@ -649,9 +647,9 @@ keys。
 1. **P5-A/B 已完成**：建立正常依赖方向的 checked scan 与 Offline forward audit fold；
 2. **P5-C 已完成**：替换 importer 与 CLI tests 的 full projection 便捷 caller，并以
    source semantic commitment 保持 import 内容真实性；
-3. **P5-D 待办**：迁移/删除剩余 test callers，删除 public `Project()` /
-   `ReplayHistory()` surface 与无生产 caller 的 `SessionReducer`，保留必要的
-   test-only differential oracle。
+3. **P5-D 已完成**：迁移剩余 test callers，删除 public full projection/replay surface 与
+   无生产 caller 的 reducer；durable head matrix 以明确 phase/head 预期验证 tail resolver，
+   并与 bounded `FoldSuffix` 合法性对照，不再复制第二套正向 reducer oracle。
 
 验收：
 
@@ -687,15 +685,15 @@ failpoint、repository audit 与 set identity 证据逐项决定。任何 persis
 P0 contract inventory
   -> P1 branch-scoped raw Engine [done]
   -> P2 branch-aware DerivedMemory [done]
-  -> P3 durable NthPrevious
-  -> P4 budget/estimator cleanup
-  -> P5 full reducer de-production
+  -> P3 durable NthPrevious [done]
+  -> P4 budget/estimator cleanup [done]
+  -> P5 full reducer de-production [done]
   -> P6 orchestration simplification
 ```
 
 P1/P2 已把 raw Engine、DerivedMemory 与 composition 绑定到同一 lifetime/durable `RefId`
-authority。P3/P4 连续完成，避免同时保留旧
-runtime selection 与新 durable selection。P5 应在 bounded planning caller 已稳定后推进。P6 最后
+authority。P3/P4 已连续完成，避免同时保留旧 runtime selection 与新 durable selection；P5
+也已在 bounded planning caller 稳定后完成。P6 最后
 单独处理，因为它与 online tail recovery 正交；产品 contract 已确定为“成功 role 不重跑”，剩余
 工作是用证据收窄实现，而不是重新选择是否保留 crash resume。
 
@@ -736,5 +734,6 @@ runtime selection 与新 durable selection。P5 应在 bounded planning caller �
   durable finalization 与 atomic publication，重复 identity 的删除范围由 P6 证据决定。
 
 P1 raw Engine boundary、P2 branch-aware DerivedMemory、P3 durable exact ordinal 与 P4 strict
-fresh bootstrap/canonical-byte guard 已是现行 contract；P5～P6 尚未落实的方向继续以 current
+fresh bootstrap/canonical-byte guard 与 P5 full reducer 去生产化已是现行 contract；P6
+尚未落实的方向继续以 current
 implementation 作为可运行基线。

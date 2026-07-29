@@ -558,7 +558,7 @@ public sealed class DerivedArtifactEpochPlannerTests : IDisposable {
         DerivedArtifactSet inputSet;
         using (var engine = CreateSession(path)) {
             AppendTurns(engine, 5, "first");
-            rawHead = engine.Project().Head!.Value;
+            rawHead = engine.InspectExecutionBoundary().Head!.Value;
             DerivedMemoryRepository repository =
                 DerivedMemoryRepository.Open(path);
             _ = await repository.EpochPlanner.ConfigureAsync(
@@ -1483,10 +1483,6 @@ public sealed class DerivedArtifactEpochPlannerTests : IDisposable {
             after.HeaderPreviewReadCount
                 > before.HeaderPreviewReadCount
         );
-        Assert.Equal(
-            before.FullProjectionInvocationCount,
-            after.FullProjectionInvocationCount
-        );
     }
 
     [Fact]
@@ -1533,10 +1529,6 @@ public sealed class DerivedArtifactEpochPlannerTests : IDisposable {
         Assert.True(
             headerDelta < lineageLength * 3L,
             $"Expected one batched lineage setup pass plus incremental windows; got {headerDelta} headers for lineage {lineageLength}."
-        );
-        Assert.Equal(
-            before.FullProjectionInvocationCount,
-            after.FullProjectionInvocationCount
         );
     }
 

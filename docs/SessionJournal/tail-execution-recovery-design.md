@@ -14,6 +14,12 @@
 > [CS-3D6 Coherent-only Manifest 化简计划](done/coherent-request-manifest-simplification-plan.md)
 > **D7 协议修订**：[Prepared / Provider Attempt 对称化](done/prepared-provider-attempt-symmetry-design.md)
 
+> **P5 supersession（2026-07-29）**：本文保留 CS-3D 的实施过程和当时 differential
+> oracle 设计，不再描述 current full-audit API。P5-D 已删除 public full projection/replay、
+> production reducer 及其 invocation diagnostics；current correctness coverage 由明确预期的
+> durable tail matrix、bounded suffix fold、Offline checked audit 与 corruption tests 组成。
+> current runtime 仍严格使用本文建立的 tail-only execution recovery。
+
 > **Prepared v5 / DM-8 supersession（2026-07-28）**：本文下文出现的 Prepared v3、exact
 > activation、raw derived-set event 或 inline artifact identity 均为历史实现记录，已由
 > [Derived Memory Subsystem Implementation Plan](derived-memory-subsystem-implementation-plan.md) 的

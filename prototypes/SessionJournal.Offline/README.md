@@ -26,7 +26,7 @@ commitment；语义内容或 contribution 顺序变化则得到不同 commitment
 branch 是 `main`。
 
 P5-C 的 legacy importer 已从 source message 独立计算同一 public codec，再把期望值与
-target Offline report 比较；因此 import 验收不是 target 自算自证。production
-`Project()` / `ReplayHistory()` caller 已归零，但本阶段仍保留 core public surface 与
-`SessionReducer`，供后续 P5-D 删除及 test-only oracle 收口；它们不是 Offline validator
-或 importer 的依赖。
+target Offline report 比较；因此 import 验收不是 target 自算自证。P5-D 已删除 core 的
+public full projection/replay surface 与 production full reducer。Offline validator 和
+importer 继续只依赖 checked audit scan、exact-head tail recovery 与 governing setup，
+不会把 full history materialization 重新引入 online core。

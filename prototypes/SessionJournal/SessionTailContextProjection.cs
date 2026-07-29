@@ -39,7 +39,7 @@ internal static class SessionTailContextProjection {
     internal static TailFoldResult FoldSuffix(
         SessionDependencyClosedFoldSeed seed,
         IReadOnlyList<DecodedSessionEvent> events,
-        ICollection<AddressedSessionHistoryMessage>? addressedMessages = null,
+        ICollection<SessionHistoryPlanningUnit>? planningUnits = null,
         ICollection<SessionHistoryPlanningBoundary>?
             replaySafeBoundaries = null
     ) {
@@ -190,7 +190,7 @@ internal static class SessionTailContextProjection {
                         RequireBody<ObservationAcceptedBody>(ev).Content
                     );
                     context.Add(observation);
-                    addressedMessages?.Add(new AddressedSessionHistoryMessage(
+                    planningUnits?.Add(new SessionHistoryPlanningUnit(
                         observation,
                         ev.Address,
                         ev.Address
@@ -290,7 +290,7 @@ internal static class SessionTailContextProjection {
                     sourcePreparedAddress = null;
                     activeAttemptAddress = null;
                     context.Add(action);
-                    addressedMessages?.Add(new AddressedSessionHistoryMessage(
+                    planningUnits?.Add(new SessionHistoryPlanningUnit(
                         action,
                         ev.Address,
                         ev.Address
@@ -392,8 +392,8 @@ internal static class SessionTailContextProjection {
                         ToolResultsMessage toolResults =
                             ProjectToolResults(openAction, observedResults);
                         context.Add(toolResults);
-                        addressedMessages?.Add(
-                            new AddressedSessionHistoryMessage(
+                        planningUnits?.Add(
+                            new SessionHistoryPlanningUnit(
                                 toolResults,
                                 firstObservedToolResultAddress.Value,
                                 lastObservedToolResultAddress.Value

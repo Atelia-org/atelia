@@ -152,8 +152,7 @@ internal sealed class SessionJournalEventReader {
                 ref _logicalPayloadByteCount
             ),
             ChronologicalChainReadCount: Interlocked.Read(ref _chronologicalChainReadCount),
-            ChronologicalEventCount: Interlocked.Read(ref _chronologicalEventCount),
-            FullProjectionInvocationCount: 0
+            ChronologicalEventCount: Interlocked.Read(ref _chronologicalEventCount)
         );
 
     internal SessionJournalReaderStorageDiagnostics

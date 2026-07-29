@@ -6,6 +6,13 @@
 > [Tail-only Execution Recovery Design](tail-execution-recovery-design.md)、
 > [SessionJournal 事件源会话与长期上下文架构路线图](event-sourced-session-architecture-roadmap.md)
 
+> **P5 supersession（2026-07-29）**：本文正文混合记录多轮历史方案。出现的 public full
+> projection/replay、production reducer 和 full-reference-oracle 均不是 current contract；
+> P5-D 已删除这些 surface。current configuration access 使用 exact-head
+> `ResolveGoverningSetup()`，execution 使用 tail recovery，history/provenance 使用 bounded
+> planning window；全链审计仅在 `SessionJournal.Offline` companion 中执行。现行边界见
+> [恢复与 DerivedMemory 化简计划](session-journal-recovery-and-derived-memory-simplification-plan.md)。
+
 > **DM-8 边界说明（2026-07-28）**：本文下文记录的 raw derived-set setup checkpoint 是
 > CS-3D5～D7 的历史实现，不再是 current contract。raw activation 已删除；近头 Prepared
 > 提供 raw setup hint，首次 Prepared 前可由可重建 DerivedMemory candidate hint 加速，但

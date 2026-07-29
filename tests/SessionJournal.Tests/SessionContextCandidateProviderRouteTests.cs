@@ -304,7 +304,6 @@ public sealed class SessionContextCandidateProviderRouteTests : IDisposable {
             );
             Assert.Equal(2, source.SelectionCount);
             Assert.Equal(0, source.MaterializationCount);
-            Assert.Equal(0, engine.FullProjectionInvocationCount);
         }
         EventAddress prepared = Assert.Single(
             ReadAddressesByKind(
@@ -335,7 +334,6 @@ public sealed class SessionContextCandidateProviderRouteTests : IDisposable {
         Assert.True(outcome.Advanced);
         Assert.Equal("resumed", outcome.Message!.GetFlattenedText());
         Assert.Equal(1, client.Calls);
-        Assert.Equal(0, reopened.FullProjectionInvocationCount);
         Assert.Equal(2, source.SelectionCount);
     }
 
@@ -674,7 +672,6 @@ public sealed class SessionContextCandidateProviderRouteTests : IDisposable {
                 "choose older",
                 CancellationToken.None
             );
-            Assert.Equal(0, reopened.FullProjectionInvocationCount);
         }
 
         Assert.All(
@@ -803,7 +800,6 @@ public sealed class SessionContextCandidateProviderRouteTests : IDisposable {
             "test-candidate-0",
             source.MaterializedHandles
         );
-        Assert.Equal(0, engine.FullProjectionInvocationCount);
     }
 
     [Fact]
@@ -906,7 +902,6 @@ public sealed class SessionContextCandidateProviderRouteTests : IDisposable {
             }
         );
         Assert.Equal(6, source.SelectionCount);
-        Assert.Equal(0, engine.FullProjectionInvocationCount);
     }
 
     [Fact]

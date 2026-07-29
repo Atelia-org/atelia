@@ -1,6 +1,6 @@
 # SessionJournal 事件源会话与长期上下文架构路线图
 
-> **状态**：Architecture Roadmap / current baseline CS-3D7 + DM-0～DM-8 / active target P1～P6
+> **状态**：Architecture Roadmap / current baseline P1～P5 + Prepared v5 + DM-0～DM-8 / active target P6
 > **日期**：2026-07-29
 > **底层依赖**：[EventJournal 功能需求与粗粒度设计基线](../EventJournal/event-journal-requirements-and-design.md)
 > **相关既有研究**：[Dynamic Logical Context Store for Long-Running Role-Play Agents](../Galatea/backlog/idea/dynamic-logical-context-store-for-long-running-role-play-agents.md)
@@ -21,7 +21,7 @@
 > contract 只保留 governing `RuntimeConfigSetup` v2 中 durable `derivedContext.nthPrevious`
 > 驱动的 exact single-candidate selection，无 automatic fallback。current architecture
 > 同时保留 existing active branch + lifetime-bound `RefId` 与 shared epoch backpressure；
-> 把 full replay/audit 迁出 online core 仍是后续目标。P1～P6 的 cutover 与验收以
+> P5 已把 full replay/audit 迁出 online core public/runtime surface。P6 的 cutover 与验收以
 > [化简计划](session-journal-recovery-and-derived-memory-simplification-plan.md)为准。
 
 ## 1. 文档定位
@@ -529,11 +529,10 @@ current raw protocol 已包含：
 - `AgentActionProduced` / `ImportedAgentAction`：区分 live completion 与 legacy/manual import。
 - `ToolExecutionStarted` / `ToolResultObserved`：在外部工具调用前固定 intent，调用后记录观察结果。
 
-在线恢复走 `SessionExecutionTailResolver` 的 tail-only 路径，不默认 full replay。current
-`SessionReducer` / `Project()` / `ReplayHistory()` 仍提供显式 full audit 与 differential tests，
-但 P5 active target 会把有价值的 full audit/import/recovery checks 迁入 offline/recovery companion，
-并从 online core public/runtime surface 删除 full projection。它从来不是 tail recovery 的运行时
-fallback。current 状态流可概括为：
+在线恢复走 `SessionExecutionTailResolver` 的 tail-only 路径。P5 已删除 public full
+projection/replay 与 production full reducer；有价值的 raw audit/import checks 位于
+`SessionJournal.Offline` companion，history/provenance caller 使用 bounded planning window。
+Offline audit 从来不是 tail recovery 的运行时 fallback。current 状态流可概括为：
 
 ```mermaid
 stateDiagram-v2

@@ -31,8 +31,7 @@ public sealed class SessionJournalRequestContextPerformanceTests : IDisposable {
                 PayloadReadCount: 1,
                 LogicalPayloadByteCount: logicalPayloadBytes,
                 ChronologicalChainReadCount: 0,
-                ChronologicalEventCount: 0,
-                FullProjectionInvocationCount: 0
+                ChronologicalEventCount: 0
             ),
             reader.CaptureDiagnostics()
         );
@@ -293,7 +292,6 @@ public sealed class SessionJournalRequestContextPerformanceTests : IDisposable {
         Assert.Equal(0, lifetime.CurrentLiveLogicalPayloadBytes);
         Assert.Equal(0, reads.ChronologicalChainReadCount);
         Assert.Equal(0, reads.ChronologicalEventCount);
-        Assert.Equal(0, reads.FullProjectionInvocationCount);
         Assert.NotEmpty(providerReadDeltas);
         Assert.All(providerReadDeltas, static providerReads => {
             Assert.True(providerReads.HeaderPreviewReadCount > 0);
@@ -301,7 +299,6 @@ public sealed class SessionJournalRequestContextPerformanceTests : IDisposable {
             Assert.True(providerReads.LogicalPayloadByteCount > 0);
             Assert.Equal(0, providerReads.ChronologicalChainReadCount);
             Assert.Equal(0, providerReads.ChronologicalEventCount);
-            Assert.Equal(0, providerReads.FullProjectionInvocationCount);
         });
         return new RequestCost(
             reads,
@@ -334,7 +331,6 @@ public sealed class SessionJournalRequestContextPerformanceTests : IDisposable {
             Assert.True(longReads.HeaderPreviewReadCount >= shortReads.HeaderPreviewReadCount);
             Assert.Equal(shortReads.PayloadReadCount, longReads.PayloadReadCount);
             Assert.Equal(shortReads.LogicalPayloadByteCount, longReads.LogicalPayloadByteCount);
-            Assert.Equal(0, longReads.FullProjectionInvocationCount);
         }
     }
 

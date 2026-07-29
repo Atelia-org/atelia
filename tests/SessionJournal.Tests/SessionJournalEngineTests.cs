@@ -27,10 +27,12 @@ public sealed class SessionJournalEngineTests : IDisposable {
     }
 
     [Fact]
-    public void Create_WritesSetupEventsThenSessionCreatedAndProjectsStateFromJournal() {
+    public void Create_WritesSetupEventsThenSessionCreatedAndRestoresStateFromJournal() {
         string path = NewJournalPath();
 
-        SessionProjection projection;
+        SessionExecutionBoundaryInspection boundary;
+        SessionGoverningSetup setup;
+        SessionHistoryPlanningWindow history;
         using (var engine = SessionJournalEngine.Create(path,
             new SessionCreateOptions(
                 ModelId: "model-A",
@@ -38,10 +40,14 @@ public sealed class SessionJournalEngineTests : IDisposable {
                 CompletionSurfaceId: "surface-A"
             )
         )) {
-            projection = engine.Project();
+            boundary = engine.InspectExecutionBoundary();
+            setup = engine.ResolveGoverningSetup(
+                boundary.Head!.Value
+            );
+            history = engine.ReadHistoryPlanningWindow();
         }
 
-        Assert.NotNull(projection.Head);
+        Assert.NotNull(boundary.Head);
         string[] payloads = ReadJournalPayloadJson(path);
         Assert.Equal(3, payloads.Length);
         Assert.Equal("{\"v\":2,\"body\":{\"modelId\":\"model-A\",\"completionSurfaceId\":\"surface-A\",\"schema\":\"atelia.session-journal.trunk.v1\",\"derivedContext\":{\"nthPrevious\":0}}}", payloads[0]);
@@ -50,14 +56,19 @@ public sealed class SessionJournalEngineTests : IDisposable {
             "{\"v\":2,\"body\":{\"origin\":\"native\"}}",
             payloads[2]
         );
-        Assert.NotNull(projection.Config);
-        Assert.Equal("model-A", projection.Config.ModelId);
-        Assert.Equal("system-A", projection.SystemPrompt);
-        Assert.Equal("surface-A", projection.Config.CompletionSurfaceId);
-        Assert.Equal(SessionJournalDefaults.Schema, projection.Config.Schema);
-        Assert.Empty(projection.Context);
-        Assert.Equal(SessionExecutionPhase.Idle, projection.ExecutionState.Phase);
-        Assert.Equal(SessionEventKind.SessionCreated, projection.ExecutionState.HeadKind);
+        Assert.Equal("model-A", setup.RuntimeConfig.ModelId);
+        Assert.Equal("system-A", setup.SystemPrompt);
+        Assert.Equal(
+            "surface-A",
+            setup.RuntimeConfig.CompletionSurfaceId
+        );
+        Assert.Equal(
+            SessionJournalDefaults.Schema,
+            setup.RuntimeConfig.Schema
+        );
+        Assert.Empty(history.Units);
+        Assert.Equal(SessionExecutionPhase.Idle, boundary.Phase);
+        Assert.Equal(SessionEventKind.SessionCreated, boundary.HeadKind);
     }
 
     [Fact]
@@ -131,9 +142,13 @@ public sealed class SessionJournalEngineTests : IDisposable {
             );
             featureHead = feature.AppendSystemPromptSetup("system-feature");
 
-            SessionProjection featureProjection = feature.Project();
-            Assert.Equal("model-feature", featureProjection.Config!.ModelId);
-            Assert.Equal("system-feature", featureProjection.SystemPrompt);
+            SessionGoverningSetup featureSetup =
+                feature.ResolveGoverningSetup(featureHead);
+            Assert.Equal(
+                "model-feature",
+                featureSetup.RuntimeConfig.ModelId
+            );
+            Assert.Equal("system-feature", featureSetup.SystemPrompt);
             Assert.Equal(
                 featureHead,
                 feature.ReadCurrentLineageHeaders().CapturedHead
@@ -151,9 +166,10 @@ public sealed class SessionJournalEngineTests : IDisposable {
         Assert.Equal(SessionJournalDefaults.MainBranchName, main.BranchName);
         Assert.Equal(mainRef, main.BranchRefId);
         Assert.Equal(mainHead, main.InspectExecutionBoundary().Head);
-        SessionProjection mainProjection = main.Project();
-        Assert.Equal("model-A", mainProjection.Config!.ModelId);
-        Assert.Equal("system-A", mainProjection.SystemPrompt);
+        SessionGoverningSetup mainSetup =
+            main.ResolveGoverningSetup(mainHead);
+        Assert.Equal("model-A", mainSetup.RuntimeConfig.ModelId);
+        Assert.Equal("system-A", mainSetup.SystemPrompt);
     }
 
     [Fact]
@@ -417,7 +433,7 @@ public sealed class SessionJournalEngineTests : IDisposable {
         using var reopened = SessionJournalEngine.Open(path, "feature");
         Assert.Equal(featureRef, reopened.BranchRefId);
         Assert.Equal(forkPoint, reopened.InspectExecutionBoundary().Head);
-        Assert.Empty(reopened.Project().Context);
+        Assert.Empty(reopened.ReadHistoryPlanningWindow().Units);
     }
 
     [Fact]
@@ -497,7 +513,7 @@ public sealed class SessionJournalEngineTests : IDisposable {
                 "feature resumed",
                 outcome.Message!.GetFlattenedText()
             );
-            Assert.Equal(SessionExecutionPhase.Idle, resumed.Project().ExecutionState.Phase);
+            Assert.Equal(SessionExecutionPhase.Idle, resumed.ResolveExecutionTail().State.Phase);
         }
 
         using var journalAfter = EventJournal.EventJournal.OpenExisting(path);
@@ -506,7 +522,7 @@ public sealed class SessionJournalEngineTests : IDisposable {
     }
 
     [Fact]
-    public void AppendObservationAndAction_ReopenRebuildsContextAndConfigFromJournal() {
+    public void AppendObservationAndAction_ReopenReadsHistoryAndConfigFromJournal() {
         string path = NewJournalPath();
         var invocation = new CompletionDescriptor("fake-provider", "fake-api-v1", "model-A");
         var action = new ActionMessage(
@@ -530,26 +546,38 @@ public sealed class SessionJournalEngineTests : IDisposable {
         Assert.Single(ReadJournalAddressesByKind(path, SessionEventKind.ImportedAgentAction));
         Assert.Empty(ReadJournalAddressesByKind(path, SessionEventKind.AgentActionProduced));
         using var reopened = SessionJournalEngine.Open(path);
-        SessionProjection projection = reopened.Project();
+        SessionExecutionRecovery recovery =
+            reopened.ResolveExecutionTail();
+        SessionGoverningSetup setup =
+            reopened.ResolveGoverningSetup(recovery.Head!.Value);
+        IReadOnlyList<SessionHistoryPlanningUnit> units =
+            reopened.ReadHistoryPlanningWindow().Units;
 
-        Assert.NotNull(projection.Config);
-        Assert.Equal("model-A", projection.Config.ModelId);
-        Assert.Equal("system-A", projection.SystemPrompt);
-        Assert.Equal("surface-A", projection.Config.CompletionSurfaceId);
-        Assert.Equal(2, projection.Context.Count);
+        Assert.Equal("model-A", setup.RuntimeConfig.ModelId);
+        Assert.Equal("system-A", setup.SystemPrompt);
+        Assert.Equal(
+            "surface-A",
+            setup.RuntimeConfig.CompletionSurfaceId
+        );
+        Assert.Equal(2, units.Count);
 
-        var observation = Assert.IsType<ObservationMessage>(projection.Context[0]);
+        var observation =
+            Assert.IsType<ObservationMessage>(units[0].Message);
         Assert.Equal("hello", observation.Content);
 
-        var projectedAction = Assert.IsType<ActionMessage>(projection.Context[1]);
+        var projectedAction =
+            Assert.IsType<ActionMessage>(units[1].Message);
         Assert.Equal("answer continued", projectedAction.GetFlattenedText());
         Assert.Empty(projectedAction.ToolCalls);
-        Assert.Equal(SessionExecutionPhase.Idle, projection.ExecutionState.Phase);
-        Assert.Equal(SessionEventKind.ImportedAgentAction, projection.ExecutionState.HeadKind);
+        Assert.Equal(SessionExecutionPhase.Idle, recovery.State.Phase);
+        Assert.Equal(
+            SessionEventKind.ImportedAgentAction,
+            recovery.State.HeadKind
+        );
     }
 
     [Fact]
-    public void ReplayHistory_ObservationAndAction_CarriesSourceAddresses() {
+    public void HistoryPlanningWindow_ObservationAndAction_CarriesSourceAddresses() {
         string path = NewJournalPath();
         var invocation = new CompletionDescriptor("fake-provider", "fake-api-v1", "model-A");
         var action = new ActionMessage(
@@ -573,20 +601,22 @@ public sealed class SessionJournalEngineTests : IDisposable {
         }
 
         using var reopened = SessionJournalEngine.Open(path);
-        SessionProjection projection = reopened.Project();
-        SessionHistoryReplay replay = reopened.ReplayHistory();
+        SessionHistoryPlanningWindow window =
+            reopened.ReadHistoryPlanningWindow();
 
-        Assert.Equal(projection.Head, replay.SourceRawHead);
-        Assert.Equal(projection.ExecutionState, replay.ExecutionState);
-        Assert.Equal(projection.Context.Count, replay.Messages.Count);
+        Assert.Equal(
+            reopened.InspectExecutionBoundary().Head,
+            window.ObservedRawHead
+        );
+        Assert.Equal(2, window.Units.Count);
 
-        AddressedSessionHistoryMessage observationEntry = replay.Messages[0];
+        SessionHistoryPlanningUnit observationEntry = window.Units[0];
         var observation = Assert.IsType<ObservationMessage>(observationEntry.Message);
         Assert.Equal("hello", observation.Content);
         Assert.Equal(observationAddress, observationEntry.SourceStartInclusive);
         Assert.Equal(observationAddress, observationEntry.SourceEndInclusive);
 
-        AddressedSessionHistoryMessage actionEntry = replay.Messages[1];
+        SessionHistoryPlanningUnit actionEntry = window.Units[1];
         var projectedAction = Assert.IsType<ActionMessage>(actionEntry.Message);
         Assert.Equal("answer continued", projectedAction.GetFlattenedText());
         Assert.Equal(actionAddress, actionEntry.SourceStartInclusive);
@@ -594,7 +624,7 @@ public sealed class SessionJournalEngineTests : IDisposable {
     }
 
     [Fact]
-    public void ReplayHistory_SetupAndSessionCreated_DoNotEmitHistoryMessages() {
+    public void HistoryPlanningWindow_SetupAndSessionCreated_DoNotEmitHistoryMessages() {
         string path = NewJournalPath();
         EventAddress setupHead;
 
@@ -609,14 +639,18 @@ public sealed class SessionJournalEngineTests : IDisposable {
         }
 
         using var reopened = SessionJournalEngine.Open(path);
-        SessionProjection projection = reopened.Project();
-        SessionHistoryReplay replay = reopened.ReplayHistory();
+        SessionHistoryPlanningWindow window =
+            reopened.ReadHistoryPlanningWindow();
+        SessionExecutionBoundaryInspection boundary =
+            reopened.InspectExecutionBoundary();
 
-        Assert.Empty(replay.Messages);
-        Assert.Equal(setupHead, replay.SourceRawHead);
-        Assert.Equal(projection.ExecutionState, replay.ExecutionState);
-        Assert.Equal(SessionExecutionPhase.Idle, replay.ExecutionState.Phase);
-        Assert.Equal(SessionEventKind.SystemPromptSetup, replay.ExecutionState.HeadKind);
+        Assert.Empty(window.Units);
+        Assert.Equal(setupHead, window.ObservedRawHead);
+        Assert.Equal(SessionExecutionPhase.Idle, boundary.Phase);
+        Assert.Equal(
+            SessionEventKind.SystemPromptSetup,
+            boundary.HeadKind
+        );
     }
 
     [Fact]
@@ -644,17 +678,35 @@ public sealed class SessionJournalEngineTests : IDisposable {
         }
 
         using var reopened = SessionJournalEngine.Open(path);
-        SessionProjection projection = reopened.Project();
+        SessionExecutionRecovery recovery =
+            reopened.ResolveExecutionTail();
+        SessionGoverningSetup setup =
+            reopened.ResolveGoverningSetup(recovery.Head!.Value);
+        IReadOnlyList<SessionHistoryPlanningUnit> units =
+            reopened.ReadHistoryPlanningWindow().Units;
 
-        Assert.NotNull(projection.Config);
-        Assert.Equal("model-B", projection.Config.ModelId);
-        Assert.Equal("system-A", projection.SystemPrompt);
-        Assert.Equal("surface-B", projection.Config.CompletionSurfaceId);
-        Assert.Equal(2, projection.Context.Count);
-        Assert.Equal("hello", Assert.IsType<ObservationMessage>(projection.Context[0]).Content);
-        Assert.Equal("answer", Assert.IsType<ActionMessage>(projection.Context[1]).GetFlattenedText());
-        Assert.Equal(SessionExecutionPhase.Idle, projection.ExecutionState.Phase);
-        Assert.Equal(SessionEventKind.RuntimeConfigSetup, projection.ExecutionState.HeadKind);
+        Assert.Equal("model-B", setup.RuntimeConfig.ModelId);
+        Assert.Equal("system-A", setup.SystemPrompt);
+        Assert.Equal(
+            "surface-B",
+            setup.RuntimeConfig.CompletionSurfaceId
+        );
+        Assert.Equal(2, units.Count);
+        Assert.Equal(
+            "hello",
+            Assert.IsType<ObservationMessage>(units[0].Message).Content
+        );
+        Assert.Equal(
+            "answer",
+            Assert.IsType<ActionMessage>(
+                units[1].Message
+            ).GetFlattenedText()
+        );
+        Assert.Equal(SessionExecutionPhase.Idle, recovery.State.Phase);
+        Assert.Equal(
+            SessionEventKind.RuntimeConfigSetup,
+            recovery.State.HeadKind
+        );
     }
 
     [Fact]
@@ -680,15 +732,25 @@ public sealed class SessionJournalEngineTests : IDisposable {
         }
 
         using var reopened = SessionJournalEngine.Open(path);
-        SessionProjection projection = reopened.Project();
+        SessionExecutionRecovery recovery =
+            reopened.ResolveExecutionTail();
+        SessionGoverningSetup setup =
+            reopened.ResolveGoverningSetup(recovery.Head!.Value);
+        IReadOnlyList<SessionHistoryPlanningUnit> units =
+            reopened.ReadHistoryPlanningWindow().Units;
 
-        Assert.NotNull(projection.Config);
-        Assert.Equal("model-A", projection.Config.ModelId);
-        Assert.Equal("system-B", projection.SystemPrompt);
-        Assert.Equal("surface-A", projection.Config.CompletionSurfaceId);
-        Assert.Equal(2, projection.Context.Count);
-        Assert.Equal(SessionExecutionPhase.Idle, projection.ExecutionState.Phase);
-        Assert.Equal(SessionEventKind.SystemPromptSetup, projection.ExecutionState.HeadKind);
+        Assert.Equal("model-A", setup.RuntimeConfig.ModelId);
+        Assert.Equal("system-B", setup.SystemPrompt);
+        Assert.Equal(
+            "surface-A",
+            setup.RuntimeConfig.CompletionSurfaceId
+        );
+        Assert.Equal(2, units.Count);
+        Assert.Equal(SessionExecutionPhase.Idle, recovery.State.Phase);
+        Assert.Equal(
+            SessionEventKind.SystemPromptSetup,
+            recovery.State.HeadKind
+        );
     }
 
     [Fact]
@@ -772,7 +834,7 @@ public sealed class SessionJournalEngineTests : IDisposable {
         );
         await engine.SendAsync("hello", CancellationToken.None);
 
-        EventAddress actionHead = engine.Project().Head!.Value;
+        EventAddress actionHead = engine.InspectExecutionBoundary().Head!.Value;
         SessionGoverningSetup fromCheckpoint = engine.ResolveGoverningSetup(actionHead);
         Assert.Equal("model-A", fromCheckpoint.RuntimeConfig.ModelId);
         Assert.Equal("system-A", fromCheckpoint.SystemPrompt);
@@ -838,7 +900,7 @@ public sealed class SessionJournalEngineTests : IDisposable {
             path,
             new SessionCreateOptions("model-A", "system-A", "surface-A")
         )) {
-            Assert.Equal(created.Project().Head, created.GoverningSetupCursorHeadForTest);
+            Assert.Equal(created.InspectExecutionBoundary().Head, created.GoverningSetupCursorHeadForTest);
             ActivatedCoherentArtifactSet activated =
                 await CoherentArtifactSetTestFixture.ActivateAtCurrentHeadAsync(
                 path,
@@ -863,7 +925,7 @@ public sealed class SessionJournalEngineTests : IDisposable {
         await Assert.ThrowsAsync<SessionJournalFailpointException>(
             () => reopened.ResumeAsync(CancellationToken.None)
         );
-        Assert.Equal(reopened.Project().Head, reopened.GoverningSetupCursorHeadForTest);
+        Assert.Equal(reopened.InspectExecutionBoundary().Head, reopened.GoverningSetupCursorHeadForTest);
         Assert.Equal(0, client.Calls);
     }
 
@@ -892,7 +954,7 @@ public sealed class SessionJournalEngineTests : IDisposable {
                 candidateSource
             );
             await engine.SendAsync("hello", CancellationToken.None);
-            actionHead = engine.Project().Head!.Value;
+            actionHead = engine.InspectExecutionBoundary().Head!.Value;
         }
 
         EventAddress prepared = Assert.Single(ReadJournalAddressesByKind(path, SessionEventKind.CompletionRequestPrepared));
@@ -964,7 +1026,7 @@ public sealed class SessionJournalEngineTests : IDisposable {
     }
 
     [Fact]
-    public void Project_WhenSetupEventAppearsInsidePendingTurn_Throws() {
+    public void ResolveExecutionTail_WhenSetupEventAppearsInsidePendingTurn_Throws() {
         string path = NewJournalPath();
 
         using (var engine = SessionJournalEngine.Create(path,
@@ -993,12 +1055,18 @@ public sealed class SessionJournalEngineTests : IDisposable {
         }
 
         using var reopened = SessionJournalEngine.Open(path);
-        var ex = Assert.Throws<InvalidDataException>(() => reopened.Project());
-        Assert.Contains("must appear only at setup or idle session boundaries", ex.Message, StringComparison.Ordinal);
+        var ex = Assert.Throws<InvalidDataException>(
+            () => reopened.ResolveExecutionTail()
+        );
+        Assert.Contains(
+            "Setup run",
+            ex.Message,
+            StringComparison.Ordinal
+        );
     }
 
     [Fact]
-    public void Project_WhenBusinessEventAppearsBeforeSessionCreatedMarker_Throws() {
+    public void ResolveExecutionTail_WhenBusinessEventAppearsBeforeSessionCreatedMarker_Throws() {
         string path = NewJournalPath();
         using (var journal = EventJournal.EventJournal.CreateNew(path)) {
             journal.CreateBranch(SessionJournalDefaults.MainBranchName, startPoint: null).Unwrap();
@@ -1009,8 +1077,14 @@ public sealed class SessionJournalEngineTests : IDisposable {
         }
 
         using var reopened = SessionJournalEngine.Open(path);
-        var ex = Assert.Throws<InvalidDataException>(() => reopened.Project());
-        Assert.Contains("requires a prior session-created marker", ex.Message, StringComparison.Ordinal);
+        var ex = Assert.Throws<InvalidDataException>(
+            () => reopened.ResolveExecutionTail()
+        );
+        Assert.Contains(
+            nameof(SessionEventKind.ObservationAccepted),
+            ex.Message,
+            StringComparison.Ordinal
+        );
     }
 
     [Fact]
@@ -1039,7 +1113,7 @@ public sealed class SessionJournalEngineTests : IDisposable {
     }
 
     [Fact]
-    public void ObservationPayload_CompressedEventJournalStillProjectsLogicalPayload() {
+    public void ObservationPayload_CompressedEventJournalStillReadsLogicalPayload() {
         string path = NewJournalPath();
         var journalOptions = new EventJournalOptions {
             PayloadCodecPolicy = EventPayloadCodecPolicy.Brotli with {
@@ -1062,9 +1136,12 @@ public sealed class SessionJournalEngineTests : IDisposable {
         }
 
         using (var reopened = SessionJournalEngine.OpenForTest(path, runtime: null, new SessionJournalTestHooks(), journalOptions)) {
-            SessionProjection projection = reopened.Project();
+            SessionHistoryPlanningUnit unit = Assert.Single(
+                reopened.ReadHistoryPlanningWindow().Units
+            );
 
-            var observation = Assert.IsType<ObservationMessage>(Assert.Single(projection.Context));
+            var observation =
+                Assert.IsType<ObservationMessage>(unit.Message);
             Assert.Equal(content, observation.Content);
         }
 
@@ -1087,9 +1164,12 @@ public sealed class SessionJournalEngineTests : IDisposable {
         }
 
         using (var reopened = SessionJournalEngine.Open(path)) {
-            SessionProjection projection = reopened.Project();
+            SessionHistoryPlanningUnit unit = Assert.Single(
+                reopened.ReadHistoryPlanningWindow().Units
+            );
 
-            var observation = Assert.IsType<ObservationMessage>(Assert.Single(projection.Context));
+            var observation =
+                Assert.IsType<ObservationMessage>(unit.Message);
             Assert.Equal(content, observation.Content);
         }
 
@@ -1099,7 +1179,7 @@ public sealed class SessionJournalEngineTests : IDisposable {
     }
 
     [Fact]
-    public void ActionPayload_RoundTripsToolCallAndProjectsPendingToolState() {
+    public void ActionPayload_RoundTripsToolCallAndRestoresPendingToolState() {
         string path = NewJournalPath();
         var invocation = new CompletionDescriptor("fake-provider", "fake-api-v1", "model-A");
         var action = new ActionMessage(
@@ -1137,15 +1217,18 @@ public sealed class SessionJournalEngineTests : IDisposable {
         }
 
         using var reopened = SessionJournalEngine.Open(path);
-        SessionProjection projection = reopened.Project();
-
-        var projectedAction = Assert.IsType<ActionMessage>(projection.Context[1]);
-        RawToolCall call = Assert.Single(projectedAction.ToolCalls);
+        SessionExecutionState state =
+            reopened.ResolveExecutionTail().State;
+        Assert.Equal(
+            SessionExecutionPhase.AwaitingToolExecution,
+            state.Phase
+        );
+        RawToolCall call = Assert.IsType<RawToolCall>(
+            state.PendingToolCall
+        );
         Assert.Equal("lookup", call.ToolName);
         Assert.Equal("call-1", call.ToolCallId);
         Assert.Equal("{\"q\":\"x\"}", call.RawArgumentsJson);
-        Assert.Equal(SessionExecutionPhase.AwaitingToolExecution, projection.ExecutionState.Phase);
-        Assert.Equal(call, projection.ExecutionState.PendingToolCall);
     }
 
     [Fact]
@@ -1183,18 +1266,13 @@ public sealed class SessionJournalEngineTests : IDisposable {
                 candidateSource
             );
 
-        int projectionCountBeforeSend = engine.FullProjectionInvocationCount;
         TurnResult result = await engine.SendAsync("hello", CancellationToken.None);
-        Assert.Equal(
-            projectionCountBeforeSend,
-            engine.FullProjectionInvocationCount
-        );
-        SessionProjection projection = engine.Project();
+        SessionExecutionState state =
+            engine.ResolveExecutionTail().State;
 
         Assert.Equal("answer", result.Message.GetFlattenedText());
         Assert.Equal("scripted", result.Invocation.ProviderId);
-        Assert.Equal(2, projection.Context.Count);
-        Assert.Equal(SessionExecutionPhase.Idle, projection.ExecutionState.Phase);
+        Assert.Equal(SessionExecutionPhase.Idle, state.Phase);
         Assert.Equal(0, client.RemainingResponses);
         engine.Dispose();
 
@@ -1291,14 +1369,12 @@ public sealed class SessionJournalEngineTests : IDisposable {
     }
 
     [Fact]
-    public void BoundaryMutations_UseTailRecoveryWithoutFullProjection() {
+    public void BoundaryMutations_UseTailRecovery() {
         string path = NewJournalPath();
         using var engine = SessionJournalEngine.Create(
             path,
             new SessionCreateOptions("model-A", "system-A", "surface-A")
         );
-        int projectionCountBeforeMutations = engine.FullProjectionInvocationCount;
-
         engine.AppendRuntimeConfigSetup(
             new SessionRuntimeConfiguration("model-B", "surface-B", SessionJournalDefaults.Schema, new(0))
         );
@@ -1308,8 +1384,6 @@ public sealed class SessionJournalEngineTests : IDisposable {
             new ActionMessage([new ActionBlock.Text("imported answer")]),
             new CompletionDescriptor("import", "import-v1", "model-B")
         );
-
-        Assert.Equal(projectionCountBeforeMutations, engine.FullProjectionInvocationCount);
         Assert.Equal(SessionExecutionPhase.Idle, engine.ResolveExecutionTail().State.Phase);
     }
 
@@ -1333,10 +1407,10 @@ public sealed class SessionJournalEngineTests : IDisposable {
             );
 
             Assert.Equal(SessionJournalFailpoint.AfterRequestPreparedCommitted, ex.Failpoint);
-            SessionExecutionState state = engine.Project().ExecutionState;
+            SessionExecutionState state = engine.ResolveExecutionTail().State;
             Assert.Equal(SessionExecutionPhase.AwaitingCompletionDispatch, state.Phase);
             Assert.Equal(SessionEventKind.CompletionRequestPrepared, state.HeadKind);
-            Assert.Equal(engine.Project().Head, state.PendingRequestPreparedAddress);
+            Assert.Equal(engine.InspectExecutionBoundary().Head, state.PendingRequestPreparedAddress);
             Assert.Null(state.ActiveCompletionAttemptAddress);
             Assert.False(string.IsNullOrWhiteSpace(state.ActiveCorrelationId));
             Assert.Equal(0, client.Calls);
@@ -1349,7 +1423,7 @@ public sealed class SessionJournalEngineTests : IDisposable {
         using var reopened = SessionJournalEngine.Open(path, CreateRuntime(client));
         Assert.Equal(
             SessionExecutionPhase.AwaitingCompletionDispatch,
-            reopened.Project().ExecutionState.Phase
+            reopened.ResolveExecutionTail().State.Phase
         );
         ResumeOutcome outcome = await reopened.ResumeAsync(CancellationToken.None);
         Assert.True(outcome.Advanced);
@@ -1390,7 +1464,7 @@ public sealed class SessionJournalEngineTests : IDisposable {
             );
             Assert.Equal(terminationKind, ex.Termination.Kind);
             Assert.Contains("known failure outcome were persisted", ex.Message, StringComparison.Ordinal);
-            SessionExecutionState state = engine.Project().ExecutionState;
+            SessionExecutionState state = engine.ResolveExecutionTail().State;
             Assert.Equal(SessionExecutionPhase.TurnFailed, state.Phase);
             Assert.Null(state.PendingRequestPreparedAddress);
             Assert.Null(state.ActiveCorrelationId);
@@ -1405,7 +1479,7 @@ public sealed class SessionJournalEngineTests : IDisposable {
             Assert.Equal(started, journal.ReadEventHeaderChecked(failed).Unwrap().Parent);
         }
         using var reopened = SessionJournalEngine.Open(path);
-        Assert.Equal(SessionExecutionPhase.TurnFailed, reopened.Project().ExecutionState.Phase);
+        Assert.Equal(SessionExecutionPhase.TurnFailed, reopened.ResolveExecutionTail().State.Phase);
         ResumeOutcome resume = await reopened.ResumeAsync(CancellationToken.None);
         Assert.False(resume.Advanced);
     }
@@ -1442,7 +1516,7 @@ public sealed class SessionJournalEngineTests : IDisposable {
         TurnResult recovered = await engine.SendAsync("second", CancellationToken.None);
 
         Assert.Equal("recovered", recovered.Message.GetFlattenedText());
-        Assert.Equal(SessionExecutionPhase.Idle, engine.Project().ExecutionState.Phase);
+        Assert.Equal(SessionExecutionPhase.Idle, engine.ResolveExecutionTail().State.Phase);
         Assert.Equal(2, client.Calls);
     }
 
@@ -1486,7 +1560,7 @@ public sealed class SessionJournalEngineTests : IDisposable {
         TurnResult result = await engine.SendAsync("second", CancellationToken.None);
 
         Assert.Equal("recovered", result.Message.GetFlattenedText());
-        Assert.Equal(SessionExecutionPhase.Idle, engine.Project().ExecutionState.Phase);
+        Assert.Equal(SessionExecutionPhase.Idle, engine.ResolveExecutionTail().State.Phase);
         Assert.Equal(2, client.Calls);
     }
 
@@ -1511,7 +1585,7 @@ public sealed class SessionJournalEngineTests : IDisposable {
                 _candidateSource
             );
             await Assert.ThrowsAnyAsync<Exception>(() => engine.SendAsync("hello", CancellationToken.None));
-            Assert.Equal(SessionExecutionPhase.AwaitingCompletion, engine.Project().ExecutionState.Phase);
+            Assert.Equal(SessionExecutionPhase.AwaitingCompletion, engine.ResolveExecutionTail().State.Phase);
         }
 
         Assert.Single(ReadJournalAddressesByKind(path, SessionEventKind.CompletionRequestPrepared));
@@ -1545,7 +1619,7 @@ public sealed class SessionJournalEngineTests : IDisposable {
                 "atelia.host.invalid-completion-invocation",
                 error.Termination.ProviderReason
             );
-            Assert.Equal(SessionExecutionPhase.TurnFailed, engine.Project().ExecutionState.Phase);
+            Assert.Equal(SessionExecutionPhase.TurnFailed, engine.ResolveExecutionTail().State.Phase);
         }
 
         Assert.Empty(ReadJournalAddressesByKind(path, SessionEventKind.AgentActionProduced));
@@ -1590,12 +1664,12 @@ public sealed class SessionJournalEngineTests : IDisposable {
         await Assert.ThrowsAsync<IOException>(() => engine.SendAsync("hello", CancellationToken.None));
 
         Assert.Null(engine.GoverningSetupCursorHeadForTest);
-        Assert.Equal(SessionExecutionPhase.AwaitingAgentAction, engine.Project().ExecutionState.Phase);
+        Assert.Equal(SessionExecutionPhase.AwaitingAgentAction, engine.ResolveExecutionTail().State.Phase);
         Assert.Equal(0, client.Calls);
     }
 
     [Fact]
-    public async Task Project_CompletionAttemptFailedWithoutStarted_Throws() {
+    public async Task ResolveExecutionTail_CompletionAttemptFailedWithoutStarted_Throws() {
         string path = NewJournalPath();
         var client = new ScriptedCompletionClient();
         EventAddress prepared;
@@ -1613,7 +1687,7 @@ public sealed class SessionJournalEngineTests : IDisposable {
             await Assert.ThrowsAsync<SessionJournalFailpointException>(
                 () => engine.SendAsync("hello", CancellationToken.None)
             );
-            prepared = engine.Project().Head!.Value;
+            prepared = engine.InspectExecutionBoundary().Head!.Value;
         }
 
         using (var journal = EventJournal.EventJournal.OpenExisting(path)) {
@@ -1635,11 +1709,13 @@ public sealed class SessionJournalEngineTests : IDisposable {
         }
 
         using var reopened = SessionJournalEngine.Open(path);
-        Assert.Throws<InvalidDataException>(() => reopened.Project());
+        Assert.Throws<InvalidDataException>(
+            () => reopened.ResolveExecutionTail()
+        );
     }
 
     [Fact]
-    public async Task Project_PreparedReasonMustMatchDirectCompletionBoundary() {
+    public async Task ResolveExecutionTail_PreparedReasonMustMatchDirectCompletionBoundary() {
         string sourcePath = NewJournalPath();
         var client = new ScriptedCompletionClient();
         using (var source = SessionJournalEngine.CreateForTest(
@@ -1696,8 +1772,9 @@ public sealed class SessionJournalEngineTests : IDisposable {
         }
 
         using var reopened = SessionJournalEngine.Open(targetPath);
-        InvalidDataException error = Assert.Throws<InvalidDataException>(() => reopened.Project());
-        Assert.Contains("reason", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Throws<InvalidDataException>(
+            () => reopened.ResolveExecutionTail()
+        );
     }
 
     [Fact]
@@ -1756,8 +1833,7 @@ public sealed class SessionJournalEngineTests : IDisposable {
                 () => engine.SendAsync("hello", CancellationToken.None)
             );
             Assert.Equal(SessionJournalFailpoint.AfterObservationCommitted, ex.Failpoint);
-            Assert.Equal(SessionExecutionPhase.AwaitingAgentAction, engine.Project().ExecutionState.Phase);
-            Assert.Single(engine.Project().Context);
+            Assert.Equal(SessionExecutionPhase.AwaitingAgentAction, engine.ResolveExecutionTail().State.Phase);
             Assert.Equal(0, firstClient.Calls);
         }
 
@@ -1782,12 +1858,13 @@ public sealed class SessionJournalEngineTests : IDisposable {
             CreateRuntime(resumeClient, contextCandidate: candidate)
         );
         ResumeOutcome outcome = await reopened.ResumeAsync(CancellationToken.None);
-        SessionProjection projection = reopened.Project();
 
         Assert.True(outcome.Advanced);
         Assert.Equal("resumed", outcome.Message!.GetFlattenedText());
-        Assert.Equal(SessionExecutionPhase.Idle, projection.ExecutionState.Phase);
-        Assert.Equal(2, projection.Context.Count);
+        Assert.Equal(
+            SessionExecutionPhase.Idle,
+            reopened.ResolveExecutionTail().State.Phase
+        );
         Assert.Equal(1, resumeClient.Calls);
     }
 
@@ -1817,7 +1894,7 @@ public sealed class SessionJournalEngineTests : IDisposable {
                 () => engine.SendAsync("hello", CancellationToken.None)
             );
             Assert.Equal(SessionJournalFailpoint.AfterCompletionBeforeActionCommitted, ex.Failpoint);
-            SessionExecutionState state = engine.Project().ExecutionState;
+            SessionExecutionState state = engine.ResolveExecutionTail().State;
             Assert.Equal(SessionExecutionPhase.AwaitingCompletion, state.Phase);
             Assert.NotNull(state.PendingRequestPreparedAddress);
             Assert.NotNull(state.ActiveCompletionAttemptAddress);
@@ -1831,7 +1908,7 @@ public sealed class SessionJournalEngineTests : IDisposable {
         );
 
         Assert.Contains("Refuse", resumeError.Message, StringComparison.Ordinal);
-        Assert.Equal(SessionExecutionPhase.AwaitingCompletion, reopened.Project().ExecutionState.Phase);
+        Assert.Equal(SessionExecutionPhase.AwaitingCompletion, reopened.ResolveExecutionTail().State.Phase);
         Assert.Equal(0, resumeClient.Calls);
     }
 
@@ -1909,17 +1986,12 @@ public sealed class SessionJournalEngineTests : IDisposable {
                 engine,
                 _candidateSource
             );
-            int projectionCountBeforeSend = engine.FullProjectionInvocationCount;
             TurnResult turn = await engine.SendAsync("need lookup", CancellationToken.None);
-            Assert.Equal(
-                projectionCountBeforeSend,
-                engine.FullProjectionInvocationCount
-            );
-            SessionProjection projection = engine.Project();
+            SessionExecutionState state =
+                engine.ResolveExecutionTail().State;
 
             Assert.Equal("final", turn.Message.GetFlattenedText());
-            Assert.Equal(SessionExecutionPhase.Idle, projection.ExecutionState.Phase);
-            Assert.Equal(4, projection.Context.Count);
+            Assert.Equal(SessionExecutionPhase.Idle, state.Phase);
             Assert.Equal(1, tool.Calls);
             Assert.Equal(2, client.Calls);
         }
@@ -1933,9 +2005,15 @@ public sealed class SessionJournalEngineTests : IDisposable {
         Assert.DoesNotContain("sequenceNumber", resultPayload, StringComparison.Ordinal);
 
         using var reopened = SessionJournalEngine.Open(path);
-        SessionProjection replayed = reopened.Project();
-        Assert.Equal(SessionExecutionPhase.Idle, replayed.ExecutionState.Phase);
-        var replayedResults = Assert.IsType<ToolResultsMessage>(replayed.Context[2]);
+        Assert.Equal(
+            SessionExecutionPhase.Idle,
+            reopened.ResolveExecutionTail().State.Phase
+        );
+        SessionHistoryPlanningWindow window =
+            reopened.ReadHistoryPlanningWindow();
+        var replayedResults = Assert.IsType<ToolResultsMessage>(
+            window.Units[2].Message
+        );
         Assert.Equal("result:{\"q\":\"x\"}", Assert.Single(replayedResults.Results).GetFlattenedText());
     }
 
@@ -1969,7 +2047,7 @@ public sealed class SessionJournalEngineTests : IDisposable {
                 () => engine.SendAsync("need lookup", CancellationToken.None)
             );
             Assert.Equal(SessionJournalFailpoint.AfterToolStartedCommitted, ex.Failpoint);
-            SessionExecutionState state = engine.Project().ExecutionState;
+            SessionExecutionState state = engine.ResolveExecutionTail().State;
             Assert.Equal(SessionExecutionPhase.AwaitingToolExecution, state.Phase);
             Assert.True(state.PendingToolExecutionStarted);
             Assert.NotNull(state.PendingOperationId);
@@ -1978,7 +2056,7 @@ public sealed class SessionJournalEngineTests : IDisposable {
 
         string persistedOperationId;
         using (var inspection = SessionJournalEngine.Open(path)) {
-            persistedOperationId = inspection.Project().ExecutionState.PendingOperationId!;
+            persistedOperationId = inspection.ResolveExecutionTail().State.PendingOperationId!;
         }
 
         Assert.Equal(persistedOperationId, ExtractOperationId(ReadJournalPayloadJson(path)[^1]));
@@ -2007,11 +2085,13 @@ public sealed class SessionJournalEngineTests : IDisposable {
             )
         );
         ResumeOutcome outcome = await reopened.ResumeAsync(CancellationToken.None);
-        SessionProjection projection = reopened.Project();
 
         Assert.True(outcome.Advanced);
         Assert.Equal("done", outcome.Message!.GetFlattenedText());
-        Assert.Equal(SessionExecutionPhase.Idle, projection.ExecutionState.Phase);
+        Assert.Equal(
+            SessionExecutionPhase.Idle,
+            reopened.ResolveExecutionTail().State.Phase
+        );
         Assert.Equal(1, resumeTool.Calls);
         Assert.False(string.IsNullOrWhiteSpace(persistedOperationId));
     }
@@ -2076,7 +2156,7 @@ public sealed class SessionJournalEngineTests : IDisposable {
             Assert.Equal(0, recoveryTool.Calls);
             Assert.Equal(
                 SessionExecutionPhase.AwaitingToolExecution,
-                reopened.Project().ExecutionState.Phase
+                reopened.ResolveExecutionTail().State.Phase
             );
         }
         Assert.Empty(ReadJournalPayloadJsonByKind(path, SessionEventKind.ToolExecutionStarted));
@@ -2129,7 +2209,7 @@ public sealed class SessionJournalEngineTests : IDisposable {
             );
             Assert.Equal([1L], firstSequences);
             Assert.Single(firstOperationIds);
-            SessionExecutionState state = engine.Project().ExecutionState;
+            SessionExecutionState state = engine.ResolveExecutionTail().State;
             Assert.True(state.PendingToolExecutionStarted);
             Assert.Equal(1, state.ToolExecutionSequenceCheckpoint);
         }
@@ -2212,7 +2292,7 @@ public sealed class SessionJournalEngineTests : IDisposable {
                 () => engine.SendAsync("need lookup", CancellationToken.None)
             );
             Assert.Equal(SessionJournalFailpoint.AfterToolResultCommitted, ex.Failpoint);
-            Assert.Equal(SessionExecutionPhase.AwaitingAgentAction, engine.Project().ExecutionState.Phase);
+            Assert.Equal(SessionExecutionPhase.AwaitingAgentAction, engine.ResolveExecutionTail().State.Phase);
             Assert.Equal(1, tool.Calls);
         }
 
@@ -2244,7 +2324,7 @@ public sealed class SessionJournalEngineTests : IDisposable {
         Assert.True(outcome.Advanced);
         Assert.Equal("done", outcome.Message!.GetFlattenedText());
         Assert.Equal(0, resumeTool.Calls);
-        Assert.Equal(SessionExecutionPhase.Idle, reopened.Project().ExecutionState.Phase);
+        Assert.Equal(SessionExecutionPhase.Idle, reopened.ResolveExecutionTail().State.Phase);
     }
 
     [Fact]
@@ -2285,7 +2365,7 @@ public sealed class SessionJournalEngineTests : IDisposable {
             Assert.Equal(SessionJournalFailpoint.AfterToolResultCommitted, ex.Failpoint);
             Assert.Equal(1, alpha.Calls);
             Assert.Equal(0, beta.Calls);
-            Assert.Equal(1, engine.Project().ExecutionState.ToolExecutionSequenceCheckpoint);
+            Assert.Equal(1, engine.ResolveExecutionTail().State.ToolExecutionSequenceCheckpoint);
         }
 
         var resumeClient = new ScriptedCompletionClient();
@@ -2322,7 +2402,7 @@ public sealed class SessionJournalEngineTests : IDisposable {
         Assert.Equal("done", outcome.Message!.GetFlattenedText());
         Assert.Equal(0, resumedAlpha.Calls);
         Assert.Equal(1, resumedBeta.Calls);
-        Assert.Equal(SessionExecutionPhase.Idle, reopened.Project().ExecutionState.Phase);
+        Assert.Equal(SessionExecutionPhase.Idle, reopened.ResolveExecutionTail().State.Phase);
     }
 
     [Fact]
@@ -2378,7 +2458,7 @@ public sealed class SessionJournalEngineTests : IDisposable {
 
         Assert.Equal("second done", second.Message.GetFlattenedText());
         Assert.Equal(2, tool.Calls);
-        Assert.Equal(2, engine.Project().ExecutionState.ToolExecutionSequenceCheckpoint);
+        Assert.Equal(2, engine.ResolveExecutionTail().State.ToolExecutionSequenceCheckpoint);
     }
 
     [Fact]
@@ -2434,14 +2514,20 @@ public sealed class SessionJournalEngineTests : IDisposable {
         }
 
         using var reopened = SessionJournalEngine.Open(path);
-        SessionProjection projection = reopened.Project();
-        var results = Assert.IsType<ToolResultsMessage>(projection.Context[2]);
+        SessionHistoryPlanningWindow window =
+            reopened.ReadHistoryPlanningWindow();
+        var results = Assert.IsType<ToolResultsMessage>(
+            window.Units[2].Message
+        );
         Assert.Collection(
             results.Results,
             first => Assert.Equal("call-A", first.ToolCallId),
             second => Assert.Equal("call-B", second.ToolCallId)
         );
-        Assert.Equal(SessionExecutionPhase.Idle, projection.ExecutionState.Phase);
+        Assert.Equal(
+            SessionExecutionPhase.Idle,
+            reopened.ResolveExecutionTail().State.Phase
+        );
     }
 
     [Theory]
@@ -2450,7 +2536,7 @@ public sealed class SessionJournalEngineTests : IDisposable {
     [InlineData("result-before-start")]
     [InlineData("out-of-order-result")]
     [InlineData("duplicate-result")]
-    public void Project_InvalidToolEventOrder_Throws(string invalidCase) {
+    public void ResolveExecutionTail_InvalidToolEventOrder_Throws(string invalidCase) {
         string path = CreateImportedTwoToolPendingJournal();
         using (var journal = EventJournal.EventJournal.OpenExisting(path)) {
             RefId main = journal.OpenBranch(SessionJournalDefaults.MainBranchName).Unwrap();
@@ -2484,7 +2570,9 @@ public sealed class SessionJournalEngineTests : IDisposable {
         }
 
         using var reopened = SessionJournalEngine.Open(path);
-        Assert.Throws<InvalidDataException>(() => reopened.Project());
+        Assert.Throws<InvalidDataException>(
+            () => reopened.ResolveExecutionTail()
+        );
     }
 
     [Theory]
@@ -2492,7 +2580,7 @@ public sealed class SessionJournalEngineTests : IDisposable {
     [InlineData("empty-id")]
     [InlineData("empty-name")]
     [InlineData("empty-arguments")]
-    public void Project_InvalidActionToolCallIdentity_Throws(string invalidCase) {
+    public void ResolveExecutionTail_InvalidActionToolCallIdentity_Throws(string invalidCase) {
         string path = NewJournalPath();
         EventAddress observation;
         using (var engine = SessionJournalEngine.Create(
@@ -2525,12 +2613,15 @@ public sealed class SessionJournalEngineTests : IDisposable {
         }
 
         using var reopened = SessionJournalEngine.Open(path);
-        InvalidDataException error = Assert.Throws<InvalidDataException>(() => reopened.Project());
+        InvalidDataException error =
+            Assert.Throws<InvalidDataException>(
+                () => reopened.ResolveExecutionTail()
+            );
         Assert.Contains("tool call", error.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
-    public async Task ReplayHistory_MultipleToolCalls_UsesToolResultObservedRange() {
+    public async Task HistoryPlanningWindow_MultipleToolCalls_UsesToolResultObservedRange() {
         string path = NewJournalPath();
         var candidateSource = new TestContextCandidateSource();
         var client = new ScriptedCompletionClient();
@@ -2580,12 +2671,13 @@ public sealed class SessionJournalEngineTests : IDisposable {
         Assert.Equal(2, toolResultAddresses.Length);
 
         using var reopened = SessionJournalEngine.Open(path);
-        SessionHistoryReplay replay = reopened.ReplayHistory();
+        SessionHistoryPlanningWindow window =
+            reopened.ReadHistoryPlanningWindow();
 
-        Assert.Equal(4, replay.Messages.Count);
-        Assert.IsType<ObservationMessage>(replay.Messages[0].Message);
-        Assert.IsType<ActionMessage>(replay.Messages[1].Message);
-        AddressedSessionHistoryMessage toolResultsEntry = replay.Messages[2];
+        Assert.Equal(4, window.Units.Count);
+        Assert.IsType<ObservationMessage>(window.Units[0].Message);
+        Assert.IsType<ActionMessage>(window.Units[1].Message);
+        SessionHistoryPlanningUnit toolResultsEntry = window.Units[2];
         var toolResults = Assert.IsType<ToolResultsMessage>(toolResultsEntry.Message);
         Assert.Equal(toolResultAddresses[0], toolResultsEntry.SourceStartInclusive);
         Assert.Equal(toolResultAddresses[1], toolResultsEntry.SourceEndInclusive);
@@ -2594,11 +2686,16 @@ public sealed class SessionJournalEngineTests : IDisposable {
             first => Assert.Equal("call-A", first.ToolCallId),
             second => Assert.Equal("call-B", second.ToolCallId)
         );
-        Assert.Equal("done", Assert.IsType<ActionMessage>(replay.Messages[3].Message).GetFlattenedText());
+        Assert.Equal(
+            "done",
+            Assert.IsType<ActionMessage>(
+                window.Units[3].Message
+            ).GetFlattenedText()
+        );
     }
 
     [Fact]
-    public async Task ReplayHistory_UnclosedToolCalls_DoNotEmitToolResultsMessage() {
+    public async Task ResolveExecutionTail_UnclosedToolCalls_RestoresPendingCall() {
         string path = NewJournalPath();
         var client = new ScriptedCompletionClient();
         var registry = new ToolRegistry(
@@ -2638,16 +2735,14 @@ public sealed class SessionJournalEngineTests : IDisposable {
         }
 
         using var reopened = SessionJournalEngine.Open(path);
-        SessionProjection projection = reopened.Project();
-        SessionHistoryReplay replay = reopened.ReplayHistory();
+        SessionExecutionState state =
+            reopened.ResolveExecutionTail().State;
 
-        Assert.Equal(projection.ExecutionState, replay.ExecutionState);
-        Assert.Equal(SessionExecutionPhase.AwaitingToolExecution, replay.ExecutionState.Phase);
-        Assert.Equal("call-B", replay.ExecutionState.PendingToolCall?.ToolCallId);
-        Assert.Equal(2, replay.Messages.Count);
-        Assert.IsType<ObservationMessage>(replay.Messages[0].Message);
-        Assert.IsType<ActionMessage>(replay.Messages[1].Message);
-        Assert.DoesNotContain(replay.Messages, message => message.Message is ToolResultsMessage);
+        Assert.Equal(
+            SessionExecutionPhase.AwaitingToolExecution,
+            state.Phase
+        );
+        Assert.Equal("call-B", state.PendingToolCall?.ToolCallId);
     }
 
     private sealed class ScriptedCompletionClient : ICompletionClient {

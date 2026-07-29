@@ -101,8 +101,6 @@ public sealed class SessionHistoryPlanningTests : IDisposable {
             small.LogicalPayloadByteCount,
             large.LogicalPayloadByteCount
         );
-        Assert.Equal(0, small.FullProjectionInvocationCount);
-        Assert.Equal(0, large.FullProjectionInvocationCount);
     }
 
     [Fact]
@@ -146,10 +144,6 @@ public sealed class SessionHistoryPlanningTests : IDisposable {
             before.PayloadReadCount,
             after.PayloadReadCount
         );
-        Assert.Equal(
-            before.FullProjectionInvocationCount,
-            after.FullProjectionInvocationCount
-        );
         for (int index = 0;
              index < snapshot.HeadToRoot.Count - 1;
              index++) {
@@ -174,9 +168,6 @@ public sealed class SessionHistoryPlanningTests : IDisposable {
         );
         EventAddress created =
             engine.ResolveExecutionTail().Head!.Value;
-        long fullProjectionCount =
-            engine.FullProjectionInvocationCount;
-
         SessionHistoryPlanningSeedBatch batch =
             engine.ReadHistoryPlanningSeeds([created]);
 
@@ -185,10 +176,6 @@ public sealed class SessionHistoryPlanningTests : IDisposable {
         Assert.Equal(created, seed.Address);
         Assert.Null(seed.ExecutionRecovery);
         Assert.Equal(2, batch.Diagnostics.PayloadReads);
-        Assert.Equal(
-            fullProjectionCount,
-            engine.FullProjectionInvocationCount
-        );
     }
 
     private (
@@ -311,8 +298,6 @@ public sealed class SessionHistoryPlanningTests : IDisposable {
         }
 
         using var engine = SessionJournalEngine.Open(path);
-        long fullProjectionCount =
-            engine.FullProjectionInvocationCount;
         SessionJournalReadDiagnostics before =
             engine.CaptureReadDiagnostics();
         SessionHistoryPlanningWindow window;
@@ -327,10 +312,6 @@ public sealed class SessionHistoryPlanningTests : IDisposable {
         SessionJournalReadDiagnostics after =
             engine.CaptureReadDiagnostics();
 
-        Assert.Equal(
-            fullProjectionCount,
-            engine.FullProjectionInvocationCount
-        );
         Assert.Equal(head, window.ObservedRawHead);
         Assert.Equal(4, window.Units.Count);
         Assert.Equal(4, window.Diagnostics.DecodedEventCount);

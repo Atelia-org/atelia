@@ -7,6 +7,13 @@
 > **后续恢复设计**：[Tail-only Execution Recovery Design](tail-execution-recovery-design.md)
 > **替代对象**：`prototypes/ChatSession`（StateJournal deque + 整轮末尾 commit）
 
+> **P5 supersession（2026-07-29）**：本文是历史主干基线，不再描述 current public API。
+> 正文中的 full projection/replay API、production reducer 与 reference-oracle 叙事已由 P5-D
+> 删除。current runtime 只使用 execution-boundary inspection、tail recovery、exact-head
+> governing setup 与 bounded history planning window；完整 raw 审计属于
+> `SessionJournal.Offline` companion。现行边界见
+> [恢复与 DerivedMemory 化简计划](session-journal-recovery-and-derived-memory-simplification-plan.md)。
+
 > **后续边界说明（2026-07-28）**：本文描述 D7 当时的已实施基线，因此仍如实记录 raw
 > `ArtifactSetCommitted` 与 Prepared v3。后续方向已在
 > [DerivedMemory 实施方案](derived-memory-subsystem-implementation-plan.md) 中落地：

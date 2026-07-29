@@ -20,7 +20,7 @@ public sealed class SessionExecutionTailResolverTests : IDisposable {
     private readonly List<string> _paths = [];
 
     [Fact]
-    public void DurableHeadDifferentialMatrix_MatchesFullFoldAndResolverContracts() {
+    public void DurableHeadMatrix_MatchesTailResolverAndFoldContracts() {
         string path = NewPath();
         var calls = new[] {
             new RawToolCall("alpha", "call-1", """{"n":1}"""),
@@ -285,104 +285,182 @@ public sealed class SessionExecutionTailResolverTests : IDisposable {
         );
 
         var scenarios = new[] {
-            Scenario("genesis-created", prompt, created, foldable: true),
-            Scenario("observation", created, observation, foldable: true),
-            Scenario("prepared", created, prepared, foldable: true),
-            Scenario("attempt", created, restarted, foldable: true),
+            Scenario(
+                "genesis-created",
+                prompt,
+                created,
+                SessionExecutionPhase.Idle,
+                SessionEventKind.SessionCreated,
+                foldable: true
+            ),
+            Scenario(
+                "observation",
+                created,
+                observation,
+                SessionExecutionPhase.AwaitingAgentAction,
+                SessionEventKind.ObservationAccepted,
+                foldable: true
+            ),
+            Scenario(
+                "prepared",
+                created,
+                prepared,
+                SessionExecutionPhase.AwaitingCompletionDispatch,
+                SessionEventKind.CompletionRequestPrepared,
+                foldable: true
+            ),
+            Scenario(
+                "attempt",
+                created,
+                restarted,
+                SessionExecutionPhase.AwaitingCompletion,
+                SessionEventKind.CompletionAttemptStarted,
+                foldable: true
+            ),
             Scenario(
                 "repeated-attempt",
                 created,
                 restartedAgain,
+                SessionExecutionPhase.AwaitingCompletion,
+                SessionEventKind.CompletionAttemptStarted,
                 foldable: true
             ),
-            Scenario("multi-tool-action", created, action, foldable: false),
+            Scenario(
+                "multi-tool-action",
+                created,
+                action,
+                SessionExecutionPhase.AwaitingToolExecution,
+                SessionEventKind.AgentActionProduced,
+                foldable: false
+            ),
             Scenario(
                 "multi-tool-first-start",
                 created,
                 started1,
+                SessionExecutionPhase.AwaitingToolExecution,
+                SessionEventKind.ToolExecutionStarted,
                 foldable: false
             ),
             Scenario(
                 "multi-tool-partial-result",
                 created,
                 result1,
+                SessionExecutionPhase.AwaitingToolExecution,
+                SessionEventKind.ToolResultObserved,
                 foldable: false
             ),
             Scenario(
                 "multi-tool-next-start",
                 created,
                 started2,
+                SessionExecutionPhase.AwaitingToolExecution,
+                SessionEventKind.ToolExecutionStarted,
                 foldable: false
             ),
             Scenario(
                 "multi-tool-final-result",
                 created,
                 result2,
+                SessionExecutionPhase.AwaitingAgentAction,
+                SessionEventKind.ToolResultObserved,
                 foldable: true
             ),
             Scenario(
                 "settled-continuation-prepared",
                 created,
                 continuationPrepared,
+                SessionExecutionPhase.AwaitingCompletionDispatch,
+                SessionEventKind.CompletionRequestPrepared,
                 foldable: true
             ),
-            Scenario("known-failure", created, failed, foldable: true),
+            Scenario(
+                "known-failure",
+                created,
+                failed,
+                SessionExecutionPhase.TurnFailed,
+                SessionEventKind.CompletionAttemptFailed,
+                foldable: true
+            ),
             Scenario(
                 "failed-to-observation",
                 created,
                 observationAfterFailure,
+                SessionExecutionPhase.AwaitingAgentAction,
+                SessionEventKind.ObservationAccepted,
                 foldable: true
             ),
             Scenario(
                 "imported-terminal",
                 created,
                 imported,
+                SessionExecutionPhase.Idle,
+                SessionEventKind.ImportedAgentAction,
                 foldable: true
             ),
             Scenario(
                 "terminal-to-setup",
                 created,
                 setup,
+                SessionExecutionPhase.Idle,
+                SessionEventKind.SystemPromptSetup,
                 foldable: true
             ),
             Scenario(
                 "live-terminal-after-repeated-attempt",
                 created,
                 liveTerminal,
+                SessionExecutionPhase.Idle,
+                SessionEventKind.AgentActionProduced,
                 foldable: true
             ),
             Scenario(
                 "single-tool-action",
                 created,
                 singleAction,
+                SessionExecutionPhase.AwaitingToolExecution,
+                SessionEventKind.ImportedAgentAction,
                 foldable: false
             ),
             Scenario(
                 "single-tool-start",
                 created,
                 singleStarted,
+                SessionExecutionPhase.AwaitingToolExecution,
+                SessionEventKind.ToolExecutionStarted,
                 foldable: false
             ),
             Scenario(
                 "single-tool-final-result",
                 created,
                 singleResult,
+                SessionExecutionPhase.AwaitingAgentAction,
+                SessionEventKind.ToolResultObserved,
                 foldable: true
             )
         };
 
         Assert.Equal(
             1,
-            AssertResolverMatchesFull(journal, runtime)
+            AssertResolverState(
+                journal,
+                runtime,
+                SessionExecutionPhase.Empty,
+                SessionEventKind.RuntimeConfigSetup
+            )
                 .Diagnostics.PayloadReadCount
         );
         Assert.Equal(
             2,
-            AssertResolverMatchesFull(journal, prompt)
+            AssertResolverState(
+                journal,
+                prompt,
+                SessionExecutionPhase.Empty,
+                SessionEventKind.SystemPromptSetup
+            )
                 .Diagnostics.PayloadReadCount
         );
         foreach (DifferentialScenario scenario in scenarios) {
-            AssertDifferentialScenario(
+            AssertTailScenario(
                 journal,
                 runtime,
                 prompt,
@@ -525,14 +603,16 @@ public sealed class SessionExecutionTailResolverTests : IDisposable {
                 ToolRuntimeIdentity: null
             )
         );
-        SessionExecutionState expected = FullOracle(journal, terminal);
         var reader = new SessionJournalEventReader(journal);
 
         SessionExecutionRecovery recovery =
             SessionExecutionTailResolver.Resolve(reader, terminal);
 
-        Assert.Equal(expected, recovery.State);
         Assert.Equal(SessionExecutionPhase.Idle, recovery.State.Phase);
+        Assert.Equal(
+            SessionEventKind.ImportedAgentAction,
+            recovery.State.HeadKind
+        );
         Assert.Equal(terminal, recovery.Boundary.SourceAction);
         Assert.Equal(4, recovery.Diagnostics.PayloadReadCount);
         Assert.Equal(2, recovery.Diagnostics.HeaderReadCount);
@@ -602,14 +682,35 @@ public sealed class SessionExecutionTailResolverTests : IDisposable {
             )
         );
 
-        foreach (EventAddress exactHead in new[] { observation, left, right }) {
+        foreach ((
+            EventAddress ExactHead,
+            SessionExecutionPhase ExpectedPhase,
+            SessionEventKind ExpectedKind
+        ) item in new[] {
+            (
+                observation,
+                SessionExecutionPhase.AwaitingAgentAction,
+                SessionEventKind.ObservationAccepted
+            ),
+            (
+                left,
+                SessionExecutionPhase.Idle,
+                SessionEventKind.ImportedAgentAction
+            ),
+            (
+                right,
+                SessionExecutionPhase.Idle,
+                SessionEventKind.ImportedAgentAction
+            )
+        }) {
             SessionExecutionRecovery recovery =
                 SessionExecutionTailResolver.Resolve(
                     new SessionJournalEventReader(journal),
-                    exactHead
+                    item.ExactHead
                 );
-            Assert.Equal(FullOracle(journal, exactHead), recovery.State);
-            Assert.Equal(exactHead, recovery.Head);
+            Assert.Equal(item.ExpectedPhase, recovery.State.Phase);
+            Assert.Equal(item.ExpectedKind, recovery.State.HeadKind);
+            Assert.Equal(item.ExactHead, recovery.Head);
         }
         Assert.Equal(left, SessionExecutionTailResolver.Resolve(
             new SessionJournalEventReader(journal),
@@ -626,45 +727,59 @@ public sealed class SessionExecutionTailResolverTests : IDisposable {
         Assert.True(journal.MoveRef(main, observation, left).Unwrap());
         Assert.True(journal.MoveRef(main, left, observation).Unwrap());
         Assert.True(journal.MoveRef(main, observation, right).Unwrap());
-        SessionExecutionState expectedCurrent = FullOracle(journal, right);
         journal.Dispose();
 
         using var reopened = SessionJournalEngine.Open(path);
         SessionExecutionRecovery current = reopened.ResolveExecutionTail();
         Assert.Equal(right, current.Head);
-        Assert.Equal(expectedCurrent, current.State);
+        Assert.Equal(SessionExecutionPhase.Idle, current.State.Phase);
+        Assert.Equal(
+            SessionEventKind.ImportedAgentAction,
+            current.State.HeadKind
+        );
         Assert.Equal(right, current.Boundary.SourceAction);
     }
 
     [Fact]
-    public void Resolve_ControlledWriterHeads_MatchFullProjectionOracle() {
+    public void Resolve_ControlledWriterHeads_ReportExpectedStates() {
         string path = NewPath();
         using var engine = SessionJournalEngine.Create(
             path,
             new SessionCreateOptions("model-A", "system", "surface-A")
         );
         SessionExecutionRecovery created = engine.ResolveExecutionTail();
-        Assert.Equal(engine.Project().ExecutionState, created.State);
+        Assert.Equal(SessionExecutionPhase.Idle, created.State.Phase);
+        Assert.Equal(SessionEventKind.SessionCreated, created.State.HeadKind);
 
         EventAddress observation = engine.AppendObservation("hello");
+        SessionExecutionState observed =
+            engine.ResolveExecutionTail(observation).State;
         Assert.Equal(
-            engine.Project().ExecutionState,
-            engine.ResolveExecutionTail(observation).State
+            SessionExecutionPhase.AwaitingAgentAction,
+            observed.Phase
+        );
+        Assert.Equal(
+            SessionEventKind.ObservationAccepted,
+            observed.HeadKind
         );
 
         EventAddress action = engine.AppendImportedAgentAction(
             new ActionMessage([new ActionBlock.Text("world")]),
             Invocation()
         );
+        SessionExecutionState completed =
+            engine.ResolveExecutionTail(action).State;
+        Assert.Equal(SessionExecutionPhase.Idle, completed.Phase);
         Assert.Equal(
-            engine.Project().ExecutionState,
-            engine.ResolveExecutionTail(action).State
+            SessionEventKind.ImportedAgentAction,
+            completed.HeadKind
         );
     }
 
     [Theory]
     [InlineData("wrong-parent")]
     [InlineData("wrong-attempt")]
+    [InlineData("started-without-prepared")]
     [InlineData("wrong-correlation")]
     [InlineData("wrong-checkpoint")]
     [InlineData("wrong-runtime")]
@@ -680,7 +795,7 @@ public sealed class SessionExecutionTailResolverTests : IDisposable {
     [InlineData("sequence-repeat")]
     [InlineData("setup-pending-prepared")]
     [InlineData("setup-pending-tool")]
-    public void MalformedOperationalMatrix_FullAndResolverFailFast(
+    public void MalformedOperationalMatrix_TailConsumersFailFast(
         string mutation
     ) {
         string path = NewPath();
@@ -716,6 +831,23 @@ public sealed class SessionExecutionTailResolverTests : IDisposable {
             new ObservationAcceptedBody("observe")
         );
         string correlation = Correlation(observation);
+
+        if (mutation == "started-without-prepared") {
+            EventAddress startedWithoutPrepared = Commit(
+                journal,
+                observation,
+                SessionEventKind.CompletionAttemptStarted,
+                new CompletionAttemptStartedBody()
+            );
+            AssertMalformedConsumerMatrix(
+                journal,
+                runtime,
+                prompt,
+                created,
+                startedWithoutPrepared
+            );
+            return;
+        }
 
         if (mutation == "wrong-parent") {
             EventAddress wrongParentHead = Commit(
@@ -1056,9 +1188,6 @@ public sealed class SessionExecutionTailResolverTests : IDisposable {
         EventAddress malformedHead,
         bool canDecodeSuffix = true
     ) {
-        Assert.Throws<InvalidDataException>(() =>
-            FullOracle(journal, malformedHead)
-        );
         var reader = new SessionJournalEventReader(journal);
 
         Assert.Throws<InvalidDataException>(() =>
@@ -1071,11 +1200,6 @@ public sealed class SessionExecutionTailResolverTests : IDisposable {
             0,
             reader.CaptureDiagnostics()
                 .ChronologicalChainReadCount
-        );
-        Assert.Equal(
-            0,
-            reader.CaptureDiagnostics()
-                .FullProjectionInvocationCount
         );
         if (!canDecodeSuffix) {
             // Runtime identity presence is also a codec-owned wire
@@ -1246,8 +1370,17 @@ public sealed class SessionExecutionTailResolverTests : IDisposable {
         string name,
         EventAddress cut,
         EventAddress head,
+        SessionExecutionPhase expectedPhase,
+        SessionEventKind expectedHeadKind,
         bool foldable
-    ) => new(name, cut, head, foldable);
+    ) => new(
+        name,
+        cut,
+        head,
+        expectedPhase,
+        expectedHeadKind,
+        foldable
+    );
 
     private static EventAddress CommitScenarioObservation(
         EventJournal.EventJournal journal,
@@ -1265,48 +1398,39 @@ public sealed class SessionExecutionTailResolverTests : IDisposable {
         );
     }
 
-    private static SessionExecutionRecovery AssertResolverMatchesFull(
+    private static SessionExecutionRecovery AssertResolverState(
         EventJournal.EventJournal journal,
-        EventAddress head
+        EventAddress head,
+        SessionExecutionPhase expectedPhase,
+        SessionEventKind expectedHeadKind
     ) {
-        SessionExecutionState expected = FullOracle(journal, head);
         var reader = new SessionJournalEventReader(journal);
 
         SessionExecutionRecovery actual =
             SessionExecutionTailResolver.Resolve(reader, head);
 
-        Assert.True(
-            expected == actual.State,
-            $"Head {head} differed.{Environment.NewLine}"
-                + $"Expected: {expected}{Environment.NewLine}"
-                + $"Actual:   {actual.State}"
-        );
+        Assert.Equal(expectedPhase, actual.State.Phase);
+        Assert.Equal(expectedHeadKind, actual.State.HeadKind);
         AssertResolverDiagnostics(reader, actual);
         return actual;
     }
 
-    private static void AssertDifferentialScenario(
+    private static void AssertTailScenario(
         EventJournal.EventJournal journal,
         EventAddress runtime,
         EventAddress prompt,
         DifferentialScenario scenario
     ) {
-        SessionExecutionState expected =
-            FullOracle(journal, scenario.Head);
         var reader = new SessionJournalEventReader(journal);
         SessionExecutionRecovery resolved =
             SessionExecutionTailResolver.Resolve(
                 reader,
                 scenario.Head
             );
-        Assert.True(
-            expected == resolved.State,
-            $"Resolver scenario '{scenario.Name}' differed."
-                + $"{Environment.NewLine}Expected: {expected}"
-                + $"{Environment.NewLine}Actual:   {resolved.State}"
-        );
+        Assert.Equal(scenario.ExpectedPhase, resolved.State.Phase);
+        Assert.Equal(scenario.ExpectedHeadKind, resolved.State.HeadKind);
         AssertResolverDiagnostics(reader, resolved);
-        if (expected.HeadKind
+        if (resolved.State.HeadKind
             == SessionEventKind.ObservationAccepted) {
             Assert.Null(resolved.Boundary.SourcePrepared);
             Assert.Null(resolved.Boundary.SourceAction);
@@ -1355,9 +1479,9 @@ public sealed class SessionExecutionTailResolverTests : IDisposable {
             );
             Assert.Equal(
                 SessionExecutionPhase.AwaitingToolExecution,
-                expected.Phase
+                resolved.State.Phase
             );
-            Assert.NotNull(expected.PendingToolCall);
+            Assert.NotNull(resolved.State.PendingToolCall);
             return;
         }
 
@@ -1371,22 +1495,22 @@ public sealed class SessionExecutionTailResolverTests : IDisposable {
             );
 
         Assert.Equal(scenario.Head, folded.GoverningSetup.Head);
-        Assert.Equal(expected.Phase, folded.Phase);
+        Assert.Equal(resolved.State.Phase, folded.Phase);
         Assert.Equal(
-            expected.ToolExecutionSequenceCheckpoint,
+            resolved.State.ToolExecutionSequenceCheckpoint,
             folded.ToolExecutionSequenceCheckpoint
         );
         Assert.Equal(
-            expected.ActiveCorrelationId,
+            resolved.State.ActiveCorrelationId,
             folded.ActiveCorrelationId
         );
         SessionEventKind foldedHeadKind = suffix.Count == 0
             ? seed.HeadKind
             : suffix[^1].Kind;
-        Assert.Equal(expected.HeadKind, foldedHeadKind);
+        Assert.Equal(resolved.State.HeadKind, foldedHeadKind);
         bool replaySafe =
             SessionOperationalSemantics.IsReplaySafePhase(
-                expected.Phase
+                resolved.State.Phase
             );
         Assert.Equal(
             replaySafe,
@@ -1410,7 +1534,6 @@ public sealed class SessionExecutionTailResolverTests : IDisposable {
             reader.CaptureDiagnostics();
         Assert.Equal(0, reads.ChronologicalChainReadCount);
         Assert.Equal(0, reads.ChronologicalEventCount);
-        Assert.Equal(0, reads.FullProjectionInvocationCount);
         Assert.Equal(
             recovery.Diagnostics.HeaderReadCount,
             reads.HeaderPreviewReadCount
@@ -1420,14 +1543,6 @@ public sealed class SessionExecutionTailResolverTests : IDisposable {
             reads.PayloadReadCount
         );
     }
-
-    private static SessionExecutionState FullOracle(
-        EventJournal.EventJournal journal,
-        EventAddress head
-    ) =>
-        SessionReducer.Reduce(
-            ReadDecodedChain(journal, head)
-        ).ExecutionState;
 
     private static IReadOnlyList<DecodedSessionEvent>
         ReadDecodedSuffix(
@@ -1595,6 +1710,8 @@ public sealed class SessionExecutionTailResolverTests : IDisposable {
         string Name,
         EventAddress Cut,
         EventAddress Head,
+        SessionExecutionPhase ExpectedPhase,
+        SessionEventKind ExpectedHeadKind,
         bool Foldable
     );
 }

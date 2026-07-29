@@ -31,7 +31,6 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
         EventAddress anchor;
         EventAddress runtimeB;
         EventAddress promptB;
-        int fullProjectionCountBeforeSend;
 
         using (var engine = SessionJournalEngine.Create(
             path,
@@ -49,7 +48,6 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
             );
             promptB = engine.AppendSystemPromptSetup("system-B");
             engine.UseRuntime(CreateRuntime(client, candidate));
-            fullProjectionCountBeforeSend = engine.FullProjectionInvocationCount;
 
             TurnResult result = await engine.SendAsync("new observation", CancellationToken.None);
 
@@ -62,7 +60,6 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
                 ),
                 engine.LastTailProjectionDiagnostics
             );
-            Assert.Equal(fullProjectionCountBeforeSend, engine.FullProjectionInvocationCount);
         }
 
         CompletionRequest request = Assert.Single(client.Requests);
@@ -161,13 +158,10 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
             path,
             CreateRuntime(client, candidate)
         );
-        int projectionCountBeforeResume = reopened.FullProjectionInvocationCount;
-
         ResumeOutcome outcome = await reopened.ResumeAsync(CancellationToken.None);
 
         Assert.True(outcome.Advanced);
         Assert.Equal("resumed answer", outcome.Message?.GetFlattenedText());
-        Assert.Equal(projectionCountBeforeResume, reopened.FullProjectionInvocationCount);
         Assert.Single(client.Requests);
     }
 
@@ -218,12 +212,9 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
             path,
             CreateRuntime(client, candidate, tools, TestToolRuntimeIdentity)
         );
-        int projectionCount = engine.FullProjectionInvocationCount;
-
         TurnResult result = await engine.SendAsync("use tool", CancellationToken.None);
 
         Assert.Equal("after tool", result.Message.GetFlattenedText());
-        Assert.Equal(projectionCount, engine.FullProjectionInvocationCount);
         Assert.Equal(3, client.Requests.Count);
         Assert.All(client.Requests, request => Assert.Single(request.Tools));
         AssertToolDependencyTail(client.Requests[1], "call-1");
@@ -274,14 +265,11 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
         engine.AppendObservation("first observation");
         engine.AppendObservation("invalid second observation");
         engine.UseRuntime(CreateRuntime(client, "missing-artifact"));
-        int projectionCountBeforeResume = engine.FullProjectionInvocationCount;
-
         InvalidDataException error = await Assert.ThrowsAsync<InvalidDataException>(
             () => engine.ResumeAsync(CancellationToken.None)
         );
 
         Assert.Contains("idle or failed boundary", error.Message, StringComparison.Ordinal);
-        Assert.Equal(projectionCountBeforeResume, engine.FullProjectionInvocationCount);
         Assert.Empty(client.Requests);
     }
 
@@ -295,14 +283,11 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
             new SessionCreateOptions("model-A", "system-A", "surface-A"),
             CreateRuntime(client, "missing-artifact", toolSession)
         )) {
-            int projectionCountBeforeSend = engine.FullProjectionInvocationCount;
-
             InvalidOperationException error = await Assert.ThrowsAsync<InvalidOperationException>(
                 () => engine.SendAsync("new observation", CancellationToken.None)
             );
 
             Assert.Contains("ToolRuntimeIdentity", error.Message, StringComparison.Ordinal);
-            Assert.Equal(projectionCountBeforeSend, engine.FullProjectionInvocationCount);
             Assert.Empty(client.Requests);
         }
         Assert.Empty(ReadAddressesByKind(path, SessionEventKind.ObservationAccepted));
@@ -343,8 +328,6 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
             ) with { ToolRuntimeIdentity = identity }
         )) {
             EventAddress? head = engine.ResolveExecutionTail().Head;
-            int projectionCount = engine.FullProjectionInvocationCount;
-
             ArgumentException error =
                 await Assert.ThrowsAsync<ArgumentException>(
                     () => engine.SendAsync(
@@ -355,7 +338,6 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
 
             Assert.Contains("ToolRuntimeIdentity", error.ParamName);
             Assert.Equal(head, engine.ResolveExecutionTail().Head);
-            Assert.Equal(projectionCount, engine.FullProjectionInvocationCount);
             Assert.Empty(client.Requests);
         }
         Assert.Empty(
@@ -396,8 +378,6 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
             SessionContextCandidate candidate =
                 CreateCandidate(engine, anchor);
             engine.UseRuntime(CreateRuntime(client, candidate));
-            int projectionCountBeforeSend = engine.FullProjectionInvocationCount;
-
             SessionJournalTurnAbortedException error =
                 await Assert.ThrowsAsync<SessionJournalTurnAbortedException>(
                 () => engine.SendAsync("new observation", CancellationToken.None)
@@ -406,10 +386,9 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
             Assert.Equal(CompletionTerminationKind.Failed, error.Termination.Kind);
             Assert.Equal("atelia.host.unsupported-tool-call", error.Termination.ProviderReason);
             Assert.Contains("supports no tools", error.Termination.Detail, StringComparison.Ordinal);
-            Assert.Equal(projectionCountBeforeSend, engine.FullProjectionInvocationCount);
-
-            SessionProjection failed = engine.Project();
-            Assert.Equal(SessionExecutionPhase.TurnFailed, failed.ExecutionState.Phase);
+            SessionExecutionBoundaryInspection failed =
+                engine.InspectExecutionBoundary();
+            Assert.Equal(SessionExecutionPhase.TurnFailed, failed.Phase);
             EventAddress failureAddress = failed.Head!.Value;
             CompletionAttemptFailedBody failure = Assert.IsType<CompletionAttemptFailedBody>(
                 SessionEventCodec.Decode(
@@ -421,13 +400,11 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
             Assert.Equal(CompletionTerminationKind.Failed, failure.TerminationKind);
             Assert.Equal("atelia.host.unsupported-tool-call", failure.ProviderReason);
 
-            int projectionCountBeforeRecovery = engine.FullProjectionInvocationCount;
             TurnResult recovered = await engine.SendAsync(
                 "recovery observation",
                 CancellationToken.None
             );
             Assert.Equal("recovered answer", recovered.Message.GetFlattenedText());
-            Assert.Equal(projectionCountBeforeRecovery, engine.FullProjectionInvocationCount);
         }
         Assert.Equal(2, client.Requests.Count);
         Assert.Equal(2, ReadAddressesByKind(path, SessionEventKind.CompletionRequestPrepared).Length);
@@ -446,16 +423,14 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
             path,
             new SessionCreateOptions("model-A", "system-A", "surface-A")
         );
-        EventAddress created = engine.Project().Head!.Value;
+        EventAddress created =
+            engine.InspectExecutionBoundary().Head!.Value;
         SessionContextCandidate candidate =
             CreateCandidate(engine, created);
         engine.UseRuntime(CreateRuntime(client, candidate));
-        int projectionCountBeforeSend = engine.FullProjectionInvocationCount;
-
         await engine.SendAsync("first observation", CancellationToken.None);
         await engine.SendAsync("second observation", CancellationToken.None);
 
-        Assert.Equal(projectionCountBeforeSend, engine.FullProjectionInvocationCount);
         Assert.Equal(2, client.Requests.Count);
     }
 
@@ -471,8 +446,6 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
             CreateRuntime(client, "unused")
         );
         EventAddress head = engine.ResolveExecutionTail().Head!.Value;
-        int projectionCount = engine.FullProjectionInvocationCount;
-
         SessionJournalNotReadyException error =
             await Assert.ThrowsAsync<SessionJournalNotReadyException>(
                 () => engine.SendAsync("durable observation", CancellationToken.None)
@@ -487,7 +460,6 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
             SessionExecutionPhase.Idle,
             engine.ResolveExecutionTail().State.Phase
         );
-        Assert.Equal(projectionCount, engine.FullProjectionInvocationCount);
         Assert.Empty(client.Requests);
     }
 
@@ -522,8 +494,6 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
             new SessionCreateOptions("model-A", "system-A", "surface-A")
         );
         EventAddress? head = engine.ResolveExecutionTail().Head;
-        int projectionCount = engine.FullProjectionInvocationCount;
-
         ArgumentException argumentError =
             await Assert.ThrowsAsync<ArgumentException>(
                 () => engine.SendAsync(" ", CancellationToken.None)
@@ -537,7 +507,6 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
 
         Assert.Contains("runtime is required", error.Message, StringComparison.Ordinal);
         Assert.Equal(head, engine.ResolveExecutionTail().Head);
-        Assert.Equal(projectionCount, engine.FullProjectionInvocationCount);
     }
 
     [Theory]
@@ -556,7 +525,8 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
             path,
             new SessionCreateOptions("model-A", "system-A", "surface-A")
         )) {
-            EventAddress anchor = setup.Project().Head!.Value;
+            EventAddress anchor =
+                setup.InspectExecutionBoundary().Head!.Value;
             candidate = CreateCandidate(setup, anchor);
             head = setup.ResolveExecutionTail().Head!.Value;
         }
@@ -581,8 +551,6 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
             path,
             runtime
         )) {
-            int projectionCount = reopened.FullProjectionInvocationCount;
-
             Exception? error = await Record.ExceptionAsync(
                 () => reopened.SendAsync(
                     "must not append",
@@ -598,7 +566,6 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
                 Assert.IsAssignableFrom<ArgumentException>(error);
             }
             Assert.Equal(head, reopened.ResolveExecutionTail().Head);
-            Assert.Equal(projectionCount, reopened.FullProjectionInvocationCount);
             Assert.Empty(client.Requests);
         }
         Assert.Empty(
@@ -622,7 +589,8 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
             path,
             new SessionCreateOptions("model-A", "system-A", "surface-A")
         )) {
-            mainHead = setup.Project().Head!.Value;
+            mainHead =
+                setup.InspectExecutionBoundary().Head!.Value;
             candidate = CreateCandidate(setup, mainHead);
         }
         EventAddress offBranchRuntimeSetup;
@@ -703,8 +671,6 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
                 SessionUncertainCompletionRecoveryPolicy.RestartWithNewAttempt
         };
         using var reopened = SessionJournalEngine.Open(path, recoveryRuntime);
-        int projectionCount = reopened.FullProjectionInvocationCount;
-
         InvalidDataException error =
             await Assert.ThrowsAsync<InvalidDataException>(
                 () => reopened.ResumeAsync(CancellationToken.None)
@@ -716,7 +682,6 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
             StringComparison.Ordinal
         );
         Assert.Equal(forgedPrepared, reopened.ResolveExecutionTail().Head);
-        Assert.Equal(projectionCount, reopened.FullProjectionInvocationCount);
         Assert.Empty(client.Requests);
     }
 
@@ -736,7 +701,8 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
             path,
             new SessionCreateOptions("model-A", "system-A", "surface-A")
         )) {
-            EventAddress anchor = engine.Project().Head!.Value;
+            EventAddress anchor =
+                engine.InspectExecutionBoundary().Head!.Value;
             candidate = CreateCandidate(engine, anchor);
             if (mutateRuntime) {
                 engine.AppendRuntimeConfigSetup(
@@ -825,7 +791,8 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
             await Assert.ThrowsAsync<SessionJournalFailpointException>(
                 () => engine.SendAsync("source observation", CancellationToken.None)
             );
-            prepared = engine.Project().Head!.Value;
+            prepared =
+                engine.InspectExecutionBoundary().Head!.Value;
         }
         using (var journal = EventJournal.EventJournal.OpenExisting(path)) {
             _ = Commit(

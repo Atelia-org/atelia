@@ -211,32 +211,6 @@ public sealed record SessionExecutionState(
     SessionToolRuntimeIdentity? PendingToolRuntimeIdentity = null
 );
 
-public sealed record SessionProjection(
-    SessionRuntimeConfiguration? Config,
-    string? SystemPrompt,
-    IReadOnlyList<IHistoryMessage> Context,
-    SessionExecutionState ExecutionState,
-    EventAddress? Head
-);
-
-public sealed record AddressedSessionHistoryMessage(
-    IHistoryMessage Message,
-    EventAddress SourceStartInclusive,
-    EventAddress SourceEndInclusive
-);
-
-public sealed record SessionHistoryReplay(
-    EventAddress? SourceRawHead,
-    IReadOnlyList<AddressedSessionHistoryMessage> Messages,
-    SessionExecutionState ExecutionState
-) {
-    public static SessionHistoryReplay Empty { get; } = new(
-        SourceRawHead: null,
-        Messages: Array.AsReadOnly(Array.Empty<AddressedSessionHistoryMessage>()),
-        ExecutionState: new SessionExecutionState(SessionExecutionPhase.Empty, HeadKind: null)
-    );
-}
-
 public sealed record SessionGoverningSetup(
     EventAddress Head,
     EventAddress RuntimeConfigSetupAddress,
@@ -343,8 +317,7 @@ internal readonly record struct SessionJournalReadDiagnostics(
     long PayloadReadCount,
     long LogicalPayloadByteCount,
     long ChronologicalChainReadCount,
-    long ChronologicalEventCount,
-    long FullProjectionInvocationCount
+    long ChronologicalEventCount
 ) {
     public static SessionJournalReadDiagnostics operator -(
         SessionJournalReadDiagnostics end,
@@ -360,9 +333,6 @@ internal readonly record struct SessionJournalReadDiagnostics(
         ),
         ChronologicalEventCount: checked(
             end.ChronologicalEventCount - start.ChronologicalEventCount
-        ),
-        FullProjectionInvocationCount: checked(
-            end.FullProjectionInvocationCount - start.FullProjectionInvocationCount
         )
     );
 }
