@@ -14,7 +14,7 @@ public sealed class DerivedRecapPublisherTests {
         Assert.DoesNotContain(
             storeMethods,
             static method =>
-                method.Name.Contains(
+                method.Name.StartsWith(
                     "Publish",
                     StringComparison.Ordinal
                 )

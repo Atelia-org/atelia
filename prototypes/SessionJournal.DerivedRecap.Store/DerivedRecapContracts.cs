@@ -382,3 +382,106 @@ public abstract record FinalBlockWriteResult {
     public sealed record Stale(string CurrentStateToken)
         : FinalBlockWriteResult;
 }
+
+public enum PublishedRestoreAuthorityKind {
+    Publication,
+    ManifestWitness,
+}
+
+public sealed class PublishedRestoreHandle {
+    internal PublishedRestoreHandle(
+        RefId refId,
+        EventAddress setAdmissionAnchor,
+        PublishedRestoreAuthorityKind authorityKind,
+        string authorityStateToken,
+        string manifestPayloadSha256
+    ) {
+        RefId = refId;
+        SetAdmissionAnchor = setAdmissionAnchor;
+        AuthorityKind = authorityKind;
+        AuthorityStateToken = authorityStateToken;
+        ManifestPayloadSha256 = manifestPayloadSha256;
+    }
+
+    public RefId RefId { get; }
+    public EventAddress SetAdmissionAnchor { get; }
+    public PublishedRestoreAuthorityKind AuthorityKind { get; }
+    public string ManifestPayloadSha256 { get; }
+
+    internal string AuthorityStateToken { get; }
+}
+
+public abstract record FrozenRecapInputHealth {
+    public abstract string StateToken { get; init; }
+
+    public sealed record NotRequired(string StateToken)
+        : FrozenRecapInputHealth;
+
+    public sealed record Missing(string StateToken)
+        : FrozenRecapInputHealth;
+
+    public sealed record Healthy(
+        DerivedRecapFrozenInput Input,
+        string StateToken
+    ) : FrozenRecapInputHealth;
+
+    public sealed record Damaged(
+        IReadOnlyList<RecapStructuralDefect> Defects,
+        string StateToken
+    ) : FrozenRecapInputHealth;
+}
+
+public abstract record PublishedBlockRestoreCapability {
+    private PublishedBlockRestoreCapability() {
+    }
+
+    public sealed record KeepCommitted
+        : PublishedBlockRestoreCapability;
+
+    public sealed record AdoptPending
+        : PublishedBlockRestoreCapability;
+
+    public sealed record InstallFinalCheckpoint
+        : PublishedBlockRestoreCapability;
+
+    public sealed record ResumeSuffix(int NextEndpointIndex)
+        : PublishedBlockRestoreCapability;
+
+    public sealed record ReplayBlock
+        : PublishedBlockRestoreCapability;
+
+    public sealed record Unavailable(
+        IReadOnlyList<RecapStructuralDefect> Defects
+    ) : PublishedBlockRestoreCapability;
+}
+
+public sealed record PublishedBlockRestoreInspection(
+    RecapBlockPlan Plan,
+    FrozenRecapInputHealth FrozenInput,
+    FinalRecapBlockHealth Final,
+    RollingRecapCheckpointHealth Checkpoint,
+    PublishedBlockRestoreCapability Capability
+);
+
+public sealed record PublishedRestoreInspection(
+    PublishedRestoreHandle Handle,
+    DerivedRecapSetManifest FrozenPlan,
+    IReadOnlyDictionary<
+        RecapBlockId,
+        PublishedBlockRestoreInspection
+    > Blocks
+);
+
+public abstract record PublishedRestoreInspectionResult {
+    private PublishedRestoreInspectionResult() {
+    }
+
+    public sealed record Available(
+        PublishedRestoreInspection Inspection
+    ) : PublishedRestoreInspectionResult;
+
+    public sealed record Unavailable(
+        EventAddress SetAdmissionAnchor,
+        IReadOnlyList<RecapStructuralDefect> Defects
+    ) : PublishedRestoreInspectionResult;
+}
