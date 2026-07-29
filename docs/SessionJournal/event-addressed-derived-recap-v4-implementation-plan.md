@@ -7,7 +7,8 @@
 > **目标设计**：
 > [Event-addressed Derived Recap V4](event-addressed-derived-recap-v4-target-design.md)
 > **兼容策略**：不迁移、不双写、不读取 current DerivedMemory v2/v3
-> **当前推进点**：R0 Contracts + Publish/Read vertical 已完成；R1 尚未启动
+> **当前推进点**：R0 Contracts + Publish/Read vertical 已完成；R1 Planner +
+> Build/Resume vertical 已完成 package-local plan lock，正在实施 R1A Store substrate
 
 ## 0. 原则
 
@@ -322,6 +323,73 @@ route A5 -> A11 -> A20
 
 真实进程 reopen 证明：正常 crash保留 block-local missing-suffix resume；checkpoint corruption最多重跑
 该 block，其他 final blocks不重跑。
+
+### R1 package-local plan lock（2026-07-30）
+
+R1 不移植 current DerivedMemory 的 epoch/job/orchestration workflow，也不增加新的 durable
+transaction state。最小 vertical 只保留以下 authority：
+
+```text
+Published source publication.json + committed blocks
+  -> hidden pre-manifest staging
+  -> Building manifest + immutable frozen inputs
+  -> one replaceable work/<block>.json
+  -> one final blocks/<block>.json
+  -> existing R0 atomic publication
+```
+
+按依赖顺序实施：
+
+| 包 | 范围 | 独立验收 |
+|---|---|---|
+| **R1A Store substrate** | exact Published source read；Store-owned source-by-commitment copy；所有 distinct source envelope统一 double-read；manifest-last Building install；Building-local snapshot；rolling/final typed health；same-directory atomic replace与短临界区 state-token CAS | source在 multi-block/multi-source copy中改变时没有可见 Building；manifest后 source变化不影响 frozen input；rolling replace reopen只见 old/new healthy version |
+| **R1B Planner + executor** | runtime `RecapPlannerConfig`、ordered active catalog、pure injectable deterministic policy、`NoBuild / PlanReady / Unavailable`；exact-head admission/route/prior validation；`EnsureFinalRecapBlock`；Maintain/Inherit；plan-or-resume→R0 Publisher | below-trigger 0 copy/0 call；limit backpressure 0 call；Inherit 0 call；Maintain unchanged content仍推进；healthy final skip；checkpoint只补 suffix |
+| **R1C acceptance + review** | Galatea fixture、真实进程 reopen、fidelity/simplification review与尾部修正 | A1 source cursor经 A5/A11到 A20；A8/A12 Inherit不推进；A5/A11不成为 set/ordinal/source；alpha healthy、zeta失败后 reopen不重跑 alpha |
+
+R1A 的 source read返回 snapshot只帮助 Planner构造 plan 中的 exact token/hash；它不授权 caller把
+任意 bytes写入 Building。创建 Building 时 Store必须重新按 manifest source commitments复制：
+
+```text
+group by (SourceSetAnchor, EnvelopeSha256)
+  -> read and validate each source envelope
+  -> copy all required committed blocks into hidden staging inputs
+  -> after every copy, reread every distinct source token
+  -> validate derived frozen-input hashes against block plans
+  -> write manifest last
+  -> atomic staging-directory create-new promotion
+```
+
+同一 source anchor声明不同 token、source missing/invalid/changed均返回 typed failure；Store不在内部
+无限 retry。caller不再向 public Building API提供 frozen input bytes。hidden pre-manifest staging
+不是 Resume authority。
+
+Building Resume只信 build-local manifest与 inputs。单 block inspection将 authoritative plan、
+optional input、final health和rolling health绑定在同一 Building descriptor下。checkpoint损坏、旧
+`BlockPlanSha256` 或 off-route cursor只使该 block从 frozen source重跑；unsafe path/symlink仍是
+安全失败。Store不持锁跨 Maintainer调用；rolling/final写入用观察到的 component state token做
+短临界区 compare-and-swap，拒绝覆盖另一 coordinator的进度。healthy but different final永不覆盖。
+
+Planner policy是同步、纯 deterministic seam，只决定 NoBuild/Maintain/Inherit、admission候选与
+bounded endpoints；它不做 IO、不调用 Maintainer，也不成为 lineage authority。Planner必须重新
+验证：
+
+- 所有 raw读取绑定同一 captured head，manifest安装前 head改变则整次重新规划；
+- admission在 captured lineage上 replay-safe，且严格晚于 latest Published；
+- route从真实 frozen `AbsorbedThrough` 或 Empty replay seed开始，strict increase，final等于
+  admission；
+- 每个 step使用 `ReadHistoryPlanningWindowAt(endpoint, start)`产生 dependency-closed slice；
+- Inline prior-context anchor是 first replay start的同-lineage ancestor/equal，整条 route只用同一
+  frozen snapshot；
+- route/call/content/raw-event hard limits在首个 Maintainer调用前全部通过。
+
+`EnsureFinalRecapBlock` 顺序执行 blocks：Inherit exact-copy local input并保持 cursor；Maintain从
+source cursor/previous endpoint唯一推导下一 start。每步即使正文不变也先以 endpoint更新并
+durable replace rolling；final endpoint checkpoint成功后才安装 final。因此 checkpoint与 final
+之间 crash，reopen可以 0 次 Maintainer调用安装 final。
+
+R1 明确不实现 Published Restore、exact-invalid online self-heal、recursive source repair、
+per-step prior context、checkpoint chain、Tag/LLM relevance policy、background scrub、CLI/R3
+cutover或 current DerivedMemory compatibility bridge。
 
 ## 3. R2：Exact-slot Restore + Online lifecycle
 
