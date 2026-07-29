@@ -849,7 +849,11 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
             )
         );
 
-        Assert.Contains("sourceRawHead", error.Message, StringComparison.Ordinal);
+        Assert.Contains(
+            "absorbedThrough",
+            error.Message,
+            StringComparison.Ordinal
+        );
         Assert.Empty(client.Requests);
     }
 
@@ -1007,13 +1011,13 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
         engine.ResolveContextAnchorSetupReferences(anchor),
         [
             ContextCandidateTestFixture.Contribution(
-                MemoryPackCarrier.Observation,
+                ContextHeaderCarrier.Observation,
                 "roleplay.world-understanding",
                 "memory observation",
                 sourceRawHead ?? anchor
             ),
             ContextCandidateTestFixture.Contribution(
-                MemoryPackCarrier.Action,
+                ContextHeaderCarrier.Action,
                 "roleplay.first-person-autobiography",
                 "memory action",
                 sourceRawHead ?? anchor

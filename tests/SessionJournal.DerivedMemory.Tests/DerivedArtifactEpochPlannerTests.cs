@@ -1846,8 +1846,8 @@ public sealed class DerivedArtifactEpochPlannerTests : IDisposable {
         DerivedArtifactEpochPlan previous,
         string profileId = "test-profile"
     ) {
-        var target = new MemoryPackBlockPath(
-            MemoryPackCarrier.Observation,
+        var target = new ContextHeaderBlockPath(
+            ContextHeaderCarrier.Observation,
             "memory.test"
         );
         IReadOnlyList<DerivedMemoryArtifactInputMember> inputMembers = [];
@@ -1881,7 +1881,7 @@ public sealed class DerivedArtifactEpochPlannerTests : IDisposable {
                 ))
                 ?.ArtifactId;
         }
-        var draft = new MemoryPackDraft(new MemoryPack());
+        var draft = new ContextHeaderPackDraft(new ContextHeaderPack());
         draft.UpsertBlock(target, "test memory");
         const string fingerprint =
             "sha256:2222222222222222222222222222222222222222222222222222222222222222";

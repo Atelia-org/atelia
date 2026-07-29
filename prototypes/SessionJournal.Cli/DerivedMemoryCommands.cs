@@ -1,3 +1,4 @@
+using System.Text.Json.Serialization;
 using Atelia.EventJournal;
 using Atelia.SessionJournal.DerivedMemory;
 using SJ = Atelia.SessionJournal;
@@ -501,17 +502,17 @@ internal static class DerivedMemoryCommands {
         }
         string carrierText = right[..slash];
         string blockKey = right[(slash + 1)..];
-        SJ.MemoryPackCarrier carrier = carrierText switch {
-            "system" => SJ.MemoryPackCarrier.System,
-            "observation" => SJ.MemoryPackCarrier.Observation,
-            "action" => SJ.MemoryPackCarrier.Action,
+        SJ.ContextHeaderCarrier carrier = carrierText switch {
+            "system" => SJ.ContextHeaderCarrier.System,
+            "observation" => SJ.ContextHeaderCarrier.Observation,
+            "action" => SJ.ContextHeaderCarrier.Action,
             _ => throw new ArgumentException(
-                $"Unknown MemoryPack carrier '{carrierText}'."
+                $"Unknown ContextHeaderPack carrier '{carrierText}'."
             )
         };
         return new DerivedArtifactSetRoleRequirement(
             roleId,
-            new SJ.MemoryPackBlockPath(carrier, blockKey),
+            new SJ.ContextHeaderBlockPath(carrier, blockKey),
             required
         );
     }
@@ -668,7 +669,7 @@ internal static class DerivedMemoryCommands {
                     member.Target.BlockKey,
                     member.ContentCodecId,
                     member.ContentSha256,
-                    EventAddressTextCodec.Format(member.SourceRawHead)
+                    EventAddressTextCodec.Format(member.AbsorbedThrough)
                 )
             )
         ]
@@ -682,13 +683,13 @@ internal static class DerivedMemoryCommands {
         reference.PayloadSha256
     );
 
-    private static string CarrierToken(SJ.MemoryPackCarrier carrier) =>
+    private static string CarrierToken(SJ.ContextHeaderCarrier carrier) =>
         carrier switch {
-            SJ.MemoryPackCarrier.System => "system",
-            SJ.MemoryPackCarrier.Observation => "observation",
-            SJ.MemoryPackCarrier.Action => "action",
+            SJ.ContextHeaderCarrier.System => "system",
+            SJ.ContextHeaderCarrier.Observation => "observation",
+            SJ.ContextHeaderCarrier.Action => "action",
             _ => throw new InvalidDataException(
-                $"Unknown MemoryPack carrier '{carrier}'."
+                $"Unknown ContextHeaderPack carrier '{carrier}'."
             )
         };
 
@@ -887,7 +888,8 @@ internal sealed record DerivedArtifactSetMemberReport(
     string BlockKey,
     string ContentCodecId,
     string ContentSha256,
-    string SourceRawHead
+    [property: JsonPropertyName("sourceRawHead")]
+        string AbsorbedThrough
 );
 
 internal sealed record DerivedArtifactSetSetupReferencesReport(

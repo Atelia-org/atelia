@@ -80,7 +80,7 @@ public sealed class DerivedMemoryOrchestratorTests : IDisposable {
                 [firstExecution]
             );
 
-        SessionMemoryLifecycleResult first =
+        SessionContextLifecycleResult first =
             await coordinator.PrepareAsync(
                 fixture.Engine,
                 new(
@@ -91,7 +91,7 @@ public sealed class DerivedMemoryOrchestratorTests : IDisposable {
             );
 
         Assert.Equal(
-            SessionMemoryLifecycleStatus.Ready,
+            SessionContextLifecycleStatus.Ready,
             first.Status
         );
         Assert.Equal(1, firstMaintainer.CallCount);
@@ -151,7 +151,7 @@ public sealed class DerivedMemoryOrchestratorTests : IDisposable {
                 [Execution(fixture, 0, secondMaintainer)]
             );
 
-        SessionMemoryLifecycleResult second =
+        SessionContextLifecycleResult second =
             await secondCoordinator.PrepareAsync(
                 fixture.Engine,
                 new(
@@ -162,7 +162,7 @@ public sealed class DerivedMemoryOrchestratorTests : IDisposable {
             );
 
         Assert.Equal(
-            SessionMemoryLifecycleStatus.Ready,
+            SessionContextLifecycleStatus.Ready,
             second.Status
         );
         Assert.Equal(1, secondMaintainer.CallCount);
@@ -242,7 +242,7 @@ public sealed class DerivedMemoryOrchestratorTests : IDisposable {
                 [Execution(fixture, 0, successful)]
             );
         Assert.Equal(
-            SessionMemoryLifecycleStatus.Ready,
+            SessionContextLifecycleStatus.Ready,
             (await first.PrepareAsync(
                 fixture.Engine,
                 new(
@@ -298,7 +298,7 @@ public sealed class DerivedMemoryOrchestratorTests : IDisposable {
                 [Execution(fixture, 0, failing)]
             );
 
-        SessionMemoryLifecycleResult result =
+        SessionContextLifecycleResult result =
             await second.PrepareAsync(
                 fixture.Engine,
                 new(
@@ -309,7 +309,7 @@ public sealed class DerivedMemoryOrchestratorTests : IDisposable {
             );
 
         Assert.Equal(
-            SessionMemoryLifecycleStatus.Ready,
+            SessionContextLifecycleStatus.Ready,
             result.Status
         );
         Assert.Equal(1, failing.CallCount);
@@ -333,7 +333,7 @@ public sealed class DerivedMemoryOrchestratorTests : IDisposable {
         Assert.NotNull(selection.Candidate);
         Assert.Equal(
             oldSet.CommonAnchor,
-            selection.Candidate.RawStartExclusive
+            selection.Candidate.SetAdmissionAnchor
         );
     }
 
@@ -380,7 +380,7 @@ public sealed class DerivedMemoryOrchestratorTests : IDisposable {
                 ]
             );
 
-        SessionMemoryLifecycleResult first =
+        SessionContextLifecycleResult first =
             await interrupted.PrepareAsync(
                 fixture.Engine,
                 new(
@@ -391,7 +391,7 @@ public sealed class DerivedMemoryOrchestratorTests : IDisposable {
             );
 
         Assert.Equal(
-            SessionMemoryLifecycleStatus.Backpressure,
+            SessionContextLifecycleStatus.Backpressure,
             first.Status
         );
         Assert.Equal(1, completedAlpha.CallCount);
@@ -439,7 +439,7 @@ public sealed class DerivedMemoryOrchestratorTests : IDisposable {
                 ]
             );
 
-        SessionMemoryLifecycleResult second =
+        SessionContextLifecycleResult second =
             await resumed.PrepareAsync(
                 reopened,
                 new(
@@ -450,7 +450,7 @@ public sealed class DerivedMemoryOrchestratorTests : IDisposable {
             );
 
         Assert.Equal(
-            SessionMemoryLifecycleStatus.Backpressure,
+            SessionContextLifecycleStatus.Backpressure,
             second.Status
         );
         Assert.Equal(0, mustNotRepeatAlpha.CallCount);
@@ -501,7 +501,7 @@ public sealed class DerivedMemoryOrchestratorTests : IDisposable {
                 ]
             );
         Assert.Equal(
-            SessionMemoryLifecycleStatus.Ready,
+            SessionContextLifecycleStatus.Ready,
             (await coordinator.PrepareAsync(
                 fixture.Engine,
                 new(
@@ -518,7 +518,7 @@ public sealed class DerivedMemoryOrchestratorTests : IDisposable {
             fixture.Engine.ReadCurrentLineageHeaders()
                 .HeadToRoot.Count;
 
-        SessionMemoryLifecycleResult result =
+        SessionContextLifecycleResult result =
             await coordinator.PrepareAsync(
                 fixture.Engine,
                 new(
@@ -530,7 +530,7 @@ public sealed class DerivedMemoryOrchestratorTests : IDisposable {
             );
 
         Assert.Equal(
-            SessionMemoryLifecycleStatus.Backpressure,
+            SessionContextLifecycleStatus.Backpressure,
             result.Status
         );
         Assert.Equal(
@@ -1764,14 +1764,14 @@ public sealed class DerivedMemoryOrchestratorTests : IDisposable {
             new DerivedArtifactSetRoleRequirement(
                 "alpha",
                 new(
-                    MemoryPackCarrier.Observation,
+                    ContextHeaderCarrier.Observation,
                     "memory.alpha"
                 )
             ),
             new DerivedArtifactSetRoleRequirement(
                 "zeta",
                 new(
-                    MemoryPackCarrier.System,
+                    ContextHeaderCarrier.System,
                     "memory.zeta"
                 ),
                 secondRequired
@@ -1809,7 +1809,7 @@ public sealed class DerivedMemoryOrchestratorTests : IDisposable {
     private static DerivedMemoryRoleExecution Execution(
         Fixture fixture,
         int roleIndex,
-        IMemoryBlockMaintainer? maintainer,
+        IRecapBlockMaintainer? maintainer,
         string mode = DerivedMemoryRoleExecutionModes.Produce,
         string? selectedArtifactId = null
     ) {
@@ -1874,18 +1874,18 @@ public sealed class DerivedMemoryOrchestratorTests : IDisposable {
 
     private sealed class FakeMaintainer(
         string id,
-        MemoryPackBlockPath target,
+        ContextHeaderBlockPath target,
         string text = "",
         ParallelGate? gate = null,
         Exception? exception = null
-    ) : IMemoryBlockMaintainer {
+    ) : IRecapBlockMaintainer {
         public string Id { get; } = id;
-        public MemoryPackBlockPath Target { get; } = target;
+        public ContextHeaderBlockPath Target { get; } = target;
         public int CallCount { get; private set; }
         public RecentHistorySlice? History { get; private set; }
 
-        public async ValueTask<MemoryBlockMaintenanceResult> MaintainAsync(
-            MemoryBlockMaintenanceRequest request,
+        public async ValueTask<RecapBlockMaintenanceResult> MaintainAsync(
+            RecapBlockMaintenanceRequest request,
             CancellationToken ct
         ) {
             CallCount++;
@@ -1899,24 +1899,24 @@ public sealed class DerivedMemoryOrchestratorTests : IDisposable {
             return new(
                 Id,
                 Target,
-                new MemoryPackBlock(text)
+                new ContextHeaderBlock(text)
             );
         }
     }
 
     private sealed class CancellationMaintainer(
         string id,
-        MemoryPackBlockPath target
-    ) : IMemoryBlockMaintainer {
+        ContextHeaderBlockPath target
+    ) : IRecapBlockMaintainer {
         private readonly TaskCompletionSource _entered =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public string Id { get; } = id;
-        public MemoryPackBlockPath Target { get; } = target;
+        public ContextHeaderBlockPath Target { get; } = target;
         public Task Entered => _entered.Task;
 
-        public async ValueTask<MemoryBlockMaintenanceResult> MaintainAsync(
-            MemoryBlockMaintenanceRequest request,
+        public async ValueTask<RecapBlockMaintenanceResult> MaintainAsync(
+            RecapBlockMaintenanceRequest request,
             CancellationToken ct
         ) {
             _ = request;

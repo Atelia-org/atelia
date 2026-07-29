@@ -1,7 +1,7 @@
 # SessionJournal.Cli
 
 `SessionJournal.Cli` 是 `SessionJournal` 的离线开发与迁移工具，也是
-`SessionJournal.Maintainers` 的 composition root。它依赖 SessionJournal contracts、
+`SessionJournal.DerivedRecap.Maintainers` 的 composition root。它依赖 SessionJournal contracts、
 concrete maintainer profiles 和 Completion provider，但不依赖旧 `ChatSession`
 程序集。
 
@@ -80,7 +80,7 @@ call-log 目录必须位于 input repo 外，且 `--output` 与 `--call-log-dir`
 互为 ancestor/descendant；这些冲突在创建 Completion client、目录或调用 LLM 前拒绝。
 report 使用同目录临时文件 atomic publish。
 
-genesis epoch 使用显式 empty `MemoryPack`。non-genesis 从 epoch 的 exact input set
+genesis epoch 使用显式 empty `ContextHeaderPack`。non-genesis 从 epoch 的 exact input set
 恢复全部 role blocks；若 input set 尚无当前 role（例如 topology 新增 maintainer），
 该 role 的 old block 显式为空，但其他 blocks 仍作为 ContextHeader 输入。同一
 role/epoch 可保存多个 alternative candidates；只有后续

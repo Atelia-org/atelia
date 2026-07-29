@@ -414,7 +414,7 @@ public sealed class DerivedMemoryOrchestrator {
                     );
             }
             else {
-                IMemoryBlockMaintainer maintainer =
+                IRecapBlockMaintainer maintainer =
                     execution.Maintainer
                     ?? new IdentityMaintainer(
                         provision.ProfileId,
@@ -591,18 +591,18 @@ public sealed class DerivedMemoryOrchestrator {
 
     private sealed class IdentityMaintainer(
         string id,
-        MemoryPackBlockPath target
-    ) : IMemoryBlockMaintainer {
+        ContextHeaderBlockPath target
+    ) : IRecapBlockMaintainer {
         public string Id { get; } = id;
-        public MemoryPackBlockPath Target { get; } = target;
+        public ContextHeaderBlockPath Target { get; } = target;
 
-        public ValueTask<MemoryBlockMaintenanceResult> MaintainAsync(
-            MemoryBlockMaintenanceRequest request,
+        public ValueTask<RecapBlockMaintenanceResult> MaintainAsync(
+            RecapBlockMaintenanceRequest request,
             CancellationToken ct
         ) {
             ct.ThrowIfCancellationRequested();
             return ValueTask.FromResult(
-                new MemoryBlockMaintenanceResult(
+                new RecapBlockMaintenanceResult(
                     Id,
                     Target,
                     request.OldBlock

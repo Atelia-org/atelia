@@ -1,9 +1,9 @@
 using Atelia.Completion.Abstractions;
 using Atelia.SessionJournal;
-using Atelia.SessionJournal.Maintainers;
+using Atelia.SessionJournal.DerivedRecap.Maintainers;
 using Xunit;
 
-namespace Atelia.SessionJournal.Maintainers.Tests;
+namespace Atelia.SessionJournal.DerivedRecap.Maintainers.Tests;
 
 public class WorldUnderstandingRewriteProfileTests {
     [Fact]
@@ -46,25 +46,25 @@ public class WorldUnderstandingRewriteProfileTests {
     public void Target_IsObservationCarrier() {
         var maintainer = CreateMaintainer(new ScriptedCompletionClient());
 
-        Assert.Equal(MemoryPackCarrier.Observation, maintainer.Target.Carrier);
-        Assert.Equal(RolePlayMemoryBlockPaths.WorldUnderstanding, maintainer.Target);
+        Assert.Equal(ContextHeaderCarrier.Observation, maintainer.Target.Carrier);
+        Assert.Equal(RolePlayRecapBlockPaths.WorldUnderstanding, maintainer.Target);
     }
 
-    private static RewriteMemoryBlockMaintainer CreateMaintainer(ICompletionClient client)
+    private static RewriteRecapBlockMaintainer CreateMaintainer(ICompletionClient client)
         => new(WorldUnderstandingRewriteProfiles.Default, client, "model-a");
 
-    private static MemoryBlockMaintenanceRequest CreateRequest(string oldBlock) {
-        var memoryPack = new MemoryPack();
-        memoryPack.Observation.Add(RolePlayMemoryBlockPaths.WorldUnderstanding.BlockKey, new MemoryPackBlock(oldBlock));
+    private static RecapBlockMaintenanceRequest CreateRequest(string oldBlock) {
+        var memoryPack = new ContextHeaderPack();
+        memoryPack.Observation.Add(RolePlayRecapBlockPaths.WorldUnderstanding.BlockKey, new ContextHeaderBlock(oldBlock));
         return new(
             new RecentHistorySlice(
-                ContextHeaderSnapshot.FromRenderedMemoryPack(memoryPack.Render()),
+                memoryPack.Render(),
                 [
                     new ObservationMessage("刘世超说他只用简体中文。"),
                     new ActionMessage([new ActionBlock.Text("[Galatea] 我记下了这个偏好。")])
                 ]
             ),
-            new MemoryPackBlock(oldBlock)
+            new ContextHeaderBlock(oldBlock)
         );
     }
 

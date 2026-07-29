@@ -16,7 +16,7 @@ namespace Atelia.SessionJournal.DerivedMemory;
 public sealed class DerivedMemoryArtifactStore {
     public const string ArtifactSchema =
         "atelia.session-journal.derived-memory-artifact.v2";
-    public const string MemoryPackSnapshotSchema =
+    public const string ContextHeaderPackSnapshotSchema =
         "atelia.session-journal.memory-pack.snapshot.v2";
     public const long MaxArtifactFileBytes = 8 * 1024 * 1024;
 
@@ -54,12 +54,12 @@ public sealed class DerivedMemoryArtifactStore {
         request.Validate();
         cancellationToken.ThrowIfCancellationRequested();
 
-        if (!request.MemoryPack.TryGetBlock(
+        if (!request.ContextHeaderPack.TryGetBlock(
                 request.Target,
-                out MemoryPackBlock? targetBlock
+                out ContextHeaderBlock? targetBlock
             )) {
             throw new ArgumentException(
-                "Candidate MemoryPack does not contain its target block.",
+                "Candidate ContextHeaderPack does not contain its target block.",
                 nameof(request)
             );
         }
@@ -83,7 +83,7 @@ public sealed class DerivedMemoryArtifactStore {
             request.ModelFingerprint,
             request.CandidateId,
             request.AttemptId,
-            EventAddressTextCodec.Format(request.SourceRawHead),
+            EventAddressTextCodec.Format(request.AbsorbedThrough),
             EventAddressTextCodec.Format(request.SourceStartExclusive),
             EventAddressTextCodec.Format(request.SourceEndInclusive),
             EventAddressTextCodec.Format(request.AnchorRawEvent),
@@ -96,10 +96,10 @@ public sealed class DerivedMemoryArtifactStore {
             request.InputSetId,
             request.PreviousRoleArtifact,
             inputMembers,
-            DerivedMemoryArtifactTarget.FromMemoryPackBlockPath(
+            DerivedMemoryArtifactTarget.FromContextHeaderBlockPath(
                 request.Target
             ),
-            MemoryPackSnapshotDto.FromMemoryPack(request.MemoryPack),
+            ContextHeaderPackSnapshotDto.FromContextHeaderPack(request.ContextHeaderPack),
             DerivedMemoryArtifactContentDto.Inline(targetBlock.Text),
             request.Invocation,
             FreezeStrings(request.CallLogPaths),
@@ -319,7 +319,7 @@ public sealed class DerivedMemoryArtifactStore {
             || !IsRequiredToken(dto.CandidateId)
             || !IsRequiredToken(dto.AttemptId)
             || dto.Target is null
-            || dto.MemoryPack is null
+            || dto.ContextHeaderPack is null
             || dto.Content is null
             || dto.InputMembers is null
             || dto.CallLogPaths is null
@@ -337,7 +337,7 @@ public sealed class DerivedMemoryArtifactStore {
             || !IsUsableSetupReferences(dto.AnchorSetups)
             || dto.SourceEndInclusive != dto.AnchorRawEvent
             || !IsUsableTarget(dto.Target)
-            || !IsUsableMemoryPack(dto.MemoryPack)
+            || !IsUsableContextHeaderPack(dto.ContextHeaderPack)
             || !string.Equals(
                 dto.Content.Storage,
                 DerivedMemoryArtifactContentStorage.Inline,
@@ -351,7 +351,7 @@ public sealed class DerivedMemoryArtifactStore {
                 StringComparison.Ordinal
             )
             || !TryGetSnapshotBlockText(
-                dto.MemoryPack,
+                dto.ContextHeaderPack,
                 dto.Target,
                 out string? targetText
             )
@@ -368,7 +368,7 @@ public sealed class DerivedMemoryArtifactStore {
     }
 
     private static bool TryParseAddresses(DerivedMemoryArtifactDto dto) =>
-        EventAddressTextCodec.TryParse(dto.SourceRawHead, out _)
+        EventAddressTextCodec.TryParse(dto.AbsorbedThrough, out _)
         && EventAddressTextCodec.TryParse(dto.SourceStartExclusive, out _)
         && EventAddressTextCodec.TryParse(dto.SourceEndInclusive, out _)
         && EventAddressTextCodec.TryParse(dto.AnchorRawEvent, out _);
@@ -475,7 +475,7 @@ public sealed class DerivedMemoryArtifactStore {
         dto.ModelFingerprint,
         dto.CandidateId,
         dto.AttemptId,
-        EventAddressTextCodec.Parse(dto.SourceRawHead),
+        EventAddressTextCodec.Parse(dto.AbsorbedThrough),
         EventAddressTextCodec.Parse(dto.SourceStartExclusive),
         EventAddressTextCodec.Parse(dto.SourceEndInclusive),
         EventAddressTextCodec.Parse(dto.AnchorRawEvent),
@@ -488,8 +488,8 @@ public sealed class DerivedMemoryArtifactStore {
                 static member => member.ToContract()
             )
         ]),
-        dto.Target.ToMemoryPackBlockPath(),
-        dto.MemoryPack.ToMemoryPack(),
+        dto.Target.ToContextHeaderBlockPath(),
+        dto.ContextHeaderPack.ToContextHeaderPack(),
         dto.Content.Text,
         dto.Invocation,
         dto.CallLogPaths,
@@ -530,7 +530,7 @@ public sealed class DerivedMemoryArtifactStore {
             dto.ModelFingerprint,
             dto.CandidateId,
             dto.AttemptId,
-            dto.SourceRawHead,
+            dto.AbsorbedThrough,
             dto.SourceStartExclusive,
             dto.SourceEndInclusive,
             dto.AnchorRawEvent,
@@ -540,7 +540,7 @@ public sealed class DerivedMemoryArtifactStore {
             dto.PreviousRoleArtifact,
             dto.InputMembers,
             dto.Target,
-            dto.MemoryPack,
+            dto.ContextHeaderPack,
             dto.Content,
             dto.Invocation,
             dto.CallLogPaths,
@@ -549,11 +549,11 @@ public sealed class DerivedMemoryArtifactStore {
         )
     );
 
-    private static bool IsUsableMemoryPack(
-        MemoryPackSnapshotDto snapshot
+    private static bool IsUsableContextHeaderPack(
+        ContextHeaderPackSnapshotDto snapshot
     ) => string.Equals(
             snapshot.Schema,
-            MemoryPackSnapshotSchema,
+            ContextHeaderPackSnapshotSchema,
             StringComparison.Ordinal
         )
         && snapshot.System is not null
@@ -564,7 +564,7 @@ public sealed class DerivedMemoryArtifactStore {
         && IsUsableCarrier(snapshot.Action);
 
     private static bool IsUsableCarrier(
-        IReadOnlyList<MemoryPackBlockDto> blocks
+        IReadOnlyList<ContextHeaderBlockDto> blocks
     ) {
         var keys = new HashSet<string>(StringComparer.Ordinal);
         return blocks.All(
@@ -576,19 +576,19 @@ public sealed class DerivedMemoryArtifactStore {
     }
 
     private static bool TryGetSnapshotBlockText(
-        MemoryPackSnapshotDto snapshot,
+        ContextHeaderPackSnapshotDto snapshot,
         DerivedMemoryArtifactTarget target,
         out string? text
     ) {
-        IReadOnlyList<MemoryPackBlockDto> blocks =
+        IReadOnlyList<ContextHeaderBlockDto> blocks =
             target.Carrier switch {
-                MemoryPackCarrierTokens.System => snapshot.System,
-                MemoryPackCarrierTokens.Observation =>
+                ContextHeaderCarrierTokens.System => snapshot.System,
+                ContextHeaderCarrierTokens.Observation =>
                     snapshot.Observation,
-                MemoryPackCarrierTokens.Action => snapshot.Action,
+                ContextHeaderCarrierTokens.Action => snapshot.Action,
                 _ => []
             };
-        MemoryPackBlockDto? block = blocks.SingleOrDefault(
+        ContextHeaderBlockDto? block = blocks.SingleOrDefault(
             value => string.Equals(
                 value.Key,
                 target.BlockKey,
@@ -601,7 +601,7 @@ public sealed class DerivedMemoryArtifactStore {
 
     private static bool IsUsableTarget(
         DerivedMemoryArtifactTarget target
-    ) => MemoryPackCarrierTokens.TryParseStorageToken(
+    ) => ContextHeaderCarrierTokens.TryParseStorageToken(
             target.Carrier,
             out _
         )
@@ -681,7 +681,7 @@ public sealed class DerivedMemoryArtifactStore {
 public sealed record DerivedMemoryArtifactInputMember(
     string RoleId,
     string ArtifactId,
-    MemoryPackBlockPath Target,
+    ContextHeaderBlockPath Target,
     string ContentSha256
 );
 
@@ -696,7 +696,7 @@ public sealed record DerivedMemoryArtifactWriteRequest(
     string ModelFingerprint,
     string CandidateId,
     string AttemptId,
-    EventAddress SourceRawHead,
+    EventAddress AbsorbedThrough,
     EventAddress SourceStartExclusive,
     EventAddress SourceEndInclusive,
     EventAddress AnchorRawEvent,
@@ -705,8 +705,8 @@ public sealed record DerivedMemoryArtifactWriteRequest(
     string? InputSetId,
     string? PreviousRoleArtifact,
     IReadOnlyList<DerivedMemoryArtifactInputMember> InputMembers,
-    MemoryPackBlockPath Target,
-    MemoryPack MemoryPack,
+    ContextHeaderBlockPath Target,
+    ContextHeaderPack ContextHeaderPack,
     CompletionDescriptor? Invocation = null,
     IReadOnlyList<string>? CallLogPaths = null,
     DateTimeOffset? CreatedUtc = null,
@@ -732,7 +732,7 @@ public sealed record DerivedMemoryArtifactWriteRequest(
                 nameof(Outcome)
             );
         }
-        RequireAddress(SourceRawHead, nameof(SourceRawHead));
+        RequireAddress(AbsorbedThrough, nameof(AbsorbedThrough));
         RequireAddress(SourceStartExclusive, nameof(SourceStartExclusive));
         RequireAddress(SourceEndInclusive, nameof(SourceEndInclusive));
         RequireAddress(AnchorRawEvent, nameof(AnchorRawEvent));
@@ -746,7 +746,7 @@ public sealed record DerivedMemoryArtifactWriteRequest(
         }
         ArgumentNullException.ThrowIfNull(InputMembers);
         ArgumentNullException.ThrowIfNull(Target);
-        ArgumentNullException.ThrowIfNull(MemoryPack);
+        ArgumentNullException.ThrowIfNull(ContextHeaderPack);
         ValidateInputMembers();
         if (InputSetId is null) {
             if (PreviousRoleArtifact is not null
@@ -778,7 +778,7 @@ public sealed record DerivedMemoryArtifactWriteRequest(
         var roles = new HashSet<string>(StringComparer.Ordinal);
         var artifacts = new HashSet<string>(StringComparer.Ordinal);
         var targets =
-            new HashSet<(MemoryPackCarrier Carrier, string BlockKey)>();
+            new HashSet<(ContextHeaderCarrier Carrier, string BlockKey)>();
         int matchingPrevious = 0;
         foreach (DerivedMemoryArtifactInputMember member in InputMembers) {
             ArgumentNullException.ThrowIfNull(member);
@@ -954,7 +954,7 @@ public sealed record DerivedMemoryArtifact(
     string ModelFingerprint,
     string CandidateId,
     string AttemptId,
-    EventAddress SourceRawHead,
+    EventAddress AbsorbedThrough,
     EventAddress SourceStartExclusive,
     EventAddress SourceEndInclusive,
     EventAddress AnchorRawEvent,
@@ -963,8 +963,8 @@ public sealed record DerivedMemoryArtifact(
     string? InputSetId,
     string? PreviousRoleArtifact,
     IReadOnlyList<DerivedMemoryArtifactInputMember> InputMembers,
-    MemoryPackBlockPath Target,
-    MemoryPack MemoryPack,
+    ContextHeaderBlockPath Target,
+    ContextHeaderPack ContextHeaderPack,
     string Content,
     CompletionDescriptor? Invocation,
     IReadOnlyList<string> CallLogPaths,
@@ -1004,7 +1004,9 @@ internal sealed record DerivedMemoryArtifactDto(
     [property: JsonPropertyOrder(11)] string ModelFingerprint,
     [property: JsonPropertyOrder(12)] string CandidateId,
     [property: JsonPropertyOrder(13)] string AttemptId,
-    [property: JsonPropertyOrder(14)] string SourceRawHead,
+    [property: JsonPropertyOrder(14)]
+    [property: JsonPropertyName("sourceRawHead")]
+        string AbsorbedThrough,
     [property: JsonPropertyOrder(15)] string SourceStartExclusive,
     [property: JsonPropertyOrder(16)] string SourceEndInclusive,
     [property: JsonPropertyOrder(17)] string AnchorRawEvent,
@@ -1017,7 +1019,9 @@ internal sealed record DerivedMemoryArtifactDto(
     [property: JsonPropertyOrder(22)]
         IReadOnlyList<DerivedMemoryArtifactInputMemberDto> InputMembers,
     [property: JsonPropertyOrder(23)] DerivedMemoryArtifactTarget Target,
-    [property: JsonPropertyOrder(24)] MemoryPackSnapshotDto MemoryPack,
+    [property: JsonPropertyOrder(24)]
+    [property: JsonPropertyName("memoryPack")]
+        ContextHeaderPackSnapshotDto ContextHeaderPack,
     [property: JsonPropertyOrder(25)] DerivedMemoryArtifactContentDto Content,
     [property: JsonPropertyOrder(26)] CompletionDescriptor? Invocation,
     [property: JsonPropertyOrder(27)] IReadOnlyList<string> CallLogPaths,
@@ -1043,7 +1047,7 @@ internal sealed record DerivedMemoryArtifactDto(
         identity.ModelFingerprint,
         identity.CandidateId,
         identity.AttemptId,
-        identity.SourceRawHead,
+        identity.AbsorbedThrough,
         identity.SourceStartExclusive,
         identity.SourceEndInclusive,
         identity.AnchorRawEvent,
@@ -1053,7 +1057,7 @@ internal sealed record DerivedMemoryArtifactDto(
         identity.PreviousRoleArtifact,
         identity.InputMembers,
         identity.Target,
-        identity.MemoryPack,
+        identity.ContextHeaderPack,
         identity.Content,
         identity.Invocation,
         identity.CallLogPaths,
@@ -1075,7 +1079,8 @@ internal sealed record DerivedMemoryArtifactIdentityDto(
     string ModelFingerprint,
     string CandidateId,
     string AttemptId,
-    string SourceRawHead,
+    [property: JsonPropertyName("sourceRawHead")]
+        string AbsorbedThrough,
     string SourceStartExclusive,
     string SourceEndInclusive,
     string AnchorRawEvent,
@@ -1085,7 +1090,8 @@ internal sealed record DerivedMemoryArtifactIdentityDto(
     string? PreviousRoleArtifact,
     IReadOnlyList<DerivedMemoryArtifactInputMemberDto> InputMembers,
     DerivedMemoryArtifactTarget Target,
-    MemoryPackSnapshotDto MemoryPack,
+    [property: JsonPropertyName("memoryPack")]
+        ContextHeaderPackSnapshotDto ContextHeaderPack,
     DerivedMemoryArtifactContentDto Content,
     CompletionDescriptor? Invocation,
     IReadOnlyList<string> CallLogPaths,
@@ -1147,14 +1153,14 @@ internal sealed record DerivedMemoryArtifactInputMemberDto(
     ) => new(
         member.RoleId,
         member.ArtifactId,
-        DerivedMemoryArtifactTarget.FromMemoryPackBlockPath(member.Target),
+        DerivedMemoryArtifactTarget.FromContextHeaderBlockPath(member.Target),
         member.ContentSha256
     );
 
     public DerivedMemoryArtifactInputMember ToContract() => new(
         RoleId,
         ArtifactId,
-        Target.ToMemoryPackBlockPath(),
+        Target.ToContextHeaderBlockPath(),
         ContentSha256
     );
 }
@@ -1163,23 +1169,23 @@ internal sealed record DerivedMemoryArtifactTarget(
     string Carrier,
     string BlockKey
 ) {
-    public static DerivedMemoryArtifactTarget FromMemoryPackBlockPath(
-        MemoryPackBlockPath path
+    public static DerivedMemoryArtifactTarget FromContextHeaderBlockPath(
+        ContextHeaderBlockPath path
     ) => new(
-        MemoryPackCarrierTokens.ToStorageToken(path.Carrier),
+        ContextHeaderCarrierTokens.ToStorageToken(path.Carrier),
         path.BlockKey
     );
 
-    public MemoryPackBlockPath ToMemoryPackBlockPath() {
-        if (!MemoryPackCarrierTokens.TryParseStorageToken(
+    public ContextHeaderBlockPath ToContextHeaderBlockPath() {
+        if (!ContextHeaderCarrierTokens.TryParseStorageToken(
                 Carrier,
-                out MemoryPackCarrier carrier
+                out ContextHeaderCarrier carrier
             )) {
             throw new InvalidDataException(
                 $"Unknown memory pack carrier token '{Carrier}'."
             );
         }
-        return new MemoryPackBlockPath(carrier, BlockKey);
+        return new ContextHeaderBlockPath(carrier, BlockKey);
     }
 }
 
@@ -1200,51 +1206,51 @@ internal static class DerivedMemoryArtifactContentStorage {
     public const string Inline = "inline";
 }
 
-internal sealed record MemoryPackSnapshotDto(
+internal sealed record ContextHeaderPackSnapshotDto(
     string Schema,
-    IReadOnlyList<MemoryPackBlockDto> System,
-    IReadOnlyList<MemoryPackBlockDto> Observation,
-    IReadOnlyList<MemoryPackBlockDto> Action
+    IReadOnlyList<ContextHeaderBlockDto> System,
+    IReadOnlyList<ContextHeaderBlockDto> Observation,
+    IReadOnlyList<ContextHeaderBlockDto> Action
 ) {
-    public static MemoryPackSnapshotDto FromMemoryPack(
-        MemoryPack memoryPack
+    public static ContextHeaderPackSnapshotDto FromContextHeaderPack(
+        ContextHeaderPack memoryPack
     ) => new(
-        DerivedMemoryArtifactStore.MemoryPackSnapshotSchema,
+        DerivedMemoryArtifactStore.ContextHeaderPackSnapshotSchema,
         FromCarrier(memoryPack.System),
         FromCarrier(memoryPack.Observation),
         FromCarrier(memoryPack.Action)
     );
 
-    public MemoryPack ToMemoryPack() {
-        var memoryPack = new MemoryPack();
+    public ContextHeaderPack ToContextHeaderPack() {
+        var memoryPack = new ContextHeaderPack();
         CopyCarrier(System, memoryPack.System);
         CopyCarrier(Observation, memoryPack.Observation);
         CopyCarrier(Action, memoryPack.Action);
         return memoryPack;
     }
 
-    private static IReadOnlyList<MemoryPackBlockDto> FromCarrier(
-        OrderedDictionary<string, MemoryPackBlock> carrier
+    private static IReadOnlyList<ContextHeaderBlockDto> FromCarrier(
+        OrderedDictionary<string, ContextHeaderBlock> carrier
     ) {
-        var blocks = new MemoryPackBlockDto[carrier.Count];
+        var blocks = new ContextHeaderBlockDto[carrier.Count];
         int index = 0;
-        foreach ((string key, MemoryPackBlock block) in carrier) {
-            blocks[index++] = new MemoryPackBlockDto(key, block.Text);
+        foreach ((string key, ContextHeaderBlock block) in carrier) {
+            blocks[index++] = new ContextHeaderBlockDto(key, block.Text);
         }
         return Array.AsReadOnly(blocks);
     }
 
     private static void CopyCarrier(
-        IReadOnlyList<MemoryPackBlockDto> source,
-        OrderedDictionary<string, MemoryPackBlock> destination
+        IReadOnlyList<ContextHeaderBlockDto> source,
+        OrderedDictionary<string, ContextHeaderBlock> destination
     ) {
-        foreach (MemoryPackBlockDto block in source) {
+        foreach (ContextHeaderBlockDto block in source) {
             destination.Add(
                 block.Key,
-                new MemoryPackBlock(block.Text)
+                new ContextHeaderBlock(block.Text)
             );
         }
     }
 }
 
-internal sealed record MemoryPackBlockDto(string Key, string Text);
+internal sealed record ContextHeaderBlockDto(string Key, string Text);

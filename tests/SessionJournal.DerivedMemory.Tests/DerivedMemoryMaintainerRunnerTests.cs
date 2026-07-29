@@ -42,8 +42,8 @@ public sealed class DerivedMemoryMaintainerRunnerTests : IDisposable {
         );
         var maintainer = new CapturingMaintainer(
             "test-profile",
-            new MemoryPackBlockPath(
-                MemoryPackCarrier.Action,
+            new ContextHeaderBlockPath(
+                ContextHeaderCarrier.Action,
                 "memory.test"
             ),
             "candidate text"
@@ -111,8 +111,8 @@ public sealed class DerivedMemoryMaintainerRunnerTests : IDisposable {
             repository,
             engine
         );
-        var oldTarget = new MemoryPackBlockPath(
-            MemoryPackCarrier.Observation,
+        var oldTarget = new ContextHeaderBlockPath(
+            ContextHeaderCarrier.Observation,
             "memory.old"
         );
         DerivedMemoryArtifact old =
@@ -177,8 +177,8 @@ public sealed class DerivedMemoryMaintainerRunnerTests : IDisposable {
             )).Epoch!;
         var newMaintainer = new CapturingMaintainer(
             "test-profile",
-            new MemoryPackBlockPath(
-                MemoryPackCarrier.Action,
+            new ContextHeaderBlockPath(
+                ContextHeaderCarrier.Action,
                 "memory.new"
             ),
             "new role memory"
@@ -222,8 +222,8 @@ public sealed class DerivedMemoryMaintainerRunnerTests : IDisposable {
             repository,
             engine
         );
-        var target = new MemoryPackBlockPath(
-            MemoryPackCarrier.Action,
+        var target = new ContextHeaderBlockPath(
+            ContextHeaderCarrier.Action,
             "memory.test"
         );
         var maintainer = new CapturingMaintainer(
@@ -270,7 +270,7 @@ public sealed class DerivedMemoryMaintainerRunnerTests : IDisposable {
                 result.Artifact.ModelFingerprint,
                 "candidate-drift",
                 result.Artifact.AttemptId,
-                result.Artifact.SourceRawHead,
+                result.Artifact.AbsorbedThrough,
                 result.Artifact.SourceStartExclusive,
                 result.Artifact.SourceEndInclusive,
                 result.Artifact.AnchorRawEvent,
@@ -284,7 +284,7 @@ public sealed class DerivedMemoryMaintainerRunnerTests : IDisposable {
                 result.Artifact.PreviousRoleArtifact,
                 result.Artifact.InputMembers,
                 result.Artifact.Target,
-                result.Artifact.MemoryPack
+                result.Artifact.ContextHeaderPack
             )
         );
 
@@ -398,24 +398,24 @@ public sealed class DerivedMemoryMaintainerRunnerTests : IDisposable {
 
     private sealed class CapturingMaintainer(
         string id,
-        MemoryPackBlockPath target,
+        ContextHeaderBlockPath target,
         string output
-    ) : IMemoryBlockMaintainer {
+    ) : IRecapBlockMaintainer {
         public string Id { get; } = id;
-        public MemoryPackBlockPath Target { get; } = target;
-        public MemoryBlockMaintenanceRequest? CapturedRequest { get; private set; }
+        public ContextHeaderBlockPath Target { get; } = target;
+        public RecapBlockMaintenanceRequest? CapturedRequest { get; private set; }
 
-        public ValueTask<MemoryBlockMaintenanceResult> MaintainAsync(
-            MemoryBlockMaintenanceRequest request,
+        public ValueTask<RecapBlockMaintenanceResult> MaintainAsync(
+            RecapBlockMaintenanceRequest request,
             CancellationToken cancellationToken
         ) {
             cancellationToken.ThrowIfCancellationRequested();
             CapturedRequest = request;
             return ValueTask.FromResult(
-                new MemoryBlockMaintenanceResult(
+                new RecapBlockMaintenanceResult(
                     Id,
                     Target,
-                    new MemoryPackBlock(output)
+                    new ContextHeaderBlock(output)
                 )
             );
         }

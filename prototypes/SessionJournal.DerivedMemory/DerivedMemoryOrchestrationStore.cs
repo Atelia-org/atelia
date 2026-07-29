@@ -601,7 +601,7 @@ public sealed class DerivedMemoryOrchestrationStore {
         }
         var seenRoles = new HashSet<string>(StringComparer.Ordinal);
         var seenTargets =
-            new HashSet<(MemoryPackCarrier Carrier, string BlockKey)>();
+            new HashSet<(ContextHeaderCarrier Carrier, string BlockKey)>();
         foreach (DerivedMemoryRoleProvisioning role in roles) {
             ArgumentNullException.ThrowIfNull(role);
             RequireToken(role.RoleId, nameof(role.RoleId));
@@ -1528,22 +1528,22 @@ public sealed class DerivedMemoryOrchestrationStore {
         [property: JsonPropertyOrder(1)] string BlockKey
     ) {
         public static TargetDto FromContract(
-            MemoryPackBlockPath target
+            ContextHeaderBlockPath target
         ) => new(
-            MemoryPackCarrierTokens.ToStorageToken(target.Carrier),
+            ContextHeaderCarrierTokens.ToStorageToken(target.Carrier),
             target.BlockKey
         );
 
-        public MemoryPackBlockPath ToContract() {
-            if (!MemoryPackCarrierTokens.TryParseStorageToken(
+        public ContextHeaderBlockPath ToContract() {
+            if (!ContextHeaderCarrierTokens.TryParseStorageToken(
                     Carrier,
-                    out MemoryPackCarrier carrier
+                    out ContextHeaderCarrier carrier
                 )) {
                 throw new InvalidDataException(
                     $"Unknown memory-pack carrier '{Carrier}'."
                 );
             }
-            return new MemoryPackBlockPath(carrier, BlockKey);
+            return new ContextHeaderBlockPath(carrier, BlockKey);
         }
     }
 

@@ -26,29 +26,29 @@ internal static class SessionCoherentRequestRecipe {
     );
 
     /// <summary>
-    /// Renders one raw derived block through the core-owned MemoryPack recipe. Providers never supply
+    /// Renders one raw derived block through the core-owned ContextHeaderPack recipe. Providers never supply
     /// request-format decoration such as block headings.
     /// </summary>
     public static SessionRequestArtifactContextSnapshot CreateOneHotSnapshot(
-        MemoryPackBlockPath target,
+        ContextHeaderBlockPath target,
         string exactText
     ) {
         ArgumentNullException.ThrowIfNull(target);
         ArgumentNullException.ThrowIfNull(exactText);
-        var singleton = new MemoryPack();
+        var singleton = new ContextHeaderPack();
         singleton.GetCarrier(target.Carrier).Add(
             target.BlockKey,
-            new MemoryPackBlock(exactText)
+            new ContextHeaderBlock(exactText)
         );
-        RenderedMemoryPack rendered = singleton.Render();
+        ContextHeaderSnapshot rendered = singleton.Render();
         return target.Carrier switch {
-            MemoryPackCarrier.System => new SessionRequestArtifactContextSnapshot(
+            ContextHeaderCarrier.System => new SessionRequestArtifactContextSnapshot(
                 rendered.SystemPromptFragment, "", ""
             ),
-            MemoryPackCarrier.Observation => new SessionRequestArtifactContextSnapshot(
+            ContextHeaderCarrier.Observation => new SessionRequestArtifactContextSnapshot(
                 "", rendered.ObservationMessage, ""
             ),
-            MemoryPackCarrier.Action => new SessionRequestArtifactContextSnapshot(
+            ContextHeaderCarrier.Action => new SessionRequestArtifactContextSnapshot(
                 "", "", rendered.ActionMessage
             ),
             _ => throw new InvalidDataException(

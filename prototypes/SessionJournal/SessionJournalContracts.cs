@@ -105,7 +105,7 @@ public sealed record SessionRuntime(
     SessionToolRuntimeIdentity? ToolRuntimeIdentity = null,
     ICoherentContextCandidateSource? ContextCandidateSource = null,
     long? MaximumCanonicalRequestBytes = null,
-    ISessionMemoryLifecycleCoordinator? MemoryLifecycle = null
+    ISessionContextLifecycleCoordinator? ContextLifecycle = null
 );
 
 public sealed record TurnResult(
@@ -129,8 +129,10 @@ public sealed record ResumeOutcome(
 public enum SessionJournalNotReadyReason {
     ContextCandidateSourceRequired,
     ContextCandidateUnavailable,
-    MemoryMaintenanceBackpressure,
-    MemoryMaintenanceUnavailable,
+    ContextCandidateInvalid,
+    ContextStoreUnavailable,
+    RecapMaintenanceBackpressure,
+    RecapMaintenanceUnavailable,
 }
 
 /// <summary>

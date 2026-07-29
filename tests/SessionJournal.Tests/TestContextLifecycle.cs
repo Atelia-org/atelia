@@ -1,26 +1,26 @@
 namespace Atelia.SessionJournal.Tests;
 
-internal sealed class TestMemoryLifecycle
-    : ISessionMemoryLifecycleCoordinator {
-    private readonly List<SessionMemoryLifecycleRequest> _requests =
+internal sealed class TestContextLifecycle
+    : ISessionContextLifecycleCoordinator {
+    private readonly List<SessionContextLifecycleRequest> _requests =
         [];
 
-    internal SessionMemoryLifecycleResult Result { get; set; } =
-        SessionMemoryLifecycleResult.Ready;
+    internal SessionContextLifecycleResult Result { get; set; } =
+        SessionContextLifecycleResult.Ready;
 
     internal Action<
         SessionJournalEngine,
-        SessionMemoryLifecycleRequest
+        SessionContextLifecycleRequest
     >? OnPrepare { get; set; }
 
-    internal IReadOnlyList<SessionMemoryLifecycleRequest> Requests =>
+    internal IReadOnlyList<SessionContextLifecycleRequest> Requests =>
         _requests;
 
     internal int InvocationCount => _requests.Count;
 
-    public ValueTask<SessionMemoryLifecycleResult> PrepareAsync(
+    public ValueTask<SessionContextLifecycleResult> PrepareAsync(
         SessionJournalEngine engine,
-        SessionMemoryLifecycleRequest request,
+        SessionContextLifecycleRequest request,
         CancellationToken cancellationToken
     ) {
         ArgumentNullException.ThrowIfNull(engine);

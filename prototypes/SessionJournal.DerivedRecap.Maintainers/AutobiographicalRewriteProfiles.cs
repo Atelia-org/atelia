@@ -1,6 +1,6 @@
 using Atelia.SessionJournal;
 
-namespace Atelia.SessionJournal.Maintainers;
+namespace Atelia.SessionJournal.DerivedRecap.Maintainers;
 
 public static class AutobiographicalRewriteProfiles {
     public const string MaintainerId = "roleplay.first-person-autobiography.rewrite";
@@ -10,23 +10,23 @@ public static class AutobiographicalRewriteProfiles {
     private const string SimplifiedChineseSystemResourceName = "Atelia.SessionJournal.Maintainers.Prompts.AutobiographicalRewrite.zh-CN.System.md";
     private const string SimplifiedChineseUserResourceName = "Atelia.SessionJournal.Maintainers.Prompts.AutobiographicalRewrite.zh-CN.User.md";
 
-    public static MemoryRewriteProfile English { get; } = Read(
+    public static RecapRewriteProfile English { get; } = Read(
         EnglishSystemResourceName,
         EnglishUserResourceName
     );
 
-    public static MemoryRewriteProfile SimplifiedChinese { get; } = Read(
+    public static RecapRewriteProfile SimplifiedChinese { get; } = Read(
         SimplifiedChineseSystemResourceName,
         SimplifiedChineseUserResourceName
     );
 
-    public static MemoryRewriteProfile Default => SimplifiedChinese;
+    public static RecapRewriteProfile Default => SimplifiedChinese;
 
-    private static MemoryRewriteProfile Read(string systemResourceName, string userResourceName)
-        => EmbeddedMemoryRewriteProfileLoader.Read(
+    private static RecapRewriteProfile Read(string systemResourceName, string userResourceName)
+        => EmbeddedRecapRewriteProfileLoader.Read(
             typeof(AutobiographicalRewriteProfiles),
             MaintainerId,
-            RolePlayMemoryBlockPaths.FirstPersonAutobiography,
+            RolePlayRecapBlockPaths.FirstPersonAutobiography,
             systemResourceName,
             userResourceName
         );

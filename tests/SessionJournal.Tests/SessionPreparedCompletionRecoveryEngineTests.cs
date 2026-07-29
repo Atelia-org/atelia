@@ -40,9 +40,9 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
             CreateRuntime(client)
         );
         var recoverySource = new TestContextCandidateSource();
-        var lifecycle = new TestMemoryLifecycle {
+        var lifecycle = new TestContextLifecycle {
             Result = new(
-                SessionMemoryLifecycleStatus.Unavailable,
+                SessionContextLifecycleStatus.Unavailable,
                 "must not run"
             )
         };
@@ -50,7 +50,7 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
             path,
             CreateRuntime(client) with {
                 ContextCandidateSource = recoverySource,
-                MemoryLifecycle = lifecycle
+                ContextLifecycle = lifecycle
             }
         )) {
             InvalidOperationException error = await Assert.ThrowsAsync<InvalidOperationException>(

@@ -18,22 +18,22 @@ public sealed record DerivedMemoryMaintainerRunRequest(
 public sealed record DerivedMemoryMaintainerRunResult(
     DerivedArtifactEpochPlan Epoch,
     DerivedMemoryArtifact Artifact,
-    MemoryPackBlock OldBlock,
-    MemoryBlockMaintenanceResult MaintenanceResult,
+    ContextHeaderBlock OldBlock,
+    RecapBlockMaintenanceResult MaintenanceResult,
     SessionHistoryPlanningDiagnostics ReadDiagnostics
 );
 
 public sealed class DerivedMemoryMaintainerSnapshot {
     internal DerivedMemoryMaintainerSnapshot(
         DerivedArtifactEpochPlan epoch,
-        MemoryPack inputMemoryPack,
+        ContextHeaderPack inputContextHeaderPack,
         IReadOnlyList<DerivedMemoryArtifactInputMember> inputMembers,
         RecentHistorySlice recentHistory,
         SessionContextAnchorSetupReferences anchorSetups,
         SessionHistoryPlanningDiagnostics readDiagnostics
     ) {
         Epoch = epoch;
-        InputMemoryPack = inputMemoryPack;
+        InputContextHeaderPack = inputContextHeaderPack;
         InputMembers = inputMembers;
         RecentHistory = recentHistory;
         AnchorSetups = anchorSetups;
@@ -44,7 +44,7 @@ public sealed class DerivedMemoryMaintainerSnapshot {
     public RecentHistorySlice RecentHistory { get; }
     public SessionContextAnchorSetupReferences AnchorSetups { get; }
     public SessionHistoryPlanningDiagnostics ReadDiagnostics { get; }
-    internal MemoryPack InputMemoryPack { get; }
+    internal ContextHeaderPack InputContextHeaderPack { get; }
     internal IReadOnlyList<DerivedMemoryArtifactInputMember> InputMembers {
         get;
     }
@@ -67,7 +67,7 @@ public sealed class DerivedMemoryMaintainerRunner {
     public async ValueTask<DerivedMemoryMaintainerRunResult> RunAsync(
         SessionJournalEngine engine,
         DerivedMemoryMaintainerRunRequest request,
-        IMemoryBlockMaintainer maintainer,
+        IRecapBlockMaintainer maintainer,
         Func<IReadOnlyList<string>>? captureCallLogPaths = null,
         CancellationToken cancellationToken = default
     ) {
@@ -155,9 +155,7 @@ public sealed class DerivedMemoryMaintainerRunner {
         ValidateExactWindow(epoch, window);
 
         var recentHistory = new RecentHistorySlice(
-            ContextHeaderSnapshot.FromRenderedMemoryPack(
-                input.MemoryPack.Render()
-            ),
+            input.ContextHeaderPack.Render(),
             Array.AsReadOnly([
                 .. window.Units.Select(static unit => unit.Message)
             ]),
@@ -166,7 +164,7 @@ public sealed class DerivedMemoryMaintainerRunner {
         );
         return new DerivedMemoryMaintainerSnapshot(
             epoch,
-            input.MemoryPack,
+            input.ContextHeaderPack,
             input.InputMembers,
             recentHistory,
             window.EndSetups,
@@ -178,7 +176,7 @@ public sealed class DerivedMemoryMaintainerRunner {
         RunPreparedAsync(
         DerivedMemoryMaintainerSnapshot snapshot,
         DerivedMemoryMaintainerRunRequest request,
-        IMemoryBlockMaintainer maintainer,
+        IRecapBlockMaintainer maintainer,
         Func<IReadOnlyList<string>>? captureCallLogPaths = null,
         CancellationToken cancellationToken = default
     ) {
@@ -219,15 +217,15 @@ public sealed class DerivedMemoryMaintainerRunner {
                 $"Input role '{request.RoleId}' target does not match the maintainer."
             );
         }
-        MemoryPackBlock oldBlock = snapshot.InputMemoryPack.TryGetBlock(
+        ContextHeaderBlock oldBlock = snapshot.InputContextHeaderPack.TryGetBlock(
             maintainer.Target,
-            out MemoryPackBlock? found
+            out ContextHeaderBlock? found
         )
             ? found
-            : new MemoryPackBlock(string.Empty);
-        MemoryBlockMaintenanceResult maintenanceResult =
+            : new ContextHeaderBlock(string.Empty);
+        RecapBlockMaintenanceResult maintenanceResult =
             await maintainer.MaintainAsync(
-                    new MemoryBlockMaintenanceRequest(
+                    new RecapBlockMaintenanceRequest(
                         snapshot.RecentHistory,
                         oldBlock
                     ),
@@ -236,12 +234,12 @@ public sealed class DerivedMemoryMaintainerRunner {
                 .ConfigureAwait(false);
         ValidateMaintenanceResult(maintainer, maintenanceResult);
 
-        var draft = new MemoryPackDraft(snapshot.InputMemoryPack);
+        var draft = new ContextHeaderPackDraft(snapshot.InputContextHeaderPack);
         draft.UpsertBlock(
             maintenanceResult.Target,
             maintenanceResult.NewBlock.Text
         );
-        MemoryPack updatedPack = draft.Build();
+        ContextHeaderPack updatedPack = draft.Build();
         IReadOnlyList<string> callLogPaths =
             captureCallLogPaths?.Invoke()
             ?? Array.Empty<string>();
@@ -321,7 +319,7 @@ public sealed class DerivedMemoryMaintainerRunner {
                 );
             }
             return new InputSnapshot(
-                new MemoryPack(),
+                new ContextHeaderPack(),
                 Array.Empty<DerivedMemoryArtifactInputMember>()
             );
         }
@@ -348,8 +346,8 @@ public sealed class DerivedMemoryMaintainerRunner {
             );
         }
 
-        var memoryPack = new MemoryPack();
-        var draft = new MemoryPackDraft(memoryPack);
+        var memoryPack = new ContextHeaderPack();
+        var draft = new ContextHeaderPackDraft(memoryPack);
         var inputMembers =
             new List<DerivedMemoryArtifactInputMember>(
                 inputSet.Members.Count
@@ -370,9 +368,9 @@ public sealed class DerivedMemoryMaintainerRunner {
                 );
             if (!string.Equals(
                     artifact.Content,
-                    artifact.MemoryPack.TryGetBlock(
+                    artifact.ContextHeaderPack.TryGetBlock(
                         member.Target,
-                        out MemoryPackBlock? block
+                        out ContextHeaderBlock? block
                     )
                         ? block.Text
                         : null,
@@ -390,7 +388,7 @@ public sealed class DerivedMemoryMaintainerRunner {
                 member.ContentSha256
             ));
         }
-        MemoryPack restored = draft.Build();
+        ContextHeaderPack restored = draft.Build();
         return new InputSnapshot(
             restored,
             inputMembers.AsReadOnly()
@@ -414,8 +412,8 @@ public sealed class DerivedMemoryMaintainerRunner {
     }
 
     private static void ValidateMaintenanceResult(
-        IMemoryBlockMaintainer maintainer,
-        MemoryBlockMaintenanceResult result
+        IRecapBlockMaintainer maintainer,
+        RecapBlockMaintenanceResult result
     ) {
         ArgumentNullException.ThrowIfNull(result);
         if (!string.Equals(
@@ -492,7 +490,7 @@ public sealed class DerivedMemoryMaintainerRunner {
     }
 
     private sealed record InputSnapshot(
-        MemoryPack MemoryPack,
+        ContextHeaderPack ContextHeaderPack,
         IReadOnlyList<DerivedMemoryArtifactInputMember> InputMembers
     );
 }

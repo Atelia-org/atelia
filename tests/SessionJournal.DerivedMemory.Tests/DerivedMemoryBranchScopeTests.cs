@@ -309,8 +309,8 @@ public sealed class DerivedMemoryBranchScopeTests : IDisposable {
             10_000
         );
 
-    private static readonly MemoryPackBlockPath Target = new(
-        MemoryPackCarrier.Observation,
+    private static readonly ContextHeaderBlockPath Target = new(
+        ContextHeaderCarrier.Observation,
         "memory.test"
     );
 
@@ -409,7 +409,7 @@ public sealed class DerivedMemoryBranchScopeTests : IDisposable {
             $"candidate-{text}",
             $"attempt-{text}"
         );
-        var draft = new MemoryPackDraft(new MemoryPack());
+        var draft = new ContextHeaderPackDraft(new ContextHeaderPack());
         draft.UpsertBlock(Target, text);
         DerivedMemoryArtifact artifact =
             await repository.Artifacts.WriteCandidateAsync(

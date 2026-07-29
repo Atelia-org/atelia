@@ -21,9 +21,9 @@ public sealed class SessionContextCandidateMaterializationContractTests {
                 1,
                 new string('b', 64)
             )
-        );
+    );
     private static readonly SessionContextCandidateDescriptor Descriptor =
-        new("contract-test", Anchor, AnchorSetups);
+        new("contract-test", "snapshot-test", Anchor, AnchorSetups);
     private static readonly IReadOnlySet<EventAddress> AllowedSourceHeads =
         new HashSet<EventAddress> { Anchor, Boundary };
 
@@ -31,13 +31,13 @@ public sealed class SessionContextCandidateMaterializationContractTests {
     public void MaterializedCandidate_LegalUnorderedContributions_AreNormalized() {
         SessionContextCandidate candidate = CreateCandidate(
             Contribution(
-                MemoryPackCarrier.Action,
+                ContextHeaderCarrier.Action,
                 "autobiography",
                 "action memory",
                 Boundary
             ),
             Contribution(
-                MemoryPackCarrier.Observation,
+                ContextHeaderCarrier.Observation,
                 "world",
                 "observation memory",
                 Anchor
@@ -50,11 +50,11 @@ public sealed class SessionContextCandidateMaterializationContractTests {
         Assert.Collection(
             validated,
             observation => Assert.Equal(
-                MemoryPackCarrier.Observation,
+                ContextHeaderCarrier.Observation,
                 observation.Target.Carrier
             ),
             action => Assert.Equal(
-                MemoryPackCarrier.Action,
+                ContextHeaderCarrier.Action,
                 action.Target.Carrier
             )
         );
@@ -64,7 +64,7 @@ public sealed class SessionContextCandidateMaterializationContractTests {
     public void MaterializedCandidate_RejectsDescriptorMismatch() {
         SessionContextCandidate candidate = CreateCandidate(
             Contribution(
-                MemoryPackCarrier.Observation,
+                ContextHeaderCarrier.Observation,
                 "world",
                 "memory",
                 Anchor
@@ -86,7 +86,7 @@ public sealed class SessionContextCandidateMaterializationContractTests {
     public void MaterializedCandidate_RejectsSourceHeadOutsideAuthoritativeInterval() {
         SessionContextCandidate candidate = CreateCandidate(
             Contribution(
-                MemoryPackCarrier.Observation,
+                ContextHeaderCarrier.Observation,
                 "world",
                 "memory",
                 Address(5)
@@ -102,13 +102,13 @@ public sealed class SessionContextCandidateMaterializationContractTests {
     public void MaterializedCandidate_RejectsDuplicateTargetAndInvalidCarrier() {
         SessionContextCandidate duplicate = CreateCandidate(
             Contribution(
-                MemoryPackCarrier.Observation,
+                ContextHeaderCarrier.Observation,
                 "world",
                 "first",
                 Anchor
             ),
             Contribution(
-                MemoryPackCarrier.Observation,
+                ContextHeaderCarrier.Observation,
                 "world",
                 "second",
                 Boundary
@@ -120,7 +120,7 @@ public sealed class SessionContextCandidateMaterializationContractTests {
 
         SessionContextCandidate invalidCarrier = CreateCandidate(
             Contribution(
-                (MemoryPackCarrier)99,
+                (ContextHeaderCarrier)99,
                 "invalid",
                 "memory",
                 Anchor
@@ -134,7 +134,7 @@ public sealed class SessionContextCandidateMaterializationContractTests {
     [Fact]
     public void MaterializedCandidate_RejectsBadHashAndOversizedText() {
         SessionContextContribution badHash = Contribution(
-            MemoryPackCarrier.Observation,
+            ContextHeaderCarrier.Observation,
             "world",
             "memory",
             Anchor
@@ -145,7 +145,7 @@ public sealed class SessionContextCandidateMaterializationContractTests {
 
         string oversizedText = new('x', 256 * 1024 + 1);
         SessionContextContribution oversized = Contribution(
-            MemoryPackCarrier.Observation,
+            ContextHeaderCarrier.Observation,
             "world",
             oversizedText,
             Anchor
@@ -158,13 +158,13 @@ public sealed class SessionContextCandidateMaterializationContractTests {
     [Fact]
     public void MaterializedCandidate_SnapshotsProviderContributionsBeforeValidation() {
         SessionContextContribution accepted = Contribution(
-            MemoryPackCarrier.Observation,
+            ContextHeaderCarrier.Observation,
             "world",
             "accepted memory",
             Anchor
         );
         SessionContextContribution injectedAfterValidation = Contribution(
-            MemoryPackCarrier.Action,
+            ContextHeaderCarrier.Action,
             "injected",
             "injected memory",
             Address(5)
@@ -192,13 +192,13 @@ public sealed class SessionContextCandidateMaterializationContractTests {
             reportedCount: 0,
             [
                 Contribution(
-                    MemoryPackCarrier.Observation,
+                    ContextHeaderCarrier.Observation,
                     "world",
                     "world memory",
                     Anchor
                 ),
                 Contribution(
-                    MemoryPackCarrier.Action,
+                    ContextHeaderCarrier.Action,
                     "self",
                     "self memory",
                     Boundary
@@ -224,7 +224,7 @@ public sealed class SessionContextCandidateMaterializationContractTests {
             reportedCount: 1,
             Enumerable.Range(0, 129)
                 .Select(index => Contribution(
-                    MemoryPackCarrier.Observation,
+                    ContextHeaderCarrier.Observation,
                     $"block-{index}",
                     $"memory-{index}",
                     Anchor
@@ -254,7 +254,7 @@ public sealed class SessionContextCandidateMaterializationContractTests {
         ));
 
         Assert.DoesNotContain(
-            "SessionJournal.Maintainers",
+            "SessionJournal.DerivedRecap.Maintainers",
             project,
             StringComparison.Ordinal
         );
@@ -284,12 +284,12 @@ public sealed class SessionContextCandidateMaterializationContractTests {
     ) => new(Anchor, AnchorSetups, contributions);
 
     private static SessionContextContribution Contribution(
-        MemoryPackCarrier carrier,
+        ContextHeaderCarrier carrier,
         string blockKey,
         string text,
         EventAddress sourceRawHead
     ) => new(
-        new MemoryPackBlockPath(carrier, blockKey),
+        new ContextHeaderBlockPath(carrier, blockKey),
         text,
         SessionContextContributionHasher.CodecId,
         SessionContextContributionHasher.ComputeSha256(text),

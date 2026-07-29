@@ -4,16 +4,16 @@ using System.Text.Json.Serialization;
 using Atelia.Completion.Abstractions;
 using Atelia.SessionJournal;
 
-namespace Atelia.SessionJournal.Maintainers;
+namespace Atelia.SessionJournal.DerivedRecap.Maintainers;
 
 /// <summary>
 /// Stable application-level identity and factory for one concrete memory-maintainer profile.
 /// Role identity is deliberately owned here rather than by SessionJournal raw core.
 /// </summary>
-public sealed record MemoryMaintainerProfileDescriptor(
+public sealed record RecapMaintainerProfileDescriptor(
     string ProfileName,
     string RoleId,
-    MemoryRewriteProfile RewriteProfile
+    RecapRewriteProfile RewriteProfile
 ) {
     public const string PromptFingerprintSchema =
         "atelia.session-journal.memory-maintainer-prompt.v1";
@@ -29,16 +29,16 @@ public sealed record MemoryMaintainerProfileDescriptor(
             )
         ))}";
 
-    public IMemoryBlockMaintainer Create(
+    public IRecapBlockMaintainer Create(
         ICompletionClient completionClient,
         string modelId
-    ) => new RewriteMemoryBlockMaintainer(
+    ) => new RewriteRecapBlockMaintainer(
         RewriteProfile,
         completionClient,
         modelId
     );
 
-    public MemoryMaintainerProfileDescriptor WithPromptOverrides(
+    public RecapMaintainerProfileDescriptor WithPromptOverrides(
         string? systemPrompt,
         string? userPrompt
     ) => this with {
@@ -56,7 +56,7 @@ public sealed record MemoryMaintainerProfileDescriptor(
     );
 }
 
-public static class MemoryMaintainerProfileCatalog {
+public static class RecapMaintainerProfileCatalog {
     public const string AutobiographicalRewrite =
         "autobiographical-rewrite";
     public const string WorldUnderstandingRewrite =
@@ -65,7 +65,7 @@ public static class MemoryMaintainerProfileCatalog {
     public const string WorldUnderstandingRole =
         "world-understanding";
 
-    public static MemoryMaintainerProfileDescriptor Resolve(
+    public static RecapMaintainerProfileDescriptor Resolve(
         string profileName
     ) => profileName switch {
         AutobiographicalRewrite => new(
@@ -79,7 +79,7 @@ public static class MemoryMaintainerProfileCatalog {
             WorldUnderstandingRewriteProfiles.Default
         ),
         _ => throw new ArgumentException(
-            $"Unsupported memory maintainer profile '{profileName}'.",
+            $"Unsupported recap maintainer profile '{profileName}'.",
             nameof(profileName)
         )
     };

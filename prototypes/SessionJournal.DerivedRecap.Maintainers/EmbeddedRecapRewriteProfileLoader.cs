@@ -1,12 +1,12 @@
 using Atelia.SessionJournal;
 
-namespace Atelia.SessionJournal.Maintainers;
+namespace Atelia.SessionJournal.DerivedRecap.Maintainers;
 
-internal static class EmbeddedMemoryRewriteProfileLoader {
-    public static MemoryRewriteProfile Read(
+internal static class EmbeddedRecapRewriteProfileLoader {
+    public static RecapRewriteProfile Read(
         Type assemblyAnchor,
         string id,
-        MemoryPackBlockPath target,
+        ContextHeaderBlockPath target,
         string systemResourceName,
         string userResourceName
     ) => new(

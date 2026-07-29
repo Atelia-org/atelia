@@ -4,7 +4,7 @@ using System.Text.Json;
 using Atelia.Completion;
 using Atelia.Completion.Abstractions;
 using Atelia.SessionJournal.DerivedMemory;
-using Atelia.SessionJournal.Maintainers;
+using Atelia.SessionJournal.DerivedRecap.Maintainers;
 using SJ = Atelia.SessionJournal;
 using SJO = Atelia.SessionJournal.Offline;
 
@@ -381,8 +381,8 @@ internal static class Program {
         CompletionConnectionConfig connection =
             registry.Resolve(requestedConnectionId);
         ICompletionClient client = registry.GetClient(connection.Id);
-        MemoryMaintainerProfileDescriptor profile =
-            MemoryMaintainerProfileCatalog.Resolve(profileName)
+        RecapMaintainerProfileDescriptor profile =
+            RecapMaintainerProfileCatalog.Resolve(profileName)
                 .WithPromptOverrides(
                     systemPromptOverride,
                     userPromptOverride
@@ -404,13 +404,13 @@ internal static class Program {
                 Command: "run-memory-maintainer",
                 MaintainerId: profile.RewriteProfile.Id,
                 TargetCarrier:
-                    SJ.MemoryPackCarrierTokens.ToStorageToken(
+                    SJ.ContextHeaderCarrierTokens.ToStorageToken(
                         profile.RewriteProfile.Target.Carrier
                     ),
                 TargetBlockId: profile.RewriteProfile.Target.BlockKey
             )
         );
-        SJ.IMemoryBlockMaintainer maintainer = profile.Create(
+        SJ.IRecapBlockMaintainer maintainer = profile.Create(
             loggingClient,
             connection.ModelId
         );
@@ -558,9 +558,9 @@ internal static class Program {
         DerivedMemoryBranchScope branchScope =
             repository.Bind(engine);
 
-        MemoryMaintainerProfileDescriptor[] profiles = [
+        RecapMaintainerProfileDescriptor[] profiles = [
             .. roleSpecs.Select(spec =>
-                MemoryMaintainerProfileCatalog.Resolve(spec.ProfileName))
+                RecapMaintainerProfileCatalog.Resolve(spec.ProfileName))
         ];
         DerivedArtifactEpochPlan epoch =
             await repository.EpochPlanner.TryReadEpochAsync(epochId)
@@ -637,7 +637,7 @@ internal static class Program {
         );
         for (int index = 0; index < profiles.Length; index++) {
             RoleSpec spec = roleSpecs[index];
-            MemoryMaintainerProfileDescriptor profile = profiles[index];
+            RecapMaintainerProfileDescriptor profile = profiles[index];
             bool produce = string.Equals(
                 spec.ExecutionMode,
                 DerivedMemoryRoleExecutionModes.Produce,
@@ -679,7 +679,7 @@ internal static class Program {
                             "run-derived-memory-orchestration",
                         MaintainerId: profile.RewriteProfile.Id,
                         TargetCarrier:
-                            SJ.MemoryPackCarrierTokens
+                            SJ.ContextHeaderCarrierTokens
                                 .ToStorageToken(
                                     profile.RewriteProfile.Target.Carrier
                                 ),
@@ -853,9 +853,9 @@ internal static class Program {
         DerivedMemoryBranchScope branchScope =
             repository.Bind(engine);
 
-        MemoryMaintainerProfileDescriptor[] profiles = [
+        RecapMaintainerProfileDescriptor[] profiles = [
             .. roleSpecs.Select(spec =>
-                MemoryMaintainerProfileCatalog.Resolve(
+                RecapMaintainerProfileCatalog.Resolve(
                     spec.ProfileName
                 ))
         ];
@@ -938,7 +938,7 @@ internal static class Program {
                 profiles.Length
             );
         for (int index = 0; index < profiles.Length; index++) {
-            MemoryMaintainerProfileDescriptor profile =
+            RecapMaintainerProfileDescriptor profile =
                 profiles[index];
             RoleSpec spec = roleSpecs[index];
             var maintainerClient =
@@ -951,7 +951,7 @@ internal static class Program {
                         MaintainerId:
                             profile.RewriteProfile.Id,
                         TargetCarrier:
-                            SJ.MemoryPackCarrierTokens
+                            SJ.ContextHeaderCarrierTokens
                                 .ToStorageToken(
                                     profile.RewriteProfile
                                         .Target.Carrier
@@ -1040,7 +1040,7 @@ internal static class Program {
             ContextCandidateSource: coordinator,
             MaximumCanonicalRequestBytes:
             maximumCanonicalRequestBytes,
-            MemoryLifecycle: coordinator
+            ContextLifecycle: coordinator
         );
         engine.UseRuntime(runtime);
         SJ.SessionExecutionBoundaryInspection initialBoundary =

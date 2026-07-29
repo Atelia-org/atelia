@@ -712,7 +712,7 @@ public sealed class DerivedMemoryRepository {
                         .GetEpochPlanFingerprint(epoch),
                     StringComparison.Ordinal
                 )
-                || artifact.SourceRawHead != epoch.PlannedAtRawHead
+                || artifact.AbsorbedThrough != epoch.PlannedAtRawHead
                 || artifact.SourceStartExclusive
                     != epoch.SourceStartExclusive
                 || artifact.SourceEndInclusive

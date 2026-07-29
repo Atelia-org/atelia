@@ -6,7 +6,7 @@ using Atelia.Completion;
 using Atelia.Completion.Abstractions;
 using Atelia.EventJournal;
 using Atelia.SessionJournal.DerivedMemory;
-using Atelia.SessionJournal.Maintainers;
+using Atelia.SessionJournal.DerivedRecap.Maintainers;
 using SJ = Atelia.SessionJournal;
 
 namespace Atelia.SessionJournal.Cli;
@@ -24,7 +24,7 @@ internal static class MemoryMaintainerProducerIdentity {
     };
 
     public static string ComputeProducerFingerprint(
-        MemoryMaintainerProfileDescriptor profile,
+        RecapMaintainerProfileDescriptor profile,
         ICompletionClient client,
         CompletionConnectionConfig connection
     ) {
@@ -38,7 +38,7 @@ internal static class MemoryMaintainerProducerIdentity {
             profile.ProfileName,
             profile.RoleId,
             profile.RewriteProfile.Id,
-            SJ.MemoryPackCarrierTokens.ToStorageToken(
+            SJ.ContextHeaderCarrierTokens.ToStorageToken(
                 profile.RewriteProfile.Target.Carrier
             ),
             profile.RewriteProfile.Target.BlockKey,
@@ -67,7 +67,7 @@ internal static class MemoryMaintainerProducerIdentity {
     ));
 
     public static string ComputeIdentityProducerFingerprint(
-        MemoryMaintainerProfileDescriptor profile
+        RecapMaintainerProfileDescriptor profile
     ) {
         ArgumentNullException.ThrowIfNull(profile);
         return ComputeFingerprint(new IdentityProducerFingerprintDto(
@@ -77,7 +77,7 @@ internal static class MemoryMaintainerProducerIdentity {
             profile.ProfileName,
             profile.RoleId,
             profile.RewriteProfile.Id,
-            SJ.MemoryPackCarrierTokens.ToStorageToken(
+            SJ.ContextHeaderCarrierTokens.ToStorageToken(
                 profile.RewriteProfile.Target.Carrier
             ),
             profile.RewriteProfile.Target.BlockKey
@@ -203,7 +203,8 @@ internal sealed record MemoryMaintainerRunRecord(
     string MaintainerId,
     string CandidateId,
     string AttemptId,
-    string SourceRawHead,
+    [property: JsonPropertyName("sourceRawHead")]
+        string AbsorbedThrough,
     string SourceStartExclusive,
     string SourceEndInclusive,
     string? InputSetId,
@@ -223,7 +224,7 @@ internal sealed record MemoryMaintainerRunRecord(
 ) {
     public static MemoryMaintainerRunRecord FromResult(
         DerivedMemoryBranchScope branchScope,
-        MemoryMaintainerProfileDescriptor profile,
+        RecapMaintainerProfileDescriptor profile,
         DerivedMemoryMaintainerRunResult result,
         string artifactsDirectory
     ) {
@@ -239,12 +240,12 @@ internal sealed record MemoryMaintainerRunRecord(
             artifact.ProfileId,
             artifact.CandidateId,
             artifact.AttemptId,
-            EventAddressTextCodec.Format(artifact.SourceRawHead),
+            EventAddressTextCodec.Format(artifact.AbsorbedThrough),
             EventAddressTextCodec.Format(artifact.SourceStartExclusive),
             EventAddressTextCodec.Format(artifact.SourceEndInclusive),
             artifact.InputSetId,
             artifact.PreviousRoleArtifact,
-            SJ.MemoryPackCarrierTokens.ToStorageToken(
+            SJ.ContextHeaderCarrierTokens.ToStorageToken(
                 artifact.Target.Carrier
             ),
             artifact.Target.BlockKey,

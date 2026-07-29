@@ -9,7 +9,7 @@ namespace Atelia.SessionJournal.DerivedMemory;
 /// provider contract.
 /// </summary>
 public sealed class DerivedMemoryOnlineLifecycleCoordinator
-    : ISessionMemoryLifecycleCoordinator, ICoherentContextCandidateSource {
+    : ISessionContextLifecycleCoordinator, ICoherentContextCandidateSource {
     private readonly DerivedMemoryRepository _repository;
     private readonly DerivedArtifactSetPolicy _policy;
     private readonly DerivedMemoryBranchScope _scope;
@@ -52,9 +52,9 @@ public sealed class DerivedMemoryOnlineLifecycleCoordinator
         CancellationToken cancellationToken
     ) => _candidates.MaterializeAsync(descriptor, cancellationToken);
 
-    public async ValueTask<SessionMemoryLifecycleResult> PrepareAsync(
+    public async ValueTask<SessionContextLifecycleResult> PrepareAsync(
         SessionJournalEngine engine,
-        SessionMemoryLifecycleRequest request,
+        SessionContextLifecycleRequest request,
         CancellationToken cancellationToken
     ) {
         ArgumentNullException.ThrowIfNull(engine);
@@ -90,7 +90,7 @@ public sealed class DerivedMemoryOnlineLifecycleCoordinator
                 .ConfigureAwait(false);
         if (config is null) {
             return new(
-                SessionMemoryLifecycleStatus.Unavailable,
+                SessionContextLifecycleStatus.Unavailable,
                 "No current derived-memory planner config is provisioned."
             );
         }
@@ -156,7 +156,7 @@ public sealed class DerivedMemoryOnlineLifecycleCoordinator
             }
             catch (DerivedArtifactEpochBackpressureException exception) {
                 return new(
-                    SessionMemoryLifecycleStatus.Backpressure,
+                    SessionContextLifecycleStatus.Backpressure,
                     exception.Message
                 );
             }
@@ -191,14 +191,14 @@ public sealed class DerivedMemoryOnlineLifecycleCoordinator
                     )
                 );
             return new(
-                SessionMemoryLifecycleStatus.Backpressure,
+                SessionContextLifecycleStatus.Backpressure,
                 string.IsNullOrEmpty(failures)
                     ? "Derived-memory raw suffix reached the configured hard limit."
                     : "Derived-memory maintenance is incomplete at the configured hard limit; failed roles: "
                         + failures
             );
         }
-        return SessionMemoryLifecycleResult.Ready;
+        return SessionContextLifecycleResult.Ready;
     }
 
     private async ValueTask<DerivedMemoryOrchestrationResult>
@@ -241,7 +241,7 @@ public sealed class DerivedMemoryOnlineLifecycleCoordinator
 
     private static long MeasureProjectedRawSuffix(
         SessionJournalEngine engine,
-        SessionMemoryLifecycleRequest request,
+        SessionContextLifecycleRequest request,
         DerivedArtifactSet? latestSet,
         CancellationToken cancellationToken
     ) {

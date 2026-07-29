@@ -15,8 +15,8 @@ public sealed class DerivedMemoryArtifactStoreTests : IDisposable {
                 fixture.Repository,
                 "autobiography",
                 "profile-a",
-                new MemoryPackBlockPath(
-                    MemoryPackCarrier.Action,
+                new ContextHeaderBlockPath(
+                    ContextHeaderCarrier.Action,
                     "memory.autobiography"
                 ),
                 "candidate text",
@@ -59,8 +59,8 @@ public sealed class DerivedMemoryArtifactStoreTests : IDisposable {
     [Fact]
     public async Task ExactRetryIsIdempotent_AlternativeCandidateIsAppendOnly() {
         Fixture fixture = CreateFixture();
-        MemoryPackBlockPath target = new(
-            MemoryPackCarrier.Observation,
+        ContextHeaderBlockPath target = new(
+            ContextHeaderCarrier.Observation,
             "memory.world"
         );
         DerivedMemoryArtifact first =
@@ -116,8 +116,8 @@ public sealed class DerivedMemoryArtifactStoreTests : IDisposable {
                 fixture.Repository,
                 "role-a",
                 "profile-a",
-                new MemoryPackBlockPath(
-                    MemoryPackCarrier.System,
+                new ContextHeaderBlockPath(
+                    ContextHeaderCarrier.System,
                     "memory.a"
                 ),
                 "text",
@@ -151,8 +151,8 @@ public sealed class DerivedMemoryArtifactStoreTests : IDisposable {
                 fixture.Repository,
                 "role-a",
                 "profile-a",
-                new MemoryPackBlockPath(
-                    MemoryPackCarrier.System,
+                new ContextHeaderBlockPath(
+                    ContextHeaderCarrier.System,
                     "memory.a"
                 ),
                 "text",
@@ -181,8 +181,8 @@ public sealed class DerivedMemoryArtifactStoreTests : IDisposable {
             DerivedMemoryArtifactTestFactory.CreateGenesisRequest(
                 "role-a",
                 "profile-a",
-                new MemoryPackBlockPath(
-                    MemoryPackCarrier.System,
+                new ContextHeaderBlockPath(
+                    ContextHeaderCarrier.System,
                     "memory.a"
                 ),
                 "text",
@@ -218,8 +218,8 @@ public sealed class DerivedMemoryArtifactStoreTests : IDisposable {
         string shape
     ) {
         Fixture fixture = CreateFixture();
-        MemoryPackBlockPath target = new(
-            MemoryPackCarrier.Action,
+        ContextHeaderBlockPath target = new(
+            ContextHeaderCarrier.Action,
             "memory.current"
         );
         DerivedMemoryArtifactWriteRequest request =
@@ -236,8 +236,8 @@ public sealed class DerivedMemoryArtifactStoreTests : IDisposable {
         var first = new DerivedMemoryArtifactInputMember(
             "role-old",
             firstId,
-            new MemoryPackBlockPath(
-                MemoryPackCarrier.Observation,
+            new ContextHeaderBlockPath(
+                ContextHeaderCarrier.Observation,
                 "memory.old"
             ),
             new string('a', 64)
@@ -245,8 +245,8 @@ public sealed class DerivedMemoryArtifactStoreTests : IDisposable {
         DerivedMemoryArtifactInputMember second = shape switch {
             "duplicate-role" => first with {
                 ArtifactId = secondId,
-                Target = new MemoryPackBlockPath(
-                    MemoryPackCarrier.System,
+                Target = new ContextHeaderBlockPath(
+                    ContextHeaderCarrier.System,
                     "memory.other"
                 )
             },
@@ -258,8 +258,8 @@ public sealed class DerivedMemoryArtifactStoreTests : IDisposable {
             "invalid-target" => first with {
                 RoleId = "role-other",
                 ArtifactId = secondId,
-                Target = new MemoryPackBlockPath(
-                    (MemoryPackCarrier)99,
+                Target = new ContextHeaderBlockPath(
+                    (ContextHeaderCarrier)99,
                     "memory.other"
                 )
             },
@@ -370,8 +370,8 @@ public sealed class DerivedMemoryArtifactStoreTests : IDisposable {
                     fixture.Repository,
                     "role-a",
                     "profile-a",
-                    new MemoryPackBlockPath(
-                        MemoryPackCarrier.System,
+                    new ContextHeaderBlockPath(
+                        ContextHeaderCarrier.System,
                         "memory.a"
                     ),
                     "text",

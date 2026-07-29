@@ -31,8 +31,8 @@ internal static class ContextCandidateTestFixture {
             anchor,
             setup,
             new SessionContextContribution(
-                new MemoryPackBlockPath(
-                    MemoryPackCarrier.Observation,
+                new ContextHeaderBlockPath(
+                    ContextHeaderCarrier.Observation,
                     "fixture.world-understanding"
                 ),
                 worldText,
@@ -41,8 +41,8 @@ internal static class ContextCandidateTestFixture {
                 anchor
             ),
             new SessionContextContribution(
-                new MemoryPackBlockPath(
-                    MemoryPackCarrier.Action,
+                new ContextHeaderBlockPath(
+                    ContextHeaderCarrier.Action,
                     "fixture.autobiography"
                 ),
                 selfText,
@@ -88,12 +88,12 @@ internal static class ContextCandidateTestFixture {
     }
 
     internal static SessionContextContribution Contribution(
-        MemoryPackCarrier carrier,
+        ContextHeaderCarrier carrier,
         string blockKey,
         string exactText,
         EventAddress sourceRawHead
     ) => new(
-        new MemoryPackBlockPath(carrier, blockKey),
+        new ContextHeaderBlockPath(carrier, blockKey),
         exactText,
         SessionContextContributionHasher.CodecId,
         SessionContextContributionHasher.ComputeSha256(exactText),

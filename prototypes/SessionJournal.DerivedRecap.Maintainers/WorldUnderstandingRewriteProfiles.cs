@@ -1,6 +1,6 @@
 using Atelia.SessionJournal;
 
-namespace Atelia.SessionJournal.Maintainers;
+namespace Atelia.SessionJournal.DerivedRecap.Maintainers;
 
 public static class WorldUnderstandingRewriteProfiles {
     public const string MaintainerId = "roleplay.world-understanding.rewrite";
@@ -10,23 +10,23 @@ public static class WorldUnderstandingRewriteProfiles {
     private const string SimplifiedChineseSystemResourceName = "Atelia.SessionJournal.Maintainers.Prompts.WorldUnderstandingRewrite.zh-CN.System.md";
     private const string SimplifiedChineseUserResourceName = "Atelia.SessionJournal.Maintainers.Prompts.WorldUnderstandingRewrite.zh-CN.User.md";
 
-    public static MemoryRewriteProfile English { get; } = Read(
+    public static RecapRewriteProfile English { get; } = Read(
         EnglishSystemResourceName,
         EnglishUserResourceName
     );
 
-    public static MemoryRewriteProfile SimplifiedChinese { get; } = Read(
+    public static RecapRewriteProfile SimplifiedChinese { get; } = Read(
         SimplifiedChineseSystemResourceName,
         SimplifiedChineseUserResourceName
     );
 
-    public static MemoryRewriteProfile Default => SimplifiedChinese;
+    public static RecapRewriteProfile Default => SimplifiedChinese;
 
-    private static MemoryRewriteProfile Read(string systemResourceName, string userResourceName)
-        => EmbeddedMemoryRewriteProfileLoader.Read(
+    private static RecapRewriteProfile Read(string systemResourceName, string userResourceName)
+        => EmbeddedRecapRewriteProfileLoader.Read(
             typeof(WorldUnderstandingRewriteProfiles),
             MaintainerId,
-            RolePlayMemoryBlockPaths.WorldUnderstanding,
+            RolePlayRecapBlockPaths.WorldUnderstanding,
             systemResourceName,
             userResourceName
         );

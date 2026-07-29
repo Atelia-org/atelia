@@ -23,8 +23,8 @@ public sealed class ArchitectureBoundaryTests {
             ],
             ReadProjectReferences(
                 root,
-                "prototypes/SessionJournal.Maintainers/"
-                    + "SessionJournal.Maintainers.csproj"
+                "prototypes/SessionJournal.DerivedRecap.Maintainers/"
+                    + "SessionJournal.DerivedRecap.Maintainers.csproj"
             )
         );
         Assert.Equal(
@@ -46,7 +46,7 @@ public sealed class ArchitectureBoundaryTests {
             StringComparison.Ordinal
         );
         Assert.DoesNotContain(
-            "SessionJournal.Maintainers",
+            "SessionJournal.DerivedRecap.Maintainers",
             coreProject,
             StringComparison.Ordinal
         );

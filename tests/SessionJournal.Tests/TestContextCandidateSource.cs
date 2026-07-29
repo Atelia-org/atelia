@@ -19,6 +19,11 @@ internal sealed class TestContextCandidateSource : ICoherentContextCandidateSour
         set;
     }
     internal bool IsEmptyLineage { get; set; }
+    internal SessionContextCandidateSelectionStatus? ForcedStatus {
+        get;
+        set;
+    }
+    internal string? SelectionDetail { get; set; }
 
     internal IReadOnlyList<SessionContextSelectionRequest> Requests
         => _requests;
@@ -39,6 +44,15 @@ internal sealed class TestContextCandidateSource : ICoherentContextCandidateSour
         _cancellationTokens.Add(cancellationToken);
         request.ValidateShape();
         cancellationToken.ThrowIfCancellationRequested();
+        if (ForcedStatus is { } forcedStatus) {
+            return ValueTask.FromResult(
+                new SessionContextCandidateSelection(
+                    forcedStatus,
+                    null,
+                    SelectionDetail
+                )
+            );
+        }
         IReadOnlyList<SessionContextCandidate> candidates =
             Candidates
             ?? (Candidate is null
@@ -63,7 +77,8 @@ internal sealed class TestContextCandidateSource : ICoherentContextCandidateSour
             SessionContextCandidateSelectionStatus.Selected,
             new SessionContextCandidateDescriptor(
                 $"test-candidate-{request.NthPrevious}",
-                candidate.RawStartExclusive,
+                $"test-snapshot-{request.NthPrevious}",
+                candidate.SetAdmissionAnchor,
                 candidate.AnchorSetups
             )
         ));

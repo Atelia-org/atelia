@@ -382,12 +382,12 @@ public sealed class DerivedArtifactSetStoreTests : IDisposable {
                 epoch.SourceEndInclusive
             );
         var targets = new[] {
-            new MemoryPackBlockPath(
-                MemoryPackCarrier.Observation,
+            new ContextHeaderBlockPath(
+                ContextHeaderCarrier.Observation,
                 "memory.alpha"
             ),
-            new MemoryPackBlockPath(
-                MemoryPackCarrier.System,
+            new ContextHeaderBlockPath(
+                ContextHeaderCarrier.System,
                 "memory.zeta"
             )
         };
@@ -483,7 +483,7 @@ public sealed class DerivedArtifactSetStoreTests : IDisposable {
     private static DerivedMemoryRoleProvisioning Provision(
         string roleId,
         string profileId,
-        MemoryPackBlockPath target
+        ContextHeaderBlockPath target
     ) {
         const string fingerprint =
             "sha256:2222222222222222222222222222222222222222222222222222222222222222";
@@ -511,7 +511,7 @@ public sealed class DerivedArtifactSetStoreTests : IDisposable {
         string candidate,
         string text
     ) {
-        var draft = new MemoryPackDraft(new MemoryPack());
+        var draft = new ContextHeaderPackDraft(new ContextHeaderPack());
         draft.UpsertBlock(role.Target, text);
         return await repository.Artifacts.WriteCandidateAsync(
             new DerivedMemoryArtifactWriteRequest(

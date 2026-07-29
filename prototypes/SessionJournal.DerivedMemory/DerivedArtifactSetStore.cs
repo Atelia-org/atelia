@@ -1115,7 +1115,7 @@ public sealed class DerivedArtifactSetStore {
         var selectedRoles = new HashSet<string>(StringComparer.Ordinal);
         var artifactIds = new HashSet<string>(StringComparer.Ordinal);
         var targets =
-            new HashSet<(MemoryPackCarrier Carrier, string BlockKey)>();
+            new HashSet<(ContextHeaderCarrier Carrier, string BlockKey)>();
         var members = new List<DerivedArtifactSetMember>(selections.Count);
         EventAddress? commonAnchor = null;
         foreach (DerivedArtifactSetMemberSelection selection in selections) {
@@ -1192,9 +1192,9 @@ public sealed class DerivedArtifactSetStore {
                     $"Artifact '{artifact.ArtifactId}' exact anchor setup references do not match publication."
                 );
             }
-            if (!artifact.MemoryPack.TryGetBlock(
+            if (!artifact.ContextHeaderPack.TryGetBlock(
                     artifact.Target,
-                    out MemoryPackBlock block
+                    out ContextHeaderBlock block
                 )
                 || !string.Equals(
                     block.Text,
@@ -1212,7 +1212,7 @@ public sealed class DerivedArtifactSetStore {
                 artifact.Target,
                 SessionContextContributionHasher.CodecId,
                 SessionContextContributionHasher.ComputeSha256(block.Text),
-                artifact.SourceRawHead,
+                artifact.AbsorbedThrough,
                 artifact.Outcome
             ));
         }
@@ -1639,7 +1639,7 @@ public sealed class DerivedArtifactSetStore {
         var roleIds = new HashSet<string>(StringComparer.Ordinal);
         var artifactIds = new HashSet<string>(StringComparer.Ordinal);
         var targets =
-            new HashSet<(MemoryPackCarrier Carrier, string BlockKey)>();
+            new HashSet<(ContextHeaderCarrier Carrier, string BlockKey)>();
         var members = new List<DerivedArtifactSetMember>(
             dto.Members.Count
         );
@@ -1667,7 +1667,7 @@ public sealed class DerivedArtifactSetStore {
                     $"Derived ArtifactSet contains undeclared role '{member.RoleId}'."
                 );
             }
-            MemoryPackBlockPath target = MaterializeTarget(member.Target);
+            ContextHeaderBlockPath target = MaterializeTarget(member.Target);
             if (target != role.Target
                 || !roleIds.Add(member.RoleId)
                 || !artifactIds.Add(member.ArtifactId)
@@ -1697,7 +1697,7 @@ public sealed class DerivedArtifactSetStore {
                 );
             }
             EventAddress sourceRawHead =
-                EventAddressTextCodec.Parse(member.SourceRawHead);
+                EventAddressTextCodec.Parse(member.AbsorbedThrough);
             members.Add(new DerivedArtifactSetMember(
                 member.RoleId,
                 member.ArtifactId,
@@ -1783,7 +1783,7 @@ public sealed class DerivedArtifactSetStore {
                 StringComparison.Ordinal
             )
             || artifact.Target != member.Target
-            || artifact.SourceRawHead != member.SourceRawHead
+            || artifact.AbsorbedThrough != member.AbsorbedThrough
             || artifact.AnchorRawEvent != commonAnchor
             || artifact.SourceEndInclusive != commonAnchor
             || artifact.AnchorSetups != anchorSetups
@@ -1792,9 +1792,9 @@ public sealed class DerivedArtifactSetStore {
                 member.Outcome,
                 StringComparison.Ordinal
             )
-            || !artifact.MemoryPack.TryGetBlock(
+            || !artifact.ContextHeaderPack.TryGetBlock(
                 artifact.Target,
-                out MemoryPackBlock block
+                out ContextHeaderBlock block
             )
             || !string.Equals(
                 artifact.Content,
@@ -2081,12 +2081,12 @@ public sealed class DerivedArtifactSetStore {
         member.ArtifactId,
         member.ArtifactKind,
         new DerivedArtifactSetTargetDto(
-            MemoryPackCarrierTokens.ToStorageToken(member.Target.Carrier),
+            ContextHeaderCarrierTokens.ToStorageToken(member.Target.Carrier),
             member.Target.BlockKey
         ),
         member.ContentCodecId,
         member.ContentSha256,
-        EventAddressTextCodec.Format(member.SourceRawHead),
+        EventAddressTextCodec.Format(member.AbsorbedThrough),
         member.Outcome
     );
 
@@ -2096,7 +2096,7 @@ public sealed class DerivedArtifactSetStore {
         role.RoleId,
         role.ProfileId,
         new DerivedArtifactSetTargetDto(
-            MemoryPackCarrierTokens.ToStorageToken(role.Target.Carrier),
+            ContextHeaderCarrierTokens.ToStorageToken(role.Target.Carrier),
             role.Target.BlockKey
         ),
         role.Required,
@@ -2115,7 +2115,7 @@ public sealed class DerivedArtifactSetStore {
     ) => new(
         requirement.RoleId,
         new DerivedArtifactSetTargetDto(
-            MemoryPackCarrierTokens.ToStorageToken(
+            ContextHeaderCarrierTokens.ToStorageToken(
                 requirement.Target.Carrier
             ),
             requirement.Target.BlockKey
@@ -2132,7 +2132,7 @@ public sealed class DerivedArtifactSetStore {
             .Select(static role =>
                 new DerivedArtifactSetRoleRequirement(
                     role.RoleId,
-                    new MemoryPackBlockPath(
+                    new ContextHeaderBlockPath(
                         role.Target.Carrier,
                         role.Target.BlockKey
                     ),
@@ -2153,7 +2153,7 @@ public sealed class DerivedArtifactSetStore {
         }
         var roleIds = new HashSet<string>(StringComparer.Ordinal);
         var targets =
-            new HashSet<(MemoryPackCarrier Carrier, string BlockKey)>();
+            new HashSet<(ContextHeaderCarrier Carrier, string BlockKey)>();
         var requirements = new List<DerivedArtifactSetRoleRequirement>(
             dtos.Count
         );
@@ -2182,7 +2182,7 @@ public sealed class DerivedArtifactSetStore {
                     exception
                 );
             }
-            MemoryPackBlockPath target = MaterializeTarget(dto.Target);
+            ContextHeaderBlockPath target = MaterializeTarget(dto.Target);
             if (!roleIds.Add(dto.RoleId)
                 || !targets.Add((target.Carrier, target.BlockKey))
                 || previousRole is not null
@@ -2364,19 +2364,19 @@ public sealed class DerivedArtifactSetStore {
         dto.PayloadSha256
     );
 
-    private static MemoryPackBlockPath MaterializeTarget(
+    private static ContextHeaderBlockPath MaterializeTarget(
         DerivedArtifactSetTargetDto dto
     ) {
         if (dto is null
-            || !MemoryPackCarrierTokens.TryParseStorageToken(
+            || !ContextHeaderCarrierTokens.TryParseStorageToken(
                 dto.Carrier,
-                out MemoryPackCarrier carrier
+                out ContextHeaderCarrier carrier
             )) {
             throw new InvalidDataException(
                 "Derived ArtifactSet member target carrier is invalid."
             );
         }
-        var target = new MemoryPackBlockPath(carrier, dto.BlockKey);
+        var target = new ContextHeaderBlockPath(carrier, dto.BlockKey);
         DerivedArtifactSetPolicy.ValidateTarget(target, nameof(dto));
         return target;
     }
@@ -2507,7 +2507,9 @@ internal sealed record DerivedArtifactSetMemberDto(
     [property: JsonPropertyOrder(3)] DerivedArtifactSetTargetDto Target,
     [property: JsonPropertyOrder(4)] string ContentCodecId,
     [property: JsonPropertyOrder(5)] string ContentSha256,
-    [property: JsonPropertyOrder(6)] string SourceRawHead,
+    [property: JsonPropertyOrder(6)]
+    [property: JsonPropertyName("sourceRawHead")]
+        string AbsorbedThrough,
     [property: JsonPropertyOrder(7)] string Outcome
 );
 

@@ -2,16 +2,16 @@ using Atelia.Completion.Abstractions;
 using Atelia.SessionJournal;
 using Xunit;
 
-namespace Atelia.SessionJournal.Tests;
+namespace Atelia.SessionJournal.DerivedRecap.Maintainers.Tests;
 
-public sealed class SessionMemorySubstrateTests {
+public sealed class SessionRecapContextContractsTests {
     [Fact]
-    public void MemoryPack_Render_UsesThreeCarriersInStableOrder() {
-        var pack = new MemoryPack();
-        pack.System.Add("system.a", new MemoryPackBlock("alpha"));
-        pack.System.Add("system.b", new MemoryPackBlock("beta"));
-        pack.Observation.Add("observation.a", new MemoryPackBlock("gamma"));
-        pack.Action.Add("action.a", new MemoryPackBlock("delta"));
+    public void ContextHeaderPack_Render_UsesThreeCarriersInStableOrder() {
+        var pack = new ContextHeaderPack();
+        pack.System.Add("system.a", new ContextHeaderBlock("alpha"));
+        pack.System.Add("system.b", new ContextHeaderBlock("beta"));
+        pack.Observation.Add("observation.a", new ContextHeaderBlock("gamma"));
+        pack.Action.Add("action.a", new ContextHeaderBlock("delta"));
 
         var rendered = pack.Render();
 
@@ -21,17 +21,17 @@ public sealed class SessionMemorySubstrateTests {
     }
 
     [Fact]
-    public void MemoryPackDraft_DoesNotMutateBaseAndPreservesExistingPosition() {
-        var pack = new MemoryPack();
-        pack.System.Add("a", new MemoryPackBlock("old-a"));
-        pack.System.Add("b", new MemoryPackBlock("old-b"));
-        pack.System.Add("c", new MemoryPackBlock("old-c"));
+    public void ContextHeaderPackDraft_DoesNotMutateBaseAndPreservesExistingPosition() {
+        var pack = new ContextHeaderPack();
+        pack.System.Add("a", new ContextHeaderBlock("old-a"));
+        pack.System.Add("b", new ContextHeaderBlock("old-b"));
+        pack.System.Add("c", new ContextHeaderBlock("old-c"));
 
-        var draft = new MemoryPackDraft(pack);
-        draft.ReplaceBlock(new MemoryPackBlockPath(MemoryPackCarrier.System, "a"), "new-a");
-        draft.UpsertBlock(new MemoryPackBlockPath(MemoryPackCarrier.System, "b"), "new-b");
-        draft.UpsertBlock(new MemoryPackBlockPath(MemoryPackCarrier.System, "d"), "new-d", order: 2);
-        Assert.True(draft.RemoveBlock(new MemoryPackBlockPath(MemoryPackCarrier.System, "c")));
+        var draft = new ContextHeaderPackDraft(pack);
+        draft.ReplaceBlock(new ContextHeaderBlockPath(ContextHeaderCarrier.System, "a"), "new-a");
+        draft.UpsertBlock(new ContextHeaderBlockPath(ContextHeaderCarrier.System, "b"), "new-b");
+        draft.UpsertBlock(new ContextHeaderBlockPath(ContextHeaderCarrier.System, "d"), "new-d", order: 2);
+        Assert.True(draft.RemoveBlock(new ContextHeaderBlockPath(ContextHeaderCarrier.System, "c")));
         var built = draft.Build();
 
         Assert.Equal(["a", "b", "c"], pack.System.Keys.ToArray());
@@ -43,11 +43,11 @@ public sealed class SessionMemorySubstrateTests {
     }
 
     [Fact]
-    public void RenderedMemoryPack_ToSessionContextHeader_UsesSessionJournalHeaderType() {
-        var pack = new MemoryPack();
-        pack.System.Add("policy", new MemoryPackBlock("stay focused"));
-        pack.Observation.Add("summary", new MemoryPackBlock("observed facts"));
-        pack.Action.Add("self", new MemoryPackBlock("acted carefully"));
+    public void ContextHeaderSnapshot_ToSessionContextHeader_UsesSessionJournalHeaderType() {
+        var pack = new ContextHeaderPack();
+        pack.System.Add("policy", new ContextHeaderBlock("stay focused"));
+        pack.Observation.Add("summary", new ContextHeaderBlock("observed facts"));
+        pack.Action.Add("self", new ContextHeaderBlock("acted carefully"));
 
         var header = pack.Render().ToSessionContextHeader();
 
@@ -73,16 +73,16 @@ public sealed class SessionMemorySubstrateTests {
     }
 
     [Fact]
-    public async Task MemoryMaintenanceOrchestrator_RunAsync_UpdatesTargetBlock() {
-        var pack = new MemoryPack();
-        pack.Observation.Add("summary", new MemoryPackBlock("old"));
+    public async Task RecapMaintenanceOrchestrator_RunAsync_UpdatesTargetBlock() {
+        var pack = new ContextHeaderPack();
+        pack.Observation.Add("summary", new ContextHeaderBlock("old"));
         var maintainer = new StubMaintainer(
             "maintainer.summary",
-            new MemoryPackBlockPath(MemoryPackCarrier.Observation, "summary"),
+            new ContextHeaderBlockPath(ContextHeaderCarrier.Observation, "summary"),
             "new"
         );
 
-        var result = await MemoryMaintenanceOrchestrator.RunAsync(
+        var result = await RecapMaintenanceOrchestrator.RunAsync(
             pack,
             new RecentHistorySlice(ContextHeaderSnapshot.Empty, [new ObservationMessage("hello")]),
             [maintainer],
@@ -91,16 +91,16 @@ public sealed class SessionMemorySubstrateTests {
 
         Assert.Single(result.Results);
         Assert.Equal("new", result.Results[0].NewBlock.Text);
-        Assert.True(result.UpdatedMemoryPack.TryGetBlock(maintainer.Target, out var updated));
+        Assert.True(result.UpdatedContextHeaderPack.TryGetBlock(maintainer.Target, out var updated));
         Assert.Equal("new", updated.Text);
         Assert.True(pack.TryGetBlock(maintainer.Target, out var original));
         Assert.Equal("old", original.Text);
     }
 
     [Fact]
-    public async Task MemoryMaintenanceOrchestrator_RunAsync_CreatesMissingTargetFromEmptyOldBlock() {
-        var pack = new MemoryPack();
-        var target = new MemoryPackBlockPath(MemoryPackCarrier.Action, "new-block");
+    public async Task RecapMaintenanceOrchestrator_RunAsync_CreatesMissingTargetFromEmptyOldBlock() {
+        var pack = new ContextHeaderPack();
+        var target = new ContextHeaderBlockPath(ContextHeaderCarrier.Action, "new-block");
         var maintainer = new StubMaintainer(
             "maintainer.new",
             target,
@@ -110,7 +110,7 @@ public sealed class SessionMemorySubstrateTests {
             }
         );
 
-        var result = await MemoryMaintenanceOrchestrator.RunAsync(
+        var result = await RecapMaintenanceOrchestrator.RunAsync(
             pack,
             new RecentHistorySlice(ContextHeaderSnapshot.Empty, [new ObservationMessage("hello")]),
             [maintainer],
@@ -118,16 +118,16 @@ public sealed class SessionMemorySubstrateTests {
         );
 
         Assert.False(pack.Action.ContainsKey(target.BlockKey));
-        Assert.Equal("created", result.UpdatedMemoryPack.Action[target.BlockKey].Text);
+        Assert.Equal("created", result.UpdatedContextHeaderPack.Action[target.BlockKey].Text);
     }
 
     [Fact]
-    public async Task MemoryMaintenanceOrchestrator_RunAsync_RejectsDuplicateTargets() {
-        var target = new MemoryPackBlockPath(MemoryPackCarrier.System, "same");
+    public async Task RecapMaintenanceOrchestrator_RunAsync_RejectsDuplicateTargets() {
+        var target = new ContextHeaderBlockPath(ContextHeaderCarrier.System, "same");
 
         await Assert.ThrowsAsync<ArgumentException>(
-            () => MemoryMaintenanceOrchestrator.RunAsync(
-                new MemoryPack(),
+            () => RecapMaintenanceOrchestrator.RunAsync(
+                new ContextHeaderPack(),
                 new RecentHistorySlice(ContextHeaderSnapshot.Empty, Array.Empty<IHistoryMessage>()),
                 [
                     new StubMaintainer("first", target, "one"),
@@ -139,19 +139,19 @@ public sealed class SessionMemorySubstrateTests {
     }
 
     [Fact]
-    public async Task MemoryMaintenanceOrchestrator_RunAsync_RejectsEmptyMaintainerList() {
+    public async Task RecapMaintenanceOrchestrator_RunAsync_RejectsEmptyMaintainerList() {
         await Assert.ThrowsAsync<ArgumentException>(
-            () => MemoryMaintenanceOrchestrator.RunAsync(
-                new MemoryPack(),
+            () => RecapMaintenanceOrchestrator.RunAsync(
+                new ContextHeaderPack(),
                 new RecentHistorySlice(ContextHeaderSnapshot.Empty, Array.Empty<IHistoryMessage>()),
-                Array.Empty<IMemoryBlockMaintainer>(),
+                Array.Empty<IRecapBlockMaintainer>(),
                 CancellationToken.None
             )
         );
     }
 
     [Fact]
-    public async Task RewriteMemoryBlockMaintainer_MaintainAsync_ExpandsSessionContextHeader() {
+    public async Task RewriteRecapBlockMaintainer_MaintainAsync_ExpandsSessionContextHeader() {
         var client = new ScriptedCompletionClient();
         client.Enqueue(
             request => {
@@ -167,7 +167,7 @@ public sealed class SessionMemorySubstrateTests {
         var maintainer = CreateRewriteMaintainer(client);
 
         var result = await maintainer.MaintainAsync(
-            new MemoryBlockMaintenanceRequest(
+            new RecapBlockMaintenanceRequest(
                 new RecentHistorySlice(
                     ContextHeaderSnapshot.Empty,
                     [
@@ -178,7 +178,7 @@ public sealed class SessionMemorySubstrateTests {
                         )
                     ]
                 ),
-                new MemoryPackBlock("old")
+                new ContextHeaderBlock("old")
             ),
             CancellationToken.None
         );
@@ -187,7 +187,7 @@ public sealed class SessionMemorySubstrateTests {
     }
 
     [Fact]
-    public async Task RewriteMemoryBlockMaintainer_MaintainAsync_IncompleteCompletionThrowsSessionJournalException() {
+    public async Task RewriteRecapBlockMaintainer_MaintainAsync_IncompleteCompletionThrowsSessionJournalException() {
         var client = new ScriptedCompletionClient();
         client.Enqueue(
             request => new CompletionResult(
@@ -200,9 +200,9 @@ public sealed class SessionMemorySubstrateTests {
 
         var ex = await Assert.ThrowsAsync<SessionJournalTurnAbortedException>(
             async () => await maintainer.MaintainAsync(
-                new MemoryBlockMaintenanceRequest(
+                new RecapBlockMaintenanceRequest(
                     new RecentHistorySlice(ContextHeaderSnapshot.Empty, [new ObservationMessage("hello")]),
-                    new MemoryPackBlock("old")
+                    new ContextHeaderBlock("old")
                 ),
                 CancellationToken.None
             )
@@ -211,11 +211,11 @@ public sealed class SessionMemorySubstrateTests {
         Assert.Equal(CompletionTerminationKind.Incomplete, ex.Termination.Kind);
     }
 
-    private static RewriteMemoryBlockMaintainer CreateRewriteMaintainer(ICompletionClient client)
+    private static RewriteRecapBlockMaintainer CreateRewriteMaintainer(ICompletionClient client)
         => new(
-            new MemoryRewriteProfile(
+            new RecapRewriteProfile(
                 "maintainer.summary",
-                new MemoryPackBlockPath(MemoryPackCarrier.Observation, "summary"),
+                new ContextHeaderBlockPath(ContextHeaderCarrier.Observation, "summary"),
                 "system prompt",
                 "user prompt"
             ),
@@ -223,17 +223,17 @@ public sealed class SessionMemorySubstrateTests {
             "model-a"
         );
 
-    private sealed class StubMaintainer : IMemoryBlockMaintainer {
-        private readonly Func<MemoryBlockMaintenanceRequest, string> _maintain;
+    private sealed class StubMaintainer : IRecapBlockMaintainer {
+        private readonly Func<RecapBlockMaintenanceRequest, string> _maintain;
 
-        public StubMaintainer(string id, MemoryPackBlockPath target, string newText)
+        public StubMaintainer(string id, ContextHeaderBlockPath target, string newText)
             : this(id, target, _ => newText) {
         }
 
         public StubMaintainer(
             string id,
-            MemoryPackBlockPath target,
-            Func<MemoryBlockMaintenanceRequest, string> maintain
+            ContextHeaderBlockPath target,
+            Func<RecapBlockMaintenanceRequest, string> maintain
         ) {
             Id = id;
             Target = target;
@@ -242,17 +242,17 @@ public sealed class SessionMemorySubstrateTests {
 
         public string Id { get; }
 
-        public MemoryPackBlockPath Target { get; }
+        public ContextHeaderBlockPath Target { get; }
 
-        public ValueTask<MemoryBlockMaintenanceResult> MaintainAsync(
-            MemoryBlockMaintenanceRequest request,
+        public ValueTask<RecapBlockMaintenanceResult> MaintainAsync(
+            RecapBlockMaintenanceRequest request,
             CancellationToken ct
         ) {
             ct.ThrowIfCancellationRequested();
-            return ValueTask.FromResult(new MemoryBlockMaintenanceResult(
+            return ValueTask.FromResult(new RecapBlockMaintenanceResult(
                 Id,
                 Target,
-                new MemoryPackBlock(_maintain(request))
+                new ContextHeaderBlock(_maintain(request))
             ));
         }
     }

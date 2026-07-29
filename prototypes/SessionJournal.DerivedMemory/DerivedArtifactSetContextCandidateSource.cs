@@ -71,6 +71,7 @@ public sealed class DerivedArtifactSetContextCandidateSource
                     SessionContextCandidateSelectionStatus.Selected,
                     new SessionContextCandidateDescriptor(
                         current.SetId,
+                        current.SetId,
                         current.CommonAnchor,
                         current.AnchorSetups
                     )
@@ -111,7 +112,12 @@ public sealed class DerivedArtifactSetContextCandidateSource
             ?? throw new InvalidDataException(
                 $"Discovered ArtifactSet '{descriptor.Handle}' is no longer available."
             );
-        if (set.CommonAnchor != descriptor.RawStartExclusive
+        if (!string.Equals(
+                set.SetId,
+                descriptor.SnapshotToken,
+                StringComparison.Ordinal
+            )
+            || set.CommonAnchor != descriptor.SetAdmissionAnchor
             || set.AnchorSetups != descriptor.AnchorSetups) {
             throw new InvalidDataException(
                 $"Discovered ArtifactSet '{descriptor.Handle}' changed before materialization."
@@ -130,9 +136,9 @@ public sealed class DerivedArtifactSetContextCandidateSource
                     cancellationToken
                 )
                 .ConfigureAwait(false);
-            if (!artifact.MemoryPack.TryGetBlock(
+            if (!artifact.ContextHeaderPack.TryGetBlock(
                     artifact.Target,
-                    out MemoryPackBlock block
+                    out ContextHeaderBlock block
                 )) {
                 throw new InvalidDataException(
                     $"Derived ArtifactSet member '{member.ArtifactId}' is missing its target text."
@@ -143,7 +149,7 @@ public sealed class DerivedArtifactSetContextCandidateSource
                 block.Text,
                 member.ContentCodecId,
                 member.ContentSha256,
-                member.SourceRawHead
+                member.AbsorbedThrough
             ));
         }
         return new(

@@ -151,7 +151,7 @@ public sealed class DerivedArtifactSetEngineIntegrationTests : IDisposable {
                 SessionJournalDefaults.MainBranchName
             ).Unwrap();
             EventAddress rewindTarget = journal
-                .ReadEventHeaderPreview(descriptor.RawStartExclusive)
+                .ReadEventHeaderPreview(descriptor.SetAdmissionAnchor)
                 .Unwrap()
                 .Parent!.Value;
             Assert.True(
@@ -251,12 +251,12 @@ public sealed class DerivedArtifactSetEngineIntegrationTests : IDisposable {
             );
         }
         RawSnapshot rawBefore = ReadRawSnapshot(path);
-        var worldTarget = new MemoryPackBlockPath(
-            MemoryPackCarrier.Observation,
+        var worldTarget = new ContextHeaderBlockPath(
+            ContextHeaderCarrier.Observation,
             "memory.world"
         );
-        var selfTarget = new MemoryPackBlockPath(
-            MemoryPackCarrier.Action,
+        var selfTarget = new ContextHeaderBlockPath(
+            ContextHeaderCarrier.Action,
             "memory.self"
         );
         DerivedMemoryArtifact world = await WriteArtifactAsync(
@@ -355,7 +355,7 @@ public sealed class DerivedArtifactSetEngineIntegrationTests : IDisposable {
         WriteArtifactAsync(
         DerivedMemoryRepository repository,
         string profileId,
-        MemoryPackBlockPath target,
+        ContextHeaderBlockPath target,
         string text,
         DerivedArtifactEpochPlan epoch,
         SessionContextAnchorSetupReferences setups
@@ -364,7 +364,7 @@ public sealed class DerivedArtifactSetEngineIntegrationTests : IDisposable {
             profileId.EndsWith("-profile", StringComparison.Ordinal)
                 ? profileId[..^"-profile".Length]
                 : profileId;
-        var draft = new MemoryPackDraft(new MemoryPack());
+        var draft = new ContextHeaderPackDraft(new ContextHeaderPack());
         draft.UpsertBlock(target, text);
         const string fingerprint =
             "sha256:2222222222222222222222222222222222222222222222222222222222222222";

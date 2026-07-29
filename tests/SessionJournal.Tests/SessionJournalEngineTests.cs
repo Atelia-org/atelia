@@ -281,12 +281,12 @@ public sealed class SessionJournalEngineTests : IDisposable {
         var candidateSource = new TestContextCandidateSource {
             IsEmptyLineage = true
         };
-        var lifecycle = new TestMemoryLifecycle();
+        var lifecycle = new TestContextLifecycle();
         SessionRuntime runtime = CreateRuntime(
             client,
             candidateSource: candidateSource
         ) with {
-            MemoryLifecycle = lifecycle
+            ContextLifecycle = lifecycle
         };
         IReadOnlyDictionary<string, FileSnapshot> before =
             CaptureRepositoryFiles(path);
@@ -502,7 +502,7 @@ public sealed class SessionJournalEngineTests : IDisposable {
             "feature",
             runtime with {
                 ContextCandidateSource = null,
-                MemoryLifecycle = null
+                ContextLifecycle = null
             }
         )) {
             ResumeOutcome outcome = await resumed.ResumeAsync(

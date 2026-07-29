@@ -1455,12 +1455,12 @@ public sealed class ProgramDerivedMemoryCommandTests : IDisposable {
             anchor = epoch.SourceEndInclusive;
             setups = engine.ResolveContextAnchorSetupReferences(anchor);
         }
-        var firstTarget = new SJ.MemoryPackBlockPath(
-            SJ.MemoryPackCarrier.Observation,
+        var firstTarget = new SJ.ContextHeaderBlockPath(
+            SJ.ContextHeaderCarrier.Observation,
             "memory.alpha"
         );
-        var secondTarget = new SJ.MemoryPackBlockPath(
-            SJ.MemoryPackCarrier.System,
+        var secondTarget = new SJ.ContextHeaderBlockPath(
+            SJ.ContextHeaderCarrier.System,
             "memory.zeta"
         );
         DerivedMemoryArtifact first = await WriteArtifactAsync(
@@ -1521,14 +1521,14 @@ public sealed class ProgramDerivedMemoryCommandTests : IDisposable {
     private static async ValueTask<DerivedMemoryArtifact> WriteArtifactAsync(
         DerivedMemoryRepository repository,
         string profile,
-        SJ.MemoryPackBlockPath target,
+        SJ.ContextHeaderBlockPath target,
         string text,
         DerivedArtifactEpochPlan epoch,
         EventAddress anchor,
         SJ.SessionContextAnchorSetupReferences setups,
         string? roleId = null
     ) {
-        var draft = new SJ.MemoryPackDraft(new SJ.MemoryPack());
+        var draft = new SJ.ContextHeaderPackDraft(new SJ.ContextHeaderPack());
         draft.UpsertBlock(target, text);
         const string fingerprint =
             "sha256:2222222222222222222222222222222222222222222222222222222222222222";

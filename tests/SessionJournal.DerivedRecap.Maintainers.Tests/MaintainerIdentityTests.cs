@@ -1,8 +1,8 @@
 using Atelia.SessionJournal;
-using Atelia.SessionJournal.Maintainers;
+using Atelia.SessionJournal.DerivedRecap.Maintainers;
 using Xunit;
 
-namespace Atelia.SessionJournal.Maintainers.Tests;
+namespace Atelia.SessionJournal.DerivedRecap.Maintainers.Tests;
 
 public class MaintainerIdentityTests {
     [Fact]
@@ -17,28 +17,28 @@ public class MaintainerIdentityTests {
         );
 
         Assert.Equal(
-            new MemoryPackBlockPath(
-                MemoryPackCarrier.Action,
+            new ContextHeaderBlockPath(
+                ContextHeaderCarrier.Action,
                 "roleplay.first-person-autobiography"
             ),
-            RolePlayMemoryBlockPaths.FirstPersonAutobiography
+            RolePlayRecapBlockPaths.FirstPersonAutobiography
         );
         Assert.Equal(
-            new MemoryPackBlockPath(
-                MemoryPackCarrier.Observation,
+            new ContextHeaderBlockPath(
+                ContextHeaderCarrier.Observation,
                 "roleplay.world-understanding"
             ),
-            RolePlayMemoryBlockPaths.WorldUnderstanding
+            RolePlayRecapBlockPaths.WorldUnderstanding
         );
 
-        MemoryMaintainerProfileDescriptor autobiography =
-            MemoryMaintainerProfileCatalog.Resolve(
-                MemoryMaintainerProfileCatalog
+        RecapMaintainerProfileDescriptor autobiography =
+            RecapMaintainerProfileCatalog.Resolve(
+                RecapMaintainerProfileCatalog
                     .AutobiographicalRewrite
             );
-        MemoryMaintainerProfileDescriptor world =
-            MemoryMaintainerProfileCatalog.Resolve(
-                MemoryMaintainerProfileCatalog
+        RecapMaintainerProfileDescriptor world =
+            RecapMaintainerProfileCatalog.Resolve(
+                RecapMaintainerProfileCatalog
                     .WorldUnderstandingRewrite
             );
         Assert.Equal("autobiography", autobiography.RoleId);
@@ -59,24 +59,24 @@ public class MaintainerIdentityTests {
 
     [Fact]
     public void PromptFingerprint_IsStructuredAndNulBoundarySafe() {
-        var target = new MemoryPackBlockPath(
-            MemoryPackCarrier.Action,
+        var target = new ContextHeaderBlockPath(
+            ContextHeaderCarrier.Action,
             "memory.test"
         );
-        var left = new MemoryMaintainerProfileDescriptor(
+        var left = new RecapMaintainerProfileDescriptor(
             "profile",
             "role",
-            new MemoryRewriteProfile(
+            new RecapRewriteProfile(
                 "maintainer",
                 target,
                 "a\0b",
                 "c"
             )
         );
-        var right = new MemoryMaintainerProfileDescriptor(
+        var right = new RecapMaintainerProfileDescriptor(
             "profile",
             "role",
-            new MemoryRewriteProfile(
+            new RecapRewriteProfile(
                 "maintainer",
                 target,
                 "a",

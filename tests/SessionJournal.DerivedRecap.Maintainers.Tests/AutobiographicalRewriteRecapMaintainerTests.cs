@@ -1,9 +1,9 @@
 using Atelia.Completion.Abstractions;
 using Atelia.SessionJournal;
-using Atelia.SessionJournal.Maintainers;
+using Atelia.SessionJournal.DerivedRecap.Maintainers;
 using Xunit;
 
-namespace Atelia.SessionJournal.Maintainers.Tests;
+namespace Atelia.SessionJournal.DerivedRecap.Maintainers.Tests;
 
 public class AutobiographicalRewriteProfileTests {
     [Fact]
@@ -59,21 +59,21 @@ public class AutobiographicalRewriteProfileTests {
         Assert.DoesNotContain("think", result.NewBlock.Text);
     }
 
-    private static RewriteMemoryBlockMaintainer CreateMaintainer(ICompletionClient client)
+    private static RewriteRecapBlockMaintainer CreateMaintainer(ICompletionClient client)
         => new(AutobiographicalRewriteProfiles.Default, client, "model-a");
 
-    private static MemoryBlockMaintenanceRequest CreateRequest(string oldBlock) {
-        var memoryPack = new MemoryPack();
-        memoryPack.Action.Add(RolePlayMemoryBlockPaths.FirstPersonAutobiography.BlockKey, new MemoryPackBlock(oldBlock));
+    private static RecapBlockMaintenanceRequest CreateRequest(string oldBlock) {
+        var memoryPack = new ContextHeaderPack();
+        memoryPack.Action.Add(RolePlayRecapBlockPaths.FirstPersonAutobiography.BlockKey, new ContextHeaderBlock(oldBlock));
         return new(
             new RecentHistorySlice(
-                ContextHeaderSnapshot.FromRenderedMemoryPack(memoryPack.Render()),
+                memoryPack.Render(),
                 [
                     new ObservationMessage("刘世超说了一句话。"),
                     new ActionMessage([new ActionBlock.Text("[Galatea] 我发现那句话仍留在我心里。")])
                 ]
             ),
-            new MemoryPackBlock(oldBlock)
+            new ContextHeaderBlock(oldBlock)
         );
     }
 

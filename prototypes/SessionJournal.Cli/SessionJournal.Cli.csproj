@@ -8,7 +8,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="../SessionJournal.Maintainers/SessionJournal.Maintainers.csproj" />
+    <ProjectReference Include="../SessionJournal.DerivedRecap.Maintainers/SessionJournal.DerivedRecap.Maintainers.csproj" />
     <ProjectReference Include="../SessionJournal.DerivedMemory/SessionJournal.DerivedMemory.csproj" />
     <ProjectReference Include="../SessionJournal.Offline/SessionJournal.Offline.csproj" />
     <ProjectReference Include="../Completion/Completion.csproj" />

@@ -14,7 +14,7 @@ public static class DerivedMemoryRoleExecutionModes {
 public sealed record DerivedMemoryRoleProvisioning(
     string RoleId,
     string ProfileId,
-    MemoryPackBlockPath Target,
+    ContextHeaderBlockPath Target,
     bool Required,
     string Producer,
     string ProducerFingerprint,
@@ -69,7 +69,7 @@ public sealed record DerivedMemoryOrchestrationInventory(
 
 public sealed record DerivedMemoryRoleExecution(
     DerivedMemoryRoleProvisioning Provisioning,
-    IMemoryBlockMaintainer? Maintainer = null,
+    IRecapBlockMaintainer? Maintainer = null,
     Func<IReadOnlyList<string>>? CaptureCallLogPaths = null
 );
 

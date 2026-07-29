@@ -917,7 +917,7 @@ public sealed class SessionJournalEngine : IDisposable {
         // cannot trigger maintainer completion or durable raw effects. Exact selection is repeated
         // after lifecycle because maintenance may publish a new set at the current boundary.
         ValidateContextPlanningPreflight(runtime);
-        await PreflightFreshBootstrapBeforeMemoryLifecycleAsync(
+        await PreflightFreshBootstrapBeforeContextLifecycleAsync(
                 runtime,
                 recovery,
                 observation,
@@ -925,7 +925,7 @@ public sealed class SessionJournalEngine : IDisposable {
                 cancellationToken
             )
             .ConfigureAwait(false);
-        await PrepareMemoryLifecycleAsync(
+        await PrepareContextLifecycleAsync(
                 runtime,
                 recovery,
                 observation,
@@ -1297,7 +1297,7 @@ public sealed class SessionJournalEngine : IDisposable {
             completionBoundary,
             cancellationToken
         );
-        await PreflightFreshBootstrapBeforeMemoryLifecycleAsync(
+        await PreflightFreshBootstrapBeforeContextLifecycleAsync(
                 runtime,
                 recovery,
                 pendingObservation: null,
@@ -1305,7 +1305,7 @@ public sealed class SessionJournalEngine : IDisposable {
                 cancellationToken
             )
             .ConfigureAwait(false);
-        await PrepareMemoryLifecycleAsync(
+        await PrepareContextLifecycleAsync(
                 runtime,
                 recovery,
                 pendingObservation: null,
@@ -1461,25 +1461,25 @@ public sealed class SessionJournalEngine : IDisposable {
             context.Add(window.Units[index].Message);
         }
         int rawStart =
-            selection.Candidate.RawStartExclusive
+            selection.Candidate.SetAdmissionAnchor
                 == window.StartExclusive
             ? 0
             : IndexAfter(
                 window.RawAddresses,
-                selection.Candidate.RawStartExclusive
+                selection.Candidate.SetAdmissionAnchor
             );
         SessionRawRangeHashEntry[] rawEntries = [
             .. window.RawHashEntries.Skip(rawStart)
         ];
         string rawRangeSha256 = SessionRawRangeHasher.Compute(
-            selection.Candidate.RawStartExclusive,
+            selection.Candidate.SetAdmissionAnchor,
             window.ObservedRawHead,
             rawEntries
         );
         return new SessionTailContextProjectionResult(
             systemPrompt,
             context.MoveToImmutable(),
-            selection.Candidate.RawStartExclusive,
+            selection.Candidate.SetAdmissionAnchor,
             rawRangeSha256,
             snapshots,
             new SessionTailProjectionDiagnostics(
@@ -2032,14 +2032,14 @@ public sealed class SessionJournalEngine : IDisposable {
     }
 
     private async ValueTask
-        PreflightFreshBootstrapBeforeMemoryLifecycleAsync(
+        PreflightFreshBootstrapBeforeContextLifecycleAsync(
         SessionRuntime runtime,
         SessionExecutionRecovery recovery,
         string? pendingObservation,
         ImmutableArray<ToolDefinition> tools,
         CancellationToken cancellationToken
     ) {
-        if (runtime.MemoryLifecycle is null) {
+        if (runtime.ContextLifecycle is null) {
             return;
         }
         EventAddress boundary = recovery.Head
@@ -2075,6 +2075,13 @@ public sealed class SessionJournalEngine : IDisposable {
             case SessionContextCandidateSelectionStatus.EmptyLineage:
                 RequireNoSelectedDescriptor(selection);
                 break;
+            case SessionContextCandidateSelectionStatus
+                    .ExactPublishedSetInvalid:
+                RequireNoSelectedDescriptor(selection);
+                return;
+            case SessionContextCandidateSelectionStatus.StoreUnavailable:
+                RequireNoSelectedDescriptor(selection);
+                return;
             default:
                 throw new InvalidDataException(
                     $"Unknown context candidate selection status '{selection.Status}'."
@@ -2225,29 +2232,29 @@ public sealed class SessionJournalEngine : IDisposable {
         detail
     );
 
-    private async ValueTask PrepareMemoryLifecycleAsync(
+    private async ValueTask PrepareContextLifecycleAsync(
         SessionRuntime runtime,
         SessionExecutionRecovery recovery,
         string? pendingObservation,
         CancellationToken cancellationToken
     ) {
-        if (runtime.MemoryLifecycle is not { } lifecycle) {
+        if (runtime.ContextLifecycle is not { } lifecycle) {
             return;
         }
         EventAddress boundary = recovery.Head
             ?? throw new InvalidDataException(
-                "Online memory lifecycle requires an exact non-empty raw boundary."
+                "Online context lifecycle requires an exact non-empty raw boundary."
             );
         EventAddress? expectedHead = _journal.GetHead(_branchRefId);
         if (expectedHead != boundary) {
             throw new InvalidOperationException(
-                "Online memory lifecycle boundary is stale before preparation."
+                "Online context lifecycle boundary is stale before preparation."
             );
         }
-        SessionMemoryLifecycleResult result = await lifecycle
+        SessionContextLifecycleResult result = await lifecycle
             .PrepareAsync(
                 this,
-                new SessionMemoryLifecycleRequest(
+                new SessionContextLifecycleRequest(
                     boundary,
                     recovery.State.Phase,
                     pendingObservation
@@ -2258,23 +2265,23 @@ public sealed class SessionJournalEngine : IDisposable {
         ArgumentNullException.ThrowIfNull(result);
         EnsureCurrentHead(expectedHead);
         switch (result.Status) {
-            case SessionMemoryLifecycleStatus.Ready:
+            case SessionContextLifecycleStatus.Ready:
                 return;
-            case SessionMemoryLifecycleStatus.Backpressure:
+            case SessionContextLifecycleStatus.Backpressure:
                 throw new SessionJournalNotReadyException(
-                    SessionJournalNotReadyReason.MemoryMaintenanceBackpressure,
+                    SessionJournalNotReadyReason.RecapMaintenanceBackpressure,
                     result.Detail
-                    ?? "Derived memory maintenance reached explicit backpressure."
+                    ?? "Derived recap maintenance reached explicit backpressure."
                 );
-            case SessionMemoryLifecycleStatus.Unavailable:
+            case SessionContextLifecycleStatus.Unavailable:
                 throw new SessionJournalNotReadyException(
-                    SessionJournalNotReadyReason.MemoryMaintenanceUnavailable,
+                    SessionJournalNotReadyReason.RecapMaintenanceUnavailable,
                     result.Detail
-                    ?? "Derived memory maintenance is unavailable."
+                    ?? "Derived recap maintenance is unavailable."
                 );
             default:
                 throw new InvalidDataException(
-                    $"Unknown memory lifecycle status '{result.Status}'."
+                    $"Unknown context lifecycle status '{result.Status}'."
                 );
         }
     }
@@ -2347,11 +2354,15 @@ public sealed class SessionJournalEngine : IDisposable {
                 "The requested coherent context candidate ordinal is unavailable before the observation append."
             );
         }
+        ThrowIfContextSelectionUnavailable(
+            selection,
+            "before the observation append"
+        );
         SessionContextCandidateDescriptor descriptor =
             RequireSelectedDescriptor(selection);
         SessionHistoryPlanningSeed seed =
             CreateHistoryPlanningSeed(
-                descriptor.RawStartExclusive,
+                descriptor.SetAdmissionAnchor,
                 descriptor.AnchorSetups,
                 cancellationToken
             );
@@ -2368,7 +2379,7 @@ public sealed class SessionJournalEngine : IDisposable {
             SessionContextCandidateValidator.ValidateMaterializedCandidate(
                 descriptor,
                 candidate,
-                CreateAllowedSourceHeads(window, descriptor.RawStartExclusive),
+                CreateAllowedSourceHeads(window, descriptor.SetAdmissionAnchor),
                 allowEmpty: false
             );
         CompletionRequest projectedRequest =
@@ -2434,12 +2445,16 @@ public sealed class SessionJournalEngine : IDisposable {
                 $"The requested coherent context candidate ordinal is unavailable for completion boundary '{completionBoundary}'."
             );
         }
+        ThrowIfContextSelectionUnavailable(
+            selection,
+            $"for completion boundary '{completionBoundary}'"
+        );
 
         SessionContextCandidateDescriptor descriptor =
             RequireSelectedDescriptor(selection);
         SessionHistoryPlanningSeed seed =
             CreateHistoryPlanningSeed(
-                descriptor.RawStartExclusive,
+                descriptor.SetAdmissionAnchor,
                 descriptor.AnchorSetups,
                 cancellationToken
             );
@@ -2456,7 +2471,7 @@ public sealed class SessionJournalEngine : IDisposable {
             SessionContextCandidateValidator.ValidateMaterializedCandidate(
                 descriptor,
                 candidate,
-                CreateAllowedSourceHeads(window, descriptor.RawStartExclusive),
+                CreateAllowedSourceHeads(window, descriptor.SetAdmissionAnchor),
                 allowEmpty: false
             );
         return new SelectedContextCandidate(
@@ -2494,12 +2509,18 @@ public sealed class SessionJournalEngine : IDisposable {
             || string.IsNullOrWhiteSpace(descriptor.Handle)
             || descriptor.Handle.Length > 512
             || descriptor.Handle.Contains('\0', StringComparison.Ordinal)
-            || descriptor.RawStartExclusive == default
+            || string.IsNullOrWhiteSpace(descriptor.SnapshotToken)
+            || descriptor.SnapshotToken.Length > 512
+            || descriptor.SnapshotToken.Contains(
+                '\0',
+                StringComparison.Ordinal
+            )
+            || descriptor.SetAdmissionAnchor == default
             || descriptor.AnchorSetups is null
             || descriptor.AnchorSetups.RuntimeConfig is null
             || descriptor.AnchorSetups.SystemPrompt is null) {
             throw new InvalidDataException(
-                "A selected context candidate must include one bounded handle and complete raw anchor facts."
+                "A selected context candidate must include bounded handle/snapshot tokens and complete raw anchor facts."
             );
         }
         return descriptor;
@@ -2512,10 +2533,36 @@ public sealed class SessionJournalEngine : IDisposable {
             || selection.Status is not (
                 SessionContextCandidateSelectionStatus.EmptyLineage
                 or SessionContextCandidateSelectionStatus.OrdinalUnavailable
+                or SessionContextCandidateSelectionStatus
+                    .ExactPublishedSetInvalid
+                or SessionContextCandidateSelectionStatus.StoreUnavailable
             )) {
             throw new InvalidDataException(
                 "A non-selected context candidate result cannot include a descriptor."
             );
+        }
+    }
+
+    private static void ThrowIfContextSelectionUnavailable(
+        SessionContextCandidateSelection selection,
+        string phase
+    ) {
+        switch (selection.Status) {
+            case SessionContextCandidateSelectionStatus
+                    .ExactPublishedSetInvalid:
+                RequireNoSelectedDescriptor(selection);
+                throw new SessionJournalNotReadyException(
+                    SessionJournalNotReadyReason.ContextCandidateInvalid,
+                    selection.Detail
+                    ?? $"The exact published recap set is structurally invalid {phase}."
+                );
+            case SessionContextCandidateSelectionStatus.StoreUnavailable:
+                RequireNoSelectedDescriptor(selection);
+                throw new SessionJournalNotReadyException(
+                    SessionJournalNotReadyReason.ContextStoreUnavailable,
+                    selection.Detail
+                    ?? $"The recap store is unavailable {phase}."
+                );
         }
     }
 

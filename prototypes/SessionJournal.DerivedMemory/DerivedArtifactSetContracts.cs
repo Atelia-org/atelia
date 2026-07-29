@@ -4,7 +4,7 @@ namespace Atelia.SessionJournal.DerivedMemory;
 
 public sealed record DerivedArtifactSetRoleRequirement(
     string RoleId,
-    MemoryPackBlockPath Target,
+    ContextHeaderBlockPath Target,
     bool Required = true
 );
 
@@ -32,7 +32,7 @@ public sealed record DerivedArtifactSetPolicy(
                 StringComparer.Ordinal
             );
         var targets =
-            new HashSet<(MemoryPackCarrier Carrier, string BlockKey)>();
+            new HashSet<(ContextHeaderCarrier Carrier, string BlockKey)>();
         foreach (DerivedArtifactSetRoleRequirement role in Roles) {
             if (roles.Count == MaxRoleCount) {
                 throw new ArgumentException(
@@ -93,7 +93,7 @@ public sealed record DerivedArtifactSetPolicy(
     }
 
     internal static void ValidateTarget(
-        MemoryPackBlockPath target,
+        ContextHeaderBlockPath target,
         string parameterName
     ) {
         ArgumentNullException.ThrowIfNull(target);
@@ -118,10 +118,10 @@ public sealed record DerivedArtifactSetMember(
     string RoleId,
     string ArtifactId,
     string ArtifactKind,
-    MemoryPackBlockPath Target,
+    ContextHeaderBlockPath Target,
     string ContentCodecId,
     string ContentSha256,
-    EventAddress SourceRawHead,
+    EventAddress AbsorbedThrough,
     string Outcome
 );
 

@@ -78,6 +78,50 @@ public sealed class SessionContextCandidateProviderRouteTests : IDisposable {
         }
     }
 
+    [Theory]
+    [InlineData(
+        SessionContextCandidateSelectionStatus.ExactPublishedSetInvalid,
+        SessionJournalNotReadyReason.ContextCandidateInvalid
+    )]
+    [InlineData(
+        SessionContextCandidateSelectionStatus.StoreUnavailable,
+        SessionJournalNotReadyReason.ContextStoreUnavailable
+    )]
+    public async Task TypedSelectionUnavailable_FailsBeforeObservation(
+        SessionContextCandidateSelectionStatus status,
+        SessionJournalNotReadyReason expectedReason
+    ) {
+        string path = NewJournalPath();
+        var client = new ScriptedClient();
+        var source = new TestContextCandidateSource {
+            ForcedStatus = status,
+            SelectionDetail = "typed selection failure"
+        };
+        using var engine = SessionJournalEngine.Create(
+            path,
+            CreateOptions(),
+            CreateRuntime(client, source)
+        );
+        _ = ContextCandidateTestFixture.CreateAtCurrentHead(engine);
+        EventAddress head =
+            engine.InspectExecutionBoundary().Head!.Value;
+
+        SessionJournalNotReadyException error =
+            await Assert.ThrowsAsync<SessionJournalNotReadyException>(
+                () => engine.SendAsync(
+                    "must remain ephemeral",
+                    CancellationToken.None
+                )
+            );
+
+        Assert.Equal(expectedReason, error.Reason);
+        Assert.Contains("typed selection failure", error.Message);
+        Assert.Equal(head, engine.InspectExecutionBoundary().Head);
+        Assert.Equal(1, source.SelectionCount);
+        Assert.Equal(0, source.MaterializationCount);
+        Assert.Equal(0, client.Calls);
+    }
+
     [Fact]
     public async Task InvalidCanonicalRequestByteGuard_FailsBeforeObservationOrSelection() {
         string path = NewJournalPath();
@@ -146,10 +190,10 @@ public sealed class SessionContextCandidateProviderRouteTests : IDisposable {
             ).Unwrap().EventAddress;
         }
         source.Candidate = fixture.Candidate with {
-            RawStartExclusive = divergent,
+            SetAdmissionAnchor = divergent,
             Contributions = new[] {
                 ContextCandidateTestFixture.Contribution(
-                    MemoryPackCarrier.Observation,
+                    ContextHeaderCarrier.Observation,
                     "fixture.world-understanding",
                     "divergent memory",
                     divergent
@@ -324,7 +368,7 @@ public sealed class SessionContextCandidateProviderRouteTests : IDisposable {
             path,
             runtime with {
                 ContextCandidateSource = null,
-                MemoryLifecycle = null
+                ContextLifecycle = null
             }
         );
         ResumeOutcome outcome = await reopened.ResumeAsync(
@@ -406,9 +450,9 @@ public sealed class SessionContextCandidateProviderRouteTests : IDisposable {
         var source = new TestContextCandidateSource {
             IsEmptyLineage = true
         };
-        var lifecycle = new TestMemoryLifecycle();
+        var lifecycle = new TestContextLifecycle();
         SessionRuntime runtime = CreateRuntime(client, source) with {
-            MemoryLifecycle = lifecycle
+            ContextLifecycle = lifecycle
         };
         using var engine = SessionJournalEngine.Create(
             path,
@@ -689,14 +733,14 @@ public sealed class SessionContextCandidateProviderRouteTests : IDisposable {
         var client = new ScriptedClient();
         client.Enqueue(Terminal("done"));
         var source = new TestContextCandidateSource();
-        var lifecycle = new TestMemoryLifecycle();
+        var lifecycle = new TestContextLifecycle();
         using var engine = SessionJournalEngine.Create(
             path,
             CreateOptions() with {
                 DerivedContextNthPrevious = 1
             },
             CreateRuntime(client, source) with {
-                MemoryLifecycle = lifecycle
+                ContextLifecycle = lifecycle
             }
         );
         SessionContextCandidate older =
@@ -757,7 +801,7 @@ public sealed class SessionContextCandidateProviderRouteTests : IDisposable {
                     oldBase.Anchor
                 ),
                 ContextCandidateTestFixture.Contribution(
-                    MemoryPackCarrier.Observation,
+                    ContextHeaderCarrier.Observation,
                     "fixture.large",
                     oversizedMemory,
                     oldBase.Anchor
@@ -858,7 +902,7 @@ public sealed class SessionContextCandidateProviderRouteTests : IDisposable {
         client.Enqueue(ToolCall("lookup", "call-1"));
         client.Enqueue(Terminal("done"));
         var source = new TestContextCandidateSource();
-        var lifecycle = new TestMemoryLifecycle();
+        var lifecycle = new TestContextLifecycle();
         var tool = new RecordingTool("lookup");
         using var engine = SessionJournalEngine.Create(
             path,
@@ -868,7 +912,7 @@ public sealed class SessionContextCandidateProviderRouteTests : IDisposable {
                 source,
                 new ToolRegistry([tool]).CreateSession()
             ) with {
-                MemoryLifecycle = lifecycle
+                ContextLifecycle = lifecycle
             }
         );
         TestContextCandidateFixture fixture =
@@ -909,7 +953,7 @@ public sealed class SessionContextCandidateProviderRouteTests : IDisposable {
         string path = NewJournalPath();
         var client = new ScriptedClient();
         var source = new TestContextCandidateSource();
-        var lifecycle = new TestMemoryLifecycle {
+        var lifecycle = new TestContextLifecycle {
             OnPrepare = static (engine, _) =>
                 engine.AppendObservation("intruder")
         };
@@ -917,7 +961,7 @@ public sealed class SessionContextCandidateProviderRouteTests : IDisposable {
             path,
             CreateOptions(),
             CreateRuntime(client, source) with {
-                MemoryLifecycle = lifecycle
+                ContextLifecycle = lifecycle
             }
         );
         TestContextCandidateFixture fixture =
@@ -979,7 +1023,7 @@ public sealed class SessionContextCandidateProviderRouteTests : IDisposable {
             toolAction,
             setup,
             ContextCandidateTestFixture.Contribution(
-                MemoryPackCarrier.Action,
+                ContextHeaderCarrier.Action,
                 "fixture.autobiography",
                 "unsafe action anchor",
                 toolAction

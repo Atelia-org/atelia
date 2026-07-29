@@ -26,32 +26,32 @@ public interface ICoherentContextCandidateSource {
 /// state but must not mutate the raw SessionJournal; the engine verifies the exact raw head after
 /// every callback.
 /// </summary>
-public interface ISessionMemoryLifecycleCoordinator {
-    ValueTask<SessionMemoryLifecycleResult> PrepareAsync(
+public interface ISessionContextLifecycleCoordinator {
+    ValueTask<SessionContextLifecycleResult> PrepareAsync(
         SessionJournalEngine engine,
-        SessionMemoryLifecycleRequest request,
+        SessionContextLifecycleRequest request,
         CancellationToken cancellationToken
     );
 }
 
-public sealed record SessionMemoryLifecycleRequest(
+public sealed record SessionContextLifecycleRequest(
     EventAddress Boundary,
     SessionExecutionPhase Phase,
     string? PendingObservation = null
 );
 
-public enum SessionMemoryLifecycleStatus {
+public enum SessionContextLifecycleStatus {
     Ready = 0,
     Backpressure = 1,
     Unavailable = 2,
 }
 
-public sealed record SessionMemoryLifecycleResult(
-    SessionMemoryLifecycleStatus Status,
+public sealed record SessionContextLifecycleResult(
+    SessionContextLifecycleStatus Status,
     string? Detail = null
 ) {
-    public static SessionMemoryLifecycleResult Ready { get; } =
-        new(SessionMemoryLifecycleStatus.Ready);
+    public static SessionContextLifecycleResult Ready { get; } =
+        new(SessionContextLifecycleStatus.Ready);
 }
 
 /// <summary>
@@ -76,6 +76,8 @@ public enum SessionContextCandidateSelectionStatus {
     Selected = 0,
     EmptyLineage = 1,
     OrdinalUnavailable = 2,
+    ExactPublishedSetInvalid = 3,
+    StoreUnavailable = 4,
 }
 
 /// <summary>
@@ -84,7 +86,8 @@ public enum SessionContextCandidateSelectionStatus {
 /// </summary>
 public sealed record SessionContextCandidateSelection(
     SessionContextCandidateSelectionStatus Status,
-    SessionContextCandidateDescriptor? Candidate
+    SessionContextCandidateDescriptor? Candidate,
+    string? Detail = null
 );
 
 /// <summary>
@@ -92,7 +95,8 @@ public sealed record SessionContextCandidateSelection(
 /// </summary>
 public sealed record SessionContextCandidateDescriptor(
     string Handle,
-    EventAddress RawStartExclusive,
+    string SnapshotToken,
+    EventAddress SetAdmissionAnchor,
     SessionContextAnchorSetupReferences AnchorSetups
 );
 
@@ -106,7 +110,7 @@ public sealed record SessionContextSetupReference(
 );
 
 /// <summary>
-/// The governing setup pair at <see cref="SessionContextCandidate.RawStartExclusive"/>.
+/// The governing setup pair at <see cref="SessionContextCandidate.SetAdmissionAnchor"/>.
 /// </summary>
 public sealed record SessionContextAnchorSetupReferences(
     SessionContextSetupReference RuntimeConfig,
@@ -117,18 +121,18 @@ public sealed record SessionContextAnchorSetupReferences(
 /// One exact derived text contribution. It deliberately carries no artifact, epoch, profile, or store identity.
 /// </summary>
 public sealed record SessionContextContribution(
-    MemoryPackBlockPath Target,
+    ContextHeaderBlockPath Target,
     string ExactText,
     string ContentCodecId,
     string ContentSha256,
-    EventAddress SourceRawHead
+    EventAddress AbsorbedThrough
 );
 
 /// <summary>
 /// A store-neutral candidate whose raw-facing assertions are verified by SessionJournal.
 /// </summary>
 public sealed record SessionContextCandidate(
-    EventAddress RawStartExclusive,
+    EventAddress SetAdmissionAnchor,
     SessionContextAnchorSetupReferences AnchorSetups,
     IReadOnlyList<SessionContextContribution> Contributions
 );

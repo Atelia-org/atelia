@@ -11,7 +11,7 @@ internal static class DerivedMemoryArtifactTestFactory {
         DerivedMemoryRepository repository,
         string roleId,
         string profileId,
-        MemoryPackBlockPath target,
+        ContextHeaderBlockPath target,
         string text,
         EventAddress anchor,
         SessionContextAnchorSetupReferences setups,
@@ -38,7 +38,7 @@ internal static class DerivedMemoryArtifactTestFactory {
         CreateGenesisRequest(
         string roleId,
         string profileId,
-        MemoryPackBlockPath target,
+        ContextHeaderBlockPath target,
         string text,
         EventAddress anchor,
         SessionContextAnchorSetupReferences setups,
@@ -46,8 +46,8 @@ internal static class DerivedMemoryArtifactTestFactory {
         EventAddress? sourceStartExclusive = null,
         SessionContextAnchorSetupReferences? anchorSetups = null
     ) {
-        var pack = new MemoryPack();
-        var draft = new MemoryPackDraft(pack);
+        var pack = new ContextHeaderPack();
+        var draft = new ContextHeaderPackDraft(pack);
         draft.UpsertBlock(target, text);
         return new DerivedMemoryArtifactWriteRequest(
             EpochId,
