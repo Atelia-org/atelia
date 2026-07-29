@@ -8,6 +8,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <ProjectReference Include="../../prototypes/SessionJournal.DerivedRecap.Planner/SessionJournal.DerivedRecap.Planner.csproj" />
     <ProjectReference Include="../../prototypes/SessionJournal.DerivedRecap.Store/SessionJournal.DerivedRecap.Store.csproj" />
   </ItemGroup>
 

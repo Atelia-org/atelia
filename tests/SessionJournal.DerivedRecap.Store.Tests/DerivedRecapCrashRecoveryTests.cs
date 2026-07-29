@@ -369,8 +369,12 @@ public sealed class DerivedRecapCrashRecoveryTests {
             0,
             process.ExitCode
         );
+        Assert.NotEqual(
+            3,
+            process.ExitCode
+        );
         Assert.Contains(
-            $"'{failpoint}'",
+            $"Intentional DerivedRecap crash at '{failpoint}'",
             output + error,
             StringComparison.Ordinal
         );

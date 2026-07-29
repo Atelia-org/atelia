@@ -127,6 +127,8 @@ internal sealed class RecapStoreFixture : IDisposable {
         Publisher = new DerivedRecapPublisher(Store, Engine);
     }
 
+    public void CloseEngine() => Engine.Dispose();
+
     public void Dispose() {
         Engine.Dispose();
         try {
