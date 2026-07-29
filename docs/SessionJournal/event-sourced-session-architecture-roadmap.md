@@ -5,7 +5,9 @@
 > **底层依赖**：[EventJournal 功能需求与粗粒度设计基线](../EventJournal/event-journal-requirements-and-design.md)
 > **相关既有研究**：[Dynamic Logical Context Store for Long-Running Role-Play Agents](../Galatea/backlog/idea/dynamic-logical-context-store-for-long-running-role-play-agents.md)
 > **后续实施计划**：
-> [SessionJournal 恢复与 DerivedMemory 化简](session-journal-recovery-and-derived-memory-simplification-plan.md)
+> [SessionJournal 恢复与 DerivedMemory 化简](session-journal-recovery-and-derived-memory-simplification-plan.md)、
+> [DerivedMemory Next 目标设计](derived-memory-next-target-design.md)、
+> [DerivedMemory Next 实现与替换计划](derived-memory-next-implementation-plan.md)
 >
 > **已完成实施记录**：
 > [DerivedMemory 可替换子系统与 Shared Epoch 实施方案](done/derived-memory-subsystem-implementation-plan.md)

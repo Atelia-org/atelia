@@ -6,7 +6,9 @@
 > **相关文档**：
 > [事件源会话与长期上下文架构路线图](event-sourced-session-architecture-roadmap.md)、
 > [DerivedMemory 已实施方案](done/derived-memory-subsystem-implementation-plan.md)、
-> [Tail Execution Recovery 后续化简候选](tail-execution-recovery-simplification-study.md)
+> [Tail Execution Recovery 后续化简候选](tail-execution-recovery-simplification-study.md)、
+> [DerivedMemory Next 目标设计](derived-memory-next-target-design.md)、
+> [DerivedMemory Next 实现与替换计划](derived-memory-next-implementation-plan.md)
 
 ## 0. 文档目的
 
