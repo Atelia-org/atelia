@@ -10,6 +10,7 @@
 > [V4 化简候选](event-addressed-derived-recap-v4-simplification-candidate.md)
 > **取代的候选设计**：
 > [DerivedMemory V3 candidate](superseded/derived-memory-v3-candidate/derived-memory-next-target-design.md)
+> **实施状态**：R0 Contracts + Publish/Read 已完成；R1 Planner + Build/Resume 尚未启动
 
 ## 0. 一句话目标
 
@@ -128,6 +129,11 @@ Store backend 必须支持：
 无法提供这些保证时 fail unsupported，不能退化为 copy + delete。
 
 ## 3. Frozen Building plan
+
+> **实现分期注记**：R0 持久化完整 union 的 canonical shape，但只允许
+> `Maintain { Source = Empty }` 创建 Building。`Inherit` 与
+> `Maintain { Source = Existing }` 必须等 R1 exact source envelope double-read/copy 后启用；
+> 这不改变下述最终态 contract。
 
 ```text
 DerivedRecapSetManifest {
@@ -370,6 +376,10 @@ typed reasons：
 
 selected Recap blocks 提供 candidate-level `SetAdmissionAnchor` 与 per-contribution
 `AbsorbedThrough`。raw core 验证 ancestry，然后拼接 anchor 后 dependency-closed raw suffix。
+绑定 exact engine 的 context-candidate Source 用 header-only raw lineage驱动 Store point lookup，
+并在 selected admission anchor 上从 raw authority解析 `SessionContextAnchorSetupReferences`；
+setup refs 不进入 Recap manifest/publication。Store 不另开 raw repository，也不按目录名推断
+lineage。
 
 Prepared 保存 exact materialized Context/request commitment；reopen 不访问 Recap Store。
 

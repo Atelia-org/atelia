@@ -7,11 +7,15 @@
 > **目标设计**：
 > [Event-addressed Derived Recap V4](event-addressed-derived-recap-v4-target-design.md)
 > **兼容策略**：不迁移、不双写、不读取 current DerivedMemory v2/v3
+> **当前推进点**：R0 Contracts + Publish/Read vertical 已完成；R1 尚未启动
 
 ## 0. 原则
 
-V4 从新 projects/tests 开始，不在 current `SessionJournal.DerivedMemory` 内原地删改。四个纵向包
-分别形成 contract → implementation → focused tests → independent review → tail-fix 闭环。
+V4 的 durable workflow 从新 projects/tests 开始，不在 current
+`SessionJournal.DerivedMemory` 内原地演化。R0a 的一次性公共 contract cutover 是唯一机械例外：
+current DerivedMemory/CLI/tests 只迁移到新 neutral/Recap 类型名以保持同一 solution 可构建，不在旧
+assembly 中实现 EADR Store、Planner、catch-up 或 Restore。四个纵向包分别形成 contract →
+implementation → focused tests → independent review → tail-fix 闭环。
 
 目标 projects：
 
@@ -44,12 +48,54 @@ tests/SessionJournal.DerivedMemory.Tests/
 - Prepared exact reopen不访问 Recap Store；
 - 不保留 V4 Memory/Artifact 命名兼容层。
 
+### 0.1 设计冻结与逐包反馈纪律
+
+EADR V4 的 Shape/Rule 主干在 R0 启动时暂时冻结。后续不再先做多轮纯文档层面的全局
+“方案自洽性 → 方案化简机会”循环；实现证据成为发现具体设计问题的主要输入。
+
+每个 `R0～R3` 仍必须独立完成：
+
+```text
+package-local plan lock
+  -> implementation + focused tests
+  -> fidelity review：实现是否满足 canonical Shape/Rule
+  -> simplification review：真实实现是否暴露可删除的状态、协议或抽象
+  -> tail-fix + canonical docs回写
+  -> next package
+```
+
+不得因为后续 package 已有设计，就在当前 package 提前铺设尚未使用的接口、状态或兼容层。review
+finding 默认在当前 package 内闭合；只有既不削弱当前 package 主张、也不会制造跨包双真源的问题，
+才可以明确延后。
+
+R0 只在下列实现证据出现时退回整体 Shape/Rule，而不是做 package-local tail-fix：
+
+- backend 无法兑现 required atomic rename / durability contract；
+- neutral Context contracts 无法避免 raw core 反向依赖 concrete Recap implementation；
+- canonical manifest/block/publication encoding 无法形成唯一、稳定的 hash projection；
+- strict ordinal 与 bounded Restore authority 在实际 Store API 中产生不可消除的冲突。
+
+除上述情况外，filesystem API、codec shape、validator composition、test seam 与命名摩擦都先作为
+Craft-tier 问题在当前 package 内解决。R0 gate 关闭前不启动 Planner、Maintainer catch-up 或
+Published Restore。
+
 ## 1. R0：Contracts + Publish/Read vertical
 
 ### Intent
 
 一次性锁定 Recap vocabulary、neutral context contract 与最小 Store，从 empty Building 走通 atomic
 Publish、strict select 与 materialize。
+
+R0 在同一个关闭闸门内按依赖顺序分成：
+
+```text
+R0a contract cutover
+  -> R0b new Store + Publish/Read
+  -> joint fidelity/simplification review
+```
+
+R0a 可以机械迁移 current 调用方，但不得改变 current DerivedMemory 的 transaction/planning
+行为；R0b 不得反向引用 current DerivedMemory。
 
 ### In scope
 
@@ -67,6 +113,14 @@ Publish、strict select 与 materialize。
   - `RenderedContextHeader` 或直接 `ContextHeaderSnapshot`；
 - `ISessionMemoryLifecycleCoordinator` 评估并 cut over 为
   `ISessionContextLifecycleCoordinator`；
+- `SessionContextCandidate` / descriptor 使用 `SetAdmissionAnchor`，per-contribution provenance
+  使用 `AbsorbedThrough`；
+- exact selection descriptor显式携带 optimistic snapshot token；
+- selection reason覆盖 `EmptyLineage / OrdinalUnavailable /
+  ExactPublishedSetInvalid / StoreUnavailable`；
+- carrier/target、contribution count、UTF-8 size、content codec/hash 与 stable ordering 下沉为
+  public neutral validator；raw core 与 Store publication gate共用，raw ancestry仍由
+  SessionJournal authority验证；
 - 保持 persisted MaintainerId、block keys、prompt bytes/logical names不变。
 
 这是单次 breaking cutover，不增加 obsolete wrapper 或双 contract。
@@ -99,9 +153,28 @@ flush/close/fsync manifest, inputs and every final block
 - exact materialization + per-block `AbsorbedThrough`；
 - typed selection reasons。
 
+R0 `CreateBuilding` 只接受 `Maintain { Source = Empty }` 的显式 fake frozen plan。完整
+`Inherit / Maintain { Source = Existing }` union 在 R0 已有 canonical codec 与 shape validation，
+但在 R1 的 exact source envelope double-read/copy 协议落地前不得创建可发布 Building。R0 的
+“resume”仅指已经 sealed 的 `publication.json` 可以继续完成 directory promotion；按 frozen source
+补 final blocks 的语义性 Building Resume 属于 R1。
+
+`DerivedRecapContextCandidateSource` 绑定同一 `SessionJournalEngine + DerivedRecapStore` lifetime：
+
+- Source 用 engine capture 的 header-only current lineage驱动 Store point lookup，Store 不另开 raw
+  repository，也不从 directory/name排序推断 lineage；
+- selection 前后复核 exact completion boundary，拒绝 stale snapshot；
+- Store descriptor 只包含 `RefId + SetAdmissionAnchor + EnvelopeSha256`；
+- Source 在 selected admission anchor 上从 raw authority解析
+  `SessionContextAnchorSetupReferences`，组装 neutral descriptor；setup refs 不写入 Recap
+  manifest/publication；
+- materialization 前后复核 envelope token，随后仍由 raw core验证 anchor、setup refs、ancestry
+  与 shared contribution shape。
+
 ### Out of scope
 
 - Planner trigger/Maintainer calls；
+- Existing/Inherit source freezing 与语义性 Building Resume；
 - rolling checkpoint；
 - Published semantic Restore；
 - full scrub；
@@ -110,7 +183,8 @@ flush/close/fsync manifest, inputs and every final block
 ### Tests
 
 - codecs/path traversal/symlink/reparse isolation；
-- root Create/reset 每个 crash point；
+- Linux child-process failpoint + forced termination/reopen 覆盖 root Create/reset、publication seal
+  与 Building→Published promotion关键边界；
 - missing required root directory不是 EmptyLineage；
 - valid-JSON manifest mutation触发 checksum failure；
 - manifest/blocks Complete 但未 promoted不计 ordinal；
@@ -136,6 +210,35 @@ Building -> CanPublish -> atomic Published
 ```
 
 且无需 Planner、Maintainer、derived lineage 或 latest pointer。
+
+### R0 完成记录（2026-07-30）
+
+R0 已按 `contract cutover → Store implementation → independent review → tail-fix` 关闭：
+
+| Commit | 内容 |
+|---|---|
+| `44e535a7` | `ContextHeader* / IRecapBlockMaintainer / Context lifecycle` 一次性 contract cutover；concrete Maintainers assembly迁移；candidate anchor/cursor/token与 public neutral validator收口 |
+| `763fdada` | pre-cutover ArtifactId/SetId/wire golden、SnapshotToken负向、exact-invalid/store-unavailable lifecycle矩阵 |
+| `046667ed` | canonical codecs、Linux durable backend、Store root、Building/Published、strict ordinal、ETag materialization与 raw-bound source |
+| `9d5d7e3d` | engine-bound publisher、rename前 authoritative raw-head final gate、`renameat2(RENAME_NOREPLACE)`、跨实例锁竞争与 child-process crash matrix |
+
+最终验收：
+
+- `SessionJournal.DerivedRecap.Store.Tests`：40/40；
+- `SessionJournal.Tests`：309/309；
+- R0a regression：current DerivedMemory 109/109、DerivedRecap.Maintainers 18/18、CLI 71/71；
+- `Atelia.sln` build：0 warnings / 0 errors；
+- 独立最终 review：P0=0、P1=0。
+
+durability 证据是 Linux production `fsync`/directory barrier 与独立子进程
+`Environment.FailFast` 后父进程 reopen 的 8 点矩阵，覆盖 root commit、publication seal、
+Building→Published promotion 与 reset 的关键前后边界。它证明当前 OS/filesystem contract 下真实
+进程终止不会暴露半 membership；不宣称模拟物理断电、device volatile cache、network filesystem
+或未验证平台。
+
+R0 public Building 入口只支持 `Maintain { Source = Empty }`。R1 必须先实现 exact source envelope
+double-read/copy，之后才能启用 Existing/Inherit、语义性 Building Resume、rolling checkpoint 与
+Maintainer execution；不得绕过当前 stable rejection。
 
 ## 2. R1：Planner + Build/Resume vertical
 
