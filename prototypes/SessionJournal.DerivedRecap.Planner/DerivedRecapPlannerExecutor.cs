@@ -660,6 +660,61 @@ public sealed class DerivedRecapPlannerExecutor {
                 emptyWindows
             );
         }
+        DerivedRecapSelection latestSelection =
+            await _store.SelectNthPreviousAsync(
+                    lineage,
+                    nthPrevious: 0,
+                    cancellationToken
+                )
+                .ConfigureAwait(false);
+        switch (latestSelection) {
+            case DerivedRecapSelection.Selected latest:
+                if (!lineageIndex.TryGetValue(
+                        latest.Descriptor.SetAdmissionAnchor,
+                        out int latestIndex
+                    )
+                    || admissionIndex >= latestIndex) {
+                    AddBuildingDefect(
+                        defects,
+                        "Building admission is not strictly newer than "
+                        + "the latest current-lineage Published set."
+                    );
+                }
+                break;
+            case DerivedRecapSelection.EmptyLineage:
+                break;
+            case DerivedRecapSelection.ExactPublishedSetInvalid invalid:
+                foreach (RecapStructuralDefect defect in invalid.Defects) {
+                    defects.Add(new DerivedRecapExecutionDefect(
+                        defect.Code,
+                        defect.Detail
+                    ));
+                }
+                break;
+            case DerivedRecapSelection.StoreUnavailable unavailable:
+                defects.Add(new DerivedRecapExecutionDefect(
+                    DerivedRecapExecutionDefectCodes.StoreUnavailable,
+                    unavailable.Reason
+                ));
+                break;
+            case DerivedRecapSelection.OrdinalUnavailable:
+                defects.Add(new DerivedRecapExecutionDefect(
+                    DerivedRecapExecutionDefectCodes.StoreUnavailable,
+                    "Latest strict Published ordinal is unavailable."
+                ));
+                break;
+            default:
+                throw new InvalidOperationException(
+                    "Unknown latest Published selection result."
+                );
+        }
+        if (defects.Count != 0) {
+            return new PreparedBuilding(
+                defects,
+                emptyInspections,
+                emptyWindows
+            );
+        }
 
         long calls = 0;
         for (int index = 0;

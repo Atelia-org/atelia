@@ -714,6 +714,92 @@ public sealed class DerivedRecapPlannerExecutorTests {
         Assert.Equal(0, maintainer.CallCount);
     }
 
+    [Fact]
+    public async Task ResumeRejectsBuildingOlderThanLatestPublished() {
+        using TestFixture fixture = await TestFixture.CreateAsync(
+            historyPairs: 2
+        );
+        SessionHistoryPlanningWindow raw =
+            fixture.Engine.ReadHistoryPlanningWindow();
+        EventAddress start = raw.StartExclusive;
+        EventAddress oldAdmission =
+            raw.ReplaySafeBoundaries[^2].Address;
+        EventAddress newAdmission =
+            raw.ReplaySafeBoundaries[^1].Address;
+        MaintainRecapBlockPlan oldPlan = fixture.CreateEmptyPlan(
+            fixture.SelfId,
+            fixture.SelfTarget,
+            "self-maintainer",
+            start,
+            [oldAdmission]
+        );
+        await fixture.CreateBuildingAsync(oldAdmission, [oldPlan]);
+        MaintainRecapBlockPlan newPlan = fixture.CreateEmptyPlan(
+            fixture.SelfId,
+            fixture.SelfTarget,
+            "self-maintainer",
+            start,
+            [newAdmission]
+        );
+        BuildingSnapshot newer =
+            await fixture.CreateBuildingAsync(
+                newAdmission,
+                [newPlan]
+            );
+        BuildingBlockInspection initial =
+            await fixture.Store.InspectBuildingBlockAsync(
+                newer.Descriptor,
+                fixture.SelfId
+            );
+        DerivedRecapBlock candidate = DerivedRecapCodec.CreateBlock(
+            newPlan,
+            newAdmission,
+            "newer-published"
+        );
+        _ = Assert.IsType<CheckpointWriteResult.Updated>(
+            await fixture.Store.AdvanceRollingCheckpointAsync(
+                newer.Descriptor,
+                fixture.SelfId,
+                initial.Checkpoint.StateToken,
+                candidate
+            )
+        );
+        BuildingBlockInspection checkpointed =
+            await fixture.Store.InspectBuildingBlockAsync(
+                newer.Descriptor,
+                fixture.SelfId
+            );
+        _ = Assert.IsType<FinalBlockWriteResult.Installed>(
+            await fixture.Store.EnsureFinalBlockAsync(
+                newer.Descriptor,
+                fixture.SelfId,
+                checkpointed.Final.StateToken,
+                candidate
+            )
+        );
+        _ = await new DerivedRecapPublisher(
+                fixture.Store,
+                fixture.Engine
+            )
+            .PublishAsync(newAdmission);
+        var maintainer = new ScriptedMaintainer(
+            "self-maintainer",
+            fixture.SelfTarget,
+            static (_, _) => "must-not-run"
+        );
+
+        DerivedRecapExecutionResult result =
+            await fixture.CreateExecutor(
+                    new DelegatePolicy(static _ =>
+                        new RecapPlanningPolicyDecision.NoBuild("unused")),
+                    [maintainer]
+                )
+                .ResumeAsync(oldAdmission);
+
+        Assert.IsType<DerivedRecapExecutionResult.Unavailable>(result);
+        Assert.Equal(0, maintainer.CallCount);
+    }
+
     private sealed class DelegatePolicy : IRecapPlanningPolicy {
         private readonly Func<
             RecapPlanningPolicyContext,
