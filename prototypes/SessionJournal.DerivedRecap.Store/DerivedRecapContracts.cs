@@ -295,6 +295,11 @@ public abstract record CreateBuildingResult {
         PublishedRecapDescriptor Source,
         string? ObservedEnvelopeSha256
     ) : CreateBuildingResult;
+
+    public sealed record RawHeadChanged(
+        EventAddress Expected,
+        EventAddress? Observed
+    ) : CreateBuildingResult;
 }
 
 public abstract record FinalRecapBlockHealth {

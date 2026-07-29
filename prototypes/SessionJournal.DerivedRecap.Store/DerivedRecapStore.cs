@@ -16,6 +16,7 @@ internal sealed record RecapStoreTestHooks(
     Action? BeforePublicationSealInstall = null,
     Action? BeforeSourceEnvelopeRecheck = null,
     Action? BeforeBuildingSourceFinalRecheck = null,
+    Action? BeforeBuildingRawHeadRecheck = null,
     Action<string>? BeforeAtomicFileReplace = null,
     Action<string>? AfterAtomicFileReplace = null,
     Action<RecapIoPoint, string>? IoObserver = null
@@ -206,8 +207,50 @@ public sealed class DerivedRecapStore {
     public async ValueTask<CreateBuildingResult> CreateBuildingAsync(
         DerivedRecapSetManifest manifest,
         CancellationToken cancellationToken = default
+    ) => await CreateBuildingCoreAsync(
+            manifest,
+            expectedRawHead: null,
+            readCurrentHead: null,
+            cancellationToken
+        )
+        .ConfigureAwait(false);
+
+    internal async ValueTask<CreateBuildingResult>
+        CreateBuildingTrustedAsync(
+        DerivedRecapSetManifest manifest,
+        EventAddress expectedRawHead,
+        Func<EventAddress?> readCurrentHead,
+        CancellationToken cancellationToken = default
+    ) {
+        ArgumentNullException.ThrowIfNull(readCurrentHead);
+        return await CreateBuildingCoreAsync(
+                manifest,
+                expectedRawHead,
+                readCurrentHead,
+                cancellationToken
+            )
+            .ConfigureAwait(false);
+    }
+
+    private async ValueTask<CreateBuildingResult>
+        CreateBuildingCoreAsync(
+        DerivedRecapSetManifest manifest,
+        EventAddress? expectedRawHead,
+        Func<EventAddress?>? readCurrentHead,
+        CancellationToken cancellationToken
     ) {
         ArgumentNullException.ThrowIfNull(manifest);
+        if (expectedRawHead == default(EventAddress)) {
+            throw new ArgumentException(
+                "Expected raw head cannot be default.",
+                nameof(expectedRawHead)
+            );
+        }
+        if ((expectedRawHead is null) != (readCurrentHead is null)) {
+            throw new ArgumentException(
+                "Expected raw head and reader must be supplied together."
+            );
+        }
         EnsureScaffolding();
         await using FileStream writeLock =
             await _fileSystem.AcquireExclusiveLockAsync(
@@ -347,6 +390,17 @@ public sealed class DerivedRecapStore {
                 return new CreateBuildingResult.SourceChanged(
                     capture.Descriptor,
                     recheck.ObservedEnvelopeSha256
+                );
+            }
+        }
+
+        if (expectedRawHead is { } expected) {
+            _testHooks.BeforeBuildingRawHeadRecheck?.Invoke();
+            EventAddress? observed = readCurrentHead!();
+            if (observed != expected) {
+                return new CreateBuildingResult.RawHeadChanged(
+                    expected,
+                    observed
                 );
             }
         }

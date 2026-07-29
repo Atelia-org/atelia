@@ -408,6 +408,312 @@ public sealed class DerivedRecapPlannerExecutorTests {
         Assert.Equal(0, maintainer.CallCount);
     }
 
+    [Fact]
+    public async Task InstallerRawMutationIsRetryableAndLeavesNoBuilding() {
+        TestFixture? fixture = null;
+        var hooks = new RecapStoreTestHooks(
+            BeforeBuildingRawHeadRecheck: () =>
+                fixture!.Engine.AppendObservation("installer race")
+        );
+        using (fixture =
+               await TestFixture.CreateAsync(
+                   historyPairs: 1,
+                   hooks
+               )) {
+            EventAddress admission =
+                fixture.Engine.ReadCurrentHead()!.Value;
+            EventAddress start = fixture.ReplayStart();
+            var maintainer = new ScriptedMaintainer(
+                "self-maintainer",
+                fixture.SelfTarget,
+                static (_, _) => "must-not-run"
+            );
+            var policy = new DelegatePolicy(_ =>
+                new RecapPlanningPolicyDecision.Build(
+                    admission,
+                    [
+                        new RecapBlockPlanningDecision.Maintain(
+                            fixture.SelfId,
+                            new RecapPlanningMaintainSource.Empty(start),
+                            [admission],
+                            EmptyRecapPriorContext.Instance
+                        )
+                    ]
+                ));
+
+            var result =
+                Assert.IsType<DerivedRecapExecutionResult.Retryable>(
+                    await fixture.CreateExecutor(policy, [maintainer])
+                        .RunAsync()
+                );
+
+            Assert.Equal(
+                DerivedRecapExecutionDefectCodes.RawHeadChanged,
+                result.Code
+            );
+            Assert.Equal(0, maintainer.CallCount);
+            Assert.IsType<BuildingReadResult.Missing>(
+                await fixture.Store.ReadBuildingAsync(admission)
+            );
+        }
+    }
+
+    [Fact]
+    public async Task ResumeRejectsIncompleteRouteBeforeMaintainer() {
+        using TestFixture fixture = await TestFixture.CreateAsync(
+            historyPairs: 2
+        );
+        (EventAddress start, EventAddress mid, EventAddress admission) =
+            fixture.TwoStepRoute();
+        MaintainRecapBlockPlan plan = fixture.CreateEmptyPlan(
+            fixture.SelfId,
+            fixture.SelfTarget,
+            "self-maintainer",
+            start,
+            [mid]
+        );
+        await fixture.CreateBuildingAsync(admission, [plan]);
+        var maintainer = new ScriptedMaintainer(
+            "self-maintainer",
+            fixture.SelfTarget,
+            static (_, _) => "must-not-run"
+        );
+
+        DerivedRecapExecutionResult result =
+            await fixture.CreateExecutor(
+                    new DelegatePolicy(static _ =>
+                        new RecapPlanningPolicyDecision.NoBuild("unused")),
+                    [maintainer]
+                )
+                .ResumeAsync(admission);
+
+        Assert.IsType<DerivedRecapExecutionResult.Unavailable>(result);
+        Assert.Equal(0, maintainer.CallCount);
+    }
+
+    [Fact]
+    public async Task ResumeRejectsNonAncestorInlinePriorBeforeMaintainer() {
+        using TestFixture fixture = await TestFixture.CreateAsync(
+            historyPairs: 2
+        );
+        EventAddress start = fixture.ReplayStart();
+        EventAddress admission = fixture.Engine.ReadCurrentHead()!.Value;
+        var plan = new MaintainRecapBlockPlan(
+            fixture.SelfId,
+            fixture.SelfTarget,
+            "self-maintainer",
+            new EmptyRecapMaintainSource(start),
+            [admission],
+            new InlineRecapPriorContext(
+                admission,
+                ContextHeaderSnapshot.Empty
+            ),
+            TestFixture.MaxContent
+        );
+        await fixture.CreateBuildingAsync(admission, [plan]);
+        var maintainer = new ScriptedMaintainer(
+            "self-maintainer",
+            fixture.SelfTarget,
+            static (_, _) => "must-not-run"
+        );
+
+        DerivedRecapExecutionResult result =
+            await fixture.CreateExecutor(
+                    new DelegatePolicy(static _ =>
+                        new RecapPlanningPolicyDecision.NoBuild("unused")),
+                    [maintainer]
+                )
+                .ResumeAsync(admission);
+
+        Assert.IsType<DerivedRecapExecutionResult.Unavailable>(result);
+        Assert.Equal(0, maintainer.CallCount);
+    }
+
+    [Fact]
+    public async Task StoreWriteFailureReturnsTypedUnavailable() {
+        var hooks = new RecapStoreTestHooks(
+            BeforeAtomicFileReplace: _ =>
+                throw new IOException("injected checkpoint failure")
+        );
+        using TestFixture fixture = await TestFixture.CreateAsync(
+            historyPairs: 1,
+            hooks
+        );
+        EventAddress admission = fixture.Engine.ReadCurrentHead()!.Value;
+        MaintainRecapBlockPlan plan = fixture.CreateEmptyPlan(
+            fixture.SelfId,
+            fixture.SelfTarget,
+            "self-maintainer",
+            fixture.ReplayStart(),
+            [admission]
+        );
+        await fixture.CreateBuildingAsync(admission, [plan]);
+        var maintainer = new ScriptedMaintainer(
+            "self-maintainer",
+            fixture.SelfTarget,
+            static (_, _) => "candidate"
+        );
+
+        var result =
+            Assert.IsType<DerivedRecapExecutionResult.Unavailable>(
+                await fixture.CreateExecutor(
+                        new DelegatePolicy(static _ =>
+                            new RecapPlanningPolicyDecision.NoBuild("unused")),
+                        [maintainer]
+                    )
+                    .ResumeAsync(admission)
+            );
+
+        Assert.Contains(
+            result.Defects,
+            defect => defect.Code
+                == DerivedRecapExecutionDefectCodes.BuildingInvalid
+        );
+    }
+
+    [Fact]
+    public async Task ResumeRejectsSourceSetNotOlderThanTarget() {
+        using TestFixture fixture = await TestFixture.CreateAsync(
+            historyPairs: 2
+        );
+        SessionHistoryPlanningWindow raw =
+            fixture.Engine.ReadHistoryPlanningWindow();
+        EventAddress olderTarget =
+            raw.ReplaySafeBoundaries[^2].Address;
+        EventAddress sourceAdmission =
+            raw.ReplaySafeBoundaries[^1].Address;
+        var maintainer = new ScriptedMaintainer(
+            "self-maintainer",
+            fixture.SelfTarget,
+            static (_, _) => "source-content"
+        );
+        var sourcePolicy = new DelegatePolicy(_ =>
+            new RecapPlanningPolicyDecision.Build(
+                sourceAdmission,
+                [
+                    new RecapBlockPlanningDecision.Maintain(
+                        fixture.SelfId,
+                        new RecapPlanningMaintainSource.Empty(
+                            raw.StartExclusive
+                        ),
+                        [sourceAdmission],
+                        EmptyRecapPriorContext.Instance
+                    )
+                ]
+            ));
+        var published =
+            Assert.IsType<DerivedRecapExecutionResult.Published>(
+                await fixture.CreateExecutor(
+                        sourcePolicy,
+                        [maintainer]
+                    )
+                    .RunAsync()
+            );
+        PublishedRecapSourceSnapshot source =
+            await fixture.ReadSourceAsync(
+                published.Descriptor,
+                [fixture.SelfId]
+            );
+        DerivedRecapFrozenInput input =
+            Assert.Single(source.FrozenInputs);
+        var inherit = new InheritRecapBlockPlan(
+            fixture.SelfId,
+            fixture.SelfTarget,
+            sourceAdmission,
+            published.Descriptor.EnvelopeSha256,
+            input.PayloadSha256,
+            TestFixture.MaxContent
+        );
+        await fixture.CreateBuildingAsync(olderTarget, [inherit]);
+        maintainer.Reset();
+
+        DerivedRecapExecutionResult result =
+            await fixture.CreateExecutor(
+                    new DelegatePolicy(static _ =>
+                        new RecapPlanningPolicyDecision.NoBuild("unused")),
+                    [maintainer]
+                )
+                .ResumeAsync(olderTarget);
+
+        Assert.IsType<DerivedRecapExecutionResult.Unavailable>(result);
+        Assert.Equal(0, maintainer.CallCount);
+    }
+
+    [Fact]
+    public async Task ResumeRejectsOversizedInheritedContent() {
+        using TestFixture fixture = await TestFixture.CreateAsync(
+            historyPairs: 1
+        );
+        EventAddress sourceAdmission =
+            fixture.Engine.ReadCurrentHead()!.Value;
+        var maintainer = new ScriptedMaintainer(
+            "self-maintainer",
+            fixture.SelfTarget,
+            static (_, _) => "0123456789"
+        );
+        var sourcePolicy = new DelegatePolicy(_ =>
+            new RecapPlanningPolicyDecision.Build(
+                sourceAdmission,
+                [
+                    new RecapBlockPlanningDecision.Maintain(
+                        fixture.SelfId,
+                        new RecapPlanningMaintainSource.Empty(
+                            fixture.ReplayStart()
+                        ),
+                        [sourceAdmission],
+                        EmptyRecapPriorContext.Instance
+                    )
+                ]
+            ));
+        var published =
+            Assert.IsType<DerivedRecapExecutionResult.Published>(
+                await fixture.CreateExecutor(
+                        sourcePolicy,
+                        [maintainer]
+                    )
+                    .RunAsync()
+            );
+        PublishedRecapSourceSnapshot source =
+            await fixture.ReadSourceAsync(
+                published.Descriptor,
+                [fixture.SelfId]
+            );
+        DerivedRecapFrozenInput input =
+            Assert.Single(source.FrozenInputs);
+        EventAddress target = fixture.AppendPair("target");
+        const int smallerLimit = 5;
+        var inherit = new InheritRecapBlockPlan(
+            fixture.SelfId,
+            fixture.SelfTarget,
+            sourceAdmission,
+            published.Descriptor.EnvelopeSha256,
+            input.PayloadSha256,
+            smallerLimit
+        );
+        await fixture.CreateBuildingAsync(target, [inherit]);
+        maintainer.Reset();
+        RecapBlockCatalogEntry[] catalog = [
+            new(
+                fixture.SelfId,
+                fixture.SelfTarget,
+                maintainer.Id,
+                smallerLimit
+            )
+        ];
+
+        DerivedRecapExecutionResult result =
+            await fixture.CreateExecutor(
+                    new DelegatePolicy(static _ =>
+                        new RecapPlanningPolicyDecision.NoBuild("unused")),
+                    [maintainer],
+                    catalog: catalog
+                )
+                .ResumeAsync(target);
+
+        Assert.IsType<DerivedRecapExecutionResult.Unavailable>(result);
+        Assert.Equal(0, maintainer.CallCount);
+    }
+
     private sealed class DelegatePolicy : IRecapPlanningPolicy {
         private readonly Func<
             RecapPlanningPolicyContext,
@@ -501,7 +807,8 @@ public sealed class DerivedRecapPlannerExecutorTests {
         );
 
         public static async ValueTask<TestFixture> CreateAsync(
-            int historyPairs
+            int historyPairs,
+            RecapStoreTestHooks? hooks = null
         ) {
             string path = System.IO.Path.Combine(
                 System.IO.Path.GetTempPath(),
@@ -516,10 +823,17 @@ public sealed class DerivedRecapPlannerExecutorTests {
                     "surface-a"
                 )
             );
+            DerivedRecapStore store = hooks is null
+                ? DerivedRecapStore.Open(path, engine.BranchRefId)
+                : DerivedRecapStore.OpenForTest(
+                    path,
+                    engine.BranchRefId,
+                    hooks
+                );
             var fixture = new TestFixture(
                 path,
                 engine,
-                DerivedRecapStore.Open(path, engine.BranchRefId)
+                store
             );
             await fixture.Store.CreateAsync();
             for (int index = 0; index < historyPairs; index++) {
