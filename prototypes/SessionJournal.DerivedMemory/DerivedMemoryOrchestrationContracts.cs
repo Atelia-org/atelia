@@ -47,16 +47,16 @@ public sealed record DerivedMemoryRoleSettlement(
     string ArtifactOutcome
 );
 
+public sealed record DerivedMemoryFinalizedRole(
+    string RoleId,
+    string ArtifactId,
+    string ArtifactOutcome
+);
+
 public sealed record DerivedMemoryOrchestrationFinalization(
     string TransactionId,
-    string JobFingerprint,
-    string EpochId,
-    string EpochPlanFingerprint,
-    string PolicyId,
-    string PolicyFingerprint,
-    string? ExpectedPreviousSetId,
     SessionContextAnchorSetupReferences AnchorSetups,
-    IReadOnlyList<DerivedMemoryRoleSettlement> IncludedSettlements,
+    IReadOnlyList<DerivedMemoryFinalizedRole> IncludedRoles,
     IReadOnlyList<string> OmittedOptionalRoleIds,
     string ExpectedSetId
 );

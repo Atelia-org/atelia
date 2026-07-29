@@ -1,6 +1,6 @@
 # SessionJournal 恢复与 DerivedMemory 化简：阶段情况与后续计划
 
-> **状态**：Active Shape/Plan；P1～P5 已实施，P6 待实施
+> **状态**：Implemented Shape/Plan；P1～P6 已实施
 > **日期**：2026-07-29
 > **适用基线**：current Prepared v5 + DM-0～DM-8
 > **相关文档**：
@@ -316,7 +316,7 @@ protocol/audit substrate 或其他正常程序集边界解决访问问题。
 | backpressure | maintainer 落后且 raw suffix 接近硬上限时，拒绝继续增长历史 | 保留 fail-fast safety，但不要与 candidate auto-selection 混为一谈 |
 | strict repository validation | 离线检查 derived 文件、hash、lineage、raw anchor 和 pointer 是否自洽 | 保留在 offline/ops；不得成为每次 online request 的全库扫描 |
 | latest pointer rebuild | index 丢失时从 immutable sets 恢复 tip | 派生 index 的必要修复能力；branch-aware 改造后重新定义 |
-| producer/policy/job fingerprints | 判断一次重跑是否真的是同一输入、prompt、model 和 policy | 实现细节，待 orchestration 专项化简，不进入近期 Agent 配置面 |
+| producer/policy/job fingerprints | 判断一次重跑是否真的是同一输入、prompt、model 和 policy | **P6 KEEP**：transaction/job/producer/policy/topology/candidate/attempt identity 保留；跨库 generation 的 JobFingerprint/TransactionId 与 Candidate/Attempt 合并延后 |
 
 近期不尝试一次性删除这一整组能力。P6 已确认 maintenance crash resume 必须只补失败/缺失
 role；专项审查只决定满足该 contract 所需的最小 identity/fingerprint 集合，不再重新讨论是否保留
@@ -333,7 +333,7 @@ settlement/finalization。
 | --- | --- | --- | --- |
 | **online core** | `SessionJournalEngine`、`SessionExecutionTailResolver`、`SessionAuthoritativeGoverningSetupResolver`、`SessionTailContextProjection`、`SessionContextCandidateContracts`、Prepared v5 codec/manifest，位于 `prototypes/SessionJournal/` | raw append/CAS、tail execution recovery、governing setup、bounded suffix fold、store-neutral candidate validation、request preparation/dispatch 与 exact reopen | **P5 已完成**：绑定 selected active branch 的稳定 `RefId`；只保留 tail/bounded online path 与 neutral contracts；不引用 concrete DerivedMemory/Maintainers；无 public full projection/replay surface |
 | **offline audit** | `SessionJournalOfflineValidator`、`SessionJournal.Cli validate`、legacy importer verification 与 corruption tests | checked root-to-head scan、全链 codec/状态审计、import smoke verification、与 exact-head tail/setup 结果交叉验证 | **P5 已完成**：位于明确的 `SessionJournal.Offline` companion；允许付出 full scan 成本，但不是 online fallback，也不向 core 反向泄漏依赖 |
-| **derived maintenance** | `DerivedArtifactEpochPlanner`、`DerivedMemoryArtifactStore`、`DerivedArtifactSetStore`、`DerivedArtifactSetContextCandidateSource`、`DerivedMemoryOrchestrator` / `DerivedMemoryOrchestrationStore`、`DerivedMemoryMaintainerRunner`，位于 `prototypes/SessionJournal.DerivedMemory/`；concrete profiles 位于 `SessionJournal.Maintainers` | shared epoch、candidate production、durable settlements/finalization、atomic ArtifactSet publication、latest/index rebuild、strict repository validation 与 online lifecycle | 使用 RefId-derived lineage generation；保留 shared epoch、backpressure、最小 settlement/finalization 与 atomic publication；selection 只按 exact `nthPrevious`；是否删除重复 identity 字段留给 P6 证据 |
+| **derived maintenance** | `DerivedArtifactEpochPlanner`、`DerivedMemoryArtifactStore`、`DerivedArtifactSetStore`、`DerivedArtifactSetContextCandidateSource`、`DerivedMemoryOrchestrator` / `DerivedMemoryOrchestrationStore`、`DerivedMemoryMaintainerRunner`，位于 `prototypes/SessionJournal.DerivedMemory/`；concrete profiles 位于 `SessionJournal.Maintainers` | shared epoch、candidate production、durable settlements/finalization、atomic ArtifactSet publication、latest/index rebuild、strict repository validation 与 online lifecycle | **P6 已完成**：RefId-derived lineage、shared epoch、backpressure、per-role settlement、bounded finalization v2 与 atomic publication；selection 只按 exact `nthPrevious`；transaction/job/provisioning identity 保留 |
 | **composition** | `SessionJournal.Cli` / Agent Host、`SessionRuntime`、connection/tool/role provisioning、`DerivedMemoryOnlineLifecycleCoordinator` 装配 | 选择 completion/tool/provider、注入 candidate source/lifecycle/runtime selection、配置 planner/policy、运行 online turn 与 ops commands | 按 active branch name 选择并先打开 Engine，再把其 lifetime-bound lineage identity 绑定到 DerivedMemory；host 固定每 branch 的单 active memory domain；Agent ordinal 来自 durable setup，不再由 runtime 注入第二份 |
 
 ownership 描述能力归属，不要求每类必须对应一个程序集。P5 可以先建立 companion boundary，再决定
@@ -348,7 +348,7 @@ ownership 描述能力归属，不要求每类必须对应一个程序集。P5 �
 | **P3** | `SessionJournalContracts.cs`、`SessionEventCodec.cs`、`SessionContextCandidateContracts.cs`、`SessionJournalEngine.cs`、DerivedMemory candidate source | durable `nthPrevious` 成为唯一 Agent-controlled ordinal；exact nth 不跳坏 set；zero-input bootstrap exception 保留，fresh-topology eligibility 由 P4 实现 | `RuntimeConfigSetup` body **v1 → v2**；只写/读 v2，不提供 v1 compatibility decoder | 删除 `SessionRuntime.ContextSelection`、`Latest` / `Budgeted` modes、candidate-list fallback 与 public `MaxCandidateCount` | host 只 provision 单 active domain/provider；不再解析或注入 runtime selection flags | codec/golden、governing setup、candidate route、Prepared reopen、CLI tests；更新 wire/current docs | `Atelia.SessionJournal`，同一 cutover 内跟进 DerivedMemory/CLI |
 | **P4** | `SessionJournalEngine` selection/cost helpers、`SessionHistoryTokenEstimator`、planner hard-limit/backpressure config、online coordinator | **已完成**：删除 raw/bootstrap/total token budgets；保留 exact canonical request UTF-8 byte guard 和 planner backpressure；以 raw header walk 判定 fresh-genesis 的 pre-append 与 exact/recovery bootstrap boundaries | `SessionCreated` body **v1 → v2**，required `origin=native|legacy-import`；无 v1 fallback。planner persisted shape/id/schema v2 不变 | 删除 `SessionContextBudgetOptions`；新增单一 `MaximumCanonicalRequestBytes`，不宣称 tokenizer | 删除三个 budget flags，新增 `--maximum-canonical-request-bytes`；planner threshold/backpressure flags 保留 | byte guard/bootstrap pre-append、post-observation crash/reopen、import/performance/backpressure tests；更新 estimator 与 CLI docs | `Atelia.SessionJournal` + composition（完成） |
 | **P5** | `SessionJournalOfflineValidator`、checked audit scan、legacy importer、CLI `validate`、tail/bounded tests | **已完成**：full reducer 退出 online/public core surface，完整 raw/import audit 不降级 | 无 raw/derived wire 变化 | 已删除 full projection/replay public surface；保留窄 inspection、tail recovery、setup 与 bounded planning API | importer/validate 已切到 companion audit；online composition 不引用 full reducer | offline validator、import safety、corruption、tail/fold legality；usage/roadmap 已更新 | P5-A～D（完成） |
-| **P6** | `DerivedMemoryOrchestrationContracts.cs`、`DerivedMemoryOrchestrationStore.cs`、`DerivedMemoryOrchestrator.cs`、`DerivedArtifactSetStore.cs` | 已 settlement role 重启不重跑；保留最小 settlement、finalization 与 required-role atomic publication；只删经证据证明重复的 identity | 删除任何 persisted/hashed identity 字段都必须创建**独立 DerivedMemory schema generation**；不得借 P2 generation 偷渡或原地重解释 | orchestration API 可收窄，但 exact resume/publish identity 必须仍可验证 | orchestration run/resume/report 随最小 contract 收窄；不修改 raw wire | failpoint/resume、partial settlement、finalization-after-crash、atomic publish tests；更新 DerivedMemory ops docs | `Atelia.SessionJournal.DerivedMemory` |
+| **P6** | `DerivedMemoryOrchestrationContracts.cs`、`DerivedMemoryOrchestrationStore.cs`、`DerivedMemoryOrchestrator.cs`、`DerivedArtifactSetStore.cs` | **已完成**：settled role 重启不重跑；per-role settlement + bounded finalization v2 + required-role atomic publication | finalization **v1 → v2**，无 compatibility read；transaction/artifact/set schemas/ids 不变 | 新增窄 `DerivedMemoryFinalizedRole`；finalization 删除 transaction 可推导字段 | 无 CLI/raw wire 变化；调用方继续复用固定 job provisioning 才能恢复同一 transaction | wire golden/v1 reject、partial resume、finalization-before-set、tamper/strict validation | `Atelia.SessionJournal.DerivedMemory`（完成） |
 
 ### 5.3 Persistence / wire ledger
 
@@ -359,12 +359,12 @@ ownership 描述能力归属，不要求每类必须对应一个程序集。P5 �
 | Raw `SessionCreated` | **P4 已完成**：body v2，required `origin=native|legacy-import` | public create 默认/显式写 native；legacy importer 写 legacy-import；strict bootstrap 只接受 native | **不提供 v1 decoder/fallback**；origin 是区分 native first-observation crash 与 imported pending observation 所需的 durable fact | P4（完成） |
 | DerivedMemory lineage/storage | **P2 已完成**：`derived/memory/v2/`；durable identity 使用 canonical lowercase `RefId`；config/epoch/transaction 为 v2，set/latest 为 v3 | P2 已按 RefId-derived identity 完成 generation cutover；planner、set/latest、epoch、orchestration 使用同一 opaque identity | v1 generation inert；不混读、不自动迁移、不设 compatibility branch；derived 数据可从 raw 重建 | P2（完成） |
 | Planner config / epoch thresholds | P2 后 config/epoch/pointers 均为 v2，包含 scheduling headroom、hard limit/backpressure policy | P4 已保留全部 epoch scheduling/backpressure 字段、estimator id 与 identity bytes | persisted shape 未变化，继续使用 v2；pointer/index 仍可从 immutable generation 重建 | P4（完成，无 schema 变化） |
-| Orchestration transaction / settlement / finalization | P2 后 transaction 为 v2，settlement/finalization 保持 v1；identity/fingerprint 同时服务 retry、audit 与 set identity | P6 保留 exact resume 所需最小记录；若删除任何 persisted 或 hash-domain identity 字段，必须作**独立于 P2**的 schema generation decision | 不允许同 schema token 下改变 identity/hash bytes；是否删除每个字段由 P6 caller、failpoint、audit 证据决定 | P6 |
+| Orchestration transaction / settlement / finalization | **P6 已完成**：transaction v2、settlement v1 保持；finalization v2 仅含 transaction id、anchor setups、included roles、omitted optional roles、expected set id | finalization 不重复 job/epoch/policy/previous-set 或 nested settlement transaction id；联表 immutable transaction 与 durable settlements 重建 authority | finalization v1 不兼容读取；transaction/artifact/set schema/id 不变。JobFingerprint/TransactionId 与 Candidate/Attempt 跨库合并延后到独立 generation | P6（完成） |
 | Bootstrap eligibility | **P4 已完成**：healthy empty lineage + native creation origin + raw ancestry 无 Prepared；接受 fresh setup-only predecessor 的 pre-append boundary，或其后恰有一个 active first observation 的 exact/recovery boundary | lifecycle 前先做 read-only empty-lineage/topology/byte preflight，之后重新 exact selection | 只限制 online bootstrap，不限制 import/offline maintenance/rebuild 发布真实 set；曾发布但未被 Prepared 使用的 set 删除后仍可 bootstrap | P4（完成） |
 
-P2 与 P6 的 derived generation 不得合并成一句“反正 derived 可重建”：P2 已确定改变 lineage authority，
-而 P6 尚未确定删除哪些 identity。若两包最终恰好落入同一物理 generation，也必须由 P6 明确证明
-P2 尚未发布/落盘且一次 cutover 不会模糊两组决策；默认按两个独立 decision 处理。
+P2 与 P6 的 derived generation 没有合并：P2 改变 lineage authority；P6 只创建独立
+finalization v2，保持 transaction/artifact/set generation 与 ids。未来跨库 identity 合并仍必须
+作为新的独立 generation decision。
 
 ### 5.4 双真源与 atomic gates
 
@@ -409,9 +409,9 @@ pre-P1 baseline 曾包含以下 raw authority split，P1 已解决并留下 focu
    malformed/corrupt history 与 historical Prepared 检查必须已有等强或更强的 companion audit；
    tests 变绿但审计覆盖减少不算完成。
 8. **P6 resume/publication gate**：每个 role 的成功 settlement 必须先 durable，resume 只运行
-   missing/failed roles；required roles 闭合后 durable finalization 冻结 exact included settlements、
-   omitted optional roles、expected previous 与 expected set identity。finalization 后不得再次调用
-   maintainer，只能 idempotent 续发布/验证；ArtifactSet 仍须一次原子成为 usable。
+   missing/failed roles；required roles 闭合后 durable finalization v2 冻结窄 included roles、
+   omitted optional roles 与 expected set identity，expected previous 来自 immutable transaction。
+   finalization 后不得再次调用 maintainer，只能 idempotent 续发布/验证；ArtifactSet 仍须一次原子成为 usable。
 
 ### 5.5 CLI、tests 与 current docs ledger
 
@@ -423,7 +423,7 @@ pre-P1 baseline 曾包含以下 raw authority split，P1 已解决并留下 focu
 | candidate route tests | 已覆盖 durable exact ordinal、setup update/reopen、selection-time lifecycle、canonical-byte guard、native fresh bootstrap、observation crash/reopen 与 imported rejection | P3/P4 已删除 mode/list/fallback 与临时 budget coverage | P3/P4（完成） |
 | DerivedMemory planner/set tests | 已覆盖 A/B branch config/epoch/set/latest/provider 隔离、exact/global validation、archive + same-name recreate、foreign scope、rewind stale-future、pointer rebuild 与 raw authority | P2 branch-aware matrix 已形成；P3～P6 继续复用这些边界 | P2（完成） |
 | orchestration tests | 已覆盖 partial settlement、cancellation、optional omission、finalization 后续发布、pointer rebuild 与 corruption | P6 必须保留的 contract tests；字段化简不得降低 missing-role-only resume/atomic publication 覆盖 | P6 |
-| active roadmap | 同时记录 historical evolution、current DM-8 和未来方向；仍有 Prepared v3、Budgeted 长期 target、full reducer core residency 等过期叙事 | P0 直接修正，并链接本文作为 P1～P6 active target | P0 |
+| active roadmap | 同时记录 historical evolution、current DM-8 和未来方向 | 已标记 superseded 段落并链接本文作为 P1～P6 implemented plan | P0～P6（完成） |
 | DerivedMemory / CLI README | 已同步 P3 exact nth、strict lineage、durable ordinal 与无 runtime selection flag；settlement/finalization 仍记录 current behavior | current behavior 文档；后续不得提前写成未实施 target | P3（完成）；P4～P6 随实现同步 |
 | `docs/SessionJournal/done/**` 与 historical trunk baseline | 记录当时已实施设计和验收 | 保持 append-only 历史，不以新 target 回写旧结论 | 不修改 |
 | tail recovery research/study | 记录 D0/D1 与 DM-8 current facts，部分候选结论已被本文后续决策取代 | 作为研究背景；active 决策冲突时以本文为准 | 后续仅补 supersession note |
@@ -658,7 +658,7 @@ keys。
 - maintainer input 只走 addressed bounded planning window；
 - public API 不再让调用方误把 full projection 当作 normal recovery。
 
-### P6：Maintenance orchestration 专项化简
+### P6：Maintenance orchestration 专项化简（已完成）
 
 已确认 contract：
 
@@ -666,16 +666,24 @@ keys。
   该 role 的昂贵 LLM 调用；
 - resume 只补 missing/failed roles，并验证既有 settlement 仍属于 exact epoch、role target 与
   provisioning；
-- required roles 闭合后必须 durable finalization，冻结 exact included settlements、omitted
-  optional roles、expected previous set 与 expected set identity；
+- required roles 闭合后必须 durable finalization，冻结窄 included roles、omitted optional roles
+  与 expected set identity；expected previous set 从 immutable transaction 取得；
 - finalization 后的 reopen 不再运行 maintainer；只允许完成或验证同一个 atomic ArtifactSet
   publication；
 - 旧 usable set 在新 set 原子发布前继续可用，partial settlements 永不直接暴露给 online selection。
 
-因此 settlement、finalization 和 atomic publication 不是候选删除项。P6 只审查 transaction/job/
-producer/policy/topology 等 identity 是否重复；删除哪些字段必须由 exact retry、collision、
-failpoint、repository audit 与 set identity 证据逐项决定。任何 persisted/hash identity 删除都遵守
-§5.3 的独立 derived schema generation gate。
+实施结论：
+
+- **KEEP** durable per-role settlement、finalization-before-publication、missing/failed-only resume、
+  optional omission、old latest until atomic publish，以及 finalized reopen no-producer；
+- finalization 切到独立 v2，只冻结 transaction id、anchor setups、窄 included roles、omitted
+  optional roles 与 expected set id；job/epoch/policy/expected previous 统一由 immutable
+  transaction 提供；
+- **KEEP** transaction/job/producer/policy/topology/candidate/attempt identities；它们仍参与 exact
+  retry、artifact/set identity 与 provisioning 验证；
+- **MERGE later** JobFingerprint/TransactionId 与 CandidateId/AttemptId 的跨库 generation
+  合并。当前 Candidate/Attempt 是固定 job provisioning，调用方必须复用它们才能恢复同一
+  transaction；本轮不修改 transaction/artifact/set schemas 或 ids。
 
 本包不得反向修改 raw SessionJournal wire，也不得把 concrete maintainer policy 放回 raw core。
 
@@ -688,14 +696,13 @@ P0 contract inventory
   -> P3 durable NthPrevious [done]
   -> P4 budget/estimator cleanup [done]
   -> P5 full reducer de-production [done]
-  -> P6 orchestration simplification
+  -> P6 orchestration simplification [done]
 ```
 
 P1/P2 已把 raw Engine、DerivedMemory 与 composition 绑定到同一 lifetime/durable `RefId`
 authority。P3/P4 已连续完成，避免同时保留旧 runtime selection 与新 durable selection；P5
-也已在 bounded planning caller 稳定后完成。P6 最后
-单独处理，因为它与 online tail recovery 正交；产品 contract 已确定为“成功 role 不重跑”，剩余
-工作是用证据收窄实现，而不是重新选择是否保留 crash resume。
+也已在 bounded planning caller 稳定后完成。P6 随后独立完成，并保留“成功 role 不重跑”的
+crash-resume contract。
 
 ## 8. 共同非目标与验收闸门
 
@@ -730,10 +737,10 @@ authority。P3/P4 已连续完成，避免同时保留旧 runtime selection 与�
   request 使用 canonical JSON UTF-8 byte guard；
 - shared epoch 与 atomic ArtifactSet publication 是必要能力；
 - full reducer 对 online recovery 没有直接价值，应退出 production 主表面；
-- orchestration/settlement/finalization 服务 maintenance crash resume；保留成功 role 不重跑、
-  durable finalization 与 atomic publication，重复 identity 的删除范围由 P6 证据决定。
+- orchestration/settlement/finalization 服务 maintenance crash resume；P6 已保留成功 role
+  不重跑、durable finalization 与 atomic publication，并把 finalization 收窄为 v2；其余 identity
+  合并延后到独立跨库 generation。
 
 P1 raw Engine boundary、P2 branch-aware DerivedMemory、P3 durable exact ordinal 与 P4 strict
-fresh bootstrap/canonical-byte guard 与 P5 full reducer 去生产化已是现行 contract；P6
-尚未落实的方向继续以 current
-implementation 作为可运行基线。
+fresh bootstrap/canonical-byte guard、P5 full reducer 去生产化与 P6 bounded finalization
+均已是现行 contract。

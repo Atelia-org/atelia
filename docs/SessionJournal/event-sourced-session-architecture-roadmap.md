@@ -1,6 +1,6 @@
 # SessionJournal 事件源会话与长期上下文架构路线图
 
-> **状态**：Architecture Roadmap / current baseline P1～P5 + Prepared v5 + DM-0～DM-8 / active target P6
+> **状态**：Architecture Roadmap / current baseline P1～P6 + Prepared v5 + DM-0～DM-8
 > **日期**：2026-07-29
 > **底层依赖**：[EventJournal 功能需求与粗粒度设计基线](../EventJournal/event-journal-requirements-and-design.md)
 > **相关既有研究**：[Dynamic Logical Context Store for Long-Running Role-Play Agents](../Galatea/backlog/idea/dynamic-logical-context-store-for-long-running-role-play-agents.md)
@@ -21,7 +21,8 @@
 > contract 只保留 governing `RuntimeConfigSetup` v2 中 durable `derivedContext.nthPrevious`
 > 驱动的 exact single-candidate selection，无 automatic fallback。current architecture
 > 同时保留 existing active branch + lifetime-bound `RefId` 与 shared epoch backpressure；
-> P5 已把 full replay/audit 迁出 online core public/runtime surface。P6 的 cutover 与验收以
+> P5 已把 full replay/audit 迁出 online core public/runtime surface；P6 已把 orchestration
+> finalization 收窄为 v2，并保留 per-role crash resume 与 atomic publication。验收记录以
 > [化简计划](session-journal-recovery-and-derived-memory-simplification-plan.md)为准。
 
 ## 1. 文档定位
@@ -400,7 +401,7 @@ current online 没有 coherent candidate 时保持 not-ready，不允许静默 f
 current empty-lineage bootstrap 已受 native raw fresh-genesis topology 约束，而不是 normal
 fallback。后续工作是在保持这一
 raw/artifact 语义的前提下，按
-[P1～P6 active plan](session-journal-recovery-and-derived-memory-simplification-plan.md)
+[P1～P6 implemented plan](session-journal-recovery-and-derived-memory-simplification-plan.md)
 化简 branch、selection、audit 与 orchestration 边界，而不是把能力回迁到 ChatSession。
 
 ## 7. Context Selection（Current P3/P4）

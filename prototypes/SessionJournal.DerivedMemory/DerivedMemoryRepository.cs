@@ -326,12 +326,6 @@ public sealed class DerivedMemoryRepository {
             epochsById,
             orchestrationInventory
         );
-        await ValidateFinalizationCandidateIdentitiesAsync(
-                orchestrationInventory,
-                cancellationToken
-            )
-            .ConfigureAwait(false);
-
         if (engine is not null) {
             DerivedArtifactEpochPlan[] branchEpochs = [
                 .. epochInventory.Epochs
@@ -574,13 +568,22 @@ public sealed class DerivedMemoryRepository {
                     : throw new InvalidDataException(
                         $"Finalization '{finalization.TransactionId}' has no durable settlements."
                     );
-            foreach (DerivedMemoryRoleSettlement included in
-                     finalization.IncludedSettlements) {
+            foreach (DerivedMemoryFinalizedRole included in
+                     finalization.IncludedRoles) {
                 if (!durable.TryGetValue(
                         included.RoleId,
                         out DerivedMemoryRoleSettlement? settlement
                     )
-                    || settlement != included) {
+                    || !string.Equals(
+                        settlement.ArtifactId,
+                        included.ArtifactId,
+                        StringComparison.Ordinal
+                    )
+                    || !string.Equals(
+                        settlement.ArtifactOutcome,
+                        included.ArtifactOutcome,
+                        StringComparison.Ordinal
+                    )) {
                     throw new InvalidDataException(
                         $"Finalization '{finalization.TransactionId}' does not reference an exact durable settlement."
                     );
@@ -685,38 +688,6 @@ public sealed class DerivedMemoryRepository {
                         $"ArtifactSet '{set.SetId}' member is not its exact durable settlement."
                     );
                 }
-            }
-        }
-    }
-
-    private async ValueTask ValidateFinalizationCandidateIdentitiesAsync(
-        DerivedMemoryOrchestrationInventory orchestrationInventory,
-        CancellationToken cancellationToken
-    ) {
-        IReadOnlyDictionary<string, DerivedMemoryOrchestrationTransaction>
-            transactions = orchestrationInventory.Transactions.ToDictionary(
-                static transaction => transaction.TransactionId,
-                StringComparer.Ordinal
-            );
-        foreach (DerivedMemoryOrchestrationFinalization finalization in
-                 orchestrationInventory.Finalizations) {
-            DerivedMemoryOrchestrationTransaction transaction =
-                transactions[finalization.TransactionId];
-            DerivedArtifactSet candidate =
-                await ArtifactSets.RebuildFinalizedCandidateAsync(
-                        transaction,
-                        finalization,
-                        cancellationToken
-                    )
-                    .ConfigureAwait(false);
-            if (!string.Equals(
-                    candidate.SetId,
-                    finalization.ExpectedSetId,
-                    StringComparison.Ordinal
-                )) {
-                throw new InvalidDataException(
-                    $"Finalization '{finalization.TransactionId}' expected set identity is invalid."
-                );
             }
         }
     }

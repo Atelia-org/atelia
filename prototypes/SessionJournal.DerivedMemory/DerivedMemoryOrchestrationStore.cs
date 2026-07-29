@@ -13,7 +13,7 @@ public sealed class DerivedMemoryOrchestrationStore {
     public const string SettlementSchema =
         "atelia.session-journal.derived-memory-role-settlement.v1";
     public const string FinalizationSchema =
-        "atelia.session-journal.derived-memory-finalization.v1";
+        "atelia.session-journal.derived-memory-finalization.v2";
     public const long MaxTransactionFileBytes = 1024 * 1024;
     public const long MaxSettlementFileBytes = 64 * 1024;
     public const long MaxFinalizationFileBytes = 256 * 1024;
@@ -292,7 +292,7 @@ public sealed class DerivedMemoryOrchestrationStore {
                         $"Finalization references missing transaction '{finalization.TransactionId}'."
                     );
                 ValidateFinalizationShape(transaction, finalization);
-                ValidateFinalizationSettlements(
+                ValidateFinalizationRoles(
                     finalization,
                     settlements.Where(settlement => string.Equals(
                         settlement.TransactionId,
@@ -300,6 +300,12 @@ public sealed class DerivedMemoryOrchestrationStore {
                         StringComparison.Ordinal
                     )).ToArray()
                 );
+                await ValidateFinalizationCandidateIdentityAsync(
+                        transaction,
+                        finalization,
+                        cancellationToken
+                    )
+                    .ConfigureAwait(false);
                 finalizations.Add(finalization);
             }
         }
@@ -394,7 +400,7 @@ public sealed class DerivedMemoryOrchestrationStore {
                 )
                 .ConfigureAwait(false);
         ValidateFinalizationShape(transaction, finalization);
-        ValidateFinalizationSettlements(
+        ValidateFinalizationRoles(
             finalization,
             await ReadSettlementsAsync(
                     transaction,
@@ -402,6 +408,12 @@ public sealed class DerivedMemoryOrchestrationStore {
                 )
                 .ConfigureAwait(false)
         );
+        await ValidateFinalizationCandidateIdentityAsync(
+                transaction,
+                finalization,
+                cancellationToken
+            )
+            .ConfigureAwait(false);
         return finalization;
     }
 
@@ -424,11 +436,34 @@ public sealed class DerivedMemoryOrchestrationStore {
                 StringComparer.Ordinal
             )
         ];
+        foreach (DerivedMemoryRoleSettlement settlement in
+                 included) {
+            ValidateSettlementShape(transaction, settlement);
+        }
+        IReadOnlyList<DerivedMemoryRoleSettlement> durable =
+            await ReadSettlementsAsync(
+                    transaction,
+                    cancellationToken
+                )
+                .ConfigureAwait(false);
+        ValidateIncludedSettlements(
+            included,
+            durable
+        );
+        DerivedMemoryFinalizedRole[] includedRoles = [
+            .. included.Select(static settlement =>
+                new DerivedMemoryFinalizedRole(
+                    settlement.RoleId,
+                    settlement.ArtifactId,
+                    settlement.ArtifactOutcome
+                )
+            )
+        ];
         string[] omitted = [
             .. transaction.Roles
                 .Where(role => !role.Required
-                    && !included.Any(settlement => string.Equals(
-                        settlement.RoleId,
+                    && !includedRoles.Any(included => string.Equals(
+                        included.RoleId,
                         role.RoleId,
                         StringComparison.Ordinal
                     )))
@@ -437,25 +472,13 @@ public sealed class DerivedMemoryOrchestrationStore {
         ];
         var candidate = new DerivedMemoryOrchestrationFinalization(
             transaction.TransactionId,
-            transaction.JobFingerprint,
-            transaction.EpochId,
-            transaction.EpochPlanFingerprint,
-            transaction.PolicyId,
-            transaction.PolicyFingerprint,
-            transaction.InputSetId,
             anchorSetups,
-            Array.AsReadOnly(included),
+            Array.AsReadOnly(includedRoles),
             Array.AsReadOnly(omitted),
             expectedSetId
         );
         ValidateFinalizationShape(transaction, candidate);
-        IReadOnlyList<DerivedMemoryRoleSettlement> durable =
-            await ReadSettlementsAsync(
-                    transaction,
-                    cancellationToken
-                )
-                .ConfigureAwait(false);
-        ValidateFinalizationSettlements(candidate, durable);
+        ValidateFinalizationRoles(candidate, durable);
         string json = JsonSerializer.Serialize(
             ToDto(candidate),
             JsonOptions
@@ -475,7 +498,12 @@ public sealed class DerivedMemoryOrchestrationStore {
                     )
                     .ConfigureAwait(false);
             ValidateFinalizationShape(transaction, existing);
-            ValidateFinalizationSettlements(existing, durable);
+            ValidateFinalizationRoles(existing, durable);
+            if (!FinalizationsEquivalent(existing, candidate)) {
+                throw new InvalidDataException(
+                    $"Immutable orchestration finalization collision at '{transaction.TransactionId}'."
+                );
+            }
             return existing;
         }
         await _repository.WriteFileAtomicallyAsync(
@@ -961,14 +989,8 @@ public sealed class DerivedMemoryOrchestrationStore {
         }
         var finalization = new DerivedMemoryOrchestrationFinalization(
             dto.TransactionId,
-            dto.JobFingerprint,
-            dto.EpochId,
-            dto.EpochPlanFingerprint,
-            dto.PolicyId,
-            dto.PolicyFingerprint,
-            dto.ExpectedPreviousSetId,
             dto.AnchorSetups,
-            dto.IncludedSettlements,
+            dto.IncludedRoles,
             dto.OmittedOptionalRoleIds,
             dto.ExpectedSetId
         );
@@ -1022,7 +1044,7 @@ public sealed class DerivedMemoryOrchestrationStore {
     ) {
         ArgumentNullException.ThrowIfNull(finalization.AnchorSetups);
         ArgumentNullException.ThrowIfNull(
-            finalization.IncludedSettlements
+            finalization.IncludedRoles
         );
         ArgumentNullException.ThrowIfNull(
             finalization.OmittedOptionalRoleIds
@@ -1036,44 +1058,14 @@ public sealed class DerivedMemoryOrchestrationStore {
                 finalization.TransactionId,
                 transaction.TransactionId,
                 StringComparison.Ordinal
-            )
-            || !string.Equals(
-                finalization.JobFingerprint,
-                transaction.JobFingerprint,
-                StringComparison.Ordinal
-            )
-            || !string.Equals(
-                finalization.EpochId,
-                transaction.EpochId,
-                StringComparison.Ordinal
-            )
-            || !string.Equals(
-                finalization.EpochPlanFingerprint,
-                transaction.EpochPlanFingerprint,
-                StringComparison.Ordinal
-            )
-            || !string.Equals(
-                finalization.PolicyId,
-                transaction.PolicyId,
-                StringComparison.Ordinal
-            )
-            || !string.Equals(
-                finalization.PolicyFingerprint,
-                transaction.PolicyFingerprint,
-                StringComparison.Ordinal
-            )
-            || !string.Equals(
-                finalization.ExpectedPreviousSetId,
-                transaction.InputSetId,
-                StringComparison.Ordinal
             )) {
             throw new InvalidDataException(
                 "Orchestration finalization does not match its transaction."
             );
         }
-        DerivedMemoryRoleSettlement[] included = [
-            .. finalization.IncludedSettlements.OrderBy(
-                static settlement => settlement.RoleId,
+        DerivedMemoryFinalizedRole[] included = [
+            .. finalization.IncludedRoles.OrderBy(
+                static role => role.RoleId,
                 StringComparer.Ordinal
             )
         ];
@@ -1084,7 +1076,7 @@ public sealed class DerivedMemoryOrchestrationStore {
             )
         ];
         if (!included.SequenceEqual(
-                finalization.IncludedSettlements
+                finalization.IncludedRoles
             )
             || !omitted.SequenceEqual(
                 finalization.OmittedOptionalRoleIds
@@ -1102,8 +1094,19 @@ public sealed class DerivedMemoryOrchestrationStore {
             .Select(static item => item.RoleId)
             .ToHashSet(StringComparer.Ordinal);
         var omittedRoles = omitted.ToHashSet(StringComparer.Ordinal);
-        foreach (DerivedMemoryRoleSettlement settlement in included) {
-            ValidateSettlementShape(transaction, settlement);
+        foreach (DerivedMemoryFinalizedRole role in included) {
+            ValidateHashId(
+                role.ArtifactId,
+                "dma_",
+                nameof(role.ArtifactId)
+            );
+            if (!DerivedMemoryArtifactOutcomes.IsDefined(
+                    role.ArtifactOutcome
+                )) {
+                throw new InvalidDataException(
+                    "Finalized role artifact outcome is invalid."
+                );
+            }
         }
         foreach (DerivedMemoryRoleProvisioning role in transaction.Roles) {
             bool includedRole = includedRoles.Contains(role.RoleId);
@@ -1124,7 +1127,7 @@ public sealed class DerivedMemoryOrchestrationStore {
         }
     }
 
-    private static void ValidateFinalizationSettlements(
+    private static void ValidateFinalizationRoles(
         DerivedMemoryOrchestrationFinalization finalization,
         IReadOnlyList<DerivedMemoryRoleSettlement> durableSettlements
     ) {
@@ -1133,19 +1136,94 @@ public sealed class DerivedMemoryOrchestrationStore {
                 static settlement => settlement.RoleId,
                 StringComparer.Ordinal
             );
-        foreach (DerivedMemoryRoleSettlement included in
-                 finalization.IncludedSettlements) {
+        foreach (DerivedMemoryFinalizedRole included in
+                 finalization.IncludedRoles) {
             if (!durable.TryGetValue(
                     included.RoleId,
                     out DerivedMemoryRoleSettlement? settlement
                 )
-                || settlement != included) {
+                || !string.Equals(
+                    settlement.ArtifactId,
+                    included.ArtifactId,
+                    StringComparison.Ordinal
+                )
+                || !string.Equals(
+                    settlement.ArtifactOutcome,
+                    included.ArtifactOutcome,
+                    StringComparison.Ordinal
+                )) {
                 throw new InvalidDataException(
                     $"Finalization role '{included.RoleId}' is not its exact durable settlement."
                 );
             }
         }
     }
+
+    private static void ValidateIncludedSettlements(
+        IReadOnlyList<DerivedMemoryRoleSettlement> included,
+        IReadOnlyList<DerivedMemoryRoleSettlement> durableSettlements
+    ) {
+        IReadOnlyDictionary<string, DerivedMemoryRoleSettlement> durable =
+            durableSettlements.ToDictionary(
+                static settlement => settlement.RoleId,
+                StringComparer.Ordinal
+            );
+        foreach (DerivedMemoryRoleSettlement settlement in included) {
+            if (!durable.TryGetValue(
+                    settlement.RoleId,
+                    out DerivedMemoryRoleSettlement? exact
+                )
+                || exact != settlement) {
+                throw new InvalidDataException(
+                    $"Finalization role '{settlement.RoleId}' is not its exact durable settlement."
+                );
+            }
+        }
+    }
+
+    private async ValueTask ValidateFinalizationCandidateIdentityAsync(
+        DerivedMemoryOrchestrationTransaction transaction,
+        DerivedMemoryOrchestrationFinalization finalization,
+        CancellationToken cancellationToken
+    ) {
+        DerivedArtifactSet candidate =
+            await _repository.ArtifactSets.RebuildFinalizedCandidateAsync(
+                    transaction,
+                    finalization,
+                    cancellationToken
+                )
+                .ConfigureAwait(false);
+        if (!string.Equals(
+                candidate.SetId,
+                finalization.ExpectedSetId,
+                StringComparison.Ordinal
+            )) {
+            throw new InvalidDataException(
+                $"Finalization '{finalization.TransactionId}' expected set identity is invalid."
+            );
+        }
+    }
+
+    private static bool FinalizationsEquivalent(
+        DerivedMemoryOrchestrationFinalization left,
+        DerivedMemoryOrchestrationFinalization right
+    ) =>
+        string.Equals(
+            left.TransactionId,
+            right.TransactionId,
+            StringComparison.Ordinal
+        )
+        && left.AnchorSetups == right.AnchorSetups
+        && left.IncludedRoles.SequenceEqual(right.IncludedRoles)
+        && left.OmittedOptionalRoleIds.SequenceEqual(
+            right.OmittedOptionalRoleIds,
+            StringComparer.Ordinal
+        )
+        && string.Equals(
+            left.ExpectedSetId,
+            right.ExpectedSetId,
+            StringComparison.Ordinal
+        );
 
     private static TransactionDto ToDto(
         DerivedMemoryOrchestrationTransaction transaction
@@ -1169,14 +1247,8 @@ public sealed class DerivedMemoryOrchestrationStore {
     ) => new(
         FinalizationSchema,
         finalization.TransactionId,
-        finalization.JobFingerprint,
-        finalization.EpochId,
-        finalization.EpochPlanFingerprint,
-        finalization.PolicyId,
-        finalization.PolicyFingerprint,
-        finalization.ExpectedPreviousSetId,
         finalization.AnchorSetups,
-        finalization.IncludedSettlements,
+        finalization.IncludedRoles,
         finalization.OmittedOptionalRoleIds,
         finalization.ExpectedSetId
     );
@@ -1486,19 +1558,12 @@ public sealed class DerivedMemoryOrchestrationStore {
     private sealed record FinalizationDto(
         [property: JsonPropertyOrder(0)] string Schema,
         [property: JsonPropertyOrder(1)] string TransactionId,
-        [property: JsonPropertyOrder(2)] string JobFingerprint,
-        [property: JsonPropertyOrder(3)] string EpochId,
-        [property: JsonPropertyOrder(4)] string EpochPlanFingerprint,
-        [property: JsonPropertyOrder(5)] string PolicyId,
-        [property: JsonPropertyOrder(6)] string PolicyFingerprint,
-        [property: JsonPropertyOrder(7)] string? ExpectedPreviousSetId,
-        [property: JsonPropertyOrder(8)]
+        [property: JsonPropertyOrder(2)]
             SessionContextAnchorSetupReferences AnchorSetups,
-        [property: JsonPropertyOrder(9)]
-            IReadOnlyList<DerivedMemoryRoleSettlement>
-                IncludedSettlements,
-        [property: JsonPropertyOrder(10)]
+        [property: JsonPropertyOrder(3)]
+            IReadOnlyList<DerivedMemoryFinalizedRole> IncludedRoles,
+        [property: JsonPropertyOrder(4)]
             IReadOnlyList<string> OmittedOptionalRoleIds,
-        [property: JsonPropertyOrder(11)] string ExpectedSetId
+        [property: JsonPropertyOrder(5)] string ExpectedSetId
     );
 }

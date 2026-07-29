@@ -244,7 +244,7 @@ public sealed class DerivedMemoryOrchestrator {
             }
             if (!string.Equals(
                     latest?.SetId,
-                    finalization.ExpectedPreviousSetId,
+                    transaction.InputSetId,
                     StringComparison.Ordinal
                 )) {
                 throw new DerivedArtifactSetConcurrencyException(
@@ -256,14 +256,14 @@ public sealed class DerivedMemoryOrchestrator {
             policy,
             transaction,
             finalization.AnchorSetups,
-            finalization.IncludedSettlements.Select(
+            finalization.IncludedRoles.Select(
                 static settlement =>
                     new DerivedArtifactSetMemberSelection(
                         settlement.RoleId,
                         settlement.ArtifactId
                     )
             ).ToArray(),
-            finalization.ExpectedPreviousSetId
+            transaction.InputSetId
         );
         DerivedArtifactSet published =
             await _repository.ArtifactSets.PublishAsync(
@@ -335,17 +335,17 @@ public sealed class DerivedMemoryOrchestrator {
             )
             || !string.Equals(
                 set.EpochId,
-                finalization.EpochId,
+                transaction.EpochId,
                 StringComparison.Ordinal
             )
             || !string.Equals(
                 set.EpochPlanFingerprint,
-                finalization.EpochPlanFingerprint,
+                transaction.EpochPlanFingerprint,
                 StringComparison.Ordinal
             )
             || !string.Equals(
                 set.PreviousSetId,
-                finalization.ExpectedPreviousSetId,
+                transaction.InputSetId,
                 StringComparison.Ordinal
             )
             || set.AnchorSetups != finalization.AnchorSetups) {
@@ -359,27 +359,27 @@ public sealed class DerivedMemoryOrchestrator {
                 StringComparer.Ordinal
             )
         ];
-        DerivedMemoryRoleSettlement[] settlements = [
-            .. finalization.IncludedSettlements.OrderBy(
-                static settlement => settlement.RoleId,
+        DerivedMemoryFinalizedRole[] finalizedRoles = [
+            .. finalization.IncludedRoles.OrderBy(
+                static role => role.RoleId,
                 StringComparer.Ordinal
             )
         ];
-        if (members.Length != settlements.Length
+        if (members.Length != finalizedRoles.Length
             || members.Where((member, index) =>
                     !string.Equals(
                         member.RoleId,
-                        settlements[index].RoleId,
+                        finalizedRoles[index].RoleId,
                         StringComparison.Ordinal
                     )
                     || !string.Equals(
                         member.ArtifactId,
-                        settlements[index].ArtifactId,
+                        finalizedRoles[index].ArtifactId,
                         StringComparison.Ordinal
                     )
                     || !string.Equals(
                         member.Outcome,
-                        settlements[index].ArtifactOutcome,
+                        finalizedRoles[index].ArtifactOutcome,
                         StringComparison.Ordinal
                     ))
                 .Any()) {

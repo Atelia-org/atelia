@@ -88,9 +88,17 @@ snapshot，并用 `Task.WhenAll` 并行执行尚未 settlement 的独立 roles�
 required role 失败时保留已成功 partial candidates/settlements，但绝不发布半套 set。
 transaction/job identity 包含 policy、topology、完整 role provisioning 与
 candidate/attempt；改变 job 会创建新 transaction，重跑同一 job 只补缺失 role。
-required roles 闭合后先写 immutable finalization intent，冻结 exact included
-settlements、omitted optional roles、expected previous 与 expected set id。reopen
-遇到 intent 时不再运行任何 role：expected set 缺失就续 publish，已存在则 exact
+当前 composition 对每个 durable job 固定 provisioning，调用方必须复用同一
+candidate/attempt identity 才能恢复同一 transaction；跨库 generation 的
+JobFingerprint/TransactionId 与 CandidateId/AttemptId 合并留待独立 generation，不在当前
+transaction/artifact/set id 下原地重解释。
+
+required roles 闭合后先写 immutable finalization v2 intent。它只冻结 transaction id、
+anchor setups、窄 `DerivedMemoryFinalizedRole` 列表（role/artifact/outcome）、omitted optional
+roles 与 expected set id；epoch/job/policy/expected previous 均从 immutable transaction
+联表取得，included role 不再重复 settlement 的 transaction id。v1 finalization 不兼容读取，
+删除 derived 后可重建。reopen 遇到 intent 时不再运行任何 role：expected set 缺失就续
+publish，已存在则 exact
 验证 latest；latest 为该 set 或其同 exact-key 后代时 short-circuit，missing pointer
 通过 unique-tip rebuild 恢复且不回退 descendant，divergent pointer fail-fast。即使
 latest 已继续推进也不会误重开已完成 transaction。ArtifactSet v3
@@ -125,7 +133,9 @@ collision 并 fail-fast。point reads 在 `File.Exists` 前检查完整路径链
 external symlink 不能伪装成 missing。
 
 global/exact validation 通过 `SessionJournalEngine.OpenReadOnly` 检查 raw authority，malformed
-active tail 会 fail-fast 且不 recovery/truncate。validation 会把每个 artifact 与 durable epoch/config 和 exact input set
+active tail 会 fail-fast 且不 recovery/truncate。validation 会把 finalization 与 immutable
+transaction、durable settlements 和 artifacts 联表，重算 role closure、anchor-bound
+candidate 与 expected set identity；随后把每个 artifact 与 durable epoch/config 和 exact input set
 dependency closure 交叉验证，并按 unique raw end 缓存复核 `AnchorSetups`。未被任何
 ArtifactSet 选择、但仍有完整 epoch closure 的 alternative candidate 是合法 orphan；
 缺 epoch 或 dependency snapshot 漂移的 detached artifact 非法。单 role runner 不执行

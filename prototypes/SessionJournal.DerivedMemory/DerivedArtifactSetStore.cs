@@ -200,14 +200,14 @@ public sealed class DerivedArtifactSetStore {
             policy,
             transaction,
             finalization.AnchorSetups,
-            finalization.IncludedSettlements.Select(
+            finalization.IncludedRoles.Select(
                 static settlement =>
                     new DerivedArtifactSetMemberSelection(
                         settlement.RoleId,
                         settlement.ArtifactId
                     )
             ).ToArray(),
-            finalization.ExpectedPreviousSetId
+            transaction.InputSetId
         );
         IReadOnlyDictionary<string, DerivedArtifactSetRoleRequirement> roles =
             policy.ValidateAndSnapshot();
@@ -220,7 +220,11 @@ public sealed class DerivedArtifactSetStore {
                 cancellationToken
             )
             .ConfigureAwait(false);
-        ValidateFinalizationCandidate(finalization, candidate);
+        ValidateFinalizationCandidate(
+            transaction,
+            finalization,
+            candidate
+        );
         return candidate;
     }
 
@@ -245,7 +249,11 @@ public sealed class DerivedArtifactSetStore {
             ?? throw new InvalidDataException(
                 $"Orchestration transaction '{request.Transaction.TransactionId}' is not finalized."
             );
-        ValidateFinalizationCandidate(finalization, candidate);
+        ValidateFinalizationCandidate(
+            request.Transaction,
+            finalization,
+            candidate
+        );
 
         await using FileStream writeLock = await _repository
             .AcquireWriteLockAsync(cancellationToken)
@@ -354,6 +362,7 @@ public sealed class DerivedArtifactSetStore {
     }
 
     private static void ValidateFinalizationCandidate(
+        DerivedMemoryOrchestrationTransaction transaction,
         DerivedMemoryOrchestrationFinalization finalization,
         DerivedArtifactSet candidate
     ) {
@@ -368,7 +377,7 @@ public sealed class DerivedArtifactSetStore {
                 StringComparison.Ordinal
             )
             || !string.Equals(
-                finalization.ExpectedPreviousSetId,
+                transaction.InputSetId,
                 candidate.PreviousSetId,
                 StringComparison.Ordinal
             )
@@ -383,27 +392,27 @@ public sealed class DerivedArtifactSetStore {
                 StringComparer.Ordinal
             )
         ];
-        DerivedMemoryRoleSettlement[] settlements = [
-            .. finalization.IncludedSettlements.OrderBy(
-                static settlement => settlement.RoleId,
+        DerivedMemoryFinalizedRole[] finalizedRoles = [
+            .. finalization.IncludedRoles.OrderBy(
+                static role => role.RoleId,
                 StringComparer.Ordinal
             )
         ];
-        if (members.Length != settlements.Length
+        if (members.Length != finalizedRoles.Length
             || members.Where((member, index) =>
                     !string.Equals(
                         member.RoleId,
-                        settlements[index].RoleId,
+                        finalizedRoles[index].RoleId,
                         StringComparison.Ordinal
                     )
                     || !string.Equals(
                         member.ArtifactId,
-                        settlements[index].ArtifactId,
+                        finalizedRoles[index].ArtifactId,
                         StringComparison.Ordinal
                     )
                     || !string.Equals(
                         member.Outcome,
-                        settlements[index].ArtifactOutcome,
+                        finalizedRoles[index].ArtifactOutcome,
                         StringComparison.Ordinal
                     ))
                 .Any()) {

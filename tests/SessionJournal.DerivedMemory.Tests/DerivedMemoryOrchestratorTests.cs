@@ -1,5 +1,6 @@
 using Atelia.Completion.Abstractions;
 using Atelia.EventJournal;
+using System.Text.Json.Nodes;
 using Xunit;
 
 namespace Atelia.SessionJournal.DerivedMemory.Tests;
@@ -1154,6 +1155,169 @@ public sealed class DerivedMemoryOrchestratorTests : IDisposable {
     }
 
     [Fact]
+    public async Task FinalizationV2Wire_IsBoundedAndOmitsTransactionDerivedFields() {
+        Fixture fixture = await CreateFixtureAsync(roleCount: 1);
+        DerivedMemoryOrchestrationResult result =
+            await new DerivedMemoryOrchestrator(fixture.Repository)
+                .RunAsync(
+                    fixture.Engine,
+                    Request(
+                        fixture,
+                        Execution(
+                            fixture,
+                            0,
+                            new FakeMaintainer(
+                                "alpha-profile",
+                                fixture.Policy.Roles[0].Target,
+                                "alpha"
+                            )
+                        )
+                    )
+                );
+        JsonObject json = JsonNode.Parse(
+            await File.ReadAllTextAsync(
+                FinalizationPath(fixture, result.Transaction)
+            )
+        )!.AsObject();
+
+        Assert.Equal(
+            DerivedMemoryOrchestrationStore.FinalizationSchema,
+            json["schema"]!.GetValue<string>()
+        );
+        Assert.Equal(
+            [
+                "schema",
+                "transactionId",
+                "anchorSetups",
+                "includedRoles",
+                "omittedOptionalRoleIds",
+                "expectedSetId"
+            ],
+            json.Select(static property => property.Key).ToArray()
+        );
+        JsonObject included = Assert.Single(
+            json["includedRoles"]!.AsArray()
+        )!.AsObject();
+        Assert.Equal(
+            ["roleId", "artifactId", "artifactOutcome"],
+            included.Select(static property => property.Key).ToArray()
+        );
+        Assert.Null(included["transactionId"]);
+        Assert.Null(json["jobFingerprint"]);
+        Assert.Null(json["epochId"]);
+        Assert.Null(json["epochPlanFingerprint"]);
+        Assert.Null(json["policyId"]);
+        Assert.Null(json["policyFingerprint"]);
+        Assert.Null(json["expectedPreviousSetId"]);
+    }
+
+    [Fact]
+    public async Task FinalizationV1Wire_IsRejectedWithoutCompatibilityRead() {
+        Fixture fixture = await CreateFixtureAsync(roleCount: 1);
+        DerivedMemoryOrchestrationResult result =
+            await new DerivedMemoryOrchestrator(fixture.Repository)
+                .RunAsync(
+                    fixture.Engine,
+                    Request(
+                        fixture,
+                        Execution(
+                            fixture,
+                            0,
+                            new FakeMaintainer(
+                                "alpha-profile",
+                                fixture.Policy.Roles[0].Target,
+                                "alpha"
+                            )
+                        )
+                    )
+                );
+        string path = FinalizationPath(fixture, result.Transaction);
+        JsonObject json = JsonNode.Parse(
+            await File.ReadAllTextAsync(path)
+        )!.AsObject();
+        json["schema"] =
+            "atelia.session-journal.derived-memory-finalization.v1";
+        await File.WriteAllTextAsync(path, json.ToJsonString());
+
+        await Assert.ThrowsAsync<InvalidDataException>(
+            async () => await fixture.Repository.Orchestrations
+                .TryReadFinalizationAsync(result.Transaction)
+        );
+    }
+
+    [Theory]
+    [InlineData("included-role")]
+    [InlineData("expected-set")]
+    [InlineData("anchor")]
+    [InlineData("omitted-closure")]
+    public async Task StrictValidationRejectsTamperedFinalizationV2(
+        string mutation
+    ) {
+        Fixture fixture = await CreateFixtureAsync(
+            roleCount: 2,
+            secondRequired: false
+        );
+        DerivedMemoryOrchestrationResult result =
+            await new DerivedMemoryOrchestrator(fixture.Repository)
+                .RunAsync(
+                    fixture.Engine,
+                    Request(
+                        fixture,
+                        Execution(
+                            fixture,
+                            0,
+                            new FakeMaintainer(
+                                "alpha-profile",
+                                fixture.Policy.Roles[0].Target,
+                                "alpha"
+                            )
+                        ),
+                        Execution(
+                            fixture,
+                            1,
+                            new FakeMaintainer(
+                                "zeta-profile",
+                                fixture.Policy.Roles[1].Target,
+                                "zeta"
+                            )
+                        )
+                    )
+                );
+        string path = FinalizationPath(fixture, result.Transaction);
+        JsonObject json = JsonNode.Parse(
+            await File.ReadAllTextAsync(path)
+        )!.AsObject();
+        switch (mutation) {
+            case "included-role":
+                json["includedRoles"]!.AsArray()[0]!["roleId"] =
+                    "unknown";
+                break;
+            case "expected-set":
+                json["expectedSetId"] =
+                    "das_" + new string('f', 64);
+                break;
+            case "anchor":
+                json["anchorSetups"]!["runtimeConfig"]![
+                    "payloadSha256"
+                ] = new string('f', 64);
+                break;
+            case "omitted-closure":
+                json["omittedOptionalRoleIds"] = new JsonArray(
+                    JsonValue.Create("zeta")
+                );
+                break;
+            default:
+                throw new InvalidOperationException(mutation);
+        }
+        await File.WriteAllTextAsync(path, json.ToJsonString());
+
+        await Assert.ThrowsAsync<InvalidDataException>(
+            async () => await fixture.Repository
+                .ValidateBranchAgainstOpenEngineAsync(fixture.Engine)
+        );
+    }
+
+    [Fact]
     public async Task ExistingSetWithoutPointerRebuildsPointerOnResume() {
         Fixture fixture = await CreateFixtureAsync(roleCount: 1);
         DerivedMemoryRoleExecution execution = Execution(
@@ -1633,6 +1797,14 @@ public sealed class DerivedMemoryOrchestratorTests : IDisposable {
         Fixture fixture,
         params DerivedMemoryRoleExecution[] roles
     ) => new(fixture.Epoch.EpochId, fixture.Policy, roles);
+
+    private static string FinalizationPath(
+        Fixture fixture,
+        DerivedMemoryOrchestrationTransaction transaction
+    ) => Path.Combine(
+        fixture.Repository.Orchestrations.FinalizationsDirectory,
+        $"{transaction.TransactionId}.json"
+    );
 
     private static DerivedMemoryRoleExecution Execution(
         Fixture fixture,
