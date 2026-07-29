@@ -106,7 +106,7 @@ public sealed class DerivedRecapStoreTests {
             await fixture.Store.SelectNthPreviousAsync(lineage, 0)
         );
         RecapPublishability incomplete =
-            await fixture.Store.CanPublishAsync(anchor, lineage);
+            await fixture.Publisher.CanPublishAsync(anchor);
         Assert.False(incomplete.IsPublishable);
 
         DerivedRecapBlock block =
@@ -117,11 +117,11 @@ public sealed class DerivedRecapStoreTests {
             );
         await fixture.Store.WriteFinalBlockAsync(anchor, block);
         Assert.True(
-            (await fixture.Store.CanPublishAsync(anchor, lineage))
+            (await fixture.Publisher.CanPublishAsync(anchor))
                 .IsPublishable
         );
         PublishedRecapDescriptor published =
-            await fixture.Store.PublishAsync(anchor, lineage);
+            await fixture.Publisher.PublishAsync(anchor);
 
         var selected =
             Assert.IsType<DerivedRecapSelection.Selected>(
@@ -164,7 +164,7 @@ public sealed class DerivedRecapStoreTests {
         );
 
         IOException observed = await Assert.ThrowsAsync<IOException>(
-            async () => await fixture.Store.PublishAsync(anchor, lineage)
+            async () => await fixture.Publisher.PublishAsync(anchor)
         );
         Assert.Same(simulatedCrash, observed);
         Assert.IsType<DerivedRecapSelection.EmptyLineage>(
@@ -175,7 +175,11 @@ public sealed class DerivedRecapStoreTests {
             fixture.Path,
             fixture.Engine.BranchRefId
         );
-        _ = await reopened.PublishAsync(anchor, lineage);
+        var reopenedPublisher = new DerivedRecapPublisher(
+            reopened,
+            fixture.Engine
+        );
+        _ = await reopenedPublisher.PublishAsync(anchor);
         Assert.IsType<DerivedRecapSelection.Selected>(
             await reopened.SelectNthPreviousAsync(lineage, 0)
         );
@@ -211,7 +215,7 @@ public sealed class DerivedRecapStoreTests {
         );
         observed.Clear();
 
-        await fixture.Store.PublishAsync(anchor, lineage);
+        await fixture.Publisher.PublishAsync(anchor);
 
         int envelopeInstall = observed.FindIndex(item =>
             item.Point == RecapIoPoint.FileInstalled
@@ -391,7 +395,7 @@ public sealed class DerivedRecapStoreTests {
         );
 
         RecapPublishability result =
-            await fixture.Store.CanPublishAsync(older, lineage);
+            await fixture.Publisher.CanPublishAsync(older);
 
         Assert.False(result.IsPublishable);
         Assert.Contains(
@@ -401,7 +405,7 @@ public sealed class DerivedRecapStoreTests {
         );
         await Assert.ThrowsAsync<InvalidDataException>(
             async () =>
-                await fixture.Store.PublishAsync(older, lineage)
+                await fixture.Publisher.PublishAsync(older)
         );
     }
 
@@ -543,7 +547,7 @@ public sealed class DerivedRecapStoreTests {
 
         await Assert.ThrowsAsync<IOException>(
             async () =>
-                await fixture.Store.PublishAsync(anchor, lineage)
+                await fixture.Publisher.PublishAsync(anchor)
         );
         Assert.Equal(
             "preserve",
@@ -642,7 +646,7 @@ public sealed class DerivedRecapStoreTests {
             DerivedRecapCodec.CreateBlock(plan, anchor, "old");
         await fixture.Store.WriteFinalBlockAsync(anchor, block);
         PublishedRecapDescriptor descriptor =
-            await fixture.Store.PublishAsync(anchor, lineage);
+            await fixture.Publisher.PublishAsync(anchor);
         publicationPath = Path.Combine(
             fixture.Store.GetPublishedPathForTest(anchor),
             "publication.json"

@@ -62,6 +62,18 @@ public sealed class SessionJournalEngine : IDisposable {
         return _journal.GetHead(_branchRefId);
     }
 
+    internal bool MoveCurrentHeadForTest(
+        EventAddress expectedOldHead,
+        EventAddress newHead
+    ) {
+        ThrowIfDisposed();
+        return _journal.MoveRef(
+            _branchRefId,
+            expectedOldHead,
+            newHead
+        ).Unwrap();
+    }
+
     internal GoverningSetupResolutionDiagnostics LastGoverningSetupResolutionDiagnostics
         => _lastGoverningSetupResolutionDiagnostics;
 

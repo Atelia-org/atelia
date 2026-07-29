@@ -7,7 +7,13 @@ namespace Atelia.SessionJournal.DerivedRecap.Store;
 internal sealed record RecapStoreTestHooks(
     Action? AfterPublicationSealed = null,
     Action? BeforePublishedPromotion = null,
+    Action? AfterPublishedPromotion = null,
     Action? BeforeMaterializationEnvelopeRecheck = null,
+    Action? BeforeRootCommit = null,
+    Action? AfterRootCommit = null,
+    Action? AfterResetQuarantine = null,
+    Action? AfterResetNewRootCommit = null,
+    Action? BeforePublicationSealInstall = null,
     Action<RecapIoPoint, string>? IoObserver = null
 );
 
@@ -90,7 +96,10 @@ public sealed class DerivedRecapStore {
                 $"DerivedRecap Store already exists for RefId {RefId}."
             );
         }
-        await CreateRootCoreAsync(cancellationToken)
+        await CreateRootCoreAsync(
+                isReset: false,
+                cancellationToken
+            )
             .ConfigureAwait(false);
     }
 
@@ -122,8 +131,12 @@ public sealed class DerivedRecapStore {
                 File.Move(_storeRoot, quarantine, overwrite: false);
             }
             _fileSystem.FlushDirectory(_refsRoot);
+            _testHooks.AfterResetQuarantine?.Invoke();
         }
-        await CreateRootCoreAsync(cancellationToken)
+        await CreateRootCoreAsync(
+                isReset: true,
+                cancellationToken
+            )
             .ConfigureAwait(false);
     }
 
@@ -296,7 +309,13 @@ public sealed class DerivedRecapStore {
             .ConfigureAwait(false);
     }
 
-    public async ValueTask<RecapPublishability> CanPublishAsync(
+    /// <summary>
+    /// Diagnoses one caller-supplied lineage snapshot. This is not a
+    /// publication authority; public publication must go through
+    /// <see cref="DerivedRecapPublisher"/>.
+    /// </summary>
+    internal async ValueTask<RecapPublishability>
+        DiagnosePublishabilityAsync(
         EventAddress admissionAnchor,
         SessionCurrentLineageSnapshot currentLineage,
         CancellationToken cancellationToken = default
@@ -323,12 +342,15 @@ public sealed class DerivedRecapStore {
             .ConfigureAwait(false);
     }
 
-    public async ValueTask<PublishedRecapDescriptor> PublishAsync(
+    internal async ValueTask<PublishedRecapDescriptor>
+        PublishTrustedAsync(
         EventAddress admissionAnchor,
         SessionCurrentLineageSnapshot currentLineage,
+        Func<EventAddress?> readCurrentHead,
         CancellationToken cancellationToken = default
     ) {
         ArgumentNullException.ThrowIfNull(currentLineage);
+        ArgumentNullException.ThrowIfNull(readCurrentHead);
         EnsureScaffolding();
         await using FileStream writeLock =
             await _fileSystem.AcquireExclusiveLockAsync(
@@ -405,6 +427,7 @@ public sealed class DerivedRecapStore {
                         cancellationToken
                     )
                     .ConfigureAwait(false);
+            _testHooks.BeforePublicationSealInstall?.Invoke();
             _fileSystem.InstallTemporaryFileCreateNew(
                 temporaryPath,
                 publicationPath
@@ -425,12 +448,22 @@ public sealed class DerivedRecapStore {
                 .ConfigureAwait(false);
         ThrowIfNotPublishable(final);
         _testHooks.BeforePublishedPromotion?.Invoke();
+        EventAddress? authoritativeHead = readCurrentHead();
+        if (authoritativeHead != currentLineage.CapturedHead) {
+            throw new InvalidOperationException(
+                "Raw SessionJournal head changed before Recap "
+                + "publication promotion. Expected "
+                + $"'{currentLineage.CapturedHead}', observed "
+                + $"'{authoritativeHead}'."
+            );
+        }
 
         string publishedPath = GetPublishedPath(admissionAnchor);
         _fileSystem.MoveDirectoryCreateNew(
             buildPath,
             publishedPath
         );
+        _testHooks.AfterPublishedPromotion?.Invoke();
         _fileSystem.FlushDirectory(_buildingRoot);
         _fileSystem.FlushDirectory(_publishedRoot);
         return new PublishedRecapDescriptor(
@@ -662,6 +695,7 @@ public sealed class DerivedRecapStore {
     }
 
     private async ValueTask CreateRootCoreAsync(
+        bool isReset,
         CancellationToken cancellationToken
     ) {
         string stagingPath = Path.Combine(
@@ -682,10 +716,15 @@ public sealed class DerivedRecapStore {
             )
             .ConfigureAwait(false);
         _fileSystem.FlushDirectory(stagingPath);
+        _testHooks.BeforeRootCommit?.Invoke();
         _fileSystem.MoveDirectoryCreateNew(
             stagingPath,
             _storeRoot
         );
+        _testHooks.AfterRootCommit?.Invoke();
+        if (isReset) {
+            _testHooks.AfterResetNewRootCommit?.Invoke();
+        }
         _fileSystem.FlushDirectory(_refsRoot);
     }
 

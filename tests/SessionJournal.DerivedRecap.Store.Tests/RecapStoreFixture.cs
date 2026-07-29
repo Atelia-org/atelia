@@ -12,11 +12,13 @@ internal sealed class RecapStoreFixture : IDisposable {
         Path = path;
         Engine = engine;
         Store = store;
+        Publisher = new DerivedRecapPublisher(store, engine);
     }
 
     public string Path { get; }
     public SessionJournalEngine Engine { get; private set; }
     public DerivedRecapStore Store { get; }
+    public DerivedRecapPublisher Publisher { get; private set; }
 
     public static async ValueTask<RecapStoreFixture> CreateAsync(
         RecapStoreTestHooks? hooks = null,
@@ -84,7 +86,7 @@ internal sealed class RecapStoreFixture : IDisposable {
             anchor,
             DerivedRecapCodec.CreateBlock(plan, anchor, content)
         );
-        return await Store.PublishAsync(anchor, Lineage());
+        return await Publisher.PublishAsync(anchor);
     }
 
     public RecapBlockPlan CreateMaintainPlan(
@@ -120,6 +122,7 @@ internal sealed class RecapStoreFixture : IDisposable {
     public void ReopenEngine() {
         Engine.Dispose();
         Engine = SessionJournalEngine.Open(Path);
+        Publisher = new DerivedRecapPublisher(Store, Engine);
     }
 
     public void Dispose() {

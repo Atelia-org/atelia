@@ -16,6 +16,8 @@
 
   <ItemGroup>
     <ProjectReference Include="../../prototypes/SessionJournal.DerivedRecap.Store/SessionJournal.DerivedRecap.Store.csproj" />
+    <ProjectReference Include="../SessionJournal.DerivedRecap.Store.CrashHarness/SessionJournal.DerivedRecap.Store.CrashHarness.csproj"
+                      ReferenceOutputAssembly="false" />
   </ItemGroup>
 
 </Project>
