@@ -7,8 +7,8 @@
 > **目标设计**：
 > [Event-addressed Derived Recap V4](event-addressed-derived-recap-v4-target-design.md)
 > **兼容策略**：不迁移、不双写、不读取 current DerivedMemory v2/v3
-> **当前推进点**：R0 Contracts + Publish/Read vertical、R1 Planner +
-> Build/Resume vertical 已完成；R2 尚未启动
+> **当前推进点**：R0、R1 已完成；R2 Exact-slot Restore + Online lifecycle
+> 已完成 package-local plan lock，正在实施 R2A Store restore substrate
 
 ## 0. 原则
 
@@ -508,6 +508,99 @@ raw growth
 
 Galatea 可以多 epoch运行，Published damage不改变 ordinal，Restore没有演化成 transaction、scrub
 或 recursive dependency workflow。
+
+### R2 package-local plan lock（2026-07-30）
+
+R2 不把 Building Resume 与 Published Restore 合并成一个 phase-neutral public workflow。两者只
+共享 pure block/plan validator、history-window preparation与 durable atomic-replace primitive：
+
+```text
+Building Resume
+  authority = building/manifest.json
+  membership 尚未建立
+
+Published Restore
+  authority = published/publication.json
+  membership 始终保留
+  component replace 后、envelope replace 前 exact slot仍 not-ready
+```
+
+按依赖顺序实施：
+
+| 包 | 范围 | 独立验收 |
+|---|---|---|
+| **R2A Published restore substrate** | exact authority inspection、manifest envelope-loss witness、per-block capability/pending replacement、Published checkpoint/final CAS、full revalidation与 envelope-last commit | block-first/envelope-last crash、old/new descriptor、strict ordinal不变、coherent authority conflict不 fallback |
+| **R2B bounded Restore executor** | ephemeral `RestorePlan / RestoreUnavailable`、Keep/AdoptPending/InstallCheckpoint/ResumeSuffix/ReplayBlock、pending-only raw windows、engine-bound final raw-head gate | healthy/pending 0 call、earlier checkpoint只补 suffix、缺 source稳定 unavailable、head race留下可复用 pending但不安装 envelope |
+| **R2C online lifecycle** | authoritative configured ordinal、latest prerequisite restore、R1 Run、configured exact-slot restore、single reselect、candidate-source facade | latest/middle invalid exact repair、不 fallback/不重编号/不循环、Prepared reopen不访问 Store |
+| **R2D acceptance + review** | process crash、envelope-loss、descriptor ETag、Prepared Store deletion、fidelity/simplification review | P0/P1关闭，未出现 scrub/job/scheduler/recursive repair |
+
+#### Restore authority winner
+
+`publication.json` 分为三类，winner规则不可由 Planner猜测：
+
+1. **Healthy exact authority**：envelope能 canonical decode、自校验，且 `RefId +
+   SetAdmissionAnchor` 与 exact directory一致。它始终是唯一 frozen-plan authority；即使 blocks、
+   inputs、work损坏或 manifest cache冲突，也不得 fallback manifest。
+2. **Missing or non-authoritative damaged envelope**：文件缺失，或 bytes/shape/checksum无法形成一个
+   自校验 publication authority。此时 self-hashed、shape/identity均健康的 co-located manifest可
+   作为一次性的 **envelope-loss restore witness**。
+3. **Coherent authority conflict**：publication自校验健康但 identity/anchor与目录冲突。必须
+   `RestoreUnavailable(AuthorityConflict)`，不得用 manifest掩盖。
+
+manifest witness不是 normal-read authority，也不与 publication形成双真源。它只授权按 exact
+manifest恢复；全部 required frozen inputs和 final blocks必须在 envelope commit 前重新验证。
+publication与 manifest均不可用时 ordinal仍由 directory membership保留，但 RestoreUnavailable。
+
+#### 最小 Published Store API
+
+Store只提供 Published 专用薄操作，不回调 Planner/Maintainer：
+
+```text
+InspectPublishedForRestore(exact anchor + raw lineage)
+  -> handle(authority kind + authority state token + exact frozen plan)
+     + per-block health/capability
+  | RestoreAuthorityUnavailable(defects)
+
+AdvancePublishedCheckpoint(handle + component CAS)
+InstallPublishedReplacement(handle + component CAS)
+CommitPublishedEnvelope(handle + expected component tokens + raw-head gate)
+```
+
+commit在 per-Ref lock 内重新验证 authority token、exact plan、全部 final blocks与 witness所需inputs，
+再从 exact plan和当前 finals生成 publication并 atomic replace envelope last。byte-identical
+publication保持 token；否则旧 descriptor fail-fast。不得移动、删除或重新 promotion
+`published/<anchor>/`。
+
+per-block capability只允许：
+
+- healthy old commitment：Keep；
+- self-check healthy且匹配 exact plan/mode-final的 replacement：AdoptPending；
+- healthy final-endpoint checkpoint：0-call install；
+- healthy earlier checkpoint：ResumeSuffix；
+- checkpoint不可用时，Empty source可 ReplayBlock，Existing需要 frozen input；
+- Inherit final损坏需要 frozen input exact-copy；
+- 缺失 dependency只令该 exact block/plan RestoreUnavailable，不递归修 source。
+
+#### Online lifecycle bounded order
+
+configured `NthPrevious` 只来自 boundary 上 authoritative governing
+`RuntimeConfigSetup.DerivedContext.NthPrevious`。Engine把同一个
+`SessionContextSelectionRequest`传给 lifecycle；Host/Planner不得保存第二份 ordinal。
+
+一次 `PrepareAsync` 最多执行：
+
+```text
+inspect slot 0
+  -> invalid: restore latest once + reselect latest once
+  -> RunAsync once
+  -> inspect configured nth against the new tip
+  -> invalid: restore that exact anchor once + reselect configured nth once
+  -> Ready | stable Backpressure/Unavailable
+```
+
+无循环、无 fallback、无邻居扫描。slot 0 restore只为解除 R1 Run的 latest-source prerequisite；
+configured slot restore只为即将生成的 online request。outer lifecycle与 engine-bound envelope commit
+均复核 raw head。Prepared之后的 recovery不进入 lifecycle，继续完全不读取 Recap Store。
 
 ## 4. R3：Cutover、CLI 与真实验收
 

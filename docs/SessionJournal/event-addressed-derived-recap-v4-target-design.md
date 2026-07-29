@@ -454,6 +454,19 @@ Published Restore：
 - manifest cache 与 publication 都不可用时 ordinal仍保留，但 RestoreUnavailable；
 - selector 不边读边修，online lifecycle 不递归扫描无界 source chain。
 
+authority winner进一步形式化为：
+
+- publication能 canonical decode、自校验且 identity匹配 exact directory时，它始终是唯一 plan
+  authority；manifest cache冲突不参与裁决；
+- publication missing，或 bytes/shape/checksum无法形成自校验 authority时，self-hashed、
+  shape/identity均健康的 manifest只能作为一次性的 **envelope-loss restore witness**；
+- publication自校验健康但 identity/anchor与目录冲突属于 coherent authority conflict，不得
+  fallback manifest；
+- manifest witness不参与 normal eligibility，不形成第二个在线 authority；它只授权按 exact
+  manifest全量重验 frozen inputs/final blocks并重建 envelope；
+- Published Restore使用 Published专用 component CAS 与 envelope-last API；不与 Building Resume
+  合并成带 phase分支的 public workflow，只共享 pure validators和 atomic-replace primitive。
+
 MVP 不做 full-generation scrub 或 proactive self-heal，只做 exact-point validation、selected-slot
 bounded Restore 与显式运维。
 
