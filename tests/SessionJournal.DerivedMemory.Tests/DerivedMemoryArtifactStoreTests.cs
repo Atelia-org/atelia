@@ -23,6 +23,16 @@ public sealed class DerivedMemoryArtifactStoreTests : IDisposable {
                 fixture.Anchor,
                 fixture.Setups
             );
+        // Captured by executing the unchanged fixture at pre-cutover commit
+        // 63738f88; do not regenerate this expected identity from current code.
+        Assert.Equal(
+            "dma_b132ac3b78528f7df347063a73303bf0d6cc9868dcd6a757a9c9770f2797e19b",
+            artifact.ArtifactId
+        );
+        Assert.Equal(
+            "atelia.session-journal.derived-memory-artifact.v2",
+            DerivedMemoryArtifactStore.ArtifactSchema
+        );
 
         Assert.Equal(
             DerivedMemoryArtifactStore.ArtifactSchema,
@@ -37,6 +47,19 @@ public sealed class DerivedMemoryArtifactStoreTests : IDisposable {
                 $"{artifact.ArtifactId}.json"
             ))
         )!;
+        JsonObject persistedObject = persisted.AsObject();
+        Assert.True(persistedObject.ContainsKey("sourceRawHead"));
+        Assert.False(persistedObject.ContainsKey("absorbedThrough"));
+        Assert.Equal(
+            EventAddressTextCodec.Format(artifact.AbsorbedThrough),
+            persisted["sourceRawHead"]!.GetValue<string>()
+        );
+        Assert.True(persistedObject.ContainsKey("memoryPack"));
+        Assert.False(persistedObject.ContainsKey("contextHeaderPack"));
+        Assert.Equal(
+            "atelia.session-journal.memory-pack.snapshot.v2",
+            persisted["memoryPack"]!["schema"]!.GetValue<string>()
+        );
         Assert.NotNull(persisted["rawStartSetups"]);
         Assert.NotNull(persisted["anchorSetups"]);
         Assert.Null(persisted["governingRuntimeConfigSetup"]);

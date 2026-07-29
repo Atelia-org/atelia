@@ -134,6 +134,38 @@ public sealed class DerivedArtifactSetEngineIntegrationTests : IDisposable {
     }
 
     [Fact]
+    public async Task Materialize_RejectsDescriptorSnapshotTokenMismatch() {
+        PublishedFixture fixture = await CreatePublishedFixtureAsync();
+        EventAddress currentHead = ReadRawSnapshot(fixture.Path).Head;
+        SessionContextCandidateSelection selected =
+            await fixture.Provider.SelectAsync(
+                new(currentHead, 0),
+                CancellationToken.None
+            );
+        SessionContextCandidateDescriptor descriptor =
+            Assert.IsType<SessionContextCandidateDescriptor>(
+                selected.Candidate
+            );
+
+        InvalidDataException error =
+            await Assert.ThrowsAsync<InvalidDataException>(
+                async () => await fixture.Provider.MaterializeAsync(
+                    descriptor with {
+                        SnapshotToken = "das_"
+                            + new string('f', 64)
+                    },
+                    CancellationToken.None
+                )
+            );
+
+        Assert.Contains(
+            "changed before materialization",
+            error.Message,
+            StringComparison.Ordinal
+        );
+    }
+
+    [Fact]
     public async Task RewindBehindPublishedSetFailsOnlineValidationAndRebuildWithoutDerivedMutation() {
         PublishedFixture fixture = await CreatePublishedFixtureAsync();
         EventAddress currentHead = ReadRawSnapshot(fixture.Path).Head;

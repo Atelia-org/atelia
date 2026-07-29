@@ -122,6 +122,97 @@ public sealed class SessionContextCandidateProviderRouteTests : IDisposable {
         Assert.Equal(0, client.Calls);
     }
 
+    [Theory]
+    [InlineData(
+        SessionContextCandidateSelectionStatus.ExactPublishedSetInvalid
+    )]
+    [InlineData(
+        SessionContextCandidateSelectionStatus.StoreUnavailable
+    )]
+    public async Task TypedSelectionUnavailable_LifecycleCanHealBeforeObservation(
+        SessionContextCandidateSelectionStatus status
+    ) {
+        string path = NewJournalPath();
+        var client = new ScriptedClient();
+        client.Enqueue(Terminal("healed"));
+        var source = new TestContextCandidateSource {
+            ForcedStatus = status
+        };
+        var lifecycle = new TestContextLifecycle();
+        using var engine = SessionJournalEngine.Create(
+            path,
+            CreateOptions(),
+            CreateRuntime(client, source) with {
+                ContextLifecycle = lifecycle
+            }
+        );
+        TestContextCandidateFixture fixture =
+            ContextCandidateTestFixture.CreateAtCurrentHead(engine);
+        lifecycle.OnPrepare = (_, _) => {
+            source.ForcedStatus = null;
+            source.Candidate = fixture.Candidate;
+        };
+
+        TurnResult outcome = await engine.SendAsync(
+            "heal before append",
+            CancellationToken.None
+        );
+
+        Assert.Equal("healed", outcome.Message.GetFlattenedText());
+        Assert.Equal(2, lifecycle.InvocationCount);
+        Assert.True(source.SelectionCount >= 2);
+        Assert.True(source.MaterializationCount >= 1);
+        Assert.Equal(1, client.Calls);
+    }
+
+    [Theory]
+    [InlineData(
+        SessionContextCandidateSelectionStatus.ExactPublishedSetInvalid,
+        SessionJournalNotReadyReason.ContextCandidateInvalid
+    )]
+    [InlineData(
+        SessionContextCandidateSelectionStatus.StoreUnavailable,
+        SessionJournalNotReadyReason.ContextStoreUnavailable
+    )]
+    public async Task TypedSelectionUnavailable_AfterLifecycleRemainsNotReady(
+        SessionContextCandidateSelectionStatus status,
+        SessionJournalNotReadyReason expectedReason
+    ) {
+        string path = NewJournalPath();
+        var client = new ScriptedClient();
+        var source = new TestContextCandidateSource {
+            ForcedStatus = status,
+            SelectionDetail = "still unavailable"
+        };
+        var lifecycle = new TestContextLifecycle();
+        using var engine = SessionJournalEngine.Create(
+            path,
+            CreateOptions(),
+            CreateRuntime(client, source) with {
+                ContextLifecycle = lifecycle
+            }
+        );
+        _ = ContextCandidateTestFixture.CreateAtCurrentHead(engine);
+        EventAddress head =
+            engine.InspectExecutionBoundary().Head!.Value;
+
+        SessionJournalNotReadyException error =
+            await Assert.ThrowsAsync<SessionJournalNotReadyException>(
+                () => engine.SendAsync(
+                    "must remain ephemeral",
+                    CancellationToken.None
+                )
+            );
+
+        Assert.Equal(expectedReason, error.Reason);
+        Assert.Contains("still unavailable", error.Message);
+        Assert.Equal(1, lifecycle.InvocationCount);
+        Assert.Equal(2, source.SelectionCount);
+        Assert.Equal(0, source.MaterializationCount);
+        Assert.Equal(head, engine.InspectExecutionBoundary().Head);
+        Assert.Equal(0, client.Calls);
+    }
+
     [Fact]
     public async Task InvalidCanonicalRequestByteGuard_FailsBeforeObservationOrSelection() {
         string path = NewJournalPath();

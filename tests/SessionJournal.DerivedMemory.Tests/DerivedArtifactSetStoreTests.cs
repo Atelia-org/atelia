@@ -1,3 +1,4 @@
+using System.Text.Json.Nodes;
 using Atelia.Completion.Abstractions;
 using Atelia.EventJournal;
 using Xunit;
@@ -17,6 +18,12 @@ public sealed class DerivedArtifactSetStoreTests : IDisposable {
                 fixture.Engine,
                 fixture.Publication()
             );
+        // Captured by executing the unchanged fixture at pre-cutover commit
+        // 63738f88; do not regenerate this expected identity from current code.
+        Assert.Equal(
+            "das_735831a86cb85f73141ed578219e09b170e9c0ee61b5967b55fa1a8e1529f9cf",
+            set.SetId
+        );
 
         Assert.Equal(
             DerivedArtifactSetStore.SetSchema,
@@ -40,6 +47,20 @@ public sealed class DerivedArtifactSetStoreTests : IDisposable {
                 DerivedMemoryArtifactOutcomes.Changed,
                 member.Outcome
             ));
+        JsonNode persisted = JsonNode.Parse(
+            await File.ReadAllTextAsync(Path.Combine(
+                fixture.Repository.ArtifactSets.SetsDirectory,
+                $"{set.SetId}.json"
+            ))
+        )!;
+        JsonObject firstMember =
+            persisted["members"]!.AsArray()[0]!.AsObject();
+        Assert.True(firstMember.ContainsKey("sourceRawHead"));
+        Assert.False(firstMember.ContainsKey("absorbedThrough"));
+        Assert.Equal(
+            EventAddressTextCodec.Format(set.Members[0].AbsorbedThrough),
+            firstMember["sourceRawHead"]!.GetValue<string>()
+        );
         DerivedArtifactSet reopened =
             await fixture.Repository.ArtifactSets.TryReadExactAsync(
                 set.SetId

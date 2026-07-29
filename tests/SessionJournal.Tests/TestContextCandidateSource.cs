@@ -111,6 +111,15 @@ internal sealed class TestContextCandidateSource : ICoherentContextCandidateSour
                 "The requested test context candidate is unavailable."
             );
         }
+        if (!string.Equals(
+                descriptor.SnapshotToken,
+                $"test-snapshot-{index}",
+                StringComparison.Ordinal
+            )) {
+            throw new InvalidDataException(
+                "The requested test context candidate snapshot changed before materialization."
+            );
+        }
         return ValueTask.FromResult(candidates[index]);
     }
 }
