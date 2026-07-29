@@ -1,7 +1,9 @@
+using System.Security.Cryptography;
 using System.Text;
 using Atelia.Completion.Abstractions;
 using Atelia.EventJournal;
 using Atelia.SessionJournal;
+using Atelia.SessionJournal.Offline;
 
 namespace Atelia.SessionJournal.Cli;
 
@@ -14,7 +16,11 @@ internal sealed record SessionJournalLegacyImportResult(
     int SkippedCompactionCount,
     int SkippedRecapCount,
     SessionRuntimeConfiguration FinalConfiguration,
-    string FinalSystemPrompt,
+    string SystemPromptUtf8Sha256CodecId,
+    string FinalSystemPromptUtf8Sha256,
+    string HistorySemanticCommitmentCodecId,
+    string ExpectedHistorySemanticCommitmentSha256,
+    EventAddress FinalHead,
     IReadOnlyList<SessionJournalLegacyImportMapping> Mappings
 );
 
@@ -80,6 +86,7 @@ internal static class SessionJournalLegacyImporter {
         int skippedCompactionCount = 0;
         int skippedRecapCount = 0;
         string apiSpecId = "legacy-upgrade-export";
+        var historyContributionHashes = new List<string>();
 
         try {
             foreach (LegacyChatSessionEvent replayEvent in eventSource.Events) {
@@ -107,7 +114,10 @@ internal static class SessionJournalLegacyImporter {
                             replayEvent.Ordinal,
                             replayEvent.Kind,
                             SessionEventKind.SessionCreated.ToString(),
-                            engine.Project().Head ?? throw new InvalidDataException("created SessionJournal has no head.")
+                            engine.InspectExecutionBoundary().Head
+                                ?? throw new InvalidDataException(
+                                    "created SessionJournal has no head."
+                                )
                         ));
                         foreach (
                             LegacyChatSessionMessage message in
@@ -116,9 +126,20 @@ internal static class SessionJournalLegacyImporter {
                         ) {
                             switch (message.Kind) {
                                 case LegacyMessageKindObservation: {
+                                    string observationContent =
+                                        message.Content ?? string.Empty;
+                                    var observation = new ObservationMessage(
+                                        observationContent
+                                    );
+                                    historyContributionHashes.Add(
+                                        SessionHistorySemanticCommitment
+                                            .ComputeObservationContributionSha256(
+                                                observation
+                                            )
+                                    );
                                     EventAddress address =
                                         engine.AppendObservation(
-                                            message.Content ?? string.Empty
+                                            observationContent
                                         );
                                     observationCount++;
                                     mappings.Add(
@@ -134,9 +155,17 @@ internal static class SessionJournalLegacyImporter {
                                     break;
                                 }
                                 case LegacyMessageKindAction: {
+                                    ActionMessage action =
+                                        ToActionMessage(message);
+                                    historyContributionHashes.Add(
+                                        SessionHistorySemanticCommitment
+                                            .ComputeActionContributionSha256(
+                                                action
+                                            )
+                                    );
                                     EventAddress address =
                                         engine.AppendImportedAgentAction(
-                                            ToActionMessage(message),
+                                            action,
                                             ToCompletionDescriptor(
                                                 currentConfiguration,
                                                 apiSpecId
@@ -167,7 +196,22 @@ internal static class SessionJournalLegacyImporter {
                         foreach (LegacyChatSessionMessage message in RequireMessages(replayEvent.AppendedMessages, replayEvent.Kind, replayEvent.Ordinal)) {
                             switch (message.Kind) {
                                 case LegacyMessageKindObservation: {
-                                    EventAddress address = engine.AppendObservation(message.Content ?? string.Empty);
+                                    string observationContent =
+                                        message.Content ?? string.Empty;
+                                    var observation =
+                                        new ObservationMessage(
+                                            observationContent
+                                        );
+                                    historyContributionHashes.Add(
+                                        SessionHistorySemanticCommitment
+                                            .ComputeObservationContributionSha256(
+                                                observation
+                                            )
+                                    );
+                                    EventAddress address =
+                                        engine.AppendObservation(
+                                            observationContent
+                                        );
                                     observationCount++;
                                     mappings.Add(new SessionJournalLegacyImportMapping(
                                         replayEvent.Ordinal,
@@ -178,8 +222,16 @@ internal static class SessionJournalLegacyImporter {
                                     break;
                                 }
                                 case LegacyMessageKindAction: {
+                                    ActionMessage action =
+                                        ToActionMessage(message);
+                                    historyContributionHashes.Add(
+                                        SessionHistorySemanticCommitment
+                                            .ComputeActionContributionSha256(
+                                                action
+                                            )
+                                    );
                                     EventAddress address = engine.AppendImportedAgentAction(
-                                        ToActionMessage(message),
+                                        action,
                                         ToCompletionDescriptor(
                                             currentConfiguration ?? throw new InvalidDataException("model-turn appeared before initial configuration."),
                                             apiSpecId
@@ -233,6 +285,11 @@ internal static class SessionJournalLegacyImporter {
         }
 
         if (engine is null || currentConfiguration is null || currentSystemPrompt is null) { throw new InvalidDataException("legacy export did not contain an initial-state event."); }
+        EventAddress finalHead =
+            engine.InspectExecutionBoundary().Head
+            ?? throw new InvalidDataException(
+                "imported SessionJournal has no final head."
+            );
         engine.Dispose();
 
         return new SessionJournalLegacyImportResult(
@@ -244,7 +301,14 @@ internal static class SessionJournalLegacyImporter {
             skippedCompactionCount,
             skippedRecapCount,
             currentConfiguration,
-            currentSystemPrompt,
+            SessionJournalOfflineValidator
+                .SystemPromptUtf8Sha256CodecId,
+            ComputeUtf8Sha256(currentSystemPrompt),
+            SessionHistorySemanticCommitment.CodecId,
+            SessionHistorySemanticCommitment.ComputeSequenceSha256(
+                historyContributionHashes
+            ),
+            finalHead,
             mappings.AsReadOnly()
         );
     }
@@ -398,31 +462,403 @@ internal static class SessionJournalLegacyImporter {
         }
     }
 
-    public static void VerifyImportedRepo(string outputPath, SessionJournalLegacyImportResult expected) {
-        using var reopened = SessionJournalEngine.Open(outputPath);
-        SessionProjection projection = reopened.Project();
-        int observations = projection.Context
-            .OfType<ObservationMessage>()
-            .Count();
-        int actions = projection.Context.OfType<ActionMessage>().Count();
+    public static void VerifyImportedRepo(
+        string outputPath,
+        SessionJournalLegacyImportResult expected
+    ) {
+        ArgumentException.ThrowIfNullOrWhiteSpace(outputPath);
+        ArgumentNullException.ThrowIfNull(expected);
 
-        if (observations != expected.ObservationCount) {
-            throw new InvalidDataException($"import smoke failed: projected observation count {observations} != imported {expected.ObservationCount}.");
+        SessionJournalOfflineValidationReport report =
+            SessionJournalOfflineValidator.ValidateAsync(
+                outputPath,
+                SessionJournalDefaults.MainBranchName
+            ).GetAwaiter().GetResult();
+
+        if (!string.Equals(
+                report.Schema,
+                SessionJournalOfflineValidator.ReportSchema,
+                StringComparison.Ordinal
+            )) {
+            throw ImportVerificationError(
+                $"offline report schema '{report.Schema}' is unsupported"
+            );
+        }
+        if (!string.Equals(
+                report.BranchName,
+                SessionJournalDefaults.MainBranchName,
+                StringComparison.Ordinal
+            )) {
+            throw ImportVerificationError(
+                $"validated branch '{report.BranchName}' is not main"
+            );
+        }
+        string expectedHeadText =
+            EventAddressTextCodec.Format(expected.FinalHead);
+        if (!string.Equals(
+                report.Head,
+                expectedHeadText,
+                StringComparison.Ordinal
+            )) {
+            throw ImportVerificationError(
+                $"validated head {report.Head ?? "(none)"} does not "
+                + $"match source-derived final head {expectedHeadText}"
+            );
+        }
+        if (report.ExecutionPhase != SessionExecutionPhase.Idle) {
+            throw ImportVerificationError(
+                $"final phase is {report.ExecutionPhase}, expected Idle"
+            );
+        }
+        if (report.HeadKind is not (
+                SessionEventKind.SessionCreated
+                or SessionEventKind.SystemPromptSetup
+                or SessionEventKind.ImportedAgentAction
+            )) {
+            throw ImportVerificationError(
+                $"final head kind {report.HeadKind?.ToString() ?? "(none)"} "
+                + "is not a legal settled legacy-import boundary"
+            );
+        }
+        if (report.ToolExecutionSequenceCheckpoint != 0) {
+            throw ImportVerificationError(
+                "final tool execution sequence checkpoint is not zero"
+            );
         }
 
-        if (actions != expected.AgentActionCount) {
-            throw new InvalidDataException($"import smoke failed: projected action count {actions} != imported {expected.AgentActionCount}.");
+        RequireImportCount(
+            "observation",
+            report.ObservationCount,
+            expected.ObservationCount
+        );
+        RequireImportCount(
+            "agent action",
+            report.AgentActionCount,
+            expected.AgentActionCount
+        );
+        RequireImportCount(
+            "imported agent action",
+            report.ImportedAgentActionCount,
+            expected.AgentActionCount
+        );
+        RequireImportCount(
+            "history contribution",
+            report.HistoryContributionCount,
+            checked(
+                expected.ObservationCount
+                + expected.AgentActionCount
+            )
+        );
+        RequireImportCount(
+            "Prepared request",
+            report.PreparedRequestCount,
+            0
+        );
+        RequireImportCount(
+            "tool-result history",
+            report.ToolResultHistoryCount,
+            0
+        );
+
+        var expectedEventKindCounts =
+            new Dictionary<SessionEventKind, int> {
+                [SessionEventKind.RuntimeConfigSetup] =
+                    expected.RuntimeConfigSetupCount,
+                [SessionEventKind.SystemPromptSetup] =
+                    expected.SystemPromptSetupCount,
+                [SessionEventKind.SessionCreated] =
+                    expected.SessionCreatedCount,
+                [SessionEventKind.ObservationAccepted] =
+                    expected.ObservationCount,
+                [SessionEventKind.ImportedAgentAction] =
+                    expected.AgentActionCount
+            };
+        expectedEventKindCounts = expectedEventKindCounts
+            .Where(static pair => pair.Value != 0)
+            .ToDictionary(
+                static pair => pair.Key,
+                static pair => pair.Value
+            );
+        Dictionary<SessionEventKind, int> actualEventKindCounts =
+            report.EventKindCounts.ToDictionary(
+                static entry => entry.Kind,
+                static entry => entry.Count
+            );
+        if (!expectedEventKindCounts.OrderBy(static pair => pair.Key)
+            .SequenceEqual(
+                actualEventKindCounts.OrderBy(static pair => pair.Key)
+            )) {
+            throw ImportVerificationError(
+                "event-kind counts do not exactly match import counters"
+            );
+        }
+        int expectedEventCount = checked(
+            expected.SessionCreatedCount
+            + expected.RuntimeConfigSetupCount
+            + expected.SystemPromptSetupCount
+            + expected.ObservationCount
+            + expected.AgentActionCount
+        );
+        RequireImportCount(
+            "event",
+            report.EventCount,
+            expectedEventCount
+        );
+
+        if (report.RuntimeConfig != expected.FinalConfiguration) {
+            throw ImportVerificationError(
+                "final runtime configuration does not match source"
+            );
+        }
+        if (!string.Equals(
+                report.SystemPromptUtf8Sha256CodecId,
+                expected.SystemPromptUtf8Sha256CodecId,
+                StringComparison.Ordinal
+            )
+            || !string.Equals(
+                report.SystemPromptUtf8Sha256,
+                expected.FinalSystemPromptUtf8Sha256,
+                StringComparison.Ordinal
+            )) {
+            throw ImportVerificationError(
+                "final system prompt hash does not match source"
+            );
+        }
+        if (!string.Equals(
+                report.HistorySemanticCommitmentCodecId,
+                expected.HistorySemanticCommitmentCodecId,
+                StringComparison.Ordinal
+            )
+            || !string.Equals(
+                report.HistorySemanticCommitmentSha256,
+                expected.ExpectedHistorySemanticCommitmentSha256,
+                StringComparison.Ordinal
+            )) {
+            throw ImportVerificationError(
+                "semantic history commitment does not match source"
+            );
         }
 
-        if (projection.Config is null) { throw new InvalidDataException("import smoke failed: projection is missing final config."); }
-        if (!Equals(projection.Config, expected.FinalConfiguration)) {
-            throw new InvalidDataException("import smoke failed: projected final config does not match imported final config.");
+        using SessionJournalEngine readOnly =
+            SessionJournalEngine.OpenReadOnly(
+                outputPath,
+                SessionJournalDefaults.MainBranchName
+            );
+        if (!string.Equals(
+                report.BranchRefId,
+                readOnly.BranchRefId.ToHexString(),
+                StringComparison.Ordinal
+            )
+            || !string.Equals(
+                report.BranchName,
+                readOnly.BranchName,
+                StringComparison.Ordinal
+            )) {
+            throw ImportVerificationError(
+                "validated branch identity does not match the current "
+                + "main branch ref"
+            );
         }
+        SessionExecutionBoundaryInspection boundary =
+            readOnly.InspectExecutionBoundary();
+        if (boundary.Head != expected.FinalHead
+            || boundary.Phase != report.ExecutionPhase
+            || boundary.HeadKind != report.HeadKind) {
+            throw ImportVerificationError(
+                "current exact execution boundary does not match "
+                + "the validated report and source-derived final head"
+            );
+        }
+        SessionCurrentLineageSnapshot lineage =
+            readOnly.ReadCurrentLineageHeaders();
+        if (lineage.CapturedHead != expected.FinalHead
+            || lineage.HeadToRoot.Count != report.EventCount) {
+            throw ImportVerificationError(
+                "captured current lineage does not match validated "
+                + "head/event count"
+            );
+        }
+        ValidateMappings(expected, lineage);
 
-        if (!string.Equals(projection.SystemPrompt, expected.FinalSystemPrompt, StringComparison.Ordinal)) {
-            throw new InvalidDataException("import smoke failed: projected final system prompt does not match imported final system prompt.");
+        SessionGoverningSetup setup =
+            readOnly.ResolveGoverningSetup(expected.FinalHead);
+        if (setup.RuntimeConfig != expected.FinalConfiguration
+            || !string.Equals(
+                ComputeUtf8Sha256(setup.SystemPrompt),
+                expected.FinalSystemPromptUtf8Sha256,
+                StringComparison.Ordinal
+            )
+            || !string.Equals(
+                report.RuntimeConfigSetup,
+                EventAddressTextCodec.Format(
+                    setup.RuntimeConfigSetupAddress
+                ),
+                StringComparison.Ordinal
+            )
+            || !string.Equals(
+                report.SystemPromptSetup,
+                EventAddressTextCodec.Format(
+                    setup.SystemPromptSetupAddress
+                ),
+                StringComparison.Ordinal
+            )) {
+            throw ImportVerificationError(
+                "exact-head governing setup does not match source/report"
+            );
         }
     }
+
+    private static void ValidateMappings(
+        SessionJournalLegacyImportResult expected,
+        SessionCurrentLineageSnapshot lineage
+    ) {
+        int expectedMappingCount = checked(
+            expected.SessionCreatedCount
+            + expected.ObservationCount
+            + expected.AgentActionCount
+            + expected.SystemPromptSetupCount
+            - 1
+        );
+        RequireImportCount(
+            "mapping",
+            expected.Mappings.Count,
+            expectedMappingCount
+        );
+        if (expected.Mappings.Count == 0) {
+            throw ImportVerificationError(
+                "import result has no SessionCreated mapping"
+            );
+        }
+        if (expected.Mappings[^1].EventAddress
+            != expected.FinalHead) {
+            throw ImportVerificationError(
+                "final mapping does not identify the final imported head"
+            );
+        }
+
+        var lineageByAddress =
+            new Dictionary<
+                EventAddress,
+                (SessionCurrentLineageHeader Header, int Index)
+            >();
+        for (int index = 0;
+             index < lineage.HeadToRoot.Count;
+             index++) {
+            SessionCurrentLineageHeader header =
+                lineage.HeadToRoot[index];
+            if (!lineageByAddress.TryAdd(
+                    header.Address,
+                    (header, index)
+                )) {
+                throw ImportVerificationError(
+                    $"current lineage repeats address {header.Address}"
+                );
+            }
+        }
+
+        var mappedAddresses = new HashSet<EventAddress>();
+        var mappedKindCounts =
+            new Dictionary<SessionEventKind, int>();
+        int previousHeadToRootIndex = lineage.HeadToRoot.Count;
+        foreach (
+            SessionJournalLegacyImportMapping mapping
+            in expected.Mappings
+        ) {
+            if (!mappedAddresses.Add(mapping.EventAddress)) {
+                throw ImportVerificationError(
+                    $"mapping repeats address {mapping.EventAddress}"
+                );
+            }
+            if (!lineageByAddress.TryGetValue(
+                    mapping.EventAddress,
+                    out var located
+                )) {
+                throw ImportVerificationError(
+                    $"mapping address {mapping.EventAddress} is not "
+                    + "on the captured current lineage"
+                );
+            }
+            if (!Enum.TryParse(
+                    mapping.SessionEventKind,
+                    ignoreCase: false,
+                    out SessionEventKind mappedKind
+                )
+                || !string.Equals(
+                    mappedKind.ToString(),
+                    mapping.SessionEventKind,
+                    StringComparison.Ordinal
+                )
+                || located.Header.Kind != mappedKind) {
+                throw ImportVerificationError(
+                    $"mapping kind '{mapping.SessionEventKind}' does "
+                    + $"not match raw event {mapping.EventAddress}"
+                );
+            }
+            if (located.Index >= previousHeadToRootIndex) {
+                throw ImportVerificationError(
+                    "mapping addresses are not strictly ordered from "
+                    + "root toward final head"
+                );
+            }
+            previousHeadToRootIndex = located.Index;
+            mappedKindCounts[mappedKind] = checked(
+                mappedKindCounts.GetValueOrDefault(mappedKind) + 1
+            );
+        }
+        if (previousHeadToRootIndex != 0) {
+            throw ImportVerificationError(
+                "final mapping is not the captured current head"
+            );
+        }
+
+        var expectedMappedKindCounts =
+            new Dictionary<SessionEventKind, int> {
+                [SessionEventKind.SessionCreated] =
+                    expected.SessionCreatedCount,
+                [SessionEventKind.ObservationAccepted] =
+                    expected.ObservationCount,
+                [SessionEventKind.ImportedAgentAction] =
+                    expected.AgentActionCount,
+                [SessionEventKind.SystemPromptSetup] =
+                    expected.SystemPromptSetupCount - 1
+            };
+        expectedMappedKindCounts = expectedMappedKindCounts
+            .Where(static pair => pair.Value != 0)
+            .ToDictionary(
+                static pair => pair.Key,
+                static pair => pair.Value
+            );
+        if (!expectedMappedKindCounts.OrderBy(static pair => pair.Key)
+            .SequenceEqual(
+                mappedKindCounts.OrderBy(static pair => pair.Key)
+            )) {
+            throw ImportVerificationError(
+                "mapping event-kind counts do not match import counters"
+            );
+        }
+    }
+
+    private static void RequireImportCount(
+        string name,
+        int actual,
+        int expected
+    ) {
+        if (actual != expected) {
+            throw ImportVerificationError(
+                $"{name} count {actual} does not match imported "
+                + expected
+            );
+        }
+    }
+
+    private static InvalidDataException ImportVerificationError(
+        string message
+    ) => new($"import verification failed: {message}.");
+
+    private static string ComputeUtf8Sha256(string value) =>
+        Convert.ToHexStringLower(
+            SHA256.HashData(Encoding.UTF8.GetBytes(value))
+        );
 
     public static void WriteReport(
         string reportPath,
@@ -450,6 +886,23 @@ internal static class SessionJournalLegacyImporter {
         writer.WriteLine($"- skippedRecaps: `{result.SkippedRecapCount}`");
         writer.WriteLine($"- finalModelId: `{result.FinalConfiguration.ModelId}`");
         writer.WriteLine($"- finalCompletionSurfaceId: `{result.FinalConfiguration.CompletionSurfaceId}`");
+        writer.WriteLine($"- finalHead: `{result.FinalHead}`");
+        writer.WriteLine(
+            "- systemPromptUtf8Sha256CodecId: "
+            + $"`{result.SystemPromptUtf8Sha256CodecId}`"
+        );
+        writer.WriteLine(
+            "- finalSystemPromptUtf8Sha256: "
+            + $"`{result.FinalSystemPromptUtf8Sha256}`"
+        );
+        writer.WriteLine(
+            "- historySemanticCommitmentCodecId: "
+            + $"`{result.HistorySemanticCommitmentCodecId}`"
+        );
+        writer.WriteLine(
+            "- expectedHistorySemanticCommitmentSha256: "
+            + $"`{result.ExpectedHistorySemanticCommitmentSha256}`"
+        );
         writer.WriteLine();
         writer.WriteLine("## Mapping");
         writer.WriteLine();

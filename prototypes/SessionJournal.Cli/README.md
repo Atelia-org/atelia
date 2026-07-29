@@ -34,9 +34,16 @@ SessionJournal 的 tool execution 需要 started/result/checkpoint/correlation
 
 目标目录必须是不存在或为空的目录。`--force` 会先在目标的同级 staging
 repository 完整导入并 reopen 验证，再替换精确目标；发布失败时会尝试恢复旧目录。
+验证不再调用 full `Project()`：importer 从 source message 独立计算版本化 semantic
+history commitment，再用 `SessionJournal.Offline` report 与 read-only exact
+branch/ref/head、lineage、governing setup API 检查 target。验收同时覆盖完整
+event-kind/count histogram、Idle boundary、最终 config/prompt hash、source-vs-target
+semantic commitment，以及每条 legacy mapping 的 raw address/kind/顺序；staging 与
+发布后的 repository 都执行同一检查。
 input/output/report 的路径链都拒绝 symlink/reparse point，且 output 不得包含
 input、report 不得覆盖 input 或位于 output repo 内。报告通过同目录临时文件
-atomic publish。
+atomic publish；报告只记录 setup identity、hash/codec、counts 和 mapping，不复制
+明文 system prompt 或 observation/action 内容。
 
 ## run-memory-maintainer
 

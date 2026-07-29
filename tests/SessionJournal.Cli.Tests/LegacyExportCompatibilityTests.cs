@@ -36,6 +36,8 @@ public sealed class LegacyExportCompatibilityTests : IDisposable {
         string exportedJson = Path.Combine(_tempRoot, "exported.json");
         string sessionJournalRepo =
             Path.Combine(_tempRoot, "session-journal");
+        string importReport =
+            Path.Combine(_tempRoot, "import-report.md");
         File.WriteAllText(
             sourceJson,
             """
@@ -97,26 +99,42 @@ public sealed class LegacyExportCompatibilityTests : IDisposable {
             [
                 "import-legacy-json",
                 "--input", exportedJson,
-                "--output", sessionJournalRepo
+                "--output", sessionJournalRepo,
+                "--report-md", importReport
             ],
             ThrowingCompletionClientFactory.Instance
         );
 
         Assert.Equal(0, exitCode);
-        SJ.SessionProjection projection;
+        SJO.SessionJournalOfflineValidationReport report =
+            await SJO.SessionJournalOfflineValidator.ValidateAsync(
+                sessionJournalRepo
+            );
         int runtimeBodySchemaVersion;
         int runtimeNthPrevious;
-        using (var engine = SJ.SessionJournalEngine.Open(
+        using (var engine = SJ.SessionJournalEngine.OpenReadOnly(
             sessionJournalRepo
         )) {
-            projection = engine.Project();
+            SJ.SessionExecutionBoundaryInspection boundary =
+                engine.InspectExecutionBoundary();
+            Assert.Equal(SJ.SessionExecutionPhase.Idle, boundary.Phase);
+            Assert.Equal(
+                SJ.SessionEventKind.ImportedAgentAction,
+                boundary.HeadKind
+            );
             SJ.SessionGoverningSetup governing =
                 engine.ResolveGoverningSetup(
-                    projection.Head
+                    boundary.Head
                     ?? throw new InvalidDataException(
                         "Imported SessionJournal has no head."
                     )
                 );
+            Assert.Equal("model-a", governing.RuntimeConfig.ModelId);
+            Assert.Equal(
+                "surface-a",
+                governing.RuntimeConfig.CompletionSurfaceId
+            );
+            Assert.Equal("system-a", governing.SystemPrompt);
             runtimeNthPrevious =
                 governing.RuntimeConfig.DerivedContext.NthPrevious;
             using JsonDocument runtimePayload = JsonDocument.Parse(
@@ -130,22 +148,44 @@ public sealed class LegacyExportCompatibilityTests : IDisposable {
         }
         Assert.Equal(2, runtimeBodySchemaVersion);
         Assert.Equal(0, runtimeNthPrevious);
-        Assert.NotNull(projection.Config);
-        Assert.Equal(0, projection.Config.DerivedContext.NthPrevious);
-        Assert.Collection(
-            projection.Context,
-            message => Assert.Equal(
-                "hello",
-                Assert.IsType<ObservationMessage>(message).Content
-            ),
-            message => Assert.Equal(
-                "world",
-                Assert.IsType<ActionMessage>(message)
-                    .GetFlattenedText()
-            )
+        Assert.NotNull(report.RuntimeConfig);
+        Assert.Equal(
+            0,
+            report.RuntimeConfig.DerivedContext.NthPrevious
         );
-        _ = await SJO.SessionJournalOfflineValidator.ValidateAsync(
-            sessionJournalRepo
+        string observationHash =
+            SJ.SessionHistorySemanticCommitment
+                .ComputeObservationContributionSha256(
+                    new ObservationMessage("hello")
+                );
+        string actionHash =
+            SJ.SessionHistorySemanticCommitment
+                .ComputeActionContributionSha256(
+                    new ActionMessage([
+                        new ActionBlock.Text("world")
+                    ])
+                );
+        Assert.Equal(
+            SJ.SessionHistorySemanticCommitment.ComputeSequenceSha256(
+                [observationHash, actionHash]
+            ),
+            report.HistorySemanticCommitmentSha256
+        );
+        string reportMarkdown = File.ReadAllText(importReport);
+        Assert.DoesNotContain(
+            "system-a",
+            reportMarkdown,
+            StringComparison.Ordinal
+        );
+        Assert.DoesNotContain(
+            "hello",
+            reportMarkdown,
+            StringComparison.Ordinal
+        );
+        Assert.DoesNotContain(
+            "world",
+            reportMarkdown,
+            StringComparison.Ordinal
         );
         using EventJournal.EventJournal journal =
             EventJournal.EventJournal.OpenReadOnlyExisting(

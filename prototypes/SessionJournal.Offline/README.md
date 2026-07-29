@@ -25,5 +25,8 @@ identity 都不参与该 hash。地址或执行元数据不同但 history 语义
 commitment；语义内容或 contribution 顺序变化则得到不同 commitment。空 branch 合法；默认
 branch 是 `main`。
 
-本阶段仍保留 core `Project()`、`ReplayHistory()` 与 `SessionReducer`，供后续 P5
-caller/test 迁移包处理；它们不是 Offline validator 的依赖。
+P5-C 的 legacy importer 已从 source message 独立计算同一 public codec，再把期望值与
+target Offline report 比较；因此 import 验收不是 target 自算自证。production
+`Project()` / `ReplayHistory()` caller 已归零，但本阶段仍保留 core public surface 与
+`SessionReducer`，供后续 P5-D 删除及 test-only oracle 收口；它们不是 Offline validator
+或 importer 的依赖。

@@ -290,9 +290,10 @@ SessionJournal offline/test companion
 ```
 
 不能直接删文件后让 untrusted import、offline validation 或 maintainer provenance 失去检查。当前
-production caller 已经很少：online path 和 DerivedMemory/Maintainers 均不调用 full projection，
-`ReplayHistory()` 没有非测试 C# caller；剩余主要是 offline validator、CLI validate 和 legacy importer。
-因此先决定：
+production caller 已经很少：online path 和 DerivedMemory/Maintainers 均不调用 full projection。
+截至 P5-C，legacy importer 已切到 Offline report + exact lineage/setup 验证，production
+`Project()` / `ReplayHistory()` C# caller 均已归零；tests 中仍保留 reference-oracle caller。
+因此 P5-D 再决定：
 
 - 删除 public `Project()`；
 - 用 bounded planning APIs 替代 current `ReplayHistory()` callers；
@@ -631,8 +632,11 @@ keys。
 > P5-B 已将 offline validator 迁入 `Atelia.SessionJournal.Offline` companion，并让 CLI
 > `validate --branch` 使用无 context 物化的 forward audit fold；公开 report 只保留最小
 > phase/setup/counts 与版本化 semantic history/system-prompt hashes，不输出完整 execution
-> state、明文 prompt 或 tool execution/correlation 细节。legacy importer 与
-> `Project()` / `ReplayHistory()` / `SessionReducer` 的迁移和删除仍属于后续 P5 包。
+> state、明文 prompt 或 tool execution/correlation 细节。P5-C 已让 legacy importer
+> 独立计算 source semantic commitment，并用 Offline report + exact branch/ref/head、
+> lineage/mapping 与 governing setup 双重验证 staging/published target；production
+> `Project()` / `ReplayHistory()` caller 已归零。core public surface、`SessionReducer`
+> 与剩余 test oracle 的删除/收口仍属于 P5-D，尚未完成。
 
 目标：
 
@@ -640,13 +644,14 @@ keys。
 - 将仍有价值的 full audit/recovery/import checks 迁入明确 companion boundary；
 - 决定 differential oracle 是保留在 tests、缩成 pure operational fixture，还是删除。
 
-推荐分三步：
+当前分包：
 
-1. 先替换 importer/普通 tests 对 `Project()` 的便捷调用，并删除 public `Project()` /
-   `ReplayHistory()` surface；
-2. 将 reducer/offline validator 迁到正常依赖方向的 offline/recovery project；
-3. 把 full projection 缩成只输出 final setup、execution state、event/message counts 和 diagnostics 的
-   audit fold，不再物化无人消费的完整 context/addressed history。
+1. **P5-A/B 已完成**：建立正常依赖方向的 checked scan 与 Offline forward audit fold；
+2. **P5-C 已完成**：替换 importer 与 CLI tests 的 full projection 便捷 caller，并以
+   source semantic commitment 保持 import 内容真实性；
+3. **P5-D 待办**：迁移/删除剩余 test callers，删除 public `Project()` /
+   `ReplayHistory()` surface 与无生产 caller 的 `SessionReducer`，保留必要的
+   test-only differential oracle。
 
 验收：
 

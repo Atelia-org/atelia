@@ -7,6 +7,7 @@ using Atelia.SessionJournal.Cli;
 using Xunit;
 using Xunit.Sdk;
 using SJ = Atelia.SessionJournal;
+using SJO = Atelia.SessionJournal.Offline;
 
 namespace Atelia.SessionJournal.Cli.Tests;
 
@@ -62,7 +63,7 @@ public sealed class ProgramLegacyImportSafetyTests : IDisposable {
     }
 
     [Fact]
-    public void InitialStateMessagesAreImportedInsteadOfSilentlyDropped() {
+    public async Task InitialStateMessagesAreImportedInsteadOfSilentlyDropped() {
         Directory.CreateDirectory(_tempRoot);
         string inputPath = Path.Combine(_tempRoot, "legacy.json");
         string outputPath = Path.Combine(_tempRoot, "session-journal");
@@ -108,18 +109,221 @@ public sealed class ProgramLegacyImportSafetyTests : IDisposable {
                 SJ.SessionEventKind.SessionCreated
             )
         );
-        using var engine = SJ.SessionJournalEngine.Open(outputPath);
-        Assert.Collection(
-            engine.Project().Context,
-            message => Assert.Equal(
-                "initial observation",
-                Assert.IsType<ObservationMessage>(message).Content
+        SJO.SessionJournalOfflineValidationReport report =
+            await SJO.SessionJournalOfflineValidator.ValidateAsync(
+                outputPath
+            );
+        string expectedObservation =
+            SJ.SessionHistorySemanticCommitment
+                .ComputeObservationContributionSha256(
+                    new ObservationMessage("initial observation")
+                );
+        string expectedAction =
+            SJ.SessionHistorySemanticCommitment
+                .ComputeActionContributionSha256(
+                    new ActionMessage([
+                        new ActionBlock.Text("initial action")
+                    ])
+                );
+        Assert.Equal(
+            SJ.SessionHistorySemanticCommitment.ComputeSequenceSha256(
+                [expectedObservation, expectedAction]
             ),
-            message => Assert.Equal(
-                "initial action",
-                Assert.IsType<ActionMessage>(message)
-                    .GetFlattenedText()
-            )
+            report.HistorySemanticCommitmentSha256
+        );
+        using var inspection =
+            SJ.SessionJournalEngine.OpenReadOnly(outputPath);
+        SJ.SessionExecutionBoundaryInspection boundary =
+            inspection.InspectExecutionBoundary();
+        Assert.Equal(SJ.SessionExecutionPhase.Idle, boundary.Phase);
+        SJ.SessionGoverningSetup setup =
+            inspection.ResolveGoverningSetup(boundary.Head!.Value);
+        Assert.Equal("system-a", setup.SystemPrompt);
+        Assert.Equal("model-a", setup.RuntimeConfig.ModelId);
+        Assert.Equal(
+            "surface-a",
+            setup.RuntimeConfig.CompletionSurfaceId
+        );
+    }
+
+    [Theory]
+    [InlineData("observation")]
+    [InlineData("action")]
+    public void SameCountsButChangedHistoryTextFailsSemanticVerification(
+        string corruption
+    ) {
+        Directory.CreateDirectory(_tempRoot);
+        string sourcePath =
+            Path.Combine(_tempRoot, $"source-{corruption}");
+        string changedPath =
+            Path.Combine(_tempRoot, $"changed-{corruption}");
+        SessionJournalLegacyImportResult source =
+            SessionJournalLegacyImporter.Import(
+                ImportExport(
+                    InitialState(),
+                    "source observation",
+                    "source action"
+                ),
+                sourcePath,
+                force: false
+            );
+        SessionJournalLegacyImportResult changed =
+            SessionJournalLegacyImporter.Import(
+                ImportExport(
+                    InitialState(),
+                    corruption == "observation"
+                        ? "changed observation"
+                        : "source observation",
+                    corruption == "action"
+                        ? "changed action"
+                        : "source action"
+                ),
+                changedPath,
+                force: false
+            );
+        Assert.Equal(source.ObservationCount, changed.ObservationCount);
+        Assert.Equal(source.AgentActionCount, changed.AgentActionCount);
+        Assert.NotEqual(
+            source.ExpectedHistorySemanticCommitmentSha256,
+            changed.ExpectedHistorySemanticCommitmentSha256
+        );
+        SessionJournalLegacyImportResult sourceExpectedAtChangedTarget =
+            source with {
+                FinalHead = changed.FinalHead,
+                Mappings = changed.Mappings
+            };
+
+        InvalidDataException error =
+            Assert.Throws<InvalidDataException>(
+                () => SessionJournalLegacyImporter.VerifyImportedRepo(
+                    changedPath,
+                    sourceExpectedAtChangedTarget
+                )
+            );
+
+        Assert.Contains(
+            "semantic history commitment",
+            error.Message,
+            StringComparison.Ordinal
+        );
+    }
+
+    [Theory]
+    [InlineData("prompt")]
+    [InlineData("config")]
+    public void FinalSetupMismatchFailsVerification(string corruption) {
+        Directory.CreateDirectory(_tempRoot);
+        LegacyChatSessionEvent sourceInitial = InitialState();
+        LegacyChatSessionRoot changedRoot =
+            sourceInitial.Root! with {
+                SystemPrompt = corruption == "prompt"
+                    ? "system-b"
+                    : sourceInitial.Root!.SystemPrompt,
+                ModelId = corruption == "config"
+                    ? "model-b"
+                    : sourceInitial.Root!.ModelId
+            };
+        LegacyChatSessionEvent changedInitial =
+            sourceInitial with { Root = changedRoot };
+        string sourcePath =
+            Path.Combine(_tempRoot, $"source-{corruption}");
+        string changedPath =
+            Path.Combine(_tempRoot, $"changed-{corruption}");
+        SessionJournalLegacyImportResult source =
+            SessionJournalLegacyImporter.Import(
+                ImportExport(
+                    sourceInitial,
+                    "same observation",
+                    "same action"
+                ),
+                sourcePath,
+                force: false
+            );
+        SessionJournalLegacyImportResult changed =
+            SessionJournalLegacyImporter.Import(
+                ImportExport(
+                    changedInitial,
+                    "same observation",
+                    "same action"
+                ),
+                changedPath,
+                force: false
+            );
+        SessionJournalLegacyImportResult sourceExpectedAtChangedTarget =
+            source with {
+                FinalHead = changed.FinalHead,
+                Mappings = changed.Mappings
+            };
+
+        InvalidDataException error =
+            Assert.Throws<InvalidDataException>(
+                () => SessionJournalLegacyImporter.VerifyImportedRepo(
+                    changedPath,
+                    sourceExpectedAtChangedTarget
+                )
+            );
+
+        Assert.Contains(
+            corruption == "prompt"
+                ? "system prompt hash"
+                : "runtime configuration",
+            error.Message,
+            StringComparison.Ordinal
+        );
+    }
+
+    [Theory]
+    [InlineData("head")]
+    [InlineData("mapping-kind")]
+    public void MappingOrFinalHeadMismatchFailsVerification(
+        string corruption
+    ) {
+        Directory.CreateDirectory(_tempRoot);
+        string outputPath =
+            Path.Combine(_tempRoot, $"mapping-{corruption}");
+        SessionJournalLegacyImportResult result =
+            SessionJournalLegacyImporter.Import(
+                ImportExport(
+                    InitialState(),
+                    "observation",
+                    "action"
+                ),
+                outputPath,
+                force: false
+            );
+        SessionJournalLegacyImportResult corrupted;
+        if (corruption == "head") {
+            corrupted = result with {
+                FinalHead = result.Mappings[0].EventAddress
+            };
+        }
+        else {
+            SessionJournalLegacyImportMapping[] mappings = [
+                .. result.Mappings
+            ];
+            mappings[^1] = mappings[^1] with {
+                SessionEventKind =
+                    SJ.SessionEventKind.ObservationAccepted.ToString()
+            };
+            corrupted = result with {
+                Mappings = Array.AsReadOnly(mappings)
+            };
+        }
+
+        InvalidDataException error =
+            Assert.Throws<InvalidDataException>(
+                () => SessionJournalLegacyImporter.VerifyImportedRepo(
+                    outputPath,
+                    corrupted
+                )
+            );
+
+        Assert.Contains(
+            corruption == "head"
+                ? "final head"
+                : "mapping kind",
+            error.Message,
+            StringComparison.Ordinal
         );
     }
 
@@ -361,8 +565,9 @@ public sealed class ProgramLegacyImportSafetyTests : IDisposable {
 
         Assert.Equal(0, exitCode);
         Assert.False(File.Exists(markerPath));
-        using var engine = SJ.SessionJournalEngine.Open(outputPath);
-        Assert.NotNull(engine.Project().Head);
+        using var engine =
+            SJ.SessionJournalEngine.OpenReadOnly(outputPath);
+        Assert.NotNull(engine.InspectExecutionBoundary().Head);
         Assert.Empty(
             Directory.EnumerateDirectories(
                 _tempRoot,
@@ -383,6 +588,44 @@ public sealed class ProgramLegacyImportSafetyTests : IDisposable {
                 SystemPrompt = "system-a"
             }
         };
+
+    private static LegacyChatSessionExport ImportExport(
+        LegacyChatSessionEvent initialState,
+        string observation,
+        string action
+    ) => new() {
+        Schema = LegacyChatSessionExportSchema.SchemaId,
+        BranchName = SJ.SessionJournalDefaults.MainBranchName,
+        Events = [
+            initialState,
+            new LegacyChatSessionEvent {
+                Ordinal = 1,
+                Kind = LegacyChatSessionEventKinds.ModelTurn,
+                AppendedMessages = [
+                    new LegacyChatSessionMessage {
+                        Kind = "observation",
+                        Content = observation
+                    },
+                    new LegacyChatSessionMessage {
+                        Kind = "action",
+                        Action = new LegacyChatSessionAction {
+                            Blocks = [
+                                new SerializedActionBlock(
+                                    ActionMessageSerialization
+                                        .BlockKindText,
+                                    action,
+                                    ToolName: null,
+                                    ToolCallId: null,
+                                    RawArgumentsJson: null,
+                                    Reasoning: null
+                                )
+                            ]
+                        }
+                    }
+                ]
+            }
+        ]
+    };
 
     private static void WriteExport(
         string path,
