@@ -7,24 +7,89 @@ namespace Atelia.SessionJournal;
 /// Counts logical EventJournal API reads so tests can assert semantic complexity without
 /// depending on storage cache hits or wall-clock timing.
 /// </summary>
-internal sealed class SessionJournalEventReader(EventJournal.EventJournal journal) {
-    private readonly EventJournal.EventJournal _journal =
-        journal ?? throw new ArgumentNullException(nameof(journal));
+internal sealed class SessionJournalEventReader {
+    private readonly EventJournal.EventJournal _journal;
+    private readonly IReadOnlyDictionary<
+        EventAddress,
+        SessionJournalCachedEvent
+    >? _cachedEvents;
+    private readonly bool _cacheOnly;
     private long _headerPreviewReadCount;
     private long _payloadReadCount;
+    private long _storageHeaderPreviewReadCount;
+    private long _storagePayloadReadCount;
+    private long _cachedHeaderReadCount;
+    private long _cachedPayloadReadCount;
     private long _logicalPayloadByteCount;
     private long _currentLiveLogicalPayloadBytes;
     private long _peakLiveLogicalPayloadBytes;
     private long _chronologicalChainReadCount;
     private long _chronologicalEventCount;
 
+    public SessionJournalEventReader(
+        EventJournal.EventJournal journal
+    ) : this(journal, cachedEvents: null, cacheOnly: false) {
+    }
+
+    internal SessionJournalEventReader(
+        EventJournal.EventJournal journal,
+        IReadOnlyDictionary<EventAddress, SessionJournalCachedEvent>?
+            cachedEvents,
+        bool cacheOnly
+    ) {
+        _journal =
+            journal ?? throw new ArgumentNullException(nameof(journal));
+        if (cacheOnly && cachedEvents is null) {
+            throw new ArgumentNullException(nameof(cachedEvents));
+        }
+        _cachedEvents = cachedEvents;
+        _cacheOnly = cacheOnly;
+    }
+
     public AteliaResult<EventFrameHeader> ReadEventHeaderPreview(EventAddress address) {
         Interlocked.Increment(ref _headerPreviewReadCount);
+        if (_cachedEvents is not null
+            && _cachedEvents.TryGetValue(
+                address,
+                out SessionJournalCachedEvent? cached
+            )
+            && cached is not null) {
+            Interlocked.Increment(ref _cachedHeaderReadCount);
+            return cached.Header;
+        }
+        ThrowIfCacheMiss(address);
+        Interlocked.Increment(ref _storageHeaderPreviewReadCount);
         return _journal.ReadEventHeaderPreview(address);
     }
 
     public AteliaResult<SessionJournalEventFrame> ReadEvent(EventAddress address) {
         Interlocked.Increment(ref _payloadReadCount);
+        if (_cachedEvents is not null
+            && _cachedEvents.TryGetValue(
+                address,
+                out SessionJournalCachedEvent? cached
+            )
+            && cached is not null) {
+            Interlocked.Increment(ref _cachedPayloadReadCount);
+            long cachedLogicalPayloadBytes =
+                cached.Header.PayloadLength;
+            Interlocked.Add(
+                ref _logicalPayloadByteCount,
+                cachedLogicalPayloadBytes
+            );
+            long cachedCurrent = Interlocked.Add(
+                ref _currentLiveLogicalPayloadBytes,
+                cachedLogicalPayloadBytes
+            );
+            UpdatePeakLiveLogicalPayloadBytes(cachedCurrent);
+            return new SessionJournalEventFrame(
+                cached,
+                cachedLogicalPayloadBytes,
+                this
+            );
+        }
+        ThrowIfCacheMiss(address);
+        Interlocked.Increment(ref _storagePayloadReadCount);
         AteliaResult<EventFrame> result = _journal.ReadEvent(address);
         if (result.IsFailure) {
             return result.Error!;
@@ -91,6 +156,23 @@ internal sealed class SessionJournalEventReader(EventJournal.EventJournal journa
             FullProjectionInvocationCount: 0
         );
 
+    internal SessionJournalReaderStorageDiagnostics
+        CaptureStorageDiagnostics()
+        => new(
+            StorageHeaderPreviewReadCount: Interlocked.Read(
+                ref _storageHeaderPreviewReadCount
+            ),
+            StoragePayloadReadCount: Interlocked.Read(
+                ref _storagePayloadReadCount
+            ),
+            CachedHeaderReadCount: Interlocked.Read(
+                ref _cachedHeaderReadCount
+            ),
+            CachedPayloadReadCount: Interlocked.Read(
+                ref _cachedPayloadReadCount
+            )
+        );
+
     public SessionJournalPayloadLifetimeDiagnostics CapturePayloadLifetimeDiagnostics()
         => new(
             CurrentLiveLogicalPayloadBytes: Interlocked.Read(
@@ -127,7 +209,29 @@ internal sealed class SessionJournalEventReader(EventJournal.EventJournal journa
             peak = prior;
         }
     }
+
+    private void ThrowIfCacheMiss(EventAddress address) {
+        if (_cacheOnly) {
+            throw new InvalidDataException(
+                $"SessionJournal audit reference {address} is not on "
+                + "the captured branch Parent lineage."
+            );
+        }
+    }
 }
+
+internal sealed record SessionJournalCachedEvent(
+    EventAddress Address,
+    EventFrameHeader Header,
+    byte[] Payload
+);
+
+internal readonly record struct SessionJournalReaderStorageDiagnostics(
+    long StorageHeaderPreviewReadCount,
+    long StoragePayloadReadCount,
+    long CachedHeaderReadCount,
+    long CachedPayloadReadCount
+);
 
 /// <summary>
 /// SessionJournal-owned lease over an EventJournal frame. The reader uses this wrapper
@@ -136,6 +240,7 @@ internal sealed class SessionJournalEventReader(EventJournal.EventJournal journa
 /// </summary>
 internal sealed class SessionJournalEventFrame : IDisposable {
     private EventFrame? _frame;
+    private SessionJournalCachedEvent? _cached;
     private readonly long _logicalPayloadBytes;
     private readonly SessionJournalEventReader _owner;
 
@@ -149,23 +254,37 @@ internal sealed class SessionJournalEventFrame : IDisposable {
         _owner = owner ?? throw new ArgumentNullException(nameof(owner));
     }
 
+    internal SessionJournalEventFrame(
+        SessionJournalCachedEvent cached,
+        long logicalPayloadBytes,
+        SessionJournalEventReader owner
+    ) {
+        _cached =
+            cached ?? throw new ArgumentNullException(nameof(cached));
+        _logicalPayloadBytes = logicalPayloadBytes;
+        _owner =
+            owner ?? throw new ArgumentNullException(nameof(owner));
+    }
+
     public EventAddress Address
-        => RequireFrame().Address;
+        => _cached?.Address ?? RequireFrame().Address;
 
     public EventFrameHeader Header
-        => RequireFrame().Header;
+        => _cached?.Header ?? RequireFrame().Header;
 
     public ReadOnlySpan<byte> Payload
-        => RequireFrame().Payload;
+        => _cached?.Payload ?? RequireFrame().Payload;
 
     public void Dispose() {
+        SessionJournalCachedEvent? cached =
+            Interlocked.Exchange(ref _cached, null);
         EventFrame? frame = Interlocked.Exchange(ref _frame, null);
-        if (frame is null) {
+        if (frame is null && cached is null) {
             return;
         }
 
         try {
-            frame.Dispose();
+            frame?.Dispose();
         }
         finally {
             _owner.ReleaseLogicalPayloadBytes(_logicalPayloadBytes);

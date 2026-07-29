@@ -255,6 +255,39 @@ public sealed class SessionJournalEngine : IDisposable {
         _runtime = runtime ?? throw new ArgumentNullException(nameof(runtime));
     }
 
+    /// <summary>
+    /// Performs an offline-only checked scan of the exact branch ref bound to
+    /// this read-only engine. The scan validates the complete raw Parent
+    /// lineage and every historical Prepared commitment before delivering
+    /// normalized, non-context facts to <paramref name="visitor"/> in
+    /// root-to-head order. Repository reads, validation, and exact-head
+    /// execution-state recovery are complete before the first callback, so a
+    /// later ref mutation cannot change this scan's captured snapshot. The
+    /// visitor is not called when validation fails and must not dispose or
+    /// re-enter this engine.
+    /// </summary>
+    public SessionJournalAuditScanResult ScanCheckedAuditEvents(
+        Action<SessionJournalAuditEvent> visitor,
+        CancellationToken cancellationToken = default
+    ) {
+        ThrowIfDisposed();
+        ArgumentNullException.ThrowIfNull(visitor);
+        if (!_isReadOnly) {
+            throw new InvalidOperationException(
+                "Checked audit scan requires a read-only "
+                + "SessionJournalEngine."
+            );
+        }
+        return SessionJournalAuditScanner.Scan(
+            _journal,
+            _branchName,
+            _branchRefId,
+            visitor,
+            _testHooks.AfterAuditSnapshotValidated,
+            cancellationToken
+        );
+    }
+
     public SessionProjection Project(CancellationToken cancellationToken = default) {
         ThrowIfDisposed();
         _fullProjectionInvocationCount++;

@@ -177,7 +177,9 @@ internal enum SessionJournalFailpoint {
 
 internal sealed record SessionJournalTestHooks(
     SessionJournalFailpoint Failpoint = SessionJournalFailpoint.None,
-    Action<SessionEventKind>? BeforeCommit = null
+    Action<SessionEventKind>? BeforeCommit = null,
+    Action<EventJournal.EventJournal>?
+        AfterAuditSnapshotValidated = null
 );
 
 internal sealed class SessionJournalFailpointException(SessionJournalFailpoint failpoint)
