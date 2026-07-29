@@ -19,7 +19,8 @@ internal sealed record RecapStoreTestHooks(
     Action? BeforeBuildingRawHeadRecheck = null,
     Action<string>? BeforeAtomicFileReplace = null,
     Action<string>? AfterAtomicFileReplace = null,
-    Action<RecapIoPoint, string>? IoObserver = null
+    Action<RecapIoPoint, string>? IoObserver = null,
+    Action? BeforeRestorePublicationRead = null
 );
 
 public sealed class DerivedRecapStore {
@@ -1909,74 +1910,126 @@ public sealed class DerivedRecapStore {
         string publicationPath =
             Path.Combine(publishedPath, "publication.json");
         var authorityDefects = new List<RecapStructuralDefect>();
-        string publicationStateToken;
         if (!PathEntryExists(publicationPath)) {
-            publicationStateToken = MissingStateToken;
             AddDefect(
                 authorityDefects,
                 "PublicationMissing",
                 "Published envelope is missing."
             );
-        }
-        else {
-            byte[]? bytes = null;
-            try {
-                bytes = await _fileSystem.ReadBoundedAsync(
-                        publicationPath,
-                        MaxPublicationBytes,
-                        cancellationToken
-                    )
-                    .ConfigureAwait(false);
-                PublishedRecapSet publication =
-                    DerivedRecapCodec.DecodePublication(bytes);
-                if (publication.RefId != RefId
-                    || publication.SetAdmissionAnchor
-                        != expectedAnchor) {
-                    return new RestoreAuthorityRead(
-                        null,
-                        [
-                            new RecapStructuralDefect(
-                                "RestoreAuthorityConflict",
-                                "Self-valid publication identity does "
-                                + "not match its exact directory."
-                            )
-                        ]
-                    );
-                }
-                return new RestoreAuthorityRead(
-                    new RestoreAuthorityCapture(
-                        PublishedRestoreAuthorityKind.Publication,
-                        $"publication:{publication.EnvelopeSha256}",
-                        publication.FrozenPlanSnapshot,
-                        publication
-                    ),
-                    Array.Empty<RecapStructuralDefect>()
-                );
-            }
-            catch (Exception exception)
-                when (exception is InvalidDataException
-                      or ArgumentException
-                      or NotSupportedException
-                      or IOException
-                      or UnauthorizedAccessException) {
-                publicationStateToken = bytes is null
-                    ? "damaged:unreadable"
-                    : DamagedStateToken(bytes);
-                AddDefect(
+            return await ReadManifestWitnessAsync(
+                    publishedPath,
+                    expectedAnchor,
+                    MissingStateToken,
                     authorityDefects,
-                    "PublicationDamaged",
-                    exception.Message
-                );
-            }
+                    cancellationToken
+                )
+                .ConfigureAwait(false);
+        }
+
+        byte[] bytes;
+        try {
+            _testHooks.BeforeRestorePublicationRead?.Invoke();
+            bytes = await _fileSystem.ReadBoundedAsync(
+                    publicationPath,
+                    MaxPublicationBytes,
+                    cancellationToken
+                )
+                .ConfigureAwait(false);
+        }
+        catch (Exception exception)
+            when (exception is InvalidDataException
+                  or IOException
+                  or UnauthorizedAccessException) {
+            return new RestoreAuthorityRead(
+                null,
+                [
+                    new RecapStructuralDefect(
+                        "PublicationReadUnavailable",
+                        exception.Message
+                    )
+                ]
+            );
         }
 
         try {
+            PublishedRecapSet publication =
+                DerivedRecapCodec.DecodePublication(bytes);
+            if (!bytes.SequenceEqual(
+                    DerivedRecapCodec.EncodePublication(publication)
+                )) {
+                throw new InvalidDataException(
+                    "Published envelope bytes are not canonical."
+                );
+            }
+            if (publication.RefId != RefId
+                || publication.SetAdmissionAnchor != expectedAnchor) {
+                return new RestoreAuthorityRead(
+                    null,
+                    [
+                        new RecapStructuralDefect(
+                            "RestoreAuthorityConflict",
+                            "Self-valid publication identity does "
+                            + "not match its exact directory."
+                        )
+                    ]
+                );
+            }
+            return new RestoreAuthorityRead(
+                new RestoreAuthorityCapture(
+                    PublishedRestoreAuthorityKind.Publication,
+                    $"publication:{publication.EnvelopeSha256}",
+                    publication.FrozenPlanSnapshot,
+                    publication
+                ),
+                Array.Empty<RecapStructuralDefect>()
+            );
+        }
+        catch (Exception exception)
+            when (exception is InvalidDataException
+                  or ArgumentException
+                  or NotSupportedException) {
+            AddDefect(
+                authorityDefects,
+                "PublicationDamaged",
+                exception.Message
+            );
+            return await ReadManifestWitnessAsync(
+                    publishedPath,
+                    expectedAnchor,
+                    DamagedStateToken(bytes),
+                    authorityDefects,
+                    cancellationToken
+                )
+                .ConfigureAwait(false);
+        }
+    }
+
+    private async ValueTask<RestoreAuthorityRead>
+        ReadManifestWitnessAsync(
+        string publishedPath,
+        EventAddress expectedAnchor,
+        string publicationStateToken,
+        List<RecapStructuralDefect> authorityDefects,
+        CancellationToken cancellationToken
+    ) {
+        try {
+            string manifestPath =
+                Path.Combine(publishedPath, "manifest.json");
+            byte[] bytes = await _fileSystem.ReadBoundedAsync(
+                    manifestPath,
+                    MaxManifestBytes,
+                    cancellationToken
+                )
+                .ConfigureAwait(false);
             DerivedRecapSetManifest manifest =
-                await ReadManifestRequiredAsync(
-                        publishedPath,
-                        cancellationToken
-                    )
-                    .ConfigureAwait(false);
+                DerivedRecapCodec.DecodeManifest(bytes);
+            if (!bytes.SequenceEqual(
+                    DerivedRecapCodec.EncodeManifest(manifest)
+                )) {
+                throw new InvalidDataException(
+                    "Manifest witness bytes are not canonical."
+                );
+            }
             if (manifest.RefId != RefId
                 || manifest.SetAdmissionAnchor != expectedAnchor) {
                 AddDefect(

@@ -145,6 +145,115 @@ public sealed class DerivedRecapPublishedRestoreInspectionTests {
         Assert.Equal(anchor, invalid.SetAdmissionAnchor);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task PublicationReadFaultDoesNotUseManifestWitness(
+        bool unauthorized
+    ) {
+        bool injectFault = false;
+        using RecapStoreFixture fixture =
+            await RecapStoreFixture.CreateAsync(
+                new RecapStoreTestHooks(
+                    BeforeRestorePublicationRead: () => {
+                        if (!injectFault) {
+                            return;
+                        }
+                        if (unauthorized) {
+                            throw new UnauthorizedAccessException(
+                                "injected publication fault"
+                            );
+                        }
+                        throw new IOException(
+                            "injected publication fault"
+                        );
+                    }
+                ),
+                historyPairs: 4
+            );
+        SessionCurrentLineageSnapshot lineage = fixture.Lineage();
+        EventAddress anchor = lineage.CapturedHead;
+        _ = await fixture.PublishAsync(
+            anchor,
+            lineage.HeadToRoot[^1].Address
+        );
+        injectFault = true;
+
+        var unavailable = Assert.IsType<
+            PublishedRestoreInspectionResult.Unavailable
+        >(
+            await fixture.Store.InspectPublishedForRestoreAsync(
+                anchor,
+                lineage
+            )
+        );
+
+        Assert.Single(unavailable.Defects);
+        Assert.Equal(
+            "PublicationReadUnavailable",
+            unavailable.Defects[0].Code
+        );
+    }
+
+    [Fact]
+    public async Task RestoreAuthorityRequiresCanonicalRawBytes() {
+        using RecapStoreFixture fixture =
+            await RecapStoreFixture.CreateAsync(historyPairs: 4);
+        SessionCurrentLineageSnapshot lineage = fixture.Lineage();
+        EventAddress anchor = lineage.CapturedHead;
+        RecapBlockPlan plan = fixture.CreateMaintainPlan(
+            anchor,
+            lineage.HeadToRoot[^1].Address
+        );
+        _ = await fixture.PublishAsync(
+            anchor,
+            lineage.HeadToRoot[^1].Address
+        );
+        string publishedPath =
+            fixture.Store.GetPublishedPathForTest(anchor);
+        string publicationPath =
+            Path.Combine(publishedPath, "publication.json");
+        await File.AppendAllTextAsync(publicationPath, "\n");
+
+        PublishedRestoreInspection witness =
+            await RequireAvailableAsync(
+                fixture.Store,
+                anchor,
+                lineage
+            );
+        Assert.Equal(
+            PublishedRestoreAuthorityKind.ManifestWitness,
+            witness.Handle.AuthorityKind
+        );
+        Assert.StartsWith(
+            "damaged:",
+            witness.Handle.AuthorityStateToken,
+            StringComparison.Ordinal
+        );
+        Assert.IsType<
+            PublishedBlockRestoreCapability.AdoptPending
+        >(witness.Blocks[plan.RecapBlockId].Capability);
+
+        File.Delete(publicationPath);
+        await File.AppendAllTextAsync(
+            Path.Combine(publishedPath, "manifest.json"),
+            "\n"
+        );
+        var unavailable = Assert.IsType<
+            PublishedRestoreInspectionResult.Unavailable
+        >(
+            await fixture.Store.InspectPublishedForRestoreAsync(
+                anchor,
+                lineage
+            )
+        );
+        Assert.Contains(
+            unavailable.Defects,
+            static defect =>
+                defect.Code == "ManifestWitnessUnavailable"
+        );
+    }
+
     [Fact]
     public async Task CoherentIdentityConflictDoesNotFallbackManifest() {
         using RecapStoreFixture fixture =
@@ -366,6 +475,120 @@ public sealed class DerivedRecapPublishedRestoreInspectionTests {
                 lineage
             )).Blocks[plan.RecapBlockId].Capability
         );
+    }
+
+    [Fact]
+    public async Task OversizedBlockCannotBecomeRestoreCapability() {
+        using RecapStoreFixture fixture =
+            await RecapStoreFixture.CreateAsync(historyPairs: 5);
+        SessionCurrentLineageSnapshot lineage = fixture.Lineage();
+        EventAddress anchor = lineage.CapturedHead;
+        EventAddress replayStart = lineage.HeadToRoot[^1].Address;
+        var plan = new MaintainRecapBlockPlan(
+            new RecapBlockId("roleplay.self"),
+            new ContextHeaderBlockPath(
+                ContextHeaderCarrier.System,
+                "roleplay.self"
+            ),
+            "roleplay.autobiographical",
+            new EmptyRecapMaintainSource(replayStart),
+            [anchor],
+            EmptyRecapPriorContext.Instance,
+            maxContentUtf8Bytes: 8
+        );
+        DerivedRecapSetManifest manifest =
+            DerivedRecapCodec.CreateManifest(
+                fixture.Engine.BranchRefId,
+                anchor,
+                [plan]
+            );
+        await PublishAsync(
+            fixture,
+            anchor,
+            plan,
+            DerivedRecapCodec.CreateBlock(plan, anchor, "ok")
+        );
+        string publishedPath =
+            fixture.Store.GetPublishedPathForTest(anchor);
+        string publicationPath =
+            Path.Combine(publishedPath, "publication.json");
+        string finalPath = BlockPath(
+            publishedPath,
+            "blocks",
+            plan.RecapBlockId
+        );
+        string workPath = BlockPath(
+            publishedPath,
+            "work",
+            plan.RecapBlockId
+        );
+        byte[] committedPublication =
+            await File.ReadAllBytesAsync(publicationPath);
+        DerivedRecapBlock oversized =
+            DerivedRecapCodec.CreateBlock(
+                plan,
+                anchor,
+                "一二三"
+            );
+
+        await File.WriteAllBytesAsync(
+            finalPath,
+            DerivedRecapCodec.EncodeBlock(oversized)
+        );
+        await File.WriteAllBytesAsync(
+            publicationPath,
+            DerivedRecapCodec.EncodePublication(
+                DerivedRecapCodec.CreatePublication(
+                    manifest,
+                    [oversized]
+                )
+            )
+        );
+        PublishedBlockRestoreInspection committed =
+            (await RequireAvailableAsync(
+                fixture.Store,
+                anchor,
+                lineage
+            )).Blocks[plan.RecapBlockId];
+        Assert.IsType<FinalRecapBlockHealth.Damaged>(
+            committed.Final
+        );
+        Assert.IsType<
+            PublishedBlockRestoreCapability.InstallFinalCheckpoint
+        >(committed.Capability);
+
+        await File.WriteAllBytesAsync(
+            publicationPath,
+            committedPublication
+        );
+        PublishedBlockRestoreInspection pending =
+            (await RequireAvailableAsync(
+                fixture.Store,
+                anchor,
+                lineage
+            )).Blocks[plan.RecapBlockId];
+        Assert.IsType<FinalRecapBlockHealth.Damaged>(pending.Final);
+        Assert.IsType<
+            PublishedBlockRestoreCapability.InstallFinalCheckpoint
+        >(pending.Capability);
+
+        await File.WriteAllTextAsync(finalPath, "damaged");
+        await File.WriteAllBytesAsync(
+            workPath,
+            DerivedRecapCodec.EncodeBlock(oversized)
+        );
+        PublishedBlockRestoreInspection checkpoint =
+            (await RequireAvailableAsync(
+                fixture.Store,
+                anchor,
+                lineage
+            )).Blocks[plan.RecapBlockId];
+        Assert.IsType<RollingRecapCheckpointHealth.Unusable>(
+            checkpoint.Checkpoint
+        );
+        Assert.IsType<
+            PublishedBlockRestoreCapability.ReplayBlock
+        >(checkpoint.Capability);
     }
 
     [Fact]
