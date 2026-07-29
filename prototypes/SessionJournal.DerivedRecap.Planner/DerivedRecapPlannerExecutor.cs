@@ -1,4 +1,3 @@
-using System.Text;
 using Atelia.EventJournal;
 using Atelia.SessionJournal.DerivedRecap.Store;
 
@@ -475,7 +474,8 @@ public sealed class DerivedRecapPlannerExecutor {
             };
             foreach (EventAddress endpoint in maintain.CatchUpThrough) {
                 SessionHistoryPlanningWindow window =
-                    ReadExactStepWindow(
+                    RecapPendingWindowPreparer.ReadExactStepWindow(
+                        _engine,
                         endpoint,
                         seeds[previous],
                         cancellationToken
@@ -716,7 +716,9 @@ public sealed class DerivedRecapPlannerExecutor {
             );
         }
 
-        long calls = 0;
+        RecapExecutionLimits executionLimits =
+            RecapExecutionLimits.From(_config);
+        var maintainPlans = new List<MaintainRecapBlockPlan>();
         for (int index = 0;
              index < building.Manifest.Blocks.Count;
              index++) {
@@ -739,30 +741,28 @@ public sealed class DerivedRecapPlannerExecutor {
                 );
                 continue;
             }
-            ValidateBuildingPlanRawSemantics(
-                building,
-                plan,
-                lineageIndex,
-                admissionIndex,
-                defects
-            );
+            foreach (RecapFrozenPlanRawDefect defect
+                     in RecapFrozenPlanRawValidator.ValidateBlock(
+                         building.Manifest,
+                         building.FrozenInputs,
+                         lineage,
+                         plan
+                     )) {
+                AddBuildingDefect(defects, defect.Detail);
+            }
             if (plan is MaintainRecapBlockPlan maintainPlan) {
-                calls += maintainPlan.CatchUpThrough.Count;
-                if (maintainPlan.CatchUpThrough.Count
-                    > _config.MaxRouteEndpointsPerBlock) {
-                    AddConfigDefect(
-                        defects,
-                        $"Block '{plan.RecapBlockId}' exceeds the "
-                        + "route limit."
-                    );
-                }
+                maintainPlans.Add(maintainPlan);
             }
         }
-        if (calls > _config.MaxMaintainerCallsPerBuild) {
+        foreach (RecapPendingWindowDefect defect
+                 in RecapPendingWindowPreparer
+                     .ValidateFrozenRouteLimits(
+                         maintainPlans,
+                         executionLimits
+                     )) {
             AddConfigDefect(
                 defects,
-                $"Building requires {calls} Maintainer calls; limit is "
-                + $"{_config.MaxMaintainerCallsPerBuild}."
+                defect.Detail
             );
         }
         if (defects.Count != 0) {
@@ -775,8 +775,7 @@ public sealed class DerivedRecapPlannerExecutor {
 
         var inspections =
             new Dictionary<RecapBlockId, BuildingBlockInspection>();
-        var starts = new List<EventAddress>();
-        var pending = new Dictionary<RecapBlockId, int>();
+        var pendingRoutes = new List<PendingMaintainRoute>();
         foreach (RecapBlockPlan plan in building.Manifest.Blocks) {
             BuildingBlockInspection inspection =
                 await _store.InspectBuildingBlockAsync(
@@ -808,16 +807,11 @@ public sealed class DerivedRecapPlannerExecutor {
                 is RollingRecapCheckpointHealth.Healthy checkpoint
                     ? checkpoint.EndpointIndex + 1
                     : 0;
-            pending.Add(plan.RecapBlockId, next);
-            EventAddress previous = next == 0
-                ? GetMaintainStart(building, maintain)
-                : maintain.CatchUpThrough[next - 1];
-            for (int index = next;
-                 index < maintain.CatchUpThrough.Count;
-                 index++) {
-                starts.Add(previous);
-                previous = maintain.CatchUpThrough[index];
-            }
+            pendingRoutes.Add(new PendingMaintainRoute(
+                maintain,
+                GetMaintainStart(building, maintain),
+                next
+            ));
         }
         if (defects.Count != 0) {
             return new PreparedBuilding(
@@ -827,69 +821,23 @@ public sealed class DerivedRecapPlannerExecutor {
             );
         }
 
-        var windows = new Dictionary<
-            (RecapBlockId BlockId, int EndpointIndex),
-            SessionHistoryPlanningWindow
-        >();
-        if (starts.Count == 0) {
-            return new PreparedBuilding(defects, inspections, windows);
-        }
-        SessionHistoryPlanningSeedBatch seedBatch =
-            _engine.ReadHistoryPlanningSeeds(
-                starts.Distinct(),
+        PreparedRecapPendingWindows preparedWindows =
+            RecapPendingWindowPreparer.Prepare(
+                _engine,
+                lineage.CapturedHead,
+                pendingRoutes,
+                executionLimits,
                 cancellationToken
             );
-        if (seedBatch.Lineage.CapturedHead != lineage.CapturedHead) {
-            throw new InvalidDataException(
-                "Raw head changed while freezing Building replay windows."
-            );
+        foreach (RecapPendingWindowDefect defect
+                 in preparedWindows.Defects) {
+            AddConfigDefect(defects, defect.Detail);
         }
-        Dictionary<EventAddress, SessionHistoryPlanningSeed> seeds =
-            seedBatch.Seeds.ToDictionary(static seed => seed.Address);
-        long rawEvents = 0;
-        foreach (MaintainRecapBlockPlan plan
-                 in building.Manifest.Blocks
-                     .OfType<MaintainRecapBlockPlan>()) {
-            if (!pending.TryGetValue(
-                    plan.RecapBlockId,
-                    out int next
-                )) {
-                continue;
-            }
-            EventAddress previous = next == 0
-                ? GetMaintainStart(building, plan)
-                : plan.CatchUpThrough[next - 1];
-            for (int index = next;
-                 index < plan.CatchUpThrough.Count;
-                 index++) {
-                EventAddress endpoint = plan.CatchUpThrough[index];
-                SessionHistoryPlanningWindow window =
-                    ReadExactStepWindow(
-                        endpoint,
-                        seeds[previous],
-                        cancellationToken
-                    );
-                if (window.RawAddresses.Count
-                    > _config.MaxRawEventsPerStep) {
-                    AddConfigDefect(
-                        defects,
-                        $"Block '{plan.RecapBlockId}' step "
-                        + $"{index} exceeds the raw step limit."
-                    );
-                }
-                rawEvents += window.RawAddresses.Count;
-                windows.Add((plan.RecapBlockId, index), window);
-                previous = endpoint;
-            }
-        }
-        if (rawEvents > _config.MaxRawEventsPerBuild) {
-            AddConfigDefect(
-                defects,
-                $"Building requires {rawEvents} raw events; limit is "
-                + $"{_config.MaxRawEventsPerBuild}."
-            );
-        }
-        return new PreparedBuilding(defects, inspections, windows);
+        return new PreparedBuilding(
+            defects,
+            inspections,
+            preparedWindows.Windows
+        );
     }
 
     private async ValueTask<DerivedRecapExecutionResult?>
@@ -984,54 +932,34 @@ public sealed class DerivedRecapPlannerExecutor {
             cancellationToken.ThrowIfCancellationRequested();
             SessionHistoryPlanningWindow window =
                 windows[(plan.RecapBlockId, nextEndpoint)];
-            RecapBlockMaintenanceResult result;
-            try {
-                result = await maintainer.MaintainAsync(
-                        new RecapBlockMaintenanceRequest(
-                            new RecentHistorySlice(
-                                GetPriorContext(maintain.PriorContext),
-                                window.Units
-                                    .Select(static unit => unit.Message)
-                                    .ToArray(),
-                                $"{window.StartExclusive}.."
-                                + $"{window.ObservedRawHead}"
-                            ),
-                            new ContextHeaderBlock(
-                                currentBlock?.Content ?? string.Empty
-                            )
-                        ),
+            RecapMaintainerStepResult step =
+                await RecapMaintainerStepRunner.RunAsync(
+                        maintainer,
+                        maintain,
+                        currentBlock,
+                        window,
+                        maintain.CatchUpThrough[nextEndpoint],
                         cancellationToken
                     )
                     .ConfigureAwait(false);
-            }
-            catch (OperationCanceledException)
-                when (cancellationToken.IsCancellationRequested) {
-                throw;
-            }
-            catch (Exception exception) {
+            if (step is RecapMaintainerStepResult.MaintainerFailed
+                failed) {
                 return new DerivedRecapExecutionResult.BlockFailed(
                     plan.RecapBlockId,
                     DerivedRecapExecutionDefectCodes.MaintainerFailed,
-                    exception.Message
+                    failed.Detail
                 );
             }
-            string? invalidResult = ValidateMaintainerResult(
-                maintain,
-                result
-            );
-            if (invalidResult is not null) {
+            if (step is RecapMaintainerStepResult.ResultInvalid invalid) {
                 return new DerivedRecapExecutionResult.BlockFailed(
                     plan.RecapBlockId,
                     DerivedRecapExecutionDefectCodes
                         .MaintainerResultInvalid,
-                    invalidResult
+                    invalid.Detail
                 );
             }
-            DerivedRecapBlock candidate = DerivedRecapCodec.CreateBlock(
-                plan,
-                maintain.CatchUpThrough[nextEndpoint],
-                result.NewBlock.Text
-            );
+            DerivedRecapBlock candidate =
+                ((RecapMaintainerStepResult.Succeeded)step).Candidate;
             CheckpointWriteResult write =
                 await _store.AdvanceRollingCheckpointAsync(
                         building.Descriptor,
@@ -1219,29 +1147,6 @@ public sealed class DerivedRecapPlannerExecutor {
         );
     }
 
-    private SessionHistoryPlanningWindow ReadExactStepWindow(
-        EventAddress endpoint,
-        SessionHistoryPlanningSeed seed,
-        CancellationToken cancellationToken
-    ) {
-        SessionHistoryPlanningWindow window =
-            _engine.ReadHistoryPlanningWindowAt(
-                endpoint,
-                seed,
-                cancellationToken
-            );
-        if (window.StartExclusive != seed.Address
-            || window.ObservedRawHead != endpoint
-            || !window.ReplaySafeBoundaries.Any(
-                boundary => boundary.Address == endpoint)) {
-            throw new InvalidDataException(
-                "Raw planning window is not the requested exact "
-                + "replay-safe interval."
-            );
-        }
-        return window;
-    }
-
     private static EventAddress? FindEarliestSourceCursor(
         SessionCurrentLineageSnapshot lineage,
         PublishedRecapSourceSnapshot? source
@@ -1281,195 +1186,6 @@ public sealed class DerivedRecapPlannerExecutor {
         return earliest;
     }
 
-    private static void ValidateBuildingPlanRawSemantics(
-        BuildingSnapshot building,
-        RecapBlockPlan plan,
-        IReadOnlyDictionary<EventAddress, int> lineage,
-        int admissionIndex,
-        List<DerivedRecapExecutionDefect> defects
-    ) {
-        switch (plan) {
-            case InheritRecapBlockPlan inherit:
-                if (!TryValidateFrozenSource(
-                        building,
-                        plan,
-                        inherit.SourceSetAnchor,
-                        lineage,
-                        admissionIndex,
-                        defects,
-                        out DerivedRecapFrozenInput? inheritedInput,
-                        out _
-                    )) {
-                    return;
-                }
-                if (string.IsNullOrEmpty(inheritedInput.Content)) {
-                    AddBuildingDefect(
-                        defects,
-                        $"Inherit block '{plan.RecapBlockId}' source "
-                        + "content is empty."
-                    );
-                    return;
-                }
-                try {
-                    if (new UTF8Encoding(false, true).GetByteCount(
-                            inheritedInput.Content
-                        ) > plan.MaxContentUtf8Bytes) {
-                        AddBuildingDefect(
-                            defects,
-                            $"Inherit block '{plan.RecapBlockId}' "
-                            + "source content exceeds its frozen limit."
-                        );
-                    }
-                }
-                catch (EncoderFallbackException) {
-                    AddBuildingDefect(
-                        defects,
-                        $"Inherit block '{plan.RecapBlockId}' source "
-                        + "content is not valid UTF-8."
-                    );
-                }
-                return;
-
-            case MaintainRecapBlockPlan maintain:
-                int startIndex;
-                switch (maintain.Source) {
-                    case EmptyRecapMaintainSource empty:
-                        if (!lineage.TryGetValue(
-                                empty.ReplayStartExclusive,
-                                out startIndex
-                            )
-                            || startIndex <= admissionIndex) {
-                            AddBuildingDefect(
-                                defects,
-                                $"Maintain block '{plan.RecapBlockId}' "
-                                + "empty replay start is not a strict "
-                                + "admission ancestor."
-                            );
-                            return;
-                        }
-                        break;
-                    case ExistingRecapMaintainSource existing:
-                        if (!TryValidateFrozenSource(
-                                building,
-                                plan,
-                                existing.SourceSetAnchor,
-                                lineage,
-                                admissionIndex,
-                                defects,
-                                out _,
-                                out startIndex
-                            )) {
-                            return;
-                        }
-                        break;
-                    default:
-                        AddBuildingDefect(
-                            defects,
-                            $"Maintain block '{plan.RecapBlockId}' "
-                            + "has an unsupported source."
-                        );
-                        return;
-                }
-
-                if (maintain.PriorContext
-                        is InlineRecapPriorContext inline
-                    && (!lineage.TryGetValue(
-                            inline.AdmissionAnchor,
-                            out int priorIndex
-                        )
-                        || priorIndex < startIndex)) {
-                    AddBuildingDefect(
-                        defects,
-                        $"Maintain block '{plan.RecapBlockId}' inline "
-                        + "prior context is not an ancestor of its "
-                        + "replay start."
-                    );
-                }
-
-                int previousIndex = startIndex;
-                foreach (EventAddress endpoint
-                         in maintain.CatchUpThrough) {
-                    if (!lineage.TryGetValue(
-                            endpoint,
-                            out int endpointIndex
-                        )
-                        || endpointIndex >= previousIndex) {
-                        AddBuildingDefect(
-                            defects,
-                            $"Maintain block '{plan.RecapBlockId}' route "
-                            + "is not strictly increasing from its exact "
-                            + "source cursor."
-                        );
-                        return;
-                    }
-                    previousIndex = endpointIndex;
-                }
-                if (maintain.CatchUpThrough.Count == 0
-                    || maintain.CatchUpThrough[^1]
-                        != building.Manifest.SetAdmissionAnchor) {
-                    AddBuildingDefect(
-                        defects,
-                        $"Maintain block '{plan.RecapBlockId}' route "
-                        + "does not end at SetAdmissionAnchor."
-                    );
-                }
-                return;
-
-            default:
-                AddBuildingDefect(
-                    defects,
-                    $"Building block '{plan.RecapBlockId}' has an "
-                    + "unsupported plan mode."
-                );
-                return;
-        }
-    }
-
-    private static bool TryValidateFrozenSource(
-        BuildingSnapshot building,
-        RecapBlockPlan plan,
-        EventAddress sourceSetAnchor,
-        IReadOnlyDictionary<EventAddress, int> lineage,
-        int admissionIndex,
-        List<DerivedRecapExecutionDefect> defects,
-        out DerivedRecapFrozenInput input,
-        out int cursorIndex
-    ) {
-        input = null!;
-        cursorIndex = -1;
-        if (!lineage.TryGetValue(
-                sourceSetAnchor,
-                out int sourceIndex
-            )
-            || sourceIndex <= admissionIndex) {
-            AddBuildingDefect(
-                defects,
-                $"Block '{plan.RecapBlockId}' source set is not a "
-                + "strict admission ancestor."
-            );
-            return false;
-        }
-        if (!building.FrozenInputs.TryGetValue(
-                plan.RecapBlockId,
-                out DerivedRecapFrozenInput? foundInput
-            )
-            || foundInput.Target != plan.Target
-            || !lineage.TryGetValue(
-                foundInput.AbsorbedThrough,
-                out cursorIndex
-            )
-            || cursorIndex < sourceIndex) {
-            AddBuildingDefect(
-                defects,
-                $"Block '{plan.RecapBlockId}' frozen cursor is not "
-                + "at or before its source set container."
-            );
-            return false;
-        }
-        input = foundInput;
-        return true;
-    }
-
     private static EventAddress GetMaintainStart(
         BuildingSnapshot building,
         MaintainRecapBlockPlan plan
@@ -1500,54 +1216,6 @@ public sealed class DerivedRecapPlannerExecutor {
             starts.Add(previous);
             previous = endpoint;
         }
-    }
-
-    private static ContextHeaderSnapshot GetPriorContext(
-        RecapPriorContext prior
-    ) => prior switch {
-        EmptyRecapPriorContext => ContextHeaderSnapshot.Empty,
-        InlineRecapPriorContext inline => inline.Snapshot,
-        _ => throw new InvalidDataException(
-            "Unsupported Recap prior context."
-        )
-    };
-
-    private static string? ValidateMaintainerResult(
-        MaintainRecapBlockPlan plan,
-        RecapBlockMaintenanceResult? result
-    ) {
-        if (result is null) {
-            return "Maintainer returned null.";
-        }
-        if (!string.Equals(
-                result.MaintainerId,
-                plan.MaintainerId,
-                StringComparison.Ordinal
-            )
-            || result.Target != plan.Target) {
-            return "Maintainer result Id or Target does not match "
-                + "the frozen block plan.";
-        }
-        if (result.NewBlock is null
-            || string.IsNullOrEmpty(result.NewBlock.Text)) {
-            return "Maintainer result content cannot be empty.";
-        }
-        if (result.Errors is { Count: > 0 }) {
-            return "Maintainer returned errors: "
-                + string.Join("; ", result.Errors);
-        }
-        try {
-            if (new UTF8Encoding(false, true).GetByteCount(
-                    result.NewBlock.Text
-                ) > plan.MaxContentUtf8Bytes) {
-                return $"Maintainer result exceeds "
-                    + $"{plan.MaxContentUtf8Bytes} UTF-8 bytes.";
-            }
-        }
-        catch (EncoderFallbackException) {
-            return "Maintainer result content is not valid UTF-8.";
-        }
-        return null;
     }
 
     private static DerivedRecapExecutionResult SourceReadUnavailable(

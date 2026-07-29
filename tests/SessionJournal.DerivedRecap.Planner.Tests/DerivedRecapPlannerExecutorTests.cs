@@ -7,6 +7,121 @@ namespace Atelia.SessionJournal.DerivedRecap.Planner.Tests;
 
 public sealed class DerivedRecapPlannerExecutorTests {
     [Fact]
+    public async Task FrozenPlanRawValidatorAcceptsExactRawSemantics() {
+        using TestFixture fixture = await TestFixture.CreateAsync(
+            historyPairs: 2
+        );
+        (
+            EventAddress start,
+            EventAddress mid,
+            EventAddress admission
+        ) = fixture.TwoStepRoute();
+        MaintainRecapBlockPlan plan = fixture.CreateEmptyPlan(
+            fixture.SelfId,
+            fixture.SelfTarget,
+            "frozen-maintainer",
+            start,
+            [mid, admission]
+        );
+        DerivedRecapSetManifest manifest =
+            DerivedRecapCodec.CreateManifest(
+                fixture.Engine.BranchRefId,
+                admission,
+                [plan]
+            );
+
+        IReadOnlyList<RecapFrozenPlanRawDefect> defects =
+            RecapFrozenPlanRawValidator.ValidateBlock(
+                manifest,
+                new Dictionary<
+                    RecapBlockId,
+                    DerivedRecapFrozenInput
+                >(),
+                fixture.Engine.ReadCurrentLineageHeaders(),
+                plan
+            );
+
+        Assert.Empty(defects);
+    }
+
+    [Fact]
+    public async Task PendingWindowPreparerMaterializesOnlySuffix() {
+        using TestFixture fixture = await TestFixture.CreateAsync(
+            historyPairs: 2
+        );
+        (
+            EventAddress start,
+            EventAddress mid,
+            EventAddress admission
+        ) = fixture.TwoStepRoute();
+        MaintainRecapBlockPlan plan = fixture.CreateEmptyPlan(
+            fixture.SelfId,
+            fixture.SelfTarget,
+            "self-maintainer",
+            start,
+            [mid, admission]
+        );
+
+        PreparedRecapPendingWindows prepared =
+            RecapPendingWindowPreparer.Prepare(
+                fixture.Engine,
+                admission,
+                [new PendingMaintainRoute(plan, start, 1)],
+                new RecapExecutionLimits(2, 2, 1000, 1000),
+                CancellationToken.None
+            );
+
+        Assert.Empty(prepared.Defects);
+        KeyValuePair<
+            (RecapBlockId BlockId, int EndpointIndex),
+            SessionHistoryPlanningWindow
+        > suffix = Assert.Single(prepared.Windows);
+        Assert.Equal((fixture.SelfId, 1), suffix.Key);
+        Assert.Equal(mid, suffix.Value.StartExclusive);
+        Assert.Equal(admission, suffix.Value.ObservedRawHead);
+    }
+
+    [Fact]
+    public async Task MaintainerStepRunnerReturnsTypedInvalidResult() {
+        using TestFixture fixture = await TestFixture.CreateAsync(
+            historyPairs: 1
+        );
+        EventAddress start = fixture.ReplayStart();
+        EventAddress admission =
+            fixture.Engine.ReadCurrentHead()!.Value;
+        MaintainRecapBlockPlan plan = fixture.CreateEmptyPlan(
+            fixture.SelfId,
+            fixture.SelfTarget,
+            "self-maintainer",
+            start,
+            [admission]
+        );
+        SessionHistoryPlanningSeedBatch seeds =
+            fixture.Engine.ReadHistoryPlanningSeeds([start]);
+        SessionHistoryPlanningWindow window =
+            fixture.Engine.ReadHistoryPlanningWindowAt(
+                admission,
+                Assert.Single(seeds.Seeds)
+            );
+        var maintainer = new InvalidIdentityMaintainer(
+            "self-maintainer",
+            fixture.SelfTarget
+        );
+
+        RecapMaintainerStepResult result =
+            await RecapMaintainerStepRunner.RunAsync(
+                maintainer,
+                plan,
+                currentBlock: null,
+                window,
+                admission,
+                CancellationToken.None
+            );
+
+        Assert.IsType<RecapMaintainerStepResult.ResultInvalid>(result);
+    }
+
+    [Fact]
     public async Task BelowTriggerHasNoPolicyOrMaintainerCalls() {
         using TestFixture fixture = await TestFixture.CreateAsync(
             historyPairs: 1
@@ -868,6 +983,25 @@ public sealed class DerivedRecapPlannerExecutorTests {
             CallCount = 0;
             OldBlocks.Clear();
         }
+    }
+
+    private sealed class InvalidIdentityMaintainer(
+        string id,
+        ContextHeaderBlockPath target
+    ) : IRecapBlockMaintainer {
+        public string Id { get; } = id;
+        public ContextHeaderBlockPath Target { get; } = target;
+
+        public ValueTask<RecapBlockMaintenanceResult> MaintainAsync(
+            RecapBlockMaintenanceRequest request,
+            CancellationToken ct
+        ) => ValueTask.FromResult(
+            new RecapBlockMaintenanceResult(
+                Id + "-wrong",
+                Target,
+                new ContextHeaderBlock("invalid")
+            )
+        );
     }
 
     private sealed class TestFixture : IDisposable {
