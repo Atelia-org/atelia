@@ -6,6 +6,8 @@
 > [EADR 核心概念](event-addressed-derived-recap-concepts.md)
 > **配套计划**：
 > [EADR V4 实现与替换计划](event-addressed-derived-recap-v4-implementation-plan.md)
+> **Post-R3 配置设计**：
+> [Repo-owned RecapPlannerConfig](recap-planner-config-repository-design.md)
 > **化简审阅记录**：
 > [V4 化简候选](event-addressed-derived-recap-v4-simplification-candidate.md)
 > **取代的候选设计**：
@@ -450,7 +452,8 @@ one Maintainer step runner
 
 Published Restore：
 
-- frozen plan、anchor、roster、mode、source、route、prior context、MaintainerId 与 limits exact不变；
+- frozen plan、anchor、roster、mode、source、route、prior context、MaintainerId 与 per-block
+  `MaxContentUtf8Bytes` exact不变；当前 operator trigger/planning ceilings不参与恢复裁决；
 - 只允许 regenerated block commitments 和 envelope token 改变；
 - component 逐个 atomic replace，publication envelope last；
 - block replace 后、envelope 前 exact set保持 unavailable；

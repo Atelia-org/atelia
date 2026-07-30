@@ -6,6 +6,8 @@
 > [EADR 核心概念](event-addressed-derived-recap-concepts.md)
 > **目标设计**：
 > [Event-addressed Derived Recap V4](event-addressed-derived-recap-v4-target-design.md)
+> **Post-R3 配置设计**：
+> [Repo-owned RecapPlannerConfig](recap-planner-config-repository-design.md)
 > **兼容策略**：不迁移、不双写、不读取 historical DerivedMemory v2/v3
 > **当前推进点**：R0～R3 已完成；R3 cutover 与 deterministic real-data release gate
 > 已于 2026-07-30 关闭
