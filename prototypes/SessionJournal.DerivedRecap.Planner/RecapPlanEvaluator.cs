@@ -44,7 +44,8 @@ public static class RecapPlanEvaluator {
         if (rawGrowthEventUpperBound
             < inputs.Cadence.BuildThresholdUnitCount) {
             return new RecapHeaderPrefilterResult.NoBuild(
-                RecapPlanReasons.BelowCadenceThreshold
+                RecapPlanReasons.BelowCadenceThreshold,
+                rawGrowthEventUpperBound
             );
         }
         return new RecapHeaderPrefilterResult.ExactEvaluationRequired(
@@ -70,23 +71,33 @@ public static class RecapPlanEvaluator {
         }
 
         int rawGrowthEventCount = lineage[facts.CadenceBaseline];
-        if (rawGrowthEventCount
-            > limits.MaxRawGrowthEventCount) {
-            return ScheduleUnavailable(
-                RecapPlanDefectCodes
-                    .MaxRawGrowthEventCountExceeded,
-                $"Raw growth after cadence baseline is "
-                + $"{rawGrowthEventCount}; limit is "
-                + $"{limits.MaxRawGrowthEventCount}."
-            );
-        }
         int growthHistoryUnitCount =
             facts.HistoryWindow.TotalHistoryUnitCount
             - baselineCompletedUnitCount;
+        var measurement = new RecapExactScheduleMeasurement(
+            growthHistoryUnitCount,
+            rawGrowthEventCount
+        );
+        if (rawGrowthEventCount
+            > limits.MaxRawGrowthEventCount) {
+            return new RecapSchedulingResult.Unavailable(
+                [
+                    new RecapPlanDefect(
+                        RecapPlanDefectCodes
+                            .MaxRawGrowthEventCountExceeded,
+                        $"Raw growth after cadence baseline is "
+                        + $"{rawGrowthEventCount}; limit is "
+                        + $"{limits.MaxRawGrowthEventCount}."
+                    )
+                ],
+                measurement
+            );
+        }
         if (growthHistoryUnitCount
             < inputs.Cadence.BuildThresholdUnitCount) {
             return new RecapSchedulingResult.NoBuild(
-                RecapPlanReasons.BelowCadenceThreshold
+                RecapPlanReasons.BelowCadenceThreshold,
+                measurement
             );
         }
 
@@ -111,7 +122,8 @@ public static class RecapPlanEvaluator {
         ];
         if (candidates.Length == 0) {
             return new RecapSchedulingResult.NoBuild(
-                RecapPlanReasons.AwaitingReplaySafeAdmission
+                RecapPlanReasons.AwaitingReplaySafeAdmission,
+                measurement
             );
         }
         var cadence = new RecapCadenceFacts(

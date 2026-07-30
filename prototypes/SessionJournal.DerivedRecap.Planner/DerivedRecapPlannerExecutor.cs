@@ -18,6 +18,7 @@ public sealed class DerivedRecapPlannerExecutor {
     private readonly RecapPlanningLimits _limits;
     private readonly DerivedRecapBuildingInstaller _installer;
     private readonly DerivedRecapBuildingExecutor _buildingExecutor;
+    private DerivedRecapPlanningDiagnostics? _lastPlanningDiagnostics;
 
     public DerivedRecapPlannerExecutor(
         SessionJournalEngine engine,
@@ -88,9 +89,13 @@ public sealed class DerivedRecapPlannerExecutor {
         );
     }
 
+    public DerivedRecapPlanningDiagnostics? LastPlanningDiagnostics =>
+        Volatile.Read(ref _lastPlanningDiagnostics);
+
     public async ValueTask<DerivedRecapExecutionResult> RunAsync(
         CancellationToken cancellationToken = default
     ) {
+        Volatile.Write(ref _lastPlanningDiagnostics, null);
         SessionCurrentLineageSnapshot lineage;
         DerivedRecapSelection selection;
         try {
@@ -109,6 +114,53 @@ public sealed class DerivedRecapPlannerExecutor {
                 DerivedRecapExecutionDefectCodes.StoreUnavailable,
                 exception.Message
             );
+        }
+        DerivedRecapPlanningBaseline baseline;
+        try {
+            baseline = DerivedRecapPlanningBaseline.FromSelection(
+                lineage.CapturedHead,
+                selection
+            );
+        }
+        catch (ArgumentException) {
+            return SelectionUnavailable(selection);
+        }
+        return await RunAsync(baseline, cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    public async ValueTask<DerivedRecapExecutionResult> RunAsync(
+        DerivedRecapPlanningBaseline baseline,
+        CancellationToken cancellationToken = default
+    ) {
+        ArgumentNullException.ThrowIfNull(baseline);
+        Volatile.Write(ref _lastPlanningDiagnostics, null);
+        SessionCurrentLineageSnapshot lineage;
+        DerivedRecapSelection selection;
+        try {
+            lineage = _engine.ReadCurrentLineageHeaders(
+                cancellationToken
+            );
+            selection = await _store.SelectNthPreviousAsync(
+                    lineage,
+                    nthPrevious: 0,
+                    cancellationToken
+                )
+                .ConfigureAwait(false);
+        }
+        catch (Exception exception) when (IsAvailabilityException(exception)) {
+            return Unavailable(
+                DerivedRecapExecutionDefectCodes.StoreUnavailable,
+                exception.Message
+            );
+        }
+        if (lineage.CapturedHead != baseline.CapturedRawHead) {
+            return RetryableRawHead(baseline.CapturedRawHead);
+        }
+        DerivedRecapExecutionResult? baselineMismatch =
+            MatchPlanningBaseline(baseline, selection);
+        if (baselineMismatch is not null) {
+            return baselineMismatch;
         }
 
         PublishedRecapDescriptor? latest;
@@ -138,29 +190,51 @@ public sealed class DerivedRecapPlannerExecutor {
                 );
         }
 
-        // This gate may only reject work. Existing Published admission gives
-        // an exact raw baseline; fresh bootstrap uses the whole lineage only
-        // as a conservative upper bound. Exact HistoryUnit facts remain the
-        // sole Build and raw-limit authority.
-        RecapHeaderPrefilterResult headerPrefilter =
-            RecapPlanEvaluator.EvaluateHeaderPrefilter(
-                _inputs,
-                lineage,
-                latest?.SetAdmissionAnchor
-            );
-        switch (headerPrefilter) {
-            case RecapHeaderPrefilterResult.NoBuild noBuild:
-                return new DerivedRecapExecutionResult.NoBuild(
-                    noBuild.Reason
-                );
-            case RecapHeaderPrefilterResult.Unavailable unavailable:
-                return Unavailable(unavailable.Defects);
-        }
-
         PublishedRecapSourceSnapshot? sourceSnapshot = null;
         Dictionary<RecapBlockId, DerivedRecapFrozenInput>
             sourceInputsById = [];
         if (latest is not null) {
+            PublishedPlanReadResult planRead;
+            try {
+                planRead = await _store.ReadPublishedPlanAsync(
+                        latest,
+                        cancellationToken
+                    )
+                    .ConfigureAwait(false);
+            }
+            catch (Exception exception)
+                when (IsAvailabilityException(exception)) {
+                return Unavailable(
+                    DerivedRecapExecutionDefectCodes
+                        .PublishedSourceUnavailable,
+                    exception.Message
+                );
+            }
+            switch (planRead) {
+                case PublishedPlanReadResult.Available planAvailable:
+                    DerivedRecapExecutionResult? catalogMismatch =
+                        RequireCatalogShape(
+                            planAvailable.Snapshot.FrozenPlan.Blocks
+                        );
+                    if (catalogMismatch is not null) {
+                        return catalogMismatch;
+                    }
+                    break;
+                case PublishedPlanReadResult.Changed changed:
+                    return new DerivedRecapExecutionResult.Retryable(
+                        DerivedRecapExecutionDefectCodes.SourceChanged,
+                        $"Latest Published plan changed from "
+                        + $"'{changed.Expected}' to "
+                        + $"'{changed.Observed}'."
+                    );
+                case PublishedPlanReadResult.Unavailable unavailable:
+                    return Unavailable(unavailable.Defects);
+                default:
+                    throw new InvalidOperationException(
+                        "Unknown Published plan read result."
+                    );
+            }
+
             PublishedRecapSourceReadResult sourceRead;
             try {
                 sourceRead = await _store.ReadPublishedSourceAsync(
@@ -186,6 +260,14 @@ public sealed class DerivedRecapPlannerExecutor {
                 return SourceReadUnavailable(sourceRead);
             }
             sourceSnapshot = available.Snapshot;
+            DerivedRecapExecutionResult? sourceCatalogMismatch =
+                RequireCatalogShape(
+                    sourceSnapshot.Publication
+                        .FrozenPlanSnapshot.Blocks
+                );
+            if (sourceCatalogMismatch is not null) {
+                return sourceCatalogMismatch;
+            }
             sourceInputsById = sourceSnapshot.FrozenInputs.ToDictionary(
                 static input => input.RecapBlockId
             );
@@ -204,6 +286,32 @@ public sealed class DerivedRecapPlannerExecutor {
                     );
                 }
             }
+        }
+
+        // This gate may only reject work. Existing Published admission gives
+        // an exact raw baseline; fresh bootstrap uses the whole lineage only
+        // as a conservative upper bound. Exact HistoryUnit facts remain the
+        // sole Build and raw-limit authority. Catalog compatibility above is
+        // intentionally checked before this cadence fast path.
+        RecapHeaderPrefilterResult headerPrefilter =
+            RecapPlanEvaluator.EvaluateHeaderPrefilter(
+                _inputs,
+                lineage,
+                latest?.SetAdmissionAnchor
+            );
+        switch (headerPrefilter) {
+            case RecapHeaderPrefilterResult.NoBuild noBuild:
+                Volatile.Write(
+                    ref _lastPlanningDiagnostics,
+                    new DerivedRecapPlanningDiagnostics.HeaderNegative(
+                        noBuild.RawGrowthEventUpperBound
+                    )
+                );
+                return new DerivedRecapExecutionResult.NoBuild(
+                    noBuild.Reason
+                );
+            case RecapHeaderPrefilterResult.Unavailable unavailable:
+                return Unavailable(unavailable.Defects);
         }
 
         RecapSchedulingResult.Ready schedule;
@@ -244,6 +352,29 @@ public sealed class DerivedRecapPlannerExecutor {
                         latest?.SetAdmissionAnchor
                     )
                 );
+            RecapExactScheduleMeasurement? measurement =
+                exactSchedule switch {
+                    RecapSchedulingResult.Ready measuredReady =>
+                        new RecapExactScheduleMeasurement(
+                            measuredReady.Cadence
+                                .GrowthHistoryUnitCount,
+                            measuredReady.Cadence.RawGrowthEventCount
+                        ),
+                    RecapSchedulingResult.NoBuild noBuild =>
+                        noBuild.Measurement,
+                    RecapSchedulingResult.Unavailable unavailable =>
+                        unavailable.Measurement,
+                    _ => null
+                };
+            if (measurement is not null) {
+                Volatile.Write(
+                    ref _lastPlanningDiagnostics,
+                    new DerivedRecapPlanningDiagnostics.ExactSchedule(
+                        measurement.GrowthHistoryUnitCount,
+                        measurement.RawGrowthEventCount
+                    )
+                );
+            }
             if (exactSchedule
                 is not RecapSchedulingResult.Ready ready) {
                 return exactSchedule switch {
@@ -408,6 +539,17 @@ public sealed class DerivedRecapPlannerExecutor {
                     $"Raw SessionJournal head changed before Building "
                     + $"installation. Expected '{changed.Expected}', "
                     + $"observed '{changed.Observed}'."
+                );
+            case CreateBuildingResult.ActiveBuildingConflict conflict:
+                return new DerivedRecapExecutionResult.Retryable(
+                    DerivedRecapExecutionDefectCodes.BuildingRace,
+                    "Another current-lineage Building became active "
+                    + "before installation: "
+                    + string.Join(
+                        ", ",
+                        conflict.SetAdmissionAnchors
+                    )
+                    + "."
                 );
         }
 
@@ -654,6 +796,99 @@ public sealed class DerivedRecapPlannerExecutor {
             previous = endpoint;
         }
     }
+
+    private static DerivedRecapExecutionResult? MatchPlanningBaseline(
+        DerivedRecapPlanningBaseline baseline,
+        DerivedRecapSelection observed
+    ) {
+        if (observed is DerivedRecapSelection.StoreUnavailable
+                unavailable) {
+            return Unavailable(
+                DerivedRecapExecutionDefectCodes.StoreUnavailable,
+                unavailable.Reason
+            );
+        }
+        if (baseline.ExpectedLatestAnchor is null) {
+            return observed is DerivedRecapSelection.EmptyLineage
+                ? null
+                : RetryableSource(
+                    "Expected no latest Published recap, but the "
+                    + $"latest selection is '{observed.GetType().Name}'."
+                );
+        }
+        if (observed
+            is not DerivedRecapSelection.Selected selected) {
+            return RetryableSource(
+                $"Expected latest Published anchor "
+                + $"'{baseline.ExpectedLatestAnchor}' to resolve to a "
+                + "healthy exact selection after any Restore, but "
+                + $"observed '{observed.GetType().Name}'."
+            );
+        }
+        if (selected.Descriptor.SetAdmissionAnchor
+            != baseline.ExpectedLatestAnchor) {
+            return RetryableSource(
+                $"Expected latest Published anchor "
+                + $"'{baseline.ExpectedLatestAnchor}', observed "
+                + $"'{selected.Descriptor.SetAdmissionAnchor}'."
+            );
+        }
+        if (baseline.ExpectedLatestPublished is { } exact
+            && selected.Descriptor != exact) {
+            return RetryableSource(
+                $"Expected latest Published identity '{exact}', "
+                + $"observed '{selected.Descriptor}'."
+            );
+        }
+        return null;
+    }
+
+    private DerivedRecapExecutionResult? RequireCatalogShape(
+        IReadOnlyList<RecapBlockPlan> frozenBlocks
+    ) {
+        RecapCatalogShapeComparison comparison =
+            RecapCatalogShape.Compare(
+                RecapCatalogShape.ProjectActive(
+                    _inputs.OrderedCatalog
+                ),
+                RecapCatalogShape.ProjectFrozen(frozenBlocks)
+            );
+        return comparison.IsExactMatch
+            ? null
+            : Unavailable(
+                DerivedRecapExecutionDefectCodes
+                    .CatalogMigrationRequired,
+                comparison.Detail
+            );
+    }
+
+    private static DerivedRecapExecutionResult SelectionUnavailable(
+        DerivedRecapSelection selection
+    ) => selection switch {
+        DerivedRecapSelection.ExactPublishedSetInvalid invalid =>
+            Unavailable(invalid.Defects),
+        DerivedRecapSelection.StoreUnavailable unavailable =>
+            Unavailable(
+                DerivedRecapExecutionDefectCodes.StoreUnavailable,
+                unavailable.Reason
+            ),
+        DerivedRecapSelection.OrdinalUnavailable => Unavailable(
+            DerivedRecapExecutionDefectCodes.StoreUnavailable,
+            "Latest strict Published ordinal is unavailable."
+        ),
+        _ => new DerivedRecapExecutionResult.Retryable(
+            DerivedRecapExecutionDefectCodes.SourceChanged,
+            $"Cannot capture a new-planning baseline from "
+            + $"'{selection.GetType().Name}'."
+        )
+    };
+
+    private static DerivedRecapExecutionResult.Retryable RetryableSource(
+        string detail
+    ) => new(
+        DerivedRecapExecutionDefectCodes.SourceChanged,
+        detail
+    );
 
     private static DerivedRecapExecutionResult SourceReadUnavailable(
         PublishedRecapSourceReadResult result

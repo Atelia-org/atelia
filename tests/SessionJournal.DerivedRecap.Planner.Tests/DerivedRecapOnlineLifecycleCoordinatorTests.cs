@@ -46,6 +46,11 @@ public sealed class DerivedRecapOnlineLifecycleCoordinatorTests {
             ],
             script.Trace
         );
+        DerivedRecapPlanningBaseline baseline =
+            Assert.Single(script.Baselines);
+        Assert.Equal(fixture.Boundary, baseline.CapturedRawHead);
+        Assert.Equal(latest, baseline.ExpectedLatestAnchor);
+        Assert.Null(baseline.ExpectedLatestPublished);
     }
 
     [Fact]
@@ -120,7 +125,7 @@ public sealed class DerivedRecapOnlineLifecycleCoordinatorTests {
             (_, _, _) => throw new Xunit.Sdk.XunitException(
                 "Restore must not run."
             ),
-            _ => {
+            (_, _) => {
                 trace.Add("Run");
                 published = true;
                 return ValueTask.FromResult<DerivedRecapExecutionResult>(
@@ -213,6 +218,58 @@ public sealed class DerivedRecapOnlineLifecycleCoordinatorTests {
             Assert.IsType<SessionContextCandidateDescriptor>(
                 neutral.Candidate
             ).SetAdmissionAnchor
+        );
+    }
+
+    [Fact]
+    public async Task FrozenBuildingCoordinatorHandlesExactBuildingOnce() {
+        using PublicLifecycleFixture fixture =
+            await PublicLifecycleFixture.CreateAsync(
+                nthPrevious: 0,
+                historyPairs: 1
+            );
+        MaintainRecapBlockPlan plan =
+            fixture.CreateMaintainPlan();
+        _ = Assert.IsType<CreateBuildingResult.Created>(
+            await fixture.Store.CreateBuildingAsync(
+                DerivedRecapCodec.CreateManifest(
+                    fixture.Engine.BranchRefId,
+                    plan.CatchUpThrough[^1],
+                    [plan]
+                )
+            )
+        );
+        CountingMaintainer maintainer = fixture.CreateMaintainer();
+        DerivedRecapOnlineLifecycleCoordinator coordinator =
+            DerivedRecapOnlineLifecycleCoordinator
+                .CreateForFrozenBuilding(
+                    fixture.Engine,
+                    fixture.Store,
+                    plan.CatchUpThrough[^1],
+                    new RecapBlockMaintainerRegistry([maintainer])
+                );
+
+        SessionContextLifecycleResult first =
+            await coordinator.PrepareAsync(
+                fixture.Engine,
+                fixture.Request(),
+                CancellationToken.None
+            );
+        SessionContextLifecycleResult second =
+            await coordinator.PrepareAsync(
+                fixture.Engine,
+                fixture.Request(),
+                CancellationToken.None
+            );
+
+        Assert.Equal(SessionContextLifecycleStatus.Ready, first.Status);
+        Assert.Equal(SessionContextLifecycleStatus.Ready, second.Status);
+        Assert.Equal(1, maintainer.CallCount);
+        Assert.Null(coordinator.LastPlanningDiagnostics);
+        Assert.IsType<BuildingReadResult.Missing>(
+            await fixture.Store.ReadBuildingAsync(
+                plan.CatchUpThrough[^1]
+            )
         );
     }
 
@@ -735,7 +792,7 @@ public sealed class DerivedRecapOnlineLifecycleCoordinatorTests {
             (_, _, _) => throw new Xunit.Sdk.XunitException(
                 "Restore must not run."
             ),
-            _ => {
+            (_, _) => {
                 fixture.Engine.AppendObservation("drift");
                 return ValueTask.FromResult<DerivedRecapExecutionResult>(
                     new DerivedRecapExecutionResult.NoBuild("stale")
@@ -750,6 +807,78 @@ public sealed class DerivedRecapOnlineLifecycleCoordinatorTests {
                 CancellationToken.None
             )
         );
+    }
+
+    [Fact]
+    public async Task PinnedPlanningIsUsedOnceThenCurrentPlanningRuns() {
+        using LifecycleFixture fixture =
+            LifecycleFixture.Create(nthPrevious: 0, historyPairs: 1);
+        EventAddress latest = fixture.Lineage.HeadToRoot[1].Address;
+        PublishedRecapDescriptor descriptor =
+            Descriptor(fixture, latest);
+        var pinned = new DerivedRecapPlanningBaseline(
+            fixture.Boundary,
+            latest,
+            descriptor
+        );
+        int pinnedCalls = 0;
+        int currentCalls = 0;
+        var coordinator =
+            new DerivedRecapOnlineLifecycleCoordinator(
+                fixture.Engine,
+                new ThrowingCandidateSource(),
+                (_, _, _) =>
+                    ValueTask.FromResult<DerivedRecapSelection>(
+                        new DerivedRecapSelection.Selected(descriptor)
+                    ),
+                (_, _, _) => throw new Xunit.Sdk.XunitException(
+                    "Restore must not run."
+                ),
+                (baseline, _) => {
+                    pinnedCalls++;
+                    Assert.Same(pinned, baseline);
+                    return ValueTask.FromResult<
+                        DerivedRecapExecutionResult
+                    >(new DerivedRecapExecutionResult.NoBuild(
+                        "first"
+                    ));
+                },
+                getLastPlanningDiagnostics: null,
+                isFrozenBuildingMode: false,
+                pinnedPlanningBaseline: pinned,
+                runCurrentPlanning: _ => {
+                    currentCalls++;
+                    return ValueTask.FromResult<
+                        DerivedRecapExecutionResult
+                    >(new DerivedRecapExecutionResult.NoBuild(
+                        "second"
+                    ));
+                }
+            );
+
+        _ = await coordinator.PrepareAsync(
+            fixture.Engine,
+            fixture.Request(),
+            CancellationToken.None
+        );
+        fixture.Engine.AppendObservation("second lifecycle");
+        EventAddress secondBoundary =
+            fixture.Engine.ReadCurrentLineageHeaders().CapturedHead;
+        var secondRequest = new SessionContextLifecycleRequest(
+            new SessionContextSelectionRequest(
+                secondBoundary,
+                fixture.NthPrevious
+            ),
+            fixture.Engine.InspectExecutionBoundary().Phase
+        );
+        _ = await coordinator.PrepareAsync(
+            fixture.Engine,
+            secondRequest,
+            CancellationToken.None
+        );
+
+        Assert.Equal(1, pinnedCalls);
+        Assert.Equal(1, currentCalls);
     }
 
     private static DerivedRecapSelection Invalid(
@@ -799,6 +928,8 @@ public sealed class DerivedRecapOnlineLifecycleCoordinatorTests {
         }
 
         public List<string> Trace { get; } = [];
+        public List<DerivedRecapPlanningBaseline> Baselines { get; } =
+            [];
 
         public ValueTask<DerivedRecapSelection> SelectAsync(
             SessionCurrentLineageSnapshot lineage,
@@ -819,9 +950,11 @@ public sealed class DerivedRecapOnlineLifecycleCoordinatorTests {
         }
 
         public ValueTask<DerivedRecapExecutionResult> RunAsync(
-            CancellationToken _
+            DerivedRecapPlanningBaseline baseline,
+            CancellationToken __
         ) {
             Trace.Add("Run");
+            Baselines.Add(baseline);
             return ValueTask.FromResult(_runs.Dequeue());
         }
     }
@@ -1184,6 +1317,7 @@ public sealed class DerivedRecapOnlineLifecycleCoordinatorTests {
                 ValueTask<DerivedRecapRestoreResult>
             > restore,
             Func<
+                DerivedRecapPlanningBaseline,
                 CancellationToken,
                 ValueTask<DerivedRecapExecutionResult>
             > run

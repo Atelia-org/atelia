@@ -160,6 +160,272 @@ public sealed class DerivedRecapPlannerExecutorTests {
     }
 
     [Fact]
+    public async Task HeaderNegativeDiagnosticsDoNotInventExactCounts() {
+        using TestFixture fixture = await TestFixture.CreateAsync(
+            historyPairs: 1
+        );
+        var maintainer = new ScriptedMaintainer(
+            "self-maintainer",
+            fixture.SelfTarget,
+            static (_, _) => "unused"
+        );
+        DerivedRecapPlannerExecutor executor = fixture.CreateExecutor(
+            new DelegatePolicy(static _ =>
+                throw new Xunit.Sdk.XunitException(
+                    "Policy must not run."
+                )),
+            [maintainer],
+            recapBuildIntervalUnitCount: 100
+        );
+
+        _ = Assert.IsType<DerivedRecapExecutionResult.NoBuild>(
+            await executor.RunAsync()
+        );
+
+        var diagnostics = Assert.IsType<
+            DerivedRecapPlanningDiagnostics.HeaderNegative
+        >(executor.LastPlanningDiagnostics);
+        Assert.True(diagnostics.RawGrowthEventUpperBound > 0);
+        Assert.DoesNotContain(
+            nameof(DerivedRecapPlanningDiagnostics.ExactSchedule
+                .GrowthHistoryUnitCount),
+            diagnostics.GetType()
+                .GetProperties()
+                .Select(static property => property.Name)
+        );
+    }
+
+    [Fact]
+    public async Task ExactNoBuildDiagnosticsExposeBothExactCounts() {
+        using TestFixture fixture = await TestFixture.CreateAsync(
+            historyPairs: 1
+        );
+        var maintainer = new ScriptedMaintainer(
+            "self-maintainer",
+            fixture.SelfTarget,
+            static (_, _) => "unused"
+        );
+        DerivedRecapPlannerExecutor executor = fixture.CreateExecutor(
+            new DelegatePolicy(static _ =>
+                throw new Xunit.Sdk.XunitException(
+                    "Policy must not run."
+                )),
+            [maintainer],
+            recapBuildIntervalUnitCount: 3
+        );
+
+        _ = Assert.IsType<DerivedRecapExecutionResult.NoBuild>(
+            await executor.RunAsync()
+        );
+
+        var diagnostics = Assert.IsType<
+            DerivedRecapPlanningDiagnostics.ExactSchedule
+        >(executor.LastPlanningDiagnostics);
+        Assert.Equal(2, diagnostics.GrowthHistoryUnitCount);
+        Assert.True(diagnostics.RawGrowthEventCount > 0);
+    }
+
+    [Fact]
+    public async Task CatalogMismatchRejectsBeforeHeaderPrefilter() {
+        using TestFixture fixture = await TestFixture.CreateAsync(
+            historyPairs: 1
+        );
+        var firstMaintainer = new ScriptedMaintainer(
+            "self-maintainer",
+            fixture.SelfTarget,
+            static (_, _) => "source"
+        );
+        _ = Assert.IsType<DerivedRecapExecutionResult.Published>(
+            await fixture.CreateExecutor(
+                    new BoundedMaintainAllRecapPlanningPolicy(),
+                    [firstMaintainer]
+                )
+                .RunAsync()
+        );
+        var policy = new DelegatePolicy(static _ =>
+            throw new Xunit.Sdk.XunitException(
+                "Catalog mismatch must precede cadence."
+            ));
+        var secondMaintainer = new ScriptedMaintainer(
+            "new-maintainer",
+            fixture.SelfTarget,
+            static (_, _) => "unused"
+        );
+        DerivedRecapPlannerExecutor executor = fixture.CreateExecutor(
+            policy,
+            [secondMaintainer],
+            recapBuildIntervalUnitCount: 100,
+            catalog: [
+                new RecapBlockCatalogEntry(
+                    fixture.SelfId,
+                    fixture.SelfTarget,
+                    "new-maintainer",
+                    TestFixture.MaxContent - 1
+                )
+            ]
+        );
+
+        var result =
+            Assert.IsType<DerivedRecapExecutionResult.Unavailable>(
+                await executor.RunAsync()
+            );
+
+        Assert.Contains(
+            result.Defects,
+            static defect => defect.Code
+                == DerivedRecapExecutionDefectCodes
+                    .CatalogMigrationRequired
+        );
+        Assert.Null(executor.LastPlanningDiagnostics);
+        Assert.Equal(0, policy.CallCount);
+        Assert.Equal(0, secondMaintainer.CallCount);
+    }
+
+    [Fact]
+    public async Task MaintainerChangeWithSameShapeNeedsNoMigration() {
+        using TestFixture fixture = await TestFixture.CreateAsync(
+            historyPairs: 1
+        );
+        var firstMaintainer = new ScriptedMaintainer(
+            "self-maintainer",
+            fixture.SelfTarget,
+            static (_, _) => "source"
+        );
+        _ = Assert.IsType<DerivedRecapExecutionResult.Published>(
+            await fixture.CreateExecutor(
+                    new BoundedMaintainAllRecapPlanningPolicy(),
+                    [firstMaintainer]
+                )
+                .RunAsync()
+        );
+        var replacement = new ScriptedMaintainer(
+            "replacement-maintainer",
+            fixture.SelfTarget,
+            static (_, _) => "unused"
+        );
+        DerivedRecapPlannerExecutor executor = fixture.CreateExecutor(
+            new DelegatePolicy(static _ =>
+                throw new Xunit.Sdk.XunitException(
+                    "No growth must not call policy."
+                )),
+            [replacement],
+            recapBuildIntervalUnitCount: 100,
+            catalog: [
+                new RecapBlockCatalogEntry(
+                    fixture.SelfId,
+                    fixture.SelfTarget,
+                    "replacement-maintainer",
+                    TestFixture.MaxContent
+                )
+            ]
+        );
+
+        DerivedRecapExecutionResult result =
+            await executor.RunAsync();
+
+        Assert.IsType<DerivedRecapExecutionResult.NoBuild>(result);
+        Assert.Equal(0, replacement.CallCount);
+    }
+
+    [Fact]
+    public async Task PlanningBaselineRejectsRawAndExactSourceDrift() {
+        using TestFixture fixture = await TestFixture.CreateAsync(
+            historyPairs: 1
+        );
+        var maintainer = new ScriptedMaintainer(
+            "self-maintainer",
+            fixture.SelfTarget,
+            static (_, _) => "source"
+        );
+        var published =
+            Assert.IsType<DerivedRecapExecutionResult.Published>(
+                await fixture.CreateExecutor(
+                        new BoundedMaintainAllRecapPlanningPolicy(),
+                        [maintainer]
+                    )
+                    .RunAsync()
+            );
+        DerivedRecapPlannerExecutor executor = fixture.CreateExecutor(
+            new BoundedMaintainAllRecapPlanningPolicy(),
+            [maintainer],
+            recapBuildIntervalUnitCount: 100
+        );
+        EventAddress head =
+            fixture.Engine.ReadCurrentLineageHeaders().CapturedHead;
+        var wrongExact = new DerivedRecapPlanningBaseline(
+            head,
+            published.Descriptor.SetAdmissionAnchor,
+            published.Descriptor with {
+                EnvelopeSha256 = new string('f', 64)
+            }
+        );
+
+        var sourceDrift =
+            Assert.IsType<DerivedRecapExecutionResult.Retryable>(
+                await executor.RunAsync(wrongExact)
+            );
+        Assert.Equal(
+            DerivedRecapExecutionDefectCodes.SourceChanged,
+            sourceDrift.Code
+        );
+
+        var rawBaseline = new DerivedRecapPlanningBaseline(
+            head,
+            published.Descriptor.SetAdmissionAnchor,
+            published.Descriptor
+        );
+        fixture.AppendPair("drift");
+        var rawDrift =
+            Assert.IsType<DerivedRecapExecutionResult.Retryable>(
+                await executor.RunAsync(rawBaseline)
+            );
+        Assert.Equal(
+            DerivedRecapExecutionDefectCodes.RawHeadChanged,
+            rawDrift.Code
+        );
+    }
+
+    [Fact]
+    public async Task AnchorOnlyBaselineAcceptsRestoredExactIdentity() {
+        using TestFixture fixture = await TestFixture.CreateAsync(
+            historyPairs: 1
+        );
+        var maintainer = new ScriptedMaintainer(
+            "self-maintainer",
+            fixture.SelfTarget,
+            static (_, _) => "source"
+        );
+        var published =
+            Assert.IsType<DerivedRecapExecutionResult.Published>(
+                await fixture.CreateExecutor(
+                        new BoundedMaintainAllRecapPlanningPolicy(),
+                        [maintainer]
+                    )
+                    .RunAsync()
+            );
+        EventAddress head =
+            fixture.Engine.ReadCurrentLineageHeaders().CapturedHead;
+        var restoredBaseline = new DerivedRecapPlanningBaseline(
+            head,
+            published.Descriptor.SetAdmissionAnchor,
+            expectedLatestPublished: null
+        );
+
+        DerivedRecapExecutionResult result =
+            await fixture.CreateExecutor(
+                    new DelegatePolicy(static _ =>
+                        throw new Xunit.Sdk.XunitException(
+                            "No growth must not call policy."
+                        )),
+                    [maintainer],
+                    recapBuildIntervalUnitCount: 100
+                )
+                .RunAsync(restoredBaseline);
+
+        Assert.IsType<DerivedRecapExecutionResult.NoBuild>(result);
+    }
+
+    [Fact]
     public async Task BoundedMaintainAllBuildsThenCatchesUp() {
         using TestFixture fixture = await TestFixture.CreateAsync(
             historyPairs: 2
@@ -855,6 +1121,66 @@ public sealed class DerivedRecapPlannerExecutorTests {
                 await fixture.Store.ReadBuildingAsync(admission)
             );
         }
+    }
+
+    [Fact]
+    public async Task ActiveBuildingConflictIsRetryableWithoutResume() {
+        using TestFixture fixture = await TestFixture.CreateAsync(
+            historyPairs: 2
+        );
+        (
+            EventAddress start,
+            EventAddress existingAnchor,
+            EventAddress targetAnchor
+        ) = fixture.TwoStepRoute();
+        MaintainRecapBlockPlan existingPlan =
+            fixture.CreateEmptyPlan(
+                fixture.SelfId,
+                fixture.SelfTarget,
+                "self-maintainer",
+                start,
+                [existingAnchor]
+            );
+        await fixture.CreateBuildingAsync(
+            existingAnchor,
+            [existingPlan]
+        );
+        var maintainer = new ScriptedMaintainer(
+            "self-maintainer",
+            fixture.SelfTarget,
+            static (_, _) => "must-not-run"
+        );
+        var policy = new DelegatePolicy(_ =>
+            new RecapPlanningPolicyDecision.Build(
+                targetAnchor,
+                [
+                    new RecapBlockPlanningDecision.Maintain(
+                        fixture.SelfId,
+                        new RecapPlanningMaintainSource.Empty(start),
+                        [targetAnchor],
+                        EmptyRecapPriorContext.Instance
+                    )
+                ]
+            ));
+
+        var result =
+            Assert.IsType<DerivedRecapExecutionResult.Retryable>(
+                await fixture.CreateExecutor(policy, [maintainer])
+                    .RunAsync()
+            );
+
+        Assert.Equal(
+            DerivedRecapExecutionDefectCodes.BuildingRace,
+            result.Code
+        );
+        Assert.Contains(existingAnchor.ToString(), result.Detail);
+        Assert.Equal(0, maintainer.CallCount);
+        Assert.IsType<BuildingReadResult.Available>(
+            await fixture.Store.ReadBuildingAsync(existingAnchor)
+        );
+        Assert.IsType<BuildingReadResult.Missing>(
+            await fixture.Store.ReadBuildingAsync(targetAnchor)
+        );
     }
 
     [Fact]

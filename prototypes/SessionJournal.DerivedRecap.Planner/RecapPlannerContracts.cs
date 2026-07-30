@@ -618,11 +618,15 @@ public abstract record RecapSchedulingResult {
     private RecapSchedulingResult() {
     }
 
-    public sealed record NoBuild(string Reason)
+    public sealed record NoBuild(
+        string Reason,
+        RecapExactScheduleMeasurement Measurement
+    )
         : RecapSchedulingResult;
 
     public sealed record Unavailable(
-        IReadOnlyList<RecapPlanDefect> Defects
+        IReadOnlyList<RecapPlanDefect> Defects,
+        RecapExactScheduleMeasurement? Measurement = null
     ) : RecapSchedulingResult;
 
     public sealed record Ready : RecapSchedulingResult {
@@ -645,11 +649,19 @@ public abstract record RecapSchedulingResult {
     }
 }
 
+public sealed record RecapExactScheduleMeasurement(
+    int GrowthHistoryUnitCount,
+    int RawGrowthEventCount
+);
+
 public abstract record RecapHeaderPrefilterResult {
     private RecapHeaderPrefilterResult() {
     }
 
-    public sealed record NoBuild(string Reason)
+    public sealed record NoBuild(
+        string Reason,
+        int RawGrowthEventUpperBound
+    )
         : RecapHeaderPrefilterResult;
 
     public sealed record ExactEvaluationRequired(
@@ -741,4 +753,6 @@ public static class RecapPlanReasons {
         nameof(BelowCadenceThreshold);
     public const string AwaitingReplaySafeAdmission =
         nameof(AwaitingReplaySafeAdmission);
+    public const string FrozenBuildingHandled =
+        nameof(FrozenBuildingHandled);
 }

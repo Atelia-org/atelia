@@ -24,9 +24,21 @@ public sealed class DerivedRecapOnlineLifecycleCoordinator
         ValueTask<DerivedRecapRestoreResult>
     > _restore;
     private readonly Func<
+        DerivedRecapPlanningBaseline,
         CancellationToken,
         ValueTask<DerivedRecapExecutionResult>
     > _run;
+    private readonly Func<DerivedRecapPlanningDiagnostics?>
+        _getLastPlanningDiagnostics;
+    private readonly Func<
+        CancellationToken,
+        ValueTask<DerivedRecapExecutionResult>
+    >? _runCurrentPlanning;
+    private readonly DerivedRecapPlanningBaseline?
+        _pinnedPlanningBaseline;
+    private readonly bool _isFrozenBuildingMode;
+    private bool _frozenBuildingHandled;
+    private bool _pinnedPlanningBaselineConsumed;
 
     public DerivedRecapOnlineLifecycleCoordinator(
         SessionJournalEngine engine,
@@ -61,6 +73,71 @@ public sealed class DerivedRecapOnlineLifecycleCoordinator
         _select = store.SelectNthPreviousAsync;
         _restore = restorer.RestoreAsync;
         _run = planner.RunAsync;
+        _runCurrentPlanning = planner.RunAsync;
+        _getLastPlanningDiagnostics =
+            () => planner.LastPlanningDiagnostics;
+    }
+
+    /// <summary>
+    /// Binds the first new-planning pass to the Host's pre-client readiness
+    /// snapshot. If the same online operation reaches lifecycle again after
+    /// raw Observation growth, the same Planner authority self-pins the new
+    /// current snapshot without reloading active configuration.
+    /// </summary>
+    public DerivedRecapOnlineLifecycleCoordinator(
+        SessionJournalEngine engine,
+        DerivedRecapStore store,
+        RecapPlanningInputs inputs,
+        RecapPlanningLimits limits,
+        IRecapBlockMaintainerRegistry maintainers,
+        DerivedRecapPlanningBaseline planningBaseline
+    ) : this(engine, store, inputs, limits, maintainers) {
+        _pinnedPlanningBaseline = planningBaseline
+            ?? throw new ArgumentNullException(nameof(planningBaseline));
+    }
+
+    /// <summary>
+    /// Creates an online lifecycle bound to one already-frozen Building.
+    /// Active Planner inputs and repo config are intentionally absent.
+    /// </summary>
+    public static DerivedRecapOnlineLifecycleCoordinator
+        CreateForFrozenBuilding(
+        SessionJournalEngine engine,
+        DerivedRecapStore store,
+        EventAddress buildingAnchor,
+        IRecapBlockMaintainerRegistry maintainers
+    ) {
+        ArgumentNullException.ThrowIfNull(engine);
+        ArgumentNullException.ThrowIfNull(store);
+        ArgumentNullException.ThrowIfNull(maintainers);
+        if (buildingAnchor == default) {
+            throw new ArgumentException(
+                "Frozen Building anchor cannot be default.",
+                nameof(buildingAnchor)
+            );
+        }
+        var building = new DerivedRecapBuildingExecutor(
+            engine,
+            store,
+            maintainers
+        );
+        var restorer = new DerivedRecapRestoreExecutor(
+            engine,
+            store,
+            maintainers
+        );
+        return new DerivedRecapOnlineLifecycleCoordinator(
+            engine,
+            new DerivedRecapContextCandidateSource(store, engine),
+            store.SelectNthPreviousAsync,
+            restorer.RestoreAsync,
+            (_, cancellationToken) => building.ResumeAsync(
+                buildingAnchor,
+                cancellationToken
+            ),
+            static () => null,
+            isFrozenBuildingMode: true
+        );
     }
 
     internal DerivedRecapOnlineLifecycleCoordinator(
@@ -79,9 +156,18 @@ public sealed class DerivedRecapOnlineLifecycleCoordinator
             ValueTask<DerivedRecapRestoreResult>
         > restore,
         Func<
+            DerivedRecapPlanningBaseline,
             CancellationToken,
             ValueTask<DerivedRecapExecutionResult>
-        > run
+        > run,
+        Func<DerivedRecapPlanningDiagnostics?>?
+            getLastPlanningDiagnostics = null,
+        bool isFrozenBuildingMode = false,
+        DerivedRecapPlanningBaseline? pinnedPlanningBaseline = null,
+        Func<
+            CancellationToken,
+            ValueTask<DerivedRecapExecutionResult>
+        >? runCurrentPlanning = null
     ) {
         _engine = engine
             ?? throw new ArgumentNullException(nameof(engine));
@@ -92,7 +178,15 @@ public sealed class DerivedRecapOnlineLifecycleCoordinator
         _restore = restore
             ?? throw new ArgumentNullException(nameof(restore));
         _run = run ?? throw new ArgumentNullException(nameof(run));
+        _getLastPlanningDiagnostics =
+            getLastPlanningDiagnostics ?? (static () => null);
+        _isFrozenBuildingMode = isFrozenBuildingMode;
+        _pinnedPlanningBaseline = pinnedPlanningBaseline;
+        _runCurrentPlanning = runCurrentPlanning;
     }
+
+    public DerivedRecapPlanningDiagnostics? LastPlanningDiagnostics =>
+        _getLastPlanningDiagnostics();
 
     public ValueTask<SessionContextCandidateSelection> SelectAsync(
         SessionContextSelectionRequest request,
@@ -151,6 +245,20 @@ public sealed class DerivedRecapOnlineLifecycleCoordinator
         DerivedRecapSelection latest =
             await SelectAsync(lineage, 0, cancellationToken)
                 .ConfigureAwait(false);
+        DerivedRecapPlanningBaseline planningBaseline;
+        try {
+            planningBaseline =
+                DerivedRecapPlanningBaseline.FromSelection(
+                    lineage.CapturedHead,
+                    latest
+                );
+        }
+        catch (ArgumentException) {
+            return SelectionUnavailable(
+                latest,
+                "latest Published recap"
+            );
+        }
         if (latest
                 is DerivedRecapSelection.ExactPublishedSetInvalid
                     invalidLatest) {
@@ -176,6 +284,15 @@ public sealed class DerivedRecapOnlineLifecycleCoordinator
                     "latest Published recap after its one restore"
                 );
             }
+            if (((DerivedRecapSelection.Selected)latest)
+                    .Descriptor.SetAdmissionAnchor
+                != invalidLatest.SetAdmissionAnchor) {
+                return Unavailable(
+                    DerivedRecapExecutionDefectCodes.SourceChanged,
+                    "Latest Published recap changed anchor during "
+                    + "exact Restore."
+                );
+            }
         }
         else if (latest is not (
                      DerivedRecapSelection.Selected
@@ -190,7 +307,8 @@ public sealed class DerivedRecapOnlineLifecycleCoordinator
             latest is DerivedRecapSelection.EmptyLineage;
 
         DerivedRecapExecutionResult build =
-            await RunAsync(cancellationToken).ConfigureAwait(false);
+            await RunAsync(planningBaseline, cancellationToken)
+                .ConfigureAwait(false);
         SessionContextLifecycleResult? buildFailure =
             MapBuildFailure(build);
         if (buildFailure is not null) {
@@ -299,13 +417,47 @@ public sealed class DerivedRecapOnlineLifecycleCoordinator
     }
 
     private async ValueTask<DerivedRecapExecutionResult> RunAsync(
+        DerivedRecapPlanningBaseline baseline,
         CancellationToken cancellationToken
     ) {
         EventAddress expectedRawHead = RequireCurrentHead();
-        DerivedRecapExecutionResult result =
-            await _run(cancellationToken).ConfigureAwait(false);
+        if (_isFrozenBuildingMode && _frozenBuildingHandled) {
+            return new DerivedRecapExecutionResult.NoBuild(
+                RecapPlanReasons.FrozenBuildingHandled
+            );
+        }
+        DerivedRecapExecutionResult result;
+        bool usedPinnedBaseline = _pinnedPlanningBaseline is not null
+            && !_pinnedPlanningBaselineConsumed;
+        if (usedPinnedBaseline) {
+            result = await _run(
+                    _pinnedPlanningBaseline!,
+                    cancellationToken
+                )
+                .ConfigureAwait(false);
+        }
+        else if (_pinnedPlanningBaselineConsumed
+                 && _runCurrentPlanning is not null) {
+            result = await _runCurrentPlanning(cancellationToken)
+                .ConfigureAwait(false);
+        }
+        else {
+            result = await _run(baseline, cancellationToken)
+                .ConfigureAwait(false);
+        }
         ArgumentNullException.ThrowIfNull(result);
         RequireCurrentBoundary(expectedRawHead);
+        if (usedPinnedBaseline
+            && result is (
+                DerivedRecapExecutionResult.NoBuild
+                or DerivedRecapExecutionResult.Published
+            )) {
+            _pinnedPlanningBaselineConsumed = true;
+        }
+        if (_isFrozenBuildingMode
+            && result is DerivedRecapExecutionResult.Published) {
+            _frozenBuildingHandled = true;
+        }
         return result;
     }
 
