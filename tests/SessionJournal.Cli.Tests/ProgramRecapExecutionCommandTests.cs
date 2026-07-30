@@ -336,6 +336,82 @@ public sealed class ProgramRecapExecutionCommandTests : IDisposable {
         Assert.Equal(raw, ReadRawSnapshot(fixture.Path));
     }
 
+    [Fact]
+    public async Task OutputShapePreflightStopsBeforeStoreOrClient() {
+        Fixture fixture = await CreateFixtureAsync("path-shape", 77);
+        await CreateStoreAsync(fixture);
+        string derivedBefore = HashDerivedFiles(fixture.Path);
+        var factory = new ScriptedCompletionClientFactory("unused");
+
+        string reportDirectory =
+            Path.Combine(_tempRoot, "execution-report-directory");
+        Directory.CreateDirectory(reportDirectory);
+        AssertRunRejected(
+            fixture,
+            reportDirectory,
+            Path.Combine(_tempRoot, "valid-call-log-1"),
+            factory,
+            derivedBefore
+        );
+
+        string fileParent =
+            Path.Combine(_tempRoot, "execution-report-parent-file");
+        File.WriteAllText(fileParent, "not a directory");
+        AssertRunRejected(
+            fixture,
+            Path.Combine(fileParent, "report.json"),
+            Path.Combine(_tempRoot, "valid-call-log-2"),
+            factory,
+            derivedBefore
+        );
+
+        AssertRunRejected(
+            fixture,
+            _tempRoot,
+            Path.Combine(_tempRoot, "valid-call-log-3"),
+            factory,
+            derivedBefore
+        );
+
+        string callLogFile =
+            Path.Combine(_tempRoot, "call-log-file");
+        File.WriteAllText(callLogFile, "not a directory");
+        AssertRunRejected(
+            fixture,
+            Path.Combine(_tempRoot, "valid-report.json"),
+            callLogFile,
+            factory,
+            derivedBefore
+        );
+
+        Assert.Equal(0, factory.CreateCallCount);
+        Assert.Equal(0, factory.CallCount);
+    }
+
+    private void AssertRunRejected(
+        Fixture fixture,
+        string reportPath,
+        string callLogPath,
+        ICompletionClientFactory factory,
+        string expectedDerivedHash
+    ) {
+        Assert.Equal(1, Run(
+            [
+                "recap", "run",
+                "--input", fixture.Path,
+                "--branch", fixture.BranchName,
+                "--connections", fixture.ConnectionsPath,
+                "--call-log-dir", callLogPath,
+                "--report-json", reportPath
+            ],
+            factory
+        ));
+        Assert.Equal(
+            expectedDerivedHash,
+            HashDerivedFiles(fixture.Path)
+        );
+    }
+
     private ValueTask<Fixture> CreateFixtureAsync(
         string name,
         int historyPairs
@@ -530,6 +606,26 @@ public sealed class ProgramRecapExecutionCommandTests : IDisposable {
             chain.Count,
             Convert.ToHexStringLower(hash.GetHashAndReset())
         );
+    }
+
+    private static string HashDerivedFiles(string path) {
+        string derivedRoot = Path.Combine(path, "derived");
+        using var hash = IncrementalHash.CreateHash(
+            HashAlgorithmName.SHA256
+        );
+        foreach (string file in Directory
+                     .EnumerateFiles(
+                         derivedRoot,
+                         "*",
+                         SearchOption.AllDirectories
+                     )
+                     .OrderBy(
+                         static file => file,
+                         StringComparer.Ordinal
+                     )) {
+            hash.AppendData(File.ReadAllBytes(file));
+        }
+        return Convert.ToHexStringLower(hash.GetHashAndReset());
     }
 
     private sealed record Fixture(

@@ -9,7 +9,7 @@ internal static class RecapStoreCommands {
     private const string OperationSchema =
         "atelia.session-journal.derived-recap-store-operation.v1";
     private const string InspectionSchema =
-        "atelia.session-journal.derived-recap-store-inspection.v1";
+        "atelia.session-journal.derived-recap-store-inspection.v2";
 
     internal static Task<int> RunAsync(
         string[] args,
@@ -208,15 +208,34 @@ internal static class RecapStoreCommands {
                 context.Engine.BranchRefId
             );
             anchor = ParseAnchor(options);
-            building = await InspectBuildingAsync(
+            PublishedMembershipInspectionResult membership =
+                await store.InspectPublishedMembershipAsync(
+                        anchor,
+                        CancellationToken.None
+                    )
+                    .ConfigureAwait(false);
+            building = membership
+                is PublishedMembershipInspectionResult.StoreUnavailable
+                    storeUnavailable
+                ? new ExactBuildingInspectionReport(
+                    "StoreUnavailable",
+                    [],
+                    [
+                        new RecapCliDefectReport(
+                            "StoreUnavailable",
+                            storeUnavailable.Reason
+                        )
+                    ]
+                )
+                : await InspectBuildingAsync(
                     store,
                     anchor
-                )
-                .ConfigureAwait(false);
+                ).ConfigureAwait(false);
             published = await InspectPublishedAsync(
                     store,
                     anchor,
-                    context.Engine.ReadCurrentLineageHeaders()
+                    context.Engine.ReadCurrentLineageHeaders(),
+                    membership
                 )
                 .ConfigureAwait(false);
         }
@@ -232,7 +251,13 @@ internal static class RecapStoreCommands {
         WriteReport(context.ReportPath, report);
         Console.WriteLine($"anchor: {report.Anchor}");
         Console.WriteLine($"building: {report.Building.State}");
-        Console.WriteLine($"published: {report.Published.State}");
+        Console.WriteLine(
+            $"publishedMembership: {report.Published.Membership.State}"
+        );
+        Console.WriteLine(
+            "publishedRestoreEligibility: "
+            + report.Published.RestoreEligibility.State
+        );
         return 0;
     }
 
@@ -291,8 +316,49 @@ internal static class RecapStoreCommands {
         InspectPublishedAsync(
         DerivedRecapStore store,
         EventAddress anchor,
-        SJ.SessionCurrentLineageSnapshot lineage
+        SJ.SessionCurrentLineageSnapshot lineage,
+        PublishedMembershipInspectionResult membership
     ) {
+        var membershipReport = membership switch {
+            PublishedMembershipInspectionResult.Present =>
+                new ExactPublishedMembershipReport("Present", []),
+            PublishedMembershipInspectionResult.Absent =>
+                new ExactPublishedMembershipReport("Absent", []),
+            PublishedMembershipInspectionResult.Invalid invalid =>
+                new ExactPublishedMembershipReport(
+                    "Invalid",
+                    MapDefects(invalid.Defects)
+                ),
+            PublishedMembershipInspectionResult.StoreUnavailable
+                    unavailable =>
+                new ExactPublishedMembershipReport(
+                    "StoreUnavailable",
+                    [
+                        new RecapCliDefectReport(
+                            "StoreUnavailable",
+                            unavailable.Reason
+                        )
+                    ]
+                ),
+            _ => throw new InvalidDataException(
+                $"Unknown Published membership inspection "
+                + $"'{membership.GetType().Name}'."
+            )
+        };
+        if (membership
+            is PublishedMembershipInspectionResult.Absent
+                or PublishedMembershipInspectionResult.StoreUnavailable) {
+            return new ExactPublishedInspectionReport(
+                membershipReport,
+                new PublishedRestoreEligibilityReport(
+                    "NotApplicable",
+                    AuthorityType: null,
+                    Blocks: [],
+                    Defects: []
+                )
+            );
+        }
+
         PublishedRestoreInspectionResult result =
             await store.InspectPublishedForRestoreAsync(
                     anchor,
@@ -302,17 +368,14 @@ internal static class RecapStoreCommands {
                 .ConfigureAwait(false);
         switch (result) {
             case PublishedRestoreInspectionResult.Unavailable unavailable:
-                string state = unavailable.Defects.Any(
-                    static defect =>
-                        defect.Code == "PublishedMembershipMissing"
-                )
-                    ? "Missing"
-                    : "Unavailable";
                 return new ExactPublishedInspectionReport(
-                    state,
-                    AuthorityType: null,
-                    Blocks: [],
-                    MapDefects(unavailable.Defects)
+                    membershipReport,
+                    new PublishedRestoreEligibilityReport(
+                        "Unavailable",
+                        AuthorityType: null,
+                        Blocks: [],
+                        MapDefects(unavailable.Defects)
+                    )
                 );
             case PublishedRestoreInspectionResult.Available available:
                 PublishedRestoreInspection inspection =
@@ -326,10 +389,13 @@ internal static class RecapStoreCommands {
                     )
                 ];
                 return new ExactPublishedInspectionReport(
-                    "Available",
-                    inspection.Handle.AuthorityKind.ToString(),
-                    Array.AsReadOnly(blocks),
-                    []
+                    membershipReport,
+                    new PublishedRestoreEligibilityReport(
+                        "Available",
+                        inspection.Handle.AuthorityKind.ToString(),
+                        Array.AsReadOnly(blocks),
+                        []
+                    )
                 );
             default:
                 throw new InvalidDataException(
@@ -478,11 +544,7 @@ internal static class RecapStoreCommands {
             "--input"
         );
         if (reportPath is not null) {
-            CliIo.EnsurePathChainHasNoReparsePoint(
-                reportPath,
-                "--report-json"
-            );
-            CliIo.EnsurePathIsOutsideRepository(
+            CliIo.ValidateFileOutputPath(
                 inputPath,
                 reportPath,
                 "--report-json"
@@ -564,6 +626,16 @@ internal sealed record ExactBuildingInspectionReport(
 );
 
 internal sealed record ExactPublishedInspectionReport(
+    ExactPublishedMembershipReport Membership,
+    PublishedRestoreEligibilityReport RestoreEligibility
+);
+
+internal sealed record ExactPublishedMembershipReport(
+    string State,
+    IReadOnlyList<RecapCliDefectReport> Defects
+);
+
+internal sealed record PublishedRestoreEligibilityReport(
     string State,
     string? AuthorityType,
     IReadOnlyList<RecapBlockInspectionReport> Blocks,

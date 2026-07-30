@@ -39,6 +39,45 @@ internal static class CliIo {
         }
     }
 
+    internal static void ValidateFileOutputPath(
+        string repositoryPath,
+        string outputPath,
+        string optionName
+    ) {
+        ValidateOutputPathShape(
+            outputPath,
+            optionName,
+            expectDirectory: false
+        );
+        EnsurePathIsOutsideRepository(
+            repositoryPath,
+            outputPath,
+            optionName
+        );
+        EnsureFilePathIsNotAncestorOfDirectory(
+            outputPath,
+            repositoryPath,
+            $"{optionName} must not contain the input repository."
+        );
+    }
+
+    internal static void ValidateDirectoryOutputPath(
+        string repositoryPath,
+        string outputPath,
+        string optionName
+    ) {
+        ValidateOutputPathShape(
+            outputPath,
+            optionName,
+            expectDirectory: true
+        );
+        EnsurePathsDoNotNest(
+            outputPath,
+            repositoryPath,
+            $"{optionName} and the input repository must be disjoint."
+        );
+    }
+
     internal static void ValidateReadOnlyWritablePaths(
         IReadOnlyList<(string Path, string Option)> readOnlyPaths,
         IReadOnlyList<(string Path, string Option)> writablePaths
@@ -180,6 +219,57 @@ internal static class CliIo {
         catch {
             TryDeleteFile(temporaryPath);
             throw;
+        }
+    }
+
+    private static void ValidateOutputPathShape(
+        string path,
+        string optionName,
+        bool expectDirectory
+    ) {
+        string fullPath = Path.GetFullPath(path);
+        string currentPath = fullPath;
+        bool isLeaf = true;
+        while (true) {
+            try {
+                FileAttributes attributes =
+                    File.GetAttributes(currentPath);
+                if ((attributes & FileAttributes.ReparsePoint) != 0) {
+                    throw new ArgumentException(
+                        $"{optionName} must not contain a symbolic link or "
+                        + $"reparse point: {currentPath}"
+                    );
+                }
+                bool isDirectory =
+                    (attributes & FileAttributes.Directory) != 0;
+                if (isLeaf && isDirectory != expectDirectory) {
+                    string expected = expectDirectory
+                        ? "a directory"
+                        : "a file";
+                    throw new ArgumentException(
+                        $"{optionName} must identify {expected} output path."
+                    );
+                }
+                if (!isLeaf && !isDirectory) {
+                    throw new ArgumentException(
+                        $"{optionName} has a non-directory ancestor: "
+                        + currentPath
+                    );
+                }
+            }
+            catch (FileNotFoundException) {
+                // Missing output components may be created by the command.
+            }
+            catch (DirectoryNotFoundException) {
+                // Missing output components may be created by the command.
+            }
+
+            string? parentPath = Path.GetDirectoryName(currentPath);
+            if (parentPath is null) {
+                break;
+            }
+            currentPath = parentPath;
+            isLeaf = false;
         }
     }
 

@@ -75,10 +75,30 @@ public sealed class ProgramRecapStoreCommandTests : IDisposable {
         Assert.Equal(0, Run(InspectArgs(fixture, healthyPath)));
         string healthyText = File.ReadAllText(healthyPath);
         using (JsonDocument healthy = JsonDocument.Parse(healthyText)) {
+            Assert.Equal(
+                "atelia.session-journal.derived-recap-store-inspection.v2",
+                String(healthy, "schema")
+            );
             Assert.Equal("Available", healthy.RootElement
                 .GetProperty("building")
                 .GetProperty("state")
                 .GetString());
+            Assert.Equal(
+                "Absent",
+                healthy.RootElement
+                    .GetProperty("published")
+                    .GetProperty("membership")
+                    .GetProperty("state")
+                    .GetString()
+            );
+            Assert.Equal(
+                "NotApplicable",
+                healthy.RootElement
+                    .GetProperty("published")
+                    .GetProperty("restoreEligibility")
+                    .GetProperty("state")
+                    .GetString()
+            );
             JsonElement block = Assert.Single(
                 healthy.RootElement
                     .GetProperty("building")
@@ -104,11 +124,20 @@ public sealed class ProgramRecapStoreCommandTests : IDisposable {
             JsonElement published = damaged.RootElement
                 .GetProperty("published");
             Assert.Equal(
+                "Invalid",
+                published
+                    .GetProperty("membership")
+                    .GetProperty("state")
+                    .GetString()
+            );
+            JsonElement eligibility =
+                published.GetProperty("restoreEligibility");
+            Assert.Equal(
                 "Available",
-                published.GetProperty("state").GetString()
+                eligibility.GetProperty("state").GetString()
             );
             JsonElement block = Assert.Single(
-                published.GetProperty("blocks").EnumerateArray()
+                eligibility.GetProperty("blocks").EnumerateArray()
             );
             Assert.Equal(
                 "Damaged",
@@ -124,6 +153,68 @@ public sealed class ProgramRecapStoreCommandTests : IDisposable {
         AssertSafeInspectionReport(damagedText, secret);
         Assert.Equal(raw, ReadRawSnapshot(fixture.Path));
         AssertNoTemporaryReports();
+    }
+
+    [Fact]
+    public async Task InspectSeparatesOffLineageMembershipFromRestore()
+    {
+        Fixture present = await CreateFixtureAsync("off-present");
+        Assert.Equal(0, Run(CreateArgs(present)));
+        await CreateFinalBuildingAsync(present, "present");
+        await PublishAsync(present);
+        DivergeBefore(present, present.Anchor, present.ReplayStart);
+        string presentReport =
+            Path.Combine(_tempRoot, "off-present.json");
+
+        Assert.Equal(0, Run(InspectArgs(present, presentReport)));
+        using (JsonDocument report = ReadJson(presentReport)) {
+            JsonElement published =
+                report.RootElement.GetProperty("published");
+            Assert.Equal(
+                "Present",
+                published.GetProperty("membership")
+                    .GetProperty("state")
+                    .GetString()
+            );
+            JsonElement eligibility =
+                published.GetProperty("restoreEligibility");
+            Assert.Equal(
+                "Unavailable",
+                eligibility.GetProperty("state").GetString()
+            );
+            Assert.Contains(
+                eligibility.GetProperty("defects").EnumerateArray(),
+                defect => defect.GetProperty("code").GetString()
+                    == "AdmissionAnchorOffLineage"
+            );
+        }
+        AssertSafeInspectionReport(
+            File.ReadAllText(presentReport),
+            "present"
+        );
+
+        Fixture absent = await CreateFixtureAsync("off-absent");
+        Assert.Equal(0, Run(CreateArgs(absent)));
+        DivergeBefore(absent, absent.Anchor, absent.ReplayStart);
+        string absentReport =
+            Path.Combine(_tempRoot, "off-absent.json");
+
+        Assert.Equal(0, Run(InspectArgs(absent, absentReport)));
+        using JsonDocument missing = ReadJson(absentReport);
+        JsonElement missingPublished =
+            missing.RootElement.GetProperty("published");
+        Assert.Equal(
+            "Absent",
+            missingPublished.GetProperty("membership")
+                .GetProperty("state")
+                .GetString()
+        );
+        Assert.Equal(
+            "NotApplicable",
+            missingPublished.GetProperty("restoreEligibility")
+                .GetProperty("state")
+                .GetString()
+        );
     }
 
     [Fact]
@@ -186,6 +277,18 @@ public sealed class ProgramRecapStoreCommandTests : IDisposable {
         Assert.False(File.Exists(rejectedReport));
         Assert.Equal(derivedBefore, HashDerivedFiles(fixture.Path));
 
+        string invalidReportDirectory =
+            Path.Combine(_tempRoot, "reset-report-directory");
+        Directory.CreateDirectory(invalidReportDirectory);
+        Assert.Equal(1, Run([
+            "recap", "reset",
+            "--input", fixture.Path,
+            "--branch", fixture.BranchName,
+            "--confirm-ref", fixture.BranchRefId,
+            "--report-json", invalidReportDirectory
+        ]));
+        Assert.Equal(derivedBefore, HashDerivedFiles(fixture.Path));
+
         string resetReport = Path.Combine(_tempRoot, "reset.json");
         Assert.Equal(0, Run([
             "recap", "reset",
@@ -230,6 +333,21 @@ public sealed class ProgramRecapStoreCommandTests : IDisposable {
         Assert.False(StoreExists(insideFixture));
         Assert.Equal(insideRaw, ReadRawSnapshot(insideFixture.Path));
 
+        Fixture shapeFixture = await CreateFixtureAsync("shape");
+        string leafDirectory =
+            Path.Combine(_tempRoot, "report-leaf-directory");
+        Directory.CreateDirectory(leafDirectory);
+        AssertCreateRejectedBeforeStore(shapeFixture, leafDirectory);
+
+        string fileParent = Path.Combine(_tempRoot, "report-parent-file");
+        File.WriteAllText(fileParent, "not a directory");
+        AssertCreateRejectedBeforeStore(
+            shapeFixture,
+            Path.Combine(fileParent, "report.json")
+        );
+
+        AssertCreateRejectedBeforeStore(shapeFixture, _tempRoot);
+
         if (OperatingSystem.IsWindows()) {
             return;
         }
@@ -264,6 +382,19 @@ public sealed class ProgramRecapStoreCommandTests : IDisposable {
         ));
         Assert.Equal(reportRaw, ReadRawSnapshot(reportFixture.Path));
         AssertNoTemporaryReports();
+    }
+
+    private void AssertCreateRejectedBeforeStore(
+        Fixture fixture,
+        string reportPath
+    ) {
+        Assert.Equal(1, Run([
+            "recap", "create",
+            "--input", fixture.Path,
+            "--branch", fixture.BranchName,
+            "--report-json", reportPath
+        ]));
+        Assert.False(StoreExists(fixture));
     }
 
     private ValueTask<Fixture> CreateFixtureAsync(
@@ -400,6 +531,40 @@ public sealed class ProgramRecapStoreCommandTests : IDisposable {
         );
         _ = await new DerivedRecapPublisher(store, engine)
             .PublishAsync(fixture.Anchor);
+    }
+
+    private static void DivergeBefore(
+        Fixture fixture,
+        EventAddress expectedHead,
+        EventAddress rewindTo
+    ) {
+        RefId refId;
+        using (var journal =
+               EventJournal.EventJournal.OpenExisting(fixture.Path)) {
+            refId = journal.OpenBranch(fixture.BranchName).Unwrap();
+            journal.MoveRef(refId, expectedHead, rewindTo).Unwrap();
+        }
+        using (var engine = SJ.SessionJournalEngine.Open(
+                   fixture.Path,
+                   fixture.BranchName
+               )) {
+            engine.AppendObservation("diverged observation");
+            _ = engine.AppendImportedAgentAction(
+                new ActionMessage([
+                    new ActionBlock.Text("diverged action")
+                ]),
+                new CompletionDescriptor(
+                    "import",
+                    "v1",
+                    "model-a"
+                )
+            );
+            Assert.Equal(refId, engine.BranchRefId);
+            Assert.DoesNotContain(
+                engine.ReadCurrentLineageHeaders().HeadToRoot,
+                node => node.Address == expectedHead
+            );
+        }
     }
 
     private static RecapBlockPlan CreatePlan(Fixture fixture) =>

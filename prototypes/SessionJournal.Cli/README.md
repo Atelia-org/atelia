@@ -52,9 +52,11 @@ dotnet run --project prototypes/SessionJournal.Cli -- \
   --confirm-ref <exact-branch-ref-id>
 ```
 
-`inspect` 同时检查 exact-anchor Building 与 Published membership，报告只包含 address、
-state/type、defect 和 restore capability；不会输出 recap content、FrozenInput、
-PriorContext、state token 或内容 hash。`abandon-building` 只隔离 exact Building，
+`inspect` 同时检查 exact-anchor Building 与 Published membership；v2 报告将 exact
+`membership`（`Present/Absent/Invalid/StoreUnavailable`）和
+`restoreEligibility`/per-block capability 分开，因此 off-lineage 的 Present 不会被误报为
+Missing。报告只包含 address、state/type、defect 和 restore capability；不会输出 recap
+content、FrozenInput、PriorContext、state token 或内容 hash。`abandon-building` 只隔离 exact Building，
 `Quarantined`/`AlreadyAbsent` 返回 0，`PublishedConflict`/`Unavailable` 返回 2。
 `reset` 必须用 `--confirm-ref` 逐字匹配当前选中 branch 的 RefId，且在任何 Store
 mutation 前拒绝不匹配值。可选 `--report-json` 必须位于 repo 外、拒绝

@@ -621,13 +621,13 @@ internal static class RecapExecutionCommands {
                     }
             ]
         );
-        CliIo.EnsurePathIsOutsideRepository(
+        CliIo.ValidateDirectoryOutputPath(
             inputPath,
             callLogDirectory,
             "--call-log-dir"
         );
         if (reportPath is not null) {
-            CliIo.EnsurePathIsOutsideRepository(
+            CliIo.ValidateFileOutputPath(
                 inputPath,
                 reportPath,
                 "--report-json"
