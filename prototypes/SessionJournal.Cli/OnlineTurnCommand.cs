@@ -2,7 +2,6 @@ using System.Security.Cryptography;
 using System.Text;
 using Atelia.Completion;
 using Atelia.Completion.Abstractions;
-using Atelia.EventJournal;
 using Atelia.SessionJournal.DerivedRecap.Planner;
 using Atelia.SessionJournal.DerivedRecap.Store;
 using SJ = Atelia.SessionJournal;
@@ -96,14 +95,20 @@ internal static class OnlineTurnCommand {
         CompletionConnectionConfig connection =
             registry.Resolve(requestedConnection);
         ICompletionClient inner = registry.GetClient(connection.Id);
-        var agentClient = new LoggingCompletionClient(
-            inner,
-            connection,
-            callLogDirectory,
-            new CompletionCallLogContext(
-                Command: "run-online-turn/agent"
-            )
-        );
+        ICompletionClient agentClient =
+            mode == OnlineExecutionMode.ResumeStarted
+                && recoveryPolicy
+                    == SJ.SessionUncertainCompletionRecoveryPolicy
+                        .Refuse
+                ? inner
+                : new LoggingCompletionClient(
+                    inner,
+                    connection,
+                    callLogDirectory,
+                    new CompletionCallLogContext(
+                        Command: "run-online-turn/agent"
+                    )
+                );
 
         if (store is not null) {
             RecapCliMaintainerComposition maintainers =
@@ -120,15 +125,6 @@ internal static class OnlineTurnCommand {
                 new BoundedMaintainAllRecapPlanningPolicy(),
                 maintainers.Registry
             );
-            await PrepareRecapBeforeEnginePreflightAsync(
-                    engine,
-                    recap,
-                    initial,
-                    mode == OnlineExecutionMode.SendNewTurn
-                        ? message
-                        : null
-                )
-                .ConfigureAwait(false);
         }
 
         engine.UseRuntime(new SJ.SessionRuntime(
@@ -259,60 +255,6 @@ internal static class OnlineTurnCommand {
                 "DerivedRecap Store is unavailable: "
                 + unavailable.Reason
             );
-        }
-    }
-
-    private static async ValueTask
-        PrepareRecapBeforeEnginePreflightAsync(
-        SJ.SessionJournalEngine engine,
-        DerivedRecapOnlineLifecycleCoordinator recap,
-        SJ.SessionExecutionBoundaryInspection boundary,
-        string? pendingObservation
-    ) {
-        EventAddress head = boundary.Head
-            ?? throw new InvalidDataException(
-                "Online recap preparation requires a non-empty raw head."
-            );
-        SJ.SessionGoverningSetup setup =
-            engine.ResolveGoverningSetup(head);
-        SJ.SessionContextLifecycleResult result =
-            await recap.PrepareAsync(
-                    engine,
-                    new SJ.SessionContextLifecycleRequest(
-                        new SJ.SessionContextSelectionRequest(
-                            head,
-                            setup.RuntimeConfig
-                                .DerivedContext.NthPrevious
-                        ),
-                        boundary.Phase,
-                        pendingObservation
-                    ),
-                    CancellationToken.None
-                )
-                .ConfigureAwait(false);
-        switch (result.Status) {
-            case SJ.SessionContextLifecycleStatus.Ready:
-                return;
-            case SJ.SessionContextLifecycleStatus.Backpressure:
-                throw new SJ.SessionJournalNotReadyException(
-                    SJ.SessionJournalNotReadyReason
-                        .RecapMaintenanceBackpressure,
-                    result.Detail
-                    ?? "Derived recap maintenance reached "
-                    + "explicit backpressure."
-                );
-            case SJ.SessionContextLifecycleStatus.Unavailable:
-                throw new SJ.SessionJournalNotReadyException(
-                    SJ.SessionJournalNotReadyReason
-                        .RecapMaintenanceUnavailable,
-                    result.Detail
-                    ?? "Derived recap maintenance is unavailable."
-                );
-            default:
-                throw new InvalidDataException(
-                    $"Unknown context lifecycle status "
-                    + $"'{result.Status}'."
-                );
         }
     }
 

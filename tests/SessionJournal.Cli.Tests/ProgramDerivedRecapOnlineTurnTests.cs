@@ -119,6 +119,7 @@ public sealed class ProgramDerivedRecapOnlineTurnTests : IDisposable {
         Assert.Equal(0, refusal.CallCount);
         Assert.False(Directory.Exists(fixture.ExactPublishedPath));
         Assert.False(File.Exists(output));
+        Assert.False(Directory.Exists(calls));
 
         var restart = new ScriptedCompletionClientFactory(
             "started recovered answer"
@@ -153,6 +154,40 @@ public sealed class ProgramDerivedRecapOnlineTurnTests : IDisposable {
         Assert.Equal(0, factory.CallCount);
         Assert.False(File.Exists(output));
         Assert.False(Directory.Exists(calls));
+    }
+
+    [Fact]
+    public async Task ObservationAcceptedResumesWithoutMessage() {
+        PublishedFixture fixture =
+            await CreatePublishedFixtureAsync("observation");
+        using (var engine = SJ.SessionJournalEngine.Open(
+                   fixture.Path,
+                   fixture.BranchName
+               )) {
+            engine.AppendObservation("already durable observation");
+            Assert.Equal(
+                SJ.SessionExecutionPhase.AwaitingAgentAction,
+                engine.InspectExecutionBoundary().Phase
+            );
+        }
+        string output =
+            Path.Combine(_tempRoot, "observation-resume.json");
+        string calls =
+            Path.Combine(_tempRoot, "observation-resume-calls");
+        var factory = new ScriptedCompletionClientFactory(
+            "observation resumed answer"
+        );
+
+        Assert.Equal(0, Program.MainCore([
+            .. BaseArgs(fixture, output, calls)
+        ], factory));
+
+        Assert.True(factory.CallCount >= 1);
+        Assert.Equal(
+            SJ.SessionExecutionPhase.Idle,
+            ReadBoundary(fixture.Path).Phase
+        );
+        Assert.True(File.Exists(output));
     }
 
     [Fact]
@@ -203,6 +238,91 @@ public sealed class ProgramDerivedRecapOnlineTurnTests : IDisposable {
             );
         }
         var factory = new ScriptedCompletionClientFactory("must not run");
+
+        Assert.Equal(1, Program.MainCore([
+            "run-online-turn",
+            "--input", path,
+            "--branch", SJ.SessionJournalDefaults.MainBranchName,
+            "--connections", connections,
+            "--output", output,
+            "--call-log-dir", calls
+        ], factory));
+
+        Assert.Equal(0, factory.CreateCallCount);
+        Assert.Equal(0, factory.CallCount);
+        Assert.False(Directory.Exists(
+            Path.Combine(path, "derived", "recap", "v4")
+        ));
+        Assert.False(File.Exists(output));
+        Assert.False(Directory.Exists(calls));
+    }
+
+    [Fact]
+    public async Task ToolResultObservedIsRejectedWithoutStoreOrClient() {
+        Directory.CreateDirectory(_tempRoot);
+        string path = Path.Combine(_tempRoot, "tool-result-phase");
+        string connections = WriteConnections("tool-result-phase");
+        string output =
+            Path.Combine(_tempRoot, "tool-result-output.json");
+        string calls =
+            Path.Combine(_tempRoot, "tool-result-calls");
+        var toolSession = new ToolRegistry([
+            new FixedTool("lookup")
+        ]).CreateSession();
+        var runtime = new SJ.SessionRuntime(
+            new ToolCallCompletionClient("lookup", "call-1"),
+            ToolSession: toolSession,
+            CompletionTarget:
+                new SJ.SessionCompletionTargetIdentity(
+                    "tool-test",
+                    "scripted",
+                    "tool-test-connection-v1",
+                    "tool-test-adapter-v1"
+                ),
+            ToolRuntimeIdentity: new SJ.SessionToolRuntimeIdentity(
+                "test-tools",
+                "implementations-v1",
+                "capabilities-v1"
+            ),
+            ContextCandidateSource:
+                new EmptyContextCandidateSource()
+        );
+        using (var engine =
+               SJ.SessionJournalEngine.CreateForTest(
+                   path,
+                   new SJ.SessionCreateOptions(
+                       "model-a",
+                       "system-a",
+                       "surface-a"
+                   ),
+                   runtime,
+                   new SJ.SessionJournalTestHooks(
+                       SJ.SessionJournalFailpoint
+                           .AfterToolResultCommitted
+                   )
+               )) {
+            SJ.SessionJournalFailpointException failure =
+                await Assert.ThrowsAsync<
+                    SJ.SessionJournalFailpointException
+                >(() => engine.SendAsync(
+                    "use a tool",
+                    CancellationToken.None
+                ));
+            Assert.Equal(
+                SJ.SessionJournalFailpoint.AfterToolResultCommitted,
+                failure.Failpoint
+            );
+            Assert.Equal(
+                SJ.SessionExecutionPhase.AwaitingAgentAction,
+                engine.InspectExecutionBoundary().Phase
+            );
+            Assert.Equal(
+                SJ.SessionEventKind.ToolResultObserved,
+                engine.InspectExecutionBoundary().HeadKind
+            );
+        }
+        var factory =
+            new ScriptedCompletionClientFactory("must not run");
 
         Assert.Equal(1, Program.MainCore([
             "run-online-turn",
@@ -518,6 +638,61 @@ public sealed class ProgramDerivedRecapOnlineTurnTests : IDisposable {
                 CompletionDescriptor.From(this, request)
             ));
         }
+    }
+
+    private sealed class ToolCallCompletionClient(
+        string toolName,
+        string callId
+    ) : ICompletionClient {
+        public string Name => "scripted";
+        public string ApiSpecId => "test-api-v1";
+
+        public Task<CompletionResult> StreamCompletionAsync(
+            CompletionRequest request,
+            CompletionStreamObserver? observer,
+            CancellationToken cancellationToken = default
+        ) {
+            cancellationToken.ThrowIfCancellationRequested();
+            return Task.FromResult(new CompletionResult(
+                new ActionMessage([
+                    new ActionBlock.ToolCall(
+                        new RawToolCall(toolName, callId, "{}")
+                    )
+                ]),
+                new CompletionDescriptor(
+                    Name,
+                    ApiSpecId,
+                    request.ModelId
+                )
+            ));
+        }
+    }
+
+    private sealed class EmptyContextCandidateSource
+        : SJ.ICoherentContextCandidateSource {
+        public ValueTask<SJ.SessionContextCandidateSelection>
+            SelectAsync(
+            SJ.SessionContextSelectionRequest request,
+            CancellationToken cancellationToken
+        ) {
+            request.ValidateShape();
+            cancellationToken.ThrowIfCancellationRequested();
+            return ValueTask.FromResult(
+                new SJ.SessionContextCandidateSelection(
+                    SJ.SessionContextCandidateSelectionStatus
+                        .EmptyLineage,
+                    Candidate: null
+                )
+            );
+        }
+
+        public ValueTask<SJ.SessionContextCandidate>
+            MaterializeAsync(
+            SJ.SessionContextCandidateDescriptor descriptor,
+            CancellationToken cancellationToken
+        ) => throw new InvalidOperationException(
+            "Fresh bootstrap must not materialize a candidate."
+        );
     }
 
     private sealed class FixedTool(string name) : ITool {

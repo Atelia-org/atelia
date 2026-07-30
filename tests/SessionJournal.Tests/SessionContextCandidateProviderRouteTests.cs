@@ -671,6 +671,148 @@ public sealed class SessionContextCandidateProviderRouteTests : IDisposable {
     }
 
     [Fact]
+    public async Task MatureEmptyLineage_LifecyclePublishesExactlyOnceBeforeResume() {
+        string path = NewJournalPath();
+        var client = new ScriptedClient();
+        client.Enqueue(Terminal("resumed"));
+        var source = new TestContextCandidateSource {
+            IsEmptyLineage = true
+        };
+        var lifecycle = new TestContextLifecycle();
+        using var engine = SessionJournalEngine.Create(
+            path,
+            CreateOptions()
+        );
+        engine.AppendObservation("settled observation");
+        _ = engine.AppendImportedAgentAction(
+            new ActionMessage([
+                new ActionBlock.Text("settled action")
+            ]),
+            new CompletionDescriptor("import", "v1", "model-A")
+        );
+        SessionContextCandidate published =
+            ContextCandidateTestFixture.CreateAtCurrentHead(engine)
+                .Candidate;
+        engine.AppendObservation("pending observation");
+        lifecycle.OnPrepare = (_, _) => {
+            source.Candidate = published;
+            source.IsEmptyLineage = false;
+        };
+        engine.UseRuntime(
+            CreateRuntime(client, source) with {
+                ContextLifecycle = lifecycle
+            }
+        );
+
+        ResumeOutcome outcome =
+            await engine.ResumeAsync(CancellationToken.None);
+
+        Assert.True(outcome.Advanced);
+        Assert.Equal(
+            "resumed",
+            outcome.Message!.GetFlattenedText()
+        );
+        Assert.Equal(1, lifecycle.InvocationCount);
+        Assert.Equal(1, client.Calls);
+    }
+
+    [Fact]
+    public async Task MatureEmptyLineage_ReadyWithoutPublicationRemainsUnavailable() {
+        string path = NewJournalPath();
+        var client = new ScriptedClient();
+        var source = new TestContextCandidateSource {
+            IsEmptyLineage = true
+        };
+        var lifecycle = new TestContextLifecycle();
+        using var engine = SessionJournalEngine.Create(
+            path,
+            CreateOptions()
+        );
+        engine.AppendObservation("settled observation");
+        _ = engine.AppendImportedAgentAction(
+            new ActionMessage([
+                new ActionBlock.Text("settled action")
+            ]),
+            new CompletionDescriptor("import", "v1", "model-A")
+        );
+        engine.AppendObservation("pending observation");
+        EventAddress head =
+            engine.InspectExecutionBoundary().Head!.Value;
+        engine.UseRuntime(
+            CreateRuntime(client, source) with {
+                ContextLifecycle = lifecycle
+            }
+        );
+
+        SessionJournalNotReadyException error =
+            await Assert.ThrowsAsync<SessionJournalNotReadyException>(
+                () => engine.ResumeAsync(CancellationToken.None)
+            );
+
+        Assert.Equal(
+            SessionJournalNotReadyReason.ContextCandidateUnavailable,
+            error.Reason
+        );
+        Assert.Contains(
+            nameof(SessionEventKind.ImportedAgentAction),
+            error.Message,
+            StringComparison.Ordinal
+        );
+        Assert.Equal(1, lifecycle.InvocationCount);
+        Assert.Equal(0, client.Calls);
+        Assert.Equal(head, engine.InspectExecutionBoundary().Head);
+    }
+
+    [Fact]
+    public async Task NonNativeEmptyLineage_IsRejectedBeforeLifecycle() {
+        string path = NewJournalPath();
+        var client = new ScriptedClient();
+        var source = new TestContextCandidateSource {
+            IsEmptyLineage = true
+        };
+        var lifecycle = new TestContextLifecycle();
+        using var engine = SessionJournalEngine.Create(
+            path,
+            CreateOptions() with {
+                Origin = SessionCreationOrigin.LegacyImport
+            }
+        );
+        engine.AppendObservation("settled observation");
+        _ = engine.AppendImportedAgentAction(
+            new ActionMessage([
+                new ActionBlock.Text("settled action")
+            ]),
+            new CompletionDescriptor("import", "v1", "model-A")
+        );
+        engine.AppendObservation("pending observation");
+        EventAddress head =
+            engine.InspectExecutionBoundary().Head!.Value;
+        engine.UseRuntime(
+            CreateRuntime(client, source) with {
+                ContextLifecycle = lifecycle
+            }
+        );
+
+        SessionJournalNotReadyException error =
+            await Assert.ThrowsAsync<SessionJournalNotReadyException>(
+                () => engine.ResumeAsync(CancellationToken.None)
+            );
+
+        Assert.Equal(
+            SessionJournalNotReadyReason.ContextCandidateUnavailable,
+            error.Reason
+        );
+        Assert.Contains(
+            nameof(SessionCreationOrigin.LegacyImport),
+            error.Message,
+            StringComparison.Ordinal
+        );
+        Assert.Equal(0, lifecycle.InvocationCount);
+        Assert.Equal(0, client.Calls);
+        Assert.Equal(head, engine.InspectExecutionBoundary().Head);
+    }
+
+    [Fact]
     public async Task PublishedButUnusedCandidateCanDisappearBeforeFreshBootstrap() {
         string path = NewJournalPath();
         var client = new ScriptedClient();

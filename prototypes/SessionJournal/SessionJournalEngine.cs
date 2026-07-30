@@ -2114,12 +2114,21 @@ public sealed class SessionJournalEngine : IDisposable {
             pendingObservation is null
                 ? FreshBootstrapBoundary.ActiveFirstObservation
                 : FreshBootstrapBoundary.PreAppend;
-        _ = ValidateFreshBootstrapTopology(
-            boundary,
-            recovery,
-            expectedBoundary,
-            cancellationToken
-        );
+        EmptyLineageTopology topology =
+            ClassifyEmptyLineageTopology(
+                boundary,
+                recovery,
+                expectedBoundary,
+                cancellationToken
+            );
+        if (topology.Kind == EmptyLineageTopologyKind.Mature) {
+            // ResolveExecutionTail has already checked the complete operational
+            // ancestry. The checked walk above additionally proves a native
+            // SessionCreated root without treating malformed ancestry as mature.
+            // Let the single engine-owned lifecycle pass publish a candidate;
+            // the exact post-lifecycle selection remains authoritative.
+            return;
+        }
         SessionHistoryPlanningWindow window =
             ReadHistoryPlanningWindowAt(
                 boundary,
@@ -2149,6 +2158,40 @@ public sealed class SessionJournalEngine : IDisposable {
         FreshBootstrapBoundary expectedBoundary,
         CancellationToken cancellationToken
     ) {
+        if (expectedBoundary
+                == FreshBootstrapBoundary.ActiveFirstObservation
+            && !IsExactActiveObservationBoundary(
+                selectedHead,
+                recovery
+            )) {
+            throw FreshBootstrapUnavailable(
+                "Recovery bootstrap requires the exact active first "
+                + "ObservationAccepted boundary."
+            );
+        }
+        EmptyLineageTopology topology =
+            ClassifyEmptyLineageTopology(
+                selectedHead,
+                recovery,
+                expectedBoundary,
+                cancellationToken
+            );
+        if (topology.Kind == EmptyLineageTopologyKind.Mature) {
+            throw FreshBootstrapUnavailable(
+                "Fresh bootstrap requires no prior operational history; "
+                + $"encountered '{topology.FirstOperationalKind}' at "
+                + $"{topology.FirstOperationalAddress}."
+            );
+        }
+        return topology.SessionCreatedAddress;
+    }
+
+    private EmptyLineageTopology ClassifyEmptyLineageTopology(
+        EventAddress selectedHead,
+        SessionExecutionRecovery recovery,
+        FreshBootstrapBoundary expectedBoundary,
+        CancellationToken cancellationToken
+    ) {
         if (recovery.Head != selectedHead) {
             throw new InvalidDataException(
                 "Fresh bootstrap recovery is not bound to the selected raw head."
@@ -2168,14 +2211,21 @@ public sealed class SessionJournalEngine : IDisposable {
             case FreshBootstrapBoundary.ActiveFirstObservation:
                 if (recovery.State.Phase
                         != SessionExecutionPhase.AwaitingAgentAction
-                    || recovery.State.HeadKind
-                        != SessionEventKind.ObservationAccepted
-                    || recovery.Boundary.SourcePrepared is not null
-                    || recovery.Boundary.SourceObservation
-                        != selectedHead) {
+                    || recovery.Boundary.SourcePrepared is not null) {
                     throw FreshBootstrapUnavailable(
-                        "Recovery bootstrap requires the exact active first ObservationAccepted boundary."
+                        "Recovery bootstrap requires an unprepared "
+                        + "completion boundary."
                     );
+                }
+                if (!IsExactActiveObservationBoundary(
+                    selectedHead,
+                    recovery
+                )) {
+                    // A non-observation completion boundary can only be mature.
+                    // Starting at its head makes the first checked non-setup
+                    // event establish that fact.
+                    cursor = selectedHead;
+                    break;
                 }
                 EventFrameHeader observationHeader =
                     _reader.ReadEventHeaderPreview(selectedHead).Unwrap();
@@ -2201,6 +2251,8 @@ public sealed class SessionJournalEngine : IDisposable {
         }
 
         var visited = new HashSet<EventAddress>();
+        EventAddress? firstOperationalAddress = null;
+        SessionEventKind? firstOperationalKind = null;
         while (cursor is { } address) {
             cancellationToken.ThrowIfCancellationRequested();
             if (!visited.Add(address)) {
@@ -2217,10 +2269,10 @@ public sealed class SessionJournalEngine : IDisposable {
                 continue;
             }
             if (kind != SessionEventKind.SessionCreated) {
-                throw FreshBootstrapUnavailable(
-                    "Fresh bootstrap requires only setup updates after SessionCreated; "
-                    + $"encountered '{kind}' at {address}."
-                );
+                firstOperationalAddress ??= address;
+                firstOperationalKind ??= kind;
+                cursor = header.Parent;
+                continue;
             }
             using SessionJournalEventFrame frame =
                 _reader.ReadEvent(address).Unwrap();
@@ -2236,17 +2288,38 @@ public sealed class SessionJournalEngine : IDisposable {
                 );
             if (created.Origin != SessionCreationOrigin.Native) {
                 throw FreshBootstrapUnavailable(
-                    "Fresh bootstrap requires a native SessionCreated origin; "
+                    "Empty-lineage online preparation requires a native "
+                    + "SessionCreated origin; "
                     + $"actual origin is '{created.Origin}'."
                 );
             }
             EnsureCurrentHead(selectedHead);
-            return address;
+            return firstOperationalAddress is null
+                ? new EmptyLineageTopology(
+                    EmptyLineageTopologyKind.Fresh,
+                    address
+                )
+                : new EmptyLineageTopology(
+                    EmptyLineageTopologyKind.Mature,
+                    address,
+                    firstOperationalAddress,
+                    firstOperationalKind
+                );
         }
         throw FreshBootstrapUnavailable(
-            "Fresh bootstrap ancestry has no SessionCreated boundary."
+            "Empty-lineage ancestry has no SessionCreated boundary."
         );
     }
+
+    private static bool IsExactActiveObservationBoundary(
+        EventAddress selectedHead,
+        SessionExecutionRecovery recovery
+    ) => recovery.State.Phase
+            == SessionExecutionPhase.AwaitingAgentAction
+        && recovery.State.HeadKind
+            == SessionEventKind.ObservationAccepted
+        && recovery.Boundary.SourcePrepared is null
+        && recovery.Boundary.SourceObservation == selectedHead;
 
     private static SessionJournalNotReadyException
         FreshBootstrapUnavailable(string detail) => new(
@@ -3191,6 +3264,18 @@ public sealed class SessionJournalEngine : IDisposable {
         PreAppend,
         ActiveFirstObservation,
     }
+
+    private enum EmptyLineageTopologyKind {
+        Fresh,
+        Mature,
+    }
+
+    private sealed record EmptyLineageTopology(
+        EmptyLineageTopologyKind Kind,
+        EventAddress SessionCreatedAddress,
+        EventAddress? FirstOperationalAddress = null,
+        SessionEventKind? FirstOperationalKind = null
+    );
 
     private sealed record CommittedCompletionResult(
         CompletionResult Result,
