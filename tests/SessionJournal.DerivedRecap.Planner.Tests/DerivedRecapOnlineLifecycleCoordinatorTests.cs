@@ -143,6 +143,143 @@ public sealed class DerivedRecapOnlineLifecycleCoordinatorTests {
     }
 
     [Fact]
+    public async Task PublicCoordinatorSelectsOldSetAtStrictOrdinalAfterBuild() {
+        using PublicLifecycleFixture fixture =
+            await PublicLifecycleFixture.CreateAsync(
+                nthPrevious: 1,
+                historyPairs: 1
+            );
+        MaintainRecapBlockPlan oldPlan =
+            fixture.CreateMaintainPlan();
+        PublishedRecapDescriptor oldPublished =
+            await fixture.PublishAsync(oldPlan, "old recap");
+        EventAddress newHead = fixture.AppendPair("growth");
+        var maintainer = fixture.CreateMaintainer();
+        var policy = new DelegatePolicy(context =>
+            new RecapPlanningPolicyDecision.Build(
+                context.Scheduling.CapturedHead,
+                [
+                    new RecapBlockPlanningDecision.Inherit(
+                        fixture.BlockId,
+                        Assert.Single(
+                            context.PolicyFacts.AvailableSources
+                        ).Source
+                    )
+                ]
+            )
+        );
+        DerivedRecapOnlineLifecycleCoordinator coordinator =
+            fixture.CreateCoordinator(
+                rawGrowthTrigger: 1,
+                policy,
+                maintainer
+            );
+        SessionContextLifecycleRequest request = fixture.Request();
+
+        SessionContextLifecycleResult result =
+            await coordinator.PrepareAsync(
+                fixture.Engine,
+                request,
+                CancellationToken.None
+            );
+
+        Assert.Equal(SessionContextLifecycleStatus.Ready, result.Status);
+        Assert.Equal(1, policy.CallCount);
+        Assert.Equal(0, maintainer.CallCount);
+        SessionCurrentLineageSnapshot lineage =
+            fixture.Engine.ReadCurrentLineageHeaders();
+        var latest = Assert.IsType<DerivedRecapSelection.Selected>(
+            await fixture.Store.SelectNthPreviousAsync(lineage, 0)
+        );
+        Assert.Equal(
+            newHead,
+            latest.Descriptor.SetAdmissionAnchor
+        );
+        var previous = Assert.IsType<DerivedRecapSelection.Selected>(
+            await fixture.Store.SelectNthPreviousAsync(lineage, 1)
+        );
+        Assert.Equal(oldPublished, previous.Descriptor);
+        SessionContextCandidateSelection neutral =
+            await coordinator.SelectAsync(
+                request.Selection,
+                CancellationToken.None
+            );
+        Assert.Equal(
+            SessionContextCandidateSelectionStatus.Selected,
+            neutral.Status
+        );
+        Assert.Equal(
+            oldPublished.SetAdmissionAnchor,
+            Assert.IsType<SessionContextCandidateDescriptor>(
+                neutral.Candidate
+            ).SetAdmissionAnchor
+        );
+    }
+
+    [Fact]
+    public async Task PublicCoordinatorRepairsDamagedLatestOnce() {
+        using PublicLifecycleFixture fixture =
+            await PublicLifecycleFixture.CreateAsync(
+                nthPrevious: 0,
+                historyPairs: 1
+            );
+        MaintainRecapBlockPlan plan =
+            fixture.CreateMaintainPlan();
+        PublishedRecapDescriptor published =
+            await fixture.PublishAsync(plan, "committed");
+        await fixture.DamageFinalAndRemoveCheckpointAsync(plan);
+        var maintainer = fixture.CreateMaintainer();
+        var policy = new DelegatePolicy(static _ =>
+            throw new Xunit.Sdk.XunitException(
+                "Below-trigger execution must not invoke policy."
+            )
+        );
+        DerivedRecapOnlineLifecycleCoordinator coordinator =
+            fixture.CreateCoordinator(
+                rawGrowthTrigger: 100,
+                policy,
+                maintainer
+            );
+        SessionContextLifecycleRequest request = fixture.Request();
+
+        SessionContextLifecycleResult result =
+            await coordinator.PrepareAsync(
+                fixture.Engine,
+                request,
+                CancellationToken.None
+            );
+
+        Assert.Equal(SessionContextLifecycleStatus.Ready, result.Status);
+        Assert.Equal(0, policy.CallCount);
+        Assert.Equal(1, maintainer.CallCount);
+        var repaired = Assert.IsType<DerivedRecapSelection.Selected>(
+            await fixture.Store.SelectNthPreviousAsync(
+                fixture.Engine.ReadCurrentLineageHeaders(),
+                0
+            )
+        );
+        Assert.Equal(
+            published.SetAdmissionAnchor,
+            repaired.Descriptor.SetAdmissionAnchor
+        );
+        SessionContextCandidateSelection neutral =
+            await coordinator.SelectAsync(
+                request.Selection,
+                CancellationToken.None
+            );
+        Assert.Equal(
+            SessionContextCandidateSelectionStatus.Selected,
+            neutral.Status
+        );
+        Assert.Equal(
+            published.SetAdmissionAnchor,
+            Assert.IsType<SessionContextCandidateDescriptor>(
+                neutral.Candidate
+            ).SetAdmissionAnchor
+        );
+    }
+
+    [Fact]
     public async Task ForgedOrdinalDoesNoLifecycleWork() {
         using LifecycleFixture fixture =
             LifecycleFixture.Create(nthPrevious: 1, historyPairs: 1);
@@ -360,6 +497,42 @@ public sealed class DerivedRecapOnlineLifecycleCoordinatorTests {
         Assert.Equal(
             SessionContextLifecycleStatus.Backpressure,
             limit.Status
+        );
+    }
+
+    [Fact]
+    public async Task MixedRestoreDefectsMapToUnavailable() {
+        using LifecycleFixture fixture =
+            LifecycleFixture.Create(nthPrevious: 0, historyPairs: 1);
+        EventAddress anchor = fixture.Lineage.HeadToRoot[1].Address;
+        var script = new LifecycleScript(
+            [Invalid(anchor)],
+            [
+                new DerivedRecapRestoreResult.Unavailable([
+                    new DerivedRecapRestoreDefect(
+                        DerivedRecapRestoreDefectCodes
+                            .ExecutionLimitExceeded,
+                        "bounded"
+                    ),
+                    new DerivedRecapRestoreDefect(
+                        DerivedRecapRestoreDefectCodes.FrozenPlanInvalid,
+                        "invalid"
+                    )
+                ])
+            ],
+            []
+        );
+
+        SessionContextLifecycleResult result =
+            await fixture.Coordinator(script).PrepareAsync(
+                fixture.Engine,
+                fixture.Request(),
+                CancellationToken.None
+            );
+
+        Assert.Equal(
+            SessionContextLifecycleStatus.Unavailable,
+            result.Status
         );
     }
 
@@ -582,6 +755,274 @@ public sealed class DerivedRecapOnlineLifecycleCoordinatorTests {
         ) {
             Trace.Add("Run");
             return ValueTask.FromResult(_runs.Dequeue());
+        }
+    }
+
+    private sealed class DelegatePolicy : IRecapPlanningPolicy {
+        private readonly Func<
+            RecapPlanningPolicyContext,
+            RecapPlanningPolicyDecision
+        > _decide;
+
+        public DelegatePolicy(
+            Func<
+                RecapPlanningPolicyContext,
+                RecapPlanningPolicyDecision
+            > decide
+        ) {
+            _decide = decide;
+        }
+
+        public int CallCount { get; private set; }
+
+        public RecapPlanningPolicyDecision Decide(
+            RecapPlanningPolicyContext context
+        ) {
+            CallCount++;
+            return _decide(context);
+        }
+    }
+
+    private sealed class CountingMaintainer(
+        string id,
+        ContextHeaderBlockPath target
+    ) : IRecapBlockMaintainer {
+        public string Id { get; } = id;
+        public ContextHeaderBlockPath Target { get; } = target;
+        public int CallCount { get; private set; }
+
+        public ValueTask<RecapBlockMaintenanceResult> MaintainAsync(
+            RecapBlockMaintenanceRequest request,
+            CancellationToken ct
+        ) {
+            ct.ThrowIfCancellationRequested();
+            CallCount++;
+            return ValueTask.FromResult(
+                new RecapBlockMaintenanceResult(
+                    Id,
+                    Target,
+                    new ContextHeaderBlock("restored")
+                )
+            );
+        }
+    }
+
+    private sealed class PublicLifecycleFixture : IDisposable {
+        private const int MaxContent = 4096;
+        private const string MaintainerId = "self-maintainer";
+
+        private PublicLifecycleFixture(
+            string path,
+            SessionJournalEngine engine,
+            DerivedRecapStore store
+        ) {
+            Path = path;
+            Engine = engine;
+            Store = store;
+        }
+
+        public string Path { get; }
+        public SessionJournalEngine Engine { get; }
+        public DerivedRecapStore Store { get; }
+        public RecapBlockId BlockId { get; } = new("self");
+        public ContextHeaderBlockPath Target { get; } = new(
+            ContextHeaderCarrier.System,
+            "self"
+        );
+
+        public static async ValueTask<PublicLifecycleFixture>
+            CreateAsync(
+            int nthPrevious,
+            int historyPairs
+        ) {
+            string path = System.IO.Path.Combine(
+                System.IO.Path.GetTempPath(),
+                "atelia-derived-recap-public-lifecycle-tests",
+                Guid.NewGuid().ToString("N")
+            );
+            SessionJournalEngine engine = SessionJournalEngine.Create(
+                path,
+                new SessionCreateOptions(
+                    "model-a",
+                    "system-a",
+                    "surface-a",
+                    DerivedContextNthPrevious: nthPrevious
+                )
+            );
+            var store = DerivedRecapStore.Open(
+                path,
+                engine.BranchRefId
+            );
+            var fixture =
+                new PublicLifecycleFixture(path, engine, store);
+            await store.CreateAsync();
+            for (int index = 0; index < historyPairs; index++) {
+                fixture.AppendPair(index.ToString());
+            }
+            return fixture;
+        }
+
+        public EventAddress AppendPair(string suffix) {
+            Engine.AppendObservation($"observation {suffix}");
+            return Engine.AppendImportedAgentAction(
+                new ActionMessage([
+                    new ActionBlock.Text($"answer {suffix}")
+                ]),
+                new CompletionDescriptor(
+                    "import",
+                    "v1",
+                    "model-a"
+                )
+            );
+        }
+
+        public MaintainRecapBlockPlan CreateMaintainPlan() {
+            SessionHistoryPlanningWindow window =
+                Engine.ReadHistoryPlanningWindow();
+            EventAddress anchor = window.ReplaySafeBoundaries[^1]
+                .Address;
+            return new MaintainRecapBlockPlan(
+                BlockId,
+                Target,
+                MaintainerId,
+                new EmptyRecapMaintainSource(
+                    window.StartExclusive
+                ),
+                [anchor],
+                EmptyRecapPriorContext.Instance,
+                MaxContent
+            );
+        }
+
+        public async ValueTask<PublishedRecapDescriptor>
+            PublishAsync(
+            MaintainRecapBlockPlan plan,
+            string content
+        ) {
+            EventAddress anchor = plan.CatchUpThrough[^1];
+            CreateBuildingResult.Created created =
+                Assert.IsType<CreateBuildingResult.Created>(
+                    await Store.CreateBuildingAsync(
+                        DerivedRecapCodec.CreateManifest(
+                            Engine.BranchRefId,
+                            anchor,
+                            [plan]
+                        )
+                    )
+                );
+            BuildingBlockInspection initial =
+                await Store.InspectBuildingBlockAsync(
+                    created.Descriptor,
+                    BlockId
+                );
+            DerivedRecapBlock block =
+                DerivedRecapCodec.CreateBlock(
+                    plan,
+                    anchor,
+                    content
+                );
+            _ = Assert.IsType<CheckpointWriteResult.Updated>(
+                await Store.AdvanceRollingCheckpointAsync(
+                    created.Descriptor,
+                    BlockId,
+                    initial.Checkpoint.StateToken,
+                    block
+                )
+            );
+            BuildingBlockInspection checkpointed =
+                await Store.InspectBuildingBlockAsync(
+                    created.Descriptor,
+                    BlockId
+                );
+            _ = Assert.IsType<FinalBlockWriteResult.Installed>(
+                await Store.EnsureFinalBlockAsync(
+                    created.Descriptor,
+                    BlockId,
+                    checkpointed.Final.StateToken,
+                    block
+                )
+            );
+            return await new DerivedRecapPublisher(Store, Engine)
+                .PublishAsync(anchor);
+        }
+
+        public async ValueTask
+            DamageFinalAndRemoveCheckpointAsync(
+            MaintainRecapBlockPlan plan
+        ) {
+            EventAddress anchor = plan.CatchUpThrough[^1];
+            string publishedPath =
+                Store.GetPublishedPathForTest(anchor);
+            await File.WriteAllTextAsync(
+                System.IO.Path.Combine(
+                    publishedPath,
+                    "blocks",
+                    $"{BlockId.Value}.json"
+                ),
+                "damaged"
+            );
+            File.Delete(
+                System.IO.Path.Combine(
+                    publishedPath,
+                    "work",
+                    $"{BlockId.Value}.json"
+                )
+            );
+        }
+
+        public CountingMaintainer CreateMaintainer()
+            => new(MaintainerId, Target);
+
+        public DerivedRecapOnlineLifecycleCoordinator
+            CreateCoordinator(
+            int rawGrowthTrigger,
+            IRecapPlanningPolicy policy,
+            IRecapBlockMaintainer maintainer
+        ) => new(
+            Engine,
+            Store,
+            new RecapPlannerConfig(
+                [
+                    new RecapBlockCatalogEntry(
+                        BlockId,
+                        Target,
+                        MaintainerId,
+                        MaxContent
+                    )
+                ],
+                rawGrowthTrigger,
+                rawGrowthHardLimit: 1000,
+                maxRouteEndpointsPerBlock: 8,
+                maxMaintainerCallsPerBuild: 1,
+                maxRawEventsPerStep: 1000,
+                maxRawEventsPerBuild: 4000
+            ),
+            policy,
+            new RecapBlockMaintainerRegistry([maintainer])
+        );
+
+        public SessionContextLifecycleRequest Request() {
+            EventAddress boundary =
+                Engine.ReadCurrentLineageHeaders().CapturedHead;
+            return new SessionContextLifecycleRequest(
+                new SessionContextSelectionRequest(
+                    boundary,
+                    Engine.ResolveGoverningSetup(boundary)
+                        .RuntimeConfig.DerivedContext.NthPrevious
+                ),
+                Engine.InspectExecutionBoundary().Phase
+            );
+        }
+
+        public void Dispose() {
+            Engine.Dispose();
+            try {
+                if (Directory.Exists(Path)) {
+                    Directory.Delete(Path, recursive: true);
+                }
+            }
+            catch {
+            }
         }
     }
 
