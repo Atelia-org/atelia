@@ -3,62 +3,63 @@ using Atelia.SessionJournal.DerivedRecap.Store;
 
 namespace Atelia.SessionJournal.DerivedRecap.Planner;
 
-internal sealed record DerivedRecapPlannerExecutorTestHooks(
+internal sealed record DerivedRecapBuildingExecutorTestHooks(
     Action? BeforePendingWindowFreeze = null
 );
 
 /// <summary>
-/// Engine-bound planning, durable execution recovery, and publication for one
-/// raw SessionJournal branch and its DerivedRecap Store.
+/// Creates a new frozen Building from active planning inputs and repo-owned
+/// planning limits, then delegates durable execution to the Building executor.
 /// </summary>
 public sealed class DerivedRecapPlannerExecutor {
     private readonly SessionJournalEngine _engine;
     private readonly DerivedRecapStore _store;
-    private readonly RecapPlannerConfig _config;
-    private readonly IRecapPlanningPolicy _policy;
-    private readonly IRecapBlockMaintainerRegistry _maintainers;
+    private readonly RecapPlanningInputs _inputs;
+    private readonly RecapPlanningLimits _limits;
     private readonly DerivedRecapBuildingInstaller _installer;
-    private readonly DerivedRecapPublisher _publisher;
-    private readonly DerivedRecapPlannerExecutorTestHooks _testHooks;
+    private readonly DerivedRecapBuildingExecutor _buildingExecutor;
 
     public DerivedRecapPlannerExecutor(
         SessionJournalEngine engine,
         DerivedRecapStore store,
-        RecapPlannerConfig config,
-        IRecapPlanningPolicy policy,
+        RecapPlanningInputs inputs,
+        RecapPlanningLimits limits,
         IRecapBlockMaintainerRegistry maintainers
     ) : this(
         engine,
         store,
-        config,
-        policy,
+        inputs,
+        limits,
         maintainers,
-        new DerivedRecapPlannerExecutorTestHooks()
+        RecapProtocolHardCaps.V4,
+        new DerivedRecapBuildingExecutorTestHooks()
     ) {
     }
 
     internal DerivedRecapPlannerExecutor(
         SessionJournalEngine engine,
         DerivedRecapStore store,
-        RecapPlannerConfig config,
-        IRecapPlanningPolicy policy,
+        RecapPlanningInputs inputs,
+        RecapPlanningLimits limits,
         IRecapBlockMaintainerRegistry maintainers,
-        DerivedRecapPlannerExecutorTestHooks testHooks
+        RecapProtocolHardCaps hardCaps,
+        DerivedRecapBuildingExecutorTestHooks testHooks
     ) {
         _engine = engine
             ?? throw new ArgumentNullException(nameof(engine));
         _store = store
             ?? throw new ArgumentNullException(nameof(store));
-        _config = config
-            ?? throw new ArgumentNullException(nameof(config));
-        _policy = policy
-            ?? throw new ArgumentNullException(nameof(policy));
-        _maintainers = maintainers
-            ?? throw new ArgumentNullException(nameof(maintainers));
-        _testHooks = testHooks
-            ?? throw new ArgumentNullException(nameof(testHooks));
+        _inputs = inputs
+            ?? throw new ArgumentNullException(nameof(inputs));
+        _limits = limits
+            ?? throw new ArgumentNullException(nameof(limits));
+        ArgumentNullException.ThrowIfNull(maintainers);
+        ArgumentNullException.ThrowIfNull(hardCaps);
+        ArgumentNullException.ThrowIfNull(testHooks);
+        hardCaps.ValidatePlanningAuthority(inputs, limits);
         RequireSameBinding(store, engine);
-        foreach (RecapBlockCatalogEntry entry in config.Catalog) {
+        foreach (RecapBlockCatalogEntry entry
+                 in inputs.OrderedCatalog) {
             if (!maintainers.TryResolve(
                     entry.MaintainerId,
                     entry.Target,
@@ -78,7 +79,13 @@ public sealed class DerivedRecapPlannerExecutor {
             }
         }
         _installer = new DerivedRecapBuildingInstaller(store, engine);
-        _publisher = new DerivedRecapPublisher(store, engine);
+        _buildingExecutor = new DerivedRecapBuildingExecutor(
+            engine,
+            store,
+            maintainers,
+            hardCaps,
+            testHooks
+        );
     }
 
     public async ValueTask<DerivedRecapExecutionResult> RunAsync(
@@ -137,7 +144,7 @@ public sealed class DerivedRecapPlannerExecutor {
         // sole Build and raw-limit authority.
         RecapHeaderPrefilterResult headerPrefilter =
             RecapPlanEvaluator.EvaluateHeaderPrefilter(
-                _config,
+                _inputs,
                 lineage,
                 latest?.SetAdmissionAnchor
             );
@@ -158,7 +165,7 @@ public sealed class DerivedRecapPlannerExecutor {
             try {
                 sourceRead = await _store.ReadPublishedSourceAsync(
                         latest,
-                        _config.Catalog
+                        _inputs.OrderedCatalog
                             .Select(static item => item.RecapBlockId)
                             .ToArray(),
                         cancellationToken
@@ -182,7 +189,8 @@ public sealed class DerivedRecapPlannerExecutor {
             sourceInputsById = sourceSnapshot.FrozenInputs.ToDictionary(
                 static input => input.RecapBlockId
             );
-            foreach (RecapBlockCatalogEntry entry in _config.Catalog) {
+            foreach (RecapBlockCatalogEntry entry
+                     in _inputs.OrderedCatalog) {
                 if (!sourceInputsById.TryGetValue(
                         entry.RecapBlockId,
                         out DerivedRecapFrozenInput? input
@@ -222,7 +230,8 @@ public sealed class DerivedRecapPlannerExecutor {
                 ?? allRelevantRaw.StartExclusive;
             RecapSchedulingResult exactSchedule =
                 RecapPlanEvaluator.EvaluateSchedule(
-                    _config,
+                    _inputs,
+                    _limits,
                     new RecapSchedulingFacts(
                         lineage.CapturedHead,
                         lineage.HeadToRoot,
@@ -273,7 +282,7 @@ public sealed class DerivedRecapPlannerExecutor {
             policyFacts = new RecapPolicyFacts(
                 emptyReplayStartExclusive: null,
                 [
-                    .. _config.Catalog.Select(entry =>
+                    .. _inputs.OrderedCatalog.Select(entry =>
                         new RecapBlockSourceIntent(
                             entry.RecapBlockId,
                             sourceIntent,
@@ -288,8 +297,7 @@ public sealed class DerivedRecapPlannerExecutor {
         RecapPlanIntentResult intentResult =
             RecapPlanEvaluator.EvaluateIntent(
                 schedule,
-                policyFacts,
-                _policy
+                policyFacts
             );
         switch (intentResult) {
             case RecapPlanIntentResult.NoBuild noBuild:
@@ -352,8 +360,9 @@ public sealed class DerivedRecapPlannerExecutor {
             return Unavailable(invalid.Defects);
         }
         if (existing is BuildingReadResult.Available alreadyBuilding) {
-            return await ExecuteAndPublishAsync(
-                    alreadyBuilding.Snapshot,
+            return await _buildingExecutor.ResumeAsync(
+                    alreadyBuilding.Snapshot
+                        .Descriptor.SetAdmissionAnchor,
                     cancellationToken
                 )
                 .ConfigureAwait(false);
@@ -404,45 +413,11 @@ public sealed class DerivedRecapPlannerExecutor {
 
         // Do not execute from in-memory intent/source objects. The installed
         // Building is now the only recovery authority.
-        return await ResumeAsync(admission, cancellationToken)
-            .ConfigureAwait(false);
-    }
-
-    public async ValueTask<DerivedRecapExecutionResult> ResumeAsync(
-        EventAddress setAdmissionAnchor,
-        CancellationToken cancellationToken = default
-    ) {
-        BuildingReadResult read;
-        try {
-            read = await _store.ReadBuildingAsync(
-                    setAdmissionAnchor,
-                    cancellationToken
-                )
-                .ConfigureAwait(false);
-        }
-        catch (Exception exception) when (IsAvailabilityException(exception)) {
-            return Unavailable(
-                DerivedRecapExecutionDefectCodes.StoreUnavailable,
-                exception.Message
-            );
-        }
-        return read switch {
-            BuildingReadResult.Available available =>
-                await ExecuteAndPublishAsync(
-                        available.Snapshot,
-                        cancellationToken
-                    )
-                    .ConfigureAwait(false),
-            BuildingReadResult.Invalid invalid =>
-                Unavailable(invalid.Defects),
-            BuildingReadResult.Missing => Unavailable(
-                DerivedRecapExecutionDefectCodes.BuildingInvalid,
-                $"Building '{setAdmissionAnchor}' does not exist."
-            ),
-            _ => throw new InvalidOperationException(
-                "Unknown Building read result."
+        return await _buildingExecutor.ResumeAsync(
+                admission,
+                cancellationToken
             )
-        };
+            .ConfigureAwait(false);
     }
 
     private PreparedIntent PrepareIntent(
@@ -569,6 +544,300 @@ public sealed class DerivedRecapPlannerExecutor {
         }
     }
 
+    private DerivedRecapSetManifest CreateManifest(
+        RecapPlanningPolicyDecision.Build intent,
+        PublishedRecapSourceSnapshot? sourceSnapshot
+    ) {
+        Dictionary<RecapBlockId, DerivedRecapFrozenInput> inputs =
+            sourceSnapshot?.FrozenInputs.ToDictionary(
+                static input => input.RecapBlockId
+            ) ?? [];
+        RecapBlockPlan[] plans = intent.Blocks
+            .Select((decision, index) => decision switch {
+                RecapBlockPlanningDecision.Inherit inherit =>
+                    (RecapBlockPlan)new InheritRecapBlockPlan(
+                        inherit.RecapBlockId,
+                        _inputs.OrderedCatalog[index].Target,
+                        inherit.Source.SourceSetAnchor,
+                        inherit.Source
+                            .SourcePublicationEnvelopeSha256,
+                        inputs[inherit.RecapBlockId].PayloadSha256,
+                        _inputs.OrderedCatalog[index]
+                            .MaxContentUtf8Bytes
+                    ),
+                RecapBlockPlanningDecision.Maintain maintain =>
+                    (RecapBlockPlan)new MaintainRecapBlockPlan(
+                        maintain.RecapBlockId,
+                        _inputs.OrderedCatalog[index].Target,
+                        _inputs.OrderedCatalog[index].MaintainerId,
+                        maintain.Source switch {
+                            RecapPlanningMaintainSource.Existing existing =>
+                                new ExistingRecapMaintainSource(
+                                    existing.Source.SourceSetAnchor,
+                                    existing.Source
+                                        .SourcePublicationEnvelopeSha256,
+                                    inputs[maintain.RecapBlockId]
+                                        .PayloadSha256
+                                ),
+                            RecapPlanningMaintainSource.Empty empty =>
+                                new EmptyRecapMaintainSource(
+                                    empty.ReplayStartExclusive
+                                ),
+                            _ => throw new InvalidDataException(
+                                "Unsupported Maintain source intent."
+                            )
+                        },
+                        maintain.CatchUpThrough,
+                        maintain.PriorContext,
+                        _inputs.OrderedCatalog[index]
+                            .MaxContentUtf8Bytes
+                    ),
+                _ => throw new InvalidDataException(
+                    "Unsupported planning decision."
+                )
+            })
+            .ToArray();
+        return DerivedRecapCodec.CreateManifest(
+            _store.RefId,
+            intent.SetAdmissionAnchor,
+            plans
+        );
+    }
+
+    private static EventAddress? FindEarliestSourceCursor(
+        SessionCurrentLineageSnapshot lineage,
+        PublishedRecapSourceSnapshot? source
+    ) {
+        if (source is null) {
+            return null;
+        }
+        if (source.FrozenInputs.Count == 0) {
+            throw new InvalidDataException(
+                "Published source has no active frozen inputs."
+            );
+        }
+        Dictionary<EventAddress, int> lineageIndex =
+            lineage.HeadToRoot
+                .Select((node, index) => (node.Address, index))
+                .ToDictionary(
+                    static pair => pair.Address,
+                    static pair => pair.index
+                );
+        EventAddress earliest = default;
+        int earliestIndex = -1;
+        foreach (DerivedRecapFrozenInput input in source.FrozenInputs) {
+            if (!lineageIndex.TryGetValue(
+                    input.AbsorbedThrough,
+                    out int inputIndex
+                )) {
+                throw new InvalidDataException(
+                    $"Published source block '{input.RecapBlockId}' "
+                    + "cursor is outside the captured raw lineage."
+                );
+            }
+            if (inputIndex > earliestIndex) {
+                earliest = input.AbsorbedThrough;
+                earliestIndex = inputIndex;
+            }
+        }
+        return earliest;
+    }
+
+    private static void AddStepStarts(
+        EventAddress first,
+        IReadOnlyList<EventAddress> endpoints,
+        List<EventAddress> starts
+    ) {
+        EventAddress previous = first;
+        foreach (EventAddress endpoint in endpoints) {
+            starts.Add(previous);
+            previous = endpoint;
+        }
+    }
+
+    private static DerivedRecapExecutionResult SourceReadUnavailable(
+        PublishedRecapSourceReadResult result
+    ) => result switch {
+        PublishedRecapSourceReadResult.Invalid invalid =>
+            Unavailable(invalid.Defects),
+        PublishedRecapSourceReadResult.Missing missing => Unavailable(
+            DerivedRecapExecutionDefectCodes
+                .PublishedSourceUnavailable,
+            $"Published source '{missing.SourceSetAnchor}' is missing."
+        ),
+        PublishedRecapSourceReadResult.SnapshotTokenMismatch mismatch =>
+            new DerivedRecapExecutionResult.Retryable(
+                DerivedRecapExecutionDefectCodes.SourceChanged,
+                $"Published source token changed from "
+                + $"'{mismatch.Expected}' to '{mismatch.Observed}'."
+            ),
+        PublishedRecapSourceReadResult.ChangedDuringRead changed =>
+            new DerivedRecapExecutionResult.Retryable(
+                DerivedRecapExecutionDefectCodes.SourceChanged,
+                $"Published source changed during read from "
+                + $"'{changed.Expected}' to '{changed.Observed}'."
+            ),
+        _ => throw new InvalidOperationException(
+            "Unknown Published source read result."
+        )
+    };
+
+    private static DerivedRecapExecutionResult.Unavailable Unavailable(
+        IReadOnlyList<RecapPlanDefect> defects
+    ) => new([
+        .. defects.Select(defect =>
+            new DerivedRecapExecutionDefect(
+                defect.Code,
+                defect.Detail
+            )
+        )
+    ]);
+
+    private static DerivedRecapExecutionResult.Unavailable Unavailable(
+        IReadOnlyList<RecapStructuralDefect> defects
+    ) => new([
+        .. defects.Select(defect =>
+            new DerivedRecapExecutionDefect(
+                defect.Code,
+                defect.Detail
+            )
+        )
+    ]);
+
+    private static DerivedRecapExecutionResult.Unavailable Unavailable(
+        string code,
+        string detail
+    ) => new([new DerivedRecapExecutionDefect(code, detail)]);
+
+    private static DerivedRecapExecutionResult.Retryable RetryableRawHead(
+        EventAddress expected
+    ) => new(
+        DerivedRecapExecutionDefectCodes.RawHeadChanged,
+        $"Raw SessionJournal head changed during planning. Expected "
+        + $"'{expected}'."
+    );
+
+    private static bool IsAvailabilityException(Exception exception)
+        => exception is RecapRawHeadChangedException
+            or InvalidDataException
+            or InvalidOperationException
+            or ArgumentException
+            or IOException
+            or UnauthorizedAccessException
+            or NotSupportedException
+            or KeyNotFoundException;
+
+    private static void RequireSameBinding(
+        DerivedRecapStore store,
+        SessionJournalEngine engine
+    ) {
+        string storePath = Path.TrimEndingDirectorySeparator(
+            Path.GetFullPath(store.SessionRepositoryPath)
+        );
+        string enginePath = Path.TrimEndingDirectorySeparator(
+            Path.GetFullPath(engine.Path)
+        );
+        if (!string.Equals(
+                storePath,
+                enginePath,
+                OperatingSystem.IsWindows()
+                    ? StringComparison.OrdinalIgnoreCase
+                    : StringComparison.Ordinal
+            )
+            || store.RefId != engine.BranchRefId) {
+            throw new ArgumentException(
+                "DerivedRecap Planner, Store, and SessionJournalEngine "
+                + "must bind the same repository and RefId."
+            );
+        }
+    }
+
+    private sealed record PreparedIntent(RecapPlanResult PlanResult);
+}
+
+/// <summary>
+/// Resumes and publishes one frozen Building without consulting active
+/// planning inputs or repo-owned planning limits.
+/// </summary>
+public sealed class DerivedRecapBuildingExecutor {
+    private readonly SessionJournalEngine _engine;
+    private readonly DerivedRecapStore _store;
+    private readonly IRecapBlockMaintainerRegistry _maintainers;
+    private readonly RecapProtocolHardCaps _hardCaps;
+    private readonly DerivedRecapPublisher _publisher;
+    private readonly DerivedRecapBuildingExecutorTestHooks _testHooks;
+
+    public DerivedRecapBuildingExecutor(
+        SessionJournalEngine engine,
+        DerivedRecapStore store,
+        IRecapBlockMaintainerRegistry maintainers
+    ) : this(
+        engine,
+        store,
+        maintainers,
+        RecapProtocolHardCaps.V4,
+        new DerivedRecapBuildingExecutorTestHooks()
+    ) {
+    }
+
+    internal DerivedRecapBuildingExecutor(
+        SessionJournalEngine engine,
+        DerivedRecapStore store,
+        IRecapBlockMaintainerRegistry maintainers,
+        RecapProtocolHardCaps hardCaps,
+        DerivedRecapBuildingExecutorTestHooks testHooks
+    ) {
+        _engine = engine
+            ?? throw new ArgumentNullException(nameof(engine));
+        _store = store
+            ?? throw new ArgumentNullException(nameof(store));
+        _maintainers = maintainers
+            ?? throw new ArgumentNullException(nameof(maintainers));
+        _hardCaps = hardCaps
+            ?? throw new ArgumentNullException(nameof(hardCaps));
+        _testHooks = testHooks
+            ?? throw new ArgumentNullException(nameof(testHooks));
+        RequireSameBinding(store, engine);
+        _publisher = new DerivedRecapPublisher(store, engine);
+    }
+
+    public async ValueTask<DerivedRecapExecutionResult> ResumeAsync(
+        EventAddress setAdmissionAnchor,
+        CancellationToken cancellationToken = default
+    ) {
+        BuildingReadResult read;
+        try {
+            read = await _store.ReadBuildingAsync(
+                    setAdmissionAnchor,
+                    cancellationToken
+                )
+                .ConfigureAwait(false);
+        }
+        catch (Exception exception) when (IsAvailabilityException(exception)) {
+            return Unavailable(
+                DerivedRecapExecutionDefectCodes.StoreUnavailable,
+                exception.Message
+            );
+        }
+        return read switch {
+            BuildingReadResult.Available available =>
+                await ExecuteAndPublishAsync(
+                        available.Snapshot,
+                        cancellationToken
+                    )
+                    .ConfigureAwait(false),
+            BuildingReadResult.Invalid invalid =>
+                Unavailable(invalid.Defects),
+            BuildingReadResult.Missing => Unavailable(
+                DerivedRecapExecutionDefectCodes.BuildingInvalid,
+                $"Building '{setAdmissionAnchor}' does not exist."
+            ),
+            _ => throw new InvalidOperationException(
+                "Unknown Building read result."
+            )
+        };
+    }
+
     private async ValueTask<DerivedRecapExecutionResult>
         ExecuteAndPublishAsync(
         BuildingSnapshot building,
@@ -671,12 +940,27 @@ public sealed class DerivedRecapPlannerExecutor {
         >();
         if (building.Manifest.RefId != _store.RefId
             || building.Manifest.SetAdmissionAnchor
-                != building.Descriptor.SetAdmissionAnchor
-            || building.Manifest.Blocks.Count != _config.Catalog.Count) {
-            AddConfigDefect(
+                != building.Descriptor.SetAdmissionAnchor) {
+            AddBuildingDefect(
                 defects,
                 "Building manifest does not match the bound RefId, "
-                + "anchor, or catalog size."
+                + "or descriptor anchor."
+            );
+            return new PreparedBuilding(
+                defects,
+                emptyInspections,
+                emptyWindows
+            );
+        }
+        if (building.Manifest.Blocks.Count
+            > _hardCaps.MaxCatalogEntries
+            || building.Manifest.Blocks.Any(plan =>
+                plan.MaxContentUtf8Bytes
+                    > _hardCaps.MaxContentUtf8Bytes)) {
+            AddLimitDefect(
+                defects,
+                "Building manifest exceeds V4 catalog or content "
+                + "protocol hard caps."
             );
             return new PreparedBuilding(
                 defects,
@@ -764,31 +1048,8 @@ public sealed class DerivedRecapPlannerExecutor {
             );
         }
 
-        RecapExecutionLimits executionLimits =
-            RecapExecutionLimits.From(_config);
         var maintainPlans = new List<MaintainRecapBlockPlan>();
-        for (int index = 0;
-             index < building.Manifest.Blocks.Count;
-             index++) {
-            RecapBlockPlan plan = building.Manifest.Blocks[index];
-            RecapBlockCatalogEntry entry = _config.Catalog[index];
-            if (plan.RecapBlockId != entry.RecapBlockId
-                || plan.Target != entry.Target
-                || plan.MaxContentUtf8Bytes
-                    != entry.MaxContentUtf8Bytes
-                || plan is MaintainRecapBlockPlan maintain
-                   && !string.Equals(
-                       maintain.MaintainerId,
-                       entry.MaintainerId,
-                       StringComparison.Ordinal
-                   )) {
-                AddConfigDefect(
-                    defects,
-                    $"Building block '{plan.RecapBlockId}' differs "
-                    + "from the active catalog binding."
-                );
-                continue;
-            }
+        foreach (RecapBlockPlan plan in building.Manifest.Blocks) {
             foreach (RecapFrozenPlanRawDefect defect
                      in RecapFrozenPlanRawValidator.ValidateBlock(
                          building.Manifest,
@@ -806,9 +1067,9 @@ public sealed class DerivedRecapPlannerExecutor {
                  in RecapPendingWindowPreparer
                      .ValidateFrozenRouteLimits(
                          maintainPlans,
-                         executionLimits
+                         _hardCaps
                      )) {
-            AddConfigDefect(
+            AddLimitDefect(
                 defects,
                 defect.Detail
             );
@@ -877,12 +1138,12 @@ public sealed class DerivedRecapPlannerExecutor {
                 _engine,
                 lineage.CapturedHead,
                 pendingRoutes,
-                executionLimits,
+                _hardCaps,
                 cancellationToken
             );
         foreach (RecapPendingWindowDefect defect
                  in preparedWindows.Defects) {
-            AddConfigDefect(defects, defect.Detail);
+            AddLimitDefect(defects, defect.Detail);
         }
         return new PreparedBuilding(
             defects,
@@ -942,7 +1203,7 @@ public sealed class DerivedRecapPlannerExecutor {
             || maintainer.Target != maintain.Target) {
             return Unavailable(
                 DerivedRecapExecutionDefectCodes
-                    .ManifestConfigMismatch,
+                    .MaintainerUnavailable,
                 $"Maintainer binding for '{plan.RecapBlockId}' "
                 + "is unavailable."
             );
@@ -1142,103 +1403,6 @@ public sealed class DerivedRecapPlannerExecutor {
         }
     }
 
-    private DerivedRecapSetManifest CreateManifest(
-        RecapPlanningPolicyDecision.Build intent,
-        PublishedRecapSourceSnapshot? sourceSnapshot
-    ) {
-        Dictionary<RecapBlockId, DerivedRecapFrozenInput> inputs =
-            sourceSnapshot?.FrozenInputs.ToDictionary(
-                static input => input.RecapBlockId
-            ) ?? [];
-        RecapBlockPlan[] plans = intent.Blocks
-            .Select((decision, index) => decision switch {
-                RecapBlockPlanningDecision.Inherit inherit =>
-                    (RecapBlockPlan)new InheritRecapBlockPlan(
-                        inherit.RecapBlockId,
-                        _config.Catalog[index].Target,
-                        inherit.Source.SourceSetAnchor,
-                        inherit.Source
-                            .SourcePublicationEnvelopeSha256,
-                        inputs[inherit.RecapBlockId].PayloadSha256,
-                        _config.Catalog[index].MaxContentUtf8Bytes
-                    ),
-                RecapBlockPlanningDecision.Maintain maintain =>
-                    (RecapBlockPlan)new MaintainRecapBlockPlan(
-                        maintain.RecapBlockId,
-                        _config.Catalog[index].Target,
-                        _config.Catalog[index].MaintainerId,
-                        maintain.Source switch {
-                            RecapPlanningMaintainSource.Existing existing =>
-                                new ExistingRecapMaintainSource(
-                                    existing.Source.SourceSetAnchor,
-                                    existing.Source
-                                        .SourcePublicationEnvelopeSha256,
-                                    inputs[maintain.RecapBlockId]
-                                        .PayloadSha256
-                                ),
-                            RecapPlanningMaintainSource.Empty empty =>
-                                new EmptyRecapMaintainSource(
-                                    empty.ReplayStartExclusive
-                                ),
-                            _ => throw new InvalidDataException(
-                                "Unsupported Maintain source intent."
-                            )
-                        },
-                        maintain.CatchUpThrough,
-                        maintain.PriorContext,
-                        _config.Catalog[index].MaxContentUtf8Bytes
-                    ),
-                _ => throw new InvalidDataException(
-                    "Unsupported planning decision."
-                )
-            })
-            .ToArray();
-        return DerivedRecapCodec.CreateManifest(
-            _store.RefId,
-            intent.SetAdmissionAnchor,
-            plans
-        );
-    }
-
-    private static EventAddress? FindEarliestSourceCursor(
-        SessionCurrentLineageSnapshot lineage,
-        PublishedRecapSourceSnapshot? source
-    ) {
-        if (source is null) {
-            return null;
-        }
-        if (source.FrozenInputs.Count == 0) {
-            throw new InvalidDataException(
-                "Published source has no active frozen inputs."
-            );
-        }
-        Dictionary<EventAddress, int> lineageIndex =
-            lineage.HeadToRoot
-                .Select((node, index) => (node.Address, index))
-                .ToDictionary(
-                    static pair => pair.Address,
-                    static pair => pair.index
-                );
-        EventAddress earliest = default;
-        int earliestIndex = -1;
-        foreach (DerivedRecapFrozenInput input in source.FrozenInputs) {
-            if (!lineageIndex.TryGetValue(
-                    input.AbsorbedThrough,
-                    out int inputIndex
-                )) {
-                throw new InvalidDataException(
-                    $"Published source block '{input.RecapBlockId}' "
-                    + "cursor is outside the captured raw lineage."
-                );
-            }
-            if (inputIndex > earliestIndex) {
-                earliest = input.AbsorbedThrough;
-                earliestIndex = inputIndex;
-            }
-        }
-        return earliest;
-    }
-
     private static EventAddress GetMaintainStart(
         BuildingSnapshot building,
         MaintainRecapBlockPlan plan
@@ -1259,56 +1423,6 @@ public sealed class DerivedRecapPlannerExecutor {
         )
     };
 
-    private static void AddStepStarts(
-        EventAddress first,
-        IReadOnlyList<EventAddress> endpoints,
-        List<EventAddress> starts
-    ) {
-        EventAddress previous = first;
-        foreach (EventAddress endpoint in endpoints) {
-            starts.Add(previous);
-            previous = endpoint;
-        }
-    }
-
-    private static DerivedRecapExecutionResult SourceReadUnavailable(
-        PublishedRecapSourceReadResult result
-    ) => result switch {
-        PublishedRecapSourceReadResult.Invalid invalid =>
-            Unavailable(invalid.Defects),
-        PublishedRecapSourceReadResult.Missing missing => Unavailable(
-            DerivedRecapExecutionDefectCodes
-                .PublishedSourceUnavailable,
-            $"Published source '{missing.SourceSetAnchor}' is missing."
-        ),
-        PublishedRecapSourceReadResult.SnapshotTokenMismatch mismatch =>
-            new DerivedRecapExecutionResult.Retryable(
-                DerivedRecapExecutionDefectCodes.SourceChanged,
-                $"Published source token changed from "
-                + $"'{mismatch.Expected}' to '{mismatch.Observed}'."
-            ),
-        PublishedRecapSourceReadResult.ChangedDuringRead changed =>
-            new DerivedRecapExecutionResult.Retryable(
-                DerivedRecapExecutionDefectCodes.SourceChanged,
-                $"Published source changed during read from "
-                + $"'{changed.Expected}' to '{changed.Observed}'."
-            ),
-        _ => throw new InvalidOperationException(
-            "Unknown Published source read result."
-        )
-    };
-
-    private static DerivedRecapExecutionResult.Unavailable Unavailable(
-        IReadOnlyList<RecapPlanDefect> defects
-    ) => new([
-        .. defects.Select(defect =>
-            new DerivedRecapExecutionDefect(
-                defect.Code,
-                defect.Detail
-            )
-        )
-    ]);
-
     private static DerivedRecapExecutionResult.Unavailable Unavailable(
         IReadOnlyList<RecapStructuralDefect> defects
     ) => new([
@@ -1326,14 +1440,6 @@ public sealed class DerivedRecapPlannerExecutor {
     ) => new([new DerivedRecapExecutionDefect(code, detail)]);
 
     private static DerivedRecapExecutionResult.Retryable RetryableRawHead(
-        EventAddress expected
-    ) => new(
-        DerivedRecapExecutionDefectCodes.RawHeadChanged,
-        $"Raw SessionJournal head changed during planning. Expected "
-        + $"'{expected}'."
-    );
-
-    private static DerivedRecapExecutionResult.Retryable RetryableRawHead(
         EventAddress expected,
         EventAddress? observed
     ) => new(
@@ -1343,11 +1449,11 @@ public sealed class DerivedRecapPlannerExecutor {
         + $"'{observed?.ToString() ?? "<none>"}'."
     );
 
-    private static void AddConfigDefect(
+    private static void AddLimitDefect(
         List<DerivedRecapExecutionDefect> defects,
         string detail
     ) => defects.Add(new(
-        DerivedRecapExecutionDefectCodes.ManifestConfigMismatch,
+        DerivedRecapExecutionDefectCodes.ExecutionLimitExceeded,
         detail
     ));
 
@@ -1393,8 +1499,6 @@ public sealed class DerivedRecapPlannerExecutor {
             );
         }
     }
-
-    private sealed record PreparedIntent(RecapPlanResult PlanResult);
 
     private sealed record PreparedBuilding(
         IReadOnlyList<DerivedRecapExecutionDefect> Defects,

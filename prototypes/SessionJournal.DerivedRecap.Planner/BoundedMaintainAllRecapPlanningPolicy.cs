@@ -14,7 +14,8 @@ public sealed class BoundedMaintainAllRecapPlanningPolicy
     ) {
         ArgumentNullException.ThrowIfNull(context);
 
-        RecapPlannerConfig config = context.Config;
+        RecapPlanningInputs inputs = context.Inputs;
+        RecapPlanningLimits limits = context.Limits;
         RecapSchedulingFacts scheduling = context.Scheduling;
         Dictionary<EventAddress, int> lineage =
             scheduling.HeadToRoot
@@ -30,7 +31,7 @@ public sealed class BoundedMaintainAllRecapPlanningPolicy
             );
 
         IReadOnlyList<BlockStart> starts = ResolveStarts(
-            config,
+            inputs,
             context.PolicyFacts,
             lineage
         );
@@ -67,7 +68,7 @@ public sealed class BoundedMaintainAllRecapPlanningPolicy
         IReadOnlyList<RecapPlanDefect> lastDefects = [];
         foreach ((int admissionIndex, _) in admissions) {
             CandidateResult candidate = TryBuildCandidate(
-                config,
+                limits,
                 starts,
                 replaySafe,
                 admissionIndex
@@ -94,13 +95,13 @@ public sealed class BoundedMaintainAllRecapPlanningPolicy
     }
 
     private static IReadOnlyList<BlockStart> ResolveStarts(
-        RecapPlannerConfig config,
+        RecapPlanningInputs inputs,
         RecapPolicyFacts facts,
         IReadOnlyDictionary<EventAddress, int> lineage
     ) {
         if (facts.EmptyReplayStartExclusive is { } emptyStart) {
             return [
-                .. config.Catalog.Select(entry => new BlockStart(
+                .. inputs.OrderedCatalog.Select(entry => new BlockStart(
                     entry,
                     new RecapPlanningMaintainSource.Empty(emptyStart),
                     lineage[emptyStart]
@@ -109,7 +110,7 @@ public sealed class BoundedMaintainAllRecapPlanningPolicy
         }
 
         return [
-            .. config.Catalog.Select((entry, index) => {
+            .. inputs.OrderedCatalog.Select((entry, index) => {
                 RecapBlockSourceIntent source =
                     facts.AvailableSources[index];
                 return new BlockStart(
@@ -124,7 +125,7 @@ public sealed class BoundedMaintainAllRecapPlanningPolicy
     }
 
     private static CandidateResult TryBuildCandidate(
-        RecapPlannerConfig config,
+        RecapPlanningLimits limits,
         IReadOnlyList<BlockStart> starts,
         IReadOnlyDictionary<int, EventAddress> replaySafe,
         int admissionIndex
@@ -149,17 +150,17 @@ public sealed class BoundedMaintainAllRecapPlanningPolicy
                     $"Block '{start.Catalog.RecapBlockId}' has no "
                     + "replay-safe route whose steps fit "
                     + $"MaxRawEventsPerStep "
-                    + $"{config.MaxRawEventsPerStep}."
+                    + $"{limits.MaxRawEventsPerStep}."
                 );
                 continue;
             }
-            if (route.Count > config.MaxRouteEndpointsPerBlock) {
+            if (route.Count > limits.MaxRouteEndpointsPerBlock) {
                 AddOnce(
                     defects,
                     RecapPlanDefectCodes.RouteLimitExceeded,
                     $"Block '{start.Catalog.RecapBlockId}' requires "
                     + $"{route.Count} route endpoints; limit is "
-                    + $"{config.MaxRouteEndpointsPerBlock}."
+                    + $"{limits.MaxRouteEndpointsPerBlock}."
                 );
             }
 
@@ -173,20 +174,20 @@ public sealed class BoundedMaintainAllRecapPlanningPolicy
             ));
         }
 
-        if (calls > config.MaxMaintainerCallsPerBuild) {
+        if (calls > limits.MaxMaintainerCallsPerBuild) {
             AddOnce(
                 defects,
                 RecapPlanDefectCodes.CallLimitExceeded,
                 $"Plan requires {calls} Maintainer calls; limit is "
-                + $"{config.MaxMaintainerCallsPerBuild}."
+                + $"{limits.MaxMaintainerCallsPerBuild}."
             );
         }
-        if (rawEvents > config.MaxRawEventsPerBuild) {
+        if (rawEvents > limits.MaxRawEventsPerBuild) {
             AddOnce(
                 defects,
                 RecapPlanDefectCodes.RawBuildLimitExceeded,
                 $"Plan requires {rawEvents} maintained raw events; "
-                + $"limit is {config.MaxRawEventsPerBuild}."
+                + $"limit is {limits.MaxRawEventsPerBuild}."
             );
         }
 
@@ -207,7 +208,7 @@ public sealed class BoundedMaintainAllRecapPlanningPolicy
                         index >= targetIndex
                         && index < cursorIndex
                         && cursorIndex - index
-                            <= config.MaxRawEventsPerStep)
+                            <= limits.MaxRawEventsPerStep)
                     .Cast<int?>()
                     .Min();
                 if (nextIndex is not { } next) {

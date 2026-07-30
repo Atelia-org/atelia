@@ -986,7 +986,7 @@ public sealed class DerivedRecapOnlineLifecycleCoordinatorTests {
         ) => new(
             Engine,
             Store,
-            new RecapPlannerConfig(
+            new RecapPlanningInputs(
                 [
                     new RecapBlockCatalogEntry(
                         BlockId,
@@ -999,13 +999,15 @@ public sealed class DerivedRecapOnlineLifecycleCoordinatorTests {
                     minimumRecentHistoryUnitCount: 0,
                     recapBuildIntervalUnitCount
                 ),
-                maxRawGrowthEventCount: 1000,
-                maxRouteEndpointsPerBlock: 8,
-                maxMaintainerCallsPerBuild: 1,
-                maxRawEventsPerStep: 1000,
-                maxRawEventsPerBuild: 4000
+                policy
             ),
-            policy,
+            new RecapPlanningLimits(
+                maxRawGrowthEventCount: 512,
+                maxRouteEndpointsPerBlock: 4,
+                maxMaintainerCallsPerBuild: 1,
+                maxRawEventsPerStep: 64,
+                maxRawEventsPerBuild: 512
+            ),
             new RecapBlockMaintainerRegistry([maintainer])
         );
 

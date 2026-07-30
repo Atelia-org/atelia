@@ -237,7 +237,7 @@ public sealed class DerivedRecapRestoreExecutorTests {
     }
 
     [Fact]
-    public async Task FrozenRosterMayDifferFromCurrentCatalog() {
+    public async Task FrozenRosterRestoresWithoutActivePlanningInputs() {
         using RestoreFixture fixture =
             await RestoreFixture.CreateAsync();
         (
@@ -253,24 +253,8 @@ public sealed class DerivedRecapRestoreExecutorTests {
             )
         );
         var maintainer = fixture.CreateMaintainer(plan);
-        RecapPlannerConfig unrelatedConfig =
-            fixture.CreateConfig([
-                new RecapBlockCatalogEntry(
-                    new RecapBlockId("current.other"),
-                    new ContextHeaderBlockPath(
-                        ContextHeaderCarrier.System,
-                        "current.other"
-                    ),
-                    "current.maintainer",
-                    RestoreFixture.MaxContent
-                )
-            ]);
-
         DerivedRecapRestoreResult result =
-            await fixture.CreateExecutor(
-                    [maintainer],
-                    unrelatedConfig
-                )
+            await fixture.CreateExecutor([maintainer])
                 .RestoreAsync(
                     plan.CatchUpThrough[^1],
                     fixture.CurrentHead
@@ -350,25 +334,9 @@ public sealed class DerivedRecapRestoreExecutorTests {
             plan,
             static (_, request) => request.OldBlock.Text + "+suffix"
         );
-        RecapPlannerConfig unrelatedConfig =
-            fixture.CreateConfig([
-                new RecapBlockCatalogEntry(
-                    new RecapBlockId("current.other"),
-                    new ContextHeaderBlockPath(
-                        ContextHeaderCarrier.Observation,
-                        "current.other"
-                    ),
-                    "current-maintainer",
-                    RestoreFixture.MaxContent
-                )
-            ]);
-
         var restored =
             Assert.IsType<DerivedRecapRestoreResult.Restored>(
-                await fixture.CreateExecutor(
-                        [maintainer],
-                        unrelatedConfig
-                    )
+                await fixture.CreateExecutor([maintainer])
                     .RestoreAsync(anchor, fixture.CurrentHead)
             );
 
@@ -507,18 +475,7 @@ public sealed class DerivedRecapRestoreExecutorTests {
             fixture.BlockPath(anchor, "work", plan.RecapBlockId)
         );
         var maintainer = fixture.CreateMaintainer(plan);
-        RecapPlannerConfig limited = fixture.CreateConfig(
-            [
-                new RecapBlockCatalogEntry(
-                    new RecapBlockId("current.other"),
-                    new ContextHeaderBlockPath(
-                        ContextHeaderCarrier.System,
-                        "current.other"
-                    ),
-                    "current-maintainer",
-                    RestoreFixture.MaxContent
-                )
-            ],
+        RecapProtocolHardCaps limited = fixture.CreateHardCaps(
             maxRawEventsPerStep: maxRawEventsPerStep,
             maxRawEventsPerBuild: maxRawEventsPerBuild
         );
@@ -553,18 +510,7 @@ public sealed class DerivedRecapRestoreExecutorTests {
             fixture.BlockPath(anchor, "work", plan.RecapBlockId)
         );
         var maintainer = fixture.CreateMaintainer(plan);
-        RecapPlannerConfig limited = fixture.CreateConfig(
-            [
-                new RecapBlockCatalogEntry(
-                    new RecapBlockId("current.other"),
-                    new ContextHeaderBlockPath(
-                        ContextHeaderCarrier.System,
-                        "current.other"
-                    ),
-                    "current-maintainer",
-                    RestoreFixture.MaxContent
-                )
-            ],
+        RecapProtocolHardCaps limited = fixture.CreateHardCaps(
             maxMaintainerCalls: 1
         );
 
@@ -1154,40 +1100,30 @@ public sealed class DerivedRecapRestoreExecutorTests {
 
         public DerivedRecapRestoreExecutor CreateExecutor(
             IReadOnlyList<IRecapBlockMaintainer> maintainers,
-            RecapPlannerConfig? config = null
+            RecapProtocolHardCaps? hardCaps = null
         ) => new(
             Engine,
             Store,
-            config ?? CreateConfig([
-                new RecapBlockCatalogEntry(
-                    new RecapBlockId("current.self"),
-                    new ContextHeaderBlockPath(
-                        ContextHeaderCarrier.System,
-                        "current.self"
-                    ),
-                    "current-maintainer",
-                    MaxContent
-                )
-            ]),
-            new RecapBlockMaintainerRegistry(maintainers)
+            new RecapBlockMaintainerRegistry(maintainers),
+            hardCaps ?? CreateHardCaps()
         );
 
-        public RecapPlannerConfig CreateConfig(
-            IReadOnlyList<RecapBlockCatalogEntry> catalog,
+        public RecapProtocolHardCaps CreateHardCaps(
             int maxMaintainerCalls = 16,
             int maxRawEventsPerStep = 1000,
             int maxRawEventsPerBuild = 4000
         ) => new(
-            catalog,
-            new RecapCadenceConfig(
-                minimumRecentHistoryUnitCount: 0,
-                recapBuildIntervalUnitCount: 1
-            ),
             maxRawGrowthEventCount: 1000,
             maxRouteEndpointsPerBlock: 8,
-            maxMaintainerCallsPerBuild: maxMaintainerCalls,
+            maxMaintainerCallsPerBuild:
+                maxMaintainerCalls,
             maxRawEventsPerStep,
-            maxRawEventsPerBuild
+            maxRawEventsPerBuild,
+            maxContentUtf8Bytes:
+                SessionContextContributionContract
+                    .MaxContributionUtf8Bytes,
+            maxCatalogEntries:
+                SessionContextContributionContract.MaxContributionCount
         );
 
         public async ValueTask<PublishedRestoreInspection>

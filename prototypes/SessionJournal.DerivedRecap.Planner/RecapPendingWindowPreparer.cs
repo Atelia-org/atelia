@@ -3,23 +3,6 @@ using Atelia.SessionJournal.DerivedRecap.Store;
 
 namespace Atelia.SessionJournal.DerivedRecap.Planner;
 
-internal sealed record RecapExecutionLimits(
-    int MaxRouteEndpointsPerBlock,
-    int MaxMaintainerCallsPerBuild,
-    int MaxRawEventsPerStep,
-    int MaxRawEventsPerBuild
-) {
-    public static RecapExecutionLimits From(RecapPlannerConfig config) {
-        ArgumentNullException.ThrowIfNull(config);
-        return new RecapExecutionLimits(
-            config.MaxRouteEndpointsPerBlock,
-            config.MaxMaintainerCallsPerBuild,
-            config.MaxRawEventsPerStep,
-            config.MaxRawEventsPerBuild
-        );
-    }
-}
-
 internal sealed record PendingMaintainRoute(
     MaintainRecapBlockPlan Plan,
     EventAddress StartExclusive,
@@ -54,10 +37,10 @@ internal static class RecapPendingWindowPreparer {
     public static IReadOnlyList<RecapPendingWindowDefect>
         ValidateFrozenRouteLimits(
         IEnumerable<MaintainRecapBlockPlan> plans,
-        RecapExecutionLimits limits
+        RecapProtocolHardCaps hardCaps
     ) {
         ArgumentNullException.ThrowIfNull(plans);
-        ArgumentNullException.ThrowIfNull(limits);
+        ArgumentNullException.ThrowIfNull(hardCaps);
 
         var defects = new List<RecapPendingWindowDefect>();
         long calls = 0;
@@ -65,17 +48,17 @@ internal static class RecapPendingWindowPreparer {
             ArgumentNullException.ThrowIfNull(plan);
             calls += plan.CatchUpThrough.Count;
             if (plan.CatchUpThrough.Count
-                > limits.MaxRouteEndpointsPerBlock) {
+                > hardCaps.MaxRouteEndpointsPerBlock) {
                 defects.Add(new RecapPendingWindowDefect(
                     $"Block '{plan.RecapBlockId}' exceeds the "
                     + "route limit."
                 ));
             }
         }
-        if (calls > limits.MaxMaintainerCallsPerBuild) {
+        if (calls > hardCaps.MaxMaintainerCallsPerBuild) {
             defects.Add(new RecapPendingWindowDefect(
-                $"Building requires {calls} Maintainer calls; limit is "
-                + $"{limits.MaxMaintainerCallsPerBuild}."
+                $"Frozen plan requires {calls} Maintainer calls; limit is "
+                + $"{hardCaps.MaxMaintainerCallsPerBuild}."
             ));
         }
         return defects;
@@ -84,10 +67,10 @@ internal static class RecapPendingWindowPreparer {
     public static IReadOnlyList<RecapPendingWindowDefect>
         ValidatePendingRouteLimits(
         IEnumerable<PendingMaintainRoute> routes,
-        RecapExecutionLimits limits
+        RecapProtocolHardCaps hardCaps
     ) {
         ArgumentNullException.ThrowIfNull(routes);
-        ArgumentNullException.ThrowIfNull(limits);
+        ArgumentNullException.ThrowIfNull(hardCaps);
 
         var defects = new List<RecapPendingWindowDefect>();
         long calls = 0;
@@ -102,7 +85,7 @@ internal static class RecapPendingWindowPreparer {
                 );
             }
             if (route.Plan.CatchUpThrough.Count
-                > limits.MaxRouteEndpointsPerBlock) {
+                > hardCaps.MaxRouteEndpointsPerBlock) {
                 defects.Add(new RecapPendingWindowDefect(
                     $"Block '{route.Plan.RecapBlockId}' exceeds the "
                     + "route limit."
@@ -111,10 +94,10 @@ internal static class RecapPendingWindowPreparer {
             calls += route.Plan.CatchUpThrough.Count
                 - route.NextEndpointIndex;
         }
-        if (calls > limits.MaxMaintainerCallsPerBuild) {
+        if (calls > hardCaps.MaxMaintainerCallsPerBuild) {
             defects.Add(new RecapPendingWindowDefect(
                 $"Restore requires {calls} Maintainer calls; limit is "
-                + $"{limits.MaxMaintainerCallsPerBuild}."
+                + $"{hardCaps.MaxMaintainerCallsPerBuild}."
             ));
         }
         return defects;
@@ -124,12 +107,12 @@ internal static class RecapPendingWindowPreparer {
         SessionJournalEngine engine,
         EventAddress expectedRawHead,
         IReadOnlyList<PendingMaintainRoute> pendingRoutes,
-        RecapExecutionLimits limits,
+        RecapProtocolHardCaps hardCaps,
         CancellationToken cancellationToken
     ) {
         ArgumentNullException.ThrowIfNull(engine);
         ArgumentNullException.ThrowIfNull(pendingRoutes);
-        ArgumentNullException.ThrowIfNull(limits);
+        ArgumentNullException.ThrowIfNull(hardCaps);
 
         var windows = new Dictionary<
             (RecapBlockId BlockId, int EndpointIndex),
@@ -199,7 +182,7 @@ internal static class RecapPendingWindowPreparer {
                         cancellationToken
                     );
                 if (window.RawAddresses.Count
-                    > limits.MaxRawEventsPerStep) {
+                    > hardCaps.MaxRawEventsPerStep) {
                     defects.Add(new RecapPendingWindowDefect(
                         $"Block '{route.Plan.RecapBlockId}' step "
                         + $"{index} exceeds the raw step limit."
@@ -213,10 +196,10 @@ internal static class RecapPendingWindowPreparer {
                 previous = endpoint;
             }
         }
-        if (rawEvents > limits.MaxRawEventsPerBuild) {
+        if (rawEvents > hardCaps.MaxRawEventsPerBuild) {
             defects.Add(new RecapPendingWindowDefect(
                 $"Building requires {rawEvents} raw events; limit is "
-                + $"{limits.MaxRawEventsPerBuild}."
+                + $"{hardCaps.MaxRawEventsPerBuild}."
             ));
         }
         return new PreparedRecapPendingWindows(defects, windows);

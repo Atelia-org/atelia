@@ -591,19 +591,21 @@ public sealed class DerivedRecapAcceptanceTests {
         ) => new(
             Engine,
             Store,
-            new RecapPlannerConfig(
+            new RecapPlanningInputs(
                 catalog,
                 new RecapCadenceConfig(
                     minimumRecentHistoryUnitCount: 0,
                     recapBuildIntervalUnitCount: 1
                 ),
-                maxRawGrowthEventCount: 10_000,
-                maxRouteEndpointsPerBlock: 16,
-                maxMaintainerCallsPerBuild: 32,
-                maxRawEventsPerStep: 10_000,
-                maxRawEventsPerBuild: 50_000
+                policy
             ),
-            policy,
+            new RecapPlanningLimits(
+                maxRawGrowthEventCount: 512,
+                maxRouteEndpointsPerBlock: 4,
+                maxMaintainerCallsPerBuild: 8,
+                maxRawEventsPerStep: 64,
+                maxRawEventsPerBuild: 512
+            ),
             new RecapBlockMaintainerRegistry(maintainers)
         );
 

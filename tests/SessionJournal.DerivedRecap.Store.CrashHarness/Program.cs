@@ -280,7 +280,6 @@ internal static class Program {
                 : throw new InvalidDataException(
                     "Executor crash fixture Building is unavailable."
                 );
-        var catalog = new List<RecapBlockCatalogEntry>();
         var maintainers = new List<IRecapBlockMaintainer>();
         foreach (RecapBlockPlan plan
                  in building.Snapshot.Manifest.Blocks) {
@@ -289,12 +288,6 @@ internal static class Program {
                 ?? throw new InvalidDataException(
                     "Executor crash fixture supports Maintain plans only."
                 );
-            catalog.Add(new RecapBlockCatalogEntry(
-                plan.RecapBlockId,
-                plan.Target,
-                maintain.MaintainerId,
-                plan.MaxContentUtf8Bytes
-            ));
             maintainers.Add(new DurableDeterministicMaintainer(
                 maintain.MaintainerId,
                 plan.Target,
@@ -304,22 +297,9 @@ internal static class Program {
                 )
             ));
         }
-        var executor = new DerivedRecapPlannerExecutor(
+        var executor = new DerivedRecapBuildingExecutor(
             engine,
             store,
-            new RecapPlannerConfig(
-                catalog,
-                new RecapCadenceConfig(
-                    minimumRecentHistoryUnitCount: 0,
-                    recapBuildIntervalUnitCount: 1
-                ),
-                maxRawGrowthEventCount: 10_000,
-                maxRouteEndpointsPerBlock: 16,
-                maxMaintainerCallsPerBuild: 32,
-                maxRawEventsPerStep: 10_000,
-                maxRawEventsPerBuild: 50_000
-            ),
-            new NoBuildPolicy(),
             new RecapBlockMaintainerRegistry(maintainers)
         );
         return await executor.ResumeAsync(admission);
@@ -352,14 +332,6 @@ internal static class Program {
                     + "plans only."
                 ))
             .ToArray();
-        var catalog = plans
-            .Select(plan => new RecapBlockCatalogEntry(
-                plan.RecapBlockId,
-                plan.Target,
-                plan.MaintainerId,
-                plan.MaxContentUtf8Bytes
-            ))
-            .ToArray();
         var maintainers = plans
             .Select(plan =>
                 (IRecapBlockMaintainer)new DurableDeterministicMaintainer(
@@ -374,18 +346,6 @@ internal static class Program {
         var executor = new DerivedRecapRestoreExecutor(
             engine,
             store,
-            new RecapPlannerConfig(
-                catalog,
-                new RecapCadenceConfig(
-                    minimumRecentHistoryUnitCount: 0,
-                    recapBuildIntervalUnitCount: 1
-                ),
-                maxRawGrowthEventCount: 10_000,
-                maxRouteEndpointsPerBlock: 16,
-                maxMaintainerCallsPerBuild: 32,
-                maxRawEventsPerStep: 10_000,
-                maxRawEventsPerBuild: 50_000
-            ),
             new RecapBlockMaintainerRegistry(maintainers)
         );
         return await executor.RestoreAsync(
@@ -422,12 +382,6 @@ internal static class Program {
                 expected,
                 StringComparison.Ordinal
             );
-
-    private sealed class NoBuildPolicy : IRecapPlanningPolicy {
-        public RecapPlanningPolicyDecision Decide(
-            RecapPlanningPolicyContext context
-        ) => new RecapPlanningPolicyDecision.NoBuild("resume only");
-    }
 
     private sealed class DurableDeterministicMaintainer
         : IRecapBlockMaintainer {

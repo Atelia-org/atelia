@@ -67,7 +67,19 @@ public sealed class DerivedRecapPlannerExecutorTests {
                 fixture.Engine,
                 admission,
                 [new PendingMaintainRoute(plan, start, 1)],
-                new RecapExecutionLimits(2, 2, 1000, 1000),
+                new RecapProtocolHardCaps(
+                    maxRawGrowthEventCount: 1000,
+                    maxRouteEndpointsPerBlock: 2,
+                    maxMaintainerCallsPerBuild: 2,
+                    maxRawEventsPerStep: 1000,
+                    maxRawEventsPerBuild: 1000,
+                    maxContentUtf8Bytes:
+                        SessionContextContributionContract
+                            .MaxContributionUtf8Bytes,
+                    maxCatalogEntries:
+                        SessionContextContributionContract
+                            .MaxContributionCount
+                ),
                 CancellationToken.None
             );
 
@@ -526,9 +538,8 @@ public sealed class DerivedRecapPlannerExecutorTests {
                 _ => request.OldBlock.Text + "+checkpoint-two"
             }
         );
-        DerivedRecapPlannerExecutor executor = fixture.CreateExecutor(
-            new DelegatePolicy(static _ =>
-                new RecapPlanningPolicyDecision.NoBuild("unused")),
+        DerivedRecapBuildingExecutor executor =
+            fixture.CreateBuildingExecutor(
             [maintainer],
             maxRouteEndpointsPerBlock: 2
         );
@@ -598,9 +609,7 @@ public sealed class DerivedRecapPlannerExecutorTests {
         );
 
         DerivedRecapExecutionResult result =
-            await fixture.CreateExecutor(
-                    new DelegatePolicy(static _ =>
-                        new RecapPlanningPolicyDecision.NoBuild("unused")),
+            await fixture.CreateBuildingExecutor(
                     [maintainer]
                 )
                 .ResumeAsync(admission);
@@ -656,26 +665,11 @@ public sealed class DerivedRecapPlannerExecutorTests {
                 ? throw new InvalidOperationException("zeta failed")
                 : "zeta-ready"
         );
-        DerivedRecapPlannerExecutor executor = fixture.CreateExecutor(
-            new DelegatePolicy(static _ =>
-                new RecapPlanningPolicyDecision.NoBuild("unused")),
-            [alpha, zeta],
-            catalog: [
-                new RecapBlockCatalogEntry(
-                    alphaId,
-                    alphaTarget,
-                    alpha.Id,
-                    TestFixture.MaxContent
-                ),
-                new RecapBlockCatalogEntry(
-                    zetaId,
-                    zetaTarget,
-                    zeta.Id,
-                    TestFixture.MaxContent
-                )
-            ],
-            maxMaintainerCallsPerBuild: 2
-        );
+        DerivedRecapBuildingExecutor executor =
+            fixture.CreateBuildingExecutor(
+                [alpha, zeta],
+                maxMaintainerCallsPerBuild: 2
+            );
 
         Assert.IsType<DerivedRecapExecutionResult.BlockFailed>(
             await executor.ResumeAsync(admission)
@@ -710,9 +704,7 @@ public sealed class DerivedRecapPlannerExecutorTests {
         );
 
         DerivedRecapExecutionResult result =
-            await fixture.CreateExecutor(
-                    new DelegatePolicy(static _ =>
-                        new RecapPlanningPolicyDecision.NoBuild("unused")),
+            await fixture.CreateBuildingExecutor(
                     [maintainer],
                     maxRouteEndpointsPerBlock: 1
                 )
@@ -743,7 +735,7 @@ public sealed class DerivedRecapPlannerExecutorTests {
             static (_, _) => "must-not-run"
         );
         bool hookInvoked = false;
-        var hooks = new DerivedRecapPlannerExecutorTestHooks(
+        var hooks = new DerivedRecapBuildingExecutorTestHooks(
             BeforePendingWindowFreeze: () => {
                 hookInvoked = true;
                 fixture.Engine.AppendObservation("seed-freeze race");
@@ -752,11 +744,7 @@ public sealed class DerivedRecapPlannerExecutorTests {
 
         var result =
             Assert.IsType<DerivedRecapExecutionResult.Retryable>(
-                await fixture.CreateExecutor(
-                        new DelegatePolicy(static _ =>
-                            new RecapPlanningPolicyDecision.NoBuild(
-                                "unused"
-                            )),
+                await fixture.CreateBuildingExecutor(
                         [maintainer],
                         executorHooks: hooks
                     )
@@ -891,9 +879,7 @@ public sealed class DerivedRecapPlannerExecutorTests {
         );
 
         DerivedRecapExecutionResult result =
-            await fixture.CreateExecutor(
-                    new DelegatePolicy(static _ =>
-                        new RecapPlanningPolicyDecision.NoBuild("unused")),
+            await fixture.CreateBuildingExecutor(
                     [maintainer]
                 )
                 .ResumeAsync(admission);
@@ -929,9 +915,7 @@ public sealed class DerivedRecapPlannerExecutorTests {
         );
 
         DerivedRecapExecutionResult result =
-            await fixture.CreateExecutor(
-                    new DelegatePolicy(static _ =>
-                        new RecapPlanningPolicyDecision.NoBuild("unused")),
+            await fixture.CreateBuildingExecutor(
                     [maintainer]
                 )
                 .ResumeAsync(admission);
@@ -967,9 +951,7 @@ public sealed class DerivedRecapPlannerExecutorTests {
 
         var result =
             Assert.IsType<DerivedRecapExecutionResult.Unavailable>(
-                await fixture.CreateExecutor(
-                        new DelegatePolicy(static _ =>
-                            new RecapPlanningPolicyDecision.NoBuild("unused")),
+                await fixture.CreateBuildingExecutor(
                         [maintainer]
                     )
                     .ResumeAsync(admission)
@@ -1039,9 +1021,7 @@ public sealed class DerivedRecapPlannerExecutorTests {
         maintainer.Reset();
 
         DerivedRecapExecutionResult result =
-            await fixture.CreateExecutor(
-                    new DelegatePolicy(static _ =>
-                        new RecapPlanningPolicyDecision.NoBuild("unused")),
+            await fixture.CreateBuildingExecutor(
                     [maintainer]
                 )
                 .ResumeAsync(olderTarget);
@@ -1103,22 +1083,9 @@ public sealed class DerivedRecapPlannerExecutorTests {
         );
         await fixture.CreateBuildingAsync(target, [inherit]);
         maintainer.Reset();
-        RecapBlockCatalogEntry[] catalog = [
-            new(
-                fixture.SelfId,
-                fixture.SelfTarget,
-                maintainer.Id,
-                smallerLimit
-            )
-        ];
 
         DerivedRecapExecutionResult result =
-            await fixture.CreateExecutor(
-                    new DelegatePolicy(static _ =>
-                        new RecapPlanningPolicyDecision.NoBuild("unused")),
-                    [maintainer],
-                    catalog: catalog
-                )
+            await fixture.CreateBuildingExecutor([maintainer])
                 .ResumeAsync(target);
 
         Assert.IsType<DerivedRecapExecutionResult.Unavailable>(result);
@@ -1200,9 +1167,7 @@ public sealed class DerivedRecapPlannerExecutorTests {
         );
 
         DerivedRecapExecutionResult result =
-            await fixture.CreateExecutor(
-                    new DelegatePolicy(static _ =>
-                        new RecapPlanningPolicyDecision.NoBuild("unused")),
+            await fixture.CreateBuildingExecutor(
                     [maintainer]
                 )
                 .ResumeAsync(oldAdmission);
@@ -1437,11 +1402,11 @@ public sealed class DerivedRecapPlannerExecutorTests {
             int maxRouteEndpointsPerBlock = 4,
             int maxMaintainerCallsPerBuild = 8,
             IReadOnlyList<RecapBlockCatalogEntry>? catalog = null,
-            DerivedRecapPlannerExecutorTestHooks? executorHooks = null
+            DerivedRecapBuildingExecutorTestHooks? executorHooks = null
         ) => new(
             Engine,
             Store,
-            new RecapPlannerConfig(
+            new RecapPlanningInputs(
                 catalog ?? [
                     new RecapBlockCatalogEntry(
                         SelfId,
@@ -1454,16 +1419,55 @@ public sealed class DerivedRecapPlannerExecutorTests {
                     minimumRecentHistoryUnitCount,
                     recapBuildIntervalUnitCount
                 ),
+                policy
+            ),
+            new RecapPlanningLimits(
                 maxRawGrowthEventCount: 1000,
                 maxRouteEndpointsPerBlock,
                 maxMaintainerCallsPerBuild,
                 maxRawEventsPerStep: 1000,
                 maxRawEventsPerBuild: 4000
             ),
-            policy,
             new RecapBlockMaintainerRegistry(maintainers),
+            TestHardCaps(
+                maxRouteEndpointsPerBlock,
+                maxMaintainerCallsPerBuild
+            ),
             executorHooks
-                ?? new DerivedRecapPlannerExecutorTestHooks()
+                ?? new DerivedRecapBuildingExecutorTestHooks()
+        );
+
+        public DerivedRecapBuildingExecutor CreateBuildingExecutor(
+            IReadOnlyList<IRecapBlockMaintainer> maintainers,
+            int maxRouteEndpointsPerBlock = 4,
+            int maxMaintainerCallsPerBuild = 8,
+            DerivedRecapBuildingExecutorTestHooks? executorHooks = null
+        ) => new(
+            Engine,
+            Store,
+            new RecapBlockMaintainerRegistry(maintainers),
+            TestHardCaps(
+                maxRouteEndpointsPerBlock,
+                maxMaintainerCallsPerBuild
+            ),
+            executorHooks
+                ?? new DerivedRecapBuildingExecutorTestHooks()
+        );
+
+        private static RecapProtocolHardCaps TestHardCaps(
+            int maxRouteEndpointsPerBlock,
+            int maxMaintainerCallsPerBuild
+        ) => new(
+            maxRawGrowthEventCount: 1000,
+            maxRouteEndpointsPerBlock,
+            maxMaintainerCallsPerBuild,
+            maxRawEventsPerStep: 1000,
+            maxRawEventsPerBuild: 4000,
+            maxContentUtf8Bytes:
+                SessionContextContributionContract
+                    .MaxContributionUtf8Bytes,
+            maxCatalogEntries:
+                SessionContextContributionContract.MaxContributionCount
         );
 
         public async ValueTask<PublishedRecapSourceSnapshot>

@@ -70,29 +70,65 @@ public sealed record RecapCadenceConfig {
     );
 }
 
-public sealed class RecapPlannerConfig {
-    public RecapPlannerConfig(
-        IReadOnlyList<RecapBlockCatalogEntry> catalog,
+public sealed class RecapPlanningInputs {
+    public RecapPlanningInputs(
+        IReadOnlyList<RecapBlockCatalogEntry> orderedCatalog,
         RecapCadenceConfig cadence,
+        IRecapPlanningPolicy policy
+    ) {
+        ArgumentNullException.ThrowIfNull(orderedCatalog);
+        if (orderedCatalog.Count is < 1
+            or > SessionContextContributionContract
+                .MaxContributionCount) {
+            throw new ArgumentOutOfRangeException(
+                nameof(orderedCatalog)
+            );
+        }
+        Cadence = cadence
+            ?? throw new ArgumentNullException(nameof(cadence));
+        Policy = policy
+            ?? throw new ArgumentNullException(nameof(policy));
+
+        RecapBlockCatalogEntry[] snapshot = [.. orderedCatalog];
+        var ids = new HashSet<RecapBlockId>();
+        var targets = new HashSet<ContextHeaderBlockPath>();
+        foreach (RecapBlockCatalogEntry entry in snapshot) {
+            ArgumentNullException.ThrowIfNull(entry);
+            if (!ids.Add(entry.RecapBlockId)) {
+                throw new ArgumentException(
+                    $"Duplicate RecapBlockId '{entry.RecapBlockId}'.",
+                    nameof(orderedCatalog)
+                );
+            }
+            if (!targets.Add(entry.Target)) {
+                throw new ArgumentException(
+                    "Recap catalog targets must be unique.",
+                    nameof(orderedCatalog)
+                );
+            }
+        }
+
+        OrderedCatalog = Array.AsReadOnly(snapshot);
+    }
+
+    public IReadOnlyList<RecapBlockCatalogEntry> OrderedCatalog {
+        get;
+    }
+    public RecapCadenceConfig Cadence { get; }
+    public IRecapPlanningPolicy Policy { get; }
+}
+
+public sealed record RecapPlanningLimits {
+    public RecapPlanningLimits(
         int maxRawGrowthEventCount,
         int maxRouteEndpointsPerBlock,
         int maxMaintainerCallsPerBuild,
         int maxRawEventsPerStep,
         int maxRawEventsPerBuild
     ) {
-        ArgumentNullException.ThrowIfNull(catalog);
-        if (catalog.Count is < 1
-            or > SessionContextContributionContract
-                .MaxContributionCount) {
-            throw new ArgumentOutOfRangeException(nameof(catalog));
-        }
-        ArgumentNullException.ThrowIfNull(cadence);
-        if (maxRawGrowthEventCount
-            < cadence.BuildThresholdUnitCount) {
+        if (maxRawGrowthEventCount <= 0) {
             throw new ArgumentOutOfRangeException(
-                nameof(maxRawGrowthEventCount),
-                "The raw growth limit must be reachable after the "
-                + "configured HistoryUnit cadence threshold."
+                nameof(maxRawGrowthEventCount)
             );
         }
         if (maxRouteEndpointsPerBlock <= 0) {
@@ -116,27 +152,6 @@ public sealed class RecapPlannerConfig {
             );
         }
 
-        RecapBlockCatalogEntry[] snapshot = [.. catalog];
-        var ids = new HashSet<RecapBlockId>();
-        var targets = new HashSet<ContextHeaderBlockPath>();
-        foreach (RecapBlockCatalogEntry entry in snapshot) {
-            ArgumentNullException.ThrowIfNull(entry);
-            if (!ids.Add(entry.RecapBlockId)) {
-                throw new ArgumentException(
-                    $"Duplicate RecapBlockId '{entry.RecapBlockId}'.",
-                    nameof(catalog)
-                );
-            }
-            if (!targets.Add(entry.Target)) {
-                throw new ArgumentException(
-                    "Recap catalog targets must be unique.",
-                    nameof(catalog)
-                );
-            }
-        }
-
-        Catalog = Array.AsReadOnly(snapshot);
-        Cadence = cadence;
         MaxRawGrowthEventCount = maxRawGrowthEventCount;
         MaxRouteEndpointsPerBlock = maxRouteEndpointsPerBlock;
         MaxMaintainerCallsPerBuild = maxMaintainerCallsPerBuild;
@@ -144,13 +159,154 @@ public sealed class RecapPlannerConfig {
         MaxRawEventsPerBuild = maxRawEventsPerBuild;
     }
 
-    public IReadOnlyList<RecapBlockCatalogEntry> Catalog { get; }
-    public RecapCadenceConfig Cadence { get; }
     public int MaxRawGrowthEventCount { get; }
     public int MaxRouteEndpointsPerBlock { get; }
     public int MaxMaintainerCallsPerBuild { get; }
     public int MaxRawEventsPerStep { get; }
     public int MaxRawEventsPerBuild { get; }
+}
+
+/// <summary>
+/// Stable schema/code-owned safety bounds for frozen V4 recap plans. These
+/// values are not operator configuration and are never read from the active
+/// repo config while resuming or restoring an existing plan.
+/// </summary>
+public sealed record RecapProtocolHardCaps {
+    public static RecapProtocolHardCaps V4 { get; } = new(
+        maxRawGrowthEventCount: 512,
+        maxRouteEndpointsPerBlock: 4,
+        maxMaintainerCallsPerBuild: 8,
+        maxRawEventsPerStep: 64,
+        maxRawEventsPerBuild: 512,
+        maxContentUtf8Bytes:
+            SessionContextContributionContract
+                .MaxContributionUtf8Bytes,
+        maxCatalogEntries:
+            SessionContextContributionContract.MaxContributionCount
+    );
+
+    internal RecapProtocolHardCaps(
+        int maxRawGrowthEventCount,
+        int maxRouteEndpointsPerBlock,
+        int maxMaintainerCallsPerBuild,
+        int maxRawEventsPerStep,
+        int maxRawEventsPerBuild,
+        int maxContentUtf8Bytes,
+        int maxCatalogEntries
+    ) {
+        MaxRawGrowthEventCount = RequirePositive(
+            maxRawGrowthEventCount,
+            nameof(maxRawGrowthEventCount)
+        );
+        MaxRouteEndpointsPerBlock = RequirePositive(
+            maxRouteEndpointsPerBlock,
+            nameof(maxRouteEndpointsPerBlock)
+        );
+        MaxMaintainerCallsPerBuild = RequirePositive(
+            maxMaintainerCallsPerBuild,
+            nameof(maxMaintainerCallsPerBuild)
+        );
+        MaxRawEventsPerStep = RequirePositive(
+            maxRawEventsPerStep,
+            nameof(maxRawEventsPerStep)
+        );
+        MaxRawEventsPerBuild = RequirePositive(
+            maxRawEventsPerBuild,
+            nameof(maxRawEventsPerBuild)
+        );
+        MaxContentUtf8Bytes = RequirePositive(
+            maxContentUtf8Bytes,
+            nameof(maxContentUtf8Bytes)
+        );
+        MaxCatalogEntries = RequirePositive(
+            maxCatalogEntries,
+            nameof(maxCatalogEntries)
+        );
+    }
+
+    public int MaxRawGrowthEventCount { get; }
+    public int MaxRouteEndpointsPerBlock { get; }
+    public int MaxMaintainerCallsPerBuild { get; }
+    public int MaxRawEventsPerStep { get; }
+    public int MaxRawEventsPerBuild { get; }
+    public int MaxContentUtf8Bytes { get; }
+    public int MaxCatalogEntries { get; }
+
+    internal void ValidatePlanningLimits(RecapPlanningLimits limits) {
+        ArgumentNullException.ThrowIfNull(limits);
+        RequireAtMost(
+            limits.MaxRawGrowthEventCount,
+            MaxRawGrowthEventCount,
+            nameof(limits.MaxRawGrowthEventCount)
+        );
+        RequireAtMost(
+            limits.MaxRouteEndpointsPerBlock,
+            MaxRouteEndpointsPerBlock,
+            nameof(limits.MaxRouteEndpointsPerBlock)
+        );
+        RequireAtMost(
+            limits.MaxMaintainerCallsPerBuild,
+            MaxMaintainerCallsPerBuild,
+            nameof(limits.MaxMaintainerCallsPerBuild)
+        );
+        RequireAtMost(
+            limits.MaxRawEventsPerStep,
+            MaxRawEventsPerStep,
+            nameof(limits.MaxRawEventsPerStep)
+        );
+        RequireAtMost(
+            limits.MaxRawEventsPerBuild,
+            MaxRawEventsPerBuild,
+            nameof(limits.MaxRawEventsPerBuild)
+        );
+    }
+
+    internal void ValidatePlanningAuthority(
+        RecapPlanningInputs inputs,
+        RecapPlanningLimits limits
+    ) {
+        ArgumentNullException.ThrowIfNull(inputs);
+        ValidatePlanningLimits(limits);
+        if (inputs.OrderedCatalog.Count > MaxCatalogEntries) {
+            throw new ArgumentOutOfRangeException(
+                nameof(inputs),
+                "Ordered catalog exceeds the protocol hard cap."
+            );
+        }
+        if (inputs.OrderedCatalog.Any(entry =>
+                entry.MaxContentUtf8Bytes > MaxContentUtf8Bytes)) {
+            throw new ArgumentOutOfRangeException(
+                nameof(inputs),
+                "Catalog content ceiling exceeds the protocol hard cap."
+            );
+        }
+        if (limits.MaxRawGrowthEventCount
+            < inputs.Cadence.BuildThresholdUnitCount) {
+            throw new ArgumentOutOfRangeException(
+                nameof(limits),
+                "The raw growth limit must be reachable after the "
+                + "configured HistoryUnit cadence threshold."
+            );
+        }
+    }
+
+    private static int RequirePositive(int value, string name)
+        => value > 0
+            ? value
+            : throw new ArgumentOutOfRangeException(name);
+
+    private static void RequireAtMost(
+        int value,
+        int maximum,
+        string name
+    ) {
+        if (value > maximum) {
+            throw new ArgumentOutOfRangeException(
+                name,
+                $"Value {value} exceeds protocol hard cap {maximum}."
+            );
+        }
+    }
 }
 
 /// <summary>
@@ -434,7 +590,8 @@ public abstract record RecapPlanningPolicyDecision {
 }
 
 public sealed record RecapPlanningPolicyContext(
-    RecapPlannerConfig Config,
+    RecapPlanningInputs Inputs,
+    RecapPlanningLimits Limits,
     RecapSchedulingFacts Scheduling,
     RecapCadenceFacts Cadence,
     RecapPolicyFacts PolicyFacts
@@ -465,16 +622,19 @@ public abstract record RecapSchedulingResult {
 
     public sealed record Ready : RecapSchedulingResult {
         internal Ready(
-            RecapPlannerConfig config,
+            RecapPlanningInputs inputs,
+            RecapPlanningLimits limits,
             RecapSchedulingFacts facts,
             RecapCadenceFacts cadence
         ) {
-            Config = config;
+            Inputs = inputs;
+            Limits = limits;
             Facts = facts;
             Cadence = cadence;
         }
 
-        public RecapPlannerConfig Config { get; }
+        public RecapPlanningInputs Inputs { get; }
+        public RecapPlanningLimits Limits { get; }
         public RecapSchedulingFacts Facts { get; }
         public RecapCadenceFacts Cadence { get; }
     }

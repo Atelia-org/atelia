@@ -63,17 +63,25 @@ public sealed class DerivedRecapPreparedRecoveryIntegrationTests
                 "roleplay.self"
             );
             var maintainer = new FixedRecapMaintainer(target);
-            RecapPlannerConfig config = CreateConfig(
+            var policy = new FirstBuildPolicy(blockId);
+            RecapPlanningInputs inputs = CreateInputs(
                 blockId,
                 target,
-                maintainer.Id
+                maintainer.Id,
+                policy
             );
             var coordinator =
                 new DerivedRecapOnlineLifecycleCoordinator(
                     engine,
                     store,
-                    config,
-                    new FirstBuildPolicy(blockId),
+                    inputs,
+                    new RecapPlanningLimits(
+                        maxRawGrowthEventCount: 512,
+                        maxRouteEndpointsPerBlock: 4,
+                        maxMaintainerCallsPerBuild: 4,
+                        maxRawEventsPerStep: 64,
+                        maxRawEventsPerBuild: 512
+                    ),
                     new RecapBlockMaintainerRegistry([maintainer])
                 );
 
@@ -228,10 +236,11 @@ public sealed class DerivedRecapPreparedRecoveryIntegrationTests
         }
     }
 
-    private static RecapPlannerConfig CreateConfig(
+    private static RecapPlanningInputs CreateInputs(
         RecapBlockId blockId,
         ContextHeaderBlockPath target,
-        string maintainerId
+        string maintainerId,
+        IRecapPlanningPolicy policy
     ) => new(
         [
             new RecapBlockCatalogEntry(
@@ -245,11 +254,7 @@ public sealed class DerivedRecapPreparedRecoveryIntegrationTests
             minimumRecentHistoryUnitCount: 0,
             recapBuildIntervalUnitCount: 2
         ),
-        maxRawGrowthEventCount: 1000,
-        maxRouteEndpointsPerBlock: 4,
-        maxMaintainerCallsPerBuild: 4,
-        maxRawEventsPerStep: 1000,
-        maxRawEventsPerBuild: 4000
+        policy
     );
 
     private static SessionRuntime CreateRuntime(

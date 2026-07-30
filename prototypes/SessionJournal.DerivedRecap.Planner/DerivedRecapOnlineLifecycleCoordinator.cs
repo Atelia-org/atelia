@@ -31,15 +31,15 @@ public sealed class DerivedRecapOnlineLifecycleCoordinator
     public DerivedRecapOnlineLifecycleCoordinator(
         SessionJournalEngine engine,
         DerivedRecapStore store,
-        RecapPlannerConfig config,
-        IRecapPlanningPolicy policy,
+        RecapPlanningInputs inputs,
+        RecapPlanningLimits limits,
         IRecapBlockMaintainerRegistry maintainers
     ) {
         _engine = engine
             ?? throw new ArgumentNullException(nameof(engine));
         ArgumentNullException.ThrowIfNull(store);
-        ArgumentNullException.ThrowIfNull(config);
-        ArgumentNullException.ThrowIfNull(policy);
+        ArgumentNullException.ThrowIfNull(inputs);
+        ArgumentNullException.ThrowIfNull(limits);
         ArgumentNullException.ThrowIfNull(maintainers);
 
         _candidates = new DerivedRecapContextCandidateSource(
@@ -49,14 +49,13 @@ public sealed class DerivedRecapOnlineLifecycleCoordinator
         var planner = new DerivedRecapPlannerExecutor(
             engine,
             store,
-            config,
-            policy,
+            inputs,
+            limits,
             maintainers
         );
         var restorer = new DerivedRecapRestoreExecutor(
             engine,
             store,
-            config,
             maintainers
         );
         _select = store.SelectNthPreviousAsync;

@@ -94,8 +94,10 @@ public static class DerivedRecapExecutionDefectCodes {
     public const string PublishedSourceUnavailable =
         nameof(PublishedSourceUnavailable);
     public const string BuildingInvalid = nameof(BuildingInvalid);
-    public const string ManifestConfigMismatch =
-        nameof(ManifestConfigMismatch);
+    public const string ExecutionLimitExceeded =
+        nameof(ExecutionLimitExceeded);
+    public const string MaintainerUnavailable =
+        nameof(MaintainerUnavailable);
     public const string RawPlanningUnavailable =
         nameof(RawPlanningUnavailable);
     public const string RawHeadChanged = nameof(RawHeadChanged);

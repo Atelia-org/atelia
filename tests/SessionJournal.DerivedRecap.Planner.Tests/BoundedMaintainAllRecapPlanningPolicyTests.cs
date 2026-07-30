@@ -222,18 +222,21 @@ public sealed class BoundedMaintainAllRecapPlanningPolicyTests {
 
         private PolicyModel(
             EventAddress[] lineageAddresses,
-            RecapPlannerConfig config,
+            RecapPlanningInputs inputs,
+            RecapPlanningLimits limits,
             RecapSchedulingFacts scheduling,
             RecapPolicyFacts policyFacts
         ) {
             LineageAddresses = lineageAddresses;
-            Config = config;
+            Inputs = inputs;
+            Limits = limits;
             Scheduling = scheduling;
             PolicyFacts = policyFacts;
         }
 
         private EventAddress[] LineageAddresses { get; }
-        private RecapPlannerConfig Config { get; }
+        private RecapPlanningInputs Inputs { get; }
+        private RecapPlanningLimits Limits { get; }
         private RecapSchedulingFacts Scheduling { get; }
         private RecapPolicyFacts PolicyFacts { get; }
 
@@ -248,7 +251,7 @@ public sealed class BoundedMaintainAllRecapPlanningPolicyTests {
                 completedUnitCounts = null
         ) {
             EventAddress[] addresses = Addresses();
-            RecapPlannerConfig config = ConfigFor(
+            PlanningAuthority authority = AuthorityFor(
                 blockCount: 1,
                 maxRouteEndpointsPerBlock: 10,
                 maxMaintainerCallsPerBuild: 10,
@@ -263,7 +266,8 @@ public sealed class BoundedMaintainAllRecapPlanningPolicyTests {
             );
             return new PolicyModel(
                 addresses,
-                config,
+                authority.Inputs,
+                authority.Limits,
                 scheduling,
                 new RecapPolicyFacts(addresses[10], [])
             );
@@ -279,7 +283,7 @@ public sealed class BoundedMaintainAllRecapPlanningPolicyTests {
             int maxRawEventsPerBuild = 100
         ) {
             EventAddress[] addresses = Addresses();
-            RecapPlannerConfig config = ConfigFor(
+            PlanningAuthority authority = AuthorityFor(
                 cursorIndices.Count,
                 maxRouteEndpointsPerBlock,
                 maxMaintainerCallsPerBuild,
@@ -297,12 +301,14 @@ public sealed class BoundedMaintainAllRecapPlanningPolicyTests {
             );
             return new PolicyModel(
                 addresses,
-                config,
+                authority.Inputs,
+                authority.Limits,
                 scheduling,
                 new RecapPolicyFacts(
                     emptyReplayStartExclusive: null,
                     [
-                        .. config.Catalog.Select((entry, index) =>
+                        .. authority.Inputs.OrderedCatalog
+                            .Select((entry, index) =>
                             new RecapBlockSourceIntent(
                                 entry.RecapBlockId,
                                 source,
@@ -315,12 +321,15 @@ public sealed class BoundedMaintainAllRecapPlanningPolicyTests {
 
         public RecapPlanIntentResult Evaluate() {
             var ready = Assert.IsType<RecapSchedulingResult.Ready>(
-                RecapPlanEvaluator.EvaluateSchedule(Config, Scheduling)
+                RecapPlanEvaluator.EvaluateSchedule(
+                    Inputs,
+                    Limits,
+                    Scheduling
+                )
             );
             return RecapPlanEvaluator.EvaluateIntent(
                 ready,
-                PolicyFacts,
-                new BoundedMaintainAllRecapPlanningPolicy()
+                PolicyFacts
             );
         }
 
@@ -391,14 +400,14 @@ public sealed class BoundedMaintainAllRecapPlanningPolicyTests {
             );
         }
 
-        private static RecapPlannerConfig ConfigFor(
+        private static PlanningAuthority AuthorityFor(
             int blockCount,
             int maxRouteEndpointsPerBlock,
             int maxMaintainerCallsPerBuild,
             int maxRawEventsPerStep,
             int maxRawEventsPerBuild
-        ) => new(
-            [
+        ) {
+            RecapBlockCatalogEntry[] catalog = [
                 .. Enumerable.Range(0, blockCount).Select(index =>
                     new RecapBlockCatalogEntry(
                         new RecapBlockId($"block-{index}"),
@@ -409,16 +418,30 @@ public sealed class BoundedMaintainAllRecapPlanningPolicyTests {
                         $"maintainer-{index}",
                         1024
                     ))
-            ],
-            new RecapCadenceConfig(
-                minimumRecentHistoryUnitCount: 0,
-                recapBuildIntervalUnitCount: 1
-            ),
-            maxRawGrowthEventCount: 100,
-            maxRouteEndpointsPerBlock,
-            maxMaintainerCallsPerBuild,
-            maxRawEventsPerStep,
-            maxRawEventsPerBuild
+            ];
+            var policy = new BoundedMaintainAllRecapPlanningPolicy();
+            return new PlanningAuthority(
+                new RecapPlanningInputs(
+                    catalog,
+                    new RecapCadenceConfig(
+                        minimumRecentHistoryUnitCount: 0,
+                        recapBuildIntervalUnitCount: 1
+                    ),
+                    policy
+                ),
+                new RecapPlanningLimits(
+                    maxRawGrowthEventCount: 100,
+                    maxRouteEndpointsPerBlock,
+                    maxMaintainerCallsPerBuild,
+                    maxRawEventsPerStep,
+                    maxRawEventsPerBuild
+                )
+            );
+        }
+
+        private sealed record PlanningAuthority(
+            RecapPlanningInputs Inputs,
+            RecapPlanningLimits Limits
         );
     }
 }

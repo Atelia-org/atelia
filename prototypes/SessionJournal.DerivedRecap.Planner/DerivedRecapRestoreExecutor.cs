@@ -10,24 +10,36 @@ namespace Atelia.SessionJournal.DerivedRecap.Planner;
 public sealed class DerivedRecapRestoreExecutor {
     private readonly SessionJournalEngine _engine;
     private readonly DerivedRecapStore _store;
-    private readonly RecapExecutionLimits _limits;
+    private readonly RecapProtocolHardCaps _hardCaps;
     private readonly IRecapBlockMaintainerRegistry _maintainers;
     private readonly DerivedRecapRestorer _restorer;
 
     public DerivedRecapRestoreExecutor(
         SessionJournalEngine engine,
         DerivedRecapStore store,
-        RecapPlannerConfig executionConfig,
         IRecapBlockMaintainerRegistry maintainers
+    ) : this(
+        engine,
+        store,
+        maintainers,
+        RecapProtocolHardCaps.V4
+    ) {
+    }
+
+    internal DerivedRecapRestoreExecutor(
+        SessionJournalEngine engine,
+        DerivedRecapStore store,
+        IRecapBlockMaintainerRegistry maintainers,
+        RecapProtocolHardCaps hardCaps
     ) {
         _engine = engine
             ?? throw new ArgumentNullException(nameof(engine));
         _store = store
             ?? throw new ArgumentNullException(nameof(store));
-        ArgumentNullException.ThrowIfNull(executionConfig);
-        _limits = RecapExecutionLimits.From(executionConfig);
         _maintainers = maintainers
             ?? throw new ArgumentNullException(nameof(maintainers));
+        _hardCaps = hardCaps
+            ?? throw new ArgumentNullException(nameof(hardCaps));
         _restorer = new DerivedRecapRestorer(store, engine);
     }
 
@@ -162,6 +174,34 @@ public sealed class DerivedRecapRestoreExecutor {
         var actions = new List<RestoreBlockAction>(
             inspection.FrozenPlan.Blocks.Count
         );
+        if (inspection.FrozenPlan.Blocks.Count
+            > _hardCaps.MaxCatalogEntries
+            || inspection.FrozenPlan.Blocks.Any(plan =>
+                plan.MaxContentUtf8Bytes
+                    > _hardCaps.MaxContentUtf8Bytes)) {
+            AddDefect(
+                defects,
+                DerivedRecapRestoreDefectCodes.ExecutionLimitExceeded,
+                "Frozen Published plan exceeds V4 catalog or content "
+                + "protocol hard caps."
+            );
+        }
+        foreach (RecapPendingWindowDefect defect
+                 in RecapPendingWindowPreparer
+                     .ValidateFrozenRouteLimits(
+                         inspection.FrozenPlan.Blocks
+                             .OfType<MaintainRecapBlockPlan>(),
+                         _hardCaps
+                     )) {
+            AddDefect(
+                defects,
+                DerivedRecapRestoreDefectCodes.ExecutionLimitExceeded,
+                defect.Detail
+            );
+        }
+        if (defects.Count != 0) {
+            return PreparedRestore.Unavailable(defects);
+        }
         Dictionary<RecapBlockId, DerivedRecapFrozenInput>
             healthyInputs = inspection.Blocks
                 .Where(static item =>
@@ -261,7 +301,7 @@ public sealed class DerivedRecapRestoreExecutor {
                  in RecapPendingWindowPreparer
                      .ValidatePendingRouteLimits(
                          pendingRoutes,
-                         _limits
+                         _hardCaps
                      )) {
             AddDefect(
                 defects,
@@ -278,7 +318,7 @@ public sealed class DerivedRecapRestoreExecutor {
                 _engine,
                 expectedRawHead,
                 pendingRoutes,
-                _limits,
+                _hardCaps,
                 cancellationToken
             );
         foreach (RecapPendingWindowDefect defect

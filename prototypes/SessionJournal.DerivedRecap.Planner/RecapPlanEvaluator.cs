@@ -5,11 +5,11 @@ namespace Atelia.SessionJournal.DerivedRecap.Planner;
 
 public static class RecapPlanEvaluator {
     public static RecapHeaderPrefilterResult EvaluateHeaderPrefilter(
-        RecapPlannerConfig config,
+        RecapPlanningInputs inputs,
         SessionCurrentLineageSnapshot lineage,
         EventAddress? cadenceBaseline
     ) {
-        ArgumentNullException.ThrowIfNull(config);
+        ArgumentNullException.ThrowIfNull(inputs);
         ArgumentNullException.ThrowIfNull(lineage);
         var defects = new List<RecapPlanDefect>();
         Dictionary<EventAddress, int> lineageIndex =
@@ -42,7 +42,7 @@ public static class RecapPlanEvaluator {
             rawGrowthEventUpperBound = lineage.HeadToRoot.Count;
         }
         if (rawGrowthEventUpperBound
-            < config.Cadence.BuildThresholdUnitCount) {
+            < inputs.Cadence.BuildThresholdUnitCount) {
             return new RecapHeaderPrefilterResult.NoBuild(
                 RecapPlanReasons.BelowCadenceThreshold
             );
@@ -53,10 +53,12 @@ public static class RecapPlanEvaluator {
     }
 
     public static RecapSchedulingResult EvaluateSchedule(
-        RecapPlannerConfig config,
+        RecapPlanningInputs inputs,
+        RecapPlanningLimits limits,
         RecapSchedulingFacts facts
     ) {
-        ArgumentNullException.ThrowIfNull(config);
+        ArgumentNullException.ThrowIfNull(inputs);
+        ArgumentNullException.ThrowIfNull(limits);
         ArgumentNullException.ThrowIfNull(facts);
         List<RecapPlanDefect> defects = ValidateSchedulingFacts(
             facts,
@@ -69,20 +71,20 @@ public static class RecapPlanEvaluator {
 
         int rawGrowthEventCount = lineage[facts.CadenceBaseline];
         if (rawGrowthEventCount
-            > config.MaxRawGrowthEventCount) {
+            > limits.MaxRawGrowthEventCount) {
             return ScheduleUnavailable(
                 RecapPlanDefectCodes
                     .MaxRawGrowthEventCountExceeded,
                 $"Raw growth after cadence baseline is "
                 + $"{rawGrowthEventCount}; limit is "
-                + $"{config.MaxRawGrowthEventCount}."
+                + $"{limits.MaxRawGrowthEventCount}."
             );
         }
         int growthHistoryUnitCount =
             facts.HistoryWindow.TotalHistoryUnitCount
             - baselineCompletedUnitCount;
         if (growthHistoryUnitCount
-            < config.Cadence.BuildThresholdUnitCount) {
+            < inputs.Cadence.BuildThresholdUnitCount) {
             return new RecapSchedulingResult.NoBuild(
                 RecapPlanReasons.BelowCadenceThreshold
             );
@@ -100,11 +102,11 @@ public static class RecapPlanEvaluator {
                 ))
                 .Where(boundary =>
                     boundary.HistoryUnitCountSinceBaseline
-                        >= config.Cadence
+                        >= inputs.Cadence
                             .RecapBuildIntervalUnitCount
                     && growthHistoryUnitCount
                        - boundary.HistoryUnitCountSinceBaseline
-                       >= config.Cadence
+                       >= inputs.Cadence
                            .MinimumRecentHistoryUnitCount)
         ];
         if (candidates.Length == 0) {
@@ -119,7 +121,8 @@ public static class RecapPlanEvaluator {
             candidates
         );
         return new RecapSchedulingResult.Ready(
-            config,
+            inputs,
+            limits,
             facts,
             cadence
         );
@@ -127,21 +130,21 @@ public static class RecapPlanEvaluator {
 
     public static RecapPlanIntentResult EvaluateIntent(
         RecapSchedulingResult.Ready schedule,
-        RecapPolicyFacts policyFacts,
-        IRecapPlanningPolicy policy
+        RecapPolicyFacts policyFacts
     ) {
         ArgumentNullException.ThrowIfNull(schedule);
         ArgumentNullException.ThrowIfNull(policyFacts);
-        ArgumentNullException.ThrowIfNull(policy);
         List<RecapPlanDefect> sourceDefects =
             ValidateSourceIntents(schedule, policyFacts);
         if (sourceDefects.Count != 0) {
             return IntentUnavailable(sourceDefects);
         }
 
-        RecapPlanningPolicyDecision decision = policy.Decide(
+        RecapPlanningPolicyDecision decision =
+            schedule.Inputs.Policy.Decide(
             new RecapPlanningPolicyContext(
-                schedule.Config,
+                schedule.Inputs,
+                schedule.Limits,
                 schedule.Facts,
                 schedule.Cadence,
                 policyFacts
@@ -383,7 +386,7 @@ public static class RecapPlanEvaluator {
 
         if (scheduling.LatestPublishedSetAnchor is null
             || policyFacts.AvailableSources.Count
-                != schedule.Config.Catalog.Count) {
+                != schedule.Inputs.OrderedCatalog.Count) {
             Add(
                 defects,
                 RecapPlanDefectCodes.PlanningFactsInvalid,
@@ -393,10 +396,10 @@ public static class RecapPlanEvaluator {
         }
 
         for (int index = 0;
-             index < schedule.Config.Catalog.Count;
+             index < schedule.Inputs.OrderedCatalog.Count;
              index++) {
             RecapBlockCatalogEntry expected =
-                schedule.Config.Catalog[index];
+                schedule.Inputs.OrderedCatalog[index];
             RecapBlockSourceIntent? item =
                 policyFacts.AvailableSources[index];
             if (item is null
@@ -434,7 +437,8 @@ public static class RecapPlanEvaluator {
         RecapPlanningPolicyDecision.Build build
     ) {
         var defects = new List<RecapPlanDefect>();
-        RecapPlannerConfig config = schedule.Config;
+        RecapPlanningInputs inputs = schedule.Inputs;
+        RecapPlanningLimits limits = schedule.Limits;
         RecapSchedulingFacts facts = schedule.Facts;
         Dictionary<EventAddress, int> lineage = facts.HeadToRoot
             .Select((node, index) => (node.Address, index))
@@ -468,7 +472,7 @@ public static class RecapPlanEvaluator {
                 "SetAdmissionAnchor is not strictly newer than latest Published."
             );
         }
-        if (build.Blocks.Count != config.Catalog.Count) {
+        if (build.Blocks.Count != inputs.OrderedCatalog.Count) {
             Add(
                 defects,
                 RecapPlanDefectCodes.CatalogMismatch,
@@ -478,8 +482,11 @@ public static class RecapPlanEvaluator {
         }
 
         long calls = 0;
-        for (int index = 0; index < config.Catalog.Count; index++) {
-            RecapBlockCatalogEntry catalog = config.Catalog[index];
+        for (int index = 0;
+             index < inputs.OrderedCatalog.Count;
+             index++) {
+            RecapBlockCatalogEntry catalog =
+                inputs.OrderedCatalog[index];
             RecapBlockPlanningDecision? decision =
                 build.Blocks[index];
             if (decision is null
@@ -504,7 +511,7 @@ public static class RecapPlanEvaluator {
                     break;
                 case RecapBlockPlanningDecision.Maintain maintain:
                     ValidateMaintainIntent(
-                        config,
+                        limits,
                         policyFacts,
                         lineage,
                         replaySafe,
@@ -516,19 +523,19 @@ public static class RecapPlanEvaluator {
                     break;
             }
         }
-        if (calls > config.MaxMaintainerCallsPerBuild) {
+        if (calls > limits.MaxMaintainerCallsPerBuild) {
             Add(
                 defects,
                 RecapPlanDefectCodes.CallLimitExceeded,
                 $"Plan requires {calls} Maintainer calls; limit is "
-                + $"{config.MaxMaintainerCallsPerBuild}."
+                + $"{limits.MaxMaintainerCallsPerBuild}."
             );
         }
         return defects;
     }
 
     private static void ValidateMaintainIntent(
-        RecapPlannerConfig config,
+        RecapPlanningLimits limits,
         RecapPolicyFacts policyFacts,
         IReadOnlyDictionary<EventAddress, int> lineage,
         IReadOnlySet<EventAddress> replaySafe,
@@ -586,7 +593,7 @@ public static class RecapPlanEvaluator {
             );
             return;
         }
-        if (route.Count > config.MaxRouteEndpointsPerBlock) {
+        if (route.Count > limits.MaxRouteEndpointsPerBlock) {
             Add(
                 defects,
                 RecapPlanDefectCodes.RouteLimitExceeded,
@@ -654,7 +661,7 @@ public static class RecapPlanEvaluator {
         RecapPlanPreflightFacts preflight
     ) {
         var defects = new List<RecapPlanDefect>();
-        RecapPlannerConfig config = ready.Schedule.Config;
+        RecapPlanningLimits limits = ready.Schedule.Limits;
         RecapSchedulingFacts facts = ready.Schedule.Facts;
         RecapPlanningPolicyDecision.Build build = ready.Intent;
         ValidatePreflightShape(preflight, defects);
@@ -737,7 +744,7 @@ public static class RecapPlanEvaluator {
                 "Preflight contains an unused or duplicate source replay fact."
             );
         }
-        ValidateCosts(config, expectedCosts, preflight, defects);
+        ValidateCosts(limits, expectedCosts, preflight, defects);
         return defects;
     }
 
@@ -884,7 +891,7 @@ public static class RecapPlanEvaluator {
     }
 
     private static void ValidateCosts(
-        RecapPlannerConfig config,
+        RecapPlanningLimits limits,
         IReadOnlyList<RecapPlannedStepCost> expected,
         RecapPlanPreflightFacts preflight,
         List<RecapPlanDefect> defects
@@ -935,22 +942,22 @@ public static class RecapPlanEvaluator {
                 );
                 continue;
             }
-            if (count > config.MaxRawEventsPerStep) {
+            if (count > limits.MaxRawEventsPerStep) {
                 Add(
                     defects,
                     RecapPlanDefectCodes.RawStepLimitExceeded,
                     $"Raw step cost {count} exceeds limit "
-                    + $"{config.MaxRawEventsPerStep}."
+                    + $"{limits.MaxRawEventsPerStep}."
                 );
             }
             total += count;
         }
-        if (total > config.MaxRawEventsPerBuild) {
+        if (total > limits.MaxRawEventsPerBuild) {
             Add(
                 defects,
                 RecapPlanDefectCodes.RawBuildLimitExceeded,
                 $"Raw build cost {total} exceeds limit "
-                + $"{config.MaxRawEventsPerBuild}."
+                + $"{limits.MaxRawEventsPerBuild}."
             );
         }
     }
