@@ -12,36 +12,41 @@ using SJ = Atelia.SessionJournal;
 
 namespace Atelia.SessionJournal.Cli.Tests;
 
-public sealed class DerivedRecapRealRepositoryAcceptanceTests {
-    // The historical repository-named variable remains a compatibility
-    // fallback. The real acceptance source is a legacy-upgrade export JSON;
-    // it is imported into an isolated current-wire SessionJournal before the
-    // raw baseline is captured.
-    private const string SourceExportEnvironment =
+internal sealed class RealLegacyExportFactAttribute : FactAttribute {
+    public const string SourceEnvironment =
         "ATELIA_REAL_LEGACY_UPGRADE_EXPORT";
-    private const string SourceEnvironment =
-        "ATELIA_REAL_SESSION_JOURNAL_REPO";
+
+    public RealLegacyExportFactAttribute() {
+        if (string.IsNullOrWhiteSpace(
+                Environment.GetEnvironmentVariable(
+                    SourceEnvironment
+                )
+            )) {
+            Skip = $"{SourceEnvironment} is required for the "
+                + "external real-data release gate.";
+        }
+    }
+}
+
+public sealed class DerivedRecapRealDataAcceptanceTests {
+    private const string SourceExportEnvironment =
+        RealLegacyExportFactAttribute.SourceEnvironment;
     private const string ReportEnvironment =
         "ATELIA_DERIVED_RECAP_ACCEPTANCE_REPORT";
 
-    [Fact]
-    public async Task RealRepositoryCopySurvivesFullRecapAndRecoveryFlow() {
-        string? configuredSource =
-            Environment.GetEnvironmentVariable(
-                SourceExportEnvironment
-            )
-            ?? Environment.GetEnvironmentVariable(SourceEnvironment);
-        if (string.IsNullOrWhiteSpace(configuredSource)) {
-            return;
-        }
+    [RealLegacyExportFact]
+    public async Task ImportedRealExportSurvivesFullRecapAndRecoveryFlow() {
+        string? configuredSource = Environment.GetEnvironmentVariable(
+            SourceExportEnvironment
+        );
+        Assert.False(string.IsNullOrWhiteSpace(configuredSource));
 
         string sourcePath = Path.TrimEndingDirectorySeparator(
-            Path.GetFullPath(configuredSource)
+            Path.GetFullPath(configuredSource!)
         );
         Assert.True(
             File.Exists(sourcePath),
-            $"{SourceExportEnvironment} (or compatibility "
-            + $"{SourceEnvironment}) must identify an existing "
+            $"{SourceExportEnvironment} must identify an existing "
             + "legacy-upgrade export JSON file."
         );
         TreeFingerprint sourceBefore =
@@ -102,7 +107,7 @@ public sealed class DerivedRecapRealRepositoryAcceptanceTests {
                 Path.Combine(tempRoot, "recap-run.json");
             var runFactory = new ScriptedCompletionClientFactory(
                 "acceptance recap",
-                failAtCall: 3
+                failAtCall: 4
             );
             Assert.Equal(2, Program.MainCore(
                 RecapExecutionArgs(
@@ -123,7 +128,7 @@ public sealed class DerivedRecapRealRepositoryAcceptanceTests {
                 ),
                 File.ReadAllText(runReport)
             );
-            Assert.Equal(3, runFactory.CallCount);
+            Assert.Equal(4, runFactory.CallCount);
             string admission = ReadString(runReport, "anchor");
             EventAddress admissionAddress =
                 SJ.EventAddressTextCodec.Parse(admission);
@@ -174,7 +179,15 @@ public sealed class DerivedRecapRealRepositoryAcceptanceTests {
                 ),
                 resumeFactory
             ));
-            Assert.Equal(2, resumeFactory.CallCount);
+            Assert.Equal(1, resumeFactory.CallCount);
+            string failedSuffixRequestSha256 =
+                CanonicalRequestSha256(runFactory.Requests[^1]);
+            Assert.Equal(
+                failedSuffixRequestSha256,
+                CanonicalRequestSha256(
+                    Assert.Single(resumeFactory.Requests)
+                )
+            );
             Assert.Equal(
                 "Published",
                 ReadString(resumeReport, "resultStatus")
@@ -364,6 +377,22 @@ public sealed class DerivedRecapRealRepositoryAcceptanceTests {
 
             RawSnapshot finalRaw = ReadRawSnapshot(copyPath);
             AssertInitialPrefixPreserved(initialRaw, finalRaw);
+            SJ.SessionEventKind[] appendedKinds = [
+                .. finalRaw.Kinds.Skip(initialRaw.Kinds.Count)
+            ];
+            Assert.Equal(
+                new[] {
+                    SJ.SessionEventKind.ObservationAccepted,
+                    SJ.SessionEventKind.CompletionRequestPrepared,
+                    SJ.SessionEventKind.CompletionAttemptStarted,
+                    SJ.SessionEventKind.AgentActionProduced,
+                    SJ.SessionEventKind.ObservationAccepted,
+                    SJ.SessionEventKind.CompletionRequestPrepared,
+                    SJ.SessionEventKind.CompletionAttemptStarted,
+                    SJ.SessionEventKind.AgentActionProduced
+                },
+                appendedKinds
+            );
             Assert.Equal(
                 legacyV1Before,
                 FingerprintTree(
@@ -416,7 +445,9 @@ public sealed class DerivedRecapRealRepositoryAcceptanceTests {
                             resumeFactory.CallCount,
                             restoreFactory.CallCount,
                             onlineFactory.CallCount,
-                            preparedFactory.CallCount
+                            preparedFactory.CallCount,
+                            failedSuffixRequestSha256,
+                            ResumeMatchedFailedSuffix: true
                         ),
                         new CorruptionReport(
                             damagedBlockId,
@@ -435,7 +466,18 @@ public sealed class DerivedRecapRealRepositoryAcceptanceTests {
                                     initialRaw.Addresses.Count
                                 )
                             ),
-                            Preserved: true
+                            Preserved: true,
+                            [
+                                .. appendedKinds.Select(
+                                    static kind => kind.ToString()
+                                )
+                            ]
+                        ),
+                        new RawFingerprintReport(
+                            initialRaw.Files.FileCount,
+                            initialRaw.Files.TotalBytes,
+                            initialRaw.Files.Sha256,
+                            HashAddresses(initialRaw.Addresses)
                         ),
                         new LegacyV1Report(
                             legacyV1Before.FileCount,
@@ -562,6 +604,18 @@ public sealed class DerivedRecapRealRepositoryAcceptanceTests {
                 .Reverse()
                 .Select(static node => node.Address)
         ];
+        SJ.SessionEventKind[] kinds;
+        using (EventJournal.EventJournal journal =
+            EventJournal.EventJournal.OpenReadOnlyExisting(path)) {
+            kinds = [
+                .. addresses.Select(address =>
+                    (SJ.SessionEventKind)journal
+                        .ReadEventHeaderPreview(address)
+                        .Unwrap()
+                        .OpaqueEventKind
+                )
+            ];
+        }
         TreeFingerprint rawFiles = FingerprintSelectedRoots(
             path,
             ["events", "refs"]
@@ -569,6 +623,7 @@ public sealed class DerivedRecapRealRepositoryAcceptanceTests {
         return new RawSnapshot(
             lineage.CapturedHead,
             addresses,
+            kinds,
             rawFiles
         );
     }
@@ -586,6 +641,12 @@ public sealed class DerivedRecapRealRepositoryAcceptanceTests {
                 .Take(initial.Addresses.Count)
                 .ToArray()
         );
+        Assert.Equal(
+            initial.Kinds,
+            current.Kinds
+                .Take(initial.Kinds.Count)
+                .ToArray()
+        );
     }
 
     private static void AssertRawUnchanged(
@@ -594,6 +655,7 @@ public sealed class DerivedRecapRealRepositoryAcceptanceTests {
     ) {
         Assert.Equal(expected.Head, actual.Head);
         Assert.Equal(expected.Addresses, actual.Addresses);
+        Assert.Equal(expected.Kinds, actual.Kinds);
         Assert.Equal(expected.Files, actual.Files);
     }
 
@@ -801,6 +863,12 @@ public sealed class DerivedRecapRealRepositoryAcceptanceTests {
         addresses.Select(SJ.EventAddressTextCodec.Format)
     )));
 
+    private static string CanonicalRequestSha256(
+        CompletionRequest request
+    ) => Sha256(
+        SJ.SessionRequestCanonicalizer.Canonicalize(request)
+    );
+
     private static string Sha256(ReadOnlySpan<byte> bytes)
         => Convert.ToHexStringLower(SHA256.HashData(bytes));
 
@@ -865,6 +933,7 @@ public sealed class DerivedRecapRealRepositoryAcceptanceTests {
     private sealed record RawSnapshot(
         EventAddress Head,
         IReadOnlyList<EventAddress> Addresses,
+        IReadOnlyList<SJ.SessionEventKind> Kinds,
         TreeFingerprint Files
     );
 
@@ -886,6 +955,7 @@ public sealed class DerivedRecapRealRepositoryAcceptanceTests {
         CorruptionReport Corruption,
         string PreparedCanonicalRequestSha256,
         PrefixReport FinalPrefix,
+        RawFingerprintReport InitialRaw,
         LegacyV1Report LegacyV1,
         bool RawUnchangedThroughRestore,
         bool SourceUnchanged,
@@ -929,7 +999,9 @@ public sealed class DerivedRecapRealRepositoryAcceptanceTests {
         int Resume,
         int Restore,
         int OnlineTurn,
-        int PreparedRecovery
+        int PreparedRecovery,
+        string FailedSuffixRequestSha256,
+        bool ResumeMatchedFailedSuffix
     );
 
     private sealed record FrozenPlanReport(
@@ -950,7 +1022,15 @@ public sealed class DerivedRecapRealRepositoryAcceptanceTests {
         int FinalAddressCount,
         string InitialAddressSha256,
         string FinalPrefixSha256,
-        bool Preserved
+        bool Preserved,
+        IReadOnlyList<string> AppendedEventKinds
+    );
+
+    private sealed record RawFingerprintReport(
+        int FileCount,
+        long TotalBytes,
+        string FullTreeSha256,
+        string ChronologicalAddressSha256
     );
 
     private sealed record LegacyV1Report(
