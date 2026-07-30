@@ -196,6 +196,45 @@ public sealed class DerivedRecapPublishedRestoreInspectionTests {
     }
 
     [Fact]
+    public async Task OversizedPublicationDoesNotUseManifestWitness() {
+        using RecapStoreFixture fixture =
+            await RecapStoreFixture.CreateAsync(historyPairs: 4);
+        SessionCurrentLineageSnapshot lineage = fixture.Lineage();
+        EventAddress anchor = lineage.CapturedHead;
+        _ = await fixture.PublishAsync(
+            anchor,
+            lineage.HeadToRoot[^1].Address
+        );
+        string publicationPath = Path.Combine(
+            fixture.Store.GetPublishedPathForTest(anchor),
+            "publication.json"
+        );
+        await File.WriteAllBytesAsync(
+            publicationPath,
+            new byte[
+                checked(
+                    (int)DerivedRecapStore.MaxPublicationBytes + 1
+                )
+            ]
+        );
+
+        var unavailable = Assert.IsType<
+            PublishedRestoreInspectionResult.Unavailable
+        >(
+            await fixture.Store.InspectPublishedForRestoreAsync(
+                anchor,
+                lineage
+            )
+        );
+
+        Assert.Single(unavailable.Defects);
+        Assert.Equal(
+            "PublicationReadUnavailable",
+            unavailable.Defects[0].Code
+        );
+    }
+
+    [Fact]
     public async Task RestoreAuthorityRequiresCanonicalRawBytes() {
         using RecapStoreFixture fixture =
             await RecapStoreFixture.CreateAsync(historyPairs: 4);

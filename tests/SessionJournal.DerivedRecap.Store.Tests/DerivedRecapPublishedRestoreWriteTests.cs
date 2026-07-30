@@ -502,6 +502,198 @@ public sealed class DerivedRecapPublishedRestoreWriteTests {
         );
     }
 
+    [Fact]
+    public async Task AlreadyCommittedStillUsesFinalRawHeadGate() {
+        SessionJournalEngine? engine = null;
+        bool injectRace = false;
+        EventAddress capturedHead = default;
+        EventAddress rewindTarget = default;
+        using RecapStoreFixture fixture =
+            await RecapStoreFixture.CreateAsync(
+                new RecapStoreTestHooks(
+                    BeforeRestoreEnvelopeRawHeadRecheck: () => {
+                        if (!injectRace) {
+                            return;
+                        }
+                        Assert.True(
+                            engine!.MoveCurrentHeadForTest(
+                                capturedHead,
+                                rewindTarget
+                            )
+                        );
+                    }
+                ),
+                historyPairs: 4
+            );
+        engine = fixture.Engine;
+        (
+            SessionCurrentLineageSnapshot lineage,
+            MaintainRecapBlockPlan plan,
+            PublishedRecapDescriptor descriptor
+        ) = await PublishMaintainAsync(
+            fixture,
+            endpointCount: 1
+        );
+        capturedHead = lineage.CapturedHead;
+        rewindTarget = lineage.HeadToRoot[2].Address;
+        PublishedRestoreInspection inspection =
+            await RequireInspectionAsync(
+                fixture,
+                descriptor.SetAdmissionAnchor,
+                lineage
+            );
+        string publicationPath = Path.Combine(
+            fixture.Store.GetPublishedPathForTest(
+                descriptor.SetAdmissionAnchor
+            ),
+            "publication.json"
+        );
+        byte[] before =
+            await File.ReadAllBytesAsync(publicationPath);
+        injectRace = true;
+        var restorer = new DerivedRecapRestorer(
+            fixture.Store,
+            fixture.Engine
+        );
+
+        var stale =
+            Assert.IsType<PublishedEnvelopeCommitResult.Stale>(
+                await restorer.CommitEnvelopeAsync(
+                    inspection.Handle,
+                    new Dictionary<RecapBlockId, string> {
+                        [plan.RecapBlockId] =
+                            inspection.Blocks[plan.RecapBlockId]
+                                .Final.StateToken
+                    },
+                    capturedHead
+                )
+            );
+
+        Assert.Equal("RawHeadChanged", stale.Code);
+        Assert.Equal(
+            before,
+            await File.ReadAllBytesAsync(publicationPath)
+        );
+    }
+
+    [Fact]
+    public async Task DamagedFinalCasTokenDetectsByteRace() {
+        using RecapStoreFixture fixture =
+            await RecapStoreFixture.CreateAsync(historyPairs: 4);
+        (
+            SessionCurrentLineageSnapshot lineage,
+            MaintainRecapBlockPlan plan,
+            PublishedRecapDescriptor descriptor
+        ) = await PublishMaintainAsync(
+            fixture,
+            endpointCount: 1
+        );
+        string finalPath = BlockPath(
+            fixture,
+            descriptor.SetAdmissionAnchor,
+            "blocks",
+            plan.RecapBlockId
+        );
+        string workPath = BlockPath(
+            fixture,
+            descriptor.SetAdmissionAnchor,
+            "work",
+            plan.RecapBlockId
+        );
+        await File.WriteAllTextAsync(finalPath, "damaged-a");
+        PublishedRestoreInspection first =
+            await RequireInspectionAsync(
+                fixture,
+                descriptor.SetAdmissionAnchor,
+                lineage
+            );
+        var firstDamage =
+            Assert.IsType<FinalRecapBlockHealth.Damaged>(
+                first.Blocks[plan.RecapBlockId].Final
+            );
+        DerivedRecapBlock candidate =
+            DerivedRecapCodec.DecodeBlock(
+                await File.ReadAllBytesAsync(workPath)
+            );
+        await File.WriteAllTextAsync(finalPath, "damaged-b");
+
+        var stale = Assert.IsType<PublishedFinalWriteResult.Stale>(
+            await fixture.Store.InstallPublishedReplacementAsync(
+                first.Handle,
+                plan.RecapBlockId,
+                firstDamage.StateToken,
+                candidate
+            )
+        );
+
+        Assert.NotEqual(firstDamage.StateToken, stale.CurrentStateToken);
+        Assert.Equal(
+            "damaged-b",
+            await File.ReadAllTextAsync(finalPath)
+        );
+    }
+
+    [Fact]
+    public async Task UnobservableFinalIsUnavailableForMutation() {
+        using RecapStoreFixture fixture =
+            await RecapStoreFixture.CreateAsync(historyPairs: 4);
+        (
+            SessionCurrentLineageSnapshot lineage,
+            MaintainRecapBlockPlan plan,
+            PublishedRecapDescriptor descriptor
+        ) = await PublishMaintainAsync(
+            fixture,
+            endpointCount: 1
+        );
+        string finalPath = BlockPath(
+            fixture,
+            descriptor.SetAdmissionAnchor,
+            "blocks",
+            plan.RecapBlockId
+        );
+        string workPath = BlockPath(
+            fixture,
+            descriptor.SetAdmissionAnchor,
+            "work",
+            plan.RecapBlockId
+        );
+        byte[] oversized = new byte[
+            checked((int)DerivedRecapStore.MaxBlockBytes + 1)
+        ];
+        await File.WriteAllBytesAsync(finalPath, oversized);
+        PublishedRestoreInspection inspection =
+            await RequireInspectionAsync(
+                fixture,
+                descriptor.SetAdmissionAnchor,
+                lineage
+            );
+        PublishedBlockRestoreInspection block =
+            inspection.Blocks[plan.RecapBlockId];
+        Assert.IsType<FinalRecapBlockHealth.Unavailable>(
+            block.Final
+        );
+        Assert.IsType<PublishedBlockRestoreCapability.Unavailable>(
+            block.Capability
+        );
+        DerivedRecapBlock candidate =
+            DerivedRecapCodec.DecodeBlock(
+                await File.ReadAllBytesAsync(workPath)
+            );
+
+        Assert.IsType<PublishedFinalWriteResult.Unavailable>(
+            await fixture.Store.InstallPublishedReplacementAsync(
+                inspection.Handle,
+                plan.RecapBlockId,
+                "unavailable",
+                candidate
+            )
+        );
+        Assert.Equal(
+            oversized.Length,
+            new FileInfo(finalPath).Length
+        );
+    }
+
     private static async ValueTask<(
         SessionCurrentLineageSnapshot Lineage,
         MaintainRecapBlockPlan Plan,

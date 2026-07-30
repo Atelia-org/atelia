@@ -1334,6 +1334,12 @@ public sealed class DerivedRecapStore {
                     cancellationToken
                 )
                 .ConfigureAwait(false);
+        if (final.Health
+                is FinalRecapBlockHealth.Unavailable unavailable) {
+            return new PublishedFinalWriteResult.Unavailable(
+                unavailable.Defects
+            );
+        }
         if (!string.Equals(
                 expectedStateToken,
                 final.Health.StateToken,
@@ -1593,6 +1599,12 @@ public sealed class DerivedRecapStore {
                         cancellationToken
                     )
                     .ConfigureAwait(false);
+            if (final.Health
+                    is FinalRecapBlockHealth.Unavailable unavailable) {
+                return new PublishedEnvelopeCommitResult.Unavailable(
+                    unavailable.Defects
+                );
+            }
             if (!string.Equals(
                     expectedTokens[plan.RecapBlockId],
                     final.Health.StateToken,
@@ -1649,6 +1661,15 @@ public sealed class DerivedRecapStore {
             && nextBytes.SequenceEqual(
                 DerivedRecapCodec.EncodePublication(current)
             )) {
+            if (DetectRestoreRawHeadChange(
+                    expectedRawHead,
+                    readCurrentHead
+                ) is { } rawHeadChange) {
+                return new PublishedEnvelopeCommitResult.Stale(
+                    "RawHeadChanged",
+                    rawHeadChange.Message
+                );
+            }
             return new PublishedEnvelopeCommitResult
                 .AlreadyCommitted(
                     new PublishedRecapDescriptor(
@@ -1666,15 +1687,11 @@ public sealed class DerivedRecapStore {
                     publicationPath,
                     nextBytes,
                     () => {
-                        _testHooks
-                            .BeforeRestoreEnvelopeRawHeadRecheck
-                            ?.Invoke();
-                        EventAddress? observed = readCurrentHead();
-                        if (observed != expectedRawHead) {
-                            throw new RestoreRawHeadChangedException(
+                        if (DetectRestoreRawHeadChange(
                                 expectedRawHead,
-                                observed
-                            );
+                                readCurrentHead
+                            ) is { } rawHeadChange) {
+                            throw rawHeadChange;
                         }
                         _testHooks.BeforeAtomicFileReplace
                             ?.Invoke(publicationPath);
@@ -2913,10 +2930,9 @@ public sealed class DerivedRecapStore {
             when (exception is InvalidDataException
                   or IOException
                   or UnauthorizedAccessException) {
-            return DamagedPublishedFinal(
-                "FinalBlockDamaged",
-                exception.Message,
-                "damaged:unreadable"
+            return UnavailablePublishedFinal(
+                "FinalBlockReadUnavailable",
+                exception.Message
             );
         }
         try {
@@ -2978,6 +2994,16 @@ public sealed class DerivedRecapStore {
         IsCommitted: false
     );
 
+    private static PublishedFinalInspection UnavailablePublishedFinal(
+        string code,
+        string detail
+    ) => new(
+        new FinalRecapBlockHealth.Unavailable(
+            [new RecapStructuralDefect(code, detail)]
+        ),
+        IsCommitted: false
+    );
+
     private static bool MatchesCommitment(
         DerivedRecapBlock block,
         RecapBlockCommitment commitment
@@ -3029,6 +3055,12 @@ public sealed class DerivedRecapStore {
         PublishedFinalInspection final,
         RollingRecapCheckpointHealth checkpoint
     ) {
+        if (final.Health
+                is FinalRecapBlockHealth.Unavailable unavailable) {
+            return new PublishedBlockRestoreCapability.Unavailable(
+                unavailable.Defects
+            );
+        }
         if (final.Health is FinalRecapBlockHealth.Healthy) {
             return final.IsCommitted
                 ? new PublishedBlockRestoreCapability.KeepCommitted()
@@ -3075,6 +3107,10 @@ public sealed class DerivedRecapStore {
         var defects = new List<RecapStructuralDefect>();
         if (final is FinalRecapBlockHealth.Damaged damagedFinal) {
             defects.AddRange(damagedFinal.Defects);
+        }
+        if (final
+                is FinalRecapBlockHealth.Unavailable unavailableFinal) {
+            defects.AddRange(unavailableFinal.Defects);
         }
         if (input is FrozenRecapInputHealth.Damaged damagedInput) {
             defects.AddRange(damagedInput.Defects);
@@ -4427,6 +4463,18 @@ public sealed class DerivedRecapStore {
             + $"'{observed}'."
         ) {
         }
+    }
+
+    private RestoreRawHeadChangedException?
+        DetectRestoreRawHeadChange(
+        EventAddress expected,
+        Func<EventAddress?> readCurrentHead
+    ) {
+        _testHooks.BeforeRestoreEnvelopeRawHeadRecheck?.Invoke();
+        EventAddress? observed = readCurrentHead();
+        return observed == expected
+            ? null
+            : new RestoreRawHeadChangedException(expected, observed);
     }
 
     private sealed record FrozenInputIndex(

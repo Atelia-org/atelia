@@ -317,6 +317,12 @@ public abstract record FinalRecapBlockHealth {
         IReadOnlyList<RecapStructuralDefect> Defects,
         string StateToken
     ) : FinalRecapBlockHealth;
+
+    public sealed record Unavailable(
+        IReadOnlyList<RecapStructuralDefect> Defects
+    ) : FinalRecapBlockHealth {
+        public override string StateToken { get; init; } = string.Empty;
+    }
 }
 
 public abstract record RollingRecapCheckpointHealth {
