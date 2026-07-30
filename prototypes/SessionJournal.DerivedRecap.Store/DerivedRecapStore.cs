@@ -309,6 +309,98 @@ public sealed class DerivedRecapStore {
         );
     }
 
+    /// <summary>
+    /// Discovers the canonical publication envelope and frozen plan at one
+    /// exact admission anchor. Final block files and Restore state are not
+    /// read. A second canonical envelope read prevents returning authority
+    /// that changed during discovery.
+    /// </summary>
+    public async ValueTask<PublishedPlanAtAnchorReadResult>
+        ReadPublishedPlanAtAnchorAsync(
+        EventAddress admissionAnchor,
+        CancellationToken cancellationToken = default
+    ) {
+        if (admissionAnchor == default) {
+            throw new ArgumentException(
+                "Admission anchor cannot be default.",
+                nameof(admissionAnchor)
+            );
+        }
+        EnsureScaffolding();
+        await using FileStream writeLock =
+            await _fileSystem.AcquireExclusiveLockAsync(
+                    _lockPath,
+                    cancellationToken
+                )
+                .ConfigureAwait(false);
+        string? unavailable =
+            await TryGetUnavailableReasonAsync(cancellationToken)
+                .ConfigureAwait(false);
+        if (unavailable is not null) {
+            return PublishedPlanAtAnchorUnavailable(
+                admissionAnchor,
+                "StoreUnavailable",
+                unavailable
+            );
+        }
+
+        string publishedPath = GetPublishedPath(admissionAnchor);
+        if (!PathEntryExists(publishedPath)) {
+            return new PublishedPlanAtAnchorReadResult.Missing(
+                admissionAnchor
+            );
+        }
+
+        PublishedPlanEnvelopeCapture first;
+        try {
+            first = await CapturePublishedPlanEnvelopeAsync(
+                    admissionAnchor,
+                    cancellationToken
+                )
+                .ConfigureAwait(false);
+        }
+        catch (Exception exception)
+            when (IsPublishedPlanAvailabilityException(exception)) {
+            return PublishedPlanAtAnchorUnavailable(
+                admissionAnchor,
+                "PublishedPlanUnavailable",
+                exception.Message
+            );
+        }
+
+        _testHooks.BeforePublishedPlanEnvelopeRecheck?.Invoke();
+        PublishedPlanEnvelopeCapture second;
+        try {
+            second = await CapturePublishedPlanEnvelopeAsync(
+                    admissionAnchor,
+                    cancellationToken
+                )
+                .ConfigureAwait(false);
+        }
+        catch (Exception exception)
+            when (IsPublishedPlanAvailabilityException(exception)) {
+            return new PublishedPlanAtAnchorReadResult.Changed(
+                first.Descriptor,
+                After: null
+            );
+        }
+        if (second.Descriptor != first.Descriptor
+            || !second.CanonicalEnvelope.SequenceEqual(
+                first.CanonicalEnvelope
+            )) {
+            return new PublishedPlanAtAnchorReadResult.Changed(
+                first.Descriptor,
+                second.Descriptor
+            );
+        }
+        return new PublishedPlanAtAnchorReadResult.Available(
+            new PublishedPlanSnapshot(
+                first.Descriptor,
+                first.Publication.FrozenPlanSnapshot
+            )
+        );
+    }
+
     public async ValueTask<CreateBuildingResult> CreateBuildingAsync(
         DerivedRecapSetManifest manifest,
         CancellationToken cancellationToken = default
@@ -4822,6 +4914,18 @@ public sealed class DerivedRecapStore {
         string detail
     ) => new(
         descriptor,
+        Array.AsReadOnly([
+            new RecapStructuralDefect(code, detail)
+        ])
+    );
+
+    private static PublishedPlanAtAnchorReadResult.Unavailable
+        PublishedPlanAtAnchorUnavailable(
+        EventAddress admissionAnchor,
+        string code,
+        string detail
+    ) => new(
+        admissionAnchor,
         Array.AsReadOnly([
             new RecapStructuralDefect(code, detail)
         ])

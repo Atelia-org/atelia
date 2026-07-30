@@ -206,6 +206,27 @@ public abstract record PublishedPlanReadResult {
     ) : PublishedPlanReadResult;
 }
 
+public abstract record PublishedPlanAtAnchorReadResult {
+    private PublishedPlanAtAnchorReadResult() {
+    }
+
+    public sealed record Available(PublishedPlanSnapshot Snapshot)
+        : PublishedPlanAtAnchorReadResult;
+
+    public sealed record Missing(EventAddress SetAdmissionAnchor)
+        : PublishedPlanAtAnchorReadResult;
+
+    public sealed record Changed(
+        PublishedRecapDescriptor Before,
+        PublishedRecapDescriptor? After
+    ) : PublishedPlanAtAnchorReadResult;
+
+    public sealed record Unavailable(
+        EventAddress SetAdmissionAnchor,
+        IReadOnlyList<RecapStructuralDefect> Defects
+    ) : PublishedPlanAtAnchorReadResult;
+}
+
 public abstract record PublishedMembershipInspectionResult {
     private PublishedMembershipInspectionResult() {
     }
