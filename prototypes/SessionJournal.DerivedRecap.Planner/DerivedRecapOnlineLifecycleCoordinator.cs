@@ -104,18 +104,13 @@ public sealed class DerivedRecapOnlineLifecycleCoordinator
         CreateForFrozenBuilding(
         SessionJournalEngine engine,
         DerivedRecapStore store,
-        EventAddress buildingAnchor,
+        BuildingDescriptor buildingDescriptor,
         IRecapBlockMaintainerRegistry maintainers
     ) {
         ArgumentNullException.ThrowIfNull(engine);
         ArgumentNullException.ThrowIfNull(store);
+        ArgumentNullException.ThrowIfNull(buildingDescriptor);
         ArgumentNullException.ThrowIfNull(maintainers);
-        if (buildingAnchor == default) {
-            throw new ArgumentException(
-                "Frozen Building anchor cannot be default.",
-                nameof(buildingAnchor)
-            );
-        }
         var building = new DerivedRecapBuildingExecutor(
             engine,
             store,
@@ -132,7 +127,7 @@ public sealed class DerivedRecapOnlineLifecycleCoordinator
             store.SelectNthPreviousAsync,
             restorer.RestoreAsync,
             (_, cancellationToken) => building.ResumeAsync(
-                buildingAnchor,
+                buildingDescriptor,
                 cancellationToken
             ),
             static () => null,

@@ -230,7 +230,8 @@ public sealed class DerivedRecapOnlineLifecycleCoordinatorTests {
             );
         MaintainRecapBlockPlan plan =
             fixture.CreateMaintainPlan();
-        _ = Assert.IsType<CreateBuildingResult.Created>(
+        CreateBuildingResult.Created created =
+            Assert.IsType<CreateBuildingResult.Created>(
             await fixture.Store.CreateBuildingAsync(
                 DerivedRecapCodec.CreateManifest(
                     fixture.Engine.BranchRefId,
@@ -245,7 +246,7 @@ public sealed class DerivedRecapOnlineLifecycleCoordinatorTests {
                 .CreateForFrozenBuilding(
                     fixture.Engine,
                     fixture.Store,
-                    plan.CatchUpThrough[^1],
+                    created.Descriptor,
                     new RecapBlockMaintainerRegistry([maintainer])
                 );
 

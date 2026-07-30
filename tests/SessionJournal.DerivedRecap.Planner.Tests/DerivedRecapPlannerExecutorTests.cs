@@ -836,6 +836,71 @@ public sealed class DerivedRecapPlannerExecutorTests {
     }
 
     [Fact]
+    public async Task DescriptorPinnedResumeRejectsSameAnchorReplacement() {
+        using TestFixture fixture = await TestFixture.CreateAsync(
+            historyPairs: 1
+        );
+        EventAddress admission =
+            fixture.Engine.ReadCurrentHead()!.Value;
+        MaintainRecapBlockPlan originalPlan = fixture.CreateEmptyPlan(
+            fixture.SelfId,
+            fixture.SelfTarget,
+            "self-maintainer",
+            fixture.ReplayStart(),
+            [admission]
+        );
+        BuildingSnapshot original =
+            await fixture.CreateBuildingAsync(
+                admission,
+                [originalPlan]
+            );
+        _ = Assert.IsType<QuarantineBuildingResult.Quarantined>(
+            await fixture.Store.QuarantineBuildingAsync(admission)
+        );
+        MaintainRecapBlockPlan replacementPlan =
+            fixture.CreateEmptyPlan(
+                fixture.SelfId,
+                fixture.SelfTarget,
+                "replacement-maintainer",
+                fixture.ReplayStart(),
+                [admission]
+            );
+        BuildingSnapshot replacement =
+            await fixture.CreateBuildingAsync(
+                admission,
+                [replacementPlan]
+            );
+        var maintainer = new ScriptedMaintainer(
+            "self-maintainer",
+            fixture.SelfTarget,
+            static (_, _) => "must-not-run"
+        );
+
+        var result =
+            Assert.IsType<DerivedRecapExecutionResult.Retryable>(
+                await fixture.CreateBuildingExecutor([maintainer])
+                    .ResumeAsync(original.Descriptor)
+            );
+
+        Assert.Equal(
+            DerivedRecapExecutionDefectCodes.SourceChanged,
+            result.Code
+        );
+        Assert.Contains(
+            original.Descriptor.ManifestPayloadSha256,
+            result.Detail
+        );
+        Assert.Contains(
+            replacement.Descriptor.ManifestPayloadSha256,
+            result.Detail
+        );
+        Assert.Equal(0, maintainer.CallCount);
+        Assert.IsType<BuildingReadResult.Available>(
+            await fixture.Store.ReadBuildingAsync(admission)
+        );
+    }
+
+    [Fact]
     public async Task FinalCheckpointInstallsWithoutMaintainerCall() {
         using TestFixture fixture = await TestFixture.CreateAsync(
             historyPairs: 1

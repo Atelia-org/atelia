@@ -492,8 +492,7 @@ public sealed class DerivedRecapPlannerExecutor {
         }
         if (existing is BuildingReadResult.Available alreadyBuilding) {
             return await _buildingExecutor.ResumeAsync(
-                    alreadyBuilding.Snapshot
-                        .Descriptor.SetAdmissionAnchor,
+                    alreadyBuilding.Snapshot.Descriptor,
                     cancellationToken
                 )
                 .ConfigureAwait(false);
@@ -524,7 +523,11 @@ public sealed class DerivedRecapPlannerExecutor {
                 exception.Message
             );
         }
+        BuildingDescriptor installedDescriptor;
         switch (created) {
+            case CreateBuildingResult.Created installed:
+                installedDescriptor = installed.Descriptor;
+                break;
             case CreateBuildingResult.SourceChanged changed:
                 return new DerivedRecapExecutionResult.Retryable(
                     DerivedRecapExecutionDefectCodes.SourceChanged,
@@ -551,12 +554,16 @@ public sealed class DerivedRecapPlannerExecutor {
                     )
                     + "."
                 );
+            default:
+                throw new InvalidOperationException(
+                    "Unknown Building creation result."
+                );
         }
 
         // Do not execute from in-memory intent/source objects. The installed
         // Building is now the only recovery authority.
         return await _buildingExecutor.ResumeAsync(
-                admission,
+                installedDescriptor,
                 cancellationToken
             )
             .ConfigureAwait(false);
@@ -1039,6 +1046,37 @@ public sealed class DerivedRecapBuildingExecutor {
     public async ValueTask<DerivedRecapExecutionResult> ResumeAsync(
         EventAddress setAdmissionAnchor,
         CancellationToken cancellationToken = default
+    ) => await ResumeCoreAsync(
+            setAdmissionAnchor,
+            expectedDescriptor: null,
+            cancellationToken
+        )
+        .ConfigureAwait(false);
+
+    public async ValueTask<DerivedRecapExecutionResult> ResumeAsync(
+        BuildingDescriptor expectedDescriptor,
+        CancellationToken cancellationToken = default
+    ) {
+        ArgumentNullException.ThrowIfNull(expectedDescriptor);
+        if (expectedDescriptor.RefId != _store.RefId) {
+            throw new ArgumentException(
+                "Building descriptor belongs to another RefId.",
+                nameof(expectedDescriptor)
+            );
+        }
+        return await ResumeCoreAsync(
+                expectedDescriptor.SetAdmissionAnchor,
+                expectedDescriptor,
+                cancellationToken
+            )
+            .ConfigureAwait(false);
+    }
+
+    private async ValueTask<DerivedRecapExecutionResult>
+        ResumeCoreAsync(
+        EventAddress setAdmissionAnchor,
+        BuildingDescriptor? expectedDescriptor,
+        CancellationToken cancellationToken
     ) {
         BuildingReadResult read;
         try {
@@ -1056,22 +1094,46 @@ public sealed class DerivedRecapBuildingExecutor {
         }
         return read switch {
             BuildingReadResult.Available available =>
-                await ExecuteAndPublishAsync(
-                        available.Snapshot,
-                        cancellationToken
+                expectedDescriptor is not null
+                && available.Snapshot.Descriptor
+                    != expectedDescriptor
+                    ? RetryableBuildingChanged(
+                        expectedDescriptor,
+                        available.Snapshot.Descriptor
                     )
-                    .ConfigureAwait(false),
+                    : await ExecuteAndPublishAsync(
+                            available.Snapshot,
+                            cancellationToken
+                        )
+                        .ConfigureAwait(false),
             BuildingReadResult.Invalid invalid =>
                 Unavailable(invalid.Defects),
-            BuildingReadResult.Missing => Unavailable(
-                DerivedRecapExecutionDefectCodes.BuildingInvalid,
-                $"Building '{setAdmissionAnchor}' does not exist."
-            ),
+            BuildingReadResult.Missing =>
+                expectedDescriptor is null
+                    ? Unavailable(
+                        DerivedRecapExecutionDefectCodes.BuildingInvalid,
+                        $"Building '{setAdmissionAnchor}' does not exist."
+                    )
+                    : new DerivedRecapExecutionResult.Retryable(
+                        DerivedRecapExecutionDefectCodes.SourceChanged,
+                        $"Expected Building '{expectedDescriptor}' "
+                        + "disappeared before frozen Resume."
+                    ),
             _ => throw new InvalidOperationException(
                 "Unknown Building read result."
             )
         };
     }
+
+    private static DerivedRecapExecutionResult.Retryable
+        RetryableBuildingChanged(
+        BuildingDescriptor expected,
+        BuildingDescriptor observed
+    ) => new(
+        DerivedRecapExecutionDefectCodes.SourceChanged,
+        $"Frozen Building changed before Resume. Expected "
+        + $"'{expected}', observed '{observed}'."
+    );
 
     private async ValueTask<DerivedRecapExecutionResult>
         ExecuteAndPublishAsync(
