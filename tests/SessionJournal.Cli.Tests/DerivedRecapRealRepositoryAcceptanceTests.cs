@@ -62,6 +62,20 @@ public sealed class DerivedRecapRealRepositoryAcceptanceTests {
                 "--output", copyPath
             ], ThrowingCompletionClientFactory.Instance));
             RawSnapshot initialRaw = ReadRawSnapshot(copyPath);
+            string legacyV1Sentinel = Path.Combine(
+                copyPath,
+                "derived",
+                "memory",
+                "v1",
+                "acceptance-invalid-sentinel.bin"
+            );
+            Directory.CreateDirectory(
+                Path.GetDirectoryName(legacyV1Sentinel)!
+            );
+            File.WriteAllBytes(
+                legacyV1Sentinel,
+                "not-a-derived-memory-record"u8.ToArray()
+            );
             TreeFingerprint legacyV1Before = FingerprintTree(
                 Path.Combine(
                     copyPath,
@@ -115,6 +129,8 @@ public sealed class DerivedRecapRealRepositoryAcceptanceTests {
                 SJ.EventAddressTextCodec.Parse(admission);
 
             RefId branchRefId;
+            int maintainedBlockCount;
+            int routeEndpointCount;
             using (var engine = SJ.SessionJournalEngine.OpenReadOnly(
                        copyPath,
                        branchName
@@ -124,9 +140,21 @@ public sealed class DerivedRecapRealRepositoryAcceptanceTests {
                     copyPath,
                     branchRefId
                 );
-                Assert.IsType<BuildingReadResult.Available>(
+                BuildingReadResult.Available building = Assert.IsType<
+                    BuildingReadResult.Available
+                >(
                     await store.ReadBuildingAsync(admissionAddress)
                 );
+                MaintainRecapBlockPlan[] maintained = [
+                    .. building.Snapshot.Manifest.Blocks
+                        .OfType<MaintainRecapBlockPlan>()
+                ];
+                maintainedBlockCount = maintained.Length;
+                routeEndpointCount = maintained.Sum(
+                    static block => block.CatchUpThrough.Count
+                );
+                Assert.Equal(2, maintainedBlockCount);
+                Assert.Equal(4, routeEndpointCount);
             }
 
             string resumeReport =
@@ -379,6 +407,10 @@ public sealed class DerivedRecapRealRepositoryAcceptanceTests {
                         ),
                         branchRefId.ToHexString(),
                         admission,
+                        new FrozenPlanReport(
+                            maintainedBlockCount,
+                            routeEndpointCount
+                        ),
                         new CallCountReport(
                             runFactory.CallCount,
                             resumeFactory.CallCount,
@@ -849,6 +881,7 @@ public sealed class DerivedRecapRealRepositoryAcceptanceTests {
         ConfigReport Config,
         string BranchRefId,
         string AdmissionAnchor,
+        FrozenPlanReport FrozenPlan,
         CallCountReport Calls,
         CorruptionReport Corruption,
         string PreparedCanonicalRequestSha256,
@@ -897,6 +930,11 @@ public sealed class DerivedRecapRealRepositoryAcceptanceTests {
         int Restore,
         int OnlineTurn,
         int PreparedRecovery
+    );
+
+    private sealed record FrozenPlanReport(
+        int MaintainedBlockCount,
+        int RouteEndpointCount
     );
 
     private sealed record CorruptionReport(
