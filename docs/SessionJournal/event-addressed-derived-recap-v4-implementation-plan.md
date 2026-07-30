@@ -8,9 +8,11 @@
 > [Event-addressed Derived Recap V4](event-addressed-derived-recap-v4-target-design.md)
 > **Post-R3 配置设计**：
 > [Repo-owned RecapPlannerConfig](recap-planner-config-repository-design.md)
+> **Post-R3 Cadence 设计**：
+> [Derived Recap Cadence](derived-recap-cadence-target-design.md)
 > **兼容策略**：不迁移、不双写、不读取 historical DerivedMemory v2/v3
 > **当前推进点**：R0～R3 已完成；R3 cutover 与 deterministic real-data release gate
-> 已于 2026-07-30 关闭
+> 已于 2026-07-30 关闭。Post-R3 repo-owned config与 HistoryUnit cadence已完成设计，尚未实现
 
 ## 0. 原则
 
@@ -81,6 +83,28 @@ R0 只在下列实现证据出现时退回整体 Shape/Rule，而不是做 packa
 除上述情况外，filesystem API、codec shape、validator composition、test seam 与命名摩擦都先作为
 Craft-tier 问题在当前 package 内解决。R0 gate 关闭前不启动 Planner、Maintainer catch-up 或
 Published Restore。
+
+### 0.2 Post-R3 follow-up plan lock
+
+R0～R3以下章节是已经完成的 historical baseline与实施证据，不回写成尚未发生的新行为。
+Post-R3新 planning authority由下列文档取代对应 baseline：
+
+- cadence Shape/Rule：
+  [Derived Recap Cadence](derived-recap-cadence-target-design.md)；
+- 唯一施工顺序与 repo config：
+  [Repo-owned RecapPlannerConfig §9](recap-planner-config-repository-design.md#9-实施工作包)。
+
+后续严格按：
+
+```text
+C0 cadence contracts/evaluator + policy/executor
+  -> C1 repo document/loader + single composition
+  -> C2 CLI/online authority cutover
+  -> C3 Galatea real acceptance
+```
+
+不得并行保留 `RawGrowthTrigger`与 `RecapCadenceConfig`，也不得让 historical
+`RecapPlannerConfig`再次成为 Resume/Restore authority。
 
 ## 1. R0：Contracts + Publish/Read vertical
 
@@ -252,7 +276,7 @@ failure/reopen只补当前缺失工作。
 
 ### In scope
 
-- `RecapPlannerConfig`：
+- `RecapPlannerConfig`（R1 historical baseline；new planning已由 Post-R3 cadence target取代）：
   - raw growth trigger/hard-limit；
   - admission selection；
   - active recap catalog；
@@ -493,7 +517,7 @@ inspect/select
 ### E2E
 
 ```text
-raw growth
+historical raw growth trigger
   -> NoBuild 或 plan
   -> Maintain/Inherit
   -> rolling catch-up
@@ -629,8 +653,9 @@ R2 已按 R2A～R2D 完成实现、独立审阅、P1 tail-fix 与真实性验收
 
 - `DerivedRecapRestoreExecutor.RestoreAsync(anchor, expectedRawHead)`返回独立 typed result；不存在
   persisted RestorePlan、后台 repair job 或 phase-neutral万能 workflow；
-- `RecapPlannerConfig`在 Restore中只提供 route/call/raw execution ceilings，不提供 roster、
-  catalog、trigger或 policy authority；
+- R2 historical实现中，`RecapPlannerConfig`在 Restore只提供 route/call/raw execution
+  ceilings，不提供 roster、catalog、trigger或 policy authority；Post-R3 cutover进一步要求
+  Restore完全不接收 active config，只使用 frozen plan + `RecapProtocolHardCaps`；
 - block replace 后、envelope前 crash只留下可复用 pending；exact Published membership和 strict
   ordinal不变，重试不重复 Maintainer调用；
 - public coordinator同时实现 lifecycle与 candidate facade，但 neutral candidate contract不暴露
@@ -722,6 +747,8 @@ current-wire baseline，再开始 Recap gate。existing current-wire repo copy�
 
 R3A对既有 ceilings的解释保持保守：
 
+- 以下是 R3 historical baseline；Post-R3由
+  [Derived Recap Cadence](derived-recap-cadence-target-design.md)取代其 scheduling语义：
 - `RawGrowthHardLimit`是 policy前的总 backlog admission gate；fresh bootstrap必须显式配置到
   足以覆盖当前 raw lineage，否则返回 typed backpressure，不自动 reset；
 - `MaxRawEventsPerBuild`按每个 maintained block 的 replay window累加；

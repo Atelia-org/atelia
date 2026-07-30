@@ -2,10 +2,12 @@
 
 > **状态**：Target Design / Implementation Guidance
 > **日期**：2026-07-30
+> **实施状态**：尚未实现；current CLI仍使用 hardcoded `RecapPlannerConfig`
 > **相关类型**：
 > `Atelia.SessionJournal.DerivedRecap.Planner.RecapPlannerConfig`
 > **相关设计**：
 > [Event-addressed Derived Recap V4](event-addressed-derived-recap-v4-target-design.md)、
+> [Derived Recap Cadence](derived-recap-cadence-target-design.md)、
 > [EADR V4 实现与替换计划](event-addressed-derived-recap-v4-implementation-plan.md)
 
 ## 0. 结论
@@ -27,8 +29,9 @@
   Planner、policy和 active roster；
 - Building建立后，frozen manifest仍是 Resume authority，配置更新不得重新规划旧 Building。
 
-V1继续使用 event-count limits。未来 backend-model-neutral information estimator单独升 schema，
-不在 V1 预留 opaque JSON或 tokenizer-specific字段。
+V1 cadence使用最终进入 Context 的 `SessionHistoryPlanningUnit` count，并把 raw event counts仅作为
+resource/safety limits。未来 backend-model-neutral information estimator单独升 schema，不在 V1
+预留 opaque JSON或 tokenizer-specific字段。
 
 ## 1. Authority 边界
 
@@ -90,7 +93,9 @@ atelia.session-journal.recap-planner-config.v1
 
 ```text
 RecapPlannerConfig                 // 已解析的 Planner runtime config
+RecapCadenceConfig                 // recent reserve + rolling interval
 RecapPlannerConfigDocument         // persisted JSON DTO
+RecapCadenceConfigDocument         // persisted cadence DTO
 RecapPlannerConfigCodec            // strict decode + canonical encode
 RecapPlannerConfigLoader           // repo path、安全读取、snapshot
 RecapPlannerConfigResolveResult    // Host侧 policy/profile resolution
@@ -125,6 +130,10 @@ canonical `RefId` override与 precedence；V1不预埋 nullable override或自�
 {
   "schema": "atelia.session-journal.recap-planner-config.v1",
   "planningPolicy": "bounded-maintain-all-v1",
+  "cadence": {
+    "minimumRecentHistoryUnitCount": 20,
+    "recapBuildIntervalUnitCount": 24
+  },
   "catalog": [
     {
       "maintainerProfile": "world-understanding-rewrite",
@@ -136,8 +145,7 @@ canonical `RefId` override与 precedence；V1不预埋 nullable override或自�
     }
   ],
   "limits": {
-    "rawGrowthTrigger": 32,
-    "rawGrowthHardLimit": 512,
+    "maxRawGrowthEventCount": 512,
     "maxRouteEndpointsPerBlock": 4,
     "maxMaintainerCallsPerBuild": 8,
     "maxRawEventsPerStep": 64,
@@ -151,6 +159,12 @@ canonical `RefId` override与 precedence；V1不预埋 nullable override或自�
 `planningPolicy`
 : versioned Host/Planner registry key。V1只接受 `bounded-maintain-all-v1`，对应
   `BoundedMaintainAllRecapPlanningPolicy`。未知 id fail-fast，不反射加载任意类型。
+
+`cadence`
+: 映射 `RecapCadenceConfig`。`minimumRecentHistoryUnitCount`是每次 Published后必须留在
+  admission之后的 minimum recent reserve；`recapBuildIntervalUnitCount`是 reserve之外至少新增
+  多少 HistoryUnits才允许下一次 build。精确公式、replay-safe admission与 delayed catch-up见
+  [Derived Recap Cadence](derived-recap-cadence-target-design.md)。
 
 `catalog`
 : 有序 active profile数组。顺序是新 manifest的 canonical block顺序，也是最终 context
@@ -166,7 +180,10 @@ canonical `RefId` override与 precedence；V1不预埋 nullable override或自�
   `SessionContextContributionContract`上限约束。
 
 `limits`
-: 与 `RecapPlannerConfig` 当前六个整数属性同名，便于代码搜索、DTO映射和报告对照。
+: raw traversal、route与 provider call的五个 planning safety ceilings。它们不参与正常 cadence
+  trigger。`maxRawGrowthEventCount`统计 raw Parent-lineage events，包含 API failed/retry，仅作为
+  pathological growth backpressure；它只统计 cadence baseline之后的 exact raw range，不统计
+  bootstrap setup prefix或 lagging block cursor到 baseline的旧区间。
 
 配置不重复声明 profile已经决定的 `RecapBlockId`、carrier/block key和 `MaintainerId`，避免同一个
 binding出现两份可冲突 authority。
@@ -180,7 +197,11 @@ V1 codec要求：
 - enum/id采用 ordinal、case-sensitive匹配；
 - catalog保持输入顺序；
 - 文件有明确的 bounded byte limit；
-- 数值先做 JSON range检查，再调用 `RecapPlannerConfig` constructor执行领域校验；
+- 数值先做 JSON range检查，再调用 `RecapCadenceConfig`与 `RecapPlannerConfig` constructors执行
+  领域与 checked-sum校验；
+- V1要求
+  `checked(MinimumRecentHistoryUnitCount + RecapBuildIntervalUnitCount)
+  <= MaxRawGrowthEventCount`，保证 cadence在 raw safety gate前可达；
 - 不支持 comments、trailing commas、environment interpolation或 extension bag；
 - canonical encode固定 property order与 escaping；
 - `ConfigSha256`由 normalized canonical document bytes计算，文件内不保存 self-hash。
@@ -232,7 +253,7 @@ V1不设计 active roster的在线演化。文件可表达初始 roster；一旦
 RecapBlockId + Target + MaxContentUtf8Bytes
 ```
 
-- 六个 planning limits与 policy调整可以影响后续新 plan；
+- cadence、五个 planning limits与 policy调整可以影响后续新 plan；
 - roster增删、重排、改变 resolved block/target或修改 per-profile content ceiling一律返回
   `CatalogMigrationRequired`，即使技术上能从 latest Published读取 subset也不例外；
 - 仅改变 `maintainerProfile`，且新 profile仍解析为相同 `RecapBlockId + Target`，是合法的未来
@@ -360,10 +381,11 @@ repo config中的 limits是新 planning ceilings。loader还必须验证它们�
 caps。hard caps只防止单次读取、route、call或content的资源失控，不是 operator policy，也不从 active
 config热更新。
 
-V1 hard caps由 Planner assembly中的 `RecapProtocolHardCaps`唯一声明。四项 route/call/raw
+V1 hard caps由 Planner assembly中的 `RecapProtocolHardCaps`唯一声明。五项 raw/route/call
 初值与 R3 production config一致，content/catalog复用既有 contribution contract：
 
 ```text
+MaxRawGrowthEventCount = 512
 MaxRouteEndpointsPerBlock = 4
 MaxMaintainerCallsPerBuild = 8
 MaxRawEventsPerStep = 64
@@ -413,10 +435,10 @@ projection明确拆成：
 
 ```text
 RecapPlanningInputs
-  = active catalog + trigger + hard-limit + policy
+  = active catalog + RecapCadenceConfig + policy
 
 RecapPlanningLimits
-  = repo-owned route/call/raw planning ceilings
+  = repo-owned raw-growth/route/call/raw-step planning ceilings
 
 RecapProtocolHardCaps
   = code/schema-owned absolute safety bounds
@@ -435,7 +457,7 @@ restore executor  <- frozen Published plan + capability registry + RecapProtocol
 
 Resume不得再比较 `_config.Catalog`，Restore constructor不得再接收 `RecapPlannerConfig`。
 frozen plan中的“limits exact”专指 per-block `MaxContentUtf8Bytes`与已经冻结的 actual route/window；
-`RawGrowthTrigger`、`RawGrowthHardLimit`及四个 operator planning ceilings不属于 frozen authority。
+active `RecapCadenceConfig`与五个 operator planning ceilings不属于 frozen authority。
 
 ## 7. CLI 管理表面与 cutover
 
@@ -458,52 +480,65 @@ CLI参数和默认常量会形成三重 precedence。
 
 breaking cutover步骤：
 
-1. 实现 document/codec/loader与 path safety；
-2. 实现 profile/policy resolution，形成 single composition snapshot；
-3. 迁移 `recap run/resume/restore`；
-4. 迁移 online new-request phases，保持 Prepared/Started zero-touch；
-5. 删除 `RecapCliComposition.CreateConfig()` hardcoded authority与二次 `CreateCatalog()`；
-6. 更新真实 repo，显式执行 `recap planner-config init`；
-7. 不为缺失文件保留长期 compatibility fallback。
+1. 先实现 `RecapCadenceConfig`与 exact HistoryUnit cadence，删除 `RawGrowthTrigger`；
+2. 实现 document/codec/loader与 path safety；
+3. 实现 profile/policy resolution，形成 single composition snapshot；
+4. 迁移 `recap run/resume/restore`；
+5. 迁移 online new-request phases，保持 Prepared/Started zero-touch；
+6. 删除 `RecapCliComposition.CreateConfig()` hardcoded authority与二次 `CreateCatalog()`；
+7. 更新真实 repo，显式执行 `recap planner-config init`；
+8. 不为缺失文件保留长期 compatibility fallback。
 
 importer不自动创建配置。raw migration成功与 operator选择哪种 Recap policy是两个独立动作。
 
 ## 8. 未来 information estimator
 
-V1的 `maxRawEventsPerStep/Build`继续作为 backend-neutral结构性 hard ceilings；它们不是 token或信息量
-估算。
+V1的 cadence使用 `HistoryUnitCount`；`maxRawEventsPerStep/Build`继续作为结构性 hard ceilings。
+两者都不是 token或信息量估算。
 
 未来 estimator需求明确后升到 V2，采用受控 registry id和明确单位，例如：
 
 ```json
 {
-  "informationEstimator": "some-versioned-estimator-id",
-  "maxEstimatedInputUnitsPerStep": 100000,
-  "maxEstimatedInputUnitsPerBuild": 400000
+  "historyLoad": {
+    "estimator": "some-versioned-estimator-id",
+    "minimumRecentUnits": 100000,
+    "recapBuildIntervalUnits": 120000
+  }
 }
 ```
 
 具体字段名和单位届时再定。V1现在只冻结以下扩展原则：
 
 - estimator实现由 Planner/Host registry拥有，raw core与Store不理解 tokenizer；
-- config只保存 versioned estimator identity与 ceilings，不保存模型endpoint或任意插件参数；
-- event-count ceilings继续独立生效；
+- config只保存 versioned estimator identity、明确单位与 cadence thresholds，不保存模型endpoint或
+  任意插件参数；
+- estimator直接测量 ordered HistoryUnit range；V2不预设 per-unit additivity或 prefix差分语义，
+  absorbed range与 recent suffix range分别验证，以容纳 chat template、role marker与 separator
+  overhead；
+- raw event safety ceilings继续独立生效；
 - estimator影响 admission/route时，Building至少冻结最终 route；是否还需冻结 estimator
   identity、fingerprint或诊断结果，由 V2 ADR依据可解释性与恢复需求决定；
 - provider-specific exact tokenizer可以是某个 estimator实现，但不能成为基础 contract的默认语义。
 
 ## 9. 实施工作包
 
-### C0：Document + Loader
+### C0：Cadence contracts + deterministic policy
+
+- 按 [Derived Recap Cadence](derived-recap-cadence-target-design.md)实现
+  `RecapCadenceConfig`；
+- 删除 `RawGrowthTrigger` scheduling authority；
+- exact `HistoryUnitCount` trigger与 minimum recent admission；
+- normalized baseline与 `R+B <= MaxRawGrowthEventCount`可达性校验；
+- baseline等于 planning-window `StartExclusive`的 `L=0`分支与 typed invalid分支；
+- API failed/retry zero-unit、bootstrap、dependency closure与 delayed catch-up focused tests；
+- 本包先沿用 programmatic config，不提前接 repo file。
+
+### C1：Document + single composition snapshot
 
 - `RecapPlannerConfigDocument` strict codec/canonical bytes/hash；
-- canonical repo path；
-- bounded safe read与 atomic init；
+- canonical repo path、bounded safe read与 atomic init；
 - `planner-config init/inspect`；
-- focused codec/path tests。
-
-### C1：Single composition snapshot
-
 - policy/profile registries；
 - document → exact catalog → `RecapPlannerConfig`；
 - wire loader与 Host resolver使用两个独立 typed result；
@@ -520,6 +555,7 @@ V1的 `maxRawEventsPerStep/Build`继续作为 backend-neutral结构性 hard ceil
 - `run` existing-Building fast path与 frozen manifest authority；
 - Resume/Restore API不再接收 active config，且不读取 active config；
 - online phase-first、Building-first条件加载；
+- online new planning使用 exact cadence，report分开记录 unit growth与 raw safety counts；
 - latest Published catalog exact ordered equality gate；
 - missing/invalid config的 zero-provider/zero-raw-side-effect tests；
 - Prepared/Started删除 config/Store仍 exact recover。
@@ -533,6 +569,8 @@ import real export
   -> run / partial failure / resume
   -> Published inspect
   -> run again = NoBuild
+  -> grow to R+B-1 units = NoBuild
+  -> grow to R+B units + cadence-safe boundary = Published with recent >= R
   -> edit config atomically
   -> next command observes new hash
   -> existing Published ordinal/materialization unchanged
@@ -547,7 +585,8 @@ import real export
 - latest Published后 add/remove/reorder/resolved-identity/content-ceiling变化均返回
   `CatalogMigrationRequired`，零 LLM、零 Building写入；
 - 同一 block identity上的 profile切换只影响下一次 `Maintain`，且不递归追溯 Inherit producer；
-- numeric boundary与cross-field validation；
+- numeric boundary、`R+B` overflow及 `R+B <= MaxRawGrowthEventCount` cross-field validation；
+- cadence `R=20/B=24` threshold、minimum reserve与 failed/retry zero-unit；
 - catalog order canonical；
 - symlink/reparse/file-vs-directory/ancestor escape；
 - init create-new与 atomic publication crash points；
