@@ -76,6 +76,46 @@ public sealed class BoundedMaintainAllRecapPlanningPolicyTests {
     }
 
     [Fact]
+    public void IrregularReplayBoundariesUseMinimumGreedyRoute() {
+        PolicyModel model = PolicyModel.FirstBuild(
+            replaySafeIndices: [10, 8, 7, 4, 3, 0],
+            maxRawEventsPerStep: 4
+        );
+
+        RecapPlanningPolicyDecision.Build build = model.Build();
+
+        Assert.Equal(model.At(0), build.SetAdmissionAnchor);
+        Assert.Equal(
+            [model.At(7), model.At(3), model.At(0)],
+            MaintainAt(build, 0).CatchUpThrough
+        );
+    }
+
+    [Fact]
+    public void DivergentCursorsBackOffToLatestAggregateBudgetAdmission() {
+        PolicyModel model = PolicyModel.Existing(
+            cursorIndices: [10, 7],
+            replaySafeIndices: [10, 9, 7, 6, 4, 3, 1, 0],
+            latestPublishedIndex: 6,
+            maxRawEventsPerStep: 4,
+            maxMaintainerCallsPerBuild: 20,
+            maxRawEventsPerBuild: 16
+        );
+
+        RecapPlanningPolicyDecision.Build build = model.Build();
+
+        Assert.Equal(model.At(1), build.SetAdmissionAnchor);
+        Assert.Equal(
+            [model.At(6), model.At(3), model.At(1)],
+            MaintainAt(build, 0).CatchUpThrough
+        );
+        Assert.Equal(
+            [model.At(3), model.At(1)],
+            MaintainAt(build, 1).CatchUpThrough
+        );
+    }
+
+    [Fact]
     public void SparseReplayGapReturnsTypedUnavailable() {
         PolicyModel model = PolicyModel.FirstBuild(
             replaySafeIndices: [10, 0],

@@ -373,7 +373,10 @@ public static class RecapPlanEvaluator {
                 );
                 break;
             case RecapPlanningMaintainSource.Empty empty:
-                if (!lineage.TryGetValue(
+                if (policyFacts.EmptyReplayStartExclusive
+                        is not { } authoritativeStart
+                    || empty.ReplayStartExclusive != authoritativeStart
+                    || !lineage.TryGetValue(
                         empty.ReplayStartExclusive,
                         out int startIndex
                     )
@@ -384,8 +387,9 @@ public static class RecapPlanEvaluator {
                     Add(
                         defects,
                         RecapPlanDefectCodes.SourceInvalid,
-                        "Empty replay start is not a replay-safe "
-                        + "strict ancestor of admission."
+                        "Empty replay start is not the exact authorized "
+                        + "first-build seed or a replay-safe strict "
+                        + "ancestor of admission."
                     );
                 }
                 break;

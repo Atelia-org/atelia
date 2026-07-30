@@ -243,6 +243,64 @@ public sealed class RecapPlanEvaluatorTests {
     }
 
     [Fact]
+    public void FirstBuildPolicyMustUseExactAuthorizedEmptySeed() {
+        TestModel model = TestModel.Create();
+        var firstBuildScheduling = new RecapSchedulingFacts(
+            model.Scheduling.CapturedHead,
+            model.Scheduling.HeadToRoot,
+            model.Scheduling.ReplaySafeBoundaries,
+            latestPublishedSetAnchor: null
+        );
+        var schedule = Assert.IsType<RecapSchedulingResult.Ready>(
+            RecapPlanEvaluator.EvaluateSchedule(
+                model.Config,
+                firstBuildScheduling
+            )
+        );
+        var facts = new RecapPolicyFacts(model.A1, []);
+        var decision = new RecapPlanningPolicyDecision.Build(
+            model.Admission,
+            [
+                new RecapBlockPlanningDecision.Maintain(
+                    model.ClientId,
+                    new RecapPlanningMaintainSource.Empty(model.A5),
+                    [model.A11, model.Admission],
+                    EmptyRecapPriorContext.Instance
+                )
+            ]
+        );
+
+        RecapPlanIntentResult result =
+            RecapPlanEvaluator.EvaluateIntent(
+                schedule,
+                facts,
+                new StubPolicy(decision)
+            );
+
+        AssertDefect(result, RecapPlanDefectCodes.SourceInvalid);
+    }
+
+    [Fact]
+    public void ExistingSourceFactsCannotAuthorizeEmptyReseed() {
+        TestModel model = TestModel.Create();
+        var decision = new RecapPlanningPolicyDecision.Build(
+            model.Admission,
+            [
+                new RecapBlockPlanningDecision.Maintain(
+                    model.ClientId,
+                    new RecapPlanningMaintainSource.Empty(model.A1),
+                    [model.A5, model.A11, model.Admission],
+                    EmptyRecapPriorContext.Instance
+                )
+            ]
+        );
+
+        RecapPlanIntentResult result = model.EvaluateIntent(decision);
+
+        AssertDefect(result, RecapPlanDefectCodes.SourceInvalid);
+    }
+
+    [Fact]
     public void PolicyUnavailableDefectsAreMappedWithoutNoBuild() {
         TestModel model = TestModel.Create();
         var policy = new StubPolicy(
@@ -281,7 +339,7 @@ public sealed class RecapPlanEvaluatorTests {
                 ),
                 new RecapBlockPlanningDecision.Maintain(
                     model.SelfId,
-                    new RecapPlanningMaintainSource.Empty(model.A1),
+                    new RecapPlanningMaintainSource.Existing(source),
                     [model.A5, model.A11, model.Admission],
                     EmptyRecapPriorContext.Instance
                 )
