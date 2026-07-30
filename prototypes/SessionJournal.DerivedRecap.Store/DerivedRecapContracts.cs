@@ -183,6 +183,27 @@ public sealed record PublishedRecapDescriptor(
     string EnvelopeSha256
 );
 
+public abstract record PublishedMembershipInspectionResult {
+    private PublishedMembershipInspectionResult() {
+    }
+
+    public sealed record Present(PublishedRecapDescriptor Descriptor)
+        : PublishedMembershipInspectionResult;
+
+    public sealed record Absent(EventAddress SetAdmissionAnchor)
+        : PublishedMembershipInspectionResult;
+
+    public sealed record Invalid(
+        EventAddress SetAdmissionAnchor,
+        IReadOnlyList<RecapStructuralDefect> Defects
+    ) : PublishedMembershipInspectionResult;
+
+    public sealed record StoreUnavailable(
+        EventAddress SetAdmissionAnchor,
+        string Reason
+    ) : PublishedMembershipInspectionResult;
+}
+
 public sealed record DerivedRecapMaterialization(
     EventAddress SetAdmissionAnchor,
     IReadOnlyList<SessionContextContribution> Contributions

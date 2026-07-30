@@ -1019,6 +1019,106 @@ public sealed class DerivedRecapStore {
             : new DerivedRecapSelection.EmptyLineage();
     }
 
+    /// <summary>
+    /// Inspects one exact Published directory membership without consulting
+    /// raw lineage or classifying restore eligibility.
+    /// </summary>
+    public async ValueTask<PublishedMembershipInspectionResult>
+        InspectPublishedMembershipAsync(
+        EventAddress admissionAnchor,
+        CancellationToken cancellationToken = default
+    ) {
+        if (admissionAnchor == default) {
+            throw new ArgumentException(
+                "Admission anchor cannot be default.",
+                nameof(admissionAnchor)
+            );
+        }
+        EnsureScaffolding();
+        await using FileStream writeLock =
+            await _fileSystem.AcquireExclusiveLockAsync(
+                    _lockPath,
+                    cancellationToken
+                )
+                .ConfigureAwait(false);
+        string? unavailable =
+            await TryGetUnavailableReasonAsync(cancellationToken)
+                .ConfigureAwait(false);
+        if (unavailable is not null) {
+            return new PublishedMembershipInspectionResult
+                .StoreUnavailable(admissionAnchor, unavailable);
+        }
+
+        string publishedPath = GetPublishedPath(admissionAnchor);
+        if (!PathEntryExists(publishedPath)) {
+            return new PublishedMembershipInspectionResult.Absent(
+                admissionAnchor
+            );
+        }
+        IReadOnlyList<RecapStructuralDefect> defects =
+            await ValidatePublishedAsync(
+                    publishedPath,
+                    admissionAnchor,
+                    lineage: null,
+                    cancellationToken
+                )
+                .ConfigureAwait(false);
+        if (defects.Count != 0) {
+            return new PublishedMembershipInspectionResult.Invalid(
+                admissionAnchor,
+                defects
+            );
+        }
+
+        try {
+            PublishedRecapSet publication =
+                await ReadPublicationRequiredAsync(
+                        Path.Combine(
+                            publishedPath,
+                            "publication.json"
+                        ),
+                        cancellationToken
+                    )
+                    .ConfigureAwait(false);
+            if (publication.RefId != RefId
+                || publication.SetAdmissionAnchor != admissionAnchor) {
+                return new PublishedMembershipInspectionResult.Invalid(
+                    admissionAnchor,
+                    [
+                        new RecapStructuralDefect(
+                            "PublicationIdentityMismatch",
+                            "Publication identity does not match its "
+                            + "directory."
+                        )
+                    ]
+                );
+            }
+            return new PublishedMembershipInspectionResult.Present(
+                new PublishedRecapDescriptor(
+                    RefId,
+                    admissionAnchor,
+                    publication.EnvelopeSha256
+                )
+            );
+        }
+        catch (Exception exception)
+            when (exception is InvalidDataException
+                  or ArgumentException
+                  or NotSupportedException
+                  or IOException
+                  or UnauthorizedAccessException) {
+            return new PublishedMembershipInspectionResult.Invalid(
+                admissionAnchor,
+                [
+                    new RecapStructuralDefect(
+                        "PublishedSetInvalid",
+                        exception.Message
+                    )
+                ]
+            );
+        }
+    }
+
     public async ValueTask<DerivedRecapMaterialization>
         MaterializeAsync(
         PublishedRecapDescriptor descriptor,
@@ -3278,7 +3378,7 @@ public sealed class DerivedRecapStore {
         ValidatePublishedAsync(
         string publishedPath,
         EventAddress expectedAnchor,
-        SessionCurrentLineageSnapshot lineage,
+        SessionCurrentLineageSnapshot? lineage,
         CancellationToken cancellationToken
     ) {
         var defects = new List<RecapStructuralDefect>();
@@ -3302,15 +3402,18 @@ public sealed class DerivedRecapStore {
                 );
                 return Array.AsReadOnly(defects.ToArray());
             }
-            IReadOnlyDictionary<EventAddress, int> lineageIndex =
-                ValidateAndIndexLineage(lineage);
-            int targetIndex = lineageIndex[expectedAnchor];
-            ValidatePlanLineage(
-                publication.FrozenPlanSnapshot,
-                lineageIndex,
-                targetIndex,
-                defects
-            );
+            IReadOnlyDictionary<EventAddress, int>? lineageIndex = null;
+            int targetIndex = -1;
+            if (lineage is not null) {
+                lineageIndex = ValidateAndIndexLineage(lineage);
+                targetIndex = lineageIndex[expectedAnchor];
+                ValidatePlanLineage(
+                    publication.FrozenPlanSnapshot,
+                    lineageIndex,
+                    targetIndex,
+                    defects
+                );
+            }
             var contributions =
                 new List<SessionContextContribution>();
             for (int index = 0;
@@ -3355,11 +3458,12 @@ public sealed class DerivedRecapStore {
                     );
                     continue;
                 }
-                if (!lineageIndex.TryGetValue(
-                        block.AbsorbedThrough,
-                        out int absorbedIndex
-                    )
-                    || absorbedIndex < targetIndex) {
+                if (lineageIndex is not null
+                    && (!lineageIndex.TryGetValue(
+                            block.AbsorbedThrough,
+                            out int absorbedIndex
+                        )
+                        || absorbedIndex < targetIndex)) {
                     AddDefect(
                         defects,
                         "PublishedCursorOffLineage",
@@ -3379,7 +3483,8 @@ public sealed class DerivedRecapStore {
                         );
                         break;
                     case InheritRecapBlockPlan inherit
-                        when !lineageIndex.TryGetValue(
+                        when lineageIndex is not null
+                             && (!lineageIndex.TryGetValue(
                                  inherit.SourceSetAnchor,
                                  out int sourceIndex
                              )
@@ -3387,7 +3492,7 @@ public sealed class DerivedRecapStore {
                                  block.AbsorbedThrough,
                                  out int inheritedIndex
                              )
-                             || inheritedIndex < sourceIndex:
+                             || inheritedIndex < sourceIndex):
                         AddDefect(
                             defects,
                             "PublishedInheritCursorInvalid",
