@@ -32,24 +32,33 @@ public class MaintainerIdentityTests {
         );
 
         RecapMaintainerProfileDescriptor autobiography =
-            RecapMaintainerProfileCatalog.Resolve(
+            RecapMaintainerProfileCatalog.BuiltIn.Resolve(
                 RecapMaintainerProfileCatalog
                     .AutobiographicalRewrite
             );
         RecapMaintainerProfileDescriptor world =
-            RecapMaintainerProfileCatalog.Resolve(
+            RecapMaintainerProfileCatalog.BuiltIn.Resolve(
                 RecapMaintainerProfileCatalog
                     .WorldUnderstandingRewrite
             );
         Assert.Equal("autobiography", autobiography.RoleId);
         Assert.Equal(
             AutobiographicalRewriteProfiles.MaintainerId,
-            autobiography.RewriteProfile.Id
+            autobiography.MaintainerId
+        );
+        Assert.Equal(
+            RolePlayRecapBlockPaths
+                .FirstPersonAutobiographyBlockKey,
+            autobiography.RecapBlockIdValue
         );
         Assert.Equal("world-understanding", world.RoleId);
         Assert.Equal(
             WorldUnderstandingRewriteProfiles.MaintainerId,
-            world.RewriteProfile.Id
+            world.MaintainerId
+        );
+        Assert.Equal(
+            RolePlayRecapBlockPaths.WorldUnderstandingBlockKey,
+            world.RecapBlockIdValue
         );
         Assert.Matches(
             "^sha256:[0-9a-f]{64}$",
@@ -66,6 +75,7 @@ public class MaintainerIdentityTests {
         var left = new RecapMaintainerProfileDescriptor(
             "profile",
             "role",
+            "memory.left",
             new RecapRewriteProfile(
                 "maintainer",
                 target,
@@ -76,6 +86,7 @@ public class MaintainerIdentityTests {
         var right = new RecapMaintainerProfileDescriptor(
             "profile",
             "role",
+            "memory.right",
             new RecapRewriteProfile(
                 "maintainer",
                 target,
