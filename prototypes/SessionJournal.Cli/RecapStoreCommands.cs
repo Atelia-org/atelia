@@ -1,4 +1,5 @@
 using Atelia.EventJournal;
+using Atelia.Completion;
 using Atelia.SessionJournal.DerivedRecap.Store;
 using SJ = Atelia.SessionJournal;
 
@@ -10,14 +11,18 @@ internal static class RecapStoreCommands {
     private const string InspectionSchema =
         "atelia.session-journal.derived-recap-store-inspection.v1";
 
-    internal static Task<int> RunAsync(string[] args) {
+    internal static Task<int> RunAsync(
+        string[] args,
+        ICompletionClientFactory completionClientFactory
+    ) {
         ArgumentNullException.ThrowIfNull(args);
+        ArgumentNullException.ThrowIfNull(completionClientFactory);
         if (args.Length == 0
             || args[0] is "-h" or "--help"
             || args[0].StartsWith("--", StringComparison.Ordinal)) {
             throw new ArgumentException(
                 "recap requires one subcommand: create, inspect, "
-                + "abandon-building, or reset."
+                + "run, resume, restore, abandon-building, or reset."
             );
         }
 
@@ -26,6 +31,18 @@ internal static class RecapStoreCommands {
         return subcommand switch {
             "create" => CreateAsync(options),
             "inspect" => InspectAsync(options),
+            "run" => RecapExecutionCommands.RunAsync(
+                options,
+                completionClientFactory
+            ),
+            "resume" => RecapExecutionCommands.ResumeAsync(
+                options,
+                completionClientFactory
+            ),
+            "restore" => RecapExecutionCommands.RestoreAsync(
+                options,
+                completionClientFactory
+            ),
             "abandon-building" => AbandonBuildingAsync(options),
             "reset" => ResetAsync(options),
             _ => throw new ArgumentException(

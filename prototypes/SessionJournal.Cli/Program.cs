@@ -37,7 +37,8 @@ internal static class Program {
                     StringComparison.Ordinal
                 )) {
                 return RecapStoreCommands.RunAsync(
-                        args.Skip(1).ToArray()
+                        args.Skip(1).ToArray(),
+                        completionClientFactory
                     )
                     .GetAwaiter()
                     .GetResult();
@@ -1222,6 +1223,26 @@ internal static class Program {
         Console.WriteLine(
             "  recap inspect --input <repo-dir> --branch <name> "
             + "--anchor <event-address> "
+            + "[--report-json <path-outside-repo>]"
+        );
+        Console.WriteLine(
+            "  recap run --input <repo-dir> --branch <name> "
+            + "--connections <path> [--connection <id>] "
+            + "[--call-log-dir <dir>] "
+            + "[--report-json <path-outside-repo>]"
+        );
+        Console.WriteLine(
+            "  recap resume --input <repo-dir> --branch <name> "
+            + "--anchor <event-address> --connections <path> "
+            + "[--connection <id>] [--call-log-dir <dir>] "
+            + "[--report-json <path-outside-repo>]"
+        );
+        Console.WriteLine(
+            "  recap restore --input <repo-dir> --branch <name> "
+            + "--anchor <event-address> "
+            + "--expected-raw-head <event-address> "
+            + "--connections <path> [--connection <id>] "
+            + "[--call-log-dir <dir>] "
             + "[--report-json <path-outside-repo>]"
         );
         Console.WriteLine(

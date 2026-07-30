@@ -28,6 +28,22 @@ dotnet run --project prototypes/SessionJournal.Cli -- \
   --report-json <path-outside-repo>
 
 dotnet run --project prototypes/SessionJournal.Cli -- \
+  recap run --input <repo-dir> --branch main \
+  --connections <connections.json> \
+  --call-log-dir <path-outside-repo>
+
+dotnet run --project prototypes/SessionJournal.Cli -- \
+  recap resume --input <repo-dir> --branch main \
+  --anchor ej1:<canonical-event-address> \
+  --connections <connections.json>
+
+dotnet run --project prototypes/SessionJournal.Cli -- \
+  recap restore --input <repo-dir> --branch main \
+  --anchor ej1:<canonical-event-address> \
+  --expected-raw-head ej1:<canonical-event-address> \
+  --connections <connections.json>
+
+dotnet run --project prototypes/SessionJournal.Cli -- \
   recap abandon-building --input <repo-dir> --branch main \
   --anchor ej1:<canonical-event-address>
 
@@ -43,6 +59,16 @@ PriorContext、state token 或内容 hash。`abandon-building` 只隔离 exact B
 `reset` 必须用 `--confirm-ref` 逐字匹配当前选中 branch 的 RefId，且在任何 Store
 mutation 前拒绝不匹配值。可选 `--report-json` 必须位于 repo 外、拒绝
 symlink/reparse path，并通过同目录临时文件 atomic publish。
+
+`run` 使用固定 production catalog（world-understanding/Observation 在前，
+autobiography/Action 在后）与 bounded `MaintainAll` policy，执行一次
+plan-or-resume-and-publish；`resume` 只恢复 exact Building，`restore` 只修复 exact
+Published membership，并要求 `--expected-raw-head` 显式 fence。三者都要求 Store 已存在，
+不会静默 create/reset。它们先完成 exact-ref Store readiness，再加载一个 connection
+registry、创建 shared inner Completion client，并为两个 maintainer 分别包一层 call
+logger。结果码为：Published/Restored/NoBuild=0，Unavailable/BlockFailed=2，
+Retryable=3。JSON report 只保留 typed status/code/defect codes、anchor/block id、固定
+config 与 call-log 计数/目录，不复制 provider error、recap/prompt/response 或 secret。
 
 ## import-legacy-json
 
