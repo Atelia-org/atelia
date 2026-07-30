@@ -31,6 +31,17 @@ internal static class Program {
             }
 
             string command = args[0];
+            if (string.Equals(
+                    command,
+                    "recap",
+                    StringComparison.Ordinal
+                )) {
+                return RecapStoreCommands.RunAsync(
+                        args.Skip(1).ToArray()
+                    )
+                    .GetAwaiter()
+                    .GetResult();
+            }
             CliOptions options = CliOptions.Parse(args.Skip(1).ToArray());
             return command switch {
                 "import-legacy-json" => RunImportLegacyJson(options),
@@ -1204,6 +1215,25 @@ internal static class Program {
         Console.WriteLine("SessionJournal.Cli");
         Console.WriteLine();
         Console.WriteLine("Commands:");
+        Console.WriteLine(
+            "  recap create --input <repo-dir> --branch <name> "
+            + "[--report-json <path-outside-repo>]"
+        );
+        Console.WriteLine(
+            "  recap inspect --input <repo-dir> --branch <name> "
+            + "--anchor <event-address> "
+            + "[--report-json <path-outside-repo>]"
+        );
+        Console.WriteLine(
+            "  recap abandon-building --input <repo-dir> "
+            + "--branch <name> --anchor <event-address> "
+            + "[--report-json <path-outside-repo>]"
+        );
+        Console.WriteLine(
+            "  recap reset --input <repo-dir> --branch <name> "
+            + "--confirm-ref <exact-ref-id> "
+            + "[--report-json <path-outside-repo>]"
+        );
         Console.WriteLine(
             "  import-legacy-json --input <json> --output <repo-dir> "
             + "[--force] [--report-md <path>]"

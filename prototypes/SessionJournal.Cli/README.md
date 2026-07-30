@@ -10,6 +10,40 @@ concrete maintainer profiles 和 Completion provider，但不依赖旧 `ChatSess
 负责；两个工具只通过版本化 JSON schema
 `atelia.chat-session.legacy-upgrade-export.v1` 交换数据。
 
+## recap Store 运维命令
+
+`recap create|inspect|abandon-building|reset` 是
+`SessionJournal.DerivedRecap.Store` 的离线、branch-exact 运维入口。每个命令都要求
+`--input` 与显式 `--branch`，先以 read-only engine 解析该 branch 的 exact
+`BranchRefId`，再打开对应 Store；它们不会运行 Planner、Maintainer 或 LLM，也不会改写
+raw journal。
+
+```bash
+dotnet run --project prototypes/SessionJournal.Cli -- \
+  recap create --input <repo-dir> --branch main
+
+dotnet run --project prototypes/SessionJournal.Cli -- \
+  recap inspect --input <repo-dir> --branch main \
+  --anchor ej1:<canonical-event-address> \
+  --report-json <path-outside-repo>
+
+dotnet run --project prototypes/SessionJournal.Cli -- \
+  recap abandon-building --input <repo-dir> --branch main \
+  --anchor ej1:<canonical-event-address>
+
+dotnet run --project prototypes/SessionJournal.Cli -- \
+  recap reset --input <repo-dir> --branch main \
+  --confirm-ref <exact-branch-ref-id>
+```
+
+`inspect` 同时检查 exact-anchor Building 与 Published membership，报告只包含 address、
+state/type、defect 和 restore capability；不会输出 recap content、FrozenInput、
+PriorContext、state token 或内容 hash。`abandon-building` 只隔离 exact Building，
+`Quarantined`/`AlreadyAbsent` 返回 0，`PublishedConflict`/`Unavailable` 返回 2。
+`reset` 必须用 `--confirm-ref` 逐字匹配当前选中 branch 的 RefId，且在任何 Store
+mutation 前拒绝不匹配值。可选 `--report-json` 必须位于 repo 外、拒绝
+symlink/reparse path，并通过同目录临时文件 atomic publish。
+
 ## import-legacy-json
 
 把 `ChatSession.LegacyExportCli export-json` 生成的 JSON 导入新的
