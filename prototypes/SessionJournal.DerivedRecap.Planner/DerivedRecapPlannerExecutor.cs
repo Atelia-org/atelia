@@ -1297,7 +1297,8 @@ public sealed class DerivedRecapPlannerExecutor {
     ));
 
     private static bool IsAvailabilityException(Exception exception)
-        => exception is InvalidDataException
+        => exception is RecapRawHeadChangedException
+            or InvalidDataException
             or InvalidOperationException
             or ArgumentException
             or IOException

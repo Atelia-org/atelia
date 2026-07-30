@@ -28,6 +28,16 @@ internal sealed record PendingMaintainRoute(
 
 internal sealed record RecapPendingWindowDefect(string Detail);
 
+internal sealed class RecapRawHeadChangedException(
+    EventAddress expected,
+    EventAddress observed
+) : Exception(
+    "Raw head changed while freezing Building replay windows."
+) {
+    public EventAddress Expected { get; } = expected;
+    public EventAddress Observed { get; } = observed;
+}
+
 internal sealed record PreparedRecapPendingWindows(
     IReadOnlyList<RecapPendingWindowDefect> Defects,
     IReadOnlyDictionary<
@@ -65,6 +75,45 @@ internal static class RecapPendingWindowPreparer {
         if (calls > limits.MaxMaintainerCallsPerBuild) {
             defects.Add(new RecapPendingWindowDefect(
                 $"Building requires {calls} Maintainer calls; limit is "
+                + $"{limits.MaxMaintainerCallsPerBuild}."
+            ));
+        }
+        return defects;
+    }
+
+    public static IReadOnlyList<RecapPendingWindowDefect>
+        ValidatePendingRouteLimits(
+        IEnumerable<PendingMaintainRoute> routes,
+        RecapExecutionLimits limits
+    ) {
+        ArgumentNullException.ThrowIfNull(routes);
+        ArgumentNullException.ThrowIfNull(limits);
+
+        var defects = new List<RecapPendingWindowDefect>();
+        long calls = 0;
+        foreach (PendingMaintainRoute route in routes) {
+            ArgumentNullException.ThrowIfNull(route);
+            if (route.NextEndpointIndex < 0
+                || route.NextEndpointIndex
+                    > route.Plan.CatchUpThrough.Count) {
+                throw new InvalidDataException(
+                    $"Block '{route.Plan.RecapBlockId}' has an invalid "
+                    + "pending endpoint index."
+                );
+            }
+            if (route.Plan.CatchUpThrough.Count
+                > limits.MaxRouteEndpointsPerBlock) {
+                defects.Add(new RecapPendingWindowDefect(
+                    $"Block '{route.Plan.RecapBlockId}' exceeds the "
+                    + "route limit."
+                ));
+            }
+            calls += route.Plan.CatchUpThrough.Count
+                - route.NextEndpointIndex;
+        }
+        if (calls > limits.MaxMaintainerCallsPerBuild) {
+            defects.Add(new RecapPendingWindowDefect(
+                $"Restore requires {calls} Maintainer calls; limit is "
                 + $"{limits.MaxMaintainerCallsPerBuild}."
             ));
         }
@@ -122,8 +171,9 @@ internal static class RecapPendingWindowPreparer {
                 cancellationToken
             );
         if (seedBatch.Lineage.CapturedHead != expectedRawHead) {
-            throw new InvalidDataException(
-                "Raw head changed while freezing Building replay windows."
+            throw new RecapRawHeadChangedException(
+                expectedRawHead,
+                seedBatch.Lineage.CapturedHead
             );
         }
         Dictionary<EventAddress, SessionHistoryPlanningSeed> seeds =
