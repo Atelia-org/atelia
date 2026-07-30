@@ -1,0 +1,988 @@
+using System.Collections.Concurrent;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
+using Atelia.Completion;
+using Atelia.Completion.Abstractions;
+using Atelia.EventJournal;
+using Atelia.SessionJournal.DerivedRecap.Planner;
+using Atelia.SessionJournal.DerivedRecap.Store;
+using Xunit;
+using SJ = Atelia.SessionJournal;
+
+namespace Atelia.SessionJournal.Cli.Tests;
+
+public sealed class DerivedRecapRealRepositoryAcceptanceTests {
+    // The historical repository-named variable remains a compatibility
+    // fallback. The real acceptance source is a legacy-upgrade export JSON;
+    // it is imported into an isolated current-wire SessionJournal before the
+    // raw baseline is captured.
+    private const string SourceExportEnvironment =
+        "ATELIA_REAL_LEGACY_UPGRADE_EXPORT";
+    private const string SourceEnvironment =
+        "ATELIA_REAL_SESSION_JOURNAL_REPO";
+    private const string ReportEnvironment =
+        "ATELIA_DERIVED_RECAP_ACCEPTANCE_REPORT";
+
+    [Fact]
+    public async Task RealRepositoryCopySurvivesFullRecapAndRecoveryFlow() {
+        string? configuredSource =
+            Environment.GetEnvironmentVariable(
+                SourceExportEnvironment
+            )
+            ?? Environment.GetEnvironmentVariable(SourceEnvironment);
+        if (string.IsNullOrWhiteSpace(configuredSource)) {
+            return;
+        }
+
+        string sourcePath = Path.TrimEndingDirectorySeparator(
+            Path.GetFullPath(configuredSource)
+        );
+        Assert.True(
+            File.Exists(sourcePath),
+            $"{SourceExportEnvironment} (or compatibility "
+            + $"{SourceEnvironment}) must identify an existing "
+            + "legacy-upgrade export JSON file."
+        );
+        TreeFingerprint sourceBefore =
+            FingerprintSourceFile(sourcePath);
+        string tempRoot = Path.Combine(
+            Path.GetTempPath(),
+            "atelia-derived-recap-real-acceptance",
+            Guid.NewGuid().ToString("N")
+        );
+        string copyPath = Path.Combine(tempRoot, "session-copy");
+        EnsureDisjoint(sourcePath, copyPath);
+
+        try {
+            Directory.CreateDirectory(tempRoot);
+            Assert.Equal(0, Program.MainCore([
+                "import-legacy-json",
+                "--input", sourcePath,
+                "--output", copyPath
+            ], ThrowingCompletionClientFactory.Instance));
+            RawSnapshot initialRaw = ReadRawSnapshot(copyPath);
+            TreeFingerprint legacyV1Before = FingerprintTree(
+                Path.Combine(
+                    copyPath,
+                    "derived",
+                    "memory",
+                    "v1"
+                ),
+                allowMissing: true
+            );
+            string branchName =
+                SJ.SessionJournalDefaults.MainBranchName;
+            string connectionsPath = WriteConnections(tempRoot);
+
+            string createReport =
+                Path.Combine(tempRoot, "recap-create.json");
+            Assert.Equal(0, Program.MainCore([
+                "recap", "create",
+                "--input", copyPath,
+                "--branch", branchName,
+                "--report-json", createReport
+            ], ThrowingCompletionClientFactory.Instance));
+
+            string runReport =
+                Path.Combine(tempRoot, "recap-run.json");
+            var runFactory = new ScriptedCompletionClientFactory(
+                "acceptance recap",
+                failAtCall: 3
+            );
+            Assert.Equal(2, Program.MainCore(
+                RecapExecutionArgs(
+                    "run",
+                    copyPath,
+                    branchName,
+                    connectionsPath,
+                    Path.Combine(tempRoot, "run-calls"),
+                    runReport
+                ),
+                runFactory
+            ));
+            Assert.True(
+                string.Equals(
+                    "BlockFailed",
+                    ReadString(runReport, "resultStatus"),
+                    StringComparison.Ordinal
+                ),
+                File.ReadAllText(runReport)
+            );
+            Assert.Equal(3, runFactory.CallCount);
+            string admission = ReadString(runReport, "anchor");
+            EventAddress admissionAddress =
+                SJ.EventAddressTextCodec.Parse(admission);
+
+            RefId branchRefId;
+            using (var engine = SJ.SessionJournalEngine.OpenReadOnly(
+                       copyPath,
+                       branchName
+                   )) {
+                branchRefId = engine.BranchRefId;
+                DerivedRecapStore store = DerivedRecapStore.Open(
+                    copyPath,
+                    branchRefId
+                );
+                Assert.IsType<BuildingReadResult.Available>(
+                    await store.ReadBuildingAsync(admissionAddress)
+                );
+            }
+
+            string resumeReport =
+                Path.Combine(tempRoot, "recap-resume.json");
+            var resumeFactory = new ScriptedCompletionClientFactory(
+                "acceptance recap"
+            );
+            Assert.Equal(0, Program.MainCore(
+                RecapExecutionArgs(
+                    "resume",
+                    copyPath,
+                    branchName,
+                    connectionsPath,
+                    Path.Combine(tempRoot, "resume-calls"),
+                    resumeReport,
+                    admission
+                ),
+                resumeFactory
+            ));
+            Assert.Equal(2, resumeFactory.CallCount);
+            Assert.Equal(
+                "Published",
+                ReadString(resumeReport, "resultStatus")
+            );
+
+            PublishedRecapDescriptor selected =
+                await SelectStrictLatestAsync(
+                    copyPath,
+                    branchName
+                );
+            Assert.Equal(
+                admissionAddress,
+                selected.SetAdmissionAnchor
+            );
+            string exactPublishedPath = Path.Combine(
+                copyPath,
+                "derived",
+                "recap",
+                "v4",
+                "refs",
+                branchRefId.ToHexString(),
+                "published",
+                EventAddressFileNameCodec.Format(
+                    selected.SetAdmissionAnchor
+                )
+            );
+            string[] blockFiles = Directory.EnumerateFiles(
+                    Path.Combine(exactPublishedPath, "blocks"),
+                    "*.json",
+                    SearchOption.TopDirectoryOnly
+                )
+                .Order(StringComparer.Ordinal)
+                .ToArray();
+            Assert.Equal(2, blockFiles.Length);
+            string damagedBlock = blockFiles[0];
+            string healthyBlock = blockFiles[1];
+            string damagedBlockId =
+                Path.GetFileNameWithoutExtension(damagedBlock);
+            string healthyBlockShaBefore = HashFile(healthyBlock);
+            await File.AppendAllTextAsync(
+                damagedBlock,
+                "\nacceptance-corruption"
+            );
+
+            using (var engine = SJ.SessionJournalEngine.OpenReadOnly(
+                       copyPath,
+                       branchName
+                   )) {
+                DerivedRecapSelection invalid =
+                    await DerivedRecapStore.Open(
+                            copyPath,
+                            engine.BranchRefId
+                        )
+                        .SelectNthPreviousAsync(
+                            engine.ReadCurrentLineageHeaders(),
+                            0
+                        );
+                DerivedRecapSelection.ExactPublishedSetInvalid defect =
+                    Assert.IsType<
+                        DerivedRecapSelection
+                            .ExactPublishedSetInvalid
+                    >(invalid);
+                Assert.Equal(
+                    selected.SetAdmissionAnchor,
+                    defect.SetAdmissionAnchor
+                );
+            }
+
+            string restoreReport =
+                Path.Combine(tempRoot, "recap-restore.json");
+            var restoreFactory = new ScriptedCompletionClientFactory(
+                "acceptance restored recap"
+            );
+            Assert.Equal(0, Program.MainCore(
+                RecapExecutionArgs(
+                    "restore",
+                    copyPath,
+                    branchName,
+                    connectionsPath,
+                    Path.Combine(tempRoot, "restore-calls"),
+                    restoreReport,
+                    admission,
+                    SJ.EventAddressTextCodec.Format(initialRaw.Head)
+                ),
+                restoreFactory
+            ));
+            Assert.Equal(
+                "Restored",
+                ReadString(restoreReport, "resultStatus")
+            );
+            Assert.InRange(restoreFactory.CallCount, 0, 4);
+            Assert.Equal(
+                healthyBlockShaBefore,
+                HashFile(healthyBlock)
+            );
+            bool otherBlockUnchanged = string.Equals(
+                healthyBlockShaBefore,
+                HashFile(healthyBlock),
+                StringComparison.Ordinal
+            );
+            _ = await SelectStrictLatestAsync(
+                copyPath,
+                branchName
+            );
+            RawSnapshot afterRestoreRaw =
+                ReadRawSnapshot(copyPath);
+            AssertRawUnchanged(initialRaw, afterRestoreRaw);
+            Assert.Equal(
+                legacyV1Before,
+                FingerprintTree(
+                    Path.Combine(
+                        copyPath,
+                        "derived",
+                        "memory",
+                        "v1"
+                    ),
+                    allowMissing: true
+                )
+            );
+
+            string onlineReport =
+                Path.Combine(tempRoot, "online.json");
+            var onlineFactory = new ScriptedCompletionClientFactory(
+                "acceptance agent answer"
+            );
+            Assert.Equal(0, Program.MainCore([
+                "run-online-turn",
+                "--input", copyPath,
+                "--branch", branchName,
+                "--connections", connectionsPath,
+                "--output", onlineReport,
+                "--call-log-dir",
+                Path.Combine(tempRoot, "online-calls"),
+                "--message", "acceptance online observation"
+            ], onlineFactory));
+            Assert.Equal(1, onlineFactory.CallCount);
+            Assert.Equal(
+                "atelia.session-journal.online-turn-run.v3",
+                ReadString(onlineReport, "schema")
+            );
+            AssertInitialPrefixPreserved(
+                initialRaw,
+                ReadRawSnapshot(copyPath)
+            );
+
+            PreparedSnapshot prepared =
+                await LeavePreparedAsync(
+                    copyPath,
+                    branchName,
+                    branchRefId
+                );
+            string recapV4Root = Path.Combine(
+                copyPath,
+                "derived",
+                "recap",
+                "v4"
+            );
+            Assert.True(Directory.Exists(recapV4Root));
+            Directory.Delete(recapV4Root, recursive: true);
+            var preparedFactory =
+                new ScriptedCompletionClientFactory(
+                    "acceptance prepared recovery"
+                );
+            string preparedReport =
+                Path.Combine(tempRoot, "prepared-reopen.json");
+            Assert.Equal(0, Program.MainCore([
+                "run-online-turn",
+                "--input", copyPath,
+                "--branch", branchName,
+                "--connections", connectionsPath,
+                "--output", preparedReport,
+                "--call-log-dir",
+                Path.Combine(tempRoot, "prepared-calls")
+            ], preparedFactory));
+            Assert.Equal(1, preparedFactory.CallCount);
+            CompletionRequest recovered =
+                Assert.Single(preparedFactory.Requests);
+            Assert.Equal(
+                prepared.CanonicalRequestSha256,
+                Sha256(
+                    SJ.SessionRequestCanonicalizer.Canonicalize(
+                        recovered
+                    )
+                )
+            );
+            Assert.False(Directory.Exists(recapV4Root));
+
+            RawSnapshot finalRaw = ReadRawSnapshot(copyPath);
+            AssertInitialPrefixPreserved(initialRaw, finalRaw);
+            Assert.Equal(
+                legacyV1Before,
+                FingerprintTree(
+                    Path.Combine(
+                        copyPath,
+                        "derived",
+                        "memory",
+                        "v1"
+                    ),
+                    allowMissing: true
+                )
+            );
+            TreeFingerprint sourceAfter =
+                FingerprintSourceFile(sourcePath);
+            Assert.Equal(sourceBefore, sourceAfter);
+
+            string? acceptanceReport =
+                Environment.GetEnvironmentVariable(
+                    ReportEnvironment
+                );
+            if (!string.IsNullOrWhiteSpace(acceptanceReport)) {
+                string reportPath = Path.GetFullPath(
+                    acceptanceReport
+                );
+                EnsureDisjoint(sourcePath, reportPath);
+                EnsureDisjoint(copyPath, reportPath);
+                WriteJsonAtomically(
+                    reportPath,
+                    new AcceptanceReport(
+                        "atelia.session-journal."
+                        + "derived-recap-real-acceptance.v1",
+                        "LegacyUpgradeExport",
+                        "ImportLegacyJson",
+                        new SourceReport(
+                            sourceBefore.FileCount,
+                            sourceBefore.TotalBytes,
+                            sourceBefore.Sha256
+                        ),
+                        ConfigReport.From(
+                            RecapCliComposition.CreateConfig()
+                        ),
+                        branchRefId.ToHexString(),
+                        admission,
+                        new CallCountReport(
+                            runFactory.CallCount,
+                            resumeFactory.CallCount,
+                            restoreFactory.CallCount,
+                            onlineFactory.CallCount,
+                            preparedFactory.CallCount
+                        ),
+                        new CorruptionReport(
+                            damagedBlockId,
+                            "FinalPayloadChanged",
+                            "ExactPublishedSetInvalid",
+                            "Restored",
+                            otherBlockUnchanged
+                        ),
+                        prepared.CanonicalRequestSha256,
+                        new PrefixReport(
+                            initialRaw.Addresses.Count,
+                            finalRaw.Addresses.Count,
+                            HashAddresses(initialRaw.Addresses),
+                            HashAddresses(
+                                finalRaw.Addresses.Take(
+                                    initialRaw.Addresses.Count
+                                )
+                            ),
+                            Preserved: true
+                        ),
+                        new LegacyV1Report(
+                            legacyV1Before.FileCount,
+                            legacyV1Before.TotalBytes,
+                            legacyV1Before.Sha256,
+                            Unchanged: true
+                        ),
+                        RawUnchangedThroughRestore: true,
+                        SourceUnchanged: true,
+                        RecapV4AbsentAfterPreparedRecovery: true
+                    )
+                );
+                AssertContentFreeReport(
+                    File.ReadAllText(reportPath)
+                );
+            }
+        }
+        finally {
+            TreeFingerprint sourceAfter =
+                FingerprintSourceFile(sourcePath);
+            Assert.Equal(sourceBefore, sourceAfter);
+            try {
+                if (Directory.Exists(tempRoot)) {
+                    Directory.Delete(tempRoot, recursive: true);
+                }
+            }
+            catch {
+                // Best-effort cleanup for the isolated acceptance copy.
+            }
+        }
+    }
+
+    private static async Task<PublishedRecapDescriptor>
+        SelectStrictLatestAsync(
+        string path,
+        string branchName
+    ) {
+        using var engine = SJ.SessionJournalEngine.OpenReadOnly(
+            path,
+            branchName
+        );
+        DerivedRecapSelection selection =
+            await DerivedRecapStore.Open(
+                    path,
+                    engine.BranchRefId
+                )
+                .SelectNthPreviousAsync(
+                    engine.ReadCurrentLineageHeaders(),
+                    0
+                );
+        return Assert
+            .IsType<DerivedRecapSelection.Selected>(selection)
+            .Descriptor;
+    }
+
+    private static async Task<PreparedSnapshot> LeavePreparedAsync(
+        string path,
+        string branchName,
+        RefId branchRefId
+    ) {
+        CompletionConnectionConfig connection = Connection();
+        var client = new ScriptedCompletionClient("must not run");
+        using (var engine = SJ.SessionJournalEngine.OpenForTest(
+                   path,
+                   branchName,
+                   new SJ.SessionRuntime(client),
+                   new SJ.SessionJournalTestHooks(
+                       SJ.SessionJournalFailpoint
+                           .AfterRequestPreparedCommitted
+                   )
+               )) {
+            var source = new DerivedRecapContextCandidateSource(
+                DerivedRecapStore.Open(path, branchRefId),
+                engine
+            );
+            engine.UseRuntime(new SJ.SessionRuntime(
+                client,
+                CompletionTarget:
+                    CompletionTargetIdentityFactory.Create(
+                        connection,
+                        client
+                    ),
+                MaxTokens: connection.MaxTokens,
+                ContextCandidateSource: source
+            ));
+            SJ.SessionJournalFailpointException failure =
+                await Assert.ThrowsAsync<
+                    SJ.SessionJournalFailpointException
+                >(() => engine.SendAsync(
+                    "acceptance prepared observation",
+                    CancellationToken.None
+                ));
+            Assert.Equal(
+                SJ.SessionJournalFailpoint
+                    .AfterRequestPreparedCommitted,
+                failure.Failpoint
+            );
+            Assert.Equal(0, client.CallCount);
+        }
+
+        EventAddress preparedAddress;
+        using (EventJournal.EventJournal journal =
+            EventJournal.EventJournal.OpenReadOnlyExisting(path)) {
+            RefId branch = journal.OpenBranch(branchName).Unwrap();
+            preparedAddress = journal.GetHead(branch)!.Value;
+            byte[] canonical =
+                SJ.SessionPreparedRequestReconstructor.Reconstruct(
+                    journal,
+                    preparedAddress
+                ).CanonicalBytes;
+            return new PreparedSnapshot(
+                preparedAddress,
+                Sha256(canonical)
+            );
+        }
+    }
+
+    private static RawSnapshot ReadRawSnapshot(string path) {
+        using var engine = SJ.SessionJournalEngine.OpenReadOnly(path);
+        SJ.SessionCurrentLineageSnapshot lineage =
+            engine.ReadCurrentLineageHeaders();
+        EventAddress[] addresses = [
+            .. lineage.HeadToRoot
+                .Reverse()
+                .Select(static node => node.Address)
+        ];
+        TreeFingerprint rawFiles = FingerprintSelectedRoots(
+            path,
+            ["events", "refs"]
+        );
+        return new RawSnapshot(
+            lineage.CapturedHead,
+            addresses,
+            rawFiles
+        );
+    }
+
+    private static void AssertInitialPrefixPreserved(
+        RawSnapshot initial,
+        RawSnapshot current
+    ) {
+        Assert.True(
+            current.Addresses.Count >= initial.Addresses.Count
+        );
+        Assert.Equal(
+            initial.Addresses,
+            current.Addresses
+                .Take(initial.Addresses.Count)
+                .ToArray()
+        );
+    }
+
+    private static void AssertRawUnchanged(
+        RawSnapshot expected,
+        RawSnapshot actual
+    ) {
+        Assert.Equal(expected.Head, actual.Head);
+        Assert.Equal(expected.Addresses, actual.Addresses);
+        Assert.Equal(expected.Files, actual.Files);
+    }
+
+    private static string[] RecapExecutionArgs(
+        string operation,
+        string input,
+        string branch,
+        string connections,
+        string calls,
+        string report,
+        string? anchor = null,
+        string? expectedRawHead = null
+    ) => [
+        "recap", operation,
+        "--input", input,
+        "--branch", branch,
+        "--connections", connections,
+        "--call-log-dir", calls,
+        "--report-json", report,
+        .. anchor is null
+            ? []
+            : new[] { "--anchor", anchor },
+        .. expectedRawHead is null
+            ? []
+            : new[] {
+                "--expected-raw-head",
+                expectedRawHead
+            }
+    ];
+
+    private static string WriteConnections(string tempRoot) {
+        string path = Path.Combine(tempRoot, "connections.json");
+        File.WriteAllText(
+            path,
+            JsonSerializer.Serialize(
+                new CompletionConnectionsFileConfig(
+                    [Connection()],
+                    "scripted"
+                )
+            )
+        );
+        return path;
+    }
+
+    private static CompletionConnectionConfig Connection() => new(
+        "scripted",
+        "scripted",
+        "model-a",
+        "surface-a",
+        "http://localhost/"
+    );
+
+    private static string ReadString(
+        string reportPath,
+        string property
+    ) {
+        using JsonDocument document = JsonDocument.Parse(
+            File.ReadAllText(reportPath)
+        );
+        return document.RootElement.GetProperty(property).GetString()
+            ?? throw new InvalidDataException(
+                $"Report property '{property}' is null."
+            );
+    }
+
+    private static void RejectReparsePoint(string path) {
+        if ((File.GetAttributes(path) & FileAttributes.ReparsePoint)
+            != 0) {
+            throw new InvalidDataException(
+                $"Acceptance source contains a symlink or reparse "
+                + $"point: {path}"
+            );
+        }
+    }
+
+    private static void EnsureDisjoint(
+        string first,
+        string second
+    ) {
+        string left = Path.TrimEndingDirectorySeparator(
+            Path.GetFullPath(first)
+        );
+        string right = Path.TrimEndingDirectorySeparator(
+            Path.GetFullPath(second)
+        );
+        StringComparison comparison = OperatingSystem.IsWindows()
+            ? StringComparison.OrdinalIgnoreCase
+            : StringComparison.Ordinal;
+        if (string.Equals(left, right, comparison)
+            || IsAncestor(left, right, comparison)
+            || IsAncestor(right, left, comparison)) {
+            throw new ArgumentException(
+                $"Acceptance paths must be disjoint: '{left}' and "
+                + $"'{right}'."
+            );
+        }
+    }
+
+    private static bool IsAncestor(
+        string ancestor,
+        string descendant,
+        StringComparison comparison
+    ) => descendant.StartsWith(
+        ancestor + Path.DirectorySeparatorChar,
+        comparison
+    );
+
+    private static TreeFingerprint FingerprintSelectedRoots(
+        string root,
+        IReadOnlyList<string> relativeRoots
+    ) {
+        string[] files = [
+            .. relativeRoots.SelectMany(relative => {
+                string selected = Path.Combine(root, relative);
+                return Directory.Exists(selected)
+                    ? Directory.EnumerateFiles(
+                        selected,
+                        "*",
+                        SearchOption.AllDirectories
+                    )
+                    : [];
+            })
+        ];
+        return FingerprintFiles(root, files);
+    }
+
+    private static TreeFingerprint FingerprintTree(
+        string root,
+        bool allowMissing = false
+    ) {
+        if (!Directory.Exists(root)) {
+            if (allowMissing) {
+                return new TreeFingerprint(
+                    0,
+                    0,
+                    Sha256([])
+                );
+            }
+            throw new DirectoryNotFoundException(root);
+        }
+        return FingerprintFiles(
+            root,
+            Directory.EnumerateFiles(
+                root,
+                "*",
+                SearchOption.AllDirectories
+            )
+        );
+    }
+
+    private static TreeFingerprint FingerprintSourceFile(
+        string path
+    ) {
+        RejectReparsePoint(path);
+        var info = new FileInfo(path);
+        return new TreeFingerprint(
+            1,
+            info.Length,
+            HashFile(path)
+        );
+    }
+
+    private static TreeFingerprint FingerprintFiles(
+        string root,
+        IEnumerable<string> files
+    ) {
+        using IncrementalHash aggregate =
+            IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        long totalBytes = 0;
+        int count = 0;
+        foreach (string file in files.Order(
+                     StringComparer.Ordinal
+                 )) {
+            RejectReparsePoint(file);
+            byte[] pathBytes = Encoding.UTF8.GetBytes(
+                Path.GetRelativePath(root, file)
+                    .Replace(Path.DirectorySeparatorChar, '/')
+            );
+            aggregate.AppendData(pathBytes);
+            aggregate.AppendData([0]);
+            byte[] bytes = File.ReadAllBytes(file);
+            totalBytes += bytes.LongLength;
+            aggregate.AppendData(
+                BitConverter.GetBytes(bytes.LongLength)
+            );
+            aggregate.AppendData(SHA256.HashData(bytes));
+            count++;
+        }
+        return new TreeFingerprint(
+            count,
+            totalBytes,
+            Convert.ToHexStringLower(
+                aggregate.GetHashAndReset()
+            )
+        );
+    }
+
+    private static string HashFile(string path)
+        => Sha256(File.ReadAllBytes(path));
+
+    private static string HashAddresses(
+        IEnumerable<EventAddress> addresses
+    ) => Sha256(Encoding.UTF8.GetBytes(string.Join(
+        "\n",
+        addresses.Select(SJ.EventAddressTextCodec.Format)
+    )));
+
+    private static string Sha256(ReadOnlySpan<byte> bytes)
+        => Convert.ToHexStringLower(SHA256.HashData(bytes));
+
+    private static void WriteJsonAtomically(
+        string path,
+        AcceptanceReport report
+    ) {
+        string fullPath = Path.GetFullPath(path);
+        string directory =
+            Path.GetDirectoryName(fullPath) ?? ".";
+        Directory.CreateDirectory(directory);
+        string temporaryPath = Path.Combine(
+            directory,
+            $".{Path.GetFileName(fullPath)}."
+            + $"{Guid.NewGuid():N}.tmp"
+        );
+        try {
+            File.WriteAllText(
+                temporaryPath,
+                JsonSerializer.Serialize(
+                    report,
+                    new JsonSerializerOptions {
+                        WriteIndented = true,
+                        PropertyNamingPolicy =
+                            JsonNamingPolicy.CamelCase
+                    }
+                )
+            );
+            File.Move(temporaryPath, fullPath, overwrite: true);
+        }
+        finally {
+            if (File.Exists(temporaryPath)) {
+                File.Delete(temporaryPath);
+            }
+        }
+    }
+
+    private static void AssertContentFreeReport(string report) {
+        foreach (string forbidden in new[] {
+                     "\"content\"",
+                     "\"prompt\"",
+                     "\"response\"",
+                     "\"secret\"",
+                     "acceptance recap",
+                     "acceptance agent answer",
+                     "acceptance prepared recovery"
+                 }) {
+            Assert.DoesNotContain(
+                forbidden,
+                report,
+                StringComparison.OrdinalIgnoreCase
+            );
+        }
+    }
+
+    private sealed record TreeFingerprint(
+        int FileCount,
+        long TotalBytes,
+        string Sha256
+    );
+
+    private sealed record RawSnapshot(
+        EventAddress Head,
+        IReadOnlyList<EventAddress> Addresses,
+        TreeFingerprint Files
+    );
+
+    private sealed record PreparedSnapshot(
+        EventAddress Address,
+        string CanonicalRequestSha256
+    );
+
+    private sealed record AcceptanceReport(
+        string Schema,
+        string SourceKind,
+        string Preparation,
+        SourceReport Source,
+        ConfigReport Config,
+        string BranchRefId,
+        string AdmissionAnchor,
+        CallCountReport Calls,
+        CorruptionReport Corruption,
+        string PreparedCanonicalRequestSha256,
+        PrefixReport FinalPrefix,
+        LegacyV1Report LegacyV1,
+        bool RawUnchangedThroughRestore,
+        bool SourceUnchanged,
+        bool RecapV4AbsentAfterPreparedRecovery
+    );
+
+    private sealed record SourceReport(
+        int FileCount,
+        long TotalBytes,
+        string Sha256
+    );
+
+    private sealed record ConfigReport(
+        int RawGrowthTrigger,
+        int RawGrowthHardLimit,
+        int MaxRouteEndpointsPerBlock,
+        int MaxMaintainerCallsPerBuild,
+        int MaxRawEventsPerStep,
+        int MaxRawEventsPerBuild,
+        IReadOnlyList<string> BlockIds
+    ) {
+        public static ConfigReport From(RecapPlannerConfig config)
+            => new(
+                config.RawGrowthTrigger,
+                config.RawGrowthHardLimit,
+                config.MaxRouteEndpointsPerBlock,
+                config.MaxMaintainerCallsPerBuild,
+                config.MaxRawEventsPerStep,
+                config.MaxRawEventsPerBuild,
+                [
+                    .. config.Catalog.Select(
+                        static item =>
+                            item.RecapBlockId.Value
+                    )
+                ]
+            );
+    }
+
+    private sealed record CallCountReport(
+        int FailedRun,
+        int Resume,
+        int Restore,
+        int OnlineTurn,
+        int PreparedRecovery
+    );
+
+    private sealed record CorruptionReport(
+        string BlockId,
+        string Mutation,
+        string SelectionResult,
+        string RestoreResult,
+        bool OtherBlockUnchanged
+    );
+
+    private sealed record PrefixReport(
+        int InitialAddressCount,
+        int FinalAddressCount,
+        string InitialAddressSha256,
+        string FinalPrefixSha256,
+        bool Preserved
+    );
+
+    private sealed record LegacyV1Report(
+        int FileCount,
+        long TotalBytes,
+        string Sha256,
+        bool Unchanged
+    );
+
+    private sealed class ThrowingCompletionClientFactory
+        : ICompletionClientFactory {
+        public static ThrowingCompletionClientFactory Instance { get; } =
+            new();
+
+        public ICompletionClient Create(
+            CompletionConnectionConfig connection
+        ) => throw new InvalidOperationException(
+            $"Completion client '{connection.Id}' must not be created."
+        );
+    }
+
+    private sealed class ScriptedCompletionClientFactory(
+        string responseText,
+        int? failAtCall = null
+    ) : ICompletionClientFactory {
+        private readonly ScriptedCompletionClient _client =
+            new(responseText, failAtCall);
+
+        public int CallCount => _client.CallCount;
+        public IReadOnlyList<CompletionRequest> Requests =>
+            _client.Requests;
+
+        public ICompletionClient Create(
+            CompletionConnectionConfig connection
+        ) => _client;
+    }
+
+    private sealed class ScriptedCompletionClient(
+        string responseText,
+        int? failAtCall = null
+    ) : ICompletionClient {
+        private readonly ConcurrentQueue<CompletionRequest> _requests =
+            new();
+        private int _callCount;
+
+        public string Name => "scripted";
+        public string ApiSpecId => "test-api-v1";
+        public int CallCount => Volatile.Read(ref _callCount);
+        public IReadOnlyList<CompletionRequest> Requests =>
+            _requests.ToArray();
+
+        public Task<CompletionResult> StreamCompletionAsync(
+            CompletionRequest request,
+            CompletionStreamObserver? observer,
+            CancellationToken cancellationToken = default
+        ) {
+            cancellationToken.ThrowIfCancellationRequested();
+            _requests.Enqueue(request);
+            int call = Interlocked.Increment(ref _callCount);
+            if (call == failAtCall) {
+                throw new HttpRequestException(
+                    "scripted acceptance interruption"
+                );
+            }
+            return Task.FromResult(new CompletionResult(
+                new ActionMessage([
+                    new ActionBlock.Text(responseText)
+                ]),
+                CompletionDescriptor.From(this, request)
+            ));
+        }
+    }
+}
