@@ -7,8 +7,8 @@
 > **目标设计**：
 > [Event-addressed Derived Recap V4](event-addressed-derived-recap-v4-target-design.md)
 > **兼容策略**：不迁移、不双写、不读取 historical DerivedMemory v2/v3
-> **当前推进点**：R0～R2 与 R3A～R3E 已完成至 `df8e3044`；R3F 真实 repo 验收及
-> engine online-tail 修正仍待关闭
+> **当前推进点**：R0～R3 已完成；R3 cutover 与 deterministic real-data release gate
+> 已于 2026-07-30 关闭
 
 ## 0. 原则
 
@@ -642,7 +642,7 @@ R2 已按 R2A～R2D 完成实现、独立审阅、P1 tail-fix 与真实性验收
 ### Intent
 
 把 `SessionJournal.Cli` 的 production composition切到 DerivedRecap，删除 current
-DerivedMemory，并用真实 repo 的隔离副本证明替换完成。
+DerivedMemory，并用真实 legacy export 导入得到的 current-wire 隔离 repo证明替换完成。
 
 这里的 Host 只指当前真正组合 `SessionJournal` 的 executable
 `SessionJournal.Cli`。仍使用 `ChatSessionEngine` 的 Galatea/FamilyChat Server迁移不属于
@@ -689,23 +689,34 @@ R3按以下顺序交付；前一工作包的 focused gate通过后才进入后�
    - persisted maintainer identity/resource logical name若仍是 canonical wire identity，不因
      assembly删除而改名。
 6. **R3F Real acceptance**
-   - mandatory gate使用真实 repo 的独立 copy与 scripted completion/maintainer，不依赖网络；
+   - mandatory gate使用真实 legacy export导入 current-wire 隔离 repo，并使用 scripted
+     completion/maintainer，不依赖网络；
    - optional real LLM smoke独立运行，不作为 deterministic release gate。
 
-### R3 实施记录（截至 `df8e3044`，2026-07-30）
+### R3 完成记录（2026-07-30）
 
 | 包 | 状态 | 实施证据 | 结果 |
 |---|---|---|---|
 | R3A Policy facts + bounded baseline | 完成 | `5dcdb142`、`bed40990` | production `MaintainAll` policy、typed unavailable 与 first-build replay seed 收口 |
 | R3B Exact Building quarantine | 完成 | `e8c62e4d` | exact unpublished Building quarantine，不借 whole-Store reset |
 | R3C Recap operator CLI | 完成 | `8804f96b`、`6fa52e6a`、`3e7c7666`、`f7b0e39f`、`ac15ff49` | create/inspect/run/resume/restore/abandon/reset、content-free report 与 path/readiness preflight |
-| R3D Online cutover | 完成主体 | `8ee323b3` | phase-first composition；Prepared/Started recovery不打开 Recap Store |
-| R3E Old subsystem deletion | 完成 | `df8e3044` | 删除旧 DerivedMemory production/tests/CLI surface，更新 solution/refs 与 architecture guard |
-| R3F Real acceptance | **Pending** | 尚无完成 commit | 仍需真实 repo 隔离副本的 deterministic scripted acceptance |
+| R3D Online cutover | 完成 | `8ee323b3`、`235be95c` | phase-first composition；lifecycle保持 engine-owned；Prepared/Started recovery不打开 Recap Store |
+| R3E Old subsystem deletion | 完成 | `df8e3044`、`4f518f6b` | 删除旧 DerivedMemory production/tests/CLI surface，更新 solution/refs、active docs 与 architecture guard |
+| R3F Real acceptance | 完成 | `637e1c6d`、`d95e2594`、`b2f17a32` | 真实 legacy export隔离导入；中断续跑、exact损坏恢复、online suffix与 Prepared删 v4 recovery |
 
-这不是 R3 全部关闭声明。`8ee323b3` 后发现的 engine online-tail/fresh-bootstrap ownership 修正仍在
-tail-fix 阶段，尚无可引用的完成 commit；真实 repo acceptance也仍是 pending。二者关闭并经过
-focused review 前，不得把上表扩写为 “R3 complete” 或 “V4 release gate complete”。
+R3 tail review发现并关闭了三项会削弱结论的问题：
+
+- lifecycle最初被 CLI 与 engine各调用一次；最终只允许 engine拥有一次 bounded lifecycle；
+- real-data test未配置 source时最初会空跑成 Passed；最终通过 conditional Fact明确报告 Skipped，
+  release runner则在 shell层强制 source/report参数；
+- partial failure最初发生在失败 block首个 endpoint；最终改为已有 rolling checkpoint后失败，
+  并断言 resume request的 canonical hash等于失败 suffix request。
+
+现存 historical SessionJournal directories使用已退休 wire，不能由 current codec直接 reopen。
+R3F没有伪造兼容层，而是选择仓库内真实
+`family-chat-legacy-upgrade/cyber.json`，先走 production `import-legacy-json`形成 124-event
+current-wire baseline，再开始 Recap gate。existing current-wire repo copy模式可在出现此类 fixture后
+增补；它不是 V4 cutover correctness的前置条件。
 
 R3A对既有 ceilings的解释保持保守：
 
@@ -769,10 +780,11 @@ rg "derived/memory/v2|derived/memory/v3"
 - solution build；
 - relative Markdown link scan；
 - `git diff --check`；
-- 一个真实 SessionJournal repo：
+- 一份真实 legacy-upgrade export，经 production importer形成隔离 current-wire repo：
 
 ```text
-copy real repo
+hash real export
+  -> import isolated current-wire repo
   -> record raw full-file hash + semantic fingerprint
   -> create Store
   -> bounded run
@@ -791,7 +803,8 @@ Mandatory scripted acceptance还必须证明：
 
 - source fixture从不原地修改；旧 `derived/memory/v1`不读取也不删除；
 - partial failure后 healthy block不重复调用，失败 block只补 missing suffix；
-- exact selected component损坏返回 `ExactPublishedSetInvalid`，不 fallback；
+- exact selected component损坏返回 `ExactPublishedSetInvalid`；neighbor non-fallback由多 ordinal
+  Store focused test独立证明；
 - Store/build/corrupt/restore期间 raw full-file hash、head、semantic fingerprint不变；
 - online append保留旧 lineage prefix，且只新增预期的 SessionJournal suffix；
 - `CompletionRequestPrepared`后保存 canonical request bytes/hash，删除
@@ -799,8 +812,51 @@ Mandatory scripted acceptance还必须证明：
 - acceptance report记录 source identity、policy/config、admission/route/call counts、
   corruption target、restore result、Prepared request hash与最终 raw prefix hash。
 
-real fixture位于 `gitignore`时，runner必须接受显式 source path；普通 CI只依赖生成式
-fixture。真实 provider smoke为 opt-in，只 gate结构合法与流程成功，不 gate生成文本。
+real fixture位于 `gitignore`时，runner通过
+`ATELIA_REAL_LEGACY_UPGRADE_EXPORT`接受显式 source path；未配置时该 external test明确
+Skipped，不能显示为 Passed。release gate在运行 test前还必须要求
+`ATELIA_DERIVED_RECAP_ACCEPTANCE_REPORT`存在。真实 provider smoke为 opt-in，只 gate结构合法与
+流程成功，不 gate生成文本。
+
+R3F 本次实际记录：
+
+- source：`cyber.json`，1,112,223 bytes，SHA-256
+  `98375378f32239eb3aafdf60d40a650c3c2a96fc3e4140698e0dfd934d9920ea`；
+- imported baseline：124 addresses；2 maintained blocks / 4 frozen route endpoints；
+- call trace：run第 4 次故障，resume 1 次且 canonical request hash与失败 suffix一致；
+- exact block corruption得到 `ExactPublishedSetInvalid`；Restore复用 checkpoint，0 provider call；
+- online + Prepared recovery精确追加
+  `ObservationAccepted → CompletionRequestPrepared → CompletionAttemptStarted →
+  AgentActionProduced` 两组共 8 events，原 124-address prefix保持；
+- 隔离副本内 invalid historical v1 sentinel保持 byte-identical；source与
+  build/restore前 raw full-tree fingerprint保持不变；Prepared删除整个 v4后恢复仍不重建 v4。
+
+release gate不能只依赖 test内条件，runner先强制外部参数，再执行 exact test：
+
+```bash
+: "${ATELIA_REAL_LEGACY_UPGRADE_EXPORT:?required}"
+: "${ATELIA_DERIVED_RECAP_ACCEPTANCE_REPORT:?required}"
+test -f "$ATELIA_REAL_LEGACY_UPGRADE_EXPORT"
+
+dotnet test \
+  tests/SessionJournal.Cli.Tests/SessionJournal.Cli.Tests.csproj \
+  -m:1 -nr:false --no-restore \
+  --filter 'FullyQualifiedName~DerivedRecapRealDataAcceptanceTests'
+```
+
+最终 gates：
+
+- Store 89/89、Planner 87/87、Maintainers 18/18、SessionJournal 313/313；
+- CLI normal suite 44 passed + 1 external real-data gate Skipped；带显式 source的 real-data gate
+  1/1；
+- SessionJournal.Offline 5/5；
+- `Atelia.sln` build 0 warnings / 0 errors；
+- active SessionJournal Markdown relative links、retired project absence、architecture guards与
+  `git diff --check`均通过。
+
+本次 report写入
+`gitignore/session-journal/derived-recap-r3-acceptance-20260730.json`（不进 git），report
+SHA-256 为 `4f33e9fb3cc63accaecd9d6300a68f54e41fdf7d4660cdcc69ae5f4ca4c79c8c`。
 
 ## 5. 完成定义
 

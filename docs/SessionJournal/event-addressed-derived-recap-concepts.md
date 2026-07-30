@@ -5,10 +5,10 @@
 > **目标设计**：
 > [Event-addressed Derived Recap V4](event-addressed-derived-recap-v4-target-design.md)
 >
-> 本文定义 current EADR V4 的领域术语与不变量。R0～R3E1 已完成 contracts、Store、Planner、
-> Maintainers、CLI/online composition 与旧 DerivedMemory 删除；R3F 真实 repo 验收仍按
-> implementation plan 单独关闭。目录布局、checksum 和原子写入详见 target design，实施证据详见
-> implementation plan。旧 P6 与更早实现只在明确标记的 historical/frozen 文档中继续按
+> 本文定义 current EADR V4 的领域术语与不变量。R0～R3 已完成 contracts、Store、Planner、
+> Maintainers、CLI/online composition、旧 DerivedMemory 删除与 real-data acceptance。目录布局、
+> checksum 和原子写入详见 target design；唯一 current实施状态与证据详见 implementation plan，
+> 避免多文档状态漂移。旧 P6 与更早实现只在明确标记的 historical/frozen 文档中继续按
 > DerivedMemory / ArtifactSet 名称解释。
 
 ## 0. Authority

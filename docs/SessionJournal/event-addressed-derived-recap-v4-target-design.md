@@ -11,7 +11,8 @@
 > **取代的候选设计**：
 > [DerivedMemory V3 candidate](superseded/derived-memory-v3-candidate/derived-memory-next-target-design.md)
 > **实施状态**：R0 Contracts + Publish/Read、R1 Planner + Build/Resume、R2 Exact-slot
-> Restore + Online lifecycle 已完成；R3 Host/CLI cutover 尚未启动
+> Restore + Online lifecycle、R3 Cutover + CLI + real-data acceptance均已完成；具体证据只在
+> implementation plan维护
 
 ## 0. 一句话目标
 
