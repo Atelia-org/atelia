@@ -302,6 +302,21 @@ public abstract record CreateBuildingResult {
     ) : CreateBuildingResult;
 }
 
+public abstract record QuarantineBuildingResult {
+    private QuarantineBuildingResult() {
+    }
+
+    public sealed record Quarantined(string QuarantineId)
+        : QuarantineBuildingResult;
+
+    public sealed record AlreadyAbsent : QuarantineBuildingResult;
+
+    public sealed record PublishedConflict : QuarantineBuildingResult;
+
+    public sealed record Unavailable(string Reason)
+        : QuarantineBuildingResult;
+}
+
 public abstract record FinalRecapBlockHealth {
     public abstract string StateToken { get; init; }
 

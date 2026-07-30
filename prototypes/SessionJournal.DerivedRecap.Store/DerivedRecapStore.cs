@@ -21,7 +21,9 @@ internal sealed record RecapStoreTestHooks(
     Action<string>? AfterAtomicFileReplace = null,
     Action<RecapIoPoint, string>? IoObserver = null,
     Action? BeforeRestorePublicationRead = null,
-    Action? BeforeRestoreEnvelopeRawHeadRecheck = null
+    Action? BeforeRestoreEnvelopeRawHeadRecheck = null,
+    Action? BeforeBuildingQuarantineRename = null,
+    Action? AfterBuildingQuarantineRename = null
 );
 
 public sealed class DerivedRecapStore {
@@ -40,6 +42,7 @@ public sealed class DerivedRecapStore {
     private readonly string _storeRoot;
     private readonly string _buildingRoot;
     private readonly string _publishedRoot;
+    private readonly string _buildingQuarantineRoot;
     private readonly string _storeHeaderPath;
 
     private DerivedRecapStore(
@@ -69,6 +72,12 @@ public sealed class DerivedRecapStore {
         _storeRoot = Path.Combine(_refsRoot, refToken);
         _buildingRoot = Path.Combine(_storeRoot, "building");
         _publishedRoot = Path.Combine(_storeRoot, "published");
+        _buildingQuarantineRoot = Path.Combine(
+            _v4Root,
+            "quarantine",
+            refToken,
+            "building"
+        );
         _storeHeaderPath = Path.Combine(_storeRoot, "store.json");
     }
 
@@ -451,6 +460,90 @@ public sealed class DerivedRecapStore {
                 cancellationToken
             )
             .ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Atomically removes one exact unpublished Building from active
+    /// membership while retaining it under Store-owned quarantine.
+    /// Published membership and every other Building remain untouched.
+    /// </summary>
+    public async ValueTask<QuarantineBuildingResult>
+        QuarantineBuildingAsync(
+        EventAddress admissionAnchor,
+        CancellationToken cancellationToken = default
+    ) {
+        if (admissionAnchor == default) {
+            throw new ArgumentException(
+                "Admission anchor cannot be default.",
+                nameof(admissionAnchor)
+            );
+        }
+
+        try {
+            EnsureScaffolding();
+            await using FileStream writeLock =
+                await _fileSystem.AcquireExclusiveLockAsync(
+                        _lockPath,
+                        cancellationToken
+                    )
+                    .ConfigureAwait(false);
+            string? unavailable =
+                await TryGetUnavailableReasonAsync(cancellationToken)
+                    .ConfigureAwait(false);
+            if (unavailable is not null) {
+                return new QuarantineBuildingResult.Unavailable(
+                    unavailable
+                );
+            }
+
+            string publishedPath = GetPublishedPath(admissionAnchor);
+            if (PathEntryExists(publishedPath)) {
+                return new QuarantineBuildingResult
+                    .PublishedConflict();
+            }
+
+            string buildingPath = GetBuildingPath(admissionAnchor);
+            if (!PathEntryExists(buildingPath)) {
+                return new QuarantineBuildingResult.AlreadyAbsent();
+            }
+            if (!Directory.Exists(buildingPath)) {
+                return new QuarantineBuildingResult.Unavailable(
+                    "Exact Building membership is not a directory."
+                );
+            }
+            _fileSystem.EnsureSafeDescendant(buildingPath);
+            _fileSystem.EnsureDirectoryDurable(
+                _buildingQuarantineRoot
+            );
+
+            string quarantineId = Guid.NewGuid().ToString("N");
+            string destination = Path.Combine(
+                _buildingQuarantineRoot,
+                EventAddressFileNameCodec.Format(admissionAnchor)
+                + $".{quarantineId}"
+            );
+            _testHooks.BeforeBuildingQuarantineRename?.Invoke();
+            _fileSystem.MoveDirectoryCreateNew(
+                buildingPath,
+                destination
+            );
+            _testHooks.AfterBuildingQuarantineRename?.Invoke();
+            _fileSystem.FlushDirectory(_buildingRoot);
+            _fileSystem.FlushDirectory(_buildingQuarantineRoot);
+            return new QuarantineBuildingResult.Quarantined(
+                quarantineId
+            );
+        }
+        catch (Exception exception)
+            when (exception is InvalidDataException
+                  or ArgumentException
+                  or NotSupportedException
+                  or IOException
+                  or UnauthorizedAccessException) {
+            return new QuarantineBuildingResult.Unavailable(
+                exception.Message
+            );
+        }
     }
 
     public async ValueTask<BuildingBlockInspection>
@@ -1722,6 +1815,18 @@ public sealed class DerivedRecapStore {
 
     internal string GetPublishedPathForTest(EventAddress anchor)
         => GetPublishedPath(anchor);
+
+    internal string GetBuildingQuarantinePathForTest(
+        EventAddress anchor,
+        string quarantineId
+    ) => Path.Combine(
+        _buildingQuarantineRoot,
+        EventAddressFileNameCodec.Format(anchor)
+        + $".{quarantineId}"
+    );
+
+    internal string BuildingQuarantineRootForTest
+        => _buildingQuarantineRoot;
 
     internal string StoreRootPathForTest => _storeRoot;
 

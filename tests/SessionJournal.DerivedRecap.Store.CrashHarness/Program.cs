@@ -12,7 +12,8 @@ internal static class Program {
         if (args.Length != 3) {
             Console.Error.WriteLine(
                 "usage: <create|publish|reset|rolling|building-create"
-                + "|executor-resume|executor-restore> "
+                + "|building-quarantine|executor-resume"
+                + "|executor-restore> "
                 + "<failpoint> <repository>"
             );
             return 2;
@@ -82,6 +83,14 @@ internal static class Program {
                         crash();
                     }
                 },
+            BeforeBuildingQuarantineRename:
+                failpoint == "quarantine-before-rename"
+                    ? crash
+                    : null,
+            AfterBuildingQuarantineRename:
+                failpoint == "quarantine-after-rename"
+                    ? crash
+                    : null,
             IoObserver: (point, path) => {
                 if (failpoint == "building-manifest-installed"
                     && point == RecapIoPoint.FileInstalled
@@ -184,6 +193,13 @@ internal static class Program {
                         buildingAnchor,
                         [buildingPlan]
                     )
+                );
+                break;
+            case "building-quarantine":
+                EventAddress quarantineAnchor =
+                    engine.ReadCurrentLineageHeaders().CapturedHead;
+                _ = await store.QuarantineBuildingAsync(
+                    quarantineAnchor
                 );
                 break;
             case "executor-resume":

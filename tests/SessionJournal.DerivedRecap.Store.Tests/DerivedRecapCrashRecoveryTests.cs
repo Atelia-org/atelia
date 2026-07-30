@@ -154,6 +154,70 @@ public sealed class DerivedRecapCrashRecoveryTests {
     }
 
     [Theory]
+    [InlineData("quarantine-before-rename", false)]
+    [InlineData("quarantine-after-rename", true)]
+    public async Task BuildingQuarantineCrashExposesActiveOrQuarantinedWholeDirectory(
+        string failpoint,
+        bool quarantined
+    ) {
+        if (!OperatingSystem.IsLinux()) {
+            return;
+        }
+        string path = await CreatePublishableBuildingAsync();
+        try {
+            await RunCrashHarnessAsync(
+                path,
+                "building-quarantine",
+                failpoint
+            );
+
+            using SessionJournalEngine engine =
+                SessionJournalEngine.Open(path);
+            DerivedRecapStore store = DerivedRecapStore.Open(
+                path,
+                engine.BranchRefId
+            );
+            EventAddress anchor =
+                engine.ReadCurrentLineageHeaders().CapturedHead;
+            BuildingReadResult building =
+                await store.ReadBuildingAsync(anchor);
+            string[] quarantineEntries =
+                Directory.Exists(
+                    store.BuildingQuarantineRootForTest
+                )
+                    ? Directory.GetDirectories(
+                        store.BuildingQuarantineRootForTest
+                    )
+                    : [];
+
+            if (quarantined) {
+                Assert.IsType<BuildingReadResult.Missing>(building);
+                string quarantine = Assert.Single(
+                    quarantineEntries
+                );
+                Assert.True(
+                    File.Exists(
+                        Path.Combine(quarantine, "manifest.json")
+                    )
+                );
+            }
+            else {
+                Assert.IsType<BuildingReadResult.Available>(building);
+                Assert.Empty(quarantineEntries);
+            }
+            Assert.IsType<DerivedRecapSelection.EmptyLineage>(
+                await store.SelectNthPreviousAsync(
+                    engine.ReadCurrentLineageHeaders(),
+                    0
+                )
+            );
+        }
+        finally {
+            TryDelete(path);
+        }
+    }
+
+    [Theory]
     [InlineData("rolling-before-replace", false)]
     [InlineData("rolling-after-replace", true)]
     public async Task RollingCheckpointCrashExposesWholeOldOrNewFile(
