@@ -211,6 +211,95 @@ public sealed class DerivedRecapCrashRecoveryTests {
         }
     }
 
+    [Theory]
+    [InlineData("restore-final-after-replace")]
+    [InlineData("restore-envelope-before-replace")]
+    public async Task PublishedRestoreCrashBeforeEnvelopeRetainsExactMembershipAndPendingRepair(
+        string failpoint
+    ) {
+        if (!OperatingSystem.IsLinux()) {
+            return;
+        }
+        string path =
+            await CreateDamagedPublishedRestoreFixtureAsync();
+        try {
+            EventAddress anchor;
+            await RunCrashHarnessAsync(
+                path,
+                "executor-restore",
+                failpoint
+            );
+            Assert.Equal(1, CountMaintainerCalls(path));
+
+            using (SessionJournalEngine engine =
+                   SessionJournalEngine.Open(path)) {
+                DerivedRecapStore store = DerivedRecapStore.Open(
+                    path,
+                    engine.BranchRefId
+                );
+                SessionCurrentLineageSnapshot lineage =
+                    engine.ReadCurrentLineageHeaders();
+                anchor = lineage.CapturedHead;
+                DerivedRecapSelection
+                    .ExactPublishedSetInvalid invalid =
+                    Assert.IsType<
+                        DerivedRecapSelection
+                            .ExactPublishedSetInvalid
+                    >(
+                        await store.SelectNthPreviousAsync(
+                            lineage,
+                            0
+                        )
+                    );
+                Assert.Equal(anchor, invalid.SetAdmissionAnchor);
+                Assert.True(
+                    Directory.Exists(
+                        store.GetPublishedPathForTest(anchor)
+                    )
+                );
+            }
+
+            await RunCrashHarnessSuccessAsync(
+                path,
+                "executor-restore"
+            );
+
+            Assert.Equal(1, CountMaintainerCalls(path));
+            await AssertSelectedMaterializesAsync(path, anchor);
+        }
+        finally {
+            TryDelete(path);
+        }
+    }
+
+    [Fact]
+    public async Task PublishedRestoreCrashAfterEnvelopeExposesCompleteSelection() {
+        if (!OperatingSystem.IsLinux()) {
+            return;
+        }
+        string path =
+            await CreateDamagedPublishedRestoreFixtureAsync();
+        try {
+            await RunCrashHarnessAsync(
+                path,
+                "executor-restore",
+                "restore-envelope-after-replace"
+            );
+
+            Assert.Equal(1, CountMaintainerCalls(path));
+            EventAddress anchor;
+            using (SessionJournalEngine engine =
+                   SessionJournalEngine.Open(path)) {
+                anchor =
+                    engine.ReadCurrentLineageHeaders().CapturedHead;
+            }
+            await AssertSelectedMaterializesAsync(path, anchor);
+        }
+        finally {
+            TryDelete(path);
+        }
+    }
+
     private static string CreateRawRepository() {
         string path = NewPath();
         using SessionJournalEngine engine = SessionJournalEngine.Create(
@@ -333,6 +422,90 @@ public sealed class DerivedRecapCrashRecoveryTests {
         return path;
     }
 
+    private static async ValueTask<string>
+        CreateDamagedPublishedRestoreFixtureAsync() {
+        string path = await CreatePublishableBuildingAsync();
+        using SessionJournalEngine engine =
+            SessionJournalEngine.Open(path);
+        DerivedRecapStore store = DerivedRecapStore.Open(
+            path,
+            engine.BranchRefId
+        );
+        EventAddress anchor =
+            engine.ReadCurrentLineageHeaders().CapturedHead;
+        _ = await new DerivedRecapPublisher(store, engine)
+            .PublishAsync(anchor);
+        string publishedPath =
+            store.GetPublishedPathForTest(anchor);
+        string blockPath = Assert.Single(
+            Directory.GetFiles(
+                Path.Combine(publishedPath, "blocks"),
+                "*.json",
+                SearchOption.TopDirectoryOnly
+            )
+        );
+        await File.WriteAllTextAsync(blockPath, "damaged");
+        string workPath = Path.Combine(
+            publishedPath,
+            "work",
+            Path.GetFileName(blockPath)
+        );
+        if (File.Exists(workPath)) {
+            File.Delete(workPath);
+        }
+        _ = Assert.IsType<
+            DerivedRecapSelection.ExactPublishedSetInvalid
+        >(
+            await store.SelectNthPreviousAsync(
+                engine.ReadCurrentLineageHeaders(),
+                0
+            )
+        );
+        return path;
+    }
+
+    private static async ValueTask
+        AssertSelectedMaterializesAsync(
+        string path,
+        EventAddress expectedAnchor
+    ) {
+        using SessionJournalEngine engine =
+            SessionJournalEngine.Open(path);
+        DerivedRecapStore store = DerivedRecapStore.Open(
+            path,
+            engine.BranchRefId
+        );
+        var selected =
+            Assert.IsType<DerivedRecapSelection.Selected>(
+                await store.SelectNthPreviousAsync(
+                    engine.ReadCurrentLineageHeaders(),
+                    0
+                )
+            );
+        Assert.Equal(
+            expectedAnchor,
+            selected.Descriptor.SetAdmissionAnchor
+        );
+        DerivedRecapMaterialization materialized =
+            await store.MaterializeAsync(selected.Descriptor);
+        Assert.Equal(
+            "|roleplay.autobiographical:1",
+            Assert.Single(materialized.Contributions).ExactText
+        );
+    }
+
+    private static int CountMaintainerCalls(string path) {
+        string logPath = Path.Combine(
+            path,
+            "recap-maintainer-calls.jsonl"
+        );
+        Assert.True(
+            File.Exists(logPath),
+            $"Maintainer call log is missing: {logPath}"
+        );
+        return File.ReadLines(logPath).Count();
+    }
+
     private static async Task RunCrashHarnessAsync(
         string repositoryPath,
         string operation,
@@ -376,6 +549,49 @@ public sealed class DerivedRecapCrashRecoveryTests {
         Assert.Contains(
             $"Intentional DerivedRecap crash at '{failpoint}'",
             output + error,
+            StringComparison.Ordinal
+        );
+    }
+
+    private static async Task RunCrashHarnessSuccessAsync(
+        string repositoryPath,
+        string operation
+    ) {
+        string harnessPath = GetCrashHarnessPath();
+        Assert.True(
+            File.Exists(harnessPath),
+            $"Crash harness was not built: {harnessPath}"
+        );
+        var startInfo = new ProcessStartInfo("dotnet") {
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            WorkingDirectory = repositoryPath
+        };
+        startInfo.ArgumentList.Add(harnessPath);
+        startInfo.ArgumentList.Add(operation);
+        startInfo.ArgumentList.Add("none");
+        startInfo.ArgumentList.Add(repositoryPath);
+        using Process process = Process.Start(startInfo)
+            ?? throw new InvalidOperationException(
+                "Failed to start DerivedRecap crash harness."
+            );
+        Task<string> stdout = process.StandardOutput.ReadToEndAsync();
+        Task<string> stderr = process.StandardError.ReadToEndAsync();
+        await process.WaitForExitAsync()
+            .WaitAsync(TimeSpan.FromSeconds(30));
+        string output = await stdout;
+        string error = await stderr;
+        Assert.True(
+            process.ExitCode == 0,
+            $"Crash harness failed with exit code "
+            + $"{process.ExitCode}.{Environment.NewLine}"
+            + output
+            + error
+        );
+        Assert.Contains(
+            "executor-result:Restored",
+            output,
             StringComparison.Ordinal
         );
     }

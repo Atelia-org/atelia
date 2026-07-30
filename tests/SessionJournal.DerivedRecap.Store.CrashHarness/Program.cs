@@ -12,7 +12,7 @@ internal static class Program {
         if (args.Length != 3) {
             Console.Error.WriteLine(
                 "usage: <create|publish|reset|rolling|building-create"
-                + "|executor-resume> "
+                + "|executor-resume|executor-restore> "
                 + "<failpoint> <repository>"
             );
             return 2;
@@ -27,6 +27,8 @@ internal static class Program {
             $"Intentional DerivedRecap crash at '{failpoint}'."
         );
         int workReplaceCount = 0;
+        string? restoreFinalPath = null;
+        string? restoreEnvelopePath = null;
         var hooks = new RecapStoreTestHooks(
             AfterPublicationSealed:
                 failpoint == "publication-sealed" ? crash : null,
@@ -47,12 +49,28 @@ internal static class Program {
             BeforePublicationSealInstall:
                 failpoint == "publication-before-seal" ? crash : null,
             BeforeAtomicFileReplace:
-                failpoint == "rolling-before-replace"
-                    ? _ => crash()
-                    : null,
+                path => {
+                    if (failpoint == "rolling-before-replace") {
+                        crash();
+                    }
+                    if (failpoint
+                            == "restore-envelope-before-replace"
+                        && PathEquals(path, restoreEnvelopePath)) {
+                        crash();
+                    }
+                },
             AfterAtomicFileReplace:
                 path => {
                     if (failpoint == "rolling-after-replace") {
+                        crash();
+                    }
+                    if (failpoint == "restore-final-after-replace"
+                        && PathEquals(path, restoreFinalPath)) {
+                        crash();
+                    }
+                    if (failpoint
+                            == "restore-envelope-after-replace"
+                        && PathEquals(path, restoreEnvelopePath)) {
                         crash();
                     }
                     if (TryParseExecutorWorkFailpoint(
@@ -182,6 +200,42 @@ internal static class Program {
                     return 0;
                 }
                 break;
+            case "executor-restore":
+                SessionCurrentLineageSnapshot restoreLineage =
+                    engine.ReadCurrentLineageHeaders();
+                string publishedPath =
+                    store.GetPublishedPathForTest(
+                        restoreLineage.CapturedHead
+                    );
+                string[] finalPaths = Directory.GetFiles(
+                    Path.Combine(publishedPath, "blocks"),
+                    "*.json",
+                    SearchOption.TopDirectoryOnly
+                );
+                if (finalPaths.Length != 1) {
+                    throw new InvalidDataException(
+                        "Executor restore crash fixture requires exactly "
+                        + "one Published final block."
+                    );
+                }
+                restoreFinalPath = Path.GetFullPath(finalPaths[0]);
+                restoreEnvelopePath = Path.GetFullPath(
+                    Path.Combine(publishedPath, "publication.json")
+                );
+                DerivedRecapRestoreResult restoreResult =
+                    await RestoreExecutorAsync(
+                        engine,
+                        store,
+                        repositoryPath,
+                        restoreLineage
+                    );
+                Console.Out.WriteLine(
+                    $"executor-result:{restoreResult.GetType().Name}"
+                );
+                if (failpoint == "none") {
+                    return 0;
+                }
+                break;
             default:
                 Console.Error.WriteLine(
                     $"unknown operation '{operation}'"
@@ -252,6 +306,72 @@ internal static class Program {
         return await executor.ResumeAsync(admission);
     }
 
+    private static async ValueTask<DerivedRecapRestoreResult>
+        RestoreExecutorAsync(
+        SessionJournalEngine engine,
+        DerivedRecapStore store,
+        string repositoryPath,
+        SessionCurrentLineageSnapshot lineage
+    ) {
+        PublishedRestoreInspectionResult.Available available =
+            await store.InspectPublishedForRestoreAsync(
+                    lineage.CapturedHead,
+                    lineage
+                )
+                is PublishedRestoreInspectionResult.Available exact
+                    ? exact
+                    : throw new InvalidDataException(
+                        "Executor restore crash fixture exact Published "
+                        + "set is unavailable for restore."
+                    );
+        MaintainRecapBlockPlan[] plans = available.Inspection
+            .FrozenPlan.Blocks
+            .Select(plan =>
+                plan as MaintainRecapBlockPlan
+                ?? throw new InvalidDataException(
+                    "Executor restore crash fixture supports Maintain "
+                    + "plans only."
+                ))
+            .ToArray();
+        var catalog = plans
+            .Select(plan => new RecapBlockCatalogEntry(
+                plan.RecapBlockId,
+                plan.Target,
+                plan.MaintainerId,
+                plan.MaxContentUtf8Bytes
+            ))
+            .ToArray();
+        var maintainers = plans
+            .Select(plan =>
+                (IRecapBlockMaintainer)new DurableDeterministicMaintainer(
+                    plan.MaintainerId,
+                    plan.Target,
+                    Path.Combine(
+                        repositoryPath,
+                        "recap-maintainer-calls.jsonl"
+                    )
+                ))
+            .ToArray();
+        var executor = new DerivedRecapRestoreExecutor(
+            engine,
+            store,
+            new RecapPlannerConfig(
+                catalog,
+                rawGrowthTrigger: 0,
+                rawGrowthHardLimit: 10_000,
+                maxRouteEndpointsPerBlock: 16,
+                maxMaintainerCallsPerBuild: 32,
+                maxRawEventsPerStep: 10_000,
+                maxRawEventsPerBuild: 50_000
+            ),
+            new RecapBlockMaintainerRegistry(maintainers)
+        );
+        return await executor.RestoreAsync(
+            lineage.CapturedHead,
+            lineage.CapturedHead
+        );
+    }
+
     private static bool TryParseExecutorWorkFailpoint(
         string failpoint,
         out int failAfter
@@ -272,6 +392,14 @@ internal static class Program {
             + $"{Path.DirectorySeparatorChar}",
             StringComparison.Ordinal
         );
+
+    private static bool PathEquals(string path, string? expected)
+        => expected is not null
+            && string.Equals(
+                Path.GetFullPath(path),
+                expected,
+                StringComparison.Ordinal
+            );
 
     private sealed class NoBuildPolicy : IRecapPlanningPolicy {
         public RecapPlanningPolicyDecision Decide(
