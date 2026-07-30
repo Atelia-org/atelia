@@ -72,8 +72,15 @@ public sealed class ProgramRecapExecutionCommandTests : IDisposable {
                 );
             }
         );
-        Assert.Equal(32, config.RawGrowthTrigger);
-        Assert.Equal(512, config.RawGrowthHardLimit);
+        Assert.Equal(
+            20,
+            config.Cadence.MinimumRecentHistoryUnitCount
+        );
+        Assert.Equal(
+            24,
+            config.Cadence.RecapBuildIntervalUnitCount
+        );
+        Assert.Equal(512, config.MaxRawGrowthEventCount);
         Assert.Equal(4, config.MaxRouteEndpointsPerBlock);
         Assert.Equal(8, config.MaxMaintainerCallsPerBuild);
         Assert.Equal(64, config.MaxRawEventsPerStep);

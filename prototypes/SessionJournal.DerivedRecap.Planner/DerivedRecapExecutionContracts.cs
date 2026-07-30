@@ -82,6 +82,7 @@ public abstract record DerivedRecapExecutionResult {
         : DerivedRecapExecutionResult;
 
     public sealed record BlockFailed(
+        EventAddress SetAdmissionAnchor,
         RecapBlockId RecapBlockId,
         string Code,
         string Detail

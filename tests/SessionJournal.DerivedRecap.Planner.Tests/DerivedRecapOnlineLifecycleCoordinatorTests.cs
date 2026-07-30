@@ -170,7 +170,7 @@ public sealed class DerivedRecapOnlineLifecycleCoordinatorTests {
         );
         DerivedRecapOnlineLifecycleCoordinator coordinator =
             fixture.CreateCoordinator(
-                rawGrowthTrigger: 1,
+                recapBuildIntervalUnitCount: 1,
                 policy,
                 maintainer
             );
@@ -236,7 +236,7 @@ public sealed class DerivedRecapOnlineLifecycleCoordinatorTests {
         );
         DerivedRecapOnlineLifecycleCoordinator coordinator =
             fixture.CreateCoordinator(
-                rawGrowthTrigger: 100,
+                recapBuildIntervalUnitCount: 100,
                 policy,
                 maintainer
             );
@@ -372,8 +372,12 @@ public sealed class DerivedRecapOnlineLifecycleCoordinatorTests {
         Assert.Equal(["S0", "Run", "S0"], script.Trace);
     }
 
-    [Fact]
-    public async Task BuildLimitOnlyMapsToBackpressure() {
+    [Theory]
+    [InlineData(RecapPlanDefectCodes.RawBuildLimitExceeded)]
+    [InlineData(
+        RecapPlanDefectCodes.MaxRawGrowthEventCountExceeded
+    )]
+    public async Task BuildLimitOnlyMapsToBackpressure(string code) {
         using LifecycleFixture fixture =
             LifecycleFixture.Create(nthPrevious: 0, historyPairs: 1);
         EventAddress latest = fixture.Lineage.HeadToRoot[1].Address;
@@ -383,7 +387,7 @@ public sealed class DerivedRecapOnlineLifecycleCoordinatorTests {
             [
                 new DerivedRecapExecutionResult.Unavailable([
                     new DerivedRecapExecutionDefect(
-                        RecapPlanDefectCodes.RawBuildLimitExceeded,
+                        code,
                         "bounded"
                     )
                 ])
@@ -577,6 +581,7 @@ public sealed class DerivedRecapOnlineLifecycleCoordinatorTests {
             [],
             [
                 new DerivedRecapExecutionResult.BlockFailed(
+                    failedAnchor,
                     new RecapBlockId("self"),
                     DerivedRecapExecutionDefectCodes.MaintainerFailed,
                     "failed"
@@ -975,7 +980,7 @@ public sealed class DerivedRecapOnlineLifecycleCoordinatorTests {
 
         public DerivedRecapOnlineLifecycleCoordinator
             CreateCoordinator(
-            int rawGrowthTrigger,
+            int recapBuildIntervalUnitCount,
             IRecapPlanningPolicy policy,
             IRecapBlockMaintainer maintainer
         ) => new(
@@ -990,8 +995,11 @@ public sealed class DerivedRecapOnlineLifecycleCoordinatorTests {
                         MaxContent
                     )
                 ],
-                rawGrowthTrigger,
-                rawGrowthHardLimit: 1000,
+                new RecapCadenceConfig(
+                    minimumRecentHistoryUnitCount: 0,
+                    recapBuildIntervalUnitCount
+                ),
+                maxRawGrowthEventCount: 1000,
                 maxRouteEndpointsPerBlock: 8,
                 maxMaintainerCallsPerBuild: 1,
                 maxRawEventsPerStep: 1000,

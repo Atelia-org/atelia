@@ -24,9 +24,9 @@ public sealed class BoundedMaintainAllRecapPlanningPolicy
                     static pair => pair.index
                 );
         Dictionary<int, EventAddress> replaySafe =
-            scheduling.ReplaySafeBoundaries.ToDictionary(
-                address => lineage[address],
-                static address => address
+            scheduling.HistoryWindow.ReplaySafeBoundaries.ToDictionary(
+                boundary => lineage[boundary.Address],
+                static boundary => boundary.Address
             );
 
         IReadOnlyList<BlockStart> starts = ResolveStarts(
@@ -41,23 +41,31 @@ public sealed class BoundedMaintainAllRecapPlanningPolicy
         int newestAllowedStartIndex = starts.Min(
             static start => start.LineageIndex
         );
-        int[] admissionIndices = [
-            .. replaySafe.Keys
-                .Where(index =>
-                    index < latestPublishedIndex
-                    && index < newestAllowedStartIndex)
-                .Order()
+        (int Index, int CompletedUnits)[] admissions = [
+            .. context.Cadence.AdmissionCandidates
+                .Select(candidate => (
+                    Index: lineage[candidate.Address],
+                    CompletedUnits:
+                        candidate.HistoryUnitCountSinceBaseline
+                ))
+                .Where(candidate =>
+                    candidate.Index < latestPublishedIndex
+                    && candidate.Index < newestAllowedStartIndex)
+                .OrderByDescending(
+                    static candidate => candidate.CompletedUnits
+                )
+                .ThenBy(static candidate => candidate.Index)
         ];
-        if (admissionIndices.Length == 0) {
+        if (admissions.Length == 0) {
             return Unavailable(
                 RecapPlanDefectCodes.AdmissionInvalid,
-                "No replay-safe admission is strictly newer than every "
-                + "block cursor and the latest Published set."
+                "Evaluator-provided cadence candidates are not newer "
+                + "than the authorized source cursors."
             );
         }
 
         IReadOnlyList<RecapPlanDefect> lastDefects = [];
-        foreach (int admissionIndex in admissionIndices) {
+        foreach ((int admissionIndex, _) in admissions) {
             CandidateResult candidate = TryBuildCandidate(
                 config,
                 starts,

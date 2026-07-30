@@ -116,6 +116,24 @@ public sealed class BoundedMaintainAllRecapPlanningPolicyTests {
     }
 
     [Fact]
+    public void EqualUnitCandidatesPreferRawNewestBoundary() {
+        PolicyModel model = PolicyModel.FirstBuild(
+            replaySafeIndices: [10, 8, 7, 0],
+            maxRawEventsPerStep: 10,
+            maxRawEventsPerBuild: 3,
+            completedUnitCounts: new Dictionary<int, int> {
+                [8] = 2,
+                [7] = 2,
+                [0] = 10
+            }
+        );
+
+        RecapPlanningPolicyDecision.Build build = model.Build();
+
+        Assert.Equal(model.At(7), build.SetAdmissionAnchor);
+    }
+
+    [Fact]
     public void SparseReplayGapReturnsTypedUnavailable() {
         PolicyModel model = PolicyModel.FirstBuild(
             replaySafeIndices: [10, 0],
@@ -225,7 +243,9 @@ public sealed class BoundedMaintainAllRecapPlanningPolicyTests {
         public static PolicyModel FirstBuild(
             IReadOnlyList<int> replaySafeIndices,
             int maxRawEventsPerStep,
-            int maxRawEventsPerBuild = 100
+            int maxRawEventsPerBuild = 100,
+            IReadOnlyDictionary<int, int>?
+                completedUnitCounts = null
         ) {
             EventAddress[] addresses = Addresses();
             RecapPlannerConfig config = ConfigFor(
@@ -238,7 +258,8 @@ public sealed class BoundedMaintainAllRecapPlanningPolicyTests {
             var scheduling = SchedulingFor(
                 addresses,
                 replaySafeIndices,
-                latestPublishedIndex: null
+                latestPublishedIndex: null,
+                completedUnitCounts
             );
             return new PolicyModel(
                 addresses,
@@ -324,7 +345,9 @@ public sealed class BoundedMaintainAllRecapPlanningPolicyTests {
         private static RecapSchedulingFacts SchedulingFor(
             EventAddress[] addresses,
             IReadOnlyList<int> replaySafeIndices,
-            int? latestPublishedIndex
+            int? latestPublishedIndex,
+            IReadOnlyDictionary<int, int>?
+                completedUnitCounts = null
         ) {
             SessionCurrentLineageHeader[] lineage = [
                 .. addresses.Select((address, index) =>
@@ -339,11 +362,29 @@ public sealed class BoundedMaintainAllRecapPlanningPolicyTests {
             return new RecapSchedulingFacts(
                 addresses[0],
                 lineage,
-                [
-                    .. replaySafeIndices.Select(
-                        index => addresses[index]
-                    )
-                ],
+                new RecapHistoryWindowFacts(
+                    addresses[10],
+                    totalHistoryUnitCount: 10,
+                    [
+                        .. replaySafeIndices
+                            .Where(static index => index != 10)
+                            .OrderByDescending(static index => index)
+                            .Select(index =>
+                                new SessionHistoryPlanningBoundary(
+                                    addresses[index],
+                                    CompletedUnitCount:
+                                        completedUnitCounts?
+                                            .GetValueOrDefault(
+                                                index,
+                                                10 - index
+                                            )
+                                        ?? 10 - index
+                                ))
+                    ]
+                ),
+                latestPublishedIndex is { } baseline
+                    ? addresses[baseline]
+                    : addresses[10],
                 latestPublishedIndex is { } latest
                     ? addresses[latest]
                     : null
@@ -369,8 +410,11 @@ public sealed class BoundedMaintainAllRecapPlanningPolicyTests {
                         1024
                     ))
             ],
-            rawGrowthTrigger: 0,
-            rawGrowthHardLimit: 100,
+            new RecapCadenceConfig(
+                minimumRecentHistoryUnitCount: 0,
+                recapBuildIntervalUnitCount: 1
+            ),
+            maxRawGrowthEventCount: 100,
             maxRouteEndpointsPerBlock,
             maxMaintainerCallsPerBuild,
             maxRawEventsPerStep,

@@ -525,6 +525,12 @@ V1的 cadence使用 `HistoryUnitCount`；`maxRawEventsPerStep/Build`继续作为
 
 ### C0：Cadence contracts + deterministic policy
 
+> **状态（2026-07-31）**：已完成。Runtime已引入
+> `RecapCadenceConfig`、content-free `RecapHistoryWindowFacts`、
+> evaluator-owned normalized `RecapCadenceFacts`、独立 header negative
+> prefilter与 deterministic budget fallback；programmatic CLI composition 已完成 breaking
+> migration，但没有接 repo file。C1尚未启动。
+
 - 按 [Derived Recap Cadence](derived-recap-cadence-target-design.md)实现
   `RecapCadenceConfig`；
 - 删除 `RawGrowthTrigger` scheduling authority；

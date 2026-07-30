@@ -330,7 +330,7 @@ public sealed class DerivedRecapOnlineLifecycleCoordinator
         IReadOnlyList<DerivedRecapExecutionDefect> defects
     ) => defects.Count != 0
          && defects.All(static defect => defect.Code is
-             RecapPlanDefectCodes.RawGrowthHardLimitExceeded
+             RecapPlanDefectCodes.MaxRawGrowthEventCountExceeded
              or RecapPlanDefectCodes.RouteLimitExceeded
              or RecapPlanDefectCodes.CallLimitExceeded
              or RecapPlanDefectCodes.RawStepLimitExceeded

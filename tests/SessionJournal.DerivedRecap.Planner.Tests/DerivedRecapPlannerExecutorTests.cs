@@ -136,7 +136,7 @@ public sealed class DerivedRecapPlannerExecutorTests {
         DerivedRecapPlannerExecutor executor = fixture.CreateExecutor(
             policy,
             [maintainer],
-            rawGrowthTrigger: 100
+            recapBuildIntervalUnitCount: 100
         );
 
         DerivedRecapExecutionResult result =
@@ -183,6 +183,125 @@ public sealed class DerivedRecapPlannerExecutorTests {
             secondHead,
             Assert.Single(source.FrozenInputs).AbsorbedThrough
         );
+    }
+
+    [Fact]
+    public async Task CadenceBuildPreservesMinimumRecentHistoryUnits() {
+        using TestFixture fixture = await TestFixture.CreateAsync(
+            historyPairs: 3
+        );
+        var maintainer = new ScriptedMaintainer(
+            "self-maintainer",
+            fixture.SelfTarget,
+            static (_, _) => "recap"
+        );
+        DerivedRecapPlannerExecutor executor = fixture.CreateExecutor(
+            new BoundedMaintainAllRecapPlanningPolicy(),
+            [maintainer],
+            minimumRecentHistoryUnitCount: 2,
+            recapBuildIntervalUnitCount: 2
+        );
+
+        var published =
+            Assert.IsType<DerivedRecapExecutionResult.Published>(
+                await executor.RunAsync()
+            );
+        SessionHistoryPlanningWindow recent =
+            fixture.Engine.ReadHistoryPlanningWindowAt(
+                fixture.Engine.ReadCurrentHead()!.Value,
+                published.Descriptor.SetAdmissionAnchor
+            );
+
+        Assert.Equal(2, recent.Units.Count);
+        Assert.Equal(1, maintainer.CallCount);
+    }
+
+    [Fact]
+    public async Task LaggingInheritedCursorDoesNotRecountPublishedUnits() {
+        using TestFixture fixture = await TestFixture.CreateAsync(
+            historyPairs: 2
+        );
+        var maintainer = new ScriptedMaintainer(
+            "self-maintainer",
+            fixture.SelfTarget,
+            static (_, _) => "recap"
+        );
+        DerivedRecapPlannerExecutor firstExecutor =
+            fixture.CreateExecutor(
+                new BoundedMaintainAllRecapPlanningPolicy(),
+                [maintainer],
+                minimumRecentHistoryUnitCount: 1,
+                recapBuildIntervalUnitCount: 1
+            );
+        _ = Assert.IsType<DerivedRecapExecutionResult.Published>(
+            await firstExecutor.RunAsync()
+        );
+
+        fixture.AppendPair("second-cycle");
+        var inheritPolicy = new DelegatePolicy(context => {
+            RecapCadenceBoundary admission =
+                context.Cadence.AdmissionCandidates
+                    .OrderByDescending(candidate =>
+                        candidate.HistoryUnitCountSinceBaseline)
+                    .First();
+            RecapSourceIntent source = Assert.Single(
+                context.PolicyFacts.AvailableSources
+            ).Source;
+            return new RecapPlanningPolicyDecision.Build(
+                admission.Address,
+                [
+                    new RecapBlockPlanningDecision.Inherit(
+                        fixture.SelfId,
+                        source
+                    )
+                ]
+            );
+        });
+        DerivedRecapPlannerExecutor secondExecutor =
+            fixture.CreateExecutor(
+                inheritPolicy,
+                [maintainer],
+                minimumRecentHistoryUnitCount: 1,
+                recapBuildIntervalUnitCount: 1
+            );
+        _ = Assert.IsType<DerivedRecapExecutionResult.Published>(
+            await secondExecutor.RunAsync()
+        );
+
+        fixture.Engine.AppendRuntimeConfigSetup(
+            new SessionRuntimeConfiguration(
+                "model-b",
+                "surface-b",
+                SessionJournalDefaults.Schema,
+                new(0)
+            )
+        );
+        fixture.Engine.AppendSystemPromptSetup("system-b");
+        var mustNotRun = new DelegatePolicy(static _ =>
+            throw new Xunit.Sdk.XunitException(
+                "Published units before the cadence baseline must "
+                + "not be recounted."
+            )
+        );
+        DerivedRecapPlannerExecutor thirdExecutor =
+            fixture.CreateExecutor(
+                mustNotRun,
+                [maintainer],
+                minimumRecentHistoryUnitCount: 1,
+                recapBuildIntervalUnitCount: 1
+            );
+
+        var noBuild =
+            Assert.IsType<DerivedRecapExecutionResult.NoBuild>(
+                await thirdExecutor.RunAsync()
+            );
+
+        Assert.Equal(
+            RecapPlanReasons.BelowCadenceThreshold,
+            noBuild.Reason
+        );
+        Assert.Equal(0, mustNotRun.CallCount);
+        Assert.Equal(1, maintainer.CallCount);
     }
 
     [Fact]
@@ -1313,7 +1432,8 @@ public sealed class DerivedRecapPlannerExecutorTests {
         public DerivedRecapPlannerExecutor CreateExecutor(
             IRecapPlanningPolicy policy,
             IReadOnlyList<IRecapBlockMaintainer> maintainers,
-            int rawGrowthTrigger = 0,
+            int minimumRecentHistoryUnitCount = 0,
+            int recapBuildIntervalUnitCount = 1,
             int maxRouteEndpointsPerBlock = 4,
             int maxMaintainerCallsPerBuild = 8,
             IReadOnlyList<RecapBlockCatalogEntry>? catalog = null,
@@ -1330,8 +1450,11 @@ public sealed class DerivedRecapPlannerExecutorTests {
                         MaxContent
                     )
                 ],
-                rawGrowthTrigger,
-                rawGrowthHardLimit: 1000,
+                new RecapCadenceConfig(
+                    minimumRecentHistoryUnitCount,
+                    recapBuildIntervalUnitCount
+                ),
+                maxRawGrowthEventCount: 1000,
                 maxRouteEndpointsPerBlock,
                 maxMaintainerCallsPerBuild,
                 maxRawEventsPerStep: 1000,

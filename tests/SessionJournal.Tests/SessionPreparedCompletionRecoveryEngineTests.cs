@@ -246,6 +246,73 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
     }
 
     [Fact]
+    public async Task PreparedRetryAndFailureDoNotAddHistoryUnits() {
+        string path = NewJournalPath();
+        var sourceClient = new ScriptedClient();
+        _ = await CreateUncertainAsync(
+            path,
+            CreateRuntime(sourceClient)
+        );
+        var recoveryClient = new ScriptedClient();
+        recoveryClient.Enqueue(request => new CompletionResult(
+            new ActionMessage([new ActionBlock.Text("unused")]),
+            Descriptor(request),
+            termination:
+                CompletionTermination.Failed("provider-failed")
+        ));
+        using (var reopened = SessionJournalEngine.Open(
+            path,
+            CreateRuntime(
+                recoveryClient,
+                recoveryPolicy:
+                    SessionUncertainCompletionRecoveryPolicy
+                        .RestartWithNewAttempt
+            )
+        )) {
+            await Assert.ThrowsAsync<
+                SessionJournalTurnAbortedException
+            >(
+                () => reopened.ResumeAsync(CancellationToken.None)
+            );
+
+            SessionHistoryPlanningWindow window =
+                reopened.ReadHistoryPlanningWindow();
+            SessionHistoryPlanningUnit unit =
+                Assert.Single(window.Units);
+            Assert.IsType<ObservationMessage>(unit.Message);
+            Assert.Equal(
+                1,
+                Assert.Single(
+                    window.ReplaySafeBoundaries,
+                    boundary =>
+                        boundary.Address
+                        == reopened.ReadCurrentHead()!.Value
+                ).CompletedUnitCount
+            );
+        }
+
+        Assert.Single(
+            ReadAddressesByKind(
+                path,
+                SessionEventKind.CompletionRequestPrepared
+            )
+        );
+        Assert.Equal(
+            2,
+            ReadAddressesByKind(
+                path,
+                SessionEventKind.CompletionAttemptStarted
+            ).Length
+        );
+        Assert.Single(
+            ReadAddressesByKind(
+                path,
+                SessionEventKind.CompletionAttemptFailed
+            )
+        );
+    }
+
+    [Fact]
     public async Task ResumeAsync_RestartWithoutTools_ProviderToolCallDurablyFails() {
         string path = NewJournalPath();
         var sourceClient = new ScriptedClient();

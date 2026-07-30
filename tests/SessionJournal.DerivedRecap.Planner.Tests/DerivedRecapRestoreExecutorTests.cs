@@ -1179,8 +1179,11 @@ public sealed class DerivedRecapRestoreExecutorTests {
             int maxRawEventsPerBuild = 4000
         ) => new(
             catalog,
-            rawGrowthTrigger: 0,
-            rawGrowthHardLimit: 1000,
+            new RecapCadenceConfig(
+                minimumRecentHistoryUnitCount: 0,
+                recapBuildIntervalUnitCount: 1
+            ),
+            maxRawGrowthEventCount: 1000,
             maxRouteEndpointsPerBlock: 8,
             maxMaintainerCallsPerBuild: maxMaintainerCalls,
             maxRawEventsPerStep,

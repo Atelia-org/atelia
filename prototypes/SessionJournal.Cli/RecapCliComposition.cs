@@ -16,8 +16,11 @@ internal static class RecapCliComposition {
 
     internal static RecapPlannerConfig CreateConfig() => new(
         CreateCatalog(),
-        rawGrowthTrigger: 32,
-        rawGrowthHardLimit: 512,
+        new RecapCadenceConfig(
+            minimumRecentHistoryUnitCount: 20,
+            recapBuildIntervalUnitCount: 24
+        ),
+        maxRawGrowthEventCount: 512,
         maxRouteEndpointsPerBlock: 4,
         maxMaintainerCallsPerBuild: 8,
         maxRawEventsPerStep: 64,

@@ -12,7 +12,8 @@
 > [Derived Recap Cadence](derived-recap-cadence-target-design.md)
 > **兼容策略**：不迁移、不双写、不读取 historical DerivedMemory v2/v3
 > **当前推进点**：R0～R3 已完成；R3 cutover 与 deterministic real-data release gate
-> 已于 2026-07-30 关闭。Post-R3 repo-owned config与 HistoryUnit cadence已完成设计，尚未实现
+> 已于 2026-07-30 关闭。Post-R3 C0 HistoryUnit cadence已于 2026-07-31完成；
+> 当前下一阶段为 C1 repo-owned document/loader + single composition
 
 ## 0. 原则
 
@@ -105,6 +106,14 @@ C0 cadence contracts/evaluator + policy/executor
 
 不得并行保留 `RawGrowthTrigger`与 `RecapCadenceConfig`，也不得让 historical
 `RecapPlannerConfig`再次成为 Resume/Restore authority。
+
+C0已完成 breaking cutover：new-plan scheduling只接受 exact、content-free planning-window
+facts；header路径只能作 negative prefilter。Repo file、loader、policy/profile resolution与
+Resume/Restore authority拆分均未提前实现。
+
+Recent reserve使 new Building的 `SetAdmissionAnchor`通常早于 raw head；因此 C0同时把
+`DerivedRecapExecutionResult.BlockFailed`补为携带 exact admission，CLI resume/report不得再从
+raw head推断 Building slot。
 
 ## 1. R0：Contracts + Publish/Read vertical
 

@@ -2,7 +2,8 @@
 
 > **状态**：Target Design / Implementation Guidance
 > **日期**：2026-07-30
-> **实施状态**：尚未实现；current Planner仍使用 raw-event `RawGrowthTrigger`
+> **实施状态**：C0 已实现；Planner 已切换到 exact HistoryUnit cadence。
+> Repo-owned document/loader 与 single composition 仍属于 C1。
 > **上位设计**：
 > [Event-addressed Derived Recap V4](event-addressed-derived-recap-v4-target-design.md)
 > **配置设计**：

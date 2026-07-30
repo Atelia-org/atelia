@@ -131,25 +131,22 @@ public sealed class DerivedRecapPlannerExecutor {
                 );
         }
 
-        // This first gate is deliberately header-only. A below-trigger
-        // decision performs no source snapshot read, policy call, raw payload
-        // replay, or Maintainer call.
-        RecapSchedulingResult initialSchedule =
-            RecapPlanEvaluator.EvaluateSchedule(
+        // This gate may only reject work. Existing Published admission gives
+        // an exact raw baseline; fresh bootstrap uses the whole lineage only
+        // as a conservative upper bound. Exact HistoryUnit facts remain the
+        // sole Build and raw-limit authority.
+        RecapHeaderPrefilterResult headerPrefilter =
+            RecapPlanEvaluator.EvaluateHeaderPrefilter(
                 _config,
-                new RecapSchedulingFacts(
-                    lineage.CapturedHead,
-                    lineage.HeadToRoot,
-                    [],
-                    latest?.SetAdmissionAnchor
-                )
+                lineage,
+                latest?.SetAdmissionAnchor
             );
-        switch (initialSchedule) {
-            case RecapSchedulingResult.NoBuild noBuild:
+        switch (headerPrefilter) {
+            case RecapHeaderPrefilterResult.NoBuild noBuild:
                 return new DerivedRecapExecutionResult.NoBuild(
                     noBuild.Reason
                 );
-            case RecapSchedulingResult.Unavailable unavailable:
+            case RecapHeaderPrefilterResult.Unavailable unavailable:
                 return Unavailable(unavailable.Defects);
         }
 
@@ -212,20 +209,29 @@ public sealed class DerivedRecapPlannerExecutor {
                     earliestCursor,
                     cancellationToken
                 );
-            EventAddress[] boundaries = [
-                allRelevantRaw.StartExclusive,
-                .. allRelevantRaw.ReplaySafeBoundaries.Select(
-                    static item => item.Address
-                )
-            ];
+            if (allRelevantRaw.ObservedRawHead
+                != lineage.CapturedHead) {
+                throw new InvalidDataException(
+                    "Exact history window does not match the captured "
+                    + "raw head."
+                );
+            }
             emptyReplayStartExclusive = allRelevantRaw.StartExclusive;
+            EventAddress cadenceBaseline =
+                latest?.SetAdmissionAnchor
+                ?? allRelevantRaw.StartExclusive;
             RecapSchedulingResult exactSchedule =
                 RecapPlanEvaluator.EvaluateSchedule(
                     _config,
                     new RecapSchedulingFacts(
                         lineage.CapturedHead,
                         lineage.HeadToRoot,
-                        boundaries.Distinct().ToArray(),
+                        new RecapHistoryWindowFacts(
+                            allRelevantRaw.StartExclusive,
+                            allRelevantRaw.Units.Count,
+                            allRelevantRaw.ReplaySafeBoundaries
+                        ),
+                        cadenceBaseline,
                         latest?.SetAdmissionAnchor
                     )
                 );
@@ -990,6 +996,7 @@ public sealed class DerivedRecapPlannerExecutor {
             if (step is RecapMaintainerStepResult.MaintainerFailed
                 failed) {
                 return new DerivedRecapExecutionResult.BlockFailed(
+                    building.Descriptor.SetAdmissionAnchor,
                     plan.RecapBlockId,
                     DerivedRecapExecutionDefectCodes.MaintainerFailed,
                     failed.Detail
@@ -997,6 +1004,7 @@ public sealed class DerivedRecapPlannerExecutor {
             }
             if (step is RecapMaintainerStepResult.ResultInvalid invalid) {
                 return new DerivedRecapExecutionResult.BlockFailed(
+                    building.Descriptor.SetAdmissionAnchor,
                     plan.RecapBlockId,
                     DerivedRecapExecutionDefectCodes
                         .MaintainerResultInvalid,

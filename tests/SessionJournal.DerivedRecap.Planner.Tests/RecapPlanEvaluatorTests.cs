@@ -8,10 +8,36 @@ namespace Atelia.SessionJournal.DerivedRecap.Planner.Tests;
 
 public sealed class RecapPlanEvaluatorTests {
     [Fact]
+    public void CadenceAndCrossFieldLimitsRejectInvalidShapes() {
+        Assert.Throws<ArgumentOutOfRangeException>(
+            () => new RecapCadenceConfig(-1, 1)
+        );
+        Assert.Throws<ArgumentOutOfRangeException>(
+            () => new RecapCadenceConfig(0, 0)
+        );
+        Assert.Throws<OverflowException>(
+            () => new RecapCadenceConfig(int.MaxValue, 1)
+        );
+
+        TestModel model = TestModel.Create();
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            new RecapPlannerConfig(
+                model.Config.Catalog,
+                new RecapCadenceConfig(2, 3),
+                maxRawGrowthEventCount: 4,
+                model.Config.MaxRouteEndpointsPerBlock,
+                model.Config.MaxMaintainerCallsPerBuild,
+                model.Config.MaxRawEventsPerStep,
+                model.Config.MaxRawEventsPerBuild
+            )
+        );
+    }
+
+    [Fact]
     public void BelowTriggerStopsBeforeSourceOrPolicyPhase() {
         TestModel model = TestModel.Create(
-            trigger: 2,
-            hardLimit: 10
+            minimumRecentHistoryUnitCount: 1,
+            recapBuildIntervalUnitCount: 1
         );
 
         RecapSchedulingResult result =
@@ -23,17 +49,14 @@ public sealed class RecapPlanEvaluatorTests {
         var noBuild =
             Assert.IsType<RecapSchedulingResult.NoBuild>(result);
         Assert.Equal(
-            RecapPlanReasons.BelowRawGrowthTrigger,
+            RecapPlanReasons.BelowCadenceThreshold,
             noBuild.Reason
         );
     }
 
     [Fact]
-    public void RawGrowthIsDerivedFromContiguousLatestAnchorIndex() {
-        TestModel model = TestModel.Create(
-            trigger: 0,
-            hardLimit: 10
-        );
+    public void GrowthIsNormalizedFromExactPublishedBaseline() {
+        TestModel model = TestModel.Create();
 
         var ready = Assert.IsType<RecapSchedulingResult.Ready>(
             RecapPlanEvaluator.EvaluateSchedule(
@@ -42,26 +65,275 @@ public sealed class RecapPlanEvaluatorTests {
             )
         );
 
-        Assert.Equal(1, ready.RawGrowth);
+        Assert.Equal(1, ready.Cadence.GrowthHistoryUnitCount);
+        Assert.Equal(1, ready.Cadence.RawGrowthEventCount);
+        Assert.Equal(model.SourceSet, ready.Cadence.Baseline);
     }
 
     [Fact]
     public void RawHardLimitStopsBeforePolicyPhase() {
-        TestModel model = TestModel.Create(
-            trigger: 0,
-            hardLimit: 0
+        TestModel model = TestModel.Create();
+        var config = new RecapPlannerConfig(
+            model.Config.Catalog,
+            model.Config.Cadence,
+            maxRawGrowthEventCount: 1,
+            model.Config.MaxRouteEndpointsPerBlock,
+            model.Config.MaxMaintainerCallsPerBuild,
+            model.Config.MaxRawEventsPerStep,
+            model.Config.MaxRawEventsPerBuild
+        );
+        var scheduling = new RecapSchedulingFacts(
+            model.Scheduling.CapturedHead,
+            model.Scheduling.HeadToRoot,
+            new RecapHistoryWindowFacts(
+                model.A1,
+                totalHistoryUnitCount: 1,
+                [
+                    new(model.A5, 0),
+                    new(model.A11, 0),
+                    new(model.SourceSet, 0),
+                    new(model.Admission, 1)
+                ]
+            ),
+            model.A11,
+            model.A11
         );
 
         RecapSchedulingResult result =
             RecapPlanEvaluator.EvaluateSchedule(
-                model.Config,
-                model.Scheduling
+                config,
+                scheduling
             );
 
         AssertDefect(
             result,
-            RecapPlanDefectCodes.RawGrowthHardLimitExceeded
+            RecapPlanDefectCodes.MaxRawGrowthEventCountExceeded
         );
+    }
+
+    [Fact]
+    public void MissingOrMismatchedPublishedBaselineIsTypedInvalid() {
+        TestModel model = TestModel.Create();
+        var mismatched = new RecapSchedulingFacts(
+            model.Scheduling.CapturedHead,
+            model.Scheduling.HeadToRoot,
+            model.Scheduling.HistoryWindow,
+            model.A11,
+            model.SourceSet
+        );
+        AssertDefect(
+            RecapPlanEvaluator.EvaluateSchedule(
+                model.Config,
+                mismatched
+            ),
+            RecapPlanDefectCodes.CadenceBaselineInvalid
+        );
+
+        var missingBoundary = new RecapSchedulingFacts(
+            model.Scheduling.CapturedHead,
+            model.Scheduling.HeadToRoot,
+            new RecapHistoryWindowFacts(
+                model.Scheduling.HistoryWindow.StartExclusive,
+                model.Scheduling.HistoryWindow
+                    .TotalHistoryUnitCount,
+                [
+                    .. model.Scheduling.HistoryWindow
+                        .ReplaySafeBoundaries
+                        .Where(boundary =>
+                            boundary.Address != model.A11)
+                ]
+            ),
+            model.A11,
+            model.A11
+        );
+        AssertDefect(
+            RecapPlanEvaluator.EvaluateSchedule(
+                model.Config,
+                missingBoundary
+            ),
+            RecapPlanDefectCodes.CadenceBaselineInvalid
+        );
+    }
+
+    [Fact]
+    public void ThresholdWithoutClosedAdmissionWaitsWithoutDefect() {
+        TestModel model = TestModel.Create(
+            minimumRecentHistoryUnitCount: 1
+        );
+        var scheduling = new RecapSchedulingFacts(
+            model.Scheduling.CapturedHead,
+            model.Scheduling.HeadToRoot,
+            new RecapHistoryWindowFacts(
+                model.Scheduling.HistoryWindow.StartExclusive,
+                totalHistoryUnitCount: 6,
+                [
+                    new(model.A1, 1),
+                    new(model.A5, 2),
+                    new(model.A11, 3),
+                    new(model.SourceSet, 6),
+                    new(model.Admission, 6)
+                ]
+            ),
+            model.A11,
+            model.A11
+        );
+
+        var noBuild = Assert.IsType<RecapSchedulingResult.NoBuild>(
+            RecapPlanEvaluator.EvaluateSchedule(
+                model.Config,
+                scheduling
+            )
+        );
+        Assert.Equal(
+            RecapPlanReasons.AwaitingReplaySafeAdmission,
+            noBuild.Reason
+        );
+    }
+
+    [Fact]
+    public void HeaderPrefilterOnlyReturnsCertainNegativeOrExact() {
+        TestModel model = TestModel.Create(
+            minimumRecentHistoryUnitCount: 1
+        );
+        var lineage = new SessionCurrentLineageSnapshot(
+            model.Scheduling.CapturedHead,
+            model.Scheduling.HeadToRoot,
+            new SessionCurrentLineageDiagnostics(0, 0, 0)
+        );
+
+        var below = Assert.IsType<
+            RecapHeaderPrefilterResult.NoBuild
+        >(
+            RecapPlanEvaluator.EvaluateHeaderPrefilter(
+                model.Config,
+                lineage,
+                model.SourceSet
+            )
+        );
+        Assert.Equal(
+            RecapPlanReasons.BelowCadenceThreshold,
+            below.Reason
+        );
+
+        var exact = Assert.IsType<
+            RecapHeaderPrefilterResult.ExactEvaluationRequired
+        >(
+            RecapPlanEvaluator.EvaluateHeaderPrefilter(
+                TestModel.Create().Config,
+                lineage,
+                model.SourceSet
+            )
+        );
+        Assert.Equal(1, exact.RawGrowthEventUpperBound);
+
+        RecapPlannerConfig rawLimited = new(
+            model.Config.Catalog,
+            new RecapCadenceConfig(0, 1),
+            maxRawGrowthEventCount: 1,
+            model.Config.MaxRouteEndpointsPerBlock,
+            model.Config.MaxMaintainerCallsPerBuild,
+            model.Config.MaxRawEventsPerStep,
+            model.Config.MaxRawEventsPerBuild
+        );
+        var rawLimitStillExact = Assert.IsType<
+            RecapHeaderPrefilterResult.ExactEvaluationRequired
+        >(
+            RecapPlanEvaluator.EvaluateHeaderPrefilter(
+                rawLimited,
+                lineage,
+                model.A11
+            )
+        );
+        Assert.Equal(
+            2,
+            rawLimitStillExact.RawGrowthEventUpperBound
+        );
+
+        RecapPlannerConfig freshThreshold = new(
+            model.Config.Catalog,
+            new RecapCadenceConfig(0, 10),
+            maxRawGrowthEventCount: 10,
+            model.Config.MaxRouteEndpointsPerBlock,
+            model.Config.MaxMaintainerCallsPerBuild,
+            model.Config.MaxRawEventsPerStep,
+            model.Config.MaxRawEventsPerBuild
+        );
+        Assert.IsType<RecapHeaderPrefilterResult.NoBuild>(
+            RecapPlanEvaluator.EvaluateHeaderPrefilter(
+                freshThreshold,
+                lineage,
+                cadenceBaseline: null
+            )
+        );
+    }
+
+    [Fact]
+    public void EvaluatorRejectsPolicyThatConsumesRecentReserve() {
+        TestModel model = TestModel.Create();
+        var config = new RecapPlannerConfig(
+            model.Config.Catalog,
+            new RecapCadenceConfig(1, 1),
+            maxRawGrowthEventCount: 10,
+            model.Config.MaxRouteEndpointsPerBlock,
+            model.Config.MaxMaintainerCallsPerBuild,
+            model.Config.MaxRawEventsPerStep,
+            model.Config.MaxRawEventsPerBuild
+        );
+        var scheduling = new RecapSchedulingFacts(
+            model.Scheduling.CapturedHead,
+            model.Scheduling.HeadToRoot,
+            new RecapHistoryWindowFacts(
+                model.Scheduling.HistoryWindow.StartExclusive,
+                totalHistoryUnitCount: 6,
+                [
+                    new(model.A1, 1),
+                    new(model.A5, 2),
+                    new(model.A11, 3),
+                    new(model.SourceSet, 5),
+                    new(model.Admission, 6)
+                ]
+            ),
+            model.A11,
+            model.A11
+        );
+        var ready = Assert.IsType<RecapSchedulingResult.Ready>(
+            RecapPlanEvaluator.EvaluateSchedule(config, scheduling)
+        );
+        var source = new RecapSourceIntent(
+            model.A11,
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            + "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        );
+        var policyFacts = new RecapPolicyFacts(
+            emptyReplayStartExclusive: null,
+            [
+                new RecapBlockSourceIntent(
+                    model.ClientId,
+                    source,
+                    model.A1
+                )
+            ]
+        );
+        var malicious = new RecapPlanningPolicyDecision.Build(
+            model.Admission,
+            [
+                new RecapBlockPlanningDecision.Maintain(
+                    model.ClientId,
+                    new RecapPlanningMaintainSource.Existing(source),
+                    [model.SourceSet, model.Admission],
+                    EmptyRecapPriorContext.Instance
+                )
+            ]
+        );
+
+        RecapPlanIntentResult result =
+            RecapPlanEvaluator.EvaluateIntent(
+                ready,
+                policyFacts,
+                new StubPolicy(malicious)
+            );
+
+        AssertDefect(result, RecapPlanDefectCodes.AdmissionInvalid);
     }
 
     [Fact]
@@ -80,7 +352,8 @@ public sealed class RecapPlanEvaluatorTests {
         var malformed = new RecapSchedulingFacts(
             model.Admission,
             [null!],
-            [],
+            model.Scheduling.HistoryWindow,
+            model.SourceSet,
             null
         );
 
@@ -248,7 +521,17 @@ public sealed class RecapPlanEvaluatorTests {
         var firstBuildScheduling = new RecapSchedulingFacts(
             model.Scheduling.CapturedHead,
             model.Scheduling.HeadToRoot,
-            model.Scheduling.ReplaySafeBoundaries,
+            new RecapHistoryWindowFacts(
+                model.A1,
+                totalHistoryUnitCount: 4,
+                [
+                    new(model.A5, 1),
+                    new(model.A11, 2),
+                    new(model.SourceSet, 3),
+                    new(model.Admission, 4)
+                ]
+            ),
+            model.A1,
             latestPublishedSetAnchor: null
         );
         var schedule = Assert.IsType<RecapSchedulingResult.Ready>(
@@ -558,8 +841,9 @@ public sealed class RecapPlanEvaluatorTests {
         public EventAddress A1 { get; }
 
         public static TestModel Create(
-            int trigger = 1,
-            int hardLimit = 10,
+            int minimumRecentHistoryUnitCount = 0,
+            int recapBuildIntervalUnitCount = 1,
+            int maxRawGrowthEventCount = 10,
             int maxRouteEndpoints = 3,
             int maxMaintainerCalls = 3,
             int maxRawEventsPerStep = 10,
@@ -626,8 +910,11 @@ public sealed class RecapPlanEvaluatorTests {
                 ];
             var config = new RecapPlannerConfig(
                 catalog,
-                trigger,
-                hardLimit,
+                new RecapCadenceConfig(
+                    minimumRecentHistoryUnitCount,
+                    recapBuildIntervalUnitCount
+                ),
+                maxRawGrowthEventCount,
                 maxRouteEndpoints,
                 maxMaintainerCalls,
                 maxRawEventsPerStep,
@@ -636,7 +923,18 @@ public sealed class RecapPlanEvaluatorTests {
             var scheduling = new RecapSchedulingFacts(
                 admission,
                 lineage,
-                [.. addresses],
+                new RecapHistoryWindowFacts(
+                    root,
+                    totalHistoryUnitCount: 5,
+                    [
+                        new(a1, 1),
+                        new(a5, 2),
+                        new(a11, 3),
+                        new(sourceSet, 4),
+                        new(admission, 5)
+                    ]
+                ),
+                sourceSet,
                 sourceSet
             );
             var availableSource = new RecapBlockSourceIntent(
@@ -662,8 +960,8 @@ public sealed class RecapPlanEvaluatorTests {
             IReadOnlyList<RecapBlockCatalogEntry> catalog
         ) => new(
             catalog,
-            Config.RawGrowthTrigger,
-            Config.RawGrowthHardLimit,
+            Config.Cadence,
+            Config.MaxRawGrowthEventCount,
             Config.MaxRouteEndpointsPerBlock,
             Config.MaxMaintainerCallsPerBuild,
             Config.MaxRawEventsPerStep,

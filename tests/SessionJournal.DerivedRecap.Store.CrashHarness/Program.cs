@@ -309,8 +309,11 @@ internal static class Program {
             store,
             new RecapPlannerConfig(
                 catalog,
-                rawGrowthTrigger: 0,
-                rawGrowthHardLimit: 10_000,
+                new RecapCadenceConfig(
+                    minimumRecentHistoryUnitCount: 0,
+                    recapBuildIntervalUnitCount: 1
+                ),
+                maxRawGrowthEventCount: 10_000,
                 maxRouteEndpointsPerBlock: 16,
                 maxMaintainerCallsPerBuild: 32,
                 maxRawEventsPerStep: 10_000,
@@ -373,8 +376,11 @@ internal static class Program {
             store,
             new RecapPlannerConfig(
                 catalog,
-                rawGrowthTrigger: 0,
-                rawGrowthHardLimit: 10_000,
+                new RecapCadenceConfig(
+                    minimumRecentHistoryUnitCount: 0,
+                    recapBuildIntervalUnitCount: 1
+                ),
+                maxRawGrowthEventCount: 10_000,
                 maxRouteEndpointsPerBlock: 16,
                 maxMaintainerCallsPerBuild: 32,
                 maxRawEventsPerStep: 10_000,

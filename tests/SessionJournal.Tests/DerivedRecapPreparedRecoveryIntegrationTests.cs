@@ -241,8 +241,11 @@ public sealed class DerivedRecapPreparedRecoveryIntegrationTests
                 maxContentUtf8Bytes: 4096
             )
         ],
-        rawGrowthTrigger: 2,
-        rawGrowthHardLimit: 1000,
+        new RecapCadenceConfig(
+            minimumRecentHistoryUnitCount: 0,
+            recapBuildIntervalUnitCount: 2
+        ),
+        maxRawGrowthEventCount: 1000,
         maxRouteEndpointsPerBlock: 4,
         maxMaintainerCallsPerBuild: 4,
         maxRawEventsPerStep: 1000,
@@ -281,17 +284,8 @@ public sealed class DerivedRecapPreparedRecoveryIntegrationTests
                     "latest-exists"
                 );
             }
-            Dictionary<EventAddress, int> lineage =
-                context.Scheduling.HeadToRoot
-                    .Select((node, index) => (node.Address, index))
-                    .ToDictionary(
-                        static item => item.Address,
-                        static item => item.index
-                    );
             EventAddress start =
-                context.Scheduling.ReplaySafeBoundaries
-                    .OrderByDescending(address => lineage[address])
-                    .First();
+                context.Scheduling.HistoryWindow.StartExclusive;
             EventAddress admission =
                 context.Scheduling.CapturedHead;
             return new RecapPlanningPolicyDecision.Build(

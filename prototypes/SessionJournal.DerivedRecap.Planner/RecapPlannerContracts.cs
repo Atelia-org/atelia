@@ -36,11 +36,45 @@ public sealed record RecapBlockCatalogEntry {
     public int MaxContentUtf8Bytes { get; }
 }
 
+public sealed record RecapCadenceConfig {
+    public RecapCadenceConfig(
+        int minimumRecentHistoryUnitCount,
+        int recapBuildIntervalUnitCount
+    ) {
+        if (minimumRecentHistoryUnitCount < 0) {
+            throw new ArgumentOutOfRangeException(
+                nameof(minimumRecentHistoryUnitCount)
+            );
+        }
+        if (recapBuildIntervalUnitCount <= 0) {
+            throw new ArgumentOutOfRangeException(
+                nameof(recapBuildIntervalUnitCount)
+            );
+        }
+        _ = checked(
+            minimumRecentHistoryUnitCount
+            + recapBuildIntervalUnitCount
+        );
+
+        MinimumRecentHistoryUnitCount =
+            minimumRecentHistoryUnitCount;
+        RecapBuildIntervalUnitCount =
+            recapBuildIntervalUnitCount;
+    }
+
+    public int MinimumRecentHistoryUnitCount { get; }
+    public int RecapBuildIntervalUnitCount { get; }
+    public int BuildThresholdUnitCount => checked(
+        MinimumRecentHistoryUnitCount
+        + RecapBuildIntervalUnitCount
+    );
+}
+
 public sealed class RecapPlannerConfig {
     public RecapPlannerConfig(
         IReadOnlyList<RecapBlockCatalogEntry> catalog,
-        int rawGrowthTrigger,
-        int rawGrowthHardLimit,
+        RecapCadenceConfig cadence,
+        int maxRawGrowthEventCount,
         int maxRouteEndpointsPerBlock,
         int maxMaintainerCallsPerBuild,
         int maxRawEventsPerStep,
@@ -52,14 +86,13 @@ public sealed class RecapPlannerConfig {
                 .MaxContributionCount) {
             throw new ArgumentOutOfRangeException(nameof(catalog));
         }
-        if (rawGrowthTrigger < 0) {
+        ArgumentNullException.ThrowIfNull(cadence);
+        if (maxRawGrowthEventCount
+            < cadence.BuildThresholdUnitCount) {
             throw new ArgumentOutOfRangeException(
-                nameof(rawGrowthTrigger)
-            );
-        }
-        if (rawGrowthHardLimit < rawGrowthTrigger) {
-            throw new ArgumentOutOfRangeException(
-                nameof(rawGrowthHardLimit)
+                nameof(maxRawGrowthEventCount),
+                "The raw growth limit must be reachable after the "
+                + "configured HistoryUnit cadence threshold."
             );
         }
         if (maxRouteEndpointsPerBlock <= 0) {
@@ -103,8 +136,8 @@ public sealed class RecapPlannerConfig {
         }
 
         Catalog = Array.AsReadOnly(snapshot);
-        RawGrowthTrigger = rawGrowthTrigger;
-        RawGrowthHardLimit = rawGrowthHardLimit;
+        Cadence = cadence;
+        MaxRawGrowthEventCount = maxRawGrowthEventCount;
         MaxRouteEndpointsPerBlock = maxRouteEndpointsPerBlock;
         MaxMaintainerCallsPerBuild = maxMaintainerCallsPerBuild;
         MaxRawEventsPerStep = maxRawEventsPerStep;
@@ -112,8 +145,8 @@ public sealed class RecapPlannerConfig {
     }
 
     public IReadOnlyList<RecapBlockCatalogEntry> Catalog { get; }
-    public int RawGrowthTrigger { get; }
-    public int RawGrowthHardLimit { get; }
+    public RecapCadenceConfig Cadence { get; }
+    public int MaxRawGrowthEventCount { get; }
     public int MaxRouteEndpointsPerBlock { get; }
     public int MaxMaintainerCallsPerBuild { get; }
     public int MaxRawEventsPerStep { get; }
@@ -121,13 +154,51 @@ public sealed class RecapPlannerConfig {
 }
 
 /// <summary>
-/// Raw-only facts used before source reads or policy execution.
+/// Content-free exact history projection used by cadence evaluation.
+/// <see cref="StartExclusive"/> is an implicit replay-safe boundary with
+/// zero completed units and is not repeated in
+/// <see cref="ReplaySafeBoundaries"/>.
+/// </summary>
+public sealed class RecapHistoryWindowFacts {
+    public RecapHistoryWindowFacts(
+        EventAddress startExclusive,
+        int totalHistoryUnitCount,
+        IReadOnlyList<SessionHistoryPlanningBoundary>
+            replaySafeBoundaries
+    ) {
+        if (startExclusive == default) {
+            throw new ArgumentException(
+                "History window start cannot be default.",
+                nameof(startExclusive)
+            );
+        }
+        if (totalHistoryUnitCount < 0) {
+            throw new ArgumentOutOfRangeException(
+                nameof(totalHistoryUnitCount)
+            );
+        }
+        ArgumentNullException.ThrowIfNull(replaySafeBoundaries);
+        StartExclusive = startExclusive;
+        TotalHistoryUnitCount = totalHistoryUnitCount;
+        ReplaySafeBoundaries =
+            Array.AsReadOnly([.. replaySafeBoundaries]);
+    }
+
+    public EventAddress StartExclusive { get; }
+    public int TotalHistoryUnitCount { get; }
+    public IReadOnlyList<SessionHistoryPlanningBoundary>
+        ReplaySafeBoundaries { get; }
+}
+
+/// <summary>
+/// Exact content-free facts used to make a final cadence decision.
 /// </summary>
 public sealed class RecapSchedulingFacts {
     public RecapSchedulingFacts(
         EventAddress capturedHead,
         IReadOnlyList<SessionCurrentLineageHeader> headToRoot,
-        IReadOnlyList<EventAddress> replaySafeBoundaries,
+        RecapHistoryWindowFacts historyWindow,
+        EventAddress cadenceBaseline,
         EventAddress? latestPublishedSetAnchor
     ) {
         if (capturedHead == default) {
@@ -137,11 +208,17 @@ public sealed class RecapSchedulingFacts {
             );
         }
         ArgumentNullException.ThrowIfNull(headToRoot);
-        ArgumentNullException.ThrowIfNull(replaySafeBoundaries);
+        ArgumentNullException.ThrowIfNull(historyWindow);
+        if (cadenceBaseline == default) {
+            throw new ArgumentException(
+                "Cadence baseline cannot be default.",
+                nameof(cadenceBaseline)
+            );
+        }
         CapturedHead = capturedHead;
         HeadToRoot = Array.AsReadOnly([.. headToRoot]);
-        ReplaySafeBoundaries =
-            Array.AsReadOnly([.. replaySafeBoundaries]);
+        HistoryWindow = historyWindow;
+        CadenceBaseline = cadenceBaseline;
         LatestPublishedSetAnchor = latestPublishedSetAnchor;
     }
 
@@ -149,8 +226,35 @@ public sealed class RecapSchedulingFacts {
     public IReadOnlyList<SessionCurrentLineageHeader> HeadToRoot {
         get;
     }
-    public IReadOnlyList<EventAddress> ReplaySafeBoundaries { get; }
+    public RecapHistoryWindowFacts HistoryWindow { get; }
+    public EventAddress CadenceBaseline { get; }
     public EventAddress? LatestPublishedSetAnchor { get; }
+}
+
+public sealed record RecapCadenceBoundary(
+    EventAddress Address,
+    int HistoryUnitCountSinceBaseline
+);
+
+public sealed class RecapCadenceFacts {
+    internal RecapCadenceFacts(
+        EventAddress baseline,
+        int growthHistoryUnitCount,
+        int rawGrowthEventCount,
+        IReadOnlyList<RecapCadenceBoundary> admissionCandidates
+    ) {
+        Baseline = baseline;
+        GrowthHistoryUnitCount = growthHistoryUnitCount;
+        RawGrowthEventCount = rawGrowthEventCount;
+        AdmissionCandidates =
+            Array.AsReadOnly([.. admissionCandidates]);
+    }
+
+    public EventAddress Baseline { get; }
+    public int GrowthHistoryUnitCount { get; }
+    public int RawGrowthEventCount { get; }
+    public IReadOnlyList<RecapCadenceBoundary>
+        AdmissionCandidates { get; }
 }
 
 /// <summary>
@@ -332,6 +436,7 @@ public abstract record RecapPlanningPolicyDecision {
 public sealed record RecapPlanningPolicyContext(
     RecapPlannerConfig Config,
     RecapSchedulingFacts Scheduling,
+    RecapCadenceFacts Cadence,
     RecapPolicyFacts PolicyFacts
 );
 
@@ -362,17 +467,33 @@ public abstract record RecapSchedulingResult {
         internal Ready(
             RecapPlannerConfig config,
             RecapSchedulingFacts facts,
-            int rawGrowth
+            RecapCadenceFacts cadence
         ) {
             Config = config;
             Facts = facts;
-            RawGrowth = rawGrowth;
+            Cadence = cadence;
         }
 
         public RecapPlannerConfig Config { get; }
         public RecapSchedulingFacts Facts { get; }
-        public int RawGrowth { get; }
+        public RecapCadenceFacts Cadence { get; }
     }
+}
+
+public abstract record RecapHeaderPrefilterResult {
+    private RecapHeaderPrefilterResult() {
+    }
+
+    public sealed record NoBuild(string Reason)
+        : RecapHeaderPrefilterResult;
+
+    public sealed record ExactEvaluationRequired(
+        int RawGrowthEventUpperBound
+    ) : RecapHeaderPrefilterResult;
+
+    public sealed record Unavailable(
+        IReadOnlyList<RecapPlanDefect> Defects
+    ) : RecapHeaderPrefilterResult;
 }
 
 public abstract record RecapPlanIntentResult {
@@ -426,8 +547,10 @@ public abstract record RecapPlanResult {
 }
 
 public static class RecapPlanDefectCodes {
-    public const string RawGrowthHardLimitExceeded =
-        nameof(RawGrowthHardLimitExceeded);
+    public const string MaxRawGrowthEventCountExceeded =
+        nameof(MaxRawGrowthEventCountExceeded);
+    public const string CadenceBaselineInvalid =
+        nameof(CadenceBaselineInvalid);
     public const string PlanningFactsInvalid =
         nameof(PlanningFactsInvalid);
     public const string PolicyDecisionInvalid =
@@ -449,6 +572,8 @@ public static class RecapPlanDefectCodes {
 }
 
 public static class RecapPlanReasons {
-    public const string BelowRawGrowthTrigger =
-        nameof(BelowRawGrowthTrigger);
+    public const string BelowCadenceThreshold =
+        nameof(BelowCadenceThreshold);
+    public const string AwaitingReplaySafeAdmission =
+        nameof(AwaitingReplaySafeAdmission);
 }

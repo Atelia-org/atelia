@@ -336,7 +336,7 @@ public sealed class SessionHistoryPlanningTests : IDisposable {
     }
 
     [Fact]
-    public void MultiToolWindow_AllowsOnlyDependencyClosedFinalResultBoundary() {
+    public void MultiToolWindow_ErrorResultStillFormsOneClosedUnit() {
         string path = NewPath();
         EventAddress firstResult;
         EventAddress finalResult;
@@ -423,7 +423,7 @@ public sealed class SessionHistoryPlanningTests : IDisposable {
                     "call-1",
                     "lookup",
                     1,
-                    ToolExecutionStatus.Success,
+                    ToolExecutionStatus.Failed,
                     [new ToolResultBlock.Text("one")]
                 )
             );

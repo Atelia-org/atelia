@@ -382,7 +382,7 @@ internal static class RecapExecutionCommands {
                     engine,
                     rawHead,
                     "BlockFailed",
-                    requestedAnchor ?? rawHead,
+                    failed.SetAdmissionAnchor,
                     failed.RecapBlockId.Value,
                     failed.Code,
                     [],
@@ -546,8 +546,9 @@ internal static class RecapExecutionCommands {
                 )
             )
         ],
-        ProductionConfig.RawGrowthTrigger,
-        ProductionConfig.RawGrowthHardLimit,
+        ProductionConfig.Cadence.MinimumRecentHistoryUnitCount,
+        ProductionConfig.Cadence.RecapBuildIntervalUnitCount,
+        ProductionConfig.MaxRawGrowthEventCount,
         ProductionConfig.MaxRouteEndpointsPerBlock,
         ProductionConfig.MaxMaintainerCallsPerBuild,
         ProductionConfig.MaxRawEventsPerStep,
@@ -659,8 +660,9 @@ internal sealed record RecapExecutionReport(
 
 internal sealed record RecapExecutionConfigReport(
     IReadOnlyList<RecapExecutionCatalogReport> Catalog,
-    int RawGrowthTrigger,
-    int RawGrowthHardLimit,
+    int MinimumRecentHistoryUnitCount,
+    int RecapBuildIntervalUnitCount,
+    int MaxRawGrowthEventCount,
     int MaxRouteEndpointsPerBlock,
     int MaxMaintainerCallsPerBuild,
     int MaxRawEventsPerStep,

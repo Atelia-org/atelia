@@ -4,6 +4,54 @@ using Atelia.SessionJournal.DerivedRecap.Store;
 namespace Atelia.SessionJournal.DerivedRecap.Planner;
 
 public static class RecapPlanEvaluator {
+    public static RecapHeaderPrefilterResult EvaluateHeaderPrefilter(
+        RecapPlannerConfig config,
+        SessionCurrentLineageSnapshot lineage,
+        EventAddress? cadenceBaseline
+    ) {
+        ArgumentNullException.ThrowIfNull(config);
+        ArgumentNullException.ThrowIfNull(lineage);
+        var defects = new List<RecapPlanDefect>();
+        Dictionary<EventAddress, int> lineageIndex =
+            ValidateLineage(
+                lineage.CapturedHead,
+                lineage.HeadToRoot,
+                defects
+            );
+        if (defects.Count != 0) {
+            return HeaderUnavailable(defects);
+        }
+        int rawGrowthEventUpperBound;
+        if (cadenceBaseline is { } exactBaseline) {
+            if (!lineageIndex.TryGetValue(
+                    exactBaseline,
+                    out rawGrowthEventUpperBound
+                )) {
+                return HeaderUnavailable(
+                    RecapPlanDefectCodes.CadenceBaselineInvalid,
+                    "Cadence baseline is outside the captured raw "
+                    + "lineage."
+                );
+            }
+        }
+        else {
+            // Fresh bootstrap has not resolved its exact SessionCreated
+            // start yet. The whole lineage is a conservative upper bound:
+            // it can safely prove only that the HistoryUnit threshold is
+            // unreachable, never that a Build or raw-limit failure exists.
+            rawGrowthEventUpperBound = lineage.HeadToRoot.Count;
+        }
+        if (rawGrowthEventUpperBound
+            < config.Cadence.BuildThresholdUnitCount) {
+            return new RecapHeaderPrefilterResult.NoBuild(
+                RecapPlanReasons.BelowCadenceThreshold
+            );
+        }
+        return new RecapHeaderPrefilterResult.ExactEvaluationRequired(
+            rawGrowthEventUpperBound
+        );
+    }
+
     public static RecapSchedulingResult EvaluateSchedule(
         RecapPlannerConfig config,
         RecapSchedulingFacts facts
@@ -12,31 +60,68 @@ public static class RecapPlanEvaluator {
         ArgumentNullException.ThrowIfNull(facts);
         List<RecapPlanDefect> defects = ValidateSchedulingFacts(
             facts,
-            out Dictionary<EventAddress, int> lineage
+            out Dictionary<EventAddress, int> lineage,
+            out int baselineCompletedUnitCount
         );
         if (defects.Count != 0) {
             return ScheduleUnavailable(defects);
         }
 
-        int rawGrowth = facts.LatestPublishedSetAnchor is { } latest
-            ? lineage[latest]
-            : facts.HeadToRoot.Count;
-        if (rawGrowth > config.RawGrowthHardLimit) {
+        int rawGrowthEventCount = lineage[facts.CadenceBaseline];
+        if (rawGrowthEventCount
+            > config.MaxRawGrowthEventCount) {
             return ScheduleUnavailable(
-                RecapPlanDefectCodes.RawGrowthHardLimitExceeded,
-                $"Derived raw growth {rawGrowth} exceeds hard limit "
-                + $"{config.RawGrowthHardLimit}."
+                RecapPlanDefectCodes
+                    .MaxRawGrowthEventCountExceeded,
+                $"Raw growth after cadence baseline is "
+                + $"{rawGrowthEventCount}; limit is "
+                + $"{config.MaxRawGrowthEventCount}."
             );
         }
-        if (rawGrowth < config.RawGrowthTrigger) {
+        int growthHistoryUnitCount =
+            facts.HistoryWindow.TotalHistoryUnitCount
+            - baselineCompletedUnitCount;
+        if (growthHistoryUnitCount
+            < config.Cadence.BuildThresholdUnitCount) {
             return new RecapSchedulingResult.NoBuild(
-                RecapPlanReasons.BelowRawGrowthTrigger
+                RecapPlanReasons.BelowCadenceThreshold
             );
         }
+
+        int baselineIndex = lineage[facts.CadenceBaseline];
+        RecapCadenceBoundary[] candidates = [
+            .. facts.HistoryWindow.ReplaySafeBoundaries
+                .Where(boundary =>
+                    lineage[boundary.Address] < baselineIndex)
+                .Select(boundary => new RecapCadenceBoundary(
+                    boundary.Address,
+                    boundary.CompletedUnitCount
+                    - baselineCompletedUnitCount
+                ))
+                .Where(boundary =>
+                    boundary.HistoryUnitCountSinceBaseline
+                        >= config.Cadence
+                            .RecapBuildIntervalUnitCount
+                    && growthHistoryUnitCount
+                       - boundary.HistoryUnitCountSinceBaseline
+                       >= config.Cadence
+                           .MinimumRecentHistoryUnitCount)
+        ];
+        if (candidates.Length == 0) {
+            return new RecapSchedulingResult.NoBuild(
+                RecapPlanReasons.AwaitingReplaySafeAdmission
+            );
+        }
+        var cadence = new RecapCadenceFacts(
+            facts.CadenceBaseline,
+            growthHistoryUnitCount,
+            rawGrowthEventCount,
+            candidates
+        );
         return new RecapSchedulingResult.Ready(
             config,
             facts,
-            rawGrowth
+            cadence
         );
     }
 
@@ -58,6 +143,7 @@ public static class RecapPlanEvaluator {
             new RecapPlanningPolicyContext(
                 schedule.Config,
                 schedule.Facts,
+                schedule.Cadence,
                 policyFacts
             )
         );
@@ -120,34 +206,137 @@ public static class RecapPlanEvaluator {
 
     private static List<RecapPlanDefect> ValidateSchedulingFacts(
         RecapSchedulingFacts facts,
-        out Dictionary<EventAddress, int> lineage
+        out Dictionary<EventAddress, int> lineage,
+        out int baselineCompletedUnitCount
     ) {
         var defects = new List<RecapPlanDefect>();
-        lineage = new Dictionary<EventAddress, int>();
-        if (facts.HeadToRoot.Count == 0
-            || facts.HeadToRoot[0] is null
-            || facts.HeadToRoot[0].Address != facts.CapturedHead) {
+        baselineCompletedUnitCount = 0;
+        lineage = ValidateLineage(
+            facts.CapturedHead,
+            facts.HeadToRoot,
+            defects
+        );
+        if (defects.Count != 0) {
+            return defects;
+        }
+
+        RecapHistoryWindowFacts window = facts.HistoryWindow;
+        if (!lineage.TryGetValue(
+                window.StartExclusive,
+                out int startIndex
+            )) {
+            Add(
+                defects,
+                RecapPlanDefectCodes.PlanningFactsInvalid,
+                "History window start is outside the raw lineage."
+            );
+            return defects;
+        }
+        var boundaryAddresses = new HashSet<EventAddress>();
+        int previousLineageIndex = startIndex;
+        int previousCompletedUnitCount = 0;
+        foreach (SessionHistoryPlanningBoundary? boundary
+                 in window.ReplaySafeBoundaries) {
+            if (boundary is null
+                || !boundaryAddresses.Add(boundary.Address)
+                || !lineage.TryGetValue(
+                    boundary.Address,
+                    out int boundaryIndex
+                )
+                || boundaryIndex >= previousLineageIndex
+                || boundary.CompletedUnitCount < 0
+                || boundary.CompletedUnitCount
+                    > window.TotalHistoryUnitCount
+                || boundary.CompletedUnitCount
+                    < previousCompletedUnitCount) {
+                Add(
+                    defects,
+                    RecapPlanDefectCodes.PlanningFactsInvalid,
+                    "Replay-safe boundaries must be unique, "
+                    + "chronological lineage members with monotonic "
+                    + "HistoryUnit counts inside the exact window."
+                );
+                return defects;
+            }
+            previousLineageIndex = boundaryIndex;
+            previousCompletedUnitCount =
+                boundary.CompletedUnitCount;
+        }
+
+        EventAddress expectedBaseline =
+            facts.LatestPublishedSetAnchor
+            ?? window.StartExclusive;
+        if (facts.CadenceBaseline != expectedBaseline) {
+            Add(
+                defects,
+                RecapPlanDefectCodes.CadenceBaselineInvalid,
+                "Cadence baseline does not match the latest Published "
+                + "admission or the exact bootstrap start."
+            );
+            return defects;
+        }
+        if (!lineage.TryGetValue(
+                facts.CadenceBaseline,
+                out int baselineIndex
+            )
+            || baselineIndex > startIndex) {
+            Add(
+                defects,
+                RecapPlanDefectCodes.CadenceBaselineInvalid,
+                "Cadence baseline is outside the exact history window."
+            );
+            return defects;
+        }
+        if (facts.CadenceBaseline != window.StartExclusive) {
+            SessionHistoryPlanningBoundary? baselineBoundary =
+                window.ReplaySafeBoundaries.SingleOrDefault(
+                    boundary =>
+                        boundary.Address == facts.CadenceBaseline
+                );
+            if (baselineBoundary is null) {
+                Add(
+                    defects,
+                    RecapPlanDefectCodes.CadenceBaselineInvalid,
+                    "Cadence baseline is not an exact replay-safe "
+                    + "history-window boundary."
+                );
+                return defects;
+            }
+            baselineCompletedUnitCount =
+                baselineBoundary.CompletedUnitCount;
+        }
+        return defects;
+    }
+
+    private static Dictionary<EventAddress, int> ValidateLineage(
+        EventAddress capturedHead,
+        IReadOnlyList<SessionCurrentLineageHeader> headToRoot,
+        List<RecapPlanDefect> defects
+    ) {
+        var lineage = new Dictionary<EventAddress, int>();
+        if (headToRoot.Count == 0
+            || headToRoot[0] is null
+            || headToRoot[0].Address != capturedHead) {
             Add(
                 defects,
                 RecapPlanDefectCodes.PlanningFactsInvalid,
                 "Raw lineage does not start at CapturedHead."
             );
-            return defects;
+            return lineage;
         }
-        for (int index = 0; index < facts.HeadToRoot.Count; index++) {
-            SessionCurrentLineageHeader? node =
-                facts.HeadToRoot[index];
+        for (int index = 0; index < headToRoot.Count; index++) {
+            SessionCurrentLineageHeader? node = headToRoot[index];
             if (node is null || !lineage.TryAdd(node.Address, index)) {
                 Add(
                     defects,
                     RecapPlanDefectCodes.PlanningFactsInvalid,
                     "Raw lineage contains a null or duplicate node."
                 );
-                return defects;
+                return lineage;
             }
             EventAddress? expectedParent =
-                index + 1 < facts.HeadToRoot.Count
-                    ? facts.HeadToRoot[index + 1]?.Address
+                index + 1 < headToRoot.Count
+                    ? headToRoot[index + 1]?.Address
                     : null;
             if (node.Parent != expectedParent) {
                 Add(
@@ -155,30 +344,10 @@ public static class RecapPlanEvaluator {
                     RecapPlanDefectCodes.PlanningFactsInvalid,
                     "Raw lineage is not Parent-contiguous."
                 );
-                return defects;
+                return lineage;
             }
         }
-        Dictionary<EventAddress, int> lineageSnapshot = lineage;
-        if (facts.ReplaySafeBoundaries.Any(
-                boundary => !lineageSnapshot.ContainsKey(boundary)
-            )
-            || facts.ReplaySafeBoundaries.Distinct().Count()
-                != facts.ReplaySafeBoundaries.Count) {
-            Add(
-                defects,
-                RecapPlanDefectCodes.PlanningFactsInvalid,
-                "Replay-safe boundaries must be unique lineage members."
-            );
-        }
-        if (facts.LatestPublishedSetAnchor is { } latest
-            && !lineage.ContainsKey(latest)) {
-            Add(
-                defects,
-                RecapPlanDefectCodes.PlanningFactsInvalid,
-                "Latest Published anchor is outside the raw lineage."
-            );
-        }
-        return defects;
+        return lineage;
     }
 
     private static List<RecapPlanDefect> ValidateSourceIntents(
@@ -193,7 +362,8 @@ public static class RecapPlanEvaluator {
                 static pair => pair.Address,
                 static pair => pair.index
             );
-        var replaySafe = scheduling.ReplaySafeBoundaries.ToHashSet();
+        HashSet<EventAddress> replaySafe =
+            GetReplaySafeAddresses(scheduling);
 
         if (policyFacts.EmptyReplayStartExclusive is { } emptyStart) {
             if (emptyStart == default
@@ -272,16 +442,21 @@ public static class RecapPlanEvaluator {
                 static pair => pair.Address,
                 static pair => pair.index
             );
-        var replaySafe = facts.ReplaySafeBoundaries.ToHashSet();
+        HashSet<EventAddress> replaySafe =
+            GetReplaySafeAddresses(facts);
         if (!lineage.TryGetValue(
                 build.SetAdmissionAnchor,
                 out int admissionIndex
             )
-            || !replaySafe.Contains(build.SetAdmissionAnchor)) {
+            || !schedule.Cadence.AdmissionCandidates.Any(
+                candidate =>
+                    candidate.Address == build.SetAdmissionAnchor
+            )) {
             Add(
                 defects,
                 RecapPlanDefectCodes.AdmissionInvalid,
-                "SetAdmissionAnchor is not a replay-safe lineage boundary."
+                "SetAdmissionAnchor is not a cadence-safe replay "
+                + "boundary preserving the configured recent reserve."
             );
         }
         if (facts.LatestPublishedSetAnchor is { } latest
@@ -532,7 +707,7 @@ public static class RecapPlanEvaluator {
                         maintain,
                         previous,
                         lineage,
-                        facts.ReplaySafeBoundaries.ToHashSet(),
+                        GetReplaySafeAddresses(facts),
                         defects
                     );
                     ValidatePriorContext(
@@ -789,6 +964,27 @@ public static class RecapPlanEvaluator {
             maintain.RecapBlockId,
         _ => throw new ArgumentOutOfRangeException(nameof(decision))
     };
+
+    private static HashSet<EventAddress> GetReplaySafeAddresses(
+        RecapSchedulingFacts facts
+    ) {
+        var replaySafe = facts.HistoryWindow.ReplaySafeBoundaries
+            .Select(static boundary => boundary.Address)
+            .ToHashSet();
+        replaySafe.Add(facts.HistoryWindow.StartExclusive);
+        return replaySafe;
+    }
+
+    private static RecapHeaderPrefilterResult.Unavailable
+        HeaderUnavailable(
+        string code,
+        string detail
+    ) => HeaderUnavailable([new RecapPlanDefect(code, detail)]);
+
+    private static RecapHeaderPrefilterResult.Unavailable
+        HeaderUnavailable(
+        IReadOnlyList<RecapPlanDefect> defects
+    ) => new(Array.AsReadOnly([.. defects]));
 
     private static RecapSchedulingResult.Unavailable
         ScheduleUnavailable(

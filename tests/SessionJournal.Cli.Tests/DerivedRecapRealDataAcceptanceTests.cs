@@ -969,8 +969,9 @@ public sealed class DerivedRecapRealDataAcceptanceTests {
     );
 
     private sealed record ConfigReport(
-        int RawGrowthTrigger,
-        int RawGrowthHardLimit,
+        int MinimumRecentHistoryUnitCount,
+        int RecapBuildIntervalUnitCount,
+        int MaxRawGrowthEventCount,
         int MaxRouteEndpointsPerBlock,
         int MaxMaintainerCallsPerBuild,
         int MaxRawEventsPerStep,
@@ -979,8 +980,9 @@ public sealed class DerivedRecapRealDataAcceptanceTests {
     ) {
         public static ConfigReport From(RecapPlannerConfig config)
             => new(
-                config.RawGrowthTrigger,
-                config.RawGrowthHardLimit,
+                config.Cadence.MinimumRecentHistoryUnitCount,
+                config.Cadence.RecapBuildIntervalUnitCount,
+                config.MaxRawGrowthEventCount,
                 config.MaxRouteEndpointsPerBlock,
                 config.MaxMaintainerCallsPerBuild,
                 config.MaxRawEventsPerStep,
