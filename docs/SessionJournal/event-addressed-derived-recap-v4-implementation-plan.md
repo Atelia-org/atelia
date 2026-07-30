@@ -640,18 +640,74 @@ R2 已按 R2A～R2D 完成实现、独立审阅、P1 tail-fix 与真实性验收
 
 ### Intent
 
-把 production composition切到 DerivedRecap，删除 current DerivedMemory，并用真实 repo证明替换完成。
+把 `SessionJournal.Cli` 的 production composition切到 DerivedRecap，删除 current
+DerivedMemory，并用真实 repo 的隔离副本证明替换完成。
+
+这里的 Host 只指当前真正组合 `SessionJournal` 的 executable
+`SessionJournal.Cli`。仍使用 `ChatSessionEngine` 的 Galatea/FamilyChat Server迁移不属于
+R3。
+
+### R3 plan lock
+
+R3按以下顺序交付；前一工作包的 focused gate通过后才进入后一工作包：
+
+1. **R3A Policy facts + bounded baseline policy**
+   - `RecapPolicyFacts`显式携带 first-build 的
+     `EmptyReplayStartExclusive`，以及每个 available block source 的 exact
+     `SourceIntent + AbsorbedThrough`；
+   - policy仍只读取 header/cursor facts，不读取 raw payload；
+   - `RecapPlanningPolicyDecision`增加 typed `Unavailable`，用于表达“已触发，但不存在预算内
+     合法 admission/route”，不得伪装成 `NoBuild`；
+   - 首个 production policy为 deterministic `MaintainAll`：所有 catalog block都更新，
+     prior context固定 empty；按 lineage顺序和 replay-safe boundaries生成最短 greedy
+     route，选择最新的预算内 admission；
+   - 不猜 relevance，不自动 `Inherit`，不引入 Tag/LLM policy。
+2. **R3B Exact Building quarantine**
+   - Store只增加 exact unpublished Building quarantine；
+   - 在 per-ref writer lock内把一个 Building原子 rename到 Store-owned quarantine目录；
+   - Published同 anchor存在时拒绝，missing幂等返回；不得借用 whole-Store `ResetAsync`。
+3. **R3C Recap operator CLI**
+   - 增加 `recap create/inspect/run/resume/restore/abandon-building/reset`命令族；
+   - `run`就是 bounded plan-or-resume-and-publish；不增加没有 durable authority的
+     dry-plan命令；
+   - `create/reset`只表达 Store初始化/整根隔离重置；真正 catch-up由一次或多次显式
+     `run`完成，不提供会在崩溃重试时再次 reset的“一键 rebuild”；
+   - inspect/report只输出 address、state、typed result/defect，不输出 recap正文、
+     frozen prompt或 provider secret；
+   - report输出继续使用同目录临时文件、symlink/reparse ancestor拒绝和 atomic
+     publication。
+4. **R3D Online cutover**
+   - `run-online-turn`先打开 raw SessionJournal并 inspect phase；
+   - `Prepared/Started` recovery只组合 agent completion runtime，不要求 message，不打开、
+     创建或修复 Recap Store；
+   - 只有需要新 request的 phase才组合 Store + Planner + Maintainers + candidate/lifecycle；
+   - Store缺失不得被 online路径静默 create/reset。
+5. **R3E Old subsystem deletion**
+   - 删除 current `SessionJournal.DerivedMemory` production/test projects和旧 CLI命令；
+   - 更新 solution、project references、active docs、InternalsVisibleTo与 architecture guards；
+   - persisted maintainer identity/resource logical name若仍是 canonical wire identity，不因
+     assembly删除而改名。
+6. **R3F Real acceptance**
+   - mandatory gate使用真实 repo 的独立 copy与 scripted completion/maintainer，不依赖网络；
+   - optional real LLM smoke独立运行，不作为 deterministic release gate。
+
+R3A对既有 ceilings的解释保持保守：
+
+- `RawGrowthHardLimit`是 policy前的总 backlog admission gate；fresh bootstrap必须显式配置到
+  足以覆盖当前 raw lineage，否则返回 typed backpressure，不自动 reset；
+- `MaxRawEventsPerBuild`按每个 maintained block 的 replay window累加；
+- greedy route只能在 replay-safe boundary上切分；单段 boundary gap超过
+  `MaxRawEventsPerStep`时返回 typed unavailable；
+- event-count ceiling不等于 provider token/byte ceiling。R3不伪称解决通用 token packing；
+  production配置应使用保守 step limit，real LLM smoke记录实际 request规模，后续单独设计
+  provider-aware request budget。
 
 ### In scope
 
-- Host/CLI只组合 Store + Planner + Maintainers；
-- 最小命令：
-  - inspect exact Building/Published；
-  - plan/run/resume Building；
-  - restore exact Published set；
-  - quarantine unpublished Building；
-  - explicit Store rebuild；
-  - run online turn；
+- production `MaintainAll` policy与其所需的 exact cursor facts；
+- `SessionJournal.Cli`只组合 Store + Planner + Maintainers；
+- exact Building/Published inspect、bounded run/exact resume、exact restore、exact unpublished
+  Building quarantine、explicit Store create/reset、online turn；
 - 删除 current DerivedMemory production/test projects；
 - 更新 solution、active docs 与 architecture guards；
 - 删除 active target/runtime 的 ArtifactSet/DerivedMemory V4 naming；
@@ -664,6 +720,10 @@ R2 已按 R2A～R2D 完成实现、独立审阅、P1 tail-fix 与真实性验收
 - broad repair console；
 - future dynamic Memory；
 - multi-process writer。
+- Galatea/FamilyChat Server从 ChatSession迁移到 SessionJournal；
+- generic dry-plan/exact-plan authoring CLI；
+- one-shot reset-and-rebuild命令；
+- provider-aware token packing与自动 profile relevance判断。
 
 ### Structure scan
 
@@ -696,8 +756,10 @@ rg "derived/memory/v2|derived/memory/v3"
 - 一个真实 SessionJournal repo：
 
 ```text
-Create/rebuild Store
-  -> plan
+copy real repo
+  -> record raw full-file hash + semantic fingerprint
+  -> create Store
+  -> bounded run
   -> partial rolling progress
   -> reopen
   -> publish
@@ -708,6 +770,21 @@ Create/rebuild Store
   -> online completion
   -> Prepared reopen after Store deletion
 ```
+
+Mandatory scripted acceptance还必须证明：
+
+- source fixture从不原地修改；旧 `derived/memory/v1`不读取也不删除；
+- partial failure后 healthy block不重复调用，失败 block只补 missing suffix；
+- exact selected component损坏返回 `ExactPublishedSetInvalid`，不 fallback；
+- Store/build/corrupt/restore期间 raw full-file hash、head、semantic fingerprint不变；
+- online append保留旧 lineage prefix，且只新增预期的 SessionJournal suffix；
+- `CompletionRequestPrepared`后保存 canonical request bytes/hash，删除
+  `derived/recap/v4`再 reopen仍得到同一 request，且不触碰 Recap lifecycle；
+- acceptance report记录 source identity、policy/config、admission/route/call counts、
+  corruption target、restore result、Prepared request hash与最终 raw prefix hash。
+
+real fixture位于 `gitignore`时，runner必须接受显式 source path；普通 CI只依赖生成式
+fixture。真实 provider smoke为 opt-in，只 gate结构合法与流程成功，不 gate生成文本。
 
 ## 5. 完成定义
 
