@@ -89,38 +89,6 @@ internal static class MemoryMaintainerProducerIdentity {
             "atelia.session-journal.derived-memory-no-model.v1"
         ));
 
-    public static string ComputeConnectionFingerprint(
-        CompletionConnectionConfig connection
-    ) {
-        ArgumentNullException.ThrowIfNull(connection);
-        return ComputeFingerprint(
-            new ConnectionFingerprintDto(
-                connection.Id,
-                connection.Kind,
-                connection.ModelId,
-                connection.CompletionSurfaceId,
-                connection.BaseAddress,
-                connection.MaxTokens
-            )
-        );
-    }
-
-    public static string ComputeRequestAdapterFingerprint(
-        ICompletionClient client,
-        CompletionConnectionConfig connection
-    ) {
-        ArgumentNullException.ThrowIfNull(client);
-        ArgumentNullException.ThrowIfNull(connection);
-        return ComputeFingerprint(
-            new RequestAdapterFingerprintDto(
-                client.Name,
-                client.ApiSpecId,
-                connection.Kind,
-                connection.CompletionSurfaceId
-            )
-        );
-    }
-
     private static string ComputeFingerprint<T>(T value) {
         byte[] bytes = JsonSerializer.SerializeToUtf8Bytes(
             value,
@@ -175,21 +143,6 @@ internal static class MemoryMaintainerProducerIdentity {
         [property: JsonPropertyOrder(0)] string Schema
     );
 
-    private sealed record ConnectionFingerprintDto(
-        string ConnectionId,
-        string Kind,
-        string ModelId,
-        string CompletionSurfaceId,
-        string BaseAddress,
-        int? MaxTokens
-    );
-
-    private sealed record RequestAdapterFingerprintDto(
-        string ClientName,
-        string ClientApiSpecId,
-        string ConnectionKind,
-        string CompletionSurfaceId
-    );
 }
 
 internal sealed record MemoryMaintainerRunRecord(

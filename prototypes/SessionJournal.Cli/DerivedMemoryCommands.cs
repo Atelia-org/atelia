@@ -550,13 +550,13 @@ internal static class DerivedMemoryCommands {
         string inputPath,
         string? reportPath
     ) {
-        Program.EnsurePathChainHasNoReparsePoint(inputPath, "--input");
+        CliIo.EnsurePathChainHasNoReparsePoint(inputPath, "--input");
         if (reportPath is not null) {
-            Program.EnsurePathChainHasNoReparsePoint(
+            CliIo.EnsurePathChainHasNoReparsePoint(
                 reportPath,
                 "--report-json"
             );
-            Program.EnsurePathIsOutsideRepository(
+            CliIo.EnsurePathIsOutsideRepository(
                 inputPath,
                 reportPath,
                 "--report-json"
@@ -611,7 +611,7 @@ internal static class DerivedMemoryCommands {
         T report
     ) {
         if (reportPath is not null) {
-            Program.WriteJsonAtomically(reportPath, report);
+            CliIo.WriteJsonAtomically(reportPath, report);
         }
     }
 

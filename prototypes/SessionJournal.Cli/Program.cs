@@ -1,5 +1,4 @@
 using System.Text;
-using System.Text.Encodings.Web;
 using System.Text.Json;
 using Atelia.Completion;
 using Atelia.Completion.Abstractions;
@@ -15,12 +14,6 @@ internal static class Program {
         "gitignore/session-journal/llm-smoke-calls";
     private const string DefaultMaintainerCallLogDir =
         "gitignore/session-journal/memory-maintainer-calls";
-
-    private static readonly JsonSerializerOptions JsonOptions = new() {
-        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-        WriteIndented = false,
-        Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping
-    };
 
     public static int Main(string[] args)
         => MainCore(args, new DefaultCompletionClientFactory());
@@ -122,22 +115,25 @@ internal static class Program {
         string? reportPath = options.Get("report-md");
         bool force = options.HasFlag("force");
 
-        EnsurePathChainHasNoReparsePoint(inputPath, "--input");
-        EnsurePathChainHasNoReparsePoint(outputPath, "--output");
-        EnsurePathsDoNotOverlap(inputPath, outputPath);
+        CliIo.EnsurePathChainHasNoReparsePoint(inputPath, "--input");
+        CliIo.EnsurePathChainHasNoReparsePoint(outputPath, "--output");
+        CliIo.EnsurePathsDoNotOverlap(inputPath, outputPath);
         if (!string.IsNullOrWhiteSpace(reportPath)) {
-            EnsurePathChainHasNoReparsePoint(reportPath, "--report-md");
-            EnsurePathsAreDifferent(
+            CliIo.EnsurePathChainHasNoReparsePoint(
+                reportPath,
+                "--report-md"
+            );
+            CliIo.EnsurePathsAreDifferent(
                 inputPath,
                 reportPath,
                 "--report-md must not overwrite --input."
             );
-            EnsurePathIsOutsideRepository(
+            CliIo.EnsurePathIsOutsideRepository(
                 outputPath,
                 reportPath,
                 "--report-md"
             );
-            EnsureFilePathIsNotAncestorOfDirectory(
+            CliIo.EnsureFilePathIsNotAncestorOfDirectory(
                 reportPath,
                 outputPath,
                 "--report-md must not contain --output."
@@ -185,10 +181,13 @@ internal static class Program {
             ?? SJ.SessionJournalDefaults.MainBranchName;
         string? reportPath =
             options.GetOptionalSingle("report-json");
-        EnsurePathChainHasNoReparsePoint(inputPath, "--input");
+        CliIo.EnsurePathChainHasNoReparsePoint(inputPath, "--input");
         if (!string.IsNullOrWhiteSpace(reportPath)) {
-            EnsurePathChainHasNoReparsePoint(reportPath, "--report-json");
-            EnsurePathIsOutsideRepository(
+            CliIo.EnsurePathChainHasNoReparsePoint(
+                reportPath,
+                "--report-json"
+            );
+            CliIo.EnsurePathIsOutsideRepository(
                 inputPath,
                 reportPath,
                 "--report-json"
@@ -202,7 +201,7 @@ internal static class Program {
                 CancellationToken.None
             ).ConfigureAwait(false);
         if (!string.IsNullOrWhiteSpace(reportPath)) {
-            WriteJsonAtomically(reportPath, report);
+            CliIo.WriteJsonAtomically(reportPath, report);
         }
 
         PrintValidation(report);
@@ -317,7 +316,7 @@ internal static class Program {
         string? userPromptPath =
             options.GetOptionalSingle("prompt");
 
-        ValidateReadOnlyWritablePaths(
+        CliIo.ValidateReadOnlyWritablePaths(
             [
                 (inputPath, "--input"),
                 (connectionsPath, "--connections"),
@@ -337,17 +336,17 @@ internal static class Program {
                 (callLogDir, "--call-log-dir")
             ]
         );
-        EnsurePathIsOutsideRepository(
+        CliIo.EnsurePathIsOutsideRepository(
             inputPath,
             outputPath,
             "--output"
         );
-        EnsurePathIsOutsideRepository(
+        CliIo.EnsurePathIsOutsideRepository(
             inputPath,
             callLogDir,
             "--call-log-dir"
         );
-        EnsurePathsDoNotNest(
+        CliIo.EnsurePathsDoNotNest(
             outputPath,
             callLogDir,
             "--output and --call-log-dir must be disjoint paths."
@@ -446,7 +445,7 @@ internal static class Program {
                 result,
                 repository.Artifacts.ArtifactsDirectory
             );
-        WriteJsonAtomically(fullOutputPath, record);
+        CliIo.WriteJsonAtomically(fullOutputPath, record);
 
         Console.WriteLine($"epoch: {record.EpochId}");
         Console.WriteLine($"artifact: {record.ArtifactId}");
@@ -514,7 +513,7 @@ internal static class Program {
             callLogDir ??= DefaultMaintainerCallLogDir;
         }
 
-        ValidateReadOnlyWritablePaths(
+        CliIo.ValidateReadOnlyWritablePaths(
             connectionsPath is null
                 ? [(inputPath, "--input")]
                 : [
@@ -528,18 +527,18 @@ internal static class Program {
                     (callLogDir, "--call-log-dir")
                 ]
         );
-        EnsurePathIsOutsideRepository(
+        CliIo.EnsurePathIsOutsideRepository(
             inputPath,
             outputPath,
             "--output"
         );
         if (callLogDir is not null) {
-            EnsurePathIsOutsideRepository(
+            CliIo.EnsurePathIsOutsideRepository(
                 inputPath,
                 callLogDir,
                 "--call-log-dir"
             );
-            EnsurePathsDoNotNest(
+            CliIo.EnsurePathsDoNotNest(
                 outputPath,
                 callLogDir,
                 "--output and --call-log-dir must be disjoint paths."
@@ -764,7 +763,7 @@ internal static class Program {
             result.Settlements,
             result.Failures
         );
-        WriteJsonAtomically(fullOutputPath, record);
+        CliIo.WriteJsonAtomically(fullOutputPath, record);
         Console.WriteLine($"transaction: {record.TransactionId}");
         Console.WriteLine($"status: {record.Status}");
         Console.WriteLine(
@@ -821,7 +820,7 @@ internal static class Program {
                 "run-online-turn requires at least one --role and currently accepts produce roles only."
             );
         }
-        ValidateReadOnlyWritablePaths(
+        CliIo.ValidateReadOnlyWritablePaths(
             [
                 (inputPath, "--input"),
                 (connectionsPath, "--connections")
@@ -831,17 +830,17 @@ internal static class Program {
                 (callLogDir, "--call-log-dir")
             ]
         );
-        EnsurePathIsOutsideRepository(
+        CliIo.EnsurePathIsOutsideRepository(
             inputPath,
             outputPath,
             "--output"
         );
-        EnsurePathIsOutsideRepository(
+        CliIo.EnsurePathIsOutsideRepository(
             inputPath,
             callLogDir,
             "--call-log-dir"
         );
-        EnsurePathsDoNotNest(
+        CliIo.EnsurePathsDoNotNest(
             outputPath,
             callLogDir,
             "--output and --call-log-dir must be disjoint paths."
@@ -1023,16 +1022,9 @@ internal static class Program {
             );
         var runtime = new SJ.SessionRuntime(
             agentClient,
-            CompletionTarget: new(
-                connection.Id,
-                connection.Kind,
-                MemoryMaintainerProducerIdentity
-                    .ComputeConnectionFingerprint(connection),
-                MemoryMaintainerProducerIdentity
-                    .ComputeRequestAdapterFingerprint(
-                        client,
-                        connection
-                    )
+            CompletionTarget: CompletionTargetIdentityFactory.Create(
+                connection,
+                client
             ),
             MaxTokens: connection.MaxTokens,
             UncertainCompletionRecoveryPolicy:
@@ -1101,7 +1093,7 @@ internal static class Program {
             ),
             resultErrors?.Count ?? 0
         );
-        WriteJsonAtomically(outputPath, record);
+        CliIo.WriteJsonAtomically(outputPath, record);
         Console.WriteLine($"head: {record.Head}");
         Console.WriteLine($"phase: {record.Phase}");
         Console.WriteLine($"output: {Path.GetFullPath(outputPath)}");
@@ -1195,227 +1187,12 @@ internal static class Program {
             ? null
             : File.ReadAllText(path, Encoding.UTF8);
 
-    internal static void EnsurePathChainHasNoReparsePoint(
-        string path,
-        string optionName
-    ) {
-        string currentPath = Path.GetFullPath(path);
-        while (true) {
-            try {
-                FileAttributes attributes =
-                    File.GetAttributes(currentPath);
-                if ((attributes & FileAttributes.ReparsePoint) != 0) {
-                    throw new ArgumentException(
-                        $"{optionName} must not contain a symbolic link or "
-                        + $"reparse point: {currentPath}"
-                    );
-                }
-            }
-            catch (FileNotFoundException) {
-                // A missing leaf is allowed; existing ancestors still matter.
-            }
-            catch (DirectoryNotFoundException) {
-                // A missing leaf is allowed; existing ancestors still matter.
-            }
-
-            string? parentPath = Path.GetDirectoryName(currentPath);
-            if (parentPath is null) { break; }
-            currentPath = parentPath;
-        }
-    }
-
-    private static void ValidateReadOnlyWritablePaths(
-        IReadOnlyList<(string Path, string Option)> readOnlyPaths,
-        IReadOnlyList<(string Path, string Option)> writablePaths
-    ) {
-        foreach ((string path, string option) in readOnlyPaths) {
-            EnsurePathChainHasNoReparsePoint(path, option);
-        }
-        foreach ((string path, string option) in writablePaths) {
-            EnsurePathChainHasNoReparsePoint(path, option);
-        }
-        foreach ((string writablePath, string writableOption) in
-                 writablePaths) {
-            foreach ((string readOnlyPath, string readOnlyOption) in
-                     readOnlyPaths) {
-                EnsurePathsDoNotNest(
-                    writablePath,
-                    readOnlyPath,
-                    $"{writableOption} and {readOnlyOption} must be disjoint paths."
-                );
-            }
-        }
-    }
-
-    internal static void EnsurePathIsOutsideRepository(
-        string repositoryPath,
-        string candidatePath,
-        string optionName
-    ) {
-        string repositoryFullPath = Path.TrimEndingDirectorySeparator(
-            Path.GetFullPath(repositoryPath)
-        );
-        string candidateFullPath = Path.TrimEndingDirectorySeparator(
-            Path.GetFullPath(candidatePath)
-        );
-        StringComparison comparison = PathComparison;
-        string repositoryPrefix =
-            repositoryFullPath + Path.DirectorySeparatorChar;
-        if (candidateFullPath.Equals(repositoryFullPath, comparison)
-            || candidateFullPath.StartsWith(
-                repositoryPrefix,
-                comparison
-            )) {
-            throw new ArgumentException(
-                $"{optionName} must be outside the input repository."
-            );
-        }
-    }
-
-    private static void EnsurePathsDoNotOverlap(
-        string inputFilePath,
-        string outputDirectoryPath
-    ) {
-        string input = Path.TrimEndingDirectorySeparator(
-            Path.GetFullPath(inputFilePath)
-        );
-        string output = Path.TrimEndingDirectorySeparator(
-            Path.GetFullPath(outputDirectoryPath)
-        );
-        string outputPrefix = output + Path.DirectorySeparatorChar;
-        if (input.Equals(output, PathComparison)
-            || input.StartsWith(outputPrefix, PathComparison)) {
-            throw new ArgumentException(
-                "--output must not contain --input."
-            );
-        }
-    }
-
-    private static void EnsurePathsAreDifferent(
-        string firstPath,
-        string secondPath,
-        string errorMessage
-    ) {
-        string first = Path.TrimEndingDirectorySeparator(
-            Path.GetFullPath(firstPath)
-        );
-        string second = Path.TrimEndingDirectorySeparator(
-            Path.GetFullPath(secondPath)
-        );
-        if (first.Equals(second, PathComparison)) {
-            throw new ArgumentException(errorMessage);
-        }
-    }
-
-    private static void EnsurePathsDoNotNest(
-        string firstPath,
-        string secondPath,
-        string errorMessage
-    ) {
-        string first = Path.TrimEndingDirectorySeparator(
-            Path.GetFullPath(firstPath)
-        );
-        string second = Path.TrimEndingDirectorySeparator(
-            Path.GetFullPath(secondPath)
-        );
-        string firstPrefix = first + Path.DirectorySeparatorChar;
-        string secondPrefix = second + Path.DirectorySeparatorChar;
-        if (first.Equals(second, PathComparison)
-            || first.StartsWith(secondPrefix, PathComparison)
-            || second.StartsWith(firstPrefix, PathComparison)) {
-            throw new ArgumentException(errorMessage);
-        }
-    }
-
-    private static void EnsureFilePathIsNotAncestorOfDirectory(
-        string filePath,
-        string directoryPath,
-        string errorMessage
-    ) {
-        string file = Path.TrimEndingDirectorySeparator(
-            Path.GetFullPath(filePath)
-        );
-        string directory = Path.TrimEndingDirectorySeparator(
-            Path.GetFullPath(directoryPath)
-        );
-        string filePrefix = file + Path.DirectorySeparatorChar;
-        if (directory.StartsWith(filePrefix, PathComparison)) {
-            throw new ArgumentException(errorMessage);
-        }
-    }
-
-    private static StringComparison PathComparison =>
-        OperatingSystem.IsWindows()
-            ? StringComparison.OrdinalIgnoreCase
-            : StringComparison.Ordinal;
-
     private sealed record RoleSpec(
         bool Required,
         string ProfileName,
         string ExecutionMode,
         string? SelectedArtifactId
     );
-
-    internal static void WriteJsonAtomically<T>(string path, T value) {
-        string fullPath = Path.GetFullPath(path);
-        Directory.CreateDirectory(
-            Path.GetDirectoryName(fullPath) ?? "."
-        );
-        (string temporaryPath, FileStream temporaryStream) =
-            CreateTemporaryOutput(fullPath);
-        try {
-            using (temporaryStream) {
-                JsonSerializer.Serialize(
-                    temporaryStream,
-                    value,
-                    JsonOptions
-                );
-                temporaryStream.Flush(flushToDisk: true);
-            }
-            File.Move(temporaryPath, fullPath, overwrite: true);
-        }
-        catch {
-            TryDeleteFile(temporaryPath);
-            throw;
-        }
-    }
-
-    private static (string Path, FileStream Stream) CreateTemporaryOutput(
-        string fullOutputPath
-    ) {
-        string directory =
-            Path.GetDirectoryName(fullOutputPath) ?? ".";
-        string fileName = Path.GetFileName(fullOutputPath);
-        while (true) {
-            string temporaryPath = Path.Combine(
-                directory,
-                $".{fileName}.{Guid.NewGuid():N}.tmp"
-            );
-            try {
-                return (
-                    temporaryPath,
-                    new FileStream(
-                        temporaryPath,
-                        FileMode.CreateNew,
-                        FileAccess.Write,
-                        FileShare.Read
-                    )
-                );
-            }
-            catch (IOException) when (File.Exists(temporaryPath)) {
-                // Reserve another unique path.
-            }
-        }
-    }
-
-    private static void TryDeleteFile(string path) {
-        try {
-            File.Delete(path);
-        }
-        catch {
-            // Best-effort cleanup must not hide the original failure.
-        }
-    }
 
     private static int Fail(string message) {
         Console.Error.WriteLine($"error: {message}");
