@@ -16,8 +16,9 @@
 > [DerivedMemory V3 candidate](superseded/derived-memory-v3-candidate/derived-memory-next-target-design.md)
 > **实施状态**：R0 Contracts + Publish/Read、R1 Planner + Build/Resume、R2 Exact-slot
 > Restore + Online lifecycle、R3 Cutover + CLI + real-data acceptance均已完成；具体证据只在
-> implementation plan维护。Post-R3 repo-owned config与 HistoryUnit cadence是已审阅 target，
-> 尚未实现
+> implementation plan维护。Post-R3 C0 HistoryUnit cadence、C1 repo-owned config
+> document/composition与C2 CLI/online authority cutover也已完成；C3 Galatea real-repo
+> acceptance尚待执行
 
 ## 0. 一句话目标
 
@@ -393,7 +394,10 @@ Prepared 保存 exact materialized Context/request commitment；reopen 不访问
 
 ## 7. Planner 与 Galatea multi-cursor
 
-`RecapPlannerConfig` 属于 Planner，至少描述：
+Planner配置已拆成四层：persisted `RecapPlannerConfigDocument`表达 repo-owned operator
+intent；resolved `RecapPlanningInputs`表达本次 active catalog、cadence与 policy；
+`RecapPlanningLimits`表达新 planning ceilings；`RecapProtocolHardCaps`则是 code/schema-owned
+frozen-plan边界。它们合起来至少描述：
 
 - `RecapCadenceConfig`：minimum recent HistoryUnit reserve + build interval；
 - `MaxRawGrowthEventCount` raw traversal hard-limit，与 cadence计量分离；

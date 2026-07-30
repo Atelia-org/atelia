@@ -65,6 +65,15 @@ internal static class OnlineTurnCommand {
             engine.InspectExecutionBoundary();
         OnlineExecutionMode mode = Classify(initial);
         ValidateMessage(mode, message);
+        if (mode == OnlineExecutionMode.ResumeStarted
+            && recoveryPolicy
+                == SJ.SessionUncertainCompletionRecoveryPolicy.Refuse) {
+            throw new InvalidOperationException(
+                "The current completion attempt may already have reached "
+                + "the provider. Choose restart-new-attempt explicitly "
+                + "to accept possible duplicate execution."
+            );
+        }
 
         DerivedRecapOnlineLifecycleCoordinator? recap = null;
         DerivedRecapStore? store = null;
@@ -111,19 +120,14 @@ internal static class OnlineTurnCommand {
             registry.Resolve(requestedConnection);
         ICompletionClient inner = registry.GetClient(connection.Id);
         ICompletionClient agentClient =
-            mode == OnlineExecutionMode.ResumeStarted
-                && recoveryPolicy
-                    == SJ.SessionUncertainCompletionRecoveryPolicy
-                        .Refuse
-                ? inner
-                : new LoggingCompletionClient(
-                    inner,
-                    connection,
-                    callLogDirectory,
-                    new CompletionCallLogContext(
-                        Command: "run-online-turn/agent"
-                    )
-                );
+            new LoggingCompletionClient(
+                inner,
+                connection,
+                callLogDirectory,
+                new CompletionCallLogContext(
+                    Command: "run-online-turn/agent"
+                )
+            );
 
         if (store is not null && recapAuthority is not null) {
             RecapMaintainerProfileCatalog capabilityCatalog =
@@ -131,8 +135,8 @@ internal static class OnlineTurnCommand {
                     PreparedRecapOperationAuthority.NewPlanning
                         newPlanning =>
                         newPlanning.Composition.CapabilityCatalog,
-                    PreparedRecapOperationAuthority.FrozenBuilding =>
-                        RecapMaintainerProfileCatalog.BuiltIn,
+                    PreparedRecapOperationAuthority.FrozenBuilding
+                        frozen => frozen.CapabilityCatalog,
                     _ => throw new InvalidDataException(
                         "Unknown prepared DerivedRecap authority."
                     )
@@ -161,8 +165,7 @@ internal static class OnlineTurnCommand {
                         .CreateForFrozenBuilding(
                             engine,
                             store,
-                            frozen.Snapshot.Descriptor
-                                .SetAdmissionAnchor,
+                            frozen.Snapshot.Descriptor,
                             maintainers.Registry
                         ),
                 _ => throw new InvalidDataException(

@@ -34,7 +34,7 @@ internal static class RecapPlannerConfigCommands {
     private static int Initialize(CliOptions options) {
         (string input, string? reportPath) = ReadOptions(options);
         ResolvedRecapPlannerComposition composition =
-            RecapCliComposition.ProductionComposition;
+            RecapCliComposition.DefaultComposition;
         RecapPlannerConfigInitializeResult result =
             RecapPlannerConfigInitializer.Initialize(
                 input,
@@ -99,64 +99,21 @@ internal static class RecapPlannerConfigCommands {
 
     private static int Inspect(CliOptions options) {
         (string input, string? reportPath) = ReadOptions(options);
-        RecapPlannerConfigLoadResult load =
-            RecapPlannerConfigLoader.Load(input);
+        RecapPlannerCompositionLoadResult load =
+            RecapPlannerCompositionLoader.Load(input);
         RecapPlannerConfigCommandReport report;
         int exitCode;
         switch (load) {
-            case RecapPlannerConfigLoadResult.Available available:
-                RecapPlannerConfigResolveResult resolution =
-                    RecapPlannerCompositionResolver.Resolve(
-                        RecapPlannerConfigSnapshot.FromAvailable(
-                            available
-                        )
-                    );
-                (report, exitCode) = resolution switch {
-                    RecapPlannerConfigResolveResult.Resolved resolved => (
-                        ResolvedReport(
-                            "inspect",
-                            "Resolved",
-                            available.Path,
-                            resolved.Composition
-                        ),
-                        0
-                    ),
-                    RecapPlannerConfigResolveResult.Invalid invalid => (
-                        FailureReport(
-                            "inspect",
-                            "Invalid",
-                            available.Path,
-                            Map(invalid.Defects),
-                            RecapPlannerConfigSnapshot.FromAvailable(
-                                available
-                            )
-                        ),
-                        2
-                    ),
-                    RecapPlannerConfigResolveResult.Unavailable unavailable =>
-                        (
-                            FailureReport(
-                                "inspect",
-                                "Unavailable",
-                                available.Path,
-                                [
-                                    new(
-                                        "Unavailable",
-                                        unavailable.Reason
-                                    )
-                                ],
-                                RecapPlannerConfigSnapshot.FromAvailable(
-                                    available
-                                )
-                            ),
-                            2
-                        ),
-                    _ => throw new InvalidDataException(
-                        "Unknown planner config resolve result."
-                    )
-                };
+            case RecapPlannerCompositionLoadResult.Resolved resolved:
+                report = ResolvedReport(
+                    "inspect",
+                    "Resolved",
+                    resolved.Composition.Snapshot.CanonicalPath!,
+                    resolved.Composition
+                );
+                exitCode = 0;
                 break;
-            case RecapPlannerConfigLoadResult.Missing missing:
+            case RecapPlannerCompositionLoadResult.Missing missing:
                 report = FailureReport(
                     "inspect",
                     "Missing",
@@ -165,21 +122,23 @@ internal static class RecapPlannerConfigCommands {
                 );
                 exitCode = 2;
                 break;
-            case RecapPlannerConfigLoadResult.Invalid invalid:
+            case RecapPlannerCompositionLoadResult.Invalid invalid:
                 report = FailureReport(
                     "inspect",
                     "Invalid",
                     invalid.Path,
-                    Map(invalid.Defects)
+                    Map(invalid.Defects),
+                    invalid.Snapshot
                 );
                 exitCode = 2;
                 break;
-            case RecapPlannerConfigLoadResult.Unavailable unavailable:
+            case RecapPlannerCompositionLoadResult.Unavailable unavailable:
                 report = FailureReport(
                     "inspect",
                     "Unavailable",
                     unavailable.Path,
-                    [new("Unavailable", unavailable.Reason)]
+                    [new("Unavailable", unavailable.Reason)],
+                    unavailable.Snapshot
                 );
                 exitCode = 2;
                 break;
@@ -310,6 +269,17 @@ internal static class RecapPlannerConfigCommands {
 
     private static IReadOnlyList<RecapPlannerConfigCommandDefect> Map(
         IEnumerable<RecapPlannerConfigResolveDefect> defects
+    ) => Array.AsReadOnly([
+        .. defects.Select(static defect =>
+            new RecapPlannerConfigCommandDefect(
+                defect.Code,
+                defect.Detail
+            )
+        )
+    ]);
+
+    private static IReadOnlyList<RecapPlannerConfigCommandDefect> Map(
+        IEnumerable<RecapPlannerCompositionLoadDefect> defects
     ) => Array.AsReadOnly([
         .. defects.Select(static defect =>
             new RecapPlannerConfigCommandDefect(

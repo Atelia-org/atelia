@@ -32,7 +32,7 @@ public sealed class ProgramRecapExecutionCommandTests : IDisposable {
     [Fact]
     public void ProductionCatalogAndLimitsAreExactAndOrdered() {
         ResolvedRecapPlannerComposition composition =
-            RecapCliComposition.ProductionComposition;
+            RecapCliComposition.DefaultComposition;
         RecapPlanningInputs inputs = composition.PlanningInputs;
         RecapPlanningLimits limits = composition.PlanningLimits;
         Assert.Equal(
@@ -110,7 +110,7 @@ public sealed class ProgramRecapExecutionCommandTests : IDisposable {
     }
 
     [Fact]
-    public async Task PartialFailureReopensSuffixPublishesThenRestoresCorrupt()
+    public async Task PartialFailureRunFastPathIgnoresMissingConfigThenRestores()
     {
         Fixture fixture = await CreateFixtureAsync("partial", 77);
         Assert.Equal(157, fixture.EventCount);
@@ -131,7 +131,7 @@ public sealed class ProgramRecapExecutionCommandTests : IDisposable {
         Assert.Equal(5, firstFactory.CallCount);
         using JsonDocument first = ReadJson(firstReport);
         Assert.Equal(
-            "atelia.session-journal.derived-recap-execution.v2",
+            "atelia.session-journal.derived-recap-execution.v3",
             String(first, "schema")
         );
         JsonElement reportedConfig =
@@ -141,10 +141,21 @@ public sealed class ProgramRecapExecutionCommandTests : IDisposable {
             reportedConfig.GetProperty("schema").GetString()
         );
         Assert.Equal(
-            RecapCliComposition.ProductionComposition
+            RecapCliComposition.DefaultComposition
                 .Snapshot.ConfigSha256,
             reportedConfig
                 .GetProperty("configSha256")
+                .GetString()
+        );
+        Assert.Equal(
+            RecapPlannerConfigLoader.GetCanonicalPath(fixture.Path),
+            reportedConfig.GetProperty("path").GetString()
+        );
+        Assert.Equal(
+            "ExactSchedule",
+            first.RootElement
+                .GetProperty("planning")
+                .GetProperty("measurementKind")
                 .GetString()
         );
         Assert.Equal("BlockFailed", String(first, "resultStatus"));
@@ -160,16 +171,19 @@ public sealed class ProgramRecapExecutionCommandTests : IDisposable {
 
         string resumeReport =
             Path.Combine(_tempRoot, "resume.json");
+        Directory.Delete(
+            Path.Combine(fixture.Path, "config"),
+            recursive: true
+        );
         var resumeFactory = new ScriptedCompletionClientFactory(
             "SECRET-RECAP-RESULT"
         );
         Assert.Equal(0, Run(
             ExecuteArgs(
                 fixture,
-                "resume",
+                "run",
                 resumeReport,
-                "resume-calls",
-                anchor
+                "resume-calls"
             ),
             resumeFactory
         ));
@@ -182,6 +196,12 @@ public sealed class ProgramRecapExecutionCommandTests : IDisposable {
                 JsonValueKind.Null,
                 resume.RootElement
                     .GetProperty("config")
+                    .ValueKind
+            );
+            Assert.Equal(
+                JsonValueKind.Null,
+                resume.RootElement
+                    .GetProperty("planning")
                     .ValueKind
             );
         }
@@ -396,6 +416,373 @@ public sealed class ProgramRecapExecutionCommandTests : IDisposable {
         Assert.Equal(raw, ReadRawSnapshot(fixture.Path));
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task MissingOrInvalidConfigBlocksBeforeClientOrBuilding(
+        bool invalid
+    ) {
+        Fixture fixture = await CreateFixtureAsync(
+            invalid ? "invalid-config" : "missing-config",
+            77
+        );
+        await CreateStoreAsync(fixture);
+        string configPath =
+            RecapPlannerConfigLoader.GetCanonicalPath(fixture.Path);
+        if (invalid) {
+            File.WriteAllText(configPath, "{\"schema\":");
+        }
+        else {
+            File.Delete(configPath);
+        }
+        RawSnapshot raw = ReadRawSnapshot(fixture.Path);
+        string derivedBefore = HashDerivedFiles(fixture.Path);
+        string reportPath = Path.Combine(
+            _tempRoot,
+            invalid ? "invalid-config.json" : "missing-config.json"
+        );
+        string calls = Path.Combine(
+            _tempRoot,
+            invalid ? "invalid-config-calls" : "missing-config-calls"
+        );
+        var factory = new ScriptedCompletionClientFactory("unused");
+
+        Assert.Equal(2, Run(
+            ExecuteArgs(
+                fixture,
+                "run",
+                reportPath,
+                Path.GetFileName(calls)
+            ),
+            factory
+        ));
+
+        using JsonDocument report = ReadJson(reportPath);
+        Assert.Equal("Unavailable", String(report, "resultStatus"));
+        Assert.Equal(0, factory.CreateCallCount);
+        Assert.Equal(0, factory.CallCount);
+        Assert.False(Directory.Exists(calls));
+        Assert.Empty(Directory.EnumerateDirectories(
+            Path.Combine(
+                fixture.Path,
+                "derived",
+                "recap",
+                "v4",
+                "refs",
+                fixture.BranchRefId,
+                "building"
+            )
+        ));
+        Assert.Equal(derivedBefore, HashDerivedFiles(fixture.Path));
+        Assert.Equal(raw, ReadRawSnapshot(fixture.Path));
+    }
+
+    [Fact]
+    public async Task CatalogShapeMismatchBlocksBeforeClientOrBuilding() {
+        Fixture fixture =
+            await CreateFixtureAsync("catalog-mismatch", 77);
+        await CreateStoreAsync(fixture);
+        var firstFactory =
+            new ScriptedCompletionClientFactory("initial recap");
+        Assert.Equal(0, Run(
+            ExecuteArgs(
+                fixture,
+                "run",
+                Path.Combine(_tempRoot, "catalog-first.json"),
+                "catalog-first-calls"
+            ),
+            firstFactory
+        ));
+
+        RecapPlannerConfigDocument source =
+            RecapCliComposition.DefaultComposition.Snapshot.Document;
+        File.WriteAllBytes(
+            RecapPlannerConfigLoader.GetCanonicalPath(fixture.Path),
+            RecapPlannerConfigCodec.EncodeCanonical(
+                source with {
+                    Catalog = Array.AsReadOnly([
+                        source.Catalog[1],
+                        source.Catalog[0]
+                    ])
+                }
+            )
+        );
+        RawSnapshot raw = ReadRawSnapshot(fixture.Path);
+        string derivedBefore = HashDerivedFiles(fixture.Path);
+        string reportPath =
+            Path.Combine(_tempRoot, "catalog-mismatch.json");
+        string calls =
+            Path.Combine(_tempRoot, "catalog-mismatch-calls");
+        var blockedFactory =
+            new ScriptedCompletionClientFactory("must not run");
+
+        Assert.Equal(2, Run(
+            ExecuteArgs(
+                fixture,
+                "run",
+                reportPath,
+                "catalog-mismatch-calls"
+            ),
+            blockedFactory
+        ));
+
+        using JsonDocument report = ReadJson(reportPath);
+        Assert.Contains(
+            DerivedRecapExecutionDefectCodes
+                .CatalogMigrationRequired,
+            report.RootElement
+                .GetProperty("defectCodes")
+                .EnumerateArray()
+                .Select(static item => item.GetString())
+        );
+        Assert.NotEqual(
+            JsonValueKind.Null,
+            report.RootElement.GetProperty("config").ValueKind
+        );
+        Assert.Equal(0, blockedFactory.CreateCallCount);
+        Assert.Equal(0, blockedFactory.CallCount);
+        Assert.False(Directory.Exists(calls));
+        Assert.Empty(Directory.EnumerateDirectories(
+            Path.Combine(
+                fixture.Path,
+                "derived",
+                "recap",
+                "v4",
+                "refs",
+                fixture.BranchRefId,
+                "building"
+            )
+        ));
+        Assert.Equal(derivedBefore, HashDerivedFiles(fixture.Path));
+        Assert.Equal(raw, ReadRawSnapshot(fixture.Path));
+    }
+
+    [Fact]
+    public async Task ConfigChangeAfterReadinessAffectsOnlyNextOperation() {
+        Fixture fixture =
+            await CreateFixtureAsync("config-snapshot", 77);
+        await CreateStoreAsync(fixture);
+        string configPath =
+            RecapPlannerConfigLoader.GetCanonicalPath(fixture.Path);
+        string expectedHash = RecapCliComposition.DefaultComposition
+            .Snapshot.ConfigSha256;
+        var firstFactory = new ScriptedCompletionClientFactory(
+            "snapshot recap",
+            onCreate: () => File.WriteAllText(
+                configPath,
+                "{\"schema\":"
+            )
+        );
+        string firstReport =
+            Path.Combine(_tempRoot, "config-snapshot-first.json");
+
+        Assert.Equal(0, Run(
+            ExecuteArgs(
+                fixture,
+                "run",
+                firstReport,
+                "config-snapshot-first-calls"
+            ),
+            firstFactory
+        ));
+
+        using (JsonDocument report = ReadJson(firstReport)) {
+            Assert.Equal("Published", String(report, "resultStatus"));
+            Assert.Equal(
+                expectedHash,
+                report.RootElement
+                    .GetProperty("config")
+                    .GetProperty("configSha256")
+                    .GetString()
+            );
+        }
+        Assert.Equal(1, firstFactory.CreateCallCount);
+
+        var nextFactory =
+            new ScriptedCompletionClientFactory("must not run");
+        string nextCalls =
+            Path.Combine(_tempRoot, "config-snapshot-next-calls");
+        Assert.Equal(2, Run(
+            ExecuteArgs(
+                fixture,
+                "run",
+                Path.Combine(
+                    _tempRoot,
+                    "config-snapshot-next.json"
+                ),
+                "config-snapshot-next-calls"
+            ),
+            nextFactory
+        ));
+        Assert.Equal(0, nextFactory.CreateCallCount);
+        Assert.False(Directory.Exists(nextCalls));
+    }
+
+    [Fact]
+    public async Task FrozenBuildingCapabilityBlocksBeforeClientOrLog() {
+        Fixture fixture =
+            await CreateFixtureAsync("missing-frozen-capability", 77);
+        await CreateStoreAsync(fixture);
+        using (var engine = SJ.SessionJournalEngine.Open(
+                   fixture.Path,
+                   fixture.BranchName
+               )) {
+            RecapBlockCatalogEntry entry =
+                RecapCliComposition.DefaultComposition
+                    .PlanningInputs.OrderedCatalog[0];
+            var plan = new MaintainRecapBlockPlan(
+                entry.RecapBlockId,
+                entry.Target,
+                "unsupported-maintainer-v1",
+                new EmptyRecapMaintainSource(
+                    engine.ReadHistoryPlanningWindow()
+                        .StartExclusive
+                ),
+                [fixture.Head],
+                EmptyRecapPriorContext.Instance,
+                entry.MaxContentUtf8Bytes
+            );
+            Assert.IsType<CreateBuildingResult.Created>(
+                await DerivedRecapStore.Open(
+                        fixture.Path,
+                        engine.BranchRefId
+                    )
+                    .CreateBuildingAsync(
+                        DerivedRecapCodec.CreateManifest(
+                            engine.BranchRefId,
+                            fixture.Head,
+                            [plan]
+                        )
+                    )
+            );
+        }
+        RawSnapshot raw = ReadRawSnapshot(fixture.Path);
+        string derived = HashDerivedFiles(fixture.Path);
+        string reportPath =
+            Path.Combine(_tempRoot, "missing-capability.json");
+        string calls =
+            Path.Combine(_tempRoot, "missing-capability-calls");
+        var factory =
+            new ScriptedCompletionClientFactory("must not run");
+
+        Assert.Equal(2, Run(
+            ExecuteArgs(
+                fixture,
+                "run",
+                reportPath,
+                "missing-capability-calls"
+            ),
+            factory
+        ));
+
+        using JsonDocument report = ReadJson(reportPath);
+        Assert.Contains(
+            DerivedRecapExecutionDefectCodes.MaintainerUnavailable,
+            report.RootElement
+                .GetProperty("defectCodes")
+                .EnumerateArray()
+                .Select(static item => item.GetString())
+        );
+        Assert.Equal(0, factory.CreateCallCount);
+        Assert.False(Directory.Exists(calls));
+        Assert.Equal(derived, HashDerivedFiles(fixture.Path));
+        Assert.Equal(raw, ReadRawSnapshot(fixture.Path));
+    }
+
+    [Fact]
+    public async Task DamagedLatestPassesCatalogGateBeforePlannerRetry() {
+        Fixture fixture =
+            await CreateFixtureAsync("damaged-latest", 77);
+        await CreateStoreAsync(fixture);
+        var publishFactory =
+            new ScriptedCompletionClientFactory("initial recap");
+        string publishReport =
+            Path.Combine(_tempRoot, "damaged-latest-publish.json");
+        Assert.Equal(0, Run(
+            ExecuteArgs(
+                fixture,
+                "run",
+                publishReport,
+                "damaged-latest-publish-calls"
+            ),
+            publishFactory
+        ));
+        string anchor = String(ReadJson(publishReport), "anchor");
+        string damagedBlock = FindPublishedBlock(
+            fixture,
+            RolePlayRecapBlockPaths.WorldUnderstandingBlockKey
+        );
+        await File.WriteAllTextAsync(
+            damagedBlock,
+            "damaged latest recap"
+        );
+        using (var readinessEngine =
+               SJ.SessionJournalEngine.OpenReadOnly(
+                   fixture.Path,
+                   fixture.BranchName
+               )) {
+            RecapOperationReadinessResult readiness =
+                await RecapOperationReadiness.PrepareAsync(
+                    readinessEngine,
+                    DerivedRecapStore.Open(
+                        fixture.Path,
+                        readinessEngine.BranchRefId
+                    )
+                );
+            Assert.True(
+                readiness is RecapOperationReadinessResult.Ready,
+                readiness.ToString()
+            );
+        }
+        var repairFactory =
+            new ScriptedCompletionClientFactory("must not run");
+        string repairReport =
+            Path.Combine(_tempRoot, "damaged-latest-repair.json");
+
+        int repairExitCode = Run(
+            ExecuteArgs(
+                fixture,
+                "run",
+                repairReport,
+                "damaged-latest-repair-calls"
+            ),
+            repairFactory
+        );
+        Assert.Equal(3, repairExitCode);
+
+        using JsonDocument report = ReadJson(repairReport);
+        Assert.Equal("Retryable", String(report, "resultStatus"));
+        Assert.Equal(
+            DerivedRecapExecutionDefectCodes.SourceChanged,
+            String(report, "code")
+        );
+        Assert.NotEqual(
+            JsonValueKind.Null,
+            report.RootElement.GetProperty("config").ValueKind
+        );
+        Assert.Equal(1, repairFactory.CreateCallCount);
+        Assert.Equal(0, repairFactory.CallCount);
+        using var engine = SJ.SessionJournalEngine.OpenReadOnly(
+            fixture.Path,
+            fixture.BranchName
+        );
+        PublishedRestoreInspectionResult.Available inspection =
+            Assert.IsType<PublishedRestoreInspectionResult.Available>(
+                await DerivedRecapStore.Open(
+                        fixture.Path,
+                        engine.BranchRefId
+                    )
+                    .InspectPublishedForRestoreAsync(
+                        SJ.EventAddressTextCodec.Parse(anchor),
+                        engine.ReadCurrentLineageHeaders()
+                    )
+            );
+        Assert.Contains(
+            inspection.Inspection.Blocks.Values,
+            block => block.Final is FinalRecapBlockHealth.Damaged
+        );
+    }
+
     [Fact]
     public async Task OutputShapePreflightStopsBeforeStoreOrClient() {
         Fixture fixture = await CreateFixtureAsync("path-shape", 77);
@@ -545,6 +932,13 @@ public sealed class ProgramRecapExecutionCommandTests : IDisposable {
                 engine.BranchRefId
             )
             .CreateAsync();
+        Assert.IsType<RecapPlannerConfigInitializeResult.Initialized>(
+            RecapPlannerConfigInitializer.Initialize(
+                fixture.Path,
+                RecapCliComposition.DefaultComposition
+                    .Snapshot.Document
+            )
+        );
     }
 
     private string[] ExecuteArgs(
@@ -645,6 +1039,9 @@ public sealed class ProgramRecapExecutionCommandTests : IDisposable {
         string derivedPart =
             $"{Path.DirectorySeparatorChar}derived"
             + Path.DirectorySeparatorChar;
+        string configPart =
+            $"{Path.DirectorySeparatorChar}config"
+            + Path.DirectorySeparatorChar;
         foreach (string file in Directory
                      .EnumerateFiles(
                          path,
@@ -653,6 +1050,10 @@ public sealed class ProgramRecapExecutionCommandTests : IDisposable {
                      )
                      .Where(file => !file.Contains(
                          derivedPart,
+                         StringComparison.Ordinal
+                     ))
+                     .Where(file => !file.Contains(
+                         configPart,
                          StringComparison.Ordinal
                      ))
                      .OrderBy(
@@ -707,7 +1108,8 @@ public sealed class ProgramRecapExecutionCommandTests : IDisposable {
     private sealed class ScriptedCompletionClientFactory(
         string responseText,
         int? failAtCall = null,
-        string failureMessage = "scripted failure"
+        string failureMessage = "scripted failure",
+        Action? onCreate = null
     ) : ICompletionClientFactory {
         private readonly ScriptedCompletionClient _client = new(
             responseText,
@@ -722,6 +1124,7 @@ public sealed class ProgramRecapExecutionCommandTests : IDisposable {
             CompletionConnectionConfig connection
         ) {
             CreateCallCount++;
+            onCreate?.Invoke();
             return _client;
         }
     }

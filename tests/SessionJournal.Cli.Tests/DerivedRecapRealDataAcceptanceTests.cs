@@ -66,6 +66,10 @@ public sealed class DerivedRecapRealDataAcceptanceTests {
                 "--input", sourcePath,
                 "--output", copyPath
             ], ThrowingCompletionClientFactory.Instance));
+            Assert.Equal(0, Program.MainCore([
+                "recap", "planner-config", "init",
+                "--input", copyPath
+            ], ThrowingCompletionClientFactory.Instance));
             RawSnapshot initialRaw = ReadRawSnapshot(copyPath);
             string legacyV1Sentinel = Path.Combine(
                 copyPath,
@@ -433,7 +437,7 @@ public sealed class DerivedRecapRealDataAcceptanceTests {
                         ),
                         ConfigReport.From(
                             RecapCliComposition
-                                .ProductionComposition
+                                .DefaultComposition
                         ),
                         branchRefId.ToHexString(),
                         admission,

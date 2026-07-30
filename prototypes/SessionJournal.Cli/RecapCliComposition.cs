@@ -9,7 +9,7 @@ namespace Atelia.SessionJournal.Cli;
 
 internal static class RecapCliComposition {
     internal static ResolvedRecapPlannerComposition
-        ProductionComposition =>
+        DefaultComposition =>
         BuiltInRecapPlannerConfig.Composition;
 
     /// <summary>

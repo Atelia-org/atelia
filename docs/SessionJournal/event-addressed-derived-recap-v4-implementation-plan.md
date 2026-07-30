@@ -13,8 +13,8 @@
 > **兼容策略**：不迁移、不双写、不读取 historical DerivedMemory v2/v3
 > **当前推进点**：R0～R3 已完成；R3 cutover 与 deterministic real-data release gate
 > 已于 2026-07-30 关闭。Post-R3 C0 HistoryUnit cadence已于 2026-07-31完成；
-> C1 repo-owned document/loader + single composition也已于 2026-07-31完成；
-> 当前下一阶段为 C2 CLI/online authority cutover
+> C1 repo-owned document/loader + single composition、C2 CLI/online authority
+> cutover均已于 2026-07-31完成；当前下一阶段为 C3 Galatea real acceptance
 
 ## 0. 原则
 
@@ -113,9 +113,10 @@ facts；header路径只能作 negative prefilter。
 
 C1已完成 strict repo document/loader/atomic init、policy/profile typed resolution、
 single immutable Host composition、完整 capability catalog、`planner-config init/inspect`
-与 runtime authority split。`DerivedRecapBuildingExecutor.ResumeAsync`和 Restore只接受
-frozen durable state、完整 capability registry与 code-owned V4 hard caps；run/online当前仍
-使用由内置 canonical document解析出的 composition，真正按 repo file生效留给 C2。实现验收还
+与 runtime authority split。C2进一步让 run/online在 durable phase与 Building-first discovery
+之后条件加载一次 repo composition snapshot；`DerivedRecapBuildingExecutor.ResumeAsync`和
+Restore只接受 frozen durable state、完整 capability registry与 code-owned V4 hard caps，
+Prepared/Started recovery也保持 Store/config zero-touch。实现验收还
 关闭了 pre-first-recap语义缺口：`EmptyLineage + NoBuild + EmptyLineage`通过显式
 `RawHistoryReady`使用完整 raw recent history，不再被误判成 strict fresh bootstrap。
 

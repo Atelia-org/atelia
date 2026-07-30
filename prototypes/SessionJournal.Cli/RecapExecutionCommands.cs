@@ -10,7 +10,7 @@ namespace Atelia.SessionJournal.Cli;
 
 internal static class RecapExecutionCommands {
     private const string ReportSchema =
-        "atelia.session-journal.derived-recap-execution.v2";
+        "atelia.session-journal.derived-recap-execution.v3";
     private const string DefaultCallLogDirectory =
         "gitignore/session-journal/recap-maintainer-calls";
 
@@ -108,8 +108,10 @@ internal static class RecapExecutionCommands {
             inputPath,
             engine.BranchRefId
         );
-        SJ.SessionCurrentLineageSnapshot lineage =
-            engine.ReadCurrentLineageHeaders();
+        SJ.SessionCurrentLineageSnapshot? lineage =
+            operation == "run"
+                ? null
+                : engine.ReadCurrentLineageHeaders();
         EventAddress? anchor = needsAnchor
             ? ParseAddress(
                 options.RequireSingle("anchor"),
@@ -123,40 +125,83 @@ internal static class RecapExecutionCommands {
             )
             : null;
 
-        IReadOnlyList<string> readinessDefects =
-            await InspectReadinessAsync(
-                    operation,
-                    store,
-                    lineage,
-                    anchor
-                )
-                .ConfigureAwait(false);
+        PreparedRecapOperationAuthority? runAuthority = null;
+        RecapExecutionConfigReport? readinessConfigReport = null;
+        IReadOnlyList<string> readinessDefects;
+        if (operation == "run") {
+            RecapOperationReadinessResult readiness =
+                await RecapOperationReadiness.PrepareAsync(
+                        engine,
+                        store
+                    )
+                    .ConfigureAwait(false);
+            if (readiness
+                is RecapOperationReadinessResult.Ready ready) {
+                runAuthority = ready.Authority;
+                lineage = ready.Lineage;
+                readinessDefects = [];
+            }
+            else {
+                var blocked =
+                    (RecapOperationReadinessResult.Blocked)readiness;
+                readinessDefects = Array.AsReadOnly([
+                    .. blocked.Defects.Select(
+                        static defect => defect.Code
+                    )
+                ]);
+                readinessConfigReport =
+                    blocked.Composition is null
+                        ? null
+                        : CreateConfigReport(blocked.Composition);
+            }
+        }
+        else {
+            readinessDefects =
+                await InspectReadinessAsync(
+                        operation,
+                        store,
+                        lineage!,
+                        anchor
+                    )
+                    .ConfigureAwait(false);
+        }
         if (readinessDefects.Count != 0) {
+            string? retryableCode = readinessDefects.FirstOrDefault(
+                static code => code
+                    is DerivedRecapExecutionDefectCodes.RawHeadChanged
+                        or DerivedRecapExecutionDefectCodes.SourceChanged
+            );
+            bool retryable = retryableCode is not null;
             return Finish(
                 Report(
                     operation,
                     engine,
-                    lineage.CapturedHead,
-                    "Unavailable",
+                    lineage?.CapturedHead
+                        ?? engine.ReadCurrentHead()
+                        ?? throw new InvalidDataException(
+                            "Raw SessionJournal has no current head."
+                        ),
+                    retryable ? "Retryable" : "Unavailable",
                     anchor,
                     blockId: null,
-                    code: null,
-                    readinessDefects,
-                    configReport: null,
+                    code: retryableCode,
+                    defectCodes: retryable ? [] : readinessDefects,
+                    readinessConfigReport,
+                    planningDiagnostics: null,
                     callLogCount: 0,
                     callLogDirectory
                 ),
                 reportPath,
-                exitCode: 2
+                exitCode: retryable ? 3 : 2
             );
         }
         if (operation == "restore"
-            && expectedRawHead != lineage.CapturedHead) {
+            && expectedRawHead != lineage!.CapturedHead) {
             return Finish(
                 Report(
                     operation,
                     engine,
-                    lineage.CapturedHead,
+                    lineage!.CapturedHead,
                     "Retryable",
                     anchor,
                     blockId: null,
@@ -164,6 +209,7 @@ internal static class RecapExecutionCommands {
                         DerivedRecapRestoreDefectCodes.RawHeadChanged,
                     defectCodes: [],
                     configReport: null,
+                    planningDiagnostics: null,
                     callLogCount: 0,
                     callLogDirectory: callLogDirectory
                 ),
@@ -195,16 +241,21 @@ internal static class RecapExecutionCommands {
         ICompletionClient inner =
             registry.GetClient(connection.Id);
         ResolvedRecapPlannerComposition? plannerComposition =
-            operation == "run"
-                ? RecapCliComposition.ProductionComposition
-                : null;
+            runAuthority
+                is PreparedRecapOperationAuthority.NewPlanning planning
+                    ? planning.Composition
+                    : null;
         RecapExecutionConfigReport? planningConfigReport =
             plannerComposition is null
                 ? null
                 : CreateConfigReport(plannerComposition);
         RecapMaintainerProfileCatalog capabilityCatalog =
-            plannerComposition?.CapabilityCatalog
-            ?? RecapMaintainerProfileCatalog.BuiltIn;
+            runAuthority
+                is PreparedRecapOperationAuthority.FrozenBuilding
+                    frozenAuthority
+                    ? frozenAuthority.CapabilityCatalog
+                    : plannerComposition?.CapabilityCatalog
+                        ?? RecapMaintainerProfileCatalog.BuiltIn;
         RecapCliMaintainerComposition composition =
             RecapCliComposition.CreateMaintainers(
                 capabilityCatalog,
@@ -231,7 +282,7 @@ internal static class RecapExecutionCommands {
             (report, exitCode) = MapRestore(
                 operation,
                 engine,
-                lineage.CapturedHead,
+                lineage!.CapturedHead,
                 result,
                 anchor,
                 composition.LoggingClients,
@@ -250,31 +301,56 @@ internal static class RecapExecutionCommands {
             (report, exitCode) = MapExecution(
                 operation,
                 engine,
-                lineage.CapturedHead,
+                lineage!.CapturedHead,
                 result,
                 anchor,
                 configReport: null,
+                planningDiagnostics: null,
                 composition.LoggingClients,
                 callLogDirectory
             );
         }
         else {
-            var executor = new DerivedRecapPlannerExecutor(
-                engine,
-                store,
-                plannerComposition!.PlanningInputs,
-                plannerComposition.PlanningLimits,
-                composition.Registry
-            );
-            DerivedRecapExecutionResult result =
-                await executor.RunAsync().ConfigureAwait(false);
+            DerivedRecapExecutionResult result;
+            DerivedRecapPlanningDiagnostics? planningDiagnostics;
+            if (runAuthority
+                is PreparedRecapOperationAuthority
+                    .FrozenBuilding frozen) {
+                var executor = new DerivedRecapBuildingExecutor(
+                    engine,
+                    store,
+                    composition.Registry
+                );
+                result = await executor.ResumeAsync(
+                        frozen.Snapshot.Descriptor
+                    )
+                    .ConfigureAwait(false);
+                planningDiagnostics = null;
+            }
+            else {
+                var newPlanning =
+                    (PreparedRecapOperationAuthority.NewPlanning)
+                    runAuthority!;
+                var executor = new DerivedRecapPlannerExecutor(
+                    engine,
+                    store,
+                    newPlanning.Composition.PlanningInputs,
+                    newPlanning.Composition.PlanningLimits,
+                    composition.Registry
+                );
+                result = await executor.RunAsync(newPlanning.Baseline)
+                    .ConfigureAwait(false);
+                planningDiagnostics =
+                    executor.LastPlanningDiagnostics;
+            }
             (report, exitCode) = MapExecution(
                 operation,
                 engine,
-                lineage.CapturedHead,
+                lineage!.CapturedHead,
                 result,
                 requestedAnchor: null,
                 planningConfigReport,
+                planningDiagnostics,
                 composition.LoggingClients,
                 callLogDirectory
             );
@@ -290,19 +366,6 @@ internal static class RecapExecutionCommands {
         EventAddress? anchor
     ) {
         try {
-            if (operation == "run") {
-                DerivedRecapSelection selection =
-                    await store.SelectNthPreviousAsync(lineage, 0)
-                        .ConfigureAwait(false);
-                return selection switch {
-                    DerivedRecapSelection.StoreUnavailable =>
-                        ["StoreUnavailable"],
-                    DerivedRecapSelection
-                            .ExactPublishedSetInvalid invalid =>
-                        DefectCodes(invalid.Defects),
-                    _ => []
-                };
-            }
             if (operation == "resume") {
                 BuildingReadResult building =
                     await store.ReadBuildingAsync(anchor!.Value)
@@ -350,6 +413,7 @@ internal static class RecapExecutionCommands {
         DerivedRecapExecutionResult result,
         EventAddress? requestedAnchor,
         RecapExecutionConfigReport? configReport,
+        DerivedRecapPlanningDiagnostics? planningDiagnostics,
         IReadOnlyList<LoggingCompletionClient> loggingClients,
         string callLogDirectory
     ) {
@@ -368,6 +432,7 @@ internal static class RecapExecutionCommands {
                     null,
                     [],
                     configReport,
+                    CreatePlanningReport(planningDiagnostics),
                     calls,
                     callLogDirectory
                 ),
@@ -384,6 +449,7 @@ internal static class RecapExecutionCommands {
                     null,
                     [],
                     configReport,
+                    CreatePlanningReport(planningDiagnostics),
                     calls,
                     callLogDirectory
                 ),
@@ -402,6 +468,7 @@ internal static class RecapExecutionCommands {
                         static defect => defect.Code
                     ),
                     configReport,
+                    CreatePlanningReport(planningDiagnostics),
                     calls,
                     callLogDirectory
                 ),
@@ -418,6 +485,7 @@ internal static class RecapExecutionCommands {
                     failed.Code,
                     [],
                     configReport,
+                    CreatePlanningReport(planningDiagnostics),
                     calls,
                     callLogDirectory
                 ),
@@ -434,6 +502,7 @@ internal static class RecapExecutionCommands {
                     retryable.Code,
                     [],
                     configReport,
+                    CreatePlanningReport(planningDiagnostics),
                     calls,
                     callLogDirectory
                 ),
@@ -473,6 +542,7 @@ internal static class RecapExecutionCommands {
                     null,
                     [],
                     configReport: null,
+                    planningDiagnostics: null,
                     calls,
                     callLogDirectory
                 ),
@@ -491,6 +561,7 @@ internal static class RecapExecutionCommands {
                         static defect => defect.Code
                     ),
                     configReport: null,
+                    planningDiagnostics: null,
                     calls,
                     callLogDirectory
                 ),
@@ -507,6 +578,7 @@ internal static class RecapExecutionCommands {
                     failed.Code,
                     [],
                     configReport: null,
+                    planningDiagnostics: null,
                     calls,
                     callLogDirectory
                 ),
@@ -523,6 +595,7 @@ internal static class RecapExecutionCommands {
                     retryable.Code,
                     [],
                     configReport: null,
+                    planningDiagnostics: null,
                     calls,
                     callLogDirectory
                 ),
@@ -545,6 +618,7 @@ internal static class RecapExecutionCommands {
         string? code,
         IEnumerable<string> defectCodes,
         RecapExecutionConfigReport? configReport,
+        RecapExecutionPlanningReport? planningDiagnostics,
         int callLogCount,
         string callLogDirectory
     ) => new(
@@ -565,6 +639,7 @@ internal static class RecapExecutionCommands {
                 .ToArray()
         ),
         configReport,
+        planningDiagnostics,
         callLogCount,
         Path.GetFullPath(callLogDirectory)
     );
@@ -576,6 +651,7 @@ internal static class RecapExecutionCommands {
             composition.Snapshot.Document;
         return new RecapExecutionConfigReport(
             document.Schema,
+            composition.Snapshot.CanonicalPath,
             composition.Snapshot.ConfigSha256,
             document.PlanningPolicy,
             [
@@ -602,6 +678,29 @@ internal static class RecapExecutionCommands {
             document.Limits.MaxRawEventsPerBuild
         );
     }
+
+    private static RecapExecutionPlanningReport? CreatePlanningReport(
+        DerivedRecapPlanningDiagnostics? diagnostics
+    ) => diagnostics switch {
+        DerivedRecapPlanningDiagnostics.HeaderNegative header =>
+            new RecapExecutionPlanningReport(
+                "HeaderNegative",
+                GrowthHistoryUnitCount: null,
+                RawGrowthEventCount: null,
+                header.RawGrowthEventUpperBound
+            ),
+        DerivedRecapPlanningDiagnostics.ExactSchedule exact =>
+            new RecapExecutionPlanningReport(
+                "ExactSchedule",
+                exact.GrowthHistoryUnitCount,
+                exact.RawGrowthEventCount,
+                RawGrowthEventUpperBound: null
+            ),
+        null => null,
+        _ => throw new InvalidDataException(
+            "Unknown recap planning diagnostics."
+        )
+    };
 
     private static int Finish(
         RecapExecutionReport report,
@@ -702,12 +801,14 @@ internal sealed record RecapExecutionReport(
     string? Code,
     IReadOnlyList<string> DefectCodes,
     RecapExecutionConfigReport? Config,
+    RecapExecutionPlanningReport? Planning,
     int CallLogCount,
     string? CallLogDirectory
 );
 
 internal sealed record RecapExecutionConfigReport(
     string Schema,
+    string? Path,
     string ConfigSha256,
     string PlanningPolicy,
     IReadOnlyList<RecapExecutionCatalogReport> Catalog,
@@ -718,6 +819,13 @@ internal sealed record RecapExecutionConfigReport(
     int MaxMaintainerCallsPerBuild,
     int MaxRawEventsPerStep,
     int MaxRawEventsPerBuild
+);
+
+internal sealed record RecapExecutionPlanningReport(
+    string MeasurementKind,
+    int? GrowthHistoryUnitCount,
+    int? RawGrowthEventCount,
+    int? RawGrowthEventUpperBound
 );
 
 internal sealed record RecapExecutionCatalogReport(

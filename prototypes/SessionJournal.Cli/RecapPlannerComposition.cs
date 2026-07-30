@@ -114,6 +114,117 @@ internal abstract record RecapPlannerConfigResolveResult {
         : RecapPlannerConfigResolveResult;
 }
 
+internal abstract record RecapPlannerCompositionLoadResult {
+    private RecapPlannerCompositionLoadResult() {
+    }
+
+    internal sealed record Resolved(
+        ResolvedRecapPlannerComposition Composition
+    ) : RecapPlannerCompositionLoadResult;
+
+    internal sealed record Missing(string Path)
+        : RecapPlannerCompositionLoadResult;
+
+    internal sealed record Invalid(
+        string Path,
+        IReadOnlyList<RecapPlannerCompositionLoadDefect> Defects,
+        RecapPlannerConfigSnapshot? Snapshot = null
+    ) : RecapPlannerCompositionLoadResult;
+
+    internal sealed record Unavailable(
+        string Path,
+        string Reason,
+        RecapPlannerConfigSnapshot? Snapshot = null
+    ) : RecapPlannerCompositionLoadResult;
+}
+
+internal sealed record RecapPlannerCompositionLoadDefect(
+    string Code,
+    string Detail
+);
+
+internal static class RecapPlannerCompositionLoader {
+    internal static RecapPlannerCompositionLoadResult Load(
+        string repositoryRoot
+    ) {
+        RecapPlannerConfigLoadResult loaded =
+            RecapPlannerConfigLoader.Load(repositoryRoot);
+        return loaded switch {
+            RecapPlannerConfigLoadResult.Available available =>
+                Resolve(available),
+            RecapPlannerConfigLoadResult.Missing missing =>
+                new RecapPlannerCompositionLoadResult.Missing(
+                    missing.Path
+                ),
+            RecapPlannerConfigLoadResult.Invalid invalid =>
+                new RecapPlannerCompositionLoadResult.Invalid(
+                    invalid.Path,
+                    Map(invalid.Defects)
+                ),
+            RecapPlannerConfigLoadResult.Unavailable unavailable =>
+                new RecapPlannerCompositionLoadResult.Unavailable(
+                    unavailable.Path,
+                    unavailable.Reason
+                ),
+            _ => throw new InvalidDataException(
+                "Unknown planner config load result."
+            )
+        };
+    }
+
+    private static RecapPlannerCompositionLoadResult Resolve(
+        RecapPlannerConfigLoadResult.Available available
+    ) {
+        RecapPlannerConfigSnapshot snapshot =
+            RecapPlannerConfigSnapshot.FromAvailable(available);
+        RecapPlannerConfigResolveResult resolved =
+            RecapPlannerCompositionResolver.Resolve(snapshot);
+        return resolved switch {
+            RecapPlannerConfigResolveResult.Resolved success =>
+                new RecapPlannerCompositionLoadResult.Resolved(
+                    success.Composition
+                ),
+            RecapPlannerConfigResolveResult.Invalid invalid =>
+                new RecapPlannerCompositionLoadResult.Invalid(
+                    available.Path,
+                    Map(invalid.Defects),
+                    snapshot
+                ),
+            RecapPlannerConfigResolveResult.Unavailable unavailable =>
+                new RecapPlannerCompositionLoadResult.Unavailable(
+                    available.Path,
+                    unavailable.Reason,
+                    snapshot
+                ),
+            _ => throw new InvalidDataException(
+                "Unknown planner config resolve result."
+            )
+        };
+    }
+
+    private static IReadOnlyList<RecapPlannerCompositionLoadDefect> Map(
+        IEnumerable<RecapPlannerConfigDefect> defects
+    ) => Array.AsReadOnly([
+        .. defects.Select(static defect =>
+            new RecapPlannerCompositionLoadDefect(
+                defect.Code,
+                defect.Detail
+            )
+        )
+    ]);
+
+    private static IReadOnlyList<RecapPlannerCompositionLoadDefect> Map(
+        IEnumerable<RecapPlannerConfigResolveDefect> defects
+    ) => Array.AsReadOnly([
+        .. defects.Select(static defect =>
+            new RecapPlannerCompositionLoadDefect(
+                defect.Code,
+                defect.Detail
+            )
+        )
+    ]);
+}
+
 internal static class RecapPlanningPolicyRegistry {
     internal static bool TryResolve(
         string policyId,

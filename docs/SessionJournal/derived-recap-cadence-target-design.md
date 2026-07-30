@@ -2,9 +2,8 @@
 
 > **状态**：Target Design / Implementation Guidance
 > **日期**：2026-07-30
-> **实施状态**：C0、C1 已实现；Planner 已切换到 exact HistoryUnit cadence，
-> repo document/loader、runtime authority split与 single composition snapshot 已落地。
-> 真正让 run/online 按 phase读取 repo file仍属于 C2。
+> **实施状态**：C0、C1、C2 已实现；Planner 已切换到 exact HistoryUnit cadence，
+> run/online new-planning也已按 phase使用单次 repo composition snapshot。
 > **上位设计**：
 > [Event-addressed Derived Recap V4](event-addressed-derived-recap-v4-target-design.md)
 > **配置设计**：
@@ -353,8 +352,8 @@ remaining unit count >= R
 - normalized baseline、exact evaluator与 deterministic admission policy；
 - header-only negative prefilter、delayed budget fallback及 focused tests。
 
-C1也已完成 repo document/composition、runtime authority split与管理命令；C2负责让
-CLI/online按 durable phase条件读取 repo file，C3负责 Galatea real acceptance。
+C1也已完成 repo document/composition、runtime authority split与管理命令；C2已完成
+CLI/online durable phase与 Building-first cutover。C3负责 Galatea real acceptance。
 
 ## 7. 验收矩阵
 

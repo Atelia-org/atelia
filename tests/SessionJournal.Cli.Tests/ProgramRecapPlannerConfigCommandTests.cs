@@ -42,7 +42,7 @@ public sealed class ProgramRecapPlannerConfigCommandTests
         string configPath =
             RecapPlannerConfigLoader.GetCanonicalPath(repository);
         byte[] expected = [
-            .. RecapCliComposition.ProductionComposition
+            .. RecapCliComposition.DefaultComposition
                 .Snapshot.CanonicalBytes
         ];
         Assert.Equal(expected, File.ReadAllBytes(configPath));
@@ -264,11 +264,11 @@ public sealed class ProgramRecapPlannerConfigCommandTests
     }
 
     [Fact]
-    public void C1ProductionCompositionIsBuiltInNotRepoLoaded() {
+    public void DefaultCompositionIsStableInitializerSnapshot() {
         ResolvedRecapPlannerComposition first =
-            RecapCliComposition.ProductionComposition;
+            RecapCliComposition.DefaultComposition;
         ResolvedRecapPlannerComposition second =
-            RecapCliComposition.ProductionComposition;
+            RecapCliComposition.DefaultComposition;
 
         Assert.Same(first, second);
         Assert.Null(first.Snapshot.CanonicalPath);

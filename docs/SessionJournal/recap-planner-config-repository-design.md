@@ -2,10 +2,9 @@
 
 > **状态**：Target Design / Implementation Guidance
 > **日期**：2026-07-30
-> **实施状态**：C0、C1 已实现。Strict document/codec/loader/atomic init、
-> Host single composition、capability catalog、runtime authority split及
-> `planner-config init/inspect`已落地。C1期间 run/online仍使用由内置 canonical
-> document解析出的 immutable composition；按 repo file生效属于 C2。
+> **实施状态**：C0、C1、C2 已实现。`run`与 online new-request phase现在按需读取
+> repo snapshot；current-lineage Building、explicit Resume/Restore及 Prepared/Started
+> recovery继续不读取 active config。下一阶段是 C3 real-repo acceptance。
 > **相关类型**：
 > `Atelia.SessionJournal.DerivedRecap.Planner.RecapPlannerConfigDocument`、
 > `RecapPlanningInputs`、`RecapPlanningLimits`
@@ -221,8 +220,8 @@ content-free report。
 
 ## 4. Resolution：一个 snapshot、两个消费者
 
-当前 CLI分别调用 `CreateConfig()` 与 `CreateMaintainers()`，后者再次创建 catalog。Repo-owned
-cutover必须删除这条潜在 drift：
+Pre-C1 CLI曾分别调用 `CreateConfig()` 与 `CreateMaintainers()`，后者再次创建 catalog。
+Repo-owned cutover已删除这条潜在 drift：
 
 ```text
 open config file once
@@ -253,7 +252,10 @@ connection/model；connection identity与 secret不写入 repo config。
 
 配置删除一个 active profile不能重新解释既有 manifest，也不等于 Host必须立刻失去修复旧 set的能力。
 Host应通过独立 capability metadata catalog按 frozen manifest的 exact MaintainerId解析所有仍受支持的
-built-in profile；只在确定实际 execution actions后创建所需 logging client。
+built-in profile。C2在 readiness成功且确认 operation需要 Maintainer capability之后组合完整
+registry；当前 logging wrapper构造可能预先创建空 call-log目录，但 missing/invalid config、
+catalog mismatch与其他 readiness失败仍发生在 completion client/call-log构造之前。按实际 block
+延迟创建 logging client属于后续可选优化，不是 C2 authority contract。
 
 V1不设计 active roster的在线演化。文件可表达初始 roster；一旦已有 Published，后续新 planning
 要求 active catalog与 latest Published frozen catalog保持 exact ordered equality。比较字段为：
@@ -342,6 +344,17 @@ RecapPlannerConfigResolveResult
 `CatalogMigrationRequired`需要读取 latest Published frozen catalog，属于 planning readiness，不属于
 file decode defect。
 
+C2 的 catalog shape 是 exact ordered tuple：
+
+```text
+(RecapBlockId, Target, MaxContentUtf8Bytes)
+```
+
+`MaintainerId`、profile name、source/route与 planning mode不属于这个跨代 compatibility
+tuple；其中 source/route/mode由每个 Building 自己冻结。相同 block/target/content ceiling下切换
+Maintainer profile只影响下一个新 Building。添加、删除、重排 block，或改变 target/content ceiling
+则返回 `CatalogMigrationRequired`，不得静默建立混合形状的下一代。
+
 ### 5.2 CLI phase matrix
 
 | 操作 | 是否加载 | 生效方式 |
@@ -361,6 +374,18 @@ file decode defect。
 需要 config 的路径必须在创建 completion client、call-log、调用 LLM或 append新 Observation之前完成
 readiness、load与resolve。missing/invalid config不得留下 raw或provider副作用。
 
+Building-first发现只在 captured raw Parent lineage上解析 durable Building membership：
+
+- `.staging-*`与 off-lineage Building不参与选择；
+- 恰好一个、且严格晚于 latest Published时，按其 frozen manifest Resume；
+- 同一 current lineage出现多个 Building时返回 typed conflict，不按“最新”猜测；
+- current-lineage Building不晚于 latest Published时返回 stale defect，要求 operator显式
+  `abandon-building`；
+- readiness把完整 `BuildingDescriptor`与已验证的 Host capability catalog交给 executor；
+  executor重读后必须校验 exact manifest hash，不能退化为只按 anchor恢复；
+- trusted Building install在 Store lock内复核 current-lineage membership，关闭发现后到安装前的
+  双 Building竞态。
+
 ### 5.3 Online order
 
 ```text
@@ -376,6 +401,7 @@ open raw engine
        no Building:
          load one repo config snapshot
          resolve policy + active roster
+         narrow-read latest Published envelope/frozen plan
          compare latest Published exact frozen catalog
        resolve connection/client
        compose lifecycle + candidate source
@@ -404,9 +430,9 @@ Published exists
 
 ### 6.1 Stable protocol hard caps
 
-repo config中的 limits是新 planning ceilings。loader还必须验证它们不超过代码/协议定义的稳定 hard
-caps。hard caps只防止单次读取、route、call或content的资源失控，不是 operator policy，也不从 active
-config热更新。
+repo config中的 limits是新 planning ceilings。Host resolver必须验证它们不超过代码/协议定义的
+稳定 hard caps；wire loader只负责安全读取与 strict document decode。hard caps只防止单次读取、
+route、call或content的资源失控，不是 operator policy，也不从 active config热更新。
 
 V1 hard caps由 Planner assembly中的 `RecapProtocolHardCaps`唯一声明。五项 raw/route/call
 初值与 R3 production config一致，content/catalog复用既有 contribution contract：
@@ -590,6 +616,13 @@ V1的 cadence使用 `HistoryUnitCount`；`maxRawEventsPerStep/Build`继续作为
 - 删除 hardcoded `ProductionConfig`和二次 `CreateCatalog()` authority。
 
 ### C2：CLI + Online cutover
+
+> **状态（2026-07-31）**：已完成。Host在 durable phase与 current-lineage Building
+> discovery之后才条件加载一次 repo snapshot；NewPlanning以同一 immutable composition和
+> captured baseline运行，Frozen Building/Resume/Restore及 Prepared/Started recovery均保持
+> active-config zero-touch。CLI/online report分别记录 config provenance及
+> `HeaderNegative`/`ExactSchedule` measurement availability。Frozen Building在
+> provider/client构造前完成 capability gate，并以 exact descriptor贯穿 Resume。
 
 - `run/resume/restore`加载矩阵；
 - `run` existing-Building fast path与 frozen manifest authority；

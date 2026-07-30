@@ -60,10 +60,10 @@ dotnet run --project prototypes/SessionJournal.Cli -- \
 opened handle bounded读取、strict decode并解析 policy/profile，输出 config hash与 content-free
 normalized view。二者都不打开 Recap Store、不选择 branch、不创建 Completion client。
 
-当前 C1 中，`recap run`与 `run-online-turn` 仍使用由同一内置 canonical document解析出的
-immutable composition；repo document在 C2 cutover后才成为这些运行路径的新-planning authority。
-`resume`与 `restore`始终只服从 frozen plan、完整 capability registry与 code-owned V4 hard caps，
-不读取 active planner config。
+`recap run`与 `run-online-turn`只在没有 current-lineage Building、确实需要 NewPlanning时加载
+一次 repo document，并在整个 operation内复用同一 immutable composition。current-lineage
+Building按 frozen manifest恢复；`resume`与 `restore`也始终只服从 frozen plan、完整 capability
+registry与 code-owned V4 hard caps，不读取 active planner config。
 
 ### recap create
 
@@ -96,8 +96,7 @@ raw 或 Store 读取错误返回 1。
 
 ### recap run
 
-使用 C1 built-in canonical composition（world-understanding/Observation 在前、
-autobiography/Action 在后）和 bounded `MaintainAll` policy，执行一次新 planning：
+使用 repo-owned `recap-planner-config.json`执行一次 recap operation：
 
 ```bash
 dotnet run --project prototypes/SessionJournal.Cli -- \
@@ -108,10 +107,14 @@ dotnet run --project prototypes/SessionJournal.Cli -- \
   [--report-json <path-outside-repo>]
 ```
 
-未达到 trigger 时返回 `NoBuild`；需要创建 Building 时，Planner 先冻结 exact source、route、
-prior context 与 limits，再调用 Maintainers。已有 Building 的补全由显式 `recap resume`负责；
-healthy final block 不重做。成功 Publish 后才进入 strict ordinal。C2会在 repo-config cutover时
-把 `run` 的 existing-Building fast path一并接入。
+无 current-lineage Building时，命令先严格加载并解析 repo config；未达到 trigger时返回
+`NoBuild`，需要创建 Building时先冻结 exact source、route、prior context与 per-block content
+ceiling，再调用 Maintainers。已有一个合法 current-lineage Building时跳过 active config并直接
+补全 frozen plan；readiness先验证 frozen maintainer capability，executor再复核完整
+Building descriptor/manifest hash。healthy final block不重做。多个或 stale Building返回 typed
+readiness defect，不猜测“最新”。
+成功 Publish后才进入 strict ordinal。首次 new planning前须显式执行
+`recap planner-config init`。
 
 ### recap resume
 
@@ -239,8 +242,9 @@ Store 缺失时，需要新 request 的 phase 在 append Observation、创建 cl
 request 为唯一真源，对 Store 是 zero-touch。
 
 成功返回 0；参数、unsupported phase、not-ready、Store/Completion 或路径失败返回 1。online JSON
-report 同样 content-free，只包含 branch/ref、head、最终 phase、provider/API/model、Action 文本
-SHA-256 与 error count；完整 request/action 只存在于明确配置的 call log。
+report 同样 content-free；NewPlanning额外报告实际 repo config path/hash与
+`HeaderNegative`/`ExactSchedule` diagnostics，Frozen Building及 Prepared/Started recovery的
+config/planning字段为 null。完整 request/action只存在于明确配置的 call log。
 
 ## import-legacy-json
 

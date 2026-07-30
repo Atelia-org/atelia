@@ -127,6 +127,7 @@ public sealed class ProgramDerivedRecapOnlineTurnTests : IDisposable {
         Assert.Equal(1, Program.MainCore([
             .. BaseArgs(fixture, output, calls)
         ], refusal));
+        Assert.Equal(0, refusal.CreateCallCount);
         Assert.Equal(0, refusal.CallCount);
         AssertRecapAuthorityAbsent(fixture.Path);
         Assert.False(File.Exists(output));
