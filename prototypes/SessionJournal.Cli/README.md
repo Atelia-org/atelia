@@ -27,6 +27,8 @@ CLI 不依赖已删除的 `SessionJournal.DerivedMemory`。旧 `ChatSession` rep
 ## recap 命令族
 
 ```text
+recap planner-config init
+recap planner-config inspect
 recap create
 recap inspect
 recap run
@@ -36,8 +38,32 @@ recap abandon-building
 recap reset
 ```
 
-所有子命令都要求 `--input <repo-dir> --branch <name>`。Store 不会由 `run`、online 或读取路径自动
-创建；首次使用必须显式执行 `recap create`。同样不存在自动 reset 或“一键 reset-and-rebuild”。
+`planner-config init/inspect` 是 repo-wide，只要求 `--input`；其余 branch-local 子命令还要求
+`--branch`。Store 不会由 `run`、online 或读取路径自动创建；首次使用必须显式执行
+`recap create`。同样不存在自动 reset 或“一键 reset-and-rebuild”。
+
+### recap planner-config init / inspect
+
+创建或严格检查 canonical repo document：
+
+```bash
+dotnet run --project prototypes/SessionJournal.Cli -- \
+  recap planner-config init --input <repo-dir> \
+  [--report-json <path-outside-repo>]
+
+dotnet run --project prototypes/SessionJournal.Cli -- \
+  recap planner-config inspect --input <repo-dir> \
+  [--report-json <path-outside-repo>]
+```
+
+`init` 只执行 create-new canonical publication；文件存在时拒绝且不覆盖。`inspect` 从同一个
+opened handle bounded读取、strict decode并解析 policy/profile，输出 config hash与 content-free
+normalized view。二者都不打开 Recap Store、不选择 branch、不创建 Completion client。
+
+当前 C1 中，`recap run`与 `run-online-turn` 仍使用由同一内置 canonical document解析出的
+immutable composition；repo document在 C2 cutover后才成为这些运行路径的新-planning authority。
+`resume`与 `restore`始终只服从 frozen plan、完整 capability registry与 code-owned V4 hard caps，
+不读取 active planner config。
 
 ### recap create
 
@@ -70,9 +96,8 @@ raw 或 Store 读取错误返回 1。
 
 ### recap run
 
-使用固定 production catalog（world-understanding/Observation 在前、
-autobiography/Action 在后）和 bounded `MaintainAll` policy，执行一次
-plan-or-resume-and-publish：
+使用 C1 built-in canonical composition（world-understanding/Observation 在前、
+autobiography/Action 在后）和 bounded `MaintainAll` policy，执行一次新 planning：
 
 ```bash
 dotnet run --project prototypes/SessionJournal.Cli -- \
@@ -84,8 +109,9 @@ dotnet run --project prototypes/SessionJournal.Cli -- \
 ```
 
 未达到 trigger 时返回 `NoBuild`；需要创建 Building 时，Planner 先冻结 exact source、route、
-prior context 与 limits，再调用 Maintainers。已有 Building 时只补缺失或损坏的 block-local work；
-healthy final block 不重做。成功 Publish 后才进入 strict ordinal。
+prior context 与 limits，再调用 Maintainers。已有 Building 的补全由显式 `recap resume`负责；
+healthy final block 不重做。成功 Publish 后才进入 strict ordinal。C2会在 repo-config cutover时
+把 `run` 的 existing-Building fast path一并接入。
 
 ### recap resume
 
@@ -162,9 +188,12 @@ reset 后的 catch-up 仍需显式执行一次或多次 `recap run`。
 | `Retryable` | 3 | raw head/CAS 等 optimistic boundary 已改变，可在重新检查后重试 |
 | 参数、路径或未分类运行错误 | 1 | 命令级失败 |
 
-JSON report 是 content-free operation record：只包含 schema、operation、branch/ref、raw head、
-anchor/block、typed status/code/defect codes，以及 call-log 数量和目录。它不复制 recap 正文、
-FrozenInput、PriorContext、prompt/response、provider error body、state token、内容 hash或 secret。
+JSON report 是 content-free operation record：包含 schema、operation、branch/ref、raw head、
+anchor/block、typed status/code/defect codes，以及 call-log 数量和目录。`run`还记录实际
+new-planning composition 的 config schema/hash与 profile prompt fingerprints；
+`resume/restore`的 config字段为 null，因为 active planner config不是其 authority。报告不复制
+recap 正文、FrozenInput、PriorContext、prompt/response、provider error body、state token、
+recap/request内容 hash或 secret。
 
 ## run-online-turn
 
@@ -196,6 +225,9 @@ dotnet run --project prototypes/SessionJournal.Cli -- \
 candidate ordinal 不是 CLI flag；它只来自 selected branch governing `RuntimeConfigSetup` v2 的
 `derivedContext.nthPrevious`，`0` 表示最近 Published set。selection 是 strict ordinal：exact slot
 损坏时 bounded Restore 同一 slot，不跳过、不重编号。
+
+首次 Published recap 之前，healthy empty lineage 经 Planner 明确返回 `NoBuild` 后会进入
+`RawHistoryReady`，继续使用完整 raw history；普通 `Ready` 不会静默降级为 raw history。
 
 `--maximum-canonical-request-bytes` 是 final canonical request JSON 的精确 UTF-8 byte guard，不是
 provider tokenizer、模型 context-window 或 fallback policy。`--uncertain-recovery` 默认 `refuse`；

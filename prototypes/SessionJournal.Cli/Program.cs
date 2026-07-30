@@ -270,6 +270,14 @@ internal static class Program {
         Console.WriteLine();
         Console.WriteLine("Commands:");
         Console.WriteLine(
+            "  recap planner-config init --input <repo-dir> "
+            + "[--report-json <path-outside-repo>]"
+        );
+        Console.WriteLine(
+            "  recap planner-config inspect --input <repo-dir> "
+            + "[--report-json <path-outside-repo>]"
+        );
+        Console.WriteLine(
             "  recap create --input <repo-dir> --branch <name> "
             + "[--report-json <path-outside-repo>]"
         );

@@ -2,9 +2,13 @@
 
 > **状态**：Target Design / Implementation Guidance
 > **日期**：2026-07-30
-> **实施状态**：尚未实现；current CLI仍使用 hardcoded `RecapPlannerConfig`
+> **实施状态**：C0、C1 已实现。Strict document/codec/loader/atomic init、
+> Host single composition、capability catalog、runtime authority split及
+> `planner-config init/inspect`已落地。C1期间 run/online仍使用由内置 canonical
+> document解析出的 immutable composition；按 repo file生效属于 C2。
 > **相关类型**：
-> `Atelia.SessionJournal.DerivedRecap.Planner.RecapPlannerConfig`
+> `Atelia.SessionJournal.DerivedRecap.Planner.RecapPlannerConfigDocument`、
+> `RecapPlanningInputs`、`RecapPlanningLimits`
 > **相关设计**：
 > [Event-addressed Derived Recap V4](event-addressed-derived-recap-v4-target-design.md)、
 > [Derived Recap Cadence](derived-recap-cadence-target-design.md)、
@@ -18,7 +22,8 @@
 <session-repo>/config/recap-planner-config.json
 ```
 
-文件名与主要消费者类型 `RecapPlannerConfig` 直接对应。它是 repo-owned operator intent：
+文件名与主要 persisted document类型 `RecapPlannerConfigDocument` 直接对应。它是
+repo-owned operator intent：
 
 - 不进入 raw EventJournal；
 - 不放入可删除、可 reset 的 `derived/recap`；
@@ -92,7 +97,9 @@ atelia.session-journal.recap-planner-config.v1
 建议代码命名：
 
 ```text
-RecapPlannerConfig                 // 已解析的 Planner runtime config
+RecapPlanningInputs                // active catalog + cadence + policy
+RecapPlanningLimits                // repo-owned planning ceilings
+RecapProtocolHardCaps              // code/schema-owned frozen-plan bounds
 RecapCadenceConfig                 // recent reserve + rolling interval
 RecapPlannerConfigDocument         // persisted JSON DTO
 RecapCadenceConfigDocument         // persisted cadence DTO
@@ -197,8 +204,10 @@ V1 codec要求：
 - enum/id采用 ordinal、case-sensitive匹配；
 - catalog保持输入顺序；
 - 文件有明确的 bounded byte limit；
-- 数值先做 JSON range检查，再调用 `RecapCadenceConfig`与 `RecapPlannerConfig` constructors执行
-  领域与 checked-sum校验；
+- strict codec先做 JSON range、正数、checked-sum、`R+B <= MaxRawGrowthEventCount`与
+  neutral contribution caps校验；Host resolution随后构造 `RecapCadenceConfig`、
+  `RecapPlanningInputs`与 `RecapPlanningLimits`，并由 `RecapProtocolHardCaps.V4`
+  执行五项 protocol ceiling校验；
 - V1要求
   `checked(MinimumRecentHistoryUnitCount + RecapBuildIntervalUnitCount)
   <= MaxRawGrowthEventCount`，保证 cadence在 raw safety gate前可达；
@@ -223,7 +232,7 @@ open config file once
   -> load Host capability metadata independently
   -> resolve ordered active profiles against capabilities
   -> build exact RecapBlockCatalogEntry[]
-  -> new RecapPlannerConfig(...)
+  -> new RecapPlanningInputs(...) + RecapPlanningLimits(...)
   -> ResolvedRecapPlannerComposition
 ```
 
@@ -261,7 +270,7 @@ RecapBlockId + Target + MaxContentUtf8Bytes
 - operator要做 breaking roster切换，必须显式设计迁移，或明确 reset/rebuild并承担完整 raw
   bootstrap预算。
 
-没有 latest Published的空 Store可用当前 catalog fresh bootstrap。已有 Building时根本不加载
+没有 latest Published的空 Store可用当前 catalog建立 empty-recap baseline。已有 Building时根本不加载
 active catalog，而是继续 frozen Resume。gate只读取 latest frozen blocks，不追溯 source chain，
 因为 `InheritRecapBlockPlan`没有 `MaintainerId`。codec合法不代表 roster evolution语义合法。
 
@@ -278,7 +287,8 @@ loader接受 SessionJournal repo root，内部解析 canonical descendant：
 它必须：
 
 - 拒绝 repo/config/file路径链上的 symlink/reparse point；
-- 要求 regular file；
+- 在 portable managed API 可判定的范围内拒绝 directory、device 与 reparse target，并在
+  opened handle 上再次检查；trusted repo config namespace 必须只放普通目录和 regular file；
 - bounded read；
 - 从同一个 opened handle读取完整 bytes；
 - decode、normalize并完成 document-level领域校验后才返回 snapshot；
@@ -287,6 +297,23 @@ loader接受 SessionJournal repo root，内部解析 canonical descendant：
 
 config使用同目录 temporary file + flush/close + atomic rename发布。一次 operation打开旧文件或新文件，
 不会在中途切换；加载完成后的替换只影响下一次 operation。不需要 config ETag double-read或持续热加载。
+
+Path safety采用本项目的 trusted local repository namespace威胁模型：repo root及其 ancestor/config
+namespace由同一 operator拥有，只包含普通目录/regular file，不假定另一个进程会放入 FIFO/socket
+等会在 portable `File.OpenHandle` 阶段阻塞的 special node，也不假定恶意进程会在一次 operation
+期间反复 rename或替换路径。
+实现会拒绝稳定存在的 symlink/reparse component与明显的非 regular target；loader从同一 opened
+handle检查 attributes、取得长度并 bounded读取，读后再次检查路径链；initializer使用同目录
+`CreateNew` temporary、flush、`Move(overwrite:false)`并在发布后回读校验 canonical hash。这些约束
+防止正常本地操作中的误配置、意外覆盖和常见竞态，但不是 hostile concurrent filesystem namespace
+substitution的 security boundary。
+
+.NET 10 public cross-platform `System.IO`没有提供 portable special-file type preflight，也没有
+no-follow/beneath-root/directory-handle-relative open/create/rename组合。未来若 repo namespace
+不能满足上述 trusted regular-file前提，或可能由不可信并发 writer修改，必须引入 OS-specific
+filesystem layer（例如 Linux `stat/openat2/openat/renameat`与 Windows reparse-safe
+handle-relative primitives），或依靠外部 ownership/ACL隔离；不得把 path-based recheck宣传为
+已消除 TOCTOU或可对 hostile special node fail-fast。
 
 建议 typed load result：
 
@@ -529,7 +556,7 @@ V1的 cadence使用 `HistoryUnitCount`；`maxRawEventsPerStep/Build`继续作为
 > `RecapCadenceConfig`、content-free `RecapHistoryWindowFacts`、
 > evaluator-owned normalized `RecapCadenceFacts`、独立 header negative
 > prefilter与 deterministic budget fallback；programmatic CLI composition 已完成 breaking
-> migration，但没有接 repo file。C1尚未启动。
+> migration，但没有接 repo file。C1已在后续提交完成。
 
 - 按 [Derived Recap Cadence](derived-recap-cadence-target-design.md)实现
   `RecapCadenceConfig`；
@@ -542,17 +569,24 @@ V1的 cadence使用 `HistoryUnitCount`；`maxRawEventsPerStep/Build`继续作为
 
 ### C1：Document + single composition snapshot
 
+> **状态（2026-07-31）**：已完成。实现 strict codec与 64 KiB bounded safe
+> loader、create-new atomic initializer、Host typed resolution、built-in immutable
+> capability catalog、single resolved composition、`planner-config init/inspect`、
+> config schema/hash execution report，以及 new planning / Building Resume / Restore
+> authority split。当前 runtime composition来自内置 canonical document；repo file
+> 尚不支配 run/online，这是刻意保留的 C1/C2边界。
+
 - `RecapPlannerConfigDocument` strict codec/canonical bytes/hash；
 - canonical repo path、bounded safe read与 atomic init；
 - `planner-config init/inspect`；
 - policy/profile registries；
-- document → exact catalog → `RecapPlannerConfig`；
+- document → exact catalog → `RecapPlanningInputs` + `RecapPlanningLimits`；
 - wire loader与 Host resolver使用两个独立 typed result；
 - config、policy、active roster只解析一次；
 - capability metadata registry独立于 active roster；
 - 实现具备上述固定初值的 `RecapProtocolHardCaps`；
 - 将 new planning projections与 Resume/Restore输入 authority强制拆开；
-- execution report增加 config schema/hash；
+- new-planning execution report增加 config schema/hash；Resume/Restore不报告 active config；
 - 删除 hardcoded `ProductionConfig`和二次 `CreateCatalog()` authority。
 
 ### C2：CLI + Online cutover
@@ -597,7 +631,7 @@ import real export
 - symlink/reparse/file-vs-directory/ancestor escape；
 - init create-new与 atomic publication crash points；
 - one command只打开/resolve一次；
-- report config hash来自实际 snapshot；
+- new-planning report config hash来自实际 snapshot；Resume/Restore config为 null；
 - Store create/reset/delete不触碰 config；
 - raw import/validate不读取 config；
 - config missing时，无 Building的 `run` 与 online new-planning在

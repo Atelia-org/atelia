@@ -70,6 +70,11 @@ public sealed record RecapCadenceConfig {
     );
 }
 
+public static class RecapPlanningPolicyIds {
+    public const string BoundedMaintainAllV1 =
+        "bounded-maintain-all-v1";
+}
+
 public sealed class RecapPlanningInputs {
     public RecapPlanningInputs(
         IReadOnlyList<RecapBlockCatalogEntry> orderedCatalog,
@@ -261,7 +266,7 @@ public sealed record RecapProtocolHardCaps {
         );
     }
 
-    internal void ValidatePlanningAuthority(
+    public void ValidatePlanningAuthority(
         RecapPlanningInputs inputs,
         RecapPlanningLimits limits
     ) {

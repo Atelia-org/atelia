@@ -432,7 +432,8 @@ public sealed class DerivedRecapRealDataAcceptanceTests {
                             sourceBefore.Sha256
                         ),
                         ConfigReport.From(
-                            RecapCliComposition.CreateConfig()
+                            RecapCliComposition
+                                .ProductionComposition
                         ),
                         branchRefId.ToHexString(),
                         admission,
@@ -978,17 +979,21 @@ public sealed class DerivedRecapRealDataAcceptanceTests {
         int MaxRawEventsPerBuild,
         IReadOnlyList<string> BlockIds
     ) {
-        public static ConfigReport From(RecapPlannerConfig config)
-            => new(
-                config.Cadence.MinimumRecentHistoryUnitCount,
-                config.Cadence.RecapBuildIntervalUnitCount,
-                config.MaxRawGrowthEventCount,
-                config.MaxRouteEndpointsPerBlock,
-                config.MaxMaintainerCallsPerBuild,
-                config.MaxRawEventsPerStep,
-                config.MaxRawEventsPerBuild,
+        public static ConfigReport From(
+            ResolvedRecapPlannerComposition composition
+        ) => new(
+                composition.PlanningInputs.Cadence
+                    .MinimumRecentHistoryUnitCount,
+                composition.PlanningInputs.Cadence
+                    .RecapBuildIntervalUnitCount,
+                composition.PlanningLimits.MaxRawGrowthEventCount,
+                composition.PlanningLimits.MaxRouteEndpointsPerBlock,
+                composition.PlanningLimits.MaxMaintainerCallsPerBuild,
+                composition.PlanningLimits.MaxRawEventsPerStep,
+                composition.PlanningLimits.MaxRawEventsPerBuild,
                 [
-                    .. config.Catalog.Select(
+                    .. composition.PlanningInputs.OrderedCatalog
+                        .Select(
                         static item =>
                             item.RecapBlockId.Value
                     )

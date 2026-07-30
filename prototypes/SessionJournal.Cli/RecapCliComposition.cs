@@ -8,24 +8,9 @@ using SJ = Atelia.SessionJournal;
 namespace Atelia.SessionJournal.Cli;
 
 internal static class RecapCliComposition {
-    internal static IReadOnlyList<RecapBlockCatalogEntry>
-        CreateCatalog() => Array.AsReadOnly([
-        CatalogEntry(WorldUnderstandingRewriteProfiles.Default),
-        CatalogEntry(AutobiographicalRewriteProfiles.Default)
-    ]);
-
-    internal static RecapPlannerConfig CreateConfig() => new(
-        CreateCatalog(),
-        new RecapCadenceConfig(
-            minimumRecentHistoryUnitCount: 20,
-            recapBuildIntervalUnitCount: 24
-        ),
-        maxRawGrowthEventCount: 512,
-        maxRouteEndpointsPerBlock: 4,
-        maxMaintainerCallsPerBuild: 8,
-        maxRawEventsPerStep: 64,
-        maxRawEventsPerBuild: 512
-    );
+    internal static ResolvedRecapPlannerComposition
+        ProductionComposition =>
+        BuiltInRecapPlannerConfig.Composition;
 
     /// <summary>
     /// Opt-in runtime composition. Callers must complete Store readiness
@@ -33,44 +18,36 @@ internal static class RecapCliComposition {
     /// the call-log directory.
     /// </summary>
     internal static RecapCliMaintainerComposition CreateMaintainers(
+        RecapMaintainerProfileCatalog capabilityCatalog,
         CompletionConnectionConfig connection,
         ICompletionClient sharedInnerClient,
         string callLogDirectory,
         string command
     ) {
+        ArgumentNullException.ThrowIfNull(capabilityCatalog);
         ArgumentNullException.ThrowIfNull(connection);
         ArgumentNullException.ThrowIfNull(sharedInnerClient);
         ArgumentException.ThrowIfNullOrWhiteSpace(callLogDirectory);
         ArgumentException.ThrowIfNullOrWhiteSpace(command);
-        IReadOnlyList<RecapBlockCatalogEntry> catalog =
-            CreateCatalog();
+        RecapMaintainerProfileDescriptor[] capabilities = [
+            .. capabilityCatalog.All
+        ];
         LoggingCompletionClient[] loggingClients = [
-            LoggingClient(
+            .. capabilities.Select(descriptor => LoggingClient(
                 sharedInnerClient,
                 connection,
                 callLogDirectory,
                 command,
-                catalog[0]
-            ),
-            LoggingClient(
-                sharedInnerClient,
-                connection,
-                callLogDirectory,
-                command,
-                catalog[1]
-            )
+                descriptor
+            ))
         ];
         IRecapBlockMaintainer[] maintainers = [
-            RecapMaintainerProfileCatalog.Resolve(
-                    RecapMaintainerProfileCatalog
-                        .WorldUnderstandingRewrite
+            .. capabilities.Select((descriptor, index) =>
+                descriptor.Create(
+                    loggingClients[index],
+                    connection.ModelId
                 )
-                .Create(loggingClients[0], connection.ModelId),
-            RecapMaintainerProfileCatalog.Resolve(
-                    RecapMaintainerProfileCatalog
-                        .AutobiographicalRewrite
-                )
-                .Create(loggingClients[1], connection.ModelId)
+            )
         ];
         return new RecapCliMaintainerComposition(
             new RecapBlockMaintainerRegistry(maintainers),
@@ -83,29 +60,20 @@ internal static class RecapCliComposition {
         CompletionConnectionConfig connection,
         string callLogDirectory,
         string command,
-        RecapBlockCatalogEntry entry
+        RecapMaintainerProfileDescriptor descriptor
     ) => new(
         inner,
         connection,
         callLogDirectory,
         new CompletionCallLogContext(
             Command: command,
-            MaintainerId: entry.MaintainerId,
+            MaintainerId: descriptor.MaintainerId,
             TargetCarrier:
                 SJ.ContextHeaderCarrierTokens.ToStorageToken(
-                    entry.Target.Carrier
+                    descriptor.Target.Carrier
                 ),
-            TargetBlockId: entry.Target.BlockKey
+            TargetBlockId: descriptor.Target.BlockKey
         )
-    );
-
-    private static RecapBlockCatalogEntry CatalogEntry(
-        RecapRewriteProfile profile
-    ) => new(
-        new RecapBlockId(profile.Target.BlockKey),
-        profile.Target,
-        profile.Id,
-        maxContentUtf8Bytes: 32_768
     );
 }
 

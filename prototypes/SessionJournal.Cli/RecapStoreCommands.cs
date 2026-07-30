@@ -21,12 +21,22 @@ internal static class RecapStoreCommands {
             || args[0] is "-h" or "--help"
             || args[0].StartsWith("--", StringComparison.Ordinal)) {
             throw new ArgumentException(
-                "recap requires one subcommand: create, inspect, "
+                "recap requires one subcommand: planner-config, "
+                + "create, inspect, "
                 + "run, resume, restore, abandon-building, or reset."
             );
         }
 
         string subcommand = args[0];
+        if (string.Equals(
+                subcommand,
+                "planner-config",
+                StringComparison.Ordinal
+            )) {
+            return RecapPlannerConfigCommands.RunAsync(
+                args.Skip(1).ToArray()
+            );
+        }
         CliOptions options = CliOptions.Parse(args.Skip(1).ToArray());
         return subcommand switch {
             "create" => CreateAsync(options),

@@ -68,6 +68,23 @@ public sealed class RecapPlannerConfigRepositoryTests : IDisposable {
         );
     }
 
+    [Fact]
+    public void DocumentSnapshotsCatalogOnConstructionAndWithUpdate() {
+        var source = new List<RecapPlannerCatalogEntryDocument> {
+            new("world-understanding-rewrite", 32_768)
+        };
+        RecapPlannerConfigDocument document =
+            CreateDocument() with { Catalog = source };
+
+        source.Clear();
+
+        Assert.Single(document.Catalog);
+        Assert.Throws<NotSupportedException>(() =>
+            ((IList<RecapPlannerCatalogEntryDocument>)
+                document.Catalog).Clear()
+        );
+    }
+
     [Theory]
     [MemberData(nameof(InvalidJsonDocuments))]
     public void CodecRejectsMalformedOrInvalidDocuments(

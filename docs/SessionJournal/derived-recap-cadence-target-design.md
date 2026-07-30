@@ -2,8 +2,9 @@
 
 > **状态**：Target Design / Implementation Guidance
 > **日期**：2026-07-30
-> **实施状态**：C0 已实现；Planner 已切换到 exact HistoryUnit cadence。
-> Repo-owned document/loader 与 single composition 仍属于 C1。
+> **实施状态**：C0、C1 已实现；Planner 已切换到 exact HistoryUnit cadence，
+> repo document/loader、runtime authority split与 single composition snapshot 已落地。
+> 真正让 run/online 按 phase读取 repo file仍属于 C2。
 > **上位设计**：
 > [Event-addressed Derived Recap V4](event-addressed-derived-recap-v4-target-design.md)
 > **配置设计**：
@@ -91,7 +92,7 @@ Existing Published：
 cadence baseline = latest Published SetAdmissionAnchor
 ```
 
-Fresh bootstrap：
+Empty-recap baseline（尚无 Published Recap，不等同于 raw core 的 strict fresh bootstrap）：
 
 ```text
 cadence baseline = core验证的 EmptyReplayStartExclusive
@@ -117,7 +118,7 @@ baseline必须是 window内唯一、exact replay-safe boundary；不在 window�
 typed `CadenceBaselineInvalid`。baseline后的 exact raw-event count也必须用同一分支确定起点。
 
 不得直接把大 window的 `Units.Count`当作 `G`，否则某个长期 Inherit block的旧 cursor会把已经
-Published的历史重复计入 cadence。Fresh bootstrap baseline的 normalized count为 0。
+Published的历史重复计入 cadence。Empty-recap baseline的 normalized count为 0。
 
 只有 exact `SessionHistoryPlanningWindow`产生最终 scheduling decision。Header-only raw distance最多
 用作安全的 negative prefilter：
@@ -130,7 +131,7 @@ raw distance >= R + B -> 仍须读取 exact planning window，不能直接 Build
 因为 raw distance包含 API failure/retry、setup与 durable protocol events，它不能成为 cadence
 authority。
 
-`MaxRawGrowthEventCount`同样只统计 cadence baseline之后的 exact raw range；fresh bootstrap不得
+`MaxRawGrowthEventCount`同样只统计 cadence baseline之后的 exact raw range；empty-recap baseline不得
 拿整条 root lineage长度裁决，否则 setup prefix会造成 false backpressure。更老 block cursor到
 baseline的 raw成本由 per-step/per-build limits独立约束。
 
@@ -210,6 +211,26 @@ recent == R
 - 正常情况下不为了补齐每个遗漏 interval连续发布多个 sets；
 - 一次 Run最多发布一个 set；所有 cadence-safe candidates都超限时才 typed backpressure。
 
+### 3.6 首个 Recap 之前的 raw-history mode
+
+当 Store尚无 Published Recap且 `G < R+B` 时，Planner返回 `NoBuild`；这不是“会话必须没有任何
+operational history”的 strict fresh bootstrap。Online coordinator只有在以下 exact shape同时成立时
+返回 `SessionContextLifecycleStatus.RawHistoryReady`：
+
+```text
+initial selection == EmptyLineage
+planning result   == NoBuild
+final selection   == EmptyLineage
+```
+
+raw core收到这个显式 outcome后，才允许把 `SessionCreated -> current boundary`的完整 raw planning
+window作为当前 Context history。普通 `Ready + mature EmptyLineage`继续拒绝；声称 Published后仍
+Empty、Selected消失、ordinal/invalid/store unavailable均不得降级成 raw history。
+
+这样 `R=20, B=24` 时的前 43 个 HistoryUnits可以保持近期思路连续性，第 44 个 unit开始满足首个
+Recap trigger。raw-only请求仍受 canonical request byte guard；`RawHistoryReady`不是绕过 context
+容量或 topology检查的通用 fallback。
+
 ## 4. `RecapCadenceConfig`
 
 目标 runtime shape：
@@ -244,9 +265,14 @@ public sealed record RecapCadenceConfig {
     public int RecapBuildIntervalUnitCount { get; }
 }
 
-public sealed class RecapPlannerConfig {
+public sealed class RecapPlanningInputs {
+    public IReadOnlyList<RecapBlockCatalogEntry> OrderedCatalog { get; }
     public RecapCadenceConfig Cadence { get; }
-    // Catalog + planning limits...
+    public IRecapPlanningPolicy Policy { get; }
+}
+
+public sealed record RecapPlanningLimits {
+    // Repo-owned planning ceilings...
 }
 ```
 
@@ -320,15 +346,15 @@ remaining unit count >= R
 [Repo-owned RecapPlannerConfig §9](recap-planner-config-repository-design.md#9-实施工作包) 的
 `C0～C3`，不在本文建立第二套 package authority。
 
-本文为其中 C0 的 cadence Shape/Rule输入；C0必须完成：
+本文为其中 C0 的 cadence Shape/Rule输入；C0已完成：
 
-- `RecapCadenceConfig`与 `RecapPlannerConfig.Cadence`；
+- `RecapCadenceConfig`与 `RecapPlanningInputs.Cadence`；
 - 删除 `RawGrowthTrigger`，将 `RawGrowthHardLimit`重命名为 `MaxRawGrowthEventCount`；
 - normalized baseline、exact evaluator与 deterministic admission policy；
 - header-only negative prefilter、delayed budget fallback及 focused tests。
 
-随后 C1负责 repo document/composition，C2负责 CLI/online cutover，C3负责 Galatea real
-acceptance。
+C1也已完成 repo document/composition、runtime authority split与管理命令；C2负责让
+CLI/online按 durable phase条件读取 repo file，C3负责 Galatea real acceptance。
 
 ## 7. 验收矩阵
 
@@ -337,7 +363,7 @@ acceptance。
 - `G=R+B-1` NoBuild；
 - `G=R+B`且存在 `C>=B && G-C>=R` 的 replay-safe boundary时 Build，否则
   `NoBuild(AwaitingReplaySafeAdmission)`；
-- first bootstrap与 existing Published使用同一公式；
+- empty-recap baseline与 existing Published使用同一公式；
 - baseline等于 `StartExclusive`时 `L=0`；否则要求 exact replay-safe boundary，缺失/非安全返回
   `CadenceBaselineInvalid`；
 - Observation/Action/complete ToolResults按 Context messages计数；

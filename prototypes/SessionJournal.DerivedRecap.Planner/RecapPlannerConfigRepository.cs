@@ -1,3 +1,5 @@
+using Microsoft.Win32.SafeHandles;
+
 namespace Atelia.SessionJournal.DerivedRecap.Planner;
 
 public static class RecapPlannerConfigLoader {
@@ -87,6 +89,23 @@ public static class RecapPlannerConfigLoader {
             }
 
             byte[] bytes = ReadBoundedFromOneHandle(path);
+            PathCheckResult afterRead =
+                RecapPlannerConfigPathSafety.ValidateConfigFile(
+                    root,
+                    configDirectory,
+                    path,
+                    allowMissing: false
+                );
+            if (afterRead.Defect is { } afterReadDefect) {
+                return Invalid(path, afterReadDefect);
+            }
+            if (afterRead.UnavailableReason
+                is { } afterReadUnavailable) {
+                return new RecapPlannerConfigLoadResult.Unavailable(
+                    path,
+                    afterReadUnavailable
+                );
+            }
             RecapPlannerConfigDecodeResult decoded =
                 RecapPlannerConfigCodec.Decode(bytes);
             return decoded switch {
@@ -134,20 +153,26 @@ public static class RecapPlannerConfigLoader {
     }
 
     private static byte[] ReadBoundedFromOneHandle(string path) {
-        using var stream = new FileStream(
+        using SafeFileHandle handle = File.OpenHandle(
             path,
             FileMode.Open,
             FileAccess.Read,
             FileShare.Read | FileShare.Delete,
-            bufferSize: 4096,
-            FileOptions.SequentialScan
+            FileOptions.RandomAccess
         );
-        if (!stream.CanSeek) {
+        FileAttributes attributes = File.GetAttributes(handle);
+        if ((attributes & (
+                FileAttributes.Directory
+                | FileAttributes.Device
+                | FileAttributes.ReparsePoint
+            )) != 0) {
             throw new ConfigFileNotRegularException(
-                "Planner config must be a regular, seekable file."
+                "Planner config opened handle must identify a "
+                + "regular file."
             );
         }
-        if (stream.Length
+        long length = RandomAccess.GetLength(handle);
+        if (length
             > RecapPlannerConfigCodec.MaxDocumentUtf8Bytes) {
             throw new ConfigFileTooLargeException(
                 $"Planner config exceeds "
@@ -161,7 +186,11 @@ public static class RecapPlannerConfigLoader {
         ];
         int total = 0;
         while (total < buffer.Length) {
-            int read = stream.Read(buffer, total, buffer.Length - total);
+            int read = RandomAccess.Read(
+                handle,
+                buffer.AsSpan(total),
+                fileOffset: total
+            );
             if (read == 0) {
                 break;
             }
@@ -229,6 +258,8 @@ public static class RecapPlannerConfigInitializer {
                 ])
             );
         }
+        string expectedSha256 =
+            RecapPlannerConfigCodec.ComputeSha256(canonical);
 
         string path;
         try {
@@ -366,10 +397,46 @@ public static class RecapPlannerConfigInitializer {
                     .AlreadyExists(path);
             }
 
-            return new RecapPlannerConfigInitializeResult.Initialized(
-                path,
-                RecapPlannerConfigCodec.ComputeSha256(canonical)
-            );
+            RecapPlannerConfigLoadResult published =
+                RecapPlannerConfigLoader.Load(root);
+            return published switch {
+                RecapPlannerConfigLoadResult.Available available
+                    when string.Equals(
+                        available.ConfigSha256,
+                        expectedSha256,
+                        StringComparison.Ordinal
+                    ) =>
+                    new RecapPlannerConfigInitializeResult.Initialized(
+                        path,
+                        expectedSha256
+                    ),
+                RecapPlannerConfigLoadResult.Available =>
+                    new RecapPlannerConfigInitializeResult.Unavailable(
+                        path,
+                        "Published planner config changed before "
+                        + "post-publication verification."
+                    ),
+                RecapPlannerConfigLoadResult.Invalid invalid =>
+                    new RecapPlannerConfigInitializeResult.Invalid(
+                        path,
+                        invalid.Defects
+                    ),
+                RecapPlannerConfigLoadResult.Missing =>
+                    new RecapPlannerConfigInitializeResult.Unavailable(
+                        path,
+                        "Published planner config disappeared before "
+                        + "post-publication verification."
+                    ),
+                RecapPlannerConfigLoadResult.Unavailable unavailable =>
+                    new RecapPlannerConfigInitializeResult.Unavailable(
+                        path,
+                        unavailable.Reason
+                    ),
+                _ => throw new InvalidOperationException(
+                    "Unknown post-publication planner config "
+                    + "load result."
+                )
+            };
         }
         catch (Exception exception) when (IsIoException(exception)) {
             return new RecapPlannerConfigInitializeResult.Unavailable(

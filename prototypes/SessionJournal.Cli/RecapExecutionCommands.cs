@@ -10,12 +10,9 @@ namespace Atelia.SessionJournal.Cli;
 
 internal static class RecapExecutionCommands {
     private const string ReportSchema =
-        "atelia.session-journal.derived-recap-execution.v1";
+        "atelia.session-journal.derived-recap-execution.v2";
     private const string DefaultCallLogDirectory =
         "gitignore/session-journal/recap-maintainer-calls";
-
-    internal static RecapPlannerConfig ProductionConfig { get; } =
-        RecapCliComposition.CreateConfig();
 
     internal static Task<int> RunAsync(
         CliOptions options,
@@ -145,6 +142,7 @@ internal static class RecapExecutionCommands {
                     blockId: null,
                     code: null,
                     readinessDefects,
+                    configReport: null,
                     callLogCount: 0,
                     callLogDirectory
                 ),
@@ -165,6 +163,7 @@ internal static class RecapExecutionCommands {
                     code:
                         DerivedRecapRestoreDefectCodes.RawHeadChanged,
                     defectCodes: [],
+                    configReport: null,
                     callLogCount: 0,
                     callLogDirectory: callLogDirectory
                 ),
@@ -195,8 +194,20 @@ internal static class RecapExecutionCommands {
             registry.Resolve(requestedConnection);
         ICompletionClient inner =
             registry.GetClient(connection.Id);
+        ResolvedRecapPlannerComposition? plannerComposition =
+            operation == "run"
+                ? RecapCliComposition.ProductionComposition
+                : null;
+        RecapExecutionConfigReport? planningConfigReport =
+            plannerComposition is null
+                ? null
+                : CreateConfigReport(plannerComposition);
+        RecapMaintainerProfileCatalog capabilityCatalog =
+            plannerComposition?.CapabilityCatalog
+            ?? RecapMaintainerProfileCatalog.BuiltIn;
         RecapCliMaintainerComposition composition =
             RecapCliComposition.CreateMaintainers(
+                capabilityCatalog,
                 connection,
                 inner,
                 callLogDirectory,
@@ -209,7 +220,6 @@ internal static class RecapExecutionCommands {
             var executor = new DerivedRecapRestoreExecutor(
                 engine,
                 store,
-                ProductionConfig,
                 composition.Registry
             );
             DerivedRecapRestoreResult result =
@@ -228,26 +238,43 @@ internal static class RecapExecutionCommands {
                 callLogDirectory
             );
         }
-        else {
-            var executor = new DerivedRecapPlannerExecutor(
+        else if (operation == "resume") {
+            var executor = new DerivedRecapBuildingExecutor(
                 engine,
                 store,
-                ProductionConfig,
-                new BoundedMaintainAllRecapPlanningPolicy(),
                 composition.Registry
             );
             DerivedRecapExecutionResult result =
-                operation == "run"
-                    ? await executor.RunAsync()
-                        .ConfigureAwait(false)
-                    : await executor.ResumeAsync(anchor!.Value)
-                        .ConfigureAwait(false);
+                await executor.ResumeAsync(anchor!.Value)
+                    .ConfigureAwait(false);
             (report, exitCode) = MapExecution(
                 operation,
                 engine,
                 lineage.CapturedHead,
                 result,
-                operation == "resume" ? anchor : null,
+                anchor,
+                configReport: null,
+                composition.LoggingClients,
+                callLogDirectory
+            );
+        }
+        else {
+            var executor = new DerivedRecapPlannerExecutor(
+                engine,
+                store,
+                plannerComposition!.PlanningInputs,
+                plannerComposition.PlanningLimits,
+                composition.Registry
+            );
+            DerivedRecapExecutionResult result =
+                await executor.RunAsync().ConfigureAwait(false);
+            (report, exitCode) = MapExecution(
+                operation,
+                engine,
+                lineage.CapturedHead,
+                result,
+                requestedAnchor: null,
+                planningConfigReport,
                 composition.LoggingClients,
                 callLogDirectory
             );
@@ -322,6 +349,7 @@ internal static class RecapExecutionCommands {
         EventAddress rawHead,
         DerivedRecapExecutionResult result,
         EventAddress? requestedAnchor,
+        RecapExecutionConfigReport? configReport,
         IReadOnlyList<LoggingCompletionClient> loggingClients,
         string callLogDirectory
     ) {
@@ -339,6 +367,7 @@ internal static class RecapExecutionCommands {
                     null,
                     null,
                     [],
+                    configReport,
                     calls,
                     callLogDirectory
                 ),
@@ -354,6 +383,7 @@ internal static class RecapExecutionCommands {
                     null,
                     null,
                     [],
+                    configReport,
                     calls,
                     callLogDirectory
                 ),
@@ -371,6 +401,7 @@ internal static class RecapExecutionCommands {
                     unavailable.Defects.Select(
                         static defect => defect.Code
                     ),
+                    configReport,
                     calls,
                     callLogDirectory
                 ),
@@ -386,6 +417,7 @@ internal static class RecapExecutionCommands {
                     failed.RecapBlockId.Value,
                     failed.Code,
                     [],
+                    configReport,
                     calls,
                     callLogDirectory
                 ),
@@ -401,6 +433,7 @@ internal static class RecapExecutionCommands {
                     null,
                     retryable.Code,
                     [],
+                    configReport,
                     calls,
                     callLogDirectory
                 ),
@@ -439,6 +472,7 @@ internal static class RecapExecutionCommands {
                     null,
                     null,
                     [],
+                    configReport: null,
                     calls,
                     callLogDirectory
                 ),
@@ -456,6 +490,7 @@ internal static class RecapExecutionCommands {
                     unavailable.Defects.Select(
                         static defect => defect.Code
                     ),
+                    configReport: null,
                     calls,
                     callLogDirectory
                 ),
@@ -471,6 +506,7 @@ internal static class RecapExecutionCommands {
                     failed.RecapBlockId.Value,
                     failed.Code,
                     [],
+                    configReport: null,
                     calls,
                     callLogDirectory
                 ),
@@ -486,6 +522,7 @@ internal static class RecapExecutionCommands {
                     null,
                     retryable.Code,
                     [],
+                    configReport: null,
                     calls,
                     callLogDirectory
                 ),
@@ -507,6 +544,7 @@ internal static class RecapExecutionCommands {
         string? blockId,
         string? code,
         IEnumerable<string> defectCodes,
+        RecapExecutionConfigReport? configReport,
         int callLogCount,
         string callLogDirectory
     ) => new(
@@ -526,34 +564,44 @@ internal static class RecapExecutionCommands {
                 .Distinct(StringComparer.Ordinal)
                 .ToArray()
         ),
-        ProductionConfigReport,
+        configReport,
         callLogCount,
         Path.GetFullPath(callLogDirectory)
     );
 
-    private static RecapExecutionConfigReport
-        ProductionConfigReport { get; } = new(
-        [
-            .. ProductionConfig.Catalog.Select(
-                static entry => new RecapExecutionCatalogReport(
-                    entry.RecapBlockId.Value,
-                    SJ.ContextHeaderCarrierTokens.ToStorageToken(
-                        entry.Target.Carrier
-                    ),
-                    entry.Target.BlockKey,
-                    entry.MaintainerId,
-                    entry.MaxContentUtf8Bytes
+    private static RecapExecutionConfigReport CreateConfigReport(
+        ResolvedRecapPlannerComposition composition
+    ) {
+        RecapPlannerConfigDocument document =
+            composition.Snapshot.Document;
+        return new RecapExecutionConfigReport(
+            document.Schema,
+            composition.Snapshot.ConfigSha256,
+            document.PlanningPolicy,
+            [
+                .. composition.ActiveProfiles.Select(
+                    static profile => new RecapExecutionCatalogReport(
+                        profile.ProfileName,
+                        profile.CatalogEntry.RecapBlockId.Value,
+                        SJ.ContextHeaderCarrierTokens.ToStorageToken(
+                            profile.CatalogEntry.Target.Carrier
+                        ),
+                        profile.CatalogEntry.Target.BlockKey,
+                        profile.CatalogEntry.MaintainerId,
+                        profile.CatalogEntry.MaxContentUtf8Bytes,
+                        profile.Capability.PromptFingerprint
+                    )
                 )
-            )
-        ],
-        ProductionConfig.Cadence.MinimumRecentHistoryUnitCount,
-        ProductionConfig.Cadence.RecapBuildIntervalUnitCount,
-        ProductionConfig.MaxRawGrowthEventCount,
-        ProductionConfig.MaxRouteEndpointsPerBlock,
-        ProductionConfig.MaxMaintainerCallsPerBuild,
-        ProductionConfig.MaxRawEventsPerStep,
-        ProductionConfig.MaxRawEventsPerBuild
-    );
+            ],
+            document.Cadence.MinimumRecentHistoryUnitCount,
+            document.Cadence.RecapBuildIntervalUnitCount,
+            document.Limits.MaxRawGrowthEventCount,
+            document.Limits.MaxRouteEndpointsPerBlock,
+            document.Limits.MaxMaintainerCallsPerBuild,
+            document.Limits.MaxRawEventsPerStep,
+            document.Limits.MaxRawEventsPerBuild
+        );
+    }
 
     private static int Finish(
         RecapExecutionReport report,
@@ -653,12 +701,15 @@ internal sealed record RecapExecutionReport(
     string? BlockId,
     string? Code,
     IReadOnlyList<string> DefectCodes,
-    RecapExecutionConfigReport Config,
+    RecapExecutionConfigReport? Config,
     int CallLogCount,
     string? CallLogDirectory
 );
 
 internal sealed record RecapExecutionConfigReport(
+    string Schema,
+    string ConfigSha256,
+    string PlanningPolicy,
     IReadOnlyList<RecapExecutionCatalogReport> Catalog,
     int MinimumRecentHistoryUnitCount,
     int RecapBuildIntervalUnitCount,
@@ -670,9 +721,11 @@ internal sealed record RecapExecutionConfigReport(
 );
 
 internal sealed record RecapExecutionCatalogReport(
+    string MaintainerProfile,
     string RecapBlockId,
     string TargetCarrier,
     string TargetBlockKey,
     string MaintainerId,
-    int MaxContentUtf8Bytes
+    int MaxContentUtf8Bytes,
+    string PromptFingerprint
 );

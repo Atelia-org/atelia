@@ -111,8 +111,11 @@ internal static class OnlineTurnCommand {
                 );
 
         if (store is not null) {
+            ResolvedRecapPlannerComposition plannerComposition =
+                RecapCliComposition.ProductionComposition;
             RecapCliMaintainerComposition maintainers =
                 RecapCliComposition.CreateMaintainers(
+                    plannerComposition.CapabilityCatalog,
                     connection,
                     inner,
                     callLogDirectory,
@@ -121,8 +124,8 @@ internal static class OnlineTurnCommand {
             recap = new DerivedRecapOnlineLifecycleCoordinator(
                 engine,
                 store,
-                RecapCliComposition.CreateConfig(),
-                new BoundedMaintainAllRecapPlanningPolicy(),
+                plannerComposition.PlanningInputs,
+                plannerComposition.PlanningLimits,
                 maintainers.Registry
             );
         }

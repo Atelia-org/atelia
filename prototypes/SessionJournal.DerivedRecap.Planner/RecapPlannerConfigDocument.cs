@@ -21,6 +21,9 @@ public sealed record RecapPlannerLimitsDocument(
 );
 
 public sealed record RecapPlannerConfigDocument {
+    private IReadOnlyList<RecapPlannerCatalogEntryDocument> _catalog =
+        null!;
+
     public RecapPlannerConfigDocument(
         string schema,
         string planningPolicy,
@@ -31,9 +34,7 @@ public sealed record RecapPlannerConfigDocument {
         Schema = schema;
         PlanningPolicy = planningPolicy;
         Cadence = cadence;
-        Catalog = catalog is null
-            ? null!
-            : Array.AsReadOnly([.. catalog]);
+        Catalog = catalog;
         Limits = limits;
     }
 
@@ -41,8 +42,10 @@ public sealed record RecapPlannerConfigDocument {
     public string PlanningPolicy { get; init; }
     public RecapCadenceConfigDocument Cadence { get; init; }
     public IReadOnlyList<RecapPlannerCatalogEntryDocument> Catalog {
-        get;
-        init;
+        get => _catalog;
+        init => _catalog = value is null
+            ? null!
+            : Array.AsReadOnly([.. value]);
     }
     public RecapPlannerLimitsDocument Limits { get; init; }
 }

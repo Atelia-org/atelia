@@ -31,10 +31,26 @@ public sealed class ProgramRecapExecutionCommandTests : IDisposable {
 
     [Fact]
     public void ProductionCatalogAndLimitsAreExactAndOrdered() {
-        RecapPlannerConfig config =
-            RecapCliComposition.CreateConfig();
+        ResolvedRecapPlannerComposition composition =
+            RecapCliComposition.ProductionComposition;
+        RecapPlanningInputs inputs = composition.PlanningInputs;
+        RecapPlanningLimits limits = composition.PlanningLimits;
+        Assert.Equal(
+            RecapPlannerConfigCodec.SchemaV1,
+            composition.Snapshot.Document.Schema
+        );
+        Assert.Equal(
+            RecapPlanningPolicyIds.BoundedMaintainAllV1,
+            composition.Snapshot.Document.PlanningPolicy
+        );
+        Assert.Equal(
+            RecapPlannerConfigCodec.ComputeSha256(
+                composition.Snapshot.CanonicalBytes.AsSpan()
+            ),
+            composition.Snapshot.ConfigSha256
+        );
         Assert.Collection(
-            config.Catalog,
+            inputs.OrderedCatalog,
             world => {
                 Assert.Equal(
                     RolePlayRecapBlockPaths
@@ -74,17 +90,23 @@ public sealed class ProgramRecapExecutionCommandTests : IDisposable {
         );
         Assert.Equal(
             20,
-            config.Cadence.MinimumRecentHistoryUnitCount
+            inputs.Cadence.MinimumRecentHistoryUnitCount
         );
         Assert.Equal(
             24,
-            config.Cadence.RecapBuildIntervalUnitCount
+            inputs.Cadence.RecapBuildIntervalUnitCount
         );
-        Assert.Equal(512, config.MaxRawGrowthEventCount);
-        Assert.Equal(4, config.MaxRouteEndpointsPerBlock);
-        Assert.Equal(8, config.MaxMaintainerCallsPerBuild);
-        Assert.Equal(64, config.MaxRawEventsPerStep);
-        Assert.Equal(512, config.MaxRawEventsPerBuild);
+        Assert.Equal(512, limits.MaxRawGrowthEventCount);
+        Assert.Equal(4, limits.MaxRouteEndpointsPerBlock);
+        Assert.Equal(8, limits.MaxMaintainerCallsPerBuild);
+        Assert.Equal(64, limits.MaxRawEventsPerStep);
+        Assert.Equal(512, limits.MaxRawEventsPerBuild);
+        Assert.Equal(
+            inputs.OrderedCatalog,
+            composition.ActiveProfiles.Select(
+                static profile => profile.CatalogEntry
+            )
+        );
     }
 
     [Fact]
@@ -108,6 +130,23 @@ public sealed class ProgramRecapExecutionCommandTests : IDisposable {
         Assert.Equal(1, firstFactory.CreateCallCount);
         Assert.Equal(5, firstFactory.CallCount);
         using JsonDocument first = ReadJson(firstReport);
+        Assert.Equal(
+            "atelia.session-journal.derived-recap-execution.v2",
+            String(first, "schema")
+        );
+        JsonElement reportedConfig =
+            first.RootElement.GetProperty("config");
+        Assert.Equal(
+            RecapPlannerConfigCodec.SchemaV1,
+            reportedConfig.GetProperty("schema").GetString()
+        );
+        Assert.Equal(
+            RecapCliComposition.ProductionComposition
+                .Snapshot.ConfigSha256,
+            reportedConfig
+                .GetProperty("configSha256")
+                .GetString()
+        );
         Assert.Equal("BlockFailed", String(first, "resultStatus"));
         Assert.Equal(
             RolePlayRecapBlockPaths
@@ -134,10 +173,18 @@ public sealed class ProgramRecapExecutionCommandTests : IDisposable {
             ),
             resumeFactory
         ));
-        Assert.Equal("Published", String(
-            ReadJson(resumeReport),
-            "resultStatus"
-        ));
+        using (JsonDocument resume = ReadJson(resumeReport)) {
+            Assert.Equal(
+                "Published",
+                String(resume, "resultStatus")
+            );
+            Assert.Equal(
+                JsonValueKind.Null,
+                resume.RootElement
+                    .GetProperty("config")
+                    .ValueKind
+            );
+        }
         Assert.Equal(2, resumeFactory.CallCount);
         AssertReportIsContentFree(
             File.ReadAllText(resumeReport)
@@ -205,6 +252,12 @@ public sealed class ProgramRecapExecutionCommandTests : IDisposable {
                 String(restore, "resultStatus")
             );
             Assert.Equal(anchor, String(restore, "anchor"));
+            Assert.Equal(
+                JsonValueKind.Null,
+                restore.RootElement
+                    .GetProperty("config")
+                    .ValueKind
+            );
         }
         AssertReportIsContentFree(
             File.ReadAllText(restoreReport)
