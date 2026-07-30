@@ -5,6 +5,7 @@ using Atelia.Completion;
 using Atelia.Completion.Abstractions;
 using Atelia.Completion.Tools;
 using Atelia.EventJournal;
+using Atelia.SessionJournal.DerivedRecap.Planner;
 using Atelia.SessionJournal.DerivedRecap.Store;
 using Xunit;
 using SJ = Atelia.SessionJournal;
@@ -34,8 +35,24 @@ public sealed class ProgramDerivedRecapOnlineTurnTests : IDisposable {
             File.ReadAllText(fixture.OutputPath)
         );
         Assert.Equal(
-            "atelia.session-journal.online-turn-run.v3",
+            "atelia.session-journal.online-turn-run.v4",
             report.RootElement.GetProperty("schema").GetString()
+        );
+        JsonElement config =
+            report.RootElement.GetProperty("config");
+        Assert.Equal(
+            RecapPlannerConfigLoader.GetCanonicalPath(fixture.Path),
+            config.GetProperty("path").GetString()
+        );
+        Assert.False(string.IsNullOrWhiteSpace(
+            config.GetProperty("configSha256").GetString()
+        ));
+        Assert.Equal(
+            "HeaderNegative",
+            report.RootElement
+                .GetProperty("planning")
+                .GetProperty("measurementKind")
+                .GetString()
         );
         Assert.Equal(
             2,
@@ -65,11 +82,7 @@ public sealed class ProgramDerivedRecapOnlineTurnTests : IDisposable {
             fixture,
             SJ.SessionJournalFailpoint.AfterRequestPreparedCommitted
         );
-        Directory.Delete(
-            fixture.ExactPublishedPath,
-            recursive: true
-        );
-        Assert.False(Directory.Exists(fixture.ExactPublishedPath));
+        DeleteRecapAuthority(fixture.Path);
 
         string output = Path.Combine(_tempRoot, "prepared-reopen.json");
         string calls = Path.Combine(_tempRoot, "prepared-reopen-calls");
@@ -89,11 +102,12 @@ public sealed class ProgramDerivedRecapOnlineTurnTests : IDisposable {
             prepared.CanonicalSha256,
             Sha256(SJ.SessionRequestCanonicalizer.Canonicalize(request))
         );
-        Assert.False(Directory.Exists(fixture.ExactPublishedPath));
+        AssertRecapAuthorityAbsent(fixture.Path);
         Assert.Equal(
             SJ.SessionExecutionPhase.Idle,
             ReadBoundary(fixture.Path).Phase
         );
+        AssertReportHasNoRecapAuthority(output);
     }
 
     [Fact]
@@ -105,10 +119,7 @@ public sealed class ProgramDerivedRecapOnlineTurnTests : IDisposable {
             SJ.SessionJournalFailpoint
                 .AfterCompletionAttemptStartedCommitted
         );
-        Directory.Delete(
-            fixture.ExactPublishedPath,
-            recursive: true
-        );
+        DeleteRecapAuthority(fixture.Path);
 
         string output = Path.Combine(_tempRoot, "started-reopen.json");
         string calls = Path.Combine(_tempRoot, "started-reopen-calls");
@@ -117,7 +128,7 @@ public sealed class ProgramDerivedRecapOnlineTurnTests : IDisposable {
             .. BaseArgs(fixture, output, calls)
         ], refusal));
         Assert.Equal(0, refusal.CallCount);
-        Assert.False(Directory.Exists(fixture.ExactPublishedPath));
+        AssertRecapAuthorityAbsent(fixture.Path);
         Assert.False(File.Exists(output));
         Assert.False(Directory.Exists(calls));
 
@@ -129,11 +140,12 @@ public sealed class ProgramDerivedRecapOnlineTurnTests : IDisposable {
             "--uncertain-recovery", "restart-new-attempt"
         ], restart));
         Assert.Equal(1, restart.CallCount);
-        Assert.False(Directory.Exists(fixture.ExactPublishedPath));
+        AssertRecapAuthorityAbsent(fixture.Path);
         Assert.Equal(
             SJ.SessionExecutionPhase.Idle,
             ReadBoundary(fixture.Path).Phase
         );
+        AssertReportHasNoRecapAuthority(output);
     }
 
     [Fact]
@@ -154,6 +166,112 @@ public sealed class ProgramDerivedRecapOnlineTurnTests : IDisposable {
         Assert.Equal(0, factory.CallCount);
         Assert.False(File.Exists(output));
         Assert.False(Directory.Exists(calls));
+    }
+
+    [Fact]
+    public async Task ExistingBuildingResumesWithoutConfigAndIsNotRunTwice() {
+        Directory.CreateDirectory(_tempRoot);
+        string path = Path.Combine(_tempRoot, "frozen-building");
+        string connections = WriteConnections("frozen-building");
+        string output =
+            Path.Combine(_tempRoot, "frozen-building-online.json");
+        string calls =
+            Path.Combine(_tempRoot, "frozen-building-calls");
+        RefId branchRefId;
+        EventAddress admissionAnchor;
+        using (var engine = SJ.SessionJournalEngine.Create(
+                   path,
+                   new SJ.SessionCreateOptions(
+                       "model-a",
+                       "system-a",
+                       "surface-a"
+                   )
+               )) {
+            for (int index = 0; index < 22; index++) {
+                engine.AppendObservation($"observation {index}");
+                _ = engine.AppendImportedAgentAction(
+                    new ActionMessage([
+                        new ActionBlock.Text($"action {index}")
+                    ]),
+                    new CompletionDescriptor(
+                        "import",
+                        "import-v1",
+                        "model-a"
+                    )
+                );
+            }
+            branchRefId = engine.BranchRefId;
+            SJ.SessionCurrentLineageSnapshot lineage =
+                engine.ReadCurrentLineageHeaders();
+            admissionAnchor = lineage.CapturedHead;
+            EventAddress replayStart =
+                engine.ReadHistoryPlanningWindow()
+                    .StartExclusive;
+            DerivedRecapStore store =
+                DerivedRecapStore.Open(path, branchRefId);
+            await store.CreateAsync();
+            IReadOnlyList<RecapBlockPlan> plans = Array.AsReadOnly([
+                .. RecapCliComposition.DefaultComposition
+                    .PlanningInputs.OrderedCatalog.Select(entry =>
+                        new MaintainRecapBlockPlan(
+                            entry.RecapBlockId,
+                            entry.Target,
+                            entry.MaintainerId,
+                            new EmptyRecapMaintainSource(
+                                replayStart
+                            ),
+                            [admissionAnchor],
+                            EmptyRecapPriorContext.Instance,
+                            entry.MaxContentUtf8Bytes
+                        )
+                    )
+            ]);
+            Assert.IsType<CreateBuildingResult.Created>(
+                await store.CreateBuildingAsync(
+                    DerivedRecapCodec.CreateManifest(
+                        branchRefId,
+                        admissionAnchor,
+                        plans
+                    )
+                )
+            );
+        }
+        Assert.False(File.Exists(
+            RecapPlannerConfigLoader.GetCanonicalPath(path)
+        ));
+        var factory = new ScriptedCompletionClientFactory(
+            "frozen recap or agent answer"
+        );
+
+        Assert.Equal(0, Program.MainCore([
+            "run-online-turn",
+            "--input", path,
+            "--branch", SJ.SessionJournalDefaults.MainBranchName,
+            "--connections", connections,
+            "--output", output,
+            "--call-log-dir", calls,
+            "--message", "new online observation"
+        ], factory));
+
+        Assert.Equal(1, factory.CreateCallCount);
+        Assert.Equal(3, factory.CallCount);
+        Assert.False(File.Exists(
+            RecapPlannerConfigLoader.GetCanonicalPath(path)
+        ));
+        Assert.IsType<BuildingReadResult.Missing>(
+            await DerivedRecapStore.Open(path, branchRefId)
+                .ReadBuildingAsync(admissionAnchor)
+        );
+        using (var engine = SJ.SessionJournalEngine.OpenReadOnly(path)) {
+            Assert.IsType<DerivedRecapSelection.Selected>(
+                await DerivedRecapStore.Open(path, branchRefId)
+                    .SelectNthPreviousAsync(
+                        engine.ReadCurrentLineageHeaders(),
+                        0
+                    )
+            );
+        }
+        AssertReportHasNoRecapAuthority(output);
     }
 
     [Fact]
@@ -226,6 +344,7 @@ public sealed class ProgramDerivedRecapOnlineTurnTests : IDisposable {
             branchRefId = engine.BranchRefId;
             await DerivedRecapStore.Open(path, branchRefId)
                 .CreateAsync();
+            InitializePlannerConfig(path);
         }
         var factory = new ScriptedCompletionClientFactory(
             "raw history answer"
@@ -272,6 +391,87 @@ public sealed class ProgramDerivedRecapOnlineTurnTests : IDisposable {
             reopened.InspectExecutionBoundary().Phase
         );
         Assert.True(File.Exists(output));
+        using JsonDocument report = JsonDocument.Parse(
+            File.ReadAllText(output)
+        );
+        Assert.NotEqual(
+            JsonValueKind.Null,
+            report.RootElement.GetProperty("config").ValueKind
+        );
+        Assert.Equal(
+            "HeaderNegative",
+            report.RootElement
+                .GetProperty("planning")
+                .GetProperty("measurementKind")
+                .GetString()
+        );
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task MissingOrInvalidConfigBlocksBeforeClientLogOrRaw(
+        bool invalid
+    ) {
+        Directory.CreateDirectory(_tempRoot);
+        string name = invalid ? "invalid-config" : "missing-config";
+        string path = Path.Combine(_tempRoot, name);
+        string connections = WriteConnections(name);
+        string output = Path.Combine(_tempRoot, $"{name}-online.json");
+        string calls = Path.Combine(_tempRoot, $"{name}-calls");
+        RefId branchRefId;
+        using (var engine = SJ.SessionJournalEngine.Create(
+                   path,
+                   new SJ.SessionCreateOptions(
+                       "model-a",
+                       "system-a",
+                       "surface-a"
+                   )
+               )) {
+            for (int index = 0; index < 22; index++) {
+                engine.AppendObservation($"observation {index}");
+                _ = engine.AppendImportedAgentAction(
+                    new ActionMessage([
+                        new ActionBlock.Text($"action {index}")
+                    ]),
+                    new CompletionDescriptor(
+                        "import",
+                        "import-v1",
+                        "model-a"
+                    )
+                );
+            }
+            branchRefId = engine.BranchRefId;
+            await DerivedRecapStore.Open(path, branchRefId)
+                .CreateAsync();
+        }
+        string configPath =
+            RecapPlannerConfigLoader.GetCanonicalPath(path);
+        if (invalid) {
+            Directory.CreateDirectory(
+                Path.GetDirectoryName(configPath)!
+            );
+            File.WriteAllText(configPath, "{\"schema\":");
+        }
+        RawSnapshot before = ReadRawSnapshot(path);
+        var factory =
+            new ScriptedCompletionClientFactory("must not run");
+
+        Assert.Equal(1, Program.MainCore([
+            "run-online-turn",
+            "--input", path,
+            "--branch", SJ.SessionJournalDefaults.MainBranchName,
+            "--connections", connections,
+            "--output", output,
+            "--call-log-dir", calls,
+            "--message", "must not append"
+        ], factory));
+
+        Assert.Equal(0, factory.CreateCallCount);
+        Assert.Equal(0, factory.CallCount);
+        Assert.Equal(before, ReadRawSnapshot(path));
+        Assert.False(File.Exists(output));
+        Assert.False(Directory.Exists(calls));
     }
 
     [Fact]
@@ -472,6 +672,7 @@ public sealed class ProgramDerivedRecapOnlineTurnTests : IDisposable {
             branchRefId = engine.BranchRefId;
             await DerivedRecapStore.Open(path, branchRefId)
                 .CreateAsync();
+            InitializePlannerConfig(path);
         }
         var factory = new ScriptedCompletionClientFactory(
             "derived recap or agent answer"
@@ -617,6 +818,65 @@ public sealed class ProgramDerivedRecapOnlineTurnTests : IDisposable {
         return engine.InspectExecutionBoundary();
     }
 
+    private static RawSnapshot ReadRawSnapshot(string path) {
+        using var engine = SJ.SessionJournalEngine.OpenReadOnly(path);
+        SJ.SessionCurrentLineageSnapshot lineage =
+            engine.ReadCurrentLineageHeaders();
+        return new RawSnapshot(
+            lineage.CapturedHead,
+            lineage.HeadToRoot.Count,
+            engine.InspectExecutionBoundary().Phase
+        );
+    }
+
+    private static void InitializePlannerConfig(string path) {
+        Assert.IsType<RecapPlannerConfigInitializeResult.Initialized>(
+            RecapPlannerConfigInitializer.Initialize(
+                path,
+                RecapCliComposition.DefaultComposition
+                    .Snapshot.Document
+            )
+        );
+    }
+
+    private static void DeleteRecapAuthority(string path) {
+        string configRoot = Path.Combine(path, "config");
+        if (Directory.Exists(configRoot)) {
+            Directory.Delete(configRoot, recursive: true);
+        }
+        string derivedRoot =
+            Path.Combine(path, "derived", "recap", "v4");
+        if (Directory.Exists(derivedRoot)) {
+            Directory.Delete(derivedRoot, recursive: true);
+        }
+        AssertRecapAuthorityAbsent(path);
+    }
+
+    private static void AssertRecapAuthorityAbsent(string path) {
+        Assert.False(Directory.Exists(
+            Path.Combine(path, "config")
+        ));
+        Assert.False(Directory.Exists(
+            Path.Combine(path, "derived", "recap", "v4")
+        ));
+    }
+
+    private static void AssertReportHasNoRecapAuthority(
+        string outputPath
+    ) {
+        using JsonDocument report = JsonDocument.Parse(
+            File.ReadAllText(outputPath)
+        );
+        Assert.Equal(
+            JsonValueKind.Null,
+            report.RootElement.GetProperty("config").ValueKind
+        );
+        Assert.Equal(
+            JsonValueKind.Null,
+            report.RootElement.GetProperty("planning").ValueKind
+        );
+    }
+
     private string[] BaseArgs(
         PublishedFixture fixture,
         string output,
@@ -673,6 +933,12 @@ public sealed class ProgramDerivedRecapOnlineTurnTests : IDisposable {
     private sealed record PreparedBoundary(
         EventAddress PreparedAddress,
         string CanonicalSha256
+    );
+
+    private sealed record RawSnapshot(
+        EventAddress Head,
+        int EventCount,
+        SJ.SessionExecutionPhase Phase
     );
 
     private sealed class ScriptedCompletionClientFactory(

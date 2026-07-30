@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using Atelia.Completion;
 using Atelia.Completion.Abstractions;
+using Atelia.SessionJournal.DerivedRecap.Maintainers;
 using Atelia.SessionJournal.DerivedRecap.Planner;
 using Atelia.SessionJournal.DerivedRecap.Store;
 using SJ = Atelia.SessionJournal;
@@ -67,14 +68,28 @@ internal static class OnlineTurnCommand {
 
         DerivedRecapOnlineLifecycleCoordinator? recap = null;
         DerivedRecapStore? store = null;
+        PreparedRecapOperationAuthority? recapAuthority = null;
         if (mode is OnlineExecutionMode.SendNewTurn
             or OnlineExecutionMode.CompleteObservation) {
             store = DerivedRecapStore.Open(
                 inputPath,
                 engine.BranchRefId
             );
-            await RequireStoreReadyAsync(engine, store)
-                .ConfigureAwait(false);
+            RecapOperationReadinessResult readiness =
+                await RecapOperationReadiness.PrepareAsync(
+                        engine,
+                        store
+                    )
+                    .ConfigureAwait(false);
+            recapAuthority = readiness switch {
+                RecapOperationReadinessResult.Ready ready =>
+                    ready.Authority,
+                RecapOperationReadinessResult.Blocked blocked =>
+                    throw ReadinessBlocked(blocked),
+                _ => throw new InvalidDataException(
+                    "Unknown DerivedRecap readiness result."
+                )
+            };
         }
 
         CompletionConnectionsFileConfig connections =
@@ -110,24 +125,50 @@ internal static class OnlineTurnCommand {
                     )
                 );
 
-        if (store is not null) {
-            ResolvedRecapPlannerComposition plannerComposition =
-                RecapCliComposition.ProductionComposition;
+        if (store is not null && recapAuthority is not null) {
+            RecapMaintainerProfileCatalog capabilityCatalog =
+                recapAuthority switch {
+                    PreparedRecapOperationAuthority.NewPlanning
+                        newPlanning =>
+                        newPlanning.Composition.CapabilityCatalog,
+                    PreparedRecapOperationAuthority.FrozenBuilding =>
+                        RecapMaintainerProfileCatalog.BuiltIn,
+                    _ => throw new InvalidDataException(
+                        "Unknown prepared DerivedRecap authority."
+                    )
+                };
             RecapCliMaintainerComposition maintainers =
                 RecapCliComposition.CreateMaintainers(
-                    plannerComposition.CapabilityCatalog,
+                    capabilityCatalog,
                     connection,
                     inner,
                     callLogDirectory,
                     "run-online-turn/maintenance"
                 );
-            recap = new DerivedRecapOnlineLifecycleCoordinator(
-                engine,
-                store,
-                plannerComposition.PlanningInputs,
-                plannerComposition.PlanningLimits,
-                maintainers.Registry
-            );
+            recap = recapAuthority switch {
+                PreparedRecapOperationAuthority.NewPlanning
+                    newPlanning =>
+                    new DerivedRecapOnlineLifecycleCoordinator(
+                        engine,
+                        store,
+                        newPlanning.Composition.PlanningInputs,
+                        newPlanning.Composition.PlanningLimits,
+                        maintainers.Registry,
+                        newPlanning.Baseline
+                    ),
+                PreparedRecapOperationAuthority.FrozenBuilding frozen =>
+                    DerivedRecapOnlineLifecycleCoordinator
+                        .CreateForFrozenBuilding(
+                            engine,
+                            store,
+                            frozen.Snapshot.Descriptor
+                                .SetAdmissionAnchor,
+                            maintainers.Registry
+                        ),
+                _ => throw new InvalidDataException(
+                    "Unknown prepared DerivedRecap authority."
+                )
+            };
         }
 
         engine.UseRuntime(new SJ.SessionRuntime(
@@ -163,7 +204,7 @@ internal static class OnlineTurnCommand {
         SJ.SessionExecutionBoundaryInspection final =
             engine.InspectExecutionBoundary();
         var report = new OnlineTurnRunRecord(
-            "atelia.session-journal.online-turn-run.v3",
+            "atelia.session-journal.online-turn-run.v4",
             engine.BranchName,
             engine.BranchRefId.ToHexString(),
             final.Head is { } head
@@ -180,7 +221,15 @@ internal static class OnlineTurnCommand {
                     )
                 )
             ),
-            errors?.Count ?? 0
+            errors?.Count ?? 0,
+            recapAuthority
+                is PreparedRecapOperationAuthority.NewPlanning
+                    reportPlanning
+                ? CreateConfigReport(reportPlanning.Composition)
+                : null,
+            CreatePlanningReport(
+                recap?.LastPlanningDiagnostics
+            )
         );
         CliIo.WriteJsonAtomically(outputPath, report);
         Console.WriteLine($"head: {report.Head}");
@@ -243,23 +292,75 @@ internal static class OnlineTurnCommand {
         }
     }
 
-    private static async ValueTask RequireStoreReadyAsync(
-        SJ.SessionJournalEngine engine,
-        DerivedRecapStore store
+    private static InvalidDataException ReadinessBlocked(
+        RecapOperationReadinessResult.Blocked blocked
+    ) => new(
+        "DerivedRecap readiness failed: "
+        + string.Join(
+            "; ",
+            blocked.Defects.Select(static defect =>
+                $"{defect.Code}: {defect.Detail}"
+            )
+        )
+    );
+
+    private static RecapExecutionConfigReport CreateConfigReport(
+        ResolvedRecapPlannerComposition composition
     ) {
-        SJ.SessionCurrentLineageSnapshot lineage =
-            engine.ReadCurrentLineageHeaders();
-        DerivedRecapSelection selection =
-            await store.SelectNthPreviousAsync(lineage, 0)
-                .ConfigureAwait(false);
-        if (selection is DerivedRecapSelection.StoreUnavailable
-                unavailable) {
-            throw new InvalidDataException(
-                "DerivedRecap Store is unavailable: "
-                + unavailable.Reason
-            );
-        }
+        RecapPlannerConfigDocument document =
+            composition.Snapshot.Document;
+        return new RecapExecutionConfigReport(
+            document.Schema,
+            composition.Snapshot.CanonicalPath,
+            composition.Snapshot.ConfigSha256,
+            document.PlanningPolicy,
+            [
+                .. composition.ActiveProfiles.Select(
+                    static profile => new RecapExecutionCatalogReport(
+                        profile.ProfileName,
+                        profile.CatalogEntry.RecapBlockId.Value,
+                        SJ.ContextHeaderCarrierTokens.ToStorageToken(
+                            profile.CatalogEntry.Target.Carrier
+                        ),
+                        profile.CatalogEntry.Target.BlockKey,
+                        profile.CatalogEntry.MaintainerId,
+                        profile.CatalogEntry.MaxContentUtf8Bytes,
+                        profile.Capability.PromptFingerprint
+                    )
+                )
+            ],
+            document.Cadence.MinimumRecentHistoryUnitCount,
+            document.Cadence.RecapBuildIntervalUnitCount,
+            document.Limits.MaxRawGrowthEventCount,
+            document.Limits.MaxRouteEndpointsPerBlock,
+            document.Limits.MaxMaintainerCallsPerBuild,
+            document.Limits.MaxRawEventsPerStep,
+            document.Limits.MaxRawEventsPerBuild
+        );
     }
+
+    private static RecapExecutionPlanningReport? CreatePlanningReport(
+        DerivedRecapPlanningDiagnostics? diagnostics
+    ) => diagnostics switch {
+        DerivedRecapPlanningDiagnostics.HeaderNegative header =>
+            new RecapExecutionPlanningReport(
+                "HeaderNegative",
+                GrowthHistoryUnitCount: null,
+                RawGrowthEventCount: null,
+                header.RawGrowthEventUpperBound
+            ),
+        DerivedRecapPlanningDiagnostics.ExactSchedule exact =>
+            new RecapExecutionPlanningReport(
+                "ExactSchedule",
+                exact.GrowthHistoryUnitCount,
+                exact.RawGrowthEventCount,
+                RawGrowthEventUpperBound: null
+            ),
+        null => null,
+        _ => throw new InvalidDataException(
+            "Unknown recap planning diagnostics."
+        )
+    };
 
     private static (
         ActionMessage Message,
@@ -376,5 +477,7 @@ internal sealed record OnlineTurnRunRecord(
     string ApiSpecId,
     string Model,
     string ActionSha256,
-    int ErrorCount
+    int ErrorCount,
+    RecapExecutionConfigReport? Config,
+    RecapExecutionPlanningReport? Planning
 );
