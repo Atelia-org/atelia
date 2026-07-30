@@ -28,6 +28,7 @@ public sealed class DerivedRecapBuildingInstaller {
     ) => _store.CreateBuildingTrustedAsync(
         manifest,
         expectedRawHead,
+        _engine.ReadCurrentLineageHeaders(cancellationToken),
         () => _engine.ReadCurrentHead(),
         cancellationToken
     );

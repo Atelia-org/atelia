@@ -15,6 +15,7 @@ internal sealed record RecapStoreTestHooks(
     Action? AfterResetNewRootCommit = null,
     Action? BeforePublicationSealInstall = null,
     Action? BeforeSourceEnvelopeRecheck = null,
+    Action? BeforePublishedPlanEnvelopeRecheck = null,
     Action? BeforeBuildingSourceFinalRecheck = null,
     Action? BeforeBuildingRawHeadRecheck = null,
     Action<string>? BeforeAtomicFileReplace = null,
@@ -215,12 +216,106 @@ public sealed class DerivedRecapStore {
         );
     }
 
+    /// <summary>
+    /// Reads only the exact Published publication envelope named by the
+    /// descriptor. Final block files and restore state are intentionally
+    /// outside this read boundary.
+    /// </summary>
+    public async ValueTask<PublishedPlanReadResult>
+        ReadPublishedPlanAsync(
+        PublishedRecapDescriptor descriptor,
+        CancellationToken cancellationToken = default
+    ) {
+        ArgumentNullException.ThrowIfNull(descriptor);
+        ValidateSourceDescriptor(descriptor);
+        if (descriptor.RefId != RefId) {
+            throw new ArgumentException(
+                "Published descriptor belongs to another RefId.",
+                nameof(descriptor)
+            );
+        }
+        EnsureScaffolding();
+        await using FileStream writeLock =
+            await _fileSystem.AcquireExclusiveLockAsync(
+                    _lockPath,
+                    cancellationToken
+                )
+                .ConfigureAwait(false);
+        string? unavailable =
+            await TryGetUnavailableReasonAsync(cancellationToken)
+                .ConfigureAwait(false);
+        if (unavailable is not null) {
+            return PublishedPlanUnavailable(
+                descriptor,
+                "StoreUnavailable",
+                unavailable
+            );
+        }
+
+        PublishedPlanEnvelopeCapture first;
+        try {
+            first = await CapturePublishedPlanEnvelopeAsync(
+                    descriptor.SetAdmissionAnchor,
+                    cancellationToken
+                )
+                .ConfigureAwait(false);
+        }
+        catch (Exception exception)
+            when (IsPublishedPlanAvailabilityException(exception)) {
+            return PublishedPlanUnavailable(
+                descriptor,
+                "PublishedPlanUnavailable",
+                exception.Message
+            );
+        }
+        if (first.Descriptor != descriptor) {
+            return new PublishedPlanReadResult.Changed(
+                descriptor,
+                first.Descriptor
+            );
+        }
+
+        _testHooks.BeforePublishedPlanEnvelopeRecheck?.Invoke();
+        PublishedPlanEnvelopeCapture second;
+        try {
+            second = await CapturePublishedPlanEnvelopeAsync(
+                    descriptor.SetAdmissionAnchor,
+                    cancellationToken
+                )
+                .ConfigureAwait(false);
+        }
+        catch (Exception exception)
+            when (IsPublishedPlanAvailabilityException(exception)) {
+            return PublishedPlanUnavailable(
+                descriptor,
+                "PublishedPlanUnavailable",
+                exception.Message
+            );
+        }
+        if (second.Descriptor != descriptor
+            || !second.CanonicalEnvelope.SequenceEqual(
+                first.CanonicalEnvelope
+            )) {
+            return new PublishedPlanReadResult.Changed(
+                descriptor,
+                second.Descriptor
+            );
+        }
+        return new PublishedPlanReadResult.Available(
+            new PublishedPlanSnapshot(
+                descriptor,
+                first.Publication.FrozenPlanSnapshot
+            )
+        );
+    }
+
     public async ValueTask<CreateBuildingResult> CreateBuildingAsync(
         DerivedRecapSetManifest manifest,
         CancellationToken cancellationToken = default
     ) => await CreateBuildingCoreAsync(
             manifest,
             expectedRawHead: null,
+            currentLineage: null,
             readCurrentHead: null,
             cancellationToken
         )
@@ -230,13 +325,16 @@ public sealed class DerivedRecapStore {
         CreateBuildingTrustedAsync(
         DerivedRecapSetManifest manifest,
         EventAddress expectedRawHead,
+        SessionCurrentLineageSnapshot currentLineage,
         Func<EventAddress?> readCurrentHead,
         CancellationToken cancellationToken = default
     ) {
+        ArgumentNullException.ThrowIfNull(currentLineage);
         ArgumentNullException.ThrowIfNull(readCurrentHead);
         return await CreateBuildingCoreAsync(
                 manifest,
                 expectedRawHead,
+                currentLineage,
                 readCurrentHead,
                 cancellationToken
             )
@@ -247,6 +345,7 @@ public sealed class DerivedRecapStore {
         CreateBuildingCoreAsync(
         DerivedRecapSetManifest manifest,
         EventAddress? expectedRawHead,
+        SessionCurrentLineageSnapshot? currentLineage,
         Func<EventAddress?>? readCurrentHead,
         CancellationToken cancellationToken
     ) {
@@ -257,9 +356,11 @@ public sealed class DerivedRecapStore {
                 nameof(expectedRawHead)
             );
         }
-        if ((expectedRawHead is null) != (readCurrentHead is null)) {
+        if ((expectedRawHead is null) != (readCurrentHead is null)
+            || (expectedRawHead is null) != (currentLineage is null)) {
             throw new ArgumentException(
-                "Expected raw head and reader must be supplied together."
+                "Expected raw head, current lineage, and reader must be "
+                + "supplied together."
             );
         }
         EnsureScaffolding();
@@ -276,6 +377,36 @@ public sealed class DerivedRecapStore {
             throw new InvalidDataException(
                 "Recap manifest belongs to a different RefId."
             );
+        }
+
+        if (currentLineage is not null) {
+            IReadOnlyDictionary<EventAddress, int> lineageIndex =
+                ValidateAndIndexLineage(currentLineage);
+            if (currentLineage.CapturedHead != expectedRawHead) {
+                return new CreateBuildingResult.RawHeadChanged(
+                    expectedRawHead!.Value,
+                    currentLineage.CapturedHead
+                );
+            }
+            CurrentLineageBuildingInventory inventory =
+                InventoryCurrentLineageBuildings(
+                    currentLineage,
+                    lineageIndex
+                );
+            EventAddress[] conflicts = inventory.Buildings
+                .Where(
+                    membership =>
+                        membership.Address
+                        != manifest.SetAdmissionAnchor
+                )
+                .Select(static membership => membership.Address)
+                .ToArray();
+            if (conflicts.Length != 0) {
+                return new CreateBuildingResult
+                    .ActiveBuildingConflict(
+                        Array.AsReadOnly(conflicts)
+                    );
+            }
         }
 
         string anchorToken = EventAddressFileNameCodec.Format(
@@ -460,6 +591,107 @@ public sealed class DerivedRecapStore {
                 cancellationToken
             )
             .ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Selects active Building membership only from the supplied current
+    /// raw lineage. Dot-staging entries and off-lineage directories are
+    /// therefore outside the membership scan by construction.
+    /// </summary>
+    public async ValueTask<CurrentLineageBuildingSelection>
+        SelectCurrentLineageBuildingAsync(
+        SessionCurrentLineageSnapshot lineage,
+        CancellationToken cancellationToken = default
+    ) {
+        ArgumentNullException.ThrowIfNull(lineage);
+        EnsureScaffolding();
+        await using FileStream writeLock =
+            await _fileSystem.AcquireExclusiveLockAsync(
+                    _lockPath,
+                    cancellationToken
+                )
+                .ConfigureAwait(false);
+        string? unavailable =
+            await TryGetUnavailableReasonAsync(cancellationToken)
+                .ConfigureAwait(false);
+        if (unavailable is not null) {
+            return new CurrentLineageBuildingSelection
+                .StoreUnavailable(unavailable);
+        }
+
+        CurrentLineageBuildingInventory inventory;
+        try {
+            IReadOnlyDictionary<EventAddress, int> lineageIndex =
+                ValidateAndIndexLineage(lineage);
+            inventory = InventoryCurrentLineageBuildings(
+                lineage,
+                lineageIndex
+            );
+        }
+        catch (Exception exception)
+            when (exception is InvalidDataException
+                  or ArgumentException
+                  or NotSupportedException
+                  or IOException
+                  or UnauthorizedAccessException) {
+            return new CurrentLineageBuildingSelection
+                .StoreUnavailable(exception.Message);
+        }
+
+        if (inventory.Buildings.Count == 0) {
+            return new CurrentLineageBuildingSelection.None();
+        }
+        if (inventory.Buildings.Count > 1) {
+            return new CurrentLineageBuildingSelection.Multiple(
+                Array.AsReadOnly(
+                    inventory.Buildings
+                        .Select(static membership =>
+                            membership.Address)
+                        .ToArray()
+                )
+            );
+        }
+
+        CurrentLineageMembership building =
+            inventory.Buildings[0];
+        if (inventory.LatestPublished is { } published
+            && building.LineageIndex >= published.LineageIndex) {
+            return new CurrentLineageBuildingSelection.Stale(
+                building.Address,
+                published.Address
+            );
+        }
+
+        BuildingReadResult exact = await ReadBuildingCoreAsync(
+                building.Address,
+                cancellationToken
+            )
+            .ConfigureAwait(false);
+        return exact switch {
+            BuildingReadResult.Available available =>
+                new CurrentLineageBuildingSelection.Available(
+                    available.Snapshot
+                ),
+            BuildingReadResult.Invalid invalid =>
+                new CurrentLineageBuildingSelection.Invalid(
+                    building.Address,
+                    invalid.Defects
+                ),
+            BuildingReadResult.Missing =>
+                new CurrentLineageBuildingSelection.Invalid(
+                    building.Address,
+                    [
+                        new RecapStructuralDefect(
+                            "BuildingDisappeared",
+                            "Current-lineage Building membership "
+                            + "disappeared during its exact read."
+                        )
+                    ]
+                ),
+            _ => throw new InvalidOperationException(
+                "Unknown Building read result."
+            )
+        };
     }
 
     /// <summary>
@@ -2209,6 +2441,33 @@ public sealed class DerivedRecapStore {
         return index;
     }
 
+    private CurrentLineageBuildingInventory
+        InventoryCurrentLineageBuildings(
+        SessionCurrentLineageSnapshot lineage,
+        IReadOnlyDictionary<EventAddress, int> lineageIndex
+    ) {
+        var buildings = new List<CurrentLineageMembership>();
+        CurrentLineageMembership? latestPublished = null;
+        foreach (SessionCurrentLineageHeader node
+                 in lineage.HeadToRoot) {
+            int index = lineageIndex[node.Address];
+            if (PathEntryExists(GetBuildingPath(node.Address))) {
+                buildings.Add(
+                    new CurrentLineageMembership(node.Address, index)
+                );
+            }
+            if (latestPublished is null
+                && PathEntryExists(GetPublishedPath(node.Address))) {
+                latestPublished =
+                    new CurrentLineageMembership(node.Address, index);
+            }
+        }
+        return new CurrentLineageBuildingInventory(
+            Array.AsReadOnly(buildings.ToArray()),
+            latestPublished
+        );
+    }
+
     private static void ValidatePlanLineage(
         DerivedRecapSetManifest manifest,
         IReadOnlyDictionary<EventAddress, int> lineage,
@@ -3782,13 +4041,65 @@ public sealed class DerivedRecapStore {
         return DerivedRecapCodec.DecodePublication(bytes);
     }
 
+    private async ValueTask<PublishedPlanEnvelopeCapture>
+        CapturePublishedPlanEnvelopeAsync(
+        EventAddress admissionAnchor,
+        CancellationToken cancellationToken
+    ) {
+        string publishedPath = GetPublishedPath(admissionAnchor);
+        if (!Directory.Exists(publishedPath)) {
+            throw new InvalidDataException(
+                $"Published Recap '{admissionAnchor}' is missing."
+            );
+        }
+        _fileSystem.EnsureSafeDescendant(publishedPath);
+        byte[] bytes = await _fileSystem.ReadBoundedAsync(
+                Path.Combine(publishedPath, "publication.json"),
+                MaxPublicationBytes,
+                cancellationToken
+            )
+            .ConfigureAwait(false);
+        PublishedRecapSet publication =
+            DerivedRecapCodec.DecodePublication(bytes);
+        if (publication.RefId != RefId
+            || publication.SetAdmissionAnchor != admissionAnchor) {
+            throw new InvalidDataException(
+                "Published plan identity does not match its directory."
+            );
+        }
+        byte[] canonical =
+            DerivedRecapCodec.EncodePublication(publication);
+        if (!bytes.SequenceEqual(canonical)) {
+            throw new InvalidDataException(
+                "Published plan envelope is not canonical."
+            );
+        }
+        return new PublishedPlanEnvelopeCapture(
+            new PublishedRecapDescriptor(
+                publication.RefId,
+                publication.SetAdmissionAnchor,
+                publication.EnvelopeSha256
+            ),
+            publication,
+            canonical
+        );
+    }
+
     private async ValueTask<BuildingReadResult> ReadBuildingCoreAsync(
         EventAddress admissionAnchor,
         CancellationToken cancellationToken
     ) {
         string buildPath = GetBuildingPath(admissionAnchor);
-        if (!Directory.Exists(buildPath)) {
+        if (!PathEntryExists(buildPath)) {
             return new BuildingReadResult.Missing();
+        }
+        if (!Directory.Exists(buildPath)) {
+            return new BuildingReadResult.Invalid([
+                new RecapStructuralDefect(
+                    "BuildingInvalid",
+                    "Exact Building membership is not a directory."
+                )
+            ]);
         }
         try {
             _fileSystem.EnsureSafeDescendant(buildPath);
@@ -4496,6 +4807,26 @@ public sealed class DerivedRecapStore {
         );
     }
 
+    private static bool IsPublishedPlanAvailabilityException(
+        Exception exception
+    ) => exception is InvalidDataException
+        or ArgumentException
+        or NotSupportedException
+        or IOException
+        or UnauthorizedAccessException;
+
+    private static PublishedPlanReadResult.Unavailable
+        PublishedPlanUnavailable(
+        PublishedRecapDescriptor descriptor,
+        string code,
+        string detail
+    ) => new(
+        descriptor,
+        Array.AsReadOnly([
+            new RecapStructuralDefect(code, detail)
+        ])
+    );
+
     private string GetBuildingPath(EventAddress anchor)
         => Path.Combine(
             _buildingRoot,
@@ -4686,6 +5017,22 @@ public sealed class DerivedRecapStore {
             ? null
             : new RestoreRawHeadChangedException(expected, observed);
     }
+
+    private sealed record PublishedPlanEnvelopeCapture(
+        PublishedRecapDescriptor Descriptor,
+        PublishedRecapSet Publication,
+        byte[] CanonicalEnvelope
+    );
+
+    private sealed record CurrentLineageMembership(
+        EventAddress Address,
+        int LineageIndex
+    );
+
+    private sealed record CurrentLineageBuildingInventory(
+        IReadOnlyList<CurrentLineageMembership> Buildings,
+        CurrentLineageMembership? LatestPublished
+    );
 
     private sealed record FrozenInputIndex(
         IReadOnlyDictionary<RecapBlockId, DerivedRecapFrozenInput>

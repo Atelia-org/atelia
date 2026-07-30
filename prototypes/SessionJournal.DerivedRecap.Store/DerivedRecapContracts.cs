@@ -183,6 +183,29 @@ public sealed record PublishedRecapDescriptor(
     string EnvelopeSha256
 );
 
+public sealed record PublishedPlanSnapshot(
+    PublishedRecapDescriptor Descriptor,
+    DerivedRecapSetManifest FrozenPlan
+);
+
+public abstract record PublishedPlanReadResult {
+    private PublishedPlanReadResult() {
+    }
+
+    public sealed record Available(PublishedPlanSnapshot Snapshot)
+        : PublishedPlanReadResult;
+
+    public sealed record Changed(
+        PublishedRecapDescriptor Expected,
+        PublishedRecapDescriptor Observed
+    ) : PublishedPlanReadResult;
+
+    public sealed record Unavailable(
+        PublishedRecapDescriptor Expected,
+        IReadOnlyList<RecapStructuralDefect> Defects
+    ) : PublishedPlanReadResult;
+}
+
 public abstract record PublishedMembershipInspectionResult {
     private PublishedMembershipInspectionResult() {
     }
@@ -300,6 +323,33 @@ public abstract record BuildingReadResult {
     ) : BuildingReadResult;
 }
 
+public abstract record CurrentLineageBuildingSelection {
+    private CurrentLineageBuildingSelection() {
+    }
+
+    public sealed record None : CurrentLineageBuildingSelection;
+
+    public sealed record Available(BuildingSnapshot Snapshot)
+        : CurrentLineageBuildingSelection;
+
+    public sealed record Invalid(
+        EventAddress SetAdmissionAnchor,
+        IReadOnlyList<RecapStructuralDefect> Defects
+    ) : CurrentLineageBuildingSelection;
+
+    public sealed record Stale(
+        EventAddress SetAdmissionAnchor,
+        EventAddress LatestPublishedAnchor
+    ) : CurrentLineageBuildingSelection;
+
+    public sealed record Multiple(
+        IReadOnlyList<EventAddress> SetAdmissionAnchors
+    ) : CurrentLineageBuildingSelection;
+
+    public sealed record StoreUnavailable(string Reason)
+        : CurrentLineageBuildingSelection;
+}
+
 public abstract record CreateBuildingResult {
     private CreateBuildingResult() {
     }
@@ -320,6 +370,10 @@ public abstract record CreateBuildingResult {
     public sealed record RawHeadChanged(
         EventAddress Expected,
         EventAddress? Observed
+    ) : CreateBuildingResult;
+
+    public sealed record ActiveBuildingConflict(
+        IReadOnlyList<EventAddress> SetAdmissionAnchors
     ) : CreateBuildingResult;
 }
 
