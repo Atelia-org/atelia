@@ -10,7 +10,7 @@
 > [SessionJournal 主干设计](session-journal-trunk-design.md)、
 > [SessionJournal 架构路线图](event-sourced-session-architecture-roadmap.md)、
 > [CS-3D 实施后化简调研](tail-execution-recovery-simplification-study.md)、
-> [候选 D0/D1 实施计划](tail-operational-semantics-simplification-plan.md)、
+> [候选 D0/D1 实施计划](done/tail-operational-semantics-simplification-plan.md)、
 > [CS-3D6 Coherent-only Manifest 化简计划](done/coherent-request-manifest-simplification-plan.md)
 > **D7 协议修订**：[Prepared / Provider Attempt 对称化](done/prepared-provider-attempt-symmetry-design.md)
 
@@ -22,7 +22,7 @@
 
 > **Prepared v5 / DM-8 supersession（2026-07-28）**：本文下文出现的 Prepared v3、exact
 > activation、raw derived-set event 或 inline artifact identity 均为历史实现记录，已由
-> [Derived Memory Subsystem Implementation Plan](derived-memory-subsystem-implementation-plan.md) 的
+> [Derived Memory Subsystem Implementation Plan](done/derived-memory-subsystem-implementation-plan.md) 的
 > DM-2/DM-8 breaking wire 替代。current Prepared v5 保存
 > `RawStartSetups + ExactContextInputs`：anchor setup refs
 > 由 controlled writer 在 append 前通过 request reconstruction、canonical exact check、
@@ -41,7 +41,7 @@
 > `SessionExecutionTailResolver` 始终保持 raw-only，只有未 Prepared 的 request-context
 > planning/materialization 注入该 provider；Prepared/Started exact reopen 不读取 derived subsystem。
 > current 实施见
-> [DerivedMemory 实施方案](derived-memory-subsystem-implementation-plan.md)；原 provisioning 问题见
+> [DerivedMemory 实施方案](done/derived-memory-subsystem-implementation-plan.md)；原 provisioning 问题见
 > [历史缺口备忘](done/memory-maintainer-provisioning-planner-gap.md)。
 
 ## 0. 给后续 Coding Agent 的结论

@@ -1,439 +1,254 @@
 # SessionJournal.Cli
 
-`SessionJournal.Cli` 是 `SessionJournal` 的离线开发与迁移工具，也是
-`SessionJournal.DerivedRecap.Maintainers` 的 composition root。它依赖 SessionJournal contracts、
-concrete maintainer profiles 和 Completion provider，但不依赖旧 `ChatSession`
-程序集。
+`SessionJournal.Cli` 是当前 SessionJournal 的迁移、离线诊断与 DerivedRecap
+composition root。它组合：
 
-旧 `ChatSession` repo 的读取和导出由相邻的
-[`ChatSession.LegacyExportCli`](../ChatSession.LegacyExportCli/README.md)
-负责；两个工具只通过版本化 JSON schema
-`atelia.chat-session.legacy-upgrade-export.v1` 交换数据。
+- raw `Atelia.SessionJournal`；
+- `SessionJournal.DerivedRecap.Store`；
+- `SessionJournal.DerivedRecap.Planner`；
+- `SessionJournal.DerivedRecap.Maintainers`；
+- Completion provider。
 
-## recap Store 运维命令
+CLI 不依赖已删除的 `SessionJournal.DerivedMemory`。旧 `ChatSession` repo 的读取和导出由
+[`ChatSession.LegacyExportCli`](../ChatSession.LegacyExportCli/README.md)负责；两个工具只通过
+`atelia.chat-session.legacy-upgrade-export.v1` JSON 交换数据。
 
-`recap create|inspect|abandon-building|reset` 是
-`SessionJournal.DerivedRecap.Store` 的离线、branch-exact 运维入口。每个命令都要求
-`--input` 与显式 `--branch`，先以 read-only engine 解析该 branch 的 exact
-`BranchRefId`，再打开对应 Store；它们不会运行 Planner、Maintainer 或 LLM，也不会改写
-raw journal。
+## 通用约束
+
+- branch-local 命令必须显式给出 `--branch`；branch name 只用于选择，durable identity 是
+  exact `BranchRefId`。
+- 所有命令拒绝未知 option 和重复 scalar option。
+- output/report/call-log 必须位于 input repo 外；路径链拒绝 symlink/reparse point，输出使用同目录
+  临时文件 atomic publish。
+- raw events 始终是 correctness source。Recap Store 是可删除、可重建的 sidecar；CLI 不向 raw
+  journal 写入 recap identity。
+- `--connection` 可省略并由 connections registry 解析默认项。
+
+## recap 命令族
+
+```text
+recap create
+recap inspect
+recap run
+recap resume
+recap restore
+recap abandon-building
+recap reset
+```
+
+所有子命令都要求 `--input <repo-dir> --branch <name>`。Store 不会由 `run`、online 或读取路径自动
+创建；首次使用必须显式执行 `recap create`。同样不存在自动 reset 或“一键 reset-and-rebuild”。
+
+### recap create
+
+显式创建当前 exact `BranchRefId` 的空 Store：
 
 ```bash
 dotnet run --project prototypes/SessionJournal.Cli -- \
-  recap create --input <repo-dir> --branch main
+  recap create --input <repo-dir> --branch main \
+  [--report-json <path-outside-repo>]
+```
 
+该命令不运行 Planner、Maintainer 或 LLM，也不做 catch-up。重复 create 遵守 Store 自身的
+create contract；不会借此覆盖或重置既有 Store。
+
+### recap inspect
+
+同时检查 exact anchor 上的 Building 和 Published membership：
+
+```bash
 dotnet run --project prototypes/SessionJournal.Cli -- \
   recap inspect --input <repo-dir> --branch main \
   --anchor ej1:<canonical-event-address> \
-  --report-json <path-outside-repo>
+  [--report-json <path-outside-repo>]
+```
 
+Published 报告把 membership 的 `Present / Absent / Invalid / StoreUnavailable` 与
+`restoreEligibility`、per-block capability 分开。Published directory 已存在但 payload 损坏时仍是
+exact ordinal member，不会被误报成 Missing。`inspect` 是只读操作，成功完成检查返回 0；参数、路径、
+raw 或 Store 读取错误返回 1。
+
+### recap run
+
+使用固定 production catalog（world-understanding/Observation 在前、
+autobiography/Action 在后）和 bounded `MaintainAll` policy，执行一次
+plan-or-resume-and-publish：
+
+```bash
 dotnet run --project prototypes/SessionJournal.Cli -- \
   recap run --input <repo-dir> --branch main \
   --connections <connections.json> \
-  --call-log-dir <path-outside-repo>
+  [--connection <id>] \
+  [--call-log-dir <path-outside-repo>] \
+  [--report-json <path-outside-repo>]
+```
 
+未达到 trigger 时返回 `NoBuild`；需要创建 Building 时，Planner 先冻结 exact source、route、
+prior context 与 limits，再调用 Maintainers。已有 Building 时只补缺失或损坏的 block-local work；
+healthy final block 不重做。成功 Publish 后才进入 strict ordinal。
+
+### recap resume
+
+只恢复一个 exact Building 的 frozen plan：
+
+```bash
 dotnet run --project prototypes/SessionJournal.Cli -- \
   recap resume --input <repo-dir> --branch main \
   --anchor ej1:<canonical-event-address> \
-  --connections <connections.json>
+  --connections <connections.json> \
+  [--connection <id>] \
+  [--call-log-dir <path-outside-repo>] \
+  [--report-json <path-outside-repo>]
+```
 
+`resume` 不重新规划、不改 roster/mode/source/route/prior，也不把 partial Building 当作 Published。
+Building missing/invalid 是 typed unavailable，而不是创建新 Building。
+
+### recap restore
+
+只修复同一个 Published directory 内的缺失或损坏 component：
+
+```bash
 dotnet run --project prototypes/SessionJournal.Cli -- \
   recap restore --input <repo-dir> --branch main \
   --anchor ej1:<canonical-event-address> \
   --expected-raw-head ej1:<canonical-event-address> \
-  --connections <connections.json>
+  --connections <connections.json> \
+  [--connection <id>] \
+  [--call-log-dir <path-outside-repo>] \
+  [--report-json <path-outside-repo>]
+```
 
+`--expected-raw-head` 是显式 optimistic fence。Restore 不改变 Published membership、strict
+ordinal、frozen plan 或 admission anchor；无法从 frozen input/checkpoint恢复时返回
+`Unavailable`，不 replan、不扫描更旧 set。
+
+### recap abandon-building
+
+把 exact unpublished Building 原子移动到 Store-owned quarantine：
+
+```bash
 dotnet run --project prototypes/SessionJournal.Cli -- \
   recap abandon-building --input <repo-dir> --branch main \
-  --anchor ej1:<canonical-event-address>
+  --anchor ej1:<canonical-event-address> \
+  [--report-json <path-outside-repo>]
+```
 
+`Quarantined` 与 `AlreadyAbsent` 返回 0；`PublishedConflict` 与 `Unavailable` 返回 2。该命令不删除或
+修改 Published directory。
+
+### recap reset
+
+显式隔离并重建整个 branch-local Store root：
+
+```bash
 dotnet run --project prototypes/SessionJournal.Cli -- \
   recap reset --input <repo-dir> --branch main \
-  --confirm-ref <exact-branch-ref-id>
+  --confirm-ref <exact-lowercase-branch-ref-id> \
+  [--report-json <path-outside-repo>]
 ```
 
-`inspect` 同时检查 exact-anchor Building 与 Published membership；v2 报告将 exact
-`membership`（`Present/Absent/Invalid/StoreUnavailable`）和
-`restoreEligibility`/per-block capability 分开，因此 off-lineage 的 Present 不会被误报为
-Missing。报告只包含 address、state/type、defect 和 restore capability；不会输出 recap
-content、FrozenInput、PriorContext、state token 或内容 hash。`abandon-building` 只隔离 exact Building，
-`Quarantined`/`AlreadyAbsent` 返回 0，`PublishedConflict`/`Unavailable` 返回 2。
-`reset` 必须用 `--confirm-ref` 逐字匹配当前选中 branch 的 RefId，且在任何 Store
-mutation 前拒绝不匹配值。可选 `--report-json` 必须位于 repo 外、拒绝
-symlink/reparse path，并通过同目录临时文件 atomic publish。
+`--confirm-ref` 必须逐字匹配当前选中 branch 的 exact RefId，并在任何 Store mutation 前校验。
+reset 后的 catch-up 仍需显式执行一次或多次 `recap run`。
 
-`run` 使用固定 production catalog（world-understanding/Observation 在前，
-autobiography/Action 在后）与 bounded `MaintainAll` policy，执行一次
-plan-or-resume-and-publish；`resume` 只恢复 exact Building，`restore` 只修复 exact
-Published membership，并要求 `--expected-raw-head` 显式 fence。三者都要求 Store 已存在，
-不会静默 create/reset。它们先完成 exact-ref Store readiness，再加载一个 connection
-registry、创建 shared inner Completion client，并为两个 maintainer 分别包一层 call
-logger。结果码为：Published/Restored/NoBuild=0，Unavailable/BlockFailed=2，
-Retryable=3。JSON report 只保留 typed status/code/defect codes、anchor/block id、固定
-config 与 call-log 计数/目录，不复制 provider error、recap/prompt/response 或 secret。
+### recap execution 状态、退出码与报告
 
-## import-legacy-json
+`run`、`resume`、`restore` 的稳定结果映射为：
 
-把 `ChatSession.LegacyExportCli export-json` 生成的 JSON 导入新的
-`SessionJournal` repo：
+| 结果 | 退出码 | 含义 |
+|---|---:|---|
+| `Published` / `Restored` / `NoBuild` | 0 | 操作完成，或当前无需建立新 set |
+| `Unavailable` / `BlockFailed` | 2 | 稳定的 Store、frozen plan 或 block failure |
+| `Retryable` | 3 | raw head/CAS 等 optimistic boundary 已改变，可在重新检查后重试 |
+| 参数、路径或未分类运行错误 | 1 | 命令级失败 |
 
-```bash
-dotnet run --project prototypes/SessionJournal.Cli -- import-legacy-json \
-  --input gitignore/migrations/<session>.json \
-  --output gitignore/session-journal/<session> \
-  --report-md gitignore/session-journal/<session>-import.md
-```
-
-导入只保留 raw facts：initial setup、observation、agent action 和 system
-prompt setup。旧 compaction/recap 是可重建的 derived 信息，因此只计数并跳过。
-未知 event（包括 `revert-turn`）会 fail fast，不会猜测 SessionJournal 的
-Parent/ref 语义。
-
-当前 importer 接受普通 observation/action 历史与 system-prompt update。带
-tool-call/tool-results 的旧回合会在触碰 `--force` 目标前 fail fast：
-SessionJournal 的 tool execution 需要 started/result/checkpoint/correlation
-等 raw 事实，不能把旧 transcript 直接伪装成新 execution wire。
-
-目标目录必须是不存在或为空的目录。`--force` 会先在目标的同级 staging
-repository 完整导入并 reopen 验证，再替换精确目标；发布失败时会尝试恢复旧目录。
-验证不再调用 full `Project()`：importer 从 source message 独立计算版本化 semantic
-history commitment，再用 `SessionJournal.Offline` report 与 read-only exact
-branch/ref/head、lineage、governing setup API 检查 target。验收同时覆盖完整
-event-kind/count histogram、Idle boundary、最终 config/prompt hash、source-vs-target
-semantic commitment，以及每条 legacy mapping 的 raw address/kind/顺序；staging 与
-发布后的 repository 都执行同一检查。
-input/output/report 的路径链都拒绝 symlink/reparse point，且 output 不得包含
-input、report 不得覆盖 input 或位于 output repo 内。报告通过同目录临时文件
-atomic publish；报告只记录 setup identity、hash/codec、counts 和 mapping，不复制
-明文 system prompt 或 observation/action 内容。
-
-## run-memory-maintainer
-
-对一个已经由 `DerivedArtifactEpochPlanner` 持久化的 exact epoch 运行一个
-rewrite maintainer。runner 不重新遍历整段历史、不按 role 自行 threshold/split，
-也不推进 epoch 或 ArtifactSet pointer；它只物化该 epoch 的
-`(sourceStartExclusive, sourceEndInclusive]`，并输出 JSON report、Completion call
-log 与 append-only `derived/memory/v2/artifacts/` candidate：
-
-```bash
-dotnet run --project prototypes/SessionJournal.Cli -- run-memory-maintainer \
-  --input gitignore/session-journal/<session> \
-  --branch main \
-  --connections prototypes/Galatea/.atelia/galatea/connections.json \
-  --connection dsv4p \
-  --profile autobiographical-rewrite \
-  --epoch dae_<...> \
-  --candidate-id prompt-tuning-a \
-  --attempt-id attempt-1 \
-  --output gitignore/backtest/<run>/result.json \
-  --call-log-dir gitignore/backtest/<run>/calls
-```
-
-可用 profile：
-
-| profile | role | target |
-| --- | --- | --- |
-| `autobiographical-rewrite` | `autobiography` | `action/roleplay.first-person-autobiography` |
-| `world-understanding-rewrite` | `world-understanding` | `observation/roleplay.world-understanding` |
-
-可用覆盖参数为 `--system-prompt <path>` 与 `--prompt <path>`；覆盖只改变
-prompt/producer fingerprint 和 candidate identity，不改变 durable epoch。输出与
-call-log 目录必须位于 input repo 外，且 `--output` 与 `--call-log-dir` 不得相同或
-互为 ancestor/descendant；这些冲突在创建 Completion client、目录或调用 LLM 前拒绝。
-report 使用同目录临时文件 atomic publish。
-
-genesis epoch 使用显式 empty `ContextHeaderPack`。non-genesis 从 epoch 的 exact input set
-恢复全部 role blocks；若 input set 尚无当前 role（例如 topology 新增 maintainer），
-该 role 的 old block 显式为空，但其他 blocks 仍作为 ContextHeader 输入。同一
-role/epoch 可保存多个 alternative candidates；只有后续
-`publish-derived-artifact-set` 才会让某个 candidate 进入可选择 set。
-
-artifact schema v2 是直接切换：旧 `derived/recaps/v1/` 与
-latest-by-profile index 已退役，不做 silent compatibility。derived 数据可删除并由
-planner/runner/publisher 重建；raw events 仍是唯一 correctness source。
-
-## run-derived-memory-orchestration
-
-这是 DM-7 的日常 maintenance transaction 入口。命令对一个 exact epoch 固定一次
-immutable input/history snapshot，按 role provisioning 并行运行所有尚未结算的
-maintainer；每个成功 role 先持久化 artifact，再写 immutable settlement。required
-roles 全部结算后，才以 exact transaction 原子发布一个 ArtifactSet。失败、取消或进程
-重启不会发布半套 set；required 闭合后先写 immutable finalization intent，冻结
-included settlements 与 omitted optional roles，再发布 exact set。重跑相同 job 在 intent
-前只执行缺失 role；intent 后只补 publish/验证 exact set，旧 latest set 保持可用。
-
-```bash
-dotnet run --project prototypes/SessionJournal.Cli -- \
-  run-derived-memory-orchestration \
-  --input gitignore/session-journal/<session> \
-  --branch main \
-  --epoch dae_<...> \
-  --role required:autobiographical-rewrite:produce \
-  --role required:world-understanding-rewrite:produce \
-  --policy-id roleplay-memory \
-  --policy-fingerprint roleplay-memory-v1 \
-  --candidate-prefix daily \
-  --attempt-id attempt-1 \
-  --connections prototypes/Galatea/.atelia/galatea/connections.json \
-  --connection dsv4p \
-  --output gitignore/backtest/<run>/orchestration.json \
-  --call-log-dir gitignore/backtest/<run>/calls
-```
-
-role mode 有三种：
-
-- `produce`：调用对应 concrete maintainer，需要 Completion connection；
-- `identity`：显式写一个 current-epoch identity artifact；旧 role 缺失时从空 block
-  开始，不创建 Completion client；
-- `select-existing:<artifact-id>`：选择一个 exact alternative candidate；transaction
-  会校验 artifact 的 epoch、role、target、producer、prompt/model、candidate/attempt
-  全部 identity，而不只校验 id。它也不创建 Completion client。
-
-仅当至少一个 role 为 `produce` 时才要求 `--connections`，并创建 call-log 目录。
-transaction id 由 exact epoch、policy/topology 与完整 provisioning/job identity
-确定；prompt/model、candidate/attempt 或 mode 变化会创建新 transaction，不会偷用旧
-settlement。
-
-两个 maintainer 命令都在读取 connections/prompt、创建 output/call-log、构造
-Completion client 或调用 LLM 前完成统一 path preflight：input repo、connections、
-system prompt、user prompt 都是 readonly inputs；output file 与 call-log directory
-不得与任一 readonly path 相同、互为 ancestor/descendant，所有路径链也拒绝
-symlink/reparse point。orchestration 的 policy/role provisioning 纯结构检查同样早于
-任何 writable side effect。
+JSON report 是 content-free operation record：只包含 schema、operation、branch/ref、raw head、
+anchor/block、typed status/code/defect codes，以及 call-log 数量和目录。它不复制 recap 正文、
+FrozenInput、PriorContext、prompt/response、provider error body、state token、内容 hash或 secret。
 
 ## run-online-turn
 
-这是 DM-8 的最小 online composition/acceptance 入口。命令把 planner、pending-first
-maintenance、coherent candidate provider 和 SessionJournal engine 组合起来：在 Observation
-append 前先做 fresh-bootstrap 与 request-size preflight，再执行 lifecycle；append 后按新 exact
-head 重新维护/选择，
-最后提交 Prepared v5 并调用 agent Completion。
+`run-online-turn` 是 phase-first online composition。它先打开 raw SessionJournal 并检查 durable
+execution phase，再决定是否需要 Recap：
+
+| 初始 phase | `--message` | Recap Store / Planner / Maintainers |
+|---|---|---|
+| `Idle` / `TurnFailed` | 必须提供 | 需要；Store 必须已显式 create |
+| `AwaitingAgentAction` + `ObservationAccepted` | 必须省略 | 需要；完成已经提交的 observation |
+| `AwaitingCompletionDispatch`（Prepared） | 必须省略 | 完全不打开、不创建、不修复 Store |
+| `AwaitingCompletion`（Started） | 必须省略 | 完全不打开、不创建、不修复 Store |
+| tool continuation | 必须省略 | 当前 CLI 无 exact tool runtime，显式拒绝 |
 
 ```bash
 dotnet run --project prototypes/SessionJournal.Cli -- \
   run-online-turn \
-  --input gitignore/session-journal/<session> \
+  --input <repo-dir> \
   --branch main \
-  --message "continue" \
-  --role required:autobiographical-rewrite:produce \
-  --role required:world-understanding-rewrite:produce \
-  --policy-id roleplay-memory \
-  --policy-fingerprint roleplay-memory-v1 \
-  --coherence-group memory-pack \
-  --connections prototypes/Galatea/.atelia/galatea/connections.json \
-  --connection dsv4p \
-  --maximum-canonical-request-bytes 262144 \
-  --uncertain-recovery refuse \
-  --output gitignore/backtest/<run>/online-turn.json \
-  --call-log-dir gitignore/backtest/<run>/calls
+  --connections <connections.json> \
+  --output <path-outside-repo>/online-turn.json \
+  [--message "continue"] \
+  [--connection <id>] \
+  [--call-log-dir <path-outside-repo>] \
+  [--maximum-canonical-request-bytes <positive-int64>] \
+  [--uncertain-recovery refuse|restart-new-attempt]
 ```
 
-candidate ordinal 不再是 `run-online-turn` runtime flag；它由 selected branch 上 governing
-`RuntimeConfigSetup` v2 的 `derivedContext.nthPrevious` 唯一决定，`0` 表示 latest。
-`--maximum-canonical-request-bytes` 是可选的 final request guard；它测量 Prepared commitment
-所用 canonical request JSON 的精确 UTF-8 byte length，不是 provider/model token count 或
-context-window 保证，也不参与 candidate selection/fallback。strict empty-lineage bootstrap
-由 native fresh-genesis raw topology 启用，不再有独立 bootstrap budget，也不会创建伪 artifact。
-当前 CLI
-便利入口只接受 `produce` roles；generic lifecycle coordinator 本身不依赖 Maintainers catalog
-或 Completion connection，长期 host 可注入其他 exact role executions。
+candidate ordinal 不是 CLI flag；它只来自 selected branch governing `RuntimeConfigSetup` v2 的
+`derivedContext.nthPrevious`，`0` 表示最近 Published set。selection 是 strict ordinal：exact slot
+损坏时 bounded Restore 同一 slot，不跳过、不重编号。
 
-若 fresh-bootstrap、lifecycle/backpressure、candidate 或 canonical-byte preflight 失败，Observation 尚未 append，
-raw head/event count 不变。Prepared/Started reopen 不再调用 maintainer/provider。输出 report
-只含 head、phase、provider/API/model、agent text hash 与 error count；完整 request/action 只留在
-显式 call-log 目录，不会写入 report。output、call-log、input repo 与 connections 的路径边界和
-`run-derived-memory-orchestration` 一样在 client/目录/LLM side effect 前验证。
+`--maximum-canonical-request-bytes` 是 final canonical request JSON 的精确 UTF-8 byte guard，不是
+provider tokenizer、模型 context-window 或 fallback policy。`--uncertain-recovery` 默认 `refuse`；
+只有 operator 明确接受潜在重复 provider 调用时，才可选 `restart-new-attempt`。
 
-命令在 idle/failed boundary 使用 `--message` 调用 `SendAsync`；若打开时已处于
-AwaitingAgentAction/Prepared/Started/tool continuation，则调用 `ResumeAsync`，不会重复 append
-message。uncertain provider attempt 缺省 `--uncertain-recovery refuse`；operator 只有明确接受潜在
-重复外部调用时，才可指定 `restart-new-attempt`。
+Store 缺失时，需要新 request 的 phase 在 append Observation、创建 client/call-log 或调用 LLM 前
+失败；CLI 不会 auto-create/reset。若 lifecycle/backpressure、candidate 或 request-size preflight
+失败，尚未 append 的 Observation 保持未提交。Prepared/Started recovery 则以 Prepared exact
+request 为唯一真源，对 Store 是 zero-touch。
+
+成功返回 0；参数、unsupported phase、not-ready、Store/Completion 或路径失败返回 1。online JSON
+report 同样 content-free，只包含 branch/ref、head、最终 phase、provider/API/model、Action 文本
+SHA-256 与 error count；完整 request/action 只存在于明确配置的 call log。
+
+## import-legacy-json
+
+把 `ChatSession.LegacyExportCli export-json` 生成的 JSON 导入新 SessionJournal repo：
+
+```bash
+dotnet run --project prototypes/SessionJournal.Cli -- \
+  import-legacy-json \
+  --input <legacy-export.json> \
+  --output <new-repo-dir> \
+  [--force] \
+  [--report-md <path-outside-repo>]
+```
+
+导入只保留 raw setup、observation、agent action；旧 compaction/recap 只计数并跳过。未知 event 与
+无法无损表达的旧 tool transcript fail fast。`--force` 使用同级 staging repo 完整导入、reopen
+验证后再替换 exact target，不把“导出成功”当作 importer 语义验收。
 
 ## validate
 
-严格、只读验证 SessionJournal：
-
-```bash
-dotnet run --project prototypes/SessionJournal.Cli -- validate \
-  --input gitignore/session-journal/<session> \
-  --branch main \
-  --report-json gitignore/session-journal-validation.json
-```
-
-`--branch` 选择一个 existing active branch，省略时默认 `main`。命令调用
-`Atelia.SessionJournal.Offline`：在 exact captured head 上检查完整 raw chain、所有 historical
-Prepared commitments、forward operational legality，并与 tail execution state / governing
-setup 做 differential。report 只含最终 phase/head-kind/sequence checkpoint、setup
-address/runtime config、system-prompt UTF-8 hash、counts、版本化 semantic history
-commitment 和 scan diagnostics；它不输出完整 execution state、明文 system prompt、
-tool raw arguments、operation/correlation id，也不物化 LLM context。semantic commitment
-复用 canonical request 的 history-value 语义并排除 raw address/execution metadata。report
-必须在 repo 外；validator 不修复或截断 raw/refs。
-
-## DerivedMemory ArtifactSet 运维命令
-
-以下命令只操作可重建的 `derived/` 子系统。它们不会向 raw SessionJournal
-追加 event。除上述 orchestration 的 `produce` mode 外，运维命令不会创建 Completion
-client。所有命令都拒绝未知 option；标量 option 重复出现也会 fail fast。
-`--report-json` 必须位于 input repo 外，并通过同目录临时文件 atomic publish。
-
-role/target 使用 `role=carrier/block-key`，其中 carrier 只能是 `system`、
-`observation` 或 `action`。block key 可以继续包含 `/`。member 使用
-`role=artifact-id`。通常可写 `--key value`；若合法 value 本身以 `--` 开头，
-使用 conventional inline form `--key=--value`（例如
-`--required-role=--role=observation/--block`），避免与下一个 option 混淆。
-
-### publish-derived-artifact-set
-
-从已经 durability-settled 的 exact orchestration transaction 发布 immutable coherent
-set。这个命令是低层运维入口；日常路径应使用
-`run-derived-memory-orchestration`：
+严格、只读验证一个 existing active branch：
 
 ```bash
 dotnet run --project prototypes/SessionJournal.Cli -- \
-  publish-derived-artifact-set \
-  --input gitignore/session-journal/<session> \
-  --branch main \
-  --transaction dmt_<...> \
-  --member autobiography=<artifact-id> \
-  --member world-understanding=<artifact-id> \
-  --report-json gitignore/reports/publish-set.json
+  validate --input <repo-dir> [--branch main] \
+  [--report-json <path-outside-repo>]
 ```
 
-CLI 从 durable transaction 得到 policy、exact epoch/input set 与 role provisioning，
-并要求 members 与 immutable settlements 完全相等。previous-set CAS 固定为
-`epoch.inputSetId`，不能由参数伪造；CLI 从 members 的唯一 common anchor 读取
-raw-authoritative governing setup address/schema/payload hash。发布只写
-`derived/memory/v2/sets` 与 latest pointer；raw SessionJournal 不写任何 derived-set
-definition/activation event。
-
-### list-derived-artifact-sets
-
-```bash
-dotnet run --project prototypes/SessionJournal.Cli -- \
-  list-derived-artifact-sets \
-  --input gitignore/session-journal/<session> \
-  --report-json gitignore/reports/derived-inventory.json
-```
-
-inventory 严格验证每个 set/pointer 的 self identity 与 exact member artifact，
-并按 exact key/id 稳定排序。它有意保留 missing/stale pointer、fork/cycle 供诊断；
-这些 topology 问题不会让 list 失败。
-
-### validate-derived-memory
-
-```bash
-dotnet run --project prototypes/SessionJournal.Cli -- \
-  validate-derived-memory \
-  --input gitignore/session-journal/<session> \
-  --report-json gitignore/reports/derived-validation.json
-```
-
-严格、只读验证所有 artifact/epoch/transaction/settlement/set/pointer，以及每个 exact
-key 的 canonical role snapshot、完整无环单 tip lineage 和
-`latest pointer == tip`。每个 set 必须闭包到 exact transaction、epoch 与全部 durable
-settlements/finalization；intent-before-set 是合法可恢复状态，已有 set 则必须等于
-intent 的 exact expected set。validation report 同时计数 transactions、role
-settlements 与 finalizations。未被 set 使用的
-orphan artifact 合法，便于 prompt tuning 保存 alternatives。空 derived repo
-也合法。DM-5 起 validation report schema 是
-`atelia.session-journal.cli.derived-memory-validation.v3`，新增 planner config/current
-与 epoch/latest counts；这是 pre-release direct cutover，不输出旧 v1 shape。该命令不
-rebuild、不创建目录或 lock。
-
-不带 `--branch` 时按 RefId 分组验证所有 active branches，并拒绝任何仍被 durable
-derived records 引用但已 archive/non-active 的 ref；带 `--branch <name>` 时只验证该 Engine
-lifetime 绑定的 exact ref。两种模式都使用 raw journal 的 strict read-only open；
-malformed active tail 会失败但不会触发 recovery/truncation。
-
-### rebuild-derived-artifact-set-latest
-
-```bash
-dotnet run --project prototypes/SessionJournal.Cli -- \
-  rebuild-derived-artifact-set-latest \
-  --input gitignore/session-journal/<session> \
-  --branch main \
-  --coherence-group roleplay.default \
-  --policy-id roleplay-memory \
-  --policy-fingerprint roleplay-memory-v1 \
-  --required-role autobiography=action/roleplay.first-person-autobiography \
-  --required-role world=observation/roleplay.world-understanding
-```
-
-该命令只重建一个 exact lineage/coherence/policy/role-snapshot key 的 latest
-pointer。没有 matching set、missing predecessor、role drift、fork 或 cycle
-都会 fail fast，不会猜测 tie-break。
-
-## Shared DerivedArtifactEpochPlanner 命令
-
-这些命令只规划 shared history coverage；不会调用 LLM、运行 maintainer、发布
-ArtifactSet 或写 raw event。
-
-所有 branch-local 命令先用 `--branch <name>` 打开 existing active branch，再从 Engine 绑定
-stable `RefId`。branch name 只是人类 selector；durable config/epoch/set/latest/report identity
-使用 canonical lowercase `branchRefId`。fork 与 archive 后同名重建都不会继承旧 ref 的
-DerivedMemory lineage。
-
-### configure-derived-artifact-planner
-
-```bash
-dotnet run --project prototypes/SessionJournal.Cli -- \
-  configure-derived-artifact-planner \
-  --input gitignore/session-journal/<session> \
-  --branch main \
-  --coherence-group roleplay.default \
-  --topology-version roleplay-memory-v1 \
-  --minimum-recent-tokens 24000 \
-  --epoch-trigger-tokens 12000 \
-  --scheduling-headroom-tokens 8000 \
-  --hard-limit-tokens 64000 \
-  --expected-current none
-```
-
-config 是 immutable lineage；更新时把 `--expected-current` 改为当前 `dpc_...` id。
-相同 definition 的重试幂等，真实 cutover 只影响未来 epoch。
-`hard-limit-tokens` 必须严格大于
-`minimum-recent-tokens + epoch-trigger-tokens + scheduling-headroom-tokens`，
-保证正常 trigger 在 backpressure 前可达。
-
-### plan-derived-artifact-epoch
-
-```bash
-dotnet run --project prototypes/SessionJournal.Cli -- \
-  plan-derived-artifact-epoch \
-  --input gitignore/session-journal/<session> \
-  --branch main \
-  --coherence-group roleplay.default \
-  --expected-previous none \
-  --input-set none \
-  --report-json gitignore/reports/plan-epoch.json
-```
-
-genesis 必须同时使用两个 `none`。后续规划必须同时给出 exact previous `dae_...`
-与真实 input `das_...`；input set 必须属于同 lineage/coherence group，且 common
-anchor 必须与 previous epoch 终点完全一致。每次调用最多发布一个 epoch；未达到
-trigger 会报告 `BelowTrigger`，达到 hard limit 但没有合法 boundary 会显式
-backpressure。
-
-### list-derived-artifact-epochs
-
-```bash
-dotnet run --project prototypes/SessionJournal.Cli -- \
-  list-derived-artifact-epochs \
-  --input gitignore/session-journal/<session> \
-  --report-json gitignore/reports/epoch-inventory.json
-```
-
-报告稳定排序且 content-free，只包含 config/epoch identity、raw addresses、cost 与
-read diagnostics，不包含 conversation 或 derived block 文本。
+省略 `--branch` 时默认 `main`。命令由 `SessionJournal.Offline` 检查 raw chain、historical Prepared
+commitments、forward operational legality、tail phase 和 governing setup；不会修复或截断
+raw/refs，也不读取 Recap Store。
 
 ## llm-smoke
 
 发送一次最小 Completion 请求，用于验证 connection/provider/call-log：
 
 ```bash
-dotnet run --project prototypes/SessionJournal.Cli -- llm-smoke \
-  --connections prototypes/Galatea/.atelia/galatea/connections.json \
-  --connection dsv4p \
-  --call-log-dir gitignore/session-journal/llm-smoke-calls
+dotnet run --project prototypes/SessionJournal.Cli -- \
+  llm-smoke --connections <connections.json> \
+  [--connection <id>] \
+  [--call-log-dir <path-outside-repo>] \
+  [--message <text>]
 ```

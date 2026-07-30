@@ -18,7 +18,7 @@
 > 提供 raw setup hint，首次 Prepared 前可由可重建 DerivedMemory candidate hint 加速，但
 > authoritative fallback 仍是 raw header parent walk。DerivedMemory 作为独立可替换程序集只参与未
 > Prepared 的 context planning，不能进入 `SessionExecutionTailResolver` 或 Prepared exact reopen。
-> 详见 [DerivedMemory 实施方案](derived-memory-subsystem-implementation-plan.md)。
+> 详见 [DerivedMemory 实施方案](done/derived-memory-subsystem-implementation-plan.md)。
 
 ## 1. 结论
 

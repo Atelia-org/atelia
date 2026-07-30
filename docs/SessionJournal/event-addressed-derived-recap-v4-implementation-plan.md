@@ -6,8 +6,9 @@
 > [EADR 核心概念](event-addressed-derived-recap-concepts.md)
 > **目标设计**：
 > [Event-addressed Derived Recap V4](event-addressed-derived-recap-v4-target-design.md)
-> **兼容策略**：不迁移、不双写、不读取 current DerivedMemory v2/v3
-> **当前推进点**：R0、R1、R2 已完成；下一阶段是 R3 Cutover、CLI 与真实验收
+> **兼容策略**：不迁移、不双写、不读取 historical DerivedMemory v2/v3
+> **当前推进点**：R0～R2 与 R3A～R3E 已完成至 `df8e3044`；R3F 真实 repo 验收及
+> engine online-tail 修正仍待关闭
 
 ## 0. 原则
 
@@ -691,6 +692,21 @@ R3按以下顺序交付；前一工作包的 focused gate通过后才进入后�
    - mandatory gate使用真实 repo 的独立 copy与 scripted completion/maintainer，不依赖网络；
    - optional real LLM smoke独立运行，不作为 deterministic release gate。
 
+### R3 实施记录（截至 `df8e3044`，2026-07-30）
+
+| 包 | 状态 | 实施证据 | 结果 |
+|---|---|---|---|
+| R3A Policy facts + bounded baseline | 完成 | `5dcdb142`、`bed40990` | production `MaintainAll` policy、typed unavailable 与 first-build replay seed 收口 |
+| R3B Exact Building quarantine | 完成 | `e8c62e4d` | exact unpublished Building quarantine，不借 whole-Store reset |
+| R3C Recap operator CLI | 完成 | `8804f96b`、`6fa52e6a`、`3e7c7666`、`f7b0e39f`、`ac15ff49` | create/inspect/run/resume/restore/abandon/reset、content-free report 与 path/readiness preflight |
+| R3D Online cutover | 完成主体 | `8ee323b3` | phase-first composition；Prepared/Started recovery不打开 Recap Store |
+| R3E Old subsystem deletion | 完成 | `df8e3044` | 删除旧 DerivedMemory production/tests/CLI surface，更新 solution/refs 与 architecture guard |
+| R3F Real acceptance | **Pending** | 尚无完成 commit | 仍需真实 repo 隔离副本的 deterministic scripted acceptance |
+
+这不是 R3 全部关闭声明。`8ee323b3` 后发现的 engine online-tail/fresh-bootstrap ownership 修正仍在
+tail-fix 阶段，尚无可引用的完成 commit；真实 repo acceptance也仍是 pending。二者关闭并经过
+focused review 前，不得把上表扩写为 “R3 complete” 或 “V4 release gate complete”。
+
 R3A对既有 ceilings的解释保持保守：
 
 - `RawGrowthHardLimit`是 policy前的总 backlog admission gate；fresh bootstrap必须显式配置到
@@ -744,7 +760,7 @@ rg "derived/memory/v2|derived/memory/v3"
 
 不允许：
 
-- EADR V4 target/runtime 继续使用宽泛 Memory 或 ArtifactSet作为 Recap 领域名；
+- EADR V4 current/runtime 继续使用宽泛 Memory 或 ArtifactSet作为 Recap 领域名；
 - current/target contract 双表面并存。
 
 ### Final validation
@@ -796,5 +812,5 @@ fixture。真实 provider smoke为 opt-in，只 gate结构合法与流程成功�
 - strict exact ordinal可用；
 - Published bounded Restore可用；
 - Prepared exact reopen不依赖 Recap Store；
-- current DerivedMemory transaction workflow从 production tree删除；
+- historical DerivedMemory transaction workflow从 production tree删除；
 - future dynamic Memory、full scrub和advanced self-heal保持 deferred。

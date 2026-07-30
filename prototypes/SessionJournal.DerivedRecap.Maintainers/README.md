@@ -10,20 +10,31 @@ RecapMaintainer companion assembly。
 - 本项目拥有具体 maintainer definitions，以及与之直接关联的 profiles、prompts、
   target paths、factories 和窄职责 helpers。
 - `Atelia.SessionJournal` raw core 不得反向引用本项目。
-- derived-memory planning、durable artifacts、epoch coordination、
-  provisioning、orchestration 与 publication 属于 derived-memory subsystem
-  或 host composition root，不属于本项目。
+- event-addressed Building/Published persistence、strict ordinal 与 structural inspection 属于
+  `SessionJournal.DerivedRecap.Store`。
+- trigger、Maintain/Inherit plan、Building Resume、Published Restore 与 bounded catch-up 属于
+  `SessionJournal.DerivedRecap.Planner`。
+- Completion client、Store、Planner、policy 与 concrete Maintainers 的装配属于 CLI/Agent Host
+  composition root，不属于本项目。
 - 应用级 role 始终是 SessionJournal raw event / recovery contracts 之外的 policy。
 
-稳定的 maintainer ID 和 target block key 是持久化身份。移动或重命名实现类型时，
-不得隐式改变这些身份。prompt fingerprint 使用带 schema 与字段边界的 canonical
-structured JSON，不以 NUL delimiter 拼接两个 prompt。
+稳定的 `MaintainerId`、target block key 和 embedded prompt `LogicalName` 是 durable/fingerprint
+identity 的一部分。程序集已更名为 `Atelia.SessionJournal.DerivedRecap.Maintainers`，但八个 prompt
+资源仍有意保留 `Atelia.SessionJournal.Maintainers.Prompts.*` logical names；这是 identity 保持，
+不是旧程序集依赖或待清理的 namespace。移动实现类型、源文件或 prompt 文件时，不得顺手改变这些
+logical names、对应常量、MaintainerId 或 block key。若确实要升级 identity，应显式做 schema/profile
+cutover并更新 golden tests。
+
+prompt fingerprint 使用带 schema 与字段边界的 canonical structured JSON，不以 NUL delimiter
+拼接两个 prompt。
 
 离线开发 composition root 是
 [`SessionJournal.Cli`](../SessionJournal.Cli/README.md)：它通过
 `RecapMaintainerProfileCatalog` 解析 stable role/profile descriptor，注入 Completion
-client，并把 concrete maintainer 交给 DerivedMemory 的 exact-epoch runner 或 multi-role
-orchestrator；online `run-online-turn` 也由 CLI 把相同 exact role executions 注入 generic
-DerivedMemory lifecycle coordinator。history 切分、epoch lookup、transaction/settlement 与 artifact/set
-persistence 不属于本程序集。CLI 和本 companion assembly 都不会被 SessionJournal raw
-core 反向引用。
+client，并把 concrete maintainer registry 交给
+`DerivedRecapPlannerExecutor`、`DerivedRecapRestoreExecutor` 或
+`DerivedRecapOnlineLifecycleCoordinator`。Store 只报告 durable structure/capability，Planner 决定
+何时调用哪个 maintainer；本程序集既不打开 Store，也不拥有 Building/Published workflow。
+
+CLI 和本 companion assembly 都不会被 SessionJournal raw core 反向引用。未来其他 Host 可以使用
+同样的注入边界组合不同 catalog/policy，而无需让 raw core 认识具体 maintainer。

@@ -16,7 +16,7 @@
 
 > **后续边界说明（2026-07-28）**：本文描述 D7 当时的已实施基线，因此仍如实记录 raw
 > `ArtifactSetCommitted` 与 Prepared v3。后续方向已在
-> [DerivedMemory 实施方案](derived-memory-subsystem-implementation-plan.md) 中落地：
+> [DerivedMemory 实施方案](done/derived-memory-subsystem-implementation-plan.md) 中落地：
 > raw sequence 不再引用 derived ids；具体 Derived ArtifactSet 实现迁入单向引用 SessionJournal
 > contracts 的独立可替换程序集；SessionJournal 仅在未 Prepared 的 request planning 阶段消费
 > store-neutral candidate，raw tail recovery 与 Prepared reopen 不依赖该子系统。

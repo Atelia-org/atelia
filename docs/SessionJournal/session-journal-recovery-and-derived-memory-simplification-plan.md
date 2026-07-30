@@ -1,8 +1,8 @@
 # SessionJournal 恢复与 DerivedMemory 化简：阶段情况与后续计划
 
-> **状态**：Implemented P1～P6 baseline；future target 已由 EADR V4 supersede
+> **状态**：Historical / Frozen P1～P6 Baseline Record
 > **日期**：2026-07-29
-> **适用基线**：current Prepared v5 + DM-0～DM-8
+> **适用基线**：2026-07-29 的 Prepared v5 + DM-0～DM-8 historical snapshot
 > **相关文档**：
 > [事件源会话与长期上下文架构路线图](event-sourced-session-architecture-roadmap.md)、
 > [DerivedMemory 已实施方案](done/derived-memory-subsystem-implementation-plan.md)、
@@ -11,12 +11,15 @@
 > [Event-addressed Derived Recap V4 目标设计](event-addressed-derived-recap-v4-target-design.md)、
 > [EADR V4 实现与替换计划](event-addressed-derived-recap-v4-implementation-plan.md)
 
-> **EADR V4 supersession（2026-07-30）**：本文记录的 P1～P6 current baseline 与问题分析仍然有效；
-> 后续出现的 immutable epoch/job/settlement/finalization、反向 set lineage 和 latest pointer
-> 不再是目标实现。V4 将职责拆为 DerivedRecap Store、Planner 与 Maintainers：Recap 是常驻、
-> 有限、替代 cold prefix 的前情提要，Memory 保留给未来动态召回。V4 `NthPrevious` 沿 raw Parent
-> chain 计数 Published Recap directories；payload损坏时 exact ordinal not-ready，不跳过、不重编号。
-> 目标 vocabulary/Shape/Rule 以上述 concepts/V4 文档为准。
+> **冻结说明（2026-07-30）**：本文从 §0 起的 “current”、P1～P6、DerivedMemory、epoch、
+> ArtifactSet、job/settlement/finalization 与 latest pointer，均描述 2026-07-29 的历史实施基线，
+> 不再描述 trunk 当前架构，也不得作为新实现入口。EADR V4 已将职责拆为 DerivedRecap Store、
+> Planner 与 Maintainers；`NthPrevious` 沿 raw Parent chain 计数 Published Recap directories，
+> payload损坏时 exact ordinal not-ready，不跳过、不重编号。当前 vocabulary/Shape/Rule 以
+> [EADR 核心概念](event-addressed-derived-recap-concepts.md)、
+> [V4 目标设计](event-addressed-derived-recap-v4-target-design.md)与
+> [V4 实现计划](event-addressed-derived-recap-v4-implementation-plan.md)为准。本文正文保持冻结，
+> 用于解释 P1～P6 的决策来源和迁移历史。
 
 ## 0. 文档目的
 

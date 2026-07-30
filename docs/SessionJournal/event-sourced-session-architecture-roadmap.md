@@ -1,6 +1,6 @@
 # SessionJournal 事件源会话与长期上下文架构路线图
 
-> **状态**：Architecture Roadmap / current baseline P1～P6 + Prepared v5 + DM-0～DM-8
+> **状态**：Architecture Roadmap / current EADR V4 + Prepared v5；P1～P6 / DM-0～DM-8 已冻结为历史
 > **日期**：2026-07-30
 > **底层依赖**：[EventJournal 功能需求与粗粒度设计基线](../EventJournal/event-journal-requirements-and-design.md)
 > **相关既有研究**：[Dynamic Logical Context Store for Long-Running Role-Play Agents](../Galatea/backlog/idea/dynamic-logical-context-store-for-long-running-role-play-agents.md)
@@ -13,34 +13,32 @@
 > **已完成实施记录**：
 > [DerivedMemory 可替换子系统与 Shared Epoch 实施方案](done/derived-memory-subsystem-implementation-plan.md)
 
-> **DM-8 supersession（2026-07-28）**：本文后续章节中仍出现的 Prepared v3、raw
+> **Historical DM-8 supersession（2026-07-28）**：本文后续章节中仍出现的 Prepared v3、raw
 > derived-set activation、manual checkpoint 与 concrete store in core 均是路线演进记录，不是
-> current contract。当前以 Prepared v5 + bounded two-phase store-neutral candidate +
-> derived-only ArtifactSet 为唯一实现路径；raw audit 和 Prepared exact reopen 不打开
-> DerivedMemory。unprepared online planning 由 host 注入 lifecycle/provider。
+> current contract。该阶段曾以 Prepared v5 + bounded two-phase store-neutral candidate +
+> derived-only ArtifactSet 作为实现路径；raw audit 和 Prepared exact reopen不访问 sidecar。
 >
-> **P3 current supersession（2026-07-29）**：DM-8 的 `Latest` / `NthPrevious` /
-> `Budgeted` 与 runtime-local selection 现已是 historical implementation fact；current
+> **Historical P3 supersession（2026-07-29）**：DM-8 的 `Latest` / `NthPrevious` /
+> `Budgeted` 与 runtime-local selection 是 historical implementation fact；current
 > contract 只保留 governing `RuntimeConfigSetup` v2 中 durable `derivedContext.nthPrevious`
-> 驱动的 exact single-candidate selection，无 automatic fallback。current architecture
-> 同时保留 existing active branch + lifetime-bound `RefId` 与 shared epoch backpressure；
-> P5 已把 full replay/audit 迁出 online core public/runtime surface；P6 已把 orchestration
-> finalization 收窄为 v2，并保留 per-role crash resume 与 atomic publication。验收记录以
+> 驱动的 exact single-candidate selection，无 automatic fallback。existing active branch +
+> lifetime-bound `RefId`、P5 offline audit与 Prepared v5仍保留；shared epoch 与 P6
+> orchestration已随旧 DerivedMemory 删除。历史验收记录以
 > [化简计划](session-journal-recovery-and-derived-memory-simplification-plan.md)为准。
 
-> **EADR V4 target supersession（2026-07-30）**：current implementation 仍是上述 P1～P6 /
-> DM-8 baseline，但下一代不再建设 immutable transaction workflow。目标拆为
+> **EADR V4 current cutover（2026-07-30）**：current implementation 已拆为
 > `SessionJournal.DerivedRecap.Store`、`SessionJournal.DerivedRecap.Planner` 与
 > `SessionJournal.DerivedRecap.Maintainers`。Recap 是常驻、有限、替代 cold prefix 的前情提要；
-> Memory 保留给未来动态召回与图查询。V4 以 event-addressed Published directory保留“不跳过、
+> Memory 保留给未来动态召回与图查询。EADR V4 以 event-addressed Published directory保留“不跳过、
 > 不重编号”的 strict ordinal，以 per-block rolling checkpoint支持落后 cursor catch-up；目标术语
 > 与规则以上述 concepts/target 文档为准。
 >
-> **EADR V4 implementation progress（2026-07-30）**：R0 Contracts + Publish/Read、R1
-> Planner + Build/Resume、R2 Exact-slot Restore + Online lifecycle均已实现并通过 package-local
-> review、进程崩溃与 Prepared 删除 Store reopen验收。R2保持 bounded on-demand repair，不包含
-> scrub、scheduler或 recursive source repair。current production composition仍维持 P1～P6 /
-> DM-8，待 R3 完成 Host/CLI cutover与旧 DerivedMemory删除后再切换 current baseline。
+> **EADR V4 implementation progress（2026-07-30）**：R0～R2 与 R3A～R3E 已实现至
+> `df8e3044`：CLI/online composition已切到 DerivedRecap，旧
+> `SessionJournal.DerivedMemory` production/tests/commands已删除。bounded on-demand repair
+> 不包含 scrub、scheduler或 recursive source repair。R3F 真实 repo acceptance与
+> engine online-tail tail-fix仍按
+> [实现计划](event-addressed-derived-recap-v4-implementation-plan.md)保持 pending，不在此提前宣称完成。
 
 ## 1. 文档定位
 
@@ -67,7 +65,7 @@
 - tool-loop 如何逐步持久化并在崩溃后恢复。
 - 全文、向量和图召回应放在哪一层。
 - SessionJournal family 中各程序集分别拥有哪一层能力。
-- 如何分阶段完成 current interim 到 target architecture 的切换。
+- 如何从已冻结的 interim 演进到 current architecture，以及后续还有哪些真实验收。
 
 本文不是每种 payload 的最终 wire spec，也不要求单个后续会话建成完整 Memory OS。后续会话应从本文的阶段列表领取一个垂直切片，产出更窄的 Decision/Spec/实现与测试。
 
@@ -103,8 +101,9 @@ raw event、recovery contract 与 request execution 属于 `Atelia.SessionJourna
 recap maintainers 属于 `Atelia.SessionJournal.DerivedRecap.Maintainers`；派生文件与 point lookup
 属于 `Atelia.SessionJournal.DerivedRecap.Store`，PlannerConfig、raw-growth scheduling 和
 Maintain/Inherit orchestration 属于 `Atelia.SessionJournal.DerivedRecap.Planner`；CLI/Agent Host
-作为 composition root 组合这些能力。current `Atelia.SessionJournal.DerivedMemory` 与
-`Atelia.SessionJournal.Maintainers` 仍是待替换 baseline。
+作为 composition root 组合这些能力。旧 `Atelia.SessionJournal.DerivedMemory` 已删除；
+`Atelia.SessionJournal.Maintainers` 的 persisted prompt logical identity只保留在新 Maintainers
+程序集的 resource names中，不代表旧程序集仍存在。
 
 ### decision [S-SJ-MIGRATION-ONE-WAY] Legacy migration 单向且经中立交换格式
 
@@ -172,7 +171,7 @@ flowchart TD
 | 层 | Canonical Data | 主要职责 |
 |:---|:---------------|:---------|
 | Raw Event Journal | 不可变 session events | 保存发生过什么、维持版本树与回放顺序 |
-| Derived Recap Sidecar | current P6 使用 epoch/artifact/set records；EADR V4 使用 event-addressed Building/Published Recap directories | 用有限、常驻 Recap近似 cold prefix，并保存 coherent online membership |
+| Derived Recap Sidecar | event-addressed Building/Published Recap directories | 用有限、常驻 Recap近似 cold prefix，并保存 coherent online membership |
 | Memory Retrieval Read Models | 可重建索引 | 未来按语义、实体、时间、向量或图查询发现本次相关材料 |
 | Context Selection / Request Materialization | Prepared 中的 exact request materialization | 选择 Recap 与 future retrieved Memory，拼接 dependency-closed raw suffix，并执行 final hard guard |
 | Execution State Machine | 逐步执行事件 | 驱动 completion/tool-loop，并从任意持久边界恢复 |
@@ -193,7 +192,7 @@ Prepared audit contract，不能借宽泛的 planner 名称把 automatic budget 
 | `SessionJournal.Cli` / Agent Host | composition root、迁移导入、离线开发运行、provider/tool 注入 | 可以同时引用上述项目，但不把应用 policy 推回 raw core |
 | `ChatSession.LegacyExportCli` | 旧 ChatSession 数据的 JSON/Markdown 出口 | 只依赖旧 ChatSession；不依赖 SessionJournal，也不承担新功能 |
 
-目标依赖图如下：
+current 依赖图如下：
 
 ```text
 SessionJournal.Cli / Agent Host
@@ -205,10 +204,10 @@ SessionJournal.Cli / Agent Host
 ChatSession.LegacyExportCli ──> Atelia.ChatSession   # frozen migration island
 ```
 
-current trunk 已达到 raw core 不反向引用 concrete DerivedMemory/Maintainers 的主依赖方向；上图是
-EADR V4 target，current trunk 仍使用 `Atelia.SessionJournal.DerivedMemory` 与
-`Atelia.SessionJournal.Maintainers`。R0 将 current MemoryPack projection收窄为 ContextHeader
-contract，并把 recap-specific maintainer一次性改名；raw event inventory仍不含 derived activation。
+current trunk 已达到上图依赖方向：raw core 不反向引用 concrete Store/Planner/Maintainers，
+CLI 是 composition root。旧 `Atelia.SessionJournal.DerivedMemory` production/test projects已删除；
+R0 已把 MemoryPack projection收窄为 `ContextHeader*` contract，并把 recap-specific maintainer
+一次性改名。raw event inventory仍不含 derived activation。
 
 ## 5. Raw Event Journal
 
@@ -297,12 +296,18 @@ EventJournal branch primitive 就宣称产品能力已经实现。
 - Continuity、style 或 identity constraints。
 
 Recap blocks 的正文可以是 Markdown、JSON 或其他受限 payload。跨代稳定的是 raw authority、
-可重建性和 coherent request projection，不是 current P6 的 artifact identity/provenance schema。
+可重建性和 coherent request projection，不是 historical P6 的 artifact identity/provenance schema。
 query-dependent vector/graph/entity recall 是未来 Memory能力，不进入 Recap set。EADR V4 正式词汇见
 [核心概念](event-addressed-derived-recap-concepts.md)。
 
-它们不是 raw experience，也不属于旧 ChatSession。current ownership 是独立、可替换的
-`Atelia.SessionJournal.DerivedMemory`；该 subsystem 可以删除并由 raw SessionJournal 重建。
+它们不是 raw experience，也不属于旧 ChatSession。current ownership 分布在独立、可替换的
+DerivedRecap Store、Planner 与 Maintainers；整个 Recap Store 可以删除并由 raw SessionJournal、
+PlannerConfig 与 Maintainers 重建。
+
+> **Historical / Frozen block（§6.2～§6.6）**：以下章节按各自当时的 “current” 记录
+> CS-5-lite、DM-0～DM-8 与 P6 演进，不描述 `df8e3044` 之后的 trunk。旧
+> DerivedMemory、Artifact/ArtifactSet、epoch/job/settlement、`SourceRawHead`、
+> `run-memory-maintainer` 等词只为保存迁移证据；不得据此恢复已删除的命令、项目或 wire。
 
 ### 6.2 Historical interim baseline（已由 DM-3B 取代）
 
@@ -328,9 +333,9 @@ Prepared/attempt recovery，但它不是最终程序集或 authority 边界。�
 core、raw `ArtifactSetCommitted` 引用 derived ids、manual checkpoint，以及 Prepared 仍引用 raw
 activation，都是已知 interim coupling。
 
-### 6.3 Current P6 Artifact 字段（V4 不再作为 target）
+### 6.3 Historical P6 Artifact 字段（Frozen）
 
-current P6 DerivedMemory schema 覆盖以下 provenance/lifecycle 信息；它们记录现行实现，不是 EADR
+historical P6 DerivedMemory schema 覆盖以下 provenance/lifecycle 信息；它们记录当时实现，不是 EADR
 V4 必须保留的 target fields：
 
 | 字段 | 含义 |
@@ -350,13 +355,13 @@ V4 必须保留的 target fields：
 | `Invocation` | 可选 completion / analyzer audit 摘要 |
 | `Status` | produced / rejected / superseded 等领域状态 |
 
-current P6 Artifact 本身 append-only，最新版由 lineage、ArtifactSet 或可重建索引确定。EADR V4
+historical P6 Artifact 本身 append-only，最新版由 lineage、ArtifactSet 或可重建索引确定。EADR V4
 改用 `SetAdmissionAnchor + per-block AbsorbedThrough` 与 Published directory membership，不保留
 `PreviousArtifact`、producer fingerprint 或 content-addressed identity 作为长期 target。
 
-### 6.4 Current P6 audit provenance（V4 非目标）
+### 6.4 Historical P6 audit provenance（Frozen）
 
-current P6 artifact 可以回答：
+historical P6 artifact 可以回答：
 
 1. 它由哪个 profile 和 producer 生成。
 2. 它读取了哪个 raw head、哪些 raw ranges。
@@ -368,7 +373,7 @@ current P6 artifact 可以回答：
 admission/cursor 如实、checksum/shape 可验证、Prepared exact bytes 不变；prompt/model/invocation
 审计若未来需要，应作为独立能力重新设计。
 
-### 6.5 Current P6 Coherent Artifact Set（V4 将替换）
+### 6.5 Historical P6 Coherent Artifact Set（Frozen）
 
 Autobiography 与 World Understanding 可能并行生成，但一次上下文不应偶然混用不同 source head 的半套结果。
 
@@ -395,7 +400,7 @@ EADR V4 保留“一组 Recap blocks 必须整体进入 online”的产品性质
 single rolling checkpoint 和原子 directory promotion 实现。strict ordinal计数 Published
 directories，不按当前 materializability重编号；current `PreviousSetId`/latest index不再是目标。
 
-### 6.6 Historical interim-to-current migration（DM-0～DM-8 已完成）
+### 6.6 Historical interim-to-P6 migration（DM-0～DM-8，Frozen）
 
 下表记录已经完成的 authority/assembly 迁移，不是 future backlog：
 
@@ -423,34 +428,32 @@ materialization，再切换 self-contained Prepared，之后移动 concrete stor
 `SessionExecutionTailResolver` 始终 raw-only；DerivedMemory 缺失只阻止尚未 Prepared 的 context
 planning，不应破坏已 Prepared request 的恢复。
 
-### 6.7 Current MemoryPack role 与 EADR cutover
+### 6.7 Current EADR V4 Recap materialization
 
-`MemoryPack` 变为 materialized context view：
+current materialized context view是：
 
 ```text
-selected ArtifactSet
-+ pinned/manual context blocks
-+ rendering profile
--> MemoryPack
--> ContextHeader projection
+exact Published DerivedRecapSet
++ admission anchor 后 dependency-closed raw suffix
++ governing setup / tools / future pinned or retrieved contributions
+-> ContextHeader contributions
+-> CompletionRequestPrepared v5 exact request
 ```
 
-`RewriteMemoryBlockMaintainer` 已作为首批 artifact producer 使用：输入旧 artifact + raw range，输出
-完整新 artifact。CS-5-lite 与后续 current trunk 已验证 recap 可以 materialize 为
-`ContextHeader` 形态的 observation/action header，并以真实 anchor 之后的 raw suffix 保留近期细节。
-full replay 只用于显式 offline audit；maintainer 输入使用 addressed bounded planning window。
-current 与 V4 online 没有 coherent candidate 时都保持 not-ready，不允许静默 full-raw fallback。DM-8
-current empty-lineage bootstrap 已受 native raw fresh-genesis topology 约束，而不是 normal
-fallback。后续工作是在保持这一
-raw/artifact 语义的前提下，按
-[EADR V4 target](event-addressed-derived-recap-v4-target-design.md)
-替换 current DerivedMemory，而不是把能力回迁到 ChatSession。
+`IRecapBlockMaintainer` 从 frozen old block、bounded raw windows与 frozen prior context产出完整
+`DerivedRecapBlock`。每个 block 以 `AbsorbedThrough` 表达真实 progress；set-level
+`SetAdmissionAnchor` 只表达 raw suffix接合点。`Inherit` 允许专项 block暂不更新且不伪造 cursor，
+以后再从真实 old cursor rolling catch up。
 
-EADR R0 不保留宽泛 Memory naming：recap maintenance 改为 `IRecapBlockMaintainer`，
-`MemoryPack*` 这组实际只负责 ContextHeader projection 的类型改为 `ContextHeader*`。未来动态
-Memory retrieval仍可产出 neutral context contributions，但不进入 `DerivedRecapSet`。
+Store 以 event-addressed Building/Published directories保存 membership和结构；Planner拥有
+trigger、Maintain/Inherit、Resume/Restore与 bounded catch-up；Maintainers只实现内容转换；CLI/Host
+组合三者。没有 coherent exact candidate时保持 not-ready，不允许静默 full-raw fallback。
+full replay只用于显式 offline audit；Prepared/Started recovery以 Prepared exact request为唯一真源，
+对 Recap Store zero-touch。正式定义见
+[EADR 核心概念](event-addressed-derived-recap-concepts.md)和
+[V4 target](event-addressed-derived-recap-v4-target-design.md)。
 
-## 7. Context Selection（Current P3/P4）
+## 7. Context Selection（Current EADR V4）
 
 ### 7.1 Current 边界：durable exact ordinal
 
@@ -475,9 +478,9 @@ provider/domain 仍由 host provision。
 ### 7.2 Current exact ordinal 与 strict bootstrap invariants
 
 P3 已删除 automatic budget candidate planner。Agent 通过 governing
-`RuntimeConfigSetup` 持久化 `nthPrevious`：`0` 选择 selected branch 当前 published coherent set
-lineage 的最新 set，`n` 选择沿 `PreviousSetId` 向前的精确第 n 个 set。tail-only projection 的边界
-仍来自该 set 的 raw anchor；更旧 set 自然产生更长 recent raw suffix。
+`RuntimeConfigSetup` 持久化 `nthPrevious`：`0` 选择 selected branch raw Parent lineage上最近的
+Published Recap directory，`n` 选择再向前的精确第 n 个 Published membership。tail-only
+projection 的边界来自该 set 的 `SetAdmissionAnchor`；更旧 set自然产生更长 recent raw suffix。
 
 current exact selection 与 strict bootstrap 必须满足：
 
@@ -495,16 +498,15 @@ current exact selection 与 strict bootstrap 必须满足：
   raw correctness；imported/legacy non-genesis history 不允许 bootstrap，但 offline maintainers /
   rebuild 可以在首个 Prepared 前发布 set，online 再按 exact ordinal 使用；
 - **current**：selected exact request 超过 hard guard 时 fail-fast，不自动换另一个 set；
-- **current**：Prepared v5 固定实际 request；之后 setup、latest pointer 或 DerivedMemory 变化都不触发重选。
+- **current**：Prepared v5 固定实际 request；之后 setup 或 Recap Store变化都不触发重选。
 
-EADR V4 保留相同的 Agent-visible strict ordinal，但替换实现机制：
+current EADR V4 的 strict ordinal 实现为：
 
-- current P6 沿 immutable `PreviousSetId` lineage 解释 ordinal；
-- V4 从 exact completion boundary 沿 raw Parent lineage point lookup event-addressed Published
+- 从 exact completion boundary 沿 raw Parent lineage point lookup event-addressed Published
   Recap directories；
-- V4 计数 Published membership，而不是当前可 materialize payload；exact set损坏时
+- 计数 Published membership，而不是当前可 materialize payload；exact set损坏时
   Restore/not-ready，不跳过、不重编号；
-- V4 Building 与 block-local rolling checkpoint不进入 ordinal；
+- Building 与 block-local rolling checkpoint不进入 ordinal；
 - `SetAdmissionAnchor` 与 per-block `AbsorbedThrough` 分离，允许 block 暂缓后从真实旧 cursor
   bounded catch up。
 
@@ -529,10 +531,10 @@ fresh-genesis topology eligibility 是两个独立问题：
   commitment。
 - 保存 durable request origin；attempt identity 继续由后续 `CompletionAttemptStarted` event address
   表达。
-- 不保存 derived artifact/set/epoch id，不以 DerivedMemory 或 raw activation 作为 reopen 依赖。
+- 不保存 derived artifact/set/epoch id，不以 Recap Store 或 raw activation 作为 reopen 依赖。
 
 raw suffix 可用 exact address/range/hash 与 deterministic fold 重建；derived contribution 则必须在
-Prepared 中提升为 exact snapshot 或 canonical bytes。恢复时不得重新打开 DerivedMemory、重新运行
+Prepared 中提升为 exact snapshot 或 canonical bytes。恢复时不得重新打开 Recap Store、重新运行
 planner，或用“当前最新配置”替换已经 Prepared 的内容。
 
 canonical request manifest 是崩溃恢复和重发的 Canonical Source。ContextPlan/selection record 只负责
@@ -544,33 +546,23 @@ canonical request manifest 是崩溃恢复和重发的 Canonical Source。Contex
 
 P4 明确区分两条职责：
 
-- current DerivedMemory epoch planner、未来 V4 Planner 的 thresholds 都只决定何时维护与何时
+- current DerivedRecap Planner 的 raw-growth/event-count thresholds只决定何时维护与何时
   backpressure；
 - online request hard guard 只检查 Agent 已选择的 exact ordinal request 是否可物理提交，超限即
   fail-fast，不参与 candidate selection。
 
-Historical CS-5-lite 曾由
-`SessionJournal.Cli run-memory-maintainer --threshold-tokens` 在 runner 内执行 synthetic split；该
-模式已经删除。current `run-memory-maintainer --epoch <epoch-id>` 只执行 DM-5 planner 预先持久化的
-exact epoch，不拥有 split policy。current DerivedMemory epoch planner 统一决定：
-
-- `minimumRecentTokens`：始终保留的最新 dependency-closed suffix。
-- `epochTriggerTokens`：eligible prefix 达到多少后创建新 epoch。
-- token estimator、dependency boundary policy、headroom 与 hard limit。
-- immutable epoch plan 的实际 raw range；boundary alignment 可使每个 epoch 大小不同。
-
-同一 coherence group 的 maintainers 消费同一 epoch plan。针对某个 role 做 prompt tuning 时，只替换
-该 epoch 的 producer candidate，不重新切分 history。
-
-上述 epoch 是 current P6 实现。V4 不保留 shared epoch identity；它在 building manifest 中冻结公共
-`SetAdmissionAnchor`、per-block source cursor、bounded catch-up route 与 prior-context snapshot。
-多个 block 可以从不同 cursor 出发，但只发布一个 final common set。
+Historical CS-5-lite/P6 曾使用 `run-memory-maintainer` 与 shared epoch；这些命令、epoch ledger和
+旧 DerivedMemory project均已删除，详见 §6 frozen block。current Planner不保留 shared epoch
+identity；它在 Building manifest中冻结公共 `SetAdmissionAnchor`、per-block source cursor、
+bounded catch-up route与 prior-context snapshot。多个 block可以从不同 cursor出发，但只发布一个
+final common set。
 
 current 已删除 `RawSuffixTokenBudget`、`TotalContextTokenBudget`、
 `BootstrapRawSuffixTokenBudget` 与 `SessionRuntime.ContextBudgets`。唯一可选 guard 是
 `MaximumCanonicalRequestBytes`，使用 canonical JSON 的精确 UTF-8 byte length；它不参与
 selection/fallback，也不等于真实 model tokenizer 或 provider context window。planner 的
-message-token estimator 只服务 durable epoch scheduling/backpressure，未与 request guard 合并。
+event-count limits只服务 bounded planning/backpressure，未与 request guard 合并，也不伪装成
+provider token packing。
 
 ### 7.5 选择结果也是事实
 
@@ -685,9 +677,8 @@ Action、Started、Result 等事实仍逐条保留。未来只有当产品需要
 
 Dynamic Retrieval 当前尚未实现，也没有冻结 `IMemoryRetriever`、`IContextMemorySource` 等公共接口。
 它属于 future Memory read-model layer，不属于 EADR Recap subsystem。retriever 在尚未 Prepared
-的 request planning 阶段按需选择候选材料；current `IMemoryBlockMaintainer` 只是等待 R0
-cutover 的 Recap maintenance baseline，future retrieval 不依赖它，也不参与已 Prepared request
-的 reopen。
+的 request planning 阶段按需选择候选材料；current `IRecapBlockMaintainer` 只服务 resident Recap
+maintenance baseline，future retrieval 不依赖它，也不参与已 Prepared request 的 reopen。
 
 应先完成一个真实 backend 的端到端切片，再从使用证据中提炼公共 contract，避免先围绕假想的向量库
 冻结接口。
@@ -717,13 +708,18 @@ cutover 的 Recap maintenance baseline，future retrieval 不依赖它，也不�
 
 索引缺失或落后不应破坏 raw replay、Prepared recovery 或基本审计。尚未 Prepared 的 online request
 如何降级，则必须服从当时明确的 readiness policy；在 current coherent-only 基线上，最多是不使用
-dynamic recall，不能借“索引降级”静默绕过 coherent ArtifactSet 要求。
+dynamic recall，不能借“索引降级”静默绕过 coherent Published Recap 要求。
 
-## 10. Artifact Maintenance 调度
+## 10. Recap Maintenance 调度
 
-### 10.1 Current development surface：single-profile epoch runner
+> **Historical / Frozen block（§10.1～§10.3）**：以下三节记录已删除的 P6
+> `run-memory-maintainer`、shared epoch与 transaction/settlement调度。它们只保留设计演进证据；
+> current入口是 `recap run/resume/restore` 与 phase-first `run-online-turn`，current durable shape
+> 见 §10.4。
 
-current `SessionJournal.Cli run-memory-maintainer` 是面向 maintainer 开发的离线 runner，而不是
+### 10.1 Historical development surface：single-profile epoch runner
+
+当时的 `SessionJournal.Cli run-memory-maintainer` 是面向 maintainer 开发的离线 runner，而不是
 DerivedMemory online scheduler：
 
 - 每次只运行一个显式 `--profile`。
@@ -731,10 +727,10 @@ DerivedMemory online scheduler：
 - non-genesis 从 exact input set 恢复 MemoryPack，支持同 epoch 的独立 prompt tuning。
 - 只写 alternative artifact candidate，不推进 shared epoch 或 latest set。
 
-online provisioning/planning 由 DM-5～DM-8 的 lifecycle coordinator 负责，single-profile runner
+当时的 online provisioning/planning 由 DM-5～DM-8 的 lifecycle coordinator 负责，single-profile runner
 只保留开发与调优价值。
 
-### 10.2 Implemented：shared epoch 与 cursor
+### 10.2 Historical implemented baseline：shared epoch 与 cursor
 
 DerivedMemory scheduler 已先持久化 shared immutable coverage epoch，再让同一 coherence group
 的 maintainers 消费同一 exact raw range。每个 artifact/role lineage 固定：
@@ -750,7 +746,7 @@ reroll 或从历史 Event 分叉后，新 branch 只能从该 lineage 可达的 
 “即将滑出上下文”仍可作为触发信号，但维护完成后不删除 raw prefix，只推进 derived lineage 与
 candidate publication。
 
-### 10.3 Implemented baseline：触发、并行与结算
+### 10.3 Historical implemented baseline：触发、并行与结算
 
 current scheduler 使用 planner token thresholds、scheduling headroom、hard limit 与 safe online
 boundary；scene/episode、artifact age 与 profile-specific trigger 仍是未来扩展。coherent roles
@@ -768,9 +764,9 @@ host 通过 exact role executions 完成 provisioning；shared config/epoch ledg
 settlement、restart resume、atomic publication 与 online backpressure 均已实施。原功能缺口已归档为
 [历史备忘](done/memory-maintainer-provisioning-planner-gap.md)。
 
-### 10.4 EADR V4 target：per-block cursor 与 rolling catch-up
+### 10.4 Current EADR V4：per-block cursor 与 rolling catch-up
 
-V4 以更小的 durable shape 替换 current epoch/job orchestration：
+EADR V4 已以更小的 durable shape 替换 historical epoch/job orchestration：
 
 - source inputs 与 manifest 先于 Maintainer 调用，冻结 common `SetAdmissionAnchor`；
 - 每个 block 保存独立 `AbsorbedThrough`，`Inherit` 不推进，`Maintain` 推进；
@@ -780,8 +776,11 @@ V4 以更小的 durable shape 替换 current epoch/job orchestration：
 - Published directory固定 strict ordinal membership；payload damage由 Store defects +
   Planner bounded Restore在同一 directory恢复，不回落旧 ordinal。
 
-具体定义以 [EADR 核心概念](event-addressed-derived-recap-concepts.md)和
-[V4 target](event-addressed-derived-recap-v4-target-design.md)为准。
+CLI/online composition已切到这一 Store + Planner + Maintainers边界，旧 DerivedMemory subsystem
+已删除。具体定义以 [EADR 核心概念](event-addressed-derived-recap-concepts.md)和
+[V4 target](event-addressed-derived-recap-v4-target-design.md)为准；真实 repo acceptance与
+engine online-tail tail-fix状态见
+[实现计划](event-addressed-derived-recap-v4-implementation-plan.md)。
 
 ## 11. 项目边界与 Legacy 迁移
 
@@ -792,8 +791,8 @@ StateJournal 原地改造成 EventJournal。边界原则是：
 
 - 旧 `prototypes/ChatSession` 与其 StateJournal message deque 保持 frozen，只承担归档读取与迁移
   数据导出；不继续加入 SessionJournal execution、memory 或 planner 新功能。
-- 新功能和新架构只进入 `prototypes/SessionJournal` 及其 target companion projects 与
-  `SessionJournal.Cli`；current companion 名称及其 EADR replacement 见 §4.1。
+- 新功能和新架构只进入 `prototypes/SessionJournal` 及其 current companion projects 与
+  `SessionJournal.Cli`；current ownership见 §4.1。
 - 新 SessionJournal 不读写旧 deque，不与旧 StateJournal 双写，也不把旧 store 当作自己的
   projection/cache。
 - StateJournal 在其他领域仍可继续使用；这里冻结的是旧 ChatSession storage 模型，不是否定
@@ -823,16 +822,17 @@ compaction/recap 属于 derived 信息，会被跳过；包含 tool execution �
 correlation、operation/checkpoint 或 branch 语义而 fail-fast，不能伪造为新的 SessionJournal
 事实。迁移是有损边界时必须显式报错的 upgrade/import，不是持续同步或兼容读取层。
 
-### 11.3 Current baseline：Memory 代码归属与 split policy
+### 11.3 Current baseline：Recap 代码归属与 planning policy
 
 旧 ChatSession 中曾经实现一半的 memory substrate 已拆除。新 contracts 位于 SessionJournal，
-concrete `MemoryMaintainer` 位于 companion assembly `Atelia.SessionJournal.Maintainers`；能力不会回迁
-到旧 ChatSession，也不以引用旧类型的方式“复用”。
+concrete `IRecapBlockMaintainer` 位于 companion assembly
+`Atelia.SessionJournal.DerivedRecap.Maintainers`；Store 与 Planner 分别拥有 persistence/query 和
+planning/orchestration。能力不会回迁到旧 ChatSession，也不以引用旧类型的方式“复用”。
 
 旧 `HistoryWindowSplitPolicy` 属于旧 ChatSession/backtest 语境，不是新架构的可复用资产。
 CS-5-lite 过渡期的 `MemoryMaintainerHistorySplitPolicy` / synthetic half-context split 也已删除。
-current `SessionJournal.Cli run-memory-maintainer --epoch <epoch-id>` 只消费 durable epoch；切分责任已
-归 DM-5 DerivedMemory scheduler/epoch planner。
+current `recap run` 使用 bounded deterministic policy，在 Building manifest中冻结 admission、
+per-block route与 limits；不存在 role-local synthetic split或 shared epoch ledger。
 
 ### 11.4 Compaction 的新语义
 
@@ -846,8 +846,7 @@ messages = recap + recent suffix
 
 ```text
 raw SessionJournal events 保持不变
-current P6: DerivedMemory producer 生成带 provenance 的 recap/artifacts
-EADR target: DerivedRecap Maintainers 生成 Recap blocks，Store 发布 DerivedRecapSet
+current: DerivedRecap Maintainers 生成 Recap blocks，Store 原子发布 DerivedRecapSet
 Context Selection / Request Materialization 按 exact ordinal 拼接 Recap + dependency-closed raw suffix
 ```
 
@@ -876,10 +875,10 @@ SessionJournal 项目族中建立能力，而不是改造旧 ChatSession。
   derived 信息而跳过，tool execution 与 `revert-turn` 因无法无损表达 current correlation、
   checkpoint 或 branch 语义而 fail-fast。该管线不修改旧 repo、不双写，详见
   [CLI 拆分与迁移边界](../ChatSession/legacy-export-and-sessionjournal-cli-split.md)。
-- **CS-2.5 / CS-5-lite：derived recap 试验基线。** 已建立可删除、可重建的 sidecar recap store，
-  addressed replay provenance，以及由 `SessionJournal.Cli run-memory-maintainer` 驱动 concrete
-  `MemoryMaintainer` 的开发入口。它证明了 raw authority、artifact lineage 和 tail anchor；当时的
-  store/split/runner 已由 current DerivedMemory/epoch runner 取代，详见
+- **CS-2.5 / CS-5-lite：derived recap 历史试验基线。** 当时建立了可删除、可重建的 sidecar recap
+  store、addressed replay provenance，以及由已删除的 `run-memory-maintainer` 驱动 concrete
+  maintainer 的开发入口。它证明了 raw authority、artifact lineage 和 tail anchor；其
+  store/split/runner后来先被 P6取代、再由 current EADR V4整体替换，详见
   [CS-5-lite 完成记录](done/cs-5-lite-sessionjournal-derived-recap-store.md)。
 - **CS-3 / CS-3D0～D7：coherent-only request 与 tail recovery。** 该阶段实现了
   `CompletionRequestPrepared` v3、Prepared/Started attempt 对称性、exact reopen、raw-only
@@ -893,12 +892,12 @@ SessionJournal 项目族中建立能力，而不是改造旧 ChatSession。
 这些完成记录保留历史 wire 与阶段名，用于解释 current code 为什么如此；它们不覆盖下节已经批准的
 长期依赖方向。
 
-### 12.2 已完成主路线：DM-0～DM-8
+### 12.2 Historical / Frozen 主路线：DM-0～DM-8
 
-当前实施权威是
+该阶段的实施权威记录是
 [DerivedMemory 可替换子系统与 Shared Epoch 实施方案](done/derived-memory-subsystem-implementation-plan.md)。
 已按其中的依赖顺序逐片实施、审阅和提交；本文只保留路线级摘要，避免复制 exact contract 或
-migration 细节。
+migration 细节。DM-0～DM-8 已被 EADR V4 cutover取代，不再是 current production surface。
 
 1. **DM-0 — Cross-assembly contracts（已完成）**：在 SessionJournal contracts 中定义 store-neutral
    candidate、selection 与 materialization 边界，先固定正确的依赖方向。
@@ -927,13 +926,16 @@ derived shape 的依赖，再建立独立 DerivedMemory，最后删除 raw activ
 SessionJournal raw core 反向引用 Maintainers/DerivedMemory，也不得把 concrete derived identity
 重新写进 raw wire。
 
-### 12.3 后续能力
+### 12.3 Current EADR V4 与后续能力
 
-DM-0～DM-8 建立正确的 authority、ownership 与 online composition 后，再推进以下能力：
+DM-0～DM-8 建立 authority/ownership 基础后，current 已推进到：
 
-- **EADR V4 replacement。** 新建 DerivedRecap Store/Planner/Maintainers projects，以
+- **EADR V4 replacement（R0～R3E 已完成至 `df8e3044`）。** DerivedRecap
+  Store/Planner/Maintainers projects以
   event-addressed Building/Published directories、strict ordinal、per-block cursor、rolling
-  catch-up 和窄 Restore protocol替换 current P6 transaction workflow；不迁移 v2/v3 data。
+  catch-up 和窄 Restore protocol替换了 P6 transaction workflow；不迁移 v2/v3 data。R3F真实 repo
+  acceptance与 engine online-tail tail-fix仍 pending，以
+  [V4 实现计划](event-addressed-derived-recap-v4-implementation-plan.md)为准。
 - **CS-4 后续：tool capability 与 uncertain hardening。** current trunk 已有在幂等/operation-id
   去重假设下可恢复的 tool loop，以及 reserved sequence/operation identity、Started/Result 和 tail
   recovery；后续不是从零重建，而是扩展 capability declaration、provider/result lookup、reconcile
@@ -981,13 +983,12 @@ DM-0～DM-8 建立正确的 authority、ownership 与 online composition 后，�
   tail execution recovery 已落地。
 - 普通 legacy observation/action/setup 已有单向 JSON 映射；无法诚实迁移的 tool/revert history
   fail-fast，不再以“以后补 metadata”掩盖语义缺口。
-- raw SessionJournal events 是唯一 correctness source；derived sidecar、indexes、recap，以及
-  DerivedMemory 中的 ArtifactSet 可删除、可重建。raw inventory 不再包含 derived-set
-  definition/activation。
-- concrete companion 的依赖方向已经确定：`SessionJournal.Maintainers` 已单向依赖 SessionJournal
-  contracts；current `SessionJournal.DerivedMemory` 同样单向依赖 raw core。EADR target 由
-  `DerivedRecap.Store / Planner / Maintainers` 组成，并与 future Memory concrete
-  implementations 一样保持 raw-core 单向依赖；CLI/Host 是 composition root。
+- raw SessionJournal events 是唯一 correctness source；DerivedRecap sidecar和 future indexes
+  可删除、可重建。raw inventory 不包含 derived-set definition/activation。
+- concrete companion 的依赖方向已经确定：current
+  `DerivedRecap.Store / Planner / Maintainers` 单向依赖 raw contracts，CLI/Host 是 composition
+  root；旧 `SessionJournal.DerivedMemory` 已删除。future Memory concrete implementations必须保持
+  同样的 raw-core 单向依赖。
 
 ### 14.2 仍开放的问题
 

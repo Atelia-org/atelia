@@ -4,12 +4,12 @@
 > **日期**：2026-07-28
 > **当前基线**：
 > [Tail-only Execution Recovery Design](tail-execution-recovery-design.md)、
-> [DerivedMemory 实施方案](derived-memory-subsystem-implementation-plan.md)
+> [DerivedMemory 实施方案](done/derived-memory-subsystem-implementation-plan.md)
 > **已完成计划**：
 > [CS-3D6：Coherent-only Request Manifest](done/coherent-request-manifest-simplification-plan.md)、
 > [CS-3D7：Prepared / Provider Attempt 对称化](done/prepared-provider-attempt-symmetry-design.md)
 > **已实施**：
-> [候选 D0/D1：Dependency-closed Fold Seed 与共享 Operational Semantics](tail-operational-semantics-simplification-plan.md)
+> [候选 D0/D1：Dependency-closed Fold Seed 与共享 Operational Semantics](done/tail-operational-semantics-simplification-plan.md)
 > **目标**：保留 current trunk 上尚未实施的化简候选，并只为刚完成的 D0/D1 留下简短实施结论与
 > D2 决策；不以牺牲 crash recovery、raw provenance、exact reopen 或 bounded reads 换取表面简洁。
 
@@ -33,7 +33,7 @@ CS-3D6/D7 与 DM-0～DM-8 已完成以下收口：
 
 已采纳的 Prepared/attempt 对称化与 ArtifactSet/raw-core 解耦不再作为候选展开。后者的最终设计、
 迁移与验收统一见
-[DerivedMemory 实施方案](derived-memory-subsystem-implementation-plan.md)。
+[DerivedMemory 实施方案](done/derived-memory-subsystem-implementation-plan.md)。
 
 当前仍值得研究的只有：
 
@@ -111,7 +111,7 @@ S 的 provenance 仍须保存 governing setup refs、raw range 与 exact context
 ## 3. 候选 D：共享正向 operational semantics
 
 本候选的 D0/D1 已完成实施，提交、边界矩阵、测试证据与 D2 go/no-go 统一见
-[Dependency-closed Fold Seed 与共享 Operational Semantics 实施计划](tail-operational-semantics-simplification-plan.md)。
+[Dependency-closed Fold Seed 与共享 Operational Semantics 实施计划](done/tail-operational-semantics-simplification-plan.md)。
 
 current 结论：
 
