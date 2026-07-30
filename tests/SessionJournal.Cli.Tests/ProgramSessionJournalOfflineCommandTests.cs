@@ -5,7 +5,6 @@ using Atelia.Completion.Abstractions;
 using Atelia.Completion.Tools;
 using Atelia.EventJournal;
 using Atelia.SessionJournal;
-using Atelia.SessionJournal.DerivedMemory;
 using Atelia.SessionJournal.Offline;
 using Atelia.SessionJournal.Cli;
 using SJ = Atelia.SessionJournal;

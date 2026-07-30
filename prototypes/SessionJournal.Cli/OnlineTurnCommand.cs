@@ -420,3 +420,16 @@ internal static class OnlineTurnCommand {
         ResumeStarted,
     }
 }
+
+internal sealed record OnlineTurnRunRecord(
+    string Schema,
+    string BranchName,
+    string BranchRefId,
+    string? Head,
+    string Phase,
+    string ProviderId,
+    string ApiSpecId,
+    string Model,
+    string ActionSha256,
+    int ErrorCount
+);
