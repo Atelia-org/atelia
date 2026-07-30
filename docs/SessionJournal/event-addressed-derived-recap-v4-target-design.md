@@ -10,7 +10,8 @@
 > [V4 化简候选](event-addressed-derived-recap-v4-simplification-candidate.md)
 > **取代的候选设计**：
 > [DerivedMemory V3 candidate](superseded/derived-memory-v3-candidate/derived-memory-next-target-design.md)
-> **实施状态**：R0 Contracts + Publish/Read 已完成；R1 Planner + Build/Resume 尚未启动
+> **实施状态**：R0 Contracts + Publish/Read、R1 Planner + Build/Resume、R2 Exact-slot
+> Restore + Online lifecycle 已完成；R3 Host/CLI cutover 尚未启动
 
 ## 0. 一句话目标
 
@@ -56,7 +57,7 @@ SessionJournal.Cli / Agent Host
 - Planner 只接收注入的 `IRecapBlockMaintainer`；
 - Store 不回调 Planner；
 - Store 与 Planner 都不得修改 raw SessionJournal；
-- current `MemoryPack* / IMemoryBlockMaintainer` 在 R0 做一次无兼容层 contract cutover：
+- current `MemoryPack* / IMemoryBlockMaintainer` 已在 R0 完成一次无兼容层 contract cutover：
   recap-specific API 改为 Recap，context-header projection 改为 `ContextHeader*`；
 - persisted `MaintainerId` values、`roleplay.*` keys 和 embedded prompt logical names不随类型改名。
 
@@ -334,9 +335,10 @@ CanMaterialize(published)
   -> Descriptor(EnvelopeSha256)
   | Defects[]
 
-Planner.TryCreateRestorePlan(defects)
-  -> RestorePlan
-  | RestoreUnavailable(reason)
+RestoreAsync(exact anchor + expected raw head)
+  -> Store exact inspection
+  -> internal bounded ephemeral actions
+  | typed unavailable/retryable
 ```
 
 `CanPublish` 同时验证：
@@ -405,7 +407,7 @@ open exact raw boundary + healthy Recap Store
   -> exact-envelope copy frozen sources
   -> freeze route + per-block prior context
   -> write manifest
-  -> EnsureFinalRecapBlock per missing/damaged block
+  -> execute phase-specific final-block actions
   -> CanPublish + latest revalidation
   -> atomic directory promotion
 ```
@@ -429,17 +431,21 @@ Maintainer 实际审阅后即使正文不变，也属于 Maintain 并推进 curs
 
 ## 8. Resume 与 Published Restore
 
-Store 返回 structural defects；Planner 创建一个 bounded RestorePlan 或
-`RestoreUnavailable(reason)`。两者复用：
+Store 返回 structural defects与 exact per-block capability；Planner在一次调用内创建 ephemeral
+bounded actions，或返回 `RestoreUnavailable(reason)`。Building Resume 与 Published Restore只复用：
 
 ```text
-EnsureFinalRecapBlock(authoritative plan, frozen input, rolling checkpoint?)
+frozen raw validator
+pending replay-window preparation
+one Maintainer step runner
 ```
 
-但外层 authority 不合并：
+外层 authority、Store mutation与 envelope protocol不合并：
 
 - Building Resume：manifest 是 plan authority，合法 final block直接 skip；
-- Published Restore：publication `FrozenPlanSnapshot` 是唯一 plan authority，membership 始终保留。
+- Published Restore：healthy exact publication存在时，其 `FrozenPlanSnapshot` 是唯一 plan
+  authority；仅当下述 envelope-loss winner规则成立时，co-located exact manifest可作为一次性
+  restore witness。membership始终保留。
 
 Published Restore：
 
@@ -458,14 +464,21 @@ authority winner进一步形式化为：
 
 - publication能 canonical decode、自校验且 identity匹配 exact directory时，它始终是唯一 plan
   authority；manifest cache冲突不参与裁决；
-- publication missing，或 bytes/shape/checksum无法形成自校验 authority时，self-hashed、
-  shape/identity均健康的 manifest只能作为一次性的 **envelope-loss restore witness**；
+- publication missing，或在 bounded read内完整捕获的 bytes因 shape/checksum/canonical validation
+  无法形成自校验 authority时，self-hashed、shape/identity均健康的 manifest只能作为一次性的
+  **envelope-loss restore witness**；
 - publication自校验健康但 identity/anchor与目录冲突属于 coherent authority conflict，不得
   fallback manifest；
+- publication authority file的 I/O/permission fault或在完整读取前超过资源上限，不是可证明的
+  envelope damage：RestoreUnavailable，不 fallback manifest；
+- final/input/work component的 I/O/permission fault或资源超限只令该 block capability
+  unavailable/unusable，不发可写 component CAS token；它不重新裁决 publication/manifest winner；
 - manifest witness不参与 normal eligibility，不形成第二个在线 authority；它只授权按 exact
   manifest全量重验 frozen inputs/final blocks并重建 envelope；
 - Published Restore使用 Published专用 component CAS 与 envelope-last API；不与 Building Resume
-  合并成带 phase分支的 public workflow，只共享 pure validators和 atomic-replace primitive。
+  合并成带 phase分支的 public workflow。代码级只共享 `RecapFrozenPlanRawValidator`、
+  `RecapPendingWindowPreparer`、`RecapMaintainerStepRunner`；phase-specific Store API可复用底层
+  atomic-replace primitive。
 
 MVP 不做 full-generation scrub 或 proactive self-heal，只做 exact-point validation、selected-slot
 bounded Restore 与显式运维。
@@ -480,7 +493,7 @@ bounded Restore 与显式运维。
 6. manifest 与 block plan commitments 防止 valid-JSON accidental drift。
 7. endpoint-only route；中间 endpoint 不成为 set。
 8. single rolling checkpoint 只是可丢弃 progress cache。
-9. Store defects → Planner RestorePlan，Store 不调 Maintainer。
+9. Store defects/capabilities → Planner bounded ephemeral restore actions，Store 不调 Maintainer。
 10. Prepared exact reopen 不访问 Recap Store。
 
 ## 10. 非目标

@@ -1,7 +1,7 @@
 # SessionJournal 事件源会话与长期上下文架构路线图
 
 > **状态**：Architecture Roadmap / current baseline P1～P6 + Prepared v5 + DM-0～DM-8
-> **日期**：2026-07-29
+> **日期**：2026-07-30
 > **底层依赖**：[EventJournal 功能需求与粗粒度设计基线](../EventJournal/event-journal-requirements-and-design.md)
 > **相关既有研究**：[Dynamic Logical Context Store for Long-Running Role-Play Agents](../Galatea/backlog/idea/dynamic-logical-context-store-for-long-running-role-play-agents.md)
 > **后续实施计划**：
@@ -35,6 +35,12 @@
 > Memory 保留给未来动态召回与图查询。V4 以 event-addressed Published directory保留“不跳过、
 > 不重编号”的 strict ordinal，以 per-block rolling checkpoint支持落后 cursor catch-up；目标术语
 > 与规则以上述 concepts/target 文档为准。
+>
+> **EADR V4 implementation progress（2026-07-30）**：R0 Contracts + Publish/Read、R1
+> Planner + Build/Resume、R2 Exact-slot Restore + Online lifecycle均已实现并通过 package-local
+> review、进程崩溃与 Prepared 删除 Store reopen验收。R2保持 bounded on-demand repair，不包含
+> scrub、scheduler或 recursive source repair。current production composition仍维持 P1～P6 /
+> DM-8，待 R3 完成 Host/CLI cutover与旧 DerivedMemory删除后再切换 current baseline。
 
 ## 1. 文档定位
 
