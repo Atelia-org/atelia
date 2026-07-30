@@ -948,7 +948,8 @@ public sealed class SessionJournalEngine : IDisposable {
                 cancellationToken
             )
             .ConfigureAwait(false);
-        await PrepareContextLifecycleAsync(
+        SessionContextLifecycleResult lifecycle = await
+            PrepareContextLifecycleAsync(
                 runtime,
                 recovery,
                 observation,
@@ -961,6 +962,8 @@ public sealed class SessionJournalEngine : IDisposable {
                 recovery.Head!.Value,
                 observation,
                 visibleTools,
+                lifecycle.Status
+                    == SessionContextLifecycleStatus.RawHistoryReady,
                 cancellationToken
             )
             .ConfigureAwait(false);
@@ -1328,7 +1331,8 @@ public sealed class SessionJournalEngine : IDisposable {
                 cancellationToken
             )
             .ConfigureAwait(false);
-        await PrepareContextLifecycleAsync(
+        SessionContextLifecycleResult lifecycle = await
+            PrepareContextLifecycleAsync(
                 runtime,
                 recovery,
                 pendingObservation: null,
@@ -1340,6 +1344,8 @@ public sealed class SessionJournalEngine : IDisposable {
             recovery,
             completionBoundary,
             governingSetup,
+            lifecycle.Status
+                == SessionContextLifecycleStatus.RawHistoryReady,
             cancellationToken
         ).ConfigureAwait(false);
         SessionContextCandidate selectedCandidate = selection.Candidate;
@@ -2123,8 +2129,9 @@ public sealed class SessionJournalEngine : IDisposable {
             );
         if (topology.Kind == EmptyLineageTopologyKind.Mature) {
             // ResolveExecutionTail has already checked the complete operational
-            // ancestry. The checked walk above additionally proves a native
-            // SessionCreated root without treating malformed ancestry as mature.
+            // ancestry. The checked walk above additionally proves a valid
+            // SessionCreated root without treating malformed ancestry as mature;
+            // only a genuinely fresh topology requires Native origin.
             // Let the single engine-owned lifecycle pass publish a candidate;
             // the exact post-lifecycle selection remains authoritative.
             return;
@@ -2152,10 +2159,11 @@ public sealed class SessionJournalEngine : IDisposable {
         );
     }
 
-    private EventAddress ValidateFreshBootstrapTopology(
+    private EventAddress ValidateEmptyLineageRawHistoryTopology(
         EventAddress selectedHead,
         SessionExecutionRecovery recovery,
         FreshBootstrapBoundary expectedBoundary,
+        bool allowMatureRawHistory,
         CancellationToken cancellationToken
     ) {
         if (expectedBoundary
@@ -2176,7 +2184,8 @@ public sealed class SessionJournalEngine : IDisposable {
                 expectedBoundary,
                 cancellationToken
             );
-        if (topology.Kind == EmptyLineageTopologyKind.Mature) {
+        if (topology.Kind == EmptyLineageTopologyKind.Mature
+            && !allowMatureRawHistory) {
             throw FreshBootstrapUnavailable(
                 "Fresh bootstrap requires no prior operational history; "
                 + $"encountered '{topology.FirstOperationalKind}' at "
@@ -2286,7 +2295,8 @@ public sealed class SessionJournalEngine : IDisposable {
                 ?? throw new InvalidDataException(
                     $"SessionCreated at {address} decoded to an unexpected body."
                 );
-            if (created.Origin != SessionCreationOrigin.Native) {
+            if (firstOperationalAddress is null
+                && created.Origin != SessionCreationOrigin.Native) {
                 throw FreshBootstrapUnavailable(
                     "Empty-lineage online preparation requires a native "
                     + "SessionCreated origin; "
@@ -2327,14 +2337,15 @@ public sealed class SessionJournalEngine : IDisposable {
         detail
     );
 
-    private async ValueTask PrepareContextLifecycleAsync(
+    private async ValueTask<SessionContextLifecycleResult>
+        PrepareContextLifecycleAsync(
         SessionRuntime runtime,
         SessionExecutionRecovery recovery,
         string? pendingObservation,
         CancellationToken cancellationToken
     ) {
         if (runtime.ContextLifecycle is not { } lifecycle) {
-            return;
+            return SessionContextLifecycleResult.Ready;
         }
         EventAddress boundary = recovery.Head
             ?? throw new InvalidDataException(
@@ -2367,7 +2378,8 @@ public sealed class SessionJournalEngine : IDisposable {
         EnsureCurrentHead(expectedHead);
         switch (result.Status) {
             case SessionContextLifecycleStatus.Ready:
-                return;
+            case SessionContextLifecycleStatus.RawHistoryReady:
+                return result;
             case SessionContextLifecycleStatus.Backpressure:
                 throw new SessionJournalNotReadyException(
                     SessionJournalNotReadyReason.RecapMaintenanceBackpressure,
@@ -2394,6 +2406,7 @@ public sealed class SessionJournalEngine : IDisposable {
         EventAddress currentBoundary,
         string pendingObservation,
         ImmutableArray<ToolDefinition> tools,
+        bool allowMatureRawHistory,
         CancellationToken cancellationToken
     ) {
         SessionGoverningSetup governingSetup =
@@ -2417,24 +2430,25 @@ public sealed class SessionJournalEngine : IDisposable {
         if (selection.Status
             == SessionContextCandidateSelectionStatus.EmptyLineage) {
             RequireNoSelectedDescriptor(selection);
-            _ = ValidateFreshBootstrapTopology(
+            _ = ValidateEmptyLineageRawHistoryTopology(
                 currentBoundary,
                 recovery,
                 FreshBootstrapBoundary.PreAppend,
+                allowMatureRawHistory,
                 cancellationToken
             );
-            SessionHistoryPlanningWindow bootstrap =
+            SessionHistoryPlanningWindow rawHistory =
                 ReadHistoryPlanningWindowAt(
                     currentBoundary,
                     startExclusive: null,
                     cancellationToken
                 );
-            CompletionRequest bootstrapProjectedRequest =
+            CompletionRequest rawHistoryProjectedRequest =
                 BuildProjectedCompletionRequest(
                     runtime,
                     governingSetup,
                     tools,
-                    bootstrap,
+                    rawHistory,
                     ImmutableArray<
                         SessionContextContribution
                     >.Empty,
@@ -2442,7 +2456,7 @@ public sealed class SessionJournalEngine : IDisposable {
                 );
             EnforceProjectedCanonicalRequestByteGuard(
                 runtime,
-                bootstrapProjectedRequest
+                rawHistoryProjectedRequest
             );
             return;
         }
@@ -2531,6 +2545,7 @@ public sealed class SessionJournalEngine : IDisposable {
         SessionExecutionRecovery recovery,
         EventAddress completionBoundary,
         SessionGoverningSetup governingSetup,
+        bool allowMatureRawHistory,
         CancellationToken cancellationToken
     ) {
         ICoherentContextCandidateSource source = RequireContextCandidateSource(runtime);
@@ -2546,13 +2561,14 @@ public sealed class SessionJournalEngine : IDisposable {
         if (selection.Status
             == SessionContextCandidateSelectionStatus.EmptyLineage) {
             RequireNoSelectedDescriptor(selection);
-            _ = ValidateFreshBootstrapTopology(
+            _ = ValidateEmptyLineageRawHistoryTopology(
                 completionBoundary,
                 recovery,
                 FreshBootstrapBoundary.ActiveFirstObservation,
+                allowMatureRawHistory,
                 cancellationToken
             );
-            return SelectBootstrapCandidate(
+            return SelectRawHistoryCandidate(
                 completionBoundary,
                 cancellationToken
             );
@@ -2600,7 +2616,7 @@ public sealed class SessionJournalEngine : IDisposable {
         );
     }
 
-    private SelectedContextCandidate SelectBootstrapCandidate(
+    private SelectedContextCandidate SelectRawHistoryCandidate(
         EventAddress completionBoundary,
         CancellationToken cancellationToken
     ) {

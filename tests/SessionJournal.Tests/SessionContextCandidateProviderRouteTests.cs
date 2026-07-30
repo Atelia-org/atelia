@@ -541,7 +541,9 @@ public sealed class SessionContextCandidateProviderRouteTests : IDisposable {
         var source = new TestContextCandidateSource {
             IsEmptyLineage = true
         };
-        var lifecycle = new TestContextLifecycle();
+        var lifecycle = new TestContextLifecycle {
+            Result = SessionContextLifecycleResult.RawHistoryReady
+        };
         SessionRuntime runtime = CreateRuntime(client, source) with {
             ContextLifecycle = lifecycle
         };
@@ -764,7 +766,269 @@ public sealed class SessionContextCandidateProviderRouteTests : IDisposable {
     }
 
     [Fact]
-    public async Task NonNativeEmptyLineage_IsRejectedBeforeLifecycle() {
+    public async Task MatureEmptyLineage_RawHistoryReadySendsWholeRawHistory() {
+        string path = NewJournalPath();
+        var client = new ScriptedClient();
+        client.Enqueue(Terminal("continued"));
+        var source = new TestContextCandidateSource {
+            IsEmptyLineage = true
+        };
+        var lifecycle = new TestContextLifecycle {
+            Result = SessionContextLifecycleResult.RawHistoryReady
+        };
+        using var engine = SessionJournalEngine.Create(
+            path,
+            CreateOptions()
+        );
+        engine.AppendObservation("settled observation");
+        _ = engine.AppendImportedAgentAction(
+            new ActionMessage([
+                new ActionBlock.Text("settled action")
+            ]),
+            new CompletionDescriptor("import", "v1", "model-A")
+        );
+        engine.UseRuntime(
+            CreateRuntime(client, source) with {
+                ContextLifecycle = lifecycle
+            }
+        );
+
+        TurnResult result = await engine.SendAsync(
+            "new observation",
+            CancellationToken.None
+        );
+
+        Assert.Equal(
+            "continued",
+            result.Message.GetFlattenedText()
+        );
+        Assert.Equal(2, lifecycle.InvocationCount);
+        Assert.Equal(0, source.MaterializationCount);
+        CompletionRequest request = Assert.Single(client.Requests);
+        Assert.Collection(
+            request.Context,
+            message => Assert.Equal(
+                "settled observation",
+                Assert.IsType<ObservationMessage>(message).Content
+            ),
+            message => Assert.Equal(
+                "settled action",
+                Assert.IsType<ActionMessage>(message)
+                    .GetFlattenedText()
+            ),
+            message => Assert.Equal(
+                "new observation",
+                Assert.IsType<ObservationMessage>(message).Content
+            )
+        );
+    }
+
+    [Fact]
+    public async Task MatureEmptyLineage_RawHistoryReadyResumesWholeRawHistory() {
+        string path = NewJournalPath();
+        var client = new ScriptedClient();
+        client.Enqueue(Terminal("resumed"));
+        var source = new TestContextCandidateSource {
+            IsEmptyLineage = true
+        };
+        var lifecycle = new TestContextLifecycle {
+            Result = SessionContextLifecycleResult.RawHistoryReady
+        };
+        using var engine = SessionJournalEngine.Create(
+            path,
+            CreateOptions()
+        );
+        engine.AppendObservation("settled observation");
+        _ = engine.AppendImportedAgentAction(
+            new ActionMessage([
+                new ActionBlock.Text("settled action")
+            ]),
+            new CompletionDescriptor("import", "v1", "model-A")
+        );
+        engine.AppendObservation("pending observation");
+        engine.UseRuntime(
+            CreateRuntime(client, source) with {
+                ContextLifecycle = lifecycle
+            }
+        );
+
+        ResumeOutcome result = await engine.ResumeAsync(
+            CancellationToken.None
+        );
+
+        Assert.True(result.Advanced);
+        Assert.Equal(1, lifecycle.InvocationCount);
+        Assert.Equal(0, source.MaterializationCount);
+        CompletionRequest request = Assert.Single(client.Requests);
+        Assert.Collection(
+            request.Context,
+            message => Assert.Equal(
+                "settled observation",
+                Assert.IsType<ObservationMessage>(message).Content
+            ),
+            message => Assert.Equal(
+                "settled action",
+                Assert.IsType<ActionMessage>(message)
+                    .GetFlattenedText()
+            ),
+            message => Assert.Equal(
+                "pending observation",
+                Assert.IsType<ObservationMessage>(message).Content
+            )
+        );
+    }
+
+    [Fact]
+    public async Task MatureLegacyImport_RawHistoryReadyCanContinueOnline() {
+        string path = NewJournalPath();
+        var client = new ScriptedClient();
+        client.Enqueue(Terminal("continued"));
+        var source = new TestContextCandidateSource {
+            IsEmptyLineage = true
+        };
+        var lifecycle = new TestContextLifecycle {
+            Result = SessionContextLifecycleResult.RawHistoryReady
+        };
+        using var engine = SessionJournalEngine.Create(
+            path,
+            CreateOptions() with {
+                Origin = SessionCreationOrigin.LegacyImport
+            }
+        );
+        engine.AppendObservation("imported observation");
+        _ = engine.AppendImportedAgentAction(
+            new ActionMessage([
+                new ActionBlock.Text("imported action")
+            ]),
+            new CompletionDescriptor("import", "v1", "model-A")
+        );
+        engine.UseRuntime(
+            CreateRuntime(client, source) with {
+                ContextLifecycle = lifecycle
+            }
+        );
+
+        TurnResult result = await engine.SendAsync(
+            "new observation",
+            CancellationToken.None
+        );
+
+        Assert.Equal(
+            "continued",
+            result.Message.GetFlattenedText()
+        );
+        Assert.Equal(2, lifecycle.InvocationCount);
+        Assert.Single(client.Requests);
+        Assert.Equal(0, source.MaterializationCount);
+    }
+
+    [Fact]
+    public async Task MatureRawHistory_CanonicalGuardFailsBeforeObservation() {
+        string path = NewJournalPath();
+        var client = new ScriptedClient();
+        var source = new TestContextCandidateSource {
+            IsEmptyLineage = true
+        };
+        var lifecycle = new TestContextLifecycle {
+            Result = SessionContextLifecycleResult.RawHistoryReady
+        };
+        using var engine = SessionJournalEngine.Create(
+            path,
+            CreateOptions()
+        );
+        engine.AppendObservation("settled observation");
+        _ = engine.AppendImportedAgentAction(
+            new ActionMessage([
+                new ActionBlock.Text("settled action")
+            ]),
+            new CompletionDescriptor("import", "v1", "model-A")
+        );
+        EventAddress head =
+            engine.InspectExecutionBoundary().Head!.Value;
+        engine.UseRuntime(
+            CreateRuntime(client, source) with {
+                ContextLifecycle = lifecycle,
+                MaximumCanonicalRequestBytes = 1
+            }
+        );
+
+        SessionJournalNotReadyException error =
+            await Assert.ThrowsAsync<SessionJournalNotReadyException>(
+                () => engine.SendAsync(
+                    "must remain ephemeral",
+                    CancellationToken.None
+                )
+            );
+
+        Assert.Equal(
+            SessionJournalNotReadyReason.ContextCandidateUnavailable,
+            error.Reason
+        );
+        Assert.Contains(
+            SessionJournalEngine.CanonicalRequestBytesMetricId,
+            error.Message,
+            StringComparison.Ordinal
+        );
+        Assert.Equal(head, engine.InspectExecutionBoundary().Head);
+        Assert.Equal(1, lifecycle.InvocationCount);
+        Assert.Empty(client.Requests);
+    }
+
+    [Theory]
+    [InlineData(
+        SessionContextCandidateSelectionStatus.OrdinalUnavailable
+    )]
+    [InlineData(
+        SessionContextCandidateSelectionStatus.ExactPublishedSetInvalid
+    )]
+    [InlineData(
+        SessionContextCandidateSelectionStatus.StoreUnavailable
+    )]
+    public async Task RawHistoryReadyDoesNotDowngradeOtherSelectionStatuses(
+        SessionContextCandidateSelectionStatus status
+    ) {
+        string path = NewJournalPath();
+        var client = new ScriptedClient();
+        var source = new TestContextCandidateSource {
+            ForcedStatus = status,
+            SelectionDetail = "must remain unavailable"
+        };
+        var lifecycle = new TestContextLifecycle {
+            Result = SessionContextLifecycleResult.RawHistoryReady
+        };
+        using var engine = SessionJournalEngine.Create(
+            path,
+            CreateOptions()
+        );
+        engine.AppendObservation("settled observation");
+        _ = engine.AppendImportedAgentAction(
+            new ActionMessage([
+                new ActionBlock.Text("settled action")
+            ]),
+            new CompletionDescriptor("import", "v1", "model-A")
+        );
+        EventAddress head =
+            engine.InspectExecutionBoundary().Head!.Value;
+        engine.UseRuntime(
+            CreateRuntime(client, source) with {
+                ContextLifecycle = lifecycle
+            }
+        );
+
+        _ = await Assert.ThrowsAsync<SessionJournalNotReadyException>(
+            () => engine.SendAsync(
+                "must remain ephemeral",
+                CancellationToken.None
+            )
+        );
+
+        Assert.Equal(head, engine.InspectExecutionBoundary().Head);
+        Assert.Equal(1, lifecycle.InvocationCount);
+        Assert.Empty(client.Requests);
+    }
+
+    [Fact]
+    public async Task MatureLegacyImport_ReadyWithoutRawAuthorizationRemainsUnavailable() {
         string path = NewJournalPath();
         var client = new ScriptedClient();
         var source = new TestContextCandidateSource {
@@ -803,11 +1067,11 @@ public sealed class SessionContextCandidateProviderRouteTests : IDisposable {
             error.Reason
         );
         Assert.Contains(
-            nameof(SessionCreationOrigin.LegacyImport),
+            nameof(SessionEventKind.ImportedAgentAction),
             error.Message,
             StringComparison.Ordinal
         );
-        Assert.Equal(0, lifecycle.InvocationCount);
+        Assert.Equal(1, lifecycle.InvocationCount);
         Assert.Equal(0, client.Calls);
         Assert.Equal(head, engine.InspectExecutionBoundary().Head);
     }
@@ -1403,12 +1667,16 @@ public sealed class SessionContextCandidateProviderRouteTests : IDisposable {
 
     private sealed class ScriptedClient : ICompletionClient {
         private readonly Queue<Func<CompletionRequest, CompletionResult>> _responses = [];
+        private readonly List<CompletionRequest> _requests = [];
 
         public string Name => "candidate-test-client";
 
         public string ApiSpecId => "candidate-test-api-v1";
 
         public int Calls { get; private set; }
+
+        internal IReadOnlyList<CompletionRequest> Requests =>
+            _requests;
 
         internal void Enqueue(Func<CompletionRequest, CompletionResult> response)
             => _responses.Enqueue(response);
@@ -1421,6 +1689,7 @@ public sealed class SessionContextCandidateProviderRouteTests : IDisposable {
             _ = observer;
             cancellationToken.ThrowIfCancellationRequested();
             Calls++;
+            _requests.Add(request);
             if (_responses.Count == 0) {
                 throw new InvalidOperationException("No scripted response.");
             }

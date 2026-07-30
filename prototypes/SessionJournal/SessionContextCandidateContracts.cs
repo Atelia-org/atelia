@@ -57,6 +57,12 @@ public enum SessionContextLifecycleStatus {
     Ready = 0,
     Backpressure = 1,
     Unavailable = 2,
+    /// <summary>
+    /// The exact lifecycle pass determined that no derived candidate is
+    /// currently required. If exact post-lifecycle selection remains
+    /// EmptyLineage, SessionJournal may use the complete raw history window.
+    /// </summary>
+    RawHistoryReady = 3,
 }
 
 public sealed record SessionContextLifecycleResult(
@@ -65,6 +71,10 @@ public sealed record SessionContextLifecycleResult(
 ) {
     public static SessionContextLifecycleResult Ready { get; } =
         new(SessionContextLifecycleStatus.Ready);
+
+    public static SessionContextLifecycleResult RawHistoryReady {
+        get;
+    } = new(SessionContextLifecycleStatus.RawHistoryReady);
 }
 
 /// <summary>

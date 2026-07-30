@@ -186,6 +186,8 @@ public sealed class DerivedRecapOnlineLifecycleCoordinator
                 "latest Published recap"
             );
         }
+        bool latestWasEmptyLineage =
+            latest is DerivedRecapSelection.EmptyLineage;
 
         DerivedRecapExecutionResult build =
             await RunAsync(cancellationToken).ConfigureAwait(false);
@@ -234,8 +236,10 @@ public sealed class DerivedRecapOnlineLifecycleCoordinator
         return configured switch {
             DerivedRecapSelection.Selected =>
                 SessionContextLifecycleResult.Ready,
-            DerivedRecapSelection.EmptyLineage =>
-                SessionContextLifecycleResult.Ready,
+            DerivedRecapSelection.EmptyLineage
+                when latestWasEmptyLineage
+                    && build is DerivedRecapExecutionResult.NoBuild =>
+                SessionContextLifecycleResult.RawHistoryReady,
             _ => SelectionUnavailable(
                 configured,
                 "configured Published recap"

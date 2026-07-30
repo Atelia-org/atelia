@@ -349,7 +349,7 @@ public sealed class DerivedRecapOnlineLifecycleCoordinatorTests {
     }
 
     [Fact]
-    public async Task EmptyBootstrapRemainsReadyWithoutRestore() {
+    public async Task EmptyLineageNoBuildAuthorizesRawHistory() {
         using LifecycleFixture fixture =
             LifecycleFixture.Create(nthPrevious: 0, historyPairs: 0);
         var script = new LifecycleScript(
@@ -368,7 +368,70 @@ public sealed class DerivedRecapOnlineLifecycleCoordinatorTests {
                 CancellationToken.None
             );
 
-        Assert.Equal(SessionContextLifecycleStatus.Ready, result.Status);
+        Assert.Equal(
+            SessionContextLifecycleStatus.RawHistoryReady,
+            result.Status
+        );
+        Assert.Equal(["S0", "Run", "S0"], script.Trace);
+    }
+
+    [Fact]
+    public async Task PublishedResultCannotAuthorizeRemainingEmptyLineage() {
+        using LifecycleFixture fixture =
+            LifecycleFixture.Create(nthPrevious: 0, historyPairs: 1);
+        var script = new LifecycleScript(
+            [
+                new DerivedRecapSelection.EmptyLineage(),
+                new DerivedRecapSelection.EmptyLineage()
+            ],
+            [],
+            [
+                new DerivedRecapExecutionResult.Published(
+                    Descriptor(fixture, fixture.Lineage.CapturedHead)
+                )
+            ]
+        );
+
+        SessionContextLifecycleResult result =
+            await fixture.Coordinator(script).PrepareAsync(
+                fixture.Engine,
+                fixture.Request(),
+                CancellationToken.None
+            );
+
+        Assert.Equal(
+            SessionContextLifecycleStatus.Unavailable,
+            result.Status
+        );
+        Assert.Equal(["S0", "Run", "S0"], script.Trace);
+    }
+
+    [Fact]
+    public async Task DisappearingSelectedLineageCannotUseNoBuildAuthorization() {
+        using LifecycleFixture fixture =
+            LifecycleFixture.Create(nthPrevious: 0, historyPairs: 1);
+        EventAddress latest =
+            fixture.Lineage.HeadToRoot[1].Address;
+        var script = new LifecycleScript(
+            [
+                Selected(fixture, latest),
+                new DerivedRecapSelection.EmptyLineage()
+            ],
+            [],
+            [new DerivedRecapExecutionResult.NoBuild("below-trigger")]
+        );
+
+        SessionContextLifecycleResult result =
+            await fixture.Coordinator(script).PrepareAsync(
+                fixture.Engine,
+                fixture.Request(),
+                CancellationToken.None
+            );
+
+        Assert.Equal(
+            SessionContextLifecycleStatus.Unavailable,
+            result.Status
+        );
         Assert.Equal(["S0", "Run", "S0"], script.Trace);
     }
 

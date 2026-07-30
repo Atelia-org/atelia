@@ -191,6 +191,90 @@ public sealed class ProgramDerivedRecapOnlineTurnTests : IDisposable {
     }
 
     [Fact]
+    public async Task BelowCadenceLegacyRepoUsesRawHistoryWithoutPublishing() {
+        Directory.CreateDirectory(_tempRoot);
+        string path = Path.Combine(_tempRoot, "below-cadence");
+        string connections = WriteConnections("below-cadence");
+        string output =
+            Path.Combine(_tempRoot, "below-cadence-online.json");
+        string calls =
+            Path.Combine(_tempRoot, "below-cadence-calls");
+        RefId branchRefId;
+        using (var engine = SJ.SessionJournalEngine.Create(
+                   path,
+                   new SJ.SessionCreateOptions(
+                       "model-a",
+                       "system-a",
+                       "surface-a"
+                   ) {
+                       Origin = SJ.SessionCreationOrigin.LegacyImport
+                   }
+               )) {
+            for (int index = 0; index < 16; index++) {
+                engine.AppendObservation($"observation {index}");
+                _ = engine.AppendImportedAgentAction(
+                    new ActionMessage([
+                        new ActionBlock.Text($"action {index}")
+                    ]),
+                    new CompletionDescriptor(
+                        "import",
+                        "import-v1",
+                        "model-a"
+                    )
+                );
+            }
+            branchRefId = engine.BranchRefId;
+            await DerivedRecapStore.Open(path, branchRefId)
+                .CreateAsync();
+        }
+        var factory = new ScriptedCompletionClientFactory(
+            "raw history answer"
+        );
+
+        Assert.Equal(0, Program.MainCore([
+            "run-online-turn",
+            "--input", path,
+            "--branch", SJ.SessionJournalDefaults.MainBranchName,
+            "--connections", connections,
+            "--output", output,
+            "--call-log-dir", calls,
+            "--message", "new online observation"
+        ], factory));
+
+        Assert.Equal(1, factory.CreateCallCount);
+        Assert.Equal(1, factory.CallCount);
+        CompletionRequest request = Assert.Single(factory.Requests);
+        Assert.Equal(33, request.Context.Count);
+        Assert.Equal(
+            "observation 0",
+            Assert.IsType<ObservationMessage>(request.Context[0]).Content
+        );
+        Assert.Equal(
+            "action 0",
+            Assert.IsType<ActionMessage>(request.Context[1])
+                .GetFlattenedText()
+        );
+        Assert.Equal(
+            "new online observation",
+            Assert.IsType<ObservationMessage>(request.Context[^1]).Content
+        );
+        using var reopened =
+            SJ.SessionJournalEngine.OpenReadOnly(path);
+        DerivedRecapSelection selection =
+            await DerivedRecapStore.Open(path, branchRefId)
+                .SelectNthPreviousAsync(
+                    reopened.ReadCurrentLineageHeaders(),
+                    0
+                );
+        Assert.IsType<DerivedRecapSelection.EmptyLineage>(selection);
+        Assert.Equal(
+            SJ.SessionExecutionPhase.Idle,
+            reopened.InspectExecutionBoundary().Phase
+        );
+        Assert.True(File.Exists(output));
+    }
+
+    [Fact]
     public void AwaitingToolExecutionIsRejectedWithoutStoreOrClient() {
         Directory.CreateDirectory(_tempRoot);
         string path = Path.Combine(_tempRoot, "tool-phase");
@@ -371,7 +455,7 @@ public sealed class ProgramDerivedRecapOnlineTurnTests : IDisposable {
                        "surface-a"
                    )
                )) {
-            for (int index = 0; index < 16; index++) {
+            for (int index = 0; index < 22; index++) {
                 engine.AppendObservation($"observation {index}");
                 _ = engine.AppendImportedAgentAction(
                     new ActionMessage([
