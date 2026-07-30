@@ -139,18 +139,21 @@ public sealed class RecapPlanEvaluatorTests {
     }
 
     [Fact]
-    public void ConflictingEnvelopeForSameBlockAndAnchorIsRejected() {
+    public void DuplicateOrConflictingSourceFactsAreRejected() {
         TestModel model = TestModel.Create();
         RecapSchedulingResult.Ready schedule = model.Schedule();
-        var conflicting = new RecapPolicyFacts([
-            model.AvailableSource,
-            model.AvailableSource with {
-                Source = new RecapSourceIntent(
-                    model.SourceSet,
-                    new string('b', 64)
-                )
-            }
-        ]);
+        var conflicting = new RecapPolicyFacts(
+            emptyReplayStartExclusive: null,
+            [
+                model.AvailableSource,
+                model.AvailableSource with {
+                    Source = new RecapSourceIntent(
+                        model.SourceSet,
+                        new string('b', 64)
+                    )
+                }
+            ]
+        );
         var policy = new StubPolicy(model.ValidMaintainIntent());
 
         RecapPlanIntentResult result =
@@ -165,6 +168,104 @@ public sealed class RecapPlanEvaluatorTests {
             RecapPlanDefectCodes.PlanningFactsInvalid
         );
         Assert.Equal(0, policy.CallCount);
+    }
+
+    [Fact]
+    public void MissingCatalogSourceOrNewerCursorIsRejected() {
+        TestModel twoBlocks = TestModel.Create(twoBlocks: true);
+        var missing = new RecapPolicyFacts(
+            emptyReplayStartExclusive: null,
+            [twoBlocks.AvailableSource]
+        );
+        var missingPolicy = new StubPolicy(
+            twoBlocks.ValidMaintainIntent()
+        );
+
+        RecapPlanIntentResult missingResult =
+            RecapPlanEvaluator.EvaluateIntent(
+                twoBlocks.Schedule(),
+                missing,
+                missingPolicy
+            );
+
+        TestModel oneBlock = TestModel.Create();
+        var newerCursor = new RecapPolicyFacts(
+            emptyReplayStartExclusive: null,
+            [
+                oneBlock.AvailableSource with {
+                    AbsorbedThrough = oneBlock.Admission
+                }
+            ]
+        );
+        var cursorPolicy = new StubPolicy(
+            oneBlock.ValidMaintainIntent()
+        );
+        RecapPlanIntentResult cursorResult =
+            RecapPlanEvaluator.EvaluateIntent(
+                oneBlock.Schedule(),
+                newerCursor,
+                cursorPolicy
+            );
+
+        AssertDefect(
+            missingResult,
+            RecapPlanDefectCodes.PlanningFactsInvalid
+        );
+        AssertDefect(
+            cursorResult,
+            RecapPlanDefectCodes.PlanningFactsInvalid
+        );
+        Assert.Equal(0, missingPolicy.CallCount);
+        Assert.Equal(0, cursorPolicy.CallCount);
+    }
+
+    [Fact]
+    public void FirstBuildAndExistingSourceFactsCannotBeMixed() {
+        TestModel model = TestModel.Create();
+        var mixed = new RecapPolicyFacts(
+            model.A1,
+            [model.AvailableSource]
+        );
+        var policy = new StubPolicy(model.ValidMaintainIntent());
+
+        RecapPlanIntentResult result =
+            RecapPlanEvaluator.EvaluateIntent(
+                model.Schedule(),
+                mixed,
+                policy
+            );
+
+        AssertDefect(
+            result,
+            RecapPlanDefectCodes.PlanningFactsInvalid
+        );
+        Assert.Equal(0, policy.CallCount);
+    }
+
+    [Fact]
+    public void PolicyUnavailableDefectsAreMappedWithoutNoBuild() {
+        TestModel model = TestModel.Create();
+        var policy = new StubPolicy(
+            new RecapPlanningPolicyDecision.Unavailable([
+                new RecapPlanDefect(
+                    RecapPlanDefectCodes.RawBuildLimitExceeded,
+                    "bounded policy cannot admit a set"
+                )
+            ])
+        );
+
+        RecapPlanIntentResult result =
+            RecapPlanEvaluator.EvaluateIntent(
+                model.Schedule(),
+                model.PolicyFacts(),
+                policy
+            );
+
+        AssertDefect(
+            result,
+            RecapPlanDefectCodes.RawBuildLimitExceeded
+        );
+        Assert.IsNotType<RecapPlanIntentResult.NoBuild>(result);
     }
 
     [Fact]
@@ -482,7 +583,8 @@ public sealed class RecapPlanEvaluatorTests {
             );
             var availableSource = new RecapBlockSourceIntent(
                 clientId,
-                new RecapSourceIntent(sourceSet, Envelope)
+                new RecapSourceIntent(sourceSet, Envelope),
+                a1
             );
             return new TestModel(
                 config,
@@ -540,8 +642,20 @@ public sealed class RecapPlanEvaluatorTests {
             RecapPlanningPolicyDecision decision
         ) => RecapPlanEvaluator.EvaluateIntent(
             Schedule(),
-            new RecapPolicyFacts([AvailableSource]),
+            PolicyFacts(),
             new StubPolicy(decision)
+        );
+
+        public RecapPolicyFacts PolicyFacts() => new(
+            emptyReplayStartExclusive: null,
+            [
+                .. Config.Catalog.Select(entry =>
+                    new RecapBlockSourceIntent(
+                        entry.RecapBlockId,
+                        AvailableSource.Source,
+                        AvailableSource.AbsorbedThrough
+                    ))
+            ]
         );
 
         public RecapPlanIntentResult.IntentReady IntentReady(
@@ -561,7 +675,7 @@ public sealed class RecapPlanEvaluatorTests {
                     new RecapSourceReplayFact(
                         ClientId,
                         AvailableSource.Source,
-                        A1
+                        AvailableSource.AbsorbedThrough
                     )
                 ],
                 [

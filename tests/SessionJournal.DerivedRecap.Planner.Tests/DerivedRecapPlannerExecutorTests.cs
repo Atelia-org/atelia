@@ -148,6 +148,44 @@ public sealed class DerivedRecapPlannerExecutorTests {
     }
 
     [Fact]
+    public async Task BoundedMaintainAllBuildsThenCatchesUp() {
+        using TestFixture fixture = await TestFixture.CreateAsync(
+            historyPairs: 2
+        );
+        var maintainer = new ScriptedMaintainer(
+            "self-maintainer",
+            fixture.SelfTarget,
+            static (call, request) =>
+                $"{request.OldBlock.Text}|step-{call}"
+        );
+        DerivedRecapPlannerExecutor executor = fixture.CreateExecutor(
+            new BoundedMaintainAllRecapPlanningPolicy(),
+            [maintainer]
+        );
+
+        var first = Assert.IsType<
+            DerivedRecapExecutionResult.Published
+        >(await executor.RunAsync());
+        EventAddress secondHead = fixture.AppendPair("catch-up");
+        var second = Assert.IsType<
+            DerivedRecapExecutionResult.Published
+        >(await executor.RunAsync());
+
+        Assert.Equal(secondHead, second.Descriptor.SetAdmissionAnchor);
+        Assert.NotEqual(first.Descriptor, second.Descriptor);
+        Assert.Equal(2, maintainer.CallCount);
+        PublishedRecapSourceSnapshot source =
+            await fixture.ReadSourceAsync(
+                second.Descriptor,
+                [fixture.SelfId]
+            );
+        Assert.Equal(
+            secondHead,
+            Assert.Single(source.FrozenInputs).AbsorbedThrough
+        );
+    }
+
+    [Fact]
     public async Task MaintainMayKeepContentWhileAdvancingCursor() {
         using TestFixture fixture = await TestFixture.CreateAsync(
             historyPairs: 2
@@ -261,6 +299,88 @@ public sealed class DerivedRecapPlannerExecutorTests {
         Assert.Equal(firstAdmission, input.AbsorbedThrough);
         Assert.Equal(0, maintainer.CallCount);
         Assert.NotEqual(first.Descriptor, second.Descriptor);
+    }
+
+    [Fact]
+    public async Task PolicyReceivesExactCursorWithoutSourcePayload() {
+        using TestFixture fixture = await TestFixture.CreateAsync(
+            historyPairs: 1
+        );
+        EventAddress firstAdmission =
+            fixture.Engine.ReadCurrentHead()!.Value;
+        var maintainer = new ScriptedMaintainer(
+            "self-maintainer",
+            fixture.SelfTarget,
+            static (_, _) => "private-source-payload"
+        );
+        var firstPolicy = new DelegatePolicy(_ =>
+            new RecapPlanningPolicyDecision.Build(
+                firstAdmission,
+                [
+                    new RecapBlockPlanningDecision.Maintain(
+                        fixture.SelfId,
+                        new RecapPlanningMaintainSource.Empty(
+                            fixture.ReplayStart()
+                        ),
+                        [firstAdmission],
+                        EmptyRecapPriorContext.Instance
+                    )
+                ]
+            ));
+        var first = Assert.IsType<
+            DerivedRecapExecutionResult.Published
+        >(
+            await fixture.CreateExecutor(firstPolicy, [maintainer])
+                .RunAsync()
+        );
+        maintainer.Reset();
+        fixture.AppendPair("next");
+        RecapBlockSourceIntent? observed = null;
+        var inspectPolicy = new DelegatePolicy(context => {
+            Assert.Null(
+                context.PolicyFacts.EmptyReplayStartExclusive
+            );
+            observed = Assert.Single(
+                context.PolicyFacts.AvailableSources
+            );
+            return new RecapPlanningPolicyDecision.Unavailable([
+                new RecapPlanDefect(
+                    RecapPlanDefectCodes.RawBuildLimitExceeded,
+                    "inspection stop"
+                )
+            ]);
+        });
+
+        DerivedRecapExecutionResult result =
+            await fixture.CreateExecutor(inspectPolicy, [maintainer])
+                .RunAsync();
+
+        Assert.IsType<DerivedRecapExecutionResult.Unavailable>(
+            result
+        );
+        Assert.NotNull(observed);
+        Assert.Equal(fixture.SelfId, observed.RecapBlockId);
+        Assert.Equal(firstAdmission, observed.AbsorbedThrough);
+        Assert.Equal(
+            first.Descriptor.SetAdmissionAnchor,
+            observed.Source.SourceSetAnchor
+        );
+        Assert.Equal(
+            first.Descriptor.EnvelopeSha256,
+            observed.Source.SourcePublicationEnvelopeSha256
+        );
+        Assert.Equal(0, maintainer.CallCount);
+        Assert.Equal(
+            [
+                nameof(RecapBlockSourceIntent.AbsorbedThrough),
+                nameof(RecapBlockSourceIntent.RecapBlockId),
+                nameof(RecapBlockSourceIntent.Source)
+            ],
+            typeof(RecapBlockSourceIntent)
+                .GetProperties()
+                .Select(static property => property.Name)
+                .Order()
+        );
     }
 
     [Fact]

@@ -49,7 +49,7 @@ public static class RecapPlanEvaluator {
         ArgumentNullException.ThrowIfNull(policyFacts);
         ArgumentNullException.ThrowIfNull(policy);
         List<RecapPlanDefect> sourceDefects =
-            ValidateSourceIntents(schedule.Facts, policyFacts);
+            ValidateSourceIntents(schedule, policyFacts);
         if (sourceDefects.Count != 0) {
             return IntentUnavailable(sourceDefects);
         }
@@ -74,6 +74,20 @@ public static class RecapPlanEvaluator {
                     "Planning policy returned an empty NoBuild reason."
                 )
                 : new RecapPlanIntentResult.NoBuild(noBuild.Reason);
+        }
+        if (decision
+            is RecapPlanningPolicyDecision.Unavailable unavailable) {
+            if (unavailable.Defects.Count == 0
+                || unavailable.Defects.Any(static defect =>
+                    defect is null
+                    || string.IsNullOrWhiteSpace(defect.Code)
+                    || string.IsNullOrWhiteSpace(defect.Detail))) {
+                return IntentUnavailable(
+                    RecapPlanDefectCodes.PolicyDecisionInvalid,
+                    "Planning policy returned malformed unavailable defects."
+                );
+            }
+            return IntentUnavailable(unavailable.Defects);
         }
 
         var build = (RecapPlanningPolicyDecision.Build)decision;
@@ -168,34 +182,75 @@ public static class RecapPlanEvaluator {
     }
 
     private static List<RecapPlanDefect> ValidateSourceIntents(
-        RecapSchedulingFacts scheduling,
+        RecapSchedulingResult.Ready schedule,
         RecapPolicyFacts policyFacts
     ) {
         var defects = new List<RecapPlanDefect>();
-        HashSet<EventAddress> lineage = scheduling.HeadToRoot
-            .Where(static node => node is not null)
-            .Select(static node => node.Address)
-            .ToHashSet();
-        var keys = new HashSet<(
-            RecapBlockId BlockId,
-            EventAddress SetAnchor
-        )>();
-        foreach (RecapBlockSourceIntent? item
-                 in policyFacts.AvailableSources) {
-            if (item is null
-                || item.RecapBlockId is null
-                || item.Source is null
-                || !keys.Add((
-                    item.RecapBlockId,
-                    item.Source.SourceSetAnchor
-                ))
-                || !lineage.Contains(item.Source.SourceSetAnchor)) {
+        RecapSchedulingFacts scheduling = schedule.Facts;
+        Dictionary<EventAddress, int> lineage = scheduling.HeadToRoot
+            .Select((node, index) => (node.Address, index))
+            .ToDictionary(
+                static pair => pair.Address,
+                static pair => pair.index
+            );
+        var replaySafe = scheduling.ReplaySafeBoundaries.ToHashSet();
+
+        if (policyFacts.EmptyReplayStartExclusive is { } emptyStart) {
+            if (emptyStart == default
+                || scheduling.LatestPublishedSetAnchor is not null
+                || policyFacts.AvailableSources.Count != 0
+                || !lineage.ContainsKey(emptyStart)
+                || !replaySafe.Contains(emptyStart)) {
                 Add(
                     defects,
                     RecapPlanDefectCodes.PlanningFactsInvalid,
-                    "Source intents are null, off-lineage, duplicate, "
-                    + "or contain conflicting envelopes for one "
-                    + "(RecapBlockId, SourceSetAnchor)."
+                    "First-build facts must contain only one exact "
+                    + "replay-safe empty replay start."
+                );
+            }
+            return defects;
+        }
+
+        if (scheduling.LatestPublishedSetAnchor is null
+            || policyFacts.AvailableSources.Count
+                != schedule.Config.Catalog.Count) {
+            Add(
+                defects,
+                RecapPlanDefectCodes.PlanningFactsInvalid,
+                "Existing-build facts must cover the exact ordered catalog."
+            );
+            return defects;
+        }
+
+        for (int index = 0;
+             index < schedule.Config.Catalog.Count;
+             index++) {
+            RecapBlockCatalogEntry expected =
+                schedule.Config.Catalog[index];
+            RecapBlockSourceIntent? item =
+                policyFacts.AvailableSources[index];
+            if (item is null
+                || item.RecapBlockId is null
+                || item.Source is null
+                || item.RecapBlockId != expected.RecapBlockId
+                || item.Source.SourceSetAnchor
+                    != scheduling.LatestPublishedSetAnchor
+                || item.AbsorbedThrough == default
+                || !lineage.TryGetValue(
+                    item.Source.SourceSetAnchor,
+                    out int sourceIndex
+                )
+                || !lineage.TryGetValue(
+                    item.AbsorbedThrough,
+                    out int cursorIndex
+                )
+                || cursorIndex < sourceIndex
+                || !replaySafe.Contains(item.AbsorbedThrough)) {
+                Add(
+                    defects,
+                    RecapPlanDefectCodes.PlanningFactsInvalid,
+                    "Existing source facts are incomplete, reordered, "
+                    + "off-lineage, or contain an invalid exact cursor."
                 );
                 break;
             }

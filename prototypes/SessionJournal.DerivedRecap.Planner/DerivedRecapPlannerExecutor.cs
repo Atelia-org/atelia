@@ -154,11 +154,9 @@ public sealed class DerivedRecapPlannerExecutor {
         }
 
         PublishedRecapSourceSnapshot? sourceSnapshot = null;
-        RecapPolicyFacts policyFacts;
-        if (latest is null) {
-            policyFacts = new RecapPolicyFacts([]);
-        }
-        else {
+        Dictionary<RecapBlockId, DerivedRecapFrozenInput>
+            sourceInputsById = [];
+        if (latest is not null) {
             PublishedRecapSourceReadResult sourceRead;
             try {
                 sourceRead = await _store.ReadPublishedSourceAsync(
@@ -184,11 +182,11 @@ public sealed class DerivedRecapPlannerExecutor {
                 return SourceReadUnavailable(sourceRead);
             }
             sourceSnapshot = available.Snapshot;
-            var inputById = sourceSnapshot.FrozenInputs.ToDictionary(
+            sourceInputsById = sourceSnapshot.FrozenInputs.ToDictionary(
                 static input => input.RecapBlockId
             );
             foreach (RecapBlockCatalogEntry entry in _config.Catalog) {
-                if (!inputById.TryGetValue(
+                if (!sourceInputsById.TryGetValue(
                         entry.RecapBlockId,
                         out DerivedRecapFrozenInput? input
                     )
@@ -201,21 +199,10 @@ public sealed class DerivedRecapPlannerExecutor {
                     );
                 }
             }
-            var sourceIntent = new RecapSourceIntent(
-                sourceSnapshot.Source.SetAdmissionAnchor,
-                sourceSnapshot.Source.EnvelopeSha256
-            );
-            policyFacts = new RecapPolicyFacts([
-                .. _config.Catalog.Select(entry =>
-                    new RecapBlockSourceIntent(
-                        entry.RecapBlockId,
-                        sourceIntent
-                    )
-                )
-            ]);
         }
 
         RecapSchedulingResult.Ready schedule;
+        EventAddress emptyReplayStartExclusive;
         try {
             EventAddress? earliestCursor =
                 FindEarliestSourceCursor(lineage, sourceSnapshot);
@@ -231,6 +218,7 @@ public sealed class DerivedRecapPlannerExecutor {
                     static item => item.Address
                 )
             ];
+            emptyReplayStartExclusive = allRelevantRaw.StartExclusive;
             RecapSchedulingResult exactSchedule =
                 RecapPlanEvaluator.EvaluateSchedule(
                     _config,
@@ -261,6 +249,33 @@ public sealed class DerivedRecapPlannerExecutor {
             return Unavailable(
                 DerivedRecapExecutionDefectCodes.RawPlanningUnavailable,
                 exception.Message
+            );
+        }
+
+        RecapPolicyFacts policyFacts;
+        if (sourceSnapshot is null) {
+            policyFacts = new RecapPolicyFacts(
+                emptyReplayStartExclusive,
+                []
+            );
+        }
+        else {
+            var sourceIntent = new RecapSourceIntent(
+                sourceSnapshot.Source.SetAdmissionAnchor,
+                sourceSnapshot.Source.EnvelopeSha256
+            );
+            policyFacts = new RecapPolicyFacts(
+                emptyReplayStartExclusive: null,
+                [
+                    .. _config.Catalog.Select(entry =>
+                        new RecapBlockSourceIntent(
+                            entry.RecapBlockId,
+                            sourceIntent,
+                            sourceInputsById[entry.RecapBlockId]
+                                .AbsorbedThrough
+                        )
+                    )
+                ]
             );
         }
 

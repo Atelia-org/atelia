@@ -182,19 +182,31 @@ public sealed record RecapSourceIntent {
     public string SourcePublicationEnvelopeSha256 { get; }
 }
 
+/// <summary>
+/// Header/cursor-only policy fact for one exact Published source block.
+/// Recap content and frozen request payloads are deliberately absent.
+/// </summary>
 public sealed record RecapBlockSourceIntent(
     RecapBlockId RecapBlockId,
-    RecapSourceIntent Source
+    RecapSourceIntent Source,
+    EventAddress AbsorbedThrough
 );
 
+/// <summary>
+/// Mutually exclusive first-build or exact Published source facts.
+/// Shape validation remains in <see cref="RecapPlanEvaluator"/>.
+/// </summary>
 public sealed class RecapPolicyFacts {
     public RecapPolicyFacts(
+        EventAddress? emptyReplayStartExclusive,
         IReadOnlyList<RecapBlockSourceIntent> availableSources
     ) {
         ArgumentNullException.ThrowIfNull(availableSources);
+        EmptyReplayStartExclusive = emptyReplayStartExclusive;
         AvailableSources = Array.AsReadOnly([.. availableSources]);
     }
 
+    public EventAddress? EmptyReplayStartExclusive { get; }
     public IReadOnlyList<RecapBlockSourceIntent> AvailableSources {
         get;
     }
@@ -286,6 +298,15 @@ public abstract record RecapPlanningPolicyDecision {
 
     public sealed record NoBuild(string Reason)
         : RecapPlanningPolicyDecision;
+
+    public sealed record Unavailable : RecapPlanningPolicyDecision {
+        public Unavailable(IReadOnlyList<RecapPlanDefect> defects) {
+            ArgumentNullException.ThrowIfNull(defects);
+            Defects = Array.AsReadOnly([.. defects]);
+        }
+
+        public IReadOnlyList<RecapPlanDefect> Defects { get; }
+    }
 
     public sealed record Build : RecapPlanningPolicyDecision {
         public Build(
