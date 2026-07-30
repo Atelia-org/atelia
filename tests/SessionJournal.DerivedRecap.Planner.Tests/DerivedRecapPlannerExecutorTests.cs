@@ -484,6 +484,63 @@ public sealed class DerivedRecapPlannerExecutorTests {
     }
 
     [Fact]
+    public async Task ResumeRawMutationDuringSeedFreezeIsRetryable() {
+        using TestFixture fixture = await TestFixture.CreateAsync(
+            historyPairs: 1
+        );
+        EventAddress admission =
+            fixture.Engine.ReadCurrentHead()!.Value;
+        MaintainRecapBlockPlan plan = fixture.CreateEmptyPlan(
+            fixture.SelfId,
+            fixture.SelfTarget,
+            "self-maintainer",
+            fixture.ReplayStart(),
+            [admission]
+        );
+        await fixture.CreateBuildingAsync(admission, [plan]);
+        var maintainer = new ScriptedMaintainer(
+            "self-maintainer",
+            fixture.SelfTarget,
+            static (_, _) => "must-not-run"
+        );
+        bool hookInvoked = false;
+        var hooks = new DerivedRecapPlannerExecutorTestHooks(
+            BeforePendingWindowFreeze: () => {
+                hookInvoked = true;
+                fixture.Engine.AppendObservation("seed-freeze race");
+            }
+        );
+
+        var result =
+            Assert.IsType<DerivedRecapExecutionResult.Retryable>(
+                await fixture.CreateExecutor(
+                        new DelegatePolicy(static _ =>
+                            new RecapPlanningPolicyDecision.NoBuild(
+                                "unused"
+                            )),
+                        [maintainer],
+                        executorHooks: hooks
+                    )
+                    .ResumeAsync(admission)
+            );
+
+        Assert.True(hookInvoked);
+        Assert.Equal(
+            DerivedRecapExecutionDefectCodes.RawHeadChanged,
+            result.Code
+        );
+        Assert.Contains(admission.ToString(), result.Detail);
+        Assert.Contains(
+            fixture.Engine.ReadCurrentHead()!.Value.ToString(),
+            result.Detail
+        );
+        Assert.Equal(0, maintainer.CallCount);
+        Assert.IsType<BuildingReadResult.Available>(
+            await fixture.Store.ReadBuildingAsync(admission)
+        );
+    }
+
+    [Fact]
     public async Task PolicyRawMutationReturnsTypedRetryableFailure() {
         using TestFixture fixture = await TestFixture.CreateAsync(
             historyPairs: 1
@@ -1139,7 +1196,8 @@ public sealed class DerivedRecapPlannerExecutorTests {
             int rawGrowthTrigger = 0,
             int maxRouteEndpointsPerBlock = 4,
             int maxMaintainerCallsPerBuild = 8,
-            IReadOnlyList<RecapBlockCatalogEntry>? catalog = null
+            IReadOnlyList<RecapBlockCatalogEntry>? catalog = null,
+            DerivedRecapPlannerExecutorTestHooks? executorHooks = null
         ) => new(
             Engine,
             Store,
@@ -1160,7 +1218,9 @@ public sealed class DerivedRecapPlannerExecutorTests {
                 maxRawEventsPerBuild: 4000
             ),
             policy,
-            new RecapBlockMaintainerRegistry(maintainers)
+            new RecapBlockMaintainerRegistry(maintainers),
+            executorHooks
+                ?? new DerivedRecapPlannerExecutorTestHooks()
         );
 
         public async ValueTask<PublishedRecapSourceSnapshot>

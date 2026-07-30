@@ -3,6 +3,10 @@ using Atelia.SessionJournal.DerivedRecap.Store;
 
 namespace Atelia.SessionJournal.DerivedRecap.Planner;
 
+internal sealed record DerivedRecapPlannerExecutorTestHooks(
+    Action? BeforePendingWindowFreeze = null
+);
+
 /// <summary>
 /// Engine-bound planning, durable execution recovery, and publication for one
 /// raw SessionJournal branch and its DerivedRecap Store.
@@ -15,6 +19,7 @@ public sealed class DerivedRecapPlannerExecutor {
     private readonly IRecapBlockMaintainerRegistry _maintainers;
     private readonly DerivedRecapBuildingInstaller _installer;
     private readonly DerivedRecapPublisher _publisher;
+    private readonly DerivedRecapPlannerExecutorTestHooks _testHooks;
 
     public DerivedRecapPlannerExecutor(
         SessionJournalEngine engine,
@@ -22,6 +27,23 @@ public sealed class DerivedRecapPlannerExecutor {
         RecapPlannerConfig config,
         IRecapPlanningPolicy policy,
         IRecapBlockMaintainerRegistry maintainers
+    ) : this(
+        engine,
+        store,
+        config,
+        policy,
+        maintainers,
+        new DerivedRecapPlannerExecutorTestHooks()
+    ) {
+    }
+
+    internal DerivedRecapPlannerExecutor(
+        SessionJournalEngine engine,
+        DerivedRecapStore store,
+        RecapPlannerConfig config,
+        IRecapPlanningPolicy policy,
+        IRecapBlockMaintainerRegistry maintainers,
+        DerivedRecapPlannerExecutorTestHooks testHooks
     ) {
         _engine = engine
             ?? throw new ArgumentNullException(nameof(engine));
@@ -33,6 +55,8 @@ public sealed class DerivedRecapPlannerExecutor {
             ?? throw new ArgumentNullException(nameof(policy));
         _maintainers = maintainers
             ?? throw new ArgumentNullException(nameof(maintainers));
+        _testHooks = testHooks
+            ?? throw new ArgumentNullException(nameof(testHooks));
         RequireSameBinding(store, engine);
         foreach (RecapBlockCatalogEntry entry in config.Catalog) {
             if (!maintainers.TryResolve(
@@ -537,6 +561,9 @@ public sealed class DerivedRecapPlannerExecutor {
                 )
                 .ConfigureAwait(false);
         }
+        catch (RecapRawHeadChangedException changed) {
+            return RetryableRawHead(changed.Expected, changed.Observed);
+        }
         catch (Exception exception) when (IsAvailabilityException(exception)) {
             return Unavailable(
                 DerivedRecapExecutionDefectCodes
@@ -821,6 +848,9 @@ public sealed class DerivedRecapPlannerExecutor {
             );
         }
 
+        if (pendingRoutes.Count != 0) {
+            _testHooks.BeforePendingWindowFreeze?.Invoke();
+        }
         PreparedRecapPendingWindows preparedWindows =
             RecapPendingWindowPreparer.Prepare(
                 _engine,
@@ -1278,6 +1308,16 @@ public sealed class DerivedRecapPlannerExecutor {
         DerivedRecapExecutionDefectCodes.RawHeadChanged,
         $"Raw SessionJournal head changed during planning. Expected "
         + $"'{expected}'."
+    );
+
+    private static DerivedRecapExecutionResult.Retryable RetryableRawHead(
+        EventAddress expected,
+        EventAddress? observed
+    ) => new(
+        DerivedRecapExecutionDefectCodes.RawHeadChanged,
+        $"Raw SessionJournal head changed during planning. Expected "
+        + $"'{expected}', observed "
+        + $"'{observed?.ToString() ?? "<none>"}'."
     );
 
     private static void AddConfigDefect(
