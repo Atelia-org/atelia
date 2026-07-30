@@ -10,11 +10,13 @@
 > [Repo-owned RecapPlannerConfig](recap-planner-config-repository-design.md)
 > **Post-R3 Cadence 设计**：
 > [Derived Recap Cadence](derived-recap-cadence-target-design.md)
+> **Post-C2 HistoryLoad 设计**：
+> [Derived Recap History Load](derived-recap-history-load-target-design.md)
 > **兼容策略**：不迁移、不双写、不读取 historical DerivedMemory v2/v3
 > **当前推进点**：R0～R3 已完成；R3 cutover 与 deterministic real-data release gate
 > 已于 2026-07-30 关闭。Post-R3 C0 HistoryUnit cadence已于 2026-07-31完成；
 > C1 repo-owned document/loader + single composition、C2 CLI/online authority
-> cutover均已于 2026-07-31完成；当前下一阶段为 C3 Galatea real acceptance
+> cutover均已于 2026-07-31完成；C3真实验收前先执行 H0～H2 HistoryLoad cutover
 
 ## 0. 原则
 
@@ -102,6 +104,11 @@ Post-R3新 planning authority由下列文档取代对应 baseline：
 C0 cadence contracts/evaluator + policy/executor
   -> C1 repo document/loader + single composition
   -> C2 CLI/online authority cutover
+  -> H0 unit estimator + window projector + Galatea calibration
+  -> H1a inactive V2 contracts/codec/registry
+  -> H1b Planner evaluator/policy/executor integration vertical
+  -> H1c single production authority cutover
+  -> H2 cache profiling decision
   -> C3 Galatea real acceptance
 ```
 
@@ -119,6 +126,28 @@ Restore只接受 frozen durable state、完整 capability registry与 code-owned
 Prepared/Started recovery也保持 Store/config zero-touch。实现验收还
 关闭了 pre-first-recap语义缺口：`EmptyLineage + NoBuild + EmptyLineage`通过显式
 `RawHistoryReady`使用完整 raw recent history，不再被误判成 strict fresh bootstrap。
+
+H0～H2的唯一 Shape/Rule与施工边界由
+[Derived Recap History Load](derived-recap-history-load-target-design.md)维护。该 cutover把
+HistoryUnitCount scheduling authority替换为抽象 HistoryLoad；V1内部使用 `o200k_base`，但
+HistoryLoad不表示推理模型/provider token。不得同时保留两套 cadence authority，也不得为此升级
+raw event或Store schema。
+
+HistoryLoad内部 package gate：
+
+- H0：`HistoryLoadUnit`、`IHistoryUnitLoadEstimator`、
+  `O200kBaseHistoryUnitLoadEstimator`、`RecapHistoryLoadProjector`、exact framing/golden vectors、
+  baseline-relative measurement limits与Galatea load distribution/threshold calibration；不改变
+  active scheduling；projector从 exact baseline address自行解析 unit offset、传入 per-unit cap并
+  聚合 load/bytes/boundaries；
+- H1a：增加尚未 active的 config V2 DTO/strict codec/estimator registry，V1仍是唯一 production
+  authority；
+- H1b：把既有 projector与baseline-relative facts接入 evaluator/policy/executor focused
+  vertical，但不得提供 production selector让 V1/V2并行；
+- H1c：一次性切换 repo init/inspect、CLI/online/report与built-in composition，拒绝 V1 config，
+  删除 HistoryUnit scheduling comparisons、header cadence negative与cross-unit validation；
+- H2：只根据 H0 calibration与针对性 pre-C3 profiling决定 bounded in-memory cache；
+  persistent sidecar需另立设计。
 
 Recent reserve使 new Building的 `SetAdmissionAnchor`通常早于 raw head；因此 C0同时把
 `DerivedRecapExecutionResult.BlockFailed`补为携带 exact admission，CLI resume/report不得再从

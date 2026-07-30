@@ -34,8 +34,9 @@ repo-owned operator intent：
 - Building建立后，frozen manifest仍是 Resume authority，配置更新不得重新规划旧 Building。
 
 V1 cadence使用最终进入 Context 的 `SessionHistoryPlanningUnit` count，并把 raw event counts仅作为
-resource/safety limits。未来 backend-model-neutral information estimator单独升 schema，不在 V1
-预留 opaque JSON或 tokenizer-specific字段。
+resource/safety limits。后续 V2按
+[Derived Recap History Load](derived-recap-history-load-target-design.md)切换到 backend-model-neutral
+内部 HistoryLoad单位；V1不预留 opaque JSON或 tokenizer-specific字段，也不原地重解释 count。
 
 ## 1. Authority 边界
 
@@ -217,6 +218,10 @@ V1 codec要求：
 `ConfigSha256`只标识 operator config document，不声称标识 prompt bytes或 concrete provider。
 operation report可另外记录 resolved profile prompt fingerprints，但不得把 prompt正文写入
 content-free report。
+
+上述 `R+B <= MaxRawGrowthEventCount`只对 V1的 HistoryUnit-count量纲成立。V2
+HistoryLoad cutover必须删除该 cross-field validation，不得把 raw-event count与HistoryLoad
+直接比较。
 
 ## 4. Resolution：一个 snapshot、两个消费者
 
@@ -544,35 +549,39 @@ breaking cutover步骤：
 
 importer不自动创建配置。raw migration成功与 operator选择哪种 Recap policy是两个独立动作。
 
-## 8. 未来 information estimator
+## 8. HistoryLoad config V2
 
-V1的 cadence使用 `HistoryUnitCount`；`maxRawEventsPerStep/Build`继续作为结构性 hard ceilings。
-两者都不是 token或信息量估算。
+V1的 cadence使用 `HistoryUnitCount`；其后续 breaking config/runtime cutover已由
+[Derived Recap History Load](derived-recap-history-load-target-design.md)定稿。
 
-未来 estimator需求明确后升到 V2，采用受控 registry id和明确单位，例如：
+V2 cadence shape：
 
 ```json
 {
-  "historyLoad": {
-    "estimator": "some-versioned-estimator-id",
-    "minimumRecentUnits": 100000,
-    "recapBuildIntervalUnits": 120000
+  "cadence": {
+    "historyUnitLoadEstimatorId": "atelia.history-load.o200k-base.history-unit-v1",
+    "minimumRecentHistoryLoad": 100000,
+    "recapBuildIntervalHistoryLoad": 120000
   }
 }
 ```
 
-具体字段名和单位届时再定。V1现在只冻结以下扩展原则：
+这里的 load是跨模型的 SessionJournal内部动态上下文管理单位，不表示推理模型实际 token数。
+具体 provider usage、context limit与billing属于独立 telemetry/preflight层。
 
-- estimator实现由 Planner/Host registry拥有，raw core与Store不理解 tokenizer；
-- config只保存 versioned estimator identity、明确单位与 cadence thresholds，不保存模型endpoint或
-  任意插件参数；
-- estimator直接测量 ordered HistoryUnit range；V2不预设 per-unit additivity或 prefix差分语义，
-  absorbed range与 recent suffix range分别验证，以容纳 chat template、role marker与 separator
-  overhead；
-- raw event safety ceilings继续独立生效；
-- estimator影响 admission/route时，Building至少冻结最终 route；是否还需冻结 estimator
-  identity、fingerprint或诊断结果，由 V2 ADR依据可解释性与恢复需求决定；
-- provider-specific exact tokenizer可以是某个 estimator实现，但不能成为基础 contract的默认语义。
+V2继续遵守：
+
+- `IHistoryUnitLoadEstimator`实现与 `RecapHistoryLoadProjector`由 Planner/Host拥有，raw core与
+  Store不理解 tokenizer；
+- config只保存 versioned estimator identity与 cadence thresholds；
+- Building冻结 final admission/route后，Resume/Restore不读取 active estimator；
+- raw event safety ceilings独立生效，不与 HistoryLoad threshold做 cross-unit reachability比较；
+- 不向 raw event写入 load；cache缺失或损坏不影响正确性。
+
+V1 count thresholds无法自动换算为 V2 load thresholds。旧文件由 operator完成真实历史校准后原子
+替换；loader不猜测数值、不做隐式 migration。`bounded-maintain-all-v1`只消费 evaluator已经证明
+cadence合法的 candidates，并继续负责 topology/route/call/raw budgets；它不拥有 estimator或
+HistoryLoad eligibility，因此无需随 config schema升版。
 
 ## 9. 实施工作包
 
@@ -633,6 +642,24 @@ V1的 cadence使用 `HistoryUnitCount`；`maxRawEventsPerStep/Build`继续作为
 - missing/invalid config的 zero-provider/zero-raw-side-effect tests；
 - Prepared/Started删除 config/Store仍 exact recover。
 
+### H0～H2：HistoryLoad cutover
+
+按
+[Derived Recap History Load §8](derived-recap-history-load-target-design.md#8-实施-gates)
+依次完成：
+
+```text
+H0 unit estimator + window projector + Galatea calibration
+  -> H1a inactive V2 contracts/codec/registry
+  -> H1b Planner evaluator/policy/executor integration vertical
+  -> H1c single production authority cutover
+  -> H2 cache profiling decision
+```
+
+只有 H1c切换 production authority。H1a/H1b不得留下可由 production独立选择的第二套 cadence；
+H1c不得保留 HistoryUnit/HistoryLoad双 scheduling authority，也不得为了 header prefilter或cache
+升级 raw event schema。Canonical V2 thresholds必须先通过 H0真实历史校准。
+
 ### C3：Real repo acceptance
 
 ```text
@@ -642,8 +669,8 @@ import real export
   -> run / partial failure / resume
   -> Published inspect
   -> run again = NoBuild
-  -> grow to R+B-1 units = NoBuild
-  -> grow to R+B units + cadence-safe boundary = Published with recent >= R
+  -> grow to R+B-1 HistoryLoad = NoBuild
+  -> grow to R+B HistoryLoad + cadence-safe boundary = Published with recent load >= R
   -> edit config atomically
   -> next command observes new hash
   -> existing Published ordinal/materialization unchanged
@@ -658,8 +685,8 @@ import real export
 - latest Published后 add/remove/reorder/resolved-identity/content-ceiling变化均返回
   `CatalogMigrationRequired`，零 LLM、零 Building写入；
 - 同一 block identity上的 profile切换只影响下一次 `Maintain`，且不递归追溯 Inherit producer；
-- numeric boundary、`R+B` overflow及 `R+B <= MaxRawGrowthEventCount` cross-field validation；
-- cadence `R=20/B=24` threshold、minimum reserve与 failed/retry zero-unit；
+- numeric boundary、`R+B` overflow与 raw-event/HistoryLoad cross-unit separation；
+- HistoryLoad threshold、minimum reserve与 failed/retry zero-load；
 - catalog order canonical；
 - symlink/reparse/file-vs-directory/ancestor escape；
 - init create-new与 atomic publication crash points；
@@ -681,7 +708,7 @@ import real export
 
 ## 11. Non-goals
 
-- V1 tokenizer或 information estimator选型；
+- provider/model exact token estimator；
 - provider/model/connection配置；
 - prompt正文或任意 prompt override；
 - per-ref/per-branch override；

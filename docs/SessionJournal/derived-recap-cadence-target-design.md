@@ -8,6 +8,8 @@
 > [Event-addressed Derived Recap V4](event-addressed-derived-recap-v4-target-design.md)
 > **配置设计**：
 > [Repo-owned RecapPlannerConfig](recap-planner-config-repository-design.md)
+> **后续计量设计**：
+> [Derived Recap History Load](derived-recap-history-load-target-design.md)
 
 ## 0. 目标
 
@@ -353,7 +355,9 @@ remaining unit count >= R
 - header-only negative prefilter、delayed budget fallback及 focused tests。
 
 C1也已完成 repo document/composition、runtime authority split与管理命令；C2已完成
-CLI/online durable phase与 Building-first cutover。C3负责 Galatea real acceptance。
+CLI/online durable phase与 Building-first cutover。后续先按
+[Derived Recap History Load](derived-recap-history-load-target-design.md)完成 H0～H2，再由 C3负责
+Galatea real acceptance。
 
 ## 7. 验收矩阵
 
@@ -377,32 +381,26 @@ CLI/online durable phase与 Building-first cutover。C3负责 Galatea real accep
 - partial Building按 frozen manifest Resume，不读取或重算 cadence；
 - Published Restore不改变 admission或 recent suffix provenance。
 
-## 8. Future information estimator
+## 8. HistoryLoad后续设计
 
-V1只实现 `HistoryUnitCount`，不在配置中预埋 tokenizer名称或任意参数。
+`HistoryUnitCount`是 C0～C2已经实现的过渡 cadence authority。其后续 breaking cutover已经由
+[Derived Recap History Load](derived-recap-history-load-target-design.md)定稿：
 
-未来 V2保留“minimum recent reserve + build interval”两个目标，但不预先承诺继续用
-`recent = G - C`。Estimator直接测量 ordered range：
+- cadence改用抽象 `HistoryLoadUnit`；
+- V1 estimator固定为
+  `atelia.history-load.o200k-base.history-unit-v1`；
+- `o200k_base`只是内部稳定分段尺度，不表示推理模型/provider token；
+- Planner/Host拥有 estimator，raw core与Store不理解 HistoryLoad；
+- `IHistoryUnitLoadEstimator`按单个 HistoryUnit测量，Planner projector独立完成
+  baseline-relative累加与boundary mapping；absorbed与recent load仍分别验证；
+- Resume/Restore不读取 active estimator或重算 frozen admission；
+- 不升级 raw event schema，是否需要持久 cache由真实 profiling决定。
 
-```text
-MeasureOrderedRange(HistoryUnits, start, end) -> non-negative long
-absorbed range load
-recent suffix range load
-minimum recent load
-build interval load
-```
-
-不提前要求 estimator逐 unit可加或 prefix可差分；chat template、role marker或 separator可能带来
-range-level overhead。V2 ADR必须分别验证 absorbed range达到 interval、recent range达到 reserve，
-并定义 range extension的单调性、framing context与性能策略。
-
-届时 config保存 versioned estimator id、明确单位与 thresholds。raw core继续只提供 units、content与
-replay-safe boundaries；Planner/Host拥有 estimator。Building已经冻结 final admission与route，
-Resume不得用新版 estimator重算。
+本文其余章节保留为已实现的 HistoryUnit baseline；后续施工与最终语义以新目标设计为准。
 
 ## 9. Non-goals
 
-- V1 tokenizer或 information estimator选型；
+- 推理模型/provider exact token estimator；
 - 按 user/agent turn计数；
 - exact R suffix保证；
 - mid-tool-loop admission；

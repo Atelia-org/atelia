@@ -42,6 +42,24 @@ entity/time lookup 与 multi-hop graph query。Memory 通常 query-dependent，�
 
 Recap 可以成为未来 Memory 的一个来源，但 EADR V4 不实现动态召回系统。
 
+### HistoryUnit 与 HistoryLoad
+
+`HistoryUnit`是 raw SessionJournal投影出的一个 dependency-closed Context message，也是
+replay-safe boundary对齐所使用的结构单位。
+
+`HistoryLoadUnit`是 Planner用于 recent reserve与rolling interval的内部负载计量单位。它由
+versioned estimator从 ordered HistoryUnits导出：
+
+- 不表示推理模型/provider token、计费单位或 context-window容量；
+- unit estimator独立测量每个 HistoryUnit，Planner projector对window直接求和；
+- 不写入 raw event或Recap Store；
+- 只在同一 estimator identity下可比较；
+- API failed/retry不形成 HistoryUnit，因此不贡献 HistoryLoad；
+- Building安装后，Resume/Restore不重新估算 HistoryLoad。
+
+C0～C2当前实现仍以 HistoryUnit count调度；后续 breaking cutover见
+[Derived Recap History Load](derived-recap-history-load-target-design.md)。
+
 ### Context
 
 `Context` 是一次 completion 实际看到的有限输入：
@@ -202,6 +220,7 @@ plan恢复时 exact ordinal保持 unavailable；不得借 Restore replan 或 fal
 - Published ≠ 当前可 materialize
 - strict ordinal ≠ “第 n 个当前健康 set”
 - rolling checkpoint ≠ `DerivedRecapSet`
+- HistoryLoadUnit ≠ provider/model token
 - Resume ≠ Restore
 - Restore ≠ Replan
 - Prepared snapshot ≠ Recap set identity

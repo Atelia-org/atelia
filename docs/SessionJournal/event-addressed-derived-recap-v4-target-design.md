@@ -10,6 +10,8 @@
 > [Repo-owned RecapPlannerConfig](recap-planner-config-repository-design.md)
 > **Post-R3 Cadence 设计**：
 > [Derived Recap Cadence](derived-recap-cadence-target-design.md)
+> **Post-C2 HistoryLoad 设计**：
+> [Derived Recap History Load](derived-recap-history-load-target-design.md)
 > **化简审阅记录**：
 > [V4 化简候选](event-addressed-derived-recap-v4-simplification-candidate.md)
 > **取代的候选设计**：
@@ -18,7 +20,7 @@
 > Restore + Online lifecycle、R3 Cutover + CLI + real-data acceptance均已完成；具体证据只在
 > implementation plan维护。Post-R3 C0 HistoryUnit cadence、C1 repo-owned config
 > document/composition与C2 CLI/online authority cutover也已完成；C3 Galatea real-repo
-> acceptance尚待执行
+> acceptance前先执行 H0～H2 HistoryLoad cutover
 
 ## 0. 一句话目标
 
@@ -399,7 +401,7 @@ intent；resolved `RecapPlanningInputs`表达本次 active catalog、cadence与 
 `RecapPlanningLimits`表达新 planning ceilings；`RecapProtocolHardCaps`则是 code/schema-owned
 frozen-plan边界。它们合起来至少描述：
 
-- `RecapCadenceConfig`：minimum recent HistoryUnit reserve + build interval；
+- `RecapCadenceConfig`：versioned HistoryLoad estimator + minimum recent reserve + build interval；
 - `MaxRawGrowthEventCount` raw traversal hard-limit，与 cadence计量分离；
 - replay-safe admission selection；
 - active `RecapBlockId / Target / MaintainerId` catalog；
@@ -412,7 +414,7 @@ frozen-plan边界。它们合起来至少描述：
 ```text
 open exact raw boundary + healthy Recap Store
   -> find current-lineage latest Published set
-  -> exact HistoryUnit growth < reserve + interval: NoBuild
+  -> exact HistoryLoad growth < reserve + interval: NoBuild
   -> threshold reached但无 cadence-safe replay boundary: NoBuild
   -> select strict-later SetAdmissionAnchor，admission后至少保留 reserve
   -> decide each block Maintain/Inherit
@@ -508,8 +510,9 @@ bounded Restore 与显式运维。
 8. single rolling checkpoint 只是可丢弃 progress cache。
 9. Store defects/capabilities → Planner bounded ephemeral restore actions，Store 不调 Maintainer。
 10. Prepared exact reopen 不访问 Recap Store。
-11. cadence只数实际进入 Context 的 dependency-closed HistoryUnits；raw API failed/retry不推进 cadence。
-12. `SetAdmissionAnchor` 后至少保留 configured minimum recent HistoryUnits。
+11. cadence只测量实际进入 Context 的 dependency-closed HistoryUnits所贡献的 HistoryLoad；
+    raw API failed/retry不推进 cadence。
+12. `SetAdmissionAnchor` 后至少保留 configured minimum recent HistoryLoad。
 
 ## 10. 非目标
 
@@ -545,9 +548,9 @@ bounded Restore 与显式运维。
 - latest/middle invalid Published set均保持 ordinal，不 fallback；
 - off-lineage Published directory不可见；
 - `EmptyLineage`、ordinal不足、exact invalid、Store unavailable可区分；
-- `R=20/B=24` 时 43 HistoryUnits NoBuild；44 units且存在 cadence-safe replay boundary时
-  Build，Published后至少保留20 units；
-- API failed/retry不推进 cadence；dependency closure无法 exact 20时只允许多留、不允许少留；
+- growth HistoryLoad低于 `R+B` 时 NoBuild；达到 threshold且存在 cadence-safe replay boundary时
+  Build，Published后 recent load至少为 R且 absorbed load至少为 B；
+- API failed/retry不推进 cadence；dependency closure无法留下 exact R时只允许多留、不允许少留；
 - 10k cold prefix selection不读取未选 raw event payload；
 - Prepared 后删除整个 `derived/recap/v4`仍 exact reopen；
 - active target 不再使用 DerivedArtifactSet/DerivedMemory 作为 V4 Recap 领域名。
