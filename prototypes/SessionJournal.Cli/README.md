@@ -32,6 +32,7 @@ recap planner-config inspect
 recap history-load inspect
 recap create
 recap inspect
+recap materialize-inspect
 recap run
 recap resume
 recap restore
@@ -121,6 +122,29 @@ Published 报告把 membership 的 `Present / Absent / Invalid / StoreUnavailabl
 `restoreEligibility`、per-block capability 分开。Published directory 已存在但 payload 损坏时仍是
 exact ordinal member，不会被误报成 Missing。`inspect` 是只读操作，成功完成检查返回 0；参数、路径、
 raw 或 Store 读取错误返回 1。
+
+### recap materialize-inspect
+
+对 captured raw head 执行一次 strict ordinal candidate selection、exact
+materialization 与 recent-history boundary 检查：
+
+```bash
+dotnet run --project prototypes/SessionJournal.Cli -- \
+  recap materialize-inspect --input <repo-dir> --branch main \
+  [--nth-previous <zero-based-ordinal>] \
+  [--report-json <path-outside-repo>]
+```
+
+`--nth-previous` 默认是 `0`。命令使用与 online runtime 相同的 public
+`DerivedRecapContextCandidateSource`，并把 exact Published plan 中的 `RecapBlockId`映射到每个
+materialized contribution。content-free JSON 只报告 captured head、selected admission anchor、
+recent raw/history-unit 范围与数量，以及每个 contribution 的 target、UTF-8 bytes、content hash和
+`AbsorbedThrough`；不输出 recap 正文、opaque handle或 envelope token。
+
+该命令不读取 planner config、connections或Completion provider，不创建/修复 Store，也不写raw或
+sidecar。Store scaffolding缺失、ordinal不存在、exact set损坏或materialization unavailable均写出
+typed report并返回 2；成功 Selected返回 0；参数、input/report路径错误返回 1。`--report-json`必须
+位于repo外。
 
 ### recap run
 
@@ -303,12 +327,20 @@ dotnet run --project prototypes/SessionJournal.Cli -- \
   --input <legacy-export.json> \
   --output <new-repo-dir> \
   [--force] \
-  [--report-md <path-outside-repo>]
+  [--report-md <path-outside-repo>] \
+  [--report-json <path-outside-repo>]
 ```
 
 导入只保留 raw setup、observation、agent action；旧 compaction/recap 只计数并跳过。未知 event 与
 无法无损表达的旧 tool transcript fail fast。`--force` 使用同级 staging repo 完整导入、reopen
 验证后再替换 exact target，不把“导出成功”当作 importer 语义验收。
+
+Markdown与JSON都从同一个verified import report生成。JSON schema是
+`atelia.session-journal.legacy-import-report.v1`，包含source identity、各类计数、final setup/head、
+semantic commitment、content-free event mapping和显式空`warnings`集合；不包含system prompt或
+history正文。两个report都必须位于新repo外、不得覆盖input，且以同目录temporary file atomic
+publish。当前 importer 对未知或有损输入一律 fail-fast，没有非致命 warning 路径，因此
+`warnings: []`是authoritative import contract，不是过滤后的视图。
 
 ## validate
 

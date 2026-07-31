@@ -1,4 +1,5 @@
 using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using Atelia.Completion;
 using Atelia.Completion.Abstractions;
@@ -153,6 +154,225 @@ public sealed class ProgramRecapStoreCommandTests : IDisposable {
         AssertSafeInspectionReport(damagedText, secret);
         Assert.Equal(raw, ReadRawSnapshot(fixture.Path));
         AssertNoTemporaryReports();
+    }
+
+    [Fact]
+    public async Task MaterializeInspectReportsExactContentFreeRecentRangeWithoutMutation() {
+        Fixture fixture = await CreateFixtureAsync("materialize");
+        Assert.Equal(0, Run(CreateArgs(fixture)));
+        const string secret = "SECRET-MATERIALIZED-RECAP";
+        await CreateFinalBuildingAsync(fixture, secret);
+        await PublishAsync(fixture);
+        using (var engine = SJ.SessionJournalEngine.Open(
+                   fixture.Path,
+                   fixture.BranchName
+               )) {
+            engine.AppendObservation("recent observation");
+            _ = engine.AppendImportedAgentAction(
+                new ActionMessage([
+                    new ActionBlock.Text("recent action")
+                ]),
+                new CompletionDescriptor("import", "v1", "model-a")
+            );
+        }
+        FileFingerprint[] before = FingerprintRepository(fixture.Path);
+        string reportPath = Path.Combine(
+            _tempRoot,
+            "materialize.json"
+        );
+
+        Assert.Equal(0, Run(MaterializeInspectArgs(
+            fixture,
+            reportPath,
+            nthPrevious: 0
+        )));
+
+        Assert.Equal(before, FingerprintRepository(fixture.Path));
+        string json = File.ReadAllText(reportPath);
+        Assert.DoesNotContain(secret, json, StringComparison.Ordinal);
+        using JsonDocument report = JsonDocument.Parse(json);
+        Assert.Equal(
+            "atelia.session-journal.derived-recap-"
+                + "materialization-inspection.v1",
+            String(report, "schema")
+        );
+        Assert.Equal("Selected", String(report, "status"));
+        Assert.Equal(
+            SJ.EventAddressTextCodec.Format(fixture.Anchor),
+            String(report, "setAdmissionAnchor")
+        );
+        JsonElement recent = report.RootElement
+            .GetProperty("recentHistory");
+        Assert.Equal(
+            SJ.EventAddressTextCodec.Format(fixture.Anchor),
+            recent.GetProperty("startExclusive").GetString()
+        );
+        Assert.Equal(2, recent.GetProperty("rawEventCount").GetInt32());
+        Assert.Equal(
+            2,
+            recent.GetProperty("historyUnitCount").GetInt32()
+        );
+        JsonElement contribution = Assert.Single(
+            report.RootElement.GetProperty("contributions")
+                .EnumerateArray()
+        );
+        Assert.Equal(
+            "system",
+            contribution.GetProperty("targetCarrier").GetString()
+        );
+        Assert.Equal(
+            "roleplay.self",
+            contribution.GetProperty("targetBlockKey").GetString()
+        );
+        Assert.Equal(
+            Encoding.UTF8.GetByteCount(secret),
+            contribution.GetProperty("utf8Bytes").GetInt32()
+        );
+        Assert.Equal(
+            SJ.SessionContextContributionHasher.ComputeSha256(secret),
+            contribution.GetProperty("contentSha256").GetString()
+        );
+        Assert.Empty(
+            report.RootElement.GetProperty("defects").EnumerateArray()
+        );
+    }
+
+    [Fact]
+    public async Task MaterializeInspectPreservesStrictOrdinalAndDoesNotCreateMissingStore() {
+        Fixture first = await CreateFixtureAsync("ordinals");
+        Assert.Equal(0, Run(CreateArgs(first)));
+        await CreateFinalBuildingAsync(first, "first recap");
+        await PublishAsync(first);
+
+        EventAddress secondAnchor;
+        using (var engine = SJ.SessionJournalEngine.Open(
+                   first.Path,
+                   first.BranchName
+               )) {
+            engine.AppendObservation("later observation");
+            secondAnchor = engine.AppendImportedAgentAction(
+                new ActionMessage([
+                    new ActionBlock.Text("later action")
+                ]),
+                new CompletionDescriptor("import", "v1", "model-a")
+            );
+        }
+        var second = new Fixture(
+            first.Path,
+            first.BranchName,
+            first.BranchRefId,
+            secondAnchor,
+            first.Anchor
+        );
+        await CreateFinalBuildingAsync(second, "second recap");
+        await PublishAsync(second);
+        FileFingerprint[] before = FingerprintRepository(first.Path);
+
+        string latestPath = Path.Combine(_tempRoot, "latest.json");
+        string previousPath = Path.Combine(_tempRoot, "previous.json");
+        string unavailablePath =
+            Path.Combine(_tempRoot, "unavailable.json");
+        Assert.Equal(0, Run(MaterializeInspectArgs(
+            second,
+            latestPath,
+            nthPrevious: 0
+        )));
+        Assert.Equal(0, Run(MaterializeInspectArgs(
+            second,
+            previousPath,
+            nthPrevious: 1
+        )));
+        Assert.Equal(2, Run(MaterializeInspectArgs(
+            second,
+            unavailablePath,
+            nthPrevious: 2
+        )));
+
+        using JsonDocument latest = ReadJson(latestPath);
+        using JsonDocument previous = ReadJson(previousPath);
+        using JsonDocument unavailable = ReadJson(unavailablePath);
+        Assert.Equal(
+            SJ.EventAddressTextCodec.Format(secondAnchor),
+            String(latest, "setAdmissionAnchor")
+        );
+        Assert.Equal(
+            SJ.EventAddressTextCodec.Format(first.Anchor),
+            String(previous, "setAdmissionAnchor")
+        );
+        Assert.Equal(
+            "OrdinalUnavailable",
+            String(unavailable, "status")
+        );
+        Assert.Equal(before, FingerprintRepository(first.Path));
+
+        Fixture missing = await CreateFixtureAsync("missing-store");
+        FileFingerprint[] missingBefore =
+            FingerprintRepository(missing.Path);
+        string missingPath = Path.Combine(_tempRoot, "missing.json");
+        Assert.Equal(2, Run(MaterializeInspectArgs(
+            missing,
+            missingPath,
+            nthPrevious: 0
+        )));
+        using JsonDocument missingReport = ReadJson(missingPath);
+        Assert.Equal(
+            "StoreUnavailable",
+            String(missingReport, "status")
+        );
+        Assert.Equal(
+            missingBefore,
+            FingerprintRepository(missing.Path)
+        );
+        Assert.False(Directory.Exists(Path.Combine(
+            missing.Path,
+            "derived"
+        )));
+
+        Fixture damaged = await CreateFixtureAsync("damaged-store");
+        Assert.Equal(0, Run(CreateArgs(damaged)));
+        string storeHeader = Path.Combine(
+            damaged.Path,
+            "derived",
+            "recap",
+            "v4",
+            "refs",
+            damaged.BranchRefId,
+            "store.json"
+        );
+        File.WriteAllText(storeHeader, "damaged");
+        FileFingerprint[] damagedBefore =
+            FingerprintRepository(damaged.Path);
+        string damagedPath =
+            Path.Combine(_tempRoot, "damaged-store.json");
+        Assert.Equal(2, Run(MaterializeInspectArgs(
+            damaged,
+            damagedPath,
+            nthPrevious: 0
+        )));
+        using JsonDocument damagedReport = ReadJson(damagedPath);
+        Assert.Equal(
+            "StoreUnavailable",
+            String(damagedReport, "status")
+        );
+        Assert.Equal(
+            damagedBefore,
+            FingerprintRepository(damaged.Path)
+        );
+    }
+
+    [Fact]
+    public async Task MaterializeInspectRejectsReportInsideInputRepository() {
+        Fixture fixture = await CreateFixtureAsync("materialize-path");
+        Assert.Equal(0, Run(CreateArgs(fixture)));
+        string reportPath = Path.Combine(fixture.Path, "report.json");
+
+        Assert.Equal(1, Run(MaterializeInspectArgs(
+            fixture,
+            reportPath,
+            nthPrevious: 0
+        )));
+
+        Assert.False(File.Exists(reportPath));
     }
 
     [Fact]
@@ -668,6 +888,18 @@ public sealed class ProgramRecapStoreCommandTests : IDisposable {
         "--report-json", reportPath
     ];
 
+    private static string[] MaterializeInspectArgs(
+        Fixture fixture,
+        string reportPath,
+        int nthPrevious
+    ) => [
+        "recap", "materialize-inspect",
+        "--input", fixture.Path,
+        "--branch", fixture.BranchName,
+        "--nth-previous", nthPrevious.ToString(),
+        "--report-json", reportPath
+    ];
+
     private static string[] AbandonArgs(
         Fixture fixture,
         string reportPath
@@ -725,6 +957,23 @@ public sealed class ProgramRecapStoreCommandTests : IDisposable {
     private static string HashDerivedFiles(string path) =>
         HashFiles(path, includeDerived: true);
 
+    private static FileFingerprint[] FingerprintRepository(
+        string path
+    ) => [
+        .. Directory.EnumerateFiles(
+                path,
+                "*",
+                SearchOption.AllDirectories
+            )
+            .Order(StringComparer.Ordinal)
+            .Select(file => new FileFingerprint(
+                Path.GetRelativePath(path, file),
+                Convert.ToHexStringLower(
+                    SHA256.HashData(File.ReadAllBytes(file))
+                )
+            ))
+    ];
+
     private static string HashFiles(
         string path,
         bool includeDerived
@@ -774,6 +1023,11 @@ public sealed class ProgramRecapStoreCommandTests : IDisposable {
         string BranchRefId,
         EventAddress Anchor,
         EventAddress ReplayStart
+    );
+
+    private sealed record FileFingerprint(
+        string RelativePath,
+        string Sha256
     );
 
     private sealed record RawSnapshot(

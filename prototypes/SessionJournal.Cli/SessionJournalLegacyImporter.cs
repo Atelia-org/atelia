@@ -31,6 +31,37 @@ internal sealed record SessionJournalLegacyImportMapping(
     EventAddress EventAddress
 );
 
+internal sealed record SessionJournalLegacyImportReport(
+    string Schema,
+    string SourceSchema,
+    string? SourceBranchName,
+    string InputPath,
+    string OutputPath,
+    int SessionCreatedCount,
+    int RuntimeConfigSetupCount,
+    int SystemPromptSetupCount,
+    int ObservationCount,
+    int AgentActionCount,
+    int SkippedCompactionCount,
+    int SkippedRecapCount,
+    string FinalModelId,
+    string FinalCompletionSurfaceId,
+    string FinalHead,
+    string SystemPromptUtf8Sha256CodecId,
+    string FinalSystemPromptUtf8Sha256,
+    string HistorySemanticCommitmentCodecId,
+    string ExpectedHistorySemanticCommitmentSha256,
+    IReadOnlyList<SessionJournalLegacyImportMappingReport> Mappings,
+    IReadOnlyList<string> Warnings
+);
+
+internal sealed record SessionJournalLegacyImportMappingReport(
+    int LegacyOrdinal,
+    string LegacyKind,
+    string SessionEventKind,
+    string EventAddress
+);
+
 internal static class SessionJournalLegacyImporter {
     private const string LegacyMessageKindObservation = "observation";
     private const string LegacyMessageKindAction = "action";
@@ -860,13 +891,59 @@ internal static class SessionJournalLegacyImporter {
             SHA256.HashData(Encoding.UTF8.GetBytes(value))
         );
 
-    public static void WriteReport(
-        string reportPath,
+    public static SessionJournalLegacyImportReport CreateReport(
+        LegacyChatSessionExport export,
         string inputPath,
         string outputPath,
         SessionJournalLegacyImportResult result
     ) {
+        ArgumentNullException.ThrowIfNull(export);
+        ArgumentNullException.ThrowIfNull(result);
+        return new SessionJournalLegacyImportReport(
+            "atelia.session-journal.legacy-import-report.v1",
+            export.Schema
+                ?? throw new InvalidDataException(
+                    "Legacy export schema is missing."
+                ),
+            export.BranchName,
+            Path.GetFullPath(inputPath),
+            Path.GetFullPath(outputPath),
+            result.SessionCreatedCount,
+            result.RuntimeConfigSetupCount,
+            result.SystemPromptSetupCount,
+            result.ObservationCount,
+            result.AgentActionCount,
+            result.SkippedCompactionCount,
+            result.SkippedRecapCount,
+            result.FinalConfiguration.ModelId,
+            result.FinalConfiguration.CompletionSurfaceId,
+            EventAddressTextCodec.Format(result.FinalHead),
+            result.SystemPromptUtf8Sha256CodecId,
+            result.FinalSystemPromptUtf8Sha256,
+            result.HistorySemanticCommitmentCodecId,
+            result.ExpectedHistorySemanticCommitmentSha256,
+            Array.AsReadOnly([
+                .. result.Mappings.Select(static mapping =>
+                    new SessionJournalLegacyImportMappingReport(
+                        mapping.LegacyOrdinal,
+                        mapping.LegacyKind,
+                        mapping.SessionEventKind,
+                        EventAddressTextCodec.Format(
+                            mapping.EventAddress
+                        )
+                    )
+                )
+            ]),
+            Array.AsReadOnly(Array.Empty<string>())
+        );
+    }
+
+    public static void WriteMarkdownReport(
+        string reportPath,
+        SessionJournalLegacyImportReport report
+    ) {
         ArgumentException.ThrowIfNullOrWhiteSpace(reportPath);
+        ArgumentNullException.ThrowIfNull(report);
         string fullReportPath = Path.GetFullPath(reportPath);
         Directory.CreateDirectory(
             Path.GetDirectoryName(fullReportPath) ?? "."
@@ -875,40 +952,41 @@ internal static class SessionJournalLegacyImporter {
         using var writer = new StringWriter(content);
         writer.WriteLine("# SessionJournal Legacy Import Report");
         writer.WriteLine();
-        writer.WriteLine($"- input: `{inputPath}`");
-        writer.WriteLine($"- output: `{outputPath}`");
-        writer.WriteLine($"- sessionCreated: `{result.SessionCreatedCount}`");
-        writer.WriteLine($"- runtimeConfigSetups: `{result.RuntimeConfigSetupCount}`");
-        writer.WriteLine($"- systemPromptSetups: `{result.SystemPromptSetupCount}`");
-        writer.WriteLine($"- observations: `{result.ObservationCount}`");
-        writer.WriteLine($"- agentActions: `{result.AgentActionCount}`");
-        writer.WriteLine($"- skippedCompactions: `{result.SkippedCompactionCount}`");
-        writer.WriteLine($"- skippedRecaps: `{result.SkippedRecapCount}`");
-        writer.WriteLine($"- finalModelId: `{result.FinalConfiguration.ModelId}`");
-        writer.WriteLine($"- finalCompletionSurfaceId: `{result.FinalConfiguration.CompletionSurfaceId}`");
-        writer.WriteLine($"- finalHead: `{result.FinalHead}`");
+        writer.WriteLine($"- input: `{report.InputPath}`");
+        writer.WriteLine($"- output: `{report.OutputPath}`");
+        writer.WriteLine($"- sessionCreated: `{report.SessionCreatedCount}`");
+        writer.WriteLine($"- runtimeConfigSetups: `{report.RuntimeConfigSetupCount}`");
+        writer.WriteLine($"- systemPromptSetups: `{report.SystemPromptSetupCount}`");
+        writer.WriteLine($"- observations: `{report.ObservationCount}`");
+        writer.WriteLine($"- agentActions: `{report.AgentActionCount}`");
+        writer.WriteLine($"- skippedCompactions: `{report.SkippedCompactionCount}`");
+        writer.WriteLine($"- skippedRecaps: `{report.SkippedRecapCount}`");
+        writer.WriteLine($"- finalModelId: `{report.FinalModelId}`");
+        writer.WriteLine($"- finalCompletionSurfaceId: `{report.FinalCompletionSurfaceId}`");
+        writer.WriteLine($"- finalHead: `{report.FinalHead}`");
         writer.WriteLine(
             "- systemPromptUtf8Sha256CodecId: "
-            + $"`{result.SystemPromptUtf8Sha256CodecId}`"
+            + $"`{report.SystemPromptUtf8Sha256CodecId}`"
         );
         writer.WriteLine(
             "- finalSystemPromptUtf8Sha256: "
-            + $"`{result.FinalSystemPromptUtf8Sha256}`"
+            + $"`{report.FinalSystemPromptUtf8Sha256}`"
         );
         writer.WriteLine(
             "- historySemanticCommitmentCodecId: "
-            + $"`{result.HistorySemanticCommitmentCodecId}`"
+            + $"`{report.HistorySemanticCommitmentCodecId}`"
         );
         writer.WriteLine(
             "- expectedHistorySemanticCommitmentSha256: "
-            + $"`{result.ExpectedHistorySemanticCommitmentSha256}`"
+            + $"`{report.ExpectedHistorySemanticCommitmentSha256}`"
         );
         writer.WriteLine();
         writer.WriteLine("## Mapping");
         writer.WriteLine();
         writer.WriteLine("| legacy ordinal | legacy kind | session event kind | event address |");
         writer.WriteLine("| ---: | --- | --- | --- |");
-        foreach (SessionJournalLegacyImportMapping mapping in result.Mappings) {
+        foreach (SessionJournalLegacyImportMappingReport mapping
+                 in report.Mappings) {
             writer.WriteLine($"| {mapping.LegacyOrdinal} | `{mapping.LegacyKind}` | `{mapping.SessionEventKind}` | `{mapping.EventAddress}` |");
         }
         WriteTextAtomically(fullReportPath, content.ToString());

@@ -146,6 +146,99 @@ public sealed class ProgramLegacyImportSafetyTests : IDisposable {
         );
     }
 
+    [Fact]
+    public void JsonAndMarkdownReportsShareOneContentFreeImportEvidence() {
+        Directory.CreateDirectory(_tempRoot);
+        string inputPath = Path.Combine(_tempRoot, "legacy.json");
+        string outputPath = Path.Combine(_tempRoot, "session-journal");
+        string markdownPath = Path.Combine(_tempRoot, "import.md");
+        string jsonPath = Path.Combine(_tempRoot, "import.json");
+        const string secret = "SECRET-HISTORY-CONTENT";
+        WriteExport(
+            inputPath,
+            [
+                InitialState() with {
+                    Messages = [
+                        new LegacyChatSessionMessage {
+                            Kind = "observation",
+                            Content = secret
+                        },
+                        new LegacyChatSessionMessage {
+                            Kind = "action",
+                            Action = new LegacyChatSessionAction {
+                                Blocks = [
+                                    new SerializedActionBlock(
+                                        ActionMessageSerialization
+                                            .BlockKindText,
+                                        secret,
+                                        ToolName: null,
+                                        ToolCallId: null,
+                                        RawArgumentsJson: null,
+                                        Reasoning: null
+                                    )
+                                ]
+                            }
+                        }
+                    ]
+                }
+            ]
+        );
+
+        Assert.Equal(0, Program.MainCore(
+            [
+                "import-legacy-json",
+                "--input", inputPath,
+                "--output", outputPath,
+                "--report-md", markdownPath,
+                "--report-json", jsonPath
+            ],
+            ThrowingCompletionClientFactory.Instance
+        ));
+
+        string json = File.ReadAllText(jsonPath);
+        string markdown = File.ReadAllText(markdownPath);
+        Assert.DoesNotContain(secret, json, StringComparison.Ordinal);
+        Assert.DoesNotContain(secret, markdown, StringComparison.Ordinal);
+        using JsonDocument report = JsonDocument.Parse(json);
+        Assert.Equal(
+            "atelia.session-journal.legacy-import-report.v1",
+            report.RootElement.GetProperty("schema").GetString()
+        );
+        Assert.Equal(
+            LegacyChatSessionExportSchema.SchemaId,
+            report.RootElement.GetProperty("sourceSchema").GetString()
+        );
+        Assert.Equal(
+            1,
+            report.RootElement.GetProperty("observationCount")
+                .GetInt32()
+        );
+        Assert.Equal(
+            1,
+            report.RootElement.GetProperty("agentActionCount")
+                .GetInt32()
+        );
+        Assert.Empty(
+            report.RootElement.GetProperty("warnings").EnumerateArray()
+        );
+        Assert.Equal(
+            3,
+            report.RootElement.GetProperty("mappings")
+                .GetArrayLength()
+        );
+        Assert.Contains(
+            $"- finalHead: `"
+                + report.RootElement.GetProperty("finalHead").GetString(),
+            markdown,
+            StringComparison.Ordinal
+        );
+        Assert.Empty(Directory.EnumerateFiles(
+            _tempRoot,
+            ".*.tmp",
+            SearchOption.AllDirectories
+        ));
+    }
+
     [Theory]
     [InlineData("observation")]
     [InlineData("action")]
@@ -511,6 +604,29 @@ public sealed class ProgramLegacyImportSafetyTests : IDisposable {
                 "--input", inputPath,
                 "--output", outputPath,
                 "--report-md", inputPath
+            ],
+            ThrowingCompletionClientFactory.Instance
+        );
+
+        Assert.Equal(1, exitCode);
+        Assert.Equal(originalJson, File.ReadAllText(inputPath));
+        Assert.False(Directory.Exists(outputPath));
+    }
+
+    [Fact]
+    public void JsonReportPathCannotOverwriteLegacyInput() {
+        Directory.CreateDirectory(_tempRoot);
+        string inputPath = Path.Combine(_tempRoot, "legacy.json");
+        string outputPath = Path.Combine(_tempRoot, "session-journal");
+        WriteExport(inputPath, [InitialState()]);
+        string originalJson = File.ReadAllText(inputPath);
+
+        int exitCode = Program.MainCore(
+            [
+                "import-legacy-json",
+                "--input", inputPath,
+                "--output", outputPath,
+                "--report-json", inputPath
             ],
             ThrowingCompletionClientFactory.Instance
         );

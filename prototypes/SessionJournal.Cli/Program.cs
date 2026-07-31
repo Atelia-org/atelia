@@ -76,33 +76,62 @@ internal static class Program {
     }
 
     private static int RunImportLegacyJson(CliOptions options) {
-        string inputPath = options.Require("input");
-        string outputPath = options.Require("output");
-        string? reportPath = options.Get("report-md");
+        options.EnsureOnly(
+            "input",
+            "output",
+            "force",
+            "report-md",
+            "report-json"
+        );
+        string inputPath = options.RequireSingle("input");
+        string outputPath = options.RequireSingle("output");
+        string? markdownReportPath =
+            options.GetOptionalSingle("report-md");
+        string? jsonReportPath =
+            options.GetOptionalSingle("report-json");
+        if (options.GetAll("force").Count > 1) {
+            throw new ArgumentException(
+                "Option --force must be specified at most once."
+            );
+        }
         bool force = options.HasFlag("force");
 
         CliIo.EnsurePathChainHasNoReparsePoint(inputPath, "--input");
         CliIo.EnsurePathChainHasNoReparsePoint(outputPath, "--output");
         CliIo.EnsurePathsDoNotOverlap(inputPath, outputPath);
-        if (!string.IsNullOrWhiteSpace(reportPath)) {
+        foreach ((string? reportPath, string option) in new[] {
+                     (markdownReportPath, "--report-md"),
+                     (jsonReportPath, "--report-json")
+                 }) {
+            if (reportPath is null) {
+                continue;
+            }
             CliIo.EnsurePathChainHasNoReparsePoint(
                 reportPath,
-                "--report-md"
+                option
             );
             CliIo.EnsurePathsAreDifferent(
                 inputPath,
                 reportPath,
-                "--report-md must not overwrite --input."
+                $"{option} must not overwrite --input."
             );
             CliIo.EnsurePathIsOutsideRepository(
                 outputPath,
                 reportPath,
-                "--report-md"
+                option
             );
             CliIo.EnsureFilePathIsNotAncestorOfDirectory(
                 reportPath,
                 outputPath,
-                "--report-md must not contain --output."
+                $"{option} must not contain --output."
+            );
+        }
+        if (markdownReportPath is not null
+            && jsonReportPath is not null) {
+            CliIo.EnsurePathsAreDifferent(
+                markdownReportPath,
+                jsonReportPath,
+                "--report-md and --report-json must be different."
             );
         }
 
@@ -111,6 +140,13 @@ internal static class Program {
         SessionJournalLegacyImportResult result =
             SessionJournalLegacyImporter.Import(export, outputPath, force);
         SessionJournalLegacyImporter.VerifyImportedRepo(outputPath, result);
+        SessionJournalLegacyImportReport report =
+            SessionJournalLegacyImporter.CreateReport(
+                export,
+                inputPath,
+                outputPath,
+                result
+            );
 
         Console.WriteLine($"schema: {export.Schema}");
         Console.WriteLine($"branchName: {export.BranchName ?? "(none)"}");
@@ -128,14 +164,20 @@ internal static class Program {
             $"skippedCompactions: {result.SkippedCompactionCount}"
         );
         Console.WriteLine($"skippedRecaps: {result.SkippedRecapCount}");
-        if (!string.IsNullOrWhiteSpace(reportPath)) {
-            SessionJournalLegacyImporter.WriteReport(
-                reportPath,
-                inputPath,
-                outputPath,
-                result
+        if (markdownReportPath is not null) {
+            SessionJournalLegacyImporter.WriteMarkdownReport(
+                markdownReportPath,
+                report
             );
-            Console.WriteLine($"report: {Path.GetFullPath(reportPath)}");
+            Console.WriteLine(
+                $"markdownReport: {Path.GetFullPath(markdownReportPath)}"
+            );
+        }
+        if (jsonReportPath is not null) {
+            CliIo.WriteJsonAtomically(jsonReportPath, report);
+            Console.WriteLine(
+                $"jsonReport: {Path.GetFullPath(jsonReportPath)}"
+            );
         }
         return 0;
     }
@@ -292,6 +334,11 @@ internal static class Program {
             + "[--report-json <path-outside-repo>]"
         );
         Console.WriteLine(
+            "  recap materialize-inspect --input <repo-dir> "
+            + "--branch <name> [--nth-previous <zero-based>] "
+            + "[--report-json <path-outside-repo>]"
+        );
+        Console.WriteLine(
             "  recap run --input <repo-dir> --branch <name> "
             + "--connections <path> [--connection <id>] "
             + "[--call-log-dir <dir>] "
@@ -323,7 +370,8 @@ internal static class Program {
         );
         Console.WriteLine(
             "  import-legacy-json --input <json> --output <repo-dir> "
-            + "[--force] [--report-md <path>]"
+            + "[--force] [--report-md <path>] "
+            + "[--report-json <path>]"
         );
         Console.WriteLine(
             "  validate --input <repo-dir> [--branch <name>] "
