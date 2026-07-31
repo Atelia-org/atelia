@@ -29,6 +29,7 @@ CLI 不依赖已删除的 `SessionJournal.DerivedMemory`。旧 `ChatSession` rep
 ```text
 recap planner-config init
 recap planner-config inspect
+recap history-load inspect
 recap create
 recap inspect
 recap run
@@ -38,7 +39,8 @@ recap abandon-building
 recap reset
 ```
 
-`planner-config init/inspect` 是 repo-wide，只要求 `--input`；其余 branch-local 子命令还要求
+`planner-config init/inspect` 是 repo-wide，只要求 `--input`；`history-load inspect` 是
+branch-local 只读命令，省略 `--branch` 时选择 `main`；其余 branch-local 子命令还要求
 `--branch`。Store 不会由 `run`、online 或读取路径自动创建；首次使用必须显式执行
 `recap create`。同样不存在自动 reset 或“一键 reset-and-rebuild”。
 
@@ -64,6 +66,29 @@ normalized view。二者都不打开 Recap Store、不选择 branch、不创建 
 一次 repo document，并在整个 operation内复用同一 immutable composition。current-lineage
 Building按 frozen manifest恢复；`resume`与 `restore`也始终只服从 frozen plan、完整 capability
 registry与 code-owned V4 hard caps，不读取 active planner config。
+
+### recap history-load inspect
+
+对 selected branch 从 `SessionCreated` exact boundary 到 captured head 的完整 planning window
+执行一次离线 HistoryLoad 校准：
+
+```bash
+dotnet run --project prototypes/SessionJournal.Cli -- \
+  recap history-load inspect --input <repo-dir> \
+  [--branch main] \
+  [--report-json <path-outside-repo>]
+```
+
+命令固定使用 `atelia.history-load.o200k-base.history-unit-v1` estimator；每个 dependency-closed
+HistoryUnit 独立 canonical rendering 后测量，因此结果不是 provider request token count。JSON
+schema 是 `atelia.session-journal.recap-history-load-calibration.v1`，包含 content-free 的
+raw/unit/boundary/load/bytes totals、按 kind 汇总、unit load/bytes nearest-rank 分布、按
+zero-based ordinal 排列的 unit/source range、replay-safe boundary，以及连续 20/24-unit
+窗口的 load 分布。
+
+该命令只用 `SessionJournalEngine.OpenReadOnly`，不读取 connections、planner config 或 Recap
+Store，不创建 client、不调用 LLM、不写 repo。`--report-json` 必须位于 repo 外；报告不包含
+history content、tool name、prompt、connections 或 call log。
 
 ### recap create
 

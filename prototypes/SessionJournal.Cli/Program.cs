@@ -278,6 +278,11 @@ internal static class Program {
             + "[--report-json <path-outside-repo>]"
         );
         Console.WriteLine(
+            "  recap history-load inspect --input <repo-dir> "
+            + "[--branch <name>] "
+            + "[--report-json <path-outside-repo>]"
+        );
+        Console.WriteLine(
             "  recap create --input <repo-dir> --branch <name> "
             + "[--report-json <path-outside-repo>]"
         );

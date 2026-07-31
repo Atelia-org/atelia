@@ -22,6 +22,7 @@ internal static class RecapStoreCommands {
             || args[0].StartsWith("--", StringComparison.Ordinal)) {
             throw new ArgumentException(
                 "recap requires one subcommand: planner-config, "
+                + "history-load, "
                 + "create, inspect, "
                 + "run, resume, restore, abandon-building, or reset."
             );
@@ -34,6 +35,15 @@ internal static class RecapStoreCommands {
                 StringComparison.Ordinal
             )) {
             return RecapPlannerConfigCommands.RunAsync(
+                args.Skip(1).ToArray()
+            );
+        }
+        if (string.Equals(
+                subcommand,
+                "history-load",
+                StringComparison.Ordinal
+            )) {
+            return RecapHistoryLoadCommands.RunAsync(
                 args.Skip(1).ToArray()
             );
         }
