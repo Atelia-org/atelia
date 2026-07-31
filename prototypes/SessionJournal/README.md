@@ -151,29 +151,41 @@ engine.UseRuntime(runtime);
 
 ## Send 与 recovery
 
-启动或重开时先检查 phase：
+启动或重开时先检查最小 runtime recovery requirement：
 
 ```csharp
-SessionExecutionBoundaryInspection boundary =
-    engine.InspectExecutionBoundary();
-
-if (boundary.Phase is SessionExecutionPhase.Idle
-    or SessionExecutionPhase.TurnFailed) {
-    TurnResult turn = await engine.SendAsync(
-        "new observation",
-        cancellationToken
-    );
-}
-else {
-    ResumeOutcome resumed =
-        await engine.ResumeAsync(cancellationToken);
-}
+SessionRuntimeRecoveryRequirements requirement =
+    engine.InspectRuntimeRecoveryRequirements(cancellationToken);
 ```
+
+- `NoRuntimeRequired`表示当前没有 pending dispatch；`Idle`上的新Send由Host另行选择runtime，
+  `TurnFailed`应先走exact abandon contract（G0B）。
+- `NewRequestRequired`表示已接受Observation但尚未冻结completion target；Host提供与该head
+  governing setup匹配的新runtime，不能在active turn中append setup。
+- `FrozenCompletionRequired`携带Prepared/Started恢复所需的non-secret exact target、client/API、
+  visible-tool-set hash及可选tool runtime identity。Host必须exact bind，不能fallback到default。
+- `ToolContinuationRequired`只冻结tool runtime；它不会谎称旧completion connection也被冻结。
+
+`FrozenCompletionRequired.DispatchState == StartedOutcomeUncertain`时，默认先返回给operator；不要
+为了检查identity而提前创建provider client。`SessionVisibleToolSetFingerprint.ComputeSha256(...)`
+可用于在调用`ResumeAsync`前验证Host提供的visible tool definitions。
+
+完成runtime/Recap composition后，Host应把inspection的exact head带入bound overload：
+
+```csharp
+await engine.SendAsync(requirement.CapturedHead!.Value, message, cancellationToken);
+await engine.ResumeAsync(requirement.CapturedHead!.Value, cancellationToken);
+```
+
+入口resolve发现head已经变化时抛出`SessionJournalExpectedHeadMismatchException`。入口检查之后
+发生的竞争仍由既有lifecycle/head CAS fence拒绝，可能保留其原有operational exception类型；两种
+情况都不会把先前组合的runtime用于后来tail。调用方应从inspection重新开始，而不是仅重试最后
+一次方法调用。
 
 规则：
 
-- `SendAsync`只允许 `Idle`或 `TurnFailed`，并且在 context/recap readiness通过后才提交新的
-  observation。
+- raw-core `SendAsync`当前允许 `Idle`或 `TurnFailed`；产品Host应在G0B完成后先abandon
+  `TurnFailed`，避免失败Observation进入后续history。
 - 非 idle phase必须先 `ResumeAsync`；不要为了“恢复”再次调用 `SendAsync`。
 - `ResumeOutcome.Advanced == false`表示当前没有待恢复工作。
 - `Prepared` / `Started` recovery使用 durable frozen request，不重新读取 active Recap config。
@@ -182,8 +194,8 @@ else {
 - `SessionJournalTurnAbortedException`表示 completion已形成 terminal abort；它携带 termination与
   errors。
 
-不要根据 exception文本、文件是否存在或 head event名称自行发明恢复逻辑；以
-`InspectExecutionBoundary`、`SendAsync`和 `ResumeAsync`为入口。
+不要根据 exception文本、文件是否存在或 head event名称自行发明恢复逻辑；Host以
+`InspectRuntimeRecoveryRequirements`选择runtime，再进入`SendAsync`或`ResumeAsync`。
 
 ## Context / Recap 扩展点
 
@@ -231,6 +243,32 @@ Prepared/Started/Failed等 protocol events也可能不产生 HistoryUnit。Plann
 distance冒充 context/history长度。
 
 ## Setup 变更
+
+普通Host在新Send前应使用exact-head desired reconciliation：
+
+```csharp
+SessionRuntimeRecoveryRequirements requirement =
+    engine.InspectRuntimeRecoveryRequirements();
+
+var result = engine.ReconcileDesiredSetup(
+    requirement.CapturedHead,
+    new SessionDesiredSetup(
+        ModelId: selectedConnection.ModelId,
+        CompletionSurfaceId: selectedConnection.CompletionSurfaceId,
+        SystemPrompt: desiredSystemPrompt
+    )
+);
+```
+
+该入口只允许exact `Idle`，自动保留governing `Schema`和`DerivedContext`，按runtime setup再system
+prompt的顺序幂等追加。`TurnFailed`返回`FailedTurnMustBeAbandoned`；Prepared、Started、
+AwaitingAgentAction和tool-active phase返回`ActiveTurn`且不写raw。`Retryable`表示captured head已经
+变化，Host应重新inspect整条决策链。
+
+如果第二次prompt append失败，前一条runtime intent不回滚；下次retry只补缺失prompt。这是raw
+operator intent的自然幂等收敛，不需要setup transaction state machine。
+
+更低层的受控工具仍可直接调用：
 
 可写 engine提供：
 

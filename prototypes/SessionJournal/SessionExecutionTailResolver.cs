@@ -256,6 +256,13 @@ internal static class SessionExecutionTailResolver {
                     SourceObservation: source.SourceObservation,
                     LatestExecutionCheckpoint:
                         chain.SourcePreparedAddress
+                ),
+                new SessionPreparedRuntimeRecoverySnapshot(
+                    chain.SourceManifest.Target.Connection,
+                    chain.SourceManifest.Target.ClientName,
+                    chain.SourceManifest.Target.ApiSpecId,
+                    chain.SourceManifest.ToolSet.Sha256,
+                    chain.SourceManifest.ToolSet.RuntimeIdentity
                 )
             );
         }
@@ -862,8 +869,15 @@ internal static class SessionExecutionTailResolver {
         private SessionExecutionRecovery Recovery(
             EventAddress head,
             SessionExecutionState state,
-            SessionExecutionRecoveryBoundary boundary
-        ) => new(head, state, boundary, default);
+            SessionExecutionRecoveryBoundary boundary,
+            SessionPreparedRuntimeRecoverySnapshot? preparedRuntime = null
+        ) => new(
+            head,
+            state,
+            boundary,
+            default,
+            preparedRuntime
+        );
 
         private static T RequireBody<T>(DecodedSessionEvent ev)
             where T : class

@@ -299,7 +299,21 @@ internal sealed record SessionExecutionRecovery(
     EventAddress? Head,
     SessionExecutionState State,
     SessionExecutionRecoveryBoundary Boundary,
-    SessionExecutionRecoveryDiagnostics Diagnostics
+    SessionExecutionRecoveryDiagnostics Diagnostics,
+    SessionPreparedRuntimeRecoverySnapshot? PreparedRuntime = null
+);
+
+/// <summary>
+/// Sanitized dispatch identity retained by the tail resolver after it has
+/// validated a Prepared manifest. It deliberately excludes request content,
+/// tool definitions, operation identity, and provider credentials.
+/// </summary>
+internal sealed record SessionPreparedRuntimeRecoverySnapshot(
+    SessionCompletionTargetIdentity CompletionTarget,
+    string ClientName,
+    string ApiSpecId,
+    string VisibleToolSetSha256,
+    SessionToolRuntimeIdentity? ToolRuntimeIdentity
 );
 
 internal sealed record SessionExecutionRecoveryBoundary(

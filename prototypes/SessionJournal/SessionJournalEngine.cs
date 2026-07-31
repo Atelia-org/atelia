@@ -5,7 +5,7 @@ using Atelia.EventJournal;
 
 namespace Atelia.SessionJournal;
 
-public sealed class SessionJournalEngine : IDisposable {
+public sealed partial class SessionJournalEngine : IDisposable {
     public const string CanonicalRequestBytesMetricId =
         "atelia.session-journal.canonical-request-json-utf8-bytes.v1";
 
@@ -912,9 +912,47 @@ public sealed class SessionJournalEngine : IDisposable {
     }
 
     public async Task<TurnResult> SendAsync(
+        EventAddress expectedHead,
+        string observation,
+        CancellationToken cancellationToken = default
+    ) => await SendAsync(
+            expectedHead,
+            observation,
+            observer: null,
+            cancellationToken
+        )
+        .ConfigureAwait(false);
+
+    public async Task<TurnResult> SendAsync(
         string observation,
         CompletionStreamObserver? observer,
         CancellationToken cancellationToken = default
+    ) => await SendCoreAsync(
+            null,
+            observation,
+            observer,
+            cancellationToken
+        )
+        .ConfigureAwait(false);
+
+    public async Task<TurnResult> SendAsync(
+        EventAddress expectedHead,
+        string observation,
+        CompletionStreamObserver? observer,
+        CancellationToken cancellationToken = default
+    ) => await SendCoreAsync(
+            expectedHead,
+            observation,
+            observer,
+            cancellationToken
+        )
+        .ConfigureAwait(false);
+
+    private async Task<TurnResult> SendCoreAsync(
+        EventAddress? expectedHead,
+        string observation,
+        CompletionStreamObserver? observer,
+        CancellationToken cancellationToken
     ) {
         ThrowIfReadOnlyMutation(nameof(SendAsync));
         ValidateRequired(observation, nameof(observation));
@@ -929,6 +967,13 @@ public sealed class SessionJournalEngine : IDisposable {
         SessionExecutionRecovery recovery = ResolveExecutionTail(
             cancellationToken
         );
+        if (expectedHead is { } boundHead
+            && recovery.Head != boundHead) {
+            throw new SessionJournalExpectedHeadMismatchException(
+                boundHead,
+                recovery.Head
+            );
+        }
         if (!SessionOperationalSemantics.IsIdleOrFailedPhase(
                 recovery.State.Phase
             )) {
@@ -997,13 +1042,52 @@ public sealed class SessionJournalEngine : IDisposable {
     }
 
     public async Task<ResumeOutcome> ResumeAsync(
+        EventAddress expectedHead,
+        CancellationToken cancellationToken = default
+    ) => await ResumeAsync(
+            expectedHead,
+            observer: null,
+            cancellationToken
+        )
+        .ConfigureAwait(false);
+
+    public async Task<ResumeOutcome> ResumeAsync(
         CompletionStreamObserver? observer,
         CancellationToken cancellationToken = default
+    ) => await ResumeCoreAsync(
+            null,
+            observer,
+            cancellationToken
+        )
+        .ConfigureAwait(false);
+
+    public async Task<ResumeOutcome> ResumeAsync(
+        EventAddress expectedHead,
+        CompletionStreamObserver? observer,
+        CancellationToken cancellationToken = default
+    ) => await ResumeCoreAsync(
+            expectedHead,
+            observer,
+            cancellationToken
+        )
+        .ConfigureAwait(false);
+
+    private async Task<ResumeOutcome> ResumeCoreAsync(
+        EventAddress? expectedHead,
+        CompletionStreamObserver? observer,
+        CancellationToken cancellationToken
     ) {
         ThrowIfReadOnlyMutation(nameof(ResumeAsync));
         SessionExecutionRecovery recovery = ResolveExecutionTail(
             cancellationToken
         );
+        if (expectedHead is { } boundHead
+            && recovery.Head != boundHead) {
+            throw new SessionJournalExpectedHeadMismatchException(
+                boundHead,
+                recovery.Head
+            );
+        }
         return recovery.State.Phase switch {
             SessionExecutionPhase.Empty or SessionExecutionPhase.Idle or SessionExecutionPhase.TurnFailed =>
                 new ResumeOutcome(Advanced: false),
