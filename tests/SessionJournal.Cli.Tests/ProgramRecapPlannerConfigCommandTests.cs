@@ -27,6 +27,22 @@ public sealed class ProgramRecapPlannerConfigCommandTests
     }
 
     [Fact]
+    public void BuiltInAndCliCompositionRemainV1OnlyDuringH1a() {
+        Assert.Equal(
+            RecapPlannerConfigCodec.SchemaV1,
+            BuiltInRecapPlannerConfig.Document.Schema
+        );
+        Assert.Equal(
+            RecapPlannerConfigCodec.SchemaV1,
+            RecapCliComposition.DefaultComposition
+                .Snapshot.Document.Schema
+        );
+        Assert.IsType<RecapCadenceConfigDocument>(
+            BuiltInRecapPlannerConfig.Document.Cadence
+        );
+    }
+
+    [Fact]
     public void InitAndInspectUseOneCanonicalSnapshotWithoutClients() {
         string repository = NewRepository("healthy");
         string initReport = Path.Combine(_tempRoot, "init.json");
