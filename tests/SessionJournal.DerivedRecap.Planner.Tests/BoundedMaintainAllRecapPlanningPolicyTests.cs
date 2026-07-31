@@ -116,8 +116,13 @@ public sealed class BoundedMaintainAllRecapPlanningPolicyTests {
     }
 
     [Fact]
-    public void EqualUnitCandidatesPreferRawNewestBoundary() {
-        PolicyModel model = PolicyModel.FirstBuild(
+    public void LineageOrderPreservesStrictAndSharedCountSelection() {
+        PolicyModel strict = PolicyModel.FirstBuild(
+            replaySafeIndices: [10, 8, 7, 0],
+            maxRawEventsPerStep: 10,
+            maxRawEventsPerBuild: 3
+        );
+        PolicyModel shared = PolicyModel.FirstBuild(
             replaySafeIndices: [10, 8, 7, 0],
             maxRawEventsPerStep: 10,
             maxRawEventsPerBuild: 3,
@@ -128,9 +133,19 @@ public sealed class BoundedMaintainAllRecapPlanningPolicyTests {
             }
         );
 
-        RecapPlanningPolicyDecision.Build build = model.Build();
+        RecapPlanningPolicyDecision.Build strictBuild = strict.Build();
+        RecapPlanningPolicyDecision.Build sharedBuild = shared.Build();
 
-        Assert.Equal(model.At(7), build.SetAdmissionAnchor);
+        Assert.Equal(strict.At(7), strictBuild.SetAdmissionAnchor);
+        Assert.Equal(shared.At(7), sharedBuild.SetAdmissionAnchor);
+        Assert.Equal(
+            strictBuild.SetAdmissionAnchor,
+            sharedBuild.SetAdmissionAnchor
+        );
+        Assert.Equal(
+            MaintainAt(strictBuild, 0).CatchUpThrough,
+            MaintainAt(sharedBuild, 0).CatchUpThrough
+        );
     }
 
     [Fact]

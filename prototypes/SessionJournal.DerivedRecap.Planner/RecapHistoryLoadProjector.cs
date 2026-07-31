@@ -36,7 +36,9 @@ public static class RecapHistoryLoadProjector {
         ValidateWindowCollections(window);
         RecapHistoryLoadBaseline baseline =
             RecapHistoryLoadBaselineResolver.Resolve(
-                window,
+                window.StartExclusive,
+                window.Units.Count,
+                window.ReplaySafeBoundaries,
                 baselineAddress
             );
         int baselineCompletedUnitCount =
@@ -290,19 +292,22 @@ internal sealed record RecapHistoryLoadBaseline(
 
 internal static class RecapHistoryLoadBaselineResolver {
     internal static RecapHistoryLoadBaseline Resolve(
-        SJ.SessionHistoryPlanningWindow window,
+        EventAddress startExclusive,
+        int totalHistoryUnitCount,
+        IReadOnlyList<SJ.SessionHistoryPlanningBoundary>
+            replaySafeBoundaries,
         EventAddress baselineAddress
     ) {
-        ArgumentNullException.ThrowIfNull(window);
-        if (window.ReplaySafeBoundaries is null
-            || window.Units is null) {
+        if (totalHistoryUnitCount < 0
+            || replaySafeBoundaries is null) {
             throw Invalid(
                 HistoryLoadMeasurementDefectCodes
                     .PlanningWindowInvalid,
-                "Planning window collections cannot be null."
+                "Planning window unit count or replay-safe boundaries "
+                + "are invalid."
             );
         }
-        if (baselineAddress == window.StartExclusive) {
+        if (baselineAddress == startExclusive) {
             return new RecapHistoryLoadBaseline(
                 baselineAddress,
                 CompletedUnitCount: 0,
@@ -312,10 +317,10 @@ internal static class RecapHistoryLoadBaselineResolver {
 
         int matchIndex = -1;
         for (int index = 0;
-             index < window.ReplaySafeBoundaries.Count;
+             index < replaySafeBoundaries.Count;
              index++) {
             SJ.SessionHistoryPlanningBoundary? boundary =
-                window.ReplaySafeBoundaries[index];
+                replaySafeBoundaries[index];
             if (boundary is null) {
                 throw Invalid(
                     HistoryLoadMeasurementDefectCodes
@@ -343,10 +348,10 @@ internal static class RecapHistoryLoadBaselineResolver {
         }
 
         int completedUnitCount =
-            window.ReplaySafeBoundaries[matchIndex]
+            replaySafeBoundaries[matchIndex]
                 .CompletedUnitCount;
         if (completedUnitCount < 0
-            || completedUnitCount > window.Units.Count) {
+            || completedUnitCount > totalHistoryUnitCount) {
             throw BaselineInvalid(
                 baselineAddress,
                 "has an out-of-range completed-unit count"

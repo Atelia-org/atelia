@@ -82,12 +82,16 @@ public sealed class RecapHistoryLoadProjectorTests {
 
         RecapHistoryLoadBaseline first =
             RecapHistoryLoadBaselineResolver.Resolve(
-                window,
+                window.StartExclusive,
+                window.Units.Count,
+                window.ReplaySafeBoundaries,
                 window.ReplaySafeBoundaries[0].Address
             );
         RecapHistoryLoadBaseline second =
             RecapHistoryLoadBaselineResolver.Resolve(
-                window,
+                window.StartExclusive,
+                window.Units.Count,
+                window.ReplaySafeBoundaries,
                 window.ReplaySafeBoundaries[1].Address
             );
 
@@ -95,6 +99,45 @@ public sealed class RecapHistoryLoadProjectorTests {
         Assert.Equal(1, first.FirstLaterBoundaryIndex);
         Assert.Equal(1, second.CompletedUnitCount);
         Assert.Equal(2, second.FirstLaterBoundaryIndex);
+    }
+
+    [Fact]
+    public void ContentFreeResolverMatchesEveryProjectedBaseline() {
+        SJ.SessionHistoryPlanningWindow window = StandardWindow();
+        EventAddress[] baselines = [
+            window.StartExclusive,
+            .. window.ReplaySafeBoundaries.Select(
+                static boundary => boundary.Address
+            )
+        ];
+
+        foreach (EventAddress baselineAddress in baselines) {
+            RecapHistoryLoadBaseline resolved =
+                RecapHistoryLoadBaselineResolver.Resolve(
+                    window.StartExclusive,
+                    window.Units.Count,
+                    window.ReplaySafeBoundaries,
+                    baselineAddress
+                );
+            RecapHistoryLoadMeasurement projected =
+                RecapHistoryLoadProjector.Measure(
+                    window,
+                    baselineAddress,
+                    new ContentEstimator()
+                );
+
+            Assert.Equal(
+                resolved.CompletedUnitCount,
+                projected.BaselineCompletedUnitCount
+            );
+            Assert.Equal(
+                window.ReplaySafeBoundaries
+                    .Skip(resolved.FirstLaterBoundaryIndex)
+                    .Select(static boundary => boundary.Address),
+                projected.ReplaySafeBoundaries
+                    .Select(static boundary => boundary.Address)
+            );
+        }
     }
 
     [Fact]

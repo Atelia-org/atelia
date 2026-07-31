@@ -42,20 +42,13 @@ public sealed class BoundedMaintainAllRecapPlanningPolicy
         int newestAllowedStartIndex = starts.Min(
             static start => start.LineageIndex
         );
-        (int Index, int CompletedUnits)[] admissions = [
+        int[] admissions = [
             .. context.Cadence.AdmissionCandidates
-                .Select(candidate => (
-                    Index: lineage[candidate.Address],
-                    CompletedUnits:
-                        candidate.HistoryUnitCountSinceBaseline
-                ))
-                .Where(candidate =>
-                    candidate.Index < latestPublishedIndex
-                    && candidate.Index < newestAllowedStartIndex)
-                .OrderByDescending(
-                    static candidate => candidate.CompletedUnits
-                )
-                .ThenBy(static candidate => candidate.Index)
+                .Select(candidate => lineage[candidate.Address])
+                .Where(index =>
+                    index < latestPublishedIndex
+                    && index < newestAllowedStartIndex)
+                .OrderBy(static index => index)
         ];
         if (admissions.Length == 0) {
             return Unavailable(
@@ -66,7 +59,7 @@ public sealed class BoundedMaintainAllRecapPlanningPolicy
         }
 
         IReadOnlyList<RecapPlanDefect> lastDefects = [];
-        foreach ((int admissionIndex, _) in admissions) {
+        foreach (int admissionIndex in admissions) {
             CandidateResult candidate = TryBuildCandidate(
                 limits,
                 starts,
