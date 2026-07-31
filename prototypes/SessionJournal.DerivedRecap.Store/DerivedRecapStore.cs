@@ -696,14 +696,20 @@ public sealed class DerivedRecapStore {
         CancellationToken cancellationToken = default
     ) {
         ArgumentNullException.ThrowIfNull(lineage);
-        EnsureScaffolding();
+        string? unavailable =
+            await TryGetUnavailableReasonAsync(cancellationToken)
+                .ConfigureAwait(false);
+        if (unavailable is not null) {
+            return new CurrentLineageBuildingSelection
+                .StoreUnavailable(unavailable);
+        }
         await using FileStream writeLock =
             await _fileSystem.AcquireExclusiveLockAsync(
                     _lockPath,
                     cancellationToken
                 )
                 .ConfigureAwait(false);
-        string? unavailable =
+        unavailable =
             await TryGetUnavailableReasonAsync(cancellationToken)
                 .ConfigureAwait(false);
         if (unavailable is not null) {
@@ -2329,6 +2335,14 @@ public sealed class DerivedRecapStore {
         CancellationToken cancellationToken
     ) {
         try {
+            if (!Directory.Exists(_v4Root)
+                || !Directory.Exists(_locksRoot)
+                || !Directory.Exists(_refsRoot)) {
+                return "Recap Store scaffolding is missing.";
+            }
+            _fileSystem.EnsureSafeDescendant(_v4Root);
+            _fileSystem.EnsureSafeDescendant(_locksRoot);
+            _fileSystem.EnsureSafeDescendant(_refsRoot);
             if (!Directory.Exists(_storeRoot)) {
                 return "Recap Store root is missing.";
             }
