@@ -636,6 +636,60 @@ public sealed class ProgramLegacyImportSafetyTests : IDisposable {
         Assert.False(Directory.Exists(outputPath));
     }
 
+    [Theory]
+    [InlineData("report-md")]
+    [InlineData("report-json")]
+    public void ReportFileOptionRejectsExistingDirectoryBeforeImport(
+        string reportOption
+    ) {
+        Directory.CreateDirectory(_tempRoot);
+        string inputPath = Path.Combine(_tempRoot, "legacy.json");
+        string outputPath = Path.Combine(_tempRoot, "session-journal");
+        string reportPath = Path.Combine(_tempRoot, "existing-report");
+        Directory.CreateDirectory(reportPath);
+        WriteExport(inputPath, [InitialState()]);
+
+        int exitCode = Program.MainCore(
+            [
+                "import-legacy-json",
+                "--input", inputPath,
+                "--output", outputPath,
+                $"--{reportOption}", reportPath
+            ],
+            ThrowingCompletionClientFactory.Instance
+        );
+
+        Assert.Equal(1, exitCode);
+        Assert.False(Directory.Exists(outputPath));
+        Assert.Empty(Directory.EnumerateFileSystemEntries(reportPath));
+    }
+
+    [Fact]
+    public void NestedMarkdownAndJsonReportsFailBeforeImport() {
+        Directory.CreateDirectory(_tempRoot);
+        string inputPath = Path.Combine(_tempRoot, "legacy.json");
+        string outputPath = Path.Combine(_tempRoot, "session-journal");
+        string markdownPath = Path.Combine(_tempRoot, "report.md");
+        string jsonPath = Path.Combine(markdownPath, "report.json");
+        WriteExport(inputPath, [InitialState()]);
+
+        int exitCode = Program.MainCore(
+            [
+                "import-legacy-json",
+                "--input", inputPath,
+                "--output", outputPath,
+                "--report-md", markdownPath,
+                "--report-json", jsonPath
+            ],
+            ThrowingCompletionClientFactory.Instance
+        );
+
+        Assert.Equal(1, exitCode);
+        Assert.False(Directory.Exists(outputPath));
+        Assert.False(File.Exists(markdownPath));
+        Assert.False(Directory.Exists(markdownPath));
+    }
+
     [Fact]
     public void ReportPathCannotBeAnAncestorOfOutput() {
         Directory.CreateDirectory(_tempRoot);

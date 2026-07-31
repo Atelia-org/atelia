@@ -106,32 +106,23 @@ internal static class Program {
             if (reportPath is null) {
                 continue;
             }
-            CliIo.EnsurePathChainHasNoReparsePoint(
+            CliIo.ValidateFileOutputPath(
+                outputPath,
                 reportPath,
                 option
             );
-            CliIo.EnsurePathsAreDifferent(
+            CliIo.EnsurePathsDoNotNest(
                 inputPath,
                 reportPath,
-                $"{option} must not overwrite --input."
-            );
-            CliIo.EnsurePathIsOutsideRepository(
-                outputPath,
-                reportPath,
-                option
-            );
-            CliIo.EnsureFilePathIsNotAncestorOfDirectory(
-                reportPath,
-                outputPath,
-                $"{option} must not contain --output."
+                $"{option} and --input must be disjoint paths."
             );
         }
         if (markdownReportPath is not null
             && jsonReportPath is not null) {
-            CliIo.EnsurePathsAreDifferent(
+            CliIo.EnsurePathsDoNotNest(
                 markdownReportPath,
                 jsonReportPath,
-                "--report-md and --report-json must be different."
+                "--report-md and --report-json must be disjoint paths."
             );
         }
 
