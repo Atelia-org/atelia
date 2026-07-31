@@ -12,6 +12,22 @@ using SJ = Atelia.SessionJournal;
 namespace Atelia.SessionJournal.Cli.Tests;
 
 public sealed class ProgramRecapExecutionCommandTests : IDisposable {
+    // Test-only cadence: the compact 22-pair fixture measures 404 load,
+    // so 180 + 200 preserves a fast build/no-build boundary without
+    // weakening the independently asserted production 18k/21k values.
+    private static RecapPlannerConfigDocument FastCadenceConfig =>
+        RecapCliComposition.DefaultComposition.Snapshot.Document with {
+            Cadence = new RecapCadenceConfigDocument(
+                O200kBaseHistoryUnitLoadEstimator.EstimatorId,
+                MinimumRecentHistoryLoad: 180,
+                RecapBuildIntervalHistoryLoad: 200
+            )
+        };
+
+    private static string FastCadenceConfigSha256 =>
+        RecapPlannerConfigSnapshot.FromDocument(FastCadenceConfig)
+            .ConfigSha256;
+
     private readonly string _tempRoot = Path.Combine(
         Path.GetTempPath(),
         "atelia-recap-execution-cli-tests",
@@ -36,7 +52,7 @@ public sealed class ProgramRecapExecutionCommandTests : IDisposable {
         RecapPlanningInputs inputs = composition.PlanningInputs;
         RecapPlanningLimits limits = composition.PlanningLimits;
         Assert.Equal(
-            RecapPlannerConfigCodec.SchemaV1,
+            RecapPlannerConfigCodec.SchemaV2,
             composition.Snapshot.Document.Schema
         );
         Assert.Equal(
@@ -89,12 +105,23 @@ public sealed class ProgramRecapExecutionCommandTests : IDisposable {
             }
         );
         Assert.Equal(
-            20,
-            inputs.Cadence.MinimumRecentHistoryUnitCount
+            O200kBaseHistoryUnitLoadEstimator.EstimatorId,
+            inputs.Cadence.HistoryUnitLoadEstimatorId
         );
         Assert.Equal(
-            24,
-            inputs.Cadence.RecapBuildIntervalUnitCount
+            composition.Snapshot.Document.Cadence
+                .MinimumRecentHistoryLoad,
+            inputs.Cadence.MinimumRecentHistoryLoad.Value
+        );
+        Assert.Equal(
+            composition.Snapshot.Document.Cadence
+                .RecapBuildIntervalHistoryLoad,
+            inputs.Cadence.RecapBuildIntervalHistoryLoad.Value
+        );
+        Assert.Equal(18_000, inputs.Cadence.MinimumRecentHistoryLoad.Value);
+        Assert.Equal(
+            21_000,
+            inputs.Cadence.RecapBuildIntervalHistoryLoad.Value
         );
         Assert.Equal(512, limits.MaxRawGrowthEventCount);
         Assert.Equal(4, limits.MaxRouteEndpointsPerBlock);
@@ -131,18 +158,17 @@ public sealed class ProgramRecapExecutionCommandTests : IDisposable {
         Assert.Equal(5, firstFactory.CallCount);
         using JsonDocument first = ReadJson(firstReport);
         Assert.Equal(
-            "atelia.session-journal.derived-recap-execution.v3",
+            "atelia.session-journal.derived-recap-execution.v4",
             String(first, "schema")
         );
         JsonElement reportedConfig =
             first.RootElement.GetProperty("config");
         Assert.Equal(
-            RecapPlannerConfigCodec.SchemaV1,
+            RecapPlannerConfigCodec.SchemaV2,
             reportedConfig.GetProperty("schema").GetString()
         );
         Assert.Equal(
-            RecapCliComposition.DefaultComposition
-                .Snapshot.ConfigSha256,
+            FastCadenceConfigSha256,
             reportedConfig
                 .GetProperty("configSha256")
                 .GetString()
@@ -153,10 +179,27 @@ public sealed class ProgramRecapExecutionCommandTests : IDisposable {
         );
         Assert.Equal(
             "ExactSchedule",
-            first.RootElement
-                .GetProperty("planning")
-                .GetProperty("measurementKind")
+            first.RootElement.GetProperty("planning")
+                .GetProperty("measurementKind").GetString()
+        );
+        JsonElement planning =
+            first.RootElement.GetProperty("planning");
+        Assert.Equal(
+            O200kBaseHistoryUnitLoadEstimator.EstimatorId,
+            planning.GetProperty("historyUnitLoadEstimatorId")
                 .GetString()
+        );
+        Assert.True(
+            planning.GetProperty("growthHistoryLoad")
+                .GetInt64() > 0
+        );
+        Assert.True(
+            planning.GetProperty("selectedAbsorbedHistoryLoad")
+                .GetInt64() > 0
+        );
+        Assert.True(
+            planning.GetProperty("selectedRecentHistoryLoad")
+                .GetInt64() >= 0
         );
         Assert.Equal("BlockFailed", String(first, "resultStatus"));
         Assert.Equal(
@@ -307,6 +350,111 @@ public sealed class ProgramRecapExecutionCommandTests : IDisposable {
             );
         }
         Assert.Equal(raw, ReadRawSnapshot(fixture.Path));
+    }
+
+    [Fact]
+    public async Task RawSafetyRejectionIsReportedBeforeClientOrBuilding() {
+        Fixture fixture =
+            await CreateFixtureAsync("raw-safety-rejected", 257);
+        await CreateStoreAsync(fixture);
+        string reportPath =
+            Path.Combine(_tempRoot, "raw-safety-rejected.json");
+        string calls =
+            Path.Combine(_tempRoot, "raw-safety-rejected-calls");
+        var factory =
+            new ScriptedCompletionClientFactory("must not run");
+
+        Assert.Equal(2, Run(
+            ExecuteArgs(
+                fixture,
+                "run",
+                reportPath,
+                "raw-safety-rejected-calls"
+            ),
+            factory
+        ));
+
+        Assert.Equal(0, factory.CreateCallCount);
+        Assert.False(Directory.Exists(calls));
+        using JsonDocument report = ReadJson(reportPath);
+        JsonElement planning =
+            report.RootElement.GetProperty("planning");
+        Assert.Equal(
+            "RawSafetyRejected",
+            planning.GetProperty("measurementKind").GetString()
+        );
+        Assert.Equal(
+            514,
+            planning.GetProperty("rawGrowthEventCount").GetInt32()
+        );
+        Assert.Equal(
+            JsonValueKind.Null,
+            planning.GetProperty("historyUnitLoadEstimatorId")
+                .ValueKind
+        );
+        Assert.Equal(
+            JsonValueKind.Null,
+            planning.GetProperty("growthHistoryLoad").ValueKind
+        );
+        Assert.Empty(Directory.EnumerateDirectories(
+            Path.Combine(
+                fixture.Path,
+                "derived",
+                "recap",
+                "v4",
+                "refs",
+                fixture.BranchRefId,
+                "building"
+            )
+        ));
+    }
+
+    [Fact]
+    public async Task TwoPairFixtureStaysBelowFastLoadThreshold() {
+        Fixture fixture =
+            await CreateFixtureAsync("below-fast-load-threshold", 2);
+        await CreateStoreAsync(fixture);
+        string reportPath =
+            Path.Combine(_tempRoot, "below-fast-load-threshold.json");
+        string calls =
+            Path.Combine(_tempRoot, "below-fast-load-threshold-calls");
+        var factory =
+            new ScriptedCompletionClientFactory("must not run");
+
+        Assert.Equal(0, Run(
+            ExecuteArgs(
+                fixture,
+                "run",
+                reportPath,
+                "below-fast-load-threshold-calls"
+            ),
+            factory
+        ));
+
+        Assert.Equal(0, factory.CreateCallCount);
+        Assert.False(Directory.Exists(calls));
+        using JsonDocument report = ReadJson(reportPath);
+        Assert.Equal("NoBuild", String(report, "resultStatus"));
+        JsonElement planning =
+            report.RootElement.GetProperty("planning");
+        Assert.Equal(
+            "ExactSchedule",
+            planning.GetProperty("measurementKind").GetString()
+        );
+        Assert.True(
+            planning.GetProperty("growthHistoryLoad").GetInt64()
+                < 380
+        );
+        Assert.Equal(
+            JsonValueKind.Null,
+            planning.GetProperty("selectedAbsorbedHistoryLoad")
+                .ValueKind
+        );
+        Assert.Equal(
+            JsonValueKind.Null,
+            planning.GetProperty("selectedRecentHistoryLoad")
+                .ValueKind
+        );
     }
 
     [Fact]
@@ -494,8 +642,7 @@ public sealed class ProgramRecapExecutionCommandTests : IDisposable {
             firstFactory
         ));
 
-        RecapPlannerConfigDocument source =
-            RecapCliComposition.DefaultComposition.Snapshot.Document;
+        RecapPlannerConfigDocument source = FastCadenceConfig;
         File.WriteAllBytes(
             RecapPlannerConfigLoader.GetCanonicalPath(fixture.Path),
             RecapPlannerConfigCodec.EncodeCanonical(
@@ -564,8 +711,7 @@ public sealed class ProgramRecapExecutionCommandTests : IDisposable {
         await CreateStoreAsync(fixture);
         string configPath =
             RecapPlannerConfigLoader.GetCanonicalPath(fixture.Path);
-        string expectedHash = RecapCliComposition.DefaultComposition
-            .Snapshot.ConfigSha256;
+        string expectedHash = FastCadenceConfigSha256;
         var firstFactory = new ScriptedCompletionClientFactory(
             "snapshot recap",
             onCreate: () => File.WriteAllText(
@@ -760,8 +906,12 @@ public sealed class ProgramRecapExecutionCommandTests : IDisposable {
             JsonValueKind.Null,
             report.RootElement.GetProperty("config").ValueKind
         );
-        Assert.Equal(1, repairFactory.CreateCallCount);
+        Assert.Equal(0, repairFactory.CreateCallCount);
         Assert.Equal(0, repairFactory.CallCount);
+        Assert.False(Directory.Exists(Path.Combine(
+            _tempRoot,
+            "damaged-latest-repair-calls"
+        )));
         using var engine = SJ.SessionJournalEngine.OpenReadOnly(
             fixture.Path,
             fixture.BranchName
@@ -935,8 +1085,7 @@ public sealed class ProgramRecapExecutionCommandTests : IDisposable {
         Assert.IsType<RecapPlannerConfigInitializeResult.Initialized>(
             RecapPlannerConfigInitializer.Initialize(
                 fixture.Path,
-                RecapCliComposition.DefaultComposition
-                    .Snapshot.Document
+                FastCadenceConfig
             )
         );
     }

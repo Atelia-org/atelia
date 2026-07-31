@@ -16,6 +16,7 @@ public sealed class DerivedRecapPlannerExecutor {
     private readonly DerivedRecapStore _store;
     private readonly RecapPlanningInputs _inputs;
     private readonly RecapPlanningLimits _limits;
+    private readonly IRecapBlockMaintainerRegistry _maintainers;
     private readonly DerivedRecapBuildingInstaller _installer;
     private readonly DerivedRecapBuildingExecutor _buildingExecutor;
     private DerivedRecapPlanningDiagnostics? _lastPlanningDiagnostics;
@@ -54,31 +55,12 @@ public sealed class DerivedRecapPlannerExecutor {
             ?? throw new ArgumentNullException(nameof(inputs));
         _limits = limits
             ?? throw new ArgumentNullException(nameof(limits));
-        ArgumentNullException.ThrowIfNull(maintainers);
+        _maintainers = maintainers
+            ?? throw new ArgumentNullException(nameof(maintainers));
         ArgumentNullException.ThrowIfNull(hardCaps);
         ArgumentNullException.ThrowIfNull(testHooks);
         hardCaps.ValidatePlanningAuthority(inputs, limits);
         RequireSameBinding(store, engine);
-        foreach (RecapBlockCatalogEntry entry
-                 in inputs.OrderedCatalog) {
-            if (!maintainers.TryResolve(
-                    entry.MaintainerId,
-                    entry.Target,
-                    out IRecapBlockMaintainer? maintainer
-                )
-                || !string.Equals(
-                    maintainer.Id,
-                    entry.MaintainerId,
-                    StringComparison.Ordinal
-                )
-                || maintainer.Target != entry.Target) {
-                throw new ArgumentException(
-                    "Maintainer registry cannot resolve the exact "
-                    + $"catalog binding for '{entry.RecapBlockId}'.",
-                    nameof(maintainers)
-                );
-            }
-        }
         _installer = new DerivedRecapBuildingInstaller(store, engine);
         _buildingExecutor = new DerivedRecapBuildingExecutor(
             engine,
@@ -288,32 +270,6 @@ public sealed class DerivedRecapPlannerExecutor {
             }
         }
 
-        // This gate may only reject work. Existing Published admission gives
-        // an exact raw baseline; fresh bootstrap uses the whole lineage only
-        // as a conservative upper bound. Exact HistoryUnit facts remain the
-        // sole Build and raw-limit authority. Catalog compatibility above is
-        // intentionally checked before this cadence fast path.
-        RecapHeaderPrefilterResult headerPrefilter =
-            RecapPlanEvaluator.EvaluateHeaderPrefilter(
-                _inputs,
-                lineage,
-                latest?.SetAdmissionAnchor
-            );
-        switch (headerPrefilter) {
-            case RecapHeaderPrefilterResult.NoBuild noBuild:
-                Volatile.Write(
-                    ref _lastPlanningDiagnostics,
-                    new DerivedRecapPlanningDiagnostics.HeaderNegative(
-                        noBuild.RawGrowthEventUpperBound
-                    )
-                );
-                return new DerivedRecapExecutionResult.NoBuild(
-                    noBuild.Reason
-                );
-            case RecapHeaderPrefilterResult.Unavailable unavailable:
-                return Unavailable(unavailable.Defects);
-        }
-
         RecapSchedulingResult.Ready schedule;
         EventAddress emptyReplayStartExclusive;
         try {
@@ -336,6 +292,29 @@ public sealed class DerivedRecapPlannerExecutor {
             EventAddress cadenceBaseline =
                 latest?.SetAdmissionAnchor
                 ?? allRelevantRaw.StartExclusive;
+            RecapRawSafetyResult rawSafety =
+                RecapPlanEvaluator.EvaluateRawSafety(
+                    _limits,
+                    lineage,
+                    cadenceBaseline
+                );
+            if (rawSafety
+                is RecapRawSafetyResult.Unavailable rawUnavailable) {
+                if (rawUnavailable.RawGrowthEventCount is { } rawCount) {
+                    Volatile.Write(
+                        ref _lastPlanningDiagnostics,
+                        new DerivedRecapPlanningDiagnostics
+                            .RawSafetyRejected(rawCount)
+                    );
+                }
+                return Unavailable(rawUnavailable.Defects);
+            }
+            RecapHistoryLoadMeasurement historyLoad =
+                RecapHistoryLoadProjector.Measure(
+                    allRelevantRaw,
+                    cadenceBaseline,
+                    _inputs.HistoryUnitLoadEstimator
+                );
             RecapSchedulingResult exactSchedule =
                 RecapPlanEvaluator.EvaluateSchedule(
                     _inputs,
@@ -349,13 +328,17 @@ public sealed class DerivedRecapPlannerExecutor {
                             allRelevantRaw.ReplaySafeBoundaries
                         ),
                         cadenceBaseline,
-                        latest?.SetAdmissionAnchor
+                        latest?.SetAdmissionAnchor,
+                        historyLoad
                     )
                 );
             RecapExactScheduleMeasurement? measurement =
                 exactSchedule switch {
                     RecapSchedulingResult.Ready measuredReady =>
                         new RecapExactScheduleMeasurement(
+                            measuredReady.Cadence
+                                .HistoryUnitLoadEstimatorId,
+                            measuredReady.Cadence.GrowthHistoryLoad,
                             measuredReady.Cadence
                                 .GrowthHistoryUnitCount,
                             measuredReady.Cadence.RawGrowthEventCount
@@ -370,8 +353,7 @@ public sealed class DerivedRecapPlannerExecutor {
                 Volatile.Write(
                     ref _lastPlanningDiagnostics,
                     new DerivedRecapPlanningDiagnostics.ExactSchedule(
-                        measurement.GrowthHistoryUnitCount,
-                        measurement.RawGrowthEventCount
+                        measurement
                     )
                 );
             }
@@ -390,6 +372,9 @@ public sealed class DerivedRecapPlannerExecutor {
                 };
             }
             schedule = ready;
+        }
+        catch (HistoryLoadMeasurementException exception) {
+            return Unavailable(exception.Code, exception.Message);
         }
         catch (Exception exception) when (IsAvailabilityException(exception)) {
             return Unavailable(
@@ -440,6 +425,26 @@ public sealed class DerivedRecapPlannerExecutor {
         }
         var intentReady =
             (RecapPlanIntentResult.IntentReady)intentResult;
+        RecapCadenceBoundary selectedCadence =
+            intentReady.Schedule.Cadence.AdmissionCandidates.Single(
+                candidate => candidate.Address
+                    == intentReady.Intent.SetAdmissionAnchor
+            );
+        Volatile.Write(
+            ref _lastPlanningDiagnostics,
+            new DerivedRecapPlanningDiagnostics.ExactSchedule(
+                new RecapExactScheduleMeasurement(
+                    intentReady.Schedule.Cadence
+                        .HistoryUnitLoadEstimatorId,
+                    intentReady.Schedule.Cadence.GrowthHistoryLoad,
+                    intentReady.Schedule.Cadence
+                        .GrowthHistoryUnitCount,
+                    intentReady.Schedule.Cadence.RawGrowthEventCount,
+                    selectedCadence.AbsorbedHistoryLoad,
+                    selectedCadence.RecentHistoryLoad
+                )
+            )
+        );
 
         if (_engine.ReadCurrentHead()
             != intentReady.Schedule.Facts.CapturedHead) {
@@ -496,6 +501,24 @@ public sealed class DerivedRecapPlannerExecutor {
                     cancellationToken
                 )
                 .ConfigureAwait(false);
+        }
+
+        DerivedRecapExecutionResult? maintainerUnavailable;
+        try {
+            maintainerUnavailable = ValidateMaintainerBindings(
+                intentReady.Intent
+            );
+        }
+        catch (Exception exception)
+            when (IsAvailabilityException(exception)) {
+            return Unavailable(
+                DerivedRecapExecutionDefectCodes
+                    .MaintainerUnavailable,
+                exception.Message
+            );
+        }
+        if (maintainerUnavailable is not null) {
+            return maintainerUnavailable;
         }
 
         DerivedRecapSetManifest manifest = CreateManifest(
@@ -968,6 +991,39 @@ public sealed class DerivedRecapPlannerExecutor {
             or UnauthorizedAccessException
             or NotSupportedException
             or KeyNotFoundException;
+
+    private DerivedRecapExecutionResult? ValidateMaintainerBindings(
+        RecapPlanningPolicyDecision.Build intent
+    ) {
+        for (int index = 0; index < intent.Blocks.Count; index++) {
+            if (intent.Blocks[index]
+                is not RecapBlockPlanningDecision.Maintain) {
+                continue;
+            }
+            RecapBlockCatalogEntry entry =
+                _inputs.OrderedCatalog[index];
+            if (!_maintainers.TryResolve(
+                    entry.MaintainerId,
+                    entry.Target,
+                    out IRecapBlockMaintainer? maintainer
+                )
+                || !string.Equals(
+                    maintainer.Id,
+                    entry.MaintainerId,
+                    StringComparison.Ordinal
+                )
+                || maintainer.Target != entry.Target) {
+                return Unavailable(
+                    DerivedRecapExecutionDefectCodes
+                        .MaintainerUnavailable,
+                    "Maintainer registry cannot resolve the exact "
+                    + "binding for recap block "
+                    + $"'{entry.RecapBlockId}'."
+                );
+            }
+        }
+        return null;
+    }
 
     private static void RequireSameBinding(
         DerivedRecapStore store,

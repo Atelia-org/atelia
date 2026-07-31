@@ -27,13 +27,13 @@ public sealed class ProgramRecapPlannerConfigCommandTests
     }
 
     [Fact]
-    public void BuiltInAndCliCompositionRemainV1OnlyDuringH1a() {
+    public void BuiltInAndCliCompositionUseCanonicalV2() {
         Assert.Equal(
-            RecapPlannerConfigCodec.SchemaV1,
+            RecapPlannerConfigCodec.SchemaV2,
             BuiltInRecapPlannerConfig.Document.Schema
         );
         Assert.Equal(
-            RecapPlannerConfigCodec.SchemaV1,
+            RecapPlannerConfigCodec.SchemaV2,
             RecapCliComposition.DefaultComposition
                 .Snapshot.Document.Schema
         );
@@ -84,7 +84,7 @@ public sealed class ProgramRecapPlannerConfigCommandTests
         using JsonDocument report =
             JsonDocument.Parse(File.ReadAllBytes(inspectReport));
         Assert.Equal(
-            "atelia.session-journal.recap-planner-config-operation.v1",
+            "atelia.session-journal.recap-planner-config-operation.v2",
             String(report.RootElement, "schema")
         );
         Assert.Equal(
@@ -92,7 +92,7 @@ public sealed class ProgramRecapPlannerConfigCommandTests
             String(report.RootElement, "status")
         );
         Assert.Equal(
-            RecapPlannerConfigCodec.SchemaV1,
+            RecapPlannerConfigCodec.SchemaV2,
             String(report.RootElement, "configSchema")
         );
         Assert.Equal(
@@ -102,6 +102,24 @@ public sealed class ProgramRecapPlannerConfigCommandTests
         Assert.Equal(
             RecapPlanningPolicyIds.BoundedMaintainAllV1,
             String(report.RootElement, "planningPolicy")
+        );
+        JsonElement cadence =
+            report.RootElement.GetProperty("cadence");
+        Assert.Equal(
+            O200kBaseHistoryUnitLoadEstimator.EstimatorId,
+            String(cadence, "historyUnitLoadEstimatorId")
+        );
+        Assert.Equal(
+            BuiltInRecapPlannerConfig.Document.Cadence
+                .MinimumRecentHistoryLoad,
+            cadence.GetProperty("minimumRecentHistoryLoad")
+                .GetInt64()
+        );
+        Assert.Equal(
+            BuiltInRecapPlannerConfig.Document.Cadence
+                .RecapBuildIntervalHistoryLoad,
+            cadence.GetProperty("recapBuildIntervalHistoryLoad")
+                .GetInt64()
         );
         JsonElement[] catalog = [
             .. report.RootElement
@@ -167,7 +185,7 @@ public sealed class ProgramRecapPlannerConfigCommandTests
             String(report.RootElement, "status")
         );
         Assert.Equal(
-            RecapPlannerConfigCodec.SchemaV1,
+            RecapPlannerConfigCodec.SchemaV2,
             String(report.RootElement, "configSchema")
         );
         Assert.False(string.IsNullOrWhiteSpace(
@@ -183,6 +201,45 @@ public sealed class ProgramRecapPlannerConfigCommandTests
             String(defect, "code")
         );
         Assert.Equal(0, factory.CreateCallCount);
+    }
+
+    [Fact]
+    public void InspectRejectsUnknownEstimatorWithoutClientOrStore() {
+        var factory = new CountingCompletionClientFactory();
+        string repository = NewRepository("unknown-estimator");
+        WriteDocument(
+            repository,
+            BuiltInRecapPlannerConfig.Document with {
+                Cadence = BuiltInRecapPlannerConfig.Document.Cadence
+                    with {
+                        HistoryUnitLoadEstimatorId =
+                            "not-installed-estimator"
+                    }
+            }
+        );
+        string reportPath =
+            Path.Combine(_tempRoot, "unknown-estimator.json");
+
+        Assert.Equal(2, Run([
+            "recap", "planner-config", "inspect",
+            "--input", repository,
+            "--report-json", reportPath
+        ], factory));
+
+        using JsonDocument report =
+            JsonDocument.Parse(File.ReadAllBytes(reportPath));
+        Assert.Equal(
+            RecapPlannerConfigResolveDefectCodes.UnknownEstimator,
+            Assert.Single(
+                report.RootElement.GetProperty("defects")
+                    .EnumerateArray()
+            ).GetProperty("code").GetString()
+        );
+        Assert.Equal(0, factory.CreateCallCount);
+        Assert.False(Directory.Exists(Path.Combine(
+            repository,
+            "derived"
+        )));
     }
 
     [Fact]

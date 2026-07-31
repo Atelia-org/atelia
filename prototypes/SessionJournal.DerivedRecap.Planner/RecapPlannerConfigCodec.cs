@@ -5,9 +5,12 @@ using System.Text.Json;
 
 namespace Atelia.SessionJournal.DerivedRecap.Planner;
 
+/// <summary>
+/// Strict codec for the HistoryLoad-based planner config V2.
+/// </summary>
 public static class RecapPlannerConfigCodec {
-    public const string SchemaV1 =
-        "atelia.session-journal.recap-planner-config.v1";
+    public const string SchemaV2 =
+        "atelia.session-journal.recap-planner-config.v2";
     public const int MaxDocumentUtf8Bytes = 64 * 1024;
 
     private static readonly JsonWriterOptions WriterOptions = new() {
@@ -21,7 +24,8 @@ public static class RecapPlannerConfigCodec {
         if (utf8Json.Length > MaxDocumentUtf8Bytes) {
             return Invalid(
                 RecapPlannerConfigDefectCodes.SizeLimitExceeded,
-                $"Planner config exceeds {MaxDocumentUtf8Bytes} UTF-8 bytes."
+                $"Planner config V2 exceeds {MaxDocumentUtf8Bytes} "
+                + "UTF-8 bytes."
             );
         }
 
@@ -48,7 +52,7 @@ public static class RecapPlannerConfigCodec {
             if (canonical.Length > MaxDocumentUtf8Bytes) {
                 return Invalid(
                     RecapPlannerConfigDefectCodes.SizeLimitExceeded,
-                    $"Canonical planner config exceeds "
+                    "Canonical planner config V2 exceeds "
                     + $"{MaxDocumentUtf8Bytes} UTF-8 bytes."
                 );
             }
@@ -64,7 +68,8 @@ public static class RecapPlannerConfigCodec {
         catch (JsonException exception) {
             return Invalid(
                 RecapPlannerConfigDefectCodes.Malformed,
-                $"Planner config is not strict JSON: {exception.Message}"
+                "Planner config V2 is not strict JSON: "
+                + exception.Message
             );
         }
     }
@@ -77,7 +82,7 @@ public static class RecapPlannerConfigCodec {
             ValidateDocument(document);
         if (defects.Count != 0) {
             throw new InvalidDataException(
-                "Cannot encode invalid recap planner config: "
+                "Cannot encode invalid recap planner config V2: "
                 + string.Join(
                     "; ",
                     defects.Select(static defect =>
@@ -89,7 +94,7 @@ public static class RecapPlannerConfigCodec {
         byte[] canonical = WriteCanonical(document);
         if (canonical.Length > MaxDocumentUtf8Bytes) {
             throw new InvalidDataException(
-                $"Canonical planner config exceeds "
+                "Canonical planner config V2 exceeds "
                 + $"{MaxDocumentUtf8Bytes} UTF-8 bytes."
             );
         }
@@ -98,6 +103,37 @@ public static class RecapPlannerConfigCodec {
 
     public static string ComputeSha256(ReadOnlySpan<byte> bytes)
         => Convert.ToHexStringLower(SHA256.HashData(bytes));
+
+    internal static IReadOnlyList<RecapPlannerConfigDefect>
+        ValidateDocument(
+        RecapPlannerConfigDocument document
+    ) {
+        var defects = new List<RecapPlannerConfigDefect>();
+        if (!string.Equals(
+                document.Schema,
+                SchemaV2,
+                StringComparison.Ordinal
+            )) {
+            Add(
+                defects,
+                RecapPlannerConfigDefectCodes.UnsupportedSchema,
+                "Unsupported recap planner config V2 schema "
+                + $"'{document.Schema ?? "<null>"}'."
+            );
+        }
+        if (string.IsNullOrWhiteSpace(document.PlanningPolicy)) {
+            Add(
+                defects,
+                RecapPlannerConfigDefectCodes.Malformed,
+                "planningPolicy cannot be empty."
+            );
+        }
+
+        ValidateCadence(document.Cadence, defects);
+        ValidateCatalog(document.Catalog, defects);
+        ValidateLimits(document.Limits, defects);
+        return defects.AsReadOnly();
+    }
 
     private static RecapPlannerConfigDocument ReadDocument(
         JsonElement root
@@ -113,28 +149,21 @@ public static class RecapPlannerConfigCodec {
                 "limits"
             );
         string schema = ReadString(properties["schema"], "$.schema");
-        if (!string.Equals(schema, SchemaV1, StringComparison.Ordinal)) {
+        if (!string.Equals(schema, SchemaV2, StringComparison.Ordinal)) {
             throw new ConfigDocumentException(
                 RecapPlannerConfigDefectCodes.UnsupportedSchema,
-                $"Unsupported recap planner config schema '{schema}'."
+                $"Unsupported recap planner config V2 schema '{schema}'."
             );
         }
-        string planningPolicy = ReadString(
-            properties["planningPolicy"],
-            "$.planningPolicy"
-        );
-        RecapCadenceConfigDocument cadence =
-            ReadCadence(properties["cadence"]);
-        IReadOnlyList<RecapPlannerCatalogEntryDocument> catalog =
-            ReadCatalog(properties["catalog"]);
-        RecapPlannerLimitsDocument limits =
-            ReadLimits(properties["limits"]);
         return new RecapPlannerConfigDocument(
             schema,
-            planningPolicy,
-            cadence,
-            catalog,
-            limits
+            ReadString(
+                properties["planningPolicy"],
+                "$.planningPolicy"
+            ),
+            ReadCadence(properties["cadence"]),
+            ReadCatalog(properties["catalog"]),
+            ReadLimits(properties["limits"])
         );
     }
 
@@ -145,17 +174,22 @@ public static class RecapPlannerConfigCodec {
             ReadExactObject(
                 element,
                 "$.cadence",
-                "minimumRecentHistoryUnitCount",
-                "recapBuildIntervalUnitCount"
+                "historyUnitLoadEstimatorId",
+                "minimumRecentHistoryLoad",
+                "recapBuildIntervalHistoryLoad"
             );
         return new RecapCadenceConfigDocument(
-            ReadInt32(
-                properties["minimumRecentHistoryUnitCount"],
-                "$.cadence.minimumRecentHistoryUnitCount"
+            ReadString(
+                properties["historyUnitLoadEstimatorId"],
+                "$.cadence.historyUnitLoadEstimatorId"
             ),
-            ReadInt32(
-                properties["recapBuildIntervalUnitCount"],
-                "$.cadence.recapBuildIntervalUnitCount"
+            ReadInt64(
+                properties["minimumRecentHistoryLoad"],
+                "$.cadence.minimumRecentHistoryLoad"
+            ),
+            ReadInt64(
+                properties["recapBuildIntervalHistoryLoad"],
+                "$.cadence.recapBuildIntervalHistoryLoad"
             )
         );
     }
@@ -165,8 +199,7 @@ public static class RecapPlannerConfigCodec {
         if (element.ValueKind != JsonValueKind.Array) {
             throw Malformed("$.catalog must be an array.");
         }
-        var entries =
-            new List<RecapPlannerCatalogEntryDocument>();
+        var entries = new List<RecapPlannerCatalogEntryDocument>();
         int index = 0;
         foreach (JsonElement item in element.EnumerateArray()) {
             string path = $"$.catalog[{index}]";
@@ -246,8 +279,7 @@ public static class RecapPlannerConfigCodec {
         var found = new Dictionary<string, JsonElement>(
             StringComparer.Ordinal
         );
-        foreach (JsonProperty property in
-                 element.EnumerateObject()) {
+        foreach (JsonProperty property in element.EnumerateObject()) {
             if (!expected.Contains(property.Name)) {
                 throw Malformed(
                     $"{path} contains unknown property "
@@ -296,35 +328,18 @@ public static class RecapPlannerConfigCodec {
         return value;
     }
 
-    internal static IReadOnlyList<RecapPlannerConfigDefect>
-        ValidateDocument(
-        RecapPlannerConfigDocument document
+    private static long ReadInt64(
+        JsonElement element,
+        string path
     ) {
-        var defects = new List<RecapPlannerConfigDefect>();
-        if (!string.Equals(
-                document.Schema,
-                SchemaV1,
-                StringComparison.Ordinal
-            )) {
-            Add(
-                defects,
-                RecapPlannerConfigDefectCodes.UnsupportedSchema,
-                $"Unsupported recap planner config schema "
-                + $"'{document.Schema ?? "<null>"}'."
+        if (element.ValueKind != JsonValueKind.Number
+            || !element.TryGetInt64(out long value)) {
+            throw new ConfigDocumentException(
+                RecapPlannerConfigDefectCodes.InvalidLimit,
+                $"{path} must be a 64-bit integer."
             );
         }
-        if (string.IsNullOrWhiteSpace(document.PlanningPolicy)) {
-            Add(
-                defects,
-                RecapPlannerConfigDefectCodes.Malformed,
-                "planningPolicy cannot be empty."
-            );
-        }
-
-        ValidateCadence(document.Cadence, defects);
-        ValidateCatalog(document.Catalog, defects);
-        ValidateLimits(document.Cadence, document.Limits, defects);
-        return defects.AsReadOnly();
+        return value;
     }
 
     private static void ValidateCadence(
@@ -339,31 +354,40 @@ public static class RecapPlannerConfigCodec {
             );
             return;
         }
-        if (cadence.MinimumRecentHistoryUnitCount < 0) {
+        if (string.IsNullOrWhiteSpace(
+                cadence.HistoryUnitLoadEstimatorId
+            )) {
             Add(
                 defects,
                 RecapPlannerConfigDefectCodes.InvalidLimit,
-                "minimumRecentHistoryUnitCount cannot be negative."
+                "historyUnitLoadEstimatorId cannot be empty."
             );
         }
-        if (cadence.RecapBuildIntervalUnitCount <= 0) {
+        if (cadence.MinimumRecentHistoryLoad < 0) {
             Add(
                 defects,
                 RecapPlannerConfigDefectCodes.InvalidLimit,
-                "recapBuildIntervalUnitCount must be positive."
+                "minimumRecentHistoryLoad cannot be negative."
+            );
+        }
+        if (cadence.RecapBuildIntervalHistoryLoad <= 0) {
+            Add(
+                defects,
+                RecapPlannerConfigDefectCodes.InvalidLimit,
+                "recapBuildIntervalHistoryLoad must be positive."
             );
         }
         try {
             _ = checked(
-                cadence.MinimumRecentHistoryUnitCount
-                + cadence.RecapBuildIntervalUnitCount
+                cadence.MinimumRecentHistoryLoad
+                + cadence.RecapBuildIntervalHistoryLoad
             );
         }
         catch (OverflowException) {
             Add(
                 defects,
                 RecapPlannerConfigDefectCodes.InvalidLimit,
-                "The cadence threshold overflows Int32."
+                "The HistoryLoad cadence threshold overflows Int64."
             );
         }
     }
@@ -386,8 +410,9 @@ public static class RecapPlannerConfigCodec {
             return;
         }
 
-        var profileNames =
-            new HashSet<string>(StringComparer.Ordinal);
+        var profileNames = new HashSet<string>(
+            StringComparer.Ordinal
+        );
         foreach (RecapPlannerCatalogEntryDocument? entry in catalog) {
             if (entry is null
                 || string.IsNullOrWhiteSpace(
@@ -424,7 +449,6 @@ public static class RecapPlannerConfigCodec {
     }
 
     private static void ValidateLimits(
-        RecapCadenceConfigDocument? cadence,
         RecapPlannerLimitsDocument? limits,
         ICollection<RecapPlannerConfigDefect> defects
     ) {
@@ -447,36 +471,13 @@ public static class RecapPlannerConfigCodec {
                 "All planner limits must be positive."
             );
         }
-        if (cadence is null) {
-            return;
-        }
-        try {
-            int threshold = checked(
-                cadence.MinimumRecentHistoryUnitCount
-                + cadence.RecapBuildIntervalUnitCount
-            );
-            if (threshold > limits.MaxRawGrowthEventCount) {
-                Add(
-                    defects,
-                    RecapPlannerConfigDefectCodes.InvalidLimit,
-                    "The cadence threshold must not exceed "
-                    + "maxRawGrowthEventCount."
-                );
-            }
-        }
-        catch (OverflowException) {
-            // ValidateCadence already reports the overflow.
-        }
     }
 
     private static byte[] WriteCanonical(
         RecapPlannerConfigDocument document
     ) {
         using var stream = new MemoryStream();
-        using (var writer = new Utf8JsonWriter(
-                   stream,
-                   WriterOptions
-               )) {
+        using (var writer = new Utf8JsonWriter(stream, WriterOptions)) {
             writer.WriteStartObject();
             writer.WriteString("schema", document.Schema);
             writer.WriteString(
@@ -486,13 +487,17 @@ public static class RecapPlannerConfigCodec {
 
             writer.WritePropertyName("cadence");
             writer.WriteStartObject();
-            writer.WriteNumber(
-                "minimumRecentHistoryUnitCount",
-                document.Cadence.MinimumRecentHistoryUnitCount
+            writer.WriteString(
+                "historyUnitLoadEstimatorId",
+                document.Cadence.HistoryUnitLoadEstimatorId
             );
             writer.WriteNumber(
-                "recapBuildIntervalUnitCount",
-                document.Cadence.RecapBuildIntervalUnitCount
+                "minimumRecentHistoryLoad",
+                document.Cadence.MinimumRecentHistoryLoad
+            );
+            writer.WriteNumber(
+                "recapBuildIntervalHistoryLoad",
+                document.Cadence.RecapBuildIntervalHistoryLoad
             );
             writer.WriteEndObject();
 

@@ -594,9 +594,11 @@ public sealed class DerivedRecapAcceptanceTests {
             new RecapPlanningInputs(
                 catalog,
                 new RecapCadenceConfig(
-                    minimumRecentHistoryUnitCount: 0,
-                    recapBuildIntervalUnitCount: 1
+                    TestHistoryUnitLoadEstimator.DefaultId,
+                    new HistoryLoadUnit(0),
+                    new HistoryLoadUnit(1)
                 ),
+                new TestHistoryUnitLoadEstimator(),
                 policy
             ),
             new RecapPlanningLimits(

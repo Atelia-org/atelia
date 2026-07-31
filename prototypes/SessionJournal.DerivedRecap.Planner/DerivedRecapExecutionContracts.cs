@@ -140,20 +140,18 @@ public sealed record DerivedRecapPlanningBaseline {
 }
 
 /// <summary>
-/// Read-only measurement from the most recent new-planning attempt. Header
-/// negatives intentionally expose no exact HistoryUnit counts.
+/// Read-only measurement from the most recent new-planning attempt.
 /// </summary>
 public abstract record DerivedRecapPlanningDiagnostics {
     private DerivedRecapPlanningDiagnostics() {
     }
 
-    public sealed record HeaderNegative(
-        int RawGrowthEventUpperBound
+    public sealed record RawSafetyRejected(
+        int RawGrowthEventCount
     ) : DerivedRecapPlanningDiagnostics;
 
     public sealed record ExactSchedule(
-        int GrowthHistoryUnitCount,
-        int RawGrowthEventCount
+        RecapExactScheduleMeasurement Measurement
     ) : DerivedRecapPlanningDiagnostics;
 }
 

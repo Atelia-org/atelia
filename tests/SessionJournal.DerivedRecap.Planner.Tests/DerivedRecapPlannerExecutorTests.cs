@@ -148,7 +148,7 @@ public sealed class DerivedRecapPlannerExecutorTests {
         DerivedRecapPlannerExecutor executor = fixture.CreateExecutor(
             policy,
             [maintainer],
-            recapBuildIntervalUnitCount: 100
+            recapBuildIntervalHistoryLoad: 100
         );
 
         DerivedRecapExecutionResult result =
@@ -160,7 +160,7 @@ public sealed class DerivedRecapPlannerExecutorTests {
     }
 
     [Fact]
-    public async Task HeaderNegativeDiagnosticsDoNotInventExactCounts() {
+    public async Task RawSafetyRejectsBeforeHistoryLoadMeasurement() {
         using TestFixture fixture = await TestFixture.CreateAsync(
             historyPairs: 1
         );
@@ -169,29 +169,106 @@ public sealed class DerivedRecapPlannerExecutorTests {
             fixture.SelfTarget,
             static (_, _) => "unused"
         );
+        var estimator = new TestHistoryUnitLoadEstimator();
         DerivedRecapPlannerExecutor executor = fixture.CreateExecutor(
             new DelegatePolicy(static _ =>
                 throw new Xunit.Sdk.XunitException(
                     "Policy must not run."
                 )),
             [maintainer],
-            recapBuildIntervalUnitCount: 100
+            estimator: estimator,
+            maxRawGrowthEventCount: 1
         );
 
-        _ = Assert.IsType<DerivedRecapExecutionResult.NoBuild>(
+        _ = Assert.IsType<DerivedRecapExecutionResult.Unavailable>(
             await executor.RunAsync()
         );
 
         var diagnostics = Assert.IsType<
-            DerivedRecapPlanningDiagnostics.HeaderNegative
+            DerivedRecapPlanningDiagnostics.RawSafetyRejected
         >(executor.LastPlanningDiagnostics);
-        Assert.True(diagnostics.RawGrowthEventUpperBound > 0);
-        Assert.DoesNotContain(
-            nameof(DerivedRecapPlanningDiagnostics.ExactSchedule
-                .GrowthHistoryUnitCount),
-            diagnostics.GetType()
-                .GetProperties()
-                .Select(static property => property.Name)
+        Assert.True(diagnostics.RawGrowthEventCount > 1);
+        Assert.Equal(0, estimator.MeasureCallCount);
+        Assert.Equal(0, maintainer.CallCount);
+    }
+
+    [Fact]
+    public async Task TypedHistoryLoadFailureHasNoMutationOrCalls() {
+        using TestFixture fixture = await TestFixture.CreateAsync(
+            historyPairs: 1
+        );
+        var maintainer = new ScriptedMaintainer(
+            "self-maintainer",
+            fixture.SelfTarget,
+            static (_, _) => "must-not-run"
+        );
+        var policy = new DelegatePolicy(static _ =>
+            throw new Xunit.Sdk.XunitException(
+                "Policy must not run."
+            ));
+        const string defectCode = "TestHistoryLoadUnavailable";
+        var estimator = new TestHistoryUnitLoadEstimator(
+            TestHistoryUnitLoadEstimator.DefaultId,
+            static (_, _) => throw
+                new HistoryLoadMeasurementException(
+                    defectCode,
+                    "synthetic measurement failure"
+                )
+        );
+        DerivedRecapPlannerExecutor executor = fixture.CreateExecutor(
+            policy,
+            [maintainer],
+            estimator: estimator
+        );
+        EventAddress candidate =
+            fixture.Engine.ReadCurrentHead()!.Value;
+
+        var unavailable =
+            Assert.IsType<DerivedRecapExecutionResult.Unavailable>(
+                await executor.RunAsync()
+            );
+
+        Assert.Contains(
+            unavailable.Defects,
+            defect => defect.Code == defectCode
+        );
+        Assert.Equal(1, estimator.MeasureCallCount);
+        Assert.Equal(0, policy.CallCount);
+        Assert.Equal(0, maintainer.CallCount);
+        Assert.Null(executor.LastPlanningDiagnostics);
+        Assert.IsType<BuildingReadResult.Missing>(
+            await fixture.Store.ReadBuildingAsync(candidate)
+        );
+    }
+
+    [Fact]
+    public async Task MissingMaintainerFailsAfterPlanningBeforeBuilding() {
+        using TestFixture fixture = await TestFixture.CreateAsync(
+            historyPairs: 1
+        );
+        DerivedRecapPlannerExecutor executor = fixture.CreateExecutor(
+            new BoundedMaintainAllRecapPlanningPolicy(),
+            maintainers: []
+        );
+        EventAddress candidate =
+            fixture.Engine.ReadCurrentHead()!.Value;
+
+        var unavailable =
+            Assert.IsType<DerivedRecapExecutionResult.Unavailable>(
+                await executor.RunAsync()
+            );
+
+        Assert.Contains(
+            unavailable.Defects,
+            defect => defect.Code
+                == DerivedRecapExecutionDefectCodes
+                    .MaintainerUnavailable
+        );
+        Assert.IsType<
+            DerivedRecapPlanningDiagnostics.ExactSchedule
+        >(executor.LastPlanningDiagnostics);
+        Assert.IsType<BuildingReadResult.Missing>(
+            await fixture.Store.ReadBuildingAsync(candidate)
         );
     }
 
@@ -211,7 +288,7 @@ public sealed class DerivedRecapPlannerExecutorTests {
                     "Policy must not run."
                 )),
             [maintainer],
-            recapBuildIntervalUnitCount: 3
+            recapBuildIntervalHistoryLoad: 3
         );
 
         _ = Assert.IsType<DerivedRecapExecutionResult.NoBuild>(
@@ -221,12 +298,21 @@ public sealed class DerivedRecapPlannerExecutorTests {
         var diagnostics = Assert.IsType<
             DerivedRecapPlanningDiagnostics.ExactSchedule
         >(executor.LastPlanningDiagnostics);
-        Assert.Equal(2, diagnostics.GrowthHistoryUnitCount);
-        Assert.True(diagnostics.RawGrowthEventCount > 0);
+        Assert.Equal(
+            2,
+            diagnostics.Measurement.GrowthHistoryUnitCount
+        );
+        Assert.Equal(
+            2,
+            diagnostics.Measurement.GrowthHistoryLoad.Value
+        );
+        Assert.True(
+            diagnostics.Measurement.RawGrowthEventCount > 0
+        );
     }
 
     [Fact]
-    public async Task CatalogMismatchRejectsBeforeHeaderPrefilter() {
+    public async Task CatalogMismatchRejectsBeforeCadenceMeasurement() {
         using TestFixture fixture = await TestFixture.CreateAsync(
             historyPairs: 1
         );
@@ -254,7 +340,7 @@ public sealed class DerivedRecapPlannerExecutorTests {
         DerivedRecapPlannerExecutor executor = fixture.CreateExecutor(
             policy,
             [secondMaintainer],
-            recapBuildIntervalUnitCount: 100,
+            recapBuildIntervalHistoryLoad: 100,
             catalog: [
                 new RecapBlockCatalogEntry(
                     fixture.SelfId,
@@ -309,7 +395,7 @@ public sealed class DerivedRecapPlannerExecutorTests {
                     "No growth must not call policy."
                 )),
             [replacement],
-            recapBuildIntervalUnitCount: 100,
+            recapBuildIntervalHistoryLoad: 100,
             catalog: [
                 new RecapBlockCatalogEntry(
                     fixture.SelfId,
@@ -348,7 +434,7 @@ public sealed class DerivedRecapPlannerExecutorTests {
         DerivedRecapPlannerExecutor executor = fixture.CreateExecutor(
             new BoundedMaintainAllRecapPlanningPolicy(),
             [maintainer],
-            recapBuildIntervalUnitCount: 100
+            recapBuildIntervalHistoryLoad: 100
         );
         EventAddress head =
             fixture.Engine.ReadCurrentLineageHeaders().CapturedHead;
@@ -418,7 +504,7 @@ public sealed class DerivedRecapPlannerExecutorTests {
                             "No growth must not call policy."
                         )),
                     [maintainer],
-                    recapBuildIntervalUnitCount: 100
+                    recapBuildIntervalHistoryLoad: 100
                 )
                 .RunAsync(restoredBaseline);
 
@@ -464,7 +550,7 @@ public sealed class DerivedRecapPlannerExecutorTests {
     }
 
     [Fact]
-    public async Task CadenceBuildPreservesMinimumRecentHistoryUnits() {
+    public async Task CadenceBuildPreservesMinimumRecentHistoryLoad() {
         using TestFixture fixture = await TestFixture.CreateAsync(
             historyPairs: 3
         );
@@ -476,8 +562,8 @@ public sealed class DerivedRecapPlannerExecutorTests {
         DerivedRecapPlannerExecutor executor = fixture.CreateExecutor(
             new BoundedMaintainAllRecapPlanningPolicy(),
             [maintainer],
-            minimumRecentHistoryUnitCount: 2,
-            recapBuildIntervalUnitCount: 2
+            minimumRecentHistoryLoad: 2,
+            recapBuildIntervalHistoryLoad: 2
         );
 
         var published =
@@ -492,6 +578,25 @@ public sealed class DerivedRecapPlannerExecutorTests {
 
         Assert.Equal(2, recent.Units.Count);
         Assert.Equal(1, maintainer.CallCount);
+        var diagnostics = Assert.IsType<
+            DerivedRecapPlanningDiagnostics.ExactSchedule
+        >(executor.LastPlanningDiagnostics);
+        Assert.Equal(
+            TestHistoryUnitLoadEstimator.DefaultId,
+            diagnostics.Measurement.HistoryUnitLoadEstimatorId
+        );
+        Assert.Equal(
+            diagnostics.Measurement.GrowthHistoryLoad.Value,
+            diagnostics.Measurement
+                .SelectedAbsorbedHistoryLoad!.Value.Value
+            + diagnostics.Measurement
+                .SelectedRecentHistoryLoad!.Value.Value
+        );
+        Assert.Equal(
+            2,
+            diagnostics.Measurement
+                .SelectedRecentHistoryLoad.Value.Value
+        );
     }
 
     [Fact]
@@ -508,8 +613,8 @@ public sealed class DerivedRecapPlannerExecutorTests {
             fixture.CreateExecutor(
                 new BoundedMaintainAllRecapPlanningPolicy(),
                 [maintainer],
-                minimumRecentHistoryUnitCount: 1,
-                recapBuildIntervalUnitCount: 1
+                minimumRecentHistoryLoad: 1,
+                recapBuildIntervalHistoryLoad: 1
             );
         _ = Assert.IsType<DerivedRecapExecutionResult.Published>(
             await firstExecutor.RunAsync()
@@ -520,7 +625,7 @@ public sealed class DerivedRecapPlannerExecutorTests {
             RecapCadenceBoundary admission =
                 context.Cadence.AdmissionCandidates
                     .OrderByDescending(candidate =>
-                        candidate.HistoryUnitCountSinceBaseline)
+                        candidate.AbsorbedHistoryLoad.Value)
                     .First();
             RecapSourceIntent source = Assert.Single(
                 context.PolicyFacts.AvailableSources
@@ -539,8 +644,8 @@ public sealed class DerivedRecapPlannerExecutorTests {
             fixture.CreateExecutor(
                 inheritPolicy,
                 [maintainer],
-                minimumRecentHistoryUnitCount: 1,
-                recapBuildIntervalUnitCount: 1
+                minimumRecentHistoryLoad: 1,
+                recapBuildIntervalHistoryLoad: 1
             );
         _ = Assert.IsType<DerivedRecapExecutionResult.Published>(
             await secondExecutor.RunAsync()
@@ -561,12 +666,14 @@ public sealed class DerivedRecapPlannerExecutorTests {
                 + "not be recounted."
             )
         );
+        var estimator = new TestHistoryUnitLoadEstimator();
         DerivedRecapPlannerExecutor thirdExecutor =
             fixture.CreateExecutor(
                 mustNotRun,
                 [maintainer],
-                minimumRecentHistoryUnitCount: 1,
-                recapBuildIntervalUnitCount: 1
+                minimumRecentHistoryLoad: 1,
+                recapBuildIntervalHistoryLoad: 1,
+                estimator: estimator
             );
 
         var noBuild =
@@ -579,6 +686,18 @@ public sealed class DerivedRecapPlannerExecutorTests {
             noBuild.Reason
         );
         Assert.Equal(0, mustNotRun.CallCount);
+        Assert.Equal(1, estimator.MeasureCallCount);
+        var diagnostics = Assert.IsType<
+            DerivedRecapPlanningDiagnostics.ExactSchedule
+        >(thirdExecutor.LastPlanningDiagnostics);
+        Assert.Equal(
+            1,
+            diagnostics.Measurement.GrowthHistoryUnitCount
+        );
+        Assert.Equal(
+            1,
+            diagnostics.Measurement.GrowthHistoryLoad.Value
+        );
         Assert.Equal(1, maintainer.CallCount);
     }
 
@@ -1788,13 +1907,17 @@ public sealed class DerivedRecapPlannerExecutorTests {
         public DerivedRecapPlannerExecutor CreateExecutor(
             IRecapPlanningPolicy policy,
             IReadOnlyList<IRecapBlockMaintainer> maintainers,
-            int minimumRecentHistoryUnitCount = 0,
-            int recapBuildIntervalUnitCount = 1,
+            int minimumRecentHistoryLoad = 0,
+            int recapBuildIntervalHistoryLoad = 1,
+            IHistoryUnitLoadEstimator? estimator = null,
+            int maxRawGrowthEventCount = 1000,
             int maxRouteEndpointsPerBlock = 4,
             int maxMaintainerCallsPerBuild = 8,
             IReadOnlyList<RecapBlockCatalogEntry>? catalog = null,
             DerivedRecapBuildingExecutorTestHooks? executorHooks = null
-        ) => new(
+        ) {
+            estimator ??= new TestHistoryUnitLoadEstimator();
+            return new(
             Engine,
             Store,
             new RecapPlanningInputs(
@@ -1807,13 +1930,19 @@ public sealed class DerivedRecapPlannerExecutorTests {
                     )
                 ],
                 new RecapCadenceConfig(
-                    minimumRecentHistoryUnitCount,
-                    recapBuildIntervalUnitCount
+                    estimator.Id,
+                    new HistoryLoadUnit(
+                        minimumRecentHistoryLoad
+                    ),
+                    new HistoryLoadUnit(
+                        recapBuildIntervalHistoryLoad
+                    )
                 ),
+                estimator,
                 policy
             ),
             new RecapPlanningLimits(
-                maxRawGrowthEventCount: 1000,
+                maxRawGrowthEventCount,
                 maxRouteEndpointsPerBlock,
                 maxMaintainerCallsPerBuild,
                 maxRawEventsPerStep: 1000,
@@ -1826,7 +1955,8 @@ public sealed class DerivedRecapPlannerExecutorTests {
             ),
             executorHooks
                 ?? new DerivedRecapBuildingExecutorTestHooks()
-        );
+            );
+        }
 
         public DerivedRecapBuildingExecutor CreateBuildingExecutor(
             IReadOnlyList<IRecapBlockMaintainer> maintainers,

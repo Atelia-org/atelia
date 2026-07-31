@@ -13,6 +13,17 @@ using SJ = Atelia.SessionJournal;
 namespace Atelia.SessionJournal.Cli.Tests;
 
 public sealed class ProgramDerivedRecapOnlineTurnTests : IDisposable {
+    // Test-only cadence for compact synthetic histories. Production
+    // thresholds are asserted separately by the execution CLI tests.
+    private static RecapPlannerConfigDocument FastCadenceConfig =>
+        RecapCliComposition.DefaultComposition.Snapshot.Document with {
+            Cadence = new RecapCadenceConfigDocument(
+                O200kBaseHistoryUnitLoadEstimator.EstimatorId,
+                MinimumRecentHistoryLoad: 180,
+                RecapBuildIntervalHistoryLoad: 200
+            )
+        };
+
     private readonly string _tempRoot = Path.Combine(
         Path.GetTempPath(),
         "atelia-derived-recap-online-cli-tests",
@@ -35,7 +46,7 @@ public sealed class ProgramDerivedRecapOnlineTurnTests : IDisposable {
             File.ReadAllText(fixture.OutputPath)
         );
         Assert.Equal(
-            "atelia.session-journal.online-turn-run.v4",
+            "atelia.session-journal.online-turn-run.v5",
             report.RootElement.GetProperty("schema").GetString()
         );
         JsonElement config =
@@ -48,11 +59,24 @@ public sealed class ProgramDerivedRecapOnlineTurnTests : IDisposable {
             config.GetProperty("configSha256").GetString()
         ));
         Assert.Equal(
-            "HeaderNegative",
-            report.RootElement
-                .GetProperty("planning")
-                .GetProperty("measurementKind")
+            O200kBaseHistoryUnitLoadEstimator.EstimatorId,
+            config.GetProperty("historyUnitLoadEstimatorId")
                 .GetString()
+        );
+        JsonElement planning =
+            report.RootElement.GetProperty("planning");
+        Assert.Equal(
+            "ExactSchedule",
+            planning.GetProperty("measurementKind").GetString()
+        );
+        Assert.Equal(
+            O200kBaseHistoryUnitLoadEstimator.EstimatorId,
+            planning.GetProperty("historyUnitLoadEstimatorId")
+                .GetString()
+        );
+        Assert.True(
+            planning.GetProperty("growthHistoryLoad")
+                .GetInt64() >= 0
         );
         Assert.Equal(
             2,
@@ -400,7 +424,7 @@ public sealed class ProgramDerivedRecapOnlineTurnTests : IDisposable {
             report.RootElement.GetProperty("config").ValueKind
         );
         Assert.Equal(
-            "HeaderNegative",
+            "ExactSchedule",
             report.RootElement
                 .GetProperty("planning")
                 .GetProperty("measurementKind")
@@ -834,8 +858,7 @@ public sealed class ProgramDerivedRecapOnlineTurnTests : IDisposable {
         Assert.IsType<RecapPlannerConfigInitializeResult.Initialized>(
             RecapPlannerConfigInitializer.Initialize(
                 path,
-                RecapCliComposition.DefaultComposition
-                    .Snapshot.Document
+                FastCadenceConfig
             )
         );
     }

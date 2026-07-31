@@ -207,7 +207,7 @@ internal static class OnlineTurnCommand {
         SJ.SessionExecutionBoundaryInspection final =
             engine.InspectExecutionBoundary();
         var report = new OnlineTurnRunRecord(
-            "atelia.session-journal.online-turn-run.v4",
+            "atelia.session-journal.online-turn-run.v5",
             engine.BranchName,
             engine.BranchRefId.ToHexString(),
             final.Head is { } head
@@ -332,8 +332,9 @@ internal static class OnlineTurnCommand {
                     )
                 )
             ],
-            document.Cadence.MinimumRecentHistoryUnitCount,
-            document.Cadence.RecapBuildIntervalUnitCount,
+            document.Cadence.HistoryUnitLoadEstimatorId,
+            document.Cadence.MinimumRecentHistoryLoad,
+            document.Cadence.RecapBuildIntervalHistoryLoad,
             document.Limits.MaxRawGrowthEventCount,
             document.Limits.MaxRouteEndpointsPerBlock,
             document.Limits.MaxMaintainerCallsPerBuild,
@@ -345,19 +346,26 @@ internal static class OnlineTurnCommand {
     private static RecapExecutionPlanningReport? CreatePlanningReport(
         DerivedRecapPlanningDiagnostics? diagnostics
     ) => diagnostics switch {
-        DerivedRecapPlanningDiagnostics.HeaderNegative header =>
+        DerivedRecapPlanningDiagnostics.RawSafetyRejected rejected =>
             new RecapExecutionPlanningReport(
-                "HeaderNegative",
+                "RawSafetyRejected",
+                HistoryUnitLoadEstimatorId: null,
+                GrowthHistoryLoad: null,
+                SelectedAbsorbedHistoryLoad: null,
+                SelectedRecentHistoryLoad: null,
                 GrowthHistoryUnitCount: null,
-                RawGrowthEventCount: null,
-                header.RawGrowthEventUpperBound
+                rejected.RawGrowthEventCount
             ),
         DerivedRecapPlanningDiagnostics.ExactSchedule exact =>
             new RecapExecutionPlanningReport(
                 "ExactSchedule",
-                exact.GrowthHistoryUnitCount,
-                exact.RawGrowthEventCount,
-                RawGrowthEventUpperBound: null
+                exact.Measurement.HistoryUnitLoadEstimatorId,
+                exact.Measurement.GrowthHistoryLoad.Value,
+                exact.Measurement
+                    .SelectedAbsorbedHistoryLoad?.Value,
+                exact.Measurement.SelectedRecentHistoryLoad?.Value,
+                exact.Measurement.GrowthHistoryUnitCount,
+                exact.Measurement.RawGrowthEventCount
             ),
         null => null,
         _ => throw new InvalidDataException(

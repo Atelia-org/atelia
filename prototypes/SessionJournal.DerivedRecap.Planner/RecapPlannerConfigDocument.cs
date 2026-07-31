@@ -3,8 +3,9 @@ using System.Collections.Immutable;
 namespace Atelia.SessionJournal.DerivedRecap.Planner;
 
 public sealed record RecapCadenceConfigDocument(
-    int MinimumRecentHistoryUnitCount,
-    int RecapBuildIntervalUnitCount
+    string HistoryUnitLoadEstimatorId,
+    long MinimumRecentHistoryLoad,
+    long RecapBuildIntervalHistoryLoad
 );
 
 public sealed record RecapPlannerCatalogEntryDocument(

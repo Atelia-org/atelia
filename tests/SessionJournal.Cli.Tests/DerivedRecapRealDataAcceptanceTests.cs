@@ -974,8 +974,9 @@ public sealed class DerivedRecapRealDataAcceptanceTests {
     );
 
     private sealed record ConfigReport(
-        int MinimumRecentHistoryUnitCount,
-        int RecapBuildIntervalUnitCount,
+        string HistoryUnitLoadEstimatorId,
+        long MinimumRecentHistoryLoad,
+        long RecapBuildIntervalHistoryLoad,
         int MaxRawGrowthEventCount,
         int MaxRouteEndpointsPerBlock,
         int MaxMaintainerCallsPerBuild,
@@ -987,9 +988,11 @@ public sealed class DerivedRecapRealDataAcceptanceTests {
             ResolvedRecapPlannerComposition composition
         ) => new(
                 composition.PlanningInputs.Cadence
-                    .MinimumRecentHistoryUnitCount,
+                    .HistoryUnitLoadEstimatorId,
                 composition.PlanningInputs.Cadence
-                    .RecapBuildIntervalUnitCount,
+                    .MinimumRecentHistoryLoad.Value,
+                composition.PlanningInputs.Cadence
+                    .RecapBuildIntervalHistoryLoad.Value,
                 composition.PlanningLimits.MaxRawGrowthEventCount,
                 composition.PlanningLimits.MaxRouteEndpointsPerBlock,
                 composition.PlanningLimits.MaxMaintainerCallsPerBuild,

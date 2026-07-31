@@ -5,7 +5,7 @@ namespace Atelia.SessionJournal.Cli;
 
 internal static class RecapPlannerConfigCommands {
     private const string ReportSchema =
-        "atelia.session-journal.recap-planner-config-operation.v1";
+        "atelia.session-journal.recap-planner-config-operation.v2";
 
     internal static Task<int> RunAsync(string[] args) {
         ArgumentNullException.ThrowIfNull(args);
@@ -184,8 +184,9 @@ internal static class RecapPlannerConfigCommands {
             composition.Snapshot.ConfigSha256,
             document.PlanningPolicy,
             new RecapPlannerConfigCadenceReport(
-                document.Cadence.MinimumRecentHistoryUnitCount,
-                document.Cadence.RecapBuildIntervalUnitCount
+                document.Cadence.HistoryUnitLoadEstimatorId,
+                document.Cadence.MinimumRecentHistoryLoad,
+                document.Cadence.RecapBuildIntervalHistoryLoad
             ),
             Array.AsReadOnly([
                 .. composition.ActiveProfiles.Select(
@@ -237,10 +238,9 @@ internal static class RecapPlannerConfigCommands {
             document is null
                 ? null
                 : new RecapPlannerConfigCadenceReport(
-                    document.Cadence
-                        .MinimumRecentHistoryUnitCount,
-                    document.Cadence
-                        .RecapBuildIntervalUnitCount
+                    document.Cadence.HistoryUnitLoadEstimatorId,
+                    document.Cadence.MinimumRecentHistoryLoad,
+                    document.Cadence.RecapBuildIntervalHistoryLoad
                 ),
             [],
             document is null
@@ -348,8 +348,9 @@ internal sealed record RecapPlannerConfigCommandReport(
 );
 
 internal sealed record RecapPlannerConfigCadenceReport(
-    int MinimumRecentHistoryUnitCount,
-    int RecapBuildIntervalUnitCount
+    string HistoryUnitLoadEstimatorId,
+    long MinimumRecentHistoryLoad,
+    long RecapBuildIntervalHistoryLoad
 );
 
 internal sealed record RecapPlannerConfigCatalogReport(

@@ -241,21 +241,26 @@ public sealed class DerivedRecapPreparedRecoveryIntegrationTests
         ContextHeaderBlockPath target,
         string maintainerId,
         IRecapPlanningPolicy policy
-    ) => new(
-        [
-            new RecapBlockCatalogEntry(
-                blockId,
-                target,
-                maintainerId,
-                maxContentUtf8Bytes: 4096
-            )
-        ],
-        new RecapCadenceConfig(
-            minimumRecentHistoryUnitCount: 0,
-            recapBuildIntervalUnitCount: 2
-        ),
-        policy
-    );
+    ) {
+        var estimator = new ConstantHistoryUnitLoadEstimator();
+        return new(
+            [
+                new RecapBlockCatalogEntry(
+                    blockId,
+                    target,
+                    maintainerId,
+                    maxContentUtf8Bytes: 4096
+                )
+            ],
+            new RecapCadenceConfig(
+                estimator.Id,
+                new HistoryLoadUnit(0),
+                new HistoryLoadUnit(2)
+            ),
+            estimator,
+            policy
+        );
+    }
 
     private static SessionRuntime CreateRuntime(
         ICompletionClient client,
@@ -268,6 +273,20 @@ public sealed class DerivedRecapPreparedRecoveryIntegrationTests
         ContextCandidateSource: candidates,
         ContextLifecycle: lifecycle
     );
+
+    private sealed class ConstantHistoryUnitLoadEstimator
+        : IHistoryUnitLoadEstimator {
+        public string Id =>
+            "atelia.tests.history-load.constant-v1";
+
+        public HistoryUnitLoadMeasurement Measure(
+            SessionHistoryPlanningUnit unit,
+            int maxRenderedUtf8Bytes
+        ) => new(
+            new HistoryLoadUnit(1),
+            RenderedUtf8Bytes: 1
+        );
+    }
 
     private string NewPath() {
         string path = Path.Combine(

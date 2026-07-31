@@ -383,35 +383,42 @@ public sealed class BoundedMaintainAllRecapPlanningPolicyTests {
                         SessionEventKind.ObservationAccepted
                     ))
             ];
+            var window = new RecapHistoryWindowFacts(
+                addresses[10],
+                totalHistoryUnitCount: 10,
+                [
+                    .. replaySafeIndices
+                        .Where(static index => index != 10)
+                        .OrderByDescending(static index => index)
+                        .Select(index =>
+                            new SessionHistoryPlanningBoundary(
+                                addresses[index],
+                                CompletedUnitCount:
+                                    completedUnitCounts?
+                                        .GetValueOrDefault(
+                                            index,
+                                            10 - index
+                                        )
+                                    ?? 10 - index
+                            ))
+                ]
+            );
+            EventAddress baselineAddress =
+                latestPublishedIndex is { } baseline
+                    ? addresses[baseline]
+                    : addresses[10];
             return new RecapSchedulingFacts(
                 addresses[0],
                 lineage,
-                new RecapHistoryWindowFacts(
-                    addresses[10],
-                    totalHistoryUnitCount: 10,
-                    [
-                        .. replaySafeIndices
-                            .Where(static index => index != 10)
-                            .OrderByDescending(static index => index)
-                            .Select(index =>
-                                new SessionHistoryPlanningBoundary(
-                                    addresses[index],
-                                    CompletedUnitCount:
-                                        completedUnitCounts?
-                                            .GetValueOrDefault(
-                                                index,
-                                                10 - index
-                                            )
-                                        ?? 10 - index
-                                ))
-                    ]
-                ),
-                latestPublishedIndex is { } baseline
-                    ? addresses[baseline]
-                    : addresses[10],
+                window,
+                baselineAddress,
                 latestPublishedIndex is { } latest
                     ? addresses[latest]
-                    : null
+                    : null,
+                TestHistoryLoadMeasurement.UnitCountEquivalent(
+                    window,
+                    baselineAddress
+                )
             );
         }
 
@@ -435,13 +442,16 @@ public sealed class BoundedMaintainAllRecapPlanningPolicyTests {
                     ))
             ];
             var policy = new BoundedMaintainAllRecapPlanningPolicy();
+            var estimator = new TestHistoryUnitLoadEstimator();
             return new PlanningAuthority(
                 new RecapPlanningInputs(
                     catalog,
                     new RecapCadenceConfig(
-                        minimumRecentHistoryUnitCount: 0,
-                        recapBuildIntervalUnitCount: 1
+                        estimator.Id,
+                        new HistoryLoadUnit(0),
+                        new HistoryLoadUnit(1)
                     ),
+                    estimator,
                     policy
                 ),
                 new RecapPlanningLimits(

@@ -9,29 +9,63 @@ public sealed class RecapRuntimeAuthorityTests {
         var first = CatalogEntry("first");
         var second = CatalogEntry("second");
         RecapBlockCatalogEntry[] source = [first, second];
-        var cadence = new RecapCadenceConfig(20, 24);
+        var estimator = new TestHistoryUnitLoadEstimator();
+        var cadence = new RecapCadenceConfig(
+            estimator.Id,
+            new HistoryLoadUnit(20),
+            new HistoryLoadUnit(24)
+        );
         var policy = new BoundedMaintainAllRecapPlanningPolicy();
 
         var inputs = new RecapPlanningInputs(
             source,
             cadence,
+            estimator,
             policy
         );
         source[0] = second;
 
         Assert.Equal([first, second], inputs.OrderedCatalog);
         Assert.Same(cadence, inputs.Cadence);
+        Assert.Same(estimator, inputs.HistoryUnitLoadEstimator);
         Assert.Same(policy, inputs.Policy);
     }
 
     [Fact]
     public void Planning_inputs_reject_duplicate_block_or_target() {
         RecapBlockCatalogEntry first = CatalogEntry("first");
+        var estimator = new TestHistoryUnitLoadEstimator();
 
         Assert.Throws<ArgumentException>(() =>
             new RecapPlanningInputs(
                 [first, first],
-                new RecapCadenceConfig(20, 24),
+                new RecapCadenceConfig(
+                    estimator.Id,
+                    new HistoryLoadUnit(20),
+                    new HistoryLoadUnit(24)
+                ),
+                estimator,
+                new BoundedMaintainAllRecapPlanningPolicy()
+            )
+        );
+    }
+
+    [Fact]
+    public void Planning_inputs_require_exact_estimator_identity() {
+        RecapBlockCatalogEntry first = CatalogEntry("first");
+        var estimator = new TestHistoryUnitLoadEstimator(
+            id: "atelia.tests.history-load.actual-v1"
+        );
+
+        Assert.Throws<ArgumentException>(() =>
+            new RecapPlanningInputs(
+                [first],
+                new RecapCadenceConfig(
+                    "atelia.tests.history-load.configured-v1",
+                    new HistoryLoadUnit(20),
+                    new HistoryLoadUnit(24)
+                ),
+                estimator,
                 new BoundedMaintainAllRecapPlanningPolicy()
             )
         );

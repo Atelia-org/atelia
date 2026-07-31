@@ -175,7 +175,7 @@ public sealed class DerivedRecapOnlineLifecycleCoordinatorTests {
         );
         DerivedRecapOnlineLifecycleCoordinator coordinator =
             fixture.CreateCoordinator(
-                recapBuildIntervalUnitCount: 1,
+                recapBuildIntervalHistoryLoad: 1,
                 policy,
                 maintainer
             );
@@ -292,11 +292,18 @@ public sealed class DerivedRecapOnlineLifecycleCoordinatorTests {
                 "Below-trigger execution must not invoke policy."
             )
         );
+        var estimator = new TestHistoryUnitLoadEstimator(
+            TestHistoryUnitLoadEstimator.DefaultId,
+            static (_, _) => throw new Xunit.Sdk.XunitException(
+                "Restore must not measure cadence."
+            )
+        );
         DerivedRecapOnlineLifecycleCoordinator coordinator =
             fixture.CreateCoordinator(
-                recapBuildIntervalUnitCount: 100,
+                recapBuildIntervalHistoryLoad: 100,
                 policy,
-                maintainer
+                maintainer,
+                estimator
             );
         SessionContextLifecycleRequest request = fixture.Request();
 
@@ -309,6 +316,7 @@ public sealed class DerivedRecapOnlineLifecycleCoordinatorTests {
 
         Assert.Equal(SessionContextLifecycleStatus.Ready, result.Status);
         Assert.Equal(0, policy.CallCount);
+        Assert.Equal(0, estimator.MeasureCallCount);
         Assert.Equal(1, maintainer.CallCount);
         var repaired = Assert.IsType<DerivedRecapSelection.Selected>(
             await fixture.Store.SelectNthPreviousAsync(
@@ -1177,10 +1185,13 @@ public sealed class DerivedRecapOnlineLifecycleCoordinatorTests {
 
         public DerivedRecapOnlineLifecycleCoordinator
             CreateCoordinator(
-            int recapBuildIntervalUnitCount,
+            int recapBuildIntervalHistoryLoad,
             IRecapPlanningPolicy policy,
-            IRecapBlockMaintainer maintainer
-        ) => new(
+            IRecapBlockMaintainer maintainer,
+            IHistoryUnitLoadEstimator? estimator = null
+        ) {
+            estimator ??= new TestHistoryUnitLoadEstimator();
+            return new(
             Engine,
             Store,
             new RecapPlanningInputs(
@@ -1193,9 +1204,13 @@ public sealed class DerivedRecapOnlineLifecycleCoordinatorTests {
                     )
                 ],
                 new RecapCadenceConfig(
-                    minimumRecentHistoryUnitCount: 0,
-                    recapBuildIntervalUnitCount
+                    estimator.Id,
+                    new HistoryLoadUnit(0),
+                    new HistoryLoadUnit(
+                        recapBuildIntervalHistoryLoad
+                    )
                 ),
+                estimator,
                 policy
             ),
             new RecapPlanningLimits(
@@ -1206,7 +1221,8 @@ public sealed class DerivedRecapOnlineLifecycleCoordinatorTests {
                 maxRawEventsPerBuild: 512
             ),
             new RecapBlockMaintainerRegistry([maintainer])
-        );
+            );
+        }
 
         public SessionContextLifecycleRequest Request() {
             EventAddress boundary =

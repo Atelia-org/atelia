@@ -38,36 +38,39 @@ public sealed record RecapBlockCatalogEntry {
 
 public sealed record RecapCadenceConfig {
     public RecapCadenceConfig(
-        int minimumRecentHistoryUnitCount,
-        int recapBuildIntervalUnitCount
+        string historyUnitLoadEstimatorId,
+        HistoryLoadUnit minimumRecentHistoryLoad,
+        HistoryLoadUnit recapBuildIntervalHistoryLoad
     ) {
-        if (minimumRecentHistoryUnitCount < 0) {
+        HistoryUnitLoadEstimatorId =
+            string.IsNullOrWhiteSpace(historyUnitLoadEstimatorId)
+                ? throw new ArgumentException(
+                    "History-unit load estimator ID cannot be empty.",
+                    nameof(historyUnitLoadEstimatorId)
+                )
+                : historyUnitLoadEstimatorId;
+        if (recapBuildIntervalHistoryLoad.Value <= 0) {
             throw new ArgumentOutOfRangeException(
-                nameof(minimumRecentHistoryUnitCount)
+                nameof(recapBuildIntervalHistoryLoad)
             );
         }
-        if (recapBuildIntervalUnitCount <= 0) {
-            throw new ArgumentOutOfRangeException(
-                nameof(recapBuildIntervalUnitCount)
-            );
-        }
-        _ = checked(
-            minimumRecentHistoryUnitCount
-            + recapBuildIntervalUnitCount
-        );
+        _ = new HistoryLoadUnit(checked(
+            minimumRecentHistoryLoad.Value
+            + recapBuildIntervalHistoryLoad.Value
+        ));
 
-        MinimumRecentHistoryUnitCount =
-            minimumRecentHistoryUnitCount;
-        RecapBuildIntervalUnitCount =
-            recapBuildIntervalUnitCount;
+        MinimumRecentHistoryLoad = minimumRecentHistoryLoad;
+        RecapBuildIntervalHistoryLoad =
+            recapBuildIntervalHistoryLoad;
     }
 
-    public int MinimumRecentHistoryUnitCount { get; }
-    public int RecapBuildIntervalUnitCount { get; }
-    public int BuildThresholdUnitCount => checked(
-        MinimumRecentHistoryUnitCount
-        + RecapBuildIntervalUnitCount
-    );
+    public string HistoryUnitLoadEstimatorId { get; }
+    public HistoryLoadUnit MinimumRecentHistoryLoad { get; }
+    public HistoryLoadUnit RecapBuildIntervalHistoryLoad { get; }
+    public HistoryLoadUnit BuildThresholdHistoryLoad => new(checked(
+        MinimumRecentHistoryLoad.Value
+        + RecapBuildIntervalHistoryLoad.Value
+    ));
 }
 
 public static class RecapPlanningPolicyIds {
@@ -79,6 +82,7 @@ public sealed class RecapPlanningInputs {
     public RecapPlanningInputs(
         IReadOnlyList<RecapBlockCatalogEntry> orderedCatalog,
         RecapCadenceConfig cadence,
+        IHistoryUnitLoadEstimator historyUnitLoadEstimator,
         IRecapPlanningPolicy policy
     ) {
         ArgumentNullException.ThrowIfNull(orderedCatalog);
@@ -91,6 +95,22 @@ public sealed class RecapPlanningInputs {
         }
         Cadence = cadence
             ?? throw new ArgumentNullException(nameof(cadence));
+        HistoryUnitLoadEstimator = historyUnitLoadEstimator
+            ?? throw new ArgumentNullException(
+                nameof(historyUnitLoadEstimator)
+            );
+        string estimatorId = HistoryUnitLoadEstimator.Id;
+        if (!string.Equals(
+                estimatorId,
+                cadence.HistoryUnitLoadEstimatorId,
+                StringComparison.Ordinal
+            )) {
+            throw new ArgumentException(
+                "History-unit load estimator does not match the "
+                + "configured cadence identity.",
+                nameof(historyUnitLoadEstimator)
+            );
+        }
         Policy = policy
             ?? throw new ArgumentNullException(nameof(policy));
 
@@ -120,6 +140,9 @@ public sealed class RecapPlanningInputs {
         get;
     }
     public RecapCadenceConfig Cadence { get; }
+    public IHistoryUnitLoadEstimator HistoryUnitLoadEstimator {
+        get;
+    }
     public IRecapPlanningPolicy Policy { get; }
 }
 
@@ -285,14 +308,6 @@ public sealed record RecapProtocolHardCaps {
                 "Catalog content ceiling exceeds the protocol hard cap."
             );
         }
-        if (limits.MaxRawGrowthEventCount
-            < inputs.Cadence.BuildThresholdUnitCount) {
-            throw new ArgumentOutOfRangeException(
-                nameof(limits),
-                "The raw growth limit must be reachable after the "
-                + "configured HistoryUnit cadence threshold."
-            );
-        }
     }
 
     private static int RequirePositive(int value, string name)
@@ -360,7 +375,8 @@ public sealed class RecapSchedulingFacts {
         IReadOnlyList<SessionCurrentLineageHeader> headToRoot,
         RecapHistoryWindowFacts historyWindow,
         EventAddress cadenceBaseline,
-        EventAddress? latestPublishedSetAnchor
+        EventAddress? latestPublishedSetAnchor,
+        RecapHistoryLoadMeasurement historyLoadMeasurement
     ) {
         if (capturedHead == default) {
             throw new ArgumentException(
@@ -381,6 +397,10 @@ public sealed class RecapSchedulingFacts {
         HistoryWindow = historyWindow;
         CadenceBaseline = cadenceBaseline;
         LatestPublishedSetAnchor = latestPublishedSetAnchor;
+        HistoryLoadMeasurement = historyLoadMeasurement
+            ?? throw new ArgumentNullException(
+                nameof(historyLoadMeasurement)
+            );
     }
 
     public EventAddress CapturedHead { get; }
@@ -390,21 +410,29 @@ public sealed class RecapSchedulingFacts {
     public RecapHistoryWindowFacts HistoryWindow { get; }
     public EventAddress CadenceBaseline { get; }
     public EventAddress? LatestPublishedSetAnchor { get; }
+    public RecapHistoryLoadMeasurement HistoryLoadMeasurement {
+        get;
+    }
 }
 
 public sealed record RecapCadenceBoundary(
     EventAddress Address,
-    int HistoryUnitCountSinceBaseline
+    HistoryLoadUnit AbsorbedHistoryLoad,
+    HistoryLoadUnit RecentHistoryLoad
 );
 
 public sealed class RecapCadenceFacts {
     internal RecapCadenceFacts(
         EventAddress baseline,
+        string historyUnitLoadEstimatorId,
+        HistoryLoadUnit growthHistoryLoad,
         int growthHistoryUnitCount,
         int rawGrowthEventCount,
         IReadOnlyList<RecapCadenceBoundary> admissionCandidates
     ) {
         Baseline = baseline;
+        HistoryUnitLoadEstimatorId = historyUnitLoadEstimatorId;
+        GrowthHistoryLoad = growthHistoryLoad;
         GrowthHistoryUnitCount = growthHistoryUnitCount;
         RawGrowthEventCount = rawGrowthEventCount;
         AdmissionCandidates =
@@ -412,6 +440,8 @@ public sealed class RecapCadenceFacts {
     }
 
     public EventAddress Baseline { get; }
+    public string HistoryUnitLoadEstimatorId { get; }
+    public HistoryLoadUnit GrowthHistoryLoad { get; }
     public int GrowthHistoryUnitCount { get; }
     public int RawGrowthEventCount { get; }
     public IReadOnlyList<RecapCadenceBoundary>
@@ -650,27 +680,25 @@ public abstract record RecapSchedulingResult {
 }
 
 public sealed record RecapExactScheduleMeasurement(
+    string HistoryUnitLoadEstimatorId,
+    HistoryLoadUnit GrowthHistoryLoad,
     int GrowthHistoryUnitCount,
-    int RawGrowthEventCount
+    int RawGrowthEventCount,
+    HistoryLoadUnit? SelectedAbsorbedHistoryLoad = null,
+    HistoryLoadUnit? SelectedRecentHistoryLoad = null
 );
 
-public abstract record RecapHeaderPrefilterResult {
-    private RecapHeaderPrefilterResult() {
+public abstract record RecapRawSafetyResult {
+    private RecapRawSafetyResult() {
     }
 
-    public sealed record NoBuild(
-        string Reason,
-        int RawGrowthEventUpperBound
-    )
-        : RecapHeaderPrefilterResult;
-
-    public sealed record ExactEvaluationRequired(
-        int RawGrowthEventUpperBound
-    ) : RecapHeaderPrefilterResult;
+    public sealed record Safe(int RawGrowthEventCount)
+        : RecapRawSafetyResult;
 
     public sealed record Unavailable(
-        IReadOnlyList<RecapPlanDefect> Defects
-    ) : RecapHeaderPrefilterResult;
+        IReadOnlyList<RecapPlanDefect> Defects,
+        int? RawGrowthEventCount = null
+    ) : RecapRawSafetyResult;
 }
 
 public abstract record RecapPlanIntentResult {

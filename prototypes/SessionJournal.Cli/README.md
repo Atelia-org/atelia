@@ -60,7 +60,10 @@ dotnet run --project prototypes/SessionJournal.Cli -- \
 
 `init` 只执行 create-new canonical publication；文件存在时拒绝且不覆盖。`inspect` 从同一个
 opened handle bounded读取、strict decode并解析 policy/profile，输出 config hash与 content-free
-normalized view。二者都不打开 Recap Store、不选择 branch、不创建 Completion client。
+normalized view。canonical config schema 是 V2；cadence 由
+`historyUnitLoadEstimatorId`、`minimumRecentHistoryLoad` 和
+`recapBuildIntervalHistoryLoad` 定义。二者都不打开 Recap Store、不选择 branch、不创建
+Completion client。
 
 `recap run`与 `run-online-turn`只在没有 current-lineage Building、确实需要 NewPlanning时加载
 一次 repo document，并在整个 operation内复用同一 immutable composition。current-lineage
@@ -138,6 +141,13 @@ ceiling，再调用 Maintainers。已有一个合法 current-lineage Building时
 补全 frozen plan；readiness先验证 frozen maintainer capability，executor再复核完整
 Building descriptor/manifest hash。healthy final block不重做。多个或 stale Building返回 typed
 readiness defect，不猜测“最新”。
+
+NewPlanning 先执行 content-free raw safety gate；被 hard cap 拒绝时不调用 HistoryLoad
+estimator，并报告 `RawSafetyRejected`。通过 gate 后才按 config 指定的 estimator 测量 exact
+planning window，使用 load threshold 选择 admission boundary。execution report schema V4
+同时报告 estimator ID、growth load、可空的 selected absorbed/recent load，以及仅用于结构诊断
+的 HistoryUnit/raw event counts。
+
 成功 Publish后才进入 strict ordinal。首次 new planning前须显式执行
 `recap planner-config init`。
 
@@ -268,8 +278,9 @@ request 为唯一真源，对 Store 是 zero-touch。
 
 成功返回 0；参数、unsupported phase、not-ready、Store/Completion 或路径失败返回 1。online JSON
 report 同样 content-free；NewPlanning额外报告实际 repo config path/hash与
-`HeaderNegative`/`ExactSchedule` diagnostics，Frozen Building及 Prepared/Started recovery的
-config/planning字段为 null。完整 request/action只存在于明确配置的 call log。
+`RawSafetyRejected`/`ExactSchedule` diagnostics；online report schema 是 V5。Frozen
+Building及 Prepared/Started recovery的 config/planning字段为 null。完整 request/action只存在于
+明确配置的 call log。
 
 ## import-legacy-json
 

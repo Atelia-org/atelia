@@ -23,17 +23,19 @@ public sealed class RecapPlannerConfigRepositoryTests : IDisposable {
     }
 
     [Fact]
-    public void CodecCanonicalizesExactV1DocumentAndPreservesCatalogOrder() {
+    public void CodecCanonicalizesExactV2DocumentAndPreservesCatalogOrder() {
         RecapPlannerConfigDocument document = CreateDocument();
 
         byte[] canonical =
             RecapPlannerConfigCodec.EncodeCanonical(document);
 
         const string expected =
-            "{\"schema\":\"atelia.session-journal.recap-planner-config.v1\","
+            "{\"schema\":\"atelia.session-journal.recap-planner-config.v2\","
             + "\"planningPolicy\":\"bounded-maintain-all-v1\","
-            + "\"cadence\":{\"minimumRecentHistoryUnitCount\":20,"
-            + "\"recapBuildIntervalUnitCount\":24},"
+            + "\"cadence\":{\"historyUnitLoadEstimatorId\":"
+            + "\"atelia.history-load.o200k-base.history-unit-v1\","
+            + "\"minimumRecentHistoryLoad\":18000,"
+            + "\"recapBuildIntervalHistoryLoad\":21000},"
             + "\"catalog\":[{\"maintainerProfile\":"
             + "\"world-understanding-rewrite\","
             + "\"maxContentUtf8Bytes\":32768},"
@@ -127,6 +129,107 @@ public sealed class RecapPlannerConfigRepositoryTests : IDisposable {
     }
 
     [Fact]
+    public void CodecRequiresExactInt64CadenceNumbers() {
+        foreach (string literal in new[] {
+            "1.0",
+            "1e3",
+            "9223372036854775808",
+            "-9223372036854775809"
+        }) {
+            string json = ValidJson().Replace(
+                "18000",
+                literal,
+                StringComparison.Ordinal
+            );
+
+            var invalid = Assert.IsType<
+                RecapPlannerConfigDecodeResult.Invalid
+            >(RecapPlannerConfigCodec.Decode(
+                Encoding.UTF8.GetBytes(json)
+            ));
+
+            Assert.Equal(
+                RecapPlannerConfigDefectCodes.InvalidLimit,
+                Assert.Single(invalid.Defects).Code
+            );
+        }
+    }
+
+    [Fact]
+    public void CodecAcceptsInt64BoundaryIndependentOfRawCountLimit() {
+        RecapPlannerConfigDocument document = CreateDocument() with {
+            Cadence = new RecapCadenceConfigDocument(
+                O200kBaseHistoryUnitLoadEstimator.EstimatorId,
+                long.MaxValue - 1,
+                1
+            ),
+            Limits = CreateDocument().Limits with {
+                MaxRawGrowthEventCount = 1
+            }
+        };
+
+        byte[] canonical =
+            RecapPlannerConfigCodec.EncodeCanonical(document);
+        var valid = Assert.IsType<
+            RecapPlannerConfigDecodeResult.Valid
+        >(RecapPlannerConfigCodec.Decode(canonical));
+
+        Assert.Equal(
+            long.MaxValue - 1,
+            valid.Document.Cadence.MinimumRecentHistoryLoad
+        );
+        Assert.Equal(
+            1,
+            valid.Document.Limits.MaxRawGrowthEventCount
+        );
+    }
+
+    [Fact]
+    public void CodecValidatesCadenceRangeAndCheckedThresholdSum() {
+        AssertEncodeInvalidLimit(CreateDocument() with {
+            Cadence = CreateDocument().Cadence with {
+                MinimumRecentHistoryLoad = -1
+            }
+        });
+        AssertEncodeInvalidLimit(CreateDocument() with {
+            Cadence = CreateDocument().Cadence with {
+                RecapBuildIntervalHistoryLoad = 0
+            }
+        });
+        AssertEncodeInvalidLimit(CreateDocument() with {
+            Cadence = CreateDocument().Cadence with {
+                MinimumRecentHistoryLoad = long.MaxValue,
+                RecapBuildIntervalHistoryLoad = 1
+            }
+        });
+        AssertEncodeInvalidLimit(CreateDocument() with {
+            Cadence = CreateDocument().Cadence with {
+                HistoryUnitLoadEstimatorId = " "
+            }
+        });
+    }
+
+    [Fact]
+    public void CodecRejectsLegacyV1Schema() {
+        string legacy = ValidJson().Replace(
+            RecapPlannerConfigCodec.SchemaV2,
+            "atelia.session-journal.recap-planner-config.v1",
+            StringComparison.Ordinal
+        );
+
+        var invalid = Assert.IsType<
+            RecapPlannerConfigDecodeResult.Invalid
+        >(RecapPlannerConfigCodec.Decode(
+            Encoding.UTF8.GetBytes(legacy)
+        ));
+
+        Assert.Equal(
+            RecapPlannerConfigDefectCodes.UnsupportedSchema,
+            Assert.Single(invalid.Defects).Code
+        );
+    }
+
+    [Fact]
     public void LoaderReturnsMissingThenOneHandleCanonicalSnapshot() {
         string repository = CreateRepositoryDirectory("load");
 
@@ -147,10 +250,12 @@ public sealed class RecapPlannerConfigRepositoryTests : IDisposable {
             + "\"maintainerProfile\":\"world-understanding-rewrite\"},"
             + "{\"maxContentUtf8Bytes\":16384,"
             + "\"maintainerProfile\":\"autobiographical-rewrite\"}],"
-            + "\"cadence\":{\"recapBuildIntervalUnitCount\":24,"
-            + "\"minimumRecentHistoryUnitCount\":20},"
+            + "\"cadence\":{\"recapBuildIntervalHistoryLoad\":21000,"
+            + "\"minimumRecentHistoryLoad\":18000,"
+            + "\"historyUnitLoadEstimatorId\":"
+            + "\"atelia.history-load.o200k-base.history-unit-v1\"},"
             + "\"planningPolicy\":\"bounded-maintain-all-v1\","
-            + "\"schema\":\"atelia.session-journal.recap-planner-config.v1\""
+            + "\"schema\":\"atelia.session-journal.recap-planner-config.v2\""
             + "}\n";
         File.WriteAllText(path, nonCanonical, new UTF8Encoding(false));
 
@@ -330,7 +435,7 @@ public sealed class RecapPlannerConfigRepositoryTests : IDisposable {
             },
             {
                 valid.Replace(
-                    "\"schema\":\"atelia.session-journal.recap-planner-config.v1\"",
+                    "\"schema\":\"atelia.session-journal.recap-planner-config.v2\"",
                     "\"schema\":\"unsupported\"",
                     StringComparison.Ordinal
                 ),
@@ -338,8 +443,8 @@ public sealed class RecapPlannerConfigRepositoryTests : IDisposable {
             },
             {
                 valid.Replace(
-                    "\"recapBuildIntervalUnitCount\":24",
-                    "\"recapBuildIntervalUnitCount\":2147483648",
+                    "\"recapBuildIntervalHistoryLoad\":21000",
+                    "\"recapBuildIntervalHistoryLoad\":9223372036854775808",
                     StringComparison.Ordinal
                 ),
                 RecapPlannerConfigDefectCodes.InvalidLimit
@@ -347,7 +452,7 @@ public sealed class RecapPlannerConfigRepositoryTests : IDisposable {
             {
                 valid.Replace(
                     "\"maxRawGrowthEventCount\":512",
-                    "\"maxRawGrowthEventCount\":43",
+                    "\"maxRawGrowthEventCount\":0",
                     StringComparison.Ordinal
                 ),
                 RecapPlannerConfigDefectCodes.InvalidLimit
@@ -378,9 +483,13 @@ public sealed class RecapPlannerConfigRepositoryTests : IDisposable {
     }
 
     private static RecapPlannerConfigDocument CreateDocument() => new(
-        RecapPlannerConfigCodec.SchemaV1,
+        RecapPlannerConfigCodec.SchemaV2,
         "bounded-maintain-all-v1",
-        new RecapCadenceConfigDocument(20, 24),
+        new RecapCadenceConfigDocument(
+            O200kBaseHistoryUnitLoadEstimator.EstimatorId,
+            MinimumRecentHistoryLoad: 18_000,
+            RecapBuildIntervalHistoryLoad: 21_000
+        ),
         [
             new RecapPlannerCatalogEntryDocument(
                 "world-understanding-rewrite",
@@ -404,6 +513,20 @@ public sealed class RecapPlannerConfigRepositoryTests : IDisposable {
         Encoding.UTF8.GetString(
             RecapPlannerConfigCodec.EncodeCanonical(CreateDocument())
         );
+
+    private static void AssertEncodeInvalidLimit(
+        RecapPlannerConfigDocument document
+    ) {
+        InvalidDataException failure =
+            Assert.Throws<InvalidDataException>(() =>
+                RecapPlannerConfigCodec.EncodeCanonical(document)
+            );
+        Assert.Contains(
+            RecapPlannerConfigDefectCodes.InvalidLimit,
+            failure.Message,
+            StringComparison.Ordinal
+        );
+    }
 
     private static void AssertInvalidCode(
         RecapPlannerConfigLoadResult result,

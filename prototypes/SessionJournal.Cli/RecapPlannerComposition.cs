@@ -89,6 +89,7 @@ internal sealed record RecapPlannerConfigResolveDefect(
 
 internal static class RecapPlannerConfigResolveDefectCodes {
     internal const string UnknownPolicy = nameof(UnknownPolicy);
+    internal const string UnknownEstimator = nameof(UnknownEstimator);
     internal const string UnknownProfile = nameof(UnknownProfile);
     internal const string DuplicateResolvedBlock =
         nameof(DuplicateResolvedBlock);
@@ -255,6 +256,22 @@ internal static class RecapPlannerCompositionResolver {
             )) {
             return UnknownPolicy(snapshot);
         }
+        HistoryUnitLoadEstimatorResolutionResult estimatorResolution =
+            HistoryUnitLoadEstimatorRegistry.Resolve(
+                snapshot.Document.Cadence
+                    .HistoryUnitLoadEstimatorId
+            );
+        if (estimatorResolution
+            is HistoryUnitLoadEstimatorResolutionResult.Invalid
+                invalidEstimator) {
+            return Invalid(
+                RecapPlannerConfigResolveDefectCodes.UnknownEstimator,
+                invalidEstimator.Defect.Detail
+            );
+        }
+        var estimator =
+            (HistoryUnitLoadEstimatorResolutionResult.Resolved)
+                estimatorResolution;
         RecapMaintainerProfileCatalog capabilities;
         try {
             capabilities = RecapMaintainerProfileCatalog.BuiltIn;
@@ -270,7 +287,12 @@ internal static class RecapPlannerCompositionResolver {
                 exception.Message
             );
         }
-        return ResolveCore(snapshot, capabilities, policy);
+        return ResolveCore(
+            snapshot,
+            capabilities,
+            estimator.Estimator,
+            policy
+        );
     }
 
     internal static RecapPlannerConfigResolveResult Resolve(
@@ -285,12 +307,32 @@ internal static class RecapPlannerCompositionResolver {
             )) {
             return UnknownPolicy(snapshot);
         }
-        return ResolveCore(snapshot, capabilities, policy);
+        HistoryUnitLoadEstimatorResolutionResult estimatorResolution =
+            HistoryUnitLoadEstimatorRegistry.Resolve(
+                snapshot.Document.Cadence
+                    .HistoryUnitLoadEstimatorId
+            );
+        if (estimatorResolution
+            is HistoryUnitLoadEstimatorResolutionResult.Invalid
+                invalidEstimator) {
+            return Invalid(
+                RecapPlannerConfigResolveDefectCodes.UnknownEstimator,
+                invalidEstimator.Defect.Detail
+            );
+        }
+        return ResolveCore(
+            snapshot,
+            capabilities,
+            ((HistoryUnitLoadEstimatorResolutionResult.Resolved)
+                estimatorResolution).Estimator,
+            policy
+        );
     }
 
     private static RecapPlannerConfigResolveResult ResolveCore(
         RecapPlannerConfigSnapshot snapshot,
         RecapMaintainerProfileCatalog capabilities,
+        IHistoryUnitLoadEstimator historyUnitLoadEstimator,
         IRecapPlanningPolicy policy
     ) {
         var active = new List<ResolvedActiveRecapProfile>(
@@ -347,9 +389,15 @@ internal static class RecapPlannerCompositionResolver {
         try {
             var cadence = new RecapCadenceConfig(
                 snapshot.Document.Cadence
-                    .MinimumRecentHistoryUnitCount,
+                    .HistoryUnitLoadEstimatorId,
+                new HistoryLoadUnit(
                 snapshot.Document.Cadence
-                    .RecapBuildIntervalUnitCount
+                    .MinimumRecentHistoryLoad
+                ),
+                new HistoryLoadUnit(
+                snapshot.Document.Cadence
+                    .RecapBuildIntervalHistoryLoad
+                )
             );
             var inputs = new RecapPlanningInputs(
                 Array.AsReadOnly([
@@ -358,6 +406,7 @@ internal static class RecapPlannerCompositionResolver {
                     )
                 ]),
                 cadence,
+                historyUnitLoadEstimator,
                 policy
             );
             RecapPlannerLimitsDocument sourceLimits =
@@ -419,11 +468,12 @@ internal static class BuiltInRecapPlannerConfig {
         );
 
     internal static RecapPlannerConfigDocument Document { get; } = new(
-        RecapPlannerConfigCodec.SchemaV1,
+        RecapPlannerConfigCodec.SchemaV2,
         RecapPlanningPolicyIds.BoundedMaintainAllV1,
         new RecapCadenceConfigDocument(
-            MinimumRecentHistoryUnitCount: 20,
-            RecapBuildIntervalUnitCount: 24
+            O200kBaseHistoryUnitLoadEstimator.EstimatorId,
+            MinimumRecentHistoryLoad: 18_000,
+            RecapBuildIntervalHistoryLoad: 21_000
         ),
         Array.AsReadOnly([
             new RecapPlannerCatalogEntryDocument(

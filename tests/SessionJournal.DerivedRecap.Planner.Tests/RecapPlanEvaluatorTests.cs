@@ -8,32 +8,47 @@ namespace Atelia.SessionJournal.DerivedRecap.Planner.Tests;
 
 public sealed class RecapPlanEvaluatorTests {
     [Fact]
-    public void CadenceAndCrossFieldLimitsRejectInvalidShapes() {
-        Assert.Throws<ArgumentOutOfRangeException>(
-            () => new RecapCadenceConfig(-1, 1)
+    public void CadenceRejectsInvalidShapesWithoutCrossUnitLimitRule() {
+        Assert.Throws<ArgumentException>(
+            () => new RecapCadenceConfig(
+                "",
+                new HistoryLoadUnit(0),
+                new HistoryLoadUnit(1)
+            )
         );
         Assert.Throws<ArgumentOutOfRangeException>(
-            () => new RecapCadenceConfig(0, 0)
+            () => new RecapCadenceConfig(
+                TestHistoryUnitLoadEstimator.DefaultId,
+                new HistoryLoadUnit(0),
+                new HistoryLoadUnit(0)
+            )
         );
         Assert.Throws<OverflowException>(
-            () => new RecapCadenceConfig(int.MaxValue, 1)
+            () => new RecapCadenceConfig(
+                TestHistoryUnitLoadEstimator.DefaultId,
+                new HistoryLoadUnit(long.MaxValue),
+                new HistoryLoadUnit(1)
+            )
         );
 
         TestModel model = TestModel.Create();
-        Assert.Throws<ArgumentOutOfRangeException>(() =>
-            RecapProtocolHardCaps.V4.ValidatePlanningAuthority(
-                new RecapPlanningInputs(
-                    model.Inputs.OrderedCatalog,
-                    new RecapCadenceConfig(2, 3),
-                    model.Inputs.Policy
+        RecapProtocolHardCaps.V4.ValidatePlanningAuthority(
+            new RecapPlanningInputs(
+                model.Inputs.OrderedCatalog,
+                new RecapCadenceConfig(
+                    model.Inputs.HistoryUnitLoadEstimator.Id,
+                    new HistoryLoadUnit(200),
+                    new HistoryLoadUnit(300)
                 ),
-                new RecapPlanningLimits(
-                    maxRawGrowthEventCount: 4,
-                    model.Limits.MaxRouteEndpointsPerBlock,
-                    model.Limits.MaxMaintainerCallsPerBuild,
-                    model.Limits.MaxRawEventsPerStep,
-                    model.Limits.MaxRawEventsPerBuild
-                )
+                model.Inputs.HistoryUnitLoadEstimator,
+                model.Inputs.Policy
+            ),
+            new RecapPlanningLimits(
+                maxRawGrowthEventCount: 4,
+                model.Limits.MaxRouteEndpointsPerBlock,
+                model.Limits.MaxMaintainerCallsPerBuild,
+                model.Limits.MaxRawEventsPerStep,
+                model.Limits.MaxRawEventsPerBuild
             )
         );
     }
@@ -41,8 +56,8 @@ public sealed class RecapPlanEvaluatorTests {
     [Fact]
     public void BelowTriggerStopsBeforeSourceOrPolicyPhase() {
         TestModel model = TestModel.Create(
-            minimumRecentHistoryUnitCount: 1,
-            recapBuildIntervalUnitCount: 1
+            minimumRecentHistoryLoad: 1,
+            recapBuildIntervalHistoryLoad: 1
         );
 
         RecapSchedulingResult result =
@@ -73,8 +88,270 @@ public sealed class RecapPlanEvaluatorTests {
         );
 
         Assert.Equal(1, ready.Cadence.GrowthHistoryUnitCount);
+        Assert.Equal(
+            1,
+            ready.Cadence.GrowthHistoryLoad.Value
+        );
         Assert.Equal(1, ready.Cadence.RawGrowthEventCount);
         Assert.Equal(model.SourceSet, ready.Cadence.Baseline);
+    }
+
+    [Theory]
+    [InlineData(4, false)]
+    [InlineData(5, true)]
+    public void LoadThresholdUsesExactRPlusBBoundary(
+        long growthLoad,
+        bool expectsReady
+    ) {
+        TestModel model = TestModel.Create(
+            minimumRecentHistoryLoad: 2,
+            recapBuildIntervalHistoryLoad: 3
+        );
+        RecapHistoryLoadMeasurement original =
+            model.Scheduling.HistoryLoadMeasurement;
+        var measurement = new RecapHistoryLoadMeasurement(
+            original.EstimatorId,
+            original.BaselineAddress,
+            original.BaselineCompletedUnitCount,
+            new HistoryLoadUnit(growthLoad),
+            original.RenderedUtf8Bytes,
+            [
+                new(
+                    model.Admission,
+                    historyUnitCountSinceBaseline: 1,
+                    new HistoryLoadUnit(3)
+                )
+            ]
+        );
+        RecapSchedulingFacts facts =
+            SchedulingWithMeasurement(model, measurement);
+
+        RecapSchedulingResult result =
+            RecapPlanEvaluator.EvaluateSchedule(
+                model.Inputs,
+                model.Limits,
+                facts
+            );
+
+        if (expectsReady) {
+            var ready =
+                Assert.IsType<RecapSchedulingResult.Ready>(result);
+            RecapCadenceBoundary candidate =
+                Assert.Single(ready.Cadence.AdmissionCandidates);
+            Assert.Equal(3, candidate.AbsorbedHistoryLoad.Value);
+            Assert.Equal(2, candidate.RecentHistoryLoad.Value);
+        }
+        else {
+            var noBuild =
+                Assert.IsType<RecapSchedulingResult.NoBuild>(result);
+            Assert.Equal(
+                RecapPlanReasons.BelowCadenceThreshold,
+                noBuild.Reason
+            );
+        }
+    }
+
+    [Fact]
+    public void AbsorbedAndRecentLoadsAreIndependentlyRequired() {
+        TestModel model = TestModel.Create(
+            minimumRecentHistoryLoad: 3,
+            recapBuildIntervalHistoryLoad: 4
+        );
+        RecapHistoryLoadMeasurement original =
+            model.Scheduling.HistoryLoadMeasurement;
+        foreach ((long absorbed, bool eligible) in new[] {
+                     (3L, false),
+                     (7L, true),
+                     (8L, false)
+                 }) {
+            var measurement = new RecapHistoryLoadMeasurement(
+                original.EstimatorId,
+                original.BaselineAddress,
+                original.BaselineCompletedUnitCount,
+                new HistoryLoadUnit(10),
+                original.RenderedUtf8Bytes,
+                [
+                    new(
+                        model.Admission,
+                        historyUnitCountSinceBaseline: 1,
+                        new HistoryLoadUnit(absorbed)
+                    )
+                ]
+            );
+
+            RecapSchedulingResult result =
+                RecapPlanEvaluator.EvaluateSchedule(
+                    model.Inputs,
+                    model.Limits,
+                    SchedulingWithMeasurement(model, measurement)
+                );
+            if (eligible) {
+                RecapCadenceBoundary candidate = Assert.Single(
+                    Assert.IsType<RecapSchedulingResult.Ready>(result)
+                        .Cadence.AdmissionCandidates
+                );
+                Assert.Equal(absorbed,
+                    candidate.AbsorbedHistoryLoad.Value);
+                Assert.Equal(10 - absorbed,
+                    candidate.RecentHistoryLoad.Value);
+            }
+            else {
+                Assert.Equal(
+                    RecapPlanReasons.AwaitingReplaySafeAdmission,
+                    Assert.IsType<RecapSchedulingResult.NoBuild>(result)
+                        .Reason
+                );
+            }
+        }
+    }
+
+    [Fact]
+    public void HugeRecentUnitDoesNotMakeOlderAdmissionEligible() {
+        TestModel model = TestModel.Create(
+            minimumRecentHistoryLoad: 90,
+            recapBuildIntervalHistoryLoad: 5
+        );
+        RecapHistoryLoadMeasurement original =
+            model.Scheduling.HistoryLoadMeasurement;
+        var measurement = new RecapHistoryLoadMeasurement(
+            original.EstimatorId,
+            original.BaselineAddress,
+            original.BaselineCompletedUnitCount,
+            new HistoryLoadUnit(100),
+            original.RenderedUtf8Bytes,
+            [
+                new(
+                    model.Admission,
+                    historyUnitCountSinceBaseline: 1,
+                    new HistoryLoadUnit(1)
+                )
+            ]
+        );
+
+        var noBuild = Assert.IsType<RecapSchedulingResult.NoBuild>(
+            RecapPlanEvaluator.EvaluateSchedule(
+                model.Inputs,
+                model.Limits,
+                SchedulingWithMeasurement(model, measurement)
+            )
+        );
+
+        Assert.Equal(
+            RecapPlanReasons.AwaitingReplaySafeAdmission,
+            noBuild.Reason
+        );
+    }
+
+    [Fact]
+    public void MeasurementIdentityBaselineAndBoundaryShapeAreTypedInvalid() {
+        TestModel model = TestModel.Create();
+        RecapHistoryLoadMeasurement original =
+            model.Scheduling.HistoryLoadMeasurement;
+        RecapHistoryLoadMeasurement[] malformed = [
+            new(
+                "other-estimator",
+                original.BaselineAddress,
+                original.BaselineCompletedUnitCount,
+                original.Growth,
+                original.RenderedUtf8Bytes,
+                original.ReplaySafeBoundaries
+            ),
+            new(
+                original.EstimatorId,
+                model.A11,
+                original.BaselineCompletedUnitCount,
+                original.Growth,
+                original.RenderedUtf8Bytes,
+                original.ReplaySafeBoundaries
+            ),
+            new(
+                original.EstimatorId,
+                original.BaselineAddress,
+                original.BaselineCompletedUnitCount,
+                original.Growth,
+                original.RenderedUtf8Bytes,
+                [
+                    new(
+                        model.Admission,
+                        historyUnitCountSinceBaseline: 0,
+                        original.Growth
+                    )
+                ]
+            )
+        ];
+
+        foreach (RecapHistoryLoadMeasurement measurement
+                 in malformed) {
+            AssertDefect(
+                RecapPlanEvaluator.EvaluateSchedule(
+                    model.Inputs,
+                    model.Limits,
+                    SchedulingWithMeasurement(model, measurement)
+                ),
+                RecapPlanDefectCodes.PlanningFactsInvalid
+            );
+        }
+    }
+
+    [Fact]
+    public void SharedCompletedCountKeepsExactBoundaryOrdinal() {
+        TestModel model = TestModel.Create();
+        var window = new RecapHistoryWindowFacts(
+            model.Scheduling.HistoryWindow.StartExclusive,
+            totalHistoryUnitCount: 4,
+            [
+                new(model.A1, 1),
+                new(model.A5, 2),
+                new(model.A11, 3),
+                new(model.SourceSet, 3),
+                new(model.Admission, 4)
+            ]
+        );
+        RecapHistoryLoadMeasurement exact =
+            TestHistoryLoadMeasurement.UnitCountEquivalent(
+                window,
+                model.A11
+            );
+        var facts = new RecapSchedulingFacts(
+            model.Scheduling.CapturedHead,
+            model.Scheduling.HeadToRoot,
+            window,
+            model.A11,
+            model.A11,
+            exact
+        );
+
+        Assert.IsType<RecapSchedulingResult.Ready>(
+            RecapPlanEvaluator.EvaluateSchedule(
+                model.Inputs,
+                model.Limits,
+                facts
+            )
+        );
+
+        var reordered = new RecapHistoryLoadMeasurement(
+            exact.EstimatorId,
+            exact.BaselineAddress,
+            exact.BaselineCompletedUnitCount,
+            exact.Growth,
+            exact.RenderedUtf8Bytes,
+            [.. exact.ReplaySafeBoundaries.Reverse()]
+        );
+        AssertDefect(
+            RecapPlanEvaluator.EvaluateSchedule(
+                model.Inputs,
+                model.Limits,
+                new RecapSchedulingFacts(
+                    facts.CapturedHead,
+                    facts.HeadToRoot,
+                    facts.HistoryWindow,
+                    facts.CadenceBaseline,
+                    facts.LatestPublishedSetAnchor,
+                    reordered
+                )
+            ),
+            RecapPlanDefectCodes.PlanningFactsInvalid
+        );
     }
 
     [Fact]
@@ -87,21 +364,26 @@ public sealed class RecapPlanEvaluatorTests {
             model.Limits.MaxRawEventsPerStep,
             model.Limits.MaxRawEventsPerBuild
         );
+        var window = new RecapHistoryWindowFacts(
+            model.A1,
+            totalHistoryUnitCount: 1,
+            [
+                new(model.A5, 0),
+                new(model.A11, 0),
+                new(model.SourceSet, 0),
+                new(model.Admission, 1)
+            ]
+        );
         var scheduling = new RecapSchedulingFacts(
             model.Scheduling.CapturedHead,
             model.Scheduling.HeadToRoot,
-            new RecapHistoryWindowFacts(
-                model.A1,
-                totalHistoryUnitCount: 1,
-                [
-                    new(model.A5, 0),
-                    new(model.A11, 0),
-                    new(model.SourceSet, 0),
-                    new(model.Admission, 1)
-                ]
-            ),
+            window,
             model.A11,
-            model.A11
+            model.A11,
+            TestHistoryLoadMeasurement.UnitCountEquivalent(
+                window,
+                model.A11
+            )
         );
 
         RecapSchedulingResult result =
@@ -125,7 +407,8 @@ public sealed class RecapPlanEvaluatorTests {
             model.Scheduling.HeadToRoot,
             model.Scheduling.HistoryWindow,
             model.A11,
-            model.SourceSet
+            model.SourceSet,
+            model.Scheduling.HistoryLoadMeasurement
         );
         AssertDefect(
             RecapPlanEvaluator.EvaluateSchedule(
@@ -136,22 +419,24 @@ public sealed class RecapPlanEvaluatorTests {
             RecapPlanDefectCodes.CadenceBaselineInvalid
         );
 
+        var missingWindow = new RecapHistoryWindowFacts(
+            model.Scheduling.HistoryWindow.StartExclusive,
+            model.Scheduling.HistoryWindow
+                .TotalHistoryUnitCount,
+            [
+                .. model.Scheduling.HistoryWindow
+                    .ReplaySafeBoundaries
+                    .Where(boundary =>
+                        boundary.Address != model.A11)
+            ]
+        );
         var missingBoundary = new RecapSchedulingFacts(
             model.Scheduling.CapturedHead,
             model.Scheduling.HeadToRoot,
-            new RecapHistoryWindowFacts(
-                model.Scheduling.HistoryWindow.StartExclusive,
-                model.Scheduling.HistoryWindow
-                    .TotalHistoryUnitCount,
-                [
-                    .. model.Scheduling.HistoryWindow
-                        .ReplaySafeBoundaries
-                        .Where(boundary =>
-                            boundary.Address != model.A11)
-                ]
-            ),
+            missingWindow,
             model.A11,
-            model.A11
+            model.A11,
+            model.Scheduling.HistoryLoadMeasurement
         );
         AssertDefect(
             RecapPlanEvaluator.EvaluateSchedule(
@@ -166,24 +451,29 @@ public sealed class RecapPlanEvaluatorTests {
     [Fact]
     public void ThresholdWithoutClosedAdmissionWaitsWithoutDefect() {
         TestModel model = TestModel.Create(
-            minimumRecentHistoryUnitCount: 1
+            minimumRecentHistoryLoad: 1
+        );
+        var window = new RecapHistoryWindowFacts(
+            model.Scheduling.HistoryWindow.StartExclusive,
+            totalHistoryUnitCount: 6,
+            [
+                new(model.A1, 1),
+                new(model.A5, 2),
+                new(model.A11, 3),
+                new(model.SourceSet, 6),
+                new(model.Admission, 6)
+            ]
         );
         var scheduling = new RecapSchedulingFacts(
             model.Scheduling.CapturedHead,
             model.Scheduling.HeadToRoot,
-            new RecapHistoryWindowFacts(
-                model.Scheduling.HistoryWindow.StartExclusive,
-                totalHistoryUnitCount: 6,
-                [
-                    new(model.A1, 1),
-                    new(model.A5, 2),
-                    new(model.A11, 3),
-                    new(model.SourceSet, 6),
-                    new(model.Admission, 6)
-                ]
-            ),
+            window,
             model.A11,
-            model.A11
+            model.A11,
+            TestHistoryLoadMeasurement.UnitCountEquivalent(
+                window,
+                model.A11
+            )
         );
 
         var noBuild = Assert.IsType<RecapSchedulingResult.NoBuild>(
@@ -200,71 +490,45 @@ public sealed class RecapPlanEvaluatorTests {
     }
 
     [Fact]
-    public void HeaderPrefilterOnlyReturnsCertainNegativeOrExact() {
-        TestModel model = TestModel.Create(
-            minimumRecentHistoryUnitCount: 1
-        );
+    public void RawSafetyUsesOnlyExactLineageDistance() {
+        TestModel model = TestModel.Create();
         var lineage = new SessionCurrentLineageSnapshot(
             model.Scheduling.CapturedHead,
             model.Scheduling.HeadToRoot,
             new SessionCurrentLineageDiagnostics(0, 0, 0)
         );
 
-        var below = Assert.IsType<
-            RecapHeaderPrefilterResult.NoBuild
-        >(
-            RecapPlanEvaluator.EvaluateHeaderPrefilter(
-                model.Inputs,
+        var safe = Assert.IsType<RecapRawSafetyResult.Safe>(
+            RecapPlanEvaluator.EvaluateRawSafety(
+                model.Limits,
                 lineage,
                 model.SourceSet
             )
         );
-        Assert.Equal(
-            RecapPlanReasons.BelowCadenceThreshold,
-            below.Reason
-        );
+        Assert.Equal(1, safe.RawGrowthEventCount);
 
-        var exact = Assert.IsType<
-            RecapHeaderPrefilterResult.ExactEvaluationRequired
-        >(
-            RecapPlanEvaluator.EvaluateHeaderPrefilter(
-                TestModel.Create().Inputs,
-                lineage,
-                model.SourceSet
-            )
+        var limits = new RecapPlanningLimits(
+            maxRawGrowthEventCount: 1,
+            model.Limits.MaxRouteEndpointsPerBlock,
+            model.Limits.MaxMaintainerCallsPerBuild,
+            model.Limits.MaxRawEventsPerStep,
+            model.Limits.MaxRawEventsPerBuild
         );
-        Assert.Equal(1, exact.RawGrowthEventUpperBound);
-
-        var rawLimited = new RecapPlanningInputs(
-            model.Inputs.OrderedCatalog,
-            new RecapCadenceConfig(0, 1),
-            model.Inputs.Policy
-        );
-        var rawLimitStillExact = Assert.IsType<
-            RecapHeaderPrefilterResult.ExactEvaluationRequired
+        var rejected = Assert.IsType<
+            RecapRawSafetyResult.Unavailable
         >(
-            RecapPlanEvaluator.EvaluateHeaderPrefilter(
-                rawLimited,
+            RecapPlanEvaluator.EvaluateRawSafety(
+                limits,
                 lineage,
                 model.A11
             )
         );
-        Assert.Equal(
-            2,
-            rawLimitStillExact.RawGrowthEventUpperBound
-        );
-
-        var freshThreshold = new RecapPlanningInputs(
-            model.Inputs.OrderedCatalog,
-            new RecapCadenceConfig(0, 10),
-            model.Inputs.Policy
-        );
-        Assert.IsType<RecapHeaderPrefilterResult.NoBuild>(
-            RecapPlanEvaluator.EvaluateHeaderPrefilter(
-                freshThreshold,
-                lineage,
-                cadenceBaseline: null
-            )
+        Assert.Equal(2, rejected.RawGrowthEventCount);
+        Assert.Contains(
+            rejected.Defects,
+            defect => defect.Code
+                == RecapPlanDefectCodes
+                    .MaxRawGrowthEventCountExceeded
         );
     }
 
@@ -276,25 +540,35 @@ public sealed class RecapPlanEvaluatorTests {
         );
         var inputs = new RecapPlanningInputs(
             model.Inputs.OrderedCatalog,
-            new RecapCadenceConfig(1, 1),
+            new RecapCadenceConfig(
+                model.Inputs.HistoryUnitLoadEstimator.Id,
+                new HistoryLoadUnit(1),
+                new HistoryLoadUnit(1)
+            ),
+            model.Inputs.HistoryUnitLoadEstimator,
             maliciousPolicy
+        );
+        var window = new RecapHistoryWindowFacts(
+            model.Scheduling.HistoryWindow.StartExclusive,
+            totalHistoryUnitCount: 6,
+            [
+                new(model.A1, 1),
+                new(model.A5, 2),
+                new(model.A11, 3),
+                new(model.SourceSet, 5),
+                new(model.Admission, 6)
+            ]
         );
         var scheduling = new RecapSchedulingFacts(
             model.Scheduling.CapturedHead,
             model.Scheduling.HeadToRoot,
-            new RecapHistoryWindowFacts(
-                model.Scheduling.HistoryWindow.StartExclusive,
-                totalHistoryUnitCount: 6,
-                [
-                    new(model.A1, 1),
-                    new(model.A5, 2),
-                    new(model.A11, 3),
-                    new(model.SourceSet, 5),
-                    new(model.Admission, 6)
-                ]
-            ),
+            window,
             model.A11,
-            model.A11
+            model.A11,
+            TestHistoryLoadMeasurement.UnitCountEquivalent(
+                window,
+                model.A11
+            )
         );
         var ready = Assert.IsType<RecapSchedulingResult.Ready>(
             RecapPlanEvaluator.EvaluateSchedule(
@@ -355,7 +629,8 @@ public sealed class RecapPlanEvaluatorTests {
             [null!],
             model.Scheduling.HistoryWindow,
             model.SourceSet,
-            null
+            null,
+            model.Scheduling.HistoryLoadMeasurement
         );
 
         RecapSchedulingResult result =
@@ -519,21 +794,26 @@ public sealed class RecapPlanEvaluatorTests {
     [Fact]
     public void FirstBuildPolicyMustUseExactAuthorizedEmptySeed() {
         TestModel model = TestModel.Create();
+        var firstBuildWindow = new RecapHistoryWindowFacts(
+            model.A1,
+            totalHistoryUnitCount: 4,
+            [
+                new(model.A5, 1),
+                new(model.A11, 2),
+                new(model.SourceSet, 3),
+                new(model.Admission, 4)
+            ]
+        );
         var firstBuildScheduling = new RecapSchedulingFacts(
             model.Scheduling.CapturedHead,
             model.Scheduling.HeadToRoot,
-            new RecapHistoryWindowFacts(
-                model.A1,
-                totalHistoryUnitCount: 4,
-                [
-                    new(model.A5, 1),
-                    new(model.A11, 2),
-                    new(model.SourceSet, 3),
-                    new(model.Admission, 4)
-                ]
-            ),
+            firstBuildWindow,
             model.A1,
-            latestPublishedSetAnchor: null
+            latestPublishedSetAnchor: null,
+            TestHistoryLoadMeasurement.UnitCountEquivalent(
+                firstBuildWindow,
+                model.A1
+            )
         );
         var facts = new RecapPolicyFacts(model.A1, []);
         var decision = new RecapPlanningPolicyDecision.Build(
@@ -781,6 +1061,18 @@ public sealed class RecapPlanEvaluatorTests {
         Assert.Contains(defects, defect => defect.Code == code);
     }
 
+    private static RecapSchedulingFacts SchedulingWithMeasurement(
+        TestModel model,
+        RecapHistoryLoadMeasurement measurement
+    ) => new(
+        model.Scheduling.CapturedHead,
+        model.Scheduling.HeadToRoot,
+        model.Scheduling.HistoryWindow,
+        model.Scheduling.CadenceBaseline,
+        model.Scheduling.LatestPublishedSetAnchor,
+        measurement
+    );
+
     private sealed class StubPolicy : IRecapPlanningPolicy {
         public StubPolicy(RecapPlanningPolicyDecision decision) {
             Decision = decision;
@@ -841,8 +1133,8 @@ public sealed class RecapPlanEvaluatorTests {
         public EventAddress A1 { get; }
 
         public static TestModel Create(
-            int minimumRecentHistoryUnitCount = 0,
-            int recapBuildIntervalUnitCount = 1,
+            long minimumRecentHistoryLoad = 0,
+            long recapBuildIntervalHistoryLoad = 1,
             int maxRawGrowthEventCount = 10,
             int maxRouteEndpoints = 3,
             int maxMaintainerCalls = 3,
@@ -911,12 +1203,17 @@ public sealed class RecapPlanEvaluatorTests {
             var policy = new StubPolicy(
                 new RecapPlanningPolicyDecision.NoBuild("unused")
             );
+            var estimator = new TestHistoryUnitLoadEstimator();
             var inputs = new RecapPlanningInputs(
                 catalog,
                 new RecapCadenceConfig(
-                    minimumRecentHistoryUnitCount,
-                    recapBuildIntervalUnitCount
+                    estimator.Id,
+                    new HistoryLoadUnit(minimumRecentHistoryLoad),
+                    new HistoryLoadUnit(
+                        recapBuildIntervalHistoryLoad
+                    )
                 ),
+                estimator,
                 policy
             );
             var limits = new RecapPlanningLimits(
@@ -926,22 +1223,28 @@ public sealed class RecapPlanEvaluatorTests {
                 maxRawEventsPerStep,
                 maxRawEventsPerBuild
             );
+            var window = new RecapHistoryWindowFacts(
+                root,
+                totalHistoryUnitCount: 5,
+                [
+                    new(a1, 1),
+                    new(a5, 2),
+                    new(a11, 3),
+                    new(sourceSet, 4),
+                    new(admission, 5)
+                ]
+            );
             var scheduling = new RecapSchedulingFacts(
                 admission,
                 lineage,
-                new RecapHistoryWindowFacts(
-                    root,
-                    totalHistoryUnitCount: 5,
-                    [
-                        new(a1, 1),
-                        new(a5, 2),
-                        new(a11, 3),
-                        new(sourceSet, 4),
-                        new(admission, 5)
-                    ]
-                ),
+                window,
                 sourceSet,
-                sourceSet
+                sourceSet,
+                TestHistoryLoadMeasurement.UnitCountEquivalent(
+                    window,
+                    sourceSet,
+                    estimator.Id
+                )
             );
             var availableSource = new RecapBlockSourceIntent(
                 clientId,
@@ -968,6 +1271,7 @@ public sealed class RecapPlanEvaluatorTests {
         ) => new(
             catalog,
             Inputs.Cadence,
+            Inputs.HistoryUnitLoadEstimator,
             Inputs.Policy
         );
 
@@ -982,6 +1286,7 @@ public sealed class RecapPlanEvaluatorTests {
                         : new RecapPlanningInputs(
                             Inputs.OrderedCatalog,
                             Inputs.Cadence,
+                            Inputs.HistoryUnitLoadEstimator,
                             policy
                         ),
                     Limits,

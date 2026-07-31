@@ -10,7 +10,7 @@ namespace Atelia.SessionJournal.Cli;
 
 internal static class RecapExecutionCommands {
     private const string ReportSchema =
-        "atelia.session-journal.derived-recap-execution.v3";
+        "atelia.session-journal.derived-recap-execution.v4";
     private const string DefaultCallLogDirectory =
         "gitignore/session-journal/recap-maintainer-calls";
 
@@ -238,8 +238,6 @@ internal static class RecapExecutionCommands {
         }
         CompletionConnectionConfig connection =
             registry.Resolve(requestedConnection);
-        ICompletionClient inner =
-            registry.GetClient(connection.Id);
         ResolvedRecapPlannerComposition? plannerComposition =
             runAuthority
                 is PreparedRecapOperationAuthority.NewPlanning planning
@@ -256,14 +254,19 @@ internal static class RecapExecutionCommands {
                     ? frozenAuthority.CapabilityCatalog
                     : plannerComposition?.CapabilityCatalog
                         ?? RecapMaintainerProfileCatalog.BuiltIn;
-        RecapCliMaintainerComposition composition =
-            RecapCliComposition.CreateMaintainers(
-                capabilityCatalog,
-                connection,
-                inner,
-                callLogDirectory,
-                $"recap {operation}"
-            );
+        RecapCliMaintainerComposition? composition = null;
+        var maintainers =
+            new DeferredRecapBlockMaintainerRegistry(() => {
+                composition ??=
+                    RecapCliComposition.CreateMaintainers(
+                        capabilityCatalog,
+                        connection,
+                        registry.GetClient(connection.Id),
+                        callLogDirectory,
+                        $"recap {operation}"
+                    );
+                return composition.Registry;
+            });
 
         RecapExecutionReport report;
         int exitCode;
@@ -271,7 +274,7 @@ internal static class RecapExecutionCommands {
             var executor = new DerivedRecapRestoreExecutor(
                 engine,
                 store,
-                composition.Registry
+                maintainers
             );
             DerivedRecapRestoreResult result =
                 await executor.RestoreAsync(
@@ -285,7 +288,7 @@ internal static class RecapExecutionCommands {
                 lineage!.CapturedHead,
                 result,
                 anchor,
-                composition.LoggingClients,
+                composition?.LoggingClients ?? [],
                 callLogDirectory
             );
         }
@@ -293,7 +296,7 @@ internal static class RecapExecutionCommands {
             var executor = new DerivedRecapBuildingExecutor(
                 engine,
                 store,
-                composition.Registry
+                maintainers
             );
             DerivedRecapExecutionResult result =
                 await executor.ResumeAsync(anchor!.Value)
@@ -306,7 +309,7 @@ internal static class RecapExecutionCommands {
                 anchor,
                 configReport: null,
                 planningDiagnostics: null,
-                composition.LoggingClients,
+                composition?.LoggingClients ?? [],
                 callLogDirectory
             );
         }
@@ -319,7 +322,7 @@ internal static class RecapExecutionCommands {
                 var executor = new DerivedRecapBuildingExecutor(
                     engine,
                     store,
-                    composition.Registry
+                    maintainers
                 );
                 result = await executor.ResumeAsync(
                         frozen.Snapshot.Descriptor
@@ -336,7 +339,7 @@ internal static class RecapExecutionCommands {
                     store,
                     newPlanning.Composition.PlanningInputs,
                     newPlanning.Composition.PlanningLimits,
-                    composition.Registry
+                    maintainers
                 );
                 result = await executor.RunAsync(newPlanning.Baseline)
                     .ConfigureAwait(false);
@@ -351,7 +354,7 @@ internal static class RecapExecutionCommands {
                 requestedAnchor: null,
                 planningConfigReport,
                 planningDiagnostics,
-                composition.LoggingClients,
+                composition?.LoggingClients ?? [],
                 callLogDirectory
             );
         }
@@ -669,8 +672,9 @@ internal static class RecapExecutionCommands {
                     )
                 )
             ],
-            document.Cadence.MinimumRecentHistoryUnitCount,
-            document.Cadence.RecapBuildIntervalUnitCount,
+            document.Cadence.HistoryUnitLoadEstimatorId,
+            document.Cadence.MinimumRecentHistoryLoad,
+            document.Cadence.RecapBuildIntervalHistoryLoad,
             document.Limits.MaxRawGrowthEventCount,
             document.Limits.MaxRouteEndpointsPerBlock,
             document.Limits.MaxMaintainerCallsPerBuild,
@@ -682,19 +686,26 @@ internal static class RecapExecutionCommands {
     private static RecapExecutionPlanningReport? CreatePlanningReport(
         DerivedRecapPlanningDiagnostics? diagnostics
     ) => diagnostics switch {
-        DerivedRecapPlanningDiagnostics.HeaderNegative header =>
+        DerivedRecapPlanningDiagnostics.RawSafetyRejected rejected =>
             new RecapExecutionPlanningReport(
-                "HeaderNegative",
+                "RawSafetyRejected",
+                HistoryUnitLoadEstimatorId: null,
+                GrowthHistoryLoad: null,
+                SelectedAbsorbedHistoryLoad: null,
+                SelectedRecentHistoryLoad: null,
                 GrowthHistoryUnitCount: null,
-                RawGrowthEventCount: null,
-                header.RawGrowthEventUpperBound
+                rejected.RawGrowthEventCount
             ),
         DerivedRecapPlanningDiagnostics.ExactSchedule exact =>
             new RecapExecutionPlanningReport(
                 "ExactSchedule",
-                exact.GrowthHistoryUnitCount,
-                exact.RawGrowthEventCount,
-                RawGrowthEventUpperBound: null
+                exact.Measurement.HistoryUnitLoadEstimatorId,
+                exact.Measurement.GrowthHistoryLoad.Value,
+                exact.Measurement
+                    .SelectedAbsorbedHistoryLoad?.Value,
+                exact.Measurement.SelectedRecentHistoryLoad?.Value,
+                exact.Measurement.GrowthHistoryUnitCount,
+                exact.Measurement.RawGrowthEventCount
             ),
         null => null,
         _ => throw new InvalidDataException(
@@ -748,6 +759,27 @@ internal static class RecapExecutionCommands {
             .Distinct(StringComparer.Ordinal)
             .ToArray()
     );
+
+    private sealed class DeferredRecapBlockMaintainerRegistry(
+        Func<IRecapBlockMaintainerRegistry> resolve
+    ) : IRecapBlockMaintainerRegistry {
+        private readonly Lazy<IRecapBlockMaintainerRegistry> _inner =
+            new(
+                resolve
+                    ?? throw new ArgumentNullException(nameof(resolve)),
+                LazyThreadSafetyMode.ExecutionAndPublication
+            );
+
+        public bool TryResolve(
+            string maintainerId,
+            ContextHeaderBlockPath target,
+            out IRecapBlockMaintainer maintainer
+        ) => _inner.Value.TryResolve(
+            maintainerId,
+            target,
+            out maintainer
+        );
+    }
 
     private static void ValidatePaths(
         string inputPath,
@@ -812,8 +844,9 @@ internal sealed record RecapExecutionConfigReport(
     string ConfigSha256,
     string PlanningPolicy,
     IReadOnlyList<RecapExecutionCatalogReport> Catalog,
-    int MinimumRecentHistoryUnitCount,
-    int RecapBuildIntervalUnitCount,
+    string HistoryUnitLoadEstimatorId,
+    long MinimumRecentHistoryLoad,
+    long RecapBuildIntervalHistoryLoad,
     int MaxRawGrowthEventCount,
     int MaxRouteEndpointsPerBlock,
     int MaxMaintainerCallsPerBuild,
@@ -823,9 +856,12 @@ internal sealed record RecapExecutionConfigReport(
 
 internal sealed record RecapExecutionPlanningReport(
     string MeasurementKind,
+    string? HistoryUnitLoadEstimatorId,
+    long? GrowthHistoryLoad,
+    long? SelectedAbsorbedHistoryLoad,
+    long? SelectedRecentHistoryLoad,
     int? GrowthHistoryUnitCount,
-    int? RawGrowthEventCount,
-    int? RawGrowthEventUpperBound
+    int? RawGrowthEventCount
 );
 
 internal sealed record RecapExecutionCatalogReport(
