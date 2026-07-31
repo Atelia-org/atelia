@@ -968,6 +968,12 @@ internal static class GalateaConfigLoader {
     }
 
     private static void Validate(GalateaConfig config) {
+        if (config.CallLogDir is not null) {
+            RejectReparsePointsOnExistingPath(
+                config.CallLogDir,
+                "callLogDir"
+            );
+        }
         var userIds = new HashSet<string>(StringComparer.Ordinal);
         for (int i = 0; i < config.Users.Count; i++) {
             var user = config.Users[i];
@@ -987,9 +993,15 @@ internal static class GalateaConfigLoader {
             }
 
             if (config.CallLogDir is not null) {
+                string sessionDirectory =
+                    Path.GetFullPath(user.SessionDir);
+                RejectReparsePointsOnExistingPath(
+                    sessionDirectory,
+                    $"sessionDir for user '{user.UserId}'"
+                );
                 EnsurePathsDoNotNest(
                     config.CallLogDir,
-                    Path.GetFullPath(user.SessionDir),
+                    sessionDirectory,
                     user.UserId
                 );
             }
@@ -1035,6 +1047,42 @@ internal static class GalateaConfigLoader {
         ancestor + Path.DirectorySeparatorChar,
         comparison
     );
+
+    private static void RejectReparsePointsOnExistingPath(
+        string path,
+        string description
+    ) {
+        string? current = Path.TrimEndingDirectorySeparator(
+            Path.GetFullPath(path)
+        );
+        while (!string.IsNullOrEmpty(current)) {
+            try {
+                if ((File.GetAttributes(current)
+                        & FileAttributes.ReparsePoint) != 0) {
+                    throw new InvalidOperationException(
+                        $"Galatea {description} must not contain an "
+                        + $"existing symlink or reparse point: {current}"
+                    );
+                }
+            }
+            catch (Exception exception) when (
+                exception is FileNotFoundException
+                    or DirectoryNotFoundException
+            ) {
+                // Missing suffixes are allowed. Existing ancestors are still
+                // inspected before any call-log directory can be created.
+            }
+            string? parent = Path.GetDirectoryName(current);
+            if (string.Equals(
+                    parent,
+                    current,
+                    StringComparison.Ordinal
+                )) {
+                break;
+            }
+            current = parent;
+        }
+    }
 }
 
 internal static class GalateaConfigBootstrapper {

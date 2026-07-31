@@ -7,6 +7,7 @@ using Atelia.SessionJournal;
 using Atelia.SessionJournal.DerivedRecap.Maintainers;
 using Microsoft.Extensions.DependencyInjection;
 using Xunit;
+using Xunit.Sdk;
 
 namespace Atelia.Galatea.Server.Tests;
 
@@ -200,6 +201,106 @@ public sealed class GalateaCallLoggingTests {
         }
     }
 
+    [Fact]
+    public async Task ConfigRejectsSymlinkedCallLogAncestorBeforeCreatingAnythingInRepo() {
+        if (!OperatingSystem.IsLinux()) {
+            throw SkipException.ForSkip(
+                "This focused call-log symlink gate runs on Linux."
+            );
+        }
+        string root = Path.Combine(
+            Path.GetTempPath(),
+            "atelia-galatea-call-log-symlink-tests",
+            Guid.NewGuid().ToString("N")
+        );
+        string sessionDirectory = Path.Combine(root, "session");
+        string targetInsideSession = Path.Combine(
+            sessionDirectory,
+            "call-log-target"
+        );
+        string alias = Path.Combine(root, "apparently-external");
+        string escapedCallLogDirectory = Path.Combine(
+            alias,
+            "new-call-logs"
+        );
+        Directory.CreateDirectory(root);
+        using (SessionJournalEngine.Create(
+                   sessionDirectory,
+                   new SessionCreateOptions(
+                       "model-a",
+                       "prompt-a",
+                       "surface-a"
+                   )
+               )) {
+        }
+        Directory.CreateDirectory(targetInsideSession);
+        try {
+            try {
+                Directory.CreateSymbolicLink(
+                    alias,
+                    targetInsideSession
+                );
+            }
+            catch (Exception symlinkException) when (
+                symlinkException is IOException
+                    or NotSupportedException
+                    or UnauthorizedAccessException
+            ) {
+                throw SkipException.ForSkip(
+                    "Directory symbolic links are unavailable: "
+                    + symlinkException.Message
+                );
+            }
+            var factory = new RecordingCompletionClientFactory();
+            await using GalateaTestHost host =
+                GalateaTestHost.OpenExisting(
+                    sessionDirectory,
+                    [Connection("test", "model-a", "surface-a")],
+                    "test",
+                    factory,
+                    DisabledGalateaUserMessageNormalizer.Instance,
+                    callLogDirectory: escapedCallLogDirectory
+                );
+
+            InvalidOperationException validationException = Assert.Throws<
+                InvalidOperationException
+            >(() => GalateaConfigLoader.Load(host.ConfigPath));
+
+            Assert.Contains(
+                "symlink or reparse point",
+                validationException.Message,
+                StringComparison.Ordinal
+            );
+            Assert.Equal(0, factory.CreateCallCount);
+            Assert.False(Directory.Exists(Path.Combine(
+                targetInsideSession,
+                "new-call-logs"
+            )));
+            Assert.Empty(Directory.EnumerateFileSystemEntries(
+                targetInsideSession
+            ));
+            Assert.DoesNotContain(
+                Directory.EnumerateFiles(
+                    sessionDirectory,
+                    "*.json",
+                    SearchOption.AllDirectories
+                ),
+                static path => File.ReadAllText(path).Contains(
+                    "atelia.completion.call-log.v1",
+                    StringComparison.Ordinal
+                )
+            );
+        }
+        finally {
+            if (Directory.Exists(alias)) {
+                Directory.Delete(alias);
+            }
+            if (Directory.Exists(root)) {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+    }
+
     private static CompletionConnectionConfig Connection(
         string id,
         string modelId,
@@ -269,12 +370,19 @@ public sealed class GalateaCallLoggingTests {
 
     private sealed class RecordingCompletionClientFactory
         : ICompletionClientFactory {
+        private int _createCallCount;
+
         internal RecordingCompletionClient Client { get; } = new();
+
+        internal int CreateCallCount => Volatile.Read(
+            ref _createCallCount
+        );
 
         public ICompletionClient Create(
             CompletionConnectionConfig connection
         ) {
             ArgumentNullException.ThrowIfNull(connection);
+            Interlocked.Increment(ref _createCallCount);
             return Client;
         }
     }
