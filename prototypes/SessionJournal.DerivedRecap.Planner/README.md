@@ -75,6 +75,7 @@ using Atelia.SessionJournal.DerivedRecap.Maintainers;
 | 解析 config planning authority | `RecapPlannerConfigSnapshot` + `RecapMaintainerCapabilitySnapshot` + `RecapPlannerConfigResolver` |
 | Building-first operation preparation | `DerivedRecapOperationPreparer` + `PreparedRecapOperationAuthority` |
 | lazy加载repo active config | `RepositoryRecapActivePlanningConfigurationSource` |
+| 延迟构造完整Maintainer registry | `DeferredRecapBlockMaintainerRegistry` |
 | 只测 HistoryLoad | `O200kBaseHistoryUnitLoadEstimator` + `RecapHistoryLoadProjector` |
 | 新 planning，必要时直接执行并 Publish | `DerivedRecapPlannerExecutor` |
 | Resume exact frozen Building | `DerivedRecapBuildingExecutor` |
@@ -220,8 +221,17 @@ selection或Resume期间重新加载config。
 
 concrete Maintainer registry只在后续prepared authority确实需要执行时，才从完整
 `concreteCapabilities.All`延迟创建；不要在config resolution成功后立即创建Completion client、
-logger或Maintainer。H1已经提供public preparation authority；public once-only deferred registry
-helper与CLI online/run统一复用属于H2（CLI run当前已有private lazy实现）。
+logger或Maintainer。用public once-only helper延迟完整registry：
+
+```csharp
+var maintainers = new DeferredRecapBlockMaintainerRegistry(
+    () => CreateCompleteMaintainerRegistry()
+);
+```
+
+构造helper不会调用factory；第一次真实`TryResolve(MaintainerId, Target)`才用
+`ExecutionAndPublication`激活一次。factory异常或返回null也会被缓存，不在同一个operation内重试。
+helper不暴露activation状态、不拥有inner disposal，也不把custom inner升级成线程安全。
 
 ## Offline plan/build
 
@@ -487,8 +497,9 @@ active source一次 → latest Published catalog → raw-head fence。
 
 `planningCapabilities`必须来自完整execution capability catalog，而不是active roster；这样旧Building
 使用的frozen `(MaintainerId, Target)`即使不再active，仍可被验证并恢复。concrete
-`maintainers`也必须覆盖同一完整catalog。H2会补once-only deferred registry，使最终`NoBuild`时连
-concrete Maintainer/logger都不创建。
+`maintainers`也必须覆盖同一完整catalog，并应使用once-only deferred registry，使最终`NoBuild`时
+连concrete Maintainer/maintenance logger都不创建。whole-registry factory由第一次exact binding
+lookup触发；首版不做per-profile lazy。
 
 若active source返回file-backed snapshot，其canonical path必须属于当前operation repo；resolved
 active profiles也必须exact匹配传给preparer的同一份capability snapshot。自定义in-memory source可用

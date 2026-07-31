@@ -756,27 +756,6 @@ internal static class RecapExecutionCommands {
             .ToArray()
     );
 
-    private sealed class DeferredRecapBlockMaintainerRegistry(
-        Func<IRecapBlockMaintainerRegistry> resolve
-    ) : IRecapBlockMaintainerRegistry {
-        private readonly Lazy<IRecapBlockMaintainerRegistry> _inner =
-            new(
-                resolve
-                    ?? throw new ArgumentNullException(nameof(resolve)),
-                LazyThreadSafetyMode.ExecutionAndPublication
-            );
-
-        public bool TryResolve(
-            string maintainerId,
-            ContextHeaderBlockPath target,
-            out IRecapBlockMaintainer maintainer
-        ) => _inner.Value.TryResolve(
-            maintainerId,
-            target,
-            out maintainer
-        );
-    }
-
     private static void ValidatePaths(
         string inputPath,
         string connectionsPath,

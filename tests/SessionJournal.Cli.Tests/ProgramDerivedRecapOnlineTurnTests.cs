@@ -387,6 +387,29 @@ public sealed class ProgramDerivedRecapOnlineTurnTests : IDisposable {
 
         Assert.Equal(1, factory.CreateCallCount);
         Assert.Equal(1, factory.CallCount);
+        string callLog = Assert.Single(
+            Directory.EnumerateFiles(
+                calls,
+                "*.json",
+                SearchOption.TopDirectoryOnly
+            )
+        );
+        using (JsonDocument call = JsonDocument.Parse(
+                   File.ReadAllText(callLog)
+               )) {
+            JsonElement context =
+                call.RootElement.GetProperty("context");
+            Assert.Equal(
+                ["command"],
+                context.EnumerateObject()
+                    .Select(static property => property.Name)
+                    .ToArray()
+            );
+            Assert.Equal(
+                "run-online-turn/agent",
+                context.GetProperty("command").GetString()
+            );
+        }
         CompletionRequest request = Assert.Single(factory.Requests);
         Assert.Equal(33, request.Context.Count);
         Assert.Equal(

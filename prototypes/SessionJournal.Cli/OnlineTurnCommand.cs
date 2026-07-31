@@ -138,23 +138,26 @@ internal static class OnlineTurnCommand {
             );
 
         if (store is not null && recapAuthority is not null) {
-            RecapCliMaintainerComposition maintainers =
-                RecapCliComposition.CreateMaintainers(
-                    recapCapabilityCatalog
-                        ?? throw new InvalidDataException(
-                            "Prepared DerivedRecap capability catalog "
-                            + "is missing."
-                        ),
-                    connection,
-                    inner,
-                    callLogDirectory,
-                    "run-online-turn/maintenance"
+            var maintainers =
+                new DeferredRecapBlockMaintainerRegistry(
+                    () =>
+                        RecapCliComposition.CreateMaintainers(
+                            recapCapabilityCatalog
+                                ?? throw new InvalidDataException(
+                                    "Prepared DerivedRecap capability "
+                                    + "catalog is missing."
+                                ),
+                            connection,
+                            inner,
+                            callLogDirectory,
+                            "run-online-turn/maintenance"
+                        ).Registry
                 );
             recap = DerivedRecapOnlineLifecycleCoordinator.Create(
                 engine,
                 store,
                 recapAuthority,
-                maintainers.Registry
+                maintainers
             );
         }
 

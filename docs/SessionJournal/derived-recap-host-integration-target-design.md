@@ -25,11 +25,11 @@ application result与UI映射。
 本设计不直接公开 CLI internal类型，不让 Planner引用 concrete Maintainers，也不创建包办
 SessionRuntime的万能 Host framework。
 
-> **实施进度（2026-08-01）**：H0 public config resolution与H1 Building-first preparation均已
-> 落地。Planner现已提供neutral capability/config snapshots、Host-injected immutable resolution
-> catalog、construction-zero-touch repository source、public preparer/authority与authority-only
-> lifecycle；CLI已迁为thin concrete/report adapter。剩余H2只负责deferred concrete Maintainer/
-> logger wiring与真实repo验收。
+> **实施进度（2026-08-01）**：H0 public config resolution、H1 Building-first preparation与H2
+> concrete runtime laziness均已落地。Planner现已提供neutral capability/config snapshots、
+> Host-injected immutable resolution catalog、construction-zero-touch repository source、public
+> preparer/authority、authority-only lifecycle与once-only deferred Maintainer registry；CLI已迁为
+> thin concrete/report adapter并通过目标Galatea export的deterministic real-repo gate。
 
 第二个 Host已经明确是 `prototypes/Galatea`。因此这不是为假想消费者预留扩展点，而是Galatea
 替换 `ChatSessionEngine`存储层和状态机前的必要 API hardening。
@@ -59,10 +59,11 @@ H0实施前，安全的端到端装配分散在：
 - NewPlanning没有绑定readiness时捕获的baseline；
 - latest Published catalog不兼容时仍继续规划。
 
-H0已把第一项config resolution关闭为可复用public contract；H1也已关闭第二项
-Building-first readiness/preparation与authority-only lifecycle。当前composition缺口只剩lazy
-concrete runtime：prepared但最终`NoBuild`的operation仍不应创建Maintainer、maintenance client或
-call-log目录。
+H0已把第一项config resolution关闭为可复用public contract；H1关闭第二项Building-first
+readiness/preparation与authority-only lifecycle；H2又关闭lazy concrete runtime。至此Galatea
+不再需要复制CLI internal config/preparation/laziness算法，剩余前置缺口是cutover plan中的
+recovery binding、desired setup、completed-turn projection/rewind与Host行为，而不是Recap
+composition API。
 
 ## 2. 所有权与依赖
 
@@ -257,8 +258,8 @@ DerivedRecapOnlineLifecycleCoordinator.Create(
 - 当前没有baseline的online constructor直接降为internal；public production入口只接受prepared
   authority，不保留兼容层。
 
-H2将由Planner提供Maintainers-neutral、thread-safe的
-`DeferredRecapBlockMaintainerRegistry(Func<IRecapBlockMaintainerRegistry>)`（名称待定）：
+Planner提供Maintainers-neutral、具有thread-safe once-only activation的
+`DeferredRecapBlockMaintainerRegistry(Func<IRecapBlockMaintainerRegistry>)`：
 
 - 第一次真实`TryResolve`才激活inner registry；
 - 只激活一次；
@@ -269,8 +270,9 @@ Host可以在preparation成功后创建agent Completion client；concrete recap 
 deferred registry延迟创建。
 
 阶段归属：prepared authority、lazy active-composition source与authority-only lifecycle factory已在
-H1完成；`DeferredRecapBlockMaintainerRegistry`及CLI lazy wiring属于H2。H1没有把concrete
-Maintainer创建职责塞入public preparer或authority。
+H1完成；`DeferredRecapBlockMaintainerRegistry`及CLI lazy wiring已在H2完成。whole-registry
+factory只在第一次exact `(MaintainerId, Target)` lookup时激活；不增加per-binding state machine、
+activation状态或retry/reset API。
 
 ## 4. Host operation order
 
@@ -364,10 +366,10 @@ Recap Store schema或planner config schema。
 - phase、connection、logging与UI天然属于各Host；
 - 仅为十几行concrete catalog projection增加assembly不能降低系统复杂度。
 
-CLI与Galatea都切到public kernel后，再检查是否仍重复了稳定的concrete capability adapter、
-deferred maintainer activation或completion-target binding。只有重复代码形成清晰且不包含CLI/UI
-policy的共同闭包时，才提取一个薄Hosting companion；不得因此把SessionRuntime或online turn
-状态机搬出raw SessionJournal。
+H2复核后仍不新建Hosting assembly：CLI当前只剩concrete profile projection、prompt fingerprint与
+log context；Galatea尚未形成第二份稳定重复实现。等Galatea真正切到public kernel后，只有重复代码
+形成清晰且不包含CLI/UI policy的共同闭包时，才提取薄Hosting companion；不得因此把
+SessionRuntime或online turn状态机搬出raw SessionJournal。
 
 ## 7. 验收
 
@@ -379,7 +381,8 @@ policy的共同闭包时，才提取一个薄Hosting companion；不得因此把
 - catalog mismatch、raw-head drift与Published envelope drift均为typed result；
 - NewPlanning report与authority使用同一个config hash；
 - FrozenBuilding、Resume、Restore没有active config provenance；
-- NoBuild不构造concrete Maintainer或maintenance log；
+- NoBuild不构造concrete Maintainer或maintenance logger；operator-only `recap run`还保证整个
+  call-log目录不存在，online turn则仍会产生必要的agent call log，但没有maintenance log；
 - Prepared删除config和Recap Store后仍可safe exact dispatch；Started仍可在zero-touch下返回typed
   Refuse，并只在显式授权后restart；
 - CLI现有wire/report行为保持；Galatea通过配套real-session gate。

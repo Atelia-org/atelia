@@ -435,6 +435,10 @@ public sealed class ProgramRecapExecutionCommandTests : IDisposable {
         Assert.False(Directory.Exists(calls));
         using JsonDocument report = ReadJson(reportPath);
         Assert.Equal("NoBuild", String(report, "resultStatus"));
+        Assert.Equal(
+            0,
+            report.RootElement.GetProperty("callLogCount").GetInt32()
+        );
         JsonElement planning =
             report.RootElement.GetProperty("planning");
         Assert.Equal(

@@ -267,13 +267,15 @@ Gate：
   0 warning / 0 error；
 - 两轮独立kernel与CLI/docs review尾复核均无blocker或medium finding。
 
-### H2：Concrete runtime laziness与真实验收
+### H2：Concrete runtime laziness与真实验收（Done，2026-08-01）
 
 范围：
 
 - 按exact frozen binding延迟创建Maintainer/logger；
-- 提供Maintainers-neutral、thread-safe、once-only的deferred registry，并让CLI online/run复用；
-- 确保NewPlanning最终为`NoBuild`时不创建concrete Maintainer、maintenance client或call-log目录；
+- 提供Maintainers-neutral、具有thread-safe once-only activation的deferred registry，并让CLI
+  online/run复用；
+- 确保NewPlanning最终为`NoBuild`时不创建concrete Maintainer或maintenance logger；operator
+  `recap run`不创建call-log目录，online turn只保留必要的agent log；
 - 对目标legacy export执行deterministic real-repo acceptance；
 - 再次审阅CLI的thin concrete/report adapter是否值得独立assembly；在第二个Host真正出现重复前不提前
   抽象。
@@ -282,7 +284,7 @@ Gate：
 
 - 现有CLI focused suite；
 - real export deterministic acceptance；
-- NoBuild零maintenance factory/log directory；
+- NoBuild零maintenance factory；operator run零call-log目录、online零maintenance log；
 - 再次审阅是否形成值得独立assembly的共享concrete adapter。
 
 H0已经完成pure resolver adoption，H1已经完成public preparation/lifecycle adoption与readiness
@@ -290,6 +292,42 @@ duplicate删除，因此H2只关闭concrete runtime laziness和真实验收。CL
 enrichment继续保留在Host adapter，不进入neutral public contract；现有
 `RecapOperationReadiness`只是concrete capability projection与report enrichment，不再拥有
 correctness-sensitive preparation决策。
+
+完成结果：
+
+- Planner提供public `DeferredRecapBlockMaintainerRegistry`，使用whole-registry
+  `Lazy<T>(ExecutionAndPublication)`；construction zero-touch，成功、异常或null结果均只激活一次；
+- CLI `recap run`删除private duplicate并复用public helper；`run-online-turn`从eager concrete
+  composition改为第一次真实Maintainer binding lookup才创建完整capability registry与maintenance
+  loggers；
+- `NoBuild` operator gate继续证明Completion factory调用0次且call-log目录不存在；online gate证明
+  provider只收到agent call，唯一call log的context是`run-online-turn/agent`，不存在maintenance
+  log；
+- whole-registry activation保留同一个capability/connection/logging snapshot；没有为单一profile
+  引入第二层per-binding factory、activation API或retry/reset状态机；
+- 对目标`cyber-copy-upgraded/chat-session-legacy-upgrade-export.json`执行现有external
+  deterministic scripted gate：source 1,281,881 bytes，SHA-256
+  `b71822a27003e8d9f9b9c0ff956ca7c268267aba72221be89df154ed7d4751f3`，fresh import
+  148 events，HistoryLoad growth/absorbed/recent为116,458/98,082/18,376，2 blocks / 4 route
+  endpoints，最终156 events且原148-event prefix保持；
+- 此处deterministic指scripted流程与semantic assertions稳定，不承诺raw container或整份report跨
+  fresh import bit-identical；
+- 当前real gate先执行default config init，因此acceptance report中的`DefaultComposition`与repo
+  snapshot等价；未来增加custom-config acceptance时，report必须改为记录当次实际resolved repo
+  snapshot，不能继续借用code default；
+- 再审阅后不提取`SessionJournal.DerivedRecap.Hosting`：在Galatea形成第二份稳定concrete adapter
+  之前，CLI-only profile projection、prompt fingerprint与log context继续留在CLI composition root。
+
+完成时验证（2026-08-01）：
+
+- deferred registry focused：5/5；Planner suite：210/210；
+- CLI `ProgramRecapExecutionCommandTests`：13/13；
+- CLI `ProgramDerivedRecapOnlineTurnTests`：11/11；
+- CLI project build：0 warning / 0 error；
+- 目标Galatea export external real-data gate：1/1，content-free acceptance report写入
+  `gitignore/session-journal/derived-recap-h2-acceptance-20260801.json`（不进git）；
+- 独立code review无finding；docs/acceptance review提出的activation thread-safety措辞已尾修，复核后
+  无剩余medium以上问题。
 
 ### G0A：Recovery与desired setup
 
