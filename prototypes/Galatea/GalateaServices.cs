@@ -15,11 +15,8 @@ using Atelia.Completion.Tools;
 namespace Atelia.Galatea.Server;
 
 public sealed class GalateaHostService : IAsyncDisposable {
-    private const string UserMessagePrefix = "玩家角色试图采取如下动作：\n```\n";
-    private const string UserMessageSuffix = "\n```\n";
-
     private readonly CompletionConnectionRegistry _connections;
-    private readonly IGalateaUserMessageNormalizer _userMessageNormalizer;
+    private readonly GalateaInputPreprocessor _inputPreprocessor;
     private readonly ConcurrentDictionary<string, Lazy<Task<UserSessionHost>>> _sessions = new(StringComparer.Ordinal);
     private readonly IReadOnlyDictionary<string, GalateaUserConfig> _users;
 
@@ -30,7 +27,9 @@ public sealed class GalateaHostService : IAsyncDisposable {
     ) {
         ArgumentNullException.ThrowIfNull(config);
         _connections = connections ?? throw new ArgumentNullException(nameof(connections));
-        _userMessageNormalizer = userMessageNormalizer ?? throw new ArgumentNullException(nameof(userMessageNormalizer));
+        _inputPreprocessor = new GalateaInputPreprocessor(
+            userMessageNormalizer
+        );
         _users = config.Users.ToDictionary(x => x.UserId, StringComparer.Ordinal);
     }
 
@@ -72,20 +71,13 @@ public sealed class GalateaHostService : IAsyncDisposable {
         AssistantMessageDto? latestAssistant = null;
 
         foreach (var message in engine.Context) {
-            if (message is RecapMessage recap) {
+            if (message is RecapMessage) {
                 if (pendingUserText is not null && latestAssistant is not null) {
                     turns.Add(new RecentTurnDto(pendingUserText, latestAssistant));
                 }
 
                 pendingUserText = null;
                 latestAssistant = null;
-                turns.Add(
-                    new RecentTurnDto(
-                        string.Empty,
-                        new AssistantMessageDto(recap.Content ?? string.Empty, null, HasReasoning: false),
-                        IsRecap: true
-                    )
-                );
                 continue;
             }
 
@@ -101,11 +93,10 @@ public sealed class GalateaHostService : IAsyncDisposable {
                 continue;
             }
 
-            if (message is ActionMessage action && pendingUserText is not null) {
-                var projected = ProjectAssistant(action);
-                if (projected is not null) {
-                    latestAssistant = projected;
-                }
+            if (message is ActionMessage action
+                && pendingUserText is not null
+                && action.ToolCalls.Count == 0) {
+                latestAssistant = ProjectAssistant(action);
             }
         }
 
@@ -114,7 +105,9 @@ public sealed class GalateaHostService : IAsyncDisposable {
         }
 
         turns.Reverse();
-        IReadOnlyList<RecentTurnDto> projectedTurns = turns.Count <= maxTurns ? turns : turns.Take(maxTurns).ToArray();
+        IReadOnlyList<RecentTurnDto> projectedTurns = turns
+            .Take(maxTurns)
+            .ToArray();
         DebugUtil.Info(
             "Galatea.Session",
             $"BuildRecentTurns: {engine.GetDebugStateSummary()}, projectedTurns={projectedTurns.Count}, firstTurn={DescribeTurn(projectedTurns.FirstOrDefault())}"
@@ -125,11 +118,10 @@ public sealed class GalateaHostService : IAsyncDisposable {
     public RecentTurnsResponseDto BuildRecentTurnsResponse(ChatSessionEngine engine, int maxTurns = 12) {
         ArgumentNullException.ThrowIfNull(engine);
 
-        var allTurns = BuildRecentTurns(engine, int.MaxValue);
-        var turns = ProjectRecentTurnsResponse(allTurns, maxTurns);
+        var turns = BuildRecentTurns(engine, maxTurns);
         DebugUtil.Info(
             "Galatea.Session",
-            $"BuildRecentTurnsResponse: {engine.GetDebugStateSummary()}, responseTurns={turns.Count}, recapVisible={turns.Any(static x => x.IsRecap)}, firstTurn={DescribeTurn(turns.FirstOrDefault())}"
+            $"BuildRecentTurnsResponse: {engine.GetDebugStateSummary()}, responseTurns={turns.Count}, firstTurn={DescribeTurn(turns.FirstOrDefault())}"
         );
         return new RecentTurnsResponseDto(turns);
     }
@@ -173,7 +165,6 @@ public sealed class GalateaHostService : IAsyncDisposable {
         string removedUserText = NormalizeUserMessageForDisplay(removedTurn.UserMessage);
 
         if (previousLatestTurn is not null
-            && !previousLatestTurn.IsRecap
             && string.Equals(previousLatestTurn.UserText, removedUserText, StringComparison.Ordinal)) {
             DebugUtil.Info(
                 "Galatea.Session",
@@ -188,7 +179,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
         );
         return new RecentTurnDto(
             removedUserText,
-            new AssistantMessageDto(string.Empty, null, HasReasoning: false)
+            new AssistantMessageDto(string.Empty, null)
         );
     }
 
@@ -220,6 +211,14 @@ public sealed class GalateaHostService : IAsyncDisposable {
         ArgumentNullException.ThrowIfNull(host);
         ArgumentNullException.ThrowIfNull(liveTurn);
 
+        using var preDispatchCts =
+            CancellationTokenSource.CreateLinkedTokenSource(
+                ct,
+                liveTurn.PreDispatchStopToken
+            );
+        CancellationToken turnCancellationToken =
+            preDispatchCts.Token;
+
         liveTurn.Publish(new StreamEventDto("meta", new { phase = "turn-start" }), phase: "turn-start");
         DebugUtil.Info(
             "Galatea.Session",
@@ -237,7 +236,18 @@ public sealed class GalateaHostService : IAsyncDisposable {
             $"RunTurnAsync connection: user={host.User.UserId}, turnId={liveTurn.TurnId}, connectionId={connection.Id}, model={connection.ModelId}, surface={connection.CompletionSurfaceId}"
         );
 
-        string effectiveUserMessage = await NormalizeUserMessageAsync(liveTurn, ct).ConfigureAwait(false);
+        string effectiveUserMessage;
+        try {
+            effectiveUserMessage = await _inputPreprocessor
+                .ProcessAsync(liveTurn, turnCancellationToken)
+                .ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (
+            !ct.IsCancellationRequested
+            && liveTurn.StopRequested
+        ) {
+            throw PreDispatchStopped();
+        }
         string promptedUserMessage = WrapUserMessageForEngine(effectiveUserMessage);
 
         // Failsafe: if the previous turn's post-generation compaction didn't happen
@@ -262,8 +272,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
         //     liveTurn.Publish(new StreamEventDto("meta", new { phase = "compaction-finish" }), phase: "compaction-finish");
         // }
 
-        var observer = new CompletionStreamObserver();
-        liveTurn.AttachObserver(observer);
+        CompletionStreamObserver observer = liveTurn.Observer;
         var toolLoopStarted = 0;
         observer.ReceivedThinkingBegin += () => liveTurn.Publish(
             new StreamEventDto("meta", new { phase = "reasoning-start" }),
@@ -293,7 +302,23 @@ public sealed class GalateaHostService : IAsyncDisposable {
 
         ChatSessionTurnResult turnResult;
         try {
-            turnResult = await host.Engine.SendMessageAsync(promptedUserMessage, observer, ct).ConfigureAwait(false);
+            liveTurn.StopController.EnterObserverOnlyOrThrow(
+                turnCancellationToken
+            );
+            turnResult = await host.Engine.SendMessageAsync(
+                    promptedUserMessage,
+                    observer,
+                    turnCancellationToken
+                )
+                .ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (
+            !ct.IsCancellationRequested
+            && liveTurn.StopController.Phase
+                == GalateaTurnStopPhase.PreDispatch
+            && liveTurn.StopRequested
+        ) {
+            throw PreDispatchStopped();
         }
         catch (ChatSessionTurnAbortedException ex) {
             DebugUtil.Warning(
@@ -315,7 +340,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
         var snapshot = BuildRecentTurnsResponse(host.Engine);
         DebugUtil.Info(
             "Galatea.Session",
-            $"RunTurnAsync send done: user={host.User.UserId}, turnId={liveTurn.TurnId}, errors={turnResult.Errors?.Count ?? 0}, snapshotTurns={snapshot.Turns.Count}, recapVisible={snapshot.Turns.Any(static x => x.IsRecap)}, head={host.Engine.PersistedHeadAddress}"
+            $"RunTurnAsync send done: user={host.User.UserId}, turnId={liveTurn.TurnId}, errors={turnResult.Errors?.Count ?? 0}, snapshotTurns={snapshot.Turns.Count}, head={host.Engine.PersistedHeadAddress}"
         );
 
         if (Volatile.Read(ref toolLoopStarted) == 1) {
@@ -415,44 +440,9 @@ public sealed class GalateaHostService : IAsyncDisposable {
             ToolSession: toolSession
         );
 
-    private async Task<string> NormalizeUserMessageAsync(GalateaLiveTurn liveTurn, CancellationToken ct) {
-        string original = liveTurn.UserMessage;
-        if (!_userMessageNormalizer.ShouldNormalize(original)) { return original; }
-
-        liveTurn.Publish(
-            new StreamEventDto("meta", new { phase = "input-normalization-start" }),
-            phase: "input-normalization-start"
-        );
-
-        try {
-            string effective = await _userMessageNormalizer.NormalizeAsync(original, ct).ConfigureAwait(false);
-            if (string.IsNullOrWhiteSpace(effective)) {
-                effective = original;
-            }
-            bool changed = !string.Equals(original, effective, StringComparison.Ordinal);
-            liveTurn.Publish(
-                new StreamEventDto("meta", new { phase = "input-normalization-finish", changed }),
-                phase: "input-normalization-finish"
-            );
-            return effective;
-        }
-        catch (OperationCanceledException) when (ct.IsCancellationRequested) {
-            throw;
-        }
-        catch (Exception ex) {
-            DebugUtil.Warning(
-                "Galatea.Session",
-                $"NormalizeUserMessageAsync fallback to original: turnId={liveTurn.TurnId}, input={Preview(original)}, error={ex.Message}"
-            );
-            liveTurn.Publish(
-                new StreamEventDto("meta", new { phase = "input-normalization-finish", changed = false, fallback = true }),
-                phase: "input-normalization-finish"
-            );
-            return original;
-        }
-    }
-
-    private static AssistantMessageDto? ProjectAssistant(ActionMessage action) {
+    private static AssistantMessageDto ProjectAssistant(
+        ActionMessage action
+    ) {
         var textBuilder = new StringBuilder();
         var reasoningBuilder = new StringBuilder();
 
@@ -467,14 +457,11 @@ public sealed class GalateaHostService : IAsyncDisposable {
             }
         }
 
-        if (textBuilder.Length == 0 && reasoningBuilder.Length == 0) { return null; }
-
         var cleanedText = StripInlineThinkBlocks(textBuilder.ToString());
         string? reasoningText = reasoningBuilder.Length == 0 ? null : reasoningBuilder.ToString();
         return new AssistantMessageDto(
             Text: cleanedText,
-            ReasoningText: reasoningText,
-            HasReasoning: !string.IsNullOrEmpty(reasoningText)
+            ReasoningText: reasoningText
         );
     }
 
@@ -495,57 +482,24 @@ public sealed class GalateaHostService : IAsyncDisposable {
     }
 
     internal static string WrapUserMessageForEngine(string userMessage) {
-        ArgumentException.ThrowIfNullOrWhiteSpace(userMessage);
-        return UserMessagePrefix + userMessage + UserMessageSuffix;
+        return GalateaUserMessageEnvelope.Wrap(userMessage);
     }
 
     internal static string NormalizeUserMessageForDisplay(string? storedUserMessage) {
-        if (string.IsNullOrEmpty(storedUserMessage)) { return string.Empty; }
-
-        if (storedUserMessage.StartsWith(UserMessagePrefix, StringComparison.Ordinal)
-            && storedUserMessage.EndsWith(UserMessageSuffix, StringComparison.Ordinal)) {
-            return storedUserMessage.Substring(
-                UserMessagePrefix.Length,
-                storedUserMessage.Length - UserMessagePrefix.Length - UserMessageSuffix.Length
-            );
-        }
-
-        return storedUserMessage;
+        return GalateaUserMessageEnvelope.UnwrapForDisplay(
+            storedUserMessage
+        );
     }
 
     private static string DescribeTurn(RecentTurnDto? turn) {
         if (turn is null) { return "<null>"; }
-        if (turn.IsRecap) { return $"recap={Preview(turn.Assistant.Text)}"; }
         return $"user={Preview(turn.UserText)}, assistant={Preview(turn.Assistant.Text)}";
     }
 
-    private static IReadOnlyList<RecentTurnDto> ProjectRecentTurnsResponse(IReadOnlyList<RecentTurnDto> allTurns, int maxTurns) {
-        ArgumentNullException.ThrowIfNull(allTurns);
-
-        var projectedTurns = allTurns.Count <= maxTurns
-            ? new List<RecentTurnDto>(allTurns)
-            : allTurns.Take(maxTurns).ToList();
-
-        int recapIndex = FindRecapIndex(allTurns);
-        if (recapIndex < 0 || recapIndex < maxTurns) { return projectedTurns; }
-
-        // Optional boundary hint: include the first turn immediately after the recap
-        // if it fell outside maxTurns, so the UI can see where the uncompressed range starts.
-        if (recapIndex > 0 && recapIndex - 1 >= maxTurns) {
-            projectedTurns.Add(allTurns[recapIndex - 1]);
-        }
-
-        projectedTurns.Add(allTurns[recapIndex]);
-        return projectedTurns;
-    }
-
-    private static int FindRecapIndex(IReadOnlyList<RecentTurnDto> turns) {
-        for (int i = 0; i < turns.Count; i++) {
-            if (turns[i].IsRecap) { return i; }
-        }
-
-        return -1;
-    }
+    private static GalateaTurnException PreDispatchStopped() => new(
+        "已停止本轮请求；尚未开始模型生成，也未写入会话历史。",
+        "stopped-before-dispatch"
+    );
 
     private static string Preview(string? text) {
         if (string.IsNullOrWhiteSpace(text)) { return "<null>"; }

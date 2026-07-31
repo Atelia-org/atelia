@@ -171,8 +171,12 @@ failed Observation留在Context，必须作为显式产品cut而不是伪装成�
 stop/cancellation分阶段定义：
 
 - normalization前或期间：可取消，尚无raw Observation；
-- Recap maintenance期间：可取消；未完成Building保持可Resume，不开始agent dispatch；
-- lifecycle/maintenance成功返回后，Host原子地从pre-dispatch CTS切换为observer-only stop；
+- Recap的Observation写入前lifecycle期间：可取消；未完成Building保持可Resume，不开始agent
+  dispatch；
+- 首次pre-append lifecycle成功返回后，Host原子地从pre-dispatch CTS切换为observer-only stop；
+  `SendAsync`在Observation写入后还会执行第二次lifecycle，该阶段也必须保持observer-only，否则用户
+  cancellation可能留下`AwaitingAgentAction` Observation，而当前exact abandon只接受
+  `TurnFailed`；
 - agent streaming期间：通过observer stop形成known terminal failure，不提交partial Action，
   随后abandon failed turn；
 - crash在Started之后：属于uncertain recovery，不能自动abandon或自动重试。
@@ -457,32 +461,88 @@ Gate：
 - known failure/observer stop在同一writer lock内只有exact abandon成功后才能报告idle；Started
   uncertain仍Refuse。G0B范围不扩张到Host wiring，该部分仍由G0C/G1实现。
 
-### G0C：Galatea Host harness与preprocessor parity
+### G0C：Galatea Host harness与preprocessor parity（Done，2026-08-01）
 
 范围：
 
 - 建立`Galatea.Server.Tests`或等价的真实Host测试入口；
 - 保留现有input normalizer作为Galatea application preprocessor；
-- normalizer只在Recap readiness成功后运行；
+- 为G1固定调用边界：只有Recap readiness成功后才运行normalizer；G0C不提前创建concrete
+  Planner/Store composition；
 - normalization失败回退原文，成功时最终normalized text进入raw Observation；
 - 实现双阶段stop controller：
-  - normalization与DerivedRecap lifecycle期间持有per-turn pre-dispatch CTS；
-  - 一个Host wrapper在lifecycle/maintenance成功返回时原子切换为observer-only；
+  - normalization与pre-append DerivedRecap lifecycle期间持有per-turn pre-dispatch CTS；
+  - 一个Host wrapper在首次pre-append lifecycle/maintenance成功返回时原子切换为observer-only；
   - 切换后用户stop不再cancel传给`SendAsync`的token，避免在Prepared/Started边界制造新的uncertain
     tail。
 
 Gate：
 
 - normalizer success/fallback/stop；
-- blocked Maintainer收到stop cancellation，零Observation/Prepared/agent call，partial Building可在
-  下一请求Building-first Resume；
-- lifecycle成功后的stop只设置observer，不cancel pre-dispatch CTS；
-- config/Store invalid时normalizer调用零次；
+- stop先于fresh-send lifecycle transition时取消pre-dispatch token；transition成功后的stop只设置
+  observer，不cancel该token；第二次post-append lifecycle保持observer-only；
 - SSE subscribe/stop不占per-session writer lock；
 - 建立raw-only recent display adapter：只消费`SessionCompletedTurnProjection`，验证wrapper
   normalization、ordered text/reasoning blocks与terminal-authoritative空输出；
 - 删除目标recent DTO/UI中的recap card、recap boundary injection与recap-aware Undo判断；
-  recap publish/materialize前后raw recent DTO必须完全一致。
+  adapter不得读取DerivedRecap Store或把recap contribution投影成conversation turn。
+
+设计收口：
+
+- G0C不创建一套假的Planner/Store orchestration来模拟未来Host；只交付能被G1直接复用的application
+  preprocessor、stop controller、lifecycle decorator、raw display adapter与真实`Program`测试入口；
+- `SessionJournalEngine.SendAsync`具有两次lifecycle callback：第一次发生在raw Observation append前，
+  第二次发生在Observation后、Prepared前。因此stop transition严格线性化在第一次
+  `PendingObservation != null`且结果为`Ready/RawHistoryReady`的callback返回之后；第二次callback
+  继续使用同一个未被用户stop取消的token；
+- stop先于transition线性化时取消pre-dispatch token且transition抛`OperationCanceledException`；
+  transition先于stop线性化时只设置同一turn的observer；application shutdown仍可独立取消linked
+  token；
+- concrete `config/Store invalid → normalizer zero`、blocked Maintainer留下partial Building并在下一
+  request Building-first Resume，以及known stop后的exact abandon，只能在G1真正接入Planner/Store/
+  `SessionJournalEngine`后做endpoint级验收；G0C只完成组件边界和测试入口，不把旧`ChatSession`
+  Host伪装成已切换。
+
+完成结果：
+
+- 新增`Galatea.Server.Tests`并加入solution；真实`WebApplicationFactory<Program>`使用临时有效
+  `config.json`/`connections.json`、authentication与严格DI replacement，确保测试不会触发环境中的
+  real provider或normalizer；
+- `GalateaInputPreprocessor`收拢现有normalizer policy：skip保持原文，异常或blank输出回退原文，
+  caller cancellation不被吞掉，既有normalization SSE phase保持；当前legacy Host也改用同一组件和
+  per-turn linked pre-dispatch token；
+- `GalateaTurnStopController`以`PreDispatch / ObserverOnly / Completed`三阶段、同一lock线性化stop与
+  transition；observer在turn创建时即固定，stop-before-background不会丢失；subscriber/replay gate与
+  stop gate保持独立；
+- `GalateaFreshSendLifecycleGate`只装饰真实`ISessionContextLifecycleCoordinator`，仅首次成功的
+  pre-append callback执行transition，不复制Planner result taxonomy或maintenance算法；
+- `CompletionStreamObserver.ShouldStop`改为thread-safe、monotonic flag，provider loop与stop endpoint
+  之间具有正式的跨线程可见性，写`false`不能复位已发出的stop；
+- `GalateaRecentTurnDisplayAdapter`的唯一业务输入是`SessionCompletedTurnProjection`：exact wrapper
+  stripping留在Host，Text与Reasoning各自在原block顺序内聚合，inline-think跨Text block统一清理，
+  terminal空输出仍生成空assistant DTO；adapter不读取Store、raw payload或中间tool Action；
+- recent wire删除`IsRecap`与可由`ReasoningText`直接派生的`HasReasoning`；JS/CSS删除recap card、
+  boundary injection与recap-aware Undo分支。G1前legacy projector遇`RecapMessage`只作为边界并跳过，
+  `maxTurns`恢复严格上限；Undo的server-authoritative exact eligibility仍留给G1。
+- start endpoint用显式writer-lock ownership transfer把锁交给background runner；handoff前异常会清理
+  live turn并释放锁，legacy pop endpoint也用`finally`释放，避免一次composition/rewind异常把session
+  永久留在busy状态。
+
+完成时验证（2026-08-01）：
+
+- `Galatea.Server.Tests`覆盖真实Host/auth/DI、preprocessor success/fallback/cancellation、stop race与
+  lifecycle status matrix、raw display adapter/legacy recap隐藏，以及SSE subscribe/stop不等待writer
+  lock；
+- 两条真实legacy Host vertical分别证明normalized input进入provider request与durable Observation，
+  以及normalization期间stop会取消pre-dispatch token、保持history为空并让completion dispatch为0；
+- raw adapter focused覆盖exact/partial wrapper、ordered Text/Reasoning、跨block inline-think、
+  reasoning-only与terminal-authoritative empty output；legacy compaction fixture证明recent response不再
+  产生recap DTO且严格遵守maximum；
+- `CompletionStreamObserver`的monotonic stop由focused test覆盖；Galatea与Completion.Abstractions
+  build均为0 warning / 0 error；`Galatea.Server.Tests`为38/38，Completion suite为183/183；
+- G1必须在同一个真实Host harness中重跑三项final gate：invalid config/Store的zero-call ordering、
+  blocked Maintainer stop + next-request FrozenBuilding Resume，以及observer stop → TurnFailed → exact
+  abandon → idle。
 
 ### G1：Galatea SessionHost vertical
 
@@ -495,8 +555,14 @@ Gate：
   校验governing model/surface后执行Recap preparation；`FrozenCompletionRequired` exact-bind durable
   completion identity；`ToolContinuationRequired`只exact-bind durable tool runtime（首个empty-tool
   slice显式unsupported）；随后使用captured-head-bound `ResumeAsync`；
-- `DerivedRecapOnlineLifecycleCoordinator`同时提供candidate source/lifecycle；
-- current in-memory `GalateaLiveTurn`继续只管理SSE subscriber与observer；
+- `DerivedRecapOnlineLifecycleCoordinator`同时提供candidate source/lifecycle；runtime的lifecycle用
+  G0C `GalateaFreshSendLifecycleGate`装饰，candidate source仍是同一个coordinator实例；该decorator
+  只用于fresh `SendAsync`，recovery按下述runtime requirement使用独立transition point；
+- stop transition按operation mode区分：fresh Send在pre-append lifecycle成功后切换；已有
+  `AwaitingAgentAction` Observation的recovery在其唯一post-observation lifecycle成功后切换；
+  Prepared与显式Started restart在完成frozen runtime exact binding、即将进入provider attempt前切换；
+  每种模式都必须分别覆盖stop-before/after transition；
+- current in-memory `GalateaLiveTurn`继续只管理SSE subscriber、per-turn stop controller与observer；
 - 删除`CompactAsync`、EstimatedTokens trigger及旧compaction prompts/config。
 - recent endpoint直接消费core completed-turn snapshot并保持newest-first；Undo endpoint直接消费
   `SessionTurnRetractionResult.Moved.Turn`做wrapper normalization/回填，不保留旧
@@ -538,6 +604,10 @@ Gate：
 - stream deltas与stop不持久化partial action；
 - config/Store missing在Observation和LLM前阻断；
 - config/Store invalid时normalizer、maintainer和agent factory调用均为0；
+- blocked pre-append Maintainer收到stop cancellation，零Observation/Prepared/agent call；留下的partial
+  Building在下一request由preparer识别为`FrozenBuilding`并只恢复缺失suffix；
+- 首次pre-append lifecycle成功后，stop只设置observer且不取消传给`SendAsync`的token；known
+  `TurnFailed`随后exact abandon并回到idle；
 - normalized text而非原始text进入raw history；
 - recent UI与Undo行为通过。
 

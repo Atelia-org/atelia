@@ -10,6 +10,7 @@
     <ProjectReference Include="../ChatSession/ChatSession.csproj" />
     <ProjectReference Include="../Completion/Completion.csproj" />
     <ProjectReference Include="../Completion.Tools/Completion.Tools.csproj" />
+    <ProjectReference Include="../SessionJournal/SessionJournal.csproj" />
   </ItemGroup>
 
   <ItemGroup>

@@ -138,7 +138,7 @@ api.MapGet(
         var response = hostService.BuildRecentTurnsResponse(session.Engine);
         DebugUtil.Info(
             "Galatea.Api",
-            $"GET /api/recent-turns user={userId}, items={response.Turns.Count}, recapVisible={response.Turns.Any(static x => x.IsRecap)}, head={session.Engine.PersistedHeadAddress}"
+            $"GET /api/recent-turns user={userId}, items={response.Turns.Count}, head={session.Engine.PersistedHeadAddress}"
         );
         return Results.Ok(response);
     }
@@ -161,15 +161,34 @@ api.MapPost(
         var session = await hostService.GetSessionAsync(userId, httpContext.RequestAborted);
 
         if (!session.TurnLock.Wait(0)) { return BuildTurnBusyConflict(hostService, session); }
-
-        var connection = connections.Resolve(request.ConnectionId);
-        var liveTurn = hostService.StartTurn(
-            session,
-            request.Message,
-            new GalateaTurnOptions(connection.Id)
-        );
-        DebugUtil.Info("Galatea.Api", $"POST /api/chat/turns user={userId}, turnId={liveTurn.TurnId}, connectionId={connection.Id}, head={session.Engine.PersistedHeadAddress}");
-        return StartAcceptedTurn(session, liveTurn, hostService, applicationLifetime);
+        GalateaLiveTurn? liveTurn = null;
+        bool writerOwnershipTransferred = false;
+        try {
+            var connection = connections.Resolve(request.ConnectionId);
+            liveTurn = hostService.StartTurn(
+                session,
+                request.Message,
+                new GalateaTurnOptions(connection.Id)
+            );
+            DebugUtil.Info("Galatea.Api", $"POST /api/chat/turns user={userId}, turnId={liveTurn.TurnId}, connectionId={connection.Id}, head={session.Engine.PersistedHeadAddress}");
+            IResult result = StartAcceptedTurn(
+                session,
+                liveTurn,
+                hostService,
+                applicationLifetime
+            );
+            writerOwnershipTransferred = true;
+            return result;
+        }
+        finally {
+            if (!writerOwnershipTransferred) {
+                if (liveTurn is not null) {
+                    hostService.FinishTurn(session, liveTurn);
+                    liveTurn.Complete();
+                }
+                session.TurnLock.Release();
+            }
+        }
     }
 );
 
@@ -185,23 +204,26 @@ api.MapPost(
         var session = await hostService.GetSessionAsync(userId, httpContext.RequestAborted);
 
         if (!session.TurnLock.Wait(0)) { return BuildTurnBusyConflict(hostService, session); }
+        try {
+            var poppedTurn = hostService.PopLatestTurn(session);
+            if (poppedTurn is null) {
+                DebugUtil.Warning("Galatea.Api", $"POST /api/chat/turns/pop-latest user={userId} returned null, head={session.Engine.PersistedHeadAddress}");
+                return Results.Json(
+                    new StartTurnResponseDto(
+                        TurnId: string.Empty,
+                        Status: "idle",
+                        Error: "当前没有可取出的最近一轮。"
+                    ),
+                    statusCode: StatusCodes.Status409Conflict
+                );
+            }
 
-        var poppedTurn = hostService.PopLatestTurn(session);
-        session.TurnLock.Release();
-        if (poppedTurn is null) {
-            DebugUtil.Warning("Galatea.Api", $"POST /api/chat/turns/pop-latest user={userId} returned null, head={session.Engine.PersistedHeadAddress}");
-            return Results.Json(
-                new StartTurnResponseDto(
-                    TurnId: string.Empty,
-                    Status: "idle",
-                    Error: "当前没有可取出的最近一轮。"
-                ),
-                statusCode: StatusCodes.Status409Conflict
-            );
+            DebugUtil.Info("Galatea.Api", $"POST /api/chat/turns/pop-latest user={userId} succeeded, head={session.Engine.PersistedHeadAddress}");
+            return Results.Ok(new PopLatestTurnResponseDto(poppedTurn));
         }
-
-        DebugUtil.Info("Galatea.Api", $"POST /api/chat/turns/pop-latest user={userId} succeeded, head={session.Engine.PersistedHeadAddress}");
-        return Results.Ok(new PopLatestTurnResponseDto(poppedTurn));
+        finally {
+            session.TurnLock.Release();
+        }
     }
 );
 

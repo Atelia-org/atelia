@@ -76,17 +76,9 @@
   }
 
   function renderTurn(turn) {
-    if (turn.isRecap) {
-      return `
-        <article class="turn-card recap-card">
-          <header>Earlier Summary</header>
-          <pre>${escapeHtml(turn.assistant.text ?? "")}</pre>
-        </article>
-      `;
-    }
-
-    const reasoning = turn.assistant.hasReasoning
-      ? `<details class="reasoning-panel"><summary>Reasoning</summary><pre>${escapeHtml(turn.assistant.reasoningText ?? "")}</pre></details>`
+    const reasoningText = turn.assistant.reasoningText ?? "";
+    const reasoning = reasoningText.length > 0
+      ? `<details class="reasoning-panel"><summary>Reasoning</summary><pre>${escapeHtml(reasoningText)}</pre></details>`
       : "";
 
     return `
@@ -135,7 +127,7 @@
   }
 
   function hasUndoableTurn() {
-    return state.recentTurns.some((turn) => !turn.isRecap);
+    return state.recentTurns.length > 0;
   }
 
   function clearPendingPoppedTurn() {
@@ -379,12 +371,8 @@
       return null;
     }
 
-    const firstUndoableTurnIndex = state.recentTurns.findIndex((turn) => !turn.isRecap);
-    if (firstUndoableTurnIndex >= 0) {
-      state.recentTurns = [
-        ...state.recentTurns.slice(0, firstUndoableTurnIndex),
-        ...state.recentTurns.slice(firstUndoableTurnIndex + 1),
-      ];
+    if (state.recentTurns.length > 0) {
+      state.recentTurns = state.recentTurns.slice(1);
     }
     input.value = state.pendingPoppedTurn.userText ?? "";
     renderTurns();

@@ -47,8 +47,7 @@ public sealed record GalateaMeDto(
 
 public sealed record RecentTurnDto(
     string UserText,
-    AssistantMessageDto Assistant,
-    bool IsRecap = false
+    AssistantMessageDto Assistant
 );
 
 public sealed record RecentTurnsResponseDto(
@@ -57,8 +56,7 @@ public sealed record RecentTurnsResponseDto(
 
 public sealed record AssistantMessageDto(
     string Text,
-    string? ReasoningText,
-    bool HasReasoning
+    string? ReasoningText
 );
 
 public sealed record ChatStreamRequest(

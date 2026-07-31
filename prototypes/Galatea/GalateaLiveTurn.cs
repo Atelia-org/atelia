@@ -10,14 +10,15 @@ internal sealed class GalateaLiveTurn {
     private readonly List<StreamEventDto> _replayEvents = new();
     private long _nextSubscriberId;
     private bool _streamCompleted;
-    private CompletionStreamObserver? _observer;
-    private bool _stopRequested;
+    private string _status;
+    private string? _phase;
 
     public GalateaLiveTurn(string userMessage, GalateaTurnOptions options) {
         TurnId = Guid.NewGuid().ToString("N");
         UserMessage = userMessage;
         Options = options ?? throw new ArgumentNullException(nameof(options));
-        Status = "running";
+        StopController = new GalateaTurnStopController();
+        _status = "running";
     }
 
     public string TurnId { get; }
@@ -26,19 +27,32 @@ internal sealed class GalateaLiveTurn {
 
     public GalateaTurnOptions Options { get; }
 
-    public string Status { get; private set; }
-
-    public string? Phase { get; private set; }
-
-    public Task? RunTask { get; set; }
-
-    public bool StopRequested {
+    public string Status {
         get {
             lock (_gate) {
-                return _stopRequested;
+                return _status;
             }
         }
     }
+
+    public string? Phase {
+        get {
+            lock (_gate) {
+                return _phase;
+            }
+        }
+    }
+
+    public Task? RunTask { get; set; }
+
+    internal GalateaTurnStopController StopController { get; }
+
+    public CompletionStreamObserver Observer => StopController.Observer;
+
+    public CancellationToken PreDispatchStopToken =>
+        StopController.PreDispatchStopToken;
+
+    public bool StopRequested => StopController.StopRequested;
 
     public GalateaTurnSubscription Subscribe() {
         lock (_gate) {
@@ -67,14 +81,15 @@ internal sealed class GalateaLiveTurn {
         lock (_gate) {
             _replayEvents.Add(streamEvent);
             if (phase is not null) {
-                Phase = phase;
+                _phase = phase;
             }
 
             if (status is not null) {
-                Status = status;
+                _status = status;
                 completeSubscribers = status != "running";
                 if (completeSubscribers) {
                     _streamCompleted = true;
+                    StopController.Complete();
                 }
             }
 
@@ -98,6 +113,8 @@ internal sealed class GalateaLiveTurn {
     public void Complete() {
         Channel<StreamEventDto>[] subscribers;
 
+        StopController.Complete();
+
         lock (_gate) {
             if (_streamCompleted) { return; }
 
@@ -117,36 +134,7 @@ internal sealed class GalateaLiveTurn {
         }
     }
 
-    public void AttachObserver(CompletionStreamObserver observer) {
-        ArgumentNullException.ThrowIfNull(observer);
-
-        bool shouldStop;
-        lock (_gate) {
-            _observer = observer;
-            shouldStop = _stopRequested;
-        }
-
-        if (shouldStop) {
-            observer.ShouldStop = true;
-        }
-    }
-
-    public bool RequestStop() {
-        CompletionStreamObserver? observer;
-
-        lock (_gate) {
-            if (_streamCompleted) { return false; }
-
-            _stopRequested = true;
-            observer = _observer;
-        }
-
-        if (observer is not null) {
-            observer.ShouldStop = true;
-        }
-
-        return true;
-    }
+    public bool RequestStop() => StopController.RequestStop();
 }
 
 internal sealed class GalateaTurnSubscription : IDisposable {
