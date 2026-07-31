@@ -100,6 +100,22 @@ provider token limit，也不是已确定的 production defaults：
 单 unit 数据。HistoryLoad 的意义正是允许相同信息预算对应不同 unit count；这些候选不承诺
 “至少保留 20 条”或“恰好每 24 条触发”。
 
-本轮数据还不足以支持 persistent cache。若要决定 H2，先分别测量 tokenizer cold
-initialization、warm in-process projection time 与 allocation，再判断 bounded process cache
-是否值得；repo-sidecar cache 仍不在当前范围。
+## H2 targeted profile与cache决定
+
+在相同的 142-unit / 116,458-HistoryLoad数据上，直接打开 read-only SessionJournal并把 repo
+replay排除在计时区间外。每个 suffix在同一进程中连续执行 30 次 projector measurement：
+
+| baseline-relative suffix | rendered UTF-8 bytes | first/cold ms | warm p50 ms | warm p90 ms | warm allocation p50 |
+|---|---:|---:|---:|---:|---:|
+| 142 units | 414,487 | 845.08 | 145.04 | 168.95 | 3,909,944 bytes |
+| 20 units | 69,641 | 7.09 | 6.48 | 7.85 | 217,976 bytes |
+| 40 units | 134,751 | 17.75 | 12.94 | 14.55 | 402,336 bytes |
+
+full first measurement分配 55,771,136 bytes，包含 `o200k_base` tokenizer cold
+initialization；同进程后续由现有 process-wide tokenizer复用。production rolling cadence在已有
+Published后通常只计量 baseline之后约 20～40 units，其 warm成本约 6～15 ms。
+
+H2据此决定不增加 bounded process cache：当前收益不足以证明 repo identity、stable digest、
+容量/逐出、并发与正文驻留风险所带来的复杂性。继续保留 process-wide tokenizer复用和
+operation-local prefix；persistent repo-sidecar仍不在当前范围。若将来在线端到端 profile证明
+measurement成为瓶颈，再单独设计cache，不从本次测量推导长期兼容承诺。

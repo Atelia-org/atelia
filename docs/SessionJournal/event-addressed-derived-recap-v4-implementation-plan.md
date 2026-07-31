@@ -13,10 +13,9 @@
 > **Post-C2 HistoryLoad 设计**：
 > [Derived Recap History Load](derived-recap-history-load-target-design.md)
 > **兼容策略**：不迁移、不双写、不读取 historical DerivedMemory v2/v3
-> **当前推进点**：R0～R3 已完成；R3 cutover 与 deterministic real-data release gate
-> 已于 2026-07-30 关闭。Post-R3 C0 HistoryUnit cadence已于 2026-07-31完成；
-> C1 repo-owned document/loader + single composition、C2 CLI/online authority
-> cutover均已于 2026-07-31完成；C3真实验收前先执行 H0～H2 HistoryLoad cutover
+> **当前推进点**：R0～R3、Post-R3 C0～C3与 H0～H2均已完成。
+> 2026-07-31 production cadence已唯一切换到 HistoryLoad config V2，并以当前
+> Galatea legacy export完成 deterministic real-repo acceptance。
 
 ## 0. 原则
 
@@ -148,6 +147,16 @@ HistoryLoad内部 package gate：
   删除 HistoryUnit scheduling comparisons、header cadence negative与cross-unit validation；
 - H2：只根据 H0 calibration与针对性 pre-C3 profiling决定 bounded in-memory cache；
   persistent sidecar需另立设计。
+
+完成记录（2026-07-31）：
+
+| Gate | 状态 | 实施证据/结论 |
+|---|---|---|
+| H0 | 完成 | `e07ff1af` estimator/projector；`0dbf9d6d` calibration CLI与 Galatea evidence |
+| H1a | 完成 | `2eb7188a` strict inactive config V2/registry |
+| H1b/H1c | 完成 | `84a37cab` baseline ordering收口；`e47b635c` production/CLI/online原子 cutover |
+| H2 | 完成 | 20～40-unit warm projection p50约 6～13 ms；不增加 bounded/persistent cache |
+| C3 | 完成 | current Galatea export fresh import；实际 selection 为 growth 116,458 / absorbed 98,082 / recent 18,376；failure/resume、exact损坏恢复、online、Prepared recovery全部通过 |
 
 Recent reserve使 new Building的 `SetAdmissionAnchor`通常早于 raw head；因此 C0同时把
 `DerivedRecapExecutionResult.BlockFailed`补为携带 exact admission，CLI resume/report不得再从

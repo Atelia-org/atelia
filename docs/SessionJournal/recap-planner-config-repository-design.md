@@ -2,9 +2,9 @@
 
 > **状态**：Target Design / Implementation Guidance
 > **日期**：2026-07-30
-> **实施状态**：C0、C1、C2 已实现。`run`与 online new-request phase现在按需读取
+> **实施状态**：C0～C3、H0～H2 已实现。`run`与 online new-request phase现在按需读取
 > repo snapshot；current-lineage Building、explicit Resume/Restore及 Prepared/Started
-> recovery继续不读取 active config。下一阶段是 C3 real-repo acceptance。
+> recovery继续不读取 active config。当前唯一 accepted wire是 HistoryLoad config V2。
 > **相关类型**：
 > `Atelia.SessionJournal.DerivedRecap.Planner.RecapPlannerConfigDocument`、
 > `RecapPlanningInputs`、`RecapPlanningLimits`
@@ -33,10 +33,10 @@ repo-owned operator intent：
   Planner、policy和 active roster；
 - Building建立后，frozen manifest仍是 Resume authority，配置更新不得重新规划旧 Building。
 
-V1 cadence使用最终进入 Context 的 `SessionHistoryPlanningUnit` count，并把 raw event counts仅作为
-resource/safety limits。后续 V2按
-[Derived Recap History Load](derived-recap-history-load-target-design.md)切换到 backend-model-neutral
-内部 HistoryLoad单位；V1不预留 opaque JSON或 tokenizer-specific字段，也不原地重解释 count。
+当前 V2 cadence使用
+[Derived Recap History Load](derived-recap-history-load-target-design.md)定义的 backend-model-neutral
+内部 HistoryLoad单位，并把 raw event counts仅作为resource/safety limits。V1
+`HistoryUnitCount` wire已被拒绝，不提供 fallback或隐式 migration。
 
 ## 1. Authority 边界
 
@@ -91,7 +91,7 @@ config/recap-planner-config.json
 Canonical schema：
 
 ```text
-atelia.session-journal.recap-planner-config.v1
+atelia.session-journal.recap-planner-config.v2
 ```
 
 建议代码命名：
@@ -131,7 +131,9 @@ assembly边界：
 V1是 repo-wide。同一 EventJournal repo的所有 RefId共享配置。确有 per-ref需求后再设计
 canonical `RefId` override与 precedence；V1不预埋 nullable override或自由字典。
 
-## 3. V1 JSON
+## 3. Historical V1 JSON
+
+本节保留 C1/C2施工时的 historical baseline，不是当前 accepted wire。当前 V2见 §8。
 
 ```json
 {
@@ -558,10 +560,11 @@ V2 cadence shape：
 
 ```json
 {
+  "schema": "atelia.session-journal.recap-planner-config.v2",
   "cadence": {
     "historyUnitLoadEstimatorId": "atelia.history-load.o200k-base.history-unit-v1",
-    "minimumRecentHistoryLoad": 100000,
-    "recapBuildIntervalHistoryLoad": 120000
+    "minimumRecentHistoryLoad": 18000,
+    "recapBuildIntervalHistoryLoad": 21000
   }
 }
 ```
@@ -578,8 +581,9 @@ V2继续遵守：
 - raw event safety ceilings独立生效，不与 HistoryLoad threshold做 cross-unit reachability比较；
 - 不向 raw event写入 load；cache缺失或损坏不影响正确性。
 
-V1 count thresholds无法自动换算为 V2 load thresholds。旧文件由 operator完成真实历史校准后原子
-替换；loader不猜测数值、不做隐式 migration。`bounded-maintain-all-v1`只消费 evaluator已经证明
+V1 count thresholds无法自动换算为 V2 load thresholds。旧文件必须由 operator完成真实历史校准后
+原子替换；当前 loader直接拒绝 V1，不猜测数值、不做隐式 migration。
+`bounded-maintain-all-v1`只消费 evaluator已经证明
 cadence合法的 candidates，并继续负责 topology/route/call/raw budgets；它不拥有 estimator或
 HistoryLoad eligibility，因此无需随 config schema升版。
 
@@ -608,8 +612,8 @@ HistoryLoad eligibility，因此无需随 config schema升版。
 > loader、create-new atomic initializer、Host typed resolution、built-in immutable
 > capability catalog、single resolved composition、`planner-config init/inspect`、
 > config schema/hash execution report，以及 new planning / Building Resume / Restore
-> authority split。当前 runtime composition来自内置 canonical document；repo file
-> 尚不支配 run/online，这是刻意保留的 C1/C2边界。
+> authority split。在 C1 package边界当时，runtime composition仍来自内置 canonical
+> document、repo file尚不支配 run/online；该刻意边界随后已由 C2关闭。
 
 - `RecapPlannerConfigDocument` strict codec/canonical bytes/hash；
 - canonical repo path、bounded safe read与 atomic init；
@@ -641,6 +645,17 @@ HistoryLoad eligibility，因此无需随 config schema升版。
 - latest Published catalog exact ordered equality gate；
 - missing/invalid config的 zero-provider/zero-raw-side-effect tests；
 - Prepared/Started删除 config/Store仍 exact recover。
+
+### H0～H2 + C3：HistoryLoad authority与真实验收
+
+> **状态（2026-07-31）**：已完成。Config V2是唯一 production wire；
+> `R=18,000`、`B=21,000`来自 Galatea calibration。H2决定不增加cache。C3对当前
+> Galatea export执行 fresh import，并完成 partial failure/resume、exact corruption/Restore、
+> online与 Prepared recovery；原始前缀、源导出与 legacy v1 sentinel均保持不变。
+
+精确 `R+B-1` / `R+B`边界由 deterministic evaluator tests钉住；真实 repo gate负责证明
+production load超过 threshold后确实形成合法 absorbed/recent selection并贯穿 durable lifecycle。
+不在真实对话中人工填充正文以凑出某个 tokenizer整数，这避免把测试数据制造技巧误当业务验收。
 
 ### H0～H2：HistoryLoad cutover
 

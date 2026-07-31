@@ -1,7 +1,10 @@
 # SessionJournal Derived Recap History Load：目标设计
 
-> **状态**：Target Design / Implementation Guidance
+> **状态**：Target Design / Implemented
 > **日期**：2026-07-31
+> **实施状态**：H0～H2与 C3 已完成。Production cadence已唯一切换到
+> config V2 + `o200k_base` HistoryLoad；旧 count scheduling authority、header cadence
+> prefilter与 config V1均已删除。
 > **适用范围**：`prototypes/SessionJournal.DerivedRecap.Planner`
 > **上位设计**：
 > [Event-addressed Derived Recap V4](event-addressed-derived-recap-v4-target-design.md)
@@ -146,6 +149,7 @@ public sealed record RecapHistoryLoadMeasurement(
     EventAddress BaselineAddress,
     int BaselineCompletedUnitCount,
     HistoryLoadUnit Growth,
+    int RenderedUtf8Bytes,
     IReadOnlyList<RecapHistoryLoadBoundary> ReplaySafeBoundaries
 );
 
@@ -188,6 +192,11 @@ Projector必须满足：
 - `Growth`是 suffix内全部 unit load的 checked sum；
 - window rendered bytes是相同 unit measurements的 checked sum；
 - malformed output、overflow或异常是 typed planning unavailable，零 Building/LLM side effect。
+
+Address到unit offset的解析由一个 Planner-internal baseline resolver作为单一实现；projector与后续
+evaluator validation复用它，不各自维护 `SingleOrDefault`/ordinal算法。Resolver还必须返回
+baseline boundary ordinal，以保证 baseline之后、与其共享同一 `CompletedUnitCount`的boundary
+仍保留在输出中。
 
 Range additivity由 projector定义，而不是要求 tokenizer跨消息拼接：
 
@@ -263,7 +272,12 @@ Planner直接 pin：
 ```text
 Microsoft.ML.Tokenizers 2.0.0
 Microsoft.ML.Tokenizers.Data.O200kBase 2.0.0
+Microsoft.Bcl.Memory 9.0.17
 ```
+
+最后一项是 tokenizer 2.0.0当前传递依赖 `Microsoft.Bcl.Memory 9.0.4`的显式安全 override；
+9.0.4受 `GHSA-73j8-2gch-69rq`影响，9.0.17位于官方已修复的9.x版本线。该 pin不改变
+HistoryLoad数值 identity，但必须由依赖漏洞审计守护。
 
 创建：
 
@@ -474,6 +488,25 @@ evaluation，不能作 cadence NoBuild。不得为恢复该优化把load hint写
 拥有、完全可删除重建，并以 estimator identity、raw source interval与stable rendered digest隔离；
 miss/corruption只触发重算，不参与 Resume/Restore或Store correctness。
 
+### 7.1 H2 profiling结论
+
+H2使用 Galatea fresh-import等价的 142-unit planning window做进程内针对性测量：
+
+| baseline-relative suffix | HistoryLoad | warm p50 | warm p90 | warm allocation p50 |
+|---|---:|---:|---:|---:|
+| 142 units（首次全历史） | 116,458 | 145.04 ms | 168.95 ms | 3,909,944 bytes |
+| 20 units（典型 recent reserve） | 18,968 | 6.48 ms | 7.85 ms | 217,976 bytes |
+| 40 units（接近下一次 build） | 36,886 | 12.94 ms | 14.55 ms | 402,336 bytes |
+
+同一进程首次 full projection包含 tokenizer cold initialization，耗时 845.08 ms、分配
+55,771,136 bytes；初始化后由 process-wide tokenizer复用吸收。steady-state cadence只测 exact
+baseline之后约 20～40 units，当前成本不足以抵消 bounded cache带来的 repo隔离、digest key、
+容量/逐出与敏感正文驻留复杂性。
+
+因此 H2决定：**首版不增加 bounded process cache**，保留 process-wide tokenizer与
+operation-local prefix。若未来在线 profile显示该 6～15 ms路径成为真实瓶颈，再以独立设计引入
+Host-owned、estimator-scoped、可删除重建的cache；本结论不授权 persistent sidecar。
+
 ## 8. 实施 gates
 
 唯一施工顺序维护在
@@ -491,6 +524,19 @@ H0 unit estimator + window projector + golden vectors + Galatea calibration
 只有 H1c切换 production authority；H1a/H1b不得留下可被 production独立选择的第二套 cadence。
 H1c一次性迁移 CLI/online/report、删除 config V1与旧 comparisons/prefilter，保持
 Building-first、phase-first和single snapshot纪律。
+
+完成证据：
+
+| Gate | 结果 |
+|---|---|
+| H0 | estimator/projector/golden vectors、Galatea calibration；`e07ff1af`、`0dbf9d6d` |
+| H1a | strict inactive V2 codec/registry；`2eb7188a` |
+| H1b/H1c | evaluator/policy/executor/CLI/online原子 authority cutover；`84a37cab`、`e47b635c` |
+| H2 | 上述 profile决定不增加cache |
+| C3 | 当前 Galatea export fresh import后完成 failure/resume、exact corruption/Restore、online与 Prepared recovery；实际 selection 为 growth 116,458 / absorbed 98,082 / recent 18,376；report schema v2 |
+
+具体 load distribution与profile环境见
+[Galatea HistoryLoad calibration](derived-recap-history-load-galatea-calibration.md)。
 
 必须覆盖：
 

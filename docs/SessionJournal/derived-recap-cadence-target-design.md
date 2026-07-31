@@ -2,8 +2,9 @@
 
 > **状态**：Target Design / Implementation Guidance
 > **日期**：2026-07-30
-> **实施状态**：C0、C1、C2 已实现；Planner 已切换到 exact HistoryUnit cadence，
-> run/online new-planning也已按 phase使用单次 repo composition snapshot。
+> **实施状态**：C0、C1、C2 已实现；本文的 HistoryUnit-count cadence是过渡期
+> historical baseline。H0～H2随后已完成 breaking cutover，当前 production authority是
+> [HistoryLoad设计](derived-recap-history-load-target-design.md)。
 > **上位设计**：
 > [Event-addressed Derived Recap V4](event-addressed-derived-recap-v4-target-design.md)
 > **配置设计**：
@@ -381,10 +382,10 @@ Galatea real acceptance。
 - partial Building按 frozen manifest Resume，不读取或重算 cadence；
 - Published Restore不改变 admission或 recent suffix provenance。
 
-## 8. HistoryLoad后续设计
+## 8. HistoryLoad当前 authority
 
-`HistoryUnitCount`是 C0～C2已经实现的过渡 cadence authority。其后续 breaking cutover已经由
-[Derived Recap History Load](derived-recap-history-load-target-design.md)定稿：
+`HistoryUnitCount`是 C0～C2曾实现的过渡 cadence authority。breaking cutover现已按
+[Derived Recap History Load](derived-recap-history-load-target-design.md)完成：
 
 - cadence改用抽象 `HistoryLoadUnit`；
 - V1 estimator固定为
@@ -394,9 +395,9 @@ Galatea real acceptance。
 - `IHistoryUnitLoadEstimator`按单个 HistoryUnit测量，Planner projector独立完成
   baseline-relative累加与boundary mapping；absorbed与recent load仍分别验证；
 - Resume/Restore不读取 active estimator或重算 frozen admission；
-- 不升级 raw event schema，是否需要持久 cache由真实 profiling决定。
+- 不升级 raw event schema；H2真实 profiling决定首版不增加 bounded或persistent cache。
 
-本文其余章节保留为已实现的 HistoryUnit baseline；后续施工与最终语义以新目标设计为准。
+本文其余章节保留为 historical HistoryUnit baseline；当前运行时、配置与验收语义以新目标设计为准。
 
 ## 9. Non-goals
 

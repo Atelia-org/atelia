@@ -136,6 +136,27 @@ public sealed class DerivedRecapRealDataAcceptanceTests {
             string admission = ReadString(runReport, "anchor");
             EventAddress admissionAddress =
                 SJ.EventAddressTextCodec.Parse(admission);
+            LoadSelectionReport loadSelection =
+                ReadLoadSelection(runReport);
+            RecapCadenceConfig cadence =
+                RecapCliComposition.DefaultComposition
+                    .PlanningInputs.Cadence;
+            Assert.Equal(
+                O200kBaseHistoryUnitLoadEstimator.EstimatorId,
+                loadSelection.HistoryUnitLoadEstimatorId
+            );
+            Assert.True(
+                loadSelection.GrowthHistoryLoad
+                    >= cadence.BuildThresholdHistoryLoad.Value
+            );
+            Assert.True(
+                loadSelection.SelectedAbsorbedHistoryLoad
+                    >= cadence.RecapBuildIntervalHistoryLoad.Value
+            );
+            Assert.True(
+                loadSelection.SelectedRecentHistoryLoad
+                    >= cadence.MinimumRecentHistoryLoad.Value
+            );
 
             RefId branchRefId;
             int maintainedBlockCount;
@@ -329,7 +350,7 @@ public sealed class DerivedRecapRealDataAcceptanceTests {
             ], onlineFactory));
             Assert.Equal(1, onlineFactory.CallCount);
             Assert.Equal(
-                "atelia.session-journal.online-turn-run.v3",
+                "atelia.session-journal.online-turn-run.v5",
                 ReadString(onlineReport, "schema")
             );
             AssertInitialPrefixPreserved(
@@ -427,7 +448,7 @@ public sealed class DerivedRecapRealDataAcceptanceTests {
                     reportPath,
                     new AcceptanceReport(
                         "atelia.session-journal."
-                        + "derived-recap-real-acceptance.v1",
+                        + "derived-recap-real-acceptance.v2",
                         "LegacyUpgradeExport",
                         "ImportLegacyJson",
                         new SourceReport(
@@ -439,6 +460,7 @@ public sealed class DerivedRecapRealDataAcceptanceTests {
                             RecapCliComposition
                                 .DefaultComposition
                         ),
+                        loadSelection,
                         branchRefId.ToHexString(),
                         admission,
                         new FrozenPlanReport(
@@ -726,6 +748,32 @@ public sealed class DerivedRecapRealDataAcceptanceTests {
             );
     }
 
+    private static LoadSelectionReport ReadLoadSelection(
+        string reportPath
+    ) {
+        using JsonDocument document = JsonDocument.Parse(
+            File.ReadAllText(reportPath)
+        );
+        JsonElement planning =
+            document.RootElement.GetProperty("planning");
+        Assert.Equal(
+            "ExactSchedule",
+            planning.GetProperty("measurementKind").GetString()
+        );
+        return new LoadSelectionReport(
+            planning.GetProperty("historyUnitLoadEstimatorId")
+                .GetString()
+                ?? throw new InvalidDataException(
+                    "Planning estimator ID is null."
+                ),
+            planning.GetProperty("growthHistoryLoad").GetInt64(),
+            planning.GetProperty("selectedAbsorbedHistoryLoad")
+                .GetInt64(),
+            planning.GetProperty("selectedRecentHistoryLoad")
+                .GetInt64()
+        );
+    }
+
     private static void RejectReparsePoint(string path) {
         if ((File.GetAttributes(path) & FileAttributes.ReparsePoint)
             != 0) {
@@ -953,6 +1001,7 @@ public sealed class DerivedRecapRealDataAcceptanceTests {
         string Preparation,
         SourceReport Source,
         ConfigReport Config,
+        LoadSelectionReport LoadSelection,
         string BranchRefId,
         string AdmissionAnchor,
         FrozenPlanReport FrozenPlan,
@@ -971,6 +1020,13 @@ public sealed class DerivedRecapRealDataAcceptanceTests {
         int FileCount,
         long TotalBytes,
         string Sha256
+    );
+
+    private sealed record LoadSelectionReport(
+        string HistoryUnitLoadEstimatorId,
+        long GrowthHistoryLoad,
+        long SelectedAbsorbedHistoryLoad,
+        long SelectedRecentHistoryLoad
     );
 
     private sealed record ConfigReport(
