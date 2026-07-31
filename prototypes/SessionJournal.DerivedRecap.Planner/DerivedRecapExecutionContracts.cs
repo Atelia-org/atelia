@@ -11,6 +11,44 @@ public interface IRecapBlockMaintainerRegistry {
     );
 }
 
+/// <summary>
+/// Defers construction of one complete Maintainer registry until the first
+/// real binding lookup. Initialization is thread-safe and is attempted at
+/// most once; factory exceptions are cached and propagated without retry.
+/// </summary>
+/// <remarks>
+/// The factory must return a non-null registry and must not resolve through
+/// this wrapper recursively. Concurrent lookup safety after initialization is
+/// the responsibility of the returned registry.
+/// </remarks>
+public sealed class DeferredRecapBlockMaintainerRegistry
+    : IRecapBlockMaintainerRegistry {
+    private readonly Lazy<IRecapBlockMaintainerRegistry> _inner;
+
+    public DeferredRecapBlockMaintainerRegistry(
+        Func<IRecapBlockMaintainerRegistry> factory
+    ) {
+        ArgumentNullException.ThrowIfNull(factory);
+        _inner = new Lazy<IRecapBlockMaintainerRegistry>(
+            () => factory()
+                ?? throw new InvalidOperationException(
+                    "Deferred Maintainer registry factory returned null."
+                ),
+            LazyThreadSafetyMode.ExecutionAndPublication
+        );
+    }
+
+    public bool TryResolve(
+        string maintainerId,
+        ContextHeaderBlockPath target,
+        out IRecapBlockMaintainer maintainer
+    ) => _inner.Value.TryResolve(
+        maintainerId,
+        target,
+        out maintainer
+    );
+}
+
 public sealed class RecapBlockMaintainerRegistry
     : IRecapBlockMaintainerRegistry {
     private readonly IReadOnlyDictionary<
