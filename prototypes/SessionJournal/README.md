@@ -197,6 +197,53 @@ await engine.ResumeAsync(requirement.CapturedHead!.Value, cancellationToken);
 不要根据 exception文本、文件是否存在或 head event名称自行发明恢复逻辑；Host以
 `InspectRuntimeRecoveryRequirements`选择runtime，再进入`SendAsync`或`ResumeAsync`。
 
+## Completed turn投影与exact retract
+
+Recent UI只需要raw、已完成的visible turn，不应看见Prepared/Started/tool protocol或
+DerivedRecap sidecar。core提供exact-head projector：
+
+```csharp
+SessionCompletedTurnsSnapshot snapshot =
+    engine.ReadRecentCompletedTurns(maximumCount: 12);
+
+SessionCompletedTurnsSnapshot historical =
+    engine.ReadRecentCompletedTurnsAt(capturedHead, maximumCount: 12);
+```
+
+`Turns`按newest-first排序。每个`SessionCompletedTurnProjection`保留raw observation content、
+Observation/terminal Action地址以及完整结构化`ActionMessage`；Host再负责user wrapper、inline
+`<think>`和reasoning display normalization。tool loop无论包含多少轮，只投影一个turn，并且只把
+最终`ToolCalls.Count == 0`的Action作为terminal Action。Imported Action遵守同一规则。
+
+`ReadRecentCompletedTurnsAt`先验证exact captured tail。Observation、Prepared、Started、settled
+tool result、TurnFailed和Idle/setup tail都完整forward-fold到captured head；只有
+`AwaitingToolExecution`会cut到当前tool-calling Action的predecessor，再由tail resolver验证Action
+及其active tool suffix。这样既能读取更早completed turns，又不会放宽history planning对
+unresolved tool dependency的拒绝，也不会用bounded tail recovery冒充完整prefix validation。
+
+两种写操作共享一个窄result union，但不暴露通用`MoveRef`：
+
+```csharp
+SessionTurnRetractionResult abandoned =
+    engine.AbandonFailedTurn(expectedTurnFailedHead);
+
+SessionTurnRetractionResult rewound =
+    engine.RewindLatestCompletedTurn(expectedTerminalActionHead);
+```
+
+- `AbandonFailedTurn`只接受exact `CompletionAttemptFailed` / `TurnFailed` head；
+- `RewindLatestCompletedTurn`只接受current head本身就是最新terminal no-tool Action；
+- setup-only suffix、Prepared/Started、tool-active、错误operation与stale head都不会向后扫描；
+- `Moved`返回`PreviousHead`、本次CAS的`NewHead`、被移出lineage的raw observation，以及
+  completed rewind时的structured terminal Action；`NewHead`不是返回时freshness proof；
+- `Unavailable`携带exact boundary，`Retryable`携带expected/observed head；corrupt raw继续fail fast；
+- 成功只CAS移动selected branch ref到该turn Observation的predecessor，不删除raw event bytes，也不
+  删除或重编号DerivedRecap sidecar。离开current lineage的sidecar由Store membership规则自然忽略。
+
+产品Host应让send/resume/abandon/rewind共享同一个per-session writer lock。known failure或已知stop
+只有在`AbandonFailedTurn`成功后，才能承诺失败Observation不会进入后续request；uncertain Started
+不能伪装成known failure。
+
 ## Context / Recap 扩展点
 
 raw core只定义 neutral contracts：

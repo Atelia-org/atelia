@@ -400,11 +400,62 @@ online入口。首个empty-tool vertical仍显式拒绝`ToolContinuationRequired
 
 Gate：
 
-- imported 71 completed turns在Galatea display normalization后逐项parity；
-- failed/stop Observation不会进入下一request；
-- exact terminal Undo回填正确；
+- imported 71 raw completed turns在core逐项parity；Galatea display normalization逐项parity移入
+  G0C；
+- exact TurnFailed abandon后，failed Observation不在current lineage/history projection；observer
+  stop接线与下一request验证移入G0C/G1；
+- exact terminal rewind返回可供Host回填的raw retracted projection；endpoint/UI回填移入G1；
 - TurnFailed、setup-only suffix和非exact head不误删更早completed turn；
 - 无Host级raw payload decoder。
+
+完成结果（2026-08-01）：
+
+- raw core新增`ReadRecentCompletedTurns` / `ReadRecentCompletedTurnsAt`，返回newest-first raw
+  Observation + structured terminal `ActionMessage`；Host wrapper stripping、inline-think与reasoning
+  display policy没有下沉；
+- shared locator先以`SessionExecutionTailResolver`验证exact captured tail；除active tool外均
+  forward-fold到captured head，只有`AwaitingToolExecution` cut到current tool Action predecessor，
+  再由tail resolver覆盖Action与active tool suffix；因此既不放宽Recap reducer的
+  dependency-closed规则，也不让bounded tail recovery替代完整prefix validation；
+- planning unit reducer显式区分普通`ObservationMessage`与同属observation role的
+  `ToolResultsMessage`，完整tool loop只关闭为一个visible turn，Imported Action遵守同一terminal
+  invariant；
+- `AbandonFailedTurn`与`RewindLatestCompletedTurn`共用`Moved / Unavailable / Retryable`
+  exact-head result union，不引入第二套reason taxonomy或通用ref mutation API；前者只接受exact
+  TurnFailed，后者只接受current head本身为terminal Action；
+- 成功CAS移动branch ref到本turn Observation predecessor，保留raw bytes；head-bound governing
+  setup/projection cache失效，DerivedRecap sidecar不删除、不重编号，off-lineage selection由Store
+  既有membership规则处理；
+- terminal Action具有权威性：即使其display text为空，也不得回退展示中间tool-call Action。
+
+完成时验证（2026-08-01）：
+
+- G0B focused：11/11，覆盖exact historical/read-only projection、active tool cut、multi-call +
+  multi-round tool loop、empty terminal authority、tool-continuation failure abandon、setup suffix、
+  stale head、rewind/abandon CAS race及malformed no-SessionCreated active tool fail-fast；
+- SessionJournal suite：344/344，其中G0B focused为11/11；CLI build为0 warning / 0 error；
+- 目标Galatea export external gate：1/1；production importer fresh copy后逐项验证71个raw
+  Observation/terminal Action newest-first parity，并继续通过既有Recap/Restore/online/recovery flow；
+- DerivedRecap off-lineage语义由既有
+  `DerivedRecapStoreTests.RewindMakesPublishedAnchorInvisible` focused gate复核为1/1；
+- 独立审阅发现并关闭nullable terminal半状态、`CurrentHead`命名、locator mismatch降级、
+  no-terminal prefix validation gap与CAS mismatch cache invalidation；最终contract与docs/acceptance
+  独立复核无新增blocker。
+
+后续调整：
+
+- 真实71-turn export只覆盖wrapper、纯text、数量与顺序；structured reasoning、tool loop、failed/
+  stop、setup suffix与CAS race继续由synthetic focused tests承担，不把真实fixture误当成全覆盖；
+- G0B real gate顺带关闭一个G0A后陈旧断言：scripted connection的desired model/surface与legacy
+  governing setup不同时，首个online turn合法地先追加`RuntimeConfigSetup`；acceptance不能继续假设
+  appended suffix直接从Observation开始；
+- G0C明确承接Galatea raw projection adapter和display normalization，并删除recent UI中的recap
+  card/boundary语义；DerivedRecap只参与provider context，不作为conversation turn；
+- G1 Undo成功直接使用core返回的raw retracted projection回填，不再pre-read/match后构造empty
+  assistant fallback；Undo enablement不能只由“存在visible turn”推断，setup suffix等typed
+  Unavailable必须映射为明确不可撤销状态；
+- known failure/observer stop在同一writer lock内只有exact abandon成功后才能报告idle；Started
+  uncertain仍Refuse。G0B范围不扩张到Host wiring，该部分仍由G0C/G1实现。
 
 ### G0C：Galatea Host harness与preprocessor parity
 
@@ -427,7 +478,11 @@ Gate：
   下一请求Building-first Resume；
 - lifecycle成功后的stop只设置observer，不cancel pre-dispatch CTS；
 - config/Store invalid时normalizer调用零次；
-- SSE subscribe/stop不占per-session writer lock。
+- SSE subscribe/stop不占per-session writer lock；
+- 建立raw-only recent display adapter：只消费`SessionCompletedTurnProjection`，验证wrapper
+  normalization、ordered text/reasoning blocks与terminal-authoritative空输出；
+- 删除目标recent DTO/UI中的recap card、recap boundary injection与recap-aware Undo判断；
+  recap publish/materialize前后raw recent DTO必须完全一致。
 
 ### G1：Galatea SessionHost vertical
 
@@ -443,6 +498,11 @@ Gate：
 - `DerivedRecapOnlineLifecycleCoordinator`同时提供candidate source/lifecycle；
 - current in-memory `GalateaLiveTurn`继续只管理SSE subscriber与observer；
 - 删除`CompactAsync`、EstimatedTokens trigger及旧compaction prompts/config。
+- recent endpoint直接消费core completed-turn snapshot并保持newest-first；Undo endpoint直接消费
+  `SessionTurnRetractionResult.Moved.Turn`做wrapper normalization/回填，不保留旧
+  pre-read/match/fallback路径；
+- UI的`canRewindLatest`由exact boundary eligibility或typed endpoint结果驱动；存在visible turn不代表
+  setup-only suffix后仍可Undo。
 
 首个slice继续使用empty ToolRegistry；tool-capable Galatea是后续独立vertical。
 

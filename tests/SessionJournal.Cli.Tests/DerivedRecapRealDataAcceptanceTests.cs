@@ -51,6 +51,14 @@ public sealed class DerivedRecapRealDataAcceptanceTests {
         );
         TreeFingerprint sourceBefore =
             FingerprintSourceFile(sourcePath);
+        Assert.Equal(
+            new TreeFingerprint(
+                FileCount: 1,
+                TotalBytes: 1_281_881,
+                Sha256: "b71822a27003e8d9f9b9c0ff956ca7c268267aba72221be89df154ed7d4751f3"
+            ),
+            sourceBefore
+        );
         string tempRoot = Path.Combine(
             Path.GetTempPath(),
             "atelia-derived-recap-real-acceptance",
@@ -66,6 +74,7 @@ public sealed class DerivedRecapRealDataAcceptanceTests {
                 "--input", sourcePath,
                 "--output", copyPath
             ], ThrowingCompletionClientFactory.Instance));
+            AssertRealCompletedTurnProjection(sourcePath, copyPath);
             Assert.Equal(0, Program.MainCore([
                 "recap", "planner-config", "init",
                 "--input", copyPath
@@ -407,6 +416,7 @@ public sealed class DerivedRecapRealDataAcceptanceTests {
             ];
             Assert.Equal(
                 new[] {
+                    SJ.SessionEventKind.RuntimeConfigSetup,
                     SJ.SessionEventKind.ObservationAccepted,
                     SJ.SessionEventKind.CompletionRequestPrepared,
                     SJ.SessionEventKind.CompletionAttemptStarted,
@@ -418,6 +428,33 @@ public sealed class DerivedRecapRealDataAcceptanceTests {
                 },
                 appendedKinds
             );
+            EventAddress desiredRuntimeAddress =
+                finalRaw.Addresses[initialRaw.Addresses.Count];
+            using (var engine = SJ.SessionJournalEngine.OpenReadOnly(
+                       copyPath
+                   )) {
+                using JsonDocument runtimeDocument = JsonDocument.Parse(
+                    engine.ReadPayloadBytes(desiredRuntimeAddress)
+                );
+                JsonElement body = runtimeDocument.RootElement
+                    .GetProperty("body");
+                Assert.Equal("model-a", body.GetProperty("modelId")
+                    .GetString());
+                Assert.Equal(
+                    "surface-a",
+                    body.GetProperty("completionSurfaceId").GetString()
+                );
+                Assert.Equal(
+                    SJ.SessionJournalDefaults.Schema,
+                    body.GetProperty("schema").GetString()
+                );
+                Assert.Equal(
+                    0,
+                    body.GetProperty("derivedContext")
+                        .GetProperty("nthPrevious")
+                        .GetInt32()
+                );
+            }
             Assert.Equal(
                 legacyV1Before,
                 FingerprintTree(
@@ -1108,6 +1145,81 @@ public sealed class DerivedRecapRealDataAcceptanceTests {
         long TotalBytes,
         string Sha256,
         bool Unchanged
+    );
+
+    private static void AssertRealCompletedTurnProjection(
+        string sourcePath,
+        string importedRepositoryPath
+    ) {
+        LegacyChatSessionExport export =
+            LegacyChatSessionExportReader.Read(sourcePath);
+        var expected = new List<ExpectedLegacyTurn>();
+        string? pendingObservation = null;
+        foreach (LegacyChatSessionEvent replayEvent in export.Events) {
+            IReadOnlyList<LegacyChatSessionMessage> messages =
+                replayEvent.Kind switch {
+                    LegacyChatSessionEventKinds.InitialState =>
+                        replayEvent.Messages ?? [],
+                    LegacyChatSessionEventKinds.ModelTurn =>
+                        replayEvent.AppendedMessages ?? [],
+                    _ => []
+                };
+            foreach (LegacyChatSessionMessage message in messages) {
+                if (string.Equals(
+                        message.Kind,
+                        "observation",
+                        StringComparison.Ordinal
+                    )) {
+                    Assert.Null(pendingObservation);
+                    pendingObservation = message.Content ?? string.Empty;
+                }
+                else if (string.Equals(
+                             message.Kind,
+                             "action",
+                             StringComparison.Ordinal
+                         )) {
+                    Assert.NotNull(pendingObservation);
+                    ActionMessage action = new(
+                        ActionMessageSerialization.FromSerializedBlocks(
+                            message.Action?.Blocks ?? []
+                        )
+                    );
+                    expected.Add(new ExpectedLegacyTurn(
+                        pendingObservation!,
+                        action
+                    ));
+                    pendingObservation = null;
+                }
+            }
+        }
+        Assert.Null(pendingObservation);
+
+        using var engine = SJ.SessionJournalEngine.OpenReadOnly(
+            importedRepositoryPath
+        );
+        SJ.SessionCompletedTurnsSnapshot snapshot =
+            engine.ReadRecentCompletedTurns(int.MaxValue);
+        Assert.Equal(71, expected.Count);
+        Assert.Equal(expected.Count, snapshot.Turns.Count);
+        for (int index = 0; index < expected.Count; index++) {
+            ExpectedLegacyTurn source =
+                expected[expected.Count - 1 - index];
+            SJ.SessionCompletedTurnProjection projected =
+                snapshot.Turns[index];
+            Assert.Equal(
+                source.ObservationContent,
+                projected.ObservationContent
+            );
+            Assert.Equal(
+                source.TerminalAction.Blocks,
+                projected.TerminalAction.Message.Blocks
+            );
+        }
+    }
+
+    private sealed record ExpectedLegacyTurn(
+        string ObservationContent,
+        ActionMessage TerminalAction
     );
 
     private sealed class ThrowingCompletionClientFactory
