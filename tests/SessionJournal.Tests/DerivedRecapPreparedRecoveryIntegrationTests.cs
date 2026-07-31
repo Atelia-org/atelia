@@ -11,6 +11,8 @@ public sealed class DerivedRecapPreparedRecoveryIntegrationTests
     : IDisposable {
     private const string RecapText =
         "durable recap survives derived Store deletion";
+    private const string ProfileName = "fixed-recap-profile";
+    private const string PolicyId = "atelia.tests.first-build-v1";
 
     private static readonly SessionCompletionTargetIdentity Target =
         new(
@@ -64,24 +66,34 @@ public sealed class DerivedRecapPreparedRecoveryIntegrationTests
             );
             var maintainer = new FixedRecapMaintainer(target);
             var policy = new FirstBuildPolicy(blockId);
-            RecapPlanningInputs inputs = CreateInputs(
-                blockId,
-                target,
-                maintainer.Id,
-                policy
+            RecapMaintainerCapabilitySnapshot capabilities = new([
+                new RecapProfilePlanningDescriptor(
+                    ProfileName,
+                    blockId,
+                    target,
+                    maintainer.Id
+                )
+            ]);
+            ResolvedRecapPlanningConfiguration configuration =
+                CreateConfiguration(
+                policy,
+                capabilities
             );
+            var source = new FixedConfigurationSource(configuration);
+            var ready = Assert.IsType<
+                DerivedRecapOperationPreparationResult.Ready
+            >(await DerivedRecapOperationPreparer.PrepareAsync(
+                engine,
+                store,
+                capabilities,
+                source,
+                CancellationToken.None
+            ));
             var coordinator =
-                new DerivedRecapOnlineLifecycleCoordinator(
+                DerivedRecapOnlineLifecycleCoordinator.Create(
                     engine,
                     store,
-                    inputs,
-                    new RecapPlanningLimits(
-                        maxRawGrowthEventCount: 512,
-                        maxRouteEndpointsPerBlock: 4,
-                        maxMaintainerCallsPerBuild: 4,
-                        maxRawEventsPerStep: 64,
-                        maxRawEventsPerBuild: 512
-                    ),
+                    ready.Authority,
                     new RecapBlockMaintainerRegistry([maintainer])
                 );
 
@@ -236,30 +248,48 @@ public sealed class DerivedRecapPreparedRecoveryIntegrationTests
         }
     }
 
-    private static RecapPlanningInputs CreateInputs(
-        RecapBlockId blockId,
-        ContextHeaderBlockPath target,
-        string maintainerId,
-        IRecapPlanningPolicy policy
+    private static ResolvedRecapPlanningConfiguration
+        CreateConfiguration(
+        IRecapPlanningPolicy policy,
+        RecapMaintainerCapabilitySnapshot capabilities
     ) {
         var estimator = new ConstantHistoryUnitLoadEstimator();
-        return new(
-            [
-                new RecapBlockCatalogEntry(
-                    blockId,
-                    target,
-                    maintainerId,
-                    maxContentUtf8Bytes: 4096
-                )
-            ],
-            new RecapCadenceConfig(
+        var document = new RecapPlannerConfigDocument(
+            RecapPlannerConfigCodec.SchemaV2,
+            PolicyId,
+            new RecapCadenceConfigDocument(
                 estimator.Id,
-                new HistoryLoadUnit(0),
-                new HistoryLoadUnit(2)
+                MinimumRecentHistoryLoad: 0,
+                RecapBuildIntervalHistoryLoad: 2
             ),
-            estimator,
-            policy
+            [new RecapPlannerCatalogEntryDocument(ProfileName, 4096)],
+            new RecapPlannerLimitsDocument(512, 4, 4, 64, 512)
         );
+        var catalog = new RecapPlannerConfigResolutionCatalog(
+            [new RecapPlanningPolicyRegistration(PolicyId, policy)],
+            [
+                new HistoryUnitLoadEstimatorRegistration(
+                    estimator.Id,
+                    estimator
+                )
+            ]
+        );
+        return Assert.IsType<RecapPlannerConfigResolveResult.Resolved>(
+            RecapPlannerConfigResolver.Resolve(
+                RecapPlannerConfigSnapshot.FromDocument(document),
+                catalog,
+                capabilities
+            )
+        ).Configuration;
+    }
+
+    private sealed class FixedConfigurationSource(
+        ResolvedRecapPlanningConfiguration configuration
+    ) : IRecapActivePlanningConfigurationSource {
+        public RecapActivePlanningConfigurationLoadResult Load()
+            => new RecapActivePlanningConfigurationLoadResult.Available(
+                configuration
+            );
     }
 
     private static SessionRuntime CreateRuntime(

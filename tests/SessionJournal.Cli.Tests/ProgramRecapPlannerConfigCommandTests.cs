@@ -243,100 +243,6 @@ public sealed class ProgramRecapPlannerConfigCommandTests
     }
 
     [Fact]
-    public void ResolverRejectsUnknownPolicyAndProtocolCapOverflow() {
-        RecapPlannerConfigResolveResult unknownPolicy =
-            RecapPlannerCompositionResolver.Resolve(
-                RecapPlannerConfigSnapshot.FromDocument(
-                    BuiltInRecapPlannerConfig.Document with {
-                        PlanningPolicy = "unknown-policy"
-                    }
-                )
-            );
-        Assert.Equal(
-            RecapPlannerConfigResolveDefectCodes.UnknownPolicy,
-            Assert.Single(
-                Assert.IsType<
-                    RecapPlannerConfigResolveResult.Invalid
-                >(unknownPolicy).Defects
-            ).Code
-        );
-
-        RecapPlannerLimitsDocument source =
-            BuiltInRecapPlannerConfig.Document.Limits;
-        RecapPlannerConfigResolveResult overflow =
-            RecapPlannerCompositionResolver.Resolve(
-                RecapPlannerConfigSnapshot.FromDocument(
-                    BuiltInRecapPlannerConfig.Document with {
-                        Limits = source with {
-                            MaxRawGrowthEventCount =
-                                RecapProtocolHardCaps.V4
-                                    .MaxRawGrowthEventCount + 1
-                        }
-                    }
-                )
-            );
-        Assert.Equal(
-            RecapPlannerConfigResolveDefectCodes
-                .InvalidPlanningAuthority,
-            Assert.Single(
-                Assert.IsType<
-                    RecapPlannerConfigResolveResult.Invalid
-                >(overflow).Defects
-            ).Code
-        );
-    }
-
-    [Fact]
-    public void ResolverRejectsDuplicateResolvedBlockAndTarget() {
-        RecapMaintainerProfileDescriptor world =
-            RecapMaintainerProfileCatalog.BuiltIn.Resolve(
-                RecapMaintainerProfileCatalog
-                    .WorldUnderstandingRewrite
-            );
-        RecapMaintainerProfileDescriptor autobiography =
-            RecapMaintainerProfileCatalog.BuiltIn.Resolve(
-                RecapMaintainerProfileCatalog
-                    .AutobiographicalRewrite
-            );
-        var duplicateBlock = autobiography with {
-            ProfileName = "duplicate-block",
-            RecapBlockIdValue = world.RecapBlockIdValue
-        };
-        AssertResolveCode(
-            CreateTwoProfileDocument(
-                world.ProfileName,
-                duplicateBlock.ProfileName
-            ),
-            new RecapMaintainerProfileCatalog([
-                world,
-                duplicateBlock
-            ]),
-            RecapPlannerConfigResolveDefectCodes
-                .DuplicateResolvedBlock
-        );
-
-        var duplicateTarget = autobiography with {
-            ProfileName = "duplicate-target",
-            RewriteProfile =
-                autobiography.RewriteProfile with {
-                    Target = world.Target
-                }
-        };
-        AssertResolveCode(
-            CreateTwoProfileDocument(
-                world.ProfileName,
-                duplicateTarget.ProfileName
-            ),
-            new RecapMaintainerProfileCatalog([
-                world,
-                duplicateTarget
-            ]),
-            RecapPlannerConfigResolveDefectCodes
-                .DuplicateResolvedTarget
-        );
-    }
-
-    [Fact]
     public void DefaultCompositionIsStableInitializerSnapshot() {
         ResolvedRecapPlannerComposition first =
             RecapCliComposition.DefaultComposition;
@@ -355,37 +261,6 @@ public sealed class ProgramRecapPlannerConfigCommandTests
         string path = Path.Combine(_tempRoot, name);
         Directory.CreateDirectory(path);
         return path;
-    }
-
-    private static RecapPlannerConfigDocument
-        CreateTwoProfileDocument(
-        string first,
-        string second
-    ) => BuiltInRecapPlannerConfig.Document with {
-        Catalog = Array.AsReadOnly([
-            new RecapPlannerCatalogEntryDocument(first, 32_768),
-            new RecapPlannerCatalogEntryDocument(second, 32_768)
-        ])
-    };
-
-    private static void AssertResolveCode(
-        RecapPlannerConfigDocument document,
-        RecapMaintainerProfileCatalog capabilities,
-        string expectedCode
-    ) {
-        RecapPlannerConfigResolveResult result =
-            RecapPlannerCompositionResolver.Resolve(
-                RecapPlannerConfigSnapshot.FromDocument(document),
-                capabilities
-            );
-        Assert.Equal(
-            expectedCode,
-            Assert.Single(
-                Assert.IsType<
-                    RecapPlannerConfigResolveResult.Invalid
-                >(result).Defects
-            ).Code
-        );
     }
 
     private static void WriteDocument(

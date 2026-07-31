@@ -97,6 +97,11 @@ Post-R3新 planning authority由下列文档取代对应 baseline：
 - 唯一施工顺序与 repo config：
   [Repo-owned RecapPlannerConfig §9](recap-planner-config-repository-design.md#9-实施工作包)。
 
+Post-C3的public Host integration与Galatea `ChatSessionEngine` cutover分别由
+[DerivedRecap Host Integration](derived-recap-host-integration-target-design.md)和
+[Galatea → SessionJournal + DerivedRecap](galatea-session-journal-cutover-plan.md)维护；不得让
+Galatea引用CLI executable或复制CLI internal resolver/readiness。
+
 后续严格按：
 
 ```text

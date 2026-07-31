@@ -1,50 +1,8 @@
-using System.Collections.Immutable;
 using Atelia.SessionJournal.DerivedRecap.Maintainers;
 using Atelia.SessionJournal.DerivedRecap.Planner;
 using Atelia.SessionJournal.DerivedRecap.Store;
 
 namespace Atelia.SessionJournal.Cli;
-
-internal sealed class RecapPlannerConfigSnapshot {
-    private RecapPlannerConfigSnapshot(
-        string? canonicalPath,
-        RecapPlannerConfigDocument document,
-        ImmutableArray<byte> canonicalBytes,
-        string configSha256
-    ) {
-        CanonicalPath = canonicalPath;
-        Document = document;
-        CanonicalBytes = canonicalBytes;
-        ConfigSha256 = configSha256;
-    }
-
-    internal string? CanonicalPath { get; }
-    internal RecapPlannerConfigDocument Document { get; }
-    internal ImmutableArray<byte> CanonicalBytes { get; }
-    internal string ConfigSha256 { get; }
-
-    internal static RecapPlannerConfigSnapshot FromDocument(
-        RecapPlannerConfigDocument document
-    ) {
-        byte[] canonical =
-            RecapPlannerConfigCodec.EncodeCanonical(document);
-        return new RecapPlannerConfigSnapshot(
-            null,
-            document,
-            ImmutableArray.CreateRange(canonical),
-            RecapPlannerConfigCodec.ComputeSha256(canonical)
-        );
-    }
-
-    internal static RecapPlannerConfigSnapshot FromAvailable(
-        RecapPlannerConfigLoadResult.Available available
-    ) => new(
-        available.Path,
-        available.Document,
-        available.CanonicalBytes,
-        available.ConfigSha256
-    );
-}
 
 internal sealed record ResolvedActiveRecapProfile(
     string ProfileName,
@@ -52,20 +10,18 @@ internal sealed record ResolvedActiveRecapProfile(
     RecapBlockCatalogEntry CatalogEntry
 );
 
+/// <summary>
+/// CLI-only enrichment of the neutral public planning configuration with the
+/// complete concrete capability catalog used for reports and execution.
+/// </summary>
 internal sealed class ResolvedRecapPlannerComposition {
     internal ResolvedRecapPlannerComposition(
-        RecapPlannerConfigSnapshot snapshot,
-        RecapPlanningInputs planningInputs,
-        RecapPlanningLimits planningLimits,
+        ResolvedRecapPlanningConfiguration configuration,
         IReadOnlyList<ResolvedActiveRecapProfile> activeProfiles,
         RecapMaintainerProfileCatalog capabilityCatalog
     ) {
-        Snapshot = snapshot
-            ?? throw new ArgumentNullException(nameof(snapshot));
-        PlanningInputs = planningInputs
-            ?? throw new ArgumentNullException(nameof(planningInputs));
-        PlanningLimits = planningLimits
-            ?? throw new ArgumentNullException(nameof(planningLimits));
+        Configuration = configuration
+            ?? throw new ArgumentNullException(nameof(configuration));
         ArgumentNullException.ThrowIfNull(activeProfiles);
         ActiveProfiles = Array.AsReadOnly([.. activeProfiles]);
         CapabilityCatalog = capabilityCatalog
@@ -74,45 +30,34 @@ internal sealed class ResolvedRecapPlannerComposition {
             );
     }
 
-    internal RecapPlannerConfigSnapshot Snapshot { get; }
-    internal RecapPlanningInputs PlanningInputs { get; }
-    internal RecapPlanningLimits PlanningLimits { get; }
+    internal ResolvedRecapPlanningConfiguration Configuration {
+        get;
+    }
+    internal RecapPlannerConfigSnapshot Snapshot =>
+        Configuration.Snapshot;
+    internal RecapPlanningInputs PlanningInputs =>
+        Configuration.PlanningInputs;
+    internal RecapPlanningLimits PlanningLimits =>
+        Configuration.PlanningLimits;
     internal IReadOnlyList<ResolvedActiveRecapProfile>
         ActiveProfiles { get; }
     internal RecapMaintainerProfileCatalog CapabilityCatalog { get; }
 }
 
-internal sealed record RecapPlannerConfigResolveDefect(
-    string Code,
-    string Detail
-);
-
-internal static class RecapPlannerConfigResolveDefectCodes {
-    internal const string UnknownPolicy = nameof(UnknownPolicy);
-    internal const string UnknownEstimator = nameof(UnknownEstimator);
-    internal const string UnknownProfile = nameof(UnknownProfile);
-    internal const string DuplicateResolvedBlock =
-        nameof(DuplicateResolvedBlock);
-    internal const string DuplicateResolvedTarget =
-        nameof(DuplicateResolvedTarget);
-    internal const string InvalidPlanningAuthority =
-        nameof(InvalidPlanningAuthority);
-}
-
-internal abstract record RecapPlannerConfigResolveResult {
-    private RecapPlannerConfigResolveResult() {
+internal abstract record RecapCliCompositionResolveResult {
+    private RecapCliCompositionResolveResult() {
     }
 
     internal sealed record Resolved(
         ResolvedRecapPlannerComposition Composition
-    ) : RecapPlannerConfigResolveResult;
+    ) : RecapCliCompositionResolveResult;
 
     internal sealed record Invalid(
         IReadOnlyList<RecapPlannerConfigResolveDefect> Defects
-    ) : RecapPlannerConfigResolveResult;
+    ) : RecapCliCompositionResolveResult;
 
     internal sealed record Unavailable(string Reason)
-        : RecapPlannerConfigResolveResult;
+        : RecapCliCompositionResolveResult;
 }
 
 internal abstract record RecapPlannerCompositionLoadResult {
@@ -178,20 +123,20 @@ internal static class RecapPlannerCompositionLoader {
     ) {
         RecapPlannerConfigSnapshot snapshot =
             RecapPlannerConfigSnapshot.FromAvailable(available);
-        RecapPlannerConfigResolveResult resolved =
-            RecapPlannerCompositionResolver.Resolve(snapshot);
+        RecapCliCompositionResolveResult resolved =
+            RecapCliCompositionResolver.Resolve(snapshot);
         return resolved switch {
-            RecapPlannerConfigResolveResult.Resolved success =>
+            RecapCliCompositionResolveResult.Resolved success =>
                 new RecapPlannerCompositionLoadResult.Resolved(
                     success.Composition
                 ),
-            RecapPlannerConfigResolveResult.Invalid invalid =>
+            RecapCliCompositionResolveResult.Invalid invalid =>
                 new RecapPlannerCompositionLoadResult.Invalid(
                     available.Path,
                     Map(invalid.Defects),
                     snapshot
                 ),
-            RecapPlannerConfigResolveResult.Unavailable unavailable =>
+            RecapCliCompositionResolveResult.Unavailable unavailable =>
                 new RecapPlannerCompositionLoadResult.Unavailable(
                     available.Path,
                     unavailable.Reason,
@@ -226,55 +171,20 @@ internal static class RecapPlannerCompositionLoader {
     ]);
 }
 
-internal static class RecapPlanningPolicyRegistry {
-    internal static bool TryResolve(
-        string policyId,
-        out IRecapPlanningPolicy policy
-    ) {
-        if (string.Equals(
-                policyId,
-                RecapPlanningPolicyIds.BoundedMaintainAllV1,
-                StringComparison.Ordinal
-            )) {
-            policy = new BoundedMaintainAllRecapPlanningPolicy();
-            return true;
-        }
-
-        policy = null!;
-        return false;
-    }
-}
-
-internal static class RecapPlannerCompositionResolver {
-    internal static RecapPlannerConfigResolveResult Resolve(
+/// <summary>
+/// Thin CLI adapter: projects concrete Maintainers metadata into the public
+/// resolver, then joins resolved profile names back to concrete descriptors.
+/// </summary>
+internal static class RecapCliCompositionResolver {
+    internal static RecapCliCompositionResolveResult Resolve(
         RecapPlannerConfigSnapshot snapshot
     ) {
         ArgumentNullException.ThrowIfNull(snapshot);
-        if (!RecapPlanningPolicyRegistry.TryResolve(
-                snapshot.Document.PlanningPolicy,
-                out IRecapPlanningPolicy policy
-            )) {
-            return UnknownPolicy(snapshot);
-        }
-        HistoryUnitLoadEstimatorResolutionResult estimatorResolution =
-            HistoryUnitLoadEstimatorRegistry.Resolve(
-                snapshot.Document.Cadence
-                    .HistoryUnitLoadEstimatorId
-            );
-        if (estimatorResolution
-            is HistoryUnitLoadEstimatorResolutionResult.Invalid
-                invalidEstimator) {
-            return Invalid(
-                RecapPlannerConfigResolveDefectCodes.UnknownEstimator,
-                invalidEstimator.Defect.Detail
-            );
-        }
-        var estimator =
-            (HistoryUnitLoadEstimatorResolutionResult.Resolved)
-                estimatorResolution;
-        RecapMaintainerProfileCatalog capabilities;
         try {
-            capabilities = RecapMaintainerProfileCatalog.BuiltIn;
+            return Resolve(
+                snapshot,
+                RecapMaintainerProfileCatalog.BuiltIn
+            );
         }
         catch (Exception exception) when (
             exception is InvalidDataException
@@ -283,181 +193,90 @@ internal static class RecapPlannerCompositionResolver {
                 or IOException
                 or UnauthorizedAccessException
         ) {
-            return new RecapPlannerConfigResolveResult.Unavailable(
+            return new RecapCliCompositionResolveResult.Unavailable(
                 exception.Message
             );
         }
-        return ResolveCore(
-            snapshot,
-            capabilities,
-            estimator.Estimator,
-            policy
-        );
     }
 
-    internal static RecapPlannerConfigResolveResult Resolve(
+    internal static RecapCliCompositionResolveResult Resolve(
         RecapPlannerConfigSnapshot snapshot,
-        RecapMaintainerProfileCatalog capabilities
+        RecapMaintainerProfileCatalog concreteCapabilities
     ) {
         ArgumentNullException.ThrowIfNull(snapshot);
-        ArgumentNullException.ThrowIfNull(capabilities);
-        if (!RecapPlanningPolicyRegistry.TryResolve(
-                snapshot.Document.PlanningPolicy,
-                out IRecapPlanningPolicy policy
-            )) {
-            return UnknownPolicy(snapshot);
-        }
-        HistoryUnitLoadEstimatorResolutionResult estimatorResolution =
-            HistoryUnitLoadEstimatorRegistry.Resolve(
-                snapshot.Document.Cadence
-                    .HistoryUnitLoadEstimatorId
+        ArgumentNullException.ThrowIfNull(concreteCapabilities);
+
+        RecapMaintainerCapabilitySnapshot neutralCapabilities =
+            ProjectCapabilities(concreteCapabilities);
+        RecapPlannerConfigResolveResult resolved =
+            RecapPlannerConfigResolver.Resolve(
+                snapshot,
+                RecapPlannerConfigResolutionCatalog.BuiltIn,
+                neutralCapabilities
             );
-        if (estimatorResolution
-            is HistoryUnitLoadEstimatorResolutionResult.Invalid
-                invalidEstimator) {
-            return Invalid(
-                RecapPlannerConfigResolveDefectCodes.UnknownEstimator,
-                invalidEstimator.Defect.Detail
-            );
-        }
-        return ResolveCore(
-            snapshot,
-            capabilities,
-            ((HistoryUnitLoadEstimatorResolutionResult.Resolved)
-                estimatorResolution).Estimator,
-            policy
-        );
+        return resolved switch {
+            RecapPlannerConfigResolveResult.Resolved success =>
+                new RecapCliCompositionResolveResult.Resolved(
+                    Enrich(
+                        success.Configuration,
+                        concreteCapabilities
+                    )
+                ),
+            RecapPlannerConfigResolveResult.Invalid invalid =>
+                new RecapCliCompositionResolveResult.Invalid(
+                    invalid.Defects
+                ),
+            _ => throw new InvalidDataException(
+                "Unknown public planner config resolve result."
+            )
+        };
     }
 
-    private static RecapPlannerConfigResolveResult ResolveCore(
-        RecapPlannerConfigSnapshot snapshot,
-        RecapMaintainerProfileCatalog capabilities,
-        IHistoryUnitLoadEstimator historyUnitLoadEstimator,
-        IRecapPlanningPolicy policy
+    internal static RecapMaintainerCapabilitySnapshot
+        ProjectCapabilities(
+        RecapMaintainerProfileCatalog concreteCapabilities
+    ) => new([
+        .. concreteCapabilities.All.Select(static descriptor =>
+            new RecapProfilePlanningDescriptor(
+                descriptor.ProfileName,
+                new RecapBlockId(descriptor.RecapBlockIdValue),
+                descriptor.Target,
+                descriptor.MaintainerId
+            )
+        )
+    ]);
+
+    internal static ResolvedRecapPlannerComposition Enrich(
+        ResolvedRecapPlanningConfiguration configuration,
+        RecapMaintainerProfileCatalog concreteCapabilities
     ) {
         var active = new List<ResolvedActiveRecapProfile>(
-            snapshot.Document.Catalog.Count
+            configuration.ActiveProfiles.Count
         );
-        var blockIds = new HashSet<RecapBlockId>();
-        var targets = new HashSet<ContextHeaderBlockPath>();
-        foreach (RecapPlannerCatalogEntryDocument entry
-                 in snapshot.Document.Catalog) {
-            if (!capabilities.TryResolveProfileName(
-                    entry.MaintainerProfile,
+        foreach (Atelia.SessionJournal.DerivedRecap.Planner
+            .ResolvedActiveRecapProfile profile
+            in configuration.ActiveProfiles) {
+            if (!concreteCapabilities.TryResolveProfileName(
+                    profile.ProfileName,
                     out RecapMaintainerProfileDescriptor descriptor
                 )) {
-                return Invalid(
-                    RecapPlannerConfigResolveDefectCodes.UnknownProfile,
-                    $"Unknown recap maintainer profile "
-                    + $"'{entry.MaintainerProfile}'."
+                throw new InvalidDataException(
+                    "Concrete capability catalog changed while "
+                    + $"resolving profile '{profile.ProfileName}'."
                 );
             }
-
-            var blockId = new RecapBlockId(
-                descriptor.RecapBlockIdValue
-            );
-            if (!blockIds.Add(blockId)) {
-                return Invalid(
-                    RecapPlannerConfigResolveDefectCodes
-                        .DuplicateResolvedBlock,
-                    $"Profile '{entry.MaintainerProfile}' resolves to "
-                    + $"duplicate RecapBlockId '{blockId}'."
-                );
-            }
-            if (!targets.Add(descriptor.Target)) {
-                return Invalid(
-                    RecapPlannerConfigResolveDefectCodes
-                        .DuplicateResolvedTarget,
-                    $"Profile '{entry.MaintainerProfile}' resolves to "
-                    + $"duplicate target '{descriptor.Target}'."
-                );
-            }
-
-            var catalogEntry = new RecapBlockCatalogEntry(
-                blockId,
-                descriptor.Target,
-                descriptor.MaintainerId,
-                entry.MaxContentUtf8Bytes
-            );
             active.Add(new ResolvedActiveRecapProfile(
-                entry.MaintainerProfile,
+                profile.ProfileName,
                 descriptor,
-                catalogEntry
+                profile.CatalogEntry
             ));
         }
-
-        try {
-            var cadence = new RecapCadenceConfig(
-                snapshot.Document.Cadence
-                    .HistoryUnitLoadEstimatorId,
-                new HistoryLoadUnit(
-                snapshot.Document.Cadence
-                    .MinimumRecentHistoryLoad
-                ),
-                new HistoryLoadUnit(
-                snapshot.Document.Cadence
-                    .RecapBuildIntervalHistoryLoad
-                )
-            );
-            var inputs = new RecapPlanningInputs(
-                Array.AsReadOnly([
-                    .. active.Select(
-                        static binding => binding.CatalogEntry
-                    )
-                ]),
-                cadence,
-                historyUnitLoadEstimator,
-                policy
-            );
-            RecapPlannerLimitsDocument sourceLimits =
-                snapshot.Document.Limits;
-            var limits = new RecapPlanningLimits(
-                sourceLimits.MaxRawGrowthEventCount,
-                sourceLimits.MaxRouteEndpointsPerBlock,
-                sourceLimits.MaxMaintainerCallsPerBuild,
-                sourceLimits.MaxRawEventsPerStep,
-                sourceLimits.MaxRawEventsPerBuild
-            );
-            RecapProtocolHardCaps.V4.ValidatePlanningAuthority(
-                inputs,
-                limits
-            );
-            return new RecapPlannerConfigResolveResult.Resolved(
-                new ResolvedRecapPlannerComposition(
-                    snapshot,
-                    inputs,
-                    limits,
-                    active,
-                    capabilities
-                )
-            );
-        }
-        catch (Exception exception) when (
-            exception is ArgumentException
-                or OverflowException
-        ) {
-            return Invalid(
-                RecapPlannerConfigResolveDefectCodes
-                    .InvalidPlanningAuthority,
-                exception.Message
-            );
-        }
-    }
-
-    private static RecapPlannerConfigResolveResult.Invalid Invalid(
-        string code,
-        string detail
-    ) => new(Array.AsReadOnly([
-        new RecapPlannerConfigResolveDefect(code, detail)
-    ]));
-
-    private static RecapPlannerConfigResolveResult.Invalid
-        UnknownPolicy(RecapPlannerConfigSnapshot snapshot) =>
-        Invalid(
-            RecapPlannerConfigResolveDefectCodes.UnknownPolicy,
-            $"Unknown recap planning policy "
-            + $"'{snapshot.Document.PlanningPolicy}'."
+        return new ResolvedRecapPlannerComposition(
+            configuration,
+            active,
+            concreteCapabilities
         );
+    }
 }
 
 internal static class BuiltInRecapPlannerConfig {
@@ -500,14 +319,14 @@ internal static class BuiltInRecapPlannerConfig {
         ResolvedSnapshot.Value;
 
     private static ResolvedRecapPlannerComposition CreateResolved() {
-        RecapPlannerConfigResolveResult resolved =
-            RecapPlannerCompositionResolver.Resolve(
+        RecapCliCompositionResolveResult resolved =
+            RecapCliCompositionResolver.Resolve(
                 RecapPlannerConfigSnapshot.FromDocument(Document)
             );
         return resolved switch {
-            RecapPlannerConfigResolveResult.Resolved success =>
+            RecapCliCompositionResolveResult.Resolved success =>
                 success.Composition,
-            RecapPlannerConfigResolveResult.Invalid invalid =>
+            RecapCliCompositionResolveResult.Invalid invalid =>
                 throw new InvalidOperationException(
                     "Built-in recap planner config is invalid: "
                     + string.Join(
@@ -517,7 +336,7 @@ internal static class BuiltInRecapPlannerConfig {
                         )
                     )
                 ),
-            RecapPlannerConfigResolveResult.Unavailable unavailable =>
+            RecapCliCompositionResolveResult.Unavailable unavailable =>
                 throw new InvalidOperationException(
                     "Built-in recap planner capabilities are "
                     + $"unavailable: {unavailable.Reason}"

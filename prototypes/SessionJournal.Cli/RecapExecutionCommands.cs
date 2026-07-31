@@ -126,6 +126,8 @@ internal static class RecapExecutionCommands {
             : null;
 
         PreparedRecapOperationAuthority? runAuthority = null;
+        RecapMaintainerProfileCatalog? preparedCapabilityCatalog = null;
+        ResolvedRecapPlannerComposition? plannerComposition = null;
         RecapExecutionConfigReport? readinessConfigReport = null;
         IReadOnlyList<string> readinessDefects;
         if (operation == "run") {
@@ -139,6 +141,8 @@ internal static class RecapExecutionCommands {
                 is RecapOperationReadinessResult.Ready ready) {
                 runAuthority = ready.Authority;
                 lineage = ready.Lineage;
+                preparedCapabilityCatalog = ready.CapabilityCatalog;
+                plannerComposition = ready.Composition;
                 readinessDefects = [];
             }
             else {
@@ -238,22 +242,14 @@ internal static class RecapExecutionCommands {
         }
         CompletionConnectionConfig connection =
             registry.Resolve(requestedConnection);
-        ResolvedRecapPlannerComposition? plannerComposition =
-            runAuthority
-                is PreparedRecapOperationAuthority.NewPlanning planning
-                    ? planning.Composition
-                    : null;
         RecapExecutionConfigReport? planningConfigReport =
             plannerComposition is null
                 ? null
                 : CreateConfigReport(plannerComposition);
         RecapMaintainerProfileCatalog capabilityCatalog =
-            runAuthority
-                is PreparedRecapOperationAuthority.FrozenBuilding
-                    frozenAuthority
-                    ? frozenAuthority.CapabilityCatalog
-                    : plannerComposition?.CapabilityCatalog
-                        ?? RecapMaintainerProfileCatalog.BuiltIn;
+            preparedCapabilityCatalog
+                ?? plannerComposition?.CapabilityCatalog
+                ?? RecapMaintainerProfileCatalog.BuiltIn;
         RecapCliMaintainerComposition? composition = null;
         var maintainers =
             new DeferredRecapBlockMaintainerRegistry(() => {
@@ -325,7 +321,7 @@ internal static class RecapExecutionCommands {
                     maintainers
                 );
                 result = await executor.ResumeAsync(
-                        frozen.Snapshot.Descriptor
+                        frozen.Descriptor
                     )
                     .ConfigureAwait(false);
                 planningDiagnostics = null;
@@ -337,8 +333,8 @@ internal static class RecapExecutionCommands {
                 var executor = new DerivedRecapPlannerExecutor(
                     engine,
                     store,
-                    newPlanning.Composition.PlanningInputs,
-                    newPlanning.Composition.PlanningLimits,
+                    newPlanning.Configuration.PlanningInputs,
+                    newPlanning.Configuration.PlanningLimits,
                     maintainers
                 );
                 result = await executor.RunAsync(newPlanning.Baseline)

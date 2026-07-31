@@ -25,8 +25,8 @@ public abstract record HistoryUnitLoadEstimatorResolutionResult {
 }
 
 /// <summary>
-/// Code-owned H1a estimator registry. It is intentionally not wired into
-/// production config loading or composition before the H1c cutover.
+/// Code-owned estimator registry used by Host composition when resolving
+/// the active HistoryLoad config.
 /// </summary>
 public static class HistoryUnitLoadEstimatorRegistry {
     private static readonly IHistoryUnitLoadEstimator O200kBaseV1 =

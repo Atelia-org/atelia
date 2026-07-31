@@ -40,7 +40,7 @@ public sealed class DerivedRecapOnlineLifecycleCoordinator
     private bool _frozenBuildingHandled;
     private bool _pinnedPlanningBaselineConsumed;
 
-    public DerivedRecapOnlineLifecycleCoordinator(
+    internal DerivedRecapOnlineLifecycleCoordinator(
         SessionJournalEngine engine,
         DerivedRecapStore store,
         RecapPlanningInputs inputs,
@@ -84,7 +84,7 @@ public sealed class DerivedRecapOnlineLifecycleCoordinator
     /// raw Observation growth, the same Planner authority self-pins the new
     /// current snapshot without reloading active configuration.
     /// </summary>
-    public DerivedRecapOnlineLifecycleCoordinator(
+    internal DerivedRecapOnlineLifecycleCoordinator(
         SessionJournalEngine engine,
         DerivedRecapStore store,
         RecapPlanningInputs inputs,
@@ -100,7 +100,7 @@ public sealed class DerivedRecapOnlineLifecycleCoordinator
     /// Creates an online lifecycle bound to one already-frozen Building.
     /// Active Planner inputs and repo config are intentionally absent.
     /// </summary>
-    public static DerivedRecapOnlineLifecycleCoordinator
+    internal static DerivedRecapOnlineLifecycleCoordinator
         CreateForFrozenBuilding(
         SessionJournalEngine engine,
         DerivedRecapStore store,
@@ -133,6 +133,60 @@ public sealed class DerivedRecapOnlineLifecycleCoordinator
             static () => null,
             isFrozenBuildingMode: true
         );
+    }
+
+    /// <summary>
+    /// Creates the only public production lifecycle from a preparer-issued
+    /// authority. New planning is pinned to its captured baseline; frozen
+    /// Building execution is pinned to its exact descriptor.
+    /// </summary>
+    public static DerivedRecapOnlineLifecycleCoordinator Create(
+        SessionJournalEngine engine,
+        DerivedRecapStore store,
+        PreparedRecapOperationAuthority authority,
+        IRecapBlockMaintainerRegistry maintainers
+    ) {
+        ArgumentNullException.ThrowIfNull(engine);
+        ArgumentNullException.ThrowIfNull(store);
+        ArgumentNullException.ThrowIfNull(authority);
+        ArgumentNullException.ThrowIfNull(maintainers);
+        if (!authority.Binding.Matches(
+                engine.Path,
+                engine.BranchRefId
+            )
+            || !authority.Binding.Matches(
+                store.SessionRepositoryPath,
+                store.RefId
+            )) {
+            throw new ArgumentException(
+                "Prepared DerivedRecap authority, Store, and "
+                + "SessionJournalEngine must bind the same repository "
+                + "and RefId.",
+                nameof(authority)
+            );
+        }
+
+        return authority switch {
+            PreparedRecapOperationAuthority.NewPlanning planning =>
+                new DerivedRecapOnlineLifecycleCoordinator(
+                    engine,
+                    store,
+                    planning.Configuration.PlanningInputs,
+                    planning.Configuration.PlanningLimits,
+                    maintainers,
+                    planning.Baseline
+                ),
+            PreparedRecapOperationAuthority.FrozenBuilding frozen =>
+                CreateForFrozenBuilding(
+                    engine,
+                    store,
+                    frozen.Descriptor,
+                    maintainers
+                ),
+            _ => throw new InvalidDataException(
+                "Unknown prepared DerivedRecap authority."
+            )
+        };
     }
 
     internal DerivedRecapOnlineLifecycleCoordinator(

@@ -12,6 +12,10 @@
 > [Derived Recap Cadence](derived-recap-cadence-target-design.md)
 > **Post-C2 HistoryLoad 设计**：
 > [Derived Recap History Load](derived-recap-history-load-target-design.md)
+> **Post-C3 Host integration 设计**：
+> [DerivedRecap Host Integration](derived-recap-host-integration-target-design.md)
+> **Galatea cutover 计划**：
+> [Galatea → SessionJournal + DerivedRecap](galatea-session-journal-cutover-plan.md)
 > **化简审阅记录**：
 > [V4 化简候选](event-addressed-derived-recap-v4-simplification-candidate.md)
 > **取代的候选设计**：

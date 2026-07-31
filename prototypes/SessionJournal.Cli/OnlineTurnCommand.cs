@@ -78,6 +78,8 @@ internal static class OnlineTurnCommand {
         DerivedRecapOnlineLifecycleCoordinator? recap = null;
         DerivedRecapStore? store = null;
         PreparedRecapOperationAuthority? recapAuthority = null;
+        RecapMaintainerProfileCatalog? recapCapabilityCatalog = null;
+        ResolvedRecapPlannerComposition? recapComposition = null;
         if (mode is OnlineExecutionMode.SendNewTurn
             or OnlineExecutionMode.CompleteObservation) {
             store = DerivedRecapStore.Open(
@@ -90,15 +92,21 @@ internal static class OnlineTurnCommand {
                         store
                     )
                     .ConfigureAwait(false);
-            recapAuthority = readiness switch {
-                RecapOperationReadinessResult.Ready ready =>
-                    ready.Authority,
-                RecapOperationReadinessResult.Blocked blocked =>
-                    throw ReadinessBlocked(blocked),
-                _ => throw new InvalidDataException(
+            if (readiness
+                is RecapOperationReadinessResult.Ready ready) {
+                recapAuthority = ready.Authority;
+                recapCapabilityCatalog = ready.CapabilityCatalog;
+                recapComposition = ready.Composition;
+            }
+            else if (readiness
+                is RecapOperationReadinessResult.Blocked blocked) {
+                throw ReadinessBlocked(blocked);
+            }
+            else {
+                throw new InvalidDataException(
                     "Unknown DerivedRecap readiness result."
-                )
-            };
+                );
+            }
         }
 
         CompletionConnectionsFileConfig connections =
@@ -130,48 +138,24 @@ internal static class OnlineTurnCommand {
             );
 
         if (store is not null && recapAuthority is not null) {
-            RecapMaintainerProfileCatalog capabilityCatalog =
-                recapAuthority switch {
-                    PreparedRecapOperationAuthority.NewPlanning
-                        newPlanning =>
-                        newPlanning.Composition.CapabilityCatalog,
-                    PreparedRecapOperationAuthority.FrozenBuilding
-                        frozen => frozen.CapabilityCatalog,
-                    _ => throw new InvalidDataException(
-                        "Unknown prepared DerivedRecap authority."
-                    )
-                };
             RecapCliMaintainerComposition maintainers =
                 RecapCliComposition.CreateMaintainers(
-                    capabilityCatalog,
+                    recapCapabilityCatalog
+                        ?? throw new InvalidDataException(
+                            "Prepared DerivedRecap capability catalog "
+                            + "is missing."
+                        ),
                     connection,
                     inner,
                     callLogDirectory,
                     "run-online-turn/maintenance"
                 );
-            recap = recapAuthority switch {
-                PreparedRecapOperationAuthority.NewPlanning
-                    newPlanning =>
-                    new DerivedRecapOnlineLifecycleCoordinator(
-                        engine,
-                        store,
-                        newPlanning.Composition.PlanningInputs,
-                        newPlanning.Composition.PlanningLimits,
-                        maintainers.Registry,
-                        newPlanning.Baseline
-                    ),
-                PreparedRecapOperationAuthority.FrozenBuilding frozen =>
-                    DerivedRecapOnlineLifecycleCoordinator
-                        .CreateForFrozenBuilding(
-                            engine,
-                            store,
-                            frozen.Snapshot.Descriptor,
-                            maintainers.Registry
-                        ),
-                _ => throw new InvalidDataException(
-                    "Unknown prepared DerivedRecap authority."
-                )
-            };
+            recap = DerivedRecapOnlineLifecycleCoordinator.Create(
+                engine,
+                store,
+                recapAuthority,
+                maintainers.Registry
+            );
         }
 
         engine.UseRuntime(new SJ.SessionRuntime(
@@ -225,11 +209,9 @@ internal static class OnlineTurnCommand {
                 )
             ),
             errors?.Count ?? 0,
-            recapAuthority
-                is PreparedRecapOperationAuthority.NewPlanning
-                    reportPlanning
-                ? CreateConfigReport(reportPlanning.Composition)
-                : null,
+            recapComposition is null
+                ? null
+                : CreateConfigReport(recapComposition),
             CreatePlanningReport(
                 recap?.LastPlanningDiagnostics
             )
