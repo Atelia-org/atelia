@@ -148,6 +148,10 @@ public sealed class ProgramDerivedRecapOnlineTurnTests : IDisposable {
         string output = Path.Combine(_tempRoot, "started-reopen.json");
         string calls = Path.Combine(_tempRoot, "started-reopen-calls");
         var refusal = new ScriptedCompletionClientFactory("must not run");
+        File.WriteAllText(
+            fixture.ConnectionsPath,
+            "{not valid and must not be read"
+        );
         Assert.Equal(1, Program.MainCore([
             .. BaseArgs(fixture, output, calls)
         ], refusal));
@@ -156,6 +160,16 @@ public sealed class ProgramDerivedRecapOnlineTurnTests : IDisposable {
         AssertRecapAuthorityAbsent(fixture.Path);
         Assert.False(File.Exists(output));
         Assert.False(Directory.Exists(calls));
+
+        File.WriteAllText(
+            fixture.ConnectionsPath,
+            JsonSerializer.Serialize(
+                new CompletionConnectionsFileConfig(
+                    [Connection()],
+                    "scripted"
+                )
+            )
+        );
 
         var restart = new ScriptedCompletionClientFactory(
             "started recovered answer"
@@ -171,6 +185,423 @@ public sealed class ProgramDerivedRecapOnlineTurnTests : IDisposable {
             ReadBoundary(fixture.Path).Phase
         );
         AssertReportHasNoRecapAuthority(output);
+    }
+
+    [Fact]
+    public async Task PreparedRecoveryIgnoresNewDefaultAndBindsDurableConnection() {
+        PublishedFixture fixture =
+            await CreatePublishedFixtureAsync("prepared-default-switch");
+        _ = await LeavePendingAsync(
+            fixture,
+            SJ.SessionJournalFailpoint.AfterRequestPreparedCommitted
+        );
+        DeleteRecapAuthority(fixture.Path);
+        string switchedConnections = WriteConnections(
+            "prepared-default-switch-v2",
+            [
+                Connection(),
+                Connection(
+                    id: "scripted-b",
+                    modelId: "model-b",
+                    completionSurfaceId: "surface-b"
+                )
+            ],
+            defaultConnectionId: "scripted-b"
+        );
+        string output = Path.Combine(
+            _tempRoot,
+            "prepared-default-switch.json"
+        );
+        string calls = Path.Combine(
+            _tempRoot,
+            "prepared-default-switch-calls"
+        );
+        var recovery = new ScriptedCompletionClientFactory(
+            "durable A recovered"
+        );
+
+        Assert.Equal(0, Program.MainCore([
+            "run-online-turn",
+            "--input", fixture.Path,
+            "--branch", fixture.BranchName,
+            "--connections", switchedConnections,
+            "--output", output,
+            "--call-log-dir", calls
+        ], recovery));
+
+        Assert.Equal(["scripted"], recovery.CreatedConnectionIds);
+        using var reopened = SJ.SessionJournalEngine.OpenReadOnly(
+            fixture.Path
+        );
+        SJ.SessionGoverningSetup setup = reopened.ResolveGoverningSetup(
+            reopened.InspectExecutionBoundary().Head!.Value
+        );
+        Assert.Equal("model-a", setup.RuntimeConfig.ModelId);
+        Assert.Equal("surface-a", setup.RuntimeConfig.CompletionSurfaceId);
+    }
+
+    [Fact]
+    public async Task MissingPreparedConnectionDoesNotFallbackOrMutateRaw() {
+        PublishedFixture fixture =
+            await CreatePublishedFixtureAsync("prepared-missing");
+        _ = await LeavePendingAsync(
+            fixture,
+            SJ.SessionJournalFailpoint.AfterRequestPreparedCommitted
+        );
+        DeleteRecapAuthority(fixture.Path);
+        RawSnapshot before = ReadRawSnapshot(fixture.Path);
+        string switchedConnections = WriteConnections(
+            "prepared-missing-v2",
+            [Connection(
+                id: "scripted-b",
+                modelId: "model-b",
+                completionSurfaceId: "surface-b"
+            )],
+            defaultConnectionId: "scripted-b"
+        );
+        string output = Path.Combine(_tempRoot, "prepared-missing.json");
+        string calls = Path.Combine(
+            _tempRoot,
+            "prepared-missing-calls"
+        );
+        var recovery = new ScriptedCompletionClientFactory("must not run");
+
+        Assert.Equal(1, Program.MainCore([
+            "run-online-turn",
+            "--input", fixture.Path,
+            "--branch", fixture.BranchName,
+            "--connections", switchedConnections,
+            "--output", output,
+            "--call-log-dir", calls
+        ], recovery));
+
+        Assert.Equal(0, recovery.CreateCallCount);
+        Assert.Equal(0, recovery.CallCount);
+        Assert.Equal(before, ReadRawSnapshot(fixture.Path));
+        Assert.False(File.Exists(output));
+        Assert.False(Directory.Exists(calls));
+    }
+
+    [Fact]
+    public async Task IdleConnectionSwitchReconcilesSetupBeforeNewTurn() {
+        PublishedFixture fixture =
+            await CreatePublishedFixtureAsync("idle-switch");
+        string switchedConnections = WriteConnections(
+            "idle-switch-v2",
+            [
+                Connection(),
+                Connection(
+                    id: "scripted-b",
+                    modelId: "model-b",
+                    completionSurfaceId: "surface-b"
+                )
+            ],
+            defaultConnectionId: "scripted-b"
+        );
+        string output = Path.Combine(_tempRoot, "idle-switch.json");
+        string calls = Path.Combine(_tempRoot, "idle-switch-calls");
+        var factory = new ScriptedCompletionClientFactory("answer from B");
+
+        Assert.Equal(0, Program.MainCore([
+            "run-online-turn",
+            "--input", fixture.Path,
+            "--branch", fixture.BranchName,
+            "--connections", switchedConnections,
+            "--output", output,
+            "--call-log-dir", calls,
+            "--message", "switch to B"
+        ], factory));
+
+        Assert.Equal(["scripted-b"], factory.CreatedConnectionIds);
+        CompletionRequest agentRequest = factory.Requests[^1];
+        Assert.Equal("model-b", agentRequest.ModelId);
+        using var reopened = SJ.SessionJournalEngine.OpenReadOnly(
+            fixture.Path
+        );
+        SJ.SessionCurrentLineageSnapshot lineage =
+            reopened.ReadCurrentLineageHeaders();
+        SJ.SessionGoverningSetup setup = reopened.ResolveGoverningSetup(
+            lineage.CapturedHead
+        );
+        Assert.Equal("model-b", setup.RuntimeConfig.ModelId);
+        Assert.Equal("surface-b", setup.RuntimeConfig.CompletionSurfaceId);
+        Assert.Equal("system-a", setup.SystemPrompt);
+        int runtimeIndex = lineage.HeadToRoot
+            .Select((entry, index) => (entry, index))
+            .Single(pair =>
+                pair.entry.Kind == SJ.SessionEventKind.RuntimeConfigSetup
+                && pair.entry.Address == setup.RuntimeConfigSetupAddress
+            ).index;
+        int observationIndex = lineage.HeadToRoot
+            .Select((entry, index) => (entry, index))
+            .First(pair =>
+                pair.entry.Kind == SJ.SessionEventKind.ObservationAccepted
+            ).index;
+        Assert.True(observationIndex < runtimeIndex);
+    }
+
+    [Fact]
+    public async Task ConnectionSwitchIntentSurvivesLaterRecapReadinessFailure() {
+        PublishedFixture fixture =
+            await CreatePublishedFixtureAsync("switch-before-recap-failure");
+        string configPath =
+            RecapPlannerConfigLoader.GetCanonicalPath(fixture.Path);
+        File.WriteAllText(configPath, "{\"schema\":");
+        RawSnapshot before = ReadRawSnapshot(fixture.Path);
+        string switchedConnections = WriteConnections(
+            "switch-before-recap-failure-v2",
+            [Connection(
+                id: "scripted-b",
+                modelId: "model-b",
+                completionSurfaceId: "surface-b"
+            )],
+            defaultConnectionId: "scripted-b"
+        );
+        string output = Path.Combine(
+            _tempRoot,
+            "switch-before-recap-failure.json"
+        );
+        string calls = Path.Combine(
+            _tempRoot,
+            "switch-before-recap-failure-calls"
+        );
+        var factory = new ScriptedCompletionClientFactory("must not run");
+
+        Assert.Equal(1, Program.MainCore([
+            "run-online-turn",
+            "--input", fixture.Path,
+            "--branch", fixture.BranchName,
+            "--connections", switchedConnections,
+            "--output", output,
+            "--call-log-dir", calls,
+            "--message", "must remain uncommitted"
+        ], factory));
+
+        RawSnapshot after = ReadRawSnapshot(fixture.Path);
+        Assert.NotEqual(before.Head, after.Head);
+        Assert.Equal(before.EventCount + 1, after.EventCount);
+        Assert.Equal(SJ.SessionExecutionPhase.Idle, after.Phase);
+        Assert.Equal(0, factory.CreateCallCount);
+        Assert.Equal(0, factory.CallCount);
+        Assert.False(File.Exists(output));
+        Assert.False(Directory.Exists(calls));
+        using var reopened = SJ.SessionJournalEngine.OpenReadOnly(
+            fixture.Path
+        );
+        Assert.Equal(
+            SJ.SessionEventKind.RuntimeConfigSetup,
+            reopened.InspectExecutionBoundary().HeadKind
+        );
+        SJ.SessionGoverningSetup setup = reopened.ResolveGoverningSetup(
+            after.Head
+        );
+        Assert.Equal("model-b", setup.RuntimeConfig.ModelId);
+        Assert.Equal("surface-b", setup.RuntimeConfig.CompletionSurfaceId);
+        Assert.Equal("system-a", setup.SystemPrompt);
+    }
+
+    [Fact]
+    public async Task AcceptedObservationRejectsConnectionDriftBeforeStoreOrClient() {
+        PublishedFixture fixture =
+            await CreatePublishedFixtureAsync("observation-drift");
+        using (var engine = SJ.SessionJournalEngine.Open(
+                   fixture.Path,
+                   fixture.BranchName
+               )) {
+            engine.AppendObservation("already accepted under A");
+        }
+        RawSnapshot before = ReadRawSnapshot(fixture.Path);
+        string switchedConnections = WriteConnections(
+            "observation-drift-v2",
+            [Connection(
+                id: "scripted-b",
+                modelId: "model-b",
+                completionSurfaceId: "surface-b"
+            )],
+            defaultConnectionId: "scripted-b"
+        );
+        string output = Path.Combine(_tempRoot, "observation-drift.json");
+        string calls = Path.Combine(_tempRoot, "observation-drift-calls");
+        var factory = new ScriptedCompletionClientFactory("must not run");
+
+        Assert.Equal(1, Program.MainCore([
+            "run-online-turn",
+            "--input", fixture.Path,
+            "--branch", fixture.BranchName,
+            "--connections", switchedConnections,
+            "--output", output,
+            "--call-log-dir", calls
+        ], factory));
+
+        Assert.Equal(0, factory.CreateCallCount);
+        Assert.Equal(0, factory.CallCount);
+        Assert.Equal(before, ReadRawSnapshot(fixture.Path));
+        Assert.False(File.Exists(output));
+        Assert.False(Directory.Exists(calls));
+    }
+
+    [Fact]
+    public void AbsentRepositoryIsUnavailableWithoutAutoProvisioning() {
+        Directory.CreateDirectory(_tempRoot);
+        string path = Path.Combine(_tempRoot, "absent-session-repo");
+        string connections = WriteConnections("absent-session-repo");
+        string output = Path.Combine(_tempRoot, "absent-output.json");
+        string calls = Path.Combine(_tempRoot, "absent-calls");
+        var factory = new ScriptedCompletionClientFactory("must not run");
+
+        Assert.Equal(1, Program.MainCore([
+            "run-online-turn",
+            "--input", path,
+            "--branch", SJ.SessionJournalDefaults.MainBranchName,
+            "--connections", connections,
+            "--output", output,
+            "--call-log-dir", calls,
+            "--message", "must not provision"
+        ], factory));
+
+        Assert.False(Directory.Exists(path));
+        Assert.Equal(0, factory.CreateCallCount);
+        Assert.False(File.Exists(output));
+        Assert.False(Directory.Exists(calls));
+    }
+
+    [Fact]
+    public void EmptyJournalShellIsUnavailableWithoutCompletingProvisioning() {
+        Directory.CreateDirectory(_tempRoot);
+        string path = Path.Combine(_tempRoot, "empty-journal-shell");
+        using (EventJournal.EventJournal journal =
+               EventJournal.EventJournal.CreateNew(path)) {
+            _ = journal.CreateBranch(
+                SJ.SessionJournalDefaults.MainBranchName,
+                startPoint: null
+            ).Unwrap();
+        }
+        string[] before = ReadRepositoryFileSnapshot(path);
+        string connections = WriteConnections("empty-journal-shell");
+        string output = Path.Combine(_tempRoot, "empty-shell-output.json");
+        string calls = Path.Combine(_tempRoot, "empty-shell-calls");
+        var factory = new ScriptedCompletionClientFactory("must not run");
+
+        Assert.Equal(1, Program.MainCore([
+            "run-online-turn",
+            "--input", path,
+            "--branch", SJ.SessionJournalDefaults.MainBranchName,
+            "--connections", connections,
+            "--output", output,
+            "--call-log-dir", calls,
+            "--message", "must not complete provisioning"
+        ], factory));
+
+        Assert.Equal(before, ReadRepositoryFileSnapshot(path));
+        Assert.Equal(0, factory.CreateCallCount);
+        Assert.False(Directory.Exists(Path.Combine(path, "config")));
+        Assert.False(Directory.Exists(Path.Combine(path, "derived")));
+        Assert.False(File.Exists(output));
+        Assert.False(Directory.Exists(calls));
+    }
+
+    [Fact]
+    public void ValidRawRepoWithoutRecapStoreIsReadOnlyUnavailable() {
+        Directory.CreateDirectory(_tempRoot);
+        string path = Path.Combine(_tempRoot, "missing-recap-store");
+        using (SJ.SessionJournalEngine.Create(
+                   path,
+                   new SJ.SessionCreateOptions(
+                       "model-a",
+                       "system-a",
+                       "surface-a"
+                   )
+               )) {
+        }
+        InitializePlannerConfig(path);
+        string[] before = ReadRepositoryFileSnapshot(path);
+        string connections = WriteConnections("missing-recap-store");
+        string output = Path.Combine(
+            _tempRoot,
+            "missing-recap-store-output.json"
+        );
+        string calls = Path.Combine(
+            _tempRoot,
+            "missing-recap-store-calls"
+        );
+        var factory = new ScriptedCompletionClientFactory("must not run");
+
+        Assert.Equal(1, Program.MainCore([
+            "run-online-turn",
+            "--input", path,
+            "--branch", SJ.SessionJournalDefaults.MainBranchName,
+            "--connections", connections,
+            "--output", output,
+            "--call-log-dir", calls,
+            "--message", "must not create Store"
+        ], factory));
+
+        Assert.Equal(before, ReadRepositoryFileSnapshot(path));
+        Assert.False(Directory.Exists(Path.Combine(path, "derived")));
+        Assert.Equal(0, factory.CreateCallCount);
+        Assert.Equal(0, factory.CallCount);
+        Assert.False(File.Exists(output));
+        Assert.False(Directory.Exists(calls));
+    }
+
+    [Fact]
+    public async Task TurnFailedRejectsBeforeReadingConnectionsOrOpeningStore() {
+        Directory.CreateDirectory(_tempRoot);
+        string path = Path.Combine(_tempRoot, "turn-failed");
+        var failing = new KnownFailureCompletionClient();
+        var connection = Connection();
+        using (var engine = SJ.SessionJournalEngine.Create(
+                   path,
+                   new SJ.SessionCreateOptions(
+                       "model-a",
+                       "system-a",
+                       "surface-a"
+                   ),
+                   new SJ.SessionRuntime(
+                       failing,
+                       CompletionTarget:
+                           CompletionTargetIdentityFactory.Create(
+                               connection,
+                               failing
+                           ),
+                       ContextCandidateSource:
+                           new EmptyContextCandidateSource()
+                   )
+               )) {
+            await Assert.ThrowsAsync<SJ.SessionJournalTurnAbortedException>(
+                () => engine.SendAsync(
+                    "known failure",
+                    CancellationToken.None
+                )
+            );
+            Assert.Equal(
+                SJ.SessionExecutionPhase.TurnFailed,
+                engine.InspectExecutionBoundary().Phase
+            );
+        }
+        RawSnapshot before = ReadRawSnapshot(path);
+        string connections = WriteConnections("turn-failed");
+        File.WriteAllText(connections, "{not valid json");
+        string output = Path.Combine(_tempRoot, "turn-failed-output.json");
+        string calls = Path.Combine(_tempRoot, "turn-failed-calls");
+        var factory = new ScriptedCompletionClientFactory("must not run");
+
+        Assert.Equal(1, Program.MainCore([
+            "run-online-turn",
+            "--input", path,
+            "--branch", SJ.SessionJournalDefaults.MainBranchName,
+            "--connections", connections,
+            "--output", output,
+            "--call-log-dir", calls,
+            "--message", "must abandon first"
+        ], factory));
+
+        Assert.Equal(before, ReadRawSnapshot(path));
+        Assert.Equal(0, factory.CreateCallCount);
+        Assert.Equal(0, factory.CallCount);
+        Assert.False(Directory.Exists(Path.Combine(path, "derived")));
+        Assert.False(File.Exists(output));
+        Assert.False(Directory.Exists(calls));
     }
 
     [Fact]
@@ -877,6 +1308,22 @@ public sealed class ProgramDerivedRecapOnlineTurnTests : IDisposable {
         );
     }
 
+    private static string[] ReadRepositoryFileSnapshot(string path)
+        => Directory.EnumerateFiles(
+                path,
+                "*",
+                SearchOption.AllDirectories
+            )
+            .Order(StringComparer.Ordinal)
+            .Select(file =>
+                Path.GetRelativePath(path, file)
+                + ":"
+                + new FileInfo(file).Length
+                + ":"
+                + Sha256(File.ReadAllBytes(file))
+            )
+            .ToArray();
+
     private static void InitializePlannerConfig(string path) {
         Assert.IsType<RecapPlannerConfigInitializeResult.Initialized>(
             RecapPlannerConfigInitializer.Initialize(
@@ -937,7 +1384,17 @@ public sealed class ProgramDerivedRecapOnlineTurnTests : IDisposable {
         "--call-log-dir", calls
     ];
 
-    private string WriteConnections(string name) {
+    private string WriteConnections(string name) => WriteConnections(
+        name,
+        [Connection()],
+        defaultConnectionId: "scripted"
+    );
+
+    private string WriteConnections(
+        string name,
+        IReadOnlyList<CompletionConnectionConfig> connections,
+        string defaultConnectionId
+    ) {
         string path = Path.Combine(
             _tempRoot,
             $"{name}-connections.json"
@@ -946,19 +1403,23 @@ public sealed class ProgramDerivedRecapOnlineTurnTests : IDisposable {
             path,
             JsonSerializer.Serialize(
                 new CompletionConnectionsFileConfig(
-                    [Connection()],
-                    "scripted"
+                    connections,
+                    defaultConnectionId
                 )
             )
         );
         return path;
     }
 
-    private static CompletionConnectionConfig Connection() => new(
+    private static CompletionConnectionConfig Connection(
+        string id = "scripted",
+        string modelId = "model-a",
+        string completionSurfaceId = "surface-a"
+    ) => new(
+        id,
         "scripted",
-        "scripted",
-        "model-a",
-        "surface-a",
+        modelId,
+        completionSurfaceId,
         "http://localhost/"
     );
 
@@ -993,16 +1454,21 @@ public sealed class ProgramDerivedRecapOnlineTurnTests : IDisposable {
     ) : ICompletionClientFactory {
         private readonly ScriptedCompletionClient _client =
             new(responseText);
+        private readonly ConcurrentQueue<string> _createdConnectionIds =
+            new();
 
         public int CreateCallCount { get; private set; }
         public int CallCount => _client.CallCount;
         public IReadOnlyList<CompletionRequest> Requests =>
             _client.Requests;
+        public IReadOnlyList<string> CreatedConnectionIds =>
+            _createdConnectionIds.ToArray();
 
         public ICompletionClient Create(
             CompletionConnectionConfig connection
         ) {
             CreateCallCount++;
+            _createdConnectionIds.Enqueue(connection.Id);
             return _client;
         }
     }
@@ -1033,6 +1499,27 @@ public sealed class ProgramDerivedRecapOnlineTurnTests : IDisposable {
                     new ActionBlock.Text(responseText)
                 ]),
                 CompletionDescriptor.From(this, request)
+            ));
+        }
+    }
+
+    private sealed class KnownFailureCompletionClient
+        : ICompletionClient {
+        public string Name => "scripted";
+
+        public string ApiSpecId => "test-api-v1";
+
+        public Task<CompletionResult> StreamCompletionAsync(
+            CompletionRequest request,
+            CompletionStreamObserver? observer,
+            CancellationToken cancellationToken = default
+        ) {
+            _ = observer;
+            cancellationToken.ThrowIfCancellationRequested();
+            return Task.FromResult(new CompletionResult(
+                new ActionMessage([new ActionBlock.Text("partial")]),
+                CompletionDescriptor.From(this, request),
+                termination: CompletionTermination.Failed("known")
             ));
         }
     }

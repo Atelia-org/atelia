@@ -87,9 +87,10 @@ connection/adapter，并绑定该client。
 当前`InspectExecutionBoundary()`刻意不暴露Prepared payload，也没有提供frozen target读取面；
 Galatea不能靠默认connection或逐个创建client试错。SessionJournal应增加窄的read-only
 `InspectRuntimeRecoveryRequirements()`（名称待定），返回
-`NoRuntimeRequired / NewRequestRequired / FrozenCompletionRequired`；最后一种只携带当前phase
-恢复所需的non-secret CompletionTarget、可选ToolRuntime identity与uncertainty kind，不返回request
-正文。
+`NoRuntimeRequired / NewRequestRequired / FrozenCompletionRequired / ToolContinuationRequired`；
+后两种只携带当前phase恢复所需的non-secret dispatch identity与uncertainty/start state，不返回
+request正文。第四种是G0A审阅后的修正：pending tool只有frozen tool runtime，没有frozen
+completion target，不应硬塞进前三种shape。
 
 CLI internal `CompletionTargetIdentityFactory`也不能成为Galatea依赖。connection与request-adapter
 fingerprint算法应提升到`Completion`的public surface；Host再显式构造SessionJournal的target
@@ -108,10 +109,10 @@ record，避免让Completion反向依赖SessionJournal。
 `SessionRuntime.CompletionClient`自动覆盖。因此每轮选择connection时：
 
 - Host先解析selected connection metadata，不必先创建client；
-- stable Idle/TurnFailed上比较governing ModelId/CompletionSurfaceId；
+- exact stable Idle上比较governing ModelId/CompletionSurfaceId；
 - 发生变化时显式append `RuntimeConfigSetup`，保留schema和DerivedContext ordinal；
 - 再从新的raw head执行Recap preparation；
-- Prepared/Started/tool-active tail绝不append setup；
+- TurnFailed必须先由G0B exact abandon；Prepared/Started/tool-active tail绝不append setup；
 - setup append本身是operator intent，即使后续Recap readiness失败也保留，但Observation和LLM调用
   仍必须是零。
 
@@ -135,7 +136,7 @@ fresh repo由`SessionCreateOptions`写入初始prompt。existing repo发生配�
 
 - 不在startup自动append；只在真正进入下一次new-request path时检查；
 - 先inspect durable phase；
-- 只在稳定idle/failed boundary执行显式`AppendSystemPromptSetup`；
+- 只在exact Idle boundary执行desired setup reconciliation；TurnFailed必须先abandon；
 - Prepared/Started或active tool/completion期间不插入setup；
 - 比较governing setup避免每次startup重复append；
 - prompt改变只影响后续request，不改写historical Prepared commitment。
@@ -329,7 +330,7 @@ correctness-sensitive preparation决策。
 - 独立code review无finding；docs/acceptance review提出的activation thread-safety措辞已尾修，复核后
   无剩余medium以上问题。
 
-### G0A：Recovery与desired setup
+### G0A：Recovery与desired setup（Done，2026-08-01）
 
 范围：
 
@@ -350,6 +351,41 @@ Gate：
 - desired runtime/system setup只在new-request stable boundary同步；
 - recovery期间零current-config mutation；
 - 空目录/半provisioned repo启动返回明确unavailable，不留下新的半初始化repo。
+
+完成结果：
+
+- SessionJournal新增public `InspectRuntimeRecoveryRequirements()`四分支sealed union；Prepared/
+  Started直接投影tail resolver已验证的sanitized manifest identity，不重构或暴露request；pending
+  tool使用独立`ToolContinuationRequired`，不伪造frozen completion target；
+- Completion新增neutral `CompletionDispatchIdentity`、稳定fingerprint factory及registry
+  `BindExact`；durable connection missing/drift不fallback default，connection metadata mismatch在client
+  factory前返回typed unavailable；factory自身construction fault继续作为operational exception传播；
+- desired setup由raw core在exact Idle head统一reconcile，完整保留Schema/DerivedContext，按runtime再
+  prompt幂等append；TurnFailed必须先由G0B abandon，active/recovery phase零setup mutation；
+- 两段setup append使用第一段返回的exact committed address作为第二段CAS parent；并发Observation
+  只能得到Retryable，不能把prompt插入active turn；runtime成功而prompt失败时下次只补prompt；
+- public captured-head-bound `SendAsync`/`ResumeAsync`阻止Host把已组合runtime用于后来tail；CLI还
+  验证Recap preparer authority的captured head与setup/recovery head完全一致；
+- CLI已迁为reference Host：Idle先reconcile再Recap，AwaitingAgentAction禁止setup并校验selected
+  model/surface，Prepared/Started exact-bind durable target，Started Refuse早于connections file读取和
+  client创建；
+- Building-first Store selection先执行read-only availability检查；valid raw但Store missing，以及
+  absent/empty-shell repo都不会创建derived scaffolding、lock、config、raw event或call log；operator
+  provisioning仍是唯一create/init路径；
+- connection switch setup作为operator intent先落raw；后续planner config/Store readiness失败时仍
+  保留该setup，但Observation/client/provider/log均为零。
+
+完成时验证（2026-08-01）：
+
+- Completion suite：183/183；SessionJournal suite：333/333；DerivedRecap Store suite：107/107；
+  CLI suite：73 passed / 1 external acceptance skipped；
+- G0A recovery + desired setup focused：12/12；CLI online focused：20/20；Store current-lineage
+  Building focused：8/8；CLI/SessionJournal build为0 warning / 0 error；
+- 独立审阅发现并关闭一项setup两段append并发lineage blocker、Store missing副作用和captured-head
+  authority两项Host缺口；文档phase matrix尾修后无已知剩余blocker。
+
+后续调整：G0B范围不变；G1必须按四种runtime requirement分派，并持续使用captured-head-bound
+online入口。首个empty-tool vertical仍显式拒绝`ToolContinuationRequired`，不提前扩张tool Host。
 
 ### G0B：Completed-turn projection与rewind
 
@@ -400,7 +436,10 @@ Gate：
 - startup只打开raw repo和inspect phase；
 - new request执行phase gate → setup reconciliation → recap preparer → input normalization →
   runtime binding → `SendAsync`；
-- recovery先读取runtime requirements，再执行exact connection binding → `ResumeAsync`；
+- recovery按public runtime requirement variant分派：`NewRequestRequired`选择current connection并
+  校验governing model/surface后执行Recap preparation；`FrozenCompletionRequired` exact-bind durable
+  completion identity；`ToolContinuationRequired`只exact-bind durable tool runtime（首个empty-tool
+  slice显式unsupported）；随后使用captured-head-bound `ResumeAsync`；
 - `DerivedRecapOnlineLifecycleCoordinator`同时提供candidate source/lifecycle；
 - current in-memory `GalateaLiveTurn`继续只管理SSE subscriber与observer；
 - 删除`CompactAsync`、EstimatedTokens trigger及旧compaction prompts/config。

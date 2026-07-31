@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using Atelia.Completion;
 using Atelia.Completion.Abstractions;
+using Atelia.EventJournal;
 using Atelia.SessionJournal.DerivedRecap.Maintainers;
 using Atelia.SessionJournal.DerivedRecap.Planner;
 using Atelia.SessionJournal.DerivedRecap.Store;
@@ -61,9 +62,9 @@ internal static class OnlineTurnCommand {
 
         using SJ.SessionJournalEngine engine =
             SJ.SessionJournalEngine.Open(inputPath, branchName);
-        SJ.SessionExecutionBoundaryInspection initial =
-            engine.InspectExecutionBoundary();
-        OnlineExecutionMode mode = Classify(initial);
+        SJ.SessionRuntimeRecoveryRequirements recoveryRequirement =
+            engine.InspectRuntimeRecoveryRequirements();
+        OnlineExecutionMode mode = Classify(recoveryRequirement);
         ValidateMessage(mode, message);
         if (mode == OnlineExecutionMode.ResumeStarted
             && recoveryPolicy
@@ -73,6 +74,82 @@ internal static class OnlineTurnCommand {
                 + "the provider. Choose restart-new-attempt explicitly "
                 + "to accept possible duplicate execution."
             );
+        }
+        if (recoveryRequirement.Phase
+            == SJ.SessionExecutionPhase.TurnFailed) {
+            throw new InvalidOperationException(
+                "The failed turn must be abandoned before starting a new "
+                + "online turn. G0B provides the exact-head abandon "
+                + "contract."
+            );
+        }
+        EventAddress expectedOnlineHead =
+            recoveryRequirement.CapturedHead
+            ?? throw new InvalidDataException(
+                "Supported online phase requires a captured raw head."
+            );
+
+        CompletionConnectionsFileConfig connections =
+            CompletionConnectionConfigLoader.LoadFile(
+                connectionsPath
+            );
+        using var registry = new CompletionConnectionRegistry(
+            connections,
+            completionClientFactory
+        );
+        if (requestedConnection is not null
+            && !registry.TryGet(requestedConnection, out _)) {
+            throw new ArgumentException(
+                $"Unknown completion connection "
+                + $"'{requestedConnection}'."
+            );
+        }
+
+        CompletionConnectionConfig connection;
+        ICompletionClient? inner = null;
+        CompletionDispatchIdentity? dispatchIdentity = null;
+        if (recoveryRequirement
+            is SJ.SessionRuntimeRecoveryRequirements
+                .FrozenCompletionRequired frozen) {
+            if (requestedConnection is not null
+                && !string.Equals(
+                    requestedConnection,
+                    frozen.CompletionTarget.ConnectionId,
+                    StringComparison.Ordinal
+                )) {
+                throw new InvalidOperationException(
+                    "Prepared completion recovery is bound to durable "
+                    + $"connection '{frozen.CompletionTarget.ConnectionId}', "
+                    + $"not requested connection '{requestedConnection}'."
+                );
+            }
+            dispatchIdentity = ToCompletionIdentity(frozen);
+            CompletionDispatchBindingResult binding =
+                registry.BindExact(dispatchIdentity);
+            if (binding is CompletionDispatchBindingResult.Unavailable
+                unavailable) {
+                throw RecoveryBindingUnavailable(unavailable);
+            }
+            var bound = AssertBound(binding);
+            connection = bound.Connection;
+            inner = bound.Client;
+        }
+        else {
+            connection = registry.Resolve(requestedConnection);
+            if (mode == OnlineExecutionMode.SendNewTurn) {
+                expectedOnlineHead = ReconcileSelectedConnection(
+                    engine,
+                    recoveryRequirement,
+                    connection
+                ).Head;
+            }
+            else if (mode == OnlineExecutionMode.CompleteObservation) {
+                ValidateNewRequestConnectionMatchesGoverningSetup(
+                    engine,
+                    recoveryRequirement,
+                    connection
+                );
+            }
         }
 
         DerivedRecapOnlineLifecycleCoordinator? recap = null;
@@ -94,6 +171,13 @@ internal static class OnlineTurnCommand {
                     .ConfigureAwait(false);
             if (readiness
                 is RecapOperationReadinessResult.Ready ready) {
+                if (ready.Lineage.CapturedHead != expectedOnlineHead) {
+                    throw new InvalidOperationException(
+                        "DerivedRecap preparation captured a different raw "
+                        + "head than the online operation; retry phase "
+                        + "inspection and composition."
+                    );
+                }
                 recapAuthority = ready.Authority;
                 recapCapabilityCatalog = ready.CapabilityCatalog;
                 recapComposition = ready.Composition;
@@ -108,25 +192,9 @@ internal static class OnlineTurnCommand {
                 );
             }
         }
-
-        CompletionConnectionsFileConfig connections =
-            CompletionConnectionConfigLoader.LoadFile(
-                connectionsPath
-            );
-        using var registry = new CompletionConnectionRegistry(
-            connections,
-            completionClientFactory
-        );
-        if (requestedConnection is not null
-            && !registry.TryGet(requestedConnection, out _)) {
-            throw new ArgumentException(
-                $"Unknown completion connection "
-                + $"'{requestedConnection}'."
-            );
-        }
-        CompletionConnectionConfig connection =
-            registry.Resolve(requestedConnection);
-        ICompletionClient inner = registry.GetClient(connection.Id);
+        inner ??= registry.GetClient(connection.Id);
+        dispatchIdentity ??=
+            CompletionDispatchIdentityFactory.Create(connection, inner);
         ICompletionClient agentClient =
             new LoggingCompletionClient(
                 inner,
@@ -163,10 +231,8 @@ internal static class OnlineTurnCommand {
 
         engine.UseRuntime(new SJ.SessionRuntime(
             agentClient,
-            CompletionTarget: CompletionTargetIdentityFactory.Create(
-                connection,
-                inner
-            ),
+            CompletionTarget:
+                CompletionTargetIdentityFactory.Create(dispatchIdentity),
             MaxTokens: connection.MaxTokens,
             UncertainCompletionRecoveryPolicy: recoveryPolicy,
             ContextCandidateSource: recap,
@@ -181,14 +247,18 @@ internal static class OnlineTurnCommand {
             IReadOnlyList<string>? errors
         ) = mode == OnlineExecutionMode.SendNewTurn
             ? FromTurn(await engine.SendAsync(
+                    expectedOnlineHead,
                     message!,
                     CancellationToken.None
                 )
                 .ConfigureAwait(false))
             : FromResume(
-                await engine.ResumeAsync(CancellationToken.None)
+                await engine.ResumeAsync(
+                        expectedOnlineHead,
+                        CancellationToken.None
+                    )
                     .ConfigureAwait(false),
-                initial.Phase
+                recoveryRequirement.Phase
             );
 
         SJ.SessionExecutionBoundaryInspection final =
@@ -227,39 +297,143 @@ internal static class OnlineTurnCommand {
     }
 
     private static OnlineExecutionMode Classify(
-        SJ.SessionExecutionBoundaryInspection boundary
-    ) => boundary.Phase switch {
-        SJ.SessionExecutionPhase.Idle
-            or SJ.SessionExecutionPhase.TurnFailed =>
+        SJ.SessionRuntimeRecoveryRequirements requirement
+    ) => requirement switch {
+        SJ.SessionRuntimeRecoveryRequirements.NoRuntimeRequired
+            when requirement.Phase is SJ.SessionExecutionPhase.Idle
+                or SJ.SessionExecutionPhase.TurnFailed =>
             OnlineExecutionMode.SendNewTurn,
-        SJ.SessionExecutionPhase.AwaitingAgentAction
-            when boundary.HeadKind
+        SJ.SessionRuntimeRecoveryRequirements.NewRequestRequired
+            when requirement.HeadKind
                 == SJ.SessionEventKind.ObservationAccepted =>
             OnlineExecutionMode.CompleteObservation,
-        SJ.SessionExecutionPhase.AwaitingAgentAction
-            when boundary.HeadKind
+        SJ.SessionRuntimeRecoveryRequirements.NewRequestRequired
+            when requirement.HeadKind
                 == SJ.SessionEventKind.ToolResultObserved =>
             throw Unsupported(
                 "Tool-result continuation requires an exact tool runtime."
             ),
-        SJ.SessionExecutionPhase.AwaitingCompletionDispatch =>
+        SJ.SessionRuntimeRecoveryRequirements.FrozenCompletionRequired {
+            DispatchState: SJ.SessionDurableDispatchState.NotStarted
+        } =>
             OnlineExecutionMode.ResumePrepared,
-        SJ.SessionExecutionPhase.AwaitingCompletion =>
+        SJ.SessionRuntimeRecoveryRequirements.FrozenCompletionRequired {
+            DispatchState:
+                SJ.SessionDurableDispatchState.StartedOutcomeUncertain
+        } =>
             OnlineExecutionMode.ResumeStarted,
-        SJ.SessionExecutionPhase.AwaitingToolExecution =>
+        SJ.SessionRuntimeRecoveryRequirements.ToolContinuationRequired =>
             throw Unsupported(
                 "AwaitingToolExecution requires an exact tool runtime."
             ),
-        SJ.SessionExecutionPhase.Empty =>
+        SJ.SessionRuntimeRecoveryRequirements.NoRuntimeRequired
+            when requirement.Phase == SJ.SessionExecutionPhase.Empty =>
             throw new InvalidOperationException(
                 "run-online-turn requires an initialized SessionJournal."
             ),
         _ => throw new InvalidOperationException(
             $"run-online-turn does not support phase "
-            + $"'{boundary.Phase}' at head kind "
-            + $"'{boundary.HeadKind}'."
+            + $"'{requirement.Phase}' at head kind "
+            + $"'{requirement.HeadKind}'."
         )
     };
+
+    private static CompletionDispatchIdentity ToCompletionIdentity(
+        SJ.SessionRuntimeRecoveryRequirements
+            .FrozenCompletionRequired frozen
+    ) => new(
+        frozen.CompletionTarget.ConnectionId,
+        frozen.CompletionTarget.Kind,
+        frozen.CompletionTarget.ConnectionFingerprint,
+        frozen.ClientName,
+        frozen.ApiSpecId,
+        frozen.CompletionTarget.RequestAdapterFingerprint
+    );
+
+    private static CompletionDispatchBindingResult.Bound AssertBound(
+        CompletionDispatchBindingResult result
+    ) => result as CompletionDispatchBindingResult.Bound
+        ?? throw new InvalidDataException(
+            "Completion exact binding returned an unknown result shape."
+        );
+
+    private static InvalidOperationException RecoveryBindingUnavailable(
+        CompletionDispatchBindingResult.Unavailable unavailable
+    ) => new(
+        "Prepared completion runtime is unavailable "
+        + $"({unavailable.Reason}): {unavailable.Detail}"
+    );
+
+    private static SJ.SessionGoverningSetup ReconcileSelectedConnection(
+        SJ.SessionJournalEngine engine,
+        SJ.SessionRuntimeRecoveryRequirements requirement,
+        CompletionConnectionConfig connection
+    ) {
+        EventAddress capturedHead = requirement.CapturedHead
+            ?? throw new InvalidDataException(
+                "Desired setup reconciliation requires a captured raw head."
+            );
+        SJ.SessionGoverningSetup current =
+            engine.ResolveGoverningSetup(capturedHead);
+        SJ.SessionDesiredSetupReconciliationResult result =
+            engine.ReconcileDesiredSetup(
+                capturedHead,
+                new SJ.SessionDesiredSetup(
+                    connection.ModelId,
+                    connection.CompletionSurfaceId,
+                    current.SystemPrompt
+                )
+            );
+        return result switch {
+            SJ.SessionDesiredSetupReconciliationResult.Ready ready =>
+                ready.GoverningSetup,
+            SJ.SessionDesiredSetupReconciliationResult.Unavailable
+                unavailable => throw new InvalidOperationException(
+                    "Desired SessionJournal setup is unavailable "
+                    + $"({unavailable.Reason}) at phase "
+                    + $"'{unavailable.Phase}'."
+                ),
+            SJ.SessionDesiredSetupReconciliationResult.Retryable retryable =>
+                throw new InvalidOperationException(
+                    "SessionJournal head changed during desired setup "
+                    + $"reconciliation. Expected '{retryable.ExpectedHead}', "
+                    + $"observed '{retryable.ObservedHead}'; retry the turn."
+                ),
+            _ => throw new InvalidDataException(
+                "Unknown desired setup reconciliation result."
+            )
+        };
+    }
+
+    private static void ValidateNewRequestConnectionMatchesGoverningSetup(
+        SJ.SessionJournalEngine engine,
+        SJ.SessionRuntimeRecoveryRequirements requirement,
+        CompletionConnectionConfig connection
+    ) {
+        EventAddress capturedHead = requirement.CapturedHead
+            ?? throw new InvalidDataException(
+                "New-request recovery requires a captured raw head."
+            );
+        SJ.SessionGoverningSetup governing =
+            engine.ResolveGoverningSetup(capturedHead);
+        if (!string.Equals(
+                governing.RuntimeConfig.ModelId,
+                connection.ModelId,
+                StringComparison.Ordinal
+            )
+            || !string.Equals(
+                governing.RuntimeConfig.CompletionSurfaceId,
+                connection.CompletionSurfaceId,
+                StringComparison.Ordinal
+            )) {
+            throw new InvalidOperationException(
+                "The selected completion connection model/surface does not "
+                + "match the governing setup of the already accepted "
+                + "Observation. Resume with a matching connection; setup "
+                + "cannot be changed inside an active turn."
+            );
+        }
+    }
 
     private static void ValidateMessage(
         OnlineExecutionMode mode,

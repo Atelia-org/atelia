@@ -240,7 +240,8 @@ execution phase，再决定是否需要 Recap：
 
 | 初始 phase | `--message` | Recap Store / Planner / Maintainers |
 |---|---|---|
-| `Idle` / `TurnFailed` | 必须提供 | 需要；Store 必须已显式 create |
+| `Idle` | 必须提供 | 需要；Store 必须已显式 create |
+| `TurnFailed` | 必须提供 | 返回`FailedTurnMustBeAbandoned`；等待G0B exact abandon |
 | `AwaitingAgentAction` + `ObservationAccepted` | 必须省略 | 需要；完成已经提交的 observation |
 | `AwaitingCompletionDispatch`（Prepared） | 必须省略 | 完全不打开、不创建、不修复 Store |
 | `AwaitingCompletion`（Started） | 必须省略 | 完全不打开、不创建、不修复 Store |
@@ -270,6 +271,16 @@ candidate ordinal 不是 CLI flag；它只来自 selected branch governing `Runt
 `--maximum-canonical-request-bytes` 是 final canonical request JSON 的精确 UTF-8 byte guard，不是
 provider tokenizer、模型 context-window 或 fallback policy。`--uncertain-recovery` 默认 `refuse`；
 只有 operator 明确接受潜在重复 provider 调用时，才可选 `restart-new-attempt`。
+
+Idle上的`--connection`/default connection会先与governing ModelId/CompletionSurfaceId比较；发生
+切换时，CLI在Recap preparation之前通过public exact-head reconcile追加新的
+`RuntimeConfigSetup`，保留Schema/DerivedContext。CLI没有desired system-prompt参数，因此保留
+现有governing prompt；Galatea Host使用同一public API同步其desired prompt。
+
+已经接受Observation时禁止中途追加setup；selected connection的model/surface必须与该head的
+governing setup一致。Prepared/Started则忽略当前default，使用durable target在public
+Completion registry中exact bind；missing或fingerprint drift返回typed unavailable，不fallback。
+Started默认`refuse`甚至不会创建client。
 
 Store 缺失时，需要新 request 的 phase 在 append Observation、创建 client/call-log 或调用 LLM 前
 失败；CLI 不会 auto-create/reset。若 lifecycle/backpressure、candidate 或 request-size preflight
