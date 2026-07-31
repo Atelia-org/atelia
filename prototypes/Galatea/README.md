@@ -35,6 +35,7 @@ Planner config。
       "systemPromptFile": "prompts/alice.md"
     }
   ],
+  "callLogDir": "../../../../gitignore/galatea/completion-calls",
   "listenUrls": ["http://0.0.0.0:3510"]
 }
 ```
@@ -42,6 +43,12 @@ Planner config。
 `systemPromptFile` 相对 `config.json` 所在目录解析，内容覆盖内联 `systemPrompt`。旧
 `compactionThresholdTokens` / `compactionSystemPrompt` / `compactionPrompt` 已删除；Recap cadence、
 profiles和limits统一由每个SessionJournal repo中的 `recap-planner-config.json` 管理。
+
+`callLogDir`是可选的，也相对`config.json`所在目录解析。配置后，agent调用写入
+`agent/`，Maintainer调用按profile写入`maintenance/<maintainer-id>/`；该目录必须与所有
+`sessionDir`互不包含。未配置时不包装client、不创建日志目录。日志wrapper透传client identity，
+因此开关日志不会改变Prepared中冻结的completion target；日志可能包含完整prompt/response，应位于
+repo之外且按敏感数据管理。
 
 `connections.json` 保存可选的Completion routes：
 
@@ -79,7 +86,7 @@ durable completion identity，不回退default connection，也不读取active R
 
 ## Recent与Undo
 
-`GET /api/recent-turns` 直接消费raw completed-turn projection，newest-first返回可见turn。只有captured
+`GET /api/recent-turns` 直接消费raw completed-turn projection，newest-first返回最近6个可见turn。只有captured
 raw head本身就是最新terminal Action时才返回 `rewindLatestToken`。Undo必须原样回传此token；server
 使用它执行exact-head CAS，因此陈旧页面不会误撤后来新增的turn。DerivedRecap不会被投影为conversation
 turn。

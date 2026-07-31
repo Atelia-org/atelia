@@ -30,6 +30,7 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
         _tempRoot = tempRoot;
         _deleteFilesOnDispose = deleteFilesOnDispose;
         SessionDirectory = sessionDirectory;
+        ConfigPath = configPath;
         Factory = new GalateaWebApplicationFactory(
             configPath,
             completionClientFactory,
@@ -43,10 +44,13 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
 
     internal string SessionDirectory { get; }
 
+    internal string ConfigPath { get; }
+
     public static GalateaTestHost Create(
         ICompletionClientFactory completionClientFactory,
         IGalateaUserMessageNormalizer normalizer,
-        bool deleteFilesOnDispose = true
+        bool deleteFilesOnDispose = true,
+        string? callLogDirectory = null
     ) {
         ArgumentNullException.ThrowIfNull(completionClientFactory);
         ArgumentNullException.ThrowIfNull(normalizer);
@@ -113,15 +117,9 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
                 )
             )
         );
-        var users = new GalateaUsersFileConfig([
-            new GalateaUserConfig(
-                TestUserId,
-                TestPassword,
-                sessionDirectory,
-                SystemPrompt: "test system prompt"
-            )
-        ]);
-        var connections = new CompletionConnectionsFileConfig(
+        string configPath = WriteConfiguration(
+            configDirectory,
+            Path.GetFullPath(sessionDirectory),
             [
                 new CompletionConnectionConfig(
                     "test",
@@ -132,22 +130,9 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
                     ApiKey: "test-key"
                 )
             ],
-            DefaultConnectionId: "test"
-        );
-        var jsonOptions = new JsonSerializerOptions(
-            JsonSerializerDefaults.Web
-        );
-        string configPath = Path.Combine(configDirectory, "config.json");
-        File.WriteAllText(
-            configPath,
-            JsonSerializer.Serialize(users, jsonOptions)
-        );
-        File.WriteAllText(
-            Path.Combine(
-                configDirectory,
-                GalateaConfigLoader.ConnectionsFileName
-            ),
-            JsonSerializer.Serialize(connections, jsonOptions)
+            "test",
+            "test system prompt",
+            callLogDirectory
         );
 
         return new GalateaTestHost(
@@ -158,6 +143,68 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
             normalizer,
             deleteFilesOnDispose
         );
+    }
+
+    /// <summary>
+    /// Creates only an isolated Galatea configuration root and points it at an
+    /// already provisioned SessionJournal repository. The repository is never
+    /// created, initialized, or owned by this host and therefore is never
+    /// removed during disposal.
+    /// </summary>
+    public static GalateaTestHost OpenExisting(
+        string sessionDirectory,
+        IReadOnlyList<CompletionConnectionConfig> connections,
+        string defaultConnectionId,
+        ICompletionClientFactory completionClientFactory,
+        IGalateaUserMessageNormalizer normalizer,
+        string systemPrompt = "test system prompt",
+        string? callLogDirectory = null
+    ) {
+        ArgumentException.ThrowIfNullOrWhiteSpace(sessionDirectory);
+        ArgumentNullException.ThrowIfNull(connections);
+        ArgumentException.ThrowIfNullOrWhiteSpace(defaultConnectionId);
+        ArgumentNullException.ThrowIfNull(completionClientFactory);
+        ArgumentNullException.ThrowIfNull(normalizer);
+        ArgumentException.ThrowIfNullOrWhiteSpace(systemPrompt);
+
+        string absoluteSessionDirectory =
+            Path.TrimEndingDirectorySeparator(
+                Path.GetFullPath(sessionDirectory)
+            );
+        if (!Directory.Exists(absoluteSessionDirectory)) {
+            throw new DirectoryNotFoundException(
+                absoluteSessionDirectory
+            );
+        }
+
+        string configurationRoot = Path.Combine(
+            Path.GetTempPath(),
+            "atelia-galatea-existing-repo-tests",
+            Guid.NewGuid().ToString("N")
+        );
+        Directory.CreateDirectory(configurationRoot);
+        try {
+            string configPath = WriteConfiguration(
+                configurationRoot,
+                absoluteSessionDirectory,
+                connections,
+                defaultConnectionId,
+                systemPrompt,
+                callLogDirectory
+            );
+            return new GalateaTestHost(
+                configurationRoot,
+                absoluteSessionDirectory,
+                configPath,
+                completionClientFactory,
+                normalizer,
+                deleteFilesOnDispose: true
+            );
+        }
+        catch {
+            Directory.Delete(configurationRoot, recursive: true);
+            throw;
+        }
     }
 
     public HttpClient CreateClient() => Factory.CreateClient(
@@ -185,6 +232,50 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
         if (_deleteFilesOnDispose && Directory.Exists(_tempRoot)) {
             Directory.Delete(_tempRoot, recursive: true);
         }
+    }
+
+    private static string WriteConfiguration(
+        string configurationDirectory,
+        string absoluteSessionDirectory,
+        IReadOnlyList<CompletionConnectionConfig> connections,
+        string defaultConnectionId,
+        string systemPrompt,
+        string? callLogDirectory
+    ) {
+        var users = new GalateaUsersFileConfig(
+            [
+                new GalateaUserConfig(
+                    TestUserId,
+                    TestPassword,
+                    absoluteSessionDirectory,
+                    SystemPrompt: systemPrompt
+                )
+            ],
+            CallLogDir: callLogDirectory
+        );
+        var connectionsFile = new CompletionConnectionsFileConfig(
+            connections,
+            defaultConnectionId
+        );
+        var jsonOptions = new JsonSerializerOptions(
+            JsonSerializerDefaults.Web
+        );
+        string configPath = Path.Combine(
+            configurationDirectory,
+            "config.json"
+        );
+        File.WriteAllText(
+            configPath,
+            JsonSerializer.Serialize(users, jsonOptions)
+        );
+        File.WriteAllText(
+            Path.Combine(
+                configurationDirectory,
+                GalateaConfigLoader.ConnectionsFileName
+            ),
+            JsonSerializer.Serialize(connectionsFile, jsonOptions)
+        );
+        return configPath;
     }
 }
 

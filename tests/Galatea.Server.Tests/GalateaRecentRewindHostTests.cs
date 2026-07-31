@@ -14,6 +14,42 @@ public sealed class GalateaRecentRewindHostTests {
         TimeSpan.FromSeconds(10);
 
     [Fact]
+    public async Task Recent_DefaultLimitIsSixCompletedTurns() {
+        await using var host = CreateHost(new QueueCompletionClient());
+        using HttpClient client = host.CreateClient();
+        await LoginAsync(client);
+        (_, UserSessionHost session) = await GetSessionAsync(host);
+        for (int ordinal = 1; ordinal <= 7; ordinal++) {
+            _ = session.Engine.AppendObservation(
+                GalateaUserMessageEnvelope.Wrap($"user {ordinal}")
+            );
+            _ = session.Engine.AppendImportedAgentAction(
+                new ActionMessage([
+                    new ActionBlock.Text($"assistant {ordinal}")
+                ]),
+                new CompletionDescriptor(
+                    "recent-limit-fixture",
+                    "fixture-v1",
+                    "model-a"
+                )
+            );
+        }
+
+        RecentTurnsResponseDto recent = await GetRecentAsync(client);
+
+        Assert.Equal(6, GalateaHostService.RecentTurnLimit);
+        Assert.Equal(6, recent.Turns.Count);
+        Assert.Equal(
+            ["user 7", "user 6", "user 5", "user 4", "user 3", "user 2"],
+            recent.Turns.Select(static turn => turn.UserText)
+        );
+        Assert.DoesNotContain(
+            recent.Turns,
+            static turn => turn.UserText == "user 1"
+        );
+    }
+
+    [Fact]
     public async Task Recent_IsNewestFirstAndTokenIsExactTerminalHead() {
         var completion = new QueueCompletionClient(
             "assistant one",

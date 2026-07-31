@@ -127,9 +127,11 @@ public sealed class GalateaDurableRecoveryVerticalTests {
             "prepared recovery answer"
         );
         var normalizer = new TrackingNormalizer();
+        using var callLogs = new TemporaryCallLogDirectory();
         await using var host = GalateaTestHost.Create(
             completionFactory,
-            normalizer
+            normalizer,
+            callLogDirectory: callLogs.Path
         );
         string sessionPath = GetSessionPath(host);
         CompletionConnectionConfig connection = GetConnection(host);
@@ -167,6 +169,10 @@ public sealed class GalateaDurableRecoveryVerticalTests {
         Assert.Equal(1, completionFactory.Client.DispatchCallCount);
         Assert.False(File.Exists(
             RecapPlannerConfigLoader.GetCanonicalPath(sessionPath)
+        ));
+        Assert.Single(Directory.EnumerateFiles(
+            Path.Combine(callLogs.Path, "agent"),
+            "*.json"
         ));
         Assert.Equal(
             SessionExecutionPhase.Idle,
@@ -552,6 +558,24 @@ public sealed class GalateaDurableRecoveryVerticalTests {
             ct.ThrowIfCancellationRequested();
             Interlocked.Increment(ref _normalizeCallCount);
             return ValueTask.FromResult(userMessage);
+        }
+    }
+
+    private sealed class TemporaryCallLogDirectory : IDisposable {
+        internal TemporaryCallLogDirectory() {
+            Path = System.IO.Path.Combine(
+                System.IO.Path.GetTempPath(),
+                "atelia-galatea-prepared-call-log-tests",
+                Guid.NewGuid().ToString("N")
+            );
+        }
+
+        internal string Path { get; }
+
+        public void Dispose() {
+            if (Directory.Exists(Path)) {
+                Directory.Delete(Path, recursive: true);
+            }
         }
     }
 }

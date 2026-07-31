@@ -13,13 +13,15 @@ public sealed record GalateaConfig(
     IReadOnlyList<GalateaUserConfig> Users,
     IReadOnlyList<CompletionConnectionConfig> Connections,
     string DefaultConnectionId,
-    IReadOnlyList<string>? ListenUrls = null
+    IReadOnlyList<string>? ListenUrls = null,
+    string? CallLogDir = null
 );
 
 /// <summary>Shape of config.json: user accounts + server settings, with no LLM binding.</summary>
 public sealed record GalateaUsersFileConfig(
     IReadOnlyList<GalateaUserConfig> Users,
-    IReadOnlyList<string>? ListenUrls = null
+    IReadOnlyList<string>? ListenUrls = null,
+    string? CallLogDir = null
 );
 
 public sealed record GalateaUserConfig(

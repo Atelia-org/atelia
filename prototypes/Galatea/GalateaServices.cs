@@ -17,8 +17,11 @@ using Atelia.SessionJournal.DerivedRecap.Planner;
 namespace Atelia.Galatea.Server;
 
 public sealed class GalateaHostService : IAsyncDisposable {
+    internal const int RecentTurnLimit = 6;
+
     private readonly CompletionConnectionRegistry _connections;
     private readonly GalateaInputPreprocessor _inputPreprocessor;
+    private readonly string? _callLogDirectory;
     private readonly ConcurrentDictionary<string, Lazy<Task<UserSessionHost>>> _sessions = new(StringComparer.Ordinal);
     private readonly IReadOnlyDictionary<string, GalateaUserConfig> _users;
 
@@ -32,6 +35,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
         _inputPreprocessor = new GalateaInputPreprocessor(
             userMessageNormalizer
         );
+        _callLogDirectory = config.CallLogDir;
         _users = config.Users.ToDictionary(x => x.UserId, StringComparer.Ordinal);
     }
 
@@ -70,7 +74,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
 
     public RecentTurnsResponseDto BuildRecentTurnsResponse(
         SessionJournalEngine engine,
-        int maxTurns = 12
+        int maxTurns = RecentTurnLimit
     ) {
         ArgumentNullException.ThrowIfNull(engine);
         SessionCompletedTurnsSnapshot snapshot =
@@ -401,13 +405,21 @@ public sealed class GalateaHostService : IAsyncDisposable {
             effectiveUserMessage
         );
 
-        ICompletionClient client = _connections.GetClient(connection.Id);
+        ICompletionClient innerClient =
+            _connections.GetClient(connection.Id);
+        ICompletionClient agentClient =
+            GalateaCompletionLogging.CreateAgentClient(
+                innerClient,
+                connection,
+                _callLogDirectory
+            );
         DerivedRecapOnlineLifecycleCoordinator recap =
             GalateaRecapComposition.CreateLifecycle(
                 host.Engine,
                 prepared,
                 connection,
-                client
+                innerClient,
+                _callLogDirectory
             );
         var lifecycleGate = new GalateaFreshSendLifecycleGate(
             recap,
@@ -415,7 +427,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
         );
         host.Engine.UseRuntime(CreateRuntime(
             connection,
-            client,
+            agentClient,
             recap,
             lifecycleGate,
             SessionUncertainCompletionRecoveryPolicy.Refuse
@@ -456,7 +468,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
         }
 
         CompletionConnectionConfig connection;
-        ICompletionClient client;
+        ICompletionClient innerClient;
         if (requirement is SessionRuntimeRecoveryRequirements
                 .NewRequestRequired) {
             connection = _connections.Resolve(
@@ -480,21 +492,28 @@ public sealed class GalateaHostService : IAsyncDisposable {
                     "recovery-head-changed"
                 );
             }
-            client = _connections.GetClient(connection.Id);
+            innerClient = _connections.GetClient(connection.Id);
             DerivedRecapOnlineLifecycleCoordinator recap =
                 GalateaRecapComposition.CreateLifecycle(
                     host.Engine,
                     prepared,
                     connection,
-                    client
+                    innerClient,
+                    _callLogDirectory
                 );
             var lifecycleGate = new GalateaRecoveryLifecycleGate(
                 recap,
                 liveTurn.StopController
             );
+            ICompletionClient agentClient =
+                GalateaCompletionLogging.CreateAgentClient(
+                    innerClient,
+                    connection,
+                    _callLogDirectory
+                );
             host.Engine.UseRuntime(CreateRuntime(
                 connection,
-                client,
+                agentClient,
                 recap,
                 lifecycleGate,
                 SessionUncertainCompletionRecoveryPolicy.Refuse
@@ -546,12 +565,18 @@ public sealed class GalateaHostService : IAsyncDisposable {
                 );
             }
             connection = bound.Connection;
-            client = bound.Client;
+            innerClient = bound.Client;
+            ICompletionClient agentClient =
+                GalateaCompletionLogging.CreateAgentClient(
+                    innerClient,
+                    connection,
+                    _callLogDirectory
+                );
             liveTurn.StopController.EnterObserverOnlyOrThrow(
                 cancellationToken
             );
             host.Engine.UseRuntime(new SessionRuntime(
-                client,
+                agentClient,
                 CompletionTarget: frozen.CompletionTarget,
                 MaxTokens: connection.MaxTokens,
                 UncertainCompletionRecoveryPolicy:
@@ -889,7 +914,11 @@ internal static class GalateaConfigLoader {
             Users: usersFile.Users,
             Connections: connectionsFile.Connections,
             DefaultConnectionId: connectionsFile.DefaultConnectionId!,
-            ListenUrls: usersFile.ListenUrls
+            ListenUrls: usersFile.ListenUrls,
+            CallLogDir: ResolveCallLogDirectory(
+                usersFile.CallLogDir,
+                configDir
+            )
         );
 
         config = ResolveSystemPromptFiles(config, resolvedPath);
@@ -923,6 +952,21 @@ internal static class GalateaConfigLoader {
         return config with { Users = resolvedUsers };
     }
 
+    private static string? ResolveCallLogDirectory(
+        string? configuredPath,
+        string configDirectory
+    ) {
+        if (configuredPath is null) { return null; }
+        if (string.IsNullOrWhiteSpace(configuredPath)) {
+            throw new InvalidOperationException(
+                "Galatea callLogDir must not be blank."
+            );
+        }
+        return Path.TrimEndingDirectorySeparator(
+            Path.GetFullPath(configuredPath, configDirectory)
+        );
+    }
+
     private static void Validate(GalateaConfig config) {
         var userIds = new HashSet<string>(StringComparer.Ordinal);
         for (int i = 0; i < config.Users.Count; i++) {
@@ -942,6 +986,14 @@ internal static class GalateaConfigLoader {
                 );
             }
 
+            if (config.CallLogDir is not null) {
+                EnsurePathsDoNotNest(
+                    config.CallLogDir,
+                    Path.GetFullPath(user.SessionDir),
+                    user.UserId
+                );
+            }
+
         }
 
         if (config.ListenUrls is null) { return; }
@@ -950,6 +1002,39 @@ internal static class GalateaConfigLoader {
             if (string.IsNullOrWhiteSpace(config.ListenUrls[i])) { throw new InvalidOperationException($"Galatea config listenUrls[{i}] must not be blank."); }
         }
     }
+
+    private static void EnsurePathsDoNotNest(
+        string callLogDirectory,
+        string sessionDirectory,
+        string userId
+    ) {
+        string callLogs = Path.TrimEndingDirectorySeparator(
+            Path.GetFullPath(callLogDirectory)
+        );
+        string session = Path.TrimEndingDirectorySeparator(
+            Path.GetFullPath(sessionDirectory)
+        );
+        StringComparison comparison = OperatingSystem.IsWindows()
+            ? StringComparison.OrdinalIgnoreCase
+            : StringComparison.Ordinal;
+        if (string.Equals(callLogs, session, comparison)
+            || IsAncestor(callLogs, session, comparison)
+            || IsAncestor(session, callLogs, comparison)) {
+            throw new InvalidOperationException(
+                $"Galatea callLogDir must be disjoint from sessionDir "
+                + $"for user '{userId}'."
+            );
+        }
+    }
+
+    private static bool IsAncestor(
+        string ancestor,
+        string descendant,
+        StringComparison comparison
+    ) => descendant.StartsWith(
+        ancestor + Path.DirectorySeparatorChar,
+        comparison
+    );
 }
 
 internal static class GalateaConfigBootstrapper {

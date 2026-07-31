@@ -83,12 +83,21 @@ internal static class GalateaRecapComposition {
         SessionJournalEngine engine,
         GalateaPreparedRecap prepared,
         CompletionConnectionConfig connection,
-        ICompletionClient sharedClient
+        ICompletionClient sharedInnerClient,
+        string? callLogDirectory
     ) {
         var maintainers = new DeferredRecapBlockMaintainerRegistry(
             () => new RecapBlockMaintainerRegistry([
                 .. prepared.CapabilityCatalog.All.Select(descriptor =>
-                    descriptor.Create(sharedClient, connection.ModelId)
+                    descriptor.Create(
+                        GalateaCompletionLogging.CreateMaintainerClient(
+                            sharedInnerClient,
+                            connection,
+                            callLogDirectory,
+                            descriptor
+                        ),
+                        connection.ModelId
+                    )
                 )
             ])
         );
