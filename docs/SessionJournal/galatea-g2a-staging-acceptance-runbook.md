@@ -98,7 +98,7 @@ dotnet run --project prototypes/SessionJournal.Cli -- \
 必须检查：
 
 - import report schema是`atelia.session-journal.legacy-import-report.v1`；
-- `observations=71`、`agentActions=71`、`skippedCompactions=2`、`skippedRecaps=2`、
+- `observationCount=71`、`agentActionCount=71`、`skippedCompactionCount=2`、`skippedRecapCount=2`、
   `warnings=[]`；
 - validate得到148个events且phase为`Idle`；
 - source schema、branch与final head均存在且符合本轮校准记录。
@@ -222,15 +222,26 @@ mkdir -p "$(dirname "$clone")"
 cp --archive --reflink=auto -- "$staging_repo" "$clone"
 ```
 
-scripted Host tests与real Host canary分别使用不同clone，不共享raw writer。Host acceptance至少覆盖：
+scripted Host tests与real Host canary分别使用不同clone，不共享raw writer。external
+real-staging suite直接覆盖：
 
 - 打开既有repo并展示newest-first最近6轮；
 - scripted fresh turn、dispose/reopen及exact Undo；
-- Published Recap进入frozen Prepared request后的safe reopen；Started默认Refuse，显式授权才restart；
-- sidecar publish/materialize前后recent snapshot、rewind token与raw head不变；
+- 已Published sidecar的exact selection/materialization前后recent snapshot、rewind token与raw head不变；
 - stale rewind token不能撤销更新后的turn；Undo回到setup-only suffix时仍可显示较早turn，但token为
   `null`；
-- connection切换只影响新turn，durable Prepared recovery仍exact绑定原connection。
+- connection切换只影响新turn。
+
+以下recovery规则不在external suite中复制test-only failpoint harness，而由组合证据继续作为G2A gate：
+
+- G1 deterministic Host tests：Prepared safe resume、Started默认Refuse/显式restart、durable original
+  connection exact binding；
+- CLI real-data acceptance：含Published Recap的Prepared canonical request在删除sidecar后仍可恢复；
+- 本轮Galatea logging tests：logging wrapper不改变completion target identity，Prepared exact recovery在
+  启用logging后仍成立。
+
+任何一层证据失败都不能用另一层替代；这里的组合只避免重复另一套failpoint authority，不把它们描述
+成external real-staging suite的直接覆盖。
 
 已provision且Published的staging通过opt-in external Fact进入scripted Host gate；测试本身为每个会写
 raw的case创建独立临时clone：
@@ -250,7 +261,7 @@ real Host使用run-root下的acceptance-only config：`sessionDir`必须是clone
 配置和环境变量名；resolved secret不得写入run root。通过`Galatea__ConfigPath`显式选择该config，
 不要修改现役Galatea config。config顶层`callLogDir`显式指向run-root下的独立
 `call-logs/host-real-001`；相对路径以config目录为基准，且Host会拒绝它与任何`sessionDir`相同或互相
-嵌套。
+嵌套，也会在创建client/日志目录之前拒绝二者existing path chain中的symlink/reparse point。
 
 real-provider canary只允许：
 

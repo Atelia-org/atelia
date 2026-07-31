@@ -673,7 +673,7 @@ G1后的调整：
   recovery policy不同；第二个Host尚未形成足够稳定的重复，不提取`DerivedRecap.Hosting`；
 - post-response warm-up继续defer，tool-capable recovery继续作为后续独立vertical。
 
-### G2A：Repeatable staging acceptance
+### G2A：Repeatable staging acceptance（Done，2026-08-01）
 
 禁止原地覆盖当前ChatSession repo。使用新的sibling staging path：
 
@@ -703,15 +703,18 @@ provisioning必须使用production `import-legacy-json`，不在测试/Host中�
 - exact materialization保留recent suffix且两个contribution可用；
 - 原export、旧repo文件hash不变。
 
-Host gate：
+G2A external Host direct gate：
 
 - Galatea打开staging repo展示最近6个raw turns；
 - 用scripted client完成一轮并reopen；
-- 在Prepared failpoint重启后safe resume；Started failpoint默认Refuse、显式授权后restart；
 - Undo新完成的一轮后UI回填正确；
-- DerivedRecap publish/materialize前后recent snapshot与`rewindLatestToken`不变；stale token不能误撤
+- DerivedRecap exact selection/materialize前后recent snapshot与`rewindLatestToken`不变；stale token不能误撤
   新turn；Undo若回到setup suffix，较早visible turns仍可显示但token必须为null；
 - connection切换只影响新turn。
+
+Prepared safe resume、Started默认Refuse/显式restart与durable original-connection binding不在external
+suite复制test-only failpoint harness；它们由G1 deterministic Host tests、CLI real-data Prepared recovery
+和本轮logging identity/Prepared recovery共同作为carried-forward gate。
 
 real-provider smoke：
 
@@ -723,6 +726,58 @@ real-provider smoke：
 会写raw event的scripted/real canary只运行在acceptance clone；该clone通过后丢弃，绝不直接切成
 production repo。
 
+完成结果：
+
+- 新增独立
+  [G2A staging acceptance runbook](galatea-g2a-staging-acceptance-runbook.md)，把每轮运行拆成
+  raw只读的staging与可写raw的disposable acceptance clones；run-root、reports、Completion call logs
+  与acceptance config均在session repo外，禁止`--force`、auto reset/reimport和clone promotion；
+- production importer新增content-free `--report-json`；同一次authoritative import report同时驱动
+  Markdown/JSON。`recap materialize-inspect`提供strict-ordinal、read-only exact materialization证据，
+  不读取active config/connections、不创建Store scaffolding、不调用provider；
+- Galatea recent默认收口为newest-first 6轮；测试Host新增existing-repo入口但不拥有/初始化输入repo。
+  opt-in external Host gate始终复制Published staging到私有clone，真实71-turn staging上4/4通过：exact
+  recent 6、materialization对recent/token/raw不可见、fresh → dispose/reopen → exact Undo、setup-only
+  suffix token为null，以及A→B connection只影响对应新turn；
+- Galatea新增可选top-level `callLogDir`，相对config目录解析且必须与全部`sessionDir`双向non-nested。
+  agent写`agent/`，Maintainer按identity写`maintenance/<maintainer-id>/`；wrapper透传client
+  `Name`/`ApiSpecId`，Prepared exact binding不因是否启用logging而漂移；
+- G2A实际run使用source export `1,281,881` bytes、SHA-256
+  `b71822a27003e8d9f9b9c0ff956ca7c268267aba72221be89df154ed7d4751f3`。production import得到
+  148 raw events、71 Observation + 71 Action、2 compaction + 2 recap skipped、零warning、Idle；
+  repo config hash为`03a5e77e506c210594901375eff86ebbaf992ff532160b471d9a1831edc4d50a`，
+  `R=18,000`、`B=21,000`，完整HistoryLoad为116,458；
+- 首个真实`dsv4p` run在world-understanding完成后，autobiographical调用命中本地100秒HTTP timeout，
+  稳定返回`BlockFailed`并保留Building；同一anchor
+  `ej1:000003e66000017f0000000100000000`上的production `recap resume`只补剩余两次调用后
+  Published，没有reset/reimport或重做healthy block。总计5次有界provider attempt（其中1次timeout），
+  immediate second run为`NoBuild`且0 call；
+- exact materialization选中两个canonical contributions：world-understanding 6,807 UTF-8 bytes、
+  autobiography 5,470 UTF-8 bytes，二者`AbsorbedThrough`均为admission anchor；recent suffix为19 raw
+  events / 19 HistoryUnits。materialize前后raw fingerprint不变，source export与旧repo同轮before/after
+  fingerprint不变；
+- real Galatea Host canary只绑定`127.0.0.1`并使用acceptance clone：打开时展示6轮，显式`dsv4p`
+  完成1次agent call，call log位于clone外；进程reopen后仍为Idle且exact rewind token不变，Undo成功移除
+  canary。由于desired runtime setup保留在tail，Undo后6个较早turn仍可见而token为null；strict validate
+  为Idle；
+- 常规Galatea suite为51 passed / 4 external skipped，external staging gate 4/4，Galatea build 0 warning /
+  0 error。Published-recap Prepared跨Host没有复制新的failpoint harness，继续由G1 Prepared exact
+  recovery、CLI real-data Prepared recovery与本轮logging exact-binding组合举证。
+
+G2A后的调整：
+
+- G2B不复用、重命名或promote本轮staging/clone；quiesce后必须从与legacy exact head对应的final export
+  fresh构建activation repo。真实LLM block payload/envelope hash不作为跨run golden，只固定raw/import、
+  config、admission/absorption、block target与Published/NoBuild结构；
+- G2B activation config除删除旧compaction字段外，还应显式把`callLogDir`放到session repo外；read-only
+  open与materialization分别使用本轮新增的Host existing-repo路径和`recap materialize-inspect`；
+- provider timeout是可恢复的Building状态，不是reset信号。G2B maintenance window必须允许有界
+  Building-first resume；若最终仍未Published则保持停服并报告失败，不能通过reimport或切换到旧derived
+  state绕过；
+- G2A已证明real canary、reopen与Undo，G2B默认只需read-only activation检查。若operator仍选择
+  production canary，必须继续在maintenance内明确越过fix-forward boundary；
+- `DerivedRecap.Hosting`仍不抽取，post-response warm-up与tool-capable recovery继续defer。
+
 ### G2B：Quiesced exact-head activation
 
 1. Galatea进入maintenance mode或停止旧Server，等待active turn和post-compaction结束并阻止
@@ -730,8 +785,8 @@ production repo。
 2. 捕获legacy exact branch/head，重新生成final export并证明对应此head；
 3. 若export bytes改变，更新SHA-256、calibration和预期import facts；
 4. 从final export重新构建一个从未运行agent canary的fresh activation repo；
-5. 完成raw validate、config init/inspect、Store create、Recap run/materialize；这些步骤不得写raw
-   turn；
+5. 完成raw validate、config init/inspect、Store create、Recap run、`materialize-inspect`与immediate
+   `NoBuild`；provider失败只允许对同一frozen Building做有界resume，这些步骤不得写raw turn；
 6. 使用隔离config/port完成read-only Host open与recent projection；
 7. 在停服状态原子切换新binary + `sessionDir`，以maintenance/admin-only模式启动新Host；
 8. 完成read-only检查；若选择production canary，也必须在maintenance内执行并明确记录已越过
@@ -748,6 +803,7 @@ rollback boundary：
 activation gate：
 
 - governing runtime/system setup与Galatea实际desired config一致；
+- activation config不含旧compaction字段，`callLogDir`存在时位于session repo外；
 - `GET current`与recent projection正常；
 - 若执行deliberate production canary，它必须发生在maintenance内；一旦写入raw即记录进入
   fix-forward boundary；
