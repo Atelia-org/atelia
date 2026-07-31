@@ -57,10 +57,11 @@ public sealed class GalateaInputPreprocessorVerticalTests {
         );
         Assert.Equal(wrapped, requestedObservation.Content);
 
-        ObservationMessage persistedObservation = Assert.Single(
-            session.Engine.Context.OfType<ObservationMessage>()
+        var persisted = session.Engine.ReadRecentCompletedTurns(1);
+        Assert.Equal(
+            wrapped,
+            Assert.Single(persisted.Turns).ObservationContent
         );
-        Assert.Equal(wrapped, persistedObservation.Content);
 
         RecentTurnsResponseDto recent = await GetRecentTurnsAsync(client);
         RecentTurnDto recentTurn = Assert.Single(recent.Turns);
@@ -88,6 +89,7 @@ public sealed class GalateaInputPreprocessorVerticalTests {
             "alice",
             CancellationToken.None
         );
+        var initialHead = session.Engine.ReadCurrentHead();
 
         StartTurnResponseDto started = await StartTurnAsync(
             client,
@@ -114,7 +116,10 @@ public sealed class GalateaInputPreprocessorVerticalTests {
 
         Assert.True(normalizer.CapturedToken.IsCancellationRequested);
         Assert.Equal(0, completion.DispatchCallCount);
-        Assert.Empty(session.Engine.Context);
+        Assert.Equal(initialHead, session.Engine.ReadCurrentHead());
+        Assert.Empty(
+            session.Engine.ReadRecentCompletedTurns().Turns
+        );
 
         RecentTurnsResponseDto recent = await GetRecentTurnsAsync(client);
         Assert.Empty(recent.Turns);

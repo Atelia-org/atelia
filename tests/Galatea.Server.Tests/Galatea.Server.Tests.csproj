@@ -20,6 +20,9 @@
   <ItemGroup>
     <ProjectReference Include="../../prototypes/Galatea/Galatea.Server.csproj" />
     <ProjectReference Include="../../prototypes/SessionJournal/SessionJournal.csproj" />
+    <ProjectReference Include="../../prototypes/SessionJournal.DerivedRecap.Store/SessionJournal.DerivedRecap.Store.csproj" />
+    <ProjectReference Include="../../prototypes/SessionJournal.DerivedRecap.Planner/SessionJournal.DerivedRecap.Planner.csproj" />
+    <ProjectReference Include="../../prototypes/SessionJournal.DerivedRecap.Maintainers/SessionJournal.DerivedRecap.Maintainers.csproj" />
   </ItemGroup>
 
 </Project>

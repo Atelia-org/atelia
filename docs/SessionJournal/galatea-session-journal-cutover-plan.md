@@ -544,7 +544,7 @@ Gate：
   blocked Maintainer stop + next-request FrozenBuilding Resume，以及observer stop → TurnFailed → exact
   abandon → idle。
 
-### G1：Galatea SessionHost vertical
+### G1：Galatea SessionHost vertical（Done，2026-08-01）
 
 用`SessionJournalEngine`替换`UserSessionHost`中的`ChatSessionEngine`：
 
@@ -611,6 +611,68 @@ Gate：
 - normalized text而非原始text进入raw history；
 - recent UI与Undo行为通过。
 
+完成结果：
+
+- `UserSessionHost`已经只持有`SessionJournalEngine`；Galatea project删除`ChatSession`引用、旧
+  `CompactAsync`/EstimatedTokens触发器与三项compaction配置。startup只打开operator预先provision的
+  raw repo并检查phase，不创建repo、Store、Planner config或Completion client；
+- fresh endpoint在创建live turn前按public runtime requirement做phase gate；active durable tail返回
+  `409 recovery-required`且不消费新message，TurnFailed仅在background writer内exact abandon成功后
+  才继续。fresh runner严格串联captured Idle head → desired setup committed head → preparer authority
+  head，任一不一致都在normalizer/client/Observation之前停止；
+- Galatea新增thin concrete Recap composition root：复用public Building-first preparer、repo active-config
+  source与authority-only lifecycle factory；完整built-in capability catalog投影留在Host，concrete
+  Maintainer registry通过`DeferredRecapBlockMaintainerRegistry`首次真实binding时才创建，没有复制
+  Planner/Store authority算法，也未抽取新的Hosting assembly；
+- fresh Send与AwaitingAgentAction recovery分别使用`GalateaFreshSendLifecycleGate`和
+  `GalateaRecoveryLifecycleGate`；前者在pre-Observation lifecycle成功后切到observer-only，后者在
+  existing Observation的唯一lifecycle成功后切换。Prepared/Started不读Store/config/normalizer，完成
+  frozen runtime exact binding后、`ResumeAsync`前切换；
+- 独立`POST /api/chat/turns/resume`使用current DTO给出的canonical exact head授权恢复；
+  AwaitingAgentAction校验selected connection的governing model/surface，Prepared exact-bind durable
+  completion identity，Started默认在client创建前拒绝，只有同一exact head上的显式restart才使用
+  `RestartWithNewAttempt`。frozen non-empty tool shape与ToolContinuation继续typed unsupported；
+- known Completion non-success先形成TurnFailed，再调用`AbandonFailedTurn(exactHead)`；只有
+  `Moved`后才向UI承诺本轮未进入active history，race/unavailable不再沿用旧成功文案；shutdown或
+  Started uncertain不自动abandon；
+- recent直接投影`ReadRecentCompletedTurns`。可撤销性不使用冗余bool，而是仅在captured head就是最新
+  terminal Action时返回opaque `rewindLatestToken`；Undo回传该token执行exact CAS，成功DTO直接消费
+  `Moved.Turn`并附带move后authoritative recent snapshot，删除pre-read/match/empty-assistant fallback与
+  JS本地`slice(1)`；
+- 测试Host现在显式provision raw repo、DerivedRecap Store与repo-owned planner config；legacy
+  ChatSession projector/compaction fixtures已删除，raw tool-loop/fold语义继续由SessionJournal core
+  suite负责。
+
+完成时验证（2026-08-01）：
+
+- `Galatea.Server.Tests` 47/47，Galatea build 0 warning / 0 error，JS `node --check`通过；
+- durable recovery vertical 5/5：active Observation阻止fresh message且normalizer/client/provider为0，
+  NewRequest恢复不重复normalization，Prepared在删除active config后仍exact恢复，Started默认拒绝且
+  client factory为0，同一exact head上的显式restart可完成且仍不读取active config；
+- recent/Undo真实Host vertical 4/4：newest-first exact token、Moved DTO、关闭writable Host后的
+  reopen/off-lineage parity、stale token零mutation、writer busy快速409；
+- readiness/failure vertical 2/2：planner config missing在normalizer/client/Observation前阻断，known
+  provider non-success exact abandon回Idle；既有preprocessor、stop-controller、SSE lock topology与
+  lifecycle component gates继续通过；
+- 独立审阅发现并关闭三项blocker：failed-turn abandon失败时错误承诺、setup committed head未与Recap
+  authority对齐、Empty/active phase在endpoint前置gate中被误当Idle；最终复核未引入第二套recovery或
+  planning state machine。
+
+G1后的调整：
+
+- G2A继续负责目标legacy export的fresh staging import、真实built-in Maintainer/partial Building stop与
+  `dsv4p`有界provider smoke；这些是real-data/real-provider acceptance，不把测试Host扩成第二套
+  importer或Maintainer harness；
+- G2 Host gate以`rewindLatestToken`而非`Turns.Count > 0`判断Undo，并增加sidecar publish/materialize
+  前后recent/token不变、stale token不误撤新turn、Undo回到setup suffix后仍有visible turn但token为
+  null的验收；
+- G2B activation config删除旧compaction字段。当前ignored local `config.json`仍指向legacy
+  ChatSession目录并不代表G1 binary已完成production activation；必须等G2A fresh staging通过后按G2B
+  quiesced exact-head步骤切换；
+- CLI与Galatea目前只重复少量profile capability投影和completion identity mapping，logging、UI、
+  recovery policy不同；第二个Host尚未形成足够稳定的重复，不提取`DerivedRecap.Hosting`；
+- post-response warm-up继续defer，tool-capable recovery继续作为后续独立vertical。
+
 ### G2A：Repeatable staging acceptance
 
 禁止原地覆盖当前ChatSession repo。使用新的sibling staging path：
@@ -647,6 +709,8 @@ Host gate：
 - 用scripted client完成一轮并reopen；
 - 在Prepared failpoint重启后safe resume；Started failpoint默认Refuse、显式授权后restart；
 - Undo新完成的一轮后UI回填正确；
+- DerivedRecap publish/materialize前后recent snapshot与`rewindLatestToken`不变；stale token不能误撤
+  新turn；Undo若回到setup suffix，较早visible turns仍可显示但token必须为null；
 - connection切换只影响新turn。
 
 real-provider smoke：

@@ -1,0 +1,557 @@
+using System.Net;
+using System.Net.Http.Json;
+using System.Reflection;
+using System.Text.Json;
+using Atelia.Completion;
+using Atelia.Completion.Abstractions;
+using Atelia.EventJournal;
+using Atelia.SessionJournal;
+using Atelia.SessionJournal.DerivedRecap.Planner;
+using Microsoft.Extensions.DependencyInjection;
+using Xunit;
+
+namespace Atelia.Galatea.Server.Tests;
+
+public sealed class GalateaDurableRecoveryVerticalTests {
+    private static readonly TimeSpan CompletionDeadline =
+        TimeSpan.FromSeconds(5);
+
+    [Fact]
+    public async Task NewMessage_WhenObservationAwaitsAction_ReturnsRecoveryConflictWithoutCalls() {
+        var completionFactory = new TrackingCompletionClientFactory();
+        var normalizer = new TrackingNormalizer();
+        await using var host = GalateaTestHost.Create(
+            completionFactory,
+            normalizer
+        );
+        string sessionPath = GetSessionPath(host);
+        EventAddress pendingHead = AppendPendingObservation(sessionPath);
+        using HttpClient client = host.CreateClient();
+        await LoginAsync(client);
+
+        using HttpResponseMessage response = await client.PostAsJsonAsync(
+            "/api/chat/turns",
+            new ChatStreamRequest(
+                "must not be accepted",
+                ConnectionId: "test"
+            )
+        );
+
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        using JsonDocument body = await ReadJsonAsync(response);
+        Assert.Equal(
+            "recovery-required",
+            body.RootElement.GetProperty("code").GetString()
+        );
+        Assert.Equal(
+            nameof(SessionExecutionPhase.AwaitingAgentAction),
+            body.RootElement.GetProperty("phase").GetString()
+        );
+        Assert.Equal(
+            EventAddressTextCodec.Format(pendingHead),
+            body.RootElement.GetProperty("head").GetString()
+        );
+        Assert.Equal(0, normalizer.NormalizeCallCount);
+        Assert.Equal(0, completionFactory.CreateCallCount);
+        Assert.Equal(0, completionFactory.Client.DispatchCallCount);
+
+        GalateaHostService service = host.Factory.Services
+            .GetRequiredService<GalateaHostService>();
+        UserSessionHost session = await service.GetSessionAsync(
+            "alice",
+            CancellationToken.None
+        );
+        Assert.Equal(pendingHead, session.Engine.ReadCurrentHead());
+        Assert.Equal(
+            SessionExecutionPhase.AwaitingAgentAction,
+            session.Engine.InspectExecutionBoundary().Phase
+        );
+    }
+
+    [Fact]
+    public async Task ResumeMatchingObservation_CompletesWithoutNormalizingAgain() {
+        var completionFactory = new TrackingCompletionClientFactory(
+            "resumed answer"
+        );
+        var normalizer = new TrackingNormalizer();
+        await using var host = GalateaTestHost.Create(
+            completionFactory,
+            normalizer
+        );
+        string sessionPath = GetSessionPath(host);
+        EventAddress pendingHead = AppendPendingObservation(sessionPath);
+        using HttpClient client = host.CreateClient();
+        await LoginAsync(client);
+
+        StartTurnResponseDto started = await ResumeAsync(
+            client,
+            pendingHead,
+            connectionId: "test"
+        );
+        GalateaHostService service = host.Factory.Services
+            .GetRequiredService<GalateaHostService>();
+        UserSessionHost session = await service.GetSessionAsync(
+            "alice",
+            CancellationToken.None
+        );
+        GalateaLiveTurn liveTurn = Assert.IsType<GalateaLiveTurn>(
+            service.FindTurn(session, started.TurnId)
+        );
+        await Assert.IsAssignableFrom<Task>(liveTurn.RunTask)
+            .WaitAsync(CompletionDeadline);
+
+        Assert.Equal("completed", liveTurn.Status);
+        Assert.Equal(0, normalizer.NormalizeCallCount);
+        Assert.Equal(1, completionFactory.CreateCallCount);
+        Assert.Equal(1, completionFactory.Client.DispatchCallCount);
+        Assert.Equal(
+            SessionExecutionPhase.Idle,
+            session.Engine.InspectExecutionBoundary().Phase
+        );
+        SessionCompletedTurnProjection completed = Assert.Single(
+            session.Engine.ReadRecentCompletedTurns().Turns
+        );
+        Assert.Equal(
+            GalateaUserMessageEnvelope.Wrap("already normalized"),
+            completed.ObservationContent
+        );
+        Assert.Equal(
+            "resumed answer",
+            completed.TerminalAction.Message.GetFlattenedText()
+        );
+    }
+
+    [Fact]
+    public async Task ResumePrepared_ExactBindsAndDoesNotReadDeletedPlannerConfig() {
+        var completionFactory = new TrackingCompletionClientFactory(
+            "prepared recovery answer"
+        );
+        var normalizer = new TrackingNormalizer();
+        await using var host = GalateaTestHost.Create(
+            completionFactory,
+            normalizer
+        );
+        string sessionPath = GetSessionPath(host);
+        CompletionConnectionConfig connection = GetConnection(host);
+        EventAddress preparedHead = await CreateRecoveryBoundaryAsync(
+            sessionPath,
+            connection,
+            completionFactory.Client,
+            "AfterRequestPreparedCommitted",
+            SessionExecutionPhase.AwaitingCompletionDispatch
+        );
+        File.Delete(RecapPlannerConfigLoader.GetCanonicalPath(sessionPath));
+        using HttpClient client = host.CreateClient();
+        await LoginAsync(client);
+
+        StartTurnResponseDto started = await ResumeAsync(
+            client,
+            preparedHead,
+            connectionId: null
+        );
+        GalateaHostService service = host.Factory.Services
+            .GetRequiredService<GalateaHostService>();
+        UserSessionHost session = await service.GetSessionAsync(
+            "alice",
+            CancellationToken.None
+        );
+        GalateaLiveTurn liveTurn = Assert.IsType<GalateaLiveTurn>(
+            service.FindTurn(session, started.TurnId)
+        );
+        await Assert.IsAssignableFrom<Task>(liveTurn.RunTask)
+            .WaitAsync(CompletionDeadline);
+
+        Assert.Equal("completed", liveTurn.Status);
+        Assert.Equal(0, normalizer.NormalizeCallCount);
+        Assert.Equal(1, completionFactory.CreateCallCount);
+        Assert.Equal(1, completionFactory.Client.DispatchCallCount);
+        Assert.False(File.Exists(
+            RecapPlannerConfigLoader.GetCanonicalPath(sessionPath)
+        ));
+        Assert.Equal(
+            SessionExecutionPhase.Idle,
+            session.Engine.InspectExecutionBoundary().Phase
+        );
+    }
+
+    [Fact]
+    public async Task ResumeStarted_DefaultRefusesBeforeClientCreation() {
+        var completionFactory = new TrackingCompletionClientFactory(
+            "must not dispatch"
+        );
+        var normalizer = new TrackingNormalizer();
+        await using var host = GalateaTestHost.Create(
+            completionFactory,
+            normalizer
+        );
+        string sessionPath = GetSessionPath(host);
+        CompletionConnectionConfig connection = GetConnection(host);
+        EventAddress startedHead = await CreateRecoveryBoundaryAsync(
+            sessionPath,
+            connection,
+            completionFactory.Client,
+            "AfterCompletionAttemptStartedCommitted",
+            SessionExecutionPhase.AwaitingCompletion
+        );
+        File.Delete(RecapPlannerConfigLoader.GetCanonicalPath(sessionPath));
+        using HttpClient client = host.CreateClient();
+        await LoginAsync(client);
+
+        using HttpResponseMessage response = await client.PostAsJsonAsync(
+            "/api/chat/turns/resume",
+            new ResumeTurnRequest(
+                EventAddressTextCodec.Format(startedHead),
+                ConnectionId: null,
+                RestartUncertainCompletion: false
+            )
+        );
+
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        using JsonDocument body = await ReadJsonAsync(response);
+        Assert.Equal(
+            "uncertain-completion-restart-required",
+            body.RootElement.GetProperty("code").GetString()
+        );
+        Assert.Equal(
+            nameof(SessionExecutionPhase.AwaitingCompletion),
+            body.RootElement.GetProperty("phase").GetString()
+        );
+        Assert.Equal(0, normalizer.NormalizeCallCount);
+        Assert.Equal(0, completionFactory.CreateCallCount);
+        Assert.Equal(0, completionFactory.Client.DispatchCallCount);
+        Assert.False(File.Exists(
+            RecapPlannerConfigLoader.GetCanonicalPath(sessionPath)
+        ));
+
+        GalateaHostService service = host.Factory.Services
+            .GetRequiredService<GalateaHostService>();
+        UserSessionHost session = await service.GetSessionAsync(
+            "alice",
+            CancellationToken.None
+        );
+        Assert.Equal(startedHead, session.Engine.ReadCurrentHead());
+        CurrentTurnDto? current = await client
+            .GetFromJsonAsync<CurrentTurnDto>(
+                "/api/chat/turns/current"
+            );
+        Assert.NotNull(current);
+        Assert.Equal("recovery-required", current!.Status);
+        Assert.True(current.RestartRequired);
+        Assert.Equal(
+            EventAddressTextCodec.Format(startedHead),
+            current.RecoveryHead
+        );
+    }
+
+    [Fact]
+    public async Task ResumeStarted_ExplicitExactHeadRestartCompletes() {
+        var completionFactory = new TrackingCompletionClientFactory(
+            "restarted answer"
+        );
+        var normalizer = new TrackingNormalizer();
+        await using var host = GalateaTestHost.Create(
+            completionFactory,
+            normalizer
+        );
+        string sessionPath = GetSessionPath(host);
+        CompletionConnectionConfig connection = GetConnection(host);
+        EventAddress startedHead = await CreateRecoveryBoundaryAsync(
+            sessionPath,
+            connection,
+            completionFactory.Client,
+            "AfterCompletionAttemptStartedCommitted",
+            SessionExecutionPhase.AwaitingCompletion
+        );
+        File.Delete(RecapPlannerConfigLoader.GetCanonicalPath(sessionPath));
+        using HttpClient client = host.CreateClient();
+        await LoginAsync(client);
+
+        using HttpResponseMessage response = await client.PostAsJsonAsync(
+            "/api/chat/turns/resume",
+            new ResumeTurnRequest(
+                EventAddressTextCodec.Format(startedHead),
+                ConnectionId: null,
+                RestartUncertainCompletion: true
+            )
+        );
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        StartTurnResponseDto? started = await response.Content
+            .ReadFromJsonAsync<StartTurnResponseDto>();
+        Assert.NotNull(started);
+
+        GalateaHostService service = host.Factory.Services
+            .GetRequiredService<GalateaHostService>();
+        UserSessionHost session = await service.GetSessionAsync(
+            "alice",
+            CancellationToken.None
+        );
+        GalateaLiveTurn liveTurn = Assert.IsType<GalateaLiveTurn>(
+            service.FindTurn(session, started!.TurnId)
+        );
+        await Assert.IsAssignableFrom<Task>(liveTurn.RunTask)
+            .WaitAsync(CompletionDeadline);
+
+        Assert.Equal("completed", liveTurn.Status);
+        Assert.Equal(0, normalizer.NormalizeCallCount);
+        Assert.Equal(1, completionFactory.CreateCallCount);
+        Assert.Equal(1, completionFactory.Client.DispatchCallCount);
+        Assert.False(File.Exists(
+            RecapPlannerConfigLoader.GetCanonicalPath(sessionPath)
+        ));
+        Assert.Equal(
+            SessionExecutionPhase.Idle,
+            session.Engine.InspectExecutionBoundary().Phase
+        );
+        Assert.Equal(
+            "restarted answer",
+            Assert.Single(
+                session.Engine.ReadRecentCompletedTurns().Turns
+            ).TerminalAction.Message.GetFlattenedText()
+        );
+    }
+
+    private static string GetSessionPath(GalateaTestHost host) =>
+        host.Factory.Services
+            .GetRequiredService<GalateaConfig>()
+            .Users.Single().SessionDir;
+
+    private static CompletionConnectionConfig GetConnection(
+        GalateaTestHost host
+    ) => host.Factory.Services
+        .GetRequiredService<GalateaConfig>()
+        .Connections.Single(static connection => connection.Id == "test");
+
+    private static EventAddress AppendPendingObservation(
+        string sessionPath
+    ) {
+        using var engine = SessionJournalEngine.Open(sessionPath);
+        return engine.AppendObservation(
+            GalateaUserMessageEnvelope.Wrap("already normalized")
+        );
+    }
+
+    private static async Task<EventAddress> CreateRecoveryBoundaryAsync(
+        string sessionPath,
+        CompletionConnectionConfig connection,
+        ICompletionClient client,
+        string failpointName,
+        SessionExecutionPhase expectedPhase
+    ) {
+        SessionRuntime runtime = CreateFixtureRuntime(
+            connection,
+            client
+        );
+        Assembly assembly = typeof(SessionJournalEngine).Assembly;
+        Type failpointType = assembly.GetType(
+            "Atelia.SessionJournal.SessionJournalFailpoint",
+            throwOnError: true
+        )!;
+        Type hooksType = assembly.GetType(
+            "Atelia.SessionJournal.SessionJournalTestHooks",
+            throwOnError: true
+        )!;
+        object failpoint = Enum.Parse(failpointType, failpointName);
+        ConstructorInfo hooksConstructor = Assert.Single(
+            hooksType.GetConstructors(
+                BindingFlags.Instance
+                | BindingFlags.Public
+                | BindingFlags.NonPublic
+            ),
+            constructor => constructor.GetParameters().Length == 4
+        );
+        object hooks = hooksConstructor.Invoke([
+            failpoint,
+            null,
+            null,
+            null
+        ]);
+        MethodInfo openForTest = Assert.Single(
+            typeof(SessionJournalEngine).GetMethods(
+                BindingFlags.Static | BindingFlags.NonPublic
+            ),
+            method => {
+                if (method.Name != "OpenForTest") { return false; }
+                ParameterInfo[] parameters = method.GetParameters();
+                return parameters.Length == 3
+                    && parameters[0].ParameterType == typeof(string)
+                    && parameters[1].ParameterType
+                        == typeof(SessionRuntime)
+                    && parameters[2].ParameterType == hooksType;
+            }
+        );
+        using var engine = Assert.IsType<SessionJournalEngine>(
+            openForTest.Invoke(null, [sessionPath, runtime, hooks])
+        );
+
+        Exception exception = await Assert.ThrowsAnyAsync<Exception>(
+            () => engine.SendAsync(
+                GalateaUserMessageEnvelope.Wrap("fixture observation"),
+                CancellationToken.None
+            )
+        );
+        Assert.Equal(
+            "Atelia.SessionJournal.SessionJournalFailpointException",
+            exception.GetType().FullName
+        );
+        SessionExecutionBoundaryInspection boundary =
+            engine.InspectExecutionBoundary();
+        Assert.Equal(expectedPhase, boundary.Phase);
+        Assert.NotNull(boundary.Head);
+        return boundary.Head!.Value;
+    }
+
+    private static SessionRuntime CreateFixtureRuntime(
+        CompletionConnectionConfig connection,
+        ICompletionClient client
+    ) {
+        CompletionDispatchIdentity dispatch =
+            CompletionDispatchIdentityFactory.Create(
+                connection,
+                client
+            );
+        return new SessionRuntime(
+            client,
+            CompletionTarget: new SessionCompletionTargetIdentity(
+                dispatch.ConnectionId,
+                dispatch.Kind,
+                dispatch.ConnectionFingerprint,
+                dispatch.RequestAdapterFingerprint
+            ),
+            MaxTokens: connection.MaxTokens,
+            ContextCandidateSource: new EmptyLineageCandidateSource()
+        );
+    }
+
+    private static async Task<StartTurnResponseDto> ResumeAsync(
+        HttpClient client,
+        EventAddress expectedHead,
+        string? connectionId
+    ) {
+        using HttpResponseMessage response = await client.PostAsJsonAsync(
+            "/api/chat/turns/resume",
+            new ResumeTurnRequest(
+                EventAddressTextCodec.Format(expectedHead),
+                connectionId
+            )
+        );
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        StartTurnResponseDto? started = await response.Content
+            .ReadFromJsonAsync<StartTurnResponseDto>();
+        return Assert.IsType<StartTurnResponseDto>(started);
+    }
+
+    private static async Task LoginAsync(HttpClient client) {
+        using HttpResponseMessage response =
+            await GalateaTestHost.LoginAsync(client);
+        Assert.Equal(HttpStatusCode.Redirect, response.StatusCode);
+    }
+
+    private static async Task<JsonDocument> ReadJsonAsync(
+        HttpResponseMessage response
+    ) => JsonDocument.Parse(
+        await response.Content.ReadAsStringAsync()
+    );
+
+    private sealed class EmptyLineageCandidateSource
+        : ICoherentContextCandidateSource {
+        public ValueTask<SessionContextCandidateSelection> SelectAsync(
+            SessionContextSelectionRequest request,
+            CancellationToken cancellationToken
+        ) {
+            ArgumentNullException.ThrowIfNull(request);
+            cancellationToken.ThrowIfCancellationRequested();
+            return ValueTask.FromResult(
+                new SessionContextCandidateSelection(
+                    SessionContextCandidateSelectionStatus.EmptyLineage,
+                    Candidate: null
+                )
+            );
+        }
+
+        public ValueTask<SessionContextCandidate> MaterializeAsync(
+            SessionContextCandidateDescriptor descriptor,
+            CancellationToken cancellationToken
+        ) => throw new InvalidOperationException(
+            "An EmptyLineage fixture must not materialize a candidate."
+        );
+    }
+
+    private sealed class TrackingCompletionClientFactory(
+        string responseText = "unused"
+    ) : ICompletionClientFactory {
+        private int _createCallCount;
+
+        internal TrackingCompletionClient Client { get; } = new(
+            responseText
+        );
+
+        internal int CreateCallCount => Volatile.Read(
+            ref _createCallCount
+        );
+
+        public ICompletionClient Create(
+            CompletionConnectionConfig connection
+        ) {
+            ArgumentNullException.ThrowIfNull(connection);
+            Interlocked.Increment(ref _createCallCount);
+            return Client;
+        }
+    }
+
+    private sealed class TrackingCompletionClient(string responseText)
+        : ICompletionClient {
+        private int _dispatchCallCount;
+
+        public string Name => "galatea-recovery-test";
+
+        public string ApiSpecId => "openai-chat-v1";
+
+        internal int DispatchCallCount => Volatile.Read(
+            ref _dispatchCallCount
+        );
+
+        public Task<CompletionResult> StreamCompletionAsync(
+            CompletionRequest request,
+            CompletionStreamObserver? observer,
+            CancellationToken cancellationToken = default
+        ) {
+            ArgumentNullException.ThrowIfNull(request);
+            cancellationToken.ThrowIfCancellationRequested();
+            Interlocked.Increment(ref _dispatchCallCount);
+            observer?.OnTextDelta(responseText);
+            return Task.FromResult(new CompletionResult(
+                new ActionMessage([
+                    new ActionBlock.Text(responseText)
+                ]),
+                new CompletionDescriptor(
+                    Name,
+                    ApiSpecId,
+                    request.ModelId
+                )
+            ));
+        }
+    }
+
+    private sealed class TrackingNormalizer
+        : IGalateaUserMessageNormalizer {
+        private int _normalizeCallCount;
+
+        internal int NormalizeCallCount => Volatile.Read(
+            ref _normalizeCallCount
+        );
+
+        public bool ShouldNormalize(string userMessage) {
+            _ = userMessage;
+            return true;
+        }
+
+        public ValueTask<string> NormalizeAsync(
+            string userMessage,
+            CancellationToken ct
+        ) {
+            ct.ThrowIfCancellationRequested();
+            Interlocked.Increment(ref _normalizeCallCount);
+            return ValueTask.FromResult(userMessage);
+        }
+    }
+}

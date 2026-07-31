@@ -6,11 +6,13 @@ using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading.Channels;
-using Atelia.ChatSession;
 using Atelia.Completion;
 using Atelia.Diagnostics;
 using Atelia.Completion.Abstractions;
 using Atelia.Completion.Tools;
+using Atelia.EventJournal;
+using Atelia.SessionJournal;
+using Atelia.SessionJournal.DerivedRecap.Planner;
 
 namespace Atelia.Galatea.Server;
 
@@ -59,89 +61,88 @@ public sealed class GalateaHostService : IAsyncDisposable {
         );
 
         var session = await lazy.Value.ConfigureAwait(false);
-        DebugUtil.Info("Galatea.Session", $"GetSessionAsync: user={userId}, {session.Engine.GetDebugStateSummary()}");
+        DebugUtil.Info(
+            "Galatea.Session",
+            $"GetSessionAsync: user={userId}, head={session.Engine.ReadCurrentHead()}"
+        );
         return session;
     }
 
-    public IReadOnlyList<RecentTurnDto> BuildRecentTurns(ChatSessionEngine engine, int maxTurns = 32) {
+    public RecentTurnsResponseDto BuildRecentTurnsResponse(
+        SessionJournalEngine engine,
+        int maxTurns = 12
+    ) {
         ArgumentNullException.ThrowIfNull(engine);
-
-        var turns = new List<RecentTurnDto>();
-        string? pendingUserText = null;
-        AssistantMessageDto? latestAssistant = null;
-
-        foreach (var message in engine.Context) {
-            if (message is RecapMessage) {
-                if (pendingUserText is not null && latestAssistant is not null) {
-                    turns.Add(new RecentTurnDto(pendingUserText, latestAssistant));
-                }
-
-                pendingUserText = null;
-                latestAssistant = null;
-                continue;
-            }
-
-            if (message is ToolResultsMessage) { continue; }
-
-            if (message is ObservationMessage observation) {
-                if (pendingUserText is not null && latestAssistant is not null) {
-                    turns.Add(new RecentTurnDto(pendingUserText, latestAssistant));
-                }
-
-                pendingUserText = NormalizeUserMessageForDisplay(observation.Content);
-                latestAssistant = null;
-                continue;
-            }
-
-            if (message is ActionMessage action
-                && pendingUserText is not null
-                && action.ToolCalls.Count == 0) {
-                latestAssistant = ProjectAssistant(action);
-            }
-        }
-
-        if (pendingUserText is not null && latestAssistant is not null) {
-            turns.Add(new RecentTurnDto(pendingUserText, latestAssistant));
-        }
-
-        turns.Reverse();
-        IReadOnlyList<RecentTurnDto> projectedTurns = turns
-            .Take(maxTurns)
-            .ToArray();
+        SessionCompletedTurnsSnapshot snapshot =
+            engine.ReadRecentCompletedTurns(maxTurns);
+        IReadOnlyList<RecentTurnDto> turns = [
+            .. snapshot.Turns.Select(
+                GalateaRecentTurnDisplayAdapter.Project
+            )
+        ];
+        string? rewindLatestToken = snapshot.CapturedHead is { } head
+            && snapshot.Turns.FirstOrDefault()?.TerminalAction.Address
+                == head
+                ? EventAddressTextCodec.Format(head)
+                : null;
         DebugUtil.Info(
             "Galatea.Session",
-            $"BuildRecentTurns: {engine.GetDebugStateSummary()}, projectedTurns={projectedTurns.Count}, firstTurn={DescribeTurn(projectedTurns.FirstOrDefault())}"
+            $"BuildRecentTurnsResponse: head={snapshot.CapturedHead}, responseTurns={turns.Count}, rewindEligible={rewindLatestToken is not null}, firstTurn={DescribeTurn(turns.FirstOrDefault())}"
         );
-        return projectedTurns;
-    }
-
-    public RecentTurnsResponseDto BuildRecentTurnsResponse(ChatSessionEngine engine, int maxTurns = 12) {
-        ArgumentNullException.ThrowIfNull(engine);
-
-        var turns = BuildRecentTurns(engine, maxTurns);
-        DebugUtil.Info(
-            "Galatea.Session",
-            $"BuildRecentTurnsResponse: {engine.GetDebugStateSummary()}, responseTurns={turns.Count}, firstTurn={DescribeTurn(turns.FirstOrDefault())}"
-        );
-        return new RecentTurnsResponseDto(turns);
+        return new RecentTurnsResponseDto(turns, rewindLatestToken);
     }
 
     public CurrentTurnDto BuildCurrentTurn(UserSessionHost host) {
         ArgumentNullException.ThrowIfNull(host);
 
         var currentTurn = host.GetCurrentTurn();
+        SessionRuntimeRecoveryRequirements recovery =
+            host.Engine.InspectRuntimeRecoveryRequirements();
         var result = currentTurn is null
-            ? new CurrentTurnDto("idle")
+            ? recovery is SessionRuntimeRecoveryRequirements
+                    .NoRuntimeRequired
+                && recovery.Phase is (
+                    SessionExecutionPhase.Idle
+                    or SessionExecutionPhase.TurnFailed
+                )
+                ? new CurrentTurnDto(
+                    "idle",
+                    DurablePhase: recovery.Phase.ToString(),
+                    RecoveryHead: EventAddressTextCodec.FormatNullable(
+                        recovery.CapturedHead
+                    )
+                )
+                : new CurrentTurnDto(
+                    recovery.Phase == SessionExecutionPhase.Empty
+                        ? "unprovisioned"
+                        : "recovery-required",
+                    DurablePhase: recovery.Phase.ToString(),
+                    RecoveryRequired: true,
+                    RecoveryHead: EventAddressTextCodec.FormatNullable(
+                        recovery.CapturedHead
+                    ),
+                    RestartRequired: recovery is
+                        SessionRuntimeRecoveryRequirements
+                            .FrozenCompletionRequired {
+                                DispatchState:
+                                    SessionDurableDispatchState
+                                        .StartedOutcomeUncertain
+                            }
+                )
             : new CurrentTurnDto(
                 "running",
                 currentTurn.TurnId,
                 currentTurn.UserMessage,
                 currentTurn.Phase,
-                currentTurn.Options.ConnectionId
+                currentTurn.Options.ConnectionId,
+                DurablePhase: recovery.Phase.ToString(),
+                RecoveryHead: EventAddressTextCodec.FormatNullable(
+                    recovery.CapturedHead
+                )
             );
         DebugUtil.Info(
             "Galatea.Session",
-            $"BuildCurrentTurn: user={host.User.UserId}, status={result.Status}, turnId={result.TurnId ?? "<none>"}, phase={result.Phase ?? "<none>"}, head={host.Engine.PersistedHeadAddress}"
+            $"BuildCurrentTurn: user={host.User.UserId}, status={result.Status}, turnId={result.TurnId ?? "<none>"}, phase={result.Phase ?? "<none>"}, head={host.Engine.ReadCurrentHead()}"
         );
         return result;
     }
@@ -153,34 +154,33 @@ public sealed class GalateaHostService : IAsyncDisposable {
         return host.StartTurn(userMessage, options);
     }
 
-    internal RecentTurnDto? PopLatestTurn(UserSessionHost host) {
+    internal GalateaLiveTurn StartRecovery(
+        UserSessionHost host,
+        GalateaTurnOptions options
+    ) {
         ArgumentNullException.ThrowIfNull(host);
+        ArgumentNullException.ThrowIfNull(options);
+        return host.StartRecovery(options);
+    }
 
-        var previousLatestTurn = BuildRecentTurns(host.Engine, maxTurns: 1).FirstOrDefault();
-        DebugUtil.Info(
-            "Galatea.Session",
-            $"PopLatestTurn before remove: user={host.User.UserId}, head={host.Engine.PersistedHeadAddress}, latestVisible={DescribeTurn(previousLatestTurn)}"
-        );
-        if (!host.Engine.TryRemoveLatestCompletedTurn(out var removedTurn) || removedTurn is null) { return null; }
-        string removedUserText = NormalizeUserMessageForDisplay(removedTurn.UserMessage);
-
-        if (previousLatestTurn is not null
-            && string.Equals(previousLatestTurn.UserText, removedUserText, StringComparison.Ordinal)) {
-            DebugUtil.Info(
-                "Galatea.Session",
-                $"PopLatestTurn matched visible turn: user={host.User.UserId}, removedCount={removedTurn.RemovedMessageCount}, head={host.Engine.PersistedHeadAddress}"
-            );
-            return previousLatestTurn;
+    internal PopLatestTurnResponseDto? PopLatestTurn(
+        UserSessionHost host,
+        EventAddress expectedHead
+    ) {
+        ArgumentNullException.ThrowIfNull(host);
+        SessionTurnRetractionResult result =
+            host.Engine.RewindLatestCompletedTurn(expectedHead);
+        if (result is not SessionTurnRetractionResult.Moved moved
+            || moved.Turn.TerminalAction is null) {
+            return null;
         }
-
-        DebugUtil.Warning(
-            "Galatea.Session",
-            $"PopLatestTurn fallback DTO: user={host.User.UserId}, removedCount={removedTurn.RemovedMessageCount}, removedUser={Preview(removedUserText)}, previousVisible={DescribeTurn(previousLatestTurn)}, head={host.Engine.PersistedHeadAddress}"
+        RecentTurnDto turn = GalateaRecentTurnDisplayAdapter.Project(
+            moved.Turn
         );
-        return new RecentTurnDto(
-            removedUserText,
-            new AssistantMessageDto(string.Empty, null)
+        RecentTurnsResponseDto recent = BuildRecentTurnsResponse(
+            host.Engine
         );
+        return new PopLatestTurnResponseDto(turn, recent);
     }
 
     internal GalateaLiveTurn? FindTurn(UserSessionHost host, string turnId) {
@@ -222,55 +222,9 @@ public sealed class GalateaHostService : IAsyncDisposable {
         liveTurn.Publish(new StreamEventDto("meta", new { phase = "turn-start" }), phase: "turn-start");
         DebugUtil.Info(
             "Galatea.Session",
-            $"RunTurnAsync start: user={host.User.UserId}, turnId={liveTurn.TurnId}, input={Preview(liveTurn.UserMessage)}, {host.Engine.GetDebugStateSummary()}",
+            $"RunTurnAsync start: user={host.User.UserId}, turnId={liveTurn.TurnId}, input={Preview(liveTurn.UserMessage)}, head={host.Engine.ReadCurrentHead()}",
             eventKind: DebugEventKind.Start
         );
-
-        // Bind this turn to the connection the user selected in the UI (falling back to
-        // the default). Because the persisted history is provider-neutral, swapping the
-        // runtime between turns is safe; post-generation compaction reuses the same one.
-        var connection = _connections.Resolve(liveTurn.Options.ConnectionId);
-        host.Engine.UseRuntime(BuildRuntime(connection, host.ToolSession));
-        DebugUtil.Info(
-            "Galatea.Session",
-            $"RunTurnAsync connection: user={host.User.UserId}, turnId={liveTurn.TurnId}, connectionId={connection.Id}, model={connection.ModelId}, surface={connection.CompletionSurfaceId}"
-        );
-
-        string effectiveUserMessage;
-        try {
-            effectiveUserMessage = await _inputPreprocessor
-                .ProcessAsync(liveTurn, turnCancellationToken)
-                .ConfigureAwait(false);
-        }
-        catch (OperationCanceledException) when (
-            !ct.IsCancellationRequested
-            && liveTurn.StopRequested
-        ) {
-            throw PreDispatchStopped();
-        }
-        string promptedUserMessage = WrapUserMessageForEngine(effectiveUserMessage);
-
-        // Failsafe: if the previous turn's post-generation compaction didn't happen
-        // or failed, try once more before generating.  Otherwise the user would wait
-        // for compaction *plus* generation in a single turn.
-        // 先试用一阵关闭pre压缩功能，仅post压缩，以提高响应性。
-        // if (host.Engine.GetStatistics().EstimatedTokens >= host.User.CompactionThresholdTokens) {
-        //     liveTurn.Publish(new StreamEventDto("meta", new { phase = "compaction-start" }), phase: "compaction-start");
-        //     var emergency = await host.Engine.CompactAsync(
-        //         host.User.CompactionSystemPrompt!,
-        //         host.User.CompactionPrompt!,
-        //         ct
-        //     ).ConfigureAwait(false);
-
-        //     if (!emergency.Applied) {
-        //         throw new GalateaTurnException(
-        //             "当前会话上下文过长，且无法继续压缩。",
-        //             emergency.FailureReason?.ToString()
-        //         );
-        //     }
-
-        //     liveTurn.Publish(new StreamEventDto("meta", new { phase = "compaction-finish" }), phase: "compaction-finish");
-        // }
 
         CompletionStreamObserver observer = liveTurn.Observer;
         var toolLoopStarted = 0;
@@ -300,17 +254,24 @@ public sealed class GalateaHostService : IAsyncDisposable {
             );
         };
 
-        ChatSessionTurnResult turnResult;
+        GalateaCompletedOperation completed;
         try {
-            liveTurn.StopController.EnterObserverOnlyOrThrow(
-                turnCancellationToken
-            );
-            turnResult = await host.Engine.SendMessageAsync(
-                    promptedUserMessage,
-                    observer,
-                    turnCancellationToken
-                )
-                .ConfigureAwait(false);
+            completed = liveTurn.Options.Mode
+                == GalateaTurnMode.FreshSend
+                ? await RunFreshSendAsync(
+                        host,
+                        liveTurn,
+                        observer,
+                        turnCancellationToken
+                    )
+                    .ConfigureAwait(false)
+                : await RunRecoveryAsync(
+                        host,
+                        liveTurn,
+                        observer,
+                        turnCancellationToken
+                    )
+                    .ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (
             !ct.IsCancellationRequested
@@ -318,20 +279,23 @@ public sealed class GalateaHostService : IAsyncDisposable {
                 == GalateaTurnStopPhase.PreDispatch
             && liveTurn.StopRequested
         ) {
-            throw PreDispatchStopped();
+            throw liveTurn.Options.Mode == GalateaTurnMode.FreshSend
+                ? PreDispatchStopped()
+                : RecoveryPreDispatchStopped();
         }
-        catch (ChatSessionTurnAbortedException ex) {
+        catch (SessionJournalTurnAbortedException ex) {
             DebugUtil.Warning(
                 "Galatea.Session",
                 $"RunTurnAsync completion aborted: user={host.User.UserId}, turnId={liveTurn.TurnId}, termination={ex.Termination.Kind}, providerReason={ex.Termination.ProviderReason ?? "<none>"}, detail={ex.Termination.Detail ?? "<none>"}"
             );
             if (liveTurn.StopRequested && WasStoppedByObserver(ex.Termination)) {
+                RequireFailedTurnAbandoned(host.Engine);
                 throw new GalateaTurnException(
                     "已停止生成，本轮结果未写入历史。你可以调整开关或修改输入后重试。",
                     "stopped-by-user"
                 );
             }
-
+            RequireFailedTurnAbandoned(host.Engine);
             throw new GalateaTurnException(
                 "模型本次输出未正常结束，本轮结果已放弃写入历史。请刷新页面后重试。",
                 ex.Termination.ProviderReason ?? ex.Termination.Kind.ToString()
@@ -340,7 +304,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
         var snapshot = BuildRecentTurnsResponse(host.Engine);
         DebugUtil.Info(
             "Galatea.Session",
-            $"RunTurnAsync send done: user={host.User.UserId}, turnId={liveTurn.TurnId}, errors={turnResult.Errors?.Count ?? 0}, snapshotTurns={snapshot.Turns.Count}, head={host.Engine.PersistedHeadAddress}"
+            $"RunTurnAsync send done: user={host.User.UserId}, turnId={liveTurn.TurnId}, errors={completed.Errors?.Count ?? 0}, snapshotTurns={snapshot.Turns.Count}, head={host.Engine.ReadCurrentHead()}"
         );
 
         if (Volatile.Read(ref toolLoopStarted) == 1) {
@@ -351,43 +315,282 @@ public sealed class GalateaHostService : IAsyncDisposable {
             new StreamEventDto(
                 "done",
                 new {
-                    recentTurns = snapshot.Turns,
-                    toolCallsExecuted = turnResult.ToolCallsExecuted,
-                    errors = turnResult.Errors
+                    recent = snapshot,
+                    errors = completed.Errors
                 }
             ),
             status: "completed"
         );
+    }
 
-        // ── Post-generation compaction ──────────────────────────────
-        // Compact *after* the response is sent so the user spends the
-        // reading / typing time waiting, not the generation latency.
-        //
-        // This is a best-effort optimization that runs *after* the turn's
-        // response has already been delivered (status "completed"). A
-        // compaction failure (timeout, transient backend error, shutdown)
-        // must NOT surface as a turn failure — the user already got their
-        // reply, and a later turn will retry compaction anyway.
-        if (host.Engine.GetStatistics().EstimatedTokens >= host.User.CompactionThresholdTokens) {
-            try {
-                using var compactCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-                compactCts.CancelAfter(TimeSpan.FromMinutes(5));
-                DebugUtil.Info("Galatea.Session", $"RunTurnAsync post-compaction trigger: user={host.User.UserId}, turnId={liveTurn.TurnId}, head={host.Engine.PersistedHeadAddress}");
-                await host.Engine.CompactAsync(
-                    host.User.CompactionSystemPrompt!,
-                    host.User.CompactionPrompt!,
-                    compactCts.Token
-                ).ConfigureAwait(false);
-                DebugUtil.Info("Galatea.Session", $"RunTurnAsync post-compaction done: user={host.User.UserId}, turnId={liveTurn.TurnId}, {host.Engine.GetDebugStateSummary()}");
-            }
-            catch (Exception ex) {
-                DebugUtil.Warning(
-                    "Galatea.Session",
-                    $"RunTurnAsync post-compaction failed (non-fatal, turn already completed): user={host.User.UserId}, turnId={liveTurn.TurnId}",
-                    ex
+    private async Task<GalateaCompletedOperation> RunFreshSendAsync(
+        UserSessionHost host,
+        GalateaLiveTurn liveTurn,
+        CompletionStreamObserver observer,
+        CancellationToken cancellationToken
+    ) {
+        SessionRuntimeRecoveryRequirements requirement =
+            host.Engine.InspectRuntimeRecoveryRequirements(
+                cancellationToken
+            );
+        if (requirement.Phase == SessionExecutionPhase.TurnFailed) {
+            EventAddress failedHead = requirement.CapturedHead
+                ?? throw new InvalidDataException(
+                    "TurnFailed requires an exact raw head."
+                );
+            SessionTurnRetractionResult abandoned =
+                host.Engine.AbandonFailedTurn(
+                    failedHead,
+                    cancellationToken
+                );
+            if (abandoned is not SessionTurnRetractionResult.Moved) {
+                throw new GalateaTurnException(
+                    "上一轮失败状态未能安全放弃，请刷新后重试。",
+                    "failed-turn-abandon-race"
                 );
             }
+            requirement = host.Engine
+                .InspectRuntimeRecoveryRequirements(
+                    cancellationToken
+                );
         }
+        if (requirement is not SessionRuntimeRecoveryRequirements
+                .NoRuntimeRequired
+            || requirement.Phase != SessionExecutionPhase.Idle
+            || requirement.CapturedHead is not { } capturedHead) {
+            throw RecoveryRequired(requirement);
+        }
+
+        CompletionConnectionConfig connection =
+            _connections.Resolve(liveTurn.Options.ConnectionId);
+        SessionDesiredSetupReconciliationResult reconciled =
+            host.Engine.ReconcileDesiredSetup(
+                capturedHead,
+                new SessionDesiredSetup(
+                    connection.ModelId,
+                    connection.CompletionSurfaceId,
+                    host.User.SystemPrompt
+                ),
+                cancellationToken
+            );
+        if (reconciled is not SessionDesiredSetupReconciliationResult
+                .Ready setupReady) {
+            throw new GalateaTurnException(
+                "会话设置无法在当前边界安全更新，请刷新后重试。",
+                "desired-setup-unavailable"
+            );
+        }
+
+        GalateaPreparedRecap prepared =
+            await GalateaRecapComposition.PrepareAsync(
+                    host.Engine,
+                    cancellationToken
+                )
+                .ConfigureAwait(false);
+        if (prepared.Authority.Lineage.CapturedHead
+            != setupReady.GoverningSetup.Head) {
+            throw new GalateaTurnException(
+                "会话在前情提要准备前发生变化，请重试。",
+                "session-head-changed"
+            );
+        }
+        string effectiveUserMessage = await _inputPreprocessor
+            .ProcessAsync(liveTurn, cancellationToken)
+            .ConfigureAwait(false);
+        string promptedUserMessage = WrapUserMessageForEngine(
+            effectiveUserMessage
+        );
+
+        ICompletionClient client = _connections.GetClient(connection.Id);
+        DerivedRecapOnlineLifecycleCoordinator recap =
+            GalateaRecapComposition.CreateLifecycle(
+                host.Engine,
+                prepared,
+                connection,
+                client
+            );
+        var lifecycleGate = new GalateaFreshSendLifecycleGate(
+            recap,
+            liveTurn.StopController
+        );
+        host.Engine.UseRuntime(CreateRuntime(
+            connection,
+            client,
+            recap,
+            lifecycleGate,
+            SessionUncertainCompletionRecoveryPolicy.Refuse
+        ));
+        TurnResult result = await host.Engine.SendAsync(
+                prepared.Authority.Lineage.CapturedHead,
+                promptedUserMessage,
+                observer,
+                cancellationToken
+            )
+            .ConfigureAwait(false);
+        return new GalateaCompletedOperation(
+            result.Message,
+            result.Invocation,
+            result.Errors
+        );
+    }
+
+    private async Task<GalateaCompletedOperation> RunRecoveryAsync(
+        UserSessionHost host,
+        GalateaLiveTurn liveTurn,
+        CompletionStreamObserver observer,
+        CancellationToken cancellationToken
+    ) {
+        SessionRuntimeRecoveryRequirements requirement =
+            host.Engine.InspectRuntimeRecoveryRequirements(
+                cancellationToken
+            );
+        EventAddress capturedHead = liveTurn.Options.ExpectedHead
+            ?? throw new InvalidDataException(
+                "Recovery live turn requires an expected raw head."
+            );
+        if (requirement.CapturedHead != capturedHead) {
+            throw new GalateaTurnException(
+                "会话边界已变化，请刷新后重新确认恢复。",
+                "stale-session-head"
+            );
+        }
+
+        CompletionConnectionConfig connection;
+        ICompletionClient client;
+        if (requirement is SessionRuntimeRecoveryRequirements
+                .NewRequestRequired) {
+            connection = _connections.Resolve(
+                liveTurn.Options.ConnectionId
+            );
+            ValidateRecoveryConnection(
+                host.Engine,
+                capturedHead,
+                connection
+            );
+            GalateaPreparedRecap prepared =
+                await GalateaRecapComposition.PrepareAsync(
+                        host.Engine,
+                        cancellationToken
+                    )
+                    .ConfigureAwait(false);
+            if (prepared.Authority.Lineage.CapturedHead
+                != capturedHead) {
+                throw new GalateaTurnException(
+                    "会话在恢复准备期间发生变化，请重试。",
+                    "recovery-head-changed"
+                );
+            }
+            client = _connections.GetClient(connection.Id);
+            DerivedRecapOnlineLifecycleCoordinator recap =
+                GalateaRecapComposition.CreateLifecycle(
+                    host.Engine,
+                    prepared,
+                    connection,
+                    client
+                );
+            var lifecycleGate = new GalateaRecoveryLifecycleGate(
+                recap,
+                liveTurn.StopController
+            );
+            host.Engine.UseRuntime(CreateRuntime(
+                connection,
+                client,
+                recap,
+                lifecycleGate,
+                SessionUncertainCompletionRecoveryPolicy.Refuse
+            ));
+        }
+        else if (requirement is SessionRuntimeRecoveryRequirements
+                     .FrozenCompletionRequired frozen) {
+            string emptyToolSetSha256 =
+                SessionVisibleToolSetFingerprint.ComputeSha256(
+                    System.Collections.Immutable
+                        .ImmutableArray<ToolDefinition>.Empty
+                );
+            if (frozen.ToolRuntimeIdentity is not null
+                || !string.Equals(
+                    frozen.VisibleToolSetSha256,
+                    emptyToolSetSha256,
+                    StringComparison.Ordinal
+                )) {
+                throw new GalateaTurnException(
+                    "已冻结请求包含Galatea G1不支持的工具runtime。",
+                    "tool-recovery-unsupported"
+                );
+            }
+            if (frozen.DispatchState
+                    == SessionDurableDispatchState
+                        .StartedOutcomeUncertain
+                && !liveTurn.Options.RestartUncertainCompletion) {
+                throw new GalateaTurnException(
+                    "上次模型调用结果不确定；必须明确选择重新调用，且可能产生重复请求。",
+                    "uncertain-completion-restart-required"
+                );
+            }
+            CompletionDispatchBindingResult binding =
+                _connections.BindExact(new CompletionDispatchIdentity(
+                    frozen.CompletionTarget.ConnectionId,
+                    frozen.CompletionTarget.Kind,
+                    frozen.CompletionTarget.ConnectionFingerprint,
+                    frozen.ClientName,
+                    frozen.ApiSpecId,
+                    frozen.CompletionTarget.RequestAdapterFingerprint
+                ));
+            if (binding is not CompletionDispatchBindingResult.Bound bound) {
+                var unavailable =
+                    (CompletionDispatchBindingResult.Unavailable)binding;
+                throw new GalateaTurnException(
+                    "无法精确绑定已冻结的模型调用："
+                    + unavailable.Detail,
+                    unavailable.Reason.ToString()
+                );
+            }
+            connection = bound.Connection;
+            client = bound.Client;
+            liveTurn.StopController.EnterObserverOnlyOrThrow(
+                cancellationToken
+            );
+            host.Engine.UseRuntime(new SessionRuntime(
+                client,
+                CompletionTarget: frozen.CompletionTarget,
+                MaxTokens: connection.MaxTokens,
+                UncertainCompletionRecoveryPolicy:
+                    liveTurn.Options.RestartUncertainCompletion
+                        ? SessionUncertainCompletionRecoveryPolicy
+                            .RestartWithNewAttempt
+                        : SessionUncertainCompletionRecoveryPolicy.Refuse
+            ));
+        }
+        else if (requirement is SessionRuntimeRecoveryRequirements
+                     .ToolContinuationRequired) {
+            throw new GalateaTurnException(
+                "当前会话停在工具执行阶段；Galatea G1 尚不支持工具恢复。",
+                "tool-recovery-unsupported"
+            );
+        }
+        else {
+            throw RecoveryRequired(requirement);
+        }
+
+        ResumeOutcome outcome = await host.Engine.ResumeAsync(
+                capturedHead,
+                observer,
+                cancellationToken
+            )
+            .ConfigureAwait(false);
+        if (!outcome.Advanced
+            || outcome.Message is null
+            || outcome.Invocation is null) {
+            throw new GalateaTurnException(
+                "当前持久化阶段没有可继续的模型调用。",
+                "recovery-did-not-advance"
+            );
+        }
+        return new GalateaCompletedOperation(
+            outcome.Message,
+            outcome.Invocation,
+            outcome.Errors
+        );
     }
 
     public async ValueTask DisposeAsync() {
@@ -404,74 +607,113 @@ public sealed class GalateaHostService : IAsyncDisposable {
         }
     }
 
-    private async Task<UserSessionHost> CreateSessionAsync(GalateaUserConfig user, CancellationToken ct) {
-        var toolSession = new ToolRegistry(Array.Empty<ITool>()).CreateSession();
-        var bootstrapConnection = _connections.Resolve(null);
-        var runtime = BuildRuntime(bootstrapConnection, toolSession);
-        var createOptions = new ChatSessionCreateOptions(SystemPrompt: user.SystemPrompt);
-
-        var sessionDir = Path.GetFullPath(user.SessionDir);
-        ChatSessionEngine engine;
-        if (Directory.Exists(sessionDir) && Directory.EnumerateFileSystemEntries(sessionDir).Any()) {
-            engine = await ChatSessionEngine.OpenAsync(sessionDir, runtime, ct: ct).ConfigureAwait(false);
-        }
-        else {
-            Directory.CreateDirectory(sessionDir);
-            engine = await ChatSessionEngine.CreateAsync(sessionDir, createOptions, runtime, ct).ConfigureAwait(false);
-        }
-
-        // Reflect config-level prompt changes into the persisted session so that
-        // editing config.json / prompts/*.md and restarting the server is enough
-        // to update the system prompt for existing sessions.
-        if (engine.TrySyncSystemPrompt(user.SystemPrompt)) {
-            DebugUtil.Info("Galatea.Session", $"CreateSessionAsync: system prompt synced from config for user={user.UserId}");
-        }
-
-        DebugUtil.Info("Galatea.Session", $"CreateSessionAsync: user={user.UserId}, sessionDir={sessionDir}, bootstrapConnection={bootstrapConnection.Id}, {engine.GetDebugStateSummary()}");
-
-        return new UserSessionHost(user, engine, toolSession);
-    }
-
-    private ChatSessionRuntime BuildRuntime(CompletionConnectionConfig connection, ToolSession toolSession)
-        => new ChatSessionRuntime(
-            CompletionClient: _connections.GetClient(connection.Id),
-            CompletionSurfaceId: connection.CompletionSurfaceId,
-            ModelId: connection.ModelId,
-            ToolSession: toolSession
-        );
-
-    private static AssistantMessageDto ProjectAssistant(
-        ActionMessage action
+    private Task<UserSessionHost> CreateSessionAsync(
+        GalateaUserConfig user,
+        CancellationToken ct
     ) {
-        var textBuilder = new StringBuilder();
-        var reasoningBuilder = new StringBuilder();
-
-        foreach (var block in action.Blocks) {
-            switch (block) {
-                case ActionBlock.Text text:
-                    textBuilder.Append(text.Content);
-                    break;
-                case ActionBlock.TextReasoningBlock reasoning:
-                    reasoningBuilder.Append(reasoning.Content);
-                    break;
-            }
+        ct.ThrowIfCancellationRequested();
+        var sessionDir = Path.GetFullPath(user.SessionDir);
+        if (!Directory.Exists(sessionDir)
+            || !Directory.EnumerateFileSystemEntries(sessionDir).Any()) {
+            throw new GalateaSessionUnavailableException(
+                "session-unprovisioned",
+                "Galatea requires a provisioned SessionJournal repository."
+            );
         }
-
-        var cleanedText = StripInlineThinkBlocks(textBuilder.ToString());
-        string? reasoningText = reasoningBuilder.Length == 0 ? null : reasoningBuilder.ToString();
-        return new AssistantMessageDto(
-            Text: cleanedText,
-            ReasoningText: reasoningText
+        SessionJournalEngine engine;
+        try {
+            engine = SessionJournalEngine.Open(sessionDir);
+        }
+        catch (Exception exception) when (
+            exception is DirectoryNotFoundException
+                or FileNotFoundException
+        ) {
+            throw new GalateaSessionUnavailableException(
+                "session-unprovisioned",
+                "Galatea SessionJournal repository is incomplete.",
+                exception
+            );
+        }
+        SessionExecutionBoundaryInspection boundary =
+            engine.InspectExecutionBoundary(ct);
+        DebugUtil.Info(
+            "Galatea.Session",
+            $"CreateSessionAsync: user={user.UserId}, sessionDir={sessionDir}, phase={boundary.Phase}, head={boundary.Head}"
         );
+        return Task.FromResult(new UserSessionHost(user, engine));
     }
 
-    /// <summary>
-    /// Removes inline <c>&lt;think&gt;...&lt;/think&gt;</c> blocks from the text.
-    /// If the closing tag is missing, the text from <c>&lt;think&gt;</c> onward is dropped.
-    /// </summary>
-    private static string StripInlineThinkBlocks(string text) {
-        return InlineThinkTextFilter.StripInlineThinkBlocks(text);
+    private static SessionRuntime CreateRuntime(
+        CompletionConnectionConfig connection,
+        ICompletionClient client,
+        ICoherentContextCandidateSource candidates,
+        ISessionContextLifecycleCoordinator lifecycle,
+        SessionUncertainCompletionRecoveryPolicy recoveryPolicy
+    ) => new(
+        client,
+        CompletionTarget:
+            GalateaRecapComposition.CreateCompletionTarget(
+                connection,
+                client
+            ),
+        MaxTokens: connection.MaxTokens,
+        UncertainCompletionRecoveryPolicy: recoveryPolicy,
+        ContextCandidateSource: candidates,
+        ContextLifecycle: lifecycle
+    );
+
+    private static void ValidateRecoveryConnection(
+        SessionJournalEngine engine,
+        EventAddress capturedHead,
+        CompletionConnectionConfig connection
+    ) {
+        SessionGoverningSetup governing =
+            engine.ResolveGoverningSetup(capturedHead);
+        if (!string.Equals(
+                governing.RuntimeConfig.ModelId,
+                connection.ModelId,
+                StringComparison.Ordinal
+            )
+            || !string.Equals(
+                governing.RuntimeConfig.CompletionSurfaceId,
+                connection.CompletionSurfaceId,
+                StringComparison.Ordinal
+            )) {
+            throw new GalateaTurnException(
+                "已接受输入所绑定的 model/surface 与当前连接不一致，请选择匹配连接恢复。",
+                "recovery-connection-mismatch"
+            );
+        }
     }
+
+    private static void RequireFailedTurnAbandoned(
+        SessionJournalEngine engine
+    ) {
+        SessionExecutionBoundaryInspection boundary =
+            engine.InspectExecutionBoundary();
+        if (boundary.Phase != SessionExecutionPhase.TurnFailed
+            || boundary.Head is not { } failedHead) {
+            throw new GalateaTurnException(
+                "失败轮次的持久化边界需要恢复，请刷新后处理。",
+                "failed-turn-recovery-required"
+            );
+        }
+        SessionTurnRetractionResult result =
+            engine.AbandonFailedTurn(failedHead);
+        if (result is not SessionTurnRetractionResult.Moved) {
+            throw new GalateaTurnException(
+                "失败轮次未能在精确边界安全放弃，请刷新后处理。",
+                "failed-turn-recovery-required"
+            );
+        }
+    }
+
+    private static GalateaTurnException RecoveryRequired(
+        SessionRuntimeRecoveryRequirements requirement
+    ) => new(
+        $"会话处于 {requirement.Phase}，必须先使用恢复入口。",
+        "recovery-required"
+    );
 
     private static bool WasStoppedByObserver(CompletionTermination termination) {
         ArgumentNullException.ThrowIfNull(termination);
@@ -501,12 +743,42 @@ public sealed class GalateaHostService : IAsyncDisposable {
         "stopped-before-dispatch"
     );
 
+    private static GalateaTurnException
+        RecoveryPreDispatchStopped() => new(
+        "已停止本次恢复尝试；原有持久化轮次仍保持待恢复状态。",
+        "recovery-stopped-before-dispatch"
+    );
+
     private static string Preview(string? text) {
         if (string.IsNullOrWhiteSpace(text)) { return "<null>"; }
         string normalized = text.Replace("\r", string.Empty, StringComparison.Ordinal)
             .Replace("\n", "\\n", StringComparison.Ordinal);
         return normalized.Length <= 120 ? normalized : normalized[..120] + "...";
     }
+}
+
+internal sealed record GalateaCompletedOperation(
+    ActionMessage Message,
+    CompletionDescriptor Invocation,
+    IReadOnlyList<string>? Errors
+);
+
+internal sealed class GalateaSessionUnavailableException
+    : InvalidOperationException {
+    internal GalateaSessionUnavailableException(
+        string code,
+        string message,
+        Exception? innerException = null
+    ) : base(message, innerException) {
+        Code = string.IsNullOrWhiteSpace(code)
+            ? throw new ArgumentException(
+                "Session availability code cannot be blank.",
+                nameof(code)
+            )
+            : code;
+    }
+
+    internal string Code { get; }
 }
 
 public sealed class UserSessionHost : IAsyncDisposable {
@@ -516,19 +788,15 @@ public sealed class UserSessionHost : IAsyncDisposable {
 
     public UserSessionHost(
         GalateaUserConfig user,
-        ChatSessionEngine engine,
-        ToolSession toolSession
+        SessionJournalEngine engine
     ) {
         User = user;
         Engine = engine;
-        ToolSession = toolSession;
     }
 
     public GalateaUserConfig User { get; }
 
-    public ChatSessionEngine Engine { get; }
-
-    public ToolSession ToolSession { get; }
+    public SessionJournalEngine Engine { get; }
 
     public SemaphoreSlim TurnLock { get; } = new(1, 1);
 
@@ -540,6 +808,18 @@ public sealed class UserSessionHost : IAsyncDisposable {
             _currentTurn = liveTurn;
         }
 
+        return liveTurn;
+    }
+
+    internal GalateaLiveTurn StartRecovery(
+        GalateaTurnOptions options
+    ) {
+        ArgumentNullException.ThrowIfNull(options);
+        var liveTurn = new GalateaLiveTurn(null, options);
+        lock (_turnStateGate) {
+            _lastTurn = null;
+            _currentTurn = liveTurn;
+        }
         return liveTurn;
     }
 
@@ -613,8 +893,6 @@ internal static class GalateaConfigLoader {
         );
 
         config = ResolveSystemPromptFiles(config, resolvedPath);
-        config = ApplyDefaultCompactionPrompts(config);
-
         Validate(config);
         return config;
     }
@@ -645,20 +923,6 @@ internal static class GalateaConfigLoader {
         return config with { Users = resolvedUsers };
     }
 
-    private static GalateaConfig ApplyDefaultCompactionPrompts(GalateaConfig config) {
-        var normalizedUsers = new List<GalateaUserConfig>(config.Users.Count);
-        foreach (var user in config.Users) {
-            normalizedUsers.Add(
-                user with {
-                    CompactionSystemPrompt = user.CompactionSystemPrompt ?? GalateaDefaults.CompactionSystemPrompt,
-                    CompactionPrompt = user.CompactionPrompt ?? GalateaDefaults.CompactionPrompt,
-                }
-            );
-        }
-
-        return config with { Users = normalizedUsers };
-    }
-
     private static void Validate(GalateaConfig config) {
         var userIds = new HashSet<string>(StringComparer.Ordinal);
         for (int i = 0; i < config.Users.Count; i++) {
@@ -678,9 +942,6 @@ internal static class GalateaConfigLoader {
                 );
             }
 
-            if (string.IsNullOrWhiteSpace(user.CompactionSystemPrompt)) { throw new InvalidOperationException($"Galatea config user '{user.UserId}' must have a non-empty compactionSystemPrompt."); }
-
-            if (string.IsNullOrWhiteSpace(user.CompactionPrompt)) { throw new InvalidOperationException($"Galatea config user '{user.UserId}' must have a non-empty compactionPrompt."); }
         }
 
         if (config.ListenUrls is null) { return; }
@@ -743,21 +1004,6 @@ internal static class GalateaDefaults {
         "你是家庭局域网里的私人助手。优先用简洁、直接、可信的中文回答。"
         + "不确定时明确说明不确定，不编造细节。";
 
-    public const string CompactionSystemPrompt = @"你是一位专业的游戏书吏（Game Scribe），负责将漫长的冒险历程提炼成引人入胜的“前情提要”。你的任务不是简单地压缩文本，而是要捕捉故事的核心戏剧性：
-  1. **聚焦动机与冲突**：识别并强调每个主要角色的核心目标、他们遇到的阻碍，以及角色之间的内在或外在冲突。
-  2. **保留关键“变化”**：记录世界状态、人物关系或角色心境发生的关键转折点。
-  3. **提炼悬念**：清晰地列出当前故事中悬而未决的问题、未解的谜团或迫在眉睫的危机。
-  4. **使用第三人称**：始终使用角色的名字进行叙述，保持客观的史官视角。";
-
-    public const string CompactionPrompt = @"请根据以上对话历史，撰写一段承前启后的中文剧情摘要。摘要需要清晰且充满张力，并至少包括以下结构：
-  1. **【主要角色间的重要交互历史】**：重要！这是防止两个角色前一天刚海誓山盟，后一天因遗忘而又回退到保持距离的关键信息。迭代时摘要旧条目，添加新条目。
-  2. **【当前局势】**：概括主要角色们目前所处的地点、时间和核心情境。
-  3. **【角色动态与内心驱动】**：分点阐述每个主要角色：
-      * 他们最新的状态是怎样的？
-      * 他们当前正在做什么？
-      * 他们内心最迫切的目标或欲望是什么？
-      * 他们与其他角色的关系（如信任、怀疑、联盟、敌对）的状态与最新变化？
-  4. **【悬念与线索】**：分点列出故事中所有待解决的谜题、未完成的任务、隐藏的线索或潜在的威胁。这些是推动故事继续发展的关键。";
 }
 
 internal static class GalateaConfigTemplateFactory {
@@ -798,9 +1044,6 @@ internal static class GalateaConfigTemplateFactory {
             UserId: userId,
             Password: password,
             SessionDir: sessionDir,
-            CompactionThresholdTokens: 32000,
-            CompactionSystemPrompt: GalateaDefaults.CompactionSystemPrompt,
-            CompactionPrompt: GalateaDefaults.CompactionPrompt,
             SystemPrompt: GalateaDefaults.SystemPrompt
         );
     }

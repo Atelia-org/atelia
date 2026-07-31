@@ -37,6 +37,23 @@ internal static class GalateaRecentTurnDisplayAdapter {
             )
         );
     }
+
+    internal static RecentTurnDto Project(
+        SessionRetractedTurnProjection source
+    ) {
+        ArgumentNullException.ThrowIfNull(source);
+        SessionTerminalActionProjection terminal =
+            source.TerminalAction
+            ?? throw new ArgumentException(
+                "A visible completed-turn rewind requires a terminal Action.",
+                nameof(source)
+            );
+        return Project(new SessionCompletedTurnProjection(
+            source.ObservationAddress,
+            source.ObservationContent,
+            terminal
+        ));
+    }
 }
 
 internal static class GalateaUserMessageEnvelope {

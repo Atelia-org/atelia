@@ -5,6 +5,7 @@ using Atelia.Diagnostics;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Atelia.Galatea.Server;
 using Microsoft.AspNetCore.Authentication;
+using Atelia.SessionJournal;
 
 const string CookieScheme = "GalateaCookie";
 const string DefaultConfigPath = ".atelia/galatea/config.json";
@@ -50,6 +51,25 @@ builder.Services.AddAuthentication(CookieScheme)
 builder.Services.AddAuthorization();
 
 var app = builder.Build();
+
+app.Use(async (context, next) => {
+    try {
+        await next(context);
+    }
+    catch (GalateaSessionUnavailableException exception) when (
+        context.Request.Path.StartsWithSegments(
+            "/api",
+            StringComparison.Ordinal
+        )
+    ) {
+        context.Response.StatusCode =
+            StatusCodes.Status503ServiceUnavailable;
+        await context.Response.WriteAsJsonAsync(new {
+            code = exception.Code,
+            error = exception.Message
+        });
+    }
+});
 
 app.UseAuthentication();
 app.UseAuthorization();
@@ -138,7 +158,7 @@ api.MapGet(
         var response = hostService.BuildRecentTurnsResponse(session.Engine);
         DebugUtil.Info(
             "Galatea.Api",
-            $"GET /api/recent-turns user={userId}, items={response.Turns.Count}, head={session.Engine.PersistedHeadAddress}"
+            $"GET /api/recent-turns user={userId}, items={response.Turns.Count}, head={session.Engine.ReadCurrentHead()}"
         );
         return Results.Ok(response);
     }
@@ -164,13 +184,179 @@ api.MapPost(
         GalateaLiveTurn? liveTurn = null;
         bool writerOwnershipTransferred = false;
         try {
-            var connection = connections.Resolve(request.ConnectionId);
+            SessionRuntimeRecoveryRequirements recovery =
+                session.Engine.InspectRuntimeRecoveryRequirements(
+                    httpContext.RequestAborted
+                );
+            if (recovery.Phase == SessionExecutionPhase.Empty) {
+                return RecoveryConflict(
+                    recovery,
+                    "session-unprovisioned",
+                    "会话仓库尚未完成初始化。"
+                );
+            }
+            if (recovery is not SessionRuntimeRecoveryRequirements
+                    .NoRuntimeRequired
+                || recovery.Phase is not (
+                    SessionExecutionPhase.Idle
+                    or SessionExecutionPhase.TurnFailed
+                )) {
+                return RecoveryConflict(
+                    recovery,
+                    "recovery-required",
+                    "当前会话存在待恢复的持久化轮次；新消息未被接收。"
+                );
+            }
+            if (!TryResolveRequestedConnection(
+                    connections,
+                    request.ConnectionId,
+                    out CompletionConnectionConfig connection
+                )) {
+                return Results.BadRequest(new {
+                    code = "unknown-connection",
+                    error = $"Unknown completion connection '{request.ConnectionId}'."
+                });
+            }
             liveTurn = hostService.StartTurn(
                 session,
                 request.Message,
                 new GalateaTurnOptions(connection.Id)
             );
-            DebugUtil.Info("Galatea.Api", $"POST /api/chat/turns user={userId}, turnId={liveTurn.TurnId}, connectionId={connection.Id}, head={session.Engine.PersistedHeadAddress}");
+            DebugUtil.Info("Galatea.Api", $"POST /api/chat/turns user={userId}, turnId={liveTurn.TurnId}, connectionId={connection.Id}, head={session.Engine.ReadCurrentHead()}");
+            IResult result = StartAcceptedTurn(
+                session,
+                liveTurn,
+                hostService,
+                applicationLifetime
+            );
+            writerOwnershipTransferred = true;
+            return result;
+        }
+        finally {
+            if (!writerOwnershipTransferred) {
+                if (liveTurn is not null) {
+                    hostService.FinishTurn(session, liveTurn);
+                    liveTurn.Complete();
+                }
+                session.TurnLock.Release();
+            }
+        }
+    }
+);
+
+api.MapPost(
+    "/chat/turns/resume",
+    async (
+        HttpContext httpContext,
+        ClaimsPrincipal user,
+        GalateaHostService hostService,
+        CompletionConnectionRegistry connections,
+        IHostApplicationLifetime applicationLifetime,
+        ResumeTurnRequest request
+    ) => {
+        string userId = user.FindFirstValue(
+            GalateaClaimTypes.UserId
+        ) ?? throw new InvalidOperationException(
+            "Authenticated principal is missing user id."
+        );
+        var session = await hostService.GetSessionAsync(
+            userId,
+            httpContext.RequestAborted
+        );
+        if (!session.TurnLock.Wait(0)) {
+            return BuildTurnBusyConflict(hostService, session);
+        }
+
+        GalateaLiveTurn? liveTurn = null;
+        bool writerOwnershipTransferred = false;
+        try {
+            SessionRuntimeRecoveryRequirements recovery =
+                session.Engine.InspectRuntimeRecoveryRequirements(
+                    httpContext.RequestAborted
+                );
+            if (!EventAddressTextCodec.TryParse(
+                    request.ExpectedHead,
+                    out var expectedHead
+                )) {
+                return Results.BadRequest(new {
+                    code = "invalid-expected-head",
+                    error = "expectedHead格式无效。"
+                });
+            }
+            if (recovery.CapturedHead != expectedHead) {
+                return RecoveryConflict(
+                    recovery,
+                    "stale-session-head",
+                    "会话边界已变化，请刷新后重新确认恢复。"
+                );
+            }
+            if (recovery is SessionRuntimeRecoveryRequirements
+                    .NoRuntimeRequired) {
+                return RecoveryConflict(
+                    recovery,
+                    "no-recovery-required",
+                    "当前会话没有待恢复轮次。"
+                );
+            }
+            if (recovery is SessionRuntimeRecoveryRequirements
+                    .ToolContinuationRequired
+                || recovery is SessionRuntimeRecoveryRequirements
+                    .NewRequestRequired {
+                        HeadKind: SessionEventKind.ToolResultObserved
+                    }) {
+                return RecoveryConflict(
+                    recovery,
+                    "tool-recovery-unsupported",
+                    "Galatea G1尚不支持工具阶段恢复。"
+                );
+            }
+            if (recovery is SessionRuntimeRecoveryRequirements
+                    .FrozenCompletionRequired {
+                        DispatchState:
+                            SessionDurableDispatchState
+                                .StartedOutcomeUncertain
+                    }
+                && !request.RestartUncertainCompletion) {
+                return RecoveryConflict(
+                    recovery,
+                    "uncertain-completion-restart-required",
+                    "上次模型调用结果不确定；必须明确授权重新调用。"
+                );
+            }
+
+            string connectionId;
+            if (recovery is SessionRuntimeRecoveryRequirements
+                    .NewRequestRequired) {
+                if (!TryResolveRequestedConnection(
+                        connections,
+                        request.ConnectionId,
+                        out CompletionConnectionConfig connection
+                    )) {
+                    return Results.BadRequest(new {
+                        code = "unknown-connection",
+                        error = $"Unknown completion connection '{request.ConnectionId}'."
+                    });
+                }
+                connectionId = connection.Id;
+            }
+            else if (recovery is SessionRuntimeRecoveryRequirements
+                         .FrozenCompletionRequired frozen) {
+                connectionId = frozen.CompletionTarget.ConnectionId;
+            }
+            else {
+                throw new InvalidDataException(
+                    "Unknown supported recovery requirement."
+                );
+            }
+            liveTurn = hostService.StartRecovery(
+                session,
+                new GalateaTurnOptions(
+                    connectionId,
+                    GalateaTurnMode.Resume,
+                    request.RestartUncertainCompletion,
+                    expectedHead
+                )
+            );
             IResult result = StartAcceptedTurn(
                 session,
                 liveTurn,
@@ -197,7 +383,8 @@ api.MapPost(
     async (
         HttpContext httpContext,
         ClaimsPrincipal user,
-        GalateaHostService hostService
+        GalateaHostService hostService,
+        PopLatestTurnRequestDto request
     ) => {
         string userId = user.FindFirstValue(GalateaClaimTypes.UserId)
             ?? throw new InvalidOperationException("Authenticated principal is missing user id.");
@@ -205,9 +392,21 @@ api.MapPost(
 
         if (!session.TurnLock.Wait(0)) { return BuildTurnBusyConflict(hostService, session); }
         try {
-            var poppedTurn = hostService.PopLatestTurn(session);
+            if (!EventAddressTextCodec.TryParse(
+                    request.RewindLatestToken,
+                    out var expectedHead
+                )) {
+                return Results.BadRequest(new {
+                    code = "invalid-rewind-token",
+                    error = "rewindLatestToken格式无效。"
+                });
+            }
+            var poppedTurn = hostService.PopLatestTurn(
+                session,
+                expectedHead
+            );
             if (poppedTurn is null) {
-                DebugUtil.Warning("Galatea.Api", $"POST /api/chat/turns/pop-latest user={userId} returned null, head={session.Engine.PersistedHeadAddress}");
+                DebugUtil.Warning("Galatea.Api", $"POST /api/chat/turns/pop-latest user={userId} returned null, head={session.Engine.ReadCurrentHead()}");
                 return Results.Json(
                     new StartTurnResponseDto(
                         TurnId: string.Empty,
@@ -218,8 +417,8 @@ api.MapPost(
                 );
             }
 
-            DebugUtil.Info("Galatea.Api", $"POST /api/chat/turns/pop-latest user={userId} succeeded, head={session.Engine.PersistedHeadAddress}");
-            return Results.Ok(new PopLatestTurnResponseDto(poppedTurn));
+            DebugUtil.Info("Galatea.Api", $"POST /api/chat/turns/pop-latest user={userId} succeeded, head={session.Engine.ReadCurrentHead()}");
+            return Results.Ok(poppedTurn);
         }
         finally {
             session.TurnLock.Release();
@@ -234,7 +433,7 @@ api.MapGet(
             ?? throw new InvalidOperationException("Authenticated principal is missing user id.");
         var session = await hostService.GetSessionAsync(userId, ct);
         var currentTurn = hostService.BuildCurrentTurn(session);
-        DebugUtil.Info("Galatea.Api", $"GET /api/chat/turns/current user={userId}, status={currentTurn.Status}, turnId={currentTurn.TurnId ?? "<none>"}, head={session.Engine.PersistedHeadAddress}");
+        DebugUtil.Info("Galatea.Api", $"GET /api/chat/turns/current user={userId}, status={currentTurn.Status}, turnId={currentTurn.TurnId ?? "<none>"}, head={session.Engine.ReadCurrentHead()}");
         return Results.Ok(currentTurn);
     }
 );
@@ -247,7 +446,7 @@ api.MapPost(
         var session = await hostService.GetSessionAsync(userId, httpContext.RequestAborted);
         if (!hostService.RequestStop(session, turnId)) { return Results.NotFound(new { error = "turn not found or already finished." }); }
 
-        DebugUtil.Warning("Galatea.Api", $"POST /api/chat/turns/{turnId}/stop user={userId}, head={session.Engine.PersistedHeadAddress}");
+        DebugUtil.Warning("Galatea.Api", $"POST /api/chat/turns/{turnId}/stop user={userId}, head={session.Engine.ReadCurrentHead()}");
         return Results.Ok(new { status = "stopping", turnId });
     }
 );
@@ -300,7 +499,7 @@ static IResult BuildTurnBusyConflict(GalateaHostService hostService, UserSession
     var runningTurn = hostService.BuildCurrentTurn(session);
     DebugUtil.Warning(
         "Galatea.Api",
-        $"Turn busy conflict: user={session.User.UserId}, runningTurn={runningTurn.TurnId ?? "<none>"}, head={session.Engine.PersistedHeadAddress}"
+        $"Turn busy conflict: user={session.User.UserId}, runningTurn={runningTurn.TurnId ?? "<none>"}, head={session.Engine.ReadCurrentHead()}"
     );
     return Results.Json(
         new StartTurnResponseDto(
@@ -322,7 +521,7 @@ static IResult StartAcceptedTurn(
         async () => {
             DebugUtil.Info(
                 "Galatea.Api",
-                $"StartAcceptedTurn background start: user={session.User.UserId}, turnId={liveTurn.TurnId}, head={session.Engine.PersistedHeadAddress}"
+                $"StartAcceptedTurn background start: user={session.User.UserId}, turnId={liveTurn.TurnId}, head={session.Engine.ReadCurrentHead()}"
             );
             try {
                 await hostService.RunTurnAsync(session, liveTurn, applicationLifetime.ApplicationStopping);
@@ -354,7 +553,7 @@ static IResult StartAcceptedTurn(
                 session.TurnLock.Release();
                 DebugUtil.Info(
                     "Galatea.Api",
-                    $"StartAcceptedTurn background finish: user={session.User.UserId}, turnId={liveTurn.TurnId}, head={session.Engine.PersistedHeadAddress}, status={liveTurn.Status}"
+                    $"StartAcceptedTurn background finish: user={session.User.UserId}, turnId={liveTurn.TurnId}, head={session.Engine.ReadCurrentHead()}, status={liveTurn.Status}"
                 );
             }
         },
@@ -367,5 +566,36 @@ static IResult StartAcceptedTurn(
         statusCode: StatusCodes.Status202Accepted
     );
 }
+
+static bool TryResolveRequestedConnection(
+    CompletionConnectionRegistry connections,
+    string? requestedConnectionId,
+    out CompletionConnectionConfig connection
+) {
+    if (string.IsNullOrWhiteSpace(requestedConnectionId)) {
+        connection = connections.Resolve(null);
+        return true;
+    }
+    return connections.TryGet(
+        requestedConnectionId,
+        out connection!
+    );
+}
+
+static IResult RecoveryConflict(
+    SessionRuntimeRecoveryRequirements recovery,
+    string code,
+    string error
+) => Results.Json(
+    new {
+        code,
+        error,
+        phase = recovery.Phase.ToString(),
+        head = EventAddressTextCodec.FormatNullable(
+            recovery.CapturedHead
+        )
+    },
+    statusCode: StatusCodes.Status409Conflict
+);
 
 public partial class Program;

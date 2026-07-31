@@ -7,10 +7,12 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="../ChatSession/ChatSession.csproj" />
     <ProjectReference Include="../Completion/Completion.csproj" />
     <ProjectReference Include="../Completion.Tools/Completion.Tools.csproj" />
     <ProjectReference Include="../SessionJournal/SessionJournal.csproj" />
+    <ProjectReference Include="../SessionJournal.DerivedRecap.Store/SessionJournal.DerivedRecap.Store.csproj" />
+    <ProjectReference Include="../SessionJournal.DerivedRecap.Planner/SessionJournal.DerivedRecap.Planner.csproj" />
+    <ProjectReference Include="../SessionJournal.DerivedRecap.Maintainers/SessionJournal.DerivedRecap.Maintainers.csproj" />
   </ItemGroup>
 
   <ItemGroup>

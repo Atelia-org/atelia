@@ -1,5 +1,9 @@
 using System.Text.Json;
 using Atelia.Completion;
+using Atelia.SessionJournal;
+using Atelia.SessionJournal.DerivedRecap.Maintainers;
+using Atelia.SessionJournal.DerivedRecap.Planner;
+using Atelia.SessionJournal.DerivedRecap.Store;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
@@ -13,14 +17,19 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
     private const string TestPassword = "pw1";
 
     private readonly string _tempRoot;
+    private readonly bool _deleteFilesOnDispose;
 
     private GalateaTestHost(
         string tempRoot,
+        string sessionDirectory,
         string configPath,
         ICompletionClientFactory completionClientFactory,
-        IGalateaUserMessageNormalizer normalizer
+        IGalateaUserMessageNormalizer normalizer,
+        bool deleteFilesOnDispose
     ) {
         _tempRoot = tempRoot;
+        _deleteFilesOnDispose = deleteFilesOnDispose;
+        SessionDirectory = sessionDirectory;
         Factory = new GalateaWebApplicationFactory(
             configPath,
             completionClientFactory,
@@ -30,9 +39,14 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
 
     public GalateaWebApplicationFactory Factory { get; }
 
+    internal string RootDirectory => _tempRoot;
+
+    internal string SessionDirectory { get; }
+
     public static GalateaTestHost Create(
         ICompletionClientFactory completionClientFactory,
-        IGalateaUserMessageNormalizer normalizer
+        IGalateaUserMessageNormalizer normalizer,
+        bool deleteFilesOnDispose = true
     ) {
         ArgumentNullException.ThrowIfNull(completionClientFactory);
         ArgumentNullException.ThrowIfNull(normalizer);
@@ -50,14 +64,60 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
         Directory.CreateDirectory(configDirectory);
 
         string sessionDirectory = Path.Combine(tempRoot, "session");
+        using (SessionJournalEngine engine =
+               SessionJournalEngine.Create(
+                   sessionDirectory,
+                   new SessionCreateOptions(
+                       "model-a",
+                       "test system prompt",
+                       "openai-chat/strict"
+                   )
+               )) {
+            DerivedRecapStore.Open(
+                    sessionDirectory,
+                    engine.BranchRefId
+                )
+                .CreateAsync()
+                .AsTask()
+                .GetAwaiter()
+                .GetResult();
+        }
+        _ = RecapPlannerConfigInitializer.Initialize(
+            sessionDirectory,
+            new RecapPlannerConfigDocument(
+                RecapPlannerConfigCodec.SchemaV2,
+                RecapPlanningPolicyIds.BoundedMaintainAllV1,
+                new RecapCadenceConfigDocument(
+                    O200kBaseHistoryUnitLoadEstimator.EstimatorId,
+                    MinimumRecentHistoryLoad: 1_000_000,
+                    RecapBuildIntervalHistoryLoad: 1_000_000
+                ),
+                [
+                    new RecapPlannerCatalogEntryDocument(
+                        RecapMaintainerProfileCatalog
+                            .WorldUnderstandingRewrite,
+                        32_768
+                    ),
+                    new RecapPlannerCatalogEntryDocument(
+                        RecapMaintainerProfileCatalog
+                            .AutobiographicalRewrite,
+                        32_768
+                    )
+                ],
+                new RecapPlannerLimitsDocument(
+                    MaxRawGrowthEventCount: 512,
+                    MaxRouteEndpointsPerBlock: 4,
+                    MaxMaintainerCallsPerBuild: 8,
+                    MaxRawEventsPerStep: 64,
+                    MaxRawEventsPerBuild: 512
+                )
+            )
+        );
         var users = new GalateaUsersFileConfig([
             new GalateaUserConfig(
                 TestUserId,
                 TestPassword,
                 sessionDirectory,
-                CompactionThresholdTokens: 100_000,
-                CompactionSystemPrompt: null,
-                CompactionPrompt: null,
                 SystemPrompt: "test system prompt"
             )
         ]);
@@ -92,9 +152,11 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
 
         return new GalateaTestHost(
             tempRoot,
+            sessionDirectory,
             configPath,
             completionClientFactory,
-            normalizer
+            normalizer,
+            deleteFilesOnDispose
         );
     }
 
@@ -120,7 +182,7 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
 
     public async ValueTask DisposeAsync() {
         await Factory.DisposeAsync().ConfigureAwait(false);
-        if (Directory.Exists(_tempRoot)) {
+        if (_deleteFilesOnDispose && Directory.Exists(_tempRoot)) {
             Directory.Delete(_tempRoot, recursive: true);
         }
     }

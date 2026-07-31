@@ -13,7 +13,7 @@ internal sealed class GalateaLiveTurn {
     private string _status;
     private string? _phase;
 
-    public GalateaLiveTurn(string userMessage, GalateaTurnOptions options) {
+    public GalateaLiveTurn(string? userMessage, GalateaTurnOptions options) {
         TurnId = Guid.NewGuid().ToString("N");
         UserMessage = userMessage;
         Options = options ?? throw new ArgumentNullException(nameof(options));
@@ -23,7 +23,7 @@ internal sealed class GalateaLiveTurn {
 
     public string TurnId { get; }
 
-    public string UserMessage { get; }
+    public string? UserMessage { get; }
 
     public GalateaTurnOptions Options { get; }
 

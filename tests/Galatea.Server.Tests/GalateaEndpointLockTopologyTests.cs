@@ -1,6 +1,5 @@
 using System.Net;
 using System.Net.Http.Json;
-using System.Reflection;
 using Atelia.Completion;
 using Atelia.Completion.Abstractions;
 using Microsoft.Extensions.DependencyInjection;
@@ -151,37 +150,15 @@ public sealed class GalateaEndpointLockTopologyTests {
             "alice",
             CancellationToken.None
         );
-        var connections = host.Factory.Services
-            .GetRequiredService<CompletionConnectionRegistry>();
-        FieldInfo byIdField = typeof(CompletionConnectionRegistry)
-            .GetField(
-                "_byId",
-                BindingFlags.Instance | BindingFlags.NonPublic
-            ) ?? throw new InvalidOperationException(
-                "CompletionConnectionRegistry._byId was not found."
+        using HttpResponseMessage response =
+            await client.PostAsJsonAsync(
+                "/api/chat/turns",
+                new ChatStreamRequest(
+                    "invalid connection probe",
+                    ConnectionId: "missing"
+                )
             );
-        var byId = Assert.IsAssignableFrom<
-            IDictionary<string, CompletionConnectionConfig>
-        >(byIdField.GetValue(connections));
-        Assert.True(byId.Remove("test"));
-
-        try {
-            using HttpResponseMessage response =
-                await client.PostAsJsonAsync(
-                    "/api/chat/turns",
-                    new ChatStreamRequest(
-                        "invalid connection probe",
-                        ConnectionId: null
-                    )
-                );
-            Assert.Equal(
-                HttpStatusCode.InternalServerError,
-                response.StatusCode
-            );
-        }
-        catch (InvalidOperationException) {
-            // TestServer may surface the unhandled endpoint exception.
-        }
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
 
         Assert.True(session.TurnLock.Wait(0));
         session.TurnLock.Release();

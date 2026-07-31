@@ -25,7 +25,10 @@ internal sealed class GalateaInputPreprocessor {
         ArgumentNullException.ThrowIfNull(liveTurn);
         cancellationToken.ThrowIfCancellationRequested();
 
-        string original = liveTurn.UserMessage;
+        string original = liveTurn.UserMessage
+            ?? throw new InvalidOperationException(
+                "Input preprocessing requires a fresh user message."
+            );
         bool shouldNormalize;
         try {
             shouldNormalize = _normalizer.ShouldNormalize(original);

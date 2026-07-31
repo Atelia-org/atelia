@@ -5,6 +5,7 @@
 
   const state = {
     recentTurns: [],
+    rewindLatestToken: null,
     pendingPoppedTurn: null,
     liveText: "",
     liveReasoning: "",
@@ -127,7 +128,7 @@
   }
 
   function hasUndoableTurn() {
-    return state.recentTurns.length > 0;
+    return Boolean(state.rewindLatestToken);
   }
 
   function clearPendingPoppedTurn() {
@@ -224,17 +225,18 @@
 
   function applyRecentTurnsPayload(payload) {
     state.recentTurns = payload?.turns ?? [];
+    state.rewindLatestToken = payload?.rewindLatestToken ?? null;
   }
 
   async function loadCurrentTurn() {
     return await fetchJson("/api/chat/turns/current");
   }
 
-  async function waitForCurrentTurnIdle() {
+  async function waitForCurrentTurnTerminal() {
     while (true) {
       const currentTurn = await loadCurrentTurn();
-      if (currentTurn?.status === "idle") {
-        return;
+      if (currentTurn?.status !== "running") {
+        return currentTurn;
       }
 
       await sleep(250);
@@ -300,10 +302,6 @@
           } else {
             setStreaming(true, "输入清洗完成，继续生成…");
           }
-        } else if (payload?.phase === "compaction-start") {
-          setStreaming(true, "正在压缩上下文…");
-        } else if (payload?.phase === "compaction-finish") {
-          setStreaming(true, "上下文压缩完成，继续生成…");
         } else if (payload?.phase === "tool-loop-start") {
           setStreaming(true, "正在调用工具…");
         }
@@ -318,9 +316,7 @@
         liveText.textContent = state.liveText;
         break;
       case "done":
-        applyRecentTurnsPayload({
-          turns: payload?.recentTurns ?? [],
-        });
+        applyRecentTurnsPayload(payload?.recent ?? {});
         clearPendingPoppedTurn();
         renderTurns();
         clearActiveTurn();
@@ -345,6 +341,12 @@
     const response = await fetch("/api/chat/turns/pop-latest", {
       method: "POST",
       credentials: "same-origin",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        rewindLatestToken: state.rewindLatestToken,
+      }),
     });
 
     const payload = await response.json().catch(() => null);
@@ -371,9 +373,7 @@
       return null;
     }
 
-    if (state.recentTurns.length > 0) {
-      state.recentTurns = state.recentTurns.slice(1);
-    }
+    applyRecentTurnsPayload(payload?.recent ?? {});
     input.value = state.pendingPoppedTurn.userText ?? "";
     renderTurns();
     input.focus();
@@ -415,8 +415,16 @@
         await readEventStream(response);
         if (state.activeTurnId !== normalizedTurnId || generation !== state.streamGeneration) {
           if (!state.activeTurnId) {
-            await waitForCurrentTurnIdle();
-            setStreaming(false, "");
+            const currentTurn = await waitForCurrentTurnTerminal();
+            if (currentTurn?.status === "recovery-required") {
+              setStreaming(false, currentTurn.restartRequired
+                ? "上次模型调用结果不确定；需要明确授权后才能恢复。"
+                : "本轮保留在可恢复状态；刷新页面可继续恢复。");
+            } else if (currentTurn?.status === "unprovisioned") {
+              setStreaming(false, "会话仓库尚未完成初始化。");
+            } else {
+              setStreaming(false, "");
+            }
           }
           return;
         }
@@ -536,6 +544,40 @@
         selectConnection(currentTurn.connectionId, { updateRadio: true });
       }
       await attachToTurn(currentTurn.turnId, "正在恢复生成…");
+      return;
+    }
+    if (currentTurn?.status === "recovery-required") {
+      const restartUncertainCompletion = currentTurn.restartRequired
+        ? window.confirm(
+          "上次模型调用的结果不确定。重新调用可能产生重复请求；是否明确授权重新调用？"
+        )
+        : false;
+      if (currentTurn.restartRequired && !restartUncertainCompletion) {
+        resetLive();
+        refreshComposerMode();
+        setStreaming(false, "已保留不确定状态，未重新调用模型。");
+        return;
+      }
+      const response = await fetch("/api/chat/turns/resume", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          expectedHead: currentTurn.recoveryHead,
+          connectionId: state.selectedConnectionId,
+          restartUncertainCompletion,
+        }),
+      });
+      const payload = await response.json().catch(() => null);
+      if (response.ok && payload?.turnId) {
+        await attachToTurn(payload.turnId, "正在恢复生成…");
+        return;
+      }
+      resetLive();
+      refreshComposerMode();
+      setStreaming(false, payload?.error || "持久化轮次需要人工恢复。");
       return;
     }
 

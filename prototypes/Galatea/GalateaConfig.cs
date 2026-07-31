@@ -26,9 +26,6 @@ public sealed record GalateaUserConfig(
     string UserId,
     string Password,
     string SessionDir,
-    ulong CompactionThresholdTokens,
-    string? CompactionSystemPrompt,
-    string? CompactionPrompt,
     string SystemPrompt = "",
     // Optional path to a markdown (or plain text) file whose content overrides the
     // inline SystemPrompt. Resolved relative to the config file's directory when not
@@ -51,7 +48,8 @@ public sealed record RecentTurnDto(
 );
 
 public sealed record RecentTurnsResponseDto(
-    IReadOnlyList<RecentTurnDto> Turns
+    IReadOnlyList<RecentTurnDto> Turns,
+    string? RewindLatestToken
 );
 
 public sealed record AssistantMessageDto(
@@ -65,7 +63,13 @@ public sealed record ChatStreamRequest(
 );
 
 public sealed record PopLatestTurnResponseDto(
-    RecentTurnDto Turn
+    RecentTurnDto Turn,
+    RecentTurnsResponseDto Recent
+);
+
+public sealed record PopLatestTurnRequestDto(
+    [property: JsonPropertyName("rewindLatestToken")]
+    string RewindLatestToken
 );
 
 public sealed record StartTurnResponseDto(
@@ -79,7 +83,20 @@ public sealed record CurrentTurnDto(
     string? TurnId = null,
     string? UserMessage = null,
     string? Phase = null,
-    string? ConnectionId = null
+    string? ConnectionId = null,
+    string? DurablePhase = null,
+    bool RecoveryRequired = false,
+    bool RestartRequired = false,
+    string? RecoveryHead = null
+);
+
+public sealed record ResumeTurnRequest(
+    [property: JsonPropertyName("expectedHead")]
+    string ExpectedHead,
+    [property: JsonPropertyName("connectionId")]
+    string? ConnectionId = null,
+    [property: JsonPropertyName("restartUncertainCompletion")]
+    bool RestartUncertainCompletion = false
 );
 
 public sealed record StreamEventDto(

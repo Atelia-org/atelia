@@ -50,7 +50,7 @@ public sealed class GalateaHostSmokeTests {
             .GetFromJsonAsync<RecentTurnsResponseDto>("/api/recent-turns");
         Assert.NotNull(recent);
         Assert.Empty(recent!.Turns);
-        Assert.Equal(1, completionFactory.CreateCallCount);
+        Assert.Equal(0, completionFactory.CreateCallCount);
         Assert.Equal(0, completionFactory.Client.DispatchCallCount);
         Assert.Equal(0, normalizer.NormalizeCallCount);
     }
