@@ -14,14 +14,16 @@ public sealed record GalateaConfig(
     IReadOnlyList<CompletionConnectionConfig> Connections,
     string DefaultConnectionId,
     IReadOnlyList<string>? ListenUrls = null,
-    string? CallLogDir = null
+    string? CallLogDir = null,
+    bool MaintenanceMode = false
 );
 
 /// <summary>Shape of config.json: user accounts + server settings, with no LLM binding.</summary>
 public sealed record GalateaUsersFileConfig(
     IReadOnlyList<GalateaUserConfig> Users,
     IReadOnlyList<string>? ListenUrls = null,
-    string? CallLogDir = null
+    string? CallLogDir = null,
+    bool MaintenanceMode = false
 );
 
 public sealed record GalateaUserConfig(
@@ -41,7 +43,8 @@ public sealed record GalateaConnectionInfoDto(
 );
 
 public sealed record GalateaMeDto(
-    string UserId
+    string UserId,
+    bool MaintenanceMode
 );
 
 public sealed record RecentTurnDto(

@@ -22,6 +22,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
     private readonly CompletionConnectionRegistry _connections;
     private readonly GalateaInputPreprocessor _inputPreprocessor;
     private readonly string? _callLogDirectory;
+    private readonly bool _maintenanceMode;
     private readonly ConcurrentDictionary<string, Lazy<Task<UserSessionHost>>> _sessions = new(StringComparer.Ordinal);
     private readonly IReadOnlyDictionary<string, GalateaUserConfig> _users;
 
@@ -36,6 +37,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
             userMessageNormalizer
         );
         _callLogDirectory = config.CallLogDir;
+        _maintenanceMode = config.MaintenanceMode;
         _users = config.Users.ToDictionary(x => x.UserId, StringComparer.Ordinal);
     }
 
@@ -647,7 +649,9 @@ public sealed class GalateaHostService : IAsyncDisposable {
         }
         SessionJournalEngine engine;
         try {
-            engine = SessionJournalEngine.Open(sessionDir);
+            engine = _maintenanceMode
+                ? SessionJournalEngine.OpenReadOnly(sessionDir)
+                : SessionJournalEngine.Open(sessionDir);
         }
         catch (Exception exception) when (
             exception is DirectoryNotFoundException
@@ -918,7 +922,8 @@ internal static class GalateaConfigLoader {
             CallLogDir: ResolveCallLogDirectory(
                 usersFile.CallLogDir,
                 configDir
-            )
+            ),
+            MaintenanceMode: usersFile.MaintenanceMode
         );
 
         config = ResolveSystemPromptFiles(config, resolvedPath);
@@ -1216,7 +1221,12 @@ internal static class GalateaHtml {
 """;
     }
 
-    public static string RenderAppPage(GalateaUserConfig user, CompletionConnectionRegistry connections, string assetVersion) {
+    public static string RenderAppPage(
+        GalateaUserConfig user,
+        CompletionConnectionRegistry connections,
+        bool maintenanceMode,
+        string assetVersion
+    ) {
         ArgumentNullException.ThrowIfNull(user);
         ArgumentNullException.ThrowIfNull(connections);
 
@@ -1230,6 +1240,12 @@ internal static class GalateaHtml {
             .ToArray();
         string connectionsJson = JsonSerializer.Serialize(connectionInfos, GalateaJson.Options);
         string defaultConnectionJson = JsonSerializer.Serialize(connections.DefaultConnectionId, GalateaJson.Options);
+        string maintenanceBanner = maintenanceMode
+            ? "<p class=\"maintenance-banner\" role=\"status\">维护模式：会话只读，发送、恢复、撤销与停止已禁用。</p>"
+            : string.Empty;
+        string maintenanceDisabled = maintenanceMode
+            ? " disabled"
+            : string.Empty;
         string stylesheetPath = GalateaStaticAssetVersion.AppendToPath("/assets/galatea.css", assetVersion);
         string scriptPath = GalateaStaticAssetVersion.AppendToPath("/assets/galatea.js", assetVersion);
 
@@ -1245,21 +1261,23 @@ internal static class GalateaHtml {
 <body class="app-body">
   <main class="app-shell">
 
+    {{maintenanceBanner}}
+
     <section class="composer">
       <form id="chat-form">
         <fieldset id="connection-picker" class="connection-picker" aria-label="模型连接">
           <legend>模型连接</legend>
         </fieldset>
-        <textarea id="message-input" rows="3" placeholder="说点什么……" required></textarea>
+        <textarea id="message-input" rows="3" placeholder="说点什么……" required{{maintenanceDisabled}}></textarea>
         <div class="composer-actions">
           <div class="composer-status">
             <span id="composer-mode-hint" class="eyebrow hidden"></span>
             <span id="status-text" class="status-text"></span>
           </div>
           <div class="composer-buttons">
-            <button id="undo-last-button" type="button" class="ghost-button">撤销上一轮</button>
-            <button id="stop-button" type="button" class="ghost-button">停止</button>
-            <button id="send-button" type="submit">发送</button>
+            <button id="undo-last-button" type="button" class="ghost-button"{{maintenanceDisabled}}>撤销上一轮</button>
+            <button id="stop-button" type="button" class="ghost-button"{{maintenanceDisabled}}>停止</button>
+            <button id="send-button" type="submit"{{maintenanceDisabled}}>发送</button>
           </div>
         </div>
       </form>
@@ -1287,7 +1305,8 @@ internal static class GalateaHtml {
     window.galateaBootstrap = {
       userId: {{JsonSerializer.Serialize(user.UserId, GalateaJson.Options)}},
       connections: {{connectionsJson}},
-      defaultConnectionId: {{defaultConnectionJson}}
+      defaultConnectionId: {{defaultConnectionJson}},
+      maintenanceMode: {{JsonSerializer.Serialize(maintenanceMode, GalateaJson.Options)}}
     };
   </script>
     <script src="{{scriptPath}}"></script>

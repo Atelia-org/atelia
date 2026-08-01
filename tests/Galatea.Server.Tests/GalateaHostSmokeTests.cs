@@ -34,6 +34,7 @@ public sealed class GalateaHostSmokeTests {
         );
         Assert.NotNull(me);
         Assert.Equal("alice", me!.UserId);
+        Assert.False(me.MaintenanceMode);
 
         Assert.Same(
             completionFactory,

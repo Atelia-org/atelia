@@ -2,6 +2,7 @@
   const bootstrapConfig = window.galateaBootstrap ?? {};
   const connections = Array.isArray(bootstrapConfig.connections) ? bootstrapConfig.connections : [];
   const userKey = bootstrapConfig.userId ?? "anonymous";
+  const maintenanceMode = bootstrapConfig.maintenanceMode === true;
 
   const state = {
     recentTurns: [],
@@ -97,14 +98,14 @@
 
   function setStreaming(streaming, status) {
     state.streaming = streaming;
-    sendButton.disabled = streaming;
-    input.disabled = streaming;
+    sendButton.disabled = maintenanceMode || streaming;
+    input.disabled = maintenanceMode || streaming;
     if (stopButton) {
-      stopButton.disabled = !streaming;
+      stopButton.disabled = maintenanceMode || !streaming;
     }
     if (connectionPicker) {
       connectionPicker.querySelectorAll('input[name="connection"]').forEach((radio) => {
-        radio.disabled = streaming;
+        radio.disabled = maintenanceMode || streaming;
       });
     }
     statusText.textContent = status || "";
@@ -123,7 +124,7 @@
     }
 
     if (undoLastButton) {
-      undoLastButton.disabled = state.streaming || state.pendingPoppedTurn !== null || !hasUndoableTurn();
+      undoLastButton.disabled = maintenanceMode || state.streaming || state.pendingPoppedTurn !== null || !hasUndoableTurn();
     }
   }
 
@@ -192,7 +193,7 @@
     connectionPicker.innerHTML = legend + options;
 
     connectionPicker.querySelectorAll('input[name="connection"]').forEach((radio) => {
-      radio.disabled = state.streaming;
+      radio.disabled = maintenanceMode || state.streaming;
       radio.addEventListener("change", () => {
         if (radio.checked) {
           selectConnection(radio.value, { persist: true });
@@ -451,7 +452,7 @@
 
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
-    if (state.streaming) {
+    if (maintenanceMode || state.streaming) {
       return;
     }
 
@@ -502,7 +503,7 @@
   });
 
   undoLastButton?.addEventListener("click", async () => {
-    if (state.streaming || state.pendingPoppedTurn || !hasUndoableTurn()) {
+    if (maintenanceMode || state.streaming || state.pendingPoppedTurn || !hasUndoableTurn()) {
       return;
     }
 
@@ -510,7 +511,7 @@
   });
 
   stopButton?.addEventListener("click", async () => {
-    if (!state.streaming || !state.activeTurnId) {
+    if (maintenanceMode || !state.streaming || !state.activeTurnId) {
       return;
     }
 
@@ -539,6 +540,12 @@
 
     await loadRecentTurns();
     const currentTurn = await loadCurrentTurn();
+    if (maintenanceMode) {
+      resetLive();
+      refreshComposerMode();
+      setStreaming(false, "维护模式：会话只读。");
+      return;
+    }
     if (currentTurn?.status === "running" && currentTurn.turnId) {
       if (currentTurn.connectionId) {
         selectConnection(currentTurn.connectionId, { updateRadio: true });

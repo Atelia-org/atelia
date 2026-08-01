@@ -50,7 +50,8 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
         ICompletionClientFactory completionClientFactory,
         IGalateaUserMessageNormalizer normalizer,
         bool deleteFilesOnDispose = true,
-        string? callLogDirectory = null
+        string? callLogDirectory = null,
+        bool maintenanceMode = false
     ) {
         ArgumentNullException.ThrowIfNull(completionClientFactory);
         ArgumentNullException.ThrowIfNull(normalizer);
@@ -132,7 +133,8 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
             ],
             "test",
             "test system prompt",
-            callLogDirectory
+            callLogDirectory,
+            maintenanceMode
         );
 
         return new GalateaTestHost(
@@ -158,7 +160,8 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
         ICompletionClientFactory completionClientFactory,
         IGalateaUserMessageNormalizer normalizer,
         string systemPrompt = "test system prompt",
-        string? callLogDirectory = null
+        string? callLogDirectory = null,
+        bool maintenanceMode = false
     ) {
         ArgumentException.ThrowIfNullOrWhiteSpace(sessionDirectory);
         ArgumentNullException.ThrowIfNull(connections);
@@ -190,7 +193,8 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
                 connections,
                 defaultConnectionId,
                 systemPrompt,
-                callLogDirectory
+                callLogDirectory,
+                maintenanceMode
             );
             return new GalateaTestHost(
                 configurationRoot,
@@ -240,7 +244,8 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
         IReadOnlyList<CompletionConnectionConfig> connections,
         string defaultConnectionId,
         string systemPrompt,
-        string? callLogDirectory
+        string? callLogDirectory,
+        bool maintenanceMode
     ) {
         var users = new GalateaUsersFileConfig(
             [
@@ -251,7 +256,8 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
                     SystemPrompt: systemPrompt
                 )
             ],
-            CallLogDir: callLogDirectory
+            CallLogDir: callLogDirectory,
+            MaintenanceMode: maintenanceMode
         );
         var connectionsFile = new CompletionConnectionsFileConfig(
             connections,

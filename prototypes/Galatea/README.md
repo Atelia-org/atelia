@@ -36,6 +36,7 @@ Planner config。
     }
   ],
   "callLogDir": "../../../../gitignore/galatea/completion-calls",
+  "maintenanceMode": false,
   "listenUrls": ["http://0.0.0.0:3510"]
 }
 ```
@@ -49,6 +50,12 @@ profiles和limits统一由每个SessionJournal repo中的 `recap-planner-config.
 `sessionDir`互不包含。未配置时不包装client、不创建日志目录。日志wrapper透传client identity，
 因此开关日志不会改变Prepared中冻结的completion target；日志可能包含完整prompt/response，应位于
 repo之外且按敏感数据管理。
+
+`maintenanceMode`是startup-time只读开关，默认`false`。设为`true`后，fresh send、durable
+resume、Undo与stop endpoint都会在打开session前返回typed `503 maintenance-mode`；Host同时以
+read-only方式打开SessionJournal，作为第二层写保护。登录、页面、`/api/me`、current、recent与SSE
+读取继续可用，页面会显示维护提示并禁用所有写按钮。该开关不会热加载，也没有admin bypass；解除维护
+需要修改config并重启，外部ingress应保持关闭直到重启后的只读检查完成。
 
 `connections.json` 保存可选的Completion routes：
 

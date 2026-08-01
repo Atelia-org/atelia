@@ -73,6 +73,23 @@ app.Use(async (context, next) => {
 
 app.UseAuthentication();
 app.UseAuthorization();
+app.Use(async (context, next) => {
+    if (config.MaintenanceMode
+        && HttpMethods.IsPost(context.Request.Method)
+        && context.Request.Path.StartsWithSegments(
+            "/api/chat/turns",
+            StringComparison.Ordinal
+        )) {
+        context.Response.StatusCode =
+            StatusCodes.Status503ServiceUnavailable;
+        await context.Response.WriteAsJsonAsync(new {
+            code = "maintenance-mode",
+            error = "Galatea当前处于维护模式；会话写操作已禁用。"
+        });
+        return;
+    }
+    await next(context);
+});
 app.UseStaticFiles();
 
 app.MapGet(
@@ -132,7 +149,15 @@ app.MapGet(
             ?? throw new InvalidOperationException("Authenticated principal is missing user id.");
         if (!hostService.TryGetUser(userId, out var configUser)) { return Results.Unauthorized(); }
 
-        return Results.Content(GalateaHtml.RenderAppPage(configUser, connections, assetVersion), "text/html; charset=utf-8");
+        return Results.Content(
+            GalateaHtml.RenderAppPage(
+                configUser,
+                connections,
+                config.MaintenanceMode,
+                assetVersion
+            ),
+            "text/html; charset=utf-8"
+        );
     }
 ).RequireAuthorization();
 
@@ -145,7 +170,10 @@ api.MapGet(
             ?? throw new InvalidOperationException("Authenticated principal is missing user id.");
         if (!hostService.TryGetUser(userId, out var configUser)) { return Results.Unauthorized(); }
 
-        return Results.Ok(new GalateaMeDto(configUser.UserId));
+        return Results.Ok(new GalateaMeDto(
+            configUser.UserId,
+            config.MaintenanceMode
+        ));
     }
 );
 
