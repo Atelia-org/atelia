@@ -666,9 +666,9 @@ G1后的调整：
 - G2 Host gate以`rewindLatestToken`而非`Turns.Count > 0`判断Undo，并增加sidecar publish/materialize
   前后recent/token不变、stale token不误撤新turn、Undo回到setup suffix后仍有visible turn但token为
   null的验收；
-- G2B activation config删除旧compaction字段。当前ignored local `config.json`仍指向legacy
-  ChatSession目录并不代表G1 binary已完成production activation；必须等G2A fresh staging通过后按G2B
-  quiesced exact-head步骤切换；
+- G2B activation config删除旧compaction字段。G1完成时，ignored local `config.json`仍指向legacy
+  ChatSession目录，这不代表G1 binary已经production activation；后续实际切换由G2B在G2A fresh
+  staging通过后按quiesced exact-head步骤完成；
 - CLI与Galatea目前只重复少量profile capability投影和completion identity mapping，logging、UI、
   recovery policy不同；第二个Host尚未形成足够稳定的重复，不提取`DerivedRecap.Hosting`；
 - post-response warm-up继续defer，tool-capable recovery继续作为后续独立vertical。
@@ -778,36 +778,84 @@ G2A后的调整：
   production canary，必须继续在maintenance内明确越过fix-forward boundary；
 - `DerivedRecap.Hosting`仍不抽取，post-response warm-up与tool-capable recovery继续defer。
 
-### G2B：Quiesced exact-head activation
+### G2B：Quiesced exact-head activation（Done，2026-08-01）
 
-1. Galatea进入maintenance mode或停止旧Server，等待active turn和post-compaction结束并阻止
-   新turn；
-2. 捕获legacy exact branch/head，重新生成final export并证明对应此head；
-3. 若export bytes改变，更新SHA-256、calibration和预期import facts；
-4. 从final export重新构建一个从未运行agent canary的fresh activation repo；
-5. 完成raw validate、config init/inspect、Store create、Recap run、`materialize-inspect`与immediate
-   `NoBuild`；provider失败只允许对同一frozen Building做有界resume，这些步骤不得写raw turn；
-6. 使用隔离config/port完成read-only Host open与recent projection；
-7. 在停服状态原子切换新binary + `sessionDir`，以maintenance/admin-only模式启动新Host；
-8. 完成read-only检查；若选择production canary，也必须在maintenance内执行并明确记录已越过
-   fix-forward boundary；
-9. 检查或canary通过后才解除maintenance，禁止真实用户抢先成为首个raw writer。
+最终activation流程收口为：
 
-rollback boundary：
+1. 停止旧Server并确认旧repo没有active owner；捕获legacy exact branch/head；
+2. `export-json --expected-head <H>`在生成前和atomic publish前双重核对head，并证明final
+   timeline/event、UTF-8 bytes和SHA-256都对应`H`；
+3. 从final export直接在永久sibling path创建一个从未运行agent canary的fresh activation repo；
+4. 完成import/validate、repo-owned config、Store、explicit setup-only reconciliation、Recap
+   run/resume、`materialize-inspect`与immediate `NoBuild`；provider失败只允许对同一frozen Building做
+   有界resume，不reset、reimport或嫁接旧derived state；
+5. 使用隔离config和loopback端口以`maintenanceMode: true`启动shadow Host，验证read-only
+   current/recent与typed write rejection；
+6. 在停服状态保存byte-exact active config和可执行legacy rollback artifact，原子切换active
+   `sessionDir`，仍以startup-time maintenance启动新Host并重复read-only gate；
+7. 修改`maintenanceMode: false`并重启后才解除quiescence。没有hot reload、admin bypass或第二套
+   maintenance状态机；应用内write gate和read-only engine提供defense-in-depth，loopback/ingress与operator
+   credential承担admin-only边界。
 
-- 首个新SessionJournal raw write之前，可无损恢复旧binary/config/repo；
-- 首个新raw write之后，没有reverse importer或dual write，切回旧ChatSession会丢失新turn；此后
-  只能fix-forward，除非operator明确接受数据丢失；
-- 旧repo与final export继续只读保留，用于审计/灾难恢复，不成为新程序fallback。
+rollback boundary分为三层：
+
+- fresh import、planner config、DerivedRecap与shadow验证是可重建activation preparation；
+- explicit activation `RuntimeConfigSetup` / `SystemPromptSetup`会让candidate raw head产生分叉，但不引入
+  用户会话事实；此时恢复旧ChatSession不会丢conversation，后续重建时重新reconcile setup即可；
+- 真正的fix-forward边界是首个post-cutover、非activation-setup的authoritative raw/ref mutation。通常是
+  `ObservationAccepted`，也包括recovery append、Undo/ref move或failed-turn abandon。production canary一旦
+  产生此类mutation便已越界，即使随后Undo也不能抹去物理raw/off-lineage事实；此后切回ChatSession会
+  丢失新authority，默认只能fix-forward。
 
 activation gate：
 
 - governing runtime/system setup与Galatea实际desired config一致；
-- activation config不含旧compaction字段，`callLogDir`存在时位于session repo外；
-- `GET current`与recent projection正常；
-- 若执行deliberate production canary，它必须发生在maintenance内；一旦写入raw即记录进入
-  fix-forward boundary；
-- staging/activation期间旧repo和final export hash不变。
+- activation config使用absolute permanent `sessionDir`，不含旧compaction字段，`callLogDir`位于repo外；
+- maintenance下`GET /api/me`、current、recent正常，所有chat POST在打开session/client前返回typed 503；
+- public restart后`maintenanceMode=false`且current/recent仍对应同一exact Idle head；
+- staging/activation期间旧repo、final export和activation raw fingerprint保持不变；
+- 默认不做production canary；若operator显式选择，必须在maintenance/受控ingress内执行并记录是否越过
+  上述fix-forward边界。
+
+完成结果：
+
+- quiesced legacy `main` head为`seg:1:00000008f866b7af`。新增mandatory
+  `export-json --expected-head`与import provenance report，final export仍为1,281,881 bytes、SHA-256
+  `b71822a27003e8d9f9b9c0ff956ca7c268267aba72221be89df154ed7d4751f3`，与既有校准export
+  byte-identical；旧repo `recent/` + `refs/` before/after fingerprint一致；
+- fresh import为148 events、71 Observation + 71 Action、2 compaction + 2 recap skipped、零warning、
+  Idle。新增`reconcile-desired-setup`在exact Idle head只追加一条`RuntimeConfigSetup`，没有重复
+  `SystemPromptSetup`；activation head成为`ej1:00000497d00000410000000100000000`、149 events、
+  Idle，runtime为`deepseek-v4-pro` / `openai-chat/deepseek-v4`，system-prompt hash与history semantic
+  commitment不变；
+- repo config SHA仍为`03a5e77e506c210594901375eff86ebbaf992ff532160b471d9a1831edc4d50a`，
+  estimator为`atelia.history-load.o200k-base.history-unit-v1`，`R=18,000`、`B=21,000`，完整历史为
+  142 HistoryUnits / 116,458 HistoryLoad；
+- Recap attempts 001-003都保留同一Building anchor
+  `ej1:000003e66000017f0000000100000000`，其中3次provider call精确命中默认100秒transport timeout。
+  这暴露的是connection operational policy，不是Planner/Store状态问题：`CompletionConnectionConfig`
+  新增1..3600秒的optional `requestTimeoutSeconds`，`dsv4p`显式设为300秒；effective值进入call log但不
+  进入dispatch fingerprint，timeout覆盖response headers与后续SSE body的完整streaming operation，
+  因此纯等待策略变化不会破坏Prepared exact binding；
+- attempt 004在同一frozen Building上Published。materialization选择world-understanding 14,994 UTF-8
+  bytes与autobiography 18,918 bytes；二者都absorbed through上述anchor，recent suffix为20 raw events /
+  19 HistoryUnits。immediate second run为`NoBuild`、0 provider call；Recap前后raw fingerprint一致；
+- 最后一个可读取ChatSession的Host commit `c5b45c7f`已生成immutable Release artifact，并在loopback上
+  对legacy repo通过login/me/recent read-only验证。shadow maintenance和active-path maintenance均通过
+  `me=true`、current Idle、recent 6、chat POST typed 503、zero call-log；随后false重启通过
+  `me=false`、current Idle、recent 6；
+- active config已指向absolute permanent
+  `/repos/focus/atelia/prototypes/Galatea/.atelia/galatea/sessions/cyber-session-journal`，external
+  `callLogDir`位于repo外，旧compaction字段已删除。正式Host监听`0.0.0.0:3511`；本轮未执行production
+  canary，因此截至activation验收尚未越过用户历史fix-forward边界。
+
+G2B后的调整：
+
+- G3继续defer。首次full-legacy build在offline maintenance window内的transport timeout，不能证明正常
+  incremental rolling maintenance会造成不可接受的pre-send延迟；先在试运行中记录threshold turn的
+  preparation wall time、Maintainer calls和用户感知，再决定是否实施post-response warm-up；
+- `requestTimeoutSeconds=300`是当前`dsv4p` route的operational policy，不是Recap architecture或
+  cross-run golden；Hosting抽取、tool-capable recovery与background scheduler仍不随G2B扩张。
 
 ### G3：Post-response recap warm-up（可选）
 

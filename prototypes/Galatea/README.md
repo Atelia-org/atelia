@@ -68,12 +68,19 @@ read-only方式打开SessionJournal，作为第二层写保护。登录、页面
       "kind": "openai-chat",
       "modelId": "deepseek-v4",
       "completionSurfaceId": "openai-chat/deepseek-v4",
+      "requestTimeoutSeconds": 300,
       "baseAddress": "https://example.invalid/v1/",
       "apiKeyEnv": "DEEPSEEK_API_KEY"
     }
   ]
 }
 ```
+
+`requestTimeoutSeconds`是可选的connection-local operation policy，范围1..3600；未配置时保持100秒
+默认值。timeout覆盖完整streaming operation，包括收到response headers之后持续读取SSE body的阶段；
+effective timeout会进入Completion call log，便于解释provider等待失败，但不会进入durable dispatch
+fingerprint：它不改变endpoint/model/request wire，调整纯等待策略也不应让已经Prepared的exact
+recovery失去binding。
 
 Fresh Send 会在 exact Idle head 执行 desired setup reconciliation，再做 Building-first Recap
 preparation；只有这些检查成功后才运行输入清洗并创建provider client。Prepared recovery精确绑定
