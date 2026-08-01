@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Security.Cryptography;
 using Atelia.Completion.Abstractions;
 
 namespace Atelia.SessionJournal.Cli;
@@ -24,6 +25,7 @@ internal sealed record LegacyChatSessionExport {
 
 internal sealed record LegacyChatSessionEvent {
     public int Ordinal { get; init; }
+    public string? Commit { get; init; }
     public string Kind { get; init; } = string.Empty;
     public LegacyChatSessionRoot? Root { get; init; }
     public IReadOnlyList<LegacyChatSessionMessage>? Messages { get; init; }
@@ -31,6 +33,12 @@ internal sealed record LegacyChatSessionEvent {
     public LegacyChatSessionMessage? RecapMessage { get; init; }
     public LegacyChatSessionSystemPromptChange? SystemPromptChange { get; init; }
 }
+
+internal sealed record LegacyChatSessionExportDocument(
+    LegacyChatSessionExport Export,
+    long InputByteCount,
+    string InputSha256
+);
 
 internal sealed record LegacyChatSessionRoot {
     public string? ApiSpecId { get; init; }
@@ -61,11 +69,17 @@ internal static class LegacyChatSessionExportReader {
     };
 
     public static LegacyChatSessionExport Read(string inputJsonPath) {
+        return ReadDocument(inputJsonPath).Export;
+    }
+
+    public static LegacyChatSessionExportDocument ReadDocument(
+        string inputJsonPath
+    ) {
         ArgumentException.ThrowIfNullOrWhiteSpace(inputJsonPath);
-        using var stream = File.OpenRead(inputJsonPath);
+        byte[] bytes = File.ReadAllBytes(inputJsonPath);
         LegacyChatSessionExport export =
             JsonSerializer.Deserialize<LegacyChatSessionExport>(
-                stream,
+                bytes,
                 JsonOptions
             ) ?? throw new InvalidDataException(
                 "Legacy ChatSession export JSON is empty."
@@ -84,6 +98,11 @@ internal static class LegacyChatSessionExportReader {
                 "Legacy ChatSession export has no events."
             );
         }
-        return export;
+        return new LegacyChatSessionExportDocument(
+            export,
+            bytes.LongLength,
+            Convert.ToHexString(SHA256.HashData(bytes))
+                .ToLowerInvariant()
+        );
     }
 }

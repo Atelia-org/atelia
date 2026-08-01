@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using System.Security.Cryptography;
 using Atelia.Completion;
 using Atelia.Completion.Abstractions;
 using Atelia.EventJournal;
@@ -209,6 +210,20 @@ public sealed class ProgramLegacyImportSafetyTests : IDisposable {
             report.RootElement.GetProperty("sourceSchema").GetString()
         );
         Assert.Equal(
+            "fixture-commit-0",
+            report.RootElement.GetProperty("sourceHead").GetString()
+        );
+        byte[] inputBytes = File.ReadAllBytes(inputPath);
+        Assert.Equal(
+            inputBytes.LongLength,
+            report.RootElement.GetProperty("inputByteCount").GetInt64()
+        );
+        Assert.Equal(
+            Convert.ToHexString(SHA256.HashData(inputBytes))
+                .ToLowerInvariant(),
+            report.RootElement.GetProperty("inputSha256").GetString()
+        );
+        Assert.Equal(
             1,
             report.RootElement.GetProperty("observationCount")
                 .GetInt32()
@@ -237,6 +252,37 @@ public sealed class ProgramLegacyImportSafetyTests : IDisposable {
             ".*.tmp",
             SearchOption.AllDirectories
         ));
+    }
+
+    [Fact]
+    public void MissingFinalSourceCommitFailsBeforeCreatingOutput() {
+        Directory.CreateDirectory(_tempRoot);
+        string inputPath = Path.Combine(_tempRoot, "legacy.json");
+        string outputPath = Path.Combine(_tempRoot, "session-journal");
+        var export = new LegacyChatSessionExport {
+            Schema = LegacyChatSessionExportSchema.SchemaId,
+            BranchName = "main",
+            Events = [InitialState() with { Commit = null }]
+        };
+        File.WriteAllText(
+            inputPath,
+            JsonSerializer.Serialize(
+                export,
+                LegacyChatSessionExportReader.JsonOptions
+            )
+        );
+
+        int exitCode = Program.MainCore(
+            [
+                "import-legacy-json",
+                "--input", inputPath,
+                "--output", outputPath
+            ],
+            ThrowingCompletionClientFactory.Instance
+        );
+
+        Assert.Equal(1, exitCode);
+        Assert.False(Directory.Exists(outputPath));
     }
 
     [Theory]
@@ -750,6 +796,7 @@ public sealed class ProgramLegacyImportSafetyTests : IDisposable {
     private static LegacyChatSessionEvent InitialState()
         => new() {
             Ordinal = 0,
+            Commit = "fixture-commit-0",
             Kind = LegacyChatSessionEventKinds.InitialState,
             Root = new LegacyChatSessionRoot {
                 ApiSpecId = "legacy-upgrade-export",
@@ -770,6 +817,7 @@ public sealed class ProgramLegacyImportSafetyTests : IDisposable {
             initialState,
             new LegacyChatSessionEvent {
                 Ordinal = 1,
+                Commit = "fixture-commit-1",
                 Kind = LegacyChatSessionEventKinds.ModelTurn,
                 AppendedMessages = [
                     new LegacyChatSessionMessage {
@@ -804,7 +852,14 @@ public sealed class ProgramLegacyImportSafetyTests : IDisposable {
         var export = new LegacyChatSessionExport {
             Schema = LegacyChatSessionExportSchema.SchemaId,
             BranchName = "main",
-            Events = events
+            Events = [
+                .. events.Select(static (replayEvent, index) =>
+                    replayEvent with {
+                        Commit = replayEvent.Commit
+                            ?? $"fixture-commit-{index}"
+                    }
+                )
+            ]
         };
         File.WriteAllText(
             path,

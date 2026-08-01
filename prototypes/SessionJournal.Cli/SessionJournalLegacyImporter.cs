@@ -35,7 +35,10 @@ internal sealed record SessionJournalLegacyImportReport(
     string Schema,
     string SourceSchema,
     string? SourceBranchName,
+    string SourceHead,
     string InputPath,
+    long InputByteCount,
+    string InputSha256,
     string OutputPath,
     int SessionCreatedCount,
     int RuntimeConfigSetupCount,
@@ -353,6 +356,13 @@ internal static class SessionJournalLegacyImporter {
                 throw new InvalidDataException(
                     $"Legacy event ordinal mismatch at index {index}: "
                     + $"{replayEvent.Ordinal}."
+                );
+            }
+            if (string.IsNullOrWhiteSpace(replayEvent.Commit)) {
+                throw new InvalidDataException(
+                    $"Legacy event at ordinal {index} is missing its "
+                    + "source commit. Schema v1 imports require the "
+                    + "commit emitted by the production exporter."
                 );
             }
 
@@ -892,13 +902,18 @@ internal static class SessionJournalLegacyImporter {
         );
 
     public static SessionJournalLegacyImportReport CreateReport(
-        LegacyChatSessionExport export,
+        LegacyChatSessionExportDocument document,
         string inputPath,
         string outputPath,
         SessionJournalLegacyImportResult result
     ) {
-        ArgumentNullException.ThrowIfNull(export);
+        ArgumentNullException.ThrowIfNull(document);
         ArgumentNullException.ThrowIfNull(result);
+        LegacyChatSessionExport export = document.Export;
+        string sourceHead = export.Events[^1].Commit
+            ?? throw new InvalidDataException(
+                "Legacy export final event has no source commit."
+            );
         return new SessionJournalLegacyImportReport(
             "atelia.session-journal.legacy-import-report.v1",
             export.Schema
@@ -906,7 +921,10 @@ internal static class SessionJournalLegacyImporter {
                     "Legacy export schema is missing."
                 ),
             export.BranchName,
+            sourceHead,
             Path.GetFullPath(inputPath),
+            document.InputByteCount,
+            document.InputSha256,
             Path.GetFullPath(outputPath),
             result.SessionCreatedCount,
             result.RuntimeConfigSetupCount,
@@ -953,6 +971,9 @@ internal static class SessionJournalLegacyImporter {
         writer.WriteLine("# SessionJournal Legacy Import Report");
         writer.WriteLine();
         writer.WriteLine($"- input: `{report.InputPath}`");
+        writer.WriteLine($"- sourceHead: `{report.SourceHead}`");
+        writer.WriteLine($"- inputByteCount: `{report.InputByteCount}`");
+        writer.WriteLine($"- inputSha256: `{report.InputSha256}`");
         writer.WriteLine($"- output: `{report.OutputPath}`");
         writer.WriteLine($"- sessionCreated: `{report.SessionCreatedCount}`");
         writer.WriteLine($"- runtimeConfigSetups: `{report.RuntimeConfigSetupCount}`");

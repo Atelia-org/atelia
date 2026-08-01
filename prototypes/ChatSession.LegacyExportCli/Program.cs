@@ -1,10 +1,14 @@
 using System.Text;
 using System.Text.Json;
+using System.Security.Cryptography;
 using Atelia.ChatSession;
+using Atelia.StateJournal;
 
 namespace Atelia.ChatSession.LegacyExportCli;
 
 internal static class Program {
+    internal static Action? BeforeExportHeadRecheckForTest { get; set; }
+
     public static int Main(string[] args)
         => MainCore(args);
 
@@ -43,20 +47,167 @@ internal static class Program {
         string inputPath = options.Require("input");
         string outputPath = options.Require("output");
         string branchName = options.Get("branch") ?? "main";
+        string expectedHead = ParseExpectedHead(
+            options.Require("expected-head")
+        );
         var exportOptions = new ChatSessionLegacyUpgradeExportOptions(
             WriteIndented: !options.HasFlag("compact")
         );
 
         ValidateExportPaths(inputPath, outputPath);
+        RequireExpectedHead(
+            inputPath,
+            branchName,
+            expectedHead,
+            "before export generation"
+        );
         string json = ChatSessionLegacyUpgradeExporter.ExportJson(
             inputPath,
             branchName,
             exportOptions
         );
+        ValidateExactExport(
+            json,
+            branchName,
+            expectedHead
+        );
+        BeforeExportHeadRecheckForTest?.Invoke();
+        RequireExpectedHead(
+            inputPath,
+            branchName,
+            expectedHead,
+            "before atomic publication"
+        );
         WriteTextAtomically(outputPath, json);
 
         PrintResult(inputPath, branchName, outputPath);
+        byte[] bytes = new UTF8Encoding(
+            encoderShouldEmitUTF8Identifier: false,
+            throwOnInvalidBytes: true
+        ).GetBytes(json);
+        Console.WriteLine($"sourceHead: {expectedHead}");
+        Console.WriteLine($"bytes: {bytes.LongLength}");
+        Console.WriteLine(
+            "sha256: "
+            + Convert.ToHexString(SHA256.HashData(bytes))
+                .ToLowerInvariant()
+        );
         return 0;
+    }
+
+    private static string ParseExpectedHead(string value) {
+        CommitAddress? parsed = CommitAddress.TryParse(value);
+        if (parsed is null
+            || !string.Equals(
+                parsed.Value.ToString(),
+                value,
+                StringComparison.Ordinal
+            )) {
+            throw new ArgumentException(
+                "--expected-head must be a canonical legacy CommitAddress "
+                + "in the form seg:<segment-number>:<lowercase-hex16>."
+            );
+        }
+        return value;
+    }
+
+    private static void RequireExpectedHead(
+        string inputPath,
+        string branchName,
+        string expectedHead,
+        string stage
+    ) {
+        string observed =
+            ChatSessionLegacyUpgradeExporter.CaptureBranchHead(
+                inputPath,
+                branchName
+            );
+        if (!string.Equals(
+                observed,
+                expectedHead,
+                StringComparison.Ordinal
+            )) {
+            throw new InvalidOperationException(
+                $"Legacy branch head changed or does not match {stage}. "
+                + $"Expected '{expectedHead}', observed '{observed}'."
+            );
+        }
+    }
+
+    private static void ValidateExactExport(
+        string json,
+        string branchName,
+        string expectedHead
+    ) {
+        using JsonDocument document = JsonDocument.Parse(json);
+        JsonElement root = document.RootElement;
+        if (!root.TryGetProperty("branchName", out JsonElement branch)
+            || !string.Equals(
+                branch.GetString(),
+                branchName,
+                StringComparison.Ordinal
+            )) {
+            throw new InvalidDataException(
+                "Generated legacy export branch does not match the "
+                + "requested branch."
+            );
+        }
+        JsonElement warnings = root.GetProperty("warnings");
+        if (warnings.ValueKind != JsonValueKind.Array
+            || warnings.GetArrayLength() != 0) {
+            throw new InvalidDataException(
+                "Generated legacy export contains integrity warnings and "
+                + "will not be published."
+            );
+        }
+        JsonElement timeline = root.GetProperty("timeline");
+        JsonElement events = root.GetProperty("events");
+        if (timeline.ValueKind != JsonValueKind.Array
+            || events.ValueKind != JsonValueKind.Array
+            || timeline.GetArrayLength() == 0
+            || timeline.GetArrayLength() != events.GetArrayLength()) {
+            throw new InvalidDataException(
+                "Generated legacy export timeline/events are incomplete."
+            );
+        }
+        for (int index = 0; index < events.GetArrayLength(); index++) {
+            JsonElement timelineEntry = timeline[index];
+            JsonElement replayEvent = events[index];
+            if (timelineEntry.GetProperty("ordinal").GetInt32() != index
+                || replayEvent.GetProperty("ordinal").GetInt32() != index
+                || !string.Equals(
+                    timelineEntry.GetProperty("commit").GetString(),
+                    replayEvent.GetProperty("commit").GetString(),
+                    StringComparison.Ordinal
+                )) {
+                throw new InvalidDataException(
+                    $"Generated legacy export timeline/event mismatch at "
+                    + $"ordinal {index}."
+                );
+            }
+        }
+        int finalIndex = timeline.GetArrayLength() - 1;
+        string? timelineHead = timeline[finalIndex]
+            .GetProperty("commit")
+            .GetString();
+        string? eventHead = events[finalIndex]
+            .GetProperty("commit")
+            .GetString();
+        if (!string.Equals(
+                timelineHead,
+                expectedHead,
+                StringComparison.Ordinal
+            )
+            || !string.Equals(
+                eventHead,
+                expectedHead,
+                StringComparison.Ordinal
+            )) {
+            throw new InvalidDataException(
+                "Generated legacy export does not end at the exact "
+                + $"expected head '{expectedHead}'."
+            );
+        }
     }
 
     private static int RunExportMarkdown(CliOptions options) {
@@ -225,7 +376,8 @@ internal static class Program {
         Console.WriteLine();
         Console.WriteLine("Commands:");
         Console.WriteLine(
-            "  export-json --input <repo-dir> --output <json> [--branch <name>] [--compact]"
+            "  export-json --input <repo-dir> --output <json> "
+            + "--expected-head <seg:...> [--branch <name>] [--compact]"
         );
         Console.WriteLine(
             "  export-markdown --input <repo-dir> --output <md> [--branch <name>] [--exclude-warnings]"

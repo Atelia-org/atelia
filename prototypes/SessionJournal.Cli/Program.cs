@@ -126,14 +126,15 @@ internal static class Program {
             );
         }
 
-        LegacyChatSessionExport export =
-            LegacyChatSessionExportReader.Read(inputPath);
+        LegacyChatSessionExportDocument document =
+            LegacyChatSessionExportReader.ReadDocument(inputPath);
+        LegacyChatSessionExport export = document.Export;
         SessionJournalLegacyImportResult result =
             SessionJournalLegacyImporter.Import(export, outputPath, force);
         SessionJournalLegacyImporter.VerifyImportedRepo(outputPath, result);
         SessionJournalLegacyImportReport report =
             SessionJournalLegacyImporter.CreateReport(
-                export,
+                document,
                 inputPath,
                 outputPath,
                 result

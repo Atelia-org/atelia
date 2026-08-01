@@ -336,9 +336,11 @@ dotnet run --project prototypes/SessionJournal.Cli -- \
 验证后再替换 exact target，不把“导出成功”当作 importer 语义验收。
 
 Markdown与JSON都从同一个verified import report生成。JSON schema是
-`atelia.session-journal.legacy-import-report.v1`，包含source identity、各类计数、final setup/head、
-semantic commitment、content-free event mapping和显式空`warnings`集合；不包含system prompt或
-history正文。两个report都必须位于新repo外、不得覆盖input，且以同目录temporary file atomic
+`atelia.session-journal.legacy-import-report.v1`，包含source branch/head、实际消费的input byte
+count/SHA-256、各类计数、final setup/head、semantic commitment、content-free event mapping和显式
+空`warnings`集合；不包含system prompt或history正文。schema v1的production producer一直为每个
+event写入`commit`；importer现明确要求该字段，并把末个event commit作为`sourceHead`，缺失时在创建
+output前fail-fast。两个report都必须位于新repo外、不得覆盖input，且以同目录temporary file atomic
 publish。当前 importer 对未知或有损输入一律 fail-fast，没有非致命 warning 路径，因此
 `warnings: []`是authoritative import contract，不是过滤后的视图。
 

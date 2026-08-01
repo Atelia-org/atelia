@@ -17,6 +17,30 @@ public static class ChatSessionLegacyUpgradeExporter {
     private static readonly JsonSerializerOptions CompactJsonOptions = CreateJsonOptions(writeIndented: false);
     private static readonly JsonSerializerOptions IndentedJsonOptions = CreateJsonOptions(writeIndented: true);
 
+    /// <summary>
+    /// Captures the exact persisted head of an existing legacy branch without
+    /// creating or advancing a branch. Migration tooling uses two independent
+    /// captures around export generation as an optimistic publication fence.
+    /// </summary>
+    public static string CaptureBranchHead(
+        string repoDir,
+        string branchName = "main"
+    ) {
+        ArgumentException.ThrowIfNullOrWhiteSpace(repoDir);
+        ArgumentException.ThrowIfNullOrWhiteSpace(branchName);
+        using var repository = Repository.Open(repoDir).Unwrap();
+        if (!repository.TryGetBranchHeadAddress(
+                branchName,
+                out CommitAddress head
+            )) {
+            throw new InvalidDataException(
+                $"Legacy ChatSession branch '{branchName}' has no "
+                + "committed head."
+            );
+        }
+        return head.ToString();
+    }
+
     public static string ExportJson(
         string repoDir,
         string branchName = "main",

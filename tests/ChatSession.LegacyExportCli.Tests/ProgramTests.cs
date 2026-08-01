@@ -1,5 +1,7 @@
 using System.Text.Json;
+using System.Security.Cryptography;
 using Atelia.ChatSession;
+using Atelia.StateJournal;
 using Xunit;
 
 namespace Atelia.ChatSession.LegacyExportCli.Tests;
@@ -12,6 +14,7 @@ public sealed class ProgramTests : IDisposable {
     );
 
     public void Dispose() {
+        Program.BeforeExportHeadRecheckForTest = null;
         try {
             if (Directory.Exists(_tempRoot)) {
                 Directory.Delete(_tempRoot, recursive: true);
@@ -28,15 +31,26 @@ public sealed class ProgramTests : IDisposable {
         string outputPath = Path.Combine(_tempRoot, "exports", "session.json");
         Directory.CreateDirectory(Path.GetDirectoryName(outputPath)!);
         File.WriteAllText(outputPath, "stale");
+        string expectedHead = Head(repoPath);
+        var stdout = new StringWriter();
+        TextWriter originalOut = Console.Out;
 
-        int exitCode = Program.MainCore(
-            [
-                "export-json",
-                "--input", repoPath,
-                "--output", outputPath,
-                "--compact"
-            ]
-        );
+        int exitCode;
+        try {
+            Console.SetOut(stdout);
+            exitCode = Program.MainCore(
+                [
+                    "export-json",
+                    "--input", repoPath,
+                    "--output", outputPath,
+                    "--expected-head", expectedHead,
+                    "--compact"
+                ]
+            );
+        }
+        finally {
+            Console.SetOut(originalOut);
+        }
 
         Assert.Equal(0, exitCode);
         string json = File.ReadAllText(outputPath);
@@ -50,6 +64,12 @@ public sealed class ProgramTests : IDisposable {
         Assert.Equal("main", root.GetProperty("branchName").GetString());
         Assert.Equal(2, root.GetProperty("events").GetArrayLength());
         Assert.Equal(
+            expectedHead,
+            root.GetProperty("events")[1]
+                .GetProperty("commit")
+                .GetString()
+        );
+        Assert.Equal(
             "hello",
             root.GetProperty("events")[1]
                 .GetProperty("appendedMessages")[0]
@@ -61,6 +81,24 @@ public sealed class ProgramTests : IDisposable {
                 Path.GetDirectoryName(outputPath)!,
                 $".{Path.GetFileName(outputPath)}.*.tmp"
             )
+        );
+        byte[] bytes = File.ReadAllBytes(outputPath);
+        Assert.Contains(
+            $"sourceHead: {expectedHead}",
+            stdout.ToString(),
+            StringComparison.Ordinal
+        );
+        Assert.Contains(
+            $"bytes: {bytes.LongLength}",
+            stdout.ToString(),
+            StringComparison.Ordinal
+        );
+        Assert.Contains(
+            "sha256: "
+            + Convert.ToHexString(SHA256.HashData(bytes))
+                .ToLowerInvariant(),
+            stdout.ToString(),
+            StringComparison.Ordinal
         );
     }
 
@@ -111,9 +149,105 @@ public sealed class ProgramTests : IDisposable {
             [
                 "export-json",
                 "--input", repoPath,
-                "--output", outputPath
+                "--output", outputPath,
+                "--expected-head", Head(repoPath)
             ]
         );
+
+        Assert.Equal(1, exitCode);
+        Assert.False(File.Exists(outputPath));
+    }
+
+    [Fact]
+    public void ExportJson_RequiresCanonicalExpectedHeadWithoutPublishing() {
+        string repoPath = CreateLegacyRepository();
+        string outputPath = Path.Combine(_tempRoot, "missing-proof.json");
+
+        Assert.Equal(1, Program.MainCore([
+            "export-json",
+            "--input", repoPath,
+            "--output", outputPath
+        ]));
+        Assert.False(File.Exists(outputPath));
+
+        Assert.Equal(1, Program.MainCore([
+            "export-json",
+            "--input", repoPath,
+            "--output", outputPath,
+            "--expected-head", "SEG:1:0000000000000001"
+        ]));
+        Assert.False(File.Exists(outputPath));
+    }
+
+    [Fact]
+    public void ExportJson_WrongExpectedHeadDoesNotOverwriteOutput() {
+        string repoPath = CreateLegacyRepository();
+        string staleHead = Head(repoPath);
+        AdvanceHead(repoPath, "advanced before export");
+        string outputPath = Path.Combine(_tempRoot, "wrong-head.json");
+        File.WriteAllText(outputPath, "keep-existing-output");
+
+        int exitCode = Program.MainCore([
+            "export-json",
+            "--input", repoPath,
+            "--output", outputPath,
+            "--expected-head", staleHead
+        ]);
+
+        Assert.Equal(1, exitCode);
+        Assert.Equal("keep-existing-output", File.ReadAllText(outputPath));
+    }
+
+    [Fact]
+    public void ExportJson_HeadChangeBeforePublicationDoesNotOverwriteOutput() {
+        string repoPath = CreateLegacyRepository();
+        string expectedHead = Head(repoPath);
+        string outputPath = Path.Combine(_tempRoot, "raced-head.json");
+        File.WriteAllText(outputPath, "keep-existing-output");
+        Program.BeforeExportHeadRecheckForTest = () =>
+            AdvanceHead(repoPath, "advanced during export");
+        try {
+            int exitCode = Program.MainCore([
+                "export-json",
+                "--input", repoPath,
+                "--output", outputPath,
+                "--expected-head", expectedHead
+            ]);
+
+            Assert.Equal(1, exitCode);
+            Assert.Equal(
+                "keep-existing-output",
+                File.ReadAllText(outputPath)
+            );
+            Assert.Empty(Directory.EnumerateFiles(
+                _tempRoot,
+                $".{Path.GetFileName(outputPath)}.*.tmp"
+            ));
+        }
+        finally {
+            Program.BeforeExportHeadRecheckForTest = null;
+        }
+    }
+
+    [Fact]
+    public void ExportJson_IntegrityWarningDoesNotPublish() {
+        string repoPath = CreateLegacyRepository();
+        string expectedHead = Head(repoPath);
+        string reflog = Path.Combine(
+            repoPath,
+            "refs",
+            "branches",
+            "main.reflog.jsonl"
+        );
+        File.AppendAllText(reflog, "not-json" + Environment.NewLine);
+        string outputPath = Path.Combine(_tempRoot, "warning.json");
+
+        int exitCode = Program.MainCore([
+            "export-json",
+            "--input", repoPath,
+            "--output", outputPath,
+            "--expected-head", expectedHead
+        ]);
 
         Assert.Equal(1, exitCode);
         Assert.False(File.Exists(outputPath));
@@ -201,5 +335,16 @@ public sealed class ProgramTests : IDisposable {
         );
         ChatSessionLegacyEventSourceImporter.Import(sourcePath, repoPath);
         return repoPath;
+    }
+
+    private static string Head(string repoPath) =>
+        ChatSessionLegacyUpgradeExporter.CaptureBranchHead(repoPath);
+
+    private static void AdvanceHead(string repoPath, string marker) {
+        using Repository repository = Repository.Open(repoPath).Unwrap();
+        Revision revision = repository.CheckoutBranch("main").Unwrap();
+        DurableObject root = revision.GraphRoot
+            ?? throw new InvalidDataException("Fixture root is missing.");
+        repository.Commit(root, marker).Unwrap();
     }
 }
