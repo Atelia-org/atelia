@@ -358,6 +358,39 @@ dotnet run --project prototypes/SessionJournal.Cli -- \
 commitments、forward operational legality、tail phase 和 governing setup；不会修复或截断
 raw/refs，也不读取 Recap Store。
 
+## reconcile-desired-setup
+
+在不发送 agent turn 的情况下，把 exact Idle head 的 governing setup 对齐到一条明确的
+Completion connection和system prompt文件：
+
+```bash
+dotnet run --project prototypes/SessionJournal.Cli -- \
+  reconcile-desired-setup \
+  --input <repo-dir> \
+  --branch main \
+  --expected-head <event-address> \
+  --connections <connections.json> \
+  --connection <id> \
+  --system-prompt-file <prompt-file> \
+  [--report-json <path-outside-repo>]
+```
+
+`--connection`必须exact命中配置项，不fallback到default；命令只读取其`modelId`和
+`completionSurfaceId`，不会创建Completion client。prompt按Galatea的
+`File.ReadAllText(...).Trim()`规则加载。connections/prompt、可写repo和report路径必须互不嵌套，
+路径链不得包含symlink/reparse point；所有路径检查、prompt读取和connection解析都发生在raw
+mutation之前。
+
+命令只接受`--expected-head`仍是当前head且phase为`Idle`的repo，并直接调用public exact-head
+`ReconcileDesiredSetup`。它保留repo-owned Schema/DerivedContext，只按需追加
+`RuntimeConfigSetup`、`SystemPromptSetup`；已对齐时不写raw。它不读取Planner config或Recap Store，
+不创建call log，不调用provider，也不追加Observation/Action。
+
+可选JSON report为content-free
+`atelia.session-journal.desired-setup-reconciliation.v1`，记录before/after head、两个changed flags、
+最终model/surface、system prompt UTF-8 SHA-256 codec/hash和最终phase。命令在写report前会从最终
+exact head复读governing setup并校验目标值。
+
 ## llm-smoke
 
 发送一次最小 Completion 请求，用于验证 connection/provider/call-log：

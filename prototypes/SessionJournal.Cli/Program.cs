@@ -44,6 +44,8 @@ internal static class Program {
                 "validate" => RunValidateAsync(options)
                     .GetAwaiter()
                     .GetResult(),
+                "reconcile-desired-setup" =>
+                    DesiredSetupReconciliationCommand.Run(options),
                 "llm-smoke" => RunLlmSmokeAsync(
                         options,
                         completionClientFactory
@@ -367,6 +369,13 @@ internal static class Program {
         );
         Console.WriteLine(
             "  validate --input <repo-dir> [--branch <name>] "
+            + "[--report-json <path-outside-repo>]"
+        );
+        Console.WriteLine(
+            "  reconcile-desired-setup --input <repo-dir> "
+            + "--branch <name> --expected-head <event-address> "
+            + "--connections <path> --connection <id> "
+            + "--system-prompt-file <path> "
             + "[--report-json <path-outside-repo>]"
         );
         Console.WriteLine(
