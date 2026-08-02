@@ -318,8 +318,10 @@ public sealed partial class SessionJournalEngine : IDisposable {
     }
 
     /// <summary>
-    /// Captures the selected branch Parent lineage using event headers only. The returned order is
-    /// head-to-root and is bound to one captured ref head; no payload is read or decoded.
+    /// Explicitly unbounded/offline inspection that captures the complete selected branch Parent
+    /// lineage using event headers only. The returned order is head-to-root and is bound to one
+    /// captured ref head; no payload is read or decoded. Online callers use
+    /// <see cref="ReadCurrentLineagePrefix"/>.
     /// </summary>
     public SessionCurrentLineageSnapshot ReadCurrentLineageHeaders(
         CancellationToken cancellationToken = default
@@ -363,6 +365,117 @@ public sealed partial class SessionJournalEngine : IDisposable {
                 after.LogicalPayloadByteCount
                     - before.LogicalPayloadByteCount
             )
+        );
+    }
+
+    /// <summary>
+    /// Captures at most <paramref name="maxHeaderCount"/> selected-branch Parent headers from one
+    /// current ref snapshot. A non-null continuation names the exact next Parent; this method does
+    /// not auto-page and never reads event payloads.
+    /// </summary>
+    public SessionCurrentLineagePrefix ReadCurrentLineagePrefix(
+        int maxHeaderCount,
+        CancellationToken cancellationToken = default
+    ) {
+        ThrowIfDisposed();
+        EventAddress capturedHead = _journal.GetHead(_branchRefId)
+            ?? throw new InvalidOperationException(
+                "Current-lineage inspection requires a non-empty SessionJournal."
+            );
+        return ReadLineagePrefixAtCore(
+            capturedHead,
+            maxHeaderCount,
+            cancellationToken
+        );
+    }
+
+    /// <summary>
+    /// Reads at most <paramref name="maxHeaderCount"/> Parent headers from one exact immutable raw
+    /// address. The supplied address is the captured head; no current-ref substitution or hidden
+    /// continuation read is performed.
+    /// </summary>
+    public SessionCurrentLineagePrefix ReadLineagePrefixAt(
+        EventAddress capturedHead,
+        int maxHeaderCount,
+        CancellationToken cancellationToken = default
+    ) {
+        ThrowIfDisposed();
+        return ReadLineagePrefixAtCore(
+            capturedHead,
+            maxHeaderCount,
+            cancellationToken
+        );
+    }
+
+    private SessionCurrentLineagePrefix ReadLineagePrefixAtCore(
+        EventAddress capturedHead,
+        int maxHeaderCount,
+        CancellationToken cancellationToken
+    ) {
+        if (capturedHead == default) {
+            throw new ArgumentException(
+                "The captured lineage head cannot be the default EventAddress.",
+                nameof(capturedHead)
+            );
+        }
+        if (maxHeaderCount <= 0) {
+            throw new ArgumentOutOfRangeException(
+                nameof(maxHeaderCount),
+                "A bounded lineage read must allow at least one header."
+            );
+        }
+        SessionJournalReadDiagnostics before =
+            _reader.CaptureDiagnostics();
+        var entries = new List<SessionCurrentLineageHeader>(
+            Math.Min(maxHeaderCount, 1024)
+        );
+        var visited = new HashSet<EventAddress>();
+        EventAddress? cursor = capturedHead;
+        while (cursor is { } address
+               && entries.Count < maxHeaderCount) {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (address == default) {
+                throw new InvalidDataException(
+                    "SessionJournal Parent chain contains a default EventAddress."
+                );
+            }
+            if (!visited.Add(address)) {
+                throw new InvalidDataException(
+                    $"SessionJournal Parent chain contains a cycle at {address}."
+                );
+            }
+            EventFrameHeader header =
+                _reader.ReadEventHeaderPreview(address).Unwrap();
+            ValidateSessionHeaderPreview(address, header);
+            entries.Add(new SessionCurrentLineageHeader(
+                address,
+                header.Parent,
+                (SessionEventKind)header.OpaqueEventKind
+            ));
+            cursor = header.Parent;
+        }
+        if (cursor is { } next && visited.Contains(next)) {
+            throw new InvalidDataException(
+                $"SessionJournal Parent chain contains a cycle at {next}."
+            );
+        }
+        SessionJournalReadDiagnostics after =
+            _reader.CaptureDiagnostics();
+        var diagnostics = new SessionCurrentLineageDiagnostics(
+            after.HeaderPreviewReadCount
+                - before.HeaderPreviewReadCount,
+            after.PayloadReadCount - before.PayloadReadCount,
+            after.LogicalPayloadByteCount
+                - before.LogicalPayloadByteCount
+        );
+        return new SessionCurrentLineagePrefix(
+            capturedHead,
+            maxHeaderCount,
+            entries,
+            cursor is { } nextAddress
+                ? new SessionCurrentLineageContinuation(nextAddress)
+                : null,
+            diagnostics
         );
     }
 
@@ -523,7 +636,8 @@ public sealed partial class SessionJournalEngine : IDisposable {
     }
 
     /// <summary>
-    /// Reads only the raw interval after a replay-safe start boundary and materializes
+    /// Explicitly unbounded/offline replay that reads the raw interval after a replay-safe start
+    /// boundary and materializes
     /// dependency-closed history units for derived planning. A null start selects the unique
     /// SessionCreated event on the captured selected branch lineage. This API never constructs full history
     /// before the returned start boundary.
@@ -545,7 +659,8 @@ public sealed partial class SessionJournalEngine : IDisposable {
     }
 
     /// <summary>
-    /// Replays one dependency-closed planning interval at an exact historical head. The caller
+    /// Explicitly unbounded/offline replay of one dependency-closed planning interval at an exact
+    /// historical head. The caller
     /// supplies the captured head rather than reading the current ref, allowing offline validators
     /// to reproduce an immutable epoch without constructing conversation history before the
     /// requested start. A null start resolves the SessionCreated boundary on that exact lineage.
@@ -572,6 +687,104 @@ public sealed partial class SessionJournalEngine : IDisposable {
             planningSeed.Address,
             planningSeed,
             cancellationToken
+        );
+    }
+
+    /// <summary>
+    /// Proves an exact planning start within at most <paramref name="maxRawEventCount"/> raw events
+    /// of <paramref name="capturedHead"/> before reading any payload. A farther start returns typed
+    /// BeyondPrefix evidence with zero payload reads; this method never falls back to an unbounded
+    /// root walk.
+    /// </summary>
+    public SessionHistoryPlanningWindowReadResult
+        ReadHistoryPlanningWindowAtBounded(
+        EventAddress capturedHead,
+        EventAddress startExclusive,
+        int maxRawEventCount,
+        CancellationToken cancellationToken = default
+    ) => ReadHistoryPlanningWindowAtBoundedCore(
+        capturedHead,
+        startExclusive,
+        maxRawEventCount,
+        planningSeed: null,
+        cancellationToken
+    );
+
+    public SessionHistoryPlanningWindowReadResult
+        ReadHistoryPlanningWindowAtBounded(
+        EventAddress capturedHead,
+        SessionHistoryPlanningSeed planningSeed,
+        int maxRawEventCount,
+        CancellationToken cancellationToken = default
+    ) {
+        ArgumentNullException.ThrowIfNull(planningSeed);
+        return ReadHistoryPlanningWindowAtBoundedCore(
+            capturedHead,
+            planningSeed.Address,
+            maxRawEventCount,
+            planningSeed,
+            cancellationToken
+        );
+    }
+
+    private SessionHistoryPlanningWindowReadResult
+        ReadHistoryPlanningWindowAtBoundedCore(
+        EventAddress capturedHead,
+        EventAddress startExclusive,
+        int maxRawEventCount,
+        SessionHistoryPlanningSeed? planningSeed,
+        CancellationToken cancellationToken
+    ) {
+        ThrowIfDisposed();
+        if (startExclusive == default) {
+            throw new ArgumentException(
+                "History planning start cannot be the default EventAddress.",
+                nameof(startExclusive)
+            );
+        }
+        if (maxRawEventCount < 0 || maxRawEventCount == int.MaxValue) {
+            throw new ArgumentOutOfRangeException(
+                nameof(maxRawEventCount),
+                "The bounded raw-event count must be non-negative and leave room for its start header."
+            );
+        }
+
+        SessionCurrentLineagePrefix prefix = ReadLineagePrefixAtCore(
+            capturedHead,
+            maxRawEventCount + 1,
+            cancellationToken
+        );
+        switch (prefix.Lookup(startExclusive)) {
+            case SessionCurrentLineageAnchorLookup.BeyondPrefix beyond:
+                return new SessionHistoryPlanningWindowReadResult
+                    .BeyondPrefix(beyond.Evidence, prefix.Diagnostics);
+            case SessionCurrentLineageAnchorLookup.OffLineage:
+                throw new InvalidDataException(
+                    "History planning start is not an ancestor of the captured raw head."
+                );
+            case SessionCurrentLineageAnchorLookup.Found:
+                break;
+            default:
+                throw new InvalidDataException(
+                    "Unknown bounded lineage lookup result."
+                );
+        }
+
+        SessionHistoryPlanningWindow window =
+            ReadHistoryPlanningWindowAtCore(
+                capturedHead,
+                startExclusive,
+                planningSeed,
+                cancellationToken
+            );
+        if (window.RawAddresses.Count > maxRawEventCount) {
+            throw new InvalidDataException(
+                "The materialized history planning interval exceeded its proven raw-event bound."
+            );
+        }
+        return new SessionHistoryPlanningWindowReadResult.Available(
+            window,
+            prefix.Diagnostics
         );
     }
 
@@ -2161,6 +2374,7 @@ public sealed partial class SessionJournalEngine : IDisposable {
             )
             .ConfigureAwait(false);
         ArgumentNullException.ThrowIfNull(selection);
+        selection.ValidateShape();
         EnsureCurrentHead(boundary);
         switch (selection.Status) {
             case SessionContextCandidateSelectionStatus.Selected:
@@ -2177,6 +2391,9 @@ public sealed partial class SessionJournalEngine : IDisposable {
                 RequireNoSelectedDescriptor(selection);
                 return;
             case SessionContextCandidateSelectionStatus.StoreUnavailable:
+                RequireNoSelectedDescriptor(selection);
+                return;
+            case SessionContextCandidateSelectionStatus.BeyondPrefix:
                 RequireNoSelectedDescriptor(selection);
                 return;
             default:
@@ -2494,6 +2711,7 @@ public sealed partial class SessionJournalEngine : IDisposable {
             .SelectAsync(request, cancellationToken)
             .ConfigureAwait(false);
         ArgumentNullException.ThrowIfNull(selection);
+        selection.ValidateShape();
         var projectedObservation =
             new ObservationMessage(pendingObservation);
         if (selection.Status
@@ -2627,6 +2845,7 @@ public sealed partial class SessionJournalEngine : IDisposable {
             .SelectAsync(request, cancellationToken)
             .ConfigureAwait(false);
         ArgumentNullException.ThrowIfNull(selection);
+        selection.ValidateShape();
         if (selection.Status
             == SessionContextCandidateSelectionStatus.EmptyLineage) {
             RequireNoSelectedDescriptor(selection);
@@ -2741,6 +2960,7 @@ public sealed partial class SessionJournalEngine : IDisposable {
                 or SessionContextCandidateSelectionStatus
                     .ExactPublishedSetInvalid
                 or SessionContextCandidateSelectionStatus.StoreUnavailable
+                or SessionContextCandidateSelectionStatus.BeyondPrefix
             )) {
             throw new InvalidDataException(
                 "A non-selected context candidate result cannot include a descriptor."
@@ -2767,6 +2987,13 @@ public sealed partial class SessionJournalEngine : IDisposable {
                     SessionJournalNotReadyReason.ContextStoreUnavailable,
                     selection.Detail
                     ?? $"The recap store is unavailable {phase}."
+                );
+            case SessionContextCandidateSelectionStatus.BeyondPrefix:
+                RequireNoSelectedDescriptor(selection);
+                throw new SessionJournalNotReadyException(
+                    SessionJournalNotReadyReason.ContextCandidateUnavailable,
+                    selection.Detail
+                    ?? $"The required context anchor is beyond the configured lineage prefix {phase}."
                 );
         }
     }

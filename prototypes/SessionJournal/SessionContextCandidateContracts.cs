@@ -101,6 +101,11 @@ public enum SessionContextCandidateSelectionStatus {
     OrdinalUnavailable = 2,
     ExactPublishedSetInvalid = 3,
     StoreUnavailable = 4,
+    /// <summary>
+    /// The source could not prove the requested exact raw anchor within its configured bounded
+    /// lineage prefix. This is temporary unavailability, not EmptyLineage or OffLineage evidence.
+    /// </summary>
+    BeyondPrefix = 5,
 }
 
 /// <summary>
@@ -111,7 +116,49 @@ public sealed record SessionContextCandidateSelection(
     SessionContextCandidateSelectionStatus Status,
     SessionContextCandidateDescriptor? Candidate,
     string? Detail = null
-);
+) {
+    public static SessionContextCandidateSelection BeyondPrefix(
+        string detail
+    ) {
+        if (string.IsNullOrWhiteSpace(detail)) {
+            throw new ArgumentException(
+                "Beyond-prefix selection detail cannot be empty.",
+                nameof(detail)
+            );
+        }
+        return new(
+            SessionContextCandidateSelectionStatus.BeyondPrefix,
+            Candidate: null,
+            detail
+        );
+    }
+
+    public void ValidateShape() {
+        if (!Enum.IsDefined(Status)) {
+            throw new InvalidDataException(
+                $"Unknown context candidate selection status '{Status}'."
+            );
+        }
+        if (Status == SessionContextCandidateSelectionStatus.Selected) {
+            if (Candidate is null) {
+                throw new InvalidDataException(
+                    "A selected context candidate result requires a descriptor."
+                );
+            }
+        }
+        else if (Candidate is not null) {
+            throw new InvalidDataException(
+                "A non-selected context candidate result cannot include a descriptor."
+            );
+        }
+        if (Status == SessionContextCandidateSelectionStatus.BeyondPrefix
+            && string.IsNullOrWhiteSpace(Detail)) {
+            throw new InvalidDataException(
+                "A beyond-prefix context candidate result requires bounded-lineage evidence detail."
+            );
+        }
+    }
+}
 
 /// <summary>
 /// Opaque exact handle plus raw-facing facts required for one bounded authority pass.

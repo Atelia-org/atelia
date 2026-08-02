@@ -96,9 +96,15 @@ using var engine = SessionJournalEngine.OpenReadOnly(
 SessionExecutionBoundaryInspection boundary =
     engine.InspectExecutionBoundary();
 EventAddress? head = engine.ReadCurrentHead();
-SessionCurrentLineageSnapshot lineage =
-    engine.ReadCurrentLineageHeaders();
+SessionCurrentLineagePrefix lineage =
+    engine.ReadCurrentLineagePrefix(maxHeaderCount: 513);
 ```
+
+`ReadCurrentLineagePrefix`最多读取给定数量的 header。未到 root时只返回显式
+`Continuation.NextAddress`，不会自动翻页；`Lookup(anchor)`只有在已到 root时才能返回
+`OffLineage`，否则返回带 `RequiredAnchor/CapturedHead/HeaderCount/NextAddress`的
+`BeyondPrefix`证据。需要完整 head-to-root scan的离线工具才使用
+`ReadCurrentLineageHeaders()`。
 
 `OpenReadOnly`不会执行 tail recovery，也禁止 `UseRuntime`、`SendAsync`、`ResumeAsync`和 append。
 离线审计优先使用
@@ -265,6 +271,8 @@ public interface ISessionContextLifecycleCoordinator {
 
 - candidate source按 governing `derivedContext.nthPrevious`选择 strict ordinal，并 materialize
   exact contribution；
+- bounded lineage不足必须返回 `BeyondPrefix`，online preflight/append/completion把它视为
+  `ContextCandidateUnavailable` backpressure；不得伪装成 `EmptyLineage`并退回完整raw history；
 - lifecycle可在新 request前执行一次 bounded maintenance/Restore；
 - raw core负责验证 candidate descriptor、setup refs、contribution hashes与 raw suffix；
 - Published exact slot损坏不能跳到更旧 slot，必须恢复同一 slot或返回 not-ready。
@@ -280,16 +288,21 @@ repository path和 `RefId`的同一个 `SessionJournalEngine`实例。
 |---|---|
 | `ReadCurrentHead()` | 不投影 payload的 exact head读取 |
 | `InspectExecutionBoundary()` | 当前 phase/head-kind |
-| `ReadCurrentLineageHeaders()` | header-only head-to-root lineage snapshot |
+| `ReadCurrentLineagePrefix(maxHeaderCount)` | current head上的header-only bounded prefix |
+| `ReadLineagePrefixAt(head, maxHeaderCount)` | exact historical head上的header-only bounded prefix |
+| `ReadCurrentLineageHeaders()` | 显式unbounded/offline的head-to-root snapshot |
 | `ResolveGoverningSetup(head)` | exact head上的 runtime/system-prompt setup |
-| `ReadHistoryPlanningWindow(...)` | dependency-closed HistoryUnits与 replay-safe boundaries |
-| `ReadHistoryPlanningWindowAt(...)` | 在 exact historical head重放 bounded planning window |
+| `ReadHistoryPlanningWindowAtBounded(...)` | payload前证明raw interval上限；返回Available或BeyondPrefix |
+| `ReadHistoryPlanningWindow(...)` | 显式unbounded/offline的dependency-closed planning window |
+| `ReadHistoryPlanningWindowAt(...)` | 在exact historical head执行显式unbounded/offline重放 |
 | `ReadHistoryPlanningSeeds(...)` | 为多个 bounded cursor准备 verified seeds |
 | `ScanCheckedAuditEvents(...)` | read-only完整审计 scan；供 Offline companion使用 |
 
 `SessionHistoryPlanningUnit`不是 raw event：多个 raw events可能闭合为一个 ToolResults unit，
 Prepared/Started/Failed等 protocol events也可能不产生 HistoryUnit。Planner不得用 raw event
-distance冒充 context/history长度。
+distance冒充 context/history长度。bounded planning的`maxRawEventCount = N`会先读取至多
+`N + 1`个header来证明exact `startExclusive`；如果证明不足，返回`BeyondPrefix`且该次调用的
+`PayloadReads == 0`，不会继续到root或materialize部分window。
 
 ## Setup 变更
 

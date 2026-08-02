@@ -78,6 +78,43 @@ public sealed class SessionContextCandidateProviderRouteTests : IDisposable {
         }
     }
 
+    [Fact]
+    public async Task BeyondPrefix_NeverDowngradesToFreshRawHistoryFallback() {
+        string path = NewJournalPath();
+        var client = new ScriptedClient();
+        client.Enqueue(Terminal("must-not-send"));
+        var source = new TestContextCandidateSource {
+            ForcedStatus =
+                SessionContextCandidateSelectionStatus.BeyondPrefix,
+            SelectionDetail = "bounded lineage proof exhausted"
+        };
+        using var engine = SessionJournalEngine.Create(
+            path,
+            CreateOptions(),
+            CreateRuntime(client, source)
+        );
+        EventAddress head =
+            engine.InspectExecutionBoundary().Head!.Value;
+
+        SessionJournalNotReadyException error =
+            await Assert.ThrowsAsync<SessionJournalNotReadyException>(
+                () => engine.SendAsync(
+                    "must remain ephemeral",
+                    CancellationToken.None
+                )
+            );
+
+        Assert.Equal(
+            SessionJournalNotReadyReason.ContextCandidateUnavailable,
+            error.Reason
+        );
+        Assert.Contains("bounded lineage proof exhausted", error.Message);
+        Assert.Equal(head, engine.InspectExecutionBoundary().Head);
+        Assert.Equal(1, source.SelectionCount);
+        Assert.Equal(0, source.MaterializationCount);
+        Assert.Equal(0, client.Calls);
+    }
+
     [Theory]
     [InlineData(
         SessionContextCandidateSelectionStatus.ExactPublishedSetInvalid,
@@ -86,6 +123,10 @@ public sealed class SessionContextCandidateProviderRouteTests : IDisposable {
     [InlineData(
         SessionContextCandidateSelectionStatus.StoreUnavailable,
         SessionJournalNotReadyReason.ContextStoreUnavailable
+    )]
+    [InlineData(
+        SessionContextCandidateSelectionStatus.BeyondPrefix,
+        SessionJournalNotReadyReason.ContextCandidateUnavailable
     )]
     public async Task TypedSelectionUnavailable_FailsBeforeObservation(
         SessionContextCandidateSelectionStatus status,
@@ -129,6 +170,9 @@ public sealed class SessionContextCandidateProviderRouteTests : IDisposable {
     [InlineData(
         SessionContextCandidateSelectionStatus.StoreUnavailable
     )]
+    [InlineData(
+        SessionContextCandidateSelectionStatus.BeyondPrefix
+    )]
     public async Task TypedSelectionUnavailable_LifecycleCanHealBeforeObservation(
         SessionContextCandidateSelectionStatus status
     ) {
@@ -136,7 +180,8 @@ public sealed class SessionContextCandidateProviderRouteTests : IDisposable {
         var client = new ScriptedClient();
         client.Enqueue(Terminal("healed"));
         var source = new TestContextCandidateSource {
-            ForcedStatus = status
+            ForcedStatus = status,
+            SelectionDetail = "typed selection unavailable"
         };
         var lifecycle = new TestContextLifecycle();
         using var engine = SessionJournalEngine.Create(
@@ -173,6 +218,10 @@ public sealed class SessionContextCandidateProviderRouteTests : IDisposable {
     [InlineData(
         SessionContextCandidateSelectionStatus.StoreUnavailable,
         SessionJournalNotReadyReason.ContextStoreUnavailable
+    )]
+    [InlineData(
+        SessionContextCandidateSelectionStatus.BeyondPrefix,
+        SessionJournalNotReadyReason.ContextCandidateUnavailable
     )]
     public async Task TypedSelectionUnavailable_AfterLifecycleRemainsNotReady(
         SessionContextCandidateSelectionStatus status,
@@ -983,6 +1032,9 @@ public sealed class SessionContextCandidateProviderRouteTests : IDisposable {
     )]
     [InlineData(
         SessionContextCandidateSelectionStatus.StoreUnavailable
+    )]
+    [InlineData(
+        SessionContextCandidateSelectionStatus.BeyondPrefix
     )]
     public async Task RawHistoryReadyDoesNotDowngradeOtherSelectionStatuses(
         SessionContextCandidateSelectionStatus status
