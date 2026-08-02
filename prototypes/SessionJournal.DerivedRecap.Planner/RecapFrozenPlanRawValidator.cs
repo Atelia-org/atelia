@@ -22,6 +22,89 @@ internal static class RecapFrozenPlanRawValidator {
         SessionCurrentLineageSnapshot lineage,
         RecapBlockPlan plan
     ) {
+        var defects = new List<RecapFrozenPlanRawDefect>();
+        defects.AddRange(ValidateSetupAuthority(
+            engine,
+            manifest,
+            lineage,
+            plan
+        ));
+        defects.AddRange(ValidateInputDependentBlock(
+            engine,
+            manifest,
+            frozenInputs,
+            lineage,
+            plan
+        ));
+        return defects;
+    }
+
+    public static IReadOnlyList<RecapFrozenPlanRawDefect>
+        ValidateSetupAuthority(
+        SessionJournalEngine engine,
+        DerivedRecapSetManifest manifest,
+        SessionCurrentLineageSnapshot lineage,
+        RecapBlockPlan plan
+    ) {
+        ArgumentNullException.ThrowIfNull(engine);
+        ArgumentNullException.ThrowIfNull(manifest);
+        ArgumentNullException.ThrowIfNull(lineage);
+        ArgumentNullException.ThrowIfNull(plan);
+
+        var defects = new List<RecapFrozenPlanRawDefect>();
+        HashSet<EventAddress> lineageAddresses = lineage.HeadToRoot
+            .Select(static node => node.Address)
+            .ToHashSet();
+        if (!lineageAddresses.Contains(manifest.SetAdmissionAnchor)) {
+            Add(
+                defects,
+                "SetAdmissionAnchor is outside current raw lineage."
+            );
+            return defects;
+        }
+        ValidateSetups(
+            engine,
+            manifest.SetAdmissionAnchor,
+            manifest.SetAdmissionAnchorSetups,
+            "manifest admission",
+            defects
+        );
+        if (plan is not MaintainRecapBlockPlan maintain) {
+            return defects;
+        }
+        foreach (RecapReplayBoundary boundary
+                 in maintain.CatchUpBoundaries) {
+            if (!lineageAddresses.Contains(boundary.Address)) {
+                Add(
+                    defects,
+                    $"Maintain block '{plan.RecapBlockId}' catch-up "
+                    + "boundary is outside current raw lineage."
+                );
+                continue;
+            }
+            ValidateSetups(
+                engine,
+                boundary.Address,
+                boundary.Setups,
+                $"Maintain block '{plan.RecapBlockId}' "
+                    + "catch-up boundary",
+                defects
+            );
+        }
+        return defects;
+    }
+
+    public static IReadOnlyList<RecapFrozenPlanRawDefect>
+        ValidateInputDependentBlock(
+        SessionJournalEngine engine,
+        DerivedRecapSetManifest manifest,
+        IReadOnlyDictionary<
+            RecapBlockId,
+            DerivedRecapFrozenInput
+        > frozenInputs,
+        SessionCurrentLineageSnapshot lineage,
+        RecapBlockPlan plan
+    ) {
         ArgumentNullException.ThrowIfNull(engine);
         ArgumentNullException.ThrowIfNull(manifest);
         ArgumentNullException.ThrowIfNull(frozenInputs);
@@ -46,13 +129,6 @@ internal static class RecapFrozenPlanRawValidator {
             );
             return defects;
         }
-        ValidateSetups(
-            engine,
-            manifest.SetAdmissionAnchor,
-            manifest.SetAdmissionAnchorSetups,
-            "manifest admission",
-            defects
-        );
 
         switch (plan) {
             case InheritRecapBlockPlan inherit:
@@ -210,14 +286,6 @@ internal static class RecapFrozenPlanRawValidator {
                         );
                         return defects;
                     }
-                    ValidateSetups(
-                        engine,
-                        boundary.Address,
-                        boundary.Setups,
-                        $"Maintain block '{plan.RecapBlockId}' "
-                            + "catch-up boundary",
-                        defects
-                    );
                     previousIndex = endpointIndex;
                 }
                 if (maintain.CatchUpBoundaries.Count == 0

@@ -259,15 +259,31 @@ public sealed class DerivedRecapRestoreExecutor {
                 continue;
             }
 
-            // Missing disposable source input must not make an already
-            // committed or checkpoint-resumable block unavailable. The
-            // Store has already validated plan-only lineage semantics.
+            foreach (RecapFrozenPlanRawDefect defect
+                     in RecapFrozenPlanRawValidator.ValidateSetupAuthority(
+                         _engine,
+                         inspection.FrozenPlan,
+                         lineage,
+                         plan
+                     )) {
+                AddDefect(
+                    defects,
+                    DerivedRecapRestoreDefectCodes.FrozenPlanInvalid,
+                    defect.Detail
+                );
+            }
+
+            // A missing disposable Existing-source input does not make an
+            // already committed or checkpoint-resumable block unavailable.
+            // Explicit-address setup authority remains independently
+            // validated above for every restore capability.
             if (plan is MaintainRecapBlockPlan {
                     Source: EmptyRecapMaintainSource
                 }
                 || healthyInputs.ContainsKey(plan.RecapBlockId)) {
                 foreach (RecapFrozenPlanRawDefect defect
-                         in RecapFrozenPlanRawValidator.ValidateBlock(
+                         in RecapFrozenPlanRawValidator
+                             .ValidateInputDependentBlock(
                              _engine,
                              inspection.FrozenPlan,
                              healthyInputs,

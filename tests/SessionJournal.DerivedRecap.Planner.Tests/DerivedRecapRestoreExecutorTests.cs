@@ -75,6 +75,124 @@ public sealed class DerivedRecapRestoreExecutorTests {
     }
 
     [Fact]
+    public async Task MissingExistingInputResumeSuffixRejectsStaleBoundarySetupAuthority() {
+        using RestoreFixture fixture =
+            await RestoreFixture.CreateAsync();
+        (
+            MaintainRecapBlockPlan plan,
+            EventAddress target
+        ) = await fixture.PublishExistingTwoStepAsync(
+            useStaleBoundarySetups: true
+        );
+        await fixture.DamageFinalAsync(plan, target);
+        DerivedRecapBlock checkpoint =
+            DerivedRecapCodec.CreateBlock(
+                plan,
+                plan.CatchUpBoundaries[0].Address,
+                "checkpoint"
+            );
+        string checkpointPath = fixture.BlockPath(
+            target,
+            "work",
+            plan.RecapBlockId
+        );
+        await File.WriteAllBytesAsync(
+            checkpointPath,
+            DerivedRecapCodec.EncodeBlock(checkpoint)
+        );
+        File.Delete(
+            fixture.BlockPath(target, "inputs", plan.RecapBlockId)
+        );
+        byte[] checkpointBefore =
+            await File.ReadAllBytesAsync(checkpointPath);
+        var suffix = Assert.IsType<
+            PublishedBlockRestoreCapability.ResumeSuffix
+        >(
+            (await fixture.InspectAsync(target))
+                .Blocks[plan.RecapBlockId].Capability
+        );
+        Assert.Equal(1, suffix.NextEndpointIndex);
+        var maintainer = fixture.CreateMaintainer(
+            plan,
+            static (_, _) => "must-not-run"
+        );
+
+        var unavailable =
+            Assert.IsType<DerivedRecapRestoreResult.Unavailable>(
+                await fixture.CreateExecutor([maintainer])
+                    .RestoreAsync(target, fixture.CurrentHead)
+            );
+
+        Assert.Equal(0, maintainer.CallCount);
+        Assert.Contains(
+            unavailable.Defects,
+            defect => defect.Code
+                == DerivedRecapRestoreDefectCodes.FrozenPlanInvalid
+                && defect.Detail.Contains(
+                    "setups do not match raw authority",
+                    StringComparison.Ordinal
+                )
+        );
+        Assert.Equal(
+            checkpointBefore,
+            await File.ReadAllBytesAsync(checkpointPath)
+        );
+        Assert.IsType<FinalRecapBlockHealth.Damaged>(
+            (await fixture.InspectAsync(target))
+                .Blocks[plan.RecapBlockId].Final
+        );
+    }
+
+    [Fact]
+    public async Task MissingExistingInputResumeSuffixUsesValidatedBoundarySetupAuthority() {
+        using RestoreFixture fixture =
+            await RestoreFixture.CreateAsync();
+        (
+            MaintainRecapBlockPlan plan,
+            EventAddress target
+        ) = await fixture.PublishExistingTwoStepAsync(
+            useStaleBoundarySetups: false
+        );
+        await fixture.DamageFinalAsync(plan, target);
+        DerivedRecapBlock checkpoint =
+            DerivedRecapCodec.CreateBlock(
+                plan,
+                plan.CatchUpBoundaries[0].Address,
+                "checkpoint"
+            );
+        await File.WriteAllBytesAsync(
+            fixture.BlockPath(target, "work", plan.RecapBlockId),
+            DerivedRecapCodec.EncodeBlock(checkpoint)
+        );
+        File.Delete(
+            fixture.BlockPath(target, "inputs", plan.RecapBlockId)
+        );
+        var suffix = Assert.IsType<
+            PublishedBlockRestoreCapability.ResumeSuffix
+        >(
+            (await fixture.InspectAsync(target))
+                .Blocks[plan.RecapBlockId].Capability
+        );
+        Assert.Equal(1, suffix.NextEndpointIndex);
+        var maintainer = fixture.CreateMaintainer(
+            plan,
+            static (_, _) => "target-content"
+        );
+
+        DerivedRecapRestoreResult result =
+            await fixture.CreateExecutor([maintainer])
+                .RestoreAsync(target, fixture.CurrentHead);
+
+        _ = Assert.IsType<DerivedRecapRestoreResult.Restored>(result);
+        Assert.Equal(1, maintainer.CallCount);
+        Assert.Equal(["checkpoint"], maintainer.OldBlocks);
+        Assert.Equal(
+            "target-content",
+            await fixture.MaterializedTextAsync(target)
+        );
+    }
+
+    [Fact]
     public async Task HealthyPublishedRestoreHasNoMaintainerCalls() {
         using RestoreFixture fixture =
             await RestoreFixture.CreateAsync();
@@ -1152,21 +1270,115 @@ public sealed class DerivedRecapRestoreExecutorTests {
             return (existing, target);
         }
 
+        public async ValueTask<(
+            MaintainRecapBlockPlan Plan,
+            EventAddress Target
+        )> PublishExistingTwoStepAsync(
+            bool useStaleBoundarySetups
+        ) {
+            EventAddress source = CurrentHead;
+            SessionHistoryPlanningWindow sourceWindow =
+                Engine.ReadHistoryPlanningWindowAt(source);
+            SessionContextAnchorSetupReferences sourceSetups =
+                RecapPlannerWireTestFacts.SetupsAt(Engine, source);
+            var sourcePlan = new MaintainRecapBlockPlan(
+                new RecapBlockId("frozen.self"),
+                new ContextHeaderBlockPath(
+                    ContextHeaderCarrier.System,
+                    "frozen.self"
+                ),
+                "frozen-maintainer",
+                RecapPlannerTestIdentity.CapabilityFingerprint,
+                new EmptyRecapMaintainSource(
+                    sourceWindow.StartExclusive,
+                    sourceWindow.StartSetups
+                ),
+                [new RecapReplayBoundary(source, sourceSetups)],
+                EmptyRecapPriorContext.Instance,
+                MaxContent
+            );
+            PublishedRecapDescriptor sourceDescriptor =
+                await PublishAsync(
+                    source,
+                    [sourcePlan],
+                    new Dictionary<RecapBlockId, string> {
+                        [sourcePlan.RecapBlockId] = "source-content"
+                    }
+                );
+            DerivedRecapFrozenInput expectedInput =
+                DerivedRecapCodec.CreateFrozenInput(
+                    sourcePlan.RecapBlockId,
+                    sourcePlan.Target,
+                    source,
+                    sourceSetups,
+                    "source-content"
+                );
+
+            Engine.AppendRuntimeConfigSetup(
+                new SessionRuntimeConfiguration(
+                    "model-b",
+                    "surface-b",
+                    SessionJournalDefaults.Schema,
+                    new(0)
+                )
+            );
+            Engine.AppendSystemPromptSetup("system-b");
+            EventAddress mid = AppendPair("existing-mid");
+            EventAddress target = AppendPair("existing-target");
+            SessionContextAnchorSetupReferences midSetups =
+                useStaleBoundarySetups
+                    ? sourceSetups
+                    : RecapPlannerWireTestFacts.SetupsAt(Engine, mid);
+            SessionContextAnchorSetupReferences targetSetups =
+                useStaleBoundarySetups
+                    ? sourceSetups
+                    : RecapPlannerWireTestFacts.SetupsAt(Engine, target);
+            var existing = new MaintainRecapBlockPlan(
+                sourcePlan.RecapBlockId,
+                sourcePlan.Target,
+                sourcePlan.MaintainerId,
+                sourcePlan.MaintainerCapabilityFingerprint,
+                new ExistingRecapMaintainSource(
+                    source,
+                    expectedInput.AbsorbedThroughSetups,
+                    sourceDescriptor.EnvelopeSha256,
+                    expectedInput.PayloadSha256
+                ),
+                [
+                    new RecapReplayBoundary(mid, midSetups),
+                    new RecapReplayBoundary(target, targetSetups)
+                ],
+                EmptyRecapPriorContext.Instance,
+                MaxContent
+            );
+            _ = await PublishAsync(
+                target,
+                [existing],
+                new Dictionary<RecapBlockId, string> {
+                    [existing.RecapBlockId] = "target-content"
+                },
+                admissionSetups: targetSetups
+            );
+            return (existing, target);
+        }
+
         public async ValueTask<PublishedRecapDescriptor> PublishAsync(
             EventAddress anchor,
             IReadOnlyList<RecapBlockPlan> plans,
             IReadOnlyDictionary<RecapBlockId, string> contents,
             IReadOnlyDictionary<RecapBlockId, EventAddress>? cursors =
-                null
+                null,
+            SessionContextAnchorSetupReferences? admissionSetups = null
         ) {
             DerivedRecapSetManifest manifest =
                 DerivedRecapCodec.CreateManifest(
                     Engine.BranchRefId,
                     anchor,
-                    RecapPlannerWireTestFacts.SetupsAt(
-                        Engine,
-                        anchor
-                    ),
+                    admissionSetups
+                        ?? RecapPlannerWireTestFacts.SetupsAt(
+                            Engine,
+                            anchor
+                        ),
                     plans
                 );
             _ = await Store.CreateBuildingAsync(manifest);
