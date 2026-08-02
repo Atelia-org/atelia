@@ -4,6 +4,208 @@ using Xunit;
 namespace Atelia.SessionJournal.DerivedRecap.Store.Tests;
 
 public sealed class DerivedRecapPublishedRestoreWriteTests {
+    [Fact]
+    public async Task MissingFinalPrecedesPlanBeyondAcrossExactSurfaces() {
+        int mutationCount = 0;
+        using RecapStoreFixture fixture =
+            await RecapStoreFixture.CreateAsync(
+                new RecapStoreTestHooks(
+                    BeforeAtomicFileReplace: _ => mutationCount++
+                ),
+                historyPairs: 257
+            );
+        DerivedRecapLineageView lineage = fixture.Lineage();
+        EventAddress anchor = lineage.CapturedHead;
+        EventAddress beyond = fixture.RawLineage().HeadToRoot[^1].Address;
+        _ = await fixture.PublishAsync(
+            anchor,
+            lineage.CurrentPrefix.HeadToOldest[^1].Address
+        );
+        var plan = (MaintainRecapBlockPlan)fixture.CreateMaintainPlan(
+            anchor,
+            beyond
+        );
+        DerivedRecapSetManifest manifest =
+            DerivedRecapCodec.CreateManifest(
+                fixture.Engine.BranchRefId,
+                anchor,
+                [plan]
+            );
+        DerivedRecapBlock committed = DerivedRecapCodec.CreateBlock(
+            plan,
+            anchor,
+            "deep plan"
+        );
+        PublishedRecapSet publication =
+            await RecapStoreTestDriver.RewritePublishedUncheckedAsync(
+                fixture.Store,
+                manifest,
+                [committed]
+            );
+        File.Delete(BlockPath(
+            fixture,
+            anchor,
+            "blocks",
+            plan.RecapBlockId
+        ));
+
+        Assert.IsType<DerivedRecapSelection.ExactPublishedSetInvalid>(
+            await fixture.Store.SelectNthPreviousAsync(lineage, 0)
+        );
+        var inspection = Assert.IsType<
+            PublishedRestoreInspectionResult.Available
+        >(
+            await fixture.Store.InspectPublishedForRestoreAsync(
+                anchor,
+                lineage
+            )
+        ).Inspection;
+        Assert.IsType<FinalRecapBlockHealth.Missing>(
+            inspection.Blocks[plan.RecapBlockId].Final
+        );
+        var handle = new PublishedRestoreHandle(
+            fixture.Engine.BranchRefId,
+            anchor,
+            PublishedRestoreAuthorityKind.Publication,
+            $"publication:{publication.EnvelopeSha256}",
+            manifest.ManifestPayloadSha256
+        );
+        mutationCount = 0;
+
+        Assert.IsType<PublishedEnvelopeCommitResult.Unavailable>(
+            await new DerivedRecapRestorer(
+                    fixture.Store,
+                    fixture.Engine
+                )
+                .CommitEnvelopeAsync(
+                    handle,
+                    new Dictionary<RecapBlockId, string> {
+                        [plan.RecapBlockId] = "missing"
+                    },
+                    lineage.CapturedHead
+                )
+        );
+        Assert.Equal(0, mutationCount);
+    }
+
+    [Fact]
+    public async Task ForgedFinalPrecedesEarlierFrozenInputBeyond() {
+        int mutationCount = 0;
+        using RecapStoreFixture fixture =
+            await RecapStoreFixture.CreateAsync(
+                new RecapStoreTestHooks(
+                    BeforeAtomicFileReplace: _ => mutationCount++
+                ),
+                historyPairs: 257
+            );
+        DerivedRecapLineageView lineage = fixture.Lineage();
+        EventAddress anchor = lineage.CapturedHead;
+        EventAddress source =
+            lineage.CurrentPrefix.HeadToOldest[2].Address;
+        EventAddress beyond = fixture.RawLineage().HeadToRoot[^1].Address;
+        _ = await fixture.PublishAsync(
+            anchor,
+            lineage.CurrentPrefix.HeadToOldest[^1].Address
+        );
+        var id = new RecapBlockId("roleplay.self");
+        var target = new ContextHeaderBlockPath(
+            ContextHeaderCarrier.System,
+            id.Value
+        );
+        DerivedRecapFrozenInput input =
+            DerivedRecapCodec.CreateFrozenInput(
+                id,
+                target,
+                beyond,
+                "deep input"
+            );
+        var plan = new InheritRecapBlockPlan(
+            id,
+            target,
+            source,
+            new string('a', 64),
+            input.PayloadSha256
+        );
+        DerivedRecapSetManifest manifest =
+            DerivedRecapCodec.CreateManifest(
+                fixture.Engine.BranchRefId,
+                anchor,
+                [plan]
+            );
+        DerivedRecapBlock committed = DerivedRecapCodec.CreateBlock(
+            plan,
+            beyond,
+            input.Content
+        );
+        var wrongPlan = new InheritRecapBlockPlan(
+            id,
+            target,
+            source,
+            new string('b', 64),
+            input.PayloadSha256
+        );
+        DerivedRecapBlock forged = DerivedRecapCodec.CreateBlock(
+            wrongPlan,
+            beyond,
+            input.Content
+        );
+        PublishedRecapSet publication =
+            await RecapStoreTestDriver.RewritePublishedUncheckedAsync(
+                fixture.Store,
+                manifest,
+                [committed],
+                [forged]
+            );
+        await File.WriteAllBytesAsync(
+            BlockPath(fixture, anchor, "inputs", id),
+            DerivedRecapCodec.EncodeFrozenInput(input)
+        );
+
+        Assert.IsType<DerivedRecapSelection.ExactPublishedSetInvalid>(
+            await fixture.Store.SelectNthPreviousAsync(lineage, 0)
+        );
+        var inspection = Assert.IsType<
+            PublishedRestoreInspectionResult.Available
+        >(
+            await fixture.Store.InspectPublishedForRestoreAsync(
+                anchor,
+                lineage
+            )
+        ).Inspection;
+        Assert.IsType<FrozenRecapInputHealth.Healthy>(
+            inspection.Blocks[id].FrozenInput
+        );
+        Assert.IsType<FinalRecapBlockHealth.Damaged>(
+            inspection.Blocks[id].Final
+        );
+        var handle = new PublishedRestoreHandle(
+            fixture.Engine.BranchRefId,
+            anchor,
+            PublishedRestoreAuthorityKind.Publication,
+            $"publication:{publication.EnvelopeSha256}",
+            manifest.ManifestPayloadSha256
+        );
+        string damagedToken =
+            $"damaged:{DerivedRecapCodec.Sha256Hex(
+                DerivedRecapCodec.EncodeBlock(forged))}";
+        mutationCount = 0;
+
+        Assert.IsType<PublishedEnvelopeCommitResult.Unavailable>(
+            await new DerivedRecapRestorer(
+                    fixture.Store,
+                    fixture.Engine
+                )
+                .CommitEnvelopeAsync(
+                    handle,
+                    new Dictionary<RecapBlockId, string> {
+                        [id] = damagedToken
+                    },
+                    lineage.CapturedHead
+                )
+        );
+        Assert.Equal(0, mutationCount);
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]

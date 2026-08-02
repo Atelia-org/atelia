@@ -594,7 +594,7 @@ internal static class RecapExecutionCommands {
                     operation,
                     engine,
                     rawHead,
-                    "Unavailable",
+                    "BeyondPrefix",
                     requestedAnchor,
                     null,
                     null,

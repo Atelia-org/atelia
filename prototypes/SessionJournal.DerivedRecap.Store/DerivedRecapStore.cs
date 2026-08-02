@@ -461,7 +461,8 @@ public sealed class DerivedRecapStore {
         FileStream writeLock;
         if (currentLineage is null) {
             EnsureScaffolding();
-            writeLock = await _fileSystem.AcquireExclusiveLockAsync(
+            writeLock = await _fileSystem
+                .AcquireExistingExclusiveWriteLockAsync(
                     _lockPath,
                     cancellationToken
                 )
@@ -2003,11 +2004,9 @@ public sealed class DerivedRecapStore {
         string publishedPath =
             GetPublishedPath(handle.SetAdmissionAnchor);
         FrozenRecapInputHealth input =
-            await InspectPublishedFrozenInputAsync(
+            await InspectPublishedFrozenInputExactAsync(
                     publishedPath,
                     plan,
-                    lineage: null,
-                    lineagePrefix: null,
                     cancellationToken
                 )
                 .ConfigureAwait(false);
@@ -2035,14 +2034,10 @@ public sealed class DerivedRecapStore {
                 item => item.RecapBlockId == blockId
             );
         PublishedFinalInspection final =
-            await InspectPublishedFinalAsync(
+            await InspectPublishedFinalExactAsync(
                     publishedPath,
-                    capture.Manifest,
                     plan,
-                    input,
                     commitment,
-                    lineage: null,
-                    lineagePrefix: null,
                     cancellationToken
                 )
                 .ConfigureAwait(false);
@@ -2230,14 +2225,6 @@ public sealed class DerivedRecapStore {
                 authority.Defects
             );
         }
-        if (FindBeyondPrefix(
-                capture.Manifest,
-                available.AdmissionPrefix
-            ) is { } manifestBeyond) {
-            return new PublishedEnvelopeCommitResult.BeyondPrefix(
-                manifestBeyond
-            );
-        }
         if (expectedTokens.Count != capture.Manifest.Blocks.Count
             || capture.Manifest.Blocks.Any(
                 plan => !expectedTokens.ContainsKey(plan.RecapBlockId)
@@ -2248,45 +2235,23 @@ public sealed class DerivedRecapStore {
                 + "frozen plan roster."
             );
         }
-        var planDefects = new List<RecapStructuralDefect>();
-        ValidatePlanLineage(
-            capture.Manifest,
-            lineageIndex,
-            targetIndex: 0,
-            planDefects
-        );
-        if (planDefects.Count != 0) {
-            return new PublishedEnvelopeCommitResult.Unavailable(
-                Array.AsReadOnly(planDefects.ToArray())
-            );
-        }
-
         string publishedPath =
             GetPublishedPath(handle.SetAdmissionAnchor);
         var inputs =
             new Dictionary<RecapBlockId, FrozenRecapInputHealth>();
         foreach (RecapBlockPlan plan in capture.Manifest.Blocks) {
-            FrozenRecapInputHealth input;
-            try {
-                input = await InspectPublishedFrozenInputAsync(
+            FrozenRecapInputHealth input =
+                await InspectPublishedFrozenInputExactAsync(
                             publishedPath,
                             plan,
-                            lineageIndex,
-                            available.AdmissionPrefix,
                             cancellationToken
                         )
                         .ConfigureAwait(false);
-            }
-            catch (DerivedRecapBeyondPrefixException exception) {
-                return new PublishedEnvelopeCommitResult.BeyondPrefix(
-                    exception.Evidence
-                );
-            }
             inputs.Add(plan.RecapBlockId, input);
         }
+        var witnessDefects = new List<RecapStructuralDefect>();
         if (capture.Kind
                 == PublishedRestoreAuthorityKind.ManifestWitness) {
-            var witnessDefects = new List<RecapStructuralDefect>();
             foreach (RecapBlockPlan plan in capture.Manifest.Blocks) {
                 FrozenRecapInputHealth input =
                     inputs[plan.RecapBlockId];
@@ -2297,11 +2262,6 @@ public sealed class DerivedRecapStore {
                 }
                 witnessDefects.AddRange(
                     RestoreDependencyDefects(plan, input)
-                );
-            }
-            if (witnessDefects.Count != 0) {
-                return new PublishedEnvelopeCommitResult.Unavailable(
-                    Array.AsReadOnly(witnessDefects.ToArray())
                 );
             }
         }
@@ -2315,36 +2275,33 @@ public sealed class DerivedRecapStore {
                     RecapBlockId,
                     RecapBlockCommitment
                 >.Empty;
-        var blocks = new List<DerivedRecapBlock>(
-            capture.Manifest.Blocks.Count
-        );
-        var contributions = new List<SessionContextContribution>(
-            capture.Manifest.Blocks.Count
-        );
+        var finals = new Dictionary<
+            RecapBlockId,
+            PublishedFinalInspection
+        >();
         foreach (RecapBlockPlan plan in capture.Manifest.Blocks) {
             commitments.TryGetValue(
                 plan.RecapBlockId,
                 out RecapBlockCommitment? commitment
             );
-            PublishedFinalInspection final;
-            try {
-                final = await InspectPublishedFinalAsync(
+            PublishedFinalInspection final =
+                await InspectPublishedFinalExactAsync(
                             publishedPath,
-                            capture.Manifest,
                             plan,
-                            inputs[plan.RecapBlockId],
                             commitment,
-                            lineageIndex,
-                            available.AdmissionPrefix,
                             cancellationToken
                         )
                         .ConfigureAwait(false);
-            }
-            catch (DerivedRecapBeyondPrefixException exception) {
-                return new PublishedEnvelopeCommitResult.BeyondPrefix(
-                    exception.Evidence
-                );
-            }
+            finals.Add(plan.RecapBlockId, final);
+        }
+
+        if (witnessDefects.Count != 0) {
+            return new PublishedEnvelopeCommitResult.Unavailable(
+                Array.AsReadOnly(witnessDefects.ToArray())
+            );
+        }
+        foreach (RecapBlockPlan plan in capture.Manifest.Blocks) {
+            PublishedFinalInspection final = finals[plan.RecapBlockId];
             if (final.Health
                     is FinalRecapBlockHealth.Unavailable unavailable) {
                 return new PublishedEnvelopeCommitResult.Unavailable(
@@ -2377,22 +2334,69 @@ public sealed class DerivedRecapStore {
                             ]
                 );
             }
-            blocks.Add(healthy.Block);
-            contributions.Add(ToContribution(healthy.Block));
         }
-        try {
-            ImmutableArray<SessionContextContribution> normalized =
-                SessionContextContributionContract
-                    .ValidateAndNormalize(contributions);
-            RequireCanonicalContributionOrder(
-                contributions,
-                normalized
+        var exactInputDefects = new List<RecapStructuralDefect>();
+        foreach (RecapBlockPlan plan in capture.Manifest.Blocks) {
+            FrozenRecapInputHealth input = inputs[plan.RecapBlockId];
+            if (input
+                is FrozenRecapInputHealth.NotRequired
+                    or FrozenRecapInputHealth.Healthy) {
+                continue;
+            }
+            exactInputDefects.AddRange(
+                RestoreDependencyDefects(plan, input)
             );
         }
-        catch (InvalidDataException exception) {
+        SessionCurrentLineageBeyondPrefix? artifactBeyond =
+            FindRestoreBeyondPrefix(
+                capture.Manifest,
+                inputs,
+                finals,
+                available.AdmissionPrefix
+            );
+        if (artifactBeyond is not null
+            && exactInputDefects.Count != 0) {
+            return new PublishedEnvelopeCommitResult.Unavailable(
+                Array.AsReadOnly(exactInputDefects.ToArray())
+            );
+        }
+        bool hasUncommittedPublishedFinal =
+            capture.Publication is not null
+            && finals.Values.Any(static final => !final.IsCommitted);
+        if (artifactBeyond is not null
+            && hasUncommittedPublishedFinal) {
             return EnvelopeUnavailable(
-                "ContributionSetInvalid",
-                exception.Message
+                "PublishedBlockCommitmentMismatch",
+                "A pending final block cannot replace committed "
+                + "publication authority while required lineage is "
+                + "beyond the authenticated prefix."
+            );
+        }
+        if (artifactBeyond is not null) {
+            return new PublishedEnvelopeCommitResult.BeyondPrefix(
+                artifactBeyond
+            );
+        }
+        IReadOnlyList<RecapStructuralDefect> semanticDefects =
+            ValidateRestoreLineageSemantics(
+                capture.Manifest,
+                inputs,
+                finals,
+                lineageIndex
+            );
+        if (semanticDefects.Count != 0) {
+            return new PublishedEnvelopeCommitResult.Unavailable(
+                semanticDefects
+            );
+        }
+
+        var blocks = new List<DerivedRecapBlock>(
+            capture.Manifest.Blocks.Count
+        );
+        foreach (RecapBlockPlan plan in capture.Manifest.Blocks) {
+            blocks.Add(
+                ((FinalRecapBlockHealth.Healthy)
+                    finals[plan.RecapBlockId].Health).Block
             );
         }
 
@@ -2660,7 +2664,8 @@ public sealed class DerivedRecapStore {
 
         FileStream writeLock;
         try {
-            writeLock = await _fileSystem.AcquireExclusiveLockAsync(
+            writeLock = await _fileSystem
+                .AcquireExistingExclusiveWriteLockAsync(
                     _lockPath,
                     cancellationToken
                 )
@@ -2955,6 +2960,9 @@ public sealed class DerivedRecapStore {
             return new CurrentLineageBuildingInventoryResult
                 .Unavailable(exception.Message);
         }
+        buildings.Sort(static (left, right) =>
+            left.LineageIndex.CompareTo(right.LineageIndex)
+        );
         return new CurrentLineageBuildingInventoryResult.Available(
             new CurrentLineageBuildingInventory(
                 Array.AsReadOnly(buildings.ToArray()),
@@ -3379,44 +3387,21 @@ public sealed class DerivedRecapStore {
             );
         }
 
-        if (FindBeyondPrefix(capture.Manifest, lineagePrefix)
-            is { } manifestBeyond) {
-            return new PublishedRestoreInspectionResult.BeyondPrefix(
-                manifestBeyond
-            );
-        }
-
-        var planDefects = new List<RecapStructuralDefect>();
-        ValidatePlanLineage(
-            capture.Manifest,
-            lineage,
-            targetIndex: 0,
-            planDefects
-        );
-        if (planDefects.Count != 0) {
-            return new PublishedRestoreInspectionResult.Unavailable(
-                expectedAnchor,
-                Array.AsReadOnly(planDefects.ToArray())
-            );
-        }
-
         var inputs =
             new Dictionary<RecapBlockId, FrozenRecapInputHealth>();
         foreach (RecapBlockPlan plan in capture.Manifest.Blocks) {
             FrozenRecapInputHealth health =
-                await InspectPublishedFrozenInputAsync(
+                await InspectPublishedFrozenInputExactAsync(
                         publishedPath,
                         plan,
-                        lineage,
-                        lineagePrefix,
                         cancellationToken
                     )
                     .ConfigureAwait(false);
             inputs.Add(plan.RecapBlockId, health);
         }
-        if (capture.Kind
-                == PublishedRestoreAuthorityKind.ManifestWitness) {
-            RecapStructuralDefect[] witnessInputDefects = inputs
+        RecapStructuralDefect[] witnessInputDefects =
+            capture.Kind == PublishedRestoreAuthorityKind.ManifestWitness
+                ? inputs
                 .Where(static item =>
                     item.Value
                         is not FrozenRecapInputHealth.NotRequired
@@ -3435,14 +3420,8 @@ public sealed class DerivedRecapStore {
                             )
                         ]
                     })
-                .ToArray();
-            if (witnessInputDefects.Length != 0) {
-                return new PublishedRestoreInspectionResult.Unavailable(
-                    expectedAnchor,
-                    Array.AsReadOnly(witnessInputDefects)
-                );
-            }
-        }
+                .ToArray()
+                : [];
 
         IReadOnlyDictionary<RecapBlockId, RecapBlockCommitment>
             commitments = capture.Publication is { } publication
@@ -3453,28 +3432,72 @@ public sealed class DerivedRecapStore {
                     RecapBlockId,
                     RecapBlockCommitment
                 >.Empty;
-        var blocks = new Dictionary<
+        var finals = new Dictionary<
             RecapBlockId,
-            PublishedBlockRestoreInspection
+            PublishedFinalInspection
         >();
         foreach (RecapBlockPlan plan in capture.Manifest.Blocks) {
             commitments.TryGetValue(
                 plan.RecapBlockId,
                 out RecapBlockCommitment? commitment
             );
-            FrozenRecapInputHealth input = inputs[plan.RecapBlockId];
             PublishedFinalInspection final =
-                await InspectPublishedFinalAsync(
+                await InspectPublishedFinalExactAsync(
                         publishedPath,
-                        capture.Manifest,
                         plan,
-                        input,
                         commitment,
-                        lineage,
-                        lineagePrefix,
                         cancellationToken
                     )
                     .ConfigureAwait(false);
+            finals.Add(plan.RecapBlockId, final);
+        }
+
+        if (witnessInputDefects.Length != 0) {
+            return new PublishedRestoreInspectionResult.Unavailable(
+                expectedAnchor,
+                Array.AsReadOnly(witnessInputDefects)
+            );
+        }
+        bool exactIncomplete = inputs.Values.Any(static health =>
+                health is not FrozenRecapInputHealth.NotRequired
+                    and not FrozenRecapInputHealth.Healthy)
+            || finals.Values.Any(static final =>
+                final.Health is not FinalRecapBlockHealth.Healthy)
+            || capture.Publication is not null
+               && finals.Values.Any(static final => !final.IsCommitted);
+        if (!exactIncomplete) {
+            if (FindRestoreBeyondPrefix(
+                    capture.Manifest,
+                    inputs,
+                    finals,
+                    lineagePrefix
+                ) is { } beyond) {
+                return new PublishedRestoreInspectionResult.BeyondPrefix(
+                    beyond
+                );
+            }
+            IReadOnlyList<RecapStructuralDefect> semanticDefects =
+                ValidateRestoreLineageSemantics(
+                    capture.Manifest,
+                    inputs,
+                    finals,
+                    lineage
+                );
+            if (semanticDefects.Count != 0) {
+                return new PublishedRestoreInspectionResult.Unavailable(
+                    expectedAnchor,
+                    semanticDefects
+                );
+            }
+        }
+
+        var blocks = new Dictionary<
+            RecapBlockId,
+            PublishedBlockRestoreInspection
+        >();
+        foreach (RecapBlockPlan plan in capture.Manifest.Blocks) {
+            FrozenRecapInputHealth input = inputs[plan.RecapBlockId];
+            PublishedFinalInspection final = finals[plan.RecapBlockId];
             RollingRecapCheckpointHealth checkpoint =
                 await InspectCheckpointHealthAsync(
                         plan,
@@ -3755,11 +3778,9 @@ public sealed class DerivedRecapStore {
     }
 
     private async ValueTask<FrozenRecapInputHealth>
-        InspectPublishedFrozenInputAsync(
+        InspectPublishedFrozenInputExactAsync(
         string publishedPath,
         RecapBlockPlan plan,
-        IReadOnlyDictionary<EventAddress, int>? lineage,
-        SessionCurrentLineagePrefix? lineagePrefix,
         CancellationToken cancellationToken
     ) {
         string? expectedHash = GetExpectedInputHash(plan);
@@ -3815,56 +3836,6 @@ public sealed class DerivedRecapStore {
                     "Frozen input does not match its exact block plan."
                 );
             }
-            if (lineagePrefix is not null
-                && lineagePrefix.Lookup(input.AbsorbedThrough)
-                    is SessionCurrentLineageAnchorLookup
-                        .BeyondPrefix beyond) {
-                throw new DerivedRecapBeyondPrefixException(
-                    beyond.Evidence
-                );
-            }
-            if (lineage is not null) {
-                var semanticDefects =
-                    new List<RecapStructuralDefect>();
-                var index = new Dictionary<
-                    RecapBlockId,
-                    DerivedRecapFrozenInput
-                > {
-                    [plan.RecapBlockId] = input
-                };
-                EventAddress? sourceAnchor = plan switch {
-                    InheritRecapBlockPlan inherit =>
-                        inherit.SourceSetAnchor,
-                    MaintainRecapBlockPlan {
-                        Source: ExistingRecapMaintainSource existing
-                    } => existing.SourceSetAnchor,
-                    _ => null
-                };
-                ValidateFrozenSourceCursor(
-                    sourceAnchor,
-                    plan,
-                    index,
-                    lineage,
-                    semanticDefects
-                );
-                if (plan is MaintainRecapBlockPlan maintain) {
-                    ValidateExistingMaintainRoute(
-                        maintain,
-                        plan,
-                        index,
-                        lineage,
-                        semanticDefects
-                    );
-                }
-                if (semanticDefects.Count != 0) {
-                    return new FrozenRecapInputHealth.Damaged(
-                        Array.AsReadOnly(
-                            semanticDefects.ToArray()
-                        ),
-                        $"damaged:{input.PayloadSha256}"
-                    );
-                }
-            }
             return new FrozenRecapInputHealth.Healthy(
                 input,
                 HealthyStateToken(input.PayloadSha256)
@@ -3887,14 +3858,10 @@ public sealed class DerivedRecapStore {
     }
 
     private async ValueTask<PublishedFinalInspection>
-        InspectPublishedFinalAsync(
+        InspectPublishedFinalExactAsync(
         string publishedPath,
-        DerivedRecapSetManifest manifest,
         RecapBlockPlan plan,
-        FrozenRecapInputHealth inputHealth,
         RecapBlockCommitment? commitment,
-        IReadOnlyDictionary<EventAddress, int>? lineage,
-        SessionCurrentLineagePrefix? lineagePrefix,
         CancellationToken cancellationToken
     ) {
         string path = GetBlockFilePath(
@@ -3935,44 +3902,6 @@ public sealed class DerivedRecapStore {
             ValidateBlockAgainstPlan(plan, block);
             bool isCommitted = commitment is not null
                 && MatchesCommitment(block, commitment);
-            if (isCommitted) {
-                if (lineagePrefix is not null
-                    && lineagePrefix.Lookup(
-                        commitment!.AbsorbedThrough
-                    ) is SessionCurrentLineageAnchorLookup
-                        .BeyondPrefix committedBeyond) {
-                    throw new DerivedRecapBeyondPrefixException(
-                        committedBeyond.Evidence
-                    );
-                }
-                ValidateCommittedPublishedFinal(
-                    manifest,
-                    plan,
-                    block,
-                    lineage
-                );
-            }
-            else {
-                DerivedRecapFrozenInput? input =
-                    inputHealth is FrozenRecapInputHealth.Healthy
-                        healthy
-                        ? healthy.Input
-                        : null;
-                ValidateFinalCandidate(
-                    manifest,
-                    plan,
-                    input,
-                    block
-                );
-                if (lineagePrefix is not null
-                    && lineagePrefix.Lookup(block.AbsorbedThrough)
-                        is SessionCurrentLineageAnchorLookup
-                            .BeyondPrefix beyond) {
-                    throw new DerivedRecapBeyondPrefixException(
-                        beyond.Evidence
-                    );
-                }
-            }
             return new PublishedFinalInspection(
                 new FinalRecapBlockHealth.Healthy(
                     block,
@@ -4178,6 +4107,148 @@ public sealed class DerivedRecapStore {
         ];
     }
 
+    private static SessionCurrentLineageBeyondPrefix?
+        FindRestoreBeyondPrefix(
+        DerivedRecapSetManifest manifest,
+        IReadOnlyDictionary<RecapBlockId, FrozenRecapInputHealth> inputs,
+        IReadOnlyDictionary<RecapBlockId, PublishedFinalInspection> finals,
+        SessionCurrentLineagePrefix prefix
+    ) {
+        if (FindBeyondPrefix(manifest, prefix) is { } planBeyond) {
+            return planBeyond;
+        }
+        foreach (RecapBlockPlan plan in manifest.Blocks) {
+            if (inputs[plan.RecapBlockId]
+                    is FrozenRecapInputHealth.Healthy input
+                && prefix.Lookup(input.Input.AbsorbedThrough)
+                    is SessionCurrentLineageAnchorLookup
+                        .BeyondPrefix inputBeyond) {
+                return inputBeyond.Evidence;
+            }
+        }
+        foreach (RecapBlockPlan plan in manifest.Blocks) {
+            if (finals[plan.RecapBlockId].Health
+                    is FinalRecapBlockHealth.Healthy final
+                && prefix.Lookup(final.Block.AbsorbedThrough)
+                    is SessionCurrentLineageAnchorLookup
+                        .BeyondPrefix finalBeyond) {
+                return finalBeyond.Evidence;
+            }
+        }
+        return null;
+    }
+
+    private static IReadOnlyList<RecapStructuralDefect>
+        ValidateRestoreLineageSemantics(
+        DerivedRecapSetManifest manifest,
+        IReadOnlyDictionary<RecapBlockId, FrozenRecapInputHealth> inputs,
+        IReadOnlyDictionary<RecapBlockId, PublishedFinalInspection> finals,
+        IReadOnlyDictionary<EventAddress, int> lineage
+    ) {
+        var defects = new List<RecapStructuralDefect>();
+        ValidatePlanLineage(manifest, lineage, targetIndex: 0, defects);
+        var healthyInputs = inputs
+            .Where(static item =>
+                item.Value is FrozenRecapInputHealth.Healthy)
+            .ToDictionary(
+                static item => item.Key,
+                static item =>
+                    ((FrozenRecapInputHealth.Healthy)item.Value).Input
+            );
+        var contributions = new List<SessionContextContribution>(
+            manifest.Blocks.Count
+        );
+        foreach (RecapBlockPlan plan in manifest.Blocks) {
+            EventAddress? sourceAnchor = plan switch {
+                InheritRecapBlockPlan inherit =>
+                    inherit.SourceSetAnchor,
+                MaintainRecapBlockPlan {
+                    Source: ExistingRecapMaintainSource existing
+                } => existing.SourceSetAnchor,
+                _ => null
+            };
+            ValidateFrozenSourceCursor(
+                sourceAnchor,
+                plan,
+                healthyInputs,
+                lineage,
+                defects
+            );
+            if (plan is MaintainRecapBlockPlan maintain) {
+                ValidateExistingMaintainRoute(
+                    maintain,
+                    plan,
+                    healthyInputs,
+                    lineage,
+                    defects
+                );
+            }
+            var final = (FinalRecapBlockHealth.Healthy)
+                finals[plan.RecapBlockId].Health;
+            if (!lineage.TryGetValue(
+                    final.Block.AbsorbedThrough,
+                    out int absorbedIndex
+                )
+                || absorbedIndex < 0) {
+                AddDefect(
+                    defects,
+                    "PublishedCursorOffLineage",
+                    $"Published block '{plan.RecapBlockId}' cursor "
+                    + "is outside the admitted prefix."
+                );
+            }
+            try {
+                if (finals[plan.RecapBlockId].IsCommitted) {
+                    ValidateCommittedPublishedFinal(
+                        manifest,
+                        plan,
+                        final.Block,
+                        lineage
+                    );
+                }
+                else {
+                    DerivedRecapFrozenInput? input =
+                        inputs[plan.RecapBlockId]
+                            is FrozenRecapInputHealth.Healthy healthy
+                            ? healthy.Input
+                            : null;
+                    ValidateFinalCandidate(
+                        manifest,
+                        plan,
+                        input,
+                        final.Block
+                    );
+                }
+            }
+            catch (InvalidDataException exception) {
+                AddDefect(
+                    defects,
+                    "PublishedFinalLineageInvalid",
+                    exception.Message
+                );
+            }
+            contributions.Add(ToContribution(final.Block));
+        }
+        try {
+            ImmutableArray<SessionContextContribution> normalized =
+                SessionContextContributionContract.ValidateAndNormalize(
+                    contributions
+                );
+            RequireCanonicalContributionOrder(
+                contributions,
+                normalized
+            );
+        }
+        catch (InvalidDataException exception) {
+            AddDefect(
+                defects,
+                "ContributionSetInvalid",
+                exception.Message
+            );
+        }
+        return Array.AsReadOnly(defects.ToArray());
+    }
+
     private static PublishedRestoreInspectionResult.Unavailable
         RestoreUnavailable(
         EventAddress admissionAnchor,
@@ -4222,26 +4293,11 @@ public sealed class DerivedRecapStore {
                 );
                 return Array.AsReadOnly(defects.ToArray());
             }
-            IReadOnlyDictionary<EventAddress, int>? lineageIndex = null;
-            int targetIndex = -1;
-            if (lineage is not null) {
-                if (FindBeyondPrefix(
-                        publication.FrozenPlanSnapshot,
-                        lineage
-                    ) is { } planBeyond) {
-                    throw new DerivedRecapBeyondPrefixException(
-                        planBeyond
-                    );
-                }
-                lineageIndex = IndexPrefix(lineage);
-                targetIndex = 0;
-                ValidatePlanLineage(
-                    publication.FrozenPlanSnapshot,
-                    lineageIndex,
-                    targetIndex,
-                    defects
-                );
-            }
+            var authenticated = new List<(
+                RecapBlockPlan Plan,
+                RecapBlockCommitment Commitment,
+                DerivedRecapBlock Block
+            )>(publication.BlockCommitments.Count);
             var contributions =
                 new List<SessionContextContribution>();
             for (int index = 0;
@@ -4251,8 +4307,9 @@ public sealed class DerivedRecapStore {
                     publication.BlockCommitments[index];
                 RecapBlockPlan plan =
                     publication.FrozenPlanSnapshot.Blocks[index];
-                DerivedRecapBlock block =
-                    await ReadBlockRequiredAsync(
+                DerivedRecapBlock block;
+                try {
+                    block = await ReadBlockRequiredAsync(
                             GetBlockFilePath(
                                 Path.Combine(
                                     publishedPath,
@@ -4263,6 +4320,21 @@ public sealed class DerivedRecapStore {
                             cancellationToken
                         )
                         .ConfigureAwait(false);
+                }
+                catch (Exception exception)
+                    when (exception is InvalidDataException
+                          or ArgumentException
+                          or NotSupportedException
+                          or IOException
+                          or UnauthorizedAccessException) {
+                    AddDefect(
+                        defects,
+                        "PublishedBlockUnavailable",
+                        $"Published block '{commitment.RecapBlockId}' "
+                        + $"could not be authenticated: {exception.Message}"
+                    );
+                    continue;
+                }
                 if (block.RecapBlockId
                         != commitment.RecapBlockId
                     || block.Target != commitment.Target
@@ -4286,15 +4358,55 @@ public sealed class DerivedRecapStore {
                     );
                     continue;
                 }
-                if (lineage is not null
-                    && defects.Count == 0
-                    && lineage.Lookup(commitment.AbsorbedThrough)
-                        is SessionCurrentLineageAnchorLookup
-                            .BeyondPrefix cursorBeyond) {
+                EnsureContentWithinPlanLimit(block.Content, plan);
+                authenticated.Add((plan, commitment, block));
+                contributions.Add(ToContribution(block));
+            }
+            if (defects.Count != 0) {
+                return Array.AsReadOnly(defects.ToArray());
+            }
+            ImmutableArray<SessionContextContribution> normalized =
+                SessionContextContributionContract.ValidateAndNormalize(
+                    contributions
+                );
+            RequireCanonicalContributionOrder(
+                contributions,
+                normalized
+            );
+
+            IReadOnlyDictionary<EventAddress, int>? lineageIndex = null;
+            int targetIndex = -1;
+            if (lineage is not null) {
+                if (FindBeyondPrefix(
+                        publication.FrozenPlanSnapshot,
+                        lineage
+                    ) is { } planBeyond) {
                     throw new DerivedRecapBeyondPrefixException(
-                        cursorBeyond.Evidence
+                        planBeyond
                     );
                 }
+                foreach ((_, RecapBlockCommitment commitment, _)
+                         in authenticated) {
+                    if (lineage.Lookup(commitment.AbsorbedThrough)
+                        is SessionCurrentLineageAnchorLookup
+                            .BeyondPrefix cursorBeyond) {
+                        throw new DerivedRecapBeyondPrefixException(
+                            cursorBeyond.Evidence
+                        );
+                    }
+                }
+                lineageIndex = IndexPrefix(lineage);
+                targetIndex = 0;
+                ValidatePlanLineage(
+                    publication.FrozenPlanSnapshot,
+                    lineageIndex,
+                    targetIndex,
+                    defects
+                );
+            }
+            foreach ((RecapBlockPlan plan,
+                     RecapBlockCommitment commitment,
+                     DerivedRecapBlock block) in authenticated) {
                 if (lineageIndex is not null
                     && (!lineageIndex.TryGetValue(
                             block.AbsorbedThrough,
@@ -4339,17 +4451,7 @@ public sealed class DerivedRecapStore {
                         );
                         break;
                 }
-                EnsureContentWithinPlanLimit(block.Content, plan);
-                contributions.Add(ToContribution(block));
             }
-            ImmutableArray<SessionContextContribution> normalized =
-                SessionContextContributionContract.ValidateAndNormalize(
-                    contributions
-                );
-            RequireCanonicalContributionOrder(
-                contributions,
-                normalized
-            );
         }
         catch (Exception exception)
             when (exception is InvalidDataException
@@ -4585,11 +4687,19 @@ public sealed class DerivedRecapStore {
             return;
         }
 
-        _fileSystem.EnsureSafeDescendant(publicationPath);
+        try {
+            _fileSystem.EnsureSafeDescendant(publicationPath);
+        }
+        catch (InvalidDataException exception) {
+            throw new IOException(
+                "Building publication candidate path is unavailable.",
+                exception
+            );
+        }
         FileAttributes attributes = File.GetAttributes(publicationPath);
         if ((attributes & FileAttributes.Directory) != 0
             || (attributes & FileAttributes.ReparsePoint) != 0) {
-            throw new InvalidDataException(
+            throw new IOException(
                 "Building publication candidate must be a regular file."
             );
         }

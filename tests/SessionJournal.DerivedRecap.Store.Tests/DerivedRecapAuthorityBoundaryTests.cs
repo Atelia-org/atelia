@@ -9,6 +9,67 @@ namespace Atelia.SessionJournal.DerivedRecap.Store.Tests;
 
 public sealed class DerivedRecapAuthorityBoundaryTests {
     [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task TrustedWritesDoNotRecreateMissingCoordinationLock(
+        bool publish
+    ) {
+        using RecapStoreFixture fixture =
+            await RecapStoreFixture.CreateAsync();
+        DerivedRecapLineageView lineage = fixture.Lineage();
+        EventAddress anchor = lineage.CapturedHead;
+        RecapBlockPlan plan = fixture.CreateMaintainPlan(
+            anchor,
+            lineage.CurrentPrefix.HeadToOldest[^1].Address
+        );
+        DerivedRecapSetManifest manifest =
+            DerivedRecapCodec.CreateManifest(
+                fixture.Engine.BranchRefId,
+                anchor,
+                [plan]
+            );
+        if (publish) {
+            _ = Assert.IsType<CreateBuildingResult.Created>(
+                await fixture.Store.CreateBuildingAsync(manifest)
+            );
+            await RecapStoreTestDriver.InstallFinalAsync(
+                fixture.Store,
+                anchor,
+                DerivedRecapCodec.CreateBlock(
+                    plan,
+                    anchor,
+                    "ready"
+                )
+            );
+        }
+        string lockPath = Path.Combine(
+            fixture.Path,
+            "derived",
+            "recap",
+            "v4",
+            "locks",
+            $"{fixture.Engine.BranchRefId.ToHexString()}.lock"
+        );
+        File.Delete(lockPath);
+
+        if (publish) {
+            Assert.IsType<PublishRecapResult.StoreUnavailable>(
+                await fixture.Publisher.PublishAsync(anchor)
+            );
+        }
+        else {
+            Assert.IsType<CreateBuildingResult.StoreUnavailable>(
+                await new DerivedRecapBuildingInstaller(
+                        fixture.Store,
+                        fixture.Engine
+                    )
+                    .InstallAsync(manifest, anchor)
+            );
+        }
+        Assert.False(File.Exists(lockPath));
+    }
+
+    [Theory]
     [InlineData("missing-root")]
     [InlineData("damaged-header")]
     [InlineData("wrong-kind-header")]

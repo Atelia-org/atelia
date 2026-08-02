@@ -167,10 +167,10 @@ public sealed class DerivedRecapStoreTests {
             DerivedRecapCodec.CreateBlock(plan, anchor, "recap")
         );
 
-        IOException observed = await Assert.ThrowsAsync<IOException>(
-            async () => await fixture.Publisher.PublishAsync(anchor)
+        var observed = Assert.IsType<PublishRecapResult.StoreUnavailable>(
+            await fixture.Publisher.PublishAsync(anchor)
         );
-        Assert.Same(simulatedCrash, observed);
+        Assert.Equal(simulatedCrash.Message, observed.Reason);
         Assert.IsType<DerivedRecapSelection.EmptyLineage>(
             await fixture.Store.SelectNthPreviousAsync(lineage, 0)
         );
@@ -225,8 +225,8 @@ public sealed class DerivedRecapStoreTests {
             anchor,
             DerivedRecapCodec.CreateBlock(plan, anchor, "recap")
         );
-        await Assert.ThrowsAsync<IOException>(
-            async () => await fixture.Publisher.PublishAsync(anchor)
+        Assert.IsType<PublishRecapResult.StoreUnavailable>(
+            await fixture.Publisher.PublishAsync(anchor)
         );
 
         string candidatePath = Path.Combine(
@@ -298,8 +298,8 @@ public sealed class DerivedRecapStoreTests {
             anchor,
             DerivedRecapCodec.CreateBlock(plan, anchor, "old recap")
         );
-        await Assert.ThrowsAsync<IOException>(
-            async () => await fixture.Publisher.PublishAsync(anchor)
+        Assert.IsType<PublishRecapResult.StoreUnavailable>(
+            await fixture.Publisher.PublishAsync(anchor)
         );
 
         string finalPath = Path.Combine(
@@ -370,8 +370,8 @@ public sealed class DerivedRecapStoreTests {
             anchor,
             DerivedRecapCodec.CreateBlock(plan, anchor, "recap")
         );
-        await Assert.ThrowsAsync<IOException>(
-            async () => await fixture.Publisher.PublishAsync(anchor)
+        Assert.IsType<PublishRecapResult.StoreUnavailable>(
+            await fixture.Publisher.PublishAsync(anchor)
         );
         string buildingPath =
             fixture.Store.GetBuildingPathForTest(anchor);
@@ -393,7 +393,7 @@ public sealed class DerivedRecapStoreTests {
             Directory.CreateDirectory(candidatePath);
         }
 
-        Assert.IsType<PublishRecapResult.NotPublishable>(
+        Assert.IsType<PublishRecapResult.StoreUnavailable>(
             await fixture.Publisher.PublishAsync(anchor)
         );
 
@@ -870,9 +870,8 @@ public sealed class DerivedRecapStoreTests {
             "preserve"
         );
 
-        await Assert.ThrowsAsync<IOException>(
-            async () =>
-                await fixture.Publisher.PublishAsync(anchor)
+        Assert.IsType<PublishRecapResult.StoreUnavailable>(
+            await fixture.Publisher.PublishAsync(anchor)
         );
         Assert.Equal(
             "preserve",
