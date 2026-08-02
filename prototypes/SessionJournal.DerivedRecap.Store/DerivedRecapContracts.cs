@@ -40,7 +40,7 @@ public sealed record RecapBlockId {
         => (ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9');
 }
 
-public abstract record RecapBlockPlan {
+public abstract class RecapBlockPlan {
     private protected RecapBlockPlan(
         RecapBlockId recapBlockId,
         ContextHeaderBlockPath target,
@@ -65,7 +65,7 @@ public abstract record RecapBlockPlan {
     public int MaxContentUtf8Bytes { get; }
 }
 
-public sealed record InheritRecapBlockPlan : RecapBlockPlan {
+public sealed class InheritRecapBlockPlan : RecapBlockPlan {
     public InheritRecapBlockPlan(
         RecapBlockId recapBlockId,
         ContextHeaderBlockPath target,
@@ -86,36 +86,61 @@ public sealed record InheritRecapBlockPlan : RecapBlockPlan {
     public string SourceInputPayloadSha256 { get; }
 }
 
-public abstract record RecapMaintainSource {
+public abstract class RecapMaintainSource {
     private protected RecapMaintainSource() {
     }
 }
 
-public sealed record ExistingRecapMaintainSource(
-    EventAddress SourceSetAnchor,
-    string SourcePublicationEnvelopeSha256,
-    string SourceInputPayloadSha256
-) : RecapMaintainSource;
+public sealed class ExistingRecapMaintainSource : RecapMaintainSource {
+    public ExistingRecapMaintainSource(
+        EventAddress sourceSetAnchor,
+        string sourcePublicationEnvelopeSha256,
+        string sourceInputPayloadSha256
+    ) {
+        SourceSetAnchor = sourceSetAnchor;
+        SourcePublicationEnvelopeSha256 =
+            sourcePublicationEnvelopeSha256;
+        SourceInputPayloadSha256 = sourceInputPayloadSha256;
+    }
 
-public sealed record EmptyRecapMaintainSource(
-    EventAddress ReplayStartExclusive
-) : RecapMaintainSource;
+    public EventAddress SourceSetAnchor { get; }
+    public string SourcePublicationEnvelopeSha256 { get; }
+    public string SourceInputPayloadSha256 { get; }
+}
 
-public abstract record RecapPriorContext {
+public sealed class EmptyRecapMaintainSource : RecapMaintainSource {
+    public EmptyRecapMaintainSource(
+        EventAddress replayStartExclusive
+    ) {
+        ReplayStartExclusive = replayStartExclusive;
+    }
+
+    public EventAddress ReplayStartExclusive { get; }
+}
+
+public abstract class RecapPriorContext {
     private protected RecapPriorContext() {
     }
 }
 
-public sealed record EmptyRecapPriorContext : RecapPriorContext {
+public sealed class EmptyRecapPriorContext : RecapPriorContext {
     public static EmptyRecapPriorContext Instance { get; } = new();
 }
 
-public sealed record InlineRecapPriorContext(
-    EventAddress AdmissionAnchor,
-    ContextHeaderSnapshot Snapshot
-) : RecapPriorContext;
+public sealed class InlineRecapPriorContext : RecapPriorContext {
+    public InlineRecapPriorContext(
+        EventAddress admissionAnchor,
+        ContextHeaderSnapshot snapshot
+    ) {
+        AdmissionAnchor = admissionAnchor;
+        Snapshot = snapshot;
+    }
 
-public sealed record MaintainRecapBlockPlan : RecapBlockPlan {
+    public EventAddress AdmissionAnchor { get; }
+    public ContextHeaderSnapshot Snapshot { get; }
+}
+
+public sealed class MaintainRecapBlockPlan : RecapBlockPlan {
     public MaintainRecapBlockPlan(
         RecapBlockId recapBlockId,
         ContextHeaderBlockPath target,

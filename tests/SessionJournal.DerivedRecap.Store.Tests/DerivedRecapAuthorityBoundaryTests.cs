@@ -1,4 +1,6 @@
+using System.Diagnostics;
 using System.Reflection;
+using System.Security;
 using Atelia.Data;
 using Atelia.EventJournal;
 using Xunit;
@@ -35,15 +37,130 @@ public sealed class DerivedRecapAuthorityBoundaryTests {
     }
 
     [Fact]
-    public void PlanUnionBaseConstructorsArePrivateProtected() {
-        AssertPrivateProtectedConstructor(
-            typeof(RecapBlockPlan),
-            typeof(RecapBlockId),
-            typeof(ContextHeaderBlockPath),
-            typeof(int)
+    public void ClosedUnionBaseConstructorsHaveNoExternalPath() {
+        AssertNoExternallyCallableConstructor(typeof(RecapBlockPlan));
+        AssertNoExternallyCallableConstructor(
+            typeof(RecapMaintainSource)
         );
-        AssertPrivateProtectedConstructor(typeof(RecapMaintainSource));
-        AssertPrivateProtectedConstructor(typeof(RecapPriorContext));
+        AssertNoExternallyCallableConstructor(typeof(RecapPriorContext));
+    }
+
+    [Fact]
+    public async Task ExternalConsumerCannotDeriveUnknownUnionCases() {
+        string tempRoot = Path.Combine(
+            Path.GetTempPath(),
+            "atelia-recap-closed-union-tests",
+            Guid.NewGuid().ToString("N")
+        );
+        Directory.CreateDirectory(tempRoot);
+        try {
+            string assemblyPath = SecurityElement.Escape(
+                typeof(RecapBlockPlan).Assembly.Location
+            )!;
+            await File.WriteAllTextAsync(
+                Path.Combine(tempRoot, "ExternalConsumer.csproj"),
+                $$"""
+                <Project Sdk="Microsoft.NET.Sdk">
+                  <PropertyGroup>
+                    <TargetFramework>net10.0</TargetFramework>
+                    <Nullable>enable</Nullable>
+                  </PropertyGroup>
+                  <ItemGroup>
+                    <Reference Include="Atelia.SessionJournal.DerivedRecap.Store">
+                      <HintPath>{{assemblyPath}}</HintPath>
+                    </Reference>
+                  </ItemGroup>
+                </Project>
+                """
+            );
+            await File.WriteAllTextAsync(
+                Path.Combine(tempRoot, "ForgedRecapBlockPlan.cs"),
+                """
+                using Atelia.SessionJournal.DerivedRecap.Store;
+
+                public sealed class ForgedPlanDeclared : RecapBlockPlan {
+                    public ForgedPlanDeclared()
+                        : base(null!, null!, 1) { }
+                }
+
+                public sealed class ForgedPlanCopy : RecapBlockPlan {
+                    public ForgedPlanCopy(RecapBlockPlan source)
+                        : base(source) { }
+                }
+                """
+            );
+            await File.WriteAllTextAsync(
+                Path.Combine(tempRoot, "ForgedRecapMaintainSource.cs"),
+                """
+                using Atelia.SessionJournal.DerivedRecap.Store;
+
+                public sealed class ForgedSourceDeclared
+                    : RecapMaintainSource {
+                    public ForgedSourceDeclared() : base() { }
+                }
+
+                public sealed class ForgedSourceCopy
+                    : RecapMaintainSource {
+                    public ForgedSourceCopy(RecapMaintainSource source)
+                        : base(source) { }
+                }
+                """
+            );
+            await File.WriteAllTextAsync(
+                Path.Combine(tempRoot, "ForgedRecapPriorContext.cs"),
+                """
+                using Atelia.SessionJournal.DerivedRecap.Store;
+
+                public sealed class ForgedPriorDeclared
+                    : RecapPriorContext {
+                    public ForgedPriorDeclared() : base() { }
+                }
+
+                public sealed class ForgedPriorCopy
+                    : RecapPriorContext {
+                    public ForgedPriorCopy(RecapPriorContext source)
+                        : base(source) { }
+                }
+                """
+            );
+
+            var start = new ProcessStartInfo("dotnet") {
+                WorkingDirectory = tempRoot,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false
+            };
+            start.ArgumentList.Add("build");
+            start.ArgumentList.Add("ExternalConsumer.csproj");
+            start.ArgumentList.Add("-m:1");
+            start.ArgumentList.Add("-nr:false");
+            start.ArgumentList.Add("--nologo");
+            using Process process = Process.Start(start)
+                ?? throw new InvalidOperationException(
+                    "Failed to start external consumer compilation."
+                );
+            Task<string> outputTask =
+                process.StandardOutput.ReadToEndAsync();
+            Task<string> errorTask =
+                process.StandardError.ReadToEndAsync();
+            await process.WaitForExitAsync();
+            string output = await outputTask + await errorTask;
+
+            Assert.NotEqual(0, process.ExitCode);
+            Assert.Contains("CS0122", output);
+            Assert.Contains("CS1729", output);
+            Assert.Contains("ForgedRecapBlockPlan.cs", output);
+            Assert.Contains("ForgedRecapMaintainSource.cs", output);
+            Assert.Contains("ForgedRecapPriorContext.cs", output);
+        }
+        finally {
+            try {
+                Directory.Delete(tempRoot, recursive: true);
+            }
+            catch {
+                // Best-effort cleanup for test-owned compiler inputs.
+            }
+        }
     }
 
     [Fact]
@@ -262,17 +379,24 @@ public sealed class DerivedRecapAuthorityBoundaryTests {
     private static ContextHeaderBlockPath Target(string blockId)
         => new(ContextHeaderCarrier.System, blockId);
 
-    private static void AssertPrivateProtectedConstructor(
-        Type type,
-        params Type[] parameterTypes
+    private static void AssertNoExternallyCallableConstructor(
+        Type type
     ) {
-        ConstructorInfo? constructor = type.GetConstructor(
-            BindingFlags.Instance | BindingFlags.NonPublic,
-            binder: null,
-            parameterTypes,
-            modifiers: null
+        ConstructorInfo[] constructors = type.GetConstructors(
+            BindingFlags.Instance
+            | BindingFlags.Public
+            | BindingFlags.NonPublic
         );
-        Assert.NotNull(constructor);
-        Assert.True(constructor.IsFamilyAndAssembly);
+        Assert.NotEmpty(constructors);
+        Assert.All(constructors, constructor => {
+            Assert.False(constructor.IsPublic);
+            Assert.False(constructor.IsFamily);
+            Assert.False(constructor.IsFamilyOrAssembly);
+            Assert.True(
+                constructor.IsPrivate
+                || constructor.IsAssembly
+                || constructor.IsFamilyAndAssembly
+            );
+        });
     }
 }
