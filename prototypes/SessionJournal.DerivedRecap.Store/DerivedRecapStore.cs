@@ -33,6 +33,7 @@ public sealed class DerivedRecapStore {
     internal const long MaxFrozenInputBytes = 5 * 1024 * 1024;
     internal const long MaxBlockBytes = 512 * 1024;
     internal const long MaxPublicationBytes = 3 * 1024 * 1024;
+    internal const int MaxBuildingInventoryEntries = 1024;
 
     private readonly RecapDurableFileSystem _fileSystem;
     private readonly RecapStoreTestHooks _testHooks;
@@ -399,7 +400,7 @@ public sealed class DerivedRecapStore {
         CreateBuildingTrustedAsync(
         DerivedRecapSetManifest manifest,
         EventAddress expectedRawHead,
-        SessionCurrentLineageSnapshot currentLineage,
+        DerivedRecapLineageView currentLineage,
         Func<EventAddress?> readCurrentHead,
         CancellationToken cancellationToken = default
     ) {
@@ -419,7 +420,7 @@ public sealed class DerivedRecapStore {
         CreateBuildingCoreAsync(
         DerivedRecapSetManifest manifest,
         EventAddress? expectedRawHead,
-        SessionCurrentLineageSnapshot? currentLineage,
+        DerivedRecapLineageView? currentLineage,
         Func<EventAddress?>? readCurrentHead,
         CancellationToken cancellationToken
     ) {
@@ -437,7 +438,9 @@ public sealed class DerivedRecapStore {
                 + "supplied together."
             );
         }
-        EnsureScaffolding();
+        if (currentLineage is null) {
+            EnsureScaffolding();
+        }
         await using FileStream writeLock =
             await _fileSystem.AcquireExclusiveLockAsync(
                     _lockPath,
@@ -460,13 +463,21 @@ public sealed class DerivedRecapStore {
                     currentLineage.CapturedHead
                 );
             }
-            IReadOnlyDictionary<EventAddress, int> lineageIndex =
-                ValidateAndIndexLineage(currentLineage);
             var planDefects = new List<RecapStructuralDefect>();
-            if (!lineageIndex.TryGetValue(
+            DerivedRecapAdmissionLineageResolution admission =
+                currentLineage.ResolveAdmission(
                     manifest.SetAdmissionAnchor,
-                    out int targetIndex
-                )) {
+                    cancellationToken
+                );
+            if (admission
+                is DerivedRecapAdmissionLineageResolution
+                    .BeyondPrefix beyond) {
+                return new CreateBuildingResult.BeyondPrefix(
+                    beyond.Evidence
+                );
+            }
+            if (admission
+                is DerivedRecapAdmissionLineageResolution.OffLineage) {
                 AddDefect(
                     planDefects,
                     "AdmissionAnchorOffLineage",
@@ -475,15 +486,29 @@ public sealed class DerivedRecapStore {
                 );
             }
             else {
+                var available =
+                    (DerivedRecapAdmissionLineageResolution.Available)
+                    admission;
+                IReadOnlyDictionary<EventAddress, int> lineageIndex =
+                    IndexPrefix(available.AdmissionPrefix);
+                if (FindBeyondPrefix(
+                        manifest,
+                        available.AdmissionPrefix
+                    ) is { } manifestBeyond) {
+                    return new CreateBuildingResult.BeyondPrefix(
+                        manifestBeyond
+                    );
+                }
                 ValidatePlanLineage(
                     manifest,
                     lineageIndex,
-                    targetIndex,
+                    targetIndex: 0,
                     planDefects
                 );
                 ValidateNoRetroactivePublication(
                     manifest.SetAdmissionAnchor,
-                    currentLineage,
+                    currentLineage.CurrentPrefix,
+                    available.CurrentIndex,
                     planDefects
                 );
             }
@@ -492,11 +517,27 @@ public sealed class DerivedRecapStore {
                     Array.AsReadOnly(planDefects.ToArray())
                 );
             }
-            CurrentLineageBuildingInventory inventory =
+            CurrentLineageBuildingInventoryResult inventoryResult =
                 InventoryCurrentLineageBuildings(
-                    currentLineage,
-                    lineageIndex
+                    currentLineage.CurrentPrefix
                 );
+            if (inventoryResult
+                is CurrentLineageBuildingInventoryResult
+                    .BeyondPrefix inventoryBeyond) {
+                return new CreateBuildingResult.BeyondPrefix(
+                    inventoryBeyond.Evidence
+                );
+            }
+            if (inventoryResult
+                is CurrentLineageBuildingInventoryResult
+                    .Unavailable inventoryUnavailable) {
+                return new CreateBuildingResult.StoreUnavailable(
+                    inventoryUnavailable.Reason
+                );
+            }
+            CurrentLineageBuildingInventory inventory =
+                ((CurrentLineageBuildingInventoryResult.Available)
+                    inventoryResult).Inventory;
             EventAddress[] conflicts = inventory.Buildings
                 .Where(
                     membership =>
@@ -692,13 +733,13 @@ public sealed class DerivedRecapStore {
     }
 
     /// <summary>
-    /// Selects active Building membership only from the supplied current
-    /// raw lineage. Dot-staging entries and off-lineage directories are
-    /// therefore outside the membership scan by construction.
+    /// Selects active Building membership from a bounded direct inventory.
+    /// Dot-staging and malformed entries count toward the resource cap but
+    /// never become semantic Building candidates.
     /// </summary>
     internal async ValueTask<CurrentLineageBuildingSelection>
         SelectCurrentLineageBuildingAsync(
-        SessionCurrentLineageSnapshot lineage,
+        DerivedRecapLineageView lineage,
         CancellationToken cancellationToken = default
     ) {
         ArgumentNullException.ThrowIfNull(lineage);
@@ -713,12 +754,26 @@ public sealed class DerivedRecapStore {
 
         CurrentLineageBuildingInventory inventory;
         try {
-            IReadOnlyDictionary<EventAddress, int> lineageIndex =
-                ValidateAndIndexLineage(lineage);
-            inventory = InventoryCurrentLineageBuildings(
-                lineage,
-                lineageIndex
-            );
+            CurrentLineageBuildingInventoryResult result =
+                InventoryCurrentLineageBuildings(
+                    lineage.CurrentPrefix
+                );
+            if (result
+                is CurrentLineageBuildingInventoryResult
+                    .BeyondPrefix inventoryBeyond) {
+                return new CurrentLineageBuildingSelection.BeyondPrefix(
+                    inventoryBeyond.Evidence
+                );
+            }
+            if (result
+                is CurrentLineageBuildingInventoryResult
+                    .Unavailable inventoryUnavailable) {
+                return new CurrentLineageBuildingSelection
+                    .StoreUnavailable(inventoryUnavailable.Reason);
+            }
+            inventory =
+                ((CurrentLineageBuildingInventoryResult.Available)
+                    result).Inventory;
         }
         catch (Exception exception)
             when (exception is InvalidDataException
@@ -754,16 +809,67 @@ public sealed class DerivedRecapStore {
             );
         }
 
+        DerivedRecapAdmissionLineageResolution admission =
+            lineage.ResolveAdmission(
+                building.Address,
+                cancellationToken
+            );
+        if (admission
+            is DerivedRecapAdmissionLineageResolution.BeyondPrefix beyond) {
+            return new CurrentLineageBuildingSelection.BeyondPrefix(
+                beyond.Evidence
+            );
+        }
+        if (admission
+            is DerivedRecapAdmissionLineageResolution.OffLineage) {
+            return new CurrentLineageBuildingSelection.StoreUnavailable(
+                "Current-lineage Building admission resolution changed."
+            );
+        }
+        var admissionAvailable =
+            (DerivedRecapAdmissionLineageResolution.Available)admission;
+
         BuildingReadResult exact = await ReadBuildingCoreAsync(
                 building.Address,
                 cancellationToken
             )
             .ConfigureAwait(false);
-        return exact switch {
-            BuildingReadResult.Available available =>
-                new CurrentLineageBuildingSelection.Available(
+        if (exact is BuildingReadResult.Available available) {
+            if (FindBeyondPrefix(
+                    available.Snapshot.Manifest,
+                    admissionAvailable.AdmissionPrefix
+                ) is { } planBeyond) {
+                return new CurrentLineageBuildingSelection.BeyondPrefix(
+                    planBeyond
+                );
+            }
+            if (FindBeyondPrefix(
+                    available.Snapshot.FrozenInputs.Values.Select(
+                        static input => input.AbsorbedThrough
+                    ),
+                    admissionAvailable.AdmissionPrefix
+                ) is { } inputBeyond) {
+                return new CurrentLineageBuildingSelection.BeyondPrefix(
+                    inputBeyond
+                );
+            }
+            var defects = new List<RecapStructuralDefect>();
+            ValidatePlanLineage(
+                available.Snapshot.Manifest,
+                IndexPrefix(admissionAvailable.AdmissionPrefix),
+                targetIndex: 0,
+                defects
+            );
+            return defects.Count == 0
+                ? new CurrentLineageBuildingSelection.Available(
                     available.Snapshot
-                ),
+                )
+                : new CurrentLineageBuildingSelection.Invalid(
+                    building.Address,
+                    Array.AsReadOnly(defects.ToArray())
+                );
+        }
+        return exact switch {
             BuildingReadResult.Invalid invalid =>
                 new CurrentLineageBuildingSelection.Invalid(
                     building.Address,
@@ -1120,7 +1226,7 @@ public sealed class DerivedRecapStore {
     internal async ValueTask<RecapPublishability>
         DiagnosePublishabilityAsync(
         EventAddress admissionAnchor,
-        SessionCurrentLineageSnapshot currentLineage,
+        DerivedRecapLineageView currentLineage,
         CancellationToken cancellationToken = default
     ) {
         ArgumentNullException.ThrowIfNull(currentLineage);
@@ -1128,7 +1234,7 @@ public sealed class DerivedRecapStore {
             await TryAcquireReadyReadLockAsync(cancellationToken)
                 .ConfigureAwait(false);
         if (lockAttempt.UnavailableReason is { } unavailable) {
-            return NotPublishable("StoreUnavailable", unavailable);
+            return new RecapPublishability.StoreUnavailable(unavailable);
         }
         await using FileStream readLock = lockAttempt.Lock!;
         return await CanPublishCoreAsync(
@@ -1139,15 +1245,26 @@ public sealed class DerivedRecapStore {
             .ConfigureAwait(false);
     }
 
-    internal async ValueTask<PublishedRecapDescriptor>
+    internal async ValueTask<PublishRecapResult>
         PublishTrustedAsync(
         EventAddress admissionAnchor,
-        SessionCurrentLineageSnapshot currentLineage,
+        DerivedRecapLineageView currentLineage,
         Func<EventAddress?> readCurrentHead,
         CancellationToken cancellationToken = default
     ) {
         ArgumentNullException.ThrowIfNull(currentLineage);
         ArgumentNullException.ThrowIfNull(readCurrentHead);
+        RecapPublishability preflight =
+            await DiagnosePublishabilityAsync(
+                    admissionAnchor,
+                    currentLineage,
+                    cancellationToken
+                )
+                .ConfigureAwait(false);
+        if (ToPublishRecapResult(preflight) is { } blocked) {
+            return blocked;
+        }
+
         EnsureScaffolding();
         await using FileStream writeLock =
             await _fileSystem.AcquireExclusiveLockAsync(
@@ -1164,7 +1281,9 @@ public sealed class DerivedRecapStore {
                     cancellationToken
                 )
                 .ConfigureAwait(false);
-        ThrowIfNotPublishable(initial);
+        if (ToPublishRecapResult(initial) is { } initialBlocked) {
+            return initialBlocked;
+        }
 
         string buildPath = GetBuildingPath(admissionAnchor);
         DerivedRecapSetManifest manifest =
@@ -1200,13 +1319,33 @@ public sealed class DerivedRecapStore {
             DerivedRecapCodec.EncodePublication(publication);
         string publicationPath =
             Path.Combine(buildPath, "publication.json");
-        await SealBuildingPublicationCandidateAsync(
-                buildPath,
-                publicationPath,
-                publicationBytes,
-                cancellationToken
-            )
-            .ConfigureAwait(false);
+        try {
+            await SealBuildingPublicationCandidateAsync(
+                    buildPath,
+                    publicationPath,
+                    publicationBytes,
+                    cancellationToken
+                )
+                .ConfigureAwait(false);
+        }
+        catch (Exception exception)
+            when (exception is InvalidDataException
+                  or ArgumentException
+                  or NotSupportedException) {
+            return new PublishRecapResult.NotPublishable([
+                new RecapStructuralDefect(
+                    "PublicationCandidateInvalid",
+                    exception.Message
+                )
+            ]);
+        }
+        catch (Exception exception)
+            when (exception is IOException
+                  or UnauthorizedAccessException) {
+            return new PublishRecapResult.StoreUnavailable(
+                exception.Message
+            );
+        }
         _testHooks.AfterPublicationSealed?.Invoke();
 
         // From the sealed candidate onward, finish the commit protocol even
@@ -1220,15 +1359,15 @@ public sealed class DerivedRecapStore {
                     commitToken
                 )
                 .ConfigureAwait(false);
-        ThrowIfNotPublishable(final);
+        if (ToPublishRecapResult(final) is { } finalBlocked) {
+            return finalBlocked;
+        }
         _testHooks.BeforePublishedPromotion?.Invoke();
         EventAddress? authoritativeHead = readCurrentHead();
         if (authoritativeHead != currentLineage.CapturedHead) {
-            throw new InvalidOperationException(
-                "Raw SessionJournal head changed before Recap "
-                + "publication promotion. Expected "
-                + $"'{currentLineage.CapturedHead}', observed "
-                + $"'{authoritativeHead}'."
+            return new PublishRecapResult.RawHeadChanged(
+                currentLineage.CapturedHead,
+                authoritativeHead
             );
         }
 
@@ -1240,16 +1379,18 @@ public sealed class DerivedRecapStore {
         _testHooks.AfterPublishedPromotion?.Invoke();
         _fileSystem.FlushDirectory(_buildingRoot);
         _fileSystem.FlushDirectory(_publishedRoot);
-        return new PublishedRecapDescriptor(
-            RefId,
-            admissionAnchor,
-            publication.EnvelopeSha256
+        return new PublishRecapResult.Published(
+            new PublishedRecapDescriptor(
+                RefId,
+                admissionAnchor,
+                publication.EnvelopeSha256
+            )
         );
     }
 
     internal async ValueTask<DerivedRecapSelection>
         SelectNthPreviousAsync(
-        SessionCurrentLineageSnapshot lineage,
+        DerivedRecapLineageView lineage,
         int nthPrevious,
         CancellationToken cancellationToken = default
     ) {
@@ -1267,7 +1408,7 @@ public sealed class DerivedRecapStore {
         }
         await using FileStream readLock = lockAttempt.Lock!;
         try {
-            _ = ValidateAndIndexLineage(lineage);
+            _ = IndexPrefix(lineage.CurrentPrefix);
         }
         catch (InvalidDataException exception) {
             return new DerivedRecapSelection.StoreUnavailable(
@@ -1278,7 +1419,7 @@ public sealed class DerivedRecapStore {
         int ordinal = 0;
         bool observedAny = false;
         foreach (SessionCurrentLineageHeader node
-                 in lineage.HeadToRoot) {
+                 in lineage.CurrentPrefix.HeadToOldest) {
             cancellationToken.ThrowIfCancellationRequested();
             string path = GetPublishedPath(node.Address);
             if (!PathEntryExists(path)) {
@@ -1288,14 +1429,40 @@ public sealed class DerivedRecapStore {
             if (ordinal++ != nthPrevious) {
                 continue;
             }
-            IReadOnlyList<RecapStructuralDefect> defects =
-                await ValidatePublishedAsync(
-                        path,
-                        node.Address,
-                        lineage,
-                        cancellationToken
-                    )
-                    .ConfigureAwait(false);
+            DerivedRecapAdmissionLineageResolution admission =
+                lineage.ResolveAdmission(
+                    node.Address,
+                    cancellationToken
+                );
+            if (admission
+                is DerivedRecapAdmissionLineageResolution
+                    .BeyondPrefix beyond) {
+                return new DerivedRecapSelection.BeyondPrefix(
+                    beyond.Evidence
+                );
+            }
+            if (admission
+                is not DerivedRecapAdmissionLineageResolution
+                    .Available available) {
+                return new DerivedRecapSelection.StoreUnavailable(
+                    "Selected Published admission resolution changed."
+                );
+            }
+            IReadOnlyList<RecapStructuralDefect> defects;
+            try {
+                defects = await ValidatePublishedAsync(
+                            path,
+                            node.Address,
+                            available.AdmissionPrefix,
+                            cancellationToken
+                        )
+                        .ConfigureAwait(false);
+            }
+            catch (DerivedRecapBeyondPrefixException exception) {
+                return new DerivedRecapSelection.BeyondPrefix(
+                    exception.Evidence
+                );
+            }
             if (defects.Count != 0) {
                 return new DerivedRecapSelection
                     .ExactPublishedSetInvalid(
@@ -1314,6 +1481,14 @@ public sealed class DerivedRecapStore {
                     RefId,
                     node.Address,
                     publication.EnvelopeSha256
+                )
+            );
+        }
+        if (lineage.CurrentPrefix.Continuation is not null) {
+            return new DerivedRecapSelection.BeyondPrefix(
+                BeyondPrefixAtContinuation(
+                    lineage.CurrentPrefix,
+                    lineage.CurrentPrefix.Continuation.NextAddress
                 )
             );
         }
@@ -1508,7 +1683,7 @@ public sealed class DerivedRecapStore {
     internal async ValueTask<PublishedRestoreInspectionResult>
         InspectPublishedForRestoreAsync(
         EventAddress admissionAnchor,
-        SessionCurrentLineageSnapshot lineage,
+        DerivedRecapLineageView lineage,
         CancellationToken cancellationToken = default
     ) {
         ArgumentNullException.ThrowIfNull(lineage);
@@ -1524,29 +1699,29 @@ public sealed class DerivedRecapStore {
         }
         await using FileStream readLock = lockAttempt.Lock!;
 
-        IReadOnlyDictionary<EventAddress, int> lineageIndex;
-        try {
-            lineageIndex = ValidateAndIndexLineage(lineage);
-        }
-        catch (Exception exception)
-            when (exception is InvalidDataException
-                  or ArgumentException) {
-            return RestoreUnavailable(
+        DerivedRecapAdmissionLineageResolution admission =
+            lineage.ResolveAdmission(
                 admissionAnchor,
-                "RawLineageInvalid",
-                exception.Message
+                cancellationToken
+            );
+        if (admission
+            is DerivedRecapAdmissionLineageResolution.BeyondPrefix beyond) {
+            return new PublishedRestoreInspectionResult.BeyondPrefix(
+                beyond.Evidence
             );
         }
-        if (!lineageIndex.TryGetValue(
-                admissionAnchor,
-                out int targetIndex
-            )) {
+        if (admission
+            is DerivedRecapAdmissionLineageResolution.OffLineage) {
             return RestoreUnavailable(
                 admissionAnchor,
                 "AdmissionAnchorOffLineage",
                 "SetAdmissionAnchor is outside the supplied raw lineage."
             );
         }
+        var available =
+            (DerivedRecapAdmissionLineageResolution.Available)admission;
+        IReadOnlyDictionary<EventAddress, int> lineageIndex =
+            IndexPrefix(available.AdmissionPrefix);
 
         string publishedPath = GetPublishedPath(admissionAnchor);
         if (!PathEntryExists(publishedPath)) {
@@ -1562,10 +1737,15 @@ public sealed class DerivedRecapStore {
                     publishedPath,
                     admissionAnchor,
                     lineageIndex,
-                    targetIndex,
+                    available.AdmissionPrefix,
                     cancellationToken
                 )
                 .ConfigureAwait(false);
+        }
+        catch (DerivedRecapBeyondPrefixException exception) {
+            return new PublishedRestoreInspectionResult.BeyondPrefix(
+                exception.Evidence
+            );
         }
         catch (Exception exception)
             when (exception is InvalidDataException
@@ -1782,6 +1962,7 @@ public sealed class DerivedRecapStore {
                     publishedPath,
                     plan,
                     lineage: null,
+                    lineagePrefix: null,
                     cancellationToken
                 )
                 .ConfigureAwait(false);
@@ -1816,6 +1997,7 @@ public sealed class DerivedRecapStore {
                     input,
                     commitment,
                     lineage: null,
+                    lineagePrefix: null,
                     cancellationToken
                 )
                 .ConfigureAwait(false);
@@ -1922,7 +2104,7 @@ public sealed class DerivedRecapStore {
         PublishedRestoreHandle handle,
         IReadOnlyDictionary<RecapBlockId, string>
             expectedFinalStateTokens,
-        SessionCurrentLineageSnapshot lineage,
+        DerivedRecapLineageView lineage,
         EventAddress expectedRawHead,
         Func<EventAddress?> readCurrentHead,
         CancellationToken cancellationToken = default
@@ -1947,6 +2129,29 @@ public sealed class DerivedRecapStore {
             expectedTokens.Add(blockId, token);
         }
 
+        DerivedRecapAdmissionLineageResolution admission =
+            lineage.ResolveAdmission(
+                handle.SetAdmissionAnchor,
+                cancellationToken
+            );
+        if (admission
+            is DerivedRecapAdmissionLineageResolution.BeyondPrefix beyond) {
+            return new PublishedEnvelopeCommitResult.BeyondPrefix(
+                beyond.Evidence
+            );
+        }
+        if (admission
+            is DerivedRecapAdmissionLineageResolution.OffLineage) {
+            return EnvelopeUnavailable(
+                "AdmissionAnchorOffLineage",
+                "SetAdmissionAnchor is outside the caller-frozen raw lineage."
+            );
+        }
+        var available =
+            (DerivedRecapAdmissionLineageResolution.Available)admission;
+        IReadOnlyDictionary<EventAddress, int> lineageIndex =
+            IndexPrefix(available.AdmissionPrefix);
+
         EnsureScaffolding();
         await using FileStream writeLock =
             await _fileSystem.AcquireExclusiveLockAsync(
@@ -1963,29 +2168,6 @@ public sealed class DerivedRecapStore {
                 storeUnavailable
             );
         }
-        IReadOnlyDictionary<EventAddress, int> lineageIndex;
-        try {
-            lineageIndex = ValidateAndIndexLineage(lineage);
-        }
-        catch (Exception exception)
-            when (exception is InvalidDataException
-                  or ArgumentException) {
-            return EnvelopeUnavailable(
-                "RawLineageInvalid",
-                exception.Message
-            );
-        }
-        if (!lineageIndex.TryGetValue(
-                handle.SetAdmissionAnchor,
-                out int targetIndex
-            )) {
-            return EnvelopeUnavailable(
-                "AdmissionAnchorOffLineage",
-                "SetAdmissionAnchor is outside the caller-frozen "
-                + "raw lineage."
-            );
-        }
-
         RestoreHandleRead authority =
             await ReadRestoreHandleAsync(
                     handle,
@@ -2003,6 +2185,14 @@ public sealed class DerivedRecapStore {
                 authority.Defects
             );
         }
+        if (FindBeyondPrefix(
+                capture.Manifest,
+                available.AdmissionPrefix
+            ) is { } manifestBeyond) {
+            return new PublishedEnvelopeCommitResult.BeyondPrefix(
+                manifestBeyond
+            );
+        }
         if (expectedTokens.Count != capture.Manifest.Blocks.Count
             || capture.Manifest.Blocks.Any(
                 plan => !expectedTokens.ContainsKey(plan.RecapBlockId)
@@ -2017,7 +2207,7 @@ public sealed class DerivedRecapStore {
         ValidatePlanLineage(
             capture.Manifest,
             lineageIndex,
-            targetIndex,
+            targetIndex: 0,
             planDefects
         );
         if (planDefects.Count != 0) {
@@ -2031,14 +2221,22 @@ public sealed class DerivedRecapStore {
         var inputs =
             new Dictionary<RecapBlockId, FrozenRecapInputHealth>();
         foreach (RecapBlockPlan plan in capture.Manifest.Blocks) {
-            FrozenRecapInputHealth input =
-                await InspectPublishedFrozenInputAsync(
-                        publishedPath,
-                        plan,
-                        lineageIndex,
-                        cancellationToken
-                    )
-                    .ConfigureAwait(false);
+            FrozenRecapInputHealth input;
+            try {
+                input = await InspectPublishedFrozenInputAsync(
+                            publishedPath,
+                            plan,
+                            lineageIndex,
+                            available.AdmissionPrefix,
+                            cancellationToken
+                        )
+                        .ConfigureAwait(false);
+            }
+            catch (DerivedRecapBeyondPrefixException exception) {
+                return new PublishedEnvelopeCommitResult.BeyondPrefix(
+                    exception.Evidence
+                );
+            }
             inputs.Add(plan.RecapBlockId, input);
         }
         if (capture.Kind
@@ -2083,17 +2281,25 @@ public sealed class DerivedRecapStore {
                 plan.RecapBlockId,
                 out RecapBlockCommitment? commitment
             );
-            PublishedFinalInspection final =
-                await InspectPublishedFinalAsync(
-                        publishedPath,
-                        capture.Manifest,
-                        plan,
-                        inputs[plan.RecapBlockId],
-                        commitment,
-                        lineageIndex,
-                        cancellationToken
-                    )
-                    .ConfigureAwait(false);
+            PublishedFinalInspection final;
+            try {
+                final = await InspectPublishedFinalAsync(
+                            publishedPath,
+                            capture.Manifest,
+                            plan,
+                            inputs[plan.RecapBlockId],
+                            commitment,
+                            lineageIndex,
+                            available.AdmissionPrefix,
+                            cancellationToken
+                        )
+                        .ConfigureAwait(false);
+            }
+            catch (DerivedRecapBeyondPrefixException exception) {
+                return new PublishedEnvelopeCommitResult.BeyondPrefix(
+                    exception.Evidence
+                );
+            }
             if (final.Health
                     is FinalRecapBlockHealth.Unavailable unavailable) {
                 return new PublishedEnvelopeCommitResult.Unavailable(
@@ -2427,31 +2633,30 @@ public sealed class DerivedRecapStore {
     private async ValueTask<RecapPublishability>
         CanPublishCoreAsync(
         EventAddress admissionAnchor,
-        SessionCurrentLineageSnapshot lineage,
+        DerivedRecapLineageView lineage,
         CancellationToken cancellationToken
     ) {
         var defects = new List<RecapStructuralDefect>();
-        IReadOnlyDictionary<EventAddress, int> lineageIndex;
-        try {
-            lineageIndex = ValidateAndIndexLineage(lineage);
-        }
-        catch (Exception exception)
-            when (exception is InvalidDataException
-                  or ArgumentException) {
-            return NotPublishable(
-                "RawLineageInvalid",
-                exception.Message
-            );
-        }
-        if (!lineageIndex.TryGetValue(
+        DerivedRecapAdmissionLineageResolution admission =
+            lineage.ResolveAdmission(
                 admissionAnchor,
-                out int targetIndex
-            )) {
+                cancellationToken
+            );
+        if (admission
+            is DerivedRecapAdmissionLineageResolution.BeyondPrefix beyond) {
+            return new RecapPublishability.BeyondPrefix(beyond.Evidence);
+        }
+        if (admission
+            is DerivedRecapAdmissionLineageResolution.OffLineage) {
             return NotPublishable(
                 "AdmissionAnchorOffLineage",
                 "SetAdmissionAnchor is outside the supplied raw lineage."
             );
         }
+        var available =
+            (DerivedRecapAdmissionLineageResolution.Available)admission;
+        IReadOnlyDictionary<EventAddress, int> lineageIndex =
+            IndexPrefix(available.AdmissionPrefix);
 
         string buildPath = GetBuildingPath(admissionAnchor);
         if (!Directory.Exists(buildPath)) {
@@ -2476,10 +2681,19 @@ public sealed class DerivedRecapStore {
                     "Manifest RefId or admission anchor is incorrect."
                 );
             }
+            if (defects.Count == 0
+                && FindBeyondPrefix(
+                    manifest,
+                    available.AdmissionPrefix
+                ) is { } manifestBeyond) {
+                return new RecapPublishability.BeyondPrefix(
+                    manifestBeyond
+                );
+            }
             ValidatePlanLineage(
                 manifest,
                 lineageIndex,
-                targetIndex,
+                targetIndex: 0,
                 defects
             );
             IReadOnlyList<DerivedRecapFrozenInput> inputs =
@@ -2490,6 +2704,14 @@ public sealed class DerivedRecapStore {
                         cancellationToken
                     )
                     .ConfigureAwait(false);
+            if (defects.Count == 0
+                && FindBeyondPrefix(
+                    inputs.Select(static input =>
+                        input.AbsorbedThrough),
+                    available.AdmissionPrefix
+                ) is { } inputBeyond) {
+                return new RecapPublishability.BeyondPrefix(inputBeyond);
+            }
             IReadOnlyList<DerivedRecapBlock> blocks =
                 await TryReadFinalBlocksAsync(
                         buildPath,
@@ -2499,12 +2721,28 @@ public sealed class DerivedRecapStore {
                     )
                     .ConfigureAwait(false);
             if (defects.Count == 0) {
+                ValidateFinalBlocksBeforeLineage(
+                    manifest,
+                    inputs,
+                    blocks,
+                    defects
+                );
+            }
+            if (defects.Count == 0
+                && FindBeyondPrefix(
+                    blocks.Select(static block =>
+                        block.AbsorbedThrough),
+                    available.AdmissionPrefix
+                ) is { } blockBeyond) {
+                return new RecapPublishability.BeyondPrefix(blockBeyond);
+            }
+            if (defects.Count == 0) {
                 ValidateInputsAndBlocks(
                     manifest,
                     inputs,
                     blocks,
                     lineageIndex,
-                    targetIndex,
+                    targetIndex: 0,
                     defects
                 );
             }
@@ -2524,85 +2762,108 @@ public sealed class DerivedRecapStore {
 
         ValidateNoRetroactivePublication(
             admissionAnchor,
-            lineage,
+            lineage.CurrentPrefix,
+            available.CurrentIndex,
             defects
         );
         return defects.Count == 0
-            ? RecapPublishability.Publishable
-            : new RecapPublishability(
-                false,
+            ? new RecapPublishability.Publishable()
+            : new RecapPublishability.NotPublishable(
                 Array.AsReadOnly(defects.ToArray())
             );
     }
 
-    private static IReadOnlyDictionary<EventAddress, int>
-        ValidateAndIndexLineage(
-        SessionCurrentLineageSnapshot lineage
-    ) {
-        ArgumentNullException.ThrowIfNull(lineage.HeadToRoot);
-        if (lineage.HeadToRoot.Count == 0
-            || lineage.HeadToRoot[0].Address
-                != lineage.CapturedHead) {
-            throw new InvalidDataException(
-                "Raw lineage snapshot does not start at CapturedHead."
-            );
-        }
-        var index = new Dictionary<EventAddress, int>();
-        for (int position = 0;
-             position < lineage.HeadToRoot.Count;
-             position++) {
-            SessionCurrentLineageHeader node =
-                lineage.HeadToRoot[position]
-                ?? throw new InvalidDataException(
-                    "Raw lineage contains a null node."
-                );
-            if (!index.TryAdd(node.Address, position)) {
-                throw new InvalidDataException(
-                    "Raw lineage contains a cycle or duplicate."
-                );
-            }
-            EventAddress? expectedParent =
-                position + 1 < lineage.HeadToRoot.Count
-                    ? lineage.HeadToRoot[position + 1].Address
-                    : null;
-            if (node.Parent != expectedParent) {
-                throw new InvalidDataException(
-                    "Raw lineage is not Parent-contiguous."
-                );
-            }
-            if (!Enum.IsDefined(node.Kind)) {
-                throw new InvalidDataException(
-                    "Raw lineage contains an unknown SessionEventKind."
-                );
-            }
-        }
-        return index;
-    }
+    private static IReadOnlyDictionary<EventAddress, int> IndexPrefix(
+        SessionCurrentLineagePrefix prefix
+    ) => prefix.HeadToOldest
+        .Select((node, index) => (node.Address, Index: index))
+        .ToDictionary(
+            static item => item.Address,
+            static item => item.Index
+        );
 
-    private CurrentLineageBuildingInventory
+    private CurrentLineageBuildingInventoryResult
         InventoryCurrentLineageBuildings(
-        SessionCurrentLineageSnapshot lineage,
-        IReadOnlyDictionary<EventAddress, int> lineageIndex
+        SessionCurrentLineagePrefix lineage
     ) {
         var buildings = new List<CurrentLineageMembership>();
         CurrentLineageMembership? latestPublished = null;
-        foreach (SessionCurrentLineageHeader node
-                 in lineage.HeadToRoot) {
-            int index = lineageIndex[node.Address];
-            if (PathEntryExists(GetBuildingPath(node.Address))) {
-                buildings.Add(
-                    new CurrentLineageMembership(node.Address, index)
-                );
-            }
+        for (int index = 0;
+             index < lineage.HeadToOldest.Count;
+             index++) {
+            SessionCurrentLineageHeader node =
+                lineage.HeadToOldest[index];
             if (latestPublished is null
                 && PathEntryExists(GetPublishedPath(node.Address))) {
                 latestPublished =
                     new CurrentLineageMembership(node.Address, index);
             }
         }
-        return new CurrentLineageBuildingInventory(
-            Array.AsReadOnly(buildings.ToArray()),
-            latestPublished
+        try {
+            int entryCount = 0;
+            foreach (string entry
+                     in Directory.EnumerateFileSystemEntries(
+                         _buildingRoot
+                     )) {
+                if (++entryCount > MaxBuildingInventoryEntries) {
+                    return new CurrentLineageBuildingInventoryResult
+                        .Unavailable(
+                            "Building inventory exceeds the bounded "
+                            + $"limit of {MaxBuildingInventoryEntries} "
+                            + "direct entries."
+                        );
+                }
+                string name = Path.GetFileName(entry);
+                if (name.StartsWith(".staging-", StringComparison.Ordinal)
+                    || !EventAddressFileNameCodec.TryParse(
+                        name,
+                        out EventAddress address
+                    )) {
+                    continue;
+                }
+                _fileSystem.EnsureSafeDescendant(entry);
+                FileAttributes attributes = File.GetAttributes(entry);
+                if ((attributes & FileAttributes.Directory) == 0
+                    || (attributes & FileAttributes.ReparsePoint) != 0) {
+                    return new CurrentLineageBuildingInventoryResult
+                        .Unavailable(
+                            $"Building entry '{name}' is not a regular directory."
+                        );
+                }
+                switch (lineage.Lookup(address)) {
+                    case SessionCurrentLineageAnchorLookup.Found found:
+                        buildings.Add(
+                            new CurrentLineageMembership(
+                                address,
+                                found.Index
+                            )
+                        );
+                        break;
+                    case SessionCurrentLineageAnchorLookup.OffLineage:
+                        break;
+                    case SessionCurrentLineageAnchorLookup.BeyondPrefix
+                        beyond:
+                        return new CurrentLineageBuildingInventoryResult
+                            .BeyondPrefix(beyond.Evidence);
+                    default:
+                        throw new InvalidOperationException(
+                            "Unknown bounded-lineage lookup result."
+                        );
+                }
+            }
+        }
+        catch (Exception exception)
+            when (exception is IOException
+                  or UnauthorizedAccessException
+                  or NotSupportedException) {
+            return new CurrentLineageBuildingInventoryResult
+                .Unavailable(exception.Message);
+        }
+        return new CurrentLineageBuildingInventoryResult.Available(
+            new CurrentLineageBuildingInventory(
+                Array.AsReadOnly(buildings.ToArray()),
+                latestPublished
+            )
         );
     }
 
@@ -2728,14 +2989,13 @@ public sealed class DerivedRecapStore {
 
     private void ValidateNoRetroactivePublication(
         EventAddress target,
-        SessionCurrentLineageSnapshot lineage,
+        SessionCurrentLineagePrefix lineage,
+        int targetIndex,
         List<RecapStructuralDefect> defects
     ) {
-        foreach (SessionCurrentLineageHeader node
-                 in lineage.HeadToRoot) {
-            if (node.Address == target) {
-                return;
-            }
+        for (int index = 0; index < targetIndex; index++) {
+            SessionCurrentLineageHeader node =
+                lineage.HeadToOldest[index];
             if (PathEntryExists(GetPublishedPath(node.Address))) {
                 AddDefect(
                     defects,
@@ -2745,11 +3005,6 @@ public sealed class DerivedRecapStore {
                 return;
             }
         }
-        AddDefect(
-            defects,
-            "AdmissionAnchorOffLineage",
-            "SetAdmissionAnchor was not reached on current lineage."
-        );
     }
 
     private static void ValidateInputsAndBlocks(
@@ -2882,6 +3137,47 @@ public sealed class DerivedRecapStore {
         }
     }
 
+    private static void ValidateFinalBlocksBeforeLineage(
+        DerivedRecapSetManifest manifest,
+        IReadOnlyList<DerivedRecapFrozenInput> inputs,
+        IReadOnlyList<DerivedRecapBlock> blocks,
+        List<RecapStructuralDefect> defects
+    ) {
+        if (blocks.Count != manifest.Blocks.Count) {
+            AddDefect(
+                defects,
+                "FinalBlockRosterMismatch",
+                "Final block roster does not match the frozen plan."
+            );
+            return;
+        }
+        IReadOnlyDictionary<RecapBlockId, DerivedRecapFrozenInput>
+            inputsById = inputs.ToDictionary(
+                static input => input.RecapBlockId
+            );
+        for (int index = 0; index < manifest.Blocks.Count; index++) {
+            RecapBlockPlan plan = manifest.Blocks[index];
+            try {
+                ValidateFinalCandidate(
+                    manifest,
+                    plan,
+                    inputsById.GetValueOrDefault(plan.RecapBlockId),
+                    blocks[index]
+                );
+            }
+            catch (Exception exception)
+                when (exception is InvalidDataException
+                      or ArgumentException
+                      or NotSupportedException) {
+                AddDefect(
+                    defects,
+                    "FinalBlockPlanMismatch",
+                    exception.Message
+                );
+            }
+        }
+    }
+
     private static void ValidateExistingMaintainRoute(
         MaintainRecapBlockPlan maintain,
         RecapBlockPlan plan,
@@ -2970,7 +3266,7 @@ public sealed class DerivedRecapStore {
         string publishedPath,
         EventAddress expectedAnchor,
         IReadOnlyDictionary<EventAddress, int> lineage,
-        int targetIndex,
+        SessionCurrentLineagePrefix lineagePrefix,
         CancellationToken cancellationToken
     ) {
         RestoreAuthorityRead authority =
@@ -2987,11 +3283,18 @@ public sealed class DerivedRecapStore {
             );
         }
 
+        if (FindBeyondPrefix(capture.Manifest, lineagePrefix)
+            is { } manifestBeyond) {
+            return new PublishedRestoreInspectionResult.BeyondPrefix(
+                manifestBeyond
+            );
+        }
+
         var planDefects = new List<RecapStructuralDefect>();
         ValidatePlanLineage(
             capture.Manifest,
             lineage,
-            targetIndex,
+            targetIndex: 0,
             planDefects
         );
         if (planDefects.Count != 0) {
@@ -3009,6 +3312,7 @@ public sealed class DerivedRecapStore {
                         publishedPath,
                         plan,
                         lineage,
+                        lineagePrefix,
                         cancellationToken
                     )
                     .ConfigureAwait(false);
@@ -3071,6 +3375,7 @@ public sealed class DerivedRecapStore {
                         input,
                         commitment,
                         lineage,
+                        lineagePrefix,
                         cancellationToken
                     )
                     .ConfigureAwait(false);
@@ -3358,6 +3663,7 @@ public sealed class DerivedRecapStore {
         string publishedPath,
         RecapBlockPlan plan,
         IReadOnlyDictionary<EventAddress, int>? lineage,
+        SessionCurrentLineagePrefix? lineagePrefix,
         CancellationToken cancellationToken
     ) {
         string? expectedHash = GetExpectedInputHash(plan);
@@ -3411,6 +3717,14 @@ public sealed class DerivedRecapStore {
                 )) {
                 throw new InvalidDataException(
                     "Frozen input does not match its exact block plan."
+                );
+            }
+            if (lineagePrefix is not null
+                && lineagePrefix.Lookup(input.AbsorbedThrough)
+                    is SessionCurrentLineageAnchorLookup
+                        .BeyondPrefix beyond) {
+                throw new DerivedRecapBeyondPrefixException(
+                    beyond.Evidence
                 );
             }
             if (lineage is not null) {
@@ -3484,12 +3798,22 @@ public sealed class DerivedRecapStore {
         FrozenRecapInputHealth inputHealth,
         RecapBlockCommitment? commitment,
         IReadOnlyDictionary<EventAddress, int>? lineage,
+        SessionCurrentLineagePrefix? lineagePrefix,
         CancellationToken cancellationToken
     ) {
         string path = GetBlockFilePath(
             Path.Combine(publishedPath, "blocks"),
             plan.RecapBlockId
         );
+        if (lineagePrefix is not null
+            && commitment is not null
+            && lineagePrefix.Lookup(commitment.AbsorbedThrough)
+                is SessionCurrentLineageAnchorLookup
+                    .BeyondPrefix committedBeyond) {
+            throw new DerivedRecapBeyondPrefixException(
+                committedBeyond.Evidence
+            );
+        }
         byte[] bytes;
         try {
             bytes = await _fileSystem.ReadBoundedAsync(
@@ -3543,6 +3867,15 @@ public sealed class DerivedRecapStore {
                     plan,
                     input,
                     block
+                );
+            }
+            if (lineagePrefix is not null
+                && commitment is null
+                && lineagePrefix.Lookup(block.AbsorbedThrough)
+                    is SessionCurrentLineageAnchorLookup
+                        .BeyondPrefix beyond) {
+                throw new DerivedRecapBeyondPrefixException(
+                    beyond.Evidence
                 );
             }
             return new PublishedFinalInspection(
@@ -3770,7 +4103,7 @@ public sealed class DerivedRecapStore {
         ValidatePublishedAsync(
         string publishedPath,
         EventAddress expectedAnchor,
-        SessionCurrentLineageSnapshot? lineage,
+        SessionCurrentLineagePrefix? lineage,
         CancellationToken cancellationToken
     ) {
         var defects = new List<RecapStructuralDefect>();
@@ -3797,8 +4130,16 @@ public sealed class DerivedRecapStore {
             IReadOnlyDictionary<EventAddress, int>? lineageIndex = null;
             int targetIndex = -1;
             if (lineage is not null) {
-                lineageIndex = ValidateAndIndexLineage(lineage);
-                targetIndex = lineageIndex[expectedAnchor];
+                if (FindBeyondPrefix(
+                        publication.FrozenPlanSnapshot,
+                        lineage
+                    ) is { } planBeyond) {
+                    throw new DerivedRecapBeyondPrefixException(
+                        planBeyond
+                    );
+                }
+                lineageIndex = IndexPrefix(lineage);
+                targetIndex = 0;
                 ValidatePlanLineage(
                     publication.FrozenPlanSnapshot,
                     lineageIndex,
@@ -3815,6 +4156,15 @@ public sealed class DerivedRecapStore {
                     publication.BlockCommitments[index];
                 RecapBlockPlan plan =
                     publication.FrozenPlanSnapshot.Blocks[index];
+                if (lineage is not null
+                    && defects.Count == 0
+                    && lineage.Lookup(commitment.AbsorbedThrough)
+                        is SessionCurrentLineageAnchorLookup
+                            .BeyondPrefix cursorBeyond) {
+                    throw new DerivedRecapBeyondPrefixException(
+                        cursorBeyond.Evidence
+                    );
+                }
                 DerivedRecapBlock block =
                     await ReadBlockRequiredAsync(
                             GetBlockFilePath(
@@ -5112,29 +5462,93 @@ public sealed class DerivedRecapStore {
     private static RecapPublishability NotPublishable(
         string code,
         string detail
-    ) => new(
-        false,
+    ) => new RecapPublishability.NotPublishable(
         Array.AsReadOnly([
             new RecapStructuralDefect(code, detail)
         ])
     );
 
-    private static void ThrowIfNotPublishable(
+    private static PublishRecapResult? ToPublishRecapResult(
         RecapPublishability result
+    ) => result switch {
+        RecapPublishability.Publishable => null,
+        RecapPublishability.NotPublishable notPublishable =>
+            new PublishRecapResult.NotPublishable(
+                notPublishable.Defects
+            ),
+        RecapPublishability.BeyondPrefix beyond =>
+            new PublishRecapResult.BeyondPrefix(beyond.Evidence),
+        RecapPublishability.StoreUnavailable unavailable =>
+            new PublishRecapResult.StoreUnavailable(
+                unavailable.Reason
+            ),
+        _ => throw new InvalidOperationException(
+            "Unknown Recap publishability result."
+        )
+    };
+
+    private static SessionCurrentLineageBeyondPrefix
+        BeyondPrefixAtContinuation(
+        SessionCurrentLineagePrefix prefix,
+        EventAddress requiredAnchor
+    ) => ((SessionCurrentLineageAnchorLookup.BeyondPrefix)
+        prefix.Lookup(requiredAnchor)).Evidence;
+
+    private static SessionCurrentLineageBeyondPrefix? FindBeyondPrefix(
+        DerivedRecapSetManifest manifest,
+        SessionCurrentLineagePrefix prefix
     ) {
-        if (result.IsPublishable) {
-            return;
+        foreach (RecapBlockPlan plan in manifest.Blocks) {
+            switch (plan) {
+                case InheritRecapBlockPlan inherit:
+                    if (FindBeyondPrefix(
+                            [inherit.SourceSetAnchor],
+                            prefix
+                        ) is { } inheritBeyond) {
+                        return inheritBeyond;
+                    }
+                    break;
+                case MaintainRecapBlockPlan maintain:
+                    var anchors = new List<EventAddress>(
+                        maintain.CatchUpThrough.Count + 2
+                    );
+                    anchors.Add(
+                        maintain.Source switch {
+                            ExistingRecapMaintainSource existing =>
+                                existing.SourceSetAnchor,
+                            EmptyRecapMaintainSource empty =>
+                                empty.ReplayStartExclusive,
+                            _ => throw new InvalidOperationException(
+                                "Unknown Maintain source."
+                            )
+                        }
+                    );
+                    anchors.AddRange(maintain.CatchUpThrough);
+                    if (maintain.PriorContext
+                        is InlineRecapPriorContext inline) {
+                        anchors.Add(inline.AdmissionAnchor);
+                    }
+                    if (FindBeyondPrefix(anchors, prefix)
+                        is { } maintainBeyond) {
+                        return maintainBeyond;
+                    }
+                    break;
+            }
         }
-        throw new InvalidDataException(
-            "Recap Building is not publishable: "
-            + string.Join(
-                "; ",
-                result.Defects.Select(
-                    static defect =>
-                        $"{defect.Code}: {defect.Detail}"
-                )
-            )
-        );
+        return null;
+    }
+
+    private static SessionCurrentLineageBeyondPrefix? FindBeyondPrefix(
+        IEnumerable<EventAddress> anchors,
+        SessionCurrentLineagePrefix prefix
+    ) {
+        foreach (EventAddress anchor in anchors.Distinct()) {
+            if (prefix.Lookup(anchor)
+                is SessionCurrentLineageAnchorLookup.BeyondPrefix beyond) {
+                return beyond.Evidence;
+            }
+        }
+        return null;
     }
 
     private static void AddDefect(
@@ -5192,6 +5606,17 @@ public sealed class DerivedRecapStore {
         }
     }
 
+    private sealed class DerivedRecapBeyondPrefixException
+        : Exception {
+        internal DerivedRecapBeyondPrefixException(
+            SessionCurrentLineageBeyondPrefix evidence
+        ) : base("A required raw anchor is beyond the bounded prefix.") {
+            Evidence = evidence;
+        }
+
+        internal SessionCurrentLineageBeyondPrefix Evidence { get; }
+    }
+
     private RestoreRawHeadChangedException?
         DetectRestoreRawHeadChange(
         EventAddress expected,
@@ -5219,6 +5644,22 @@ public sealed class DerivedRecapStore {
         IReadOnlyList<CurrentLineageMembership> Buildings,
         CurrentLineageMembership? LatestPublished
     );
+
+    private abstract record CurrentLineageBuildingInventoryResult {
+        private CurrentLineageBuildingInventoryResult() {
+        }
+
+        internal sealed record Available(
+            CurrentLineageBuildingInventory Inventory
+        ) : CurrentLineageBuildingInventoryResult;
+
+        internal sealed record BeyondPrefix(
+            SessionCurrentLineageBeyondPrefix Evidence
+        ) : CurrentLineageBuildingInventoryResult;
+
+        internal sealed record Unavailable(string Reason)
+            : CurrentLineageBuildingInventoryResult;
+    }
 
     private sealed record FrozenInputIndex(
         IReadOnlyDictionary<RecapBlockId, DerivedRecapFrozenInput>

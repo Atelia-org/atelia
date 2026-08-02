@@ -79,7 +79,7 @@ public sealed class DerivedRecapRestoreExecutorTests {
         var selected =
             Assert.IsType<DerivedRecapSelection.Selected>(
                 await fixture.Store.SelectNthPreviousAsync(
-                    fixture.Lineage,
+                    fixture.LineageView,
                     0
                 )
             );
@@ -837,6 +837,8 @@ public sealed class DerivedRecapRestoreExecutorTests {
             Engine.ReadCurrentHead()!.Value;
         public SessionCurrentLineageSnapshot Lineage =>
             Engine.ReadCurrentLineageHeaders();
+        public DerivedRecapLineageView LineageView =>
+            DerivedRecapLineageView.Capture(Store, Engine);
 
         public static async ValueTask<RestoreFixture> CreateAsync(
             int historyPairs = 5
@@ -1129,7 +1131,9 @@ public sealed class DerivedRecapRestoreExecutorTests {
                         or FinalBlockWriteResult.AlreadyHealthy
                 );
             }
-            return await Publisher.PublishAsync(anchor);
+            return Assert.IsType<PublishRecapResult.Published>(
+                await Publisher.PublishAsync(anchor)
+            ).Descriptor;
         }
 
         public ScriptedMaintainer CreateMaintainer(
@@ -1180,10 +1184,7 @@ public sealed class DerivedRecapRestoreExecutorTests {
             => Assert.IsType<
                 PublishedRestoreInspectionResult.Available
             >(
-                await Store.InspectPublishedForRestoreAsync(
-                    anchor,
-                    Lineage
-                )
+                await LineageView.InspectPublishedForRestoreAsync(anchor)
             ).Inspection;
 
         public async ValueTask DamageFinalAsync(
@@ -1207,7 +1208,7 @@ public sealed class DerivedRecapRestoreExecutorTests {
         ) {
             var selected =
                 Assert.IsType<DerivedRecapSelection.Selected>(
-                    await Store.SelectNthPreviousAsync(Lineage, 0)
+                    await Store.SelectNthPreviousAsync(LineageView, 0)
                 );
             if (selected.Descriptor.SetAdmissionAnchor != anchor) {
                 var inspection = await InspectAsync(anchor);

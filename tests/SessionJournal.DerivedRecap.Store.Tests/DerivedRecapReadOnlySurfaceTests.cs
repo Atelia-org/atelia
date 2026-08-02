@@ -26,7 +26,7 @@ public sealed class DerivedRecapReadOnlySurfaceTests {
 
             await AssertUnavailableAcrossReadSurfaceAsync(
                 store,
-                engine.ReadCurrentLineageHeaders()
+                DerivedRecapLineageView.Capture(store, engine)
             );
 
             Assert.False(Directory.Exists(derivedRoot));
@@ -75,7 +75,7 @@ public sealed class DerivedRecapReadOnlySurfaceTests {
                 throw new ArgumentOutOfRangeException(nameof(damage));
         }
         string[] before = SnapshotTree(v4Root);
-        SessionCurrentLineageSnapshot lineage = fixture.Lineage();
+        DerivedRecapLineageView lineage = fixture.Lineage();
 
         Assert.IsType<DerivedRecapSelection.StoreUnavailable>(
             await fixture.Store.SelectNthPreviousAsync(lineage, 0)
@@ -107,7 +107,7 @@ public sealed class DerivedRecapReadOnlySurfaceTests {
         string lockPath = GetLockPath(fixture);
         File.Delete(lockPath);
         string[] before = SnapshotTree(v4Root);
-        SessionCurrentLineageSnapshot lineage = fixture.Lineage();
+        DerivedRecapLineageView lineage = fixture.Lineage();
 
         Assert.IsType<DerivedRecapSelection.StoreUnavailable>(
             await fixture.Store.SelectNthPreviousAsync(lineage, 0)
@@ -168,7 +168,7 @@ public sealed class DerivedRecapReadOnlySurfaceTests {
 
     private static async ValueTask AssertUnavailableAcrossReadSurfaceAsync(
         DerivedRecapStore store,
-        SessionCurrentLineageSnapshot lineage
+        DerivedRecapLineageView lineage
     ) {
         PublishedRecapDescriptor published = Descriptor(store, lineage);
         BuildingDescriptor building = Building(store, lineage);
@@ -207,10 +207,13 @@ public sealed class DerivedRecapReadOnlySurfaceTests {
                 lineage.CapturedHead,
                 lineage
             );
-        Assert.False(publishability.IsPublishable);
+        var unavailablePublish = Assert.IsType<
+            RecapPublishability.StoreUnavailable
+        >(publishability);
         Assert.Contains(
-            publishability.Defects,
-            static defect => defect.Code == "StoreUnavailable"
+            "Store",
+            unavailablePublish.Reason,
+            StringComparison.OrdinalIgnoreCase
         );
         Assert.IsType<DerivedRecapSelection.StoreUnavailable>(
             await store.SelectNthPreviousAsync(lineage, 0)
@@ -238,7 +241,7 @@ public sealed class DerivedRecapReadOnlySurfaceTests {
 
     private static async ValueTask ExerciseHealthyReadSurfaceAsync(
         DerivedRecapStore store,
-        SessionCurrentLineageSnapshot lineage
+        DerivedRecapLineageView lineage
     ) {
         PublishedRecapDescriptor published = Descriptor(store, lineage);
         BuildingDescriptor building = Building(store, lineage);
@@ -267,10 +270,12 @@ public sealed class DerivedRecapReadOnlySurfaceTests {
                 blockId
             )
         );
-        Assert.False((await store.DiagnosePublishabilityAsync(
-            lineage.CapturedHead,
-            lineage
-        )).IsPublishable);
+        Assert.IsType<RecapPublishability.NotPublishable>(
+            await store.DiagnosePublishabilityAsync(
+                lineage.CapturedHead,
+                lineage
+            )
+        );
         Assert.IsType<DerivedRecapSelection.EmptyLineage>(
             await store.SelectNthPreviousAsync(lineage, 0)
         );
@@ -292,7 +297,7 @@ public sealed class DerivedRecapReadOnlySurfaceTests {
 
     private static PublishedRecapDescriptor Descriptor(
         DerivedRecapStore store,
-        SessionCurrentLineageSnapshot lineage
+        DerivedRecapLineageView lineage
     ) => new(
         store.RefId,
         lineage.CapturedHead,
@@ -301,7 +306,7 @@ public sealed class DerivedRecapReadOnlySurfaceTests {
 
     private static BuildingDescriptor Building(
         DerivedRecapStore store,
-        SessionCurrentLineageSnapshot lineage
+        DerivedRecapLineageView lineage
     ) => new(
         store.RefId,
         lineage.CapturedHead,

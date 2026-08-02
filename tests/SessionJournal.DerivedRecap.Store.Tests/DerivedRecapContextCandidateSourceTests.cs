@@ -7,10 +7,10 @@ public sealed class DerivedRecapContextCandidateSourceTests {
     public async Task AdapterResolvesRawSetupsAndMaterializesNeutralCandidate() {
         using RecapStoreFixture fixture =
             await RecapStoreFixture.CreateAsync();
-        SessionCurrentLineageSnapshot lineage = fixture.Lineage();
+        DerivedRecapLineageView lineage = fixture.Lineage();
         await fixture.PublishAsync(
             lineage.CapturedHead,
-            lineage.HeadToRoot[2].Address,
+            lineage.CurrentPrefix.HeadToOldest[2].Address,
             content: "adapter recap"
         );
         var source = new DerivedRecapContextCandidateSource(
@@ -60,10 +60,10 @@ public sealed class DerivedRecapContextCandidateSourceTests {
     public async Task AdapterRejectsStaleSelectionAndMaterialization() {
         using RecapStoreFixture fixture =
             await RecapStoreFixture.CreateAsync();
-        SessionCurrentLineageSnapshot lineage = fixture.Lineage();
+        DerivedRecapLineageView lineage = fixture.Lineage();
         await fixture.PublishAsync(
             lineage.CapturedHead,
-            lineage.HeadToRoot[2].Address
+            lineage.CurrentPrefix.HeadToOldest[2].Address
         );
         var source = new DerivedRecapContextCandidateSource(
             fixture.Store,
@@ -102,10 +102,10 @@ public sealed class DerivedRecapContextCandidateSourceTests {
     public async Task AdapterMapsUnavailableAndInvalidWithoutFallback() {
         using RecapStoreFixture fixture =
             await RecapStoreFixture.CreateAsync();
-        SessionCurrentLineageSnapshot lineage = fixture.Lineage();
+        DerivedRecapLineageView lineage = fixture.Lineage();
         await fixture.PublishAsync(
             lineage.CapturedHead,
-            lineage.HeadToRoot[2].Address
+            lineage.CurrentPrefix.HeadToOldest[2].Address
         );
         await File.WriteAllTextAsync(
             Path.Combine(
@@ -137,5 +137,33 @@ public sealed class DerivedRecapContextCandidateSourceTests {
         );
         Assert.Null(invalid.Candidate);
         Assert.False(string.IsNullOrWhiteSpace(invalid.Detail));
+    }
+
+    [Fact]
+    public async Task AdapterMapsBeyondPrefixWithDeterministicEvidence() {
+        using RecapStoreFixture fixture =
+            await RecapStoreFixture.CreateAsync(historyPairs: 257);
+        DerivedRecapLineageView lineage = fixture.Lineage();
+        var source = new DerivedRecapContextCandidateSource(
+            fixture.Store,
+            fixture.Engine
+        );
+
+        SessionContextCandidateSelection selection =
+            await source.SelectAsync(
+                new SessionContextSelectionRequest(
+                    lineage.CapturedHead,
+                    0
+                ),
+                CancellationToken.None
+            );
+
+        Assert.Equal(
+            SessionContextCandidateSelectionStatus.BeyondPrefix,
+            selection.Status
+        );
+        Assert.Null(selection.Candidate);
+        Assert.Contains("HeaderCount=513", selection.Detail);
+        selection.ValidateShape();
     }
 }

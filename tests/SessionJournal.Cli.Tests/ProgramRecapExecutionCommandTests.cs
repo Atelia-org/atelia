@@ -172,7 +172,7 @@ public sealed class ProgramRecapExecutionCommandTests : IDisposable {
         Assert.Equal(5, firstFactory.CallCount);
         using JsonDocument first = ReadJson(firstReport);
         Assert.Equal(
-            "atelia.session-journal.derived-recap-execution.v4",
+            "atelia.session-journal.derived-recap-execution.v5",
             String(first, "schema")
         );
         JsonElement reportedConfig =
@@ -368,7 +368,7 @@ public sealed class ProgramRecapExecutionCommandTests : IDisposable {
     }
 
     [Fact]
-    public async Task RawSafetyRejectionIsReportedBeforeClientOrBuilding() {
+    public async Task BoundedPreflightIsReportedBeforeClientOrBuilding() {
         Fixture fixture =
             await CreateFixtureAsync("raw-safety-rejected", 257);
         await CreateStoreAsync(fixture);
@@ -392,25 +392,36 @@ public sealed class ProgramRecapExecutionCommandTests : IDisposable {
         Assert.Equal(0, factory.CreateCallCount);
         Assert.False(Directory.Exists(calls));
         using JsonDocument report = ReadJson(reportPath);
-        JsonElement planning =
-            report.RootElement.GetProperty("planning");
         Assert.Equal(
-            "RawSafetyRejected",
-            planning.GetProperty("measurementKind").GetString()
+            "atelia.session-journal.derived-recap-execution.v5",
+            String(report, "schema")
         );
-        Assert.Equal(
-            514,
-            planning.GetProperty("rawGrowthEventCount").GetInt32()
-        );
-        Assert.Equal(
-            JsonValueKind.Null,
-            planning.GetProperty("historyUnitLoadEstimatorId")
-                .ValueKind
+        Assert.Equal("BeyondPrefix", String(report, "resultStatus"));
+        Assert.Contains(
+            "BeyondPrefix",
+            report.RootElement.GetProperty("defectCodes")
+                .EnumerateArray()
+                .Select(static item => item.GetString())
         );
         Assert.Equal(
             JsonValueKind.Null,
-            planning.GetProperty("growthHistoryLoad").ValueKind
+            report.RootElement.GetProperty("planning").ValueKind
         );
+        JsonElement beyondPrefix =
+            report.RootElement.GetProperty("beyondPrefix");
+        Assert.Equal(
+            513,
+            beyondPrefix.GetProperty("headerCount").GetInt32()
+        );
+        Assert.False(string.IsNullOrWhiteSpace(
+            beyondPrefix.GetProperty("requiredAnchor").GetString()
+        ));
+        Assert.False(string.IsNullOrWhiteSpace(
+            beyondPrefix.GetProperty("capturedHead").GetString()
+        ));
+        Assert.False(string.IsNullOrWhiteSpace(
+            beyondPrefix.GetProperty("nextAddress").GetString()
+        ));
         Assert.Empty(Directory.EnumerateDirectories(
             Path.Combine(
                 fixture.Path,

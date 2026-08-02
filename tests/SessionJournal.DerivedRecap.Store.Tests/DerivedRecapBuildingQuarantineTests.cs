@@ -12,12 +12,12 @@ public sealed class DerivedRecapBuildingQuarantineTests {
     ) {
         using RecapStoreFixture fixture =
             await RecapStoreFixture.CreateAsync(historyPairs: 2);
-        SessionCurrentLineageSnapshot lineage = fixture.Lineage();
+        DerivedRecapLineageView lineage = fixture.Lineage();
         EventAddress anchor = lineage.CapturedHead;
         await CreateBuildingAsync(
             fixture,
             anchor,
-            lineage.HeadToRoot[2].Address
+            lineage.CurrentPrefix.HeadToOldest[2].Address
         );
         string manifestPath = Path.Combine(
             fixture.Store.GetBuildingPathForTest(anchor),
@@ -93,12 +93,12 @@ public sealed class DerivedRecapBuildingQuarantineTests {
     public async Task PublishedMembershipIsAConflictAndRemainsSelected() {
         using RecapStoreFixture fixture =
             await RecapStoreFixture.CreateAsync(historyPairs: 2);
-        SessionCurrentLineageSnapshot lineage = fixture.Lineage();
+        DerivedRecapLineageView lineage = fixture.Lineage();
         EventAddress anchor = lineage.CapturedHead;
         PublishedRecapDescriptor published =
             await fixture.PublishAsync(
                 anchor,
-                lineage.HeadToRoot[2].Address
+                lineage.CurrentPrefix.HeadToOldest[2].Address
             );
 
         Assert.IsType<QuarantineBuildingResult.PublishedConflict>(
@@ -125,14 +125,14 @@ public sealed class DerivedRecapBuildingQuarantineTests {
     public async Task ExactQuarantineLeavesOtherBuildingPublishedAndRawUntouched() {
         using RecapStoreFixture fixture =
             await RecapStoreFixture.CreateAsync(historyPairs: 4);
-        SessionCurrentLineageSnapshot lineage = fixture.Lineage();
+        DerivedRecapLineageView lineage = fixture.Lineage();
         EventAddress rawHead = lineage.CapturedHead;
-        EventAddress target = lineage.HeadToRoot[2].Address;
-        EventAddress other = lineage.HeadToRoot[0].Address;
+        EventAddress target = lineage.CurrentPrefix.HeadToOldest[2].Address;
+        EventAddress other = lineage.CurrentPrefix.HeadToOldest[0].Address;
         EventAddress publishedAnchor =
-            lineage.HeadToRoot[4].Address;
+            lineage.CurrentPrefix.HeadToOldest[4].Address;
         EventAddress replayStart =
-            lineage.HeadToRoot[6].Address;
+            lineage.CurrentPrefix.HeadToOldest[6].Address;
         PublishedRecapDescriptor published =
             await fixture.PublishAsync(
                 publishedAnchor,

@@ -69,7 +69,7 @@ public sealed class DerivedRecapRestoreExecutor {
                     cancellationToken
                 );
             SessionCurrentLineageSnapshot lineage =
-                lineageView.Snapshot;
+                _engine.ReadCurrentLineageHeaders(cancellationToken);
             if (lineageView.CapturedHead != expectedRawHead) {
                 return RawHeadChanged(
                     expectedRawHead,
@@ -87,6 +87,12 @@ public sealed class DerivedRecapRestoreExecutor {
                     is PublishedRestoreInspectionResult.Unavailable
                         inspectionUnavailable) {
                 return Unavailable(inspectionUnavailable.Defects);
+            }
+            if (inspectionResult
+                is PublishedRestoreInspectionResult.BeyondPrefix beyond) {
+                return new DerivedRecapRestoreResult.BeyondPrefix(
+                    beyond.Evidence
+                );
             }
             PublishedRestoreInspection inspection =
                 ((PublishedRestoreInspectionResult.Available)
@@ -152,6 +158,10 @@ public sealed class DerivedRecapRestoreExecutor {
                     ),
                 PublishedEnvelopeCommitResult.Unavailable unavailable =>
                     Unavailable(unavailable.Defects),
+                PublishedEnvelopeCommitResult.BeyondPrefix commitBeyond =>
+                    new DerivedRecapRestoreResult.BeyondPrefix(
+                        commitBeyond.Evidence
+                    ),
                 _ => throw new InvalidOperationException(
                     "Unknown Published envelope commit result."
                 )

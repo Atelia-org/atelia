@@ -20,7 +20,8 @@ internal abstract record RecapOperationReadinessResult {
 
     internal sealed record Blocked(
         IReadOnlyList<RecapOperationReadinessDefect> Defects,
-        ResolvedRecapPlannerComposition? Composition = null
+        ResolvedRecapPlannerComposition? Composition = null,
+        SJ.SessionCurrentLineageBeyondPrefix? BeyondPrefix = null
     ) : RecapOperationReadinessResult;
 }
 
@@ -163,6 +164,16 @@ internal static class RecapOperationReadiness {
                         unavailable.Configuration,
                         concreteCapabilities
                     )
+                ),
+            DerivedRecapOperationPreparationResult.BeyondPrefix beyond =>
+                new RecapOperationReadinessResult.Blocked(
+                    [new RecapOperationReadinessDefect(
+                        "BeyondPrefix",
+                        "Required raw anchor is beyond the bounded "
+                        + "DerivedRecap lineage prefix."
+                    )],
+                    Composition: null,
+                    BeyondPrefix: beyond.Evidence
                 ),
             _ => throw new InvalidDataException(
                 "Unknown DerivedRecap preparation result."

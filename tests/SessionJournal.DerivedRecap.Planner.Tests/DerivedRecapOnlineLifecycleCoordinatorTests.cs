@@ -191,8 +191,11 @@ public sealed class DerivedRecapOnlineLifecycleCoordinatorTests {
         Assert.Equal(SessionContextLifecycleStatus.Ready, result.Status);
         Assert.Equal(1, policy.CallCount);
         Assert.Equal(0, maintainer.CallCount);
-        SessionCurrentLineageSnapshot lineage =
-            fixture.Engine.ReadCurrentLineageHeaders();
+        DerivedRecapLineageView lineage =
+            DerivedRecapLineageView.Capture(
+                fixture.Store,
+                fixture.Engine
+            );
         var latest = Assert.IsType<DerivedRecapSelection.Selected>(
             await fixture.Store.SelectNthPreviousAsync(lineage, 0)
         );
@@ -320,7 +323,10 @@ public sealed class DerivedRecapOnlineLifecycleCoordinatorTests {
         Assert.Equal(1, maintainer.CallCount);
         var repaired = Assert.IsType<DerivedRecapSelection.Selected>(
             await fixture.Store.SelectNthPreviousAsync(
-                fixture.Engine.ReadCurrentLineageHeaders(),
+                DerivedRecapLineageView.Capture(
+                    fixture.Store,
+                    fixture.Engine
+                ),
                 0
             )
         );
@@ -1157,8 +1163,10 @@ public sealed class DerivedRecapOnlineLifecycleCoordinatorTests {
                     block
                 )
             );
-            return await new DerivedRecapPublisher(Store, Engine)
-                .PublishAsync(anchor);
+            return Assert.IsType<PublishRecapResult.Published>(
+                await new DerivedRecapPublisher(Store, Engine)
+                    .PublishAsync(anchor)
+            ).Descriptor;
         }
 
         public async ValueTask

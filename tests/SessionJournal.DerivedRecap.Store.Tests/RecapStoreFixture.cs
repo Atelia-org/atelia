@@ -61,7 +61,10 @@ internal sealed class RecapStoreFixture : IDisposable {
         return new RecapStoreFixture(path, engine, store);
     }
 
-    public SessionCurrentLineageSnapshot Lineage()
+    public DerivedRecapLineageView Lineage()
+        => DerivedRecapLineageView.Capture(Store, Engine);
+
+    public SessionCurrentLineageSnapshot RawLineage()
         => Engine.ReadCurrentLineageHeaders();
 
     public async ValueTask<PublishedRecapDescriptor> PublishAsync(
@@ -88,7 +91,13 @@ internal sealed class RecapStoreFixture : IDisposable {
             anchor,
             DerivedRecapCodec.CreateBlock(plan, anchor, content)
         );
-        return await Publisher.PublishAsync(anchor);
+        PublishRecapResult result =
+            await Publisher.PublishAsync(anchor);
+        return result is PublishRecapResult.Published published
+            ? published.Descriptor
+            : throw new InvalidDataException(
+                $"Fixture publication failed with '{result.GetType().Name}'."
+            );
     }
 
     public RecapBlockPlan CreateMaintainPlan(

@@ -67,7 +67,8 @@ public enum SessionContextLifecycleStatus {
 
 public sealed record SessionContextLifecycleResult(
     SessionContextLifecycleStatus Status,
-    string? Detail = null
+    string? Detail = null,
+    SessionCurrentLineageBeyondPrefix? BoundedLineageEvidence = null
 ) {
     public static SessionContextLifecycleResult Ready { get; } =
         new(SessionContextLifecycleStatus.Ready);
@@ -75,6 +76,20 @@ public sealed record SessionContextLifecycleResult(
     public static SessionContextLifecycleResult RawHistoryReady {
         get;
     } = new(SessionContextLifecycleStatus.RawHistoryReady);
+
+    public static SessionContextLifecycleResult BeyondPrefix(
+        SessionCurrentLineageBeyondPrefix evidence
+    ) {
+        ArgumentNullException.ThrowIfNull(evidence);
+        return new(
+            SessionContextLifecycleStatus.Unavailable,
+            "RequiredAnchor=" + evidence.RequiredAnchor
+            + ";CapturedHead=" + evidence.CapturedHead
+            + ";HeaderCount=" + evidence.HeaderCount
+            + ";NextAddress=" + evidence.NextAddress,
+            evidence
+        );
+    }
 }
 
 /// <summary>

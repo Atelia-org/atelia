@@ -45,14 +45,14 @@ public sealed class DerivedRecapStoreAcceptanceTests {
                 hooks,
                 historyPairs: 6
             );
-        SessionCurrentLineageSnapshot lineage = fixture.Lineage();
-        EventAddress target = lineage.HeadToRoot[0].Address;
+        DerivedRecapLineageView lineage = fixture.Lineage();
+        EventAddress target = lineage.CurrentPrefix.HeadToOldest[0].Address;
         EventAddress secondSource =
-            lineage.HeadToRoot[2].Address;
+            lineage.CurrentPrefix.HeadToOldest[2].Address;
         EventAddress firstSource =
-            lineage.HeadToRoot[4].Address;
+            lineage.CurrentPrefix.HeadToOldest[4].Address;
         EventAddress replayStart =
-            lineage.HeadToRoot[^1].Address;
+            lineage.CurrentPrefix.HeadToOldest[^1].Address;
         PublishedRecapDescriptor first =
             await fixture.PublishAsync(
                 firstSource,

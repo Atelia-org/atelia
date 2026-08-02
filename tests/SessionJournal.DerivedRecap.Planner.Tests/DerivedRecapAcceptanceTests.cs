@@ -146,8 +146,11 @@ public sealed class DerivedRecapAcceptanceTests {
         Assert.Equal(a[12], finalSource.SourceSetAnchor);
         Assert.Equal([a[5], a[11], a[20]], finalPlan.CatchUpThrough);
 
-        SessionCurrentLineageSnapshot lineage =
-            fixture.Engine.ReadCurrentLineageHeaders();
+        DerivedRecapLineageView lineage =
+            DerivedRecapLineageView.Capture(
+                fixture.Store,
+                fixture.Engine
+            );
         EventAddress[] expectedOrdinals = [
             a[20],
             a[12],
@@ -253,7 +256,10 @@ public sealed class DerivedRecapAcceptanceTests {
         var selected =
             Assert.IsType<DerivedRecapSelection.Selected>(
                 await fixture.Store.SelectNthPreviousAsync(
-                    fixture.Engine.ReadCurrentLineageHeaders(),
+                    DerivedRecapLineageView.Capture(
+                        fixture.Store,
+                        fixture.Engine
+                    ),
                     0
                 )
             );

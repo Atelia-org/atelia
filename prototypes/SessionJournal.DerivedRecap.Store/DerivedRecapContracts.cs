@@ -293,12 +293,46 @@ public sealed record RecapStructuralDefect(
     string Detail
 );
 
-public sealed record RecapPublishability(
-    bool IsPublishable,
-    IReadOnlyList<RecapStructuralDefect> Defects
-) {
-    public static RecapPublishability Publishable { get; } =
-        new(true, Array.Empty<RecapStructuralDefect>());
+public abstract record RecapPublishability {
+    private RecapPublishability() {
+    }
+
+    public sealed record Publishable : RecapPublishability;
+
+    public sealed record NotPublishable(
+        IReadOnlyList<RecapStructuralDefect> Defects
+    ) : RecapPublishability;
+
+    public sealed record BeyondPrefix(
+        SessionCurrentLineageBeyondPrefix Evidence
+    ) : RecapPublishability;
+
+    public sealed record StoreUnavailable(string Reason)
+        : RecapPublishability;
+}
+
+public abstract record PublishRecapResult {
+    private PublishRecapResult() {
+    }
+
+    public sealed record Published(PublishedRecapDescriptor Descriptor)
+        : PublishRecapResult;
+
+    public sealed record NotPublishable(
+        IReadOnlyList<RecapStructuralDefect> Defects
+    ) : PublishRecapResult;
+
+    public sealed record BeyondPrefix(
+        SessionCurrentLineageBeyondPrefix Evidence
+    ) : PublishRecapResult;
+
+    public sealed record StoreUnavailable(string Reason)
+        : PublishRecapResult;
+
+    public sealed record RawHeadChanged(
+        EventAddress Expected,
+        EventAddress? Observed
+    ) : PublishRecapResult;
 }
 
 public abstract record DerivedRecapSelection {
@@ -315,6 +349,10 @@ public abstract record DerivedRecapSelection {
     public sealed record ExactPublishedSetInvalid(
         EventAddress SetAdmissionAnchor,
         IReadOnlyList<RecapStructuralDefect> Defects
+    ) : DerivedRecapSelection;
+
+    public sealed record BeyondPrefix(
+        SessionCurrentLineageBeyondPrefix Evidence
     ) : DerivedRecapSelection;
 
     public sealed record StoreUnavailable(string Reason)
@@ -402,6 +440,10 @@ public abstract record CurrentLineageBuildingSelection {
         IReadOnlyList<EventAddress> SetAdmissionAnchors
     ) : CurrentLineageBuildingSelection;
 
+    public sealed record BeyondPrefix(
+        SessionCurrentLineageBeyondPrefix Evidence
+    ) : CurrentLineageBuildingSelection;
+
     public sealed record StoreUnavailable(string Reason)
         : CurrentLineageBuildingSelection;
 }
@@ -431,6 +473,13 @@ public abstract record CreateBuildingResult {
     public sealed record ActiveBuildingConflict(
         IReadOnlyList<EventAddress> SetAdmissionAnchors
     ) : CreateBuildingResult;
+
+    public sealed record BeyondPrefix(
+        SessionCurrentLineageBeyondPrefix Evidence
+    ) : CreateBuildingResult;
+
+    public sealed record StoreUnavailable(string Reason)
+        : CreateBuildingResult;
 
     public sealed record InvalidPlan(
         IReadOnlyList<RecapStructuralDefect> Defects
@@ -656,6 +705,10 @@ public abstract record PublishedRestoreInspectionResult {
         PublishedRestoreInspection Inspection
     ) : PublishedRestoreInspectionResult;
 
+    public sealed record BeyondPrefix(
+        SessionCurrentLineageBeyondPrefix Evidence
+    ) : PublishedRestoreInspectionResult;
+
     public sealed record Unavailable(
         EventAddress SetAdmissionAnchor,
         IReadOnlyList<RecapStructuralDefect> Defects
@@ -724,5 +777,9 @@ public abstract record PublishedEnvelopeCommitResult {
 
     public sealed record Unavailable(
         IReadOnlyList<RecapStructuralDefect> Defects
+    ) : PublishedEnvelopeCommitResult;
+
+    public sealed record BeyondPrefix(
+        SessionCurrentLineageBeyondPrefix Evidence
     ) : PublishedEnvelopeCommitResult;
 }

@@ -25,13 +25,29 @@ public sealed class DerivedRecapBuildingInstaller {
         DerivedRecapSetManifest manifest,
         EventAddress expectedRawHead,
         CancellationToken cancellationToken = default
-    ) => _store.CreateBuildingTrustedAsync(
-        manifest,
-        expectedRawHead,
-        _engine.ReadCurrentLineageHeaders(cancellationToken),
-        () => _engine.ReadCurrentHead(),
-        cancellationToken
-    );
+    ) {
+        DerivedRecapLineageView lineage =
+            DerivedRecapLineageView.Capture(
+                _store,
+                _engine,
+                cancellationToken
+            );
+        if (lineage.CapturedHead != expectedRawHead) {
+            return ValueTask.FromResult<CreateBuildingResult>(
+                new CreateBuildingResult.RawHeadChanged(
+                    expectedRawHead,
+                    lineage.CapturedHead
+                )
+            );
+        }
+        return _store.CreateBuildingTrustedAsync(
+            manifest,
+            expectedRawHead,
+            lineage,
+            () => _engine.ReadCurrentHead(),
+            cancellationToken
+        );
+    }
 
     private static void RequireSameBinding(
         DerivedRecapStore store,

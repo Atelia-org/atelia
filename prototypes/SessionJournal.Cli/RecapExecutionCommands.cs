@@ -10,7 +10,7 @@ namespace Atelia.SessionJournal.Cli;
 
 internal static class RecapExecutionCommands {
     private const string ReportSchema =
-        "atelia.session-journal.derived-recap-execution.v4";
+        "atelia.session-journal.derived-recap-execution.v5";
     private const string DefaultCallLogDirectory =
         "gitignore/session-journal/recap-maintainer-calls";
 
@@ -113,7 +113,9 @@ internal static class RecapExecutionCommands {
                 ? null
                 : DerivedRecapLineageView.Capture(store, engine);
         SJ.SessionCurrentLineageSnapshot? lineage =
-            lineageView?.Snapshot;
+            lineageView is null
+                ? null
+                : engine.ReadCurrentLineageHeaders();
         EventAddress? anchor = needsAnchor
             ? ParseAddress(
                 options.RequireSingle("anchor"),
@@ -132,6 +134,8 @@ internal static class RecapExecutionCommands {
         ResolvedRecapPlannerComposition? plannerComposition = null;
         RecapExecutionConfigReport? readinessConfigReport = null;
         IReadOnlyList<string> readinessDefects;
+        SJ.SessionCurrentLineageBeyondPrefix? readinessBeyondPrefix =
+            null;
         if (operation is "run" or "resume") {
             RecapOperationReadinessResult readiness =
                 await (operation == "run"
@@ -166,10 +170,11 @@ internal static class RecapExecutionCommands {
                     blocked.Composition is null
                         ? null
                         : CreateConfigReport(blocked.Composition);
+                readinessBeyondPrefix = blocked.BeyondPrefix;
             }
         }
         else {
-            readinessDefects =
+            (readinessDefects, readinessBeyondPrefix) =
                 await InspectReadinessAsync(
                         operation,
                         store,
@@ -194,7 +199,11 @@ internal static class RecapExecutionCommands {
                         ?? throw new InvalidDataException(
                             "Raw SessionJournal has no current head."
                         ),
-                    retryable ? "Retryable" : "Unavailable",
+                    readinessBeyondPrefix is not null
+                        ? "BeyondPrefix"
+                        : retryable
+                            ? "Retryable"
+                            : "Unavailable",
                     anchor,
                     blockId: null,
                     code: retryableCode,
@@ -202,7 +211,8 @@ internal static class RecapExecutionCommands {
                     readinessConfigReport,
                     planningDiagnostics: null,
                     callLogCount: 0,
-                    callLogDirectory
+                    callLogDirectory,
+                    readinessBeyondPrefix
                 ),
                 reportPath,
                 exitCode: retryable ? 3 : 2
@@ -345,7 +355,10 @@ internal static class RecapExecutionCommands {
         return Finish(report, reportPath, exitCode);
     }
 
-    private static async ValueTask<IReadOnlyList<string>>
+    private static async ValueTask<(
+        IReadOnlyList<string> Defects,
+        SJ.SessionCurrentLineageBeyondPrefix? BeyondPrefix
+    )>
         InspectReadinessAsync(
         string operation,
         DerivedRecapStore store,
@@ -358,11 +371,12 @@ internal static class RecapExecutionCommands {
                     await store.ReadBuildingAsync(anchor!.Value)
                         .ConfigureAwait(false);
                 return building switch {
-                    BuildingReadResult.Available => [],
+                    BuildingReadResult.Available => ([], null),
                     BuildingReadResult.Invalid invalid =>
-                        DefectCodes(invalid.Defects),
-                    BuildingReadResult.Missing => ["BuildingMissing"],
-                    _ => ["BuildingUnavailable"]
+                        (DefectCodes(invalid.Defects), null),
+                    BuildingReadResult.Missing =>
+                        (["BuildingMissing"], null),
+                    _ => (["BuildingUnavailable"], null)
                 };
             }
 
@@ -373,11 +387,14 @@ internal static class RecapExecutionCommands {
                     )
                     .ConfigureAwait(false);
             return published switch {
-                PublishedRestoreInspectionResult.Available => [],
+                PublishedRestoreInspectionResult.Available =>
+                    ([], null),
                 PublishedRestoreInspectionResult
                         .Unavailable unavailable =>
-                    DefectCodes(unavailable.Defects),
-                _ => ["PublishedUnavailable"]
+                    (DefectCodes(unavailable.Defects), null),
+                PublishedRestoreInspectionResult.BeyondPrefix beyond =>
+                    (["BeyondPrefix"], beyond.Evidence),
+                _ => (["PublishedUnavailable"], null)
             };
         }
         catch (Exception exception)
@@ -386,7 +403,7 @@ internal static class RecapExecutionCommands {
                   or NotSupportedException
                   or IOException
                   or UnauthorizedAccessException) {
-            return ["StoreUnavailable"];
+            return (["StoreUnavailable"], null);
         }
     }
 
@@ -447,7 +464,7 @@ internal static class RecapExecutionCommands {
                     operation,
                     engine,
                     rawHead,
-                    "Unavailable",
+                    "BeyondPrefix",
                     requestedAnchor,
                     null,
                     null,
@@ -458,6 +475,24 @@ internal static class RecapExecutionCommands {
                     CreatePlanningReport(planningDiagnostics),
                     calls,
                     callLogDirectory
+                ),
+                2
+            ),
+            DerivedRecapExecutionResult.BeyondPrefix beyond => (
+                Report(
+                    operation,
+                    engine,
+                    rawHead,
+                    "BeyondPrefix",
+                    requestedAnchor,
+                    null,
+                    null,
+                    ["BeyondPrefix"],
+                    configReport,
+                    CreatePlanningReport(planningDiagnostics),
+                    calls,
+                    callLogDirectory,
+                    beyond.Evidence
                 ),
                 2
             ),
@@ -554,6 +589,24 @@ internal static class RecapExecutionCommands {
                 ),
                 2
             ),
+            DerivedRecapRestoreResult.BeyondPrefix beyond => (
+                Report(
+                    operation,
+                    engine,
+                    rawHead,
+                    "Unavailable",
+                    requestedAnchor,
+                    null,
+                    null,
+                    ["BeyondPrefix"],
+                    configReport: null,
+                    planningDiagnostics: null,
+                    calls,
+                    callLogDirectory,
+                    beyond.Evidence
+                ),
+                2
+            ),
             DerivedRecapRestoreResult.BlockFailed failed => (
                 Report(
                     operation,
@@ -607,7 +660,8 @@ internal static class RecapExecutionCommands {
         RecapExecutionConfigReport? configReport,
         RecapExecutionPlanningReport? planningDiagnostics,
         int callLogCount,
-        string callLogDirectory
+        string callLogDirectory,
+        SJ.SessionCurrentLineageBeyondPrefix? beyondPrefixEvidence = null
     ) => new(
         ReportSchema,
         operation,
@@ -628,7 +682,21 @@ internal static class RecapExecutionCommands {
         configReport,
         planningDiagnostics,
         callLogCount,
-        Path.GetFullPath(callLogDirectory)
+        Path.GetFullPath(callLogDirectory),
+        beyondPrefixEvidence is null
+            ? null
+            : new RecapExecutionBeyondPrefixReport(
+                SJ.EventAddressTextCodec.Format(
+                    beyondPrefixEvidence.RequiredAnchor
+                ),
+                SJ.EventAddressTextCodec.Format(
+                    beyondPrefixEvidence.CapturedHead
+                ),
+                beyondPrefixEvidence.HeaderCount,
+                SJ.EventAddressTextCodec.Format(
+                    beyondPrefixEvidence.NextAddress
+                )
+            )
     );
 
     private static RecapExecutionConfigReport CreateConfigReport(
@@ -799,7 +867,15 @@ internal sealed record RecapExecutionReport(
     RecapExecutionConfigReport? Config,
     RecapExecutionPlanningReport? Planning,
     int CallLogCount,
-    string? CallLogDirectory
+    string? CallLogDirectory,
+    RecapExecutionBeyondPrefixReport? BeyondPrefix
+);
+
+internal sealed record RecapExecutionBeyondPrefixReport(
+    string RequiredAnchor,
+    string CapturedHead,
+    int HeaderCount,
+    string NextAddress
 );
 
 internal sealed record RecapExecutionConfigReport(

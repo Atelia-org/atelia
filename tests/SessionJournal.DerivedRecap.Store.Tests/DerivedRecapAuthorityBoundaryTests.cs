@@ -22,6 +22,8 @@ public sealed class DerivedRecapAuthorityBoundaryTests {
             static method => method.GetParameters().Any(
                 parameter => parameter.ParameterType
                     == typeof(SessionCurrentLineageSnapshot)
+                    || parameter.ParameterType
+                    == typeof(SessionCurrentLineagePrefix)
             )
         );
         Assert.Empty(typeof(DerivedRecapLineageView).GetConstructors());
@@ -33,6 +35,66 @@ public sealed class DerivedRecapAuthorityBoundaryTests {
                 parameter => parameter.ParameterType
                     == typeof(SessionCurrentLineageSnapshot)
             )
+        );
+        Assert.Null(
+            typeof(DerivedRecapLineageView).GetProperty(
+                "CurrentPrefix",
+                BindingFlags.Instance | BindingFlags.Public
+            )
+        );
+    }
+
+    [Fact]
+    public async Task InstallerHistoricalAnchorBeyondPrefixIsTypedBeforeStaging() {
+        using RecapStoreFixture fixture =
+            await RecapStoreFixture.CreateAsync(historyPairs: 257);
+        DerivedRecapLineageView lineage = fixture.Lineage();
+        EventAddress root =
+            fixture.RawLineage().HeadToRoot[^1].Address;
+        DerivedRecapSetManifest manifest =
+            DerivedRecapCodec.CreateManifest(
+                fixture.Engine.BranchRefId,
+                lineage.CapturedHead,
+                [Maintain(
+                    lineage.CapturedHead,
+                    root,
+                    [lineage.CapturedHead]
+                )]
+            );
+        string buildingRoot = Path.GetDirectoryName(
+            fixture.Store.GetBuildingPathForTest(lineage.CapturedHead)
+        )!;
+        string[] beforeEntries = Directory
+            .EnumerateFileSystemEntries(buildingRoot)
+            .Select(Path.GetFileName)
+            .Order(StringComparer.Ordinal)
+            .ToArray()!;
+        SessionJournalReadDiagnostics beforeReads =
+            fixture.Engine.CaptureReadDiagnostics();
+
+        var beyond = Assert.IsType<CreateBuildingResult.BeyondPrefix>(
+            await new DerivedRecapBuildingInstaller(
+                    fixture.Store,
+                    fixture.Engine
+                )
+                .InstallAsync(manifest, lineage.CapturedHead)
+        );
+        SessionJournalReadDiagnostics reads =
+            fixture.Engine.CaptureReadDiagnostics() - beforeReads;
+
+        Assert.Equal(root, beyond.Evidence.RequiredAnchor);
+        Assert.Equal(513, beyond.Evidence.HeaderCount);
+        Assert.Equal(1026, reads.HeaderPreviewReadCount);
+        Assert.Equal(0, reads.PayloadReadCount);
+        Assert.Equal(
+            beforeEntries,
+            Directory.EnumerateFileSystemEntries(buildingRoot)
+                .Select(Path.GetFileName)
+                .Order(StringComparer.Ordinal)
+                .ToArray()
+        );
+        Assert.IsType<BuildingReadResult.Missing>(
+            await fixture.Store.ReadBuildingAsync(lineage.CapturedHead)
         );
     }
 
@@ -204,9 +266,9 @@ public sealed class DerivedRecapAuthorityBoundaryTests {
     ) {
         using RecapStoreFixture fixture =
             await RecapStoreFixture.CreateAsync(historyPairs: 5);
-        SessionCurrentLineageSnapshot lineage = fixture.Lineage();
+        DerivedRecapLineageView lineage = fixture.Lineage();
         EventAddress target = lineage.CapturedHead;
-        EventAddress replayStart = lineage.HeadToRoot[4].Address;
+        EventAddress replayStart = lineage.CurrentPrefix.HeadToOldest[4].Address;
         EventAddress offLineage = new(
             SizedPtr.FromPacked(ulong.MaxValue),
             uint.MaxValue,
@@ -215,10 +277,10 @@ public sealed class DerivedRecapAuthorityBoundaryTests {
         if (defectKind == "retroactive") {
             await fixture.PublishAsync(
                 target,
-                lineage.HeadToRoot[2].Address
+                lineage.CurrentPrefix.HeadToOldest[2].Address
             );
-            target = lineage.HeadToRoot[2].Address;
-            replayStart = lineage.HeadToRoot[4].Address;
+            target = lineage.CurrentPrefix.HeadToOldest[2].Address;
+            replayStart = lineage.CurrentPrefix.HeadToOldest[4].Address;
         }
 
         RecapBlockPlan plan = defectKind switch {
@@ -232,7 +294,7 @@ public sealed class DerivedRecapAuthorityBoundaryTests {
             "catch-up" => Maintain(
                 target,
                 replayStart,
-                [lineage.HeadToRoot[2].Address]
+                [lineage.CurrentPrefix.HeadToOldest[2].Address]
             ),
             "prior" => Maintain(
                 target,
@@ -299,10 +361,10 @@ public sealed class DerivedRecapAuthorityBoundaryTests {
     ) {
         using RecapStoreFixture fixture =
             await RecapStoreFixture.CreateAsync(historyPairs: 5);
-        SessionCurrentLineageSnapshot lineage = fixture.Lineage();
+        DerivedRecapLineageView lineage = fixture.Lineage();
         EventAddress target = lineage.CapturedHead;
-        EventAddress source = lineage.HeadToRoot[2].Address;
-        EventAddress replayStart = lineage.HeadToRoot[4].Address;
+        EventAddress source = lineage.CurrentPrefix.HeadToOldest[2].Address;
+        EventAddress replayStart = lineage.CurrentPrefix.HeadToOldest[4].Address;
         var id = new RecapBlockId("roleplay.self");
         ContextHeaderBlockPath targetPath = Target(id.Value);
         RecapBlockPlan plan;

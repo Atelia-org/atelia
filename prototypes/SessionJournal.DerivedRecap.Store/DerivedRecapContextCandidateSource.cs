@@ -102,6 +102,10 @@ public sealed class DerivedRecapContextCandidateSource
                     null,
                     FormatDefects(invalid.Defects)
                 );
+            case DerivedRecapSelection.BeyondPrefix beyond:
+                return SessionContextCandidateSelection.BeyondPrefix(
+                    FormatBeyondPrefix(beyond.Evidence)
+                );
             case DerivedRecapSelection.StoreUnavailable unavailable:
                 return new SessionContextCandidateSelection(
                     SessionContextCandidateSelectionStatus
@@ -115,6 +119,13 @@ public sealed class DerivedRecapContextCandidateSource
                 );
         }
     }
+
+    private static string FormatBeyondPrefix(
+        SessionCurrentLineageBeyondPrefix evidence
+    ) => "RequiredAnchor=" + evidence.RequiredAnchor
+        + ";CapturedHead=" + evidence.CapturedHead
+        + ";HeaderCount=" + evidence.HeaderCount
+        + ";NextAddress=" + evidence.NextAddress;
 
     public async ValueTask<SessionContextCandidate> MaterializeAsync(
         SessionContextCandidateDescriptor descriptor,

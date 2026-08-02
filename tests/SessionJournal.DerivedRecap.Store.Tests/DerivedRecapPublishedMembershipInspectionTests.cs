@@ -12,15 +12,15 @@ public sealed class DerivedRecapPublishedMembershipInspectionTests {
     ) {
         using RecapStoreFixture fixture =
             await RecapStoreFixture.CreateAsync(historyPairs: 4);
-        SessionCurrentLineageSnapshot lineage = fixture.Lineage();
+        DerivedRecapLineageView lineage = fixture.Lineage();
         EventAddress anchor = lineage.CapturedHead;
         PublishedRecapDescriptor descriptor =
             await fixture.PublishAsync(
                 anchor,
-                lineage.HeadToRoot[^1].Address
+                lineage.CurrentPrefix.HeadToOldest[^1].Address
             );
         if (rewindOffLineage) {
-            RewindBefore(fixture, anchor, lineage.HeadToRoot[2].Address);
+            RewindBefore(fixture, anchor, lineage.CurrentPrefix.HeadToOldest[2].Address);
         }
 
         var present = Assert.IsType<
@@ -40,10 +40,10 @@ public sealed class DerivedRecapPublishedMembershipInspectionTests {
     ) {
         using RecapStoreFixture fixture =
             await RecapStoreFixture.CreateAsync(historyPairs: 4);
-        SessionCurrentLineageSnapshot lineage = fixture.Lineage();
+        DerivedRecapLineageView lineage = fixture.Lineage();
         EventAddress anchor = lineage.CapturedHead;
         if (rewindOffLineage) {
-            RewindBefore(fixture, anchor, lineage.HeadToRoot[2].Address);
+            RewindBefore(fixture, anchor, lineage.CurrentPrefix.HeadToOldest[2].Address);
         }
 
         var absent = Assert.IsType<
@@ -63,11 +63,11 @@ public sealed class DerivedRecapPublishedMembershipInspectionTests {
     ) {
         using RecapStoreFixture fixture =
             await RecapStoreFixture.CreateAsync(historyPairs: 4);
-        SessionCurrentLineageSnapshot lineage = fixture.Lineage();
+        DerivedRecapLineageView lineage = fixture.Lineage();
         EventAddress anchor = lineage.CapturedHead;
         _ = await fixture.PublishAsync(
             anchor,
-            lineage.HeadToRoot[^1].Address
+            lineage.CurrentPrefix.HeadToOldest[^1].Address
         );
         await File.WriteAllTextAsync(
             Path.Combine(
@@ -77,7 +77,7 @@ public sealed class DerivedRecapPublishedMembershipInspectionTests {
             "damaged"
         );
         if (rewindOffLineage) {
-            RewindBefore(fixture, anchor, lineage.HeadToRoot[2].Address);
+            RewindBefore(fixture, anchor, lineage.CurrentPrefix.HeadToOldest[2].Address);
         }
 
         var invalid = Assert.IsType<
@@ -126,7 +126,7 @@ public sealed class DerivedRecapPublishedMembershipInspectionTests {
         }
         fixture.ReopenEngine();
         Assert.DoesNotContain(
-            fixture.Lineage().HeadToRoot,
+            fixture.Lineage().CurrentPrefix.HeadToOldest,
             node => node.Address == expectedHead
         );
     }

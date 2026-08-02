@@ -168,9 +168,17 @@ readiness defect，不猜测“最新”。
 
 NewPlanning 先执行 content-free raw safety gate；被 hard cap 拒绝时不调用 HistoryLoad
 estimator，并报告 `RawSafetyRejected`。通过 gate 后才按 config 指定的 estimator 测量 exact
-planning window，使用 load threshold 选择 admission boundary。execution report schema V4
-同时报告 estimator ID、growth load、可空的 selected absorbed/recent load，以及仅用于结构诊断
-的 HistoryUnit/raw event counts。
+planning window，使用 load threshold 选择 admission boundary。若 Store的513-header bounded
+prefix无法证明 prior Published baseline或所需anchor，preflight会先以exit code 2返回
+`BeyondPrefix`，`defectCodes`包含`BeyondPrefix`，并且不会创建client、call log、Building或
+staging目录。此时不能声称exact `RawSafetyRejected`；configured limit较小且baseline已在prefix
+内确定时，仍保留exact raw-safety诊断。
+
+execution report schema V5同时报告 estimator ID、growth load、可空的 selected
+absorbed/recent load，以及仅用于结构诊断的 HistoryUnit/raw event counts。prepare、execute或
+restore遇到bounded-lineage不确定性时，`beyondPrefix`携带`requiredAnchor`、`capturedHead`、
+`headerCount`和`nextAddress`；普通不可用场景该字段为null。CLI目前完成的是B1 Store-boundary
+迁移，online planning内部剩余的完整lineage读取仍待B2收口。
 
 成功 Publish后才进入 strict ordinal。首次 new planning前须显式执行
 `recap planner-config init`。

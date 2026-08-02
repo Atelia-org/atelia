@@ -25,8 +25,12 @@ public sealed class DerivedRecapPublisher {
         EventAddress admissionAnchor,
         CancellationToken cancellationToken = default
     ) {
-        SessionCurrentLineageSnapshot lineage =
-            _engine.ReadCurrentLineageHeaders(cancellationToken);
+        DerivedRecapLineageView lineage =
+            DerivedRecapLineageView.Capture(
+                _store,
+                _engine,
+                cancellationToken
+            );
         RecapPublishability result =
             await _store.DiagnosePublishabilityAsync(
                     admissionAnchor,
@@ -38,12 +42,16 @@ public sealed class DerivedRecapPublisher {
         return result;
     }
 
-    public ValueTask<PublishedRecapDescriptor> PublishAsync(
+    public ValueTask<PublishRecapResult> PublishAsync(
         EventAddress admissionAnchor,
         CancellationToken cancellationToken = default
     ) {
-        SessionCurrentLineageSnapshot lineage =
-            _engine.ReadCurrentLineageHeaders(cancellationToken);
+        DerivedRecapLineageView lineage =
+            DerivedRecapLineageView.Capture(
+                _store,
+                _engine,
+                cancellationToken
+            );
         return _store.PublishTrustedAsync(
             admissionAnchor,
             lineage,

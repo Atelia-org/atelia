@@ -232,6 +232,10 @@ public abstract record DerivedRecapExecutionResult {
         IReadOnlyList<DerivedRecapExecutionDefect> Defects
     ) : DerivedRecapExecutionResult;
 
+    public sealed record BeyondPrefix(
+        SessionCurrentLineageBeyondPrefix Evidence
+    ) : DerivedRecapExecutionResult;
+
     public sealed record Retryable(string Code, string Detail)
         : DerivedRecapExecutionResult;
 

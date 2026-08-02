@@ -87,7 +87,9 @@ internal sealed class DerivedRecapPlannerExecutor {
                     _engine,
                     cancellationToken
                 );
-            lineage = view.Snapshot;
+            lineage = _engine.ReadCurrentLineageHeaders(
+                cancellationToken
+            );
             selection = await view.SelectNthPreviousAsync(
                     nthPrevious: 0,
                     cancellationToken
@@ -129,7 +131,9 @@ internal sealed class DerivedRecapPlannerExecutor {
                     _engine,
                     cancellationToken
                 );
-            lineage = view.Snapshot;
+            lineage = _engine.ReadCurrentLineageHeaders(
+                cancellationToken
+            );
             selection = await view.SelectNthPreviousAsync(
                     nthPrevious: 0,
                     cancellationToken
@@ -162,6 +166,10 @@ internal sealed class DerivedRecapPlannerExecutor {
             case DerivedRecapSelection.ExactPublishedSetInvalid
                 selectedInvalid:
                 return Unavailable(selectedInvalid.Defects);
+            case DerivedRecapSelection.BeyondPrefix beyond:
+                return new DerivedRecapExecutionResult.BeyondPrefix(
+                    beyond.Evidence
+                );
             case DerivedRecapSelection.StoreUnavailable unavailable:
                 return Unavailable(
                     DerivedRecapExecutionDefectCodes.StoreUnavailable,
@@ -583,6 +591,15 @@ internal sealed class DerivedRecapPlannerExecutor {
                     )
                     + "."
                 );
+            case CreateBuildingResult.BeyondPrefix beyond:
+                return new DerivedRecapExecutionResult.BeyondPrefix(
+                    beyond.Evidence
+                );
+            case CreateBuildingResult.StoreUnavailable unavailable:
+                return Unavailable(
+                    DerivedRecapExecutionDefectCodes.StoreUnavailable,
+                    unavailable.Reason
+                );
             case CreateBuildingResult.InvalidPlan invalidPlan:
                 return Unavailable(invalidPlan.Defects);
             default:
@@ -848,6 +865,11 @@ internal sealed class DerivedRecapPlannerExecutor {
                 unavailable.Reason
             );
         }
+        if (observed is DerivedRecapSelection.BeyondPrefix beyond) {
+            return new DerivedRecapExecutionResult.BeyondPrefix(
+                beyond.Evidence
+            );
+        }
         if (baseline.ExpectedLatestAnchor is null) {
             return observed is DerivedRecapSelection.EmptyLineage
                 ? null
@@ -907,6 +929,10 @@ internal sealed class DerivedRecapPlannerExecutor {
     ) => selection switch {
         DerivedRecapSelection.ExactPublishedSetInvalid invalid =>
             Unavailable(invalid.Defects),
+        DerivedRecapSelection.BeyondPrefix beyond =>
+            new DerivedRecapExecutionResult.BeyondPrefix(
+                beyond.Evidence
+            ),
         DerivedRecapSelection.StoreUnavailable unavailable =>
             Unavailable(
                 DerivedRecapExecutionDefectCodes.StoreUnavailable,
@@ -1230,6 +1256,11 @@ internal sealed class DerivedRecapBuildingExecutor {
                 exception.Message
             );
         }
+        if (prepared.BeyondPrefix is { } beyondPrefix) {
+            return new DerivedRecapExecutionResult.BeyondPrefix(
+                beyondPrefix
+            );
+        }
         if (prepared.Defects.Count != 0) {
             return new DerivedRecapExecutionResult.Unavailable(
                 prepared.Defects
@@ -1267,16 +1298,56 @@ internal sealed class DerivedRecapBuildingExecutor {
                         cancellationToken
                     )
                     .ConfigureAwait(false);
-            if (!publishability.IsPublishable) {
-                return Unavailable(publishability.Defects);
+            switch (publishability) {
+                case RecapPublishability.Publishable:
+                    break;
+                case RecapPublishability.NotPublishable notPublishable:
+                    return Unavailable(notPublishable.Defects);
+                case RecapPublishability.BeyondPrefix beyond:
+                    return new DerivedRecapExecutionResult.BeyondPrefix(
+                        beyond.Evidence
+                    );
+                case RecapPublishability.StoreUnavailable unavailable:
+                    return Unavailable(
+                        DerivedRecapExecutionDefectCodes.StoreUnavailable,
+                        unavailable.Reason
+                    );
+                default:
+                    throw new InvalidOperationException(
+                        "Unknown Recap publishability result."
+                    );
             }
-            PublishedRecapDescriptor descriptor =
+            PublishRecapResult published =
                 await _publisher.PublishAsync(
                         building.Manifest.SetAdmissionAnchor,
                         cancellationToken
                     )
                     .ConfigureAwait(false);
-            return new DerivedRecapExecutionResult.Published(descriptor);
+            return published switch {
+                PublishRecapResult.Published success =>
+                    new DerivedRecapExecutionResult.Published(
+                        success.Descriptor
+                    ),
+                PublishRecapResult.NotPublishable notPublishable =>
+                    Unavailable(notPublishable.Defects),
+                PublishRecapResult.BeyondPrefix beyond =>
+                    new DerivedRecapExecutionResult.BeyondPrefix(
+                        beyond.Evidence
+                    ),
+                PublishRecapResult.StoreUnavailable unavailable =>
+                    Unavailable(
+                        DerivedRecapExecutionDefectCodes.StoreUnavailable,
+                        unavailable.Reason
+                    ),
+                PublishRecapResult.RawHeadChanged changed =>
+                    RetryableRawHead(
+                        changed.Expected,
+                        changed.Observed
+                    ),
+                _ => throw new InvalidOperationException(
+                    "Unknown Recap publish result."
+                )
+            };
         }
         catch (InvalidOperationException exception)
             when (exception.Message.Contains(
@@ -1344,7 +1415,8 @@ internal sealed class DerivedRecapBuildingExecutor {
                 _engine,
                 cancellationToken
             );
-        SessionCurrentLineageSnapshot lineage = lineageView.Snapshot;
+        SessionCurrentLineageSnapshot lineage =
+            _engine.ReadCurrentLineageHeaders(cancellationToken);
         Dictionary<EventAddress, int> lineageIndex =
             lineage.HeadToRoot
                 .Select((node, index) => (node.Address, index))
@@ -1396,6 +1468,13 @@ internal sealed class DerivedRecapBuildingExecutor {
                     ));
                 }
                 break;
+            case DerivedRecapSelection.BeyondPrefix beyond:
+                return new PreparedBuilding(
+                    defects,
+                    emptyInspections,
+                    emptyWindows,
+                    beyond.Evidence
+                );
             case DerivedRecapSelection.StoreUnavailable unavailable:
                 defects.Add(new DerivedRecapExecutionDefect(
                     DerivedRecapExecutionDefectCodes.StoreUnavailable,
@@ -1943,6 +2022,7 @@ internal sealed class DerivedRecapBuildingExecutor {
         IReadOnlyDictionary<
             (RecapBlockId BlockId, int EndpointIndex),
             SessionHistoryPlanningWindow
-        > Windows
+        > Windows,
+        SessionCurrentLineageBeyondPrefix? BeyondPrefix = null
     );
 }

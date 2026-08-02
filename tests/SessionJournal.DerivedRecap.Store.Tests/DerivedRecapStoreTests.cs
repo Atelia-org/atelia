@@ -21,8 +21,8 @@ public sealed class DerivedRecapStoreTests {
                 engine.Path,
                 engine.BranchRefId
             );
-            SessionCurrentLineageSnapshot lineage =
-                engine.ReadCurrentLineageHeaders();
+            DerivedRecapLineageView lineage =
+                DerivedRecapLineageView.Capture(store, engine);
 
             Assert.IsType<DerivedRecapSelection.StoreUnavailable>(
                 await store.SelectNthPreviousAsync(lineage, 0)
@@ -89,9 +89,9 @@ public sealed class DerivedRecapStoreTests {
     public async Task FakeBlockFlowsBuildingPublishSelectMaterialize() {
         using RecapStoreFixture fixture =
             await RecapStoreFixture.CreateAsync();
-        SessionCurrentLineageSnapshot lineage = fixture.Lineage();
+        DerivedRecapLineageView lineage = fixture.Lineage();
         EventAddress anchor = lineage.CapturedHead;
-        EventAddress replayStart = lineage.HeadToRoot[2].Address;
+        EventAddress replayStart = lineage.CurrentPrefix.HeadToOldest[2].Address;
         RecapBlockPlan plan =
             fixture.CreateMaintainPlan(anchor, replayStart);
         DerivedRecapSetManifest manifest =
@@ -107,7 +107,7 @@ public sealed class DerivedRecapStoreTests {
         );
         RecapPublishability incomplete =
             await fixture.Publisher.CanPublishAsync(anchor);
-        Assert.False(incomplete.IsPublishable);
+        Assert.IsType<RecapPublishability.NotPublishable>(incomplete);
 
         DerivedRecapBlock block =
             DerivedRecapCodec.CreateBlock(
@@ -118,12 +118,12 @@ public sealed class DerivedRecapStoreTests {
         await RecapStoreTestDriver.InstallFinalAsync(
             fixture.Store,
             anchor, block);
-        Assert.True(
-            (await fixture.Publisher.CanPublishAsync(anchor))
-                .IsPublishable
+        Assert.IsType<RecapPublishability.Publishable>(
+            await fixture.Publisher.CanPublishAsync(anchor)
         );
-        PublishedRecapDescriptor published =
-            await fixture.Publisher.PublishAsync(anchor);
+        PublishedRecapDescriptor published = Assert.IsType<
+            PublishRecapResult.Published
+        >(await fixture.Publisher.PublishAsync(anchor)).Descriptor;
 
         var selected =
             Assert.IsType<DerivedRecapSelection.Selected>(
@@ -148,9 +148,9 @@ public sealed class DerivedRecapStoreTests {
                         throw simulatedCrash
                 )
             );
-        SessionCurrentLineageSnapshot lineage = fixture.Lineage();
+        DerivedRecapLineageView lineage = fixture.Lineage();
         EventAddress anchor = lineage.CapturedHead;
-        EventAddress replayStart = lineage.HeadToRoot[2].Address;
+        EventAddress replayStart = lineage.CurrentPrefix.HeadToOldest[2].Address;
         RecapBlockPlan plan =
             fixture.CreateMaintainPlan(anchor, replayStart);
         DerivedRecapSetManifest manifest =
@@ -207,11 +207,11 @@ public sealed class DerivedRecapStoreTests {
                     }
                 )
             );
-        SessionCurrentLineageSnapshot lineage = fixture.Lineage();
+        DerivedRecapLineageView lineage = fixture.Lineage();
         EventAddress anchor = lineage.CapturedHead;
         RecapBlockPlan plan = fixture.CreateMaintainPlan(
             anchor,
-            lineage.HeadToRoot[2].Address
+            lineage.CurrentPrefix.HeadToOldest[2].Address
         );
         _ = await fixture.Store.CreateBuildingAsync(
             DerivedRecapCodec.CreateManifest(
@@ -252,8 +252,9 @@ public sealed class DerivedRecapStoreTests {
                 throw new ArgumentOutOfRangeException(nameof(damage));
         }
 
-        PublishedRecapDescriptor descriptor =
-            await fixture.Publisher.PublishAsync(anchor);
+        PublishedRecapDescriptor descriptor = Assert.IsType<
+            PublishRecapResult.Published
+        >(await fixture.Publisher.PublishAsync(anchor)).Descriptor;
 
         Assert.False(Directory.Exists(
             fixture.Store.GetBuildingPathForTest(anchor)
@@ -279,11 +280,11 @@ public sealed class DerivedRecapStoreTests {
                     }
                 )
             );
-        SessionCurrentLineageSnapshot lineage = fixture.Lineage();
+        DerivedRecapLineageView lineage = fixture.Lineage();
         EventAddress anchor = lineage.CapturedHead;
         RecapBlockPlan plan = fixture.CreateMaintainPlan(
             anchor,
-            lineage.HeadToRoot[2].Address
+            lineage.CurrentPrefix.HeadToOldest[2].Address
         );
         _ = await fixture.Store.CreateBuildingAsync(
             DerivedRecapCodec.CreateManifest(
@@ -319,8 +320,9 @@ public sealed class DerivedRecapStoreTests {
             DerivedRecapCodec.CreateBlock(plan, anchor, "new recap")
         );
 
-        PublishedRecapDescriptor descriptor =
-            await fixture.Publisher.PublishAsync(anchor);
+        PublishedRecapDescriptor descriptor = Assert.IsType<
+            PublishRecapResult.Published
+        >(await fixture.Publisher.PublishAsync(anchor)).Descriptor;
         DerivedRecapMaterialization materialized =
             await fixture.Store.MaterializeAsync(descriptor);
 
@@ -350,11 +352,11 @@ public sealed class DerivedRecapStoreTests {
                     }
                 )
             );
-        SessionCurrentLineageSnapshot lineage = fixture.Lineage();
+        DerivedRecapLineageView lineage = fixture.Lineage();
         EventAddress anchor = lineage.CapturedHead;
         RecapBlockPlan plan = fixture.CreateMaintainPlan(
             anchor,
-            lineage.HeadToRoot[2].Address
+            lineage.CurrentPrefix.HeadToOldest[2].Address
         );
         _ = await fixture.Store.CreateBuildingAsync(
             DerivedRecapCodec.CreateManifest(
@@ -391,8 +393,8 @@ public sealed class DerivedRecapStoreTests {
             Directory.CreateDirectory(candidatePath);
         }
 
-        await Assert.ThrowsAsync<InvalidDataException>(
-            async () => await fixture.Publisher.PublishAsync(anchor)
+        Assert.IsType<PublishRecapResult.NotPublishable>(
+            await fixture.Publisher.PublishAsync(anchor)
         );
 
         Assert.True(Directory.Exists(buildingPath));
@@ -410,11 +412,11 @@ public sealed class DerivedRecapStoreTests {
     public async Task PublishNeverResealsExistingPublishedMembership() {
         using RecapStoreFixture fixture =
             await RecapStoreFixture.CreateAsync();
-        SessionCurrentLineageSnapshot lineage = fixture.Lineage();
+        DerivedRecapLineageView lineage = fixture.Lineage();
         EventAddress anchor = lineage.CapturedHead;
         _ = await fixture.PublishAsync(
             anchor,
-            lineage.HeadToRoot[2].Address
+            lineage.CurrentPrefix.HeadToOldest[2].Address
         );
         string publicationPath = Path.Combine(
             fixture.Store.GetPublishedPathForTest(anchor),
@@ -423,8 +425,8 @@ public sealed class DerivedRecapStoreTests {
         await File.AppendAllTextAsync(publicationPath, "\n");
         byte[] damaged = await File.ReadAllBytesAsync(publicationPath);
 
-        await Assert.ThrowsAsync<InvalidDataException>(
-            async () => await fixture.Publisher.PublishAsync(anchor)
+        Assert.IsType<PublishRecapResult.NotPublishable>(
+            await fixture.Publisher.PublishAsync(anchor)
         );
 
         Assert.Equal(
@@ -437,12 +439,12 @@ public sealed class DerivedRecapStoreTests {
     public async Task PublicationReadersShareCanonicalHealthDefinition() {
         using RecapStoreFixture fixture =
             await RecapStoreFixture.CreateAsync();
-        SessionCurrentLineageSnapshot lineage = fixture.Lineage();
+        DerivedRecapLineageView lineage = fixture.Lineage();
         EventAddress anchor = lineage.CapturedHead;
         PublishedRecapDescriptor descriptor =
             await fixture.PublishAsync(
                 anchor,
-                lineage.HeadToRoot[2].Address
+                lineage.CurrentPrefix.HeadToOldest[2].Address
             );
         await File.AppendAllTextAsync(
             Path.Combine(
@@ -497,11 +499,11 @@ public sealed class DerivedRecapStoreTests {
                 ),
                 historyPairs: 1
             );
-        SessionCurrentLineageSnapshot lineage = fixture.Lineage();
+        DerivedRecapLineageView lineage = fixture.Lineage();
         EventAddress anchor = lineage.CapturedHead;
         RecapBlockPlan plan = fixture.CreateMaintainPlan(
             anchor,
-            lineage.HeadToRoot[2].Address
+            lineage.CurrentPrefix.HeadToOldest[2].Address
         );
         DerivedRecapSetManifest manifest =
             DerivedRecapCodec.CreateManifest(
@@ -557,15 +559,15 @@ public sealed class DerivedRecapStoreTests {
     public async Task StrictOrdinalCountsInvalidExactSetWithoutFallback() {
         using RecapStoreFixture fixture =
             await RecapStoreFixture.CreateAsync();
-        SessionCurrentLineageSnapshot firstLineage = fixture.Lineage();
+        DerivedRecapLineageView firstLineage = fixture.Lineage();
         EventAddress first = firstLineage.CapturedHead;
         await fixture.PublishAsync(
             first,
-            firstLineage.HeadToRoot[2].Address,
+            firstLineage.CurrentPrefix.HeadToOldest[2].Address,
             content: "older"
         );
         EventAddress second = fixture.AppendPair("newer");
-        SessionCurrentLineageSnapshot secondLineage =
+        DerivedRecapLineageView secondLineage =
             fixture.Lineage();
         await fixture.PublishAsync(
             second,
@@ -602,11 +604,11 @@ public sealed class DerivedRecapStoreTests {
     public async Task InvalidPlanConstructorMapsToExactInvalid() {
         using RecapStoreFixture fixture =
             await RecapStoreFixture.CreateAsync();
-        SessionCurrentLineageSnapshot lineage = fixture.Lineage();
+        DerivedRecapLineageView lineage = fixture.Lineage();
         EventAddress anchor = lineage.CapturedHead;
         await fixture.PublishAsync(
             anchor,
-            lineage.HeadToRoot[2].Address
+            lineage.CurrentPrefix.HeadToOldest[2].Address
         );
         string publicationPath = Path.Combine(
             fixture.Store.GetPublishedPathForTest(anchor),
@@ -632,11 +634,11 @@ public sealed class DerivedRecapStoreTests {
     public async Task NthPreviousAndOrdinalUnavailableAreRawLineageBased() {
         using RecapStoreFixture fixture =
             await RecapStoreFixture.CreateAsync();
-        SessionCurrentLineageSnapshot initial = fixture.Lineage();
+        DerivedRecapLineageView initial = fixture.Lineage();
         EventAddress first = initial.CapturedHead;
         await fixture.PublishAsync(
             first,
-            initial.HeadToRoot[2].Address,
+            initial.CurrentPrefix.HeadToOldest[2].Address,
             content: "first"
         );
         EventAddress second = fixture.AppendPair("second");
@@ -645,7 +647,7 @@ public sealed class DerivedRecapStoreTests {
             first,
             content: "second"
         );
-        SessionCurrentLineageSnapshot lineage = fixture.Lineage();
+        DerivedRecapLineageView lineage = fixture.Lineage();
 
         Assert.Equal(
             second,
@@ -668,10 +670,10 @@ public sealed class DerivedRecapStoreTests {
     public async Task FinalGateRejectsRetroactivePublication() {
         using RecapStoreFixture fixture =
             await RecapStoreFixture.CreateAsync(historyPairs: 5);
-        SessionCurrentLineageSnapshot lineage = fixture.Lineage();
-        EventAddress newer = lineage.HeadToRoot[0].Address;
-        EventAddress older = lineage.HeadToRoot[2].Address;
-        EventAddress olderReplay = lineage.HeadToRoot[4].Address;
+        DerivedRecapLineageView lineage = fixture.Lineage();
+        EventAddress newer = lineage.CurrentPrefix.HeadToOldest[0].Address;
+        EventAddress older = lineage.CurrentPrefix.HeadToOldest[2].Address;
+        EventAddress olderReplay = lineage.CurrentPrefix.HeadToOldest[4].Address;
 
         RecapBlockPlan olderPlan =
             fixture.CreateMaintainPlan(older, olderReplay);
@@ -702,15 +704,16 @@ public sealed class DerivedRecapStoreTests {
         RecapPublishability result =
             await fixture.Publisher.CanPublishAsync(older);
 
-        Assert.False(result.IsPublishable);
+        var notPublishable = Assert.IsType<
+            RecapPublishability.NotPublishable
+        >(result);
         Assert.Contains(
-            result.Defects,
+            notPublishable.Defects,
             static defect =>
                 defect.Code == "RetroactivePublication"
         );
-        await Assert.ThrowsAsync<InvalidDataException>(
-            async () =>
-                await fixture.Publisher.PublishAsync(older)
+        Assert.IsType<PublishRecapResult.NotPublishable>(
+            await fixture.Publisher.PublishAsync(older)
         );
     }
 
@@ -718,11 +721,11 @@ public sealed class DerivedRecapStoreTests {
     public async Task CreateBuildingFreezesExactInheritSource() {
         using RecapStoreFixture fixture =
             await RecapStoreFixture.CreateAsync(historyPairs: 4);
-        SessionCurrentLineageSnapshot lineage = fixture.Lineage();
-        EventAddress target = lineage.HeadToRoot[0].Address;
-        EventAddress source = lineage.HeadToRoot[2].Address;
+        DerivedRecapLineageView lineage = fixture.Lineage();
+        EventAddress target = lineage.CurrentPrefix.HeadToOldest[0].Address;
+        EventAddress source = lineage.CurrentPrefix.HeadToOldest[2].Address;
         EventAddress replayStart =
-            lineage.HeadToRoot[^1].Address;
+            lineage.CurrentPrefix.HeadToOldest[^1].Address;
         var id = new RecapBlockId("roleplay.self");
         var targetPath = new ContextHeaderBlockPath(
             ContextHeaderCarrier.System,
@@ -773,13 +776,13 @@ public sealed class DerivedRecapStoreTests {
     public async Task ExistingCatchUpShapePreservesEarlyEndpoint() {
         using RecapStoreFixture fixture =
             await RecapStoreFixture.CreateAsync(historyPairs: 5);
-        SessionCurrentLineageSnapshot lineage = fixture.Lineage();
-        EventAddress target = lineage.HeadToRoot[0].Address;
-        EventAddress source = lineage.HeadToRoot[4].Address;
+        DerivedRecapLineageView lineage = fixture.Lineage();
+        EventAddress target = lineage.CurrentPrefix.HeadToOldest[0].Address;
+        EventAddress source = lineage.CurrentPrefix.HeadToOldest[4].Address;
         EventAddress earlyEndpoint =
-            lineage.HeadToRoot[6].Address;
+            lineage.CurrentPrefix.HeadToOldest[6].Address;
         EventAddress absorbedThrough =
-            lineage.HeadToRoot[8].Address;
+            lineage.CurrentPrefix.HeadToOldest[8].Address;
         var id = new RecapBlockId("roleplay.self");
         var targetPath = new ContextHeaderBlockPath(
             ContextHeaderCarrier.System,
@@ -825,11 +828,11 @@ public sealed class DerivedRecapStoreTests {
             decodedPlan.CatchUpThrough
         );
         Assert.True(
-            lineage.HeadToRoot
+            lineage.CurrentPrefix.HeadToOldest
                     .Select(static node => node.Address)
                     .ToList()
                     .IndexOf(earlyEndpoint)
-                > lineage.HeadToRoot
+                > lineage.CurrentPrefix.HeadToOldest
                     .Select(static node => node.Address)
                     .ToList()
                     .IndexOf(source)
@@ -840,11 +843,11 @@ public sealed class DerivedRecapStoreTests {
     public async Task PublishDestinationExistsFailsWithoutOverwrite() {
         using RecapStoreFixture fixture =
             await RecapStoreFixture.CreateAsync();
-        SessionCurrentLineageSnapshot lineage = fixture.Lineage();
+        DerivedRecapLineageView lineage = fixture.Lineage();
         EventAddress anchor = lineage.CapturedHead;
         RecapBlockPlan plan = fixture.CreateMaintainPlan(
             anchor,
-            lineage.HeadToRoot[2].Address
+            lineage.CurrentPrefix.HeadToOldest[2].Address
         );
         DerivedRecapSetManifest manifest =
             DerivedRecapCodec.CreateManifest(
@@ -914,9 +917,9 @@ public sealed class DerivedRecapStoreTests {
     public async Task RewindMakesPublishedAnchorInvisible() {
         using RecapStoreFixture fixture =
             await RecapStoreFixture.CreateAsync();
-        SessionCurrentLineageSnapshot lineage = fixture.Lineage();
+        DerivedRecapLineageView lineage = fixture.Lineage();
         EventAddress published = lineage.CapturedHead;
-        EventAddress rewindTo = lineage.HeadToRoot[2].Address;
+        EventAddress rewindTo = lineage.CurrentPrefix.HeadToOldest[2].Address;
         await fixture.PublishAsync(
             published,
             rewindTo,
@@ -952,9 +955,9 @@ public sealed class DerivedRecapStoreTests {
                         )
                 )
             );
-        SessionCurrentLineageSnapshot lineage = fixture.Lineage();
+        DerivedRecapLineageView lineage = fixture.Lineage();
         EventAddress anchor = lineage.CapturedHead;
-        EventAddress replay = lineage.HeadToRoot[2].Address;
+        EventAddress replay = lineage.CurrentPrefix.HeadToOldest[2].Address;
         RecapBlockPlan plan =
             fixture.CreateMaintainPlan(anchor, replay);
         DerivedRecapSetManifest manifest =
@@ -969,8 +972,9 @@ public sealed class DerivedRecapStoreTests {
         await RecapStoreTestDriver.InstallFinalAsync(
             fixture.Store,
             anchor, block);
-        PublishedRecapDescriptor descriptor =
-            await fixture.Publisher.PublishAsync(anchor);
+        PublishedRecapDescriptor descriptor = Assert.IsType<
+            PublishRecapResult.Published
+        >(await fixture.Publisher.PublishAsync(anchor)).Descriptor;
         publicationPath = Path.Combine(
             fixture.Store.GetPublishedPathForTest(anchor),
             "publication.json"
@@ -987,38 +991,34 @@ public sealed class DerivedRecapStoreTests {
     }
 
     [Fact]
-    public async Task TenThousandColdHeadersUsePointLookupSemantics() {
+    public async Task TruncatedColdLineageIsTypedBeyondPrefix() {
         using RecapStoreFixture fixture =
-            await RecapStoreFixture.CreateAsync();
-        var nodes = new SessionCurrentLineageHeader[10_000];
-        EventAddress? parent = null;
-        for (int index = nodes.Length - 1; index >= 0; index--) {
-            var address = new EventAddress(
-                SizedPtr.FromPacked((ulong)index + 1),
-                1,
-                AddressHint.None
-            );
-            nodes[index] = new SessionCurrentLineageHeader(
-                address,
-                parent,
-                SessionEventKind.ObservationAccepted
-            );
-            parent = address;
-        }
-        var snapshot = new SessionCurrentLineageSnapshot(
-            nodes[0].Address,
-            Array.AsReadOnly(nodes),
-            new SessionCurrentLineageDiagnostics(
-                HeaderVisits: nodes.Length,
-                PayloadReads: 0,
-                DecodedPayloadBytes: 0
-            )
+            await RecapStoreFixture.CreateAsync(historyPairs: 257);
+        DerivedRecapLineageView lineage = fixture.Lineage();
+
+        var beyond = Assert.IsType<DerivedRecapSelection.BeyondPrefix>(
+            await lineage.SelectNthPreviousAsync(0)
+        );
+        Assert.Equal(513, beyond.Evidence.HeaderCount);
+        Assert.Equal(0, lineage.CurrentPrefix.Diagnostics.PayloadReads);
+    }
+
+    [Fact]
+    public async Task InsufficientStrictOrdinalOnTruncatedLineageIsBeyondPrefix() {
+        using RecapStoreFixture fixture =
+            await RecapStoreFixture.CreateAsync(historyPairs: 257);
+        DerivedRecapLineageView lineage = fixture.Lineage();
+        _ = await fixture.PublishAsync(
+            lineage.CapturedHead,
+            lineage.CurrentPrefix.HeadToOldest[2].Address
         );
 
-        Assert.IsType<DerivedRecapSelection.EmptyLineage>(
-            await fixture.Store.SelectNthPreviousAsync(snapshot, 0)
+        Assert.IsType<DerivedRecapSelection.BeyondPrefix>(
+            await fixture.Lineage().SelectNthPreviousAsync(1)
         );
-        Assert.Equal(0, snapshot.Diagnostics.PayloadReads);
+        Assert.IsType<DerivedRecapSelection.Selected>(
+            await fixture.Lineage().SelectNthPreviousAsync(0)
+        );
     }
 
     private static string NewPath()

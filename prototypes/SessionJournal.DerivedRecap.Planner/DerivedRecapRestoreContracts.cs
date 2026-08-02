@@ -19,6 +19,10 @@ public abstract record DerivedRecapRestoreResult {
         IReadOnlyList<DerivedRecapRestoreDefect> Defects
     ) : DerivedRecapRestoreResult;
 
+    public sealed record BeyondPrefix(
+        SessionCurrentLineageBeyondPrefix Evidence
+    ) : DerivedRecapRestoreResult;
+
     public sealed record Retryable(string Code, string Detail)
         : DerivedRecapRestoreResult;
 

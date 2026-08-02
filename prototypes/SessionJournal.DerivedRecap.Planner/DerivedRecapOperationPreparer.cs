@@ -180,6 +180,10 @@ public abstract record DerivedRecapOperationPreparationResult {
         }
         public RecapPlannerConfigSnapshot? ConfigSnapshot { get; }
     }
+
+    public sealed record BeyondPrefix(
+        SessionCurrentLineageBeyondPrefix Evidence
+    ) : DerivedRecapOperationPreparationResult;
 }
 
 /// <summary>
@@ -360,7 +364,7 @@ public static class DerivedRecapOperationPreparer {
                 engine,
                 ct
             );
-            return capturedView.Snapshot;
+            return engine.ReadCurrentLineageHeaders(ct);
         }
 
         ValueTask<CurrentLineageBuildingSelection> SelectBuilding(
@@ -387,7 +391,7 @@ public static class DerivedRecapOperationPreparer {
             SessionCurrentLineageSnapshot lineage
         ) {
             if (capturedView is null
-                || !ReferenceEquals(capturedView.Snapshot, lineage)) {
+                || capturedView.CapturedHead != lineage.CapturedHead) {
                 throw new InvalidOperationException(
                     "DerivedRecap preparation lineage view is unavailable."
                 );
@@ -501,6 +505,11 @@ public static class DerivedRecapOperationPreparer {
                         .StoreUnavailable,
                     unavailable.Reason
                 );
+            case CurrentLineageBuildingSelection.BeyondPrefix beyond:
+                return new DerivedRecapOperationPreparationResult
+                    .BeyondPrefix(
+                        beyond.Evidence
+                    );
             case CurrentLineageBuildingSelection.None:
                 break;
             default:
@@ -607,6 +616,11 @@ public static class DerivedRecapOperationPreparer {
                 catalogUnavailable.Defects,
                 configuration
             );
+        }
+        if (frozenCatalog is FrozenCatalogReadResult.BeyondPrefix
+            catalogBeyond) {
+            return new DerivedRecapOperationPreparationResult
+                .BeyondPrefix(catalogBeyond.Evidence);
         }
         if (frozenCatalog is FrozenCatalogReadResult.SourceChanged
             sourceChanged) {
@@ -744,6 +758,10 @@ public static class DerivedRecapOperationPreparer {
                     DerivedRecapOperationPreparationDefectCodes
                         .StoreUnavailable,
                     unavailable.Reason
+                );
+            case DerivedRecapSelection.BeyondPrefix beyond:
+                return new FrozenCatalogReadResult.BeyondPrefix(
+                    beyond.Evidence
                 );
             case DerivedRecapSelection.OrdinalUnavailable:
                 return FrozenCatalogUnavailable(
@@ -961,6 +979,9 @@ public static class DerivedRecapOperationPreparer {
         ) : FrozenCatalogReadResult;
         internal sealed record SourceChanged(string Detail)
             : FrozenCatalogReadResult;
+        internal sealed record BeyondPrefix(
+            SessionCurrentLineageBeyondPrefix Evidence
+        ) : FrozenCatalogReadResult;
         internal sealed record Unavailable(
             IReadOnlyList<DerivedRecapOperationPreparationDefect>
                 Defects

@@ -497,6 +497,10 @@ public sealed class DerivedRecapOnlineLifecycleCoordinator
                 Backpressure(unavailable.Defects),
             DerivedRecapRestoreResult.Unavailable unavailable =>
                 Unavailable(unavailable.Defects),
+            DerivedRecapRestoreResult.BeyondPrefix beyond =>
+                SessionContextLifecycleResult.BeyondPrefix(
+                    beyond.Evidence
+                ),
             DerivedRecapRestoreResult.BlockFailed failed =>
                 Unavailable(failed.Code, failed.Detail),
             _ => throw new InvalidDataException(
@@ -563,6 +567,10 @@ public sealed class DerivedRecapOnlineLifecycleCoordinator
             Backpressure(unavailable.Defects),
         DerivedRecapExecutionResult.Unavailable unavailable =>
             Unavailable(unavailable.Defects),
+        DerivedRecapExecutionResult.BeyondPrefix beyond =>
+            SessionContextLifecycleResult.BeyondPrefix(
+                beyond.Evidence
+            ),
         DerivedRecapExecutionResult.BlockFailed failed =>
             Unavailable(failed.Code, failed.Detail),
         _ => throw new InvalidDataException(
@@ -650,6 +658,10 @@ public sealed class DerivedRecapOnlineLifecycleCoordinator
                 invalid.Defects.Select(static defect =>
                     (defect.Code, defect.Detail)),
                 $"{stage} remains invalid"
+            ),
+        DerivedRecapSelection.BeyondPrefix beyond =>
+            SessionContextLifecycleResult.BeyondPrefix(
+                beyond.Evidence
             ),
         DerivedRecapSelection.StoreUnavailable unavailable =>
             Unavailable("StoreUnavailable", unavailable.Reason),

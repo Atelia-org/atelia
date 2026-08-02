@@ -9,7 +9,7 @@ public sealed class DerivedRecapPublishedRestoreWriteTests {
         using RecapStoreFixture fixture =
             await RecapStoreFixture.CreateAsync(historyPairs: 5);
         (
-            SessionCurrentLineageSnapshot lineage,
+            DerivedRecapLineageView lineage,
             MaintainRecapBlockPlan plan,
             _
         ) = await PublishMaintainAsync(
@@ -97,7 +97,7 @@ public sealed class DerivedRecapPublishedRestoreWriteTests {
         using RecapStoreFixture fixture =
             await RecapStoreFixture.CreateAsync(historyPairs: 4);
         (
-            SessionCurrentLineageSnapshot lineage,
+            DerivedRecapLineageView lineage,
             MaintainRecapBlockPlan plan,
             _
         ) = await PublishMaintainAsync(
@@ -200,7 +200,7 @@ public sealed class DerivedRecapPublishedRestoreWriteTests {
         using RecapStoreFixture fixture =
             await RecapStoreFixture.CreateAsync(historyPairs: 4);
         (
-            SessionCurrentLineageSnapshot lineage,
+            DerivedRecapLineageView lineage,
             MaintainRecapBlockPlan plan,
             PublishedRecapDescriptor oldDescriptor
         ) = await PublishMaintainAsync(
@@ -311,7 +311,7 @@ public sealed class DerivedRecapPublishedRestoreWriteTests {
         using RecapStoreFixture fixture =
             await RecapStoreFixture.CreateAsync(historyPairs: 4);
         (
-            SessionCurrentLineageSnapshot lineage,
+            DerivedRecapLineageView lineage,
             MaintainRecapBlockPlan plan,
             _
         ) = await PublishMaintainAsync(
@@ -366,7 +366,7 @@ public sealed class DerivedRecapPublishedRestoreWriteTests {
         using RecapStoreFixture fixture =
             await RecapStoreFixture.CreateAsync(historyPairs: 6);
         (
-            SessionCurrentLineageSnapshot lineage,
+            DerivedRecapLineageView lineage,
             EventAddress target,
             InheritRecapBlockPlan plan
         ) = await PublishInheritAsync(fixture);
@@ -437,7 +437,7 @@ public sealed class DerivedRecapPublishedRestoreWriteTests {
             );
         engine = fixture.Engine;
         (
-            SessionCurrentLineageSnapshot lineage,
+            DerivedRecapLineageView lineage,
             MaintainRecapBlockPlan plan,
             PublishedRecapDescriptor oldDescriptor
         ) = await PublishMaintainAsync(
@@ -445,7 +445,7 @@ public sealed class DerivedRecapPublishedRestoreWriteTests {
             endpointCount: 1
         );
         capturedHead = lineage.CapturedHead;
-        rewindTarget = lineage.HeadToRoot[2].Address;
+        rewindTarget = lineage.CurrentPrefix.HeadToOldest[2].Address;
         EventAddress anchor = plan.CatchUpThrough[^1];
         (
             PublishedRestoreHandle handle,
@@ -527,7 +527,7 @@ public sealed class DerivedRecapPublishedRestoreWriteTests {
             );
         engine = fixture.Engine;
         (
-            SessionCurrentLineageSnapshot lineage,
+            DerivedRecapLineageView lineage,
             MaintainRecapBlockPlan plan,
             PublishedRecapDescriptor descriptor
         ) = await PublishMaintainAsync(
@@ -535,7 +535,7 @@ public sealed class DerivedRecapPublishedRestoreWriteTests {
             endpointCount: 1
         );
         capturedHead = lineage.CapturedHead;
-        rewindTarget = lineage.HeadToRoot[2].Address;
+        rewindTarget = lineage.CurrentPrefix.HeadToOldest[2].Address;
         PublishedRestoreInspection inspection =
             await RequireInspectionAsync(
                 fixture,
@@ -581,7 +581,7 @@ public sealed class DerivedRecapPublishedRestoreWriteTests {
         using RecapStoreFixture fixture =
             await RecapStoreFixture.CreateAsync(historyPairs: 4);
         (
-            SessionCurrentLineageSnapshot lineage,
+            DerivedRecapLineageView lineage,
             MaintainRecapBlockPlan plan,
             PublishedRecapDescriptor descriptor
         ) = await PublishMaintainAsync(
@@ -638,7 +638,7 @@ public sealed class DerivedRecapPublishedRestoreWriteTests {
         using RecapStoreFixture fixture =
             await RecapStoreFixture.CreateAsync(historyPairs: 4);
         (
-            SessionCurrentLineageSnapshot lineage,
+            DerivedRecapLineageView lineage,
             MaintainRecapBlockPlan plan,
             PublishedRecapDescriptor descriptor
         ) = await PublishMaintainAsync(
@@ -695,18 +695,18 @@ public sealed class DerivedRecapPublishedRestoreWriteTests {
     }
 
     private static async ValueTask<(
-        SessionCurrentLineageSnapshot Lineage,
+        DerivedRecapLineageView Lineage,
         MaintainRecapBlockPlan Plan,
         PublishedRecapDescriptor Descriptor
     )> PublishMaintainAsync(
         RecapStoreFixture fixture,
         int endpointCount
     ) {
-        SessionCurrentLineageSnapshot lineage = fixture.Lineage();
+        DerivedRecapLineageView lineage = fixture.Lineage();
         EventAddress anchor = lineage.CapturedHead;
         EventAddress[] endpoints = endpointCount switch {
             1 => [anchor],
-            2 => [lineage.HeadToRoot[2].Address, anchor],
+            2 => [lineage.CurrentPrefix.HeadToOldest[2].Address, anchor],
             _ => throw new ArgumentOutOfRangeException(
                 nameof(endpointCount)
             )
@@ -720,7 +720,7 @@ public sealed class DerivedRecapPublishedRestoreWriteTests {
             "roleplay.autobiographical",
             RecapTestIdentity.CapabilityFingerprint,
             new EmptyRecapMaintainSource(
-                lineage.HeadToRoot[^1].Address
+                lineage.CurrentPrefix.HeadToOldest[^1].Address
             ),
             endpoints,
             EmptyRecapPriorContext.Instance
@@ -743,26 +743,27 @@ public sealed class DerivedRecapPublishedRestoreWriteTests {
                 "committed"
             )
         );
-        PublishedRecapDescriptor descriptor =
-            await fixture.Publisher.PublishAsync(anchor);
+        PublishedRecapDescriptor descriptor = Assert.IsType<
+            PublishRecapResult.Published
+        >(await fixture.Publisher.PublishAsync(anchor)).Descriptor;
         return (lineage, plan, descriptor);
     }
 
     private static async ValueTask<(
-        SessionCurrentLineageSnapshot Lineage,
+        DerivedRecapLineageView Lineage,
         EventAddress Target,
         InheritRecapBlockPlan Plan
     )> PublishInheritAsync(
         RecapStoreFixture fixture
     ) {
-        SessionCurrentLineageSnapshot lineage = fixture.Lineage();
+        DerivedRecapLineageView lineage = fixture.Lineage();
         EventAddress target = lineage.CapturedHead;
-        EventAddress source = lineage.HeadToRoot[4].Address;
+        EventAddress source = lineage.CurrentPrefix.HeadToOldest[4].Address;
         const string sourceContent = "source recap";
         PublishedRecapDescriptor sourceDescriptor =
             await fixture.PublishAsync(
                 source,
-                lineage.HeadToRoot[^1].Address,
+                lineage.CurrentPrefix.HeadToOldest[^1].Address,
                 content: sourceContent
             );
         var id = new RecapBlockId("roleplay.self");
@@ -812,7 +813,7 @@ public sealed class DerivedRecapPublishedRestoreWriteTests {
         string FinalToken
     )> InstallPendingAsync(
         RecapStoreFixture fixture,
-        SessionCurrentLineageSnapshot lineage,
+        DerivedRecapLineageView lineage,
         MaintainRecapBlockPlan plan,
         string content
     ) {
@@ -876,7 +877,7 @@ public sealed class DerivedRecapPublishedRestoreWriteTests {
         RequireInspectionAsync(
         RecapStoreFixture fixture,
         EventAddress anchor,
-        SessionCurrentLineageSnapshot lineage
+        DerivedRecapLineageView lineage
     ) => Assert.IsType<
         PublishedRestoreInspectionResult.Available
     >(

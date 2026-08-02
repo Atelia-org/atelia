@@ -41,12 +41,12 @@ public sealed class DerivedRecapCurrentLineageBuildingTests {
     public async Task SingleCurrentLineageMembershipIsReadExactly() {
         using RecapStoreFixture fixture =
             await RecapStoreFixture.CreateAsync(historyPairs: 3);
-        SessionCurrentLineageSnapshot lineage = fixture.Lineage();
-        EventAddress anchor = lineage.HeadToRoot[0].Address;
+        DerivedRecapLineageView lineage = fixture.Lineage();
+        EventAddress anchor = lineage.CurrentPrefix.HeadToOldest[0].Address;
         DerivedRecapSetManifest manifest = CreateManifest(
             fixture,
             anchor,
-            lineage.HeadToRoot[2].Address
+            lineage.CurrentPrefix.HeadToOldest[2].Address
         );
         _ = Assert.IsType<CreateBuildingResult.Created>(
             await fixture.Store.CreateBuildingAsync(manifest)
@@ -72,7 +72,7 @@ public sealed class DerivedRecapCurrentLineageBuildingTests {
     public async Task DotStagingAndOffLineageMembershipAreIgnored() {
         using RecapStoreFixture fixture =
             await RecapStoreFixture.CreateAsync(historyPairs: 3);
-        SessionCurrentLineageSnapshot lineage = fixture.Lineage();
+        DerivedRecapLineageView lineage = fixture.Lineage();
         EventAddress offLineage = new(
             SizedPtr.FromPacked(ulong.MaxValue),
             uint.MaxValue,
@@ -83,7 +83,7 @@ public sealed class DerivedRecapCurrentLineageBuildingTests {
                 CreateManifest(
                     fixture,
                     offLineage,
-                    lineage.HeadToRoot[2].Address
+                    lineage.CurrentPrefix.HeadToOldest[2].Address
                 )
             )
         );
@@ -107,10 +107,10 @@ public sealed class DerivedRecapCurrentLineageBuildingTests {
     public async Task MultipleCurrentLineageMembershipsAreNotGuessed() {
         using RecapStoreFixture fixture =
             await RecapStoreFixture.CreateAsync(historyPairs: 4);
-        SessionCurrentLineageSnapshot lineage = fixture.Lineage();
-        EventAddress newer = lineage.HeadToRoot[0].Address;
-        EventAddress older = lineage.HeadToRoot[2].Address;
-        EventAddress replayStart = lineage.HeadToRoot[4].Address;
+        DerivedRecapLineageView lineage = fixture.Lineage();
+        EventAddress newer = lineage.CurrentPrefix.HeadToOldest[0].Address;
+        EventAddress older = lineage.CurrentPrefix.HeadToOldest[2].Address;
+        EventAddress replayStart = lineage.CurrentPrefix.HeadToOldest[4].Address;
         _ = Assert.IsType<CreateBuildingResult.Created>(
             await fixture.Store.CreateBuildingAsync(
                 CreateManifest(fixture, older, replayStart, "older")
@@ -137,13 +137,13 @@ public sealed class DerivedRecapCurrentLineageBuildingTests {
     public async Task BuildingNotNewerThanLatestPublishedIsStale() {
         using RecapStoreFixture fixture =
             await RecapStoreFixture.CreateAsync(historyPairs: 4);
-        SessionCurrentLineageSnapshot lineage = fixture.Lineage();
+        DerivedRecapLineageView lineage = fixture.Lineage();
         EventAddress publishedAnchor =
-            lineage.HeadToRoot[0].Address;
+            lineage.CurrentPrefix.HeadToOldest[0].Address;
         EventAddress staleBuilding =
-            lineage.HeadToRoot[2].Address;
+            lineage.CurrentPrefix.HeadToOldest[2].Address;
         EventAddress replayStart =
-            lineage.HeadToRoot[4].Address;
+            lineage.CurrentPrefix.HeadToOldest[4].Address;
         _ = Assert.IsType<CreateBuildingResult.Created>(
             await fixture.Store.CreateBuildingAsync(
                 CreateManifest(
@@ -176,14 +176,14 @@ public sealed class DerivedRecapCurrentLineageBuildingTests {
     public async Task InvalidExactMembershipIsTypedInvalid() {
         using RecapStoreFixture fixture =
             await RecapStoreFixture.CreateAsync(historyPairs: 3);
-        SessionCurrentLineageSnapshot lineage = fixture.Lineage();
+        DerivedRecapLineageView lineage = fixture.Lineage();
         EventAddress anchor = lineage.CapturedHead;
         _ = Assert.IsType<CreateBuildingResult.Created>(
             await fixture.Store.CreateBuildingAsync(
                 CreateManifest(
                     fixture,
                     anchor,
-                    lineage.HeadToRoot[2].Address
+                    lineage.CurrentPrefix.HeadToOldest[2].Address
                 )
             )
         );
@@ -211,11 +211,11 @@ public sealed class DerivedRecapCurrentLineageBuildingTests {
     public async Task TrustedInstallerRejectsOtherActiveBuildingButLowLevelDoesNot() {
         using RecapStoreFixture fixture =
             await RecapStoreFixture.CreateAsync(historyPairs: 4);
-        SessionCurrentLineageSnapshot lineage = fixture.Lineage();
-        EventAddress target = lineage.HeadToRoot[0].Address;
-        EventAddress other = lineage.HeadToRoot[2].Address;
+        DerivedRecapLineageView lineage = fixture.Lineage();
+        EventAddress target = lineage.CurrentPrefix.HeadToOldest[0].Address;
+        EventAddress other = lineage.CurrentPrefix.HeadToOldest[2].Address;
         EventAddress replayStart =
-            lineage.HeadToRoot[4].Address;
+            lineage.CurrentPrefix.HeadToOldest[4].Address;
         _ = Assert.IsType<CreateBuildingResult.Created>(
             await fixture.Store.CreateBuildingAsync(
                 CreateManifest(
@@ -261,6 +261,70 @@ public sealed class DerivedRecapCurrentLineageBuildingTests {
                 )
             )
         );
+    }
+
+    [Fact]
+    public async Task BuildingBeyondCurrentPrefixIsTypedWithoutExactRead() {
+        using RecapStoreFixture fixture =
+            await RecapStoreFixture.CreateAsync(historyPairs: 1);
+        DerivedRecapLineageView initial = fixture.Lineage();
+        EventAddress oldAnchor = initial.CapturedHead;
+        _ = Assert.IsType<CreateBuildingResult.Created>(
+            await fixture.Store.CreateBuildingAsync(
+                CreateManifest(
+                    fixture,
+                    oldAnchor,
+                    initial.CurrentPrefix.HeadToOldest[^1].Address
+                )
+            )
+        );
+        await File.WriteAllTextAsync(
+            Path.Combine(
+                fixture.Store.GetBuildingPathForTest(oldAnchor),
+                "manifest.json"
+            ),
+            "damaged"
+        );
+        for (int index = 0; index < 257; index++) {
+            _ = fixture.AppendPair($"tail-{index}");
+        }
+
+        var beyond = Assert.IsType<
+            CurrentLineageBuildingSelection.BeyondPrefix
+        >(await fixture.Lineage().SelectCurrentBuildingAsync());
+
+        Assert.Equal(oldAnchor, beyond.Evidence.RequiredAnchor);
+        Assert.Equal(513, beyond.Evidence.HeaderCount);
+    }
+
+    [Fact]
+    public async Task BuildingInventoryOverCapIsStoreUnavailable() {
+        using RecapStoreFixture fixture =
+            await RecapStoreFixture.CreateAsync(historyPairs: 1);
+        for (int index = 0;
+             index < DerivedRecapStore.MaxBuildingInventoryEntries;
+             index++) {
+            var address = new EventAddress(
+                SizedPtr.FromPacked(ulong.MaxValue - (ulong)index),
+                (uint)index + 1,
+                AddressHint.None
+            );
+            Directory.CreateDirectory(
+                fixture.Store.GetBuildingPathForTest(address)
+            );
+        }
+        string buildingRoot = Path.GetDirectoryName(
+            fixture.Store.GetBuildingPathForTest(
+                fixture.Lineage().CapturedHead
+            )
+        )!;
+        Directory.CreateDirectory(
+            Path.Combine(buildingRoot, ".staging-over-cap")
+        );
+
+        Assert.IsType<
+            CurrentLineageBuildingSelection.StoreUnavailable
+        >(await fixture.Lineage().SelectCurrentBuildingAsync());
     }
 
     private static DerivedRecapSetManifest CreateManifest(

@@ -340,10 +340,11 @@ internal static class Program {
         string repositoryPath,
         SessionCurrentLineageSnapshot lineage
     ) {
+        DerivedRecapLineageView lineageView =
+            DerivedRecapLineageView.Capture(store, engine);
         PublishedRestoreInspectionResult.Available available =
-            await store.InspectPublishedForRestoreAsync(
-                    lineage.CapturedHead,
-                    lineage
+            await lineageView.InspectPublishedForRestoreAsync(
+                    lineage.CapturedHead
                 )
                 is PublishedRestoreInspectionResult.Available exact
                     ? exact

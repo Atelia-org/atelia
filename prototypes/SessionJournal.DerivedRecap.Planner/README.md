@@ -45,6 +45,19 @@ repo config -> Host resolves one immutable composition snapshot
 - `NthPrevious`是 strict ordinal；损坏 slot不跳过；
 - Recap Store是可删除重建的 sidecar，Planner不向 raw journal写 recap identity。
 
+## B1 bounded Store boundary
+
+Planner当前通过 engine-bound `DerivedRecapLineageView`调用 Store selection、Building
+admission、Publish和Restore，并把 Store的结构化 `BeyondPrefix` evidence逐层传递到 execution、
+restore及online lifecycle结果；不会把它降级成普通字符串或扫描完整raw lineage来猜答案。
+
+这一收口只覆盖 Store authority boundary。Planner内部用于 HistoryUnit projection、cadence、
+route和planning window的若干路径仍读取完整 `SessionCurrentLineageSnapshot`；把这些online
+planning路径迁移到bounded API属于后续 B2。因而目前不能把整个 Planner/online chain描述成
+已经bounded。特别是当 513-header prefix之外可能存在 prior Published baseline时，B1 preflight
+只能返回 `BeyondPrefix`，不能伪造exact raw-growth count；只有baseline能在prefix内确定且配置
+limit更小时，才可能报告exact `RawSafetyRejected`。
+
 ## 引用
 
 ```xml

@@ -38,10 +38,21 @@ the Store's per-Ref exclusive lock, publication:
 
 Application code reads current-lineage state through
 `DerivedRecapLineageView.Capture(store, engine)`. The view verifies the same
-repository path and `RefId`, captures its own engine snapshot, and keeps that
-snapshot paired with the Store for all selection and restore inspection calls.
-Snapshot-taking Store methods remain internal trusted/test seams; callers
-cannot inject a public snapshot.
+repository path and `RefId`, captures at most 513 header-only entries from the
+current lineage, and keeps that engine-bound prefix paired with the Store for
+all selection and restore inspection calls. Resolving a set admission anchor
+captures a second, historical prefix of at most 513 headers starting at that
+anchor. Callers cannot inject a public snapshot or prefix.
+
+The bounded result surface fails closed. If the required anchor or strict
+ordinal could exist only beyond a truncated prefix, Store returns typed
+`BeyondPrefix` evidence containing the required anchor, captured head, header
+count, and continuation address; it does not fall back to a full-lineage scan.
+Current-lineage Building inventory scans only direct entries and stops after
+1,025 observations: at most 1,024 entries are accepted, while an over-cap or
+unreadable inventory returns typed `StoreUnavailable`. Staging and malformed
+entries do not become semantic Building candidates, but still count toward
+that resource bound.
 
 Building creation has the same authority boundary. Application code uses
 `DerivedRecapBuildingInstaller`, while direct `CreateBuildingAsync` remains an
@@ -50,6 +61,13 @@ installer validates admission anchor, replay routes, prior-context anchors,
 source anchors, and non-retroactive publication against its captured lineage.
 Current Building execution supports Empty, Existing, and Inherit sources;
 referenced Published sources are reread exactly and frozen into the Building.
+
+`DerivedRecapPublisher.PublishAsync` is also a closed result contract:
+`Published`, `NotPublishable`, `BeyondPrefix`, `StoreUnavailable`, or
+`RawHeadChanged`. Admission and historical source validation occurs before
+staging/sealing writes, and the final raw-head fence remains immediately before
+promotion. These authority and resource-bound changes do not change durable
+Store, manifest, block, frozen-input, or publication-envelope schemas.
 
 ## Durability evidence
 

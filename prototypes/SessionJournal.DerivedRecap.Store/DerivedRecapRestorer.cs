@@ -31,8 +31,12 @@ public sealed class DerivedRecapRestorer {
     ) {
         ArgumentNullException.ThrowIfNull(handle);
         ArgumentNullException.ThrowIfNull(expectedFinalStateTokens);
-        SessionCurrentLineageSnapshot lineage =
-            _engine.ReadCurrentLineageHeaders(cancellationToken);
+        DerivedRecapLineageView lineage =
+            DerivedRecapLineageView.Capture(
+                _store,
+                _engine,
+                cancellationToken
+            );
         if (lineage.CapturedHead != expectedRawHead) {
             return ValueTask.FromResult<
                 PublishedEnvelopeCommitResult

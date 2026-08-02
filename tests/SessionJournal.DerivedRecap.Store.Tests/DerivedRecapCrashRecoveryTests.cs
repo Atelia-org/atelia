@@ -28,7 +28,7 @@ public sealed class DerivedRecapCrashRecoveryTests {
             );
             DerivedRecapSelection selection =
                 await store.SelectNthPreviousAsync(
-                    engine.ReadCurrentLineageHeaders(),
+                    DerivedRecapLineageView.Capture(store, engine),
                     0
                 );
             if (rootCommitted) {
@@ -69,8 +69,8 @@ public sealed class DerivedRecapCrashRecoveryTests {
                 path,
                 engine.BranchRefId
             );
-            SessionCurrentLineageSnapshot lineage =
-                engine.ReadCurrentLineageHeaders();
+            DerivedRecapLineageView lineage =
+                DerivedRecapLineageView.Capture(store, engine);
             DerivedRecapSelection selection =
                 await store.SelectNthPreviousAsync(lineage, 0);
             if (published) {
@@ -170,7 +170,10 @@ public sealed class DerivedRecapCrashRecoveryTests {
             _ = await publisher.PublishAsync(anchor);
             Assert.IsType<DerivedRecapSelection.Selected>(
                 await reopenedStore.SelectNthPreviousAsync(
-                    reopened.ReadCurrentLineageHeaders(),
+                    DerivedRecapLineageView.Capture(
+                        reopenedStore,
+                        reopened
+                    ),
                     0
                 )
             );
@@ -211,7 +214,10 @@ public sealed class DerivedRecapCrashRecoveryTests {
             );
             DerivedRecapSelection selection =
                 await reopenedStore.SelectNthPreviousAsync(
-                    reopened.ReadCurrentLineageHeaders(),
+                    DerivedRecapLineageView.Capture(
+                        reopenedStore,
+                        reopened
+                    ),
                     0
                 );
             if (newRootCommitted) {
@@ -284,7 +290,7 @@ public sealed class DerivedRecapCrashRecoveryTests {
             }
             Assert.IsType<DerivedRecapSelection.EmptyLineage>(
                 await store.SelectNthPreviousAsync(
-                    engine.ReadCurrentLineageHeaders(),
+                    DerivedRecapLineageView.Capture(store, engine),
                     0
                 )
             );
@@ -378,8 +384,8 @@ public sealed class DerivedRecapCrashRecoveryTests {
                     path,
                     engine.BranchRefId
                 );
-                SessionCurrentLineageSnapshot lineage =
-                    engine.ReadCurrentLineageHeaders();
+                DerivedRecapLineageView lineage =
+                    DerivedRecapLineageView.Capture(store, engine);
                 anchor = lineage.CapturedHead;
                 DerivedRecapSelection
                     .ExactPublishedSetInvalid invalid =
@@ -600,7 +606,7 @@ public sealed class DerivedRecapCrashRecoveryTests {
             DerivedRecapSelection.ExactPublishedSetInvalid
         >(
             await store.SelectNthPreviousAsync(
-                engine.ReadCurrentLineageHeaders(),
+                DerivedRecapLineageView.Capture(store, engine),
                 0
             )
         );
@@ -621,7 +627,7 @@ public sealed class DerivedRecapCrashRecoveryTests {
         var selected =
             Assert.IsType<DerivedRecapSelection.Selected>(
                 await store.SelectNthPreviousAsync(
-                    engine.ReadCurrentLineageHeaders(),
+                    DerivedRecapLineageView.Capture(store, engine),
                     0
                 )
             );
