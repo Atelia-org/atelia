@@ -76,7 +76,7 @@ public sealed record SessionCurrentLineageDiagnostics(
 /// The next Parent address required to continue a deliberately bounded lineage read.
 /// </summary>
 public sealed class SessionCurrentLineageContinuation {
-    public SessionCurrentLineageContinuation(EventAddress nextAddress) {
+    internal SessionCurrentLineageContinuation(EventAddress nextAddress) {
         if (nextAddress == default) {
             throw new ArgumentException(
                 "A lineage continuation address cannot be default.",
@@ -94,7 +94,7 @@ public sealed class SessionCurrentLineageContinuation {
 /// This is not evidence that the anchor is off the selected lineage.
 /// </summary>
 public sealed class SessionCurrentLineageBeyondPrefix {
-    public SessionCurrentLineageBeyondPrefix(
+    internal SessionCurrentLineageBeyondPrefix(
         EventAddress requiredAnchor,
         EventAddress capturedHead,
         int headerCount,
@@ -179,7 +179,7 @@ public abstract class SessionCurrentLineageAnchorLookup {
 public sealed class SessionCurrentLineagePrefix {
     private readonly IReadOnlyDictionary<EventAddress, int> _indexes;
 
-    public SessionCurrentLineagePrefix(
+    internal SessionCurrentLineagePrefix(
         EventAddress capturedHead,
         int maxHeaderCount,
         IReadOnlyList<SessionCurrentLineageHeader> headToOldest,
@@ -212,6 +212,12 @@ public sealed class SessionCurrentLineagePrefix {
         ];
         for (int index = 0; index < entries.Length; index++) {
             entries[index] = headToOldest[index];
+        }
+        if (entries[0] is null) {
+            throw new ArgumentException(
+                "A bounded lineage prefix cannot contain a null header.",
+                nameof(headToOldest)
+            );
         }
         if (entries[0].Address != capturedHead) {
             throw new ArgumentException(

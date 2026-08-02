@@ -115,6 +115,46 @@ public sealed class SessionContextCandidateProviderRouteTests : IDisposable {
         Assert.Equal(0, client.Calls);
     }
 
+    [Fact]
+    public async Task AwaitingAgentActionResume_BeyondPrefixPreservesHeadAndProviderState() {
+        string path = NewJournalPath();
+        var client = new ScriptedClient();
+        var source = new TestContextCandidateSource {
+            ForcedStatus =
+                SessionContextCandidateSelectionStatus.BeyondPrefix,
+            SelectionDetail = "resume lineage proof exhausted"
+        };
+        using var engine = SessionJournalEngine.Create(
+            path,
+            CreateOptions()
+        );
+        EventAddress head = engine.AppendObservation("pending");
+        engine.UseRuntime(CreateRuntime(client, source));
+        int selections = source.SelectionCount;
+        int materializations = source.MaterializationCount;
+
+        SessionJournalNotReadyException error =
+            await Assert.ThrowsAsync<SessionJournalNotReadyException>(
+                () => engine.ResumeAsync(CancellationToken.None)
+            );
+
+        Assert.Equal(
+            SessionJournalNotReadyReason.ContextCandidateUnavailable,
+            error.Reason
+        );
+        Assert.Equal(head, engine.InspectExecutionBoundary().Head);
+        Assert.Equal(
+            SessionExecutionPhase.AwaitingAgentAction,
+            engine.InspectExecutionBoundary().Phase
+        );
+        Assert.Equal(selections + 1, source.SelectionCount);
+        Assert.Equal(
+            materializations,
+            source.MaterializationCount
+        );
+        Assert.Equal(0, client.Calls);
+    }
+
     [Theory]
     [InlineData(
         SessionContextCandidateSelectionStatus.ExactPublishedSetInvalid,
@@ -1212,6 +1252,73 @@ public sealed class SessionContextCandidateProviderRouteTests : IDisposable {
             reopened.InspectExecutionBoundary().Head
         );
         Assert.Equal(1, client.Calls);
+    }
+
+    [Fact]
+    public async Task ToolResultContinuation_BeyondPrefixPreservesHeadAndProviderState() {
+        string path = NewJournalPath();
+        var client = new ScriptedClient();
+        client.Enqueue(ToolCall("lookup", "call-1"));
+        var source = new TestContextCandidateSource();
+        var tool = new RecordingTool("lookup");
+        SessionRuntime runtime = CreateRuntime(
+            client,
+            source,
+            new ToolRegistry([tool]).CreateSession()
+        );
+        using (var engine =
+               SessionJournalEngine.CreateForTest(
+                   path,
+                   CreateOptions(),
+                   runtime,
+                   new SessionJournalTestHooks(
+                       SessionJournalFailpoint
+                           .AfterToolResultCommitted
+                   )
+               )) {
+            source.Candidate = ContextCandidateTestFixture
+                .CreateAtCurrentHead(engine)
+                .Candidate;
+            _ = await Assert.ThrowsAsync<
+                SessionJournalFailpointException
+            >(
+                () => engine.SendAsync(
+                    "use tool",
+                    CancellationToken.None
+                )
+            );
+        }
+        source.ForcedStatus =
+            SessionContextCandidateSelectionStatus.BeyondPrefix;
+        source.SelectionDetail =
+            "tool continuation lineage proof exhausted";
+        int selections = source.SelectionCount;
+        int materializations = source.MaterializationCount;
+        int providerCalls = client.Calls;
+        using var reopened = SessionJournalEngine.Open(path, runtime);
+        EventAddress head =
+            reopened.InspectExecutionBoundary().Head!.Value;
+
+        SessionJournalNotReadyException error =
+            await Assert.ThrowsAsync<SessionJournalNotReadyException>(
+                () => reopened.ResumeAsync(CancellationToken.None)
+            );
+
+        Assert.Equal(
+            SessionJournalNotReadyReason.ContextCandidateUnavailable,
+            error.Reason
+        );
+        Assert.Equal(head, reopened.InspectExecutionBoundary().Head);
+        Assert.Equal(
+            SessionExecutionPhase.AwaitingAgentAction,
+            reopened.InspectExecutionBoundary().Phase
+        );
+        Assert.Equal(selections + 1, source.SelectionCount);
+        Assert.Equal(
+            materializations,
+            source.MaterializationCount
+        );
+        Assert.Equal(providerCalls, client.Calls);
     }
 
     [Fact]

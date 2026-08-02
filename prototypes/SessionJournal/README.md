@@ -271,8 +271,10 @@ public interface ISessionContextLifecycleCoordinator {
 
 - candidate source按 governing `derivedContext.nthPrevious`选择 strict ordinal，并 materialize
   exact contribution；
-- bounded lineage不足必须返回 `BeyondPrefix`，online preflight/append/completion把它视为
-  `ContextCandidateUnavailable` backpressure；不得伪装成 `EmptyLineage`并退回完整raw history；
+- Core现已提供target-aware bounded lineage/window foundation与neutral `BeyondPrefix`状态；Store/
+  Planner迁移到该foundation后，bounded lineage不足必须返回`BeyondPrefix`，online preflight/
+  append/completion会把它视为`ContextCandidateUnavailable` backpressure，不得伪装成
+  `EmptyLineage`并退回完整raw history；
 - lifecycle可在新 request前执行一次 bounded maintenance/Restore；
 - raw core负责验证 candidate descriptor、setup refs、contribution hashes与 raw suffix；
 - Published exact slot损坏不能跳到更旧 slot，必须恢复同一 slot或返回 not-ready。
@@ -294,8 +296,8 @@ repository path和 `RefId`的同一个 `SessionJournalEngine`实例。
 | `ResolveGoverningSetup(head)` | exact head上的 runtime/system-prompt setup |
 | `ReadHistoryPlanningWindowAtBounded(...)` | payload前证明raw interval上限；返回Available或BeyondPrefix |
 | `ReadHistoryPlanningWindow(...)` | 显式unbounded/offline的dependency-closed planning window |
-| `ReadHistoryPlanningWindowAt(...)` | 在exact historical head执行显式unbounded/offline重放 |
-| `ReadHistoryPlanningSeeds(...)` | 为多个 bounded cursor准备 verified seeds |
+| `ReadHistoryPlanningWindowAt(...)` | 含seeded overload；均为显式unbounded/offline重放 |
+| `ReadHistoryPlanningSeeds(...)` | 显式unbounded/offline地为多个cursor准备verified seeds |
 | `ScanCheckedAuditEvents(...)` | read-only完整审计 scan；供 Offline companion使用 |
 
 `SessionHistoryPlanningUnit`不是 raw event：多个 raw events可能闭合为一个 ToolResults unit，
@@ -303,6 +305,9 @@ Prepared/Started/Failed等 protocol events也可能不产生 HistoryUnit。Plann
 distance冒充 context/history长度。bounded planning的`maxRawEventCount = N`会先读取至多
 `N + 1`个header来证明exact `startExclusive`；如果证明不足，返回`BeyondPrefix`且该次调用的
 `PayloadReads == 0`，不会继续到root或materialize部分window。
+EventJournal writer会拒绝missing Parent，而append-only address顺序不能构造指向未来event的
+Parent cycle；corruption gate因此用截断的历史Parent frame与payload CRC锁定可达storage损坏，
+并在internal authority shape测试中单独锁定cycle拒绝。
 
 ## Setup 变更
 

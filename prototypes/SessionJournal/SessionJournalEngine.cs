@@ -479,9 +479,147 @@ public sealed partial class SessionJournalEngine : IDisposable {
         );
     }
 
+    private SessionTargetLineageProof ReadLineageTargetProofAtCore(
+        EventAddress capturedHead,
+        EventAddress requiredAnchor,
+        int maxHeaderCount,
+        CancellationToken cancellationToken
+    ) {
+        if (capturedHead == default) {
+            throw new ArgumentException(
+                "The captured lineage head cannot be the default EventAddress.",
+                nameof(capturedHead)
+            );
+        }
+        if (requiredAnchor == default) {
+            throw new ArgumentException(
+                "The required lineage anchor cannot be the default EventAddress.",
+                nameof(requiredAnchor)
+            );
+        }
+        if (maxHeaderCount <= 0) {
+            throw new ArgumentOutOfRangeException(
+                nameof(maxHeaderCount),
+                "A target lineage proof must allow at least one header."
+            );
+        }
+
+        SessionJournalReadDiagnostics before =
+            _reader.CaptureDiagnostics();
+        var headers = new List<SessionProvenLineageHeader>(
+            Math.Min(maxHeaderCount, 1024)
+        );
+        var visited = new HashSet<EventAddress>();
+        EventAddress cursor = capturedHead;
+        while (true) {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (cursor == default) {
+                throw new InvalidDataException(
+                    "SessionJournal Parent chain contains a default EventAddress."
+                );
+            }
+            if (!visited.Add(cursor)) {
+                throw new InvalidDataException(
+                    $"SessionJournal Parent chain contains a cycle at {cursor}."
+                );
+            }
+            EventFrameHeader header =
+                _reader.ReadEventHeaderPreview(cursor).Unwrap();
+            ValidateSessionHeaderPreview(cursor, header);
+            headers.Add(new SessionProvenLineageHeader(
+                cursor,
+                header
+            ));
+
+            if (cursor == requiredAnchor) {
+                return CreateTargetLineageProof(
+                    capturedHead,
+                    requiredAnchor,
+                    maxHeaderCount,
+                    headers,
+                    new SessionCurrentLineageAnchorLookup.Found(
+                        headers.Count - 1
+                    ),
+                    before
+                );
+            }
+            if (header.Parent is not EventAddress parent) {
+                return CreateTargetLineageProof(
+                    capturedHead,
+                    requiredAnchor,
+                    maxHeaderCount,
+                    headers,
+                    new SessionCurrentLineageAnchorLookup.OffLineage(
+                        requiredAnchor,
+                        capturedHead
+                    ),
+                    before
+                );
+            }
+            if (visited.Contains(parent)) {
+                throw new InvalidDataException(
+                    $"SessionJournal Parent chain contains a cycle at {parent}."
+                );
+            }
+            if (headers.Count == maxHeaderCount) {
+                var evidence = new SessionCurrentLineageBeyondPrefix(
+                    requiredAnchor,
+                    capturedHead,
+                    headers.Count,
+                    parent
+                );
+                return CreateTargetLineageProof(
+                    capturedHead,
+                    requiredAnchor,
+                    maxHeaderCount,
+                    headers,
+                    new SessionCurrentLineageAnchorLookup
+                        .BeyondPrefix(evidence),
+                    before
+                );
+            }
+            cursor = parent;
+        }
+    }
+
+    private SessionTargetLineageProof CreateTargetLineageProof(
+        EventAddress capturedHead,
+        EventAddress requiredAnchor,
+        int maxHeaderCount,
+        List<SessionProvenLineageHeader> headers,
+        SessionCurrentLineageAnchorLookup lookup,
+        SessionJournalReadDiagnostics before
+    ) {
+        SessionJournalReadDiagnostics after =
+            _reader.CaptureDiagnostics();
+        var diagnostics = new SessionCurrentLineageDiagnostics(
+            after.HeaderPreviewReadCount
+                - before.HeaderPreviewReadCount,
+            after.PayloadReadCount - before.PayloadReadCount,
+            after.LogicalPayloadByteCount
+                - before.LogicalPayloadByteCount
+        );
+        if (diagnostics.HeaderVisits != headers.Count
+            || diagnostics.PayloadReads != 0
+            || diagnostics.DecodedPayloadBytes != 0) {
+            throw new InvalidDataException(
+                "A target lineage proof must remain header-only and account for every visited header."
+            );
+        }
+        return new SessionTargetLineageProof(
+            capturedHead,
+            requiredAnchor,
+            maxHeaderCount,
+            headers.AsReadOnly(),
+            lookup,
+            diagnostics
+        );
+    }
+
     /// <summary>
-    /// Resolves setup seeds for multiple selected-branch planning starts with one header walk. Only
-    /// setup-event payloads are decoded; ordinary history payloads remain unread.
+    /// Explicitly unbounded/offline resolution of setup seeds for multiple selected-branch
+    /// planning starts with one complete header walk. Only setup-event payloads are decoded;
+    /// ordinary history payloads remain unread.
     /// </summary>
     public SessionHistoryPlanningSeedBatch ReadHistoryPlanningSeeds(
         IEnumerable<EventAddress> starts,
@@ -676,6 +814,12 @@ public sealed partial class SessionJournalEngine : IDisposable {
         cancellationToken
     );
 
+    /// <summary>
+    /// Explicitly unbounded/offline seeded replay at one exact historical head. The seed avoids
+    /// setup and execution-state discovery before its boundary, but this overload does not impose
+    /// a raw suffix limit; online migration uses
+    /// <see cref="ReadHistoryPlanningWindowAtBounded(EventAddress,SessionHistoryPlanningSeed,int,CancellationToken)"/>.
+    /// </summary>
     public SessionHistoryPlanningWindow ReadHistoryPlanningWindowAt(
         EventAddress capturedHead,
         SessionHistoryPlanningSeed planningSeed,
@@ -749,43 +893,55 @@ public sealed partial class SessionJournalEngine : IDisposable {
             );
         }
 
-        SessionCurrentLineagePrefix prefix = ReadLineagePrefixAtCore(
-            capturedHead,
-            maxRawEventCount + 1,
-            cancellationToken
-        );
-        switch (prefix.Lookup(startExclusive)) {
+        SessionJournalReadDiagnostics before =
+            _reader.CaptureDiagnostics();
+        SessionTargetLineageProof proof =
+            ReadLineageTargetProofAtCore(
+                capturedHead,
+                startExclusive,
+                maxRawEventCount + 1,
+                cancellationToken
+            );
+        switch (proof.Lookup) {
             case SessionCurrentLineageAnchorLookup.BeyondPrefix beyond:
                 return new SessionHistoryPlanningWindowReadResult
-                    .BeyondPrefix(beyond.Evidence, prefix.Diagnostics);
+                    .BeyondPrefix(beyond.Evidence, proof.Diagnostics);
             case SessionCurrentLineageAnchorLookup.OffLineage:
                 throw new InvalidDataException(
                     "History planning start is not an ancestor of the captured raw head."
                 );
-            case SessionCurrentLineageAnchorLookup.Found:
-                break;
+            case SessionCurrentLineageAnchorLookup.Found found:
+                _testHooks.AfterBoundedHistoryProof?.Invoke();
+                var interval = new SessionProvenLineageHeader[
+                    found.Index
+                ];
+                for (int index = 0; index < found.Index; index++) {
+                    interval[index] =
+                        proof.HeadThroughTargetOrLimit[index];
+                }
+                SessionHistoryPlanningWindow window =
+                    MaterializeHistoryPlanningWindow(
+                        capturedHead,
+                        startExclusive,
+                        planningSeed,
+                        interval,
+                        before,
+                        verifyBoundedProof: true,
+                        cancellationToken
+                    );
+                if (window.RawAddresses.Count
+                    > maxRawEventCount) {
+                    throw new InvalidDataException(
+                        "The materialized history planning interval exceeded its proven raw-event bound."
+                    );
+                }
+                return new SessionHistoryPlanningWindowReadResult
+                    .Available(window, proof.Diagnostics);
             default:
                 throw new InvalidDataException(
                     "Unknown bounded lineage lookup result."
                 );
         }
-
-        SessionHistoryPlanningWindow window =
-            ReadHistoryPlanningWindowAtCore(
-                capturedHead,
-                startExclusive,
-                planningSeed,
-                cancellationToken
-            );
-        if (window.RawAddresses.Count > maxRawEventCount) {
-            throw new InvalidDataException(
-                "The materialized history planning interval exceeded its proven raw-event bound."
-            );
-        }
-        return new SessionHistoryPlanningWindowReadResult.Available(
-            window,
-            prefix.Diagnostics
-        );
     }
 
     /// <summary>
@@ -864,11 +1020,17 @@ public sealed partial class SessionJournalEngine : IDisposable {
         }
         SessionJournalReadDiagnostics before =
             _reader.CaptureDiagnostics();
-        var reverseAddresses = new List<EventAddress>();
+        var reverseHeaders = new List<SessionProvenLineageHeader>();
+        var visited = new HashSet<EventAddress>();
         EventAddress? cursor = capturedHead;
         EventAddress? resolvedStart = null;
         while (cursor is { } address) {
             cancellationToken.ThrowIfCancellationRequested();
+            if (!visited.Add(address)) {
+                throw new InvalidDataException(
+                    $"SessionJournal Parent chain contains a cycle at {address}."
+                );
+            }
             EventFrameHeader header =
                 _reader.ReadEventHeaderPreview(address).Unwrap();
             ValidateSessionHeaderPreview(address, header);
@@ -883,7 +1045,10 @@ public sealed partial class SessionJournalEngine : IDisposable {
                 resolvedStart = address;
                 break;
             }
-            reverseAddresses.Add(address);
+            reverseHeaders.Add(new SessionProvenLineageHeader(
+                address,
+                header
+            ));
             cursor = header.Parent;
         }
         if (resolvedStart is null) {
@@ -894,8 +1059,30 @@ public sealed partial class SessionJournalEngine : IDisposable {
             );
         }
 
+        return MaterializeHistoryPlanningWindow(
+            capturedHead,
+            resolvedStart.Value,
+            planningSeed,
+            reverseHeaders,
+            before,
+            verifyBoundedProof: false,
+            cancellationToken
+        );
+    }
+
+    private SessionHistoryPlanningWindow
+        MaterializeHistoryPlanningWindow(
+        EventAddress capturedHead,
+        EventAddress resolvedStart,
+        SessionHistoryPlanningSeed? planningSeed,
+        IReadOnlyList<SessionProvenLineageHeader>
+            headToStartExclusive,
+        SessionJournalReadDiagnostics before,
+        bool verifyBoundedProof,
+        CancellationToken cancellationToken
+    ) {
         if (planningSeed is not null
-            && (planningSeed.Address != resolvedStart.Value
+            && (planningSeed.Address != resolvedStart
                 || !string.Equals(
                     System.IO.Path.GetFullPath(
                         planningSeed.OwnerPath
@@ -914,24 +1101,45 @@ public sealed partial class SessionJournalEngine : IDisposable {
             planningSeed?.ExecutionRecovery
             ?? SessionTailContextProjection.ValidateReplaySafeBoundary(
                 _reader,
-                resolvedStart.Value,
+                resolvedStart,
                 cancellationToken
             );
-        reverseAddresses.Reverse();
+        SessionProvenLineageHeader[] chronologicalHeaders =
+            headToStartExclusive.Reverse().ToArray();
+        var rawAddresses = new List<EventAddress>(
+            chronologicalHeaders.Length
+        );
         var events = new List<DecodedSessionEvent>(
-            reverseAddresses.Count
+            chronologicalHeaders.Length
         );
         var rawHashEntries =
             new List<SessionRawRangeHashEntry>(
-                reverseAddresses.Count
+                chronologicalHeaders.Length
             );
         var suffixSetupReferences =
             new Dictionary<EventAddress, SessionContextSetupReference>();
-        foreach (EventAddress address in reverseAddresses) {
+        foreach (SessionProvenLineageHeader proven
+                 in chronologicalHeaders) {
             cancellationToken.ThrowIfCancellationRequested();
             using SessionJournalEventFrame frame =
-                _reader.ReadEvent(address).Unwrap();
-            ValidateSessionHeaderPreview(address, frame.Header);
+                _reader.ReadEvent(proven.Address).Unwrap();
+            EventFrameHeader expectedHeader =
+                verifyBoundedProof
+                    && _testHooks
+                        .RewriteBoundedHistoryProofHeader
+                        is { } rewrite
+                    ? rewrite(proven.Header)
+                    : proven.Header;
+            if (frame.Address != proven.Address
+                || frame.Header != expectedHeader) {
+                throw new InvalidDataException(
+                    $"History planning payload read at '{proven.Address}' does not match its proven lineage header."
+                );
+            }
+            ValidateSessionHeaderPreview(
+                proven.Address,
+                frame.Header
+            );
             var kind = (SessionEventKind)frame.Header.OpaqueEventKind;
             object body = SessionEventCodec.Decode(
                 kind,
@@ -940,9 +1148,9 @@ public sealed partial class SessionJournalEngine : IDisposable {
             );
             if (SessionOperationalSemantics.IsSetupKind(kind)) {
                 suffixSetupReferences.Add(
-                    address,
+                    proven.Address,
                     new SessionContextSetupReference(
-                        address,
+                        proven.Address,
                         bodySchemaVersion,
                         SessionRequestCanonicalizer.Sha256Hex(
                             frame.Payload
@@ -954,12 +1162,12 @@ public sealed partial class SessionJournalEngine : IDisposable {
                 kind,
                 bodySchemaVersion,
                 body,
-                address,
+                proven.Address,
                 frame.Header.Parent
             ));
             rawHashEntries.Add(
                 new SessionRawRangeHashEntry(
-                    address,
+                    proven.Address,
                     frame.Header.Parent,
                     frame.Header.OpaqueEventKind,
                     bodySchemaVersion,
@@ -968,13 +1176,14 @@ public sealed partial class SessionJournalEngine : IDisposable {
                     )
                 )
             );
+            rawAddresses.Add(proven.Address);
         }
 
         SessionGoverningSetup governingSetup;
         SessionContextAnchorSetupReferences startSetups;
         if (planningSeed is null) {
             governingSetup = ResolveGoverningSetup(
-                resolvedStart.Value,
+                resolvedStart,
                 cancellationToken
             );
             SessionSetupReference runtime = CreateSetupReference(
@@ -1067,10 +1276,10 @@ public sealed partial class SessionJournalEngine : IDisposable {
             _reader.CaptureDiagnostics();
         return new SessionHistoryPlanningWindow(
             capturedHead,
-            resolvedStart.Value,
+            resolvedStart,
             startSetups,
             endSetups,
-            reverseAddresses.AsReadOnly(),
+            rawAddresses.AsReadOnly(),
             units.AsReadOnly(),
             boundaries.AsReadOnly(),
             new System.Collections.ObjectModel.ReadOnlyDictionary<
@@ -3570,6 +3779,21 @@ public sealed partial class SessionJournalEngine : IDisposable {
     private sealed record SelectedContextCandidate(
         SessionContextCandidate Candidate,
         SessionHistoryPlanningWindow Window
+    );
+
+    private sealed record SessionProvenLineageHeader(
+        EventAddress Address,
+        EventFrameHeader Header
+    );
+
+    private sealed record SessionTargetLineageProof(
+        EventAddress CapturedHead,
+        EventAddress RequiredAnchor,
+        int MaxHeaderCount,
+        IReadOnlyList<SessionProvenLineageHeader>
+            HeadThroughTargetOrLimit,
+        SessionCurrentLineageAnchorLookup Lookup,
+        SessionCurrentLineageDiagnostics Diagnostics
     );
 
     private enum FreshBootstrapBoundary {

@@ -182,7 +182,10 @@ internal sealed record SessionJournalTestHooks(
     Action<SessionEventKind>? BeforeCommit = null,
     Action<EventJournal.EventJournal>?
         AfterAuditSnapshotValidated = null,
-    Action? BeforeTurnRefMove = null
+    Action? BeforeTurnRefMove = null,
+    Action? AfterBoundedHistoryProof = null,
+    Func<EventFrameHeader, EventFrameHeader>?
+        RewriteBoundedHistoryProofHeader = null
 );
 
 internal sealed class SessionJournalFailpointException(SessionJournalFailpoint failpoint)

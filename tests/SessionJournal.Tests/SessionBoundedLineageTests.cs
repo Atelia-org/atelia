@@ -1,5 +1,7 @@
 using Atelia.Completion.Abstractions;
 using Atelia.EventJournal;
+using Atelia.Rbf;
+using Atelia.RbfSegmentStore;
 using Xunit;
 
 namespace Atelia.SessionJournal.Tests;
@@ -90,11 +92,25 @@ public sealed class SessionBoundedLineageTests : IDisposable {
             () => engine.ReadCurrentLineagePrefix(0)
         );
 
+        Assert.Empty(typeof(SessionCurrentLineageContinuation)
+            .GetConstructors());
+        Assert.Empty(typeof(SessionCurrentLineageBeyondPrefix)
+            .GetConstructors());
+        Assert.Empty(typeof(SessionCurrentLineagePrefix)
+            .GetConstructors());
+
         EventAddress head = Address(1);
         EventAddress parent = Address(2);
         EventAddress other = Address(3);
         SessionCurrentLineageDiagnostics twoHeaders =
             new(HeaderVisits: 2, PayloadReads: 0, DecodedPayloadBytes: 0);
+        Assert.Throws<ArgumentException>(() => new SessionCurrentLineagePrefix(
+            head,
+            1,
+            [null!],
+            continuation: null,
+            new(1, 0, 0)
+        ));
         Assert.Throws<ArgumentException>(() => new SessionCurrentLineagePrefix(
             head,
             2,
@@ -105,6 +121,9 @@ public sealed class SessionBoundedLineageTests : IDisposable {
             continuation: null,
             twoHeaders
         ));
+        // Append-only EventJournal addresses cannot point to a future child, so a storage-level
+        // Parent cycle is not writer-constructable. Lock the same authority rejection at its
+        // internal shape boundary; reachable storage corruption is covered below.
         Assert.Throws<ArgumentException>(() => new SessionCurrentLineagePrefix(
             head,
             2,
@@ -144,16 +163,24 @@ public sealed class SessionBoundedLineageTests : IDisposable {
             string path,
             EventAddress start,
             EventAddress headAt512,
-            EventAddress headAt513
+            EventAddress headAt513,
+            EventAddress headAt514,
+            SessionContextAnchorSetupReferences setups
         ) = CreatePlanningLineage();
         using var engine = SessionJournalEngine.Open(path);
+        SessionHistoryPlanningSeed seed =
+            engine.CreateHistoryPlanningSeed(start, setups);
+        SessionJournalReadDiagnostics before =
+            engine.CaptureReadDiagnostics();
 
         SessionHistoryPlanningWindowReadResult result =
             engine.ReadHistoryPlanningWindowAtBounded(
                 headAt512,
-                start,
+                seed,
                 maxRawEventCount: 512
             );
+        SessionJournalReadDiagnostics after =
+            engine.CaptureReadDiagnostics();
 
         var available = Assert.IsType<
             SessionHistoryPlanningWindowReadResult.Available
@@ -162,20 +189,24 @@ public sealed class SessionBoundedLineageTests : IDisposable {
         Assert.Equal(512, available.Window.Diagnostics.DecodedEventCount);
         Assert.Equal(513, available.PrefixDiagnostics.HeaderVisits);
         Assert.Equal(0, available.PrefixDiagnostics.PayloadReads);
+        Assert.Equal(513, available.Window.Diagnostics.HeaderVisits);
+        Assert.Equal(
+            513,
+            after.HeaderPreviewReadCount
+                - before.HeaderPreviewReadCount
+        );
         Assert.Equal(headAt512, available.Window.ObservedRawHead);
         Assert.True(
             available.Window.RawAddresses.Count <= 512
         );
 
-        SessionJournalReadDiagnostics before =
-            engine.CaptureReadDiagnostics();
+        before = engine.CaptureReadDiagnostics();
         result = engine.ReadHistoryPlanningWindowAtBounded(
             headAt513,
             start,
             maxRawEventCount: 512
         );
-        SessionJournalReadDiagnostics after =
-            engine.CaptureReadDiagnostics();
+        after = engine.CaptureReadDiagnostics();
 
         var beyond = Assert.IsType<
             SessionHistoryPlanningWindowReadResult.BeyondPrefix
@@ -186,6 +217,24 @@ public sealed class SessionBoundedLineageTests : IDisposable {
         Assert.Equal(start, beyond.Evidence.NextAddress);
         Assert.Equal(0, beyond.Diagnostics.PayloadReads);
         Assert.Equal(before.PayloadReadCount, after.PayloadReadCount);
+        Assert.Equal(
+            513,
+            after.HeaderPreviewReadCount
+                - before.HeaderPreviewReadCount
+        );
+        result = engine.ReadHistoryPlanningWindowAtBounded(
+            headAt514,
+            start,
+            maxRawEventCount: 512
+        );
+        beyond = Assert.IsType<
+            SessionHistoryPlanningWindowReadResult.BeyondPrefix
+        >(result);
+        Assert.Equal(513, beyond.Evidence.HeaderCount);
+        Assert.NotEqual(
+            beyond.Evidence.RequiredAnchor,
+            beyond.Evidence.NextAddress
+        );
         before = engine.CaptureReadDiagnostics();
         Assert.Throws<InvalidDataException>(
             () => engine.ReadHistoryPlanningWindowAtBounded(
@@ -202,6 +251,321 @@ public sealed class SessionBoundedLineageTests : IDisposable {
                 start,
                 maxRawEventCount: -1
             )
+        );
+        Assert.Throws<ArgumentOutOfRangeException>(
+            () => engine.ReadHistoryPlanningWindowAtBounded(
+                headAt512,
+                start,
+                maxRawEventCount: int.MaxValue
+            )
+        );
+    }
+
+    [Fact]
+    public void BoundedPlanning_TargetHitStopsAtOneOrTwoHeaders() {
+        string path = NewPath();
+        using var engine = SessionJournalEngine.Create(
+            path,
+            new SessionCreateOptions(
+                "model-A",
+                "system-A",
+                "surface-A"
+            )
+        );
+        EventAddress start =
+            engine.InspectExecutionBoundary().Head!.Value;
+        EventAddress head = engine.AppendObservation("one");
+        SessionHistoryPlanningSeedBatch batch =
+            engine.ReadHistoryPlanningSeeds([start]);
+        SessionHistoryPlanningSeed seed =
+            engine.CreateHistoryPlanningSeed(
+                start,
+                Assert.Single(batch.Seeds).Setups
+            );
+
+        SessionJournalReadDiagnostics before =
+            engine.CaptureReadDiagnostics();
+        var atHead = Assert.IsType<
+            SessionHistoryPlanningWindowReadResult.Available
+        >(engine.ReadHistoryPlanningWindowAtBounded(
+            start,
+            seed,
+            maxRawEventCount: 0
+        ));
+        SessionJournalReadDiagnostics after =
+            engine.CaptureReadDiagnostics();
+        Assert.Empty(atHead.Window.RawAddresses);
+        Assert.Equal(1, atHead.PrefixDiagnostics.HeaderVisits);
+        Assert.Equal(
+            1,
+            after.HeaderPreviewReadCount
+                - before.HeaderPreviewReadCount
+        );
+
+        before = engine.CaptureReadDiagnostics();
+        var oneEvent = Assert.IsType<
+            SessionHistoryPlanningWindowReadResult.Available
+        >(engine.ReadHistoryPlanningWindowAtBounded(
+            head,
+            seed,
+            maxRawEventCount: 1
+        ));
+        after = engine.CaptureReadDiagnostics();
+        Assert.Equal([head], oneEvent.Window.RawAddresses);
+        Assert.Equal(2, oneEvent.PrefixDiagnostics.HeaderVisits);
+        Assert.Equal(2, oneEvent.Window.Diagnostics.HeaderVisits);
+        Assert.Equal(
+            2,
+            after.HeaderPreviewReadCount
+                - before.HeaderPreviewReadCount
+        );
+    }
+
+    [Fact]
+    public void FrozenSeed_DoesNotReadMissingParentBeforeExactAnchor() {
+        string path = NewPath();
+        var journalOptions = new EventJournalOptions {
+            EventSegmentStoreOptions =
+                new RbfSegmentStoreOptions {
+                    SegmentSizeThresholdBytes = 4,
+                    CacheMode = RbfCacheMode.Off
+                }
+        };
+        EventAddress missing;
+        EventAddress start;
+        EventAddress head;
+        SessionHistoryPlanningSeed seed;
+        using (EventJournal.EventJournal journal =
+               EventJournal.EventJournal.CreateNew(
+                   path,
+                   journalOptions
+               )) {
+            RefId main = journal.CreateBranch(
+                SessionJournalDefaults.MainBranchName,
+                startPoint: null
+            ).Unwrap();
+            var runtime = new SessionRuntimeConfiguration(
+                "model-A",
+                "surface-A",
+                SessionJournalDefaults.Schema,
+                new(0)
+            );
+            byte[] runtimePayload = SessionEventCodec.Encode(
+                SessionEventKind.RuntimeConfigSetup,
+                runtime
+            );
+            EventAddress runtimeAddress = journal.AppendEventFrame(
+                parent: null,
+                runtimePayload,
+                (uint)SessionEventKind.RuntimeConfigSetup,
+                hint: default
+            ).Unwrap();
+            byte[] promptPayload = SessionEventCodec.Encode(
+                SessionEventKind.SystemPromptSetup,
+                new SystemPromptSetupBody("system-A")
+            );
+            EventAddress promptAddress = journal.AppendEventFrame(
+                runtimeAddress,
+                promptPayload,
+                (uint)SessionEventKind.SystemPromptSetup,
+                hint: default
+            ).Unwrap();
+            missing = promptAddress;
+            start = AppendRaw(
+                journal,
+                promptAddress,
+                SessionEventKind.SessionCreated,
+                new SessionCreatedBody(SessionCreationOrigin.Native)
+            );
+            head = AppendRaw(
+                journal,
+                start,
+                SessionEventKind.ObservationAccepted,
+                new ObservationAcceptedBody("reachable suffix")
+            );
+            Assert.True(journal.MoveRef(main, null, head).Unwrap());
+            _ = AppendRaw(
+                journal,
+                head,
+                SessionEventKind.ObservationAccepted,
+                new ObservationAcceptedBody("unreferenced active")
+            );
+            var setups = new SessionContextAnchorSetupReferences(
+                new SessionContextSetupReference(
+                    runtimeAddress,
+                    SessionEventCodec.GetExpectedBodySchemaVersion(
+                        SessionEventKind.RuntimeConfigSetup
+                    ),
+                    SessionRequestCanonicalizer.Sha256Hex(
+                        runtimePayload
+                    )
+                ),
+                new SessionContextSetupReference(
+                    promptAddress,
+                    SessionEventCodec.GetExpectedBodySchemaVersion(
+                        SessionEventKind.SystemPromptSetup
+                    ),
+                    SessionRequestCanonicalizer.Sha256Hex(
+                        promptPayload
+                    )
+                )
+            );
+            seed = new SessionHistoryPlanningSeed(
+                path,
+                start,
+                setups,
+                new SessionGoverningSetup(
+                    start,
+                    runtimeAddress,
+                    runtime,
+                    promptAddress,
+                    "system-A"
+                ),
+                new SessionExecutionRecovery(
+                    start,
+                    new SessionExecutionState(
+                        SessionExecutionPhase.Idle,
+                        SessionEventKind.SessionCreated
+                    ),
+                    new SessionExecutionRecoveryBoundary(
+                        SourcePrepared: null,
+                        SourceAction: null,
+                        SourceObservation: null,
+                        LatestExecutionCheckpoint: null
+                    ),
+                    new SessionExecutionRecoveryDiagnostics(0, 0)
+                )
+            );
+        }
+        TruncateEventSegment(path, missing.SegmentNumber);
+
+        using var engine = SessionJournalEngine.OpenForTest(
+            path,
+            runtime: null,
+            new SessionJournalTestHooks(),
+            journalOptions
+        );
+        SessionJournalReadDiagnostics before =
+            engine.CaptureReadDiagnostics();
+        var available = Assert.IsType<
+            SessionHistoryPlanningWindowReadResult.Available
+        >(engine.ReadHistoryPlanningWindowAtBounded(
+            head,
+            seed,
+            maxRawEventCount: 1
+        ));
+        SessionJournalReadDiagnostics after =
+            engine.CaptureReadDiagnostics();
+        Assert.Equal([head], available.Window.RawAddresses);
+        Assert.Equal(2, available.PrefixDiagnostics.HeaderVisits);
+        Assert.Equal(
+            2,
+            after.HeaderPreviewReadCount
+                - before.HeaderPreviewReadCount
+        );
+        InvalidOperationException missingError =
+            Assert.Throws<InvalidOperationException>(() =>
+            engine.ReadHistoryPlanningWindowAtBounded(
+                head,
+                missing,
+                maxRawEventCount: 2
+            )
+        );
+        Assert.Contains(
+            "Short read",
+            missingError.ToString(),
+            StringComparison.OrdinalIgnoreCase
+        );
+    }
+
+    [Fact]
+    public void BoundedPlanning_RejectsProofToPayloadHeaderDrift() {
+        (
+            string path,
+            EventAddress start,
+            EventAddress head,
+            SessionHistoryPlanningSeed seed
+        ) = CreateOneEventPlanningFixture();
+        var hooks = new SessionJournalTestHooks(
+            RewriteBoundedHistoryProofHeader: header => header with {
+                OpaqueEventKind =
+                    (uint)SessionEventKind.ImportedAgentAction
+            }
+        );
+        using var engine = SessionJournalEngine.OpenForTest(
+            path,
+            runtime: null,
+            hooks,
+            new EventJournalOptions()
+        );
+
+        InvalidDataException error = Assert.Throws<InvalidDataException>(
+            () => engine.ReadHistoryPlanningWindowAtBounded(
+                head,
+                seed,
+                maxRawEventCount: 1
+            )
+        );
+
+        Assert.Contains("proven lineage header", error.Message);
+    }
+
+    [Fact]
+    public void BoundedPlanning_FullReadRejectsPayloadCrcCorruptionAfterProof() {
+        var journalOptions = new EventJournalOptions {
+            EventSegmentStoreOptions =
+                new RbfSegmentStoreOptions {
+                    SegmentSizeThresholdBytes = 4,
+                    CacheMode = RbfCacheMode.Off
+                }
+        };
+        (
+            string path,
+            EventAddress start,
+            EventAddress head,
+            SessionHistoryPlanningSeed seed
+        ) = CreateOneEventPlanningFixture(journalOptions);
+        using (EventJournal.EventJournal journal =
+               EventJournal.EventJournal.OpenExisting(
+                   path,
+                   journalOptions
+               )) {
+            _ = AppendRaw(
+                journal,
+                head,
+                SessionEventKind.ObservationAccepted,
+                new ObservationAcceptedBody("unreferenced active")
+            );
+        }
+        CorruptFramePayloadByte(path, head);
+        bool proofCompleted = false;
+        var hooks = new SessionJournalTestHooks(
+            AfterBoundedHistoryProof: () => {
+                Assert.False(proofCompleted);
+                proofCompleted = true;
+            }
+        );
+        using var engine = SessionJournalEngine.OpenForTest(
+            path,
+            runtime: null,
+            hooks,
+            journalOptions
+        );
+
+        InvalidOperationException error =
+            Assert.Throws<InvalidOperationException>(
+            () => engine.ReadHistoryPlanningWindowAtBounded(
+                head,
+                seed,
+                maxRawEventCount: 1
+            )
+        );
+
+        Assert.True(proofCompleted, error.ToString());
+        Assert.Contains(
+            "crc",
+            error.ToString(),
+            StringComparison.OrdinalIgnoreCase
         );
     }
 
@@ -233,8 +597,91 @@ public sealed class SessionBoundedLineageTests : IDisposable {
     private (
         string Path,
         EventAddress Start,
+        EventAddress Head,
+        SessionHistoryPlanningSeed Seed
+    ) CreateOneEventPlanningFixture(
+        EventJournalOptions? journalOptions = null
+    ) {
+        string path = NewPath();
+        journalOptions ??= new EventJournalOptions();
+        using var engine = SessionJournalEngine.CreateForTest(
+            path,
+            new SessionCreateOptions(
+                "model-A",
+                "system-A",
+                "surface-A"
+            ),
+            runtime: null,
+            new SessionJournalTestHooks(),
+            journalOptions
+        );
+        EventAddress start =
+            engine.InspectExecutionBoundary().Head!.Value;
+        SessionHistoryPlanningSeedBatch batch =
+            engine.ReadHistoryPlanningSeeds([start]);
+        SessionHistoryPlanningSeed seed =
+            engine.CreateHistoryPlanningSeed(
+                start,
+                Assert.Single(batch.Seeds).Setups
+            );
+        EventAddress head = engine.AppendObservation("one");
+        return (path, start, head, seed);
+    }
+
+    private static void CorruptFramePayloadByte(
+        string path,
+        EventAddress address
+    ) {
+        string segmentPath = Assert.Single(
+            Directory.GetFiles(
+                Path.Combine(path, "events"),
+                $"{address.SegmentNumber:x8}.rbf",
+                SearchOption.AllDirectories
+            )
+        );
+        using var stream = new FileStream(
+            segmentPath,
+            FileMode.Open,
+            FileAccess.ReadWrite,
+            FileShare.ReadWrite
+        );
+        long payloadOffset = checked(address.Ticket.Offset + 4);
+        stream.Position = payloadOffset;
+        int value = stream.ReadByte();
+        Assert.NotEqual(-1, value);
+        stream.Position = payloadOffset;
+        stream.WriteByte((byte)(value ^ 0x01));
+        stream.Flush(flushToDisk: true);
+    }
+
+    private static void TruncateEventSegment(
+        string path,
+        uint segmentNumber
+    ) {
+        string segmentPath = Assert.Single(
+            Directory.GetFiles(
+                Path.Combine(path, "events"),
+                $"{segmentNumber:x8}.rbf",
+                SearchOption.AllDirectories
+            )
+        );
+        using var stream = new FileStream(
+            segmentPath,
+            FileMode.Open,
+            FileAccess.Write,
+            FileShare.None
+        );
+        stream.SetLength(4);
+        stream.Flush(flushToDisk: true);
+    }
+
+    private (
+        string Path,
+        EventAddress Start,
         EventAddress HeadAt512,
-        EventAddress HeadAt513
+        EventAddress HeadAt513,
+        EventAddress HeadAt514,
+        SessionContextAnchorSetupReferences Setups
     ) CreatePlanningLineage() {
         string path = NewPath();
         using EventJournal.EventJournal journal =
@@ -243,22 +690,52 @@ public sealed class SessionBoundedLineageTests : IDisposable {
             SessionJournalDefaults.MainBranchName,
             startPoint: null
         ).Unwrap();
-        EventAddress runtime = AppendRaw(
-            journal,
-            parent: null,
-            SessionEventKind.RuntimeConfigSetup,
-            new SessionRuntimeConfiguration(
+        var runtimeBody = new SessionRuntimeConfiguration(
                 "model-A",
                 "surface-A",
                 SessionJournalDefaults.Schema,
                 new(0)
-            )
+            );
+        byte[] runtimePayload = SessionEventCodec.Encode(
+            SessionEventKind.RuntimeConfigSetup,
+            runtimeBody
         );
-        EventAddress prompt = AppendRaw(
-            journal,
-            runtime,
+        EventAddress runtime = journal.AppendEventFrame(
+            parent: null,
+            runtimePayload,
+            (uint)SessionEventKind.RuntimeConfigSetup,
+            hint: default
+        ).Unwrap();
+        var promptBody = new SystemPromptSetupBody("system-A");
+        byte[] promptPayload = SessionEventCodec.Encode(
             SessionEventKind.SystemPromptSetup,
-            new SystemPromptSetupBody("system-A")
+            promptBody
+        );
+        EventAddress prompt = journal.AppendEventFrame(
+            runtime,
+            promptPayload,
+            (uint)SessionEventKind.SystemPromptSetup,
+            hint: default
+        ).Unwrap();
+        var setups = new SessionContextAnchorSetupReferences(
+            new SessionContextSetupReference(
+                runtime,
+                SessionEventCodec.GetExpectedBodySchemaVersion(
+                    SessionEventKind.RuntimeConfigSetup
+                ),
+                SessionRequestCanonicalizer.Sha256Hex(
+                    runtimePayload
+                )
+            ),
+            new SessionContextSetupReference(
+                prompt,
+                SessionEventCodec.GetExpectedBodySchemaVersion(
+                    SessionEventKind.SystemPromptSetup
+                ),
+                SessionRequestCanonicalizer.Sha256Hex(
+                    promptPayload
+                )
+            )
         );
         EventAddress start = AppendRaw(
             journal,
@@ -300,8 +777,33 @@ public sealed class SessionBoundedLineageTests : IDisposable {
             SessionEventKind.ObservationAccepted,
             new ObservationAcceptedBody("pending-observation")
         );
-        Assert.True(journal.MoveRef(main, null, headAt513).Unwrap());
-        return (path, start, headAt512, headAt513);
+        EventAddress headAt514 = AppendRaw(
+            journal,
+            headAt513,
+            SessionEventKind.ImportedAgentAction,
+            new AgentActionProducedBody(
+                new ActionMessage([
+                    new ActionBlock.Text("pending-answer")
+                ]),
+                new CompletionDescriptor(
+                    "import",
+                    "import-v1",
+                    "model-A"
+                ),
+                $"atelia.session-journal.turn.v1:{EventAddressTextCodec.Format(headAt513)}",
+                new SessionExecutionCheckpoint(0),
+                ToolRuntimeIdentity: null
+            )
+        );
+        Assert.True(journal.MoveRef(main, null, headAt514).Unwrap());
+        return (
+            path,
+            start,
+            headAt512,
+            headAt513,
+            headAt514,
+            setups
+        );
     }
 
     private static EventAddress AppendRaw(
