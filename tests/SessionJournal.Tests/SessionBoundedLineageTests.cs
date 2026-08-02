@@ -78,6 +78,120 @@ public sealed class SessionBoundedLineageTests : IDisposable {
     }
 
     [Fact]
+    public void PrefixPlanningProof_IndexTwoReportsZeroIoAndExactLogicalCoverage() {
+        (string path, EventAddress[] addresses) =
+            CreateHeaderOnlyLineage(6);
+        using var engine = SessionJournalEngine.Open(path);
+        SessionCurrentLineagePrefix prefix =
+            engine.ReadCurrentLineagePrefix(6);
+        var endpoint = Assert.IsType<
+            SessionCurrentLineageAnchorLookup.Found
+        >(prefix.Lookup(addresses[3]));
+        SessionJournalReadDiagnostics before =
+            engine.CaptureReadDiagnostics();
+
+        var available = Assert.IsType<
+            SessionHistoryPlanningWindowProofResult.Available
+        >(engine.ProveHistoryPlanningWindowInPrefix(
+            prefix,
+            capturedHead: addresses[3],
+            startExclusive: addresses[1],
+            maxRawEventCount: 2
+        ));
+        var beyond = Assert.IsType<
+            SessionHistoryPlanningWindowProofResult.BeyondPrefix
+        >(engine.ProveHistoryPlanningWindowInPrefix(
+            prefix,
+            capturedHead: addresses[3],
+            startExclusive: addresses[0],
+            maxRawEventCount: 1
+        ));
+        Assert.Throws<InvalidDataException>(() =>
+            engine.ProveHistoryPlanningWindowInPrefix(
+                prefix,
+                capturedHead: Address(1000),
+                startExclusive: addresses[1],
+                maxRawEventCount: 2
+            )
+        );
+        Assert.Throws<InvalidDataException>(() =>
+            engine.ProveHistoryPlanningWindowInPrefix(
+                prefix,
+                capturedHead: addresses[3],
+                startExclusive: Address(1000),
+                maxRawEventCount: 2
+            )
+        );
+        SessionJournalReadDiagnostics after =
+            engine.CaptureReadDiagnostics();
+
+        Assert.Equal(2, endpoint.Index);
+        Assert.Equal(before, after);
+        Assert.Equal(
+            new SessionCurrentLineageDiagnostics(0, 0, 0),
+            available.Proof.Diagnostics
+        );
+        Assert.Equal(3, available.Proof.LogicalCoverage.HeaderCount);
+        Assert.Equal(
+            new SessionCurrentLineageDiagnostics(0, 0, 0),
+            beyond.Diagnostics
+        );
+        Assert.Equal(2, beyond.LogicalCoverage.HeaderCount);
+        Assert.Equal(2, beyond.Evidence.HeaderCount);
+        Assert.Equal(addresses[1], beyond.Evidence.NextAddress);
+    }
+
+    [Fact]
+    public void PrefixPlanningProof_PartialPrefixReturnsTypedAnchorContinuations() {
+        (string path, EventAddress[] addresses) =
+            CreateHeaderOnlyLineage(6);
+        using var engine = SessionJournalEngine.Open(path);
+        SessionCurrentLineagePrefix prefix =
+            engine.ReadCurrentLineagePrefix(3);
+        SessionJournalReadDiagnostics before =
+            engine.CaptureReadDiagnostics();
+
+        var endpointBeyond = Assert.IsType<
+            SessionHistoryPlanningWindowProofResult.BeyondPrefix
+        >(engine.ProveHistoryPlanningWindowInPrefix(
+            prefix,
+            capturedHead: addresses[2],
+            startExclusive: addresses[0],
+            maxRawEventCount: 2
+        ));
+        var startBeyond = Assert.IsType<
+            SessionHistoryPlanningWindowProofResult.BeyondPrefix
+        >(engine.ProveHistoryPlanningWindowInPrefix(
+            prefix,
+            capturedHead: addresses[4],
+            startExclusive: addresses[2],
+            maxRawEventCount: 2
+        ));
+        SessionJournalReadDiagnostics after =
+            engine.CaptureReadDiagnostics();
+
+        Assert.Equal(before, after);
+        Assert.Equal(addresses[2], endpointBeyond.Evidence.RequiredAnchor);
+        Assert.Equal(prefix.CapturedHead, endpointBeyond.Evidence.CapturedHead);
+        Assert.Equal(3, endpointBeyond.Evidence.HeaderCount);
+        Assert.Equal(addresses[2], endpointBeyond.Evidence.NextAddress);
+        Assert.Equal(
+            new SessionCurrentLineageDiagnostics(0, 0, 0),
+            endpointBeyond.Diagnostics
+        );
+        Assert.Equal(3, endpointBeyond.LogicalCoverage.HeaderCount);
+        Assert.Equal(addresses[2], startBeyond.Evidence.RequiredAnchor);
+        Assert.Equal(prefix.CapturedHead, startBeyond.Evidence.CapturedHead);
+        Assert.Equal(3, startBeyond.Evidence.HeaderCount);
+        Assert.Equal(addresses[2], startBeyond.Evidence.NextAddress);
+        Assert.Equal(
+            new SessionCurrentLineageDiagnostics(0, 0, 0),
+            startBeyond.Diagnostics
+        );
+        Assert.Equal(3, startBeyond.LogicalCoverage.HeaderCount);
+    }
+
+    [Fact]
     public void Prefix_RejectsInvalidLimitAndMalformedShapes() {
         string path = NewPath();
         using var engine = SessionJournalEngine.Create(
@@ -513,6 +627,92 @@ public sealed class SessionBoundedLineageTests : IDisposable {
     }
 
     [Fact]
+    public void PrefixGoverningSetupProof_IndexTwoSeparatesFullPrefixFromBoundaryCoverage() {
+        (
+            string path,
+            EventAddress start,
+            EventAddress boundary,
+            _,
+            EventAddress capturedHead,
+            SessionContextAnchorSetupReferences setups
+        ) = CreatePlanningLineage();
+        using var engine = SessionJournalEngine.Open(path);
+        SessionCurrentLineagePrefix bounded =
+            engine.ReadLineagePrefixAt(capturedHead, 513);
+        SessionCurrentLineagePrefix complete =
+            engine.ReadLineagePrefixAt(capturedHead, 517);
+        var boundedBoundary = Assert.IsType<
+            SessionCurrentLineageAnchorLookup.Found
+        >(bounded.Lookup(boundary));
+        var completeBoundary = Assert.IsType<
+            SessionCurrentLineageAnchorLookup.Found
+        >(complete.Lookup(boundary));
+        SessionJournalReadDiagnostics before =
+            engine.CaptureReadDiagnostics();
+
+        var beyond = Assert.IsType<
+            SessionGoverningSetupProofResult.BeyondPrefix
+        >(engine.ProveGoverningSetupInPrefix(
+            bounded,
+            boundary,
+            setups
+        ));
+        var boundaryBeyond = Assert.IsType<
+            SessionGoverningSetupProofResult.BeyondPrefix
+        >(engine.ProveGoverningSetupInPrefix(
+            bounded,
+            start,
+            setups
+        ));
+        var available = Assert.IsType<
+            SessionGoverningSetupProofResult.Available
+        >(engine.ProveGoverningSetupInPrefix(
+            complete,
+            boundary,
+            setups
+        ));
+        Assert.Throws<InvalidDataException>(() =>
+            engine.ProveGoverningSetupInPrefix(
+                complete,
+                Address(1000),
+                setups
+            )
+        );
+        SessionJournalReadDiagnostics after =
+            engine.CaptureReadDiagnostics();
+
+        Assert.Equal(2, boundedBoundary.Index);
+        Assert.Equal(2, completeBoundary.Index);
+        Assert.Equal(before, after);
+        Assert.Equal(
+            new SessionCurrentLineageDiagnostics(0, 0, 0),
+            beyond.Diagnostics
+        );
+        Assert.Equal(513, beyond.Evidence.HeaderCount);
+        Assert.Equal(511, beyond.LogicalCoverage.HeaderCount);
+        Assert.Equal(start, boundaryBeyond.Evidence.RequiredAnchor);
+        Assert.Equal(
+            capturedHead,
+            boundaryBeyond.Evidence.ContinuationEvidence.CapturedHead
+        );
+        Assert.Equal(513, boundaryBeyond.Evidence.HeaderCount);
+        Assert.Equal(
+            bounded.Continuation!.NextAddress,
+            boundaryBeyond.Evidence.NextAddress
+        );
+        Assert.Equal(
+            new SessionCurrentLineageDiagnostics(0, 0, 0),
+            boundaryBeyond.Diagnostics
+        );
+        Assert.Equal(513, boundaryBeyond.LogicalCoverage.HeaderCount);
+        Assert.Equal(
+            new SessionCurrentLineageDiagnostics(0, 0, 0),
+            available.Proof.Diagnostics
+        );
+        Assert.Equal(515, available.Proof.LogicalCoverage.HeaderCount);
+    }
+
+    [Fact]
     public void PrefixGoverningSetupPayloadValidation_RejectsWrongHashAndSchema() {
         string path = NewPath();
         using var engine = SessionJournalEngine.Create(
@@ -672,12 +872,14 @@ public sealed class SessionBoundedLineageTests : IDisposable {
         )).Proof;
         SessionHistoryPlanningWindowProof routeProof = Assert.IsType<
             SessionHistoryPlanningWindowProofResult.Available
-        >(engine.ProveHistoryPlanningWindowInPrefix(
-            prefix,
+        >(engine.ProveHistoryPlanningWindowAtBounded(
             endpoint,
             start,
             maxRawEventCount: 8
         )).Proof;
+        Assert.True(routeProof.Diagnostics.HeaderVisits > 0);
+        SessionJournalReadDiagnostics beforeTransition =
+            engine.CaptureReadDiagnostics();
 
         SessionGoverningSetupProof endpointProof =
             engine.ProveGoverningSetupTransition(
@@ -685,9 +887,20 @@ public sealed class SessionBoundedLineageTests : IDisposable {
                 startProof,
                 window.EndSetups
             );
+        SessionJournalReadDiagnostics afterTransition =
+            engine.CaptureReadDiagnostics();
 
         Assert.Equal(endpoint, endpointProof.Boundary);
         Assert.Equal(window.EndSetups, endpointProof.ExpectedSetups);
+        Assert.Equal(beforeTransition, afterTransition);
+        Assert.Equal(
+            new SessionCurrentLineageDiagnostics(0, 0, 0),
+            endpointProof.Diagnostics
+        );
+        Assert.Same(
+            routeProof.LogicalCoverage,
+            endpointProof.LogicalCoverage
+        );
         Assert.Throws<ArgumentException>(() =>
             engine.ProveGoverningSetupTransition(
                 routeProof,

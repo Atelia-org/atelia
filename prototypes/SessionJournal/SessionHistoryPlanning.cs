@@ -66,11 +66,35 @@ public sealed record SessionCurrentLineageHeader(
     SessionEventKind Kind
 );
 
+/// <summary>
+/// Physical SessionJournal reads performed by one operation. Reusing an already captured prefix
+/// contributes zero here even when the operation logically examines retained headers.
+/// </summary>
 public sealed record SessionCurrentLineageDiagnostics(
     long HeaderVisits,
     long PayloadReads,
     long DecodedPayloadBytes
 );
+
+/// <summary>
+/// Headers logically examined by one proof operation. This is coverage rather than I/O: for a
+/// fresh bounded proof it may match the physical header visits, while reusing an already captured
+/// prefix contributes no additional reads. It is therefore reported separately from
+/// <see cref="SessionCurrentLineageDiagnostics"/>.
+/// </summary>
+public sealed class SessionCurrentLineageLogicalCoverage {
+    internal SessionCurrentLineageLogicalCoverage(int headerCount) {
+        if (headerCount <= 0) {
+            throw new ArgumentOutOfRangeException(
+                nameof(headerCount),
+                "Logical lineage coverage must contain at least one header."
+            );
+        }
+        HeaderCount = headerCount;
+    }
+
+    public int HeaderCount { get; }
+}
 
 /// <summary>
 /// The next Parent address required to continue a deliberately bounded lineage read.
@@ -137,6 +161,10 @@ public sealed class SessionCurrentLineageBeyondPrefix {
     /// </summary>
     public EventAddress? RequiredAnchor { get; }
     public EventAddress CapturedHead { get; }
+    /// <summary>
+    /// The full bounded prefix length measured from <see cref="CapturedHead"/> to the header
+    /// immediately before <see cref="NextAddress"/>.
+    /// </summary>
     public int HeaderCount { get; }
     public EventAddress NextAddress { get; }
 }
@@ -488,6 +516,7 @@ public sealed class SessionHistoryPlanningWindowProof {
         EventAddress startExclusive,
         int rawEventCount,
         SessionCurrentLineageDiagnostics diagnostics,
+        SessionCurrentLineageLogicalCoverage logicalCoverage,
         object state
     ) {
         OwnerPath = ownerPath;
@@ -495,6 +524,7 @@ public sealed class SessionHistoryPlanningWindowProof {
         StartExclusive = startExclusive;
         RawEventCount = rawEventCount;
         Diagnostics = diagnostics;
+        LogicalCoverage = logicalCoverage;
         State = state;
     }
 
@@ -505,6 +535,7 @@ public sealed class SessionHistoryPlanningWindowProof {
     public EventAddress StartExclusive { get; }
     public int RawEventCount { get; }
     public SessionCurrentLineageDiagnostics Diagnostics { get; }
+    public SessionCurrentLineageLogicalCoverage LogicalCoverage { get; }
 }
 
 public abstract class SessionHistoryPlanningWindowProofResult {
@@ -522,16 +553,20 @@ public abstract class SessionHistoryPlanningWindowProofResult {
     public sealed class BeyondPrefix : SessionHistoryPlanningWindowProofResult {
         internal BeyondPrefix(
             SessionCurrentLineageBeyondPrefix evidence,
-            SessionCurrentLineageDiagnostics diagnostics
+            SessionCurrentLineageDiagnostics diagnostics,
+            SessionCurrentLineageLogicalCoverage logicalCoverage
         ) {
             ArgumentNullException.ThrowIfNull(evidence);
             ArgumentNullException.ThrowIfNull(diagnostics);
+            ArgumentNullException.ThrowIfNull(logicalCoverage);
             Evidence = evidence;
             Diagnostics = diagnostics;
+            LogicalCoverage = logicalCoverage;
         }
 
         public SessionCurrentLineageBeyondPrefix Evidence { get; }
         public SessionCurrentLineageDiagnostics Diagnostics { get; }
+        public SessionCurrentLineageLogicalCoverage LogicalCoverage { get; }
     }
 }
 
@@ -546,12 +581,14 @@ public sealed class SessionGoverningSetupProof {
         EventAddress boundary,
         SessionContextAnchorSetupReferences expectedSetups,
         SessionCurrentLineageDiagnostics diagnostics,
+        SessionCurrentLineageLogicalCoverage logicalCoverage,
         object state
     ) {
         OwnerPath = ownerPath;
         Boundary = boundary;
         ExpectedSetups = expectedSetups;
         Diagnostics = diagnostics;
+        LogicalCoverage = logicalCoverage;
         State = state;
     }
 
@@ -561,6 +598,7 @@ public sealed class SessionGoverningSetupProof {
     public EventAddress Boundary { get; }
     public SessionContextAnchorSetupReferences ExpectedSetups { get; }
     public SessionCurrentLineageDiagnostics Diagnostics { get; }
+    public SessionCurrentLineageLogicalCoverage LogicalCoverage { get; }
 }
 
 /// <summary>
@@ -591,6 +629,11 @@ public sealed class SessionGoverningSetupBeyondPrefix {
 
     public EventAddress Boundary { get; }
     public SessionContextAnchorSetupReferences ExpectedSetups { get; }
+    /// <summary>
+    /// The full bounded prefix length measured from the continuation evidence captured head.
+    /// For a boundary inside that prefix, the boundary-relative subset is reported separately as
+    /// <see cref="SessionCurrentLineageLogicalCoverage"/> on the returned result.
+    /// </summary>
     public int HeaderCount { get; }
     public EventAddress NextAddress { get; }
     public EventAddress RequiredAnchor { get; }
@@ -617,16 +660,20 @@ public abstract class SessionGoverningSetupProofResult {
     public sealed class BeyondPrefix : SessionGoverningSetupProofResult {
         internal BeyondPrefix(
             SessionGoverningSetupBeyondPrefix evidence,
-            SessionCurrentLineageDiagnostics diagnostics
+            SessionCurrentLineageDiagnostics diagnostics,
+            SessionCurrentLineageLogicalCoverage logicalCoverage
         ) {
             ArgumentNullException.ThrowIfNull(evidence);
             ArgumentNullException.ThrowIfNull(diagnostics);
+            ArgumentNullException.ThrowIfNull(logicalCoverage);
             Evidence = evidence;
             Diagnostics = diagnostics;
+            LogicalCoverage = logicalCoverage;
         }
 
         public SessionGoverningSetupBeyondPrefix Evidence { get; }
         public SessionCurrentLineageDiagnostics Diagnostics { get; }
+        public SessionCurrentLineageLogicalCoverage LogicalCoverage { get; }
     }
 }
 

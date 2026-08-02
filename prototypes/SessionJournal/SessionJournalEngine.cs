@@ -919,7 +919,13 @@ public sealed partial class SessionJournalEngine : IDisposable {
         switch (proof.Lookup) {
             case SessionCurrentLineageAnchorLookup.BeyondPrefix beyond:
                 return new SessionHistoryPlanningWindowProofResult
-                    .BeyondPrefix(beyond.Evidence, proof.Diagnostics);
+                    .BeyondPrefix(
+                        beyond.Evidence,
+                        proof.Diagnostics,
+                        new SessionCurrentLineageLogicalCoverage(
+                            beyond.Evidence.HeaderCount
+                        )
+                    );
             case SessionCurrentLineageAnchorLookup.OffLineage:
                 throw new InvalidDataException(
                     "History planning start is not an ancestor of the captured raw head."
@@ -940,6 +946,9 @@ public sealed partial class SessionJournalEngine : IDisposable {
                         startExclusive,
                         interval.Length,
                         proof.Diagnostics,
+                        new SessionCurrentLineageLogicalCoverage(
+                            interval.Length + 1
+                        ),
                         new SessionHistoryPlanningWindowProofState(
                             interval,
                             before
@@ -981,16 +990,35 @@ public sealed partial class SessionJournalEngine : IDisposable {
                 nameof(maxRawEventCount)
             );
         }
-        var end = prefix.Lookup(capturedHead)
-            as SessionCurrentLineageAnchorLookup.Found
-            ?? throw new InvalidDataException(
-                "Route endpoint is outside the captured lineage prefix."
+        SessionCurrentLineageAnchorLookup endLookup =
+            prefix.Lookup(capturedHead);
+        if (endLookup
+            is SessionCurrentLineageAnchorLookup.BeyondPrefix
+                endBeyond) {
+            return PrefixPlanningAnchorBeyond(endBeyond.Evidence);
+        }
+        if (endLookup
+            is SessionCurrentLineageAnchorLookup.OffLineage) {
+            throw new InvalidDataException(
+                "Route endpoint is off the captured lineage."
             );
-        var start = prefix.Lookup(startExclusive)
-            as SessionCurrentLineageAnchorLookup.Found
-            ?? throw new InvalidDataException(
-                "Route start is outside the captured lineage prefix."
+        }
+        var end = (SessionCurrentLineageAnchorLookup.Found)endLookup;
+
+        SessionCurrentLineageAnchorLookup startLookup =
+            prefix.Lookup(startExclusive);
+        if (startLookup
+            is SessionCurrentLineageAnchorLookup.BeyondPrefix
+                startBeyond) {
+            return PrefixPlanningAnchorBeyond(startBeyond.Evidence);
+        }
+        if (startLookup
+            is SessionCurrentLineageAnchorLookup.OffLineage) {
+            throw new InvalidDataException(
+                "Route start is off the captured lineage."
             );
+        }
+        var start = (SessionCurrentLineageAnchorLookup.Found)startLookup;
         if (end.Index >= start.Index) {
             throw new InvalidDataException(
                 "Route start must be an ancestor of its endpoint."
@@ -1014,9 +1042,12 @@ public sealed partial class SessionJournalEngine : IDisposable {
                         nextAddress
                     ),
                     new SessionCurrentLineageDiagnostics(
-                        headerCount,
+                        HeaderVisits: 0,
                         PayloadReads: 0,
                         DecodedPayloadBytes: 0
+                    ),
+                    new SessionCurrentLineageLogicalCoverage(
+                        headerCount
                     )
                 );
         }
@@ -1031,14 +1062,31 @@ public sealed partial class SessionJournalEngine : IDisposable {
                 startExclusive,
                 rawEventCount,
                 new SessionCurrentLineageDiagnostics(
-                    rawEventCount + 1,
+                    HeaderVisits: 0,
                     PayloadReads: 0,
                     DecodedPayloadBytes: 0
+                ),
+                new SessionCurrentLineageLogicalCoverage(
+                    rawEventCount + 1
                 ),
                 new SessionHistoryPlanningWindowProofState(
                     interval,
                     _reader.CaptureDiagnostics()
                 )
+            )
+        );
+
+        SessionHistoryPlanningWindowProofResult PrefixPlanningAnchorBeyond(
+            SessionCurrentLineageBeyondPrefix evidence
+        ) => new SessionHistoryPlanningWindowProofResult.BeyondPrefix(
+            evidence,
+            new SessionCurrentLineageDiagnostics(
+                HeaderVisits: 0,
+                PayloadReads: 0,
+                DecodedPayloadBytes: 0
+            ),
+            new SessionCurrentLineageLogicalCoverage(
+                evidence.HeaderCount
             )
         );
     }
@@ -1165,7 +1213,12 @@ public sealed partial class SessionJournalEngine : IDisposable {
             Path,
             proof.CapturedHead,
             expectedEndSetups,
-            proof.Diagnostics,
+            new SessionCurrentLineageDiagnostics(
+                HeaderVisits: 0,
+                PayloadReads: 0,
+                DecodedPayloadBytes: 0
+            ),
+            proof.LogicalCoverage,
             new SessionGoverningSetupProofState(
                 proof.CapturedHead,
                 expectedEndSetups
@@ -1283,6 +1336,9 @@ public sealed partial class SessionJournalEngine : IDisposable {
                         boundary,
                         expectedSetups,
                         diagnostics,
+                        new SessionCurrentLineageLogicalCoverage(
+                            headerCount
+                        ),
                         new SessionGoverningSetupProofState(
                             boundary,
                             expectedSetups
@@ -1320,7 +1376,10 @@ public sealed partial class SessionJournalEngine : IDisposable {
                             ? expectedSetups.SystemPrompt.Address
                             : expectedSetups.RuntimeConfig.Address
                     ),
-                    diagnostics
+                    diagnostics,
+                    new SessionCurrentLineageLogicalCoverage(
+                        headerCount
+                    )
                 );
             }
             cursor = parent;
@@ -1350,11 +1409,38 @@ public sealed partial class SessionJournalEngine : IDisposable {
                 nameof(prefix)
             );
         }
-        var found = prefix.Lookup(boundary)
-            as SessionCurrentLineageAnchorLookup.Found
-            ?? throw new InvalidDataException(
-                "Governing setup boundary is outside the captured lineage prefix."
+        SessionCurrentLineageAnchorLookup boundaryLookup =
+            prefix.Lookup(boundary);
+        if (boundaryLookup
+            is SessionCurrentLineageAnchorLookup.BeyondPrefix beyond) {
+            SessionCurrentLineageBeyondPrefix evidence = beyond.Evidence;
+            return new SessionGoverningSetupProofResult.BeyondPrefix(
+                new SessionGoverningSetupBeyondPrefix(
+                    boundary,
+                    expectedSetups,
+                    evidence.CapturedHead,
+                    evidence.HeaderCount,
+                    evidence.NextAddress,
+                    boundary
+                ),
+                new SessionCurrentLineageDiagnostics(
+                    HeaderVisits: 0,
+                    PayloadReads: 0,
+                    DecodedPayloadBytes: 0
+                ),
+                new SessionCurrentLineageLogicalCoverage(
+                    evidence.HeaderCount
+                )
             );
+        }
+        if (boundaryLookup
+            is SessionCurrentLineageAnchorLookup.OffLineage) {
+            throw new InvalidDataException(
+                "Governing setup boundary is off the captured lineage."
+            );
+        }
+        var found =
+            (SessionCurrentLineageAnchorLookup.Found)boundaryLookup;
         bool foundRuntime = false;
         bool foundPrompt = false;
         int headerCount = 0;
@@ -1392,7 +1478,7 @@ public sealed partial class SessionJournalEngine : IDisposable {
             if (foundRuntime && foundPrompt) {
                 var diagnostics =
                     new SessionCurrentLineageDiagnostics(
-                        headerCount,
+                        HeaderVisits: 0,
                         PayloadReads: 0,
                         DecodedPayloadBytes: 0
                     );
@@ -1402,6 +1488,9 @@ public sealed partial class SessionJournalEngine : IDisposable {
                         boundary,
                         expectedSetups,
                         diagnostics,
+                        new SessionCurrentLineageLogicalCoverage(
+                            headerCount
+                        ),
                         new SessionGoverningSetupProofState(
                             boundary,
                             expectedSetups
@@ -1424,9 +1513,12 @@ public sealed partial class SessionJournalEngine : IDisposable {
                     requiredAnchor
                 ),
                 new SessionCurrentLineageDiagnostics(
-                    headerCount,
+                    HeaderVisits: 0,
                     PayloadReads: 0,
                     DecodedPayloadBytes: 0
+                ),
+                new SessionCurrentLineageLogicalCoverage(
+                    headerCount
                 )
             );
         }
