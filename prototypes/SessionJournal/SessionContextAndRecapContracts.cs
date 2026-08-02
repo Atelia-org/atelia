@@ -244,6 +244,11 @@ public interface IRecapBlockMaintainer {
 
     ContextHeaderBlockPath Target { get; }
 
+    /// <summary>
+    /// Opaque semantic capability identity frozen by derived-recap plans.
+    /// </summary>
+    string CapabilityFingerprint { get; }
+
     ValueTask<RecapBlockMaintenanceResult> MaintainAsync(
         RecapBlockMaintenanceRequest request,
         CancellationToken ct

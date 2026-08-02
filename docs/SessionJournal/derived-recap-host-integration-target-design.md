@@ -110,16 +110,19 @@ RecapProfilePlanningDescriptor
   RecapBlockId
   Target
   MaintainerId
+  MaintainerCapabilityFingerprint
 
 RecapMaintainerCapabilitySnapshot
   ordered/immutable descriptors
   ResolveActiveProfile(ProfileName)
-  SupportsFrozen(MaintainerId, Target)
+  SupportsFrozen(MaintainerId, Target, MaintainerCapabilityFingerprint)
 ```
 
 snapshot在构造时复制输入并使用ordinal comparison。它是metadata-only：
 
 - 不包含prompt正文；
+- capability fingerprint是opaque `sha256:<64 lowercase hex>` token；其canonical preimage由
+  concrete Maintainers assembly拥有；
 - 不包含Completion client、connection、secret或factory；
 - 不创建目录或call log；
 - 不因active config删除profile而删除仍受Host支持的frozen capability。
@@ -127,13 +130,15 @@ snapshot在构造时复制输入并使用ordinal comparison。它是metadata-onl
 构造规则：
 
 - `ProfileName`必须ordinal unique；
-- frozen execution key `(MaintainerId, Target)`必须unique；
+- frozen execution key
+  `(MaintainerId, Target, MaintainerCapabilityFingerprint)`必须unique；同一ID与Target可保留多个
+  fingerprint，以便恢复旧frozen plan；
 - capability catalog允许多个profile映射到同一个`RecapBlockId/Target`，以支持producer/profile
   换代；
 - 只有resolved active roster必须拒绝重复`RecapBlockId`或Target。
 
 active roster只决定新的Building。Resume/Restore必须使用完整capability snapshot验证frozen
-`MaintainerId + Target`，再由Host的完整maintainer registry执行。
+`MaintainerId + Target + MaintainerCapabilityFingerprint`，再由Host的完整maintainer registry执行。
 
 ### 3.2 Pure config resolution
 
@@ -271,7 +276,8 @@ deferred registry延迟创建。
 
 阶段归属：prepared authority、lazy active-composition source与authority-only lifecycle factory已在
 H1完成；`DeferredRecapBlockMaintainerRegistry`及CLI lazy wiring已在H2完成。whole-registry
-factory只在第一次exact `(MaintainerId, Target)` lookup时激活；不增加per-binding state machine、
+factory只在第一次exact
+`(MaintainerId, Target, MaintainerCapabilityFingerprint)` lookup时激活；不增加per-binding state machine、
 activation状态或retry/reset API。
 
 ## 4. Host operation order

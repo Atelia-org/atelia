@@ -356,6 +356,7 @@ public sealed class DerivedRecapPublishedPlanReadTests {
                 original.RecapBlockId,
                 original.Target,
                 "replacement-maintainer",
+                original.MaintainerCapabilityFingerprint,
                 original.Source,
                 original.CatchUpThrough,
                 original.PriorContext,

@@ -80,6 +80,29 @@ public sealed class DerivedRecapOperationPreparerTests : IDisposable {
     }
 
     [Fact]
+    public async Task FrozenFingerprintDriftSkipsConfiguration() {
+        Scenario scenario = Scenario.Create();
+        scenario.Building =
+            new CurrentLineageBuildingSelection.Available(
+                CreateBuilding(
+                    MaintainerId,
+                    Target,
+                    "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+                )
+            );
+
+        var unavailable = Assert.IsType<
+            DerivedRecapOperationPreparationResult.Unavailable
+        >(await scenario.PrepareAsync(Capabilities()));
+
+        Assert.Equal(0, scenario.LoadCallCount);
+        Assert.Equal(
+            DerivedRecapExecutionDefectCodes.MaintainerUnavailable,
+            Assert.Single(unavailable.Defects).Code
+        );
+    }
+
+    [Fact]
     public async Task NoBuildingLoadsOnceAndPinsOneConfiguration() {
         Scenario scenario = Scenario.Create();
         ResolvedRecapPlanningConfiguration configuration =
@@ -157,7 +180,8 @@ public sealed class DerivedRecapOperationPreparerTests : IDisposable {
                         ContextHeaderCarrier.System,
                         "other"
                     ),
-                    "other-maintainer"
+                    "other-maintainer",
+                    RecapPlannerTestIdentity.CapabilityFingerprint
                 )
             ]);
 
@@ -601,7 +625,8 @@ public sealed class DerivedRecapOperationPreparerTests : IDisposable {
                 ProfileName,
                 BlockId,
                 Target,
-                MaintainerId
+                MaintainerId,
+                RecapPlannerTestIdentity.CapabilityFingerprint
             )
         ]);
 
@@ -630,12 +655,15 @@ public sealed class DerivedRecapOperationPreparerTests : IDisposable {
 
     private static BuildingSnapshot CreateBuilding(
         string maintainerId,
-        ContextHeaderBlockPath target
+        ContextHeaderBlockPath target,
+        string maintainerCapabilityFingerprint =
+            RecapPlannerTestIdentity.CapabilityFingerprint
     ) {
         DerivedRecapSetManifest manifest = CreateManifest(
             BlockId,
             target,
-            maintainerId
+            maintainerId,
+            maintainerCapabilityFingerprint
         );
         return new BuildingSnapshot(
             new BuildingDescriptor(
@@ -651,7 +679,9 @@ public sealed class DerivedRecapOperationPreparerTests : IDisposable {
     private static DerivedRecapSetManifest CreateManifest(
         RecapBlockId blockId,
         ContextHeaderBlockPath target,
-        string maintainerId
+        string maintainerId,
+        string maintainerCapabilityFingerprint =
+            RecapPlannerTestIdentity.CapabilityFingerprint
     ) => DerivedRecapCodec.CreateManifest(
         new RefId(1),
         Head,
@@ -660,6 +690,7 @@ public sealed class DerivedRecapOperationPreparerTests : IDisposable {
                 blockId,
                 target,
                 maintainerId,
+                maintainerCapabilityFingerprint,
                 new EmptyRecapMaintainSource(Address(1)),
                 [Head],
                 EmptyRecapPriorContext.Instance,

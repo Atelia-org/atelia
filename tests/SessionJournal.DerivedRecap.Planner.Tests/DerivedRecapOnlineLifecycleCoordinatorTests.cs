@@ -998,6 +998,8 @@ public sealed class DerivedRecapOnlineLifecycleCoordinatorTests {
         ContextHeaderBlockPath target
     ) : IRecapBlockMaintainer {
         public string Id { get; } = id;
+        public string CapabilityFingerprint { get; } =
+            "sha256:0000000000000000000000000000000000000000000000000000000000000000";
         public ContextHeaderBlockPath Target { get; } = target;
         public int CallCount { get; private set; }
 
@@ -1095,6 +1097,7 @@ public sealed class DerivedRecapOnlineLifecycleCoordinatorTests {
                 BlockId,
                 Target,
                 MaintainerId,
+                RecapPlannerTestIdentity.CapabilityFingerprint,
                 new EmptyRecapMaintainSource(
                     window.StartExclusive
                 ),
@@ -1200,6 +1203,7 @@ public sealed class DerivedRecapOnlineLifecycleCoordinatorTests {
                         BlockId,
                         Target,
                         MaintainerId,
+                        RecapPlannerTestIdentity.CapabilityFingerprint,
                         MaxContent
                     )
                 ],

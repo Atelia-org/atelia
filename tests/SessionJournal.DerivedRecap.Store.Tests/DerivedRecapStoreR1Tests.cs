@@ -113,6 +113,7 @@ public sealed class DerivedRecapStoreR1Tests {
                     plans[1].RecapBlockId,
                     plans[1].Target,
                     "roleplay.changed",
+                    RecapTestIdentity.CapabilityFingerprint,
                     new EmptyRecapMaintainSource(replayStart),
                     [source],
                     EmptyRecapPriorContext.Instance
@@ -176,6 +177,7 @@ public sealed class DerivedRecapStoreR1Tests {
                     blocks[1].RecapBlockId,
                     blocks[1].Target,
                     "roleplay.autobiographical",
+                    RecapTestIdentity.CapabilityFingerprint,
                     new ExistingRecapMaintainSource(
                         source,
                         descriptor.EnvelopeSha256,
@@ -285,6 +287,7 @@ public sealed class DerivedRecapStoreR1Tests {
                 "roleplay.self"
             ),
             "roleplay.autobiographical",
+            RecapTestIdentity.CapabilityFingerprint,
             new EmptyRecapMaintainSource(replayStart),
             [endpoint, target],
             EmptyRecapPriorContext.Instance
@@ -328,6 +331,7 @@ public sealed class DerivedRecapStoreR1Tests {
             plan.RecapBlockId,
             plan.Target,
             "roleplay.wrong",
+            plan.MaintainerCapabilityFingerprint,
             plan.Source,
             plan.CatchUpThrough,
             plan.PriorContext,
@@ -433,6 +437,7 @@ public sealed class DerivedRecapStoreR1Tests {
                 "roleplay.self"
             ),
             "roleplay.autobiographical",
+            RecapTestIdentity.CapabilityFingerprint,
             new EmptyRecapMaintainSource(
                 lineage.HeadToRoot[^1].Address
             ),

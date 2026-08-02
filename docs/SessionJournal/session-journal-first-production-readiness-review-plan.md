@@ -228,7 +228,8 @@ boundary/property tests、frozen config drift、missing-only restore、large-his
 **必须证明**：
 
 - CLI与Galatea不复制config resolution、Building selection、restore或raw phase state machine；
-- Maintainer/profile roster与frozen `MaintainerId + Target`能够exact bind；
+- Maintainer/profile roster与frozen
+  `MaintainerId + Target + MaintainerCapabilityFingerprint`能够exact bind；
 - Recap sidecar mutation不改变raw events/refs；
 - Prepared reopen能在active config删除/改变后重建同一canonical request；
 - strict ordinal损坏只Restore同一slot，不能fallback到full raw或更旧set；

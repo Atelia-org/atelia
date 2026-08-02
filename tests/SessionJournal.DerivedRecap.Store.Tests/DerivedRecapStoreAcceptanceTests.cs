@@ -78,6 +78,8 @@ public sealed class DerivedRecapStoreAcceptanceTests {
             originalFirstPlan.RecapBlockId,
             originalFirstPlan.Target,
             "changed-maintainer",
+            ((MaintainRecapBlockPlan)originalFirstPlan)
+                .MaintainerCapabilityFingerprint,
             ((MaintainRecapBlockPlan)originalFirstPlan).Source,
             ((MaintainRecapBlockPlan)originalFirstPlan).CatchUpThrough,
             EmptyRecapPriorContext.Instance

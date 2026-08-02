@@ -21,14 +21,23 @@ public sealed record RecapRewriteProfile(
 }
 
 public sealed class RewriteRecapBlockMaintainer : IRecapBlockMaintainer {
+    public const string ImplementationId =
+        "atelia.session-journal.recap-maintainer.rewrite.v1";
+
     private readonly RecapRewriteProfile _profile;
 
     public RewriteRecapBlockMaintainer(
         RecapRewriteProfile profile,
+        string capabilityFingerprint,
         ICompletionClient completionClient,
         string modelId
     ) {
         _profile = profile ?? throw new ArgumentNullException(nameof(profile));
+        CapabilityFingerprint =
+            RecapMaintainerCapabilityFingerprint.RequireFingerprint(
+                capabilityFingerprint,
+                nameof(capabilityFingerprint)
+            );
         CompletionClient = completionClient
             ?? throw new ArgumentNullException(nameof(completionClient));
         ModelId = string.IsNullOrWhiteSpace(modelId)
@@ -38,6 +47,7 @@ public sealed class RewriteRecapBlockMaintainer : IRecapBlockMaintainer {
 
     public string Id => _profile.Id;
     public ContextHeaderBlockPath Target => _profile.Target;
+    public string CapabilityFingerprint { get; }
     public ICompletionClient CompletionClient { get; }
     public string ModelId { get; }
 

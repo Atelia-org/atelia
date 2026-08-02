@@ -114,6 +114,7 @@ public sealed record MaintainRecapBlockPlan : RecapBlockPlan {
         RecapBlockId recapBlockId,
         ContextHeaderBlockPath target,
         string maintainerId,
+        string maintainerCapabilityFingerprint,
         RecapMaintainSource source,
         IReadOnlyList<EventAddress> catchUpThrough,
         RecapPriorContext priorContext,
@@ -121,6 +122,8 @@ public sealed record MaintainRecapBlockPlan : RecapBlockPlan {
             SessionContextContributionContract.MaxContributionUtf8Bytes
     ) : base(recapBlockId, target, maxContentUtf8Bytes) {
         MaintainerId = maintainerId;
+        MaintainerCapabilityFingerprint =
+            maintainerCapabilityFingerprint;
         Source = source ?? throw new ArgumentNullException(nameof(source));
         ArgumentNullException.ThrowIfNull(catchUpThrough);
         CatchUpThrough = Array.AsReadOnly(catchUpThrough.ToArray());
@@ -129,6 +132,7 @@ public sealed record MaintainRecapBlockPlan : RecapBlockPlan {
     }
 
     public string MaintainerId { get; }
+    public string MaintainerCapabilityFingerprint { get; }
     public RecapMaintainSource Source { get; }
     public IReadOnlyList<EventAddress> CatchUpThrough { get; }
     public RecapPriorContext PriorContext { get; }

@@ -28,6 +28,18 @@ cutover并更新 golden tests。
 prompt fingerprint 使用带 schema 与字段边界的 canonical structured JSON，不以 NUL delimiter
 拼接两个 prompt。
 
+每个descriptor还计算opaque
+`MaintainerCapabilityFingerprint`。canonical preimage schema固定为
+`atelia.session-journal.recap-maintainer-capability.v1`，UTF-8 JSON字段顺序固定为
+`schema`、`implementationId`、`maintainerId`、`target`（`carrier`、`blockKey`）、
+`promptFingerprint`；输出格式固定为`sha256:<64 lowercase hex>`。model、connection、secret、
+logging path不属于语义能力，不进入fingerprint。实现或prompt语义变化产生新fingerprint时，完整catalog
+应同时保留仍可能被旧Building/Published set引用的旧descriptor；active profile只决定新planning。
+
+Store与Planner把fingerprint当作opaque token；canonical preimage与具体实现版本由本companion
+assembly拥有。raw `Atelia.SessionJournal`只在neutral `IRecapBlockMaintainer` contract上暴露该token，
+不会依赖本程序集或理解其preimage。
+
 离线开发 composition root 是
 [`SessionJournal.Cli`](../SessionJournal.Cli/README.md)：它通过
 `RecapMaintainerProfileCatalog` 解析 stable role/profile descriptor，注入 Completion

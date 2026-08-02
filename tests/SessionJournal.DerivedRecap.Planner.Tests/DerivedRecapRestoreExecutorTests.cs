@@ -289,6 +289,7 @@ public sealed class DerivedRecapRestoreExecutorTests {
                 "frozen.rich"
             ),
             "frozen-rich-maintainer",
+            RecapPlannerTestIdentity.CapabilityFingerprint,
             new EmptyRecapMaintainSource(raw.StartExclusive),
             route,
             new InlineRecapPriorContext(
@@ -423,6 +424,44 @@ public sealed class DerivedRecapRestoreExecutorTests {
                         .MaintainerUnavailable
         );
         Assert.Equal(0, available.CallCount);
+    }
+
+    [Fact]
+    public async Task FingerprintDriftPreventsRestoreCall() {
+        using RestoreFixture fixture =
+            await RestoreFixture.CreateAsync();
+        (
+            MaintainRecapBlockPlan plan,
+            _
+        ) = await fixture.PublishMaintainAsync(endpointCount: 1);
+        EventAddress anchor = plan.CatchUpThrough[^1];
+        await fixture.DamageFinalAsync(plan);
+        File.Delete(
+            fixture.BlockPath(anchor, "work", plan.RecapBlockId)
+        );
+        var drifted = new ScriptedMaintainer(
+            plan.MaintainerId,
+            plan.Target,
+            static (_, _) => "must-not-run",
+            beforeReturn: null,
+            capabilityFingerprint:
+                "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+        );
+
+        var unavailable = Assert.IsType<
+            DerivedRecapRestoreResult.Unavailable
+        >(
+            await fixture.CreateExecutor([drifted])
+                .RestoreAsync(anchor, fixture.CurrentHead)
+        );
+
+        Assert.Contains(
+            unavailable.Defects,
+            defect => defect.Code
+                == DerivedRecapRestoreDefectCodes
+                    .MaintainerUnavailable
+        );
+        Assert.Equal(0, drifted.CallCount);
     }
 
     [Fact]
@@ -719,15 +758,19 @@ public sealed class DerivedRecapRestoreExecutorTests {
             string id,
             ContextHeaderBlockPath target,
             Func<int, RecapBlockMaintenanceRequest, string> maintain,
-            Action? beforeReturn
+            Action? beforeReturn,
+            string capabilityFingerprint =
+                RecapPlannerTestIdentity.CapabilityFingerprint
         ) {
             Id = id;
             Target = target;
+            CapabilityFingerprint = capabilityFingerprint;
             _maintain = maintain;
             _beforeReturn = beforeReturn;
         }
 
         public string Id { get; }
+        public string CapabilityFingerprint { get; }
         public ContextHeaderBlockPath Target { get; }
         public int CallCount { get; private set; }
         public List<string> OldBlocks { get; } = [];
@@ -756,6 +799,8 @@ public sealed class DerivedRecapRestoreExecutorTests {
         ContextHeaderBlockPath target
     ) : IRecapBlockMaintainer {
         public string Id { get; } = id;
+        public string CapabilityFingerprint { get; } =
+            "sha256:0000000000000000000000000000000000000000000000000000000000000000";
         public ContextHeaderBlockPath Target { get; } = target;
 
         public ValueTask<RecapBlockMaintenanceResult> MaintainAsync(
@@ -852,6 +897,7 @@ public sealed class DerivedRecapRestoreExecutorTests {
                     blockId
                 ),
                 maintainerId,
+                RecapPlannerTestIdentity.CapabilityFingerprint,
                 new EmptyRecapMaintainSource(
                     window.StartExclusive
                 ),
@@ -896,6 +942,7 @@ public sealed class DerivedRecapRestoreExecutorTests {
                     "frozen.self"
                 ),
                 "frozen-maintainer",
+                RecapPlannerTestIdentity.CapabilityFingerprint,
                 new EmptyRecapMaintainSource(
                     window.StartExclusive
                 ),
@@ -955,6 +1002,7 @@ public sealed class DerivedRecapRestoreExecutorTests {
                     "frozen.self"
                 ),
                 "frozen-maintainer",
+                RecapPlannerTestIdentity.CapabilityFingerprint,
                 new EmptyRecapMaintainSource(
                     sourceWindow.StartExclusive
                 ),
@@ -982,6 +1030,7 @@ public sealed class DerivedRecapRestoreExecutorTests {
                 sourcePlan.RecapBlockId,
                 sourcePlan.Target,
                 sourcePlan.MaintainerId,
+                sourcePlan.MaintainerCapabilityFingerprint,
                 new ExistingRecapMaintainSource(
                     source,
                     sourceDescriptor.EnvelopeSha256,

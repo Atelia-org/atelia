@@ -171,6 +171,7 @@ RecapBlockPlan =
     RecapBlockId
     Target
     MaintainerId
+    MaintainerCapabilityFingerprint
     Source =
       Existing {
         SourceSetAnchor
@@ -201,6 +202,9 @@ RecapBlockPlan =
 - `SetAdmissionAnchor` 等于 directory key，是同一 `RefId` 上 replay-safe raw boundary；
 - `RecapBlockId` 与 Target 均不得重复；
 - explicit discriminated union 决定 Maintain/Inherit，不从 nullable fields猜测；
+- 每个Maintain plan冻结exact
+  `(MaintainerId, Target, MaintainerCapabilityFingerprint)`；fingerprint是opaque
+  `sha256:<64 lowercase hex>`，Store/Planner不从当前catalog推断或解释其preimage；
 - Existing first replay start 由 frozen input `AbsorbedThrough` 得出；
 - Empty 显式保存 replay seed；
 - 只持久化 ordered `CatchUpThrough[]`；step start 由 source cursor/previous endpoint 推导；
@@ -408,7 +412,7 @@ frozen-plan边界。它们合起来至少描述：
 - `RecapCadenceConfig`：versioned HistoryLoad estimator + minimum recent reserve + build interval；
 - `MaxRawGrowthEventCount` raw traversal hard-limit，与 cadence计量分离；
 - replay-safe admission selection；
-- active `RecapBlockId / Target / MaintainerId` catalog；
+- active `RecapBlockId / Target / MaintainerId / MaintainerCapabilityFingerprint` catalog；
 - content/route/call limits；
 - NoBuild/Maintain/Inherit policy；
 - bounded endpoint policy。
@@ -467,7 +471,8 @@ one Maintainer step runner
 
 Published Restore：
 
-- frozen plan、anchor、roster、mode、source、route、prior context、MaintainerId 与 per-block
+- frozen plan、anchor、roster、mode、source、route、prior context、MaintainerId、
+  MaintainerCapabilityFingerprint 与 per-block
   `MaxContentUtf8Bytes` exact不变；当前 operator trigger/planning ceilings不参与恢复裁决；
 - 只允许 regenerated block commitments 和 envelope token 改变；
 - component 逐个 atomic replace，publication envelope last；
@@ -529,7 +534,7 @@ bounded Restore 与显式运维。
 - dependency scheduler/persisted retry trigger；
 - global membership ledger 与带外 directory deletion detection；
 - byte-identical LLM regeneration；
-- prompt/model/provider audit identity；
+- model/provider audit identity；
 - multi-process writers；
 - tamper evidence、Merkle/signature、backup/replication；
 - dynamic retrieval、vector memory 与 multi-hop graph memory。
@@ -558,3 +563,11 @@ bounded Restore 与显式运维。
 - 10k cold prefix selection不读取未选 raw event payload；
 - Prepared 后删除整个 `derived/recap/v4`仍 exact reopen；
 - active target 不再使用 DerivedArtifactSet/DerivedMemory 作为 V4 Recap 领域名。
+
+## 12. Maintainer capability schema cutover
+
+durable layout、Store header、frozen input与block schema继续使用v4；manifest与publication envelope
+升级为v5，使canonical payload hash覆盖每个Maintain plan的
+`MaintainerCapabilityFingerprint`。v4 manifest/publication不提供兼容读取、默认值或current-ID
+推断。首次采用v5前必须显式处理旧sidecar：只有Building时执行`recap abandon-building`；存在
+Published membership时执行带exact `--confirm-ref`的`recap reset`，随后显式`recap run`重建。

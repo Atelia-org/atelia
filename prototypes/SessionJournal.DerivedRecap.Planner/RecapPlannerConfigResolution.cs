@@ -12,7 +12,8 @@ public sealed record RecapProfilePlanningDescriptor {
         string profileName,
         RecapBlockId recapBlockId,
         ContextHeaderBlockPath target,
-        string maintainerId
+        string maintainerId,
+        string maintainerCapabilityFingerprint
     ) {
         ProfileName = string.IsNullOrWhiteSpace(profileName)
             ? throw new ArgumentException(
@@ -36,12 +37,18 @@ public sealed record RecapProfilePlanningDescriptor {
                 nameof(maintainerId)
             )
             : maintainerId;
+        MaintainerCapabilityFingerprint =
+            RecapMaintainerCapabilityFingerprintSyntax.Require(
+                maintainerCapabilityFingerprint,
+                nameof(maintainerCapabilityFingerprint)
+            );
     }
 
     public string ProfileName { get; }
     public RecapBlockId RecapBlockId { get; }
     public ContextHeaderBlockPath Target { get; }
     public string MaintainerId { get; }
+    public string MaintainerCapabilityFingerprint { get; }
 }
 
 /// <summary>
@@ -54,7 +61,8 @@ public sealed class RecapMaintainerCapabilitySnapshot {
         RecapProfilePlanningDescriptor
     > _byProfileName;
     private readonly IReadOnlyDictionary<
-        (string MaintainerId, ContextHeaderBlockPath Target),
+        (string MaintainerId, ContextHeaderBlockPath Target,
+            string CapabilityFingerprint),
         RecapProfilePlanningDescriptor
     > _byFrozenIdentity;
 
@@ -69,7 +77,8 @@ public sealed class RecapMaintainerCapabilitySnapshot {
             RecapProfilePlanningDescriptor
         >(StringComparer.Ordinal);
         var byFrozenIdentity = new Dictionary<
-            (string MaintainerId, ContextHeaderBlockPath Target),
+            (string MaintainerId, ContextHeaderBlockPath Target,
+                string CapabilityFingerprint),
             RecapProfilePlanningDescriptor
         >();
 
@@ -89,7 +98,8 @@ public sealed class RecapMaintainerCapabilitySnapshot {
 
             var frozenIdentity = (
                 descriptor.MaintainerId,
-                descriptor.Target
+                descriptor.Target,
+                descriptor.MaintainerCapabilityFingerprint
             );
             if (!byFrozenIdentity.TryAdd(
                     frozenIdentity,
@@ -99,7 +109,8 @@ public sealed class RecapMaintainerCapabilitySnapshot {
                     "Recap capability snapshot contains duplicate "
                     + "frozen identity "
                     + $"('{descriptor.MaintainerId}', "
-                    + $"'{descriptor.Target}').",
+                    + $"'{descriptor.Target}', "
+                    + $"'{descriptor.MaintainerCapabilityFingerprint}').",
                     nameof(descriptors)
                 );
             }
@@ -133,12 +144,18 @@ public sealed class RecapMaintainerCapabilitySnapshot {
     public bool TryResolveFrozen(
         string? maintainerId,
         ContextHeaderBlockPath? target,
+        string? maintainerCapabilityFingerprint,
         out RecapProfilePlanningDescriptor descriptor
     ) {
         if (maintainerId is not null
             && target is not null
+            && maintainerCapabilityFingerprint is not null
             && _byFrozenIdentity.TryGetValue(
-                (maintainerId, target),
+                (
+                    maintainerId,
+                    target,
+                    maintainerCapabilityFingerprint
+                ),
                 out descriptor!
             )) {
             return true;
@@ -150,8 +167,14 @@ public sealed class RecapMaintainerCapabilitySnapshot {
 
     public bool SupportsFrozen(
         string? maintainerId,
-        ContextHeaderBlockPath? target
-    ) => TryResolveFrozen(maintainerId, target, out _);
+        ContextHeaderBlockPath? target,
+        string? maintainerCapabilityFingerprint
+    ) => TryResolveFrozen(
+        maintainerId,
+        target,
+        maintainerCapabilityFingerprint,
+        out _
+    );
 }
 
 public sealed record RecapPlanningPolicyRegistration {
@@ -559,6 +582,7 @@ public static class RecapPlannerConfigResolver {
                 descriptor.RecapBlockId,
                 descriptor.Target,
                 descriptor.MaintainerId,
+                descriptor.MaintainerCapabilityFingerprint,
                 entry.MaxContentUtf8Bytes
             );
             active.Add(new ResolvedActiveRecapProfile(

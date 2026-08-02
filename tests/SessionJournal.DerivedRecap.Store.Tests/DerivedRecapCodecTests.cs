@@ -55,6 +55,7 @@ public sealed class DerivedRecapCodecTests {
                 "roleplay.self"
             ),
             "roleplay.autobiographical",
+            RecapTestIdentity.CapabilityFingerprint,
             new EmptyRecapMaintainSource(A1),
             [A2],
             EmptyRecapPriorContext.Instance
@@ -76,6 +77,9 @@ public sealed class DerivedRecapCodecTests {
             + "\"target\":{\"carrier\":\"system\","
             + "\"blockKey\":\"roleplay.self\"},"
             + "\"maintainerId\":\"roleplay.autobiographical\","
+            + "\"maintainerCapabilityFingerprint\":\""
+            + RecapTestIdentity.CapabilityFingerprint
+            + "\","
             + "\"source\":{\"kind\":\"empty\","
             + "\"replayStartExclusive\":\""
             + EventAddressTextCodec.Format(A1)
@@ -101,6 +105,135 @@ public sealed class DerivedRecapCodecTests {
     }
 
     [Fact]
+    public void MaintainCapabilityFingerprint_IsRequiredAndHashBound() {
+        MaintainRecapBlockPlan first = MaintainPlan(
+            RecapTestIdentity.CapabilityFingerprint
+        );
+        MaintainRecapBlockPlan second = MaintainPlan(
+            "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+        );
+
+        Assert.NotEqual(
+            DerivedRecapCodec.ComputeBlockPlanSha256(first),
+            DerivedRecapCodec.ComputeBlockPlanSha256(second)
+        );
+        Assert.NotEqual(
+            DerivedRecapCodec.CreateManifest(
+                new RefId(8),
+                A2,
+                [first]
+            ).ManifestPayloadSha256,
+            DerivedRecapCodec.CreateManifest(
+                new RefId(8),
+                A2,
+                [second]
+            ).ManifestPayloadSha256
+        );
+
+        foreach (string invalid in new[] {
+            "",
+            new string('0', 64),
+            "sha256:" + new string('A', 64),
+            "sha256:" + new string('0', 63)
+        }) {
+            Assert.Throws<InvalidDataException>(() =>
+                DerivedRecapCodec.CreateManifest(
+                    new RefId(8),
+                    A2,
+                    [MaintainPlan(invalid)]
+                )
+            );
+        }
+    }
+
+    [Fact]
+    public void DurableV5_RejectsV4AndFingerprintFieldMutation() {
+        DerivedRecapSetManifest manifest =
+            DerivedRecapCodec.CreateManifest(
+                new RefId(9),
+                A2,
+                [MaintainPlan(
+                    RecapTestIdentity.CapabilityFingerprint
+                )]
+            );
+        string json = Encoding.UTF8.GetString(
+            DerivedRecapCodec.EncodeManifest(manifest)
+        );
+
+        string oldSchema = json.Replace(
+            DerivedRecapCodec.ManifestSchema,
+            "atelia.session-journal.derived-recap-manifest.v4",
+            StringComparison.Ordinal
+        );
+        Assert.Throws<NotSupportedException>(() =>
+            DerivedRecapCodec.DecodeManifest(
+                Encoding.UTF8.GetBytes(oldSchema)
+            )
+        );
+
+        string missing = json.Replace(
+            "\"maintainerCapabilityFingerprint\":\""
+            + RecapTestIdentity.CapabilityFingerprint
+            + "\",",
+            string.Empty,
+            StringComparison.Ordinal
+        );
+        Assert.Throws<InvalidDataException>(() =>
+            DerivedRecapCodec.DecodeManifest(
+                Encoding.UTF8.GetBytes(missing)
+            )
+        );
+
+        string duplicate = json.Replace(
+            "\"maintainerCapabilityFingerprint\":",
+            "\"maintainerCapabilityFingerprint\":\""
+            + RecapTestIdentity.CapabilityFingerprint
+            + "\",\"maintainerCapabilityFingerprint\":",
+            StringComparison.Ordinal
+        );
+        Assert.Throws<InvalidDataException>(() =>
+            DerivedRecapCodec.DecodeManifest(
+                Encoding.UTF8.GetBytes(duplicate)
+            )
+        );
+
+        RecapBlockPlan plan = manifest.Blocks[0];
+        PublishedRecapSet publication =
+            DerivedRecapCodec.CreatePublication(
+                manifest,
+                [DerivedRecapCodec.CreateBlock(plan, A2, "recap")]
+            );
+        string publicationJson = Encoding.UTF8.GetString(
+            DerivedRecapCodec.EncodePublication(publication)
+        );
+        string oldPublicationSchema = publicationJson.Replace(
+            DerivedRecapCodec.PublicationSchema,
+            "atelia.session-journal.published-recap-set.v4",
+            StringComparison.Ordinal
+        );
+        Assert.Throws<NotSupportedException>(() =>
+            DerivedRecapCodec.DecodePublication(
+                Encoding.UTF8.GetBytes(oldPublicationSchema)
+            )
+        );
+    }
+
+    private static MaintainRecapBlockPlan MaintainPlan(
+        string capabilityFingerprint
+    ) => new(
+        new RecapBlockId("roleplay.fingerprint"),
+        new ContextHeaderBlockPath(
+            ContextHeaderCarrier.System,
+            "roleplay.fingerprint"
+        ),
+        "roleplay.fingerprint",
+        capabilityFingerprint,
+        new EmptyRecapMaintainSource(A1),
+        [A2],
+        EmptyRecapPriorContext.Instance
+    );
+
+    [Fact]
     public void ManifestCodec_RejectsSemanticMutationUnknownAndDuplicate() {
         RecapBlockPlan plan = new MaintainRecapBlockPlan(
             new RecapBlockId("roleplay.world"),
@@ -109,6 +242,7 @@ public sealed class DerivedRecapCodecTests {
                 "roleplay.world"
             ),
             "roleplay.world",
+            RecapTestIdentity.CapabilityFingerprint,
             new EmptyRecapMaintainSource(A1),
             [A2],
             EmptyRecapPriorContext.Instance
@@ -234,6 +368,7 @@ public sealed class DerivedRecapCodecTests {
             id,
             target,
             "roleplay.autobiographical",
+            RecapTestIdentity.CapabilityFingerprint,
             new EmptyRecapMaintainSource(A1),
             [A2],
             EmptyRecapPriorContext.Instance

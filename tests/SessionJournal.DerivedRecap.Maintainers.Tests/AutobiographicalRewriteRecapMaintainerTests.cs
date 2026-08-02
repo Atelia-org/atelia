@@ -60,7 +60,12 @@ public class AutobiographicalRewriteProfileTests {
     }
 
     private static RewriteRecapBlockMaintainer CreateMaintainer(ICompletionClient client)
-        => new(AutobiographicalRewriteProfiles.Default, client, "model-a");
+        => new(
+            AutobiographicalRewriteProfiles.Default,
+            "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+            client,
+            "model-a"
+        );
 
     private static RecapBlockMaintenanceRequest CreateRequest(string oldBlock) {
         var memoryPack = new ContextHeaderPack();

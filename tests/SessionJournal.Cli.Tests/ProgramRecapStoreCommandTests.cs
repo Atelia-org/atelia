@@ -795,6 +795,7 @@ public sealed class ProgramRecapStoreCommandTests : IDisposable {
                 "roleplay.self"
             ),
             "test.roleplay",
+            "sha256:0000000000000000000000000000000000000000000000000000000000000000",
             new EmptyRecapMaintainSource(fixture.ReplayStart),
             [fixture.Anchor],
             EmptyRecapPriorContext.Instance

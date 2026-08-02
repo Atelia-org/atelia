@@ -51,7 +51,12 @@ public class WorldUnderstandingRewriteProfileTests {
     }
 
     private static RewriteRecapBlockMaintainer CreateMaintainer(ICompletionClient client)
-        => new(WorldUnderstandingRewriteProfiles.Default, client, "model-a");
+        => new(
+            WorldUnderstandingRewriteProfiles.Default,
+            "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+            client,
+            "model-a"
+        );
 
     private static RecapBlockMaintenanceRequest CreateRequest(string oldBlock) {
         var memoryPack = new ContextHeaderPack();

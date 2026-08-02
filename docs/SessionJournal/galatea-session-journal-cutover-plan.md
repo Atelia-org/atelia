@@ -251,7 +251,8 @@ Gate：
   snapshot与head-matched baseline；两种authority都内部绑定签发时的repository/RefId，不能跨repo
   重放；raw-head/source races是typed `Retryable`；
 - preparer拒绝Store/repository/RefId错配；完整capability snapshot验证frozen
-  `(MaintainerId, Target)`并约束source解析出的active profiles，active roster只支配new planning；
+  `(MaintainerId, Target, MaintainerCapabilityFingerprint)`并约束source解析出的active profiles，
+  active roster只支配new planning；
   file-backed active snapshot还必须来自该
   repo的canonical config path，resolved active profiles必须属于同一次传入的完整capability snapshot；
 - `DerivedRecapOnlineLifecycleCoordinator`的public production入口已收窄为authority-only

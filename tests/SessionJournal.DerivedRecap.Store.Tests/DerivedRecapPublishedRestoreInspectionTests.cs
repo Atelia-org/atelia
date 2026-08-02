@@ -25,6 +25,9 @@ public sealed class DerivedRecapPublishedRestoreInspectionTests {
             plan.RecapBlockId,
             plan.Target,
             "roleplay.changed",
+            plan is MaintainRecapBlockPlan identity
+                ? identity.MaintainerCapabilityFingerprint
+                : throw new InvalidOperationException(),
             plan is MaintainRecapBlockPlan maintain
                 ? maintain.Source
                 : throw new InvalidOperationException(),
@@ -409,6 +412,7 @@ public sealed class DerivedRecapPublishedRestoreInspectionTests {
                 "roleplay.self"
             ),
             "roleplay.autobiographical",
+            RecapTestIdentity.CapabilityFingerprint,
             new EmptyRecapMaintainSource(replayStart),
             [firstEndpoint, anchor],
             EmptyRecapPriorContext.Instance
@@ -459,6 +463,7 @@ public sealed class DerivedRecapPublishedRestoreInspectionTests {
             plan.RecapBlockId,
             plan.Target,
             "roleplay.changed",
+            plan.MaintainerCapabilityFingerprint,
             plan.Source,
             plan.CatchUpThrough,
             plan.PriorContext
@@ -530,6 +535,7 @@ public sealed class DerivedRecapPublishedRestoreInspectionTests {
                 "roleplay.self"
             ),
             "roleplay.autobiographical",
+            RecapTestIdentity.CapabilityFingerprint,
             new EmptyRecapMaintainSource(replayStart),
             [anchor],
             EmptyRecapPriorContext.Instance,

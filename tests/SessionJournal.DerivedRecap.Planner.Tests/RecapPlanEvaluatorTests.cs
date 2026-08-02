@@ -662,6 +662,7 @@ public sealed class RecapPlanEvaluatorTests {
                     new RecapBlockId("other"),
                     entry.Target,
                     "other-maintainer",
+                    RecapPlannerTestIdentity.CapabilityFingerprint,
                     1024
                 )
             ])
@@ -683,6 +684,7 @@ public sealed class RecapPlanEvaluatorTests {
                     "roleplay.self"
                 ),
                 first.MaintainerId,
+                RecapPlannerTestIdentity.CapabilityFingerprint,
                 1024
             )
         ]);
@@ -1037,6 +1039,7 @@ public sealed class RecapPlanEvaluatorTests {
                 entry.RecapBlockId,
                 entry.Target,
                 entry.MaintainerId,
+                entry.MaintainerCapabilityFingerprint,
                 SessionContextContributionContract
                     .MaxContributionUtf8Bytes + 1
             )
@@ -1183,12 +1186,14 @@ public sealed class RecapPlanEvaluatorTests {
                         clientId,
                         clientTarget,
                         "roleplay.client-maintainer",
+                        RecapPlannerTestIdentity.CapabilityFingerprint,
                         1024
                     ),
                     new(
                         selfId,
                         selfTarget,
                         "roleplay.self-maintainer",
+                        RecapPlannerTestIdentity.CapabilityFingerprint,
                         1024
                     )
                 ]
@@ -1197,6 +1202,7 @@ public sealed class RecapPlanEvaluatorTests {
                         clientId,
                         clientTarget,
                         "roleplay.client-maintainer",
+                        RecapPlannerTestIdentity.CapabilityFingerprint,
                         1024
                     )
                 ];

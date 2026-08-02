@@ -81,6 +81,13 @@ public sealed class ProgramRecapExecutionCommandTests : IDisposable {
                     WorldUnderstandingRewriteProfiles.MaintainerId,
                     world.MaintainerId
                 );
+                Assert.Equal(
+                    RecapMaintainerProfileCatalog.BuiltIn.Resolve(
+                        RecapMaintainerProfileCatalog
+                            .WorldUnderstandingRewrite
+                    ).CapabilityFingerprint,
+                    world.MaintainerCapabilityFingerprint
+                );
                 Assert.Equal(32_768, world.MaxContentUtf8Bytes);
             },
             autobiography => {
@@ -97,6 +104,13 @@ public sealed class ProgramRecapExecutionCommandTests : IDisposable {
                 Assert.Equal(
                     AutobiographicalRewriteProfiles.MaintainerId,
                     autobiography.MaintainerId
+                );
+                Assert.Equal(
+                    RecapMaintainerProfileCatalog.BuiltIn.Resolve(
+                        RecapMaintainerProfileCatalog
+                            .AutobiographicalRewrite
+                    ).CapabilityFingerprint,
+                    autobiography.MaintainerCapabilityFingerprint
                 );
                 Assert.Equal(
                     32_768,
@@ -783,7 +797,8 @@ public sealed class ProgramRecapExecutionCommandTests : IDisposable {
             var plan = new MaintainRecapBlockPlan(
                 entry.RecapBlockId,
                 entry.Target,
-                "unsupported-maintainer-v1",
+                entry.MaintainerId,
+                "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
                 new EmptyRecapMaintainSource(
                     engine.ReadHistoryPlanningWindow()
                         .StartExclusive

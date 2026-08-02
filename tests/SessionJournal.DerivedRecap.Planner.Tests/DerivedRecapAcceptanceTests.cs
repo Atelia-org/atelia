@@ -95,6 +95,7 @@ public sealed class DerivedRecapAcceptanceTests {
                     id,
                     target,
                     maintainer.Id,
+                    maintainer.CapabilityFingerprint,
                     MaxContent
                 )],
                 policy,
@@ -205,6 +206,7 @@ public sealed class DerivedRecapAcceptanceTests {
             id,
             target,
             "roleplay.client-maintainer",
+            RecapPlannerTestIdentity.CapabilityFingerprint,
             new EmptyRecapMaintainSource(a[1]),
             [a[5], a[11], a[20]],
             EmptyRecapPriorContext.Instance,
@@ -351,6 +353,7 @@ public sealed class DerivedRecapAcceptanceTests {
                     id.Value
                 ),
                 maintainerId,
+                RecapPlannerTestIdentity.CapabilityFingerprint,
                 new EmptyRecapMaintainSource(replayStart),
                 [admission],
                 EmptyRecapPriorContext.Instance,
@@ -502,6 +505,8 @@ public sealed class DerivedRecapAcceptanceTests {
         }
 
         public string Id { get; }
+        public string CapabilityFingerprint { get; } =
+            "sha256:0000000000000000000000000000000000000000000000000000000000000000";
         public ContextHeaderBlockPath Target { get; }
         public int CallCount { get; private set; }
 

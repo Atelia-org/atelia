@@ -673,6 +673,7 @@ public sealed class ProgramDerivedRecapOnlineTurnTests : IDisposable {
                             entry.RecapBlockId,
                             entry.Target,
                             entry.MaintainerId,
+                            entry.MaintainerCapabilityFingerprint,
                             new EmptyRecapMaintainSource(
                                 replayStart
                             ),

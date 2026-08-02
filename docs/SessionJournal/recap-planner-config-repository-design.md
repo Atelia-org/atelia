@@ -254,8 +254,9 @@ connection/model；connection identity与 secret不写入 repo config。
 需要区分：
 
 - active roster：配置的 `catalog`，只决定新 Building包含哪些 blocks；
-- capability registry：当前 Host能为哪些 exact `MaintainerId + Target`提供实现，用于执行 frozen
-  Building或 Restore旧 Published component。
+- capability registry：当前 Host能为哪些 exact
+  `MaintainerId + Target + MaintainerCapabilityFingerprint`提供实现，用于执行 frozen Building或
+  Restore旧 Published component。
 
 配置删除一个 active profile不能重新解释既有 manifest，也不等于 Host必须立刻失去修复旧 set的能力。
 Host应通过独立 capability metadata catalog按 frozen manifest的 exact MaintainerId解析所有仍受支持的
@@ -468,7 +469,8 @@ Resume/Restore因此无需再加载 operator config，也不会因 operator调�
 Resume完全不加载 active config。它只使用：
 
 - frozen manifest/block bindings与route；
-- Host对 frozen `MaintainerId + Target` 的 capability；
+- Host对 frozen
+  `MaintainerId + Target + MaintainerCapabilityFingerprint` 的 capability；
 - stable protocol hard caps。
 
 若 Host已不支持所需 profile，返回 typed `MaintainerUnavailable`。若 frozen manifest违反当前 schema

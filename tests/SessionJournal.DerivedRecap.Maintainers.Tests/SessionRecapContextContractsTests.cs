@@ -219,6 +219,7 @@ public sealed class SessionRecapContextContractsTests {
                 "system prompt",
                 "user prompt"
             ),
+            "sha256:0000000000000000000000000000000000000000000000000000000000000000",
             client,
             "model-a"
         );
@@ -241,6 +242,8 @@ public sealed class SessionRecapContextContractsTests {
         }
 
         public string Id { get; }
+        public string CapabilityFingerprint { get; } =
+            "sha256:0000000000000000000000000000000000000000000000000000000000000000";
 
         public ContextHeaderBlockPath Target { get; }
 

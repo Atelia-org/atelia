@@ -664,7 +664,8 @@ internal static class RecapExecutionCommands {
                         profile.CatalogEntry.Target.BlockKey,
                         profile.CatalogEntry.MaintainerId,
                         profile.CatalogEntry.MaxContentUtf8Bytes,
-                        profile.Capability.PromptFingerprint
+                        profile.Capability.PromptFingerprint,
+                        profile.Capability.CapabilityFingerprint
                     )
                 )
             ],
@@ -846,5 +847,6 @@ internal sealed record RecapExecutionCatalogReport(
     string TargetBlockKey,
     string MaintainerId,
     int MaxContentUtf8Bytes,
-    string PromptFingerprint
+    string PromptFingerprint,
+    string CapabilityFingerprint
 );

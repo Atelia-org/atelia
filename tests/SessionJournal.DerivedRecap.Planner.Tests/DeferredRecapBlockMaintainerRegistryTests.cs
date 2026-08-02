@@ -23,12 +23,14 @@ public sealed class DeferredRecapBlockMaintainerRegistryTests {
         Assert.True(registry.TryResolve(
             maintainer.Id,
             Target,
+            maintainer.CapabilityFingerprint,
             out IRecapBlockMaintainer resolved
         ));
         Assert.Same(maintainer, resolved);
         Assert.False(registry.TryResolve(
             "missing",
             Target,
+            RecapPlannerTestIdentity.CapabilityFingerprint,
             out IRecapBlockMaintainer? missing
         ));
         Assert.Null(missing);
@@ -57,6 +59,7 @@ public sealed class DeferredRecapBlockMaintainerRegistryTests {
                 registry.TryResolve(
                     maintainer.Id,
                     Target,
+                    maintainer.CapabilityFingerprint,
                     out IRecapBlockMaintainer resolved
                 ) && ReferenceEquals(maintainer, resolved)
             ))
@@ -80,10 +83,20 @@ public sealed class DeferredRecapBlockMaintainerRegistryTests {
         });
 
         IOException first = Assert.Throws<IOException>(() =>
-            registry.TryResolve("self", Target, out _)
+            registry.TryResolve(
+                "self",
+                Target,
+                RecapPlannerTestIdentity.CapabilityFingerprint,
+                out _
+            )
         );
         IOException second = Assert.Throws<IOException>(() =>
-            registry.TryResolve("self", Target, out _)
+            registry.TryResolve(
+                "self",
+                Target,
+                RecapPlannerTestIdentity.CapabilityFingerprint,
+                out _
+            )
         );
 
         Assert.Same(expected, first);
@@ -101,11 +114,21 @@ public sealed class DeferredRecapBlockMaintainerRegistryTests {
 
         InvalidOperationException first =
             Assert.Throws<InvalidOperationException>(() =>
-                registry.TryResolve("self", Target, out _)
+                registry.TryResolve(
+                    "self",
+                    Target,
+                    RecapPlannerTestIdentity.CapabilityFingerprint,
+                    out _
+                )
             );
         InvalidOperationException second =
             Assert.Throws<InvalidOperationException>(() =>
-                registry.TryResolve("self", Target, out _)
+                registry.TryResolve(
+                    "self",
+                    Target,
+                    RecapPlannerTestIdentity.CapabilityFingerprint,
+                    out _
+                )
             );
 
         Assert.Contains("returned null", first.Message);
@@ -124,17 +147,74 @@ public sealed class DeferredRecapBlockMaintainerRegistryTests {
         Assert.False(registry.TryResolve(
             "missing",
             Target,
+            RecapPlannerTestIdentity.CapabilityFingerprint,
             out IRecapBlockMaintainer? maintainer
         ));
         Assert.Null(maintainer);
         Assert.Equal(1, factoryCalls);
     }
 
+    [Fact]
+    public void SameIdAndTargetResolveByExactFingerprint() {
+        var oldCapability = new StubMaintainer(
+            "self",
+            Target,
+            RecapPlannerTestIdentity.CapabilityFingerprint
+        );
+        var newCapability = new StubMaintainer(
+            "self",
+            Target,
+            "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+        );
+        var registry = new RecapBlockMaintainerRegistry([
+            oldCapability,
+            newCapability
+        ]);
+
+        Assert.True(registry.TryResolve(
+            "self",
+            Target,
+            oldCapability.CapabilityFingerprint,
+            out IRecapBlockMaintainer oldResolved
+        ));
+        Assert.Same(oldCapability, oldResolved);
+        Assert.True(registry.TryResolve(
+            "self",
+            Target,
+            newCapability.CapabilityFingerprint,
+            out IRecapBlockMaintainer newResolved
+        ));
+        Assert.Same(newCapability, newResolved);
+        Assert.False(registry.TryResolve(
+            "self",
+            Target,
+            "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            out _
+        ));
+    }
+
+    [Fact]
+    public void RegistryRejectsMalformedCapabilityFingerprint() {
+        var malformed = new StubMaintainer(
+            "self",
+            Target,
+            "sha256:ABCDEF"
+        );
+
+        Assert.Throws<ArgumentException>(
+            () => new RecapBlockMaintainerRegistry([malformed])
+        );
+    }
+
     private sealed class StubMaintainer(
         string id,
-        ContextHeaderBlockPath target
+        ContextHeaderBlockPath target,
+        string capabilityFingerprint =
+            RecapPlannerTestIdentity.CapabilityFingerprint
     ) : IRecapBlockMaintainer {
         public string Id { get; } = id;
+        public string CapabilityFingerprint { get; } =
+            capabilityFingerprint;
         public ContextHeaderBlockPath Target { get; } = target;
 
         public ValueTask<RecapBlockMaintenanceResult> MaintainAsync(

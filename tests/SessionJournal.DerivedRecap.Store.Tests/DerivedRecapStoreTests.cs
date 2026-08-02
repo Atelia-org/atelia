@@ -796,6 +796,7 @@ public sealed class DerivedRecapStoreTests {
             id,
             targetPath,
             "roleplay.autobiographical",
+            RecapTestIdentity.CapabilityFingerprint,
             new ExistingRecapMaintainSource(
                 source,
                 new string('a', 64),

@@ -38,6 +38,7 @@ public class RecapMaintainerProfileCatalogTests {
         Assert.True(catalog.TryResolveFrozen(
             expected.MaintainerId,
             expected.Target,
+            expected.CapabilityFingerprint,
             out RecapMaintainerProfileDescriptor byFrozenIdentity
         ));
         Assert.Same(expected, byFrozenIdentity);
@@ -85,6 +86,7 @@ public class RecapMaintainerProfileCatalogTests {
         Assert.True(catalog.TryResolveFrozen(
             "maintainer",
             target,
+            descriptor.CapabilityFingerprint,
             out RecapMaintainerProfileDescriptor resolved
         ));
         Assert.Same(descriptor, resolved);
@@ -172,15 +174,62 @@ public class RecapMaintainerProfileCatalogTests {
         Assert.True(catalog.TryResolveFrozen(
             first.MaintainerId,
             target,
+            first.CapabilityFingerprint,
             out RecapMaintainerProfileDescriptor resolvedFirst
         ));
         Assert.True(catalog.TryResolveFrozen(
             second.MaintainerId,
             target,
+            second.CapabilityFingerprint,
             out RecapMaintainerProfileDescriptor resolvedSecond
         ));
         Assert.Same(first, resolvedFirst);
         Assert.Same(second, resolvedSecond);
+    }
+
+    [Fact]
+    public void Constructor_AllowsRetainedFingerprintForSamePair() {
+        ContextHeaderBlockPath target = Target(
+            ContextHeaderCarrier.Action,
+            "shared.target"
+        );
+        RecapMaintainerProfileDescriptor oldCapability = Descriptor(
+            "profile-old",
+            "shared-maintainer",
+            target,
+            "shared.recap"
+        );
+        RecapMaintainerProfileDescriptor newCapability =
+            oldCapability with {
+                ProfileName = "profile-new",
+                RewriteProfile = oldCapability.RewriteProfile with {
+                    UserPrompt = "new prompt"
+                }
+            };
+
+        var catalog = new RecapMaintainerProfileCatalog([
+            oldCapability,
+            newCapability
+        ]);
+
+        Assert.NotEqual(
+            oldCapability.CapabilityFingerprint,
+            newCapability.CapabilityFingerprint
+        );
+        Assert.True(catalog.TryResolveFrozen(
+            oldCapability.MaintainerId,
+            target,
+            oldCapability.CapabilityFingerprint,
+            out RecapMaintainerProfileDescriptor oldResolved
+        ));
+        Assert.Same(oldCapability, oldResolved);
+        Assert.True(catalog.TryResolveFrozen(
+            newCapability.MaintainerId,
+            target,
+            newCapability.CapabilityFingerprint,
+            out RecapMaintainerProfileDescriptor newResolved
+        ));
+        Assert.Same(newCapability, newResolved);
     }
 
     [Fact]
@@ -196,15 +245,24 @@ public class RecapMaintainerProfileCatalogTests {
         Assert.False(catalog.TryResolveFrozen(
             "unknown",
             catalog.All[0].Target,
+            catalog.All[0].CapabilityFingerprint,
             out _
         ));
         Assert.False(catalog.TryResolveFrozen(
             null,
             catalog.All[0].Target,
+            catalog.All[0].CapabilityFingerprint,
             out _
         ));
         Assert.False(catalog.TryResolveFrozen(
             catalog.All[0].MaintainerId,
+            null,
+            catalog.All[0].CapabilityFingerprint,
+            out _
+        ));
+        Assert.False(catalog.TryResolveFrozen(
+            catalog.All[0].MaintainerId,
+            catalog.All[0].Target,
             null,
             out _
         ));

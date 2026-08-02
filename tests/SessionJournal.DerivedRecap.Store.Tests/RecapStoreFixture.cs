@@ -102,6 +102,7 @@ internal sealed class RecapStoreFixture : IDisposable {
             blockId
         ),
         "roleplay.autobiographical",
+        RecapTestIdentity.CapabilityFingerprint,
         new EmptyRecapMaintainSource(replayStart),
         [anchor],
         EmptyRecapPriorContext.Instance

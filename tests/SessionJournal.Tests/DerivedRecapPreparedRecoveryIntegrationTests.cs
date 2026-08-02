@@ -71,7 +71,8 @@ public sealed class DerivedRecapPreparedRecoveryIntegrationTests
                     ProfileName,
                     blockId,
                     target,
-                    maintainer.Id
+                    maintainer.Id,
+                    maintainer.CapabilityFingerprint
                 )
             ]);
             ResolvedRecapPlanningConfiguration configuration =
@@ -360,6 +361,8 @@ public sealed class DerivedRecapPreparedRecoveryIntegrationTests
         ContextHeaderBlockPath target
     ) : IRecapBlockMaintainer {
         public string Id => "fixed-recap";
+        public string CapabilityFingerprint =>
+            "sha256:0000000000000000000000000000000000000000000000000000000000000000";
 
         public ContextHeaderBlockPath Target { get; } = target;
 

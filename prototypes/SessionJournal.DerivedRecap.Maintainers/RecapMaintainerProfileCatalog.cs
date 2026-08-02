@@ -1,6 +1,7 @@
+using System.Buffers;
 using System.Security.Cryptography;
+using System.Text.Encodings.Web;
 using System.Text.Json;
-using System.Text.Json.Serialization;
 using Atelia.Completion.Abstractions;
 using Atelia.SessionJournal;
 
@@ -50,23 +51,30 @@ public sealed record RecapMaintainerProfileDescriptor(
 
     public string MaintainerId => RewriteProfile.Id;
     public ContextHeaderBlockPath Target => RewriteProfile.Target;
+    public string ImplementationId =>
+        RewriteRecapBlockMaintainer.ImplementationId;
 
     public string PromptFingerprint =>
-        $"sha256:{Convert.ToHexStringLower(SHA256.HashData(
-            JsonSerializer.SerializeToUtf8Bytes(
-                new PromptFingerprintDto(
-                    PromptFingerprintSchema,
-                    RewriteProfile.SystemPrompt,
-                    RewriteProfile.UserPrompt
-                )
-            )
-        ))}";
+        RecapMaintainerCapabilityFingerprint.ComputePrompt(
+            PromptFingerprintSchema,
+            RewriteProfile.SystemPrompt,
+            RewriteProfile.UserPrompt
+        );
+
+    public string CapabilityFingerprint =>
+        RecapMaintainerCapabilityFingerprint.Compute(
+            ImplementationId,
+            MaintainerId,
+            Target,
+            PromptFingerprint
+        );
 
     public IRecapBlockMaintainer Create(
         ICompletionClient completionClient,
         string modelId
     ) => new RewriteRecapBlockMaintainer(
         RewriteProfile,
+        CapabilityFingerprint,
         completionClient,
         modelId
     );
@@ -81,12 +89,6 @@ public sealed record RecapMaintainerProfileDescriptor(
             UserPrompt = userPrompt ?? RewriteProfile.UserPrompt
         }
     };
-
-    private sealed record PromptFingerprintDto(
-        [property: JsonPropertyOrder(0)] string Schema,
-        [property: JsonPropertyOrder(1)] string SystemPrompt,
-        [property: JsonPropertyOrder(2)] string UserPrompt
-    );
 
     private static bool IsValidRecapBlockIdValue(string? value) {
         if (string.IsNullOrEmpty(value) || value.Length > 128) {
@@ -110,6 +112,102 @@ public sealed record RecapMaintainerProfileDescriptor(
             || (ch >= '0' && ch <= '9');
 }
 
+public static class RecapMaintainerCapabilityFingerprint {
+    public const string Schema =
+        "atelia.session-journal.recap-maintainer-capability.v1";
+
+    private static readonly JsonWriterOptions WriterOptions = new() {
+        Indented = false,
+        Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+        SkipValidation = false
+    };
+
+    public static string Compute(
+        string implementationId,
+        string maintainerId,
+        ContextHeaderBlockPath target,
+        string promptFingerprint
+    ) {
+        ArgumentException.ThrowIfNullOrWhiteSpace(implementationId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(maintainerId);
+        ArgumentNullException.ThrowIfNull(target);
+        RequireFingerprint(promptFingerprint, nameof(promptFingerprint));
+        byte[] preimage = Write(writer => {
+            writer.WriteStartObject();
+            writer.WriteString("schema", Schema);
+            writer.WriteString("implementationId", implementationId);
+            writer.WriteString("maintainerId", maintainerId);
+            writer.WriteStartObject("target");
+            writer.WriteString(
+                "carrier",
+                ContextHeaderCarrierTokens.ToStorageToken(
+                    target.Carrier
+                )
+            );
+            writer.WriteString("blockKey", target.BlockKey);
+            writer.WriteEndObject();
+            writer.WriteString(
+                "promptFingerprint",
+                promptFingerprint
+            );
+            writer.WriteEndObject();
+        });
+        return Hash(preimage);
+    }
+
+    internal static string ComputePrompt(
+        string schema,
+        string systemPrompt,
+        string userPrompt
+    ) {
+        ArgumentException.ThrowIfNullOrWhiteSpace(schema);
+        ArgumentNullException.ThrowIfNull(systemPrompt);
+        ArgumentNullException.ThrowIfNull(userPrompt);
+        byte[] preimage = Write(writer => {
+            writer.WriteStartObject();
+            writer.WriteString("schema", schema);
+            writer.WriteString("systemPrompt", systemPrompt);
+            writer.WriteString("userPrompt", userPrompt);
+            writer.WriteEndObject();
+        });
+        return Hash(preimage);
+    }
+
+    private static byte[] Write(Action<Utf8JsonWriter> action) {
+        var buffer = new ArrayBufferWriter<byte>();
+        using (var writer = new Utf8JsonWriter(
+                   buffer,
+                   WriterOptions
+               )) {
+            action(writer);
+        }
+        return buffer.WrittenMemory.ToArray();
+    }
+
+    private static string Hash(ReadOnlySpan<byte> bytes) =>
+        $"sha256:{Convert.ToHexStringLower(SHA256.HashData(bytes))}";
+
+    internal static string RequireFingerprint(
+        string value,
+        string parameterName
+    ) {
+        const string Prefix = "sha256:";
+        if (value is null
+            || !value.StartsWith(Prefix, StringComparison.Ordinal)
+            || value.Length != Prefix.Length + 64
+            || value.AsSpan(Prefix.Length).ContainsAnyExcept(
+                "0123456789abcdef"
+            )) {
+            throw new ArgumentException(
+                "Fingerprint must be sha256: followed by lowercase "
+                + "SHA-256 hex.",
+                parameterName
+            );
+        }
+        return value;
+    }
+}
+
 public sealed class RecapMaintainerProfileCatalog {
     public const string AutobiographicalRewrite =
         "autobiographical-rewrite";
@@ -130,7 +228,8 @@ public sealed class RecapMaintainerProfileCatalog {
         RecapMaintainerProfileDescriptor
     > _byProfileName;
     private readonly IReadOnlyDictionary<
-        (string MaintainerId, ContextHeaderBlockPath Target),
+        (string MaintainerId, ContextHeaderBlockPath Target,
+            string CapabilityFingerprint),
         RecapMaintainerProfileDescriptor
     > _byFrozenIdentity;
 
@@ -146,7 +245,8 @@ public sealed class RecapMaintainerProfileCatalog {
             RecapMaintainerProfileDescriptor
         >(StringComparer.Ordinal);
         var byFrozenIdentity = new Dictionary<
-            (string MaintainerId, ContextHeaderBlockPath Target),
+            (string MaintainerId, ContextHeaderBlockPath Target,
+                string CapabilityFingerprint),
             RecapMaintainerProfileDescriptor
         >();
 
@@ -167,7 +267,8 @@ public sealed class RecapMaintainerProfileCatalog {
 
             var frozenIdentity = (
                 descriptor.MaintainerId,
-                descriptor.Target
+                descriptor.Target,
+                descriptor.CapabilityFingerprint
             );
             if (!byFrozenIdentity.TryAdd(
                     frozenIdentity,
@@ -177,7 +278,8 @@ public sealed class RecapMaintainerProfileCatalog {
                     "Recap maintainer profile catalog contains "
                     + "duplicate frozen identity "
                     + $"('{descriptor.MaintainerId}', "
-                    + $"'{descriptor.Target}').",
+                    + $"'{descriptor.Target}', "
+                    + $"'{descriptor.CapabilityFingerprint}').",
                     nameof(descriptors)
                 );
             }
@@ -214,12 +316,14 @@ public sealed class RecapMaintainerProfileCatalog {
     public bool TryResolveFrozen(
         string? maintainerId,
         ContextHeaderBlockPath? target,
+        string? capabilityFingerprint,
         out RecapMaintainerProfileDescriptor descriptor
     ) {
         if (maintainerId is not null
             && target is not null
+            && capabilityFingerprint is not null
             && _byFrozenIdentity.TryGetValue(
-                (maintainerId, target),
+                (maintainerId, target, capabilityFingerprint),
                 out descriptor!
             )) {
             return true;

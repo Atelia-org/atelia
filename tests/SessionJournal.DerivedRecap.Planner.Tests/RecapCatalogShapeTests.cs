@@ -5,6 +5,27 @@ using Xunit;
 namespace Atelia.SessionJournal.DerivedRecap.Planner.Tests;
 
 public sealed class RecapCatalogShapeTests {
+    [Theory]
+    [InlineData("")]
+    [InlineData("sha256:ABCDEF")]
+    [InlineData("sha256:gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg")]
+    public void CatalogEntryRejectsMalformedCapabilityFingerprint(
+        string fingerprint
+    ) {
+        Assert.Throws<ArgumentException>(() =>
+            new RecapBlockCatalogEntry(
+                new RecapBlockId("self"),
+                new ContextHeaderBlockPath(
+                    ContextHeaderCarrier.System,
+                    "self"
+                ),
+                "maintainer",
+                fingerprint,
+                4096
+            )
+        );
+    }
+
     [Fact]
     public void ProjectionIgnoresPlanSubtypeAndExecutionIdentity() {
         var id = new RecapBlockId("self");
@@ -19,6 +40,7 @@ public sealed class RecapCatalogShapeTests {
                     id,
                     target,
                     "new-profile",
+                    RecapPlannerTestIdentity.CapabilityFingerprint,
                     4096
                 )
             ]);
@@ -28,6 +50,7 @@ public sealed class RecapCatalogShapeTests {
                     id,
                     target,
                     "old-profile",
+                    RecapPlannerTestIdentity.CapabilityFingerprint,
                     new EmptyRecapMaintainSource(address),
                     [address],
                     EmptyRecapPriorContext.Instance,

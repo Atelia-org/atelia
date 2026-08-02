@@ -180,6 +180,7 @@ internal static class Program {
                         "roleplay.self"
                     ),
                     "roleplay.autobiographical",
+                    "sha256:0000000000000000000000000000000000000000000000000000000000000000",
                     new EmptyRecapMaintainSource(
                         engine.ReadHistoryPlanningWindow()
                             .StartExclusive
@@ -399,6 +400,8 @@ internal static class Program {
 
         public string Id { get; }
         public ContextHeaderBlockPath Target { get; }
+        public string CapabilityFingerprint { get; } =
+            "sha256:0000000000000000000000000000000000000000000000000000000000000000";
 
         public ValueTask<RecapBlockMaintenanceResult> MaintainAsync(
             RecapBlockMaintenanceRequest request,

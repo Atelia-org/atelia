@@ -229,7 +229,8 @@ var maintainers = new DeferredRecapBlockMaintainerRegistry(
 );
 ```
 
-构造helper不会调用factory；第一次真实`TryResolve(MaintainerId, Target)`才用
+构造helper不会调用factory；第一次真实
+`TryResolve(MaintainerId, Target, MaintainerCapabilityFingerprint)`才用
 `ExecutionAndPublication`激活一次。factory异常或返回null也会被缓存，不在同一个operation内重试。
 helper不暴露activation状态、不拥有inner disposal，也不把custom inner升级成线程安全。
 
@@ -496,10 +497,17 @@ active source一次 → latest Published catalog → raw-head fence。
   constructor或descriptor-only绕行入口。
 
 `planningCapabilities`必须来自完整execution capability catalog，而不是active roster；这样旧Building
-使用的frozen `(MaintainerId, Target)`即使不再active，仍可被验证并恢复。concrete
+使用的frozen
+`(MaintainerId, Target, MaintainerCapabilityFingerprint)`即使不再active，仍可被验证并恢复。concrete
 `maintainers`也必须覆盖同一完整catalog，并应使用once-only deferred registry，使最终`NoBuild`时
 连concrete Maintainer/maintenance logger都不创建。whole-registry factory由第一次exact binding
 lookup触发；首版不做per-profile lazy。
+
+每个Maintain plan都冻结上述exact triple；Resume/Restore只做exact lookup，不从当前profile或
+`MaintainerId`推断fingerprint。fingerprint格式固定为`sha256:<64 lowercase hex>`，但Planner不解释
+preimage；具体Maintainers assembly拥有canonical计算规则。active catalog shape比较仍只覆盖
+`RecapBlockId / Target / MaxContentUtf8Bytes`：它约束set形状，不把执行identity升级误判成roster
+shape变化。
 
 若active source返回file-backed snapshot，其canonical path必须属于当前operation repo；resolved
 active profiles也必须exact匹配传给preparer的同一份capability snapshot。自定义in-memory source可用

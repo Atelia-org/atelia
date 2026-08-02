@@ -117,6 +117,7 @@ public sealed class RecapRuntimeAuthorityTests {
             blockId
         ),
         $"maintainer-{blockId}",
+        RecapPlannerTestIdentity.CapabilityFingerprint,
         maxContentUtf8Bytes: 1024
     );
 }

@@ -270,7 +270,8 @@ public static class DerivedRecapOperationPreparer {
                         .OfType<MaintainRecapBlockPlan>()) {
                     if (!capabilities.SupportsFrozen(
                             plan.MaintainerId,
-                            plan.Target
+                            plan.Target,
+                            plan.MaintainerCapabilityFingerprint
                         )) {
                         return Unavailable(
                             DerivedRecapExecutionDefectCodes

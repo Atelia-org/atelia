@@ -135,7 +135,8 @@ internal static class GalateaRecapComposition {
                     descriptor.ProfileName,
                     new RecapBlockId(descriptor.RecapBlockIdValue),
                     descriptor.Target,
-                    descriptor.MaintainerId
+                    descriptor.MaintainerId,
+                    descriptor.CapabilityFingerprint
                 )
             )
         ]);

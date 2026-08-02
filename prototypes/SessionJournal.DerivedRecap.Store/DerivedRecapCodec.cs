@@ -10,13 +10,13 @@ public static class DerivedRecapCodec {
     public const string StoreSchema =
         "atelia.session-journal.derived-recap-store.v4";
     public const string ManifestSchema =
-        "atelia.session-journal.derived-recap-manifest.v4";
+        "atelia.session-journal.derived-recap-manifest.v5";
     public const string FrozenInputSchema =
         "atelia.session-journal.derived-recap-frozen-input.v4";
     public const string BlockSchema =
         "atelia.session-journal.derived-recap-block.v4";
     public const string PublicationSchema =
-        "atelia.session-journal.published-recap-set.v4";
+        "atelia.session-journal.published-recap-set.v5";
 
     private static readonly JsonWriterOptions WriterOptions = new() {
         Indented = false,
@@ -352,6 +352,10 @@ public static class DerivedRecapCodec {
                     "maintainerId",
                     maintain.MaintainerId
                 );
+                writer.WriteString(
+                    "maintainerCapabilityFingerprint",
+                    maintain.MaintainerCapabilityFingerprint
+                );
                 writer.WritePropertyName("source");
                 WriteMaintainSource(writer, maintain.Source);
                 writer.WriteStartArray("catchUpThrough");
@@ -674,6 +678,7 @@ public static class DerivedRecapCodec {
             "recapBlockId",
             "target",
             "maintainerId",
+            "maintainerCapabilityFingerprint",
             "source",
             "catchUpThrough",
             "priorContext",
@@ -683,6 +688,10 @@ public static class DerivedRecapCodec {
             ReadBlockId(element, "recapBlockId"),
             ReadTarget(ReadObject(element, "target")),
             ReadString(element, "maintainerId"),
+            ReadString(
+                element,
+                "maintainerCapabilityFingerprint"
+            ),
             ReadMaintainSource(ReadObject(element, "source")),
             Array.AsReadOnly(
                 ReadArray(element, "catchUpThrough")
@@ -984,6 +993,10 @@ public static class DerivedRecapCodec {
                     maintain.MaintainerId,
                     256,
                     "maintain.maintainerId"
+                );
+                ValidateCapabilityFingerprint(
+                    maintain.MaintainerCapabilityFingerprint,
+                    "maintain.maintainerCapabilityFingerprint"
                 );
                 ValidateMaintainSource(maintain.Source);
                 ArgumentNullException.ThrowIfNull(
@@ -1319,6 +1332,23 @@ public static class DerivedRecapCodec {
             || value.Length > maxLength
             || value.Contains('\0', StringComparison.Ordinal)) {
             throw new InvalidDataException($"{name} is invalid.");
+        }
+    }
+
+    private static void ValidateCapabilityFingerprint(
+        string value,
+        string name
+    ) {
+        const string Prefix = "sha256:";
+        if (value is null
+            || !value.StartsWith(Prefix, StringComparison.Ordinal)
+            || value.Length != Prefix.Length + 64
+            || value.AsSpan(Prefix.Length).ContainsAnyExcept(
+                "0123456789abcdef"
+            )) {
+            throw new InvalidDataException(
+                $"{name} must be sha256: followed by lowercase SHA-256 hex."
+            );
         }
     }
 

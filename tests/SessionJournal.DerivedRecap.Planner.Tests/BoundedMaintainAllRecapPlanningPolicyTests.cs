@@ -438,6 +438,7 @@ public sealed class BoundedMaintainAllRecapPlanningPolicyTests {
                             $"block-{index}"
                         ),
                         $"maintainer-{index}",
+                        RecapPlannerTestIdentity.CapabilityFingerprint,
                         1024
                     ))
             ];

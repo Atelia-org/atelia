@@ -718,6 +718,7 @@ public sealed class DerivedRecapPublishedRestoreWriteTests {
                 "roleplay.self"
             ),
             "roleplay.autobiographical",
+            RecapTestIdentity.CapabilityFingerprint,
             new EmptyRecapMaintainSource(
                 lineage.HeadToRoot[^1].Address
             ),

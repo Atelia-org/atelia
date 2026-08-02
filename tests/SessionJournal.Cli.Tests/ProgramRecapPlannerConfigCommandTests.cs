@@ -142,6 +142,11 @@ public sealed class ProgramRecapPlannerConfigCommandTests
             String(item, "promptFingerprint"),
             StringComparison.Ordinal
         ));
+        Assert.All(catalog, item => Assert.StartsWith(
+            "sha256:",
+            String(item, "capabilityFingerprint"),
+            StringComparison.Ordinal
+        ));
         Assert.False(Directory.Exists(Path.Combine(
             repository,
             "derived"

@@ -7,6 +7,7 @@ public interface IRecapBlockMaintainerRegistry {
     bool TryResolve(
         string maintainerId,
         ContextHeaderBlockPath target,
+        string maintainerCapabilityFingerprint,
         out IRecapBlockMaintainer maintainer
     );
 }
@@ -41,10 +42,12 @@ public sealed class DeferredRecapBlockMaintainerRegistry
     public bool TryResolve(
         string maintainerId,
         ContextHeaderBlockPath target,
+        string maintainerCapabilityFingerprint,
         out IRecapBlockMaintainer maintainer
     ) => _inner.Value.TryResolve(
         maintainerId,
         target,
+        maintainerCapabilityFingerprint,
         out maintainer
     );
 }
@@ -52,7 +55,8 @@ public sealed class DeferredRecapBlockMaintainerRegistry
 public sealed class RecapBlockMaintainerRegistry
     : IRecapBlockMaintainerRegistry {
     private readonly IReadOnlyDictionary<
-        (string Id, ContextHeaderBlockPath Target),
+        (string Id, ContextHeaderBlockPath Target,
+            string CapabilityFingerprint),
         IRecapBlockMaintainer
     > _maintainers;
 
@@ -61,7 +65,8 @@ public sealed class RecapBlockMaintainerRegistry
     ) {
         ArgumentNullException.ThrowIfNull(maintainers);
         var index = new Dictionary<
-            (string Id, ContextHeaderBlockPath Target),
+            (string Id, ContextHeaderBlockPath Target,
+                string CapabilityFingerprint),
             IRecapBlockMaintainer
         >();
         foreach (IRecapBlockMaintainer? maintainer in maintainers) {
@@ -69,17 +74,36 @@ public sealed class RecapBlockMaintainerRegistry
             if (string.IsNullOrWhiteSpace(maintainer.Id)
                 || maintainer.Target is null) {
                 throw new ArgumentException(
-                    "Maintainer Id and Target must be present.",
+                    "Maintainer Id, Target, and capability fingerprint "
+                    + "must be present.",
                     nameof(maintainers)
                 );
             }
+            try {
+                RecapMaintainerCapabilityFingerprintSyntax.Require(
+                    maintainer.CapabilityFingerprint,
+                    nameof(maintainers)
+                );
+            }
+            catch (ArgumentException error) {
+                throw new ArgumentException(
+                    "Maintainer capability fingerprint is invalid.",
+                    nameof(maintainers),
+                    error
+                );
+            }
             if (!index.TryAdd(
-                    (maintainer.Id, maintainer.Target),
+                    (
+                        maintainer.Id,
+                        maintainer.Target,
+                        maintainer.CapabilityFingerprint
+                    ),
                     maintainer
                 )) {
                 throw new ArgumentException(
                     "Maintainer registry contains a duplicate "
-                    + $"('{maintainer.Id}', '{maintainer.Target}').",
+                    + $"('{maintainer.Id}', '{maintainer.Target}', "
+                    + $"'{maintainer.CapabilityFingerprint}').",
                     nameof(maintainers)
                 );
             }
@@ -90,9 +114,10 @@ public sealed class RecapBlockMaintainerRegistry
     public bool TryResolve(
         string maintainerId,
         ContextHeaderBlockPath target,
+        string maintainerCapabilityFingerprint,
         out IRecapBlockMaintainer maintainer
     ) => _maintainers.TryGetValue(
-        (maintainerId, target),
+        (maintainerId, target, maintainerCapabilityFingerprint),
         out maintainer!
     );
 }

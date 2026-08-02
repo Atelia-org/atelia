@@ -119,7 +119,8 @@ public sealed class RecapPlannerConfigResolverTests {
             "duplicate-block",
             first.RecapBlockId,
             SecondTarget,
-            "maintainer-duplicate-block"
+            "maintainer-duplicate-block",
+            RecapPlannerTestIdentity.CapabilityFingerprint
         );
         AssertResolveCode(
             Document(
@@ -136,7 +137,8 @@ public sealed class RecapPlannerConfigResolverTests {
             "duplicate-target",
             new RecapBlockId("duplicate-target"),
             first.Target,
-            "maintainer-duplicate-target"
+            "maintainer-duplicate-target",
+            RecapPlannerTestIdentity.CapabilityFingerprint
         );
         AssertResolveCode(
             Document(
@@ -180,7 +182,8 @@ public sealed class RecapPlannerConfigResolverTests {
             "next-first-profile",
             first.RecapBlockId,
             first.Target,
-            "next-maintainer"
+            "next-maintainer",
+            RecapPlannerTestIdentity.CapabilityFingerprint
         );
 
         var snapshot = new RecapMaintainerCapabilitySnapshot([
@@ -196,7 +199,8 @@ public sealed class RecapPlannerConfigResolverTests {
         Assert.Same(sameShape, resolved);
         Assert.True(snapshot.SupportsFrozen(
             first.MaintainerId,
-            first.Target
+            first.Target,
+            first.MaintainerCapabilityFingerprint
         ));
 
         Assert.Throws<ArgumentException>(() =>
@@ -206,7 +210,8 @@ public sealed class RecapPlannerConfigResolverTests {
                     first.ProfileName,
                     first.RecapBlockId,
                     SecondTarget,
-                    "another"
+                    "another",
+                    RecapPlannerTestIdentity.CapabilityFingerprint
                 )
             ])
         );
@@ -217,7 +222,8 @@ public sealed class RecapPlannerConfigResolverTests {
                     "another-profile",
                     new RecapBlockId("another"),
                     first.Target,
-                    first.MaintainerId
+                    first.MaintainerId,
+                    RecapPlannerTestIdentity.CapabilityFingerprint
                 )
             ])
         );
@@ -229,7 +235,8 @@ public sealed class RecapPlannerConfigResolverTests {
                     (ContextHeaderCarrier)int.MaxValue,
                     "invalid-target"
                 ),
-                "invalid-target"
+                "invalid-target",
+                RecapPlannerTestIdentity.CapabilityFingerprint
             )
         );
     }
@@ -321,7 +328,8 @@ public sealed class RecapPlannerConfigResolverTests {
             "first-profile",
             new RecapBlockId("first"),
             FirstTarget,
-            "maintainer-first"
+            "maintainer-first",
+            RecapPlannerTestIdentity.CapabilityFingerprint
         );
 
     private static RecapProfilePlanningDescriptor SecondCapability()
@@ -329,7 +337,8 @@ public sealed class RecapPlannerConfigResolverTests {
             "second-profile",
             new RecapBlockId("second"),
             SecondTarget,
-            "maintainer-second"
+            "maintainer-second",
+            RecapPlannerTestIdentity.CapabilityFingerprint
         );
 
     private static RecapPlannerConfigDocument Document(

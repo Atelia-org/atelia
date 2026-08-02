@@ -487,7 +487,8 @@ internal static class OnlineTurnCommand {
                         profile.CatalogEntry.Target.BlockKey,
                         profile.CatalogEntry.MaintainerId,
                         profile.CatalogEntry.MaxContentUtf8Bytes,
-                        profile.Capability.PromptFingerprint
+                        profile.Capability.PromptFingerprint,
+                        profile.Capability.CapabilityFingerprint
                     )
                 )
             ],

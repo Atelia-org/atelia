@@ -3,6 +3,21 @@
 This project owns event-addressed Recap persistence, structural validation,
 atomic publication, strict ordinal selection, and exact materialization.
 
+## Frozen maintainer capability
+
+Every Maintain plan durably freezes the exact
+`(MaintainerId, Target, MaintainerCapabilityFingerprint)` triple. The
+fingerprint is opaque to Store and must use the canonical
+`sha256:<64 lowercase hex>` syntax. Store never derives it from a current
+Maintainer or defaults it from `MaintainerId`.
+
+The durable directory and Store header remain `derived/recap/v4` and Store
+schema v4. Frozen inputs and final blocks also remain v4. The manifest and
+Published publication envelope are schema v5 because their canonical payloads
+now commit the capability fingerprint. There is deliberately no v4
+manifest/publication reader: an old Building must be explicitly abandoned;
+an old Published Store must be explicitly reset and rebuilt.
+
 ## Publication authority
 
 Application code publishes through `DerivedRecapPublisher`, which is bound to

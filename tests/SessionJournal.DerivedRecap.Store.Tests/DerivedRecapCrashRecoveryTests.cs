@@ -481,6 +481,7 @@ public sealed class DerivedRecapCrashRecoveryTests {
                 "roleplay.self"
             ),
             "roleplay.autobiographical",
+            RecapTestIdentity.CapabilityFingerprint,
             new EmptyRecapMaintainSource(
                 lineage.HeadToRoot[2].Address
             ),
@@ -534,6 +535,7 @@ public sealed class DerivedRecapCrashRecoveryTests {
                 "roleplay.self"
             ),
             "roleplay.autobiographical",
+            RecapTestIdentity.CapabilityFingerprint,
             new EmptyRecapMaintainSource(replayStart),
             [firstEndpoint, target],
             EmptyRecapPriorContext.Instance

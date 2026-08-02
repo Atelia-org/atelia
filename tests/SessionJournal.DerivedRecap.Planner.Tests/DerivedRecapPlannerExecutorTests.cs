@@ -346,6 +346,7 @@ public sealed class DerivedRecapPlannerExecutorTests {
                     fixture.SelfId,
                     fixture.SelfTarget,
                     "new-maintainer",
+                    RecapPlannerTestIdentity.CapabilityFingerprint,
                     TestFixture.MaxContent - 1
                 )
             ]
@@ -365,6 +366,41 @@ public sealed class DerivedRecapPlannerExecutorTests {
         Assert.Null(executor.LastPlanningDiagnostics);
         Assert.Equal(0, policy.CallCount);
         Assert.Equal(0, secondMaintainer.CallCount);
+    }
+
+    [Fact]
+    public async Task NewPlanningFreezesMaintainerFingerprint() {
+        using TestFixture fixture = await TestFixture.CreateAsync(
+            historyPairs: 1
+        );
+        var maintainer = new ScriptedMaintainer(
+            "self-maintainer",
+            fixture.SelfTarget,
+            static (_, _) => "published"
+        );
+
+        var published = Assert.IsType<
+            DerivedRecapExecutionResult.Published
+        >(
+            await fixture.CreateExecutor(
+                    new BoundedMaintainAllRecapPlanningPolicy(),
+                    [maintainer]
+                )
+                .RunAsync()
+        );
+        var planRead = Assert.IsType<PublishedPlanReadResult.Available>(
+            await fixture.Store.ReadPublishedPlanAsync(
+                published.Descriptor
+            )
+        );
+        MaintainRecapBlockPlan plan = Assert.IsType<
+            MaintainRecapBlockPlan
+        >(Assert.Single(planRead.Snapshot.FrozenPlan.Blocks));
+
+        Assert.Equal(
+            maintainer.CapabilityFingerprint,
+            plan.MaintainerCapabilityFingerprint
+        );
     }
 
     [Fact]
@@ -401,6 +437,7 @@ public sealed class DerivedRecapPlannerExecutorTests {
                     fixture.SelfId,
                     fixture.SelfTarget,
                     "replacement-maintainer",
+                    RecapPlannerTestIdentity.CapabilityFingerprint,
                     TestFixture.MaxContent
                 )
             ]
@@ -955,6 +992,78 @@ public sealed class DerivedRecapPlannerExecutorTests {
     }
 
     [Fact]
+    public async Task ResumeRejectsFingerprintDriftBeforeMaintainerCall() {
+        using TestFixture fixture = await TestFixture.CreateAsync(
+            historyPairs: 1
+        );
+        EventAddress admission = fixture.Engine.ReadCurrentHead()!.Value;
+        MaintainRecapBlockPlan plan = fixture.CreateEmptyPlan(
+            fixture.SelfId,
+            fixture.SelfTarget,
+            "self-maintainer",
+            fixture.ReplayStart(),
+            [admission]
+        );
+        await fixture.CreateBuildingAsync(admission, [plan]);
+        var drifted = new ScriptedMaintainer(
+            "self-maintainer",
+            fixture.SelfTarget,
+            static (_, _) => "must-not-run",
+            "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+        );
+
+        var result = Assert.IsType<
+            DerivedRecapExecutionResult.Unavailable
+        >(
+            await fixture.CreateBuildingExecutor([drifted])
+                .ResumeAsync(admission)
+        );
+
+        Assert.Contains(
+            result.Defects,
+            defect => defect.Code
+                == DerivedRecapExecutionDefectCodes
+                    .MaintainerUnavailable
+        );
+        Assert.Equal(0, drifted.CallCount);
+    }
+
+    [Fact]
+    public async Task ResumeSelectsRetainedExactFingerprint() {
+        using TestFixture fixture = await TestFixture.CreateAsync(
+            historyPairs: 1
+        );
+        EventAddress admission = fixture.Engine.ReadCurrentHead()!.Value;
+        MaintainRecapBlockPlan plan = fixture.CreateEmptyPlan(
+            fixture.SelfId,
+            fixture.SelfTarget,
+            "self-maintainer",
+            fixture.ReplayStart(),
+            [admission]
+        );
+        await fixture.CreateBuildingAsync(admission, [plan]);
+        var retained = new ScriptedMaintainer(
+            "self-maintainer",
+            fixture.SelfTarget,
+            static (_, _) => "retained"
+        );
+        var current = new ScriptedMaintainer(
+            "self-maintainer",
+            fixture.SelfTarget,
+            static (_, _) => "must-not-run",
+            "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+        );
+
+        Assert.IsType<DerivedRecapExecutionResult.Published>(
+            await fixture.CreateBuildingExecutor([current, retained])
+                .ResumeAsync(admission)
+        );
+
+        Assert.Equal(1, retained.CallCount);
+        Assert.Equal(0, current.CallCount);
+    }
+
+    [Fact]
     public async Task DescriptorPinnedResumeRejectsSameAnchorReplacement() {
         using TestFixture fixture = await TestFixture.CreateAsync(
             historyPairs: 1
@@ -1409,6 +1518,7 @@ public sealed class DerivedRecapPlannerExecutorTests {
             fixture.SelfId,
             fixture.SelfTarget,
             "self-maintainer",
+            RecapPlannerTestIdentity.CapabilityFingerprint,
             new EmptyRecapMaintainSource(start),
             [admission],
             new InlineRecapPriorContext(
@@ -1721,14 +1831,18 @@ public sealed class DerivedRecapPlannerExecutorTests {
         public ScriptedMaintainer(
             string id,
             ContextHeaderBlockPath target,
-            Func<int, RecapBlockMaintenanceRequest, string> maintain
+            Func<int, RecapBlockMaintenanceRequest, string> maintain,
+            string capabilityFingerprint =
+                RecapPlannerTestIdentity.CapabilityFingerprint
         ) {
             Id = id;
             Target = target;
+            CapabilityFingerprint = capabilityFingerprint;
             _maintain = maintain;
         }
 
         public string Id { get; }
+        public string CapabilityFingerprint { get; }
         public ContextHeaderBlockPath Target { get; }
         public int CallCount { get; private set; }
         public List<string> OldBlocks { get; } = [];
@@ -1761,6 +1875,8 @@ public sealed class DerivedRecapPlannerExecutorTests {
         ContextHeaderBlockPath target
     ) : IRecapBlockMaintainer {
         public string Id { get; } = id;
+        public string CapabilityFingerprint { get; } =
+            "sha256:0000000000000000000000000000000000000000000000000000000000000000";
         public ContextHeaderBlockPath Target { get; } = target;
 
         public ValueTask<RecapBlockMaintenanceResult> MaintainAsync(
@@ -1878,6 +1994,7 @@ public sealed class DerivedRecapPlannerExecutorTests {
             id,
             target,
             maintainerId,
+            RecapPlannerTestIdentity.CapabilityFingerprint,
             new EmptyRecapMaintainSource(start),
             route,
             EmptyRecapPriorContext.Instance,
@@ -1926,6 +2043,7 @@ public sealed class DerivedRecapPlannerExecutorTests {
                         SelfId,
                         SelfTarget,
                         "self-maintainer",
+                        RecapPlannerTestIdentity.CapabilityFingerprint,
                         MaxContent
                     )
                 ],

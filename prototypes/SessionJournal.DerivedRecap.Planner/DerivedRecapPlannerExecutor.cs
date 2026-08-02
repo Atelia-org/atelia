@@ -742,6 +742,8 @@ public sealed class DerivedRecapPlannerExecutor {
                         maintain.RecapBlockId,
                         _inputs.OrderedCatalog[index].Target,
                         _inputs.OrderedCatalog[index].MaintainerId,
+                        _inputs.OrderedCatalog[index]
+                            .MaintainerCapabilityFingerprint,
                         maintain.Source switch {
                             RecapPlanningMaintainSource.Existing existing =>
                                 new ExistingRecapMaintainSource(
@@ -1005,6 +1007,7 @@ public sealed class DerivedRecapPlannerExecutor {
             if (!_maintainers.TryResolve(
                     entry.MaintainerId,
                     entry.Target,
+                    entry.MaintainerCapabilityFingerprint,
                     out IRecapBlockMaintainer? maintainer
                 )
                 || !string.Equals(
@@ -1012,7 +1015,12 @@ public sealed class DerivedRecapPlannerExecutor {
                     entry.MaintainerId,
                     StringComparison.Ordinal
                 )
-                || maintainer.Target != entry.Target) {
+                || maintainer.Target != entry.Target
+                || !string.Equals(
+                    maintainer.CapabilityFingerprint,
+                    entry.MaintainerCapabilityFingerprint,
+                    StringComparison.Ordinal
+                )) {
                 return Unavailable(
                     DerivedRecapExecutionDefectCodes
                         .MaintainerUnavailable,
@@ -1546,6 +1554,7 @@ public sealed class DerivedRecapBuildingExecutor {
         if (!_maintainers.TryResolve(
                 maintain.MaintainerId,
                 maintain.Target,
+                maintain.MaintainerCapabilityFingerprint,
                 out IRecapBlockMaintainer? maintainer
             )
             || !string.Equals(
@@ -1553,7 +1562,12 @@ public sealed class DerivedRecapBuildingExecutor {
                 maintain.MaintainerId,
                 StringComparison.Ordinal
             )
-            || maintainer.Target != maintain.Target) {
+            || maintainer.Target != maintain.Target
+            || !string.Equals(
+                maintainer.CapabilityFingerprint,
+                maintain.MaintainerCapabilityFingerprint,
+                StringComparison.Ordinal
+            )) {
             return Unavailable(
                 DerivedRecapExecutionDefectCodes
                     .MaintainerUnavailable,

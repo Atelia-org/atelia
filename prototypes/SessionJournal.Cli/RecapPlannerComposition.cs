@@ -241,7 +241,8 @@ internal static class RecapCliCompositionResolver {
                 descriptor.ProfileName,
                 new RecapBlockId(descriptor.RecapBlockIdValue),
                 descriptor.Target,
-                descriptor.MaintainerId
+                descriptor.MaintainerId,
+                descriptor.CapabilityFingerprint
             )
         )
     ]);

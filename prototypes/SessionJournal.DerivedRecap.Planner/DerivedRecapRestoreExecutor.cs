@@ -472,6 +472,7 @@ public sealed class DerivedRecapRestoreExecutor {
         if (!_maintainers.TryResolve(
                 plan.MaintainerId,
                 plan.Target,
+                plan.MaintainerCapabilityFingerprint,
                 out IRecapBlockMaintainer? maintainer
             )
             || !string.Equals(
@@ -479,7 +480,12 @@ public sealed class DerivedRecapRestoreExecutor {
                 plan.MaintainerId,
                 StringComparison.Ordinal
             )
-            || maintainer.Target != plan.Target) {
+            || maintainer.Target != plan.Target
+            || !string.Equals(
+                maintainer.CapabilityFingerprint,
+                plan.MaintainerCapabilityFingerprint,
+                StringComparison.Ordinal
+            )) {
             AddDefect(
                 defects,
                 DerivedRecapRestoreDefectCodes.MaintainerUnavailable,
