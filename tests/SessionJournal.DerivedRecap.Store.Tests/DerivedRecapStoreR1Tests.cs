@@ -746,6 +746,254 @@ public sealed class DerivedRecapStoreR1Tests {
         );
     }
 
+    [Fact]
+    public async Task WrongKindBuildingArtifactsAreUnavailableAndNotReplaced() {
+        using RecapStoreFixture fixture =
+            await RecapStoreFixture.CreateAsync(historyPairs: 1);
+        SessionCurrentLineageSnapshot lineage = fixture.Lineage();
+        EventAddress target = lineage.CapturedHead;
+        RecapBlockPlan plan = fixture.CreateMaintainPlan(
+            target,
+            lineage.HeadToRoot[^1].Address
+        );
+        CreateBuildingResult.Created created =
+            Assert.IsType<CreateBuildingResult.Created>(
+                await fixture.Store.CreateBuildingAsync(
+                    DerivedRecapCodec.CreateManifest(
+                        fixture.Engine.BranchRefId,
+                        target,
+                        [plan]
+                    )
+                )
+            );
+        string buildingPath =
+            fixture.Store.GetBuildingPathForTest(target);
+        string checkpointPath = Path.Combine(
+            buildingPath,
+            "work",
+            $"{plan.RecapBlockId.Value}.json"
+        );
+        Directory.CreateDirectory(checkpointPath);
+        DerivedRecapBlock candidate = DerivedRecapCodec.CreateBlock(
+            plan,
+            target,
+            "candidate"
+        );
+
+        BuildingBlockInspection checkpointInspection =
+            await fixture.Store.InspectBuildingBlockAsync(
+                created.Descriptor,
+                plan.RecapBlockId
+            );
+        Assert.IsType<RollingRecapCheckpointHealth.Unavailable>(
+            checkpointInspection.Checkpoint
+        );
+        Assert.IsType<CheckpointWriteResult.Unavailable>(
+            await fixture.Store.AdvanceRollingCheckpointAsync(
+                created.Descriptor,
+                plan.RecapBlockId,
+                "missing",
+                candidate
+            )
+        );
+        Assert.IsType<FinalBlockWriteResult.Unavailable>(
+            await fixture.Store.EnsureFinalBlockAsync(
+                created.Descriptor,
+                plan.RecapBlockId,
+                "missing",
+                candidate
+            )
+        );
+        Assert.True(Directory.Exists(checkpointPath));
+
+        string finalPath = Path.Combine(
+            buildingPath,
+            "blocks",
+            $"{plan.RecapBlockId.Value}.json"
+        );
+        Directory.CreateDirectory(finalPath);
+        BuildingBlockInspection finalInspection =
+            await fixture.Store.InspectBuildingBlockAsync(
+                created.Descriptor,
+                plan.RecapBlockId
+            );
+        Assert.IsType<FinalRecapBlockHealth.Unavailable>(
+            finalInspection.Final
+        );
+        Assert.IsType<FinalBlockWriteResult.Unavailable>(
+            await fixture.Store.EnsureFinalBlockAsync(
+                created.Descriptor,
+                plan.RecapBlockId,
+                "missing",
+                candidate
+            )
+        );
+        Assert.True(Directory.Exists(finalPath));
+        Assert.True(Directory.Exists(checkpointPath));
+    }
+
+    [Fact]
+    public async Task WrongKindPublishedCheckpointIsUnavailableAndNotReplaced() {
+        using RecapStoreFixture fixture =
+            await RecapStoreFixture.CreateAsync(historyPairs: 1);
+        SessionCurrentLineageSnapshot lineage = fixture.Lineage();
+        EventAddress target = lineage.CapturedHead;
+        RecapBlockPlan plan = fixture.CreateMaintainPlan(
+            target,
+            lineage.HeadToRoot[^1].Address
+        );
+        _ = Assert.IsType<CreateBuildingResult.Created>(
+            await fixture.Store.CreateBuildingAsync(
+                DerivedRecapCodec.CreateManifest(
+                    fixture.Engine.BranchRefId,
+                    target,
+                    [plan]
+                )
+            )
+        );
+        DerivedRecapBlock candidate = DerivedRecapCodec.CreateBlock(
+            plan,
+            target,
+            "published candidate"
+        );
+        await RecapStoreTestDriver.InstallFinalAsync(
+            fixture.Store,
+            target,
+            candidate
+        );
+        _ = await fixture.Publisher.PublishAsync(target);
+        string publishedPath =
+            fixture.Store.GetPublishedPathForTest(target);
+        File.Delete(Path.Combine(
+            publishedPath,
+            "blocks",
+            $"{plan.RecapBlockId.Value}.json"
+        ));
+        string checkpointPath = Path.Combine(
+            publishedPath,
+            "work",
+            $"{plan.RecapBlockId.Value}.json"
+        );
+        File.Delete(checkpointPath);
+        Directory.CreateDirectory(checkpointPath);
+
+        var available =
+            Assert.IsType<PublishedRestoreInspectionResult.Available>(
+                await fixture.Store.InspectPublishedForRestoreAsync(
+                    target,
+                    lineage
+                )
+            );
+        PublishedBlockRestoreInspection block =
+            available.Inspection.Blocks[plan.RecapBlockId];
+        Assert.IsType<RollingRecapCheckpointHealth.Unavailable>(
+            block.Checkpoint
+        );
+        Assert.IsType<PublishedBlockRestoreCapability.Unavailable>(
+            block.Capability
+        );
+        Assert.IsType<PublishedCheckpointWriteResult.Unavailable>(
+            await fixture.Store.AdvancePublishedCheckpointAsync(
+                available.Inspection.Handle,
+                plan.RecapBlockId,
+                "missing",
+                candidate
+            )
+        );
+        Assert.IsType<PublishedFinalWriteResult.Unavailable>(
+            await fixture.Store.InstallPublishedReplacementAsync(
+                available.Inspection.Handle,
+                plan.RecapBlockId,
+                "missing",
+                candidate
+            )
+        );
+        Assert.True(Directory.Exists(checkpointPath));
+    }
+
+    [Fact]
+    public async Task WrongKindPublishedFrozenInputIsUnavailable() {
+        using RecapStoreFixture fixture =
+            await RecapStoreFixture.CreateAsync(historyPairs: 3);
+        SessionCurrentLineageSnapshot lineage = fixture.Lineage();
+        EventAddress target = lineage.CapturedHead;
+        EventAddress source = lineage.HeadToRoot[2].Address;
+        EventAddress replayStart = lineage.HeadToRoot[^1].Address;
+        RecapBlockPlan sourcePlan = fixture.CreateMaintainPlan(
+            source,
+            replayStart
+        );
+        DerivedRecapBlock sourceBlock = DerivedRecapCodec.CreateBlock(
+            sourcePlan,
+            source,
+            "source content"
+        );
+        PublishedRecapDescriptor sourceDescriptor = await PublishAsync(
+            fixture,
+            source,
+            [sourcePlan],
+            [sourceBlock]
+        );
+        DerivedRecapFrozenInput expectedInput =
+            DerivedRecapCodec.CreateFrozenInput(
+                sourceBlock.RecapBlockId,
+                sourceBlock.Target,
+                source,
+                sourceBlock.Content
+            );
+        RecapBlockPlan targetPlan = new InheritRecapBlockPlan(
+            sourceBlock.RecapBlockId,
+            sourceBlock.Target,
+            source,
+            sourceDescriptor.EnvelopeSha256,
+            expectedInput.PayloadSha256
+        );
+        _ = Assert.IsType<CreateBuildingResult.Created>(
+            await fixture.Store.CreateBuildingAsync(
+                DerivedRecapCodec.CreateManifest(
+                    fixture.Engine.BranchRefId,
+                    target,
+                    [targetPlan]
+                )
+            )
+        );
+        await RecapStoreTestDriver.InstallFinalAsync(
+            fixture.Store,
+            target,
+            DerivedRecapCodec.CreateBlock(
+                targetPlan,
+                source,
+                sourceBlock.Content
+            )
+        );
+        _ = await fixture.Publisher.PublishAsync(target);
+        string inputPath = Path.Combine(
+            fixture.Store.GetPublishedPathForTest(target),
+            "inputs",
+            $"{targetPlan.RecapBlockId.Value}.json"
+        );
+        File.Delete(inputPath);
+        Directory.CreateDirectory(inputPath);
+
+        var available =
+            Assert.IsType<PublishedRestoreInspectionResult.Available>(
+                await fixture.Store.InspectPublishedForRestoreAsync(
+                    target,
+                    lineage
+                )
+            );
+        FrozenRecapInputHealth input = available.Inspection.Blocks[
+            targetPlan.RecapBlockId
+        ].FrozenInput;
+        var unavailable =
+            Assert.IsType<FrozenRecapInputHealth.Unavailable>(input);
+        Assert.Contains(
+            unavailable.Defects,
+            static defect => defect.Code == "FrozenInputReadUnavailable"
+        );
+        Assert.True(Directory.Exists(inputPath));
+    }
+
     private static void CreateOversizedSparseFile(string path) {
         using var stream = new FileStream(
             path,

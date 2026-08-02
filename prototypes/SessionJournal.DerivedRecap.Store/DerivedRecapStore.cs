@@ -2995,6 +2995,8 @@ public sealed class DerivedRecapStore {
                     item.Value switch {
                         FrozenRecapInputHealth.Damaged damaged =>
                             damaged.Defects,
+                        FrozenRecapInputHealth.Unavailable unavailable =>
+                            unavailable.Defects,
                         _ => [
                             new RecapStructuralDefect(
                                 "ManifestWitnessInputMissing",
@@ -3338,11 +3340,6 @@ public sealed class DerivedRecapStore {
             Path.Combine(publishedPath, "inputs"),
             plan.RecapBlockId
         );
-        if (!File.Exists(path)) {
-            return new FrozenRecapInputHealth.Missing(
-                MissingStateToken
-            );
-        }
         byte[] bytes;
         try {
             bytes = await _fileSystem.ReadBoundedAsync(
@@ -3363,14 +3360,13 @@ public sealed class DerivedRecapStore {
             when (exception is InvalidDataException
                   or IOException
                   or UnauthorizedAccessException) {
-            return new FrozenRecapInputHealth.Damaged(
+            return new FrozenRecapInputHealth.Unavailable(
                 [
                     new RecapStructuralDefect(
-                        "FrozenInputDamaged",
+                        "FrozenInputReadUnavailable",
                         exception.Message
                     )
-                ],
-                "damaged:unreadable"
+                ]
             );
         }
         try {
@@ -3464,14 +3460,6 @@ public sealed class DerivedRecapStore {
             Path.Combine(publishedPath, "blocks"),
             plan.RecapBlockId
         );
-        if (!File.Exists(path)) {
-            return new PublishedFinalInspection(
-                new FinalRecapBlockHealth.Missing(
-                    MissingStateToken
-                ),
-                IsCommitted: false
-            );
-        }
         byte[] bytes;
         try {
             bytes = await _fileSystem.ReadBoundedAsync(
@@ -3687,6 +3675,10 @@ public sealed class DerivedRecapStore {
         if (input is FrozenRecapInputHealth.Damaged damagedInput) {
             defects.AddRange(damagedInput.Defects);
         }
+        if (input
+                is FrozenRecapInputHealth.Unavailable unavailableInput) {
+            defects.AddRange(unavailableInput.Defects);
+        }
         if (input is FrozenRecapInputHealth.Missing) {
             AddDefect(
                 defects,
@@ -3715,6 +3707,9 @@ public sealed class DerivedRecapStore {
     ) {
         if (input is FrozenRecapInputHealth.Damaged damaged) {
             return damaged.Defects;
+        }
+        if (input is FrozenRecapInputHealth.Unavailable unavailable) {
+            return unavailable.Defects;
         }
         return [
             new RecapStructuralDefect(
@@ -4423,11 +4418,6 @@ public sealed class DerivedRecapStore {
         string path,
         CancellationToken cancellationToken
     ) {
-        if (!File.Exists(path)) {
-            return new FinalRecapBlockHealth.Missing(
-                MissingStateToken
-            );
-        }
         byte[] bytes;
         try {
             bytes = await _fileSystem.ReadBoundedAsync(
@@ -4444,7 +4434,10 @@ public sealed class DerivedRecapStore {
                 MissingStateToken
             );
         }
-        catch (InvalidDataException exception) {
+        catch (Exception exception)
+            when (exception is InvalidDataException
+                  or IOException
+                  or UnauthorizedAccessException) {
             return new FinalRecapBlockHealth.Unavailable(
                 [
                     new RecapStructuralDefect(
@@ -4490,11 +4483,6 @@ public sealed class DerivedRecapStore {
         string path,
         CancellationToken cancellationToken
     ) {
-        if (!File.Exists(path)) {
-            return new RollingRecapCheckpointHealth.Missing(
-                MissingStateToken
-            );
-        }
         byte[] bytes;
         try {
             bytes = await _fileSystem.ReadBoundedAsync(
@@ -4511,7 +4499,10 @@ public sealed class DerivedRecapStore {
                 MissingStateToken
             );
         }
-        catch (InvalidDataException exception) {
+        catch (Exception exception)
+            when (exception is InvalidDataException
+                  or IOException
+                  or UnauthorizedAccessException) {
             return new RollingRecapCheckpointHealth.Unavailable(
                 [
                     new RecapStructuralDefect(

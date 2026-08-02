@@ -564,6 +564,12 @@ public abstract record FrozenRecapInputHealth {
         IReadOnlyList<RecapStructuralDefect> Defects,
         string StateToken
     ) : FrozenRecapInputHealth;
+
+    public sealed record Unavailable(
+        IReadOnlyList<RecapStructuralDefect> Defects
+    ) : FrozenRecapInputHealth {
+        public override string StateToken { get; init; } = string.Empty;
+    }
 }
 
 public abstract record PublishedBlockRestoreCapability {
