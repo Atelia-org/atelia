@@ -23,6 +23,7 @@ public sealed partial class SessionJournalEngine : IDisposable {
     private readonly RefId _branchRefId;
     private readonly bool _isReadOnly;
     private readonly SessionJournalTestHooks _testHooks;
+    private readonly SessionJournalReadView _readView;
     private SessionRuntime? _runtime;
     private SessionGoverningSetup? _governingSetupCursor;
     private GoverningSetupResolutionDiagnostics _lastGoverningSetupResolutionDiagnostics;
@@ -44,12 +45,26 @@ public sealed partial class SessionJournalEngine : IDisposable {
         _isReadOnly = isReadOnly;
         _runtime = runtime;
         _testHooks = testHooks ?? new SessionJournalTestHooks();
+        _readView = new SessionJournalReadView(this);
     }
 
     public string Path => _journal.JournalPath;
     public string BranchName => _branchName;
     public RefId BranchRefId => _branchRefId;
     public bool IsReadOnly => _isReadOnly;
+
+    /// <summary>
+    /// Returns the engine-lifetime-bound minimum raw-authority view used by
+    /// Derived integrations. This is intentionally not a general mirror of
+    /// every read API on <see cref="SessionJournalEngine"/>. The same view
+    /// instance is retained for the lifetime of this engine.
+    /// </summary>
+    public SessionJournalReadView ReadView {
+        get {
+            ThrowIfDisposed();
+            return _readView;
+        }
+    }
 
     /// <summary>
     /// Reads the exact current head of the selected Ref without projecting
@@ -4764,6 +4779,9 @@ public sealed partial class SessionJournalEngine : IDisposable {
     private void ThrowIfDisposed() {
         ObjectDisposedException.ThrowIf(_disposed, this);
     }
+
+    internal void EnsureNotDisposedForReadView()
+        => ThrowIfDisposed();
 
     private void ThrowIfReadOnlyMutation(string operation) {
         ThrowIfDisposed();
