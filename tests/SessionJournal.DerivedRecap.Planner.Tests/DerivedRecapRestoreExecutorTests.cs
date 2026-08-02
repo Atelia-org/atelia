@@ -82,7 +82,7 @@ public sealed class DerivedRecapRestoreExecutorTests {
             MaintainRecapBlockPlan plan,
             EventAddress target
         ) = await fixture.PublishExistingTwoStepAsync(
-            useStaleBoundarySetups: true
+            useStaleMidBoundarySetup: true
         );
         await fixture.DamageFinalAsync(plan, target);
         DerivedRecapBlock checkpoint =
@@ -151,8 +151,12 @@ public sealed class DerivedRecapRestoreExecutorTests {
             MaintainRecapBlockPlan plan,
             EventAddress target
         ) = await fixture.PublishExistingTwoStepAsync(
-            useStaleBoundarySetups: false
+            useStaleMidBoundarySetup: false
         );
+        byte[] canonicalManifestBefore =
+            await File.ReadAllBytesAsync(fixture.ManifestPath(target));
+        byte[] canonicalPublicationBefore =
+            await File.ReadAllBytesAsync(fixture.PublicationPath(target));
         await fixture.DamageFinalAsync(plan, target);
         DerivedRecapBlock checkpoint =
             DerivedRecapCodec.CreateBlock(
@@ -189,6 +193,68 @@ public sealed class DerivedRecapRestoreExecutorTests {
         Assert.Equal(
             "target-content",
             await fixture.MaterializedTextAsync(target)
+        );
+        Assert.Equal(
+            canonicalManifestBefore,
+            await File.ReadAllBytesAsync(fixture.ManifestPath(target))
+        );
+        Assert.Equal(
+            canonicalPublicationBefore,
+            await File.ReadAllBytesAsync(fixture.PublicationPath(target))
+        );
+    }
+
+    [Fact]
+    public async Task FrozenPlanRawValidatorReportsOffLineageAdmissionOnce() {
+        using RestoreFixture fixture =
+            await RestoreFixture.CreateAsync();
+        MaintainRecapBlockPlan valid = fixture.CreateMaintainPlan(
+            "frozen.self",
+            "frozen-maintainer",
+            endpointCount: 1
+        );
+        RecapReplayBoundary validAdmission =
+            valid.CatchUpBoundaries[^1];
+        EventAddress offLineage = validAdmission.Address with {
+            SegmentNumber = validAdmission.Address.SegmentNumber
+                == uint.MaxValue
+                    ? uint.MaxValue - 1
+                    : uint.MaxValue
+        };
+        var plan = new MaintainRecapBlockPlan(
+            valid.RecapBlockId,
+            valid.Target,
+            valid.MaintainerId,
+            valid.MaintainerCapabilityFingerprint,
+            valid.Source,
+            [new RecapReplayBoundary(offLineage, validAdmission.Setups)],
+            valid.PriorContext,
+            valid.MaxContentUtf8Bytes
+        );
+        DerivedRecapSetManifest manifest =
+            DerivedRecapCodec.CreateManifest(
+                fixture.Engine.BranchRefId,
+                offLineage,
+                validAdmission.Setups,
+                [plan]
+            );
+
+        IReadOnlyList<RecapFrozenPlanRawDefect> defects =
+            RecapFrozenPlanRawValidator.ValidateBlock(
+                fixture.Engine,
+                manifest,
+                new Dictionary<
+                    RecapBlockId,
+                    DerivedRecapFrozenInput
+                >(),
+                fixture.Lineage,
+                plan
+            );
+
+        RecapFrozenPlanRawDefect defect = Assert.Single(defects);
+        Assert.Equal(
+            "SetAdmissionAnchor is outside current raw lineage.",
+            defect.Detail
         );
     }
 
@@ -1274,7 +1340,7 @@ public sealed class DerivedRecapRestoreExecutorTests {
             MaintainRecapBlockPlan Plan,
             EventAddress Target
         )> PublishExistingTwoStepAsync(
-            bool useStaleBoundarySetups
+            bool useStaleMidBoundarySetup
         ) {
             EventAddress source = CurrentHead;
             SessionHistoryPlanningWindow sourceWindow =
@@ -1326,13 +1392,11 @@ public sealed class DerivedRecapRestoreExecutorTests {
             EventAddress mid = AppendPair("existing-mid");
             EventAddress target = AppendPair("existing-target");
             SessionContextAnchorSetupReferences midSetups =
-                useStaleBoundarySetups
+                useStaleMidBoundarySetup
                     ? sourceSetups
                     : RecapPlannerWireTestFacts.SetupsAt(Engine, mid);
             SessionContextAnchorSetupReferences targetSetups =
-                useStaleBoundarySetups
-                    ? sourceSetups
-                    : RecapPlannerWireTestFacts.SetupsAt(Engine, target);
+                RecapPlannerWireTestFacts.SetupsAt(Engine, target);
             var existing = new MaintainRecapBlockPlan(
                 sourcePlan.RecapBlockId,
                 sourcePlan.Target,
@@ -1559,6 +1623,12 @@ public sealed class DerivedRecapRestoreExecutorTests {
             => System.IO.Path.Combine(
                 Store.GetPublishedPathForTest(anchor),
                 "publication.json"
+            );
+
+        public string ManifestPath(EventAddress anchor)
+            => System.IO.Path.Combine(
+                Store.GetPublishedPathForTest(anchor),
+                "manifest.json"
             );
 
         public string BlockPath(

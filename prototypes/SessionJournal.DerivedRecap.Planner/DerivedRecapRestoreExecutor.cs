@@ -259,13 +259,15 @@ public sealed class DerivedRecapRestoreExecutor {
                 continue;
             }
 
+            IReadOnlyList<RecapFrozenPlanRawDefect> authorityDefects =
+                RecapFrozenPlanRawValidator.ValidateSetupAuthority(
+                    _engine,
+                    inspection.FrozenPlan,
+                    lineage,
+                    plan
+                );
             foreach (RecapFrozenPlanRawDefect defect
-                     in RecapFrozenPlanRawValidator.ValidateSetupAuthority(
-                         _engine,
-                         inspection.FrozenPlan,
-                         lineage,
-                         plan
-                     )) {
+                     in authorityDefects) {
                 AddDefect(
                     defects,
                     DerivedRecapRestoreDefectCodes.FrozenPlanInvalid,
@@ -277,10 +279,11 @@ public sealed class DerivedRecapRestoreExecutor {
             // already committed or checkpoint-resumable block unavailable.
             // Explicit-address setup authority remains independently
             // validated above for every restore capability.
-            if (plan is MaintainRecapBlockPlan {
-                    Source: EmptyRecapMaintainSource
-                }
-                || healthyInputs.ContainsKey(plan.RecapBlockId)) {
+            if (authorityDefects.Count == 0
+                && (plan is MaintainRecapBlockPlan {
+                        Source: EmptyRecapMaintainSource
+                    }
+                    || healthyInputs.ContainsKey(plan.RecapBlockId))) {
                 foreach (RecapFrozenPlanRawDefect defect
                          in RecapFrozenPlanRawValidator
                              .ValidateInputDependentBlock(

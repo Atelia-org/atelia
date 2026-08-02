@@ -23,12 +23,17 @@ internal static class RecapFrozenPlanRawValidator {
         RecapBlockPlan plan
     ) {
         var defects = new List<RecapFrozenPlanRawDefect>();
-        defects.AddRange(ValidateSetupAuthority(
-            engine,
-            manifest,
-            lineage,
-            plan
-        ));
+        IReadOnlyList<RecapFrozenPlanRawDefect> authorityDefects =
+            ValidateSetupAuthority(
+                engine,
+                manifest,
+                lineage,
+                plan
+            );
+        defects.AddRange(authorityDefects);
+        if (authorityDefects.Count != 0) {
+            return defects;
+        }
         defects.AddRange(ValidateInputDependentBlock(
             engine,
             manifest,
