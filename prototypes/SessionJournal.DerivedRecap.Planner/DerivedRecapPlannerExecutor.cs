@@ -1419,12 +1419,19 @@ internal sealed class DerivedRecapBuildingExecutor {
             ?? throw new InvalidDataException(
                 "Frozen Resume requires a non-empty SessionJournal."
             );
+        SessionCurrentLineagePrefix prefix =
+            _engine.ReadLineagePrefixAt(
+                expectedRawHead,
+                RecapFrozenPlanBarrier.MaxHeaderCount,
+                cancellationToken
+            );
         RecapFrozenPlanBarrierResult barrier;
         try {
             barrier = await RecapFrozenPlanBarrier.ProveAsync(
                     _engine,
                     _store,
                     plan.Manifest,
+                    prefix,
                     expectedRawHead,
                     _hardCaps,
                     cancellationToken
@@ -1517,11 +1524,12 @@ internal sealed class DerivedRecapBuildingExecutor {
     private static DerivedRecapExecutionResult.Retryable
         RetryableBuildingChanged(
         BuildingDescriptor expected,
-        BuildingDescriptor observed
+        BuildingDescriptor? observed
     ) => new(
         DerivedRecapExecutionDefectCodes.SourceChanged,
         $"Frozen Building changed before Resume. Expected "
-        + $"'{expected}', observed '{observed}'."
+        + $"'{expected}', observed "
+        + (observed is null ? "no exact Building." : $"'{observed}'.")
     );
 
     private async ValueTask<DerivedRecapExecutionResult>
@@ -1591,13 +1599,22 @@ internal sealed class DerivedRecapBuildingExecutor {
         try {
             RecapPublishability publishability =
                 await _publisher.CanPublishAsync(
-                        building.Manifest.SetAdmissionAnchor,
+                        handle,
                         cancellationToken
                     )
                     .ConfigureAwait(false);
             switch (publishability) {
                 case RecapPublishability.Publishable:
                     break;
+                case RecapPublishability.AlreadyPublished already:
+                    return new DerivedRecapExecutionResult.Published(
+                        already.Descriptor
+                    );
+                case RecapPublishability.SourceChanged changed:
+                    return RetryableBuildingChanged(
+                        changed.Expected,
+                        changed.Observed
+                    );
                 case RecapPublishability.NotPublishable notPublishable:
                     return Unavailable(notPublishable.Defects);
                 case RecapPublishability.BeyondPrefix beyond:
@@ -1619,7 +1636,7 @@ internal sealed class DerivedRecapBuildingExecutor {
             }
             PublishRecapResult published =
                 await _publisher.PublishAsync(
-                        building.Manifest.SetAdmissionAnchor,
+                        handle,
                         cancellationToken
                     )
                     .ConfigureAwait(false);
@@ -1627,6 +1644,15 @@ internal sealed class DerivedRecapBuildingExecutor {
                 PublishRecapResult.Published success =>
                     new DerivedRecapExecutionResult.Published(
                         success.Descriptor
+                    ),
+                PublishRecapResult.AlreadyPublished already =>
+                    new DerivedRecapExecutionResult.Published(
+                        already.Descriptor
+                    ),
+                PublishRecapResult.SourceChanged changed =>
+                    RetryableBuildingChanged(
+                        changed.Expected,
+                        changed.Observed
                     ),
                 PublishRecapResult.NotPublishable notPublishable =>
                     Unavailable(notPublishable.Defects),

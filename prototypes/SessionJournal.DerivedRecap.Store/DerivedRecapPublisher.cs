@@ -3,9 +3,9 @@ using Atelia.EventJournal;
 namespace Atelia.SessionJournal.DerivedRecap.Store;
 
 /// <summary>
-/// Engine-bound publication authority for one Recap Store. Callers choose
-/// only the target admission anchor; raw lineage and the final current-head
-/// check always come from the bound SessionJournalEngine.
+/// Engine-bound publication authority for one exact Building plan. Public
+/// callers present the metadata-issued BuildingPlanHandle; raw lineage and
+/// the final current-head check always come from the bound engine.
 /// </summary>
 public sealed class DerivedRecapPublisher {
     private readonly DerivedRecapStore _store;
@@ -22,9 +22,10 @@ public sealed class DerivedRecapPublisher {
     }
 
     public async ValueTask<RecapPublishability> CanPublishAsync(
-        EventAddress admissionAnchor,
+        BuildingPlanHandle handle,
         CancellationToken cancellationToken = default
     ) {
+        ArgumentNullException.ThrowIfNull(handle);
         DerivedRecapLineageView lineage =
             DerivedRecapLineageView.Capture(
                 _store,
@@ -33,7 +34,7 @@ public sealed class DerivedRecapPublisher {
             );
         RecapPublishability result =
             await _store.DiagnosePublishabilityAsync(
-                    admissionAnchor,
+                    handle,
                     lineage,
                     cancellationToken
                 )
@@ -43,9 +44,10 @@ public sealed class DerivedRecapPublisher {
     }
 
     public ValueTask<PublishRecapResult> PublishAsync(
-        EventAddress admissionAnchor,
+        BuildingPlanHandle handle,
         CancellationToken cancellationToken = default
     ) {
+        ArgumentNullException.ThrowIfNull(handle);
         DerivedRecapLineageView lineage =
             DerivedRecapLineageView.Capture(
                 _store,
@@ -53,12 +55,104 @@ public sealed class DerivedRecapPublisher {
                 cancellationToken
             );
         return _store.PublishTrustedAsync(
-            admissionAnchor,
+            handle,
             lineage,
             () => _engine.ReadCurrentHead(),
             cancellationToken
         );
     }
+
+    internal async ValueTask<RecapPublishability> CanPublishAsync(
+        EventAddress admissionAnchor,
+        CancellationToken cancellationToken = default
+    ) {
+        try {
+            BuildingPlanReadResult read =
+                await _store.ReadBuildingPlanAsync(
+                        admissionAnchor,
+                        cancellationToken
+                    )
+                    .ConfigureAwait(false);
+            return read switch {
+                BuildingPlanReadResult.Available available =>
+                    await CanPublishAsync(
+                            available.Snapshot.Handle,
+                            cancellationToken
+                        )
+                        .ConfigureAwait(false),
+                BuildingPlanReadResult.Invalid invalid =>
+                    new RecapPublishability.NotPublishable(
+                        invalid.Defects
+                    ),
+                BuildingPlanReadResult.Missing =>
+                    new RecapPublishability.NotPublishable([
+                        new RecapStructuralDefect(
+                            "BuildingMissing",
+                            "Exact Building directory is missing."
+                        )
+                    ]),
+                _ => throw new InvalidDataException(
+                    "Unknown Building plan read result."
+                )
+            };
+        }
+        catch (Exception exception)
+            when (IsStoreAvailabilityException(exception)) {
+            return new RecapPublishability.StoreUnavailable(
+                exception.Message
+            );
+        }
+    }
+
+    internal async ValueTask<PublishRecapResult> PublishAsync(
+        EventAddress admissionAnchor,
+        CancellationToken cancellationToken = default
+    ) {
+        try {
+            BuildingPlanReadResult read =
+                await _store.ReadBuildingPlanAsync(
+                        admissionAnchor,
+                        cancellationToken
+                    )
+                    .ConfigureAwait(false);
+            return read switch {
+                BuildingPlanReadResult.Available available =>
+                    await PublishAsync(
+                            available.Snapshot.Handle,
+                            cancellationToken
+                        )
+                        .ConfigureAwait(false),
+                BuildingPlanReadResult.Invalid invalid =>
+                    new PublishRecapResult.NotPublishable(
+                        invalid.Defects
+                    ),
+                BuildingPlanReadResult.Missing =>
+                    new PublishRecapResult.NotPublishable([
+                        new RecapStructuralDefect(
+                            "BuildingMissing",
+                            "Exact Building directory is missing."
+                        )
+                    ]),
+                _ => throw new InvalidDataException(
+                    "Unknown Building plan read result."
+                )
+            };
+        }
+        catch (Exception exception)
+            when (IsStoreAvailabilityException(exception)) {
+            return new PublishRecapResult.StoreUnavailable(
+                exception.Message
+            );
+        }
+    }
+
+    private static bool IsStoreAvailabilityException(
+        Exception exception
+    ) => exception is InvalidDataException
+        or IOException
+        or UnauthorizedAccessException
+        or System.Security.SecurityException
+        or NotSupportedException;
 
     private void RequireCurrentHead(EventAddress expected) {
         EventAddress? observed = _engine.ReadCurrentHead();

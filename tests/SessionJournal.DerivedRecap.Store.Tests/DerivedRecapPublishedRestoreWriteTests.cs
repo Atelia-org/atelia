@@ -56,7 +56,7 @@ public sealed class DerivedRecapPublishedRestoreWriteTests {
         var inspection = Assert.IsType<
             PublishedRestoreInspectionResult.Available
         >(
-            await fixture.Store.InspectPublishedForRestoreAsync(
+            await fixture.Store.InspectPublishedForOfflineDiagnosticsAsync(
                 anchor,
                 lineage
             )
@@ -93,7 +93,7 @@ public sealed class DerivedRecapPublishedRestoreWriteTests {
             DerivedRecapCodec.EncodeBlock(pending)
         );
         Assert.IsType<PublishedRestoreInspectionResult.BeyondPrefix>(
-            await fixture.Store.InspectPublishedForRestoreAsync(
+            await fixture.Store.InspectPublishedForOfflineDiagnosticsAsync(
                 anchor,
                 lineage
             )
@@ -177,7 +177,7 @@ public sealed class DerivedRecapPublishedRestoreWriteTests {
         var inspection = Assert.IsType<
             PublishedRestoreInspectionResult.Available
         >(
-            await fixture.Store.InspectPublishedForRestoreAsync(
+            await fixture.Store.InspectPublishedForOfflineDiagnosticsAsync(
                 anchor,
                 lineage
             )
@@ -209,7 +209,7 @@ public sealed class DerivedRecapPublishedRestoreWriteTests {
         var committedInspection = Assert.IsType<
             PublishedRestoreInspectionResult.Available
         >(
-            await fixture.Store.InspectPublishedForRestoreAsync(
+            await fixture.Store.InspectPublishedForOfflineDiagnosticsAsync(
                 anchor,
                 lineage
             )
@@ -298,7 +298,7 @@ public sealed class DerivedRecapPublishedRestoreWriteTests {
         mutationCount = 0;
 
         PublishedRestoreInspectionResult result =
-            await fixture.Store.InspectPublishedForRestoreAsync(
+            await fixture.Store.InspectPublishedForOfflineDiagnosticsAsync(
                 anchor,
                 lineage
             );
@@ -1271,7 +1271,7 @@ public sealed class DerivedRecapPublishedRestoreWriteTests {
     ) => Assert.IsType<
         PublishedRestoreInspectionResult.Available
     >(
-        await fixture.Store.InspectPublishedForRestoreAsync(
+        await fixture.Store.InspectPublishedForOfflineDiagnosticsAsync(
             anchor,
             lineage
         )

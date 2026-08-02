@@ -727,7 +727,7 @@ public sealed class DerivedRecapStoreR1Tests {
 
         var available =
             Assert.IsType<PublishedRestoreInspectionResult.Available>(
-                await fixture.Store.InspectPublishedForRestoreAsync(
+                await fixture.Store.InspectPublishedForOfflineDiagnosticsAsync(
                     target,
                     lineage
                 )
@@ -891,7 +891,7 @@ public sealed class DerivedRecapStoreR1Tests {
 
         var available =
             Assert.IsType<PublishedRestoreInspectionResult.Available>(
-                await fixture.Store.InspectPublishedForRestoreAsync(
+                await fixture.Store.InspectPublishedForOfflineDiagnosticsAsync(
                     target,
                     lineage
                 )
@@ -990,7 +990,7 @@ public sealed class DerivedRecapStoreR1Tests {
 
         var available =
             Assert.IsType<PublishedRestoreInspectionResult.Available>(
-                await fixture.Store.InspectPublishedForRestoreAsync(
+                await fixture.Store.InspectPublishedForOfflineDiagnosticsAsync(
                     target,
                     lineage
                 )

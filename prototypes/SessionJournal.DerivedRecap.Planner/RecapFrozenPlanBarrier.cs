@@ -20,16 +20,18 @@ internal sealed record RecapFrozenPlanBarrierDefect(
 );
 
 /// <summary>
-/// Metadata-and-header-only barrier shared by frozen Resume and Restore. It resolves exact
-/// Existing/Inherit source cursors from their envelope-authenticated source publications, proves
-/// every frozen setup authority, and proves every possible Maintain route before any Building or
-/// Published component payload may be read.
+/// Metadata, one bounded lineage prefix, and authenticated setup payload barrier shared by frozen
+/// Resume and Restore. Every raw anchor and route is proved before setup payloads are read; every
+/// setup payload is authenticated before any Building or Published component payload may be read.
 /// </summary>
 internal static class RecapFrozenPlanBarrier {
+    internal const int MaxHeaderCount = 513;
+
     public static async ValueTask<RecapFrozenPlanBarrierResult> ProveAsync(
         SessionJournalEngine engine,
         DerivedRecapStore store,
         DerivedRecapSetManifest manifest,
+        SessionCurrentLineagePrefix prefix,
         EventAddress expectedRawHead,
         RecapProtocolHardCaps hardCaps,
         CancellationToken cancellationToken
@@ -37,12 +39,13 @@ internal static class RecapFrozenPlanBarrier {
         ArgumentNullException.ThrowIfNull(engine);
         ArgumentNullException.ThrowIfNull(store);
         ArgumentNullException.ThrowIfNull(manifest);
+        ArgumentNullException.ThrowIfNull(prefix);
         ArgumentNullException.ThrowIfNull(hardCaps);
 
         var defects = new List<RecapFrozenPlanBarrierDefect>();
-        var sourceBoundaries = new Dictionary<
+        var sourceAuthorities = new Dictionary<
             RecapBlockId,
-            RecapReplayBoundary
+            ResolvedSourceAuthority
         >();
         foreach (RecapBlockPlan plan in manifest.Blocks) {
             if (plan is not InheritRecapBlockPlan
@@ -62,24 +65,55 @@ internal static class RecapFrozenPlanBarrier {
                 defects.Add(defect);
                 continue;
             }
-            sourceBoundaries.Add(
+            sourceAuthorities.Add(
                 plan.RecapBlockId,
-                resolved.Boundary!
+                resolved.Authority!
             );
         }
         if (defects.Count != 0) {
             return new RecapFrozenPlanBarrierResult(defects);
         }
 
-        var setupBoundaries = new List<RecapReplayBoundary>();
-        var transitionProvedAddresses = new HashSet<EventAddress>();
+        RequireExpectedRawHead(engine, expectedRawHead);
+        if (prefix.CapturedHead != expectedRawHead) {
+            throw new ArgumentException(
+                "Frozen barrier prefix does not match the expected raw head.",
+                nameof(prefix)
+            );
+        }
+
+        var membership = new List<FrozenAnchorRequirement> {
+            new(
+                manifest.SetAdmissionAnchor,
+                "target set admission"
+            )
+        };
+        var directBoundaries = new List<RecapReplayBoundary>();
+        var sourceAdmissions = new List<FrozenAnchorRequirement>();
+        var sourceCommitments = new List<FrozenAnchorRequirement>();
+        var inlinePriors = new List<FrozenAnchorRequirement>();
+        var emptyStarts = new List<FrozenAnchorRequirement>();
+        var endpoints = new List<FrozenAnchorRequirement>();
         var routes = new List<PendingMaintainRoute>();
         foreach (RecapBlockPlan plan in manifest.Blocks) {
-            if (sourceBoundaries.TryGetValue(
+            if (sourceAuthorities.TryGetValue(
                     plan.RecapBlockId,
-                    out RecapReplayBoundary? sourceBoundary
+                    out ResolvedSourceAuthority? sourceAuthority
                 )) {
-                setupBoundaries.Add(sourceBoundary);
+                sourceAdmissions.Add(new FrozenAnchorRequirement(
+                    sourceAuthority.SourceSetBoundary.Address,
+                    $"block '{plan.RecapBlockId}' source set admission"
+                ));
+                sourceCommitments.Add(new FrozenAnchorRequirement(
+                    sourceAuthority.CommitmentBoundary.Address,
+                    $"block '{plan.RecapBlockId}' source commitment"
+                ));
+                directBoundaries.Add(
+                    sourceAuthority.SourceSetBoundary
+                );
+                directBoundaries.Add(
+                    sourceAuthority.CommitmentBoundary
+                );
             }
             if (plan is not MaintainRecapBlockPlan maintain) {
                 continue;
@@ -90,15 +124,32 @@ internal static class RecapFrozenPlanBarrier {
                     empty.ReplayStartSetups
                 ),
                 ExistingRecapMaintainSource =>
-                    sourceBoundaries[maintain.RecapBlockId],
+                    sourceAuthorities[maintain.RecapBlockId]
+                        .CommitmentBoundary,
                 _ => throw new InvalidDataException(
                     "Unsupported frozen Maintain source."
                 )
             };
-            setupBoundaries.Add(start);
+            if (maintain.Source is EmptyRecapMaintainSource) {
+                emptyStarts.Add(new FrozenAnchorRequirement(
+                    start.Address,
+                    $"block '{plan.RecapBlockId}' empty replay start"
+                ));
+                directBoundaries.Add(start);
+            }
+            if (maintain.PriorContext
+                is InlineRecapPriorContext inline) {
+                inlinePriors.Add(new FrozenAnchorRequirement(
+                    inline.AdmissionAnchor,
+                    $"block '{plan.RecapBlockId}' inline prior"
+                ));
+            }
             foreach (RecapReplayBoundary endpoint
                      in maintain.CatchUpBoundaries) {
-                transitionProvedAddresses.Add(endpoint.Address);
+                endpoints.Add(new FrozenAnchorRequirement(
+                    endpoint.Address,
+                    $"block '{plan.RecapBlockId}' catch-up endpoint"
+                ));
             }
             routes.Add(new PendingMaintainRoute(
                 maintain,
@@ -106,56 +157,119 @@ internal static class RecapFrozenPlanBarrier {
                 NextEndpointIndex: 0
             ));
         }
-        if (!transitionProvedAddresses.Contains(
-                manifest.SetAdmissionAnchor
-            )) {
-            setupBoundaries.Add(new RecapReplayBoundary(
-                manifest.SetAdmissionAnchor,
-                manifest.SetAdmissionAnchorSetups
-            ));
-        }
+        directBoundaries.Add(new RecapReplayBoundary(
+            manifest.SetAdmissionAnchor,
+            manifest.SetAdmissionAnchorSetups
+        ));
+        membership.AddRange(sourceAdmissions);
+        membership.AddRange(sourceCommitments);
+        membership.AddRange(inlinePriors);
+        membership.AddRange(emptyStarts);
+        membership.AddRange(endpoints);
 
-        const int setupProofLimit = 513;
-        foreach (RecapReplayBoundary boundary in setupBoundaries
-                     .DistinctBy(static item => (
-                         item.Address,
-                         item.Setups
-                     ))) {
-            SessionGoverningSetupProofResult proof =
-                engine.ProveGoverningSetupAtBounded(
-                    boundary.Address,
-                    boundary.Setups,
-                    setupProofLimit,
-                    cancellationToken
-                );
-            if (proof is SessionGoverningSetupProofResult
-                    .BeyondPrefix beyond) {
-                return new RecapFrozenPlanBarrierResult(
-                    defects,
-                    ToLineageEvidence(beyond)
-                );
+        var lineageIndexes = new Dictionary<EventAddress, int>();
+        foreach (FrozenAnchorRequirement required in membership
+                     .DistinctBy(static item => item.Address)) {
+            switch (prefix.Lookup(required.Address)) {
+                case SessionCurrentLineageAnchorLookup.Found found:
+                    lineageIndexes.Add(required.Address, found.Index);
+                    break;
+                case SessionCurrentLineageAnchorLookup.BeyondPrefix beyond:
+                    return new RecapFrozenPlanBarrierResult(
+                        defects,
+                        beyond.Evidence
+                    );
+                case SessionCurrentLineageAnchorLookup.OffLineage:
+                    return FrozenAuthority(
+                        $"Frozen {required.Purpose} anchor "
+                        + $"'{required.Address}' is off the captured "
+                        + "raw lineage."
+                    );
             }
         }
+        RecapFrozenPlanBarrierResult? orderDefect =
+            ValidateFrozenOrder(
+                manifest,
+                sourceAuthorities,
+                lineageIndexes
+            );
+        if (orderDefect is not null) {
+            return orderDefect;
+        }
 
-        PreparedRecapPendingWindows routeProof =
-            RecapPendingWindowPreparer.Prove(
-                engine,
-                expectedRawHead,
-                routes,
-                hardCaps,
+        var setupProofs = new List<SessionGoverningSetupProof>();
+        try {
+            var directSetupProofs = new Dictionary<
+                (EventAddress Address,
+                    SessionContextAnchorSetupReferences Setups),
+                SessionGoverningSetupProof
+            >();
+            foreach (RecapReplayBoundary boundary in directBoundaries
+                         .DistinctBy(static item => (
+                             item.Address,
+                             item.Setups
+                         ))) {
+                SessionGoverningSetupProofResult result =
+                    engine.ProveGoverningSetupInPrefix(
+                        prefix,
+                        boundary.Address,
+                        boundary.Setups
+                    );
+                if (result is SessionGoverningSetupProofResult
+                        .BeyondPrefix beyond) {
+                    return new RecapFrozenPlanBarrierResult(
+                        defects,
+                        ToLineageEvidence(beyond)
+                    );
+                }
+                SessionGoverningSetupProof proof =
+                    ((SessionGoverningSetupProofResult.Available)
+                        result).Proof;
+                directSetupProofs.Add(
+                    (boundary.Address, boundary.Setups),
+                    proof
+                );
+                setupProofs.Add(proof);
+            }
+
+            PreparedRecapPendingWindows routeProof =
+                RecapPendingWindowPreparer.Prove(
+                    engine,
+                    prefix,
+                    directSetupProofs,
+                    expectedRawHead,
+                    routes,
+                    hardCaps,
+                    cancellationToken
+                );
+            if (routeProof.Defects.Count != 0
+                || routeProof.BeyondPrefix is not null) {
+                return new RecapFrozenPlanBarrierResult(
+                    [
+                        .. defects,
+                        .. routeProof.Defects.Select(defect =>
+                            new RecapFrozenPlanBarrierDefect(
+                                RecapFrozenPlanBarrierDefectKind
+                                    .ExecutionLimit,
+                                defect.Detail
+                            ))
+                    ],
+                    routeProof.BeyondPrefix
+                );
+            }
+            setupProofs.AddRange(routeProof.SetupProofs);
+
+            RequireExpectedRawHead(engine, expectedRawHead);
+            engine.ValidateGoverningSetupPayloads(
+                setupProofs,
                 cancellationToken
             );
-        return new RecapFrozenPlanBarrierResult(
-            [
-                .. defects,
-                .. routeProof.Defects.Select(defect =>
-                    new RecapFrozenPlanBarrierDefect(
-                        RecapFrozenPlanBarrierDefectKind.ExecutionLimit,
-                        defect.Detail
-                    ))
-            ],
-            routeProof.BeyondPrefix
-        );
+            RequireExpectedRawHead(engine, expectedRawHead);
+        }
+        catch (InvalidDataException exception) {
+            return FrozenAuthority(exception.Message);
+        }
+        return new RecapFrozenPlanBarrierResult([]);
     }
 
     private static async ValueTask<SourceBoundaryResolution>
@@ -250,9 +364,15 @@ internal static class RecapFrozenPlanBarrier {
             );
         }
         return new SourceBoundaryResolution(
-            new RecapReplayBoundary(
-                commitment.AbsorbedThrough,
-                sourceSetups
+            new ResolvedSourceAuthority(
+                new RecapReplayBoundary(
+                    source.FrozenPlan.SetAdmissionAnchor,
+                    source.FrozenPlan.SetAdmissionAnchorSetups
+                ),
+                new RecapReplayBoundary(
+                    commitment.AbsorbedThrough,
+                    sourceSetups
+                )
             ),
             null
         );
@@ -310,8 +430,125 @@ internal static class RecapFrozenPlanBarrier {
         SessionGoverningSetupProofResult.BeyondPrefix beyond
     ) => beyond.Evidence.ContinuationEvidence;
 
+    private static void RequireExpectedRawHead(
+        SessionJournalEngine engine,
+        EventAddress expectedRawHead
+    ) {
+        EventAddress observed = engine.ReadCurrentHead()
+            ?? throw new InvalidDataException(
+                "Frozen plan proof requires a non-empty SessionJournal."
+            );
+        if (observed != expectedRawHead) {
+            throw new RecapRawHeadChangedException(
+                expectedRawHead,
+                observed
+            );
+        }
+    }
+
+    private static RecapFrozenPlanBarrierResult FrozenAuthority(
+        string detail
+    ) => new([
+        new RecapFrozenPlanBarrierDefect(
+            RecapFrozenPlanBarrierDefectKind.FrozenAuthority,
+            detail
+        )
+    ]);
+
+    private static RecapFrozenPlanBarrierResult?
+        ValidateFrozenOrder(
+        DerivedRecapSetManifest manifest,
+        IReadOnlyDictionary<RecapBlockId, ResolvedSourceAuthority>
+            sourceAuthorities,
+        IReadOnlyDictionary<EventAddress, int> lineageIndexes
+    ) {
+        int admissionIndex =
+            lineageIndexes[manifest.SetAdmissionAnchor];
+        foreach (RecapBlockPlan plan in manifest.Blocks) {
+            if (sourceAuthorities.TryGetValue(
+                    plan.RecapBlockId,
+                    out ResolvedSourceAuthority? source
+                )) {
+                int sourceSetIndex = lineageIndexes[
+                    source.SourceSetBoundary.Address
+                ];
+                int commitmentIndex = lineageIndexes[
+                    source.CommitmentBoundary.Address
+                ];
+                if (sourceSetIndex <= admissionIndex) {
+                    return FrozenAuthority(
+                        $"Block '{plan.RecapBlockId}' source set "
+                        + "admission is not a strict ancestor of its "
+                        + "target admission."
+                    );
+                }
+                if (commitmentIndex < sourceSetIndex) {
+                    return FrozenAuthority(
+                        $"Block '{plan.RecapBlockId}' source "
+                        + "commitment is newer than its source set "
+                        + "admission."
+                    );
+                }
+            }
+            if (plan is not MaintainRecapBlockPlan maintain) {
+                continue;
+            }
+            EventAddress start = maintain.Source switch {
+                EmptyRecapMaintainSource empty =>
+                    empty.ReplayStartExclusive,
+                ExistingRecapMaintainSource =>
+                    sourceAuthorities[plan.RecapBlockId]
+                        .CommitmentBoundary.Address,
+                _ => throw new InvalidDataException(
+                    "Unsupported frozen Maintain source."
+                )
+            };
+            int startIndex = lineageIndexes[start];
+            if (startIndex < admissionIndex) {
+                return FrozenAuthority(
+                    $"Block '{plan.RecapBlockId}' replay start is "
+                    + "newer than its target admission."
+                );
+            }
+            if (maintain.PriorContext
+                    is InlineRecapPriorContext inline
+                && lineageIndexes[inline.AdmissionAnchor]
+                    < startIndex) {
+                return FrozenAuthority(
+                    $"Block '{plan.RecapBlockId}' inline prior is "
+                    + "newer than its exact replay start."
+                );
+            }
+            int previousIndex = startIndex;
+            foreach (RecapReplayBoundary endpoint
+                     in maintain.CatchUpBoundaries) {
+                int endpointIndex = lineageIndexes[endpoint.Address];
+                if (endpointIndex >= previousIndex
+                    || endpointIndex < admissionIndex) {
+                    return FrozenAuthority(
+                        $"Block '{plan.RecapBlockId}' catch-up route "
+                        + "is not strictly increasing within its "
+                        + "target admission bound."
+                    );
+                }
+                previousIndex = endpointIndex;
+            }
+        }
+        return null;
+    }
+
+    private sealed record FrozenAnchorRequirement(
+        EventAddress Address,
+        string Purpose
+    );
+
+    private sealed record ResolvedSourceAuthority(
+        RecapReplayBoundary SourceSetBoundary,
+        RecapReplayBoundary CommitmentBoundary
+    );
+
     private sealed record SourceBoundaryResolution(
-        RecapReplayBoundary? Boundary,
+        ResolvedSourceAuthority? Authority,
         RecapFrozenPlanBarrierDefect? Defect
     );
 }

@@ -759,8 +759,12 @@ public sealed class ProgramRecapStoreCommandTests : IDisposable {
             fixture.Path,
             engine.BranchRefId
         );
+        BuildingPlanHandle handle = Assert.IsType<
+            BuildingPlanReadResult.Available
+        >(await store.ReadBuildingPlanAsync(fixture.Anchor))
+            .Snapshot.Handle;
         _ = await new DerivedRecapPublisher(store, engine)
-            .PublishAsync(fixture.Anchor);
+            .PublishAsync(handle);
     }
 
     private static void DivergeBefore(

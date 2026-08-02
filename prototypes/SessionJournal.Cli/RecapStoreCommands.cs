@@ -409,7 +409,7 @@ internal static class RecapStoreCommands {
         }
 
         PublishedRestoreInspectionResult result =
-            await lineage.InspectPublishedForRestoreAsync(
+            await lineage.InspectPublishedForOfflineDiagnosticsAsync(
                     anchor,
                     CancellationToken.None
                 )

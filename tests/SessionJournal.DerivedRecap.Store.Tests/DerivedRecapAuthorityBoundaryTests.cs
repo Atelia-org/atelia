@@ -116,7 +116,7 @@ public sealed class DerivedRecapAuthorityBoundaryTests {
         var published = Assert.IsType<
             PublishedRestoreInspectionResult.Available
         >(
-            await fixture.Store.InspectPublishedForRestoreAsync(
+            await fixture.Store.InspectPublishedForOfflineDiagnosticsAsync(
                 anchor,
                 lineage
             )
@@ -337,6 +337,30 @@ public sealed class DerivedRecapAuthorityBoundaryTests {
                 "CurrentPrefix",
                 BindingFlags.Instance | BindingFlags.Public
             )
+        );
+        MethodInfo offlineRestoreInspection = Assert.Single(
+            typeof(DerivedRecapLineageView).GetMethods(
+                BindingFlags.Instance | BindingFlags.Public
+            ),
+            static method => method.Name
+                == nameof(DerivedRecapLineageView
+                    .InspectPublishedForOfflineDiagnosticsAsync)
+        );
+        Assert.Equal(
+            typeof(EventAddress),
+            offlineRestoreInspection.GetParameters()[0].ParameterType
+        );
+        MethodInfo onlineRestoreInspection = Assert.Single(
+            typeof(DerivedRecapLineageView).GetMethods(
+                BindingFlags.Instance | BindingFlags.Public
+            ),
+            static method => method.Name
+                == nameof(DerivedRecapLineageView
+                    .InspectPublishedForRestoreAsync)
+        );
+        Assert.Equal(
+            typeof(PublishedRestorePlanAuthority),
+            onlineRestoreInspection.GetParameters()[0].ParameterType
         );
 
         MethodInfo buildingRead = Assert.Single(

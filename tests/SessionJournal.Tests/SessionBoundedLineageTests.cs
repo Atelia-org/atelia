@@ -428,6 +428,276 @@ public sealed class SessionBoundedLineageTests : IDisposable {
     }
 
     [Fact]
+    public void PrefixGoverningSetupPayloadValidation_DeduplicatesToExactlyTwoReads() {
+        string path = NewPath();
+        using var engine = SessionJournalEngine.Create(
+            path,
+            new SessionCreateOptions(
+                "model-A",
+                "system-A",
+                "surface-A"
+            )
+        );
+        EventAddress boundary = engine.ReadCurrentHead()!.Value;
+        SessionContextAnchorSetupReferences setups =
+            engine.ResolveContextAnchorSetupReferences(boundary);
+        SessionCurrentLineagePrefix prefix =
+            engine.ReadLineagePrefixAt(boundary, 513);
+        SessionJournalReadDiagnostics beforeProof =
+            engine.CaptureReadDiagnostics();
+        var available = Assert.IsType<
+            SessionGoverningSetupProofResult.Available
+        >(engine.ProveGoverningSetupInPrefix(
+            prefix,
+            boundary,
+            setups
+        ));
+        SessionJournalReadDiagnostics afterProof =
+            engine.CaptureReadDiagnostics();
+
+        Assert.Equal(
+            beforeProof.PayloadReadCount,
+            afterProof.PayloadReadCount
+        );
+        engine.ValidateGoverningSetupPayloads([
+            available.Proof,
+            available.Proof
+        ]);
+        SessionJournalReadDiagnostics afterValidation =
+            engine.CaptureReadDiagnostics();
+
+        Assert.Equal(
+            2,
+            afterValidation.PayloadReadCount
+                - afterProof.PayloadReadCount
+        );
+    }
+
+    [Fact]
+    public void PrefixGoverningSetupProof_UsesExact513ContinuationWithoutPayloads() {
+        (
+            string path,
+            _,
+            _,
+            _,
+            EventAddress headAt514,
+            SessionContextAnchorSetupReferences setups
+        ) = CreatePlanningLineage();
+        using var engine = SessionJournalEngine.Open(path);
+        SessionCurrentLineagePrefix prefix =
+            engine.ReadLineagePrefixAt(headAt514, 513);
+        SessionJournalReadDiagnostics before =
+            engine.CaptureReadDiagnostics();
+
+        var beyond = Assert.IsType<
+            SessionGoverningSetupProofResult.BeyondPrefix
+        >(engine.ProveGoverningSetupInPrefix(
+            prefix,
+            headAt514,
+            setups
+        ));
+        SessionJournalReadDiagnostics after =
+            engine.CaptureReadDiagnostics();
+
+        Assert.Equal(headAt514, beyond.Evidence.Boundary);
+        Assert.Equal(
+            headAt514,
+            beyond.Evidence.ContinuationEvidence.CapturedHead
+        );
+        Assert.Equal(513, beyond.Evidence.HeaderCount);
+        Assert.Equal(
+            prefix.Continuation!.NextAddress,
+            beyond.Evidence.NextAddress
+        );
+        Assert.Equal(before.PayloadReadCount, after.PayloadReadCount);
+    }
+
+    [Fact]
+    public void PrefixGoverningSetupPayloadValidation_RejectsWrongHashAndSchema() {
+        string path = NewPath();
+        using var engine = SessionJournalEngine.Create(
+            path,
+            new SessionCreateOptions(
+                "model-A",
+                "system-A",
+                "surface-A"
+            )
+        );
+        EventAddress boundary = engine.ReadCurrentHead()!.Value;
+        SessionContextAnchorSetupReferences setups =
+            engine.ResolveContextAnchorSetupReferences(boundary);
+        SessionCurrentLineagePrefix prefix =
+            engine.ReadLineagePrefixAt(boundary, 513);
+        var wrongHash = setups with {
+            RuntimeConfig = setups.RuntimeConfig with {
+                PayloadSha256 = new string('0', 64)
+            }
+        };
+        var wrongSchema = setups with {
+            RuntimeConfig = setups.RuntimeConfig with {
+                BodySchemaVersion =
+                    setups.RuntimeConfig.BodySchemaVersion + 1
+            }
+        };
+        SessionGoverningSetupProof hashProof = Assert.IsType<
+            SessionGoverningSetupProofResult.Available
+        >(engine.ProveGoverningSetupInPrefix(
+            prefix,
+            boundary,
+            wrongHash
+        )).Proof;
+        SessionGoverningSetupProof schemaProof = Assert.IsType<
+            SessionGoverningSetupProofResult.Available
+        >(engine.ProveGoverningSetupInPrefix(
+            prefix,
+            boundary,
+            wrongSchema
+        )).Proof;
+
+        Assert.Contains(
+            "hash mismatch",
+            Assert.Throws<InvalidDataException>(() =>
+                engine.ValidateGoverningSetupPayloads([hashProof])
+            ).Message
+        );
+        Assert.Contains(
+            "schema version mismatch",
+            Assert.Throws<InvalidDataException>(() =>
+                engine.ValidateGoverningSetupPayloads([schemaProof])
+            ).Message
+        );
+    }
+
+    [Fact]
+    public void PrefixGoverningSetupPayloadValidation_RejectsForeignAndConflictingProofsBeforeReads() {
+        string firstPath = NewPath();
+        string secondPath = NewPath();
+        using var first = SessionJournalEngine.Create(
+            firstPath,
+            new SessionCreateOptions(
+                "model-A",
+                "system-A",
+                "surface-A"
+            )
+        );
+        using var second = SessionJournalEngine.Create(
+            secondPath,
+            new SessionCreateOptions(
+                "model-A",
+                "system-A",
+                "surface-A"
+            )
+        );
+        EventAddress boundary = first.ReadCurrentHead()!.Value;
+        SessionContextAnchorSetupReferences setups =
+            first.ResolveContextAnchorSetupReferences(boundary);
+        SessionCurrentLineagePrefix prefix =
+            first.ReadLineagePrefixAt(boundary, 513);
+        SessionGoverningSetupProof valid = Assert.IsType<
+            SessionGoverningSetupProofResult.Available
+        >(first.ProveGoverningSetupInPrefix(
+            prefix,
+            boundary,
+            setups
+        )).Proof;
+        var conflictingSetups = setups with {
+            RuntimeConfig = setups.RuntimeConfig with {
+                PayloadSha256 = new string('0', 64)
+            }
+        };
+        SessionGoverningSetupProof conflicting = Assert.IsType<
+            SessionGoverningSetupProofResult.Available
+        >(first.ProveGoverningSetupInPrefix(
+            prefix,
+            boundary,
+            conflictingSetups
+        )).Proof;
+        EventAddress foreignBoundary = second.ReadCurrentHead()!.Value;
+        SessionContextAnchorSetupReferences foreignSetups =
+            second.ResolveContextAnchorSetupReferences(foreignBoundary);
+        SessionGoverningSetupProof foreign = Assert.IsType<
+            SessionGoverningSetupProofResult.Available
+        >(second.ProveGoverningSetupInPrefix(
+            second.ReadLineagePrefixAt(foreignBoundary, 513),
+            foreignBoundary,
+            foreignSetups
+        )).Proof;
+        SessionJournalReadDiagnostics before =
+            first.CaptureReadDiagnostics();
+
+        Assert.Throws<ArgumentException>(() =>
+            first.ValidateGoverningSetupPayloads([foreign])
+        );
+        Assert.Throws<InvalidDataException>(() =>
+            first.ValidateGoverningSetupPayloads([
+                valid,
+                conflicting
+            ])
+        );
+        SessionJournalReadDiagnostics after =
+            first.CaptureReadDiagnostics();
+
+        Assert.Equal(before.PayloadReadCount, after.PayloadReadCount);
+    }
+
+    [Fact]
+    public void GoverningSetupTransition_RequiresRepositoryBoundStartProof() {
+        string path = NewPath();
+        using var engine = SessionJournalEngine.Create(
+            path,
+            new SessionCreateOptions(
+                "model-A",
+                "system-A",
+                "surface-A"
+            )
+        );
+        engine.AppendObservation("observation");
+        EventAddress endpoint = engine.AppendImportedAgentAction(
+            new ActionMessage([
+                new ActionBlock.Text("answer")
+            ]),
+            new CompletionDescriptor("import", "v1", "model-A")
+        );
+        SessionHistoryPlanningWindow window =
+            engine.ReadHistoryPlanningWindow();
+        EventAddress start = window.StartExclusive;
+        SessionCurrentLineagePrefix prefix =
+            engine.ReadLineagePrefixAt(endpoint, 513);
+        SessionGoverningSetupProof startProof = Assert.IsType<
+            SessionGoverningSetupProofResult.Available
+        >(engine.ProveGoverningSetupInPrefix(
+            prefix,
+            start,
+            window.StartSetups
+        )).Proof;
+        SessionHistoryPlanningWindowProof routeProof = Assert.IsType<
+            SessionHistoryPlanningWindowProofResult.Available
+        >(engine.ProveHistoryPlanningWindowInPrefix(
+            prefix,
+            endpoint,
+            start,
+            maxRawEventCount: 8
+        )).Proof;
+
+        SessionGoverningSetupProof endpointProof =
+            engine.ProveGoverningSetupTransition(
+                routeProof,
+                startProof,
+                window.EndSetups
+            );
+
+        Assert.Equal(endpoint, endpointProof.Boundary);
+        Assert.Equal(window.EndSetups, endpointProof.ExpectedSetups);
+        Assert.Throws<ArgumentException>(() =>
+            engine.ProveGoverningSetupTransition(
+                routeProof,
+                endpointProof,
+                window.EndSetups
+            )
+        );
+    }
+
+    [Fact]
     public void BoundedGoverningSetupProof_RejectsOldButRealReferencesHeaderOnly() {
         string path = NewPath();
         using var engine = SessionJournalEngine.Create(

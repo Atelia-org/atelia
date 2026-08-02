@@ -21,14 +21,33 @@ internal sealed class RecapRawHeadChangedException(
     public EventAddress Observed { get; } = observed;
 }
 
-internal sealed record PreparedRecapPendingWindows(
-    IReadOnlyList<RecapPendingWindowDefect> Defects,
-    IReadOnlyDictionary<
+internal sealed class PreparedRecapPendingWindows {
+    public PreparedRecapPendingWindows(
+        IReadOnlyList<RecapPendingWindowDefect> defects,
+        IReadOnlyDictionary<
+            (RecapBlockId BlockId, int EndpointIndex),
+            SessionHistoryPlanningWindow
+        > windows,
+        SessionCurrentLineageBeyondPrefix? beyondPrefix = null,
+        IReadOnlyList<SessionGoverningSetupProof>? setupProofs = null
+    ) {
+        Defects = defects;
+        Windows = windows;
+        BeyondPrefix = beyondPrefix;
+        SetupProofs = setupProofs
+            ?? Array.Empty<SessionGoverningSetupProof>();
+    }
+
+    public IReadOnlyList<RecapPendingWindowDefect> Defects { get; }
+    public IReadOnlyDictionary<
         (RecapBlockId BlockId, int EndpointIndex),
         SessionHistoryPlanningWindow
-    > Windows,
-    SessionCurrentLineageBeyondPrefix? BeyondPrefix = null
-);
+    > Windows { get; }
+    public SessionCurrentLineageBeyondPrefix? BeyondPrefix { get; }
+    public IReadOnlyList<SessionGoverningSetupProof> SetupProofs {
+        get;
+    }
+}
 
 /// <summary>
 /// Freezes exact raw windows only for pending Maintain route suffixes.
@@ -42,45 +61,65 @@ internal static class RecapPendingWindowPreparer {
     /// </summary>
     public static PreparedRecapPendingWindows Prove(
         SessionJournalEngine engine,
+        SessionCurrentLineagePrefix prefix,
+        IReadOnlyDictionary<
+            (EventAddress Address,
+                SessionContextAnchorSetupReferences Setups),
+            SessionGoverningSetupProof
+        > directSetupProofs,
         EventAddress expectedRawHead,
         IReadOnlyList<PendingMaintainRoute> pendingRoutes,
         RecapProtocolHardCaps hardCaps,
         CancellationToken cancellationToken
     ) {
         ArgumentNullException.ThrowIfNull(engine);
+        ArgumentNullException.ThrowIfNull(prefix);
+        ArgumentNullException.ThrowIfNull(directSetupProofs);
         ArgumentNullException.ThrowIfNull(pendingRoutes);
         ArgumentNullException.ThrowIfNull(hardCaps);
         var windows = new Dictionary<
             (RecapBlockId BlockId, int EndpointIndex),
             SessionHistoryPlanningWindow
         >();
+        var setupProofs = new List<SessionGoverningSetupProof>();
+        if (prefix.CapturedHead != expectedRawHead) {
+            throw new ArgumentException(
+                "Captured lineage prefix does not match the expected raw head.",
+                nameof(prefix)
+            );
+        }
         IReadOnlyList<RecapPendingWindowDefect> routeDefects =
             ValidatePendingRouteLimits(pendingRoutes, hardCaps);
         if (routeDefects.Count != 0) {
             return new PreparedRecapPendingWindows(
                 routeDefects,
-                windows
+                windows,
+                setupProofs: setupProofs
             );
         }
         if (pendingRoutes.Count == 0
             || pendingRoutes.All(route =>
                 route.NextEndpointIndex
                     == route.Plan.CatchUpBoundaries.Count)) {
-            return new PreparedRecapPendingWindows([], windows);
-        }
-        EventAddress observedRawHead = engine.ReadCurrentHead()
-            ?? throw new InvalidDataException(
-                "Pending replay-window proof requires a non-empty SessionJournal."
-            );
-        if (observedRawHead != expectedRawHead) {
-            throw new RecapRawHeadChangedException(
-                expectedRawHead,
-                observedRawHead
+            return new PreparedRecapPendingWindows(
+                [],
+                windows,
+                setupProofs: setupProofs
             );
         }
         long rawEvents = 0;
         foreach (PendingMaintainRoute route in pendingRoutes) {
+            cancellationToken.ThrowIfCancellationRequested();
             RecapReplayBoundary previous = StartBoundary(route);
+            if (!directSetupProofs.TryGetValue(
+                    (previous.Address, previous.Setups),
+                    out SessionGoverningSetupProof? previousSetupProof
+                )) {
+                throw new InvalidDataException(
+                    $"Block '{route.Plan.RecapBlockId}' has no direct "
+                    + "governing proof for its frozen route start."
+                );
+            }
             if (previous.Address != route.StartExclusive) {
                 throw new InvalidDataException(
                     $"Block '{route.Plan.RecapBlockId}' pending start "
@@ -90,31 +129,36 @@ internal static class RecapPendingWindowPreparer {
             for (int index = route.NextEndpointIndex;
                  index < route.Plan.CatchUpBoundaries.Count;
                  index++) {
+                cancellationToken.ThrowIfCancellationRequested();
                 RecapReplayBoundary endpoint =
                     route.Plan.CatchUpBoundaries[index];
                 SessionHistoryPlanningWindowProofResult proofResult =
-                    engine.ProveHistoryPlanningWindowAtBounded(
+                    engine.ProveHistoryPlanningWindowInPrefix(
+                        prefix,
                         endpoint.Address,
                         previous.Address,
-                        hardCaps.MaxRawEventsPerStep,
-                        cancellationToken
+                        hardCaps.MaxRawEventsPerStep
                     );
                 if (proofResult is SessionHistoryPlanningWindowProofResult
                         .BeyondPrefix beyond) {
                     return new PreparedRecapPendingWindows(
                         [],
                         windows,
-                        beyond.Evidence
+                        beyond.Evidence,
+                        setupProofs
                     );
                 }
                 SessionHistoryPlanningWindowProof proof =
                     ((SessionHistoryPlanningWindowProofResult.Available)
                         proofResult).Proof;
-                engine.ValidateGoverningSetupTransition(
-                    proof,
-                    previous.Setups,
-                    endpoint.Setups
+                setupProofs.Add(
+                    engine.ProveGoverningSetupTransition(
+                        proof,
+                        previousSetupProof,
+                        endpoint.Setups
+                    )
                 );
+                previousSetupProof = setupProofs[^1];
                 rawEvents = checked(rawEvents + proof.RawEventCount);
                 previous = endpoint;
             }
@@ -125,17 +169,15 @@ internal static class RecapPendingWindowPreparer {
                     $"Building requires {rawEvents} raw events; limit is "
                     + $"{hardCaps.MaxRawEventsPerBuild}."
                 )],
-                windows
+                windows,
+                setupProofs: setupProofs
             );
         }
-        EventAddress? afterProofHead = engine.ReadCurrentHead();
-        if (afterProofHead != expectedRawHead) {
-            throw new RecapRawHeadChangedException(
-                expectedRawHead,
-                afterProofHead ?? default
-            );
-        }
-        return new PreparedRecapPendingWindows([], windows);
+        return new PreparedRecapPendingWindows(
+            [],
+            windows,
+            setupProofs: setupProofs
+        );
     }
 
     public static IReadOnlyList<RecapPendingWindowDefect>

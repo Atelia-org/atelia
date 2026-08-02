@@ -18,12 +18,6 @@ public sealed class DerivedRecapOnlineLifecycleCoordinator
         ValueTask<DerivedRecapSelection>
     > _select;
     private readonly Func<
-        SessionCurrentLineagePrefix,
-        EventAddress,
-        CancellationToken,
-        ValueTask<PublishedRestoreInspectionResult>
-    >? _inspectPublished;
-    private readonly Func<
         EventAddress,
         EventAddress,
         CancellationToken,
@@ -84,15 +78,6 @@ public sealed class DerivedRecapOnlineLifecycleCoordinator
                 nthPrevious,
                 cancellationToken
             );
-        _inspectPublished =
-            (lineage, admissionAnchor, cancellationToken) =>
-                InspectPublishedBoundAsync(
-                    store,
-                    engine,
-                    lineage,
-                    admissionAnchor,
-                    cancellationToken
-                );
         _restore = restorer.RestoreAsync;
         _run = planner.RunAsync;
         _runCurrentPlanning = planner.RunAsync;
@@ -152,14 +137,6 @@ public sealed class DerivedRecapOnlineLifecycleCoordinator
                     engine,
                     lineage,
                     nthPrevious,
-                    cancellationToken
-                ),
-            (lineage, admissionAnchor, cancellationToken) =>
-                InspectPublishedBoundAsync(
-                    store,
-                    engine,
-                    lineage,
-                    admissionAnchor,
                     cancellationToken
                 ),
             restorer.RestoreAsync,
@@ -236,12 +213,6 @@ public sealed class DerivedRecapOnlineLifecycleCoordinator
             ValueTask<DerivedRecapSelection>
         > select,
         Func<
-            SessionCurrentLineagePrefix,
-            EventAddress,
-            CancellationToken,
-            ValueTask<PublishedRestoreInspectionResult>
-        >? inspectPublished,
-        Func<
             EventAddress,
             EventAddress,
             CancellationToken,
@@ -267,7 +238,6 @@ public sealed class DerivedRecapOnlineLifecycleCoordinator
             ?? throw new ArgumentNullException(nameof(candidates));
         _select = select
             ?? throw new ArgumentNullException(nameof(select));
-        _inspectPublished = inspectPublished;
         _restore = restore
             ?? throw new ArgumentNullException(nameof(restore));
         _run = run ?? throw new ArgumentNullException(nameof(run));
@@ -342,52 +312,39 @@ public sealed class DerivedRecapOnlineLifecycleCoordinator
             await SelectAsync(lineage, 0, cancellationToken)
                 .ConfigureAwait(false);
         if (latest is DerivedRecapSelection.Selected selectedLatest) {
-            SelectedRestoreCheck check =
-                await CheckSelectedRestoreAsync(
-                        lineage,
-                        selectedLatest,
+            SessionContextLifecycleResult? restoreFailure =
+                await RestoreAsync(
+                        selectedLatest.Descriptor.SetAdmissionAnchor,
+                        request.Boundary,
                         cancellationToken
                     )
                     .ConfigureAwait(false);
-            if (check.Failure is not null) {
-                return check.Failure;
+            if (restoreFailure is not null) {
+                return restoreFailure;
             }
-            if (check.NeedsRestore) {
-                SessionContextLifecycleResult? restoreFailure =
-                    await RestoreAsync(
-                            selectedLatest.Descriptor
-                                .SetAdmissionAnchor,
-                            request.Boundary,
-                            cancellationToken
-                        )
-                        .ConfigureAwait(false);
-                if (restoreFailure is not null) {
-                    return restoreFailure;
-                }
-                lineage = CaptureFreshLineage(
-                    request.Boundary,
+            lineage = CaptureFreshLineage(
+                request.Boundary,
+                cancellationToken
+            );
+            latest = await SelectAsync(
+                    lineage,
+                    0,
                     cancellationToken
+                )
+                .ConfigureAwait(false);
+            if (latest is not DerivedRecapSelection.Selected repaired) {
+                return SelectionUnavailable(
+                    latest,
+                    "latest Published recap after its one restore"
                 );
-                latest = await SelectAsync(
-                        lineage,
-                        0,
-                        cancellationToken
-                    )
-                    .ConfigureAwait(false);
-                if (latest is not DerivedRecapSelection.Selected repaired) {
-                    return SelectionUnavailable(
-                        latest,
-                        "latest Published recap after its one restore"
-                    );
-                }
-                if (repaired.Descriptor.SetAdmissionAnchor
-                    != selectedLatest.Descriptor.SetAdmissionAnchor) {
-                    return Unavailable(
-                        DerivedRecapExecutionDefectCodes.SourceChanged,
-                        "Latest Published recap changed anchor during "
-                        + "exact Restore."
-                    );
-                }
+            }
+            if (repaired.Descriptor.SetAdmissionAnchor
+                != selectedLatest.Descriptor.SetAdmissionAnchor) {
+                return Unavailable(
+                    DerivedRecapExecutionDefectCodes.SourceChanged,
+                    "Latest Published recap changed anchor during "
+                    + "exact Restore."
+                );
             }
         }
         DerivedRecapPlanningBaseline planningBaseline;
@@ -473,54 +430,40 @@ public sealed class DerivedRecapOnlineLifecycleCoordinator
                 .ConfigureAwait(false);
         if (configured
             is DerivedRecapSelection.Selected selectedConfigured) {
-            SelectedRestoreCheck check =
-                await CheckSelectedRestoreAsync(
-                        lineage,
-                        selectedConfigured,
+            SessionContextLifecycleResult? restoreFailure =
+                await RestoreAsync(
+                        selectedConfigured.Descriptor.SetAdmissionAnchor,
+                        request.Boundary,
                         cancellationToken
                     )
                     .ConfigureAwait(false);
-            if (check.Failure is not null) {
-                return check.Failure;
+            if (restoreFailure is not null) {
+                return restoreFailure;
             }
-            if (check.NeedsRestore) {
-                SessionContextLifecycleResult? restoreFailure =
-                    await RestoreAsync(
-                            selectedConfigured.Descriptor
-                                .SetAdmissionAnchor,
-                            request.Boundary,
-                            cancellationToken
-                        )
-                        .ConfigureAwait(false);
-                if (restoreFailure is not null) {
-                    return restoreFailure;
-                }
-                lineage = CaptureFreshLineage(
-                    request.Boundary,
+            lineage = CaptureFreshLineage(
+                request.Boundary,
+                cancellationToken
+            );
+            configured = await SelectAsync(
+                    lineage,
+                    configuredOrdinal,
                     cancellationToken
+                )
+                .ConfigureAwait(false);
+            if (configured
+                is not DerivedRecapSelection.Selected repaired) {
+                return SelectionUnavailable(
+                    configured,
+                    "configured Published recap after its one restore"
                 );
-                configured = await SelectAsync(
-                        lineage,
-                        configuredOrdinal,
-                        cancellationToken
-                    )
-                    .ConfigureAwait(false);
-                if (configured
-                    is not DerivedRecapSelection.Selected repaired) {
-                    return SelectionUnavailable(
-                        configured,
-                        "configured Published recap after its one restore"
-                    );
-                }
-                if (repaired.Descriptor.SetAdmissionAnchor
-                    != selectedConfigured.Descriptor
-                        .SetAdmissionAnchor) {
-                    return Unavailable(
-                        DerivedRecapExecutionDefectCodes.SourceChanged,
-                        "Configured Published recap changed anchor during "
-                        + "exact Restore."
-                    );
-                }
+            }
+            if (repaired.Descriptor.SetAdmissionAnchor
+                != selectedConfigured.Descriptor.SetAdmissionAnchor) {
+                return Unavailable(
+                    DerivedRecapExecutionDefectCodes.SourceChanged,
+                    "Configured Published recap changed anchor during "
+                    + "exact Restore."
+                );
             }
         }
         if (configured
@@ -628,84 +571,6 @@ public sealed class DerivedRecapOnlineLifecycleCoordinator
             .ConfigureAwait(false);
     }
 
-    private static async ValueTask<PublishedRestoreInspectionResult>
-        InspectPublishedBoundAsync(
-        DerivedRecapStore store,
-        SessionJournalEngine engine,
-        SessionCurrentLineagePrefix expectedLineage,
-        EventAddress admissionAnchor,
-        CancellationToken cancellationToken
-    ) {
-        DerivedRecapLineageView view =
-            DerivedRecapLineageView.Capture(
-                store,
-                engine,
-                cancellationToken
-            );
-        if (view.CapturedHead != expectedLineage.CapturedHead) {
-            throw new InvalidOperationException(
-                "DerivedRecap lifecycle lineage changed before "
-                + "Published restore inspection."
-            );
-        }
-        PublishedPlanAtAnchorReadResult planRead =
-            await store.ReadPublishedPlanAtAnchorAsync(
-                    admissionAnchor,
-                    cancellationToken
-                )
-                .ConfigureAwait(false);
-        PublishedRestorePlanAuthority authority;
-        switch (planRead) {
-            case PublishedPlanAtAnchorReadResult.Available available:
-                authority = available.Authority;
-                break;
-            case PublishedPlanAtAnchorReadResult
-                .ManifestWitnessAvailable witness:
-                authority = witness.Authority;
-                break;
-            case PublishedPlanAtAnchorReadResult.Changed:
-                return new PublishedRestoreInspectionResult.Unavailable(
-                    admissionAnchor,
-                    [new RecapStructuralDefect(
-                        "ConcurrentPublishedChange",
-                        "Published metadata changed during lifecycle preflight."
-                    )]
-                );
-            case PublishedPlanAtAnchorReadResult.Missing:
-                return new PublishedRestoreInspectionResult.Unavailable(
-                    admissionAnchor,
-                    [new RecapStructuralDefect(
-                        "PublishedMembershipMissing",
-                        "Exact Published metadata is missing."
-                    )]
-                );
-            case PublishedPlanAtAnchorReadResult.Unavailable unavailable:
-                return new PublishedRestoreInspectionResult.Unavailable(
-                    admissionAnchor,
-                    unavailable.Defects
-                );
-            default:
-                throw new InvalidDataException(
-                    "Unknown Published metadata preflight result."
-                );
-        }
-        foreach (RecapBlockCommitment commitment
-                 in authority.BlockCommitments) {
-            if (expectedLineage.Lookup(commitment.AbsorbedThrough)
-                    is SessionCurrentLineageAnchorLookup
-                        .BeyondPrefix beyond) {
-                return new PublishedRestoreInspectionResult.BeyondPrefix(
-                    beyond.Evidence
-                );
-            }
-        }
-        return await view.InspectPublishedForRestoreAsync(
-                authority,
-                cancellationToken
-            )
-            .ConfigureAwait(false);
-    }
-
     private async ValueTask<SessionContextLifecycleResult?> RestoreAsync(
         EventAddress admissionAnchor,
         EventAddress expectedRawHead,
@@ -739,59 +604,6 @@ public sealed class DerivedRecapOnlineLifecycleCoordinator
             _ => throw new InvalidDataException(
                 $"Unknown DerivedRecap restore result "
                 + $"'{result.GetType().Name}'."
-            )
-        };
-    }
-
-    private async ValueTask<SelectedRestoreCheck>
-        CheckSelectedRestoreAsync(
-        SessionCurrentLineagePrefix lineage,
-        DerivedRecapSelection.Selected selected,
-        CancellationToken cancellationToken
-    ) {
-        if (_inspectPublished is null) {
-            return new SelectedRestoreCheck(
-                NeedsRestore: false,
-                Failure: null
-            );
-        }
-        PublishedRestoreInspectionResult result =
-            await _inspectPublished(
-                    lineage,
-                    selected.Descriptor.SetAdmissionAnchor,
-                    cancellationToken
-                )
-                .ConfigureAwait(false);
-        return result switch {
-            PublishedRestoreInspectionResult.Available available =>
-                new SelectedRestoreCheck(
-                    available.Inspection.Blocks.Values.Any(
-                        static block => block.Capability
-                            is not PublishedBlockRestoreCapability
-                                .KeepCommitted
-                    ),
-                    Failure: null
-                ),
-            PublishedRestoreInspectionResult.BeyondPrefix beyond =>
-                new SelectedRestoreCheck(
-                    NeedsRestore: false,
-                    SessionContextLifecycleResult.BeyondPrefix(
-                        beyond.Evidence
-                    )
-                ),
-            PublishedRestoreInspectionResult.Unavailable unavailable =>
-                new SelectedRestoreCheck(
-                    NeedsRestore: false,
-                    Unavailable(unavailable.Defects.Select(
-                        static defect =>
-                            new DerivedRecapRestoreDefect(
-                                defect.Code,
-                                defect.Detail
-                            )
-                    ).ToArray())
-                ),
-            _ => throw new InvalidDataException(
-                "Unknown Published restore inspection result."
             )
         };
     }
@@ -970,11 +782,6 @@ public sealed class DerivedRecapOnlineLifecycleCoordinator
     ) => new(
         SessionContextLifecycleStatus.Unavailable,
         $"{prefix}: {FormatDefects(defects)}"
-    );
-
-    private sealed record SelectedRestoreCheck(
-        bool NeedsRestore,
-        SessionContextLifecycleResult? Failure
     );
 
     private static string FormatDefects(

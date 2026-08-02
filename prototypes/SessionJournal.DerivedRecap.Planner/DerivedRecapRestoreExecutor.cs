@@ -147,6 +147,7 @@ public sealed class DerivedRecapRestoreExecutor {
                         _engine,
                         _store,
                         frozenPlan,
+                        lineage,
                         expectedRawHead,
                         _hardCaps,
                         cancellationToken
@@ -380,31 +381,15 @@ public sealed class DerivedRecapRestoreExecutor {
                 continue;
             }
 
-            IReadOnlyList<RecapFrozenPlanRawDefect> authorityDefects =
-                RecapFrozenPlanRawValidator.ValidateSetupAuthority(
-                    _engine,
-                    inspection.FrozenPlan,
-                    lineage,
-                    plan
-                );
-            foreach (RecapFrozenPlanRawDefect defect
-                     in authorityDefects) {
-                AddDefect(
-                    defects,
-                    DerivedRecapRestoreDefectCodes.FrozenPlanInvalid,
-                    defect.Detail
-                );
-            }
-
             // A missing disposable Existing-source input does not make an
             // already committed or checkpoint-resumable block unavailable.
-            // Explicit-address setup authority remains independently
-            // validated above for every restore capability.
-            if (authorityDefects.Count == 0
-                && (plan is MaintainRecapBlockPlan {
+            // The frozen barrier already authenticated every setup proof
+            // before Published components were read; do not re-walk that
+            // authority after entering the component phase.
+            if (plan is MaintainRecapBlockPlan {
                         Source: EmptyRecapMaintainSource
                     }
-                    || healthyInputs.ContainsKey(plan.RecapBlockId))) {
+                    || healthyInputs.ContainsKey(plan.RecapBlockId)) {
                 foreach (RecapFrozenPlanRawDefect defect
                          in RecapFrozenPlanRawValidator
                              .ValidateInputDependentBlock(

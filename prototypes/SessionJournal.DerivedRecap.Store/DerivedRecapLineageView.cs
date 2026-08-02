@@ -111,10 +111,10 @@ public sealed class DerivedRecapLineageView {
     );
 
     public ValueTask<PublishedRestoreInspectionResult>
-        InspectPublishedForRestoreAsync(
+        InspectPublishedForOfflineDiagnosticsAsync(
         EventAddress admissionAnchor,
         CancellationToken cancellationToken = default
-    ) => _store.InspectPublishedForRestoreAsync(
+    ) => _store.InspectPublishedForOfflineDiagnosticsAsync(
         admissionAnchor,
         this,
         cancellationToken

@@ -62,10 +62,14 @@ public sealed class DerivedRecapOnlineLifecycleCoordinatorTests {
         var script = new LifecycleScript(
             [
                 Selected(fixture, latest),
+                Selected(fixture, latest),
                 Invalid(middle),
                 Invalid(middle)
             ],
-            [Restored(fixture, middle)],
+            [
+                Restored(fixture, latest),
+                Restored(fixture, middle)
+            ],
             [new DerivedRecapExecutionResult.NoBuild("not-needed")]
         );
 
@@ -82,6 +86,8 @@ public sealed class DerivedRecapOnlineLifecycleCoordinatorTests {
         );
         Assert.Equal(
             [
+                "S0",
+                $"R:{latest}",
                 "S0",
                 "Run",
                 "S2",
@@ -110,8 +116,9 @@ public sealed class DerivedRecapOnlineLifecycleCoordinatorTests {
             ) => {
                 trace.Add($"S{ordinal}");
                 selectionCount++;
-                if (selectionCount == 1) {
+                if (selectionCount <= 2) {
                     Assert.False(published);
+                    Assert.Equal(0, ordinal);
                     return ValueTask.FromResult<DerivedRecapSelection>(
                         Selected(fixture, oldLatest)
                     );
@@ -122,9 +129,12 @@ public sealed class DerivedRecapOnlineLifecycleCoordinatorTests {
                     Selected(fixture, oldLatest)
                 );
             },
-            (_, _, _) => throw new Xunit.Sdk.XunitException(
-                "Restore must not run."
-            ),
+            (anchor, _, _) => {
+                trace.Add($"R:{anchor}");
+                return ValueTask.FromResult<DerivedRecapRestoreResult>(
+                    Restored(fixture, anchor)
+                );
+            },
             (_, _) => {
                 trace.Add("Run");
                 published = true;
@@ -144,7 +154,18 @@ public sealed class DerivedRecapOnlineLifecycleCoordinatorTests {
             );
 
         Assert.Equal(SessionContextLifecycleStatus.Ready, result.Status);
-        Assert.Equal(["S0", "Run", "S1"], trace);
+        Assert.Equal(
+            [
+                "S0",
+                $"R:{oldLatest}",
+                "S0",
+                "Run",
+                "S1",
+                $"R:{oldLatest}",
+                "S1"
+            ],
+            trace
+        );
     }
 
     [Fact]
@@ -490,7 +511,7 @@ public sealed class DerivedRecapOnlineLifecycleCoordinatorTests {
                 Selected(fixture, latest),
                 new DerivedRecapSelection.EmptyLineage()
             ],
-            [],
+            [Restored(fixture, latest)],
             [new DerivedRecapExecutionResult.NoBuild("below-trigger")]
         );
 
@@ -505,7 +526,10 @@ public sealed class DerivedRecapOnlineLifecycleCoordinatorTests {
             SessionContextLifecycleStatus.Unavailable,
             result.Status
         );
-        Assert.Equal(["S0", "Run", "S0"], script.Trace);
+        Assert.Equal(
+            ["S0", $"R:{latest}", "S0"],
+            script.Trace
+        );
     }
 
     [Theory]
@@ -518,8 +542,11 @@ public sealed class DerivedRecapOnlineLifecycleCoordinatorTests {
             LifecycleFixture.Create(nthPrevious: 0, historyPairs: 1);
         EventAddress latest = fixture.Lineage.HeadToOldest[1].Address;
         var script = new LifecycleScript(
-            [Selected(fixture, latest)],
-            [],
+            [
+                Selected(fixture, latest),
+                Selected(fixture, latest)
+            ],
+            [Restored(fixture, latest)],
             [
                 new DerivedRecapExecutionResult.Unavailable([
                     new DerivedRecapExecutionDefect(
@@ -541,7 +568,10 @@ public sealed class DerivedRecapOnlineLifecycleCoordinatorTests {
             SessionContextLifecycleStatus.Backpressure,
             result.Status
         );
-        Assert.Equal(["S0", "Run"], script.Trace);
+        Assert.Equal(
+            ["S0", $"R:{latest}", "S0", "Run"],
+            script.Trace
+        );
     }
 
     [Fact]
@@ -550,8 +580,11 @@ public sealed class DerivedRecapOnlineLifecycleCoordinatorTests {
             LifecycleFixture.Create(nthPrevious: 0, historyPairs: 1);
         EventAddress latest = fixture.Lineage.HeadToOldest[1].Address;
         var script = new LifecycleScript(
-            [Selected(fixture, latest)],
-            [],
+            [
+                Selected(fixture, latest),
+                Selected(fixture, latest)
+            ],
+            [Restored(fixture, latest)],
             [
                 new DerivedRecapExecutionResult.Unavailable([
                     new DerivedRecapExecutionDefect(
@@ -713,8 +746,11 @@ public sealed class DerivedRecapOnlineLifecycleCoordinatorTests {
         EventAddress failedAnchor =
             failedFixture.Lineage.HeadToOldest[1].Address;
         var failedScript = new LifecycleScript(
-            [Selected(failedFixture, failedAnchor)],
-            [],
+            [
+                Selected(failedFixture, failedAnchor),
+                Selected(failedFixture, failedAnchor)
+            ],
+            [Restored(failedFixture, failedAnchor)],
             [
                 new DerivedRecapExecutionResult.BlockFailed(
                     failedAnchor,
@@ -745,8 +781,11 @@ public sealed class DerivedRecapOnlineLifecycleCoordinatorTests {
         EventAddress retryAnchor =
             retryFixture.Lineage.HeadToOldest[1].Address;
         var retryScript = new LifecycleScript(
-            [Selected(retryFixture, retryAnchor)],
-            [],
+            [
+                Selected(retryFixture, retryAnchor),
+                Selected(retryFixture, retryAnchor)
+            ],
+            [Restored(retryFixture, retryAnchor)],
             [
                 new DerivedRecapExecutionResult.Retryable(
                     DerivedRecapExecutionDefectCodes.BuildingRace,
@@ -805,9 +844,9 @@ public sealed class DerivedRecapOnlineLifecycleCoordinatorTests {
             (_, _, _) => ValueTask.FromResult<DerivedRecapSelection>(
                 Selected(fixture, latest)
             ),
-            (_, _, _) => throw new Xunit.Sdk.XunitException(
-                "Restore must not run."
-            ),
+            (anchor, _, _) => ValueTask.FromResult<
+                DerivedRecapRestoreResult
+            >(Restored(fixture, anchor)),
             (_, _) => {
                 fixture.Engine.AppendObservation("drift");
                 return ValueTask.FromResult<DerivedRecapExecutionResult>(
@@ -847,10 +886,9 @@ public sealed class DerivedRecapOnlineLifecycleCoordinatorTests {
                     ValueTask.FromResult<DerivedRecapSelection>(
                         new DerivedRecapSelection.Selected(descriptor)
                     ),
-                null,
-                (_, _, _) => throw new Xunit.Sdk.XunitException(
-                    "Restore must not run."
-                ),
+                (anchor, _, _) => ValueTask.FromResult<
+                    DerivedRecapRestoreResult
+                >(Restored(fixture, anchor)),
                 (baseline, _) => {
                     pinnedCalls++;
                     Assert.Same(pinned, baseline);
@@ -1365,7 +1403,6 @@ public sealed class DerivedRecapOnlineLifecycleCoordinatorTests {
             Engine,
             new ThrowingCandidateSource(),
             select,
-            null,
             restore,
             run
         );

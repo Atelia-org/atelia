@@ -1492,6 +1492,169 @@ public sealed class DerivedRecapPlannerExecutorTests {
     }
 
     [Fact]
+    public async Task ResumeInlinePriorAt514IsBeyondBeforePayloadOrComponents() {
+        int componentReads = 0;
+        int mutations = 0;
+        using TestFixture fixture = await TestFixture.CreateAsync(
+            historyPairs: 259,
+            hooks: new RecapStoreTestHooks(
+                BeforeAtomicFileReplace: _ => mutations++,
+                BeforeBuildingComponentRead: () => componentReads++
+            )
+        );
+        _ = fixture.Engine.AppendRuntimeConfigSetup(
+            new SessionRuntimeConfiguration(
+                "model-inline-514",
+                "surface-inline-514",
+                SessionJournalDefaults.Schema,
+                new(0)
+            )
+        );
+        _ = fixture.Engine.AppendSystemPromptSetup(
+            "system-inline-514"
+        );
+        EventAddress start = fixture.AppendPair("inline-514-start");
+        EventAddress admission =
+            fixture.AppendPair("inline-514-admission");
+        SessionCurrentLineageSnapshot full =
+            fixture.Engine.ReadCurrentLineageHeaders();
+        EventAddress inlineAt514 = full.HeadToRoot[
+            RecapFrozenPlanBarrier.MaxHeaderCount
+        ].Address;
+        var plan = new MaintainRecapBlockPlan(
+            fixture.SelfId,
+            fixture.SelfTarget,
+            "self-maintainer",
+            RecapPlannerTestIdentity.CapabilityFingerprint,
+            new EmptyRecapMaintainSource(
+                start,
+                RecapPlannerWireTestFacts.SetupsAt(
+                    fixture.Engine,
+                    start
+                )
+            ),
+            [new RecapReplayBoundary(
+                admission,
+                RecapPlannerWireTestFacts.SetupsAt(
+                    fixture.Engine,
+                    admission
+                )
+            )],
+            new InlineRecapPriorContext(
+                inlineAt514,
+                ContextHeaderSnapshot.Empty
+            ),
+            TestFixture.MaxContent
+        );
+        _ = await fixture.CreateBuildingAsync(admission, [plan]);
+        var maintainer = new ScriptedMaintainer(
+            "self-maintainer",
+            fixture.SelfTarget,
+            static (_, _) => "must-not-run"
+        );
+        componentReads = 0;
+        mutations = 0;
+        SessionJournalReadDiagnostics before =
+            fixture.Engine.CaptureReadDiagnostics();
+
+        var beyond = Assert.IsType<
+            DerivedRecapExecutionResult.BeyondPrefix
+        >(await fixture.CreateBuildingExecutor([maintainer])
+            .ResumeAsync(admission));
+
+        SessionJournalReadDiagnostics after =
+            fixture.Engine.CaptureReadDiagnostics();
+        Assert.Equal(
+            DerivedRecapBeyondPrefixStage.ResumePendingWindow,
+            beyond.Stage
+        );
+        Assert.Equal(inlineAt514, beyond.Evidence.RequiredAnchor);
+        Assert.Equal(
+            inlineAt514,
+            beyond.Evidence.NextAddress
+        );
+        Assert.Equal(
+            before.PayloadReadCount,
+            after.PayloadReadCount
+        );
+        Assert.Equal(0, componentReads);
+        Assert.Equal(0, mutations);
+        Assert.Equal(0, maintainer.CallCount);
+    }
+
+    [Fact]
+    public async Task ResumeOffLineageInlinePriorIsFrozenAuthorityBeforeComponents() {
+        int componentReads = 0;
+        int mutations = 0;
+        using TestFixture fixture = await TestFixture.CreateAsync(
+            historyPairs: 2,
+            hooks: new RecapStoreTestHooks(
+                BeforeAtomicFileReplace: _ => mutations++,
+                BeforeBuildingComponentRead: () => componentReads++
+            )
+        );
+        EventAddress start = fixture.ReplayStart();
+        EventAddress admission = fixture.Engine.ReadCurrentHead()!.Value;
+        EventAddress offLineage = admission with {
+            SegmentNumber = admission.SegmentNumber == uint.MaxValue
+                ? uint.MaxValue - 1
+                : uint.MaxValue
+        };
+        MaintainRecapBlockPlan valid = fixture.CreateEmptyPlan(
+            fixture.SelfId,
+            fixture.SelfTarget,
+            "self-maintainer",
+            start,
+            [admission]
+        );
+        var plan = new MaintainRecapBlockPlan(
+            valid.RecapBlockId,
+            valid.Target,
+            valid.MaintainerId,
+            valid.MaintainerCapabilityFingerprint,
+            valid.Source,
+            valid.CatchUpBoundaries,
+            new InlineRecapPriorContext(
+                offLineage,
+                ContextHeaderSnapshot.Empty
+            ),
+            valid.MaxContentUtf8Bytes
+        );
+        _ = await fixture.CreateBuildingAsync(admission, [plan]);
+        var maintainer = new ScriptedMaintainer(
+            "self-maintainer",
+            fixture.SelfTarget,
+            static (_, _) => "must-not-run"
+        );
+        componentReads = 0;
+        mutations = 0;
+        SessionJournalReadDiagnostics before =
+            fixture.Engine.CaptureReadDiagnostics();
+
+        var unavailable = Assert.IsType<
+            DerivedRecapExecutionResult.Unavailable
+        >(await fixture.CreateBuildingExecutor([maintainer])
+            .ResumeAsync(admission));
+
+        Assert.Contains(
+            unavailable.Defects,
+            defect => defect.Code
+                    == DerivedRecapExecutionDefectCodes.BuildingInvalid
+                && defect.Detail.Contains(
+                    "off the captured raw lineage",
+                    StringComparison.Ordinal
+                )
+        );
+        Assert.Equal(
+            before.PayloadReadCount,
+            fixture.Engine.CaptureReadDiagnostics().PayloadReadCount
+        );
+        Assert.Equal(0, componentReads);
+        Assert.Equal(0, mutations);
+        Assert.Equal(0, maintainer.CallCount);
+    }
+
+    [Fact]
     public async Task ResumeRawMutationDuringSeedFreezeIsRetryable() {
         using TestFixture fixture = await TestFixture.CreateAsync(
             historyPairs: 1
@@ -1696,8 +1859,14 @@ public sealed class DerivedRecapPlannerExecutorTests {
 
     [Fact]
     public async Task ResumeRejectsStructurallyValidWrongFrozenBoundarySetupsBeforeMaintainer() {
+        int componentReads = 0;
+        int mutations = 0;
         using TestFixture fixture = await TestFixture.CreateAsync(
-            historyPairs: 2
+            historyPairs: 2,
+            hooks: new RecapStoreTestHooks(
+                BeforeAtomicFileReplace: _ => mutations++,
+                BeforeBuildingComponentRead: () => componentReads++
+            )
         );
         (EventAddress start, EventAddress mid, EventAddress admission) =
             fixture.TwoStepRoute();
@@ -1741,6 +1910,8 @@ public sealed class DerivedRecapPlannerExecutorTests {
             fixture.SelfTarget,
             static (_, _) => "must-not-run"
         );
+        componentReads = 0;
+        mutations = 0;
 
         var unavailable =
             Assert.IsType<DerivedRecapExecutionResult.Unavailable>(
@@ -1751,11 +1922,13 @@ public sealed class DerivedRecapPlannerExecutorTests {
         Assert.Contains(
             unavailable.Defects,
             defect => defect.Detail.Contains(
-                "not the requested exact replay-safe interval",
+                "conflicting frozen identity",
                 StringComparison.Ordinal
             )
         );
         Assert.Equal(0, maintainer.CallCount);
+        Assert.Equal(0, componentReads);
+        Assert.Equal(0, mutations);
         BuildingBlockInspection inspection =
             await fixture.Store.InspectBuildingBlockAsync(
                 building.Descriptor,
@@ -1819,8 +1992,14 @@ public sealed class DerivedRecapPlannerExecutorTests {
 
     [Fact]
     public async Task ResumeRejectsNonAncestorInlinePriorBeforeMaintainer() {
+        int componentReads = 0;
+        int mutations = 0;
         using TestFixture fixture = await TestFixture.CreateAsync(
-            historyPairs: 2
+            historyPairs: 2,
+            hooks: new RecapStoreTestHooks(
+                BeforeAtomicFileReplace: _ => mutations++,
+                BeforeBuildingComponentRead: () => componentReads++
+            )
         );
         EventAddress start = fixture.ReplayStart();
         EventAddress admission = fixture.Engine.ReadCurrentHead()!.Value;
@@ -1857,6 +2036,8 @@ public sealed class DerivedRecapPlannerExecutorTests {
             fixture.SelfTarget,
             static (_, _) => "must-not-run"
         );
+        componentReads = 0;
+        mutations = 0;
 
         DerivedRecapExecutionResult result =
             await fixture.CreateBuildingExecutor(
@@ -1866,6 +2047,8 @@ public sealed class DerivedRecapPlannerExecutorTests {
 
         Assert.IsType<DerivedRecapExecutionResult.Unavailable>(result);
         Assert.Equal(0, maintainer.CallCount);
+        Assert.Equal(0, componentReads);
+        Assert.Equal(0, mutations);
     }
 
     [Fact]

@@ -228,7 +228,7 @@ public sealed class DerivedRecapReadOnlySurfaceTests {
         );
         PublishedRestoreInspectionResult.Unavailable restore =
             Assert.IsType<PublishedRestoreInspectionResult.Unavailable>(
-                await store.InspectPublishedForRestoreAsync(
+                await store.InspectPublishedForOfflineDiagnosticsAsync(
                     lineage.CapturedHead,
                     lineage
                 )
@@ -288,7 +288,7 @@ public sealed class DerivedRecapReadOnlySurfaceTests {
             async () => await store.MaterializeAsync(published)
         );
         Assert.IsType<PublishedRestoreInspectionResult.Unavailable>(
-            await store.InspectPublishedForRestoreAsync(
+            await store.InspectPublishedForOfflineDiagnosticsAsync(
                 lineage.CapturedHead,
                 lineage
             )

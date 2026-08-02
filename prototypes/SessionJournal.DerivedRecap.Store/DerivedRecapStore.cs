@@ -1435,10 +1435,11 @@ public sealed class DerivedRecapStore {
     /// </summary>
     internal async ValueTask<RecapPublishability>
         DiagnosePublishabilityAsync(
-        EventAddress admissionAnchor,
+        BuildingPlanHandle handle,
         DerivedRecapLineageView currentLineage,
         CancellationToken cancellationToken = default
     ) {
+        ValidateBuildingPlanHandle(handle);
         ArgumentNullException.ThrowIfNull(currentLineage);
         StoreReadLockAttempt lockAttempt =
             await TryAcquireReadyReadLockAsync(cancellationToken)
@@ -1448,25 +1449,67 @@ public sealed class DerivedRecapStore {
         }
         await using FileStream readLock = lockAttempt.Lock!;
         return await CanPublishCoreAsync(
-                admissionAnchor,
+                handle,
                 currentLineage,
                 cancellationToken
             )
             .ConfigureAwait(false);
     }
 
+    internal async ValueTask<RecapPublishability>
+        DiagnosePublishabilityAsync(
+        EventAddress admissionAnchor,
+        DerivedRecapLineageView currentLineage,
+        CancellationToken cancellationToken = default
+    ) {
+        try {
+            BuildingPlanReadResult read = await ReadBuildingPlanAsync(
+                    admissionAnchor,
+                    cancellationToken
+                )
+                .ConfigureAwait(false);
+            return read switch {
+                BuildingPlanReadResult.Available available =>
+                    await DiagnosePublishabilityAsync(
+                            available.Snapshot.Handle,
+                            currentLineage,
+                            cancellationToken
+                        )
+                        .ConfigureAwait(false),
+                BuildingPlanReadResult.Invalid invalid =>
+                    new RecapPublishability.NotPublishable(
+                        invalid.Defects
+                    ),
+                BuildingPlanReadResult.Missing => NotPublishable(
+                    "BuildingMissing",
+                    "Exact Building directory is missing."
+                ),
+                _ => throw new InvalidDataException(
+                    "Unknown Building plan read result."
+                )
+            };
+        }
+        catch (Exception exception)
+            when (IsPublishedPlanAvailabilityException(exception)) {
+            return new RecapPublishability.StoreUnavailable(
+                exception.Message
+            );
+        }
+    }
+
     internal async ValueTask<PublishRecapResult>
         PublishTrustedAsync(
-        EventAddress admissionAnchor,
+        BuildingPlanHandle handle,
         DerivedRecapLineageView currentLineage,
         Func<EventAddress?> readCurrentHead,
         CancellationToken cancellationToken = default
     ) {
+        ValidateBuildingPlanHandle(handle);
         ArgumentNullException.ThrowIfNull(currentLineage);
         ArgumentNullException.ThrowIfNull(readCurrentHead);
         RecapPublishability preflight =
             await DiagnosePublishabilityAsync(
-                    admissionAnchor,
+                    handle,
                     currentLineage,
                     cancellationToken
                 )
@@ -1486,7 +1529,7 @@ public sealed class DerivedRecapStore {
         try {
             RecapPublishability initial =
                 await CanPublishCoreAsync(
-                        admissionAnchor,
+                        handle,
                         currentLineage,
                         cancellationToken
                     )
@@ -1495,6 +1538,9 @@ public sealed class DerivedRecapStore {
                 return initialBlocked;
             }
 
+            BuildingDescriptor expected = handle.Descriptor;
+            EventAddress admissionAnchor =
+                expected.SetAdmissionAnchor;
             string buildPath = GetBuildingPath(admissionAnchor);
             DerivedRecapSetManifest manifest =
                 await ReadManifestRequiredAsync(
@@ -1502,6 +1548,13 @@ public sealed class DerivedRecapStore {
                         cancellationToken
                     )
                     .ConfigureAwait(false);
+            BuildingDescriptor observed = BuildingDescriptorFor(manifest);
+            if (observed != expected) {
+                return new PublishRecapResult.SourceChanged(
+                    expected,
+                    observed
+                );
+            }
             IReadOnlyList<DerivedRecapFrozenInput> inputs =
                 await ReadExpectedInputsAsync(
                         buildPath,
@@ -1562,9 +1615,10 @@ public sealed class DerivedRecapStore {
             // even if the caller cancels. Returning early here would make
             // durability ambiguous.
             CancellationToken commitToken = CancellationToken.None;
+            _testHooks.BeforePublishedPromotion?.Invoke();
             RecapPublishability final =
                 await CanPublishCoreAsync(
-                        admissionAnchor,
+                        handle,
                         currentLineage,
                         commitToken
                     )
@@ -1572,7 +1626,6 @@ public sealed class DerivedRecapStore {
             if (ToPublishRecapResult(final) is { } finalBlocked) {
                 return finalBlocked;
             }
-            _testHooks.BeforePublishedPromotion?.Invoke();
             EventAddress? authoritativeHead = readCurrentHead();
             if (authoritativeHead != currentLineage.CapturedHead) {
                 return new PublishRecapResult.RawHeadChanged(
@@ -1927,7 +1980,7 @@ public sealed class DerivedRecapStore {
     }
 
     internal async ValueTask<PublishedRestoreInspectionResult>
-        InspectPublishedForRestoreAsync(
+        InspectPublishedForOfflineDiagnosticsAsync(
         EventAddress admissionAnchor,
         DerivedRecapLineageView lineage,
         CancellationToken cancellationToken = default
@@ -2020,6 +2073,7 @@ public sealed class DerivedRecapStore {
                     publishedPath,
                     admissionAnchor,
                     lineageIndex,
+                    available.AdmissionPrefix,
                     expectedAuthority,
                     cancellationToken
                 )
@@ -3023,11 +3077,49 @@ public sealed class DerivedRecapStore {
 
     private async ValueTask<RecapPublishability>
         CanPublishCoreAsync(
-        EventAddress admissionAnchor,
+        BuildingPlanHandle handle,
         DerivedRecapLineageView lineage,
         CancellationToken cancellationToken
     ) {
+        BuildingDescriptor expected = handle.Descriptor;
+        EventAddress admissionAnchor = expected.SetAdmissionAnchor;
         var defects = new List<RecapStructuralDefect>();
+        string buildPath = GetBuildingPath(admissionAnchor);
+        if (!Directory.Exists(buildPath)) {
+            return await ResolvePublishedOrChangedAsync(
+                    expected,
+                    cancellationToken
+                )
+                .ConfigureAwait(false);
+        }
+        DerivedRecapSetManifest manifest;
+        try {
+            _fileSystem.EnsureSafeDescendant(buildPath);
+            manifest = await ReadManifestRequiredAsync(
+                    buildPath,
+                    cancellationToken
+                )
+                .ConfigureAwait(false);
+        }
+        catch (Exception exception)
+            when (exception is InvalidDataException
+                  or ArgumentException
+                  or NotSupportedException
+                  or IOException
+                  or UnauthorizedAccessException) {
+            return NotPublishable(
+                "BuildingInvalid",
+                exception.Message
+            );
+        }
+        BuildingDescriptor observed = BuildingDescriptorFor(manifest);
+        if (observed != expected) {
+            return new RecapPublishability.SourceChanged(
+                expected,
+                observed
+            );
+        }
+
         DerivedRecapAdmissionLineageResolution admission =
             lineage.ResolveAdmission(
                 admissionAnchor,
@@ -3049,21 +3141,7 @@ public sealed class DerivedRecapStore {
         IReadOnlyDictionary<EventAddress, int> lineageIndex =
             IndexPrefix(available.AdmissionPrefix);
 
-        string buildPath = GetBuildingPath(admissionAnchor);
-        if (!Directory.Exists(buildPath)) {
-            return NotPublishable(
-                "BuildingMissing",
-                "Exact Building directory is missing."
-            );
-        }
         try {
-            _fileSystem.EnsureSafeDescendant(buildPath);
-            DerivedRecapSetManifest manifest =
-                await ReadManifestRequiredAsync(
-                        buildPath,
-                        cancellationToken
-                    )
-                    .ConfigureAwait(false);
             if (manifest.RefId != RefId
                 || manifest.SetAdmissionAnchor != admissionAnchor) {
                 AddDefect(
@@ -3163,6 +3241,55 @@ public sealed class DerivedRecapStore {
                 Array.AsReadOnly(defects.ToArray())
             );
     }
+
+    private async ValueTask<RecapPublishability>
+        ResolvePublishedOrChangedAsync(
+        BuildingDescriptor expected,
+        CancellationToken cancellationToken
+    ) {
+        string publishedPath = GetPublishedPath(
+            expected.SetAdmissionAnchor
+        );
+        if (!Directory.Exists(publishedPath)) {
+            return new RecapPublishability.SourceChanged(
+                expected,
+                Observed: null
+            );
+        }
+        try {
+            PublishedPlanEnvelopeCapture capture =
+                await CapturePublishedPlanEnvelopeAsync(
+                        expected.SetAdmissionAnchor,
+                        cancellationToken
+                    )
+                    .ConfigureAwait(false);
+            BuildingDescriptor observed = BuildingDescriptorFor(
+                capture.Publication.FrozenPlanSnapshot
+            );
+            return observed == expected
+                ? new RecapPublishability.AlreadyPublished(
+                    capture.Descriptor
+                )
+                : new RecapPublishability.SourceChanged(
+                    expected,
+                    observed
+                );
+        }
+        catch (Exception exception)
+            when (IsPublishedPlanAvailabilityException(exception)) {
+            return new RecapPublishability.StoreUnavailable(
+                exception.Message
+            );
+        }
+    }
+
+    private BuildingDescriptor BuildingDescriptorFor(
+        DerivedRecapSetManifest manifest
+    ) => new(
+        manifest.RefId,
+        manifest.SetAdmissionAnchor,
+        manifest.ManifestPayloadSha256
+    );
 
     private static IReadOnlyDictionary<EventAddress, int> IndexPrefix(
         SessionCurrentLineagePrefix prefix
@@ -3680,6 +3807,7 @@ public sealed class DerivedRecapStore {
         string publishedPath,
         EventAddress expectedAnchor,
         IReadOnlyDictionary<EventAddress, int> lineage,
+        SessionCurrentLineagePrefix lineagePrefix,
         PublishedRestorePlanAuthority? expectedAuthority,
         CancellationToken cancellationToken
     ) {
@@ -3793,6 +3921,17 @@ public sealed class DerivedRecapStore {
                            and not FrozenRecapInputHealth.Healthy;
         });
         if (!exactIncomplete) {
+            if (expectedAuthority is null
+                && FindRestoreBeyondPrefix(
+                    capture.Manifest,
+                    inputs,
+                    finals,
+                    lineagePrefix
+                ) is { } beyond) {
+                return new PublishedRestoreInspectionResult.BeyondPrefix(
+                    beyond
+                );
+            }
             IReadOnlyList<RecapStructuralDefect> semanticDefects =
                 ValidateRestoreLineageSemantics(
                     capture.Manifest,
@@ -6199,6 +6338,15 @@ public sealed class DerivedRecapStore {
         RecapPublishability result
     ) => result switch {
         RecapPublishability.Publishable => null,
+        RecapPublishability.AlreadyPublished already =>
+            new PublishRecapResult.AlreadyPublished(
+                already.Descriptor
+            ),
+        RecapPublishability.SourceChanged changed =>
+            new PublishRecapResult.SourceChanged(
+                changed.Expected,
+                changed.Observed
+            ),
         RecapPublishability.NotPublishable notPublishable =>
             new PublishRecapResult.NotPublishable(
                 notPublishable.Defects

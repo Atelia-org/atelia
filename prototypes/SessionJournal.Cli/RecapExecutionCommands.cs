@@ -177,14 +177,7 @@ internal static class RecapExecutionCommands {
             }
         }
         else {
-            (readinessDefects, readinessBeyondPrefix) =
-                await InspectReadinessAsync(
-                        operation,
-                        store,
-                        lineageView,
-                        anchor
-                    )
-                    .ConfigureAwait(false);
+            readinessDefects = [];
         }
         if (readinessDefects.Count != 0) {
             string? retryableCode = readinessDefects.FirstOrDefault(
@@ -359,70 +352,6 @@ internal static class RecapExecutionCommands {
             );
         }
         return Finish(report, reportPath, exitCode);
-    }
-
-    private static async ValueTask<(
-        IReadOnlyList<string> Defects,
-        SJ.SessionCurrentLineageBeyondPrefix? BeyondPrefix
-    )>
-        InspectReadinessAsync(
-        string operation,
-        DerivedRecapStore store,
-        DerivedRecapLineageView? lineage,
-        EventAddress? anchor
-    ) {
-        try {
-            if (operation == "resume") {
-                BuildingPlanReadResult plan =
-                    await store.ReadBuildingPlanAsync(anchor!.Value)
-                        .ConfigureAwait(false);
-                if (plan is BuildingPlanReadResult.Invalid planInvalid) {
-                    return (DefectCodes(planInvalid.Defects), null);
-                }
-                if (plan is BuildingPlanReadResult.Missing) {
-                    return (["BuildingMissing"], null);
-                }
-                BuildingReadResult building = await store
-                    .ReadBuildingAsync(
-                        ((BuildingPlanReadResult.Available)plan)
-                            .Snapshot.Handle
-                    )
-                    .ConfigureAwait(false);
-                return building switch {
-                    BuildingReadResult.Available => ([], null),
-                    BuildingReadResult.Invalid invalid =>
-                        (DefectCodes(invalid.Defects), null),
-                    BuildingReadResult.Missing =>
-                        (["BuildingMissing"], null),
-                    _ => (["BuildingUnavailable"], null)
-                };
-            }
-
-            PublishedRestoreInspectionResult published =
-                await lineage!.InspectPublishedForRestoreAsync(
-                        anchor!.Value,
-                        CancellationToken.None
-                    )
-                    .ConfigureAwait(false);
-            return published switch {
-                PublishedRestoreInspectionResult.Available =>
-                    ([], null),
-                PublishedRestoreInspectionResult
-                        .Unavailable unavailable =>
-                    (DefectCodes(unavailable.Defects), null),
-                PublishedRestoreInspectionResult.BeyondPrefix beyond =>
-                    (["BeyondPrefix"], beyond.Evidence),
-                _ => (["PublishedUnavailable"], null)
-            };
-        }
-        catch (Exception exception)
-            when (exception is InvalidDataException
-                  or ArgumentException
-                  or NotSupportedException
-                  or IOException
-                  or UnauthorizedAccessException) {
-            return (["StoreUnavailable"], null);
-        }
     }
 
     private static (

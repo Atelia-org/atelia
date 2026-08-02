@@ -358,7 +358,8 @@ internal static class Program {
         DerivedRecapLineageView lineageView =
             DerivedRecapLineageView.Capture(store, engine);
         PublishedRestoreInspectionResult.Available available =
-            await lineageView.InspectPublishedForRestoreAsync(
+            await lineageView
+                .InspectPublishedForOfflineDiagnosticsAsync(
                     lineage.CapturedHead
                 )
                 is PublishedRestoreInspectionResult.Available exact

@@ -353,7 +353,7 @@ public sealed class ProgramRecapExecutionCommandTests : IDisposable {
                 >(
                     await DerivedRecapLineageView
                         .Capture(store, engine)
-                        .InspectPublishedForRestoreAsync(
+                        .InspectPublishedForOfflineDiagnosticsAsync(
                             publishedAnchor
                         )
                 );
@@ -536,6 +536,14 @@ public sealed class ProgramRecapExecutionCommandTests : IDisposable {
         ));
         using JsonDocument published = ReadJson(publishReport);
         string anchor = String(published, "anchor");
+        string damagedBlock = FindPublishedBlock(
+            fixture,
+            RolePlayRecapBlockPaths.WorldUnderstandingBlockKey
+        );
+        await File.WriteAllTextAsync(
+            damagedBlock,
+            "component must remain unread when admission is beyond prefix"
+        );
         EventAddress currentHead;
         using (var engine = SJ.SessionJournalEngine.Open(fixture.Path)) {
             for (int index = 0; index < 257; index++) {
@@ -590,7 +598,7 @@ public sealed class ProgramRecapExecutionCommandTests : IDisposable {
         JsonElement beyond =
             report.RootElement.GetProperty("beyondPrefix");
         Assert.Equal(
-            "preparation-current-lineage",
+            "restore-pending-window",
             beyond.GetProperty("stage").GetString()
         );
         Assert.Equal(
@@ -1144,7 +1152,7 @@ public sealed class ProgramRecapExecutionCommandTests : IDisposable {
             Assert.IsType<PublishedRestoreInspectionResult.Available>(
                 await DerivedRecapLineageView
                     .Capture(store, engine)
-                    .InspectPublishedForRestoreAsync(
+                    .InspectPublishedForOfflineDiagnosticsAsync(
                         SJ.EventAddressTextCodec.Parse(anchor)
                     )
             );

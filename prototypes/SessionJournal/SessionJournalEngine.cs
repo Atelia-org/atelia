@@ -429,6 +429,9 @@ public sealed partial class SessionJournalEngine : IDisposable {
         var entries = new List<SessionCurrentLineageHeader>(
             Math.Min(maxHeaderCount, 1024)
         );
+        var provenHeaders = new List<SessionProvenLineageHeader>(
+            Math.Min(maxHeaderCount, 1024)
+        );
         var visited = new HashSet<EventAddress>();
         EventAddress? cursor = capturedHead;
         while (cursor is { } address
@@ -452,6 +455,10 @@ public sealed partial class SessionJournalEngine : IDisposable {
                 header.Parent,
                 (SessionEventKind)header.OpaqueEventKind
             ));
+            provenHeaders.Add(new SessionProvenLineageHeader(
+                address,
+                header
+            ));
             cursor = header.Parent;
         }
         if (cursor is { } next && visited.Contains(next)) {
@@ -469,13 +476,17 @@ public sealed partial class SessionJournalEngine : IDisposable {
                 - before.LogicalPayloadByteCount
         );
         return new SessionCurrentLineagePrefix(
+            Path,
             capturedHead,
             maxHeaderCount,
             entries,
             cursor is { } nextAddress
                 ? new SessionCurrentLineageContinuation(nextAddress)
                 : null,
-            diagnostics
+            diagnostics,
+            new SessionCurrentLineagePrefixState(
+                provenHeaders.AsReadOnly()
+            )
         );
     }
 
@@ -943,6 +954,96 @@ public sealed partial class SessionJournalEngine : IDisposable {
     }
 
     /// <summary>
+    /// Produces one exact route proof from a previously captured repository-bound lineage
+    /// prefix. No additional header or payload read is performed; the local raw-event cap is
+    /// still enforced independently for this route step.
+    /// </summary>
+    public SessionHistoryPlanningWindowProofResult
+        ProveHistoryPlanningWindowInPrefix(
+        SessionCurrentLineagePrefix prefix,
+        EventAddress capturedHead,
+        EventAddress startExclusive,
+        int maxRawEventCount
+    ) {
+        ThrowIfDisposed();
+        ArgumentNullException.ThrowIfNull(prefix);
+        if (!PathsEqual(prefix.OwnerPath, Path)
+            || prefix.State
+                is not SessionCurrentLineagePrefixState state) {
+            throw new ArgumentException(
+                "Lineage prefix does not belong to this SessionJournal.",
+                nameof(prefix)
+            );
+        }
+        if (maxRawEventCount < 0
+            || maxRawEventCount == int.MaxValue) {
+            throw new ArgumentOutOfRangeException(
+                nameof(maxRawEventCount)
+            );
+        }
+        var end = prefix.Lookup(capturedHead)
+            as SessionCurrentLineageAnchorLookup.Found
+            ?? throw new InvalidDataException(
+                "Route endpoint is outside the captured lineage prefix."
+            );
+        var start = prefix.Lookup(startExclusive)
+            as SessionCurrentLineageAnchorLookup.Found
+            ?? throw new InvalidDataException(
+                "Route start is outside the captured lineage prefix."
+            );
+        if (end.Index >= start.Index) {
+            throw new InvalidDataException(
+                "Route start must be an ancestor of its endpoint."
+            );
+        }
+        int rawEventCount = start.Index - end.Index;
+        if (rawEventCount > maxRawEventCount) {
+            int headerCount = maxRawEventCount + 1;
+            SessionCurrentLineageHeader tail =
+                prefix.HeadToOldest[end.Index + maxRawEventCount];
+            EventAddress nextAddress = tail.Parent
+                ?? throw new InvalidDataException(
+                    "A capped route proof reached root before its known start."
+                );
+            return new SessionHistoryPlanningWindowProofResult
+                .BeyondPrefix(
+                    new SessionCurrentLineageBeyondPrefix(
+                        startExclusive,
+                        capturedHead,
+                        headerCount,
+                        nextAddress
+                    ),
+                    new SessionCurrentLineageDiagnostics(
+                        headerCount,
+                        PayloadReads: 0,
+                        DecodedPayloadBytes: 0
+                    )
+                );
+        }
+        SessionProvenLineageHeader[] interval = state.HeadToOldest
+            .Skip(end.Index)
+            .Take(rawEventCount)
+            .ToArray();
+        return new SessionHistoryPlanningWindowProofResult.Available(
+            new SessionHistoryPlanningWindowProof(
+                Path,
+                capturedHead,
+                startExclusive,
+                rawEventCount,
+                new SessionCurrentLineageDiagnostics(
+                    rawEventCount + 1,
+                    PayloadReads: 0,
+                    DecodedPayloadBytes: 0
+                ),
+                new SessionHistoryPlanningWindowProofState(
+                    interval,
+                    _reader.CaptureDiagnostics()
+                )
+            )
+        );
+    }
+
+    /// <summary>
     /// Materializes a previously header-proved interval with one authenticated matching seed.
     /// No lineage search or hidden continuation read is performed.
     /// </summary>
@@ -1031,6 +1132,45 @@ public sealed partial class SessionJournalEngine : IDisposable {
                 + "does not match the frozen endpoint setup addresses."
             );
         }
+    }
+
+    /// <summary>
+    /// Converts one repository-bound route proof into an opaque governing-setup proof for its
+    /// endpoint. This validates setup-address transitions from retained headers only.
+    /// </summary>
+    public SessionGoverningSetupProof
+        ProveGoverningSetupTransition(
+        SessionHistoryPlanningWindowProof proof,
+        SessionGoverningSetupProof startProof,
+        SessionContextAnchorSetupReferences expectedEndSetups
+    ) {
+        ArgumentNullException.ThrowIfNull(startProof);
+        if (!PathsEqual(startProof.OwnerPath, Path)
+            || startProof.State
+                is not SessionGoverningSetupProofState state
+            || state.Boundary != startProof.Boundary
+            || state.ExpectedSetups != startProof.ExpectedSetups
+            || startProof.Boundary != proof.StartExclusive) {
+            throw new ArgumentException(
+                "Route start setup proof does not match the proven interval.",
+                nameof(startProof)
+            );
+        }
+        ValidateGoverningSetupTransition(
+            proof,
+            startProof.ExpectedSetups,
+            expectedEndSetups
+        );
+        return new SessionGoverningSetupProof(
+            Path,
+            proof.CapturedHead,
+            expectedEndSetups,
+            proof.Diagnostics,
+            new SessionGoverningSetupProofState(
+                proof.CapturedHead,
+                expectedEndSetups
+            )
+        );
     }
 
     private static bool PathsEqual(string left, string right)
@@ -1173,6 +1313,7 @@ public sealed partial class SessionJournalEngine : IDisposable {
                     new SessionGoverningSetupBeyondPrefix(
                         boundary,
                         expectedSetups,
+                        boundary,
                         headerCount,
                         parent,
                         foundRuntime
@@ -1183,6 +1324,253 @@ public sealed partial class SessionJournalEngine : IDisposable {
                 );
             }
             cursor = parent;
+        }
+    }
+
+    /// <summary>
+    /// Produces a direct governing-setup proof from one previously captured repository-bound
+    /// lineage prefix. The first setup headers governing the boundary must be present in that
+    /// exact prefix; no continuation is followed and no payload is read.
+    /// </summary>
+    public SessionGoverningSetupProofResult
+        ProveGoverningSetupInPrefix(
+        SessionCurrentLineagePrefix prefix,
+        EventAddress boundary,
+        SessionContextAnchorSetupReferences expectedSetups
+    ) {
+        ThrowIfDisposed();
+        ArgumentNullException.ThrowIfNull(prefix);
+        ArgumentNullException.ThrowIfNull(expectedSetups);
+        ValidateExpectedSetupReferences(expectedSetups);
+        if (!PathsEqual(prefix.OwnerPath, Path)
+            || prefix.State
+                is not SessionCurrentLineagePrefixState) {
+            throw new ArgumentException(
+                "Lineage prefix does not belong to this SessionJournal.",
+                nameof(prefix)
+            );
+        }
+        var found = prefix.Lookup(boundary)
+            as SessionCurrentLineageAnchorLookup.Found
+            ?? throw new InvalidDataException(
+                "Governing setup boundary is outside the captured lineage prefix."
+            );
+        bool foundRuntime = false;
+        bool foundPrompt = false;
+        int headerCount = 0;
+        for (int index = found.Index;
+             index < prefix.HeadToOldest.Count;
+             index++) {
+            SessionCurrentLineageHeader header =
+                prefix.HeadToOldest[index];
+            headerCount++;
+            if (header.Kind == SessionEventKind.RuntimeConfigSetup
+                && !foundRuntime) {
+                if (header.Address
+                    != expectedSetups.RuntimeConfig.Address) {
+                    throw new InvalidDataException(
+                        $"The first runtime-config-setup governing exact boundary {boundary} "
+                        + $"is {header.Address}, not expected address "
+                        + $"{expectedSetups.RuntimeConfig.Address}."
+                    );
+                }
+                foundRuntime = true;
+            }
+            else if (header.Kind
+                     == SessionEventKind.SystemPromptSetup
+                     && !foundPrompt) {
+                if (header.Address
+                    != expectedSetups.SystemPrompt.Address) {
+                    throw new InvalidDataException(
+                        $"The first system-prompt-setup governing exact boundary {boundary} "
+                        + $"is {header.Address}, not expected address "
+                        + $"{expectedSetups.SystemPrompt.Address}."
+                    );
+                }
+                foundPrompt = true;
+            }
+            if (foundRuntime && foundPrompt) {
+                var diagnostics =
+                    new SessionCurrentLineageDiagnostics(
+                        headerCount,
+                        PayloadReads: 0,
+                        DecodedPayloadBytes: 0
+                    );
+                return new SessionGoverningSetupProofResult.Available(
+                    new SessionGoverningSetupProof(
+                        Path,
+                        boundary,
+                        expectedSetups,
+                        diagnostics,
+                        new SessionGoverningSetupProofState(
+                            boundary,
+                            expectedSetups
+                        )
+                    )
+                );
+            }
+        }
+        if (prefix.Continuation is { } continuation) {
+            EventAddress requiredAnchor = !foundRuntime
+                ? expectedSetups.RuntimeConfig.Address
+                : expectedSetups.SystemPrompt.Address;
+            return new SessionGoverningSetupProofResult.BeyondPrefix(
+                new SessionGoverningSetupBeyondPrefix(
+                    boundary,
+                    expectedSetups,
+                    prefix.CapturedHead,
+                    prefix.HeadToOldest.Count,
+                    continuation.NextAddress,
+                    requiredAnchor
+                ),
+                new SessionCurrentLineageDiagnostics(
+                    headerCount,
+                    PayloadReads: 0,
+                    DecodedPayloadBytes: 0
+                )
+            );
+        }
+        throw new InvalidDataException(
+            $"SessionJournal governing setup for exact boundary {boundary} "
+            + "is missing a runtime-config-setup or system-prompt-setup on its Parent chain."
+        );
+    }
+
+    /// <summary>
+    /// Authenticates the setup payload identities named by opaque governing proofs. All proof
+    /// ownership and conflicting-reference checks complete before the first payload read; each
+    /// distinct setup address is then read exactly once and validated by kind, schema, and hash.
+    /// Boundary and history payloads are never read by this method.
+    /// </summary>
+    public void ValidateGoverningSetupPayloads(
+        IEnumerable<SessionGoverningSetupProof> proofs,
+        CancellationToken cancellationToken = default
+    ) {
+        ThrowIfDisposed();
+        ArgumentNullException.ThrowIfNull(proofs);
+        SessionGoverningSetupProof[] materialized = [.. proofs];
+        foreach (SessionGoverningSetupProof proof in materialized) {
+            ArgumentNullException.ThrowIfNull(proof);
+            if (!PathsEqual(proof.OwnerPath, Path)
+                || proof.State
+                    is not SessionGoverningSetupProofState state
+                || state.Boundary != proof.Boundary
+                || state.ExpectedSetups != proof.ExpectedSetups) {
+                throw new ArgumentException(
+                    "Governing setup proof does not belong to this SessionJournal.",
+                    nameof(proofs)
+                );
+            }
+            ValidateExpectedSetupReferences(proof.ExpectedSetups);
+        }
+        var references = new Dictionary<
+            EventAddress,
+            (SessionContextSetupReference Reference,
+                SessionEventKind Kind)
+        >();
+        foreach (SessionGoverningSetupProof proof in materialized) {
+            AddSetupReference(
+                references,
+                proof.ExpectedSetups.RuntimeConfig,
+                SessionEventKind.RuntimeConfigSetup
+            );
+            AddSetupReference(
+                references,
+                proof.ExpectedSetups.SystemPrompt,
+                SessionEventKind.SystemPromptSetup
+            );
+        }
+        foreach ((SessionContextSetupReference reference,
+                     SessionEventKind kind) in references
+                     .OrderBy(static item => item.Key.SegmentNumber)
+                     .ThenBy(static item => item.Key.Ticket.Packed)
+                     .ThenBy(static item => item.Key.Hint.Packed)
+                     .Select(static item => item.Value)) {
+            if (kind == SessionEventKind.RuntimeConfigSetup) {
+                _ = ReadAndValidatePlanningSetupReference<
+                    SessionRuntimeConfiguration
+                >(reference, kind, cancellationToken);
+            }
+            else {
+                _ = ReadAndValidatePlanningSetupReference<
+                    SystemPromptSetupBody
+                >(reference, kind, cancellationToken);
+            }
+        }
+    }
+
+    private static void AddSetupReference(
+        IDictionary<
+            EventAddress,
+            (SessionContextSetupReference Reference,
+                SessionEventKind Kind)
+        > references,
+        SessionContextSetupReference reference,
+        SessionEventKind kind
+    ) {
+        if (references.TryGetValue(
+                reference.Address,
+                out var existing
+            )) {
+            if (existing.Reference != reference
+                || existing.Kind != kind) {
+                throw new InvalidDataException(
+                    $"Setup address '{reference.Address}' has conflicting frozen identity."
+                );
+            }
+            return;
+        }
+        references.Add(reference.Address, (reference, kind));
+    }
+
+    private static void ValidateExpectedSetupReferences(
+        SessionContextAnchorSetupReferences setups
+    ) {
+        ArgumentNullException.ThrowIfNull(setups);
+        if (setups.RuntimeConfig is null
+            || setups.SystemPrompt is null) {
+            throw new InvalidDataException(
+                "Governing setup proof contains a null setup reference."
+            );
+        }
+        ValidateExpectedSetupReference(
+            setups.RuntimeConfig,
+            "runtime-config"
+        );
+        ValidateExpectedSetupReference(
+            setups.SystemPrompt,
+            "system-prompt"
+        );
+        if (setups.RuntimeConfig.Address
+            == setups.SystemPrompt.Address) {
+            throw new InvalidDataException(
+                "Runtime-config and system-prompt setup references must use distinct addresses."
+            );
+        }
+    }
+
+    private static void ValidateExpectedSetupReference(
+        SessionContextSetupReference reference,
+        string label
+    ) {
+        if (reference.Address == default) {
+            throw new InvalidDataException(
+                $"Frozen {label} setup address cannot be default."
+            );
+        }
+        if (reference.BodySchemaVersion <= 0) {
+            throw new InvalidDataException(
+                $"Frozen {label} setup schema version must be positive."
+            );
+        }
+        if (reference.PayloadSha256 is null
+            || reference.PayloadSha256.Length != 64
+            || reference.PayloadSha256.Any(static ch =>
+                !((ch >= '0' && ch <= '9')
+                  || (ch >= 'a' && ch <= 'f')))) {
+            throw new InvalidDataException(
+                $"Frozen {label} setup hash must be lowercase SHA-256 hex."
+            );
         }
     }
 
@@ -4230,6 +4618,10 @@ public sealed partial class SessionJournalEngine : IDisposable {
             HeadThroughTargetOrLimit,
         SessionCurrentLineageAnchorLookup Lookup,
         SessionCurrentLineageDiagnostics Diagnostics
+    );
+
+    private sealed record SessionCurrentLineagePrefixState(
+        IReadOnlyList<SessionProvenLineageHeader> HeadToOldest
     );
 
     private sealed record SessionHistoryPlanningWindowProofState(

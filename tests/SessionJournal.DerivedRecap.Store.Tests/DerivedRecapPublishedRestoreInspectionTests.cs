@@ -22,7 +22,7 @@ public sealed class DerivedRecapPublishedRestoreInspectionTests {
         var available = Assert.IsType<
             PublishedRestoreInspectionResult.Available
         >(
-            await fixture.Store.InspectPublishedForRestoreAsync(
+            await fixture.Store.InspectPublishedForOfflineDiagnosticsAsync(
                 rewritten.Anchor,
                 rewritten.Lineage
             )
@@ -51,7 +51,7 @@ public sealed class DerivedRecapPublishedRestoreInspectionTests {
         var restore = Assert.IsType<
             PublishedRestoreInspectionResult.BeyondPrefix
         >(
-            await fixture.Store.InspectPublishedForRestoreAsync(
+            await fixture.Store.InspectPublishedForOfflineDiagnosticsAsync(
                 rewritten.Anchor,
                 rewritten.Lineage
             )
@@ -90,7 +90,7 @@ public sealed class DerivedRecapPublishedRestoreInspectionTests {
 
         Assert.IsType<PublishedRestoreInspectionResult.BeyondPrefix>(
             await fixture.Lineage()
-                .InspectPublishedForRestoreAsync(anchor)
+                .InspectPublishedForOfflineDiagnosticsAsync(anchor)
         );
         Assert.Equal(0, publicationReads);
     }
@@ -276,7 +276,7 @@ public sealed class DerivedRecapPublishedRestoreInspectionTests {
         var unavailable = Assert.IsType<
             PublishedRestoreInspectionResult.Unavailable
         >(
-            await fixture.Store.InspectPublishedForRestoreAsync(
+            await fixture.Store.InspectPublishedForOfflineDiagnosticsAsync(
                 anchor,
                 lineage
             )
@@ -315,7 +315,7 @@ public sealed class DerivedRecapPublishedRestoreInspectionTests {
         var unavailable = Assert.IsType<
             PublishedRestoreInspectionResult.Unavailable
         >(
-            await fixture.Store.InspectPublishedForRestoreAsync(
+            await fixture.Store.InspectPublishedForOfflineDiagnosticsAsync(
                 anchor,
                 lineage
             )
@@ -375,7 +375,7 @@ public sealed class DerivedRecapPublishedRestoreInspectionTests {
         var unavailable = Assert.IsType<
             PublishedRestoreInspectionResult.Unavailable
         >(
-            await fixture.Store.InspectPublishedForRestoreAsync(
+            await fixture.Store.InspectPublishedForOfflineDiagnosticsAsync(
                 anchor,
                 lineage
             )
@@ -429,7 +429,7 @@ public sealed class DerivedRecapPublishedRestoreInspectionTests {
         var unavailable = Assert.IsType<
             PublishedRestoreInspectionResult.Unavailable
         >(
-            await fixture.Store.InspectPublishedForRestoreAsync(
+            await fixture.Store.InspectPublishedForOfflineDiagnosticsAsync(
                 anchor,
                 lineage
             )
@@ -465,7 +465,7 @@ public sealed class DerivedRecapPublishedRestoreInspectionTests {
         var unavailable = Assert.IsType<
             PublishedRestoreInspectionResult.Unavailable
         >(
-            await fixture.Store.InspectPublishedForRestoreAsync(
+            await fixture.Store.InspectPublishedForOfflineDiagnosticsAsync(
                 anchor,
                 lineage
             )
@@ -890,7 +890,7 @@ public sealed class DerivedRecapPublishedRestoreInspectionTests {
         var unavailable = Assert.IsType<
             PublishedRestoreInspectionResult.Unavailable
         >(
-            await fixture.Store.InspectPublishedForRestoreAsync(
+            await fixture.Store.InspectPublishedForOfflineDiagnosticsAsync(
                 target,
                 lineage
             )
@@ -916,7 +916,7 @@ public sealed class DerivedRecapPublishedRestoreInspectionTests {
     ) => Assert.IsType<
         PublishedRestoreInspectionResult.Available
     >(
-        await store.InspectPublishedForRestoreAsync(anchor, lineage)
+        await store.InspectPublishedForOfflineDiagnosticsAsync(anchor, lineage)
     ).Inspection;
 
     private static async ValueTask PublishAsync(

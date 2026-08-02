@@ -190,7 +190,28 @@ public sealed class SessionCurrentLineagePrefix {
         IReadOnlyList<SessionCurrentLineageHeader> headToOldest,
         SessionCurrentLineageContinuation? continuation,
         SessionCurrentLineageDiagnostics diagnostics
+    ) : this(
+        "<unbound-test-prefix>",
+        capturedHead,
+        maxHeaderCount,
+        headToOldest,
+        continuation,
+        diagnostics,
+        new object()
     ) {
+    }
+
+    internal SessionCurrentLineagePrefix(
+        string ownerPath,
+        EventAddress capturedHead,
+        int maxHeaderCount,
+        IReadOnlyList<SessionCurrentLineageHeader> headToOldest,
+        SessionCurrentLineageContinuation? continuation,
+        SessionCurrentLineageDiagnostics diagnostics,
+        object state
+    ) {
+        ArgumentException.ThrowIfNullOrWhiteSpace(ownerPath);
+        ArgumentNullException.ThrowIfNull(state);
         if (capturedHead == default) {
             throw new ArgumentException(
                 "The captured lineage head cannot be default.",
@@ -303,8 +324,13 @@ public sealed class SessionCurrentLineagePrefix {
         HeadToOldest = Array.AsReadOnly(entries);
         Continuation = continuation;
         Diagnostics = diagnostics;
+        OwnerPath = ownerPath;
+        State = state;
         _indexes = indexes;
     }
+
+    internal string OwnerPath { get; }
+    internal object State { get; }
 
     public EventAddress CapturedHead { get; }
     public int MaxHeaderCount { get; }
@@ -545,6 +571,7 @@ public sealed class SessionGoverningSetupBeyondPrefix {
     internal SessionGoverningSetupBeyondPrefix(
         EventAddress boundary,
         SessionContextAnchorSetupReferences expectedSetups,
+        EventAddress capturedHead,
         int headerCount,
         EventAddress nextAddress,
         EventAddress requiredAnchor
@@ -556,7 +583,7 @@ public sealed class SessionGoverningSetupBeyondPrefix {
         RequiredAnchor = requiredAnchor;
         ContinuationEvidence = new SessionCurrentLineageBeyondPrefix(
             requiredAnchor,
-            boundary,
+            capturedHead,
             headerCount,
             nextAddress
         );

@@ -29,7 +29,10 @@ public sealed class DerivedRecapRestoreExecutorTests {
 
         SessionJournalReadDiagnostics after =
             fixture.Engine.CaptureReadDiagnostics();
-        Assert.Equal(before.PayloadReadCount, after.PayloadReadCount);
+        Assert.Equal(
+            2,
+            after.PayloadReadCount - before.PayloadReadCount
+        );
         Assert.Equal(0, maintainer.CallCount);
     }
 
@@ -142,6 +145,109 @@ public sealed class DerivedRecapRestoreExecutorTests {
     }
 
     [Fact]
+    public async Task RestoreInheritSourceAt514IsBeyondBeforePayloadOrComponents() {
+        int componentReads = 0;
+        using RestoreFixture fixture =
+            await RestoreFixture.CreateAsync(
+                historyPairs: 2,
+                hooks: new RecapStoreTestHooks(
+                    BeforeRestoreComponentRead: () => componentReads++
+                )
+            );
+        MaintainRecapBlockPlan sourcePlan = fixture.CreateMaintainPlan(
+            "frozen.self",
+            "frozen-maintainer",
+            endpointCount: 1
+        );
+        EventAddress sourceAnchor = fixture.CurrentHead;
+        PublishedRecapDescriptor sourceDescriptor =
+            await fixture.PublishAsync(
+                sourceAnchor,
+                [sourcePlan],
+                new Dictionary<RecapBlockId, string> {
+                    [sourcePlan.RecapBlockId] = "source-content"
+                }
+            );
+        DerivedRecapFrozenInput input =
+            DerivedRecapCodec.CreateFrozenInput(
+                sourcePlan.RecapBlockId,
+                sourcePlan.Target,
+                sourceAnchor,
+                RecapPlannerWireTestFacts.SetupsAt(
+                    fixture.Engine,
+                    sourceAnchor
+                ),
+                "source-content"
+            );
+        for (int index = 0; index < 256; index++) {
+            fixture.AppendPair($"inherit-514-{index}");
+        }
+        EventAddress target = fixture.Engine.AppendObservation(
+            "inherit-514-target"
+        );
+        var inherit = new InheritRecapBlockPlan(
+            sourcePlan.RecapBlockId,
+            sourcePlan.Target,
+            sourceAnchor,
+            input.AbsorbedThroughSetups,
+            sourceDescriptor.EnvelopeSha256,
+            input.PayloadSha256,
+            RestoreFixture.MaxContent
+        );
+        DerivedRecapSetManifest manifest =
+            DerivedRecapCodec.CreateManifest(
+                fixture.Engine.BranchRefId,
+                target,
+                RecapPlannerWireTestFacts.SetupsAt(
+                    fixture.Engine,
+                    target
+                ),
+                [inherit]
+            );
+        SessionCurrentLineagePrefix prefix =
+            fixture.Engine.ReadLineagePrefixAt(
+                target,
+                RecapFrozenPlanBarrier.MaxHeaderCount
+            );
+        Assert.Equal(
+            sourceAnchor,
+            prefix.Continuation!.NextAddress
+        );
+        componentReads = 0;
+        SessionJournalReadDiagnostics before =
+            fixture.Engine.CaptureReadDiagnostics();
+
+        RecapFrozenPlanBarrierResult result =
+            await RecapFrozenPlanBarrier.ProveAsync(
+                fixture.Engine,
+                fixture.Store,
+                manifest,
+                prefix,
+                target,
+                RecapProtocolHardCaps.V4,
+                CancellationToken.None
+            );
+
+        Assert.Empty(result.Defects);
+        SessionCurrentLineageBeyondPrefix beyond = Assert.IsType<
+            SessionCurrentLineageBeyondPrefix
+        >(result.BeyondPrefix);
+        Assert.Equal(
+            sourceAnchor,
+            beyond.RequiredAnchor
+        );
+        Assert.Equal(
+            sourceAnchor,
+            beyond.NextAddress
+        );
+        Assert.Equal(
+            before.PayloadReadCount,
+            fixture.Engine.CaptureReadDiagnostics().PayloadReadCount
+        );
+        Assert.Equal(0, componentReads);
+    }
+
+    [Fact]
     public async Task ForgedMaintainSourceCommitmentIsFrozenAuthorityDefect() {
         using RestoreFixture fixture =
             await RestoreFixture.CreateAsync();
@@ -237,6 +343,10 @@ public sealed class DerivedRecapRestoreExecutorTests {
                 fixture.Engine,
                 fixture.Store,
                 targetManifest,
+                fixture.Engine.ReadLineagePrefixAt(
+                    target,
+                    RecapFrozenPlanBarrier.MaxHeaderCount
+                ),
                 target,
                 RecapProtocolHardCaps.V4,
                 CancellationToken.None
@@ -259,8 +369,15 @@ public sealed class DerivedRecapRestoreExecutorTests {
 
     [Fact]
     public async Task RestoreRejectsStructurallyValidWrongReplayStartSetupsBeforeMaintainer() {
+        int componentReads = 0;
+        int mutations = 0;
         using RestoreFixture fixture =
-            await RestoreFixture.CreateAsync();
+            await RestoreFixture.CreateAsync(
+                hooks: new RecapStoreTestHooks(
+                    BeforeRestoreComponentRead: () => componentReads++,
+                    BeforeAtomicFileReplace: _ => mutations++
+                )
+            );
         MaintainRecapBlockPlan valid = fixture.CreateMaintainPlan(
             "frozen.self",
             "frozen-maintainer",
@@ -299,6 +416,8 @@ public sealed class DerivedRecapRestoreExecutorTests {
             plan,
             static (_, _) => "must-not-run"
         );
+        componentReads = 0;
+        mutations = 0;
 
         var unavailable =
             Assert.IsType<DerivedRecapRestoreResult.Unavailable>(
@@ -309,11 +428,13 @@ public sealed class DerivedRecapRestoreExecutorTests {
         Assert.Contains(
             unavailable.Defects,
             defect => defect.Detail.Contains(
-                "payload hash mismatch",
+                "conflicting frozen identity",
                 StringComparison.Ordinal
             )
         );
         Assert.Equal(0, maintainer.CallCount);
+        Assert.Equal(0, componentReads);
+        Assert.Equal(0, mutations);
         PublishedBlockRestoreInspection inspection =
             (await fixture.InspectAsync(anchor))
                 .Blocks[plan.RecapBlockId];
@@ -324,9 +445,84 @@ public sealed class DerivedRecapRestoreExecutorTests {
     }
 
     [Fact]
-    public async Task MissingExistingInputResumeSuffixRejectsStaleBoundarySetupAuthority() {
+    public async Task RestoreRejectsForgedAdmissionSetupHashBeforeComponents() {
+        int componentReads = 0;
+        int mutations = 0;
         using RestoreFixture fixture =
-            await RestoreFixture.CreateAsync();
+            await RestoreFixture.CreateAsync(
+                hooks: new RecapStoreTestHooks(
+                    BeforeRestoreComponentRead: () => componentReads++,
+                    BeforeAtomicFileReplace: _ => mutations++
+                )
+            );
+        MaintainRecapBlockPlan validPlan = fixture.CreateMaintainPlan(
+            "frozen.self",
+            "frozen-maintainer",
+            endpointCount: 1
+        );
+        EventAddress anchor = validPlan.CatchUpBoundaries[^1].Address;
+        SessionContextAnchorSetupReferences forgedAdmission =
+            RecapPlannerWireTestFacts.WrongSetups(
+                RecapPlannerWireTestFacts.SetupsAt(
+                    fixture.Engine,
+                    anchor
+                )
+            );
+        var plan = new MaintainRecapBlockPlan(
+            validPlan.RecapBlockId,
+            validPlan.Target,
+            validPlan.MaintainerId,
+            validPlan.MaintainerCapabilityFingerprint,
+            validPlan.Source,
+            [new RecapReplayBoundary(anchor, forgedAdmission)],
+            validPlan.PriorContext,
+            validPlan.MaxContentUtf8Bytes
+        );
+        _ = await fixture.PublishAsync(
+            anchor,
+            [plan],
+            new Dictionary<RecapBlockId, string> {
+                [plan.RecapBlockId] = "committed"
+            },
+            admissionSetups: forgedAdmission
+        );
+        var maintainer = fixture.CreateMaintainer(
+            plan,
+            static (_, _) => "must-not-run"
+        );
+        componentReads = 0;
+        mutations = 0;
+
+        var unavailable = Assert.IsType<
+            DerivedRecapRestoreResult.Unavailable
+        >(await fixture.CreateExecutor([maintainer])
+            .RestoreAsync(anchor, fixture.CurrentHead));
+
+        Assert.Contains(
+            unavailable.Defects,
+            defect => defect.Code
+                    == DerivedRecapRestoreDefectCodes.FrozenPlanInvalid
+                && defect.Detail.Contains(
+                    "conflicting frozen identity",
+                    StringComparison.Ordinal
+                )
+        );
+        Assert.Equal(0, componentReads);
+        Assert.Equal(0, mutations);
+        Assert.Equal(0, maintainer.CallCount);
+    }
+
+    [Fact]
+    public async Task MissingExistingInputResumeSuffixRejectsStaleBoundarySetupAuthority() {
+        int componentReads = 0;
+        int mutations = 0;
+        using RestoreFixture fixture =
+            await RestoreFixture.CreateAsync(
+                hooks: new RecapStoreTestHooks(
+                    BeforeRestoreComponentRead: () => componentReads++,
+                    BeforeAtomicFileReplace: _ => mutations++
+                )
+            );
         (
             MaintainRecapBlockPlan plan,
             EventAddress target
@@ -365,6 +561,8 @@ public sealed class DerivedRecapRestoreExecutorTests {
             plan,
             static (_, _) => "must-not-run"
         );
+        componentReads = 0;
+        mutations = 0;
 
         var unavailable =
             Assert.IsType<DerivedRecapRestoreResult.Unavailable>(
@@ -373,10 +571,12 @@ public sealed class DerivedRecapRestoreExecutorTests {
             );
 
         Assert.Equal(0, maintainer.CallCount);
+        Assert.Equal(0, componentReads);
+        Assert.Equal(0, mutations);
         Assert.Contains(
             unavailable.Defects,
             defect => defect.Detail.Contains(
-                "not the requested exact replay-safe interval",
+                "does not match the frozen endpoint setup addresses",
                 StringComparison.Ordinal
             )
         );
@@ -2005,7 +2205,8 @@ public sealed class DerivedRecapRestoreExecutorTests {
             => Assert.IsType<
                 PublishedRestoreInspectionResult.Available
             >(
-                await LineageView.InspectPublishedForRestoreAsync(anchor)
+                await LineageView
+                    .InspectPublishedForOfflineDiagnosticsAsync(anchor)
             ).Inspection;
 
         public async ValueTask DamageFinalAsync(

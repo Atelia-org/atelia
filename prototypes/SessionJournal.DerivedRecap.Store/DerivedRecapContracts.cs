@@ -377,6 +377,15 @@ public abstract record RecapPublishability {
 
     public sealed record Publishable : RecapPublishability;
 
+    public sealed record AlreadyPublished(
+        PublishedRecapDescriptor Descriptor
+    ) : RecapPublishability;
+
+    public sealed record SourceChanged(
+        BuildingDescriptor Expected,
+        BuildingDescriptor? Observed
+    ) : RecapPublishability;
+
     public sealed record NotPublishable(
         IReadOnlyList<RecapStructuralDefect> Defects
     ) : RecapPublishability;
@@ -395,6 +404,15 @@ public abstract record PublishRecapResult {
 
     public sealed record Published(PublishedRecapDescriptor Descriptor)
         : PublishRecapResult;
+
+    public sealed record AlreadyPublished(
+        PublishedRecapDescriptor Descriptor
+    ) : PublishRecapResult;
+
+    public sealed record SourceChanged(
+        BuildingDescriptor Expected,
+        BuildingDescriptor? Observed
+    ) : PublishRecapResult;
 
     public sealed record NotPublishable(
         IReadOnlyList<RecapStructuralDefect> Defects

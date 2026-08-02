@@ -477,7 +477,7 @@ public sealed class DerivedRecapStoreTests {
         );
         PublishedRestoreInspectionResult.Available restore =
             Assert.IsType<PublishedRestoreInspectionResult.Available>(
-                await fixture.Store.InspectPublishedForRestoreAsync(
+                await fixture.Store.InspectPublishedForOfflineDiagnosticsAsync(
                     anchor,
                     lineage
                 )

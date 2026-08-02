@@ -187,10 +187,124 @@ public sealed class DerivedRecapPublisherTests {
                 parameter.ParameterType
                     == typeof(SessionCurrentLineageSnapshot)
         );
+        Assert.Equal(
+            typeof(BuildingPlanHandle),
+            publicPublish.GetParameters()[0].ParameterType
+        );
+        MethodInfo publicCanPublish = Assert.Single(
+            typeof(DerivedRecapPublisher).GetMethods(
+                BindingFlags.Instance | BindingFlags.Public
+            ),
+            static method =>
+                method.Name == nameof(
+                    DerivedRecapPublisher.CanPublishAsync
+                )
+        );
+        Assert.Equal(
+            typeof(BuildingPlanHandle),
+            publicCanPublish.GetParameters()[0].ParameterType
+        );
+        Assert.DoesNotContain(
+            typeof(DerivedRecapPublisher).GetMethods(
+                BindingFlags.Instance | BindingFlags.Public
+            ),
+            static method => method.GetParameters().Any(
+                static parameter => parameter.ParameterType
+                    == typeof(EventAddress)
+            )
+        );
     }
 
     [Fact]
-    public async Task PublishAdmissionBeyondPrefixIsTypedBeforeSeal() {
+    public async Task ExactHandleRejectsPlanSwapAfterPreflight() {
+        int sealedCount = 0;
+        DerivedRecapSetManifest? replacement = null;
+        RecapStoreFixture? fixture = null;
+        fixture = await RecapStoreFixture.CreateAsync(
+            new RecapStoreTestHooks(
+                AfterPublicationSealed: () => sealedCount++,
+                BeforePublishedPromotion: () => File.WriteAllBytes(
+                    Path.Combine(
+                        fixture!.Store.GetBuildingPathForTest(
+                            replacement!.SetAdmissionAnchor
+                        ),
+                        "manifest.json"
+                    ),
+                    DerivedRecapCodec.EncodeManifest(replacement)
+                )
+            )
+        );
+        using (fixture) {
+            DerivedRecapLineageView lineage = fixture.Lineage();
+            EventAddress anchor = lineage.CapturedHead;
+            EventAddress replayStart =
+                lineage.CurrentPrefix.HeadToOldest[2].Address;
+            RecapBlockPlan originalPlan = fixture.CreateMaintainPlan(
+                anchor,
+                replayStart,
+                blockId: "roleplay.original"
+            );
+            DerivedRecapSetManifest original =
+                RecapWireTestFacts.CreateManifest(
+                    fixture.Engine,
+                    anchor,
+                    [originalPlan]
+                );
+            _ = Assert.IsType<CreateBuildingResult.Created>(
+                await fixture.Store.CreateBuildingAsync(original)
+            );
+            await RecapStoreTestDriver.InstallFinalAsync(
+                fixture.Store,
+                anchor,
+                DerivedRecapCodec.CreateBlock(
+                    originalPlan,
+                    anchor,
+                    "original"
+                )
+            );
+            BuildingPlanSnapshot snapshot = Assert.IsType<
+                BuildingPlanReadResult.Available
+            >(await fixture.Store.ReadBuildingPlanAsync(anchor)).Snapshot;
+            RecapBlockPlan replacementPlan = fixture.CreateMaintainPlan(
+                anchor,
+                replayStart,
+                blockId: "roleplay.replacement"
+            );
+            replacement = RecapWireTestFacts.CreateManifest(
+                fixture.Engine,
+                anchor,
+                [replacementPlan]
+            );
+
+            var changed = Assert.IsType<
+                PublishRecapResult.SourceChanged
+            >(await fixture.Publisher.PublishAsync(snapshot.Handle));
+
+            Assert.Equal(snapshot.Descriptor, changed.Expected);
+            Assert.Equal(
+                new BuildingDescriptor(
+                    fixture.Engine.BranchRefId,
+                    anchor,
+                    replacement.ManifestPayloadSha256
+                ),
+                changed.Observed
+            );
+            Assert.Equal(1, sealedCount);
+            Assert.True(
+                Directory.Exists(
+                    fixture.Store.GetBuildingPathForTest(anchor)
+                )
+            );
+            Assert.False(
+                Directory.Exists(
+                    fixture.Store.GetPublishedPathForTest(anchor)
+                )
+            );
+        }
+    }
+
+    [Fact]
+    public async Task ExactPlanDamageWinsBeforeAdmissionBeyond() {
         int sealedCount = 0;
         using RecapStoreFixture fixture =
             await RecapStoreFixture.CreateAsync(
@@ -214,6 +328,9 @@ public sealed class DerivedRecapPublisherTests {
         _ = Assert.IsType<CreateBuildingResult.Created>(
             await fixture.Store.CreateBuildingAsync(manifest)
         );
+        BuildingPlanHandle handle = Assert.IsType<
+            BuildingPlanReadResult.Available
+        >(await fixture.Store.ReadBuildingPlanAsync(anchor)).Snapshot.Handle;
         await File.WriteAllTextAsync(
             Path.Combine(
                 fixture.Store.GetBuildingPathForTest(anchor),
@@ -225,11 +342,11 @@ public sealed class DerivedRecapPublisherTests {
             _ = fixture.AppendPair($"tail-{index}");
         }
 
-        Assert.IsType<RecapPublishability.BeyondPrefix>(
-            await fixture.Publisher.CanPublishAsync(anchor)
+        Assert.IsType<RecapPublishability.NotPublishable>(
+            await fixture.Publisher.CanPublishAsync(handle)
         );
-        Assert.IsType<PublishRecapResult.BeyondPrefix>(
-            await fixture.Publisher.PublishAsync(anchor)
+        Assert.IsType<PublishRecapResult.NotPublishable>(
+            await fixture.Publisher.PublishAsync(handle)
         );
         Assert.Equal(0, sealedCount);
         Assert.True(
@@ -329,7 +446,7 @@ public sealed class DerivedRecapPublisherTests {
     }
 
     [Fact]
-    public async Task TwoStoreInstancesSerializeOnPerRefLock() {
+    public async Task TwoPublishersWithSameHandleConvergeIdempotently() {
         var enteredGate =
             new TaskCompletionSource(
                 TaskCreationOptions.RunContinuationsAsynchronously
@@ -363,8 +480,11 @@ public sealed class DerivedRecapPublisherTests {
             anchor,
             DerivedRecapCodec.CreateBlock(plan, anchor, "recap")
         );
+        BuildingPlanSnapshot snapshot = Assert.IsType<
+            BuildingPlanReadResult.Available
+        >(await fixture.Store.ReadBuildingPlanAsync(anchor)).Snapshot;
         Task<PublishRecapResult> publishing =
-            fixture.Publisher.PublishAsync(anchor).AsTask();
+            fixture.Publisher.PublishAsync(snapshot.Handle).AsTask();
         await enteredGate.Task.WaitAsync(TimeSpan.FromSeconds(10));
 
         DerivedRecapStore secondStore = DerivedRecapStore.Open(
@@ -375,8 +495,8 @@ public sealed class DerivedRecapPublisherTests {
             secondStore,
             fixture.Engine
         );
-        Task<RecapPublishability> contending =
-            secondPublisher.CanPublishAsync(anchor).AsTask();
+        Task<PublishRecapResult> contending =
+            secondPublisher.PublishAsync(snapshot.Handle).AsTask();
         try {
             Task early = await Task.WhenAny(
                 contending,
@@ -387,7 +507,29 @@ public sealed class DerivedRecapPublisherTests {
         finally {
             releaseGate.Set();
         }
-        _ = await publishing;
-        _ = await contending;
+        var published = Assert.IsType<PublishRecapResult.Published>(
+            await publishing
+        );
+        var already = Assert.IsType<
+            PublishRecapResult.AlreadyPublished
+        >(await contending);
+        Assert.Equal(published.Descriptor, already.Descriptor);
+        Assert.Equal(
+            published.Descriptor,
+            Assert.IsType<RecapPublishability.AlreadyPublished>(
+                await secondPublisher.CanPublishAsync(snapshot.Handle)
+            ).Descriptor
+        );
+        Assert.Equal(
+            snapshot.Descriptor.ManifestPayloadSha256,
+            (Assert.IsType<PublishedPlanAtAnchorReadResult.Available>(
+                await fixture.Store.ReadPublishedPlanAtAnchorAsync(anchor)
+            )).Snapshot.FrozenPlan.ManifestPayloadSha256
+        );
+        Assert.False(
+            Directory.Exists(
+                fixture.Store.GetBuildingPathForTest(anchor)
+            )
+        );
     }
 }
