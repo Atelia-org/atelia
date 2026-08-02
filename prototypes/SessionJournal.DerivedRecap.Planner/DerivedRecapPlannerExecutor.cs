@@ -975,9 +975,9 @@ internal sealed class DerivedRecapPlannerExecutor {
             if (inputIndex > earliestIndex) {
                 earliest = new RecapReplayBoundary(
                     commitment.AbsorbedThrough,
-                    FindFrozenSetups(
+                    FindFrozenCommitmentSetups(
                         source.FrozenPlan,
-                        commitment.AbsorbedThrough
+                        commitment
                     )
                 );
                 earliestIndex = inputIndex;
@@ -986,38 +986,27 @@ internal sealed class DerivedRecapPlannerExecutor {
         return new EarliestSourceBoundaryResolution(earliest);
     }
 
-    private static SessionContextAnchorSetupReferences FindFrozenSetups(
+    private static SessionContextAnchorSetupReferences
+        FindFrozenCommitmentSetups(
         DerivedRecapSetManifest manifest,
-        EventAddress address
+        RecapBlockCommitment commitment
     ) {
-        if (manifest.SetAdmissionAnchor == address) {
+        RecapBlockPlan plan = manifest.Blocks.Single(
+            candidate => candidate.RecapBlockId
+                == commitment.RecapBlockId
+        );
+        if (plan is InheritRecapBlockPlan inherit) {
+            return inherit.SourceAbsorbedThroughSetups;
+        }
+        if (plan is MaintainRecapBlockPlan
+            && commitment.AbsorbedThrough
+                == manifest.SetAdmissionAnchor) {
             return manifest.SetAdmissionAnchorSetups;
         }
-        foreach (RecapBlockPlan plan in manifest.Blocks) {
-            if (plan is InheritRecapBlockPlan inherit
-                && inherit.SourceSetAnchor == address) {
-                return inherit.SourceAbsorbedThroughSetups;
-            }
-            if (plan is not MaintainRecapBlockPlan maintain) {
-                continue;
-            }
-            RecapReplayBoundary? boundary = maintain.CatchUpBoundaries
-                .FirstOrDefault(candidate => candidate.Address == address);
-            if (boundary is not null) {
-                return boundary.Setups;
-            }
-            if (maintain.Source
-                    is EmptyRecapMaintainSource empty
-                && empty.ReplayStartExclusive == address) {
-                return empty.ReplayStartSetups;
-            }
-            if (maintain.Source
-                    is ExistingRecapMaintainSource existing) {
-                return existing.ReplayStartSetups;
-            }
-        }
         throw new InvalidDataException(
-            $"Published plan has no frozen setup authority for '{address}'."
+            $"Published plan has no frozen setup authority for block "
+            + $"'{commitment.RecapBlockId}' at "
+            + $"'{commitment.AbsorbedThrough}'."
         );
     }
 

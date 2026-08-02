@@ -403,10 +403,20 @@ public sealed class DerivedRecapAcceptanceTests {
 
     private static async ValueTask<PublishedRecapDescriptor>
         RunPublishedAsync(DerivedRecapPlannerExecutor executor) {
-        var published =
-            Assert.IsType<DerivedRecapExecutionResult.Published>(
-                await executor.RunAsync()
+        DerivedRecapExecutionResult result = await executor.RunAsync();
+        if (result is DerivedRecapExecutionResult.Unavailable unavailable) {
+            Assert.Fail(
+                "Expected Published, but execution was unavailable: "
+                    + string.Join(
+                        "; ",
+                        unavailable.Defects.Select(static defect =>
+                            $"{defect.Code}: {defect.Detail}"
+                        )
+                    )
             );
+        }
+        var published =
+            Assert.IsType<DerivedRecapExecutionResult.Published>(result);
         return published.Descriptor;
     }
 

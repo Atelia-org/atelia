@@ -893,6 +893,290 @@ public sealed class DerivedRecapPlannerExecutorTests {
     }
 
     [Fact]
+    public async Task MultiBlockLaggingInheritUsesEachBlocksFrozenSetupEpoch() {
+        int componentReads = 0;
+        int mutations = 0;
+        using TestFixture fixture = await TestFixture.CreateAsync(
+            historyPairs: 1,
+            hooks: new RecapStoreTestHooks(
+                BeforeAtomicFileReplace: _ => mutations++,
+                BeforeBuildingComponentRead: () => componentReads++
+            )
+        );
+        var recentId = new RecapBlockId("a-recent");
+        var oldId = new RecapBlockId("z-old");
+        var recentTarget = new ContextHeaderBlockPath(
+            ContextHeaderCarrier.System,
+            recentId.Value
+        );
+        var oldTarget = new ContextHeaderBlockPath(
+            ContextHeaderCarrier.System,
+            oldId.Value
+        );
+        var recentMaintainer = new ScriptedMaintainer(
+            "recent-maintainer",
+            recentTarget,
+            static (call, _) => $"recent-{call}"
+        );
+        var oldMaintainer = new ScriptedMaintainer(
+            "old-maintainer",
+            oldTarget,
+            static (call, _) => $"old-{call}"
+        );
+        RecapBlockCatalogEntry[] catalog = [
+            new(
+                recentId,
+                recentTarget,
+                recentMaintainer.Id,
+                recentMaintainer.CapabilityFingerprint,
+                TestFixture.MaxContent
+            ),
+            new(
+                oldId,
+                oldTarget,
+                oldMaintainer.Id,
+                oldMaintainer.CapabilityFingerprint,
+                TestFixture.MaxContent
+            )
+        ];
+        IRecapBlockMaintainer[] maintainers = [
+            recentMaintainer,
+            oldMaintainer
+        ];
+        EventAddress replayStart = fixture.ReplayStart();
+        EventAddress firstAdmission =
+            fixture.Engine.ReadCurrentHead()!.Value;
+        SessionContextAnchorSetupReferences firstEpoch =
+            RecapPlannerWireTestFacts.SetupsAt(
+                fixture.Engine,
+                firstAdmission
+            );
+        var initialPolicy = new DelegatePolicy(_ =>
+            new RecapPlanningPolicyDecision.Build(
+                firstAdmission,
+                [
+                    MaintainEmpty(recentId, replayStart, firstAdmission),
+                    MaintainEmpty(oldId, replayStart, firstAdmission)
+                ]
+            ));
+        _ = await RunPublishedAsync(fixture.CreateExecutor(
+            initialPolicy,
+            maintainers,
+            catalog: catalog
+        ));
+
+        _ = fixture.Engine.AppendRuntimeConfigSetup(
+            new SessionRuntimeConfiguration(
+                "model-b",
+                "surface-b",
+                SessionJournalDefaults.Schema,
+                new(0)
+            )
+        );
+        _ = fixture.Engine.AppendSystemPromptSetup("system-b");
+        EventAddress secondAdmission = fixture.AppendPair("epoch-b");
+        SessionContextAnchorSetupReferences secondEpoch =
+            RecapPlannerWireTestFacts.SetupsAt(
+                fixture.Engine,
+                secondAdmission
+            );
+        Assert.NotEqual(firstEpoch, secondEpoch);
+        var mixedPolicy = new DelegatePolicy(context => {
+            RecapBlockSourceIntent recent = Source(context, recentId);
+            RecapBlockSourceIntent old = Source(context, oldId);
+            return new RecapPlanningPolicyDecision.Build(
+                secondAdmission,
+                [
+                    new RecapBlockPlanningDecision.Maintain(
+                        recentId,
+                        new RecapPlanningMaintainSource.Existing(
+                            recent.Source
+                        ),
+                        [secondAdmission],
+                        EmptyRecapPriorContext.Instance
+                    ),
+                    new RecapBlockPlanningDecision.Inherit(
+                        oldId,
+                        old.Source
+                    )
+                ]
+            );
+        });
+        _ = await RunPublishedAsync(fixture.CreateExecutor(
+            mixedPolicy,
+            maintainers,
+            catalog: catalog
+        ));
+
+        _ = fixture.Engine.AppendRuntimeConfigSetup(
+            new SessionRuntimeConfiguration(
+                "model-c",
+                "surface-c",
+                SessionJournalDefaults.Schema,
+                new(0)
+            )
+        );
+        _ = fixture.Engine.AppendSystemPromptSetup("system-c");
+        EventAddress thirdAdmission = fixture.AppendPair("epoch-c");
+        var inheritBothPolicy = new DelegatePolicy(context =>
+            new RecapPlanningPolicyDecision.Build(
+                thirdAdmission,
+                [
+                    Inherit(context, recentId),
+                    Inherit(context, oldId)
+                ]
+            ));
+        DerivedRecapExecutionResult.Published inherited =
+            await RunPublishedAsync(fixture.CreateExecutor(
+                inheritBothPolicy,
+                maintainers,
+                catalog: catalog
+            ));
+        PublishedRecapSourceSnapshot source =
+            await fixture.ReadSourceAsync(
+                inherited.Descriptor,
+                [recentId, oldId]
+            );
+        DerivedRecapFrozenInput recentInput = source.FrozenInputs.Single(
+            input => input.RecapBlockId == recentId
+        );
+        DerivedRecapFrozenInput oldInput = source.FrozenInputs.Single(
+            input => input.RecapBlockId == oldId
+        );
+        Assert.Equal(secondAdmission, recentInput.AbsorbedThrough);
+        Assert.Equal(secondEpoch, recentInput.AbsorbedThroughSetups);
+        Assert.Equal(firstAdmission, oldInput.AbsorbedThrough);
+        Assert.Equal(firstEpoch, oldInput.AbsorbedThroughSetups);
+        Assert.NotEqual(
+            recentInput.AbsorbedThroughSetups,
+            oldInput.AbsorbedThroughSetups
+        );
+        InheritRecapBlockPlan recentPlan = Assert.IsType<
+            InheritRecapBlockPlan
+        >(source.Publication.FrozenPlanSnapshot.Blocks.Single(
+            plan => plan.RecapBlockId == recentId
+        ));
+        InheritRecapBlockPlan oldPlan = Assert.IsType<
+            InheritRecapBlockPlan
+        >(source.Publication.FrozenPlanSnapshot.Blocks.Single(
+            plan => plan.RecapBlockId == oldId
+        ));
+        Assert.Equal(secondAdmission, recentPlan.SourceSetAnchor);
+        Assert.Equal(secondAdmission, oldPlan.SourceSetAnchor);
+        Assert.NotEqual(
+            recentInput.AbsorbedThrough,
+            inherited.Descriptor.SetAdmissionAnchor
+        );
+        Assert.NotEqual(
+            oldInput.AbsorbedThrough,
+            inherited.Descriptor.SetAdmissionAnchor
+        );
+        Assert.Equal(
+            recentInput.AbsorbedThroughSetups,
+            recentPlan.SourceAbsorbedThroughSetups
+        );
+        Assert.Equal(
+            oldInput.AbsorbedThroughSetups,
+            oldPlan.SourceAbsorbedThroughSetups
+        );
+        EventAddress verificationHead =
+            fixture.AppendPair("verify-earliest");
+        SessionHistoryPlanningWindow expectedEarliestWindow =
+            fixture.Engine.ReadHistoryPlanningWindowAt(
+                verificationHead,
+                firstAdmission
+            );
+        SessionHistoryPlanningWindow wrongRecentWindow =
+            fixture.Engine.ReadHistoryPlanningWindowAt(
+                verificationHead,
+                secondAdmission
+            );
+        SessionHistoryPlanningWindow cadenceGrowthWindow =
+            fixture.Engine.ReadHistoryPlanningWindowAt(
+                verificationHead,
+                thirdAdmission
+            );
+        Assert.Equal(6, expectedEarliestWindow.Units.Count);
+        Assert.Equal(4, wrongRecentWindow.Units.Count);
+        Assert.Equal(2, cadenceGrowthWindow.Units.Count);
+
+        componentReads = 0;
+        mutations = 0;
+        recentMaintainer.Reset();
+        oldMaintainer.Reset();
+        var estimator = new TestHistoryUnitLoadEstimator();
+        var mustNotBuild = new DelegatePolicy(static _ =>
+            throw new Xunit.Sdk.XunitException(
+                "Below-threshold verification must not call policy."
+            ));
+        DerivedRecapExecutionResult result =
+            await fixture.CreateExecutor(
+                    mustNotBuild,
+                    maintainers,
+                    recapBuildIntervalHistoryLoad: 100,
+                    estimator: estimator,
+                    catalog: catalog
+                )
+                .RunAsync();
+
+        Assert.IsType<DerivedRecapExecutionResult.NoBuild>(result);
+        Assert.Equal(
+            cadenceGrowthWindow.Units.Count,
+            estimator.MeasureCallCount
+        );
+        Assert.Equal(0, mustNotBuild.CallCount);
+        Assert.Equal(0, recentMaintainer.CallCount);
+        Assert.Equal(0, oldMaintainer.CallCount);
+        Assert.Equal(0, componentReads);
+        Assert.Equal(0, mutations);
+
+        RecapBlockPlanningDecision.Maintain MaintainEmpty(
+            RecapBlockId id,
+            EventAddress start,
+            EventAddress admission
+        ) => new(
+            id,
+            new RecapPlanningMaintainSource.Empty(start),
+            [admission],
+            EmptyRecapPriorContext.Instance
+        );
+
+        RecapBlockPlanningDecision.Inherit Inherit(
+            RecapPlanningPolicyContext context,
+            RecapBlockId id
+        ) => new(id, Source(context, id).Source);
+
+        static RecapBlockSourceIntent Source(
+            RecapPlanningPolicyContext context,
+            RecapBlockId id
+        ) => context.PolicyFacts.AvailableSources.Single(
+            source => source.RecapBlockId == id
+        );
+
+        static async ValueTask<
+            DerivedRecapExecutionResult.Published
+        > RunPublishedAsync(DerivedRecapPlannerExecutor executor) {
+            DerivedRecapExecutionResult result =
+                await executor.RunAsync();
+            if (result is DerivedRecapExecutionResult.Unavailable
+                    unavailable) {
+                Assert.Fail(
+                    "Expected Published, but execution was unavailable: "
+                    + string.Join(
+                        "; ",
+                        unavailable.Defects.Select(static defect =>
+                            $"{defect.Code}: {defect.Detail}"
+                        )
+                    )
+                );
+            }
+            return Assert.IsType<
+                DerivedRecapExecutionResult.Published
+            >(result);
+        }
+    }
+
+    [Fact]
     public async Task MaintainMayKeepContentWhileAdvancingCursor() {
         using TestFixture fixture = await TestFixture.CreateAsync(
             historyPairs: 2
@@ -1942,8 +2226,14 @@ public sealed class DerivedRecapPlannerExecutorTests {
 
     [Fact]
     public async Task ResumeRejectsRepeatedRouteBoundaryBeforeMaintainer() {
+        int componentReads = 0;
+        int mutations = 0;
         using TestFixture fixture = await TestFixture.CreateAsync(
-            historyPairs: 2
+            historyPairs: 2,
+            hooks: new RecapStoreTestHooks(
+                BeforeAtomicFileReplace: _ => mutations++,
+                BeforeBuildingComponentRead: () => componentReads++
+            )
         );
         (EventAddress start, _, EventAddress admission) =
             fixture.TwoStepRoute();
@@ -1961,6 +2251,8 @@ public sealed class DerivedRecapPlannerExecutorTests {
             fixture.SelfTarget,
             static (_, _) => "must-not-run"
         );
+        componentReads = 0;
+        mutations = 0;
 
         var unavailable =
             Assert.IsType<DerivedRecapExecutionResult.Unavailable>(
@@ -1973,12 +2265,14 @@ public sealed class DerivedRecapPlannerExecutorTests {
             defect => defect.Code
                 == DerivedRecapExecutionDefectCodes.BuildingInvalid
                 && defect.Detail.Contains(
-                    "route is not strictly increasing from its exact "
-                        + "source cursor",
+                    "catch-up route is not strictly increasing within "
+                        + "its target admission bound",
                     StringComparison.Ordinal
                 )
         );
         Assert.Equal(0, maintainer.CallCount);
+        Assert.Equal(0, componentReads);
+        Assert.Equal(0, mutations);
         BuildingBlockInspection inspection =
             await fixture.Store.InspectBuildingBlockAsync(
                 building.Descriptor,
