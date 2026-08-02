@@ -1605,34 +1605,53 @@ public sealed class DerivedRecapPlannerExecutorTests {
     }
 
     [Fact]
-    public async Task ResumeRejectsIncompleteRouteBeforeMaintainer() {
+    public async Task ResumeRejectsRepeatedRouteBoundaryBeforeMaintainer() {
         using TestFixture fixture = await TestFixture.CreateAsync(
             historyPairs: 2
         );
-        (EventAddress start, EventAddress mid, EventAddress admission) =
+        (EventAddress start, _, EventAddress admission) =
             fixture.TwoStepRoute();
         MaintainRecapBlockPlan plan = fixture.CreateEmptyPlan(
             fixture.SelfId,
             fixture.SelfTarget,
             "self-maintainer",
             start,
-            [mid]
+            [admission, admission]
         );
-        await fixture.CreateBuildingAsync(admission, [plan]);
+        BuildingSnapshot building =
+            await fixture.CreateBuildingAsync(admission, [plan]);
         var maintainer = new ScriptedMaintainer(
             "self-maintainer",
             fixture.SelfTarget,
             static (_, _) => "must-not-run"
         );
 
-        DerivedRecapExecutionResult result =
-            await fixture.CreateBuildingExecutor(
-                    [maintainer]
-                )
-                .ResumeAsync(admission);
+        var unavailable =
+            Assert.IsType<DerivedRecapExecutionResult.Unavailable>(
+                await fixture.CreateBuildingExecutor([maintainer])
+                    .ResumeAsync(admission)
+            );
 
-        Assert.IsType<DerivedRecapExecutionResult.Unavailable>(result);
+        Assert.Contains(
+            unavailable.Defects,
+            defect => defect.Code
+                == DerivedRecapExecutionDefectCodes.BuildingInvalid
+                && defect.Detail.Contains(
+                    "route is not strictly increasing from its exact "
+                        + "source cursor",
+                    StringComparison.Ordinal
+                )
+        );
         Assert.Equal(0, maintainer.CallCount);
+        BuildingBlockInspection inspection =
+            await fixture.Store.InspectBuildingBlockAsync(
+                building.Descriptor,
+                plan.RecapBlockId
+            );
+        Assert.IsType<RollingRecapCheckpointHealth.Missing>(
+            inspection.Checkpoint
+        );
+        Assert.IsType<FinalRecapBlockHealth.Missing>(inspection.Final);
     }
 
     [Fact]
