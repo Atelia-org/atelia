@@ -567,6 +567,195 @@ public sealed class DerivedRecapStoreR1Tests {
         );
     }
 
+    [Fact]
+    public async Task OversizedBuildingArtifactsAreUnavailableAndNotWritable() {
+        using RecapStoreFixture fixture =
+            await RecapStoreFixture.CreateAsync(historyPairs: 1);
+        SessionCurrentLineageSnapshot lineage = fixture.Lineage();
+        EventAddress target = lineage.CapturedHead;
+        RecapBlockPlan plan = fixture.CreateMaintainPlan(
+            target,
+            lineage.HeadToRoot[^1].Address
+        );
+        CreateBuildingResult.Created created =
+            Assert.IsType<CreateBuildingResult.Created>(
+                await fixture.Store.CreateBuildingAsync(
+                    DerivedRecapCodec.CreateManifest(
+                        fixture.Engine.BranchRefId,
+                        target,
+                        [plan]
+                    )
+                )
+            );
+        string buildingPath =
+            fixture.Store.GetBuildingPathForTest(target);
+        string checkpointPath = Path.Combine(
+            buildingPath,
+            "work",
+            $"{plan.RecapBlockId.Value}.json"
+        );
+        CreateOversizedSparseFile(checkpointPath);
+
+        BuildingBlockInspection checkpointInspection =
+            await fixture.Store.InspectBuildingBlockAsync(
+                created.Descriptor,
+                plan.RecapBlockId
+            );
+        var checkpointUnavailable =
+            Assert.IsType<RollingRecapCheckpointHealth.Unavailable>(
+                checkpointInspection.Checkpoint
+            );
+        Assert.Contains(
+            checkpointUnavailable.Defects,
+            static defect => defect.Code
+                == "CheckpointReadUnavailable"
+        );
+        DerivedRecapBlock candidate = DerivedRecapCodec.CreateBlock(
+            plan,
+            target,
+            "candidate"
+        );
+        Assert.IsType<CheckpointWriteResult.Unavailable>(
+            await fixture.Store.AdvanceRollingCheckpointAsync(
+                created.Descriptor,
+                plan.RecapBlockId,
+                "missing",
+                candidate
+            )
+        );
+        Assert.IsType<FinalBlockWriteResult.Unavailable>(
+            await fixture.Store.EnsureFinalBlockAsync(
+                created.Descriptor,
+                plan.RecapBlockId,
+                "missing",
+                candidate
+            )
+        );
+        Assert.Equal(
+            DerivedRecapStore.MaxBlockBytes + 1,
+            new FileInfo(checkpointPath).Length
+        );
+
+        string finalPath = Path.Combine(
+            buildingPath,
+            "blocks",
+            $"{plan.RecapBlockId.Value}.json"
+        );
+        CreateOversizedSparseFile(finalPath);
+        BuildingBlockInspection finalInspection =
+            await fixture.Store.InspectBuildingBlockAsync(
+                created.Descriptor,
+                plan.RecapBlockId
+            );
+        var finalUnavailable =
+            Assert.IsType<FinalRecapBlockHealth.Unavailable>(
+                finalInspection.Final
+            );
+        Assert.Contains(
+            finalUnavailable.Defects,
+            static defect => defect.Code == "FinalBlockReadUnavailable"
+        );
+        Assert.IsType<FinalBlockWriteResult.Unavailable>(
+            await fixture.Store.EnsureFinalBlockAsync(
+                created.Descriptor,
+                plan.RecapBlockId,
+                "missing",
+                candidate
+            )
+        );
+        Assert.Equal(
+            DerivedRecapStore.MaxBlockBytes + 1,
+            new FileInfo(finalPath).Length
+        );
+    }
+
+    [Fact]
+    public async Task OversizedPublishedCheckpointBlocksRestoreAndWrites() {
+        using RecapStoreFixture fixture =
+            await RecapStoreFixture.CreateAsync(historyPairs: 1);
+        SessionCurrentLineageSnapshot lineage = fixture.Lineage();
+        EventAddress target = lineage.CapturedHead;
+        RecapBlockPlan plan = fixture.CreateMaintainPlan(
+            target,
+            lineage.HeadToRoot[^1].Address
+        );
+        DerivedRecapSetManifest manifest =
+            DerivedRecapCodec.CreateManifest(
+                fixture.Engine.BranchRefId,
+                target,
+                [plan]
+            );
+        _ = Assert.IsType<CreateBuildingResult.Created>(
+            await fixture.Store.CreateBuildingAsync(manifest)
+        );
+        DerivedRecapBlock candidate = DerivedRecapCodec.CreateBlock(
+            plan,
+            target,
+            "published candidate"
+        );
+        await RecapStoreTestDriver.InstallFinalAsync(
+            fixture.Store,
+            target,
+            candidate
+        );
+        _ = await fixture.Publisher.PublishAsync(target);
+
+        string publishedPath =
+            fixture.Store.GetPublishedPathForTest(target);
+        File.Delete(Path.Combine(
+            publishedPath,
+            "blocks",
+            $"{plan.RecapBlockId.Value}.json"
+        ));
+        CreateOversizedSparseFile(Path.Combine(
+            publishedPath,
+            "work",
+            $"{plan.RecapBlockId.Value}.json"
+        ));
+
+        var available =
+            Assert.IsType<PublishedRestoreInspectionResult.Available>(
+                await fixture.Store.InspectPublishedForRestoreAsync(
+                    target,
+                    lineage
+                )
+            );
+        PublishedBlockRestoreInspection block =
+            available.Inspection.Blocks[plan.RecapBlockId];
+        Assert.IsType<RollingRecapCheckpointHealth.Unavailable>(
+            block.Checkpoint
+        );
+        Assert.IsType<PublishedBlockRestoreCapability.Unavailable>(
+            block.Capability
+        );
+        Assert.IsType<PublishedCheckpointWriteResult.Unavailable>(
+            await fixture.Store.AdvancePublishedCheckpointAsync(
+                available.Inspection.Handle,
+                plan.RecapBlockId,
+                "missing",
+                candidate
+            )
+        );
+        Assert.IsType<PublishedFinalWriteResult.Unavailable>(
+            await fixture.Store.InstallPublishedReplacementAsync(
+                available.Inspection.Handle,
+                plan.RecapBlockId,
+                "missing",
+                candidate
+            )
+        );
+    }
+
+    private static void CreateOversizedSparseFile(string path) {
+        using var stream = new FileStream(
+            path,
+            FileMode.Create,
+            FileAccess.Write,
+            FileShare.None
+        );
+        stream.SetLength(DerivedRecapStore.MaxBlockBytes + 1);
+    }
+
     private static async ValueTask<PublishedRecapDescriptor>
         PublishAsync(
         RecapStoreFixture fixture,

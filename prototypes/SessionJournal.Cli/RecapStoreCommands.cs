@@ -481,6 +481,7 @@ internal static class RecapStoreCommands {
         RollingRecapCheckpointHealth.Missing => "Missing",
         RollingRecapCheckpointHealth.Healthy => "Healthy",
         RollingRecapCheckpointHealth.Unusable => "Unusable",
+        RollingRecapCheckpointHealth.Unavailable => "Unavailable",
         _ => inspect.GetType().Name
     };
 
@@ -499,6 +500,8 @@ internal static class RecapStoreCommands {
     ) => health switch {
         RollingRecapCheckpointHealth.Unusable unusable =>
             unusable.Defects,
+        RollingRecapCheckpointHealth.Unavailable unavailable =>
+            unavailable.Defects,
         _ => []
     };
 

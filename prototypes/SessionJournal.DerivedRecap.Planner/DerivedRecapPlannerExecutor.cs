@@ -1468,6 +1468,22 @@ public sealed class DerivedRecapBuildingExecutor {
                 continue;
             }
             inspections.Add(plan.RecapBlockId, inspection);
+            bool artifactUnavailable = false;
+            if (inspection.Final
+                    is FinalRecapBlockHealth.Unavailable finalUnavailable) {
+                AddStoreDefects(defects, finalUnavailable.Defects);
+                artifactUnavailable = true;
+            }
+            if (plan is MaintainRecapBlockPlan
+                && inspection.Checkpoint
+                    is RollingRecapCheckpointHealth.Unavailable
+                        checkpointUnavailable) {
+                AddStoreDefects(defects, checkpointUnavailable.Defects);
+                artifactUnavailable = true;
+            }
+            if (artifactUnavailable) {
+                continue;
+            }
             if (plan is not MaintainRecapBlockPlan maintain
                 || inspection.Final
                     is FinalRecapBlockHealth.Healthy) {
@@ -1527,6 +1543,10 @@ public sealed class DerivedRecapBuildingExecutor {
         if (inspection.Final is FinalRecapBlockHealth.Healthy) {
             return null;
         }
+        if (inspection.Final
+                is FinalRecapBlockHealth.Unavailable finalUnavailable) {
+            return Unavailable(finalUnavailable.Defects);
+        }
 
         if (plan is InheritRecapBlockPlan) {
             if (inspection.FrozenInput is not { } input) {
@@ -1551,6 +1571,11 @@ public sealed class DerivedRecapBuildingExecutor {
         }
 
         var maintain = (MaintainRecapBlockPlan)plan;
+        if (inspection.Checkpoint
+                is RollingRecapCheckpointHealth.Unavailable
+                    checkpointUnavailable) {
+            return Unavailable(checkpointUnavailable.Defects);
+        }
         if (!_maintainers.TryResolve(
                 maintain.MaintainerId,
                 maintain.Target,
@@ -1673,6 +1698,20 @@ public sealed class DerivedRecapBuildingExecutor {
                         is FinalRecapBlockHealth.Healthy) {
                         return null;
                     }
+                    if (refreshed.Final
+                            is FinalRecapBlockHealth.Unavailable
+                                refreshedFinalUnavailable) {
+                        return Unavailable(
+                            refreshedFinalUnavailable.Defects
+                        );
+                    }
+                    if (refreshed.Checkpoint
+                            is RollingRecapCheckpointHealth.Unavailable
+                                refreshedCheckpointUnavailable) {
+                        return Unavailable(
+                            refreshedCheckpointUnavailable.Defects
+                        );
+                    }
                     if (refreshed.Checkpoint
                         is not RollingRecapCheckpointHealth.Healthy
                             advanced
@@ -1689,6 +1728,8 @@ public sealed class DerivedRecapBuildingExecutor {
                     nextEndpoint = advanced.EndpointIndex + 1;
                     inspection = refreshed;
                     break;
+                case CheckpointWriteResult.Unavailable unavailable:
+                    return Unavailable(unavailable.Defects);
             }
         }
 
@@ -1763,6 +1804,8 @@ public sealed class DerivedRecapBuildingExecutor {
                             $"Final block '{inspection.Plan.RecapBlockId}' "
                             + "changed concurrently."
                         );
+            case FinalBlockWriteResult.Unavailable unavailable:
+                return Unavailable(unavailable.Defects);
             default:
                 throw new InvalidOperationException(
                     "Unknown final block write result."
@@ -1831,6 +1874,18 @@ public sealed class DerivedRecapBuildingExecutor {
         DerivedRecapExecutionDefectCodes.BuildingInvalid,
         detail
     ));
+
+    private static void AddStoreDefects(
+        List<DerivedRecapExecutionDefect> defects,
+        IReadOnlyList<RecapStructuralDefect> storeDefects
+    ) {
+        foreach (RecapStructuralDefect defect in storeDefects) {
+            defects.Add(new DerivedRecapExecutionDefect(
+                defect.Code,
+                defect.Detail
+            ));
+        }
+    }
 
     private static bool IsAvailabilityException(Exception exception)
         => exception is RecapRawHeadChangedException

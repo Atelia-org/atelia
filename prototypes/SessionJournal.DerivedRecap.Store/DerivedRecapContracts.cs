@@ -456,6 +456,12 @@ public abstract record RollingRecapCheckpointHealth {
         IReadOnlyList<RecapStructuralDefect> Defects,
         string StateToken
     ) : RollingRecapCheckpointHealth;
+
+    public sealed record Unavailable(
+        IReadOnlyList<RecapStructuralDefect> Defects
+    ) : RollingRecapCheckpointHealth {
+        public override string StateToken { get; init; } = string.Empty;
+    }
 }
 
 public sealed record BuildingBlockInspection(
@@ -478,6 +484,10 @@ public abstract record CheckpointWriteResult {
 
     public sealed record Stale(string CurrentStateToken)
         : CheckpointWriteResult;
+
+    public sealed record Unavailable(
+        IReadOnlyList<RecapStructuralDefect> Defects
+    ) : CheckpointWriteResult;
 }
 
 public abstract record FinalBlockWriteResult {
@@ -502,6 +512,10 @@ public abstract record FinalBlockWriteResult {
 
     public sealed record Stale(string CurrentStateToken)
         : FinalBlockWriteResult;
+
+    public sealed record Unavailable(
+        IReadOnlyList<RecapStructuralDefect> Defects
+    ) : FinalBlockWriteResult;
 }
 
 public enum PublishedRestoreAuthorityKind {

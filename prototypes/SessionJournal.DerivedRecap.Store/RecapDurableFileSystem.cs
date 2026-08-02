@@ -1,7 +1,6 @@
 using System.ComponentModel;
 using System.Globalization;
 using System.Runtime.InteropServices;
-using System.Security.Cryptography;
 
 namespace Atelia.SessionJournal.DerivedRecap.Store;
 
@@ -261,23 +260,6 @@ internal sealed class RecapDurableFileSystem {
                 exception
             );
         }
-    }
-
-    public string ComputeFileSha256(string path) {
-        EnsureSafeDescendant(path);
-        using var stream = new FileStream(
-            path,
-            FileMode.Open,
-            FileAccess.Read,
-            FileShare.Read,
-            bufferSize: 64 * 1024,
-            FileOptions.SequentialScan
-        );
-        string hash = Convert.ToHexString(
-            SHA256.HashData(stream)
-        ).ToLowerInvariant();
-        EnsureSafeDescendant(path);
-        return hash;
     }
 
     public void FlushFile(string path) {

@@ -269,6 +269,9 @@ manifest 中该 block 的 exact discriminated `RecapBlockPlan` canonical bytes�
 - healthy checkpoint 必须匹配 authoritative `BlockPlanSha256` 和某个 frozen endpoint；
 - healthy checkpoint 后只补 route suffix；
 - checkpoint missing/damaged 时，仅该 block 从 frozen source 重跑完整 route；
+- final/checkpoint 的 `damaged` 只表示 Store 已在大小上限内完整捕获 bytes、因而能生成
+  exact state token 的可替换内容缺陷；若 bounded read 本身失败或文件超过上限，则返回 typed
+  `Unavailable`，不得为获取 token 再次读取或计算无界 hash，也不得自动覆盖该文件；
 - final endpoint 先写 rolling checkpoint，再原子安装 final block；
 - checkpoint 不参与 Complete、Published、ordinal 或其他 block 输入。
 

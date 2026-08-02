@@ -1796,6 +1796,58 @@ public sealed class DerivedRecapPlannerExecutorTests {
         Assert.Equal(0, maintainer.CallCount);
     }
 
+    [Theory]
+    [InlineData("blocks", "FinalBlockReadUnavailable")]
+    [InlineData("work", "CheckpointReadUnavailable")]
+    public async Task ResumeRejectsOversizedArtifactBeforeMaintainer(
+        string artifactDirectory,
+        string expectedDefectCode
+    ) {
+        using TestFixture fixture = await TestFixture.CreateAsync(
+            historyPairs: 1
+        );
+        EventAddress admission =
+            fixture.Engine.ReadCurrentHead()!.Value;
+        MaintainRecapBlockPlan plan = fixture.CreateEmptyPlan(
+            fixture.SelfId,
+            fixture.SelfTarget,
+            "self-maintainer",
+            fixture.ReplayStart(),
+            [admission]
+        );
+        await fixture.CreateBuildingAsync(admission, [plan]);
+        string artifactPath = Path.Combine(
+            fixture.Store.GetBuildingPathForTest(admission),
+            artifactDirectory,
+            $"{plan.RecapBlockId.Value}.json"
+        );
+        using (var stream = new FileStream(
+                   artifactPath,
+                   FileMode.Create,
+                   FileAccess.Write,
+                   FileShare.None
+               )) {
+            stream.SetLength(DerivedRecapStore.MaxBlockBytes + 1);
+        }
+        var maintainer = new ScriptedMaintainer(
+            "self-maintainer",
+            fixture.SelfTarget,
+            static (_, _) => "must-not-run"
+        );
+
+        var unavailable =
+            Assert.IsType<DerivedRecapExecutionResult.Unavailable>(
+                await fixture.CreateBuildingExecutor([maintainer])
+                    .ResumeAsync(admission)
+            );
+
+        Assert.Contains(
+            unavailable.Defects,
+            defect => defect.Code == expectedDefectCode
+        );
+        Assert.Equal(0, maintainer.CallCount);
+    }
+
     private sealed class DelegatePolicy : IRecapPlanningPolicy {
         private readonly Func<
             RecapPlanningPolicyContext,

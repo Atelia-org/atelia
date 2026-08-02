@@ -901,6 +901,13 @@ public sealed class DerivedRecapStore {
                     cancellationToken
                 )
                 .ConfigureAwait(false);
+        if (inspection.Checkpoint
+                is RollingRecapCheckpointHealth.Unavailable
+                    unavailable) {
+            return new CheckpointWriteResult.Unavailable(
+                unavailable.Defects
+            );
+        }
         if (!string.Equals(
                 expectedStateToken,
                 inspection.Checkpoint.StateToken,
@@ -998,6 +1005,12 @@ public sealed class DerivedRecapStore {
                     cancellationToken
                 )
                 .ConfigureAwait(false);
+        if (inspection.Final
+                is FinalRecapBlockHealth.Unavailable unavailable) {
+            return new FinalBlockWriteResult.Unavailable(
+                unavailable.Defects
+            );
+        }
         if (!string.Equals(
                 expectedStateToken,
                 inspection.Final.StateToken,
@@ -1024,17 +1037,24 @@ public sealed class DerivedRecapStore {
                     healthy.StateToken
                 );
         }
-        if (inspection.Plan is MaintainRecapBlockPlan maintain
-            && (inspection.Checkpoint
-                    is not RollingRecapCheckpointHealth.Healthy
-                        checkpoint
+        if (inspection.Plan is MaintainRecapBlockPlan maintain) {
+            if (inspection.Checkpoint
+                    is RollingRecapCheckpointHealth.Unavailable
+                        checkpointUnavailable) {
+                return new FinalBlockWriteResult.Unavailable(
+                    checkpointUnavailable.Defects
+                );
+            }
+            if (inspection.Checkpoint
+                    is not RollingRecapCheckpointHealth.Healthy checkpoint
                 || checkpoint.EndpointIndex
                     != maintain.CatchUpThrough.Count - 1
-                || checkpoint.Block != candidate)) {
-            throw new InvalidDataException(
-                "Maintain final installation requires a healthy, "
-                + "byte-identical final-endpoint rolling checkpoint."
-            );
+                || checkpoint.Block != candidate) {
+                throw new InvalidDataException(
+                    "Maintain final installation requires a healthy, "
+                    + "byte-identical final-endpoint rolling checkpoint."
+                );
+            }
         }
 
         bool replacingDamaged =
@@ -1605,6 +1625,13 @@ public sealed class DerivedRecapStore {
                     cancellationToken
                 )
                 .ConfigureAwait(false);
+        if (checkpoint
+                is RollingRecapCheckpointHealth.Unavailable
+                    unavailable) {
+            return new PublishedCheckpointWriteResult.Unavailable(
+                unavailable.Defects
+            );
+        }
         if (!string.Equals(
                 expectedStateToken,
                 checkpoint.StateToken,
@@ -1807,24 +1834,34 @@ public sealed class DerivedRecapStore {
                 candidate
             );
         }
-        if (plan is MaintainRecapBlockPlan maintain
-            && (await InspectCheckpointHealthAsync(
-                    maintain,
-                    GetBlockFilePath(
-                        Path.Combine(publishedPath, "work"),
-                        blockId
-                    ),
-                    cancellationToken
-                )
-                .ConfigureAwait(false)
-                is not RollingRecapCheckpointHealth.Healthy checkpoint
+        if (plan is MaintainRecapBlockPlan maintain) {
+            RollingRecapCheckpointHealth checkpointHealth =
+                await InspectCheckpointHealthAsync(
+                        maintain,
+                        GetBlockFilePath(
+                            Path.Combine(publishedPath, "work"),
+                            blockId
+                        ),
+                        cancellationToken
+                    )
+                    .ConfigureAwait(false);
+            if (checkpointHealth
+                    is RollingRecapCheckpointHealth.Unavailable
+                        checkpointUnavailable) {
+                return new PublishedFinalWriteResult.Unavailable(
+                    checkpointUnavailable.Defects
+                );
+            }
+            if (checkpointHealth
+                    is not RollingRecapCheckpointHealth.Healthy checkpoint
                 || checkpoint.EndpointIndex
                     != maintain.CatchUpThrough.Count - 1
-                || checkpoint.Block != candidate)) {
-            throw new InvalidDataException(
-                "Published Maintain final installation requires a "
-                + "healthy, byte-identical final-endpoint checkpoint."
-            );
+                || checkpoint.Block != candidate) {
+                throw new InvalidDataException(
+                    "Published Maintain final installation requires a "
+                    + "healthy, byte-identical final-endpoint checkpoint."
+                );
+            }
         }
 
         bool replacingDamaged =
@@ -3606,6 +3643,13 @@ public sealed class DerivedRecapStore {
 
         var maintain = (MaintainRecapBlockPlan)plan;
         if (checkpoint
+                is RollingRecapCheckpointHealth.Unavailable
+                    checkpointUnavailable) {
+            return new PublishedBlockRestoreCapability.Unavailable(
+                checkpointUnavailable.Defects
+            );
+        }
+        if (checkpoint
                 is RollingRecapCheckpointHealth.Healthy healthy) {
             return healthy.EndpointIndex
                     == maintain.CatchUpThrough.Count - 1
@@ -4401,14 +4445,13 @@ public sealed class DerivedRecapStore {
             );
         }
         catch (InvalidDataException exception) {
-            return new FinalRecapBlockHealth.Damaged(
+            return new FinalRecapBlockHealth.Unavailable(
                 [
                     new RecapStructuralDefect(
-                        "FinalBlockDamaged",
+                        "FinalBlockReadUnavailable",
                         exception.Message
                     )
-                ],
-                $"damaged:{_fileSystem.ComputeFileSha256(path)}"
+                ]
             );
         }
         try {
@@ -4469,14 +4512,13 @@ public sealed class DerivedRecapStore {
             );
         }
         catch (InvalidDataException exception) {
-            return new RollingRecapCheckpointHealth.Unusable(
+            return new RollingRecapCheckpointHealth.Unavailable(
                 [
                     new RecapStructuralDefect(
-                        "CheckpointUnusable",
+                        "CheckpointReadUnavailable",
                         exception.Message
                     )
-                ],
-                $"damaged:{_fileSystem.ComputeFileSha256(path)}"
+                ]
             );
         }
         try {
