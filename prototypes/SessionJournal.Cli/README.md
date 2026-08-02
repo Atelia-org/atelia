@@ -178,7 +178,8 @@ execution report schema V5同时报告 estimator ID、growth load、可空的 se
 absorbed/recent load，以及仅用于结构诊断的 HistoryUnit/raw event counts。prepare、execute或
 restore遇到bounded-lineage不确定性时，`beyondPrefix`携带`requiredAnchor`、`capturedHead`、
 `headerCount`和`nextAddress`；普通不可用场景该字段为null。CLI目前完成的是B1 Store-boundary
-迁移，online planning内部剩余的完整lineage读取仍待B2收口。
+迁移。普通`run` prepare、exact Building resume和exact Published restore内部仍有完整或重复的
+lineage读取，待B2收口。
 
 成功 Publish后才进入 strict ordinal。首次 new planning前须显式执行
 `recap planner-config init`。
@@ -217,7 +218,8 @@ dotnet run --project prototypes/SessionJournal.Cli -- \
 
 `--expected-raw-head` 是显式 optimistic fence。Restore 不改变 Published membership、strict
 ordinal、frozen plan 或 admission anchor；无法从 frozen input/checkpoint恢复时返回
-`Unavailable`，不 replan、不扫描更旧 set。
+`Unavailable`，bounded prefix无法认证exact slot时返回`BeyondPrefix`，不 replan、不扫描更旧
+set。
 
 ### recap abandon-building
 
@@ -254,6 +256,7 @@ reset 后的 catch-up 仍需显式执行一次或多次 `recap run`。
 | 结果 | 退出码 | 含义 |
 |---|---:|---|
 | `Published` / `Restored` / `NoBuild` | 0 | 操作完成，或当前无需建立新 set |
+| `BeyondPrefix` | 2 | bounded authority不足；报告携带required anchor、captured head、header count与continuation |
 | `Unavailable` / `BlockFailed` | 2 | 稳定的 Store、frozen plan 或 block failure |
 | `Retryable` | 3 | raw head/CAS 等 optimistic boundary 已改变，可在重新检查后重试 |
 | 参数、路径或未分类运行错误 | 1 | 命令级失败 |

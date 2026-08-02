@@ -436,6 +436,94 @@ public sealed class ProgramRecapExecutionCommandTests : IDisposable {
     }
 
     [Fact]
+    public async Task RestoreBeyondPrefixUsesV5GoldenWithoutMutation() {
+        Fixture fixture =
+            await CreateFixtureAsync("restore-beyond-prefix", 77);
+        await CreateStoreAsync(fixture);
+        string publishReport =
+            Path.Combine(_tempRoot, "restore-beyond-publish.json");
+        var publishFactory = new ScriptedCompletionClientFactory(
+            "publish recap"
+        );
+        Assert.Equal(0, Run(
+            ExecuteArgs(
+                fixture,
+                "run",
+                publishReport,
+                "restore-beyond-publish-calls"
+            ),
+            publishFactory
+        ));
+        using JsonDocument published = ReadJson(publishReport);
+        string anchor = String(published, "anchor");
+        EventAddress currentHead;
+        using (var engine = SJ.SessionJournalEngine.Open(fixture.Path)) {
+            for (int index = 0; index < 257; index++) {
+                engine.AppendObservation($"tail observation {index}");
+                _ = engine.AppendImportedAgentAction(
+                    new ActionMessage([
+                        new ActionBlock.Text($"tail action {index}")
+                    ]),
+                    new CompletionDescriptor(
+                        "import",
+                        "v1",
+                        "model-a"
+                    )
+                );
+            }
+            currentHead = engine.ReadCurrentHead()!.Value;
+        }
+        string beforeDerived = HashDerivedFiles(fixture.Path);
+        string reportPath =
+            Path.Combine(_tempRoot, "restore-beyond.json");
+        string callLogName = "restore-beyond-calls";
+        var restoreFactory = new ScriptedCompletionClientFactory(
+            "must not run"
+        );
+
+        Assert.Equal(2, Run(
+            ExecuteArgs(
+                fixture,
+                "restore",
+                reportPath,
+                callLogName,
+                anchor,
+                SJ.EventAddressTextCodec.Format(currentHead)
+            ),
+            restoreFactory
+        ));
+
+        Assert.Equal(0, restoreFactory.CreateCallCount);
+        Assert.Equal(0, restoreFactory.CallCount);
+        Assert.False(Directory.Exists(
+            Path.Combine(_tempRoot, callLogName)
+        ));
+        Assert.Equal(beforeDerived, HashDerivedFiles(fixture.Path));
+        using JsonDocument report = ReadJson(reportPath);
+        Assert.Equal(
+            "atelia.session-journal.derived-recap-execution.v5",
+            String(report, "schema")
+        );
+        Assert.Equal("restore", String(report, "operation"));
+        Assert.Equal("BeyondPrefix", String(report, "resultStatus"));
+        Assert.Equal(anchor, String(report, "anchor"));
+        JsonElement beyond =
+            report.RootElement.GetProperty("beyondPrefix");
+        Assert.Equal(
+            anchor,
+            beyond.GetProperty("requiredAnchor").GetString()
+        );
+        Assert.Equal(513, beyond.GetProperty("headerCount").GetInt32());
+        Assert.False(string.IsNullOrWhiteSpace(
+            beyond.GetProperty("capturedHead").GetString()
+        ));
+        Assert.False(string.IsNullOrWhiteSpace(
+            beyond.GetProperty("nextAddress").GetString()
+        ));
+        AssertReportIsContentFree(File.ReadAllText(reportPath));
+    }
+
+    [Fact]
     public async Task TwoPairFixtureStaysBelowFastLoadThreshold() {
         Fixture fixture =
             await CreateFixtureAsync("below-fast-load-threshold", 2);

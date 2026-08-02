@@ -95,6 +95,9 @@ public sealed class DerivedRecapCurrentLineageBuildingTests {
         Directory.CreateDirectory(
             Path.Combine(buildingRoot, ".pending.create.test")
         );
+        Directory.CreateDirectory(
+            Path.Combine(buildingRoot, ".staging-create-test")
+        );
 
         Assert.IsType<CurrentLineageBuildingSelection.None>(
             await fixture.Store.SelectCurrentLineageBuildingAsync(
@@ -298,29 +301,45 @@ public sealed class DerivedRecapCurrentLineageBuildingTests {
     }
 
     [Fact]
-    public async Task BuildingInventoryOverCapIsStoreUnavailable() {
+    public async Task TruncatedShuffledInventoryOverCapWinsBeforeClassification() {
         using RecapStoreFixture fixture =
             await RecapStoreFixture.CreateAsync(historyPairs: 1);
+        EventAddress beyondAnchor = fixture.Lineage().CapturedHead;
+        for (int index = 0; index < 257; index++) {
+            _ = fixture.AppendPair($"tail-{index}");
+        }
+        string buildingRoot = Path.GetDirectoryName(
+            fixture.Store.GetBuildingPathForTest(beyondAnchor)
+        )!;
+        var entries = new List<string> {
+            fixture.Store.GetBuildingPathForTest(beyondAnchor),
+            Path.Combine(buildingRoot, ".staging-over-cap"),
+            Path.Combine(buildingRoot, "malformed-over-cap")
+        };
         for (int index = 0;
-             index < DerivedRecapStore.MaxBuildingInventoryEntries;
+             index < DerivedRecapStore.MaxBuildingInventoryEntries - 2;
              index++) {
             var address = new EventAddress(
                 SizedPtr.FromPacked(ulong.MaxValue - (ulong)index),
                 (uint)index + 1,
                 AddressHint.None
             );
-            Directory.CreateDirectory(
+            entries.Add(
                 fixture.Store.GetBuildingPathForTest(address)
             );
         }
-        string buildingRoot = Path.GetDirectoryName(
-            fixture.Store.GetBuildingPathForTest(
-                fixture.Lineage().CapturedHead
-            )
-        )!;
-        Directory.CreateDirectory(
-            Path.Combine(buildingRoot, ".staging-over-cap")
+        Assert.Equal(
+            DerivedRecapStore.MaxBuildingInventoryEntries + 1,
+            entries.Count
         );
+        foreach (string entry in entries
+                     .Select(static (path, index) => (path, index))
+                     .OrderBy(item =>
+                         item.index * 37 % entries.Count
+                     )
+                     .Select(static item => item.path)) {
+            Directory.CreateDirectory(entry);
+        }
 
         Assert.IsType<
             CurrentLineageBuildingSelection.StoreUnavailable

@@ -6,6 +6,65 @@ namespace Atelia.SessionJournal.DerivedRecap.Store.Tests;
 
 public sealed class DerivedRecapPublisherTests {
     [Fact]
+    public async Task StoreDamageAfterPublishPreflightIsTypedBeforeSeal() {
+        int sealedCount = 0;
+        RecapStoreFixture? fixture = null;
+        fixture = await RecapStoreFixture.CreateAsync(
+            new RecapStoreTestHooks(
+                AfterPublicationSealed: () => sealedCount++,
+                AfterPublishPreflight: () => File.WriteAllText(
+                    Path.Combine(
+                        fixture!.Store.StoreRootPathForTest,
+                        "store.json"
+                    ),
+                    "damaged"
+                )
+            )
+        );
+        using (fixture) {
+            DerivedRecapLineageView lineage = fixture.Lineage();
+            EventAddress anchor = lineage.CapturedHead;
+            RecapBlockPlan plan = fixture.CreateMaintainPlan(
+                anchor,
+                lineage.CurrentPrefix.HeadToOldest[^1].Address
+            );
+            _ = Assert.IsType<CreateBuildingResult.Created>(
+                await fixture.Store.CreateBuildingAsync(
+                    DerivedRecapCodec.CreateManifest(
+                        fixture.Engine.BranchRefId,
+                        anchor,
+                        [plan]
+                    )
+                )
+            );
+            await RecapStoreTestDriver.InstallFinalAsync(
+                fixture.Store,
+                anchor,
+                DerivedRecapCodec.CreateBlock(
+                    plan,
+                    anchor,
+                    "ready"
+                )
+            );
+
+            Assert.IsType<PublishRecapResult.StoreUnavailable>(
+                await fixture.Publisher.PublishAsync(anchor)
+            );
+            Assert.Equal(0, sealedCount);
+            Assert.True(
+                Directory.Exists(
+                    fixture.Store.GetBuildingPathForTest(anchor)
+                )
+            );
+            Assert.False(
+                Directory.Exists(
+                    fixture.Store.GetPublishedPathForTest(anchor)
+                )
+            );
+        }
+    }
+
+    [Fact]
     public async Task PublishReusesOneAdmissionPrefixProof() {
         using RecapStoreFixture fixture =
             await RecapStoreFixture.CreateAsync();

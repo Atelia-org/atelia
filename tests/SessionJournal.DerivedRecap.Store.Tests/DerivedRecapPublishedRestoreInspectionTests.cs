@@ -5,6 +5,63 @@ namespace Atelia.SessionJournal.DerivedRecap.Store.Tests;
 
 public sealed class DerivedRecapPublishedRestoreInspectionTests {
     [Fact]
+    public async Task ExactPublishedDamageWinsBeforeCommittedCursorBeyond() {
+        using RecapStoreFixture fixture =
+            await RecapStoreFixture.CreateAsync(historyPairs: 257);
+        var rewritten = await RewriteCommittedCursorBeyondAsync(
+            fixture,
+            persistCommitmentMismatch: true
+        );
+
+        Assert.IsType<DerivedRecapSelection.ExactPublishedSetInvalid>(
+            await fixture.Store.SelectNthPreviousAsync(
+                rewritten.Lineage,
+                0
+            )
+        );
+        var available = Assert.IsType<
+            PublishedRestoreInspectionResult.Available
+        >(
+            await fixture.Store.InspectPublishedForRestoreAsync(
+                rewritten.Anchor,
+                rewritten.Lineage
+            )
+        );
+        Assert.IsType<FinalRecapBlockHealth.Damaged>(
+            available.Inspection.Blocks[rewritten.Plan.RecapBlockId]
+                .Final
+        );
+    }
+
+    [Fact]
+    public async Task ExactCommittedCursorBeyondIsTypedAfterBlockAuthentication() {
+        using RecapStoreFixture fixture =
+            await RecapStoreFixture.CreateAsync(historyPairs: 257);
+        var rewritten = await RewriteCommittedCursorBeyondAsync(
+            fixture,
+            persistCommitmentMismatch: false
+        );
+
+        var selection = Assert.IsType<DerivedRecapSelection.BeyondPrefix>(
+            await fixture.Store.SelectNthPreviousAsync(
+                rewritten.Lineage,
+                0
+            )
+        );
+        var restore = Assert.IsType<
+            PublishedRestoreInspectionResult.BeyondPrefix
+        >(
+            await fixture.Store.InspectPublishedForRestoreAsync(
+                rewritten.Anchor,
+                rewritten.Lineage
+            )
+        );
+
+        Assert.Equal(rewritten.Beyond, selection.Evidence.RequiredAnchor);
+        Assert.Equal(rewritten.Beyond, restore.Evidence.RequiredAnchor);
+    }
+
+    [Fact]
     public async Task AdmissionBeyondPrefixIsTypedBeforePublicationRead() {
         int publicationReads = 0;
         using RecapStoreFixture fixture =
@@ -869,4 +926,61 @@ public sealed class DerivedRecapPublishedRestoreInspectionTests {
         directory,
         $"{blockId.Value}.json"
     );
+
+    private static async ValueTask<(
+        DerivedRecapLineageView Lineage,
+        EventAddress Anchor,
+        EventAddress Beyond,
+        MaintainRecapBlockPlan Plan
+    )> RewriteCommittedCursorBeyondAsync(
+        RecapStoreFixture fixture,
+        bool persistCommitmentMismatch
+    ) {
+        DerivedRecapLineageView lineage = fixture.Lineage();
+        EventAddress anchor = lineage.CapturedHead;
+        EventAddress beyond = fixture.RawLineage().HeadToRoot[^1].Address;
+        var plan = (MaintainRecapBlockPlan)fixture.CreateMaintainPlan(
+            anchor,
+            lineage.CurrentPrefix.HeadToOldest[^1].Address
+        );
+        _ = await fixture.PublishAsync(
+            anchor,
+            lineage.CurrentPrefix.HeadToOldest[^1].Address
+        );
+        DerivedRecapSetManifest manifest =
+            DerivedRecapCodec.CreateManifest(
+                fixture.Engine.BranchRefId,
+                anchor,
+                [plan]
+            );
+        DerivedRecapBlock committed = DerivedRecapCodec.CreateBlock(
+            plan,
+            beyond,
+            "committed beyond prefix"
+        );
+        IReadOnlyList<DerivedRecapBlock>? persisted = null;
+        if (persistCommitmentMismatch) {
+            var wrongPlan = new MaintainRecapBlockPlan(
+                plan.RecapBlockId,
+                plan.Target,
+                "roleplay.changed",
+                plan.MaintainerCapabilityFingerprint,
+                plan.Source,
+                plan.CatchUpThrough,
+                plan.PriorContext
+            );
+            persisted = [DerivedRecapCodec.CreateBlock(
+                wrongPlan,
+                beyond,
+                "committed beyond prefix"
+            )];
+        }
+        _ = await RecapStoreTestDriver.RewritePublishedUncheckedAsync(
+            fixture.Store,
+            manifest,
+            [committed],
+            persisted
+        );
+        return (lineage, anchor, beyond, plan);
+    }
 }

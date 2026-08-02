@@ -69,6 +69,14 @@ staging/sealing writes, and the final raw-head fence remains immediately before
 promotion. These authority and resource-bound changes do not change durable
 Store, manifest, block, frozen-input, or publication-envelope schemas.
 
+The final raw-head reread is a fence, not an atomic compare-and-swap with the
+raw journal. The SessionJournal engine lock excludes other engine processes for
+the lifetime of the engine, and the per-Ref Store lock excludes cooperating
+Store operations across processes. Neither lock serializes two callers sharing
+the same engine instance: such callers must serialize raw mutation against
+Building install, Publish, and Restore themselves. A raw mutation racing after
+the final reread is therefore outside the Store's CAS guarantees.
+
 ## Durability evidence
 
 `SessionJournal.DerivedRecap.Store.CrashHarness` is a separate process used by

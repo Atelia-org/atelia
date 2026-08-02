@@ -4,6 +4,39 @@ using Xunit;
 namespace Atelia.SessionJournal.DerivedRecap.Store.Tests;
 
 internal static class RecapStoreTestDriver {
+    public static async ValueTask<PublishedRecapSet>
+        RewritePublishedUncheckedAsync(
+        DerivedRecapStore store,
+        DerivedRecapSetManifest manifest,
+        IReadOnlyList<DerivedRecapBlock> committedBlocks,
+        IReadOnlyList<DerivedRecapBlock>? persistedBlocks = null
+    ) {
+        PublishedRecapSet publication =
+            DerivedRecapCodec.CreatePublication(
+                manifest,
+                committedBlocks
+            );
+        string publishedPath = store.GetPublishedPathForTest(
+            manifest.SetAdmissionAnchor
+        );
+        await File.WriteAllBytesAsync(
+            Path.Combine(publishedPath, "publication.json"),
+            DerivedRecapCodec.EncodePublication(publication)
+        );
+        foreach (DerivedRecapBlock block
+                 in persistedBlocks ?? committedBlocks) {
+            await File.WriteAllBytesAsync(
+                Path.Combine(
+                    publishedPath,
+                    "blocks",
+                    $"{block.RecapBlockId.Value}.json"
+                ),
+                DerivedRecapCodec.EncodeBlock(block)
+            );
+        }
+        return publication;
+    }
+
     public static async ValueTask InstallFinalAsync(
         DerivedRecapStore store,
         EventAddress admissionAnchor,

@@ -8,6 +8,88 @@ using Xunit;
 namespace Atelia.SessionJournal.DerivedRecap.Store.Tests;
 
 public sealed class DerivedRecapAuthorityBoundaryTests {
+    [Theory]
+    [InlineData("missing-root")]
+    [InlineData("damaged-header")]
+    [InlineData("wrong-kind-header")]
+    public async Task InstallerStoreAvailabilityFailuresAreTypedBeforeStaging(
+        string damageMode
+    ) {
+        using RecapStoreFixture fixture =
+            await RecapStoreFixture.CreateAsync();
+        DerivedRecapLineageView lineage = fixture.Lineage();
+        EventAddress anchor = lineage.CapturedHead;
+        DerivedRecapSetManifest manifest =
+            DerivedRecapCodec.CreateManifest(
+                fixture.Engine.BranchRefId,
+                anchor,
+                [Maintain(
+                    anchor,
+                    lineage.CurrentPrefix.HeadToOldest[^1].Address,
+                    [anchor]
+                )]
+            );
+        string storeRoot = fixture.Store.StoreRootPathForTest;
+        string buildingPath =
+            fixture.Store.GetBuildingPathForTest(anchor);
+        string storeHeader = Path.Combine(storeRoot, "store.json");
+        switch (damageMode) {
+            case "missing-root":
+                Directory.Move(storeRoot, $"{storeRoot}.missing");
+                break;
+            case "damaged-header":
+                await File.WriteAllTextAsync(storeHeader, "damaged");
+                break;
+            case "wrong-kind-header":
+                File.Delete(storeHeader);
+                Directory.CreateDirectory(storeHeader);
+                break;
+            default:
+                throw new InvalidOperationException(damageMode);
+        }
+
+        Assert.IsType<CreateBuildingResult.StoreUnavailable>(
+            await new DerivedRecapBuildingInstaller(
+                    fixture.Store,
+                    fixture.Engine
+                )
+                .InstallAsync(manifest, anchor)
+        );
+        Assert.False(Directory.Exists(buildingPath));
+    }
+
+    [Fact]
+    public async Task InstallerCancellationPropagates() {
+        using RecapStoreFixture fixture =
+            await RecapStoreFixture.CreateAsync();
+        DerivedRecapLineageView lineage = fixture.Lineage();
+        EventAddress anchor = lineage.CapturedHead;
+        DerivedRecapSetManifest manifest =
+            DerivedRecapCodec.CreateManifest(
+                fixture.Engine.BranchRefId,
+                anchor,
+                [Maintain(
+                    anchor,
+                    lineage.CurrentPrefix.HeadToOldest[^1].Address,
+                    [anchor]
+                )]
+            );
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            async () => await new DerivedRecapBuildingInstaller(
+                    fixture.Store,
+                    fixture.Engine
+                )
+                .InstallAsync(
+                    manifest,
+                    anchor,
+                    cancellation.Token
+                )
+        );
+    }
+
     [Fact]
     public void PublicStoreSurfaceCannotInjectLineageOrCreateBuilding() {
         MethodInfo[] publicStoreMethods = typeof(DerivedRecapStore)

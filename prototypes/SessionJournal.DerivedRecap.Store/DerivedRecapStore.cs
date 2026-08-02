@@ -6,6 +6,7 @@ namespace Atelia.SessionJournal.DerivedRecap.Store;
 
 internal sealed record RecapStoreTestHooks(
     Action? AfterPublicationSealed = null,
+    Action? AfterPublishPreflight = null,
     Action? BeforePublishedPromotion = null,
     Action? AfterPublishedPromotion = null,
     Action? BeforeMaterializationEnvelopeRecheck = null,
@@ -404,16 +405,35 @@ public sealed class DerivedRecapStore {
         Func<EventAddress?> readCurrentHead,
         CancellationToken cancellationToken = default
     ) {
+        ArgumentNullException.ThrowIfNull(manifest);
         ArgumentNullException.ThrowIfNull(currentLineage);
         ArgumentNullException.ThrowIfNull(readCurrentHead);
-        return await CreateBuildingCoreAsync(
-                manifest,
-                expectedRawHead,
-                currentLineage,
-                readCurrentHead,
-                cancellationToken
-            )
-            .ConfigureAwait(false);
+        DerivedRecapCodec.ValidateManifest(manifest);
+        if (manifest.RefId != RefId) {
+            throw new InvalidDataException(
+                "Recap manifest belongs to a different RefId."
+            );
+        }
+        try {
+            return await CreateBuildingCoreAsync(
+                    manifest,
+                    expectedRawHead,
+                    currentLineage,
+                    readCurrentHead,
+                    cancellationToken
+                )
+                .ConfigureAwait(false);
+        }
+        catch (Exception exception)
+            when (exception is InvalidDataException
+                  or ArgumentException
+                  or NotSupportedException
+                  or IOException
+                  or UnauthorizedAccessException) {
+            return new CreateBuildingResult.StoreUnavailable(
+                exception.Message
+            );
+        }
     }
 
     private async ValueTask<CreateBuildingResult>
@@ -438,17 +458,31 @@ public sealed class DerivedRecapStore {
                 + "supplied together."
             );
         }
+        FileStream writeLock;
         if (currentLineage is null) {
             EnsureScaffolding();
-        }
-        await using FileStream writeLock =
-            await _fileSystem.AcquireExclusiveLockAsync(
+            writeLock = await _fileSystem.AcquireExclusiveLockAsync(
                     _lockPath,
                     cancellationToken
                 )
                 .ConfigureAwait(false);
-        await RequireReadyAsync(cancellationToken)
-            .ConfigureAwait(false);
+        }
+        else {
+            StoreWriteLockAttempt attempt =
+                await TryAcquireReadyWriteLockAsync(cancellationToken)
+                    .ConfigureAwait(false);
+            if (attempt.UnavailableReason is { } unavailable) {
+                return new CreateBuildingResult.StoreUnavailable(
+                    unavailable
+                );
+            }
+            writeLock = attempt.Lock!;
+        }
+        await using FileStream ownedWriteLock = writeLock;
+        if (currentLineage is null) {
+            await RequireReadyAsync(cancellationToken)
+                .ConfigureAwait(false);
+        }
         DerivedRecapCodec.ValidateManifest(manifest);
         if (manifest.RefId != RefId) {
             throw new InvalidDataException(
@@ -1264,128 +1298,139 @@ public sealed class DerivedRecapStore {
         if (ToPublishRecapResult(preflight) is { } blocked) {
             return blocked;
         }
+        _testHooks.AfterPublishPreflight?.Invoke();
 
-        EnsureScaffolding();
-        await using FileStream writeLock =
-            await _fileSystem.AcquireExclusiveLockAsync(
-                    _lockPath,
-                    cancellationToken
-                )
+        StoreWriteLockAttempt writeAttempt =
+            await TryAcquireReadyWriteLockAsync(cancellationToken)
                 .ConfigureAwait(false);
-        await RequireReadyAsync(cancellationToken)
-            .ConfigureAwait(false);
-        RecapPublishability initial =
-            await CanPublishCoreAsync(
-                    admissionAnchor,
-                    currentLineage,
-                    cancellationToken
-                )
-                .ConfigureAwait(false);
-        if (ToPublishRecapResult(initial) is { } initialBlocked) {
-            return initialBlocked;
+        if (writeAttempt.UnavailableReason is { } unavailable) {
+            return new PublishRecapResult.StoreUnavailable(unavailable);
         }
-
-        string buildPath = GetBuildingPath(admissionAnchor);
-        DerivedRecapSetManifest manifest =
-            await ReadManifestRequiredAsync(
-                    buildPath,
-                    cancellationToken
-                )
-                .ConfigureAwait(false);
-        IReadOnlyList<DerivedRecapFrozenInput> inputs =
-            await ReadExpectedInputsAsync(
-                    buildPath,
-                    manifest,
-                    cancellationToken
-                )
-                .ConfigureAwait(false);
-        IReadOnlyList<DerivedRecapBlock> blocks =
-            await ReadFinalBlocksAsync(
-                    buildPath,
-                    manifest,
-                    cancellationToken
-                )
-                .ConfigureAwait(false);
-
-        FlushPublicationDependencies(
-            buildPath,
-            manifest,
-            inputs,
-            blocks
-        );
-        PublishedRecapSet publication =
-            DerivedRecapCodec.CreatePublication(manifest, blocks);
-        byte[] publicationBytes =
-            DerivedRecapCodec.EncodePublication(publication);
-        string publicationPath =
-            Path.Combine(buildPath, "publication.json");
+        await using FileStream writeLock = writeAttempt.Lock!;
         try {
-            await SealBuildingPublicationCandidateAsync(
-                    buildPath,
-                    publicationPath,
-                    publicationBytes,
-                    cancellationToken
+            RecapPublishability initial =
+                await CanPublishCoreAsync(
+                        admissionAnchor,
+                        currentLineage,
+                        cancellationToken
+                    )
+                    .ConfigureAwait(false);
+            if (ToPublishRecapResult(initial) is { } initialBlocked) {
+                return initialBlocked;
+            }
+
+            string buildPath = GetBuildingPath(admissionAnchor);
+            DerivedRecapSetManifest manifest =
+                await ReadManifestRequiredAsync(
+                        buildPath,
+                        cancellationToken
+                    )
+                    .ConfigureAwait(false);
+            IReadOnlyList<DerivedRecapFrozenInput> inputs =
+                await ReadExpectedInputsAsync(
+                        buildPath,
+                        manifest,
+                        cancellationToken
+                    )
+                    .ConfigureAwait(false);
+            IReadOnlyList<DerivedRecapBlock> blocks =
+                await ReadFinalBlocksAsync(
+                        buildPath,
+                        manifest,
+                        cancellationToken
+                    )
+                    .ConfigureAwait(false);
+
+            FlushPublicationDependencies(
+                buildPath,
+                manifest,
+                inputs,
+                blocks
+            );
+            PublishedRecapSet publication =
+                DerivedRecapCodec.CreatePublication(manifest, blocks);
+            byte[] publicationBytes =
+                DerivedRecapCodec.EncodePublication(publication);
+            string publicationPath =
+                Path.Combine(buildPath, "publication.json");
+            try {
+                await SealBuildingPublicationCandidateAsync(
+                        buildPath,
+                        publicationPath,
+                        publicationBytes,
+                        cancellationToken
+                    )
+                    .ConfigureAwait(false);
+            }
+            catch (Exception exception)
+                when (exception is InvalidDataException
+                      or ArgumentException
+                      or NotSupportedException) {
+                return new PublishRecapResult.NotPublishable([
+                    new RecapStructuralDefect(
+                        "PublicationCandidateInvalid",
+                        exception.Message
+                    )
+                ]);
+            }
+            catch (Exception exception)
+                when (exception is IOException
+                      or UnauthorizedAccessException) {
+                return new PublishRecapResult.StoreUnavailable(
+                    exception.Message
+                );
+            }
+            _testHooks.AfterPublicationSealed?.Invoke();
+
+            // From the sealed candidate onward, finish the commit protocol
+            // even if the caller cancels. Returning early here would make
+            // durability ambiguous.
+            CancellationToken commitToken = CancellationToken.None;
+            RecapPublishability final =
+                await CanPublishCoreAsync(
+                        admissionAnchor,
+                        currentLineage,
+                        commitToken
+                    )
+                    .ConfigureAwait(false);
+            if (ToPublishRecapResult(final) is { } finalBlocked) {
+                return finalBlocked;
+            }
+            _testHooks.BeforePublishedPromotion?.Invoke();
+            EventAddress? authoritativeHead = readCurrentHead();
+            if (authoritativeHead != currentLineage.CapturedHead) {
+                return new PublishRecapResult.RawHeadChanged(
+                    currentLineage.CapturedHead,
+                    authoritativeHead
+                );
+            }
+
+            string publishedPath = GetPublishedPath(admissionAnchor);
+            _fileSystem.MoveDirectoryCreateNew(
+                buildPath,
+                publishedPath
+            );
+            _testHooks.AfterPublishedPromotion?.Invoke();
+            _fileSystem.FlushDirectory(_buildingRoot);
+            _fileSystem.FlushDirectory(_publishedRoot);
+            return new PublishRecapResult.Published(
+                new PublishedRecapDescriptor(
+                    RefId,
+                    admissionAnchor,
+                    publication.EnvelopeSha256
                 )
-                .ConfigureAwait(false);
+            );
         }
         catch (Exception exception)
             when (exception is InvalidDataException
                   or ArgumentException
-                  or NotSupportedException) {
-            return new PublishRecapResult.NotPublishable([
-                new RecapStructuralDefect(
-                    "PublicationCandidateInvalid",
-                    exception.Message
-                )
-            ]);
-        }
-        catch (Exception exception)
-            when (exception is IOException
+                  or NotSupportedException
+                  or IOException
                   or UnauthorizedAccessException) {
             return new PublishRecapResult.StoreUnavailable(
                 exception.Message
             );
         }
-        _testHooks.AfterPublicationSealed?.Invoke();
-
-        // From the sealed candidate onward, finish the commit protocol even
-        // if the caller cancels. Returning early here would make durability
-        // ambiguous.
-        CancellationToken commitToken = CancellationToken.None;
-        RecapPublishability final =
-            await CanPublishCoreAsync(
-                    admissionAnchor,
-                    currentLineage,
-                    commitToken
-                )
-                .ConfigureAwait(false);
-        if (ToPublishRecapResult(final) is { } finalBlocked) {
-            return finalBlocked;
-        }
-        _testHooks.BeforePublishedPromotion?.Invoke();
-        EventAddress? authoritativeHead = readCurrentHead();
-        if (authoritativeHead != currentLineage.CapturedHead) {
-            return new PublishRecapResult.RawHeadChanged(
-                currentLineage.CapturedHead,
-                authoritativeHead
-            );
-        }
-
-        string publishedPath = GetPublishedPath(admissionAnchor);
-        _fileSystem.MoveDirectoryCreateNew(
-            buildPath,
-            publishedPath
-        );
-        _testHooks.AfterPublishedPromotion?.Invoke();
-        _fileSystem.FlushDirectory(_buildingRoot);
-        _fileSystem.FlushDirectory(_publishedRoot);
-        return new PublishRecapResult.Published(
-            new PublishedRecapDescriptor(
-                RefId,
-                admissionAnchor,
-                publication.EnvelopeSha256
-            )
-        );
     }
 
     internal async ValueTask<DerivedRecapSelection>
@@ -2602,6 +2647,50 @@ public sealed class DerivedRecapStore {
         return new StoreReadLockAttempt(readLock, null);
     }
 
+    private async ValueTask<StoreWriteLockAttempt>
+        TryAcquireReadyWriteLockAsync(
+        CancellationToken cancellationToken
+    ) {
+        string? unavailable =
+            await TryGetUnavailableReasonAsync(cancellationToken)
+                .ConfigureAwait(false);
+        if (unavailable is not null) {
+            return new StoreWriteLockAttempt(null, unavailable);
+        }
+
+        FileStream writeLock;
+        try {
+            writeLock = await _fileSystem.AcquireExclusiveLockAsync(
+                    _lockPath,
+                    cancellationToken
+                )
+                .ConfigureAwait(false);
+        }
+        catch (Exception exception)
+            when (exception is InvalidDataException
+                  or ArgumentException
+                  or NotSupportedException
+                  or IOException
+                  or UnauthorizedAccessException) {
+            return new StoreWriteLockAttempt(null, exception.Message);
+        }
+
+        try {
+            unavailable =
+                await TryGetUnavailableReasonAsync(cancellationToken)
+                    .ConfigureAwait(false);
+        }
+        catch {
+            await writeLock.DisposeAsync().ConfigureAwait(false);
+            throw;
+        }
+        if (unavailable is not null) {
+            await writeLock.DisposeAsync().ConfigureAwait(false);
+            return new StoreWriteLockAttempt(null, unavailable);
+        }
+        return new StoreWriteLockAttempt(writeLock, null);
+    }
+
     private async ValueTask<FileStream> AcquireReadyReadLockRequiredAsync(
         CancellationToken cancellationToken
     ) {
@@ -2800,12 +2889,14 @@ public sealed class DerivedRecapStore {
             }
         }
         try {
-            int entryCount = 0;
+            var entries = new List<(string Name, string Path)>(
+                MaxBuildingInventoryEntries
+            );
             foreach (string entry
                      in Directory.EnumerateFileSystemEntries(
                          _buildingRoot
                      )) {
-                if (++entryCount > MaxBuildingInventoryEntries) {
+                if (entries.Count == MaxBuildingInventoryEntries) {
                     return new CurrentLineageBuildingInventoryResult
                         .Unavailable(
                             "Building inventory exceeds the bounded "
@@ -2813,7 +2904,12 @@ public sealed class DerivedRecapStore {
                             + "direct entries."
                         );
                 }
-                string name = Path.GetFileName(entry);
+                entries.Add((Path.GetFileName(entry), entry));
+            }
+            foreach ((string name, string entry) in entries.OrderBy(
+                         static item => item.Name,
+                         StringComparer.Ordinal
+                     )) {
                 if (name.StartsWith(".staging-", StringComparison.Ordinal)
                     || !EventAddressFileNameCodec.TryParse(
                         name,
@@ -3805,15 +3901,6 @@ public sealed class DerivedRecapStore {
             Path.Combine(publishedPath, "blocks"),
             plan.RecapBlockId
         );
-        if (lineagePrefix is not null
-            && commitment is not null
-            && lineagePrefix.Lookup(commitment.AbsorbedThrough)
-                is SessionCurrentLineageAnchorLookup
-                    .BeyondPrefix committedBeyond) {
-            throw new DerivedRecapBeyondPrefixException(
-                committedBeyond.Evidence
-            );
-        }
         byte[] bytes;
         try {
             bytes = await _fileSystem.ReadBoundedAsync(
@@ -3849,6 +3936,15 @@ public sealed class DerivedRecapStore {
             bool isCommitted = commitment is not null
                 && MatchesCommitment(block, commitment);
             if (isCommitted) {
+                if (lineagePrefix is not null
+                    && lineagePrefix.Lookup(
+                        commitment!.AbsorbedThrough
+                    ) is SessionCurrentLineageAnchorLookup
+                        .BeyondPrefix committedBeyond) {
+                    throw new DerivedRecapBeyondPrefixException(
+                        committedBeyond.Evidence
+                    );
+                }
                 ValidateCommittedPublishedFinal(
                     manifest,
                     plan,
@@ -3868,15 +3964,14 @@ public sealed class DerivedRecapStore {
                     input,
                     block
                 );
-            }
-            if (lineagePrefix is not null
-                && commitment is null
-                && lineagePrefix.Lookup(block.AbsorbedThrough)
-                    is SessionCurrentLineageAnchorLookup
-                        .BeyondPrefix beyond) {
-                throw new DerivedRecapBeyondPrefixException(
-                    beyond.Evidence
-                );
+                if (lineagePrefix is not null
+                    && lineagePrefix.Lookup(block.AbsorbedThrough)
+                        is SessionCurrentLineageAnchorLookup
+                            .BeyondPrefix beyond) {
+                    throw new DerivedRecapBeyondPrefixException(
+                        beyond.Evidence
+                    );
+                }
             }
             return new PublishedFinalInspection(
                 new FinalRecapBlockHealth.Healthy(
@@ -4156,15 +4251,6 @@ public sealed class DerivedRecapStore {
                     publication.BlockCommitments[index];
                 RecapBlockPlan plan =
                     publication.FrozenPlanSnapshot.Blocks[index];
-                if (lineage is not null
-                    && defects.Count == 0
-                    && lineage.Lookup(commitment.AbsorbedThrough)
-                        is SessionCurrentLineageAnchorLookup
-                            .BeyondPrefix cursorBeyond) {
-                    throw new DerivedRecapBeyondPrefixException(
-                        cursorBeyond.Evidence
-                    );
-                }
                 DerivedRecapBlock block =
                     await ReadBlockRequiredAsync(
                             GetBlockFilePath(
@@ -4199,6 +4285,15 @@ public sealed class DerivedRecapStore {
                         + "does not match its commitment."
                     );
                     continue;
+                }
+                if (lineage is not null
+                    && defects.Count == 0
+                    && lineage.Lookup(commitment.AbsorbedThrough)
+                        is SessionCurrentLineageAnchorLookup
+                            .BeyondPrefix cursorBeyond) {
+                    throw new DerivedRecapBeyondPrefixException(
+                        cursorBeyond.Evidence
+                    );
                 }
                 if (lineageIndex is not null
                     && (!lineageIndex.TryGetValue(
@@ -5687,6 +5782,11 @@ public sealed class DerivedRecapStore {
     );
 
     private sealed record StoreReadLockAttempt(
+        FileStream? Lock,
+        string? UnavailableReason
+    );
+
+    private sealed record StoreWriteLockAttempt(
         FileStream? Lock,
         string? UnavailableReason
     );

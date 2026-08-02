@@ -51,12 +51,13 @@ Planner当前通过 engine-bound `DerivedRecapLineageView`调用 Store selection
 admission、Publish和Restore，并把 Store的结构化 `BeyondPrefix` evidence逐层传递到 execution、
 restore及online lifecycle结果；不会把它降级成普通字符串或扫描完整raw lineage来猜答案。
 
-这一收口只覆盖 Store authority boundary。Planner内部用于 HistoryUnit projection、cadence、
-route和planning window的若干路径仍读取完整 `SessionCurrentLineageSnapshot`；把这些online
-planning路径迁移到bounded API属于后续 B2。因而目前不能把整个 Planner/online chain描述成
-已经bounded。特别是当 513-header prefix之外可能存在 prior Published baseline时，B1 preflight
-只能返回 `BeyondPrefix`，不能伪造exact raw-growth count；只有baseline能在prefix内确定且配置
-limit更小时，才可能报告exact `RawSafetyRejected`。
+这一收口只覆盖 Store authority boundary。普通 `Prepare`、exact Building `Resume`、exact
+Published `Restore`仍会在 Planner内部的 HistoryUnit projection、cadence、route或planning
+window阶段调用完整或重复的 `ReadCurrentLineageHeaders`。把这些online planning路径迁移到
+bounded API属于后续 B2；目前不能把整个 Planner/online chain描述成已经bounded。特别是当
+513-header prefix之外可能存在 prior Published baseline时，B1 preflight只能返回
+`BeyondPrefix`，不能伪造exact raw-growth count；只有baseline能在prefix内确定且配置limit更小
+时，才可能报告exact `RawSafetyRejected`。
 
 ## 引用
 
@@ -417,8 +418,8 @@ DerivedRecapRestoreResult restored =
 - 保留 healthy components；
 - 只从 frozen input/checkpoint恢复缺失或损坏部分。
 
-处理 `Restored`、`Unavailable`、`Retryable`和 `BlockFailed`四种 typed result。若 exact slot无法
-恢复，应把 session报告为 not-ready；不得跳到 `NthPrevious + 1`。
+处理 `Restored`、`BeyondPrefix`、`Unavailable`、`Retryable`和 `BlockFailed`五种 typed result。
+若 exact slot无法恢复，应把 session报告为 not-ready；不得跳到 `NthPrevious + 1`。
 
 ## Online integration
 

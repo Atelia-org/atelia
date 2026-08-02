@@ -4,6 +4,110 @@ using Xunit;
 namespace Atelia.SessionJournal.DerivedRecap.Store.Tests;
 
 public sealed class DerivedRecapPublishedRestoreWriteTests {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task CommitAuthenticatesExactBlockBeforeCursorBeyond(
+        bool persistCommitmentMismatch
+    ) {
+        int mutationCount = 0;
+        using RecapStoreFixture fixture =
+            await RecapStoreFixture.CreateAsync(
+                new RecapStoreTestHooks(
+                    BeforeAtomicFileReplace: _ => mutationCount++
+                ),
+                historyPairs: 257
+            );
+        DerivedRecapLineageView lineage = fixture.Lineage();
+        EventAddress anchor = lineage.CapturedHead;
+        EventAddress beyond = fixture.RawLineage().HeadToRoot[^1].Address;
+        var plan = (MaintainRecapBlockPlan)fixture.CreateMaintainPlan(
+            anchor,
+            lineage.CurrentPrefix.HeadToOldest[^1].Address
+        );
+        _ = await fixture.PublishAsync(
+            anchor,
+            lineage.CurrentPrefix.HeadToOldest[^1].Address
+        );
+        DerivedRecapSetManifest manifest =
+            DerivedRecapCodec.CreateManifest(
+                fixture.Engine.BranchRefId,
+                anchor,
+                [plan]
+            );
+        DerivedRecapBlock committed = DerivedRecapCodec.CreateBlock(
+            plan,
+            beyond,
+            "committed beyond prefix"
+        );
+        DerivedRecapBlock persisted = committed;
+        if (persistCommitmentMismatch) {
+            var wrongPlan = new MaintainRecapBlockPlan(
+                plan.RecapBlockId,
+                plan.Target,
+                "roleplay.changed",
+                plan.MaintainerCapabilityFingerprint,
+                plan.Source,
+                plan.CatchUpThrough,
+                plan.PriorContext
+            );
+            persisted = DerivedRecapCodec.CreateBlock(
+                wrongPlan,
+                beyond,
+                "committed beyond prefix"
+            );
+        }
+        PublishedRecapSet publication =
+            await RecapStoreTestDriver.RewritePublishedUncheckedAsync(
+                fixture.Store,
+                manifest,
+                [committed],
+                [persisted]
+            );
+        var handle = new PublishedRestoreHandle(
+            fixture.Engine.BranchRefId,
+            anchor,
+            PublishedRestoreAuthorityKind.Publication,
+            $"publication:{publication.EnvelopeSha256}",
+            manifest.ManifestPayloadSha256
+        );
+        byte[] persistedBytes =
+            DerivedRecapCodec.EncodeBlock(persisted);
+        string expectedStateToken = persistCommitmentMismatch
+            ? $"damaged:{DerivedRecapCodec.Sha256Hex(persistedBytes)}"
+            : $"healthy:{persisted.PayloadSha256}";
+        var restorer = new DerivedRecapRestorer(
+            fixture.Store,
+            fixture.Engine
+        );
+        mutationCount = 0;
+
+        PublishedEnvelopeCommitResult result =
+            await restorer.CommitEnvelopeAsync(
+                handle,
+                new Dictionary<RecapBlockId, string> {
+                    [plan.RecapBlockId] = expectedStateToken
+                },
+                lineage.CapturedHead
+            );
+
+        if (persistCommitmentMismatch) {
+            Assert.IsType<PublishedEnvelopeCommitResult.Unavailable>(
+                result
+            );
+        }
+        else {
+            var beyondResult = Assert.IsType<
+                PublishedEnvelopeCommitResult.BeyondPrefix
+            >(result);
+            Assert.Equal(
+                beyond,
+                beyondResult.Evidence.RequiredAnchor
+            );
+        }
+        Assert.Equal(0, mutationCount);
+    }
+
     [Fact]
     public async Task PublishedCheckpointUsesExactAdjacentCas() {
         using RecapStoreFixture fixture =
