@@ -45,19 +45,19 @@ repo config -> Host resolves one immutable composition snapshot
 - `NthPrevious`是 strict ordinal；损坏 slot不跳过；
 - Recap Store是可删除重建的 sidecar，Planner不向 raw journal写 recap identity。
 
-## B1 bounded Store boundary
+## B2 bounded online boundary
 
 Planner当前通过 engine-bound `DerivedRecapLineageView`调用 Store selection、Building
 admission、Publish和Restore，并把 Store的结构化 `BeyondPrefix` evidence逐层传递到 execution、
 restore及online lifecycle结果；不会把它降级成普通字符串或扫描完整raw lineage来猜答案。
 
-这一收口只覆盖 Store authority boundary。普通 `Prepare`、exact Building `Resume`、exact
-Published `Restore`仍会在 Planner内部的 HistoryUnit projection、cadence、route或planning
-window阶段调用完整或重复的 `ReadCurrentLineageHeaders`。把这些online planning路径迁移到
-bounded API属于后续 B2；目前不能把整个 Planner/online chain描述成已经bounded。特别是当
-513-header prefix之外可能存在 prior Published baseline时，B1 preflight只能返回
-`BeyondPrefix`，不能伪造exact raw-growth count；只有baseline能在prefix内确定且配置limit更小
-时，才可能报告exact `RawSafetyRejected`。
+普通 `Prepare`、exact Building `Resume`、exact Published `Restore`与online lifecycle都只使用
+bounded prefix、metadata proof和opaque write authority。需要的raw anchor/window无法在当前
+prefix中证明时，会在读取recap payload、调用Maintainer或写Store之前返回stage-qualified
+`BeyondPrefix`；不会退回full-lineage header/setup discovery。特别是当513-header prefix之外
+可能存在prior Published baseline时，preflight只能返回`BeyondPrefix`，不能伪造exact
+raw-growth count；只有baseline能在prefix内确定且配置limit更小时，才可能报告exact
+`RawSafetyRejected`。
 
 ## 引用
 
@@ -391,9 +391,9 @@ source、prior context、content ceiling与 code-owned `RecapProtocolHardCaps.V4
 manifest中的 admission/source/replay boundary均冻结 exact governing setup refs；Resume验证
 这些 refs并用它们构造 replay seed。healthy final block直接复用；只补缺失或未完成工作。
 
-这只是 frozen wire closure：普通 new planning和 frozen-plan raw validation当前仍可能调用
-full-lineage header/setup discovery。它们尚未承诺 bounded online execution；只有后续把这些入口
-改成 bounded prefix proof并在越界时返回 typed `BeyondPrefix`后，才能作出该承诺。
+new planning与frozen-plan raw validation先生成bounded metadata proof，再物化exact planning
+window。线上路径不调用full-lineage header/setup discovery；无法证明时返回typed、带stage的
+`BeyondPrefix`。
 
 `None`、`Multiple`、`Stale`、`Invalid`和 `StoreUnavailable`必须分别处理，不要按目录时间选择
 “最新 Building”。
@@ -422,6 +422,12 @@ DerivedRecapRestoreResult restored =
 - 不读取 repo config或 HistoryLoad estimator；
 - 保留 healthy components；
 - 只从 frozen input/checkpoint恢复缺失或损坏部分。
+
+Restore在读取Published component之前完成所有可能产生`BeyondPrefix`的metadata/window proof。
+component inspection为每块签发不可构造的`PublishedBlockWriteAuthority`；checkpoint/final写成功后
+返回刷新authority。最后由Store把同一exact restore handle的完整block authority roster聚合为
+`PublishedEnvelopeCommitAuthority`。公开commit API不接受caller-supplied state-token map，且
+envelope commit阶段只复核raw-head fence与exact component identity，不再产生`BeyondPrefix`。
 
 处理 `Restored`、`BeyondPrefix`、`Unavailable`、`Retryable`和 `BlockFailed`五种 typed result。
 若 exact slot无法恢复，应把 session报告为 not-ready；不得跳到 `NthPrevious + 1`。

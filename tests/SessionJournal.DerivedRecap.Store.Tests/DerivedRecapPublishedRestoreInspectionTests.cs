@@ -13,7 +13,7 @@ public sealed class DerivedRecapPublishedRestoreInspectionTests {
             persistCommitmentMismatch: true
         );
 
-        Assert.IsType<DerivedRecapSelection.ExactPublishedSetInvalid>(
+        Assert.IsType<DerivedRecapSelection.Selected>(
             await fixture.Store.SelectNthPreviousAsync(
                 rewritten.Lineage,
                 0
@@ -42,7 +42,7 @@ public sealed class DerivedRecapPublishedRestoreInspectionTests {
             persistCommitmentMismatch: false
         );
 
-        var selection = Assert.IsType<DerivedRecapSelection.BeyondPrefix>(
+        _ = Assert.IsType<DerivedRecapSelection.Selected>(
             await fixture.Store.SelectNthPreviousAsync(
                 rewritten.Lineage,
                 0
@@ -57,7 +57,6 @@ public sealed class DerivedRecapPublishedRestoreInspectionTests {
             )
         );
 
-        Assert.Equal(rewritten.Beyond, selection.Evidence.RequiredAnchor);
         Assert.Equal(rewritten.Beyond, restore.Evidence.RequiredAnchor);
     }
 

@@ -23,21 +23,13 @@ public sealed class DerivedRecapRestorer {
 
     public ValueTask<PublishedEnvelopeCommitResult>
         CommitEnvelopeAsync(
-        PublishedRestoreHandle handle,
-        IReadOnlyDictionary<RecapBlockId, string>
-            expectedFinalStateTokens,
+        PublishedEnvelopeCommitAuthority authority,
         EventAddress expectedRawHead,
         CancellationToken cancellationToken = default
     ) {
-        ArgumentNullException.ThrowIfNull(handle);
-        ArgumentNullException.ThrowIfNull(expectedFinalStateTokens);
-        DerivedRecapLineageView lineage =
-            DerivedRecapLineageView.Capture(
-                _store,
-                _engine,
-                cancellationToken
-            );
-        if (lineage.CapturedHead != expectedRawHead) {
+        ArgumentNullException.ThrowIfNull(authority);
+        EventAddress? currentHead = _engine.ReadCurrentHead();
+        if (currentHead != expectedRawHead) {
             return ValueTask.FromResult<
                 PublishedEnvelopeCommitResult
             >(
@@ -49,9 +41,7 @@ public sealed class DerivedRecapRestorer {
             );
         }
         return _store.CommitPublishedEnvelopeTrustedAsync(
-            handle,
-            expectedFinalStateTokens,
-            lineage,
+            authority,
             expectedRawHead,
             () => _engine.ReadCurrentHead(),
             cancellationToken

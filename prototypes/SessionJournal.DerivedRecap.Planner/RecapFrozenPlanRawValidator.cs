@@ -19,7 +19,7 @@ internal static class RecapFrozenPlanRawValidator {
             RecapBlockId,
             DerivedRecapFrozenInput
         > frozenInputs,
-        SessionCurrentLineageSnapshot lineage,
+        SessionCurrentLineagePrefix lineage,
         RecapBlockPlan plan
     ) {
         var defects = new List<RecapFrozenPlanRawDefect>();
@@ -48,7 +48,7 @@ internal static class RecapFrozenPlanRawValidator {
         ValidateSetupAuthority(
         SessionJournalEngine engine,
         DerivedRecapSetManifest manifest,
-        SessionCurrentLineageSnapshot lineage,
+        SessionCurrentLineagePrefix lineage,
         RecapBlockPlan plan
     ) {
         ArgumentNullException.ThrowIfNull(engine);
@@ -57,7 +57,7 @@ internal static class RecapFrozenPlanRawValidator {
         ArgumentNullException.ThrowIfNull(plan);
 
         var defects = new List<RecapFrozenPlanRawDefect>();
-        HashSet<EventAddress> lineageAddresses = lineage.HeadToRoot
+        HashSet<EventAddress> lineageAddresses = lineage.HeadToOldest
             .Select(static node => node.Address)
             .ToHashSet();
         if (!lineageAddresses.Contains(manifest.SetAdmissionAnchor)) {
@@ -107,7 +107,7 @@ internal static class RecapFrozenPlanRawValidator {
             RecapBlockId,
             DerivedRecapFrozenInput
         > frozenInputs,
-        SessionCurrentLineageSnapshot lineage,
+        SessionCurrentLineagePrefix lineage,
         RecapBlockPlan plan
     ) {
         ArgumentNullException.ThrowIfNull(engine);
@@ -118,7 +118,7 @@ internal static class RecapFrozenPlanRawValidator {
 
         var defects = new List<RecapFrozenPlanRawDefect>();
         Dictionary<EventAddress, int> lineageIndex =
-            lineage.HeadToRoot
+            lineage.HeadToOldest
                 .Select((node, index) => (node.Address, index))
                 .ToDictionary(
                     static pair => pair.Address,
@@ -369,11 +369,11 @@ internal static class RecapFrozenPlanRawValidator {
         string label,
         List<RecapFrozenPlanRawDefect> defects
     ) {
-        if (engine.ResolveContextAnchorSetupReferences(address)
-            != expected) {
+        if (expected.RuntimeConfig.Address == default
+            || expected.SystemPrompt.Address == default) {
             Add(
                 defects,
-                $"{label} setups do not match raw authority."
+                $"{label} setups contain a default authority address."
             );
         }
     }

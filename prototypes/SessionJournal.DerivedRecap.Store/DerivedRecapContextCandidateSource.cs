@@ -66,11 +66,20 @@ public sealed class DerivedRecapContextCandidateSource
         RequireCurrentBoundary(request.CompletionBoundary);
         switch (result) {
             case DerivedRecapSelection.Selected selected:
-                SessionContextAnchorSetupReferences setups =
-                    _engine.ResolveContextAnchorSetupReferences(
-                        selected.Descriptor.SetAdmissionAnchor,
-                        cancellationToken
+                PublishedPlanReadResult planRead =
+                    await _store.ReadPublishedPlanAsync(
+                            selected.Descriptor,
+                            cancellationToken
+                        )
+                        .ConfigureAwait(false);
+                if (planRead
+                    is not PublishedPlanReadResult.Available available) {
+                    throw new InvalidDataException(
+                        "Selected Published recap metadata changed before candidate descriptor creation."
                     );
+                }
+                SessionContextAnchorSetupReferences setups = available
+                    .Snapshot.FrozenPlan.SetAdmissionAnchorSetups;
                 RequireCurrentBoundary(request.CompletionBoundary);
                 return new SessionContextCandidateSelection(
                     SessionContextCandidateSelectionStatus.Selected,
@@ -147,12 +156,22 @@ public sealed class DerivedRecapContextCandidateSource
             );
         }
         RequireCurrentBoundary(handle.CompletionBoundary);
-        SessionContextAnchorSetupReferences currentSetups =
-            _engine.ResolveContextAnchorSetupReferences(
-                descriptor.SetAdmissionAnchor,
-                cancellationToken
-            );
-        if (currentSetups != descriptor.AnchorSetups) {
+        var published = new PublishedRecapDescriptor(
+            handle.RefId,
+            handle.SetAdmissionAnchor,
+            handle.EnvelopeSha256
+        );
+        PublishedPlanReadResult planRead =
+            await _store.ReadPublishedPlanAsync(
+                    published,
+                    cancellationToken
+                )
+                .ConfigureAwait(false);
+        if (planRead
+                is not PublishedPlanReadResult.Available available
+            || available.Snapshot.FrozenPlan
+                    .SetAdmissionAnchorSetups
+                != descriptor.AnchorSetups) {
             throw new InvalidDataException(
                 "DerivedRecap descriptor setup references are stale "
                 + "or forged."
@@ -160,11 +179,7 @@ public sealed class DerivedRecapContextCandidateSource
         }
         DerivedRecapMaterialization materialization =
             await _store.MaterializeAsync(
-                    new PublishedRecapDescriptor(
-                        handle.RefId,
-                        handle.SetAdmissionAnchor,
-                        handle.EnvelopeSha256
-                    ),
+                    published,
                     cancellationToken
                 )
                 .ConfigureAwait(false);

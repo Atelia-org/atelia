@@ -73,11 +73,20 @@ promotion. The Store directory/header and final-block schemas remain v4; the
 frozen wire cutover above intentionally changes manifest, frozen-input, and
 publication schemas without a compatibility layer.
 
-This wire closure does not itself make raw validation bounded. The current
-installer and Planner execution paths may still perform full-lineage header or
-governing-setup discovery before using the frozen references. A later bounded
-online cutover must replace those discovery paths with explicit prefix proof
-and typed `BeyondPrefix`; callers must not infer that guarantee from schema v6.
+Online installer and Planner execution paths use explicit bounded-prefix proof
+for raw anchors, setup authority, and planning windows. They return typed,
+stage-qualified `BeyondPrefix` before component payload reads, Maintainer calls,
+or Store writes; they do not fall back to full-lineage header or governing-setup
+discovery.
+
+Published restore separates metadata proof from component mutation. Exact
+inspection issues opaque per-block write authorities bound to the Store,
+restore handle, block, checkpoint state, and final state. Successful writes
+refresh that authority. The Store then issues one opaque envelope-commit
+authority only from a complete roster for the same exact handle. Public writes
+and envelope commit do not accept caller-supplied state-token maps; final
+commit rechecks the raw head and exact component identities and cannot return
+`BeyondPrefix`.
 
 The final raw-head reread is a fence, not an atomic compare-and-swap with the
 raw journal. The SessionJournal engine lock excludes other engine processes for

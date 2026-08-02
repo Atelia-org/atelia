@@ -57,12 +57,10 @@ public sealed class DerivedRecapRestoreExecutorTests {
 
         Assert.Contains(
             unavailable.Defects,
-            defect => defect.Code
-                == DerivedRecapRestoreDefectCodes.FrozenPlanInvalid
-                && defect.Detail.Contains(
-                    "setups do not match raw authority",
-                    StringComparison.Ordinal
-                )
+            defect => defect.Detail.Contains(
+                "payload hash mismatch",
+                StringComparison.Ordinal
+            )
         );
         Assert.Equal(0, maintainer.CallCount);
         PublishedBlockRestoreInspection inspection =
@@ -126,12 +124,10 @@ public sealed class DerivedRecapRestoreExecutorTests {
         Assert.Equal(0, maintainer.CallCount);
         Assert.Contains(
             unavailable.Defects,
-            defect => defect.Code
-                == DerivedRecapRestoreDefectCodes.FrozenPlanInvalid
-                && defect.Detail.Contains(
-                    "setups do not match raw authority",
-                    StringComparison.Ordinal
-                )
+            defect => defect.Detail.Contains(
+                "not the requested exact replay-safe interval",
+                StringComparison.Ordinal
+            )
         );
         Assert.Equal(
             checkpointBefore,
@@ -312,10 +308,18 @@ public sealed class DerivedRecapRestoreExecutorTests {
             await fixture.CreateExecutor([maintainer])
                 .RestoreAsync(anchor, fixture.CurrentHead);
 
-        var restored =
-            Assert.IsType<DerivedRecapRestoreResult.Restored>(
-                result
-            );
+        Assert.True(
+            result is DerivedRecapRestoreResult.Restored,
+            result is DerivedRecapRestoreResult.Unavailable unavailable
+                ? string.Join(
+                    " | ",
+                    unavailable.Defects.Select(static defect =>
+                        $"{defect.Code}: {defect.Detail}"
+                    )
+                )
+                : result.ToString()
+        );
+        var restored = (DerivedRecapRestoreResult.Restored)result;
         Assert.Equal(originalDescriptor, restored.Descriptor);
         Assert.Equal(
             originalDescriptor.EnvelopeSha256,
@@ -757,8 +761,16 @@ public sealed class DerivedRecapRestoreExecutorTests {
         int maxRawEventsPerStep,
         int maxRawEventsPerBuild
     ) {
+        int componentReadCount = 0;
+        int mutationCount = 0;
         using RestoreFixture fixture =
-            await RestoreFixture.CreateAsync();
+            await RestoreFixture.CreateAsync(
+                hooks: new RecapStoreTestHooks(
+                    BeforeRestoreComponentRead: () =>
+                        componentReadCount++,
+                    BeforeAtomicFileReplace: _ => mutationCount++
+                )
+            );
         (
             MaintainRecapBlockPlan plan,
             _
@@ -773,21 +785,176 @@ public sealed class DerivedRecapRestoreExecutorTests {
             maxRawEventsPerStep: maxRawEventsPerStep,
             maxRawEventsPerBuild: maxRawEventsPerBuild
         );
+        componentReadCount = 0;
+        mutationCount = 0;
 
-        var unavailable =
-            Assert.IsType<DerivedRecapRestoreResult.Unavailable>(
-                await fixture.CreateExecutor([maintainer], limited)
-                    .RestoreAsync(anchor, fixture.CurrentHead)
+        DerivedRecapRestoreResult result =
+            await fixture.CreateExecutor([maintainer], limited)
+                .RestoreAsync(anchor, fixture.CurrentHead);
+        if (maxRawEventsPerStep == 1) {
+            var beyond = Assert.IsType<
+                DerivedRecapRestoreResult.BeyondPrefix
+            >(result);
+            Assert.Equal(
+                DerivedRecapBeyondPrefixStage.RestorePendingWindow,
+                beyond.Stage
             );
+        }
+        else {
+            var unavailable = Assert.IsType<
+                DerivedRecapRestoreResult.Unavailable
+            >(result);
+            Assert.Contains(
+                unavailable.Defects,
+                static defect => defect.Code
+                    == DerivedRecapRestoreDefectCodes
+                        .ExecutionLimitExceeded
+            );
+        }
+        Assert.Equal(0, componentReadCount);
+        Assert.Equal(0, mutationCount);
+        Assert.Equal(0, maintainer.CallCount);
+    }
+
+    [Fact]
+    public async Task LateInspectionBeyondIsInvariantFailureWithoutSideEffects() {
+        int componentReadCount = 0;
+        int mutationCount = 0;
+        bool injectConcurrentPublication = false;
+        string publicationPath = string.Empty;
+        string finalPath = string.Empty;
+        byte[] publicationBytes = [];
+        byte[] finalBytes = [];
+        using RestoreFixture fixture =
+            await RestoreFixture.CreateAsync(
+                historyPairs: 259,
+                hooks: new RecapStoreTestHooks(
+                    BeforeRestorePublicationRead: () => {
+                        if (!injectConcurrentPublication) {
+                            return;
+                        }
+                        injectConcurrentPublication = false;
+                        File.WriteAllBytes(
+                            publicationPath,
+                            publicationBytes
+                        );
+                        File.WriteAllBytes(finalPath, finalBytes);
+                    },
+                    BeforeRestoreComponentRead: () =>
+                        componentReadCount++,
+                    BeforeAtomicFileReplace: _ => mutationCount++
+                )
+            );
+        MaintainRecapBlockPlan template = fixture.CreateMaintainPlan(
+            "frozen.self",
+            "frozen-maintainer",
+            endpointCount: 1
+        );
+        EventAddress anchor = fixture.CurrentHead;
+        EventAddress recentStart =
+            fixture.Lineage.HeadToOldest[4].Address;
+        var original = new MaintainRecapBlockPlan(
+            template.RecapBlockId,
+            template.Target,
+            template.MaintainerId,
+            template.MaintainerCapabilityFingerprint,
+            new EmptyRecapMaintainSource(
+                recentStart,
+                RecapPlannerWireTestFacts.SetupsAt(
+                    fixture.Engine,
+                    recentStart
+                )
+            ),
+            [new RecapReplayBoundary(
+                anchor,
+                RecapPlannerWireTestFacts.SetupsAt(
+                    fixture.Engine,
+                    anchor
+                )
+            )],
+            template.PriorContext,
+            template.MaxContentUtf8Bytes
+        );
+        _ = await fixture.PublishAsync(
+            anchor,
+            [original],
+            new Dictionary<RecapBlockId, string> {
+                [original.RecapBlockId] = "committed"
+            }
+        );
+        EventAddress beyond = fixture.Engine
+            .ReadCurrentLineageHeaders().HeadToRoot[
+                fixture.Lineage.MaxHeaderCount
+            ].Address;
+        var mutated = new MaintainRecapBlockPlan(
+            original.RecapBlockId,
+            original.Target,
+            original.MaintainerId,
+            original.MaintainerCapabilityFingerprint,
+            new EmptyRecapMaintainSource(
+                beyond,
+                ((EmptyRecapMaintainSource)original.Source)
+                    .ReplayStartSetups
+            ),
+            original.CatchUpBoundaries,
+            original.PriorContext,
+            original.MaxContentUtf8Bytes
+        );
+        PublishedPlanSnapshot originalPlan = Assert.IsType<
+            PublishedPlanAtAnchorReadResult.Available
+        >(
+            await fixture.Store.ReadPublishedPlanAtAnchorAsync(anchor)
+        ).Snapshot;
+        DerivedRecapSetManifest mutatedManifest =
+            DerivedRecapCodec.CreateManifest(
+                fixture.Engine.BranchRefId,
+                anchor,
+                originalPlan.FrozenPlan.SetAdmissionAnchorSetups,
+                [mutated]
+            );
+        DerivedRecapBlock mutatedFinal =
+            DerivedRecapCodec.CreateBlock(
+                mutated,
+                anchor,
+                "concurrent final"
+            );
+        publicationBytes = DerivedRecapCodec.EncodePublication(
+            DerivedRecapCodec.CreatePublication(
+                mutatedManifest,
+                [mutatedFinal]
+            )
+        );
+        finalBytes = DerivedRecapCodec.EncodeBlock(mutatedFinal);
+        publicationPath = fixture.PublicationPath(anchor);
+        finalPath = fixture.BlockPath(
+            anchor,
+            "blocks",
+            original.RecapBlockId
+        );
+        var maintainer = fixture.CreateMaintainer(original);
+        componentReadCount = 0;
+        mutationCount = 0;
+        injectConcurrentPublication = true;
+
+        var unavailable = Assert.IsType<
+            DerivedRecapRestoreResult.Unavailable
+        >(
+            await fixture.CreateExecutor([maintainer])
+                .RestoreAsync(anchor, fixture.CurrentHead)
+        );
 
         Assert.Contains(
             unavailable.Defects,
-            static defect =>
-                defect.Code
-                    == DerivedRecapRestoreDefectCodes
-                        .ExecutionLimitExceeded
+            static defect => defect.Code
+                == DerivedRecapRestoreDefectCodes.FrozenPlanInvalid
+                && defect.Detail.Contains(
+                    "contradicted",
+                    StringComparison.Ordinal
+                )
         );
+        Assert.Equal(0, mutationCount);
         Assert.Equal(0, maintainer.CallCount);
+        Assert.Equal(1, componentReadCount);
     }
 
     [Fact]
@@ -1090,13 +1257,14 @@ public sealed class DerivedRecapRestoreExecutorTests {
         public DerivedRecapPublisher Publisher { get; }
         public EventAddress CurrentHead =>
             Engine.ReadCurrentHead()!.Value;
-        public SessionCurrentLineageSnapshot Lineage =>
-            Engine.ReadCurrentLineageHeaders();
+        public SessionCurrentLineagePrefix Lineage =>
+            Engine.ReadCurrentLineagePrefix(513);
         public DerivedRecapLineageView LineageView =>
             DerivedRecapLineageView.Capture(Store, Engine);
 
         public static async ValueTask<RestoreFixture> CreateAsync(
-            int historyPairs = 5
+            int historyPairs = 5,
+            RecapStoreTestHooks? hooks = null
         ) {
             string path = System.IO.Path.Combine(
                 System.IO.Path.GetTempPath(),
@@ -1111,10 +1279,16 @@ public sealed class DerivedRecapRestoreExecutorTests {
                     "surface-a"
                 )
             );
-            var store = DerivedRecapStore.Open(
-                path,
-                engine.BranchRefId
-            );
+            DerivedRecapStore store = hooks is null
+                ? DerivedRecapStore.Open(
+                    path,
+                    engine.BranchRefId
+                )
+                : DerivedRecapStore.OpenForTest(
+                    path,
+                    engine.BranchRefId,
+                    hooks
+                );
             await store.CreateAsync();
             var fixture = new RestoreFixture(path, engine, store);
             for (int index = 0; index < historyPairs; index++) {
@@ -1192,8 +1366,8 @@ public sealed class DerivedRecapRestoreExecutorTests {
             InheritRecapBlockPlan Plan,
             EventAddress Target
         )> PublishInheritAsync() {
-            SessionCurrentLineageSnapshot lineage = Lineage;
-            EventAddress source = lineage.HeadToRoot[4].Address;
+            SessionCurrentLineagePrefix lineage = Lineage;
+            EventAddress source = lineage.HeadToOldest[4].Address;
             SessionHistoryPlanningWindow window =
                 Engine.ReadHistoryPlanningWindowAt(source);
             var sourcePlan = new MaintainRecapBlockPlan(
@@ -1258,8 +1432,8 @@ public sealed class DerivedRecapRestoreExecutorTests {
             MaintainRecapBlockPlan Plan,
             EventAddress Target
         )> PublishExistingAsync() {
-            SessionCurrentLineageSnapshot lineage = Lineage;
-            EventAddress source = lineage.HeadToRoot[4].Address;
+            SessionCurrentLineagePrefix lineage = Lineage;
+            EventAddress source = lineage.HeadToOldest[4].Address;
             SessionHistoryPlanningWindow sourceWindow =
                 Engine.ReadHistoryPlanningWindowAt(source);
             var sourcePlan = new MaintainRecapBlockPlan(
@@ -1599,11 +1773,13 @@ public sealed class DerivedRecapRestoreExecutorTests {
                     >(
                         await new DerivedRecapRestorer(Store, Engine)
                             .CommitEnvelopeAsync(
-                                inspection.Handle,
-                                inspection.Blocks.ToDictionary(
-                                    static item => item.Key,
-                                    static item =>
-                                        item.Value.Final.StateToken
+                                Store.IssuePublishedEnvelopeCommitAuthority(
+                                    inspection.Handle,
+                                    inspection.Blocks.Values
+                                        .Select(static block =>
+                                            block.WriteAuthority
+                                        )
+                                        .ToArray()
                                 ),
                                 CurrentHead
                             )

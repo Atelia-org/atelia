@@ -42,7 +42,7 @@ public sealed class DerivedRecapPlannerExecutorTests {
                     RecapBlockId,
                     DerivedRecapFrozenInput
                 >(),
-                fixture.Engine.ReadCurrentLineageHeaders(),
+                fixture.Engine.ReadCurrentLineagePrefix(513),
                 plan
             );
 
@@ -96,6 +96,58 @@ public sealed class DerivedRecapPlannerExecutorTests {
         Assert.Equal((fixture.SelfId, 1), suffix.Key);
         Assert.Equal(mid, suffix.Value.StartExclusive);
         Assert.Equal(admission, suffix.Value.ObservedRawHead);
+    }
+
+    [Fact]
+    public async Task PendingWindowPreparer_ProvesAllStepsBeforePayload() {
+        using TestFixture fixture = await TestFixture.CreateAsync(
+            historyPairs: 3
+        );
+        SessionHistoryPlanningWindow history =
+            fixture.Engine.ReadHistoryPlanningWindow();
+        EventAddress[] boundaries = history.ReplaySafeBoundaries
+            .Select(static boundary => boundary.Address)
+            .ToArray();
+        MaintainRecapBlockPlan plan = fixture.CreateEmptyPlan(
+            fixture.SelfId,
+            fixture.SelfTarget,
+            "self-maintainer",
+            history.StartExclusive,
+            [boundaries[0], boundaries[^1]]
+        );
+        SessionJournalReadDiagnostics before =
+            fixture.Engine.CaptureReadDiagnostics();
+
+        PreparedRecapPendingWindows prepared =
+            RecapPendingWindowPreparer.Prepare(
+                fixture.Engine,
+                boundaries[^1],
+                [new PendingMaintainRoute(
+                    plan,
+                    history.StartExclusive,
+                    0
+                )],
+                new RecapProtocolHardCaps(
+                    maxRawGrowthEventCount: 1000,
+                    maxRouteEndpointsPerBlock: 2,
+                    maxMaintainerCallsPerBuild: 2,
+                    maxRawEventsPerStep: 2,
+                    maxRawEventsPerBuild: 1000,
+                    maxContentUtf8Bytes:
+                        SessionContextContributionContract
+                            .MaxContributionUtf8Bytes,
+                    maxCatalogEntries:
+                        SessionContextContributionContract
+                            .MaxContributionCount
+                ),
+                CancellationToken.None
+            );
+        SessionJournalReadDiagnostics after =
+            fixture.Engine.CaptureReadDiagnostics();
+
+        Assert.NotNull(prepared.BeyondPrefix);
+        Assert.Empty(prepared.Windows);
+        Assert.Equal(before.PayloadReadCount, after.PayloadReadCount);
     }
 
     [Fact]
@@ -235,14 +287,15 @@ public sealed class DerivedRecapPlannerExecutorTests {
             maxRawGrowthEventCount: 1
         );
 
-        _ = Assert.IsType<DerivedRecapExecutionResult.Unavailable>(
-            await executor.RunAsync()
-        );
+        var beyond = Assert.IsType<
+            DerivedRecapExecutionResult.BeyondPrefix
+        >(await executor.RunAsync());
 
-        var diagnostics = Assert.IsType<
-            DerivedRecapPlanningDiagnostics.RawSafetyRejected
-        >(executor.LastPlanningDiagnostics);
-        Assert.True(diagnostics.RawGrowthEventCount > 1);
+        Assert.Equal(
+            DerivedRecapBeyondPrefixStage.NewPlanningRawGrowth,
+            beyond.Stage
+        );
+        Assert.Null(executor.LastPlanningDiagnostics);
         Assert.Equal(0, estimator.MeasureCallCount);
         Assert.Equal(0, maintainer.CallCount);
     }
@@ -1588,7 +1641,7 @@ public sealed class DerivedRecapPlannerExecutorTests {
         Assert.Contains(
             unavailable.Defects,
             defect => defect.Detail.Contains(
-                "setups do not match raw authority",
+                "not the requested exact replay-safe interval",
                 StringComparison.Ordinal
             )
         );

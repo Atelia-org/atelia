@@ -172,6 +172,52 @@ public sealed class RecapCutoverArchitectureBoundaryTests {
         );
     }
 
+    [Fact]
+    public void OnlineRecapPaths_UseBoundedLineageAndOpaqueAuthorities() {
+        string repoRoot = FindRepositoryRoot();
+        string plannerRoot = Path.Combine(
+            repoRoot,
+            "prototypes",
+            "SessionJournal.DerivedRecap.Planner"
+        );
+        string[] onlineFiles = [
+            .. Directory.EnumerateFiles(
+                plannerRoot,
+                "*.cs",
+                SearchOption.TopDirectoryOnly
+            ),
+            Path.Combine(
+                repoRoot,
+                "prototypes",
+                "SessionJournal.DerivedRecap.Store",
+                "DerivedRecapContextCandidateSource.cs"
+            ),
+            Path.Combine(
+                repoRoot,
+                "prototypes",
+                "SessionJournal.Cli",
+                "RecapExecutionCommands.cs"
+            )
+        ];
+        string[] forbiddenCalls = [
+            "ReadCurrentLineageHeaders(",
+            "ReadHistoryPlanningSeeds(",
+            "ReadHistoryPlanningWindowAt(",
+            "ResolveContextAnchorSetupReferences("
+        ];
+
+        foreach (string file in onlineFiles) {
+            string source = File.ReadAllText(file);
+            foreach (string forbiddenCall in forbiddenCalls) {
+                Assert.DoesNotContain(
+                    forbiddenCall,
+                    source,
+                    StringComparison.Ordinal
+                );
+            }
+        }
+    }
+
     private static string[] ReadProjectReferences(
         string repoRoot,
         params string[] relativePath

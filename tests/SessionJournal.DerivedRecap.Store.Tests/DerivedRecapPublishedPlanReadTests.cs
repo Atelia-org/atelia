@@ -44,6 +44,31 @@ public sealed class DerivedRecapPublishedPlanReadTests {
     }
 
     [Fact]
+    public async Task AnchorReadUsesCanonicalManifestWitnessWhenEnvelopeIsMissing() {
+        using RecapStoreFixture fixture =
+            await RecapStoreFixture.CreateAsync(historyPairs: 3);
+        DerivedRecapLineageView lineage = fixture.Lineage();
+        EventAddress anchor = lineage.CapturedHead;
+        _ = await fixture.PublishAsync(
+            anchor,
+            lineage.CurrentPrefix.HeadToOldest[2].Address
+        );
+        File.Delete(Path.Combine(
+            fixture.Store.GetPublishedPathForTest(anchor),
+            "publication.json"
+        ));
+
+        var witness = Assert.IsType<
+            PublishedPlanAtAnchorReadResult.ManifestWitnessAvailable
+        >(
+            await fixture.Store.ReadPublishedPlanAtAnchorAsync(anchor)
+        );
+
+        Assert.Equal(anchor, witness.FrozenPlan.SetAdmissionAnchor);
+        Assert.Single(witness.FrozenPlan.Blocks);
+    }
+
+    [Fact]
     public async Task AnchorReadMissingMembershipIsTypedMissing() {
         using RecapStoreFixture fixture =
             await RecapStoreFixture.CreateAsync();
@@ -101,7 +126,7 @@ public sealed class DerivedRecapPublishedPlanReadTests {
     }
 
     [Fact]
-    public async Task AnchorReadRejectsNonCanonicalEnvelope() {
+    public async Task AnchorReadFallsBackFromNonCanonicalEnvelopeToManifestWitness() {
         using RecapStoreFixture fixture =
             await RecapStoreFixture.CreateAsync(historyPairs: 3);
         DerivedRecapLineageView lineage = fixture.Lineage();
@@ -121,14 +146,16 @@ public sealed class DerivedRecapPublishedPlanReadTests {
             [.. canonical, (byte)'\n']
         );
 
-        Assert.IsType<PublishedPlanAtAnchorReadResult.Unavailable>(
+        Assert.IsType<
+            PublishedPlanAtAnchorReadResult.ManifestWitnessAvailable
+        >(
             await fixture.Store
                 .ReadPublishedPlanAtAnchorAsync(anchor)
         );
     }
 
     [Fact]
-    public async Task AnchorReadRejectsEnvelopeHashCorruption() {
+    public async Task AnchorReadFallsBackFromEnvelopeHashCorruptionToManifestWitness() {
         using RecapStoreFixture fixture =
             await RecapStoreFixture.CreateAsync(historyPairs: 3);
         DerivedRecapLineageView lineage = fixture.Lineage();
@@ -152,7 +179,9 @@ public sealed class DerivedRecapPublishedPlanReadTests {
         Assert.NotEqual(canonical, corrupted);
         await File.WriteAllTextAsync(publicationPath, corrupted);
 
-        Assert.IsType<PublishedPlanAtAnchorReadResult.Unavailable>(
+        Assert.IsType<
+            PublishedPlanAtAnchorReadResult.ManifestWitnessAvailable
+        >(
             await fixture.Store
                 .ReadPublishedPlanAtAnchorAsync(anchor)
         );

@@ -371,6 +371,140 @@ public abstract class SessionHistoryPlanningWindowReadResult {
 }
 
 /// <summary>
+/// Closed result of locating the canonical SessionCreated planning boundary inside one bounded
+/// raw suffix. A BeyondPrefix result means only that the boundary was not found in this prefix;
+/// it does not pretend that an as-yet unknown SessionCreated address was proven off-lineage.
+/// </summary>
+public abstract class SessionCreatedPlanningSeedReadResult {
+    private SessionCreatedPlanningSeedReadResult() { }
+
+    public sealed class Available : SessionCreatedPlanningSeedReadResult {
+        internal Available(
+            SessionHistoryPlanningSeed seed,
+            int rawEventCountAfterStart,
+            SessionCurrentLineageDiagnostics diagnostics
+        ) {
+            ArgumentNullException.ThrowIfNull(seed);
+            ArgumentNullException.ThrowIfNull(diagnostics);
+            if (rawEventCountAfterStart < 0) {
+                throw new ArgumentOutOfRangeException(
+                    nameof(rawEventCountAfterStart)
+                );
+            }
+            Seed = seed;
+            RawEventCountAfterStart = rawEventCountAfterStart;
+            Diagnostics = diagnostics;
+        }
+
+        public SessionHistoryPlanningSeed Seed { get; }
+        public int RawEventCountAfterStart { get; }
+        public SessionCurrentLineageDiagnostics Diagnostics { get; }
+    }
+
+    public sealed class BeyondPrefix : SessionCreatedPlanningSeedReadResult {
+        internal BeyondPrefix(
+            EventAddress capturedHead,
+            int headerCount,
+            EventAddress nextAddress,
+            SessionCurrentLineageDiagnostics diagnostics
+        ) {
+            if (capturedHead == default) {
+                throw new ArgumentException(
+                    "The captured lineage head cannot be default.",
+                    nameof(capturedHead)
+                );
+            }
+            if (headerCount <= 0) {
+                throw new ArgumentOutOfRangeException(nameof(headerCount));
+            }
+            if (nextAddress == default) {
+                throw new ArgumentException(
+                    "The next lineage address cannot be default.",
+                    nameof(nextAddress)
+                );
+            }
+            ArgumentNullException.ThrowIfNull(diagnostics);
+            CapturedHead = capturedHead;
+            HeaderCount = headerCount;
+            NextAddress = nextAddress;
+            Diagnostics = diagnostics;
+            ContinuationEvidence = new SessionCurrentLineageBeyondPrefix(
+                nextAddress,
+                capturedHead,
+                headerCount,
+                nextAddress
+            );
+        }
+
+        public EventAddress CapturedHead { get; }
+        public int HeaderCount { get; }
+        public EventAddress NextAddress { get; }
+        public SessionCurrentLineageDiagnostics Diagnostics { get; }
+        public SessionCurrentLineageBeyondPrefix ContinuationEvidence {
+            get;
+        }
+    }
+}
+
+/// <summary>
+/// Opaque, repository-bound proof that one exact planning interval fits inside its raw-event
+/// limit. Producing this token reads headers only; payload materialization is a separate action.
+/// </summary>
+public sealed class SessionHistoryPlanningWindowProof {
+    internal SessionHistoryPlanningWindowProof(
+        string ownerPath,
+        EventAddress capturedHead,
+        EventAddress startExclusive,
+        int rawEventCount,
+        SessionCurrentLineageDiagnostics diagnostics,
+        object state
+    ) {
+        OwnerPath = ownerPath;
+        CapturedHead = capturedHead;
+        StartExclusive = startExclusive;
+        RawEventCount = rawEventCount;
+        Diagnostics = diagnostics;
+        State = state;
+    }
+
+    internal string OwnerPath { get; }
+    internal object State { get; }
+
+    public EventAddress CapturedHead { get; }
+    public EventAddress StartExclusive { get; }
+    public int RawEventCount { get; }
+    public SessionCurrentLineageDiagnostics Diagnostics { get; }
+}
+
+public abstract class SessionHistoryPlanningWindowProofResult {
+    private SessionHistoryPlanningWindowProofResult() { }
+
+    public sealed class Available : SessionHistoryPlanningWindowProofResult {
+        internal Available(SessionHistoryPlanningWindowProof proof) {
+            ArgumentNullException.ThrowIfNull(proof);
+            Proof = proof;
+        }
+
+        public SessionHistoryPlanningWindowProof Proof { get; }
+    }
+
+    public sealed class BeyondPrefix : SessionHistoryPlanningWindowProofResult {
+        internal BeyondPrefix(
+            SessionCurrentLineageBeyondPrefix evidence,
+            SessionCurrentLineageDiagnostics diagnostics
+        ) {
+            ArgumentNullException.ThrowIfNull(evidence);
+            ArgumentNullException.ThrowIfNull(diagnostics);
+            Evidence = evidence;
+            Diagnostics = diagnostics;
+        }
+
+        public SessionCurrentLineageBeyondPrefix Evidence { get; }
+        public SessionCurrentLineageDiagnostics Diagnostics { get; }
+    }
+}
+
+/// <summary>
 /// Store-neutral header-only snapshot of the selected branch lineage. Entries are ordered from
 /// captured head toward the root. No event payload is read or decoded while producing it.
 /// </summary>

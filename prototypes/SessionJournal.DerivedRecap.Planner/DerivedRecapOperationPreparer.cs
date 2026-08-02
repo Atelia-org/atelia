@@ -5,7 +5,7 @@ namespace Atelia.SessionJournal.DerivedRecap.Planner;
 
 public abstract class PreparedRecapOperationAuthority {
     private PreparedRecapOperationAuthority(
-        SessionCurrentLineageSnapshot lineage,
+        SessionCurrentLineagePrefix lineage,
         DerivedRecapOperationBinding binding
     ) {
         Lineage = lineage
@@ -14,13 +14,13 @@ public abstract class PreparedRecapOperationAuthority {
             ?? throw new ArgumentNullException(nameof(binding));
     }
 
-    public SessionCurrentLineageSnapshot Lineage { get; }
+    public SessionCurrentLineagePrefix Lineage { get; }
     internal DerivedRecapOperationBinding Binding { get; }
 
     public sealed class FrozenBuilding
         : PreparedRecapOperationAuthority {
         internal FrozenBuilding(
-            SessionCurrentLineageSnapshot lineage,
+            SessionCurrentLineagePrefix lineage,
             DerivedRecapOperationBinding binding,
             BuildingDescriptor descriptor
         ) : base(lineage, binding) {
@@ -34,7 +34,7 @@ public abstract class PreparedRecapOperationAuthority {
     public sealed class NewPlanning
         : PreparedRecapOperationAuthority {
         internal NewPlanning(
-            SessionCurrentLineageSnapshot lineage,
+            SessionCurrentLineagePrefix lineage,
             DerivedRecapOperationBinding binding,
             ResolvedRecapPlanningConfiguration configuration,
             DerivedRecapPlanningBaseline baseline
@@ -182,6 +182,7 @@ public abstract record DerivedRecapOperationPreparationResult {
     }
 
     public sealed record BeyondPrefix(
+        DerivedRecapBeyondPrefixStage Stage,
         SessionCurrentLineageBeyondPrefix Evidence
     ) : DerivedRecapOperationPreparationResult;
 }
@@ -216,9 +217,11 @@ public static class DerivedRecapOperationPreparer {
         }
         RequireSameBinding(store, engine);
 
-        SessionCurrentLineageSnapshot lineage;
+        DerivedRecapLineageView lineageView;
         try {
-            lineage = engine.ReadCurrentLineageHeaders(
+            lineageView = DerivedRecapLineageView.Capture(
+                store,
+                engine,
                 cancellationToken
             );
         }
@@ -232,9 +235,9 @@ public static class DerivedRecapOperationPreparer {
             );
         }
 
-        BuildingReadResult building;
+        BuildingPlanReadResult building;
         try {
-            building = await store.ReadBuildingAsync(
+            building = await store.ReadBuildingPlanAsync(
                     setAdmissionAnchor,
                     cancellationToken
                 )
@@ -250,21 +253,34 @@ public static class DerivedRecapOperationPreparer {
             );
         }
 
-        if (!lineage.HeadToRoot.Any(
-                node => node.Address == setAdmissionAnchor
-            )) {
-            return Unavailable(
-                DerivedRecapExecutionDefectCodes.BuildingInvalid,
-                "Exact Building admission anchor is not on the "
-                + "captured current raw lineage."
-            );
+        SessionCurrentLineagePrefix lineage = lineageView.Prefix;
+        switch (lineage.Lookup(setAdmissionAnchor)) {
+            case SessionCurrentLineageAnchorLookup.Found:
+                break;
+            case SessionCurrentLineageAnchorLookup.BeyondPrefix beyond:
+                return new DerivedRecapOperationPreparationResult
+                    .BeyondPrefix(
+                        DerivedRecapBeyondPrefixStage
+                            .PreparationBuildingAdmission,
+                        beyond.Evidence
+                    );
+            case SessionCurrentLineageAnchorLookup.OffLineage:
+                return Unavailable(
+                    DerivedRecapExecutionDefectCodes.BuildingInvalid,
+                    "Exact Building admission anchor is not on the "
+                    + "captured current raw lineage."
+                );
+            default:
+                throw new InvalidDataException(
+                    "Unknown bounded-lineage lookup result."
+                );
         }
 
-        if (building is not BuildingReadResult.Available available) {
+        if (building is not BuildingPlanReadResult.Available available) {
             return building switch {
-                BuildingReadResult.Invalid invalid =>
+                BuildingPlanReadResult.Invalid invalid =>
                     Unavailable(invalid.Defects),
-                BuildingReadResult.Missing => Unavailable(
+                BuildingPlanReadResult.Missing => Unavailable(
                     DerivedRecapExecutionDefectCodes.BuildingInvalid,
                     $"Building '{EventAddressTextCodec.Format(
                         setAdmissionAnchor
@@ -356,7 +372,7 @@ public static class DerivedRecapOperationPreparer {
             cancellationToken
         );
 
-        SessionCurrentLineageSnapshot ReadLineage(
+        SessionCurrentLineagePrefix ReadLineage(
             CancellationToken ct
         ) {
             capturedView = DerivedRecapLineageView.Capture(
@@ -364,11 +380,11 @@ public static class DerivedRecapOperationPreparer {
                 engine,
                 ct
             );
-            return engine.ReadCurrentLineageHeaders(ct);
+            return capturedView.Prefix;
         }
 
         ValueTask<CurrentLineageBuildingSelection> SelectBuilding(
-            SessionCurrentLineageSnapshot lineage,
+            SessionCurrentLineagePrefix lineage,
             CancellationToken ct
         ) {
             RequireCapturedView(lineage);
@@ -376,7 +392,7 @@ public static class DerivedRecapOperationPreparer {
         }
 
         ValueTask<DerivedRecapSelection> SelectLatest(
-            SessionCurrentLineageSnapshot lineage,
+            SessionCurrentLineagePrefix lineage,
             int nthPrevious,
             CancellationToken ct
         ) {
@@ -388,7 +404,7 @@ public static class DerivedRecapOperationPreparer {
         }
 
         void RequireCapturedView(
-            SessionCurrentLineageSnapshot lineage
+            SessionCurrentLineagePrefix lineage
         ) {
             if (capturedView is null
                 || capturedView.CapturedHead != lineage.CapturedHead) {
@@ -409,7 +425,7 @@ public static class DerivedRecapOperationPreparer {
         ArgumentNullException.ThrowIfNull(services);
         ArgumentNullException.ThrowIfNull(capabilities);
 
-        SessionCurrentLineageSnapshot lineage;
+        SessionCurrentLineagePrefix lineage;
         try {
             lineage = services.ReadLineage(cancellationToken);
         }
@@ -508,6 +524,8 @@ public static class DerivedRecapOperationPreparer {
             case CurrentLineageBuildingSelection.BeyondPrefix beyond:
                 return new DerivedRecapOperationPreparationResult
                     .BeyondPrefix(
+                        DerivedRecapBeyondPrefixStage
+                            .PreparationBuildingAdmission,
                         beyond.Evidence
                     );
             case CurrentLineageBuildingSelection.None:
@@ -620,7 +638,11 @@ public static class DerivedRecapOperationPreparer {
         if (frozenCatalog is FrozenCatalogReadResult.BeyondPrefix
             catalogBeyond) {
             return new DerivedRecapOperationPreparationResult
-                .BeyondPrefix(catalogBeyond.Evidence);
+                .BeyondPrefix(
+                    DerivedRecapBeyondPrefixStage
+                        .NewPlanningSourceAnchor,
+                    catalogBeyond.Evidence
+                );
         }
         if (frozenCatalog is FrozenCatalogReadResult.SourceChanged
             sourceChanged) {
@@ -727,6 +749,11 @@ public static class DerivedRecapOperationPreparer {
                     PublishedPlanAtAnchorReadResult.Available available =>
                         new FrozenCatalogReadResult.Available(
                             available.Snapshot.FrozenPlan.Blocks
+                        ),
+                    PublishedPlanAtAnchorReadResult
+                        .ManifestWitnessAvailable witness =>
+                        new FrozenCatalogReadResult.Available(
+                            witness.FrozenPlan.Blocks
                         ),
                     PublishedPlanAtAnchorReadResult.Missing missing =>
                         FrozenCatalogUnavailable(
@@ -992,17 +1019,17 @@ public static class DerivedRecapOperationPreparer {
 internal sealed class DerivedRecapOperationPreparationServices {
     internal DerivedRecapOperationPreparationServices(
         DerivedRecapOperationBinding binding,
-        Func<CancellationToken, SessionCurrentLineageSnapshot>
+        Func<CancellationToken, SessionCurrentLineagePrefix>
             readLineage,
         Func<
-            SessionCurrentLineageSnapshot,
+            SessionCurrentLineagePrefix,
             CancellationToken,
             ValueTask<CurrentLineageBuildingSelection>
         > selectBuilding,
         Func<RecapActivePlanningConfigurationLoadResult>
             loadActiveConfiguration,
         Func<
-            SessionCurrentLineageSnapshot,
+            SessionCurrentLineagePrefix,
             int,
             CancellationToken,
             ValueTask<DerivedRecapSelection>
@@ -1031,17 +1058,17 @@ internal sealed class DerivedRecapOperationPreparationServices {
     }
 
     internal DerivedRecapOperationBinding Binding { get; }
-    internal Func<CancellationToken, SessionCurrentLineageSnapshot>
+    internal Func<CancellationToken, SessionCurrentLineagePrefix>
         ReadLineage { get; }
     internal Func<
-        SessionCurrentLineageSnapshot,
+        SessionCurrentLineagePrefix,
         CancellationToken,
         ValueTask<CurrentLineageBuildingSelection>
     > SelectBuilding { get; }
     internal Func<RecapActivePlanningConfigurationLoadResult>
         LoadActiveConfiguration { get; }
     internal Func<
-        SessionCurrentLineageSnapshot,
+        SessionCurrentLineagePrefix,
         int,
         CancellationToken,
         ValueTask<DerivedRecapSelection>

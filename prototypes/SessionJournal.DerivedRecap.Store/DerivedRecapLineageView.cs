@@ -30,6 +30,8 @@ public sealed class DerivedRecapLineageView {
 
     internal SessionCurrentLineagePrefix CurrentPrefix { get; }
 
+    public SessionCurrentLineagePrefix Prefix => CurrentPrefix;
+
     public EventAddress CapturedHead => CurrentPrefix.CapturedHead;
 
     public static DerivedRecapLineageView Capture(

@@ -23,6 +23,7 @@ internal sealed record RecapStoreTestHooks(
     Action<string>? AfterAtomicFileReplace = null,
     Action<RecapIoPoint, string>? IoObserver = null,
     Action? BeforeRestorePublicationRead = null,
+    Action? BeforeRestoreComponentRead = null,
     Action? BeforeRestoreEnvelopeRawHeadRecheck = null,
     Action? BeforeBuildingQuarantineRename = null,
     Action? AfterBuildingQuarantineRename = null
@@ -295,7 +296,11 @@ public sealed class DerivedRecapStore {
             new PublishedPlanSnapshot(
                 descriptor,
                 first.Publication.FrozenPlanSnapshot
-            )
+            ) {
+                BlockCommitments = Array.AsReadOnly(
+                    first.Publication.BlockCommitments.ToArray()
+                )
+            }
         );
     }
 
@@ -335,53 +340,72 @@ public sealed class DerivedRecapStore {
             );
         }
 
-        PublishedPlanEnvelopeCapture first;
-        try {
-            first = await CapturePublishedPlanEnvelopeAsync(
-                    admissionAnchor,
-                    cancellationToken
-                )
-                .ConfigureAwait(false);
-        }
-        catch (Exception exception)
-            when (IsPublishedPlanAvailabilityException(exception)) {
+        RestoreAuthorityRead first = await ReadRestoreAuthorityAsync(
+                publishedPath,
+                admissionAnchor,
+                cancellationToken,
+                invokeRestorePublicationHook: false
+            )
+            .ConfigureAwait(false);
+        if (first.Capture is not { } firstCapture) {
             return PublishedPlanAtAnchorUnavailable(
                 admissionAnchor,
                 "PublishedPlanUnavailable",
-                exception.Message
+                string.Join(
+                    "; ",
+                    first.Defects.Select(static defect => defect.Detail)
+                )
             );
         }
 
         _testHooks.BeforePublishedPlanEnvelopeRecheck?.Invoke();
-        PublishedPlanEnvelopeCapture second;
-        try {
-            second = await CapturePublishedPlanEnvelopeAsync(
-                    admissionAnchor,
-                    cancellationToken
-                )
-                .ConfigureAwait(false);
-        }
-        catch (Exception exception)
-            when (IsPublishedPlanAvailabilityException(exception)) {
+        RestoreAuthorityRead second = await ReadRestoreAuthorityAsync(
+                publishedPath,
+                admissionAnchor,
+                cancellationToken,
+                invokeRestorePublicationHook: false
+            )
+            .ConfigureAwait(false);
+        if (second.Capture is not { } secondCapture) {
             return new PublishedPlanAtAnchorReadResult.Changed(
-                first.Descriptor,
+                RestoreAuthorityDescriptor(firstCapture),
                 After: null
             );
         }
-        if (second.Descriptor != first.Descriptor
-            || !second.CanonicalEnvelope.SequenceEqual(
-                first.CanonicalEnvelope
+        if (secondCapture.Kind != firstCapture.Kind
+            || !string.Equals(
+                secondCapture.AuthorityStateToken,
+                firstCapture.AuthorityStateToken,
+                StringComparison.Ordinal
+            )
+            || !string.Equals(
+                secondCapture.Manifest.ManifestPayloadSha256,
+                firstCapture.Manifest.ManifestPayloadSha256,
+                StringComparison.Ordinal
             )) {
             return new PublishedPlanAtAnchorReadResult.Changed(
-                first.Descriptor,
-                second.Descriptor
+                RestoreAuthorityDescriptor(firstCapture),
+                RestoreAuthorityDescriptor(secondCapture)
             );
         }
+        if (firstCapture.Publication is null) {
+            return new PublishedPlanAtAnchorReadResult
+                .ManifestWitnessAvailable(firstCapture.Manifest);
+        }
+        PublishedRecapSet publication = firstCapture.Publication;
         return new PublishedPlanAtAnchorReadResult.Available(
             new PublishedPlanSnapshot(
-                first.Descriptor,
-                first.Publication.FrozenPlanSnapshot
-            )
+                new PublishedRecapDescriptor(
+                    RefId,
+                    admissionAnchor,
+                    publication.EnvelopeSha256
+                ),
+                publication.FrozenPlanSnapshot
+            ) {
+                BlockCommitments = Array.AsReadOnly(
+                    publication.BlockCommitments.ToArray()
+                )
+            }
         );
     }
 
@@ -768,6 +792,57 @@ public sealed class DerivedRecapStore {
     }
 
     /// <summary>
+    /// Reads and authenticates only the exact Building manifest. Frozen inputs and generated
+    /// block files remain outside this metadata phase.
+    /// </summary>
+    public async ValueTask<BuildingPlanReadResult> ReadBuildingPlanAsync(
+        EventAddress admissionAnchor,
+        CancellationToken cancellationToken = default
+    ) {
+        await using FileStream readLock =
+            await AcquireReadyReadLockRequiredAsync(cancellationToken)
+                .ConfigureAwait(false);
+        return await ReadBuildingPlanCoreAsync(
+                admissionAnchor,
+                cancellationToken
+            )
+            .ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Enters the content phase for one manifest-authorized Building. The handle cannot be
+    /// constructed publicly or moved across Store instances.
+    /// </summary>
+    public async ValueTask<BuildingReadResult> ReadBuildingAsync(
+        BuildingPlanHandle handle,
+        CancellationToken cancellationToken = default
+    ) {
+        ArgumentNullException.ThrowIfNull(handle);
+        if (!StorePathsEqual(handle.OwnerPath, SessionRepositoryPath)
+            || handle.Descriptor.RefId != RefId) {
+            throw new ArgumentException(
+                "Building plan handle belongs to another Store.",
+                nameof(handle)
+            );
+        }
+        BuildingReadResult result = await ReadBuildingAsync(
+                handle.Descriptor.SetAdmissionAnchor,
+                cancellationToken
+            )
+            .ConfigureAwait(false);
+        if (result is BuildingReadResult.Available available
+            && available.Snapshot.Descriptor != handle.Descriptor) {
+            return new BuildingReadResult.Invalid([
+                new RecapStructuralDefect(
+                    "BuildingChanged",
+                    "Building manifest changed after metadata inspection."
+                )
+            ]);
+        }
+        return result;
+    }
+
+    /// <summary>
     /// Selects active Building membership from a bounded direct inventory.
     /// Dot-staging and malformed entries count toward the resource cap but
     /// never become semantic Building candidates.
@@ -864,28 +939,18 @@ public sealed class DerivedRecapStore {
         var admissionAvailable =
             (DerivedRecapAdmissionLineageResolution.Available)admission;
 
-        BuildingReadResult exact = await ReadBuildingCoreAsync(
+        BuildingPlanReadResult exact = await ReadBuildingPlanCoreAsync(
                 building.Address,
                 cancellationToken
             )
             .ConfigureAwait(false);
-        if (exact is BuildingReadResult.Available available) {
+        if (exact is BuildingPlanReadResult.Available available) {
             if (FindBeyondPrefix(
                     available.Snapshot.Manifest,
                     admissionAvailable.AdmissionPrefix
                 ) is { } planBeyond) {
                 return new CurrentLineageBuildingSelection.BeyondPrefix(
                     planBeyond
-                );
-            }
-            if (FindBeyondPrefix(
-                    available.Snapshot.FrozenInputs.Values.Select(
-                        static input => input.AbsorbedThrough
-                    ),
-                    admissionAvailable.AdmissionPrefix
-                ) is { } inputBeyond) {
-                return new CurrentLineageBuildingSelection.BeyondPrefix(
-                    inputBeyond
                 );
             }
             var defects = new List<RecapStructuralDefect>();
@@ -905,12 +970,12 @@ public sealed class DerivedRecapStore {
                 );
         }
         return exact switch {
-            BuildingReadResult.Invalid invalid =>
+            BuildingPlanReadResult.Invalid invalid =>
                 new CurrentLineageBuildingSelection.Invalid(
                     building.Address,
                     invalid.Defects
                 ),
-            BuildingReadResult.Missing =>
+            BuildingPlanReadResult.Missing =>
                 new CurrentLineageBuildingSelection.Invalid(
                     building.Address,
                     [
@@ -1030,7 +1095,23 @@ public sealed class DerivedRecapStore {
             .ConfigureAwait(false);
     }
 
-    public async ValueTask<CheckpointWriteResult>
+    public ValueTask<CheckpointWriteResult>
+        AdvanceRollingCheckpointAsync(
+        BuildingBlockWriteAuthority authority,
+        DerivedRecapBlock candidate,
+        CancellationToken cancellationToken = default
+    ) {
+        ValidateBuildingWriteAuthority(authority);
+        return AdvanceRollingCheckpointAsync(
+            authority.Building,
+            authority.BlockId,
+            authority.CheckpointStateToken,
+            candidate,
+            cancellationToken
+        );
+    }
+
+    internal async ValueTask<CheckpointWriteResult>
         AdvanceRollingCheckpointAsync(
         BuildingDescriptor building,
         RecapBlockId blockId,
@@ -1134,7 +1215,23 @@ public sealed class DerivedRecapStore {
         );
     }
 
-    public async ValueTask<FinalBlockWriteResult>
+    public ValueTask<FinalBlockWriteResult>
+        EnsureFinalBlockAsync(
+        BuildingBlockWriteAuthority authority,
+        DerivedRecapBlock candidate,
+        CancellationToken cancellationToken = default
+    ) {
+        ValidateBuildingWriteAuthority(authority);
+        return EnsureFinalBlockAsync(
+            authority.Building,
+            authority.BlockId,
+            authority.FinalStateToken,
+            candidate,
+            cancellationToken
+        );
+    }
+
+    internal async ValueTask<FinalBlockWriteResult>
         EnsureFinalBlockAsync(
         BuildingDescriptor building,
         RecapBlockId blockId,
@@ -1488,20 +1585,40 @@ public sealed class DerivedRecapStore {
                     "Selected Published admission resolution changed."
                 );
             }
-            IReadOnlyList<RecapStructuralDefect> defects;
+            var defects = new List<RecapStructuralDefect>();
+            PublishedPlanEnvelopeCapture first;
             try {
-                defects = await ValidatePublishedAsync(
-                            path,
-                            node.Address,
-                            available.AdmissionPrefix,
-                            cancellationToken
-                        )
-                        .ConfigureAwait(false);
-            }
-            catch (DerivedRecapBeyondPrefixException exception) {
-                return new DerivedRecapSelection.BeyondPrefix(
-                    exception.Evidence
+                first = await CapturePublishedPlanEnvelopeAsync(
+                        node.Address,
+                        cancellationToken
+                    )
+                    .ConfigureAwait(false);
+                if (FindBeyondPrefix(
+                        first.Publication.FrozenPlanSnapshot,
+                        available.AdmissionPrefix
+                    ) is { } planBeyond) {
+                    return new DerivedRecapSelection.BeyondPrefix(
+                        planBeyond
+                    );
+                }
+                ValidatePlanLineage(
+                    first.Publication.FrozenPlanSnapshot,
+                    IndexPrefix(available.AdmissionPrefix),
+                    targetIndex: 0,
+                    defects
                 );
+            }
+            catch (Exception exception)
+                when (exception is InvalidDataException
+                      or ArgumentException
+                      or NotSupportedException
+                      or IOException
+                      or UnauthorizedAccessException) {
+                defects.Add(new RecapStructuralDefect(
+                    "PublishedMetadataInvalid",
+                    exception.Message
+                ));
+                first = null!;
             }
             if (defects.Count != 0) {
                 return new DerivedRecapSelection
@@ -1510,18 +1627,23 @@ public sealed class DerivedRecapStore {
                         defects
                     );
             }
-            PublishedRecapSet publication =
-                await ReadPublicationRequiredAsync(
-                        Path.Combine(path, "publication.json"),
+            _testHooks.BeforePublishedPlanEnvelopeRecheck?.Invoke();
+            PublishedPlanEnvelopeCapture second =
+                await CapturePublishedPlanEnvelopeAsync(
+                        node.Address,
                         cancellationToken
                     )
                     .ConfigureAwait(false);
+            if (second.Descriptor != first.Descriptor
+                || !second.CanonicalEnvelope.SequenceEqual(
+                    first.CanonicalEnvelope
+                )) {
+                return new DerivedRecapSelection.StoreUnavailable(
+                    "Published metadata changed during selection."
+                );
+            }
             return new DerivedRecapSelection.Selected(
-                new PublishedRecapDescriptor(
-                    RefId,
-                    node.Address,
-                    publication.EnvelopeSha256
-                )
+                first.Descriptor
             );
         }
         if (lineage.CurrentPrefix.Continuation is not null) {
@@ -1804,6 +1926,45 @@ public sealed class DerivedRecapStore {
 
     public async ValueTask<PublishedCheckpointWriteResult>
         AdvancePublishedCheckpointAsync(
+        PublishedBlockWriteAuthority authority,
+        DerivedRecapBlock candidate,
+        CancellationToken cancellationToken = default
+    ) {
+        ValidatePublishedBlockWriteAuthority(authority);
+        PublishedCheckpointWriteResult result =
+            await AdvancePublishedCheckpointAsync(
+                    authority.Handle,
+                    authority.BlockId,
+                    authority.CheckpointStateToken,
+                    candidate,
+                    cancellationToken
+                )
+                .ConfigureAwait(false);
+        return result switch {
+            PublishedCheckpointWriteResult.Updated updated =>
+                updated with {
+                    WriteAuthority = CreatePublishedBlockWriteAuthority(
+                        authority.Handle,
+                        authority.BlockId,
+                        updated.StateToken,
+                        authority.FinalStateToken
+                    )
+                },
+            PublishedCheckpointWriteResult.AlreadyCurrent current =>
+                current with {
+                    WriteAuthority = CreatePublishedBlockWriteAuthority(
+                        authority.Handle,
+                        authority.BlockId,
+                        current.StateToken,
+                        authority.FinalStateToken
+                    )
+                },
+            _ => result
+        };
+    }
+
+    internal async ValueTask<PublishedCheckpointWriteResult>
+        AdvancePublishedCheckpointAsync(
         PublishedRestoreHandle handle,
         RecapBlockId blockId,
         string expectedStateToken,
@@ -1924,6 +2085,54 @@ public sealed class DerivedRecapStore {
     }
 
     public async ValueTask<PublishedFinalWriteResult>
+        InstallPublishedReplacementAsync(
+        PublishedBlockWriteAuthority authority,
+        DerivedRecapBlock candidate,
+        CancellationToken cancellationToken = default
+    ) {
+        ValidatePublishedBlockWriteAuthority(authority);
+        PublishedFinalWriteResult result =
+            await InstallPublishedReplacementAsync(
+                    authority.Handle,
+                    authority.BlockId,
+                    authority.FinalStateToken,
+                    candidate,
+                    cancellationToken
+                )
+                .ConfigureAwait(false);
+        return result switch {
+            PublishedFinalWriteResult.Installed installed =>
+                installed with {
+                    WriteAuthority = CreatePublishedBlockWriteAuthority(
+                        authority.Handle,
+                        authority.BlockId,
+                        authority.CheckpointStateToken,
+                        installed.StateToken
+                    )
+                },
+            PublishedFinalWriteResult.ReplacedDamaged replaced =>
+                replaced with {
+                    WriteAuthority = CreatePublishedBlockWriteAuthority(
+                        authority.Handle,
+                        authority.BlockId,
+                        authority.CheckpointStateToken,
+                        replaced.StateToken
+                    )
+                },
+            PublishedFinalWriteResult.AlreadyHealthy healthy =>
+                healthy with {
+                    WriteAuthority = CreatePublishedBlockWriteAuthority(
+                        authority.Handle,
+                        authority.BlockId,
+                        authority.CheckpointStateToken,
+                        healthy.StateToken
+                    )
+                },
+            _ => result
+        };
+    }
+
+    internal async ValueTask<PublishedFinalWriteResult>
         InstallPublishedReplacementAsync(
         PublishedRestoreHandle handle,
         RecapBlockId blockId,
@@ -2113,58 +2322,89 @@ public sealed class DerivedRecapStore {
             : new PublishedFinalWriteResult.Installed(stateToken);
     }
 
+    public PublishedEnvelopeCommitAuthority
+        IssuePublishedEnvelopeCommitAuthority(
+        PublishedRestoreHandle handle,
+        IReadOnlyCollection<PublishedBlockWriteAuthority>
+            blockAuthorities
+    ) {
+        ArgumentNullException.ThrowIfNull(handle);
+        ArgumentNullException.ThrowIfNull(blockAuthorities);
+        if (handle.RefId != RefId) {
+            throw new ArgumentException(
+                "Published restore handle belongs to another Store.",
+                nameof(handle)
+            );
+        }
+        var finalStateTokens =
+            new Dictionary<RecapBlockId, string>();
+        foreach (PublishedBlockWriteAuthority authority
+                 in blockAuthorities) {
+            ValidatePublishedBlockWriteAuthority(authority);
+            if (!ReferenceEquals(authority.Handle, handle)) {
+                throw new ArgumentException(
+                    "Published block authorities must belong to the exact "
+                    + "restore inspection handle.",
+                    nameof(blockAuthorities)
+                );
+            }
+            if (!finalStateTokens.TryAdd(
+                    authority.BlockId,
+                    authority.FinalStateToken
+                )) {
+                throw new ArgumentException(
+                    $"Duplicate Published block authority for "
+                    + $"'{authority.BlockId}'.",
+                    nameof(blockAuthorities)
+                );
+            }
+        }
+        if (finalStateTokens.Count != handle.BlockRoster.Count
+            || handle.BlockRoster.Any(
+                blockId => !finalStateTokens.ContainsKey(blockId)
+            )) {
+            throw new ArgumentException(
+                "Published block authorities do not cover the exact frozen "
+                + "plan roster.",
+                nameof(blockAuthorities)
+            );
+        }
+        return new PublishedEnvelopeCommitAuthority(
+            SessionRepositoryPath,
+            handle,
+            finalStateTokens.ToImmutableDictionary()
+        );
+    }
+
     internal async ValueTask<PublishedEnvelopeCommitResult>
         CommitPublishedEnvelopeTrustedAsync(
-        PublishedRestoreHandle handle,
-        IReadOnlyDictionary<RecapBlockId, string>
-            expectedFinalStateTokens,
-        DerivedRecapLineageView lineage,
+        PublishedEnvelopeCommitAuthority commitAuthority,
         EventAddress expectedRawHead,
         Func<EventAddress?> readCurrentHead,
         CancellationToken cancellationToken = default
     ) {
-        ArgumentNullException.ThrowIfNull(handle);
-        ArgumentNullException.ThrowIfNull(expectedFinalStateTokens);
-        ArgumentNullException.ThrowIfNull(lineage);
+        ArgumentNullException.ThrowIfNull(commitAuthority);
         ArgumentNullException.ThrowIfNull(readCurrentHead);
-        if (lineage.CapturedHead != expectedRawHead) {
+        if (!StorePathsEqual(
+                commitAuthority.OwnerPath,
+                SessionRepositoryPath
+            )
+            || commitAuthority.Handle.RefId != RefId) {
+            throw new ArgumentException(
+                "Published envelope commit authority belongs to another Store.",
+                nameof(commitAuthority)
+            );
+        }
+        PublishedRestoreHandle handle = commitAuthority.Handle;
+        IReadOnlyDictionary<RecapBlockId, string> expectedTokens =
+            commitAuthority.FinalStateTokens;
+        if (readCurrentHead() != expectedRawHead) {
             return new PublishedEnvelopeCommitResult.Stale(
                 "RawHeadChanged",
-                "Captured raw lineage does not match the caller-frozen "
+                "Current raw head does not match the caller-frozen "
                 + "expected head."
             );
         }
-        var expectedTokens =
-            new Dictionary<RecapBlockId, string>();
-        foreach ((RecapBlockId blockId, string token)
-                 in expectedFinalStateTokens) {
-            ArgumentNullException.ThrowIfNull(blockId);
-            ArgumentException.ThrowIfNullOrWhiteSpace(token);
-            expectedTokens.Add(blockId, token);
-        }
-
-        DerivedRecapAdmissionLineageResolution admission =
-            lineage.ResolveAdmission(
-                handle.SetAdmissionAnchor,
-                cancellationToken
-            );
-        if (admission
-            is DerivedRecapAdmissionLineageResolution.BeyondPrefix beyond) {
-            return new PublishedEnvelopeCommitResult.BeyondPrefix(
-                beyond.Evidence
-            );
-        }
-        if (admission
-            is DerivedRecapAdmissionLineageResolution.OffLineage) {
-            return EnvelopeUnavailable(
-                "AdmissionAnchorOffLineage",
-                "SetAdmissionAnchor is outside the caller-frozen raw lineage."
-            );
-        }
-        var available =
-            (DerivedRecapAdmissionLineageResolution.Available)admission;
-        IReadOnlyDictionary<EventAddress, int> lineageIndex =
-            IndexPrefix(available.AdmissionPrefix);
 
         StoreWriteLockAttempt writeAttempt =
             await TryAcquireReadyWriteLockAsync(cancellationToken)
@@ -2320,34 +2560,9 @@ public sealed class DerivedRecapStore {
                 RestoreDependencyDefects(plan, input)
             );
         }
-        SessionCurrentLineageBeyondPrefix? artifactBeyond =
-            FindRestoreBeyondPrefix(
-                capture.Manifest,
-                inputs,
-                finals,
-                available.AdmissionPrefix
-            );
-        if (artifactBeyond is not null
-            && exactInputDefects.Count != 0) {
+        if (exactInputDefects.Count != 0) {
             return new PublishedEnvelopeCommitResult.Unavailable(
                 Array.AsReadOnly(exactInputDefects.ToArray())
-            );
-        }
-        if (artifactBeyond is not null) {
-            return new PublishedEnvelopeCommitResult.BeyondPrefix(
-                artifactBeyond
-            );
-        }
-        IReadOnlyList<RecapStructuralDefect> semanticDefects =
-            ValidateRestoreLineageSemantics(
-                capture.Manifest,
-                inputs,
-                finals,
-                lineageIndex
-            );
-        if (semanticDefects.Count != 0) {
-            return new PublishedEnvelopeCommitResult.Unavailable(
-                semanticDefects
             );
         }
 
@@ -3360,6 +3575,7 @@ public sealed class DerivedRecapStore {
                 authority.Defects
             );
         }
+        _testHooks.BeforeRestoreComponentRead?.Invoke();
 
         var inputs =
             new Dictionary<RecapBlockId, FrozenRecapInputHealth>();
@@ -3470,6 +3686,18 @@ public sealed class DerivedRecapStore {
             }
         }
 
+        var handle = new PublishedRestoreHandle(
+            RefId,
+            expectedAnchor,
+            capture.Kind,
+            capture.AuthorityStateToken,
+            capture.Manifest.ManifestPayloadSha256,
+            Array.AsReadOnly(
+                capture.Manifest.Blocks
+                    .Select(static plan => plan.RecapBlockId)
+                    .ToArray()
+            )
+        );
         var blocks = new Dictionary<
             RecapBlockId,
             PublishedBlockRestoreInspection
@@ -3502,17 +3730,18 @@ public sealed class DerivedRecapStore {
                     final.Health,
                     checkpoint,
                     capability
-                )
+                ) {
+                    WriteAuthority =
+                        CreatePublishedBlockWriteAuthority(
+                            handle,
+                            plan.RecapBlockId,
+                            checkpoint.StateToken,
+                            final.Health.StateToken
+                        )
+                }
             );
         }
 
-        var handle = new PublishedRestoreHandle(
-            RefId,
-            expectedAnchor,
-            capture.Kind,
-            capture.AuthorityStateToken,
-            capture.Manifest.ManifestPayloadSha256
-        );
         return new PublishedRestoreInspectionResult.Available(
             new PublishedRestoreInspection(
                 handle,
@@ -3526,7 +3755,8 @@ public sealed class DerivedRecapStore {
         ReadRestoreAuthorityAsync(
         string publishedPath,
         EventAddress expectedAnchor,
-        CancellationToken cancellationToken
+        CancellationToken cancellationToken,
+        bool invokeRestorePublicationHook = true
     ) {
         string publicationPath =
             Path.Combine(publishedPath, "publication.json");
@@ -3549,7 +3779,9 @@ public sealed class DerivedRecapStore {
 
         byte[] bytes;
         try {
-            _testHooks.BeforeRestorePublicationRead?.Invoke();
+            if (invokeRestorePublicationHook) {
+                _testHooks.BeforeRestorePublicationRead?.Invoke();
+            }
             bytes = await _fileSystem.ReadBoundedAsync(
                     publicationPath,
                     MaxPublicationBytes,
@@ -3689,6 +3921,36 @@ public sealed class DerivedRecapStore {
             );
     }
 
+    private PublishedBlockWriteAuthority
+        CreatePublishedBlockWriteAuthority(
+        PublishedRestoreHandle handle,
+        RecapBlockId blockId,
+        string checkpointStateToken,
+        string finalStateToken
+    ) => new(
+        SessionRepositoryPath,
+        handle,
+        blockId,
+        checkpointStateToken,
+        finalStateToken
+    );
+
+    private void ValidatePublishedBlockWriteAuthority(
+        PublishedBlockWriteAuthority authority
+    ) {
+        ArgumentNullException.ThrowIfNull(authority);
+        if (!StorePathsEqual(
+                authority.OwnerPath,
+                SessionRepositoryPath
+            )
+            || authority.Handle.RefId != RefId) {
+            throw new ArgumentException(
+                "Published block write authority belongs to another Store.",
+                nameof(authority)
+            );
+        }
+    }
+
     private async ValueTask<RestoreAuthorityRead>
         ReadManifestWitnessAsync(
         string publishedPath,
@@ -3755,6 +4017,16 @@ public sealed class DerivedRecapStore {
             );
         }
     }
+
+    private PublishedRecapDescriptor RestoreAuthorityDescriptor(
+        RestoreAuthorityCapture capture
+    ) => new(
+        RefId,
+        capture.Manifest.SetAdmissionAnchor,
+        capture.Publication?.EnvelopeSha256
+            ?? $"manifest-witness:{capture.Manifest.ManifestPayloadSha256}:"
+                + capture.AuthorityStateToken
+    );
 
     private async ValueTask<FrozenRecapInputHealth>
         InspectPublishedFrozenInputExactAsync(
@@ -4905,6 +5177,77 @@ public sealed class DerivedRecapStore {
         }
     }
 
+    private async ValueTask<BuildingPlanReadResult>
+        ReadBuildingPlanCoreAsync(
+        EventAddress admissionAnchor,
+        CancellationToken cancellationToken
+    ) {
+        string buildPath = GetBuildingPath(admissionAnchor);
+        if (!PathEntryExists(buildPath)) {
+            return new BuildingPlanReadResult.Missing();
+        }
+        if (!Directory.Exists(buildPath)) {
+            return new BuildingPlanReadResult.Invalid([
+                new RecapStructuralDefect(
+                    "BuildingInvalid",
+                    "Exact Building membership is not a directory."
+                )
+            ]);
+        }
+        try {
+            _fileSystem.EnsureSafeDescendant(buildPath);
+            DerivedRecapSetManifest manifest =
+                await ReadManifestRequiredAsync(
+                        buildPath,
+                        cancellationToken
+                    )
+                    .ConfigureAwait(false);
+            if (manifest.RefId != RefId
+                || manifest.SetAdmissionAnchor != admissionAnchor) {
+                throw new InvalidDataException(
+                    "Building manifest identity does not match its path."
+                );
+            }
+            var descriptor = new BuildingDescriptor(
+                RefId,
+                admissionAnchor,
+                manifest.ManifestPayloadSha256
+            );
+            return new BuildingPlanReadResult.Available(
+                new BuildingPlanSnapshot(
+                    descriptor,
+                    manifest,
+                    new BuildingPlanHandle(
+                        SessionRepositoryPath,
+                        descriptor
+                    )
+                )
+            );
+        }
+        catch (Exception exception)
+            when (exception is InvalidDataException
+                  or ArgumentException
+                  or NotSupportedException
+                  or IOException
+                  or UnauthorizedAccessException) {
+            return new BuildingPlanReadResult.Invalid([
+                new RecapStructuralDefect(
+                    "BuildingInvalid",
+                    exception.Message
+                )
+            ]);
+        }
+    }
+
+    private static bool StorePathsEqual(string left, string right)
+        => string.Equals(
+            Path.GetFullPath(left),
+            Path.GetFullPath(right),
+            OperatingSystem.IsWindows()
+                ? StringComparison.OrdinalIgnoreCase
+                : StringComparison.Ordinal
+        );
+
     private async ValueTask<BuildingSnapshot>
         ReadExactBuildingRequiredAsync(
         BuildingDescriptor descriptor,
@@ -4998,7 +5341,31 @@ public sealed class DerivedRecapStore {
             input,
             final,
             checkpoint
-        );
+        ) {
+            WriteAuthority = new BuildingBlockWriteAuthority(
+                SessionRepositoryPath,
+                snapshot.Descriptor,
+                blockId,
+                checkpoint.StateToken,
+                final.StateToken
+            )
+        };
+    }
+
+    private void ValidateBuildingWriteAuthority(
+        BuildingBlockWriteAuthority authority
+    ) {
+        ArgumentNullException.ThrowIfNull(authority);
+        if (!StorePathsEqual(
+                authority.OwnerPath,
+                SessionRepositoryPath
+            )
+            || authority.Building.RefId != RefId) {
+            throw new ArgumentException(
+                "Building write authority belongs to another Store.",
+                nameof(authority)
+            );
+        }
     }
 
     private async ValueTask<FinalRecapBlockHealth>

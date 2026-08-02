@@ -10,8 +10,8 @@ public sealed class DerivedRecapOnlineLifecycleCoordinatorTests {
     public async Task RepairsLatestThenConfiguredExactAnchorOnce() {
         using LifecycleFixture fixture =
             LifecycleFixture.Create(nthPrevious: 1, historyPairs: 2);
-        EventAddress latest = fixture.Lineage.HeadToRoot[1].Address;
-        EventAddress middle = fixture.Lineage.HeadToRoot[3].Address;
+        EventAddress latest = fixture.Lineage.HeadToOldest[1].Address;
+        EventAddress middle = fixture.Lineage.HeadToOldest[3].Address;
         var script = new LifecycleScript(
             [
                 Invalid(latest),
@@ -57,8 +57,8 @@ public sealed class DerivedRecapOnlineLifecycleCoordinatorTests {
     public async Task SecondInvalidConfiguredSelectionStops() {
         using LifecycleFixture fixture =
             LifecycleFixture.Create(nthPrevious: 2, historyPairs: 2);
-        EventAddress latest = fixture.Lineage.HeadToRoot[1].Address;
-        EventAddress middle = fixture.Lineage.HeadToRoot[3].Address;
+        EventAddress latest = fixture.Lineage.HeadToOldest[1].Address;
+        EventAddress middle = fixture.Lineage.HeadToOldest[3].Address;
         var script = new LifecycleScript(
             [
                 Selected(fixture, latest),
@@ -97,7 +97,7 @@ public sealed class DerivedRecapOnlineLifecycleCoordinatorTests {
         using LifecycleFixture fixture =
             LifecycleFixture.Create(nthPrevious: 1, historyPairs: 1);
         EventAddress oldLatest =
-            fixture.Lineage.HeadToRoot[1].Address;
+            fixture.Lineage.HeadToOldest[1].Address;
         EventAddress newTip = fixture.Lineage.CapturedHead;
         bool published = false;
         var trace = new List<string>();
@@ -484,7 +484,7 @@ public sealed class DerivedRecapOnlineLifecycleCoordinatorTests {
         using LifecycleFixture fixture =
             LifecycleFixture.Create(nthPrevious: 0, historyPairs: 1);
         EventAddress latest =
-            fixture.Lineage.HeadToRoot[1].Address;
+            fixture.Lineage.HeadToOldest[1].Address;
         var script = new LifecycleScript(
             [
                 Selected(fixture, latest),
@@ -516,7 +516,7 @@ public sealed class DerivedRecapOnlineLifecycleCoordinatorTests {
     public async Task BuildLimitOnlyMapsToBackpressure(string code) {
         using LifecycleFixture fixture =
             LifecycleFixture.Create(nthPrevious: 0, historyPairs: 1);
-        EventAddress latest = fixture.Lineage.HeadToRoot[1].Address;
+        EventAddress latest = fixture.Lineage.HeadToOldest[1].Address;
         var script = new LifecycleScript(
             [Selected(fixture, latest)],
             [],
@@ -548,7 +548,7 @@ public sealed class DerivedRecapOnlineLifecycleCoordinatorTests {
     public async Task MixedBuildDefectsMapToUnavailable() {
         using LifecycleFixture fixture =
             LifecycleFixture.Create(nthPrevious: 0, historyPairs: 1);
-        EventAddress latest = fixture.Lineage.HeadToRoot[1].Address;
+        EventAddress latest = fixture.Lineage.HeadToOldest[1].Address;
         var script = new LifecycleScript(
             [Selected(fixture, latest)],
             [],
@@ -584,7 +584,7 @@ public sealed class DerivedRecapOnlineLifecycleCoordinatorTests {
         using LifecycleFixture retryFixture =
             LifecycleFixture.Create(nthPrevious: 0, historyPairs: 1);
         EventAddress retryAnchor =
-            retryFixture.Lineage.HeadToRoot[1].Address;
+            retryFixture.Lineage.HeadToOldest[1].Address;
         var retryScript = new LifecycleScript(
             [Invalid(retryAnchor)],
             [
@@ -612,7 +612,7 @@ public sealed class DerivedRecapOnlineLifecycleCoordinatorTests {
         using LifecycleFixture limitFixture =
             LifecycleFixture.Create(nthPrevious: 0, historyPairs: 1);
         EventAddress limitAnchor =
-            limitFixture.Lineage.HeadToRoot[1].Address;
+            limitFixture.Lineage.HeadToOldest[1].Address;
         var limitScript = new LifecycleScript(
             [Invalid(limitAnchor)],
             [
@@ -644,7 +644,7 @@ public sealed class DerivedRecapOnlineLifecycleCoordinatorTests {
     public async Task MixedRestoreDefectsMapToUnavailable() {
         using LifecycleFixture fixture =
             LifecycleFixture.Create(nthPrevious: 0, historyPairs: 1);
-        EventAddress anchor = fixture.Lineage.HeadToRoot[1].Address;
+        EventAddress anchor = fixture.Lineage.HeadToOldest[1].Address;
         var script = new LifecycleScript(
             [Invalid(anchor)],
             [
@@ -681,7 +681,7 @@ public sealed class DerivedRecapOnlineLifecycleCoordinatorTests {
         using LifecycleFixture unavailableFixture =
             LifecycleFixture.Create(nthPrevious: 0, historyPairs: 1);
         EventAddress unavailableAnchor =
-            unavailableFixture.Lineage.HeadToRoot[1].Address;
+            unavailableFixture.Lineage.HeadToOldest[1].Address;
         var unavailableScript = new LifecycleScript(
             [Invalid(unavailableAnchor)],
             [
@@ -711,7 +711,7 @@ public sealed class DerivedRecapOnlineLifecycleCoordinatorTests {
         using LifecycleFixture failedFixture =
             LifecycleFixture.Create(nthPrevious: 0, historyPairs: 1);
         EventAddress failedAnchor =
-            failedFixture.Lineage.HeadToRoot[1].Address;
+            failedFixture.Lineage.HeadToOldest[1].Address;
         var failedScript = new LifecycleScript(
             [Selected(failedFixture, failedAnchor)],
             [],
@@ -743,7 +743,7 @@ public sealed class DerivedRecapOnlineLifecycleCoordinatorTests {
         using LifecycleFixture retryFixture =
             LifecycleFixture.Create(nthPrevious: 0, historyPairs: 1);
         EventAddress retryAnchor =
-            retryFixture.Lineage.HeadToRoot[1].Address;
+            retryFixture.Lineage.HeadToOldest[1].Address;
         var retryScript = new LifecycleScript(
             [Selected(retryFixture, retryAnchor)],
             [],
@@ -770,7 +770,7 @@ public sealed class DerivedRecapOnlineLifecycleCoordinatorTests {
         using LifecycleFixture failedFixture =
             LifecycleFixture.Create(nthPrevious: 0, historyPairs: 1);
         EventAddress failedAnchor =
-            failedFixture.Lineage.HeadToRoot[1].Address;
+            failedFixture.Lineage.HeadToOldest[1].Address;
         var failedScript = new LifecycleScript(
             [Invalid(failedAnchor)],
             [
@@ -800,7 +800,7 @@ public sealed class DerivedRecapOnlineLifecycleCoordinatorTests {
     public async Task RawHeadDriftCannotReturnReady() {
         using LifecycleFixture fixture =
             LifecycleFixture.Create(nthPrevious: 0, historyPairs: 1);
-        EventAddress latest = fixture.Lineage.HeadToRoot[1].Address;
+        EventAddress latest = fixture.Lineage.HeadToOldest[1].Address;
         var coordinator = fixture.Coordinator(
             (_, _, _) => ValueTask.FromResult<DerivedRecapSelection>(
                 Selected(fixture, latest)
@@ -829,7 +829,7 @@ public sealed class DerivedRecapOnlineLifecycleCoordinatorTests {
     public async Task PinnedPlanningIsUsedOnceThenCurrentPlanningRuns() {
         using LifecycleFixture fixture =
             LifecycleFixture.Create(nthPrevious: 0, historyPairs: 1);
-        EventAddress latest = fixture.Lineage.HeadToRoot[1].Address;
+        EventAddress latest = fixture.Lineage.HeadToOldest[1].Address;
         PublishedRecapDescriptor descriptor =
             Descriptor(fixture, latest);
         var pinned = new DerivedRecapPlanningBaseline(
@@ -847,6 +847,7 @@ public sealed class DerivedRecapOnlineLifecycleCoordinatorTests {
                     ValueTask.FromResult<DerivedRecapSelection>(
                         new DerivedRecapSelection.Selected(descriptor)
                     ),
+                null,
                 (_, _, _) => throw new Xunit.Sdk.XunitException(
                     "Restore must not run."
                 ),
@@ -948,7 +949,7 @@ public sealed class DerivedRecapOnlineLifecycleCoordinatorTests {
             [];
 
         public ValueTask<DerivedRecapSelection> SelectAsync(
-            SessionCurrentLineageSnapshot lineage,
+            SessionCurrentLineagePrefix lineage,
             int ordinal,
             CancellationToken cancellationToken
         ) {
@@ -1280,7 +1281,7 @@ public sealed class DerivedRecapOnlineLifecycleCoordinatorTests {
             Path = path;
             Engine = engine;
             NthPrevious = nthPrevious;
-            Lineage = engine.ReadCurrentLineageHeaders();
+            Lineage = engine.ReadCurrentLineagePrefix(513);
             Boundary = Lineage.CapturedHead;
             Phase = engine.InspectExecutionBoundary().Phase;
         }
@@ -1288,7 +1289,7 @@ public sealed class DerivedRecapOnlineLifecycleCoordinatorTests {
         public string Path { get; }
         public SessionJournalEngine Engine { get; }
         public int NthPrevious { get; }
-        public SessionCurrentLineageSnapshot Lineage { get; }
+        public SessionCurrentLineagePrefix Lineage { get; }
         public EventAddress Boundary { get; }
         public SessionExecutionPhase Phase { get; }
 
@@ -1344,7 +1345,7 @@ public sealed class DerivedRecapOnlineLifecycleCoordinatorTests {
 
         public DerivedRecapOnlineLifecycleCoordinator Coordinator(
             Func<
-                SessionCurrentLineageSnapshot,
+                SessionCurrentLineagePrefix,
                 int,
                 CancellationToken,
                 ValueTask<DerivedRecapSelection>
@@ -1364,6 +1365,7 @@ public sealed class DerivedRecapOnlineLifecycleCoordinatorTests {
             Engine,
             new ThrowingCandidateSource(),
             select,
+            null,
             restore,
             run
         );

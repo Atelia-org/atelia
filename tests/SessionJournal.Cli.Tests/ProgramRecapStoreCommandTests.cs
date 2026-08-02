@@ -856,9 +856,7 @@ public sealed class ProgramRecapStoreCommandTests : IDisposable {
                     );
             Assert.IsType<CheckpointWriteResult.Updated>(
                 await store.AdvanceRollingCheckpointAsync(
-                    building.Snapshot.Descriptor,
-                    block.RecapBlockId,
-                    inspection.Checkpoint.StateToken,
+                    inspection.WriteAuthority,
                     checkpoint
                 )
             );
@@ -868,9 +866,7 @@ public sealed class ProgramRecapStoreCommandTests : IDisposable {
             );
         }
         _ = await store.EnsureFinalBlockAsync(
-            building.Snapshot.Descriptor,
-            block.RecapBlockId,
-            inspection.Final.StateToken,
+            inspection.WriteAuthority,
             block
         );
     }

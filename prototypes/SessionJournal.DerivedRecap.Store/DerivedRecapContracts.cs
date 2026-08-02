@@ -245,7 +245,16 @@ public sealed record PublishedRecapDescriptor(
 public sealed record PublishedPlanSnapshot(
     PublishedRecapDescriptor Descriptor,
     DerivedRecapSetManifest FrozenPlan
-);
+) {
+    /// <summary>
+    /// Canonical publication commitments authenticated by the same envelope as FrozenPlan.
+    /// Reading this metadata does not read final block files.
+    /// </summary>
+    public IReadOnlyList<RecapBlockCommitment> BlockCommitments {
+        get;
+        init;
+    } = Array.Empty<RecapBlockCommitment>();
+}
 
 public abstract record PublishedPlanReadResult {
     private PublishedPlanReadResult() {
@@ -271,6 +280,10 @@ public abstract record PublishedPlanAtAnchorReadResult {
 
     public sealed record Available(PublishedPlanSnapshot Snapshot)
         : PublishedPlanAtAnchorReadResult;
+
+    public sealed record ManifestWitnessAvailable(
+        DerivedRecapSetManifest FrozenPlan
+    ) : PublishedPlanAtAnchorReadResult;
 
     public sealed record Missing(EventAddress SetAdmissionAnchor)
         : PublishedPlanAtAnchorReadResult;
@@ -427,6 +440,45 @@ public sealed record BuildingSnapshot(
         FrozenInputs
 );
 
+/// <summary>
+/// Opaque capability for the second, content-reading phase of one exact Building snapshot.
+/// </summary>
+public sealed class BuildingPlanHandle {
+    internal BuildingPlanHandle(
+        string ownerPath,
+        BuildingDescriptor descriptor
+    ) {
+        OwnerPath = ownerPath;
+        Descriptor = descriptor;
+    }
+
+    internal string OwnerPath { get; }
+    internal BuildingDescriptor Descriptor { get; }
+}
+
+/// <summary>
+/// Manifest-only Building metadata. Frozen input and block contents are deliberately absent.
+/// </summary>
+public sealed record BuildingPlanSnapshot(
+    BuildingDescriptor Descriptor,
+    DerivedRecapSetManifest Manifest,
+    BuildingPlanHandle Handle
+);
+
+public abstract record BuildingPlanReadResult {
+    private BuildingPlanReadResult() {
+    }
+
+    public sealed record Available(BuildingPlanSnapshot Snapshot)
+        : BuildingPlanReadResult;
+
+    public sealed record Missing : BuildingPlanReadResult;
+
+    public sealed record Invalid(
+        IReadOnlyList<RecapStructuralDefect> Defects
+    ) : BuildingPlanReadResult;
+}
+
 public abstract record BuildingReadResult {
     private BuildingReadResult() {
     }
@@ -447,8 +499,20 @@ public abstract record CurrentLineageBuildingSelection {
 
     public sealed record None : CurrentLineageBuildingSelection;
 
-    public sealed record Available(BuildingSnapshot Snapshot)
-        : CurrentLineageBuildingSelection;
+    public sealed record Available(BuildingPlanSnapshot Snapshot)
+        : CurrentLineageBuildingSelection {
+        internal Available(BuildingSnapshot snapshot) : this(
+            new BuildingPlanSnapshot(
+                snapshot.Descriptor,
+                snapshot.Manifest,
+                new BuildingPlanHandle(
+                    string.Empty,
+                    snapshot.Descriptor
+                )
+            )
+        ) {
+        }
+    }
 
     public sealed record Invalid(
         EventAddress SetAdmissionAnchor,
@@ -578,7 +642,36 @@ public sealed record BuildingBlockInspection(
     DerivedRecapFrozenInput? FrozenInput,
     FinalRecapBlockHealth Final,
     RollingRecapCheckpointHealth Checkpoint
-);
+) {
+    public BuildingBlockWriteAuthority WriteAuthority { get; init; }
+        = null!;
+}
+
+/// <summary>
+/// Store-issued, pre-write authority for the exact Building/block/component states observed by
+/// one inspection. Callers can retain it but cannot construct or alter its binding.
+/// </summary>
+public sealed class BuildingBlockWriteAuthority {
+    internal BuildingBlockWriteAuthority(
+        string ownerPath,
+        BuildingDescriptor building,
+        RecapBlockId blockId,
+        string checkpointStateToken,
+        string finalStateToken
+    ) {
+        OwnerPath = ownerPath;
+        Building = building;
+        BlockId = blockId;
+        CheckpointStateToken = checkpointStateToken;
+        FinalStateToken = finalStateToken;
+    }
+
+    internal string OwnerPath { get; }
+    internal BuildingDescriptor Building { get; }
+    internal RecapBlockId BlockId { get; }
+    internal string CheckpointStateToken { get; }
+    internal string FinalStateToken { get; }
+}
 
 public abstract record CheckpointWriteResult {
     private CheckpointWriteResult() {
@@ -637,13 +730,15 @@ public sealed class PublishedRestoreHandle {
         EventAddress setAdmissionAnchor,
         PublishedRestoreAuthorityKind authorityKind,
         string authorityStateToken,
-        string manifestPayloadSha256
+        string manifestPayloadSha256,
+        IReadOnlyList<RecapBlockId> blockRoster
     ) {
         RefId = refId;
         SetAdmissionAnchor = setAdmissionAnchor;
         AuthorityKind = authorityKind;
         AuthorityStateToken = authorityStateToken;
         ManifestPayloadSha256 = manifestPayloadSha256;
+        BlockRoster = blockRoster;
     }
 
     public RefId RefId { get; }
@@ -652,6 +747,7 @@ public sealed class PublishedRestoreHandle {
     public string ManifestPayloadSha256 { get; }
 
     internal string AuthorityStateToken { get; }
+    internal IReadOnlyList<RecapBlockId> BlockRoster { get; }
 }
 
 public abstract record FrozenRecapInputHealth {
@@ -710,7 +806,58 @@ public sealed record PublishedBlockRestoreInspection(
     FinalRecapBlockHealth Final,
     RollingRecapCheckpointHealth Checkpoint,
     PublishedBlockRestoreCapability Capability
-);
+) {
+    public PublishedBlockWriteAuthority WriteAuthority { get; init; }
+        = null!;
+}
+
+/// <summary>
+/// Store-issued, pre-write authority for the exact Published restore handle,
+/// block, checkpoint, and final states observed by one inspection. Callers can
+/// retain it but cannot construct or alter its binding.
+/// </summary>
+public sealed class PublishedBlockWriteAuthority {
+    internal PublishedBlockWriteAuthority(
+        string ownerPath,
+        PublishedRestoreHandle handle,
+        RecapBlockId blockId,
+        string checkpointStateToken,
+        string finalStateToken
+    ) {
+        OwnerPath = ownerPath;
+        Handle = handle;
+        BlockId = blockId;
+        CheckpointStateToken = checkpointStateToken;
+        FinalStateToken = finalStateToken;
+    }
+
+    internal string OwnerPath { get; }
+    internal PublishedRestoreHandle Handle { get; }
+    internal RecapBlockId BlockId { get; }
+    internal string CheckpointStateToken { get; }
+    internal string FinalStateToken { get; }
+}
+
+/// <summary>
+/// Store-issued authority for committing one exact Published envelope after
+/// every frozen-plan block has an exact, pre-write final-state authority.
+/// </summary>
+public sealed class PublishedEnvelopeCommitAuthority {
+    internal PublishedEnvelopeCommitAuthority(
+        string ownerPath,
+        PublishedRestoreHandle handle,
+        IReadOnlyDictionary<RecapBlockId, string> finalStateTokens
+    ) {
+        OwnerPath = ownerPath;
+        Handle = handle;
+        FinalStateTokens = finalStateTokens;
+    }
+
+    internal string OwnerPath { get; }
+    internal PublishedRestoreHandle Handle { get; }
+    internal IReadOnlyDictionary<RecapBlockId, string>
+        FinalStateTokens { get; }
+}
 
 public sealed record PublishedRestoreInspection(
     PublishedRestoreHandle Handle,
@@ -744,10 +891,16 @@ public abstract record PublishedCheckpointWriteResult {
     }
 
     public sealed record Updated(string StateToken)
-        : PublishedCheckpointWriteResult;
+        : PublishedCheckpointWriteResult {
+        public PublishedBlockWriteAuthority WriteAuthority { get; init; }
+            = null!;
+    }
 
     public sealed record AlreadyCurrent(string StateToken)
-        : PublishedCheckpointWriteResult;
+        : PublishedCheckpointWriteResult {
+        public PublishedBlockWriteAuthority WriteAuthority { get; init; }
+            = null!;
+    }
 
     public sealed record Stale(string? CurrentStateToken)
         : PublishedCheckpointWriteResult;
@@ -762,15 +915,24 @@ public abstract record PublishedFinalWriteResult {
     }
 
     public sealed record Installed(string StateToken)
-        : PublishedFinalWriteResult;
+        : PublishedFinalWriteResult {
+        public PublishedBlockWriteAuthority WriteAuthority { get; init; }
+            = null!;
+    }
 
     public sealed record ReplacedDamaged(string StateToken)
-        : PublishedFinalWriteResult;
+        : PublishedFinalWriteResult {
+        public PublishedBlockWriteAuthority WriteAuthority { get; init; }
+            = null!;
+    }
 
     public sealed record AlreadyHealthy(
         DerivedRecapBlock Block,
         string StateToken
-    ) : PublishedFinalWriteResult;
+    ) : PublishedFinalWriteResult {
+        public PublishedBlockWriteAuthority WriteAuthority { get; init; }
+            = null!;
+    }
 
     public sealed record HealthyConflict(
         DerivedRecapBlock Existing,
@@ -803,7 +965,4 @@ public abstract record PublishedEnvelopeCommitResult {
         IReadOnlyList<RecapStructuralDefect> Defects
     ) : PublishedEnvelopeCommitResult;
 
-    public sealed record BeyondPrefix(
-        SessionCurrentLineageBeyondPrefix Evidence
-    ) : PublishedEnvelopeCommitResult;
 }

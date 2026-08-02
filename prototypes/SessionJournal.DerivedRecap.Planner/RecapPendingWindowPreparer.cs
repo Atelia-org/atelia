@@ -26,7 +26,8 @@ internal sealed record PreparedRecapPendingWindows(
     IReadOnlyDictionary<
         (RecapBlockId BlockId, int EndpointIndex),
         SessionHistoryPlanningWindow
-    > Windows
+    > Windows,
+    SessionCurrentLineageBeyondPrefix? BeyondPrefix = null
 );
 
 /// <summary>
@@ -145,9 +146,10 @@ internal static class RecapPendingWindowPreparer {
             return new PreparedRecapPendingWindows([], windows);
         }
 
-        EventAddress observedRawHead =
-            engine.ReadCurrentLineageHeaders(cancellationToken)
-                .CapturedHead;
+        EventAddress observedRawHead = engine.ReadCurrentHead()
+            ?? throw new InvalidDataException(
+                "Pending replay-window preparation requires a non-empty SessionJournal."
+            );
         if (observedRawHead != expectedRawHead) {
             throw new RecapRawHeadChangedException(
                 expectedRawHead,
@@ -155,6 +157,12 @@ internal static class RecapPendingWindowPreparer {
             );
         }
         var defects = new List<RecapPendingWindowDefect>();
+        var proofs = new Dictionary<
+            (RecapBlockId BlockId, int EndpointIndex),
+            (SessionHistoryPlanningWindowProof Proof,
+                RecapReplayBoundary Start,
+                RecapReplayBoundary End)
+        >();
         long rawEvents = 0;
         foreach (PendingMaintainRoute route in pendingRoutes) {
             RecapReplayBoundary previous = StartBoundary(route);
@@ -163,30 +171,29 @@ internal static class RecapPendingWindowPreparer {
                  index++) {
                 RecapReplayBoundary endpoint =
                     route.Plan.CatchUpBoundaries[index];
-                SessionHistoryPlanningSeed seed =
-                    engine.CreateHistoryPlanningSeed(
+                SessionHistoryPlanningWindowProofResult proofResult =
+                    engine.ProveHistoryPlanningWindowAtBounded(
+                        endpoint.Address,
                         previous.Address,
-                        previous.Setups,
+                        hardCaps.MaxRawEventsPerStep,
                         cancellationToken
                     );
-                SessionHistoryPlanningWindow window =
-                    ReadExactStepWindow(
-                        engine,
-                        endpoint,
-                        seed,
-                        cancellationToken
+                if (proofResult
+                    is SessionHistoryPlanningWindowProofResult
+                        .BeyondPrefix beyond) {
+                    return new PreparedRecapPendingWindows(
+                        defects,
+                        windows,
+                        beyond.Evidence
                     );
-                if (window.RawAddresses.Count
-                    > hardCaps.MaxRawEventsPerStep) {
-                    defects.Add(new RecapPendingWindowDefect(
-                        $"Block '{route.Plan.RecapBlockId}' step "
-                        + $"{index} exceeds the raw step limit."
-                    ));
                 }
-                rawEvents += window.RawAddresses.Count;
-                windows.Add(
+                SessionHistoryPlanningWindowProof proof =
+                    ((SessionHistoryPlanningWindowProofResult.Available)
+                        proofResult).Proof;
+                rawEvents = checked(rawEvents + proof.RawEventCount);
+                proofs.Add(
                     (route.Plan.RecapBlockId, index),
-                    window
+                    (proof, previous, endpoint)
                 );
                 previous = endpoint;
             }
@@ -196,6 +203,39 @@ internal static class RecapPendingWindowPreparer {
                 $"Building requires {rawEvents} raw events; limit is "
                 + $"{hardCaps.MaxRawEventsPerBuild}."
             ));
+        }
+        if (defects.Count != 0) {
+            return new PreparedRecapPendingWindows(defects, windows);
+        }
+
+        EventAddress? afterProofHead = engine.ReadCurrentHead();
+        if (afterProofHead != expectedRawHead) {
+            throw new RecapRawHeadChangedException(
+                expectedRawHead,
+                afterProofHead ?? default
+            );
+        }
+
+        foreach ((
+            (RecapBlockId BlockId, int EndpointIndex) key,
+            (SessionHistoryPlanningWindowProof Proof,
+                RecapReplayBoundary Start,
+                RecapReplayBoundary End) step
+        ) in proofs) {
+            SessionHistoryPlanningSeed seed =
+                engine.CreateHistoryPlanningSeed(
+                    step.Start.Address,
+                    step.Start.Setups,
+                    cancellationToken
+                );
+            SessionHistoryPlanningWindow window =
+                engine.MaterializeHistoryPlanningWindow(
+                    step.Proof,
+                    seed,
+                    cancellationToken
+                );
+            ValidateExactStepWindow(window, step.End, seed);
+            windows.Add(key, window);
         }
         return new PreparedRecapPendingWindows(defects, windows);
     }
@@ -221,18 +261,11 @@ internal static class RecapPendingWindowPreparer {
         return new RecapReplayBoundary(route.StartExclusive, setups);
     }
 
-    internal static SessionHistoryPlanningWindow ReadExactStepWindow(
-        SessionJournalEngine engine,
+    private static void ValidateExactStepWindow(
+        SessionHistoryPlanningWindow window,
         RecapReplayBoundary endpoint,
-        SessionHistoryPlanningSeed seed,
-        CancellationToken cancellationToken
+        SessionHistoryPlanningSeed seed
     ) {
-        SessionHistoryPlanningWindow window =
-            engine.ReadHistoryPlanningWindowAt(
-                endpoint.Address,
-                seed,
-                cancellationToken
-            );
         if (window.StartExclusive != seed.Address
             || window.StartSetups != seed.Setups
             || window.ObservedRawHead != endpoint.Address
@@ -249,6 +282,36 @@ internal static class RecapPendingWindowPreparer {
                 + "replay-safe interval."
             );
         }
+    }
+
+    internal static SessionHistoryPlanningWindow ReadExactStepWindow(
+        SessionJournalEngine engine,
+        RecapReplayBoundary endpoint,
+        SessionHistoryPlanningSeed seed,
+        int maxRawEventCount,
+        CancellationToken cancellationToken
+    ) {
+        SessionHistoryPlanningWindowProofResult proofResult =
+            engine.ProveHistoryPlanningWindowAtBounded(
+                endpoint.Address,
+                seed.Address,
+                maxRawEventCount,
+                cancellationToken
+            );
+        if (proofResult
+            is SessionHistoryPlanningWindowProofResult.BeyondPrefix) {
+            throw new InvalidDataException(
+                "Exact replay step exceeds its bounded raw-event prefix."
+            );
+        }
+        SessionHistoryPlanningWindow window =
+            engine.MaterializeHistoryPlanningWindow(
+                ((SessionHistoryPlanningWindowProofResult.Available)
+                    proofResult).Proof,
+                seed,
+                cancellationToken
+            );
+        ValidateExactStepWindow(window, endpoint, seed);
         return window;
     }
 }

@@ -871,6 +871,199 @@ public sealed partial class SessionJournalEngine : IDisposable {
         );
     }
 
+    /// <summary>
+    /// Proves an exact immutable planning interval using headers only. The returned token is
+    /// repository-bound and can be materialized only with a matching authenticated start seed.
+    /// </summary>
+    public SessionHistoryPlanningWindowProofResult
+        ProveHistoryPlanningWindowAtBounded(
+        EventAddress capturedHead,
+        EventAddress startExclusive,
+        int maxRawEventCount,
+        CancellationToken cancellationToken = default
+    ) {
+        ThrowIfDisposed();
+        if (startExclusive == default) {
+            throw new ArgumentException(
+                "History planning start cannot be the default EventAddress.",
+                nameof(startExclusive)
+            );
+        }
+        if (maxRawEventCount < 0 || maxRawEventCount == int.MaxValue) {
+            throw new ArgumentOutOfRangeException(
+                nameof(maxRawEventCount),
+                "The bounded raw-event count must be non-negative and leave room for its start header."
+            );
+        }
+
+        SessionJournalReadDiagnostics before =
+            _reader.CaptureDiagnostics();
+        SessionTargetLineageProof proof =
+            ReadLineageTargetProofAtCore(
+                capturedHead,
+                startExclusive,
+                maxRawEventCount + 1,
+                cancellationToken
+            );
+        switch (proof.Lookup) {
+            case SessionCurrentLineageAnchorLookup.BeyondPrefix beyond:
+                return new SessionHistoryPlanningWindowProofResult
+                    .BeyondPrefix(beyond.Evidence, proof.Diagnostics);
+            case SessionCurrentLineageAnchorLookup.OffLineage:
+                throw new InvalidDataException(
+                    "History planning start is not an ancestor of the captured raw head."
+                );
+            case SessionCurrentLineageAnchorLookup.Found found:
+                _testHooks.AfterBoundedHistoryProof?.Invoke();
+                var interval = new SessionProvenLineageHeader[
+                    found.Index
+                ];
+                for (int index = 0; index < found.Index; index++) {
+                    interval[index] =
+                        proof.HeadThroughTargetOrLimit[index];
+                }
+                return new SessionHistoryPlanningWindowProofResult.Available(
+                    new SessionHistoryPlanningWindowProof(
+                        Path,
+                        capturedHead,
+                        startExclusive,
+                        interval.Length,
+                        proof.Diagnostics,
+                        new SessionHistoryPlanningWindowProofState(
+                            interval,
+                            before
+                        )
+                    )
+                );
+            default:
+                throw new InvalidDataException(
+                    "Unknown bounded lineage lookup result."
+                );
+        }
+    }
+
+    /// <summary>
+    /// Materializes a previously header-proved interval with one authenticated matching seed.
+    /// No lineage search or hidden continuation read is performed.
+    /// </summary>
+    public SessionHistoryPlanningWindow MaterializeHistoryPlanningWindow(
+        SessionHistoryPlanningWindowProof proof,
+        SessionHistoryPlanningSeed planningSeed,
+        CancellationToken cancellationToken = default
+    ) {
+        ThrowIfDisposed();
+        ArgumentNullException.ThrowIfNull(proof);
+        ArgumentNullException.ThrowIfNull(planningSeed);
+        if (!PathsEqual(proof.OwnerPath, Path)
+            || proof.State
+                is not SessionHistoryPlanningWindowProofState state) {
+            throw new ArgumentException(
+                "History planning proof does not belong to this SessionJournal.",
+                nameof(proof)
+            );
+        }
+        if (planningSeed.Address != proof.StartExclusive) {
+            throw new ArgumentException(
+                "Planning seed does not match the proven history start.",
+                nameof(planningSeed)
+            );
+        }
+        SessionHistoryPlanningWindow window =
+            MaterializeHistoryPlanningWindow(
+                proof.CapturedHead,
+                proof.StartExclusive,
+                planningSeed,
+                state.HeadToStartExclusive,
+                state.DiagnosticsBeforeProof,
+                verifyBoundedProof: true,
+                cancellationToken
+            );
+        if (window.RawAddresses.Count != proof.RawEventCount) {
+            throw new InvalidDataException(
+                "The materialized history planning interval did not match its header proof."
+            );
+        }
+        return window;
+    }
+
+    private static bool PathsEqual(string left, string right)
+        => string.Equals(
+            System.IO.Path.GetFullPath(left),
+            System.IO.Path.GetFullPath(right),
+            OperatingSystem.IsWindows()
+                ? StringComparison.OrdinalIgnoreCase
+                : StringComparison.Ordinal
+        );
+
+    /// <summary>
+    /// Locates the canonical SessionCreated planning boundary within one bounded raw suffix. The
+    /// complete prefix is proved with headers only; setup and SessionCreated payloads are read only
+    /// after the boundary is found. This method never auto-pages or falls back to a root walk.
+    /// </summary>
+    public SessionCreatedPlanningSeedReadResult
+        ReadSessionCreatedPlanningSeedAtBounded(
+        EventAddress capturedHead,
+        int maxRawEventCount,
+        CancellationToken cancellationToken = default
+    ) {
+        ThrowIfDisposed();
+        if (capturedHead == default) {
+            throw new ArgumentException(
+                "The captured lineage head cannot be the default EventAddress.",
+                nameof(capturedHead)
+            );
+        }
+        if (maxRawEventCount < 0 || maxRawEventCount == int.MaxValue) {
+            throw new ArgumentOutOfRangeException(
+                nameof(maxRawEventCount),
+                "The bounded raw-event count must be non-negative and leave room for the SessionCreated header."
+            );
+        }
+
+        SessionCurrentLineagePrefix prefix = ReadLineagePrefixAtCore(
+            capturedHead,
+            maxRawEventCount + 1,
+            cancellationToken
+        );
+        for (int index = 0; index < prefix.HeadToOldest.Count; index++) {
+            SessionCurrentLineageHeader header =
+                prefix.HeadToOldest[index];
+            if (header.Kind != SessionEventKind.SessionCreated) {
+                continue;
+            }
+
+            _testHooks.AfterBoundedHistoryProof?.Invoke();
+            SessionContextAnchorSetupReferences setups =
+                ResolveContextAnchorSetupReferences(
+                    header.Address,
+                    cancellationToken
+                );
+            SessionHistoryPlanningSeed seed =
+                CreateHistoryPlanningSeed(
+                    header.Address,
+                    setups,
+                    cancellationToken
+                );
+            return new SessionCreatedPlanningSeedReadResult.Available(
+                seed,
+                index,
+                prefix.Diagnostics
+            );
+        }
+
+        if (prefix.Continuation is { } continuation) {
+            return new SessionCreatedPlanningSeedReadResult.BeyondPrefix(
+                prefix.CapturedHead,
+                prefix.HeadToOldest.Count,
+                continuation.NextAddress,
+                prefix.Diagnostics
+            );
+        }
+        throw new InvalidDataException(
+            "SessionJournal lineage has no SessionCreated planning boundary."
+        );
+    }
+
     private SessionHistoryPlanningWindowReadResult
         ReadHistoryPlanningWindowAtBoundedCore(
         EventAddress capturedHead,
@@ -3794,6 +3987,12 @@ public sealed partial class SessionJournalEngine : IDisposable {
             HeadThroughTargetOrLimit,
         SessionCurrentLineageAnchorLookup Lookup,
         SessionCurrentLineageDiagnostics Diagnostics
+    );
+
+    private sealed record SessionHistoryPlanningWindowProofState(
+        IReadOnlyList<SessionProvenLineageHeader>
+            HeadToStartExclusive,
+        SessionJournalReadDiagnostics DiagnosticsBeforeProof
     );
 
     private enum FreshBootstrapBoundary {

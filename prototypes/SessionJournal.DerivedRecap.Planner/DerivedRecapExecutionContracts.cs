@@ -218,6 +218,21 @@ public abstract record DerivedRecapPlanningDiagnostics {
     ) : DerivedRecapPlanningDiagnostics;
 }
 
+public enum DerivedRecapBeyondPrefixStage {
+    PreparationCurrentLineage,
+    PreparationBuildingAdmission,
+    NewPlanningSourceAnchor,
+    NewPlanningRawGrowth,
+    NewPlanningPendingWindow,
+    ResumeBuildingAdmission,
+    ResumePendingWindow,
+    RestoreAdmission,
+    RestorePendingWindow,
+    LifecycleCandidateAdmission,
+    LifecycleRecentHistory,
+    Publish,
+}
+
 public abstract record DerivedRecapExecutionResult {
     private DerivedRecapExecutionResult() {
     }
@@ -233,8 +248,17 @@ public abstract record DerivedRecapExecutionResult {
     ) : DerivedRecapExecutionResult;
 
     public sealed record BeyondPrefix(
+        DerivedRecapBeyondPrefixStage Stage,
         SessionCurrentLineageBeyondPrefix Evidence
-    ) : DerivedRecapExecutionResult;
+    ) : DerivedRecapExecutionResult {
+        internal BeyondPrefix(
+            SessionCurrentLineageBeyondPrefix evidence
+        ) : this(
+            DerivedRecapBeyondPrefixStage.PreparationCurrentLineage,
+            evidence
+        ) {
+        }
+    }
 
     public sealed record Retryable(string Code, string Detail)
         : DerivedRecapExecutionResult;

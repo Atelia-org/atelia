@@ -10,7 +10,7 @@ namespace Atelia.SessionJournal.Cli;
 
 internal static class RecapExecutionCommands {
     private const string ReportSchema =
-        "atelia.session-journal.derived-recap-execution.v5";
+        "atelia.session-journal.derived-recap-execution.v6";
     private const string DefaultCallLogDirectory =
         "gitignore/session-journal/recap-maintainer-calls";
 
@@ -112,10 +112,10 @@ internal static class RecapExecutionCommands {
             operation == "run"
                 ? null
                 : DerivedRecapLineageView.Capture(store, engine);
-        SJ.SessionCurrentLineageSnapshot? lineage =
+        SJ.SessionCurrentLineagePrefix? lineage =
             lineageView is null
                 ? null
-                : engine.ReadCurrentLineageHeaders();
+                : lineageView.Prefix;
         EventAddress? anchor = needsAnchor
             ? ParseAddress(
                 options.RequireSingle("anchor"),
@@ -136,6 +136,7 @@ internal static class RecapExecutionCommands {
         IReadOnlyList<string> readinessDefects;
         SJ.SessionCurrentLineageBeyondPrefix? readinessBeyondPrefix =
             null;
+        DerivedRecapBeyondPrefixStage? readinessBeyondPrefixStage = null;
         if (operation is "run" or "resume") {
             RecapOperationReadinessResult readiness =
                 await (operation == "run"
@@ -171,6 +172,8 @@ internal static class RecapExecutionCommands {
                         ? null
                         : CreateConfigReport(blocked.Composition);
                 readinessBeyondPrefix = blocked.BeyondPrefix;
+                readinessBeyondPrefixStage =
+                    blocked.BeyondPrefixStage;
             }
         }
         else {
@@ -212,7 +215,10 @@ internal static class RecapExecutionCommands {
                     planningDiagnostics: null,
                     callLogCount: 0,
                     callLogDirectory,
-                    readinessBeyondPrefix
+                    readinessBeyondPrefix,
+                    readinessBeyondPrefixStage is { } readinessStage
+                        ? BeyondPrefixStageToken(readinessStage)
+                        : null
                 ),
                 reportPath,
                 exitCode: retryable ? 3 : 2
@@ -464,7 +470,7 @@ internal static class RecapExecutionCommands {
                     operation,
                     engine,
                     rawHead,
-                    "BeyondPrefix",
+                    "Unavailable",
                     requestedAnchor,
                     null,
                     null,
@@ -492,7 +498,8 @@ internal static class RecapExecutionCommands {
                     CreatePlanningReport(planningDiagnostics),
                     calls,
                     callLogDirectory,
-                    beyond.Evidence
+                    beyond.Evidence,
+                    BeyondPrefixStageToken(beyond.Stage)
                 ),
                 2
             ),
@@ -603,7 +610,8 @@ internal static class RecapExecutionCommands {
                     planningDiagnostics: null,
                     calls,
                     callLogDirectory,
-                    beyond.Evidence
+                    beyond.Evidence,
+                    BeyondPrefixStageToken(beyond.Stage)
                 ),
                 2
             ),
@@ -661,7 +669,8 @@ internal static class RecapExecutionCommands {
         RecapExecutionPlanningReport? planningDiagnostics,
         int callLogCount,
         string callLogDirectory,
-        SJ.SessionCurrentLineageBeyondPrefix? beyondPrefixEvidence = null
+        SJ.SessionCurrentLineageBeyondPrefix? beyondPrefixEvidence = null,
+        string? beyondPrefixStage = null
     ) => new(
         ReportSchema,
         operation,
@@ -686,6 +695,7 @@ internal static class RecapExecutionCommands {
         beyondPrefixEvidence is null
             ? null
             : new RecapExecutionBeyondPrefixReport(
+                beyondPrefixStage ?? "preparation-current-lineage",
                 SJ.EventAddressTextCodec.Format(
                     beyondPrefixEvidence.RequiredAnchor
                 ),
@@ -698,6 +708,37 @@ internal static class RecapExecutionCommands {
                 )
             )
     );
+
+    private static string BeyondPrefixStageToken(
+        DerivedRecapBeyondPrefixStage stage
+    ) => stage switch {
+        DerivedRecapBeyondPrefixStage.PreparationCurrentLineage =>
+            "preparation-current-lineage",
+        DerivedRecapBeyondPrefixStage.PreparationBuildingAdmission =>
+            "preparation-building-admission",
+        DerivedRecapBeyondPrefixStage.NewPlanningSourceAnchor =>
+            "new-planning-source-anchor",
+        DerivedRecapBeyondPrefixStage.NewPlanningRawGrowth =>
+            "new-planning-raw-growth",
+        DerivedRecapBeyondPrefixStage.NewPlanningPendingWindow =>
+            "new-planning-pending-window",
+        DerivedRecapBeyondPrefixStage.ResumeBuildingAdmission =>
+            "resume-building-admission",
+        DerivedRecapBeyondPrefixStage.ResumePendingWindow =>
+            "resume-pending-window",
+        DerivedRecapBeyondPrefixStage.RestoreAdmission =>
+            "restore-admission",
+        DerivedRecapBeyondPrefixStage.RestorePendingWindow =>
+            "restore-pending-window",
+        DerivedRecapBeyondPrefixStage.LifecycleCandidateAdmission =>
+            "lifecycle-candidate-admission",
+        DerivedRecapBeyondPrefixStage.LifecycleRecentHistory =>
+            "lifecycle-recent-history",
+        DerivedRecapBeyondPrefixStage.Publish => "publish",
+        _ => throw new InvalidDataException(
+            $"Unknown BeyondPrefix stage '{stage}'."
+        )
+    };
 
     private static RecapExecutionConfigReport CreateConfigReport(
         ResolvedRecapPlannerComposition composition
@@ -872,6 +913,7 @@ internal sealed record RecapExecutionReport(
 );
 
 internal sealed record RecapExecutionBeyondPrefixReport(
+    string Stage,
     string RequiredAnchor,
     string CapturedHead,
     int HeaderCount,

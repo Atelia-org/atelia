@@ -14,14 +14,15 @@ internal abstract record RecapOperationReadinessResult {
         RecapMaintainerProfileCatalog CapabilityCatalog,
         ResolvedRecapPlannerComposition? Composition
     ) : RecapOperationReadinessResult {
-        internal SJ.SessionCurrentLineageSnapshot Lineage =>
+        internal SJ.SessionCurrentLineagePrefix Lineage =>
             Authority.Lineage;
     }
 
     internal sealed record Blocked(
         IReadOnlyList<RecapOperationReadinessDefect> Defects,
         ResolvedRecapPlannerComposition? Composition = null,
-        SJ.SessionCurrentLineageBeyondPrefix? BeyondPrefix = null
+        SJ.SessionCurrentLineageBeyondPrefix? BeyondPrefix = null,
+        DerivedRecapBeyondPrefixStage? BeyondPrefixStage = null
     ) : RecapOperationReadinessResult;
 }
 
@@ -173,7 +174,8 @@ internal static class RecapOperationReadiness {
                         + "DerivedRecap lineage prefix."
                     )],
                     Composition: null,
-                    BeyondPrefix: beyond.Evidence
+                    BeyondPrefix: beyond.Evidence,
+                    BeyondPrefixStage: beyond.Stage
                 ),
             _ => throw new InvalidDataException(
                 "Unknown DerivedRecap preparation result."

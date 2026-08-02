@@ -66,6 +66,9 @@ public sealed class DerivedRecapCurrentLineageBuildingTests {
             manifest.ManifestPayloadSha256,
             available.Snapshot.Descriptor.ManifestPayloadSha256
         );
+        Assert.Empty(typeof(BuildingPlanHandle).GetConstructors());
+        Assert.Empty(typeof(BuildingBlockWriteAuthority)
+            .GetConstructors());
     }
 
     [Fact]

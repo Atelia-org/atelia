@@ -68,13 +68,70 @@ public sealed class DerivedRecapRestoreExecutor {
                     _engine,
                     cancellationToken
                 );
-            SessionCurrentLineageSnapshot lineage =
-                _engine.ReadCurrentLineageHeaders(cancellationToken);
+            SessionCurrentLineagePrefix lineage = lineageView.Prefix;
             if (lineageView.CapturedHead != expectedRawHead) {
                 return RawHeadChanged(
                     expectedRawHead,
                     lineageView.CapturedHead
                 );
+            }
+
+            PublishedPlanAtAnchorReadResult planRead =
+                await _store.ReadPublishedPlanAtAnchorAsync(
+                        setAdmissionAnchor,
+                        cancellationToken
+                    )
+                    .ConfigureAwait(false);
+            DerivedRecapSetManifest frozenPlan;
+            switch (planRead) {
+                case PublishedPlanAtAnchorReadResult.Available plan:
+                    frozenPlan = plan.Snapshot.FrozenPlan;
+                    break;
+                case PublishedPlanAtAnchorReadResult
+                    .ManifestWitnessAvailable witness:
+                    frozenPlan = witness.FrozenPlan;
+                    break;
+                default:
+                    return planRead switch {
+                    PublishedPlanAtAnchorReadResult.Missing =>
+                        Unavailable(
+                            DerivedRecapRestoreDefectCodes.StoreUnavailable,
+                            "Published metadata is missing."
+                        ),
+                    PublishedPlanAtAnchorReadResult.Unavailable unavailable =>
+                        Unavailable(unavailable.Defects),
+                    PublishedPlanAtAnchorReadResult.Changed =>
+                        new DerivedRecapRestoreResult.Retryable(
+                            DerivedRecapRestoreDefectCodes
+                                .ConcurrentPublishedChange,
+                            "Published metadata changed during restore preflight."
+                        ),
+                    _ => throw new InvalidOperationException(
+                        "Unknown Published plan read result."
+                    )
+                    };
+            }
+            PreparedRecapPendingWindows restorePreflight =
+                PreflightAllRestoreWindows(
+                    frozenPlan,
+                    expectedRawHead,
+                    cancellationToken
+                );
+            if (restorePreflight.BeyondPrefix is { } preflightBeyond) {
+                return new DerivedRecapRestoreResult.BeyondPrefix(
+                    DerivedRecapBeyondPrefixStage.RestorePendingWindow,
+                    preflightBeyond
+                );
+            }
+            if (restorePreflight.Defects.Count != 0) {
+                return new DerivedRecapRestoreResult.Unavailable([
+                    .. restorePreflight.Defects.Select(defect =>
+                        new DerivedRecapRestoreDefect(
+                            DerivedRecapRestoreDefectCodes
+                                .ExecutionLimitExceeded,
+                            defect.Detail
+                        ))
+                ]);
             }
 
             PublishedRestoreInspectionResult inspectionResult =
@@ -90,8 +147,11 @@ public sealed class DerivedRecapRestoreExecutor {
             }
             if (inspectionResult
                 is PublishedRestoreInspectionResult.BeyondPrefix beyond) {
-                return new DerivedRecapRestoreResult.BeyondPrefix(
-                    beyond.Evidence
+                return Unavailable(
+                    DerivedRecapRestoreDefectCodes.FrozenPlanInvalid,
+                    "Exact Published component inspection contradicted "
+                    + "the completed Restore metadata proof at anchor "
+                    + $"'{beyond.Evidence.RequiredAnchor}'."
                 );
             }
             PublishedRestoreInspection inspection =
@@ -108,14 +168,22 @@ public sealed class DerivedRecapRestoreExecutor {
                     prepared.Defects
                 );
             }
+            if (prepared.BeyondPrefix is { } pendingBeyond) {
+                return new DerivedRecapRestoreResult.BeyondPrefix(
+                    DerivedRecapBeyondPrefixStage.RestorePendingWindow,
+                    pendingBeyond
+                );
+            }
 
             EventAddress? observedHead = _engine.ReadCurrentHead();
             if (observedHead != expectedRawHead) {
                 return RawHeadChanged(expectedRawHead, observedHead);
             }
 
-            var finalStateTokens =
-                new Dictionary<RecapBlockId, string>();
+            var finalAuthorities =
+                new List<PublishedBlockWriteAuthority>(
+                    prepared.Actions.Count
+                );
             foreach (RestoreBlockAction action in prepared.Actions) {
                 RestoreBlockExecution execution =
                     await ExecuteBlockAsync(
@@ -128,16 +196,17 @@ public sealed class DerivedRecapRestoreExecutor {
                 if (execution.Failure is { } failure) {
                     return failure;
                 }
-                finalStateTokens.Add(
-                    action.Plan.RecapBlockId,
-                    execution.FinalStateToken!
-                );
+                finalAuthorities.Add(execution.WriteAuthority!);
             }
 
+            PublishedEnvelopeCommitAuthority commitAuthority =
+                _store.IssuePublishedEnvelopeCommitAuthority(
+                    inspection.Handle,
+                    finalAuthorities
+                );
             PublishedEnvelopeCommitResult commit =
                 await _restorer.CommitEnvelopeAsync(
-                        inspection.Handle,
-                        finalStateTokens,
+                        commitAuthority,
                         expectedRawHead,
                         cancellationToken
                     )
@@ -158,10 +227,6 @@ public sealed class DerivedRecapRestoreExecutor {
                     ),
                 PublishedEnvelopeCommitResult.Unavailable unavailable =>
                     Unavailable(unavailable.Defects),
-                PublishedEnvelopeCommitResult.BeyondPrefix commitBeyond =>
-                    new DerivedRecapRestoreResult.BeyondPrefix(
-                        commitBeyond.Evidence
-                    ),
                 _ => throw new InvalidOperationException(
                     "Unknown Published envelope commit result."
                 )
@@ -181,7 +246,7 @@ public sealed class DerivedRecapRestoreExecutor {
 
     private PreparedRestore Prepare(
         PublishedRestoreInspection inspection,
-        SessionCurrentLineageSnapshot lineage,
+        SessionCurrentLineagePrefix lineage,
         EventAddress expectedRawHead,
         CancellationToken cancellationToken
     ) {
@@ -348,7 +413,7 @@ public sealed class DerivedRecapRestoreExecutor {
             return PreparedRestore.Unavailable(defects);
         }
 
-        PreparedRecapPendingWindows preparedWindows =
+        PreparedRecapPendingWindows exactWindows =
             RecapPendingWindowPreparer.Prepare(
                 _engine,
                 expectedRawHead,
@@ -356,8 +421,15 @@ public sealed class DerivedRecapRestoreExecutor {
                 _hardCaps,
                 cancellationToken
             );
+        if (exactWindows.BeyondPrefix is not null) {
+            AddDefect(
+                defects,
+                DerivedRecapRestoreDefectCodes.FrozenPlanInvalid,
+                "Exact pending route contradicted its conservative preflight proof."
+            );
+        }
         foreach (RecapPendingWindowDefect defect
-                 in preparedWindows.Defects) {
+                 in exactWindows.Defects) {
             AddDefect(
                 defects,
                 DerivedRecapRestoreDefectCodes.ExecutionLimitExceeded,
@@ -367,7 +439,50 @@ public sealed class DerivedRecapRestoreExecutor {
         return new PreparedRestore(
             defects,
             actions,
-            preparedWindows.Windows
+            exactWindows.Windows
+        );
+    }
+
+    private PreparedRecapPendingWindows PreflightAllRestoreWindows(
+        DerivedRecapSetManifest frozenPlan,
+        EventAddress expectedRawHead,
+        CancellationToken cancellationToken
+    ) {
+        var routes = new List<PendingMaintainRoute>();
+        foreach (MaintainRecapBlockPlan maintain
+                 in frozenPlan.Blocks
+                     .OfType<MaintainRecapBlockPlan>()) {
+            EventAddress start = maintain.Source switch {
+                EmptyRecapMaintainSource empty =>
+                    empty.ReplayStartExclusive,
+                ExistingRecapMaintainSource existing =>
+                    existing.SourceSetAnchor,
+                _ => throw new InvalidDataException(
+                    "Unsupported frozen Maintain source."
+                )
+            };
+            routes.Add(new PendingMaintainRoute(maintain, start, 0));
+        }
+        IReadOnlyList<RecapPendingWindowDefect> routeDefects =
+            RecapPendingWindowPreparer.ValidatePendingRouteLimits(
+                routes,
+                _hardCaps
+            );
+        if (routeDefects.Count != 0) {
+            return new PreparedRecapPendingWindows(
+                routeDefects,
+                new Dictionary<
+                    (RecapBlockId BlockId, int EndpointIndex),
+                    SessionHistoryPlanningWindow
+                >()
+            );
+        }
+        return RecapPendingWindowPreparer.Prepare(
+            _engine,
+            expectedRawHead,
+            routes,
+            _hardCaps,
+            cancellationToken
         );
     }
 
@@ -400,7 +515,7 @@ public sealed class DerivedRecapRestoreExecutor {
                 }
                 return new InstallFinalAction(
                     plan,
-                    block.Final.StateToken,
+                    block.WriteAuthority,
                     finalCheckpoint.Block
                 );
             case PublishedBlockRestoreCapability.ResumeSuffix suffix:
@@ -419,7 +534,6 @@ public sealed class DerivedRecapRestoreExecutor {
                     maintain,
                     block,
                     checkpoint.Block,
-                    checkpoint.StateToken,
                     suffix.NextEndpointIndex,
                     checkpoint.Block.AbsorbedThrough,
                     defects
@@ -434,7 +548,7 @@ public sealed class DerivedRecapRestoreExecutor {
                     }
                     return new InstallFinalAction(
                         plan,
-                        block.Final.StateToken,
+                        block.WriteAuthority,
                         DerivedRecapCodec.CreateBlock(
                             plan,
                             inherited.Input.AbsorbedThrough,
@@ -475,7 +589,6 @@ public sealed class DerivedRecapRestoreExecutor {
                     replay,
                     block,
                     initialBlock,
-                    block.Checkpoint.StateToken,
                     nextEndpointIndex: 0,
                     start,
                     defects
@@ -499,7 +612,6 @@ public sealed class DerivedRecapRestoreExecutor {
         MaintainRecapBlockPlan plan,
         PublishedBlockRestoreInspection block,
         DerivedRecapBlock? initialBlock,
-        string checkpointStateToken,
         int nextEndpointIndex,
         EventAddress startExclusive,
         List<DerivedRecapRestoreDefect> defects
@@ -531,8 +643,7 @@ public sealed class DerivedRecapRestoreExecutor {
         }
         return new MaintainRestoreAction(
             plan,
-            block.Final.StateToken,
-            checkpointStateToken,
+            block.WriteAuthority,
             initialBlock,
             nextEndpointIndex,
             startExclusive,
@@ -545,13 +656,13 @@ public sealed class DerivedRecapRestoreExecutor {
         PublishedBlockRestoreInspection block,
         List<DerivedRecapRestoreDefect> defects
     ) {
-        if (block.Final is not FinalRecapBlockHealth.Healthy healthy) {
+        if (block.Final is not FinalRecapBlockHealth.Healthy) {
             AddInvalidCapability(defects, plan);
             return null;
         }
         return new NoOpRestoreAction(
             plan,
-            healthy.StateToken
+            block.WriteAuthority
         );
     }
 
@@ -568,7 +679,7 @@ public sealed class DerivedRecapRestoreExecutor {
         switch (action) {
             case NoOpRestoreAction noOp:
                 return RestoreBlockExecution.Succeeded(
-                    noOp.FinalStateToken
+                    noOp.WriteAuthority
                 );
             case InstallFinalAction install:
                 return await InstallFinalAsync(
@@ -603,7 +714,8 @@ public sealed class DerivedRecapRestoreExecutor {
         CancellationToken cancellationToken
     ) {
         DerivedRecapBlock? currentBlock = action.InitialBlock;
-        string checkpointToken = action.CheckpointStateToken;
+        PublishedBlockWriteAuthority writeAuthority =
+            action.WriteAuthority;
         for (int index = action.NextEndpointIndex;
              index < action.MaintainPlan.CatchUpBoundaries.Count;
              index++) {
@@ -649,19 +761,17 @@ public sealed class DerivedRecapRestoreExecutor {
 
             PublishedCheckpointWriteResult checkpoint =
                 await _store.AdvancePublishedCheckpointAsync(
-                        handle,
-                        action.Plan.RecapBlockId,
-                        checkpointToken,
+                        writeAuthority,
                         currentBlock,
                         cancellationToken
                     )
                     .ConfigureAwait(false);
             switch (checkpoint) {
                 case PublishedCheckpointWriteResult.Updated updated:
-                    checkpointToken = updated.StateToken;
+                    writeAuthority = updated.WriteAuthority;
                     break;
                 case PublishedCheckpointWriteResult.AlreadyCurrent current:
-                    checkpointToken = current.StateToken;
+                    writeAuthority = current.WriteAuthority;
                     break;
                 case PublishedCheckpointWriteResult.Stale:
                     return ConcurrentChange(
@@ -692,7 +802,7 @@ public sealed class DerivedRecapRestoreExecutor {
                 handle,
                 new InstallFinalAction(
                     action.Plan,
-                    action.ExpectedFinalStateToken,
+                    writeAuthority,
                     currentBlock
                 ),
                 cancellationToken
@@ -707,9 +817,7 @@ public sealed class DerivedRecapRestoreExecutor {
     ) {
         PublishedFinalWriteResult final =
             await _store.InstallPublishedReplacementAsync(
-                    handle,
-                    action.Plan.RecapBlockId,
-                    action.ExpectedFinalStateToken,
+                    action.WriteAuthority,
                     action.Candidate,
                     cancellationToken
                 )
@@ -717,15 +825,15 @@ public sealed class DerivedRecapRestoreExecutor {
         return final switch {
             PublishedFinalWriteResult.Installed installed =>
                 RestoreBlockExecution.Succeeded(
-                    installed.StateToken
+                    installed.WriteAuthority
                 ),
             PublishedFinalWriteResult.ReplacedDamaged replaced =>
                 RestoreBlockExecution.Succeeded(
-                    replaced.StateToken
+                    replaced.WriteAuthority
                 ),
             PublishedFinalWriteResult.AlreadyHealthy healthy =>
                 RestoreBlockExecution.Succeeded(
-                    healthy.StateToken
+                    healthy.WriteAuthority
                 ),
             PublishedFinalWriteResult.HealthyConflict =>
                 ConcurrentChange(
@@ -823,7 +931,8 @@ public sealed class DerivedRecapRestoreExecutor {
         IReadOnlyDictionary<
             (RecapBlockId BlockId, int EndpointIndex),
             SessionHistoryPlanningWindow
-        > Windows
+        > Windows,
+        SessionCurrentLineageBeyondPrefix? BeyondPrefix = null
     ) {
         public static PreparedRestore Unavailable(
             IReadOnlyList<DerivedRecapRestoreDefect> defects
@@ -837,36 +946,38 @@ public sealed class DerivedRecapRestoreExecutor {
         );
     }
 
-    private abstract record RestoreBlockAction(RecapBlockPlan Plan);
+    private abstract record RestoreBlockAction(
+        RecapBlockPlan Plan,
+        PublishedBlockWriteAuthority WriteAuthority
+    );
 
     private sealed record NoOpRestoreAction(
         RecapBlockPlan Plan,
-        string FinalStateToken
-    ) : RestoreBlockAction(Plan);
+        PublishedBlockWriteAuthority WriteAuthority
+    ) : RestoreBlockAction(Plan, WriteAuthority);
 
     private sealed record InstallFinalAction(
         RecapBlockPlan Plan,
-        string ExpectedFinalStateToken,
+        PublishedBlockWriteAuthority WriteAuthority,
         DerivedRecapBlock Candidate
-    ) : RestoreBlockAction(Plan);
+    ) : RestoreBlockAction(Plan, WriteAuthority);
 
     private sealed record MaintainRestoreAction(
         MaintainRecapBlockPlan MaintainPlan,
-        string ExpectedFinalStateToken,
-        string CheckpointStateToken,
+        PublishedBlockWriteAuthority WriteAuthority,
         DerivedRecapBlock? InitialBlock,
         int NextEndpointIndex,
         EventAddress StartExclusive,
         IRecapBlockMaintainer Maintainer
-    ) : RestoreBlockAction(MaintainPlan);
+    ) : RestoreBlockAction(MaintainPlan, WriteAuthority);
 
     private sealed record RestoreBlockExecution(
-        string? FinalStateToken,
+        PublishedBlockWriteAuthority? WriteAuthority,
         DerivedRecapRestoreResult? Failure
     ) {
         public static RestoreBlockExecution Succeeded(
-            string finalStateToken
-        ) => new(finalStateToken, null);
+            PublishedBlockWriteAuthority writeAuthority
+        ) => new(writeAuthority, null);
 
         public static RestoreBlockExecution Failed(
             DerivedRecapRestoreResult failure

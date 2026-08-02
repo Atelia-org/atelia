@@ -38,8 +38,7 @@ public sealed class DerivedRecapPublishedRestoreWriteTests {
             anchor,
             "deep plan"
         );
-        PublishedRecapSet publication =
-            await RecapStoreTestDriver.RewritePublishedUncheckedAsync(
+        _ = await RecapStoreTestDriver.RewritePublishedUncheckedAsync(
                 fixture.Store,
                 manifest,
                 [committed]
@@ -51,7 +50,7 @@ public sealed class DerivedRecapPublishedRestoreWriteTests {
             plan.RecapBlockId
         ));
 
-        Assert.IsType<DerivedRecapSelection.ExactPublishedSetInvalid>(
+        Assert.IsType<DerivedRecapSelection.BeyondPrefix>(
             await fixture.Store.SelectNthPreviousAsync(lineage, 0)
         );
         var inspection = Assert.IsType<
@@ -65,13 +64,6 @@ public sealed class DerivedRecapPublishedRestoreWriteTests {
         Assert.IsType<FinalRecapBlockHealth.Missing>(
             inspection.Blocks[plan.RecapBlockId].Final
         );
-        var handle = new PublishedRestoreHandle(
-            fixture.Engine.BranchRefId,
-            anchor,
-            PublishedRestoreAuthorityKind.Publication,
-            $"publication:{publication.EnvelopeSha256}",
-            manifest.ManifestPayloadSha256
-        );
         mutationCount = 0;
 
         Assert.IsType<PublishedEnvelopeCommitResult.Unavailable>(
@@ -80,10 +72,7 @@ public sealed class DerivedRecapPublishedRestoreWriteTests {
                     fixture.Engine
                 )
                 .CommitEnvelopeAsync(
-                    handle,
-                    new Dictionary<RecapBlockId, string> {
-                        [plan.RecapBlockId] = "missing"
-                    },
+                    CommitAuthority(fixture, inspection),
                     lineage.CapturedHead
                 )
         );
@@ -108,20 +97,6 @@ public sealed class DerivedRecapPublishedRestoreWriteTests {
                 anchor,
                 lineage
             )
-        );
-        Assert.IsType<PublishedEnvelopeCommitResult.BeyondPrefix>(
-            await new DerivedRecapRestorer(
-                    fixture.Store,
-                    fixture.Engine
-                )
-                .CommitEnvelopeAsync(
-                    handle,
-                    new Dictionary<RecapBlockId, string> {
-                        [plan.RecapBlockId] =
-                            $"healthy:{pending.PayloadSha256}"
-                    },
-                    lineage.CapturedHead
-                )
         );
         Assert.Equal(0, mutationCount);
     }
@@ -196,7 +171,7 @@ public sealed class DerivedRecapPublishedRestoreWriteTests {
             DerivedRecapCodec.EncodeFrozenInput(input)
         );
 
-        Assert.IsType<DerivedRecapSelection.ExactPublishedSetInvalid>(
+        Assert.IsType<DerivedRecapSelection.Selected>(
             await fixture.Store.SelectNthPreviousAsync(lineage, 0)
         );
         var inspection = Assert.IsType<
@@ -213,16 +188,6 @@ public sealed class DerivedRecapPublishedRestoreWriteTests {
         Assert.IsType<FinalRecapBlockHealth.Damaged>(
             inspection.Blocks[id].Final
         );
-        var handle = new PublishedRestoreHandle(
-            fixture.Engine.BranchRefId,
-            anchor,
-            PublishedRestoreAuthorityKind.Publication,
-            $"publication:{publication.EnvelopeSha256}",
-            manifest.ManifestPayloadSha256
-        );
-        string damagedToken =
-            $"damaged:{DerivedRecapCodec.Sha256Hex(
-                DerivedRecapCodec.EncodeBlock(forged))}";
         mutationCount = 0;
 
         Assert.IsType<PublishedEnvelopeCommitResult.Unavailable>(
@@ -231,10 +196,7 @@ public sealed class DerivedRecapPublishedRestoreWriteTests {
                     fixture.Engine
                 )
                 .CommitEnvelopeAsync(
-                    handle,
-                    new Dictionary<RecapBlockId, string> {
-                        [id] = damagedToken
-                    },
+                    CommitAuthority(fixture, inspection),
                     lineage.CapturedHead
                 )
         );
@@ -263,10 +225,7 @@ public sealed class DerivedRecapPublishedRestoreWriteTests {
                     fixture.Engine
                 )
                 .CommitEnvelopeAsync(
-                    handle,
-                    new Dictionary<RecapBlockId, string> {
-                        [id] = $"healthy:{committed.PayloadSha256}"
-                    },
+                    CommitAuthority(fixture, committedInspection),
                     lineage.CapturedHead
                 )
         );
@@ -330,48 +289,38 @@ public sealed class DerivedRecapPublishedRestoreWriteTests {
                 "committed beyond prefix"
             );
         }
-        PublishedRecapSet publication =
-            await RecapStoreTestDriver.RewritePublishedUncheckedAsync(
+        _ = await RecapStoreTestDriver.RewritePublishedUncheckedAsync(
                 fixture.Store,
                 manifest,
                 [committed],
                 [persisted]
             );
-        var handle = new PublishedRestoreHandle(
-            fixture.Engine.BranchRefId,
-            anchor,
-            PublishedRestoreAuthorityKind.Publication,
-            $"publication:{publication.EnvelopeSha256}",
-            manifest.ManifestPayloadSha256
-        );
-        byte[] persistedBytes =
-            DerivedRecapCodec.EncodeBlock(persisted);
-        string expectedStateToken = persistCommitmentMismatch
-            ? $"damaged:{DerivedRecapCodec.Sha256Hex(persistedBytes)}"
-            : $"healthy:{persisted.PayloadSha256}";
-        var restorer = new DerivedRecapRestorer(
-            fixture.Store,
-            fixture.Engine
-        );
         mutationCount = 0;
 
-        PublishedEnvelopeCommitResult result =
-            await restorer.CommitEnvelopeAsync(
-                handle,
-                new Dictionary<RecapBlockId, string> {
-                    [plan.RecapBlockId] = expectedStateToken
-                },
-                lineage.CapturedHead
+        PublishedRestoreInspectionResult result =
+            await fixture.Store.InspectPublishedForRestoreAsync(
+                anchor,
+                lineage
             );
 
         if (persistCommitmentMismatch) {
+            PublishedRestoreInspection damaged = Assert.IsType<
+                PublishedRestoreInspectionResult.Available
+            >(result).Inspection;
             Assert.IsType<PublishedEnvelopeCommitResult.Unavailable>(
-                result
+                await new DerivedRecapRestorer(
+                        fixture.Store,
+                        fixture.Engine
+                    )
+                    .CommitEnvelopeAsync(
+                        CommitAuthority(fixture, damaged),
+                        lineage.CapturedHead
+                    )
             );
         }
         else {
             var beyondResult = Assert.IsType<
-                PublishedEnvelopeCommitResult.BeyondPrefix
+                PublishedRestoreInspectionResult.BeyondPrefix
             >(result);
             Assert.Equal(
                 beyond,
@@ -588,7 +537,9 @@ public sealed class DerivedRecapPublishedRestoreWriteTests {
         (
             PublishedRestoreHandle handle,
             DerivedRecapBlock replacement,
-            string finalToken
+            string finalToken,
+            PublishedEnvelopeCommitAuthority commitAuthority,
+            PublishedEnvelopeCommitAuthority staleCommitAuthority
         ) = await InstallPendingAsync(
             fixture,
             lineage,
@@ -606,10 +557,7 @@ public sealed class DerivedRecapPublishedRestoreWriteTests {
         var stale =
             Assert.IsType<PublishedEnvelopeCommitResult.Stale>(
                 await restorer.CommitEnvelopeAsync(
-                    handle,
-                    new Dictionary<RecapBlockId, string> {
-                        [plan.RecapBlockId] = "missing"
-                    },
+                    staleCommitAuthority,
                     lineage.CapturedHead
                 )
             );
@@ -619,10 +567,7 @@ public sealed class DerivedRecapPublishedRestoreWriteTests {
             PublishedEnvelopeCommitResult.Committed
         >(
             await restorer.CommitEnvelopeAsync(
-                handle,
-                new Dictionary<RecapBlockId, string> {
-                    [plan.RecapBlockId] = finalToken
-                },
+                commitAuthority,
                 lineage.CapturedHead
             )
         );
@@ -671,12 +616,7 @@ public sealed class DerivedRecapPublishedRestoreWriteTests {
             PublishedEnvelopeCommitResult.AlreadyCommitted
         >(
             await restorer.CommitEnvelopeAsync(
-                current.Handle,
-                new Dictionary<RecapBlockId, string> {
-                    [plan.RecapBlockId] =
-                        current.Blocks[plan.RecapBlockId]
-                            .Final.StateToken
-                },
+                CommitAuthority(fixture, current),
                 lineage.CapturedHead
             )
         );
@@ -717,12 +657,7 @@ public sealed class DerivedRecapPublishedRestoreWriteTests {
             PublishedEnvelopeCommitResult.Committed
         >(
             await restorer.CommitEnvelopeAsync(
-                witness.Handle,
-                new Dictionary<RecapBlockId, string> {
-                    [plan.RecapBlockId] =
-                        witness.Blocks[plan.RecapBlockId]
-                            .Final.StateToken
-                },
+                CommitAuthority(fixture, witness),
                 lineage.CapturedHead
             )
         );
@@ -775,12 +710,7 @@ public sealed class DerivedRecapPublishedRestoreWriteTests {
             PublishedEnvelopeCommitResult.Unavailable
         >(
             await restorer.CommitEnvelopeAsync(
-                witness.Handle,
-                new Dictionary<RecapBlockId, string> {
-                    [plan.RecapBlockId] =
-                        witness.Blocks[plan.RecapBlockId]
-                            .Final.StateToken
-                },
+                CommitAuthority(fixture, witness),
                 lineage.CapturedHead
             )
         );
@@ -848,12 +778,7 @@ public sealed class DerivedRecapPublishedRestoreWriteTests {
             PublishedEnvelopeCommitResult.AlreadyCommitted
         >(
             await restorer.CommitEnvelopeAsync(
-                inspection.Handle,
-                new Dictionary<RecapBlockId, string> {
-                    [plan.RecapBlockId] =
-                        inspection.Blocks[plan.RecapBlockId]
-                            .Final.StateToken
-                },
+                CommitAuthority(fixture, inspection),
                 lineage.CapturedHead
             )
         );
@@ -898,9 +823,11 @@ public sealed class DerivedRecapPublishedRestoreWriteTests {
         rewindTarget = lineage.CurrentPrefix.HeadToOldest[2].Address;
         EventAddress anchor = plan.CatchUpBoundaries[^1].Address;
         (
-            PublishedRestoreHandle handle,
+            _,
             DerivedRecapBlock replacement,
-            string finalToken
+            _,
+            PublishedEnvelopeCommitAuthority commitAuthority,
+            _
         ) = await InstallPendingAsync(
             fixture,
             lineage,
@@ -920,10 +847,7 @@ public sealed class DerivedRecapPublishedRestoreWriteTests {
         var stale =
             Assert.IsType<PublishedEnvelopeCommitResult.Stale>(
                 await restorer.CommitEnvelopeAsync(
-                    handle,
-                    new Dictionary<RecapBlockId, string> {
-                        [plan.RecapBlockId] = finalToken
-                    },
+                    commitAuthority,
                     capturedHead
                 )
             );
@@ -1009,12 +933,7 @@ public sealed class DerivedRecapPublishedRestoreWriteTests {
         var stale =
             Assert.IsType<PublishedEnvelopeCommitResult.Stale>(
                 await restorer.CommitEnvelopeAsync(
-                    inspection.Handle,
-                    new Dictionary<RecapBlockId, string> {
-                        [plan.RecapBlockId] =
-                            inspection.Blocks[plan.RecapBlockId]
-                                .Final.StateToken
-                    },
+                    CommitAuthority(fixture, inspection),
                     capturedHead
                 )
             );
@@ -1267,7 +1186,9 @@ public sealed class DerivedRecapPublishedRestoreWriteTests {
     private static async ValueTask<(
         PublishedRestoreHandle Handle,
         DerivedRecapBlock Replacement,
-        string FinalToken
+        string FinalToken,
+        PublishedEnvelopeCommitAuthority CommitAuthority,
+        PublishedEnvelopeCommitAuthority StaleCommitAuthority
     )> InstallPendingAsync(
         RecapStoreFixture fixture,
         DerivedRecapLineageView lineage,
@@ -1275,8 +1196,6 @@ public sealed class DerivedRecapPublishedRestoreWriteTests {
         string content
     ) {
         EventAddress anchor = plan.CatchUpBoundaries[^1].Address;
-        PublishedRestoreInspection inspection =
-            await RequireInspectionAsync(fixture, anchor, lineage);
         File.Delete(
             BlockPath(
                 fixture,
@@ -1285,6 +1204,8 @@ public sealed class DerivedRecapPublishedRestoreWriteTests {
                 plan.RecapBlockId
             )
         );
+        PublishedRestoreInspection inspection =
+            await RequireInspectionAsync(fixture, anchor, lineage);
         DerivedRecapBlock replacement =
             DerivedRecapCodec.CreateBlock(
                 plan,
@@ -1295,9 +1216,7 @@ public sealed class DerivedRecapPublishedRestoreWriteTests {
             PublishedCheckpointWriteResult.Updated
         >(
             await fixture.Store.AdvancePublishedCheckpointAsync(
-                inspection.Handle,
-                plan.RecapBlockId,
-                "missing",
+                inspection.Blocks[plan.RecapBlockId].WriteAuthority,
                 replacement
             )
         );
@@ -1312,23 +1231,37 @@ public sealed class DerivedRecapPublishedRestoreWriteTests {
         );
         PublishedRestoreInspection damaged =
             await RequireInspectionAsync(fixture, anchor, lineage);
+        PublishedEnvelopeCommitAuthority staleCommitAuthority =
+            CommitAuthority(fixture, damaged);
         var installed = Assert.IsType<
             PublishedFinalWriteResult.ReplacedDamaged
         >(
             await fixture.Store.InstallPublishedReplacementAsync(
-                damaged.Handle,
-                plan.RecapBlockId,
-                damaged.Blocks[plan.RecapBlockId]
-                    .Final.StateToken,
+                damaged.Blocks[plan.RecapBlockId].WriteAuthority,
                 replacement
             )
         );
         return (
             damaged.Handle,
             replacement,
-            installed.StateToken
+            installed.StateToken,
+            fixture.Store.IssuePublishedEnvelopeCommitAuthority(
+                damaged.Handle,
+                [installed.WriteAuthority]
+            ),
+            staleCommitAuthority
         );
     }
+
+    private static PublishedEnvelopeCommitAuthority CommitAuthority(
+        RecapStoreFixture fixture,
+        PublishedRestoreInspection inspection
+    ) => fixture.Store.IssuePublishedEnvelopeCommitAuthority(
+        inspection.Handle,
+        inspection.Blocks.Values
+            .Select(static block => block.WriteAuthority)
+            .ToArray()
+    );
 
     private static async ValueTask<PublishedRestoreInspection>
         RequireInspectionAsync(

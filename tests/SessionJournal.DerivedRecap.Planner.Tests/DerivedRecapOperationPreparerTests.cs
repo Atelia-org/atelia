@@ -272,6 +272,54 @@ public sealed class DerivedRecapOperationPreparerTests : IDisposable {
         Assert.Null(unavailable.ConfigSnapshot);
     }
 
+    [Fact]
+    public async Task BuildingBeyondIsStagedBeforeConfigurationOrSourceContent() {
+        Scenario scenario = Scenario.Create();
+        SessionCurrentLineageBeyondPrefix evidence = BeyondEvidence(
+            Address(80)
+        );
+        scenario.Building =
+            new CurrentLineageBuildingSelection.BeyondPrefix(evidence);
+
+        var beyond = Assert.IsType<
+            DerivedRecapOperationPreparationResult.BeyondPrefix
+        >(await scenario.PrepareAsync(Capabilities()));
+
+        Assert.Equal(
+            DerivedRecapBeyondPrefixStage
+                .PreparationBuildingAdmission,
+            beyond.Stage
+        );
+        Assert.Same(evidence, beyond.Evidence);
+        Assert.Equal(0, scenario.LoadCallCount);
+        Assert.Equal(0, scenario.SelectLatestCallCount);
+        Assert.Equal(0, scenario.ReadPlanCallCount);
+    }
+
+    [Fact]
+    public async Task LatestBeyondIsStagedBeforePublishedPlanContent() {
+        Scenario scenario = Scenario.Create();
+        SessionCurrentLineageBeyondPrefix evidence = BeyondEvidence(
+            Address(80)
+        );
+        scenario.Latest = new DerivedRecapSelection.BeyondPrefix(
+            evidence
+        );
+
+        var beyond = Assert.IsType<
+            DerivedRecapOperationPreparationResult.BeyondPrefix
+        >(await scenario.PrepareAsync(Capabilities()));
+
+        Assert.Equal(
+            DerivedRecapBeyondPrefixStage.NewPlanningSourceAnchor,
+            beyond.Stage
+        );
+        Assert.Same(evidence, beyond.Evidence);
+        Assert.Equal(1, scenario.LoadCallCount);
+        Assert.Equal(1, scenario.SelectLatestCallCount);
+        Assert.Equal(0, scenario.ReadPlanCallCount);
+    }
+
     [Theory]
     [InlineData("missing",
         DerivedRecapOperationPreparationDefectCodes
@@ -574,6 +622,14 @@ public sealed class DerivedRecapOperationPreparerTests : IDisposable {
                     )
             );
         Assert.True(authorityConstructor.IsPrivate);
+        Assert.Equal(
+            typeof(SessionCurrentLineagePrefix),
+            typeof(PreparedRecapOperationAuthority)
+                .GetProperty(nameof(
+                    PreparedRecapOperationAuthority.Lineage
+                ))!
+                .PropertyType
+        );
         foreach (Type authorityCase in new[] {
             typeof(PreparedRecapOperationAuthority.FrozenBuilding),
             typeof(PreparedRecapOperationAuthority.NewPlanning)
@@ -888,8 +944,9 @@ public sealed class DerivedRecapOperationPreparerTests : IDisposable {
         string token
     ) => new(new RefId(1), Address(90), token.PadRight(64, '0'));
 
-    private static SessionCurrentLineageSnapshot Lineage() => new(
+    private static SessionCurrentLineagePrefix Lineage() => new(
         Head,
+        1,
         [
             new SessionCurrentLineageHeader(
                 Head,
@@ -897,7 +954,17 @@ public sealed class DerivedRecapOperationPreparerTests : IDisposable {
                 SessionEventKind.SystemPromptSetup
             )
         ],
+        continuation: null,
         new SessionCurrentLineageDiagnostics(1, 0, 0)
+    );
+
+    private static SessionCurrentLineageBeyondPrefix BeyondEvidence(
+        EventAddress requiredAnchor
+    ) => new(
+        requiredAnchor,
+        Head,
+        headerCount: 1,
+        nextAddress: Address(99)
     );
 
     private static EventAddress Address(ulong value) => new(
@@ -907,7 +974,7 @@ public sealed class DerivedRecapOperationPreparerTests : IDisposable {
     );
 
     private sealed class Scenario {
-        internal SessionCurrentLineageSnapshot Lineage { get; } =
+        internal SessionCurrentLineagePrefix Lineage { get; } =
             DerivedRecapOperationPreparerTests.Lineage();
         internal CurrentLineageBuildingSelection Building { get; set; }
             = new CurrentLineageBuildingSelection.None();
@@ -916,7 +983,7 @@ public sealed class DerivedRecapOperationPreparerTests : IDisposable {
         internal EventAddress? CurrentHead { get; set; } = Head;
         internal Func<EventAddress?> ReadCurrentHead { get; set; }
             = null!;
-        internal Func<CancellationToken, SessionCurrentLineageSnapshot>
+        internal Func<CancellationToken, SessionCurrentLineagePrefix>
             ReadLineage { get; set; } = null!;
         internal Func<RecapActivePlanningConfigurationLoadResult>
             Load { get; set; } = null!;
@@ -928,6 +995,8 @@ public sealed class DerivedRecapOperationPreparerTests : IDisposable {
                 "Published plan read was not expected."
             );
         internal int LoadCallCount { get; private set; }
+        internal int SelectLatestCallCount { get; private set; }
+        internal int ReadPlanCallCount { get; private set; }
 
         internal static Scenario Create() {
             var scenario = new Scenario();
@@ -956,10 +1025,14 @@ public sealed class DerivedRecapOperationPreparerTests : IDisposable {
                     LoadCallCount++;
                     return Load();
                 },
-                (lineage, ordinal, cancellationToken) =>
-                    ValueTask.FromResult(Latest),
-                (descriptor, cancellationToken) =>
-                    ValueTask.FromResult(ReadPlan(descriptor)),
+                (lineage, ordinal, cancellationToken) => {
+                    SelectLatestCallCount++;
+                    return ValueTask.FromResult(Latest);
+                },
+                (descriptor, cancellationToken) => {
+                    ReadPlanCallCount++;
+                    return ValueTask.FromResult(ReadPlan(descriptor));
+                },
                 (anchor, cancellationToken) =>
                     throw new InvalidOperationException(
                         "Published plan-at-anchor read was not expected."

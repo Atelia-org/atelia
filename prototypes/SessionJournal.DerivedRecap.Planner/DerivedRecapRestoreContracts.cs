@@ -20,8 +20,17 @@ public abstract record DerivedRecapRestoreResult {
     ) : DerivedRecapRestoreResult;
 
     public sealed record BeyondPrefix(
+        DerivedRecapBeyondPrefixStage Stage,
         SessionCurrentLineageBeyondPrefix Evidence
-    ) : DerivedRecapRestoreResult;
+    ) : DerivedRecapRestoreResult {
+        internal BeyondPrefix(
+            SessionCurrentLineageBeyondPrefix evidence
+        ) : this(
+            DerivedRecapBeyondPrefixStage.RestoreAdmission,
+            evidence
+        ) {
+        }
+    }
 
     public sealed record Retryable(string Code, string Detail)
         : DerivedRecapRestoreResult;

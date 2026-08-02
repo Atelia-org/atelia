@@ -188,11 +188,11 @@ public sealed class DerivedRecapAuthorityBoundaryTests {
         AssertStoreUnavailable(
             Assert.IsType<PublishedEnvelopeCommitResult.Unavailable>(
                 await restorer.CommitEnvelopeAsync(
-                    published.Handle,
-                    new Dictionary<RecapBlockId, string> {
-                        [plan.RecapBlockId] =
-                            publishedBlock.Final.StateToken
-                    },
+                    fixture.Store
+                        .IssuePublishedEnvelopeCommitAuthority(
+                            published.Handle,
+                            [publishedBlock.WriteAuthority]
+                        ),
                     lineage.CapturedHead
                 )
             ).Defects
@@ -337,6 +337,55 @@ public sealed class DerivedRecapAuthorityBoundaryTests {
                 "CurrentPrefix",
                 BindingFlags.Instance | BindingFlags.Public
             )
+        );
+
+        MethodInfo checkpointWrite = Assert.Single(
+            publicStoreMethods,
+            static method => method.Name
+                == nameof(DerivedRecapStore
+                    .AdvancePublishedCheckpointAsync)
+        );
+        Assert.Equal(
+            typeof(PublishedBlockWriteAuthority),
+            checkpointWrite.GetParameters()[0].ParameterType
+        );
+        MethodInfo finalWrite = Assert.Single(
+            publicStoreMethods,
+            static method => method.Name
+                == nameof(DerivedRecapStore
+                    .InstallPublishedReplacementAsync)
+        );
+        Assert.Equal(
+            typeof(PublishedBlockWriteAuthority),
+            finalWrite.GetParameters()[0].ParameterType
+        );
+        MethodInfo commit = Assert.Single(
+            typeof(DerivedRecapRestorer).GetMethods(
+                BindingFlags.Instance | BindingFlags.Public
+            ),
+            static method => method.Name == "CommitEnvelopeAsync"
+        );
+        Assert.Equal(
+            typeof(PublishedEnvelopeCommitAuthority),
+            commit.GetParameters()[0].ParameterType
+        );
+        Assert.DoesNotContain(
+            commit.GetParameters(),
+            static parameter => parameter.ParameterType.IsGenericType
+                && parameter.ParameterType.GetGenericTypeDefinition()
+                    == typeof(IReadOnlyDictionary<,>)
+        );
+        AssertNoExternallyCallableConstructor(
+            typeof(PublishedBlockWriteAuthority)
+        );
+        AssertNoExternallyCallableConstructor(
+            typeof(PublishedEnvelopeCommitAuthority)
+        );
+        Assert.DoesNotContain(
+            typeof(PublishedEnvelopeCommitResult).GetNestedTypes(
+                BindingFlags.Public
+            ),
+            static type => type.Name == "BeyondPrefix"
         );
     }
 

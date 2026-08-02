@@ -47,6 +47,43 @@ public static class RecapPlanEvaluator {
         return new RecapRawSafetyResult.Safe(rawGrowthEventCount);
     }
 
+    public static RecapRawSafetyResult EvaluateRawSafety(
+        RecapPlanningLimits limits,
+        SessionCurrentLineagePrefix lineage,
+        EventAddress cadenceBaseline
+    ) {
+        ArgumentNullException.ThrowIfNull(limits);
+        ArgumentNullException.ThrowIfNull(lineage);
+        var defects = new List<RecapPlanDefect>();
+        Dictionary<EventAddress, int> lineageIndex = ValidateLineage(
+            lineage.CapturedHead,
+            lineage.HeadToOldest,
+            defects
+        );
+        if (defects.Count != 0) {
+            return RawSafetyUnavailable(defects);
+        }
+        if (!lineageIndex.TryGetValue(
+                cadenceBaseline,
+                out int rawGrowthEventCount
+            )) {
+            return RawSafetyUnavailable(
+                RecapPlanDefectCodes.CadenceBaselineInvalid,
+                "Cadence baseline is outside the bounded raw lineage."
+            );
+        }
+        if (rawGrowthEventCount > limits.MaxRawGrowthEventCount) {
+            return new RecapRawSafetyResult.Unavailable(
+                [new RecapPlanDefect(
+                    RecapPlanDefectCodes.MaxRawGrowthEventCountExceeded,
+                    $"Raw growth after cadence baseline is {rawGrowthEventCount}; limit is {limits.MaxRawGrowthEventCount}."
+                )],
+                rawGrowthEventCount
+            );
+        }
+        return new RecapRawSafetyResult.Safe(rawGrowthEventCount);
+    }
+
     public static RecapSchedulingResult EvaluateSchedule(
         RecapPlanningInputs inputs,
         RecapPlanningLimits limits,

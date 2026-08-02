@@ -262,6 +262,182 @@ public sealed class SessionBoundedLineageTests : IDisposable {
     }
 
     [Fact]
+    public void BoundedSessionCreatedSeed_Uses513HeaderProofFor512RawEvents() {
+        (
+            string path,
+            EventAddress start,
+            EventAddress headAt512,
+            EventAddress headAt513,
+            EventAddress headAt514,
+            SessionContextAnchorSetupReferences setups
+        ) = CreatePlanningLineage();
+        using var engine = SessionJournalEngine.Open(path);
+
+        SessionJournalReadDiagnostics before =
+            engine.CaptureReadDiagnostics();
+        var available = Assert.IsType<
+            SessionCreatedPlanningSeedReadResult.Available
+        >(engine.ReadSessionCreatedPlanningSeedAtBounded(
+            headAt512,
+            maxRawEventCount: 512
+        ));
+        SessionJournalReadDiagnostics after =
+            engine.CaptureReadDiagnostics();
+
+        Assert.Equal(start, available.Seed.Address);
+        Assert.Equal(setups, available.Seed.Setups);
+        Assert.Equal(512, available.RawEventCountAfterStart);
+        Assert.Equal(513, available.Diagnostics.HeaderVisits);
+        Assert.Equal(0, available.Diagnostics.PayloadReads);
+        Assert.True(
+            after.HeaderPreviewReadCount
+                - before.HeaderPreviewReadCount
+                >= 513
+        );
+        Assert.True(after.PayloadReadCount > before.PayloadReadCount);
+
+        before = engine.CaptureReadDiagnostics();
+        var beyond513 = Assert.IsType<
+            SessionCreatedPlanningSeedReadResult.BeyondPrefix
+        >(engine.ReadSessionCreatedPlanningSeedAtBounded(
+            headAt513,
+            maxRawEventCount: 512
+        ));
+        after = engine.CaptureReadDiagnostics();
+        Assert.Equal(headAt513, beyond513.CapturedHead);
+        Assert.Equal(513, beyond513.HeaderCount);
+        Assert.Equal(start, beyond513.NextAddress);
+        Assert.Equal(0, beyond513.Diagnostics.PayloadReads);
+        Assert.Equal(before.PayloadReadCount, after.PayloadReadCount);
+
+        before = engine.CaptureReadDiagnostics();
+        var beyond514 = Assert.IsType<
+            SessionCreatedPlanningSeedReadResult.BeyondPrefix
+        >(engine.ReadSessionCreatedPlanningSeedAtBounded(
+            headAt514,
+            maxRawEventCount: 512
+        ));
+        after = engine.CaptureReadDiagnostics();
+        Assert.Equal(513, beyond514.HeaderCount);
+        Assert.NotEqual(start, beyond514.NextAddress);
+        Assert.Equal(before.PayloadReadCount, after.PayloadReadCount);
+
+        Assert.Throws<ArgumentOutOfRangeException>(
+            () => engine.ReadSessionCreatedPlanningSeedAtBounded(
+                headAt512,
+                maxRawEventCount: -1
+            )
+        );
+        Assert.Throws<ArgumentOutOfRangeException>(
+            () => engine.ReadSessionCreatedPlanningSeedAtBounded(
+                headAt512,
+                maxRawEventCount: int.MaxValue
+            )
+        );
+    }
+
+    [Fact]
+    public void BoundedSessionCreatedSeed_MaxZeroRequiresCreatedHead() {
+        string path = NewPath();
+        using var engine = SessionJournalEngine.Create(
+            path,
+            new SessionCreateOptions(
+                "model-A",
+                "system-A",
+                "surface-A"
+            )
+        );
+        EventAddress created =
+            engine.InspectExecutionBoundary().Head!.Value;
+
+        var available = Assert.IsType<
+            SessionCreatedPlanningSeedReadResult.Available
+        >(engine.ReadSessionCreatedPlanningSeedAtBounded(
+            created,
+            maxRawEventCount: 0
+        ));
+        Assert.Equal(created, available.Seed.Address);
+        Assert.Equal(0, available.RawEventCountAfterStart);
+        Assert.Equal(1, available.Diagnostics.HeaderVisits);
+
+        EventAddress observation = engine.AppendObservation("one");
+        SessionJournalReadDiagnostics before =
+            engine.CaptureReadDiagnostics();
+        var beyond = Assert.IsType<
+            SessionCreatedPlanningSeedReadResult.BeyondPrefix
+        >(engine.ReadSessionCreatedPlanningSeedAtBounded(
+            observation,
+            maxRawEventCount: 0
+        ));
+        SessionJournalReadDiagnostics after =
+            engine.CaptureReadDiagnostics();
+        Assert.Equal(1, beyond.HeaderCount);
+        Assert.Equal(created, beyond.NextAddress);
+        Assert.Equal(before.PayloadReadCount, after.PayloadReadCount);
+    }
+
+    [Fact]
+    public void PlanningWindowProofs_AllRemainHeaderOnlyUntilMaterialized() {
+        (
+            string path,
+            EventAddress start,
+            EventAddress headAt512,
+            EventAddress headAt513,
+            _,
+            SessionContextAnchorSetupReferences setups
+        ) = CreatePlanningLineage();
+        using var engine = SessionJournalEngine.Open(path);
+        SessionHistoryPlanningSeed seed =
+            engine.CreateHistoryPlanningSeed(start, setups);
+        SessionJournalReadDiagnostics before =
+            engine.CaptureReadDiagnostics();
+
+        var first = Assert.IsType<
+            SessionHistoryPlanningWindowProofResult.Available
+        >(engine.ProveHistoryPlanningWindowAtBounded(
+            headAt512,
+            start,
+            maxRawEventCount: 512
+        ));
+        SessionJournalReadDiagnostics afterFirstProof =
+            engine.CaptureReadDiagnostics();
+        var second = Assert.IsType<
+            SessionHistoryPlanningWindowProofResult.BeyondPrefix
+        >(engine.ProveHistoryPlanningWindowAtBounded(
+            headAt513,
+            start,
+            maxRawEventCount: 512
+        ));
+        SessionJournalReadDiagnostics afterAllProofs =
+            engine.CaptureReadDiagnostics();
+
+        Assert.Equal(512, first.Proof.RawEventCount);
+        Assert.Equal(513, first.Proof.Diagnostics.HeaderVisits);
+        Assert.Equal(513, second.Evidence.HeaderCount);
+        Assert.Equal(
+            before.PayloadReadCount,
+            afterFirstProof.PayloadReadCount
+        );
+        Assert.Equal(
+            before.PayloadReadCount,
+            afterAllProofs.PayloadReadCount
+        );
+
+        SessionHistoryPlanningWindow window =
+            engine.MaterializeHistoryPlanningWindow(
+                first.Proof,
+                seed
+            );
+        Assert.Equal(512, window.RawAddresses.Count);
+        Assert.True(
+            engine.CaptureReadDiagnostics().PayloadReadCount
+                > afterAllProofs.PayloadReadCount
+        );
+        Assert.Empty(typeof(SessionHistoryPlanningWindowProof)
+            .GetConstructors());
+    }
+
+    [Fact]
     public void BoundedPlanning_TargetHitStopsAtOneOrTwoHeaders() {
         string path = NewPath();
         using var engine = SessionJournalEngine.Create(

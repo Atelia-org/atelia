@@ -172,7 +172,7 @@ public sealed class ProgramRecapExecutionCommandTests : IDisposable {
         Assert.Equal(5, firstFactory.CallCount);
         using JsonDocument first = ReadJson(firstReport);
         Assert.Equal(
-            "atelia.session-journal.derived-recap-execution.v5",
+            "atelia.session-journal.derived-recap-execution.v6",
             String(first, "schema")
         );
         JsonElement reportedConfig =
@@ -393,7 +393,7 @@ public sealed class ProgramRecapExecutionCommandTests : IDisposable {
         Assert.False(Directory.Exists(calls));
         using JsonDocument report = ReadJson(reportPath);
         Assert.Equal(
-            "atelia.session-journal.derived-recap-execution.v5",
+            "atelia.session-journal.derived-recap-execution.v6",
             String(report, "schema")
         );
         Assert.Equal("BeyondPrefix", String(report, "resultStatus"));
@@ -409,6 +409,10 @@ public sealed class ProgramRecapExecutionCommandTests : IDisposable {
         );
         JsonElement beyondPrefix =
             report.RootElement.GetProperty("beyondPrefix");
+        Assert.Equal(
+            "new-planning-source-anchor",
+            beyondPrefix.GetProperty("stage").GetString()
+        );
         Assert.Equal(
             513,
             beyondPrefix.GetProperty("headerCount").GetInt32()
@@ -436,7 +440,7 @@ public sealed class ProgramRecapExecutionCommandTests : IDisposable {
     }
 
     [Fact]
-    public async Task RestoreBeyondPrefixUsesV5GoldenWithoutMutation() {
+    public async Task RestoreBeyondPrefixUsesV6GoldenWithoutMutation() {
         Fixture fixture =
             await CreateFixtureAsync("restore-beyond-prefix", 77);
         await CreateStoreAsync(fixture);
@@ -501,7 +505,7 @@ public sealed class ProgramRecapExecutionCommandTests : IDisposable {
         Assert.Equal(beforeDerived, HashDerivedFiles(fixture.Path));
         using JsonDocument report = ReadJson(reportPath);
         Assert.Equal(
-            "atelia.session-journal.derived-recap-execution.v5",
+            "atelia.session-journal.derived-recap-execution.v6",
             String(report, "schema")
         );
         Assert.Equal("restore", String(report, "operation"));
@@ -509,6 +513,10 @@ public sealed class ProgramRecapExecutionCommandTests : IDisposable {
         Assert.Equal(anchor, String(report, "anchor"));
         JsonElement beyond =
             report.RootElement.GetProperty("beyondPrefix");
+        Assert.Equal(
+            "preparation-current-lineage",
+            beyond.GetProperty("stage").GetString()
+        );
         Assert.Equal(
             anchor,
             beyond.GetProperty("requiredAnchor").GetString()
