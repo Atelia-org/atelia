@@ -551,6 +551,33 @@ public sealed class DerivedRecapPublishedRestoreInspectionTests {
             )).Blocks[plan.RecapBlockId].Capability
         );
 
+        await File.WriteAllBytesAsync(
+            finalPath,
+            DerivedRecapCodec.EncodeBlock(
+                DerivedRecapCodec.CreateBlock(
+                    plan,
+                    firstEndpoint,
+                    "semantically invalid pending"
+                )
+            )
+        );
+        PublishedBlockRestoreInspection invalidPending =
+            (await RequireAvailableAsync(
+                fixture.Store,
+                anchor,
+                lineage
+            )).Blocks[plan.RecapBlockId];
+        var damagedPending = Assert.IsType<
+            FinalRecapBlockHealth.Damaged
+        >(invalidPending.Final);
+        Assert.Contains(
+            damagedPending.Defects,
+            static defect => defect.Code == "FinalBlockDamaged"
+        );
+        Assert.IsNotType<
+            PublishedBlockRestoreCapability.AdoptPending
+        >(invalidPending.Capability);
+
         var wrongPlan = new MaintainRecapBlockPlan(
             plan.RecapBlockId,
             plan.Target,
@@ -726,6 +753,60 @@ public sealed class DerivedRecapPublishedRestoreInspectionTests {
         Assert.IsType<
             PublishedBlockRestoreCapability.ReplayBlock
         >(checkpoint.Capability);
+    }
+
+    [Fact]
+    public async Task InheritPendingMustMatchFrozenInputSemantics() {
+        using RecapStoreFixture fixture =
+            await RecapStoreFixture.CreateAsync(historyPairs: 6);
+        (
+            EventAddress target,
+            InheritRecapBlockPlan plan,
+            _
+        ) = await PublishInheritedTargetAsync(fixture);
+        DerivedRecapLineageView lineage = fixture.Lineage();
+        PublishedBlockRestoreInspection committed =
+            (await RequireAvailableAsync(
+                fixture.Store,
+                target,
+                lineage
+            )).Blocks[plan.RecapBlockId];
+        var input = Assert.IsType<FrozenRecapInputHealth.Healthy>(
+            committed.FrozenInput
+        ).Input;
+        string finalPath = BlockPath(
+            fixture.Store.GetPublishedPathForTest(target),
+            "blocks",
+            plan.RecapBlockId
+        );
+        await File.WriteAllBytesAsync(
+            finalPath,
+            DerivedRecapCodec.EncodeBlock(
+                DerivedRecapCodec.CreateBlock(
+                    plan,
+                    input.AbsorbedThrough,
+                    input.Content + " forged"
+                )
+            )
+        );
+
+        PublishedBlockRestoreInspection observed =
+            (await RequireAvailableAsync(
+                fixture.Store,
+                target,
+                lineage
+            )).Blocks[plan.RecapBlockId];
+
+        var damaged = Assert.IsType<FinalRecapBlockHealth.Damaged>(
+            observed.Final
+        );
+        Assert.Contains(
+            damaged.Defects,
+            static defect => defect.Code == "FinalBlockDamaged"
+        );
+        Assert.IsNotType<
+            PublishedBlockRestoreCapability.AdoptPending
+        >(observed.Capability);
     }
 
     [Fact]

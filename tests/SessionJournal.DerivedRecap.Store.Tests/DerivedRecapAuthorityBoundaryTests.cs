@@ -69,6 +69,140 @@ public sealed class DerivedRecapAuthorityBoundaryTests {
         Assert.False(File.Exists(lockPath));
     }
 
+    [Fact]
+    public async Task EveryMutationSeamRequiresExistingReadyLock() {
+        int mutationHooks = 0;
+        using RecapStoreFixture fixture =
+            await RecapStoreFixture.CreateAsync(
+                new RecapStoreTestHooks(
+                    BeforeAtomicFileReplace: _ => mutationHooks++,
+                    BeforeBuildingQuarantineRename: () => mutationHooks++
+                )
+            );
+        DerivedRecapLineageView lineage = fixture.Lineage();
+        EventAddress anchor = lineage.CapturedHead;
+        RecapBlockPlan plan = fixture.CreateMaintainPlan(
+            anchor,
+            lineage.CurrentPrefix.HeadToOldest[^1].Address
+        );
+        DerivedRecapSetManifest manifest =
+            DerivedRecapCodec.CreateManifest(
+                fixture.Engine.BranchRefId,
+                anchor,
+                [plan]
+            );
+        var created = Assert.IsType<CreateBuildingResult.Created>(
+            await fixture.Store.CreateBuildingAsync(manifest)
+        );
+        BuildingBlockInspection building =
+            await fixture.Store.InspectBuildingBlockAsync(
+                created.Descriptor,
+                plan.RecapBlockId
+            );
+        DerivedRecapBlock candidate =
+            DerivedRecapCodec.CreateBlock(
+                plan,
+                anchor,
+                "ready"
+            );
+        await RecapStoreTestDriver.InstallFinalAsync(
+            fixture.Store,
+            anchor,
+            candidate
+        );
+        _ = Assert.IsType<PublishRecapResult.Published>(
+            await fixture.Publisher.PublishAsync(anchor)
+        );
+        var published = Assert.IsType<
+            PublishedRestoreInspectionResult.Available
+        >(
+            await fixture.Store.InspectPublishedForRestoreAsync(
+                anchor,
+                lineage
+            )
+        ).Inspection;
+        PublishedBlockRestoreInspection publishedBlock =
+            published.Blocks[plan.RecapBlockId];
+        string v4Root = Path.Combine(
+            fixture.Path,
+            "derived",
+            "recap",
+            "v4"
+        );
+        string lockPath = Path.Combine(
+            v4Root,
+            "locks",
+            $"{fixture.Engine.BranchRefId.ToHexString()}.lock"
+        );
+        File.Delete(lockPath);
+        string[] before = SnapshotTree(v4Root);
+        mutationHooks = 0;
+
+        Assert.IsType<QuarantineBuildingResult.Unavailable>(
+            await fixture.Store.QuarantineBuildingAsync(anchor)
+        );
+        AssertStoreUnavailable(
+            Assert.IsType<CheckpointWriteResult.Unavailable>(
+                await fixture.Store.AdvanceRollingCheckpointAsync(
+                    created.Descriptor,
+                    plan.RecapBlockId,
+                    building.Checkpoint.StateToken,
+                    candidate
+                )
+            ).Defects
+        );
+        AssertStoreUnavailable(
+            Assert.IsType<FinalBlockWriteResult.Unavailable>(
+                await fixture.Store.EnsureFinalBlockAsync(
+                    created.Descriptor,
+                    plan.RecapBlockId,
+                    building.Final.StateToken,
+                    candidate
+                )
+            ).Defects
+        );
+        AssertStoreUnavailable(
+            Assert.IsType<PublishedCheckpointWriteResult.Unavailable>(
+                await fixture.Store.AdvancePublishedCheckpointAsync(
+                    published.Handle,
+                    plan.RecapBlockId,
+                    publishedBlock.Checkpoint.StateToken,
+                    candidate
+                )
+            ).Defects
+        );
+        AssertStoreUnavailable(
+            Assert.IsType<PublishedFinalWriteResult.Unavailable>(
+                await fixture.Store.InstallPublishedReplacementAsync(
+                    published.Handle,
+                    plan.RecapBlockId,
+                    publishedBlock.Final.StateToken,
+                    candidate
+                )
+            ).Defects
+        );
+        var restorer = new DerivedRecapRestorer(
+            fixture.Store,
+            fixture.Engine
+        );
+        AssertStoreUnavailable(
+            Assert.IsType<PublishedEnvelopeCommitResult.Unavailable>(
+                await restorer.CommitEnvelopeAsync(
+                    published.Handle,
+                    new Dictionary<RecapBlockId, string> {
+                        [plan.RecapBlockId] =
+                            publishedBlock.Final.StateToken
+                    },
+                    lineage.CapturedHead
+                )
+            ).Defects
+        );
+
+        Assert.Equal(0, mutationHooks);
+        Assert.False(File.Exists(lockPath));
+        Assert.Equal(before, SnapshotTree(v4Root));
+    }
+
     [Theory]
     [InlineData("missing-root")]
     [InlineData("damaged-header")]
@@ -118,6 +252,23 @@ public sealed class DerivedRecapAuthorityBoundaryTests {
         );
         Assert.False(Directory.Exists(buildingPath));
     }
+
+    private static void AssertStoreUnavailable(
+        IReadOnlyList<RecapStructuralDefect> defects
+    ) => Assert.Contains(
+        defects,
+        static defect => defect.Code == "StoreUnavailable"
+    );
+
+    private static string[] SnapshotTree(string root) =>
+        Directory.EnumerateFileSystemEntries(
+                root,
+                "*",
+                SearchOption.AllDirectories
+            )
+            .Select(path => Path.GetRelativePath(root, path))
+            .Order(StringComparer.Ordinal)
+            .ToArray();
 
     [Fact]
     public async Task InstallerCancellationPropagates() {

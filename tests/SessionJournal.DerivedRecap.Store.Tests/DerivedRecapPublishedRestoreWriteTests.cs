@@ -86,10 +86,47 @@ public sealed class DerivedRecapPublishedRestoreWriteTests {
                 )
         );
         Assert.Equal(0, mutationCount);
+
+        DerivedRecapBlock pending = DerivedRecapCodec.CreateBlock(
+            plan,
+            anchor,
+            "valid pending"
+        );
+        await File.WriteAllBytesAsync(
+            BlockPath(
+                fixture,
+                anchor,
+                "blocks",
+                plan.RecapBlockId
+            ),
+            DerivedRecapCodec.EncodeBlock(pending)
+        );
+        Assert.IsType<PublishedRestoreInspectionResult.BeyondPrefix>(
+            await fixture.Store.InspectPublishedForRestoreAsync(
+                anchor,
+                lineage
+            )
+        );
+        Assert.IsType<PublishedEnvelopeCommitResult.BeyondPrefix>(
+            await new DerivedRecapRestorer(
+                    fixture.Store,
+                    fixture.Engine
+                )
+                .CommitEnvelopeAsync(
+                    handle,
+                    new Dictionary<RecapBlockId, string> {
+                        [plan.RecapBlockId] =
+                            $"healthy:{pending.PayloadSha256}"
+                    },
+                    lineage.CapturedHead
+                )
+        );
+        Assert.Equal(0, mutationCount);
     }
 
     [Fact]
-    public async Task ForgedFinalPrecedesEarlierFrozenInputBeyond() {
+    public async Task
+        PendingSemanticsPrecedeInputBeyondAndCommittedIgnoresIt() {
         int mutationCount = 0;
         using RecapStoreFixture fixture =
             await RecapStoreFixture.CreateAsync(
@@ -134,20 +171,13 @@ public sealed class DerivedRecapPublishedRestoreWriteTests {
             );
         DerivedRecapBlock committed = DerivedRecapCodec.CreateBlock(
             plan,
-            beyond,
-            input.Content
-        );
-        var wrongPlan = new InheritRecapBlockPlan(
-            id,
-            target,
             source,
-            new string('b', 64),
-            input.PayloadSha256
+            "committed authority"
         );
         DerivedRecapBlock forged = DerivedRecapCodec.CreateBlock(
-            wrongPlan,
+            plan,
             beyond,
-            input.Content
+            input.Content + " forged"
         );
         PublishedRecapSet publication =
             await RecapStoreTestDriver.RewritePublishedUncheckedAsync(
@@ -202,6 +232,42 @@ public sealed class DerivedRecapPublishedRestoreWriteTests {
                     },
                     lineage.CapturedHead
                 )
+        );
+        Assert.Equal(0, mutationCount);
+
+        await File.WriteAllBytesAsync(
+            BlockPath(fixture, anchor, "blocks", id),
+            DerivedRecapCodec.EncodeBlock(committed)
+        );
+        var committedInspection = Assert.IsType<
+            PublishedRestoreInspectionResult.Available
+        >(
+            await fixture.Store.InspectPublishedForRestoreAsync(
+                anchor,
+                lineage
+            )
+        ).Inspection;
+        Assert.IsType<PublishedBlockRestoreCapability.KeepCommitted>(
+            committedInspection.Blocks[id].Capability
+        );
+        var already = Assert.IsType<
+            PublishedEnvelopeCommitResult.AlreadyCommitted
+        >(
+            await new DerivedRecapRestorer(
+                    fixture.Store,
+                    fixture.Engine
+                )
+                .CommitEnvelopeAsync(
+                    handle,
+                    new Dictionary<RecapBlockId, string> {
+                        [id] = $"healthy:{committed.PayloadSha256}"
+                    },
+                    lineage.CapturedHead
+                )
+        );
+        Assert.Equal(
+            publication.EnvelopeSha256,
+            already.Descriptor.EnvelopeSha256
         );
         Assert.Equal(0, mutationCount);
     }
@@ -720,6 +786,79 @@ public sealed class DerivedRecapPublishedRestoreWriteTests {
                 defect.Code == "RestoreDependencyMissing"
         );
         Assert.False(File.Exists(publicationPath));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task AlreadyCommittedIgnoresAuxiliaryInputLoss(
+        bool damageInput
+    ) {
+        int atomicWrites = 0;
+        using RecapStoreFixture fixture =
+            await RecapStoreFixture.CreateAsync(
+                new RecapStoreTestHooks(
+                    BeforeAtomicFileReplace: _ => atomicWrites++
+                ),
+                historyPairs: 6
+            );
+        (
+            DerivedRecapLineageView lineage,
+            EventAddress target,
+            InheritRecapBlockPlan plan
+        ) = await PublishInheritAsync(fixture);
+        var descriptor = Assert.IsType<DerivedRecapSelection.Selected>(
+            await fixture.Store.SelectNthPreviousAsync(lineage, 0)
+        ).Descriptor;
+        string inputPath = BlockPath(
+            fixture,
+            target,
+            "inputs",
+            plan.RecapBlockId
+        );
+        if (damageInput) {
+            await File.WriteAllTextAsync(inputPath, "damaged");
+        }
+        else {
+            File.Delete(inputPath);
+        }
+        PublishedRestoreInspection inspection =
+            await RequireInspectionAsync(fixture, target, lineage);
+        Assert.IsType<
+            PublishedBlockRestoreCapability.KeepCommitted
+        >(inspection.Blocks[plan.RecapBlockId].Capability);
+        string publicationPath = Path.Combine(
+            fixture.Store.GetPublishedPathForTest(target),
+            "publication.json"
+        );
+        byte[] publicationBefore =
+            await File.ReadAllBytesAsync(publicationPath);
+        atomicWrites = 0;
+        var restorer = new DerivedRecapRestorer(
+            fixture.Store,
+            fixture.Engine
+        );
+
+        var already = Assert.IsType<
+            PublishedEnvelopeCommitResult.AlreadyCommitted
+        >(
+            await restorer.CommitEnvelopeAsync(
+                inspection.Handle,
+                new Dictionary<RecapBlockId, string> {
+                    [plan.RecapBlockId] =
+                        inspection.Blocks[plan.RecapBlockId]
+                            .Final.StateToken
+                },
+                lineage.CapturedHead
+            )
+        );
+
+        Assert.Equal(descriptor, already.Descriptor);
+        Assert.Equal(0, atomicWrites);
+        Assert.Equal(
+            publicationBefore,
+            await File.ReadAllBytesAsync(publicationPath)
+        );
     }
 
     [Fact]

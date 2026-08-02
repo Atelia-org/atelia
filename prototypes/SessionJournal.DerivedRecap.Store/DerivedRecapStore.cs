@@ -945,21 +945,15 @@ public sealed class DerivedRecapStore {
         }
 
         try {
-            EnsureScaffolding();
-            await using FileStream writeLock =
-                await _fileSystem.AcquireExclusiveLockAsync(
-                        _lockPath,
-                        cancellationToken
-                    )
+            StoreWriteLockAttempt writeAttempt =
+                await TryAcquireReadyWriteLockAsync(cancellationToken)
                     .ConfigureAwait(false);
-            string? unavailable =
-                await TryGetUnavailableReasonAsync(cancellationToken)
-                    .ConfigureAwait(false);
-            if (unavailable is not null) {
+            if (writeAttempt.UnavailableReason is { } storeUnavailable) {
                 return new QuarantineBuildingResult.Unavailable(
-                    unavailable
+                    storeUnavailable
                 );
             }
+            await using FileStream writeLock = writeAttempt.Lock!;
 
             string publishedPath = GetPublishedPath(admissionAnchor);
             if (PathEntryExists(publishedPath)) {
@@ -1050,15 +1044,15 @@ public sealed class DerivedRecapStore {
             expectedStateToken
         );
         ArgumentNullException.ThrowIfNull(candidate);
-        EnsureScaffolding();
-        await using FileStream writeLock =
-            await _fileSystem.AcquireExclusiveLockAsync(
-                    _lockPath,
-                    cancellationToken
-                )
+        StoreWriteLockAttempt writeAttempt =
+            await TryAcquireReadyWriteLockAsync(cancellationToken)
                 .ConfigureAwait(false);
-        await RequireReadyAsync(cancellationToken)
-            .ConfigureAwait(false);
+        if (writeAttempt.UnavailableReason is { } storeUnavailable) {
+            return new CheckpointWriteResult.Unavailable(
+                StoreUnavailableDefects(storeUnavailable)
+            );
+        }
+        await using FileStream writeLock = writeAttempt.Lock!;
         BuildingSnapshot snapshot =
             await ReadExactBuildingRequiredAsync(
                     building,
@@ -1154,15 +1148,15 @@ public sealed class DerivedRecapStore {
             expectedStateToken
         );
         ArgumentNullException.ThrowIfNull(candidate);
-        EnsureScaffolding();
-        await using FileStream writeLock =
-            await _fileSystem.AcquireExclusiveLockAsync(
-                    _lockPath,
-                    cancellationToken
-                )
+        StoreWriteLockAttempt writeAttempt =
+            await TryAcquireReadyWriteLockAsync(cancellationToken)
                 .ConfigureAwait(false);
-        await RequireReadyAsync(cancellationToken)
-            .ConfigureAwait(false);
+        if (writeAttempt.UnavailableReason is { } storeUnavailable) {
+            return new FinalBlockWriteResult.Unavailable(
+                StoreUnavailableDefects(storeUnavailable)
+            );
+        }
+        await using FileStream writeLock = writeAttempt.Lock!;
         BuildingSnapshot snapshot =
             await ReadExactBuildingRequiredAsync(
                     building,
@@ -1822,26 +1816,15 @@ public sealed class DerivedRecapStore {
             expectedStateToken
         );
         ArgumentNullException.ThrowIfNull(candidate);
-        EnsureScaffolding();
-        await using FileStream writeLock =
-            await _fileSystem.AcquireExclusiveLockAsync(
-                    _lockPath,
-                    cancellationToken
-                )
+        StoreWriteLockAttempt writeAttempt =
+            await TryAcquireReadyWriteLockAsync(cancellationToken)
                 .ConfigureAwait(false);
-        string? storeUnavailable =
-            await TryGetUnavailableReasonAsync(cancellationToken)
-                .ConfigureAwait(false);
-        if (storeUnavailable is not null) {
+        if (writeAttempt.UnavailableReason is { } storeUnavailable) {
             return new PublishedCheckpointWriteResult.Unavailable(
-                [
-                    new RecapStructuralDefect(
-                        "StoreUnavailable",
-                        storeUnavailable
-                    )
-                ]
+                StoreUnavailableDefects(storeUnavailable)
             );
         }
+        await using FileStream writeLock = writeAttempt.Lock!;
         RestoreHandleRead authority =
             await ReadRestoreHandleAsync(
                     handle,
@@ -1954,26 +1937,15 @@ public sealed class DerivedRecapStore {
             expectedStateToken
         );
         ArgumentNullException.ThrowIfNull(candidate);
-        EnsureScaffolding();
-        await using FileStream writeLock =
-            await _fileSystem.AcquireExclusiveLockAsync(
-                    _lockPath,
-                    cancellationToken
-                )
+        StoreWriteLockAttempt writeAttempt =
+            await TryAcquireReadyWriteLockAsync(cancellationToken)
                 .ConfigureAwait(false);
-        string? storeUnavailable =
-            await TryGetUnavailableReasonAsync(cancellationToken)
-                .ConfigureAwait(false);
-        if (storeUnavailable is not null) {
+        if (writeAttempt.UnavailableReason is { } storeUnavailable) {
             return new PublishedFinalWriteResult.Unavailable(
-                [
-                    new RecapStructuralDefect(
-                        "StoreUnavailable",
-                        storeUnavailable
-                    )
-                ]
+                StoreUnavailableDefects(storeUnavailable)
             );
         }
+        await using FileStream writeLock = writeAttempt.Lock!;
         RestoreHandleRead authority =
             await ReadRestoreHandleAsync(
                     handle,
@@ -2036,7 +2008,9 @@ public sealed class DerivedRecapStore {
         PublishedFinalInspection final =
             await InspectPublishedFinalExactAsync(
                     publishedPath,
+                    capture.Manifest,
                     plan,
+                    input,
                     commitment,
                     cancellationToken
                 )
@@ -2192,22 +2166,16 @@ public sealed class DerivedRecapStore {
         IReadOnlyDictionary<EventAddress, int> lineageIndex =
             IndexPrefix(available.AdmissionPrefix);
 
-        EnsureScaffolding();
-        await using FileStream writeLock =
-            await _fileSystem.AcquireExclusiveLockAsync(
-                    _lockPath,
-                    cancellationToken
-                )
+        StoreWriteLockAttempt writeAttempt =
+            await TryAcquireReadyWriteLockAsync(cancellationToken)
                 .ConfigureAwait(false);
-        string? storeUnavailable =
-            await TryGetUnavailableReasonAsync(cancellationToken)
-                .ConfigureAwait(false);
-        if (storeUnavailable is not null) {
+        if (writeAttempt.UnavailableReason is { } storeUnavailable) {
             return EnvelopeUnavailable(
                 "StoreUnavailable",
                 storeUnavailable
             );
         }
+        await using FileStream writeLock = writeAttempt.Lock!;
         RestoreHandleRead authority =
             await ReadRestoreHandleAsync(
                     handle,
@@ -2287,7 +2255,9 @@ public sealed class DerivedRecapStore {
             PublishedFinalInspection final =
                 await InspectPublishedFinalExactAsync(
                             publishedPath,
+                            capture.Manifest,
                             plan,
+                            inputs[plan.RecapBlockId],
                             commitment,
                             cancellationToken
                         )
@@ -2337,6 +2307,9 @@ public sealed class DerivedRecapStore {
         }
         var exactInputDefects = new List<RecapStructuralDefect>();
         foreach (RecapBlockPlan plan in capture.Manifest.Blocks) {
+            if (finals[plan.RecapBlockId].IsCommitted) {
+                continue;
+            }
             FrozenRecapInputHealth input = inputs[plan.RecapBlockId];
             if (input
                 is FrozenRecapInputHealth.NotRequired
@@ -2358,18 +2331,6 @@ public sealed class DerivedRecapStore {
             && exactInputDefects.Count != 0) {
             return new PublishedEnvelopeCommitResult.Unavailable(
                 Array.AsReadOnly(exactInputDefects.ToArray())
-            );
-        }
-        bool hasUncommittedPublishedFinal =
-            capture.Publication is not null
-            && finals.Values.Any(static final => !final.IsCommitted);
-        if (artifactBeyond is not null
-            && hasUncommittedPublishedFinal) {
-            return EnvelopeUnavailable(
-                "PublishedBlockCommitmentMismatch",
-                "A pending final block cannot replace committed "
-                + "publication authority while required lineage is "
-                + "beyond the authenticated prefix."
             );
         }
         if (artifactBeyond is not null) {
@@ -3444,7 +3405,9 @@ public sealed class DerivedRecapStore {
             PublishedFinalInspection final =
                 await InspectPublishedFinalExactAsync(
                         publishedPath,
+                        capture.Manifest,
                         plan,
+                        inputs[plan.RecapBlockId],
                         commitment,
                         cancellationToken
                     )
@@ -3458,13 +3421,16 @@ public sealed class DerivedRecapStore {
                 Array.AsReadOnly(witnessInputDefects)
             );
         }
-        bool exactIncomplete = inputs.Values.Any(static health =>
-                health is not FrozenRecapInputHealth.NotRequired
-                    and not FrozenRecapInputHealth.Healthy)
-            || finals.Values.Any(static final =>
-                final.Health is not FinalRecapBlockHealth.Healthy)
-            || capture.Publication is not null
-               && finals.Values.Any(static final => !final.IsCommitted);
+        bool exactIncomplete = capture.Manifest.Blocks.Any(plan => {
+            PublishedFinalInspection final =
+                finals[plan.RecapBlockId];
+            return final.Health
+                    is not FinalRecapBlockHealth.Healthy
+                || !final.IsCommitted
+                   && inputs[plan.RecapBlockId]
+                       is not FrozenRecapInputHealth.NotRequired
+                           and not FrozenRecapInputHealth.Healthy;
+        });
         if (!exactIncomplete) {
             if (FindRestoreBeyondPrefix(
                     capture.Manifest,
@@ -3860,7 +3826,9 @@ public sealed class DerivedRecapStore {
     private async ValueTask<PublishedFinalInspection>
         InspectPublishedFinalExactAsync(
         string publishedPath,
+        DerivedRecapSetManifest manifest,
         RecapBlockPlan plan,
+        FrozenRecapInputHealth inputHealth,
         RecapBlockCommitment? commitment,
         CancellationToken cancellationToken
     ) {
@@ -3902,6 +3870,18 @@ public sealed class DerivedRecapStore {
             ValidateBlockAgainstPlan(plan, block);
             bool isCommitted = commitment is not null
                 && MatchesCommitment(block, commitment);
+            if (!isCommitted) {
+                DerivedRecapFrozenInput? input =
+                    inputHealth is FrozenRecapInputHealth.Healthy healthy
+                        ? healthy.Input
+                        : null;
+                ValidateFinalCandidate(
+                    manifest,
+                    plan,
+                    input,
+                    block
+                );
+            }
             return new PublishedFinalInspection(
                 new FinalRecapBlockHealth.Healthy(
                     block,
@@ -4118,7 +4098,8 @@ public sealed class DerivedRecapStore {
             return planBeyond;
         }
         foreach (RecapBlockPlan plan in manifest.Blocks) {
-            if (inputs[plan.RecapBlockId]
+            if (!finals[plan.RecapBlockId].IsCommitted
+                && inputs[plan.RecapBlockId]
                     is FrozenRecapInputHealth.Healthy input
                 && prefix.Lookup(input.Input.AbsorbedThrough)
                     is SessionCurrentLineageAnchorLookup
@@ -4159,29 +4140,31 @@ public sealed class DerivedRecapStore {
             manifest.Blocks.Count
         );
         foreach (RecapBlockPlan plan in manifest.Blocks) {
-            EventAddress? sourceAnchor = plan switch {
-                InheritRecapBlockPlan inherit =>
-                    inherit.SourceSetAnchor,
-                MaintainRecapBlockPlan {
-                    Source: ExistingRecapMaintainSource existing
-                } => existing.SourceSetAnchor,
-                _ => null
-            };
-            ValidateFrozenSourceCursor(
-                sourceAnchor,
-                plan,
-                healthyInputs,
-                lineage,
-                defects
-            );
-            if (plan is MaintainRecapBlockPlan maintain) {
-                ValidateExistingMaintainRoute(
-                    maintain,
+            if (!finals[plan.RecapBlockId].IsCommitted) {
+                EventAddress? sourceAnchor = plan switch {
+                    InheritRecapBlockPlan inherit =>
+                        inherit.SourceSetAnchor,
+                    MaintainRecapBlockPlan {
+                        Source: ExistingRecapMaintainSource existing
+                    } => existing.SourceSetAnchor,
+                    _ => null
+                };
+                ValidateFrozenSourceCursor(
+                    sourceAnchor,
                     plan,
                     healthyInputs,
                     lineage,
                     defects
                 );
+                if (plan is MaintainRecapBlockPlan maintain) {
+                    ValidateExistingMaintainRoute(
+                        maintain,
+                        plan,
+                        healthyInputs,
+                        lineage,
+                        defects
+                    );
+                }
             }
             var final = (FinalRecapBlockHealth.Healthy)
                 finals[plan.RecapBlockId].Health;
@@ -4264,6 +4247,11 @@ public sealed class DerivedRecapStore {
         string code,
         string detail
     ) => new([new RecapStructuralDefect(code, detail)]);
+
+    private static IReadOnlyList<RecapStructuralDefect>
+        StoreUnavailableDefects(
+        string detail
+    ) => [new RecapStructuralDefect("StoreUnavailable", detail)];
 
     private async ValueTask<IReadOnlyList<RecapStructuralDefect>>
         ValidatePublishedAsync(
