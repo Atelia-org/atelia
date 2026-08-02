@@ -81,11 +81,14 @@ public sealed class DerivedRecapPlannerExecutor {
         SessionCurrentLineageSnapshot lineage;
         DerivedRecapSelection selection;
         try {
-            lineage = _engine.ReadCurrentLineageHeaders(
-                cancellationToken
-            );
-            selection = await _store.SelectNthPreviousAsync(
-                    lineage,
+            DerivedRecapLineageView view =
+                DerivedRecapLineageView.Capture(
+                    _store,
+                    _engine,
+                    cancellationToken
+                );
+            lineage = view.Snapshot;
+            selection = await view.SelectNthPreviousAsync(
                     nthPrevious: 0,
                     cancellationToken
                 )
@@ -120,11 +123,14 @@ public sealed class DerivedRecapPlannerExecutor {
         SessionCurrentLineageSnapshot lineage;
         DerivedRecapSelection selection;
         try {
-            lineage = _engine.ReadCurrentLineageHeaders(
-                cancellationToken
-            );
-            selection = await _store.SelectNthPreviousAsync(
-                    lineage,
+            DerivedRecapLineageView view =
+                DerivedRecapLineageView.Capture(
+                    _store,
+                    _engine,
+                    cancellationToken
+                );
+            lineage = view.Snapshot;
+            selection = await view.SelectNthPreviousAsync(
                     nthPrevious: 0,
                     cancellationToken
                 )
@@ -577,6 +583,8 @@ public sealed class DerivedRecapPlannerExecutor {
                     )
                     + "."
                 );
+            case CreateBuildingResult.InvalidPlan invalidPlan:
+                return Unavailable(invalidPlan.Defects);
             default:
                 throw new InvalidOperationException(
                     "Unknown Building creation result."
@@ -1330,8 +1338,13 @@ public sealed class DerivedRecapBuildingExecutor {
             );
         }
 
-        SessionCurrentLineageSnapshot lineage =
-            _engine.ReadCurrentLineageHeaders(cancellationToken);
+        DerivedRecapLineageView lineageView =
+            DerivedRecapLineageView.Capture(
+                _store,
+                _engine,
+                cancellationToken
+            );
+        SessionCurrentLineageSnapshot lineage = lineageView.Snapshot;
         Dictionary<EventAddress, int> lineageIndex =
             lineage.HeadToRoot
                 .Select((node, index) => (node.Address, index))
@@ -1354,8 +1367,7 @@ public sealed class DerivedRecapBuildingExecutor {
             );
         }
         DerivedRecapSelection latestSelection =
-            await _store.SelectNthPreviousAsync(
-                    lineage,
+            await lineageView.SelectNthPreviousAsync(
                     nthPrevious: 0,
                     cancellationToken
                 )

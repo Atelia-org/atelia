@@ -41,7 +41,7 @@ public sealed record RecapBlockId {
 }
 
 public abstract record RecapBlockPlan {
-    protected RecapBlockPlan(
+    private protected RecapBlockPlan(
         RecapBlockId recapBlockId,
         ContextHeaderBlockPath target,
         int maxContentUtf8Bytes
@@ -86,7 +86,10 @@ public sealed record InheritRecapBlockPlan : RecapBlockPlan {
     public string SourceInputPayloadSha256 { get; }
 }
 
-public abstract record RecapMaintainSource;
+public abstract record RecapMaintainSource {
+    private protected RecapMaintainSource() {
+    }
+}
 
 public sealed record ExistingRecapMaintainSource(
     EventAddress SourceSetAnchor,
@@ -98,7 +101,10 @@ public sealed record EmptyRecapMaintainSource(
     EventAddress ReplayStartExclusive
 ) : RecapMaintainSource;
 
-public abstract record RecapPriorContext;
+public abstract record RecapPriorContext {
+    private protected RecapPriorContext() {
+    }
+}
 
 public sealed record EmptyRecapPriorContext : RecapPriorContext {
     public static EmptyRecapPriorContext Instance { get; } = new();
@@ -399,6 +405,10 @@ public abstract record CreateBuildingResult {
 
     public sealed record ActiveBuildingConflict(
         IReadOnlyList<EventAddress> SetAdmissionAnchors
+    ) : CreateBuildingResult;
+
+    public sealed record InvalidPlan(
+        IReadOnlyList<RecapStructuralDefect> Defects
     ) : CreateBuildingResult;
 }
 

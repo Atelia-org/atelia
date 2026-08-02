@@ -351,10 +351,11 @@ public sealed class ProgramRecapExecutionCommandTests : IDisposable {
                 Assert.IsType<
                     PublishedRestoreInspectionResult.Available
                 >(
-                    await store.InspectPublishedForRestoreAsync(
-                        publishedAnchor,
-                        engine.ReadCurrentLineageHeaders()
-                    )
+                    await DerivedRecapLineageView
+                        .Capture(store, engine)
+                        .InspectPublishedForRestoreAsync(
+                            publishedAnchor
+                        )
                 );
             Assert.All(
                 inspection.Inspection.Blocks.Values,
@@ -807,17 +808,19 @@ public sealed class ProgramRecapExecutionCommandTests : IDisposable {
                 EmptyRecapPriorContext.Instance,
                 entry.MaxContentUtf8Bytes
             );
+            DerivedRecapStore store = DerivedRecapStore.Open(
+                fixture.Path,
+                engine.BranchRefId
+            );
             Assert.IsType<CreateBuildingResult.Created>(
-                await DerivedRecapStore.Open(
-                        fixture.Path,
-                        engine.BranchRefId
-                    )
-                    .CreateBuildingAsync(
+                await new DerivedRecapBuildingInstaller(store, engine)
+                    .InstallAsync(
                         DerivedRecapCodec.CreateManifest(
                             engine.BranchRefId,
                             fixture.Head,
                             [plan]
-                        )
+                        ),
+                        fixture.Head
                     )
             );
         }
@@ -935,15 +938,16 @@ public sealed class ProgramRecapExecutionCommandTests : IDisposable {
             fixture.Path,
             fixture.BranchName
         );
+        DerivedRecapStore store = DerivedRecapStore.Open(
+            fixture.Path,
+            engine.BranchRefId
+        );
         PublishedRestoreInspectionResult.Available inspection =
             Assert.IsType<PublishedRestoreInspectionResult.Available>(
-                await DerivedRecapStore.Open(
-                        fixture.Path,
-                        engine.BranchRefId
-                    )
+                await DerivedRecapLineageView
+                    .Capture(store, engine)
                     .InspectPublishedForRestoreAsync(
-                        SJ.EventAddressTextCodec.Parse(anchor),
-                        engine.ReadCurrentLineageHeaders()
+                        SJ.EventAddressTextCodec.Parse(anchor)
                     )
             );
         Assert.Contains(

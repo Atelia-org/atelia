@@ -70,7 +70,14 @@ public sealed class DerivedRecapOnlineLifecycleCoordinator
             store,
             maintainers
         );
-        _select = store.SelectNthPreviousAsync;
+        _select = (lineage, nthPrevious, cancellationToken) =>
+            SelectBoundAsync(
+                store,
+                engine,
+                lineage,
+                nthPrevious,
+                cancellationToken
+            );
         _restore = restorer.RestoreAsync;
         _run = planner.RunAsync;
         _runCurrentPlanning = planner.RunAsync;
@@ -124,7 +131,14 @@ public sealed class DerivedRecapOnlineLifecycleCoordinator
         return new DerivedRecapOnlineLifecycleCoordinator(
             engine,
             new DerivedRecapContextCandidateSource(store, engine),
-            store.SelectNthPreviousAsync,
+            (lineage, nthPrevious, cancellationToken) =>
+                SelectBoundAsync(
+                    store,
+                    engine,
+                    lineage,
+                    nthPrevious,
+                    cancellationToken
+                ),
             restorer.RestoreAsync,
             (_, cancellationToken) => building.ResumeAsync(
                 buildingDescriptor,
@@ -430,6 +444,33 @@ public sealed class DerivedRecapOnlineLifecycleCoordinator
         ArgumentNullException.ThrowIfNull(selection);
         RequireCurrentBoundary(lineage.CapturedHead);
         return selection;
+    }
+
+    private static async ValueTask<DerivedRecapSelection>
+        SelectBoundAsync(
+        DerivedRecapStore store,
+        SessionJournalEngine engine,
+        SessionCurrentLineageSnapshot expectedLineage,
+        int nthPrevious,
+        CancellationToken cancellationToken
+    ) {
+        DerivedRecapLineageView view =
+            DerivedRecapLineageView.Capture(
+                store,
+                engine,
+                cancellationToken
+            );
+        if (view.CapturedHead != expectedLineage.CapturedHead) {
+            throw new InvalidOperationException(
+                "DerivedRecap lifecycle lineage changed before "
+                + "Store selection."
+            );
+        }
+        return await view.SelectNthPreviousAsync(
+                nthPrevious,
+                cancellationToken
+            )
+            .ConfigureAwait(false);
     }
 
     private async ValueTask<SessionContextLifecycleResult?> RestoreAsync(

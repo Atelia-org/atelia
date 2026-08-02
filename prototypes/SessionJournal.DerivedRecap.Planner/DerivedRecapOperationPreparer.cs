@@ -201,16 +201,18 @@ public static class DerivedRecapOperationPreparer {
         ArgumentNullException.ThrowIfNull(activeConfiguration);
         RequireSameBinding(store, engine);
 
+        DerivedRecapLineageView? capturedView = null;
+
         return PrepareCoreAsync(
             new DerivedRecapOperationPreparationServices(
                 DerivedRecapOperationBinding.Create(
                     engine.Path,
                     engine.BranchRefId
                 ),
-                engine.ReadCurrentLineageHeaders,
-                store.SelectCurrentLineageBuildingAsync,
+                ReadLineage,
+                SelectBuilding,
                 activeConfiguration.Load,
-                store.SelectNthPreviousAsync,
+                SelectLatest,
                 store.ReadPublishedPlanAsync,
                 store.ReadPublishedPlanAtAnchorAsync,
                 engine.ReadCurrentHead
@@ -218,6 +220,48 @@ public static class DerivedRecapOperationPreparer {
             capabilities,
             cancellationToken
         );
+
+        SessionCurrentLineageSnapshot ReadLineage(
+            CancellationToken ct
+        ) {
+            capturedView = DerivedRecapLineageView.Capture(
+                store,
+                engine,
+                ct
+            );
+            return capturedView.Snapshot;
+        }
+
+        ValueTask<CurrentLineageBuildingSelection> SelectBuilding(
+            SessionCurrentLineageSnapshot lineage,
+            CancellationToken ct
+        ) {
+            RequireCapturedView(lineage);
+            return capturedView!.SelectCurrentBuildingAsync(ct);
+        }
+
+        ValueTask<DerivedRecapSelection> SelectLatest(
+            SessionCurrentLineageSnapshot lineage,
+            int nthPrevious,
+            CancellationToken ct
+        ) {
+            RequireCapturedView(lineage);
+            return capturedView!.SelectNthPreviousAsync(
+                nthPrevious,
+                ct
+            );
+        }
+
+        void RequireCapturedView(
+            SessionCurrentLineageSnapshot lineage
+        ) {
+            if (capturedView is null
+                || !ReferenceEquals(capturedView.Snapshot, lineage)) {
+                throw new InvalidOperationException(
+                    "DerivedRecap preparation lineage view is unavailable."
+                );
+            }
+        }
     }
 
     internal static async ValueTask<

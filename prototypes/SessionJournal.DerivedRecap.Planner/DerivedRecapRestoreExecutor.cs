@@ -62,19 +62,24 @@ public sealed class DerivedRecapRestoreExecutor {
         }
 
         try {
+            DerivedRecapLineageView lineageView =
+                DerivedRecapLineageView.Capture(
+                    _store,
+                    _engine,
+                    cancellationToken
+                );
             SessionCurrentLineageSnapshot lineage =
-                _engine.ReadCurrentLineageHeaders(cancellationToken);
-            if (lineage.CapturedHead != expectedRawHead) {
+                lineageView.Snapshot;
+            if (lineageView.CapturedHead != expectedRawHead) {
                 return RawHeadChanged(
                     expectedRawHead,
-                    lineage.CapturedHead
+                    lineageView.CapturedHead
                 );
             }
 
             PublishedRestoreInspectionResult inspectionResult =
-                await _store.InspectPublishedForRestoreAsync(
+                await lineageView.InspectPublishedForRestoreAsync(
                         setAdmissionAnchor,
-                        lineage,
                         cancellationToken
                     )
                     .ConfigureAwait(false);

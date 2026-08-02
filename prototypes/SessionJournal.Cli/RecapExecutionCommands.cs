@@ -108,10 +108,12 @@ internal static class RecapExecutionCommands {
             inputPath,
             engine.BranchRefId
         );
-        SJ.SessionCurrentLineageSnapshot? lineage =
+        DerivedRecapLineageView? lineageView =
             operation == "run"
                 ? null
-                : engine.ReadCurrentLineageHeaders();
+                : DerivedRecapLineageView.Capture(store, engine);
+        SJ.SessionCurrentLineageSnapshot? lineage =
+            lineageView?.Snapshot;
         EventAddress? anchor = needsAnchor
             ? ParseAddress(
                 options.RequireSingle("anchor"),
@@ -164,7 +166,7 @@ internal static class RecapExecutionCommands {
                 await InspectReadinessAsync(
                         operation,
                         store,
-                        lineage!,
+                        lineageView,
                         anchor
                     )
                     .ConfigureAwait(false);
@@ -361,7 +363,7 @@ internal static class RecapExecutionCommands {
         InspectReadinessAsync(
         string operation,
         DerivedRecapStore store,
-        SJ.SessionCurrentLineageSnapshot lineage,
+        DerivedRecapLineageView? lineage,
         EventAddress? anchor
     ) {
         try {
@@ -379,9 +381,9 @@ internal static class RecapExecutionCommands {
             }
 
             PublishedRestoreInspectionResult published =
-                await store.InspectPublishedForRestoreAsync(
+                await lineage!.InspectPublishedForRestoreAsync(
                         anchor!.Value,
-                        lineage
+                        CancellationToken.None
                     )
                     .ConfigureAwait(false);
             return published switch {

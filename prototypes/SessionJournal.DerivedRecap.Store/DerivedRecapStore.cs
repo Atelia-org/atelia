@@ -383,7 +383,7 @@ public sealed class DerivedRecapStore {
         );
     }
 
-    public async ValueTask<CreateBuildingResult> CreateBuildingAsync(
+    internal async ValueTask<CreateBuildingResult> CreateBuildingAsync(
         DerivedRecapSetManifest manifest,
         CancellationToken cancellationToken = default
     ) => await CreateBuildingCoreAsync(
@@ -454,12 +454,42 @@ public sealed class DerivedRecapStore {
         }
 
         if (currentLineage is not null) {
-            IReadOnlyDictionary<EventAddress, int> lineageIndex =
-                ValidateAndIndexLineage(currentLineage);
             if (currentLineage.CapturedHead != expectedRawHead) {
                 return new CreateBuildingResult.RawHeadChanged(
                     expectedRawHead!.Value,
                     currentLineage.CapturedHead
+                );
+            }
+            IReadOnlyDictionary<EventAddress, int> lineageIndex =
+                ValidateAndIndexLineage(currentLineage);
+            var planDefects = new List<RecapStructuralDefect>();
+            if (!lineageIndex.TryGetValue(
+                    manifest.SetAdmissionAnchor,
+                    out int targetIndex
+                )) {
+                AddDefect(
+                    planDefects,
+                    "AdmissionAnchorOffLineage",
+                    "SetAdmissionAnchor is outside the captured raw "
+                    + "lineage."
+                );
+            }
+            else {
+                ValidatePlanLineage(
+                    manifest,
+                    lineageIndex,
+                    targetIndex,
+                    planDefects
+                );
+                ValidateNoRetroactivePublication(
+                    manifest.SetAdmissionAnchor,
+                    currentLineage,
+                    planDefects
+                );
+            }
+            if (planDefects.Count != 0) {
+                return new CreateBuildingResult.InvalidPlan(
+                    Array.AsReadOnly(planDefects.ToArray())
                 );
             }
             CurrentLineageBuildingInventory inventory =
@@ -666,7 +696,7 @@ public sealed class DerivedRecapStore {
     /// raw lineage. Dot-staging entries and off-lineage directories are
     /// therefore outside the membership scan by construction.
     /// </summary>
-    public async ValueTask<CurrentLineageBuildingSelection>
+    internal async ValueTask<CurrentLineageBuildingSelection>
         SelectCurrentLineageBuildingAsync(
         SessionCurrentLineageSnapshot lineage,
         CancellationToken cancellationToken = default
@@ -1217,7 +1247,7 @@ public sealed class DerivedRecapStore {
         );
     }
 
-    public async ValueTask<DerivedRecapSelection>
+    internal async ValueTask<DerivedRecapSelection>
         SelectNthPreviousAsync(
         SessionCurrentLineageSnapshot lineage,
         int nthPrevious,
@@ -1475,7 +1505,7 @@ public sealed class DerivedRecapStore {
         );
     }
 
-    public async ValueTask<PublishedRestoreInspectionResult>
+    internal async ValueTask<PublishedRestoreInspectionResult>
         InspectPublishedForRestoreAsync(
         EventAddress admissionAnchor,
         SessionCurrentLineageSnapshot lineage,

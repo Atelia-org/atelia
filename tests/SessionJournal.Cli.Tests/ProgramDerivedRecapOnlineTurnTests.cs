@@ -684,13 +684,15 @@ public sealed class ProgramDerivedRecapOnlineTurnTests : IDisposable {
                     )
             ]);
             Assert.IsType<CreateBuildingResult.Created>(
-                await store.CreateBuildingAsync(
-                    DerivedRecapCodec.CreateManifest(
-                        branchRefId,
-                        admissionAnchor,
-                        plans
+                await new DerivedRecapBuildingInstaller(store, engine)
+                    .InstallAsync(
+                        DerivedRecapCodec.CreateManifest(
+                            branchRefId,
+                            admissionAnchor,
+                            plans
+                        ),
+                        admissionAnchor
                     )
-                )
             );
         }
         Assert.False(File.Exists(
@@ -720,12 +722,12 @@ public sealed class ProgramDerivedRecapOnlineTurnTests : IDisposable {
                 .ReadBuildingAsync(admissionAnchor)
         );
         using (var engine = SJ.SessionJournalEngine.OpenReadOnly(path)) {
+            DerivedRecapStore store =
+                DerivedRecapStore.Open(path, branchRefId);
             Assert.IsType<DerivedRecapSelection.Selected>(
-                await DerivedRecapStore.Open(path, branchRefId)
-                    .SelectNthPreviousAsync(
-                        engine.ReadCurrentLineageHeaders(),
-                        0
-                    )
+                await DerivedRecapLineageView
+                    .Capture(store, engine)
+                    .SelectNthPreviousAsync(0)
             );
         }
         AssertReportHasNoRecapAuthority(output);
@@ -859,12 +861,12 @@ public sealed class ProgramDerivedRecapOnlineTurnTests : IDisposable {
         );
         using var reopened =
             SJ.SessionJournalEngine.OpenReadOnly(path);
+        DerivedRecapStore store =
+            DerivedRecapStore.Open(path, branchRefId);
         DerivedRecapSelection selection =
-            await DerivedRecapStore.Open(path, branchRefId)
-                .SelectNthPreviousAsync(
-                    reopened.ReadCurrentLineageHeaders(),
-                    0
-                );
+            await DerivedRecapLineageView
+                .Capture(store, reopened)
+                .SelectNthPreviousAsync(0);
         Assert.IsType<DerivedRecapSelection.EmptyLineage>(selection);
         Assert.Equal(
             SJ.SessionExecutionPhase.Idle,
@@ -1170,12 +1172,12 @@ public sealed class ProgramDerivedRecapOnlineTurnTests : IDisposable {
         PublishedRecapDescriptor descriptor;
         using (var engine =
             SJ.SessionJournalEngine.OpenReadOnly(path, branchName)) {
+            DerivedRecapStore store =
+                DerivedRecapStore.Open(path, branchRefId);
             DerivedRecapSelection selection =
-                await DerivedRecapStore.Open(path, branchRefId)
-                    .SelectNthPreviousAsync(
-                        engine.ReadCurrentLineageHeaders(),
-                        0
-                    );
+                await DerivedRecapLineageView
+                    .Capture(store, engine)
+                    .SelectNthPreviousAsync(0);
             descriptor = Assert
                 .IsType<DerivedRecapSelection.Selected>(selection)
                 .Descriptor;

@@ -347,14 +347,15 @@ HistoryUnit/raw event counts是结构诊断，不是 scheduling authority。
 先由 Store选择 current-lineage Building，再用 exact descriptor恢复：
 
 ```csharp
-SessionCurrentLineageSnapshot lineage =
-    engine.ReadCurrentLineageHeaders(cancellationToken);
-
-CurrentLineageBuildingSelection selected =
-    await store.SelectCurrentLineageBuildingAsync(
-        lineage,
+DerivedRecapLineageView lineage =
+    DerivedRecapLineageView.Capture(
+        store,
+        engine,
         cancellationToken
     );
+
+CurrentLineageBuildingSelection selected =
+    await lineage.SelectCurrentBuildingAsync(cancellationToken);
 
 if (selected
     is CurrentLineageBuildingSelection.Available available) {

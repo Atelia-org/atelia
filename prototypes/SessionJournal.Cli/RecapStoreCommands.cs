@@ -231,6 +231,11 @@ internal static class RecapStoreCommands {
                 context.InputPath,
                 context.Engine.BranchRefId
             );
+            DerivedRecapLineageView lineage =
+                DerivedRecapLineageView.Capture(
+                    store,
+                    context.Engine
+                );
             anchor = ParseAnchor(options);
             PublishedMembershipInspectionResult membership =
                 await store.InspectPublishedMembershipAsync(
@@ -256,9 +261,8 @@ internal static class RecapStoreCommands {
                     anchor
                 ).ConfigureAwait(false);
             published = await InspectPublishedAsync(
-                    store,
+                    lineage,
                     anchor,
-                    context.Engine.ReadCurrentLineageHeaders(),
                     membership
                 )
                 .ConfigureAwait(false);
@@ -338,9 +342,8 @@ internal static class RecapStoreCommands {
 
     private static async ValueTask<ExactPublishedInspectionReport>
         InspectPublishedAsync(
-        DerivedRecapStore store,
+        DerivedRecapLineageView lineage,
         EventAddress anchor,
-        SJ.SessionCurrentLineageSnapshot lineage,
         PublishedMembershipInspectionResult membership
     ) {
         var membershipReport = membership switch {
@@ -384,9 +387,8 @@ internal static class RecapStoreCommands {
         }
 
         PublishedRestoreInspectionResult result =
-            await store.InspectPublishedForRestoreAsync(
+            await lineage.InspectPublishedForRestoreAsync(
                     anchor,
-                    lineage,
                     CancellationToken.None
                 )
                 .ConfigureAwait(false);

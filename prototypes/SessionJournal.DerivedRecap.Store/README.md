@@ -1,4 +1,4 @@
-# DerivedRecap Store R0
+# DerivedRecap Store V4
 
 This project owns event-addressed Recap persistence, structural validation,
 atomic publication, strict ordinal selection, and exact materialization.
@@ -36,10 +36,20 @@ the Store's per-Ref exclusive lock, publication:
 5. atomically promotes Building with Linux
    `renameat2(RENAME_NOREPLACE)`.
 
-The snapshot-based Store methods are internal diagnostic/trusted seams. R0
-`CreateBuildingAsync` executes only Empty Maintain plans. Existing/Inherit
-plans have canonical codecs, but their executable exact-source freeze remains
-an R1 responsibility.
+Application code reads current-lineage state through
+`DerivedRecapLineageView.Capture(store, engine)`. The view verifies the same
+repository path and `RefId`, captures its own engine snapshot, and keeps that
+snapshot paired with the Store for all selection and restore inspection calls.
+Snapshot-taking Store methods remain internal trusted/test seams; callers
+cannot inject a public snapshot.
+
+Building creation has the same authority boundary. Application code uses
+`DerivedRecapBuildingInstaller`, while direct `CreateBuildingAsync` remains an
+internal trusted/test seam. Before any source read or staging write, the
+installer validates admission anchor, replay routes, prior-context anchors,
+source anchors, and non-retroactive publication against its captured lineage.
+Current Building execution supports Empty, Existing, and Inherit sources;
+referenced Published sources are reread exactly and frozen into the Building.
 
 ## Durability evidence
 

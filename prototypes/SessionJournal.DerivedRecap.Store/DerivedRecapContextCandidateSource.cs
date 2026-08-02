@@ -46,16 +46,19 @@ public sealed class DerivedRecapContextCandidateSource
     ) {
         ArgumentNullException.ThrowIfNull(request);
         request.ValidateShape();
-        SessionCurrentLineageSnapshot lineage =
-            _engine.ReadCurrentLineageHeaders(cancellationToken);
+        DerivedRecapLineageView lineage =
+            DerivedRecapLineageView.Capture(
+                _store,
+                _engine,
+                cancellationToken
+            );
         if (lineage.CapturedHead != request.CompletionBoundary) {
             throw new InvalidOperationException(
                 "DerivedRecap selection request is stale."
             );
         }
         DerivedRecapSelection result =
-            await _store.SelectNthPreviousAsync(
-                    lineage,
+            await lineage.SelectNthPreviousAsync(
                     request.NthPrevious,
                     cancellationToken
                 )

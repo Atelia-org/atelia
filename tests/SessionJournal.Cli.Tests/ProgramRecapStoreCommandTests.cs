@@ -672,13 +672,15 @@ public sealed class ProgramRecapStoreCommandTests : IDisposable {
         );
         RecapBlockPlan plan = CreatePlan(fixture);
         _ = Assert.IsType<CreateBuildingResult.Created>(
-            await store.CreateBuildingAsync(
-                DerivedRecapCodec.CreateManifest(
-                    engine.BranchRefId,
-                    fixture.Anchor,
-                    [plan]
+            await new DerivedRecapBuildingInstaller(store, engine)
+                .InstallAsync(
+                    DerivedRecapCodec.CreateManifest(
+                        engine.BranchRefId,
+                        fixture.Anchor,
+                        [plan]
+                    ),
+                    fixture.Anchor
                 )
-            )
         );
     }
 
@@ -696,13 +698,15 @@ public sealed class ProgramRecapStoreCommandTests : IDisposable {
         );
         RecapBlockPlan plan = CreatePlan(fixture);
         _ = Assert.IsType<CreateBuildingResult.Created>(
-            await store.CreateBuildingAsync(
-                DerivedRecapCodec.CreateManifest(
-                    engine.BranchRefId,
-                    fixture.Anchor,
-                    [plan]
+            await new DerivedRecapBuildingInstaller(store, engine)
+                .InstallAsync(
+                    DerivedRecapCodec.CreateManifest(
+                        engine.BranchRefId,
+                        fixture.Anchor,
+                        [plan]
+                    ),
+                    fixture.Anchor
                 )
-            )
         );
         await InstallFinalAsync(
             store,

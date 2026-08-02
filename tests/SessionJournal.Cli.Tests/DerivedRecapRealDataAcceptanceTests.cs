@@ -270,15 +270,14 @@ public sealed class DerivedRecapRealDataAcceptanceTests {
                        copyPath,
                        branchName
                    )) {
+                DerivedRecapStore store = DerivedRecapStore.Open(
+                    copyPath,
+                    engine.BranchRefId
+                );
                 DerivedRecapSelection invalid =
-                    await DerivedRecapStore.Open(
-                            copyPath,
-                            engine.BranchRefId
-                        )
-                        .SelectNthPreviousAsync(
-                            engine.ReadCurrentLineageHeaders(),
-                            0
-                        );
+                    await DerivedRecapLineageView
+                        .Capture(store, engine)
+                        .SelectNthPreviousAsync(0);
                 DerivedRecapSelection.ExactPublishedSetInvalid defect =
                     Assert.IsType<
                         DerivedRecapSelection
@@ -583,15 +582,14 @@ public sealed class DerivedRecapRealDataAcceptanceTests {
             path,
             branchName
         );
+        DerivedRecapStore store = DerivedRecapStore.Open(
+            path,
+            engine.BranchRefId
+        );
         DerivedRecapSelection selection =
-            await DerivedRecapStore.Open(
-                    path,
-                    engine.BranchRefId
-                )
-                .SelectNthPreviousAsync(
-                    engine.ReadCurrentLineageHeaders(),
-                    0
-                );
+            await DerivedRecapLineageView
+                .Capture(store, engine)
+                .SelectNthPreviousAsync(0);
         return Assert
             .IsType<DerivedRecapSelection.Selected>(selection)
             .Descriptor;
