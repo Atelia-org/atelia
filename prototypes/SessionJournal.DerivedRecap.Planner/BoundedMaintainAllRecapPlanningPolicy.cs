@@ -9,6 +9,8 @@ namespace Atelia.SessionJournal.DerivedRecap.Planner;
 /// </summary>
 public sealed class BoundedMaintainAllRecapPlanningPolicy
     : IRecapPlanningPolicy {
+    public string Id => RecapPlanningPolicyIds.BoundedMaintainAllV1;
+
     public RecapPlanningPolicyDecision Decide(
         RecapPlanningPolicyContext context
     ) {

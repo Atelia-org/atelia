@@ -282,6 +282,7 @@ internal static class Program {
                     "Executor crash fixture Building is unavailable."
                 );
         var maintainers = new List<IRecapBlockMaintainer>();
+        var capabilities = new List<RecapProfilePlanningDescriptor>();
         foreach (RecapBlockPlan plan
                  in building.Snapshot.Manifest.Blocks) {
             MaintainRecapBlockPlan maintain =
@@ -289,22 +290,48 @@ internal static class Program {
                 ?? throw new InvalidDataException(
                     "Executor crash fixture supports Maintain plans only."
                 );
-            maintainers.Add(new DurableDeterministicMaintainer(
+            var maintainer = new DurableDeterministicMaintainer(
                 maintain.MaintainerId,
                 plan.Target,
                 Path.Combine(
                     repositoryPath,
                     "recap-maintainer-calls.jsonl"
                 )
+            );
+            maintainers.Add(maintainer);
+            capabilities.Add(new RecapProfilePlanningDescriptor(
+                $"crash-{plan.RecapBlockId.Value}",
+                plan.RecapBlockId,
+                plan.Target,
+                maintainer.Id,
+                maintainer.CapabilityFingerprint
             ));
         }
-        var executor = new DerivedRecapBuildingExecutor(
+        var prepared = AssertReady(
+            await DerivedRecapOperationPreparer
+                .PrepareExactBuildingAsync(
+                    engine,
+                    store,
+                    new RecapMaintainerCapabilitySnapshot(capabilities),
+                    admission
+                )
+        );
+        var executor = new DerivedRecapPreparedExecutor(
             engine,
             store,
+            prepared,
             new RecapBlockMaintainerRegistry(maintainers)
         );
-        return await executor.ResumeAsync(admission);
+        return await executor.ExecuteAsync();
     }
+
+    private static PreparedRecapOperationAuthority AssertReady(
+        DerivedRecapOperationPreparationResult result
+    ) => result is DerivedRecapOperationPreparationResult.Ready ready
+        ? ready.Authority
+        : throw new InvalidDataException(
+            $"Executor crash fixture preparation failed: {result}."
+        );
 
     private static async ValueTask<DerivedRecapRestoreResult>
         RestoreExecutorAsync(

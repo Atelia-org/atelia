@@ -885,6 +885,30 @@ public sealed class RecapPlanEvaluatorTests {
     }
 
     [Fact]
+    public void PolicyFailureIsTypedAndCancellationPropagates() {
+        TestModel model = TestModel.Create();
+        var failed = new ThrowingPolicy(
+            new InvalidOperationException("policy broke")
+        );
+
+        RecapPlanIntentResult result = RecapPlanEvaluator.EvaluateIntent(
+            model.Schedule(failed),
+            model.PolicyFacts()
+        );
+
+        AssertDefect(result, RecapPlanDefectCodes.PolicyFailed);
+        var canceled = new ThrowingPolicy(
+            new OperationCanceledException("policy canceled")
+        );
+        Assert.Throws<OperationCanceledException>(() =>
+            RecapPlanEvaluator.EvaluateIntent(
+                model.Schedule(canceled),
+                model.PolicyFacts()
+            )
+        );
+    }
+
+    [Fact]
     public void InheritAndMaintainAreExplicitIntents() {
         TestModel model = TestModel.Create(twoBlocks: true);
         RecapSourceIntent source = model.AvailableSource.Source;
@@ -1082,6 +1106,7 @@ public sealed class RecapPlanEvaluatorTests {
         }
 
         public int CallCount { get; private set; }
+        public string Id => "evaluator-stub";
         public RecapPlanningPolicyDecision Decision { get; set; }
 
         public RecapPlanningPolicyDecision Decide(
@@ -1090,6 +1115,15 @@ public sealed class RecapPlanEvaluatorTests {
             CallCount++;
             return Decision;
         }
+    }
+
+    private sealed class ThrowingPolicy(Exception exception)
+        : IRecapPlanningPolicy {
+        public string Id => "throwing-policy";
+
+        public RecapPlanningPolicyDecision Decide(
+            RecapPlanningPolicyContext context
+        ) => throw exception;
     }
 
     private sealed class TestModel {

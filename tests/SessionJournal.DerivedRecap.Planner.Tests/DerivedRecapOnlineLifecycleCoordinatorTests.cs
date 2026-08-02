@@ -974,6 +974,8 @@ public sealed class DerivedRecapOnlineLifecycleCoordinatorTests {
             RecapPlanningPolicyDecision
         > _decide;
 
+        public string Id => "lifecycle-delegate";
+
         public DelegatePolicy(
             Func<
                 RecapPlanningPolicyContext,

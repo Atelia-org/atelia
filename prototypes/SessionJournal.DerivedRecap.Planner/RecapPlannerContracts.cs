@@ -666,6 +666,8 @@ public sealed record RecapPlanningPolicyContext(
 /// independently validated against supplied raw/source/preflight facts.
 /// </summary>
 public interface IRecapPlanningPolicy {
+    string Id { get; }
+
     RecapPlanningPolicyDecision Decide(
         RecapPlanningPolicyContext context
     );
@@ -789,6 +791,7 @@ public static class RecapPlanDefectCodes {
         nameof(PlanningFactsInvalid);
     public const string PolicyDecisionInvalid =
         nameof(PolicyDecisionInvalid);
+    public const string PolicyFailed = nameof(PolicyFailed);
     public const string CatalogMismatch = nameof(CatalogMismatch);
     public const string AdmissionInvalid = nameof(AdmissionInvalid);
     public const string SourceInvalid = nameof(SourceInvalid);

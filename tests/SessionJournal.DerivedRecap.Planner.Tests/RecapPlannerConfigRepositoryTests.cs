@@ -384,6 +384,102 @@ public sealed class RecapPlannerConfigRepositoryTests : IDisposable {
     }
 
     [Fact]
+    public void InitializerOrdersLinuxDirectoryDurabilityBarriers() {
+        if (!OperatingSystem.IsLinux()) {
+            return;
+        }
+        string repository = CreateRepositoryDirectory("durability-order");
+        var observed = new List<RecapPlannerConfigInitializeIoPoint>();
+
+        var result = RecapPlannerConfigInitializer.Initialize(
+            repository,
+            CreateDocument(),
+            new RecapPlannerConfigInitializerTestHooks(
+                (point, _) => observed.Add(point)
+            )
+        );
+
+        Assert.IsType<RecapPlannerConfigInitializeResult.Initialized>(
+            result
+        );
+        Assert.Equal(
+            [
+                RecapPlannerConfigInitializeIoPoint
+                    .ConfigDirectoryCreated,
+                RecapPlannerConfigInitializeIoPoint
+                    .RepositoryRootBarrier,
+                RecapPlannerConfigInitializeIoPoint
+                    .TemporaryFileBarrier,
+                RecapPlannerConfigInitializeIoPoint.ConfigPublished,
+                RecapPlannerConfigInitializeIoPoint
+                    .ConfigDirectoryBarrier
+            ],
+            observed
+        );
+    }
+
+    [Theory]
+    [InlineData(
+        (int)RecapPlannerConfigInitializeIoPoint.RepositoryRootBarrier,
+        false
+    )]
+    [InlineData(
+        (int)RecapPlannerConfigInitializeIoPoint.ConfigDirectoryBarrier,
+        true
+    )]
+    public void InitializerBarrierFailureIsUnavailable(
+        int failurePointValue,
+        bool configWasPublished
+    ) {
+        if (!OperatingSystem.IsLinux()) {
+            return;
+        }
+        string repository = CreateRepositoryDirectory(
+            $"durability-failure-{failurePointValue}"
+        );
+        var failurePoint =
+            (RecapPlannerConfigInitializeIoPoint)failurePointValue;
+        string path = RecapPlannerConfigLoader.GetCanonicalPath(
+            repository
+        );
+
+        RecapPlannerConfigInitializeResult result =
+            RecapPlannerConfigInitializer.Initialize(
+                repository,
+                CreateDocument(),
+                new RecapPlannerConfigInitializerTestHooks(
+                    (point, _) => {
+                        if (point == failurePoint) {
+                            throw new IOException("injected barrier failure");
+                        }
+                    }
+                )
+            );
+
+        var unavailable = Assert.IsType<
+            RecapPlannerConfigInitializeResult.Unavailable
+        >(result);
+        Assert.Contains("injected barrier failure", unavailable.Reason);
+        Assert.Equal(configWasPublished, File.Exists(path));
+
+        RecapPlannerConfigInitializeResult retry =
+            RecapPlannerConfigInitializer.Initialize(
+                repository,
+                CreateDocument()
+            );
+        if (configWasPublished) {
+            Assert.IsType<
+                RecapPlannerConfigInitializeResult.AlreadyExists
+            >(retry);
+        }
+        else {
+            Assert.IsType<
+                RecapPlannerConfigInitializeResult.Initialized
+            >(retry);
+        }
+    }
+
+    [Fact]
     public void InitializerRejectsUnsafeConfigDirectoryWithoutWriting() {
         string repository =
             CreateRepositoryDirectory("initialize-link");

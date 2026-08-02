@@ -134,6 +134,56 @@ public sealed class DerivedRecapPlannerExecutorTests {
     }
 
     [Fact]
+    public async Task MaintainerStepSourceIdUsesCanonicalEventAddresses() {
+        using TestFixture fixture = await TestFixture.CreateAsync(
+            historyPairs: 1
+        );
+        EventAddress start = fixture.ReplayStart();
+        EventAddress admission = fixture.Engine.ReadCurrentHead()!.Value;
+        MaintainRecapBlockPlan plan = fixture.CreateEmptyPlan(
+            fixture.SelfId,
+            fixture.SelfTarget,
+            "self-maintainer",
+            start,
+            [admission]
+        );
+        SessionHistoryPlanningSeedBatch seeds =
+            fixture.Engine.ReadHistoryPlanningSeeds([start]);
+        SessionHistoryPlanningWindow window =
+            fixture.Engine.ReadHistoryPlanningWindowAt(
+                admission,
+                Assert.Single(seeds.Seeds)
+            );
+        string? observedSourceId = null;
+        var maintainer = new ScriptedMaintainer(
+            "self-maintainer",
+            fixture.SelfTarget,
+            (_, request) => {
+                observedSourceId = request.RecentHistory.SourceId;
+                return "canonical";
+            }
+        );
+
+        RecapMaintainerStepResult result =
+            await RecapMaintainerStepRunner.RunAsync(
+                maintainer,
+                plan,
+                currentBlock: null,
+                window,
+                admission,
+                CancellationToken.None
+            );
+
+        Assert.IsType<RecapMaintainerStepResult.Succeeded>(result);
+        Assert.Equal(
+            EventAddressTextCodec.Format(window.StartExclusive)
+            + ".."
+            + EventAddressTextCodec.Format(window.ObservedRawHead),
+            observedSourceId
+        );
+    }
+
+    [Fact]
     public async Task BelowTriggerHasNoPolicyOrMaintainerCalls() {
         using TestFixture fixture = await TestFixture.CreateAsync(
             historyPairs: 1
@@ -1899,6 +1949,8 @@ public sealed class DerivedRecapPlannerExecutorTests {
             RecapPlanningPolicyContext,
             RecapPlanningPolicyDecision
         > _decide;
+
+        public string Id => "executor-delegate";
 
         public DelegatePolicy(
             Func<

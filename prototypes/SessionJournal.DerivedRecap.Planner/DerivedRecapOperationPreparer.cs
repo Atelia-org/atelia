@@ -187,6 +187,137 @@ public abstract record DerivedRecapOperationPreparationResult {
 /// clients, concrete Maintainers, or call logs.
 /// </summary>
 public static class DerivedRecapOperationPreparer {
+    /// <summary>
+    /// Prepares one exact frozen Building without consulting active planner
+    /// configuration. Frozen maintainer capabilities and the raw-head fence
+    /// are validated before an execution authority is issued.
+    /// </summary>
+    public static async ValueTask<
+        DerivedRecapOperationPreparationResult
+    > PrepareExactBuildingAsync(
+        SessionJournalEngine engine,
+        DerivedRecapStore store,
+        RecapMaintainerCapabilitySnapshot capabilities,
+        EventAddress setAdmissionAnchor,
+        CancellationToken cancellationToken = default
+    ) {
+        ArgumentNullException.ThrowIfNull(engine);
+        ArgumentNullException.ThrowIfNull(store);
+        ArgumentNullException.ThrowIfNull(capabilities);
+        if (setAdmissionAnchor == default) {
+            throw new ArgumentException(
+                "Building admission anchor cannot be default.",
+                nameof(setAdmissionAnchor)
+            );
+        }
+        RequireSameBinding(store, engine);
+
+        SessionCurrentLineageSnapshot lineage;
+        try {
+            lineage = engine.ReadCurrentLineageHeaders(
+                cancellationToken
+            );
+        }
+        catch (Exception exception) when (
+            IsAvailabilityException(exception)
+        ) {
+            return Unavailable(
+                DerivedRecapOperationPreparationDefectCodes
+                    .RawLineageUnavailable,
+                exception.Message
+            );
+        }
+
+        BuildingReadResult building;
+        try {
+            building = await store.ReadBuildingAsync(
+                    setAdmissionAnchor,
+                    cancellationToken
+                )
+                .ConfigureAwait(false);
+        }
+        catch (Exception exception) when (
+            IsAvailabilityException(exception)
+        ) {
+            return Unavailable(
+                DerivedRecapOperationPreparationDefectCodes
+                    .StoreUnavailable,
+                exception.Message
+            );
+        }
+
+        if (!lineage.HeadToRoot.Any(
+                node => node.Address == setAdmissionAnchor
+            )) {
+            return Unavailable(
+                DerivedRecapExecutionDefectCodes.BuildingInvalid,
+                "Exact Building admission anchor is not on the "
+                + "captured current raw lineage."
+            );
+        }
+
+        if (building is not BuildingReadResult.Available available) {
+            return building switch {
+                BuildingReadResult.Invalid invalid =>
+                    Unavailable(invalid.Defects),
+                BuildingReadResult.Missing => Unavailable(
+                    DerivedRecapExecutionDefectCodes.BuildingInvalid,
+                    $"Building '{EventAddressTextCodec.Format(
+                        setAdmissionAnchor
+                    )}' does not exist."
+                ),
+                _ => throw new InvalidDataException(
+                    "Unknown Building read result."
+                )
+            };
+        }
+
+        foreach (MaintainRecapBlockPlan plan
+            in available.Snapshot.Manifest.Blocks
+                .OfType<MaintainRecapBlockPlan>()) {
+            if (!capabilities.SupportsFrozen(
+                    plan.MaintainerId,
+                    plan.Target,
+                    plan.MaintainerCapabilityFingerprint
+                )) {
+                return Unavailable(
+                    DerivedRecapExecutionDefectCodes
+                        .MaintainerUnavailable,
+                    "Frozen Building maintainer binding for "
+                    + $"'{plan.RecapBlockId}' is unavailable."
+                );
+            }
+        }
+
+        EventAddress? current;
+        try {
+            current = engine.ReadCurrentHead();
+        }
+        catch (Exception exception) when (
+            IsAvailabilityException(exception)
+        ) {
+            return Unavailable(
+                DerivedRecapOperationPreparationDefectCodes
+                    .RawLineageUnavailable,
+                exception.Message
+            );
+        }
+        if (current != lineage.CapturedHead) {
+            return RawHeadChanged(lineage.CapturedHead);
+        }
+
+        return new DerivedRecapOperationPreparationResult.Ready(
+            new PreparedRecapOperationAuthority.FrozenBuilding(
+                lineage,
+                DerivedRecapOperationBinding.Create(
+                    engine.Path,
+                    engine.BranchRefId
+                ),
+                available.Snapshot.Descriptor
+            )
+        );
+    }
+
     public static ValueTask<DerivedRecapOperationPreparationResult>
         PrepareAsync(
         SessionJournalEngine engine,

@@ -35,6 +35,52 @@ internal sealed record RecapOperationReadinessDefect(
 /// </summary>
 internal static class RecapOperationReadiness {
     internal static async ValueTask<RecapOperationReadinessResult>
+        PrepareExactBuildingAsync(
+        SJ.SessionJournalEngine engine,
+        DerivedRecapStore store,
+        Atelia.EventJournal.EventAddress setAdmissionAnchor,
+        CancellationToken cancellationToken = default
+    ) {
+        ArgumentNullException.ThrowIfNull(engine);
+        ArgumentNullException.ThrowIfNull(store);
+
+        RecapMaintainerProfileCatalog concreteCapabilities;
+        RecapMaintainerCapabilitySnapshot planningCapabilities;
+        try {
+            concreteCapabilities = RecapMaintainerProfileCatalog.BuiltIn;
+            planningCapabilities =
+                RecapCliCompositionResolver.ProjectCapabilities(
+                    concreteCapabilities
+                );
+        }
+        catch (Exception exception) when (
+            exception is InvalidDataException
+                or InvalidOperationException
+                or ArgumentException
+                or IOException
+                or UnauthorizedAccessException
+        ) {
+            return Blocked(
+                DerivedRecapExecutionDefectCodes
+                    .MaintainerUnavailable,
+                exception.Message
+            );
+        }
+
+        DerivedRecapOperationPreparationResult prepared =
+            await DerivedRecapOperationPreparer
+                .PrepareExactBuildingAsync(
+                    engine,
+                    store,
+                    planningCapabilities,
+                    setAdmissionAnchor,
+                    cancellationToken
+                )
+                .ConfigureAwait(false);
+        return MapPrepared(prepared, concreteCapabilities);
+    }
+
+    internal static async ValueTask<RecapOperationReadinessResult>
         PrepareAsync(
         SJ.SessionJournalEngine engine,
         DerivedRecapStore store,
@@ -82,7 +128,13 @@ internal static class RecapOperationReadiness {
                 )
                 .ConfigureAwait(false);
 
-        return prepared switch {
+        return MapPrepared(prepared, concreteCapabilities);
+    }
+
+    private static RecapOperationReadinessResult MapPrepared(
+        DerivedRecapOperationPreparationResult prepared,
+        RecapMaintainerProfileCatalog concreteCapabilities
+    ) => prepared switch {
             DerivedRecapOperationPreparationResult.Ready ready =>
                 Ready(
                     ready.Authority,
@@ -116,7 +168,6 @@ internal static class RecapOperationReadiness {
                 "Unknown DerivedRecap preparation result."
             )
         };
-    }
 
     private static RecapOperationReadinessResult.Ready Ready(
         PreparedRecapOperationAuthority authority,

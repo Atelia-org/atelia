@@ -480,6 +480,8 @@ public sealed class DerivedRecapAcceptanceTests {
             RecapPlanningPolicyDecision
         > _decide;
 
+        public string Id => "acceptance-delegate";
+
         public DelegatePolicy(
             Func<
                 RecapPlanningPolicyContext,

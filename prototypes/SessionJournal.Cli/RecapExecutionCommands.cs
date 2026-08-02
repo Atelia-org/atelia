@@ -127,21 +127,28 @@ internal static class RecapExecutionCommands {
             )
             : null;
 
-        PreparedRecapOperationAuthority? runAuthority = null;
+        PreparedRecapOperationAuthority? executionAuthority = null;
         RecapMaintainerProfileCatalog? preparedCapabilityCatalog = null;
         ResolvedRecapPlannerComposition? plannerComposition = null;
         RecapExecutionConfigReport? readinessConfigReport = null;
         IReadOnlyList<string> readinessDefects;
-        if (operation == "run") {
+        if (operation is "run" or "resume") {
             RecapOperationReadinessResult readiness =
-                await RecapOperationReadiness.PrepareAsync(
+                await (operation == "run"
+                    ? RecapOperationReadiness.PrepareAsync(
                         engine,
                         store
                     )
+                    : RecapOperationReadiness
+                        .PrepareExactBuildingAsync(
+                            engine,
+                            store,
+                            anchor!.Value
+                        ))
                     .ConfigureAwait(false);
             if (readiness
                 is RecapOperationReadinessResult.Ready ready) {
-                runAuthority = ready.Authority;
+                executionAuthority = ready.Authority;
                 lineage = ready.Lineage;
                 preparedCapabilityCatalog = ready.CapabilityCatalog;
                 plannerComposition = ready.Composition;
@@ -291,13 +298,14 @@ internal static class RecapExecutionCommands {
             );
         }
         else if (operation == "resume") {
-            var executor = new DerivedRecapBuildingExecutor(
+            var executor = new DerivedRecapPreparedExecutor(
                 engine,
                 store,
+                executionAuthority!,
                 maintainers
             );
             DerivedRecapExecutionResult result =
-                await executor.ResumeAsync(anchor!.Value)
+                await executor.ExecuteAsync()
                     .ConfigureAwait(false);
             (report, exitCode) = MapExecution(
                 operation,
@@ -312,38 +320,16 @@ internal static class RecapExecutionCommands {
             );
         }
         else {
-            DerivedRecapExecutionResult result;
-            DerivedRecapPlanningDiagnostics? planningDiagnostics;
-            if (runAuthority
-                is PreparedRecapOperationAuthority
-                    .FrozenBuilding frozen) {
-                var executor = new DerivedRecapBuildingExecutor(
-                    engine,
-                    store,
-                    maintainers
-                );
-                result = await executor.ResumeAsync(
-                        frozen.Descriptor
-                    )
-                    .ConfigureAwait(false);
-                planningDiagnostics = null;
-            }
-            else {
-                var newPlanning =
-                    (PreparedRecapOperationAuthority.NewPlanning)
-                    runAuthority!;
-                var executor = new DerivedRecapPlannerExecutor(
-                    engine,
-                    store,
-                    newPlanning.Configuration.PlanningInputs,
-                    newPlanning.Configuration.PlanningLimits,
-                    maintainers
-                );
-                result = await executor.RunAsync(newPlanning.Baseline)
-                    .ConfigureAwait(false);
-                planningDiagnostics =
-                    executor.LastPlanningDiagnostics;
-            }
+            var executor = new DerivedRecapPreparedExecutor(
+                engine,
+                store,
+                executionAuthority!,
+                maintainers
+            );
+            DerivedRecapExecutionResult result =
+                await executor.ExecuteAsync().ConfigureAwait(false);
+            DerivedRecapPlanningDiagnostics? planningDiagnostics =
+                executor.LastPlanningDiagnostics;
             (report, exitCode) = MapExecution(
                 operation,
                 engine,

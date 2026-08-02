@@ -17,7 +17,7 @@ public sealed class RecapPlannerConfigResolverTests {
     [Fact]
     public void StandaloneConsumerResolvesInjectedCapabilitiesInConfigOrder()
     {
-        var policy = new StubPolicy();
+        var policy = new StubPolicy("custom-policy");
         var estimator = new StubEstimator("custom-estimator");
         var resolutionCatalog = new RecapPlannerConfigResolutionCatalog(
             [new("custom-policy", policy)],
@@ -97,18 +97,18 @@ public sealed class RecapPlannerConfigResolverTests {
     }
 
     [Fact]
-    public void EstimatorRegistrationIdentityMismatchIsTyped() {
-        var resolutionCatalog = new RecapPlannerConfigResolutionCatalog(
-            [new("policy", new StubPolicy())],
-            [new("configured", new StubEstimator("actual"))]
+    public void RegistrationIdentityMismatchFailsClosed() {
+        Assert.Throws<ArgumentException>(() =>
+            new RecapPlannerConfigResolutionCatalog(
+                [new("configured", new StubPolicy("actual"))],
+                []
+            )
         );
-
-        AssertResolveCode(
-            Document("policy", "configured", ["first-profile"]),
-            resolutionCatalog,
-            Capabilities(),
-            RecapPlannerConfigResolveDefectCodes
-                .EstimatorIdentityMismatch
+        Assert.Throws<ArgumentException>(() =>
+            new RecapPlannerConfigResolutionCatalog(
+                [],
+                [new("configured", new StubEstimator("actual"))]
+            )
         );
     }
 
@@ -303,8 +303,8 @@ public sealed class RecapPlannerConfigResolverTests {
         Assert.Throws<ArgumentException>(() =>
             new RecapPlannerConfigResolutionCatalog(
                 [
-                    new("duplicate", new StubPolicy()),
-                    new("duplicate", new StubPolicy())
+                    new("duplicate", new StubPolicy("duplicate")),
+                    new("duplicate", new StubPolicy("duplicate"))
                 ],
                 []
             )
@@ -404,7 +404,10 @@ public sealed class RecapPlannerConfigResolverTests {
         );
     }
 
-    private sealed class StubPolicy : IRecapPlanningPolicy {
+    private sealed class StubPolicy(string id = "policy")
+        : IRecapPlanningPolicy {
+        public string Id { get; } = id;
+
         public RecapPlanningPolicyDecision Decide(
             RecapPlanningPolicyContext context
         ) => throw new NotSupportedException(

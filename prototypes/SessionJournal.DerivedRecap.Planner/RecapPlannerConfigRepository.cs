@@ -1,4 +1,5 @@
 using Microsoft.Win32.SafeHandles;
+using System.Runtime.InteropServices;
 
 namespace Atelia.SessionJournal.DerivedRecap.Planner;
 
@@ -227,12 +228,42 @@ public static class RecapPlannerConfigLoader {
         : Exception(message);
 }
 
+internal enum RecapPlannerConfigInitializeIoPoint {
+    ConfigDirectoryCreated = 1,
+    RepositoryRootBarrier = 2,
+    TemporaryFileBarrier = 3,
+    ConfigPublished = 4,
+    ConfigDirectoryBarrier = 5
+}
+
+internal sealed record RecapPlannerConfigInitializerTestHooks(
+    Action<RecapPlannerConfigInitializeIoPoint, string>? BeforeIo = null
+);
+
 public static class RecapPlannerConfigInitializer {
     public static RecapPlannerConfigInitializeResult Initialize(
         string repositoryRoot,
         RecapPlannerConfigDocument document
+    ) => Initialize(
+        repositoryRoot,
+        document,
+        new RecapPlannerConfigInitializerTestHooks()
+    );
+
+    internal static RecapPlannerConfigInitializeResult Initialize(
+        string repositoryRoot,
+        RecapPlannerConfigDocument document,
+        RecapPlannerConfigInitializerTestHooks testHooks
     ) {
         ArgumentNullException.ThrowIfNull(document);
+        ArgumentNullException.ThrowIfNull(testHooks);
+        if (!OperatingSystem.IsLinux()) {
+            return new RecapPlannerConfigInitializeResult.Unavailable(
+                SafePath(repositoryRoot),
+                "RecapPlannerConfig durable initialization requires "
+                + "Linux directory fsync semantics."
+            );
+        }
         IReadOnlyList<RecapPlannerConfigDefect> defects =
             RecapPlannerConfigCodec.ValidateDocument(document);
         if (defects.Count != 0) {
@@ -311,6 +342,12 @@ public static class RecapPlannerConfigInitializer {
             }
             if (!beforeCreate.Exists) {
                 Directory.CreateDirectory(configDirectory);
+                Observe(
+                    testHooks,
+                    RecapPlannerConfigInitializeIoPoint
+                        .ConfigDirectoryCreated,
+                    configDirectory
+                );
             }
 
             PathCheckResult directoryCheck =
@@ -347,7 +384,23 @@ public static class RecapPlannerConfigInitializer {
                     existingUnavailable
                 );
             }
+            // This also repairs a prior attempt that created config/ but
+            // failed before its parent-directory barrier completed.
+            FlushDirectory(
+                root,
+                RecapPlannerConfigInitializeIoPoint
+                    .RepositoryRootBarrier,
+                testHooks
+            );
             if (existingCheck.Exists) {
+                // This also repairs a prior attempt that renamed the file
+                // but failed before its directory barrier completed.
+                FlushDirectory(
+                    configDirectory,
+                    RecapPlannerConfigInitializeIoPoint
+                        .ConfigDirectoryBarrier,
+                    testHooks
+                );
                 return new RecapPlannerConfigInitializeResult
                     .AlreadyExists(path);
             }
@@ -356,6 +409,12 @@ public static class RecapPlannerConfigInitializer {
                 CreateTemporary(configDirectory);
             using (temporary) {
                 temporary.Write(canonical);
+                Observe(
+                    testHooks,
+                    RecapPlannerConfigInitializeIoPoint
+                        .TemporaryFileBarrier,
+                    temporaryPath
+                );
                 temporary.Flush(flushToDisk: true);
             }
 
@@ -378,7 +437,6 @@ public static class RecapPlannerConfigInitializer {
 
             try {
                 File.Move(temporaryPath, path, overwrite: false);
-                temporaryPath = null;
             }
             catch (IOException) when (
                 File.Exists(path) || Directory.Exists(path)
@@ -396,6 +454,18 @@ public static class RecapPlannerConfigInitializer {
                 return new RecapPlannerConfigInitializeResult
                     .AlreadyExists(path);
             }
+            temporaryPath = null;
+            Observe(
+                testHooks,
+                RecapPlannerConfigInitializeIoPoint.ConfigPublished,
+                path
+            );
+            FlushDirectory(
+                configDirectory,
+                RecapPlannerConfigInitializeIoPoint
+                    .ConfigDirectoryBarrier,
+                testHooks
+            );
 
             RecapPlannerConfigLoadResult published =
                 RecapPlannerConfigLoader.Load(root);
@@ -484,6 +554,64 @@ public static class RecapPlannerConfigInitializer {
             }
         }
     }
+
+    private static void Observe(
+        RecapPlannerConfigInitializerTestHooks hooks,
+        RecapPlannerConfigInitializeIoPoint point,
+        string path
+    ) => hooks.BeforeIo?.Invoke(point, path);
+
+    private static void FlushDirectory(
+        string path,
+        RecapPlannerConfigInitializeIoPoint point,
+        RecapPlannerConfigInitializerTestHooks hooks
+    ) {
+        Observe(hooks, point, path);
+        int descriptor = NativeOpen(
+            path,
+            OpenReadOnly | OpenDirectory | OpenCloseOnExec
+        );
+        if (descriptor < 0) {
+            throw NativeIOException(
+                $"Failed to open planner config directory for fsync: "
+                + path
+            );
+        }
+        try {
+            if (NativeFsync(descriptor) != 0) {
+                throw NativeIOException(
+                    $"Failed to fsync planner config directory: {path}"
+                );
+            }
+        }
+        finally {
+            _ = NativeClose(descriptor);
+        }
+    }
+
+    private static IOException NativeIOException(string message)
+        => new(
+            message,
+            new System.ComponentModel.Win32Exception(
+                Marshal.GetLastPInvokeError()
+            )
+        );
+
+    private const int OpenReadOnly = 0;
+    private const int OpenDirectory = 0x10000;
+    private const int OpenCloseOnExec = 0x80000;
+
+    [DllImport("libc", EntryPoint = "open", SetLastError = true)]
+    private static extern int NativeOpen(
+        string path,
+        int flags
+    );
+
+    [DllImport("libc", EntryPoint = "fsync", SetLastError = true)]
+    private static extern int NativeFsync(int descriptor);
+
+    [DllImport("libc", EntryPoint = "close", SetLastError = true)]
+    private static extern int NativeClose(int descriptor);
 
     private static RecapPlannerConfigInitializeResult.Invalid Invalid(
         string path,

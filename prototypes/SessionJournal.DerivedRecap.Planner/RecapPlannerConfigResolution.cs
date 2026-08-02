@@ -190,6 +190,13 @@ public sealed record RecapPlanningPolicyRegistration {
             : policyId;
         Policy = policy
             ?? throw new ArgumentNullException(nameof(policy));
+        if (!string.Equals(PolicyId, Policy.Id, StringComparison.Ordinal)) {
+            throw new ArgumentException(
+                $"Planning policy registration '{PolicyId}' does not "
+                + $"match policy identity '{Policy.Id}'.",
+                nameof(policy)
+            );
+        }
     }
 
     public string PolicyId { get; }
@@ -209,6 +216,18 @@ public sealed record HistoryUnitLoadEstimatorRegistration {
             : estimatorId;
         Estimator = estimator
             ?? throw new ArgumentNullException(nameof(estimator));
+        if (!string.Equals(
+                EstimatorId,
+                Estimator.Id,
+                StringComparison.Ordinal
+            )) {
+            throw new ArgumentException(
+                $"History-unit load estimator registration "
+                + $"'{EstimatorId}' does not match estimator identity "
+                + $"'{Estimator.Id}'.",
+                nameof(estimator)
+            );
+        }
     }
 
     public string EstimatorId { get; }
@@ -457,6 +476,8 @@ public sealed record RecapPlannerConfigResolveDefect(
 
 public static class RecapPlannerConfigResolveDefectCodes {
     public const string UnknownPolicy = nameof(UnknownPolicy);
+    public const string PolicyIdentityMismatch =
+        nameof(PolicyIdentityMismatch);
     public const string UnknownEstimator = nameof(UnknownEstimator);
     public const string EstimatorIdentityMismatch =
         nameof(EstimatorIdentityMismatch);
@@ -514,6 +535,20 @@ public static class RecapPlannerConfigResolver {
                 RecapPlannerConfigResolveDefectCodes.UnknownPolicy,
                 $"Unknown recap planning policy "
                 + $"'{document.PlanningPolicy}'."
+            );
+        }
+        string resolvedPolicyId = policy.Id;
+        if (!string.Equals(
+                document.PlanningPolicy,
+                resolvedPolicyId,
+                StringComparison.Ordinal
+            )) {
+            return Invalid(
+                RecapPlannerConfigResolveDefectCodes
+                    .PolicyIdentityMismatch,
+                $"Recap planning policy registration "
+                + $"'{document.PlanningPolicy}' resolves to policy "
+                + $"'{resolvedPolicyId}'."
             );
         }
 

@@ -11,7 +11,7 @@ internal sealed record DerivedRecapBuildingExecutorTestHooks(
 /// Creates a new frozen Building from active planning inputs and repo-owned
 /// planning limits, then delegates durable execution to the Building executor.
 /// </summary>
-public sealed class DerivedRecapPlannerExecutor {
+internal sealed class DerivedRecapPlannerExecutor {
     private readonly SessionJournalEngine _engine;
     private readonly DerivedRecapStore _store;
     private readonly RecapPlanningInputs _inputs;
@@ -1073,7 +1073,7 @@ public sealed class DerivedRecapPlannerExecutor {
 /// Resumes and publishes one frozen Building without consulting active
 /// planning inputs or repo-owned planning limits.
 /// </summary>
-public sealed class DerivedRecapBuildingExecutor {
+internal sealed class DerivedRecapBuildingExecutor {
     private readonly SessionJournalEngine _engine;
     private readonly DerivedRecapStore _store;
     private readonly IRecapBlockMaintainerRegistry _maintainers;

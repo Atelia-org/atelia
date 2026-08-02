@@ -305,8 +305,12 @@ loader接受 SessionJournal repo root，内部解析 canonical descendant：
 - 不创建目录、文件、Store或 call-log；
 - 对 missing、I/O、oversize或 invalid document返回 typed unavailable。
 
-config使用同目录 temporary file + flush/close + atomic rename发布。一次 operation打开旧文件或新文件，
-不会在中途切换；加载完成后的替换只影响下一次 operation。不需要 config ETag double-read或持续热加载。
+config使用同目录 temporary file + flush/close + atomic rename发布。production initializer明确只支持
+Linux durability语义：新建`config/`后先对 repo root执行 directory `fsync`，发布 config rename后再对
+`config/`执行 directory `fsync`。任一 barrier失败都返回`Unavailable`，不得把 rename后的 barrier
+失败误报为`AlreadyExists`；后续重试会重新执行 parent/config directory barrier，再返回
+`Initialized`或`AlreadyExists`。一次 operation打开旧文件或新文件，不会在中途切换；加载完成后的替换只
+影响下一次 operation。不需要 config ETag double-read或持续热加载，也不声明跨平台断电保证。
 
 Path safety采用本项目的 trusted local repository namespace威胁模型：repo root及其 ancestor/config
 namespace由同一 operator拥有，只包含普通目录/regular file，不假定另一个进程会放入 FIFO/socket
@@ -391,6 +395,9 @@ Building-first发现只在 captured raw Parent lineage上解析 durable Building
   `abandon-building`；
 - readiness把完整 `BuildingDescriptor`与已验证的 Host capability catalog交给 executor；
   executor重读后必须校验 exact manifest hash，不能退化为只按 anchor恢复；
+- new-plan/Building public execution surface只有`DerivedRecapPreparedExecutor`：它同时绑定 raw engine、Store与
+  preparer签发的`PreparedRecapOperationAuthority`。new planning caller不能注入 config/baseline，
+  exact Resume caller不能注入裸 anchor；两个 low-level executor均为 assembly-internal；
 - trusted Building install在 Store lock内复核 current-lineage membership，关闭发现后到安装前的
   双 Building竞态。
 
@@ -512,8 +519,9 @@ persisted JSON仍保持一个文件和一个 schema；hard caps不是第二份 o
 必须相应改变 executor API：
 
 ```text
-new-plan executor <- RecapPlanningInputs + RecapPlanningLimits
-resume executor   <- frozen Building + capability registry + RecapProtocolHardCaps
+public executor   <- PreparedRecapOperationAuthority + capability registry
+internal new-plan executor <- frozen RecapPlanningInputs + RecapPlanningLimits + exact baseline
+internal resume executor   <- exact frozen Building descriptor + RecapProtocolHardCaps
 restore executor  <- frozen Published plan + capability registry + RecapProtocolHardCaps
 ```
 
@@ -532,6 +540,8 @@ recap planner-config inspect
 
 `init`
 : create-new写入当前 canonical default；文件存在即拒绝，不提供 `--force`，不创建/reset Store。
+  Linux上以 file barrier、same-directory rename、parent-directory barrier完成 durable publication；
+  initializer在非Linux平台返回`Unavailable`，不提供无目录 barrier的降级写入。
 
 `inspect`
 : strict加载并输出 path、schema、config hash、policy、resolved ordered catalog和limits；不输出

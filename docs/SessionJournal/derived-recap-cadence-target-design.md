@@ -278,6 +278,10 @@ public sealed record RecapPlanningLimits {
 }
 ```
 
+`IRecapPlanningPolicy`必须暴露稳定`Id`。code-owned resolution catalog在注册时校验
+`registration key == policy.Id`（estimator同样校验 key与`Id`），重复或错配立即 fail closed；
+policy抛出的非取消异常映射为 typed `PolicyFailed`，`OperationCanceledException`原样传播。
+
 Persisted JSON：
 
 ```json
@@ -332,6 +336,10 @@ RecapRawSafetyFacts
 - 从合法 cadence candidates中按确定性顺序试算；
 - 应用 route/call/raw budgets；
 - 返回 selected admission与 per-block decisions。
+
+传给 Maintainer 的`RecentHistorySlice.SourceId`只使用
+`EventAddressTextCodec.Format(startExclusive) + ".." + EventAddressTextCodec.Format(rawHead)`；
+不得依赖`EventAddress.ToString()`的非 wire 文本。
 
 Evaluator必须独立复算：
 

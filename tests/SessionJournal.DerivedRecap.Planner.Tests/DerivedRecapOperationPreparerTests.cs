@@ -1,3 +1,5 @@
+using System.Diagnostics;
+using System.Security;
 using Atelia.Data;
 using Atelia.EventJournal;
 using Atelia.SessionJournal.DerivedRecap.Store;
@@ -547,6 +549,128 @@ public sealed class DerivedRecapOperationPreparerTests : IDisposable {
                 .Select(static parameter => parameter.ParameterType)
                 .ToArray()
         );
+    }
+
+    [Fact]
+    public void ExecutionPublicSurfaceIsAuthorityOnly() {
+        Type[] exported = typeof(DerivedRecapPreparedExecutor)
+            .Assembly.GetExportedTypes();
+        Assert.DoesNotContain(
+            exported,
+            type => type.Name == "DerivedRecapPlannerExecutor"
+        );
+        Assert.DoesNotContain(
+            exported,
+            type => type.Name == "DerivedRecapBuildingExecutor"
+        );
+
+        System.Reflection.ConstructorInfo constructor = Assert.Single(
+            typeof(DerivedRecapPreparedExecutor).GetConstructors()
+        );
+        Assert.Equal(
+            [
+                typeof(SessionJournalEngine),
+                typeof(DerivedRecapStore),
+                typeof(PreparedRecapOperationAuthority),
+                typeof(IRecapBlockMaintainerRegistry)
+            ],
+            constructor.GetParameters()
+                .Select(static parameter => parameter.ParameterType)
+                .ToArray()
+        );
+        System.Reflection.MethodInfo execute = Assert.Single(
+            typeof(DerivedRecapPreparedExecutor).GetMethods(
+                System.Reflection.BindingFlags.Public
+                | System.Reflection.BindingFlags.Instance
+                | System.Reflection.BindingFlags.DeclaredOnly
+            ),
+            method => method.Name == nameof(
+                DerivedRecapPreparedExecutor.ExecuteAsync
+            )
+        );
+        Assert.Equal(
+            [typeof(CancellationToken)],
+            execute.GetParameters()
+                .Select(static parameter => parameter.ParameterType)
+                .ToArray()
+        );
+    }
+
+    [Fact]
+    public async Task ExternalConsumerCannotReachLowLevelExecutors() {
+        string tempRoot = Path.Combine(
+            Path.GetTempPath(),
+            "atelia-recap-planner-surface-tests",
+            Guid.NewGuid().ToString("N")
+        );
+        Directory.CreateDirectory(tempRoot);
+        try {
+            string assemblyPath = SecurityElement.Escape(
+                typeof(DerivedRecapPreparedExecutor).Assembly.Location
+            )!;
+            await File.WriteAllTextAsync(
+                Path.Combine(tempRoot, "ExternalConsumer.csproj"),
+                $$"""
+                <Project Sdk="Microsoft.NET.Sdk">
+                  <PropertyGroup>
+                    <TargetFramework>net10.0</TargetFramework>
+                    <Nullable>enable</Nullable>
+                  </PropertyGroup>
+                  <ItemGroup>
+                    <Reference Include="Atelia.SessionJournal.DerivedRecap.Planner">
+                      <HintPath>{{assemblyPath}}</HintPath>
+                    </Reference>
+                  </ItemGroup>
+                </Project>
+                """
+            );
+            await File.WriteAllTextAsync(
+                Path.Combine(tempRoot, "LowLevelExecutorProbe.cs"),
+                """
+                using Atelia.SessionJournal.DerivedRecap.Planner;
+
+                public sealed class LowLevelExecutorProbe {
+                    private DerivedRecapPlannerExecutor? _planner;
+                    private DerivedRecapBuildingExecutor? _building;
+                }
+                """
+            );
+
+            var start = new ProcessStartInfo("dotnet") {
+                WorkingDirectory = tempRoot,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false
+            };
+            start.ArgumentList.Add("build");
+            start.ArgumentList.Add("ExternalConsumer.csproj");
+            start.ArgumentList.Add("-m:1");
+            start.ArgumentList.Add("-nr:false");
+            start.ArgumentList.Add("--nologo");
+            using Process process = Process.Start(start)
+                ?? throw new InvalidOperationException(
+                    "Failed to start external consumer compilation."
+                );
+            Task<string> outputTask =
+                process.StandardOutput.ReadToEndAsync();
+            Task<string> errorTask =
+                process.StandardError.ReadToEndAsync();
+            await process.WaitForExitAsync();
+            string output = await outputTask + await errorTask;
+
+            Assert.NotEqual(0, process.ExitCode);
+            Assert.Contains("CS0122", output);
+            Assert.Contains("DerivedRecapPlannerExecutor", output);
+            Assert.Contains("DerivedRecapBuildingExecutor", output);
+        }
+        finally {
+            try {
+                Directory.Delete(tempRoot, recursive: true);
+            }
+            catch {
+                // Best-effort cleanup for test-owned compiler inputs.
+            }
+        }
     }
 
     [Fact]

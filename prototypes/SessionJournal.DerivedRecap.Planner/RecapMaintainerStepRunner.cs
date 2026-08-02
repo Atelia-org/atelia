@@ -43,8 +43,13 @@ internal static class RecapMaintainerStepRunner {
                             window.Units
                                 .Select(static unit => unit.Message)
                                 .ToArray(),
-                            $"{window.StartExclusive}.."
-                            + $"{window.ObservedRawHead}"
+                            EventAddressTextCodec.Format(
+                                window.StartExclusive
+                            )
+                            + ".."
+                            + EventAddressTextCodec.Format(
+                                window.ObservedRawHead
+                            )
                         ),
                         new ContextHeaderBlock(
                             currentBlock?.Content ?? string.Empty

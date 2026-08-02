@@ -331,6 +331,8 @@ public sealed class DerivedRecapPreparedRecoveryIntegrationTests
 
     private sealed class FirstBuildPolicy(RecapBlockId blockId)
         : IRecapPlanningPolicy {
+        public string Id => PolicyId;
+
         public RecapPlanningPolicyDecision Decide(
             RecapPlanningPolicyContext context
         ) {

@@ -168,16 +168,28 @@ public static class RecapPlanEvaluator {
             return IntentUnavailable(sourceDefects);
         }
 
-        RecapPlanningPolicyDecision decision =
-            schedule.Inputs.Policy.Decide(
-            new RecapPlanningPolicyContext(
-                schedule.Inputs,
-                schedule.Limits,
-                schedule.Facts,
-                schedule.Cadence,
-                policyFacts
-            )
-        );
+        RecapPlanningPolicyDecision decision;
+        try {
+            decision = schedule.Inputs.Policy.Decide(
+                new RecapPlanningPolicyContext(
+                    schedule.Inputs,
+                    schedule.Limits,
+                    schedule.Facts,
+                    schedule.Cadence,
+                    policyFacts
+                )
+            );
+        }
+        catch (OperationCanceledException) {
+            throw;
+        }
+        catch (Exception exception) {
+            return IntentUnavailable(
+                RecapPlanDefectCodes.PolicyFailed,
+                $"Planning policy '{schedule.Inputs.Policy.Id}' failed: "
+                + exception.Message
+            );
+        }
         if (decision is null) {
             return IntentUnavailable(
                 RecapPlanDefectCodes.PolicyDecisionInvalid,

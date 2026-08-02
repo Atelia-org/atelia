@@ -125,8 +125,10 @@ facts；header路径只能作 negative prefilter。
 C1已完成 strict repo document/loader/atomic init、policy/profile typed resolution、
 single immutable Host composition、完整 capability catalog、`planner-config init/inspect`
 与 runtime authority split。C2进一步让 run/online在 durable phase与 Building-first discovery
-之后条件加载一次 repo composition snapshot；`DerivedRecapBuildingExecutor.ResumeAsync`和
-Restore只接受 frozen durable state、完整 capability registry与 code-owned V4 hard caps，
+之后条件加载一次 repo composition snapshot；public `DerivedRecapPreparedExecutor.ExecuteAsync`
+只消费 preparer签发的 authority，并在内部路由 exact Building Resume或 new planning；两个
+low-level executor均为 assembly-internal。Restore只接受 frozen durable state、完整 capability
+registry与 code-owned V4 hard caps，
 Prepared/Started recovery也保持 Store/config zero-touch。实现验收还
 关闭了 pre-first-recap语义缺口：`EmptyLineage + NoBuild + EmptyLineage`通过显式
 `RawHistoryReady`使用完整 raw recent history，不再被误判成 strict fresh bootstrap。
