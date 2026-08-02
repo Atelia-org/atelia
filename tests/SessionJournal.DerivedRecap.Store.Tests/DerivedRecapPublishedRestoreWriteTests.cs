@@ -12,11 +12,13 @@ public sealed class DerivedRecapPublishedRestoreWriteTests {
                 new RecapStoreTestHooks(
                     BeforeAtomicFileReplace: _ => mutationCount++
                 ),
-                historyPairs: 257
+                historyPairs: 259
             );
         DerivedRecapLineageView lineage = fixture.Lineage();
         EventAddress anchor = lineage.CapturedHead;
-        EventAddress beyond = fixture.RawLineage().HeadToRoot[^1].Address;
+        EventAddress beyond = fixture.RawLineage().HeadToRoot[
+            lineage.CurrentPrefix.MaxHeaderCount
+        ].Address;
         _ = await fixture.PublishAsync(
             anchor,
             lineage.CurrentPrefix.HeadToOldest[^2].Address
@@ -133,13 +135,15 @@ public sealed class DerivedRecapPublishedRestoreWriteTests {
                 new RecapStoreTestHooks(
                     BeforeAtomicFileReplace: _ => mutationCount++
                 ),
-                historyPairs: 257
+                historyPairs: 259
             );
         DerivedRecapLineageView lineage = fixture.Lineage();
         EventAddress anchor = lineage.CapturedHead;
         EventAddress source =
             lineage.CurrentPrefix.HeadToOldest[2].Address;
-        EventAddress beyond = fixture.RawLineage().HeadToRoot[^1].Address;
+        EventAddress beyond = fixture.RawLineage().HeadToRoot[
+            lineage.CurrentPrefix.MaxHeaderCount
+        ].Address;
         _ = await fixture.PublishAsync(
             anchor,
             lineage.CurrentPrefix.HeadToOldest[^2].Address

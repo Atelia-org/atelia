@@ -343,10 +343,11 @@ public sealed class DerivedRecapAuthorityBoundaryTests {
     [Fact]
     public async Task InstallerHistoricalAnchorBeyondPrefixIsTypedBeforeStaging() {
         using RecapStoreFixture fixture =
-            await RecapStoreFixture.CreateAsync(historyPairs: 257);
+            await RecapStoreFixture.CreateAsync(historyPairs: 259);
         DerivedRecapLineageView lineage = fixture.Lineage();
-        EventAddress root =
-            fixture.RawLineage().HeadToRoot[^1].Address;
+        EventAddress beyondAnchor = fixture.RawLineage().HeadToRoot[
+            lineage.CurrentPrefix.MaxHeaderCount
+        ].Address;
         DerivedRecapSetManifest manifest =
             RecapWireTestFacts.CreateManifest(
                 fixture.Engine,
@@ -354,7 +355,7 @@ public sealed class DerivedRecapAuthorityBoundaryTests {
                 [Maintain(
                     fixture,
                     lineage.CapturedHead,
-                    root,
+                    beyondAnchor,
                     [lineage.CapturedHead]
                 )]
             );
@@ -369,7 +370,7 @@ public sealed class DerivedRecapAuthorityBoundaryTests {
         SessionJournalReadDiagnostics beforeReads =
             fixture.Engine.CaptureReadDiagnostics();
 
-        var beyond = Assert.IsType<CreateBuildingResult.BeyondPrefix>(
+        var beyondResult = Assert.IsType<CreateBuildingResult.BeyondPrefix>(
             await new DerivedRecapBuildingInstaller(
                     fixture.Store,
                     fixture.Engine
@@ -379,8 +380,11 @@ public sealed class DerivedRecapAuthorityBoundaryTests {
         SessionJournalReadDiagnostics reads =
             fixture.Engine.CaptureReadDiagnostics() - beforeReads;
 
-        Assert.Equal(root, beyond.Evidence.RequiredAnchor);
-        Assert.Equal(513, beyond.Evidence.HeaderCount);
+        Assert.Equal(
+            beyondAnchor,
+            beyondResult.Evidence.RequiredAnchor
+        );
+        Assert.Equal(513, beyondResult.Evidence.HeaderCount);
         Assert.Equal(1026, reads.HeaderPreviewReadCount);
         Assert.Equal(0, reads.PayloadReadCount);
         Assert.Equal(
@@ -554,7 +558,7 @@ public sealed class DerivedRecapAuthorityBoundaryTests {
     [Theory]
     [InlineData("admission", "AdmissionAnchorOffLineage")]
     [InlineData("source", "SourceAnchorInvalid")]
-    [InlineData("catch-up", "CatchUpRouteIncomplete")]
+    [InlineData("catch-up", "CatchUpRouteInvalid")]
     [InlineData("prior", "PriorContextAnchorInvalid")]
     [InlineData("retroactive", "RetroactivePublication")]
     public async Task InstallerRejectsInvalidPlanBeforeStaging(
@@ -579,8 +583,22 @@ public sealed class DerivedRecapAuthorityBoundaryTests {
             target = lineage.CurrentPrefix.HeadToOldest[2].Address;
             replayStart = lineage.CurrentPrefix.HeadToOldest[4].Address;
         }
+        SessionContextAnchorSetupReferences targetSetups =
+            fixture.Setups(target);
 
         RecapBlockPlan plan = defectKind switch {
+            "admission" => new MaintainRecapBlockPlan(
+                new RecapBlockId("roleplay.self"),
+                Target("roleplay.self"),
+                "roleplay.autobiographical",
+                RecapTestIdentity.CapabilityFingerprint,
+                new EmptyRecapMaintainSource(
+                    replayStart,
+                    fixture.Setups(replayStart)
+                ),
+                [new RecapReplayBoundary(offLineage, targetSetups)],
+                EmptyRecapPriorContext.Instance
+            ),
             "source" => new InheritRecapBlockPlan(
                 new RecapBlockId("roleplay.self"),
                 Target("roleplay.self"),
@@ -593,7 +611,7 @@ public sealed class DerivedRecapAuthorityBoundaryTests {
                 fixture,
                 target,
                 replayStart,
-                [lineage.CurrentPrefix.HeadToOldest[2].Address]
+                [target, target]
             ),
             "prior" => Maintain(
                 fixture,
@@ -611,9 +629,12 @@ public sealed class DerivedRecapAuthorityBoundaryTests {
             ? offLineage
             : target;
         DerivedRecapSetManifest manifest =
-            RecapWireTestFacts.CreateManifest(
-                fixture.Engine,
+            DerivedRecapCodec.CreateManifest(
+                fixture.Engine.BranchRefId,
                 admission,
+                defectKind == "admission"
+                    ? targetSetups
+                    : fixture.Setups(admission),
                 [plan]
             );
         string[] before = Directory.EnumerateFileSystemEntries(

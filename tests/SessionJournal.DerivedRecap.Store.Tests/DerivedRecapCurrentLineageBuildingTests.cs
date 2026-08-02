@@ -72,21 +72,26 @@ public sealed class DerivedRecapCurrentLineageBuildingTests {
     public async Task DotStagingAndOffLineageMembershipAreIgnored() {
         using RecapStoreFixture fixture =
             await RecapStoreFixture.CreateAsync(historyPairs: 3);
-        DerivedRecapLineageView lineage = fixture.Lineage();
-        EventAddress offLineage = new(
-            SizedPtr.FromPacked(ulong.MaxValue),
-            uint.MaxValue,
-            AddressHint.None
-        );
+        DerivedRecapLineageView initialLineage = fixture.Lineage();
+        EventAddress offLineage = initialLineage.CapturedHead;
+        EventAddress rewindTarget =
+            initialLineage.CurrentPrefix.HeadToOldest[2].Address;
         _ = Assert.IsType<CreateBuildingResult.Created>(
             await fixture.Store.CreateBuildingAsync(
                 CreateManifest(
                     fixture,
                     offLineage,
-                    lineage.CurrentPrefix.HeadToOldest[2].Address
+                    rewindTarget
                 )
             )
         );
+        Assert.True(
+            fixture.Engine.MoveCurrentHeadForTest(
+                offLineage,
+                rewindTarget
+            )
+        );
+        DerivedRecapLineageView lineage = fixture.Lineage();
         string buildingRoot = Path.GetDirectoryName(
             fixture.Store.GetBuildingPathForTest(
                 lineage.CapturedHead
@@ -352,7 +357,7 @@ public sealed class DerivedRecapCurrentLineageBuildingTests {
         EventAddress replayStart,
         string blockId = "roleplay.self"
     ) => RecapWireTestFacts.CreateManifest(
-                fixture.Engine,
+        fixture.Engine,
         anchor,
         [fixture.CreateMaintainPlan(
             anchor,
