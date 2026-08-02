@@ -19,6 +19,30 @@ public sealed class DerivedRecapCodecTests {
     );
 
     [Fact]
+    public void SchemaTokens_AreLiteralWireCommitments() {
+        Assert.Equal(
+            "atelia.session-journal.derived-recap-store.v4",
+            DerivedRecapCodec.StoreSchema
+        );
+        Assert.Equal(
+            "atelia.session-journal.derived-recap-manifest.v5",
+            DerivedRecapCodec.ManifestSchema
+        );
+        Assert.Equal(
+            "atelia.session-journal.derived-recap-frozen-input.v4",
+            DerivedRecapCodec.FrozenInputSchema
+        );
+        Assert.Equal(
+            "atelia.session-journal.derived-recap-block.v4",
+            DerivedRecapCodec.BlockSchema
+        );
+        Assert.Equal(
+            "atelia.session-journal.published-recap-set.v5",
+            DerivedRecapCodec.PublicationSchema
+        );
+    }
+
+    [Fact]
     public void EventAddressFileNameCodec_UsesBinaryLittleEndianHex() {
         const string expected =
             "08070605040302010d0c0b0a04030201";
@@ -46,7 +70,7 @@ public sealed class DerivedRecapCodecTests {
     }
 
     [Fact]
-    public void ManifestCodec_HasStableCanonicalPropertyOrderAndRoundTrips() {
+    public void V5ManifestAndPublication_HaveLiteralCanonicalGoldens() {
         var refId = new RefId(0x1234);
         RecapBlockPlan plan = new MaintainRecapBlockPlan(
             new RecapBlockId("roleplay.self"),
@@ -66,32 +90,26 @@ public sealed class DerivedRecapCodecTests {
         string actual = Encoding.UTF8.GetString(
             DerivedRecapCodec.EncodeManifest(manifest)
         );
-        string expected =
-            "{\"schema\":\""
-            + DerivedRecapCodec.ManifestSchema
-            + "\",\"refId\":\"0000000000001234\","
-            + "\"setAdmissionAnchor\":\""
-            + EventAddressTextCodec.Format(A2)
-            + "\",\"blocks\":[{\"mode\":\"maintain\","
+        const string ExpectedManifest =
+            "{\"schema\":\"atelia.session-journal.derived-recap-manifest.v5\","
+            + "\"refId\":\"0000000000001234\","
+            + "\"setAdmissionAnchor\":\"ej1:11121314151617181a1b1c1d00000000\","
+            + "\"blocks\":[{\"mode\":\"maintain\","
             + "\"recapBlockId\":\"roleplay.self\","
-            + "\"target\":{\"carrier\":\"system\","
-            + "\"blockKey\":\"roleplay.self\"},"
+            + "\"target\":{\"carrier\":\"system\",\"blockKey\":\"roleplay.self\"},"
             + "\"maintainerId\":\"roleplay.autobiographical\","
-            + "\"maintainerCapabilityFingerprint\":\""
-            + RecapTestIdentity.CapabilityFingerprint
-            + "\","
-            + "\"source\":{\"kind\":\"empty\","
-            + "\"replayStartExclusive\":\""
-            + EventAddressTextCodec.Format(A1)
-            + "\"},\"catchUpThrough\":[\""
-            + EventAddressTextCodec.Format(A2)
-            + "\"],\"priorContext\":{\"kind\":\"empty\"},"
+            + "\"maintainerCapabilityFingerprint\":\"sha256:0000000000000000000000000000000000000000000000000000000000000000\","
+            + "\"source\":{\"kind\":\"empty\",\"replayStartExclusive\":\"ej1:01020304050607080a0b0c0d01020304\"},"
+            + "\"catchUpThrough\":[\"ej1:11121314151617181a1b1c1d00000000\"],"
+            + "\"priorContext\":{\"kind\":\"empty\"},"
             + "\"maxContentUtf8Bytes\":262144}],"
-            + "\"manifestPayloadSha256\":\""
-            + manifest.ManifestPayloadSha256
-            + "\"}";
+            + "\"manifestPayloadSha256\":\"b35f6f3ba3aaede8067e642d34f7c36377a4451f17a518d9e9d094dc010ee456\"}";
 
-        Assert.Equal(expected, actual);
+        Assert.Equal(
+            "b35f6f3ba3aaede8067e642d34f7c36377a4451f17a518d9e9d094dc010ee456",
+            manifest.ManifestPayloadSha256
+        );
+        Assert.Equal(ExpectedManifest, actual);
         DerivedRecapSetManifest decoded =
             DerivedRecapCodec.DecodeManifest(
                 Encoding.UTF8.GetBytes(actual)
@@ -100,6 +118,44 @@ public sealed class DerivedRecapCodecTests {
             actual,
             Encoding.UTF8.GetString(
                 DerivedRecapCodec.EncodeManifest(decoded)
+            )
+        );
+
+        PublishedRecapSet publication =
+            DerivedRecapCodec.CreatePublication(
+                manifest,
+                [DerivedRecapCodec.CreateBlock(plan, A2, "recap")]
+            );
+        const string ExpectedPublication =
+            "{\"schema\":\"atelia.session-journal.published-recap-set.v5\","
+            + "\"refId\":\"0000000000001234\","
+            + "\"setAdmissionAnchor\":\"ej1:11121314151617181a1b1c1d00000000\","
+            + "\"frozenPlanSnapshot\":{\"schema\":\"atelia.session-journal.derived-recap-manifest.v5\","
+            + "\"refId\":\"0000000000001234\","
+            + "\"setAdmissionAnchor\":\"ej1:11121314151617181a1b1c1d00000000\","
+            + "\"blocks\":[{\"mode\":\"maintain\","
+            + "\"recapBlockId\":\"roleplay.self\","
+            + "\"target\":{\"carrier\":\"system\",\"blockKey\":\"roleplay.self\"},"
+            + "\"maintainerId\":\"roleplay.autobiographical\","
+            + "\"maintainerCapabilityFingerprint\":\"sha256:0000000000000000000000000000000000000000000000000000000000000000\","
+            + "\"source\":{\"kind\":\"empty\",\"replayStartExclusive\":\"ej1:01020304050607080a0b0c0d01020304\"},"
+            + "\"catchUpThrough\":[\"ej1:11121314151617181a1b1c1d00000000\"],"
+            + "\"priorContext\":{\"kind\":\"empty\"},"
+            + "\"maxContentUtf8Bytes\":262144}],"
+            + "\"manifestPayloadSha256\":\"b35f6f3ba3aaede8067e642d34f7c36377a4451f17a518d9e9d094dc010ee456\"},"
+            + "\"blockCommitments\":[{\"recapBlockId\":\"roleplay.self\","
+            + "\"target\":{\"carrier\":\"system\",\"blockKey\":\"roleplay.self\"},"
+            + "\"absorbedThrough\":\"ej1:11121314151617181a1b1c1d00000000\","
+            + "\"payloadSha256\":\"8ac896339aa420b8479d21d4ec273ae68bc635d6dd0a29125c760917f5fe9a96\"}],"
+            + "\"envelopeSha256\":\"e373c50676923355401de1543f185d972702f00b9ef9f0ad48f5c99a4a3c3f6b\"}";
+        Assert.Equal(
+            "e373c50676923355401de1543f185d972702f00b9ef9f0ad48f5c99a4a3c3f6b",
+            publication.EnvelopeSha256
+        );
+        Assert.Equal(
+            ExpectedPublication,
+            Encoding.UTF8.GetString(
+                DerivedRecapCodec.EncodePublication(publication)
             )
         );
     }
@@ -144,6 +200,60 @@ public sealed class DerivedRecapCodecTests {
                 )
             );
         }
+    }
+
+    [Fact]
+    public void HistoricalV4ManifestAndPublication_AreStrictlyRejected() {
+        const string HistoricalManifest =
+            "{\"schema\":\"atelia.session-journal.derived-recap-manifest.v4\","
+            + "\"refId\":\"0000000000001234\","
+            + "\"setAdmissionAnchor\":\"ej1:11121314151617181a1b1c1d00000000\","
+            + "\"blocks\":[{\"mode\":\"maintain\","
+            + "\"recapBlockId\":\"roleplay.self\","
+            + "\"target\":{\"carrier\":\"system\",\"blockKey\":\"roleplay.self\"},"
+            + "\"maintainerId\":\"roleplay.autobiographical\","
+            + "\"source\":{\"kind\":\"empty\",\"replayStartExclusive\":\"ej1:01020304050607080a0b0c0d01020304\"},"
+            + "\"catchUpThrough\":[\"ej1:11121314151617181a1b1c1d00000000\"],"
+            + "\"priorContext\":{\"kind\":\"empty\"},"
+            + "\"maxContentUtf8Bytes\":262144}],"
+            + "\"manifestPayloadSha256\":\"cad7c824d9e03b0fe632852d4072d3057b5208506bf660bfa7989cf8563c24df\"}";
+        const string HistoricalPublication =
+            "{\"schema\":\"atelia.session-journal.published-recap-set.v4\","
+            + "\"refId\":\"0000000000001234\","
+            + "\"setAdmissionAnchor\":\"ej1:11121314151617181a1b1c1d00000000\","
+            + "\"frozenPlanSnapshot\":{\"schema\":\"atelia.session-journal.derived-recap-manifest.v4\","
+            + "\"refId\":\"0000000000001234\","
+            + "\"setAdmissionAnchor\":\"ej1:11121314151617181a1b1c1d00000000\","
+            + "\"blocks\":[{\"mode\":\"maintain\","
+            + "\"recapBlockId\":\"roleplay.self\","
+            + "\"target\":{\"carrier\":\"system\",\"blockKey\":\"roleplay.self\"},"
+            + "\"maintainerId\":\"roleplay.autobiographical\","
+            + "\"source\":{\"kind\":\"empty\",\"replayStartExclusive\":\"ej1:01020304050607080a0b0c0d01020304\"},"
+            + "\"catchUpThrough\":[\"ej1:11121314151617181a1b1c1d00000000\"],"
+            + "\"priorContext\":{\"kind\":\"empty\"},"
+            + "\"maxContentUtf8Bytes\":262144}],"
+            + "\"manifestPayloadSha256\":\"cad7c824d9e03b0fe632852d4072d3057b5208506bf660bfa7989cf8563c24df\"},"
+            + "\"blockCommitments\":[{\"recapBlockId\":\"roleplay.self\","
+            + "\"target\":{\"carrier\":\"system\",\"blockKey\":\"roleplay.self\"},"
+            + "\"absorbedThrough\":\"ej1:11121314151617181a1b1c1d00000000\","
+            + "\"payloadSha256\":\"aae2e3ef7c63cbc2753ef5337e600425a0670993997748b6dec552683d452324\"}],"
+            + "\"envelopeSha256\":\"330273a29d4cf8ed5e2b3341f61063f76042485289eac60a2708c27f382a9f9c\"}";
+
+        Assert.DoesNotContain(
+            "maintainerCapabilityFingerprint",
+            HistoricalManifest,
+            StringComparison.Ordinal
+        );
+        Assert.Throws<NotSupportedException>(() =>
+            DerivedRecapCodec.DecodeManifest(
+                Encoding.UTF8.GetBytes(HistoricalManifest)
+            )
+        );
+        Assert.Throws<NotSupportedException>(() =>
+            DerivedRecapCodec.DecodePublication(
+                Encoding.UTF8.GetBytes(HistoricalPublication)
+            )
+        );
     }
 
     [Fact]

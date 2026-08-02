@@ -74,7 +74,6 @@ public sealed record RecapMaintainerProfileDescriptor(
         string modelId
     ) => new RewriteRecapBlockMaintainer(
         RewriteProfile,
-        CapabilityFingerprint,
         completionClient,
         modelId
     );
@@ -187,7 +186,7 @@ public static class RecapMaintainerCapabilityFingerprint {
     private static string Hash(ReadOnlySpan<byte> bytes) =>
         $"sha256:{Convert.ToHexStringLower(SHA256.HashData(bytes))}";
 
-    internal static string RequireFingerprint(
+    private static string RequireFingerprint(
         string value,
         string parameterName
     ) {

@@ -28,15 +28,21 @@ public sealed class RewriteRecapBlockMaintainer : IRecapBlockMaintainer {
 
     public RewriteRecapBlockMaintainer(
         RecapRewriteProfile profile,
-        string capabilityFingerprint,
         ICompletionClient completionClient,
         string modelId
     ) {
         _profile = profile ?? throw new ArgumentNullException(nameof(profile));
         CapabilityFingerprint =
-            RecapMaintainerCapabilityFingerprint.RequireFingerprint(
-                capabilityFingerprint,
-                nameof(capabilityFingerprint)
+            RecapMaintainerCapabilityFingerprint.Compute(
+                ImplementationId,
+                _profile.Id,
+                _profile.Target,
+                RecapMaintainerCapabilityFingerprint.ComputePrompt(
+                    RecapMaintainerProfileDescriptor
+                        .PromptFingerprintSchema,
+                    _profile.SystemPrompt,
+                    _profile.UserPrompt
+                )
             );
         CompletionClient = completionClient
             ?? throw new ArgumentNullException(nameof(completionClient));

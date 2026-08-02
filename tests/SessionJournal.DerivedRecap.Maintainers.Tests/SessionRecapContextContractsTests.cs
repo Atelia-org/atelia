@@ -6,6 +6,30 @@ namespace Atelia.SessionJournal.DerivedRecap.Maintainers.Tests;
 
 public sealed class SessionRecapContextContractsTests {
     [Fact]
+    public void RewriteMaintainerDirectAndDescriptorFactoryShareIdentity() {
+        RecapMaintainerProfileDescriptor descriptor =
+            RecapMaintainerProfileCatalog.BuiltIn.Resolve(
+                RecapMaintainerProfileCatalog
+                    .AutobiographicalRewrite
+            );
+        var client = new ScriptedCompletionClient();
+        var direct = new RewriteRecapBlockMaintainer(
+            descriptor.RewriteProfile,
+            client,
+            "model-a"
+        );
+        IRecapBlockMaintainer factory = descriptor.Create(
+            client,
+            "model-b"
+        );
+
+        const string Expected =
+            "sha256:ac851405d18654fb3428afc7c8050bac46c3072184da8177388446b57d79552c";
+        Assert.Equal(Expected, direct.CapabilityFingerprint);
+        Assert.Equal(Expected, factory.CapabilityFingerprint);
+    }
+
+    [Fact]
     public void ContextHeaderPack_Render_UsesThreeCarriersInStableOrder() {
         var pack = new ContextHeaderPack();
         pack.System.Add("system.a", new ContextHeaderBlock("alpha"));
@@ -219,7 +243,6 @@ public sealed class SessionRecapContextContractsTests {
                 "system prompt",
                 "user prompt"
             ),
-            "sha256:0000000000000000000000000000000000000000000000000000000000000000",
             client,
             "model-a"
         );

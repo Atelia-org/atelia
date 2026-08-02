@@ -53,7 +53,6 @@ public class WorldUnderstandingRewriteProfileTests {
     private static RewriteRecapBlockMaintainer CreateMaintainer(ICompletionClient client)
         => new(
             WorldUnderstandingRewriteProfiles.Default,
-            "sha256:0000000000000000000000000000000000000000000000000000000000000000",
             client,
             "model-a"
         );

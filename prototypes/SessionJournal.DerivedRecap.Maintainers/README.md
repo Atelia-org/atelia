@@ -39,6 +39,8 @@ logging path不属于语义能力，不进入fingerprint。实现或prompt语义
 Store与Planner把fingerprint当作opaque token；canonical preimage与具体实现版本由本companion
 assembly拥有。raw `Atelia.SessionJournal`只在neutral `IRecapBlockMaintainer` contract上暴露该token，
 不会依赖本程序集或理解其preimage。
+`RewriteRecapBlockMaintainer`的public constructor始终从exact profile与`ImplementationId`计算该值，
+不接受caller-supplied fingerprint；operator遇到旧v4 sidecar仍必须显式abandon/reset后重建。
 
 离线开发 composition root 是
 [`SessionJournal.Cli`](../SessionJournal.Cli/README.md)：它通过
