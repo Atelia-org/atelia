@@ -163,7 +163,9 @@ SessionRuntimeRecoveryRequirements requirement =
 - `NewRequestRequired`表示已接受Observation但尚未冻结completion target；Host提供与该head
   governing setup匹配的新runtime，不能在active turn中append setup。
 - `FrozenCompletionRequired`携带Prepared/Started恢复所需的non-secret exact target、client/API、
-  visible-tool-set hash及可选tool runtime identity。Host必须exact bind，不能fallback到default。
+  visible-tool-set hash及可选tool runtime identity。inspection会先走与`ResumeAsync`相同的Prepared v5
+  full reconstruction、raw-range与commitment acceptance gate，再暴露这些identity；全过程不创建
+  provider client、不会调用provider/tool，也不写raw。Host必须exact bind，不能fallback到default。
 - `ToolContinuationRequired`只冻结tool runtime；它不会谎称旧completion connection也被冻结。
 
 `FrozenCompletionRequired.DispatchState == StartedOutcomeUncertain`时，默认先返回给operator；不要
@@ -358,9 +360,10 @@ current writer把 event payload编码为 JSON envelope：
 {"v":1,"body":{}}
 ```
 
-`v`是每种 event kind自己的 body schema version，不等于 repo schema。Codec校验版本、required
-shape与当前 kind定义的 exact properties；不要假设所有历史 kind具有相同的
-unknown-property策略。当前 code-owned版本：
+`v`是每种 event kind自己的 body schema version，不等于 repo schema。所有current raw reader都对
+envelope、body以及Action/reasoning/tool-result等nested discriminated object执行exact-shape decode：
+unknown property、duplicate property、缺失required property与writer semantic domain之外的值一律
+fail closed。当前 code-owned版本：
 
 | Event kind | Body version |
 |---|---:|
@@ -377,6 +380,15 @@ unknown-property策略。当前 code-owned版本：
 `SessionEventCodec`与 `SessionRequestManifestCodec`是 internal wire authority。调用方不要手写
 event JSON，也不要依赖 JSON property顺序以外的非合同细节。原型期 wire升级采用 direct cut；
 旧实验 repo若不再被 current codec接受，应显式 import/rebuild，不增加 silent fallback。
+
+Prepared v5的两个hash字段没有另带wire-visible codec id；其含义由body version隐式冻结：
+
+- `plan.rawRangeSha256`固定使用`atelia.session-journal.raw-range.v1`；
+- `plan.exactContextInputs[].contentSha256`固定使用
+  `atelia.session-journal.artifact-context-snapshot.sha256.v1`。
+
+改变任一算法/域分隔/字段framing必须升级`CompletionRequestPrepared` body version并同步golden，不能
+在v5 reader中按环境猜测或增加fallback。
 
 EventAddress显示格式统一使用 `EventAddressTextCodec`：
 

@@ -34,44 +34,63 @@ internal static class SessionEventCodec {
 
     public static object Decode(SessionEventKind kind, ReadOnlySpan<byte> payload, out int bodySchemaVersion) {
         int expectedBodySchemaVersion = GetExpectedBodySchemaVersion(kind);
-        using var document = JsonDocument.Parse(payload.ToArray());
-        JsonElement root = document.RootElement;
-        RequireObject(root, "envelope");
-        bodySchemaVersion = ReadRequiredInt32(root, "v");
-        if (bodySchemaVersion != expectedBodySchemaVersion) {
-            throw new NotSupportedException(
-                $"Unsupported body schema version for session event kind '{kind}': "
-                + $"actual={bodySchemaVersion}, expected={expectedBodySchemaVersion}."
+        JsonDocument document;
+        try {
+            document = JsonDocument.Parse(payload.ToArray());
+        }
+        catch (JsonException exception) {
+            throw new InvalidDataException(
+                $"Session event '{kind}' payload is not valid JSON.",
+                exception
             );
         }
+        using (document) {
+            JsonElement root = document.RootElement;
+            RequireObject(root, "envelope");
+            bodySchemaVersion = ReadRequiredInt32(root, "v");
+            if (bodySchemaVersion != expectedBodySchemaVersion) {
+                throw new NotSupportedException(
+                    $"Unsupported body schema version for session event kind '{kind}': "
+                    + $"actual={bodySchemaVersion}, expected={expectedBodySchemaVersion}."
+                );
+            }
 
-        if (!root.TryGetProperty("body", out JsonElement body)) {
-            throw new InvalidDataException("Session event envelope is missing required property 'body'.");
-        }
-        if (kind is SessionEventKind.RuntimeConfigSetup
-            || SessionOperationalSemantics.IsActionKind(kind)
-            || SessionOperationalSemantics.IsToolSegmentKind(kind)
-            || kind is SessionEventKind.SessionCreated
-            or SessionEventKind.CompletionRequestPrepared
-            or SessionEventKind.CompletionAttemptFailed
-            or SessionEventKind.CompletionAttemptStarted) {
             RequireExactProperties(root, $"{kind} envelope", "v", "body");
-        }
+            if (!root.TryGetProperty("body", out JsonElement body)) {
+                throw new InvalidDataException("Session event envelope is missing required property 'body'.");
+            }
 
-        return kind switch {
-            SessionEventKind.RuntimeConfigSetup => DecodeRuntimeConfiguration(body),
-            SessionEventKind.SystemPromptSetup => DecodeSystemPromptSetup(body),
-            SessionEventKind.SessionCreated => DecodeSessionCreated(body),
-            SessionEventKind.ObservationAccepted => DecodeObservationAccepted(body),
-            SessionEventKind.AgentActionProduced => DecodeAgentActionProduced(body, bodySchemaVersion),
-            SessionEventKind.ToolExecutionStarted => DecodeToolExecutionStarted(body),
-            SessionEventKind.ToolResultObserved => DecodeToolResultObserved(body),
-            SessionEventKind.CompletionRequestPrepared => SessionRequestManifestCodec.Decode(body),
-            SessionEventKind.CompletionAttemptFailed => DecodeCompletionAttemptFailed(body),
-            SessionEventKind.ImportedAgentAction => DecodeAgentActionProduced(body, bodySchemaVersion),
-            SessionEventKind.CompletionAttemptStarted => DecodeCompletionAttemptStarted(body),
-            _ => throw new NotSupportedException($"Session event kind '{kind}' is not implemented.")
-        };
+            try {
+                return kind switch {
+                    SessionEventKind.RuntimeConfigSetup => DecodeRuntimeConfiguration(body),
+                    SessionEventKind.SystemPromptSetup => DecodeSystemPromptSetup(body),
+                    SessionEventKind.SessionCreated => DecodeSessionCreated(body),
+                    SessionEventKind.ObservationAccepted => DecodeObservationAccepted(body),
+                    SessionEventKind.AgentActionProduced => DecodeAgentActionProduced(body, bodySchemaVersion),
+                    SessionEventKind.ToolExecutionStarted => DecodeToolExecutionStarted(body),
+                    SessionEventKind.ToolResultObserved => DecodeToolResultObserved(body),
+                    SessionEventKind.CompletionRequestPrepared => SessionRequestManifestCodec.Decode(body),
+                    SessionEventKind.CompletionAttemptFailed => DecodeCompletionAttemptFailed(body),
+                    SessionEventKind.ImportedAgentAction => DecodeAgentActionProduced(body, bodySchemaVersion),
+                    SessionEventKind.CompletionAttemptStarted => DecodeCompletionAttemptStarted(body),
+                    _ => throw new NotSupportedException($"Session event kind '{kind}' is not implemented.")
+                };
+            }
+            catch (InvalidDataException) {
+                throw;
+            }
+            catch (NotSupportedException) {
+                throw;
+            }
+            catch (Exception exception) when (exception is ArgumentException
+                or FormatException
+                or InvalidOperationException) {
+                throw new InvalidDataException(
+                    $"Session event '{kind}' body violates its semantic contract.",
+                    exception
+                );
+            }
+        }
     }
 
     internal static int GetExpectedBodySchemaVersion(SessionEventKind kind)
@@ -396,16 +415,21 @@ internal static class SessionEventCodec {
                 "runtime-config-setup derivedContext.nthPrevious cannot be negative."
             );
         }
-        return new SessionRuntimeConfiguration(
+        var result = new SessionRuntimeConfiguration(
             ReadRequiredString(body, "modelId"),
             ReadRequiredString(body, "completionSurfaceId"),
             ReadRequiredString(body, "schema"),
             new SessionDerivedContextConfiguration(nthPrevious)
         );
+        ValidateRequired(result.ModelId, "modelId");
+        ValidateRequired(result.CompletionSurfaceId, "completionSurfaceId");
+        ValidateRequired(result.Schema, "schema");
+        return result;
     }
 
     private static SystemPromptSetupBody DecodeSystemPromptSetup(JsonElement body) {
         RequireObject(body, "system-prompt-setup body");
+        RequireExactProperties(body, "system-prompt-setup body", "content");
         return new SystemPromptSetupBody(ReadRequiredString(body, "content"));
     }
 
@@ -425,7 +449,12 @@ internal static class SessionEventCodec {
 
     private static ObservationAcceptedBody DecodeObservationAccepted(JsonElement body) {
         RequireObject(body, "observation-accepted body");
-        return new ObservationAcceptedBody(ReadRequiredString(body, "content"));
+        RequireExactProperties(body, "observation-accepted body", "content");
+        var result = new ObservationAcceptedBody(
+            ReadRequiredString(body, "content")
+        );
+        ValidateRequired(result.Content, "content");
+        return result;
     }
 
     private static AgentActionProducedBody DecodeAgentActionProduced(
@@ -499,6 +528,10 @@ internal static class SessionEventCodec {
                     "tool-execution-started body requires toolRuntimeIdentity."
                 )
         );
+        ValidateRequired(result.ToolCallId, "toolCallId");
+        ValidateRequired(result.ToolName, "toolName");
+        ValidateRequired(result.RawArgumentsJson, "rawArgumentsJson");
+        ValidateRequired(result.OperationId, "operationId");
         ValidateExecutionSequence(result.ExecutionSequence, "executionSequence");
         ValidateToolRuntimeIdentity(result.ToolRuntimeIdentity);
         return result;
@@ -530,6 +563,8 @@ internal static class SessionEventCodec {
             ReadStatus(ReadRequiredString(body, "status")),
             blocks
         );
+        ValidateRequired(result.ToolCallId, "toolCallId");
+        ValidateRequired(result.ToolName, "toolName");
         ValidateExecutionSequence(result.ExecutionSequence, "executionSequence");
         return result;
     }
@@ -640,6 +675,33 @@ internal static class SessionEventCodec {
     }
 
     private static void WriteSerializedActionBlock(Utf8JsonWriter writer, SerializedActionBlock block) {
+        ArgumentNullException.ThrowIfNull(block);
+        switch (block.Kind) {
+            case ActionMessageSerialization.BlockKindText:
+                ArgumentNullException.ThrowIfNull(block.Content);
+                break;
+            case ActionMessageSerialization.BlockKindToolCall:
+                ArgumentNullException.ThrowIfNull(block.ToolName);
+                ArgumentNullException.ThrowIfNull(block.ToolCallId);
+                ArgumentNullException.ThrowIfNull(block.RawArgumentsJson);
+                break;
+            case ActionMessageSerialization.BlockKindReasoning:
+                SerializedReasoningBlock reasoning = block.Reasoning
+                    ?? throw new ArgumentException(
+                        "A reasoning action block requires its serialized reasoning payload.",
+                        nameof(block)
+                    );
+                ValidateRequired(reasoning.CodecId, "action.reasoning.codecId");
+                ValidateRequired(reasoning.OriginProviderId, "action.reasoning.originProviderId");
+                ValidateRequired(reasoning.OriginApiSpecId, "action.reasoning.originApiSpecId");
+                ValidateRequired(reasoning.OriginModel, "action.reasoning.originModel");
+                ArgumentNullException.ThrowIfNull(reasoning.Payload);
+                break;
+            default:
+                throw new InvalidOperationException(
+                    $"Unsupported serialized action block kind '{block.Kind}'."
+                );
+        }
         writer.WriteStartObject();
         writer.WriteString("kind", block.Kind);
         if (block.Content is not null) { writer.WriteString("content", block.Content); }
@@ -661,9 +723,42 @@ internal static class SessionEventCodec {
 
     private static SerializedActionBlock ReadSerializedActionBlock(JsonElement block) {
         RequireObject(block, "action block");
+        string kind = ReadRequiredString(block, "kind");
+        switch (kind) {
+            case ActionMessageSerialization.BlockKindText:
+                RequireExactProperties(block, "text action block", "kind", "content");
+                break;
+            case ActionMessageSerialization.BlockKindToolCall:
+                RequireExactProperties(
+                    block,
+                    "tool-call action block",
+                    "kind",
+                    "toolName",
+                    "toolCallId",
+                    "rawArgumentsJson"
+                );
+                break;
+            case ActionMessageSerialization.BlockKindReasoning:
+                RequireExactProperties(block, "reasoning action block", "kind", "reasoning");
+                break;
+            default:
+                throw new InvalidDataException(
+                    $"Unsupported serialized action block kind '{kind}'."
+                );
+        }
         SerializedReasoningBlock? reasoning = null;
         if (block.TryGetProperty("reasoning", out JsonElement reasoningElement)) {
             RequireObject(reasoningElement, "reasoning");
+            RequireExactProperties(
+                reasoningElement,
+                "reasoning",
+                "codecId",
+                "originProviderId",
+                "originApiSpecId",
+                "originModel",
+                "payload",
+                "plainTextForDebug"
+            );
             reasoning = new SerializedReasoningBlock(
                 ReadRequiredString(reasoningElement, "codecId"),
                 ReadRequiredString(reasoningElement, "originProviderId"),
@@ -672,10 +767,14 @@ internal static class SessionEventCodec {
                 ReadRequiredBytes(reasoningElement, "payload"),
                 ReadOptionalString(reasoningElement, "plainTextForDebug")
             );
+            ValidateRequired(reasoning.CodecId, "reasoning.codecId");
+            ValidateRequired(reasoning.OriginProviderId, "reasoning.originProviderId");
+            ValidateRequired(reasoning.OriginApiSpecId, "reasoning.originApiSpecId");
+            ValidateRequired(reasoning.OriginModel, "reasoning.originModel");
         }
 
         return new SerializedActionBlock(
-            ReadRequiredString(block, "kind"),
+            kind,
             ReadOptionalString(block, "content"),
             ReadOptionalString(block, "toolName"),
             ReadOptionalString(block, "toolCallId"),
@@ -685,9 +784,11 @@ internal static class SessionEventCodec {
     }
 
     private static void WriteToolResultBlock(Utf8JsonWriter writer, ToolResultBlock block) {
+        ArgumentNullException.ThrowIfNull(block);
         writer.WriteStartObject();
         switch (block) {
             case ToolResultBlock.Text text:
+                ArgumentNullException.ThrowIfNull(text.Content);
                 writer.WriteString("kind", ToolResultBlockKindText);
                 writer.WriteString("content", text.Content);
                 break;
@@ -701,9 +802,14 @@ internal static class SessionEventCodec {
         RequireObject(block, "tool result block");
         string kind = ReadRequiredString(block, "kind");
         return kind switch {
-            ToolResultBlockKindText => new ToolResultBlock.Text(ReadRequiredString(block, "content")),
+            ToolResultBlockKindText => ReadTextToolResultBlock(block),
             _ => throw new InvalidDataException($"Unsupported tool result block kind '{kind}'.")
         };
+    }
+
+    private static ToolResultBlock ReadTextToolResultBlock(JsonElement block) {
+        RequireExactProperties(block, "text tool result block", "kind", "content");
+        return new ToolResultBlock.Text(ReadRequiredString(block, "content"));
     }
 
     private static string WriteStatus(ToolExecutionStatus status)

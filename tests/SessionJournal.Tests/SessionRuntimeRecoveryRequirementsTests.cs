@@ -245,8 +245,8 @@ public sealed class SessionRuntimeRecoveryRequirementsTests
         >(path, prepared, SessionEventKind.CompletionRequestPrepared);
         EventAddress parent = ReadParent(path, prepared)!.Value;
         CompletionRequestPreparedBody corrupt = source with {
-            Origin = source.Origin with {
-                Reason = "unsupported-corrupt-reason"
+            Commitment = source.Commitment with {
+                Sha256 = new string('0', 64)
             }
         };
         using (var journal = EventJournal.EventJournal.OpenExisting(path)) {
@@ -268,9 +268,10 @@ public sealed class SessionRuntimeRecoveryRequirementsTests
         }
 
         using var reopened = SessionJournalEngine.OpenReadOnly(path);
-        Assert.Throws<InvalidDataException>(
+        InvalidDataException error = Assert.Throws<InvalidDataException>(
             () => reopened.InspectRuntimeRecoveryRequirements()
         );
+        Assert.Contains("commitment", error.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Equal(0, client.Calls);
     }
 

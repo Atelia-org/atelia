@@ -154,6 +154,42 @@ public sealed class SessionJournalOfflineValidatorTests
     }
 
     [Fact]
+    public async Task RawBodyShapeDrift_FailsOfflineValidation() {
+        string path = NewPath();
+        EventAddress head;
+        using (var engine = SessionJournalEngine.Create(
+                   path,
+                   new SessionCreateOptions(
+                       "model-A",
+                       "system-A",
+                       "surface-A"
+                   )
+               )) {
+            head = engine.ReadCurrentHead()!.Value;
+        }
+        using (EventJournal.EventJournal journal =
+               EventJournal.EventJournal.OpenExisting(path)) {
+            RefId main = journal.OpenBranch(
+                SessionJournalDefaults.MainBranchName
+            ).Unwrap();
+            EventAddress malformed = journal.AppendEventFrame(
+                head,
+                """{"v":1,"body":{"content":"observation","unexpected":true}}"""u8,
+                opaqueEventKind:
+                    (uint)SessionEventKind.ObservationAccepted
+            ).Unwrap();
+            Assert.True(journal.MoveRef(main, head, malformed).Unwrap());
+        }
+
+        InvalidDataException error =
+            await Assert.ThrowsAsync<InvalidDataException>(
+                async () => await SessionJournalOfflineValidator
+                    .ValidateAsync(path)
+            );
+        Assert.Contains("unknown property", error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task SemanticCommitment_IgnoresAddressAndRawMetadata() {
         string firstPath = NewPath();
         string shiftedPath = NewPath();

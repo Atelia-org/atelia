@@ -2097,6 +2097,104 @@ public sealed class SessionJournalEngineTests : IDisposable {
     }
 
     [Fact]
+    public async Task ResumeAsync_AfterActionCommitted_ReopensWithMatchingRuntime() {
+        string path = NewJournalPath();
+        var candidateSource = new TestContextCandidateSource();
+        var firstClient = new ScriptedCompletionClient();
+        firstClient.Enqueue(request => new CompletionResult(
+            new ActionMessage([
+                new ActionBlock.ToolCall(new RawToolCall(
+                    "lookup",
+                    "call-1",
+                    "{}"
+                ))
+            ]),
+            new CompletionDescriptor(
+                "scripted",
+                "test-api-v1",
+                request.ModelId
+            )
+        ));
+        using (var engine = SessionJournalEngine.CreateForTest(
+                   path,
+                   new SessionCreateOptions(
+                       "model-A",
+                       "system-A",
+                       "surface-A"
+                   ),
+                   CreateRuntime(
+                       firstClient,
+                       new ToolRegistry([
+                           new RecordingTool(
+                               "lookup",
+                               _ => ToolExecuteResult.FromText(
+                                   ToolExecutionStatus.Success,
+                                   "must-not-run-before-reopen"
+                               )
+                           )
+                       ]).CreateSession(),
+                       candidateSource: candidateSource
+                   ),
+                   new SessionJournalTestHooks(
+                       SessionJournalFailpoint.AfterActionCommitted
+                   )
+               )) {
+            await CoherentArtifactSetTestFixture.ActivateAtCurrentHeadAsync(
+                path,
+                engine,
+                candidateSource
+            );
+            await Assert.ThrowsAsync<SessionJournalFailpointException>(
+                () => engine.SendAsync("need lookup", CancellationToken.None)
+            );
+        }
+
+        var recoveryClient = new ScriptedCompletionClient();
+        recoveryClient.Enqueue(request => new CompletionResult(
+            new ActionMessage([new ActionBlock.Text("done")]),
+            new CompletionDescriptor(
+                "scripted",
+                "test-api-v1",
+                request.ModelId
+            )
+        ));
+        var recoveryTool = new RecordingTool(
+            "lookup",
+            _ => ToolExecuteResult.FromText(
+                ToolExecutionStatus.Success,
+                "reopened-result"
+            )
+        );
+        using var reopened = SessionJournalEngine.Open(
+            path,
+            CreateRuntime(
+                recoveryClient,
+                new ToolRegistry([recoveryTool]).CreateSession(),
+                candidateSource: candidateSource
+            )
+        );
+        SessionRuntimeRecoveryRequirements.ToolContinuationRequired
+            requirement = Assert.IsType<
+                SessionRuntimeRecoveryRequirements.ToolContinuationRequired
+            >(reopened.InspectRuntimeRecoveryRequirements());
+        Assert.Equal(ToolRuntimeIdentity, requirement.ToolRuntimeIdentity);
+
+        ResumeOutcome outcome = await reopened.ResumeAsync(
+            requirement.CapturedHead!.Value,
+            CancellationToken.None
+        );
+
+        Assert.True(outcome.Advanced);
+        Assert.Equal("done", outcome.Message!.GetFlattenedText());
+        Assert.Equal(1, recoveryTool.Calls);
+        Assert.Equal(1, recoveryClient.Calls);
+        Assert.Equal(
+            SessionExecutionPhase.Idle,
+            reopened.ResolveExecutionTail().State.Phase
+        );
+    }
+
+    [Fact]
     public async Task ResumeAsync_PendingActionToolRuntimeIdentityMismatchFailsBeforeStartOrExecution() {
         string path = NewJournalPath();
         var candidateSource = new TestContextCandidateSource();

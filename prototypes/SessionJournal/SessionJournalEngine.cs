@@ -1844,24 +1844,9 @@ public sealed partial class SessionJournalEngine : IDisposable {
 
         SessionRuntime runtime = RequireRuntime();
         SessionPreparedRequestReconstruction reconstruction =
-            SessionPreparedRequestReconstructor.Reconstruct(
-                _reader,
-                sourcePreparedAddress,
-                cancellationToken
-            );
+            ReconstructPreparedRecovery(recovery, cancellationToken);
         CompletionRequestPreparedBody manifest =
             reconstruction.Manifest;
-        if (!string.Equals(
-                manifest.Origin.CorrelationId,
-                recovery.State.ActiveCorrelationId,
-                StringComparison.Ordinal
-            )
-            || manifest.Execution.LastIssuedToolExecutionSequence !=
-                recovery.State.ToolExecutionSequenceCheckpoint) {
-            throw new InvalidDataException(
-                "Prepared reconstruction does not match the resolved execution checkpoint."
-            );
-        }
         ValidateRecoveryRuntimeCompatibility(runtime, manifest);
 
         bool sourceAllowsToolCalls =

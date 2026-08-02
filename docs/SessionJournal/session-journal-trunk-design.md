@@ -155,6 +155,9 @@ EventJournal 对 payload 不透明，只解释 header。SessionJournal 用两个
 - null/default 字段策略固定（推荐省略 null，由 body schema 显式声明可选字段）。
 - 字符串 escaping 策略固定为 `JavaScriptEncoder.UnsafeRelaxedJsonEscaping`：中文等非 ASCII 文本按 UTF-8 原文落盘，不写成 `\uXXXX`；JSON 必需转义（如引号、反斜杠、控制字符）仍按 `Utf8JsonWriter` 规则输出。SessionJournal payload 是落盘 canonical JSON，不得直接当作 HTML / `<script>` 内容嵌入。
 - Action body 复用 `ActionMessageSerialization`（camelCase）；SessionJournal 的 canonical writer 必须在其之上强制上述键序/空白纪律，不依赖默认 serializer 的偶然行为。
+- current reader 对每种 event 的 envelope/body，以及 Action/reasoning/tool-result 等 nested discriminated object 都执行 exact-shape decode；unknown/duplicate/missing property 与 writer semantic domain 外的值必须 fail closed，不做宽松 DTO 反序列化。
+
+Prepared v5 的 `plan.rawRangeSha256` 与 `plan.exactContextInputs[].contentSha256` 没有重复保存 codec-id 字段；v5 schema 已分别把它们隐式冻结为 `atelia.session-journal.raw-range.v1` 与 `atelia.session-journal.artifact-context-snapshot.sha256.v1`。任一 hash framing/域分隔算法变化都必须 bump Prepared body version，不能让同一 v5 bytes 随运行时选择不同 codec。
 
 > 对已落盘事件做 hash 时直接 hash 其 bytes，不重新 canonicalize；canonical writer 的作用是保证「同一 logical event 首次写出时 bytes 就唯一」。
 
