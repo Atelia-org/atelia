@@ -172,15 +172,9 @@ public sealed class DerivedRecapStore {
                 nameof(source)
             );
         }
-        EnsureScaffolding();
-        await using FileStream writeLock =
-            await _fileSystem.AcquireExclusiveLockAsync(
-                    _lockPath,
-                    cancellationToken
-                )
+        await using FileStream readLock =
+            await AcquireReadyReadLockRequiredAsync(cancellationToken)
                 .ConfigureAwait(false);
-        await RequireReadyAsync(cancellationToken)
-            .ConfigureAwait(false);
 
         SourceCaptureResult capture =
             await CapturePublishedSourceAsync(
@@ -234,23 +228,17 @@ public sealed class DerivedRecapStore {
                 nameof(descriptor)
             );
         }
-        EnsureScaffolding();
-        await using FileStream writeLock =
-            await _fileSystem.AcquireExclusiveLockAsync(
-                    _lockPath,
-                    cancellationToken
-                )
+        StoreReadLockAttempt lockAttempt =
+            await TryAcquireReadyReadLockAsync(cancellationToken)
                 .ConfigureAwait(false);
-        string? unavailable =
-            await TryGetUnavailableReasonAsync(cancellationToken)
-                .ConfigureAwait(false);
-        if (unavailable is not null) {
+        if (lockAttempt.UnavailableReason is { } unavailable) {
             return PublishedPlanUnavailable(
                 descriptor,
                 "StoreUnavailable",
                 unavailable
             );
         }
+        await using FileStream readLock = lockAttempt.Lock!;
 
         PublishedPlanEnvelopeCapture first;
         try {
@@ -326,23 +314,17 @@ public sealed class DerivedRecapStore {
                 nameof(admissionAnchor)
             );
         }
-        EnsureScaffolding();
-        await using FileStream writeLock =
-            await _fileSystem.AcquireExclusiveLockAsync(
-                    _lockPath,
-                    cancellationToken
-                )
+        StoreReadLockAttempt lockAttempt =
+            await TryAcquireReadyReadLockAsync(cancellationToken)
                 .ConfigureAwait(false);
-        string? unavailable =
-            await TryGetUnavailableReasonAsync(cancellationToken)
-                .ConfigureAwait(false);
-        if (unavailable is not null) {
+        if (lockAttempt.UnavailableReason is { } unavailable) {
             return PublishedPlanAtAnchorUnavailable(
                 admissionAnchor,
                 "StoreUnavailable",
                 unavailable
             );
         }
+        await using FileStream readLock = lockAttempt.Lock!;
 
         string publishedPath = GetPublishedPath(admissionAnchor);
         if (!PathEntryExists(publishedPath)) {
@@ -669,15 +651,9 @@ public sealed class DerivedRecapStore {
         EventAddress admissionAnchor,
         CancellationToken cancellationToken = default
     ) {
-        EnsureScaffolding();
-        await using FileStream writeLock =
-            await _fileSystem.AcquireExclusiveLockAsync(
-                    _lockPath,
-                    cancellationToken
-                )
+        await using FileStream readLock =
+            await AcquireReadyReadLockRequiredAsync(cancellationToken)
                 .ConfigureAwait(false);
-        await RequireReadyAsync(cancellationToken)
-            .ConfigureAwait(false);
         return await ReadBuildingCoreAsync(
                 admissionAnchor,
                 cancellationToken
@@ -696,26 +672,14 @@ public sealed class DerivedRecapStore {
         CancellationToken cancellationToken = default
     ) {
         ArgumentNullException.ThrowIfNull(lineage);
-        string? unavailable =
-            await TryGetUnavailableReasonAsync(cancellationToken)
+        StoreReadLockAttempt lockAttempt =
+            await TryAcquireReadyReadLockAsync(cancellationToken)
                 .ConfigureAwait(false);
-        if (unavailable is not null) {
+        if (lockAttempt.UnavailableReason is { } unavailable) {
             return new CurrentLineageBuildingSelection
                 .StoreUnavailable(unavailable);
         }
-        await using FileStream writeLock =
-            await _fileSystem.AcquireExclusiveLockAsync(
-                    _lockPath,
-                    cancellationToken
-                )
-                .ConfigureAwait(false);
-        unavailable =
-            await TryGetUnavailableReasonAsync(cancellationToken)
-                .ConfigureAwait(false);
-        if (unavailable is not null) {
-            return new CurrentLineageBuildingSelection
-                .StoreUnavailable(unavailable);
-        }
+        await using FileStream readLock = lockAttempt.Lock!;
 
         CurrentLineageBuildingInventory inventory;
         try {
@@ -884,15 +848,9 @@ public sealed class DerivedRecapStore {
     ) {
         ArgumentNullException.ThrowIfNull(building);
         ArgumentNullException.ThrowIfNull(blockId);
-        EnsureScaffolding();
-        await using FileStream writeLock =
-            await _fileSystem.AcquireExclusiveLockAsync(
-                    _lockPath,
-                    cancellationToken
-                )
+        await using FileStream readLock =
+            await AcquireReadyReadLockRequiredAsync(cancellationToken)
                 .ConfigureAwait(false);
-        await RequireReadyAsync(cancellationToken)
-            .ConfigureAwait(false);
         BuildingSnapshot snapshot =
             await ReadExactBuildingRequiredAsync(
                     building,
@@ -1116,19 +1074,13 @@ public sealed class DerivedRecapStore {
         CancellationToken cancellationToken = default
     ) {
         ArgumentNullException.ThrowIfNull(currentLineage);
-        EnsureScaffolding();
-        await using FileStream writeLock =
-            await _fileSystem.AcquireExclusiveLockAsync(
-                    _lockPath,
-                    cancellationToken
-                )
+        StoreReadLockAttempt lockAttempt =
+            await TryAcquireReadyReadLockAsync(cancellationToken)
                 .ConfigureAwait(false);
-        string? unavailable =
-            await TryGetUnavailableReasonAsync(cancellationToken)
-                .ConfigureAwait(false);
-        if (unavailable is not null) {
+        if (lockAttempt.UnavailableReason is { } unavailable) {
             return NotPublishable("StoreUnavailable", unavailable);
         }
+        await using FileStream readLock = lockAttempt.Lock!;
         return await CanPublishCoreAsync(
                 admissionAnchor,
                 currentLineage,
@@ -1255,21 +1207,15 @@ public sealed class DerivedRecapStore {
         if (nthPrevious < 0) {
             throw new ArgumentOutOfRangeException(nameof(nthPrevious));
         }
-        EnsureScaffolding();
-        await using FileStream writeLock =
-            await _fileSystem.AcquireExclusiveLockAsync(
-                    _lockPath,
-                    cancellationToken
-                )
+        StoreReadLockAttempt lockAttempt =
+            await TryAcquireReadyReadLockAsync(cancellationToken)
                 .ConfigureAwait(false);
-        string? unavailable =
-            await TryGetUnavailableReasonAsync(cancellationToken)
-                .ConfigureAwait(false);
-        if (unavailable is not null) {
+        if (lockAttempt.UnavailableReason is { } unavailable) {
             return new DerivedRecapSelection.StoreUnavailable(
                 unavailable
             );
         }
+        await using FileStream readLock = lockAttempt.Lock!;
         try {
             _ = ValidateAndIndexLineage(lineage);
         }
@@ -1341,20 +1287,14 @@ public sealed class DerivedRecapStore {
                 nameof(admissionAnchor)
             );
         }
-        EnsureScaffolding();
-        await using FileStream writeLock =
-            await _fileSystem.AcquireExclusiveLockAsync(
-                    _lockPath,
-                    cancellationToken
-                )
+        StoreReadLockAttempt lockAttempt =
+            await TryAcquireReadyReadLockAsync(cancellationToken)
                 .ConfigureAwait(false);
-        string? unavailable =
-            await TryGetUnavailableReasonAsync(cancellationToken)
-                .ConfigureAwait(false);
-        if (unavailable is not null) {
+        if (lockAttempt.UnavailableReason is { } unavailable) {
             return new PublishedMembershipInspectionResult
                 .StoreUnavailable(admissionAnchor, unavailable);
         }
+        await using FileStream readLock = lockAttempt.Lock!;
 
         string publishedPath = GetPublishedPath(admissionAnchor);
         if (!PathEntryExists(publishedPath)) {
@@ -1442,15 +1382,9 @@ public sealed class DerivedRecapStore {
             descriptor.EnvelopeSha256,
             "descriptor.envelopeSha256"
         );
-        EnsureScaffolding();
-        await using FileStream writeLock =
-            await _fileSystem.AcquireExclusiveLockAsync(
-                    _lockPath,
-                    cancellationToken
-                )
+        await using FileStream readLock =
+            await AcquireReadyReadLockRequiredAsync(cancellationToken)
                 .ConfigureAwait(false);
-        await RequireReadyAsync(cancellationToken)
-            .ConfigureAwait(false);
         string publishedPath =
             GetPublishedPath(descriptor.SetAdmissionAnchor);
         string publicationPath =
@@ -1528,23 +1462,17 @@ public sealed class DerivedRecapStore {
         CancellationToken cancellationToken = default
     ) {
         ArgumentNullException.ThrowIfNull(lineage);
-        EnsureScaffolding();
-        await using FileStream writeLock =
-            await _fileSystem.AcquireExclusiveLockAsync(
-                    _lockPath,
-                    cancellationToken
-                )
+        StoreReadLockAttempt lockAttempt =
+            await TryAcquireReadyReadLockAsync(cancellationToken)
                 .ConfigureAwait(false);
-        string? unavailable =
-            await TryGetUnavailableReasonAsync(cancellationToken)
-                .ConfigureAwait(false);
-        if (unavailable is not null) {
+        if (lockAttempt.UnavailableReason is { } unavailable) {
             return RestoreUnavailable(
                 admissionAnchor,
                 "StoreUnavailable",
                 unavailable
             );
         }
+        await using FileStream readLock = lockAttempt.Lock!;
 
         IReadOnlyDictionary<EventAddress, int> lineageIndex;
         try {
@@ -2354,6 +2282,66 @@ public sealed class DerivedRecapStore {
                   or UnauthorizedAccessException) {
             return exception.Message;
         }
+    }
+
+    private async ValueTask<StoreReadLockAttempt>
+        TryAcquireReadyReadLockAsync(
+        CancellationToken cancellationToken
+    ) {
+        string? unavailable =
+            await TryGetUnavailableReasonAsync(cancellationToken)
+                .ConfigureAwait(false);
+        if (unavailable is not null) {
+            return new StoreReadLockAttempt(null, unavailable);
+        }
+
+        FileStream readLock;
+        try {
+            readLock =
+                await _fileSystem.AcquireExistingExclusiveReadLockAsync(
+                        _lockPath,
+                        cancellationToken
+                    )
+                    .ConfigureAwait(false);
+        }
+        catch (Exception exception)
+            when (exception is InvalidDataException
+                  or ArgumentException
+                  or NotSupportedException
+                  or IOException
+                  or UnauthorizedAccessException) {
+            return new StoreReadLockAttempt(null, exception.Message);
+        }
+
+        try {
+            unavailable =
+                await TryGetUnavailableReasonAsync(cancellationToken)
+                    .ConfigureAwait(false);
+        }
+        catch {
+            await readLock.DisposeAsync().ConfigureAwait(false);
+            throw;
+        }
+        if (unavailable is not null) {
+            await readLock.DisposeAsync().ConfigureAwait(false);
+            return new StoreReadLockAttempt(null, unavailable);
+        }
+        return new StoreReadLockAttempt(readLock, null);
+    }
+
+    private async ValueTask<FileStream> AcquireReadyReadLockRequiredAsync(
+        CancellationToken cancellationToken
+    ) {
+        StoreReadLockAttempt attempt =
+            await TryAcquireReadyReadLockAsync(cancellationToken)
+                .ConfigureAwait(false);
+        if (attempt.Lock is null) {
+            throw new InvalidDataException(
+                "DerivedRecap Store is unavailable: "
+                + attempt.UnavailableReason
+            );
+        }
+        return attempt.Lock;
     }
 
     private async ValueTask RequireReadyAsync(
@@ -5192,6 +5180,11 @@ public sealed class DerivedRecapStore {
     private sealed record PublicationRecheck(
         bool IsExact,
         string? ObservedEnvelopeSha256
+    );
+
+    private sealed record StoreReadLockAttempt(
+        FileStream? Lock,
+        string? UnavailableReason
     );
 
     private abstract record SourceCaptureResult {

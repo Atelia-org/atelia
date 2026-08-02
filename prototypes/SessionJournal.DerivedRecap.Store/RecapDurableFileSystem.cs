@@ -404,6 +404,55 @@ internal sealed class RecapDurableFileSystem {
         );
     }
 
+    /// <summary>
+    /// Opens an existing coordination lock for a pure read operation without
+    /// provisioning either its parent directory or the lock file itself.
+    /// </summary>
+    public async ValueTask<FileStream>
+        AcquireExistingExclusiveReadLockAsync(
+        string path,
+        CancellationToken cancellationToken
+    ) {
+        const int maxAttempts = 200;
+        EnsureSafeDescendant(path);
+        IOException? contention = null;
+        for (int attempt = 0; attempt < maxAttempts; attempt++) {
+            cancellationToken.ThrowIfCancellationRequested();
+            EnsureSafeDescendant(path);
+            try {
+                return new FileStream(
+                    path,
+                    FileMode.Open,
+                    FileAccess.Read,
+                    FileShare.None,
+                    bufferSize: 1,
+                    FileOptions.Asynchronous
+                );
+            }
+            catch (FileNotFoundException) {
+                throw;
+            }
+            catch (DirectoryNotFoundException) {
+                throw;
+            }
+            catch (UnauthorizedAccessException) {
+                throw;
+            }
+            catch (IOException exception) {
+                contention = exception;
+                await Task.Delay(
+                        TimeSpan.FromMilliseconds(25),
+                        cancellationToken
+                    )
+                    .ConfigureAwait(false);
+            }
+        }
+        throw new IOException(
+            $"Timed out acquiring existing DerivedRecap lock '{path}'.",
+            contention
+        );
+    }
+
     public void EnsureSafeDescendant(string path) {
         string candidate = Path.GetFullPath(path);
         StringComparison comparison = OperatingSystem.IsWindows()
