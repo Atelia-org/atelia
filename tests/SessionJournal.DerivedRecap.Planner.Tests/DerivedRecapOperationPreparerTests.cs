@@ -38,7 +38,7 @@ public sealed class DerivedRecapOperationPreparerTests : IDisposable {
     [Fact]
     public async Task FrozenBuildingSkipsThrowingConfigurationSource() {
         Scenario scenario = Scenario.Create();
-        BuildingSnapshot building = CreateBuilding(
+        BuildingPlanSnapshot building = CreateBuildingPlan(
             MaintainerId,
             Target
         );
@@ -65,7 +65,7 @@ public sealed class DerivedRecapOperationPreparerTests : IDisposable {
         Scenario scenario = Scenario.Create();
         scenario.Building =
             new CurrentLineageBuildingSelection.Available(
-                CreateBuilding("retired-maintainer", Target)
+                CreateBuildingPlan("retired-maintainer", Target)
             );
 
         var unavailable = Assert.IsType<
@@ -86,7 +86,7 @@ public sealed class DerivedRecapOperationPreparerTests : IDisposable {
         Scenario scenario = Scenario.Create();
         scenario.Building =
             new CurrentLineageBuildingSelection.Available(
-                CreateBuilding(
+                CreateBuildingPlan(
                     MaintainerId,
                     Target,
                     "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
@@ -479,7 +479,7 @@ public sealed class DerivedRecapOperationPreparerTests : IDisposable {
         if (frozenBuilding) {
             scenario.Building =
                 new CurrentLineageBuildingSelection.Available(
-                    CreateBuilding(MaintainerId, Target)
+                    CreateBuildingPlan(MaintainerId, Target)
                 );
         }
         scenario.ReadCurrentHead = () =>
@@ -886,7 +886,7 @@ public sealed class DerivedRecapOperationPreparerTests : IDisposable {
         new RecapPlannerLimitsDocument(512, 4, 8, 64, 512)
     );
 
-    private static BuildingSnapshot CreateBuilding(
+    private static BuildingPlanSnapshot CreateBuildingPlan(
         string maintainerId,
         ContextHeaderBlockPath target,
         string maintainerCapabilityFingerprint =
@@ -898,14 +898,18 @@ public sealed class DerivedRecapOperationPreparerTests : IDisposable {
             maintainerId,
             maintainerCapabilityFingerprint
         );
-        return new BuildingSnapshot(
-            new BuildingDescriptor(
-                manifest.RefId,
-                manifest.SetAdmissionAnchor,
-                manifest.ManifestPayloadSha256
-            ),
+        var descriptor = new BuildingDescriptor(
+            manifest.RefId,
+            manifest.SetAdmissionAnchor,
+            manifest.ManifestPayloadSha256
+        );
+        return new BuildingPlanSnapshot(
+            descriptor,
             manifest,
-            new Dictionary<RecapBlockId, DerivedRecapFrozenInput>()
+            new BuildingPlanHandle(
+                Path.GetTempPath(),
+                descriptor
+            )
         );
     }
 

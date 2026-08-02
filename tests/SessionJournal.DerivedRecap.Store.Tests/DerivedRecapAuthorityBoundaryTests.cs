@@ -339,6 +339,25 @@ public sealed class DerivedRecapAuthorityBoundaryTests {
             )
         );
 
+        MethodInfo buildingRead = Assert.Single(
+            publicStoreMethods,
+            static method => method.Name
+                == nameof(DerivedRecapStore.ReadBuildingAsync)
+        );
+        Assert.Equal(
+            typeof(BuildingPlanHandle),
+            buildingRead.GetParameters()[0].ParameterType
+        );
+        MethodInfo buildingInspection = Assert.Single(
+            publicStoreMethods,
+            static method => method.Name
+                == nameof(DerivedRecapStore.InspectBuildingBlockAsync)
+        );
+        Assert.Equal(
+            typeof(BuildingPlanHandle),
+            buildingInspection.GetParameters()[0].ParameterType
+        );
+
         MethodInfo checkpointWrite = Assert.Single(
             publicStoreMethods,
             static method => method.Name
@@ -386,6 +405,105 @@ public sealed class DerivedRecapAuthorityBoundaryTests {
                 BindingFlags.Public
             ),
             static type => type.Name == "BeyondPrefix"
+        );
+    }
+
+    [Fact]
+    public async Task BuildingPlanHandleIsPortableAcrossSamePathAndRef() {
+        using RecapStoreFixture fixture =
+            await RecapStoreFixture.CreateAsync();
+        DerivedRecapLineageView lineage = fixture.Lineage();
+        EventAddress anchor = lineage.CapturedHead;
+        RecapBlockPlan plan = fixture.CreateMaintainPlan(
+            anchor,
+            lineage.CurrentPrefix.HeadToOldest[^2].Address
+        );
+        _ = Assert.IsType<CreateBuildingResult.Created>(
+            await fixture.Store.CreateBuildingAsync(
+                RecapWireTestFacts.CreateManifest(
+                    fixture.Engine,
+                    anchor,
+                    [plan]
+                )
+            )
+        );
+        BuildingPlanSnapshot snapshot = Assert.IsType<
+            BuildingPlanReadResult.Available
+        >(
+            await fixture.Store.ReadBuildingPlanAsync(anchor)
+        ).Snapshot;
+        DerivedRecapStore reopened = DerivedRecapStore.Open(
+            Path.Combine(fixture.Path, "."),
+            fixture.Engine.BranchRefId
+        );
+
+        var content = Assert.IsType<BuildingReadResult.Available>(
+            await reopened.ReadBuildingAsync(snapshot.Handle)
+        );
+        BuildingBlockInspection block =
+            await reopened.InspectBuildingBlockAsync(
+                snapshot.Handle,
+                plan.RecapBlockId
+        );
+
+        Assert.Equal(snapshot.Descriptor, content.Snapshot.Descriptor);
+        Assert.Equal(
+            DerivedRecapCodec.ComputeBlockPlanSha256(plan),
+            DerivedRecapCodec.ComputeBlockPlanSha256(block.Plan)
+        );
+    }
+
+    [Fact]
+    public async Task BuildingPlanHandleRejectsCrossPathAndCrossRef() {
+        using RecapStoreFixture first =
+            await RecapStoreFixture.CreateAsync();
+        using RecapStoreFixture second =
+            await RecapStoreFixture.CreateAsync();
+        DerivedRecapLineageView lineage = first.Lineage();
+        EventAddress anchor = lineage.CapturedHead;
+        RecapBlockPlan plan = first.CreateMaintainPlan(
+            anchor,
+            lineage.CurrentPrefix.HeadToOldest[^2].Address
+        );
+        _ = Assert.IsType<CreateBuildingResult.Created>(
+            await first.Store.CreateBuildingAsync(
+                RecapWireTestFacts.CreateManifest(
+                    first.Engine,
+                    anchor,
+                    [plan]
+                )
+            )
+        );
+        BuildingPlanHandle handle = Assert.IsType<
+            BuildingPlanReadResult.Available
+        >(
+            await first.Store.ReadBuildingPlanAsync(anchor)
+        ).Snapshot.Handle;
+        RefId mismatchedRef = first.Engine.BranchRefId.Packed == 1
+            ? new RefId(2)
+            : new RefId(1);
+        DerivedRecapStore wrongRef = DerivedRecapStore.Open(
+            first.Path,
+            mismatchedRef
+        );
+
+        await Assert.ThrowsAsync<ArgumentException>(async () =>
+            await second.Store.ReadBuildingAsync(handle)
+        );
+        await Assert.ThrowsAsync<ArgumentException>(async () =>
+            await second.Store.InspectBuildingBlockAsync(
+                handle,
+                plan.RecapBlockId
+            )
+        );
+        await Assert.ThrowsAsync<ArgumentException>(async () =>
+            await wrongRef.ReadBuildingAsync(handle)
+        );
+        await Assert.ThrowsAsync<ArgumentException>(async () =>
+            await wrongRef.InspectBuildingBlockAsync(
+                handle,
+                plan.RecapBlockId
+            )
         );
     }
 

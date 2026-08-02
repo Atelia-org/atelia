@@ -250,15 +250,7 @@ public abstract record DerivedRecapExecutionResult {
     public sealed record BeyondPrefix(
         DerivedRecapBeyondPrefixStage Stage,
         SessionCurrentLineageBeyondPrefix Evidence
-    ) : DerivedRecapExecutionResult {
-        internal BeyondPrefix(
-            SessionCurrentLineageBeyondPrefix evidence
-        ) : this(
-            DerivedRecapBeyondPrefixStage.PreparationCurrentLineage,
-            evidence
-        ) {
-        }
-    }
+    ) : DerivedRecapExecutionResult;
 
     public sealed record Retryable(string Code, string Detail)
         : DerivedRecapExecutionResult;

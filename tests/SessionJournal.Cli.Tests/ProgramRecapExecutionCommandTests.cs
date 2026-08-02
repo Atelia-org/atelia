@@ -440,6 +440,82 @@ public sealed class ProgramRecapExecutionCommandTests : IDisposable {
     }
 
     [Fact]
+    public async Task SessionCreatedContinuationUsesNullRequiredAnchorAndExactNextAddress() {
+        Fixture fixture =
+            await CreateFixtureAsync("session-created-continuation", 2);
+        RecapPlannerConfigDocument boundedConfig =
+            FastCadenceConfig with {
+                Limits = FastCadenceConfig.Limits with {
+                    MaxRawGrowthEventCount = 1
+                }
+            };
+        await CreateStoreAsync(fixture, boundedConfig);
+        SJ.SessionCreatedPlanningSeedReadResult.BeyondPrefix expected;
+        using (var engine = SJ.SessionJournalEngine.OpenReadOnly(
+                   fixture.Path,
+                   fixture.BranchName
+               )) {
+            expected = Assert.IsType<
+                SJ.SessionCreatedPlanningSeedReadResult.BeyondPrefix
+            >(engine.ReadSessionCreatedPlanningSeedAtBounded(
+                fixture.Head,
+                boundedConfig.Limits.MaxRawGrowthEventCount
+            ));
+        }
+        string reportPath = Path.Combine(
+            _tempRoot,
+            "session-created-continuation.json"
+        );
+        string callLogName = "session-created-continuation-calls";
+        var factory = new ScriptedCompletionClientFactory(
+            "must not run"
+        );
+
+        Assert.Equal(2, Run(
+            ExecuteArgs(
+                fixture,
+                "run",
+                reportPath,
+                callLogName
+            ),
+            factory
+        ));
+
+        Assert.Equal(0, factory.CreateCallCount);
+        Assert.False(Directory.Exists(
+            Path.Combine(_tempRoot, callLogName)
+        ));
+        using JsonDocument report = ReadJson(reportPath);
+        Assert.Equal(
+            "atelia.session-journal.derived-recap-execution.v6",
+            String(report, "schema")
+        );
+        Assert.Equal("BeyondPrefix", String(report, "resultStatus"));
+        JsonElement beyond =
+            report.RootElement.GetProperty("beyondPrefix");
+        Assert.Equal(
+            "new-planning-raw-growth",
+            beyond.GetProperty("stage").GetString()
+        );
+        Assert.Equal(
+            JsonValueKind.Null,
+            beyond.GetProperty("requiredAnchor").ValueKind
+        );
+        Assert.Equal(
+            SJ.EventAddressTextCodec.Format(expected.CapturedHead),
+            beyond.GetProperty("capturedHead").GetString()
+        );
+        Assert.Equal(
+            expected.HeaderCount,
+            beyond.GetProperty("headerCount").GetInt32()
+        );
+        Assert.Equal(
+            SJ.EventAddressTextCodec.Format(expected.NextAddress),
+            beyond.GetProperty("nextAddress").GetString()
+        );
+    }
+
+    [Fact]
     public async Task RestoreBeyondPrefixUsesV6GoldenWithoutMutation() {
         Fixture fixture =
             await CreateFixtureAsync("restore-beyond-prefix", 77);
@@ -615,13 +691,13 @@ public sealed class ProgramRecapExecutionCommandTests : IDisposable {
             fixture.Path,
             engine.BranchRefId
         );
-        BuildingReadResult.Available building =
-            Assert.IsType<BuildingReadResult.Available>(
-                await store.ReadBuildingAsync(anchor)
-            );
+        BuildingPlanSnapshot building =
+            Assert.IsType<BuildingPlanReadResult.Available>(
+                await store.ReadBuildingPlanAsync(anchor)
+            ).Snapshot;
         BuildingBlockInspection block =
             await store.InspectBuildingBlockAsync(
-                building.Snapshot.Descriptor,
+                building.Handle,
                 new RecapBlockId(
                     RolePlayRecapBlockPaths
                         .WorldUnderstandingBlockKey
@@ -1216,7 +1292,8 @@ public sealed class ProgramRecapExecutionCommandTests : IDisposable {
     }
 
     private static async ValueTask CreateStoreAsync(
-        Fixture fixture
+        Fixture fixture,
+        RecapPlannerConfigDocument? config = null
     ) {
         using var engine = SJ.SessionJournalEngine.OpenReadOnly(
             fixture.Path,
@@ -1230,7 +1307,7 @@ public sealed class ProgramRecapExecutionCommandTests : IDisposable {
         Assert.IsType<RecapPlannerConfigInitializeResult.Initialized>(
             RecapPlannerConfigInitializer.Initialize(
                 fixture.Path,
-                FastCadenceConfig
+                config ?? FastCadenceConfig
             )
         );
     }

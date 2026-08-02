@@ -88,6 +88,11 @@ and envelope commit do not accept caller-supplied state-token maps; final
 commit rechecks the raw head and exact component identities and cannot return
 `BeyondPrefix`.
 
+Building content inspection likewise requires a metadata-issued
+`BuildingPlanHandle`. The handle is bound to normalized repository path plus
+`RefId`: it remains valid across reopening that same durable Store identity,
+but is rejected by a Store opened for another path or RefId.
+
 The final raw-head reread is a fence, not an atomic compare-and-swap with the
 raw journal. The SessionJournal engine lock excludes other engine processes for
 the lifetime of the engine, and the per-Ref Store lock excludes cooperating

@@ -294,8 +294,30 @@ internal static class RecapStoreCommands {
         DerivedRecapStore store,
         EventAddress anchor
     ) {
-        BuildingReadResult read = await store.ReadBuildingAsync(
+        BuildingPlanReadResult planRead =
+            await store.ReadBuildingPlanAsync(
                 anchor,
+                CancellationToken.None
+            )
+            .ConfigureAwait(false);
+        if (planRead is BuildingPlanReadResult.Missing) {
+            return new ExactBuildingInspectionReport(
+                "Missing",
+                [],
+                []
+            );
+        }
+        if (planRead is BuildingPlanReadResult.Invalid planInvalid) {
+            return new ExactBuildingInspectionReport(
+                "Invalid",
+                [],
+                MapDefects(planInvalid.Defects)
+            );
+        }
+        BuildingPlanSnapshot planSnapshot =
+            ((BuildingPlanReadResult.Available)planRead).Snapshot;
+        BuildingReadResult read = await store.ReadBuildingAsync(
+                planSnapshot.Handle,
                 CancellationToken.None
             )
             .ConfigureAwait(false);
@@ -320,7 +342,7 @@ internal static class RecapStoreCommands {
                          in available.Snapshot.Manifest.Blocks) {
                     BuildingBlockInspection inspection =
                         await store.InspectBuildingBlockAsync(
-                                available.Snapshot.Descriptor,
+                                planSnapshot.Handle,
                                 plan.RecapBlockId,
                                 CancellationToken.None
                             )

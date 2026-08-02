@@ -373,9 +373,21 @@ internal static class RecapExecutionCommands {
     ) {
         try {
             if (operation == "resume") {
-                BuildingReadResult building =
-                    await store.ReadBuildingAsync(anchor!.Value)
+                BuildingPlanReadResult plan =
+                    await store.ReadBuildingPlanAsync(anchor!.Value)
                         .ConfigureAwait(false);
+                if (plan is BuildingPlanReadResult.Invalid planInvalid) {
+                    return (DefectCodes(planInvalid.Defects), null);
+                }
+                if (plan is BuildingPlanReadResult.Missing) {
+                    return (["BuildingMissing"], null);
+                }
+                BuildingReadResult building = await store
+                    .ReadBuildingAsync(
+                        ((BuildingPlanReadResult.Available)plan)
+                            .Snapshot.Handle
+                    )
+                    .ConfigureAwait(false);
                 return building switch {
                     BuildingReadResult.Available => ([], null),
                     BuildingReadResult.Invalid invalid =>
@@ -696,9 +708,9 @@ internal static class RecapExecutionCommands {
             ? null
             : new RecapExecutionBeyondPrefixReport(
                 beyondPrefixStage ?? "preparation-current-lineage",
-                SJ.EventAddressTextCodec.Format(
-                    beyondPrefixEvidence.RequiredAnchor
-                ),
+                beyondPrefixEvidence.RequiredAnchor is { } required
+                    ? SJ.EventAddressTextCodec.Format(required)
+                    : null,
                 SJ.EventAddressTextCodec.Format(
                     beyondPrefixEvidence.CapturedHead
                 ),
@@ -914,7 +926,7 @@ internal sealed record RecapExecutionReport(
 
 internal sealed record RecapExecutionBeyondPrefixReport(
     string Stage,
-    string RequiredAnchor,
+    string? RequiredAnchor,
     string CapturedHead,
     int HeaderCount,
     string NextAddress

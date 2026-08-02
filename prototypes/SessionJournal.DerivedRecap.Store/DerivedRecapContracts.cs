@@ -256,6 +256,43 @@ public sealed record PublishedPlanSnapshot(
     } = Array.Empty<RecapBlockCommitment>();
 }
 
+/// <summary>
+/// Opaque metadata-phase authority for one exact Published restore epoch. It binds the
+/// publication-or-witness state, frozen manifest, block roster, and any envelope-authenticated
+/// final commitments before component payloads may be inspected.
+/// </summary>
+public sealed class PublishedRestorePlanAuthority {
+    internal PublishedRestorePlanAuthority(
+        string ownerPath,
+        RefId refId,
+        EventAddress setAdmissionAnchor,
+        PublishedRestoreAuthorityKind authorityKind,
+        string authorityStateToken,
+        string manifestPayloadSha256,
+        IReadOnlyList<RecapBlockId> blockRoster,
+        IReadOnlyList<RecapBlockCommitment> blockCommitments
+    ) {
+        OwnerPath = ownerPath;
+        RefId = refId;
+        SetAdmissionAnchor = setAdmissionAnchor;
+        AuthorityKind = authorityKind;
+        AuthorityStateToken = authorityStateToken;
+        ManifestPayloadSha256 = manifestPayloadSha256;
+        BlockRoster = blockRoster;
+        BlockCommitments = blockCommitments;
+    }
+
+    internal string OwnerPath { get; }
+    internal string AuthorityStateToken { get; }
+    internal IReadOnlyList<RecapBlockId> BlockRoster { get; }
+
+    public RefId RefId { get; }
+    public EventAddress SetAdmissionAnchor { get; }
+    public PublishedRestoreAuthorityKind AuthorityKind { get; }
+    public string ManifestPayloadSha256 { get; }
+    public IReadOnlyList<RecapBlockCommitment> BlockCommitments { get; }
+}
+
 public abstract record PublishedPlanReadResult {
     private PublishedPlanReadResult() {
     }
@@ -278,11 +315,15 @@ public abstract record PublishedPlanAtAnchorReadResult {
     private PublishedPlanAtAnchorReadResult() {
     }
 
-    public sealed record Available(PublishedPlanSnapshot Snapshot)
+    public sealed record Available(
+        PublishedPlanSnapshot Snapshot,
+        PublishedRestorePlanAuthority Authority
+    )
         : PublishedPlanAtAnchorReadResult;
 
     public sealed record ManifestWitnessAvailable(
-        DerivedRecapSetManifest FrozenPlan
+        DerivedRecapSetManifest FrozenPlan,
+        PublishedRestorePlanAuthority Authority
     ) : PublishedPlanAtAnchorReadResult;
 
     public sealed record Missing(EventAddress SetAdmissionAnchor)
@@ -441,7 +482,10 @@ public sealed record BuildingSnapshot(
 );
 
 /// <summary>
-/// Opaque capability for the second, content-reading phase of one exact Building snapshot.
+/// Opaque capability for the second, content-reading phase of one exact
+/// Building snapshot. The capability is bound to the normalized repository
+/// path and RefId, so it remains portable across Store reopen/new instances
+/// for that same durable Store identity and is rejected elsewhere.
 /// </summary>
 public sealed class BuildingPlanHandle {
     internal BuildingPlanHandle(
@@ -500,19 +544,7 @@ public abstract record CurrentLineageBuildingSelection {
     public sealed record None : CurrentLineageBuildingSelection;
 
     public sealed record Available(BuildingPlanSnapshot Snapshot)
-        : CurrentLineageBuildingSelection {
-        internal Available(BuildingSnapshot snapshot) : this(
-            new BuildingPlanSnapshot(
-                snapshot.Descriptor,
-                snapshot.Manifest,
-                new BuildingPlanHandle(
-                    string.Empty,
-                    snapshot.Descriptor
-                )
-            )
-        ) {
-        }
-    }
+        : CurrentLineageBuildingSelection;
 
     public sealed record Invalid(
         EventAddress SetAdmissionAnchor,

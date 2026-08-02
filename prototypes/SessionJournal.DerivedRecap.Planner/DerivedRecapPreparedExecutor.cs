@@ -49,7 +49,7 @@ public sealed class DerivedRecapPreparedExecutor {
                     maintainers
                 );
                 _execute = cancellationToken => building.ResumeAsync(
-                    frozen.Descriptor,
+                    frozen.Plan,
                     cancellationToken
                 );
                 _getPlanningDiagnostics = static () => null;

@@ -119,6 +119,16 @@ public sealed class DerivedRecapLineageView {
         this,
         cancellationToken
     );
+
+    public ValueTask<PublishedRestoreInspectionResult>
+        InspectPublishedForRestoreAsync(
+        PublishedRestorePlanAuthority authority,
+        CancellationToken cancellationToken = default
+    ) => _store.InspectPublishedForRestoreAsync(
+        authority,
+        this,
+        cancellationToken
+    );
 }
 
 internal abstract record DerivedRecapAdmissionLineageResolution {

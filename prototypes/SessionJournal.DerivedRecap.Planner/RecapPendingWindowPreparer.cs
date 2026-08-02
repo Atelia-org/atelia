@@ -35,6 +35,109 @@ internal sealed record PreparedRecapPendingWindows(
 /// Store inspection and component writes remain phase-specific.
 /// </summary>
 internal static class RecapPendingWindowPreparer {
+    /// <summary>
+    /// Header-only proof for every possible pending route. This deliberately returns no
+    /// materialized windows; callers enter the content phase separately after all other
+    /// metadata/setup barriers have succeeded.
+    /// </summary>
+    public static PreparedRecapPendingWindows Prove(
+        SessionJournalEngine engine,
+        EventAddress expectedRawHead,
+        IReadOnlyList<PendingMaintainRoute> pendingRoutes,
+        RecapProtocolHardCaps hardCaps,
+        CancellationToken cancellationToken
+    ) {
+        ArgumentNullException.ThrowIfNull(engine);
+        ArgumentNullException.ThrowIfNull(pendingRoutes);
+        ArgumentNullException.ThrowIfNull(hardCaps);
+        var windows = new Dictionary<
+            (RecapBlockId BlockId, int EndpointIndex),
+            SessionHistoryPlanningWindow
+        >();
+        IReadOnlyList<RecapPendingWindowDefect> routeDefects =
+            ValidatePendingRouteLimits(pendingRoutes, hardCaps);
+        if (routeDefects.Count != 0) {
+            return new PreparedRecapPendingWindows(
+                routeDefects,
+                windows
+            );
+        }
+        if (pendingRoutes.Count == 0
+            || pendingRoutes.All(route =>
+                route.NextEndpointIndex
+                    == route.Plan.CatchUpBoundaries.Count)) {
+            return new PreparedRecapPendingWindows([], windows);
+        }
+        EventAddress observedRawHead = engine.ReadCurrentHead()
+            ?? throw new InvalidDataException(
+                "Pending replay-window proof requires a non-empty SessionJournal."
+            );
+        if (observedRawHead != expectedRawHead) {
+            throw new RecapRawHeadChangedException(
+                expectedRawHead,
+                observedRawHead
+            );
+        }
+        long rawEvents = 0;
+        foreach (PendingMaintainRoute route in pendingRoutes) {
+            RecapReplayBoundary previous = StartBoundary(route);
+            if (previous.Address != route.StartExclusive) {
+                throw new InvalidDataException(
+                    $"Block '{route.Plan.RecapBlockId}' pending start "
+                    + "does not match its frozen replay boundary."
+                );
+            }
+            for (int index = route.NextEndpointIndex;
+                 index < route.Plan.CatchUpBoundaries.Count;
+                 index++) {
+                RecapReplayBoundary endpoint =
+                    route.Plan.CatchUpBoundaries[index];
+                SessionHistoryPlanningWindowProofResult proofResult =
+                    engine.ProveHistoryPlanningWindowAtBounded(
+                        endpoint.Address,
+                        previous.Address,
+                        hardCaps.MaxRawEventsPerStep,
+                        cancellationToken
+                    );
+                if (proofResult is SessionHistoryPlanningWindowProofResult
+                        .BeyondPrefix beyond) {
+                    return new PreparedRecapPendingWindows(
+                        [],
+                        windows,
+                        beyond.Evidence
+                    );
+                }
+                SessionHistoryPlanningWindowProof proof =
+                    ((SessionHistoryPlanningWindowProofResult.Available)
+                        proofResult).Proof;
+                engine.ValidateGoverningSetupTransition(
+                    proof,
+                    previous.Setups,
+                    endpoint.Setups
+                );
+                rawEvents = checked(rawEvents + proof.RawEventCount);
+                previous = endpoint;
+            }
+        }
+        if (rawEvents > hardCaps.MaxRawEventsPerBuild) {
+            return new PreparedRecapPendingWindows(
+                [new RecapPendingWindowDefect(
+                    $"Building requires {rawEvents} raw events; limit is "
+                    + $"{hardCaps.MaxRawEventsPerBuild}."
+                )],
+                windows
+            );
+        }
+        EventAddress? afterProofHead = engine.ReadCurrentHead();
+        if (afterProofHead != expectedRawHead) {
+            throw new RecapRawHeadChangedException(
+                expectedRawHead,
+                afterProofHead ?? default
+            );
+        }
+        return new PreparedRecapPendingWindows([], windows);
+    }
+
     public static IReadOnlyList<RecapPendingWindowDefect>
         ValidateFrozenRouteLimits(
         IEnumerable<MaintainRecapBlockPlan> plans,
@@ -190,6 +293,11 @@ internal static class RecapPendingWindowPreparer {
                 SessionHistoryPlanningWindowProof proof =
                     ((SessionHistoryPlanningWindowProofResult.Available)
                         proofResult).Proof;
+                engine.ValidateGoverningSetupTransition(
+                    proof,
+                    previous.Setups,
+                    endpoint.Setups
+                );
                 rawEvents = checked(rawEvents + proof.RawEventCount);
                 proofs.Add(
                     (route.Plan.RecapBlockId, index),

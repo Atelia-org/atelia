@@ -22,13 +22,15 @@ public abstract class PreparedRecapOperationAuthority {
         internal FrozenBuilding(
             SessionCurrentLineagePrefix lineage,
             DerivedRecapOperationBinding binding,
-            BuildingDescriptor descriptor
+            BuildingPlanSnapshot plan
         ) : base(lineage, binding) {
-            Descriptor = descriptor
-                ?? throw new ArgumentNullException(nameof(descriptor));
+            Plan = plan
+                ?? throw new ArgumentNullException(nameof(plan));
         }
 
-        public BuildingDescriptor Descriptor { get; }
+        public BuildingDescriptor Descriptor => Plan.Descriptor;
+        public BuildingPlanHandle Handle => Plan.Handle;
+        internal BuildingPlanSnapshot Plan { get; }
     }
 
     public sealed class NewPlanning
@@ -333,7 +335,7 @@ public static class DerivedRecapOperationPreparer {
                     engine.Path,
                     engine.BranchRefId
                 ),
-                available.Snapshot.Descriptor
+                available.Snapshot
             )
         );
     }
@@ -486,7 +488,7 @@ public static class DerivedRecapOperationPreparer {
                     new PreparedRecapOperationAuthority.FrozenBuilding(
                         lineage,
                         services.Binding,
-                        available.Snapshot.Descriptor
+                        available.Snapshot
                     )
                 );
             case CurrentLineageBuildingSelection.Invalid invalid:

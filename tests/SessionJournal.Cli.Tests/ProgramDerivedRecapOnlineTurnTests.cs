@@ -730,9 +730,9 @@ public sealed class ProgramDerivedRecapOnlineTurnTests : IDisposable {
         Assert.False(File.Exists(
             RecapPlannerConfigLoader.GetCanonicalPath(path)
         ));
-        Assert.IsType<BuildingReadResult.Missing>(
+        Assert.IsType<BuildingPlanReadResult.Missing>(
             await DerivedRecapStore.Open(path, branchRefId)
-                .ReadBuildingAsync(admissionAnchor)
+                .ReadBuildingPlanAsync(admissionAnchor)
         );
         using (var engine = SJ.SessionJournalEngine.OpenReadOnly(path)) {
             DerivedRecapStore store =

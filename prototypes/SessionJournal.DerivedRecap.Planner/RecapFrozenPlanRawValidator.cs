@@ -12,6 +12,7 @@ internal sealed record RecapFrozenPlanRawDefect(string Detail);
 /// phase-specific caller.
 /// </summary>
 internal static class RecapFrozenPlanRawValidator {
+    private const int OnlineHeaderProofLimit = 513;
     public static IReadOnlyList<RecapFrozenPlanRawDefect> ValidateBlock(
         SessionJournalEngine engine,
         DerivedRecapSetManifest manifest,
@@ -374,6 +375,30 @@ internal static class RecapFrozenPlanRawValidator {
             Add(
                 defects,
                 $"{label} setups contain a default authority address."
+            );
+            return;
+        }
+        try {
+            SessionGoverningSetupProofResult proof =
+                engine.ProveGoverningSetupAtBounded(
+                    address,
+                    expected,
+                    OnlineHeaderProofLimit
+                );
+            if (proof is SessionGoverningSetupProofResult
+                    .BeyondPrefix) {
+                // Online callers must have crossed RecapFrozenPlanBarrier,
+                // where long-lived setup authority is proved by chaining
+                // header-only route transitions. Do not reinterpret that
+                // completed proof as a post-content Beyond/defect here.
+                return;
+            }
+        }
+        catch (InvalidDataException exception) {
+            Add(
+                defects,
+                $"{label} setup authority is not governing its exact "
+                + $"boundary: {exception.Message}"
             );
         }
     }

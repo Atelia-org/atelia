@@ -95,12 +95,13 @@ public sealed class SessionCurrentLineageContinuation {
 /// </summary>
 public sealed class SessionCurrentLineageBeyondPrefix {
     internal SessionCurrentLineageBeyondPrefix(
-        EventAddress requiredAnchor,
+        EventAddress? requiredAnchor,
         EventAddress capturedHead,
         int headerCount,
         EventAddress nextAddress
     ) {
-        if (requiredAnchor == default) {
+        if (requiredAnchor is { } exactRequiredAnchor
+            && exactRequiredAnchor == default) {
             throw new ArgumentException(
                 "The required lineage anchor cannot be default.",
                 nameof(requiredAnchor)
@@ -130,7 +131,11 @@ public sealed class SessionCurrentLineageBeyondPrefix {
         NextAddress = nextAddress;
     }
 
-    public EventAddress RequiredAnchor { get; }
+    /// <summary>
+    /// The exact requested ancestor, or null when the bounded search is for a kind-defined
+    /// boundary whose address is not yet known (for example SessionCreated).
+    /// </summary>
+    public EventAddress? RequiredAnchor { get; }
     public EventAddress CapturedHead { get; }
     public int HeaderCount { get; }
     public EventAddress NextAddress { get; }
@@ -429,7 +434,7 @@ public abstract class SessionCreatedPlanningSeedReadResult {
             NextAddress = nextAddress;
             Diagnostics = diagnostics;
             ContinuationEvidence = new SessionCurrentLineageBeyondPrefix(
-                nextAddress,
+                requiredAnchor: null,
                 capturedHead,
                 headerCount,
                 nextAddress
@@ -500,6 +505,100 @@ public abstract class SessionHistoryPlanningWindowProofResult {
         }
 
         public SessionCurrentLineageBeyondPrefix Evidence { get; }
+        public SessionCurrentLineageDiagnostics Diagnostics { get; }
+    }
+}
+
+/// <summary>
+/// Opaque, repository-bound header proof that the first runtime-config and system-prompt setup
+/// events governing one exact boundary are the expected durable addresses. Producing this token
+/// never reads payloads; setup and boundary payload validation is deferred to materialization.
+/// </summary>
+public sealed class SessionGoverningSetupProof {
+    internal SessionGoverningSetupProof(
+        string ownerPath,
+        EventAddress boundary,
+        SessionContextAnchorSetupReferences expectedSetups,
+        SessionCurrentLineageDiagnostics diagnostics,
+        object state
+    ) {
+        OwnerPath = ownerPath;
+        Boundary = boundary;
+        ExpectedSetups = expectedSetups;
+        Diagnostics = diagnostics;
+        State = state;
+    }
+
+    internal string OwnerPath { get; }
+    internal object State { get; }
+
+    public EventAddress Boundary { get; }
+    public SessionContextAnchorSetupReferences ExpectedSetups { get; }
+    public SessionCurrentLineageDiagnostics Diagnostics { get; }
+}
+
+/// <summary>
+/// Header-only evidence that a governing setup pair could not be fully proven inside one bounded
+/// Parent prefix. The next address is an explicit continuation; no hidden paging was performed.
+/// </summary>
+public sealed class SessionGoverningSetupBeyondPrefix {
+    internal SessionGoverningSetupBeyondPrefix(
+        EventAddress boundary,
+        SessionContextAnchorSetupReferences expectedSetups,
+        int headerCount,
+        EventAddress nextAddress,
+        EventAddress requiredAnchor
+    ) {
+        Boundary = boundary;
+        ExpectedSetups = expectedSetups;
+        HeaderCount = headerCount;
+        NextAddress = nextAddress;
+        RequiredAnchor = requiredAnchor;
+        ContinuationEvidence = new SessionCurrentLineageBeyondPrefix(
+            requiredAnchor,
+            boundary,
+            headerCount,
+            nextAddress
+        );
+    }
+
+    public EventAddress Boundary { get; }
+    public SessionContextAnchorSetupReferences ExpectedSetups { get; }
+    public int HeaderCount { get; }
+    public EventAddress NextAddress { get; }
+    public EventAddress RequiredAnchor { get; }
+    public SessionCurrentLineageBeyondPrefix ContinuationEvidence {
+        get;
+    }
+}
+
+/// <summary>
+/// Closed result of proving the exact governing setup addresses for one replay boundary.
+/// </summary>
+public abstract class SessionGoverningSetupProofResult {
+    private SessionGoverningSetupProofResult() { }
+
+    public sealed class Available : SessionGoverningSetupProofResult {
+        internal Available(SessionGoverningSetupProof proof) {
+            ArgumentNullException.ThrowIfNull(proof);
+            Proof = proof;
+        }
+
+        public SessionGoverningSetupProof Proof { get; }
+    }
+
+    public sealed class BeyondPrefix : SessionGoverningSetupProofResult {
+        internal BeyondPrefix(
+            SessionGoverningSetupBeyondPrefix evidence,
+            SessionCurrentLineageDiagnostics diagnostics
+        ) {
+            ArgumentNullException.ThrowIfNull(evidence);
+            ArgumentNullException.ThrowIfNull(diagnostics);
+            Evidence = evidence;
+            Diagnostics = diagnostics;
+        }
+
+        public SessionGoverningSetupBeyondPrefix Evidence { get; }
         public SessionCurrentLineageDiagnostics Diagnostics { get; }
     }
 }

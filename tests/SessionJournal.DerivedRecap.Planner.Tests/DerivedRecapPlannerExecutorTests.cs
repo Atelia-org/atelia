@@ -301,6 +301,52 @@ public sealed class DerivedRecapPlannerExecutorTests {
     }
 
     [Fact]
+    public async Task PublishedCommitmentBeyondCurrentPrefixIsStagedBeforePlanningPayloads() {
+        using TestFixture fixture = await TestFixture.CreateAsync(
+            historyPairs: 1
+        );
+        var sourceMaintainer = new ScriptedMaintainer(
+            "self-maintainer",
+            fixture.SelfTarget,
+            static (_, _) => "source"
+        );
+        _ = Assert.IsType<DerivedRecapExecutionResult.Published>(
+            await fixture.CreateExecutor(
+                    new BoundedMaintainAllRecapPlanningPolicy(),
+                    [sourceMaintainer]
+                )
+                .RunAsync()
+        );
+        for (int index = 0; index < 257; index++) {
+            fixture.AppendPair($"beyond-{index}");
+        }
+        var estimator = new TestHistoryUnitLoadEstimator();
+        var maintainer = new ScriptedMaintainer(
+            "self-maintainer",
+            fixture.SelfTarget,
+            static (_, _) => "must-not-run"
+        );
+
+        var beyond = Assert.IsType<
+            DerivedRecapExecutionResult.BeyondPrefix
+        >(
+            await fixture.CreateExecutor(
+                    new BoundedMaintainAllRecapPlanningPolicy(),
+                    [maintainer],
+                    estimator: estimator
+                )
+                .RunAsync()
+        );
+
+        Assert.Equal(
+            DerivedRecapBeyondPrefixStage.NewPlanningSourceAnchor,
+            beyond.Stage
+        );
+        Assert.Equal(0, estimator.MeasureCallCount);
+        Assert.Equal(0, maintainer.CallCount);
+    }
+
+    [Fact]
     public async Task TypedHistoryLoadFailureHasNoMutationOrCalls() {
         using TestFixture fixture = await TestFixture.CreateAsync(
             historyPairs: 1
@@ -1378,6 +1424,70 @@ public sealed class DerivedRecapPlannerExecutorTests {
                 .ResumeAsync(admission);
 
         Assert.IsType<DerivedRecapExecutionResult.Unavailable>(result);
+        Assert.Equal(0, maintainer.CallCount);
+    }
+
+    [Fact]
+    public async Task PreparedResumeBeyondPrecedesBuildingComponentsAndMutation() {
+        int componentReads = 0;
+        int mutations = 0;
+        using TestFixture fixture = await TestFixture.CreateAsync(
+            historyPairs: 33,
+            hooks: new RecapStoreTestHooks(
+                BeforeAtomicFileReplace: _ => mutations++,
+                BeforeBuildingComponentRead: () => componentReads++
+            )
+        );
+        EventAddress admission =
+            fixture.Engine.ReadCurrentHead()!.Value;
+        MaintainRecapBlockPlan plan = fixture.CreateEmptyPlan(
+            fixture.SelfId,
+            fixture.SelfTarget,
+            "self-maintainer",
+            fixture.ReplayStart(),
+            [admission]
+        );
+        _ = await fixture.CreateBuildingAsync(admission, [plan]);
+        var capability = new RecapMaintainerCapabilitySnapshot([
+            new RecapProfilePlanningDescriptor(
+                "self-profile",
+                fixture.SelfId,
+                fixture.SelfTarget,
+                "self-maintainer",
+                RecapPlannerTestIdentity.CapabilityFingerprint
+            )
+        ]);
+        var ready = Assert.IsType<
+            DerivedRecapOperationPreparationResult.Ready
+        >(await DerivedRecapOperationPreparer.PrepareExactBuildingAsync(
+            fixture.Engine,
+            fixture.Store,
+            capability,
+            admission
+        ));
+        var maintainer = new ScriptedMaintainer(
+            "self-maintainer",
+            fixture.SelfTarget,
+            static (_, _) => "must-not-run"
+        );
+        componentReads = 0;
+        mutations = 0;
+
+        var beyond = Assert.IsType<
+            DerivedRecapExecutionResult.BeyondPrefix
+        >(await new DerivedRecapPreparedExecutor(
+            fixture.Engine,
+            fixture.Store,
+            ready.Authority,
+            new RecapBlockMaintainerRegistry([maintainer])
+        ).ExecuteAsync());
+
+        Assert.Equal(
+            DerivedRecapBeyondPrefixStage.ResumePendingWindow,
+            beyond.Stage
+        );
+        Assert.Equal(0, componentReads);
+        Assert.Equal(0, mutations);
         Assert.Equal(0, maintainer.CallCount);
     }
 

@@ -83,13 +83,19 @@ public sealed class DerivedRecapRestoreExecutor {
                     )
                     .ConfigureAwait(false);
             DerivedRecapSetManifest frozenPlan;
+            PublishedRestorePlanAuthority restorePlanAuthority;
+            IReadOnlyList<RecapBlockCommitment> commitments;
             switch (planRead) {
                 case PublishedPlanAtAnchorReadResult.Available plan:
                     frozenPlan = plan.Snapshot.FrozenPlan;
+                    restorePlanAuthority = plan.Authority;
+                    commitments = plan.Snapshot.BlockCommitments;
                     break;
                 case PublishedPlanAtAnchorReadResult
                     .ManifestWitnessAvailable witness:
                     frozenPlan = witness.FrozenPlan;
+                    restorePlanAuthority = witness.Authority;
+                    commitments = witness.Authority.BlockCommitments;
                     break;
                 default:
                     return planRead switch {
@@ -111,12 +117,41 @@ public sealed class DerivedRecapRestoreExecutor {
                     )
                     };
             }
-            PreparedRecapPendingWindows restorePreflight =
-                PreflightAllRestoreWindows(
-                    frozenPlan,
-                    expectedRawHead,
-                    cancellationToken
-                );
+            foreach (RecapBlockCommitment commitment in commitments) {
+                switch (lineage.Lookup(commitment.AbsorbedThrough)) {
+                    case SessionCurrentLineageAnchorLookup.Found:
+                        break;
+                    case SessionCurrentLineageAnchorLookup
+                        .BeyondPrefix commitmentBeyond:
+                        return new DerivedRecapRestoreResult.BeyondPrefix(
+                            DerivedRecapBeyondPrefixStage
+                                .RestorePendingWindow,
+                            commitmentBeyond.Evidence
+                        );
+                    case SessionCurrentLineageAnchorLookup.OffLineage:
+                        return Unavailable(
+                            DerivedRecapRestoreDefectCodes
+                                .FrozenPlanInvalid,
+                            $"Published commitment for block "
+                            + $"'{commitment.RecapBlockId}' is outside "
+                            + "the captured raw lineage."
+                        );
+                    default:
+                        throw new InvalidDataException(
+                            "Unknown commitment lineage lookup result."
+                        );
+                }
+            }
+            RecapFrozenPlanBarrierResult restorePreflight =
+                await RecapFrozenPlanBarrier.ProveAsync(
+                        _engine,
+                        _store,
+                        frozenPlan,
+                        expectedRawHead,
+                        _hardCaps,
+                        cancellationToken
+                    )
+                    .ConfigureAwait(false);
             if (restorePreflight.BeyondPrefix is { } preflightBeyond) {
                 return new DerivedRecapRestoreResult.BeyondPrefix(
                     DerivedRecapBeyondPrefixStage.RestorePendingWindow,
@@ -127,8 +162,18 @@ public sealed class DerivedRecapRestoreExecutor {
                 return new DerivedRecapRestoreResult.Unavailable([
                     .. restorePreflight.Defects.Select(defect =>
                         new DerivedRecapRestoreDefect(
-                            DerivedRecapRestoreDefectCodes
-                                .ExecutionLimitExceeded,
+                            defect.Kind switch {
+                                RecapFrozenPlanBarrierDefectKind
+                                    .ExecutionLimit =>
+                                    DerivedRecapRestoreDefectCodes
+                                        .ExecutionLimitExceeded,
+                                RecapFrozenPlanBarrierDefectKind
+                                    .StoreUnavailable =>
+                                    DerivedRecapRestoreDefectCodes
+                                        .StoreUnavailable,
+                                _ => DerivedRecapRestoreDefectCodes
+                                    .FrozenPlanInvalid
+                            },
                             defect.Detail
                         ))
                 ]);
@@ -136,13 +181,24 @@ public sealed class DerivedRecapRestoreExecutor {
 
             PublishedRestoreInspectionResult inspectionResult =
                 await lineageView.InspectPublishedForRestoreAsync(
-                        setAdmissionAnchor,
+                        restorePlanAuthority,
                         cancellationToken
                     )
                     .ConfigureAwait(false);
             if (inspectionResult
                     is PublishedRestoreInspectionResult.Unavailable
                         inspectionUnavailable) {
+                if (inspectionUnavailable.Defects.Any(
+                        static defect => defect.Code
+                            == "ConcurrentPublishedChange"
+                    )) {
+                    return new DerivedRecapRestoreResult.Retryable(
+                        DerivedRecapRestoreDefectCodes
+                            .ConcurrentPublishedChange,
+                        "Published metadata changed between restore "
+                        + "preflight and component inspection."
+                    );
+                }
                 return Unavailable(inspectionUnavailable.Defects);
             }
             if (inspectionResult
@@ -440,49 +496,6 @@ public sealed class DerivedRecapRestoreExecutor {
             defects,
             actions,
             exactWindows.Windows
-        );
-    }
-
-    private PreparedRecapPendingWindows PreflightAllRestoreWindows(
-        DerivedRecapSetManifest frozenPlan,
-        EventAddress expectedRawHead,
-        CancellationToken cancellationToken
-    ) {
-        var routes = new List<PendingMaintainRoute>();
-        foreach (MaintainRecapBlockPlan maintain
-                 in frozenPlan.Blocks
-                     .OfType<MaintainRecapBlockPlan>()) {
-            EventAddress start = maintain.Source switch {
-                EmptyRecapMaintainSource empty =>
-                    empty.ReplayStartExclusive,
-                ExistingRecapMaintainSource existing =>
-                    existing.SourceSetAnchor,
-                _ => throw new InvalidDataException(
-                    "Unsupported frozen Maintain source."
-                )
-            };
-            routes.Add(new PendingMaintainRoute(maintain, start, 0));
-        }
-        IReadOnlyList<RecapPendingWindowDefect> routeDefects =
-            RecapPendingWindowPreparer.ValidatePendingRouteLimits(
-                routes,
-                _hardCaps
-            );
-        if (routeDefects.Count != 0) {
-            return new PreparedRecapPendingWindows(
-                routeDefects,
-                new Dictionary<
-                    (RecapBlockId BlockId, int EndpointIndex),
-                    SessionHistoryPlanningWindow
-                >()
-            );
-        }
-        return RecapPendingWindowPreparer.Prepare(
-            _engine,
-            expectedRawHead,
-            routes,
-            _hardCaps,
-            cancellationToken
         );
     }
 

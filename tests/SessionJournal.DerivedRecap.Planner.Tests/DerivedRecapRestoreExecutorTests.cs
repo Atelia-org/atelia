@@ -7,6 +7,257 @@ namespace Atelia.SessionJournal.DerivedRecap.Planner.Tests;
 
 public sealed class DerivedRecapRestoreExecutorTests {
     [Fact]
+    public async Task HealthyRestoreProvesRoutesWithoutRawMaterialization() {
+        using RestoreFixture fixture =
+            await RestoreFixture.CreateAsync();
+        (
+            MaintainRecapBlockPlan plan,
+            _
+        ) = await fixture.PublishMaintainAsync(endpointCount: 1);
+        EventAddress anchor = plan.CatchUpBoundaries[^1].Address;
+        var maintainer = fixture.CreateMaintainer(
+            plan,
+            static (_, _) => "must-not-run"
+        );
+        SessionJournalReadDiagnostics before =
+            fixture.Engine.CaptureReadDiagnostics();
+
+        _ = Assert.IsType<DerivedRecapRestoreResult.Restored>(
+            await fixture.CreateExecutor([maintainer])
+                .RestoreAsync(anchor, fixture.CurrentHead)
+        );
+
+        SessionJournalReadDiagnostics after =
+            fixture.Engine.CaptureReadDiagnostics();
+        Assert.Equal(before.PayloadReadCount, after.PayloadReadCount);
+        Assert.Equal(0, maintainer.CallCount);
+    }
+
+    [Fact]
+    public async Task PublishedCommitmentBeyondStopsBeforeRestoreComponents() {
+        int componentReads = 0;
+        using RestoreFixture fixture =
+            await RestoreFixture.CreateAsync(
+                historyPairs: 259,
+                hooks: new RecapStoreTestHooks(
+                    BeforeRestoreComponentRead: () => componentReads++
+                )
+            );
+        MaintainRecapBlockPlan template = fixture.CreateMaintainPlan(
+            "frozen.self",
+            "frozen-maintainer",
+            endpointCount: 1
+        );
+        _ = fixture.Engine.AppendRuntimeConfigSetup(
+            new SessionRuntimeConfiguration(
+                "model-current-commitment",
+                "surface-current-commitment",
+                SessionJournalDefaults.Schema,
+                new(0)
+            )
+        );
+        _ = fixture.Engine.AppendSystemPromptSetup(
+            "system-current-commitment"
+        );
+        EventAddress recentStart = fixture.AppendPair(
+            "current-commitment-start"
+        );
+        EventAddress anchor = fixture.AppendPair(
+            "current-commitment-anchor"
+        );
+        var plan = new MaintainRecapBlockPlan(
+            template.RecapBlockId,
+            template.Target,
+            template.MaintainerId,
+            template.MaintainerCapabilityFingerprint,
+            new EmptyRecapMaintainSource(
+                recentStart,
+                RecapPlannerWireTestFacts.SetupsAt(
+                    fixture.Engine,
+                    recentStart
+                )
+            ),
+            [new RecapReplayBoundary(
+                anchor,
+                RecapPlannerWireTestFacts.SetupsAt(
+                    fixture.Engine,
+                    anchor
+                )
+            )],
+            template.PriorContext,
+            template.MaxContentUtf8Bytes
+        );
+        _ = await fixture.PublishAsync(
+            anchor,
+            [plan],
+            new Dictionary<RecapBlockId, string> {
+                [plan.RecapBlockId] = "committed"
+            }
+        );
+        EventAddress beyond = fixture.Engine
+            .ReadCurrentLineageHeaders().HeadToRoot[
+                fixture.Lineage.MaxHeaderCount
+            ].Address;
+        DerivedRecapSetManifest manifest = Assert.IsType<
+            PublishedPlanAtAnchorReadResult.Available
+        >(await fixture.Store.ReadPublishedPlanAtAnchorAsync(anchor))
+            .Snapshot.FrozenPlan;
+        DerivedRecapBlock rewrittenFinal =
+            DerivedRecapCodec.CreateBlock(
+                plan,
+                beyond,
+                "rewritten beyond final"
+            );
+        await File.WriteAllBytesAsync(
+            fixture.PublicationPath(anchor),
+            DerivedRecapCodec.EncodePublication(
+                DerivedRecapCodec.CreatePublication(
+                    manifest,
+                    [rewrittenFinal]
+                )
+            )
+        );
+        await File.WriteAllBytesAsync(
+            fixture.BlockPath(anchor, "blocks", plan.RecapBlockId),
+            DerivedRecapCodec.EncodeBlock(rewrittenFinal)
+        );
+        componentReads = 0;
+        var maintainer = fixture.CreateMaintainer(
+            plan,
+            static (_, _) => "must-not-run"
+        );
+
+        var result = Assert.IsType<
+            DerivedRecapRestoreResult.BeyondPrefix
+        >(await fixture.CreateExecutor([maintainer])
+            .RestoreAsync(anchor, fixture.CurrentHead));
+
+        Assert.Equal(
+            DerivedRecapBeyondPrefixStage.RestorePendingWindow,
+            result.Stage
+        );
+        Assert.Equal(beyond, result.Evidence.RequiredAnchor);
+        Assert.Equal(0, componentReads);
+        Assert.Equal(0, maintainer.CallCount);
+    }
+
+    [Fact]
+    public async Task ForgedMaintainSourceCommitmentIsFrozenAuthorityDefect() {
+        using RestoreFixture fixture =
+            await RestoreFixture.CreateAsync();
+        MaintainRecapBlockPlan sourcePlan = fixture.CreateMaintainPlan(
+            "frozen.self",
+            "frozen-maintainer",
+            endpointCount: 1
+        );
+        EventAddress sourceAnchor = fixture.CurrentHead;
+        _ = await fixture.PublishAsync(
+            sourceAnchor,
+            [sourcePlan],
+            new Dictionary<RecapBlockId, string> {
+                [sourcePlan.RecapBlockId] = "source-content"
+            }
+        );
+        DerivedRecapSetManifest sourceManifest = Assert.IsType<
+            PublishedPlanAtAnchorReadResult.Available
+        >(
+            await fixture.Store.ReadPublishedPlanAtAnchorAsync(
+                sourceAnchor
+            )
+        ).Snapshot.FrozenPlan;
+        var sourceEmpty = (EmptyRecapMaintainSource)sourcePlan.Source;
+        DerivedRecapBlock forgedSourceFinal =
+            DerivedRecapCodec.CreateBlock(
+                sourcePlan,
+                sourceEmpty.ReplayStartExclusive,
+                "source-content"
+            );
+        PublishedRecapSet forgedSourcePublication =
+            DerivedRecapCodec.CreatePublication(
+                sourceManifest,
+                [forgedSourceFinal]
+            );
+        await File.WriteAllBytesAsync(
+            fixture.PublicationPath(sourceAnchor),
+            DerivedRecapCodec.EncodePublication(
+                forgedSourcePublication
+            )
+        );
+        await File.WriteAllBytesAsync(
+            fixture.BlockPath(
+                sourceAnchor,
+                "blocks",
+                sourcePlan.RecapBlockId
+            ),
+            DerivedRecapCodec.EncodeBlock(forgedSourceFinal)
+        );
+        DerivedRecapFrozenInput input =
+            DerivedRecapCodec.CreateFrozenInput(
+                sourcePlan.RecapBlockId,
+                sourcePlan.Target,
+                sourceEmpty.ReplayStartExclusive,
+                sourceEmpty.ReplayStartSetups,
+                "source-content"
+            );
+        EventAddress target = fixture.AppendPair("forged-target");
+        var targetPlan = new MaintainRecapBlockPlan(
+            sourcePlan.RecapBlockId,
+            sourcePlan.Target,
+            sourcePlan.MaintainerId,
+            sourcePlan.MaintainerCapabilityFingerprint,
+            new ExistingRecapMaintainSource(
+                sourceAnchor,
+                input.AbsorbedThroughSetups,
+                forgedSourcePublication.EnvelopeSha256,
+                input.PayloadSha256
+            ),
+            [new RecapReplayBoundary(
+                target,
+                RecapPlannerWireTestFacts.SetupsAt(
+                    fixture.Engine,
+                    target
+                )
+            )],
+            EmptyRecapPriorContext.Instance,
+            RestoreFixture.MaxContent
+        );
+        DerivedRecapSetManifest targetManifest =
+            DerivedRecapCodec.CreateManifest(
+                fixture.Engine.BranchRefId,
+                target,
+                RecapPlannerWireTestFacts.SetupsAt(
+                    fixture.Engine,
+                    target
+                ),
+                [targetPlan]
+            );
+
+        RecapFrozenPlanBarrierResult result =
+            await RecapFrozenPlanBarrier.ProveAsync(
+                fixture.Engine,
+                fixture.Store,
+                targetManifest,
+                target,
+                RecapProtocolHardCaps.V4,
+                CancellationToken.None
+            );
+
+        RecapFrozenPlanBarrierDefect defect =
+            Assert.Single(result.Defects);
+        Assert.Equal(
+            RecapFrozenPlanBarrierDefectKind.FrozenAuthority,
+            defect.Kind
+        );
+        Assert.Contains(
+            "does not absorb through",
+            defect.Detail,
+            StringComparison.Ordinal
+        );
+    }
+
+
+
+    [Fact]
     public async Task RestoreRejectsStructurallyValidWrongReplayStartSetupsBeforeMaintainer() {
         using RestoreFixture fixture =
             await RestoreFixture.CreateAsync();
@@ -817,7 +1068,7 @@ public sealed class DerivedRecapRestoreExecutorTests {
     }
 
     [Fact]
-    public async Task LateInspectionBeyondIsInvariantFailureWithoutSideEffects() {
+    public async Task PlanSwitchAfterMetadataPreflightIsRetryableBeforeComponents() {
         int componentReadCount = 0;
         int mutationCount = 0;
         bool injectConcurrentPublication = false;
@@ -850,9 +1101,23 @@ public sealed class DerivedRecapRestoreExecutorTests {
             "frozen-maintainer",
             endpointCount: 1
         );
-        EventAddress anchor = fixture.CurrentHead;
-        EventAddress recentStart =
-            fixture.Lineage.HeadToOldest[4].Address;
+        _ = fixture.Engine.AppendRuntimeConfigSetup(
+            new SessionRuntimeConfiguration(
+                "model-plan-switch",
+                "surface-plan-switch",
+                SessionJournalDefaults.Schema,
+                new(0)
+            )
+        );
+        _ = fixture.Engine.AppendSystemPromptSetup(
+            "system-plan-switch"
+        );
+        EventAddress recentStart = fixture.AppendPair(
+            "plan-switch-start"
+        );
+        EventAddress anchor = fixture.AppendPair(
+            "plan-switch-anchor"
+        );
         var original = new MaintainRecapBlockPlan(
             template.RecapBlockId,
             template.Target,
@@ -936,25 +1201,26 @@ public sealed class DerivedRecapRestoreExecutorTests {
         mutationCount = 0;
         injectConcurrentPublication = true;
 
-        var unavailable = Assert.IsType<
-            DerivedRecapRestoreResult.Unavailable
-        >(
+        DerivedRecapRestoreResult result =
             await fixture.CreateExecutor([maintainer])
-                .RestoreAsync(anchor, fixture.CurrentHead)
+                .RestoreAsync(anchor, fixture.CurrentHead);
+        Assert.True(
+            result is DerivedRecapRestoreResult.Retryable,
+            result is DerivedRecapRestoreResult.BeyondPrefix observed
+                ? $"Unexpected Beyond stage={observed.Stage}, "
+                    + $"required={observed.Evidence.RequiredAnchor}, "
+                    + $"next={observed.Evidence.NextAddress}."
+                : $"Unexpected result {result.GetType().Name}."
         );
+        var retryable = (DerivedRecapRestoreResult.Retryable)result;
 
-        Assert.Contains(
-            unavailable.Defects,
-            static defect => defect.Code
-                == DerivedRecapRestoreDefectCodes.FrozenPlanInvalid
-                && defect.Detail.Contains(
-                    "contradicted",
-                    StringComparison.Ordinal
-                )
+        Assert.Equal(
+            DerivedRecapRestoreDefectCodes.ConcurrentPublishedChange,
+            retryable.Code
         );
         Assert.Equal(0, mutationCount);
         Assert.Equal(0, maintainer.CallCount);
-        Assert.Equal(1, componentReadCount);
+        Assert.Equal(0, componentReadCount);
     }
 
     [Fact]

@@ -164,6 +164,8 @@ internal sealed class DerivedRecapPlannerExecutor {
                 return Unavailable(selectedInvalid.Defects);
             case DerivedRecapSelection.BeyondPrefix beyond:
                 return new DerivedRecapExecutionResult.BeyondPrefix(
+                    DerivedRecapBeyondPrefixStage
+                        .NewPlanningSourceAnchor,
                     beyond.Evidence
                 );
             case DerivedRecapSelection.StoreUnavailable unavailable:
@@ -257,8 +259,24 @@ internal sealed class DerivedRecapPlannerExecutor {
         EventAddress emptyReplayStartExclusive;
         SessionHistoryPlanningWindow? provenPlanningWindow = null;
         try {
-            RecapReplayBoundary? earliestSource =
+            EarliestSourceBoundaryResolution earliestResolution =
                 FindEarliestSourceBoundary(lineage, sourcePlan);
+            if (earliestResolution.BeyondPrefix is { } sourceBeyond) {
+                return new DerivedRecapExecutionResult.BeyondPrefix(
+                    DerivedRecapBeyondPrefixStage
+                        .NewPlanningSourceAnchor,
+                    sourceBeyond
+                );
+            }
+            if (earliestResolution.OffLineageDetail is { } offLineage) {
+                return Unavailable(
+                    DerivedRecapExecutionDefectCodes
+                        .RawPlanningUnavailable,
+                    offLineage
+                );
+            }
+            RecapReplayBoundary? earliestSource =
+                earliestResolution.Boundary;
             EventAddress? earliestCursor = earliestSource?.Address;
             SessionHistoryPlanningWindow allRelevantRaw;
             if (earliestCursor is null) {
@@ -556,9 +574,9 @@ internal sealed class DerivedRecapPlannerExecutor {
 
         EventAddress admission =
             intentReady.Intent.SetAdmissionAnchor;
-        BuildingReadResult existing;
+        BuildingPlanReadResult existing;
         try {
-            existing = await _store.ReadBuildingAsync(
+            existing = await _store.ReadBuildingPlanAsync(
                     admission,
                     cancellationToken
                 )
@@ -570,12 +588,12 @@ internal sealed class DerivedRecapPlannerExecutor {
                 exception.Message
             );
         }
-        if (existing is BuildingReadResult.Invalid invalid) {
+        if (existing is BuildingPlanReadResult.Invalid invalid) {
             return Unavailable(invalid.Defects);
         }
-        if (existing is BuildingReadResult.Available alreadyBuilding) {
+        if (existing is BuildingPlanReadResult.Available alreadyBuilding) {
             return await _buildingExecutor.ResumeAsync(
-                    alreadyBuilding.Snapshot.Descriptor,
+                    alreadyBuilding.Snapshot,
                     cancellationToken
                 )
                 .ConfigureAwait(false);
@@ -657,8 +675,11 @@ internal sealed class DerivedRecapPlannerExecutor {
                     + "."
                 );
             case CreateBuildingResult.BeyondPrefix beyond:
-                return new DerivedRecapExecutionResult.BeyondPrefix(
-                    beyond.Evidence
+                return new DerivedRecapExecutionResult.Retryable(
+                    DerivedRecapExecutionDefectCodes.SourceChanged,
+                    "Building installation lineage authority changed "
+                    + "after bounded new-planning proof at "
+                    + $"'{beyond.Evidence.RequiredAnchor}'."
                 );
             case CreateBuildingResult.StoreUnavailable unavailable:
                 return Unavailable(
@@ -911,37 +932,45 @@ internal sealed class DerivedRecapPlannerExecutor {
         );
     }
 
-    private static RecapReplayBoundary? FindEarliestSourceBoundary(
+    private static EarliestSourceBoundaryResolution
+        FindEarliestSourceBoundary(
         SessionCurrentLineagePrefix lineage,
         PublishedPlanSnapshot? source
     ) {
         if (source is null) {
-            return null;
+            return new EarliestSourceBoundaryResolution(null);
         }
         if (source.BlockCommitments.Count == 0) {
             throw new InvalidDataException(
                 "Published source has no active frozen inputs."
             );
         }
-        Dictionary<EventAddress, int> lineageIndex =
-            lineage.HeadToOldest
-                .Select((node, index) => (node.Address, index))
-                .ToDictionary(
-                    static pair => pair.Address,
-                    static pair => pair.index
-                );
         RecapReplayBoundary? earliest = null;
         int earliestIndex = -1;
         foreach (RecapBlockCommitment commitment
                  in source.BlockCommitments) {
-            if (!lineageIndex.TryGetValue(
-                    commitment.AbsorbedThrough,
-                    out int inputIndex
-                )) {
-                throw new InvalidDataException(
-                    $"Published source block '{commitment.RecapBlockId}' "
-                    + "cursor is outside the captured raw lineage."
-                );
+            int inputIndex;
+            switch (lineage.Lookup(commitment.AbsorbedThrough)) {
+                case SessionCurrentLineageAnchorLookup.Found found:
+                    inputIndex = found.Index;
+                    break;
+                case SessionCurrentLineageAnchorLookup.BeyondPrefix beyond:
+                    return new EarliestSourceBoundaryResolution(
+                        Boundary: null,
+                        BeyondPrefix: beyond.Evidence
+                    );
+                case SessionCurrentLineageAnchorLookup.OffLineage:
+                    return new EarliestSourceBoundaryResolution(
+                        Boundary: null,
+                        OffLineageDetail:
+                            $"Published source block "
+                            + $"'{commitment.RecapBlockId}' cursor "
+                            + "is outside the captured raw lineage."
+                    );
+                default:
+                    throw new InvalidOperationException(
+                        "Unknown bounded-lineage lookup result."
+                    );
             }
             if (inputIndex > earliestIndex) {
                 earliest = new RecapReplayBoundary(
@@ -954,7 +983,7 @@ internal sealed class DerivedRecapPlannerExecutor {
                 earliestIndex = inputIndex;
             }
         }
-        return earliest;
+        return new EarliestSourceBoundaryResolution(earliest);
     }
 
     private static SessionContextAnchorSetupReferences FindFrozenSetups(
@@ -1017,6 +1046,8 @@ internal sealed class DerivedRecapPlannerExecutor {
         }
         if (observed is DerivedRecapSelection.BeyondPrefix beyond) {
             return new DerivedRecapExecutionResult.BeyondPrefix(
+                DerivedRecapBeyondPrefixStage
+                    .NewPlanningSourceAnchor,
                 beyond.Evidence
             );
         }
@@ -1081,6 +1112,8 @@ internal sealed class DerivedRecapPlannerExecutor {
             Unavailable(invalid.Defects),
         DerivedRecapSelection.BeyondPrefix beyond =>
             new DerivedRecapExecutionResult.BeyondPrefix(
+                DerivedRecapBeyondPrefixStage
+                    .NewPlanningSourceAnchor,
                 beyond.Evidence
             ),
         DerivedRecapSelection.StoreUnavailable unavailable =>
@@ -1243,6 +1276,12 @@ internal sealed class DerivedRecapPlannerExecutor {
     }
 
     private sealed record PreparedIntent(RecapPlanResult PlanResult);
+
+    private sealed record EarliestSourceBoundaryResolution(
+        RecapReplayBoundary? Boundary,
+        SessionCurrentLineageBeyondPrefix? BeyondPrefix = null,
+        string? OffLineageDetail = null
+    );
 }
 
 /// <summary>
@@ -1294,12 +1333,32 @@ internal sealed class DerivedRecapBuildingExecutor {
     public async ValueTask<DerivedRecapExecutionResult> ResumeAsync(
         EventAddress setAdmissionAnchor,
         CancellationToken cancellationToken = default
-    ) => await ResumeCoreAsync(
-            setAdmissionAnchor,
-            expectedDescriptor: null,
-            cancellationToken
-        )
-        .ConfigureAwait(false);
+    ) {
+        BuildingPlanReadResult read =
+            await _store.ReadBuildingPlanAsync(
+                    setAdmissionAnchor,
+                    cancellationToken
+                )
+                .ConfigureAwait(false);
+        return read switch {
+            BuildingPlanReadResult.Available available =>
+                await ResumeCoreAsync(
+                        available.Snapshot,
+                        expectedDescriptor: null,
+                        cancellationToken
+                    )
+                    .ConfigureAwait(false),
+            BuildingPlanReadResult.Invalid invalid =>
+                Unavailable(invalid.Defects),
+            BuildingPlanReadResult.Missing => Unavailable(
+                DerivedRecapExecutionDefectCodes.BuildingInvalid,
+                $"Building '{setAdmissionAnchor}' does not exist."
+            ),
+            _ => throw new InvalidOperationException(
+                "Unknown Building plan read result."
+            )
+        };
+    }
 
     public async ValueTask<DerivedRecapExecutionResult> ResumeAsync(
         BuildingDescriptor expectedDescriptor,
@@ -1312,24 +1371,105 @@ internal sealed class DerivedRecapBuildingExecutor {
                 nameof(expectedDescriptor)
             );
         }
-        return await ResumeCoreAsync(
-                expectedDescriptor.SetAdmissionAnchor,
-                expectedDescriptor,
-                cancellationToken
+        BuildingPlanReadResult read =
+            await _store.ReadBuildingPlanAsync(
+                    expectedDescriptor.SetAdmissionAnchor,
+                    cancellationToken
+                )
+                .ConfigureAwait(false);
+        return read switch {
+            BuildingPlanReadResult.Available available =>
+                await ResumeCoreAsync(
+                        available.Snapshot,
+                        expectedDescriptor,
+                        cancellationToken
+                    )
+                    .ConfigureAwait(false),
+            BuildingPlanReadResult.Invalid invalid =>
+                Unavailable(invalid.Defects),
+            BuildingPlanReadResult.Missing =>
+                new DerivedRecapExecutionResult.Retryable(
+                    DerivedRecapExecutionDefectCodes.SourceChanged,
+                    $"Expected Building '{expectedDescriptor}' "
+                    + "disappeared before frozen Resume."
+                ),
+            _ => throw new InvalidOperationException(
+                "Unknown Building plan read result."
             )
-            .ConfigureAwait(false);
+        };
     }
+
+    public async ValueTask<DerivedRecapExecutionResult> ResumeAsync(
+        BuildingPlanSnapshot plan,
+        CancellationToken cancellationToken = default
+    ) => await ResumeCoreAsync(
+            plan ?? throw new ArgumentNullException(nameof(plan)),
+            plan.Descriptor,
+            cancellationToken
+        )
+        .ConfigureAwait(false);
 
     private async ValueTask<DerivedRecapExecutionResult>
         ResumeCoreAsync(
-        EventAddress setAdmissionAnchor,
+        BuildingPlanSnapshot plan,
         BuildingDescriptor? expectedDescriptor,
         CancellationToken cancellationToken
     ) {
+        EventAddress expectedRawHead = _engine.ReadCurrentHead()
+            ?? throw new InvalidDataException(
+                "Frozen Resume requires a non-empty SessionJournal."
+            );
+        RecapFrozenPlanBarrierResult barrier;
+        try {
+            barrier = await RecapFrozenPlanBarrier.ProveAsync(
+                    _engine,
+                    _store,
+                    plan.Manifest,
+                    expectedRawHead,
+                    _hardCaps,
+                    cancellationToken
+                )
+                .ConfigureAwait(false);
+        }
+        catch (RecapRawHeadChangedException changed) {
+            return RetryableRawHead(changed.Expected, changed.Observed);
+        }
+        catch (Exception exception) when (IsAvailabilityException(exception)) {
+            return Unavailable(
+                DerivedRecapExecutionDefectCodes.RawPlanningUnavailable,
+                exception.Message
+            );
+        }
+        if (barrier.BeyondPrefix is { } beyond) {
+            return new DerivedRecapExecutionResult.BeyondPrefix(
+                DerivedRecapBeyondPrefixStage.ResumePendingWindow,
+                beyond
+            );
+        }
+        if (barrier.Defects.Count != 0) {
+            return new DerivedRecapExecutionResult.Unavailable([
+                .. barrier.Defects.Select(defect =>
+                    new DerivedRecapExecutionDefect(
+                        defect.Kind switch {
+                            RecapFrozenPlanBarrierDefectKind
+                                .ExecutionLimit =>
+                                DerivedRecapExecutionDefectCodes
+                                    .ExecutionLimitExceeded,
+                            RecapFrozenPlanBarrierDefectKind
+                                .StoreUnavailable =>
+                                DerivedRecapExecutionDefectCodes
+                                    .StoreUnavailable,
+                            _ => DerivedRecapExecutionDefectCodes
+                                .BuildingInvalid
+                        },
+                        defect.Detail
+                    ))
+            ]);
+        }
         BuildingReadResult read;
         try {
             read = await _store.ReadBuildingAsync(
-                    setAdmissionAnchor,
+                    plan.Handle,
                     cancellationToken
                 )
                 .ConfigureAwait(false);
@@ -1351,6 +1491,7 @@ internal sealed class DerivedRecapBuildingExecutor {
                     )
                     : await ExecuteAndPublishAsync(
                             available.Snapshot,
+                            plan.Handle,
                             cancellationToken
                         )
                         .ConfigureAwait(false),
@@ -1360,7 +1501,7 @@ internal sealed class DerivedRecapBuildingExecutor {
                 expectedDescriptor is null
                     ? Unavailable(
                         DerivedRecapExecutionDefectCodes.BuildingInvalid,
-                        $"Building '{setAdmissionAnchor}' does not exist."
+                        $"Building '{plan.Descriptor.SetAdmissionAnchor}' does not exist."
                     )
                     : new DerivedRecapExecutionResult.Retryable(
                         DerivedRecapExecutionDefectCodes.SourceChanged,
@@ -1386,12 +1527,14 @@ internal sealed class DerivedRecapBuildingExecutor {
     private async ValueTask<DerivedRecapExecutionResult>
         ExecuteAndPublishAsync(
         BuildingSnapshot building,
+        BuildingPlanHandle handle,
         CancellationToken cancellationToken
     ) {
         PreparedBuilding prepared;
         try {
             prepared = await PrepareBuildingAsync(
                     building,
+                    handle,
                     cancellationToken
                 )
                 .ConfigureAwait(false);
@@ -1407,9 +1550,11 @@ internal sealed class DerivedRecapBuildingExecutor {
             );
         }
         if (prepared.BeyondPrefix is { } beyondPrefix) {
-            return new DerivedRecapExecutionResult.BeyondPrefix(
-                DerivedRecapBeyondPrefixStage.ResumePendingWindow,
-                beyondPrefix
+            return Unavailable(
+                DerivedRecapExecutionDefectCodes.BuildingInvalid,
+                "Exact Building content contradicted its completed "
+                + "metadata/header proof at "
+                + $"'{beyondPrefix.RequiredAnchor}'."
             );
         }
         if (prepared.Defects.Count != 0) {
@@ -1423,6 +1568,7 @@ internal sealed class DerivedRecapBuildingExecutor {
             try {
                 blockResult = await EnsureBlockAsync(
                             building,
+                            handle,
                             plan,
                             prepared.Inspections[plan.RecapBlockId],
                             prepared.Windows,
@@ -1455,8 +1601,11 @@ internal sealed class DerivedRecapBuildingExecutor {
                 case RecapPublishability.NotPublishable notPublishable:
                     return Unavailable(notPublishable.Defects);
                 case RecapPublishability.BeyondPrefix beyond:
-                    return new DerivedRecapExecutionResult.BeyondPrefix(
-                        beyond.Evidence
+                    return new DerivedRecapExecutionResult.Retryable(
+                        DerivedRecapExecutionDefectCodes.SourceChanged,
+                        "Publishability lineage authority changed after "
+                        + "the completed Resume proof at "
+                        + $"'{beyond.Evidence.RequiredAnchor}'."
                     );
                 case RecapPublishability.StoreUnavailable unavailable:
                     return Unavailable(
@@ -1482,8 +1631,11 @@ internal sealed class DerivedRecapBuildingExecutor {
                 PublishRecapResult.NotPublishable notPublishable =>
                     Unavailable(notPublishable.Defects),
                 PublishRecapResult.BeyondPrefix beyond =>
-                    new DerivedRecapExecutionResult.BeyondPrefix(
-                        beyond.Evidence
+                    new DerivedRecapExecutionResult.Retryable(
+                        DerivedRecapExecutionDefectCodes.SourceChanged,
+                        "Publication lineage authority changed after "
+                        + "the completed Resume proof at "
+                        + $"'{beyond.Evidence.RequiredAnchor}'."
                     ),
                 PublishRecapResult.StoreUnavailable unavailable =>
                     Unavailable(
@@ -1520,6 +1672,7 @@ internal sealed class DerivedRecapBuildingExecutor {
 
     private async ValueTask<PreparedBuilding> PrepareBuildingAsync(
         BuildingSnapshot building,
+        BuildingPlanHandle handle,
         CancellationToken cancellationToken
     ) {
         var defects = new List<DerivedRecapExecutionDefect>();
@@ -1691,7 +1844,7 @@ internal sealed class DerivedRecapBuildingExecutor {
         foreach (RecapBlockPlan plan in building.Manifest.Blocks) {
             BuildingBlockInspection inspection =
                 await _store.InspectBuildingBlockAsync(
-                        building.Descriptor,
+                        handle,
                         plan.RecapBlockId,
                         cancellationToken
                     )
@@ -1784,6 +1937,7 @@ internal sealed class DerivedRecapBuildingExecutor {
     private async ValueTask<DerivedRecapExecutionResult?>
         EnsureBlockAsync(
         BuildingSnapshot building,
+        BuildingPlanHandle handle,
         RecapBlockPlan plan,
         BuildingBlockInspection inspection,
         IReadOnlyDictionary<
@@ -1814,8 +1968,9 @@ internal sealed class DerivedRecapBuildingExecutor {
                 input.Content
             );
             return await EnsureFinalAsync(
-                    building.Descriptor,
-                    inspection,
+                            building.Descriptor,
+                            handle,
+                            inspection,
                     candidate,
                     cancellationToken
                 )
@@ -1932,7 +2087,7 @@ internal sealed class DerivedRecapBuildingExecutor {
                     nextEndpoint++;
                     inspection = await _store
                         .InspectBuildingBlockAsync(
-                            building.Descriptor,
+                            handle,
                             plan.RecapBlockId,
                             cancellationToken
                         )
@@ -1944,7 +2099,7 @@ internal sealed class DerivedRecapBuildingExecutor {
                     nextEndpoint++;
                     inspection = await _store
                         .InspectBuildingBlockAsync(
-                            building.Descriptor,
+                            handle,
                             plan.RecapBlockId,
                             cancellationToken
                         )
@@ -1954,7 +2109,7 @@ internal sealed class DerivedRecapBuildingExecutor {
                 case CheckpointWriteResult.Stale:
                     BuildingBlockInspection refreshed =
                         await _store.InspectBuildingBlockAsync(
-                                building.Descriptor,
+                                handle,
                                 plan.RecapBlockId,
                                 cancellationToken
                             )
@@ -2007,7 +2162,7 @@ internal sealed class DerivedRecapBuildingExecutor {
         }
         BuildingBlockInspection finalInspection =
             await _store.InspectBuildingBlockAsync(
-                    building.Descriptor,
+                    handle,
                     plan.RecapBlockId,
                     cancellationToken
                 )
@@ -2017,6 +2172,7 @@ internal sealed class DerivedRecapBuildingExecutor {
         }
         return await EnsureFinalAsync(
                 building.Descriptor,
+                handle,
                 finalInspection,
                 currentBlock,
                 cancellationToken
@@ -2026,6 +2182,7 @@ internal sealed class DerivedRecapBuildingExecutor {
 
     private async ValueTask<DerivedRecapExecutionResult?> EnsureFinalAsync(
         BuildingDescriptor building,
+        BuildingPlanHandle handle,
         BuildingBlockInspection inspection,
         DerivedRecapBlock candidate,
         CancellationToken cancellationToken
@@ -2052,7 +2209,7 @@ internal sealed class DerivedRecapBuildingExecutor {
             case FinalBlockWriteResult.Stale:
                 BuildingBlockInspection refreshed =
                     await _store.InspectBuildingBlockAsync(
-                            building,
+                            handle,
                             inspection.Plan.RecapBlockId,
                             cancellationToken
                         )

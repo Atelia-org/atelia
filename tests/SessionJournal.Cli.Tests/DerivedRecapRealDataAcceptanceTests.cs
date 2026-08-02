@@ -179,10 +179,10 @@ public sealed class DerivedRecapRealDataAcceptanceTests {
                     copyPath,
                     branchRefId
                 );
-                BuildingReadResult.Available building = Assert.IsType<
-                    BuildingReadResult.Available
+                BuildingPlanReadResult.Available building = Assert.IsType<
+                    BuildingPlanReadResult.Available
                 >(
-                    await store.ReadBuildingAsync(admissionAddress)
+                    await store.ReadBuildingPlanAsync(admissionAddress)
                 );
                 MaintainRecapBlockPlan[] maintained = [
                     .. building.Snapshot.Manifest.Blocks

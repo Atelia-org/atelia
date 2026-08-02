@@ -529,8 +529,8 @@ public sealed class ProgramRecapStoreCommandTests : IDisposable {
                 fixture.Path,
                 engine.BranchRefId
             );
-            Assert.IsType<BuildingReadResult.Missing>(
-                await store.ReadBuildingAsync(fixture.Anchor)
+            Assert.IsType<BuildingPlanReadResult.Missing>(
+                await store.ReadBuildingPlanAsync(fixture.Anchor)
             );
         }
         Assert.Equal(raw, ReadRawSnapshot(fixture.Path));
@@ -831,13 +831,13 @@ public sealed class ProgramRecapStoreCommandTests : IDisposable {
         EventAddress anchor,
         DerivedRecapBlock block
     ) {
-        BuildingReadResult.Available building =
-            Assert.IsType<BuildingReadResult.Available>(
-                await store.ReadBuildingAsync(anchor)
-            );
+        BuildingPlanSnapshot building =
+            Assert.IsType<BuildingPlanReadResult.Available>(
+                await store.ReadBuildingPlanAsync(anchor)
+            ).Snapshot;
         BuildingBlockInspection inspection =
             await store.InspectBuildingBlockAsync(
-                building.Snapshot.Descriptor,
+                building.Handle,
                 block.RecapBlockId
             );
         var maintain = Assert.IsType<MaintainRecapBlockPlan>(
@@ -861,7 +861,7 @@ public sealed class ProgramRecapStoreCommandTests : IDisposable {
                 )
             );
             inspection = await store.InspectBuildingBlockAsync(
-                building.Snapshot.Descriptor,
+                building.Handle,
                 block.RecapBlockId
             );
         }

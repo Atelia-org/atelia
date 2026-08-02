@@ -307,6 +307,7 @@ public sealed class SessionBoundedLineageTests : IDisposable {
         Assert.Equal(headAt513, beyond513.CapturedHead);
         Assert.Equal(513, beyond513.HeaderCount);
         Assert.Equal(start, beyond513.NextAddress);
+        Assert.Null(beyond513.ContinuationEvidence.RequiredAnchor);
         Assert.Equal(0, beyond513.Diagnostics.PayloadReads);
         Assert.Equal(before.PayloadReadCount, after.PayloadReadCount);
 
@@ -374,6 +375,272 @@ public sealed class SessionBoundedLineageTests : IDisposable {
         Assert.Equal(1, beyond.HeaderCount);
         Assert.Equal(created, beyond.NextAddress);
         Assert.Equal(before.PayloadReadCount, after.PayloadReadCount);
+    }
+
+    [Fact]
+    public void BoundedGoverningSetupProof_IsHeaderOnlyUntilMaterialized() {
+        string path = NewPath();
+        using var engine = SessionJournalEngine.Create(
+            path,
+            new SessionCreateOptions(
+                "model-A",
+                "system-A",
+                "surface-A"
+            )
+        );
+        EventAddress boundary =
+            engine.InspectExecutionBoundary().Head!.Value;
+        SessionContextAnchorSetupReferences setups =
+            engine.ResolveContextAnchorSetupReferences(boundary);
+        SessionJournalReadDiagnostics before =
+            engine.CaptureReadDiagnostics();
+
+        var available = Assert.IsType<
+            SessionGoverningSetupProofResult.Available
+        >(engine.ProveGoverningSetupAtBounded(
+            boundary,
+            setups,
+            maxHeaderCount: 3
+        ));
+        SessionJournalReadDiagnostics afterProof =
+            engine.CaptureReadDiagnostics();
+
+        Assert.Equal(boundary, available.Proof.Boundary);
+        Assert.Equal(setups, available.Proof.ExpectedSetups);
+        Assert.Equal(3, available.Proof.Diagnostics.HeaderVisits);
+        Assert.Equal(0, available.Proof.Diagnostics.PayloadReads);
+        Assert.Equal(
+            before.PayloadReadCount,
+            afterProof.PayloadReadCount
+        );
+        Assert.Empty(typeof(SessionGoverningSetupProof)
+            .GetConstructors());
+
+        SessionHistoryPlanningSeed seed =
+            engine.MaterializeHistoryPlanningSeed(available.Proof);
+
+        Assert.Equal(boundary, seed.Address);
+        Assert.Equal(setups, seed.Setups);
+        Assert.True(
+            engine.CaptureReadDiagnostics().PayloadReadCount
+                > afterProof.PayloadReadCount
+        );
+    }
+
+    [Fact]
+    public void BoundedGoverningSetupProof_RejectsOldButRealReferencesHeaderOnly() {
+        string path = NewPath();
+        using var engine = SessionJournalEngine.Create(
+            path,
+            new SessionCreateOptions(
+                "model-A",
+                "system-A",
+                "surface-A"
+            )
+        );
+        EventAddress created =
+            engine.InspectExecutionBoundary().Head!.Value;
+        SessionContextAnchorSetupReferences oldSetups =
+            engine.ResolveContextAnchorSetupReferences(created);
+        _ = engine.AppendRuntimeConfigSetup(
+            new SessionRuntimeConfiguration(
+                "model-B",
+                "surface-B",
+                SessionJournalDefaults.Schema,
+                new(0)
+            )
+        );
+        EventAddress boundary =
+            engine.AppendSystemPromptSetup("system-B");
+        SessionJournalReadDiagnostics before =
+            engine.CaptureReadDiagnostics();
+
+        InvalidDataException error = Assert.Throws<InvalidDataException>(
+            () => engine.ProveGoverningSetupAtBounded(
+                boundary,
+                oldSetups,
+                maxHeaderCount: 8
+            )
+        );
+        SessionJournalReadDiagnostics after =
+            engine.CaptureReadDiagnostics();
+
+        Assert.Contains("first system-prompt-setup", error.Message);
+        Assert.Equal(before.PayloadReadCount, after.PayloadReadCount);
+        Assert.Equal(
+            1,
+            after.HeaderPreviewReadCount
+                - before.HeaderPreviewReadCount
+        );
+    }
+
+    [Fact]
+    public void BoundedGoverningSetupProof_ReturnsBeyondAt513And514Headers() {
+        (
+            string path,
+            _,
+            EventAddress boundary,
+            _,
+            _,
+            SessionContextAnchorSetupReferences setups
+        ) = CreatePlanningLineage();
+        using var engine = SessionJournalEngine.Open(path);
+        SessionJournalReadDiagnostics before =
+            engine.CaptureReadDiagnostics();
+
+        var beyond513 = Assert.IsType<
+            SessionGoverningSetupProofResult.BeyondPrefix
+        >(engine.ProveGoverningSetupAtBounded(
+            boundary,
+            setups,
+            maxHeaderCount: 513
+        ));
+        var beyond514 = Assert.IsType<
+            SessionGoverningSetupProofResult.BeyondPrefix
+        >(engine.ProveGoverningSetupAtBounded(
+            boundary,
+            setups,
+            maxHeaderCount: 514
+        ));
+        SessionJournalReadDiagnostics after =
+            engine.CaptureReadDiagnostics();
+
+        Assert.Equal(boundary, beyond513.Evidence.Boundary);
+        Assert.Equal(513, beyond513.Evidence.HeaderCount);
+        Assert.Equal(514, beyond514.Evidence.HeaderCount);
+        Assert.Equal(
+            setups.RuntimeConfig.Address,
+            beyond513.Evidence.RequiredAnchor
+        );
+        Assert.Equal(
+            setups.RuntimeConfig.Address,
+            beyond514.Evidence.RequiredAnchor
+        );
+        Assert.NotEqual(
+            beyond513.Evidence.NextAddress,
+            beyond514.Evidence.NextAddress
+        );
+        Assert.Equal(0, beyond513.Diagnostics.PayloadReads);
+        Assert.Equal(0, beyond514.Diagnostics.PayloadReads);
+        Assert.Equal(before.PayloadReadCount, after.PayloadReadCount);
+    }
+
+    [Fact]
+    public void BoundedGoverningSetupProof_StopsAtExactBoundaryAndAfterExpectedSetups() {
+        var journalOptions = new EventJournalOptions {
+            EventSegmentStoreOptions =
+                new RbfSegmentStoreOptions {
+                    SegmentSizeThresholdBytes = 4,
+                    CacheMode = RbfCacheMode.Off
+                }
+        };
+        string path = NewPath();
+        EventAddress missingOlder;
+        EventAddress boundary;
+        SessionContextAnchorSetupReferences setups;
+        using (EventJournal.EventJournal journal =
+               EventJournal.EventJournal.CreateNew(
+                   path,
+                   journalOptions
+               )) {
+            RefId main = journal.CreateBranch(
+                SessionJournalDefaults.MainBranchName,
+                startPoint: null
+            ).Unwrap();
+            missingOlder = AppendRaw(
+                journal,
+                parent: null,
+                SessionEventKind.ObservationAccepted,
+                new ObservationAcceptedBody("unreachable older payload")
+            );
+            var runtimeBody = new SessionRuntimeConfiguration(
+                "model-A",
+                "surface-A",
+                SessionJournalDefaults.Schema,
+                new(0)
+            );
+            byte[] runtimePayload = SessionEventCodec.Encode(
+                SessionEventKind.RuntimeConfigSetup,
+                runtimeBody
+            );
+            EventAddress runtime = journal.AppendEventFrame(
+                missingOlder,
+                runtimePayload,
+                (uint)SessionEventKind.RuntimeConfigSetup,
+                hint: default
+            ).Unwrap();
+            var promptBody = new SystemPromptSetupBody("system-A");
+            byte[] promptPayload = SessionEventCodec.Encode(
+                SessionEventKind.SystemPromptSetup,
+                promptBody
+            );
+            EventAddress prompt = journal.AppendEventFrame(
+                runtime,
+                promptPayload,
+                (uint)SessionEventKind.SystemPromptSetup,
+                hint: default
+            ).Unwrap();
+            setups = new SessionContextAnchorSetupReferences(
+                new SessionContextSetupReference(
+                    runtime,
+                    SessionEventCodec.GetExpectedBodySchemaVersion(
+                        SessionEventKind.RuntimeConfigSetup
+                    ),
+                    SessionRequestCanonicalizer.Sha256Hex(
+                        runtimePayload
+                    )
+                ),
+                new SessionContextSetupReference(
+                    prompt,
+                    SessionEventCodec.GetExpectedBodySchemaVersion(
+                        SessionEventKind.SystemPromptSetup
+                    ),
+                    SessionRequestCanonicalizer.Sha256Hex(
+                        promptPayload
+                    )
+                )
+            );
+            boundary = AppendRaw(
+                journal,
+                prompt,
+                SessionEventKind.SessionCreated,
+                new SessionCreatedBody(SessionCreationOrigin.Native)
+            );
+            Assert.True(journal.MoveRef(main, null, boundary).Unwrap());
+            _ = AppendRaw(
+                journal,
+                boundary,
+                SessionEventKind.ObservationAccepted,
+                new ObservationAcceptedBody("unreferenced newer suffix")
+            );
+        }
+        TruncateEventSegment(path, missingOlder.SegmentNumber);
+        using var engine = SessionJournalEngine.OpenForTest(
+            path,
+            runtime: null,
+            new SessionJournalTestHooks(),
+            journalOptions
+        );
+        SessionJournalReadDiagnostics before =
+            engine.CaptureReadDiagnostics();
+
+        var available = Assert.IsType<
+            SessionGoverningSetupProofResult.Available
+        >(engine.ProveGoverningSetupAtBounded(
+            boundary,
+            setups,
+            maxHeaderCount: 8
+        ));
+        SessionJournalReadDiagnostics afterProof =
+            engine.CaptureReadDiagnostics();
+
+        Assert.Equal(3, available.Proof.Diagnostics.HeaderVisits);
+        Assert.Equal(
+            3,
+            afterProof.HeaderPreviewReadCount
+                - before.HeaderPreviewReadCount
+        );
+        Assert.Equal(before.PayloadReadCount, afterProof.PayloadReadCount);
     }
 
     [Fact]

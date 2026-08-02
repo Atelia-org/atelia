@@ -25,6 +25,7 @@ internal sealed record RecapStoreTestHooks(
     Action? BeforeRestorePublicationRead = null,
     Action? BeforeRestoreComponentRead = null,
     Action? BeforeRestoreEnvelopeRawHeadRecheck = null,
+    Action? BeforeBuildingComponentRead = null,
     Action? BeforeBuildingQuarantineRename = null,
     Action? AfterBuildingQuarantineRename = null
 );
@@ -390,7 +391,10 @@ public sealed class DerivedRecapStore {
         }
         if (firstCapture.Publication is null) {
             return new PublishedPlanAtAnchorReadResult
-                .ManifestWitnessAvailable(firstCapture.Manifest);
+                .ManifestWitnessAvailable(
+                    firstCapture.Manifest,
+                    CreatePublishedRestorePlanAuthority(firstCapture)
+                );
         }
         PublishedRecapSet publication = firstCapture.Publication;
         return new PublishedPlanAtAnchorReadResult.Available(
@@ -405,7 +409,62 @@ public sealed class DerivedRecapStore {
                 BlockCommitments = Array.AsReadOnly(
                     publication.BlockCommitments.ToArray()
                 )
-            }
+            },
+            CreatePublishedRestorePlanAuthority(firstCapture)
+        );
+    }
+
+    private PublishedRestorePlanAuthority
+        CreatePublishedRestorePlanAuthority(
+        RestoreAuthorityCapture capture
+    ) => new(
+        SessionRepositoryPath,
+        RefId,
+        capture.Manifest.SetAdmissionAnchor,
+        capture.Kind,
+        capture.AuthorityStateToken,
+        capture.Manifest.ManifestPayloadSha256,
+        Array.AsReadOnly(
+            capture.Manifest.Blocks
+                .Select(static plan => plan.RecapBlockId)
+                .ToArray()
+        ),
+        Array.AsReadOnly(
+            capture.Publication?.BlockCommitments.ToArray()
+                ?? Array.Empty<RecapBlockCommitment>()
+        )
+    );
+
+    private static bool MatchesRestorePlanAuthority(
+        PublishedRestorePlanAuthority expected,
+        RestoreAuthorityCapture observed
+    ) {
+        if (expected.AuthorityKind != observed.Kind
+            || !string.Equals(
+                expected.AuthorityStateToken,
+                observed.AuthorityStateToken,
+                StringComparison.Ordinal
+            )
+            || !string.Equals(
+                expected.ManifestPayloadSha256,
+                observed.Manifest.ManifestPayloadSha256,
+                StringComparison.Ordinal
+            )) {
+            return false;
+        }
+        RecapBlockId[] observedRoster = [
+            .. observed.Manifest.Blocks.Select(
+                static plan => plan.RecapBlockId
+            )
+        ];
+        if (!expected.BlockRoster.SequenceEqual(observedRoster)) {
+            return false;
+        }
+        RecapBlockCommitment[] observedCommitments =
+            observed.Publication?.BlockCommitments.ToArray()
+                ?? [];
+        return expected.BlockCommitments.SequenceEqual(
+            observedCommitments
         );
     }
 
@@ -777,7 +836,7 @@ public sealed class DerivedRecapStore {
         );
     }
 
-    public async ValueTask<BuildingReadResult> ReadBuildingAsync(
+    internal async ValueTask<BuildingReadResult> ReadBuildingAsync(
         EventAddress admissionAnchor,
         CancellationToken cancellationToken = default
     ) {
@@ -810,21 +869,17 @@ public sealed class DerivedRecapStore {
     }
 
     /// <summary>
-    /// Enters the content phase for one manifest-authorized Building. The handle cannot be
-    /// constructed publicly or moved across Store instances.
+    /// Enters the content phase for one manifest-authorized Building. The
+    /// handle cannot be constructed publicly. It is portable across Store
+    /// reopen/new instances only when the normalized repository path and RefId
+    /// still match.
     /// </summary>
     public async ValueTask<BuildingReadResult> ReadBuildingAsync(
         BuildingPlanHandle handle,
         CancellationToken cancellationToken = default
     ) {
-        ArgumentNullException.ThrowIfNull(handle);
-        if (!StorePathsEqual(handle.OwnerPath, SessionRepositoryPath)
-            || handle.Descriptor.RefId != RefId) {
-            throw new ArgumentException(
-                "Building plan handle belongs to another Store.",
-                nameof(handle)
-            );
-        }
+        ValidateBuildingPlanHandle(handle);
+        _testHooks.BeforeBuildingComponentRead?.Invoke();
         BuildingReadResult result = await ReadBuildingAsync(
                 handle.Descriptor.SetAdmissionAnchor,
                 cancellationToken
@@ -840,6 +895,17 @@ public sealed class DerivedRecapStore {
             ]);
         }
         return result;
+    }
+
+    private void ValidateBuildingPlanHandle(BuildingPlanHandle handle) {
+        ArgumentNullException.ThrowIfNull(handle);
+        if (!StorePathsEqual(handle.OwnerPath, SessionRepositoryPath)
+            || handle.Descriptor.RefId != RefId) {
+            throw new ArgumentException(
+                "Building plan handle belongs to another repository or RefId.",
+                nameof(handle)
+            );
+        }
     }
 
     /// <summary>
@@ -1070,7 +1136,25 @@ public sealed class DerivedRecapStore {
         }
     }
 
-    public async ValueTask<BuildingBlockInspection>
+    /// <summary>
+    /// Inspects one block in the content phase authorized by an exact Building
+    /// metadata handle.
+    /// </summary>
+    public ValueTask<BuildingBlockInspection>
+        InspectBuildingBlockAsync(
+        BuildingPlanHandle handle,
+        RecapBlockId blockId,
+        CancellationToken cancellationToken = default
+    ) {
+        ValidateBuildingPlanHandle(handle);
+        return InspectBuildingBlockAsync(
+            handle.Descriptor,
+            blockId,
+            cancellationToken
+        );
+    }
+
+    internal async ValueTask<BuildingBlockInspection>
         InspectBuildingBlockAsync(
         BuildingDescriptor building,
         RecapBlockId blockId,
@@ -1847,6 +1931,43 @@ public sealed class DerivedRecapStore {
         EventAddress admissionAnchor,
         DerivedRecapLineageView lineage,
         CancellationToken cancellationToken = default
+    ) => await InspectPublishedForRestoreAsync(
+            admissionAnchor,
+            expectedAuthority: null,
+            lineage,
+            cancellationToken
+        )
+        .ConfigureAwait(false);
+
+    internal async ValueTask<PublishedRestoreInspectionResult>
+        InspectPublishedForRestoreAsync(
+        PublishedRestorePlanAuthority authority,
+        DerivedRecapLineageView lineage,
+        CancellationToken cancellationToken = default
+    ) {
+        ArgumentNullException.ThrowIfNull(authority);
+        if (!StorePathsEqual(authority.OwnerPath, SessionRepositoryPath)
+            || authority.RefId != RefId) {
+            throw new ArgumentException(
+                "Published restore plan authority belongs to another Store.",
+                nameof(authority)
+            );
+        }
+        return await InspectPublishedForRestoreAsync(
+                authority.SetAdmissionAnchor,
+                authority,
+                lineage,
+                cancellationToken
+            )
+            .ConfigureAwait(false);
+    }
+
+    private async ValueTask<PublishedRestoreInspectionResult>
+        InspectPublishedForRestoreAsync(
+        EventAddress admissionAnchor,
+        PublishedRestorePlanAuthority? expectedAuthority,
+        DerivedRecapLineageView lineage,
+        CancellationToken cancellationToken
     ) {
         ArgumentNullException.ThrowIfNull(lineage);
         StoreReadLockAttempt lockAttempt =
@@ -1899,7 +2020,7 @@ public sealed class DerivedRecapStore {
                     publishedPath,
                     admissionAnchor,
                     lineageIndex,
-                    available.AdmissionPrefix,
+                    expectedAuthority,
                     cancellationToken
                 )
                 .ConfigureAwait(false);
@@ -3559,7 +3680,7 @@ public sealed class DerivedRecapStore {
         string publishedPath,
         EventAddress expectedAnchor,
         IReadOnlyDictionary<EventAddress, int> lineage,
-        SessionCurrentLineagePrefix lineagePrefix,
+        PublishedRestorePlanAuthority? expectedAuthority,
         CancellationToken cancellationToken
     ) {
         RestoreAuthorityRead authority =
@@ -3573,6 +3694,17 @@ public sealed class DerivedRecapStore {
             return new PublishedRestoreInspectionResult.Unavailable(
                 expectedAnchor,
                 authority.Defects
+            );
+        }
+        if (expectedAuthority is not null
+            && !MatchesRestorePlanAuthority(
+                expectedAuthority,
+                capture
+            )) {
+            return RestoreUnavailable(
+                expectedAnchor,
+                "ConcurrentPublishedChange",
+                "Published restore authority changed after metadata preflight."
             );
         }
         _testHooks.BeforeRestoreComponentRead?.Invoke();
@@ -3661,16 +3793,6 @@ public sealed class DerivedRecapStore {
                            and not FrozenRecapInputHealth.Healthy;
         });
         if (!exactIncomplete) {
-            if (FindRestoreBeyondPrefix(
-                    capture.Manifest,
-                    inputs,
-                    finals,
-                    lineagePrefix
-                ) is { } beyond) {
-                return new PublishedRestoreInspectionResult.BeyondPrefix(
-                    beyond
-                );
-            }
             IReadOnlyList<RecapStructuralDefect> semanticDefects =
                 ValidateRestoreLineageSemantics(
                     capture.Manifest,

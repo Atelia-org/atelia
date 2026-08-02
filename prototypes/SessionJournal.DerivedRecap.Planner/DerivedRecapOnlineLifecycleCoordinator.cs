@@ -648,8 +648,59 @@ public sealed class DerivedRecapOnlineLifecycleCoordinator
                 + "Published restore inspection."
             );
         }
+        PublishedPlanAtAnchorReadResult planRead =
+            await store.ReadPublishedPlanAtAnchorAsync(
+                    admissionAnchor,
+                    cancellationToken
+                )
+                .ConfigureAwait(false);
+        PublishedRestorePlanAuthority authority;
+        switch (planRead) {
+            case PublishedPlanAtAnchorReadResult.Available available:
+                authority = available.Authority;
+                break;
+            case PublishedPlanAtAnchorReadResult
+                .ManifestWitnessAvailable witness:
+                authority = witness.Authority;
+                break;
+            case PublishedPlanAtAnchorReadResult.Changed:
+                return new PublishedRestoreInspectionResult.Unavailable(
+                    admissionAnchor,
+                    [new RecapStructuralDefect(
+                        "ConcurrentPublishedChange",
+                        "Published metadata changed during lifecycle preflight."
+                    )]
+                );
+            case PublishedPlanAtAnchorReadResult.Missing:
+                return new PublishedRestoreInspectionResult.Unavailable(
+                    admissionAnchor,
+                    [new RecapStructuralDefect(
+                        "PublishedMembershipMissing",
+                        "Exact Published metadata is missing."
+                    )]
+                );
+            case PublishedPlanAtAnchorReadResult.Unavailable unavailable:
+                return new PublishedRestoreInspectionResult.Unavailable(
+                    admissionAnchor,
+                    unavailable.Defects
+                );
+            default:
+                throw new InvalidDataException(
+                    "Unknown Published metadata preflight result."
+                );
+        }
+        foreach (RecapBlockCommitment commitment
+                 in authority.BlockCommitments) {
+            if (expectedLineage.Lookup(commitment.AbsorbedThrough)
+                    is SessionCurrentLineageAnchorLookup
+                        .BeyondPrefix beyond) {
+                return new PublishedRestoreInspectionResult.BeyondPrefix(
+                    beyond.Evidence
+                );
+            }
+        }
         return await view.InspectPublishedForRestoreAsync(
-                admissionAnchor,
+                authority,
                 cancellationToken
             )
             .ConfigureAwait(false);
