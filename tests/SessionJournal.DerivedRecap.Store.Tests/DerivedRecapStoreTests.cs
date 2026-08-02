@@ -436,7 +436,7 @@ public sealed class DerivedRecapStoreTests {
     }
 
     [Fact]
-    public async Task PublicationReadersShareCanonicalHealthDefinition() {
+    public async Task PublicationReadersRespectLayeredAuthorityBoundaries() {
         using RecapStoreFixture fixture =
             await RecapStoreFixture.CreateAsync();
         DerivedRecapLineageView lineage = fixture.Lineage();
@@ -466,8 +466,18 @@ public sealed class DerivedRecapStoreTests {
         Assert.IsType<PublishedPlanReadResult.Unavailable>(
             await fixture.Store.ReadPublishedPlanAsync(descriptor)
         );
-        Assert.IsType<PublishedPlanAtAnchorReadResult.Unavailable>(
-            await fixture.Store.ReadPublishedPlanAtAnchorAsync(anchor)
+        PublishedPlanAtAnchorReadResult.ManifestWitnessAvailable witness =
+            Assert.IsType<
+                PublishedPlanAtAnchorReadResult
+                    .ManifestWitnessAvailable
+            >(
+                await fixture.Store
+                    .ReadPublishedPlanAtAnchorAsync(anchor)
+            );
+        Assert.Equal(anchor, witness.FrozenPlan.SetAdmissionAnchor);
+        Assert.Equal(
+            PublishedRestoreAuthorityKind.ManifestWitness,
+            witness.Authority.AuthorityKind
         );
         Assert.IsType<PublishedRecapSourceReadResult.Invalid>(
             await fixture.Store.ReadPublishedSourceAsync(
@@ -556,7 +566,7 @@ public sealed class DerivedRecapStoreTests {
     }
 
     [Fact]
-    public async Task StrictOrdinalCountsInvalidExactSetWithoutFallback() {
+    public async Task StrictOrdinalSelectsDamagedExactSetWithoutFallback() {
         using RecapStoreFixture fixture =
             await RecapStoreFixture.CreateAsync();
         DerivedRecapLineageView firstLineage = fixture.Lineage();
@@ -581,15 +591,20 @@ public sealed class DerivedRecapStoreTests {
         );
         await File.WriteAllTextAsync(newerBlock, "{}");
 
-        var invalid = Assert.IsType<
-            DerivedRecapSelection.ExactPublishedSetInvalid
+        var selected = Assert.IsType<
+            DerivedRecapSelection.Selected
         >(
             await fixture.Store.SelectNthPreviousAsync(
                 secondLineage,
                 0
             )
         );
-        Assert.Equal(second, invalid.SetAdmissionAnchor);
+        Assert.Equal(second, selected.Descriptor.SetAdmissionAnchor);
+        await Assert.ThrowsAsync<InvalidDataException>(
+            async () => await fixture.Store.MaterializeAsync(
+                selected.Descriptor
+            )
+        );
 
         var older = Assert.IsType<DerivedRecapSelection.Selected>(
             await fixture.Store.SelectNthPreviousAsync(

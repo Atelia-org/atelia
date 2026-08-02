@@ -387,21 +387,28 @@ public sealed class DerivedRecapCrashRecoveryTests {
                 DerivedRecapLineageView lineage =
                     DerivedRecapLineageView.Capture(store, engine);
                 anchor = lineage.CapturedHead;
-                DerivedRecapSelection
-                    .ExactPublishedSetInvalid invalid =
+                DerivedRecapSelection.Selected selected =
                     Assert.IsType<
                         DerivedRecapSelection
-                            .ExactPublishedSetInvalid
+                            .Selected
                     >(
                         await store.SelectNthPreviousAsync(
                             lineage,
                             0
                         )
                     );
-                Assert.Equal(anchor, invalid.SetAdmissionAnchor);
+                Assert.Equal(
+                    anchor,
+                    selected.Descriptor.SetAdmissionAnchor
+                );
                 Assert.True(
                     Directory.Exists(
                         store.GetPublishedPathForTest(anchor)
+                    )
+                );
+                await Assert.ThrowsAsync<InvalidDataException>(
+                    async () => await store.MaterializeAsync(
+                        selected.Descriptor
                     )
                 );
             }
@@ -611,12 +618,18 @@ public sealed class DerivedRecapCrashRecoveryTests {
         if (File.Exists(workPath)) {
             File.Delete(workPath);
         }
-        _ = Assert.IsType<
-            DerivedRecapSelection.ExactPublishedSetInvalid
+        DerivedRecapSelection.Selected selected = Assert.IsType<
+            DerivedRecapSelection.Selected
         >(
             await store.SelectNthPreviousAsync(
                 DerivedRecapLineageView.Capture(store, engine),
                 0
+            )
+        );
+        Assert.Equal(anchor, selected.Descriptor.SetAdmissionAnchor);
+        await Assert.ThrowsAsync<InvalidDataException>(
+            async () => await store.MaterializeAsync(
+                selected.Descriptor
             )
         );
         return path;
