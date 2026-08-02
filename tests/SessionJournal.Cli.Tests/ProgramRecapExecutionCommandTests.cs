@@ -1064,7 +1064,7 @@ public sealed class ProgramRecapExecutionCommandTests : IDisposable {
     }
 
     [Fact]
-    public async Task DamagedLatestPassesCatalogGateBeforePlannerRetry() {
+    public async Task DamagedLatestComponentIsDeferredUntilBuildIsDue() {
         Fixture fixture =
             await CreateFixtureAsync("damaged-latest", 77);
         await CreateStoreAsync(fixture);
@@ -1090,6 +1090,8 @@ public sealed class ProgramRecapExecutionCommandTests : IDisposable {
             damagedBlock,
             "damaged latest recap"
         );
+        RawSnapshot rawBeforeNoBuild = ReadRawSnapshot(fixture.Path);
+        string derivedBeforeNoBuild = HashDerivedFiles(fixture.Path);
         using (var readinessEngine =
                SJ.SessionJournalEngine.OpenReadOnly(
                    fixture.Path,
@@ -1108,38 +1110,59 @@ public sealed class ProgramRecapExecutionCommandTests : IDisposable {
                 readiness.ToString()
             );
         }
-        var repairFactory =
+        var noBuildFactory =
             new ScriptedCompletionClientFactory("must not run");
-        string repairReport =
-            Path.Combine(_tempRoot, "damaged-latest-repair.json");
+        string noBuildReport =
+            Path.Combine(_tempRoot, "damaged-latest-no-build.json");
 
-        int repairExitCode = Run(
+        int noBuildExitCode = Run(
             ExecuteArgs(
                 fixture,
                 "run",
-                repairReport,
-                "damaged-latest-repair-calls"
+                noBuildReport,
+                "damaged-latest-no-build-calls"
             ),
-            repairFactory
+            noBuildFactory
         );
-        Assert.Equal(3, repairExitCode);
+        Assert.Equal(0, noBuildExitCode);
 
-        using JsonDocument report = ReadJson(repairReport);
-        Assert.Equal("Retryable", String(report, "resultStatus"));
+        using JsonDocument report = ReadJson(noBuildReport);
+        Assert.Equal("NoBuild", String(report, "resultStatus"));
         Assert.Equal(
-            DerivedRecapExecutionDefectCodes.SourceChanged,
-            String(report, "code")
+            JsonValueKind.Null,
+            report.RootElement.GetProperty("code").ValueKind
+        );
+        Assert.Equal(
+            JsonValueKind.Null,
+            report.RootElement.GetProperty("anchor").ValueKind
         );
         Assert.NotEqual(
             JsonValueKind.Null,
             report.RootElement.GetProperty("config").ValueKind
         );
-        Assert.Equal(0, repairFactory.CreateCallCount);
-        Assert.Equal(0, repairFactory.CallCount);
+        JsonElement planning =
+            report.RootElement.GetProperty("planning");
+        Assert.Equal(
+            "ExactSchedule",
+            planning.GetProperty("measurementKind").GetString()
+        );
+        Assert.True(
+            planning.GetProperty("rawGrowthEventCount").GetInt32() > 0
+        );
+        long growthHistoryLoad =
+            planning.GetProperty("growthHistoryLoad").GetInt64();
+        Assert.InRange(growthHistoryLoad, 1, 379);
+        Assert.Equal(0, noBuildFactory.CreateCallCount);
+        Assert.Equal(0, noBuildFactory.CallCount);
         Assert.False(Directory.Exists(Path.Combine(
             _tempRoot,
-            "damaged-latest-repair-calls"
+            "damaged-latest-no-build-calls"
         )));
+        Assert.Equal(rawBeforeNoBuild, ReadRawSnapshot(fixture.Path));
+        Assert.Equal(
+            derivedBeforeNoBuild,
+            HashDerivedFiles(fixture.Path)
+        );
         using var engine = SJ.SessionJournalEngine.OpenReadOnly(
             fixture.Path,
             fixture.BranchName
