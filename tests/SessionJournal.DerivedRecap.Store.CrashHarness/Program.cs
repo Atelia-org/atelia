@@ -163,7 +163,7 @@ internal static class Program {
                     inspection.Checkpoint.StateToken,
                     DerivedRecapCodec.CreateBlock(
                         plan,
-                        maintain.CatchUpThrough[^1],
+                        maintain.CatchUpBoundaries[^1].Address,
                         "new checkpoint"
                     )
                 );
@@ -173,6 +173,9 @@ internal static class Program {
                     engine.ReadCurrentLineageHeaders();
                 EventAddress buildingAnchor =
                     buildingLineage.CapturedHead;
+                EventAddress replayStart =
+                    engine.ReadHistoryPlanningWindow()
+                        .StartExclusive;
                 var buildingPlan = new MaintainRecapBlockPlan(
                     new RecapBlockId("roleplay.self"),
                     new ContextHeaderBlockPath(
@@ -182,16 +185,28 @@ internal static class Program {
                     "roleplay.autobiographical",
                     "sha256:0000000000000000000000000000000000000000000000000000000000000000",
                     new EmptyRecapMaintainSource(
-                        engine.ReadHistoryPlanningWindow()
-                            .StartExclusive
+                        replayStart,
+                        engine.ResolveContextAnchorSetupReferences(
+                            replayStart
+                        )
                     ),
-                    [buildingAnchor],
+                    [
+                        new RecapReplayBoundary(
+                            buildingAnchor,
+                            engine.ResolveContextAnchorSetupReferences(
+                                buildingAnchor
+                            )
+                        )
+                    ],
                     EmptyRecapPriorContext.Instance
                 );
                 await store.CreateBuildingAsync(
                     DerivedRecapCodec.CreateManifest(
                         engine.BranchRefId,
                         buildingAnchor,
+                        engine.ResolveContextAnchorSetupReferences(
+                            buildingAnchor
+                        ),
                         [buildingPlan]
                     )
                 );

@@ -277,7 +277,7 @@ public sealed class DerivedRecapCurrentLineageBuildingTests {
                 CreateManifest(
                     fixture,
                     oldAnchor,
-                    initial.CurrentPrefix.HeadToOldest[^1].Address
+                    initial.CurrentPrefix.HeadToOldest[^2].Address
                 )
             )
         );
@@ -351,8 +351,8 @@ public sealed class DerivedRecapCurrentLineageBuildingTests {
         EventAddress anchor,
         EventAddress replayStart,
         string blockId = "roleplay.self"
-    ) => DerivedRecapCodec.CreateManifest(
-        fixture.Engine.BranchRefId,
+    ) => RecapWireTestFacts.CreateManifest(
+                fixture.Engine,
         anchor,
         [fixture.CreateMaintainPlan(
             anchor,

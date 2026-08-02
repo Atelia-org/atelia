@@ -13,6 +13,7 @@ internal sealed record RecapFrozenPlanRawDefect(string Detail);
 /// </summary>
 internal static class RecapFrozenPlanRawValidator {
     public static IReadOnlyList<RecapFrozenPlanRawDefect> ValidateBlock(
+        SessionJournalEngine engine,
         DerivedRecapSetManifest manifest,
         IReadOnlyDictionary<
             RecapBlockId,
@@ -21,6 +22,7 @@ internal static class RecapFrozenPlanRawValidator {
         SessionCurrentLineageSnapshot lineage,
         RecapBlockPlan plan
     ) {
+        ArgumentNullException.ThrowIfNull(engine);
         ArgumentNullException.ThrowIfNull(manifest);
         ArgumentNullException.ThrowIfNull(frozenInputs);
         ArgumentNullException.ThrowIfNull(lineage);
@@ -44,6 +46,13 @@ internal static class RecapFrozenPlanRawValidator {
             );
             return defects;
         }
+        ValidateSetups(
+            engine,
+            manifest.SetAdmissionAnchor,
+            manifest.SetAdmissionAnchorSetups,
+            "manifest admission",
+            defects
+        );
 
         switch (plan) {
             case InheritRecapBlockPlan inherit:
@@ -67,6 +76,22 @@ internal static class RecapFrozenPlanRawValidator {
                     );
                     return defects;
                 }
+                if (inheritedInput.AbsorbedThroughSetups
+                        != inherit.SourceAbsorbedThroughSetups) {
+                    Add(
+                        defects,
+                        $"Inherit block '{plan.RecapBlockId}' source "
+                        + "setup authority does not match its input."
+                    );
+                    return defects;
+                }
+                ValidateSetups(
+                    engine,
+                    inheritedInput.AbsorbedThrough,
+                    inheritedInput.AbsorbedThroughSetups,
+                    $"Inherit block '{plan.RecapBlockId}' source",
+                    defects
+                );
                 try {
                     if (new UTF8Encoding(false, true).GetByteCount(
                             inheritedInput.Content
@@ -104,6 +129,14 @@ internal static class RecapFrozenPlanRawValidator {
                             );
                             return defects;
                         }
+                        ValidateSetups(
+                            engine,
+                            empty.ReplayStartExclusive,
+                            empty.ReplayStartSetups,
+                            $"Maintain block '{plan.RecapBlockId}' "
+                                + "empty replay start",
+                            defects
+                        );
                         break;
                     case ExistingRecapMaintainSource existing:
                         if (!TryValidateFrozenSource(
@@ -113,11 +146,29 @@ internal static class RecapFrozenPlanRawValidator {
                                 lineageIndex,
                                 admissionIndex,
                                 defects,
-                                out _,
+                                out DerivedRecapFrozenInput? existingInput,
                                 out startIndex
                             )) {
                             return defects;
                         }
+                        if (existingInput.AbsorbedThroughSetups
+                                != existing.ReplayStartSetups) {
+                            Add(
+                                defects,
+                                $"Maintain block '{plan.RecapBlockId}' "
+                                + "replay setup authority does not "
+                                + "match its input."
+                            );
+                            return defects;
+                        }
+                        ValidateSetups(
+                            engine,
+                            existingInput.AbsorbedThrough,
+                            existing.ReplayStartSetups,
+                            $"Maintain block '{plan.RecapBlockId}' "
+                                + "existing replay start",
+                            defects
+                        );
                         break;
                     default:
                         Add(
@@ -144,10 +195,10 @@ internal static class RecapFrozenPlanRawValidator {
                 }
 
                 int previousIndex = startIndex;
-                foreach (EventAddress endpoint
-                         in maintain.CatchUpThrough) {
+                foreach (RecapReplayBoundary boundary
+                         in maintain.CatchUpBoundaries) {
                     if (!lineageIndex.TryGetValue(
-                            endpoint,
+                            boundary.Address,
                             out int endpointIndex
                         )
                         || endpointIndex >= previousIndex) {
@@ -159,10 +210,18 @@ internal static class RecapFrozenPlanRawValidator {
                         );
                         return defects;
                     }
+                    ValidateSetups(
+                        engine,
+                        boundary.Address,
+                        boundary.Setups,
+                        $"Maintain block '{plan.RecapBlockId}' "
+                            + "catch-up boundary",
+                        defects
+                    );
                     previousIndex = endpointIndex;
                 }
-                if (maintain.CatchUpThrough.Count == 0
-                    || maintain.CatchUpThrough[^1]
+                if (maintain.CatchUpBoundaries.Count == 0
+                    || maintain.CatchUpBoundaries[^1].Address
                         != manifest.SetAdmissionAnchor) {
                     Add(
                         defects,
@@ -228,6 +287,22 @@ internal static class RecapFrozenPlanRawValidator {
         }
         input = foundInput;
         return true;
+    }
+
+    private static void ValidateSetups(
+        SessionJournalEngine engine,
+        EventAddress address,
+        SessionContextAnchorSetupReferences expected,
+        string label,
+        List<RecapFrozenPlanRawDefect> defects
+    ) {
+        if (engine.ResolveContextAnchorSetupReferences(address)
+            != expected) {
+            Add(
+                defects,
+                $"{label} setups do not match raw authority."
+            );
+        }
     }
 
     private static void Add(

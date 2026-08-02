@@ -693,7 +693,12 @@ internal sealed class DerivedRecapPlannerExecutor {
                 SessionHistoryPlanningWindow window =
                     RecapPendingWindowPreparer.ReadExactStepWindow(
                         _engine,
-                        endpoint,
+                        new RecapReplayBoundary(
+                            endpoint,
+                            _engine.ResolveContextAnchorSetupReferences(
+                                endpoint
+                            )
+                        ),
                         seeds[previous],
                         cancellationToken
                     );
@@ -756,6 +761,8 @@ internal sealed class DerivedRecapPlannerExecutor {
                         inherit.RecapBlockId,
                         _inputs.OrderedCatalog[index].Target,
                         inherit.Source.SourceSetAnchor,
+                        inputs[inherit.RecapBlockId]
+                            .AbsorbedThroughSetups,
                         inherit.Source
                             .SourcePublicationEnvelopeSha256,
                         inputs[inherit.RecapBlockId].PayloadSha256,
@@ -773,6 +780,8 @@ internal sealed class DerivedRecapPlannerExecutor {
                             RecapPlanningMaintainSource.Existing existing =>
                                 new ExistingRecapMaintainSource(
                                     existing.Source.SourceSetAnchor,
+                                    inputs[maintain.RecapBlockId]
+                                        .AbsorbedThroughSetups,
                                     existing.Source
                                         .SourcePublicationEnvelopeSha256,
                                     inputs[maintain.RecapBlockId]
@@ -780,13 +789,28 @@ internal sealed class DerivedRecapPlannerExecutor {
                                 ),
                             RecapPlanningMaintainSource.Empty empty =>
                                 new EmptyRecapMaintainSource(
-                                    empty.ReplayStartExclusive
+                                    empty.ReplayStartExclusive,
+                                    _engine
+                                        .ResolveContextAnchorSetupReferences(
+                                            empty.ReplayStartExclusive
+                                        )
                                 ),
                             _ => throw new InvalidDataException(
                                 "Unsupported Maintain source intent."
                             )
                         },
-                        maintain.CatchUpThrough,
+                        Array.AsReadOnly(
+                            maintain.CatchUpThrough
+                                .Select(endpoint =>
+                                    new RecapReplayBoundary(
+                                        endpoint,
+                                        _engine
+                                            .ResolveContextAnchorSetupReferences(
+                                                endpoint
+                                            )
+                                    ))
+                                .ToArray()
+                        ),
                         maintain.PriorContext,
                         _inputs.OrderedCatalog[index]
                             .MaxContentUtf8Bytes
@@ -799,6 +823,9 @@ internal sealed class DerivedRecapPlannerExecutor {
         return DerivedRecapCodec.CreateManifest(
             _store.RefId,
             intent.SetAdmissionAnchor,
+            _engine.ResolveContextAnchorSetupReferences(
+                intent.SetAdmissionAnchor
+            ),
             plans
         );
     }
@@ -1504,6 +1531,7 @@ internal sealed class DerivedRecapBuildingExecutor {
         foreach (RecapBlockPlan plan in building.Manifest.Blocks) {
             foreach (RecapFrozenPlanRawDefect defect
                      in RecapFrozenPlanRawValidator.ValidateBlock(
+                         _engine,
                          building.Manifest,
                          building.FrozenInputs,
                          lineage,
@@ -1586,7 +1614,9 @@ internal sealed class DerivedRecapBuildingExecutor {
                     : 0;
             pendingRoutes.Add(new PendingMaintainRoute(
                 maintain,
-                GetMaintainStart(building, maintain),
+                next == 0
+                    ? GetMaintainStart(building, maintain)
+                    : maintain.CatchUpBoundaries[next - 1].Address,
                 next
             ));
         }
@@ -1723,7 +1753,7 @@ internal sealed class DerivedRecapBuildingExecutor {
             }
         }
 
-        while (nextEndpoint < maintain.CatchUpThrough.Count) {
+        while (nextEndpoint < maintain.CatchUpBoundaries.Count) {
             cancellationToken.ThrowIfCancellationRequested();
             SessionHistoryPlanningWindow window =
                 windows[(plan.RecapBlockId, nextEndpoint)];
@@ -1733,7 +1763,7 @@ internal sealed class DerivedRecapBuildingExecutor {
                         maintain,
                         currentBlock,
                         window,
-                        maintain.CatchUpThrough[nextEndpoint],
+                        maintain.CatchUpBoundaries[nextEndpoint].Address,
                         cancellationToken
                     )
                     .ConfigureAwait(false);

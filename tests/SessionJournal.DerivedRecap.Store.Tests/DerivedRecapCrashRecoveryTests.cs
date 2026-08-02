@@ -342,8 +342,8 @@ public sealed class DerivedRecapCrashRecoveryTests {
                 >(inspection.Checkpoint);
             Assert.Equal(
                 newCheckpointInstalled
-                    ? maintain.CatchUpThrough[^1]
-                    : maintain.CatchUpThrough[0],
+                    ? maintain.CatchUpBoundaries[^1].Address
+                    : maintain.CatchUpBoundaries[0].Address,
                 checkpoint.Block.AbsorbedThrough
             );
             Assert.Equal(
@@ -489,14 +489,17 @@ public sealed class DerivedRecapCrashRecoveryTests {
             "roleplay.autobiographical",
             RecapTestIdentity.CapabilityFingerprint,
             new EmptyRecapMaintainSource(
-                lineage.HeadToRoot[2].Address
+                lineage.HeadToRoot[2].Address,
+                engine.ResolveContextAnchorSetupReferences(
+                    lineage.HeadToRoot[2].Address
+                )
             ),
-            [anchor],
+            [RecapWireTestFacts.ResolveBoundary(engine, anchor)],
             EmptyRecapPriorContext.Instance
         );
         DerivedRecapSetManifest manifest =
-            DerivedRecapCodec.CreateManifest(
-                engine.BranchRefId,
+            RecapWireTestFacts.CreateManifest(
+                engine,
                 anchor,
                 [plan]
             );
@@ -533,7 +536,7 @@ public sealed class DerivedRecapCrashRecoveryTests {
         EventAddress firstEndpoint =
             lineage.HeadToRoot[2].Address;
         EventAddress replayStart =
-            lineage.HeadToRoot[^1].Address;
+            lineage.HeadToRoot[^2].Address;
         var plan = new MaintainRecapBlockPlan(
             new RecapBlockId("roleplay.self"),
             new ContextHeaderBlockPath(
@@ -542,13 +545,19 @@ public sealed class DerivedRecapCrashRecoveryTests {
             ),
             "roleplay.autobiographical",
             RecapTestIdentity.CapabilityFingerprint,
-            new EmptyRecapMaintainSource(replayStart),
-            [firstEndpoint, target],
+            new EmptyRecapMaintainSource(
+                replayStart,
+                engine.ResolveContextAnchorSetupReferences(replayStart)
+            ),
+            RecapWireTestFacts.ResolveBoundaries(
+                engine,
+                [firstEndpoint, target]
+            ),
             EmptyRecapPriorContext.Instance
         );
         DerivedRecapSetManifest manifest =
-            DerivedRecapCodec.CreateManifest(
-                engine.BranchRefId,
+            RecapWireTestFacts.CreateManifest(
+                engine,
                 target,
                 [plan]
             );

@@ -1213,7 +1213,7 @@ public sealed class DerivedRecapStore {
             if (inspection.Checkpoint
                     is not RollingRecapCheckpointHealth.Healthy checkpoint
                 || checkpoint.EndpointIndex
-                    != maintain.CatchUpThrough.Count - 1
+                    != maintain.CatchUpBoundaries.Count - 1
                 || checkpoint.Block != candidate) {
                 throw new InvalidDataException(
                     "Maintain final installation requires a healthy, "
@@ -2081,7 +2081,7 @@ public sealed class DerivedRecapStore {
             if (checkpointHealth
                     is not RollingRecapCheckpointHealth.Healthy checkpoint
                 || checkpoint.EndpointIndex
-                    != maintain.CatchUpThrough.Count - 1
+                    != maintain.CatchUpBoundaries.Count - 1
                 || checkpoint.Block != candidate) {
                 throw new InvalidDataException(
                     "Published Maintain final installation requires a "
@@ -2980,10 +2980,10 @@ public sealed class DerivedRecapStore {
                             }
                             break;
                     }
-                    foreach (EventAddress endpoint
-                             in maintain.CatchUpThrough) {
+                    foreach (RecapReplayBoundary boundary
+                             in maintain.CatchUpBoundaries) {
                         if (!lineage.TryGetValue(
-                                endpoint,
+                                boundary.Address,
                                 out int endpointIndex
                             )
                             || priorIndex is int previous
@@ -2998,7 +2998,7 @@ public sealed class DerivedRecapStore {
                         }
                         priorIndex = endpointIndex;
                     }
-                    if (maintain.CatchUpThrough[^1]
+                    if (maintain.CatchUpBoundaries[^1].Address
                         != manifest.SetAdmissionAnchor) {
                         AddDefect(
                             defects,
@@ -3263,8 +3263,12 @@ public sealed class DerivedRecapStore {
             )) {
             return;
         }
-        foreach (EventAddress endpoint in maintain.CatchUpThrough) {
-            if (!lineage.TryGetValue(endpoint, out int endpointIndex)
+        foreach (RecapReplayBoundary boundary
+                 in maintain.CatchUpBoundaries) {
+            if (!lineage.TryGetValue(
+                    boundary.Address,
+                    out int endpointIndex
+                )
                 || endpointIndex >= previousIndex) {
                 AddDefect(
                     defects,
@@ -3316,7 +3320,16 @@ public sealed class DerivedRecapStore {
                 input.AbsorbedThrough,
                 out int absorbedIndex
             )
-            || absorbedIndex < sourceIndex) {
+            || absorbedIndex < sourceIndex
+            || input.AbsorbedThroughSetups
+                != (plan switch {
+                    InheritRecapBlockPlan inherit =>
+                        inherit.SourceAbsorbedThroughSetups,
+                    MaintainRecapBlockPlan {
+                        Source: ExistingRecapMaintainSource existing
+                    } => existing.ReplayStartSetups,
+                    _ => input.AbsorbedThroughSetups
+                })) {
             AddDefect(
                 defects,
                 "FrozenSourceCursorInvalid",
@@ -3791,8 +3804,11 @@ public sealed class DerivedRecapStore {
         try {
             DerivedRecapFrozenInput input =
                 DerivedRecapCodec.DecodeFrozenInput(bytes);
+            SessionContextAnchorSetupReferences expectedSetups =
+                GetExpectedInputSetups(plan);
             if (input.RecapBlockId != plan.RecapBlockId
                 || input.Target != plan.Target
+                || input.AbsorbedThroughSetups != expectedSetups
                 || !string.Equals(
                     input.PayloadSha256,
                     expectedHash,
@@ -4007,7 +4023,7 @@ public sealed class DerivedRecapStore {
         if (checkpoint
                 is RollingRecapCheckpointHealth.Healthy healthy) {
             return healthy.EndpointIndex
-                    == maintain.CatchUpThrough.Count - 1
+                    == maintain.CatchUpBoundaries.Count - 1
                 ? new PublishedBlockRestoreCapability
                     .InstallFinalCheckpoint()
                 : new PublishedBlockRestoreCapability.ResumeSuffix(
@@ -4497,6 +4513,8 @@ public sealed class DerivedRecapStore {
                 );
             }
             if (input.Target != plan.Target
+                || input.AbsorbedThroughSetups
+                    != GetExpectedInputSetups(plan)
                 || !string.Equals(
                     input.PayloadSha256,
                     expectedHash,
@@ -5124,9 +5142,9 @@ public sealed class DerivedRecapStore {
         ValidateBlockAgainstPlan(plan, candidate);
         int endpointIndex = -1;
         for (int index = 0;
-             index < plan.CatchUpThrough.Count;
+             index < plan.CatchUpBoundaries.Count;
              index++) {
-            if (plan.CatchUpThrough[index]
+            if (plan.CatchUpBoundaries[index].Address
                 == candidate.AbsorbedThrough) {
                 endpointIndex = index;
                 break;
@@ -5340,6 +5358,19 @@ public sealed class DerivedRecapStore {
                     block.RecapBlockId,
                     block.Target,
                     block.AbsorbedThrough,
+                    sourcePlan switch {
+                        InheritRecapBlockPlan inherit =>
+                            inherit.SourceAbsorbedThroughSetups,
+                        MaintainRecapBlockPlan
+                            when block.AbsorbedThrough
+                                == publication.SetAdmissionAnchor =>
+                            publication.FrozenPlanSnapshot
+                                .SetAdmissionAnchorSetups,
+                        _ => throw new InvalidDataException(
+                            "Published source block has no frozen "
+                            + "setup authority for its cursor."
+                        )
+                    },
                     block.Content
                 ));
             }
@@ -5589,6 +5620,20 @@ public sealed class DerivedRecapStore {
         )
     };
 
+    private static SessionContextAnchorSetupReferences
+        GetExpectedInputSetups(RecapBlockPlan plan)
+        => plan switch {
+            InheritRecapBlockPlan inherit =>
+                inherit.SourceAbsorbedThroughSetups,
+            MaintainRecapBlockPlan {
+                Source: ExistingRecapMaintainSource existing
+            } => existing.ReplayStartSetups,
+            _ => throw new InvalidDataException(
+                $"Block '{plan.RecapBlockId}' does not require a "
+                + "frozen source input."
+            )
+        };
+
     private static SessionContextContribution ToContribution(
         DerivedRecapBlock block
     ) => new(
@@ -5703,7 +5748,7 @@ public sealed class DerivedRecapStore {
                     break;
                 case MaintainRecapBlockPlan maintain:
                     var anchors = new List<EventAddress>(
-                        maintain.CatchUpThrough.Count + 2
+                        maintain.CatchUpBoundaries.Count + 2
                     );
                     anchors.Add(
                         maintain.Source switch {
@@ -5716,7 +5761,11 @@ public sealed class DerivedRecapStore {
                             )
                         }
                     );
-                    anchors.AddRange(maintain.CatchUpThrough);
+                    anchors.AddRange(
+                        maintain.CatchUpBoundaries.Select(
+                            static boundary => boundary.Address
+                        )
+                    );
                     if (maintain.PriorContext
                         is InlineRecapPriorContext inline) {
                         anchors.Add(inline.AdmissionAnchor);

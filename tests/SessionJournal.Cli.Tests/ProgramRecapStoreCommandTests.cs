@@ -670,13 +670,16 @@ public sealed class ProgramRecapStoreCommandTests : IDisposable {
             fixture.Path,
             engine.BranchRefId
         );
-        RecapBlockPlan plan = CreatePlan(fixture);
+        RecapBlockPlan plan = CreatePlan(fixture, engine);
         _ = Assert.IsType<CreateBuildingResult.Created>(
             await new DerivedRecapBuildingInstaller(store, engine)
                 .InstallAsync(
                     DerivedRecapCodec.CreateManifest(
                         engine.BranchRefId,
                         fixture.Anchor,
+                        engine.ResolveContextAnchorSetupReferences(
+                            fixture.Anchor
+                        ),
                         [plan]
                     ),
                     fixture.Anchor
@@ -696,13 +699,16 @@ public sealed class ProgramRecapStoreCommandTests : IDisposable {
             fixture.Path,
             engine.BranchRefId
         );
-        RecapBlockPlan plan = CreatePlan(fixture);
+        RecapBlockPlan plan = CreatePlan(fixture, engine);
         _ = Assert.IsType<CreateBuildingResult.Created>(
             await new DerivedRecapBuildingInstaller(store, engine)
                 .InstallAsync(
                     DerivedRecapCodec.CreateManifest(
                         engine.BranchRefId,
                         fixture.Anchor,
+                        engine.ResolveContextAnchorSetupReferences(
+                            fixture.Anchor
+                        ),
                         [plan]
                     ),
                     fixture.Anchor
@@ -791,7 +797,10 @@ public sealed class ProgramRecapStoreCommandTests : IDisposable {
         }
     }
 
-    private static RecapBlockPlan CreatePlan(Fixture fixture) =>
+    private static RecapBlockPlan CreatePlan(
+        Fixture fixture,
+        SJ.SessionJournalEngine engine
+    ) =>
         new MaintainRecapBlockPlan(
             new RecapBlockId("roleplay.self"),
             new SJ.ContextHeaderBlockPath(
@@ -800,8 +809,20 @@ public sealed class ProgramRecapStoreCommandTests : IDisposable {
             ),
             "test.roleplay",
             "sha256:0000000000000000000000000000000000000000000000000000000000000000",
-            new EmptyRecapMaintainSource(fixture.ReplayStart),
-            [fixture.Anchor],
+            new EmptyRecapMaintainSource(
+                fixture.ReplayStart,
+                engine.ResolveContextAnchorSetupReferences(
+                    fixture.ReplayStart
+                )
+            ),
+            [
+                new RecapReplayBoundary(
+                    fixture.Anchor,
+                    engine.ResolveContextAnchorSetupReferences(
+                        fixture.Anchor
+                    )
+                )
+            ],
             EmptyRecapPriorContext.Instance
         );
 
@@ -823,14 +844,14 @@ public sealed class ProgramRecapStoreCommandTests : IDisposable {
             inspection.Plan
         );
         for (int index = 0;
-             index < maintain.CatchUpThrough.Count;
+             index < maintain.CatchUpBoundaries.Count;
              index++) {
             DerivedRecapBlock checkpoint =
-                index == maintain.CatchUpThrough.Count - 1
+                index == maintain.CatchUpBoundaries.Count - 1
                     ? block
                     : DerivedRecapCodec.CreateBlock(
                         maintain,
-                        maintain.CatchUpThrough[index],
+                        maintain.CatchUpBoundaries[index].Address,
                         block.Content
                     );
             Assert.IsType<CheckpointWriteResult.Updated>(

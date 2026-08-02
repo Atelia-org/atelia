@@ -190,7 +190,7 @@ public sealed class DerivedRecapRealDataAcceptanceTests {
                 ];
                 maintainedBlockCount = maintained.Length;
                 routeEndpointCount = maintained.Sum(
-                    static block => block.CatchUpThrough.Count
+                    static block => block.CatchUpBoundaries.Count
                 );
                 Assert.Equal(2, maintainedBlockCount);
                 Assert.Equal(4, routeEndpointCount);

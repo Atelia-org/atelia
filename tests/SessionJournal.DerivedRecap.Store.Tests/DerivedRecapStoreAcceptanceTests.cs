@@ -5,6 +5,68 @@ using Xunit;
 namespace Atelia.SessionJournal.DerivedRecap.Store.Tests;
 
 public sealed class DerivedRecapStoreAcceptanceTests {
+    [Fact]
+    public async Task SourceCaptureRejectsPlanSetupAuthorityMismatch() {
+        using RecapStoreFixture fixture =
+            await RecapStoreFixture.CreateAsync(historyPairs: 6);
+        DerivedRecapLineageView lineage = fixture.Lineage();
+        EventAddress target =
+            lineage.CurrentPrefix.HeadToOldest[0].Address;
+        EventAddress source =
+            lineage.CurrentPrefix.HeadToOldest[2].Address;
+        EventAddress replayStart =
+            lineage.CurrentPrefix.HeadToOldest[^2].Address;
+        PublishedRecapDescriptor published =
+            await fixture.PublishAsync(
+                source,
+                replayStart,
+                blockId: "alpha",
+                content: "alpha source"
+            );
+        var blockId = new RecapBlockId("alpha");
+        var targetPath = new ContextHeaderBlockPath(
+            ContextHeaderCarrier.System,
+            blockId.Value
+        );
+        DerivedRecapFrozenInput expectedInput =
+            RecapWireTestFacts.CreateFrozenInput(
+                fixture.Engine,
+                blockId,
+                targetPath,
+                source,
+                "alpha source"
+            );
+        SessionContextAnchorSetupReferences wrongSetups =
+            expectedInput.AbsorbedThroughSetups with {
+                RuntimeConfig = expectedInput.AbsorbedThroughSetups
+                    .RuntimeConfig with {
+                        PayloadSha256 = new string('f', 64)
+                    }
+            };
+        DerivedRecapSetManifest manifest =
+            RecapWireTestFacts.CreateManifest(
+                fixture.Engine,
+                target,
+                [
+                    new InheritRecapBlockPlan(
+                        blockId,
+                        targetPath,
+                        source,
+                        wrongSetups,
+                        published.EnvelopeSha256,
+                        expectedInput.PayloadSha256
+                    )
+                ]
+            );
+
+        await Assert.ThrowsAsync<InvalidDataException>(async () =>
+            await fixture.Store.CreateBuildingAsync(manifest)
+        );
+        Assert.IsType<BuildingReadResult.Missing>(
+            await fixture.Store.ReadBuildingAsync(target)
+        );
+    }
+
     [Theory]
     [InlineData("building-manifest-installed", false)]
     [InlineData("building-promoted", true)]
@@ -52,7 +114,7 @@ public sealed class DerivedRecapStoreAcceptanceTests {
         EventAddress firstSource =
             lineage.CurrentPrefix.HeadToOldest[4].Address;
         EventAddress replayStart =
-            lineage.CurrentPrefix.HeadToOldest[^1].Address;
+            lineage.CurrentPrefix.HeadToOldest[^2].Address;
         PublishedRecapDescriptor first =
             await fixture.PublishAsync(
                 firstSource,
@@ -81,13 +143,13 @@ public sealed class DerivedRecapStoreAcceptanceTests {
             ((MaintainRecapBlockPlan)originalFirstPlan)
                 .MaintainerCapabilityFingerprint,
             ((MaintainRecapBlockPlan)originalFirstPlan).Source,
-            ((MaintainRecapBlockPlan)originalFirstPlan).CatchUpThrough,
+            ((MaintainRecapBlockPlan)originalFirstPlan).CatchUpBoundaries,
             EmptyRecapPriorContext.Instance
         );
         PublishedRecapSet changedFirst =
             DerivedRecapCodec.CreatePublication(
-                DerivedRecapCodec.CreateManifest(
-                    fixture.Engine.BranchRefId,
+                RecapWireTestFacts.CreateManifest(
+                fixture.Engine,
                     firstSource,
                     [changedFirstPlan]
                 ),
@@ -118,28 +180,29 @@ public sealed class DerivedRecapStoreAcceptanceTests {
             zetaId.Value
         );
         DerivedRecapFrozenInput alphaInput =
-            DerivedRecapCodec.CreateFrozenInput(
+            RecapWireTestFacts.CreateFrozenInput(fixture.Engine,
                 alphaId,
                 alphaTarget,
                 firstSource,
                 "alpha source"
             );
         DerivedRecapFrozenInput zetaInput =
-            DerivedRecapCodec.CreateFrozenInput(
+            RecapWireTestFacts.CreateFrozenInput(fixture.Engine,
                 zetaId,
                 zetaTarget,
                 secondSource,
                 "zeta source"
             );
         DerivedRecapSetManifest targetManifest =
-            DerivedRecapCodec.CreateManifest(
-                fixture.Engine.BranchRefId,
+            RecapWireTestFacts.CreateManifest(
+                fixture.Engine,
                 target,
                 [
                     new InheritRecapBlockPlan(
                         alphaId,
                         alphaTarget,
                         firstSource,
+                        alphaInput.AbsorbedThroughSetups,
                         first.EnvelopeSha256,
                         alphaInput.PayloadSha256
                     ),
@@ -147,6 +210,7 @@ public sealed class DerivedRecapStoreAcceptanceTests {
                         zetaId,
                         zetaTarget,
                         secondSource,
+                        zetaInput.AbsorbedThroughSetups,
                         second.EnvelopeSha256,
                         zetaInput.PayloadSha256
                     )

@@ -7,6 +7,74 @@ namespace Atelia.SessionJournal.DerivedRecap.Planner.Tests;
 
 public sealed class DerivedRecapRestoreExecutorTests {
     [Fact]
+    public async Task RestoreRejectsStructurallyValidWrongReplayStartSetupsBeforeMaintainer() {
+        using RestoreFixture fixture =
+            await RestoreFixture.CreateAsync();
+        MaintainRecapBlockPlan valid = fixture.CreateMaintainPlan(
+            "frozen.self",
+            "frozen-maintainer",
+            endpointCount: 1
+        );
+        var plan = new MaintainRecapBlockPlan(
+            valid.RecapBlockId,
+            valid.Target,
+            valid.MaintainerId,
+            valid.MaintainerCapabilityFingerprint,
+            new EmptyRecapMaintainSource(
+                ((EmptyRecapMaintainSource)valid.Source)
+                    .ReplayStartExclusive,
+                RecapPlannerWireTestFacts.WrongSetups(
+                    ((EmptyRecapMaintainSource)valid.Source)
+                        .ReplayStartSetups
+                )
+            ),
+            valid.CatchUpBoundaries,
+            valid.PriorContext,
+            valid.MaxContentUtf8Bytes
+        );
+        EventAddress anchor = plan.CatchUpBoundaries[^1].Address;
+        _ = await fixture.PublishAsync(
+            anchor,
+            [plan],
+            new Dictionary<RecapBlockId, string> {
+                [plan.RecapBlockId] = "committed"
+            }
+        );
+        await fixture.DamageFinalAsync(plan);
+        File.Delete(
+            fixture.BlockPath(anchor, "work", plan.RecapBlockId)
+        );
+        var maintainer = fixture.CreateMaintainer(
+            plan,
+            static (_, _) => "must-not-run"
+        );
+
+        var unavailable =
+            Assert.IsType<DerivedRecapRestoreResult.Unavailable>(
+                await fixture.CreateExecutor([maintainer])
+                    .RestoreAsync(anchor, fixture.CurrentHead)
+            );
+
+        Assert.Contains(
+            unavailable.Defects,
+            defect => defect.Code
+                == DerivedRecapRestoreDefectCodes.FrozenPlanInvalid
+                && defect.Detail.Contains(
+                    "setups do not match raw authority",
+                    StringComparison.Ordinal
+                )
+        );
+        Assert.Equal(0, maintainer.CallCount);
+        PublishedBlockRestoreInspection inspection =
+            (await fixture.InspectAsync(anchor))
+                .Blocks[plan.RecapBlockId];
+        Assert.IsType<RollingRecapCheckpointHealth.Missing>(
+            inspection.Checkpoint
+        );
+        Assert.IsType<FinalRecapBlockHealth.Damaged>(inspection.Final);
+    }
+
+    [Fact]
     public async Task HealthyPublishedRestoreHasNoMaintainerCalls() {
         using RestoreFixture fixture =
             await RestoreFixture.CreateAsync();
@@ -19,7 +87,7 @@ public sealed class DerivedRecapRestoreExecutorTests {
         DerivedRecapRestoreResult result =
             await fixture.CreateExecutor([maintainer])
                 .RestoreAsync(
-                    plan.CatchUpThrough[^1],
+                    plan.CatchUpBoundaries[^1].Address,
                     fixture.CurrentHead
                 );
 
@@ -39,7 +107,7 @@ public sealed class DerivedRecapRestoreExecutorTests {
             MaintainRecapBlockPlan plan,
             PublishedRecapDescriptor originalDescriptor
         ) = await fixture.PublishMaintainAsync(endpointCount: 1);
-        EventAddress anchor = plan.CatchUpThrough[^1];
+        EventAddress anchor = plan.CatchUpBoundaries[^1].Address;
         byte[] originalEnvelope =
             await File.ReadAllBytesAsync(
                 fixture.PublicationPath(anchor)
@@ -102,7 +170,7 @@ public sealed class DerivedRecapRestoreExecutorTests {
             MaintainRecapBlockPlan plan,
             _
         ) = await fixture.PublishMaintainAsync(endpointCount: 1);
-        EventAddress anchor = plan.CatchUpThrough[^1];
+        EventAddress anchor = plan.CatchUpBoundaries[^1].Address;
         await File.WriteAllTextAsync(
             fixture.BlockPath(anchor, "blocks", plan.RecapBlockId),
             "damaged"
@@ -137,12 +205,12 @@ public sealed class DerivedRecapRestoreExecutorTests {
             MaintainRecapBlockPlan plan,
             _
         ) = await fixture.PublishMaintainAsync(endpointCount: 2);
-        EventAddress anchor = plan.CatchUpThrough[^1];
+        EventAddress anchor = plan.CatchUpBoundaries[^1].Address;
         await fixture.DamageFinalAsync(plan);
         DerivedRecapBlock checkpoint =
             DerivedRecapCodec.CreateBlock(
                 plan,
-                plan.CatchUpThrough[0],
+                plan.CatchUpBoundaries[0].Address,
                 "checkpoint"
             );
         await File.WriteAllBytesAsync(
@@ -183,7 +251,7 @@ public sealed class DerivedRecapRestoreExecutorTests {
             MaintainRecapBlockPlan plan,
             _
         ) = await fixture.PublishMaintainAsync(endpointCount: 2);
-        EventAddress anchor = plan.CatchUpThrough[^1];
+        EventAddress anchor = plan.CatchUpBoundaries[^1].Address;
         await fixture.DamageFinalAsync(plan);
         File.Delete(
             fixture.BlockPath(anchor, "work", plan.RecapBlockId)
@@ -247,7 +315,7 @@ public sealed class DerivedRecapRestoreExecutorTests {
         await fixture.DamageFinalAsync(plan);
         File.Delete(
             fixture.BlockPath(
-                plan.CatchUpThrough[^1],
+                plan.CatchUpBoundaries[^1].Address,
                 "work",
                 plan.RecapBlockId
             )
@@ -256,7 +324,7 @@ public sealed class DerivedRecapRestoreExecutorTests {
         DerivedRecapRestoreResult result =
             await fixture.CreateExecutor([maintainer])
                 .RestoreAsync(
-                    plan.CatchUpThrough[^1],
+                    plan.CatchUpBoundaries[^1].Address,
                     fixture.CurrentHead
                 );
 
@@ -290,8 +358,11 @@ public sealed class DerivedRecapRestoreExecutorTests {
             ),
             "frozen-rich-maintainer",
             RecapPlannerTestIdentity.CapabilityFingerprint,
-            new EmptyRecapMaintainSource(raw.StartExclusive),
-            route,
+            new EmptyRecapMaintainSource(
+                raw.StartExclusive,
+                raw.StartSetups
+            ),
+            RecapPlannerWireTestFacts.Boundaries(raw, route),
             new InlineRecapPriorContext(
                 raw.StartExclusive,
                 priorSnapshot
@@ -434,7 +505,7 @@ public sealed class DerivedRecapRestoreExecutorTests {
             MaintainRecapBlockPlan plan,
             _
         ) = await fixture.PublishMaintainAsync(endpointCount: 1);
-        EventAddress anchor = plan.CatchUpThrough[^1];
+        EventAddress anchor = plan.CatchUpBoundaries[^1].Address;
         await fixture.DamageFinalAsync(plan);
         File.Delete(
             fixture.BlockPath(anchor, "work", plan.RecapBlockId)
@@ -508,7 +579,7 @@ public sealed class DerivedRecapRestoreExecutorTests {
             MaintainRecapBlockPlan plan,
             _
         ) = await fixture.PublishMaintainAsync(endpointCount: 1);
-        EventAddress anchor = plan.CatchUpThrough[^1];
+        EventAddress anchor = plan.CatchUpBoundaries[^1].Address;
         await fixture.DamageFinalAsync(plan);
         File.Delete(
             fixture.BlockPath(anchor, "work", plan.RecapBlockId)
@@ -543,7 +614,7 @@ public sealed class DerivedRecapRestoreExecutorTests {
             MaintainRecapBlockPlan plan,
             _
         ) = await fixture.PublishMaintainAsync(endpointCount: 2);
-        EventAddress anchor = plan.CatchUpThrough[^1];
+        EventAddress anchor = plan.CatchUpBoundaries[^1].Address;
         await fixture.DamageFinalAsync(plan);
         File.Delete(
             fixture.BlockPath(anchor, "work", plan.RecapBlockId)
@@ -577,7 +648,7 @@ public sealed class DerivedRecapRestoreExecutorTests {
             MaintainRecapBlockPlan plan,
             _
         ) = await fixture.PublishMaintainAsync(endpointCount: 1);
-        EventAddress anchor = plan.CatchUpThrough[^1];
+        EventAddress anchor = plan.CatchUpBoundaries[^1].Address;
         await fixture.DamageFinalAsync(plan);
         File.Delete(
             fixture.BlockPath(anchor, "work", plan.RecapBlockId)
@@ -609,7 +680,7 @@ public sealed class DerivedRecapRestoreExecutorTests {
             MaintainRecapBlockPlan plan,
             _
         ) = await fixture.PublishMaintainAsync(endpointCount: 1);
-        EventAddress anchor = plan.CatchUpThrough[^1];
+        EventAddress anchor = plan.CatchUpBoundaries[^1].Address;
         await fixture.DamageFinalAsync(plan);
         File.Delete(
             fixture.BlockPath(anchor, "work", plan.RecapBlockId)
@@ -639,7 +710,7 @@ public sealed class DerivedRecapRestoreExecutorTests {
             MaintainRecapBlockPlan plan,
             _
         ) = await fixture.PublishMaintainAsync(endpointCount: 1);
-        EventAddress anchor = plan.CatchUpThrough[^1];
+        EventAddress anchor = plan.CatchUpBoundaries[^1].Address;
         await fixture.DamageFinalAsync(plan);
         string workPath =
             fixture.BlockPath(anchor, "work", plan.RecapBlockId);
@@ -674,7 +745,7 @@ public sealed class DerivedRecapRestoreExecutorTests {
             MaintainRecapBlockPlan older,
             _
         ) = await fixture.PublishMaintainAsync(endpointCount: 1);
-        EventAddress olderAnchor = older.CatchUpThrough[^1];
+        EventAddress olderAnchor = older.CatchUpBoundaries[^1].Address;
         _ = fixture.AppendPair("newer");
         (
             MaintainRecapBlockPlan newer,
@@ -682,7 +753,7 @@ public sealed class DerivedRecapRestoreExecutorTests {
         ) = await fixture.PublishMaintainAsync(endpointCount: 1);
         Assert.NotEqual(
             olderAnchor,
-            newer.CatchUpThrough[^1]
+            newer.CatchUpBoundaries[^1].Address
         );
         await fixture.DamageFinalAsync(older, olderAnchor);
         File.Delete(
@@ -712,7 +783,7 @@ public sealed class DerivedRecapRestoreExecutorTests {
             MaintainRecapBlockPlan plan,
             _
         ) = await fixture.PublishMaintainAsync(endpointCount: 1);
-        EventAddress anchor = plan.CatchUpThrough[^1];
+        EventAddress anchor = plan.CatchUpBoundaries[^1].Address;
         EventAddress expectedHead = fixture.CurrentHead;
         await fixture.DamageFinalAsync(plan);
         File.Delete(
@@ -901,9 +972,13 @@ public sealed class DerivedRecapRestoreExecutorTests {
                 maintainerId,
                 RecapPlannerTestIdentity.CapabilityFingerprint,
                 new EmptyRecapMaintainSource(
-                    window.StartExclusive
+                    window.StartExclusive,
+                    window.StartSetups
                 ),
-                boundaries[^endpointCount..],
+                RecapPlannerWireTestFacts.Boundaries(
+                    window,
+                    boundaries[^endpointCount..]
+                ),
                 EmptyRecapPriorContext.Instance,
                 MaxContent
             );
@@ -946,9 +1021,10 @@ public sealed class DerivedRecapRestoreExecutorTests {
                 "frozen-maintainer",
                 RecapPlannerTestIdentity.CapabilityFingerprint,
                 new EmptyRecapMaintainSource(
-                    window.StartExclusive
+                    window.StartExclusive,
+                    window.StartSetups
                 ),
-                [source],
+                [RecapPlannerWireTestFacts.Boundary(window, source)],
                 EmptyRecapPriorContext.Instance,
                 MaxContent
             );
@@ -965,12 +1041,17 @@ public sealed class DerivedRecapRestoreExecutorTests {
                     sourcePlan.RecapBlockId,
                     sourcePlan.Target,
                     source,
+                    RecapPlannerWireTestFacts.SetupsAt(
+                        window,
+                        source
+                    ),
                     "source-content"
                 );
             var inherit = new InheritRecapBlockPlan(
                 sourcePlan.RecapBlockId,
                 sourcePlan.Target,
                 source,
+                expectedInput.AbsorbedThroughSetups,
                 sourceDescriptor.EnvelopeSha256,
                 expectedInput.PayloadSha256,
                 MaxContent
@@ -1006,9 +1087,15 @@ public sealed class DerivedRecapRestoreExecutorTests {
                 "frozen-maintainer",
                 RecapPlannerTestIdentity.CapabilityFingerprint,
                 new EmptyRecapMaintainSource(
-                    sourceWindow.StartExclusive
+                    sourceWindow.StartExclusive,
+                    sourceWindow.StartSetups
                 ),
-                [source],
+                [
+                    RecapPlannerWireTestFacts.Boundary(
+                        sourceWindow,
+                        source
+                    )
+                ],
                 EmptyRecapPriorContext.Instance,
                 MaxContent
             );
@@ -1025,6 +1112,10 @@ public sealed class DerivedRecapRestoreExecutorTests {
                     sourcePlan.RecapBlockId,
                     sourcePlan.Target,
                     source,
+                    RecapPlannerWireTestFacts.SetupsAt(
+                        sourceWindow,
+                        source
+                    ),
                     "source-content"
                 );
             EventAddress target = CurrentHead;
@@ -1035,10 +1126,19 @@ public sealed class DerivedRecapRestoreExecutorTests {
                 sourcePlan.MaintainerCapabilityFingerprint,
                 new ExistingRecapMaintainSource(
                     source,
+                    expectedInput.AbsorbedThroughSetups,
                     sourceDescriptor.EnvelopeSha256,
                     expectedInput.PayloadSha256
                 ),
-                [target],
+                [
+                    new RecapReplayBoundary(
+                        target,
+                        RecapPlannerWireTestFacts.SetupsAt(
+                            Engine,
+                            target
+                        )
+                    )
+                ],
                 EmptyRecapPriorContext.Instance,
                 MaxContent
             );
@@ -1063,6 +1163,10 @@ public sealed class DerivedRecapRestoreExecutorTests {
                 DerivedRecapCodec.CreateManifest(
                     Engine.BranchRefId,
                     anchor,
+                    RecapPlannerWireTestFacts.SetupsAt(
+                        Engine,
+                        anchor
+                    ),
                     plans
                 );
             _ = await Store.CreateBuildingAsync(manifest);
@@ -1090,15 +1194,16 @@ public sealed class DerivedRecapRestoreExecutorTests {
                     );
                 if (plan is MaintainRecapBlockPlan maintain) {
                     for (int index = 0;
-                         index < maintain.CatchUpThrough.Count;
+                         index < maintain.CatchUpBoundaries.Count;
                          index++) {
                         DerivedRecapBlock checkpoint =
                             index
-                                == maintain.CatchUpThrough.Count - 1
+                                == maintain.CatchUpBoundaries.Count - 1
                                 ? final
                                 : DerivedRecapCodec.CreateBlock(
                                     maintain,
-                                    maintain.CatchUpThrough[index],
+                                    maintain.CatchUpBoundaries[index]
+                                        .Address,
                                     contents[plan.RecapBlockId]
                                 );
                         _ = Assert.IsType<
@@ -1194,7 +1299,7 @@ public sealed class DerivedRecapRestoreExecutorTests {
             BlockPath(
                 anchor ?? (
                     plan is MaintainRecapBlockPlan maintain
-                        ? maintain.CatchUpThrough[^1]
+                        ? maintain.CatchUpBoundaries[^1].Address
                         : throw new ArgumentNullException(nameof(anchor))
                 ),
                 "blocks",

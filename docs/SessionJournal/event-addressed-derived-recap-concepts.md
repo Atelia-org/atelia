@@ -169,11 +169,13 @@ workflow authority。
 
 - build-local exact old block；
 - stable MaintainerId；
-- ordered `CatchUpThrough[]`；
+- ordered `CatchUpBoundaries[]`，每项冻结 `(Address, Setups)`；
+- source replay start 与 frozen input cursor 的 exact governing setup refs；
 - per-block frozen prior context 或显式 Empty；
 - content limit。
 
-每步 start 由 old cursor 或前一 endpoint 推导，不重复持久化。
+每步 start 由 source replay boundary 或前一 frozen boundary 推导；address 与 setups共同构成
+replay authority，执行时不得重新发现后静默替换。
 
 prior context 不得读取当前 Building 的 partial results。非空 snapshot 的 admission anchor 必须不晚于
 first replay start，保证 parallel order 与 crash/reopen 不改变输入。

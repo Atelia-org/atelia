@@ -894,16 +894,28 @@ public sealed class ProgramRecapExecutionCommandTests : IDisposable {
             RecapBlockCatalogEntry entry =
                 RecapCliComposition.DefaultComposition
                     .PlanningInputs.OrderedCatalog[0];
+            EventAddress replayStart =
+                engine.ReadHistoryPlanningWindow()
+                    .StartExclusive;
             var plan = new MaintainRecapBlockPlan(
                 entry.RecapBlockId,
                 entry.Target,
                 entry.MaintainerId,
                 "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
                 new EmptyRecapMaintainSource(
-                    engine.ReadHistoryPlanningWindow()
-                        .StartExclusive
+                    replayStart,
+                    engine.ResolveContextAnchorSetupReferences(
+                        replayStart
+                    )
                 ),
-                [fixture.Head],
+                [
+                    new RecapReplayBoundary(
+                        fixture.Head,
+                        engine.ResolveContextAnchorSetupReferences(
+                            fixture.Head
+                        )
+                    )
+                ],
                 EmptyRecapPriorContext.Instance,
                 entry.MaxContentUtf8Bytes
             );
@@ -917,6 +929,9 @@ public sealed class ProgramRecapExecutionCommandTests : IDisposable {
                         DerivedRecapCodec.CreateManifest(
                             engine.BranchRefId,
                             fixture.Head,
+                            engine.ResolveContextAnchorSetupReferences(
+                                fixture.Head
+                            ),
                             [plan]
                         ),
                         fixture.Head

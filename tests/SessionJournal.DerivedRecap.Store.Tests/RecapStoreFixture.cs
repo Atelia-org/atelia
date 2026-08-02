@@ -82,6 +82,7 @@ internal sealed class RecapStoreFixture : IDisposable {
             DerivedRecapCodec.CreateManifest(
                 Engine.BranchRefId,
                 anchor,
+                Setups(anchor),
                 [plan]
             );
         await Store.CreateBuildingAsync(manifest);
@@ -112,10 +113,20 @@ internal sealed class RecapStoreFixture : IDisposable {
         ),
         "roleplay.autobiographical",
         RecapTestIdentity.CapabilityFingerprint,
-        new EmptyRecapMaintainSource(replayStart),
-        [anchor],
+        new EmptyRecapMaintainSource(
+            replayStart,
+            Setups(replayStart)
+        ),
+        [Boundary(anchor)],
         EmptyRecapPriorContext.Instance
     );
+
+    public SessionContextAnchorSetupReferences Setups(
+        EventAddress address
+    ) => RecapWireTestFacts.ResolveSetups(Engine, address);
+
+    public RecapReplayBoundary Boundary(EventAddress address)
+        => new(address, Setups(address));
 
     public EventAddress AppendPair(string suffix) {
         Engine.AppendObservation($"observation {suffix}");

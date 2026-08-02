@@ -238,7 +238,8 @@ public sealed class DerivedRecapOnlineLifecycleCoordinatorTests {
             await fixture.Store.CreateBuildingAsync(
                 DerivedRecapCodec.CreateManifest(
                     fixture.Engine.BranchRefId,
-                    plan.CatchUpThrough[^1],
+                    plan.CatchUpBoundaries[^1].Address,
+                    plan.CatchUpBoundaries[^1].Setups,
                     [plan]
                 )
             )
@@ -272,7 +273,7 @@ public sealed class DerivedRecapOnlineLifecycleCoordinatorTests {
         Assert.Null(coordinator.LastPlanningDiagnostics);
         Assert.IsType<BuildingReadResult.Missing>(
             await fixture.Store.ReadBuildingAsync(
-                plan.CatchUpThrough[^1]
+                plan.CatchUpBoundaries[^1].Address
             )
         );
     }
@@ -1107,9 +1108,15 @@ public sealed class DerivedRecapOnlineLifecycleCoordinatorTests {
                 MaintainerId,
                 RecapPlannerTestIdentity.CapabilityFingerprint,
                 new EmptyRecapMaintainSource(
-                    window.StartExclusive
+                    window.StartExclusive,
+                    window.StartSetups
                 ),
-                [anchor],
+                [
+                    RecapPlannerWireTestFacts.Boundary(
+                        window,
+                        anchor
+                    )
+                ],
                 EmptyRecapPriorContext.Instance,
                 MaxContent
             );
@@ -1120,13 +1127,14 @@ public sealed class DerivedRecapOnlineLifecycleCoordinatorTests {
             MaintainRecapBlockPlan plan,
             string content
         ) {
-            EventAddress anchor = plan.CatchUpThrough[^1];
+            EventAddress anchor = plan.CatchUpBoundaries[^1].Address;
             CreateBuildingResult.Created created =
                 Assert.IsType<CreateBuildingResult.Created>(
                     await Store.CreateBuildingAsync(
                         DerivedRecapCodec.CreateManifest(
                             Engine.BranchRefId,
                             anchor,
+                            plan.CatchUpBoundaries[^1].Setups,
                             [plan]
                         )
                     )
@@ -1173,7 +1181,7 @@ public sealed class DerivedRecapOnlineLifecycleCoordinatorTests {
             DamageFinalAndRemoveCheckpointAsync(
             MaintainRecapBlockPlan plan
         ) {
-            EventAddress anchor = plan.CatchUpThrough[^1];
+            EventAddress anchor = plan.CatchUpBoundaries[^1].Address;
             string publishedPath =
                 Store.GetPublishedPathForTest(anchor);
             await File.WriteAllTextAsync(

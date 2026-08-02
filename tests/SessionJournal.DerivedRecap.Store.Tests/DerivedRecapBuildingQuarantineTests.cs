@@ -244,8 +244,8 @@ public sealed class DerivedRecapBuildingQuarantineTests {
         );
         _ = Assert.IsType<CreateBuildingResult.Created>(
             await fixture.Store.CreateBuildingAsync(
-                DerivedRecapCodec.CreateManifest(
-                    fixture.Engine.BranchRefId,
+                RecapWireTestFacts.CreateManifest(
+                fixture.Engine,
                     anchor,
                     [plan]
                 )

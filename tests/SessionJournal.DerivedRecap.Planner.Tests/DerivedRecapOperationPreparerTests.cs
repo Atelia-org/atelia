@@ -862,14 +862,22 @@ public sealed class DerivedRecapOperationPreparerTests : IDisposable {
     ) => DerivedRecapCodec.CreateManifest(
         new RefId(1),
         Head,
+        RecapPlannerWireTestFacts.SyntheticSetups(Head),
         [
             new MaintainRecapBlockPlan(
                 blockId,
                 target,
                 maintainerId,
                 maintainerCapabilityFingerprint,
-                new EmptyRecapMaintainSource(Address(1)),
-                [Head],
+                new EmptyRecapMaintainSource(
+                    Address(1),
+                    RecapPlannerWireTestFacts.SyntheticSetups(
+                        Address(1)
+                    )
+                ),
+                [
+                    RecapPlannerWireTestFacts.SyntheticBoundary(Head)
+                ],
                 EmptyRecapPriorContext.Instance,
                 32_768
             )

@@ -268,6 +268,7 @@ public sealed class DerivedRecapRestoreExecutor {
                 || healthyInputs.ContainsKey(plan.RecapBlockId)) {
                 foreach (RecapFrozenPlanRawDefect defect
                          in RecapFrozenPlanRawValidator.ValidateBlock(
+                             _engine,
                              inspection.FrozenPlan,
                              healthyInputs,
                              lineage,
@@ -391,7 +392,7 @@ public sealed class DerivedRecapRestoreExecutor {
                     || suffix.NextEndpointIndex
                         != checkpoint.EndpointIndex + 1
                     || suffix.NextEndpointIndex
-                        >= maintain.CatchUpThrough.Count) {
+                        >= maintain.CatchUpBoundaries.Count) {
                     AddInvalidCapability(defects, plan);
                     return null;
                 }
@@ -585,7 +586,7 @@ public sealed class DerivedRecapRestoreExecutor {
         DerivedRecapBlock? currentBlock = action.InitialBlock;
         string checkpointToken = action.CheckpointStateToken;
         for (int index = action.NextEndpointIndex;
-             index < action.MaintainPlan.CatchUpThrough.Count;
+             index < action.MaintainPlan.CatchUpBoundaries.Count;
              index++) {
             cancellationToken.ThrowIfCancellationRequested();
             RecapMaintainerStepResult step =
@@ -594,7 +595,8 @@ public sealed class DerivedRecapRestoreExecutor {
                         action.MaintainPlan,
                         currentBlock,
                         windows[(action.Plan.RecapBlockId, index)],
-                        action.MaintainPlan.CatchUpThrough[index],
+                        action.MaintainPlan
+                            .CatchUpBoundaries[index].Address,
                         cancellationToken
                     )
                     .ConfigureAwait(false);

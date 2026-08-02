@@ -26,12 +26,12 @@ public sealed class DerivedRecapPublisherTests {
             EventAddress anchor = lineage.CapturedHead;
             RecapBlockPlan plan = fixture.CreateMaintainPlan(
                 anchor,
-                lineage.CurrentPrefix.HeadToOldest[^1].Address
+                lineage.CurrentPrefix.HeadToOldest[^2].Address
             );
             _ = Assert.IsType<CreateBuildingResult.Created>(
                 await fixture.Store.CreateBuildingAsync(
-                    DerivedRecapCodec.CreateManifest(
-                        fixture.Engine.BranchRefId,
+                    RecapWireTestFacts.CreateManifest(
+                fixture.Engine,
                         anchor,
                         [plan]
                     )
@@ -72,11 +72,11 @@ public sealed class DerivedRecapPublisherTests {
         EventAddress anchor = lineage.CapturedHead;
         RecapBlockPlan plan = fixture.CreateMaintainPlan(
             anchor,
-            lineage.CurrentPrefix.HeadToOldest[^1].Address
+            lineage.CurrentPrefix.HeadToOldest[^2].Address
         );
         _ = await fixture.Store.CreateBuildingAsync(
-            DerivedRecapCodec.CreateManifest(
-                fixture.Engine.BranchRefId,
+            RecapWireTestFacts.CreateManifest(
+                fixture.Engine,
                 anchor,
                 [plan]
             )
@@ -109,12 +109,12 @@ public sealed class DerivedRecapPublisherTests {
         EventAddress beyond = fixture.RawLineage().HeadToRoot[^1].Address;
         RecapBlockPlan plan = fixture.CreateMaintainPlan(
             anchor,
-            lineage.CurrentPrefix.HeadToOldest[^1].Address
+            lineage.CurrentPrefix.HeadToOldest[^2].Address
         );
         var maintain = (MaintainRecapBlockPlan)plan;
         _ = await fixture.Store.CreateBuildingAsync(
-            DerivedRecapCodec.CreateManifest(
-                fixture.Engine.BranchRefId,
+            RecapWireTestFacts.CreateManifest(
+                fixture.Engine,
                 anchor,
                 [plan]
             )
@@ -125,7 +125,7 @@ public sealed class DerivedRecapPublisherTests {
             "roleplay.autobiographical",
             maintain.MaintainerCapabilityFingerprint,
             maintain.Source,
-            maintain.CatchUpThrough,
+            maintain.CatchUpBoundaries,
             EmptyRecapPriorContext.Instance
         );
         string finalPath = Path.Combine(
@@ -203,11 +203,11 @@ public sealed class DerivedRecapPublisherTests {
         EventAddress anchor = initial.CapturedHead;
         RecapBlockPlan plan = fixture.CreateMaintainPlan(
             anchor,
-            initial.CurrentPrefix.HeadToOldest[^1].Address
+            initial.CurrentPrefix.HeadToOldest[^2].Address
         );
         DerivedRecapSetManifest manifest =
-            DerivedRecapCodec.CreateManifest(
-                fixture.Engine.BranchRefId,
+            RecapWireTestFacts.CreateManifest(
+                fixture.Engine,
                 anchor,
                 [plan]
             );
@@ -272,8 +272,8 @@ public sealed class DerivedRecapPublisherTests {
             rewindTarget
         );
         DerivedRecapSetManifest manifest =
-            DerivedRecapCodec.CreateManifest(
-                refId,
+            RecapWireTestFacts.CreateManifest(
+                fixture.Engine,
                 capturedHead,
                 [plan]
             );
@@ -351,8 +351,8 @@ public sealed class DerivedRecapPublisherTests {
             lineage.CurrentPrefix.HeadToOldest[2].Address
         );
         DerivedRecapSetManifest manifest =
-            DerivedRecapCodec.CreateManifest(
-                fixture.Engine.BranchRefId,
+            RecapWireTestFacts.CreateManifest(
+                fixture.Engine,
                 anchor,
                 [plan]
             );

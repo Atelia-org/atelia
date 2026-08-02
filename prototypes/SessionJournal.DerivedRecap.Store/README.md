@@ -12,11 +12,14 @@ fingerprint is opaque to Store and must use the canonical
 Maintainer or defaults it from `MaintainerId`.
 
 The durable directory and Store header remain `derived/recap/v4` and Store
-schema v4. Frozen inputs and final blocks also remain v4. The manifest and
-Published publication envelope are schema v5 because their canonical payloads
-now commit the capability fingerprint. There is deliberately no v4
-manifest/publication reader: an old Building must be explicitly abandoned;
-an old Published Store must be explicitly reset and rebuilt.
+schema v4. Final blocks also remain v4. The manifest and Published publication
+envelope are schema v6, and frozen inputs are schema v5. Their canonical
+payloads freeze the exact governing setup references for admission, source
+cursor, replay start, and every catch-up boundary. Maintain routes use
+`RecapReplayBoundary(Address, Setups)`, and the final boundary must exactly
+equal both manifest admission fields. There are deliberately no readers for
+manifest/publication v5 or frozen-input v4: an old Building must be explicitly
+abandoned; an old Published Store must be explicitly reset and rebuilt.
 
 ## Publication authority
 
@@ -66,8 +69,15 @@ referenced Published sources are reread exactly and frozen into the Building.
 `Published`, `NotPublishable`, `BeyondPrefix`, `StoreUnavailable`, or
 `RawHeadChanged`. Admission and historical source validation occurs before
 staging/sealing writes, and the final raw-head fence remains immediately before
-promotion. These authority and resource-bound changes do not change durable
-Store, manifest, block, frozen-input, or publication-envelope schemas.
+promotion. The Store directory/header and final-block schemas remain v4; the
+frozen wire cutover above intentionally changes manifest, frozen-input, and
+publication schemas without a compatibility layer.
+
+This wire closure does not itself make raw validation bounded. The current
+installer and Planner execution paths may still perform full-lineage header or
+governing-setup discovery before using the frozen references. A later bounded
+online cutover must replace those discovery paths with explicit prefix proof
+and typed `BeyondPrefix`; callers must not infer that guarantee from schema v6.
 
 The final raw-head reread is a fence, not an atomic compare-and-swap with the
 raw journal. The SessionJournal engine lock excludes other engine processes for

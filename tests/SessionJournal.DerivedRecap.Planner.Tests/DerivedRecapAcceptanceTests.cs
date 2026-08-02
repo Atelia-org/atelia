@@ -144,7 +144,12 @@ public sealed class DerivedRecapAcceptanceTests {
                 finalPlan.Source
             );
         Assert.Equal(a[12], finalSource.SourceSetAnchor);
-        Assert.Equal([a[5], a[11], a[20]], finalPlan.CatchUpThrough);
+        Assert.Equal(
+            [a[5], a[11], a[20]],
+            finalPlan.CatchUpBoundaries.Select(
+                static boundary => boundary.Address
+            )
+        );
 
         DerivedRecapLineageView lineage =
             DerivedRecapLineageView.Capture(
@@ -205,13 +210,24 @@ public sealed class DerivedRecapAcceptanceTests {
             ContextHeaderCarrier.System,
             id.Value
         );
+        SessionHistoryPlanningWindow planningWindow =
+            fixture.Engine.ReadHistoryPlanningWindow();
         var plan = new MaintainRecapBlockPlan(
             id,
             target,
             "roleplay.client-maintainer",
             RecapPlannerTestIdentity.CapabilityFingerprint,
-            new EmptyRecapMaintainSource(a[1]),
-            [a[5], a[11], a[20]],
+            new EmptyRecapMaintainSource(
+                a[1],
+                RecapPlannerWireTestFacts.SetupsAt(
+                    planningWindow,
+                    a[1]
+                )
+            ),
+            RecapPlannerWireTestFacts.Boundaries(
+                planningWindow,
+                [a[5], a[11], a[20]]
+            ),
             EmptyRecapPriorContext.Instance,
             MaxContent
         );
@@ -221,6 +237,10 @@ public sealed class DerivedRecapAcceptanceTests {
                     DerivedRecapCodec.CreateManifest(
                         fixture.Engine.BranchRefId,
                         a[20],
+                        RecapPlannerWireTestFacts.SetupsAt(
+                            planningWindow,
+                            a[20]
+                        ),
                         [plan]
                     )
                 )
@@ -292,8 +312,9 @@ public sealed class DerivedRecapAcceptanceTests {
             await AcceptanceFixture.CreateAsync();
         EventAddress[] a = fixture.AppendNumberedPairs(3);
         EventAddress admission = a[3];
-        EventAddress replayStart =
-            fixture.Engine.ReadHistoryPlanningWindow().StartExclusive;
+        SessionHistoryPlanningWindow planningWindow =
+            fixture.Engine.ReadHistoryPlanningWindow();
+        EventAddress replayStart = planningWindow.StartExclusive;
         RecapBlockPlan[] plans = [
             CreatePlan("alpha", "alpha-maintainer"),
             CreatePlan("zeta", "zeta-maintainer")
@@ -303,6 +324,10 @@ public sealed class DerivedRecapAcceptanceTests {
                 DerivedRecapCodec.CreateManifest(
                     fixture.Engine.BranchRefId,
                     admission,
+                    RecapPlannerWireTestFacts.SetupsAt(
+                        planningWindow,
+                        admission
+                    ),
                     plans
                 )
             )
@@ -360,8 +385,16 @@ public sealed class DerivedRecapAcceptanceTests {
                 ),
                 maintainerId,
                 RecapPlannerTestIdentity.CapabilityFingerprint,
-                new EmptyRecapMaintainSource(replayStart),
-                [admission],
+                new EmptyRecapMaintainSource(
+                    replayStart,
+                    planningWindow.StartSetups
+                ),
+                [
+                    RecapPlannerWireTestFacts.Boundary(
+                        planningWindow,
+                        admission
+                    )
+                ],
                 EmptyRecapPriorContext.Instance,
                 MaxContent
             );

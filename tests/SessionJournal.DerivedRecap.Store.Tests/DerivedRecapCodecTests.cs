@@ -18,6 +18,24 @@ public sealed class DerivedRecapCodecTests {
         AddressHint.None
     );
 
+    private static readonly SessionContextAnchorSetupReferences S1 =
+        RecapWireTestFacts.SyntheticSetups(A1);
+
+    private static readonly SessionContextAnchorSetupReferences S2 =
+        RecapWireTestFacts.SyntheticSetups(A2);
+
+    private const string S1Json =
+        "{\"runtimeConfig\":{\"address\":\"ej1:01020304050607080a0b0c0d01020304\","
+        + "\"bodySchemaVersion\":1,\"payloadSha256\":\"0000000000000000000000000000000000000000000000000000000000000000\"},"
+        + "\"systemPrompt\":{\"address\":\"ej1:01020304050607080a0b0c0d01020304\","
+        + "\"bodySchemaVersion\":1,\"payloadSha256\":\"1111111111111111111111111111111111111111111111111111111111111111\"}}";
+
+    private const string S2Json =
+        "{\"runtimeConfig\":{\"address\":\"ej1:11121314151617181a1b1c1d00000000\","
+        + "\"bodySchemaVersion\":1,\"payloadSha256\":\"0000000000000000000000000000000000000000000000000000000000000000\"},"
+        + "\"systemPrompt\":{\"address\":\"ej1:11121314151617181a1b1c1d00000000\","
+        + "\"bodySchemaVersion\":1,\"payloadSha256\":\"1111111111111111111111111111111111111111111111111111111111111111\"}}";
+
     [Fact]
     public void SchemaTokens_AreLiteralWireCommitments() {
         Assert.Equal(
@@ -25,11 +43,11 @@ public sealed class DerivedRecapCodecTests {
             DerivedRecapCodec.StoreSchema
         );
         Assert.Equal(
-            "atelia.session-journal.derived-recap-manifest.v5",
+            "atelia.session-journal.derived-recap-manifest.v6",
             DerivedRecapCodec.ManifestSchema
         );
         Assert.Equal(
-            "atelia.session-journal.derived-recap-frozen-input.v4",
+            "atelia.session-journal.derived-recap-frozen-input.v5",
             DerivedRecapCodec.FrozenInputSchema
         );
         Assert.Equal(
@@ -37,7 +55,7 @@ public sealed class DerivedRecapCodecTests {
             DerivedRecapCodec.BlockSchema
         );
         Assert.Equal(
-            "atelia.session-journal.published-recap-set.v5",
+            "atelia.session-journal.published-recap-set.v6",
             DerivedRecapCodec.PublicationSchema
         );
     }
@@ -70,7 +88,7 @@ public sealed class DerivedRecapCodecTests {
     }
 
     [Fact]
-    public void V5ManifestAndPublication_HaveLiteralCanonicalGoldens() {
+    public void V6ManifestAndPublication_HaveLiteralCanonicalGoldens() {
         var refId = new RefId(0x1234);
         RecapBlockPlan plan = new MaintainRecapBlockPlan(
             new RecapBlockId("roleplay.self"),
@@ -80,33 +98,36 @@ public sealed class DerivedRecapCodecTests {
             ),
             "roleplay.autobiographical",
             RecapTestIdentity.CapabilityFingerprint,
-            new EmptyRecapMaintainSource(A1),
-            [A2],
+            new EmptyRecapMaintainSource(A1, S1),
+            [new RecapReplayBoundary(A2, S2)],
             EmptyRecapPriorContext.Instance
         );
         DerivedRecapSetManifest manifest =
-            DerivedRecapCodec.CreateManifest(refId, A2, [plan]);
+            DerivedRecapCodec.CreateManifest(refId, A2, S2, [plan]);
 
         string actual = Encoding.UTF8.GetString(
             DerivedRecapCodec.EncodeManifest(manifest)
         );
         const string ExpectedManifest =
-            "{\"schema\":\"atelia.session-journal.derived-recap-manifest.v5\","
+            "{\"schema\":\"atelia.session-journal.derived-recap-manifest.v6\","
             + "\"refId\":\"0000000000001234\","
             + "\"setAdmissionAnchor\":\"ej1:11121314151617181a1b1c1d00000000\","
+            + "\"setAdmissionAnchorSetups\":" + S2Json + ","
             + "\"blocks\":[{\"mode\":\"maintain\","
             + "\"recapBlockId\":\"roleplay.self\","
             + "\"target\":{\"carrier\":\"system\",\"blockKey\":\"roleplay.self\"},"
             + "\"maintainerId\":\"roleplay.autobiographical\","
             + "\"maintainerCapabilityFingerprint\":\"sha256:0000000000000000000000000000000000000000000000000000000000000000\","
-            + "\"source\":{\"kind\":\"empty\",\"replayStartExclusive\":\"ej1:01020304050607080a0b0c0d01020304\"},"
-            + "\"catchUpThrough\":[\"ej1:11121314151617181a1b1c1d00000000\"],"
+            + "\"source\":{\"kind\":\"empty\",\"replayStartExclusive\":\"ej1:01020304050607080a0b0c0d01020304\","
+            + "\"replayStartSetups\":" + S1Json + "},"
+            + "\"catchUpBoundaries\":[{\"address\":\"ej1:11121314151617181a1b1c1d00000000\","
+            + "\"setups\":" + S2Json + "}],"
             + "\"priorContext\":{\"kind\":\"empty\"},"
             + "\"maxContentUtf8Bytes\":262144}],"
-            + "\"manifestPayloadSha256\":\"b35f6f3ba3aaede8067e642d34f7c36377a4451f17a518d9e9d094dc010ee456\"}";
+            + "\"manifestPayloadSha256\":\"da7ea99188960f8497a7a9e228f0b0d15e84a6e1b6507f26b47f082ae4b4ac28\"}";
 
         Assert.Equal(
-            "b35f6f3ba3aaede8067e642d34f7c36377a4451f17a518d9e9d094dc010ee456",
+            "da7ea99188960f8497a7a9e228f0b0d15e84a6e1b6507f26b47f082ae4b4ac28",
             manifest.ManifestPayloadSha256
         );
         Assert.Equal(ExpectedManifest, actual);
@@ -127,35 +148,61 @@ public sealed class DerivedRecapCodecTests {
                 [DerivedRecapCodec.CreateBlock(plan, A2, "recap")]
             );
         const string ExpectedPublication =
-            "{\"schema\":\"atelia.session-journal.published-recap-set.v5\","
+            "{\"schema\":\"atelia.session-journal.published-recap-set.v6\","
             + "\"refId\":\"0000000000001234\","
             + "\"setAdmissionAnchor\":\"ej1:11121314151617181a1b1c1d00000000\","
-            + "\"frozenPlanSnapshot\":{\"schema\":\"atelia.session-journal.derived-recap-manifest.v5\","
-            + "\"refId\":\"0000000000001234\","
-            + "\"setAdmissionAnchor\":\"ej1:11121314151617181a1b1c1d00000000\","
-            + "\"blocks\":[{\"mode\":\"maintain\","
-            + "\"recapBlockId\":\"roleplay.self\","
-            + "\"target\":{\"carrier\":\"system\",\"blockKey\":\"roleplay.self\"},"
-            + "\"maintainerId\":\"roleplay.autobiographical\","
-            + "\"maintainerCapabilityFingerprint\":\"sha256:0000000000000000000000000000000000000000000000000000000000000000\","
-            + "\"source\":{\"kind\":\"empty\",\"replayStartExclusive\":\"ej1:01020304050607080a0b0c0d01020304\"},"
-            + "\"catchUpThrough\":[\"ej1:11121314151617181a1b1c1d00000000\"],"
-            + "\"priorContext\":{\"kind\":\"empty\"},"
-            + "\"maxContentUtf8Bytes\":262144}],"
-            + "\"manifestPayloadSha256\":\"b35f6f3ba3aaede8067e642d34f7c36377a4451f17a518d9e9d094dc010ee456\"},"
+            + "\"frozenPlanSnapshot\":" + ExpectedManifest + ","
             + "\"blockCommitments\":[{\"recapBlockId\":\"roleplay.self\","
             + "\"target\":{\"carrier\":\"system\",\"blockKey\":\"roleplay.self\"},"
             + "\"absorbedThrough\":\"ej1:11121314151617181a1b1c1d00000000\","
-            + "\"payloadSha256\":\"8ac896339aa420b8479d21d4ec273ae68bc635d6dd0a29125c760917f5fe9a96\"}],"
-            + "\"envelopeSha256\":\"e373c50676923355401de1543f185d972702f00b9ef9f0ad48f5c99a4a3c3f6b\"}";
+            + "\"payloadSha256\":\"cbceee4ef1fd3519991e61ee320b538d39dc85479b8c924e94510cbfd0cd58ec\"}],"
+            + "\"envelopeSha256\":\"facea6130590a48676a8ced1d3361e39fbbe7834e3fcffb65ebf819fb1717078\"}";
         Assert.Equal(
-            "e373c50676923355401de1543f185d972702f00b9ef9f0ad48f5c99a4a3c3f6b",
+            "facea6130590a48676a8ced1d3361e39fbbe7834e3fcffb65ebf819fb1717078",
             publication.EnvelopeSha256
         );
         Assert.Equal(
             ExpectedPublication,
             Encoding.UTF8.GetString(
                 DerivedRecapCodec.EncodePublication(publication)
+            )
+        );
+    }
+
+    [Fact]
+    public void V5FrozenInput_HasLiteralCanonicalGolden() {
+        DerivedRecapFrozenInput input =
+            DerivedRecapCodec.CreateFrozenInput(
+                new RecapBlockId("roleplay.action"),
+                new ContextHeaderBlockPath(
+                    ContextHeaderCarrier.Action,
+                    "roleplay.action"
+                ),
+                A1,
+                S1,
+                "old"
+            );
+        string actual = Encoding.UTF8.GetString(
+            DerivedRecapCodec.EncodeFrozenInput(input)
+        );
+        const string Expected =
+            "{\"schema\":\"atelia.session-journal.derived-recap-frozen-input.v5\","
+            + "\"recapBlockId\":\"roleplay.action\","
+            + "\"target\":{\"carrier\":\"action\",\"blockKey\":\"roleplay.action\"},"
+            + "\"absorbedThrough\":\"ej1:01020304050607080a0b0c0d01020304\","
+            + "\"absorbedThroughSetups\":" + S1Json + ","
+            + "\"content\":\"old\","
+            + "\"payloadSha256\":\"a9986e97a2c82fd02fd8a7d71b8d9c3db0b3c3da4f98314243030a85cee50a7d\"}";
+
+        Assert.Equal(
+            "a9986e97a2c82fd02fd8a7d71b8d9c3db0b3c3da4f98314243030a85cee50a7d",
+            input.PayloadSha256
+        );
+        Assert.Equal(Expected, actual);
+        Assert.Equal(
+            input,
+            DerivedRecapCodec.DecodeFrozenInput(
+                Encoding.UTF8.GetBytes(actual)
             )
         );
     }
@@ -177,11 +224,13 @@ public sealed class DerivedRecapCodecTests {
             DerivedRecapCodec.CreateManifest(
                 new RefId(8),
                 A2,
+                S2,
                 [first]
             ).ManifestPayloadSha256,
             DerivedRecapCodec.CreateManifest(
                 new RefId(8),
                 A2,
+                S2,
                 [second]
             ).ManifestPayloadSha256
         );
@@ -196,38 +245,169 @@ public sealed class DerivedRecapCodecTests {
                 DerivedRecapCodec.CreateManifest(
                     new RefId(8),
                     A2,
+                    S2,
                     [MaintainPlan(invalid)]
                 )
             );
         }
     }
 
+    [Theory]
+    [InlineData("default-address")]
+    [InlineData("non-positive-schema")]
+    [InlineData("uppercase-sha")]
+    public void SetupReferences_RequireNonDefaultAddressPositiveSchemaAndLowercaseSha(
+        string mutation
+    ) {
+        SessionContextSetupReference invalidRuntime = mutation switch {
+            "default-address" => S2.RuntimeConfig with {
+                Address = default
+            },
+            "non-positive-schema" => S2.RuntimeConfig with {
+                BodySchemaVersion = 0
+            },
+            "uppercase-sha" => S2.RuntimeConfig with {
+                PayloadSha256 = new string('A', 64)
+            },
+            _ => throw new ArgumentOutOfRangeException(nameof(mutation))
+        };
+        SessionContextAnchorSetupReferences invalidSetups = S2 with {
+            RuntimeConfig = invalidRuntime
+        };
+
+        Assert.Throws<InvalidDataException>(() =>
+            DerivedRecapCodec.CreateManifest(
+                new RefId(8),
+                A2,
+                invalidSetups,
+                [MaintainPlan(RecapTestIdentity.CapabilityFingerprint)]
+            )
+        );
+    }
+
     [Fact]
-    public void HistoricalV4ManifestAndPublication_AreStrictlyRejected() {
+    public void MaintainFinalBoundary_MustMatchAdmissionAddressAndSetups() {
+        MaintainRecapBlockPlan baseline = MaintainPlan(
+            RecapTestIdentity.CapabilityFingerprint
+        );
+        var mismatched = new MaintainRecapBlockPlan(
+            baseline.RecapBlockId,
+            baseline.Target,
+            baseline.MaintainerId,
+            baseline.MaintainerCapabilityFingerprint,
+            baseline.Source,
+            [
+                new RecapReplayBoundary(A2, S1)
+            ],
+            baseline.PriorContext,
+            baseline.MaxContentUtf8Bytes
+        );
+
+        Assert.Throws<InvalidDataException>(() =>
+            DerivedRecapCodec.CreateManifest(
+                new RefId(8),
+                A2,
+                S2,
+                [mismatched]
+            )
+        );
+    }
+
+    [Fact]
+    public void Setups_AreHashBoundAcrossManifestFrozenInputAndPlan() {
+        SessionContextAnchorSetupReferences alternateS1 = S1 with {
+            SystemPrompt = S1.SystemPrompt with {
+                PayloadSha256 = new string('2', 64)
+            }
+        };
+        DerivedRecapFrozenInput firstInput =
+            DerivedRecapCodec.CreateFrozenInput(
+                new RecapBlockId("roleplay.action"),
+                new ContextHeaderBlockPath(
+                    ContextHeaderCarrier.Action,
+                    "roleplay.action"
+                ),
+                A1,
+                S1,
+                "old"
+            );
+        DerivedRecapFrozenInput alternateInput =
+            DerivedRecapCodec.CreateFrozenInput(
+                firstInput.RecapBlockId,
+                firstInput.Target,
+                A1,
+                alternateS1,
+                "old"
+            );
+        var firstPlan = new InheritRecapBlockPlan(
+            firstInput.RecapBlockId,
+            firstInput.Target,
+            A1,
+            S1,
+            new string('3', 64),
+            firstInput.PayloadSha256
+        );
+        var crossBoundPlan = new InheritRecapBlockPlan(
+            firstInput.RecapBlockId,
+            firstInput.Target,
+            A1,
+            alternateS1,
+            new string('3', 64),
+            firstInput.PayloadSha256
+        );
+
+        Assert.NotEqual(
+            firstInput.PayloadSha256,
+            alternateInput.PayloadSha256
+        );
+        Assert.NotEqual(
+            DerivedRecapCodec.ComputeBlockPlanSha256(firstPlan),
+            DerivedRecapCodec.ComputeBlockPlanSha256(crossBoundPlan)
+        );
+        Assert.NotEqual(
+            DerivedRecapCodec.CreateManifest(
+                new RefId(8),
+                A2,
+                S2,
+                [firstPlan]
+            ).ManifestPayloadSha256,
+            DerivedRecapCodec.CreateManifest(
+                new RefId(8),
+                A2,
+                S2,
+                [crossBoundPlan]
+            ).ManifestPayloadSha256
+        );
+    }
+
+    [Fact]
+    public void HistoricalV5ManifestAndPublication_AreStrictlyRejected() {
         const string HistoricalManifest =
-            "{\"schema\":\"atelia.session-journal.derived-recap-manifest.v4\","
+            "{\"schema\":\"atelia.session-journal.derived-recap-manifest.v5\","
             + "\"refId\":\"0000000000001234\","
             + "\"setAdmissionAnchor\":\"ej1:11121314151617181a1b1c1d00000000\","
             + "\"blocks\":[{\"mode\":\"maintain\","
             + "\"recapBlockId\":\"roleplay.self\","
             + "\"target\":{\"carrier\":\"system\",\"blockKey\":\"roleplay.self\"},"
             + "\"maintainerId\":\"roleplay.autobiographical\","
+            + "\"maintainerCapabilityFingerprint\":\"sha256:0000000000000000000000000000000000000000000000000000000000000000\","
             + "\"source\":{\"kind\":\"empty\",\"replayStartExclusive\":\"ej1:01020304050607080a0b0c0d01020304\"},"
             + "\"catchUpThrough\":[\"ej1:11121314151617181a1b1c1d00000000\"],"
             + "\"priorContext\":{\"kind\":\"empty\"},"
             + "\"maxContentUtf8Bytes\":262144}],"
             + "\"manifestPayloadSha256\":\"cad7c824d9e03b0fe632852d4072d3057b5208506bf660bfa7989cf8563c24df\"}";
         const string HistoricalPublication =
-            "{\"schema\":\"atelia.session-journal.published-recap-set.v4\","
+            "{\"schema\":\"atelia.session-journal.published-recap-set.v5\","
             + "\"refId\":\"0000000000001234\","
             + "\"setAdmissionAnchor\":\"ej1:11121314151617181a1b1c1d00000000\","
-            + "\"frozenPlanSnapshot\":{\"schema\":\"atelia.session-journal.derived-recap-manifest.v4\","
+            + "\"frozenPlanSnapshot\":{\"schema\":\"atelia.session-journal.derived-recap-manifest.v5\","
             + "\"refId\":\"0000000000001234\","
             + "\"setAdmissionAnchor\":\"ej1:11121314151617181a1b1c1d00000000\","
             + "\"blocks\":[{\"mode\":\"maintain\","
             + "\"recapBlockId\":\"roleplay.self\","
             + "\"target\":{\"carrier\":\"system\",\"blockKey\":\"roleplay.self\"},"
             + "\"maintainerId\":\"roleplay.autobiographical\","
+            + "\"maintainerCapabilityFingerprint\":\"sha256:0000000000000000000000000000000000000000000000000000000000000000\","
             + "\"source\":{\"kind\":\"empty\",\"replayStartExclusive\":\"ej1:01020304050607080a0b0c0d01020304\"},"
             + "\"catchUpThrough\":[\"ej1:11121314151617181a1b1c1d00000000\"],"
             + "\"priorContext\":{\"kind\":\"empty\"},"
@@ -240,7 +420,7 @@ public sealed class DerivedRecapCodecTests {
             + "\"envelopeSha256\":\"330273a29d4cf8ed5e2b3341f61063f76042485289eac60a2708c27f382a9f9c\"}";
 
         Assert.DoesNotContain(
-            "maintainerCapabilityFingerprint",
+            "setAdmissionAnchorSetups",
             HistoricalManifest,
             StringComparison.Ordinal
         );
@@ -257,11 +437,29 @@ public sealed class DerivedRecapCodecTests {
     }
 
     [Fact]
-    public void DurableV5_RejectsV4AndFingerprintFieldMutation() {
+    public void HistoricalV4FrozenInput_IsStrictlyRejected() {
+        const string HistoricalInput =
+            "{\"schema\":\"atelia.session-journal.derived-recap-frozen-input.v4\","
+            + "\"recapBlockId\":\"roleplay.action\","
+            + "\"target\":{\"carrier\":\"action\",\"blockKey\":\"roleplay.action\"},"
+            + "\"absorbedThrough\":\"ej1:01020304050607080a0b0c0d01020304\","
+            + "\"content\":\"old\","
+            + "\"payloadSha256\":\"0f97ad4a752167dc0c69d5c508d17c444fdb5eeecf11698c5784e8cfdaf59c14\"}";
+
+        Assert.Throws<NotSupportedException>(() =>
+            DerivedRecapCodec.DecodeFrozenInput(
+                Encoding.UTF8.GetBytes(HistoricalInput)
+            )
+        );
+    }
+
+    [Fact]
+    public void DurableV6_RejectsV5AndFingerprintFieldMutation() {
         DerivedRecapSetManifest manifest =
             DerivedRecapCodec.CreateManifest(
                 new RefId(9),
                 A2,
+                S2,
                 [MaintainPlan(
                     RecapTestIdentity.CapabilityFingerprint
                 )]
@@ -272,7 +470,7 @@ public sealed class DerivedRecapCodecTests {
 
         string oldSchema = json.Replace(
             DerivedRecapCodec.ManifestSchema,
-            "atelia.session-journal.derived-recap-manifest.v4",
+            "atelia.session-journal.derived-recap-manifest.v5",
             StringComparison.Ordinal
         );
         Assert.Throws<NotSupportedException>(() =>
@@ -318,7 +516,7 @@ public sealed class DerivedRecapCodecTests {
         );
         string oldPublicationSchema = publicationJson.Replace(
             DerivedRecapCodec.PublicationSchema,
-            "atelia.session-journal.published-recap-set.v4",
+            "atelia.session-journal.published-recap-set.v5",
             StringComparison.Ordinal
         );
         Assert.Throws<NotSupportedException>(() =>
@@ -338,8 +536,8 @@ public sealed class DerivedRecapCodecTests {
         ),
         "roleplay.fingerprint",
         capabilityFingerprint,
-        new EmptyRecapMaintainSource(A1),
-        [A2],
+        new EmptyRecapMaintainSource(A1, S1),
+        [new RecapReplayBoundary(A2, S2)],
         EmptyRecapPriorContext.Instance
     );
 
@@ -353,14 +551,15 @@ public sealed class DerivedRecapCodecTests {
             ),
             "roleplay.world",
             RecapTestIdentity.CapabilityFingerprint,
-            new EmptyRecapMaintainSource(A1),
-            [A2],
+            new EmptyRecapMaintainSource(A1, S1),
+            [new RecapReplayBoundary(A2, S2)],
             EmptyRecapPriorContext.Instance
         );
         DerivedRecapSetManifest manifest =
             DerivedRecapCodec.CreateManifest(
                 new RefId(7),
                 A2,
+                S2,
                 [plan]
             );
         string json = Encoding.UTF8.GetString(
@@ -413,12 +612,14 @@ public sealed class DerivedRecapCodecTests {
                 id,
                 target,
                 A1,
+                S1,
                 "old"
             );
         var plan = new InheritRecapBlockPlan(
             id,
             target,
             A1,
+            S1,
             new string('1', 64),
             input.PayloadSha256
         );
@@ -426,6 +627,7 @@ public sealed class DerivedRecapCodecTests {
             DerivedRecapCodec.CreateManifest(
                 new RefId(9),
                 A2,
+                S2,
                 [plan]
             );
         DerivedRecapBlock block =
@@ -479,14 +681,15 @@ public sealed class DerivedRecapCodecTests {
             target,
             "roleplay.autobiographical",
             RecapTestIdentity.CapabilityFingerprint,
-            new EmptyRecapMaintainSource(A1),
-            [A2],
+            new EmptyRecapMaintainSource(A1, S1),
+            [new RecapReplayBoundary(A2, S2)],
             EmptyRecapPriorContext.Instance
         );
         DerivedRecapSetManifest manifest =
             DerivedRecapCodec.CreateManifest(
                 new RefId(12),
                 A2,
+                S2,
                 [plan]
             );
         PublishedRecapSet publication =

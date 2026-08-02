@@ -10,13 +10,13 @@ public static class DerivedRecapCodec {
     public const string StoreSchema =
         "atelia.session-journal.derived-recap-store.v4";
     public const string ManifestSchema =
-        "atelia.session-journal.derived-recap-manifest.v5";
+        "atelia.session-journal.derived-recap-manifest.v6";
     public const string FrozenInputSchema =
-        "atelia.session-journal.derived-recap-frozen-input.v4";
+        "atelia.session-journal.derived-recap-frozen-input.v5";
     public const string BlockSchema =
         "atelia.session-journal.derived-recap-block.v4";
     public const string PublicationSchema =
-        "atelia.session-journal.published-recap-set.v5";
+        "atelia.session-journal.published-recap-set.v6";
 
     private static readonly JsonWriterOptions WriterOptions = new() {
         Indented = false,
@@ -29,6 +29,7 @@ public static class DerivedRecapCodec {
     public static DerivedRecapSetManifest CreateManifest(
         RefId refId,
         EventAddress setAdmissionAnchor,
+        SessionContextAnchorSetupReferences setAdmissionAnchorSetups,
         IReadOnlyList<RecapBlockPlan> blocks
     ) {
         ArgumentNullException.ThrowIfNull(blocks);
@@ -36,6 +37,7 @@ public static class DerivedRecapCodec {
             ManifestSchema,
             refId,
             setAdmissionAnchor,
+            setAdmissionAnchorSetups,
             Array.AsReadOnly(blocks.ToArray()),
             string.Empty
         );
@@ -50,6 +52,7 @@ public static class DerivedRecapCodec {
         RecapBlockId recapBlockId,
         ContextHeaderBlockPath target,
         EventAddress absorbedThrough,
+        SessionContextAnchorSetupReferences absorbedThroughSetups,
         string content
     ) {
         var provisional = new DerivedRecapFrozenInput(
@@ -57,6 +60,7 @@ public static class DerivedRecapCodec {
             recapBlockId,
             target,
             absorbedThrough,
+            absorbedThroughSetups,
             content,
             string.Empty
         );
@@ -303,6 +307,11 @@ public static class DerivedRecapCodec {
             "setAdmissionAnchor",
             EventAddressTextCodec.Format(manifest.SetAdmissionAnchor)
         );
+        WriteSetups(
+            writer,
+            "setAdmissionAnchorSetups",
+            manifest.SetAdmissionAnchorSetups
+        );
         writer.WriteStartArray("blocks");
         foreach (RecapBlockPlan plan in manifest.Blocks) {
             WritePlan(writer, plan);
@@ -332,6 +341,11 @@ public static class DerivedRecapCodec {
                         inherit.SourceSetAnchor
                     )
                 );
+                WriteSetups(
+                    writer,
+                    "sourceAbsorbedThroughSetups",
+                    inherit.SourceAbsorbedThroughSetups
+                );
                 writer.WriteString(
                     "sourcePublicationEnvelopeSha256",
                     inherit.SourcePublicationEnvelopeSha256
@@ -358,12 +372,16 @@ public static class DerivedRecapCodec {
                 );
                 writer.WritePropertyName("source");
                 WriteMaintainSource(writer, maintain.Source);
-                writer.WriteStartArray("catchUpThrough");
-                foreach (EventAddress endpoint
-                         in maintain.CatchUpThrough) {
-                    writer.WriteStringValue(
-                        EventAddressTextCodec.Format(endpoint)
+                writer.WriteStartArray("catchUpBoundaries");
+                foreach (RecapReplayBoundary boundary
+                         in maintain.CatchUpBoundaries) {
+                    writer.WriteStartObject();
+                    writer.WriteString(
+                        "address",
+                        EventAddressTextCodec.Format(boundary.Address)
                     );
+                    WriteSetups(writer, "setups", boundary.Setups);
+                    writer.WriteEndObject();
                 }
                 writer.WriteEndArray();
                 writer.WritePropertyName("priorContext");
@@ -407,6 +425,11 @@ public static class DerivedRecapCodec {
                         existing.SourceSetAnchor
                     )
                 );
+                WriteSetups(
+                    writer,
+                    "replayStartSetups",
+                    existing.ReplayStartSetups
+                );
                 writer.WriteString(
                     "sourcePublicationEnvelopeSha256",
                     existing.SourcePublicationEnvelopeSha256
@@ -423,6 +446,11 @@ public static class DerivedRecapCodec {
                     EventAddressTextCodec.Format(
                         empty.ReplayStartExclusive
                     )
+                );
+                WriteSetups(
+                    writer,
+                    "replayStartSetups",
+                    empty.ReplayStartSetups
                 );
                 break;
             default:
@@ -497,6 +525,11 @@ public static class DerivedRecapCodec {
         writer.WriteString(
             "absorbedThrough",
             EventAddressTextCodec.Format(input.AbsorbedThrough)
+        );
+        WriteSetups(
+            writer,
+            "absorbedThroughSetups",
+            input.AbsorbedThroughSetups
         );
         writer.WriteString("content", input.Content);
         if (includeHash) {
@@ -588,6 +621,43 @@ public static class DerivedRecapCodec {
         writer.WriteEndObject();
     }
 
+    private static void WriteSetups(
+        Utf8JsonWriter writer,
+        string propertyName,
+        SessionContextAnchorSetupReferences setups
+    ) {
+        writer.WriteStartObject(propertyName);
+        WriteSetupReference(
+            writer,
+            "runtimeConfig",
+            setups.RuntimeConfig
+        );
+        WriteSetupReference(
+            writer,
+            "systemPrompt",
+            setups.SystemPrompt
+        );
+        writer.WriteEndObject();
+    }
+
+    private static void WriteSetupReference(
+        Utf8JsonWriter writer,
+        string propertyName,
+        SessionContextSetupReference reference
+    ) {
+        writer.WriteStartObject(propertyName);
+        writer.WriteString(
+            "address",
+            EventAddressTextCodec.Format(reference.Address)
+        );
+        writer.WriteNumber(
+            "bodySchemaVersion",
+            reference.BodySchemaVersion
+        );
+        writer.WriteString("payloadSha256", reference.PayloadSha256);
+        writer.WriteEndObject();
+    }
+
     private static void WriteTarget(
         Utf8JsonWriter writer,
         ContextHeaderBlockPath target
@@ -606,20 +676,23 @@ public static class DerivedRecapCodec {
     private static DerivedRecapSetManifest ReadManifest(
         JsonElement root
     ) {
+        RequireObject(root, "manifest");
+        RequireSchema(root, ManifestSchema, "manifest");
         RequireExactProperties(
             root,
             "manifest",
             "schema",
             "refId",
             "setAdmissionAnchor",
+            "setAdmissionAnchorSetups",
             "blocks",
             "manifestPayloadSha256"
         );
-        RequireSchema(root, ManifestSchema, "manifest");
         return new DerivedRecapSetManifest(
             ReadString(root, "schema"),
             ReadRefId(root, "refId"),
             ReadAddress(root, "setAdmissionAnchor"),
+            ReadSetups(ReadObject(root, "setAdmissionAnchorSetups")),
             Array.AsReadOnly(
                 ReadArray(root, "blocks")
                     .Select(ReadPlan)
@@ -651,6 +724,7 @@ public static class DerivedRecapCodec {
             "recapBlockId",
             "target",
             "sourceSetAnchor",
+            "sourceAbsorbedThroughSetups",
             "sourcePublicationEnvelopeSha256",
             "sourceInputPayloadSha256",
             "maxContentUtf8Bytes"
@@ -659,6 +733,9 @@ public static class DerivedRecapCodec {
             ReadBlockId(element, "recapBlockId"),
             ReadTarget(ReadObject(element, "target")),
             ReadAddress(element, "sourceSetAnchor"),
+            ReadSetups(
+                ReadObject(element, "sourceAbsorbedThroughSetups")
+            ),
             ReadString(
                 element,
                 "sourcePublicationEnvelopeSha256"
@@ -680,7 +757,7 @@ public static class DerivedRecapCodec {
             "maintainerId",
             "maintainerCapabilityFingerprint",
             "source",
-            "catchUpThrough",
+            "catchUpBoundaries",
             "priorContext",
             "maxContentUtf8Bytes"
         );
@@ -694,8 +771,8 @@ public static class DerivedRecapCodec {
             ),
             ReadMaintainSource(ReadObject(element, "source")),
             Array.AsReadOnly(
-                ReadArray(element, "catchUpThrough")
-                    .Select(ReadAddressValue)
+                ReadArray(element, "catchUpBoundaries")
+                    .Select(ReadReplayBoundary)
                     .ToArray()
             ),
             ReadPriorContext(ReadObject(element, "priorContext")),
@@ -714,11 +791,15 @@ public static class DerivedRecapCodec {
                     "existing source",
                     "kind",
                     "sourceSetAnchor",
+                    "replayStartSetups",
                     "sourcePublicationEnvelopeSha256",
                     "sourceInputPayloadSha256"
                 );
                 return new ExistingRecapMaintainSource(
                     ReadAddress(element, "sourceSetAnchor"),
+                    ReadSetups(
+                        ReadObject(element, "replayStartSetups")
+                    ),
                     ReadString(
                         element,
                         "sourcePublicationEnvelopeSha256"
@@ -733,10 +814,14 @@ public static class DerivedRecapCodec {
                     element,
                     "empty source",
                     "kind",
-                    "replayStartExclusive"
+                    "replayStartExclusive",
+                    "replayStartSetups"
                 );
                 return new EmptyRecapMaintainSource(
-                    ReadAddress(element, "replayStartExclusive")
+                    ReadAddress(element, "replayStartExclusive"),
+                    ReadSetups(
+                        ReadObject(element, "replayStartSetups")
+                    )
                 );
             default:
                 throw new InvalidDataException(
@@ -796,6 +881,8 @@ public static class DerivedRecapCodec {
     private static DerivedRecapFrozenInput ReadFrozenInput(
         JsonElement root
     ) {
+        RequireObject(root, "frozen input");
+        RequireSchema(root, FrozenInputSchema, "frozen input");
         RequireExactProperties(
             root,
             "frozen input",
@@ -803,15 +890,16 @@ public static class DerivedRecapCodec {
             "recapBlockId",
             "target",
             "absorbedThrough",
+            "absorbedThroughSetups",
             "content",
             "payloadSha256"
         );
-        RequireSchema(root, FrozenInputSchema, "frozen input");
         return new DerivedRecapFrozenInput(
             ReadString(root, "schema"),
             ReadBlockId(root, "recapBlockId"),
             ReadTarget(ReadObject(root, "target")),
             ReadAddress(root, "absorbedThrough"),
+            ReadSetups(ReadObject(root, "absorbedThroughSetups")),
             ReadString(root, "content"),
             ReadString(root, "payloadSha256")
         );
@@ -883,6 +971,60 @@ public static class DerivedRecapCodec {
         );
     }
 
+    private static RecapReplayBoundary ReadReplayBoundary(
+        JsonElement element
+    ) {
+        RequireExactProperties(
+            element,
+            "replay boundary",
+            "address",
+            "setups"
+        );
+        return new RecapReplayBoundary(
+            ReadAddress(element, "address"),
+            ReadSetups(ReadObject(element, "setups"))
+        );
+    }
+
+    private static SessionContextAnchorSetupReferences ReadSetups(
+        JsonElement element
+    ) {
+        RequireExactProperties(
+            element,
+            "setup references",
+            "runtimeConfig",
+            "systemPrompt"
+        );
+        return new SessionContextAnchorSetupReferences(
+            ReadSetupReference(
+                ReadObject(element, "runtimeConfig"),
+                "runtimeConfig"
+            ),
+            ReadSetupReference(
+                ReadObject(element, "systemPrompt"),
+                "systemPrompt"
+            )
+        );
+    }
+
+    private static SessionContextSetupReference ReadSetupReference(
+        JsonElement element,
+        string path
+    ) {
+        RequireExactProperties(
+            element,
+            $"{path} setup reference",
+            "address",
+            "bodySchemaVersion",
+            "payloadSha256"
+        );
+        return new SessionContextSetupReference(
+            ReadAddress(element, "address"),
+            ReadInt32(element, "bodySchemaVersion"),
+            ReadString(element, "payloadSha256")
+        );
+    }
+
     private static ContextHeaderBlockPath ReadTarget(
         JsonElement element
     ) {
@@ -926,6 +1068,10 @@ public static class DerivedRecapCodec {
             manifest.SetAdmissionAnchor,
             "manifest.setAdmissionAnchor"
         );
+        ValidateSetups(
+            manifest.SetAdmissionAnchorSetups,
+            "manifest.setAdmissionAnchorSetups"
+        );
         ArgumentNullException.ThrowIfNull(manifest.Blocks);
         if (manifest.Blocks.Count is 0
             or > SessionContextContributionContract
@@ -939,6 +1085,16 @@ public static class DerivedRecapCodec {
             new HashSet<(ContextHeaderCarrier Carrier, string Key)>();
         foreach (RecapBlockPlan plan in manifest.Blocks) {
             ValidatePlanShape(plan);
+            if (plan is MaintainRecapBlockPlan maintain
+                && (maintain.CatchUpBoundaries[^1].Address
+                        != manifest.SetAdmissionAnchor
+                    || maintain.CatchUpBoundaries[^1].Setups
+                        != manifest.SetAdmissionAnchorSetups)) {
+                throw new InvalidDataException(
+                    "Maintain final replay boundary must equal the "
+                    + "manifest admission address and setups."
+                );
+            }
             if (!ids.Add(plan.RecapBlockId)) {
                 throw new InvalidDataException(
                     "Recap manifest contains duplicate RecapBlockId."
@@ -979,6 +1135,10 @@ public static class DerivedRecapCodec {
                     inherit.SourceSetAnchor,
                     "inherit.sourceSetAnchor"
                 );
+                ValidateSetups(
+                    inherit.SourceAbsorbedThroughSetups,
+                    "inherit.sourceAbsorbedThroughSetups"
+                );
                 ValidateSha256(
                     inherit.SourcePublicationEnvelopeSha256,
                     "inherit.sourcePublicationEnvelopeSha256"
@@ -1000,18 +1160,23 @@ public static class DerivedRecapCodec {
                 );
                 ValidateMaintainSource(maintain.Source);
                 ArgumentNullException.ThrowIfNull(
-                    maintain.CatchUpThrough
+                    maintain.CatchUpBoundaries
                 );
-                if (maintain.CatchUpThrough.Count == 0) {
+                if (maintain.CatchUpBoundaries.Count == 0) {
                     throw new InvalidDataException(
                         "Maintain plan requires at least one catch-up endpoint."
                     );
                 }
-                foreach (EventAddress endpoint
-                         in maintain.CatchUpThrough) {
+                foreach (RecapReplayBoundary boundary
+                         in maintain.CatchUpBoundaries) {
+                    ArgumentNullException.ThrowIfNull(boundary);
                     ValidateAddress(
-                        endpoint,
-                        "maintain.catchUpThrough"
+                        boundary.Address,
+                        "maintain.catchUpBoundaries.address"
+                    );
+                    ValidateSetups(
+                        boundary.Setups,
+                        "maintain.catchUpBoundaries.setups"
                     );
                 }
                 ValidatePriorContext(maintain.PriorContext);
@@ -1033,6 +1198,10 @@ public static class DerivedRecapCodec {
                     existing.SourceSetAnchor,
                     "source.sourceSetAnchor"
                 );
+                ValidateSetups(
+                    existing.ReplayStartSetups,
+                    "source.replayStartSetups"
+                );
                 ValidateSha256(
                     existing.SourcePublicationEnvelopeSha256,
                     "source.sourcePublicationEnvelopeSha256"
@@ -1046,6 +1215,10 @@ public static class DerivedRecapCodec {
                 ValidateAddress(
                     empty.ReplayStartExclusive,
                     "source.replayStartExclusive"
+                );
+                ValidateSetups(
+                    empty.ReplayStartSetups,
+                    "source.replayStartSetups"
                 );
                 break;
             default:
@@ -1122,6 +1295,10 @@ public static class DerivedRecapCodec {
         ValidateAddress(
             input.AbsorbedThrough,
             "frozenInput.absorbedThrough"
+        );
+        ValidateSetups(
+            input.AbsorbedThroughSetups,
+            "frozenInput.absorbedThroughSetups"
         );
         ValidateContent(
             input.Content,
@@ -1321,6 +1498,38 @@ public static class DerivedRecapCodec {
                 exception
             );
         }
+    }
+
+    private static void ValidateSetups(
+        SessionContextAnchorSetupReferences setups,
+        string name
+    ) {
+        ArgumentNullException.ThrowIfNull(setups);
+        ValidateSetupReference(
+            setups.RuntimeConfig,
+            $"{name}.runtimeConfig"
+        );
+        ValidateSetupReference(
+            setups.SystemPrompt,
+            $"{name}.systemPrompt"
+        );
+    }
+
+    private static void ValidateSetupReference(
+        SessionContextSetupReference reference,
+        string name
+    ) {
+        ArgumentNullException.ThrowIfNull(reference);
+        ValidateAddress(reference.Address, $"{name}.address");
+        if (reference.BodySchemaVersion <= 0) {
+            throw new InvalidDataException(
+                $"{name}.bodySchemaVersion must be positive."
+            );
+        }
+        ValidateSha256(
+            reference.PayloadSha256,
+            $"{name}.payloadSha256"
+        );
     }
 
     private static void ValidateToken(

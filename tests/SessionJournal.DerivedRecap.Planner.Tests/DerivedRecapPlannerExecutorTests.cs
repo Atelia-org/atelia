@@ -27,11 +27,16 @@ public sealed class DerivedRecapPlannerExecutorTests {
             DerivedRecapCodec.CreateManifest(
                 fixture.Engine.BranchRefId,
                 admission,
+                RecapPlannerWireTestFacts.SetupsAt(
+                    fixture.Engine,
+                    admission
+                ),
                 [plan]
             );
 
         IReadOnlyList<RecapFrozenPlanRawDefect> defects =
             RecapFrozenPlanRawValidator.ValidateBlock(
+                fixture.Engine,
                 manifest,
                 new Dictionary<
                     RecapBlockId,
@@ -66,7 +71,7 @@ public sealed class DerivedRecapPlannerExecutorTests {
             RecapPendingWindowPreparer.Prepare(
                 fixture.Engine,
                 admission,
-                [new PendingMaintainRoute(plan, start, 1)],
+                [new PendingMaintainRoute(plan, mid, 1)],
                 new RecapProtocolHardCaps(
                     maxRawGrowthEventCount: 1000,
                     maxRouteEndpointsPerBlock: 2,
@@ -1527,6 +1532,79 @@ public sealed class DerivedRecapPlannerExecutorTests {
     }
 
     [Fact]
+    public async Task ResumeRejectsStructurallyValidWrongFrozenBoundarySetupsBeforeMaintainer() {
+        using TestFixture fixture = await TestFixture.CreateAsync(
+            historyPairs: 2
+        );
+        (EventAddress start, EventAddress mid, EventAddress admission) =
+            fixture.TwoStepRoute();
+        var plan = new MaintainRecapBlockPlan(
+            fixture.SelfId,
+            fixture.SelfTarget,
+            "self-maintainer",
+            RecapPlannerTestIdentity.CapabilityFingerprint,
+            new EmptyRecapMaintainSource(
+                start,
+                RecapPlannerWireTestFacts.SetupsAt(
+                    fixture.Engine,
+                    start
+                )
+            ),
+            [
+                new RecapReplayBoundary(
+                    mid,
+                    RecapPlannerWireTestFacts.WrongSetups(
+                        RecapPlannerWireTestFacts.SetupsAt(
+                            fixture.Engine,
+                            mid
+                        )
+                    )
+                ),
+                new RecapReplayBoundary(
+                    admission,
+                    RecapPlannerWireTestFacts.SetupsAt(
+                        fixture.Engine,
+                        admission
+                    )
+                )
+            ],
+            EmptyRecapPriorContext.Instance,
+            TestFixture.MaxContent
+        );
+        BuildingSnapshot building =
+            await fixture.CreateBuildingAsync(admission, [plan]);
+        var maintainer = new ScriptedMaintainer(
+            "self-maintainer",
+            fixture.SelfTarget,
+            static (_, _) => "must-not-run"
+        );
+
+        var unavailable =
+            Assert.IsType<DerivedRecapExecutionResult.Unavailable>(
+                await fixture.CreateBuildingExecutor([maintainer])
+                    .ResumeAsync(admission)
+            );
+
+        Assert.Contains(
+            unavailable.Defects,
+            defect => defect.Detail.Contains(
+                "setups do not match raw authority",
+                StringComparison.Ordinal
+            )
+        );
+        Assert.Equal(0, maintainer.CallCount);
+        BuildingBlockInspection inspection =
+            await fixture.Store.InspectBuildingBlockAsync(
+                building.Descriptor,
+                plan.RecapBlockId
+            );
+        Assert.IsType<RollingRecapCheckpointHealth.Missing>(
+            inspection.Checkpoint
+        );
+        Assert.IsType<FinalRecapBlockHealth.Missing>(inspection.Final);
+    }
+
+    [Fact]
     public async Task ResumeRejectsIncompleteRouteBeforeMaintainer() {
         using TestFixture fixture = await TestFixture.CreateAsync(
             historyPairs: 2
@@ -1569,8 +1647,22 @@ public sealed class DerivedRecapPlannerExecutorTests {
             fixture.SelfTarget,
             "self-maintainer",
             RecapPlannerTestIdentity.CapabilityFingerprint,
-            new EmptyRecapMaintainSource(start),
-            [admission],
+            new EmptyRecapMaintainSource(
+                start,
+                RecapPlannerWireTestFacts.SetupsAt(
+                    fixture.Engine,
+                    start
+                )
+            ),
+            [
+                new RecapReplayBoundary(
+                    admission,
+                    RecapPlannerWireTestFacts.SetupsAt(
+                        fixture.Engine,
+                        admission
+                    )
+                )
+            ],
             new InlineRecapPriorContext(
                 admission,
                 ContextHeaderSnapshot.Empty
@@ -1683,6 +1775,7 @@ public sealed class DerivedRecapPlannerExecutorTests {
             fixture.SelfId,
             fixture.SelfTarget,
             sourceAdmission,
+            input.AbsorbedThroughSetups,
             published.Descriptor.EnvelopeSha256,
             input.PayloadSha256,
             TestFixture.MaxContent
@@ -1747,6 +1840,7 @@ public sealed class DerivedRecapPlannerExecutorTests {
             fixture.SelfId,
             fixture.SelfTarget,
             sourceAdmission,
+            input.AbsorbedThroughSetups,
             published.Descriptor.EnvelopeSha256,
             input.PayloadSha256,
             smallerLimit
@@ -2145,8 +2239,19 @@ public sealed class DerivedRecapPlannerExecutorTests {
             target,
             maintainerId,
             RecapPlannerTestIdentity.CapabilityFingerprint,
-            new EmptyRecapMaintainSource(start),
-            route,
+            new EmptyRecapMaintainSource(
+                start,
+                RecapPlannerWireTestFacts.SetupsAt(Engine, start)
+            ),
+            [
+                .. route.Select(address => new RecapReplayBoundary(
+                    address,
+                    RecapPlannerWireTestFacts.SetupsAt(
+                        Engine,
+                        address
+                    )
+                ))
+            ],
             EmptyRecapPriorContext.Instance,
             MaxContent
         );
@@ -2160,6 +2265,10 @@ public sealed class DerivedRecapPlannerExecutorTests {
                     DerivedRecapCodec.CreateManifest(
                         Engine.BranchRefId,
                         admission,
+                        RecapPlannerWireTestFacts.SetupsAt(
+                            Engine,
+                            admission
+                        ),
                         plans
                     )
                 )

@@ -358,13 +358,13 @@ public sealed class DerivedRecapPublishedPlanReadTests {
                 "replacement-maintainer",
                 original.MaintainerCapabilityFingerprint,
                 original.Source,
-                original.CatchUpThrough,
+                original.CatchUpBoundaries,
                 original.PriorContext,
                 original.MaxContentUtf8Bytes
             );
         return DerivedRecapCodec.CreatePublication(
-            DerivedRecapCodec.CreateManifest(
-                fixture.Engine.BranchRefId,
+            RecapWireTestFacts.CreateManifest(
+                fixture.Engine,
                 anchor,
                 [replacementPlan]
             ),

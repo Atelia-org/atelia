@@ -57,14 +57,14 @@ internal static class RecapStoreTestDriver {
                     ? healthy.EndpointIndex + 1
                     : 0;
             for (int index = nextEndpoint;
-                 index < maintain.CatchUpThrough.Count;
+                 index < maintain.CatchUpBoundaries.Count;
                  index++) {
                 DerivedRecapBlock checkpoint =
-                    index == maintain.CatchUpThrough.Count - 1
+                    index == maintain.CatchUpBoundaries.Count - 1
                         ? block
                         : DerivedRecapCodec.CreateBlock(
                             maintain,
-                            maintain.CatchUpThrough[index],
+                            maintain.CatchUpBoundaries[index].Address,
                             block.Content
                         );
                 CheckpointWriteResult result =

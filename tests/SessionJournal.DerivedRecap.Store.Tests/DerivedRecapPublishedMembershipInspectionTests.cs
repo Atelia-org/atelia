@@ -17,7 +17,7 @@ public sealed class DerivedRecapPublishedMembershipInspectionTests {
         PublishedRecapDescriptor descriptor =
             await fixture.PublishAsync(
                 anchor,
-                lineage.CurrentPrefix.HeadToOldest[^1].Address
+                lineage.CurrentPrefix.HeadToOldest[^2].Address
             );
         if (rewindOffLineage) {
             RewindBefore(fixture, anchor, lineage.CurrentPrefix.HeadToOldest[2].Address);
@@ -67,7 +67,7 @@ public sealed class DerivedRecapPublishedMembershipInspectionTests {
         EventAddress anchor = lineage.CapturedHead;
         _ = await fixture.PublishAsync(
             anchor,
-            lineage.CurrentPrefix.HeadToOldest[^1].Address
+            lineage.CurrentPrefix.HeadToOldest[^2].Address
         );
         await File.WriteAllTextAsync(
             Path.Combine(

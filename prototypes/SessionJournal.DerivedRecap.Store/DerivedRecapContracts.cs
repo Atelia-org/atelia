@@ -65,23 +65,35 @@ public abstract class RecapBlockPlan {
     public int MaxContentUtf8Bytes { get; }
 }
 
+public sealed record RecapReplayBoundary(
+    EventAddress Address,
+    SessionContextAnchorSetupReferences Setups
+);
+
 public sealed class InheritRecapBlockPlan : RecapBlockPlan {
     public InheritRecapBlockPlan(
         RecapBlockId recapBlockId,
         ContextHeaderBlockPath target,
         EventAddress sourceSetAnchor,
+        SessionContextAnchorSetupReferences sourceAbsorbedThroughSetups,
         string sourcePublicationEnvelopeSha256,
         string sourceInputPayloadSha256,
         int maxContentUtf8Bytes =
             SessionContextContributionContract.MaxContributionUtf8Bytes
     ) : base(recapBlockId, target, maxContentUtf8Bytes) {
         SourceSetAnchor = sourceSetAnchor;
+        SourceAbsorbedThroughSetups = sourceAbsorbedThroughSetups
+            ?? throw new ArgumentNullException(
+                nameof(sourceAbsorbedThroughSetups)
+            );
         SourcePublicationEnvelopeSha256 =
             sourcePublicationEnvelopeSha256;
         SourceInputPayloadSha256 = sourceInputPayloadSha256;
     }
 
     public EventAddress SourceSetAnchor { get; }
+    public SessionContextAnchorSetupReferences
+        SourceAbsorbedThroughSetups { get; }
     public string SourcePublicationEnvelopeSha256 { get; }
     public string SourceInputPayloadSha256 { get; }
 }
@@ -94,28 +106,36 @@ public abstract class RecapMaintainSource {
 public sealed class ExistingRecapMaintainSource : RecapMaintainSource {
     public ExistingRecapMaintainSource(
         EventAddress sourceSetAnchor,
+        SessionContextAnchorSetupReferences replayStartSetups,
         string sourcePublicationEnvelopeSha256,
         string sourceInputPayloadSha256
     ) {
         SourceSetAnchor = sourceSetAnchor;
+        ReplayStartSetups = replayStartSetups
+            ?? throw new ArgumentNullException(nameof(replayStartSetups));
         SourcePublicationEnvelopeSha256 =
             sourcePublicationEnvelopeSha256;
         SourceInputPayloadSha256 = sourceInputPayloadSha256;
     }
 
     public EventAddress SourceSetAnchor { get; }
+    public SessionContextAnchorSetupReferences ReplayStartSetups { get; }
     public string SourcePublicationEnvelopeSha256 { get; }
     public string SourceInputPayloadSha256 { get; }
 }
 
 public sealed class EmptyRecapMaintainSource : RecapMaintainSource {
     public EmptyRecapMaintainSource(
-        EventAddress replayStartExclusive
+        EventAddress replayStartExclusive,
+        SessionContextAnchorSetupReferences replayStartSetups
     ) {
         ReplayStartExclusive = replayStartExclusive;
+        ReplayStartSetups = replayStartSetups
+            ?? throw new ArgumentNullException(nameof(replayStartSetups));
     }
 
     public EventAddress ReplayStartExclusive { get; }
+    public SessionContextAnchorSetupReferences ReplayStartSetups { get; }
 }
 
 public abstract class RecapPriorContext {
@@ -147,7 +167,7 @@ public sealed class MaintainRecapBlockPlan : RecapBlockPlan {
         string maintainerId,
         string maintainerCapabilityFingerprint,
         RecapMaintainSource source,
-        IReadOnlyList<EventAddress> catchUpThrough,
+        IReadOnlyList<RecapReplayBoundary> catchUpBoundaries,
         RecapPriorContext priorContext,
         int maxContentUtf8Bytes =
             SessionContextContributionContract.MaxContributionUtf8Bytes
@@ -156,8 +176,10 @@ public sealed class MaintainRecapBlockPlan : RecapBlockPlan {
         MaintainerCapabilityFingerprint =
             maintainerCapabilityFingerprint;
         Source = source ?? throw new ArgumentNullException(nameof(source));
-        ArgumentNullException.ThrowIfNull(catchUpThrough);
-        CatchUpThrough = Array.AsReadOnly(catchUpThrough.ToArray());
+        ArgumentNullException.ThrowIfNull(catchUpBoundaries);
+        CatchUpBoundaries = Array.AsReadOnly(
+            catchUpBoundaries.ToArray()
+        );
         PriorContext = priorContext
             ?? throw new ArgumentNullException(nameof(priorContext));
     }
@@ -165,7 +187,7 @@ public sealed class MaintainRecapBlockPlan : RecapBlockPlan {
     public string MaintainerId { get; }
     public string MaintainerCapabilityFingerprint { get; }
     public RecapMaintainSource Source { get; }
-    public IReadOnlyList<EventAddress> CatchUpThrough { get; }
+    public IReadOnlyList<RecapReplayBoundary> CatchUpBoundaries { get; }
     public RecapPriorContext PriorContext { get; }
 }
 
@@ -173,6 +195,7 @@ public sealed record DerivedRecapSetManifest(
     string Schema,
     RefId RefId,
     EventAddress SetAdmissionAnchor,
+    SessionContextAnchorSetupReferences SetAdmissionAnchorSetups,
     IReadOnlyList<RecapBlockPlan> Blocks,
     string ManifestPayloadSha256
 );
@@ -182,6 +205,7 @@ public sealed record DerivedRecapFrozenInput(
     RecapBlockId RecapBlockId,
     ContextHeaderBlockPath Target,
     EventAddress AbsorbedThrough,
+    SessionContextAnchorSetupReferences AbsorbedThroughSetups,
     string Content,
     string PayloadSha256
 );

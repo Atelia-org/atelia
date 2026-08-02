@@ -76,7 +76,7 @@ public sealed class DerivedRecapPublishedRestoreInspectionTests {
         EventAddress anchor = initial.CapturedHead;
         _ = await fixture.PublishAsync(
             anchor,
-            initial.CurrentPrefix.HeadToOldest[^1].Address
+            initial.CurrentPrefix.HeadToOldest[^2].Address
         );
         await File.WriteAllTextAsync(
             Path.Combine(
@@ -102,7 +102,7 @@ public sealed class DerivedRecapPublishedRestoreInspectionTests {
             await RecapStoreFixture.CreateAsync(historyPairs: 4);
         DerivedRecapLineageView lineage = fixture.Lineage();
         EventAddress anchor = lineage.CapturedHead;
-        EventAddress replayStart = lineage.CurrentPrefix.HeadToOldest[^1].Address;
+        EventAddress replayStart = lineage.CurrentPrefix.HeadToOldest[^2].Address;
         RecapBlockPlan plan =
             fixture.CreateMaintainPlan(anchor, replayStart);
         PublishedRecapDescriptor descriptor =
@@ -123,12 +123,12 @@ public sealed class DerivedRecapPublishedRestoreInspectionTests {
             plan is MaintainRecapBlockPlan maintain
                 ? maintain.Source
                 : throw new InvalidOperationException(),
-            [anchor],
+            [fixture.Boundary(anchor)],
             EmptyRecapPriorContext.Instance
         );
         DerivedRecapSetManifest conflictingManifest =
-            DerivedRecapCodec.CreateManifest(
-                fixture.Engine.BranchRefId,
+            RecapWireTestFacts.CreateManifest(
+                fixture.Engine,
                 anchor,
                 [conflictingPlan]
             );
@@ -191,7 +191,7 @@ public sealed class DerivedRecapPublishedRestoreInspectionTests {
             await RecapStoreFixture.CreateAsync(historyPairs: 4);
         DerivedRecapLineageView lineage = fixture.Lineage();
         EventAddress anchor = lineage.CapturedHead;
-        EventAddress replayStart = lineage.CurrentPrefix.HeadToOldest[^1].Address;
+        EventAddress replayStart = lineage.CurrentPrefix.HeadToOldest[^2].Address;
         RecapBlockPlan plan =
             fixture.CreateMaintainPlan(anchor, replayStart);
         _ = await fixture.PublishAsync(
@@ -270,7 +270,7 @@ public sealed class DerivedRecapPublishedRestoreInspectionTests {
         EventAddress anchor = lineage.CapturedHead;
         _ = await fixture.PublishAsync(
             anchor,
-            lineage.CurrentPrefix.HeadToOldest[^1].Address
+            lineage.CurrentPrefix.HeadToOldest[^2].Address
         );
         injectFault = true;
 
@@ -298,7 +298,7 @@ public sealed class DerivedRecapPublishedRestoreInspectionTests {
         EventAddress anchor = lineage.CapturedHead;
         _ = await fixture.PublishAsync(
             anchor,
-            lineage.CurrentPrefix.HeadToOldest[^1].Address
+            lineage.CurrentPrefix.HeadToOldest[^2].Address
         );
         string publicationPath = Path.Combine(
             fixture.Store.GetPublishedPathForTest(anchor),
@@ -337,11 +337,11 @@ public sealed class DerivedRecapPublishedRestoreInspectionTests {
         EventAddress anchor = lineage.CapturedHead;
         RecapBlockPlan plan = fixture.CreateMaintainPlan(
             anchor,
-            lineage.CurrentPrefix.HeadToOldest[^1].Address
+            lineage.CurrentPrefix.HeadToOldest[^2].Address
         );
         _ = await fixture.PublishAsync(
             anchor,
-            lineage.CurrentPrefix.HeadToOldest[^1].Address
+            lineage.CurrentPrefix.HeadToOldest[^2].Address
         );
         string publishedPath =
             fixture.Store.GetPublishedPathForTest(anchor);
@@ -394,7 +394,7 @@ public sealed class DerivedRecapPublishedRestoreInspectionTests {
             await RecapStoreFixture.CreateAsync(historyPairs: 4);
         DerivedRecapLineageView lineage = fixture.Lineage();
         EventAddress anchor = lineage.CapturedHead;
-        EventAddress replayStart = lineage.CurrentPrefix.HeadToOldest[^1].Address;
+        EventAddress replayStart = lineage.CurrentPrefix.HeadToOldest[^2].Address;
         _ = await fixture.PublishAsync(anchor, replayStart);
         EventAddress foreignAnchor = lineage.CurrentPrefix.HeadToOldest[2].Address;
         RecapBlockPlan foreignPlan =
@@ -403,8 +403,8 @@ public sealed class DerivedRecapPublishedRestoreInspectionTests {
                 replayStart
             );
         DerivedRecapSetManifest foreignManifest =
-            DerivedRecapCodec.CreateManifest(
-                fixture.Engine.BranchRefId,
+            RecapWireTestFacts.CreateManifest(
+                fixture.Engine,
                 foreignAnchor,
                 [foreignPlan]
             );
@@ -456,7 +456,7 @@ public sealed class DerivedRecapPublishedRestoreInspectionTests {
         EventAddress anchor = lineage.CapturedHead;
         _ = await fixture.PublishAsync(
             anchor,
-            lineage.CurrentPrefix.HeadToOldest[^1].Address
+            lineage.CurrentPrefix.HeadToOldest[^2].Address
         );
         string publishedPath =
             fixture.Store.GetPublishedPathForTest(anchor);
@@ -496,7 +496,7 @@ public sealed class DerivedRecapPublishedRestoreInspectionTests {
         EventAddress anchor = lineage.CapturedHead;
         EventAddress firstEndpoint =
             lineage.CurrentPrefix.HeadToOldest[2].Address;
-        EventAddress replayStart = lineage.CurrentPrefix.HeadToOldest[^1].Address;
+        EventAddress replayStart = lineage.CurrentPrefix.HeadToOldest[^2].Address;
         var plan = new MaintainRecapBlockPlan(
             new RecapBlockId("roleplay.self"),
             new ContextHeaderBlockPath(
@@ -505,8 +505,11 @@ public sealed class DerivedRecapPublishedRestoreInspectionTests {
             ),
             "roleplay.autobiographical",
             RecapTestIdentity.CapabilityFingerprint,
-            new EmptyRecapMaintainSource(replayStart),
-            [firstEndpoint, anchor],
+            new EmptyRecapMaintainSource(
+                replayStart,
+                fixture.Setups(replayStart)
+            ),
+            [fixture.Boundary(firstEndpoint), fixture.Boundary(anchor)],
             EmptyRecapPriorContext.Instance
         );
         await PublishAsync(
@@ -584,7 +587,7 @@ public sealed class DerivedRecapPublishedRestoreInspectionTests {
             "roleplay.changed",
             plan.MaintainerCapabilityFingerprint,
             plan.Source,
-            plan.CatchUpThrough,
+            plan.CatchUpBoundaries,
             plan.PriorContext
         );
         await File.WriteAllBytesAsync(
@@ -646,7 +649,7 @@ public sealed class DerivedRecapPublishedRestoreInspectionTests {
             await RecapStoreFixture.CreateAsync(historyPairs: 5);
         DerivedRecapLineageView lineage = fixture.Lineage();
         EventAddress anchor = lineage.CapturedHead;
-        EventAddress replayStart = lineage.CurrentPrefix.HeadToOldest[^1].Address;
+        EventAddress replayStart = lineage.CurrentPrefix.HeadToOldest[^2].Address;
         var plan = new MaintainRecapBlockPlan(
             new RecapBlockId("roleplay.self"),
             new ContextHeaderBlockPath(
@@ -655,14 +658,17 @@ public sealed class DerivedRecapPublishedRestoreInspectionTests {
             ),
             "roleplay.autobiographical",
             RecapTestIdentity.CapabilityFingerprint,
-            new EmptyRecapMaintainSource(replayStart),
-            [anchor],
+            new EmptyRecapMaintainSource(
+                replayStart,
+                fixture.Setups(replayStart)
+            ),
+            [fixture.Boundary(anchor)],
             EmptyRecapPriorContext.Instance,
             maxContentUtf8Bytes: 8
         );
         DerivedRecapSetManifest manifest =
-            DerivedRecapCodec.CreateManifest(
-                fixture.Engine.BranchRefId,
+            RecapWireTestFacts.CreateManifest(
+                fixture.Engine,
                 anchor,
                 [plan]
             );
@@ -921,8 +927,8 @@ public sealed class DerivedRecapPublishedRestoreInspectionTests {
         DerivedRecapBlock block
     ) {
         DerivedRecapSetManifest manifest =
-            DerivedRecapCodec.CreateManifest(
-                fixture.Engine.BranchRefId,
+            RecapWireTestFacts.CreateManifest(
+                fixture.Engine,
                 anchor,
                 [plan]
             );
@@ -947,7 +953,7 @@ public sealed class DerivedRecapPublishedRestoreInspectionTests {
         DerivedRecapLineageView lineage = fixture.Lineage();
         EventAddress target = lineage.CapturedHead;
         EventAddress source = lineage.CurrentPrefix.HeadToOldest[4].Address;
-        EventAddress replayStart = lineage.CurrentPrefix.HeadToOldest[^1].Address;
+        EventAddress replayStart = lineage.CurrentPrefix.HeadToOldest[^2].Address;
         const string sourceContent = "source recap";
         PublishedRecapDescriptor sourceDescriptor =
             await fixture.PublishAsync(
@@ -961,7 +967,7 @@ public sealed class DerivedRecapPublishedRestoreInspectionTests {
             id.Value
         );
         DerivedRecapFrozenInput input =
-            DerivedRecapCodec.CreateFrozenInput(
+            RecapWireTestFacts.CreateFrozenInput(fixture.Engine,
                 id,
                 targetPath,
                 source,
@@ -971,12 +977,13 @@ public sealed class DerivedRecapPublishedRestoreInspectionTests {
             id,
             targetPath,
             source,
+            input.AbsorbedThroughSetups,
             sourceDescriptor.EnvelopeSha256,
             input.PayloadSha256
         );
         DerivedRecapSetManifest manifest =
-            DerivedRecapCodec.CreateManifest(
-                fixture.Engine.BranchRefId,
+            RecapWireTestFacts.CreateManifest(
+                fixture.Engine,
                 target,
                 [plan]
             );
@@ -1022,15 +1029,15 @@ public sealed class DerivedRecapPublishedRestoreInspectionTests {
         EventAddress beyond = fixture.RawLineage().HeadToRoot[^1].Address;
         var plan = (MaintainRecapBlockPlan)fixture.CreateMaintainPlan(
             anchor,
-            lineage.CurrentPrefix.HeadToOldest[^1].Address
+            lineage.CurrentPrefix.HeadToOldest[^2].Address
         );
         _ = await fixture.PublishAsync(
             anchor,
-            lineage.CurrentPrefix.HeadToOldest[^1].Address
+            lineage.CurrentPrefix.HeadToOldest[^2].Address
         );
         DerivedRecapSetManifest manifest =
-            DerivedRecapCodec.CreateManifest(
-                fixture.Engine.BranchRefId,
+            RecapWireTestFacts.CreateManifest(
+                fixture.Engine,
                 anchor,
                 [plan]
             );
@@ -1047,7 +1054,7 @@ public sealed class DerivedRecapPublishedRestoreInspectionTests {
                 "roleplay.changed",
                 plan.MaintainerCapabilityFingerprint,
                 plan.Source,
-                plan.CatchUpThrough,
+                plan.CatchUpBoundaries,
                 plan.PriorContext
             );
             persisted = [DerivedRecapCodec.CreateBlock(

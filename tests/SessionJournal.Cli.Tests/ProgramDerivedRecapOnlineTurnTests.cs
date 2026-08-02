@@ -675,9 +675,19 @@ public sealed class ProgramDerivedRecapOnlineTurnTests : IDisposable {
                             entry.MaintainerId,
                             entry.MaintainerCapabilityFingerprint,
                             new EmptyRecapMaintainSource(
-                                replayStart
+                                replayStart,
+                                engine.ResolveContextAnchorSetupReferences(
+                                    replayStart
+                                )
                             ),
-                            [admissionAnchor],
+                            [
+                                new RecapReplayBoundary(
+                                    admissionAnchor,
+                                    engine.ResolveContextAnchorSetupReferences(
+                                        admissionAnchor
+                                    )
+                                )
+                            ],
                             EmptyRecapPriorContext.Instance,
                             entry.MaxContentUtf8Bytes
                         )
@@ -689,6 +699,9 @@ public sealed class ProgramDerivedRecapOnlineTurnTests : IDisposable {
                         DerivedRecapCodec.CreateManifest(
                             branchRefId,
                             admissionAnchor,
+                            engine.ResolveContextAnchorSetupReferences(
+                                admissionAnchor
+                            ),
                             plans
                         ),
                         admissionAnchor

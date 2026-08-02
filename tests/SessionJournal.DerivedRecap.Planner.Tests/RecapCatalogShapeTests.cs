@@ -51,8 +51,17 @@ public sealed class RecapCatalogShapeTests {
                     target,
                     "old-profile",
                     RecapPlannerTestIdentity.CapabilityFingerprint,
-                    new EmptyRecapMaintainSource(address),
-                    [address],
+                    new EmptyRecapMaintainSource(
+                        address,
+                        RecapPlannerWireTestFacts.SyntheticSetups(
+                            address
+                        )
+                    ),
+                    [
+                        RecapPlannerWireTestFacts.SyntheticBoundary(
+                            address
+                        )
+                    ],
                     EmptyRecapPriorContext.Instance,
                     4096
                 )
@@ -63,6 +72,9 @@ public sealed class RecapCatalogShapeTests {
                     id,
                     target,
                     address,
+                    RecapPlannerWireTestFacts.SyntheticSetups(
+                        address
+                    ),
                     new string('a', 64),
                     new string('b', 64),
                     4096

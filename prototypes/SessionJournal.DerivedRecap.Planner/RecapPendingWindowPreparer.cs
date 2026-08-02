@@ -46,8 +46,8 @@ internal static class RecapPendingWindowPreparer {
         long calls = 0;
         foreach (MaintainRecapBlockPlan plan in plans) {
             ArgumentNullException.ThrowIfNull(plan);
-            calls += plan.CatchUpThrough.Count;
-            if (plan.CatchUpThrough.Count
+            calls += plan.CatchUpBoundaries.Count;
+            if (plan.CatchUpBoundaries.Count
                 > hardCaps.MaxRouteEndpointsPerBlock) {
                 defects.Add(new RecapPendingWindowDefect(
                     $"Block '{plan.RecapBlockId}' exceeds the "
@@ -78,20 +78,20 @@ internal static class RecapPendingWindowPreparer {
             ArgumentNullException.ThrowIfNull(route);
             if (route.NextEndpointIndex < 0
                 || route.NextEndpointIndex
-                    > route.Plan.CatchUpThrough.Count) {
+                    > route.Plan.CatchUpBoundaries.Count) {
                 throw new InvalidDataException(
                     $"Block '{route.Plan.RecapBlockId}' has an invalid "
                     + "pending endpoint index."
                 );
             }
-            if (route.Plan.CatchUpThrough.Count
+            if (route.Plan.CatchUpBoundaries.Count
                 > hardCaps.MaxRouteEndpointsPerBlock) {
                 defects.Add(new RecapPendingWindowDefect(
                     $"Block '{route.Plan.RecapBlockId}' exceeds the "
                     + "route limit."
                 ));
             }
-            calls += route.Plan.CatchUpThrough.Count
+            calls += route.Plan.CatchUpBoundaries.Count
                 - route.NextEndpointIndex;
         }
         if (calls > hardCaps.MaxMaintainerCallsPerBuild) {
@@ -122,63 +122,58 @@ internal static class RecapPendingWindowPreparer {
             return new PreparedRecapPendingWindows([], windows);
         }
 
-        var starts = new List<EventAddress>();
         foreach (PendingMaintainRoute route in pendingRoutes) {
             if (route.NextEndpointIndex < 0
                 || route.NextEndpointIndex
-                    > route.Plan.CatchUpThrough.Count) {
+                    > route.Plan.CatchUpBoundaries.Count) {
                 throw new InvalidDataException(
                     $"Block '{route.Plan.RecapBlockId}' has an invalid "
                     + "pending endpoint index."
                 );
             }
-            EventAddress previous = route.NextEndpointIndex == 0
-                ? route.StartExclusive
-                : route.Plan.CatchUpThrough[
-                    route.NextEndpointIndex - 1
-                ];
-            for (int index = route.NextEndpointIndex;
-                 index < route.Plan.CatchUpThrough.Count;
-                 index++) {
-                starts.Add(previous);
-                previous = route.Plan.CatchUpThrough[index];
+            RecapReplayBoundary previous = StartBoundary(route);
+            if (previous.Address != route.StartExclusive) {
+                throw new InvalidDataException(
+                    $"Block '{route.Plan.RecapBlockId}' pending start "
+                    + "does not match its frozen replay boundary."
+                );
             }
         }
-        if (starts.Count == 0) {
+        if (pendingRoutes.All(route =>
+                route.NextEndpointIndex
+                    == route.Plan.CatchUpBoundaries.Count)) {
             return new PreparedRecapPendingWindows([], windows);
         }
 
-        SessionHistoryPlanningSeedBatch seedBatch =
-            engine.ReadHistoryPlanningSeeds(
-                starts.Distinct(),
-                cancellationToken
-            );
-        if (seedBatch.Lineage.CapturedHead != expectedRawHead) {
+        EventAddress observedRawHead =
+            engine.ReadCurrentLineageHeaders(cancellationToken)
+                .CapturedHead;
+        if (observedRawHead != expectedRawHead) {
             throw new RecapRawHeadChangedException(
                 expectedRawHead,
-                seedBatch.Lineage.CapturedHead
+                observedRawHead
             );
         }
-        Dictionary<EventAddress, SessionHistoryPlanningSeed> seeds =
-            seedBatch.Seeds.ToDictionary(static seed => seed.Address);
         var defects = new List<RecapPendingWindowDefect>();
         long rawEvents = 0;
         foreach (PendingMaintainRoute route in pendingRoutes) {
-            EventAddress previous = route.NextEndpointIndex == 0
-                ? route.StartExclusive
-                : route.Plan.CatchUpThrough[
-                    route.NextEndpointIndex - 1
-                ];
+            RecapReplayBoundary previous = StartBoundary(route);
             for (int index = route.NextEndpointIndex;
-                 index < route.Plan.CatchUpThrough.Count;
+                 index < route.Plan.CatchUpBoundaries.Count;
                  index++) {
-                EventAddress endpoint =
-                    route.Plan.CatchUpThrough[index];
+                RecapReplayBoundary endpoint =
+                    route.Plan.CatchUpBoundaries[index];
+                SessionHistoryPlanningSeed seed =
+                    engine.CreateHistoryPlanningSeed(
+                        previous.Address,
+                        previous.Setups,
+                        cancellationToken
+                    );
                 SessionHistoryPlanningWindow window =
                     ReadExactStepWindow(
                         engine,
                         endpoint,
-                        seeds[previous],
+                        seed,
                         cancellationToken
                     );
                 if (window.RawAddresses.Count
@@ -205,22 +200,50 @@ internal static class RecapPendingWindowPreparer {
         return new PreparedRecapPendingWindows(defects, windows);
     }
 
+    private static RecapReplayBoundary StartBoundary(
+        PendingMaintainRoute route
+    ) {
+        if (route.NextEndpointIndex > 0) {
+            return route.Plan.CatchUpBoundaries[
+                route.NextEndpointIndex - 1
+            ];
+        }
+        SessionContextAnchorSetupReferences setups =
+            route.Plan.Source switch {
+                ExistingRecapMaintainSource existing =>
+                    existing.ReplayStartSetups,
+                EmptyRecapMaintainSource empty =>
+                    empty.ReplayStartSetups,
+                _ => throw new InvalidDataException(
+                    "Unsupported Maintain source."
+                )
+            };
+        return new RecapReplayBoundary(route.StartExclusive, setups);
+    }
+
     internal static SessionHistoryPlanningWindow ReadExactStepWindow(
         SessionJournalEngine engine,
-        EventAddress endpoint,
+        RecapReplayBoundary endpoint,
         SessionHistoryPlanningSeed seed,
         CancellationToken cancellationToken
     ) {
         SessionHistoryPlanningWindow window =
             engine.ReadHistoryPlanningWindowAt(
-                endpoint,
+                endpoint.Address,
                 seed,
                 cancellationToken
             );
         if (window.StartExclusive != seed.Address
-            || window.ObservedRawHead != endpoint
+            || window.StartSetups != seed.Setups
+            || window.ObservedRawHead != endpoint.Address
+            || window.EndSetups != endpoint.Setups
+            || !window.ReplaySafeBoundarySetups.TryGetValue(
+                endpoint.Address,
+                out SessionContextAnchorSetupReferences? boundarySetups
+            )
+            || boundarySetups != endpoint.Setups
             || !window.ReplaySafeBoundaries.Any(
-                boundary => boundary.Address == endpoint)) {
+                boundary => boundary.Address == endpoint.Address)) {
             throw new InvalidDataException(
                 "Raw planning window is not the requested exact "
                 + "replay-safe interval."

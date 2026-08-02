@@ -387,8 +387,13 @@ if (selected
 ```
 
 Resume不需要、也不应接收 `RecapPlanningInputs`或 `RecapPlanningLimits`。它使用 frozen route、
-source、prior context、content ceiling与 code-owned `RecapProtocolHardCaps.V4`。healthy final
-block直接复用；只补缺失或未完成工作。
+source、prior context、content ceiling与 code-owned `RecapProtocolHardCaps.V4`。schema v6
+manifest中的 admission/source/replay boundary均冻结 exact governing setup refs；Resume验证
+这些 refs并用它们构造 replay seed。healthy final block直接复用；只补缺失或未完成工作。
+
+这只是 frozen wire closure：普通 new planning和 frozen-plan raw validation当前仍可能调用
+full-lineage header/setup discovery。它们尚未承诺 bounded online execution；只有后续把这些入口
+改成 bounded prefix proof并在越界时返回 typed `BeyondPrefix`后，才能作出该承诺。
 
 `None`、`Multiple`、`Stale`、`Invalid`和 `StoreUnavailable`必须分别处理，不要按目录时间选择
 “最新 Building”。

@@ -20,11 +20,11 @@ public sealed class DerivedRecapAuthorityBoundaryTests {
         EventAddress anchor = lineage.CapturedHead;
         RecapBlockPlan plan = fixture.CreateMaintainPlan(
             anchor,
-            lineage.CurrentPrefix.HeadToOldest[^1].Address
+            lineage.CurrentPrefix.HeadToOldest[^2].Address
         );
         DerivedRecapSetManifest manifest =
-            DerivedRecapCodec.CreateManifest(
-                fixture.Engine.BranchRefId,
+            RecapWireTestFacts.CreateManifest(
+                fixture.Engine,
                 anchor,
                 [plan]
             );
@@ -83,11 +83,11 @@ public sealed class DerivedRecapAuthorityBoundaryTests {
         EventAddress anchor = lineage.CapturedHead;
         RecapBlockPlan plan = fixture.CreateMaintainPlan(
             anchor,
-            lineage.CurrentPrefix.HeadToOldest[^1].Address
+            lineage.CurrentPrefix.HeadToOldest[^2].Address
         );
         DerivedRecapSetManifest manifest =
-            DerivedRecapCodec.CreateManifest(
-                fixture.Engine.BranchRefId,
+            RecapWireTestFacts.CreateManifest(
+                fixture.Engine,
                 anchor,
                 [plan]
             );
@@ -215,12 +215,13 @@ public sealed class DerivedRecapAuthorityBoundaryTests {
         DerivedRecapLineageView lineage = fixture.Lineage();
         EventAddress anchor = lineage.CapturedHead;
         DerivedRecapSetManifest manifest =
-            DerivedRecapCodec.CreateManifest(
-                fixture.Engine.BranchRefId,
+            RecapWireTestFacts.CreateManifest(
+                fixture.Engine,
                 anchor,
                 [Maintain(
+                    fixture,
                     anchor,
-                    lineage.CurrentPrefix.HeadToOldest[^1].Address,
+                    lineage.CurrentPrefix.HeadToOldest[^2].Address,
                     [anchor]
                 )]
             );
@@ -277,12 +278,13 @@ public sealed class DerivedRecapAuthorityBoundaryTests {
         DerivedRecapLineageView lineage = fixture.Lineage();
         EventAddress anchor = lineage.CapturedHead;
         DerivedRecapSetManifest manifest =
-            DerivedRecapCodec.CreateManifest(
-                fixture.Engine.BranchRefId,
+            RecapWireTestFacts.CreateManifest(
+                fixture.Engine,
                 anchor,
                 [Maintain(
+                    fixture,
                     anchor,
-                    lineage.CurrentPrefix.HeadToOldest[^1].Address,
+                    lineage.CurrentPrefix.HeadToOldest[^2].Address,
                     [anchor]
                 )]
             );
@@ -346,10 +348,11 @@ public sealed class DerivedRecapAuthorityBoundaryTests {
         EventAddress root =
             fixture.RawLineage().HeadToRoot[^1].Address;
         DerivedRecapSetManifest manifest =
-            DerivedRecapCodec.CreateManifest(
-                fixture.Engine.BranchRefId,
+            RecapWireTestFacts.CreateManifest(
+                fixture.Engine,
                 lineage.CapturedHead,
                 [Maintain(
+                    fixture,
                     lineage.CapturedHead,
                     root,
                     [lineage.CapturedHead]
@@ -582,15 +585,18 @@ public sealed class DerivedRecapAuthorityBoundaryTests {
                 new RecapBlockId("roleplay.self"),
                 Target("roleplay.self"),
                 offLineage,
+                fixture.Setups(replayStart),
                 new string('a', 64),
                 new string('b', 64)
             ),
             "catch-up" => Maintain(
+                fixture,
                 target,
                 replayStart,
                 [lineage.CurrentPrefix.HeadToOldest[2].Address]
             ),
             "prior" => Maintain(
+                fixture,
                 target,
                 replayStart,
                 [target],
@@ -599,14 +605,14 @@ public sealed class DerivedRecapAuthorityBoundaryTests {
                     ContextHeaderSnapshot.Empty
                 )
             ),
-            _ => Maintain(target, replayStart, [target])
+            _ => Maintain(fixture, target, replayStart, [target])
         };
         EventAddress admission = defectKind == "admission"
             ? offLineage
             : target;
         DerivedRecapSetManifest manifest =
-            DerivedRecapCodec.CreateManifest(
-                fixture.Engine.BranchRefId,
+            RecapWireTestFacts.CreateManifest(
+                fixture.Engine,
                 admission,
                 [plan]
             );
@@ -663,7 +669,7 @@ public sealed class DerivedRecapAuthorityBoundaryTests {
         ContextHeaderBlockPath targetPath = Target(id.Value);
         RecapBlockPlan plan;
         if (sourceKind == "empty") {
-            plan = Maintain(target, replayStart, [target]);
+            plan = Maintain(fixture, target, replayStart, [target]);
         }
         else {
             PublishedRecapDescriptor published =
@@ -673,7 +679,7 @@ public sealed class DerivedRecapAuthorityBoundaryTests {
                     content: "source recap"
                 );
             DerivedRecapFrozenInput input =
-                DerivedRecapCodec.CreateFrozenInput(
+                RecapWireTestFacts.CreateFrozenInput(fixture.Engine,
                     id,
                     targetPath,
                     source,
@@ -684,6 +690,7 @@ public sealed class DerivedRecapAuthorityBoundaryTests {
                     id,
                     targetPath,
                     source,
+                    input.AbsorbedThroughSetups,
                     published.EnvelopeSha256,
                     input.PayloadSha256
                 )
@@ -694,16 +701,17 @@ public sealed class DerivedRecapAuthorityBoundaryTests {
                     RecapTestIdentity.CapabilityFingerprint,
                     new ExistingRecapMaintainSource(
                         source,
+                        input.AbsorbedThroughSetups,
                         published.EnvelopeSha256,
                         input.PayloadSha256
                     ),
-                    [target],
+                    [fixture.Boundary(target)],
                     EmptyRecapPriorContext.Instance
                 );
         }
         DerivedRecapSetManifest manifest =
-            DerivedRecapCodec.CreateManifest(
-                fixture.Engine.BranchRefId,
+            RecapWireTestFacts.CreateManifest(
+                fixture.Engine,
                 target,
                 [plan]
             );
@@ -718,6 +726,7 @@ public sealed class DerivedRecapAuthorityBoundaryTests {
     }
 
     private static MaintainRecapBlockPlan Maintain(
+        RecapStoreFixture fixture,
         EventAddress target,
         EventAddress replayStart,
         IReadOnlyList<EventAddress> catchUpThrough,
@@ -727,8 +736,14 @@ public sealed class DerivedRecapAuthorityBoundaryTests {
         Target("roleplay.self"),
         "roleplay.autobiographical",
         RecapTestIdentity.CapabilityFingerprint,
-        new EmptyRecapMaintainSource(replayStart),
-        catchUpThrough,
+        new EmptyRecapMaintainSource(
+            replayStart,
+            fixture.Setups(replayStart)
+        ),
+        RecapWireTestFacts.ResolveBoundaries(
+            fixture.Engine,
+            catchUpThrough
+        ),
         priorContext ?? EmptyRecapPriorContext.Instance
     );
 
