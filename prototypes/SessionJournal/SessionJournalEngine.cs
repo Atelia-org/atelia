@@ -1826,6 +1826,8 @@ public sealed partial class SessionJournalEngine : IDisposable {
                 "Prepared-only recovery must not expose an active Started boundary."
             );
         }
+        SessionPreparedRequestReconstruction reconstruction =
+            ReconstructPreparedRecovery(recovery, cancellationToken);
         SessionUncertainCompletionRecoveryPolicy policy =
             _runtime?.UncertainCompletionRecoveryPolicy
             ?? SessionUncertainCompletionRecoveryPolicy.Refuse;
@@ -1843,8 +1845,6 @@ public sealed partial class SessionJournalEngine : IDisposable {
         }
 
         SessionRuntime runtime = RequireRuntime();
-        SessionPreparedRequestReconstruction reconstruction =
-            ReconstructPreparedRecovery(recovery, cancellationToken);
         CompletionRequestPreparedBody manifest =
             reconstruction.Manifest;
         ValidateRecoveryRuntimeCompatibility(runtime, manifest);

@@ -2101,6 +2101,13 @@ public sealed class SessionJournalEngineTests : IDisposable {
         string path = NewJournalPath();
         var candidateSource = new TestContextCandidateSource();
         var firstClient = new ScriptedCompletionClient();
+        var firstTool = new RecordingTool(
+            "lookup",
+            _ => ToolExecuteResult.FromText(
+                ToolExecutionStatus.Success,
+                "must-not-run-before-reopen"
+            )
+        );
         firstClient.Enqueue(request => new CompletionResult(
             new ActionMessage([
                 new ActionBlock.ToolCall(new RawToolCall(
@@ -2124,15 +2131,7 @@ public sealed class SessionJournalEngineTests : IDisposable {
                    ),
                    CreateRuntime(
                        firstClient,
-                       new ToolRegistry([
-                           new RecordingTool(
-                               "lookup",
-                               _ => ToolExecuteResult.FromText(
-                                   ToolExecutionStatus.Success,
-                                   "must-not-run-before-reopen"
-                               )
-                           )
-                       ]).CreateSession(),
+                       new ToolRegistry([firstTool]).CreateSession(),
                        candidateSource: candidateSource
                    ),
                    new SessionJournalTestHooks(
@@ -2148,6 +2147,15 @@ public sealed class SessionJournalEngineTests : IDisposable {
                 () => engine.SendAsync("need lookup", CancellationToken.None)
             );
         }
+        Assert.Equal(0, firstTool.Calls);
+        Assert.Empty(ReadJournalPayloadJsonByKind(
+            path,
+            SessionEventKind.ToolExecutionStarted
+        ));
+        Assert.Empty(ReadJournalPayloadJsonByKind(
+            path,
+            SessionEventKind.ToolResultObserved
+        ));
 
         var recoveryClient = new ScriptedCompletionClient();
         recoveryClient.Enqueue(request => new CompletionResult(
@@ -2158,40 +2166,93 @@ public sealed class SessionJournalEngineTests : IDisposable {
                 request.ModelId
             )
         ));
+        var recoverySequences = new List<long>();
+        var recoveryOperationIds = new List<string?>();
         var recoveryTool = new RecordingTool(
             "lookup",
-            _ => ToolExecuteResult.FromText(
-                ToolExecutionStatus.Success,
-                "reopened-result"
-            )
+            context => {
+                recoverySequences.Add(context.ExecutionSequence);
+                recoveryOperationIds.Add(context.OperationId);
+                return ToolExecuteResult.FromText(
+                    ToolExecutionStatus.Success,
+                    "reopened-result"
+                );
+            }
         );
-        using var reopened = SessionJournalEngine.Open(
+        EventAddress completedHead;
+        using (var reopened = SessionJournalEngine.Open(
+                   path,
+                   CreateRuntime(
+                       recoveryClient,
+                       new ToolRegistry([recoveryTool]).CreateSession(),
+                       candidateSource: candidateSource
+                   )
+               )) {
+            SessionRuntimeRecoveryRequirements.ToolContinuationRequired
+                requirement = Assert.IsType<
+                    SessionRuntimeRecoveryRequirements.ToolContinuationRequired
+                >(reopened.InspectRuntimeRecoveryRequirements());
+            Assert.Equal(ToolRuntimeIdentity, requirement.ToolRuntimeIdentity);
+
+            ResumeOutcome outcome = await reopened.ResumeAsync(
+                requirement.CapturedHead!.Value,
+                CancellationToken.None
+            );
+
+            Assert.True(outcome.Advanced);
+            Assert.Equal("done", outcome.Message!.GetFlattenedText());
+            Assert.Equal(1, recoveryTool.Calls);
+            Assert.Equal(1, recoveryClient.Calls);
+            Assert.Equal([1], recoverySequences);
+            Assert.Single(recoveryOperationIds);
+            Assert.False(string.IsNullOrWhiteSpace(recoveryOperationIds[0]));
+            Assert.Equal(
+                SessionExecutionPhase.Idle,
+                reopened.ResolveExecutionTail().State.Phase
+            );
+            completedHead = reopened.ReadCurrentHead()!.Value;
+        }
+
+        string startedPayload = Assert.Single(ReadJournalPayloadJsonByKind(
             path,
-            CreateRuntime(
-                recoveryClient,
-                new ToolRegistry([recoveryTool]).CreateSession(),
-                candidateSource: candidateSource
+            SessionEventKind.ToolExecutionStarted
+        ));
+        string resultPayload = Assert.Single(ReadJournalPayloadJsonByKind(
+            path,
+            SessionEventKind.ToolResultObserved
+        ));
+        Assert.Equal(1, ExtractExecutionSequence(startedPayload));
+        Assert.Equal(1, ExtractExecutionSequence(resultPayload));
+        Assert.Equal(
+            ExtractOperationId(startedPayload),
+            recoveryOperationIds[0]
+        );
+
+        var noOpClient = new ScriptedCompletionClient();
+        var noOpTool = new RecordingTool(
+            "lookup",
+            _ => throw new Xunit.Sdk.XunitException(
+                "Idle reopen must not execute a tool."
             )
         );
-        SessionRuntimeRecoveryRequirements.ToolContinuationRequired
-            requirement = Assert.IsType<
-                SessionRuntimeRecoveryRequirements.ToolContinuationRequired
-            >(reopened.InspectRuntimeRecoveryRequirements());
-        Assert.Equal(ToolRuntimeIdentity, requirement.ToolRuntimeIdentity);
-
-        ResumeOutcome outcome = await reopened.ResumeAsync(
-            requirement.CapturedHead!.Value,
-            CancellationToken.None
-        );
-
-        Assert.True(outcome.Advanced);
-        Assert.Equal("done", outcome.Message!.GetFlattenedText());
-        Assert.Equal(1, recoveryTool.Calls);
-        Assert.Equal(1, recoveryClient.Calls);
-        Assert.Equal(
-            SessionExecutionPhase.Idle,
-            reopened.ResolveExecutionTail().State.Phase
-        );
+        using (var noOp = SessionJournalEngine.Open(
+                   path,
+                   CreateRuntime(
+                       noOpClient,
+                       new ToolRegistry([noOpTool]).CreateSession(),
+                       candidateSource: candidateSource
+                   )
+               )) {
+            ResumeOutcome outcome = await noOp.ResumeAsync(
+                completedHead,
+                CancellationToken.None
+            );
+            Assert.False(outcome.Advanced);
+            Assert.Null(outcome.Message);
+            Assert.Equal(completedHead, noOp.ReadCurrentHead());
+        }
+        Assert.Equal(0, noOpClient.Calls);
+        Assert.Equal(0, noOpTool.Calls);
     }
 
     [Fact]
@@ -3004,6 +3065,14 @@ public sealed class SessionJournalEngineTests : IDisposable {
         using var document = System.Text.Json.JsonDocument.Parse(startedPayload);
         return document.RootElement.GetProperty("body").GetProperty("operationId").GetString()
             ?? throw new InvalidDataException("tool-execution-started payload is missing operationId.");
+    }
+
+    private static long ExtractExecutionSequence(string payload) {
+        using var document = System.Text.Json.JsonDocument.Parse(payload);
+        return document.RootElement
+            .GetProperty("body")
+            .GetProperty("executionSequence")
+            .GetInt64();
     }
 
     private string NewJournalPath() {

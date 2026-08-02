@@ -66,7 +66,7 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
     }
 
     [Fact]
-    public async Task ResumeAsync_DefaultRefuse_UsesLocalAttemptProofWithoutRequestReconstruction() {
+    public async Task ResumeAsync_DefaultRefuse_RejectsCorruptPreparedBeforePolicyRefusal() {
         string path = NewJournalPath();
         var client = new ScriptedClient();
         EventAddress validPrepared = await CreatePreparedAsync(
@@ -109,21 +109,23 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
                 hint: default
             ).Unwrap().EventAddress;
         }
-        using (var journal = EventJournal.EventJournal.OpenExisting(path)) {
-            Assert.Throws<InvalidDataException>(
-                () => SessionPreparedRequestReconstructor.Reconstruct(
-                    journal,
-                    malformedPrepared,
-                    CancellationToken.None
-                )
-            );
-        }
-
         using (var reopened = SessionJournalEngine.Open(path, CreateRuntime(client))) {
-            InvalidOperationException error = await Assert.ThrowsAsync<InvalidOperationException>(
+            InvalidDataException inspectionError = Assert.Throws<InvalidDataException>(
+                () => reopened.InspectRuntimeRecoveryRequirements()
+            );
+            InvalidDataException resumeError = await Assert.ThrowsAsync<InvalidDataException>(
                 () => reopened.ResumeAsync(CancellationToken.None)
             );
-            Assert.Contains("Refuse", error.Message, StringComparison.Ordinal);
+            Assert.Contains(
+                "commitment",
+                inspectionError.Message,
+                StringComparison.OrdinalIgnoreCase
+            );
+            Assert.Contains(
+                "commitment",
+                resumeError.Message,
+                StringComparison.OrdinalIgnoreCase
+            );
         }
 
         Assert.Equal(malformedStarted, ReadHead(path));
