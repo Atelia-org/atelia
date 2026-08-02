@@ -210,6 +210,11 @@ public static class DerivedRecapCodec {
         PublishedRecapSet publication =
             ReadPublication(document.RootElement);
         ValidatePublication(publication);
+        if (!bytes.SequenceEqual(EncodePublication(publication))) {
+            throw new InvalidDataException(
+                "Recap publication bytes are not canonical."
+            );
+        }
         return publication;
     }
 

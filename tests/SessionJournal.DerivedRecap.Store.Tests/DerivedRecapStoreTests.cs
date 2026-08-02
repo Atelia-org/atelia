@@ -189,6 +189,303 @@ public sealed class DerivedRecapStoreTests {
         );
     }
 
+    [Theory]
+    [InlineData("malformed")]
+    [InlineData("noncanonical")]
+    [InlineData("oversized")]
+    public async Task DamagedBuildingPublicationCandidateIsResealed(
+        string damage
+    ) {
+        int sealCount = 0;
+        using RecapStoreFixture fixture =
+            await RecapStoreFixture.CreateAsync(
+                new RecapStoreTestHooks(
+                    AfterPublicationSealed: () => {
+                        if (++sealCount == 1) {
+                            throw new IOException("stop after first seal");
+                        }
+                    }
+                )
+            );
+        SessionCurrentLineageSnapshot lineage = fixture.Lineage();
+        EventAddress anchor = lineage.CapturedHead;
+        RecapBlockPlan plan = fixture.CreateMaintainPlan(
+            anchor,
+            lineage.HeadToRoot[2].Address
+        );
+        _ = await fixture.Store.CreateBuildingAsync(
+            DerivedRecapCodec.CreateManifest(
+                fixture.Engine.BranchRefId,
+                anchor,
+                [plan]
+            )
+        );
+        await RecapStoreTestDriver.InstallFinalAsync(
+            fixture.Store,
+            anchor,
+            DerivedRecapCodec.CreateBlock(plan, anchor, "recap")
+        );
+        await Assert.ThrowsAsync<IOException>(
+            async () => await fixture.Publisher.PublishAsync(anchor)
+        );
+
+        string candidatePath = Path.Combine(
+            fixture.Store.GetBuildingPathForTest(anchor),
+            "publication.json"
+        );
+        switch (damage) {
+            case "malformed":
+                await File.WriteAllTextAsync(candidatePath, "{");
+                break;
+            case "noncanonical":
+                await File.AppendAllTextAsync(candidatePath, "\n");
+                break;
+            case "oversized":
+                await File.WriteAllBytesAsync(
+                    candidatePath,
+                    new byte[checked(
+                        (int)DerivedRecapStore.MaxPublicationBytes + 1
+                    )]
+                );
+                break;
+            default:
+                throw new ArgumentOutOfRangeException(nameof(damage));
+        }
+
+        PublishedRecapDescriptor descriptor =
+            await fixture.Publisher.PublishAsync(anchor);
+
+        Assert.False(Directory.Exists(
+            fixture.Store.GetBuildingPathForTest(anchor)
+        ));
+        Assert.Equal(
+            descriptor,
+            Assert.IsType<DerivedRecapSelection.Selected>(
+                await fixture.Store.SelectNthPreviousAsync(lineage, 0)
+            ).Descriptor
+        );
+    }
+
+    [Fact]
+    public async Task StaleCandidateAfterFinalRepairIsResealed() {
+        int sealCount = 0;
+        using RecapStoreFixture fixture =
+            await RecapStoreFixture.CreateAsync(
+                new RecapStoreTestHooks(
+                    AfterPublicationSealed: () => {
+                        if (++sealCount == 1) {
+                            throw new IOException("stop after first seal");
+                        }
+                    }
+                )
+            );
+        SessionCurrentLineageSnapshot lineage = fixture.Lineage();
+        EventAddress anchor = lineage.CapturedHead;
+        RecapBlockPlan plan = fixture.CreateMaintainPlan(
+            anchor,
+            lineage.HeadToRoot[2].Address
+        );
+        _ = await fixture.Store.CreateBuildingAsync(
+            DerivedRecapCodec.CreateManifest(
+                fixture.Engine.BranchRefId,
+                anchor,
+                [plan]
+            )
+        );
+        await RecapStoreTestDriver.InstallFinalAsync(
+            fixture.Store,
+            anchor,
+            DerivedRecapCodec.CreateBlock(plan, anchor, "old recap")
+        );
+        await Assert.ThrowsAsync<IOException>(
+            async () => await fixture.Publisher.PublishAsync(anchor)
+        );
+
+        string finalPath = Path.Combine(
+            fixture.Store.GetBuildingPathForTest(anchor),
+            "blocks",
+            $"{plan.RecapBlockId.Value}.json"
+        );
+        string checkpointPath = Path.Combine(
+            fixture.Store.GetBuildingPathForTest(anchor),
+            "work",
+            $"{plan.RecapBlockId.Value}.json"
+        );
+        await File.WriteAllTextAsync(finalPath, "damaged");
+        await File.WriteAllTextAsync(checkpointPath, "damaged");
+        await RecapStoreTestDriver.InstallFinalAsync(
+            fixture.Store,
+            anchor,
+            DerivedRecapCodec.CreateBlock(plan, anchor, "new recap")
+        );
+
+        PublishedRecapDescriptor descriptor =
+            await fixture.Publisher.PublishAsync(anchor);
+        DerivedRecapMaterialization materialized =
+            await fixture.Store.MaterializeAsync(descriptor);
+
+        Assert.Equal(
+            "new recap",
+            Assert.Single(materialized.Contributions).ExactText
+        );
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task WrongKindBuildingCandidateFailsClosed(
+        bool symlink
+    ) {
+        if (symlink && !OperatingSystem.IsLinux()) {
+            return;
+        }
+        int sealCount = 0;
+        using RecapStoreFixture fixture =
+            await RecapStoreFixture.CreateAsync(
+                new RecapStoreTestHooks(
+                    AfterPublicationSealed: () => {
+                        if (++sealCount == 1) {
+                            throw new IOException("stop after first seal");
+                        }
+                    }
+                )
+            );
+        SessionCurrentLineageSnapshot lineage = fixture.Lineage();
+        EventAddress anchor = lineage.CapturedHead;
+        RecapBlockPlan plan = fixture.CreateMaintainPlan(
+            anchor,
+            lineage.HeadToRoot[2].Address
+        );
+        _ = await fixture.Store.CreateBuildingAsync(
+            DerivedRecapCodec.CreateManifest(
+                fixture.Engine.BranchRefId,
+                anchor,
+                [plan]
+            )
+        );
+        await RecapStoreTestDriver.InstallFinalAsync(
+            fixture.Store,
+            anchor,
+            DerivedRecapCodec.CreateBlock(plan, anchor, "recap")
+        );
+        await Assert.ThrowsAsync<IOException>(
+            async () => await fixture.Publisher.PublishAsync(anchor)
+        );
+        string buildingPath =
+            fixture.Store.GetBuildingPathForTest(anchor);
+        string candidatePath = Path.Combine(
+            buildingPath,
+            "publication.json"
+        );
+        File.Delete(candidatePath);
+        string? symlinkTarget = null;
+        if (symlink) {
+            symlinkTarget = Path.Combine(
+                fixture.Path,
+                "candidate-target.json"
+            );
+            await File.WriteAllTextAsync(symlinkTarget, "unchanged");
+            File.CreateSymbolicLink(candidatePath, symlinkTarget);
+        }
+        else {
+            Directory.CreateDirectory(candidatePath);
+        }
+
+        await Assert.ThrowsAsync<InvalidDataException>(
+            async () => await fixture.Publisher.PublishAsync(anchor)
+        );
+
+        Assert.True(Directory.Exists(buildingPath));
+        Assert.False(Directory.Exists(
+            fixture.Store.GetPublishedPathForTest(anchor)
+        ));
+        if (symlinkTarget is not null) {
+            Assert.Equal("unchanged", await File.ReadAllTextAsync(
+                symlinkTarget
+            ));
+        }
+    }
+
+    [Fact]
+    public async Task PublishNeverResealsExistingPublishedMembership() {
+        using RecapStoreFixture fixture =
+            await RecapStoreFixture.CreateAsync();
+        SessionCurrentLineageSnapshot lineage = fixture.Lineage();
+        EventAddress anchor = lineage.CapturedHead;
+        _ = await fixture.PublishAsync(
+            anchor,
+            lineage.HeadToRoot[2].Address
+        );
+        string publicationPath = Path.Combine(
+            fixture.Store.GetPublishedPathForTest(anchor),
+            "publication.json"
+        );
+        await File.AppendAllTextAsync(publicationPath, "\n");
+        byte[] damaged = await File.ReadAllBytesAsync(publicationPath);
+
+        await Assert.ThrowsAsync<InvalidDataException>(
+            async () => await fixture.Publisher.PublishAsync(anchor)
+        );
+
+        Assert.Equal(
+            damaged,
+            await File.ReadAllBytesAsync(publicationPath)
+        );
+    }
+
+    [Fact]
+    public async Task PublicationReadersShareCanonicalHealthDefinition() {
+        using RecapStoreFixture fixture =
+            await RecapStoreFixture.CreateAsync();
+        SessionCurrentLineageSnapshot lineage = fixture.Lineage();
+        EventAddress anchor = lineage.CapturedHead;
+        PublishedRecapDescriptor descriptor =
+            await fixture.PublishAsync(
+                anchor,
+                lineage.HeadToRoot[2].Address
+            );
+        await File.AppendAllTextAsync(
+            Path.Combine(
+                fixture.Store.GetPublishedPathForTest(anchor),
+                "publication.json"
+            ),
+            "\n"
+        );
+
+        Assert.IsType<DerivedRecapSelection.ExactPublishedSetInvalid>(
+            await fixture.Store.SelectNthPreviousAsync(lineage, 0)
+        );
+        Assert.IsType<PublishedMembershipInspectionResult.Invalid>(
+            await fixture.Store.InspectPublishedMembershipAsync(anchor)
+        );
+        await Assert.ThrowsAsync<InvalidDataException>(
+            async () => await fixture.Store.MaterializeAsync(descriptor)
+        );
+        Assert.IsType<PublishedPlanReadResult.Unavailable>(
+            await fixture.Store.ReadPublishedPlanAsync(descriptor)
+        );
+        Assert.IsType<PublishedPlanAtAnchorReadResult.Unavailable>(
+            await fixture.Store.ReadPublishedPlanAtAnchorAsync(anchor)
+        );
+        Assert.IsType<PublishedRecapSourceReadResult.Invalid>(
+            await fixture.Store.ReadPublishedSourceAsync(
+                descriptor,
+                [new RecapBlockId("roleplay.self")]
+            )
+        );
+        PublishedRestoreInspectionResult.Available restore =
+            Assert.IsType<PublishedRestoreInspectionResult.Available>(
+                await fixture.Store.InspectPublishedForRestoreAsync(
+                    anchor,
+                    lineage
+                )
+            );
+        Assert.Equal(
+            PublishedRestoreAuthorityKind.ManifestWitness,
+            restore.Inspection.Handle.AuthorityKind
+        );
+    }
+
     [Fact]
     public async Task PublishSealsEnvelopeBeforeDirectoryPromotionAndBarriers() {
         var observed = new List<(RecapIoPoint Point, string Path)>();

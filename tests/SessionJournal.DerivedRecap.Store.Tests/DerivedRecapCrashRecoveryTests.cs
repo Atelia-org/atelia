@@ -104,6 +104,83 @@ public sealed class DerivedRecapCrashRecoveryTests {
     }
 
     [Theory]
+    [InlineData("publication-before-seal", false)]
+    [InlineData("publication-sealed", true)]
+    public async Task PublicationResealCrashLeavesWholeCandidate(
+        string failpoint,
+        bool resealed
+    ) {
+        if (!OperatingSystem.IsLinux()) {
+            return;
+        }
+        string path = await CreatePublishableBuildingAsync();
+        try {
+            await RunCrashHarnessAsync(
+                path,
+                "publish",
+                "publication-sealed"
+            );
+
+            EventAddress anchor;
+            RefId refId;
+            string candidatePath;
+            using (SessionJournalEngine engine =
+                   SessionJournalEngine.Open(path)) {
+                anchor = engine.ReadCurrentLineageHeaders().CapturedHead;
+                refId = engine.BranchRefId;
+                DerivedRecapStore store = DerivedRecapStore.Open(
+                    path,
+                    refId
+                );
+                candidatePath = Path.Combine(
+                    store.GetBuildingPathForTest(anchor),
+                    "publication.json"
+                );
+            }
+            await File.AppendAllTextAsync(candidatePath, "\n");
+            byte[] damaged = await File.ReadAllBytesAsync(candidatePath);
+
+            await RunCrashHarnessAsync(path, "publish", failpoint);
+
+            byte[] afterCrash = await File.ReadAllBytesAsync(
+                candidatePath
+            );
+            Assert.False(Directory.Exists(
+                DerivedRecapStore.Open(path, refId)
+                    .GetPublishedPathForTest(anchor)
+            ));
+            if (resealed) {
+                _ = DerivedRecapCodec.DecodePublication(afterCrash);
+                Assert.NotEqual(damaged, afterCrash);
+            }
+            else {
+                Assert.Equal(damaged, afterCrash);
+            }
+
+            using SessionJournalEngine reopened =
+                SessionJournalEngine.Open(path);
+            DerivedRecapStore reopenedStore = DerivedRecapStore.Open(
+                path,
+                reopened.BranchRefId
+            );
+            var publisher = new DerivedRecapPublisher(
+                reopenedStore,
+                reopened
+            );
+            _ = await publisher.PublishAsync(anchor);
+            Assert.IsType<DerivedRecapSelection.Selected>(
+                await reopenedStore.SelectNthPreviousAsync(
+                    reopened.ReadCurrentLineageHeaders(),
+                    0
+                )
+            );
+        }
+        finally {
+            TryDelete(path);
+        }
+    }
+
+    [Theory]
     [InlineData("reset-after-quarantine", false)]
     [InlineData("reset-after-new-root-commit", true)]
     public async Task ResetCrashHasUnavailableOrFreshCommittedRoot(

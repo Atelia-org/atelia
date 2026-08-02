@@ -216,6 +216,69 @@ public sealed class DerivedRecapCodecTests {
         );
     }
 
+    [Theory]
+    [InlineData("leading-whitespace")]
+    [InlineData("trailing-whitespace")]
+    [InlineData("inter-property-whitespace")]
+    [InlineData("escaped-string")]
+    [InlineData("utf8-bom")]
+    public void PublicationCodecRejectsEquivalentNonCanonicalBytes(
+        string mutation
+    ) {
+        var target = new ContextHeaderBlockPath(
+            ContextHeaderCarrier.System,
+            "roleplay.self"
+        );
+        var id = new RecapBlockId("roleplay.self");
+        RecapBlockPlan plan = new MaintainRecapBlockPlan(
+            id,
+            target,
+            "roleplay.autobiographical",
+            new EmptyRecapMaintainSource(A1),
+            [A2],
+            EmptyRecapPriorContext.Instance
+        );
+        DerivedRecapSetManifest manifest =
+            DerivedRecapCodec.CreateManifest(
+                new RefId(12),
+                A2,
+                [plan]
+            );
+        PublishedRecapSet publication =
+            DerivedRecapCodec.CreatePublication(
+                manifest,
+                [DerivedRecapCodec.CreateBlock(plan, A2, "recap")]
+            );
+        byte[] canonical =
+            DerivedRecapCodec.EncodePublication(publication);
+        string json = Encoding.UTF8.GetString(canonical);
+        byte[] mutated = mutation switch {
+            "leading-whitespace" => Encoding.UTF8.GetBytes(" " + json),
+            "trailing-whitespace" => Encoding.UTF8.GetBytes(json + "\n"),
+            "inter-property-whitespace" => Encoding.UTF8.GetBytes(
+                json.Replace(
+                    ",\"refId\"",
+                    ", \"refId\"",
+                    StringComparison.Ordinal
+                )
+            ),
+            "escaped-string" => Encoding.UTF8.GetBytes(
+                json.Replace(
+                    "roleplay.self",
+                    "roleplay\\u002eself",
+                    StringComparison.Ordinal
+                )
+            ),
+            "utf8-bom" => [0xef, 0xbb, 0xbf, .. canonical],
+            _ => throw new ArgumentOutOfRangeException(nameof(mutation))
+        };
+
+        Assert.NotEqual(canonical, mutated);
+        Assert.Throws<InvalidDataException>(() =>
+            DerivedRecapCodec.DecodePublication(mutated)
+        );
+    }
+
     private static void AssertHashMutationRejected<T>(
         byte[] bytes,
         string oldValue,

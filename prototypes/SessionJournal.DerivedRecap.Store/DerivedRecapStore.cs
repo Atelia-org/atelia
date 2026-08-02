@@ -1194,40 +1194,17 @@ public sealed class DerivedRecapStore {
         );
         PublishedRecapSet publication =
             DerivedRecapCodec.CreatePublication(manifest, blocks);
+        byte[] publicationBytes =
+            DerivedRecapCodec.EncodePublication(publication);
         string publicationPath =
             Path.Combine(buildPath, "publication.json");
-        if (File.Exists(publicationPath)) {
-            PublishedRecapSet existing =
-                await ReadPublicationRequiredAsync(
-                        publicationPath,
-                        cancellationToken
-                    )
-                    .ConfigureAwait(false);
-            if (!DerivedRecapCodec.EncodePublication(existing)
-                    .SequenceEqual(
-                        DerivedRecapCodec.EncodePublication(publication)
-                    )) {
-                throw new InvalidDataException(
-                    "Sealed publication candidate conflicts with "
-                    + "the current Building."
-                );
-            }
-        }
-        else {
-            string temporaryPath =
-                await _fileSystem.WriteNamedTemporaryFileAsync(
-                        buildPath,
-                        "publication",
-                        DerivedRecapCodec.EncodePublication(publication),
-                        cancellationToken
-                    )
-                    .ConfigureAwait(false);
-            _testHooks.BeforePublicationSealInstall?.Invoke();
-            _fileSystem.InstallTemporaryFileCreateNew(
-                temporaryPath,
-                publicationPath
-            );
-        }
+        await SealBuildingPublicationCandidateAsync(
+                buildPath,
+                publicationPath,
+                publicationBytes,
+                cancellationToken
+            )
+            .ConfigureAwait(false);
         _testHooks.AfterPublicationSealed?.Invoke();
 
         // From the sealed candidate onward, finish the commit protocol even
@@ -3138,13 +3115,6 @@ public sealed class DerivedRecapStore {
         try {
             PublishedRecapSet publication =
                 DerivedRecapCodec.DecodePublication(bytes);
-            if (!bytes.SequenceEqual(
-                    DerivedRecapCodec.EncodePublication(publication)
-                )) {
-                throw new InvalidDataException(
-                    "Published envelope bytes are not canonical."
-                );
-            }
             if (publication.RefId != RefId
                 || publication.SetAdmissionAnchor != expectedAnchor) {
                 return new RestoreAuthorityRead(
@@ -4090,6 +4060,73 @@ public sealed class DerivedRecapStore {
         _fileSystem.FlushDirectory(buildPath);
     }
 
+    private async ValueTask SealBuildingPublicationCandidateAsync(
+        string buildPath,
+        string publicationPath,
+        byte[] expectedCanonicalBytes,
+        CancellationToken cancellationToken
+    ) {
+        if (!PathEntryExists(publicationPath)) {
+            string temporaryPath =
+                await _fileSystem.WriteNamedTemporaryFileAsync(
+                        buildPath,
+                        "publication",
+                        expectedCanonicalBytes,
+                        cancellationToken
+                    )
+                    .ConfigureAwait(false);
+            _testHooks.BeforePublicationSealInstall?.Invoke();
+            _fileSystem.InstallTemporaryFileCreateNew(
+                temporaryPath,
+                publicationPath
+            );
+            return;
+        }
+
+        _fileSystem.EnsureSafeDescendant(publicationPath);
+        FileAttributes attributes = File.GetAttributes(publicationPath);
+        if ((attributes & FileAttributes.Directory) != 0
+            || (attributes & FileAttributes.ReparsePoint) != 0) {
+            throw new InvalidDataException(
+                "Building publication candidate must be a regular file."
+            );
+        }
+
+        bool isExact = false;
+        try {
+            byte[] observed = await _fileSystem.ReadBoundedAsync(
+                    publicationPath,
+                    MaxPublicationBytes,
+                    cancellationToken
+                )
+                .ConfigureAwait(false);
+            isExact = observed.SequenceEqual(expectedCanonicalBytes);
+        }
+        catch (InvalidDataException) {
+            // A Building candidate is derived, pre-promotion state. Once its
+            // dependencies have been fully revalidated, an unreadable or
+            // oversized regular candidate may be replaced by the one
+            // canonical projection.
+        }
+        if (isExact) {
+            return;
+        }
+
+        await _fileSystem.WriteFileAtomicReplaceAsync(
+                publicationPath,
+                expectedCanonicalBytes,
+                () => {
+                    _testHooks.BeforePublicationSealInstall?.Invoke();
+                    _testHooks.BeforeAtomicFileReplace
+                        ?.Invoke(publicationPath);
+                },
+                () => _testHooks.AfterAtomicFileReplace
+                    ?.Invoke(publicationPath),
+                cancellationToken
+            )
+            .ConfigureAwait(false);
+    }
+
     private async ValueTask<DerivedRecapSetManifest>
         ReadManifestRequiredAsync(
         string buildPath,
@@ -4173,13 +4210,6 @@ public sealed class DerivedRecapStore {
                 "Published plan identity does not match its directory."
             );
         }
-        byte[] canonical =
-            DerivedRecapCodec.EncodePublication(publication);
-        if (!bytes.SequenceEqual(canonical)) {
-            throw new InvalidDataException(
-                "Published plan envelope is not canonical."
-            );
-        }
         return new PublishedPlanEnvelopeCapture(
             new PublishedRecapDescriptor(
                 publication.RefId,
@@ -4187,7 +4217,7 @@ public sealed class DerivedRecapStore {
                 publication.EnvelopeSha256
             ),
             publication,
-            canonical
+            bytes
         );
     }
 
@@ -4639,19 +4669,6 @@ public sealed class DerivedRecapStore {
                     publication.EnvelopeSha256
                 );
             }
-            byte[] encoded =
-                DerivedRecapCodec.EncodePublication(publication);
-            if (!canonicalEnvelope.SequenceEqual(encoded)) {
-                return new SourceCaptureResult.Unavailable(
-                    source.SetAdmissionAnchor,
-                    [
-                        new RecapStructuralDefect(
-                            "SourceEnvelopeNonCanonical",
-                            "Published source envelope is not canonical."
-                        )
-                    ]);
-            }
-
             var seen = new HashSet<RecapBlockId>();
             var inputs = new List<DerivedRecapFrozenInput>(
                 requiredBlocks.Count
