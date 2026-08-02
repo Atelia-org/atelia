@@ -479,6 +479,102 @@ public sealed class RecapPlannerConfigRepositoryTests : IDisposable {
         }
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void InitializerCollisionRequiresWinnerDirectoryBarrier(
+        bool failBarrier
+    ) {
+        if (!OperatingSystem.IsLinux()) {
+            return;
+        }
+        string repository = CreateRepositoryDirectory(
+            $"collision-barrier-{failBarrier}"
+        );
+        string path = RecapPlannerConfigLoader.GetCanonicalPath(
+            repository
+        );
+        var observed = new List<RecapPlannerConfigInitializeIoPoint>();
+        bool winnerPublished = false;
+
+        RecapPlannerConfigInitializeResult result =
+            RecapPlannerConfigInitializer.Initialize(
+                repository,
+                CreateDocument(),
+                new RecapPlannerConfigInitializerTestHooks(
+                    (point, _) => {
+                        observed.Add(point);
+                        if (point == RecapPlannerConfigInitializeIoPoint
+                                .TemporaryFileBarrier
+                            && !winnerPublished) {
+                            PublishWinnerWithoutDirectoryBarrier(path);
+                            winnerPublished = true;
+                        }
+                        if (point == RecapPlannerConfigInitializeIoPoint
+                                .ConfigDirectoryBarrier
+                            && failBarrier) {
+                            throw new IOException(
+                                "injected collision barrier failure"
+                            );
+                        }
+                    }
+                )
+            );
+
+        Assert.True(winnerPublished);
+        Assert.Contains(
+            RecapPlannerConfigInitializeIoPoint.ConfigDirectoryBarrier,
+            observed
+        );
+        if (failBarrier) {
+            var unavailable = Assert.IsType<
+                RecapPlannerConfigInitializeResult.Unavailable
+            >(result);
+            Assert.Contains(
+                "injected collision barrier failure",
+                unavailable.Reason
+            );
+        }
+        else {
+            Assert.IsType<
+                RecapPlannerConfigInitializeResult.AlreadyExists
+            >(result);
+        }
+    }
+
+    [Fact]
+    public void InitializerCollisionRereadUnavailableIsNotAlreadyExists() {
+        if (!OperatingSystem.IsLinux()) {
+            return;
+        }
+        string repository = CreateRepositoryDirectory(
+            "collision-reread-unavailable"
+        );
+        string path = RecapPlannerConfigLoader.GetCanonicalPath(
+            repository
+        );
+
+        RecapPlannerConfigInitializeResult result =
+            RecapPlannerConfigInitializer.Initialize(
+                repository,
+                CreateDocument(),
+                new RecapPlannerConfigInitializerTestHooks(
+                    (point, _) => {
+                        if (point == RecapPlannerConfigInitializeIoPoint
+                                .TemporaryFileBarrier) {
+                            PublishWinnerWithoutDirectoryBarrier(path);
+                        }
+                    },
+                    collisionPath => File.Delete(collisionPath)
+                )
+            );
+
+        var unavailable = Assert.IsType<
+            RecapPlannerConfigInitializeResult.Unavailable
+        >(result);
+        Assert.Contains("missing", unavailable.Reason);
+    }
+
     [Fact]
     public void InitializerRejectsUnsafeConfigDirectoryWithoutWriting() {
         string repository =
@@ -576,6 +672,24 @@ public sealed class RecapPlannerConfigRepositoryTests : IDisposable {
         string path = Path.Combine(_tempRoot, name);
         Directory.CreateDirectory(path);
         return path;
+    }
+
+    private static void PublishWinnerWithoutDirectoryBarrier(
+        string path
+    ) {
+        byte[] canonical = RecapPlannerConfigCodec.EncodeCanonical(
+            CreateDocument()
+        );
+        using var stream = new FileStream(
+            path,
+            FileMode.CreateNew,
+            FileAccess.Write,
+            FileShare.Read,
+            bufferSize: 4096,
+            FileOptions.SequentialScan
+        );
+        stream.Write(canonical);
+        stream.Flush(flushToDisk: true);
     }
 
     private static RecapPlannerConfigDocument CreateDocument() => new(

@@ -19,7 +19,9 @@ public static class RecapHistoryLoadProjector {
         try {
             estimatorId = estimator.Id;
         }
-        catch (Exception exception) when (IsCatchable(exception)) {
+        catch (Exception exception) when (
+            RecapNonFatalException.IsCatchable(exception)
+        ) {
             throw Invalid(
                 HistoryLoadMeasurementDefectCodes.EstimatorFailed,
                 "History-load estimator ID could not be read.",
@@ -199,7 +201,9 @@ public static class RecapHistoryLoadProjector {
                 exception
             );
         }
-        catch (Exception exception) when (IsCatchable(exception)) {
+        catch (Exception exception) when (
+            RecapNonFatalException.IsCatchable(exception)
+        ) {
             throw Invalid(
                 HistoryLoadMeasurementDefectCodes.EstimatorFailed,
                 "History-load estimator failed.",
@@ -276,12 +280,6 @@ public static class RecapHistoryLoadProjector {
         Exception? innerException = null
     ) => new(code, detail, innerException);
 
-    private static bool IsCatchable(Exception exception)
-        => exception is not (
-            OutOfMemoryException
-            or StackOverflowException
-            or AccessViolationException
-        );
 }
 
 internal sealed record RecapHistoryLoadBaseline(

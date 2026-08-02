@@ -3,7 +3,7 @@ using Atelia.SessionJournal.DerivedRecap.Store;
 
 namespace Atelia.SessionJournal.DerivedRecap.Planner;
 
-public abstract record PreparedRecapOperationAuthority {
+public abstract class PreparedRecapOperationAuthority {
     private PreparedRecapOperationAuthority(
         SessionCurrentLineageSnapshot lineage,
         DerivedRecapOperationBinding binding
@@ -17,7 +17,7 @@ public abstract record PreparedRecapOperationAuthority {
     public SessionCurrentLineageSnapshot Lineage { get; }
     internal DerivedRecapOperationBinding Binding { get; }
 
-    public sealed record FrozenBuilding
+    public sealed class FrozenBuilding
         : PreparedRecapOperationAuthority {
         internal FrozenBuilding(
             SessionCurrentLineageSnapshot lineage,
@@ -31,7 +31,7 @@ public abstract record PreparedRecapOperationAuthority {
         public BuildingDescriptor Descriptor { get; }
     }
 
-    public sealed record NewPlanning
+    public sealed class NewPlanning
         : PreparedRecapOperationAuthority {
         internal NewPlanning(
             SessionCurrentLineageSnapshot lineage,

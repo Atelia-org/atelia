@@ -237,7 +237,8 @@ internal enum RecapPlannerConfigInitializeIoPoint {
 }
 
 internal sealed record RecapPlannerConfigInitializerTestHooks(
-    Action<RecapPlannerConfigInitializeIoPoint, string>? BeforeIo = null
+    Action<RecapPlannerConfigInitializeIoPoint, string>? BeforeIo = null,
+    Action<string>? AfterPublishCollision = null
 );
 
 public static class RecapPlannerConfigInitializer {
@@ -441,6 +442,7 @@ public static class RecapPlannerConfigInitializer {
             catch (IOException) when (
                 File.Exists(path) || Directory.Exists(path)
             ) {
+                testHooks.AfterPublishCollision?.Invoke(path);
                 PathCheckResult racedTarget =
                     RecapPlannerConfigPathSafety.ValidateConfigFile(
                         root,
@@ -451,6 +453,24 @@ public static class RecapPlannerConfigInitializer {
                 if (racedTarget.Defect is { } raceDefect) {
                     return Invalid(path, raceDefect);
                 }
+                if (racedTarget.UnavailableReason
+                    is { } raceUnavailable) {
+                    return new RecapPlannerConfigInitializeResult
+                        .Unavailable(path, raceUnavailable);
+                }
+                if (!racedTarget.Exists) {
+                    return new RecapPlannerConfigInitializeResult
+                        .Unavailable(
+                        path,
+                        "Raced planner config target is unavailable."
+                    );
+                }
+                FlushDirectory(
+                    configDirectory,
+                    RecapPlannerConfigInitializeIoPoint
+                        .ConfigDirectoryBarrier,
+                    testHooks
+                );
                 return new RecapPlannerConfigInitializeResult
                     .AlreadyExists(path);
             }

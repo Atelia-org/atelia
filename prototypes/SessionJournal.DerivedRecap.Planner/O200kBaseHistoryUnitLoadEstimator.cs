@@ -46,7 +46,9 @@ public sealed class O200kBaseHistoryUnitLoadEstimator
                 rendering.Text
             );
         }
-        catch (Exception exception) when (IsCatchable(exception)) {
+        catch (Exception exception) when (
+            RecapNonFatalException.IsCatchable(exception)
+        ) {
             throw new HistoryLoadMeasurementException(
                 HistoryLoadMeasurementDefectCodes.EstimatorFailed,
                 "The o200k_base tokenizer could not measure the "
@@ -60,12 +62,6 @@ public sealed class O200kBaseHistoryUnitLoadEstimator
         );
     }
 
-    private static bool IsCatchable(Exception exception)
-        => exception is not (
-            OutOfMemoryException
-            or StackOverflowException
-            or AccessViolationException
-        );
 }
 
 internal sealed record HistoryUnitLoadRendering(

@@ -183,7 +183,9 @@ public static class RecapPlanEvaluator {
         catch (OperationCanceledException) {
             throw;
         }
-        catch (Exception exception) {
+        catch (Exception exception) when (
+            RecapNonFatalException.IsCatchable(exception)
+        ) {
             return IntentUnavailable(
                 RecapPlanDefectCodes.PolicyFailed,
                 $"Planning policy '{schedule.Inputs.Policy.Id}' failed: "

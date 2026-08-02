@@ -564,6 +564,30 @@ public sealed class DerivedRecapOperationPreparerTests : IDisposable {
             type => type.Name == "DerivedRecapBuildingExecutor"
         );
 
+        System.Reflection.ConstructorInfo authorityConstructor =
+            Assert.Single(
+                typeof(PreparedRecapOperationAuthority)
+                    .GetConstructors(
+                        System.Reflection.BindingFlags.Instance
+                        | System.Reflection.BindingFlags.NonPublic
+                        | System.Reflection.BindingFlags.DeclaredOnly
+                    )
+            );
+        Assert.True(authorityConstructor.IsPrivate);
+        foreach (Type authorityCase in new[] {
+            typeof(PreparedRecapOperationAuthority.FrozenBuilding),
+            typeof(PreparedRecapOperationAuthority.NewPlanning)
+        }) {
+            System.Reflection.ConstructorInfo caseConstructor =
+                Assert.Single(authorityCase.GetConstructors(
+                    System.Reflection.BindingFlags.Instance
+                    | System.Reflection.BindingFlags.Public
+                    | System.Reflection.BindingFlags.NonPublic
+                    | System.Reflection.BindingFlags.DeclaredOnly
+                ));
+            Assert.True(caseConstructor.IsAssembly);
+        }
+
         System.Reflection.ConstructorInfo constructor = Assert.Single(
             typeof(DerivedRecapPreparedExecutor).GetConstructors()
         );
@@ -635,33 +659,34 @@ public sealed class DerivedRecapOperationPreparerTests : IDisposable {
                 }
                 """
             );
+            (int lowLevelExitCode, string output) =
+                await CompileExternalConsumerAsync(tempRoot);
 
-            var start = new ProcessStartInfo("dotnet") {
-                WorkingDirectory = tempRoot,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false
-            };
-            start.ArgumentList.Add("build");
-            start.ArgumentList.Add("ExternalConsumer.csproj");
-            start.ArgumentList.Add("-m:1");
-            start.ArgumentList.Add("-nr:false");
-            start.ArgumentList.Add("--nologo");
-            using Process process = Process.Start(start)
-                ?? throw new InvalidOperationException(
-                    "Failed to start external consumer compilation."
-                );
-            Task<string> outputTask =
-                process.StandardOutput.ReadToEndAsync();
-            Task<string> errorTask =
-                process.StandardError.ReadToEndAsync();
-            await process.WaitForExitAsync();
-            string output = await outputTask + await errorTask;
-
-            Assert.NotEqual(0, process.ExitCode);
+            Assert.NotEqual(0, lowLevelExitCode);
             Assert.Contains("CS0122", output);
             Assert.Contains("DerivedRecapPlannerExecutor", output);
             Assert.Contains("DerivedRecapBuildingExecutor", output);
+
+            await File.WriteAllTextAsync(
+                Path.Combine(tempRoot, "LowLevelExecutorProbe.cs"),
+                """
+                using Atelia.SessionJournal.DerivedRecap.Planner;
+
+                public sealed class ForgedAuthority
+                    : PreparedRecapOperationAuthority {
+                    public ForgedAuthority(
+                        PreparedRecapOperationAuthority original
+                    ) : base(original) { }
+                }
+                """
+            );
+            (int authorityExitCode, string authorityOutput) =
+                await CompileExternalConsumerAsync(tempRoot);
+            Assert.NotEqual(0, authorityExitCode);
+            Assert.Contains(
+                "PreparedRecapOperationAuthority",
+                authorityOutput
+            );
         }
         finally {
             try {
@@ -671,6 +696,34 @@ public sealed class DerivedRecapOperationPreparerTests : IDisposable {
                 // Best-effort cleanup for test-owned compiler inputs.
             }
         }
+    }
+
+    private static async Task<(int ExitCode, string Output)>
+        CompileExternalConsumerAsync(string workingDirectory) {
+        var start = new ProcessStartInfo("dotnet") {
+            WorkingDirectory = workingDirectory,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false
+        };
+        start.ArgumentList.Add("build");
+        start.ArgumentList.Add("ExternalConsumer.csproj");
+        start.ArgumentList.Add("-m:1");
+        start.ArgumentList.Add("-nr:false");
+        start.ArgumentList.Add("--nologo");
+        using Process process = Process.Start(start)
+            ?? throw new InvalidOperationException(
+                "Failed to start external consumer compilation."
+            );
+        Task<string> outputTask =
+            process.StandardOutput.ReadToEndAsync();
+        Task<string> errorTask =
+            process.StandardError.ReadToEndAsync();
+        await process.WaitForExitAsync();
+        return (
+            process.ExitCode,
+            await outputTask + await errorTask
+        );
     }
 
     [Fact]

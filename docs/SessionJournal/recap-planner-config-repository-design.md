@@ -309,7 +309,9 @@ config使用同目录 temporary file + flush/close + atomic rename发布。produ
 Linux durability语义：新建`config/`后先对 repo root执行 directory `fsync`，发布 config rename后再对
 `config/`执行 directory `fsync`。任一 barrier失败都返回`Unavailable`，不得把 rename后的 barrier
 失败误报为`AlreadyExists`；后续重试会重新执行 parent/config directory barrier，再返回
-`Initialized`或`AlreadyExists`。一次 operation打开旧文件或新文件，不会在中途切换；加载完成后的替换只
+`Initialized`或`AlreadyExists`。create-new rename遇到并发赢家时，输家必须重新检查 winner target，
+传播 reread unavailable，并在合法 winner上完成 config-directory barrier后才能返回`AlreadyExists`。
+一次 operation打开旧文件或新文件，不会在中途切换；加载完成后的替换只
 影响下一次 operation。不需要 config ETag double-read或持续热加载，也不声明跨平台断电保证。
 
 Path safety采用本项目的 trusted local repository namespace威胁模型：repo root及其 ancestor/config
@@ -397,7 +399,8 @@ Building-first发现只在 captured raw Parent lineage上解析 durable Building
   executor重读后必须校验 exact manifest hash，不能退化为只按 anchor恢复；
 - new-plan/Building public execution surface只有`DerivedRecapPreparedExecutor`：它同时绑定 raw engine、Store与
   preparer签发的`PreparedRecapOperationAuthority`。new planning caller不能注入 config/baseline，
-  exact Resume caller不能注入裸 anchor；两个 low-level executor均为 assembly-internal；
+  exact Resume caller不能注入裸 anchor；authority本身是 private-base-constructor的 closed class
+  union，外部不能借 record copy constructor派生未知 case；两个 low-level executor均为 assembly-internal；
 - trusted Building install在 Store lock内复核 current-lineage membership，关闭发现后到安装前的
   双 Building竞态。
 

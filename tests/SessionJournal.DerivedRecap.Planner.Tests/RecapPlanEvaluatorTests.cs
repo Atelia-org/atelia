@@ -885,7 +885,7 @@ public sealed class RecapPlanEvaluatorTests {
     }
 
     [Fact]
-    public void PolicyFailureIsTypedAndCancellationPropagates() {
+    public void PolicyFailureIsTypedAndCancellationOrFatalPropagates() {
         TestModel model = TestModel.Create();
         var failed = new ThrowingPolicy(
             new InvalidOperationException("policy broke")
@@ -906,6 +906,28 @@ public sealed class RecapPlanEvaluatorTests {
                 model.PolicyFacts()
             )
         );
+        var outOfMemory = new ThrowingPolicy(
+            new OutOfMemoryException("policy exhausted memory")
+        );
+        Assert.Throws<OutOfMemoryException>(() =>
+            RecapPlanEvaluator.EvaluateIntent(
+                model.Schedule(outOfMemory),
+                model.PolicyFacts()
+            )
+        );
+
+        Assert.True(RecapNonFatalException.IsCatchable(
+            new InvalidOperationException()
+        ));
+        Assert.False(RecapNonFatalException.IsCatchable(
+            new OutOfMemoryException()
+        ));
+        Assert.False(RecapNonFatalException.IsCatchable(
+            new StackOverflowException()
+        ));
+        Assert.False(RecapNonFatalException.IsCatchable(
+            new AccessViolationException()
+        ));
     }
 
     [Fact]

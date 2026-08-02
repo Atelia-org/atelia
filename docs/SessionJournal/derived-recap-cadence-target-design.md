@@ -280,7 +280,8 @@ public sealed record RecapPlanningLimits {
 
 `IRecapPlanningPolicy`必须暴露稳定`Id`。code-owned resolution catalog在注册时校验
 `registration key == policy.Id`（estimator同样校验 key与`Id`），重复或错配立即 fail closed；
-policy抛出的非取消异常映射为 typed `PolicyFailed`，`OperationCanceledException`原样传播。
+policy抛出的可捕获普通异常映射为 typed `PolicyFailed`；`OperationCanceledException`与
+`OutOfMemoryException`、`StackOverflowException`、`AccessViolationException`等 fatal异常原样传播。
 
 Persisted JSON：
 
