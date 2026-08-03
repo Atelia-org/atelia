@@ -301,7 +301,7 @@ candidate ordinal 不是 CLI flag；它只来自 selected branch governing `Runt
 损坏时 bounded Restore 同一 slot，不跳过、不重编号。
 
 首次 Published recap 之前，healthy empty lineage 经 Planner 明确返回 `NoBuild` 后会进入
-`RawHistoryReady`，继续使用完整 raw history；普通 `Ready` 不会静默降级为 raw history。
+`RawHistoryAuthorized`，继续使用完整 raw history；普通 `Ready` 不会静默降级为 raw history。
 
 `--maximum-canonical-request-bytes` 是 final canonical request JSON 的精确 UTF-8 byte guard，不是
 provider tokenizer、模型 context-window 或 fallback policy。`--uncertain-recovery` 默认 `refuse`；

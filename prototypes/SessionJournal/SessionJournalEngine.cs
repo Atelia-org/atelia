@@ -2399,7 +2399,7 @@ public sealed partial class SessionJournalEngine : IDisposable {
                 observation,
                 visibleTools,
                 lifecycle.Status
-                    == SessionContextLifecycleStatus.RawHistoryReady,
+                    == SessionContextLifecycleStatus.RawHistoryAuthorized,
                 cancellationToken
             )
             .ConfigureAwait(false);
@@ -2829,7 +2829,7 @@ public sealed partial class SessionJournalEngine : IDisposable {
             completionBoundary,
             governingSetup,
             lifecycle.Status
-                == SessionContextLifecycleStatus.RawHistoryReady,
+                == SessionContextLifecycleStatus.RawHistoryAuthorized,
             cancellationToken
         ).ConfigureAwait(false);
         SessionContextCandidate selectedCandidate = selection.Candidate;
@@ -3851,7 +3851,7 @@ public sealed partial class SessionJournalEngine : IDisposable {
         EnsureCurrentHead(expectedHead);
         switch (result.Status) {
             case SessionContextLifecycleStatus.Ready:
-            case SessionContextLifecycleStatus.RawHistoryReady:
+            case SessionContextLifecycleStatus.RawHistoryAuthorized:
                 return result;
             case SessionContextLifecycleStatus.Backpressure:
                 throw new SessionJournalNotReadyException(

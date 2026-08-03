@@ -463,7 +463,7 @@ public sealed class DerivedRecapOnlineLifecycleCoordinatorTests {
             );
 
         Assert.Equal(
-            SessionContextLifecycleStatus.RawHistoryReady,
+            SessionContextLifecycleStatus.RawHistoryAuthorized,
             result.Status
         );
         Assert.Equal(["S0", "Run", "S0"], script.Trace);

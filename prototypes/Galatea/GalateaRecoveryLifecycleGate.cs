@@ -33,7 +33,7 @@ internal sealed class GalateaRecoveryLifecycleGate
         ArgumentNullException.ThrowIfNull(result);
         if (result.Status is (
                 SessionContextLifecycleStatus.Ready
-                or SessionContextLifecycleStatus.RawHistoryReady
+                or SessionContextLifecycleStatus.RawHistoryAuthorized
             )
             && Interlocked.CompareExchange(
                 ref _transitioned,

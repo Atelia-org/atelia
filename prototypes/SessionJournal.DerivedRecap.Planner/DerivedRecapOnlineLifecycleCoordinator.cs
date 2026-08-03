@@ -501,7 +501,7 @@ public sealed class DerivedRecapOnlineLifecycleCoordinator
             DerivedRecapSelection.EmptyLineage
                 when latestWasEmptyLineage
                     && build is DerivedRecapExecutionResult.NoBuild =>
-                SessionContextLifecycleResult.RawHistoryReady,
+                SessionContextLifecycleResult.RawHistoryAuthorized,
             _ => SelectionUnavailable(
                 configured,
                 "configured Published recap"

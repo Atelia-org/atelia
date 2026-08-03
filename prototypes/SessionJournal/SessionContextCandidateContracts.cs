@@ -62,7 +62,7 @@ public enum SessionContextLifecycleStatus {
     /// currently required. If exact post-lifecycle selection remains
     /// EmptyLineage, SessionJournal may use the complete raw history window.
     /// </summary>
-    RawHistoryReady = 3,
+    RawHistoryAuthorized = 3,
 }
 
 public sealed record SessionContextLifecycleResult(
@@ -73,9 +73,9 @@ public sealed record SessionContextLifecycleResult(
     public static SessionContextLifecycleResult Ready { get; } =
         new(SessionContextLifecycleStatus.Ready);
 
-    public static SessionContextLifecycleResult RawHistoryReady {
+    public static SessionContextLifecycleResult RawHistoryAuthorized {
         get;
-    } = new(SessionContextLifecycleStatus.RawHistoryReady);
+    } = new(SessionContextLifecycleStatus.RawHistoryAuthorized);
 
     public static SessionContextLifecycleResult BeyondPrefix(
         SessionCurrentLineageBeyondPrefix evidence

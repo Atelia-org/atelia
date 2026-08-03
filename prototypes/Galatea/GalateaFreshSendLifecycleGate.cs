@@ -37,7 +37,7 @@ internal sealed class GalateaFreshSendLifecycleGate
         if (request.PendingObservation is not null
             && result.Status is (
                 SessionContextLifecycleStatus.Ready
-                or SessionContextLifecycleStatus.RawHistoryReady
+                or SessionContextLifecycleStatus.RawHistoryAuthorized
             )
             && Interlocked.CompareExchange(
                 ref _transitioned,

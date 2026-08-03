@@ -217,7 +217,7 @@ recent == R
 
 当 Store尚无 Published Recap且 `G < R+B` 时，Planner返回 `NoBuild`；这不是“会话必须没有任何
 operational history”的 strict fresh bootstrap。Online coordinator只有在以下 exact shape同时成立时
-返回 `SessionContextLifecycleStatus.RawHistoryReady`：
+返回 `SessionContextLifecycleStatus.RawHistoryAuthorized`：
 
 ```text
 initial selection == EmptyLineage
@@ -230,7 +230,7 @@ window作为当前 Context history。普通 `Ready + mature EmptyLineage`继续�
 Empty、Selected消失、ordinal/invalid/store unavailable均不得降级成 raw history。
 
 这样 `R=20, B=24` 时的前 43 个 HistoryUnits可以保持近期思路连续性，第 44 个 unit开始满足首个
-Recap trigger。raw-only请求仍受 canonical request byte guard；`RawHistoryReady`不是绕过 context
+Recap trigger。raw-only请求仍受 canonical request byte guard；`RawHistoryAuthorized`不是绕过 context
 容量或 topology检查的通用 fallback。
 
 ## 4. `RecapCadenceConfig`

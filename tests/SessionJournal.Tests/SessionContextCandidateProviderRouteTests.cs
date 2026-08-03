@@ -14,6 +14,33 @@ public sealed class SessionContextCandidateProviderRouteTests : IDisposable {
 
     private readonly List<string> _tempDirectories = [];
 
+    [Fact]
+    public void LifecycleStatusPublicSurface_HasAuthorizedRawFallback() {
+        string[] names = Enum.GetNames<SessionContextLifecycleStatus>();
+        Assert.Equal(
+            3,
+            (int)SessionContextLifecycleStatus.RawHistoryAuthorized
+        );
+        Assert.Equal(
+            [nameof(SessionContextLifecycleStatus.RawHistoryAuthorized)],
+            names.Where(name =>
+                    (int)Enum.Parse<SessionContextLifecycleStatus>(name)
+                        == 3
+                )
+                .ToArray()
+        );
+        Assert.DoesNotContain("RawHistoryReady", names);
+        Type resultType = typeof(SessionContextLifecycleResult);
+        Assert.NotNull(resultType.GetProperty(
+            nameof(SessionContextLifecycleResult.RawHistoryAuthorized)
+        ));
+        Assert.Null(resultType.GetProperty("RawHistoryReady"));
+        Assert.Equal(
+            SessionContextLifecycleStatus.RawHistoryAuthorized,
+            SessionContextLifecycleResult.RawHistoryAuthorized.Status
+        );
+    }
+
     public void Dispose() {
         foreach (string path in _tempDirectories) {
             try {
@@ -631,7 +658,7 @@ public sealed class SessionContextCandidateProviderRouteTests : IDisposable {
             IsEmptyLineage = true
         };
         var lifecycle = new TestContextLifecycle {
-            Result = SessionContextLifecycleResult.RawHistoryReady
+            Result = SessionContextLifecycleResult.RawHistoryAuthorized
         };
         SessionRuntime runtime = CreateRuntime(client, source) with {
             ContextLifecycle = lifecycle
@@ -855,7 +882,7 @@ public sealed class SessionContextCandidateProviderRouteTests : IDisposable {
     }
 
     [Fact]
-    public async Task MatureEmptyLineage_RawHistoryReadySendsWholeRawHistory() {
+    public async Task MatureEmptyLineage_RawHistoryAuthorizedSendsWholeRawHistory() {
         string path = NewJournalPath();
         var client = new ScriptedClient();
         client.Enqueue(Terminal("continued"));
@@ -863,7 +890,7 @@ public sealed class SessionContextCandidateProviderRouteTests : IDisposable {
             IsEmptyLineage = true
         };
         var lifecycle = new TestContextLifecycle {
-            Result = SessionContextLifecycleResult.RawHistoryReady
+            Result = SessionContextLifecycleResult.RawHistoryAuthorized
         };
         using var engine = SessionJournalEngine.Create(
             path,
@@ -913,7 +940,7 @@ public sealed class SessionContextCandidateProviderRouteTests : IDisposable {
     }
 
     [Fact]
-    public async Task MatureEmptyLineage_RawHistoryReadyResumesWholeRawHistory() {
+    public async Task MatureEmptyLineage_RawHistoryAuthorizedResumesWholeRawHistory() {
         string path = NewJournalPath();
         var client = new ScriptedClient();
         client.Enqueue(Terminal("resumed"));
@@ -921,7 +948,7 @@ public sealed class SessionContextCandidateProviderRouteTests : IDisposable {
             IsEmptyLineage = true
         };
         var lifecycle = new TestContextLifecycle {
-            Result = SessionContextLifecycleResult.RawHistoryReady
+            Result = SessionContextLifecycleResult.RawHistoryAuthorized
         };
         using var engine = SessionJournalEngine.Create(
             path,
@@ -968,7 +995,7 @@ public sealed class SessionContextCandidateProviderRouteTests : IDisposable {
     }
 
     [Fact]
-    public async Task MatureLegacyImport_RawHistoryReadyCanContinueOnline() {
+    public async Task MatureLegacyImport_RawHistoryAuthorizedCanContinueOnline() {
         string path = NewJournalPath();
         var client = new ScriptedClient();
         client.Enqueue(Terminal("continued"));
@@ -976,7 +1003,7 @@ public sealed class SessionContextCandidateProviderRouteTests : IDisposable {
             IsEmptyLineage = true
         };
         var lifecycle = new TestContextLifecycle {
-            Result = SessionContextLifecycleResult.RawHistoryReady
+            Result = SessionContextLifecycleResult.RawHistoryAuthorized
         };
         using (var writer = SessionJournalLegacyImportWriter.Create(
                    path,
@@ -1019,7 +1046,7 @@ public sealed class SessionContextCandidateProviderRouteTests : IDisposable {
             IsEmptyLineage = true
         };
         var lifecycle = new TestContextLifecycle {
-            Result = SessionContextLifecycleResult.RawHistoryReady
+            Result = SessionContextLifecycleResult.RawHistoryAuthorized
         };
         using var engine = SessionJournalEngine.Create(
             path,
@@ -1076,7 +1103,7 @@ public sealed class SessionContextCandidateProviderRouteTests : IDisposable {
     [InlineData(
         SessionContextCandidateSelectionStatus.BeyondPrefix
     )]
-    public async Task RawHistoryReadyDoesNotDowngradeOtherSelectionStatuses(
+    public async Task RawHistoryAuthorizedDoesNotDowngradeOtherSelectionStatuses(
         SessionContextCandidateSelectionStatus status
     ) {
         string path = NewJournalPath();
@@ -1086,7 +1113,7 @@ public sealed class SessionContextCandidateProviderRouteTests : IDisposable {
             SelectionDetail = "must remain unavailable"
         };
         var lifecycle = new TestContextLifecycle {
-            Result = SessionContextLifecycleResult.RawHistoryReady
+            Result = SessionContextLifecycleResult.RawHistoryAuthorized
         };
         using var engine = SessionJournalEngine.Create(
             path,

@@ -495,7 +495,7 @@ Gate：
   preprocessor、stop controller、lifecycle decorator、raw display adapter与真实`Program`测试入口；
 - `SessionJournalEngine.SendAsync`具有两次lifecycle callback：第一次发生在raw Observation append前，
   第二次发生在Observation后、Prepared前。因此stop transition严格线性化在第一次
-  `PendingObservation != null`且结果为`Ready/RawHistoryReady`的callback返回之后；第二次callback
+  `PendingObservation != null`且结果为`Ready/RawHistoryAuthorized`的callback返回之后；第二次callback
   继续使用同一个未被用户stop取消的token；
 - stop先于transition线性化时取消pre-dispatch token且transition抛`OperationCanceledException`；
   transition先于stop线性化时只设置同一turn的observer；application shutdown仍可独立取消linked

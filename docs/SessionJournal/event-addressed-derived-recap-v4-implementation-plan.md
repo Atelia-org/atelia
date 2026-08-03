@@ -131,7 +131,7 @@ low-level executor均为 assembly-internal。Restore只接受 frozen durable sta
 registry与 code-owned V4 hard caps，
 Prepared/Started recovery也保持 Store/config zero-touch。实现验收还
 关闭了 pre-first-recap语义缺口：`EmptyLineage + NoBuild + EmptyLineage`通过显式
-`RawHistoryReady`使用完整 raw recent history，不再被误判成 strict fresh bootstrap。
+`RawHistoryAuthorized`使用完整 raw recent history，不再被误判成 strict fresh bootstrap。
 
 H0～H2的唯一 Shape/Rule与施工边界由
 [Derived Recap History Load](derived-recap-history-load-target-design.md)维护。该 cutover把

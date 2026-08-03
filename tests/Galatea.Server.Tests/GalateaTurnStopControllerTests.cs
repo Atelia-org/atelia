@@ -109,7 +109,7 @@ public sealed class GalateaTurnStopControllerTests : IDisposable {
 
     [Theory]
     [InlineData(SessionContextLifecycleStatus.Ready)]
-    [InlineData(SessionContextLifecycleStatus.RawHistoryReady)]
+    [InlineData(SessionContextLifecycleStatus.RawHistoryAuthorized)]
     public async Task LifecycleGate_PreAppendSuccessTransitions(
         SessionContextLifecycleStatus status
     ) {
