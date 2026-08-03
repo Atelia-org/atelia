@@ -16,6 +16,12 @@ public sealed class SessionJournalMutationGateTests : IDisposable {
         var client = new BlockingFirstCompletionClient();
         var candidates = new TestContextCandidateSource();
         SessionRuntime runtime = CreateRuntime(client, candidates);
+        var rejectedClient = new KnownFailureCompletionClient();
+        SessionRuntime rejectedRuntime = CreateRuntime(
+            rejectedClient,
+            new TestContextCandidateSource(),
+            connectionId: "rejected-connection"
+        );
         SessionJournalEngine engine = SessionJournalTestRuntime.Attach(
             SessionJournalEngine.Create(
                 _root,
@@ -68,13 +74,54 @@ public sealed class SessionJournalMutationGateTests : IDisposable {
 
             SessionJournalConcurrentMutationException useRuntime =
                 Assert.Throws<SessionJournalConcurrentMutationException>(
-                    () => engine.UseRuntime(runtime)
+                    () => engine.UseRuntime(rejectedRuntime)
                 );
             AssertMutation(
                 useRuntime,
                 attempted: "UseRuntime",
                 active: "SendAsync"
             );
+
+            var desired = new SessionDesiredSetup(
+                "model-B",
+                "surface-B",
+                "system-B"
+            );
+            SessionJournalConcurrentMutationException reconcile =
+                Assert.Throws<SessionJournalConcurrentMutationException>(
+                    () => engine.ReconcileDesiredSetup(
+                        blockedHead,
+                        desired
+                    )
+                );
+            AssertMutation(
+                reconcile,
+                attempted: "ReconcileDesiredSetup",
+                active: "SendAsync"
+            );
+            Assert.Equal(blockedHead, engine.ReadCurrentHead());
+
+            SessionJournalConcurrentMutationException abandon =
+                Assert.Throws<SessionJournalConcurrentMutationException>(
+                    () => engine.AbandonFailedTurn(blockedHead)
+                );
+            AssertMutation(
+                abandon,
+                attempted: "AbandonFailedTurn",
+                active: "SendAsync"
+            );
+            Assert.Equal(blockedHead, engine.ReadCurrentHead());
+
+            SessionJournalConcurrentMutationException rewind =
+                Assert.Throws<SessionJournalConcurrentMutationException>(
+                    () => engine.RewindLatestCompletedTurn(blockedHead)
+                );
+            AssertMutation(
+                rewind,
+                attempted: "RewindLatestCompletedTurn",
+                active: "SendAsync"
+            );
+            Assert.Equal(blockedHead, engine.ReadCurrentHead());
 
             SessionJournalConcurrentMutationException dispose =
                 Assert.Throws<SessionJournalConcurrentMutationException>(
@@ -106,6 +153,7 @@ public sealed class SessionJournalMutationGateTests : IDisposable {
                 second.Message.GetFlattenedText()
             );
             Assert.Equal(2, client.CallCount);
+            Assert.Equal(0, rejectedClient.CallCount);
 
             ResumeOutcome idle = await engine.ResumeAsync(
                 engine.ReadCurrentHead()!.Value,
@@ -123,6 +171,25 @@ public sealed class SessionJournalMutationGateTests : IDisposable {
 
         Assert.Throws<ObjectDisposedException>(() =>
             engine.ReadCurrentHead()
+        );
+    }
+
+    [Fact]
+    public void SequentialDoubleDisposeIsIdempotent() {
+        SessionJournalEngine engine = SessionJournalEngine.Create(
+            _root,
+            new SessionCreateOptions(
+                "model-A",
+                "system-A",
+                "surface-A"
+            )
+        );
+
+        engine.Dispose();
+        engine.Dispose();
+
+        Assert.Throws<ObjectDisposedException>(
+            () => engine.ReadCurrentHead()
         );
     }
 
@@ -249,13 +316,14 @@ public sealed class SessionJournalMutationGateTests : IDisposable {
 
     private static SessionRuntime CreateRuntime(
         ICompletionClient client,
-        TestContextCandidateSource candidates
+        TestContextCandidateSource candidates,
+        string connectionId = "test-connection"
     ) => new(
         client,
         CompletionTarget: new SessionCompletionTargetIdentity(
-            "test-connection",
+            connectionId,
             "test",
-            "test-connection-fingerprint-v1",
+            $"{connectionId}-fingerprint-v1",
             "test-request-adapter-v1"
         ),
         ContextCandidateSource: candidates
@@ -310,9 +378,13 @@ public sealed class SessionJournalMutationGateTests : IDisposable {
 
     private sealed class KnownFailureCompletionClient
         : ICompletionClient {
+        private int _callCount;
+
         public string Name => "scripted";
 
         public string ApiSpecId => "test-api-v1";
+
+        internal int CallCount => Volatile.Read(ref _callCount);
 
         public Task<CompletionResult> StreamCompletionAsync(
             CompletionRequest request,
@@ -321,6 +393,7 @@ public sealed class SessionJournalMutationGateTests : IDisposable {
         ) {
             _ = observer;
             cancellationToken.ThrowIfCancellationRequested();
+            _ = Interlocked.Increment(ref _callCount);
             return Task.FromResult(new CompletionResult(
                 new ActionMessage([
                     new ActionBlock.Text("failed-result")
