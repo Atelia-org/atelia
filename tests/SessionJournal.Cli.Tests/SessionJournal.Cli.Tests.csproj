@@ -24,4 +24,9 @@
     <ProjectReference Include="../../prototypes/SessionJournal/SessionJournal.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Compile Include="../TestInfrastructure/TestDirectorySafety.cs"
+             Link="TestInfrastructure/TestDirectorySafety.cs" />
+  </ItemGroup>
+
 </Project>

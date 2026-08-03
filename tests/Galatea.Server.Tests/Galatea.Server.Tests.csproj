@@ -25,4 +25,9 @@
     <ProjectReference Include="../../prototypes/SessionJournal.DerivedRecap.Maintainers/SessionJournal.DerivedRecap.Maintainers.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Compile Include="../TestInfrastructure/TestDirectorySafety.cs"
+             Link="TestInfrastructure/TestDirectorySafety.cs" />
+  </ItemGroup>
+
 </Project>

@@ -33,6 +33,10 @@ public sealed class DerivedRecapRealDataAcceptanceTests {
         RealLegacyExportFactAttribute.SourceEnvironment;
     private const string ReportEnvironment =
         "ATELIA_DERIVED_RECAP_ACCEPTANCE_REPORT";
+    private const string ScriptedStagingOutputEnvironment =
+        "ATELIA_DERIVED_RECAP_SCRIPTED_STAGING_OUTPUT";
+    private const string ScriptedStagingOldBaseEnvironment =
+        "ATELIA_DERIVED_RECAP_SCRIPTED_STAGING_OLD_BASE";
 
     [RealLegacyExportFact]
     public async Task ImportedRealExportSurvivesFullRecapAndRecoveryFlow() {
@@ -66,6 +70,8 @@ public sealed class DerivedRecapRealDataAcceptanceTests {
         );
         string copyPath = Path.Combine(tempRoot, "session-copy");
         EnsureDisjoint(sourcePath, copyPath);
+        CreateOnlyDirectorySnapshot? scriptedStaging = null;
+        bool acceptanceCompleted = false;
 
         try {
             Directory.CreateDirectory(tempRoot);
@@ -405,6 +411,15 @@ public sealed class DerivedRecapRealDataAcceptanceTests {
                     allowMissing: true
                 )
             );
+            scriptedStaging =
+                await PrepareScriptedStagingSnapshotAsync(
+                    sourcePath,
+                    tempRoot,
+                    copyPath,
+                    branchName,
+                    branchRefId,
+                    initialRaw
+                );
 
             string onlineReport =
                 Path.Combine(tempRoot, "online.json");
@@ -625,18 +640,27 @@ public sealed class DerivedRecapRealDataAcceptanceTests {
                     File.ReadAllText(reportPath)
                 );
             }
+            acceptanceCompleted = true;
         }
         finally {
-            TreeFingerprint sourceAfter =
-                FingerprintSourceFile(sourcePath);
-            Assert.Equal(sourceBefore, sourceAfter);
             try {
-                if (Directory.Exists(tempRoot)) {
-                    Directory.Delete(tempRoot, recursive: true);
+                TreeFingerprint sourceAfter =
+                    FingerprintSourceFile(sourcePath);
+                Assert.Equal(sourceBefore, sourceAfter);
+                if (acceptanceCompleted) {
+                    scriptedStaging?.Publish();
                 }
             }
-            catch {
-                // Best-effort cleanup for the isolated acceptance copy.
+            finally {
+                scriptedStaging?.Dispose();
+                try {
+                    if (Directory.Exists(tempRoot)) {
+                        Directory.Delete(tempRoot, recursive: true);
+                    }
+                }
+                catch {
+                    // Best-effort cleanup for the isolated acceptance copy.
+                }
             }
         }
     }
@@ -661,6 +685,111 @@ public sealed class DerivedRecapRealDataAcceptanceTests {
         return Assert
             .IsType<DerivedRecapSelection.Selected>(selection)
             .Descriptor;
+    }
+
+    private static async ValueTask<CreateOnlyDirectorySnapshot?>
+        PrepareScriptedStagingSnapshotAsync(
+        string sourceExportPath,
+        string acceptanceTempRoot,
+        string repositoryPath,
+        string branchName,
+        RefId branchRefId,
+        RawSnapshot expectedRaw
+    ) {
+        string? configuredOutput = Environment.GetEnvironmentVariable(
+            ScriptedStagingOutputEnvironment
+        );
+        if (string.IsNullOrWhiteSpace(configuredOutput)) {
+            return null;
+        }
+        string outputPath = Path.GetFullPath(configuredOutput);
+        EnsureDisjoint(acceptanceTempRoot, outputPath);
+        var protectedPaths = new List<string> {
+            sourceExportPath
+        };
+        string? oldBase = Environment.GetEnvironmentVariable(
+            ScriptedStagingOldBaseEnvironment
+        );
+        if (!string.IsNullOrWhiteSpace(oldBase)) {
+            protectedPaths.Add(oldBase);
+        }
+        string? report = Environment.GetEnvironmentVariable(
+            ReportEnvironment
+        );
+        if (!string.IsNullOrWhiteSpace(report)) {
+            protectedPaths.Add(report);
+        }
+        return await CreateOnlyDirectorySnapshot.PrepareAsync(
+            repositoryPath,
+            outputPath,
+            protectedPaths,
+            temporary => ValidateScriptedStagingSnapshotAsync(
+                temporary,
+                branchName,
+                branchRefId,
+                expectedRaw
+            )
+        );
+    }
+
+    private static async ValueTask ValidateScriptedStagingSnapshotAsync(
+        string repositoryPath,
+        string branchName,
+        RefId expectedBranchRefId,
+        RawSnapshot expectedRaw
+    ) {
+        RawSnapshot copiedRaw = ReadRawSnapshot(repositoryPath);
+        Assert.Equal(148, copiedRaw.Addresses.Count);
+        AssertRawUnchanged(expectedRaw, copiedRaw);
+        using var engine = SJ.SessionJournalEngine.OpenReadOnly(
+            repositoryPath,
+            branchName
+        );
+        Assert.Equal(expectedBranchRefId, engine.BranchRefId);
+        SJ.SessionExecutionBoundaryInspection boundary =
+            engine.InspectExecutionBoundary();
+        Assert.Equal(SJ.SessionExecutionPhase.Idle, boundary.Phase);
+        Assert.Equal(expectedRaw.Head, boundary.Head);
+
+        DerivedRecapStore store = DerivedRecapStore.Open(
+            repositoryPath,
+            engine.BranchRefId
+        );
+        DerivedRecapSelection.Selected selected = Assert.IsType<
+            DerivedRecapSelection.Selected
+        >(
+            await DerivedRecapLineageView
+                .Capture(store, engine.ReadView)
+                .SelectNthPreviousAsync(0)
+        );
+        DerivedRecapMaterialization materialized =
+            await store.MaterializeAsync(selected.Descriptor);
+        Assert.Equal(2, materialized.Contributions.Count);
+
+        string publicationPath = Path.Combine(
+            repositoryPath,
+            "derived",
+            "recap",
+            "v4",
+            "refs",
+            engine.BranchRefId.ToHexString(),
+            "published",
+            EventAddressFileNameCodec.Format(
+                selected.Descriptor.SetAdmissionAnchor
+            ),
+            "publication.json"
+        );
+        using JsonDocument publication = JsonDocument.Parse(
+            File.ReadAllText(publicationPath)
+        );
+        Assert.Equal(
+            DerivedRecapCodec.PublicationSchema,
+            publication.RootElement.GetProperty("schema").GetString()
+        );
+        Assert.Equal(
+            "atelia.session-journal.published-recap-set.v6",
+            DerivedRecapCodec.PublicationSchema
+        );
     }
 
     private static async Task<PreparedSnapshot> LeavePreparedAsync(

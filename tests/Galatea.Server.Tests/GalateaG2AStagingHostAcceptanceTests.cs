@@ -6,6 +6,7 @@ using Atelia.Completion.Abstractions;
 using Atelia.EventJournal;
 using Atelia.SessionJournal;
 using Atelia.SessionJournal.DerivedRecap.Store;
+using Atelia.Testing;
 using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 
@@ -507,7 +508,7 @@ public sealed class GalateaG2AStagingHostAcceptanceTests {
         CompletionRequest Request
     );
 
-    private sealed class StagingClone : IDisposable {
+    internal sealed class StagingClone : IDisposable {
         private StagingClone(
             string rootDirectory,
             string sessionDirectory
@@ -531,78 +532,89 @@ public sealed class GalateaG2AStagingHostAcceptanceTests {
                 GalateaG2AStagingFactAttribute
                     .StagingRepositoryEnvironment
             );
-            string source = Path.TrimEndingDirectorySeparator(
-                Path.GetFullPath(configured!)
+            return CreateFrom(configured!);
+        }
+
+        internal static StagingClone CreateFrom(
+            string configuredSource,
+            Func<string>? rootNameFactory = null,
+            Action<string>? beforeRootCreate = null,
+            string? cloneParentOverride = null
+        ) {
+            string source = TestDirectorySafety.Normalize(
+                configuredSource
             );
             if (!Directory.Exists(source)) {
                 throw new DirectoryNotFoundException(source);
             }
-            string root = Path.Combine(
-                Path.GetTempPath(),
-                "atelia-galatea-g2a-host-acceptance",
-                Guid.NewGuid().ToString("N")
+            if (cloneParentOverride is not null
+                && !Path.IsPathFullyQualified(cloneParentOverride)) {
+                throw new ArgumentException(
+                    "The staging clone parent override must be an absolute "
+                    + "path.",
+                    nameof(cloneParentOverride)
+                );
+            }
+            string cloneParent = TestDirectorySafety.Normalize(
+                cloneParentOverride ?? Path.Combine(
+                    Path.GetTempPath(),
+                    "atelia-galatea-g2a-host-acceptance"
+                )
             );
+            string rootName = rootNameFactory?.Invoke()
+                ?? Guid.NewGuid().ToString("N");
+            if (string.IsNullOrWhiteSpace(rootName)
+                || !string.Equals(
+                    rootName,
+                    Path.GetFileName(rootName),
+                    StringComparison.Ordinal
+                )) {
+                throw new ArgumentException(
+                    "The staging clone root-name factory must return one "
+                    + "file name."
+                );
+            }
+            string root = Path.Combine(cloneParent, rootName);
             string destination = Path.Combine(root, "session-clone");
+            TestDirectorySafety.EnsureDisjoint(source, destination);
+            TestDirectorySafety
+                .EnsureExistingPathChainHasNoReparsePoint(source);
+            TestDirectorySafety
+                .EnsureExistingPathChainHasNoReparsePoint(cloneParent);
+            TestDirectorySafety
+                .EnsureExistingPathChainHasNoReparsePoint(destination);
+            if (Path.Exists(cloneParent)
+                && !Directory.Exists(cloneParent)) {
+                throw new InvalidDataException(
+                    "The staging clone parent is not a directory: "
+                    + cloneParent
+                );
+            }
+            Directory.CreateDirectory(cloneParent);
+            TestDirectorySafety
+                .EnsureExistingPathChainHasNoReparsePoint(cloneParent);
+            bool ownsRoot = false;
             try {
-                CopyDirectory(source, destination);
+                beforeRootCreate?.Invoke(root);
+                TestDirectorySafety.CreateDirectoryNew(root);
+                ownsRoot = true;
+                TestDirectorySafety.CreateDirectoryNew(destination);
+                TestDirectorySafety.CopyTreeIntoOwnedEmptyDirectory(
+                    source,
+                    destination
+                );
                 return new StagingClone(root, destination);
             }
             catch {
-                if (Directory.Exists(root)) {
-                    Directory.Delete(root, recursive: true);
+                if (ownsRoot) {
+                    TestDirectorySafety.DeleteOwnedTreeNoFollow(root);
                 }
                 throw;
             }
         }
 
         public void Dispose() {
-            if (Directory.Exists(RootDirectory)) {
-                Directory.Delete(RootDirectory, recursive: true);
-            }
-        }
-
-        private static void CopyDirectory(
-            string source,
-            string destination
-        ) {
-            RejectReparsePoint(source);
-            Directory.CreateDirectory(destination);
-            foreach (string directory in Directory.EnumerateDirectories(
-                         source,
-                         "*",
-                         SearchOption.AllDirectories
-                     )) {
-                RejectReparsePoint(directory);
-                Directory.CreateDirectory(Path.Combine(
-                    destination,
-                    Path.GetRelativePath(source, directory)
-                ));
-            }
-            foreach (string file in Directory.EnumerateFiles(
-                         source,
-                         "*",
-                         SearchOption.AllDirectories
-                     )) {
-                RejectReparsePoint(file);
-                string target = Path.Combine(
-                    destination,
-                    Path.GetRelativePath(source, file)
-                );
-                Directory.CreateDirectory(
-                    Path.GetDirectoryName(target)!
-                );
-                File.Copy(file, target);
-            }
-        }
-
-        private static void RejectReparsePoint(string path) {
-            if ((File.GetAttributes(path)
-                    & FileAttributes.ReparsePoint) != 0) {
-                throw new InvalidDataException(
-                    $"G2A staging contains a symlink or reparse point: "
-                    + path
-                );
-            }
+            TestDirectorySafety.DeleteOwnedTreeNoFollow(RootDirectory);
         }
     }
 }

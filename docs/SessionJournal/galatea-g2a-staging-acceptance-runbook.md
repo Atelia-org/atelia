@@ -212,6 +212,44 @@ bytes/SHA-256；source before/after必须相同。
 check内有意义，不作为跨run golden。跨run可固定的是raw head、config语义、admission/absorption
 addresses、block ids/targets/modes与Published/NoBuild shape。
 
+### 5.1 Scripted current-v6 Host fixture（不替代真实provider gate）
+
+若目的只是给本节之后的**scripted Host suite**准备一份当前candidate可严格读取的Published fixture，
+可以复用CLI real-data acceptance的scripted maintainer。该Fact从同一份校准source重新import，在
+Restore完成、online turn开始前暂存一份raw仍为148 events / `Idle`的完整repo副本，并复验strict latest
+为`Selected`、materialization恰有两个contributions且`publication.json`使用当前
+`atelia.session-journal.published-recap-set.v6`。它不读取、改写或迁移旧publication v4，也不增加
+compatibility reader；`derived/recap/v4`仍是当前Store目录名，不代表publication schema v4。
+
+输出parent必须预先存在，output自身必须不存在。Fact先复制到output同目录的hidden temporary
+directory；只有整个real-data acceptance（包括后续online与Prepared recovery）全部成功后才以Linux
+`renameat2(RENAME_NOREPLACE)`原子、create-only发布正式output；不支持该syscall时fail closed。失败会
+清理自己已取得ownership的temporary directory，既不覆盖既有output，也不
+修改source、旧staging或现役`sessionDir`：
+
+```bash
+scripted_fixture="$run_root/scripted-host-fixtures/current-v6"
+mkdir -p "$(dirname "$scripted_fixture")"
+test ! -e "$scripted_fixture"
+
+ATELIA_REAL_LEGACY_UPGRADE_EXPORT="$source_export" \
+ATELIA_DERIVED_RECAP_SCRIPTED_STAGING_OUTPUT="$scripted_fixture" \
+ATELIA_DERIVED_RECAP_SCRIPTED_STAGING_OLD_BASE="$staging_repo" \
+ATELIA_DERIVED_RECAP_ACCEPTANCE_REPORT="$reports/scripted-fixture-acceptance.json" \
+dotnet test tests/SessionJournal.Cli.Tests/SessionJournal.Cli.Tests.csproj \
+  -m:1 -nr:false --no-restore \
+  --filter 'FullyQualifiedName~DerivedRecapRealDataAcceptanceTests.ImportedRealExportSurvivesFullRecapAndRecoveryFlow'
+```
+
+`ATELIA_DERIVED_RECAP_SCRIPTED_STAGING_OLD_BASE`是可选的只读保护路径：设置后，provisioner会要求
+它与source export、working repo、output及report互不相同且互不构成ancestor/descendant，并拒绝所有
+existing path chain或复制树中的symlink/reparse point。它不会打开或复制旧base。
+
+这份fixture只证明current wire、Store/Planner/Restore以及scripted Host组合链。它**不能**把本节的
+`dsv4p` Recap attempt/`NoBuild`、真实connection、provider预算或第6节real Host canary记为
+`Passed`。若本轮目标是完整G2A，仍必须使用真实provider staging分别完成这些gate；scripted fixture
+只能作为独立、可丢弃的Host test input。
+
 ## 6. Acceptance clone与Host gate
 
 只有第3～5节全部通过后才能复制staging。复制时CLI/Host必须已经退出，destination必须不存在：
@@ -243,15 +281,22 @@ real-staging suite直接覆盖：
 任何一层证据失败都不能用另一层替代；这里的组合只避免重复另一套failpoint authority，不把它们描述
 成external real-staging suite的直接覆盖。
 
-已provision且Published的staging通过opt-in external Fact进入scripted Host gate；测试本身为每个会写
-raw的case创建独立临时clone：
+第5.1节生成的scripted fixture通过opt-in external Fact进入scripted Host gate；测试本身为每个会写
+raw的case创建独立临时clone。这里必须显式使用`$scripted_fixture`，并移除只属于provisioner的旧base
+保护变量；绝不能把旧base本身传给Host suite：
 
 ```bash
-ATELIA_GALATEA_G2A_STAGING_REPO="$staging_repo" \
+env -u ATELIA_DERIVED_RECAP_SCRIPTED_STAGING_OLD_BASE \
+ATELIA_GALATEA_G2A_STAGING_REPO="$scripted_fixture" \
 dotnet test tests/Galatea.Server.Tests/Galatea.Server.Tests.csproj \
   -m:1 -nr:false --no-restore \
   --filter 'FullyQualifiedName~GalateaG2AStagingHostAcceptanceTests'
 ```
+
+真实provider staging必须由当前candidate按第3～5节重新构建，并已经证明publication current wire、
+materialization与`NoBuild`；旧publication-v4 staging不能直接使用。完成这些真实provider checks后，
+可以在**另一轮独立Host suite**中把`ATELIA_GALATEA_G2A_STAGING_REPO`显式指向该current-wire
+`$staging_repo`。该轮证据与上面的scripted fixture证据分别记录，不能互相改名或覆盖。
 
 未设置该环境变量时测试应明确skip，而不是用空repo冒充external acceptance。test output保存在
 run-root reports目录或由CI作为独立evidence保留。
