@@ -467,6 +467,15 @@ public sealed class DerivedRecapOnlineLifecycleCoordinatorTests {
             result.Status
         );
         Assert.Equal(["S0", "Run", "S0"], script.Trace);
+        Assert.Equal(2, script.LineagePrefixHeaderCounts.Count);
+        Assert.All(
+            script.LineagePrefixHeaderCounts,
+            count => Assert.Equal(
+                RecapProtocolHardCaps.V4
+                    .RawGrowthProofPrefixHeaderCount,
+                count
+            )
+        );
     }
 
     [Fact]
@@ -1007,6 +1016,7 @@ public sealed class DerivedRecapOnlineLifecycleCoordinatorTests {
         }
 
         public List<string> Trace { get; } = [];
+        public List<int> LineagePrefixHeaderCounts { get; } = [];
         public List<DerivedRecapPlanningBaseline> Baselines { get; } =
             [];
 
@@ -1016,6 +1026,7 @@ public sealed class DerivedRecapOnlineLifecycleCoordinatorTests {
             CancellationToken cancellationToken
         ) {
             Trace.Add($"S{ordinal}");
+            LineagePrefixHeaderCounts.Add(lineage.MaxHeaderCount);
             return ValueTask.FromResult(_selections.Dequeue());
         }
 

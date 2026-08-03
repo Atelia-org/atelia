@@ -81,8 +81,13 @@ public sealed class RecapRuntimeAuthorityTests {
         );
         Assert.Equal(512, caps.MaxRawGrowthEventCount);
         Assert.Equal(
-            DerivedRecapLineageView.MaxPrefixHeaderCount,
-            checked(caps.MaxRawGrowthEventCount + 1)
+            checked(caps.MaxRawGrowthEventCount + 1),
+            caps.RawGrowthProofPrefixHeaderCount
+        );
+        Assert.InRange(
+            caps.RawGrowthProofPrefixHeaderCount,
+            1,
+            DerivedRecapLineageView.MaxPrefixHeaderCount
         );
         Assert.Equal(4, caps.MaxRouteEndpointsPerBlock);
         Assert.Equal(8, caps.MaxMaintainerCallsPerBuild);
@@ -121,30 +126,51 @@ public sealed class RecapRuntimeAuthorityTests {
     }
 
     [Fact]
-    public void Hard_caps_reject_raw_growth_beyond_store_lineage_limit() {
+    public void Hard_caps_derive_online_horizon_below_store_ceiling() {
+        RecapProtocolHardCaps caps = CreateHardCaps(
+            maxRawGrowthEventCount: 128
+        );
+
+        Assert.Equal(129, caps.RawGrowthProofPrefixHeaderCount);
+        Assert.True(
+            caps.RawGrowthProofPrefixHeaderCount
+                < DerivedRecapLineageView.MaxPrefixHeaderCount
+        );
+    }
+
+    [Theory]
+    [InlineData(513)]
+    [InlineData(int.MaxValue)]
+    public void Hard_caps_reject_raw_growth_beyond_store_lineage_limit(
+        int maxRawGrowthEventCount
+    ) {
         ArgumentOutOfRangeException exception = Assert.Throws<
             ArgumentOutOfRangeException
-        >(() => new RecapProtocolHardCaps(
-            maxRawGrowthEventCount:
-                DerivedRecapLineageView.MaxPrefixHeaderCount,
-            maxRouteEndpointsPerBlock: 4,
-            maxMaintainerCallsPerBuild: 8,
-            maxRawEventsPerStep: 64,
-            maxRawEventsPerBuild: 512,
-            maxContentUtf8Bytes:
-                SessionContextContributionContract
-                    .MaxContributionUtf8Bytes,
-            maxCatalogEntries:
-                SessionContextContributionContract.MaxContributionCount
-        ));
+        >(() => CreateHardCaps(maxRawGrowthEventCount));
 
         Assert.Equal("maxRawGrowthEventCount", exception.ParamName);
+        Assert.Equal(maxRawGrowthEventCount, exception.ActualValue);
         Assert.Contains(
             nameof(DerivedRecapLineageView.MaxPrefixHeaderCount),
             exception.Message,
             StringComparison.Ordinal
         );
     }
+
+    private static RecapProtocolHardCaps CreateHardCaps(
+        int maxRawGrowthEventCount
+    ) => new(
+        maxRawGrowthEventCount,
+        maxRouteEndpointsPerBlock: 4,
+        maxMaintainerCallsPerBuild: 8,
+        maxRawEventsPerStep: 64,
+        maxRawEventsPerBuild: 512,
+        maxContentUtf8Bytes:
+            SessionContextContributionContract
+                .MaxContributionUtf8Bytes,
+        maxCatalogEntries:
+            SessionContextContributionContract.MaxContributionCount
+    );
 
     private static RecapBlockCatalogEntry CatalogEntry(
         string blockId

@@ -14,7 +14,7 @@ public sealed class DerivedRecapLineageView {
     /// prefix. Consumer raw-growth caps must remain compatible with this
     /// Store-owned protocol boundary.
     /// </summary>
-    public const int MaxPrefixHeaderCount = 513;
+    public static int MaxPrefixHeaderCount => 513;
 
     private readonly DerivedRecapStore _store;
     private readonly SessionJournalReadView _readView;

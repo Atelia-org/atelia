@@ -282,6 +282,9 @@ public sealed record RecapProtocolHardCaps {
     }
 
     public int MaxRawGrowthEventCount { get; }
+    internal int RawGrowthProofPrefixHeaderCount => checked(
+        MaxRawGrowthEventCount + 1
+    );
     public int MaxRouteEndpointsPerBlock { get; }
     public int MaxMaintainerCallsPerBuild { get; }
     public int MaxRawEventsPerStep { get; }
@@ -349,20 +352,7 @@ public sealed record RecapProtocolHardCaps {
         string name
     ) {
         _ = RequirePositive(value, name);
-        int requiredPrefixHeaderCount;
-        try {
-            requiredPrefixHeaderCount = checked(value + 1);
-        }
-        catch (OverflowException) {
-            throw new ArgumentOutOfRangeException(
-                name,
-                value,
-                "Raw-growth hard cap cannot be represented as a bounded "
-                + "lineage prefix requirement."
-            );
-        }
-        if (requiredPrefixHeaderCount
-            > DerivedRecapLineageView.MaxPrefixHeaderCount) {
+        if (value >= DerivedRecapLineageView.MaxPrefixHeaderCount) {
             throw new ArgumentOutOfRangeException(
                 name,
                 value,

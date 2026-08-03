@@ -10,6 +10,18 @@ namespace Atelia.SessionJournal.DerivedRecap.Store.Tests;
 public sealed class DerivedRecapAuthorityBoundaryTests {
     [Fact]
     public void LineagePrefixProtocolLimitIsStable() {
+        PropertyInfo property = Assert.IsAssignableFrom<PropertyInfo>(
+            typeof(DerivedRecapLineageView).GetProperty(
+                nameof(DerivedRecapLineageView.MaxPrefixHeaderCount),
+                BindingFlags.Public | BindingFlags.Static
+            )
+        );
+
+        Assert.Equal(typeof(int), property.PropertyType);
+        Assert.Null(typeof(DerivedRecapLineageView).GetField(
+            nameof(DerivedRecapLineageView.MaxPrefixHeaderCount),
+            BindingFlags.Public | BindingFlags.Static
+        ));
         Assert.Equal(
             513,
             DerivedRecapLineageView.MaxPrefixHeaderCount
