@@ -1043,9 +1043,14 @@ public sealed class UserSessionHost : IAsyncDisposable {
         }
     }
 
-    public ValueTask DisposeAsync() {
-        Engine.Dispose();
-        return ValueTask.CompletedTask;
+    public async ValueTask DisposeAsync() {
+        await TurnLock.WaitAsync().ConfigureAwait(false);
+        try {
+            Engine.Dispose();
+        }
+        finally {
+            TurnLock.Release();
+        }
     }
 }
 

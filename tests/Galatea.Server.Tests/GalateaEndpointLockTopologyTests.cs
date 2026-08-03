@@ -14,6 +14,38 @@ public sealed class GalateaEndpointLockTopologyTests {
         TimeSpan.FromSeconds(3);
 
     [Fact]
+    public async Task SessionDisposalWaitsForTurnLockBeforeDisposingEngine() {
+        await using var host = CreateHost();
+        var hostService = host.Factory.Services
+            .GetRequiredService<GalateaHostService>();
+        UserSessionHost session = await hostService.GetSessionAsync(
+            "alice",
+            CancellationToken.None
+        );
+
+        bool lockHeld = false;
+        Task? disposal = null;
+        try {
+            await session.TurnLock.WaitAsync();
+            lockHeld = true;
+            disposal = session.DisposeAsync().AsTask();
+
+            Assert.False(disposal.IsCompleted);
+            Assert.NotNull(session.Engine.ReadCurrentHead());
+        }
+        finally {
+            if (lockHeld) {
+                session.TurnLock.Release();
+            }
+        }
+
+        await disposal!.WaitAsync(EndpointDeadline);
+        Assert.Throws<ObjectDisposedException>(
+            () => session.Engine.ReadCurrentHead()
+        );
+    }
+
+    [Fact]
     public async Task Events_ReplaysWhileTurnLockRemainsHeld() {
         await using var host = CreateHost();
         using HttpClient client = host.CreateClient();
