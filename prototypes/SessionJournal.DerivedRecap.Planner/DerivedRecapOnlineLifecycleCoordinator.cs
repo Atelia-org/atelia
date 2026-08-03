@@ -299,7 +299,7 @@ public sealed class DerivedRecapOnlineLifecycleCoordinator
 
         SessionCurrentLineagePrefix lineage =
             engine.ReadCurrentLineagePrefix(
-                RecapProtocolHardCaps.V4.MaxRawGrowthEventCount + 1,
+                DerivedRecapLineageView.MaxPrefixHeaderCount,
                 cancellationToken
             );
         if (lineage.CapturedHead != request.Boundary) {
@@ -533,7 +533,7 @@ public sealed class DerivedRecapOnlineLifecycleCoordinator
     ) {
         SessionCurrentLineagePrefix prefix =
             _engine.ReadCurrentLineagePrefix(
-                RecapProtocolHardCaps.V4.MaxRawGrowthEventCount + 1,
+                DerivedRecapLineageView.MaxPrefixHeaderCount,
                 cancellationToken
             );
         if (prefix.CapturedHead != expectedHead) {

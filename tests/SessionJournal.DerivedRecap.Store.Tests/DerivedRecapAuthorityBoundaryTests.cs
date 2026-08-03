@@ -8,6 +8,14 @@ using Xunit;
 namespace Atelia.SessionJournal.DerivedRecap.Store.Tests;
 
 public sealed class DerivedRecapAuthorityBoundaryTests {
+    [Fact]
+    public void LineagePrefixProtocolLimitIsStable() {
+        Assert.Equal(
+            513,
+            DerivedRecapLineageView.MaxPrefixHeaderCount
+        );
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]

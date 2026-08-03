@@ -9,7 +9,12 @@ namespace Atelia.SessionJournal.DerivedRecap.Store;
 /// read view.
 /// </summary>
 public sealed class DerivedRecapLineageView {
-    internal const int MaxHeaderCount = 513;
+    /// <summary>
+    /// Maximum header count captured for one bounded DerivedRecap lineage
+    /// prefix. Consumer raw-growth caps must remain compatible with this
+    /// Store-owned protocol boundary.
+    /// </summary>
+    public const int MaxPrefixHeaderCount = 513;
 
     private readonly DerivedRecapStore _store;
     private readonly SessionJournalReadView _readView;
@@ -57,7 +62,7 @@ public sealed class DerivedRecapLineageView {
             store,
             readView,
             readView.ReadCurrentLineagePrefix(
-                MaxHeaderCount,
+                MaxPrefixHeaderCount,
                 cancellationToken
             )
         );
@@ -83,7 +88,7 @@ public sealed class DerivedRecapLineageView {
                                 found.Index,
                                 _readView.ReadLineagePrefixAt(
                                     admissionAnchor,
-                                    MaxHeaderCount,
+                                    MaxPrefixHeaderCount,
                                     cancellationToken
                                 )
                             ),

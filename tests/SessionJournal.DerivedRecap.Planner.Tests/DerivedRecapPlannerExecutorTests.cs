@@ -41,7 +41,9 @@ public sealed class DerivedRecapPlannerExecutorTests {
                     RecapBlockId,
                     DerivedRecapFrozenInput
                 >(),
-                fixture.Engine.ReadCurrentLineagePrefix(513),
+                fixture.Engine.ReadCurrentLineagePrefix(
+                    DerivedRecapLineageView.MaxPrefixHeaderCount
+                ),
                 plan
             );
 
@@ -66,7 +68,7 @@ public sealed class DerivedRecapPlannerExecutorTests {
             [mid, admission]
         );
         var hardCaps = new RecapProtocolHardCaps(
-            maxRawGrowthEventCount: 1000,
+            maxRawGrowthEventCount: 512,
             maxRouteEndpointsPerBlock: 2,
             maxMaintainerCallsPerBuild: 2,
             maxRawEventsPerStep: 1000,
@@ -147,7 +149,7 @@ public sealed class DerivedRecapPlannerExecutorTests {
             [boundaries[0], boundaries[^1]]
         );
         var hardCaps = new RecapProtocolHardCaps(
-            maxRawGrowthEventCount: 1000,
+            maxRawGrowthEventCount: 512,
             maxRouteEndpointsPerBlock: 2,
             maxMaintainerCallsPerBuild: 2,
             maxRawEventsPerStep: 2,
@@ -239,7 +241,7 @@ public sealed class DerivedRecapPlannerExecutorTests {
             fixture.Engine.ReadView.ProveGoverningSetupAtBounded(
                 checkpoint,
                 checkpointSetups,
-                RecapFrozenPlanBarrier.MaxHeaderCount
+                DerivedRecapLineageView.MaxPrefixHeaderCount
             )
         );
         SessionCurrentLineagePrefix prefix =
@@ -298,7 +300,8 @@ public sealed class DerivedRecapPlannerExecutorTests {
         // must not repeat that governing-setup walk.
         Assert.InRange(headerDelta, 1L, 16L);
         Assert.True(
-            headerDelta < RecapFrozenPlanBarrier.MaxHeaderCount
+            headerDelta
+                < DerivedRecapLineageView.MaxPrefixHeaderCount
         );
         Assert.True(after.PayloadReadCount > before.PayloadReadCount);
     }
@@ -338,7 +341,7 @@ public sealed class DerivedRecapPlannerExecutorTests {
         >(fixture.Engine.ReadView.ProveGoverningSetupAtBounded(
             startBoundary.Address,
             startBoundary.Setups,
-            RecapFrozenPlanBarrier.MaxHeaderCount
+            DerivedRecapLineageView.MaxPrefixHeaderCount
         )).Proof;
         SessionHistoryPlanningWindowProof firstProof = Assert.IsType<
             SessionHistoryPlanningWindowProofResult.Available
@@ -408,7 +411,7 @@ public sealed class DerivedRecapPlannerExecutorTests {
             admission,
             [new PendingMaintainRoute(plan, start, 0)],
             new RecapProtocolHardCaps(
-                maxRawGrowthEventCount: 1000,
+                maxRawGrowthEventCount: 512,
                 maxRouteEndpointsPerBlock: 2,
                 maxMaintainerCallsPerBuild: 2,
                 maxRawEventsPerStep: 1000,
@@ -1752,7 +1755,7 @@ public sealed class DerivedRecapPlannerExecutorTests {
             fixture.Engine.ReadView.ProveGoverningSetupAtBounded(
                 checkpoint,
                 firstPlan.CatchUpBoundaries[0].Setups,
-                RecapFrozenPlanBarrier.MaxHeaderCount
+                DerivedRecapLineageView.MaxPrefixHeaderCount
             )
         );
         MaintainRecapBlockPlan baselinePlan = fixture.CreateEmptyPlan(
@@ -1863,7 +1866,8 @@ public sealed class DerivedRecapPlannerExecutorTests {
         // 513-header lineage authority demonstrated above.
         Assert.InRange(headerDelta, 1L, 16L);
         Assert.True(
-            headerDelta < RecapFrozenPlanBarrier.MaxHeaderCount
+            headerDelta
+                < DerivedRecapLineageView.MaxPrefixHeaderCount
         );
     }
 
@@ -3434,7 +3438,7 @@ public sealed class DerivedRecapPlannerExecutorTests {
             int minimumRecentHistoryLoad = 0,
             int recapBuildIntervalHistoryLoad = 1,
             IHistoryUnitLoadEstimator? estimator = null,
-            int maxRawGrowthEventCount = 1000,
+            int maxRawGrowthEventCount = 512,
             int maxRouteEndpointsPerBlock = 4,
             int maxMaintainerCallsPerBuild = 8,
             IReadOnlyList<RecapBlockCatalogEntry>? catalog = null,
@@ -3504,7 +3508,7 @@ public sealed class DerivedRecapPlannerExecutorTests {
             int maxRouteEndpointsPerBlock,
             int maxMaintainerCallsPerBuild
         ) => new(
-            maxRawGrowthEventCount: 1000,
+            maxRawGrowthEventCount: 512,
             maxRouteEndpointsPerBlock,
             maxMaintainerCallsPerBuild,
             maxRawEventsPerStep: 1000,

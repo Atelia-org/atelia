@@ -1343,7 +1343,9 @@ public sealed class DerivedRecapOnlineLifecycleCoordinatorTests {
             Path = path;
             Engine = engine;
             NthPrevious = nthPrevious;
-            Lineage = engine.ReadCurrentLineagePrefix(513);
+            Lineage = engine.ReadCurrentLineagePrefix(
+                DerivedRecapLineageView.MaxPrefixHeaderCount
+            );
             Boundary = Lineage.CapturedHead;
             Phase = engine.InspectExecutionBoundary().Phase;
         }

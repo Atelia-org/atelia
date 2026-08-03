@@ -210,7 +210,7 @@ public sealed class DerivedRecapRestoreExecutorTests {
         SessionCurrentLineagePrefix prefix =
             fixture.Engine.ReadLineagePrefixAt(
                 target,
-                RecapFrozenPlanBarrier.MaxHeaderCount
+                DerivedRecapLineageView.MaxPrefixHeaderCount
             );
         Assert.Equal(
             sourceAnchor,
@@ -348,7 +348,7 @@ public sealed class DerivedRecapRestoreExecutorTests {
                 targetManifest,
                 fixture.Engine.ReadLineagePrefixAt(
                     target,
-                    RecapFrozenPlanBarrier.MaxHeaderCount
+                    DerivedRecapLineageView.MaxPrefixHeaderCount
                 ),
                 target,
                 RecapProtocolHardCaps.V4,
@@ -952,7 +952,7 @@ public sealed class DerivedRecapRestoreExecutorTests {
             fixture.Engine.ReadView.ProveGoverningSetupAtBounded(
                 checkpointEndpoint,
                 plan.CatchUpBoundaries[0].Setups,
-                RecapFrozenPlanBarrier.MaxHeaderCount
+                DerivedRecapLineageView.MaxPrefixHeaderCount
             )
         );
         _ = await fixture.PublishAsync(
@@ -995,7 +995,8 @@ public sealed class DerivedRecapRestoreExecutorTests {
         // cost; the 513-header setup reproof demonstrated above is not.
         Assert.InRange(headerDelta, 1L, 16L);
         Assert.True(
-            headerDelta < RecapFrozenPlanBarrier.MaxHeaderCount
+            headerDelta
+                < DerivedRecapLineageView.MaxPrefixHeaderCount
         );
     }
 
@@ -1079,7 +1080,8 @@ public sealed class DerivedRecapRestoreExecutorTests {
             - headersAtComponentRead.Value;
         Assert.InRange(headerDelta, 0L, 16L);
         Assert.True(
-            headerDelta < RecapFrozenPlanBarrier.MaxHeaderCount
+            headerDelta
+                < DerivedRecapLineageView.MaxPrefixHeaderCount
         );
     }
 
@@ -1928,7 +1930,9 @@ public sealed class DerivedRecapRestoreExecutorTests {
         public EventAddress CurrentHead =>
             Engine.ReadCurrentHead()!.Value;
         public SessionCurrentLineagePrefix Lineage =>
-            Engine.ReadCurrentLineagePrefix(513);
+            Engine.ReadCurrentLineagePrefix(
+                DerivedRecapLineageView.MaxPrefixHeaderCount
+            );
         public DerivedRecapLineageView LineageView =>
             DerivedRecapLineageView.Capture(Store, Engine.ReadView);
 
@@ -2391,7 +2395,7 @@ public sealed class DerivedRecapRestoreExecutorTests {
             int maxRawEventsPerStep = 1000,
             int maxRawEventsPerBuild = 4000
         ) => new(
-            maxRawGrowthEventCount: 1000,
+            maxRawGrowthEventCount: 512,
             maxRouteEndpointsPerBlock: 8,
             maxMaintainerCallsPerBuild:
                 maxMaintainerCalls,

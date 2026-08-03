@@ -75,11 +75,23 @@ public sealed class RecapRuntimeAuthorityTests {
     public void V4_hard_caps_are_stable_and_bound_repo_limits() {
         RecapProtocolHardCaps caps = RecapProtocolHardCaps.V4;
 
+        Assert.Equal(
+            513,
+            DerivedRecapLineageView.MaxPrefixHeaderCount
+        );
         Assert.Equal(512, caps.MaxRawGrowthEventCount);
+        Assert.Equal(
+            DerivedRecapLineageView.MaxPrefixHeaderCount,
+            checked(caps.MaxRawGrowthEventCount + 1)
+        );
         Assert.Equal(4, caps.MaxRouteEndpointsPerBlock);
         Assert.Equal(8, caps.MaxMaintainerCallsPerBuild);
         Assert.Equal(64, caps.MaxRawEventsPerStep);
         Assert.Equal(512, caps.MaxRawEventsPerBuild);
+        Assert.Equal(
+            1025,
+            RecapFrozenPlanBarrier.ProofPrefixHeaderCount(caps)
+        );
         Assert.Equal(
             SessionContextContributionContract
                 .MaxContributionUtf8Bytes,
@@ -105,6 +117,32 @@ public sealed class RecapRuntimeAuthorityTests {
                 maxRawEventsPerStep: 64,
                 maxRawEventsPerBuild: 512
             ))
+        );
+    }
+
+    [Fact]
+    public void Hard_caps_reject_raw_growth_beyond_store_lineage_limit() {
+        ArgumentOutOfRangeException exception = Assert.Throws<
+            ArgumentOutOfRangeException
+        >(() => new RecapProtocolHardCaps(
+            maxRawGrowthEventCount:
+                DerivedRecapLineageView.MaxPrefixHeaderCount,
+            maxRouteEndpointsPerBlock: 4,
+            maxMaintainerCallsPerBuild: 8,
+            maxRawEventsPerStep: 64,
+            maxRawEventsPerBuild: 512,
+            maxContentUtf8Bytes:
+                SessionContextContributionContract
+                    .MaxContributionUtf8Bytes,
+            maxCatalogEntries:
+                SessionContextContributionContract.MaxContributionCount
+        ));
+
+        Assert.Equal("maxRawGrowthEventCount", exception.ParamName);
+        Assert.Contains(
+            nameof(DerivedRecapLineageView.MaxPrefixHeaderCount),
+            exception.Message,
+            StringComparison.Ordinal
         );
     }
 

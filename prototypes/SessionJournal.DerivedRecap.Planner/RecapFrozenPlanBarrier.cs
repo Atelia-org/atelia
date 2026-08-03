@@ -38,16 +38,15 @@ internal sealed record RecapFrozenPlanBarrierDefect(
 /// setup payload is authenticated before any Building or Published component payload may be read.
 /// </summary>
 internal static class RecapFrozenPlanBarrier {
-    internal const int MaxHeaderCount = 513;
-
     internal static int ProofPrefixHeaderCount(
         RecapProtocolHardCaps hardCaps
     ) {
         ArgumentNullException.ThrowIfNull(hardCaps);
         // The frozen route itself may consume the full per-Build raw budget;
-        // retain one additional direct-setup proof horizon at its start.
+        // retain one Store-bounded direct-setup proof horizon at its start.
         return checked(
-            hardCaps.MaxRawEventsPerBuild + MaxHeaderCount
+            hardCaps.MaxRawEventsPerBuild
+            + DerivedRecapLineageView.MaxPrefixHeaderCount
         );
     }
 

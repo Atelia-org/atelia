@@ -251,7 +251,7 @@ public sealed record RecapProtocolHardCaps {
         int maxContentUtf8Bytes,
         int maxCatalogEntries
     ) {
-        MaxRawGrowthEventCount = RequirePositive(
+        MaxRawGrowthEventCount = RequireLineageCompatibleRawGrowth(
             maxRawGrowthEventCount,
             nameof(maxRawGrowthEventCount)
         );
@@ -343,6 +343,36 @@ public sealed record RecapProtocolHardCaps {
         => value > 0
             ? value
             : throw new ArgumentOutOfRangeException(name);
+
+    private static int RequireLineageCompatibleRawGrowth(
+        int value,
+        string name
+    ) {
+        _ = RequirePositive(value, name);
+        int requiredPrefixHeaderCount;
+        try {
+            requiredPrefixHeaderCount = checked(value + 1);
+        }
+        catch (OverflowException) {
+            throw new ArgumentOutOfRangeException(
+                name,
+                value,
+                "Raw-growth hard cap cannot be represented as a bounded "
+                + "lineage prefix requirement."
+            );
+        }
+        if (requiredPrefixHeaderCount
+            > DerivedRecapLineageView.MaxPrefixHeaderCount) {
+            throw new ArgumentOutOfRangeException(
+                name,
+                value,
+                "Raw-growth hard cap plus its baseline header exceeds "
+                + "DerivedRecapLineageView.MaxPrefixHeaderCount "
+                + $"({DerivedRecapLineageView.MaxPrefixHeaderCount})."
+            );
+        }
+        return value;
+    }
 
     private static void RequireAtMost(
         int value,
