@@ -1,7 +1,8 @@
 # SessionJournal Beta contract snapshot
 
-状态：Beta-supported  
-Product candidate：`681fc02bb9f1e4a45cd012aa7feadefe3f33fa9e`
+状态：Beta-supported；candidate-specific gate 见 §7  
+Product candidate：`49ebb4634e5b4136032db983dd92a9a4560b33eb`  
+Prior Beta-supported candidate：`681fc02bb9f1e4a45cd012aa7feadefe3f33fa9e`
 
 本文冻结首个 Beta 准备支持的边界。它不是所有当前 `public` 类型的兼容性承诺；未列入角色 allowlist 的
 diagnostic、low-level 或 first-party cross-assembly mechanics 仍可在 Beta 前后按明确决策收窄。
@@ -27,6 +28,15 @@ diagnostic、low-level 或 first-party cross-assembly mechanics 仍可在 Beta �
 
 普通 consumer 不应依赖 public diagnostic records、test/trusted seams、Planner/Building low-level executors或伪造
 descriptor。是否 `public` 本身不构成 Beta support 证据。
+
+本candidate的public factory不接收`SessionRuntime`；writable Host唯一public runtime attachment是无-runtime
+`Create/Open`之后的`UseRuntime`。三个runtime-bearing factory overload是direct cut，不保留compatibility
+overload。`ReadPayloadBytes(EventAddress)`已internal；普通consumer应使用completed/recovery projection、
+engine-bound `SessionJournalReadView`或Offline checked audit。
+
+Store authority-bearing inspection/success只能由Store签发。Galatea loader与public Host constructor在任何
+session/client/log/maintainer side effect前拒绝两个user指向同一normalized lexical `sessionDir`；preparation
+`BeyondPrefix`映射为typed `recap-beyond-prefix`，不扩界、不fallback full scan。
 
 ## 3. A-level raw and recovery wire
 
@@ -64,6 +74,8 @@ Prepared exact inputs 最多 128；artifact context snapshot 最大 4 MiB。unkn
 strict decode semantics 与 Prepared reconstruction canonical bytes 使用同一 authority rules；只有 schema 明确声明为
 nullable 的字段接受 null。
 
+Candidate `49ebb463`没有A-level raw/recovery wire变化。
+
 ## 4. B-level repo-owned Planner config
 
 - path：`<repo>/config/recap-planner-config.json`
@@ -76,6 +88,12 @@ nullable 的字段接受 null。
 
 config snapshot 每次 operation 只解析一次。Building/Resume/Restore 不以 active config、当前 default connection 或
 当前 maintainer roster 覆盖 frozen authority。
+
+`RecapPlannerConfigResolutionCatalog`直接接收`IReadOnlyList<IRecapPlanningPolicy>`与
+`IReadOnlyList<IHistoryUnitLoadEstimator>`。catalog construction按Ordinal冻结implementation当时的`Id`与
+对象，拒绝null/blank/duplicate；后续identity drift仍typed reject为`PolicyIdentityMismatch`或
+`EstimatorIdentityMismatch`。两个registration wrapper/key type是direct cut。此变化只收窄in-memory public
+catalog：config v2 bytes、reader language、path/hash/caps及active/frozen routing均不变。
 
 ## 5. C-level DerivedRecap filesystem wire
 
@@ -96,6 +114,19 @@ Linux durability path 使用 same-directory temporary、flush/fsync、no-replace
 `Selected` 只认证 publication/manifest metadata descriptor；component missing/corrupt 由 exact-slot Restore
 按 missing-only 规则修复。损坏 Published slot 仍占 strict ordinal，不 fallback 到更旧 set。
 
+以下九个.NET authority-bearing结果类型是Store-issued seam，不是filesystem wire：
+
+- `BuildingBlockInspection`；
+- `PublishedBlockRestoreInspection`；
+- `PublishedRestoreInspection`；
+- `PublishedRestoreInspectionResult.Available`；
+- `PublishedCheckpointWriteResult.Updated` / `AlreadyCurrent`；
+- `PublishedFinalWriteResult.Installed` / `ReplacedDamaged` / `AlreadyHealthy`。
+
+它们是sealed、没有externally-callable constructor，public properties均get-only；inspection/success从Store构造
+起携带non-null matching authority，成功mutation返回与post-write state绑定的refreshed authority。manifest、
+publication、block、checkpoint bytes与schema均未改变。
+
 ## 6. Explicit non-promises and residual risks
 
 - `RawHistoryAuthorized` 只用于 `EmptyLineage` genesis，不是 invalid/unavailable 的 fallback。
@@ -109,7 +140,25 @@ Linux durability path 使用 same-directory temporary、flush/fsync、no-replace
 
 ## 7. Verification boundary
 
-本快照的 wire/API 结论以综合报告中的 R0–R3 review 和 exact product candidate 为准。R4 在两个独立
-`--no-local` fresh clone 上重复通过：每个 clone 1035 个 default test、5 个 explicit opt-in test、真实数据
-import/recap/NoBuild、disposable Host canary、reopen/Undo 与 source/raw-ref invariants。合计 2080 passed、
-10 expected skips、0 failed；因此本文状态为 Beta-supported。
+`681fc02b`的历史R4在两个独立`--no-local` fresh clone上合计通过2080 tests、10 expected skips、0 failed，
+并完成real-provider/staging workflow；该证据只认证prior Beta-supported candidate，不自动转移到本candidate。
+
+Gate-tooling实施前，`49ebb463`的独立local Release solution build为0 warnings、0 errors；七套default
+tests合计1044 passed、5 expected opt-in skips、0 failed。另以已验证的1,281,881-byte真实legacy export
+运行1项scripted real-data acceptance，完成
+failed-run/resume、damaged-final missing-only restore、online turn与Prepared recovery，并保持source与raw prefix
+invariants。它不包含real-provider dispatch；本轮未改provider request construction，因此调用预算与实际调用均为0。
+Galatea的4个staging tests在default轮是expected skips；该skip不单独写成通过。
+
+candidate-specific Clone A/B均在exact candidate `49ebb463`上通过：每份Release solution build都是0
+warnings、0 errors；每份七套default tests都是1044 passed、5 expected skips、0 failed；每份explicit
+real-data acceptance都是1 passed、0 skipped、0 failed。合计default tests 2088 passed、10 expected skips、0
+failed，explicit real-data acceptance 2 passed、0 failed。随后两个clone都以current-writer v6 scripted
+fixture显式运行4项disposable-Host staging acceptance，各自4 passed、0 skipped、0 failed，fixture base hash不变。
+
+Gate-tooling commit `81a1fa24`只修改tests/runbook，不改变product assemblies或candidate contract；其提交后
+Release solution build为0 warnings、0 errors，CLI全套116 passed、1 expected opt-in skip、0 failed，Galatea带
+v6 fixture全套70 passed、0 skipped、0 failed。这些scripted gates不包含real-provider dispatch或real Host canary；
+本轮provider request construction未变，external provider calls为0。因此本快照将`49ebb463`记为
+Beta-supported。完整证据边界见
+[`session-journal-semantic-preserving-contract-normalization-review-report.md`](session-journal-semantic-preserving-contract-normalization-review-report.md)。
