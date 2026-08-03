@@ -711,15 +711,30 @@ public abstract record RollingRecapCheckpointHealth {
     }
 }
 
-public sealed record BuildingBlockInspection(
-    BuildingDescriptor Building,
-    RecapBlockPlan Plan,
-    DerivedRecapFrozenInput? FrozenInput,
-    FinalRecapBlockHealth Final,
-    RollingRecapCheckpointHealth Checkpoint
-) {
-    public BuildingBlockWriteAuthority WriteAuthority { get; init; }
-        = null!;
+public sealed class BuildingBlockInspection {
+    internal BuildingBlockInspection(
+        BuildingDescriptor building,
+        RecapBlockPlan plan,
+        DerivedRecapFrozenInput? frozenInput,
+        FinalRecapBlockHealth final,
+        RollingRecapCheckpointHealth checkpoint,
+        BuildingBlockWriteAuthority writeAuthority
+    ) {
+        ArgumentNullException.ThrowIfNull(writeAuthority);
+        Building = building;
+        Plan = plan;
+        FrozenInput = frozenInput;
+        Final = final;
+        Checkpoint = checkpoint;
+        WriteAuthority = writeAuthority;
+    }
+
+    public BuildingDescriptor Building { get; }
+    public RecapBlockPlan Plan { get; }
+    public DerivedRecapFrozenInput? FrozenInput { get; }
+    public FinalRecapBlockHealth Final { get; }
+    public RollingRecapCheckpointHealth Checkpoint { get; }
+    public BuildingBlockWriteAuthority WriteAuthority { get; }
 }
 
 /// <summary>
@@ -875,15 +890,30 @@ public abstract record PublishedBlockRestoreCapability {
     ) : PublishedBlockRestoreCapability;
 }
 
-public sealed record PublishedBlockRestoreInspection(
-    RecapBlockPlan Plan,
-    FrozenRecapInputHealth FrozenInput,
-    FinalRecapBlockHealth Final,
-    RollingRecapCheckpointHealth Checkpoint,
-    PublishedBlockRestoreCapability Capability
-) {
-    public PublishedBlockWriteAuthority WriteAuthority { get; init; }
-        = null!;
+public sealed class PublishedBlockRestoreInspection {
+    internal PublishedBlockRestoreInspection(
+        RecapBlockPlan plan,
+        FrozenRecapInputHealth frozenInput,
+        FinalRecapBlockHealth final,
+        RollingRecapCheckpointHealth checkpoint,
+        PublishedBlockRestoreCapability capability,
+        PublishedBlockWriteAuthority writeAuthority
+    ) {
+        ArgumentNullException.ThrowIfNull(writeAuthority);
+        Plan = plan;
+        FrozenInput = frozenInput;
+        Final = final;
+        Checkpoint = checkpoint;
+        Capability = capability;
+        WriteAuthority = writeAuthority;
+    }
+
+    public RecapBlockPlan Plan { get; }
+    public FrozenRecapInputHealth FrozenInput { get; }
+    public FinalRecapBlockHealth Final { get; }
+    public RollingRecapCheckpointHealth Checkpoint { get; }
+    public PublishedBlockRestoreCapability Capability { get; }
+    public PublishedBlockWriteAuthority WriteAuthority { get; }
 }
 
 /// <summary>
@@ -934,22 +964,42 @@ public sealed class PublishedEnvelopeCommitAuthority {
         FinalStateTokens { get; }
 }
 
-public sealed record PublishedRestoreInspection(
-    PublishedRestoreHandle Handle,
-    DerivedRecapSetManifest FrozenPlan,
-    IReadOnlyDictionary<
+public sealed class PublishedRestoreInspection {
+    internal PublishedRestoreInspection(
+        PublishedRestoreHandle handle,
+        DerivedRecapSetManifest frozenPlan,
+        IReadOnlyDictionary<
+            RecapBlockId,
+            PublishedBlockRestoreInspection
+        > blocks
+    ) {
+        ArgumentNullException.ThrowIfNull(handle);
+        ArgumentNullException.ThrowIfNull(blocks);
+        Handle = handle;
+        FrozenPlan = frozenPlan;
+        Blocks = blocks;
+    }
+
+    public PublishedRestoreHandle Handle { get; }
+    public DerivedRecapSetManifest FrozenPlan { get; }
+    public IReadOnlyDictionary<
         RecapBlockId,
         PublishedBlockRestoreInspection
-    > Blocks
-);
+    > Blocks { get; }
+}
 
 public abstract record PublishedRestoreInspectionResult {
     private PublishedRestoreInspectionResult() {
     }
 
-    public sealed record Available(
-        PublishedRestoreInspection Inspection
-    ) : PublishedRestoreInspectionResult;
+    public sealed record Available : PublishedRestoreInspectionResult {
+        internal Available(PublishedRestoreInspection inspection) {
+            ArgumentNullException.ThrowIfNull(inspection);
+            Inspection = inspection;
+        }
+
+        public PublishedRestoreInspection Inspection { get; }
+    }
 
     public sealed record BeyondPrefix(
         SessionCurrentLineageBeyondPrefix Evidence
@@ -965,16 +1015,32 @@ public abstract record PublishedCheckpointWriteResult {
     private PublishedCheckpointWriteResult() {
     }
 
-    public sealed record Updated(string StateToken)
-        : PublishedCheckpointWriteResult {
-        public PublishedBlockWriteAuthority WriteAuthority { get; init; }
-            = null!;
+    public sealed record Updated : PublishedCheckpointWriteResult {
+        internal Updated(
+            string stateToken,
+            PublishedBlockWriteAuthority writeAuthority
+        ) {
+            ArgumentNullException.ThrowIfNull(writeAuthority);
+            StateToken = stateToken;
+            WriteAuthority = writeAuthority;
+        }
+
+        public string StateToken { get; }
+        public PublishedBlockWriteAuthority WriteAuthority { get; }
     }
 
-    public sealed record AlreadyCurrent(string StateToken)
-        : PublishedCheckpointWriteResult {
-        public PublishedBlockWriteAuthority WriteAuthority { get; init; }
-            = null!;
+    public sealed record AlreadyCurrent : PublishedCheckpointWriteResult {
+        internal AlreadyCurrent(
+            string stateToken,
+            PublishedBlockWriteAuthority writeAuthority
+        ) {
+            ArgumentNullException.ThrowIfNull(writeAuthority);
+            StateToken = stateToken;
+            WriteAuthority = writeAuthority;
+        }
+
+        public string StateToken { get; }
+        public PublishedBlockWriteAuthority WriteAuthority { get; }
     }
 
     public sealed record Stale(string? CurrentStateToken)
@@ -989,24 +1055,49 @@ public abstract record PublishedFinalWriteResult {
     private PublishedFinalWriteResult() {
     }
 
-    public sealed record Installed(string StateToken)
-        : PublishedFinalWriteResult {
-        public PublishedBlockWriteAuthority WriteAuthority { get; init; }
-            = null!;
+    public sealed record Installed : PublishedFinalWriteResult {
+        internal Installed(
+            string stateToken,
+            PublishedBlockWriteAuthority writeAuthority
+        ) {
+            ArgumentNullException.ThrowIfNull(writeAuthority);
+            StateToken = stateToken;
+            WriteAuthority = writeAuthority;
+        }
+
+        public string StateToken { get; }
+        public PublishedBlockWriteAuthority WriteAuthority { get; }
     }
 
-    public sealed record ReplacedDamaged(string StateToken)
-        : PublishedFinalWriteResult {
-        public PublishedBlockWriteAuthority WriteAuthority { get; init; }
-            = null!;
+    public sealed record ReplacedDamaged : PublishedFinalWriteResult {
+        internal ReplacedDamaged(
+            string stateToken,
+            PublishedBlockWriteAuthority writeAuthority
+        ) {
+            ArgumentNullException.ThrowIfNull(writeAuthority);
+            StateToken = stateToken;
+            WriteAuthority = writeAuthority;
+        }
+
+        public string StateToken { get; }
+        public PublishedBlockWriteAuthority WriteAuthority { get; }
     }
 
-    public sealed record AlreadyHealthy(
-        DerivedRecapBlock Block,
-        string StateToken
-    ) : PublishedFinalWriteResult {
-        public PublishedBlockWriteAuthority WriteAuthority { get; init; }
-            = null!;
+    public sealed record AlreadyHealthy : PublishedFinalWriteResult {
+        internal AlreadyHealthy(
+            DerivedRecapBlock block,
+            string stateToken,
+            PublishedBlockWriteAuthority writeAuthority
+        ) {
+            ArgumentNullException.ThrowIfNull(writeAuthority);
+            Block = block;
+            StateToken = stateToken;
+            WriteAuthority = writeAuthority;
+        }
+
+        public DerivedRecapBlock Block { get; }
+        public string StateToken { get; }
+        public PublishedBlockWriteAuthority WriteAuthority { get; }
     }
 
     public sealed record HealthyConflict(

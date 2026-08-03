@@ -436,6 +436,160 @@ public sealed class DerivedRecapAuthorityBoundaryTests {
     }
 
     [Fact]
+    public void AuthorityBearingResultsHaveNoExternalConstructionOrMutation() {
+        Type[] authorityBearingTypes = [
+            typeof(BuildingBlockInspection),
+            typeof(PublishedBlockRestoreInspection),
+            typeof(PublishedRestoreInspection),
+            typeof(PublishedRestoreInspectionResult.Available),
+            typeof(PublishedCheckpointWriteResult.Updated),
+            typeof(PublishedCheckpointWriteResult.AlreadyCurrent),
+            typeof(PublishedFinalWriteResult.Installed),
+            typeof(PublishedFinalWriteResult.ReplacedDamaged),
+            typeof(PublishedFinalWriteResult.AlreadyHealthy)
+        ];
+
+        Assert.All(
+            authorityBearingTypes,
+            AssertNoExternallyCallableConstructor
+        );
+        Assert.All(authorityBearingTypes, static type => {
+            Assert.True(type.IsSealed);
+            Assert.All(
+                type.GetProperties(BindingFlags.Instance
+                    | BindingFlags.Public),
+                static property => Assert.Null(property.SetMethod)
+            );
+        });
+    }
+
+    [Fact]
+    public async Task ExternalConsumerCanReadButCannotForgeAuthorityResults() {
+        string tempRoot = Path.Combine(
+            Path.GetTempPath(),
+            "atelia-recap-authority-result-tests",
+            Guid.NewGuid().ToString("N")
+        );
+        Directory.CreateDirectory(tempRoot);
+        try {
+            string assemblyPath = SecurityElement.Escape(
+                typeof(BuildingBlockInspection).Assembly.Location
+            )!;
+            await File.WriteAllTextAsync(
+                Path.Combine(tempRoot, "ExternalConsumer.csproj"),
+                $$"""
+                <Project Sdk="Microsoft.NET.Sdk">
+                  <PropertyGroup>
+                    <TargetFramework>net10.0</TargetFramework>
+                    <Nullable>enable</Nullable>
+                  </PropertyGroup>
+                  <ItemGroup>
+                    <Reference Include="Atelia.SessionJournal.DerivedRecap.Store">
+                      <HintPath>{{assemblyPath}}</HintPath>
+                    </Reference>
+                  </ItemGroup>
+                </Project>
+                """
+            );
+            string sourcePath = Path.Combine(
+                tempRoot,
+                "AuthorityResults.cs"
+            );
+            await File.WriteAllTextAsync(
+                sourcePath,
+                """
+                using Atelia.SessionJournal.DerivedRecap.Store;
+
+                public static class AuthorityResults {
+                    public static void Read(
+                        BuildingBlockInspection building,
+                        PublishedBlockRestoreInspection block,
+                        PublishedRestoreInspection restore,
+                        PublishedRestoreInspectionResult.Available available,
+                        PublishedCheckpointWriteResult checkpoint,
+                        PublishedFinalWriteResult final
+                    ) {
+                        _ = building.WriteAuthority;
+                        _ = block.WriteAuthority;
+                        _ = restore.Blocks;
+                        _ = available.Inspection;
+                        if (checkpoint
+                            is PublishedCheckpointWriteResult.Updated updated) {
+                            _ = updated.StateToken;
+                            _ = updated.WriteAuthority;
+                        }
+                        if (final
+                            is PublishedFinalWriteResult.AlreadyHealthy healthy) {
+                            _ = healthy.Block;
+                            _ = healthy.StateToken;
+                            _ = healthy.WriteAuthority;
+                        }
+                    }
+                }
+                """
+            );
+
+            (int positiveExitCode, string positiveOutput) =
+                await BuildExternalConsumerAsync(tempRoot);
+            Assert.True(
+                positiveExitCode == 0,
+                $"External positive consumer failed:\n{positiveOutput}"
+            );
+
+            await File.WriteAllTextAsync(
+                sourcePath,
+                """
+                using Atelia.SessionJournal.DerivedRecap.Store;
+
+                public static class AuthorityResultForgery {
+                    public static void Forge() {
+                        _ = new BuildingBlockInspection(
+                            null!, null!, null, null!, null!, null!);
+                        _ = new PublishedBlockRestoreInspection(
+                            null!, null!, null!, null!, null!, null!);
+                        _ = new PublishedRestoreInspection(
+                            null!, null!, null!);
+                        _ = new PublishedRestoreInspectionResult.Available(
+                            null!);
+                        _ = new PublishedCheckpointWriteResult.Updated(
+                            null!, null!);
+                        _ = new PublishedCheckpointWriteResult.AlreadyCurrent(
+                            null!, null!);
+                        _ = new PublishedFinalWriteResult.Installed(
+                            null!, null!);
+                        _ = new PublishedFinalWriteResult.ReplacedDamaged(
+                            null!, null!);
+                        _ = new PublishedFinalWriteResult.AlreadyHealthy(
+                            null!, null!, null!);
+                    }
+                }
+                """
+            );
+
+            (int negativeExitCode, string negativeOutput) =
+                await BuildExternalConsumerAsync(tempRoot);
+            Assert.NotEqual(0, negativeExitCode);
+            Assert.Contains("CS1729", negativeOutput);
+            Assert.Contains("BuildingBlockInspection", negativeOutput);
+            Assert.Contains("PublishedBlockRestoreInspection", negativeOutput);
+            Assert.Contains("PublishedRestoreInspection", negativeOutput);
+            Assert.Contains("Updated", negativeOutput);
+            Assert.Contains("AlreadyCurrent", negativeOutput);
+            Assert.Contains("Installed", negativeOutput);
+            Assert.Contains("ReplacedDamaged", negativeOutput);
+            Assert.Contains("AlreadyHealthy", negativeOutput);
+        }
+        finally {
+            try {
+                Directory.Delete(tempRoot, recursive: true);
+            }
+            catch {
+                // Best-effort cleanup for test-owned compiler inputs.
+            }
+        }
+    }
+
+    [Fact]
     public void ProductionReadDependenciesAcceptReadViewNotWritableEngine() {
         Type[] facadeTypes = [
             typeof(DerivedRecapContextCandidateSource),
@@ -1007,6 +1161,29 @@ public sealed class DerivedRecapAuthorityBoundaryTests {
 
     private static ContextHeaderBlockPath Target(string blockId)
         => new(ContextHeaderCarrier.System, blockId);
+
+    private static async Task<(int ExitCode, string Output)>
+        BuildExternalConsumerAsync(string workingDirectory) {
+        var start = new ProcessStartInfo("dotnet") {
+            WorkingDirectory = workingDirectory,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false
+        };
+        start.ArgumentList.Add("build");
+        start.ArgumentList.Add("ExternalConsumer.csproj");
+        start.ArgumentList.Add("-m:1");
+        start.ArgumentList.Add("-nr:false");
+        start.ArgumentList.Add("--nologo");
+        using Process process = Process.Start(start)
+            ?? throw new InvalidOperationException(
+                "Failed to start external consumer compilation."
+            );
+        Task<string> outputTask = process.StandardOutput.ReadToEndAsync();
+        Task<string> errorTask = process.StandardError.ReadToEndAsync();
+        await process.WaitForExitAsync();
+        return (process.ExitCode, await outputTask + await errorTask);
+    }
 
     private static void AssertNoExternallyCallableConstructor(
         Type type

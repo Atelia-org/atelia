@@ -388,7 +388,7 @@ public sealed class DerivedRecapPublishedRestoreWriteTests {
                 first
             )
         );
-        Assert.IsType<
+        var alreadyCurrent = Assert.IsType<
             PublishedCheckpointWriteResult.AlreadyCurrent
         >(
             await fixture.Store.AdvancePublishedCheckpointAsync(
@@ -398,6 +398,7 @@ public sealed class DerivedRecapPublishedRestoreWriteTests {
                 first
             )
         );
+        Assert.NotNull(alreadyCurrent.WriteAuthority);
         Assert.IsType<PublishedCheckpointWriteResult.Stale>(
             await fixture.Store.AdvancePublishedCheckpointAsync(
                 inspection.Handle,
@@ -491,7 +492,9 @@ public sealed class DerivedRecapPublishedRestoreWriteTests {
                 replacement
             )
         );
-        Assert.IsType<PublishedFinalWriteResult.AlreadyHealthy>(
+        var alreadyHealthy = Assert.IsType<
+            PublishedFinalWriteResult.AlreadyHealthy
+        >(
             await fixture.Store.InstallPublishedReplacementAsync(
                 initial.Handle,
                 plan.RecapBlockId,
@@ -499,6 +502,7 @@ public sealed class DerivedRecapPublishedRestoreWriteTests {
                 replacement
             )
         );
+        Assert.NotNull(alreadyHealthy.WriteAuthority);
         Assert.IsType<PublishedFinalWriteResult.HealthyConflict>(
             await fixture.Store.InstallPublishedReplacementAsync(
                 initial.Handle,
