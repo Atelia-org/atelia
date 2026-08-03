@@ -603,7 +603,9 @@ static IResult StartAcceptedTurn(
                     status: "failed"
                 );
             }
-            catch (Exception ex) {
+            catch (Exception ex) when (
+                GalateaExceptionClassifier.IsNonFatal(ex)
+            ) {
                 DebugUtil.Error("Galatea.Api", $"Turn failed with exception: user={session.User.UserId}, turnId={liveTurn.TurnId}", ex);
                 liveTurn.Publish(
                     new StreamEventDto("error", new { message = ex.Message }),

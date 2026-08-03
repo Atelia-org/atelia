@@ -233,6 +233,14 @@
     return await fetchJson("/api/chat/turns/current");
   }
 
+  async function waitForPublishedCurrentTurn(currentTurn) {
+    while (currentTurn?.status === "running" && !currentTurn.turnId) {
+      await sleep(100);
+      currentTurn = await loadCurrentTurn();
+    }
+    return currentTurn;
+  }
+
   async function waitForCurrentTurnTerminal() {
     while (true) {
       const currentTurn = await loadCurrentTurn();
@@ -539,13 +547,14 @@
     renderConnectionPicker();
 
     await loadRecentTurns();
-    const currentTurn = await loadCurrentTurn();
+    let currentTurn = await loadCurrentTurn();
     if (maintenanceMode) {
       resetLive();
       refreshComposerMode();
       setStreaming(false, "维护模式：会话只读。");
       return;
     }
+    currentTurn = await waitForPublishedCurrentTurn(currentTurn);
     if (currentTurn?.status === "running" && currentTurn.turnId) {
       if (currentTurn.connectionId) {
         selectConnection(currentTurn.connectionId, { updateRadio: true });

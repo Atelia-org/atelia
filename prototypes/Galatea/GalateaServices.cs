@@ -176,17 +176,23 @@ public sealed class GalateaHostService : IAsyncDisposable {
         return result;
     }
 
-    internal void RefreshRecentTurnsBestEffort(UserSessionHost host) {
+    internal RecentTurnsResponseDto RefreshRecentTurnsBestEffort(
+        UserSessionHost host
+    ) {
         ArgumentNullException.ThrowIfNull(host);
         try {
-            _ = RefreshRecentTurns(host);
+            return RefreshRecentTurns(host);
         }
-        catch (Exception ex) {
+        catch (Exception ex) when (
+            GalateaExceptionClassifier.IsNonFatal(ex)
+        ) {
             host.InvalidateRecentRewindToken();
+            RecentTurnsResponseDto fallback = host.GetRecentTurns();
             DebugUtil.Warning(
                 "Galatea.Session",
                 $"Recent-turn cache refresh failed: user={host.User.UserId}, error={ex.GetType().Name}: {ex.Message}"
             );
+            return fallback;
         }
     }
 
@@ -282,7 +288,8 @@ public sealed class GalateaHostService : IAsyncDisposable {
         RecentTurnDto turn = GalateaRecentTurnDisplayAdapter.Project(
             moved.Turn
         );
-        RecentTurnsResponseDto recent = RefreshRecentTurns(host);
+        RecentTurnsResponseDto recent =
+            RefreshRecentTurnsBestEffort(host);
         return new PopLatestTurnResponseDto(turn, recent);
     }
 
@@ -404,7 +411,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
                 ex.Termination.ProviderReason ?? ex.Termination.Kind.ToString()
             );
         }
-        var snapshot = RefreshRecentTurns(host);
+        var snapshot = RefreshRecentTurnsBestEffort(host);
         DebugUtil.Info(
             "Galatea.Session",
             $"RunTurnAsync send done: user={host.User.UserId}, turnId={liveTurn.TurnId}, errors={completed.Errors?.Count ?? 0}, snapshotTurns={snapshot.Turns.Count}, head={host.Engine.ReadCurrentHead()}"
@@ -916,6 +923,17 @@ internal sealed class GalateaSessionUnavailableException
     }
 
     internal string Code { get; }
+}
+
+internal static class GalateaExceptionClassifier {
+    internal static bool IsNonFatal(Exception exception) {
+        ArgumentNullException.ThrowIfNull(exception);
+        return exception is not (
+            OutOfMemoryException
+                or StackOverflowException
+                or AccessViolationException
+        );
+    }
 }
 
 public sealed class UserSessionHost : IAsyncDisposable {

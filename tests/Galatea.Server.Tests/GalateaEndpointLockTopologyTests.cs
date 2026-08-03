@@ -3,6 +3,7 @@ using System.Net.Http.Json;
 using Atelia.Completion;
 using Atelia.Completion.Abstractions;
 using Atelia.SessionJournal;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 
@@ -286,6 +287,54 @@ public sealed class GalateaEndpointLockTopologyTests {
         finally {
             session.TurnLock.Release();
         }
+    }
+
+    [Fact]
+    public async Task StaticClient_PollsOnlyTheLiveTurnPublicationWindow() {
+        await using var host = CreateHost();
+        IWebHostEnvironment environment = host.Factory.Services
+            .GetRequiredService<IWebHostEnvironment>();
+        await using Stream stream = environment.WebRootFileProvider
+            .GetFileInfo("assets/galatea.js")
+            .CreateReadStream();
+        using var reader = new StreamReader(stream);
+
+        string script = await reader.ReadToEndAsync();
+
+        Assert.Contains(
+            "async function waitForPublishedCurrentTurn(currentTurn)",
+            script,
+            StringComparison.Ordinal
+        );
+        Assert.Contains(
+            "currentTurn?.status === \"running\" && !currentTurn.turnId",
+            script,
+            StringComparison.Ordinal
+        );
+        Assert.Contains(
+            "currentTurn = await waitForPublishedCurrentTurn(currentTurn);",
+            script,
+            StringComparison.Ordinal
+        );
+    }
+
+    [Fact]
+    public void ExceptionClassifier_RejectsFatalProcessFailures() {
+        Assert.True(GalateaExceptionClassifier.IsNonFatal(
+            new IOException("ordinary I/O failure")
+        ));
+        Assert.True(GalateaExceptionClassifier.IsNonFatal(
+            new InvalidDataException("ordinary invalid data")
+        ));
+        Assert.False(GalateaExceptionClassifier.IsNonFatal(
+            new OutOfMemoryException()
+        ));
+        Assert.False(GalateaExceptionClassifier.IsNonFatal(
+            new StackOverflowException()
+        ));
+        Assert.False(GalateaExceptionClassifier.IsNonFatal(
+            new AccessViolationException()
+        ));
     }
 
     [Fact]

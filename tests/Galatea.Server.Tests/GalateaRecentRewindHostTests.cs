@@ -324,6 +324,41 @@ public sealed class GalateaRecentRewindHostTests {
         AssertTurn(moved.Turn, "user one", "assistant one");
     }
 
+    [Fact]
+    public async Task RefreshFailure_PreservesCachedTurnsButInvalidatesRewindToken() {
+        await using var host = CreateHost(new QueueCompletionClient());
+        (GalateaHostService service, UserSessionHost session) =
+            await GetSessionAsync(host);
+        _ = session.Engine.AppendObservation(
+            GalateaUserMessageEnvelope.Wrap("cached user")
+        );
+        _ = session.Engine.AppendImportedAgentAction(
+            new ActionMessage([
+                new ActionBlock.Text("cached assistant")
+            ]),
+            new CompletionDescriptor(
+                "refresh-fallback-fixture",
+                "fixture-v1",
+                "model-a"
+            )
+        );
+        RecentTurnsResponseDto cached =
+            await service.GetRecentTurnsAsync(
+                session,
+                CancellationToken.None
+            );
+        Assert.NotNull(cached.RewindLatestToken);
+        session.Engine.Dispose();
+
+        RecentTurnsResponseDto fallback =
+            service.RefreshRecentTurnsBestEffort(session);
+
+        RecentTurnDto turn = Assert.Single(fallback.Turns);
+        AssertTurn(turn, "cached user", "cached assistant");
+        Assert.Null(fallback.RewindLatestToken);
+        Assert.Same(fallback, session.GetRecentTurns());
+    }
+
     private static GalateaTestHost CreateHost(
         ICompletionClient client,
         bool deleteFilesOnDispose = true
