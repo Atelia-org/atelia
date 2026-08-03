@@ -45,10 +45,10 @@ assembly拥有。raw `Atelia.SessionJournal`只在neutral `IRecapBlockMaintainer
 离线开发 composition root 是
 [`SessionJournal.Cli`](../SessionJournal.Cli/README.md)：它通过
 `RecapMaintainerProfileCatalog` 解析 stable role/profile descriptor，注入 Completion
-client，并把 concrete maintainer registry 交给
-`DerivedRecapPlannerExecutor`、`DerivedRecapRestoreExecutor` 或
-`DerivedRecapOnlineLifecycleCoordinator`。Store 只报告 durable structure/capability，Planner 决定
-何时调用哪个 maintainer；本程序集既不打开 Store，也不拥有 Building/Published workflow。
+client，并先通过public `DerivedRecapOperationPreparer`取得exact authority，再把完整 concrete
+maintainer registry交给`DerivedRecapPreparedExecutor`或online lifecycle composition。Host不应把
+registry直接传给Planner的internal workflow executor。Store只报告durable structure/capability，
+Planner决定何时调用哪个maintainer；本程序集既不打开Store，也不拥有Building/Published workflow。
 
 CLI 和本 companion assembly 都不会被 SessionJournal raw core 反向引用。未来其他 Host 可以使用
 同样的注入边界组合不同 catalog/policy，而无需让 raw core 认识具体 maintainer。

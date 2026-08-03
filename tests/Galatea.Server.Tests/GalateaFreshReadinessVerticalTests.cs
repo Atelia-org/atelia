@@ -1,9 +1,14 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Security.Cryptography;
+using System.Text.Json;
 using Atelia.Completion;
 using Atelia.Completion.Abstractions;
+using Atelia.EventJournal;
 using Atelia.SessionJournal;
+using Atelia.SessionJournal.DerivedRecap.Maintainers;
 using Atelia.SessionJournal.DerivedRecap.Planner;
+using Atelia.SessionJournal.DerivedRecap.Store;
 using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 
@@ -47,6 +52,156 @@ public sealed class GalateaFreshReadinessVerticalTests {
         Assert.Empty(
             session.Engine.ReadRecentCompletedTurns().Turns
         );
+    }
+
+    [Fact]
+    public async Task BeyondPrefixFailsClosedBeforeProviderMaintainerLogOrBuildingMutation() {
+        string callLogDirectory = Path.Combine(
+            Path.GetTempPath(),
+            "atelia-galatea-beyond-prefix-logs",
+            Guid.NewGuid().ToString("N")
+        );
+        var factory = new TrackingFactory(
+            CompletionTermination.Completed()
+        );
+        var normalizer = new TrackingNormalizer();
+        try {
+            await using var host = GalateaTestHost.Create(
+                factory,
+                normalizer,
+                callLogDirectory: callLogDirectory
+            );
+            EventAddress buildingAnchor;
+            EventAddress expectedHead;
+            IReadOnlyDictionary<string, string> derivedBefore;
+            using (SessionJournalEngine engine =
+                   SessionJournalEngine.Open(host.SessionDirectory)) {
+                buildingAnchor = engine.AppendSystemPromptSetup(
+                    "test system prompt"
+                );
+                SessionHistoryPlanningWindow window =
+                    engine.ReadHistoryPlanningWindow();
+                RecapMaintainerProfileDescriptor profile =
+                    RecapMaintainerProfileCatalog.BuiltIn.Resolve(
+                        RecapMaintainerProfileCatalog
+                            .WorldUnderstandingRewrite
+                    );
+                SessionContextAnchorSetupReferences anchorSetups =
+                    engine.ResolveContextAnchorSetupReferences(
+                        buildingAnchor
+                    );
+                var plan = new MaintainRecapBlockPlan(
+                    new RecapBlockId(profile.RecapBlockIdValue),
+                    profile.Target,
+                    profile.MaintainerId,
+                    profile.CapabilityFingerprint,
+                    new EmptyRecapMaintainSource(
+                        window.StartExclusive,
+                        window.StartSetups
+                    ),
+                    [new RecapReplayBoundary(
+                        buildingAnchor,
+                        anchorSetups
+                    )],
+                    EmptyRecapPriorContext.Instance
+                );
+                DerivedRecapStore store = DerivedRecapStore.Open(
+                    host.SessionDirectory,
+                    engine.BranchRefId
+                );
+                Assert.IsType<CreateBuildingResult.Created>(
+                    await new DerivedRecapBuildingInstaller(
+                        store,
+                        engine.ReadView
+                    ).InstallAsync(
+                        DerivedRecapCodec.CreateManifest(
+                            engine.BranchRefId,
+                            buildingAnchor,
+                            anchorSetups,
+                            [plan]
+                        ),
+                        buildingAnchor
+                    )
+                );
+
+                for (int index = 0; index < 514; index++) {
+                    _ = engine.AppendSystemPromptSetup(
+                        $"bounded-prefix-padding-{index}"
+                    );
+                }
+                _ = engine.AppendSystemPromptSetup(
+                    "test system prompt"
+                );
+                expectedHead = Assert.IsType<EventAddress>(
+                    engine.ReadCurrentHead()
+                );
+                var aligned = Assert.IsType<
+                    SessionDesiredSetupReconciliationResult.Ready
+                >(engine.ReconcileDesiredSetup(
+                    expectedHead,
+                    new SessionDesiredSetup(
+                        "model-a",
+                        "openai-chat/strict",
+                        "test system prompt"
+                    )
+                ));
+                Assert.False(aligned.RuntimeConfigChanged);
+                Assert.False(aligned.SystemPromptChanged);
+                Assert.IsType<
+                    SessionCurrentLineageAnchorLookup.BeyondPrefix
+                >(engine.ReadView
+                    .ReadCurrentLineagePrefix(513)
+                    .Lookup(buildingAnchor));
+                Assert.Equal(expectedHead, engine.ReadCurrentHead());
+                derivedBefore = SnapshotDerivedFiles(
+                    host.SessionDirectory
+                );
+            }
+
+            using HttpClient client = host.CreateClient();
+            GalateaHostService service = host.Factory.Services
+                .GetRequiredService<GalateaHostService>();
+            UserSessionHost session = await service.GetSessionAsync(
+                "alice",
+                CancellationToken.None
+            );
+            GalateaLiveTurn turn = service.StartTurn(
+                session,
+                "must remain unconsumed",
+                new GalateaTurnOptions("test")
+            );
+
+            GalateaTurnException failure = await Assert.ThrowsAsync<
+                GalateaTurnException
+            >(() => service.RunTurnAsync(
+                session,
+                turn,
+                CancellationToken.None
+            ));
+
+            Assert.Equal("recap-beyond-prefix", failure.FailureReason);
+            Assert.Contains("stage=PreparationBuildingAdmission", failure.Message);
+            Assert.Contains(
+                EventAddressTextCodec.Format(buildingAnchor),
+                failure.Message
+            );
+            Assert.Equal(0, normalizer.ShouldNormalizeCallCount);
+            Assert.Equal(0, normalizer.NormalizeCallCount);
+            Assert.Equal(0, factory.CreateCallCount);
+            Assert.Equal(0, factory.Client.DispatchCallCount);
+            Assert.False(Directory.Exists(callLogDirectory));
+            Assert.Equal(expectedHead, session.Engine.ReadCurrentHead());
+            Assert.Equal(
+                derivedBefore.OrderBy(static item => item.Key),
+                SnapshotDerivedFiles(host.SessionDirectory)
+                    .OrderBy(static item => item.Key)
+            );
+        }
+        finally {
+            if (Directory.Exists(callLogDirectory)) {
+                Directory.Delete(callLogDirectory, recursive: true);
+            }
+        }
     }
 
     [Fact]
@@ -115,6 +270,28 @@ public sealed class GalateaFreshReadinessVerticalTests {
         Assert.Equal(HttpStatusCode.Redirect, response.StatusCode);
     }
 
+    private static IReadOnlyDictionary<string, string>
+        SnapshotDerivedFiles(string sessionDirectory) {
+        string root = Path.Combine(
+            sessionDirectory,
+            "derived",
+            "recap",
+            "v4"
+        );
+        return Directory.EnumerateFiles(
+                root,
+                "*",
+                SearchOption.AllDirectories
+            )
+            .ToDictionary(
+                path => Path.GetRelativePath(root, path),
+                path => Convert.ToHexStringLower(
+                    SHA256.HashData(File.ReadAllBytes(path))
+                ),
+                StringComparer.Ordinal
+            );
+    }
+
     private static async Task<(
         GalateaHostService Service,
         UserSessionHost Session
@@ -130,7 +307,12 @@ public sealed class GalateaFreshReadinessVerticalTests {
 
     private sealed class TrackingNormalizer
         : IGalateaUserMessageNormalizer {
+        private int _shouldNormalizeCallCount;
         private int _normalizeCallCount;
+
+        internal int ShouldNormalizeCallCount => Volatile.Read(
+            ref _shouldNormalizeCallCount
+        );
 
         internal int NormalizeCallCount => Volatile.Read(
             ref _normalizeCallCount
@@ -138,6 +320,7 @@ public sealed class GalateaFreshReadinessVerticalTests {
 
         public bool ShouldNormalize(string userMessage) {
             _ = userMessage;
+            Interlocked.Increment(ref _shouldNormalizeCallCount);
             return true;
         }
 

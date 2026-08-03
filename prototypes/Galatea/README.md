@@ -17,9 +17,10 @@ Galatea 不会在第一次 Send 时自动创建或补齐会话仓库。每个 `s
 - 对应 RefId 的 `derived/recap/v4` Store；
 - repository-owned `config/recap-planner-config.json`。
 
-可使用 `prototypes/SessionJournal.Cli` 的 import/provision/config 命令完成这一步。Host 启动只打开
-raw repo并检查 durable phase；不会创建 Completion client、DerivedRecap scaffolding或加载 active
-Planner config。
+可使用 `prototypes/SessionJournal.Cli` 的 import/provision/config 命令完成这一步。Host启动只加载并
+验证配置，不会遍历或打开各账号的raw repo。某个账号第一次访问需要session的endpoint时，Host才按
+`sessionDir` lazy open该用户repo并检查durable phase；此时仍不会创建Completion client、
+DerivedRecap scaffolding或加载active Planner config。
 
 ## 配置
 
@@ -56,10 +57,11 @@ orphan文件。只有完成serialize/write/flush/close并成功登记的文件�
 调用次数、provider结果或recovery状态。
 
 `maintenanceMode`是startup-time只读开关，默认`false`。设为`true`后，fresh send、durable
-resume、Undo与stop endpoint都会在打开session前返回typed `503 maintenance-mode`；Host同时以
-read-only方式打开SessionJournal，作为第二层写保护。登录、页面、`/api/me`、current、recent与SSE
-读取继续可用，页面会显示维护提示并禁用所有写按钮。该开关不会热加载，也没有admin bypass；解除维护
-需要修改config并重启，外部ingress应保持关闭直到重启后的只读检查完成。
+resume、Undo与stop endpoint都会在打开session前返回typed `503 maintenance-mode`。登录、页面和
+`/api/me`不打开repo；current、recent等首次需要该用户session的读取endpoint会lazy open
+read-only `SessionJournalEngine`，形成第二层写保护。SSE只附着已有in-memory turn。页面会显示维护
+提示并禁用所有写按钮。该开关不会热加载，也没有admin bypass；解除维护需要修改config并重启，外部
+ingress应保持关闭直到重启后对目标用户完成所需的只读检查。
 
 `connections.json` 保存可选的Completion routes：
 

@@ -72,11 +72,29 @@ internal static class GalateaRecapComposition {
                     ),
                     unavailable.Defects[0].Code
                 ),
+            DerivedRecapOperationPreparationResult.BeyondPrefix beyond =>
+                throw RecapBeyondPrefix(beyond),
             _ => throw new InvalidDataException(
                 "Unknown DerivedRecap preparation result."
             )
         };
     }
+
+    private static GalateaTurnException RecapBeyondPrefix(
+        DerivedRecapOperationPreparationResult.BeyondPrefix beyond
+    ) => new(
+        "会话的前情提要所需raw lineage超出bounded prefix："
+        + $"stage={beyond.Stage}; requiredAnchor="
+        + EventAddressTextCodec.FormatNullable(
+            beyond.Evidence.RequiredAnchor
+        )
+        + "; capturedHead="
+        + EventAddressTextCodec.Format(beyond.Evidence.CapturedHead)
+        + $"; headerCount={beyond.Evidence.HeaderCount}; nextAddress="
+        + EventAddressTextCodec.Format(beyond.Evidence.NextAddress)
+        + ".",
+        "recap-beyond-prefix"
+    );
 
     internal static DerivedRecapOnlineLifecycleCoordinator
         CreateLifecycle(

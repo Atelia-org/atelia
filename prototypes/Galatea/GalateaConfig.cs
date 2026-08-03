@@ -37,6 +37,47 @@ public sealed record GalateaUserConfig(
     string? SystemPromptFile = null
 );
 
+internal static class GalateaConfigValidation {
+    internal static void RequireDistinctSessionDirectories(
+        IReadOnlyList<GalateaUserConfig> users
+    ) {
+        ArgumentNullException.ThrowIfNull(users);
+        StringComparer comparer = OperatingSystem.IsWindows()
+            ? StringComparer.OrdinalIgnoreCase
+            : StringComparer.Ordinal;
+        var owners = new Dictionary<
+            string,
+            (string UserId, string ConfiguredPath)
+        >(comparer);
+
+        for (int index = 0; index < users.Count; index++) {
+            GalateaUserConfig user = users[index]
+                ?? throw new InvalidOperationException(
+                    $"Galatea config user[{index}] must not be null."
+                );
+            if (string.IsNullOrWhiteSpace(user.SessionDir)) {
+                throw new InvalidOperationException(
+                    $"Galatea config user '{user.UserId}' must have a "
+                    + "non-empty sessionDir."
+                );
+            }
+            string normalized = Path.TrimEndingDirectorySeparator(
+                Path.GetFullPath(user.SessionDir)
+            );
+            if (owners.TryGetValue(normalized, out var existing)) {
+                throw new InvalidOperationException(
+                    "Galatea config users "
+                    + $"'{existing.UserId}' (sessionDir "
+                    + $"'{existing.ConfiguredPath}') and '{user.UserId}' "
+                    + $"(sessionDir '{user.SessionDir}') resolve to the "
+                    + $"same lexical session path '{normalized}'."
+                );
+            }
+            owners.Add(normalized, (user.UserId, user.SessionDir));
+        }
+    }
+}
+
 public sealed record GalateaConnectionInfoDto(
     string Id,
     string ModelId

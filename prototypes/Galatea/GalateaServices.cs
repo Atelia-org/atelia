@@ -32,6 +32,9 @@ public sealed class GalateaHostService : IAsyncDisposable {
         IGalateaUserMessageNormalizer userMessageNormalizer
     ) {
         ArgumentNullException.ThrowIfNull(config);
+        GalateaConfigValidation.RequireDistinctSessionDirectories(
+            config.Users
+        );
         _connections = connections ?? throw new ArgumentNullException(nameof(connections));
         _inputPreprocessor = new GalateaInputPreprocessor(
             userMessageNormalizer
@@ -1129,6 +1132,9 @@ internal static class GalateaConfigLoader {
     }
 
     private static void Validate(GalateaConfig config) {
+        GalateaConfigValidation.RequireDistinctSessionDirectories(
+            config.Users
+        );
         if (config.CallLogDir is not null) {
             RejectReparsePointsOnExistingPath(
                 config.CallLogDir,

@@ -24,7 +24,8 @@ raw SessionJournal
 repo config -> Host resolves one immutable composition snapshot
                     |
                     v
-        DerivedRecapPlannerExecutor
+        DerivedRecapPreparedExecutor
+          (new planning or exact Building authority)
           raw safety -> HistoryLoad -> policy intent
                     |
                     v
@@ -92,8 +93,7 @@ using Atelia.SessionJournal.DerivedRecap.Maintainers;
 | lazy加载repo active config | `RepositoryRecapActivePlanningConfigurationSource` |
 | 延迟构造完整Maintainer registry | `DeferredRecapBlockMaintainerRegistry` |
 | 只测 HistoryLoad | `O200kBaseHistoryUnitLoadEstimator` + `RecapHistoryLoadProjector` |
-| 新 planning，必要时直接执行并 Publish | `DerivedRecapPlannerExecutor` |
-| Resume exact frozen Building | `DerivedRecapBuildingExecutor` |
+| 执行prepared new planning或exact Building | `DerivedRecapPreparedExecutor` |
 | Restore exact Published slot | `DerivedRecapRestoreExecutor` |
 | online maintenance + candidate source | `DerivedRecapOnlineLifecycleCoordinator` |
 | 自定义 planning policy | `IRecapPlanningPolicy` |
@@ -177,7 +177,8 @@ var planningCapabilities = new RecapMaintainerCapabilitySnapshot([
             profile.ProfileName,
             new RecapBlockId(profile.RecapBlockIdValue),
             profile.Target,
-            profile.MaintainerId
+            profile.MaintainerId,
+            profile.CapabilityFingerprint
         )
     )
 ]);
@@ -284,51 +285,53 @@ var source = new RepositoryRecapActivePlanningConfigurationSource(
     repositoryPath,
     planningCapabilities
 );
-var ready = AssertReady(await DerivedRecapOperationPreparer.PrepareAsync(
+DerivedRecapOperationPreparationResult prepared =
+    await DerivedRecapOperationPreparer.PrepareAsync(
+        engine.ReadView,
+        store,
+        planningCapabilities,
+        source,
+        cancellationToken
+    );
+
+PreparedRecapOperationAuthority authority = prepared switch {
+    DerivedRecapOperationPreparationResult.Ready ready =>
+        ready.Authority,
+    DerivedRecapOperationPreparationResult.Retryable retryable =>
+        throw new InvalidOperationException(retryable.Detail),
+    DerivedRecapOperationPreparationResult.Unavailable unavailable =>
+        throw new InvalidDataException(string.Join(
+            "; ",
+            unavailable.Defects.Select(defect => defect.Detail)
+        )),
+    DerivedRecapOperationPreparationResult.BeyondPrefix beyond =>
+        throw new InvalidOperationException(
+            $"Preparation exceeded its bounded prefix at "
+            + $"{beyond.Stage}: {beyond.Evidence.RequiredAnchor}"
+        ),
+    _ => throw new InvalidDataException(
+        "Unknown DerivedRecap preparation result."
+    )
+};
+
+var executor = new DerivedRecapPreparedExecutor(
     engine.ReadView,
     store,
-    planningCapabilities,
-    source,
-    cancellationToken
-));
-
-DerivedRecapExecutionResult result;
-DerivedRecapPlanningDiagnostics? diagnostics = null;
-if (ready.Authority
-    is PreparedRecapOperationAuthority.FrozenBuilding frozen) {
-    var building = new DerivedRecapBuildingExecutor(
-        engine.ReadView,
-        store,
-        maintainers
-    );
-    result = await building.ResumeAsync(
-        frozen.Descriptor,
-        cancellationToken
-    );
-}
-else {
-    var planning =
-        (PreparedRecapOperationAuthority.NewPlanning)ready.Authority;
-    var planner = new DerivedRecapPlannerExecutor(
-        engine.ReadView,
-        store,
-        planning.Configuration.PlanningInputs,
-        planning.Configuration.PlanningLimits,
-        maintainers
-    );
-    result = await planner.RunAsync(
-        planning.Baseline,
-        cancellationToken
-    );
-    diagnostics = planner.LastPlanningDiagnostics;
-}
+    authority,
+    maintainers
+);
+DerivedRecapExecutionResult result =
+    await executor.ExecuteAsync(cancellationToken);
+DerivedRecapPlanningDiagnostics? diagnostics =
+    executor.LastPlanningDiagnostics;
 ```
 
-`AssertReady`只是示意Host对`Ready / Retryable / Unavailable`做exhaustive mapping；不要把失败
-折叠成无条件继续。preparer会把Available Building变成exact frozen authority；其他Building状态是
-typed unavailable。Executor不会替Host把多个、stale或损坏Building猜成某个可继续的“最新”实例。
+Host必须对`Ready / Retryable / Unavailable / BeyondPrefix`做exhaustive mapping；不要把失败折叠成
+无条件继续，也不要扩大bounded prefix或fallback full scan。preparer会把Available Building变成exact
+frozen authority；其他Building状态是typed unavailable。`DerivedRecapPreparedExecutor`只执行这份
+preparer签发的authority，不替Host猜测多个、stale或损坏Building中的“最新”实例。
 
-`RunAsync`只做一次 bounded operation。结果必须 exhaustive match：
+`ExecuteAsync`只做一次 bounded operation。结果必须 exhaustive match：
 
 ```csharp
 switch (result) {
@@ -347,6 +350,9 @@ switch (result) {
     case DerivedRecapExecutionResult.Unavailable unavailable:
         // stable config/store/frozen-plan/capability defect。
         break;
+    case DerivedRecapExecutionResult.BeyondPrefix beyond:
+        // 保留stage/evidence；不得扩大prefix或fallback full scan。
+        break;
 }
 ```
 
@@ -360,32 +366,44 @@ HistoryUnit/raw event counts是结构诊断，不是 scheduling authority。
 
 ## Resume frozen Building
 
-先由 Store选择 current-lineage Building，再用 exact descriptor恢复：
+显式恢复某个已知Building时，也必须先走public exact preparation，再交给统一prepared executor：
 
 ```csharp
-DerivedRecapLineageView lineage =
-    DerivedRecapLineageView.Capture(
-        store,
+DerivedRecapOperationPreparationResult exact =
+    await DerivedRecapOperationPreparer.PrepareExactBuildingAsync(
         engine.ReadView,
+        store,
+        planningCapabilities,
+        setAdmissionAnchor,
         cancellationToken
     );
-
-CurrentLineageBuildingSelection selected =
-    await lineage.SelectCurrentBuildingAsync(cancellationToken);
-
-if (selected
-    is CurrentLineageBuildingSelection.Available available) {
-    var executor = new DerivedRecapBuildingExecutor(
-        engine.ReadView,
-        store,
-        maintainers
-    );
-    DerivedRecapExecutionResult resumed =
-        await executor.ResumeAsync(
-            available.Snapshot.Descriptor,
-            cancellationToken
-        );
-}
+PreparedRecapOperationAuthority exactAuthority = exact switch {
+    DerivedRecapOperationPreparationResult.Ready ready =>
+        ready.Authority,
+    DerivedRecapOperationPreparationResult.Retryable retryable =>
+        throw new InvalidOperationException(retryable.Detail),
+    DerivedRecapOperationPreparationResult.Unavailable unavailable =>
+        throw new InvalidDataException(string.Join(
+            "; ",
+            unavailable.Defects.Select(defect => defect.Detail)
+        )),
+    DerivedRecapOperationPreparationResult.BeyondPrefix beyond =>
+        throw new InvalidOperationException(
+            $"Exact Building preparation exceeded its bounded prefix "
+            + $"at {beyond.Stage}: {beyond.Evidence.RequiredAnchor}"
+        ),
+    _ => throw new InvalidDataException(
+        "Unknown exact Building preparation result."
+    )
+};
+var exactExecutor = new DerivedRecapPreparedExecutor(
+    engine.ReadView,
+    store,
+    exactAuthority,
+    maintainers
+);
+DerivedRecapExecutionResult resumed =
+    await exactExecutor.ExecuteAsync(cancellationToken);
 ```
 
 Resume不需要、也不应接收 `RecapPlanningInputs`或 `RecapPlanningLimits`。它使用 frozen route、
@@ -499,6 +517,11 @@ PreparedRecapOperationAuthority authority = prepared switch {
                 defect => $"{defect.Code}: {defect.Detail}"
             )
         )),
+    DerivedRecapOperationPreparationResult.BeyondPrefix beyond =>
+        throw new InvalidOperationException(
+            $"Preparation exceeded its bounded prefix at "
+            + $"{beyond.Stage}: {beyond.Evidence.RequiredAnchor}"
+        ),
     _ => throw new InvalidDataException(
         "Unknown DerivedRecap preparation result."
     )
