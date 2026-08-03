@@ -23,12 +23,12 @@ internal sealed class GalateaRecoveryLifecycleGate
     }
 
     public async ValueTask<SessionContextLifecycleResult> PrepareAsync(
-        SessionJournalEngine engine,
+        SessionJournalReadView readView,
         SessionContextLifecycleRequest request,
         CancellationToken cancellationToken
     ) {
         SessionContextLifecycleResult result = await _inner
-            .PrepareAsync(engine, request, cancellationToken)
+            .PrepareAsync(readView, request, cancellationToken)
             .ConfigureAwait(false);
         ArgumentNullException.ThrowIfNull(result);
         if (result.Status is (

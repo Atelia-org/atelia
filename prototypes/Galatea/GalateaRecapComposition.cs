@@ -41,7 +41,7 @@ internal static class GalateaRecapComposition {
             );
         DerivedRecapOperationPreparationResult result =
             await DerivedRecapOperationPreparer.PrepareAsync(
-                    engine,
+                    engine.ReadView,
                     store,
                     capabilities,
                     source,
@@ -102,7 +102,7 @@ internal static class GalateaRecapComposition {
             ])
         );
         return DerivedRecapOnlineLifecycleCoordinator.Create(
-            engine,
+            engine.ReadView,
             prepared.Store,
             prepared.Authority,
             maintainers

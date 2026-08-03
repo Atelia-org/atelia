@@ -363,10 +363,12 @@ public sealed class GalateaDurableRecoveryVerticalTests {
                 | BindingFlags.Public
                 | BindingFlags.NonPublic
             ),
-            constructor => constructor.GetParameters().Length == 4
+            constructor => constructor.GetParameters().Length == 6
         );
         object hooks = hooksConstructor.Invoke([
             failpoint,
+            null,
+            null,
             null,
             null,
             null

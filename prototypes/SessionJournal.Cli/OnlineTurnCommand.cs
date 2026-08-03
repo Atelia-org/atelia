@@ -222,7 +222,7 @@ internal static class OnlineTurnCommand {
                         ).Registry
                 );
             recap = DerivedRecapOnlineLifecycleCoordinator.Create(
-                engine,
+                engine.ReadView,
                 store,
                 recapAuthority,
                 maintainers

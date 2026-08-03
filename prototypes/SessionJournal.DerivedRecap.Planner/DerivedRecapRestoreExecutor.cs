@@ -8,14 +8,14 @@ namespace Atelia.SessionJournal.DerivedRecap.Planner;
 /// membership. Building Resume and online lifecycle remain separate flows.
 /// </summary>
 public sealed class DerivedRecapRestoreExecutor {
-    private readonly SessionJournalEngine _engine;
+    private readonly SessionJournalReadView _engine;
     private readonly DerivedRecapStore _store;
     private readonly RecapProtocolHardCaps _hardCaps;
     private readonly IRecapBlockMaintainerRegistry _maintainers;
     private readonly DerivedRecapRestorer _restorer;
 
     public DerivedRecapRestoreExecutor(
-        SessionJournalEngine engine,
+        SessionJournalReadView engine,
         DerivedRecapStore store,
         IRecapBlockMaintainerRegistry maintainers
     ) : this(
@@ -27,7 +27,7 @@ public sealed class DerivedRecapRestoreExecutor {
     }
 
     internal DerivedRecapRestoreExecutor(
-        SessionJournalEngine engine,
+        SessionJournalReadView engine,
         DerivedRecapStore store,
         IRecapBlockMaintainerRegistry maintainers,
         RecapProtocolHardCaps hardCaps
@@ -75,6 +75,14 @@ public sealed class DerivedRecapRestoreExecutor {
                     lineageView.CapturedHead
                 );
             }
+            SessionCurrentLineagePrefix proofLineage =
+                _engine.ReadLineagePrefixAt(
+                    expectedRawHead,
+                    RecapFrozenPlanBarrier.ProofPrefixHeaderCount(
+                        _hardCaps
+                    ),
+                    cancellationToken
+                );
 
             PublishedPlanAtAnchorReadResult planRead =
                 await _store.ReadPublishedPlanAtAnchorAsync(
@@ -118,7 +126,9 @@ public sealed class DerivedRecapRestoreExecutor {
                     };
             }
             foreach (RecapBlockCommitment commitment in commitments) {
-                switch (lineage.Lookup(commitment.AbsorbedThrough)) {
+                switch (proofLineage.Lookup(
+                            commitment.AbsorbedThrough
+                        )) {
                     case SessionCurrentLineageAnchorLookup.Found:
                         break;
                     case SessionCurrentLineageAnchorLookup
@@ -147,7 +157,7 @@ public sealed class DerivedRecapRestoreExecutor {
                         _engine,
                         _store,
                         frozenPlan,
-                        lineage,
+                        proofLineage,
                         expectedRawHead,
                         _hardCaps,
                         cancellationToken
@@ -216,8 +226,9 @@ public sealed class DerivedRecapRestoreExecutor {
                     inspectionResult).Inspection;
             PreparedRestore prepared = Prepare(
                 inspection,
-                lineage,
+                proofLineage,
                 expectedRawHead,
+                restorePreflight.PendingWindowProofs,
                 cancellationToken
             );
             if (prepared.Defects.Count != 0) {
@@ -305,6 +316,10 @@ public sealed class DerivedRecapRestoreExecutor {
         PublishedRestoreInspection inspection,
         SessionCurrentLineagePrefix lineage,
         EventAddress expectedRawHead,
+        IReadOnlyDictionary<
+            (RecapBlockId BlockId, int EndpointIndex),
+            RecapPendingWindowProofAuthority
+        > pendingWindowProofs,
         CancellationToken cancellationToken
     ) {
         var defects = new List<DerivedRecapRestoreDefect>();
@@ -393,7 +408,6 @@ public sealed class DerivedRecapRestoreExecutor {
                 foreach (RecapFrozenPlanRawDefect defect
                          in RecapFrozenPlanRawValidator
                              .ValidateInputDependentBlock(
-                             _engine,
                              inspection.FrozenPlan,
                              healthyInputs,
                              lineage,
@@ -460,6 +474,7 @@ public sealed class DerivedRecapRestoreExecutor {
                 expectedRawHead,
                 pendingRoutes,
                 _hardCaps,
+                pendingWindowProofs,
                 cancellationToken
             );
         if (exactWindows.BeyondPrefix is not null) {

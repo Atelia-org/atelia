@@ -15,7 +15,7 @@ public sealed class DerivedRecapContextCandidateSourceTests {
         );
         var source = new DerivedRecapContextCandidateSource(
             fixture.Store,
-            fixture.Engine
+            fixture.ReadView
         );
 
         SessionContextCandidateSelection selection =
@@ -67,7 +67,7 @@ public sealed class DerivedRecapContextCandidateSourceTests {
         );
         var source = new DerivedRecapContextCandidateSource(
             fixture.Store,
-            fixture.Engine
+            fixture.ReadView
         );
         SessionContextCandidateSelection selection =
             await source.SelectAsync(
@@ -118,7 +118,7 @@ public sealed class DerivedRecapContextCandidateSourceTests {
         );
         var source = new DerivedRecapContextCandidateSource(
             fixture.Store,
-            fixture.Engine
+            fixture.ReadView
         );
 
         SessionContextCandidateSelection invalid =
@@ -146,7 +146,7 @@ public sealed class DerivedRecapContextCandidateSourceTests {
         DerivedRecapLineageView lineage = fixture.Lineage();
         var source = new DerivedRecapContextCandidateSource(
             fixture.Store,
-            fixture.Engine
+            fixture.ReadView
         );
 
         SessionContextCandidateSelection selection =

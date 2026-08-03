@@ -234,7 +234,7 @@ internal static class RecapStoreCommands {
             DerivedRecapLineageView lineage =
                 DerivedRecapLineageView.Capture(
                     store,
-                    context.Engine
+                    context.Engine.ReadView
                 );
             anchor = ParseAnchor(options);
             PublishedMembershipInspectionResult membership =

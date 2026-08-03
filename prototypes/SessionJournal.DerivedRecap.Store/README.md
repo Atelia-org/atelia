@@ -24,28 +24,41 @@ abandoned; an old Published Store must be explicitly reset and rebuilt.
 ## Publication authority
 
 Application code publishes through `DerivedRecapPublisher`, which is bound to
-one `DerivedRecapStore` and the same `SessionJournalEngine` path/`RefId`.
-Callers provide only `SetAdmissionAnchor`; they cannot supply a raw-lineage
-snapshot as publication authority.
+one `DerivedRecapStore` and a `SessionJournalReadView` with the same repository
+path/`RefId`. The read view is valid only for the lifetime of its owning
+`SessionJournalEngine`.
+Callers provide only a metadata-issued `BuildingPlanHandle`; they cannot supply
+a raw-lineage snapshot as publication authority. Frozen execution paths call
+`Prepare(handle, expectedRawHead)` before component work. This returns an opaque
+`PreparedRecapPublication` bound to that exact handle, Publisher, captured
+lineage, admission-relative lineage, and caller-frozen head. Its
+`CanPublishAsync`/`PublishAsync` overloads consume the prepared authority without
+recapturing lineage after component work. The public diagnose/publish surface
+accepts only this prepared authority; handle-only convenience overloads are an
+internal trusted seam so a Host cannot accidentally capture publication
+authority after provider or component side effects.
+If the owning `SessionJournalEngine` is already disposed when one of these
+engine-bound views or prepared authorities is called, it fails deterministically
+with `ObjectDisposedException` before cached results or Store I/O are used.
 
-The publisher captures header-only raw lineage from the engine. While holding
+The publisher captures header-only raw lineage from the read view. While holding
 the Store's per-Ref exclusive lock, publication:
 
 1. validates the Building against the captured lineage;
 2. seals and durably installs `publication.json`;
 3. repeats structural/latest-anchor validation;
-4. rereads the bound engine's current head immediately before directory
+4. rereads the bound read view's current head immediately before directory
    promotion;
 5. atomically promotes Building with Linux
    `renameat2(RENAME_NOREPLACE)`.
 
 Application code reads current-lineage state through
-`DerivedRecapLineageView.Capture(store, engine)`. The view verifies the same
-repository path and `RefId`, captures at most 513 header-only entries from the
-current lineage, and keeps that engine-bound prefix paired with the Store for
-all selection and restore inspection calls. Resolving a set admission anchor
-captures a second, historical prefix of at most 513 headers starting at that
-anchor. Callers cannot inject a public snapshot or prefix.
+`DerivedRecapLineageView.Capture(store, engine.ReadView)`. The view verifies
+the same repository path and `RefId`, captures at most 513 header-only entries
+from the current lineage, and keeps that engine-lifetime-bound prefix paired
+with the Store for all selection and restore inspection calls. Resolving a set
+admission anchor captures a second, historical prefix of at most 513 headers
+starting at that anchor. Callers cannot inject a public snapshot or prefix.
 
 The bounded result surface fails closed. If the required anchor or strict
 ordinal could exist only beyond a truncated prefix, Store returns typed

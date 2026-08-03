@@ -12,11 +12,13 @@ internal sealed class RecapStoreFixture : IDisposable {
         Path = path;
         Engine = engine;
         Store = store;
-        Publisher = new DerivedRecapPublisher(store, engine);
+        Publisher = new DerivedRecapPublisher(store, engine.ReadView);
     }
 
     public string Path { get; }
     public SessionJournalEngine Engine { get; private set; }
+
+    public SessionJournalReadView ReadView => Engine.ReadView;
     public DerivedRecapStore Store { get; }
     public DerivedRecapPublisher Publisher { get; private set; }
 
@@ -62,7 +64,7 @@ internal sealed class RecapStoreFixture : IDisposable {
     }
 
     public DerivedRecapLineageView Lineage()
-        => DerivedRecapLineageView.Capture(Store, Engine);
+        => DerivedRecapLineageView.Capture(Store, ReadView);
 
     public SessionCurrentLineageSnapshot RawLineage()
         => Engine.ReadCurrentLineageHeaders();
@@ -145,7 +147,7 @@ internal sealed class RecapStoreFixture : IDisposable {
     public void ReopenEngine() {
         Engine.Dispose();
         Engine = SessionJournalEngine.Open(Path);
-        Publisher = new DerivedRecapPublisher(Store, Engine);
+        Publisher = new DerivedRecapPublisher(Store, ReadView);
     }
 
     public void CloseEngine() => Engine.Dispose();

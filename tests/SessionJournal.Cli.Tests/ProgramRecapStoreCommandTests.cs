@@ -672,7 +672,10 @@ public sealed class ProgramRecapStoreCommandTests : IDisposable {
         );
         RecapBlockPlan plan = CreatePlan(fixture, engine);
         _ = Assert.IsType<CreateBuildingResult.Created>(
-            await new DerivedRecapBuildingInstaller(store, engine)
+            await new DerivedRecapBuildingInstaller(
+                store,
+                engine.ReadView
+            )
                 .InstallAsync(
                     DerivedRecapCodec.CreateManifest(
                         engine.BranchRefId,
@@ -701,7 +704,10 @@ public sealed class ProgramRecapStoreCommandTests : IDisposable {
         );
         RecapBlockPlan plan = CreatePlan(fixture, engine);
         _ = Assert.IsType<CreateBuildingResult.Created>(
-            await new DerivedRecapBuildingInstaller(store, engine)
+            await new DerivedRecapBuildingInstaller(
+                store,
+                engine.ReadView
+            )
                 .InstallAsync(
                     DerivedRecapCodec.CreateManifest(
                         engine.BranchRefId,
@@ -763,8 +769,15 @@ public sealed class ProgramRecapStoreCommandTests : IDisposable {
             BuildingPlanReadResult.Available
         >(await store.ReadBuildingPlanAsync(fixture.Anchor))
             .Snapshot.Handle;
-        _ = await new DerivedRecapPublisher(store, engine)
-            .PublishAsync(handle);
+        var publisher = new DerivedRecapPublisher(
+            store,
+            engine.ReadView
+        );
+        PreparedRecapPublication publication = publisher.Prepare(
+            handle,
+            fixture.Anchor
+        );
+        _ = await publisher.PublishAsync(publication);
     }
 
     private static void DivergeBefore(

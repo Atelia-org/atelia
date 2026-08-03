@@ -3,15 +3,16 @@ using Atelia.EventJournal;
 namespace Atelia.SessionJournal.DerivedRecap.Store;
 
 /// <summary>
-/// One immutable, engine-bound raw-lineage authority. The current prefix is
-/// bounded to the DerivedRecap contract limit; exact admission-relative
-/// prefixes can only be produced through the same bound engine.
+/// One immutable, engine-lifetime-bound raw-lineage authority. The current
+/// prefix is bounded to the DerivedRecap contract limit; exact
+/// admission-relative prefixes can only be produced through the same bound
+/// read view.
 /// </summary>
 public sealed class DerivedRecapLineageView {
     internal const int MaxHeaderCount = 513;
 
     private readonly DerivedRecapStore _store;
-    private readonly SessionJournalEngine _engine;
+    private readonly SessionJournalReadView _readView;
     private readonly object _admissionLock = new();
     private readonly Dictionary<
         EventAddress,
@@ -20,32 +21,42 @@ public sealed class DerivedRecapLineageView {
 
     private DerivedRecapLineageView(
         DerivedRecapStore store,
-        SessionJournalEngine engine,
+        SessionJournalReadView readView,
         SessionCurrentLineagePrefix currentPrefix
     ) {
         _store = store;
-        _engine = engine;
+        _readView = readView;
         CurrentPrefix = currentPrefix;
     }
 
     internal SessionCurrentLineagePrefix CurrentPrefix { get; }
 
-    public SessionCurrentLineagePrefix Prefix => CurrentPrefix;
+    public SessionCurrentLineagePrefix Prefix {
+        get {
+            EnsureOwnerAlive();
+            return CurrentPrefix;
+        }
+    }
 
-    public EventAddress CapturedHead => CurrentPrefix.CapturedHead;
+    public EventAddress CapturedHead {
+        get {
+            EnsureOwnerAlive();
+            return CurrentPrefix.CapturedHead;
+        }
+    }
 
     public static DerivedRecapLineageView Capture(
         DerivedRecapStore store,
-        SessionJournalEngine engine,
+        SessionJournalReadView readView,
         CancellationToken cancellationToken = default
     ) {
         ArgumentNullException.ThrowIfNull(store);
-        ArgumentNullException.ThrowIfNull(engine);
-        DerivedRecapPublisher.RequireSameBinding(store, engine);
+        ArgumentNullException.ThrowIfNull(readView);
+        DerivedRecapPublisher.RequireSameBinding(store, readView);
         return new DerivedRecapLineageView(
             store,
-            engine,
-            engine.ReadCurrentLineagePrefix(
+            readView,
+            readView.ReadCurrentLineagePrefix(
                 MaxHeaderCount,
                 cancellationToken
             )
@@ -56,6 +67,7 @@ public sealed class DerivedRecapLineageView {
         EventAddress admissionAnchor,
         CancellationToken cancellationToken
     ) {
+        EnsureOwnerAlive();
         lock (_admissionLock) {
             if (_admissions.TryGetValue(
                     admissionAnchor,
@@ -69,7 +81,7 @@ public sealed class DerivedRecapLineageView {
                         new DerivedRecapAdmissionLineageResolution
                             .Available(
                                 found.Index,
-                                _engine.ReadLineagePrefixAt(
+                                _readView.ReadLineagePrefixAt(
                                     admissionAnchor,
                                     MaxHeaderCount,
                                     cancellationToken
@@ -96,39 +108,55 @@ public sealed class DerivedRecapLineageView {
     public ValueTask<DerivedRecapSelection> SelectNthPreviousAsync(
         int nthPrevious,
         CancellationToken cancellationToken = default
-    ) => _store.SelectNthPreviousAsync(
-        this,
-        nthPrevious,
-        cancellationToken
-    );
+    ) {
+        EnsureOwnerAlive();
+        return _store.SelectNthPreviousAsync(
+            this,
+            nthPrevious,
+            cancellationToken
+        );
+    }
 
     public ValueTask<CurrentLineageBuildingSelection>
         SelectCurrentBuildingAsync(
         CancellationToken cancellationToken = default
-    ) => _store.SelectCurrentLineageBuildingAsync(
-        this,
-        cancellationToken
-    );
+    ) {
+        EnsureOwnerAlive();
+        return _store.SelectCurrentLineageBuildingAsync(
+            this,
+            cancellationToken
+        );
+    }
 
     public ValueTask<PublishedRestoreInspectionResult>
         InspectPublishedForOfflineDiagnosticsAsync(
         EventAddress admissionAnchor,
         CancellationToken cancellationToken = default
-    ) => _store.InspectPublishedForOfflineDiagnosticsAsync(
-        admissionAnchor,
-        this,
-        cancellationToken
-    );
+    ) {
+        EnsureOwnerAlive();
+        return _store.InspectPublishedForOfflineDiagnosticsAsync(
+            admissionAnchor,
+            this,
+            cancellationToken
+        );
+    }
 
     public ValueTask<PublishedRestoreInspectionResult>
         InspectPublishedForRestoreAsync(
         PublishedRestorePlanAuthority authority,
         CancellationToken cancellationToken = default
-    ) => _store.InspectPublishedForRestoreAsync(
-        authority,
-        this,
-        cancellationToken
-    );
+    ) {
+        EnsureOwnerAlive();
+        return _store.InspectPublishedForRestoreAsync(
+            authority,
+            this,
+            cancellationToken
+        );
+    }
+
+    private void EnsureOwnerAlive() {
+        _ = _readView.BranchRefId;
+    }
 }
 
 internal abstract record DerivedRecapAdmissionLineageResolution {

@@ -9,7 +9,7 @@ namespace Atelia.SessionJournal.DerivedRecap.Planner;
 /// </summary>
 public sealed class DerivedRecapOnlineLifecycleCoordinator
     : ISessionContextLifecycleCoordinator, ICoherentContextCandidateSource {
-    private readonly SessionJournalEngine _engine;
+    private readonly SessionJournalReadView _engine;
     private readonly ICoherentContextCandidateSource _candidates;
     private readonly Func<
         SessionCurrentLineagePrefix,
@@ -41,7 +41,7 @@ public sealed class DerivedRecapOnlineLifecycleCoordinator
     private bool _pinnedPlanningBaselineConsumed;
 
     internal DerivedRecapOnlineLifecycleCoordinator(
-        SessionJournalEngine engine,
+        SessionJournalReadView engine,
         DerivedRecapStore store,
         RecapPlanningInputs inputs,
         RecapPlanningLimits limits,
@@ -92,7 +92,7 @@ public sealed class DerivedRecapOnlineLifecycleCoordinator
     /// current snapshot without reloading active configuration.
     /// </summary>
     internal DerivedRecapOnlineLifecycleCoordinator(
-        SessionJournalEngine engine,
+        SessionJournalReadView engine,
         DerivedRecapStore store,
         RecapPlanningInputs inputs,
         RecapPlanningLimits limits,
@@ -109,7 +109,7 @@ public sealed class DerivedRecapOnlineLifecycleCoordinator
     /// </summary>
     internal static DerivedRecapOnlineLifecycleCoordinator
         CreateForFrozenBuilding(
-        SessionJournalEngine engine,
+        SessionJournalReadView engine,
         DerivedRecapStore store,
         BuildingDescriptor buildingDescriptor,
         IRecapBlockMaintainerRegistry maintainers
@@ -155,7 +155,7 @@ public sealed class DerivedRecapOnlineLifecycleCoordinator
     /// Building execution is pinned to its exact descriptor.
     /// </summary>
     public static DerivedRecapOnlineLifecycleCoordinator Create(
-        SessionJournalEngine engine,
+        SessionJournalReadView engine,
         DerivedRecapStore store,
         PreparedRecapOperationAuthority authority,
         IRecapBlockMaintainerRegistry maintainers
@@ -174,7 +174,7 @@ public sealed class DerivedRecapOnlineLifecycleCoordinator
             )) {
             throw new ArgumentException(
                 "Prepared DerivedRecap authority, Store, and "
-                + "SessionJournalEngine must bind the same repository "
+                + "SessionJournalReadView must bind the same repository "
                 + "and RefId.",
                 nameof(authority)
             );
@@ -204,7 +204,7 @@ public sealed class DerivedRecapOnlineLifecycleCoordinator
     }
 
     internal DerivedRecapOnlineLifecycleCoordinator(
-        SessionJournalEngine engine,
+        SessionJournalReadView engine,
         ICoherentContextCandidateSource candidates,
         Func<
             SessionCurrentLineagePrefix,
@@ -265,7 +265,7 @@ public sealed class DerivedRecapOnlineLifecycleCoordinator
     );
 
     public async ValueTask<SessionContextLifecycleResult> PrepareAsync(
-        SessionJournalEngine engine,
+        SessionJournalReadView engine,
         SessionContextLifecycleRequest request,
         CancellationToken cancellationToken
     ) {
@@ -274,7 +274,7 @@ public sealed class DerivedRecapOnlineLifecycleCoordinator
         if (!ReferenceEquals(engine, _engine)) {
             throw new ArgumentException(
                 "DerivedRecap lifecycle must run on its bound "
-                + "SessionJournalEngine.",
+                + "SessionJournalReadView.",
                 nameof(engine)
             );
         }
@@ -547,7 +547,7 @@ public sealed class DerivedRecapOnlineLifecycleCoordinator
     private static async ValueTask<DerivedRecapSelection>
         SelectBoundAsync(
         DerivedRecapStore store,
-        SessionJournalEngine engine,
+        SessionJournalReadView engine,
         SessionCurrentLineagePrefix expectedLineage,
         int nthPrevious,
         CancellationToken cancellationToken
@@ -809,7 +809,7 @@ public sealed class DerivedRecapOnlineLifecycleCoordinator
     }
 
     private static void RequireBoundaryAndPhase(
-        SessionJournalEngine engine,
+        SessionJournalReadView engine,
         SessionContextLifecycleRequest request,
         CancellationToken cancellationToken
     ) {

@@ -3,22 +3,22 @@ using Atelia.EventJournal;
 namespace Atelia.SessionJournal.DerivedRecap.Store;
 
 /// <summary>
-/// Engine-bound authority for the final Published Restore envelope gate.
+/// Engine-lifetime-bound authority for the final Published Restore envelope gate.
 /// Component writes remain pending until this facade proves the same
 /// caller-frozen raw head and commits the envelope last.
 /// </summary>
 public sealed class DerivedRecapRestorer {
     private readonly DerivedRecapStore _store;
-    private readonly SessionJournalEngine _engine;
+    private readonly SessionJournalReadView _readView;
 
     public DerivedRecapRestorer(
         DerivedRecapStore store,
-        SessionJournalEngine engine
+        SessionJournalReadView readView
     ) {
         _store = store ?? throw new ArgumentNullException(nameof(store));
-        _engine = engine
-            ?? throw new ArgumentNullException(nameof(engine));
-        DerivedRecapPublisher.RequireSameBinding(store, engine);
+        _readView = readView
+            ?? throw new ArgumentNullException(nameof(readView));
+        DerivedRecapPublisher.RequireSameBinding(store, readView);
     }
 
     public ValueTask<PublishedEnvelopeCommitResult>
@@ -28,7 +28,7 @@ public sealed class DerivedRecapRestorer {
         CancellationToken cancellationToken = default
     ) {
         ArgumentNullException.ThrowIfNull(authority);
-        EventAddress? currentHead = _engine.ReadCurrentHead();
+        EventAddress? currentHead = _readView.ReadCurrentHead();
         if (currentHead != expectedRawHead) {
             return ValueTask.FromResult<
                 PublishedEnvelopeCommitResult
@@ -43,7 +43,7 @@ public sealed class DerivedRecapRestorer {
         return _store.CommitPublishedEnvelopeTrustedAsync(
             authority,
             expectedRawHead,
-            () => _engine.ReadCurrentHead(),
+            () => _readView.ReadCurrentHead(),
             cancellationToken
         );
     }

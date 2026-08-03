@@ -16,7 +16,7 @@ public sealed class DerivedRecapPreparedExecutor {
         _getPlanningDiagnostics;
 
     public DerivedRecapPreparedExecutor(
-        SessionJournalEngine engine,
+        SessionJournalReadView engine,
         DerivedRecapStore store,
         PreparedRecapOperationAuthority authority,
         IRecapBlockMaintainerRegistry maintainers
@@ -35,7 +35,7 @@ public sealed class DerivedRecapPreparedExecutor {
             )) {
             throw new ArgumentException(
                 "Prepared DerivedRecap authority, Store, and "
-                + "SessionJournalEngine must bind the same repository "
+                + "SessionJournalReadView must bind the same repository "
                 + "and RefId.",
                 nameof(authority)
             );

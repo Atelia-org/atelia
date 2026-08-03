@@ -3785,7 +3785,7 @@ public sealed partial class SessionJournalEngine : IDisposable {
         }
         SessionContextLifecycleResult result = await lifecycle
             .PrepareAsync(
-                this,
+                ReadView,
                 new SessionContextLifecycleRequest(
                     CreateContextSelectionRequest(
                         boundary,

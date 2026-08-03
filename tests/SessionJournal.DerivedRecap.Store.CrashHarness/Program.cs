@@ -127,7 +127,10 @@ internal static class Program {
                 await store.CreateAsync();
                 break;
             case "publish":
-                var publisher = new DerivedRecapPublisher(store, engine);
+                var publisher = new DerivedRecapPublisher(
+                    store,
+                    engine.ReadView
+                );
                 await publisher.PublishAsync(
                     engine.ReadCurrentLineageHeaders().CapturedHead
                 );
@@ -325,14 +328,14 @@ internal static class Program {
         var prepared = AssertReady(
             await DerivedRecapOperationPreparer
                 .PrepareExactBuildingAsync(
-                    engine,
+                    engine.ReadView,
                     store,
                     new RecapMaintainerCapabilitySnapshot(capabilities),
                     admission
                 )
         );
         var executor = new DerivedRecapPreparedExecutor(
-            engine,
+            engine.ReadView,
             store,
             prepared,
             new RecapBlockMaintainerRegistry(maintainers)
@@ -356,7 +359,7 @@ internal static class Program {
         SessionCurrentLineageSnapshot lineage
     ) {
         DerivedRecapLineageView lineageView =
-            DerivedRecapLineageView.Capture(store, engine);
+            DerivedRecapLineageView.Capture(store, engine.ReadView);
         PublishedRestoreInspectionResult.Available available =
             await lineageView
                 .InspectPublishedForOfflineDiagnosticsAsync(
@@ -389,7 +392,7 @@ internal static class Program {
                 ))
             .ToArray();
         var executor = new DerivedRecapRestoreExecutor(
-            engine,
+            engine.ReadView,
             store,
             new RecapBlockMaintainerRegistry(maintainers)
         );

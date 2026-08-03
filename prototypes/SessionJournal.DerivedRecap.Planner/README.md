@@ -47,7 +47,8 @@ repo config -> Host resolves one immutable composition snapshot
 
 ## B2 bounded online boundary
 
-Planner当前通过 engine-bound `DerivedRecapLineageView`调用 Store selection、Building
+Planner当前通过 engine-lifetime-bound `SessionJournalReadView`与
+`DerivedRecapLineageView`调用 Store selection、Building
 admission、Publish和Restore，并把 Store的结构化 `BeyondPrefix` evidence逐层传递到 execution、
 restore及online lifecycle结果；不会把它降级成普通字符串或扫描完整raw lineage来猜答案。
 
@@ -283,7 +284,7 @@ var source = new RepositoryRecapActivePlanningConfigurationSource(
     planningCapabilities
 );
 var ready = AssertReady(await DerivedRecapOperationPreparer.PrepareAsync(
-    engine,
+    engine.ReadView,
     store,
     planningCapabilities,
     source,
@@ -295,7 +296,7 @@ DerivedRecapPlanningDiagnostics? diagnostics = null;
 if (ready.Authority
     is PreparedRecapOperationAuthority.FrozenBuilding frozen) {
     var building = new DerivedRecapBuildingExecutor(
-        engine,
+        engine.ReadView,
         store,
         maintainers
     );
@@ -308,7 +309,7 @@ else {
     var planning =
         (PreparedRecapOperationAuthority.NewPlanning)ready.Authority;
     var planner = new DerivedRecapPlannerExecutor(
-        engine,
+        engine.ReadView,
         store,
         planning.Configuration.PlanningInputs,
         planning.Configuration.PlanningLimits,
@@ -364,7 +365,7 @@ HistoryUnit/raw event counts是结构诊断，不是 scheduling authority。
 DerivedRecapLineageView lineage =
     DerivedRecapLineageView.Capture(
         store,
-        engine,
+        engine.ReadView,
         cancellationToken
     );
 
@@ -374,7 +375,7 @@ CurrentLineageBuildingSelection selected =
 if (selected
     is CurrentLineageBuildingSelection.Available available) {
     var executor = new DerivedRecapBuildingExecutor(
-        engine,
+        engine.ReadView,
         store,
         maintainers
     );
@@ -402,7 +403,7 @@ window。线上路径不调用full-lineage header/setup discovery；无法证明
 
 ```csharp
 var restorer = new DerivedRecapRestoreExecutor(
-    engine,
+    engine.ReadView,
     store,
     maintainers
 );
@@ -470,7 +471,7 @@ var activeConfiguration =
 
 DerivedRecapOperationPreparationResult prepared =
     await DerivedRecapOperationPreparer.PrepareAsync(
-        engine,
+        engine.ReadView,
         store,
         planningCapabilities,
         activeConfiguration,
@@ -499,7 +500,7 @@ PreparedRecapOperationAuthority authority = prepared switch {
 
 DerivedRecapOnlineLifecycleCoordinator lifecycle =
     DerivedRecapOnlineLifecycleCoordinator.Create(
-        engine,
+        engine.ReadView,
         store,
         authority,
         maintainers

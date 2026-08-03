@@ -3,22 +3,22 @@ using Atelia.EventJournal;
 namespace Atelia.SessionJournal.DerivedRecap.Store;
 
 /// <summary>
-/// Engine-bound Building installation authority. The raw head is rechecked
-/// while the Store lock is held, after every source has been reread and
-/// immediately before the manifest becomes visible.
+/// Engine-lifetime-bound Building installation authority. The raw head is
+/// rechecked while the Store lock is held, after every source has been reread
+/// and immediately before the manifest becomes visible.
 /// </summary>
 public sealed class DerivedRecapBuildingInstaller {
     private readonly DerivedRecapStore _store;
-    private readonly SessionJournalEngine _engine;
+    private readonly SessionJournalReadView _readView;
 
     public DerivedRecapBuildingInstaller(
         DerivedRecapStore store,
-        SessionJournalEngine engine
+        SessionJournalReadView readView
     ) {
         _store = store ?? throw new ArgumentNullException(nameof(store));
-        _engine = engine
-            ?? throw new ArgumentNullException(nameof(engine));
-        RequireSameBinding(store, engine);
+        _readView = readView
+            ?? throw new ArgumentNullException(nameof(readView));
+        DerivedRecapPublisher.RequireSameBinding(store, readView);
     }
 
     public ValueTask<CreateBuildingResult> InstallAsync(
@@ -29,7 +29,7 @@ public sealed class DerivedRecapBuildingInstaller {
         DerivedRecapLineageView lineage =
             DerivedRecapLineageView.Capture(
                 _store,
-                _engine,
+                _readView,
                 cancellationToken
             );
         if (lineage.CapturedHead != expectedRawHead) {
@@ -44,33 +44,9 @@ public sealed class DerivedRecapBuildingInstaller {
             manifest,
             expectedRawHead,
             lineage,
-            () => _engine.ReadCurrentHead(),
+            () => _readView.ReadCurrentHead(),
             cancellationToken
         );
     }
 
-    private static void RequireSameBinding(
-        DerivedRecapStore store,
-        SessionJournalEngine engine
-    ) {
-        string storePath = Path.TrimEndingDirectorySeparator(
-            Path.GetFullPath(store.SessionRepositoryPath)
-        );
-        string enginePath = Path.TrimEndingDirectorySeparator(
-            Path.GetFullPath(engine.Path)
-        );
-        if (!string.Equals(
-                storePath,
-                enginePath,
-                OperatingSystem.IsWindows()
-                    ? StringComparison.OrdinalIgnoreCase
-                    : StringComparison.Ordinal
-            )
-            || store.RefId != engine.BranchRefId) {
-            throw new ArgumentException(
-                "DerivedRecap Store and SessionJournalEngine must bind "
-                + "the same repository and RefId."
-            );
-        }
-    }
 }

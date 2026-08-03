@@ -84,7 +84,7 @@ public sealed class DerivedRecapPreparedRecoveryIntegrationTests
             var ready = Assert.IsType<
                 DerivedRecapOperationPreparationResult.Ready
             >(await DerivedRecapOperationPreparer.PrepareAsync(
-                engine,
+                engine.ReadView,
                 store,
                 capabilities,
                 source,
@@ -92,7 +92,7 @@ public sealed class DerivedRecapPreparedRecoveryIntegrationTests
             ));
             var coordinator =
                 DerivedRecapOnlineLifecycleCoordinator.Create(
-                    engine,
+                    engine.ReadView,
                     store,
                     ready.Authority,
                     new RecapBlockMaintainerRegistry([maintainer])
@@ -110,7 +110,7 @@ public sealed class DerivedRecapPreparedRecoveryIntegrationTests
                 );
             SessionContextLifecycleResult prepared =
                 await coordinator.PrepareAsync(
-                    engine,
+                    engine.ReadView,
                     new SessionContextLifecycleRequest(
                         selectionRequest,
                         boundary.Phase
@@ -422,7 +422,7 @@ public sealed class DerivedRecapPreparedRecoveryIntegrationTests
         public int MaterializationCalls { get; private set; }
 
         public ValueTask<SessionContextLifecycleResult> PrepareAsync(
-            SessionJournalEngine engine,
+            SessionJournalReadView readView,
             SessionContextLifecycleRequest request,
             CancellationToken cancellationToken
         ) {

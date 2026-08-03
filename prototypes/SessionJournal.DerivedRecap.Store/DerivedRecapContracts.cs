@@ -519,6 +519,31 @@ public sealed class BuildingPlanHandle {
 }
 
 /// <summary>
+/// Opaque, Publisher-issued authority for diagnosing or publishing one exact
+/// Building against one caller-frozen raw head. Preparation captures and
+/// resolves the required raw lineage before component work begins; later
+/// consumption never recaptures that lineage.
+/// </summary>
+public sealed class PreparedRecapPublication {
+    internal PreparedRecapPublication(
+        DerivedRecapPublisher owner,
+        BuildingPlanHandle handle,
+        DerivedRecapLineageView lineage,
+        EventAddress expectedRawHead
+    ) {
+        Owner = owner;
+        Handle = handle;
+        Lineage = lineage;
+        ExpectedRawHead = expectedRawHead;
+    }
+
+    internal DerivedRecapPublisher Owner { get; }
+    internal BuildingPlanHandle Handle { get; }
+    internal DerivedRecapLineageView Lineage { get; }
+    internal EventAddress ExpectedRawHead { get; }
+}
+
+/// <summary>
 /// Manifest-only Building metadata. Frozen input and block contents are deliberately absent.
 /// </summary>
 public sealed record BuildingPlanSnapshot(

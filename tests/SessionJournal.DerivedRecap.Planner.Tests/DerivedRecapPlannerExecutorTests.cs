@@ -35,8 +35,7 @@ public sealed class DerivedRecapPlannerExecutorTests {
             );
 
         IReadOnlyList<RecapFrozenPlanRawDefect> defects =
-            RecapFrozenPlanRawValidator.ValidateBlock(
-                fixture.Engine,
+            RecapFrozenPlanRawValidator.ValidateInputDependentBlock(
                 manifest,
                 new Dictionary<
                     RecapBlockId,
@@ -66,25 +65,57 @@ public sealed class DerivedRecapPlannerExecutorTests {
             start,
             [mid, admission]
         );
+        var hardCaps = new RecapProtocolHardCaps(
+            maxRawGrowthEventCount: 1000,
+            maxRouteEndpointsPerBlock: 2,
+            maxMaintainerCallsPerBuild: 2,
+            maxRawEventsPerStep: 1000,
+            maxRawEventsPerBuild: 1000,
+            maxContentUtf8Bytes:
+                SessionContextContributionContract
+                    .MaxContributionUtf8Bytes,
+            maxCatalogEntries:
+                SessionContextContributionContract
+                    .MaxContributionCount
+        );
+        var route = new PendingMaintainRoute(plan, mid, 1);
+        SessionCurrentLineagePrefix prefix =
+            fixture.Engine.ReadLineagePrefixAt(admission, 1000);
+        RecapReplayBoundary routeStart = plan.CatchUpBoundaries[0];
+        SessionGoverningSetupProof routeStartProof = Assert.IsType<
+            SessionGoverningSetupProofResult.Available
+        >(fixture.Engine.ReadView.ProveGoverningSetupInPrefix(
+            prefix,
+            routeStart.Address,
+            routeStart.Setups
+        )).Proof;
+        PreparedRecapPendingWindows proven =
+            RecapPendingWindowPreparer.Prove(
+                fixture.Engine.ReadView,
+                prefix,
+                new Dictionary<
+                    (EventAddress Address,
+                        SessionContextAnchorSetupReferences Setups),
+                    SessionGoverningSetupProof
+                > {
+                    [(routeStart.Address, routeStart.Setups)] =
+                        routeStartProof
+                },
+                admission,
+                [route],
+                hardCaps,
+                CancellationToken.None
+            );
+        Assert.Empty(proven.Defects);
+        Assert.Null(proven.BeyondPrefix);
 
         PreparedRecapPendingWindows prepared =
             RecapPendingWindowPreparer.Prepare(
-                fixture.Engine,
+                fixture.Engine.ReadView,
                 admission,
-                [new PendingMaintainRoute(plan, mid, 1)],
-                new RecapProtocolHardCaps(
-                    maxRawGrowthEventCount: 1000,
-                    maxRouteEndpointsPerBlock: 2,
-                    maxMaintainerCallsPerBuild: 2,
-                    maxRawEventsPerStep: 1000,
-                    maxRawEventsPerBuild: 1000,
-                    maxContentUtf8Bytes:
-                        SessionContextContributionContract
-                            .MaxContributionUtf8Bytes,
-                    maxCatalogEntries:
-                        SessionContextContributionContract
-                            .MaxContributionCount
-                ),
+                [route],
+                hardCaps,
+                proven.ProofAuthorities,
                 CancellationToken.None
             );
 
@@ -115,31 +146,55 @@ public sealed class DerivedRecapPlannerExecutorTests {
             history.StartExclusive,
             [boundaries[0], boundaries[^1]]
         );
+        var hardCaps = new RecapProtocolHardCaps(
+            maxRawGrowthEventCount: 1000,
+            maxRouteEndpointsPerBlock: 2,
+            maxMaintainerCallsPerBuild: 2,
+            maxRawEventsPerStep: 2,
+            maxRawEventsPerBuild: 1000,
+            maxContentUtf8Bytes:
+                SessionContextContributionContract
+                    .MaxContributionUtf8Bytes,
+            maxCatalogEntries:
+                SessionContextContributionContract
+                    .MaxContributionCount
+        );
+        var route = new PendingMaintainRoute(
+            plan,
+            history.StartExclusive,
+            0
+        );
+        SessionCurrentLineagePrefix prefix =
+            fixture.Engine.ReadLineagePrefixAt(boundaries[^1], 1000);
+        var routeStart = new RecapReplayBoundary(
+            history.StartExclusive,
+            ((EmptyRecapMaintainSource)plan.Source).ReplayStartSetups
+        );
+        SessionGoverningSetupProof routeStartProof = Assert.IsType<
+            SessionGoverningSetupProofResult.Available
+        >(fixture.Engine.ReadView.ProveGoverningSetupInPrefix(
+            prefix,
+            routeStart.Address,
+            routeStart.Setups
+        )).Proof;
         SessionJournalReadDiagnostics before =
             fixture.Engine.CaptureReadDiagnostics();
 
         PreparedRecapPendingWindows prepared =
-            RecapPendingWindowPreparer.Prepare(
-                fixture.Engine,
+            RecapPendingWindowPreparer.Prove(
+                fixture.Engine.ReadView,
+                prefix,
+                new Dictionary<
+                    (EventAddress Address,
+                        SessionContextAnchorSetupReferences Setups),
+                    SessionGoverningSetupProof
+                > {
+                    [(routeStart.Address, routeStart.Setups)] =
+                        routeStartProof
+                },
                 boundaries[^1],
-                [new PendingMaintainRoute(
-                    plan,
-                    history.StartExclusive,
-                    0
-                )],
-                new RecapProtocolHardCaps(
-                    maxRawGrowthEventCount: 1000,
-                    maxRouteEndpointsPerBlock: 2,
-                    maxMaintainerCallsPerBuild: 2,
-                    maxRawEventsPerStep: 2,
-                    maxRawEventsPerBuild: 1000,
-                    maxContentUtf8Bytes:
-                        SessionContextContributionContract
-                            .MaxContributionUtf8Bytes,
-                    maxCatalogEntries:
-                        SessionContextContributionContract
-                            .MaxContributionCount
-                ),
+                [route],
+                hardCaps,
                 CancellationToken.None
             );
         SessionJournalReadDiagnostics after =
@@ -147,6 +202,235 @@ public sealed class DerivedRecapPlannerExecutorTests {
 
         Assert.NotNull(prepared.BeyondPrefix);
         Assert.Empty(prepared.Windows);
+        Assert.Equal(before.PayloadReadCount, after.PayloadReadCount);
+    }
+
+    [Fact]
+    public async Task ProvenPendingSuffixWithOldSetupsDoesNotReproveHeaders() {
+        using TestFixture fixture = await TestFixture.CreateAsync(
+            historyPairs: 300
+        );
+        SessionHistoryPlanningWindow history =
+            fixture.Engine.ReadHistoryPlanningWindow();
+        EventAddress[] boundaries = history.ReplaySafeBoundaries
+            .Select(static boundary => boundary.Address)
+            .ToArray();
+        EventAddress source = boundaries[^3];
+        EventAddress checkpoint = boundaries[^2];
+        EventAddress admission = boundaries[^1];
+        MaintainRecapBlockPlan plan = fixture.CreateEmptyPlan(
+            fixture.SelfId,
+            fixture.SelfTarget,
+            "self-maintainer",
+            source,
+            [checkpoint, admission]
+        );
+        SessionContextAnchorSetupReferences sourceSetups =
+            RecapPlannerWireTestFacts.SetupsAt(
+                fixture.Engine,
+                source
+            );
+        SessionContextAnchorSetupReferences checkpointSetups =
+            RecapPlannerWireTestFacts.SetupsAt(
+                fixture.Engine,
+                checkpoint
+            );
+        Assert.IsType<SessionGoverningSetupProofResult.BeyondPrefix>(
+            fixture.Engine.ReadView.ProveGoverningSetupAtBounded(
+                checkpoint,
+                checkpointSetups,
+                RecapFrozenPlanBarrier.MaxHeaderCount
+            )
+        );
+        SessionCurrentLineagePrefix prefix =
+            fixture.Engine.ReadLineagePrefixAt(
+                admission,
+                RecapFrozenPlanBarrier.ProofPrefixHeaderCount(
+                    RecapProtocolHardCaps.V4
+                )
+            );
+        SessionGoverningSetupProof sourceProof = Assert.IsType<
+            SessionGoverningSetupProofResult.Available
+        >(fixture.Engine.ReadView.ProveGoverningSetupInPrefix(
+            prefix,
+            source,
+            sourceSetups
+        )).Proof;
+        PreparedRecapPendingWindows proven =
+            RecapPendingWindowPreparer.Prove(
+                fixture.Engine.ReadView,
+                prefix,
+                new Dictionary<
+                    (EventAddress Address,
+                        SessionContextAnchorSetupReferences Setups),
+                    SessionGoverningSetupProof
+                > {
+                    [(source, sourceSetups)] = sourceProof
+                },
+                admission,
+                [new PendingMaintainRoute(plan, source, 0)],
+                RecapProtocolHardCaps.V4,
+                CancellationToken.None
+            );
+        Assert.Empty(proven.Defects);
+        Assert.Null(proven.BeyondPrefix);
+        SessionJournalReadDiagnostics before =
+            fixture.Engine.CaptureReadDiagnostics();
+
+        PreparedRecapPendingWindows prepared =
+            RecapPendingWindowPreparer.Prepare(
+                fixture.Engine.ReadView,
+                admission,
+                [new PendingMaintainRoute(plan, checkpoint, 1)],
+                RecapProtocolHardCaps.V4,
+                proven.ProofAuthorities,
+                CancellationToken.None
+            );
+        SessionJournalReadDiagnostics after =
+            fixture.Engine.CaptureReadDiagnostics();
+
+        Assert.Empty(prepared.Defects);
+        Assert.Equal((fixture.SelfId, 1), Assert.Single(prepared.Windows).Key);
+        long headerDelta = after.HeaderPreviewReadCount
+            - before.HeaderPreviewReadCount;
+        // The explicit 513-header direct proof above returned Beyond.
+        // Materialization may resolve the exact execution boundary, but it
+        // must not repeat that governing-setup walk.
+        Assert.InRange(headerDelta, 1L, 16L);
+        Assert.True(
+            headerDelta < RecapFrozenPlanBarrier.MaxHeaderCount
+        );
+        Assert.True(after.PayloadReadCount > before.PayloadReadCount);
+    }
+
+    [Theory]
+    [InlineData("block")]
+    [InlineData("index")]
+    [InlineData("start")]
+    [InlineData("start-setups")]
+    public async Task PendingWindowProofAuthorityMismatchFailsBeforePayload(
+        string mismatch
+    ) {
+        using TestFixture fixture = await TestFixture.CreateAsync(
+            historyPairs: 2
+        );
+        (
+            EventAddress start,
+            EventAddress mid,
+            EventAddress admission
+        ) = fixture.TwoStepRoute();
+        MaintainRecapBlockPlan plan = fixture.CreateEmptyPlan(
+            fixture.SelfId,
+            fixture.SelfTarget,
+            "self-maintainer",
+            start,
+            [mid, admission]
+        );
+        var startBoundary = new RecapReplayBoundary(
+            start,
+            RecapPlannerWireTestFacts.SetupsAt(fixture.Engine, start)
+        );
+        RecapReplayBoundary midBoundary = plan.CatchUpBoundaries[0];
+        RecapReplayBoundary admissionBoundary =
+            plan.CatchUpBoundaries[1];
+        SessionGoverningSetupProof startProof = Assert.IsType<
+            SessionGoverningSetupProofResult.Available
+        >(fixture.Engine.ReadView.ProveGoverningSetupAtBounded(
+            startBoundary.Address,
+            startBoundary.Setups,
+            RecapFrozenPlanBarrier.MaxHeaderCount
+        )).Proof;
+        SessionHistoryPlanningWindowProof firstProof = Assert.IsType<
+            SessionHistoryPlanningWindowProofResult.Available
+        >(fixture.Engine.ReadView.ProveHistoryPlanningWindowAtBounded(
+            mid,
+            start,
+            maxRawEventCount: 1000
+        )).Proof;
+        SessionGoverningSetupProof midSetupProof =
+            fixture.Engine.ReadView.ProveGoverningSetupTransition(
+                firstProof,
+                startProof,
+                midBoundary.Setups
+            );
+        SessionHistoryPlanningWindowProof secondProof = Assert.IsType<
+            SessionHistoryPlanningWindowProofResult.Available
+        >(fixture.Engine.ReadView.ProveHistoryPlanningWindowAtBounded(
+            admission,
+            mid,
+            maxRawEventCount: 1000
+        )).Proof;
+        var firstAuthority = new RecapPendingWindowProofAuthority(
+            fixture.SelfId,
+            0,
+            startBoundary,
+            midBoundary,
+            firstProof,
+            startProof
+        );
+        var secondAuthority = new RecapPendingWindowProofAuthority(
+            fixture.SelfId,
+            1,
+            midBoundary,
+            admissionBoundary,
+            secondProof,
+            midSetupProof
+        );
+        secondAuthority = mismatch switch {
+            "block" => secondAuthority with {
+                BlockId = new RecapBlockId("other")
+            },
+            "index" => secondAuthority with { EndpointIndex = 0 },
+            "start" => secondAuthority with { Start = startBoundary },
+            "start-setups" => secondAuthority with {
+                Start = midBoundary with {
+                    Setups = RecapPlannerWireTestFacts.WrongSetups(
+                        midBoundary.Setups
+                    )
+                }
+            },
+            _ => throw new ArgumentOutOfRangeException(nameof(mismatch))
+        };
+        var authorities = new Dictionary<
+            (RecapBlockId BlockId, int EndpointIndex),
+            RecapPendingWindowProofAuthority
+        > {
+            [(fixture.SelfId, 0)] = firstAuthority,
+            [(fixture.SelfId, 1)] = secondAuthority
+        };
+        SessionJournalReadDiagnostics before =
+            fixture.Engine.CaptureReadDiagnostics();
+
+        InvalidDataException exception = Assert.Throws<
+            InvalidDataException
+        >(() => RecapPendingWindowPreparer.Prepare(
+            fixture.Engine.ReadView,
+            admission,
+            [new PendingMaintainRoute(plan, start, 0)],
+            new RecapProtocolHardCaps(
+                maxRawGrowthEventCount: 1000,
+                maxRouteEndpointsPerBlock: 2,
+                maxMaintainerCallsPerBuild: 2,
+                maxRawEventsPerStep: 1000,
+                maxRawEventsPerBuild: 1000,
+                maxContentUtf8Bytes:
+                    SessionContextContributionContract
+                        .MaxContributionUtf8Bytes,
+                maxCatalogEntries:
+                    SessionContextContributionContract
+                        .MaxContributionCount
+            ),
+            authorities,
+            CancellationToken.None
+        ));
+        SessionJournalReadDiagnostics after =
+            fixture.Engine.CaptureReadDiagnostics();
+
+        Assert.Contains(
+            "bound pre-component proof authority",
+            exception.Message,
+            StringComparison.Ordinal
+        );
         Assert.Equal(before.PayloadReadCount, after.PayloadReadCount);
     }
 
@@ -1430,6 +1714,160 @@ public sealed class DerivedRecapPlannerExecutorTests {
     }
 
     [Fact]
+    public async Task ResumeUsesPreComponentProofWhenCheckpointIsBeyondDirectSetupLimit() {
+        bool captureComponentPhase = false;
+        long? headersAtComponentRead = null;
+        SessionJournalEngine? diagnosticEngine = null;
+        using TestFixture fixture = await TestFixture.CreateAsync(
+            historyPairs: 300,
+            hooks: new RecapStoreTestHooks(
+                BeforeBuildingComponentRead: () => {
+                    if (captureComponentPhase) {
+                        headersAtComponentRead = diagnosticEngine!
+                            .CaptureReadDiagnostics()
+                            .HeaderPreviewReadCount;
+                    }
+                }
+            )
+        );
+        diagnosticEngine = fixture.Engine;
+        SessionHistoryPlanningWindow history =
+            fixture.Engine.ReadHistoryPlanningWindow();
+        EventAddress baselineSource =
+            history.ReplaySafeBoundaries[^4].Address;
+        EventAddress source =
+            history.ReplaySafeBoundaries[^3].Address;
+        EventAddress checkpoint =
+            history.ReplaySafeBoundaries[^2].Address;
+        EventAddress admission =
+            history.ReplaySafeBoundaries[^1].Address;
+        MaintainRecapBlockPlan firstPlan = fixture.CreateEmptyPlan(
+            fixture.SelfId,
+            fixture.SelfTarget,
+            "self-maintainer",
+            source,
+            [checkpoint, admission]
+        );
+        Assert.IsType<SessionGoverningSetupProofResult.BeyondPrefix>(
+            fixture.Engine.ReadView.ProveGoverningSetupAtBounded(
+                checkpoint,
+                firstPlan.CatchUpBoundaries[0].Setups,
+                RecapFrozenPlanBarrier.MaxHeaderCount
+            )
+        );
+        MaintainRecapBlockPlan baselinePlan = fixture.CreateEmptyPlan(
+            fixture.SelfId,
+            fixture.SelfTarget,
+            "self-maintainer",
+            baselineSource,
+            [source]
+        );
+        BuildingSnapshot baseline = await fixture.CreateBuildingAsync(
+            source,
+            [baselinePlan]
+        );
+        BuildingBlockInspection baselineInitial =
+            await fixture.Store.InspectBuildingBlockAsync(
+                baseline.Descriptor,
+                baselinePlan.RecapBlockId
+            );
+        DerivedRecapBlock baselineCandidate =
+            DerivedRecapCodec.CreateBlock(
+                baselinePlan,
+                source,
+                "baseline"
+            );
+        _ = Assert.IsType<CheckpointWriteResult.Updated>(
+            await fixture.Store.AdvanceRollingCheckpointAsync(
+                baseline.Descriptor,
+                baselinePlan.RecapBlockId,
+                baselineInitial.Checkpoint.StateToken,
+                baselineCandidate
+            )
+        );
+        BuildingBlockInspection baselineCheckpointed =
+            await fixture.Store.InspectBuildingBlockAsync(
+                baseline.Descriptor,
+                baselinePlan.RecapBlockId
+            );
+        _ = Assert.IsType<FinalBlockWriteResult.Installed>(
+            await fixture.Store.EnsureFinalBlockAsync(
+                baseline.Descriptor,
+                baselinePlan.RecapBlockId,
+                baselineCheckpointed.Final.StateToken,
+                baselineCandidate
+            )
+        );
+        _ = Assert.IsType<PublishRecapResult.Published>(
+            await new DerivedRecapPublisher(
+                    fixture.Store,
+                    fixture.Engine.ReadView
+                )
+                .PublishAsync(source)
+        );
+        BuildingSnapshot building = await fixture.CreateBuildingAsync(
+            admission,
+            [firstPlan]
+        );
+        BuildingBlockInspection inspection =
+            await fixture.Store.InspectBuildingBlockAsync(
+                building.Descriptor,
+                firstPlan.RecapBlockId
+            );
+        _ = Assert.IsType<CheckpointWriteResult.Updated>(
+            await fixture.Store.AdvanceRollingCheckpointAsync(
+                building.Descriptor,
+                firstPlan.RecapBlockId,
+                inspection.Checkpoint.StateToken,
+                DerivedRecapCodec.CreateBlock(
+                    firstPlan,
+                    checkpoint,
+                    "checkpoint"
+                )
+            )
+        );
+        var firstMaintainer = new ScriptedMaintainer(
+            "self-maintainer",
+            fixture.SelfTarget,
+            static (_, request) => request.OldBlock.Text + "+done"
+        );
+        captureComponentPhase = true;
+
+        DerivedRecapExecutionResult result =
+            await fixture.CreateBuildingExecutor(
+                    [firstMaintainer],
+                    maxRouteEndpointsPerBlock: 2
+                )
+                .ResumeAsync(admission);
+
+        Assert.True(
+            result is DerivedRecapExecutionResult.Published,
+            result is DerivedRecapExecutionResult.Unavailable unavailable
+                ? string.Join(
+                    Environment.NewLine,
+                    unavailable.Defects.Select(static defect =>
+                        $"{defect.Code}: {defect.Detail}"
+                    )
+                )
+                : $"Unexpected result: {result.GetType().Name}."
+        );
+        Assert.Equal(1, firstMaintainer.CallCount);
+        Assert.NotNull(headersAtComponentRead);
+        long headersAfterResume = fixture.Engine
+            .CaptureReadDiagnostics()
+            .HeaderPreviewReadCount;
+        long headerDelta = headersAfterResume
+            - headersAtComponentRead.Value;
+        // Exact execution-boundary closure is legitimate after the component
+        // barrier; neither materialization nor publication may recapture the
+        // 513-header lineage authority demonstrated above.
+        Assert.InRange(headerDelta, 1L, 16L);
+        Assert.True(
+            headerDelta < RecapFrozenPlanBarrier.MaxHeaderCount
+        );
+    }
+
+    [Fact]
     public async Task ResumeRejectsFingerprintDriftBeforeMaintainerCall() {
         using TestFixture fixture = await TestFixture.CreateAsync(
             historyPairs: 1
@@ -1744,7 +2182,7 @@ public sealed class DerivedRecapPlannerExecutorTests {
         var ready = Assert.IsType<
             DerivedRecapOperationPreparationResult.Ready
         >(await DerivedRecapOperationPreparer.PrepareExactBuildingAsync(
-            fixture.Engine,
+            fixture.Engine.ReadView,
             fixture.Store,
             capability,
             admission
@@ -1760,7 +2198,7 @@ public sealed class DerivedRecapPlannerExecutorTests {
         var beyond = Assert.IsType<
             DerivedRecapExecutionResult.BeyondPrefix
         >(await new DerivedRecapPreparedExecutor(
-            fixture.Engine,
+            fixture.Engine.ReadView,
             fixture.Store,
             ready.Authority,
             new RecapBlockMaintainerRegistry([maintainer])
@@ -1776,11 +2214,14 @@ public sealed class DerivedRecapPlannerExecutorTests {
     }
 
     [Fact]
-    public async Task ResumeInlinePriorAt514IsBeyondBeforePayloadOrComponents() {
+    public async Task ResumeInlinePriorBeyondV4ProofPrefixStopsBeforePayloadOrComponents() {
         int componentReads = 0;
         int mutations = 0;
+        RecapProtocolHardCaps hardCaps = RecapProtocolHardCaps.V4;
+        int proofPrefixHeaderCount =
+            RecapFrozenPlanBarrier.ProofPrefixHeaderCount(hardCaps);
         using TestFixture fixture = await TestFixture.CreateAsync(
-            historyPairs: 259,
+            historyPairs: (proofPrefixHeaderCount + 1) / 2 + 2,
             hooks: new RecapStoreTestHooks(
                 BeforeAtomicFileReplace: _ => mutations++,
                 BeforeBuildingComponentRead: () => componentReads++
@@ -1788,22 +2229,22 @@ public sealed class DerivedRecapPlannerExecutorTests {
         );
         _ = fixture.Engine.AppendRuntimeConfigSetup(
             new SessionRuntimeConfiguration(
-                "model-inline-514",
-                "surface-inline-514",
+                "model-inline-beyond-v4",
+                "surface-inline-beyond-v4",
                 SessionJournalDefaults.Schema,
                 new(0)
             )
         );
         _ = fixture.Engine.AppendSystemPromptSetup(
-            "system-inline-514"
+            "system-inline-beyond-v4"
         );
-        EventAddress start = fixture.AppendPair("inline-514-start");
+        EventAddress start = fixture.AppendPair("inline-beyond-v4-start");
         EventAddress admission =
-            fixture.AppendPair("inline-514-admission");
+            fixture.AppendPair("inline-beyond-v4-admission");
         SessionCurrentLineageSnapshot full =
             fixture.Engine.ReadCurrentLineageHeaders();
-        EventAddress inlineAt514 = full.HeadToRoot[
-            RecapFrozenPlanBarrier.MaxHeaderCount
+        EventAddress inlineBeyond = full.HeadToRoot[
+            proofPrefixHeaderCount
         ].Address;
         var plan = new MaintainRecapBlockPlan(
             fixture.SelfId,
@@ -1825,7 +2266,7 @@ public sealed class DerivedRecapPlannerExecutorTests {
                 )
             )],
             new InlineRecapPriorContext(
-                inlineAt514,
+                inlineBeyond,
                 ContextHeaderSnapshot.Empty
             ),
             TestFixture.MaxContent
@@ -1843,8 +2284,11 @@ public sealed class DerivedRecapPlannerExecutorTests {
 
         var beyond = Assert.IsType<
             DerivedRecapExecutionResult.BeyondPrefix
-        >(await fixture.CreateBuildingExecutor([maintainer])
-            .ResumeAsync(admission));
+        >(await new DerivedRecapBuildingExecutor(
+            fixture.Engine.ReadView,
+            fixture.Store,
+            new RecapBlockMaintainerRegistry([maintainer])
+        ).ResumeAsync(admission));
 
         SessionJournalReadDiagnostics after =
             fixture.Engine.CaptureReadDiagnostics();
@@ -1852,9 +2296,9 @@ public sealed class DerivedRecapPlannerExecutorTests {
             DerivedRecapBeyondPrefixStage.ResumePendingWindow,
             beyond.Stage
         );
-        Assert.Equal(inlineAt514, beyond.Evidence.RequiredAnchor);
+        Assert.Equal(inlineBeyond, beyond.Evidence.RequiredAnchor);
         Assert.Equal(
-            inlineAt514,
+            inlineBeyond,
             beyond.Evidence.NextAddress
         );
         Assert.Equal(
@@ -1988,6 +2432,47 @@ public sealed class DerivedRecapPlannerExecutorTests {
         Assert.Equal(0, maintainer.CallCount);
         Assert.IsType<BuildingReadResult.Available>(
             await fixture.Store.ReadBuildingAsync(admission)
+        );
+    }
+
+    [Fact]
+    public async Task ResumeMaintainerRawMutationIsRetryableAndNotPublished() {
+        using TestFixture fixture = await TestFixture.CreateAsync(
+            historyPairs: 1
+        );
+        EventAddress admission = fixture.Engine.ReadCurrentHead()!.Value;
+        MaintainRecapBlockPlan plan = fixture.CreateEmptyPlan(
+            fixture.SelfId,
+            fixture.SelfTarget,
+            "self-maintainer",
+            fixture.ReplayStart(),
+            [admission]
+        );
+        await fixture.CreateBuildingAsync(admission, [plan]);
+        var maintainer = new ScriptedMaintainer(
+            "self-maintainer",
+            fixture.SelfTarget,
+            static (_, _) => "completed-before-race",
+            beforeReturn: () => fixture.Engine.AppendObservation(
+                "host-held writer race"
+            )
+        );
+
+        var result = Assert.IsType<DerivedRecapExecutionResult.Retryable>(
+            await fixture.CreateBuildingExecutor([maintainer])
+                .ResumeAsync(admission)
+        );
+
+        Assert.Equal(
+            DerivedRecapExecutionDefectCodes.RawHeadChanged,
+            result.Code
+        );
+        Assert.Equal(1, maintainer.CallCount);
+        Assert.IsType<BuildingReadResult.Available>(
+            await fixture.Store.ReadBuildingAsync(admission)
+        );
+        Assert.IsType<PublishedPlanAtAnchorReadResult.Missing>(
+            await fixture.Store.ReadPublishedPlanAtAnchorAsync(admission)
         );
     }
 
@@ -2580,7 +3065,7 @@ public sealed class DerivedRecapPlannerExecutorTests {
         );
         _ = await new DerivedRecapPublisher(
                 fixture.Store,
-                fixture.Engine
+                fixture.Engine.ReadView
             )
             .PublishAsync(newAdmission);
         var maintainer = new ScriptedMaintainer(
@@ -2730,18 +3215,21 @@ public sealed class DerivedRecapPlannerExecutorTests {
             RecapBlockMaintenanceRequest,
             string
         > _maintain;
+        private readonly Action? _beforeReturn;
 
         public ScriptedMaintainer(
             string id,
             ContextHeaderBlockPath target,
             Func<int, RecapBlockMaintenanceRequest, string> maintain,
             string capabilityFingerprint =
-                RecapPlannerTestIdentity.CapabilityFingerprint
+                RecapPlannerTestIdentity.CapabilityFingerprint,
+            Action? beforeReturn = null
         ) {
             Id = id;
             Target = target;
             CapabilityFingerprint = capabilityFingerprint;
             _maintain = maintain;
+            _beforeReturn = beforeReturn;
         }
 
         public string Id { get; }
@@ -2758,6 +3246,7 @@ public sealed class DerivedRecapPlannerExecutorTests {
             CallCount++;
             OldBlocks.Add(request.OldBlock.Text);
             string content = _maintain(CallCount, request);
+            _beforeReturn?.Invoke();
             return ValueTask.FromResult(
                 new RecapBlockMaintenanceResult(
                     Id,
@@ -2953,7 +3442,7 @@ public sealed class DerivedRecapPlannerExecutorTests {
         ) {
             estimator ??= new TestHistoryUnitLoadEstimator();
             return new(
-            Engine,
+            Engine.ReadView,
             Store,
             new RecapPlanningInputs(
                 catalog ?? [
@@ -3000,7 +3489,7 @@ public sealed class DerivedRecapPlannerExecutorTests {
             int maxMaintainerCallsPerBuild = 8,
             DerivedRecapBuildingExecutorTestHooks? executorHooks = null
         ) => new(
-            Engine,
+            Engine.ReadView,
             Store,
             new RecapBlockMaintainerRegistry(maintainers),
             TestHardCaps(

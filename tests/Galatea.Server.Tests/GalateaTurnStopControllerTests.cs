@@ -126,7 +126,7 @@ public sealed class GalateaTurnStopControllerTests : IDisposable {
         );
 
         SessionContextLifecycleResult result = await gate.PrepareAsync(
-            engine,
+            engine.ReadView,
             Request(engine, pendingObservation: "pending"),
             CancellationToken.None
         );
@@ -157,7 +157,7 @@ public sealed class GalateaTurnStopControllerTests : IDisposable {
         );
 
         SessionContextLifecycleResult result = await gate.PrepareAsync(
-            engine,
+            engine.ReadView,
             Request(engine, pendingObservation: "pending"),
             CancellationToken.None
         );
@@ -184,7 +184,7 @@ public sealed class GalateaTurnStopControllerTests : IDisposable {
 
         await Assert.ThrowsAsync<InvalidOperationException>(
             () => gate.PrepareAsync(
-                engine,
+                engine.ReadView,
                 Request(engine, pendingObservation: "pending"),
                 CancellationToken.None
             ).AsTask()
@@ -213,7 +213,7 @@ public sealed class GalateaTurnStopControllerTests : IDisposable {
 
         await Assert.ThrowsAnyAsync<OperationCanceledException>(
             () => gate.PrepareAsync(
-                engine,
+                engine.ReadView,
                 Request(engine, pendingObservation: "pending"),
                 cancellation.Token
             ).AsTask()
@@ -238,7 +238,7 @@ public sealed class GalateaTurnStopControllerTests : IDisposable {
         );
 
         _ = await gate.PrepareAsync(
-            engine,
+            engine.ReadView,
             Request(engine, pendingObservation: null),
             CancellationToken.None
         );
@@ -268,13 +268,13 @@ public sealed class GalateaTurnStopControllerTests : IDisposable {
         );
 
         _ = await gate.PrepareAsync(
-            engine,
+            engine.ReadView,
             request,
             CancellationToken.None
         );
         controller.Complete();
         _ = await gate.PrepareAsync(
-            engine,
+            engine.ReadView,
             request,
             CancellationToken.None
         );
@@ -315,13 +315,13 @@ public sealed class GalateaTurnStopControllerTests : IDisposable {
         );
 
         _ = await gate.PrepareAsync(
-            engine,
+            engine.ReadView,
             Request(engine, pendingObservation: "pending"),
             CancellationToken.None
         );
         Task<SessionContextLifecycleResult> postAppend = gate
             .PrepareAsync(
-                engine,
+                engine.ReadView,
                 Request(engine, pendingObservation: null),
                 controller.PreDispatchStopToken
             )
@@ -378,7 +378,7 @@ public sealed class GalateaTurnStopControllerTests : IDisposable {
 
     private sealed class StubLifecycle(
         Func<
-            SessionJournalEngine,
+            SessionJournalReadView,
             SessionContextLifecycleRequest,
             CancellationToken,
             ValueTask<SessionContextLifecycleResult>
@@ -389,12 +389,12 @@ public sealed class GalateaTurnStopControllerTests : IDisposable {
         internal int CallCount => Volatile.Read(ref _callCount);
 
         public ValueTask<SessionContextLifecycleResult> PrepareAsync(
-            SessionJournalEngine engine,
+            SessionJournalReadView readView,
             SessionContextLifecycleRequest request,
             CancellationToken cancellationToken
         ) {
             Interlocked.Increment(ref _callCount);
-            return handler(engine, request, cancellationToken);
+            return handler(readView, request, cancellationToken);
         }
     }
 }

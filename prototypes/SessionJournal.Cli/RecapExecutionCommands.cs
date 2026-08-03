@@ -111,7 +111,10 @@ internal static class RecapExecutionCommands {
         DerivedRecapLineageView? lineageView =
             operation == "run"
                 ? null
-                : DerivedRecapLineageView.Capture(store, engine);
+                : DerivedRecapLineageView.Capture(
+                    store,
+                    engine.ReadView
+                );
         SJ.SessionCurrentLineagePrefix? lineage =
             lineageView is null
                 ? null
@@ -286,7 +289,7 @@ internal static class RecapExecutionCommands {
         int exitCode;
         if (operation == "restore") {
             var executor = new DerivedRecapRestoreExecutor(
-                engine,
+                engine.ReadView,
                 store,
                 maintainers
             );
@@ -308,7 +311,7 @@ internal static class RecapExecutionCommands {
         }
         else if (operation == "resume") {
             var executor = new DerivedRecapPreparedExecutor(
-                engine,
+                engine.ReadView,
                 store,
                 executionAuthority!,
                 maintainers
@@ -330,7 +333,7 @@ internal static class RecapExecutionCommands {
         }
         else {
             var executor = new DerivedRecapPreparedExecutor(
-                engine,
+                engine.ReadView,
                 store,
                 executionAuthority!,
                 maintainers

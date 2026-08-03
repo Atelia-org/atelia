@@ -352,7 +352,7 @@ public sealed class ProgramRecapExecutionCommandTests : IDisposable {
                     PublishedRestoreInspectionResult.Available
                 >(
                     await DerivedRecapLineageView
-                        .Capture(store, engine)
+                        .Capture(store, engine.ReadView)
                         .InspectPublishedForOfflineDiagnosticsAsync(
                             publishedAnchor
                         )
@@ -544,9 +544,16 @@ public sealed class ProgramRecapExecutionCommandTests : IDisposable {
             damagedBlock,
             "component must remain unread when admission is beyond prefix"
         );
+        const int proofPrefixHeaderCount = 512 + 513;
+        const int tailPairsBeyondProofPrefix =
+            (proofPrefixHeaderCount + 1) / 2;
         EventAddress currentHead;
         using (var engine = SJ.SessionJournalEngine.Open(fixture.Path)) {
-            for (int index = 0; index < 257; index++) {
+            for (
+                int index = 0;
+                index < tailPairsBeyondProofPrefix;
+                index++
+            ) {
                 engine.AppendObservation($"tail observation {index}");
                 _ = engine.AppendImportedAgentAction(
                     new ActionMessage([
@@ -605,7 +612,10 @@ public sealed class ProgramRecapExecutionCommandTests : IDisposable {
             anchor,
             beyond.GetProperty("requiredAnchor").GetString()
         );
-        Assert.Equal(513, beyond.GetProperty("headerCount").GetInt32());
+        Assert.Equal(
+            proofPrefixHeaderCount,
+            beyond.GetProperty("headerCount").GetInt32()
+        );
         Assert.False(string.IsNullOrWhiteSpace(
             beyond.GetProperty("capturedHead").GetString()
         ));
@@ -1016,7 +1026,10 @@ public sealed class ProgramRecapExecutionCommandTests : IDisposable {
                 engine.BranchRefId
             );
             Assert.IsType<CreateBuildingResult.Created>(
-                await new DerivedRecapBuildingInstaller(store, engine)
+                await new DerivedRecapBuildingInstaller(
+                    store,
+                    engine.ReadView
+                )
                     .InstallAsync(
                         DerivedRecapCodec.CreateManifest(
                             engine.BranchRefId,
@@ -1174,7 +1187,7 @@ public sealed class ProgramRecapExecutionCommandTests : IDisposable {
         PublishedRestoreInspectionResult.Available inspection =
             Assert.IsType<PublishedRestoreInspectionResult.Available>(
                 await DerivedRecapLineageView
-                    .Capture(store, engine)
+                    .Capture(store, engine.ReadView)
                     .InspectPublishedForOfflineDiagnosticsAsync(
                         SJ.EventAddressTextCodec.Parse(anchor)
                     )

@@ -28,7 +28,10 @@ public sealed class DerivedRecapCrashRecoveryTests {
             );
             DerivedRecapSelection selection =
                 await store.SelectNthPreviousAsync(
-                    DerivedRecapLineageView.Capture(store, engine),
+                    DerivedRecapLineageView.Capture(
+                        store,
+                        engine.ReadView
+                    ),
                     0
                 );
             if (rootCommitted) {
@@ -70,7 +73,10 @@ public sealed class DerivedRecapCrashRecoveryTests {
                 engine.BranchRefId
             );
             DerivedRecapLineageView lineage =
-                DerivedRecapLineageView.Capture(store, engine);
+                DerivedRecapLineageView.Capture(
+                    store,
+                    engine.ReadView
+                );
             DerivedRecapSelection selection =
                 await store.SelectNthPreviousAsync(lineage, 0);
             if (published) {
@@ -165,14 +171,14 @@ public sealed class DerivedRecapCrashRecoveryTests {
             );
             var publisher = new DerivedRecapPublisher(
                 reopenedStore,
-                reopened
+                reopened.ReadView
             );
             _ = await publisher.PublishAsync(anchor);
             Assert.IsType<DerivedRecapSelection.Selected>(
                 await reopenedStore.SelectNthPreviousAsync(
                     DerivedRecapLineageView.Capture(
                         reopenedStore,
-                        reopened
+                        reopened.ReadView
                     ),
                     0
                 )
@@ -216,7 +222,7 @@ public sealed class DerivedRecapCrashRecoveryTests {
                 await reopenedStore.SelectNthPreviousAsync(
                     DerivedRecapLineageView.Capture(
                         reopenedStore,
-                        reopened
+                        reopened.ReadView
                     ),
                     0
                 );
@@ -290,7 +296,10 @@ public sealed class DerivedRecapCrashRecoveryTests {
             }
             Assert.IsType<DerivedRecapSelection.EmptyLineage>(
                 await store.SelectNthPreviousAsync(
-                    DerivedRecapLineageView.Capture(store, engine),
+                    DerivedRecapLineageView.Capture(
+                        store,
+                        engine.ReadView
+                    ),
                     0
                 )
             );
@@ -385,7 +394,10 @@ public sealed class DerivedRecapCrashRecoveryTests {
                     engine.BranchRefId
                 );
                 DerivedRecapLineageView lineage =
-                    DerivedRecapLineageView.Capture(store, engine);
+                    DerivedRecapLineageView.Capture(
+                        store,
+                        engine.ReadView
+                    );
                 anchor = lineage.CapturedHead;
                 DerivedRecapSelection.Selected selected =
                     Assert.IsType<
@@ -598,7 +610,7 @@ public sealed class DerivedRecapCrashRecoveryTests {
         );
         EventAddress anchor =
             engine.ReadCurrentLineageHeaders().CapturedHead;
-        _ = await new DerivedRecapPublisher(store, engine)
+        _ = await new DerivedRecapPublisher(store, engine.ReadView)
             .PublishAsync(anchor);
         string publishedPath =
             store.GetPublishedPathForTest(anchor);
@@ -622,7 +634,7 @@ public sealed class DerivedRecapCrashRecoveryTests {
             DerivedRecapSelection.Selected
         >(
             await store.SelectNthPreviousAsync(
-                DerivedRecapLineageView.Capture(store, engine),
+                DerivedRecapLineageView.Capture(store, engine.ReadView),
                 0
             )
         );
@@ -649,7 +661,10 @@ public sealed class DerivedRecapCrashRecoveryTests {
         var selected =
             Assert.IsType<DerivedRecapSelection.Selected>(
                 await store.SelectNthPreviousAsync(
-                    DerivedRecapLineageView.Capture(store, engine),
+                    DerivedRecapLineageView.Capture(
+                        store,
+                        engine.ReadView
+                    ),
                     0
                 )
             );

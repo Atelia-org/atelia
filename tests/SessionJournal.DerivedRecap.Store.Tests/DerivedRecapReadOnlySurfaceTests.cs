@@ -26,7 +26,7 @@ public sealed class DerivedRecapReadOnlySurfaceTests {
 
             await AssertUnavailableAcrossReadSurfaceAsync(
                 store,
-                DerivedRecapLineageView.Capture(store, engine)
+                DerivedRecapLineageView.Capture(store, engine.ReadView)
             );
 
             Assert.False(Directory.Exists(derivedRoot));
@@ -140,6 +140,70 @@ public sealed class DerivedRecapReadOnlySurfaceTests {
         );
 
         Assert.Equal(before, SnapshotTree(v4Root));
+    }
+
+    [Fact]
+    public async Task CachedLineageViewFailsFastAfterOwnerDispose() {
+        int publicationReads = 0;
+        using RecapStoreFixture fixture =
+            await RecapStoreFixture.CreateAsync(
+                new RecapStoreTestHooks(
+                    BeforeRestorePublicationRead: () =>
+                        publicationReads++
+                )
+            );
+        DerivedRecapLineageView initial = fixture.Lineage();
+        EventAddress anchor = initial.CapturedHead;
+        _ = await fixture.PublishAsync(
+            anchor,
+            initial.CurrentPrefix.HeadToOldest[^2].Address
+        );
+        DerivedRecapLineageView lineage = fixture.Lineage();
+        var restorePlan = Assert.IsType<
+            PublishedPlanAtAnchorReadResult.Available
+        >(await fixture.Store.ReadPublishedPlanAtAnchorAsync(anchor));
+        Assert.IsType<DerivedRecapSelection.Selected>(
+            await lineage.SelectNthPreviousAsync(0)
+        );
+        Assert.IsType<PublishedRestoreInspectionResult.Available>(
+            await lineage.InspectPublishedForOfflineDiagnosticsAsync(
+                anchor
+            )
+        );
+        _ = lineage.ResolveAdmission(anchor, CancellationToken.None);
+        publicationReads = 0;
+
+        fixture.CloseEngine();
+
+        Assert.Throws<ObjectDisposedException>(() => {
+            _ = lineage.Prefix;
+        });
+        Assert.Throws<ObjectDisposedException>(() => {
+            _ = lineage.CapturedHead;
+        });
+        Assert.Throws<ObjectDisposedException>(() => {
+            _ = lineage.ResolveAdmission(
+                anchor,
+                CancellationToken.None
+            );
+        });
+        await Assert.ThrowsAsync<ObjectDisposedException>(async () =>
+            await lineage.SelectNthPreviousAsync(0)
+        );
+        await Assert.ThrowsAsync<ObjectDisposedException>(async () =>
+            await lineage.SelectCurrentBuildingAsync()
+        );
+        await Assert.ThrowsAsync<ObjectDisposedException>(async () =>
+            await lineage.InspectPublishedForOfflineDiagnosticsAsync(
+                anchor
+            )
+        );
+        await Assert.ThrowsAsync<ObjectDisposedException>(async () =>
+            await lineage.InspectPublishedForRestoreAsync(
+                restorePlan.Authority
+            )
+        );
+        Assert.Equal(0, publicationReads);
     }
 
     [Fact]

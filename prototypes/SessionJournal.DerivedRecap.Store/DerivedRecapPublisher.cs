@@ -3,47 +3,90 @@ using Atelia.EventJournal;
 namespace Atelia.SessionJournal.DerivedRecap.Store;
 
 /// <summary>
-/// Engine-bound publication authority for one exact Building plan. Public
-/// callers present the metadata-issued BuildingPlanHandle; raw lineage and
-/// the final current-head check always come from the bound engine.
+/// Engine-lifetime-bound publication authority for one exact Building plan.
+/// Public callers present the metadata-issued BuildingPlanHandle; raw lineage
+/// and the final current-head check always come from the bound read view.
 /// </summary>
 public sealed class DerivedRecapPublisher {
     private readonly DerivedRecapStore _store;
-    private readonly SessionJournalEngine _engine;
+    private readonly SessionJournalReadView _readView;
 
     public DerivedRecapPublisher(
         DerivedRecapStore store,
-        SessionJournalEngine engine
+        SessionJournalReadView readView
     ) {
         _store = store ?? throw new ArgumentNullException(nameof(store));
-        _engine = engine
-            ?? throw new ArgumentNullException(nameof(engine));
-        RequireSameBinding(store, engine);
+        _readView = readView
+            ?? throw new ArgumentNullException(nameof(readView));
+        RequireSameBinding(store, readView);
+    }
+
+    public PreparedRecapPublication Prepare(
+        BuildingPlanHandle handle,
+        EventAddress expectedRawHead,
+        CancellationToken cancellationToken = default
+    ) {
+        ArgumentNullException.ThrowIfNull(handle);
+        DerivedRecapLineageView lineage =
+            DerivedRecapLineageView.Capture(
+                _store,
+                _readView,
+                cancellationToken
+            );
+        RequireCurrentHead(expectedRawHead, lineage.CapturedHead);
+        _ = lineage.ResolveAdmission(
+            handle.Descriptor.SetAdmissionAnchor,
+            cancellationToken
+        );
+        RequireCurrentHead(expectedRawHead);
+        return new PreparedRecapPublication(
+            this,
+            handle,
+            lineage,
+            expectedRawHead
+        );
+    }
+
+    internal ValueTask<RecapPublishability> CanPublishAsync(
+        BuildingPlanHandle handle,
+        CancellationToken cancellationToken = default
+    ) {
+        ArgumentNullException.ThrowIfNull(handle);
+        DerivedRecapLineageView lineage =
+            DerivedRecapLineageView.Capture(
+                _store,
+                _readView,
+                cancellationToken
+            );
+        return CanPublishAsync(
+            CreatePrepared(
+                handle,
+                lineage,
+                lineage.CapturedHead,
+                cancellationToken
+            ),
+            cancellationToken
+        );
     }
 
     public async ValueTask<RecapPublishability> CanPublishAsync(
-        BuildingPlanHandle handle,
+        PreparedRecapPublication publication,
         CancellationToken cancellationToken = default
     ) {
-        ArgumentNullException.ThrowIfNull(handle);
-        DerivedRecapLineageView lineage =
-            DerivedRecapLineageView.Capture(
-                _store,
-                _engine,
-                cancellationToken
-            );
+        ValidatePrepared(publication);
+        RequireCurrentHead(publication.ExpectedRawHead);
         RecapPublishability result =
             await _store.DiagnosePublishabilityAsync(
-                    handle,
-                    lineage,
+                    publication.Handle,
+                    publication.Lineage,
                     cancellationToken
                 )
                 .ConfigureAwait(false);
-        RequireCurrentHead(lineage.CapturedHead);
+        RequireCurrentHead(publication.ExpectedRawHead);
         return result;
     }
 
-    public ValueTask<PublishRecapResult> PublishAsync(
+    internal ValueTask<PublishRecapResult> PublishAsync(
         BuildingPlanHandle handle,
         CancellationToken cancellationToken = default
     ) {
@@ -51,13 +94,31 @@ public sealed class DerivedRecapPublisher {
         DerivedRecapLineageView lineage =
             DerivedRecapLineageView.Capture(
                 _store,
-                _engine,
+                _readView,
                 cancellationToken
             );
+        return PublishAsync(
+            CreatePrepared(
+                handle,
+                lineage,
+                lineage.CapturedHead,
+                cancellationToken
+            ),
+            cancellationToken
+        );
+    }
+
+    public ValueTask<PublishRecapResult> PublishAsync(
+        PreparedRecapPublication publication,
+        CancellationToken cancellationToken = default
+    ) {
+        ValidatePrepared(publication);
+        RequireCurrentHead(publication.ExpectedRawHead);
         return _store.PublishTrustedAsync(
-            handle,
-            lineage,
-            () => _engine.ReadCurrentHead(),
+            publication.Handle,
+            publication.Lineage,
+            publication.ExpectedRawHead,
+            () => _readView.ReadCurrentHead(),
             cancellationToken
         );
     }
@@ -154,35 +215,73 @@ public sealed class DerivedRecapPublisher {
         or System.Security.SecurityException
         or NotSupportedException;
 
-    private void RequireCurrentHead(EventAddress expected) {
-        EventAddress? observed = _engine.ReadCurrentHead();
-        if (observed != expected) {
-            throw new InvalidOperationException(
-                "Raw SessionJournal head changed during Recap "
-                + $"diagnosis. Expected '{expected}', observed "
-                + $"'{observed}'."
+    private PreparedRecapPublication CreatePrepared(
+        BuildingPlanHandle handle,
+        DerivedRecapLineageView lineage,
+        EventAddress expectedRawHead,
+        CancellationToken cancellationToken
+    ) {
+        _ = lineage.ResolveAdmission(
+            handle.Descriptor.SetAdmissionAnchor,
+            cancellationToken
+        );
+        return new PreparedRecapPublication(
+            this,
+            handle,
+            lineage,
+            expectedRawHead
+        );
+    }
+
+    private void ValidatePrepared(PreparedRecapPublication publication) {
+        ArgumentNullException.ThrowIfNull(publication);
+        if (!ReferenceEquals(publication.Owner, this)) {
+            throw new ArgumentException(
+                "Prepared publication belongs to another Publisher.",
+                nameof(publication)
             );
         }
     }
 
+    private void RequireCurrentHead(EventAddress expected) {
+        EventAddress? observed = _readView.ReadCurrentHead();
+        RequireCurrentHead(expected, observed);
+    }
+
+    private static void RequireCurrentHead(
+        EventAddress expected,
+        EventAddress? observed
+    ) {
+        if (observed == expected) {
+            return;
+        }
+        throw new InvalidOperationException(
+            "Raw SessionJournal head changed during Recap publication "
+            + $"preparation or diagnosis. Expected '{expected}', observed "
+            + $"'{observed}'."
+        );
+    }
+
     internal static void RequireSameBinding(
         DerivedRecapStore store,
-        SessionJournalEngine engine
+        SessionJournalReadView readView
     ) {
         string storePath = Path.TrimEndingDirectorySeparator(
             Path.GetFullPath(store.SessionRepositoryPath)
         );
-        string enginePath = Path.TrimEndingDirectorySeparator(
-            Path.GetFullPath(engine.Path)
+        string readViewPath = Path.TrimEndingDirectorySeparator(
+            Path.GetFullPath(readView.Path)
         );
         if (!string.Equals(
                 storePath,
-                enginePath,
-                StringComparison.Ordinal
+                readViewPath,
+                OperatingSystem.IsWindows()
+                    ? StringComparison.OrdinalIgnoreCase
+                    : StringComparison.Ordinal
             )
-            || store.RefId != engine.BranchRefId) {
+            || store.RefId != readView.BranchRefId) {
             throw new ArgumentException(
-                "DerivedRecap Store and SessionJournalEngine must bind "
+                "DerivedRecap Store and SessionJournalReadView must bind "
                 + "the same repository and RefId."
             );
         }

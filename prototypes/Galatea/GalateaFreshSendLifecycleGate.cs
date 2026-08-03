@@ -22,15 +22,15 @@ internal sealed class GalateaFreshSendLifecycleGate
     }
 
     public async ValueTask<SessionContextLifecycleResult> PrepareAsync(
-        SessionJournalEngine engine,
+        SessionJournalReadView readView,
         SessionContextLifecycleRequest request,
         CancellationToken cancellationToken
     ) {
-        ArgumentNullException.ThrowIfNull(engine);
+        ArgumentNullException.ThrowIfNull(readView);
         ArgumentNullException.ThrowIfNull(request);
 
         SessionContextLifecycleResult result = await _inner
-            .PrepareAsync(engine, request, cancellationToken)
+            .PrepareAsync(readView, request, cancellationToken)
             .ConfigureAwait(false);
         ArgumentNullException.ThrowIfNull(result);
 
@@ -49,4 +49,3 @@ internal sealed class GalateaFreshSendLifecycleGate
         return result;
     }
 }
-

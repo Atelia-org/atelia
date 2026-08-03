@@ -239,7 +239,7 @@ public sealed class DerivedRecapCurrentLineageBuildingTests {
         );
         var installer = new DerivedRecapBuildingInstaller(
             fixture.Store,
-            fixture.Engine
+            fixture.ReadView
         );
 
         var conflict =

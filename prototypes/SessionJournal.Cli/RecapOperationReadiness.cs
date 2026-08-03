@@ -72,7 +72,7 @@ internal static class RecapOperationReadiness {
         DerivedRecapOperationPreparationResult prepared =
             await DerivedRecapOperationPreparer
                 .PrepareExactBuildingAsync(
-                    engine,
+                    engine.ReadView,
                     store,
                     planningCapabilities,
                     setAdmissionAnchor,
@@ -122,7 +122,7 @@ internal static class RecapOperationReadiness {
             );
         DerivedRecapOperationPreparationResult prepared =
             await DerivedRecapOperationPreparer.PrepareAsync(
-                    engine,
+                    engine.ReadView,
                     store,
                     planningCapabilities,
                     source,

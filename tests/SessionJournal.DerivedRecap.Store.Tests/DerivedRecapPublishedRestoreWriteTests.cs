@@ -69,7 +69,7 @@ public sealed class DerivedRecapPublishedRestoreWriteTests {
         Assert.IsType<PublishedEnvelopeCommitResult.Unavailable>(
             await new DerivedRecapRestorer(
                     fixture.Store,
-                    fixture.Engine
+                    fixture.ReadView
                 )
                 .CommitEnvelopeAsync(
                     CommitAuthority(fixture, inspection),
@@ -193,7 +193,7 @@ public sealed class DerivedRecapPublishedRestoreWriteTests {
         Assert.IsType<PublishedEnvelopeCommitResult.Unavailable>(
             await new DerivedRecapRestorer(
                     fixture.Store,
-                    fixture.Engine
+                    fixture.ReadView
                 )
                 .CommitEnvelopeAsync(
                     CommitAuthority(fixture, inspection),
@@ -222,7 +222,7 @@ public sealed class DerivedRecapPublishedRestoreWriteTests {
         >(
             await new DerivedRecapRestorer(
                     fixture.Store,
-                    fixture.Engine
+                    fixture.ReadView
                 )
                 .CommitEnvelopeAsync(
                     CommitAuthority(fixture, committedInspection),
@@ -310,7 +310,7 @@ public sealed class DerivedRecapPublishedRestoreWriteTests {
             Assert.IsType<PublishedEnvelopeCommitResult.Unavailable>(
                 await new DerivedRecapRestorer(
                         fixture.Store,
-                        fixture.Engine
+                        fixture.ReadView
                     )
                     .CommitEnvelopeAsync(
                         CommitAuthority(fixture, damaged),
@@ -552,7 +552,7 @@ public sealed class DerivedRecapPublishedRestoreWriteTests {
         );
         var restorer = new DerivedRecapRestorer(
             fixture.Store,
-            fixture.Engine
+            fixture.ReadView
         );
         var stale =
             Assert.IsType<PublishedEnvelopeCommitResult.Stale>(
@@ -650,7 +650,7 @@ public sealed class DerivedRecapPublishedRestoreWriteTests {
         );
         var restorer = new DerivedRecapRestorer(
             fixture.Store,
-            fixture.Engine
+            fixture.ReadView
         );
 
         var committed = Assert.IsType<
@@ -703,7 +703,7 @@ public sealed class DerivedRecapPublishedRestoreWriteTests {
         );
         var restorer = new DerivedRecapRestorer(
             fixture.Store,
-            fixture.Engine
+            fixture.ReadView
         );
 
         var unavailable = Assert.IsType<
@@ -771,7 +771,7 @@ public sealed class DerivedRecapPublishedRestoreWriteTests {
         atomicWrites = 0;
         var restorer = new DerivedRecapRestorer(
             fixture.Store,
-            fixture.Engine
+            fixture.ReadView
         );
 
         var already = Assert.IsType<
@@ -841,7 +841,7 @@ public sealed class DerivedRecapPublishedRestoreWriteTests {
         byte[] before = await File.ReadAllBytesAsync(publicationPath);
         var restorer = new DerivedRecapRestorer(
             fixture.Store,
-            fixture.Engine
+            fixture.ReadView
         );
 
         var stale =
@@ -927,7 +927,7 @@ public sealed class DerivedRecapPublishedRestoreWriteTests {
         injectRace = true;
         var restorer = new DerivedRecapRestorer(
             fixture.Store,
-            fixture.Engine
+            fixture.ReadView
         );
 
         var stale =

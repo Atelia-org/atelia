@@ -61,7 +61,7 @@ public sealed class DerivedRecapAuthorityBoundaryTests {
             Assert.IsType<CreateBuildingResult.StoreUnavailable>(
                 await new DerivedRecapBuildingInstaller(
                         fixture.Store,
-                        fixture.Engine
+                        fixture.ReadView
                     )
                     .InstallAsync(manifest, anchor)
             );
@@ -183,7 +183,7 @@ public sealed class DerivedRecapAuthorityBoundaryTests {
         );
         var restorer = new DerivedRecapRestorer(
             fixture.Store,
-            fixture.Engine
+            fixture.ReadView
         );
         AssertStoreUnavailable(
             Assert.IsType<PublishedEnvelopeCommitResult.Unavailable>(
@@ -247,7 +247,7 @@ public sealed class DerivedRecapAuthorityBoundaryTests {
         Assert.IsType<CreateBuildingResult.StoreUnavailable>(
             await new DerivedRecapBuildingInstaller(
                     fixture.Store,
-                    fixture.Engine
+                    fixture.ReadView
                 )
                 .InstallAsync(manifest, anchor)
         );
@@ -294,7 +294,7 @@ public sealed class DerivedRecapAuthorityBoundaryTests {
         await Assert.ThrowsAnyAsync<OperationCanceledException>(
             async () => await new DerivedRecapBuildingInstaller(
                     fixture.Store,
-                    fixture.Engine
+                    fixture.ReadView
                 )
                 .InstallAsync(
                     manifest,
@@ -424,11 +424,57 @@ public sealed class DerivedRecapAuthorityBoundaryTests {
         AssertNoExternallyCallableConstructor(
             typeof(PublishedEnvelopeCommitAuthority)
         );
+        AssertNoExternallyCallableConstructor(
+            typeof(PreparedRecapPublication)
+        );
         Assert.DoesNotContain(
             typeof(PublishedEnvelopeCommitResult).GetNestedTypes(
                 BindingFlags.Public
             ),
             static type => type.Name == "BeyondPrefix"
+        );
+    }
+
+    [Fact]
+    public void ProductionReadDependenciesAcceptReadViewNotWritableEngine() {
+        Type[] facadeTypes = [
+            typeof(DerivedRecapContextCandidateSource),
+            typeof(DerivedRecapBuildingInstaller),
+            typeof(DerivedRecapPublisher),
+            typeof(DerivedRecapRestorer)
+        ];
+        foreach (Type facadeType in facadeTypes) {
+            ConstructorInfo constructor = Assert.Single(
+                facadeType.GetConstructors()
+            );
+            Assert.Contains(
+                constructor.GetParameters(),
+                static parameter => parameter.ParameterType
+                    == typeof(SessionJournalReadView)
+            );
+            Assert.DoesNotContain(
+                constructor.GetParameters(),
+                static parameter => parameter.ParameterType
+                    == typeof(SessionJournalEngine)
+            );
+        }
+
+        MethodInfo capture = Assert.Single(
+            typeof(DerivedRecapLineageView).GetMethods(
+                BindingFlags.Public | BindingFlags.Static
+            ),
+            static method => method.Name
+                == nameof(DerivedRecapLineageView.Capture)
+        );
+        Assert.Contains(
+            capture.GetParameters(),
+            static parameter => parameter.ParameterType
+                == typeof(SessionJournalReadView)
+        );
+        Assert.DoesNotContain(
+            capture.GetParameters(),
+            static parameter => parameter.ParameterType
+                == typeof(SessionJournalEngine)
         );
     }
 
@@ -564,7 +610,7 @@ public sealed class DerivedRecapAuthorityBoundaryTests {
         var beyondResult = Assert.IsType<CreateBuildingResult.BeyondPrefix>(
             await new DerivedRecapBuildingInstaller(
                     fixture.Store,
-                    fixture.Engine
+                    fixture.ReadView
                 )
                 .InstallAsync(manifest, lineage.CapturedHead)
         );
@@ -727,7 +773,7 @@ public sealed class DerivedRecapAuthorityBoundaryTests {
         Assert.Throws<ArgumentException>(() =>
             DerivedRecapLineageView.Capture(
                 first.Store,
-                second.Engine
+                second.ReadView
             )
         );
 
@@ -741,7 +787,7 @@ public sealed class DerivedRecapAuthorityBoundaryTests {
         Assert.Throws<ArgumentException>(() =>
             DerivedRecapLineageView.Capture(
                 mismatchedStore,
-                first.Engine
+                first.ReadView
             )
         );
     }
@@ -840,7 +886,7 @@ public sealed class DerivedRecapAuthorityBoundaryTests {
             Assert.IsType<CreateBuildingResult.InvalidPlan>(
                 await new DerivedRecapBuildingInstaller(
                         fixture.Store,
-                        fixture.Engine
+                        fixture.ReadView
                     )
                     .InstallAsync(manifest, lineage.CapturedHead)
             );
@@ -931,7 +977,7 @@ public sealed class DerivedRecapAuthorityBoundaryTests {
         Assert.IsType<CreateBuildingResult.Created>(
             await new DerivedRecapBuildingInstaller(
                     fixture.Store,
-                    fixture.Engine
+                    fixture.ReadView
                 )
                 .InstallAsync(manifest, lineage.CapturedHead)
         );

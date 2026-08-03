@@ -5,8 +5,21 @@ namespace Atelia.SessionJournal.DerivedRecap.Planner;
 
 internal sealed record RecapFrozenPlanBarrierResult(
     IReadOnlyList<RecapFrozenPlanBarrierDefect> Defects,
-    SessionCurrentLineageBeyondPrefix? BeyondPrefix = null
-);
+    SessionCurrentLineageBeyondPrefix? BeyondPrefix = null,
+    IReadOnlyDictionary<
+        (RecapBlockId BlockId, int EndpointIndex),
+        RecapPendingWindowProofAuthority
+    >? ProvenPendingWindows = null
+) {
+    public IReadOnlyDictionary<
+        (RecapBlockId BlockId, int EndpointIndex),
+        RecapPendingWindowProofAuthority
+    > PendingWindowProofs => ProvenPendingWindows
+        ?? new Dictionary<
+            (RecapBlockId BlockId, int EndpointIndex),
+            RecapPendingWindowProofAuthority
+        >();
+}
 
 internal enum RecapFrozenPlanBarrierDefectKind {
     ExecutionLimit,
@@ -27,8 +40,19 @@ internal sealed record RecapFrozenPlanBarrierDefect(
 internal static class RecapFrozenPlanBarrier {
     internal const int MaxHeaderCount = 513;
 
+    internal static int ProofPrefixHeaderCount(
+        RecapProtocolHardCaps hardCaps
+    ) {
+        ArgumentNullException.ThrowIfNull(hardCaps);
+        // The frozen route itself may consume the full per-Build raw budget;
+        // retain one additional direct-setup proof horizon at its start.
+        return checked(
+            hardCaps.MaxRawEventsPerBuild + MaxHeaderCount
+        );
+    }
+
     public static async ValueTask<RecapFrozenPlanBarrierResult> ProveAsync(
-        SessionJournalEngine engine,
+        SessionJournalReadView engine,
         DerivedRecapStore store,
         DerivedRecapSetManifest manifest,
         SessionCurrentLineagePrefix prefix,
@@ -198,6 +222,13 @@ internal static class RecapFrozenPlanBarrier {
         }
 
         var setupProofs = new List<SessionGoverningSetupProof>();
+        IReadOnlyDictionary<
+            (RecapBlockId BlockId, int EndpointIndex),
+            RecapPendingWindowProofAuthority
+        > provenPendingWindows = new Dictionary<
+            (RecapBlockId BlockId, int EndpointIndex),
+            RecapPendingWindowProofAuthority
+        >();
         try {
             var directSetupProofs = new Dictionary<
                 (EventAddress Address,
@@ -258,6 +289,7 @@ internal static class RecapFrozenPlanBarrier {
                 );
             }
             setupProofs.AddRange(routeProof.SetupProofs);
+            provenPendingWindows = routeProof.ProofAuthorities;
 
             RequireExpectedRawHead(engine, expectedRawHead);
             engine.ValidateGoverningSetupPayloads(
@@ -269,7 +301,10 @@ internal static class RecapFrozenPlanBarrier {
         catch (InvalidDataException exception) {
             return FrozenAuthority(exception.Message);
         }
-        return new RecapFrozenPlanBarrierResult([]);
+        return new RecapFrozenPlanBarrierResult(
+            [],
+            ProvenPendingWindows: provenPendingWindows
+        );
     }
 
     private static async ValueTask<SourceBoundaryResolution>
@@ -431,7 +466,7 @@ internal static class RecapFrozenPlanBarrier {
     ) => beyond.Evidence.ContinuationEvidence;
 
     private static void RequireExpectedRawHead(
-        SessionJournalEngine engine,
+        SessionJournalReadView engine,
         EventAddress expectedRawHead
     ) {
         EventAddress observed = engine.ReadCurrentHead()

@@ -202,7 +202,7 @@ public static class DerivedRecapOperationPreparer {
     public static async ValueTask<
         DerivedRecapOperationPreparationResult
     > PrepareExactBuildingAsync(
-        SessionJournalEngine engine,
+        SessionJournalReadView engine,
         DerivedRecapStore store,
         RecapMaintainerCapabilitySnapshot capabilities,
         EventAddress setAdmissionAnchor,
@@ -342,7 +342,7 @@ public static class DerivedRecapOperationPreparer {
 
     public static ValueTask<DerivedRecapOperationPreparationResult>
         PrepareAsync(
-        SessionJournalEngine engine,
+        SessionJournalReadView engine,
         DerivedRecapStore store,
         RecapMaintainerCapabilitySnapshot capabilities,
         IRecapActivePlanningConfigurationSource activeConfiguration,
@@ -974,7 +974,7 @@ public static class DerivedRecapOperationPreparer {
 
     private static void RequireSameBinding(
         DerivedRecapStore store,
-        SessionJournalEngine engine
+        SessionJournalReadView engine
     ) {
         string storePath = Path.TrimEndingDirectorySeparator(
             Path.GetFullPath(store.SessionRepositoryPath)
@@ -992,7 +992,7 @@ public static class DerivedRecapOperationPreparer {
             || store.RefId != engine.BranchRefId) {
             throw new ArgumentException(
                 "DerivedRecap preparer, Store, and "
-                + "SessionJournalEngine must bind the same repository "
+                + "SessionJournalReadView must bind the same repository "
                 + "and RefId."
             );
         }

@@ -1,10 +1,79 @@
 using System.Reflection;
+using System.Security.Cryptography;
 using Atelia.EventJournal;
 using Xunit;
 
 namespace Atelia.SessionJournal.DerivedRecap.Store.Tests;
 
 public sealed class DerivedRecapPublisherTests {
+    [Fact]
+    public async Task PreparedPublicationFailsFastAfterOwnerDisposeBeforeStoreIo() {
+        int publishabilityStoreReads = 0;
+        int sealedCount = 0;
+        using RecapStoreFixture fixture =
+            await RecapStoreFixture.CreateAsync(
+                new RecapStoreTestHooks(
+                    AfterPublicationSealed: () => sealedCount++,
+                    BeforePublishabilityStoreRead: () =>
+                        publishabilityStoreReads++
+                )
+            );
+        DerivedRecapLineageView lineage = fixture.Lineage();
+        EventAddress anchor = lineage.CapturedHead;
+        RecapBlockPlan plan = fixture.CreateMaintainPlan(
+            anchor,
+            lineage.CurrentPrefix.HeadToOldest[^2].Address
+        );
+        _ = Assert.IsType<CreateBuildingResult.Created>(
+            await fixture.Store.CreateBuildingAsync(
+                RecapWireTestFacts.CreateManifest(
+                    fixture.Engine,
+                    anchor,
+                    [plan]
+                )
+            )
+        );
+        await RecapStoreTestDriver.InstallFinalAsync(
+            fixture.Store,
+            anchor,
+            DerivedRecapCodec.CreateBlock(plan, anchor, "ready")
+        );
+        BuildingPlanHandle handle = Assert.IsType<
+            BuildingPlanReadResult.Available
+        >(await fixture.Store.ReadBuildingPlanAsync(anchor)).Snapshot.Handle;
+        PreparedRecapPublication prepared = fixture.Publisher.Prepare(
+            handle,
+            anchor
+        );
+        Assert.IsType<RecapPublishability.Publishable>(
+            await fixture.Publisher.CanPublishAsync(prepared)
+        );
+        publishabilityStoreReads = 0;
+        string buildingPath =
+            fixture.Store.GetBuildingPathForTest(anchor);
+        string publicationPath = Path.Combine(
+            buildingPath,
+            "publication.json"
+        );
+        string[] before = SnapshotTree(buildingPath);
+        Assert.False(File.Exists(publicationPath));
+        Assert.Equal(0, publishabilityStoreReads);
+
+        fixture.CloseEngine();
+
+        await Assert.ThrowsAsync<ObjectDisposedException>(async () =>
+            await fixture.Publisher.CanPublishAsync(prepared)
+        );
+        Assert.Throws<ObjectDisposedException>(() => {
+            _ = fixture.Publisher.PublishAsync(prepared);
+        });
+        Assert.Equal(0, publishabilityStoreReads);
+        Assert.Equal(0, sealedCount);
+        Assert.False(File.Exists(publicationPath));
+        Assert.Equal(before, SnapshotTree(buildingPath));
+        Assert.True(Directory.Exists(buildingPath));
+    }
+
     [Fact]
     public async Task StoreDamageAfterPublishPreflightIsTypedBeforeSeal() {
         int sealedCount = 0;
@@ -172,47 +241,98 @@ public sealed class DerivedRecapPublisherTests {
                 )
         );
 
-        MethodInfo publicPublish = Assert.Single(
+        MethodInfo[] publicPublish =
             typeof(DerivedRecapPublisher).GetMethods(
                 BindingFlags.Instance | BindingFlags.Public
-            ),
-            static method =>
+            ).Where(static method =>
                 method.Name == nameof(
                     DerivedRecapPublisher.PublishAsync
                 )
-        );
-        Assert.DoesNotContain(
-            publicPublish.GetParameters(),
-            static parameter =>
-                parameter.ParameterType
-                    == typeof(SessionCurrentLineageSnapshot)
-        );
+            ).ToArray();
+        MethodInfo publish = Assert.Single(publicPublish);
         Assert.Equal(
-            typeof(BuildingPlanHandle),
-            publicPublish.GetParameters()[0].ParameterType
+            typeof(PreparedRecapPublication),
+            publish.GetParameters()[0].ParameterType
         );
-        MethodInfo publicCanPublish = Assert.Single(
+        MethodInfo[] publicCanPublish =
             typeof(DerivedRecapPublisher).GetMethods(
                 BindingFlags.Instance | BindingFlags.Public
-            ),
-            static method =>
+            ).Where(static method =>
                 method.Name == nameof(
                     DerivedRecapPublisher.CanPublishAsync
                 )
+            ).ToArray();
+        MethodInfo canPublish = Assert.Single(publicCanPublish);
+        Assert.Equal(
+            typeof(PreparedRecapPublication),
+            canPublish.GetParameters()[0].ParameterType
+        );
+        MethodInfo prepare = Assert.Single(
+            typeof(DerivedRecapPublisher).GetMethods(
+                BindingFlags.Instance | BindingFlags.Public
+            ),
+            static method => method.Name
+                == nameof(DerivedRecapPublisher.Prepare)
         );
         Assert.Equal(
-            typeof(BuildingPlanHandle),
-            publicCanPublish.GetParameters()[0].ParameterType
+            new[] {
+                typeof(BuildingPlanHandle),
+                typeof(EventAddress),
+                typeof(CancellationToken)
+            },
+            prepare.GetParameters()
+                .Select(static parameter => parameter.ParameterType)
+                .ToArray()
         );
         Assert.DoesNotContain(
             typeof(DerivedRecapPublisher).GetMethods(
                 BindingFlags.Instance | BindingFlags.Public
-            ),
-            static method => method.GetParameters().Any(
-                static parameter => parameter.ParameterType
-                    == typeof(EventAddress)
+            ).SelectMany(static method => method.GetParameters()),
+            static parameter => parameter.ParameterType
+                == typeof(SessionCurrentLineageSnapshot)
+        );
+    }
+
+    [Fact]
+    public async Task PreparedPublicationBindsPublisherAndExpectedHead() {
+        using RecapStoreFixture fixture =
+            await RecapStoreFixture.CreateAsync();
+        DerivedRecapLineageView lineage = fixture.Lineage();
+        EventAddress anchor = lineage.CapturedHead;
+        RecapBlockPlan plan = fixture.CreateMaintainPlan(
+            anchor,
+            lineage.CurrentPrefix.HeadToOldest[^2].Address
+        );
+        _ = await fixture.Store.CreateBuildingAsync(
+            RecapWireTestFacts.CreateManifest(
+                fixture.Engine,
+                anchor,
+                [plan]
             )
         );
+        BuildingPlanHandle handle = Assert.IsType<
+            BuildingPlanReadResult.Available
+        >(await fixture.Store.ReadBuildingPlanAsync(anchor)).Snapshot.Handle;
+        PreparedRecapPublication prepared = fixture.Publisher.Prepare(
+            handle,
+            anchor
+        );
+        Assert.IsType<RecapPublishability.NotPublishable>(
+            await fixture.Publisher.CanPublishAsync(prepared)
+        );
+        var foreignPublisher = new DerivedRecapPublisher(
+            fixture.Store,
+            fixture.ReadView
+        );
+        await Assert.ThrowsAsync<ArgumentException>(async () =>
+            await foreignPublisher.CanPublishAsync(prepared)
+        );
+
+        _ = fixture.Engine.AppendObservation("raw head drift");
+        InvalidOperationException changed = Assert.Throws<
+            InvalidOperationException
+        >(() => fixture.Publisher.Prepare(handle, anchor));
+        Assert.Contains("Raw SessionJournal head changed", changed.Message);
     }
 
     [Fact]
@@ -493,7 +613,7 @@ public sealed class DerivedRecapPublisherTests {
         );
         var secondPublisher = new DerivedRecapPublisher(
             secondStore,
-            fixture.Engine
+            fixture.ReadView
         );
         Task<PublishRecapResult> contending =
             secondPublisher.PublishAsync(snapshot.Handle).AsTask();
@@ -532,4 +652,21 @@ public sealed class DerivedRecapPublisherTests {
             )
         );
     }
+
+    private static string[] SnapshotTree(string root) => [
+        .. Directory.EnumerateFileSystemEntries(
+                root,
+                "*",
+                SearchOption.AllDirectories
+            )
+            .Select(path => Directory.Exists(path)
+                ? $"D:{Path.GetRelativePath(root, path)}"
+                : "F:"
+                  + Path.GetRelativePath(root, path)
+                  + ":"
+                  + Convert.ToHexStringLower(
+                      SHA256.HashData(File.ReadAllBytes(path))
+                  ))
+            .Order(StringComparer.Ordinal)
+    ];
 }

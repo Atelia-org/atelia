@@ -1634,14 +1634,11 @@ public sealed class SessionContextCandidateProviderRouteTests : IDisposable {
     }
 
     [Fact]
-    public async Task LifecycleRawMutationIsRejectedByPostCallbackHeadCas() {
+    public async Task HostHeldWriterRawDriftIsRejectedAfterReadOnlyLifecycleCallback() {
         string path = NewJournalPath();
         var client = new ScriptedClient();
         var source = new TestContextCandidateSource();
-        var lifecycle = new TestContextLifecycle {
-            OnPrepare = static (engine, _) =>
-                engine.AppendObservation("intruder")
-        };
+        var lifecycle = new TestContextLifecycle();
         using var engine = SessionJournalEngine.Create(
             path,
             CreateOptions(),
@@ -1649,6 +1646,14 @@ public sealed class SessionContextCandidateProviderRouteTests : IDisposable {
                 ContextLifecycle = lifecycle
             }
         );
+        lifecycle.OnPrepare = (readView, request) => {
+            // The callback capability is read-only. This deliberately uses
+            // the Host-held writer outside that capability to exercise the
+            // post-callback raw-head fence.
+            _ = readView.ReadCurrentHead();
+            _ = request.Phase;
+            engine.AppendObservation("intruder");
+        };
         TestContextCandidateFixture fixture =
             ContextCandidateTestFixture.CreateAtCurrentHead(engine);
         source.Candidate = fixture.Candidate;

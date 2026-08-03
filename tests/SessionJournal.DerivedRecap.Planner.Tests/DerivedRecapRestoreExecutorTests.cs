@@ -39,9 +39,12 @@ public sealed class DerivedRecapRestoreExecutorTests {
     [Fact]
     public async Task PublishedCommitmentBeyondStopsBeforeRestoreComponents() {
         int componentReads = 0;
+        RecapProtocolHardCaps hardCaps = RecapProtocolHardCaps.V4;
+        int proofPrefixHeaderCount =
+            RecapFrozenPlanBarrier.ProofPrefixHeaderCount(hardCaps);
         using RestoreFixture fixture =
             await RestoreFixture.CreateAsync(
-                historyPairs: 259,
+                historyPairs: (proofPrefixHeaderCount + 1) / 2 + 2,
                 hooks: new RecapStoreTestHooks(
                     BeforeRestoreComponentRead: () => componentReads++
                 )
@@ -99,7 +102,7 @@ public sealed class DerivedRecapRestoreExecutorTests {
         );
         EventAddress beyond = fixture.Engine
             .ReadCurrentLineageHeaders().HeadToRoot[
-                fixture.Lineage.MaxHeaderCount
+                proofPrefixHeaderCount
             ].Address;
         DerivedRecapSetManifest manifest = Assert.IsType<
             PublishedPlanAtAnchorReadResult.Available
@@ -132,7 +135,7 @@ public sealed class DerivedRecapRestoreExecutorTests {
 
         var result = Assert.IsType<
             DerivedRecapRestoreResult.BeyondPrefix
-        >(await fixture.CreateExecutor([maintainer])
+        >(await fixture.CreateExecutor([maintainer], hardCaps)
             .RestoreAsync(anchor, fixture.CurrentHead));
 
         Assert.Equal(
@@ -219,7 +222,7 @@ public sealed class DerivedRecapRestoreExecutorTests {
 
         RecapFrozenPlanBarrierResult result =
             await RecapFrozenPlanBarrier.ProveAsync(
-                fixture.Engine,
+                fixture.Engine.ReadView,
                 fixture.Store,
                 manifest,
                 prefix,
@@ -340,7 +343,7 @@ public sealed class DerivedRecapRestoreExecutorTests {
 
         RecapFrozenPlanBarrierResult result =
             await RecapFrozenPlanBarrier.ProveAsync(
-                fixture.Engine,
+                fixture.Engine.ReadView,
                 fixture.Store,
                 targetManifest,
                 fixture.Engine.ReadLineagePrefixAt(
@@ -687,8 +690,7 @@ public sealed class DerivedRecapRestoreExecutorTests {
             );
 
         IReadOnlyList<RecapFrozenPlanRawDefect> defects =
-            RecapFrozenPlanRawValidator.ValidateBlock(
-                fixture.Engine,
+            RecapFrozenPlanRawValidator.ValidateInputDependentBlock(
                 manifest,
                 new Dictionary<
                     RecapBlockId,
@@ -879,6 +881,205 @@ public sealed class DerivedRecapRestoreExecutorTests {
         Assert.Equal(
             "checkpoint+suffix",
             await fixture.MaterializedTextAsync(anchor)
+        );
+    }
+
+    [Fact]
+    public async Task RestoreUsesPreComponentProofWhenCheckpointSetupIsBeyondDirectLimit() {
+        bool captureComponentPhase = false;
+        long? headersAtComponentRead = null;
+        long? headersAtMaintainer = null;
+        SessionJournalEngine? diagnosticEngine = null;
+        using RestoreFixture fixture =
+            await RestoreFixture.CreateAsync(
+                historyPairs: 300,
+                hooks: new RecapStoreTestHooks(
+                    BeforeRestoreComponentRead: () => {
+                        if (captureComponentPhase) {
+                            headersAtComponentRead = diagnosticEngine!
+                                .CaptureReadDiagnostics()
+                                .HeaderPreviewReadCount;
+                        }
+                    }
+                )
+        );
+        diagnosticEngine = fixture.Engine;
+        SessionHistoryPlanningWindow history =
+            fixture.Engine.ReadHistoryPlanningWindow();
+        EventAddress source =
+            history.ReplaySafeBoundaries[^3].Address;
+        EventAddress checkpointEndpoint =
+            history.ReplaySafeBoundaries[^2].Address;
+        EventAddress anchor =
+            history.ReplaySafeBoundaries[^1].Address;
+        MaintainRecapBlockPlan template = fixture.CreateMaintainPlan(
+            "frozen.self",
+            "frozen-maintainer",
+            endpointCount: 2
+        );
+        var plan = new MaintainRecapBlockPlan(
+            template.RecapBlockId,
+            template.Target,
+            template.MaintainerId,
+            template.MaintainerCapabilityFingerprint,
+            new EmptyRecapMaintainSource(
+                source,
+                RecapPlannerWireTestFacts.SetupsAt(
+                    fixture.Engine,
+                    source
+                )
+            ),
+            [
+                new RecapReplayBoundary(
+                    checkpointEndpoint,
+                    RecapPlannerWireTestFacts.SetupsAt(
+                        fixture.Engine,
+                        checkpointEndpoint
+                    )
+                ),
+                new RecapReplayBoundary(
+                    anchor,
+                    RecapPlannerWireTestFacts.SetupsAt(
+                        fixture.Engine,
+                        anchor
+                    )
+                )
+            ],
+            template.PriorContext,
+            template.MaxContentUtf8Bytes
+        );
+        Assert.IsType<SessionGoverningSetupProofResult.BeyondPrefix>(
+            fixture.Engine.ReadView.ProveGoverningSetupAtBounded(
+                checkpointEndpoint,
+                plan.CatchUpBoundaries[0].Setups,
+                RecapFrozenPlanBarrier.MaxHeaderCount
+            )
+        );
+        _ = await fixture.PublishAsync(
+            anchor,
+            [plan],
+            new Dictionary<RecapBlockId, string> {
+                [plan.RecapBlockId] = "committed"
+            }
+        );
+        await fixture.DamageFinalAsync(plan);
+        DerivedRecapBlock checkpoint = DerivedRecapCodec.CreateBlock(
+            plan,
+            checkpointEndpoint,
+            "checkpoint"
+        );
+        await File.WriteAllBytesAsync(
+            fixture.BlockPath(anchor, "work", plan.RecapBlockId),
+            DerivedRecapCodec.EncodeBlock(checkpoint)
+        );
+        var maintainer = fixture.CreateMaintainer(
+            plan,
+            static (_, request) => request.OldBlock.Text + "+suffix",
+            beforeReturn: () => headersAtMaintainer = fixture.Engine
+                .CaptureReadDiagnostics()
+                .HeaderPreviewReadCount
+        );
+        captureComponentPhase = true;
+
+        DerivedRecapRestoreResult result =
+            await fixture.CreateExecutor([maintainer])
+                .RestoreAsync(anchor, fixture.CurrentHead);
+
+        Assert.IsType<DerivedRecapRestoreResult.Restored>(result);
+        Assert.Equal(1, maintainer.CallCount);
+        Assert.NotNull(headersAtComponentRead);
+        Assert.NotNull(headersAtMaintainer);
+        long headerDelta = headersAtMaintainer.Value
+            - headersAtComponentRead.Value;
+        // Exact execution-boundary closure is a legitimate materialization
+        // cost; the 513-header setup reproof demonstrated above is not.
+        Assert.InRange(headerDelta, 1L, 16L);
+        Assert.True(
+            headerDelta < RecapFrozenPlanBarrier.MaxHeaderCount
+        );
+    }
+
+    [Theory]
+    [InlineData("inherit")]
+    [InlineData("empty-maintain")]
+    [InlineData("existing-maintain")]
+    public async Task RestoreDoesNotProveHeadersAfterComponentRead(
+        string routeKind
+    ) {
+        bool captureComponentPhase = false;
+        long? headersAtComponentRead = null;
+        SessionJournalEngine? diagnosticEngine = null;
+        using RestoreFixture fixture =
+            await RestoreFixture.CreateAsync(
+                hooks: new RecapStoreTestHooks(
+                    BeforeRestoreComponentRead: () => {
+                        if (captureComponentPhase) {
+                            headersAtComponentRead = diagnosticEngine!
+                                .CaptureReadDiagnostics()
+                                .HeaderPreviewReadCount;
+                        }
+                    }
+                )
+            );
+        diagnosticEngine = fixture.Engine;
+        EventAddress anchor;
+        IReadOnlyList<IRecapBlockMaintainer> maintainers;
+        switch (routeKind) {
+            case "inherit": {
+                var published = await fixture.PublishInheritAsync();
+                InheritRecapBlockPlan plan = published.Plan;
+                anchor = published.Target;
+                await fixture.DamageFinalAsync(plan, anchor);
+                maintainers = [];
+                break;
+            }
+            case "empty-maintain": {
+                var published = await fixture.PublishMaintainAsync(
+                    endpointCount: 1
+                );
+                MaintainRecapBlockPlan plan = published.Plan;
+                anchor = plan.CatchUpBoundaries[^1].Address;
+                await fixture.DamageFinalAsync(plan);
+                File.Delete(fixture.BlockPath(
+                    anchor,
+                    "work",
+                    plan.RecapBlockId
+                ));
+                maintainers = [fixture.CreateMaintainer(plan)];
+                break;
+            }
+            case "existing-maintain": {
+                var published = await fixture.PublishExistingAsync();
+                MaintainRecapBlockPlan plan = published.Plan;
+                anchor = published.Target;
+                await fixture.DamageFinalAsync(plan, anchor);
+                File.Delete(fixture.BlockPath(
+                    anchor,
+                    "work",
+                    plan.RecapBlockId
+                ));
+                maintainers = [fixture.CreateMaintainer(plan)];
+                break;
+            }
+            default:
+                throw new ArgumentOutOfRangeException(nameof(routeKind));
+        }
+        captureComponentPhase = true;
+
+        DerivedRecapRestoreResult result =
+            await fixture.CreateExecutor(maintainers)
+                .RestoreAsync(anchor, fixture.CurrentHead);
+        long headersAfterRestore = fixture.Engine
+            .CaptureReadDiagnostics()
+            .HeaderPreviewReadCount;
+
+        Assert.IsType<DerivedRecapRestoreResult.Restored>(result);
+        Assert.NotNull(headersAtComponentRead);
+        long headerDelta = headersAfterRestore
+            - headersAtComponentRead.Value;
+        Assert.InRange(headerDelta, 0L, 16L);
+        Assert.True(
+            headerDelta < RecapFrozenPlanBarrier.MaxHeaderCount
         );
     }
 
@@ -1714,7 +1915,10 @@ public sealed class DerivedRecapRestoreExecutorTests {
             Path = path;
             Engine = engine;
             Store = store;
-            Publisher = new DerivedRecapPublisher(store, engine);
+            Publisher = new DerivedRecapPublisher(
+                store,
+                engine.ReadView
+            );
         }
 
         public string Path { get; }
@@ -1726,7 +1930,7 @@ public sealed class DerivedRecapRestoreExecutorTests {
         public SessionCurrentLineagePrefix Lineage =>
             Engine.ReadCurrentLineagePrefix(513);
         public DerivedRecapLineageView LineageView =>
-            DerivedRecapLineageView.Capture(Store, Engine);
+            DerivedRecapLineageView.Capture(Store, Engine.ReadView);
 
         public static async ValueTask<RestoreFixture> CreateAsync(
             int historyPairs = 5,
@@ -2176,7 +2380,7 @@ public sealed class DerivedRecapRestoreExecutorTests {
             IReadOnlyList<IRecapBlockMaintainer> maintainers,
             RecapProtocolHardCaps? hardCaps = null
         ) => new(
-            Engine,
+            Engine.ReadView,
             Store,
             new RecapBlockMaintainerRegistry(maintainers),
             hardCaps ?? CreateHardCaps()
@@ -2238,7 +2442,10 @@ public sealed class DerivedRecapRestoreExecutorTests {
                     Assert.IsType<
                         PublishedEnvelopeCommitResult.AlreadyCommitted
                     >(
-                        await new DerivedRecapRestorer(Store, Engine)
+                        await new DerivedRecapRestorer(
+                            Store,
+                            Engine.ReadView
+                        )
                             .CommitEnvelopeAsync(
                                 Store.IssuePublishedEnvelopeCommitAuthority(
                                     inspection.Handle,

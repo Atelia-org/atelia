@@ -95,7 +95,7 @@ internal static class RecapMaterializationInspectionCommands {
             );
             var source = new DerivedRecapContextCandidateSource(
                 store,
-                engine
+                engine.ReadView
             );
             SJ.SessionContextCandidateSelection selection =
                 await source.SelectAsync(

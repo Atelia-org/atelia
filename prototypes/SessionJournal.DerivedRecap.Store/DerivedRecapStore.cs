@@ -7,6 +7,7 @@ namespace Atelia.SessionJournal.DerivedRecap.Store;
 internal sealed record RecapStoreTestHooks(
     Action? AfterPublicationSealed = null,
     Action? AfterPublishPreflight = null,
+    Action? BeforePublishabilityStoreRead = null,
     Action? BeforePublishedPromotion = null,
     Action? AfterPublishedPromotion = null,
     Action? BeforeMaterializationEnvelopeRecheck = null,
@@ -1441,6 +1442,7 @@ public sealed class DerivedRecapStore {
     ) {
         ValidateBuildingPlanHandle(handle);
         ArgumentNullException.ThrowIfNull(currentLineage);
+        _testHooks.BeforePublishabilityStoreRead?.Invoke();
         StoreReadLockAttempt lockAttempt =
             await TryAcquireReadyReadLockAsync(cancellationToken)
                 .ConfigureAwait(false);
@@ -1501,6 +1503,7 @@ public sealed class DerivedRecapStore {
         PublishTrustedAsync(
         BuildingPlanHandle handle,
         DerivedRecapLineageView currentLineage,
+        EventAddress expectedRawHead,
         Func<EventAddress?> readCurrentHead,
         CancellationToken cancellationToken = default
     ) {
@@ -1627,9 +1630,9 @@ public sealed class DerivedRecapStore {
                 return finalBlocked;
             }
             EventAddress? authoritativeHead = readCurrentHead();
-            if (authoritativeHead != currentLineage.CapturedHead) {
+            if (authoritativeHead != expectedRawHead) {
                 return new PublishRecapResult.RawHeadChanged(
-                    currentLineage.CapturedHead,
+                    expectedRawHead,
                     authoritativeHead
                 );
             }

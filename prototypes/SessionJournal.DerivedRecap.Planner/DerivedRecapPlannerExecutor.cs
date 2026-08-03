@@ -4,7 +4,8 @@ using Atelia.SessionJournal.DerivedRecap.Store;
 namespace Atelia.SessionJournal.DerivedRecap.Planner;
 
 internal sealed record DerivedRecapBuildingExecutorTestHooks(
-    Action? BeforePendingWindowFreeze = null
+    Action? BeforePendingWindowFreeze = null,
+    Action? AfterPendingWindowMaterialization = null
 );
 
 /// <summary>
@@ -12,7 +13,7 @@ internal sealed record DerivedRecapBuildingExecutorTestHooks(
 /// planning limits, then delegates durable execution to the Building executor.
 /// </summary>
 internal sealed class DerivedRecapPlannerExecutor {
-    private readonly SessionJournalEngine _engine;
+    private readonly SessionJournalReadView _engine;
     private readonly DerivedRecapStore _store;
     private readonly RecapPlanningInputs _inputs;
     private readonly RecapPlanningLimits _limits;
@@ -22,7 +23,7 @@ internal sealed class DerivedRecapPlannerExecutor {
     private DerivedRecapPlanningDiagnostics? _lastPlanningDiagnostics;
 
     public DerivedRecapPlannerExecutor(
-        SessionJournalEngine engine,
+        SessionJournalReadView engine,
         DerivedRecapStore store,
         RecapPlanningInputs inputs,
         RecapPlanningLimits limits,
@@ -39,7 +40,7 @@ internal sealed class DerivedRecapPlannerExecutor {
     }
 
     internal DerivedRecapPlannerExecutor(
-        SessionJournalEngine engine,
+        SessionJournalReadView engine,
         DerivedRecapStore store,
         RecapPlanningInputs inputs,
         RecapPlanningLimits limits,
@@ -317,10 +318,25 @@ internal sealed class DerivedRecapPlannerExecutor {
                         beyond.Evidence
                     );
                 }
-                SessionHistoryPlanningSeed sourceSeed =
-                    _engine.CreateHistoryPlanningSeed(
+                SessionGoverningSetupProofResult setupProofResult =
+                    _engine.ProveGoverningSetupInPrefix(
+                        lineage,
                         earliestCursor.Value,
-                        earliestSource!.Setups,
+                        earliestSource!.Setups
+                    );
+                if (setupProofResult
+                    is SessionGoverningSetupProofResult.BeyondPrefix
+                        setupBeyond) {
+                    return new DerivedRecapExecutionResult.BeyondPrefix(
+                        DerivedRecapBeyondPrefixStage
+                            .NewPlanningSourceAnchor,
+                        setupBeyond.Evidence.ContinuationEvidence
+                    );
+                }
+                SessionHistoryPlanningSeed sourceSeed =
+                    _engine.MaterializeHistoryPlanningSeed(
+                        ((SessionGoverningSetupProofResult.Available)
+                            setupProofResult).Proof,
                         cancellationToken
                     );
                 allRelevantRaw = _engine.MaterializeHistoryPlanningWindow(
@@ -1241,7 +1257,7 @@ internal sealed class DerivedRecapPlannerExecutor {
 
     private static void RequireSameBinding(
         DerivedRecapStore store,
-        SessionJournalEngine engine
+        SessionJournalReadView engine
     ) {
         string storePath = Path.TrimEndingDirectorySeparator(
             Path.GetFullPath(store.SessionRepositoryPath)
@@ -1258,7 +1274,7 @@ internal sealed class DerivedRecapPlannerExecutor {
             )
             || store.RefId != engine.BranchRefId) {
             throw new ArgumentException(
-                "DerivedRecap Planner, Store, and SessionJournalEngine "
+                "DerivedRecap Planner, Store, and SessionJournalReadView "
                 + "must bind the same repository and RefId."
             );
         }
@@ -1278,7 +1294,7 @@ internal sealed class DerivedRecapPlannerExecutor {
 /// planning inputs or repo-owned planning limits.
 /// </summary>
 internal sealed class DerivedRecapBuildingExecutor {
-    private readonly SessionJournalEngine _engine;
+    private readonly SessionJournalReadView _engine;
     private readonly DerivedRecapStore _store;
     private readonly IRecapBlockMaintainerRegistry _maintainers;
     private readonly RecapProtocolHardCaps _hardCaps;
@@ -1286,7 +1302,7 @@ internal sealed class DerivedRecapBuildingExecutor {
     private readonly DerivedRecapBuildingExecutorTestHooks _testHooks;
 
     public DerivedRecapBuildingExecutor(
-        SessionJournalEngine engine,
+        SessionJournalReadView engine,
         DerivedRecapStore store,
         IRecapBlockMaintainerRegistry maintainers
     ) : this(
@@ -1299,7 +1315,7 @@ internal sealed class DerivedRecapBuildingExecutor {
     }
 
     internal DerivedRecapBuildingExecutor(
-        SessionJournalEngine engine,
+        SessionJournalReadView engine,
         DerivedRecapStore store,
         IRecapBlockMaintainerRegistry maintainers,
         RecapProtocolHardCaps hardCaps,
@@ -1411,7 +1427,9 @@ internal sealed class DerivedRecapBuildingExecutor {
         SessionCurrentLineagePrefix prefix =
             _engine.ReadLineagePrefixAt(
                 expectedRawHead,
-                RecapFrozenPlanBarrier.MaxHeaderCount,
+                RecapFrozenPlanBarrier.ProofPrefixHeaderCount(
+                    _hardCaps
+                ),
                 cancellationToken
             );
         RecapFrozenPlanBarrierResult barrier;
@@ -1462,6 +1480,53 @@ internal sealed class DerivedRecapBuildingExecutor {
                     ))
             ]);
         }
+        ResumeLineagePreflight lineagePreflight;
+        try {
+            lineagePreflight = await ProveResumeLineageAsync(
+                    plan.Manifest,
+                    expectedRawHead,
+                    cancellationToken
+                )
+                .ConfigureAwait(false);
+        }
+        catch (RecapRawHeadChangedException changed) {
+            return RetryableRawHead(changed.Expected, changed.Observed);
+        }
+        catch (Exception exception) when (IsAvailabilityException(exception)) {
+            return Unavailable(
+                DerivedRecapExecutionDefectCodes.RawPlanningUnavailable,
+                exception.Message
+            );
+        }
+        if (lineagePreflight
+                is ResumeLineagePreflight.Unavailable unavailableLineage) {
+            return unavailableLineage.Result;
+        }
+        SessionCurrentLineagePrefix provenLineage =
+            ((ResumeLineagePreflight.Available)lineagePreflight).Lineage;
+        PreparedRecapPublication publication;
+        try {
+            publication = _publisher.Prepare(
+                plan.Handle,
+                expectedRawHead,
+                cancellationToken
+            );
+        }
+        catch (InvalidOperationException exception)
+            when (exception.Message.Contains(
+                "Raw SessionJournal head changed",
+                StringComparison.Ordinal)) {
+            return new DerivedRecapExecutionResult.Retryable(
+                DerivedRecapExecutionDefectCodes.RawHeadChanged,
+                exception.Message
+            );
+        }
+        catch (Exception exception) when (IsAvailabilityException(exception)) {
+            return Unavailable(
+                DerivedRecapExecutionDefectCodes.RawPlanningUnavailable,
+                exception.Message
+            );
+        }
         BuildingReadResult read;
         try {
             read = await _store.ReadBuildingAsync(
@@ -1488,6 +1553,9 @@ internal sealed class DerivedRecapBuildingExecutor {
                     : await ExecuteAndPublishAsync(
                             available.Snapshot,
                             plan.Handle,
+                            barrier.PendingWindowProofs,
+                            provenLineage,
+                            publication,
                             cancellationToken
                         )
                         .ConfigureAwait(false),
@@ -1510,6 +1578,102 @@ internal sealed class DerivedRecapBuildingExecutor {
         };
     }
 
+    private async ValueTask<ResumeLineagePreflight>
+        ProveResumeLineageAsync(
+        DerivedRecapSetManifest manifest,
+        EventAddress expectedRawHead,
+        CancellationToken cancellationToken
+    ) {
+        DerivedRecapLineageView lineageView =
+            DerivedRecapLineageView.Capture(
+                _store,
+                _engine,
+                cancellationToken
+            );
+        if (lineageView.CapturedHead != expectedRawHead) {
+            throw new RecapRawHeadChangedException(
+                expectedRawHead,
+                lineageView.CapturedHead
+            );
+        }
+        SessionCurrentLineagePrefix lineage = lineageView.Prefix;
+        Dictionary<EventAddress, int> lineageIndex =
+            lineage.HeadToOldest
+                .Select((node, index) => (node.Address, index))
+                .ToDictionary(
+                    static pair => pair.Address,
+                    static pair => pair.index
+                );
+        if (!lineageIndex.TryGetValue(
+                manifest.SetAdmissionAnchor,
+                out int admissionIndex
+            )) {
+            return Failed(
+                DerivedRecapExecutionDefectCodes.BuildingInvalid,
+                "Building admission anchor is outside current raw lineage."
+            );
+        }
+
+        DerivedRecapSelection latestSelection =
+            await lineageView.SelectNthPreviousAsync(
+                    nthPrevious: 0,
+                    cancellationToken
+                )
+                .ConfigureAwait(false);
+        ResumeLineagePreflight? failed = latestSelection switch {
+            DerivedRecapSelection.Selected latest
+                when !lineageIndex.TryGetValue(
+                        latest.Descriptor.SetAdmissionAnchor,
+                        out int latestIndex
+                    )
+                    || admissionIndex >= latestIndex => Failed(
+                        DerivedRecapExecutionDefectCodes.BuildingInvalid,
+                        "Building admission is not strictly newer than "
+                        + "the latest current-lineage Published set."
+                    ),
+            DerivedRecapSelection.Selected => null,
+            DerivedRecapSelection.EmptyLineage => null,
+            DerivedRecapSelection.ExactPublishedSetInvalid invalid =>
+                new ResumeLineagePreflight.Unavailable(
+                    Unavailable(invalid.Defects)
+                ),
+            DerivedRecapSelection.BeyondPrefix beyond => Failed(
+                DerivedRecapExecutionDefectCodes.BuildingInvalid,
+                "Exact Building content contradicted its completed "
+                + "metadata/header proof at "
+                + $"'{beyond.Evidence.RequiredAnchor}'."
+            ),
+            DerivedRecapSelection.StoreUnavailable unavailable => Failed(
+                DerivedRecapExecutionDefectCodes.StoreUnavailable,
+                unavailable.Reason
+            ),
+            DerivedRecapSelection.OrdinalUnavailable => Failed(
+                DerivedRecapExecutionDefectCodes.StoreUnavailable,
+                "Latest strict Published ordinal is unavailable."
+            ),
+            _ => throw new InvalidOperationException(
+                "Unknown latest Published selection result."
+            )
+        };
+        EventAddress observedHead = _engine.ReadCurrentHead()
+            ?? throw new InvalidDataException(
+                "Frozen Resume requires a non-empty SessionJournal."
+            );
+        if (observedHead != expectedRawHead) {
+            throw new RecapRawHeadChangedException(
+                expectedRawHead,
+                observedHead
+            );
+        }
+        return failed
+            ?? new ResumeLineagePreflight.Available(lineage);
+
+        static ResumeLineagePreflight.Unavailable Failed(
+            string code,
+            string detail
+        ) => new(Unavailable(code, detail));
+    }
+
     private static DerivedRecapExecutionResult.Retryable
         RetryableBuildingChanged(
         BuildingDescriptor expected,
@@ -1525,6 +1689,12 @@ internal sealed class DerivedRecapBuildingExecutor {
         ExecuteAndPublishAsync(
         BuildingSnapshot building,
         BuildingPlanHandle handle,
+        IReadOnlyDictionary<
+            (RecapBlockId BlockId, int EndpointIndex),
+            RecapPendingWindowProofAuthority
+        > pendingWindowProofs,
+        SessionCurrentLineagePrefix provenLineage,
+        PreparedRecapPublication publication,
         CancellationToken cancellationToken
     ) {
         PreparedBuilding prepared;
@@ -1532,6 +1702,8 @@ internal sealed class DerivedRecapBuildingExecutor {
             prepared = await PrepareBuildingAsync(
                     building,
                     handle,
+                    pendingWindowProofs,
+                    provenLineage,
                     cancellationToken
                 )
                 .ConfigureAwait(false);
@@ -1588,7 +1760,7 @@ internal sealed class DerivedRecapBuildingExecutor {
         try {
             RecapPublishability publishability =
                 await _publisher.CanPublishAsync(
-                        handle,
+                        publication,
                         cancellationToken
                     )
                     .ConfigureAwait(false);
@@ -1625,7 +1797,7 @@ internal sealed class DerivedRecapBuildingExecutor {
             }
             PublishRecapResult published =
                 await _publisher.PublishAsync(
-                        handle,
+                        publication,
                         cancellationToken
                     )
                     .ConfigureAwait(false);
@@ -1688,6 +1860,11 @@ internal sealed class DerivedRecapBuildingExecutor {
     private async ValueTask<PreparedBuilding> PrepareBuildingAsync(
         BuildingSnapshot building,
         BuildingPlanHandle handle,
+        IReadOnlyDictionary<
+            (RecapBlockId BlockId, int EndpointIndex),
+            RecapPendingWindowProofAuthority
+        > pendingWindowProofs,
+        SessionCurrentLineagePrefix provenLineage,
         CancellationToken cancellationToken
     ) {
         var defects = new List<DerivedRecapExecutionDefect>();
@@ -1697,6 +1874,17 @@ internal sealed class DerivedRecapBuildingExecutor {
             (RecapBlockId, int),
             SessionHistoryPlanningWindow
         >();
+        ArgumentNullException.ThrowIfNull(provenLineage);
+        EventAddress observedHead = _engine.ReadCurrentHead()
+            ?? throw new InvalidDataException(
+                "Frozen Resume requires a non-empty SessionJournal."
+            );
+        if (observedHead != provenLineage.CapturedHead) {
+            throw new RecapRawHeadChangedException(
+                provenLineage.CapturedHead,
+                observedHead
+            );
+        }
         if (building.Manifest.RefId != _store.RefId
             || building.Manifest.SetAdmissionAnchor
                 != building.Descriptor.SetAdmissionAnchor) {
@@ -1728,104 +1916,17 @@ internal sealed class DerivedRecapBuildingExecutor {
             );
         }
 
-        DerivedRecapLineageView lineageView =
-            DerivedRecapLineageView.Capture(
-                _store,
-                _engine,
-                cancellationToken
-            );
-        SessionCurrentLineagePrefix lineage = lineageView.Prefix;
-        Dictionary<EventAddress, int> lineageIndex =
-            lineage.HeadToOldest
-                .Select((node, index) => (node.Address, index))
-                .ToDictionary(
-                    static pair => pair.Address,
-                    static pair => pair.index
-                );
-        if (!lineageIndex.TryGetValue(
-                building.Manifest.SetAdmissionAnchor,
-                out int admissionIndex
-            )) {
-            AddBuildingDefect(
-                defects,
-                "Building admission anchor is outside current raw lineage."
-            );
-            return new PreparedBuilding(
-                defects,
-                emptyInspections,
-                emptyWindows
-            );
-        }
-        DerivedRecapSelection latestSelection =
-            await lineageView.SelectNthPreviousAsync(
-                    nthPrevious: 0,
-                    cancellationToken
-                )
-                .ConfigureAwait(false);
-        switch (latestSelection) {
-            case DerivedRecapSelection.Selected latest:
-                if (!lineageIndex.TryGetValue(
-                        latest.Descriptor.SetAdmissionAnchor,
-                        out int latestIndex
-                    )
-                    || admissionIndex >= latestIndex) {
-                    AddBuildingDefect(
-                        defects,
-                        "Building admission is not strictly newer than "
-                        + "the latest current-lineage Published set."
-                    );
-                }
-                break;
-            case DerivedRecapSelection.EmptyLineage:
-                break;
-            case DerivedRecapSelection.ExactPublishedSetInvalid invalid:
-                foreach (RecapStructuralDefect defect in invalid.Defects) {
-                    defects.Add(new DerivedRecapExecutionDefect(
-                        defect.Code,
-                        defect.Detail
-                    ));
-                }
-                break;
-            case DerivedRecapSelection.BeyondPrefix beyond:
-                return new PreparedBuilding(
-                    defects,
-                    emptyInspections,
-                    emptyWindows,
-                    beyond.Evidence
-                );
-            case DerivedRecapSelection.StoreUnavailable unavailable:
-                defects.Add(new DerivedRecapExecutionDefect(
-                    DerivedRecapExecutionDefectCodes.StoreUnavailable,
-                    unavailable.Reason
-                ));
-                break;
-            case DerivedRecapSelection.OrdinalUnavailable:
-                defects.Add(new DerivedRecapExecutionDefect(
-                    DerivedRecapExecutionDefectCodes.StoreUnavailable,
-                    "Latest strict Published ordinal is unavailable."
-                ));
-                break;
-            default:
-                throw new InvalidOperationException(
-                    "Unknown latest Published selection result."
-                );
-        }
-        if (defects.Count != 0) {
-            return new PreparedBuilding(
-                defects,
-                emptyInspections,
-                emptyWindows
-            );
-        }
-
         var maintainPlans = new List<MaintainRecapBlockPlan>();
         foreach (RecapBlockPlan plan in building.Manifest.Blocks) {
+            // The frozen barrier authenticated all setup authority before
+            // Building components were read. This phase validates only the
+            // component-dependent structure and must not re-walk headers.
             foreach (RecapFrozenPlanRawDefect defect
-                     in RecapFrozenPlanRawValidator.ValidateBlock(
-                         _engine,
+                     in RecapFrozenPlanRawValidator
+                         .ValidateInputDependentBlock(
                          building.Manifest,
                          building.FrozenInputs,
-                         lineage,
+                         provenLineage,
                          plan
                      )) {
                 AddBuildingDefect(defects, defect.Detail);
@@ -1925,11 +2026,13 @@ internal sealed class DerivedRecapBuildingExecutor {
         PreparedRecapPendingWindows preparedWindows =
             RecapPendingWindowPreparer.Prepare(
                 _engine,
-                lineage.CapturedHead,
+                provenLineage.CapturedHead,
                 pendingRoutes,
                 _hardCaps,
+                pendingWindowProofs,
                 cancellationToken
             );
+        _testHooks.AfterPendingWindowMaterialization?.Invoke();
         if (preparedWindows.BeyondPrefix is { } beyondPrefix) {
             return new PreparedBuilding(
                 defects,
@@ -2334,7 +2437,7 @@ internal sealed class DerivedRecapBuildingExecutor {
 
     private static void RequireSameBinding(
         DerivedRecapStore store,
-        SessionJournalEngine engine
+        SessionJournalReadView engine
     ) {
         string storePath = Path.TrimEndingDirectorySeparator(
             Path.GetFullPath(store.SessionRepositoryPath)
@@ -2351,7 +2454,7 @@ internal sealed class DerivedRecapBuildingExecutor {
             )
             || store.RefId != engine.BranchRefId) {
             throw new ArgumentException(
-                "DerivedRecap Planner, Store, and SessionJournalEngine "
+                "DerivedRecap Planner, Store, and SessionJournalReadView "
                 + "must bind the same repository and RefId."
             );
         }
@@ -2369,4 +2472,16 @@ internal sealed class DerivedRecapBuildingExecutor {
         > Windows,
         SessionCurrentLineageBeyondPrefix? BeyondPrefix = null
     );
+
+    private abstract record ResumeLineagePreflight {
+        private ResumeLineagePreflight() { }
+
+        internal sealed record Available(
+            SessionCurrentLineagePrefix Lineage
+        ) : ResumeLineagePreflight;
+
+        internal sealed record Unavailable(
+            DerivedRecapExecutionResult Result
+        ) : ResumeLineagePreflight;
+    }
 }

@@ -94,7 +94,7 @@ public sealed class GalateaG2AStagingHostAcceptanceTests {
                 clone.SessionDirectory,
                 session.Engine.BranchRefId
             ),
-            session.Engine
+            session.Engine.ReadView
         );
         SessionContextCandidateSelection selected =
             await source.SelectAsync(

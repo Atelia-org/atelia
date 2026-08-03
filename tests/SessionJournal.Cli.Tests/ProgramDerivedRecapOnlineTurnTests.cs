@@ -694,7 +694,10 @@ public sealed class ProgramDerivedRecapOnlineTurnTests : IDisposable {
                     )
             ]);
             Assert.IsType<CreateBuildingResult.Created>(
-                await new DerivedRecapBuildingInstaller(store, engine)
+                await new DerivedRecapBuildingInstaller(
+                    store,
+                    engine.ReadView
+                )
                     .InstallAsync(
                         DerivedRecapCodec.CreateManifest(
                             branchRefId,
@@ -739,7 +742,7 @@ public sealed class ProgramDerivedRecapOnlineTurnTests : IDisposable {
                 DerivedRecapStore.Open(path, branchRefId);
             Assert.IsType<DerivedRecapSelection.Selected>(
                 await DerivedRecapLineageView
-                    .Capture(store, engine)
+                    .Capture(store, engine.ReadView)
                     .SelectNthPreviousAsync(0)
             );
         }
@@ -878,7 +881,7 @@ public sealed class ProgramDerivedRecapOnlineTurnTests : IDisposable {
             DerivedRecapStore.Open(path, branchRefId);
         DerivedRecapSelection selection =
             await DerivedRecapLineageView
-                .Capture(store, reopened)
+                .Capture(store, reopened.ReadView)
                 .SelectNthPreviousAsync(0);
         Assert.IsType<DerivedRecapSelection.EmptyLineage>(selection);
         Assert.Equal(
@@ -1189,7 +1192,7 @@ public sealed class ProgramDerivedRecapOnlineTurnTests : IDisposable {
                 DerivedRecapStore.Open(path, branchRefId);
             DerivedRecapSelection selection =
                 await DerivedRecapLineageView
-                    .Capture(store, engine)
+                    .Capture(store, engine.ReadView)
                     .SelectNthPreviousAsync(0);
             descriptor = Assert
                 .IsType<DerivedRecapSelection.Selected>(selection)
@@ -1241,7 +1244,7 @@ public sealed class ProgramDerivedRecapOnlineTurnTests : IDisposable {
             );
             var source = new DerivedRecapContextCandidateSource(
                 store,
-                engine
+                engine.ReadView
             );
             engine.UseRuntime(new SJ.SessionRuntime(
                 client,

@@ -5,7 +5,7 @@ namespace Atelia.SessionJournal.DerivedRecap.Store;
 /// <summary>
 /// Adapts one event-addressed Recap Store to SessionJournal's neutral
 /// two-phase context-candidate contract. Raw lineage and setup authority are
-/// always read from the bound SessionJournalEngine; the Store never opens or
+/// always read from the bound SessionJournalReadView; the Store never opens or
 /// mutates the raw journal.
 /// </summary>
 public sealed class DerivedRecapContextCandidateSource
@@ -13,31 +13,16 @@ public sealed class DerivedRecapContextCandidateSource
     private const string HandlePrefix = "eadr4";
 
     private readonly DerivedRecapStore _store;
-    private readonly SessionJournalEngine _engine;
+    private readonly SessionJournalReadView _readView;
 
     public DerivedRecapContextCandidateSource(
         DerivedRecapStore store,
-        SessionJournalEngine engine
+        SessionJournalReadView readView
     ) {
         _store = store ?? throw new ArgumentNullException(nameof(store));
-        _engine = engine
-            ?? throw new ArgumentNullException(nameof(engine));
-        string storePath = Path.TrimEndingDirectorySeparator(
-            Path.GetFullPath(store.SessionRepositoryPath)
-        );
-        string enginePath = Path.TrimEndingDirectorySeparator(
-            Path.GetFullPath(engine.Path)
-        );
-        StringComparison comparison = OperatingSystem.IsWindows()
-            ? StringComparison.OrdinalIgnoreCase
-            : StringComparison.Ordinal;
-        if (!string.Equals(storePath, enginePath, comparison)
-            || store.RefId != engine.BranchRefId) {
-            throw new ArgumentException(
-                "DerivedRecap Store and SessionJournalEngine must bind "
-                + "the same repository and RefId."
-            );
-        }
+        _readView = readView
+            ?? throw new ArgumentNullException(nameof(readView));
+        DerivedRecapPublisher.RequireSameBinding(store, readView);
     }
 
     public async ValueTask<SessionContextCandidateSelection> SelectAsync(
@@ -49,7 +34,7 @@ public sealed class DerivedRecapContextCandidateSource
         DerivedRecapLineageView lineage =
             DerivedRecapLineageView.Capture(
                 _store,
-                _engine,
+                _readView,
                 cancellationToken
             );
         if (lineage.CapturedHead != request.CompletionBoundary) {
@@ -192,7 +177,7 @@ public sealed class DerivedRecapContextCandidateSource
     }
 
     private void RequireCurrentBoundary(EventAddress expected) {
-        EventAddress? observed = _engine.ReadCurrentHead();
+        EventAddress? observed = _readView.ReadCurrentHead();
         if (observed != expected) {
             throw new InvalidOperationException(
                 "DerivedRecap candidate operation became stale. "

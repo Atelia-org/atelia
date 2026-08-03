@@ -154,7 +154,7 @@ public sealed class DerivedRecapAcceptanceTests {
         DerivedRecapLineageView lineage =
             DerivedRecapLineageView.Capture(
                 fixture.Store,
-                fixture.Engine
+                fixture.Engine.ReadView
             );
         EventAddress[] expectedOrdinals = [
             a[20],
@@ -278,7 +278,7 @@ public sealed class DerivedRecapAcceptanceTests {
                 await fixture.Store.SelectNthPreviousAsync(
                     DerivedRecapLineageView.Capture(
                         fixture.Store,
-                        fixture.Engine
+                        fixture.Engine.ReadView
                     ),
                     0
                 )
@@ -645,7 +645,7 @@ public sealed class DerivedRecapAcceptanceTests {
             IRecapPlanningPolicy policy,
             IReadOnlyList<IRecapBlockMaintainer> maintainers
         ) => new(
-            Engine,
+            Engine.ReadView,
             Store,
             new RecapPlanningInputs(
                 catalog,

@@ -28,7 +28,7 @@ public sealed class DerivedRecapOnlineLifecycleCoordinatorTests {
 
         SessionContextLifecycleResult result =
             await fixture.Coordinator(script).PrepareAsync(
-                fixture.Engine,
+                fixture.Engine.ReadView,
                 fixture.Request(),
                 CancellationToken.None
             );
@@ -75,7 +75,7 @@ public sealed class DerivedRecapOnlineLifecycleCoordinatorTests {
 
         SessionContextLifecycleResult result =
             await fixture.Coordinator(script).PrepareAsync(
-                fixture.Engine,
+                fixture.Engine.ReadView,
                 fixture.Request(),
                 CancellationToken.None
             );
@@ -148,7 +148,7 @@ public sealed class DerivedRecapOnlineLifecycleCoordinatorTests {
 
         SessionContextLifecycleResult result =
             await coordinator.PrepareAsync(
-                fixture.Engine,
+                fixture.Engine.ReadView,
                 fixture.Request(),
                 CancellationToken.None
             );
@@ -204,7 +204,7 @@ public sealed class DerivedRecapOnlineLifecycleCoordinatorTests {
 
         SessionContextLifecycleResult result =
             await coordinator.PrepareAsync(
-                fixture.Engine,
+                fixture.Engine.ReadView,
                 request,
                 CancellationToken.None
             );
@@ -215,7 +215,7 @@ public sealed class DerivedRecapOnlineLifecycleCoordinatorTests {
         DerivedRecapLineageView lineage =
             DerivedRecapLineageView.Capture(
                 fixture.Store,
-                fixture.Engine
+                fixture.Engine.ReadView
             );
         var latest = Assert.IsType<DerivedRecapSelection.Selected>(
             await fixture.Store.SelectNthPreviousAsync(lineage, 0)
@@ -269,7 +269,7 @@ public sealed class DerivedRecapOnlineLifecycleCoordinatorTests {
         DerivedRecapOnlineLifecycleCoordinator coordinator =
             DerivedRecapOnlineLifecycleCoordinator
                 .CreateForFrozenBuilding(
-                    fixture.Engine,
+                    fixture.Engine.ReadView,
                     fixture.Store,
                     created.Descriptor,
                     new RecapBlockMaintainerRegistry([maintainer])
@@ -277,13 +277,13 @@ public sealed class DerivedRecapOnlineLifecycleCoordinatorTests {
 
         SessionContextLifecycleResult first =
             await coordinator.PrepareAsync(
-                fixture.Engine,
+                fixture.Engine.ReadView,
                 fixture.Request(),
                 CancellationToken.None
             );
         SessionContextLifecycleResult second =
             await coordinator.PrepareAsync(
-                fixture.Engine,
+                fixture.Engine.ReadView,
                 fixture.Request(),
                 CancellationToken.None
             );
@@ -334,7 +334,7 @@ public sealed class DerivedRecapOnlineLifecycleCoordinatorTests {
 
         SessionContextLifecycleResult result =
             await coordinator.PrepareAsync(
-                fixture.Engine,
+                fixture.Engine.ReadView,
                 request,
                 CancellationToken.None
             );
@@ -345,9 +345,9 @@ public sealed class DerivedRecapOnlineLifecycleCoordinatorTests {
         Assert.Equal(1, maintainer.CallCount);
         var repaired = Assert.IsType<DerivedRecapSelection.Selected>(
             await fixture.Store.SelectNthPreviousAsync(
-                DerivedRecapLineageView.Capture(
-                    fixture.Store,
-                    fixture.Engine
+                    DerivedRecapLineageView.Capture(
+                        fixture.Store,
+                        fixture.Engine.ReadView
                 ),
                 0
             )
@@ -390,7 +390,7 @@ public sealed class DerivedRecapOnlineLifecycleCoordinatorTests {
 
         await Assert.ThrowsAsync<InvalidOperationException>(
             async () => await coordinator.PrepareAsync(
-                fixture.Engine,
+                fixture.Engine.ReadView,
                 forged,
                 CancellationToken.None
             )
@@ -409,7 +409,7 @@ public sealed class DerivedRecapOnlineLifecycleCoordinatorTests {
 
         await Assert.ThrowsAsync<ArgumentException>(
             async () => await fixture.Coordinator(script).PrepareAsync(
-                other.Engine,
+                other.Engine.ReadView,
                 other.Request(),
                 CancellationToken.None
             )
@@ -433,7 +433,7 @@ public sealed class DerivedRecapOnlineLifecycleCoordinatorTests {
 
         await Assert.ThrowsAsync<InvalidOperationException>(
             async () => await fixture.Coordinator(script).PrepareAsync(
-                fixture.Engine,
+                fixture.Engine.ReadView,
                 stale,
                 CancellationToken.None
             )
@@ -457,7 +457,7 @@ public sealed class DerivedRecapOnlineLifecycleCoordinatorTests {
 
         SessionContextLifecycleResult result =
             await fixture.Coordinator(script).PrepareAsync(
-                fixture.Engine,
+                fixture.Engine.ReadView,
                 fixture.Request(),
                 CancellationToken.None
             );
@@ -488,7 +488,7 @@ public sealed class DerivedRecapOnlineLifecycleCoordinatorTests {
 
         SessionContextLifecycleResult result =
             await fixture.Coordinator(script).PrepareAsync(
-                fixture.Engine,
+                fixture.Engine.ReadView,
                 fixture.Request(),
                 CancellationToken.None
             );
@@ -517,7 +517,7 @@ public sealed class DerivedRecapOnlineLifecycleCoordinatorTests {
 
         SessionContextLifecycleResult result =
             await fixture.Coordinator(script).PrepareAsync(
-                fixture.Engine,
+                fixture.Engine.ReadView,
                 fixture.Request(),
                 CancellationToken.None
             );
@@ -559,7 +559,7 @@ public sealed class DerivedRecapOnlineLifecycleCoordinatorTests {
 
         SessionContextLifecycleResult result =
             await fixture.Coordinator(script).PrepareAsync(
-                fixture.Engine,
+                fixture.Engine.ReadView,
                 fixture.Request(),
                 CancellationToken.None
             );
@@ -601,7 +601,7 @@ public sealed class DerivedRecapOnlineLifecycleCoordinatorTests {
 
         SessionContextLifecycleResult result =
             await fixture.Coordinator(script).PrepareAsync(
-                fixture.Engine,
+                fixture.Engine.ReadView,
                 fixture.Request(),
                 CancellationToken.None
             );
@@ -632,7 +632,7 @@ public sealed class DerivedRecapOnlineLifecycleCoordinatorTests {
 
         SessionContextLifecycleResult retry =
             await retryFixture.Coordinator(retryScript).PrepareAsync(
-                retryFixture.Engine,
+                retryFixture.Engine.ReadView,
                 retryFixture.Request(),
                 CancellationToken.None
             );
@@ -662,7 +662,7 @@ public sealed class DerivedRecapOnlineLifecycleCoordinatorTests {
 
         SessionContextLifecycleResult limit =
             await limitFixture.Coordinator(limitScript).PrepareAsync(
-                limitFixture.Engine,
+                limitFixture.Engine.ReadView,
                 limitFixture.Request(),
                 CancellationToken.None
             );
@@ -698,7 +698,7 @@ public sealed class DerivedRecapOnlineLifecycleCoordinatorTests {
 
         SessionContextLifecycleResult result =
             await fixture.Coordinator(script).PrepareAsync(
-                fixture.Engine,
+                fixture.Engine.ReadView,
                 fixture.Request(),
                 CancellationToken.None
             );
@@ -731,7 +731,7 @@ public sealed class DerivedRecapOnlineLifecycleCoordinatorTests {
         SessionContextLifecycleResult unavailable =
             await unavailableFixture.Coordinator(unavailableScript)
                 .PrepareAsync(
-                    unavailableFixture.Engine,
+                    unavailableFixture.Engine.ReadView,
                     unavailableFixture.Request(),
                     CancellationToken.None
                 );
@@ -763,7 +763,7 @@ public sealed class DerivedRecapOnlineLifecycleCoordinatorTests {
 
         SessionContextLifecycleResult failed =
             await failedFixture.Coordinator(failedScript).PrepareAsync(
-                failedFixture.Engine,
+                failedFixture.Engine.ReadView,
                 failedFixture.Request(),
                 CancellationToken.None
             );
@@ -796,7 +796,7 @@ public sealed class DerivedRecapOnlineLifecycleCoordinatorTests {
 
         SessionContextLifecycleResult retry =
             await retryFixture.Coordinator(retryScript).PrepareAsync(
-                retryFixture.Engine,
+                retryFixture.Engine.ReadView,
                 retryFixture.Request(),
                 CancellationToken.None
             );
@@ -824,7 +824,7 @@ public sealed class DerivedRecapOnlineLifecycleCoordinatorTests {
 
         SessionContextLifecycleResult failed =
             await failedFixture.Coordinator(failedScript).PrepareAsync(
-                failedFixture.Engine,
+                failedFixture.Engine.ReadView,
                 failedFixture.Request(),
                 CancellationToken.None
             );
@@ -857,7 +857,7 @@ public sealed class DerivedRecapOnlineLifecycleCoordinatorTests {
 
         await Assert.ThrowsAsync<InvalidOperationException>(
             async () => await coordinator.PrepareAsync(
-                fixture.Engine,
+                fixture.Engine.ReadView,
                 fixture.Request(),
                 CancellationToken.None
             )
@@ -880,7 +880,7 @@ public sealed class DerivedRecapOnlineLifecycleCoordinatorTests {
         int currentCalls = 0;
         var coordinator =
             new DerivedRecapOnlineLifecycleCoordinator(
-                fixture.Engine,
+                fixture.Engine.ReadView,
                 new ThrowingCandidateSource(),
                 (_, _, _) =>
                     ValueTask.FromResult<DerivedRecapSelection>(
@@ -912,7 +912,7 @@ public sealed class DerivedRecapOnlineLifecycleCoordinatorTests {
             );
 
         _ = await coordinator.PrepareAsync(
-            fixture.Engine,
+                fixture.Engine.ReadView,
             fixture.Request(),
             CancellationToken.None
         );
@@ -927,7 +927,7 @@ public sealed class DerivedRecapOnlineLifecycleCoordinatorTests {
             fixture.Engine.InspectExecutionBoundary().Phase
         );
         _ = await coordinator.PrepareAsync(
-            fixture.Engine,
+                fixture.Engine.ReadView,
             secondRequest,
             CancellationToken.None
         );
@@ -1211,7 +1211,7 @@ public sealed class DerivedRecapOnlineLifecycleCoordinatorTests {
                 )
             );
             return Assert.IsType<PublishRecapResult.Published>(
-                await new DerivedRecapPublisher(Store, Engine)
+                await new DerivedRecapPublisher(Store, Engine.ReadView)
                     .PublishAsync(anchor)
             ).Descriptor;
         }
@@ -1252,7 +1252,7 @@ public sealed class DerivedRecapOnlineLifecycleCoordinatorTests {
         ) {
             estimator ??= new TestHistoryUnitLoadEstimator();
             return new(
-            Engine,
+            Engine.ReadView,
             Store,
             new RecapPlanningInputs(
                 [
@@ -1400,7 +1400,7 @@ public sealed class DerivedRecapOnlineLifecycleCoordinatorTests {
                 ValueTask<DerivedRecapExecutionResult>
             > run
         ) => new(
-            Engine,
+            Engine.ReadView,
             new ThrowingCandidateSource(),
             select,
             restore,

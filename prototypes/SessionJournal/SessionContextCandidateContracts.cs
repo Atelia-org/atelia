@@ -28,7 +28,7 @@ public interface ICoherentContextCandidateSource {
 /// </summary>
 public interface ISessionContextLifecycleCoordinator {
     ValueTask<SessionContextLifecycleResult> PrepareAsync(
-        SessionJournalEngine engine,
+        SessionJournalReadView readView,
         SessionContextLifecycleRequest request,
         CancellationToken cancellationToken
     );

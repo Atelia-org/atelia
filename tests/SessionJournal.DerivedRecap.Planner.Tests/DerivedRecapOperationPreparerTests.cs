@@ -588,7 +588,7 @@ public sealed class DerivedRecapOperationPreparerTests : IDisposable {
         );
         Assert.Equal(
             [
-                typeof(SessionJournalEngine),
+                typeof(SessionJournalReadView),
                 typeof(DerivedRecapStore),
                 typeof(PreparedRecapOperationAuthority),
                 typeof(IRecapBlockMaintainerRegistry)
@@ -603,6 +603,27 @@ public sealed class DerivedRecapOperationPreparerTests : IDisposable {
     public void ExecutionPublicSurfaceIsAuthorityOnly() {
         Type[] exported = typeof(DerivedRecapPreparedExecutor)
             .Assembly.GetExportedTypes();
+        foreach (Type type in exported) {
+            IEnumerable<System.Reflection.MethodBase> publicCallables =
+                type.GetConstructors(
+                    System.Reflection.BindingFlags.Public
+                    | System.Reflection.BindingFlags.Instance
+                    | System.Reflection.BindingFlags.DeclaredOnly
+                ).Cast<System.Reflection.MethodBase>()
+                .Concat(type.GetMethods(
+                    System.Reflection.BindingFlags.Public
+                    | System.Reflection.BindingFlags.Instance
+                    | System.Reflection.BindingFlags.Static
+                    | System.Reflection.BindingFlags.DeclaredOnly
+                ));
+            Assert.DoesNotContain(
+                publicCallables.SelectMany(static callable =>
+                    callable.GetParameters()
+                ),
+                static parameter => parameter.ParameterType
+                    == typeof(SessionJournalEngine)
+            );
+        }
         Assert.DoesNotContain(
             exported,
             type => type.Name == "DerivedRecapPlannerExecutor"
@@ -649,7 +670,7 @@ public sealed class DerivedRecapOperationPreparerTests : IDisposable {
         );
         Assert.Equal(
             [
-                typeof(SessionJournalEngine),
+                typeof(SessionJournalReadView),
                 typeof(DerivedRecapStore),
                 typeof(PreparedRecapOperationAuthority),
                 typeof(IRecapBlockMaintainerRegistry)
@@ -804,7 +825,7 @@ public sealed class DerivedRecapOperationPreparerTests : IDisposable {
 
         Assert.Throws<ArgumentException>(() =>
             DerivedRecapOnlineLifecycleCoordinator.Create(
-                engine,
+                engine.ReadView,
                 store,
                 ready.Authority,
                 new RecapBlockMaintainerRegistry([])
@@ -844,7 +865,7 @@ public sealed class DerivedRecapOperationPreparerTests : IDisposable {
 
         Assert.Throws<ArgumentException>(() => {
             _ = DerivedRecapOperationPreparer.PrepareAsync(
-                engine,
+                engine.ReadView,
                 store,
                 Capabilities(),
                 source

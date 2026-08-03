@@ -276,7 +276,7 @@ public sealed class DerivedRecapRealDataAcceptanceTests {
                 );
                 DerivedRecapSelection invalid =
                     await DerivedRecapLineageView
-                        .Capture(store, engine)
+                        .Capture(store, engine.ReadView)
                         .SelectNthPreviousAsync(0);
                 DerivedRecapSelection.ExactPublishedSetInvalid defect =
                     Assert.IsType<
@@ -588,7 +588,7 @@ public sealed class DerivedRecapRealDataAcceptanceTests {
         );
         DerivedRecapSelection selection =
             await DerivedRecapLineageView
-                .Capture(store, engine)
+                .Capture(store, engine.ReadView)
                 .SelectNthPreviousAsync(0);
         return Assert
             .IsType<DerivedRecapSelection.Selected>(selection)
@@ -613,7 +613,7 @@ public sealed class DerivedRecapRealDataAcceptanceTests {
                )) {
             var source = new DerivedRecapContextCandidateSource(
                 DerivedRecapStore.Open(path, branchRefId),
-                engine
+                engine.ReadView
             );
             engine.UseRuntime(new SJ.SessionRuntime(
                 client,

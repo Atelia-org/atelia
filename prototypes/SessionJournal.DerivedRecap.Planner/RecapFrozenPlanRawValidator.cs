@@ -7,102 +7,14 @@ namespace Atelia.SessionJournal.DerivedRecap.Planner;
 internal sealed record RecapFrozenPlanRawDefect(string Detail);
 
 /// <summary>
-/// Validates only the raw-lineage semantics frozen into a recap plan.
-/// Active catalog policy and Published/Building ordering belong to the
-/// phase-specific caller.
+/// Validates component-dependent frozen-plan structure against an already
+/// captured lineage. Governing setup authority belongs exclusively to
+/// <see cref="RecapFrozenPlanBarrier"/> before component reads; this validator
+/// performs no SessionJournal read.
 /// </summary>
 internal static class RecapFrozenPlanRawValidator {
-    private const int OnlineHeaderProofLimit = 513;
-    public static IReadOnlyList<RecapFrozenPlanRawDefect> ValidateBlock(
-        SessionJournalEngine engine,
-        DerivedRecapSetManifest manifest,
-        IReadOnlyDictionary<
-            RecapBlockId,
-            DerivedRecapFrozenInput
-        > frozenInputs,
-        SessionCurrentLineagePrefix lineage,
-        RecapBlockPlan plan
-    ) {
-        var defects = new List<RecapFrozenPlanRawDefect>();
-        IReadOnlyList<RecapFrozenPlanRawDefect> authorityDefects =
-            ValidateSetupAuthority(
-                engine,
-                manifest,
-                lineage,
-                plan
-            );
-        defects.AddRange(authorityDefects);
-        if (authorityDefects.Count != 0) {
-            return defects;
-        }
-        defects.AddRange(ValidateInputDependentBlock(
-            engine,
-            manifest,
-            frozenInputs,
-            lineage,
-            plan
-        ));
-        return defects;
-    }
-
-    public static IReadOnlyList<RecapFrozenPlanRawDefect>
-        ValidateSetupAuthority(
-        SessionJournalEngine engine,
-        DerivedRecapSetManifest manifest,
-        SessionCurrentLineagePrefix lineage,
-        RecapBlockPlan plan
-    ) {
-        ArgumentNullException.ThrowIfNull(engine);
-        ArgumentNullException.ThrowIfNull(manifest);
-        ArgumentNullException.ThrowIfNull(lineage);
-        ArgumentNullException.ThrowIfNull(plan);
-
-        var defects = new List<RecapFrozenPlanRawDefect>();
-        HashSet<EventAddress> lineageAddresses = lineage.HeadToOldest
-            .Select(static node => node.Address)
-            .ToHashSet();
-        if (!lineageAddresses.Contains(manifest.SetAdmissionAnchor)) {
-            Add(
-                defects,
-                "SetAdmissionAnchor is outside current raw lineage."
-            );
-            return defects;
-        }
-        ValidateSetups(
-            engine,
-            manifest.SetAdmissionAnchor,
-            manifest.SetAdmissionAnchorSetups,
-            "manifest admission",
-            defects
-        );
-        if (plan is not MaintainRecapBlockPlan maintain) {
-            return defects;
-        }
-        foreach (RecapReplayBoundary boundary
-                 in maintain.CatchUpBoundaries) {
-            if (!lineageAddresses.Contains(boundary.Address)) {
-                Add(
-                    defects,
-                    $"Maintain block '{plan.RecapBlockId}' catch-up "
-                    + "boundary is outside current raw lineage."
-                );
-                continue;
-            }
-            ValidateSetups(
-                engine,
-                boundary.Address,
-                boundary.Setups,
-                $"Maintain block '{plan.RecapBlockId}' "
-                    + "catch-up boundary",
-                defects
-            );
-        }
-        return defects;
-    }
-
     public static IReadOnlyList<RecapFrozenPlanRawDefect>
         ValidateInputDependentBlock(
-        SessionJournalEngine engine,
         DerivedRecapSetManifest manifest,
         IReadOnlyDictionary<
             RecapBlockId,
@@ -111,7 +23,6 @@ internal static class RecapFrozenPlanRawValidator {
         SessionCurrentLineagePrefix lineage,
         RecapBlockPlan plan
     ) {
-        ArgumentNullException.ThrowIfNull(engine);
         ArgumentNullException.ThrowIfNull(manifest);
         ArgumentNullException.ThrowIfNull(frozenInputs);
         ArgumentNullException.ThrowIfNull(lineage);
@@ -167,13 +78,6 @@ internal static class RecapFrozenPlanRawValidator {
                     );
                     return defects;
                 }
-                ValidateSetups(
-                    engine,
-                    inheritedInput.AbsorbedThrough,
-                    inheritedInput.AbsorbedThroughSetups,
-                    $"Inherit block '{plan.RecapBlockId}' source",
-                    defects
-                );
                 try {
                     if (new UTF8Encoding(false, true).GetByteCount(
                             inheritedInput.Content
@@ -211,14 +115,6 @@ internal static class RecapFrozenPlanRawValidator {
                             );
                             return defects;
                         }
-                        ValidateSetups(
-                            engine,
-                            empty.ReplayStartExclusive,
-                            empty.ReplayStartSetups,
-                            $"Maintain block '{plan.RecapBlockId}' "
-                                + "empty replay start",
-                            defects
-                        );
                         break;
                     case ExistingRecapMaintainSource existing:
                         if (!TryValidateFrozenSource(
@@ -243,14 +139,6 @@ internal static class RecapFrozenPlanRawValidator {
                             );
                             return defects;
                         }
-                        ValidateSetups(
-                            engine,
-                            existingInput.AbsorbedThrough,
-                            existing.ReplayStartSetups,
-                            $"Maintain block '{plan.RecapBlockId}' "
-                                + "existing replay start",
-                            defects
-                        );
                         break;
                     default:
                         Add(
@@ -361,46 +249,6 @@ internal static class RecapFrozenPlanRawValidator {
         }
         input = foundInput;
         return true;
-    }
-
-    private static void ValidateSetups(
-        SessionJournalEngine engine,
-        EventAddress address,
-        SessionContextAnchorSetupReferences expected,
-        string label,
-        List<RecapFrozenPlanRawDefect> defects
-    ) {
-        if (expected.RuntimeConfig.Address == default
-            || expected.SystemPrompt.Address == default) {
-            Add(
-                defects,
-                $"{label} setups contain a default authority address."
-            );
-            return;
-        }
-        try {
-            SessionGoverningSetupProofResult proof =
-                engine.ProveGoverningSetupAtBounded(
-                    address,
-                    expected,
-                    OnlineHeaderProofLimit
-                );
-            if (proof is SessionGoverningSetupProofResult
-                    .BeyondPrefix) {
-                // Online callers must have crossed RecapFrozenPlanBarrier,
-                // where long-lived setup authority is proved by chaining
-                // header-only route transitions. Do not reinterpret that
-                // completed proof as a post-content Beyond/defect here.
-                return;
-            }
-        }
-        catch (InvalidDataException exception) {
-            Add(
-                defects,
-                $"{label} setup authority is not governing its exact "
-                + $"boundary: {exception.Message}"
-            );
-        }
     }
 
     private static void Add(

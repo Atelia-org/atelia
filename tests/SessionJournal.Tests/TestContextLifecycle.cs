@@ -9,7 +9,7 @@ internal sealed class TestContextLifecycle
         SessionContextLifecycleResult.Ready;
 
     internal Action<
-        SessionJournalEngine,
+        SessionJournalReadView,
         SessionContextLifecycleRequest
     >? OnPrepare { get; set; }
 
@@ -19,14 +19,14 @@ internal sealed class TestContextLifecycle
     internal int InvocationCount => _requests.Count;
 
     public ValueTask<SessionContextLifecycleResult> PrepareAsync(
-        SessionJournalEngine engine,
+        SessionJournalReadView readView,
         SessionContextLifecycleRequest request,
         CancellationToken cancellationToken
     ) {
-        ArgumentNullException.ThrowIfNull(engine);
+        ArgumentNullException.ThrowIfNull(readView);
         _requests.Add(request);
         cancellationToken.ThrowIfCancellationRequested();
-        OnPrepare?.Invoke(engine, request);
+        OnPrepare?.Invoke(readView, request);
         return ValueTask.FromResult(Result);
     }
 }

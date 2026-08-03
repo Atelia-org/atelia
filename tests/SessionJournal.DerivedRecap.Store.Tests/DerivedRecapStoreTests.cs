@@ -22,7 +22,10 @@ public sealed class DerivedRecapStoreTests {
                 engine.BranchRefId
             );
             DerivedRecapLineageView lineage =
-                DerivedRecapLineageView.Capture(store, engine);
+                DerivedRecapLineageView.Capture(
+                    store,
+                    engine.ReadView
+                );
 
             Assert.IsType<DerivedRecapSelection.StoreUnavailable>(
                 await store.SelectNthPreviousAsync(lineage, 0)
@@ -181,7 +184,7 @@ public sealed class DerivedRecapStoreTests {
         );
         var reopenedPublisher = new DerivedRecapPublisher(
             reopened,
-            fixture.Engine
+            fixture.ReadView
         );
         _ = await reopenedPublisher.PublishAsync(anchor);
         Assert.IsType<DerivedRecapSelection.Selected>(
