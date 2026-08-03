@@ -614,9 +614,9 @@ static IResult StartAcceptedTurn(
             }
             finally {
                 try {
-                    hostService.RefreshRecentTurnsBestEffort(session);
                     hostService.FinishTurn(session, liveTurn);
                     liveTurn.Complete();
+                    hostService.RefreshRecentTurnsBestEffort(session);
                     DebugUtil.Info(
                         "Galatea.Api",
                         $"StartAcceptedTurn background finish: user={session.User.UserId}, turnId={liveTurn.TurnId}, status={liveTurn.Status}"
