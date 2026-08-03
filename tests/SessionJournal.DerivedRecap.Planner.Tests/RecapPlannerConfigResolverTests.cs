@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using System.Reflection;
 using Atelia.SessionJournal.DerivedRecap.Store;
 using Xunit;
 
@@ -13,6 +14,32 @@ public sealed class RecapPlannerConfigResolverTests {
         ContextHeaderCarrier.System,
         "second"
     );
+
+    [Fact]
+    public void ResolutionCatalogPublicSurfaceHasNoRegistrationWrappers() {
+        Assembly assembly = typeof(
+            RecapPlannerConfigResolutionCatalog
+        ).Assembly;
+        Assert.Null(assembly.GetType(
+            "Atelia.SessionJournal.DerivedRecap.Planner.RecapPlanningPolicyRegistration"
+        ));
+        Assert.Null(assembly.GetType(
+            "Atelia.SessionJournal.DerivedRecap.Planner.HistoryUnitLoadEstimatorRegistration"
+        ));
+
+        ConstructorInfo constructor = Assert.Single(
+            typeof(RecapPlannerConfigResolutionCatalog).GetConstructors()
+        );
+        Assert.Equal(
+            [
+                typeof(IReadOnlyList<IRecapPlanningPolicy>),
+                typeof(IReadOnlyList<IHistoryUnitLoadEstimator>)
+            ],
+            constructor.GetParameters()
+                .Select(parameter => parameter.ParameterType)
+                .ToArray()
+        );
+    }
 
     [Fact]
     public void StandaloneConsumerResolvesInjectedCapabilitiesInConfigOrder()
