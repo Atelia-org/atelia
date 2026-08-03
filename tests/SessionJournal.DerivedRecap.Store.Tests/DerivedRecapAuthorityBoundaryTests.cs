@@ -164,9 +164,7 @@ public sealed class DerivedRecapAuthorityBoundaryTests {
         AssertStoreUnavailable(
             Assert.IsType<PublishedCheckpointWriteResult.Unavailable>(
                 await fixture.Store.AdvancePublishedCheckpointAsync(
-                    published.Handle,
-                    plan.RecapBlockId,
-                    publishedBlock.Checkpoint.StateToken,
+                    publishedBlock.WriteAuthority,
                     candidate
                 )
             ).Defects
@@ -174,9 +172,7 @@ public sealed class DerivedRecapAuthorityBoundaryTests {
         AssertStoreUnavailable(
             Assert.IsType<PublishedFinalWriteResult.Unavailable>(
                 await fixture.Store.InstallPublishedReplacementAsync(
-                    published.Handle,
-                    plan.RecapBlockId,
-                    publishedBlock.Final.StateToken,
+                    publishedBlock.WriteAuthority,
                     candidate
                 )
             ).Defects
@@ -308,6 +304,13 @@ public sealed class DerivedRecapAuthorityBoundaryTests {
     public void PublicStoreSurfaceCannotInjectLineageOrCreateBuilding() {
         MethodInfo[] publicStoreMethods = typeof(DerivedRecapStore)
             .GetMethods(BindingFlags.Instance | BindingFlags.Public);
+        MethodInfo[] declaredStoreMethods = typeof(DerivedRecapStore)
+            .GetMethods(
+                BindingFlags.Instance
+                | BindingFlags.Public
+                | BindingFlags.NonPublic
+                | BindingFlags.DeclaredOnly
+            );
 
         Assert.DoesNotContain(
             publicStoreMethods,
@@ -392,6 +395,12 @@ public sealed class DerivedRecapAuthorityBoundaryTests {
             typeof(PublishedBlockWriteAuthority),
             checkpointWrite.GetParameters()[0].ParameterType
         );
+        Assert.Single(
+            declaredStoreMethods,
+            static method => method.Name
+                == nameof(DerivedRecapStore
+                    .AdvancePublishedCheckpointAsync)
+        );
         MethodInfo finalWrite = Assert.Single(
             publicStoreMethods,
             static method => method.Name
@@ -401,6 +410,12 @@ public sealed class DerivedRecapAuthorityBoundaryTests {
         Assert.Equal(
             typeof(PublishedBlockWriteAuthority),
             finalWrite.GetParameters()[0].ParameterType
+        );
+        Assert.Single(
+            declaredStoreMethods,
+            static method => method.Name
+                == nameof(DerivedRecapStore
+                    .InstallPublishedReplacementAsync)
         );
         MethodInfo commit = Assert.Single(
             typeof(DerivedRecapRestorer).GetMethods(

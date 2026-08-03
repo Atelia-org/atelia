@@ -2120,36 +2120,18 @@ public sealed class DerivedRecapStore {
             .ConfigureAwait(false);
     }
 
-    internal ValueTask<PublishedCheckpointWriteResult>
-        AdvancePublishedCheckpointAsync(
-        PublishedRestoreHandle handle,
-        RecapBlockId blockId,
-        string expectedStateToken,
-        DerivedRecapBlock candidate,
-        CancellationToken cancellationToken = default
-    ) => AdvancePublishedCheckpointCoreAsync(
-        handle,
-        blockId,
-        expectedStateToken,
-        expectedFinalStateToken: null,
-        candidate,
-        cancellationToken
-    );
-
     private async ValueTask<PublishedCheckpointWriteResult>
         AdvancePublishedCheckpointCoreAsync(
         PublishedRestoreHandle handle,
         RecapBlockId blockId,
         string expectedStateToken,
-        string? expectedFinalStateToken,
+        string expectedFinalStateToken,
         DerivedRecapBlock candidate,
         CancellationToken cancellationToken
     ) {
         ArgumentNullException.ThrowIfNull(handle);
         ArgumentNullException.ThrowIfNull(blockId);
-        ArgumentException.ThrowIfNullOrWhiteSpace(
-            expectedStateToken
-        );
+        ArgumentNullException.ThrowIfNull(expectedStateToken);
         ArgumentNullException.ThrowIfNull(candidate);
         StoreWriteLockAttempt writeAttempt =
             await TryAcquireReadyWriteLockAsync(cancellationToken)
@@ -2222,21 +2204,13 @@ public sealed class DerivedRecapStore {
         if (checkpoint
                 is RollingRecapCheckpointHealth.Healthy healthy) {
             if (healthy.Block == candidate) {
-                string finalStateToken = await ResolvePublishedFinalStateTokenAsync(
-                        publishedPath,
-                        capture,
-                        plan,
-                        expectedFinalStateToken,
-                        cancellationToken
-                    )
-                    .ConfigureAwait(false);
                 return new PublishedCheckpointWriteResult.AlreadyCurrent(
                     healthy.StateToken,
                     CreatePublishedBlockWriteAuthority(
                         handle,
                         blockId,
                         healthy.StateToken,
-                        finalStateToken
+                        expectedFinalStateToken
                     )
                 );
             }
@@ -2269,21 +2243,13 @@ public sealed class DerivedRecapStore {
             )
             .ConfigureAwait(false);
         string stateToken = HealthyStateToken(candidate);
-        string finalToken = await ResolvePublishedFinalStateTokenAsync(
-                publishedPath,
-                capture,
-                plan,
-                expectedFinalStateToken,
-                cancellationToken
-            )
-            .ConfigureAwait(false);
         return new PublishedCheckpointWriteResult.Updated(
             stateToken,
             CreatePublishedBlockWriteAuthority(
                 handle,
                 blockId,
                 stateToken,
-                finalToken
+                expectedFinalStateToken
             )
         );
     }
@@ -2306,36 +2272,18 @@ public sealed class DerivedRecapStore {
             .ConfigureAwait(false);
     }
 
-    internal ValueTask<PublishedFinalWriteResult>
-        InstallPublishedReplacementAsync(
-        PublishedRestoreHandle handle,
-        RecapBlockId blockId,
-        string expectedStateToken,
-        DerivedRecapBlock candidate,
-        CancellationToken cancellationToken = default
-    ) => InstallPublishedReplacementCoreAsync(
-        handle,
-        blockId,
-        expectedStateToken,
-        expectedCheckpointStateToken: null,
-        candidate,
-        cancellationToken
-    );
-
     private async ValueTask<PublishedFinalWriteResult>
         InstallPublishedReplacementCoreAsync(
         PublishedRestoreHandle handle,
         RecapBlockId blockId,
         string expectedStateToken,
-        string? expectedCheckpointStateToken,
+        string expectedCheckpointStateToken,
         DerivedRecapBlock candidate,
         CancellationToken cancellationToken
     ) {
         ArgumentNullException.ThrowIfNull(handle);
         ArgumentNullException.ThrowIfNull(blockId);
-        ArgumentException.ThrowIfNullOrWhiteSpace(
-            expectedStateToken
-        );
+        ArgumentNullException.ThrowIfNull(expectedStateToken);
         ArgumentNullException.ThrowIfNull(candidate);
         StoreWriteLockAttempt writeAttempt =
             await TryAcquireReadyWriteLockAsync(cancellationToken)
@@ -2433,21 +2381,13 @@ public sealed class DerivedRecapStore {
         if (final.Health
                 is FinalRecapBlockHealth.Healthy healthyFinal) {
             if (healthyFinal.Block == candidate) {
-                string currentCheckpointStateToken =
-                    await ResolvePublishedCheckpointStateTokenAsync(
-                            publishedPath,
-                            plan,
-                            expectedCheckpointStateToken,
-                            cancellationToken
-                        )
-                        .ConfigureAwait(false);
                 return new PublishedFinalWriteResult.AlreadyHealthy(
                     healthyFinal.Block,
                     healthyFinal.StateToken,
                     CreatePublishedBlockWriteAuthority(
                         handle,
                         blockId,
-                        currentCheckpointStateToken,
+                        expectedCheckpointStateToken,
                         healthyFinal.StateToken
                     )
                 );
@@ -2522,19 +2462,11 @@ public sealed class DerivedRecapStore {
             )
             .ConfigureAwait(false);
         string stateToken = HealthyStateToken(candidate);
-        string checkpointStateToken =
-            await ResolvePublishedCheckpointStateTokenAsync(
-                    publishedPath,
-                    plan,
-                    expectedCheckpointStateToken,
-                    cancellationToken
-                )
-                .ConfigureAwait(false);
         PublishedBlockWriteAuthority writeAuthority =
             CreatePublishedBlockWriteAuthority(
                 handle,
                 blockId,
-                checkpointStateToken,
+                expectedCheckpointStateToken,
                 stateToken
             );
         return replacingDamaged
@@ -4242,63 +4174,6 @@ public sealed class DerivedRecapStore {
         checkpointStateToken,
         finalStateToken
     );
-
-    private async ValueTask<string> ResolvePublishedFinalStateTokenAsync(
-        string publishedPath,
-        RestoreAuthorityCapture capture,
-        RecapBlockPlan plan,
-        string? expectedStateToken,
-        CancellationToken cancellationToken
-    ) {
-        if (expectedStateToken is not null) {
-            return expectedStateToken;
-        }
-        FrozenRecapInputHealth input =
-            await InspectPublishedFrozenInputExactAsync(
-                    publishedPath,
-                    plan,
-                    cancellationToken
-                )
-                .ConfigureAwait(false);
-        RecapBlockCommitment? commitment = capture.Publication?
-            .BlockCommitments.Single(
-                item => item.RecapBlockId == plan.RecapBlockId
-            );
-        PublishedFinalInspection final =
-            await InspectPublishedFinalExactAsync(
-                    publishedPath,
-                    capture.Manifest,
-                    plan,
-                    input,
-                    commitment,
-                    cancellationToken
-                )
-                .ConfigureAwait(false);
-        return final.Health.StateToken;
-    }
-
-    private async ValueTask<string>
-        ResolvePublishedCheckpointStateTokenAsync(
-        string publishedPath,
-        RecapBlockPlan plan,
-        string? expectedStateToken,
-        CancellationToken cancellationToken
-    ) {
-        if (expectedStateToken is not null) {
-            return expectedStateToken;
-        }
-        RollingRecapCheckpointHealth checkpoint =
-            await InspectCheckpointHealthAsync(
-                    plan,
-                    GetBlockFilePath(
-                        Path.Combine(publishedPath, "work"),
-                        plan.RecapBlockId
-                    ),
-                    cancellationToken
-                )
-                .ConfigureAwait(false);
-        return checkpoint.StateToken;
-    }
 
     private void ValidatePublishedBlockWriteAuthority(
         PublishedBlockWriteAuthority authority

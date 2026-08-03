@@ -352,9 +352,8 @@ public sealed class DerivedRecapPublishedRestoreWriteTests {
         File.Delete(workPath);
         PublishedRestoreInspection inspection =
             await RequireInspectionAsync(fixture, anchor, lineage);
-        string missingToken =
-            inspection.Blocks[plan.RecapBlockId]
-                .Checkpoint.StateToken;
+        PublishedBlockWriteAuthority missingAuthority =
+            inspection.Blocks[plan.RecapBlockId].WriteAuthority;
         DerivedRecapBlock first =
             DerivedRecapCodec.CreateBlock(
                 plan,
@@ -372,9 +371,7 @@ public sealed class DerivedRecapPublishedRestoreWriteTests {
             async () =>
                 await fixture.Store
                     .AdvancePublishedCheckpointAsync(
-                        inspection.Handle,
-                        plan.RecapBlockId,
-                        missingToken,
+                        missingAuthority,
                         final
                     )
         );
@@ -382,9 +379,7 @@ public sealed class DerivedRecapPublishedRestoreWriteTests {
             PublishedCheckpointWriteResult.Updated
         >(
             await fixture.Store.AdvancePublishedCheckpointAsync(
-                inspection.Handle,
-                plan.RecapBlockId,
-                missingToken,
+                missingAuthority,
                 first
             )
         );
@@ -392,18 +387,14 @@ public sealed class DerivedRecapPublishedRestoreWriteTests {
             PublishedCheckpointWriteResult.AlreadyCurrent
         >(
             await fixture.Store.AdvancePublishedCheckpointAsync(
-                inspection.Handle,
-                plan.RecapBlockId,
-                updated.StateToken,
+                updated.WriteAuthority,
                 first
             )
         );
         Assert.NotNull(alreadyCurrent.WriteAuthority);
         Assert.IsType<PublishedCheckpointWriteResult.Stale>(
             await fixture.Store.AdvancePublishedCheckpointAsync(
-                inspection.Handle,
-                plan.RecapBlockId,
-                missingToken,
+                missingAuthority,
                 first
             )
         );
@@ -411,9 +402,7 @@ public sealed class DerivedRecapPublishedRestoreWriteTests {
             PublishedCheckpointWriteResult.Updated
         >(
             await fixture.Store.AdvancePublishedCheckpointAsync(
-                inspection.Handle,
-                plan.RecapBlockId,
-                updated.StateToken,
+                alreadyCurrent.WriteAuthority,
                 final
             )
         );
@@ -453,27 +442,26 @@ public sealed class DerivedRecapPublishedRestoreWriteTests {
         await File.WriteAllTextAsync(finalPath, "damaged");
         PublishedRestoreInspection initial =
             await RequireInspectionAsync(fixture, anchor, lineage);
-        string damagedToken =
-            initial.Blocks[plan.RecapBlockId].Final.StateToken;
+        PublishedBlockWriteAuthority initialAuthority =
+            initial.Blocks[plan.RecapBlockId].WriteAuthority;
         await Assert.ThrowsAsync<InvalidDataException>(
             async () =>
                 await fixture.Store
                     .InstallPublishedReplacementAsync(
-                        initial.Handle,
-                        plan.RecapBlockId,
-                        damagedToken,
+                        initialAuthority,
                         replacement
                     )
         );
 
         File.Delete(workPath);
+        PublishedRestoreInspection missingCheckpoint =
+            await RequireInspectionAsync(fixture, anchor, lineage);
         var checkpoint = Assert.IsType<
             PublishedCheckpointWriteResult.Updated
         >(
             await fixture.Store.AdvancePublishedCheckpointAsync(
-                initial.Handle,
-                plan.RecapBlockId,
-                "missing",
+                missingCheckpoint.Blocks[plan.RecapBlockId]
+                    .WriteAuthority,
                 replacement
             )
         );
@@ -486,9 +474,7 @@ public sealed class DerivedRecapPublishedRestoreWriteTests {
             PublishedFinalWriteResult.ReplacedDamaged
         >(
             await fixture.Store.InstallPublishedReplacementAsync(
-                initial.Handle,
-                plan.RecapBlockId,
-                damagedToken,
+                checkpoint.WriteAuthority,
                 replacement
             )
         );
@@ -496,18 +482,14 @@ public sealed class DerivedRecapPublishedRestoreWriteTests {
             PublishedFinalWriteResult.AlreadyHealthy
         >(
             await fixture.Store.InstallPublishedReplacementAsync(
-                initial.Handle,
-                plan.RecapBlockId,
-                installed.StateToken,
+                installed.WriteAuthority,
                 replacement
             )
         );
         Assert.NotNull(alreadyHealthy.WriteAuthority);
         Assert.IsType<PublishedFinalWriteResult.HealthyConflict>(
             await fixture.Store.InstallPublishedReplacementAsync(
-                initial.Handle,
-                plan.RecapBlockId,
-                installed.StateToken,
+                alreadyHealthy.WriteAuthority,
                 DerivedRecapCodec.CreateBlock(
                     plan,
                     anchor,
@@ -517,9 +499,7 @@ public sealed class DerivedRecapPublishedRestoreWriteTests {
         );
         Assert.IsType<PublishedFinalWriteResult.Stale>(
             await fixture.Store.InstallPublishedReplacementAsync(
-                initial.Handle,
-                plan.RecapBlockId,
-                damagedToken,
+                checkpoint.WriteAuthority,
                 replacement
             )
         );
@@ -539,9 +519,8 @@ public sealed class DerivedRecapPublishedRestoreWriteTests {
         );
         EventAddress anchor = plan.CatchUpBoundaries[^1].Address;
         (
-            PublishedRestoreHandle handle,
             DerivedRecapBlock replacement,
-            string finalToken,
+            PublishedBlockWriteAuthority staleBlockAuthority,
             PublishedEnvelopeCommitAuthority commitAuthority,
             PublishedEnvelopeCommitAuthority staleCommitAuthority
         ) = await InstallPendingAsync(
@@ -599,17 +578,13 @@ public sealed class DerivedRecapPublishedRestoreWriteTests {
         Assert.Equal(committed.Descriptor, selected.Descriptor);
         Assert.IsType<PublishedFinalWriteResult.Stale>(
             await fixture.Store.InstallPublishedReplacementAsync(
-                handle,
-                plan.RecapBlockId,
-                finalToken,
+                staleBlockAuthority,
                 replacement
             )
         );
         Assert.IsType<PublishedCheckpointWriteResult.Stale>(
             await fixture.Store.AdvancePublishedCheckpointAsync(
-                handle,
-                plan.RecapBlockId,
-                finalToken,
+                staleBlockAuthority,
                 replacement
             )
         );
@@ -827,7 +802,6 @@ public sealed class DerivedRecapPublishedRestoreWriteTests {
         rewindTarget = lineage.CurrentPrefix.HeadToOldest[2].Address;
         EventAddress anchor = plan.CatchUpBoundaries[^1].Address;
         (
-            _,
             DerivedRecapBlock replacement,
             _,
             PublishedEnvelopeCommitAuthority commitAuthority,
@@ -992,9 +966,7 @@ public sealed class DerivedRecapPublishedRestoreWriteTests {
 
         var stale = Assert.IsType<PublishedFinalWriteResult.Stale>(
             await fixture.Store.InstallPublishedReplacementAsync(
-                first.Handle,
-                plan.RecapBlockId,
-                firstDamage.StateToken,
+                first.Blocks[plan.RecapBlockId].WriteAuthority,
                 candidate
             )
         );
@@ -1055,9 +1027,7 @@ public sealed class DerivedRecapPublishedRestoreWriteTests {
 
         Assert.IsType<PublishedFinalWriteResult.Unavailable>(
             await fixture.Store.InstallPublishedReplacementAsync(
-                inspection.Handle,
-                plan.RecapBlockId,
-                "unavailable",
+                block.WriteAuthority,
                 candidate
             )
         );
@@ -1188,9 +1158,8 @@ public sealed class DerivedRecapPublishedRestoreWriteTests {
     }
 
     private static async ValueTask<(
-        PublishedRestoreHandle Handle,
         DerivedRecapBlock Replacement,
-        string FinalToken,
+        PublishedBlockWriteAuthority StaleBlockAuthority,
         PublishedEnvelopeCommitAuthority CommitAuthority,
         PublishedEnvelopeCommitAuthority StaleCommitAuthority
     )> InstallPendingAsync(
@@ -1246,9 +1215,8 @@ public sealed class DerivedRecapPublishedRestoreWriteTests {
             )
         );
         return (
-            damaged.Handle,
             replacement,
-            installed.StateToken,
+            installed.WriteAuthority,
             fixture.Store.IssuePublishedEnvelopeCommitAuthority(
                 damaged.Handle,
                 [installed.WriteAuthority]

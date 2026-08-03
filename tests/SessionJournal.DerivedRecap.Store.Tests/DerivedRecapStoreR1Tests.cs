@@ -742,17 +742,13 @@ public sealed class DerivedRecapStoreR1Tests {
         );
         Assert.IsType<PublishedCheckpointWriteResult.Unavailable>(
             await fixture.Store.AdvancePublishedCheckpointAsync(
-                available.Inspection.Handle,
-                plan.RecapBlockId,
-                "missing",
+                block.WriteAuthority,
                 candidate
             )
         );
         Assert.IsType<PublishedFinalWriteResult.Unavailable>(
             await fixture.Store.InstallPublishedReplacementAsync(
-                available.Inspection.Handle,
-                plan.RecapBlockId,
-                "missing",
+                block.WriteAuthority,
                 candidate
             )
         );
@@ -906,17 +902,13 @@ public sealed class DerivedRecapStoreR1Tests {
         );
         Assert.IsType<PublishedCheckpointWriteResult.Unavailable>(
             await fixture.Store.AdvancePublishedCheckpointAsync(
-                available.Inspection.Handle,
-                plan.RecapBlockId,
-                "missing",
+                block.WriteAuthority,
                 candidate
             )
         );
         Assert.IsType<PublishedFinalWriteResult.Unavailable>(
             await fixture.Store.InstallPublishedReplacementAsync(
-                available.Inspection.Handle,
-                plan.RecapBlockId,
-                "missing",
+                block.WriteAuthority,
                 candidate
             )
         );
