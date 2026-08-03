@@ -59,8 +59,9 @@ orphan文件。只有完成serialize/write/flush/close并成功登记的文件�
 `maintenanceMode`是startup-time只读开关，默认`false`。设为`true`后，fresh send、durable
 resume、Undo与stop endpoint都会在打开session前返回typed `503 maintenance-mode`。登录、页面和
 `/api/me`不打开repo；current、recent等首次需要该用户session的读取endpoint会lazy open
-read-only `SessionJournalEngine`，形成第二层写保护。SSE只附着已有in-memory turn。页面会显示维护
-提示并禁用所有写按钮。该开关不会热加载，也没有admin bypass；解除维护需要修改config并重启，外部
+read-only `SessionJournalEngine`，形成第二层写保护。SSE成功订阅只附着已有in-memory turn，但endpoint
+首次访问仍会先解析并lazy open用户session，再查找turn。页面会显示维护提示并禁用所有写按钮。该开关
+不会热加载，也没有admin bypass；解除维护需要修改config并重启，外部
 ingress应保持关闭直到重启后对目标用户完成所需的只读检查。
 
 `connections.json` 保存可选的Completion routes：
