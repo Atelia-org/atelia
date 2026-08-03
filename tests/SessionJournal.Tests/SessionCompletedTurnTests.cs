@@ -436,14 +436,24 @@ public sealed class SessionCompletedTurnTests : IDisposable {
         EventAddress? concurrentObservation = null;
         bool raced = false;
         var hooks = new SessionJournalTestHooks(
-            BeforeTurnRefMove: () => {
+            BeforeTurnRefMove: journal => {
                 if (raced) {
                     return;
                 }
                 raced = true;
-                concurrentObservation = racing!.AppendObservation(
-                    "concurrent"
-                );
+                EventAddress observed =
+                    journal.GetHead(racing!.BranchRefId)!.Value;
+                concurrentObservation = journal.CommitToRef(
+                    racing.BranchRefId,
+                    observed,
+                    SessionEventCodec.Encode(
+                        SessionEventKind.ObservationAccepted,
+                        new ObservationAcceptedBody("concurrent")
+                    ),
+                    opaqueEventKind:
+                        (uint)SessionEventKind.ObservationAccepted,
+                    hint: default
+                ).Unwrap().EventAddress;
             }
         );
         using (racing = SessionJournalEngine.OpenForTest(
@@ -475,16 +485,18 @@ public sealed class SessionCompletedTurnTests : IDisposable {
         EventAddress? idleHead = null;
         bool raced = false;
         var hooks = new SessionJournalTestHooks(
-            BeforeTurnRefMove: () => {
+            BeforeTurnRefMove: journal => {
                 if (raced) {
                     return;
                 }
                 raced = true;
-                EventAddress observed = racing!.ReadCurrentHead()!.Value;
-                Assert.True(racing.MoveCurrentHeadForTest(
+                EventAddress observed =
+                    journal.GetHead(racing!.BranchRefId)!.Value;
+                Assert.True(journal.MoveRef(
+                    racing.BranchRefId,
                     observed,
                     idleHead!.Value
-                ));
+                ).IsSuccess);
                 concurrentHead = idleHead;
             }
         );

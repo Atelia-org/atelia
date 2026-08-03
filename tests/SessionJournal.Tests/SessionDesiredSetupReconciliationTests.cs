@@ -84,7 +84,7 @@ public sealed class SessionDesiredSetupReconciliationTests : IDisposable {
         )) {
         }
         var hooks = new SessionJournalTestHooks(
-            BeforeCommit: kind => {
+            BeforeCommit: (kind, _) => {
                 if (kind == SessionEventKind.SystemPromptSetup) {
                     throw new IOException("simulated prompt append failure");
                 }
@@ -150,13 +150,25 @@ public sealed class SessionDesiredSetupReconciliationTests : IDisposable {
         EventAddress? concurrentObservation = null;
         SessionJournalEngine? racing = null;
         var hooks = new SessionJournalTestHooks(
-            BeforeCommit: kind => {
+            BeforeCommit: (kind, journal) => {
                 if (kind != SessionEventKind.SystemPromptSetup) {
                     return;
                 }
-                concurrentObservation = racing!.AppendObservation(
-                    "concurrent observation"
-                );
+                EventAddress observed =
+                    journal.GetHead(racing!.BranchRefId)!.Value;
+                concurrentObservation = journal.CommitToRef(
+                    racing.BranchRefId,
+                    observed,
+                    SessionEventCodec.Encode(
+                        SessionEventKind.ObservationAccepted,
+                        new ObservationAcceptedBody(
+                            "concurrent observation"
+                        )
+                    ),
+                    opaqueEventKind:
+                        (uint)SessionEventKind.ObservationAccepted,
+                    hint: default
+                ).Unwrap().EventAddress;
             }
         );
         using (racing = SessionJournalEngine.OpenForTest(

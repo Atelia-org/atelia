@@ -81,7 +81,10 @@ public sealed partial class SessionJournalEngine : IDisposable {
         EventAddress expectedOldHead,
         EventAddress newHead
     ) {
-        ThrowIfDisposed();
+        using MutationLease mutation = EnterMutation(
+            nameof(MoveCurrentHeadForTest)
+        );
+        ThrowIfReadOnlyMutation(nameof(MoveCurrentHeadForTest));
         return _journal.MoveRef(
             _branchRefId,
             expectedOldHead,
@@ -284,6 +287,7 @@ public sealed partial class SessionJournalEngine : IDisposable {
     );
 
     public void UseRuntime(SessionRuntime runtime) {
+        using MutationLease mutation = EnterMutation(nameof(UseRuntime));
         ThrowIfReadOnlyMutation(nameof(UseRuntime));
         _runtime = runtime ?? throw new ArgumentNullException(nameof(runtime));
     }
@@ -2257,7 +2261,6 @@ public sealed partial class SessionJournalEngine : IDisposable {
         string observation,
         CancellationToken cancellationToken = default
     ) {
-        ThrowIfReadOnlyMutation(nameof(SendAsync));
         return await SendAsync(
                 observation,
                 observer: null,
@@ -2309,6 +2312,7 @@ public sealed partial class SessionJournalEngine : IDisposable {
         CompletionStreamObserver? observer,
         CancellationToken cancellationToken
     ) {
+        using MutationLease mutation = EnterMutation(nameof(SendAsync));
         ThrowIfReadOnlyMutation(nameof(SendAsync));
         ValidateRequired(observation, nameof(observation));
         SessionExecutionRecovery recovery = ResolveExecutionTail(
@@ -2401,7 +2405,6 @@ public sealed partial class SessionJournalEngine : IDisposable {
     internal async Task<ResumeOutcome> ResumeAsync(
         CancellationToken cancellationToken = default
     ) {
-        ThrowIfReadOnlyMutation(nameof(ResumeAsync));
         return await ResumeAsync(
                 observer: null,
                 cancellationToken
@@ -2445,6 +2448,7 @@ public sealed partial class SessionJournalEngine : IDisposable {
         CompletionStreamObserver? observer,
         CancellationToken cancellationToken
     ) {
+        using MutationLease mutation = EnterMutation(nameof(ResumeAsync));
         ThrowIfReadOnlyMutation(nameof(ResumeAsync));
         SessionExecutionRecovery recovery = ResolveExecutionTail(
             cancellationToken
@@ -2490,6 +2494,9 @@ public sealed partial class SessionJournalEngine : IDisposable {
     }
 
     internal EventAddress AppendObservation(string content) {
+        using MutationLease mutation = EnterMutation(
+            nameof(AppendObservation)
+        );
         ThrowIfReadOnlyMutation(nameof(AppendObservation));
         ValidateRequired(content, nameof(content));
         SessionExecutionRecovery recovery = ResolveExecutionTail();
@@ -2508,6 +2515,9 @@ public sealed partial class SessionJournalEngine : IDisposable {
     }
 
     internal EventAddress AppendRuntimeConfigSetup(SessionRuntimeConfiguration configuration) {
+        using MutationLease mutation = EnterMutation(
+            nameof(AppendRuntimeConfigSetup)
+        );
         ThrowIfReadOnlyMutation(nameof(AppendRuntimeConfigSetup));
         ArgumentNullException.ThrowIfNull(configuration);
         ValidateRuntimeConfiguration(configuration);
@@ -2527,6 +2537,9 @@ public sealed partial class SessionJournalEngine : IDisposable {
     }
 
     internal EventAddress AppendSystemPromptSetup(string systemPrompt) {
+        using MutationLease mutation = EnterMutation(
+            nameof(AppendSystemPromptSetup)
+        );
         ThrowIfReadOnlyMutation(nameof(AppendSystemPromptSetup));
         if (systemPrompt is null) { throw new ArgumentNullException(nameof(systemPrompt)); }
         SessionExecutionRecovery recovery = ResolveExecutionTail();
@@ -2545,6 +2558,9 @@ public sealed partial class SessionJournalEngine : IDisposable {
     }
 
     internal EventAddress AppendImportedAgentAction(ActionMessage action, CompletionDescriptor invocation) {
+        using MutationLease mutation = EnterMutation(
+            nameof(AppendImportedAgentAction)
+        );
         ThrowIfReadOnlyMutation(nameof(AppendImportedAgentAction));
         ArgumentNullException.ThrowIfNull(action);
         ArgumentNullException.ThrowIfNull(invocation);
@@ -2652,6 +2668,7 @@ public sealed partial class SessionJournalEngine : IDisposable {
     }
 
     public void Dispose() {
+        using MutationLease mutation = EnterMutation(nameof(Dispose));
         if (_disposed) { return; }
         _journal.Dispose();
         _disposed = true;
@@ -4413,7 +4430,7 @@ public sealed partial class SessionJournalEngine : IDisposable {
 
         byte[] payload = SessionEventCodec.Encode(kind, body);
         try {
-            _testHooks.BeforeCommit?.Invoke(kind);
+            _testHooks.BeforeCommit?.Invoke(kind, _journal);
             EventAddress committed = _journal.CommitToRef(
                 _branchRefId,
                 expectedHead,

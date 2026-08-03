@@ -76,6 +76,9 @@ public sealed partial class SessionJournalEngine {
         EventAddress expectedHead,
         CancellationToken cancellationToken = default
     ) {
+        using MutationLease mutation = EnterMutation(
+            nameof(AbandonFailedTurn)
+        );
         ThrowIfReadOnlyMutation(nameof(AbandonFailedTurn));
         cancellationToken.ThrowIfCancellationRequested();
         ValidateRetractionHead(expectedHead, nameof(expectedHead));
@@ -126,6 +129,9 @@ public sealed partial class SessionJournalEngine {
         EventAddress expectedHead,
         CancellationToken cancellationToken = default
     ) {
+        using MutationLease mutation = EnterMutation(
+            nameof(RewindLatestCompletedTurn)
+        );
         ThrowIfReadOnlyMutation(nameof(RewindLatestCompletedTurn));
         cancellationToken.ThrowIfCancellationRequested();
         ValidateRetractionHead(expectedHead, nameof(expectedHead));
@@ -348,7 +354,7 @@ public sealed partial class SessionJournalEngine {
         out EventAddress? observedHead
     ) {
         cancellationToken.ThrowIfCancellationRequested();
-        _testHooks.BeforeTurnRefMove?.Invoke();
+        _testHooks.BeforeTurnRefMove?.Invoke(_journal);
         var move = _journal.MoveRef(
             _branchRefId,
             expectedHead,

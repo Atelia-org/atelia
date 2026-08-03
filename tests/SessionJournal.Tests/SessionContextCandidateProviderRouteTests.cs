@@ -1714,7 +1714,7 @@ public sealed class SessionContextCandidateProviderRouteTests : IDisposable {
     }
 
     [Fact]
-    public async Task HostHeldWriterRawDriftIsRejectedAfterReadOnlyLifecycleCallback() {
+    public async Task SameEngineMutationReentryIsRejectedInsideReadOnlyLifecycleCallback() {
         string path = NewJournalPath();
         var client = new ScriptedClient();
         var source = new TestContextCandidateSource();
@@ -1730,8 +1730,8 @@ public sealed class SessionContextCandidateProviderRouteTests : IDisposable {
         );
         lifecycle.OnPrepare = (readView, request) => {
             // The callback capability is read-only. This deliberately uses
-            // the Host-held writer outside that capability to exercise the
-            // post-callback raw-head fence.
+            // the Host-held writer outside that capability to prove that
+            // same-engine callback reentry fails before a raw append.
             _ = readView.ReadCurrentHead();
             _ = request.Phase;
             engine.AppendObservation("intruder");
@@ -1739,25 +1739,26 @@ public sealed class SessionContextCandidateProviderRouteTests : IDisposable {
         TestContextCandidateFixture fixture =
             ContextCandidateTestFixture.CreateAtCurrentHead(engine);
         source.Candidate = fixture.Candidate;
+        EventAddress originalHead = engine.ReadCurrentHead()!.Value;
 
-        InvalidOperationException error =
-            await Assert.ThrowsAsync<InvalidOperationException>(
+        SessionJournalConcurrentMutationException error =
+            await Assert.ThrowsAsync<
+                SessionJournalConcurrentMutationException
+            >(
                 () => engine.SendAsync(
                     "must not be appended",
                     CancellationToken.None
                 )
             );
 
-        Assert.Contains(
-            "stale",
-            error.Message,
-            StringComparison.OrdinalIgnoreCase
-        );
+        Assert.Equal("AppendObservation", error.AttemptedOperation);
+        Assert.Equal("SendAsync", error.ActiveOperation);
         Assert.Equal(1, lifecycle.InvocationCount);
         Assert.Equal(1, source.SelectionCount);
         Assert.Equal(0, client.Calls);
+        Assert.Equal(originalHead, engine.ReadCurrentHead());
         Assert.Equal(
-            SessionExecutionPhase.AwaitingAgentAction,
+            SessionExecutionPhase.Idle,
             engine.ResolveExecutionTail().State.Phase
         );
     }

@@ -255,9 +255,19 @@ SessionTurnRetractionResult rewound =
 - 成功只CAS移动selected branch ref到该turn Observation的predecessor，不删除raw event bytes，也不
   删除或重编号DerivedRecap sidecar。离开current lineage的sidecar由Store membership规则自然忽略。
 
-产品Host应让send/resume/abandon/rewind共享同一个per-session writer lock。known failure或已知stop
-只有在`AbandonFailedTurn`成功后，才能承诺失败Observation不会进入后续request；uncertain Started
-不能伪装成known failure。
+同一个`SessionJournalEngine`实例一次只允许一个outer mutation operation。`SendAsync`、
+`ResumeAsync`、setup reconciliation、abandon/rewind、runtime attachment与dispose发生并发或回入时，
+第二个入口会在产生它自己的provider、raw journal或runtime side effect前抛出
+`SessionJournalConcurrentMutationException`；`AttemptedOperation`与`ActiveOperation`提供稳定的typed
+诊断。operation无论成功、取消或抛错都会释放ownership；`Dispose`竞争失败时不会关闭底层journal，
+成功dispose后的既有`ObjectDisposedException`语义不变。
+
+这个same-instance fail-closed guard不能替代产品Host的per-session writer lock。Host仍必须让
+inspect → compose → send/resume/reconcile/abandon/rewind构成一个串行operation，因为guard不覆盖调用
+入口之前的inspection/config/runtime composition，也不协调同一路径上的两个engine实例或不同进程。
+多engine/多进程竞争仍由exact-head/ref CAS与既有Store fence处理。known failure或已知stop只有在
+`AbandonFailedTurn`成功后，才能承诺失败Observation不会进入后续request；uncertain Started不能伪装成
+known failure。
 
 ## Context / Recap 扩展点
 

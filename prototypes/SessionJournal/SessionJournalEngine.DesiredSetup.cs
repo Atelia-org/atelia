@@ -14,6 +14,9 @@ public sealed partial class SessionJournalEngine {
         SessionDesiredSetup desired,
         CancellationToken cancellationToken = default
     ) {
+        using MutationLease mutation = EnterMutation(
+            nameof(ReconcileDesiredSetup)
+        );
         ThrowIfReadOnlyMutation(nameof(ReconcileDesiredSetup));
         cancellationToken.ThrowIfCancellationRequested();
         ArgumentNullException.ThrowIfNull(desired);

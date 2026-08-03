@@ -1794,7 +1794,7 @@ public sealed class SessionJournalEngineTests : IDisposable {
         string path = NewJournalPath();
         var client = new ScriptedCompletionClient();
         var hooks = new SessionJournalTestHooks(
-            BeforeCommit: kind => {
+            BeforeCommit: (kind, _) => {
                 if (kind == SessionEventKind.CompletionRequestPrepared) {
                     throw new IOException("simulated CommitToRef failure");
                 }

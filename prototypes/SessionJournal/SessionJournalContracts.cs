@@ -178,10 +178,11 @@ internal enum SessionJournalFailpoint {
 
 internal sealed record SessionJournalTestHooks(
     SessionJournalFailpoint Failpoint = SessionJournalFailpoint.None,
-    Action<SessionEventKind>? BeforeCommit = null,
+    Action<SessionEventKind, EventJournal.EventJournal>?
+        BeforeCommit = null,
     Action<EventJournal.EventJournal>?
         AfterAuditSnapshotValidated = null,
-    Action? BeforeTurnRefMove = null,
+    Action<EventJournal.EventJournal>? BeforeTurnRefMove = null,
     Action? AfterBoundedHistoryProof = null,
     Func<EventFrameHeader, EventFrameHeader>?
         RewriteBoundedHistoryProofHeader = null
