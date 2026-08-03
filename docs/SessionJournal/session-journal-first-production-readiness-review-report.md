@@ -65,6 +65,9 @@ online report v6 content-free、Prepared v5 文档/golden、Galatea 同 Engine �
 | R4 expectation fix | `bc7ba07a` |
 | Galatea live Engine gate | `bfae9263`, `455d9b19`, `681fc02b` |
 
+表中的 `…` 表示同一工作包内的 inclusive commit range；逐提交清单保存在对应的 R2/B2 plan-lock
+run evidence 中。
+
 每组高风险修复均由未参与实现的 reviewer 复核；最终 Galatea 三提交复核结论为“无 findings”。
 
 ## 5. R4 evidence matrix
@@ -85,6 +88,7 @@ Clone A 使用 `git clone --no-local`，detached checkout exact candidate，rest
 | `SessionJournal.Cli.Tests` | 98 passed, 1 expected external-fixture skip |
 | `Galatea.Server.Tests` | 59 passed, 4 expected staging skips |
 | Seven default suites total | 1035 passed, 5 skipped, 0 failed |
+| Prepared/Started/tool/failed reopen + unsupported Host capability typed rejection | representative deterministic matrix passed in the suites above |
 | Explicit real-data acceptance | 1/1 |
 | Explicit disposable staging acceptance | 4/4 |
 

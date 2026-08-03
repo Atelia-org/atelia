@@ -49,6 +49,7 @@ ID 11 retired；其他未定义 ID、未知版本与未知字段都拒绝。
 冻结 identifiers：
 
 - repo/trunk：`atelia.session-journal.trunk.v1`
+- Prepared request recipe：`atelia.session-journal.coherent-artifact-tail.recipe.v1`
 - canonical request：`atelia.completion-request.canonical-json.v1`
 - tool definition：`atelia.tool-definition.canonical-json.v1`
 - raw range：`atelia.session-journal.raw-range.v1`
@@ -57,9 +58,11 @@ ID 11 retired；其他未定义 ID、未知版本与未知字段都拒绝。
 - context contribution：`atelia.session-journal.context-contribution-text-sha256.v1`
 - EventAddress text：`ej1:` 加 32 个 lowercase hex；filename codec 是独立定义
 
-Prepared exact inputs 最多 128；artifact context snapshot 最大 4 MiB。unknown/missing/duplicate/null/wrong-type、
+Prepared exact inputs 最多 128；artifact context snapshot 最大 4 MiB。unknown/missing/duplicate/wrong-type、
+非 nullable 位置的 null、
 整数越界、非法或 off-lineage address、错误 Parent、setup drift 与 hash mismatch 均 fail closed。direct encode bytes、
-strict decode semantics 与 Prepared reconstruction canonical bytes 使用同一 authority rules。
+strict decode semantics 与 Prepared reconstruction canonical bytes 使用同一 authority rules；只有 schema 明确声明为
+nullable 的字段接受 null。
 
 ## 4. B-level repo-owned Planner config
 
