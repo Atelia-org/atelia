@@ -275,7 +275,8 @@ manifest 中该 block 的 exact discriminated `RecapBlockPlan` canonical bytes�
 - final endpoint 先写 rolling checkpoint，再原子安装 final block；
 - checkpoint 不参与 Complete、Published、ordinal 或其他 block 输入。
 
-Published `inputs/`/`work/` 只影响 Restore capability，不影响正常 `CanMaterialize`。`work/` 可删除；
+Published `inputs/`/`work/` 只影响 Restore capability，不影响 descriptor 的 exact
+materialization。`work/` 可删除；
 `inputs/` 是 frozen restore dependency，普通 cache cleanup 不得删除。
 
 ## 5. Publication
@@ -351,9 +352,13 @@ CanPublish(build)
   -> Publishable(candidate)
   | Defects[]
 
-CanMaterialize(published)
+SelectPublishedMetadata(published)
   -> Descriptor(EnvelopeSha256)
-  | Defects[]
+  | MetadataDefects[]
+
+MaterializeExact(descriptor)
+  -> Contributions
+  | InvalidData
 
 RestoreAsync(exact anchor + expected raw head)
   -> Store exact inspection
@@ -382,9 +387,15 @@ open exact RefId Store
   -> directory absent: 不计数
   -> directory present: 计数，不论 envelope/payload 当前是否 valid
   -> exact ordinal
-       -> CanMaterialize success: Selected(descriptor)
-       -> defects: ExactPublishedSetInvalid
+       -> publication metadata valid: Selected(descriptor)
+       -> publication metadata defects: ExactPublishedSetInvalid
 ```
+
+strict ordinal selection只读取 Published membership与 canonical publication metadata，生成
+绑定 exact slot的 descriptor；不读取 `blocks/`、`inputs/`或`work/`。因此
+`ExactPublishedSetInvalid`只表示 selected slot 的 publication metadata 缺陷。descriptor指向的
+payload缺陷由 exact materialize或Restore content phase发现；两者均fail closed，且不得fallback
+到neighbor或重编号。
 
 typed reasons：
 

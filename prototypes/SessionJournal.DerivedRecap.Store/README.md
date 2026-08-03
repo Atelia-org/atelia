@@ -60,6 +60,20 @@ with the Store for all selection and restore inspection calls. Resolving a set
 admission anchor captures a second, historical prefix of at most 513 headers
 starting at that anchor. Callers cannot inject a public snapshot or prefix.
 
+Strict ordinal selection is a publication-metadata and descriptor phase. It
+reads exact Published membership and the canonical `publication.json` needed
+to bind `RefId + SetAdmissionAnchor + EnvelopeSha256`; it does not read
+`blocks/`, `inputs/`, or `work/`. Consequently, `Selected` means that the exact
+slot has a valid descriptor, not that its payload has already been proved
+healthy. Publication metadata defects return `ExactPublishedSetInvalid` for
+that slot without fallback or ordinal renumbering.
+
+`MaterializeAsync` and Restore are the content phase. They validate the exact
+selected payload and its commitments strictly, fail closed on any defect, and
+never substitute a neighboring Published set. Restore repairs that same slot;
+successful materialization after Restore is the proof that its content is
+healthy again.
+
 The bounded result surface fails closed. If the required anchor or strict
 ordinal could exist only beyond a truncated prefix, Store returns typed
 `BeyondPrefix` evidence containing the required anchor, captured head, header

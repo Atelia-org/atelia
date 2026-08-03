@@ -533,7 +533,7 @@ Building-first、phase-first和single snapshot纪律。
 | H1a | strict inactive V2 codec/registry；`2eb7188a` |
 | H1b/H1c | evaluator/policy/executor/CLI/online原子 authority cutover；`84a37cab`、`e47b635c` |
 | H2 | 上述 profile决定不增加cache |
-| C3 | 当前 Galatea export fresh import后完成 failure/resume、exact corruption/Restore、online与 Prepared recovery；实际 selection 为 growth 116,458 / absorbed 98,082 / recent 18,376；report schema v2 |
+| C3 | 当前 Galatea export fresh import后完成 failure/resume、exact corruption/Restore、online与 Prepared recovery；实际 selection 为 growth 116,458 / absorbed 98,082 / recent 18,376；report schema v3（由 v2 直接切换，无 compat） |
 
 具体 load distribution与profile环境见
 [Galatea HistoryLoad calibration](derived-recap-history-load-galatea-calibration.md)。

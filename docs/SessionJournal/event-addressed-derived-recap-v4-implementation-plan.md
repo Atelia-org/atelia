@@ -540,10 +540,12 @@ Prepare exact restore actions
 - lifecycle：
 
 ```text
-inspect/select
-  -> Selected: materialize
-  -> ExactPublishedSetInvalid:
-       bounded restore actions -> execute -> reselect
+metadata select
+  -> Selected(descriptor): exact content inspection/materialize
+       payload invalid -> same-slot bounded restore actions -> execute
+                         -> reselect same slot -> materialize
+  -> ExactPublishedSetInvalid(metadata defects):
+       same-slot bounded restore actions -> execute -> reselect
        RestoreUnavailable -> stable not-ready
 ```
 
@@ -895,8 +897,9 @@ Mandatory scripted acceptance还必须证明：
 
 - source fixture从不原地修改；旧 `derived/memory/v1`不读取也不删除；
 - partial failure后 healthy block不重复调用，失败 block只补 missing suffix；
-- exact selected component损坏返回 `ExactPublishedSetInvalid`；neighbor non-fallback由多 ordinal
-  Store focused test独立证明；
+- exact selected block损坏后仍返回同一 `Selected(descriptor)`，随后 production
+  `materialize-inspect`返回 `Invalid/MaterializationInvalid`；same-slot `Restore`后再次
+  materialize必须成功；neighbor non-fallback由多 ordinal Store focused test独立证明；
 - Store/build/corrupt/restore期间 raw full-file hash、head、semantic fingerprint不变；
 - online append保留旧 lineage prefix，且只新增预期的 SessionJournal suffix；
 - `CompletionRequestPrepared`后保存 canonical request bytes/hash，删除
@@ -910,7 +913,7 @@ Skipped，不能显示为 Passed。release gate在运行 test前还必须要求
 `ATELIA_DERIVED_RECAP_ACCEPTANCE_REPORT`存在。真实 provider smoke为 opt-in，只 gate结构合法与
 流程成功，不 gate生成文本。
 
-R3F 本次实际记录：
+R3F pre-B2 historical record（以下选择结果保留为当时语义，不代表当前契约）：
 
 - source：`cyber.json`，1,112,223 bytes，SHA-256
   `98375378f32239eb3aafdf60d40a650c3c2a96fc3e4140698e0dfd934d9920ea`；
@@ -922,6 +925,12 @@ R3F 本次实际记录：
   AgentActionProduced` 两组共 8 events，原 124-address prefix保持；
 - 隔离副本内 invalid historical v1 sentinel保持 byte-identical；source与
   build/restore前 raw full-tree fingerprint保持不变；Prepared删除整个 v4后恢复仍不重建 v4。
+
+当前 B2 语义与验收证据改为：strict ordinal metadata selection在 block payload损坏后仍返回
+原 `Selected(descriptor)`；production `materialize-inspect`随后返回
+`Invalid/MaterializationInvalid`；same-slot `Restore`以 0 provider call恢复损坏 block且不改
+healthy sibling；再次 materialize返回 `Selected`。current acceptance report从 v2直接升级为
+v3，不提供compat reader/writer。
 
 release gate不能只依赖 test内条件，runner先强制外部参数，再执行 exact test：
 

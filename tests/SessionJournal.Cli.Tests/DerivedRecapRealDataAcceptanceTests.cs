@@ -260,10 +260,15 @@ public sealed class DerivedRecapRealDataAcceptanceTests {
             string healthyBlock = blockFiles[1];
             string damagedBlockId =
                 Path.GetFileNameWithoutExtension(damagedBlock);
+            string damagedBlockShaBefore = HashFile(damagedBlock);
             string healthyBlockShaBefore = HashFile(healthyBlock);
             await File.AppendAllTextAsync(
                 damagedBlock,
                 "\nacceptance-corruption"
+            );
+            Assert.NotEqual(
+                damagedBlockShaBefore,
+                HashFile(damagedBlock)
             );
 
             using (var engine = SJ.SessionJournalEngine.OpenReadOnly(
@@ -274,18 +279,43 @@ public sealed class DerivedRecapRealDataAcceptanceTests {
                     copyPath,
                     engine.BranchRefId
                 );
-                DerivedRecapSelection invalid =
-                    await DerivedRecapLineageView
-                        .Capture(store, engine.ReadView)
-                        .SelectNthPreviousAsync(0);
-                DerivedRecapSelection.ExactPublishedSetInvalid defect =
-                    Assert.IsType<
-                        DerivedRecapSelection
-                            .ExactPublishedSetInvalid
-                    >(invalid);
+                DerivedRecapSelection.Selected damagedSelection =
+                    Assert.IsType<DerivedRecapSelection.Selected>(
+                        await DerivedRecapLineageView
+                            .Capture(store, engine.ReadView)
+                            .SelectNthPreviousAsync(0)
+                    );
+                Assert.Equal(selected, damagedSelection.Descriptor);
+            }
+
+            string preRestoreMaterializationReport = Path.Combine(
+                tempRoot,
+                "materialize-before-restore.json"
+            );
+            Assert.Equal(2, Program.MainCore([
+                "recap", "materialize-inspect",
+                "--input", copyPath,
+                "--branch", branchName,
+                "--nth-previous", "0",
+                "--report-json", preRestoreMaterializationReport
+            ], ThrowingCompletionClientFactory.Instance));
+            using (JsonDocument report = JsonDocument.Parse(
+                       File.ReadAllText(
+                           preRestoreMaterializationReport
+                       )
+                   )) {
                 Assert.Equal(
-                    selected.SetAdmissionAnchor,
-                    defect.SetAdmissionAnchor
+                    "Invalid",
+                    report.RootElement.GetProperty("status").GetString()
+                );
+                JsonElement defect = Assert.Single(
+                    report.RootElement
+                        .GetProperty("defects")
+                        .EnumerateArray()
+                );
+                Assert.Equal(
+                    "MaterializationInvalid",
+                    defect.GetProperty("code").GetString()
                 );
             }
 
@@ -311,7 +341,13 @@ public sealed class DerivedRecapRealDataAcceptanceTests {
                 "Restored",
                 ReadString(restoreReport, "resultStatus")
             );
-            Assert.InRange(restoreFactory.CallCount, 0, 4);
+            Assert.Equal(0, restoreFactory.CallCount);
+            bool damagedBlockRestored = string.Equals(
+                damagedBlockShaBefore,
+                HashFile(damagedBlock),
+                StringComparison.Ordinal
+            );
+            Assert.True(damagedBlockRestored);
             Assert.Equal(
                 healthyBlockShaBefore,
                 HashFile(healthyBlock)
@@ -321,10 +357,39 @@ public sealed class DerivedRecapRealDataAcceptanceTests {
                 HashFile(healthyBlock),
                 StringComparison.Ordinal
             );
-            _ = await SelectStrictLatestAsync(
-                copyPath,
-                branchName
+            Assert.True(otherBlockUnchanged);
+            string postRestoreMaterializationReport = Path.Combine(
+                tempRoot,
+                "materialize-after-restore.json"
             );
+            Assert.Equal(0, Program.MainCore([
+                "recap", "materialize-inspect",
+                "--input", copyPath,
+                "--branch", branchName,
+                "--nth-previous", "0",
+                "--report-json", postRestoreMaterializationReport
+            ], ThrowingCompletionClientFactory.Instance));
+            using (JsonDocument report = JsonDocument.Parse(
+                       File.ReadAllText(
+                           postRestoreMaterializationReport
+                       )
+                   )) {
+                Assert.Equal(
+                    "Selected",
+                    report.RootElement.GetProperty("status").GetString()
+                );
+                Assert.Equal(
+                    2,
+                    report.RootElement
+                        .GetProperty("contributions")
+                        .GetArrayLength()
+                );
+                Assert.Empty(
+                    report.RootElement
+                        .GetProperty("defects")
+                        .EnumerateArray()
+                );
+            }
             RawSnapshot afterRestoreRaw =
                 ReadRawSnapshot(copyPath);
             AssertRawUnchanged(initialRaw, afterRestoreRaw);
@@ -484,7 +549,7 @@ public sealed class DerivedRecapRealDataAcceptanceTests {
                     reportPath,
                     new AcceptanceReport(
                         "atelia.session-journal."
-                        + "derived-recap-real-acceptance.v2",
+                        + "derived-recap-real-acceptance.v3",
                         "LegacyUpgradeExport",
                         "ImportLegacyJson",
                         new SourceReport(
@@ -515,8 +580,11 @@ public sealed class DerivedRecapRealDataAcceptanceTests {
                         new CorruptionReport(
                             damagedBlockId,
                             "FinalPayloadChanged",
-                            "ExactPublishedSetInvalid",
+                            "Selected",
+                            "Invalid",
                             "Restored",
+                            "Selected",
+                            damagedBlockRestored,
                             otherBlockUnchanged
                         ),
                         prepared.CanonicalRequestSha256,
@@ -1118,7 +1186,10 @@ public sealed class DerivedRecapRealDataAcceptanceTests {
         string BlockId,
         string Mutation,
         string SelectionResult,
+        string PreRestoreMaterializationResult,
         string RestoreResult,
+        string PostRestoreMaterializationResult,
+        bool DamagedBlockRestored,
         bool OtherBlockUnchanged
     );
 
