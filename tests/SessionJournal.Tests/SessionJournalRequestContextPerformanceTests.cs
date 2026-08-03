@@ -183,8 +183,10 @@ public sealed class SessionJournalRequestContextPerformanceTests : IDisposable {
                 providerReadDeltas
             )
         );
-        using var engine = SessionJournalEngine.Open(
-            journal.Path,
+        using var engine = SessionJournalTestRuntime.Attach(
+            SessionJournalEngine.Open(
+                journal.Path
+            ),
             CreateRuntime(client, contextCandidate: journal.Candidate)
         );
         observedEngine = engine;
@@ -246,8 +248,10 @@ public sealed class SessionJournalRequestContextPerformanceTests : IDisposable {
         var tool = new NoopTool();
         ToolSession tools =
             new ToolRegistry([tool]).CreateSession();
-        using var engine = SessionJournalEngine.Open(
-            journal.Path,
+        using var engine = SessionJournalTestRuntime.Attach(
+            SessionJournalEngine.Open(
+                journal.Path
+            ),
             CreateRuntime(client, tools, journal.Candidate)
         );
         observedEngine = engine;

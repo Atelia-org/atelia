@@ -154,8 +154,10 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
             new ActionMessage([new ActionBlock.Text("resumed answer")]),
             new CompletionDescriptor("tail-client", "tail-api-v1", request.ModelId)
         ));
-        using var reopened = SessionJournalEngine.Open(
-            path,
+        using var reopened = SessionJournalTestRuntime.Attach(
+            SessionJournalEngine.Open(
+                path
+            ),
             CreateRuntime(client, candidate)
         );
         ResumeOutcome outcome = await reopened.ResumeAsync(CancellationToken.None);
@@ -185,31 +187,33 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
         var client = new CapturingCompletionClient(request => {
             int currentResponse = response++;
             return currentResponse switch {
-            0 => new CompletionResult(
-                new ActionMessage([
-                    new ActionBlock.ToolCall(
+                0 => new CompletionResult(
+                    new ActionMessage([
+                        new ActionBlock.ToolCall(
                         new RawToolCall("noop", "call-1", "{}")
                     )
-                ]),
-                new CompletionDescriptor("tail-client", "tail-api-v1", request.ModelId)
-            ),
-            1 => new CompletionResult(
-                new ActionMessage([
-                    new ActionBlock.ToolCall(
+                    ]),
+                    new CompletionDescriptor("tail-client", "tail-api-v1", request.ModelId)
+                ),
+                1 => new CompletionResult(
+                    new ActionMessage([
+                        new ActionBlock.ToolCall(
                         new RawToolCall("noop", "call-2", "{}")
                     )
-                ]),
-                new CompletionDescriptor("tail-client", "tail-api-v1", request.ModelId)
-            ),
-            _ => new CompletionResult(
-                new ActionMessage([new ActionBlock.Text("after tool")]),
-                new CompletionDescriptor("tail-client", "tail-api-v1", request.ModelId)
-            )
+                    ]),
+                    new CompletionDescriptor("tail-client", "tail-api-v1", request.ModelId)
+                ),
+                _ => new CompletionResult(
+                    new ActionMessage([new ActionBlock.Text("after tool")]),
+                    new CompletionDescriptor("tail-client", "tail-api-v1", request.ModelId)
+                )
             };
         });
         ToolSession tools = new ToolRegistry([new NoopTool()]).CreateSession();
-        using var engine = SessionJournalEngine.Open(
-            path,
+        using var engine = SessionJournalTestRuntime.Attach(
+            SessionJournalEngine.Open(
+                path
+            ),
             CreateRuntime(client, candidate, tools, TestToolRuntimeIdentity)
         );
         TurnResult result = await engine.SendAsync("use tool", CancellationToken.None);
@@ -282,9 +286,11 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
         string path = NewJournalPath();
         var client = new CapturingCompletionClient(_ => throw new InvalidOperationException("must not call provider"));
         ToolSession toolSession = new ToolRegistry([new NoopTool()]).CreateSession();
-        using (var engine = SessionJournalEngine.Create(
-            path,
-            new SessionCreateOptions("model-A", "system-A", "surface-A"),
+        using (var engine = SessionJournalTestRuntime.Attach(
+            SessionJournalEngine.Create(
+                path,
+                new SessionCreateOptions("model-A", "system-A", "surface-A")
+            ),
             CreateRuntime(client, "missing-artifact", toolSession)
         )) {
             InvalidOperationException error = await Assert.ThrowsAsync<InvalidOperationException>(
@@ -322,9 +328,11 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
                 $"Unknown invalid field '{invalidField}'."
             )
         };
-        using (var engine = SessionJournalEngine.Create(
-            path,
-            new SessionCreateOptions("model-A", "system-A", "surface-A"),
+        using (var engine = SessionJournalTestRuntime.Attach(
+            SessionJournalEngine.Create(
+                path,
+                new SessionCreateOptions("model-A", "system-A", "surface-A")
+            ),
             CreateRuntime(
                 client,
                 "unused",
@@ -453,9 +461,11 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
         var client = new CapturingCompletionClient(
             _ => throw new InvalidOperationException("must not call provider")
         );
-        using var engine = SessionJournalEngine.Create(
-            path,
-            new SessionCreateOptions("model-A", "system-A", "surface-A"),
+        using var engine = SessionJournalTestRuntime.Attach(
+            SessionJournalEngine.Create(
+                path,
+                new SessionCreateOptions("model-A", "system-A", "surface-A")
+            ),
             CreateRuntime(client, "unused")
         );
         EventAddress head = engine.ResolveExecutionTail().Head!.Value;
@@ -483,9 +493,11 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
         SessionRuntime runtime = CreateRuntime(client, "unused") with {
             ContextCandidateSource = null
         };
-        using var engine = SessionJournalEngine.Create(
-            path,
-            new SessionCreateOptions("model-A", "system-A", "surface-A"),
+        using var engine = SessionJournalTestRuntime.Attach(
+            SessionJournalEngine.Create(
+                path,
+                new SessionCreateOptions("model-A", "system-A", "surface-A")
+            ),
             runtime
         );
         EventAddress head = engine.ResolveExecutionTail().Head!.Value;
@@ -560,8 +572,10 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
             "nonpositive-max-tokens" => runtime with { MaxTokens = 0 },
             _ => runtime
         };
-        using (var reopened = SessionJournalEngine.Open(
-            path,
+        using (var reopened = SessionJournalTestRuntime.Attach(
+            SessionJournalEngine.Open(
+                path
+            ),
             runtime
         )) {
             Exception? error = await Record.ExceptionAsync(
@@ -683,7 +697,12 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
             UncertainCompletionRecoveryPolicy =
                 SessionUncertainCompletionRecoveryPolicy.RestartWithNewAttempt
         };
-        using var reopened = SessionJournalEngine.Open(path, recoveryRuntime);
+        using var reopened = SessionJournalTestRuntime.Attach(
+            SessionJournalEngine.Open(
+                path
+            ),
+            recoveryRuntime
+        );
         InvalidDataException error =
             await Assert.ThrowsAsync<InvalidDataException>(
                 () => reopened.ResumeAsync(CancellationToken.None)
@@ -768,8 +787,10 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
         }
 
         var client = new CapturingCompletionClient(_ => throw new InvalidOperationException("must not call provider"));
-        using var reopened = SessionJournalEngine.Open(
-            path,
+        using var reopened = SessionJournalTestRuntime.Attach(
+            SessionJournalEngine.Open(
+                path
+            ),
             CreateRuntime(client, "missing-artifact")
         );
 
@@ -822,8 +843,10 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
         }
 
         var client = new CapturingCompletionClient(_ => throw new InvalidOperationException("must not call provider"));
-        using var reopened = SessionJournalEngine.Open(
-            path,
+        using var reopened = SessionJournalTestRuntime.Attach(
+            SessionJournalEngine.Open(
+                path
+            ),
             CreateRuntime(client, "missing-artifact")
         );
         InvalidDataException error = await Assert.ThrowsAsync<InvalidDataException>(
@@ -882,9 +905,11 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
         EventAddress toolResult;
         EventAddress finalAction;
         EventAddress sourceObservation;
-        using (var engine = SessionJournalEngine.Create(
-            path,
-            new SessionCreateOptions("model-A", "system-A", "surface-A"),
+        using (var engine = SessionJournalTestRuntime.Attach(
+            SessionJournalEngine.Create(
+                path,
+                new SessionCreateOptions("model-A", "system-A", "surface-A")
+            ),
             new SessionRuntime(
                 new CapturingCompletionClient(_ => throw new InvalidOperationException("unused")),
                 new ToolRegistry([new NoopTool("lookup")]).CreateSession(),

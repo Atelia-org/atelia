@@ -46,8 +46,10 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
                 "must not run"
             )
         };
-        using (var reopened = SessionJournalEngine.Open(
-            path,
+        using (var reopened = SessionJournalTestRuntime.Attach(
+            SessionJournalEngine.Open(
+                path
+            ),
             CreateRuntime(client) with {
                 ContextCandidateSource = recoverySource,
                 ContextLifecycle = lifecycle
@@ -109,7 +111,12 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
                 hint: default
             ).Unwrap().EventAddress;
         }
-        using (var reopened = SessionJournalEngine.Open(path, CreateRuntime(client))) {
+        using (var reopened = SessionJournalTestRuntime.Attach(
+            SessionJournalEngine.Open(
+                path
+            ),
+            CreateRuntime(client)
+        )) {
             InvalidDataException inspectionError = Assert.Throws<InvalidDataException>(
                 () => reopened.InspectRuntimeRecoveryRequirements()
             );
@@ -142,7 +149,12 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
         );
         using var cancellation = new CancellationTokenSource();
         cancellation.Cancel();
-        using (var reopened = SessionJournalEngine.Open(path, CreateRuntime(client))) {
+        using (var reopened = SessionJournalTestRuntime.Attach(
+            SessionJournalEngine.Open(
+                path
+            ),
+            CreateRuntime(client)
+        )) {
             await Assert.ThrowsAnyAsync<OperationCanceledException>(
                 () => reopened.ResumeAsync(cancellation.Token)
             );
@@ -166,8 +178,10 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
         );
         var recoveryClient = new ScriptedClient();
         recoveryClient.Enqueue(request => Success(request, "recovered"));
-        using (var reopened = SessionJournalEngine.Open(
-            path,
+        using (var reopened = SessionJournalTestRuntime.Attach(
+            SessionJournalEngine.Open(
+                path
+            ),
             CreateRuntime(
                 recoveryClient,
                 recoveryPolicy: SessionUncertainCompletionRecoveryPolicy.RestartWithNewAttempt
@@ -197,8 +211,10 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
         );
         var recoveryClient = new ScriptedClient();
         recoveryClient.Enqueue(request => Success(request, "reconstructed"));
-        using (var reopened = SessionJournalEngine.Open(
-            path,
+        using (var reopened = SessionJournalTestRuntime.Attach(
+            SessionJournalEngine.Open(
+                path
+            ),
             CreateRuntime(
                 recoveryClient,
                 recoveryPolicy: SessionUncertainCompletionRecoveryPolicy.RestartWithNewAttempt,
@@ -223,8 +239,10 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
             Descriptor(request),
             termination: CompletionTermination.Failed("provider-failed", "known")
         ));
-        using (var reopened = SessionJournalEngine.Open(
-            path,
+        using (var reopened = SessionJournalTestRuntime.Attach(
+            SessionJournalEngine.Open(
+                path
+            ),
             CreateRuntime(
                 recoveryClient,
                 recoveryPolicy: SessionUncertainCompletionRecoveryPolicy.RestartWithNewAttempt
@@ -262,8 +280,10 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
             termination:
                 CompletionTermination.Failed("provider-failed")
         ));
-        using (var reopened = SessionJournalEngine.Open(
-            path,
+        using (var reopened = SessionJournalTestRuntime.Attach(
+            SessionJournalEngine.Open(
+                path
+            ),
             CreateRuntime(
                 recoveryClient,
                 recoveryPolicy:
@@ -328,8 +348,10 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
             ]),
             Descriptor(request)
         ));
-        using (var reopened = SessionJournalEngine.Open(
-            path,
+        using (var reopened = SessionJournalTestRuntime.Attach(
+            SessionJournalEngine.Open(
+                path
+            ),
             CreateRuntime(
                 recoveryClient,
                 recoveryPolicy:
@@ -410,8 +432,10 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
         ));
         recoveryClient.Enqueue(request => Success(request, "done"));
         var recoveryTool = new RecordingTool("lookup");
-        using (var reopened = SessionJournalEngine.Open(
-            path,
+        using (var reopened = SessionJournalTestRuntime.Attach(
+            SessionJournalEngine.Open(
+                path
+            ),
             CreateRuntime(
                 recoveryClient,
                 new ToolRegistry([recoveryTool]).CreateSession(),
@@ -493,8 +517,10 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
         Assert.Equal(0, recoveryClient.Calls);
 
         recoveryClient.Enqueue(request => Success(request, "second restart"));
-        using (var secondRecovery = SessionJournalEngine.Open(
-            path,
+        using (var secondRecovery = SessionJournalTestRuntime.Attach(
+            SessionJournalEngine.Open(
+                path
+            ),
             CreateRuntime(
                 recoveryClient,
                 recoveryPolicy: SessionUncertainCompletionRecoveryPolicy.RestartWithNewAttempt
@@ -541,8 +567,10 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
         Assert.Equal(1, client.Calls);
 
         client.Enqueue(request => Success(request, "restarted result"));
-        using (var reopened = SessionJournalEngine.Open(
-            path,
+        using (var reopened = SessionJournalTestRuntime.Attach(
+            SessionJournalEngine.Open(
+                path
+            ),
             CreateRuntime(
                 client,
                 recoveryPolicy: SessionUncertainCompletionRecoveryPolicy.RestartWithNewAttempt
@@ -580,8 +608,10 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
         ToolSession? tools = mismatch == "tools"
             ? new ToolRegistry([new RecordingTool("unexpected")]).CreateSession()
             : null;
-        using (var reopened = SessionJournalEngine.Open(
-            path,
+        using (var reopened = SessionJournalTestRuntime.Attach(
+            SessionJournalEngine.Open(
+                path
+            ),
             CreateRuntime(
                 recoveryClient,
                 tools,
@@ -608,8 +638,10 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
             CreateRuntime(sourceClient)
         );
         var recoveryClient = new ScriptedClient();
-        using (var reopened = SessionJournalEngine.Open(
-            path,
+        using (var reopened = SessionJournalTestRuntime.Attach(
+            SessionJournalEngine.Open(
+                path
+            ),
             CreateRuntime(
                 recoveryClient,
                 target: DefaultTarget with {
@@ -663,8 +695,10 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
         var recoveryClient = new ScriptedClient();
         recoveryClient.Enqueue(request => Success(request, "inline recovery"));
         var recoverySource = new TestContextCandidateSource();
-        using var reopened = SessionJournalEngine.Open(
-            path,
+        using var reopened = SessionJournalTestRuntime.Attach(
+            SessionJournalEngine.Open(
+                path
+            ),
             CreateRuntime(
                 recoveryClient,
                 recoveryPolicy: SessionUncertainCompletionRecoveryPolicy.RestartWithNewAttempt
@@ -705,8 +739,10 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
             Descriptor(request)
         ));
         client.Enqueue(_ => throw new IOException("transport after tool result"));
-        using (var engine = SessionJournalEngine.Open(
-            path,
+        using (var engine = SessionJournalTestRuntime.Attach(
+            SessionJournalEngine.Open(
+                path
+            ),
             CreateRuntime(
                 client,
                 initialTools,
@@ -732,8 +768,10 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
 
         ToolSession recoveryTools = new ToolRegistry([tool]).CreateSession();
         client.Enqueue(request => Success(request, "recovered terminal"));
-        using (var reopened = SessionJournalEngine.Open(
-            path,
+        using (var reopened = SessionJournalTestRuntime.Attach(
+            SessionJournalEngine.Open(
+                path
+            ),
             CreateRuntime(
                 client,
                 recoveryTools,
@@ -771,8 +809,10 @@ public sealed class SessionPreparedCompletionRecoveryEngineTests : IDisposable {
         );
         var recoveryTool = new RecordingTool("lookup");
         ToolSession recoveryTools = new ToolRegistry([recoveryTool]).CreateSession();
-        using (var reopened = SessionJournalEngine.Open(
-            path,
+        using (var reopened = SessionJournalTestRuntime.Attach(
+            SessionJournalEngine.Open(
+                path
+            ),
             CreateRuntime(
                 client,
                 recoveryTools,

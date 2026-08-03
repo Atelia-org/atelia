@@ -133,9 +133,11 @@ public sealed class SessionCompletedTurnTests : IDisposable {
         ToolSession tools = new ToolRegistry([
             new TextTool("lookup", "unused")
         ]).CreateSession();
-        using var engine = SessionJournalEngine.Create(
-            path,
-            Options,
+        using var engine = SessionJournalTestRuntime.Attach(
+            SessionJournalEngine.Create(
+                path,
+                Options
+            ),
             Runtime(new QueueCompletionClient(), source, tools)
         );
         _ = engine.AppendObservation("earlier");
@@ -195,9 +197,11 @@ public sealed class SessionCompletedTurnTests : IDisposable {
             new TextTool("lookup", "tool result")
         ]).CreateSession();
 
-        using var engine = SessionJournalEngine.Create(
-            path,
-            Options,
+        using var engine = SessionJournalTestRuntime.Attach(
+            SessionJournalEngine.Create(
+                path,
+                Options
+            ),
             Runtime(client, source, tools)
         );
         await CoherentArtifactSetTestFixture.ActivateAtCurrentHeadAsync(
@@ -273,9 +277,11 @@ public sealed class SessionCompletedTurnTests : IDisposable {
             new TextTool("beta", "beta result")
         ]).CreateSession();
 
-        using var engine = SessionJournalEngine.Create(
-            path,
-            Options,
+        using var engine = SessionJournalTestRuntime.Attach(
+            SessionJournalEngine.Create(
+                path,
+                Options
+            ),
             Runtime(client, source, tools)
         );
         await CoherentArtifactSetTestFixture.ActivateAtCurrentHeadAsync(
@@ -321,9 +327,11 @@ public sealed class SessionCompletedTurnTests : IDisposable {
             new TextTool("lookup", "tool result")
         ]).CreateSession();
 
-        using var engine = SessionJournalEngine.Create(
-            path,
-            Options,
+        using var engine = SessionJournalTestRuntime.Attach(
+            SessionJournalEngine.Create(
+                path,
+                Options
+            ),
             Runtime(client, source, tools)
         );
         _ = engine.AppendObservation("earlier");

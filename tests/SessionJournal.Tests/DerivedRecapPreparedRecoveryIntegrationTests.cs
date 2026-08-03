@@ -200,8 +200,10 @@ public sealed class DerivedRecapPreparedRecoveryIntegrationTests
         var forbidden = new ThrowingContextCollaborator();
         var recoveryClient = new CapturingClient("recovered answer");
         ResumeOutcome outcome;
-        using (var reopened = SessionJournalEngine.Open(
-            path,
+        using (var reopened = SessionJournalTestRuntime.Attach(
+            SessionJournalEngine.Open(
+                path
+            ),
             CreateRuntime(
                 recoveryClient,
                 forbidden,

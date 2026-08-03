@@ -136,18 +136,6 @@ public sealed partial class SessionJournalEngine : IDisposable {
             testHooks: null
         );
 
-    internal static SessionJournalEngine Create(
-        string path,
-        SessionCreateOptions options,
-        SessionRuntime runtime
-    ) => CreateCore(
-        path,
-        options,
-        SessionCreationOrigin.Native,
-        runtime,
-        testHooks: null
-    );
-
     internal static SessionJournalEngine CreateForTest(
         string path,
         SessionCreateOptions options,
@@ -184,22 +172,8 @@ public sealed partial class SessionJournalEngine : IDisposable {
             testHooks: null
         );
 
-    internal static SessionJournalEngine Open(string path, SessionRuntime runtime)
-        => OpenCore(
-            path,
-            SessionJournalDefaults.MainBranchName,
-            runtime,
-            testHooks: null
-        );
-
     public static SessionJournalEngine Open(string path, string branchName)
         => OpenCore(path, branchName, runtime: null, testHooks: null);
-
-    internal static SessionJournalEngine Open(
-        string path,
-        string branchName,
-        SessionRuntime runtime
-    ) => OpenCore(path, branchName, runtime, testHooks: null);
 
     /// <summary>
     /// Opens the active main branch for strict read-only inspection without raw-tail recovery.

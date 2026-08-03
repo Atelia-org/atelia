@@ -60,9 +60,11 @@ public sealed class SessionContextCandidateProviderRouteTests : IDisposable {
         var client = new ScriptedClient();
         client.Enqueue(Terminal("done"));
         var source = new TestContextCandidateSource();
-        using (var engine = SessionJournalEngine.Create(
-            path,
-            CreateOptions(),
+        using (var engine = SessionJournalTestRuntime.Attach(
+            SessionJournalEngine.Create(
+                path,
+                CreateOptions()
+            ),
             CreateRuntime(client, source)
         )) {
             TestContextCandidateFixture fixture =
@@ -115,9 +117,11 @@ public sealed class SessionContextCandidateProviderRouteTests : IDisposable {
                 SessionContextCandidateSelectionStatus.BeyondPrefix,
             SelectionDetail = "bounded lineage proof exhausted"
         };
-        using var engine = SessionJournalEngine.Create(
-            path,
-            CreateOptions(),
+        using var engine = SessionJournalTestRuntime.Attach(
+            SessionJournalEngine.Create(
+                path,
+                CreateOptions()
+            ),
             CreateRuntime(client, source)
         );
         EventAddress head =
@@ -205,9 +209,11 @@ public sealed class SessionContextCandidateProviderRouteTests : IDisposable {
             ForcedStatus = status,
             SelectionDetail = "typed selection failure"
         };
-        using var engine = SessionJournalEngine.Create(
-            path,
-            CreateOptions(),
+        using var engine = SessionJournalTestRuntime.Attach(
+            SessionJournalEngine.Create(
+                path,
+                CreateOptions()
+            ),
             CreateRuntime(client, source)
         );
         _ = ContextCandidateTestFixture.CreateAtCurrentHead(engine);
@@ -251,9 +257,11 @@ public sealed class SessionContextCandidateProviderRouteTests : IDisposable {
             SelectionDetail = "typed selection unavailable"
         };
         var lifecycle = new TestContextLifecycle();
-        using var engine = SessionJournalEngine.Create(
-            path,
-            CreateOptions(),
+        using var engine = SessionJournalTestRuntime.Attach(
+            SessionJournalEngine.Create(
+                path,
+                CreateOptions()
+            ),
             CreateRuntime(client, source) with {
                 ContextLifecycle = lifecycle
             }
@@ -301,9 +309,11 @@ public sealed class SessionContextCandidateProviderRouteTests : IDisposable {
             SelectionDetail = "still unavailable"
         };
         var lifecycle = new TestContextLifecycle();
-        using var engine = SessionJournalEngine.Create(
-            path,
-            CreateOptions(),
+        using var engine = SessionJournalTestRuntime.Attach(
+            SessionJournalEngine.Create(
+                path,
+                CreateOptions()
+            ),
             CreateRuntime(client, source) with {
                 ContextLifecycle = lifecycle
             }
@@ -337,9 +347,11 @@ public sealed class SessionContextCandidateProviderRouteTests : IDisposable {
         SessionRuntime runtime = CreateRuntime(client, source) with {
             MaximumCanonicalRequestBytes = 0
         };
-        using var engine = SessionJournalEngine.Create(
-            path,
-            CreateOptions(),
+        using var engine = SessionJournalTestRuntime.Attach(
+            SessionJournalEngine.Create(
+                path,
+                CreateOptions()
+            ),
             runtime
         );
         EventAddress head = engine.ResolveExecutionTail().Head!.Value;
@@ -407,8 +419,10 @@ public sealed class SessionContextCandidateProviderRouteTests : IDisposable {
                 )
             }
         };
-        using var engine = SessionJournalEngine.Open(
-            path,
+        using var engine = SessionJournalTestRuntime.Attach(
+            SessionJournalEngine.Open(
+                path
+            ),
             CreateRuntime(client, source)
         );
         EventAddress head =
@@ -432,9 +446,11 @@ public sealed class SessionContextCandidateProviderRouteTests : IDisposable {
         string path = NewJournalPath();
         var client = new ScriptedClient();
         var source = new TestContextCandidateSource();
-        using var engine = SessionJournalEngine.Create(
-            path,
-            CreateOptions(),
+        using var engine = SessionJournalTestRuntime.Attach(
+            SessionJournalEngine.Create(
+                path,
+                CreateOptions()
+            ),
             CreateRuntime(client, source)
         );
         TestContextCandidateFixture fixture =
@@ -468,9 +484,11 @@ public sealed class SessionContextCandidateProviderRouteTests : IDisposable {
         string path = NewJournalPath();
         var client = new ScriptedClient();
         var source = new TestContextCandidateSource();
-        using var engine = SessionJournalEngine.Create(
-            path,
-            CreateOptions(),
+        using var engine = SessionJournalTestRuntime.Attach(
+            SessionJournalEngine.Create(
+                path,
+                CreateOptions()
+            ),
             CreateRuntime(client, source) with {
                 MaximumCanonicalRequestBytes = 1
             }
@@ -571,8 +589,10 @@ public sealed class SessionContextCandidateProviderRouteTests : IDisposable {
         Assert.Empty(manifest.Plan.ExactContextInputs);
 
         client.Enqueue(Terminal("resumed"));
-        using var reopened = SessionJournalEngine.Open(
-            path,
+        using var reopened = SessionJournalTestRuntime.Attach(
+            SessionJournalEngine.Open(
+                path
+            ),
             runtime with {
                 ContextCandidateSource = null,
                 ContextLifecycle = null
@@ -626,7 +646,12 @@ public sealed class SessionContextCandidateProviderRouteTests : IDisposable {
         }
 
         client.Enqueue(Terminal("resumed"));
-        using (var reopened = SessionJournalEngine.Open(path, runtime)) {
+        using (var reopened = SessionJournalTestRuntime.Attach(
+            SessionJournalEngine.Open(
+                path
+            ),
+            runtime
+        )) {
             ResumeOutcome outcome = await reopened.ResumeAsync(
                 CancellationToken.None
             );
@@ -727,9 +752,11 @@ public sealed class SessionContextCandidateProviderRouteTests : IDisposable {
         SessionRuntime runtime = CreateRuntime(client, source) with {
             MaximumCanonicalRequestBytes = exactBytes
         };
-        using var engine = SessionJournalEngine.Create(
-            path,
-            CreateOptions(),
+        using var engine = SessionJournalTestRuntime.Attach(
+            SessionJournalEngine.Create(
+                path,
+                CreateOptions()
+            ),
             runtime
         );
 
@@ -748,9 +775,11 @@ public sealed class SessionContextCandidateProviderRouteTests : IDisposable {
         var client = new ScriptedClient();
         client.Enqueue(Terminal("first"));
         var source = new TestContextCandidateSource();
-        using var engine = SessionJournalEngine.Create(
-            path,
-            CreateOptions(),
+        using var engine = SessionJournalTestRuntime.Attach(
+            SessionJournalEngine.Create(
+                path,
+                CreateOptions()
+            ),
             CreateRuntime(client, source)
         );
         source.Candidate = ContextCandidateTestFixture
@@ -1201,9 +1230,11 @@ public sealed class SessionContextCandidateProviderRouteTests : IDisposable {
         var client = new ScriptedClient();
         client.Enqueue(Terminal("bootstrapped"));
         var source = new TestContextCandidateSource();
-        using var engine = SessionJournalEngine.Create(
-            path,
-            CreateOptions(),
+        using var engine = SessionJournalTestRuntime.Attach(
+            SessionJournalEngine.Create(
+                path,
+                CreateOptions()
+            ),
             CreateRuntime(client, source)
         );
         source.Candidate = ContextCandidateTestFixture
@@ -1260,7 +1291,12 @@ public sealed class SessionContextCandidateProviderRouteTests : IDisposable {
         }
         source.Candidate = null;
         source.IsEmptyLineage = true;
-        using var reopened = SessionJournalEngine.Open(path, runtime);
+        using var reopened = SessionJournalTestRuntime.Attach(
+            SessionJournalEngine.Open(
+                path
+            ),
+            runtime
+        );
         EventAddress toolResultHead =
             reopened.InspectExecutionBoundary().Head!.Value;
 
@@ -1322,7 +1358,12 @@ public sealed class SessionContextCandidateProviderRouteTests : IDisposable {
         int selections = source.SelectionCount;
         int materializations = source.MaterializationCount;
         int providerCalls = client.Calls;
-        using var reopened = SessionJournalEngine.Open(path, runtime);
+        using var reopened = SessionJournalTestRuntime.Attach(
+            SessionJournalEngine.Open(
+                path
+            ),
+            runtime
+        );
         EventAddress head =
             reopened.InspectExecutionBoundary().Head!.Value;
 
@@ -1358,9 +1399,11 @@ public sealed class SessionContextCandidateProviderRouteTests : IDisposable {
         SessionContextCandidate older;
         SessionContextCandidate newer;
         EventAddress runtimeUpdate;
-        using (var engine = SessionJournalEngine.Create(
-            path,
-            CreateOptions(),
+        using (var engine = SessionJournalTestRuntime.Attach(
+            SessionJournalEngine.Create(
+                path,
+                CreateOptions()
+            ),
             CreateRuntime(client, source)
         )) {
             older = ContextCandidateTestFixture
@@ -1393,8 +1436,10 @@ public sealed class SessionContextCandidateProviderRouteTests : IDisposable {
             newer,
             older
         ];
-        using (var reopened = SessionJournalEngine.Open(
-            path,
+        using (var reopened = SessionJournalTestRuntime.Attach(
+            SessionJournalEngine.Open(
+                path
+            ),
             CreateRuntime(client, source) with {
                 ContextLifecycle = lifecycle
             }
@@ -1436,11 +1481,13 @@ public sealed class SessionContextCandidateProviderRouteTests : IDisposable {
         client.Enqueue(Terminal("done"));
         var source = new TestContextCandidateSource();
         var lifecycle = new TestContextLifecycle();
-        using var engine = SessionJournalEngine.Create(
-            path,
-            CreateOptions() with {
-                DerivedContextNthPrevious = 1
-            },
+        using var engine = SessionJournalTestRuntime.Attach(
+            SessionJournalEngine.Create(
+                path,
+                CreateOptions() with {
+                    DerivedContextNthPrevious = 1
+                }
+            ),
             CreateRuntime(client, source) with {
                 ContextLifecycle = lifecycle
             }
@@ -1492,11 +1539,13 @@ public sealed class SessionContextCandidateProviderRouteTests : IDisposable {
         var client = new ScriptedClient();
         client.Enqueue(Terminal("done"));
         var source = new TestContextCandidateSource();
-        using var engine = SessionJournalEngine.Create(
-            path,
-            CreateOptions() with {
-                DerivedContextNthPrevious = 1
-            },
+        using var engine = SessionJournalTestRuntime.Attach(
+            SessionJournalEngine.Create(
+                path,
+                CreateOptions() with {
+                    DerivedContextNthPrevious = 1
+                }
+            ),
             CreateRuntime(client, source)
         );
         TestContextCandidateFixture oldBase =
@@ -1567,9 +1616,11 @@ public sealed class SessionContextCandidateProviderRouteTests : IDisposable {
         client.Enqueue(Terminal("done"));
         var source = new TestContextCandidateSource();
         var tool = new RecordingTool("lookup");
-        using (var engine = SessionJournalEngine.Create(
-            path,
-            CreateOptions(),
+        using (var engine = SessionJournalTestRuntime.Attach(
+            SessionJournalEngine.Create(
+                path,
+                CreateOptions()
+            ),
             CreateRuntime(
                 client,
                 source,
@@ -1616,9 +1667,11 @@ public sealed class SessionContextCandidateProviderRouteTests : IDisposable {
         var source = new TestContextCandidateSource();
         var lifecycle = new TestContextLifecycle();
         var tool = new RecordingTool("lookup");
-        using var engine = SessionJournalEngine.Create(
-            path,
-            CreateOptions(),
+        using var engine = SessionJournalTestRuntime.Attach(
+            SessionJournalEngine.Create(
+                path,
+                CreateOptions()
+            ),
             CreateRuntime(
                 client,
                 source,
@@ -1666,9 +1719,11 @@ public sealed class SessionContextCandidateProviderRouteTests : IDisposable {
         var client = new ScriptedClient();
         var source = new TestContextCandidateSource();
         var lifecycle = new TestContextLifecycle();
-        using var engine = SessionJournalEngine.Create(
-            path,
-            CreateOptions(),
+        using var engine = SessionJournalTestRuntime.Attach(
+            SessionJournalEngine.Create(
+                path,
+                CreateOptions()
+            ),
             CreateRuntime(client, source) with {
                 ContextLifecycle = lifecycle
             }
@@ -1713,9 +1768,11 @@ public sealed class SessionContextCandidateProviderRouteTests : IDisposable {
         var client = new ScriptedClient();
         var source = new TestContextCandidateSource();
         var tool = new RecordingTool("lookup");
-        using var engine = SessionJournalEngine.Create(
-            path,
-            CreateOptions(),
+        using var engine = SessionJournalTestRuntime.Attach(
+            SessionJournalEngine.Create(
+                path,
+                CreateOptions()
+            ),
             CreateRuntime(
                 client,
                 source,

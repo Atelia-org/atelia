@@ -391,12 +391,14 @@ public sealed class SessionJournalAuditScanTests : IDisposable {
         string path = NewPath();
         var source = new TestContextCandidateSource();
         var client = new TextCompletionClient();
-        using (var engine = SessionJournalEngine.Create(
-            path,
-            new SessionCreateOptions(
-                "model-A",
-                "system-A",
-                "surface-A"
+        using (var engine = SessionJournalTestRuntime.Attach(
+            SessionJournalEngine.Create(
+                path,
+                new SessionCreateOptions(
+                    "model-A",
+                    "system-A",
+                    "surface-A"
+                )
             ),
             CreateRuntime(client, source)
         )) {

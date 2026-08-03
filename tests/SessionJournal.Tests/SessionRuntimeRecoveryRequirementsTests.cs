@@ -184,11 +184,13 @@ public sealed class SessionRuntimeRecoveryRequirementsTests
             new ToolRegistry([tool]).CreateSession()
         );
         EventAddress action;
-        using (var engine = SessionJournalEngine.Create(
-                   path,
-                   Options(),
-                   runtime
-               )) {
+        using (var engine = SessionJournalTestRuntime.Attach(
+            SessionJournalEngine.Create(
+                path,
+                Options()
+            ),
+            runtime
+        )) {
             engine.AppendObservation("run a tool");
             action = engine.AppendImportedAgentAction(
                 new ActionMessage([
@@ -326,11 +328,13 @@ public sealed class SessionRuntimeRecoveryRequirementsTests
         string sendPath = NewPath();
         var sendClient = new NeverClient();
         SessionRuntime sendRuntime = Runtime(sendClient);
-        using (var engine = SessionJournalEngine.Create(
-                   sendPath,
-                   Options(),
-                   sendRuntime
-               )) {
+        using (var engine = SessionJournalTestRuntime.Attach(
+            SessionJournalEngine.Create(
+                sendPath,
+                Options()
+            ),
+            sendRuntime
+        )) {
             EventAddress capturedIdle = engine.ReadCurrentHead()!.Value;
             EventAddress laterSetup = engine.AppendSystemPromptSetup(
                 "later prompt"
@@ -359,8 +363,10 @@ public sealed class SessionRuntimeRecoveryRequirementsTests
             resumeRuntime
         );
         EventAddress started = AppendStarted(resumePath, prepared);
-        using var reopened = SessionJournalEngine.Open(
-            resumePath,
+        using var reopened = SessionJournalTestRuntime.Attach(
+            SessionJournalEngine.Open(
+                resumePath
+            ),
             resumeRuntime
         );
 

@@ -291,9 +291,11 @@ public sealed class SessionDesiredSetupReconciliationTests : IDisposable {
             ),
             ContextCandidateSource: source
         );
-        using var engine = SessionJournalEngine.Create(
-            path,
-            new SessionCreateOptions("model-a", "prompt-a", "surface-a"),
+        using var engine = SessionJournalTestRuntime.Attach(
+            SessionJournalEngine.Create(
+                path,
+                new SessionCreateOptions("model-a", "prompt-a", "surface-a")
+            ),
             runtime
         );
         await CoherentArtifactSetTestFixture.ActivateAtCurrentHeadAsync(

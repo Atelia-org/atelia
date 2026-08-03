@@ -503,9 +503,11 @@ public sealed class SessionJournalEngineTests : IDisposable {
                 request.ModelId
             )
         ));
-        using (var resumed = SessionJournalEngine.Open(
-            path,
-            "feature",
+        using (var resumed = SessionJournalTestRuntime.Attach(
+            SessionJournalEngine.Open(
+                path,
+                "feature"
+            ),
             runtime with {
                 ContextCandidateSource = null,
                 ContextLifecycle = null
@@ -828,9 +830,11 @@ public sealed class SessionJournalEngineTests : IDisposable {
             new CompletionDescriptor("scripted", "test-api-v1", request.ModelId)
         ));
 
-        using var engine = SessionJournalEngine.Create(
-            path,
-            new SessionCreateOptions("model-A", "system-A", "surface-A"),
+        using var engine = SessionJournalTestRuntime.Attach(
+            SessionJournalEngine.Create(
+                path,
+                new SessionCreateOptions("model-A", "system-A", "surface-A")
+            ),
             CreateRuntime(client)
         );
         await CoherentArtifactSetTestFixture.ActivateAtCurrentHeadAsync(
@@ -877,9 +881,11 @@ public sealed class SessionJournalEngineTests : IDisposable {
             new CompletionDescriptor("scripted", "test-api-v1", request.ModelId)
         ));
 
-        using var engine = SessionJournalEngine.Create(
-            path,
-            new SessionCreateOptions("model-A", "system-A", "surface-A"),
+        using var engine = SessionJournalTestRuntime.Attach(
+            SessionJournalEngine.Create(
+                path,
+                new SessionCreateOptions("model-A", "system-A", "surface-A")
+            ),
             CreateRuntime(client)
         );
         await CoherentArtifactSetTestFixture.ActivateAtCurrentHeadAsync(
@@ -949,9 +955,11 @@ public sealed class SessionJournalEngineTests : IDisposable {
         ));
 
         EventAddress actionHead;
-        using (var engine = SessionJournalEngine.Create(
-            path,
-            new SessionCreateOptions("model-A", "system-A", "surface-A"),
+        using (var engine = SessionJournalTestRuntime.Attach(
+            SessionJournalEngine.Create(
+                path,
+                new SessionCreateOptions("model-A", "system-A", "surface-A")
+            ),
             CreateRuntime(client, candidateSource: candidateSource)
         )) {
             await CoherentArtifactSetTestFixture.ActivateAtCurrentHeadAsync(
@@ -1202,12 +1210,14 @@ public sealed class SessionJournalEngineTests : IDisposable {
                 _ => ToolExecuteResult.FromText(ToolExecutionStatus.Success, "unused")
             )
         ]).CreateSession();
-        using (var engine = SessionJournalEngine.Create(
-            path,
-            new SessionCreateOptions(
-                ModelId: "model-A",
-                SystemPrompt: "system-A",
-                CompletionSurfaceId: "surface-A"
+        using (var engine = SessionJournalTestRuntime.Attach(
+            SessionJournalEngine.Create(
+                path,
+                new SessionCreateOptions(
+                    ModelId: "model-A",
+                    SystemPrompt: "system-A",
+                    CompletionSurfaceId: "surface-A"
+                )
             ),
             CreateRuntime(new ScriptedCompletionClient(), toolSession)
         )) {
@@ -1260,9 +1270,11 @@ public sealed class SessionJournalEngineTests : IDisposable {
             }
         );
 
-        using var engine = SessionJournalEngine.Create(
-            path,
-            new SessionCreateOptions("model-A", "system-A", "surface-A"),
+        using var engine = SessionJournalTestRuntime.Attach(
+            SessionJournalEngine.Create(
+                path,
+                new SessionCreateOptions("model-A", "system-A", "surface-A")
+            ),
             CreateRuntime(client, candidateSource: candidateSource)
         );
         ActivatedCoherentArtifactSet activated =
@@ -1317,9 +1329,11 @@ public sealed class SessionJournalEngineTests : IDisposable {
             ]),
             new CompletionDescriptor("scripted", "test-api-v1", request.ModelId)
         ));
-        using var engine = SessionJournalEngine.Create(
-            path,
-            new SessionCreateOptions("model-A", "system-A", "surface-A"),
+        using var engine = SessionJournalTestRuntime.Attach(
+            SessionJournalEngine.Create(
+                path,
+                new SessionCreateOptions("model-A", "system-A", "surface-A")
+            ),
             CreateRuntime(client)
         );
         await CoherentArtifactSetTestFixture.ActivateAtCurrentHeadAsync(
@@ -1426,7 +1440,12 @@ public sealed class SessionJournalEngineTests : IDisposable {
             new ActionMessage([new ActionBlock.Text("resumed")]),
             new CompletionDescriptor("scripted", "test-api-v1", request.ModelId)
         ));
-        using var reopened = SessionJournalEngine.Open(path, CreateRuntime(client));
+        using var reopened = SessionJournalTestRuntime.Attach(
+            SessionJournalEngine.Open(
+                path
+            ),
+            CreateRuntime(client)
+        );
         Assert.Equal(
             SessionExecutionPhase.AwaitingCompletionDispatch,
             reopened.ResolveExecutionTail().State.Phase
@@ -1455,9 +1474,11 @@ public sealed class SessionJournalEngineTests : IDisposable {
         ));
         var candidateSource = new TestContextCandidateSource();
 
-        using (var engine = SessionJournalEngine.Create(
-            path,
-            new SessionCreateOptions("model-A", "system-A", "surface-A"),
+        using (var engine = SessionJournalTestRuntime.Attach(
+            SessionJournalEngine.Create(
+                path,
+                new SessionCreateOptions("model-A", "system-A", "surface-A")
+            ),
             CreateRuntime(client, candidateSource: candidateSource)
         )) {
             await CoherentArtifactSetTestFixture.ActivateAtCurrentHeadAsync(
@@ -1505,9 +1526,11 @@ public sealed class SessionJournalEngineTests : IDisposable {
         ));
         var candidateSource = new TestContextCandidateSource();
 
-        using var engine = SessionJournalEngine.Create(
-            path,
-            new SessionCreateOptions("model-A", "system-A", "surface-A"),
+        using var engine = SessionJournalTestRuntime.Attach(
+            SessionJournalEngine.Create(
+                path,
+                new SessionCreateOptions("model-A", "system-A", "surface-A")
+            ),
             CreateRuntime(client, candidateSource: candidateSource)
         );
         await CoherentArtifactSetTestFixture.ActivateAtCurrentHeadAsync(
@@ -1576,9 +1599,11 @@ public sealed class SessionJournalEngineTests : IDisposable {
         });
         var candidateSource = new TestContextCandidateSource();
 
-        using var engine = SessionJournalEngine.Create(
-            path,
-            new SessionCreateOptions("model-A", "system-A", "surface-A"),
+        using var engine = SessionJournalTestRuntime.Attach(
+            SessionJournalEngine.Create(
+                path,
+                new SessionCreateOptions("model-A", "system-A", "surface-A")
+            ),
             CreateRuntime(client, candidateSource: candidateSource)
         );
         await CoherentArtifactSetTestFixture.ActivateAtCurrentHeadAsync(
@@ -1641,18 +1666,20 @@ public sealed class SessionJournalEngineTests : IDisposable {
         ));
         var candidateSource = new TestContextCandidateSource();
         EventAddress failedHead;
-        using (var engine = SessionJournalEngine.Create(
-                   path,
-                   new SessionCreateOptions(
-                       "model-A",
-                       "system-A",
-                       "surface-A"
-                   ),
-                   CreateRuntime(
-                       client,
-                       candidateSource: candidateSource
-                   )
-               )) {
+        using (var engine = SessionJournalTestRuntime.Attach(
+            SessionJournalEngine.Create(
+                path,
+                new SessionCreateOptions(
+                    "model-A",
+                    "system-A",
+                    "surface-A"
+                )
+            ),
+            CreateRuntime(
+                client,
+                candidateSource: candidateSource
+            )
+        )) {
             await CoherentArtifactSetTestFixture
                 .ActivateAtCurrentHeadAsync(
                     path,
@@ -1694,9 +1721,11 @@ public sealed class SessionJournalEngineTests : IDisposable {
             ? throw new OperationCanceledException("transport cancellation")
             : throw new IOException("transport failure"));
 
-        using (var engine = SessionJournalEngine.Create(
-            path,
-            new SessionCreateOptions("model-A", "system-A", "surface-A"),
+        using (var engine = SessionJournalTestRuntime.Attach(
+            SessionJournalEngine.Create(
+                path,
+                new SessionCreateOptions("model-A", "system-A", "surface-A")
+            ),
             CreateRuntime(client)
         )) {
             await CoherentArtifactSetTestFixture.ActivateAtCurrentHeadAsync(
@@ -1721,9 +1750,11 @@ public sealed class SessionJournalEngineTests : IDisposable {
             new CompletionDescriptor("wrong-provider", "wrong-api", request.ModelId)
         ));
 
-        using (var engine = SessionJournalEngine.Create(
-            path,
-            new SessionCreateOptions("model-A", "system-A", "surface-A"),
+        using (var engine = SessionJournalTestRuntime.Attach(
+            SessionJournalEngine.Create(
+                path,
+                new SessionCreateOptions("model-A", "system-A", "surface-A")
+            ),
             CreateRuntime(client)
         )) {
             await CoherentArtifactSetTestFixture.ActivateAtCurrentHeadAsync(
@@ -1912,9 +1943,11 @@ public sealed class SessionJournalEngineTests : IDisposable {
             }
         );
 
-        using var engine = SessionJournalEngine.Create(
-            path,
-            new SessionCreateOptions("model-A", "system-A", "surface-A"),
+        using var engine = SessionJournalTestRuntime.Attach(
+            SessionJournalEngine.Create(
+                path,
+                new SessionCreateOptions("model-A", "system-A", "surface-A")
+            ),
             CreateRuntime(client)
         );
         await CoherentArtifactSetTestFixture.ActivateAtCurrentHeadAsync(
@@ -1973,8 +2006,10 @@ public sealed class SessionJournalEngineTests : IDisposable {
             }
         );
 
-        using var reopened = SessionJournalEngine.Open(
-            path,
+        using var reopened = SessionJournalTestRuntime.Attach(
+            SessionJournalEngine.Open(
+                path
+            ),
             CreateRuntime(resumeClient, contextCandidate: candidate)
         );
         ResumeOutcome outcome = await reopened.ResumeAsync(CancellationToken.None);
@@ -2022,7 +2057,12 @@ public sealed class SessionJournalEngineTests : IDisposable {
         }
 
         var resumeClient = new ScriptedCompletionClient();
-        using var reopened = SessionJournalEngine.Open(path, CreateRuntime(resumeClient));
+        using var reopened = SessionJournalTestRuntime.Attach(
+            SessionJournalEngine.Open(
+                path
+            ),
+            CreateRuntime(resumeClient)
+        );
         InvalidOperationException resumeError = await Assert.ThrowsAsync<InvalidOperationException>(
             () => reopened.ResumeAsync(CancellationToken.None)
         );
@@ -2036,9 +2076,11 @@ public sealed class SessionJournalEngineTests : IDisposable {
     public async Task ResumeAsync_WhenIdle_DoesNotCallCompletion() {
         string path = NewJournalPath();
         var client = new ScriptedCompletionClient();
-        using var engine = SessionJournalEngine.Create(
-            path,
-            new SessionCreateOptions("model-A", "system-A", "surface-A"),
+        using var engine = SessionJournalTestRuntime.Attach(
+            SessionJournalEngine.Create(
+                path,
+                new SessionCreateOptions("model-A", "system-A", "surface-A")
+            ),
             CreateRuntime(client)
         );
 
@@ -2096,9 +2138,11 @@ public sealed class SessionJournalEngineTests : IDisposable {
             }
         );
 
-        using (var engine = SessionJournalEngine.Create(
-            path,
-            new SessionCreateOptions("model-A", "system-A", "surface-A"),
+        using (var engine = SessionJournalTestRuntime.Attach(
+            SessionJournalEngine.Create(
+                path,
+                new SessionCreateOptions("model-A", "system-A", "surface-A")
+            ),
             CreateRuntime(client, toolSession)
         )) {
             await CoherentArtifactSetTestFixture.ActivateAtCurrentHeadAsync(
@@ -2196,8 +2240,10 @@ public sealed class SessionJournalEngineTests : IDisposable {
             }
         );
 
-        using var reopened = SessionJournalEngine.Open(
-            path,
+        using var reopened = SessionJournalTestRuntime.Attach(
+            SessionJournalEngine.Open(
+                path
+            ),
             CreateRuntime(
                 resumeClient,
                 new ToolRegistry([resumeTool]).CreateSession(),
@@ -2300,14 +2346,16 @@ public sealed class SessionJournalEngineTests : IDisposable {
             }
         );
         EventAddress completedHead;
-        using (var reopened = SessionJournalEngine.Open(
-                   path,
-                   CreateRuntime(
-                       recoveryClient,
-                       new ToolRegistry([recoveryTool]).CreateSession(),
-                       candidateSource: candidateSource
-                   )
-               )) {
+        using (var reopened = SessionJournalTestRuntime.Attach(
+            SessionJournalEngine.Open(
+                path
+            ),
+            CreateRuntime(
+                recoveryClient,
+                new ToolRegistry([recoveryTool]).CreateSession(),
+                candidateSource: candidateSource
+            )
+        )) {
             SessionRuntimeRecoveryRequirements.ToolContinuationRequired
                 requirement = Assert.IsType<
                     SessionRuntimeRecoveryRequirements.ToolContinuationRequired
@@ -2355,14 +2403,16 @@ public sealed class SessionJournalEngineTests : IDisposable {
                 "Idle reopen must not execute a tool."
             )
         );
-        using (var noOp = SessionJournalEngine.Open(
-                   path,
-                   CreateRuntime(
-                       noOpClient,
-                       new ToolRegistry([noOpTool]).CreateSession(),
-                       candidateSource: candidateSource
-                   )
-               )) {
+        using (var noOp = SessionJournalTestRuntime.Attach(
+            SessionJournalEngine.Open(
+                path
+            ),
+            CreateRuntime(
+                noOpClient,
+                new ToolRegistry([noOpTool]).CreateSession(),
+                candidateSource: candidateSource
+            )
+        )) {
             ResumeOutcome outcome = await noOp.ResumeAsync(
                 completedHead,
                 CancellationToken.None
@@ -2419,8 +2469,10 @@ public sealed class SessionJournalEngineTests : IDisposable {
         var differentIdentity = ToolRuntimeIdentity with {
             CapabilitySetFingerprint = "different-capabilities-v2"
         };
-        using (var reopened = SessionJournalEngine.Open(
-            path,
+        using (var reopened = SessionJournalTestRuntime.Attach(
+            SessionJournalEngine.Open(
+                path
+            ),
             CreateRuntime(
                 new ScriptedCompletionClient(),
                 new ToolRegistry([recoveryTool]).CreateSession(),
@@ -2514,8 +2566,10 @@ public sealed class SessionJournalEngineTests : IDisposable {
             new ActionMessage([new ActionBlock.Text("done")]),
             new CompletionDescriptor("scripted", "test-api-v1", request.ModelId)
         ));
-        using (var reopened = SessionJournalEngine.Open(
-            path,
+        using (var reopened = SessionJournalTestRuntime.Attach(
+            SessionJournalEngine.Open(
+                path
+            ),
             CreateRuntime(
                 resumeClient,
                 new ToolRegistry([resumedTool]).CreateSession(),
@@ -2590,8 +2644,10 @@ public sealed class SessionJournalEngineTests : IDisposable {
             }
         );
 
-        using var reopened = SessionJournalEngine.Open(
-            path,
+        using var reopened = SessionJournalTestRuntime.Attach(
+            SessionJournalEngine.Open(
+                path
+            ),
             CreateRuntime(
                 resumeClient,
                 new ToolRegistry([resumeTool]).CreateSession(),
@@ -2667,8 +2723,10 @@ public sealed class SessionJournalEngineTests : IDisposable {
             }
         );
 
-        using var reopened = SessionJournalEngine.Open(
-            path,
+        using var reopened = SessionJournalTestRuntime.Attach(
+            SessionJournalEngine.Open(
+                path
+            ),
             CreateRuntime(
                 resumeClient,
                 new ToolRegistry([resumedAlpha, resumedBeta]).CreateSession(),
@@ -2721,9 +2779,11 @@ public sealed class SessionJournalEngineTests : IDisposable {
             }
         );
 
-        using var engine = SessionJournalEngine.Create(
-            path,
-            new SessionCreateOptions("model-A", "system-A", "surface-A"),
+        using var engine = SessionJournalTestRuntime.Attach(
+            SessionJournalEngine.Create(
+                path,
+                new SessionCreateOptions("model-A", "system-A", "surface-A")
+            ),
             CreateRuntime(client, toolSession, candidateSource: candidateSource)
         );
         await CoherentArtifactSetTestFixture.ActivateAtCurrentHeadAsync(
@@ -2779,9 +2839,11 @@ public sealed class SessionJournalEngineTests : IDisposable {
             }
         );
 
-        using (var engine = SessionJournalEngine.Create(
-            path,
-            new SessionCreateOptions("model-A", "system-A", "surface-A"),
+        using (var engine = SessionJournalTestRuntime.Attach(
+            SessionJournalEngine.Create(
+                path,
+                new SessionCreateOptions("model-A", "system-A", "surface-A")
+            ),
             CreateRuntime(client, registry.CreateSession())
         )) {
             await CoherentArtifactSetTestFixture.ActivateAtCurrentHeadAsync(
@@ -2929,9 +2991,11 @@ public sealed class SessionJournalEngineTests : IDisposable {
             )
         );
 
-        using (var engine = SessionJournalEngine.Create(
-            path,
-            new SessionCreateOptions("model-A", "system-A", "surface-A"),
+        using (var engine = SessionJournalTestRuntime.Attach(
+            SessionJournalEngine.Create(
+                path,
+                new SessionCreateOptions("model-A", "system-A", "surface-A")
+            ),
             CreateRuntime(
                 client,
                 registry.CreateSession(),
@@ -3119,9 +3183,11 @@ public sealed class SessionJournalEngineTests : IDisposable {
             new RecordingTool("alpha", _ => ToolExecuteResult.FromText(ToolExecutionStatus.Success, "unused")),
             new RecordingTool("beta", _ => ToolExecuteResult.FromText(ToolExecutionStatus.Success, "unused"))
         ]).CreateSession();
-        using var engine = SessionJournalEngine.Create(
-            path,
-            new SessionCreateOptions("model-A", "system-A", "surface-A"),
+        using var engine = SessionJournalTestRuntime.Attach(
+            SessionJournalEngine.Create(
+                path,
+                new SessionCreateOptions("model-A", "system-A", "surface-A")
+            ),
             CreateRuntime(new ScriptedCompletionClient(), tools)
         );
         engine.AppendObservation("run two tools");

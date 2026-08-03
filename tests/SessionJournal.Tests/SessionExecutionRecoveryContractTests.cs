@@ -63,7 +63,12 @@ public sealed class SessionExecutionRecoveryContractTests : IDisposable {
             candidateSource.SelectionCount;
         int materializationCountBeforeResume =
             candidateSource.MaterializationCount;
-        using var reopened = SessionJournalEngine.Open(path, runtime);
+        using var reopened = SessionJournalTestRuntime.Attach(
+            SessionJournalEngine.Open(
+                path
+            ),
+            runtime
+        );
         SessionJournalReadDiagnostics before = reopened.CaptureReadDiagnostics();
 
         await Assert.ThrowsAsync<InvalidOperationException>(
