@@ -262,8 +262,10 @@ reset 后的 catch-up 仍需显式执行一次或多次 `recap run`。
 | 参数、路径或未分类运行错误 | 1 | 命令级失败 |
 
 JSON report 是 content-free operation record：包含 schema、operation、branch/ref、raw head、
-anchor/block、typed status/code/defect codes，以及 call-log 数量和目录。`run`还记录实际
-new-planning composition 的 config schema/hash与 profile prompt fingerprints；
+anchor/block、typed status/code/defect codes，以及完成serialize/write/flush/close并成功登记的
+call-log数量和目录。该数量不是
+provider invocation count；best-effort日志I/O失败不会改变provider结果，因此可能少于实际调用数。
+`run`还记录实际 new-planning composition 的 config schema/hash与 profile prompt fingerprints；
 `resume/restore`的 config字段为 null，因为 active planner config不是其 authority。报告不复制
 recap 正文、FrozenInput、PriorContext、prompt/response、provider error body、state token、
 recap/request内容 hash或 secret。
@@ -326,7 +328,8 @@ request 为唯一真源，对 Store 是 zero-touch。
 report 同样 content-free；NewPlanning额外报告实际 repo config path/hash与
 `RawSafetyRejected`/`ExactSchedule` diagnostics；online report schema 是 V5。Frozen
 Building及 Prepared/Started recovery的 config/planning字段为 null。完整 request/action只存在于
-明确配置的 call log。
+明确配置且成功写入的 call log；日志初始化、reserve、write或flush失败不会替换provider结果或异常，
+因此operational evidence可能缺失。
 
 ## import-legacy-json
 
@@ -415,3 +418,7 @@ dotnet run --project prototypes/SessionJournal.Cli -- \
   [--call-log-dir <path-outside-repo>] \
   [--message <text>]
 ```
+
+Call log是best-effort诊断产物；provider调用成功但日志I/O失败时，该命令仍保留provider结果。需要把
+落盘也作为人工验收项时，应另行检查目标目录中的完整JSON文件。初始化失败会在该wrapper生命周期内
+禁用日志；失败reservation清理失败时可能留下未登记、不完整且不可依赖的orphan文件。

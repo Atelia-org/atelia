@@ -170,6 +170,14 @@ public sealed class LoggingCompletionClient : ICompletionClient
 
 边界：`LoggingCompletionClient` 是语义层日志，不是 provider wire log。它记录 canonical `CompletionRequest`、聚合后的 `CompletionResult` / exception，以及 backtest epoch metadata；它不承诺保存 provider-native HTTP request / response 的完整字节级内容。需要 HTTP 层法证或 replay 时，继续复用 / 扩展 `CompletionHttpTransportFactory` 现有 golden log 能力。
 
+Call log还是best-effort operational evidence，而不是completion authority。目录初始化、文件reserve、
+序列化、写入、flush或cleanup失败都不得阻止provider调用，也不得替换provider返回值、异常实例或
+cancellation语义；失败调用可能没有call log。`WrittenCallLogPaths`及上层report中的call-log数量只统计
+已经完成serialize/write/flush/close并成功登记的文件，不等同于provider invocation count。初始化失败会
+在该wrapper的剩余生命周期禁用日志，不做后台重试；单次reserve/write/flush/close失败不毒化后续调用。
+若失败reservation的cleanup也失败，目录中可能留下未登记且不完整的orphan文件；它不属于成功call log，
+不得作为调用次数、provider结果或recovery的依据。
+
 推荐每次调用一个 JSON 文件：
 
 ```text

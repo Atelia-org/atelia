@@ -14,8 +14,8 @@ internal static class RecapCliComposition {
 
     /// <summary>
     /// Opt-in runtime composition. Callers must complete Store readiness
-    /// checks before invoking this method because logging construction creates
-    /// the call-log directory.
+    /// checks before invoking this method because logging construction may
+    /// attempt to initialize the best-effort call-log directory.
     /// </summary>
     internal static RecapCliMaintainerComposition CreateMaintainers(
         RecapMaintainerProfileCatalog capabilityCatalog,

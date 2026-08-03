@@ -49,7 +49,11 @@ profiles和limits统一由每个SessionJournal repo中的 `recap-planner-config.
 `agent/`，Maintainer调用按profile写入`maintenance/<maintainer-id>/`；该目录必须与所有
 `sessionDir`互不包含。未配置时不包装client、不创建日志目录。日志wrapper透传client identity，
 因此开关日志不会改变Prepared中冻结的completion target；日志可能包含完整prompt/response，应位于
-repo之外且按敏感数据管理。
+repo之外且按敏感数据管理。日志是best-effort operational evidence：初始化、reserve、write、flush
+或cleanup失败都不会令agent Send或Maintainer调用失败，也不会替换provider异常；相应调用可能没有
+call-log文件。初始化失败会在该wrapper的剩余生命周期禁用日志；cleanup失败可能留下未登记且不完整的
+orphan文件。只有完成serialize/write/flush/close并成功登记的文件才计为成功日志，orphan不得用于推断
+调用次数、provider结果或recovery状态。
 
 `maintenanceMode`是startup-time只读开关，默认`false`。设为`true`后，fresh send、durable
 resume、Undo与stop endpoint都会在打开session前返回typed `503 maintenance-mode`；Host同时以
