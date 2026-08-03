@@ -220,9 +220,9 @@ public sealed class ProgramSessionJournalOfflineCommandTests : IDisposable {
                 "model-A",
                 systemPrompt,
                 "surface-A"
-            ),
-            runtime
+            )
         )) {
+            engine.UseRuntime(runtime);
             engine.AppendObservation("run private tool");
             engine.AppendImportedAgentAction(
                 new ActionMessage([

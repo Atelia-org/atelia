@@ -583,24 +583,25 @@ public sealed class ProgramDerivedRecapOnlineTurnTests : IDisposable {
         string path = Path.Combine(_tempRoot, "turn-failed");
         var failing = new KnownFailureCompletionClient();
         var connection = Connection();
+        var runtime = new SJ.SessionRuntime(
+            failing,
+            CompletionTarget:
+                CompletionTargetIdentityFactory.Create(
+                    connection,
+                    failing
+                ),
+            ContextCandidateSource:
+                new EmptyContextCandidateSource()
+        );
         using (var engine = SJ.SessionJournalEngine.Create(
                    path,
                    new SJ.SessionCreateOptions(
                        "model-a",
                        "system-a",
                        "surface-a"
-                   ),
-                   new SJ.SessionRuntime(
-                       failing,
-                       CompletionTarget:
-                           CompletionTargetIdentityFactory.Create(
-                               connection,
-                               failing
-                           ),
-                       ContextCandidateSource:
-                           new EmptyContextCandidateSource()
                    )
                )) {
+            engine.UseRuntime(runtime);
             await Assert.ThrowsAsync<SJ.SessionJournalTurnAbortedException>(
                 () => engine.SendAsync(
                     "known failure",
@@ -1039,9 +1040,9 @@ public sealed class ProgramDerivedRecapOnlineTurnTests : IDisposable {
                        "model-a",
                        "system-a",
                        "surface-a"
-                   ),
-                   runtime
+                   )
                )) {
+            engine.UseRuntime(runtime);
             engine.AppendObservation("use a tool");
             _ = engine.AppendImportedAgentAction(
                 new ActionMessage([
