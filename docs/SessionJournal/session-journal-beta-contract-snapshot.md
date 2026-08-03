@@ -1,6 +1,6 @@
 # SessionJournal Beta contract snapshot
 
-状态：Candidate snapshot，等待 R4 Clone B 关闭  
+状态：Beta-supported  
 Product candidate：`681fc02bb9f1e4a45cd012aa7feadefe3f33fa9e`
 
 本文冻结首个 Beta 准备支持的边界。它不是所有当前 `public` 类型的兼容性承诺；未列入角色 allowlist 的
@@ -109,6 +109,7 @@ Linux durability path 使用 same-directory temporary、flush/fsync、no-replace
 
 ## 7. Verification boundary
 
-本快照的 wire/API 结论以综合报告中的 R0–R3 review 和 exact product candidate 为准。R4 Clone A 已通过
-1035 个 default test、5 个 explicit opt-in test、真实数据 import/recap/NoBuild 与 disposable Host canary；
-只有 Clone B 重复完成后，本文状态才可从 Candidate 改为 Beta-supported。
+本快照的 wire/API 结论以综合报告中的 R0–R3 review 和 exact product candidate 为准。R4 在两个独立
+`--no-local` fresh clone 上重复通过：每个 clone 1035 个 default test、5 个 explicit opt-in test、真实数据
+import/recap/NoBuild、disposable Host canary、reopen/Undo 与 source/raw-ref invariants。合计 2080 passed、
+10 expected skips、0 failed；因此本文状态为 Beta-supported。
