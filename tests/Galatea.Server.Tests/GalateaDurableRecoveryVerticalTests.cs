@@ -538,10 +538,8 @@ public sealed class GalateaDurableRecoveryVerticalTests {
         CompletionConnectionConfig connection
     ) {
         var client = new KnownFailureClient();
-        using var engine = SessionJournalEngine.Open(
-            sessionPath,
-            CreateFixtureRuntime(connection, client)
-        );
+        using var engine = SessionJournalEngine.Open(sessionPath);
+        engine.UseRuntime(CreateFixtureRuntime(connection, client));
         await Assert.ThrowsAsync<SessionJournalTurnAbortedException>(
             () => engine.SendAsync(
                 GalateaUserMessageEnvelope.Wrap("failed fixture turn"),
