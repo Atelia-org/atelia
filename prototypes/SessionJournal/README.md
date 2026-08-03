@@ -188,8 +188,8 @@ await engine.SendAsync(requirement.CapturedHead!.Value, message, cancellationTok
 await engine.ResumeAsync(requirement.CapturedHead!.Value, cancellationToken);
 ```
 
-这四个带`EventAddress expectedHead`的overload是external consumer唯一可见的online mutation
-入口；不带head的Send/Resume overload只保留给raw core内部与白盒测试，production Host不能绕过
+这四个带`EventAddress expectedHead`的overload是external consumer唯一可见的Send/Resume
+mutation overload；不带head的Send/Resume overload只保留给raw core内部与白盒测试，production Host不能绕过
 inspection/prepare所得的freshness boundary。
 
 入口resolve发现head已经变化时抛出`SessionJournalExpectedHeadMismatchException`。入口检查之后

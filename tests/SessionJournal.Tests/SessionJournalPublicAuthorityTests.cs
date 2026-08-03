@@ -199,6 +199,44 @@ public sealed class SessionJournalPublicAuthorityTests : IDisposable {
     }
 
     [Fact]
+    public void PublicFactorySurface_RequiresSeparateRuntimeAttachment_AndHidesRawPayloadBytes() {
+        Type engineType = typeof(SessionJournalEngine);
+        Assert.Equal(
+            [
+                "Create(String,SessionCreateOptions)",
+                "Open(String)",
+                "Open(String,String)"
+            ],
+            engineType.GetMethods(
+                    BindingFlags.Public
+                    | BindingFlags.Static
+                    | BindingFlags.DeclaredOnly
+                )
+                .Where(method => method.Name is nameof(
+                        SessionJournalEngine.Create
+                    ) or nameof(SessionJournalEngine.Open))
+                .Select(FormatSignature)
+                .Order(StringComparer.Ordinal)
+                .ToArray()
+        );
+        Assert.DoesNotContain(
+            engineType.GetMethods(
+                BindingFlags.Public
+                | BindingFlags.Instance
+                | BindingFlags.DeclaredOnly
+            ),
+            method => method.Name == "ReadPayloadBytes"
+        );
+        AssertPublicMethod(
+            engineType,
+            isStatic: false,
+            nameof(SessionJournalEngine.UseRuntime),
+            typeof(void),
+            typeof(SessionRuntime)
+        );
+    }
+
+    [Fact]
     public async Task ExternalConsumer_CannotCompileUnboundOnlineMutations_ButCanCompileBoundOverloads() {
         string tempRoot = NewPath();
         Directory.CreateDirectory(tempRoot);
@@ -302,6 +340,126 @@ public sealed class SessionJournalPublicAuthorityTests : IDisposable {
             await CompileExternalConsumerAsync(tempRoot);
 
         Assert.True(boundExitCode == 0, boundOutput);
+    }
+
+    [Fact]
+    public async Task ExternalSecondHost_UsesRuntimeAfterFactory_AndCannotCompileRuntimeFactoriesOrRawPayloadRead() {
+        string tempRoot = NewPath();
+        Directory.CreateDirectory(tempRoot);
+        string sessionJournalProject = SecurityElement.Escape(
+            Path.GetFullPath(
+                Path.Combine(
+                    Path.GetDirectoryName(CurrentSourceFile())!,
+                    "..",
+                    "..",
+                    "prototypes",
+                    "SessionJournal",
+                    "SessionJournal.csproj"
+                )
+            )
+        )!;
+        await File.WriteAllTextAsync(
+            Path.Combine(tempRoot, "ExternalConsumer.csproj"),
+            $$"""
+            <Project Sdk="Microsoft.NET.Sdk">
+              <PropertyGroup>
+                <TargetFramework>net10.0</TargetFramework>
+                <ImplicitUsings>enable</ImplicitUsings>
+                <Nullable>enable</Nullable>
+              </PropertyGroup>
+              <ItemGroup>
+                <ProjectReference Include="{{sessionJournalProject}}" />
+              </ItemGroup>
+            </Project>
+            """
+        );
+        string probePath = Path.Combine(
+            tempRoot,
+            "ExternalConsumerProbe.cs"
+        );
+        await File.WriteAllTextAsync(
+            probePath,
+            """
+            using Atelia.SessionJournal;
+
+            public static class ExternalSecondHost {
+                public static void UseUnsupportedFactories(
+                    string createPath,
+                    string openPath,
+                    string branchName,
+                    SessionCreateOptions options,
+                    SessionRuntime runtime
+                ) {
+                    _ = SessionJournalEngine.Create(
+                        createPath,
+                        options,
+                        runtime
+                    );
+                    _ = SessionJournalEngine.Open(openPath, runtime);
+                    _ = SessionJournalEngine.Open(
+                        openPath,
+                        branchName,
+                        runtime
+                    );
+                    using var inspection =
+                        SessionJournalEngine.OpenReadOnly(openPath);
+                    _ = inspection.ReadPayloadBytes(default);
+                }
+            }
+            """
+        );
+
+        (int unsupportedExitCode, string unsupportedOutput) =
+            await CompileExternalConsumerAsync(tempRoot);
+
+        Assert.NotEqual(0, unsupportedExitCode);
+        Assert.Contains("ExternalConsumerProbe.cs", unsupportedOutput);
+        Assert.Contains("ReadPayloadBytes", unsupportedOutput);
+        Assert.True(
+            unsupportedOutput.Split(
+                ": error CS",
+                StringSplitOptions.None
+            ).Length >= 5,
+            unsupportedOutput
+        );
+
+        await File.WriteAllTextAsync(
+            probePath,
+            """
+            using Atelia.SessionJournal;
+
+            public static class ExternalSecondHost {
+                public static void UseSupportedFactories(
+                    string createPath,
+                    string openPath,
+                    string branchName,
+                    SessionCreateOptions options,
+                    SessionRuntime runtime
+                ) {
+                    using var created = SessionJournalEngine.Create(
+                        createPath,
+                        options
+                    );
+                    created.UseRuntime(runtime);
+
+                    using var opened =
+                        SessionJournalEngine.Open(openPath);
+                    opened.UseRuntime(runtime);
+
+                    using var branch = SessionJournalEngine.Open(
+                        openPath,
+                        branchName
+                    );
+                    branch.UseRuntime(runtime);
+                }
+            }
+            """
+        );
+
+        (int supportedExitCode, string supportedOutput) =
+            await CompileExternalConsumerAsync(tempRoot);
+
+        Assert.True(supportedExitCode == 0, supportedOutput);
     }
 
     [Fact]
