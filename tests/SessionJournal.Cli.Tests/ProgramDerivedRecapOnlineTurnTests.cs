@@ -578,6 +578,14 @@ public sealed class ProgramDerivedRecapOnlineTurnTests : IDisposable {
                 SJ.SessionExecutionPhase.TurnFailed,
                 engine.InspectExecutionBoundary().Phase
             );
+            var requirement = Assert.IsType<
+                SJ.SessionRuntimeRecoveryRequirements
+                    .FailedTurnMustBeAbandoned
+            >(engine.InspectRuntimeRecoveryRequirements());
+            Assert.Equal(
+                engine.ReadCurrentHead()!.Value,
+                requirement.FailedHead
+            );
         }
         RawSnapshot before = ReadRawSnapshot(path);
         string connections = WriteConnections("turn-failed");

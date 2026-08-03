@@ -463,7 +463,8 @@ public sealed class SessionCompletedTurnTests : IDisposable {
             termination: CompletionTermination.Failed("known")
         ));
         SessionJournalEngine? racing = null;
-        EventAddress? concurrentObservation = null;
+        EventAddress? concurrentHead = null;
+        EventAddress? idleHead = null;
         bool raced = false;
         var hooks = new SessionJournalTestHooks(
             BeforeTurnRefMove: () => {
@@ -471,9 +472,12 @@ public sealed class SessionCompletedTurnTests : IDisposable {
                     return;
                 }
                 raced = true;
-                concurrentObservation = racing!.AppendObservation(
-                    "concurrent"
-                );
+                EventAddress observed = racing!.ReadCurrentHead()!.Value;
+                Assert.True(racing.MoveCurrentHeadForTest(
+                    observed,
+                    idleHead!.Value
+                ));
+                concurrentHead = idleHead;
             }
         );
         using (racing = SessionJournalEngine.CreateForTest(
@@ -487,6 +491,7 @@ public sealed class SessionCompletedTurnTests : IDisposable {
                 racing,
                 source
             );
+            idleHead = racing.ReadCurrentHead()!.Value;
             await Assert.ThrowsAsync<SessionJournalTurnAbortedException>(
                 () => racing.SendAsync("failed", CancellationToken.None)
             );
@@ -496,8 +501,8 @@ public sealed class SessionCompletedTurnTests : IDisposable {
                 SessionTurnRetractionResult.Retryable
             >(racing.AbandonFailedTurn(failedHead));
             Assert.Equal(failedHead, retryable.ExpectedHead);
-            Assert.Equal(concurrentObservation, retryable.ObservedHead);
-            Assert.Equal(concurrentObservation, racing.ReadCurrentHead());
+            Assert.Equal(concurrentHead, retryable.ObservedHead);
+            Assert.Equal(concurrentHead, racing.ReadCurrentHead());
         }
     }
 

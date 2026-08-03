@@ -19,14 +19,26 @@ public sealed partial class SessionJournalEngine {
             ResolveExecutionTail(cancellationToken);
         return recovery.State.Phase switch {
             SessionExecutionPhase.Empty
-                or SessionExecutionPhase.Idle
-                or SessionExecutionPhase.TurnFailed =>
+                or SessionExecutionPhase.Idle =>
                 new SessionRuntimeRecoveryRequirements
                     .NoRuntimeRequired(
                         recovery.Head,
                         recovery.State.Phase,
                         recovery.State.HeadKind
                     ),
+            SessionExecutionPhase.TurnFailed
+                when recovery.State.HeadKind
+                    == SessionEventKind.CompletionAttemptFailed =>
+                new SessionRuntimeRecoveryRequirements
+                    .FailedTurnMustBeAbandoned(
+                        RequireHead(recovery)
+                    ),
+            SessionExecutionPhase.TurnFailed =>
+                throw new InvalidDataException(
+                    "TurnFailed runtime recovery requires the exact "
+                    + "CompletionAttemptFailed head. Legacy failed-turn "
+                    + "setup suffixes are unsupported."
+                ),
             SessionExecutionPhase.AwaitingAgentAction =>
                 new SessionRuntimeRecoveryRequirements
                     .NewRequestRequired(

@@ -180,10 +180,9 @@ internal static class SessionTailContextProjection {
                 }
                 case SessionEventKind.ObservationAccepted:
                     EnsureNoOpenTool(ev, openAction);
-                    if (!SessionOperationalSemantics
-                            .IsIdleOrFailedPhase(phase)) {
+                    if (phase != SessionExecutionPhase.Idle) {
                         throw new InvalidDataException(
-                            $"{ev.Kind} at {ev.Address} must appear at an idle or failed suffix boundary."
+                            $"{ev.Kind} at {ev.Address} must appear at an idle suffix boundary; an exact failed turn must be abandoned first."
                         );
                     }
                     var observation = new ObservationMessage(
@@ -456,11 +455,12 @@ internal static class SessionTailContextProjection {
     ) {
         EnsureNoOpenTool(ev, openAction);
         if (sourcePrepared is not null
-            || phase != SessionExecutionPhase.Empty
-                && !SessionOperationalSemantics
-                    .IsIdleOrFailedPhase(phase)) {
+            || phase is not (
+                SessionExecutionPhase.Empty
+                or SessionExecutionPhase.Idle
+            )) {
             throw new InvalidDataException(
-                $"{ev.Kind} at {ev.Address} must appear only at a setup, idle, or failed suffix boundary."
+                $"{ev.Kind} at {ev.Address} must appear only at a setup or idle suffix boundary."
             );
         }
     }

@@ -1017,12 +1017,12 @@ public sealed class SessionJournalEngineTests : IDisposable {
                 new SessionRuntimeConfiguration("model-B", "surface-B", SessionJournalDefaults.Schema, new(0))
             )
         );
-        Assert.Contains("requires an idle or explicitly failed turn boundary", configEx.Message, StringComparison.Ordinal);
+        Assert.Contains("requires an idle boundary", configEx.Message, StringComparison.Ordinal);
 
         var promptEx = Assert.Throws<InvalidOperationException>(
             () => engine.AppendSystemPromptSetup("system-B")
         );
-        Assert.Contains("requires an idle or explicitly failed turn boundary", promptEx.Message, StringComparison.Ordinal);
+        Assert.Contains("requires an idle boundary", promptEx.Message, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -1485,7 +1485,7 @@ public sealed class SessionJournalEngineTests : IDisposable {
     }
 
     [Fact]
-    public async Task SendAsync_AfterTurnFailed_StartsANewObservationWithoutRetryingFailedAttempt() {
+    public async Task SendAsync_AfterTurnFailed_RequiresExactAbandonBeforeNextObservation() {
         string path = NewJournalPath();
         var client = new ScriptedCompletionClient();
         client.Enqueue(request => new CompletionResult(
@@ -1512,16 +1512,47 @@ public sealed class SessionJournalEngineTests : IDisposable {
         await Assert.ThrowsAsync<SessionJournalTurnAbortedException>(
             () => engine.SendAsync("first", CancellationToken.None)
         );
+        EventAddress failedHead = engine.ReadCurrentHead()!.Value;
 
-        TurnResult recovered = await engine.SendAsync("second", CancellationToken.None);
+        InvalidOperationException blocked =
+            await Assert.ThrowsAsync<InvalidOperationException>(
+                () => engine.SendAsync(
+                    "second",
+                    CancellationToken.None
+                )
+            );
 
-        Assert.Equal("recovered", recovered.Message.GetFlattenedText());
+        Assert.Contains("AbandonFailedTurn", blocked.Message);
+        Assert.Equal(failedHead, engine.ReadCurrentHead());
+        Assert.Equal(1, client.Calls);
+        InvalidOperationException appendBlocked = Assert.Throws<
+            InvalidOperationException
+        >(() => engine.AppendObservation("manual retry"));
+        Assert.Contains("exact failed turn", appendBlocked.Message);
+        Assert.Equal(failedHead, engine.ReadCurrentHead());
+
+        Assert.IsType<SessionTurnRetractionResult.Moved>(
+            engine.AbandonFailedTurn(failedHead)
+        );
+        EventAddress recoveredObservation = engine.AppendObservation(
+            "manual retry"
+        );
+        Assert.Equal(recoveredObservation, engine.ReadCurrentHead());
+        ResumeOutcome resumed = await engine.ResumeAsync(
+            CancellationToken.None
+        );
+
+        Assert.True(resumed.Advanced);
+        Assert.Equal(
+            "recovered",
+            resumed.Message?.GetFlattenedText()
+        );
         Assert.Equal(SessionExecutionPhase.Idle, engine.ResolveExecutionTail().State.Phase);
         Assert.Equal(2, client.Calls);
     }
 
     [Fact]
-    public async Task TurnFailed_AllowsSetupReplacementAndNextRequestUsesLatestSetup() {
+    public async Task TurnFailed_RejectsSetupUntilAbandonedThenUsesLatestSetup() {
         string path = NewJournalPath();
         var client = new ScriptedCompletionClient();
         client.Enqueue(request => new CompletionResult(
@@ -1552,9 +1583,34 @@ public sealed class SessionJournalEngineTests : IDisposable {
         await Assert.ThrowsAsync<SessionJournalTurnAbortedException>(
             () => engine.SendAsync("first", CancellationToken.None)
         );
+        EventAddress failedHead = engine.ReadCurrentHead()!.Value;
 
+        Assert.Throws<InvalidOperationException>(() =>
+            engine.AppendRuntimeConfigSetup(
+                new SessionRuntimeConfiguration(
+                    "model-B",
+                    "surface-B",
+                    SessionJournalDefaults.Schema,
+                    new(0)
+                )
+            )
+        );
+        Assert.Throws<InvalidOperationException>(() =>
+            engine.AppendSystemPromptSetup("system-B")
+        );
+        Assert.Equal(failedHead, engine.ReadCurrentHead());
+        Assert.Equal(1, client.Calls);
+
+        Assert.IsType<SessionTurnRetractionResult.Moved>(
+            engine.AbandonFailedTurn(failedHead)
+        );
         engine.AppendRuntimeConfigSetup(
-            new SessionRuntimeConfiguration("model-B", "surface-B", SessionJournalDefaults.Schema, new(0))
+            new SessionRuntimeConfiguration(
+                "model-B",
+                "surface-B",
+                SessionJournalDefaults.Schema,
+                new(0)
+            )
         );
         engine.AppendSystemPromptSetup("system-B");
         TurnResult result = await engine.SendAsync("second", CancellationToken.None);
@@ -1562,6 +1618,64 @@ public sealed class SessionJournalEngineTests : IDisposable {
         Assert.Equal("recovered", result.Message.GetFlattenedText());
         Assert.Equal(SessionExecutionPhase.Idle, engine.ResolveExecutionTail().State.Phase);
         Assert.Equal(2, client.Calls);
+    }
+
+    [Fact]
+    public async Task ReopenedTurnFailedSendRequiresAbandonBeforeRuntime() {
+        string path = NewJournalPath();
+        var client = new ScriptedCompletionClient();
+        client.Enqueue(request => new CompletionResult(
+            new ActionMessage([new ActionBlock.Text("failed")]),
+            new CompletionDescriptor(
+                "scripted",
+                "test-api-v1",
+                request.ModelId
+            ),
+            termination: CompletionTermination.Failed("known")
+        ));
+        var candidateSource = new TestContextCandidateSource();
+        EventAddress failedHead;
+        using (var engine = SessionJournalEngine.Create(
+                   path,
+                   new SessionCreateOptions(
+                       "model-A",
+                       "system-A",
+                       "surface-A"
+                   ),
+                   CreateRuntime(
+                       client,
+                       candidateSource: candidateSource
+                   )
+               )) {
+            await CoherentArtifactSetTestFixture
+                .ActivateAtCurrentHeadAsync(
+                    path,
+                    engine,
+                    candidateSource
+                );
+            await Assert.ThrowsAsync<SessionJournalTurnAbortedException>(
+                () => engine.SendAsync("first", CancellationToken.None)
+            );
+            failedHead = engine.ReadCurrentHead()!.Value;
+        }
+
+        using var reopened = SessionJournalEngine.Open(path);
+        InvalidOperationException blocked =
+            await Assert.ThrowsAsync<InvalidOperationException>(
+                () => reopened.SendAsync(
+                    "second",
+                    CancellationToken.None
+                )
+            );
+
+        Assert.Contains("AbandonFailedTurn", blocked.Message);
+        Assert.DoesNotContain(
+            "runtime",
+            blocked.Message,
+            StringComparison.OrdinalIgnoreCase
+        );
+        Assert.Equal(failedHead, reopened.ReadCurrentHead());
+        Assert.Equal(1, client.Calls);
     }
 
     [Theory]

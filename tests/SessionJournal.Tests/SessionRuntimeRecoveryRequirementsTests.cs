@@ -154,14 +154,21 @@ public sealed class SessionRuntimeRecoveryRequirementsTests
         EventAddress failed = AppendFailure(path, started);
         using (var inspection = SessionJournalEngine.OpenReadOnly(path)) {
             var terminal = Assert.IsType<
-                SessionRuntimeRecoveryRequirements.NoRuntimeRequired
+                SessionRuntimeRecoveryRequirements
+                    .FailedTurnMustBeAbandoned
             >(inspection.InspectRuntimeRecoveryRequirements());
             Assert.Equal(failed, terminal.CapturedHead);
+            Assert.Equal(failed, terminal.FailedHead);
             Assert.Equal(SessionExecutionPhase.TurnFailed, terminal.Phase);
             Assert.Equal(
                 SessionEventKind.CompletionAttemptFailed,
                 terminal.HeadKind
             );
+            string publicJson = JsonSerializer.Serialize(terminal);
+            Assert.DoesNotContain("secret prepared observation", publicJson);
+            Assert.DoesNotContain("lookup description secret", publicJson);
+            Assert.DoesNotContain("known terminal failure", publicJson);
+            Assert.DoesNotContain("test-failure", publicJson);
         }
         Assert.Equal(0, client.Calls);
         Assert.Equal(0, tool.Calls);
@@ -272,6 +279,45 @@ public sealed class SessionRuntimeRecoveryRequirementsTests
             () => reopened.InspectRuntimeRecoveryRequirements()
         );
         Assert.Contains("commitment", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(0, client.Calls);
+    }
+
+    [Fact]
+    public async Task LegacyFailedTurnSetupSuffixFailsClosed() {
+        string path = NewPath();
+        var client = new NeverClient();
+        EventAddress prepared = await CreatePreparedAsync(
+            path,
+            Runtime(client)
+        );
+        EventAddress started = AppendStarted(path, prepared);
+        EventAddress failed = AppendFailure(path, started);
+        EventAddress setup;
+        using (var journal = EventJournal.EventJournal.OpenExisting(path)) {
+            setup = journal.CommitToRef(
+                SessionJournalDefaults.MainBranchName,
+                failed,
+                SessionEventCodec.Encode(
+                    SessionEventKind.SystemPromptSetup,
+                    new SystemPromptSetupBody("legacy suffix secret")
+                ),
+                opaqueEventKind:
+                    (uint)SessionEventKind.SystemPromptSetup,
+                hint: default
+            ).Unwrap().EventAddress;
+        }
+
+        using var reopened = SessionJournalEngine.OpenReadOnly(path);
+        InvalidDataException error = Assert.Throws<InvalidDataException>(
+            () => reopened.InspectRuntimeRecoveryRequirements()
+        );
+
+        Assert.Contains(
+            "exact CompletionAttemptFailed head",
+            error.Message,
+            StringComparison.Ordinal
+        );
+        Assert.Equal(setup, reopened.ReadCurrentHead());
         Assert.Equal(0, client.Calls);
     }
 

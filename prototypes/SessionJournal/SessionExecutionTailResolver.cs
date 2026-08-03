@@ -126,11 +126,19 @@ internal static class SessionExecutionTailResolver {
             }
 
             SessionExecutionRecovery predecessor = ResolveHead(cursor.Value);
-            if (!SessionOperationalSemantics.IsIdleOrFailedPhase(
-                    predecessor.State.Phase
-                )) {
+            if (predecessor.State.Phase
+                == SessionExecutionPhase.TurnFailed) {
                 throw new InvalidDataException(
-                    $"Setup run ending at {head} must descend from an idle or failed terminal boundary."
+                    $"Setup run ending at {head} cannot descend from a "
+                    + "failed turn; the exact CompletionAttemptFailed "
+                    + "head must be abandoned first."
+                );
+            }
+            if (predecessor.State.Phase
+                != SessionExecutionPhase.Idle) {
+                throw new InvalidDataException(
+                    $"Setup run ending at {head} must descend from an "
+                    + "idle terminal boundary."
                 );
             }
 
@@ -194,11 +202,9 @@ internal static class SessionExecutionTailResolver {
                     $"ObservationAccepted at {head} requires an idle predecessor."
                 );
             SessionExecutionRecovery idle = ResolveHead(parent);
-            if (!SessionOperationalSemantics.IsIdleOrFailedPhase(
-                    idle.State.Phase
-                )) {
+            if (idle.State.Phase != SessionExecutionPhase.Idle) {
                 throw new InvalidDataException(
-                    $"ObservationAccepted at {head} must directly descend from an idle or failed boundary."
+                    $"ObservationAccepted at {head} must directly descend from an idle boundary; an exact failed turn must be abandoned first."
                 );
             }
             string correlationId =

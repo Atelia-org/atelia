@@ -60,11 +60,6 @@ public sealed class SessionOperationalSemanticsTests {
                 SessionExecutionPhase.AwaitingAgentAction,
                 SessionExecutionPhase.TurnFailed
             };
-        IReadOnlySet<SessionExecutionPhase> idleOrFailed =
-            new HashSet<SessionExecutionPhase> {
-                SessionExecutionPhase.Idle,
-                SessionExecutionPhase.TurnFailed
-            };
         IReadOnlySet<SessionExecutionPhase> preparedOrAttempt =
             new HashSet<SessionExecutionPhase> {
                 SessionExecutionPhase.AwaitingCompletionDispatch,
@@ -79,11 +74,6 @@ public sealed class SessionOperationalSemanticsTests {
                     .IsReplaySafePhase(phase)
             );
             Assert.Equal(
-                idleOrFailed.Contains(phase),
-                SessionOperationalSemantics
-                    .IsIdleOrFailedPhase(phase)
-            );
-            Assert.Equal(
                 preparedOrAttempt.Contains(phase),
                 SessionOperationalSemantics
                     .IsPreparedOrAttemptPhase(phase)
@@ -93,10 +83,6 @@ public sealed class SessionOperationalSemanticsTests {
         Assert.False(
             SessionOperationalSemantics
                 .IsReplaySafePhase(unknown)
-        );
-        Assert.False(
-            SessionOperationalSemantics
-                .IsIdleOrFailedPhase(unknown)
         );
         Assert.False(
             SessionOperationalSemantics

@@ -87,10 +87,11 @@ connection/adapter，并绑定该client。
 当前`InspectExecutionBoundary()`刻意不暴露Prepared payload，也没有提供frozen target读取面；
 Galatea不能靠默认connection或逐个创建client试错。SessionJournal应增加窄的read-only
 `InspectRuntimeRecoveryRequirements()`（名称待定），返回
-`NoRuntimeRequired / NewRequestRequired / FrozenCompletionRequired / ToolContinuationRequired`；
-后两种只携带当前phase恢复所需的non-secret dispatch identity与uncertainty/start state，不返回
-request正文。第四种是G0A审阅后的修正：pending tool只有frozen tool runtime，没有frozen
-completion target，不应硬塞进前三种shape。
+`NoRuntimeRequired / FailedTurnMustBeAbandoned / NewRequestRequired /
+FrozenCompletionRequired / ToolContinuationRequired`；失败case只携带exact `FailedHead`，Host必须
+先对该head执行CAS abandon并重新检查为`Idle`。后两种只携带当前phase恢复所需的non-secret
+dispatch identity与uncertainty/start state，不返回request正文。第五种是G0A审阅后的修正：
+pending tool只有frozen tool runtime，没有frozen completion target，不应硬塞进其他shape。
 
 CLI internal `CompletionTargetIdentityFactory`也不能成为Galatea依赖。connection与request-adapter
 fingerprint算法应提升到`Completion`的public surface；Host再显式构造SessionJournal的target

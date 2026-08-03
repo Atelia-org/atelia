@@ -24,8 +24,10 @@ a network LLM acceptance.
 `SessionJournalEngine.InspectRuntimeRecoveryRequirements()` is read-only and returns a sealed union
 bound to one captured raw head:
 
-- `NoRuntimeRequired`: `Empty`, `Idle`, or `TurnFailed`; there is no pending dispatch to recover.
-  A later user-initiated Send is a separate Host operation.
+- `NoRuntimeRequired`: only `Empty` or `Idle`; there is no pending dispatch to recover. A later
+  user-initiated Send is a separate Host operation.
+- `FailedTurnMustBeAbandoned`: exact `CompletionAttemptFailed` / `TurnFailed`; exposes only
+  `FailedHead`, which the Host must pass to `AbandonFailedTurn` before setup reconciliation or Send.
 - `NewRequestRequired`: `AwaitingAgentAction`; no completion target has been frozen yet. The Host
   supplies a current completion runtime, but must not append setup inside this active turn.
 - `FrozenCompletionRequired`: `CompletionRequestPrepared` or `CompletionAttemptStarted`; exposes only
@@ -35,7 +37,7 @@ bound to one captured raw head:
   whether tool dispatch has started. It does not pretend that the earlier completion target is frozen
   for the completion request which may follow the tool result.
 
-The fourth variant is an intentional correction to the earlier three-variant sketch. A pending tool
+The tool-continuation variant is an intentional correction to the earlier sketch. A pending tool
 operation has frozen tool identity but no pending frozen completion dispatch; representing it as
 either `NewRequestRequired` or `FrozenCompletionRequired` would create an invalid shape.
 
@@ -83,6 +85,8 @@ The operation is legal only at exact `Idle`:
 Restricting reconciliation to `Idle` corrects a conflict in the earlier cutover plan. G0B requires an
 exact `TurnFailed` head before abandoning a failed turn; appending a setup-only suffix first would
 destroy that exact shape. The Host must abandon first, then reconcile at the resulting Idle head.
+Because this is a pre-Beta direct cut, an old `TurnFailed + setup/Observation suffix` is unsupported and fails
+closed; inspection does not scan backward to synthesize a compatible failed-head authority.
 
 Comparison is ordinal and prompt content is not normalized. Runtime setup is appended first and
 system prompt second. If the second append fails, the runtime intent remains durable; a later exact

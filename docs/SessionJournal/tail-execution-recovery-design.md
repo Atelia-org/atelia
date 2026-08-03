@@ -194,8 +194,12 @@ Open(repo)
   -> read main ref head
   -> ResolveExecutionTail(head)              // no Context, no artifact
   -> switch state.Phase
-       Idle / TurnFailed:
+       Idle:
          wait for observation or setup mutation
+
+       TurnFailed at exact CompletionAttemptFailed head:
+         expose FailedTurnMustBeAbandoned(FailedHead)
+         exact AbandonFailedTurn, then reinspect Idle
 
        AwaitingCompletionDispatch:
          reconstruct and validate committed request
@@ -218,6 +222,9 @@ Open(repo)
          commit Prepared manifest
          call provider
 ```
+
+pre-Beta采用direct cut：旧`TurnFailed + setup/Observation suffix`不做兼容回扫，runtime requirements
+inspection与fresh Send均fail-closed；这类tail必须显式迁移或重建。
 
 这里 `AwaitingAgentAction` 既可能来自新 Observation，也可能来自已结算的 ToolResult。两者共用 request
 materialization contract；不能让 tool continuation 回落到 full `Project()`。

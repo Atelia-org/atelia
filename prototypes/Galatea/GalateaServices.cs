@@ -104,37 +104,8 @@ public sealed class GalateaHostService : IAsyncDisposable {
         var currentTurn = host.GetCurrentTurn();
         SessionRuntimeRecoveryRequirements recovery =
             host.Engine.InspectRuntimeRecoveryRequirements();
-        var result = currentTurn is null
-            ? recovery is SessionRuntimeRecoveryRequirements
-                    .NoRuntimeRequired
-                && recovery.Phase is (
-                    SessionExecutionPhase.Idle
-                    or SessionExecutionPhase.TurnFailed
-                )
-                ? new CurrentTurnDto(
-                    "idle",
-                    DurablePhase: recovery.Phase.ToString(),
-                    RecoveryHead: EventAddressTextCodec.FormatNullable(
-                        recovery.CapturedHead
-                    )
-                )
-                : new CurrentTurnDto(
-                    recovery.Phase == SessionExecutionPhase.Empty
-                        ? "unprovisioned"
-                        : "recovery-required",
-                    DurablePhase: recovery.Phase.ToString(),
-                    RecoveryRequired: true,
-                    RecoveryHead: EventAddressTextCodec.FormatNullable(
-                        recovery.CapturedHead
-                    ),
-                    RestartRequired: recovery is
-                        SessionRuntimeRecoveryRequirements
-                            .FrozenCompletionRequired {
-                                DispatchState:
-                                    SessionDurableDispatchState
-                                        .StartedOutcomeUncertain
-                            }
-                )
+        CurrentTurnDto result = currentTurn is null
+            ? BuildDurableCurrentTurn(recovery)
             : new CurrentTurnDto(
                 "running",
                 currentTurn.TurnId,
@@ -152,6 +123,58 @@ public sealed class GalateaHostService : IAsyncDisposable {
         );
         return result;
     }
+
+    private static CurrentTurnDto BuildDurableCurrentTurn(
+        SessionRuntimeRecoveryRequirements recovery
+    ) => recovery switch {
+        SessionRuntimeRecoveryRequirements.NoRuntimeRequired {
+            Phase: SessionExecutionPhase.Idle
+        } => new CurrentTurnDto(
+            "idle",
+            DurablePhase: recovery.Phase.ToString(),
+            RecoveryHead: EventAddressTextCodec.FormatNullable(
+                recovery.CapturedHead
+            )
+        ),
+        SessionRuntimeRecoveryRequirements
+            .FailedTurnMustBeAbandoned failed => new CurrentTurnDto(
+                "idle",
+                DurablePhase: failed.Phase.ToString(),
+                RecoveryHead: EventAddressTextCodec.Format(
+                    failed.FailedHead
+                )
+            ),
+        SessionRuntimeRecoveryRequirements.NoRuntimeRequired {
+            Phase: SessionExecutionPhase.Empty
+        } => RecoveryCurrentTurn(recovery, "unprovisioned"),
+        SessionRuntimeRecoveryRequirements.NewRequestRequired =>
+            RecoveryCurrentTurn(recovery),
+        SessionRuntimeRecoveryRequirements.FrozenCompletionRequired {
+            DispatchState:
+                SessionDurableDispatchState.StartedOutcomeUncertain
+        } => RecoveryCurrentTurn(recovery, restartRequired: true),
+        SessionRuntimeRecoveryRequirements.FrozenCompletionRequired =>
+            RecoveryCurrentTurn(recovery),
+        SessionRuntimeRecoveryRequirements.ToolContinuationRequired =>
+            RecoveryCurrentTurn(recovery),
+        _ => throw new InvalidDataException(
+            "Unknown runtime recovery requirement."
+        )
+    };
+
+    private static CurrentTurnDto RecoveryCurrentTurn(
+        SessionRuntimeRecoveryRequirements recovery,
+        string status = "recovery-required",
+        bool restartRequired = false
+    ) => new(
+        status,
+        DurablePhase: recovery.Phase.ToString(),
+        RecoveryRequired: true,
+        RecoveryHead: EventAddressTextCodec.FormatNullable(
+            recovery.CapturedHead
+        ),
+        RestartRequired: restartRequired
+    );
 
     internal GalateaLiveTurn StartTurn(UserSessionHost host, string userMessage, GalateaTurnOptions options) {
         ArgumentNullException.ThrowIfNull(host);
@@ -339,14 +362,11 @@ public sealed class GalateaHostService : IAsyncDisposable {
             host.Engine.InspectRuntimeRecoveryRequirements(
                 cancellationToken
             );
-        if (requirement.Phase == SessionExecutionPhase.TurnFailed) {
-            EventAddress failedHead = requirement.CapturedHead
-                ?? throw new InvalidDataException(
-                    "TurnFailed requires an exact raw head."
-                );
+        if (requirement is SessionRuntimeRecoveryRequirements
+                .FailedTurnMustBeAbandoned failed) {
             SessionTurnRetractionResult abandoned =
                 host.Engine.AbandonFailedTurn(
-                    failedHead,
+                    failed.FailedHead,
                     cancellationToken
                 );
             if (abandoned is not SessionTurnRetractionResult.Moved) {
@@ -595,8 +615,21 @@ public sealed class GalateaHostService : IAsyncDisposable {
                 "tool-recovery-unsupported"
             );
         }
-        else {
+        else if (requirement is SessionRuntimeRecoveryRequirements
+                     .FailedTurnMustBeAbandoned) {
+            throw new GalateaTurnException(
+                "失败轮次必须通过新消息入口在精确边界安全放弃。",
+                "failed-turn-must-be-abandoned"
+            );
+        }
+        else if (requirement is SessionRuntimeRecoveryRequirements
+                     .NoRuntimeRequired) {
             throw RecoveryRequired(requirement);
+        }
+        else {
+            throw new InvalidDataException(
+                "Unknown runtime recovery requirement."
+            );
         }
 
         ResumeOutcome outcome = await host.Engine.ResumeAsync(

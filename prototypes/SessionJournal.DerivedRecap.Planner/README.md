@@ -446,8 +446,7 @@ using var engine = SessionJournalEngine.Open(
 SessionExecutionBoundaryInspection boundary =
     engine.InspectExecutionBoundary(cancellationToken);
 bool newRequestRequired = boundary.Phase
-        is SessionExecutionPhase.Idle
-            or SessionExecutionPhase.TurnFailed
+        == SessionExecutionPhase.Idle
     || boundary.Phase == SessionExecutionPhase.AwaitingAgentAction
         && boundary.HeadKind == SessionEventKind.ObservationAccepted;
 if (!newRequestRequired) {
@@ -455,6 +454,12 @@ if (!newRequestRequired) {
     // 不要继续打开Recap Store或构造activeConfiguration。
     return await ResumeExactRuntimeAsync(boundary, cancellationToken);
 }
+
+// TurnFailed 不属于 lifecycle 支持面。Host 必须先通过
+// InspectRuntimeRecoveryRequirements() 取得
+// FailedTurnMustBeAbandoned 的 exact FailedHead，成功执行
+// AbandonFailedTurn(FailedHead)，重新检查为 Idle 后，才可打开 Store、
+// preparer 或 maintainer。
 
 DerivedRecapStore store = DerivedRecapStore.Open(
     repositoryPath,

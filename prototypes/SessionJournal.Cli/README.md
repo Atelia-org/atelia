@@ -276,7 +276,7 @@ execution phase，再决定是否需要 Recap：
 | 初始 phase | `--message` | Recap Store / Planner / Maintainers |
 |---|---|---|
 | `Idle` | 必须提供 | 需要；Store 必须已显式 create |
-| `TurnFailed` | 必须提供 | 返回`FailedTurnMustBeAbandoned`；等待G0B exact abandon |
+| `TurnFailed` | 必须提供 | 返回`FailedTurnMustBeAbandoned`并显式拒绝；operator/Host须先执行exact abandon。Galatea fresh path会自动处理，CLI不会代替operator改写head |
 | `AwaitingAgentAction` + `ObservationAccepted` | 必须省略 | 需要；完成已经提交的 observation |
 | `AwaitingCompletionDispatch`（Prepared） | 必须省略 | 完全不打开、不创建、不修复 Store |
 | `AwaitingCompletion`（Started） | 必须省略 | 完全不打开、不创建、不修复 Store |

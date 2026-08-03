@@ -287,15 +287,17 @@ config source：
 
 | durable phase | Host行为 | Recap访问 |
 |---|---|---|
-| `Idle` / `TurnFailed` | 准备新Observation | 调用preparer |
+| `Idle` | 准备新Observation | 调用preparer |
+| exact `TurnFailed` | 先`AbandonFailedTurn(FailedHead)`并reinspect为`Idle` | zero-touch |
 | `AwaitingAgentAction`且需要形成新request | `ResumeAsync` | 调用preparer |
 | `AwaitingCompletionDispatch` | exact frozen request recovery | zero-touch |
 | `AwaitingCompletion` | exact attempt recovery | zero-touch |
 | tool continuation | 由raw phase与ToolSession决定 | 仅在下一request确实要prepare时进入lifecycle |
 
-对于Galatea这类允许每轮切换connection的Host，Idle/TurnFailed上的selected connection首先需要
-与governing `RuntimeConfigSetup`协调：ModelId或CompletionSurfaceId改变时，Host显式append新的
-setup，然后preparer从变化后的raw head捕获authority。system prompt同步遵守同一规则。
+对于Galatea这类允许每轮切换connection的Host，selected connection只在`Idle`上与governing
+`RuntimeConfigSetup`协调：ModelId或CompletionSurfaceId改变时，Host显式append新的setup，然后
+preparer从变化后的raw head捕获authority。`TurnFailed`必须先exact abandon；system prompt同步
+遵守同一规则。
 Prepared/Started期间禁止append setup。
 
 Host顺序：
@@ -328,6 +330,7 @@ raw SessionJournal提供只读、store-neutral的runtime requirements inspection
 ```text
 InspectRuntimeRecoveryRequirements()
   -> NoRuntimeRequired
+  |  FailedTurnMustBeAbandoned(FailedHead)
   |  NewRequestRequired
   |  FrozenCompletionRequired(
        SessionCompletionTargetIdentity,
@@ -339,6 +342,8 @@ InspectRuntimeRecoveryRequirements()
 它验证当前tail并只暴露Host绑定runtime所需的non-secret durable identities，不返回Prepared request
 正文。Prepared可进入safe exact dispatch；Started默认`Refuse`并保持零provider/零mutation，只有
 显式授权`RestartWithNewAttempt`才允许潜在重复调用。
+pre-Beta direct cut不扫描旧`TurnFailed + setup/Observation suffix`来恢复failure authority；这类tail
+fail-closed并要求显式迁移或重建。
 
 ## 5. Galatea作为第二个Host
 

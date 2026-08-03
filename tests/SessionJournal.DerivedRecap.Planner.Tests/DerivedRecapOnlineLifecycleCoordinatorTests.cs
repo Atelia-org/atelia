@@ -532,6 +532,30 @@ public sealed class DerivedRecapOnlineLifecycleCoordinatorTests {
         );
     }
 
+    [Fact]
+    public async Task TurnFailedIsRejectedBeforeLifecycleWork() {
+        using LifecycleFixture fixture =
+            LifecycleFixture.Create(nthPrevious: 0, historyPairs: 1);
+        var script = new LifecycleScript([], [], []);
+        var failed = new SessionContextLifecycleRequest(
+            new SessionContextSelectionRequest(
+                fixture.Boundary,
+                fixture.NthPrevious
+            ),
+            SessionExecutionPhase.TurnFailed
+        );
+
+        await Assert.ThrowsAsync<ArgumentException>(
+            async () => await fixture.Coordinator(script).PrepareAsync(
+                fixture.Engine.ReadView,
+                failed,
+                CancellationToken.None
+            )
+        );
+
+        Assert.Empty(script.Trace);
+    }
+
     [Theory]
     [InlineData(RecapPlanDefectCodes.RawBuildLimitExceeded)]
     [InlineData(

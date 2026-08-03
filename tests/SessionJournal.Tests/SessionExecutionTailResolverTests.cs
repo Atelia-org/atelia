@@ -169,20 +169,28 @@ public sealed class SessionExecutionTailResolverTests : IDisposable {
             SessionEventKind.ObservationAccepted,
             new ObservationAcceptedBody("try again")
         );
-        EventAddress imported = Commit(
+        EventAddress importedObservation = CommitScenarioObservation(
             journal,
-            observationAfterFailure,
+            "imported-terminal",
+            created,
+            "imported observation"
+        );
+        EventAddress imported = CommitToBranch(
+            journal,
+            "imported-terminal",
+            importedObservation,
             SessionEventKind.ImportedAgentAction,
             new AgentActionProducedBody(
                 new ActionMessage([new ActionBlock.Text("done")]),
                 Invocation(),
-                Correlation(observationAfterFailure),
-                new SessionExecutionCheckpoint(2),
+                Correlation(importedObservation),
+                new SessionExecutionCheckpoint(0),
                 ToolRuntimeIdentity: null
             )
         );
-        EventAddress setup = Commit(
+        EventAddress setup = CommitToBranch(
             journal,
+            "imported-terminal",
             imported,
             SessionEventKind.SystemPromptSetup,
             new SystemPromptSetupBody("system-B")
@@ -382,14 +390,6 @@ public sealed class SessionExecutionTailResolverTests : IDisposable {
                 foldable: true
             ),
             Scenario(
-                "failed-to-observation",
-                created,
-                observationAfterFailure,
-                SessionExecutionPhase.AwaitingAgentAction,
-                SessionEventKind.ObservationAccepted,
-                foldable: true
-            ),
-            Scenario(
                 "imported-terminal",
                 created,
                 imported,
@@ -467,6 +467,13 @@ public sealed class SessionExecutionTailResolverTests : IDisposable {
                 scenario
             );
         }
+        AssertMalformedConsumerMatrix(
+            journal,
+            runtime,
+            prompt,
+            created,
+            observationAfterFailure
+        );
     }
 
     [Theory]

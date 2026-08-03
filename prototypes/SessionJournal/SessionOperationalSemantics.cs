@@ -47,14 +47,6 @@ internal static class SessionOperationalSemantics {
             or SessionExecutionPhase.TurnFailed
         );
 
-    internal static bool IsIdleOrFailedPhase(
-        SessionExecutionPhase phase
-    ) =>
-        phase is (
-            SessionExecutionPhase.Idle
-            or SessionExecutionPhase.TurnFailed
-        );
-
     internal static bool IsPreparedOrAttemptPhase(
         SessionExecutionPhase phase
     ) =>

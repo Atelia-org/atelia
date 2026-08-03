@@ -35,8 +35,8 @@ public abstract class SessionRuntimeRecoveryRequirements {
     public SessionEventKind? HeadKind { get; }
 
     /// <summary>
-    /// Empty, Idle, and TurnFailed tails have no pending runtime dispatch.
-    /// A later user-initiated Send is a separate Host operation.
+    /// Empty and Idle tails have no pending runtime dispatch. A later
+    /// user-initiated Send is a separate Host operation.
     /// </summary>
     public sealed class NoRuntimeRequired
         : SessionRuntimeRecoveryRequirements {
@@ -46,6 +46,24 @@ public abstract class SessionRuntimeRecoveryRequirements {
             SessionEventKind? headKind
         ) : base(capturedHead, phase, headKind) {
         }
+    }
+
+    /// <summary>
+    /// The exact failed-turn head must be abandoned before a fresh Send or
+    /// setup mutation can begin.
+    /// </summary>
+    public sealed class FailedTurnMustBeAbandoned
+        : SessionRuntimeRecoveryRequirements {
+        internal FailedTurnMustBeAbandoned(EventAddress failedHead)
+            : base(
+                failedHead,
+                SessionExecutionPhase.TurnFailed,
+                SessionEventKind.CompletionAttemptFailed
+            ) {
+            FailedHead = failedHead;
+        }
+
+        public EventAddress FailedHead { get; }
     }
 
     /// <summary>

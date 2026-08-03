@@ -164,8 +164,10 @@ SessionRuntimeRecoveryRequirements requirement =
     engine.InspectRuntimeRecoveryRequirements(cancellationToken);
 ```
 
-- `NoRuntimeRequired`表示当前没有 pending dispatch；`Idle`上的新Send由Host另行选择runtime，
-  `TurnFailed`应先走exact abandon contract（G0B）。
+- `NoRuntimeRequired`仅表示`Empty`或`Idle`没有 pending dispatch；`Idle`上的新Send由Host另行
+  选择runtime。
+- `FailedTurnMustBeAbandoned`只携带exact `CompletionAttemptFailed` head；Host必须先用
+  `AbandonFailedTurn(FailedHead)`回到`Idle`，再同步setup或Send。
 - `NewRequestRequired`表示已接受Observation但尚未冻结completion target；Host提供与该head
   governing setup匹配的新runtime，不能在active turn中append setup。
 - `FrozenCompletionRequired`携带Prepared/Started恢复所需的non-secret exact target、client/API、
@@ -192,8 +194,8 @@ await engine.ResumeAsync(requirement.CapturedHead!.Value, cancellationToken);
 
 规则：
 
-- raw-core `SendAsync`当前允许 `Idle`或 `TurnFailed`；产品Host应在G0B完成后先abandon
-  `TurnFailed`，避免失败Observation进入后续history。
+- raw-core `SendAsync`只允许`Idle`；`TurnFailed`会在runtime、candidate、lifecycle和provider
+  访问前要求exact abandon，避免失败Observation进入后续history。
 - 非 idle phase必须先 `ResumeAsync`；不要为了“恢复”再次调用 `SendAsync`。
 - `ResumeOutcome.Advanced == false`表示当前没有待恢复工作。
 - `Prepared` / `Started` recovery使用 durable frozen request，不重新读取 active Recap config。
@@ -354,6 +356,9 @@ engine.AppendSystemPromptSetup("new system prompt");
 
 setup是 raw、branch-local、event-addressed facts。`ResolveGoverningSetup(exactHead)`沿 Parent
 lineage解析最近的两种 setup；不要用 repo级 mutable config替代历史 setup authority。
+两个直接append setup入口和`AppendObservation`同样只允许exact `Idle`。pre-Beta采用direct
+cut：旧`TurnFailed + setup/Observation suffix`不做兼容扫描，runtime inspection与新Send会
+fail-closed；operator必须显式迁移或重建这类历史tail。
 
 ## Low-level append API
 

@@ -223,12 +223,26 @@ api.MapPost(
                     "会话仓库尚未完成初始化。"
                 );
             }
-            if (recovery is not SessionRuntimeRecoveryRequirements
-                    .NoRuntimeRequired
-                || recovery.Phase is not (
-                    SessionExecutionPhase.Idle
-                    or SessionExecutionPhase.TurnFailed
-                )) {
+            bool acceptsFreshMessage = recovery switch {
+                SessionRuntimeRecoveryRequirements.NoRuntimeRequired {
+                    Phase: SessionExecutionPhase.Idle
+                } => true,
+                SessionRuntimeRecoveryRequirements
+                    .FailedTurnMustBeAbandoned => true,
+                SessionRuntimeRecoveryRequirements.NoRuntimeRequired {
+                    Phase: SessionExecutionPhase.Empty
+                } => false,
+                SessionRuntimeRecoveryRequirements.NewRequestRequired =>
+                    false,
+                SessionRuntimeRecoveryRequirements
+                    .FrozenCompletionRequired => false,
+                SessionRuntimeRecoveryRequirements
+                    .ToolContinuationRequired => false,
+                _ => throw new InvalidDataException(
+                    "Unknown runtime recovery requirement."
+                )
+            };
+            if (!acceptsFreshMessage) {
                 return RecoveryConflict(
                     recovery,
                     "recovery-required",
@@ -316,6 +330,14 @@ api.MapPost(
                     recovery,
                     "stale-session-head",
                     "会话边界已变化，请刷新后重新确认恢复。"
+                );
+            }
+            if (recovery is SessionRuntimeRecoveryRequirements
+                    .FailedTurnMustBeAbandoned) {
+                return RecoveryConflict(
+                    recovery,
+                    "failed-turn-must-be-abandoned",
+                    "失败轮次必须通过新消息入口在精确边界安全放弃。"
                 );
             }
             if (recovery is SessionRuntimeRecoveryRequirements

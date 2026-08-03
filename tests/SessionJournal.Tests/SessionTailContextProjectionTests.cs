@@ -255,21 +255,25 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
     }
 
     [Fact]
-    public async Task ResumeAsync_ObservationWhoseParentIsNotIdle_RejectsWithoutFullProjection() {
+    public void AppendObservation_WhoseParentIsNotIdle_RejectsBeforeAppend() {
         string path = NewJournalPath();
         var client = new CapturingCompletionClient(_ => throw new InvalidOperationException("must not call provider"));
         using var engine = SessionJournalEngine.Create(
             path,
             new SessionCreateOptions("model-A", "system-A", "surface-A")
         );
-        engine.AppendObservation("first observation");
-        engine.AppendObservation("invalid second observation");
+        EventAddress first = engine.AppendObservation(
+            "first observation"
+        );
         engine.UseRuntime(CreateRuntime(client, "missing-artifact"));
-        InvalidDataException error = await Assert.ThrowsAsync<InvalidDataException>(
-            () => engine.ResumeAsync(CancellationToken.None)
+        InvalidOperationException error = Assert.Throws<
+            InvalidOperationException
+        >(
+            () => engine.AppendObservation("invalid second observation")
         );
 
-        Assert.Contains("idle or failed boundary", error.Message, StringComparison.Ordinal);
+        Assert.Contains("idle boundary", error.Message, StringComparison.Ordinal);
+        Assert.Equal(first, engine.ReadCurrentHead());
         Assert.Empty(client.Requests);
     }
 
@@ -352,7 +356,7 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
     }
 
     [Fact]
-    public async Task SendAsync_TailProviderToolCall_PersistsKnownFailureAndAllowsNextObservation() {
+    public async Task SendAsync_TailProviderToolCall_PersistsKnownFailureAndAllowsAfterAbandon() {
         string path = NewJournalPath();
         int responseIndex = 0;
         var client = new CapturingCompletionClient(request => {
@@ -400,6 +404,9 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
             Assert.Equal(CompletionTerminationKind.Failed, failure.TerminationKind);
             Assert.Equal("atelia.host.unsupported-tool-call", failure.ProviderReason);
 
+            Assert.IsType<SessionTurnRetractionResult.Moved>(
+                engine.AbandonFailedTurn(failureAddress)
+            );
             TurnResult recovered = await engine.SendAsync(
                 "recovery observation",
                 CancellationToken.None
@@ -407,8 +414,14 @@ public sealed class SessionTailContextProjectionTests : IDisposable {
             Assert.Equal("recovered answer", recovered.Message.GetFlattenedText());
         }
         Assert.Equal(2, client.Requests.Count);
-        Assert.Equal(2, ReadAddressesByKind(path, SessionEventKind.CompletionRequestPrepared).Length);
-        Assert.Single(ReadAddressesByKind(path, SessionEventKind.CompletionAttemptFailed));
+        Assert.Single(ReadAddressesByKind(
+            path,
+            SessionEventKind.CompletionRequestPrepared
+        ));
+        Assert.Empty(ReadAddressesByKind(
+            path,
+            SessionEventKind.CompletionAttemptFailed
+        ));
         Assert.Single(ReadAddressesByKind(path, SessionEventKind.AgentActionProduced));
     }
 

@@ -128,7 +128,7 @@ stateDiagram-v2
     Started --> Acted: completion → Action
     Started --> TurnFailed: known non-success
     Started --> Started: explicit uncertain retry
-    TurnFailed --> Observed: next observation
+    TurnFailed --> Idle: exact AbandonFailedTurn
     Acted --> ToolStarted: has unsettled call
     Acted --> Idle: no tool call (turn done)
     ToolStarted --> ToolSettled: execute → ToolResult
@@ -243,8 +243,10 @@ Reduce(chronological events) -> SessionProjection {
   source Prepared、active Started address 与跨 tool-loop correlation id。
 - Started 必须直接继承 source Prepared 或 active Started；无需额外 attempt id 或 replaces 字段。
 - `completion-attempt-failed` 必须直接继承 active Started；消费后清空 pending/correlation，
-  投影为 quiescent `TurnFailed`。`ResumeAsync` 不重发，但可以先替换 runtime config / system prompt，
-  再由下一条 observation 开始新 turn。
+  投影为 quiescent `TurnFailed`。`ResumeAsync` 不重发；必须先对exact failure head执行
+  `AbandonFailedTurn`回到`Idle`，才能替换 runtime config / system prompt或开始下一条 observation。
+- pre-Beta采用direct cut，不兼容扫描旧`TurnFailed + setup/Observation suffix`；这类tail在runtime inspection与
+  fresh Send处fail-closed，必须显式迁移或重建。
 - full reducer 是状态机语义的 reference oracle。在线 resolver 可以用链头 kind 快速分派，但不得跳过
   当前 Action / tool-call settlement / attempt chain 所需的局部 raw facts。`turn` 完成仍由依赖闭合
   隐式判定，无独立事件。

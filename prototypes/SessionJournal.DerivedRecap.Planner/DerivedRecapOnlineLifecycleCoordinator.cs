@@ -797,12 +797,11 @@ public sealed class DerivedRecapOnlineLifecycleCoordinator
     ) {
         if (phase is not (
                 SessionExecutionPhase.Idle
-                or SessionExecutionPhase.TurnFailed
                 or SessionExecutionPhase.AwaitingAgentAction
             )) {
             throw new ArgumentException(
                 "DerivedRecap online lifecycle requires an idle, "
-                + "failed, or unprepared completion boundary.",
+                + "or unprepared completion boundary.",
                 nameof(phase)
             );
         }

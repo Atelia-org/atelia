@@ -2309,14 +2309,6 @@ public sealed partial class SessionJournalEngine : IDisposable {
     ) {
         ThrowIfReadOnlyMutation(nameof(SendAsync));
         ValidateRequired(observation, nameof(observation));
-        SessionRuntime runtime = RequireRuntime();
-        ImmutableArray<ToolDefinition> visibleTools =
-            runtime.ToolSession?.VisibleDefinitions ?? ImmutableArray<ToolDefinition>.Empty;
-        if (!visibleTools.IsEmpty) {
-            _ = RequireToolRuntimeIdentity(runtime, visibleTools);
-        }
-        _ = ValidateRuntimePlanningPrerequisites(runtime);
-
         SessionExecutionRecovery recovery = ResolveExecutionTail(
             cancellationToken
         );
@@ -2327,13 +2319,34 @@ public sealed partial class SessionJournalEngine : IDisposable {
                 recovery.Head
             );
         }
-        if (!SessionOperationalSemantics.IsIdleOrFailedPhase(
-                recovery.State.Phase
-            )) {
+        if (recovery.State.Phase == SessionExecutionPhase.TurnFailed) {
+            if (recovery.State.HeadKind
+                    != SessionEventKind.CompletionAttemptFailed
+                || recovery.Head is null) {
+                throw new InvalidDataException(
+                    "TurnFailed SendAsync requires the exact "
+                    + "CompletionAttemptFailed head; legacy failed-turn "
+                    + "setup suffixes are unsupported."
+                );
+            }
             throw new InvalidOperationException(
-                $"SendAsync requires an idle or explicitly failed turn boundary. Current phase is '{recovery.State.Phase}'; call ResumeAsync first."
+                "SendAsync cannot continue from TurnFailed. Call "
+                + $"AbandonFailedTurn('{recovery.Head.Value}') with the "
+                + "exact failed head before sending a new observation."
             );
         }
+        if (recovery.State.Phase != SessionExecutionPhase.Idle) {
+            throw new InvalidOperationException(
+                $"SendAsync requires an idle boundary. Current phase is '{recovery.State.Phase}'; call ResumeAsync first."
+            );
+        }
+        SessionRuntime runtime = RequireRuntime();
+        ImmutableArray<ToolDefinition> visibleTools =
+            runtime.ToolSession?.VisibleDefinitions ?? ImmutableArray<ToolDefinition>.Empty;
+        if (!visibleTools.IsEmpty) {
+            _ = RequireToolRuntimeIdentity(runtime, visibleTools);
+        }
+        _ = ValidateRuntimePlanningPrerequisites(runtime);
         // Empty-lineage bootstrap is proven before lifecycle work so invalid genesis topology
         // cannot trigger maintainer completion or durable raw effects. Exact selection is repeated
         // after lifecycle because maintenance may publish a new set at the current boundary.
@@ -2477,7 +2490,19 @@ public sealed partial class SessionJournalEngine : IDisposable {
     public EventAddress AppendObservation(string content) {
         ThrowIfReadOnlyMutation(nameof(AppendObservation));
         ValidateRequired(content, nameof(content));
-        return Append(SessionEventKind.ObservationAccepted, new ObservationAcceptedBody(content));
+        SessionExecutionRecovery recovery = ResolveExecutionTail();
+        if (recovery.State.Phase != SessionExecutionPhase.Idle) {
+            throw new InvalidOperationException(
+                $"AppendObservation requires an idle boundary. Current phase is '{recovery.State.Phase}'; abandon an exact failed turn first."
+            );
+        }
+
+        return AppendExpected(
+            SessionEventKind.ObservationAccepted,
+            new ObservationAcceptedBody(content),
+            recovery.Head,
+            requireBoundSetupCursor: false
+        );
     }
 
     public EventAddress AppendRuntimeConfigSetup(SessionRuntimeConfiguration configuration) {
@@ -2485,11 +2510,9 @@ public sealed partial class SessionJournalEngine : IDisposable {
         ArgumentNullException.ThrowIfNull(configuration);
         ValidateRuntimeConfiguration(configuration);
         SessionExecutionRecovery recovery = ResolveExecutionTail();
-        if (!SessionOperationalSemantics.IsIdleOrFailedPhase(
-                recovery.State.Phase
-            )) {
+        if (recovery.State.Phase != SessionExecutionPhase.Idle) {
             throw new InvalidOperationException(
-                $"AppendRuntimeConfigSetup requires an idle or explicitly failed turn boundary. Current phase is '{recovery.State.Phase}'."
+                $"AppendRuntimeConfigSetup requires an idle boundary. Current phase is '{recovery.State.Phase}'; abandon an exact failed turn first."
             );
         }
 
@@ -2505,11 +2528,9 @@ public sealed partial class SessionJournalEngine : IDisposable {
         ThrowIfReadOnlyMutation(nameof(AppendSystemPromptSetup));
         if (systemPrompt is null) { throw new ArgumentNullException(nameof(systemPrompt)); }
         SessionExecutionRecovery recovery = ResolveExecutionTail();
-        if (!SessionOperationalSemantics.IsIdleOrFailedPhase(
-                recovery.State.Phase
-            )) {
+        if (recovery.State.Phase != SessionExecutionPhase.Idle) {
             throw new InvalidOperationException(
-                $"AppendSystemPromptSetup requires an idle or explicitly failed turn boundary. Current phase is '{recovery.State.Phase}'."
+                $"AppendSystemPromptSetup requires an idle boundary. Current phase is '{recovery.State.Phase}'; abandon an exact failed turn first."
             );
         }
 

@@ -75,14 +75,6 @@ internal static class OnlineTurnCommand {
                 + "to accept possible duplicate execution."
             );
         }
-        if (recoveryRequirement.Phase
-            == SJ.SessionExecutionPhase.TurnFailed) {
-            throw new InvalidOperationException(
-                "The failed turn must be abandoned before starting a new "
-                + "online turn. G0B provides the exact-head abandon "
-                + "contract."
-            );
-        }
         EventAddress expectedOnlineHead =
             recoveryRequirement.CapturedHead
             ?? throw new InvalidDataException(
@@ -300,9 +292,15 @@ internal static class OnlineTurnCommand {
         SJ.SessionRuntimeRecoveryRequirements requirement
     ) => requirement switch {
         SJ.SessionRuntimeRecoveryRequirements.NoRuntimeRequired
-            when requirement.Phase is SJ.SessionExecutionPhase.Idle
-                or SJ.SessionExecutionPhase.TurnFailed =>
+            when requirement.Phase == SJ.SessionExecutionPhase.Idle =>
             OnlineExecutionMode.SendNewTurn,
+        SJ.SessionRuntimeRecoveryRequirements
+                .FailedTurnMustBeAbandoned failed =>
+            throw new InvalidOperationException(
+                "The failed turn at exact head "
+                + $"'{failed.FailedHead}' must be abandoned before "
+                + "starting a new online turn."
+            ),
         SJ.SessionRuntimeRecoveryRequirements.NewRequestRequired
             when requirement.HeadKind
                 == SJ.SessionEventKind.ObservationAccepted =>
@@ -442,7 +440,7 @@ internal static class OnlineTurnCommand {
         if (mode == OnlineExecutionMode.SendNewTurn) {
             if (message is null) {
                 throw new ArgumentException(
-                    "--message is required for Idle or TurnFailed."
+                    "--message is required for Idle."
                 );
             }
             return;
