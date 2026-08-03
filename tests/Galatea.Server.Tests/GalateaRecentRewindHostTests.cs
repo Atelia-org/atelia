@@ -74,6 +74,10 @@ public sealed class GalateaRecentRewindHostTests {
             "user two"
         );
 
+        RecentTurnsResponseDto completedCache =
+            session.GetRecentTurns();
+        Assert.Equal(2, completedCache.Turns.Count);
+        Assert.NotNull(completedCache.RewindLatestToken);
         RecentTurnsResponseDto recent = await GetRecentAsync(client);
 
         Assert.Collection(
@@ -168,6 +172,20 @@ public sealed class GalateaRecentRewindHostTests {
                     remainingToken,
                     out var newHead
                 ));
+                RecentTurnsResponseDto undoCache =
+                    session.GetRecentTurns();
+                Assert.Equal(
+                    moved.Recent.RewindLatestToken,
+                    undoCache.RewindLatestToken
+                );
+                RecentTurnDto cachedRemaining = Assert.Single(
+                    undoCache.Turns
+                );
+                AssertTurn(
+                    cachedRemaining,
+                    "user one",
+                    "assistant one"
+                );
                 Assert.Equal(
                     newHead,
                     session.Engine.ReadCurrentHead()

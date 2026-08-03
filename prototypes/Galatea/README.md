@@ -104,10 +104,12 @@ durable completion identity，不回退default connection，也不读取active R
 
 ## Recent与Undo
 
-`GET /api/recent-turns` 直接消费raw completed-turn projection，newest-first返回最近6个可见turn。只有captured
-raw head本身就是最新terminal Action时才返回 `rewindLatestToken`。Undo必须原样回传此token；server
-使用它执行exact-head CAS，因此陈旧页面不会误撤后来新增的turn。DerivedRecap不会被投影为conversation
-turn。
+`GET /api/recent-turns` 的权威输入是raw completed-turn projection，newest-first返回最近6个可见turn。
+Host在per-session writer gate内重建一份只读cache，使页面在active turn期间仍能reload/reattach而不读取
+正在append的SessionJournal；cache不是authority，进程重启或writer完成后都可从raw projection重建。
+active turn一经接受，cached `rewindLatestToken`立即失效。只有captured raw head本身就是最新terminal
+Action时才重新返回该token。Undo必须原样回传此token；server使用它执行exact-head CAS，因此陈旧页面
+不会误撤后来新增的turn。DerivedRecap不会被投影为conversation turn。
 
 ## 输入清洗与停止
 
@@ -116,4 +118,6 @@ turn。
 
 Stop 在Recap lifecycle成功前取消pre-dispatch工作；成功后只通过stream observer停止provider，避免
 取消Prepared/Started持久化步骤。只有known failed turn被exact abandon成功后，Host才承诺该轮未进入
-active history。每个账号同一时刻只有一个writer turn；SSE订阅与stop endpoint不占writer lock。
+active history。每个账号同一时刻只有一个SessionJournal engine driver：per-session `TurnLock`覆盖所有
+durable read/write；active turn期间current、recent、busy、SSE与stop只读in-memory live state或上述cache，
+不接触Engine。idle current在取得gate后才检查durable recovery。SSE订阅与stop endpoint不占writer lock。

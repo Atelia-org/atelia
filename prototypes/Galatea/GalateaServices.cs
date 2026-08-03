@@ -69,12 +69,12 @@ public sealed class GalateaHostService : IAsyncDisposable {
         var session = await lazy.Value.ConfigureAwait(false);
         DebugUtil.Info(
             "Galatea.Session",
-            $"GetSessionAsync: user={userId}, head={session.Engine.ReadCurrentHead()}"
+            $"GetSessionAsync: user={userId}"
         );
         return session;
     }
 
-    public RecentTurnsResponseDto BuildRecentTurnsResponse(
+    private RecentTurnsResponseDto BuildRecentTurnsResponse(
         SessionJournalEngine engine,
         int maxTurns = RecentTurnLimit
     ) {
@@ -98,30 +98,106 @@ public sealed class GalateaHostService : IAsyncDisposable {
         return new RecentTurnsResponseDto(turns, rewindLatestToken);
     }
 
-    public CurrentTurnDto BuildCurrentTurn(UserSessionHost host) {
+    public Task<RecentTurnsResponseDto> GetRecentTurnsAsync(
+        UserSessionHost host,
+        CancellationToken ct
+    ) {
         ArgumentNullException.ThrowIfNull(host);
 
-        var currentTurn = host.GetCurrentTurn();
-        SessionRuntimeRecoveryRequirements recovery =
-            host.Engine.InspectRuntimeRecoveryRequirements();
-        CurrentTurnDto result = currentTurn is null
-            ? BuildDurableCurrentTurn(recovery)
-            : new CurrentTurnDto(
-                "running",
-                currentTurn.TurnId,
-                currentTurn.UserMessage,
-                currentTurn.Phase,
-                currentTurn.Options.ConnectionId,
-                DurablePhase: recovery.Phase.ToString(),
-                RecoveryHead: EventAddressTextCodec.FormatNullable(
-                    recovery.CapturedHead
-                )
+        if (!host.TurnLock.Wait(0)) {
+            return Task.FromResult(host.GetRecentTurns());
+        }
+        try {
+            ct.ThrowIfCancellationRequested();
+            return Task.FromResult(RefreshRecentTurns(host));
+        }
+        finally {
+            host.TurnLock.Release();
+        }
+    }
+
+    public Task<CurrentTurnDto> GetCurrentTurnAsync(
+        UserSessionHost host,
+        CancellationToken ct
+    ) {
+        ArgumentNullException.ThrowIfNull(host);
+
+        GalateaLiveTurn? liveTurn = host.GetCurrentTurn();
+        if (liveTurn is not null) {
+            return Task.FromResult(BuildLiveCurrentTurn(liveTurn));
+        }
+
+        if (!host.TurnLock.Wait(0)) {
+            return Task.FromResult(new CurrentTurnDto("running"));
+        }
+        try {
+            ct.ThrowIfCancellationRequested();
+            liveTurn = host.GetCurrentTurn();
+            if (liveTurn is not null) {
+                return Task.FromResult(BuildLiveCurrentTurn(liveTurn));
+            }
+
+            SessionRuntimeRecoveryRequirements recovery =
+                host.Engine.InspectRuntimeRecoveryRequirements(ct);
+            CurrentTurnDto result = BuildDurableCurrentTurn(recovery);
+            DebugUtil.Info(
+                "Galatea.Session",
+                $"GetCurrentTurnAsync: user={host.User.UserId}, status={result.Status}, phase={result.Phase ?? "<none>"}, head={recovery.CapturedHead}"
             );
+            return Task.FromResult(result);
+        }
+        finally {
+            host.TurnLock.Release();
+        }
+    }
+
+    internal CurrentTurnDto BuildLiveCurrentTurn(UserSessionHost host) {
+        ArgumentNullException.ThrowIfNull(host);
+        GalateaLiveTurn? liveTurn = host.GetCurrentTurn();
+        return liveTurn is null
+            ? new CurrentTurnDto("running")
+            : BuildLiveCurrentTurn(liveTurn);
+    }
+
+    private static CurrentTurnDto BuildLiveCurrentTurn(
+        GalateaLiveTurn liveTurn
+    ) {
+        CurrentTurnDto result = new(
+            "running",
+            liveTurn.TurnId,
+            liveTurn.UserMessage,
+            liveTurn.Phase,
+            liveTurn.Options.ConnectionId
+        );
         DebugUtil.Info(
             "Galatea.Session",
-            $"BuildCurrentTurn: user={host.User.UserId}, status={result.Status}, turnId={result.TurnId ?? "<none>"}, phase={result.Phase ?? "<none>"}, head={host.Engine.ReadCurrentHead()}"
+            $"BuildLiveCurrentTurn: turnId={result.TurnId}, phase={result.Phase ?? "<none>"}"
         );
         return result;
+    }
+
+    internal void RefreshRecentTurnsBestEffort(UserSessionHost host) {
+        ArgumentNullException.ThrowIfNull(host);
+        try {
+            _ = RefreshRecentTurns(host);
+        }
+        catch (Exception ex) {
+            host.InvalidateRecentRewindToken();
+            DebugUtil.Warning(
+                "Galatea.Session",
+                $"Recent-turn cache refresh failed: user={host.User.UserId}, error={ex.GetType().Name}: {ex.Message}"
+            );
+        }
+    }
+
+    private RecentTurnsResponseDto RefreshRecentTurns(
+        UserSessionHost host
+    ) {
+        RecentTurnsResponseDto recent = BuildRecentTurnsResponse(
+            host.Engine
+        );
+        host.SetRecentTurns(recent);
+        return recent;
     }
 
     private static CurrentTurnDto BuildDurableCurrentTurn(
@@ -206,9 +282,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
         RecentTurnDto turn = GalateaRecentTurnDisplayAdapter.Project(
             moved.Turn
         );
-        RecentTurnsResponseDto recent = BuildRecentTurnsResponse(
-            host.Engine
-        );
+        RecentTurnsResponseDto recent = RefreshRecentTurns(host);
         return new PopLatestTurnResponseDto(turn, recent);
     }
 
@@ -330,7 +404,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
                 ex.Termination.ProviderReason ?? ex.Termination.Kind.ToString()
             );
         }
-        var snapshot = BuildRecentTurnsResponse(host.Engine);
+        var snapshot = RefreshRecentTurns(host);
         DebugUtil.Info(
             "Galatea.Session",
             $"RunTurnAsync send done: user={host.User.UserId}, turnId={liveTurn.TurnId}, errors={completed.Errors?.Count ?? 0}, snapshotTurns={snapshot.Turns.Count}, head={host.Engine.ReadCurrentHead()}"
@@ -702,7 +776,8 @@ public sealed class GalateaHostService : IAsyncDisposable {
             "Galatea.Session",
             $"CreateSessionAsync: user={user.UserId}, sessionDir={sessionDir}, phase={boundary.Phase}, head={boundary.Head}"
         );
-        return Task.FromResult(new UserSessionHost(user, engine));
+        RecentTurnsResponseDto recent = BuildRecentTurnsResponse(engine);
+        return Task.FromResult(new UserSessionHost(user, engine, recent));
     }
 
     private static SessionRuntime CreateRuntime(
@@ -847,13 +922,16 @@ public sealed class UserSessionHost : IAsyncDisposable {
     private readonly object _turnStateGate = new();
     private GalateaLiveTurn? _currentTurn;
     private GalateaLiveTurn? _lastTurn;
+    private RecentTurnsResponseDto _recentTurns;
 
     public UserSessionHost(
         GalateaUserConfig user,
-        SessionJournalEngine engine
+        SessionJournalEngine engine,
+        RecentTurnsResponseDto recentTurns
     ) {
         User = user;
         Engine = engine;
+        _recentTurns = recentTurns;
     }
 
     public GalateaUserConfig User { get; }
@@ -868,6 +946,9 @@ public sealed class UserSessionHost : IAsyncDisposable {
         lock (_turnStateGate) {
             _lastTurn = null;
             _currentTurn = liveTurn;
+            _recentTurns = _recentTurns with {
+                RewindLatestToken = null
+            };
         }
 
         return liveTurn;
@@ -881,8 +962,32 @@ public sealed class UserSessionHost : IAsyncDisposable {
         lock (_turnStateGate) {
             _lastTurn = null;
             _currentTurn = liveTurn;
+            _recentTurns = _recentTurns with {
+                RewindLatestToken = null
+            };
         }
         return liveTurn;
+    }
+
+    internal RecentTurnsResponseDto GetRecentTurns() {
+        lock (_turnStateGate) {
+            return _recentTurns;
+        }
+    }
+
+    internal void SetRecentTurns(RecentTurnsResponseDto recentTurns) {
+        ArgumentNullException.ThrowIfNull(recentTurns);
+        lock (_turnStateGate) {
+            _recentTurns = recentTurns;
+        }
+    }
+
+    internal void InvalidateRecentRewindToken() {
+        lock (_turnStateGate) {
+            _recentTurns = _recentTurns with {
+                RewindLatestToken = null
+            };
+        }
     }
 
     internal GalateaLiveTurn? GetCurrentTurn() {

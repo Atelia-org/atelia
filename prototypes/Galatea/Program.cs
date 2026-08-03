@@ -183,10 +183,10 @@ api.MapGet(
         string userId = user.FindFirstValue(GalateaClaimTypes.UserId)
             ?? throw new InvalidOperationException("Authenticated principal is missing user id.");
         var session = await hostService.GetSessionAsync(userId, ct);
-        var response = hostService.BuildRecentTurnsResponse(session.Engine);
+        var response = await hostService.GetRecentTurnsAsync(session, ct);
         DebugUtil.Info(
             "Galatea.Api",
-            $"GET /api/recent-turns user={userId}, items={response.Turns.Count}, head={session.Engine.ReadCurrentHead()}"
+            $"GET /api/recent-turns user={userId}, items={response.Turns.Count}, rewindEligible={response.RewindLatestToken is not null}"
         );
         return Results.Ok(response);
     }
@@ -276,11 +276,16 @@ api.MapPost(
         }
         finally {
             if (!writerOwnershipTransferred) {
-                if (liveTurn is not null) {
-                    hostService.FinishTurn(session, liveTurn);
-                    liveTurn.Complete();
+                try {
+                    if (liveTurn is not null) {
+                        hostService.FinishTurn(session, liveTurn);
+                        liveTurn.Complete();
+                    }
+                    hostService.RefreshRecentTurnsBestEffort(session);
                 }
-                session.TurnLock.Release();
+                finally {
+                    session.TurnLock.Release();
+                }
             }
         }
     }
@@ -418,11 +423,16 @@ api.MapPost(
         }
         finally {
             if (!writerOwnershipTransferred) {
-                if (liveTurn is not null) {
-                    hostService.FinishTurn(session, liveTurn);
-                    liveTurn.Complete();
+                try {
+                    if (liveTurn is not null) {
+                        hostService.FinishTurn(session, liveTurn);
+                        liveTurn.Complete();
+                    }
+                    hostService.RefreshRecentTurnsBestEffort(session);
                 }
-                session.TurnLock.Release();
+                finally {
+                    session.TurnLock.Release();
+                }
             }
         }
     }
@@ -482,8 +492,11 @@ api.MapGet(
         string userId = user.FindFirstValue(GalateaClaimTypes.UserId)
             ?? throw new InvalidOperationException("Authenticated principal is missing user id.");
         var session = await hostService.GetSessionAsync(userId, ct);
-        var currentTurn = hostService.BuildCurrentTurn(session);
-        DebugUtil.Info("Galatea.Api", $"GET /api/chat/turns/current user={userId}, status={currentTurn.Status}, turnId={currentTurn.TurnId ?? "<none>"}, head={session.Engine.ReadCurrentHead()}");
+        var currentTurn = await hostService.GetCurrentTurnAsync(
+            session,
+            ct
+        );
+        DebugUtil.Info("Galatea.Api", $"GET /api/chat/turns/current user={userId}, status={currentTurn.Status}, turnId={currentTurn.TurnId ?? "<none>"}");
         return Results.Ok(currentTurn);
     }
 );
@@ -496,7 +509,7 @@ api.MapPost(
         var session = await hostService.GetSessionAsync(userId, httpContext.RequestAborted);
         if (!hostService.RequestStop(session, turnId)) { return Results.NotFound(new { error = "turn not found or already finished." }); }
 
-        DebugUtil.Warning("Galatea.Api", $"POST /api/chat/turns/{turnId}/stop user={userId}, head={session.Engine.ReadCurrentHead()}");
+        DebugUtil.Warning("Galatea.Api", $"POST /api/chat/turns/{turnId}/stop user={userId}");
         return Results.Ok(new { status = "stopping", turnId });
     }
 );
@@ -546,10 +559,10 @@ api.MapGet(
 app.Run();
 
 static IResult BuildTurnBusyConflict(GalateaHostService hostService, UserSessionHost session) {
-    var runningTurn = hostService.BuildCurrentTurn(session);
+    var runningTurn = hostService.BuildLiveCurrentTurn(session);
     DebugUtil.Warning(
         "Galatea.Api",
-        $"Turn busy conflict: user={session.User.UserId}, runningTurn={runningTurn.TurnId ?? "<none>"}, head={session.Engine.ReadCurrentHead()}"
+        $"Turn busy conflict: user={session.User.UserId}, runningTurn={runningTurn.TurnId ?? "<none>"}"
     );
     return Results.Json(
         new StartTurnResponseDto(
@@ -598,13 +611,18 @@ static IResult StartAcceptedTurn(
                 );
             }
             finally {
-                hostService.FinishTurn(session, liveTurn);
-                liveTurn.Complete();
-                session.TurnLock.Release();
-                DebugUtil.Info(
-                    "Galatea.Api",
-                    $"StartAcceptedTurn background finish: user={session.User.UserId}, turnId={liveTurn.TurnId}, head={session.Engine.ReadCurrentHead()}, status={liveTurn.Status}"
-                );
+                try {
+                    hostService.RefreshRecentTurnsBestEffort(session);
+                    hostService.FinishTurn(session, liveTurn);
+                    liveTurn.Complete();
+                    DebugUtil.Info(
+                        "Galatea.Api",
+                        $"StartAcceptedTurn background finish: user={session.User.UserId}, turnId={liveTurn.TurnId}, status={liveTurn.Status}"
+                    );
+                }
+                finally {
+                    session.TurnLock.Release();
+                }
             }
         },
         CancellationToken.None

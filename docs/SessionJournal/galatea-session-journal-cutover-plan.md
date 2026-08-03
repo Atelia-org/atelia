@@ -585,11 +585,16 @@ phase inspection
   -> resulting raw mutation
 ```
 
-Undo也获取同一锁；SSE subscribe与stop signal不占写锁。
+Undo与durable current/recent refresh也获取同一锁。这个锁是per-session exclusive Engine driver gate，
+不只是writer mutex；active turn期间current、recent、busy、SSE与stop都不得读取Engine。Host保留一份
+可从raw completed-turn projection重建的recent cache供reload/reattach使用，它不是authority；接受active
+turn时先清空cached rewind token，writer结束、失败清理或Undo后在释放锁前刷新。SSE subscribe与stop
+signal不占写锁。
 
 进程重启后的durable turn使用独立恢复表面：
 
-- current-turn query返回durable `recoveryRequired` phase，而不只看in-memory `GalateaLiveTurn`；
+- idle current-turn query在取得Engine driver gate后返回durable `recoveryRequired` phase；active query只看
+  in-memory `GalateaLiveTurn`，`durablePhase`/`recoveryHead`留空；
 - 新message endpoint在非Idle/TurnFailed时返回`409 recovery-required`，原message不消费；
 - 独立resume endpoint不接受新message，并创建可订阅的live recovery turn；
 - Prepared可safe resume；
