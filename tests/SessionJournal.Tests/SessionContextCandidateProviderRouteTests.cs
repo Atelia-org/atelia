@@ -636,15 +636,15 @@ public sealed class SessionContextCandidateProviderRouteTests : IDisposable {
         SessionRuntime runtime = CreateRuntime(client, source) with {
             ContextLifecycle = lifecycle
         };
-        using var engine = SessionJournalEngine.Create(
-            path,
-            CreateOptions() with {
-                Origin = SessionCreationOrigin.LegacyImport
+        using (var writer = SessionJournalLegacyImportWriter.Create(
+                   path,
+                   CreateOptions()
+               )) {
+            if (observationAlreadyPersisted) {
+                writer.AppendObservation("imported pending observation");
             }
-        );
-        if (observationAlreadyPersisted) {
-            engine.AppendObservation("imported pending observation");
         }
+        using var engine = SessionJournalEngine.Open(path);
         engine.UseRuntime(runtime);
         EventAddress head = engine.InspectExecutionBoundary().Head!.Value;
         int eventCount =
@@ -978,19 +978,19 @@ public sealed class SessionContextCandidateProviderRouteTests : IDisposable {
         var lifecycle = new TestContextLifecycle {
             Result = SessionContextLifecycleResult.RawHistoryReady
         };
-        using var engine = SessionJournalEngine.Create(
-            path,
-            CreateOptions() with {
-                Origin = SessionCreationOrigin.LegacyImport
-            }
-        );
-        engine.AppendObservation("imported observation");
-        _ = engine.AppendImportedAgentAction(
-            new ActionMessage([
-                new ActionBlock.Text("imported action")
-            ]),
-            new CompletionDescriptor("import", "v1", "model-A")
-        );
+        using (var writer = SessionJournalLegacyImportWriter.Create(
+                   path,
+                   CreateOptions()
+               )) {
+            writer.AppendObservation("imported observation");
+            _ = writer.AppendImportedAgentAction(
+                new ActionMessage([
+                    new ActionBlock.Text("imported action")
+                ]),
+                new CompletionDescriptor("import", "v1", "model-A")
+            );
+        }
+        using var engine = SessionJournalEngine.Open(path);
         engine.UseRuntime(
             CreateRuntime(client, source) with {
                 ContextLifecycle = lifecycle
@@ -1127,20 +1127,20 @@ public sealed class SessionContextCandidateProviderRouteTests : IDisposable {
             IsEmptyLineage = true
         };
         var lifecycle = new TestContextLifecycle();
-        using var engine = SessionJournalEngine.Create(
-            path,
-            CreateOptions() with {
-                Origin = SessionCreationOrigin.LegacyImport
-            }
-        );
-        engine.AppendObservation("settled observation");
-        _ = engine.AppendImportedAgentAction(
-            new ActionMessage([
-                new ActionBlock.Text("settled action")
-            ]),
-            new CompletionDescriptor("import", "v1", "model-A")
-        );
-        engine.AppendObservation("pending observation");
+        using (var writer = SessionJournalLegacyImportWriter.Create(
+                   path,
+                   CreateOptions()
+               )) {
+            writer.AppendObservation("settled observation");
+            _ = writer.AppendImportedAgentAction(
+                new ActionMessage([
+                    new ActionBlock.Text("settled action")
+                ]),
+                new CompletionDescriptor("import", "v1", "model-A")
+            );
+            writer.AppendObservation("pending observation");
+        }
+        using var engine = SessionJournalEngine.Open(path);
         EventAddress head =
             engine.InspectExecutionBoundary().Head!.Value;
         engine.UseRuntime(

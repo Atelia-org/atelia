@@ -68,20 +68,6 @@ public sealed record RecentHistorySlice {
     }
 }
 
-public interface IRecentHistoryAnalyzer {
-    string Id { get; }
-
-    ValueTask AnalyzeAsync(
-        RecentHistoryAnalysisContext context,
-        CancellationToken ct
-    );
-}
-
-public sealed record RecentHistoryAnalysisContext(
-    RecentHistorySlice RecentHistory,
-    IServiceProvider? Services = null
-);
-
 public enum ContextHeaderCarrier {
     System,
     Observation,

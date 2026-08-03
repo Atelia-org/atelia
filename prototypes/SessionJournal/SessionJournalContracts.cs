@@ -49,8 +49,7 @@ public sealed record SessionCreateOptions(
     string SystemPrompt,
     string CompletionSurfaceId,
     string Schema = SessionJournalDefaults.Schema,
-    int DerivedContextNthPrevious = 0,
-    SessionCreationOrigin Origin = SessionCreationOrigin.Native
+    int DerivedContextNthPrevious = 0
 ) {
     public SessionRuntimeConfiguration ToRuntimeConfiguration()
         => new(

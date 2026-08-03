@@ -108,7 +108,7 @@ internal static class SessionJournalLegacyImporter {
         string outputPath
     ) {
 
-        SessionJournalEngine? engine = null;
+        SessionJournalLegacyImportWriter? writer = null;
         var mappings = new List<SessionJournalLegacyImportMapping>();
         SessionRuntimeConfiguration? currentConfiguration = null;
         string? currentSystemPrompt = null;
@@ -126,20 +126,19 @@ internal static class SessionJournalLegacyImporter {
             foreach (LegacyChatSessionEvent replayEvent in eventSource.Events) {
                 switch (replayEvent.Kind) {
                     case LegacyChatSessionEventKinds.InitialState: {
-                        if (engine is not null) { throw new InvalidDataException("legacy export contains more than one initial-state event."); }
+                        if (writer is not null) { throw new InvalidDataException("legacy export contains more than one initial-state event."); }
 
                         currentConfiguration = ToInitialConfiguration(replayEvent);
                         currentSystemPrompt = replayEvent.Root?.SystemPrompt ?? string.Empty;
                         apiSpecId = string.IsNullOrWhiteSpace(replayEvent.Root?.ApiSpecId)
                             ? apiSpecId
                             : replayEvent.Root.ApiSpecId;
-                        engine = SessionJournalEngine.Create(outputPath, new SessionCreateOptions(
+                        writer = SessionJournalLegacyImportWriter.Create(outputPath, new SessionCreateOptions(
                             currentConfiguration.ModelId,
                             currentSystemPrompt,
                             currentConfiguration.CompletionSurfaceId,
                             currentConfiguration.Schema,
-                            DerivedContextNthPrevious: 0,
-                            Origin: SessionCreationOrigin.LegacyImport
+                            DerivedContextNthPrevious: 0
                         ));
                         runtimeConfigSetupCount++;
                         systemPromptSetupCount++;
@@ -148,10 +147,7 @@ internal static class SessionJournalLegacyImporter {
                             replayEvent.Ordinal,
                             replayEvent.Kind,
                             SessionEventKind.SessionCreated.ToString(),
-                            engine.InspectExecutionBoundary().Head
-                                ?? throw new InvalidDataException(
-                                    "created SessionJournal has no head."
-                                )
+                            writer.ReadCurrentHead()
                         ));
                         foreach (
                             LegacyChatSessionMessage message in
@@ -172,7 +168,7 @@ internal static class SessionJournalLegacyImporter {
                                             )
                                     );
                                     EventAddress address =
-                                        engine.AppendObservation(
+                                        writer.AppendObservation(
                                             observationContent
                                         );
                                     observationCount++;
@@ -198,7 +194,7 @@ internal static class SessionJournalLegacyImporter {
                                             )
                                     );
                                     EventAddress address =
-                                        engine.AppendImportedAgentAction(
+                                        writer.AppendImportedAgentAction(
                                             action,
                                             ToCompletionDescriptor(
                                                 currentConfiguration,
@@ -226,7 +222,7 @@ internal static class SessionJournalLegacyImporter {
                         break;
                     }
                     case LegacyChatSessionEventKinds.ModelTurn: {
-                        engine = RequireEngine(engine, replayEvent);
+                        writer = RequireWriter(writer, replayEvent);
                         foreach (LegacyChatSessionMessage message in RequireMessages(replayEvent.AppendedMessages, replayEvent.Kind, replayEvent.Ordinal)) {
                             switch (message.Kind) {
                                 case LegacyMessageKindObservation: {
@@ -243,7 +239,7 @@ internal static class SessionJournalLegacyImporter {
                                             )
                                     );
                                     EventAddress address =
-                                        engine.AppendObservation(
+                                        writer.AppendObservation(
                                             observationContent
                                         );
                                     observationCount++;
@@ -264,7 +260,7 @@ internal static class SessionJournalLegacyImporter {
                                                 action
                                             )
                                     );
-                                    EventAddress address = engine.AppendImportedAgentAction(
+                                    EventAddress address = writer.AppendImportedAgentAction(
                                         action,
                                         ToCompletionDescriptor(
                                             currentConfiguration ?? throw new InvalidDataException("model-turn appeared before initial configuration."),
@@ -290,9 +286,9 @@ internal static class SessionJournalLegacyImporter {
                         break;
                     }
                     case LegacyChatSessionEventKinds.UpdateSystemPrompt: {
-                        engine = RequireEngine(engine, replayEvent);
+                        writer = RequireWriter(writer, replayEvent);
                         currentSystemPrompt = ReadSystemPromptChange(currentSystemPrompt, replayEvent);
-                        EventAddress address = engine.AppendSystemPromptSetup(currentSystemPrompt);
+                        EventAddress address = writer.AppendSystemPromptSetup(currentSystemPrompt);
                         systemPromptSetupCount++;
                         mappings.Add(new SessionJournalLegacyImportMapping(
                             replayEvent.Ordinal,
@@ -314,17 +310,14 @@ internal static class SessionJournalLegacyImporter {
             }
         }
         catch {
-            engine?.Dispose();
+            writer?.Dispose();
             throw;
         }
 
-        if (engine is null || currentConfiguration is null || currentSystemPrompt is null) { throw new InvalidDataException("legacy export did not contain an initial-state event."); }
+        if (writer is null || currentConfiguration is null || currentSystemPrompt is null) { throw new InvalidDataException("legacy export did not contain an initial-state event."); }
         EventAddress finalHead =
-            engine.InspectExecutionBoundary().Head
-            ?? throw new InvalidDataException(
-                "imported SessionJournal has no final head."
-            );
-        engine.Dispose();
+            writer.ReadCurrentHead();
+        writer.Dispose();
 
         return new SessionJournalLegacyImportResult(
             sessionCreatedCount,
@@ -1187,8 +1180,12 @@ internal static class SessionJournalLegacyImporter {
     private static CompletionDescriptor ToCompletionDescriptor(SessionRuntimeConfiguration configuration, string apiSpecId)
         => new(configuration.CompletionSurfaceId, apiSpecId, configuration.ModelId);
 
-    private static SessionJournalEngine RequireEngine(SessionJournalEngine? engine, LegacyChatSessionEvent replayEvent)
-        => engine ?? throw new InvalidDataException($"{replayEvent.Kind} at ordinal {replayEvent.Ordinal} appeared before initial-state.");
+    private static SessionJournalLegacyImportWriter RequireWriter(
+        SessionJournalLegacyImportWriter? writer,
+        LegacyChatSessionEvent replayEvent
+    ) => writer ?? throw new InvalidDataException(
+        $"{replayEvent.Kind} at ordinal {replayEvent.Ordinal} appeared before initial-state."
+    );
 
     private static IReadOnlyList<LegacyChatSessionMessage> RequireMessages(
         IReadOnlyList<LegacyChatSessionMessage>? messages,

@@ -128,17 +128,35 @@ public sealed partial class SessionJournalEngine : IDisposable {
     }
 
     public static SessionJournalEngine Create(string path, SessionCreateOptions options)
-        => CreateCore(path, options, runtime: null, testHooks: null);
+        => CreateCore(
+            path,
+            options,
+            SessionCreationOrigin.Native,
+            runtime: null,
+            testHooks: null
+        );
 
     public static SessionJournalEngine Create(string path, SessionCreateOptions options, SessionRuntime runtime)
-        => CreateCore(path, options, runtime, testHooks: null);
+        => CreateCore(
+            path,
+            options,
+            SessionCreationOrigin.Native,
+            runtime,
+            testHooks: null
+        );
 
     internal static SessionJournalEngine CreateForTest(
         string path,
         SessionCreateOptions options,
         SessionRuntime runtime,
         SessionJournalTestHooks testHooks
-    ) => CreateCore(path, options, runtime, testHooks);
+    ) => CreateCore(
+        path,
+        options,
+        SessionCreationOrigin.Native,
+        runtime,
+        testHooks
+    );
 
     internal static SessionJournalEngine CreateForTest(
         string path,
@@ -146,7 +164,14 @@ public sealed partial class SessionJournalEngine : IDisposable {
         SessionRuntime? runtime,
         SessionJournalTestHooks testHooks,
         EventJournalOptions journalOptions
-    ) => CreateCore(path, options, runtime, testHooks, journalOptions);
+    ) => CreateCore(
+        path,
+        options,
+        SessionCreationOrigin.Native,
+        runtime,
+        testHooks,
+        journalOptions
+    );
 
     public static SessionJournalEngine Open(string path)
         => OpenCore(
@@ -2487,7 +2512,7 @@ public sealed partial class SessionJournalEngine : IDisposable {
         };
     }
 
-    public EventAddress AppendObservation(string content) {
+    internal EventAddress AppendObservation(string content) {
         ThrowIfReadOnlyMutation(nameof(AppendObservation));
         ValidateRequired(content, nameof(content));
         SessionExecutionRecovery recovery = ResolveExecutionTail();
@@ -2505,7 +2530,7 @@ public sealed partial class SessionJournalEngine : IDisposable {
         );
     }
 
-    public EventAddress AppendRuntimeConfigSetup(SessionRuntimeConfiguration configuration) {
+    internal EventAddress AppendRuntimeConfigSetup(SessionRuntimeConfiguration configuration) {
         ThrowIfReadOnlyMutation(nameof(AppendRuntimeConfigSetup));
         ArgumentNullException.ThrowIfNull(configuration);
         ValidateRuntimeConfiguration(configuration);
@@ -2524,7 +2549,7 @@ public sealed partial class SessionJournalEngine : IDisposable {
         );
     }
 
-    public EventAddress AppendSystemPromptSetup(string systemPrompt) {
+    internal EventAddress AppendSystemPromptSetup(string systemPrompt) {
         ThrowIfReadOnlyMutation(nameof(AppendSystemPromptSetup));
         if (systemPrompt is null) { throw new ArgumentNullException(nameof(systemPrompt)); }
         SessionExecutionRecovery recovery = ResolveExecutionTail();
@@ -2542,7 +2567,7 @@ public sealed partial class SessionJournalEngine : IDisposable {
         );
     }
 
-    public EventAddress AppendImportedAgentAction(ActionMessage action, CompletionDescriptor invocation) {
+    internal EventAddress AppendImportedAgentAction(ActionMessage action, CompletionDescriptor invocation) {
         ThrowIfReadOnlyMutation(nameof(AppendImportedAgentAction));
         ArgumentNullException.ThrowIfNull(action);
         ArgumentNullException.ThrowIfNull(invocation);
@@ -2655,15 +2680,16 @@ public sealed partial class SessionJournalEngine : IDisposable {
         _disposed = true;
     }
 
-    private static SessionJournalEngine CreateCore(
+    internal static SessionJournalEngine CreateCore(
         string path,
         SessionCreateOptions options,
+        SessionCreationOrigin origin,
         SessionRuntime? runtime,
         SessionJournalTestHooks? testHooks,
         EventJournalOptions? journalOptions = null
     ) {
         ArgumentNullException.ThrowIfNull(options);
-        ValidateCreateOptions(options);
+        ValidateCreateOptions(options, origin);
 
         var journal = EventJournal.EventJournal.CreateNew(path, journalOptions ?? DefaultJournalOptions);
         try {
@@ -2684,7 +2710,7 @@ public sealed partial class SessionJournalEngine : IDisposable {
             EventAddress promptAddress = engine.Append(SessionEventKind.SystemPromptSetup, new SystemPromptSetupBody(options.SystemPrompt));
             EventAddress createdAddress = engine.Append(
                 SessionEventKind.SessionCreated,
-                new SessionCreatedBody(options.Origin)
+                new SessionCreatedBody(origin)
             );
             engine._governingSetupCursor = new SessionGoverningSetup(
                 createdAddress,
@@ -4682,7 +4708,10 @@ public sealed partial class SessionJournalEngine : IDisposable {
         return $"atelia.session-journal.tool.v1:{turnKey}:{call.ToolCallId}";
     }
 
-    private static void ValidateCreateOptions(SessionCreateOptions options) {
+    private static void ValidateCreateOptions(
+        SessionCreateOptions options,
+        SessionCreationOrigin origin
+    ) {
         ValidateRequired(options.ModelId, nameof(options.ModelId));
         ValidateRequired(options.CompletionSurfaceId, nameof(options.CompletionSurfaceId));
         ValidateRequired(options.Schema, nameof(options.Schema));
@@ -4692,10 +4721,10 @@ public sealed partial class SessionJournalEngine : IDisposable {
                 "Derived context nth-previous ordinal cannot be negative."
             );
         }
-        if (!Enum.IsDefined(options.Origin)) {
+        if (!Enum.IsDefined(origin)) {
             throw new ArgumentOutOfRangeException(
-                nameof(options.Origin),
-                options.Origin,
+                nameof(origin),
+                origin,
                 "Unknown session creation origin."
             );
         }

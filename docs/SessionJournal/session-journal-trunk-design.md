@@ -176,7 +176,7 @@ body **禁止**复述 EventJournal header 已有的字段（`EventFrameHeader.cs
 |-----:|:----------|:--------------|
 | 1 | `runtime-config-setup` | 完整 runtime config 快照：modelId, completionSurfaceId, schema |
 | 2 | `system-prompt-setup` | content（从此位置起生效的完整 system prompt snapshot） |
-| 3 | `session-created` | 空 body；初始化完成 marker |
+| 3 | `session-created` | creation origin；初始化完成 marker，不复述 setup |
 | 4 | `observation-accepted` | content（外部输入文本；未来可扩展块） |
 | 5 | `agent-action-produced` | **raw（未消毒）** `ActionMessage`、invocation 摘要、correlationId、execution checkpoint；有 tool calls 时固定 tool runtime identity |
 | 6 | `tool-execution-started` | toolCallId, toolName, rawArgumentsJson, operationId, reserved executionSequence, tool runtime identity |
@@ -201,8 +201,9 @@ kind 8 的 frame `Header.Parent` 是 plan based-on raw head / raw end 的唯一�
 kind 13 不复制 manifest：首次 `Started.Header.Parent` 指向 kind 8，retry 指向前一个 Started；
 沿 Parent 回溯到 source Prepared。reconstruction 永远使用 source Prepared 的 Parent 作为 raw end，
 不能把 Started.Parent 误当 request raw end。completion 成功产生的
-`agent-action-produced.Header.Parent` 必须直接指向当前 active Started；manual/import 历史
-只能走显式 `AppendImportedAgentAction` 入口，并落为不同的 kind 10。
+`agent-action-produced.Header.Parent` 必须直接指向当前 active Started；manual/import 历史只能走
+public create-only `SessionJournalLegacyImportWriter`的`AppendImportedAgentAction`入口（内部委托
+Engine seam），并落为不同的 kind 10。
 两类 Action 都必须保存 active completion-boundary correlation：live 值精确继承 source Prepared，
 import 值取 append 前的 Observation/settled ToolResult execution state。即使 terminal Action 的派生
 state 随后清空 correlation，raw body 仍保留它作为近头 provenance/checkpoint。
@@ -217,7 +218,7 @@ state 随后清空 correlation，raw body 仍保留它作为近头 provenance/ch
 ### 2.4 配置也是事件
 
 model / completionSurfaceId **不再塞 StateJournal root dict**（老 `ChatSessionStorageSchema`），而是由 `runtime-config-setup` 事件保存完整 runtime config snapshot。
-system prompt 不归入 runtime config；它是上下文事实，由 `system-prompt-setup` 保存完整 prompt snapshot。`session-created` 只作为初始化完成 marker，空 body，不复述前两者。
+system prompt 不归入 runtime config；它是上下文事实，由 `system-prompt-setup` 保存完整 prompt snapshot。`session-created` 只作为初始化完成 marker，不复述前两者，但保存creation origin。public `SessionJournalEngine.Create`固定写`Native`；legacy迁移只能由create-only `SessionJournalLegacyImportWriter`固定写`LegacyImport`。
 
 **config / system prompt 按事件位置 as-of 解析**：重建某次历史 completion 的上下文时，runtime config 与 system prompt 分别取该事件位置**之前**的最新 snapshot；只有构造**当前**新请求才取链尾最新。审计旧 action 不能用今天的 system prompt 解释昨天的模型输入。
 
@@ -284,8 +285,9 @@ var outcome = journal.CommitToRef(
 
 ```csharp
 public sealed class SessionJournalEngine : IDisposable {
-    public static SessionJournalEngine Create(string path, SessionCreateOptions opts, SessionRuntime rt);
-    public static SessionJournalEngine Open(string path, SessionRuntime rt);
+    // Public create authority always writes Native origin.
+    public static SessionJournalEngine Create(string path, SessionCreateOptions opts);
+    public static SessionJournalEngine Open(string path);
 
     // 提交一条 observation 并把 tool-loop 推进到下一个静止点（无未结算 tool call）。
     public Task<TurnResult> SendAsync(string observation, CancellationToken ct = default);
@@ -294,6 +296,14 @@ public sealed class SessionJournalEngine : IDisposable {
     public Task<ResumeOutcome> ResumeAsync(CancellationToken ct = default);
 
     public SessionProjection Project();   // = Reduce(ReadChronologicalChain(head))
+}
+
+public sealed class SessionJournalLegacyImportWriter : IDisposable {
+    // Create-only; always writes LegacyImport origin. No Open/Engine escape.
+    public static SessionJournalLegacyImportWriter Create(string path, SessionCreateOptions opts);
+    public EventAddress AppendObservation(string content);
+    public EventAddress AppendSystemPromptSetup(string systemPrompt);
+    public EventAddress AppendImportedAgentAction(ActionMessage action, CompletionDescriptor invocation);
 }
 
 public sealed record SessionRuntime(

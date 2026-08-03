@@ -344,7 +344,9 @@ dotnet run --project prototypes/SessionJournal.Cli -- \
 
 导入只保留 raw setup、observation、agent action；旧 compaction/recap 只计数并跳过。未知 event 与
 无法无损表达的旧 tool transcript fail fast。`--force` 使用同级 staging repo 完整导入、reopen
-验证后再替换 exact target，不把“导出成功”当作 importer 语义验收。
+验证后再替换 exact target，不把“导出成功”当作 importer 语义验收。importer只通过create-only
+`SessionJournalLegacyImportWriter`写入：它强制`LegacyImport` origin，不开放现有repo的`Open`或
+runtime-config mutation；该authority收窄不改变event wire bytes、同级staging或atomic publish语义。
 
 Markdown与JSON都从同一个verified import report生成。JSON schema是
 `atelia.session-journal.legacy-import-report.v1`，包含source branch/head、实际消费的input byte

@@ -83,7 +83,8 @@ using var engine = SessionJournalEngine.Create(
 
 `Create`只接受一个尚不存在的 repository path，并创建 `main` branch。初始化时依次提交
 `RuntimeConfigSetup`、`SystemPromptSetup`和 `SessionCreated`。`SessionCreateOptions.Schema`
-通常保持 `SessionJournalDefaults.Schema`。
+通常保持 `SessionJournalDefaults.Schema`。public `SessionJournalEngine.Create`始终把
+`SessionCreated`标记为`Native`；调用方不能通过 create options伪造导入来源。
 
 只读检查使用：
 
@@ -337,36 +338,21 @@ AwaitingAgentAction和tool-active phase返回`ActiveTurn`且不写raw。`Retryab
 如果第二次prompt append失败，前一条runtime intent不回滚；下次retry只补缺失prompt。这是raw
 operator intent的自然幂等收敛，不需要setup transaction state machine。
 
-更低层的受控工具仍可直接调用：
-
-可写 engine提供：
-
-```csharp
-engine.AppendRuntimeConfigSetup(new SessionRuntimeConfiguration(
-    ModelId: "new-model",
-    CompletionSurfaceId: "responses",
-    Schema: SessionJournalDefaults.Schema,
-    DerivedContext: new SessionDerivedContextConfiguration(
-        NthPrevious: 0
-    )
-));
-
-engine.AppendSystemPromptSetup("new system prompt");
-```
-
 setup是 raw、branch-local、event-addressed facts。`ResolveGoverningSetup(exactHead)`沿 Parent
 lineage解析最近的两种 setup；不要用 repo级 mutable config替代历史 setup authority。
-两个直接append setup入口和`AppendObservation`同样只允许exact `Idle`。pre-Beta采用direct
-cut：旧`TurnFailed + setup/Observation suffix`不做兼容扫描，runtime inspection与新Send会
-fail-closed；operator必须显式迁移或重建这类历史tail。
+低层setup append seam现在是assembly-internal；普通Host只使用
+`ReconcileDesiredSetup`。pre-Beta采用direct cut：旧`TurnFailed + setup/Observation suffix`不做
+兼容扫描，runtime inspection与新Send会fail-closed；operator必须显式迁移或重建这类历史tail。
 
 ## Low-level append API
 
-`AppendObservation`、`AppendImportedAgentAction`等入口主要服务受控 import、测试和迁移流程。
-普通 online Agent应使用 `SendAsync` / `ResumeAsync`，否则调用方必须自行证明 operational
-legality、execution checkpoint和 context commitment，容易制造无法恢复的 tail。
+`SessionJournalEngine`的低层 observation/setup/imported-action append seam是
+assembly-internal，供白盒测试和实现内部的受控流程使用。普通 online Agent只使用
+`SendAsync` / `ResumeAsync`；普通Host使用`ReconcileDesiredSetup`同步setup。
 
-Legacy迁移请优先使用
+Legacy importer必须通过public create-only `SessionJournalLegacyImportWriter`创建repo。该authority
+没有`Open`、runtime-config append或底层engine escape，始终写入`LegacyImport` origin，并只暴露
+导入当前必需的 observation、system-prompt和imported-action追加能力。产品迁移流程优先使用
 [`SessionJournal.Cli import-legacy-json`](../SessionJournal.Cli/README.md#import-legacy-json)。
 
 ## Current wire 快速检查

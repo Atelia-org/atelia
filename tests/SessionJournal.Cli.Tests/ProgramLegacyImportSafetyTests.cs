@@ -610,6 +610,11 @@ public sealed class ProgramLegacyImportSafetyTests : IDisposable {
 
         Assert.Equal(1, exitCode);
         Assert.Equal("keep", File.ReadAllText(markerPath));
+        Assert.Empty(Directory.EnumerateDirectories(
+            _tempRoot,
+            ".existing-repo.importing.*",
+            SearchOption.TopDirectoryOnly
+        ));
     }
 
     [Fact]

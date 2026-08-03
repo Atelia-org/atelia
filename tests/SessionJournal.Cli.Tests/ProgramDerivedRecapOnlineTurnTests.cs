@@ -801,19 +801,17 @@ public sealed class ProgramDerivedRecapOnlineTurnTests : IDisposable {
         string calls =
             Path.Combine(_tempRoot, "below-cadence-calls");
         RefId branchRefId;
-        using (var engine = SJ.SessionJournalEngine.Create(
+        using (var writer = SJ.SessionJournalLegacyImportWriter.Create(
                    path,
                    new SJ.SessionCreateOptions(
                        "model-a",
                        "system-a",
                        "surface-a"
-                   ) {
-                       Origin = SJ.SessionCreationOrigin.LegacyImport
-                   }
+                   )
                )) {
             for (int index = 0; index < 16; index++) {
-                engine.AppendObservation($"observation {index}");
-                _ = engine.AppendImportedAgentAction(
+                writer.AppendObservation($"observation {index}");
+                _ = writer.AppendImportedAgentAction(
                     new ActionMessage([
                         new ActionBlock.Text($"action {index}")
                     ]),
@@ -824,11 +822,13 @@ public sealed class ProgramDerivedRecapOnlineTurnTests : IDisposable {
                     )
                 );
             }
-            branchRefId = engine.BranchRefId;
-            await DerivedRecapStore.Open(path, branchRefId)
-                .CreateAsync();
-            InitializePlannerConfig(path);
         }
+        using (var engine = SJ.SessionJournalEngine.OpenReadOnly(path)) {
+            branchRefId = engine.BranchRefId;
+        }
+        await DerivedRecapStore.Open(path, branchRefId)
+            .CreateAsync();
+        InitializePlannerConfig(path);
         var factory = new ScriptedCompletionClientFactory(
             "raw history answer"
         );
