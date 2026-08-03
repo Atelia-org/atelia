@@ -269,13 +269,8 @@ public sealed class DerivedRecapPreparedRecoveryIntegrationTests
             new RecapPlannerLimitsDocument(512, 4, 4, 64, 512)
         );
         var catalog = new RecapPlannerConfigResolutionCatalog(
-            [new RecapPlanningPolicyRegistration(PolicyId, policy)],
-            [
-                new HistoryUnitLoadEstimatorRegistration(
-                    estimator.Id,
-                    estimator
-                )
-            ]
+            [policy],
+            [estimator]
         );
         return Assert.IsType<RecapPlannerConfigResolveResult.Resolved>(
             RecapPlannerConfigResolver.Resolve(

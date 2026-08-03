@@ -20,8 +20,8 @@ public sealed class RecapPlannerConfigResolverTests {
         var policy = new StubPolicy("custom-policy");
         var estimator = new StubEstimator("custom-estimator");
         var resolutionCatalog = new RecapPlannerConfigResolutionCatalog(
-            [new("custom-policy", policy)],
-            [new(estimator.Id, estimator)]
+            [policy],
+            [estimator]
         );
         RecapMaintainerCapabilitySnapshot capabilities = Capabilities();
         RecapPlannerConfigSnapshot snapshot =
@@ -81,8 +81,8 @@ public sealed class RecapPlannerConfigResolverTests {
         string expectedCode
     ) {
         var resolutionCatalog = new RecapPlannerConfigResolutionCatalog(
-            [new("policy", new StubPolicy())],
-            [new("estimator", new StubEstimator("estimator"))]
+            [new StubPolicy()],
+            [new StubEstimator("estimator")]
         );
         string[] profiles = scenario == "profile"
             ? ["missing-profile"]
@@ -97,18 +97,29 @@ public sealed class RecapPlannerConfigResolverTests {
     }
 
     [Fact]
-    public void RegistrationIdentityMismatchFailsClosed() {
-        Assert.Throws<ArgumentException>(() =>
-            new RecapPlannerConfigResolutionCatalog(
-                [new("configured", new StubPolicy("actual"))],
-                []
-            )
+    public void ImplementationIdentityDriftFailsClosed() {
+        var policy = new StubPolicy("policy");
+        var estimator = new StubEstimator("estimator");
+        var catalog = new RecapPlannerConfigResolutionCatalog(
+            [policy],
+            [estimator]
         );
-        Assert.Throws<ArgumentException>(() =>
-            new RecapPlannerConfigResolutionCatalog(
-                [],
-                [new("configured", new StubEstimator("actual"))]
-            )
+        policy.Id = "drifted-policy";
+
+        AssertResolveCode(
+            Document("policy", "estimator", ["first-profile"]),
+            catalog,
+            Capabilities(),
+            RecapPlannerConfigResolveDefectCodes.PolicyIdentityMismatch
+        );
+
+        policy.Id = "policy";
+        estimator.Id = "drifted-estimator";
+        AssertResolveCode(
+            Document("policy", "estimator", ["first-profile"]),
+            catalog,
+            Capabilities(),
+            RecapPlannerConfigResolveDefectCodes.EstimatorIdentityMismatch
         );
     }
 
@@ -284,12 +295,14 @@ public sealed class RecapPlannerConfigResolverTests {
     }
 
     [Fact]
-    public void ResolutionCatalogCopiesInputsAndRejectsDuplicateIds() {
-        var policies = new List<RecapPlanningPolicyRegistration> {
-            new("policy", new StubPolicy())
+    public void ResolutionCatalogFreezesInputsAndRejectsInvalidIds() {
+        var policy = new StubPolicy();
+        var estimator = new StubEstimator("estimator");
+        var policies = new List<IRecapPlanningPolicy> {
+            policy
         };
-        var estimators = new List<HistoryUnitLoadEstimatorRegistration> {
-            new("estimator", new StubEstimator("estimator"))
+        var estimators = new List<IHistoryUnitLoadEstimator> {
+            estimator
         };
         var snapshot = new RecapPlannerConfigResolutionCatalog(
             policies,
@@ -300,11 +313,13 @@ public sealed class RecapPlannerConfigResolverTests {
 
         Assert.Single(snapshot.Policies);
         Assert.Single(snapshot.Estimators);
+        Assert.Same(policy, snapshot.Policies[0]);
+        Assert.Same(estimator, snapshot.Estimators[0]);
         Assert.Throws<ArgumentException>(() =>
             new RecapPlannerConfigResolutionCatalog(
                 [
-                    new("duplicate", new StubPolicy("duplicate")),
-                    new("duplicate", new StubPolicy("duplicate"))
+                    new StubPolicy("duplicate"),
+                    new StubPolicy("duplicate")
                 ],
                 []
             )
@@ -313,9 +328,27 @@ public sealed class RecapPlannerConfigResolverTests {
             new RecapPlannerConfigResolutionCatalog(
                 [],
                 [
-                    new("duplicate", new StubEstimator("first")),
-                    new("duplicate", new StubEstimator("second"))
+                    new StubEstimator("duplicate"),
+                    new StubEstimator("duplicate")
                 ]
+            )
+        );
+        Assert.Throws<ArgumentNullException>(() =>
+            new RecapPlannerConfigResolutionCatalog([null!], [])
+        );
+        Assert.Throws<ArgumentNullException>(() =>
+            new RecapPlannerConfigResolutionCatalog([], [null!])
+        );
+        Assert.Throws<ArgumentException>(() =>
+            new RecapPlannerConfigResolutionCatalog(
+                [new StubPolicy(" ")],
+                []
+            )
+        );
+        Assert.Throws<ArgumentException>(() =>
+            new RecapPlannerConfigResolutionCatalog(
+                [],
+                [new StubEstimator("")]
             )
         );
     }
@@ -394,7 +427,7 @@ public sealed class RecapPlannerConfigResolverTests {
 
     private sealed class StubEstimator(string id)
         : IHistoryUnitLoadEstimator {
-        public string Id { get; } = id;
+        public string Id { get; set; } = id;
 
         public HistoryUnitLoadMeasurement Measure(
             SessionHistoryPlanningUnit unit,
@@ -406,7 +439,7 @@ public sealed class RecapPlannerConfigResolverTests {
 
     private sealed class StubPolicy(string id = "policy")
         : IRecapPlanningPolicy {
-        public string Id { get; } = id;
+        public string Id { get; set; } = id;
 
         public RecapPlanningPolicyDecision Decide(
             RecapPlanningPolicyContext context

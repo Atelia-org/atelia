@@ -177,63 +177,6 @@ public sealed class RecapMaintainerCapabilitySnapshot {
     );
 }
 
-public sealed record RecapPlanningPolicyRegistration {
-    public RecapPlanningPolicyRegistration(
-        string policyId,
-        IRecapPlanningPolicy policy
-    ) {
-        PolicyId = string.IsNullOrWhiteSpace(policyId)
-            ? throw new ArgumentException(
-                "Planning policy ID cannot be empty.",
-                nameof(policyId)
-            )
-            : policyId;
-        Policy = policy
-            ?? throw new ArgumentNullException(nameof(policy));
-        if (!string.Equals(PolicyId, Policy.Id, StringComparison.Ordinal)) {
-            throw new ArgumentException(
-                $"Planning policy registration '{PolicyId}' does not "
-                + $"match policy identity '{Policy.Id}'.",
-                nameof(policy)
-            );
-        }
-    }
-
-    public string PolicyId { get; }
-    public IRecapPlanningPolicy Policy { get; }
-}
-
-public sealed record HistoryUnitLoadEstimatorRegistration {
-    public HistoryUnitLoadEstimatorRegistration(
-        string estimatorId,
-        IHistoryUnitLoadEstimator estimator
-    ) {
-        EstimatorId = string.IsNullOrWhiteSpace(estimatorId)
-            ? throw new ArgumentException(
-                "History-unit load estimator ID cannot be empty.",
-                nameof(estimatorId)
-            )
-            : estimatorId;
-        Estimator = estimator
-            ?? throw new ArgumentNullException(nameof(estimator));
-        if (!string.Equals(
-                EstimatorId,
-                Estimator.Id,
-                StringComparison.Ordinal
-            )) {
-            throw new ArgumentException(
-                $"History-unit load estimator registration "
-                + $"'{EstimatorId}' does not match estimator identity "
-                + $"'{Estimator.Id}'.",
-                nameof(estimator)
-            );
-        }
-    }
-
-    public string EstimatorId { get; }
-    public IHistoryUnitLoadEstimator Estimator { get; }
-}
-
 /// <summary>
 /// Immutable code-capability catalog used by pure config resolution. Hosts
 /// may inject custom policies and estimators without relying on global state.
@@ -244,16 +187,10 @@ public sealed class RecapPlannerConfigResolutionCatalog {
     > BuiltInSnapshot = new(
         static () => new RecapPlannerConfigResolutionCatalog(
             [
-                new RecapPlanningPolicyRegistration(
-                    RecapPlanningPolicyIds.BoundedMaintainAllV1,
-                    new BoundedMaintainAllRecapPlanningPolicy()
-                )
+                new BoundedMaintainAllRecapPlanningPolicy()
             ],
             [
-                new HistoryUnitLoadEstimatorRegistration(
-                    O200kBaseHistoryUnitLoadEstimator.EstimatorId,
-                    new O200kBaseHistoryUnitLoadEstimator()
-                )
+                new O200kBaseHistoryUnitLoadEstimator()
             ]
         ),
         LazyThreadSafetyMode.ExecutionAndPublication
@@ -269,16 +206,14 @@ public sealed class RecapPlannerConfigResolutionCatalog {
     > _estimators;
 
     public RecapPlannerConfigResolutionCatalog(
-        IReadOnlyList<RecapPlanningPolicyRegistration> policies,
-        IReadOnlyList<HistoryUnitLoadEstimatorRegistration> estimators
+        IReadOnlyList<IRecapPlanningPolicy> policies,
+        IReadOnlyList<IHistoryUnitLoadEstimator> estimators
     ) {
         ArgumentNullException.ThrowIfNull(policies);
         ArgumentNullException.ThrowIfNull(estimators);
 
-        RecapPlanningPolicyRegistration[] policySnapshot = [.. policies];
-        HistoryUnitLoadEstimatorRegistration[] estimatorSnapshot = [
-            .. estimators
-        ];
+        IRecapPlanningPolicy[] policySnapshot = [.. policies];
+        IHistoryUnitLoadEstimator[] estimatorSnapshot = [.. estimators];
         var policyMap = new Dictionary<
             string,
             IRecapPlanningPolicy
@@ -288,30 +223,37 @@ public sealed class RecapPlannerConfigResolutionCatalog {
             IHistoryUnitLoadEstimator
         >(StringComparer.Ordinal);
 
-        foreach (RecapPlanningPolicyRegistration? registration
-            in policySnapshot) {
-            ArgumentNullException.ThrowIfNull(registration);
-            if (!policyMap.TryAdd(
-                    registration.PolicyId,
-                    registration.Policy
-                )) {
+        foreach (IRecapPlanningPolicy? policy in policySnapshot) {
+            ArgumentNullException.ThrowIfNull(policy);
+            string? implementationId = policy.Id;
+            string policyId = string.IsNullOrWhiteSpace(implementationId)
+                ? throw new ArgumentException(
+                    "Planning policy ID cannot be empty.",
+                    nameof(policies)
+                )
+                : implementationId;
+            if (!policyMap.TryAdd(policyId, policy)) {
                 throw new ArgumentException(
                     "Resolution catalog contains duplicate policy ID "
-                    + $"'{registration.PolicyId}'.",
+                    + $"'{policyId}'.",
                     nameof(policies)
                 );
             }
         }
-        foreach (HistoryUnitLoadEstimatorRegistration? registration
+        foreach (IHistoryUnitLoadEstimator? estimator
             in estimatorSnapshot) {
-            ArgumentNullException.ThrowIfNull(registration);
-            if (!estimatorMap.TryAdd(
-                    registration.EstimatorId,
-                    registration.Estimator
-                )) {
+            ArgumentNullException.ThrowIfNull(estimator);
+            string? implementationId = estimator.Id;
+            string estimatorId = string.IsNullOrWhiteSpace(implementationId)
+                ? throw new ArgumentException(
+                    "History-unit load estimator ID cannot be empty.",
+                    nameof(estimators)
+                )
+                : implementationId;
+            if (!estimatorMap.TryAdd(estimatorId, estimator)) {
                 throw new ArgumentException(
                     "Resolution catalog contains duplicate estimator ID "
-                    + $"'{registration.EstimatorId}'.",
+                    + $"'{estimatorId}'.",
                     nameof(estimators)
                 );
             }
@@ -326,10 +268,10 @@ public sealed class RecapPlannerConfigResolutionCatalog {
     public static RecapPlannerConfigResolutionCatalog BuiltIn =>
         BuiltInSnapshot.Value;
 
-    public IReadOnlyList<RecapPlanningPolicyRegistration> Policies {
+    public IReadOnlyList<IRecapPlanningPolicy> Policies {
         get;
     }
-    public IReadOnlyList<HistoryUnitLoadEstimatorRegistration>
+    public IReadOnlyList<IHistoryUnitLoadEstimator>
         Estimators { get; }
 
     public bool TryResolvePolicy(

@@ -226,7 +226,8 @@ RecapPlanningLimits limits = configuration.PlanningLimits;
 ```
 
 `RecapPlannerConfigResolutionCatalog.BuiltIn`只注册 baseline policy与o200k estimator。自定义Host
-可构造自己的immutable catalog并显式注入。resolver只返回`Resolved`或`Invalid`：文件
+把 `IRecapPlanningPolicy` 与 `IHistoryUnitLoadEstimator` 实现直接交给 immutable catalog；catalog
+在构造时冻结各实现当时的 `Id`，resolver 仍会拒绝后续 identity 漂移。resolver只返回`Resolved`或`Invalid`：文件
 `Missing/Invalid/Unavailable`仍属于loader层，concrete capability加载失败仍属于Host层。
 
 同一次 operation只解析一次 snapshot，并复用同一个 immutable `inputs + limits`。`inputs.OrderedCatalog`
