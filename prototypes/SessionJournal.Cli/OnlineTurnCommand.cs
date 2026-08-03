@@ -1,5 +1,3 @@
-using System.Security.Cryptography;
-using System.Text;
 using Atelia.Completion;
 using Atelia.Completion.Abstractions;
 using Atelia.EventJournal;
@@ -234,7 +232,6 @@ internal static class OnlineTurnCommand {
         ));
 
         (
-            ActionMessage resultMessage,
             CompletionDescriptor invocation,
             IReadOnlyList<string>? errors
         ) = mode == OnlineExecutionMode.SendNewTurn
@@ -256,7 +253,7 @@ internal static class OnlineTurnCommand {
         SJ.SessionExecutionBoundaryInspection final =
             engine.InspectExecutionBoundary();
         var report = new OnlineTurnRunRecord(
-            "atelia.session-journal.online-turn-run.v5",
+            "atelia.session-journal.online-turn-run.v6",
             engine.BranchName,
             engine.BranchRefId.ToHexString(),
             final.Head is { } head
@@ -266,13 +263,6 @@ internal static class OnlineTurnCommand {
             invocation.ProviderId,
             invocation.ApiSpecId,
             invocation.Model,
-            Convert.ToHexStringLower(
-                SHA256.HashData(
-                    Encoding.UTF8.GetBytes(
-                        resultMessage.GetFlattenedText()
-                    )
-                )
-            ),
             errors?.Count ?? 0,
             recapComposition is null
                 ? null
@@ -532,17 +522,14 @@ internal static class OnlineTurnCommand {
     };
 
     private static (
-        ActionMessage Message,
         CompletionDescriptor Invocation,
         IReadOnlyList<string>? Errors
     ) FromTurn(SJ.TurnResult result) => (
-        result.Message,
         result.Invocation,
         result.Errors
     );
 
     private static (
-        ActionMessage Message,
         CompletionDescriptor Invocation,
         IReadOnlyList<string>? Errors
     ) FromResume(
@@ -557,7 +544,7 @@ internal static class OnlineTurnCommand {
                 + $"'{initialPhase}'."
             );
         }
-        return (result.Message, result.Invocation, result.Errors);
+        return (result.Invocation, result.Errors);
     }
 
     private static void ValidatePaths(
@@ -645,7 +632,6 @@ internal sealed record OnlineTurnRunRecord(
     string ProviderId,
     string ApiSpecId,
     string Model,
-    string ActionSha256,
     int ErrorCount,
     RecapExecutionConfigReport? Config,
     RecapExecutionPlanningReport? Planning

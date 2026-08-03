@@ -32,8 +32,19 @@ public sealed class ProgramDerivedRecapOnlineTurnTests : IDisposable {
 
     [Fact]
     public async Task IdleRunsRecapMaintenanceThenAgentCompletion() {
+        const string observationSentinel =
+            "online-report-fresh-observation-sentinel";
+        const string answerSentinel =
+            "online-report-fresh-provider-answer-sentinel";
+        const string apiKeySentinel =
+            "online-report-fresh-api-key-secret-sentinel";
         PublishedFixture fixture =
-            await CreatePublishedFixtureAsync("idle");
+            await CreatePublishedFixtureAsync(
+                "idle",
+                initialMessage: observationSentinel,
+                initialResponseText: answerSentinel,
+                apiKey: apiKeySentinel
+            );
 
         Assert.Equal(1, fixture.Factory.CreateCallCount);
         Assert.Equal(3, fixture.Factory.CallCount);
@@ -42,12 +53,14 @@ public sealed class ProgramDerivedRecapOnlineTurnTests : IDisposable {
             ReadBoundary(fixture.Path).Phase
         );
         Assert.True(File.Exists(fixture.OutputPath));
+        AssertContentFreeOnlineReport(
+            fixture.OutputPath,
+            answerSentinel,
+            observationSentinel,
+            apiKeySentinel
+        );
         using JsonDocument report = JsonDocument.Parse(
             File.ReadAllText(fixture.OutputPath)
-        );
-        Assert.Equal(
-            "atelia.session-journal.online-turn-run.v5",
-            report.RootElement.GetProperty("schema").GetString()
         );
         JsonElement config =
             report.RootElement.GetProperty("config");
@@ -100,18 +113,23 @@ public sealed class ProgramDerivedRecapOnlineTurnTests : IDisposable {
 
     [Fact]
     public async Task PreparedRecoveryUsesDurableRequestWithoutRecapRef() {
+        const string observationSentinel =
+            "online-report-prepared-observation-sentinel";
+        const string answerSentinel =
+            "online-report-prepared-provider-answer-sentinel";
         PublishedFixture fixture =
             await CreatePublishedFixtureAsync("prepared");
         PreparedBoundary prepared = await LeavePendingAsync(
             fixture,
-            SJ.SessionJournalFailpoint.AfterRequestPreparedCommitted
+            SJ.SessionJournalFailpoint.AfterRequestPreparedCommitted,
+            observationSentinel
         );
         DeleteRecapAuthority(fixture.Path);
 
         string output = Path.Combine(_tempRoot, "prepared-reopen.json");
         string calls = Path.Combine(_tempRoot, "prepared-reopen-calls");
         var recovery = new ScriptedCompletionClientFactory(
-            "prepared recovered answer"
+            answerSentinel
         );
 
         Assert.Equal(0, Program.MainCore([
@@ -131,17 +149,27 @@ public sealed class ProgramDerivedRecapOnlineTurnTests : IDisposable {
             SJ.SessionExecutionPhase.Idle,
             ReadBoundary(fixture.Path).Phase
         );
+        AssertContentFreeOnlineReport(
+            output,
+            answerSentinel,
+            observationSentinel
+        );
         AssertReportHasNoRecapAuthority(output);
     }
 
     [Fact]
     public async Task StartedDefaultsToRefuseThenExplicitRestartCallsOnce() {
+        const string observationSentinel =
+            "online-report-started-observation-sentinel";
+        const string answerSentinel =
+            "online-report-started-provider-answer-sentinel";
         PublishedFixture fixture =
             await CreatePublishedFixtureAsync("started");
         _ = await LeavePendingAsync(
             fixture,
             SJ.SessionJournalFailpoint
-                .AfterCompletionAttemptStartedCommitted
+                .AfterCompletionAttemptStartedCommitted,
+            observationSentinel
         );
         DeleteRecapAuthority(fixture.Path);
 
@@ -172,7 +200,7 @@ public sealed class ProgramDerivedRecapOnlineTurnTests : IDisposable {
         );
 
         var restart = new ScriptedCompletionClientFactory(
-            "started recovered answer"
+            answerSentinel
         );
         Assert.Equal(0, Program.MainCore([
             .. BaseArgs(fixture, output, calls),
@@ -183,6 +211,11 @@ public sealed class ProgramDerivedRecapOnlineTurnTests : IDisposable {
         Assert.Equal(
             SJ.SessionExecutionPhase.Idle,
             ReadBoundary(fixture.Path).Phase
+        );
+        AssertContentFreeOnlineReport(
+            output,
+            answerSentinel,
+            observationSentinel
         );
         AssertReportHasNoRecapAuthority(output);
     }
@@ -1144,11 +1177,18 @@ public sealed class ProgramDerivedRecapOnlineTurnTests : IDisposable {
     }
 
     private async Task<PublishedFixture> CreatePublishedFixtureAsync(
-        string name
+        string name,
+        string initialMessage = "new online observation",
+        string initialResponseText = "derived recap or agent answer",
+        string? apiKey = null
     ) {
         Directory.CreateDirectory(_tempRoot);
         string path = Path.Combine(_tempRoot, name);
-        string connections = WriteConnections(name);
+        string connections = WriteConnections(
+            name,
+            [Connection() with { ApiKey = apiKey }],
+            defaultConnectionId: "scripted"
+        );
         string output = Path.Combine(_tempRoot, $"{name}-online.json");
         string calls = Path.Combine(_tempRoot, $"{name}-online-calls");
         string branchName;
@@ -1181,7 +1221,7 @@ public sealed class ProgramDerivedRecapOnlineTurnTests : IDisposable {
             InitializePlannerConfig(path);
         }
         var factory = new ScriptedCompletionClientFactory(
-            "derived recap or agent answer"
+            initialResponseText
         );
         Assert.Equal(0, Program.MainCore([
             "run-online-turn",
@@ -1190,7 +1230,7 @@ public sealed class ProgramDerivedRecapOnlineTurnTests : IDisposable {
             "--connections", connections,
             "--output", output,
             "--call-log-dir", calls,
-            "--message", "new online observation"
+            "--message", initialMessage
         ], factory));
 
         PublishedRecapDescriptor descriptor;
@@ -1234,7 +1274,8 @@ public sealed class ProgramDerivedRecapOnlineTurnTests : IDisposable {
 
     private static async Task<PreparedBoundary> LeavePendingAsync(
         PublishedFixture fixture,
-        SJ.SessionJournalFailpoint failpoint
+        SJ.SessionJournalFailpoint failpoint,
+        string observation = "pending recovery observation"
     ) {
         CompletionConnectionConfig connection = Connection();
         var client = new ScriptedCompletionClient("must not run");
@@ -1268,7 +1309,7 @@ public sealed class ProgramDerivedRecapOnlineTurnTests : IDisposable {
                 await Assert.ThrowsAsync<
                     SJ.SessionJournalFailpointException
                 >(() => engine.SendAsync(
-                    "pending recovery observation",
+                    observation,
                     CancellationToken.None
                 ));
             Assert.Equal(failpoint, failure.Failpoint);
@@ -1380,6 +1421,81 @@ public sealed class ProgramDerivedRecapOnlineTurnTests : IDisposable {
         Assert.False(Directory.Exists(
             Path.Combine(path, "derived", "recap", "v4")
         ));
+    }
+
+    private static void AssertContentFreeOnlineReport(
+        string outputPath,
+        string providerAnswer,
+        params string[] forbiddenValues
+    ) {
+        string json = File.ReadAllText(outputPath);
+        using JsonDocument report = JsonDocument.Parse(json);
+        JsonElement root = report.RootElement;
+
+        Assert.Equal(
+            "atelia.session-journal.online-turn-run.v6",
+            root.GetProperty("schema").GetString()
+        );
+        Assert.Equal(
+            [
+                "schema",
+                "branchName",
+                "branchRefId",
+                "head",
+                "phase",
+                "providerId",
+                "apiSpecId",
+                "model",
+                "errorCount",
+                "config",
+                "planning"
+            ],
+            root.EnumerateObject()
+                .Select(static property => property.Name)
+                .ToArray()
+        );
+
+        foreach (string forbiddenProperty in new[] {
+                     "actionSha256",
+                     "action",
+                     "message",
+                     "request",
+                     "response",
+                     "content",
+                     "apiKey",
+                     "secret"
+                 }) {
+            Assert.False(
+                root.TryGetProperty(forbiddenProperty, out _),
+                $"Online report must not expose '{forbiddenProperty}'."
+            );
+        }
+        Assert.False(
+            root.EnumerateObject().Any(static property =>
+                property.Name.StartsWith(
+                    "callLog",
+                    StringComparison.Ordinal
+                )),
+            "Online report must not expose call-log fields."
+        );
+
+        foreach (string sensitiveValue in forbiddenValues.Prepend(
+                     providerAnswer
+                 )) {
+            Assert.DoesNotContain(
+                sensitiveValue,
+                json,
+                StringComparison.Ordinal
+            );
+            string legacyContentDigest = Sha256(
+                System.Text.Encoding.UTF8.GetBytes(sensitiveValue)
+            );
+            Assert.DoesNotContain(
+                legacyContentDigest,
+                json,
+                StringComparison.OrdinalIgnoreCase
+            );
+        }
     }
 
     private static void AssertReportHasNoRecapAuthority(

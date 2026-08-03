@@ -358,7 +358,7 @@ public sealed class DerivedRecapRealDataAcceptanceTests {
             ], onlineFactory));
             Assert.Equal(1, onlineFactory.CallCount);
             Assert.Equal(
-                "atelia.session-journal.online-turn-run.v5",
+                "atelia.session-journal.online-turn-run.v6",
                 ReadString(onlineReport, "schema")
             );
             AssertInitialPrefixPreserved(

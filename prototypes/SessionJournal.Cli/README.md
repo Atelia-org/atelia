@@ -174,12 +174,12 @@ prefix无法证明 prior Published baseline或所需anchor，preflight会先以e
 staging目录。此时不能声称exact `RawSafetyRejected`；configured limit较小且baseline已在prefix
 内确定时，仍保留exact raw-safety诊断。
 
-execution report schema V5同时报告 estimator ID、growth load、可空的 selected
+execution report schema V6同时报告 estimator ID、growth load、可空的 selected
 absorbed/recent load，以及仅用于结构诊断的 HistoryUnit/raw event counts。prepare、execute或
 restore遇到bounded-lineage不确定性时，`beyondPrefix`携带`requiredAnchor`、`capturedHead`、
-`headerCount`和`nextAddress`；普通不可用场景该字段为null。CLI目前完成的是B1 Store-boundary
-迁移。普通`run` prepare、exact Building resume和exact Published restore内部仍有完整或重复的
-lineage读取，待B2收口。
+`headerCount`和`nextAddress`；普通不可用场景该字段为null。B2 boundary迁移后，普通`run`
+prepare、exact Building resume和exact Published restore都只使用同一个engine-lifetime-bound
+read view、bounded prefix与opaque write authority，不再回退到full-lineage读取。
 
 成功 Publish后才进入 strict ordinal。首次 new planning前须显式执行
 `recap planner-config init`。
@@ -326,10 +326,14 @@ request 为唯一真源，对 Store 是 zero-touch。
 
 成功返回 0；参数、unsupported phase、not-ready、Store/Completion 或路径失败返回 1。online JSON
 report 同样 content-free；NewPlanning额外报告实际 repo config path/hash与
-`RawSafetyRejected`/`ExactSchedule` diagnostics；online report schema 是 V5。Frozen
-Building及 Prepared/Started recovery的 config/planning字段为 null。完整 request/action只存在于
-明确配置且成功写入的 call log；日志初始化、reserve、write或flush失败不会替换provider结果或异常，
-因此operational evidence可能缺失。
+`RawSafetyRejected`/`ExactSchedule` diagnostics；online report schema 是 V6，top-level exact
+shape为`schema`、`branchName`、`branchRefId`、`head`、`phase`、`providerId`、`apiSpecId`、
+`model`、`errorCount`、`config`与`planning`。它不复制 observation/request/action/response、API key
+或其他secret，也不保存从这些正文派生的hash；`configSha256`与profile fingerprints仍是合法的
+content-free composition provenance。Frozen Building及 Prepared/Started recovery的
+config/planning字段为 null。完整 request/action只存在于单独显式配置且成功写入的call-log v1；
+该日志仍是best-effort，初始化、reserve、write或flush失败不会替换provider结果或异常，因此
+operational evidence可能缺失。
 
 ## import-legacy-json
 
