@@ -296,12 +296,17 @@ public sealed class SessionJournalEngineTests : IDisposable {
                 path,
                 runtime
             );
+        EventAddress expectedHead = readOnly.ReadCurrentHead()!.Value;
         await AssertReadOnlyMutationRejectedAsync(
-            () => readOnly.SendAsync("must not send"),
+            () => readOnly.SendAsync(
+                expectedHead,
+                "must not send"
+            ),
             nameof(SessionJournalEngine.SendAsync)
         );
         await AssertReadOnlyMutationRejectedAsync(
             () => readOnly.SendAsync(
+                expectedHead,
                 "must not send",
                 observer: null,
                 CancellationToken.None
@@ -309,11 +314,12 @@ public sealed class SessionJournalEngineTests : IDisposable {
             nameof(SessionJournalEngine.SendAsync)
         );
         await AssertReadOnlyMutationRejectedAsync(
-            () => readOnly.ResumeAsync(),
+            () => readOnly.ResumeAsync(expectedHead),
             nameof(SessionJournalEngine.ResumeAsync)
         );
         await AssertReadOnlyMutationRejectedAsync(
             () => readOnly.ResumeAsync(
+                expectedHead,
                 observer: null,
                 CancellationToken.None
             ),

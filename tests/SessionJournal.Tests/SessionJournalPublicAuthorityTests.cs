@@ -1,4 +1,7 @@
+using System.Diagnostics;
 using System.Reflection;
+using System.Runtime.CompilerServices;
+using System.Security;
 using Atelia.Completion.Abstractions;
 using Atelia.EventJournal;
 using Xunit;
@@ -154,6 +157,154 @@ public sealed class SessionJournalPublicAuthorityTests : IDisposable {
     }
 
     [Fact]
+    public void PublicOnlineMutationSurface_RequiresExactExpectedHead() {
+        Type engineType = typeof(SessionJournalEngine);
+        MethodInfo[] publicOnlineMethods = engineType.GetMethods(
+                BindingFlags.Public
+                | BindingFlags.Instance
+                | BindingFlags.DeclaredOnly
+            )
+            .Where(method => method.Name is nameof(
+                    SessionJournalEngine.SendAsync
+                ) or nameof(SessionJournalEngine.ResumeAsync))
+            .ToArray();
+
+        Assert.Equal(
+            [
+                "ResumeAsync(EventAddress,CancellationToken)",
+                "ResumeAsync(EventAddress,CompletionStreamObserver,CancellationToken)",
+                "SendAsync(EventAddress,String,CancellationToken)",
+                "SendAsync(EventAddress,String,CompletionStreamObserver,CancellationToken)"
+            ],
+            publicOnlineMethods
+                .Select(FormatSignature)
+                .Order(StringComparer.Ordinal)
+                .ToArray()
+        );
+        Assert.All(
+            publicOnlineMethods,
+            method => {
+                Assert.Equal(
+                    typeof(EventAddress),
+                    method.GetParameters()[0].ParameterType
+                );
+                Assert.Equal(
+                    method.Name == nameof(SessionJournalEngine.SendAsync)
+                        ? typeof(Task<TurnResult>)
+                        : typeof(Task<ResumeOutcome>),
+                    method.ReturnType
+                );
+            }
+        );
+    }
+
+    [Fact]
+    public async Task ExternalConsumer_CannotCompileUnboundOnlineMutations_ButCanCompileBoundOverloads() {
+        string tempRoot = NewPath();
+        Directory.CreateDirectory(tempRoot);
+        string sessionJournalProject = SecurityElement.Escape(
+            Path.GetFullPath(
+                Path.Combine(
+                    Path.GetDirectoryName(CurrentSourceFile())!,
+                    "..",
+                    "..",
+                    "prototypes",
+                    "SessionJournal",
+                    "SessionJournal.csproj"
+                )
+            )
+        )!;
+        await File.WriteAllTextAsync(
+            Path.Combine(tempRoot, "ExternalConsumer.csproj"),
+            $$"""
+            <Project Sdk="Microsoft.NET.Sdk">
+              <PropertyGroup>
+                <TargetFramework>net10.0</TargetFramework>
+                <ImplicitUsings>enable</ImplicitUsings>
+                <Nullable>enable</Nullable>
+              </PropertyGroup>
+              <ItemGroup>
+                <ProjectReference Include="{{sessionJournalProject}}" />
+              </ItemGroup>
+            </Project>
+            """
+        );
+        string probePath = Path.Combine(
+            tempRoot,
+            "ExternalConsumerProbe.cs"
+        );
+        await File.WriteAllTextAsync(
+            probePath,
+            """
+            using Atelia.SessionJournal;
+
+            public static class ExternalConsumerProbe {
+                public static async Task UseUnboundAsync(
+                    SessionJournalEngine engine
+                ) {
+                    _ = await engine.SendAsync("first");
+                    _ = await engine.SendAsync(
+                        "second",
+                        observer: null
+                    );
+                    _ = await engine.ResumeAsync();
+                    _ = await engine.ResumeAsync(
+                        observer: null
+                    );
+                }
+            }
+            """
+        );
+
+        (int unboundExitCode, string unboundOutput) =
+            await CompileExternalConsumerAsync(tempRoot);
+
+        Assert.NotEqual(0, unboundExitCode);
+        Assert.Contains("ExternalConsumerProbe.cs", unboundOutput);
+        Assert.True(
+            unboundOutput.Split(
+                ": error CS",
+                StringSplitOptions.None
+            ).Length >= 5,
+            unboundOutput
+        );
+
+        await File.WriteAllTextAsync(
+            probePath,
+            """
+            using Atelia.SessionJournal;
+
+            public static class ExternalConsumerProbe {
+                public static async Task UseBoundAsync(
+                    SessionJournalEngine engine
+                ) {
+                    var expectedHead = engine.ReadCurrentHead()!.Value;
+                    _ = await engine.SendAsync(
+                        expectedHead,
+                        "first"
+                    );
+                    _ = await engine.SendAsync(
+                        expectedHead,
+                        "second",
+                        observer: null
+                    );
+                    _ = await engine.ResumeAsync(expectedHead);
+                    _ = await engine.ResumeAsync(
+                        expectedHead,
+                        observer: null
+                    );
+                }
+            }
+            """
+        );
+
+        (int boundExitCode, string boundOutput) =
+            await CompileExternalConsumerAsync(tempRoot);
+
+        Assert.True(boundExitCode == 0, boundOutput);
+    }
+
+    [Fact]
     public void CreateAuthorities_ForceTheirOwnedOrigins() {
         string nativePath = NewPath();
         using (var engine = SessionJournalEngine.Create(
@@ -262,6 +413,41 @@ public sealed class SessionJournalPublicAuthorityTests : IDisposable {
             method.GetParameters()
                 .Select(parameter => parameter.ParameterType)
                 .ToArray()
+        );
+    }
+
+    private static string FormatSignature(MethodInfo method)
+        => $"{method.Name}({string.Join(",", method.GetParameters().Select(
+            parameter => parameter.ParameterType.Name
+        ))})";
+
+    private static string CurrentSourceFile(
+        [CallerFilePath] string path = ""
+    ) => path;
+
+    private static async Task<(int ExitCode, string Output)>
+        CompileExternalConsumerAsync(string workingDirectory) {
+        var start = new ProcessStartInfo("dotnet") {
+            WorkingDirectory = workingDirectory,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false
+        };
+        start.ArgumentList.Add("build");
+        start.ArgumentList.Add("ExternalConsumer.csproj");
+        start.ArgumentList.Add("-m:1");
+        start.ArgumentList.Add("-nr:false");
+        start.ArgumentList.Add("--nologo");
+        using Process process = Process.Start(start)
+            ?? throw new InvalidOperationException(
+                "Failed to start external consumer compilation."
+            );
+        Task<string> outputTask = process.StandardOutput.ReadToEndAsync();
+        Task<string> errorTask = process.StandardError.ReadToEndAsync();
+        await process.WaitForExitAsync();
+        return (
+            process.ExitCode,
+            await outputTask + await errorTask
         );
     }
 

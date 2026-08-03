@@ -2276,7 +2276,7 @@ public sealed partial class SessionJournalEngine : IDisposable {
             );
     }
 
-    public async Task<TurnResult> SendAsync(
+    internal async Task<TurnResult> SendAsync(
         string observation,
         CancellationToken cancellationToken = default
     ) {
@@ -2301,7 +2301,7 @@ public sealed partial class SessionJournalEngine : IDisposable {
         )
         .ConfigureAwait(false);
 
-    public async Task<TurnResult> SendAsync(
+    internal async Task<TurnResult> SendAsync(
         string observation,
         CompletionStreamObserver? observer,
         CancellationToken cancellationToken = default
@@ -2421,7 +2421,7 @@ public sealed partial class SessionJournalEngine : IDisposable {
         ).ConfigureAwait(false);
     }
 
-    public async Task<ResumeOutcome> ResumeAsync(
+    internal async Task<ResumeOutcome> ResumeAsync(
         CancellationToken cancellationToken = default
     ) {
         ThrowIfReadOnlyMutation(nameof(ResumeAsync));
@@ -2442,7 +2442,7 @@ public sealed partial class SessionJournalEngine : IDisposable {
         )
         .ConfigureAwait(false);
 
-    public async Task<ResumeOutcome> ResumeAsync(
+    internal async Task<ResumeOutcome> ResumeAsync(
         CompletionStreamObserver? observer,
         CancellationToken cancellationToken = default
     ) => await ResumeCoreAsync(
