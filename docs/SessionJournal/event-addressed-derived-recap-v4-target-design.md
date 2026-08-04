@@ -20,11 +20,10 @@
 > [V4 化简候选](event-addressed-derived-recap-v4-simplification-candidate.md)
 > **取代的候选设计**：
 > [DerivedMemory V3 candidate](superseded/derived-memory-v3-candidate/derived-memory-next-target-design.md)
-> **实施状态**：R0 Contracts + Publish/Read、R1 Planner + Build/Resume、R2 Exact-slot
-> Restore + Online lifecycle、R3 Cutover + CLI + real-data acceptance均已完成；具体证据只在
-> implementation plan维护。Post-R3 C0 HistoryUnit cadence、C1 repo-owned config
-> document/composition与C2 CLI/online authority cutover也已完成；C3 Galatea real-repo
-> acceptance前先执行 H0～H2 HistoryLoad cutover
+> **文档边界**：本文维护 EADR 的 normative Target Shape / Rule，不是 current API、wire 或
+> implementation-status owner。R0～R3、C0～C3 与 H0～H2 的交付及验收已经关闭；历史 commit/evidence
+> map 见 implementation completion record。核对 current 实现时应读取对应 component README、code
+> 与 focused tests。
 
 ## 0. 一句话目标
 
@@ -580,8 +579,11 @@ bounded Restore 与显式运维。
 
 ## 12. Maintainer capability schema cutover
 
-durable layout、Store header、frozen input与block schema继续使用v4；manifest与publication envelope
-升级为v5，使canonical payload hash覆盖每个Maintain plan的
-`MaintainerCapabilityFingerprint`。v4 manifest/publication不提供兼容读取、默认值或current-ID
-推断。首次采用v5前必须显式处理旧sidecar：只有Building时执行`recap abandon-building`；存在
-Published membership时执行带exact `--confirm-ref`的`recap reset`，随后显式`recap run`重建。
+durable layout、Store header与block schema继续使用v4；manifest与publication envelope使用v6，
+frozen input使用v5。canonical payload hash覆盖每个Maintain plan的
+`MaintainerCapabilityFingerprint`以及 admission、source cursor、replay start、catch-up boundary 所需的
+exact governing-setup references。manifest/publication v5与frozen-input v4不提供兼容读取、默认值或
+current-ID推断。采用该 direct cut 前必须显式处理旧sidecar：只有Building时执行
+`recap abandon-building`；存在Published membership时执行带exact `--confirm-ref`的`recap reset`，随后
+显式`recap run`重建。这里定义 accepted durable target；current codec常量与reader language仍以Store
+README、`DerivedRecapCodec`及其focused tests为核验入口。

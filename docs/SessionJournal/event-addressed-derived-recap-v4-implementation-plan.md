@@ -1,6 +1,6 @@
 # SessionJournal EADR V4：实现与替换计划
 
-> **状态**：Implementation Plan
+> **状态**：Closed Completion Record / Mixed Historical
 > **日期**：2026-07-30
 > **核心概念**：
 > [EADR 核心概念](event-addressed-derived-recap-concepts.md)
@@ -13,9 +13,13 @@
 > **Post-C2 HistoryLoad 设计**：
 > [Derived Recap History Load](derived-recap-history-load-target-design.md)
 > **兼容策略**：不迁移、不双写、不读取 historical DerivedMemory v2/v3
-> **当前推进点**：R0～R3、Post-R3 C0～C3与 H0～H2均已完成。
-> 2026-07-31 production cadence已唯一切换到 HistoryLoad config V2，并以当前
+> **关闭边界**：R0～R3、Post-R3 C0～C3与 H0～H2均已完成。
+> 2026-07-31 production cadence已唯一切换到 HistoryLoad config V2，并以当时的
 > Galatea legacy export完成 deterministic real-repo acceptance。
+>
+> 本文保留工作分解、交付顺序与 commit/evidence map，既包含 closed completion record，也包含实施时的
+> historical plan 叙事；它不再承担 current API、wire 或 implementation-status authority。核对 current
+> 实现应读取对应 component README、code 与 focused tests。
 
 ## 0. 原则
 

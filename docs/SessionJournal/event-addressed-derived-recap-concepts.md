@@ -7,9 +7,10 @@
 >
 > 本文定义 current EADR V4 的领域术语与不变量。R0～R3 已完成 contracts、Store、Planner、
 > Maintainers、CLI/online composition、旧 DerivedMemory 删除与 real-data acceptance。目录布局、
-> checksum 和原子写入详见 target design；唯一 current实施状态与证据详见 implementation plan，
-> 避免多文档状态漂移。旧 P6 与更早实现只在明确标记的 historical/frozen 文档中继续按
-> DerivedMemory / ArtifactSet 名称解释。
+> checksum 与原子写入的 normative Shape/Rule 详见 target design；current API、wire 与实施状态必须
+> 以对应 component README、code 和 tests 为准。implementation plan 是已关闭的 delivery/evidence
+> record，不再承担 current 状态 authority。旧 P6 与更早实现只在明确标记的 historical/frozen
+> 文档中继续按 DerivedMemory / ArtifactSet 名称解释。
 
 ## 0. Authority
 
@@ -57,7 +58,10 @@ versioned estimator从 ordered HistoryUnits导出：
 - API failed/retry不形成 HistoryUnit，因此不贡献 HistoryLoad；
 - Building安装后，Resume/Restore不重新估算 HistoryLoad。
 
-C0～C2当前实现仍以 HistoryUnit count调度；后续 breaking cutover见
+current NewPlanning cadence 使用 repo-owned HistoryLoad config V2 与 versioned estimator；
+`HistoryUnit` count 只承担 window structure、baseline 对齐与 raw safety bound，不再是 scheduling
+trigger。Building/Resume/Restore 继续服从 frozen authority，不读取 active cadence config，也不重新测量
+HistoryLoad。设计与 cutover 约束见
 [Derived Recap History Load](derived-recap-history-load-target-design.md)。
 
 ### Context
