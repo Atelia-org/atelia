@@ -1,6 +1,9 @@
 # SessionJournal 首次生产运行前审阅计划
 
-状态：Review plan，2026-08-02
+状态：Completed / Archived，2026-08-02
+
+Current/evidence successor：[Beta contract snapshot](../../current/contracts/session-journal-beta-contract-snapshot.md) 与
+[first-production readiness review](../../evidence/first-production-readiness-review.md)。
 
 适用范围：
 

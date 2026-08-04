@@ -17,6 +17,6 @@
 
 Galatea 2026-08-01 exact G2A旧证据仍在
 [cutover completion record](../archive/completed-plans/galatea-session-journal-cutover-plan.md#g2arepeatable-staging-acceptancedone2026-08-01)；
-该completion record后续会进入`archive/`，这里的链接只用于历史审计。要针对current candidate重跑G2A，
+该completion record现已位于`archive/`，这里的链接只用于历史审计。要针对current candidate重跑G2A，
 必须使用[operations runbook](../operations/galatea-g2a-staging-acceptance.md)并生成本轮新的
 `Passed / Failed / NotRun` evidence，不能复制旧结果或只更新日期。

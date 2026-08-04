@@ -1,8 +1,11 @@
 # SessionJournal 语义保持型 Contract Normalization 审阅计划
 
-状态：Review plan，2026-08-03  
+状态：Completed / Archived，2026-08-03  
 Context baseline：`b7f9fa37ed9dcd5150077983e428b8d6646c64d9`  
 已验证的上一轮 product candidate：`681fc02bb9f1e4a45cd012aa7feadefe3f33fa9e`
+
+Current/evidence successor：[EADR contract normalization gate](../../current/derived-recap/concepts.md#contract-normalization-gate) 与
+[normalization review closeout](../../evidence/contract-normalization-review.md)。
 
 本文是 SessionJournal 首次生产运行前审阅的后续计划。上一轮已经证明当前 candidate 达到 Beta GO；本轮不以
 寻找更多 bug、优化性能或压缩代码行为主要目标，而是审阅能否用更少的独立概念、authority path 和 durable

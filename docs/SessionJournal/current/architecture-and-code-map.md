@@ -202,11 +202,13 @@ reader language、crash/recovery和authority边界审阅。
 
 ## 当前真实开放边界
 
-- **Planner static reachability guard**：`RecapPlannerConfigResolver`当前校验单字段、catalog与protocol hard caps，
+- **R-PLAN-01 — Planner static reachability guard**：`RecapPlannerConfigResolver`当前校验单字段、catalog与protocol hard caps，
   尚未用跨字段规则拒绝“在 `maxRawGrowthEventCount`内不可能达到 `R + B` HistoryLoad”的配置。
-- **Provider Started outcome uncertain**：Completion provider path目前只有默认 `Refuse`与显式
+- **Provider Started outcome uncertain**：详见[current safety contract](recovery/uncertain-external-effects.md)。
+  Completion provider path目前只有默认 `Refuse`与显式
   `RestartWithNewAttempt`；provider result lookup/reconciliation尚未实现，restart可能重复provider side effect。
-- **Tool continuation capability boundary**：这不由provider policy控制。`ToolExecutionStarted`冻结tool runtime
+- **Tool continuation capability boundary**：这不由provider policy控制，完整边界见
+  [current safety contract](recovery/uncertain-external-effects.md)。`ToolExecutionStarted`冻结tool runtime
   identity、operation id与execution sequence，Resume用同一reservation继续。只有天然幂等或Host能按operation id
   自行去重/查询结果的工具适合自动恢复；非幂等且结果不可查询的工具不得自动恢复。当前Core尚未提供按该
   side-effect capability自动选择resume/pause的策略层。
