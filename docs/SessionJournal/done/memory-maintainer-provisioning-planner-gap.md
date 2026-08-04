@@ -3,7 +3,7 @@
 > **状态**：Implemented / Superseded Historical Gap（DM-5～DM-8，2026-07-28）。
 > 本文保留提出问题时的历史快照，正文中的“当前缺口”“尚未实现”不再描述 current trunk。
 > current contracts、实现落点与验收以
-> [DerivedMemory 可替换子系统与 Shared Epoch 实施方案](../derived-memory-subsystem-implementation-plan.md)
+> [DerivedMemory 可替换子系统与 Shared Epoch 实施方案](derived-memory-subsystem-implementation-plan.md)
 > 为准。
 >
 > 日期：2026-07-27。
@@ -11,7 +11,7 @@
 > provisioning、调度、coherent publication 与生命周期管理能力，供后续 Coding Agent 建立上下文和
 > 拆分实施切片。本文不是已采纳的详细 API 设计。
 > **已采纳实施顺序**：
-> [DerivedMemory 可替换子系统与 Shared Epoch 实施方案](../derived-memory-subsystem-implementation-plan.md)。
+> [DerivedMemory 可替换子系统与 Shared Epoch 实施方案](derived-memory-subsystem-implementation-plan.md)。
 
 ## 1. 一句话结论
 

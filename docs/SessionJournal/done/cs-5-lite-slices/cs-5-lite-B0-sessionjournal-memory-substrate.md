@@ -12,7 +12,7 @@
 >
 > **后续退役（2026-07-27）**：B0 当时短期保留的
 > `prototypes/ChatSession/MemorySubstrate.cs` 已删除；本文正文保留当时迁移范围，
-> 现行边界见 [ChatSession Legacy Memory Substrate 退役](../legacy-memory-substrate-retirement.md)。
+> 现行边界见 [ChatSession Legacy Memory Substrate 退役](../../../ChatSession/legacy-memory-substrate-retirement.md)。
 
 ## 1. 目标
 

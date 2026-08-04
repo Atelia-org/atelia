@@ -8,7 +8,7 @@
 > `ChatSession.BacktestCli` 已拆为 `ChatSession.LegacyExportCli` 与
 > `SessionJournal.Cli`，legacy replay 实验入口已删除；现行命令为
 > `import-legacy-json` / `run-memory-maintainer`。详见
-> [CLI 拆分说明](../legacy-export-and-sessionjournal-cli-split.md)。
+> [CLI 拆分说明](../../../ChatSession/legacy-export-and-sessionjournal-cli-split.md)。
 
 ## 目的
 

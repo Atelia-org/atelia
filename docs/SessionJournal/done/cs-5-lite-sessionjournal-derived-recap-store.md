@@ -112,9 +112,9 @@ SessionJournal raw repo
   记录旧 ChatSession duplicate substrate 及 session-level maintainer API 的最终删除边界。
 - [ChatSessionContracts.cs](../../../prototypes/ChatSession/ChatSessionContracts.cs)
   `ContextHeader`、`RecapMessage`、`RecapSourceAnchor` 等旧 ChatSession context projection 类型。
-- [AutobiographicalRewriteProfiles.cs](../../../prototypes/SessionJournal.Maintainers/AutobiographicalRewriteProfiles.cs)
+- [AutobiographicalRewriteProfiles.cs（current successor）](../../../prototypes/SessionJournal.DerivedRecap.Maintainers/AutobiographicalRewriteProfiles.cs)
   后续可复用 profile 示例。
-- [WorldUnderstandingRewriteProfiles.cs](../../../prototypes/SessionJournal.Maintainers/WorldUnderstandingRewriteProfiles.cs)
+- [WorldUnderstandingRewriteProfiles.cs（current successor）](../../../prototypes/SessionJournal.DerivedRecap.Maintainers/WorldUnderstandingRewriteProfiles.cs)
   后续可复用 profile 示例。
 
 底层遍历相关：

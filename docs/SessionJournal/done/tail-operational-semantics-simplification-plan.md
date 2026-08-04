@@ -5,9 +5,9 @@
 > **设计基线（实施前）**：Prepared v5、CS-3D0～D7、DM-0～DM-8；
 > 第 1～5 节中的 “current” 若未另行标注，均指提交 `92bd049d` 时的实施前基线
 > **来源**：
-> [Tail Execution Recovery 后续化简候选](tail-execution-recovery-simplification-study.md)
+> [Tail Execution Recovery 后续化简候选](../tail-execution-recovery-simplification-study.md)
 > **相关实现记录**：
-> [Tail-only Execution Recovery Design](tail-execution-recovery-design.md)
+> [Tail-only Execution Recovery Design](../tail-execution-recovery-design.md)
 > **范围说明**：本文的 D0 / D1 是“化简候选 D”的内部子切片，不是历史
 > `CS-3D0` / `CS-3D1`。
 > **目标**：先删除 suffix fold 的隐式 seed 双路径，再共享稳定、无 IO 的局部 operational

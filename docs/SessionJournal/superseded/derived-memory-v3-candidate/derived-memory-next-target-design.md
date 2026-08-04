@@ -7,7 +7,7 @@
 > **配套计划**：
 > [DerivedMemory Next 实现与替换计划](derived-memory-next-implementation-plan.md)
 > **前置决策**：
-> [SessionJournal 恢复与 DerivedMemory 化简](session-journal-recovery-and-derived-memory-simplification-plan.md)
+> [SessionJournal 恢复与 DerivedMemory 化简](../../session-journal-recovery-and-derived-memory-simplification-plan.md)
 
 ## 0. 文档目的
 
