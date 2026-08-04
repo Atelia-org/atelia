@@ -66,8 +66,8 @@ rebuild 都服务于这条主线，不再各自形成一套平行领域模型。
 
 ### 1.1 Galatea MVP baseline
 
-首个真实 consumer 不是抽象的 artifact reader，而是
-[`cyber`](../../prototypes/Galatea/.atelia/galatea/prompts/cyber.md) 所定义的 Galatea。
+首个真实 consumer 不是抽象的 artifact reader，而是当时由machine-local/ignored path
+`prototypes/Galatea/.atelia/galatea/prompts/cyber.md` 定义的 Galatea；该路径不纳入tracked authority。
 V3 的最小 baseline 固定为一个静态 core coherence domain，包含两个 concrete required
 memory slots：
 

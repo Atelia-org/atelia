@@ -326,7 +326,8 @@ residual/accepted risks、未验证 assumptions、commit/candidate/verification 
 - **Done**：命令可重复运行，默认只扫描已治理 scope；先 report-only，观察稳定后才单独决定是否 gate。
 - **实施状态（2026-08-04）**：Done。默认15份tracked active/current入口为clean；stdlib fixture suite
   17/17。首次`--all-tracked --report-only`观察51份tracked Markdown，报告19项`MISSING_TARGET`，均位于
-  默认scope外的historical/done/superseded记录；本包不修历史链接、不接CI、不校验anchors。
+  默认scope外的historical/done/superseded记录；这是DG5的initial observation，不接CI、不校验anchors。
+  DG6 closeout后同一all-tracked corpus为51份 / 0项，默认scope仍为clean。
 
 ### DG6 — Conditional small-batch historical moves and link repair
 
@@ -334,6 +335,11 @@ residual/accepted risks、未验证 assumptions、commit/candidate/verification 
 - **Out of scope**：一次性大搬家、按文件名猜 lifecycle、移动仍承载 current/mixed safety claim 的文档。
 - **Validation**：每批枚举 inbound links、scripts/tests references 与 external operational references；移动前后 scoped checker通过；`git diff --check`；独立人工 review。
 - **Done**：若实施，每批可独立 revert、links 无断裂、commit明确 old→new mapping 且 retained evidence 不丢失；若成本或风险不合算，记录 retain-in-place decision 后关闭 DG6，不强求搬迁。
+- **实施状态（2026-08-04）**：Done / retain-in-place / no moves。逐项核对19条historical
+  `MISSING_TARGET`后，没有文档具有足以抵消inbound/external-reference风险的搬迁收益。DG6-A在
+  `ed83a310`修复12条相对路径与2条tracked Maintainers successor；DG6-B把剩余4条deleted code path和
+  1条machine-local/ignored prompt改为inline historical记录，不建立伪successor。两批均不删除、不移动
+  文档；all-tracked observation由51/19关闭为51/0。
 
 ## 12. High-risk documents: no mechanical moves
 

@@ -118,3 +118,7 @@ python scripts/check_session_journal_docs.py --all-tracked --report-only
 
 `--report-only`即使发现diagnostic也返回0，只供治理盘点；它不是CI gate，也不能把历史噪声解释成
 current文档失败。移除`--report-only`后，任何diagnostic都会返回1。
+
+2026-08-04 initial observation为51份tracked Markdown / 19项`MISSING_TARGET`。DG6选择
+retain-in-place、不移动historical文档，并分两批修复可解析successor、把无1:1 successor或ignored
+machine-local path改为诚实的inline historical记录；current closed observation为51份 / 0项。

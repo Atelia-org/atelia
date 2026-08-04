@@ -19,8 +19,10 @@ prototypes/SessionJournal.DerivedRecap.Maintainers/README.md
 # Audit-only/closed records are intentionally not default-scanned.  This includes
 # the EADR implementation completion record, normalization closeout, Galatea
 # cutover/calibration evidence, and tail/configuration recovery histories.  Their
-# known historical links remain observable with:
+# historical links remain observable with:
 #   python scripts/check_session_journal_docs.py --all-tracked --report-only
-# This is an explicit lifecycle boundary, not a claim that historical noise is clean.
+# This is an explicit lifecycle boundary, not a reason to promote closed records into default scope.
 # Initial 2026-08-04 observation: 51 tracked Markdown files, 19 MISSING_TARGET
 # diagnostics, all outside this default scope.
+# DG6 closed observation: retain-in-place/no moves; 51 tracked Markdown files,
+# 0 MISSING_TARGET diagnostics after two bounded historical-link repair batches.

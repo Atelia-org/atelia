@@ -92,22 +92,24 @@ SessionJournal raw repo
 
 主要代码入口：
 
-- [MemoryMaintainerRun.cs](../../../prototypes/SessionJournal.Cli/MemoryMaintainerRun.cs)
-  SessionJournal maintainer runner、addressed source 与 run record。
-- [MemoryMaintainerArtifactWriting.cs](../../../prototypes/SessionJournal.Cli/MemoryMaintainerArtifactWriting.cs)
-  SessionJournal Derived Recap writer、producer fingerprint、lineage preflight 与写入边界。
+- historical path `prototypes/SessionJournal.Cli/MemoryMaintainerRun.cs`：当时的 SessionJournal
+  maintainer runner、addressed source 与 run record；由 `df8e3044` 删除，无 1:1 current successor。
+- historical path `prototypes/SessionJournal.Cli/MemoryMaintainerArtifactWriting.cs`：当时的
+  SessionJournal Derived Recap writer、producer fingerprint、lineage preflight 与写入边界；由
+  `5c4d8327` cutover删除，无 1:1 current successor。
 - [Program.cs](../../../prototypes/SessionJournal.Cli/Program.cs)
   SessionJournal CLI 命令入口、connection 配置和 maintainer profile 参数。
 - [SessionJournalLegacyImporter.cs](../../../prototypes/SessionJournal.Cli/SessionJournalLegacyImporter.cs)
   legacy export -> SessionJournal repo importer；已跳过 legacy recap / compaction。
 - [SessionJournalEngine.cs](../../../prototypes/SessionJournal/SessionJournalEngine.cs)
   SessionJournal open/project/append/resolver 主入口。
-- [SessionReducer.cs](../../../prototypes/SessionJournal/SessionReducer.cs)
-  raw events -> `SessionProjection` 的纯 reducer。
+- historical path `prototypes/SessionJournal/SessionReducer.cs`：当时的 raw events ->
+  `SessionProjection` 纯 reducer；由 `34ad34e7` 删除，无 1:1 current successor。
 - [SessionJournalContracts.cs](../../../prototypes/SessionJournal/SessionJournalContracts.cs)
   `SessionEventKind`、`SessionProjection`、`SessionGoverningSetup` 等契约。
-- [SessionMemoryContracts.cs](../../../prototypes/SessionJournal/SessionMemoryContracts.cs)
-  新 SessionJournal 主干的 `MemoryPack`、`SessionContextHeader`、maintainer/orchestrator substrate。
+- historical path `prototypes/SessionJournal/SessionMemoryContracts.cs`：当时 SessionJournal主干的
+  `MemoryPack`、`SessionContextHeader`、maintainer/orchestrator substrate；由 `44e535a7` contract
+  cutover删除，无 1:1 current successor。
 - [ChatSession Legacy Memory Substrate 退役](../../ChatSession/legacy-memory-substrate-retirement.md)
   记录旧 ChatSession duplicate substrate 及 session-level maintainer API 的最终删除边界。
 - [ChatSessionContracts.cs](../../../prototypes/ChatSession/ChatSessionContracts.cs)
