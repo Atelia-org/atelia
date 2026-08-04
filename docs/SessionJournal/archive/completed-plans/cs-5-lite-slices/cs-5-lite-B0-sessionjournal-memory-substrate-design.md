@@ -10,7 +10,7 @@
 >
 > **后续退役（2026-07-27）**：B0 当时允许短期并存的旧 ChatSession substrate
 > 已删除；现行边界见
-> [ChatSession Legacy Memory Substrate 退役](../../../ChatSession/legacy-memory-substrate-retirement.md)。
+> [ChatSession Legacy Memory Substrate 退役](../../../../ChatSession/legacy-memory-substrate-retirement.md)。
 
 ## 1. 结论
 

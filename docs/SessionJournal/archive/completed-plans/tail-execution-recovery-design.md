@@ -3,19 +3,19 @@
 > **状态**：Completion Record / Historical / CS-3D0～CS-3D7 已完成
 > **文档角色**：记录 CS-3D 的 cut-time design、实施切片与当时验收；不拥有 current API、wire或
 > implementation status。current 默认入口是
-> [Core guide](../../prototypes/SessionJournal/README.md#send-与-recovery)、current code与focused tests。
+> [Core guide](../../../../prototypes/SessionJournal/README.md#send-与-recovery)、current code与focused tests。
 > **日期**：2026-07-27
 > **建议路线编号**：CS-3D
 > **前置实现**：CS-3A governing setup checkpoint、CS-3B dependency-closed tail context、
 > CS-3C committed request recovery
 > **相关文档**：
-> [Configuration Access Notes](session-configuration-access-notes.md)、
-> [SessionJournal 主干设计](session-journal-trunk-design.md)、
-> [SessionJournal 架构路线图](event-sourced-session-architecture-roadmap.md)、
-> [CS-3D 实施后化简调研](tail-execution-recovery-simplification-study.md)、
-> [候选 D0/D1 实施计划](done/tail-operational-semantics-simplification-plan.md)、
-> [CS-3D6 Coherent-only Manifest 化简计划](done/coherent-request-manifest-simplification-plan.md)
-> **D7 协议修订**：[Prepared / Provider Attempt 对称化](done/prepared-provider-attempt-symmetry-design.md)
+> [Configuration Access Notes](../studies/session-configuration-access-notes.md)、
+> [SessionJournal 主干设计](../superseded/session-journal-trunk-design.md)、
+> [SessionJournal 架构路线图](../studies/event-sourced-session-architecture-roadmap.md)、
+> [CS-3D 实施后化简调研](../studies/tail-execution-recovery-simplification-study.md)、
+> [候选 D0/D1 实施计划](tail-operational-semantics-simplification-plan.md)、
+> [CS-3D6 Coherent-only Manifest 化简计划](coherent-request-manifest-simplification-plan.md)
+> **D7 协议修订**：[Prepared / Provider Attempt 对称化](prepared-provider-attempt-symmetry-design.md)
 
 > **P5 supersession（2026-07-29）**：本文保留 CS-3D 的实施过程和当时 differential
 > oracle 设计，不再描述 current full-audit API。P5-D 已删除 public full projection/replay、
@@ -25,7 +25,7 @@
 
 > **Prepared v5 / DM-8 supersession（2026-07-28）**：本文下文出现的 Prepared v3、exact
 > activation、raw derived-set event 或 inline artifact identity 均为历史实现记录，已由
-> [Derived Memory Subsystem Implementation Plan](done/derived-memory-subsystem-implementation-plan.md) 的
+> [Derived Memory Subsystem Implementation Plan](derived-memory-subsystem-implementation-plan.md) 的
 > DM-2/DM-8 breaking wire 替代。current Prepared v5 保存
 > `RawStartSetups + ExactContextInputs`：anchor setup refs
 > 由 controlled writer 在 append 前通过 request reconstruction、canonical exact check、
@@ -44,8 +44,8 @@
 > `SessionExecutionTailResolver` 始终保持 raw-only，只有未 Prepared 的 request-context
 > planning/materialization 注入该 provider；Prepared/Started exact reopen 不读取 derived subsystem。
 > current 实施见
-> [DerivedMemory 实施方案](done/derived-memory-subsystem-implementation-plan.md)；原 provisioning 问题见
-> [历史缺口备忘](done/memory-maintainer-provisioning-planner-gap.md)。
+> [DerivedMemory 实施方案](derived-memory-subsystem-implementation-plan.md)；原 provisioning 问题见
+> [历史缺口备忘](memory-maintainer-provisioning-planner-gap.md)。
 
 > **历史正文解释规则**：除上面的 supersession/current replacement 说明外，正文中的“当前”、
 > `Project()`、`ReplayHistory()`、`SessionReducer`、ArtifactSet activation与 DerivedMemory均指

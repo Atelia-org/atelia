@@ -23,9 +23,9 @@ contract。
 新会话应先按顺序读取：
 
 1. 本文；
-2. [`first-production-readiness-review.md`](evidence/first-production-readiness-review.md)：
+2. [`first-production-readiness-review.md`](../../evidence/first-production-readiness-review.md)：
    上一轮 findings、修复 commit map 与 R4 证据；
-3. [`session-journal-beta-contract-snapshot.md`](current/contracts/session-journal-beta-contract-snapshot.md)：当前 Beta support surface、
+3. [`session-journal-beta-contract-snapshot.md`](../../current/contracts/session-journal-beta-contract-snapshot.md)：当前 Beta support surface、
    A/B/C wire 与 residual risks；
 4. [`session-journal-first-production-readiness-review-plan.md`](session-journal-first-production-readiness-review-plan.md)：
    五包审阅方法、finding 格式与稳定性分级；

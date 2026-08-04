@@ -9,10 +9,10 @@
 > **上位设计**：
 > [Event-addressed Derived Recap V4](durable-target.md)
 > **前置实现**：
-> [Derived Recap Cadence](../../derived-recap-cadence-target-design.md)、
+> [Derived Recap Cadence](../../archive/superseded/derived-recap-cadence-target-design.md)、
 > [Repo-owned RecapPlannerConfig](planner-config.md)
 > **施工计划**：
-> [EADR V4 实现与替换计划](../../event-addressed-derived-recap-v4-implementation-plan.md)
+> [EADR V4 实现与替换计划](../../archive/completed-plans/event-addressed-derived-recap-v4-implementation-plan.md)
 >
 > **章节角色**：§0～§7、§9记录accepted target/current rules；§8是H0～H2/C3的
 > historical closed delivery record，不承担current implementation status。
@@ -513,7 +513,7 @@ Host-owned、estimator-scoped、可删除重建的cache；本结论不授权 per
 ## 8. 实施 gates
 
 H0～H2/C3当时采用的delivery order与closing evidence记录在
-[EADR V4 implementation completion record](../../event-addressed-derived-recap-v4-implementation-plan.md)：
+[EADR V4 implementation completion record](../../archive/completed-plans/event-addressed-derived-recap-v4-implementation-plan.md)：
 
 ```text
 H0 unit estimator + window projector + golden vectors + Galatea calibration

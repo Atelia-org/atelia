@@ -8,7 +8,7 @@
 > 也不替代 code、wire codec、component README 或后续 domain router。
 
 本文关闭
-[SessionJournal 文档治理计划](../session-journal-document-governance-plan.md) 的 DG1。核验发生在上面的
+[SessionJournal 文档治理计划](../archive/completed-plans/session-journal-document-governance-plan.md) 的 DG1。核验发生在上面的
 exact full commit；本包只修正文档，未把基线机械提升到修正文档后的 commit。DG2 只能发布本报告中
 `Accept` 或已经落实文字修正的 `Modify` entry，不能把未核验的文档标题或整篇文档提升为 current
 authority。

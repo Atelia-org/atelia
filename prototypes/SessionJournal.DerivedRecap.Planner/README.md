@@ -664,4 +664,4 @@ dotnet test \
 2. [V4 target design](../../docs/SessionJournal/current/derived-recap/durable-target.md)
 3. [HistoryLoad target design](../../docs/SessionJournal/current/derived-recap/history-load.md)
 4. [Repo-owned planner config](../../docs/SessionJournal/current/derived-recap/planner-config.md)
-5. [V4 implementation plan and evidence](../../docs/SessionJournal/event-addressed-derived-recap-v4-implementation-plan.md)
+5. [V4 implementation plan and evidence](../../docs/SessionJournal/archive/completed-plans/event-addressed-derived-recap-v4-implementation-plan.md)

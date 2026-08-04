@@ -11,7 +11,7 @@
 > `prototypes/SessionJournal.Cli`。
 > **目标**：寻找**设计层面**需要修正的问题与化简机会，而不是逐行 code review。
 > **与既有审阅的关系**：
-> - [contract normalization 审阅报告](evidence/contract-normalization-review.md)
+> - [contract normalization 审阅报告](../../evidence/contract-normalization-review.md)
 >   已关闭 public surface 收口类问题（N-A..N-E）；
 > - [V4 化简候选](event-addressed-derived-recap-v4-simplification-candidate.md)
 >   已关闭 durable model 层的化简；
@@ -66,15 +66,15 @@
   库本身不提供 cadence 默认）：
   `minimumRecentHistoryLoad = 18000`、`recapBuildIntervalHistoryLoad = 21000`，
   触发条件是 `G >= R + B`，即**自 cadence baseline 起累计 ≥ 39,000 HistoryLoad token**。
-- raw safety 门（[RecapPlanEvaluator.cs](../../prototypes/SessionJournal.DerivedRecap.Planner/RecapPlanEvaluator.cs#L66-L80)）：
+- raw safety 门（[RecapPlanEvaluator.cs](../../../../prototypes/SessionJournal.DerivedRecap.Planner/RecapPlanEvaluator.cs#L66-L80)）：
   `rawGrowthEventCount` = cadence baseline 在 lineage 中的**下标**（raw event 个数），
   `> limits.MaxRawGrowthEventCount` 即返回 `Unavailable(MaxRawGrowthEventCountExceeded)`。
 - 硬上限 `RecapProtocolHardCaps.V4.MaxRawGrowthEventCount = 512`
-  （[RecapPlannerContracts.cs](../../prototypes/SessionJournal.DerivedRecap.Planner/RecapPlannerContracts.cs#L231-L243)），
+  （[RecapPlannerContracts.cs](../../../../prototypes/SessionJournal.DerivedRecap.Planner/RecapPlannerContracts.cs#L231-L243)），
   且 `ValidatePlanningLimits` 用 `RequireAtMost` 只允许 config **收紧**
-  （[RecapPlannerContracts.cs](../../prototypes/SessionJournal.DerivedRecap.Planner/RecapPlannerContracts.cs#L292-L318)）。
+  （[RecapPlannerContracts.cs](../../../../prototypes/SessionJournal.DerivedRecap.Planner/RecapPlannerContracts.cs#L292-L318)）。
 - 该 defect 在 online 路径被映射为 `Backpressure`
-  （[DerivedRecapOnlineLifecycleCoordinator.cs](../../prototypes/SessionJournal.DerivedRecap.Planner/DerivedRecapOnlineLifecycleCoordinator.cs#L680-L688)），
+  （[DerivedRecapOnlineLifecycleCoordinator.cs](../../../../prototypes/SessionJournal.DerivedRecap.Planner/DerivedRecapOnlineLifecycleCoordinator.cs#L680-L688)），
   即**拒绝本次 completion**。
 - raw safety 在 cadence/estimator **之前**执行，因此一旦越界，无论 cadence 配置如何都不再进入 build。
 
@@ -142,9 +142,9 @@
 
 | 位置 | 表达式 | 所属程序集 |
 |---|---|---|
-| [DerivedRecapLineageView.cs](../../prototypes/SessionJournal.DerivedRecap.Store/DerivedRecapLineageView.cs#L12) | `internal const int MaxHeaderCount = 513;` | Store |
-| [RecapFrozenPlanBarrier.cs](../../prototypes/SessionJournal.DerivedRecap.Planner/RecapFrozenPlanBarrier.cs#L41) | `internal const int MaxHeaderCount = 513;` | Planner |
-| [DerivedRecapOnlineLifecycleCoordinator.cs](../../prototypes/SessionJournal.DerivedRecap.Planner/DerivedRecapOnlineLifecycleCoordinator.cs#L302) | `RecapProtocolHardCaps.V4.MaxRawGrowthEventCount + 1` | Planner |
+| [DerivedRecapLineageView.cs](../../../../prototypes/SessionJournal.DerivedRecap.Store/DerivedRecapLineageView.cs#L12) | `internal const int MaxHeaderCount = 513;` | Store |
+| [RecapFrozenPlanBarrier.cs](../../../../prototypes/SessionJournal.DerivedRecap.Planner/RecapFrozenPlanBarrier.cs#L41) | `internal const int MaxHeaderCount = 513;` | Planner |
+| [DerivedRecapOnlineLifecycleCoordinator.cs](../../../../prototypes/SessionJournal.DerivedRecap.Planner/DerivedRecapOnlineLifecycleCoordinator.cs#L302) | `RecapProtocolHardCaps.V4.MaxRawGrowthEventCount + 1` | Planner |
 
 **问题**
 
@@ -248,7 +248,7 @@ bounded prefix header 上限 >= MaxRawGrowthEventCount + 1
 
 **证据**
 
-- [SessionJournalOfflineValidator.cs](../../prototypes/SessionJournal.Offline/SessionJournalOfflineValidator.cs#L44-L80)：
+- [SessionJournalOfflineValidator.cs](../../../../prototypes/SessionJournal.Offline/SessionJournalOfflineValidator.cs#L44-L80)：
   用 `SessionJournalOfflineForwardFold`（833 行，前向）折叠一遍，再与
   `scan.ExecutionStateAtCapturedHead`（由 `SessionExecutionTailResolver`，916 行，后向解析）
   比较，不一致即 `throw new InvalidDataException("... disagree at captured head ...")`；
@@ -261,7 +261,7 @@ bounded prefix header 上限 >= MaxRawGrowthEventCount + 1
 
 **建议**：保留，但明确记录为「刻意冗余」并加一条约束：
 tail 语义的规范变更必须先改
-[tail-execution-recovery-design.md](tail-execution-recovery-design.md)，
+[tail-execution-recovery-design.md](../completed-plans/tail-execution-recovery-design.md)，
 再同时改两份实现，且必须有一个 test 证明**故意引入的单侧偏差会被 validator 捕获**
 （当前是否有这样的 mutation test 待确认，见台账 B1）。
 
@@ -515,7 +515,7 @@ ToolExecutionStarted / ToolResultObserved
 2. `SessionJournalOfflineForwardFold` 保留其**统计与 semantic commitment** 职责，
    状态机部分改为调用共享实现；
 3. 保留后向 `SessionExecutionTailResolver` 作为独立 oracle，并在
-   [tail-execution-recovery-design.md](tail-execution-recovery-design.md) 中
+   [tail-execution-recovery-design.md](../completed-plans/tail-execution-recovery-design.md) 中
    显式记录「前向 1 份 + 后向 1 份 = 刻意的 2-version 冗余」，
    避免将来又长出第三、第四份。
 
@@ -702,7 +702,7 @@ CLI 与 Galatea 的装配还存在直接重复：
 
 | Finding | 实际做法 | 与本文建议的差异 |
 |---|---|---|
-| **R-HOST-01** | 在 `SessionJournalEngine` 上加 mutation gate（`Interlocked.CompareExchange` + 租约），覆盖 Send/Resume/appends/UseRuntime/reconcile/abandon/rewind/Dispose 共 12 个入口；Galatea 侧让 disposal 与 turn lock 串行 | 与本文「fail-closed 重入守卫」建议一致。实现见 [SessionJournalMutationContracts.cs](../../prototypes/SessionJournal/SessionJournalMutationContracts.cs) |
+| **R-HOST-01** | 在 `SessionJournalEngine` 上加 mutation gate（`Interlocked.CompareExchange` + 租约），覆盖 Send/Resume/appends/UseRuntime/reconcile/abandon/rewind/Dispose 共 12 个入口；Galatea 侧让 disposal 与 turn lock 串行 | 与本文「fail-closed 重入守卫」建议一致。实现见 [SessionJournalMutationContracts.cs](../../../../prototypes/SessionJournal/SessionJournalMutationContracts.cs) |
 | **R-XCUT-01** | 集中 lineage prefix ceiling，并规避跨程序集 `const` 内联；**保留** Store ceiling / Frozen horizon / Online raw-growth horizon 三者的语义区分 | 比本文建议更精细：本文把三处当作同一常量的复制，实施方判定它们语义不同，只统一来源不统一含义 |
 | **R-STORE-01** | **未**合并 Building/Published 两套 authority world；改为让 checkpoint 成功结果携带 Store 签发的 refreshed `BuildingBlockWriteAuthority`，删除 Planner happy path 的重复 inspection | 与本文建议方向不同。本文主张引入 `RecapSetContainer` 统一 phase；实施方选择了侵入性小得多的局部改进 |
 

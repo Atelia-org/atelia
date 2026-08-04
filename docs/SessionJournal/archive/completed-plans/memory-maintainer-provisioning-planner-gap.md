@@ -24,7 +24,7 @@ coherent ArtifactSet。
 
 候选 C / DM-4 已将 coherent ArtifactSet definition/publication 移入 derived sidecar；raw
 SessionJournal 不再引用 derived set 或 artifact id。详见
-[`tail-execution-recovery-simplification-study.md`](../tail-execution-recovery-simplification-study.md)。
+[`tail-execution-recovery-simplification-study.md`](../studies/tail-execution-recovery-simplification-study.md)。
 
 Derived ArtifactSet 也不应只是“仍放在 SessionJournal 程序集里的另一种 store”。其具体维护、存储、
 lineage、indexes、provisioning 和 candidate discovery 应进入独立、可替换的 DerivedMemory 子系统；
@@ -473,7 +473,7 @@ self-contained wire cut、raw activation 删除和 producer 迁移应各自 revi
 重复 substrate 调查已于 2026-07-27 收口：旧
 `prototypes/ChatSession/MemorySubstrate.cs` 及其 session-level maintainer API 已删除，
 `prototypes/SessionJournal/SessionMemoryContracts.cs` 是唯一继续演化的实现。详见
-[ChatSession Legacy Memory Substrate 退役](../../ChatSession/legacy-memory-substrate-retirement.md)。
+[ChatSession Legacy Memory Substrate 退役](../../../ChatSession/legacy-memory-substrate-retirement.md)。
 若未来抽取独立 substrate 项目，仍应作为有意识的 dependency refactor，而不是重新复制一份实现。
 
 ### MMP-C：coherence-group epoch 与并行 producer

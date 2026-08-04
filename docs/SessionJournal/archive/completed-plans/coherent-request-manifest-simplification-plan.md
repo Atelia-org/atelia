@@ -2,8 +2,8 @@
 
 > **状态**：Complete / CS-3D6A～D6E 已实施并验收
 > **日期**：2026-07-27
-> **前置基线**：[Tail-only Execution Recovery Design](../tail-execution-recovery-design.md)
-> **来源调研**：[Tail Execution Recovery 化简调研](../tail-execution-recovery-simplification-study.md)
+> **前置基线**：[Tail-only Execution Recovery Design](tail-execution-recovery-design.md)
+> **来源调研**：[Tail Execution Recovery 化简调研](../studies/tail-execution-recovery-simplification-study.md)
 > **目标读者**：负责逐切片具体设计、实施、review 与验收的 Coding Agent
 
 ## 0. 决策摘要

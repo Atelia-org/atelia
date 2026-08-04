@@ -4,11 +4,11 @@
 > **日期**：2026-07-29
 > **适用基线**：2026-07-29 的 Prepared v5 + DM-0～DM-8 historical snapshot
 > **相关文档**：
-> [事件源会话与长期上下文架构路线图](event-sourced-session-architecture-roadmap.md)、
-> [DerivedMemory 已实施方案](done/derived-memory-subsystem-implementation-plan.md)、
-> [Tail Execution Recovery 后续化简候选](tail-execution-recovery-simplification-study.md)、
-> [EADR 核心概念](current/derived-recap/concepts.md)、
-> [Event-addressed Derived Recap V4 目标设计](current/derived-recap/durable-target.md)、
+> [事件源会话与长期上下文架构路线图](../studies/event-sourced-session-architecture-roadmap.md)、
+> [DerivedMemory 已实施方案](derived-memory-subsystem-implementation-plan.md)、
+> [Tail Execution Recovery 后续化简候选](../studies/tail-execution-recovery-simplification-study.md)、
+> [EADR 核心概念](../../current/derived-recap/concepts.md)、
+> [Event-addressed Derived Recap V4 目标设计](../../current/derived-recap/durable-target.md)、
 > [EADR V4 实现与替换计划](event-addressed-derived-recap-v4-implementation-plan.md)
 
 > **冻结说明（2026-07-30）**：本文从 §0 起的 “current”、P1～P6、DerivedMemory、epoch、
@@ -16,8 +16,8 @@
 > 不再描述 trunk 当前架构，也不得作为新实现入口。EADR V4 已将职责拆为 DerivedRecap Store、
 > Planner 与 Maintainers；`NthPrevious` 沿 raw Parent chain 计数 Published Recap directories，
 > payload损坏时 exact ordinal not-ready，不跳过、不重编号。当前 vocabulary/Shape/Rule 以
-> [EADR 核心概念](current/derived-recap/concepts.md)、
-> [V4 目标设计](current/derived-recap/durable-target.md)与
+> [EADR 核心概念](../../current/derived-recap/concepts.md)、
+> [V4 目标设计](../../current/derived-recap/durable-target.md)与
 > [V4 实现计划](event-addressed-derived-recap-v4-implementation-plan.md)为准。本文正文保持冻结，
 > 用于解释 P1～P6 的决策来源和迁移历史。
 
@@ -322,7 +322,7 @@ protocol/audit substrate 或其他正常程序集边界解决访问问题。
 ## 4. 其余 DerivedMemory 术语的白话说明与阶段判断
 
 > 本节只解释 current P6 baseline 的命名与当时阶段判断。EADR V4 的 canonical vocabulary 已迁移到
-> [EADR 核心概念](current/derived-recap/concepts.md)；其中 Recap / Memory / Context、
+> [EADR 核心概念](../../current/derived-recap/concepts.md)；其中 Recap / Memory / Context、
 > Building / Published、SetAdmissionAnchor / AbsorbedThrough、Maintain / Inherit / rolling
 > catch-up、Resume / Restore / Rebuild 的定义不由本节覆盖。
 

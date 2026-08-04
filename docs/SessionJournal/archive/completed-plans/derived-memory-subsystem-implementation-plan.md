@@ -9,10 +9,10 @@
 > `SessionJournal.Maintainers` companion assembly
 > **目标基线**：current Prepared v5 + DM-0～DM-8；后续以 breaking wire / derived rebuild 方式演进
 > **上游决策**：
-> [Tail Execution Recovery 化简调研](../tail-execution-recovery-simplification-study.md)、
+> [Tail Execution Recovery 化简调研](../studies/tail-execution-recovery-simplification-study.md)、
 > [MemoryMaintainer Provisioning / Planner 历史缺口](memory-maintainer-provisioning-planner-gap.md)、
-> [SessionJournal 事件源会话与长期上下文架构路线图](../event-sourced-session-architecture-roadmap.md)、
-> [Legacy ChatSession Export / SessionJournal CLI 拆分](../../ChatSession/legacy-export-and-sessionjournal-cli-split.md)
+> [SessionJournal 事件源会话与长期上下文架构路线图](../studies/event-sourced-session-architecture-roadmap.md)、
+> [Legacy ChatSession Export / SessionJournal CLI 拆分](../../../ChatSession/legacy-export-and-sessionjournal-cli-split.md)
 > **用途**：记录已实施的 authority、contracts、迁移、验收与后续非目标；不再作为待领取分片计划。
 
 ## 0. 执行结论

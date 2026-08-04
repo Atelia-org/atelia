@@ -3,7 +3,7 @@
 > **状态**：Active repeatable procedure / exact-export-scoped  
 > **日期**：2026-08-01  
 > **上位计划**：
-> [Galatea → SessionJournal + DerivedRecap cutover plan](../galatea-session-journal-cutover-plan.md)
+> [Galatea → SessionJournal + DerivedRecap cutover plan](../archive/completed-plans/galatea-session-journal-cutover-plan.md)
 >
 > **验证边界**：procedure surface已在
 > `eda5ee979b5df1ab383fddf20d0691bb891a00d1` against current CLI/Galatea deterministic scope复核；

@@ -3,10 +3,10 @@
 > 状态：Historical Implementation Notes / Closed / CS-3A～CS-3D7 + DM-0～DM-8
 > 文档角色：保留 governing setup checkpoint 的设计理由、历史实施演进与验收记录；不拥有 current
 > public API。current 默认入口是
-> [Core guide §Setup 变更](../../prototypes/SessionJournal/README.md#setup-变更)、current resolver/code/tests。
+> [Core guide §Setup 变更](../../../../prototypes/SessionJournal/README.md#setup-变更)、current resolver/code/tests。
 > 日期：2026-07-27
-> 相关文档：[SessionJournal 主干设计基线](session-journal-trunk-design.md)、
-> [Tail-only Execution Recovery Design](tail-execution-recovery-design.md)、
+> 相关文档：[SessionJournal 主干设计基线](../superseded/session-journal-trunk-design.md)、
+> [Tail-only Execution Recovery Design](../completed-plans/tail-execution-recovery-design.md)、
 > [SessionJournal 事件源会话与长期上下文架构路线图](event-sourced-session-architecture-roadmap.md)
 
 > **P5 supersession（2026-07-29）**：本文正文混合记录多轮历史方案。出现的 public full
@@ -14,14 +14,14 @@
 > P5-D 已删除这些 surface。current configuration access 使用 exact-head
 > `ResolveGoverningSetup()`，execution 使用 tail recovery，history/provenance 使用 bounded
 > planning window；全链审计仅在 `SessionJournal.Offline` companion 中执行。现行边界见
-> [恢复与 DerivedMemory 化简计划](session-journal-recovery-and-derived-memory-simplification-plan.md)。
+> [恢复与 DerivedMemory 化简计划](../completed-plans/session-journal-recovery-and-derived-memory-simplification-plan.md)。
 
 > **DM-8 边界说明（2026-07-28）**：本文下文记录的 raw derived-set setup checkpoint 是
 > CS-3D5～D7 的历史实现，不再是 current contract。raw activation 已删除；近头 Prepared
 > 提供 raw setup hint，首次 Prepared 前可由可重建 DerivedMemory candidate hint 加速，但
 > authoritative fallback 仍是 raw header parent walk。DerivedMemory 作为独立可替换程序集只参与未
 > Prepared 的 context planning，不能进入 `SessionExecutionTailResolver` 或 Prepared exact reopen。
-> 详见 [DerivedMemory 实施方案](done/derived-memory-subsystem-implementation-plan.md)。
+> 详见 [DerivedMemory 实施方案](../completed-plans/derived-memory-subsystem-implementation-plan.md)。
 
 > **历史正文解释规则**：正文混合了仍有效的 setup authority不变量与 CS-3/DM cut-time实现记录。
 > 出现 `Project()`、`ReplayHistory()`、`SessionReducer`、raw ArtifactSet activation或旧
@@ -535,7 +535,7 @@ near-head checkpoint 恢复。Planner policy 可以先选择 full raw fallback�
 
 > 本节只记录 D7 前的 P/R 协议事实；下文的 Restarted、attempt id 与旧 recovery policy 均非 current
 > API。current P/S 合同以
-> [CS-3D7 设计收口](done/prepared-provider-attempt-symmetry-design.md) 固定的 attempt topology 为准；
+> [CS-3D7 设计收口](../completed-plans/prepared-provider-attempt-symmetry-design.md) 固定的 attempt topology 为准；
 > 该文当时使用 Prepared v3，DM-8 已把 current request wire 升级为 Prepared v5。
 > Prepared 保存 request/origin，Started event address 保存 attempt identity，live terminal topology 只有
 > `Prepared -> Started+ -> Action/Failed`；旧 kind 11 已 retired。
@@ -627,7 +627,7 @@ prompt-only 的 post-activation mutation 仍由 suffix 正确吸收。
 
 不能把 CS-3 的 context fold 静默推广成通用 execution reducer seed，也不能让 resolver 越过最近
 Prepared/Action checkpoint 重验完整 autonomous loop。具体职责、事件协议和实施切片见
-[Tail-only Execution Recovery Design](tail-execution-recovery-design.md)。
+[Tail-only Execution Recovery Design](../completed-plans/tail-execution-recovery-design.md)。
 
 ## 9. Cut-time 验收矩阵（Historical）
 

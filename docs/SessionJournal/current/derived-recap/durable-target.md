@@ -5,21 +5,21 @@
 > **核心概念**：
 > [EADR 核心概念](concepts.md)
 > **配套计划**：
-> [EADR V4 实现与替换计划](../../event-addressed-derived-recap-v4-implementation-plan.md)
+> [EADR V4 实现与替换计划](../../archive/completed-plans/event-addressed-derived-recap-v4-implementation-plan.md)
 > **Post-R3 配置设计**：
 > [Repo-owned RecapPlannerConfig](planner-config.md)
 > **Post-R3 Cadence 设计**：
-> [Derived Recap Cadence](../../derived-recap-cadence-target-design.md)
+> [Derived Recap Cadence](../../archive/superseded/derived-recap-cadence-target-design.md)
 > **Post-C2 HistoryLoad 设计**：
 > [Derived Recap History Load](history-load.md)
 > **Post-C3 Host integration 设计**：
 > [DerivedRecap Host Integration](../host-integration/derived-recap-host-integration.md)
 > **Galatea cutover 计划**：
-> [Galatea → SessionJournal + DerivedRecap](../../galatea-session-journal-cutover-plan.md)
+> [Galatea → SessionJournal + DerivedRecap](../../archive/completed-plans/galatea-session-journal-cutover-plan.md)
 > **化简审阅记录**：
-> [V4 化简候选](../../event-addressed-derived-recap-v4-simplification-candidate.md)
+> [V4 化简候选](../../archive/reviews/event-addressed-derived-recap-v4-simplification-candidate.md)
 > **取代的候选设计**：
-> [DerivedMemory V3 candidate](../../superseded/derived-memory-v3-candidate/derived-memory-next-target-design.md)
+> [DerivedMemory V3 candidate](../../archive/superseded/derived-memory-v3-candidate/derived-memory-next-target-design.md)
 > **文档边界**：本文维护 EADR 的 normative Target Shape / Rule，不是 current API、wire 或
 > implementation-status owner。R0～R3、C0～C3 与 H0～H2 的交付及验收已经关闭；历史 commit/evidence
 > map 见 implementation completion record。核对 current 实现时应读取对应 component README、code

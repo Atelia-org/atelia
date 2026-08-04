@@ -5,7 +5,7 @@ Review baseline：`2ccd67150373360a1230dd22c195b4ec100ac0bb`
 Product candidate：`681fc02bb9f1e4a45cd012aa7feadefe3f33fa9e`
 
 本文是
-[`session-journal-first-production-readiness-review-plan.md`](../session-journal-first-production-readiness-review-plan.md)
+[`session-journal-first-production-readiness-review-plan.md`](../archive/completed-plans/session-journal-first-production-readiness-review-plan.md)
 的综合结论。原始盲审报告和 run-specific 验收证据保存在
 `gitignore/session-journal/reviews/2026-08-02-production-readiness/`，不作为 contract authority。
 

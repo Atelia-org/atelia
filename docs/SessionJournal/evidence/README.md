@@ -16,7 +16,7 @@
 | [Contract normalization review](contract-normalization-review.md) | N0～N5 candidate ledger、Adopt/Retain/Reject/Defer理由与contract-preservation evidence | execution baseline `cd804c39cf96499167c80e5d046fb21e4d3b8c7d`；implementation candidate `49ebb4634e5b4136032db983dd92a9a4560b33eb`；`81a1fa24`只增加tests/runbook，本轮provider calls为0且staging evidence是scripted | 再提contract合并/删除proof redundancy时，复核已裁决方案与重新开启条件 |
 
 Galatea 2026-08-01 exact G2A旧证据仍在
-[cutover completion record](../galatea-session-journal-cutover-plan.md#g2arepeatable-staging-acceptancedone2026-08-01)；
+[cutover completion record](../archive/completed-plans/galatea-session-journal-cutover-plan.md#g2arepeatable-staging-acceptancedone2026-08-01)；
 该completion record后续会进入`archive/`，这里的链接只用于历史审计。要针对current candidate重跑G2A，
 必须使用[operations runbook](../operations/galatea-g2a-staging-acceptance.md)并生成本轮新的
 `Passed / Failed / NotRun` evidence，不能复制旧结果或只更新日期。

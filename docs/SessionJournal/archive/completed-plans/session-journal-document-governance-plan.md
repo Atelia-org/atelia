@@ -1,10 +1,13 @@
 # SessionJournal 文档治理计划
 
-状态：Active meta plan / DG0
+状态：Completed / Archived
 
 Baseline：`bac6a6d627ad4cce1c496cccd5f56dd2c5c032eb`
 
 适用范围：`docs/SessionJournal/` 与 SessionJournal family component README
+
+关闭说明：DG0～DG6及后续 archive-first 整理已完成；current规则与入口现由root router、
+current code map和文档checker承担。本文的baseline inventory只保留为cut-time evidence，不随HEAD续期。
 
 本文定义 SessionJournal 文档的发现、角色、生命周期、关闭与渐进整理规则。它先建立低维护的逻辑治理，
 再允许后续工作包小批修正文档；它不是一次全量重写或目录迁移计划。

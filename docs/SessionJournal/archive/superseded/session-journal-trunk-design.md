@@ -2,9 +2,9 @@
 
 > **状态**：Historical Trunk Baseline / CS-3A～CS-3D7 coherent-only Prepared v3
 > **日期**：2026-07-27
-> **底层依赖**：[EventJournal 使用指南](../../src/EventJournal/README.md)、[EventJournal 功能需求与粗粒度设计基线](../EventJournal/event-journal-requirements-and-design.md)
-> **上层路线图**：[SessionJournal 事件源会话与长期上下文架构路线图](event-sourced-session-architecture-roadmap.md)
-> **后续恢复设计**：[Tail-only Execution Recovery Design](tail-execution-recovery-design.md)
+> **底层依赖**：[EventJournal 使用指南](../../../../src/EventJournal/README.md)、[EventJournal 功能需求与粗粒度设计基线](../../../EventJournal/event-journal-requirements-and-design.md)
+> **上层路线图**：[SessionJournal 事件源会话与长期上下文架构路线图](../studies/event-sourced-session-architecture-roadmap.md)
+> **后续恢复设计**：[Tail-only Execution Recovery Design](../completed-plans/tail-execution-recovery-design.md)
 > **替代对象**：`prototypes/ChatSession`（StateJournal deque + 整轮末尾 commit）
 
 > **P5 supersession（2026-07-29）**：本文是历史主干基线，不再描述 current public API。
@@ -12,11 +12,11 @@
 > 删除。current runtime 只使用 execution-boundary inspection、tail recovery、exact-head
 > governing setup 与 bounded history planning window；完整 raw 审计属于
 > `SessionJournal.Offline` companion。现行边界见
-> [恢复与 DerivedMemory 化简计划](session-journal-recovery-and-derived-memory-simplification-plan.md)。
+> [恢复与 DerivedMemory 化简计划](../completed-plans/session-journal-recovery-and-derived-memory-simplification-plan.md)。
 
 > **后续边界说明（2026-07-28）**：本文描述 D7 当时的已实施基线，因此仍如实记录 raw
 > `ArtifactSetCommitted` 与 Prepared v3。后续方向已在
-> [DerivedMemory 实施方案](done/derived-memory-subsystem-implementation-plan.md) 中落地：
+> [DerivedMemory 实施方案](../completed-plans/derived-memory-subsystem-implementation-plan.md) 中落地：
 > raw sequence 不再引用 derived ids；具体 Derived ArtifactSet 实现迁入单向引用 SessionJournal
 > contracts 的独立可替换程序集；SessionJournal 仅在未 Prepared 的 request planning 阶段消费
 > store-neutral candidate，raw tail recovery 与 Prepared reopen 不依赖该子系统。
@@ -27,7 +27,7 @@
 > provider 只返回 exact nth 的单 candidate/status，不再存在 Latest/Budgeted mode、candidate
 > list fallback、`SessionRuntime.ContextSelection` 或 CLI `--selection`。Prepared v5 exact
 > reopen 仍不访问 DerivedMemory。现行计划与验收见
-> [恢复与 DerivedMemory 化简计划](session-journal-recovery-and-derived-memory-simplification-plan.md)。
+> [恢复与 DerivedMemory 化简计划](../completed-plans/session-journal-recovery-and-derived-memory-simplification-plan.md)。
 
 ## 0. 定位与边界
 
@@ -88,7 +88,7 @@ reopen → 从 head 反向解析 operational tail → 得到最小 ExecutionStat
 这里只读取当前 Action/attempt/tool dependencies 与近头 execution checkpoint，不构造完整 conversation。
 完整历史继续由显式 `Project()` / `ReplayHistory()` 提供；需要调用 LLM 时，context 由 artifact set +
 dependency-closed raw suffix 单独物化。详见
-[Tail-only Execution Recovery Design](tail-execution-recovery-design.md)。
+[Tail-only Execution Recovery Design](../completed-plans/tail-execution-recovery-design.md)。
 
 ```
 链头 kind                     下一合法动作
@@ -355,7 +355,7 @@ result 都是非法 raw chain，fail-fast 且不递增 execution sequence。
 - `src/EventJournal`：全部落盘/遍历/branch/恢复原语。**零改动**接入。
 - memory rewrite profiles（`prototypes/SessionJournal.Maintainers`）：作为下游
   concrete MemoryMaintainer companion assembly，主干**不接**；下一步先通过
-  [CS-5-lite](done/cs-5-lite-sessionjournal-derived-recap-store.md) 接入
+  [CS-5-lite](../completed-plans/cs-5-lite-sessionjournal-derived-recap-store.md) 接入
   SessionJournal forward replay 和 derived recap store，再进入完整 DerivedArtifact / ArtifactSet 切片（CS-5）。
 
 ## 9. 明确不做（防止范围蔓延）
