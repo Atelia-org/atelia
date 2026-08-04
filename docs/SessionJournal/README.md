@@ -96,3 +96,24 @@ Frozen/closed entry 只用于审计其 exact candidate 或 delivery/review close
 [SessionJournal 文档治理计划](session-journal-document-governance-plan.md)。DG1 report 是 closed
 decision/evidence record，不是第二份 active ledger。只有 DG1 后续工作包实际裁决并核验的 claim 才能加入这里；
 目录、日期、标题、`README.md` 或 `public` 均不自动授予 authority。
+
+结构检查使用tracked explicit scope：
+
+```bash
+python scripts/check_session_journal_docs.py
+```
+
+默认路径列表见
+[`session-journal-doc-check-scope.txt`](session-journal-doc-check-scope.txt)。checker先用`git ls-files`
+确认scope与每个输入均已tracked，再读取Markdown；因此未纳入版本库的review/report不会被隐式读取。
+它只检查local target/path case/repo escape与两张ledger的claim结构，不访问网络、不写report、不修复文件，
+首版也不校验anchor/GitHub slug。
+
+需要观察closed/historical corpus的既有噪声时运行：
+
+```bash
+python scripts/check_session_journal_docs.py --all-tracked --report-only
+```
+
+`--report-only`即使发现diagnostic也返回0，只供治理盘点；它不是CI gate，也不能把历史噪声解释成
+current文档失败。移除`--report-only`后，任何diagnostic都会返回1。

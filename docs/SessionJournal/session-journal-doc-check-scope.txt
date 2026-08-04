@@ -1,0 +1,26 @@
+# DG5 default scope: governed active/current SessionJournal entry documents.
+# Paths are repository-relative, explicit, and must already be tracked.
+docs/SessionJournal/README.md
+docs/SessionJournal/session-journal-document-governance-plan.md
+docs/SessionJournal/session-journal-beta-contract-snapshot.md
+docs/SessionJournal/event-sourced-session-architecture-roadmap.md
+docs/SessionJournal/event-addressed-derived-recap-concepts.md
+docs/SessionJournal/event-addressed-derived-recap-v4-target-design.md
+docs/SessionJournal/derived-recap-cadence-target-design.md
+docs/SessionJournal/derived-recap-history-load-target-design.md
+docs/SessionJournal/recap-planner-config-repository-design.md
+docs/SessionJournal/derived-recap-host-integration-target-design.md
+docs/SessionJournal/galatea-g2a-staging-acceptance-runbook.md
+prototypes/SessionJournal/README.md
+prototypes/SessionJournal.DerivedRecap.Store/README.md
+prototypes/SessionJournal.DerivedRecap.Planner/README.md
+prototypes/SessionJournal.DerivedRecap.Maintainers/README.md
+
+# Audit-only/closed records are intentionally not default-scanned.  This includes
+# the EADR implementation completion record, normalization closeout, Galatea
+# cutover/calibration evidence, and tail/configuration recovery histories.  Their
+# known historical links remain observable with:
+#   python scripts/check_session_journal_docs.py --all-tracked --report-only
+# This is an explicit lifecycle boundary, not a claim that historical noise is clean.
+# Initial 2026-08-04 observation: 51 tracked Markdown files, 19 MISSING_TARGET
+# diagnostics, all outside this default scope.
