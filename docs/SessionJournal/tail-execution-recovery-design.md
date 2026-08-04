@@ -1,6 +1,9 @@
 # SessionJournal Tail-only Execution Recovery Design
 
-> **状态**：Implemented / CS-3D0～CS-3D7 已完成
+> **状态**：Completion Record / Historical / CS-3D0～CS-3D7 已完成
+> **文档角色**：记录 CS-3D 的 cut-time design、实施切片与当时验收；不拥有 current API、wire或
+> implementation status。current 默认入口是
+> [Core guide](../../prototypes/SessionJournal/README.md#send-与-recovery)、current code与focused tests。
 > **日期**：2026-07-27
 > **建议路线编号**：CS-3D
 > **前置实现**：CS-3A governing setup checkpoint、CS-3B dependency-closed tail context、
@@ -44,13 +47,19 @@
 > [DerivedMemory 实施方案](done/derived-memory-subsystem-implementation-plan.md)；原 provisioning 问题见
 > [历史缺口备忘](done/memory-maintainer-provisioning-planner-gap.md)。
 
-## 0. 给后续 Coding Agent 的结论
+> **历史正文解释规则**：除上面的 supersession/current replacement 说明外，正文中的“当前”、
+> `Project()`、`ReplayHistory()`、`SessionReducer`、ArtifactSet activation与 DerivedMemory均指
+> CS-3D cut-time snapshot。P5 已删除 public full projection/replay与production reducer；EADR V4已
+> 替换旧 derived implementation。不要从正文反推 current public surface。
 
-当前 `SessionJournalEngine.Project()` 会从 ref root 正向解码到 ref head，并用 `SessionReducer`
-同时构造完整 conversation context 与 execution state。这个实现仍可作为审计、迁移和测试 oracle，
-但**不得继续作为在线 reopen / resume 的默认依赖**。
+## 0. CS-3D cut-time 结论（Historical）
 
-当前主线已经拆成两个彼此独立的投影：
+CS-3D 启动时，`SessionJournalEngine.Project()` 会从 ref root 正向解码到 ref head，并用
+`SessionReducer` 同时构造完整 conversation context 与 execution state。该切片把它用作当时的
+审计、迁移和 differential-test oracle，但要求 online reopen / resume退出这条路径；P5 后这些
+public/production surface 已删除，current full audit属于 Offline companion。
+
+CS-3D 当时把主线拆成两个彼此独立的投影：
 
 1. **Execution Recovery Projection**：只回答“链头现在处于什么 phase，下一合法动作是什么，执行该动作还缺
    哪些局部依赖”。它从 head 沿 Parent 反向读取当前 operational tail，绝不物化完整 conversation。
@@ -58,9 +67,9 @@
    recap/artifact set（rolling 第一人称自传、world-understanding 等）加 dependency-closed raw
    suffix，并将最终 request 固化进 committed manifest。
 
-显式 `Project()` / `ReplayHistory()` 继续允许 O(全历史)，因为调用方明确请求完整审计投影。在线
-`Open`、`ResumeAsync`、`SendAsync`、tool-loop driver、setup mutation 与 request preparation 不应为了
-判断 execution phase 而隐式调用它们。
+显式 `Project()` / `ReplayHistory()` 在该切片完成时仍允许 O(全历史)；P5 随后删除了这些 public
+surface。保留下来的 current规则是：online `Open`、`ResumeAsync`、`SendAsync`、tool-loop driver、
+setup mutation与request preparation不通过full projection判断execution phase。
 
 目标复杂度不是一个脆弱的固定窗口，而是：
 
@@ -107,7 +116,7 @@ dependencies，而不是假定“回溯到最近一条用户消息”。
   旧实验 journal 通过离线重建迁移，不由 current codec 猜测。
 - 不在本切片解决 provider-side idempotency/result lookup 或非幂等工具的完整补偿策略。
 
-## 2. 三类投影必须分离
+## 2. 三类投影的 cut-time 分离（Historical）
 
 | 投影 | 回答的问题 | 输入 | 输出 | 在线复杂度 |
 | --- | --- | --- | --- | --- |
@@ -115,12 +124,14 @@ dependencies，而不是假定“回溯到最近一条用户消息”。
 | Tail Execution Projection | 现在应执行什么 | head 附近 operational tail + raw checkpoints | 最小 execution state | O(局部依赖) |
 | Request Context Projection | 下一次 LLM 看见什么 | exact artifact set + dependency-closed suffix + setup | bounded canonical request | O(artifact + suffix) |
 
-`SessionReducer` 是第一行的正确性 oracle；`SessionExecutionTailResolver` 属于第二行；现有
-`SessionTailContextProjection` 及后续 Context Planner 属于第三行。
+在 CS-3D cut-time，`SessionReducer` 是第一行的 differential oracle，
+`SessionExecutionTailResolver` 属于第二行，`SessionTailContextProjection`及当时后续 Context
+Planner属于第三行。P5以后第一行由 Offline checked audit与明确预期的corruption/acceptance
+matrix承担，不再存在public/production full reducer。
 
 这三者不能再通过“先构造完整 `SessionProjection`，然后只取其中一个字段”耦合。
 
-## 3. 当前实现边界
+## 3. CS-3D cut-time 实现边界（Historical）
 
 关键文件：
 

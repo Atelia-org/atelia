@@ -1,6 +1,9 @@
 # SessionJournal Configuration Access Notes
 
-> 状态：CS-3A～CS-3D7 + DM-0～DM-8 Implemented / Prepared v5
+> 状态：Historical Implementation Notes / Closed / CS-3A～CS-3D7 + DM-0～DM-8
+> 文档角色：保留 governing setup checkpoint 的设计理由、历史实施演进与验收记录；不拥有 current
+> public API。current 默认入口是
+> [Core guide §Setup 变更](../../prototypes/SessionJournal/README.md#setup-变更)、current resolver/code/tests。
 > 日期：2026-07-27
 > 相关文档：[SessionJournal 主干设计基线](session-journal-trunk-design.md)、
 > [Tail-only Execution Recovery Design](tail-execution-recovery-design.md)、
@@ -19,6 +22,11 @@
 > authoritative fallback 仍是 raw header parent walk。DerivedMemory 作为独立可替换程序集只参与未
 > Prepared 的 context planning，不能进入 `SessionExecutionTailResolver` 或 Prepared exact reopen。
 > 详见 [DerivedMemory 实施方案](done/derived-memory-subsystem-implementation-plan.md)。
+
+> **历史正文解释规则**：正文混合了仍有效的 setup authority不变量与 CS-3/DM cut-time实现记录。
+> 出现 `Project()`、`ReplayHistory()`、`SessionReducer`、raw ArtifactSet activation或旧
+> DerivedMemory时均按historical阅读；P5/EADR V4后的current replacement只由顶部说明、Core guide、
+> code与focused tests确认。
 
 ## 1. 结论
 
@@ -70,7 +78,7 @@ setup/request reads 不随冷前缀增长，因此不需要再发明 setup cache
 边界重新从完整 Parent chain 证明，并逐 Prepared 重建 canonical request。错误 hint 在 offline
 validation 中 fail-fast，不会被接受为迁移后的合法 repo。
 
-## 2. 当前实现事实
+## 2. 仍有效的 setup 不变量与 cut-time 实现事实
 
 `SessionJournal` 的 sticky setup 已拆成两个彼此独立的完整 snapshot：
 
@@ -95,27 +103,32 @@ manifest 的 setup lineage 绑定是 **validated writer invariant**：append man
 Parent 做 ref CAS。reopen 不再用 O(N) scan 重证祖先关系，否则会抵消 checkpoint 的收益；它信任 checked
 raw manifest 的语义事实，同时独立验证所引用 payload 的 kind/schema/hash。
 
-显式调用 `Project()` / `ReplayHistory()` 仍通过 `ReadChronologicalChain` 解码完整 raw chain，但这只
-属于审计/reference oracle。所有 online execution phase 已由 `SessionExecutionTailResolver` 路由；
-Observation 与 dependency-closed ToolResult 的 request context 都走 coherent ArtifactSet + suffix：
+这里的 `ResolveGoverningSetup(head)` 是 exact-head authoritative resolver，不是 numeric hard-bound
+proof API：若没有可用 Prepared checkpoint，它可以沿真实 Parent lineage一直扫描到 root。Planner/Store
+需要固定读取上限时，必须使用 `ReadCurrentLineagePrefix`、`ProveGoverningSetupAtBounded`或bounded
+planning-window API；证明不足返回typed `BeyondPrefix`，不会hidden-page到root，并在proof完成前不读取
+window/setup payload或materialize部分结果。`BeyondPrefix`只说明当前prefix不足，不等于`OffLineage`。
+
+CS-3D cut-time 的显式 `Project()` / `ReplayHistory()` 曾通过 `ReadChronologicalChain` 解码完整 raw
+chain，作为 differential oracle；P5 已删除这些 public/production surface。current online execution
+phase由 `SessionExecutionTailResolver` 路由，完整审计由 Offline checked scan承担。仍有效的online规则是：
 
 - `SendAsync` 沿最近的 setup run 找到 idle predecessor，并对 bootstrap、live/imported terminal
   Action 或 failed attempt 做有界局部因果证明，再以 CAS append observation。
 - `ResumeAsync`、setup/import mutation 与 tool-loop 每次 append 后都从 exact new head 重解
   operational tail，不凭链头 kind 猜状态。
 - request preparation 从 store-neutral coherent candidate、governing setup、exact contributions 与
-  raw suffix 构造；current Prepared v5 codec/reconstructor 只接受 coherent recipe，不调用
-  `Project()`。
+  raw suffix 构造；Prepared v5 codec/reconstructor只接受current recipe，不调用full projection。
 
 这里采用与 setup checkpoint 相同的 **validated-writer trust model**：局部证明信任更早 prefix 已经由
 SessionJournal 的受控 writer / artifact provenance 校验，不试图把任意低层伪造 raw chain 重新做一次
 full-history reducer validation。若未来允许不可信 raw import 直接进入 fast path，必须先做完整验真，或
 增加 suffix-local execution DFA / 更强 checkpoint，不能继续把 bounded proof 当作全链等价证明。
 
-CS-3B/C 的早期 explicit/full-raw 形状只保留为历史演进记录；D6D 已删除其 current reader、writer 与
-compat decoder。当前可以准确描述为：online recovery 是 tail-only，online request 是
-coherent-artifact-tail-only；只有显式 `Project()` / `ReplayHistory()` 与 strict offline validator
-有意支付 O(全历史) 成本。
+CS-3B/C 的早期 explicit/full-raw 形状只保留为历史演进记录；D6D 已删除其 reader、writer与compat
+decoder，P5进一步删除public full projection/replay。current online recovery是tail-only，online
+request使用store-neutral candidate + bounded raw suffix；只有显式Offline checked audit有意支付
+O(全历史)成本。
 
 ## 3. 必须分开的三个问题
 
@@ -576,16 +589,16 @@ Action 还新增 required `correlationId`：live 值继承 Prepared；import 值
 ToolResult completion boundary。这样 Action 本身就是 correlation + sequence 的 trust cut，连续 imported
 tool continuation 不必追到最初 Observation。
 
-CS-3D3 已让 `ResumeAsync()`、`SendAsync()`、setup/import boundary 与 tool-loop transition 统一消费
-current/exact-head recovery；Started/Result append 使用 recovery address 做 CAS，pending tool 在 durable
-runtime identity gate 通过后才可执行。Started 的 `operationId` 与 reserved sequence 会一并传入
-`ToolExecutionContext`，供工具实现幂等/result lookup/reconcile；它本身不承诺 exactly-once。
-public `Project()` / `ReplayHistory()` 仍保留 full semantics。
+CS-3D3 让 `ResumeAsync()`、`SendAsync()`、setup/import boundary 与 tool-loop transition统一消费
+exact-head recovery；Started/Result append使用recovery address做CAS，pending tool在durable runtime
+identity gate通过后才可执行。Started的`operationId`与reserved sequence会一并传入
+`ToolExecutionContext`，供工具实现幂等/result lookup/reconcile；它本身不承诺 exactly-once。该阶段
+仍保留的public `Project()` / `ReplayHistory()` 后来已由P5删除。
 
-需要准确区分：D3 消除的是 **execution routing 的 full replay**；D6D 又把 Prepared current wire
-收为 coherent-only v2。online request 不调用 `Project()` 物化 Context；D6D 前的 full-raw /
-explicit reader 只是本文件的历史，不存在于 current codec/reconstructor。public `Project()` /
-`ReplayHistory()` 只保留为显式审计与 reference oracle。
+需要准确区分：D3消除的是 **execution routing 的 full replay**；D6D又把当时Prepared wire收为
+coherent-only v2。online request不调用full projection物化Context；D6D前的full-raw/explicit
+reader只是历史，不存在于current codec/reconstructor。P5以后显式全链审计也由Offline companion
+承担，而不是public `Project()` / `ReplayHistory()`。
 
 CS-3D4 已实施为新的 `coherent-artifact-tail` policy，而不是原地改变已 committed 的
 `explicit-artifact-tail.v1`：
@@ -616,7 +629,10 @@ prompt-only 的 post-activation mutation 仍由 suffix 正确吸收。
 Prepared/Action checkpoint 重验完整 autonomous loop。具体职责、事件协议和实施切片见
 [Tail-only Execution Recovery Design](tail-execution-recovery-design.md)。
 
-## 9. 验收矩阵
+## 9. Cut-time 验收矩阵（Historical）
+
+本节保留CS-3/DM阶段的验收语言；其中full reducer/public projection相关条目只解释旧candidate。
+current等价门应改读durable-tail matrix、bounded proof与Offline checked audit。
 
 Governing setup：
 
@@ -709,8 +725,8 @@ fully-settled ToolResult request context 退出 full `Project()`；CS-3D5/D6C1 �
 ArtifactSet activation 与 coherent-only Prepared；这是 D7 当时的 Prepared v3 + Started
 历史收口。DM-2/DM-8 随后把 current wire 升级为 self-contained Prepared v5，并删除 raw
 ArtifactSet activation。
-public 审计 API 继续保留完整历史语义；旧
-full-raw / explicit reader 已在 D6D wire cutover 删除，不是 current runtime 合同。
+CS-3D cut-time 的public审计API后来已由P5删除；旧full-raw/explicit reader也已在D6D wire cutover
+删除。current完整审计入口属于Offline companion，二者都不是current runtime合同。
 
 正常运行时把内存中的两个 governing setup 地址写入每次 completion 前提交的
 `ContextPlan` / canonical request manifest；重启后从 head 扫描局部尾段，命中最近 checkpoint 后各一次

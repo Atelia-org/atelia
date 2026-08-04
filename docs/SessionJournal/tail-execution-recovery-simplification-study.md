@@ -1,8 +1,8 @@
 # SessionJournal Tail Execution Recovery 后续化简候选
 
-> **状态**：Historical Research / D0+D1 implemented；其余候选由 active P1～P6 计划取代
+> **状态**：Closed / Historical Research / D0+D1 implemented
 > **日期**：2026-07-28
-> **当前基线**：
+> **cut-time 基线**：
 > [Tail-only Execution Recovery Design](tail-execution-recovery-design.md)、
 > [DerivedMemory 实施方案](done/derived-memory-subsystem-implementation-plan.md)
 > **已完成计划**：
@@ -10,8 +10,9 @@
 > [CS-3D7：Prepared / Provider Attempt 对称化](done/prepared-provider-attempt-symmetry-design.md)
 > **已实施**：
 > [候选 D0/D1：Dependency-closed Fold Seed 与共享 Operational Semantics](done/tail-operational-semantics-simplification-plan.md)
-> **目标**：保留 current trunk 上尚未实施的化简候选，并只为刚完成的 D0/D1 留下简短实施结论与
-> D2 决策；不以牺牲 crash recovery、raw provenance、exact reopen 或 bounded reads 换取表面简洁。
+> **文档角色**：保留当时尚未实施的化简候选、D0/D1结论与D2决策；本文不是current backlog或
+> implementation guide。current默认入口是
+> [Core guide](../../prototypes/SessionJournal/README.md)、current code/tests与现行work item。
 
 > **P5 supersession（2026-07-29）**：本文关于保留 public full projection/replay 与 production
 > reducer 的判断已经过期。P5-D 已删除这些 surface；current tail、bounded planning 与 Offline
@@ -19,7 +20,11 @@
 > [恢复与 DerivedMemory 化简计划](session-journal-recovery-and-derived-memory-simplification-plan.md)
 > 为准。
 
-## 0. 当前结论
+> **历史正文解释规则**：下文的“当前”“下一项”、A0/D2/E顺序与共同验收闸门均是本研究关闭时的
+> cut-time判断，不自动建立今天的active backlog。其中要求保留 `Project()` / `ReplayHistory()`、
+> full reducer oracle或其invocation diagnostics的gate已被P5 supersede。
+
+## 0. 研究关闭时的结论（Historical）
 
 CS-3D6/D7 与 DM-0～DM-8 已完成以下收口：
 
@@ -35,7 +40,7 @@ CS-3D6/D7 与 DM-0～DM-8 已完成以下收口：
 迁移与验收统一见
 [DerivedMemory 实施方案](done/derived-memory-subsystem-implementation-plan.md)。
 
-当前仍值得研究的只有：
+当时仍值得研究的只有：
 
 1. **候选 A：Exact request snapshot spike**；
 2. **候选 D：D0/D1 已实施；D2 当前 Deferred / NO-GO，等待 A0 与复杂度收益证据**；
@@ -166,7 +171,10 @@ SessionCompletionDriver
 未稳定前拆文件，只会把耦合变成跨类跳转。应先完成候选 A 数据并重新评估 D2，之后才决定是否拆
 Engine；public surface 暂不改变。
 
-## 5. 推荐研究顺序
+## 5. 当时的推荐研究顺序（Historical）
+
+本节只记录依赖顺序，不声明A0、D2或E仍是current backlog；若要重启任一候选，必须against current
+Core surface重新建立candidate、收益证据与verification gate。
 
 1. **D0：显式 dependency-closed fold seed**：已完成；
 2. **D1：pure classification、local validators、internal violation vocabulary 与 differential
@@ -178,7 +186,11 @@ Engine；public surface 暂不改变。
 Prepared/attempt 对称化、ArtifactSet/raw 解耦、shared epoch、online lifecycle 与 budgeted selection
 均已完成，不再列入未来 P2/P3。
 
-## 6. 共同验收闸门
+## 6. 当时的共同验收闸门（Historical）
+
+以下列表保留原研究的proof obligations。P5已删除public full projection/replay、production reducer与
+invocation diagnostics，因此涉及这些surface的条目只能解释旧candidate，不能原样用于新变更；新
+candidate应改用current durable-tail matrix、bounded proof、Offline checked audit与corruption tests。
 
 任何后续化简都必须证明：
 

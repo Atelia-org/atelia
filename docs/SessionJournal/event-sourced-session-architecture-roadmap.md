@@ -33,12 +33,12 @@
 > 不重编号”的 strict ordinal，以 per-block rolling checkpoint支持落后 cursor catch-up；目标术语
 > 与规则以上述 concepts/target 文档为准。
 >
-> **EADR V4 implementation progress（2026-07-30）**：R0～R2 与 R3A～R3E 已实现至
-> `df8e3044`：CLI/online composition已切到 DerivedRecap，旧
-> `SessionJournal.DerivedMemory` production/tests/commands已删除。bounded on-demand repair
-> 不包含 scrub、scheduler或 recursive source repair。R3F 真实 repo acceptance与
-> engine online-tail tail-fix仍按
-> [实现计划](event-addressed-derived-recap-v4-implementation-plan.md)保持 pending，不在此提前宣称完成。
+> **EADR V4 implementation closeout（2026-08-04）**：R0～R3、Post-R3 C0～C3与H0～H2均已完成；
+> CLI/online composition已切到 DerivedRecap，旧 `SessionJournal.DerivedMemory`
+> production/tests/commands已删除，R3F真实repo acceptance与engine online-tail tail-fix也已关闭。
+> exact package/commit/evidence map见
+> [completion record](event-addressed-derived-recap-v4-implementation-plan.md)。bounded on-demand repair
+> 仍不包含scrub、scheduler或recursive source repair。
 
 ## 1. 文档定位
 
@@ -123,8 +123,8 @@ Memory layer。
 
 ### decision [S-SJ-PROJECTION-NOT-SSOT] Context projection 不是 SSOT
 
-“本轮上下文需要的有序文本块投影”是有价值的，但它不是长期记忆的唯一事实源。current
-`MemoryPack*` 是这一角色的现行实现；EADR R0 将其收窄为 `ContextHeader*`。该 projection 可由
+“本轮上下文需要的有序文本块投影”是有价值的，但它不是长期记忆的唯一事实源。EADR R0已将
+这一current contract收窄为`ContextHeader*`；`MemoryPack*`只属于pre-R0历史。该 projection 可由
 选定的 `DerivedRecapSet`、future Memory retrieval results 与其他固定配置共同 materialize。
 
 ### decision [S-SJ-CONTEXT-PLAN-PERSISTED] 实际上下文选择必须持久化
@@ -930,12 +930,11 @@ SessionJournal raw core 反向引用 Maintainers/DerivedMemory，也不得把 co
 
 DM-0～DM-8 建立 authority/ownership 基础后，current 已推进到：
 
-- **EADR V4 replacement（R0～R3E 已完成至 `df8e3044`）。** DerivedRecap
-  Store/Planner/Maintainers projects以
-  event-addressed Building/Published directories、strict ordinal、per-block cursor、rolling
-  catch-up 和窄 Restore protocol替换了 P6 transaction workflow；不迁移 v2/v3 data。R3F真实 repo
-  acceptance与 engine online-tail tail-fix仍 pending，以
-  [V4 实现计划](event-addressed-derived-recap-v4-implementation-plan.md)为准。
+- **EADR V4 replacement（R0～R3、C0～C3、H0～H2已完成）。** DerivedRecap
+  Store/Planner/Maintainers projects以event-addressed Building/Published directories、strict
+  ordinal、per-block cursor、rolling catch-up和窄Restore protocol替换了P6 transaction workflow；
+  不迁移v2/v3 data。R3F真实repo acceptance与engine online-tail tail-fix已经关闭；exact交付边界以
+  [completion record](event-addressed-derived-recap-v4-implementation-plan.md)为准。
 - **CS-4 后续：tool capability 与 uncertain hardening。** current trunk 已有在幂等/operation-id
   去重假设下可恢复的 tool loop，以及 reserved sequence/operation identity、Started/Result 和 tail
   recovery；后续不是从零重建，而是扩展 capability declaration、provider/result lookup、reconcile
