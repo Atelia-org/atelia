@@ -12,6 +12,9 @@
 > [Event-addressed Derived Recap V4](event-addressed-derived-recap-v4-target-design.md)、
 > [Derived Recap Cadence](derived-recap-cadence-target-design.md)、
 > [EADR V4 实现与替换计划](event-addressed-derived-recap-v4-implementation-plan.md)
+>
+> **章节角色**：§0～§2、§4～§8、§10～§11记录accepted target/current guidance；§3是已退役的
+> config V1 historical wire；§9是C0～C3/H0～H2 closed delivery record，不承担current status。
 
 ## 0. 结论
 
@@ -37,6 +40,10 @@ repo-owned operator intent：
 [Derived Recap History Load](derived-recap-history-load-target-design.md)定义的 backend-model-neutral
 内部 HistoryLoad单位，并把 raw event counts仅作为resource/safety limits。V1
 `HistoryUnitCount` wire已被拒绝，不提供 fallback或隐式 migration。
+
+当前限制：resolver不会、也不能从`MaxRawGrowthEventCount`与HistoryLoad的`R+B`直接推导跨量纲
+静态可达性；现有config validation不证明threshold一定在raw safety ceiling之前可达。本DG4只如实记录
+该尚未实现的guard，不预设pressure trigger、proof cap或emergency scheduling的后续设计。
 
 ## 1. Authority 边界
 
@@ -260,12 +267,13 @@ connection/model；connection identity与 secret不写入 repo config。
 
 配置删除一个 active profile不能重新解释既有 manifest，也不等于 Host必须立刻失去修复旧 set的能力。
 Host应通过独立 capability metadata catalog按 frozen manifest的 exact MaintainerId解析所有仍受支持的
-built-in profile。C2在 readiness成功且确认 operation需要 Maintainer capability之后组合完整
-registry；当前 logging wrapper构造可能预先创建空 call-log目录，但 missing/invalid config、
-catalog mismatch与其他 readiness失败仍发生在 completion client/call-log构造之前。按实际 block
-延迟创建 logging client属于后续可选优化，不是 C2 authority contract。
+built-in profile。H2以后，Host使用once-only deferred registry：构造helper不激活concrete
+Maintainer或maintenance logger，第一次exact
+`(MaintainerId, Target, MaintainerCapabilityFingerprint)` lookup才从完整capability catalog创建
+registry。readiness failure与`NoBuild`保持零Maintainer/零maintenance logger；operator `recap run`
+在`NoBuild`时连call-log目录也不创建。agent online turn仍可为实际agent request创建自己的call log。
 
-V1不设计 active roster的在线演化。文件可表达初始 roster；一旦已有 Published，后续新 planning
+当前 V2仍不设计 active roster的在线演化。文件可表达初始 roster；一旦已有 Published，后续新 planning
 要求 active catalog与 latest Published frozen catalog保持 exact ordered equality。比较字段为：
 
 ```text
@@ -452,7 +460,7 @@ repo config中的 limits是新 planning ceilings。Host resolver必须验证它�
 稳定 hard caps；wire loader只负责安全读取与 strict document decode。hard caps只防止单次读取、
 route、call或content的资源失控，不是 operator policy，也不从 active config热更新。
 
-V1 hard caps由 Planner assembly中的 `RecapProtocolHardCaps`唯一声明。五项 raw/route/call
+当前 hard caps由 Planner assembly中的 `RecapProtocolHardCaps.V4`唯一声明。五项 raw/route/call
 初值与 R3 production config一致，content/catalog复用既有 contribution contract：
 
 ```text
@@ -502,8 +510,7 @@ Restore同样不加载 active config。它按 exact publication/manifest确定�
 
 ### 6.4 必需的 authority 拆分
 
-当前 `RecapPlannerConfig`同时包含 scheduling和execution字段。实现 repo config时必须把 internal
-projection明确拆成：
+当前 `RecapPlannerConfig`同时包含 scheduling和execution字段，其 internal projection已经明确拆成：
 
 ```text
 RecapPlanningInputs

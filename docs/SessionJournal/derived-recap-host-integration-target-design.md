@@ -1,16 +1,20 @@
 # SessionJournal DerivedRecap Host Integration：短目标设计
 
-> **状态**：Target Shape / Rule
+> **状态**：Accepted Target / Implemented；mixed target + completion record
 > **日期**：2026-07-31
 > **核心实现背景**：
 > [EADR V4 目标设计](event-addressed-derived-recap-v4-target-design.md)、
 > [Repo-owned RecapPlannerConfig](recap-planner-config-repository-design.md)
 > **首个 library consumer**：
 > [Galatea SessionJournal cutover plan](galatea-session-journal-cutover-plan.md)
+>
+> **章节角色**：§0、§2～§7记录accepted/current integration boundary；§1保留H0前baseline并
+> 记录H0～H2如何关闭缺口。current API与Galatea采用状态必须against code/tests复核，不能由本文的
+> 2026-08-01 completion evidence自动续期。
 
 ## 0. 决策
 
-将当前只存在于 `SessionJournal.Cli` internal composition root 的两段 correctness-sensitive
+将H0前只存在于 `SessionJournal.Cli` internal composition root 的两段 correctness-sensitive
 逻辑提升为 `SessionJournal.DerivedRecap.Planner` public API：
 
 1. **pure config resolver**：把一个 immutable repo config snapshot与 Host提供的
@@ -31,10 +35,10 @@ SessionRuntime的万能 Host framework。
 > preparer/authority、authority-only lifecycle与once-only deferred Maintainer registry；CLI已迁为
 > thin concrete/report adapter并通过目标Galatea export的deterministic real-repo gate。
 
-第二个 Host已经明确是 `prototypes/Galatea`。因此这不是为假想消费者预留扩展点，而是Galatea
-替换 `ChatSessionEngine`存储层和状态机前的必要 API hardening。
+第二个 Host是 `prototypes/Galatea`，且后续cutover已经完成。因此这不是为假想消费者预留扩展点，
+而是已被CLI与Galatea共同采用的public API hardening。
 
-## 1. 实施前基线与剩余缺口
+## 1. 实施前基线与已关闭缺口
 
 public API已经包含：
 
@@ -59,11 +63,11 @@ H0实施前，安全的端到端装配分散在：
 - NewPlanning没有绑定readiness时捕获的baseline；
 - latest Published catalog不兼容时仍继续规划。
 
-H0已把第一项config resolution关闭为可复用public contract；H1关闭第二项Building-first
-readiness/preparation与authority-only lifecycle；H2又关闭lazy concrete runtime。至此Galatea
-不再需要复制CLI internal config/preparation/laziness算法，剩余前置缺口是cutover plan中的
-recovery binding、desired setup、completed-turn projection/rewind与Host行为，而不是Recap
-composition API。
+H0把第一项config resolution关闭为可复用public contract；H1关闭第二项Building-first
+readiness/preparation与authority-only lifecycle；H2又关闭lazy concrete runtime。Galatea因此没有
+复制CLI internal config/preparation/laziness算法。随后cutover plan的G0A～G2B也关闭了recovery
+binding、desired setup、completed-turn projection/rewind、Host vertical与activation；这些不再是
+current前置缺口。
 
 ## 2. 所有权与依赖
 
@@ -377,10 +381,11 @@ Recap Store schema或planner config schema。
 - phase、connection、logging与UI天然属于各Host；
 - 仅为十几行concrete catalog projection增加assembly不能降低系统复杂度。
 
-H2复核后仍不新建Hosting assembly：CLI当前只剩concrete profile projection、prompt fingerprint与
-log context；Galatea尚未形成第二份稳定重复实现。等Galatea真正切到public kernel后，只有重复代码
-形成清晰且不包含CLI/UI policy的共同闭包时，才提取薄Hosting companion；不得因此把
-SessionRuntime或online turn状态机搬出raw SessionJournal。
+H2复核时没有新建Hosting assembly；Galatea完成public-kernel cutover后再次复核也保持该决定。
+CLI与Galatea共有的correctness-sensitive kernel已经在Planner，剩余concrete profile projection、
+prompt fingerprint、connection、logging与UI policy尚未形成值得抽取的稳定共同闭包。只有将来重复代码
+形成清晰且不包含CLI/UI policy的共同闭包时，才提取薄Hosting companion；不得因此把SessionRuntime或
+online turn状态机搬出raw SessionJournal。
 
 ## 7. 验收
 

@@ -1,9 +1,14 @@
 # Galatea G2A：Repeatable staging acceptance runbook
 
-> **状态**：G2A operator runbook  
+> **状态**：Active repeatable procedure / exact-export-scoped  
 > **日期**：2026-08-01  
 > **上位计划**：
 > [Galatea → SessionJournal + DerivedRecap cutover plan](galatea-session-journal-cutover-plan.md)
+>
+> **验证边界**：procedure surface已在
+> `eda5ee979b5df1ab383fddf20d0691bb891a00d1` against current CLI/Galatea deterministic scope复核；
+> external staging/provider gate没有形成该HEAD的`Passed` evidence。本文存在、命令可解析或历史G2A
+> 曾通过，都不等于当前一轮已执行成功。
 
 ## 1. 目标与边界
 
@@ -24,6 +29,9 @@ production CLI仍是import、validate、Recap planning与materialization的唯�
 - 对staging使用`--force`、`recap reset`，或在provider失败后自动reimport；
 - 把connections secret、request/response正文、Recap正文或其payload hash抄入汇总报告；
 - 把任何运行过canary的clone作为G2B activation repo。
+
+每次执行都必须选择新的run id、记录当次git/build identity，并在§7重新产生
+`Passed / Failed / NotRun` evidence；禁止复制2026-08-01结果或修改日期来冒充新验收。
 
 ## 2. Run root与信任区
 
@@ -344,9 +352,10 @@ canary失败时停止并保留clone及durable tail：
 summary不内联source正文、对话、system prompt、Completion request/response、Recap正文、credentials或
 payload hash。详细call log可能含正文，只保留在受限目录，并在summary中记录其相对位置和数量。
 
-只有offline/deterministic gate、bounded `dsv4p` Recap gate、scripted Host gate和real Host canary都通过，
-本轮G2A才是`Passed`。外部provider故障不推翻已通过的offline证据，但整轮状态仍必须是`Failed`或
-`NotRun`，等待有界重试。
+只有offline/deterministic gate、bounded `dsv4p` Recap gate、scripted Host gate和real Host canary在
+**同一轮**都通过，本轮G2A才是`Passed`。外部provider故障不推翻已通过的offline证据，但整轮状态仍
+必须是`Failed`或`NotRun`，等待有界重试。历史cutover closeout中的`Passed`只属于其exact
+2026-08-01 run，不可转移到current HEAD或本轮run。
 
 ## 8. 与G2B的边界
 

@@ -3,10 +3,10 @@
 状态：Active discovery ledger / DG2
 
 本文只负责按任务发现 SessionJournal 文档，不是 raw、wire、recovery 或 implementation authority。
-current implementation/API/wire claim 已在 exact commit
-`cf3c77d524abdf24352400c221e0c42f0c9cb2fe` 上核验；核验 scope、focused tests 与裁决见
-[DG1 pilot closing record](session-journal-document-governance-dg1-pilot-report.md)。该 SHA 是
-verification baseline，不表示后续 HEAD 自动通过相同 gate。代码变化后必须重跑对应 scope，不能机械更新 SHA。
+DG1 claim 在 exact commit `cf3c77d524abdf24352400c221e0c42f0c9cb2fe` 上核验；本页后来发布的
+Core/Recovery 与 Recap/Host claim 各自在表内记录自己的 exact baseline、scope 与 evidence。
+这些 SHA 都只是 verification baseline，不表示后续 HEAD 自动通过相同 gate。代码变化后必须重跑
+对应 scope，不能机械更新 SHA。
 
 从下表与任务最接近的一行开始，通常先读 2～4 份文档。遇到本文末尾的 safety trigger 时，立即继续读取
 current code、tests 与 fixtures，不受默认阅读预算限制。
@@ -25,14 +25,20 @@ current code、tests 与 fixtures，不受默认阅读预算限制。
 | 理解 EADR 术语、authority、cadence 与 ownership | [EADR concepts](event-addressed-derived-recap-concepts.md) | [Store guide](../../prototypes/SessionJournal.DerivedRecap.Store/README.md) 或 [Planner guide](../../prototypes/SessionJournal.DerivedRecap.Planner/README.md) | concepts 拥有术语与不变量，不拥有全部 current API、wire 或 status |
 | 修改 Store selection、publication、materialization 或 Restore | [Store guide](../../prototypes/SessionJournal.DerivedRecap.Store/README.md) | [EADR concepts](event-addressed-derived-recap-concepts.md) | wire、authority、atomic publication、strict ordinal 与 corruption 必须继续读 Store code/tests |
 | 修改 Planner cadence、NewPlanning、Resume 或 Restore | [Planner guide](../../prototypes/SessionJournal.DerivedRecap.Planner/README.md) | [EADR concepts](event-addressed-derived-recap-concepts.md)，必要时再读 Store guide | active config 与 frozen execution分离；bounded proof 不能退化为 full scan |
+| 修改 config V2、repo loader、active roster 或 planning limits | [Config design §0～§2、§4～§8](recap-planner-config-repository-design.md) | [Planner guide §Repo-owned config](../../prototypes/SessionJournal.DerivedRecap.Planner/README.md#repo-owned-config) 与 current codec/resolver tests | Config design §3、§9只是 V1 / delivery history；config validation当前不证明 cadence在raw ceiling前静态可达 |
+| 修改 HistoryLoad estimator、framing、projection 或 threshold | [HistoryLoad design §0～§7](derived-recap-history-load-target-design.md) | [Planner guide §HistoryLoad](../../prototypes/SessionJournal.DerivedRecap.Planner/README.md#historyload) 与 evaluator/projector tests | HistoryLoad design §8与calibration是closed evidence；不要把历史提交/test total当current verification |
+| 修改 Planner frozen Building、Resume/Restore 或 Host preparation order | [Planner guide §Offline plan/build](../../prototypes/SessionJournal.DerivedRecap.Planner/README.md#offline-planbuild) 与 [§Resume](../../prototypes/SessionJournal.DerivedRecap.Planner/README.md#resume-frozen-building) | [Host Integration §3～§4](derived-recap-host-integration-target-design.md#3-public-neutral-contracts) | active roster不是完整execution capability registry；Prepared/Started recovery跳过Store/config |
+| 修改 Galatea SessionJournal/DerivedRecap composition | [Host Integration §2～§7](derived-recap-host-integration-target-design.md#2-所有权与依赖) | [Galatea cutover closeout](galatea-session-journal-cutover-plan.md) 只用于历史交付/决策追溯 | current实现以Galatea code/tests为准；cutover totals冻结在2026-08-01，不自动续期 |
+| 重跑 Galatea G2A staging acceptance | [G2A runbook](galatea-g2a-staging-acceptance-runbook.md) | current CLI/Galatea command surfaces、path-safety tests与本轮新生成 evidence | runbook是procedure，不是Passed结果；external staging/provider gates必须每轮实际执行 |
 | 评估 EADR durable Shape / Rule | [V4 target design](event-addressed-derived-recap-v4-target-design.md) | EADR concepts 与相关 component guide | target 是 accepted normative intent，不是 current codec、API 或 implementation-status owner |
 | 提议合并同构 contract 或删除 proof redundancy | [EADR concepts](event-addressed-derived-recap-concepts.md) 的 `Contract normalization gate` | [normalization closeout](session-journal-semantic-preserving-contract-normalization-review-report.md) | 先比较合法状态/行为、authority、proof obligation 与 durable reader language |
 | 审计历史交付或 exact candidate acceptance | [implementation completion record](event-addressed-derived-recap-v4-implementation-plan.md) 或 normalization closeout | Beta snapshot §7 与 DG1 record | 这些是 closed/frozen evidence，不自动认证 current HEAD |
 
 ## Current verified claim ledger
 
-以下七项是 against DG1 baseline 核验过的窄 implementation/API/wire claim。owner 文档仍只是入口；
-`verified_against` 指向的 code/tests/fixtures 才是复核依据。
+以下是分批against各自baseline核验过的窄 implementation/API/wire claim。owner 文档仍只是入口；
+`verified_against` 指向的 code/tests/fixtures 才是复核依据。后加入的细化claim只收窄read route，
+不夺取DG1 concept/component claim的既有ownership。
 
 | `claim_id` | 窄 claim / owner | role · lifecycle | `verified_against` | `read_when` |
 |---|---|---|---|---|
@@ -47,6 +53,12 @@ current code、tests 与 fixtures，不受默认阅读预算限制。
 | `eadr.ownership.store-planner-maintainers` | Store persistence/selection/materialization、Planner scheduling/frozen execution、Maintainers profile/prompt、composition-root assembly boundary；[EADR concepts](event-addressed-derived-recap-concepts.md) | `concept` · `current` | `implementation`；`cf3c77d524abdf24352400c221e0c42f0c9cb2fe`；component project references/guides + public authority tests；[DG1](session-journal-document-governance-dg1-pilot-report.md) | 新增跨 assembly reference、移动 authority 或合并 component contract |
 | `eadr.store.current-usage` | engine-bound LineageView、metadata-issued authority、bounded selection、exact materialization/Restore 与 codec入口；[Store guide](../../prototypes/SessionJournal.DerivedRecap.Store/README.md) | `component-guide` · `current` | `implementation`；`cf3c77d524abdf24352400c221e0c42f0c9cb2fe`；Store contracts/codec/lineage/publisher/installer + authority/codec tests；[DG1](session-journal-document-governance-dg1-pilot-report.md) | 调用 Store 或修改 publication、selection、Restore、authority issuance、codec |
 | `eadr.planner.current-usage` | Building-first、NewPlanning config V2、frozen Resume/Restore 与 typed bounded-prefix execution；[Planner guide](../../prototypes/SessionJournal.DerivedRecap.Planner/README.md) | `component-guide` · `current` | `implementation`；`cf3c77d524abdf24352400c221e0c42f0c9cb2fe`；config/evaluator/coordinator/frozen barrier + focused tests；[DG1](session-journal-document-governance-dg1-pilot-report.md) | 调用 Planner 或修改 config、cadence、frozen execution、runtime authority |
+| `eadr.planner.config-v2-repository-current` | Config V2 repo path、strict load/resolve、single snapshot、active roster与planning ceilings；[Config design §0～§2、§4～§8](recap-planner-config-repository-design.md) | `target-design`, `component-guide` · `current` | `implementation/api`；`eda5ee979b5df1ab383fddf20d0691bb891a00d1`；config codec/loader/resolver/repository source；Planner focused gate 110/110 | 修改config wire/path、resolver、catalog、limits或NewPlanning config provenance；这是 `eadr.planner.current-usage` 的config细化，不重定义其总边界 |
+| `eadr.planner.history-load-cadence-current` | `o200k_base` estimator identity、per-unit framing、baseline projection与HistoryLoad trigger/admission；[HistoryLoad design §0～§7](derived-recap-history-load-target-design.md) | `target-design`, `component-guide` · `current` | `implementation`；`eda5ee979b5df1ab383fddf20d0691bb891a00d1`；HistoryLoad contracts/estimator/projector/evaluator；Planner focused gate 110/110 | 修改HistoryLoad数值identity、framing、R/B、cache或admission；这是concept claim `eadr.cadence.current` 的implementation owner |
+| `eadr.planner.frozen-execution-current` | Building-first preparation签发closed authority；Frozen Building、Resume与Restore不读取active config，exact lookup完整capability registry；[Planner guide](../../prototypes/SessionJournal.DerivedRecap.Planner/README.md) | `component-guide`, `canonical-contract` · `current` | `implementation/api`；`eda5ee979b5df1ab383fddf20d0691bb891a00d1`；operation preparer/prepared executor/restore/deferred registry；Planner focused gate 110/110 | 修改preparation order、authority union、Resume/Restore输入或Maintainer activation；不与Core raw `ResumeAsync`合并 |
+| `eadr.ownership.composition-current` | Store→Core、Planner→Store、Maintainers→Core+Completion.Abstractions；CLI/Galatea拥有concrete composition，Planner不引用Maintainers；[Host Integration §2](derived-recap-host-integration-target-design.md#2-所有权与依赖) | `target-design`, `component-guide` · `current` | `implementation`；`eda5ee979b5df1ab383fddf20d0691bb891a00d1`；三个component project references与guides；Maintainers focused gate 22/22 | 新增project reference、移动config/prompt/phase ownership或考虑Hosting assembly；这是既有ownership concept的composition细化 |
+| `galatea.derived-recap.integration-current` | Galatea已使用SessionJournal + Store/Planner/Maintainers public kernel，并保留Host-owned phase/connection/logging/UI；[Host Integration §2～§7](derived-recap-host-integration-target-design.md#2-所有权与依赖) | `target-design`, `component-guide` · `current` | `implementation`；`eda5ee979b5df1ab383fddf20d0691bb891a00d1`；Galatea project refs/composition/session host；deterministic Galatea gate 14/14 | 修改Galatea recap composition、recovery binding、readiness、maintenance或UI projection；历史cutover文档不拥有current code |
+| `galatea.g2a.runbook-current-procedure` | fresh staging、raw invariant、disposable clone、content-free evidence与no-promotion步骤；[G2A runbook](galatea-g2a-staging-acceptance-runbook.md) | `runbook` · `current` | `operational-procedure`；`eda5ee979b5df1ab383fddf20d0691bb891a00d1`；current CLI command surface + deterministic Galatea gate 14/14；external staging/provider gate未形成current HEAD Passed evidence | 执行或修改G2A流程；每轮必须重新生成Passed/Failed/NotRun evidence，不能从runbook存在推断成功 |
 
 ## Normative、frozen 与 closed entries
 
@@ -62,6 +74,10 @@ Frozen/closed entry 只用于审计其 exact candidate 或 delivery/review close
 | `sj.recovery.cs3d-history` | `completion-record`, `historical` · `closed` | CS-3A～CS-3D7 tail recovery、configuration checkpoint与后续化简的 cut-time design/decision/evidence；不拥有 current API | [Tail recovery completion record](tail-execution-recovery-design.md)、[Configuration Notes](session-configuration-access-notes.md)、[simplification study](tail-execution-recovery-simplification-study.md) |
 | `eadr.implementation.r0-r3-ch-closeout` | `completion-record`, `historical` · `closed` | R0～R3、C0～C3、H0～H2 的工作分解、交付顺序、commit/evidence map 与当时验收边界 | [implementation completion record](event-addressed-derived-recap-v4-implementation-plan.md) |
 | `eadr.normalization.decision-49ebb463` | `review`, `completion-record`, `evidence` · `closed` | `cd804c39..49ebb463` candidate ledger、adopt/reject/defer decision、commit map 与 residual risks | [normalization closeout](session-journal-semantic-preserving-contract-normalization-review-report.md) |
+| `eadr.history-load.h0-h2-c3-closeout` | `completion-record`, `evidence` · `historical`, `closed` | H0～H2/C3 delivery order、2026-07-31 calibration与当时real-repo evidence；不拥有current implementation status | [HistoryLoad design §8](derived-recap-history-load-target-design.md#8-实施-gates) 与 [Galatea calibration](derived-recap-history-load-galatea-calibration.md) |
+| `galatea.sessionjournal-cutover-2026-08-01` | `completion-record` · `historical`, `closed` | H0～H2、G0A～G2B 的交付决策、commit/test/evidence map与activation边界 | [Galatea cutover closeout](galatea-session-journal-cutover-plan.md) |
+| `galatea.g2a.acceptance-2026-08-01` | `evidence` · `frozen`, `closed` | 只记录2026-08-01 exact export/staging/provider/Host acceptance；不认证current HEAD或下一轮run | [Cutover G2A closeout](galatea-session-journal-cutover-plan.md#g2arepeatable-staging-acceptancedone2026-08-01) |
+| `galatea.g3.warmup-target` | `target-design` · `deferred` | 可选post-response warm-up；当前未实现，需真实延迟证据与独立设计/验收后才能进入implementation | [Cutover G3](galatea-session-journal-cutover-plan.md#g3post-response-recap-warm-up可选deferred) |
 
 ## Safety escalation
 

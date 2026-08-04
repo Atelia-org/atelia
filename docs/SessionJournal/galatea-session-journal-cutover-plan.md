@@ -1,19 +1,24 @@
-# Galatea → SessionJournal + DerivedRecap：后续实施计划
+# Galatea → SessionJournal + DerivedRecap：实施完成记录
 
-> **状态**：Plan
+> **状态**：Completion Record / Closed；G3 optional warm-up保持Deferred
 > **日期**：2026-07-31
 > **上位设计**：
 > [DerivedRecap Host Integration](derived-recap-host-integration-target-design.md)
 > **目标实例**：
 > `prototypes/Galatea/.atelia/galatea/sessions/cyber-copy-upgraded/`
+>
+> **章节角色**：§0～§2是pre-cutover target/baseline；§3的H0～G2B是2026-08-01 closed delivery
+> 与evidence record；G3是未实现的deferred target；§4～§5是closing checklist。本文不拥有current
+> Galatea implementation status，current claim必须against Galatea code/tests复核。
 
 ## 0. 目标
 
-用 `SessionJournalEngine + DerivedRecap`替换Galatea当前的`ChatSessionEngine + CompactAsync`，
+本计划完成了用 `SessionJournalEngine + DerivedRecap`替换Galatea当时的
+`ChatSessionEngine + CompactAsync`，
 保留现有单账号、connection切换、SSE streaming、用户stop与recent-turn UI，并让
 `cyber-copy-upgraded/chat-session-legacy-upgrade-export.json`成为首个真实cutover实例。
 
-迁移后：
+切换完成后：
 
 - raw SessionJournal events是唯一会话correctness source；
 - DerivedRecap提供`world-understanding`与`autobiographical`常驻前情提要；
@@ -22,11 +27,11 @@
   restart new attempt；
 - 不保留ChatSession/SessionJournal dual read、dual write或runtime fallback。
 
-剩余工作包不自动串行施工；每个工作包先做package-local review，再实施、测试和独立review。
+以下工作包当时没有自动串行施工；每个工作包都先做package-local review，再实施、测试和独立review。
 
-## 1. 当前事实
+## 1. Cutover前事实（historical baseline）
 
-Galatea当前：
+计划启动时的Galatea：
 
 - `Galatea.Server.csproj`引用`ChatSession`、`Completion`和`Completion.Tools`；
 - `GalateaHostService`按用户lazy打开一个`ChatSessionEngine`；
@@ -61,9 +66,10 @@ selected absorbed  98,082
 selected recent    18,376
 ```
 
-这些证据证明数据和DerivedRecap vertical可用，但尚未证明Galatea Server本身已切换Host。
+在该baseline时，这些证据只证明数据和DerivedRecap vertical可用，尚未证明Galatea Server本身已
+切换Host；后续G1～G2B已经关闭该缺口。
 
-## 2. Cutover前必须关闭的相邻缺口
+## 2. Cutover前相邻缺口（historical target）
 
 ### 2.1 Public recap composition
 
@@ -393,7 +399,7 @@ Gate：
 后续调整：G0B范围不变；G1必须按四种runtime requirement分派，并持续使用captured-head-bound
 online入口。首个empty-tool vertical仍显式拒绝`ToolContinuationRequired`，不提前扩张tool Host。
 
-### G0B：Completed-turn projection与rewind
+### G0B：Completed-turn projection与rewind（Done，2026-08-01）
 
 范围：
 
@@ -864,7 +870,9 @@ G2B后的调整：
 - `requestTimeoutSeconds=300`是当前`dsv4p` route的operational policy，不是Recap architecture或
   cross-run golden；Hosting抽取、tool-capable recovery与background scheduler仍不随G2B扩张。
 
-### G3：Post-response recap warm-up（可选）
+### G3：Post-response recap warm-up（可选，Deferred）
+
+本项截至本completion record关闭时未实现，也不属于G0～G2B完成状态。
 
 初始正确路径允许下一次request在preparation阶段执行maintenance。若真实体验证明这段延迟明显，
 再复用同一Planner authority设计post-response best-effort warm-up：
@@ -877,9 +885,9 @@ G2B后的调整：
 
 没有延迟证据时不实施G3。
 
-## 4. 再审阅问题
+## 4. Closeout再审阅问题（historical）
 
-完成本文与Host Integration短设计后，独立review应重点回答：
+完成本文与Host Integration短设计后，当时的独立review重点回答：
 
 1. 第二个Host是否已经使薄`DerivedRecap.Hosting` assembly值得创建，还是public Planner kernel +
    两个thin adapters仍更简单？
@@ -891,7 +899,7 @@ G2B后的调整：
    boundary是否明确？
 7. post-response warm-up是否应继续defer？
 
-## 5. 完成定义
+## 5. G0～G2B完成定义（closed）
 
 - CLI和Galatea都通过public resolver/preparer，不复制authority-sensitive逻辑；
 - Galatea不再引用`ChatSession`或旧compaction配置；

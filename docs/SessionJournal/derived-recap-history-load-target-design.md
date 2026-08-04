@@ -13,6 +13,9 @@
 > [Repo-owned RecapPlannerConfig](recap-planner-config-repository-design.md)
 > **施工计划**：
 > [EADR V4 实现与替换计划](event-addressed-derived-recap-v4-implementation-plan.md)
+>
+> **章节角色**：§0～§7、§9记录accepted target/current rules；§8是H0～H2/C3的
+> historical closed delivery record，不承担current implementation status。
 
 ## 0. 决策
 
@@ -509,8 +512,8 @@ Host-owned、estimator-scoped、可删除重建的cache；本结论不授权 per
 
 ## 8. 实施 gates
 
-唯一施工顺序维护在
-[EADR V4 实现与替换计划](event-addressed-derived-recap-v4-implementation-plan.md)：
+H0～H2/C3当时采用的delivery order与closing evidence记录在
+[EADR V4 implementation completion record](event-addressed-derived-recap-v4-implementation-plan.md)：
 
 ```text
 H0 unit estimator + window projector + golden vectors + Galatea calibration
@@ -521,8 +524,8 @@ H0 unit estimator + window projector + golden vectors + Galatea calibration
   -> C3 real repo acceptance
 ```
 
-只有 H1c切换 production authority；H1a/H1b不得留下可被 production独立选择的第二套 cadence。
-H1c一次性迁移 CLI/online/report、删除 config V1与旧 comparisons/prefilter，保持
+交付时只有 H1c切换 production authority；H1a/H1b没有留下可被 production独立选择的第二套 cadence。
+H1c一次性迁移了 CLI/online/report、删除 config V1与旧 comparisons/prefilter，并保持
 Building-first、phase-first和single snapshot纪律。
 
 完成证据：
