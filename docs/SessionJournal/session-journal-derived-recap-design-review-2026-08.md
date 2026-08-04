@@ -11,7 +11,7 @@
 > `prototypes/SessionJournal.Cli`。
 > **目标**：寻找**设计层面**需要修正的问题与化简机会，而不是逐行 code review。
 > **与既有审阅的关系**：
-> - [contract normalization 审阅报告](session-journal-semantic-preserving-contract-normalization-review-report.md)
+> - [contract normalization 审阅报告](evidence/contract-normalization-review.md)
 >   已关闭 public surface 收口类问题（N-A..N-E）；
 > - [V4 化简候选](event-addressed-derived-recap-v4-simplification-candidate.md)
 >   已关闭 durable model 层的化简；

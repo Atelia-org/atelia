@@ -23,7 +23,7 @@ contract。
 新会话应先按顺序读取：
 
 1. 本文；
-2. [`session-journal-first-production-readiness-review-report.md`](session-journal-first-production-readiness-review-report.md)：
+2. [`first-production-readiness-review.md`](evidence/first-production-readiness-review.md)：
    上一轮 findings、修复 commit map 与 R4 证据；
 3. [`session-journal-beta-contract-snapshot.md`](current/contracts/session-journal-beta-contract-snapshot.md)：当前 Beta support surface、
    A/B/C wire 与 residual risks；
@@ -188,7 +188,7 @@ swapon --show
 ### 6.1 当前 contract 与架构入口
 
 - `docs/SessionJournal/session-journal-beta-contract-snapshot.md`：当前 Beta support/wire authority；
-- `docs/SessionJournal/session-journal-first-production-readiness-review-report.md`：上一轮 findings 与验证证据；
+- `docs/SessionJournal/evidence/first-production-readiness-review.md`：上一轮 findings 与验证证据；
 - `prototypes/SessionJournal/README.md`：Host、recovery、completed turn、Planner/offline read、setup 与 wire quick check；
 - `prototypes/SessionJournal.DerivedRecap.Store/README.md`：frozen capability、publication authority、durability；
 - `prototypes/SessionJournal.DerivedRecap.Planner/README.md`：entry selection、config、resume/restore/online integration；

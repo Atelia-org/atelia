@@ -8,14 +8,14 @@
 > 也不替代 code、wire codec、component README 或后续 domain router。
 
 本文关闭
-[SessionJournal 文档治理计划](session-journal-document-governance-plan.md) 的 DG1。核验发生在上面的
+[SessionJournal 文档治理计划](../session-journal-document-governance-plan.md) 的 DG1。核验发生在上面的
 exact full commit；本包只修正文档，未把基线机械提升到修正文档后的 commit。DG2 只能发布本报告中
 `Accept` 或已经落实文字修正的 `Modify` entry，不能把未核验的文档标题或整篇文档提升为 current
 authority。
 
 ## 1. Candidate 与 current checkout 边界
 
-[`SessionJournal Beta contract snapshot`](current/contracts/session-journal-beta-contract-snapshot.md) 冻结的 product
+[`SessionJournal Beta contract snapshot`](../current/contracts/session-journal-beta-contract-snapshot.md) 冻结的 product
 candidate 是 `49ebb4634e5b4136032db983dd92a9a4560b33eb`；它的 candidate-specific clone、build、test 与
 real-data/staging evidence 只证明该 exact candidate，不能自动转移到 DG1 基线
 `cf3c77d524abdf24352400c221e0c42f0c9cb2fe`。
@@ -86,7 +86,7 @@ real-data/staging evidence 只证明该 exact candidate，不能自动转移到 
   staging acceptance；tracked normalization closeout
 - `verified_against.kind`：`operational-evidence`
 - `verified_against.evidence`：tracked snapshot §7；
-  `docs/SessionJournal/session-journal-semantic-preserving-contract-normalization-review-report.md` §7～§8；
+  `docs/SessionJournal/evidence/contract-normalization-review.md` §7～§8；
   `docs/SessionJournal/galatea-g2a-staging-acceptance-runbook.md`
 
 ### `sj.raw-wire.beta-summary`
@@ -239,7 +239,7 @@ real-data/staging evidence 只证明该 exact candidate，不能自动转移到 
 
 ### `eadr.normalization.decision-49ebb463`
 
-- `document`：`docs/SessionJournal/session-journal-semantic-preserving-contract-normalization-review-report.md`
+- `document`：`docs/SessionJournal/evidence/contract-normalization-review.md`
 - `doc_role`：`review`, `completion-record`, `evidence`
 - `lifecycle`：`closed`
 - `owner`：N0～N5 normalization review closeout
@@ -253,7 +253,7 @@ real-data/staging evidence 只证明该 exact candidate，不能自动转移到 
 - `verified_against.kind`：`operational-evidence`
 - `verified_against.evidence`：tracked review report；Beta snapshot §7；tracked test/runbook pointers
 - `decision_or_closing_record`：
-  `docs/SessionJournal/session-journal-semantic-preserving-contract-normalization-review-report.md`
+  `docs/SessionJournal/evidence/contract-normalization-review.md`
 
 ## 4. Portable verification evidence
 

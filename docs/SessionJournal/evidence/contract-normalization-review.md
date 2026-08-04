@@ -7,7 +7,7 @@ Implementation range：`cd804c39..49ebb463`（baseline exclusive）
 Gate-tooling commit：`81a1fa24058fc4b5405e14a5fc504844ce5fd345`（tests/runbook only）
 
 本文是
-[`session-journal-semantic-preserving-contract-normalization-review-plan.md`](session-journal-semantic-preserving-contract-normalization-review-plan.md)
+[`session-journal-semantic-preserving-contract-normalization-review-plan.md`](../session-journal-semantic-preserving-contract-normalization-review-plan.md)
 的综合结论。run-specific inventory、盲审报告与 plan lock 位于
 `gitignore/session-journal/reviews/2026-08-03-contract-normalization/`，不作为 contract authority。
 

@@ -161,4 +161,4 @@ Release solution build为0 warnings、0 errors，CLI全套116 passed、1 expecte
 v6 fixture全套70 passed、0 skipped、0 failed。这些scripted gates不包含real-provider dispatch或real Host canary；
 本轮provider request construction未变，external provider calls为0。因此本快照将`49ebb463`记为
 Beta-supported。完整证据边界见
-[`session-journal-semantic-preserving-contract-normalization-review-report.md`](../../session-journal-semantic-preserving-contract-normalization-review-report.md)。
+[`contract-normalization-review.md`](../../evidence/contract-normalization-review.md)。

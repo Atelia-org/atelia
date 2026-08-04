@@ -539,7 +539,7 @@ Building-first、phase-first和single snapshot纪律。
 | C3 | 当前 Galatea export fresh import后完成 failure/resume、exact corruption/Restore、online与 Prepared recovery；实际 selection 为 growth 116,458 / absorbed 98,082 / recent 18,376；report schema v3（由 v2 直接切换，无 compat） |
 
 具体 load distribution与profile环境见
-[Galatea HistoryLoad calibration](../../derived-recap-history-load-galatea-calibration.md)。
+[Galatea HistoryLoad calibration](../../evidence/history-load-galatea-calibration.md)。
 
 必须覆盖：
 
