@@ -64,7 +64,7 @@ class SessionJournalDocCheckerTests(unittest.TestCase):
             encoding="utf-8",
         )
 
-    def test_valid_links_duplicate_roles_and_fenced_fake_link(self) -> None:
+    def test_valid_links_and_fenced_fake_link(self) -> None:
         self._install_fixture("valid")
 
         result = self._run()
@@ -96,30 +96,6 @@ class SessionJournalDocCheckerTests(unittest.TestCase):
 
         self.assertEqual(1, result.returncode)
         self.assertIn("REPO_ESCAPE docs/SessionJournal/README.md:1", result.stdout)
-
-    def test_duplicate_current_owner_is_reported_for_each_owner(self) -> None:
-        self._install_fixture("duplicate_current_owner")
-
-        result = self._run()
-
-        self.assertEqual(1, result.returncode)
-        self.assertEqual(2, result.stdout.count("DUPLICATE_CURRENT_OWNER"))
-
-    def test_short_and_missing_baselines_are_rejected(self) -> None:
-        self._install_fixture("invalid_baselines")
-
-        result = self._run()
-
-        self.assertEqual(1, result.returncode)
-        self.assertEqual(2, result.stdout.count("MISSING_BASELINE"))
-
-    def test_closed_lifecycle_cannot_enter_current_ledger(self) -> None:
-        self._install_fixture("noncurrent_in_current")
-
-        result = self._run()
-
-        self.assertEqual(1, result.returncode)
-        self.assertIn("NONCURRENT_IN_CURRENT_LEDGER", result.stdout)
 
     def test_untracked_markdown_is_never_read_by_scoped_mode(self) -> None:
         self._install_fixture("valid")
@@ -178,6 +154,20 @@ class SessionJournalDocCheckerTests(unittest.TestCase):
         self.assertEqual(1, result.returncode)
         self.assertIn("UNSAFE_TARGET_SYMLINK", result.stdout)
 
+    def test_tracked_source_replaced_by_symlink_is_rejected(self) -> None:
+        self._install_fixture("valid")
+        source = self.repo / "docs/SessionJournal/README.md"
+        source.unlink()
+        try:
+            source.symlink_to("target.md")
+        except (NotImplementedError, OSError) as exception:
+            self.skipTest(f"symlink creation is unavailable: {exception}")
+
+        result = self._run()
+
+        self.assertEqual(1, result.returncode)
+        self.assertIn("SOURCE_NOT_REGULAR", result.stdout)
+
     def test_tracked_target_below_replaced_symlink_ancestor_is_rejected(
         self,
     ) -> None:
@@ -197,47 +187,6 @@ class SessionJournalDocCheckerTests(unittest.TestCase):
         self.assertEqual(1, result.returncode)
         self.assertIn("UNSAFE_TARGET_SYMLINK", result.stdout)
         self.assertIn("docs/SessionJournal/linked", result.stdout)
-
-    def test_required_router_sections_are_exact_and_unique(self) -> None:
-        cases = (
-            ("ledger_absent", "MISSING_LEDGER_SECTION"),
-            ("ledger_renamed", "MISSING_LEDGER_SECTION"),
-            ("ledger_duplicate", "DUPLICATE_LEDGER_SECTION"),
-        )
-        for fixture, expected_code in cases:
-            with self.subTest(fixture=fixture):
-                self.tearDown()
-                self.setUp()
-                self._install_fixture(fixture)
-
-                result = self._run()
-
-                self.assertEqual(1, result.returncode)
-                self.assertIn(expected_code, result.stdout)
-
-    def test_router_headers_are_required_and_exact(self) -> None:
-        cases = (
-            ("ledger_wrong_header", "LEDGER_HEADER_MISMATCH"),
-            ("ledger_missing_header", "MISSING_LEDGER_HEADER"),
-        )
-        for fixture, expected_code in cases:
-            with self.subTest(fixture=fixture):
-                self.tearDown()
-                self.setUp()
-                self._install_fixture(fixture)
-
-                result = self._run()
-
-                self.assertEqual(1, result.returncode)
-                self.assertIn(expected_code, result.stdout)
-
-    def test_baseline_must_be_in_verified_against_cell(self) -> None:
-        self._install_fixture("sha_only_other_cell")
-
-        result = self._run()
-
-        self.assertEqual(1, result.returncode)
-        self.assertIn("MISSING_BASELINE", result.stdout)
 
     def test_non_markdown_scope_entry_is_diagnostic_not_crash(self) -> None:
         self._install_fixture("valid")

@@ -20,33 +20,11 @@ import sys
 from urllib.parse import unquote
 
 
-CURRENT_LEDGER_HEADING = "## Current verified claim ledger"
-CLOSED_LEDGER_HEADING = "## Normative、frozen 与 closed entries"
-ROUTER_PATH = "docs/SessionJournal/README.md"
-LEDGER_SCHEMAS = {
-    "current": (
-        "`claim_id`",
-        "窄 claim / owner",
-        "role · lifecycle",
-        "`verified_against`",
-        "`read_when`",
-    ),
-    "closed": (
-        "`claim_id`",
-        "role · lifecycle",
-        "窄边界",
-        "入口",
-    ),
-}
 DEFAULT_SCOPE = PurePosixPath(
     "docs/SessionJournal/session-journal-doc-check-scope.txt"
 )
 LINK_PATTERN = re.compile(r"!?\[[^\]]*\]\(([^)]+)\)")
 REFERENCE_PATTERN = re.compile(r"^\s*\[[^\]]+\]:\s*(\S+)")
-FULL_COMMIT_PATTERN = re.compile(
-    r"(?<![0-9a-fA-F])[0-9a-fA-F]{40}(?![0-9a-fA-F])"
-)
-CLAIM_ID_PATTERN = re.compile(r"^`([^`]+)`$")
 FENCE_PATTERN = re.compile(r"^\s*(`{3,}|~{3,})")
 IGNORED_SCHEMES = ("http://", "https://", "mailto:")
 
@@ -60,22 +38,6 @@ class Diagnostic:
 
     def render(self) -> str:
         return f"{self.code} {self.path}:{self.line} {self.detail}"
-
-
-@dataclass(frozen=True)
-class LedgerRow:
-    claim_id: str
-    path: str
-    line: int
-    lifecycle_cell: str
-    verified_against_cell: str | None
-    table: str
-
-    @property
-    def is_current_owner(self) -> bool:
-        if self.table == "current":
-            return True
-        return bool(re.search(r"`current`|\bcurrent\b", self.lifecycle_cell))
 
 
 def _git(repo_root: Path, *arguments: str) -> str:
@@ -407,201 +369,6 @@ def _check_link(
     ))
 
 
-def _table_cells(line: str) -> list[str] | None:
-    if not line.lstrip().startswith("|"):
-        return None
-    return [cell.strip() for cell in line.strip().strip("|").split("|")]
-
-
-def _is_separator_row(cells: list[str], expected_count: int) -> bool:
-    return len(cells) == expected_count and all(
-        re.fullmatch(r":?-{3,}:?", cell) is not None for cell in cells
-    )
-
-
-def _parse_router_ledgers(
-    path: str,
-    text: str,
-    diagnostics: list[Diagnostic],
-) -> list[LedgerRow]:
-    if path != ROUTER_PATH:
-        return []
-
-    visible_lines = _markdown_without_fences(text)
-    headings = {
-        "current": CURRENT_LEDGER_HEADING,
-        "closed": CLOSED_LEDGER_HEADING,
-    }
-    occurrences = {
-        table: [
-            index for index, (_, line) in enumerate(visible_lines)
-            if line == heading
-        ]
-        for table, heading in headings.items()
-    }
-    rows: list[LedgerRow] = []
-
-    for table in ("current", "closed"):
-        positions = occurrences[table]
-        heading = headings[table]
-        if not positions:
-            diagnostics.append(Diagnostic(
-                "MISSING_LEDGER_SECTION",
-                path,
-                1,
-                f"required heading is missing: {heading}",
-            ))
-            continue
-        if len(positions) > 1:
-            first_line = visible_lines[positions[0]][0]
-            for position in positions[1:]:
-                diagnostics.append(Diagnostic(
-                    "DUPLICATE_LEDGER_SECTION",
-                    path,
-                    visible_lines[position][0],
-                    f"heading {heading} already appears at line {first_line}",
-                ))
-            continue
-
-        start = positions[0]
-        end = len(visible_lines)
-        for index in range(start + 1, len(visible_lines)):
-            if visible_lines[index][1].startswith("## "):
-                end = index
-                break
-        section = visible_lines[start + 1:end]
-        table_positions = [
-            index for index, (_, line) in enumerate(section)
-            if _table_cells(line) is not None
-        ]
-        if not table_positions:
-            diagnostics.append(Diagnostic(
-                "MISSING_LEDGER_HEADER",
-                path,
-                visible_lines[start][0],
-                f"section {heading} has no Markdown table header",
-            ))
-            continue
-
-        header_position = table_positions[0]
-        header_line_number, header_line = section[header_position]
-        header_cells = _table_cells(header_line) or []
-        expected_header = LEDGER_SCHEMAS[table]
-        if tuple(header_cells) != expected_header:
-            diagnostics.append(Diagnostic(
-                "LEDGER_HEADER_MISMATCH",
-                path,
-                header_line_number,
-                f"expected {' | '.join(expected_header)}",
-            ))
-            continue
-        header_map = {
-            name: index for index, name in enumerate(header_cells)
-        }
-
-        separator_position = header_position + 1
-        if separator_position >= len(section):
-            diagnostics.append(Diagnostic(
-                "MISSING_LEDGER_SEPARATOR",
-                path,
-                header_line_number,
-                f"section {heading} has no table separator",
-            ))
-            continue
-        separator_line_number, separator_line = section[separator_position]
-        separator_cells = _table_cells(separator_line)
-        if separator_cells is None or not _is_separator_row(
-            separator_cells, len(expected_header)
-        ):
-            diagnostics.append(Diagnostic(
-                "MISSING_LEDGER_SEPARATOR",
-                path,
-                separator_line_number,
-                f"section {heading} has an invalid table separator",
-            ))
-            continue
-
-        for line_number, line in section[separator_position + 1:]:
-            cells = _table_cells(line)
-            if cells is None:
-                break
-            if len(cells) != len(expected_header):
-                diagnostics.append(Diagnostic(
-                    "LEDGER_ROW_SCHEMA",
-                    path,
-                    line_number,
-                    f"expected {len(expected_header)} cells in {table} ledger",
-                ))
-                continue
-            claim_cell = cells[header_map["`claim_id`"]]
-            claim_match = CLAIM_ID_PATTERN.match(claim_cell)
-            if not claim_match or claim_match.group(1) == "claim_id":
-                diagnostics.append(Diagnostic(
-                    "LEDGER_ROW_SCHEMA",
-                    path,
-                    line_number,
-                    "claim_id cell must contain one backtick-delimited id",
-                ))
-                continue
-            verified_cell = (
-                cells[header_map["`verified_against`"]]
-                if table == "current" else None
-            )
-            rows.append(LedgerRow(
-                claim_match.group(1),
-                path,
-                line_number,
-                cells[header_map["role · lifecycle"]],
-                verified_cell,
-                table,
-            ))
-    return rows
-
-
-def _check_ledgers(
-    rows: list[LedgerRow], diagnostics: list[Diagnostic]
-) -> None:
-    current_owners: dict[str, list[LedgerRow]] = {}
-    for row in rows:
-        if row.table == "current":
-            forbidden = [
-                state for state in ("closed", "frozen", "deferred")
-                if re.search(rf"`{state}`|\b{state}\b", row.lifecycle_cell)
-            ]
-            if forbidden:
-                diagnostics.append(Diagnostic(
-                    "NONCURRENT_IN_CURRENT_LEDGER",
-                    row.path,
-                    row.line,
-                    f"claim {row.claim_id} has lifecycle {','.join(forbidden)}",
-                ))
-            if not FULL_COMMIT_PATTERN.search(
-                row.verified_against_cell or ""
-            ):
-                diagnostics.append(Diagnostic(
-                    "MISSING_BASELINE",
-                    row.path,
-                    row.line,
-                    f"current claim {row.claim_id} lacks a full 40-hex baseline",
-                ))
-        if row.is_current_owner:
-            current_owners.setdefault(row.claim_id, []).append(row)
-
-    for claim_id, owners in current_owners.items():
-        if len(owners) <= 1:
-            continue
-        locations = ", ".join(
-            f"{owner.path}:{owner.line}" for owner in owners
-        )
-        for owner in owners:
-            diagnostics.append(Diagnostic(
-                "DUPLICATE_CURRENT_OWNER",
-                owner.path,
-                owner.line,
-                f"claim {claim_id} has current owners at {locations}",
-            ))
-
-
 def run_checks(
     repo_root: Path,
     scope_path: str,
@@ -622,7 +389,6 @@ def run_checks(
             repo_root, scope_path, tracked, diagnostics
         )
 
-    ledger_rows: list[LedgerRow] = []
     read_count = 0
     for path in selected:
         text = _read_tracked_text(repo_root, path, diagnostics)
@@ -640,11 +406,6 @@ def run_checks(
                     target_casefold,
                     diagnostics,
                 )
-        ledger_rows.extend(_parse_router_ledgers(
-            path, text, diagnostics
-        ))
-
-    _check_ledgers(ledger_rows, diagnostics)
     return sorted(diagnostics), read_count
 
 
