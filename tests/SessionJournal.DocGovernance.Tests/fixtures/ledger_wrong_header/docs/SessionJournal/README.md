@@ -1,8 +1,6 @@
-# Active entry
-
 ## Current verified claim ledger
 
-| `claim_id` | 窄 claim / owner | role · lifecycle | `verified_against` | `read_when` |
+| `claim_id` | wrong claim header | role · lifecycle | `verified_against` | `read_when` |
 |---|---|---|---|---|
 
 ## Normative、frozen 与 closed entries

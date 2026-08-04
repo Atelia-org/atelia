@@ -22,6 +22,22 @@ from urllib.parse import unquote
 
 CURRENT_LEDGER_HEADING = "## Current verified claim ledger"
 CLOSED_LEDGER_HEADING = "## Normative、frozen 与 closed entries"
+ROUTER_PATH = "docs/SessionJournal/README.md"
+LEDGER_SCHEMAS = {
+    "current": (
+        "`claim_id`",
+        "窄 claim / owner",
+        "role · lifecycle",
+        "`verified_against`",
+        "`read_when`",
+    ),
+    "closed": (
+        "`claim_id`",
+        "role · lifecycle",
+        "窄边界",
+        "入口",
+    ),
+}
 DEFAULT_SCOPE = PurePosixPath(
     "docs/SessionJournal/session-journal-doc-check-scope.txt"
 )
@@ -52,7 +68,7 @@ class LedgerRow:
     path: str
     line: int
     lifecycle_cell: str
-    raw_line: str
+    verified_against_cell: str | None
     table: str
 
     @property
@@ -278,7 +294,52 @@ def _local_destinations(line: str) -> list[str]:
     return destinations
 
 
+def _check_target_worktree(
+    repo_root: Path,
+    source_path: str,
+    line_number: int,
+    raw_destination: str,
+    normalized_target: str,
+    diagnostics: list[Diagnostic],
+) -> None:
+    current = repo_root
+    components = [(".", current)]
+    for part in PurePosixPath(normalized_target).parts:
+        current = current / part
+        components.append((part, current))
+
+    for part, path in components:
+        try:
+            mode = path.lstat().st_mode
+        except (FileNotFoundError, NotADirectoryError):
+            diagnostics.append(Diagnostic(
+                "TARGET_MISSING_WORKTREE",
+                source_path,
+                line_number,
+                f"tracked target is absent from worktree: {raw_destination}",
+            ))
+            return
+        except OSError:
+            diagnostics.append(Diagnostic(
+                "TARGET_WORKTREE_UNAVAILABLE",
+                source_path,
+                line_number,
+                f"cannot inspect tracked target: {raw_destination}",
+            ))
+            return
+        if stat.S_ISLNK(mode):
+            relative_component = path.relative_to(repo_root).as_posix()
+            diagnostics.append(Diagnostic(
+                "UNSAFE_TARGET_SYMLINK",
+                source_path,
+                line_number,
+                f"target path contains symlink at {relative_component or part}",
+            ))
+            return
+
+
 def _check_link(
+    repo_root: Path,
     source_path: str,
     line_number: int,
     raw_destination: str,
@@ -320,6 +381,14 @@ def _check_link(
 
     normalized = PurePosixPath(joined).as_posix()
     if normalized in tracked_targets:
+        _check_target_worktree(
+            repo_root,
+            source_path,
+            line_number,
+            raw_destination,
+            normalized,
+            diagnostics,
+        )
         return
     case_matches = target_casefold.get(normalized.casefold(), [])
     if case_matches:
@@ -338,31 +407,154 @@ def _check_link(
     ))
 
 
-def _parse_ledger_rows(path: str, text: str) -> list[LedgerRow]:
+def _table_cells(line: str) -> list[str] | None:
+    if not line.lstrip().startswith("|"):
+        return None
+    return [cell.strip() for cell in line.strip().strip("|").split("|")]
+
+
+def _is_separator_row(cells: list[str], expected_count: int) -> bool:
+    return len(cells) == expected_count and all(
+        re.fullmatch(r":?-{3,}:?", cell) is not None for cell in cells
+    )
+
+
+def _parse_router_ledgers(
+    path: str,
+    text: str,
+    diagnostics: list[Diagnostic],
+) -> list[LedgerRow]:
+    if path != ROUTER_PATH:
+        return []
+
+    visible_lines = _markdown_without_fences(text)
+    headings = {
+        "current": CURRENT_LEDGER_HEADING,
+        "closed": CLOSED_LEDGER_HEADING,
+    }
+    occurrences = {
+        table: [
+            index for index, (_, line) in enumerate(visible_lines)
+            if line == heading
+        ]
+        for table, heading in headings.items()
+    }
     rows: list[LedgerRow] = []
-    active_table: str | None = None
-    for line_number, line in _markdown_without_fences(text):
-        if line.startswith("## "):
-            if line == CURRENT_LEDGER_HEADING:
-                active_table = "current"
-            elif line == CLOSED_LEDGER_HEADING:
-                active_table = "closed"
-            else:
-                active_table = None
+
+    for table in ("current", "closed"):
+        positions = occurrences[table]
+        heading = headings[table]
+        if not positions:
+            diagnostics.append(Diagnostic(
+                "MISSING_LEDGER_SECTION",
+                path,
+                1,
+                f"required heading is missing: {heading}",
+            ))
             continue
-        if active_table is None or not line.lstrip().startswith("|"):
+        if len(positions) > 1:
+            first_line = visible_lines[positions[0]][0]
+            for position in positions[1:]:
+                diagnostics.append(Diagnostic(
+                    "DUPLICATE_LEDGER_SECTION",
+                    path,
+                    visible_lines[position][0],
+                    f"heading {heading} already appears at line {first_line}",
+                ))
             continue
-        cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
-        if len(cells) < 2:
+
+        start = positions[0]
+        end = len(visible_lines)
+        for index in range(start + 1, len(visible_lines)):
+            if visible_lines[index][1].startswith("## "):
+                end = index
+                break
+        section = visible_lines[start + 1:end]
+        table_positions = [
+            index for index, (_, line) in enumerate(section)
+            if _table_cells(line) is not None
+        ]
+        if not table_positions:
+            diagnostics.append(Diagnostic(
+                "MISSING_LEDGER_HEADER",
+                path,
+                visible_lines[start][0],
+                f"section {heading} has no Markdown table header",
+            ))
             continue
-        claim_match = CLAIM_ID_PATTERN.match(cells[0])
-        if not claim_match or claim_match.group(1) == "claim_id":
+
+        header_position = table_positions[0]
+        header_line_number, header_line = section[header_position]
+        header_cells = _table_cells(header_line) or []
+        expected_header = LEDGER_SCHEMAS[table]
+        if tuple(header_cells) != expected_header:
+            diagnostics.append(Diagnostic(
+                "LEDGER_HEADER_MISMATCH",
+                path,
+                header_line_number,
+                f"expected {' | '.join(expected_header)}",
+            ))
             continue
-        lifecycle_index = 2 if active_table == "current" else 1
-        lifecycle = cells[lifecycle_index] if len(cells) > lifecycle_index else ""
-        rows.append(LedgerRow(
-            claim_match.group(1), path, line_number, lifecycle, line, active_table
-        ))
+        header_map = {
+            name: index for index, name in enumerate(header_cells)
+        }
+
+        separator_position = header_position + 1
+        if separator_position >= len(section):
+            diagnostics.append(Diagnostic(
+                "MISSING_LEDGER_SEPARATOR",
+                path,
+                header_line_number,
+                f"section {heading} has no table separator",
+            ))
+            continue
+        separator_line_number, separator_line = section[separator_position]
+        separator_cells = _table_cells(separator_line)
+        if separator_cells is None or not _is_separator_row(
+            separator_cells, len(expected_header)
+        ):
+            diagnostics.append(Diagnostic(
+                "MISSING_LEDGER_SEPARATOR",
+                path,
+                separator_line_number,
+                f"section {heading} has an invalid table separator",
+            ))
+            continue
+
+        for line_number, line in section[separator_position + 1:]:
+            cells = _table_cells(line)
+            if cells is None:
+                break
+            if len(cells) != len(expected_header):
+                diagnostics.append(Diagnostic(
+                    "LEDGER_ROW_SCHEMA",
+                    path,
+                    line_number,
+                    f"expected {len(expected_header)} cells in {table} ledger",
+                ))
+                continue
+            claim_cell = cells[header_map["`claim_id`"]]
+            claim_match = CLAIM_ID_PATTERN.match(claim_cell)
+            if not claim_match or claim_match.group(1) == "claim_id":
+                diagnostics.append(Diagnostic(
+                    "LEDGER_ROW_SCHEMA",
+                    path,
+                    line_number,
+                    "claim_id cell must contain one backtick-delimited id",
+                ))
+                continue
+            verified_cell = (
+                cells[header_map["`verified_against`"]]
+                if table == "current" else None
+            )
+            rows.append(LedgerRow(
+                claim_match.group(1),
+                path,
+                line_number,
+                cells[header_map["role · lifecycle"]],
+                verified_cell,
+                table,
+            ))
     return rows
 
 
@@ -383,7 +575,9 @@ def _check_ledgers(
                     row.line,
                     f"claim {row.claim_id} has lifecycle {','.join(forbidden)}",
                 ))
-            if not FULL_COMMIT_PATTERN.search(row.raw_line):
+            if not FULL_COMMIT_PATTERN.search(
+                row.verified_against_cell or ""
+            ):
                 diagnostics.append(Diagnostic(
                     "MISSING_BASELINE",
                     row.path,
@@ -438,6 +632,7 @@ def run_checks(
         for line_number, line in _markdown_without_fences(text):
             for destination in _local_destinations(line):
                 _check_link(
+                    repo_root,
                     path,
                     line_number,
                     destination,
@@ -445,7 +640,9 @@ def run_checks(
                     target_casefold,
                     diagnostics,
                 )
-        ledger_rows.extend(_parse_ledger_rows(path, text))
+        ledger_rows.extend(_parse_router_ledgers(
+            path, text, diagnostics
+        ))
 
     _check_ledgers(ledger_rows, diagnostics)
     return sorted(diagnostics), read_count

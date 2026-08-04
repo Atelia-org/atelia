@@ -1,8 +1,7 @@
-## Current verified claim ledger
+## Current claim ledger
 
 | `claim_id` | 窄 claim / owner | role · lifecycle | `verified_against` | `read_when` |
 |---|---|---|---|---|
-| `wrong.lifecycle` | frozen | `evidence` · `frozen` | `0123456789abcdef0123456789abcdef01234567` | wrong |
 
 ## Normative、frozen 与 closed entries
 

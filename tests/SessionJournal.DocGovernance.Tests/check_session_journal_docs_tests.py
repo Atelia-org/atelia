@@ -155,6 +155,107 @@ class SessionJournalDocCheckerTests(unittest.TestCase):
         self.assertEqual(1, result.returncode)
         self.assertIn("MISSING_TARGET", result.stdout)
 
+    def test_tracked_target_missing_from_worktree_is_rejected(self) -> None:
+        self._install_fixture("valid")
+        (self.repo / "docs/SessionJournal/target.md").unlink()
+
+        result = self._run()
+
+        self.assertEqual(1, result.returncode)
+        self.assertIn("TARGET_MISSING_WORKTREE", result.stdout)
+
+    def test_tracked_target_replaced_by_symlink_is_rejected(self) -> None:
+        self._install_fixture("valid")
+        target = self.repo / "docs/SessionJournal/target.md"
+        target.unlink()
+        try:
+            target.symlink_to("outside.md")
+        except (NotImplementedError, OSError) as exception:
+            self.skipTest(f"symlink creation is unavailable: {exception}")
+
+        result = self._run()
+
+        self.assertEqual(1, result.returncode)
+        self.assertIn("UNSAFE_TARGET_SYMLINK", result.stdout)
+
+    def test_tracked_target_below_replaced_symlink_ancestor_is_rejected(
+        self,
+    ) -> None:
+        self._install_fixture("ancestor_symlink")
+        linked = self.repo / "docs/SessionJournal/linked"
+        shutil.rmtree(linked)
+        outside = self.repo / "outside-directory"
+        outside.mkdir()
+        (outside / "target.md").write_text("outside\n", encoding="utf-8")
+        try:
+            linked.symlink_to(outside, target_is_directory=True)
+        except (NotImplementedError, OSError) as exception:
+            self.skipTest(f"directory symlink creation is unavailable: {exception}")
+
+        result = self._run()
+
+        self.assertEqual(1, result.returncode)
+        self.assertIn("UNSAFE_TARGET_SYMLINK", result.stdout)
+        self.assertIn("docs/SessionJournal/linked", result.stdout)
+
+    def test_required_router_sections_are_exact_and_unique(self) -> None:
+        cases = (
+            ("ledger_absent", "MISSING_LEDGER_SECTION"),
+            ("ledger_renamed", "MISSING_LEDGER_SECTION"),
+            ("ledger_duplicate", "DUPLICATE_LEDGER_SECTION"),
+        )
+        for fixture, expected_code in cases:
+            with self.subTest(fixture=fixture):
+                self.tearDown()
+                self.setUp()
+                self._install_fixture(fixture)
+
+                result = self._run()
+
+                self.assertEqual(1, result.returncode)
+                self.assertIn(expected_code, result.stdout)
+
+    def test_router_headers_are_required_and_exact(self) -> None:
+        cases = (
+            ("ledger_wrong_header", "LEDGER_HEADER_MISMATCH"),
+            ("ledger_missing_header", "MISSING_LEDGER_HEADER"),
+        )
+        for fixture, expected_code in cases:
+            with self.subTest(fixture=fixture):
+                self.tearDown()
+                self.setUp()
+                self._install_fixture(fixture)
+
+                result = self._run()
+
+                self.assertEqual(1, result.returncode)
+                self.assertIn(expected_code, result.stdout)
+
+    def test_baseline_must_be_in_verified_against_cell(self) -> None:
+        self._install_fixture("sha_only_other_cell")
+
+        result = self._run()
+
+        self.assertEqual(1, result.returncode)
+        self.assertIn("MISSING_BASELINE", result.stdout)
+
+    def test_non_markdown_scope_entry_is_diagnostic_not_crash(self) -> None:
+        self._install_fixture("valid")
+        notes = self.repo / "notes.txt"
+        notes.write_text("tracked non-Markdown\n", encoding="utf-8")
+        scope = self.repo / SCOPE_PATH
+        scope.write_text(
+            "docs/SessionJournal/README.md\nnotes.txt\n",
+            encoding="utf-8",
+        )
+        self._git("add", "--", "notes.txt", SCOPE_PATH)
+
+        result = self._run()
+
+        self.assertEqual(1, result.returncode)
+        self.assertIn("NON_MARKDOWN_SCOPE_ENTRY", result.stdout)
+        self.assertNotIn("CHECKER_ERROR", result.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()

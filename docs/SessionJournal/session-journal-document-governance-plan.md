@@ -325,7 +325,7 @@ residual/accepted risks、未验证 assumptions、commit/candidate/verification 
 - **Validation**：positive/negative fixtures覆盖 missing target、case mismatch、repo escape 与同一 `claim_id` 的 duplicate current owner；重复 role 合法；现有 historical 噪声有显式处置；checker 不修改文件。
 - **Done**：命令可重复运行，默认只扫描已治理 scope；先 report-only，观察稳定后才单独决定是否 gate。
 - **实施状态（2026-08-04）**：Done。默认15份tracked active/current入口为clean；stdlib fixture suite
-  10/10。首次`--all-tracked --report-only`观察51份tracked Markdown，报告19项`MISSING_TARGET`，均位于
+  17/17。首次`--all-tracked --report-only`观察51份tracked Markdown，报告19项`MISSING_TARGET`，均位于
   默认scope外的historical/done/superseded记录；本包不修历史链接、不接CI、不校验anchors。
 
 ### DG6 — Conditional small-batch historical moves and link repair
