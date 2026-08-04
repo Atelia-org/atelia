@@ -75,6 +75,7 @@ Galatea.Server         -> Core + Store + Planner + Maintainers + Completion
 [Store csproj](../../../prototypes/SessionJournal.DerivedRecap.Store/SessionJournal.DerivedRecap.Store.csproj)、
 [Planner csproj](../../../prototypes/SessionJournal.DerivedRecap.Planner/SessionJournal.DerivedRecap.Planner.csproj)、
 [Maintainers csproj](../../../prototypes/SessionJournal.DerivedRecap.Maintainers/SessionJournal.DerivedRecap.Maintainers.csproj)、
+[Offline csproj](../../../prototypes/SessionJournal.Offline/SessionJournal.Offline.csproj)、
 [CLI csproj](../../../prototypes/SessionJournal.Cli/SessionJournal.Cli.csproj)、
 [Galatea csproj](../../../prototypes/Galatea/Galatea.Server.csproj)。
 
@@ -91,7 +92,7 @@ Galatea.Server         -> Core + Store + Planner + Maintainers + Completion
 | Prepared manifest/canonical wire | [`SessionRequestManifestCodec.cs`](../../../prototypes/SessionJournal/SessionRequestManifestCodec.cs) | [`SessionRequestManifestCodecTests.cs`](../../../tests/SessionJournal.Tests/SessionRequestManifestCodecTests.cs) |
 | Prepared reconstruction | [`SessionPreparedRequestReconstructor.cs`](../../../prototypes/SessionJournal/SessionPreparedRequestReconstructor.cs) | [`SessionPreparedRequestReconstructorTests.cs`](../../../tests/SessionJournal.Tests/SessionPreparedRequestReconstructorTests.cs) |
 | tail phase recovery | [`SessionExecutionTailResolver.cs`](../../../prototypes/SessionJournal/SessionExecutionTailResolver.cs) | [`SessionExecutionTailResolverTests.cs`](../../../tests/SessionJournal.Tests/SessionExecutionTailResolverTests.cs) |
-| runtime recovery inspection | [`SessionJournalEngine.RuntimeRecovery.cs`](../../../prototypes/SessionJournal/SessionJournalEngine.RuntimeRecovery.cs) | [`SessionRuntimeRecoveryRequirementsTests.cs`](../../../tests/SessionJournal.Tests/SessionRuntimeRecoveryRequirementsTests.cs) |
+| runtime recovery inspection/execution | [`SessionJournalEngine.RuntimeRecovery.cs`](../../../prototypes/SessionJournal/SessionJournalEngine.RuntimeRecovery.cs) | [`SessionRuntimeRecoveryRequirementsTests.cs`](../../../tests/SessionJournal.Tests/SessionRuntimeRecoveryRequirementsTests.cs)、[`SessionPreparedCompletionRecoveryEngineTests.cs`](../../../tests/SessionJournal.Tests/SessionPreparedCompletionRecoveryEngineTests.cs) |
 | Parent lineage与 bounded proof | [`SessionHistoryPlanning.cs`](../../../prototypes/SessionJournal/SessionHistoryPlanning.cs) | [`SessionBoundedLineageTests.cs`](../../../tests/SessionJournal.Tests/SessionBoundedLineageTests.cs) |
 | engine-bound read surface | [`SessionJournalReadView.cs`](../../../prototypes/SessionJournal/SessionJournalReadView.cs) | [`SessionJournalReadViewTests.cs`](../../../tests/SessionJournal.Tests/SessionJournalReadViewTests.cs) |
 | governing setup | [`SessionAuthoritativeGoverningSetupResolver.cs`](../../../prototypes/SessionJournal/SessionAuthoritativeGoverningSetupResolver.cs) | [`SessionDesiredSetupReconciliationTests.cs`](../../../tests/SessionJournal.Tests/SessionDesiredSetupReconciliationTests.cs) |
@@ -108,7 +109,7 @@ Galatea.Server         -> Core + Store + Planner + Maintainers + Completion
 | engine-bound lineage | [`DerivedRecapLineageView.cs`](../../../prototypes/SessionJournal.DerivedRecap.Store/DerivedRecapLineageView.cs) | [`DerivedRecapCurrentLineageBuildingTests.cs`](../../../tests/SessionJournal.DerivedRecap.Store.Tests/DerivedRecapCurrentLineageBuildingTests.cs) |
 | Building install | [`DerivedRecapBuildingInstaller.cs`](../../../prototypes/SessionJournal.DerivedRecap.Store/DerivedRecapBuildingInstaller.cs) | [`DerivedRecapAuthorityBoundaryTests.cs`](../../../tests/SessionJournal.DerivedRecap.Store.Tests/DerivedRecapAuthorityBoundaryTests.cs) |
 | atomic publish | [`DerivedRecapPublisher.cs`](../../../prototypes/SessionJournal.DerivedRecap.Store/DerivedRecapPublisher.cs) | [`DerivedRecapPublisherTests.cs`](../../../tests/SessionJournal.DerivedRecap.Store.Tests/DerivedRecapPublisherTests.cs) |
-| exact-slot restore primitive | [`DerivedRecapRestorer.cs`](../../../prototypes/SessionJournal.DerivedRecap.Store/DerivedRecapRestorer.cs) | [`DerivedRecapPublishedRestoreWriteTests.cs`](../../../tests/SessionJournal.DerivedRecap.Store.Tests/DerivedRecapPublishedRestoreWriteTests.cs) |
+| exact-slot restore primitive | [`DerivedRecapRestorer.cs`](../../../prototypes/SessionJournal.DerivedRecap.Store/DerivedRecapRestorer.cs) | [`DerivedRecapPublishedRestoreInspectionTests.cs`](../../../tests/SessionJournal.DerivedRecap.Store.Tests/DerivedRecapPublishedRestoreInspectionTests.cs)、[`DerivedRecapPublishedRestoreWriteTests.cs`](../../../tests/SessionJournal.DerivedRecap.Store.Tests/DerivedRecapPublishedRestoreWriteTests.cs) |
 | filesystem durability | [`RecapDurableFileSystem.cs`](../../../prototypes/SessionJournal.DerivedRecap.Store/RecapDurableFileSystem.cs) | [`DerivedRecapCrashRecoveryTests.cs`](../../../tests/SessionJournal.DerivedRecap.Store.Tests/DerivedRecapCrashRecoveryTests.cs) |
 
 使用与 durability 边界见 [Store README](../../../prototypes/SessionJournal.DerivedRecap.Store/README.md)。
@@ -136,6 +137,19 @@ Galatea.Server         -> Core + Store + Planner + Maintainers + Completion
 路径是 `DerivedRecapOperationPreparer.PrepareAsync/PrepareExactBuildingAsync`签发
 `PreparedRecapOperationAuthority`，再由 `DerivedRecapPreparedExecutor.ExecuteAsync`消费；不要把 internal
 workflow executor 当成 Host entry。
+
+### Offline、Host 与操作验收
+
+| Concern | Current entry | Focused tests / procedure |
+|---|---|---|
+| read-only full audit | [`SessionJournalOfflineValidator.cs`](../../../prototypes/SessionJournal.Offline/SessionJournalOfflineValidator.cs)、[Offline README](../../../prototypes/SessionJournal.Offline/README.md) | [`SessionJournalOfflineValidatorTests.cs`](../../../tests/SessionJournal.Offline.Tests/SessionJournalOfflineValidatorTests.cs) |
+| CLI real-data recap/import gate | [`Program.cs`](../../../prototypes/SessionJournal.Cli/Program.cs)、[CLI README](../../../prototypes/SessionJournal.Cli/README.md) | [`DerivedRecapRealDataAcceptanceTests.cs`](../../../tests/SessionJournal.Cli.Tests/DerivedRecapRealDataAcceptanceTests.cs) |
+| Galatea G2A Host acceptance | [`GalateaServices.cs`](../../../prototypes/Galatea/GalateaServices.cs) | [`GalateaG2AStagingHostAcceptanceTests.cs`](../../../tests/Galatea.Server.Tests/GalateaG2AStagingHostAcceptanceTests.cs) |
+| G2A disposable clone safety | [G2A runbook](../galatea-g2a-staging-acceptance-runbook.md) | [`GalateaG2AStagingCloneSafetyTests.cs`](../../../tests/Galatea.Server.Tests/GalateaG2AStagingCloneSafetyTests.cs) |
+
+G2A runbook只定义repeatable procedure，不是当前 HEAD 的 `Passed` evidence。Host acceptance与real-data
+acceptance都是显式environment-gated；普通test run中的skip不能被报告成通过external gate。Clone-safety
+tests可独立验证本地安全性质，但也不能代替真实export、provider或staging执行。
 
 ## 三类运行流程
 
@@ -172,7 +186,8 @@ workflow executor 当成 Host entry。
 - bounded proof不足必须传播 typed `BeyondPrefix`，不得 hidden-page或fallback full lineage。
 - Store final-head reread 是 fence，不是跨同一 Engine caller的原子 CAS；不要据此放松 Host serialization。
 - Maintainers 的 embedded prompt `LogicalName`有意保留旧 `Atelia.SessionJournal.Maintainers.Prompts.*`
-  identity；移动文件或类型时不得顺手“规范化”这些 durable fingerprint inputs。
+  resource identity。`LogicalName`本身不进入fingerprint preimage；prompt fingerprint由schema与两段prompt
+  文本计算，capability fingerprint再绑定implementation、maintainer、target与prompt fingerprint。
 
 遇到以下改动时，本地图不够，必须继续读 owning codec/contracts、focused tests和fixtures：
 
@@ -189,8 +204,12 @@ reader language、crash/recovery和authority边界审阅。
 
 - **Planner static reachability guard**：`RecapPlannerConfigResolver`当前校验单字段、catalog与protocol hard caps，
   尚未用跨字段规则拒绝“在 `maxRawGrowthEventCount`内不可能达到 `R + B` HistoryLoad”的配置。
-- **Uncertain / capability-aware recovery**：Core目前只有默认 `Refuse`与显式
-  `RestartWithNewAttempt`；provider result lookup/reconciliation、按side-effect capability选择retry/pause尚未实现。
+- **Provider Started outcome uncertain**：Completion provider path目前只有默认 `Refuse`与显式
+  `RestartWithNewAttempt`；provider result lookup/reconciliation尚未实现，restart可能重复provider side effect。
+- **Tool continuation capability boundary**：这不由provider policy控制。`ToolExecutionStarted`冻结tool runtime
+  identity、operation id与execution sequence，Resume用同一reservation继续。只有天然幂等或Host能按operation id
+  自行去重/查询结果的工具适合自动恢复；非幂等且结果不可查询的工具不得自动恢复。当前Core尚未提供按该
+  side-effect capability自动选择resume/pause的策略层。
 - **G3 warm-up**：Galatea当前没有post-response DerivedRecap warm-up路径；在真实延迟证据、独立设计与验收前，
   不应把它加入 response-critical workflow。
 - **External acceptance**：deterministic tests不等于当前HEAD已通过真实provider/staging gate；每轮都要生成新evidence。

@@ -1,6 +1,7 @@
 # DG5 default scope: governed active/current SessionJournal entry documents.
 # Paths are repository-relative, explicit, and must already be tracked.
 docs/SessionJournal/README.md
+docs/SessionJournal/current/architecture-and-code-map.md
 docs/SessionJournal/session-journal-document-governance-plan.md
 docs/SessionJournal/session-journal-beta-contract-snapshot.md
 docs/SessionJournal/event-sourced-session-architecture-roadmap.md

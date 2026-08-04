@@ -11,6 +11,10 @@ Core/Recovery 与 Recap/Host claim 各自在表内记录自己的 exact baseline
 从下表与任务最接近的一行开始，通常先读 2～4 份文档。遇到本文末尾的 safety trigger 时，立即继续读取
 current code、tests 与 fixtures，不受默认阅读预算限制。
 
+首次接触 SessionJournal、定位 current assembly ownership、owner code 或 focused tests 时，先读
+[当前架构与代码地图](current/architecture-and-code-map.md)。该地图只是 agent-first navigation，
+不取代下表的 canonical contract、normative design、current code/tests 或 acceptance evidence。
+
 ## 按任务阅读
 
 | 任务 | 首读入口 | 再读入口 | 边界 / escalation |
