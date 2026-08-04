@@ -432,6 +432,92 @@ public sealed class DerivedRecapStoreR1Tests {
     }
 
     [Fact]
+    public async Task CheckpointSuccessAuthoritiesChainAndRefreshFinalState() {
+        using RecapStoreFixture fixture =
+            await RecapStoreFixture.CreateAsync(historyPairs: 4);
+        DerivedRecapLineageView lineage = fixture.Lineage();
+        EventAddress target = lineage.CapturedHead;
+        EventAddress firstEndpoint =
+            lineage.CurrentPrefix.HeadToOldest[2].Address;
+        var plan = new MaintainRecapBlockPlan(
+            new RecapBlockId("roleplay.self"),
+            new ContextHeaderBlockPath(
+                ContextHeaderCarrier.System,
+                "roleplay.self"
+            ),
+            "roleplay.autobiographical",
+            RecapTestIdentity.CapabilityFingerprint,
+            new EmptyRecapMaintainSource(
+                lineage.CurrentPrefix.HeadToOldest[^2].Address,
+                fixture.Setups(
+                    lineage.CurrentPrefix.HeadToOldest[^2].Address
+                )
+            ),
+            [fixture.Boundary(firstEndpoint), fixture.Boundary(target)],
+            EmptyRecapPriorContext.Instance
+        );
+        DerivedRecapSetManifest manifest =
+            RecapWireTestFacts.CreateManifest(
+                fixture.Engine,
+                target,
+                [plan]
+            );
+        CreateBuildingResult.Created created =
+            Assert.IsType<CreateBuildingResult.Created>(
+                await fixture.Store.CreateBuildingAsync(manifest)
+            );
+        BuildingBlockInspection initial =
+            await fixture.Store.InspectBuildingBlockAsync(
+                created.Descriptor,
+                plan.RecapBlockId
+            );
+        DerivedRecapBlock firstCandidate =
+            DerivedRecapCodec.CreateBlock(
+                plan,
+                firstEndpoint,
+                "first"
+            );
+        CheckpointWriteResult.Updated first = Assert.IsType<
+            CheckpointWriteResult.Updated
+        >(await fixture.Store.AdvanceRollingCheckpointAsync(
+            initial.WriteAuthority,
+            firstCandidate
+        ));
+        DerivedRecapBlock finalCandidate =
+            DerivedRecapCodec.CreateBlock(
+                plan,
+                target,
+                "final"
+            );
+        CheckpointWriteResult.Updated second = Assert.IsType<
+            CheckpointWriteResult.Updated
+        >(await fixture.Store.AdvanceRollingCheckpointAsync(
+            first.WriteAuthority,
+            finalCandidate
+        ));
+        _ = Assert.IsType<FinalBlockWriteResult.Installed>(
+            await fixture.Store.EnsureFinalBlockAsync(
+                second.WriteAuthority,
+                finalCandidate
+            )
+        );
+
+        CheckpointWriteResult.AlreadyCurrent current = Assert.IsType<
+            CheckpointWriteResult.AlreadyCurrent
+        >(await fixture.Store.AdvanceRollingCheckpointAsync(
+            second.WriteAuthority,
+            finalCandidate
+        ));
+        Assert.Equal(second.StateToken, current.StateToken);
+        _ = Assert.IsType<FinalBlockWriteResult.AlreadyHealthy>(
+            await fixture.Store.EnsureFinalBlockAsync(
+                current.WriteAuthority,
+                finalCandidate
+            )
+        );
+    }
+
+    [Fact]
     public async Task FinalInstallUsesHealthTokenAndRepairsOnlyDamage() {
         using RecapStoreFixture fixture =
             await RecapStoreFixture.CreateAsync(historyPairs: 4);

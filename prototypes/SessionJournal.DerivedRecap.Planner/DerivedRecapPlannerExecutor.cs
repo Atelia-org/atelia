@@ -2200,29 +2200,15 @@ internal sealed class DerivedRecapBuildingExecutor {
                     )
                     .ConfigureAwait(false);
             switch (write) {
-                case CheckpointWriteResult.Updated:
+                case CheckpointWriteResult.Updated updated:
                     currentBlock = candidate;
                     nextEndpoint++;
-                    inspection = await _store
-                        .InspectBuildingBlockAsync(
-                            handle,
-                            plan.RecapBlockId,
-                            cancellationToken
-                        )
-                        .ConfigureAwait(false);
-                    writeAuthority = inspection.WriteAuthority;
+                    writeAuthority = updated.WriteAuthority;
                     break;
-                case CheckpointWriteResult.AlreadyCurrent:
+                case CheckpointWriteResult.AlreadyCurrent current:
                     currentBlock = candidate;
                     nextEndpoint++;
-                    inspection = await _store
-                        .InspectBuildingBlockAsync(
-                            handle,
-                            plan.RecapBlockId,
-                            cancellationToken
-                        )
-                        .ConfigureAwait(false);
-                    writeAuthority = inspection.WriteAuthority;
+                    writeAuthority = current.WriteAuthority;
                     break;
                 case CheckpointWriteResult.Stale:
                     BuildingBlockInspection refreshed =

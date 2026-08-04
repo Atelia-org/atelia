@@ -1261,7 +1261,13 @@ public sealed class DerivedRecapStore {
                 is RollingRecapCheckpointHealth.Healthy healthy) {
             if (healthy.Block == candidate) {
                 return new CheckpointWriteResult.AlreadyCurrent(
-                    healthy.StateToken
+                    healthy.StateToken,
+                    CreateBuildingBlockWriteAuthority(
+                        building,
+                        blockId,
+                        healthy.StateToken,
+                        inspection.Final.StateToken
+                    )
                 );
             }
             if (candidateEndpoint != healthy.EndpointIndex + 1) {
@@ -1295,8 +1301,15 @@ public sealed class DerivedRecapStore {
                 cancellationToken
             )
             .ConfigureAwait(false);
+        string stateToken = HealthyStateToken(candidate);
         return new CheckpointWriteResult.Updated(
-            HealthyStateToken(candidate)
+            stateToken,
+            CreateBuildingBlockWriteAuthority(
+                building,
+                blockId,
+                stateToken,
+                inspection.Final.StateToken
+            )
         );
     }
 
@@ -5581,8 +5594,7 @@ public sealed class DerivedRecapStore {
             input,
             final,
             checkpoint,
-            new BuildingBlockWriteAuthority(
-                SessionRepositoryPath,
+            CreateBuildingBlockWriteAuthority(
                 snapshot.Descriptor,
                 blockId,
                 checkpoint.StateToken,
@@ -5590,6 +5602,20 @@ public sealed class DerivedRecapStore {
             )
         );
     }
+
+    private BuildingBlockWriteAuthority
+        CreateBuildingBlockWriteAuthority(
+        BuildingDescriptor building,
+        RecapBlockId blockId,
+        string checkpointStateToken,
+        string finalStateToken
+    ) => new(
+        SessionRepositoryPath,
+        building,
+        blockId,
+        checkpointStateToken,
+        finalStateToken
+    );
 
     private void ValidateBuildingWriteAuthority(
         BuildingBlockWriteAuthority authority

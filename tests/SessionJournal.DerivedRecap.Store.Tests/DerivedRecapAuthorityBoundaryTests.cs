@@ -474,6 +474,8 @@ public sealed class DerivedRecapAuthorityBoundaryTests {
     public void AuthorityBearingResultsHaveNoExternalConstructionOrMutation() {
         Type[] authorityBearingTypes = [
             typeof(BuildingBlockInspection),
+            typeof(CheckpointWriteResult.Updated),
+            typeof(CheckpointWriteResult.AlreadyCurrent),
             typeof(PublishedBlockRestoreInspection),
             typeof(PublishedRestoreInspection),
             typeof(PublishedRestoreInspectionResult.Available),
@@ -538,6 +540,7 @@ public sealed class DerivedRecapAuthorityBoundaryTests {
                 public static class AuthorityResults {
                     public static void Read(
                         BuildingBlockInspection building,
+                        CheckpointWriteResult buildingCheckpoint,
                         PublishedBlockRestoreInspection block,
                         PublishedRestoreInspection restore,
                         PublishedRestoreInspectionResult.Available available,
@@ -545,6 +548,16 @@ public sealed class DerivedRecapAuthorityBoundaryTests {
                         PublishedFinalWriteResult final
                     ) {
                         _ = building.WriteAuthority;
+                        if (buildingCheckpoint
+                            is CheckpointWriteResult.Updated buildingUpdated) {
+                            _ = buildingUpdated.StateToken;
+                            _ = buildingUpdated.WriteAuthority;
+                        }
+                        if (buildingCheckpoint
+                            is CheckpointWriteResult.AlreadyCurrent buildingCurrent) {
+                            _ = buildingCurrent.StateToken;
+                            _ = buildingCurrent.WriteAuthority;
+                        }
                         _ = block.WriteAuthority;
                         _ = restore.Blocks;
                         _ = available.Inspection;
@@ -580,6 +593,10 @@ public sealed class DerivedRecapAuthorityBoundaryTests {
                     public static void Forge() {
                         _ = new BuildingBlockInspection(
                             null!, null!, null, null!, null!, null!);
+                        _ = new CheckpointWriteResult.Updated(
+                            null!, null!);
+                        _ = new CheckpointWriteResult.AlreadyCurrent(
+                            null!, null!);
                         _ = new PublishedBlockRestoreInspection(
                             null!, null!, null!, null!, null!, null!);
                         _ = new PublishedRestoreInspection(

@@ -767,11 +767,33 @@ public abstract record CheckpointWriteResult {
     private CheckpointWriteResult() {
     }
 
-    public sealed record Updated(string StateToken)
-        : CheckpointWriteResult;
+    public sealed record Updated : CheckpointWriteResult {
+        internal Updated(
+            string stateToken,
+            BuildingBlockWriteAuthority writeAuthority
+        ) {
+            ArgumentNullException.ThrowIfNull(writeAuthority);
+            StateToken = stateToken;
+            WriteAuthority = writeAuthority;
+        }
 
-    public sealed record AlreadyCurrent(string StateToken)
-        : CheckpointWriteResult;
+        public string StateToken { get; }
+        public BuildingBlockWriteAuthority WriteAuthority { get; }
+    }
+
+    public sealed record AlreadyCurrent : CheckpointWriteResult {
+        internal AlreadyCurrent(
+            string stateToken,
+            BuildingBlockWriteAuthority writeAuthority
+        ) {
+            ArgumentNullException.ThrowIfNull(writeAuthority);
+            StateToken = stateToken;
+            WriteAuthority = writeAuthority;
+        }
+
+        public string StateToken { get; }
+        public BuildingBlockWriteAuthority WriteAuthority { get; }
+    }
 
     public sealed record Stale(string CurrentStateToken)
         : CheckpointWriteResult;
