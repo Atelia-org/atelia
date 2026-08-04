@@ -438,4 +438,4 @@ dotnet run --project prototypes/SessionJournal.Cli -- \
 
 - [Tail execution recovery](../../docs/SessionJournal/tail-execution-recovery-design.md)
 - [Tail operational semantics simplification](../../docs/SessionJournal/done/tail-operational-semantics-simplification-plan.md)
-- [Event-addressed Derived Recap concepts](../../docs/SessionJournal/event-addressed-derived-recap-concepts.md)
+- [Event-addressed Derived Recap concepts](../../docs/SessionJournal/current/derived-recap/concepts.md)

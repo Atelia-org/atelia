@@ -7,8 +7,8 @@
 
 本文只回答“当前代码在哪里、组件如何连接、改动时先看哪些测试”。精确 schema、canonical bytes、
 reader rejection、durability 与 Beta support 边界，应继续核对 owning code、fixtures/tests，以及
-[Beta contract snapshot](../session-journal-beta-contract-snapshot.md)。EADR 术语与不可合并的 proof
-obligation 见 [核心概念](../event-addressed-derived-recap-concepts.md)。
+[Beta contract snapshot](contracts/session-journal-beta-contract-snapshot.md)。EADR 术语与不可合并的 proof
+obligation 见 [核心概念](derived-recap/concepts.md)。
 
 ## 30 秒心智模型
 
@@ -145,7 +145,7 @@ workflow executor 当成 Host entry。
 | read-only full audit | [`SessionJournalOfflineValidator.cs`](../../../prototypes/SessionJournal.Offline/SessionJournalOfflineValidator.cs)、[Offline README](../../../prototypes/SessionJournal.Offline/README.md) | [`SessionJournalOfflineValidatorTests.cs`](../../../tests/SessionJournal.Offline.Tests/SessionJournalOfflineValidatorTests.cs) |
 | CLI real-data recap/import gate | [`Program.cs`](../../../prototypes/SessionJournal.Cli/Program.cs)、[CLI README](../../../prototypes/SessionJournal.Cli/README.md) | [`DerivedRecapRealDataAcceptanceTests.cs`](../../../tests/SessionJournal.Cli.Tests/DerivedRecapRealDataAcceptanceTests.cs) |
 | Galatea G2A Host acceptance | [`GalateaServices.cs`](../../../prototypes/Galatea/GalateaServices.cs) | [`GalateaG2AStagingHostAcceptanceTests.cs`](../../../tests/Galatea.Server.Tests/GalateaG2AStagingHostAcceptanceTests.cs) |
-| G2A disposable clone safety | [G2A runbook](../galatea-g2a-staging-acceptance-runbook.md) | [`GalateaG2AStagingCloneSafetyTests.cs`](../../../tests/Galatea.Server.Tests/GalateaG2AStagingCloneSafetyTests.cs) |
+| G2A disposable clone safety | [G2A runbook](../operations/galatea-g2a-staging-acceptance.md) | [`GalateaG2AStagingCloneSafetyTests.cs`](../../../tests/Galatea.Server.Tests/GalateaG2AStagingCloneSafetyTests.cs) |
 
 G2A runbook只定义repeatable procedure，不是当前 HEAD 的 `Passed` evidence。Host acceptance与real-data
 acceptance都是显式environment-gated；普通test run中的skip不能被报告成通过external gate。Clone-safety

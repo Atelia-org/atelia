@@ -3,7 +3,7 @@
 > **状态**：Canonical Current Vocabulary（EADR V4）
 > **日期**：2026-07-30
 > **目标设计**：
-> [Event-addressed Derived Recap V4](event-addressed-derived-recap-v4-target-design.md)
+> [Event-addressed Derived Recap V4](durable-target.md)
 >
 > 本文定义 current EADR V4 的领域术语与不变量。R0～R3 已完成 contracts、Store、Planner、
 > Maintainers、CLI/online composition、旧 DerivedMemory 删除与 real-data acceptance。目录布局、
@@ -22,7 +22,7 @@
   不访问 Recap Store。
 
 `RefId`、`EventAddress` 与 raw Parent traversal 的底层定义见
-[EventJournal 使用指南](../../src/EventJournal/README.md)。
+[EventJournal 使用指南](../../../../src/EventJournal/README.md)。
 
 ## 1. Recap、Memory 与 Context
 
@@ -62,7 +62,7 @@ current NewPlanning cadence 使用 repo-owned HistoryLoad config V2 与 versione
 `HistoryUnit` count 只承担 window structure、baseline 对齐与 raw safety bound，不再是 scheduling
 trigger。Building/Resume/Restore 继续服从 frozen authority，不读取 active cadence config，也不重新测量
 HistoryLoad。设计与 cutover 约束见
-[Derived Recap History Load](derived-recap-history-load-target-design.md)。
+[Derived Recap History Load](history-load.md)。
 
 ### Context
 

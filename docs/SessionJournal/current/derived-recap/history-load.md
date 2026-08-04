@@ -7,12 +7,12 @@
 > prefilter与 config V1均已删除。
 > **适用范围**：`prototypes/SessionJournal.DerivedRecap.Planner`
 > **上位设计**：
-> [Event-addressed Derived Recap V4](event-addressed-derived-recap-v4-target-design.md)
+> [Event-addressed Derived Recap V4](durable-target.md)
 > **前置实现**：
-> [Derived Recap Cadence](derived-recap-cadence-target-design.md)、
-> [Repo-owned RecapPlannerConfig](recap-planner-config-repository-design.md)
+> [Derived Recap Cadence](../../derived-recap-cadence-target-design.md)、
+> [Repo-owned RecapPlannerConfig](planner-config.md)
 > **施工计划**：
-> [EADR V4 实现与替换计划](event-addressed-derived-recap-v4-implementation-plan.md)
+> [EADR V4 实现与替换计划](../../event-addressed-derived-recap-v4-implementation-plan.md)
 >
 > **章节角色**：§0～§7、§9记录accepted target/current rules；§8是H0～H2/C3的
 > historical closed delivery record，不承担current implementation status。
@@ -513,7 +513,7 @@ Host-owned、estimator-scoped、可删除重建的cache；本结论不授权 per
 ## 8. 实施 gates
 
 H0～H2/C3当时采用的delivery order与closing evidence记录在
-[EADR V4 implementation completion record](event-addressed-derived-recap-v4-implementation-plan.md)：
+[EADR V4 implementation completion record](../../event-addressed-derived-recap-v4-implementation-plan.md)：
 
 ```text
 H0 unit estimator + window projector + golden vectors + Galatea calibration
@@ -539,7 +539,7 @@ Building-first、phase-first和single snapshot纪律。
 | C3 | 当前 Galatea export fresh import后完成 failure/resume、exact corruption/Restore、online与 Prepared recovery；实际 selection 为 growth 116,458 / absorbed 98,082 / recent 18,376；report schema v3（由 v2 直接切换，无 compat） |
 
 具体 load distribution与profile环境见
-[Galatea HistoryLoad calibration](derived-recap-history-load-galatea-calibration.md)。
+[Galatea HistoryLoad calibration](../../derived-recap-history-load-galatea-calibration.md)。
 
 必须覆盖：
 

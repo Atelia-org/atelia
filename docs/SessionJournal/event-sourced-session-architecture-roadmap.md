@@ -6,8 +6,8 @@
 > **相关既有研究**：[Dynamic Logical Context Store for Long-Running Role-Play Agents](../Galatea/backlog/idea/dynamic-logical-context-store-for-long-running-role-play-agents.md)
 > **后续实施计划**：
 > [SessionJournal 恢复与 DerivedMemory 化简](session-journal-recovery-and-derived-memory-simplification-plan.md)、
-> [EADR 核心概念](event-addressed-derived-recap-concepts.md)、
-> [Event-addressed Derived Recap V4 目标设计](event-addressed-derived-recap-v4-target-design.md)、
+> [EADR 核心概念](current/derived-recap/concepts.md)、
+> [Event-addressed Derived Recap V4 目标设计](current/derived-recap/durable-target.md)、
 > [EADR V4 实现与替换计划](event-addressed-derived-recap-v4-implementation-plan.md)
 >
 > **已完成实施记录**：
@@ -299,7 +299,7 @@ EventJournal branch primitive 就宣称产品能力已经实现。
 Recap blocks 的正文可以是 Markdown、JSON 或其他受限 payload。跨代稳定的是 raw authority、
 可重建性和 coherent request projection，不是 historical P6 的 artifact identity/provenance schema。
 query-dependent vector/graph/entity recall 是未来 Memory能力，不进入 Recap set。EADR V4 正式词汇见
-[核心概念](event-addressed-derived-recap-concepts.md)。
+[核心概念](current/derived-recap/concepts.md)。
 
 它们不是 raw experience，也不属于旧 ChatSession。current ownership 分布在独立、可替换的
 DerivedRecap Store、Planner 与 Maintainers；整个 Recap Store 可以删除并由 raw SessionJournal、
@@ -451,8 +451,8 @@ trigger、Maintain/Inherit、Resume/Restore与 bounded catch-up；Maintainers只
 组合三者。没有 coherent exact candidate时保持 not-ready，不允许静默 full-raw fallback。
 full replay只用于显式 offline audit；Prepared/Started recovery以 Prepared exact request为唯一真源，
 对 Recap Store zero-touch。正式定义见
-[EADR 核心概念](event-addressed-derived-recap-concepts.md)和
-[V4 target](event-addressed-derived-recap-v4-target-design.md)。
+[EADR 核心概念](current/derived-recap/concepts.md)和
+[V4 target](current/derived-recap/durable-target.md)。
 
 ## 7. Context Selection（Current EADR V4）
 
@@ -778,8 +778,8 @@ EADR V4 已以更小的 durable shape 替换 historical epoch/job orchestration�
   Planner bounded Restore在同一 directory恢复，不回落旧 ordinal。
 
 CLI/online composition已切到这一 Store + Planner + Maintainers边界，旧 DerivedMemory subsystem
-已删除。具体定义以 [EADR 核心概念](event-addressed-derived-recap-concepts.md)和
-[V4 target](event-addressed-derived-recap-v4-target-design.md)为准；真实 repo acceptance与
+已删除。具体定义以 [EADR 核心概念](current/derived-recap/concepts.md)和
+[V4 target](current/derived-recap/durable-target.md)为准；真实 repo acceptance与
 engine online-tail tail-fix状态见
 [实现计划](event-addressed-derived-recap-v4-implementation-plan.md)。
 

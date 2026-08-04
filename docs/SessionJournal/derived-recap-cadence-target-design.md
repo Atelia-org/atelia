@@ -4,13 +4,13 @@
 > **日期**：2026-07-30
 > **实施状态**：C0、C1、C2 已实现；本文的 HistoryUnit-count cadence是过渡期
 > historical baseline。H0～H2随后已完成 breaking cutover，当前 production authority是
-> [HistoryLoad设计](derived-recap-history-load-target-design.md)。
+> [HistoryLoad设计](current/derived-recap/history-load.md)。
 > **上位设计**：
-> [Event-addressed Derived Recap V4](event-addressed-derived-recap-v4-target-design.md)
+> [Event-addressed Derived Recap V4](current/derived-recap/durable-target.md)
 > **配置设计**：
-> [Repo-owned RecapPlannerConfig](recap-planner-config-repository-design.md)
+> [Repo-owned RecapPlannerConfig](current/derived-recap/planner-config.md)
 > **后续计量设计**：
-> [Derived Recap History Load](derived-recap-history-load-target-design.md)
+> [Derived Recap History Load](current/derived-recap/history-load.md)
 
 ## 0. 目标
 
@@ -354,7 +354,7 @@ remaining unit count >= R
 ## 6. 实施交接
 
 唯一 canonical施工顺序维护在
-[Repo-owned RecapPlannerConfig §9](recap-planner-config-repository-design.md#9-实施工作包) 的
+[Repo-owned RecapPlannerConfig §9](current/derived-recap/planner-config.md#9-实施工作包) 的
 `C0～C3`，不在本文建立第二套 package authority。
 
 本文为其中 C0 的 cadence Shape/Rule输入；C0已完成：
@@ -366,7 +366,7 @@ remaining unit count >= R
 
 C1也已完成 repo document/composition、runtime authority split与管理命令；C2已完成
 CLI/online durable phase与 Building-first cutover。后续先按
-[Derived Recap History Load](derived-recap-history-load-target-design.md)完成 H0～H2，再由 C3负责
+[Derived Recap History Load](current/derived-recap/history-load.md)完成 H0～H2，再由 C3负责
 Galatea real acceptance。
 
 ## 7. 验收矩阵
@@ -394,7 +394,7 @@ Galatea real acceptance。
 ## 8. HistoryLoad当前 authority
 
 `HistoryUnitCount`是 C0～C2曾实现的过渡 cadence authority。breaking cutover现已按
-[Derived Recap History Load](derived-recap-history-load-target-design.md)完成：
+[Derived Recap History Load](current/derived-recap/history-load.md)完成：
 
 - cadence改用抽象 `HistoryLoadUnit`；
 - V1 estimator固定为

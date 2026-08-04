@@ -3,10 +3,10 @@
 > **状态**：Accepted Target / Implemented；mixed target + completion record
 > **日期**：2026-07-31
 > **核心实现背景**：
-> [EADR V4 目标设计](event-addressed-derived-recap-v4-target-design.md)、
-> [Repo-owned RecapPlannerConfig](recap-planner-config-repository-design.md)
+> [EADR V4 目标设计](../derived-recap/durable-target.md)、
+> [Repo-owned RecapPlannerConfig](../derived-recap/planner-config.md)
 > **首个 library consumer**：
-> [Galatea SessionJournal cutover plan](galatea-session-journal-cutover-plan.md)
+> [Galatea SessionJournal cutover plan](../../galatea-session-journal-cutover-plan.md)
 >
 > **章节角色**：§0、§2～§7记录accepted/current integration boundary；§1保留H0前baseline并
 > 记录H0～H2如何关闭缺口。current API与Galatea采用状态必须against code/tests复核，不能由本文的

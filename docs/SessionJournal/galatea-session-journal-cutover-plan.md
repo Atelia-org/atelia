@@ -3,7 +3,7 @@
 > **状态**：Completion Record / Closed；G3 optional warm-up保持Deferred
 > **日期**：2026-07-31
 > **上位设计**：
-> [DerivedRecap Host Integration](derived-recap-host-integration-target-design.md)
+> [DerivedRecap Host Integration](current/host-integration/derived-recap-host-integration.md)
 > **目标实例**：
 > `prototypes/Galatea/.atelia/galatea/sessions/cyber-copy-upgraded/`
 >
@@ -742,7 +742,7 @@ production repo。
 完成结果：
 
 - 新增独立
-  [G2A staging acceptance runbook](galatea-g2a-staging-acceptance-runbook.md)，把每轮运行拆成
+  [G2A staging acceptance runbook](operations/galatea-g2a-staging-acceptance.md)，把每轮运行拆成
   raw只读的staging与可写raw的disposable acceptance clones；run-root、reports、Completion call logs
   与acceptance config均在session repo外，禁止`--force`、auto reset/reimport和clone promotion；
 - production importer新增content-free `--report-json`；同一次authoritative import report同时驱动

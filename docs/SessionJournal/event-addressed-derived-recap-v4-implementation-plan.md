@@ -3,15 +3,15 @@
 > **状态**：Closed Completion Record / Mixed Historical
 > **日期**：2026-07-30
 > **核心概念**：
-> [EADR 核心概念](event-addressed-derived-recap-concepts.md)
+> [EADR 核心概念](current/derived-recap/concepts.md)
 > **目标设计**：
-> [Event-addressed Derived Recap V4](event-addressed-derived-recap-v4-target-design.md)
+> [Event-addressed Derived Recap V4](current/derived-recap/durable-target.md)
 > **Post-R3 配置设计**：
-> [Repo-owned RecapPlannerConfig](recap-planner-config-repository-design.md)
+> [Repo-owned RecapPlannerConfig](current/derived-recap/planner-config.md)
 > **Post-R3 Cadence 设计**：
 > [Derived Recap Cadence](derived-recap-cadence-target-design.md)
 > **Post-C2 HistoryLoad 设计**：
-> [Derived Recap History Load](derived-recap-history-load-target-design.md)
+> [Derived Recap History Load](current/derived-recap/history-load.md)
 > **兼容策略**：不迁移、不双写、不读取 historical DerivedMemory v2/v3
 > **关闭边界**：R0～R3、Post-R3 C0～C3与 H0～H2均已完成。
 > 2026-07-31 production cadence已唯一切换到 HistoryLoad config V2，并以当时的
@@ -99,10 +99,10 @@ Post-R3新 planning authority由下列文档取代对应 baseline：
 - cadence Shape/Rule：
   [Derived Recap Cadence](derived-recap-cadence-target-design.md)；
 - 唯一施工顺序与 repo config：
-  [Repo-owned RecapPlannerConfig §9](recap-planner-config-repository-design.md#9-实施工作包)。
+  [Repo-owned RecapPlannerConfig §9](current/derived-recap/planner-config.md#9-实施工作包)。
 
 Post-C3的public Host integration与Galatea `ChatSessionEngine` cutover分别由
-[DerivedRecap Host Integration](derived-recap-host-integration-target-design.md)和
+[DerivedRecap Host Integration](current/host-integration/derived-recap-host-integration.md)和
 [Galatea → SessionJournal + DerivedRecap](galatea-session-journal-cutover-plan.md)维护；不得让
 Galatea引用CLI executable或复制CLI internal resolver/readiness。
 
@@ -138,7 +138,7 @@ Prepared/Started recovery也保持 Store/config zero-touch。实现验收还
 `RawHistoryAuthorized`使用完整 raw recent history，不再被误判成 strict fresh bootstrap。
 
 H0～H2的唯一 Shape/Rule与施工边界由
-[Derived Recap History Load](derived-recap-history-load-target-design.md)维护。该 cutover把
+[Derived Recap History Load](current/derived-recap/history-load.md)维护。该 cutover把
 HistoryUnitCount scheduling authority替换为抽象 HistoryLoad；V1内部使用 `o200k_base`，但
 HistoryLoad不表示推理模型/provider token。不得同时保留两套 cadence authority，也不得为此升级
 raw event或Store schema。

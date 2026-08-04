@@ -3,8 +3,8 @@
 > **状态**：Accepted Design Review / 已回写 canonical
 > **日期**：2026-07-30
 > **Canonical**：
-> [EADR 核心概念](event-addressed-derived-recap-concepts.md)、
-> [EADR V4 目标设计](event-addressed-derived-recap-v4-target-design.md)、
+> [EADR 核心概念](current/derived-recap/concepts.md)、
+> [EADR V4 目标设计](current/derived-recap/durable-target.md)、
 > [EADR V4 实现计划](event-addressed-derived-recap-v4-implementation-plan.md)
 > **目的**：记录从 EADM V4 到 EADR V4 的化简论证与 adversarial review gates。具体 contract
 > 以 canonical 文档为准。

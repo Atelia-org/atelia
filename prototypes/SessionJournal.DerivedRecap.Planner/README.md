@@ -47,7 +47,7 @@ repo config -> Host resolves one immutable composition snapshot
 - Recap Store是可删除重建的 sidecar，Planner不向 raw journal写 recap identity。
 
 Contract 化简必须遵循
-[canonical normalization gate](../../docs/SessionJournal/event-addressed-derived-recap-concepts.md#contract-normalization-gate)：
+[canonical normalization gate](../../docs/SessionJournal/current/derived-recap/concepts.md#contract-normalization-gate)：
 结构相似不代表 proof obligation 相同；不同 stage 的 typed result、authority boundary 与
 fail-closed behavior 不能因此合并。
 
@@ -660,8 +660,8 @@ dotnet test \
 
 建议按下面顺序阅读：
 
-1. [Derived Recap core concepts](../../docs/SessionJournal/event-addressed-derived-recap-concepts.md)
-2. [V4 target design](../../docs/SessionJournal/event-addressed-derived-recap-v4-target-design.md)
-3. [HistoryLoad target design](../../docs/SessionJournal/derived-recap-history-load-target-design.md)
-4. [Repo-owned planner config](../../docs/SessionJournal/recap-planner-config-repository-design.md)
+1. [Derived Recap core concepts](../../docs/SessionJournal/current/derived-recap/concepts.md)
+2. [V4 target design](../../docs/SessionJournal/current/derived-recap/durable-target.md)
+3. [HistoryLoad target design](../../docs/SessionJournal/current/derived-recap/history-load.md)
+4. [Repo-owned planner config](../../docs/SessionJournal/current/derived-recap/planner-config.md)
 5. [V4 implementation plan and evidence](../../docs/SessionJournal/event-addressed-derived-recap-v4-implementation-plan.md)

@@ -1,29 +1,22 @@
-# DG5 default scope: governed active/current SessionJournal entry documents.
+# Default scope: governed current SessionJournal entry documents.
 # Paths are repository-relative, explicit, and must already be tracked.
 docs/SessionJournal/README.md
 docs/SessionJournal/current/architecture-and-code-map.md
-docs/SessionJournal/session-journal-document-governance-plan.md
-docs/SessionJournal/session-journal-beta-contract-snapshot.md
-docs/SessionJournal/event-sourced-session-architecture-roadmap.md
-docs/SessionJournal/event-addressed-derived-recap-concepts.md
-docs/SessionJournal/event-addressed-derived-recap-v4-target-design.md
-docs/SessionJournal/derived-recap-cadence-target-design.md
-docs/SessionJournal/derived-recap-history-load-target-design.md
-docs/SessionJournal/recap-planner-config-repository-design.md
-docs/SessionJournal/derived-recap-host-integration-target-design.md
-docs/SessionJournal/galatea-g2a-staging-acceptance-runbook.md
+docs/SessionJournal/current/contracts/session-journal-beta-contract-snapshot.md
+docs/SessionJournal/current/derived-recap/concepts.md
+docs/SessionJournal/current/derived-recap/durable-target.md
+docs/SessionJournal/current/derived-recap/history-load.md
+docs/SessionJournal/current/derived-recap/planner-config.md
+docs/SessionJournal/current/host-integration/derived-recap-host-integration.md
+docs/SessionJournal/operations/galatea-g2a-staging-acceptance.md
 prototypes/SessionJournal/README.md
 prototypes/SessionJournal.DerivedRecap.Store/README.md
 prototypes/SessionJournal.DerivedRecap.Planner/README.md
 prototypes/SessionJournal.DerivedRecap.Maintainers/README.md
 
-# Audit-only/closed records are intentionally not default-scanned.  This includes
-# the EADR implementation completion record, normalization closeout, Galatea
-# cutover/calibration evidence, and tail/configuration recovery histories.  Their
-# historical links remain observable with:
+# Evidence/archive records are intentionally not default-scanned. Their links
+# remain observable with:
 #   python scripts/check_session_journal_docs.py --all-tracked --report-only
-# This is an explicit lifecycle boundary, not a reason to promote closed records into default scope.
-# Initial 2026-08-04 observation: 51 tracked Markdown files, 19 MISSING_TARGET
-# diagnostics, all outside this default scope.
-# DG6 closed observation: retain-in-place/no moves; 51 tracked Markdown files,
-# 0 MISSING_TARGET diagnostics after two bounded historical-link repair batches.
+# This is an explicit lifecycle boundary, not a reason to promote closed records
+# into default scope. Physical moves must keep both default and all-tracked scans
+# at zero diagnostics.

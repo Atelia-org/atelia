@@ -9,9 +9,9 @@
 > `Atelia.SessionJournal.DerivedRecap.Planner.RecapPlannerConfigDocument`、
 > `RecapPlanningInputs`、`RecapPlanningLimits`
 > **相关设计**：
-> [Event-addressed Derived Recap V4](event-addressed-derived-recap-v4-target-design.md)、
-> [Derived Recap Cadence](derived-recap-cadence-target-design.md)、
-> [EADR V4 实现与替换计划](event-addressed-derived-recap-v4-implementation-plan.md)
+> [Event-addressed Derived Recap V4](durable-target.md)、
+> [Derived Recap Cadence](../../derived-recap-cadence-target-design.md)、
+> [EADR V4 实现与替换计划](../../event-addressed-derived-recap-v4-implementation-plan.md)
 >
 > **章节角色**：§0～§2、§4～§8、§10～§11记录accepted target/current guidance；§3是已退役的
 > config V1 historical wire；§9是C0～C3/H0～H2 closed delivery record，不承担current status。
@@ -37,7 +37,7 @@ repo-owned operator intent：
 - Building建立后，frozen manifest仍是 Resume authority，配置更新不得重新规划旧 Building。
 
 当前 V2 cadence使用
-[Derived Recap History Load](derived-recap-history-load-target-design.md)定义的 backend-model-neutral
+[Derived Recap History Load](history-load.md)定义的 backend-model-neutral
 内部 HistoryLoad单位，并把 raw event counts仅作为resource/safety limits。V1
 `HistoryUnitCount` wire已被拒绝，不提供 fallback或隐式 migration。
 
@@ -180,7 +180,7 @@ canonical `RefId` override与 precedence；V1不预埋 nullable override或自�
 : 映射 `RecapCadenceConfig`。`minimumRecentHistoryUnitCount`是每次 Published后必须留在
   admission之后的 minimum recent reserve；`recapBuildIntervalUnitCount`是 reserve之外至少新增
   多少 HistoryUnits才允许下一次 build。精确公式、replay-safe admission与 delayed catch-up见
-  [Derived Recap Cadence](derived-recap-cadence-target-design.md)。
+  [Derived Recap Cadence](../../derived-recap-cadence-target-design.md)。
 
 `catalog`
 : 有序 active profile数组。顺序是新 manifest的 canonical block顺序，也是最终 context
@@ -576,7 +576,7 @@ importer不自动创建配置。raw migration成功与 operator选择哪种 Reca
 ## 8. HistoryLoad config V2
 
 V1的 cadence使用 `HistoryUnitCount`；其后续 breaking config/runtime cutover已由
-[Derived Recap History Load](derived-recap-history-load-target-design.md)定稿。
+[Derived Recap History Load](history-load.md)定稿。
 
 V2 cadence shape：
 
@@ -619,7 +619,7 @@ HistoryLoad eligibility，因此无需随 config schema升版。
 > prefilter与 deterministic budget fallback；programmatic CLI composition 已完成 breaking
 > migration，但没有接 repo file。C1已在后续提交完成。
 
-- 按 [Derived Recap Cadence](derived-recap-cadence-target-design.md)实现
+- 按 [Derived Recap Cadence](../../derived-recap-cadence-target-design.md)实现
   `RecapCadenceConfig`；
 - 删除 `RawGrowthTrigger` scheduling authority；
 - exact `HistoryUnitCount` trigger与 minimum recent admission；
@@ -682,7 +682,7 @@ production load超过 threshold后确实形成合法 absorbed/recent selection�
 ### H0～H2：HistoryLoad cutover
 
 按
-[Derived Recap History Load §8](derived-recap-history-load-target-design.md#8-实施-gates)
+[Derived Recap History Load §8](history-load.md#8-实施-gates)
 依次完成：
 
 ```text

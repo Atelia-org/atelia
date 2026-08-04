@@ -101,7 +101,7 @@ frozen wire cutover above intentionally changes manifest, frozen-input, and
 publication schemas without a compatibility layer.
 
 Contract changes must follow the
-[canonical normalization gate](../../docs/SessionJournal/event-addressed-derived-recap-concepts.md#contract-normalization-gate).
+[canonical normalization gate](../../docs/SessionJournal/current/derived-recap/concepts.md#contract-normalization-gate).
 Matching shapes alone do not justify merging stage-specific results,
 authorities, or fail-closed behavior when their proof obligations differ.
 
