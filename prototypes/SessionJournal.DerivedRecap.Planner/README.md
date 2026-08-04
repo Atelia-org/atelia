@@ -46,6 +46,11 @@ repo config -> Host resolves one immutable composition snapshot
 - `NthPrevious`是 strict ordinal；损坏 slot不跳过；
 - Recap Store是可删除重建的 sidecar，Planner不向 raw journal写 recap identity。
 
+Contract 化简必须遵循
+[canonical normalization gate](../../docs/SessionJournal/event-addressed-derived-recap-concepts.md#contract-normalization-gate)：
+结构相似不代表 proof obligation 相同；不同 stage 的 typed result、authority boundary 与
+fail-closed behavior 不能因此合并。
+
 ## B2 bounded online boundary
 
 Planner当前通过 engine-lifetime-bound `SessionJournalReadView`与

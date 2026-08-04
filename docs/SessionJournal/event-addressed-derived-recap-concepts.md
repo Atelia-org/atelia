@@ -133,6 +133,24 @@ Planner.TryCreateRestorePlan(defects) -> plan | unavailable
 
 `Healthy` 可以作为“当前 `CanMaterialize` 成功”的口语，不是独立 persisted state。
 
+### Contract normalization gate
+
+结构、字段或变体名称同构，不足以证明两个 contract 可以合并。合并 result、health、durable
+phase、state machine 或 opaque authority 之前，必须逐项比较并记录：
+
+1. **合法状态与行为**：合法状态集合、状态 transition、recovery 路径，以及每种结果要求
+   operator 采取的 action 是否等价；
+2. **authority 边界**：authority 的 owner、构造/签发权限与可伪造性，以及它绑定的 exact
+   repository、`RefId`、raw head、plan/restore handle、component state 等身份是否等价；
+3. **proof 与 verification obligation**：调用者和实现分别必须证明、重验哪些事实；有意义的
+   独立冗余是 correctness evidence，不能仅因实现相似而删除；
+4. **durable 语言**：涉及持久化时，reader accepted wire language、canonical bytes，以及各个
+   crash point 后 reopen 的可观察行为是否保持不变。
+
+可以共享 internal validation、evidence propagation 或 operational-semantics kernel；本门禁禁止的
+是语义坍缩，不是代码复用。当 proof obligation 不同时，必须保留 outer stage-specific typed
+results、authority boundary 与 fail-closed behavior，即使它们的目录、字段或控制流形状相似。
+
 ## 4. Maintain、Inherit 与 Catch-up
 
 ### Maintain

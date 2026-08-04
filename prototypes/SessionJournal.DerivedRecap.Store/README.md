@@ -100,6 +100,11 @@ promotion. The Store directory/header and final-block schemas remain v4; the
 frozen wire cutover above intentionally changes manifest, frozen-input, and
 publication schemas without a compatibility layer.
 
+Contract changes must follow the
+[canonical normalization gate](../../docs/SessionJournal/event-addressed-derived-recap-concepts.md#contract-normalization-gate).
+Matching shapes alone do not justify merging stage-specific results,
+authorities, or fail-closed behavior when their proof obligations differ.
+
 Online installer and Planner execution paths use explicit bounded-prefix proof
 for raw anchors, setup authority, and planning windows. They return typed,
 stage-qualified `BeyondPrefix` before component payload reads, Maintainer calls,
