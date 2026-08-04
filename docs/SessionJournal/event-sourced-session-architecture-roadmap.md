@@ -99,8 +99,9 @@ SessionJournal 不在旧 deque 旁边补 raw log，而是从新的 storage/wire 
 
 raw event、recovery contract 与 request execution 属于 `Atelia.SessionJournal`；EADR V4 concrete
 recap maintainers 属于 `Atelia.SessionJournal.DerivedRecap.Maintainers`；派生文件与 point lookup
-属于 `Atelia.SessionJournal.DerivedRecap.Store`，PlannerConfig、raw-growth scheduling 和
-Maintain/Inherit orchestration 属于 `Atelia.SessionJournal.DerivedRecap.Planner`；CLI/Agent Host
+属于 `Atelia.SessionJournal.DerivedRecap.Store`，PlannerConfig、HistoryLoad cadence、独立的
+raw-growth safety/backpressure和Maintain/Inherit orchestration属于
+`Atelia.SessionJournal.DerivedRecap.Planner`；CLI/Agent Host
 作为 composition root 组合这些能力。旧 `Atelia.SessionJournal.DerivedMemory` 已删除；
 `Atelia.SessionJournal.Maintainers` 的 persisted prompt logical identity只保留在新 Maintainers
 程序集的 resource names中，不代表旧程序集仍存在。
@@ -188,7 +189,7 @@ Prepared audit contract，不能借宽泛的 planner 名称把 automatic budget 
 | `Atelia.SessionJournal` | raw event codec、tail recovery、request preparation/execution，以及 store-neutral context contracts | raw core 不引用 concrete Recap/Memory implementation |
 | `Atelia.SessionJournal.DerivedRecap.Maintainers` | concrete recap maintainers、profiles、prompts 与 target paths | 单向依赖 SessionJournal contracts；future Memory有独立 components |
 | `Atelia.SessionJournal.DerivedRecap.Store` | event-addressed Building/Published directories、point validation、strict descriptor 与 structural defects | 不拥有 PlannerConfig、Maintainer 或 restore orchestration |
-| `Atelia.SessionJournal.DerivedRecap.Planner` | RecapPlannerConfig、raw-growth trigger、Maintain/Inherit、rolling catch-up 与 Resume/Restore | 依赖 Store 与 SessionJournal contracts；只接收注入的 `IRecapBlockMaintainer` |
+| `Atelia.SessionJournal.DerivedRecap.Planner` | RecapPlannerConfig、HistoryLoad cadence、raw-growth safety/backpressure、Maintain/Inherit、rolling catch-up 与 Resume/Restore | 依赖 Store 与 SessionJournal contracts；只接收注入的 `IRecapBlockMaintainer` |
 | `SessionJournal.Cli` / Agent Host | composition root、迁移导入、离线开发运行、provider/tool 注入 | 可以同时引用上述项目，但不把应用 policy 推回 raw core |
 | `ChatSession.LegacyExportCli` | 旧 ChatSession 数据的 JSON/Markdown 出口 | 只依赖旧 ChatSession；不依赖 SessionJournal，也不承担新功能 |
 
@@ -546,8 +547,8 @@ canonical request manifest 是崩溃恢复和重发的 Canonical Source。Contex
 
 P4 明确区分两条职责：
 
-- current DerivedRecap Planner 的 raw-growth/event-count thresholds只决定何时维护与何时
-  backpressure；
+- current DerivedRecap Planner以versioned HistoryLoad threshold决定何时维护；独立的
+  raw-growth/event-count limit只承担resource safety与backpressure，不是cadence trigger；
 - online request hard guard 只检查 Agent 已选择的 exact ordinal request 是否可物理提交，超限即
   fail-fast，不参与 candidate selection。
 
