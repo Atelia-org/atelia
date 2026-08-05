@@ -55,6 +55,66 @@ public sealed class GalateaFreshReadinessVerticalTests {
     }
 
     [Fact]
+    public async Task OldPublishedSchema_BlocksBeforeProviderWithRebuildGuidance() {
+        var factory = new TrackingFactory(
+            CompletionTermination.Completed()
+        );
+        var normalizer = new TrackingNormalizer();
+        await using var host = GalateaTestHost.Create(
+            factory,
+            normalizer
+        );
+        using HttpClient client = host.CreateClient();
+        await LoginAsync(client);
+        (GalateaHostService service, UserSessionHost session) =
+            await GetSessionAsync(host);
+        EventAddress initialHead = Assert.IsType<EventAddress>(
+            session.Engine.ReadCurrentHead()
+        );
+        string publishedDirectory = Path.Combine(
+            host.SessionDirectory,
+            "derived",
+            "recap",
+            "v4",
+            "refs",
+            session.Engine.BranchRefId.ToHexString(),
+            "published",
+            EventAddressFileNameCodec.Format(initialHead)
+        );
+        Directory.CreateDirectory(publishedDirectory);
+        await File.WriteAllTextAsync(
+            Path.Combine(publishedDirectory, "publication.json"),
+            """
+            {"schema":"atelia.session-journal.published-recap-set.v4","refId":"unused","setAdmissionAnchor":"unused","frozenPlanSnapshot":{},"blockCommitments":[],"envelopeSha256":"unused"}
+            """
+        );
+
+        GalateaLiveTurn liveTurn = await StartAndAwaitAsync(
+            client,
+            service,
+            session,
+            "must remain unconsumed"
+        );
+
+        Assert.Equal("failed", liveTurn.Status);
+        Assert.Equal(0, normalizer.NormalizeCallCount);
+        Assert.Equal(0, factory.CreateCallCount);
+        Assert.Equal(0, factory.Client.DispatchCallCount);
+        Assert.Equal(initialHead, session.Engine.ReadCurrentHead());
+        using GalateaTurnSubscription subscription =
+            liveTurn.Subscribe();
+        StreamEventDto error = Assert.Single(
+            subscription.ReplayEvents,
+            static item => item.Type == "error"
+        );
+        string payload = JsonSerializer.Serialize(error.Payload);
+        Assert.Contains("PublishedPlanUnavailable", payload);
+        Assert.Contains("Unsupported publication schema", payload);
+        Assert.Contains("recap reset", payload);
+        Assert.Contains("recap run", payload);
+    }
+
+    [Fact]
     public async Task BeyondPrefixFailsClosedBeforeProviderMaintainerLogOrBuildingMutation() {
         string callLogDirectory = Path.Combine(
             Path.GetTempPath(),

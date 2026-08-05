@@ -597,7 +597,7 @@ static IResult StartAcceptedTurn(
                 );
             }
             catch (GalateaTurnException ex) {
-                DebugUtil.Warning("Galatea.Api", $"Turn failed with GalateaTurnException: user={session.User.UserId}, turnId={liveTurn.TurnId}, reason={ex.FailureReason}");
+                DebugUtil.Warning("Galatea.Api", $"Turn failed with GalateaTurnException: user={session.User.UserId}, turnId={liveTurn.TurnId}, reason={ex.FailureReason}, detail={ex.Message}");
                 liveTurn.Publish(
                     new StreamEventDto("error", new { message = ex.Message, failureReason = ex.FailureReason }),
                     status: "failed"

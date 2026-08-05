@@ -63,13 +63,7 @@ internal static class GalateaRecapComposition {
                 ),
             DerivedRecapOperationPreparationResult.Unavailable unavailable =>
                 throw new GalateaTurnException(
-                    "会话的前情提要配置或存储当前不可用："
-                    + string.Join(
-                        "; ",
-                        unavailable.Defects.Select(static defect =>
-                            $"{defect.Code}: {defect.Detail}"
-                        )
-                    ),
+                    FormatUnavailableMessage(unavailable.Defects),
                     unavailable.Defects[0].Code
                 ),
             DerivedRecapOperationPreparationResult.BeyondPrefix beyond =>
@@ -78,6 +72,32 @@ internal static class GalateaRecapComposition {
                 "Unknown DerivedRecap preparation result."
             )
         };
+    }
+
+    private static string FormatUnavailableMessage(
+        IReadOnlyList<DerivedRecapOperationPreparationDefect> defects
+    ) {
+        string message = "会话的前情提要配置或存储当前不可用："
+            + string.Join(
+                "; ",
+                defects.Select(static defect =>
+                    $"{defect.Code}: {defect.Detail}"
+                )
+            );
+        if (defects.Any(static defect =>
+                defect.Detail.StartsWith(
+                    "Unsupported publication schema ",
+                    StringComparison.Ordinal
+                )
+                || defect.Detail.StartsWith(
+                    "Unsupported manifest schema ",
+                    StringComparison.Ordinal
+                ))) {
+            message += "。检测到旧版DerivedRecap sidecar；请先用"
+                + "SessionJournal.Cli的recap inspect确认，再按Store契约"
+                + "显式执行recap reset与recap run重建。";
+        }
+        return message;
     }
 
     private static GalateaTurnException RecapBeyondPrefix(

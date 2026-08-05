@@ -93,6 +93,34 @@ Fresh Send 会在 exact Idle head 执行 desired setup reconciliation，再做 B
 preparation；只有这些检查成功后才运行输入清洗并创建provider client。Prepared recovery精确绑定
 durable completion identity，不回退default connection，也不读取active Recap config。
 
+### `PublishedPlanUnavailable`排障
+
+如果前端或`galatea.api.log`报告`PublishedPlanUnavailable`，先用只读命令检查 exact Published
+slot；不要据此判断Completion provider不可用：
+
+```bash
+dotnet run --project prototypes/SessionJournal.Cli -- \
+  recap materialize-inspect --input <sessionDir> --branch main
+```
+
+若 defect 是`Unsupported publication schema`或`Unsupported manifest schema`，说明
+DerivedRecap payload来自旧 wire schema。`derived/recap/v4`目录名和Store header仍为v4，但当前
+manifest/publication payload是v6；项目不提供旧 payload兼容读取。先确认当前branch的exact RefId，
+再显式隔离旧Store并从raw journal重建：
+
+```bash
+dotnet run --project prototypes/SessionJournal.Cli -- \
+  recap reset --input <sessionDir> --branch main --confirm-ref <exact-ref-id>
+
+dotnet run --project prototypes/SessionJournal.Cli -- \
+  recap run --input <sessionDir> --branch main \
+  --connections <connections.json> --connection <id>
+```
+
+`reset`会把旧branch-local Store原子移动到同一`refs/`目录下的quarantine，而不修改raw
+SessionJournal或repo-owned Planner config；`recap run`可能产生Maintainer LLM调用。若当前schema
+的Published block损坏，应优先检查是否可用exact `recap restore`，不要把所有损坏都等同于旧schema。
+
 ## Durable recovery
 
 - 新消息只能进入 `Idle`；`TurnFailed` 会先做 exact abandon。

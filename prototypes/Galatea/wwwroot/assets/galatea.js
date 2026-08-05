@@ -260,6 +260,7 @@
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
     let buffer = "";
+    let terminalEvent = null;
 
     while (true) {
       const { value, done } = await reader.read();
@@ -277,9 +278,11 @@
 
         const rawEvent = buffer.slice(0, separatorIndex);
         buffer = buffer.slice(separatorIndex + 2);
-        handleRawEvent(rawEvent);
+        terminalEvent = handleRawEvent(rawEvent) ?? terminalEvent;
       }
     }
+
+    return terminalEvent;
   }
 
   function handleRawEvent(rawEvent) {
@@ -295,10 +298,10 @@
     }
 
     const payload = data ? JSON.parse(data) : null;
-    handleEvent(eventName, payload);
+    return handleEvent(eventName, payload);
   }
 
-  async function handleEvent(eventName, payload) {
+  function handleEvent(eventName, payload) {
     switch (eventName) {
       case "meta":
         if (payload?.phase === "turn-start") {
@@ -332,12 +335,15 @@
         resetLive();
         setStreaming(true, "正在收尾…");
         input.value = "";
-        break;
+        return { type: "done" };
       case "error":
+        const message = payload?.message ?? "请求失败";
         clearActiveTurn();
-        setStreaming(false, payload?.message ?? "请求失败");
-        break;
+        setStreaming(false, message);
+        return { type: "error", message };
     }
+
+    return null;
   }
 
   async function popLatestTurn(status) {
@@ -421,7 +427,7 @@
           throw new Error("连接生成流失败");
         }
 
-        await readEventStream(response);
+        const terminalEvent = await readEventStream(response);
         if (state.activeTurnId !== normalizedTurnId || generation !== state.streamGeneration) {
           if (!state.activeTurnId) {
             const currentTurn = await waitForCurrentTurnTerminal();
@@ -431,6 +437,8 @@
                 : "本轮保留在可恢复状态；刷新页面可继续恢复。");
             } else if (currentTurn?.status === "unprovisioned") {
               setStreaming(false, "会话仓库尚未完成初始化。");
+            } else if (terminalEvent?.type === "error") {
+              setStreaming(false, terminalEvent.message);
             } else {
               setStreaming(false, "");
             }
