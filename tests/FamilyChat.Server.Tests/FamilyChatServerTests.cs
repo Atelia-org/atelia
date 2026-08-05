@@ -224,6 +224,88 @@ public sealed class FamilyChatServerTests {
     }
 
     [Fact]
+    public async Task PostGenerationCompaction_UsesTheCallerTokenWithoutAnElapsedTimeout() {
+        string tempDir = CreateTempDirectory();
+        string sessionDir = Path.Combine(tempDir, "alice-session");
+        try {
+            await SeedSessionAsync(
+                sessionDir,
+                "model-a",
+                "openai-chat/strict",
+                [
+                    ("seed-one", "seed reply one"),
+                    ("seed-two", "seed reply two"),
+                ]
+            );
+
+            var configPath = WriteConfig(
+                tempDir,
+                thresholdTokens: 1,
+                users: [
+                    new FamilyChatUserConfig(
+                        "alice",
+                        "pw1",
+                        sessionDir,
+                        1,
+                        "compact-system",
+                        "compact-prompt",
+                        "system"
+                    )
+                ]
+            );
+
+            var scriptFactory = new ScriptedCompletionClientFactory();
+            CancellationToken generationToken = default;
+            CancellationToken compactionToken = default;
+            bool generationObserved = false;
+            bool compactionObserved = false;
+
+            scriptFactory.For("alice").Enqueue(
+                (request, observer, ct) => {
+                    generationObserved = true;
+                    generationToken = ct;
+                    observer?.OnTextDelta("new reply");
+                    return Task.FromResult(
+                        new CompletionResult(
+                            new ActionMessage([new ActionBlock.Text("new reply")]),
+                            new CompletionDescriptor("scripted", "openai-chat-v1", request.ModelId)
+                        )
+                    );
+                }
+            );
+            scriptFactory.For("alice").Enqueue(
+                (request, observer, ct) => {
+                    compactionObserved = true;
+                    compactionToken = ct;
+                    observer?.OnTextDelta("summary");
+                    return Task.FromResult(
+                        new CompletionResult(
+                            new ActionMessage([new ActionBlock.Text("summary")]),
+                            new CompletionDescriptor("scripted", "openai-chat-v1", request.ModelId)
+                        )
+                    );
+                }
+            );
+
+            await using var factory = new FamilyChatServerFactory(configPath, scriptFactory);
+            using var client = factory.CreateClient(new WebApplicationFactoryClientOptions {
+                AllowAutoRedirect = false,
+                HandleCookies = true,
+            });
+            await LoginAsync(client, "alice", "pw1");
+
+            await ReadSseAsStringAsync(client, "new turn");
+
+            Assert.True(generationObserved);
+            Assert.True(compactionObserved);
+            Assert.Equal(generationToken, compactionToken);
+        }
+        finally {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task UserMessageNormalizer_RewritesInputBeforeMainModel_AndPersistsRewrittenText() {
         string tempDir = CreateTempDirectory();
         try {
