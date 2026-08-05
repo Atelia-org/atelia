@@ -138,7 +138,10 @@ Host在per-session writer gate内重建一份只读cache，使页面在active tu
 正在append的SessionJournal；cache不是authority，进程重启或writer完成后都可从raw projection重建。
 active turn一经接受，cached `rewindLatestToken`立即失效。只有captured raw head本身就是最新terminal
 Action时才重新返回该token。Undo必须原样回传此token；server使用它执行exact-head CAS，因此陈旧页面
-不会误撤后来新增的turn。DerivedRecap不会被投影为conversation turn。
+不会误撤后来新增的turn。成功后若新head本身是上一轮terminal Action，响应会携带下一枚token，页面可
+继续逐轮Undo；每次只回填刚撤销轮次的用户输入。若用户已修改该回填文本，再次Undo会先确认，避免静默
+覆盖未发送草稿。setup-only suffix、active/recovery tail或已经到达初始setup边界时不会跨边界继续回退。
+DerivedRecap不会被投影为conversation turn。
 
 ## 输入清洗与停止
 

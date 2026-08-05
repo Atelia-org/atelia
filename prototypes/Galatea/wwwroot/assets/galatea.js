@@ -8,6 +8,7 @@
     recentTurns: [],
     rewindLatestToken: null,
     pendingPoppedTurn: null,
+    pendingPoppedDraftText: null,
     liveText: "",
     liveReasoning: "",
     streaming: false,
@@ -115,7 +116,7 @@
   function refreshComposerMode() {
     if (composerModeHint) {
       if (state.pendingPoppedTurn) {
-        composerModeHint.textContent = "最近一轮已撤销。修改后重新发送即可。";
+        composerModeHint.textContent = "已撤销一轮。可继续撤销更早轮次，或修改后重新发送。";
         composerModeHint.classList.remove("hidden");
       } else {
         composerModeHint.textContent = "";
@@ -124,7 +125,7 @@
     }
 
     if (undoLastButton) {
-      undoLastButton.disabled = maintenanceMode || state.streaming || state.pendingPoppedTurn !== null || !hasUndoableTurn();
+      undoLastButton.disabled = maintenanceMode || state.streaming || !hasUndoableTurn();
     }
   }
 
@@ -134,7 +135,20 @@
 
   function clearPendingPoppedTurn() {
     state.pendingPoppedTurn = null;
+    state.pendingPoppedDraftText = null;
     refreshComposerMode();
+  }
+
+  function confirmPendingPoppedTurnReplacement() {
+    if (!state.pendingPoppedTurn) {
+      return true;
+    }
+
+    if (input.value === state.pendingPoppedDraftText) {
+      return true;
+    }
+
+    return window.confirm("继续撤销会覆盖输入框中尚未发送的修改，是否继续？");
   }
 
   function resetLive() {
@@ -347,8 +361,8 @@
   }
 
   async function popLatestTurn(status) {
-    if (state.pendingPoppedTurn) {
-      return state.pendingPoppedTurn;
+    if (!confirmPendingPoppedTurnReplacement()) {
+      return null;
     }
 
     setStreaming(true, status || "正在取出最近一轮…");
@@ -390,6 +404,7 @@
 
     applyRecentTurnsPayload(payload?.recent ?? {});
     input.value = state.pendingPoppedTurn.userText ?? "";
+    state.pendingPoppedDraftText = input.value;
     renderTurns();
     input.focus();
     input.setSelectionRange(input.value.length, input.value.length);
@@ -519,7 +534,7 @@
   });
 
   undoLastButton?.addEventListener("click", async () => {
-    if (maintenanceMode || state.streaming || state.pendingPoppedTurn || !hasUndoableTurn()) {
+    if (maintenanceMode || state.streaming || !hasUndoableTurn()) {
       return;
     }
 

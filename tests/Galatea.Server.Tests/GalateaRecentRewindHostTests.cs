@@ -239,6 +239,71 @@ public sealed class GalateaRecentRewindHostTests {
     }
 
     [Fact]
+    public async Task ConsecutiveUndo_UsesEachFreshTokenAndMovesOneCompletedTurnPerRequest() {
+        var completion = new QueueCompletionClient(
+            "assistant one",
+            "assistant two",
+            "assistant three"
+        );
+        await using var host = CreateHost(completion);
+        using HttpClient client = host.CreateClient();
+        await LoginAsync(client);
+        (GalateaHostService service, UserSessionHost session) =
+            await GetSessionAsync(host);
+
+        await CompleteTurnAsync(client, service, session, "user one");
+        await CompleteTurnAsync(client, service, session, "user two");
+        await CompleteTurnAsync(client, service, session, "user three");
+
+        RecentTurnsResponseDto before = await GetRecentAsync(client);
+        string thirdToken = Assert.IsType<string>(
+            before.RewindLatestToken
+        );
+        PopLatestTurnResponseDto first = await PopLatestAsync(
+            client,
+            thirdToken
+        );
+
+        AssertTurn(first.Turn, "user three", "assistant three");
+        Assert.Collection(
+            first.Recent.Turns,
+            turn => AssertTurn(turn, "user two", "assistant two"),
+            turn => AssertTurn(turn, "user one", "assistant one")
+        );
+        string secondToken = Assert.IsType<string>(
+            first.Recent.RewindLatestToken
+        );
+        Assert.NotEqual(thirdToken, secondToken);
+
+        PopLatestTurnResponseDto second = await PopLatestAsync(
+            client,
+            secondToken
+        );
+
+        AssertTurn(second.Turn, "user two", "assistant two");
+        AssertTurn(
+            Assert.Single(second.Recent.Turns),
+            "user one",
+            "assistant one"
+        );
+        string firstToken = Assert.IsType<string>(
+            second.Recent.RewindLatestToken
+        );
+        Assert.NotEqual(secondToken, firstToken);
+
+        PopLatestTurnResponseDto third = await PopLatestAsync(
+            client,
+            firstToken
+        );
+
+        AssertTurn(third.Turn, "user one", "assistant one");
+        Assert.Empty(third.Recent.Turns);
+        Assert.Null(third.Recent.RewindLatestToken);
+        Assert.Equal(3, completion.DispatchCallCount);
+        Assert.Empty(session.Engine.ReadRecentCompletedTurns(10).Turns);
+    }
+
+    [Fact]
     public async Task StaleToken_ReturnsConflictWithoutMovingHead() {
         var completion = new QueueCompletionClient(
             "assistant one",

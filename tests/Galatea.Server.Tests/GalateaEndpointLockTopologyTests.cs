@@ -351,6 +351,55 @@ public sealed class GalateaEndpointLockTopologyTests {
     }
 
     [Fact]
+    public async Task StaticClient_AllowsConsecutiveUndoAndProtectsEditedDraft() {
+        await using var host = CreateHost();
+        IWebHostEnvironment environment = host.Factory.Services
+            .GetRequiredService<IWebHostEnvironment>();
+        await using Stream stream = environment.WebRootFileProvider
+            .GetFileInfo("assets/galatea.js")
+            .CreateReadStream();
+        using var reader = new StreamReader(stream);
+
+        string script = await reader.ReadToEndAsync();
+
+        Assert.Contains(
+            "undoLastButton.disabled = maintenanceMode || state.streaming || !hasUndoableTurn();",
+            script,
+            StringComparison.Ordinal
+        );
+        Assert.Contains(
+            "function confirmPendingPoppedTurnReplacement()",
+            script,
+            StringComparison.Ordinal
+        );
+        Assert.Contains(
+            "if (!confirmPendingPoppedTurnReplacement())",
+            script,
+            StringComparison.Ordinal
+        );
+        Assert.Contains(
+            "继续撤销会覆盖输入框中尚未发送的修改",
+            script,
+            StringComparison.Ordinal
+        );
+        Assert.Contains(
+            "state.pendingPoppedDraftText = input.value;",
+            script,
+            StringComparison.Ordinal
+        );
+        Assert.DoesNotContain(
+            "if (state.pendingPoppedTurn) {\n      return state.pendingPoppedTurn;",
+            script,
+            StringComparison.Ordinal
+        );
+        Assert.DoesNotContain(
+            "state.pendingPoppedTurn || !hasUndoableTurn()",
+            script,
+            StringComparison.Ordinal
+        );
+    }
+
+    [Fact]
     public void ExceptionClassifier_RejectsFatalProcessFailures() {
         Assert.True(GalateaExceptionClassifier.IsNonFatal(
             new IOException("ordinary I/O failure")
