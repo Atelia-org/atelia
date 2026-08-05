@@ -191,7 +191,7 @@ gitignore/backtest/rolling-summary-calls/
 
 ```json
 {
-  "schema": "atelia.completion.call-log.v1",
+  "schema": "atelia.completion.call-log.v2",
   "callId": 1,
   "timestampUtc": "2026-07-20T00:00:00Z",
   "elapsedMs": 12345,

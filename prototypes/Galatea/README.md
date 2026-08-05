@@ -75,7 +75,6 @@ ingress应保持关闭直到重启后对目标用户完成所需的只读检查�
       "kind": "openai-chat",
       "modelId": "deepseek-v4",
       "completionSurfaceId": "openai-chat/deepseek-v4",
-      "requestTimeoutSeconds": 300,
       "baseAddress": "https://example.invalid/v1/",
       "apiKeyEnv": "DEEPSEEK_API_KEY"
     }
@@ -83,11 +82,10 @@ ingress应保持关闭直到重启后对目标用户完成所需的只读检查�
 }
 ```
 
-`requestTimeoutSeconds`是可选的connection-local operation policy，范围1..3600；未配置时保持100秒
-默认值。timeout覆盖完整streaming operation，包括收到response headers之后持续读取SSE body的阶段；
-effective timeout会进入Completion call log，便于解释provider等待失败，但不会进入durable dispatch
-fingerprint：它不改变endpoint/model/request wire，调整纯等待策略也不应让已经Prepared的exact
-recovery失去binding。
+Completion runtime不设置elapsed-operation timeout：provider在不可见reasoning或排队期间即使长时间没有
+输出，client也会继续等待。调用只会因caller cancellation、明确的HTTP/连接错误，或stream在provider
+terminal event之前断开而结束；静默本身不被解释为LLM failure。连接等待策略不进入durable dispatch
+fingerprint。
 
 Fresh Send 会在 exact Idle head 执行 desired setup reconciliation，再做 Building-first Recap
 preparation；只有这些检查成功后才运行输入清洗并创建provider client。Prepared recovery精确绑定
