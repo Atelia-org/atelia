@@ -3186,6 +3186,426 @@ public sealed class DerivedRecapPlannerExecutorTests {
         Assert.True(Directory.Exists(artifactPath));
     }
 
+    public sealed class DerivedRecapPlanningProgressInspectorTests {
+        private const string ProfileName = "self-profile";
+
+        [Fact]
+        public async Task BelowThresholdReportsExactHeadAndRemainingLoad() {
+            using TestFixture fixture = await TestFixture.CreateAsync(
+                historyPairs: 1
+            );
+            var policy = new DelegatePolicy(static _ =>
+                throw new Xunit.Sdk.XunitException(
+                    "Read-only inspection must not invoke policy."
+                ));
+            var estimator = new TestHistoryUnitLoadEstimator();
+            RecapMaintainerCapabilitySnapshot capabilities =
+                Capabilities(fixture);
+            var source = new StaticActiveConfigurationSource(
+                Configuration(
+                    fixture,
+                    capabilities,
+                    policy,
+                    estimator,
+                    minimumRecentHistoryLoad: 1,
+                    recapBuildIntervalHistoryLoad: 3
+                )
+            );
+            EventAddress head = fixture.Engine.ReadCurrentHead()!.Value;
+
+            var result = Assert.IsType<
+                DerivedRecapPlanningProgressInspectionResult
+                    .BelowCadenceThreshold
+            >(
+                await DerivedRecapPlanningProgressInspector.InspectAsync(
+                    fixture.Engine.ReadView,
+                    fixture.Store,
+                    capabilities,
+                    source
+                )
+            );
+
+            Assert.Equal(head, result.Snapshot.CapturedRawHead);
+            Assert.Null(result.Snapshot.LatestPublishedSetAnchor);
+            Assert.Equal(
+                fixture.ReplayStart(),
+                result.Snapshot.CadenceBaseline
+            );
+            Assert.Equal(
+                2,
+                result.Snapshot.Measurement.GrowthHistoryUnitCount
+            );
+            Assert.Equal(
+                2,
+                result.Snapshot.Measurement.GrowthHistoryLoad.Value
+            );
+            Assert.Equal(4,
+                result.Snapshot.BuildThresholdHistoryLoad.Value);
+            Assert.Equal(2,
+                result.Snapshot.RemainingHistoryLoad.Value);
+            Assert.False(result.Snapshot.IsBuildThresholdReached);
+            Assert.Equal(1, source.LoadCallCount);
+            Assert.Equal(0, policy.CallCount);
+            Assert.IsType<BuildingReadResult.Missing>(
+                await fixture.Store.ReadBuildingAsync(head)
+            );
+        }
+
+        [Fact]
+        public async Task CadenceReadyStopsBeforePolicyAndBuilding() {
+            using TestFixture fixture = await TestFixture.CreateAsync(
+                historyPairs: 1
+            );
+            var policy = new DelegatePolicy(static _ =>
+                throw new Xunit.Sdk.XunitException(
+                    "Read-only inspection must not invoke policy."
+                ));
+            var estimator = new TestHistoryUnitLoadEstimator();
+            RecapMaintainerCapabilitySnapshot capabilities =
+                Capabilities(fixture);
+            var source = new StaticActiveConfigurationSource(
+                Configuration(
+                    fixture,
+                    capabilities,
+                    policy,
+                    estimator,
+                    minimumRecentHistoryLoad: 1,
+                    recapBuildIntervalHistoryLoad: 1
+                )
+            );
+            EventAddress head = fixture.Engine.ReadCurrentHead()!.Value;
+
+            var result = Assert.IsType<
+                DerivedRecapPlanningProgressInspectionResult.CadenceReady
+            >(
+                await DerivedRecapPlanningProgressInspector.InspectAsync(
+                    fixture.Engine.ReadView,
+                    fixture.Store,
+                    capabilities,
+                    source
+                )
+            );
+
+            Assert.True(result.Snapshot.IsBuildThresholdReached);
+            Assert.Equal(0,
+                result.Snapshot.RemainingHistoryLoad.Value);
+            Assert.Equal(0, policy.CallCount);
+            Assert.IsType<BuildingReadResult.Missing>(
+                await fixture.Store.ReadBuildingAsync(head)
+            );
+        }
+
+        [Fact]
+        public async Task PublishedAdmissionIsExactProgressBaseline() {
+            using TestFixture fixture = await TestFixture.CreateAsync(
+                historyPairs: 1
+            );
+            var maintainer = new ScriptedMaintainer(
+                "self-maintainer",
+                fixture.SelfTarget,
+                static (_, _) => "source"
+            );
+            var published = Assert.IsType<
+                DerivedRecapExecutionResult.Published
+            >(
+                await fixture.CreateExecutor(
+                        new BoundedMaintainAllRecapPlanningPolicy(),
+                        [maintainer]
+                    )
+                    .RunAsync()
+            );
+            fixture.AppendPair("after-published");
+            var policy = new DelegatePolicy(static _ =>
+                throw new Xunit.Sdk.XunitException(
+                    "Read-only inspection must not invoke policy."
+                ));
+            var estimator = new TestHistoryUnitLoadEstimator();
+            RecapMaintainerCapabilitySnapshot capabilities =
+                Capabilities(fixture);
+            var source = new StaticActiveConfigurationSource(
+                Configuration(
+                    fixture,
+                    capabilities,
+                    policy,
+                    estimator,
+                    minimumRecentHistoryLoad: 1,
+                    recapBuildIntervalHistoryLoad: 10
+                )
+            );
+
+            var result = Assert.IsType<
+                DerivedRecapPlanningProgressInspectionResult
+                    .BelowCadenceThreshold
+            >(
+                await DerivedRecapPlanningProgressInspector.InspectAsync(
+                    fixture.Engine.ReadView,
+                    fixture.Store,
+                    capabilities,
+                    source
+                )
+            );
+
+            Assert.Equal(
+                published.Descriptor.SetAdmissionAnchor,
+                result.Snapshot.CadenceBaseline
+            );
+            Assert.Equal(
+                published.Descriptor.SetAdmissionAnchor,
+                result.Snapshot.LatestPublishedSetAnchor
+            );
+            Assert.Equal(
+                2,
+                result.Snapshot.Measurement.GrowthHistoryUnitCount
+            );
+            Assert.Equal(0, policy.CallCount);
+            Assert.Equal(1, maintainer.CallCount);
+        }
+
+        [Fact]
+        public async Task ThresholdWithoutEligibleBoundaryIsTypedAwaiting() {
+            using TestFixture fixture = await TestFixture.CreateAsync(
+                historyPairs: 1
+            );
+            var policy = new DelegatePolicy(static _ =>
+                throw new Xunit.Sdk.XunitException(
+                    "Read-only inspection must not invoke policy."
+                ));
+            int measurementIndex = 0;
+            var estimator = new TestHistoryUnitLoadEstimator(
+                TestHistoryUnitLoadEstimator.DefaultId,
+                (_, _) => new HistoryUnitLoadMeasurement(
+                    new HistoryLoadUnit(
+                        measurementIndex++ == 0 ? 1 : 100
+                    ),
+                    RenderedUtf8Bytes: 1
+                )
+            );
+            RecapMaintainerCapabilitySnapshot capabilities =
+                Capabilities(fixture);
+            var source = new StaticActiveConfigurationSource(
+                Configuration(
+                    fixture,
+                    capabilities,
+                    policy,
+                    estimator,
+                    minimumRecentHistoryLoad: 90,
+                    recapBuildIntervalHistoryLoad: 5
+                )
+            );
+
+            var result = Assert.IsType<
+                DerivedRecapPlanningProgressInspectionResult
+                    .AwaitingReplaySafeAdmission
+            >(
+                await DerivedRecapPlanningProgressInspector.InspectAsync(
+                    fixture.Engine.ReadView,
+                    fixture.Store,
+                    capabilities,
+                    source
+                )
+            );
+
+            Assert.Equal(101,
+                result.Snapshot.Measurement.GrowthHistoryLoad.Value);
+            Assert.Equal(0,
+                result.Snapshot.RemainingHistoryLoad.Value);
+            Assert.Equal(0, policy.CallCount);
+        }
+
+        [Fact]
+        public async Task FrozenBuildingSkipsActiveConfiguration() {
+            using TestFixture fixture = await TestFixture.CreateAsync(
+                historyPairs: 1
+            );
+            EventAddress admission =
+                fixture.Engine.ReadCurrentHead()!.Value;
+            MaintainRecapBlockPlan plan = fixture.CreateEmptyPlan(
+                fixture.SelfId,
+                fixture.SelfTarget,
+                "self-maintainer",
+                fixture.ReplayStart(),
+                [admission]
+            );
+            BuildingSnapshot building =
+                await fixture.CreateBuildingAsync(admission, [plan]);
+            RecapMaintainerCapabilitySnapshot capabilities =
+                Capabilities(fixture);
+            var source = new ThrowingActiveConfigurationSource();
+
+            var result = Assert.IsType<
+                DerivedRecapPlanningProgressInspectionResult.FrozenBuilding
+            >(
+                await DerivedRecapPlanningProgressInspector.InspectAsync(
+                    fixture.Engine.ReadView,
+                    fixture.Store,
+                    capabilities,
+                    source
+                )
+            );
+
+            Assert.Equal(building.Descriptor, result.Descriptor);
+            Assert.Equal(0, source.LoadCallCount);
+        }
+
+        [Fact]
+        public async Task PreparationRawHeadRaceIsTypedRetryable() {
+            using TestFixture fixture = await TestFixture.CreateAsync(
+                historyPairs: 1
+            );
+            var policy = new DelegatePolicy(static _ =>
+                throw new Xunit.Sdk.XunitException(
+                    "Read-only inspection must not invoke policy."
+                ));
+            var estimator = new TestHistoryUnitLoadEstimator();
+            RecapMaintainerCapabilitySnapshot capabilities =
+                Capabilities(fixture);
+            ResolvedRecapPlanningConfiguration configuration =
+                Configuration(
+                    fixture,
+                    capabilities,
+                    policy,
+                    estimator,
+                    minimumRecentHistoryLoad: 1,
+                    recapBuildIntervalHistoryLoad: 3
+                );
+            var source = new StaticActiveConfigurationSource(
+                configuration,
+                () => fixture.AppendPair("raced")
+            );
+
+            var result = Assert.IsType<
+                DerivedRecapPlanningProgressInspectionResult.Retryable
+            >(
+                await DerivedRecapPlanningProgressInspector.InspectAsync(
+                    fixture.Engine.ReadView,
+                    fixture.Store,
+                    capabilities,
+                    source
+                )
+            );
+
+            Assert.Equal(
+                DerivedRecapExecutionDefectCodes.RawHeadChanged,
+                result.Code
+            );
+            Assert.Equal(0, policy.CallCount);
+        }
+
+        private static RecapMaintainerCapabilitySnapshot Capabilities(
+            TestFixture fixture
+        ) => new([
+            new RecapProfilePlanningDescriptor(
+                ProfileName,
+                fixture.SelfId,
+                fixture.SelfTarget,
+                "self-maintainer",
+                RecapPlannerTestIdentity.CapabilityFingerprint
+            )
+        ]);
+
+        private static ResolvedRecapPlanningConfiguration Configuration(
+            TestFixture fixture,
+            RecapMaintainerCapabilitySnapshot capabilities,
+            IRecapPlanningPolicy policy,
+            IHistoryUnitLoadEstimator estimator,
+            int minimumRecentHistoryLoad,
+            int recapBuildIntervalHistoryLoad
+        ) {
+            RecapProfilePlanningDescriptor capability =
+                Assert.Single(capabilities.All);
+            var catalogEntry = new RecapBlockCatalogEntry(
+                fixture.SelfId,
+                fixture.SelfTarget,
+                "self-maintainer",
+                RecapPlannerTestIdentity.CapabilityFingerprint,
+                TestFixture.MaxContent
+            );
+            var cadence = new RecapCadenceConfig(
+                estimator.Id,
+                new HistoryLoadUnit(minimumRecentHistoryLoad),
+                new HistoryLoadUnit(recapBuildIntervalHistoryLoad)
+            );
+            var limits = new RecapPlanningLimits(
+                maxRawGrowthEventCount: 512,
+                maxRouteEndpointsPerBlock: 4,
+                maxMaintainerCallsPerBuild: 8,
+                maxRawEventsPerStep: 64,
+                maxRawEventsPerBuild: 512
+            );
+            RecapPlannerConfigSnapshot snapshot =
+                RecapPlannerConfigSnapshot.FromDocument(
+                    new RecapPlannerConfigDocument(
+                        RecapPlannerConfigCodec.SchemaV2,
+                        policy.Id,
+                        new RecapCadenceConfigDocument(
+                            estimator.Id,
+                            minimumRecentHistoryLoad,
+                            recapBuildIntervalHistoryLoad
+                        ),
+                        [new(ProfileName, TestFixture.MaxContent)],
+                        new RecapPlannerLimitsDocument(
+                            limits.MaxRawGrowthEventCount,
+                            limits.MaxRouteEndpointsPerBlock,
+                            limits.MaxMaintainerCallsPerBuild,
+                            limits.MaxRawEventsPerStep,
+                            limits.MaxRawEventsPerBuild
+                        )
+                    )
+                );
+            return new ResolvedRecapPlanningConfiguration(
+                snapshot,
+                new RecapPlanningInputs(
+                    [catalogEntry],
+                    cadence,
+                    estimator,
+                    policy
+                ),
+                limits,
+                [new ResolvedActiveRecapProfile(
+                    ProfileName,
+                    capability,
+                    catalogEntry
+                )]
+            );
+        }
+
+        private sealed class StaticActiveConfigurationSource
+            : IRecapActivePlanningConfigurationSource {
+            private readonly ResolvedRecapPlanningConfiguration
+                _configuration;
+            private readonly Action? _beforeReturn;
+
+            internal StaticActiveConfigurationSource(
+                ResolvedRecapPlanningConfiguration configuration,
+                Action? beforeReturn = null
+            ) {
+                _configuration = configuration;
+                _beforeReturn = beforeReturn;
+            }
+
+            internal int LoadCallCount { get; private set; }
+
+            public RecapActivePlanningConfigurationLoadResult Load() {
+                LoadCallCount++;
+                _beforeReturn?.Invoke();
+                return new RecapActivePlanningConfigurationLoadResult
+                    .Available(_configuration);
+            }
+        }
+
+        private sealed class ThrowingActiveConfigurationSource
+            : IRecapActivePlanningConfigurationSource {
+            internal int LoadCallCount { get; private set; }
+
+            public RecapActivePlanningConfigurationLoadResult Load() {
+                LoadCallCount++;
+                throw new Xunit.Sdk.XunitException(
+                    "Frozen Building inspection must not load config."
+                );
+            }
+        }
+    }
+
     private sealed class DelegatePolicy : IRecapPlanningPolicy {
         private readonly Func<
             RecapPlanningPolicyContext,

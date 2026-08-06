@@ -18,6 +18,7 @@ internal sealed class DerivedRecapPlannerExecutor {
     private readonly RecapPlanningInputs _inputs;
     private readonly RecapPlanningLimits _limits;
     private readonly IRecapBlockMaintainerRegistry _maintainers;
+    private readonly DerivedRecapScheduleReader _scheduleReader;
     private readonly DerivedRecapBuildingInstaller _installer;
     private readonly DerivedRecapBuildingExecutor _buildingExecutor;
     private DerivedRecapPlanningDiagnostics? _lastPlanningDiagnostics;
@@ -62,6 +63,13 @@ internal sealed class DerivedRecapPlannerExecutor {
         ArgumentNullException.ThrowIfNull(testHooks);
         hardCaps.ValidatePlanningAuthority(inputs, limits);
         RequireSameBinding(store, engine);
+        _scheduleReader = new DerivedRecapScheduleReader(
+            engine,
+            store,
+            inputs,
+            limits,
+            hardCaps
+        );
         _installer = new DerivedRecapBuildingInstaller(store, engine);
         _buildingExecutor = new DerivedRecapBuildingExecutor(
             engine,
@@ -121,333 +129,62 @@ internal sealed class DerivedRecapPlannerExecutor {
     ) {
         ArgumentNullException.ThrowIfNull(baseline);
         Volatile.Write(ref _lastPlanningDiagnostics, null);
-        SessionCurrentLineagePrefix lineage;
-        DerivedRecapSelection selection;
-        try {
-            DerivedRecapLineageView view =
-                DerivedRecapLineageView.Capture(
-                    _store,
-                    _engine,
-                    cancellationToken
-                );
-            lineage = view.Prefix;
-            selection = await view.SelectNthPreviousAsync(
-                    nthPrevious: 0,
+        DerivedRecapScheduleReadResult scheduleRead =
+            await _scheduleReader.ReadAsync(
+                    baseline,
                     cancellationToken
                 )
                 .ConfigureAwait(false);
-        }
-        catch (Exception exception) when (IsAvailabilityException(exception)) {
-            return Unavailable(
-                DerivedRecapExecutionDefectCodes.StoreUnavailable,
-                exception.Message
-            );
-        }
-        if (lineage.CapturedHead != baseline.CapturedRawHead) {
-            return RetryableRawHead(baseline.CapturedRawHead);
-        }
-        DerivedRecapExecutionResult? baselineMismatch =
-            MatchPlanningBaseline(baseline, selection);
-        if (baselineMismatch is not null) {
-            return baselineMismatch;
-        }
-
-        PublishedRecapDescriptor? latest;
-        switch (selection) {
-            case DerivedRecapSelection.Selected selected:
-                latest = selected.Descriptor;
-                break;
-            case DerivedRecapSelection.EmptyLineage:
-                latest = null;
-                break;
-            case DerivedRecapSelection.ExactPublishedSetInvalid
-                selectedInvalid:
-                return Unavailable(selectedInvalid.Defects);
-            case DerivedRecapSelection.BeyondPrefix beyond:
-                return new DerivedRecapExecutionResult.BeyondPrefix(
-                    DerivedRecapBeyondPrefixStage
-                        .NewPlanningSourceAnchor,
-                    beyond.Evidence
+        switch (scheduleRead) {
+            case DerivedRecapScheduleReadResult.NoBuild noBuild:
+                SetExactScheduleDiagnostics(noBuild.Progress);
+                return new DerivedRecapExecutionResult.NoBuild(
+                    noBuild.Reason
                 );
-            case DerivedRecapSelection.StoreUnavailable unavailable:
-                return Unavailable(
-                    DerivedRecapExecutionDefectCodes.StoreUnavailable,
-                    unavailable.Reason
-                );
-            case DerivedRecapSelection.OrdinalUnavailable:
-                return Unavailable(
-                    DerivedRecapExecutionDefectCodes.StoreUnavailable,
-                    "Latest strict Published ordinal is unavailable."
-                );
-            default:
-                throw new InvalidOperationException(
-                    "Unknown DerivedRecap selection result."
-                );
-        }
-
-        PublishedRecapSourceSnapshot? sourceSnapshot = null;
-        PublishedPlanSnapshot? sourcePlan = null;
-        SessionHistoryPlanningSeed? emptyPlanningSeed = null;
-        Dictionary<RecapBlockId, DerivedRecapFrozenInput>
-            sourceInputsById = [];
-        if (latest is null) {
-            SessionCreatedPlanningSeedReadResult startRead =
-                _engine.ReadSessionCreatedPlanningSeedAtBounded(
-                    lineage.CapturedHead,
-                    _limits.MaxRawGrowthEventCount,
-                    cancellationToken
-                );
-            if (startRead
-                is SessionCreatedPlanningSeedReadResult.BeyondPrefix) {
-                var search =
-                    (SessionCreatedPlanningSeedReadResult.BeyondPrefix)
-                        startRead;
-                return new DerivedRecapExecutionResult.BeyondPrefix(
-                    DerivedRecapBeyondPrefixStage.NewPlanningRawGrowth,
-                    search.ContinuationEvidence
-                );
-            }
-            emptyPlanningSeed =
-                ((SessionCreatedPlanningSeedReadResult.Available)
-                    startRead).Seed;
-        }
-        if (latest is not null) {
-            PublishedPlanReadResult planRead;
-            try {
-                planRead = await _store.ReadPublishedPlanAsync(
-                        latest,
-                        cancellationToken
-                    )
-                    .ConfigureAwait(false);
-            }
-            catch (Exception exception)
-                when (IsAvailabilityException(exception)) {
-                return Unavailable(
-                    DerivedRecapExecutionDefectCodes
-                        .PublishedSourceUnavailable,
-                    exception.Message
-                );
-            }
-            switch (planRead) {
-                case PublishedPlanReadResult.Available planAvailable:
-                    sourcePlan = planAvailable.Snapshot;
-                    DerivedRecapExecutionResult? catalogMismatch =
-                        RequireCatalogShape(
-                            planAvailable.Snapshot.FrozenPlan.Blocks
-                        );
-                    if (catalogMismatch is not null) {
-                        return catalogMismatch;
-                    }
-                    break;
-                case PublishedPlanReadResult.Changed changed:
-                    return new DerivedRecapExecutionResult.Retryable(
-                        DerivedRecapExecutionDefectCodes.SourceChanged,
-                        $"Latest Published plan changed from "
-                        + $"'{changed.Expected}' to "
-                        + $"'{changed.Observed}'."
-                    );
-                case PublishedPlanReadResult.Unavailable unavailable:
-                    return Unavailable(unavailable.Defects);
-                default:
-                    throw new InvalidOperationException(
-                        "Unknown Published plan read result."
-                    );
-            }
-
-        }
-
-        RecapSchedulingResult.Ready schedule;
-        EventAddress emptyReplayStartExclusive;
-        SessionHistoryPlanningWindow? provenPlanningWindow = null;
-        try {
-            EarliestSourceBoundaryResolution earliestResolution =
-                FindEarliestSourceBoundary(lineage, sourcePlan);
-            if (earliestResolution.BeyondPrefix is { } sourceBeyond) {
-                return new DerivedRecapExecutionResult.BeyondPrefix(
-                    DerivedRecapBeyondPrefixStage
-                        .NewPlanningSourceAnchor,
-                    sourceBeyond
-                );
-            }
-            if (earliestResolution.OffLineageDetail is { } offLineage) {
-                return Unavailable(
-                    DerivedRecapExecutionDefectCodes
-                        .RawPlanningUnavailable,
-                    offLineage
-                );
-            }
-            RecapReplayBoundary? earliestSource =
-                earliestResolution.Boundary;
-            EventAddress? earliestCursor = earliestSource?.Address;
-            SessionHistoryPlanningWindow allRelevantRaw;
-            if (earliestCursor is null) {
-                SessionHistoryPlanningWindowReadResult bounded =
-                    _engine.ReadHistoryPlanningWindowAtBounded(
-                        lineage.CapturedHead,
-                        emptyPlanningSeed!,
-                        _limits.MaxRawGrowthEventCount,
-                        cancellationToken
-                    );
-                if (bounded
-                    is SessionHistoryPlanningWindowReadResult
-                        .BeyondPrefix beyond) {
-                    return new DerivedRecapExecutionResult.BeyondPrefix(
-                        DerivedRecapBeyondPrefixStage
-                            .NewPlanningPendingWindow,
-                        beyond.Evidence
-                    );
-                }
-                allRelevantRaw =
-                    ((SessionHistoryPlanningWindowReadResult.Available)
-                        bounded).Window;
-            }
-            else {
-                SessionHistoryPlanningWindowProofResult proofResult =
-                    _engine.ProveHistoryPlanningWindowAtBounded(
-                        lineage.CapturedHead,
-                        earliestCursor.Value,
-                        _limits.MaxRawGrowthEventCount,
-                        cancellationToken
-                    );
-                if (proofResult
-                    is SessionHistoryPlanningWindowProofResult
-                        .BeyondPrefix beyond) {
-                    return new DerivedRecapExecutionResult.BeyondPrefix(
-                        DerivedRecapBeyondPrefixStage
-                            .NewPlanningPendingWindow,
-                        beyond.Evidence
-                    );
-                }
-                SessionGoverningSetupProofResult setupProofResult =
-                    _engine.ProveGoverningSetupInPrefix(
-                        lineage,
-                        earliestCursor.Value,
-                        earliestSource!.Setups
-                    );
-                if (setupProofResult
-                    is SessionGoverningSetupProofResult.BeyondPrefix
-                        setupBeyond) {
-                    return new DerivedRecapExecutionResult.BeyondPrefix(
-                        DerivedRecapBeyondPrefixStage
-                            .NewPlanningSourceAnchor,
-                        setupBeyond.Evidence.ContinuationEvidence
-                    );
-                }
-                SessionHistoryPlanningSeed sourceSeed =
-                    _engine.MaterializeHistoryPlanningSeed(
-                        ((SessionGoverningSetupProofResult.Available)
-                            setupProofResult).Proof,
-                        cancellationToken
-                    );
-                allRelevantRaw = _engine.MaterializeHistoryPlanningWindow(
-                    ((SessionHistoryPlanningWindowProofResult.Available)
-                        proofResult).Proof,
-                    sourceSeed,
-                    cancellationToken
-                );
-            }
-            if (allRelevantRaw.ObservedRawHead
-                != lineage.CapturedHead) {
-                throw new InvalidDataException(
-                    "Exact history window does not match the captured "
-                    + "raw head."
-                );
-            }
-            provenPlanningWindow = allRelevantRaw;
-            emptyReplayStartExclusive = allRelevantRaw.StartExclusive;
-            EventAddress cadenceBaseline =
-                latest?.SetAdmissionAnchor
-                ?? allRelevantRaw.StartExclusive;
-            RecapRawSafetyResult rawSafety =
-                RecapPlanEvaluator.EvaluateRawSafety(
-                    _limits,
-                    lineage,
-                    cadenceBaseline
-                );
-            if (rawSafety
-                is RecapRawSafetyResult.Unavailable rawUnavailable) {
-                if (rawUnavailable.RawGrowthEventCount is { } rawCount) {
-                    Volatile.Write(
-                        ref _lastPlanningDiagnostics,
-                        new DerivedRecapPlanningDiagnostics
-                            .RawSafetyRejected(rawCount)
-                    );
-                }
-                return Unavailable(rawUnavailable.Defects);
-            }
-            RecapHistoryLoadMeasurement historyLoad =
-                RecapHistoryLoadProjector.Measure(
-                    allRelevantRaw,
-                    cadenceBaseline,
-                    _inputs.HistoryUnitLoadEstimator
-                );
-            RecapSchedulingResult exactSchedule =
-                RecapPlanEvaluator.EvaluateSchedule(
-                    _inputs,
-                    _limits,
-                    new RecapSchedulingFacts(
-                        lineage.CapturedHead,
-                        lineage.HeadToOldest,
-                        new RecapHistoryWindowFacts(
-                            allRelevantRaw.StartExclusive,
-                            allRelevantRaw.Units.Count,
-                            allRelevantRaw.ReplaySafeBoundaries
-                        ),
-                        cadenceBaseline,
-                        latest?.SetAdmissionAnchor,
-                        historyLoad
-                    )
-                );
-            RecapExactScheduleMeasurement? measurement =
-                exactSchedule switch {
-                    RecapSchedulingResult.Ready measuredReady =>
-                        new RecapExactScheduleMeasurement(
-                            measuredReady.Cadence
-                                .HistoryUnitLoadEstimatorId,
-                            measuredReady.Cadence.GrowthHistoryLoad,
-                            measuredReady.Cadence
-                                .GrowthHistoryUnitCount,
-                            measuredReady.Cadence.RawGrowthEventCount
-                        ),
-                    RecapSchedulingResult.NoBuild noBuild =>
-                        noBuild.Measurement,
-                    RecapSchedulingResult.Unavailable unavailable =>
-                        unavailable.Measurement,
-                    _ => null
-                };
-            if (measurement is not null) {
+            case DerivedRecapScheduleReadResult.RawSafetyRejected
+                rejected:
                 Volatile.Write(
                     ref _lastPlanningDiagnostics,
-                    new DerivedRecapPlanningDiagnostics.ExactSchedule(
-                        measurement
-                    )
+                    new DerivedRecapPlanningDiagnostics
+                        .RawSafetyRejected(
+                            rejected.RawGrowthEventCount
+                        )
                 );
-            }
-            if (exactSchedule
-                is not RecapSchedulingResult.Ready ready) {
-                return exactSchedule switch {
-                    RecapSchedulingResult.NoBuild noBuild =>
-                        new DerivedRecapExecutionResult.NoBuild(
-                            noBuild.Reason
-                        ),
-                    RecapSchedulingResult.Unavailable unavailable =>
-                        Unavailable(unavailable.Defects),
-                    _ => throw new InvalidOperationException(
-                        "Unknown exact scheduling result."
-                    )
-                };
-            }
-            schedule = ready;
+                return new DerivedRecapExecutionResult.Unavailable(
+                    rejected.Defects
+                );
+            case DerivedRecapScheduleReadResult.Retryable retryable:
+                return new DerivedRecapExecutionResult.Retryable(
+                    retryable.Code,
+                    retryable.Detail
+                );
+            case DerivedRecapScheduleReadResult.Unavailable unavailable:
+                if (unavailable.Progress is { } progress) {
+                    SetExactScheduleDiagnostics(progress);
+                }
+                return new DerivedRecapExecutionResult.Unavailable(
+                    unavailable.Defects
+                );
+            case DerivedRecapScheduleReadResult.BeyondPrefix beyond:
+                return new DerivedRecapExecutionResult.BeyondPrefix(
+                    beyond.Stage,
+                    beyond.Evidence
+                );
         }
-        catch (HistoryLoadMeasurementException exception) {
-            return Unavailable(exception.Code, exception.Message);
-        }
-        catch (Exception exception) when (IsAvailabilityException(exception)) {
-            return Unavailable(
-                DerivedRecapExecutionDefectCodes.RawPlanningUnavailable,
-                exception.Message
-            );
-        }
+
+        var scheduleReady =
+            (DerivedRecapScheduleReadResult.Ready)scheduleRead;
+        SetExactScheduleDiagnostics(scheduleReady.Progress);
+        SessionCurrentLineagePrefix lineage = scheduleReady.Lineage;
+        PublishedRecapDescriptor? latest = scheduleReady.Latest;
+        EventAddress emptyReplayStartExclusive =
+            scheduleReady.EmptyReplayStartExclusive;
+        SessionHistoryPlanningWindow provenPlanningWindow =
+            scheduleReady.PlanningWindow;
+        RecapSchedulingResult.Ready schedule = scheduleReady.Schedule;
+        PublishedRecapSourceSnapshot? sourceSnapshot = null;
+        Dictionary<RecapBlockId, DerivedRecapFrozenInput>
+            sourceInputsById = [];
 
         if (latest is not null) {
             PublishedRecapSourceReadResult sourceRead;
@@ -948,83 +685,14 @@ internal sealed class DerivedRecapPlannerExecutor {
         );
     }
 
-    private static EarliestSourceBoundaryResolution
-        FindEarliestSourceBoundary(
-        SessionCurrentLineagePrefix lineage,
-        PublishedPlanSnapshot? source
-    ) {
-        if (source is null) {
-            return new EarliestSourceBoundaryResolution(null);
-        }
-        if (source.BlockCommitments.Count == 0) {
-            throw new InvalidDataException(
-                "Published source has no active frozen inputs."
-            );
-        }
-        RecapReplayBoundary? earliest = null;
-        int earliestIndex = -1;
-        foreach (RecapBlockCommitment commitment
-                 in source.BlockCommitments) {
-            int inputIndex;
-            switch (lineage.Lookup(commitment.AbsorbedThrough)) {
-                case SessionCurrentLineageAnchorLookup.Found found:
-                    inputIndex = found.Index;
-                    break;
-                case SessionCurrentLineageAnchorLookup.BeyondPrefix beyond:
-                    return new EarliestSourceBoundaryResolution(
-                        Boundary: null,
-                        BeyondPrefix: beyond.Evidence
-                    );
-                case SessionCurrentLineageAnchorLookup.OffLineage:
-                    return new EarliestSourceBoundaryResolution(
-                        Boundary: null,
-                        OffLineageDetail:
-                            $"Published source block "
-                            + $"'{commitment.RecapBlockId}' cursor "
-                            + "is outside the captured raw lineage."
-                    );
-                default:
-                    throw new InvalidOperationException(
-                        "Unknown bounded-lineage lookup result."
-                    );
-            }
-            if (inputIndex > earliestIndex) {
-                earliest = new RecapReplayBoundary(
-                    commitment.AbsorbedThrough,
-                    FindFrozenCommitmentSetups(
-                        source.FrozenPlan,
-                        commitment
-                    )
-                );
-                earliestIndex = inputIndex;
-            }
-        }
-        return new EarliestSourceBoundaryResolution(earliest);
-    }
-
-    private static SessionContextAnchorSetupReferences
-        FindFrozenCommitmentSetups(
-        DerivedRecapSetManifest manifest,
-        RecapBlockCommitment commitment
-    ) {
-        RecapBlockPlan plan = manifest.Blocks.Single(
-            candidate => candidate.RecapBlockId
-                == commitment.RecapBlockId
-        );
-        if (plan is InheritRecapBlockPlan inherit) {
-            return inherit.SourceAbsorbedThroughSetups;
-        }
-        if (plan is MaintainRecapBlockPlan
-            && commitment.AbsorbedThrough
-                == manifest.SetAdmissionAnchor) {
-            return manifest.SetAdmissionAnchorSetups;
-        }
-        throw new InvalidDataException(
-            $"Published plan has no frozen setup authority for block "
-            + $"'{commitment.RecapBlockId}' at "
-            + $"'{commitment.AbsorbedThrough}'."
-        );
-    }
+    private void SetExactScheduleDiagnostics(
+        DerivedRecapPlanningProgressSnapshot progress
+    ) => Volatile.Write(
+        ref _lastPlanningDiagnostics,
+        new DerivedRecapPlanningDiagnostics.ExactSchedule(
+            progress.Measurement
+        )
+    );
 
     private static void AddStepStarts(
         EventAddress first,
@@ -1036,78 +704,6 @@ internal sealed class DerivedRecapPlannerExecutor {
             starts.Add(previous);
             previous = endpoint;
         }
-    }
-
-    private static DerivedRecapExecutionResult? MatchPlanningBaseline(
-        DerivedRecapPlanningBaseline baseline,
-        DerivedRecapSelection observed
-    ) {
-        if (observed is DerivedRecapSelection.StoreUnavailable
-                unavailable) {
-            return Unavailable(
-                DerivedRecapExecutionDefectCodes.StoreUnavailable,
-                unavailable.Reason
-            );
-        }
-        if (observed is DerivedRecapSelection.BeyondPrefix beyond) {
-            return new DerivedRecapExecutionResult.BeyondPrefix(
-                DerivedRecapBeyondPrefixStage
-                    .NewPlanningSourceAnchor,
-                beyond.Evidence
-            );
-        }
-        if (baseline.ExpectedLatestAnchor is null) {
-            return observed is DerivedRecapSelection.EmptyLineage
-                ? null
-                : RetryableSource(
-                    "Expected no latest Published recap, but the "
-                    + $"latest selection is '{observed.GetType().Name}'."
-                );
-        }
-        if (observed
-            is not DerivedRecapSelection.Selected selected) {
-            return RetryableSource(
-                $"Expected latest Published anchor "
-                + $"'{baseline.ExpectedLatestAnchor}' to resolve to a "
-                + "healthy exact selection after any Restore, but "
-                + $"observed '{observed.GetType().Name}'."
-            );
-        }
-        if (selected.Descriptor.SetAdmissionAnchor
-            != baseline.ExpectedLatestAnchor) {
-            return RetryableSource(
-                $"Expected latest Published anchor "
-                + $"'{baseline.ExpectedLatestAnchor}', observed "
-                + $"'{selected.Descriptor.SetAdmissionAnchor}'."
-            );
-        }
-        if (baseline.ExpectedLatestPublished is { } exact
-            && selected.Descriptor != exact) {
-            return RetryableSource(
-                $"Expected latest Published identity '{exact}', "
-                + $"observed '{selected.Descriptor}'."
-            );
-        }
-        return null;
-    }
-
-    private DerivedRecapExecutionResult? RequireCatalogShape(
-        IReadOnlyList<RecapBlockPlan> frozenBlocks
-    ) {
-        RecapCatalogShapeComparison comparison =
-            RecapCatalogShape.Compare(
-                RecapCatalogShape.ProjectActive(
-                    _inputs.OrderedCatalog
-                ),
-                RecapCatalogShape.ProjectFrozen(frozenBlocks)
-            );
-        return comparison.IsExactMatch
-            ? null
-            : Unavailable(
-                DerivedRecapExecutionDefectCodes
-                    .CatalogMigrationRequired,
-                comparison.Detail
-            );
     }
 
     private static DerivedRecapExecutionResult SelectionUnavailable(
@@ -1136,13 +732,6 @@ internal sealed class DerivedRecapPlannerExecutor {
             + $"'{selection.GetType().Name}'."
         )
     };
-
-    private static DerivedRecapExecutionResult.Retryable RetryableSource(
-        string detail
-    ) => new(
-        DerivedRecapExecutionDefectCodes.SourceChanged,
-        detail
-    );
 
     private static DerivedRecapExecutionResult SourceReadUnavailable(
         PublishedRecapSourceReadResult result
@@ -1281,12 +870,6 @@ internal sealed class DerivedRecapPlannerExecutor {
     }
 
     private sealed record PreparedIntent(RecapPlanResult PlanResult);
-
-    private sealed record EarliestSourceBoundaryResolution(
-        RecapReplayBoundary? Boundary,
-        SessionCurrentLineageBeyondPrefix? BeyondPrefix = null,
-        string? OffLineageDetail = null
-    );
 }
 
 /// <summary>

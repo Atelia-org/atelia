@@ -249,7 +249,38 @@ exact属于本次传入的完整capability snapshot。anonymous/in-memory snapsh
 
 Building Resume和Published Restore继续是两个独立frozen-only executor；不并入preparer。
 
-### 3.4 Lifecycle binding与lazy execution
+### 3.4 Exact-head只读planning progress
+
+需要向Host UI或operator暴露cadence progress时，公共入口是：
+
+```text
+DerivedRecapPlanningProgressInspector.InspectAsync(
+  engine,
+  store,
+  capability snapshot,
+  lazy active-composition source
+)
+  -> FrozenBuilding
+  |  BelowCadenceThreshold(progress snapshot)
+  |  AwaitingReplaySafeAdmission(progress snapshot)
+  |  CadenceReady(progress snapshot)
+  |  RawSafetyRejected
+  |  Retryable
+  |  Unavailable
+  |  BeyondPrefix
+```
+
+Inspector必须先走同一个`DerivedRecapOperationPreparer`，所以Frozen Building仍保持active config零读取。
+NewPlanning随后复用production executor的单一internal schedule reader，只执行freshness/source proof、raw
+safety、bounded history materialization、HistoryLoad与exact schedule evaluation；它不接受Maintainer或
+Completion client，也不调用policy、installer、publisher。
+
+progress snapshot把measurement与同一次captured head、cadence baseline/latest Published anchor及resolved
+`RecapCadenceConfig`绑定，并提供`RemainingHistoryLoad = max(0, R + B - G)`。Host只能把它描述为该exact
+head上的cadence observation：`CadenceReady`不等于Building/Published必然成功，head变化后snapshot立即
+stale。Galatea等Host负责把typed result投影成自己的wire/UI DTO；Planner不拥有百分比、文案或UI状态。
+
+### 3.5 Lifecycle binding与lazy execution
 
 online lifecycle增加authority-only factory：
 

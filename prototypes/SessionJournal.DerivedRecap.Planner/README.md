@@ -369,6 +369,43 @@ switch (result) {
 
 HistoryUnit/raw event counts是结构诊断，不是 scheduling authority。
 
+### Exact-head只读进度检查
+
+Host需要向operator或UI展示当前cadence进度时，使用
+`DerivedRecapPlanningProgressInspector`，不要直接拼接一次旧
+`LastPlanningDiagnostics`与后来加载的active config：
+
+```csharp
+DerivedRecapPlanningProgressInspectionResult progress =
+    await DerivedRecapPlanningProgressInspector.InspectAsync(
+        engine.ReadView,
+        store,
+        capabilities,
+        activeConfiguration,
+        cancellationToken
+    );
+```
+
+Inspector首先复用`DerivedRecapOperationPreparer.PrepareAsync`的Building-first顺序：current-lineage
+Building存在时返回`FrozenBuilding`，并保持active config零读取。只有`NewPlanning`才进入与production
+executor共用的read-only schedule reader；该reader只完成fresh lineage/source fence、raw safety、bounded
+planning window、HistoryLoad与`EvaluateSchedule`，不会调用policy、Maintainer、installer或publisher。
+
+结果必须exhaustive处理：
+
+- `BelowCadenceThreshold`：`RemainingHistoryLoad > 0`；
+- `AwaitingReplaySafeAdmission`：load threshold已到，但尚无同时满足absorbed/recent约束的
+  dependency-closed boundary；
+- `CadenceReady`：cadence已有合法candidate，但这不承诺后续policy、budget、Maintainer或publication
+  成功；
+- `FrozenBuilding`、`RawSafetyRejected`、`Retryable`、`Unavailable`、`BeyondPrefix`保持各自typed语义。
+
+成功schedule的`DerivedRecapPlanningProgressSnapshot`同时携带exact `CapturedRawHead`、cadence
+baseline/latest Published anchor、同一次immutable `RecapCadenceConfig`、
+`RecapExactScheduleMeasurement`与checked `RemainingHistoryLoad`。它是operation-local observation，不是
+durable authority；若当前raw head已不同，Host必须把它视为stale并重新inspect。HistoryUnit count与raw
+event count只用于结构诊断；触发进度必须使用同一estimator identity下的HistoryLoad。
+
 ## Resume frozen Building
 
 显式恢复某个已知Building时，也必须先走public exact preparation，再交给统一prepared executor：
