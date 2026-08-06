@@ -294,7 +294,7 @@
     switch (snapshot.state) {
       case "below-cadence-threshold":
         recapPlanningDetail.textContent = Number.isFinite(remaining)
-          ? `距下次 Recap：${historyLoadFormatter.format(remaining)} HistoryLoad`
+          ? `距 cadence 阈值：${historyLoadFormatter.format(remaining)} HistoryLoad`
           : "尚未达到 DerivedRecap cadence。";
         break;
       case "awaiting-replay-safe-admission":
@@ -332,7 +332,7 @@
     }
 
     if (snapshot.freshness === "stale" && hasMeasurement) {
-      recapPlanningDetail.textContent += " 生成中；显示上一稳定边界。";
+      recapPlanningDetail.textContent += " 显示上一稳定边界；当前进度尚未重新确认。";
     } else if (snapshot.freshness === "stale" && snapshot.state === "unavailable") {
       recapPlanningDetail.textContent += " 当前无法确认精确边界。";
     }

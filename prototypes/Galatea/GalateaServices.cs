@@ -254,6 +254,13 @@ public sealed class GalateaHostService : IAsyncDisposable {
                     EventAddressTextCodec.Format(capturedHead),
                     StringComparison.Ordinal
                 ));
+        bool rawHeadChanged = recapPlanning.Freshness
+                == GalateaRecapComposition.StaleFreshness
+            && string.Equals(
+                recapPlanning.Code,
+                DerivedRecapExecutionDefectCodes.RawHeadChanged,
+                StringComparison.Ordinal
+            );
         if (headMismatch) {
             DebugUtil.Warning(
                 "Galatea.Session",
@@ -268,7 +275,7 @@ public sealed class GalateaHostService : IAsyncDisposable {
             );
         }
         return recent with {
-            RewindLatestToken = headMismatch
+            RewindLatestToken = headMismatch || rawHeadChanged
                 ? null
                 : recent.RewindLatestToken,
             RecapPlanning = recapPlanning

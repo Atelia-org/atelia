@@ -386,6 +386,26 @@ public sealed class GalateaEndpointLockTopologyTests {
             StringComparison.Ordinal
         );
         Assert.Contains(
+            "距 cadence 阈值：",
+            script,
+            StringComparison.Ordinal
+        );
+        Assert.Contains(
+            "显示上一稳定边界；当前进度尚未重新确认。",
+            script,
+            StringComparison.Ordinal
+        );
+        Assert.DoesNotContain(
+            "距下次 Recap：",
+            script,
+            StringComparison.Ordinal
+        );
+        Assert.DoesNotContain(
+            "生成中；显示上一稳定边界。",
+            script,
+            StringComparison.Ordinal
+        );
+        Assert.Contains(
             "await loadRecentTurns().catch(() => {});",
             script,
             StringComparison.Ordinal

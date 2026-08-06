@@ -3,12 +3,47 @@ using System.Net.Http.Json;
 using Atelia.Completion;
 using Atelia.Completion.Abstractions;
 using Atelia.SessionJournal;
+using Atelia.SessionJournal.DerivedRecap.Planner;
 using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 
 namespace Atelia.Galatea.Server.Tests;
 
 public sealed class GalateaHostSmokeTests {
+    [Fact]
+    public void StaleRawHeadChanged_ClearsRewindAuthorityWithoutRemappingRecap() {
+        var recent = new RecentTurnsResponseDto([], "rewind-authority");
+        var stale = new RecapPlanningSnapshotDto(
+            "stale",
+            "unavailable",
+            Code: DerivedRecapExecutionDefectCodes.RawHeadChanged,
+            Detail: "retry the read-only inspection"
+        );
+
+        RecentTurnsResponseDto bound =
+            GalateaHostService.BindRecapPlanningSnapshot(
+                recent,
+                recentCapturedHead: null,
+                stale
+            );
+
+        Assert.Null(bound.RewindLatestToken);
+        RecapPlanningSnapshotDto boundRecap = Assert.IsType<
+            RecapPlanningSnapshotDto
+        >(bound.RecapPlanning);
+        Assert.Same(stale, boundRecap);
+        Assert.Equal("stale", boundRecap.Freshness);
+        Assert.Equal("unavailable", boundRecap.State);
+        Assert.Equal(
+            DerivedRecapExecutionDefectCodes.RawHeadChanged,
+            boundRecap.Code
+        );
+        Assert.Equal(
+            "retry the read-only inspection",
+            boundRecap.Detail
+        );
+    }
+
     [Fact]
     public async Task RecapHeadMismatch_DowngradesSnapshotAndClearsRewindAuthority() {
         var completionFactory = new TrackingCompletionClientFactory();
