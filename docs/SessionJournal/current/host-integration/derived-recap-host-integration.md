@@ -260,7 +260,7 @@ DerivedRecapPlanningProgressInspector.InspectAsync(
   capability snapshot,
   lazy active-composition source
 )
-  -> FrozenBuilding
+  -> FrozenBuilding(captured raw head, descriptor)
   |  BelowCadenceThreshold(progress snapshot)
   |  AwaitingReplaySafeAdmission(progress snapshot)
   |  CadenceReady(progress snapshot)
@@ -270,7 +270,8 @@ DerivedRecapPlanningProgressInspector.InspectAsync(
   |  BeyondPrefix
 ```
 
-Inspector必须先走同一个`DerivedRecapOperationPreparer`，所以Frozen Building仍保持active config零读取。
+Inspector必须先走同一个`DerivedRecapOperationPreparer`，所以Frozen Building仍保持active config零读取；其
+public diagnostic result只暴露captured raw head与descriptor，不暴露`BuildingPlanHandle` capability。
 NewPlanning随后复用production executor的单一internal schedule reader，只执行freshness/source proof、raw
 safety、bounded history materialization、HistoryLoad与exact schedule evaluation；它不接受Maintainer或
 Completion client，也不调用policy、installer、publisher。
@@ -279,6 +280,10 @@ progress snapshot把measurement与同一次captured head、cadence baseline/late
 `RecapCadenceConfig`绑定，并提供`RemainingHistoryLoad = max(0, R + B - G)`。Host只能把它描述为该exact
 head上的cadence observation：`CadenceReady`不等于Building/Published必然成功，head变化后snapshot立即
 stale。Galatea等Host负责把typed result投影成自己的wire/UI DTO；Planner不拥有百分比、文案或UI状态。
+caller在同步HistoryLoad projection期间取消时，Inspector传播`OperationCanceledException`，不把取消映射为
+typed success或`Unavailable`。
+`Retryable`保留typed `Kind`（`RawHeadChanged`或`SourceChanged`）；`Code`只从该Kind派生，Host不应反向
+解析字符串来恢复retry分类。
 
 ### 3.5 Lifecycle binding与lazy execution
 

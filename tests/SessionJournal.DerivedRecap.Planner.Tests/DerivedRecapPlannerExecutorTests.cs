@@ -3443,8 +3443,60 @@ public sealed class DerivedRecapPlannerExecutorTests {
                 )
             );
 
+            Assert.Equal(
+                fixture.Engine.ReadCurrentHead()!.Value,
+                result.CapturedRawHead
+            );
             Assert.Equal(building.Descriptor, result.Descriptor);
             Assert.Equal(0, source.LoadCallCount);
+        }
+
+        [Fact]
+        public async Task CancellationDuringEstimatorIsPropagated() {
+            using TestFixture fixture = await TestFixture.CreateAsync(
+                historyPairs: 1
+            );
+            using var cancellation = new CancellationTokenSource();
+            var policy = new DelegatePolicy(static _ =>
+                throw new Xunit.Sdk.XunitException(
+                    "Read-only inspection must not invoke policy."
+                ));
+            var estimator = new TestHistoryUnitLoadEstimator(
+                TestHistoryUnitLoadEstimator.DefaultId,
+                (_, _) => {
+                    cancellation.Cancel();
+                    return new HistoryUnitLoadMeasurement(
+                        new HistoryLoadUnit(1),
+                        RenderedUtf8Bytes: 1
+                    );
+                }
+            );
+            RecapMaintainerCapabilitySnapshot capabilities =
+                Capabilities(fixture);
+            var source = new StaticActiveConfigurationSource(
+                Configuration(
+                    fixture,
+                    capabilities,
+                    policy,
+                    estimator,
+                    minimumRecentHistoryLoad: 1,
+                    recapBuildIntervalHistoryLoad: 3
+                )
+            );
+
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(
+                async () => await DerivedRecapPlanningProgressInspector
+                    .InspectAsync(
+                        fixture.Engine.ReadView,
+                        fixture.Store,
+                        capabilities,
+                        source,
+                        cancellation.Token
+                    )
+            );
+
+            Assert.True(estimator.MeasureCallCount > 0);
+            Assert.Equal(0, policy.CallCount);
         }
 
         [Fact]
@@ -3484,6 +3536,10 @@ public sealed class DerivedRecapPlannerExecutorTests {
                 )
             );
 
+            Assert.Equal(
+                DerivedRecapOperationPreparationRetryKind.RawHeadChanged,
+                result.Kind
+            );
             Assert.Equal(
                 DerivedRecapExecutionDefectCodes.RawHeadChanged,
                 result.Code

@@ -83,8 +83,8 @@ public abstract record DerivedRecapPlanningProgressInspectionResult {
     private DerivedRecapPlanningProgressInspectionResult() { }
 
     public sealed record FrozenBuilding(
-        BuildingDescriptor Descriptor,
-        BuildingPlanHandle Handle
+        EventAddress CapturedRawHead,
+        BuildingDescriptor Descriptor
     ) : DerivedRecapPlanningProgressInspectionResult;
 
     public sealed record BelowCadenceThreshold(
@@ -109,8 +109,20 @@ public abstract record DerivedRecapPlanningProgressInspectionResult {
         IReadOnlyList<DerivedRecapExecutionDefect> Defects
     ) : DerivedRecapPlanningProgressInspectionResult;
 
-    public sealed record Retryable(string Code, string Detail)
-        : DerivedRecapPlanningProgressInspectionResult;
+    public sealed record Retryable(
+        DerivedRecapOperationPreparationRetryKind Kind,
+        string Detail
+    ) : DerivedRecapPlanningProgressInspectionResult {
+        public string Code => Kind switch {
+            DerivedRecapOperationPreparationRetryKind.RawHeadChanged =>
+                DerivedRecapExecutionDefectCodes.RawHeadChanged,
+            DerivedRecapOperationPreparationRetryKind.SourceChanged =>
+                DerivedRecapExecutionDefectCodes.SourceChanged,
+            _ => throw new InvalidOperationException(
+                "Unknown preparation retry kind."
+            )
+        };
+    }
 
     public sealed record Unavailable(
         IReadOnlyList<DerivedRecapExecutionDefect> Defects,
@@ -156,7 +168,7 @@ public static class DerivedRecapPlanningProgressInspector {
             case DerivedRecapOperationPreparationResult.Retryable
                 retryable:
                 return new DerivedRecapPlanningProgressInspectionResult
-                    .Retryable(retryable.Code, retryable.Detail);
+                    .Retryable(retryable.Kind, retryable.Detail);
             case DerivedRecapOperationPreparationResult.Unavailable
                 unavailable:
                 return new DerivedRecapPlanningProgressInspectionResult
@@ -173,7 +185,10 @@ public static class DerivedRecapPlanningProgressInspector {
         if (authority
             is PreparedRecapOperationAuthority.FrozenBuilding frozen) {
             return new DerivedRecapPlanningProgressInspectionResult
-                .FrozenBuilding(frozen.Descriptor, frozen.Handle);
+                .FrozenBuilding(
+                    frozen.Lineage.CapturedHead,
+                    frozen.Descriptor
+                );
         }
 
         var planning =
@@ -225,7 +240,7 @@ public static class DerivedRecapPlanningProgressInspector {
                     ),
             DerivedRecapScheduleReadResult.Retryable retryable =>
                 new DerivedRecapPlanningProgressInspectionResult
-                    .Retryable(retryable.Code, retryable.Detail),
+                    .Retryable(retryable.Kind, retryable.Detail),
             DerivedRecapScheduleReadResult.Unavailable unavailable =>
                 new DerivedRecapPlanningProgressInspectionResult
                     .Unavailable(

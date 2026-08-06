@@ -166,7 +166,8 @@ internal sealed class DerivedRecapScheduleReader {
                     break;
                 case PublishedPlanReadResult.Changed changed:
                     return new DerivedRecapScheduleReadResult.Retryable(
-                        DerivedRecapExecutionDefectCodes.SourceChanged,
+                        DerivedRecapOperationPreparationRetryKind
+                            .SourceChanged,
                         $"Latest Published plan changed from "
                         + $"'{changed.Expected}' to "
                         + $"'{changed.Observed}'."
@@ -304,12 +305,14 @@ internal sealed class DerivedRecapScheduleReader {
                 );
             }
 
+            cancellationToken.ThrowIfCancellationRequested();
             RecapHistoryLoadMeasurement historyLoad =
                 RecapHistoryLoadProjector.Measure(
                     allRelevantRaw,
                     cadenceBaseline,
                     _inputs.HistoryUnitLoadEstimator
                 );
+            cancellationToken.ThrowIfCancellationRequested();
             RecapSchedulingResult exactSchedule =
                 RecapPlanEvaluator.EvaluateSchedule(
                     _inputs,
@@ -327,6 +330,7 @@ internal sealed class DerivedRecapScheduleReader {
                         historyLoad
                     )
                 );
+            cancellationToken.ThrowIfCancellationRequested();
             return exactSchedule switch {
                 RecapSchedulingResult.Ready ready =>
                     new DerivedRecapScheduleReadResult.Ready(
@@ -543,13 +547,13 @@ internal sealed class DerivedRecapScheduleReader {
 
     private static DerivedRecapScheduleReadResult.Retryable
         RetryableSource(string detail) => new(
-            DerivedRecapExecutionDefectCodes.SourceChanged,
+            DerivedRecapOperationPreparationRetryKind.SourceChanged,
             detail
         );
 
     private static DerivedRecapScheduleReadResult.Retryable
         RetryableRawHead(EventAddress expected) => new(
-            DerivedRecapExecutionDefectCodes.RawHeadChanged,
+            DerivedRecapOperationPreparationRetryKind.RawHeadChanged,
             $"Raw SessionJournal head changed during planning. Expected "
             + $"'{expected}'."
         );
@@ -651,8 +655,20 @@ internal abstract record DerivedRecapScheduleReadResult {
         IReadOnlyList<DerivedRecapExecutionDefect> Defects
     ) : DerivedRecapScheduleReadResult;
 
-    internal sealed record Retryable(string Code, string Detail)
-        : DerivedRecapScheduleReadResult;
+    internal sealed record Retryable(
+        DerivedRecapOperationPreparationRetryKind Kind,
+        string Detail
+    ) : DerivedRecapScheduleReadResult {
+        internal string Code => Kind switch {
+            DerivedRecapOperationPreparationRetryKind.RawHeadChanged =>
+                DerivedRecapExecutionDefectCodes.RawHeadChanged,
+            DerivedRecapOperationPreparationRetryKind.SourceChanged =>
+                DerivedRecapExecutionDefectCodes.SourceChanged,
+            _ => throw new InvalidOperationException(
+                "Unknown preparation retry kind."
+            )
+        };
+    }
 
     internal sealed record Unavailable(
         IReadOnlyList<DerivedRecapExecutionDefect> Defects,

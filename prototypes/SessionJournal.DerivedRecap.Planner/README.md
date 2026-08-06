@@ -95,6 +95,7 @@ using Atelia.SessionJournal.DerivedRecap.Maintainers;
 | 加载/初始化 repo config | `RecapPlannerConfigLoader` / `RecapPlannerConfigInitializer` |
 | 解析 config planning authority | `RecapPlannerConfigSnapshot` + `RecapMaintainerCapabilitySnapshot` + `RecapPlannerConfigResolver` |
 | Building-first operation preparation | `DerivedRecapOperationPreparer` + `PreparedRecapOperationAuthority` |
+| 只读检查exact-head cadence progress | `DerivedRecapPlanningProgressInspector` |
 | lazy加载repo active config | `RepositoryRecapActivePlanningConfigurationSource` |
 | 延迟构造完整Maintainer registry | `DeferredRecapBlockMaintainerRegistry` |
 | 只测 HistoryLoad | `O200kBaseHistoryUnitLoadEstimator` + `RecapHistoryLoadProjector` |
@@ -387,7 +388,9 @@ DerivedRecapPlanningProgressInspectionResult progress =
 ```
 
 Inspector首先复用`DerivedRecapOperationPreparer.PrepareAsync`的Building-first顺序：current-lineage
-Building存在时返回`FrozenBuilding`，并保持active config零读取。只有`NewPlanning`才进入与production
+Building存在时返回`FrozenBuilding(CapturedRawHead, Descriptor)`，并保持active config零读取；该只读
+diagnostic result不会暴露后续读取Building content所需的`BuildingPlanHandle` capability。只有
+`NewPlanning`才进入与production
 executor共用的read-only schedule reader；该reader只完成fresh lineage/source fence、raw safety、bounded
 planning window、HistoryLoad与`EvaluateSchedule`，不会调用policy、Maintainer、installer或publisher。
 
@@ -398,13 +401,16 @@ planning window、HistoryLoad与`EvaluateSchedule`，不会调用policy、Mainta
   dependency-closed boundary；
 - `CadenceReady`：cadence已有合法candidate，但这不承诺后续policy、budget、Maintainer或publication
   成功；
-- `FrozenBuilding`、`RawSafetyRejected`、`Retryable`、`Unavailable`、`BeyondPrefix`保持各自typed语义。
+- `FrozenBuilding`、`RawSafetyRejected`、`Retryable`、`Unavailable`、`BeyondPrefix`保持各自typed语义；
+  `Retryable.Kind`区分`RawHeadChanged`与`SourceChanged`，`Code`只是从Kind派生的字符串表示。
 
 成功schedule的`DerivedRecapPlanningProgressSnapshot`同时携带exact `CapturedRawHead`、cadence
 baseline/latest Published anchor、同一次immutable `RecapCadenceConfig`、
 `RecapExactScheduleMeasurement`与checked `RemainingHistoryLoad`。它是operation-local observation，不是
 durable authority；若当前raw head已不同，Host必须把它视为stale并重新inspect。HistoryUnit count与raw
 event count只用于结构诊断；触发进度必须使用同一estimator identity下的HistoryLoad。
+同步HistoryLoad projection前后均有cancellation fence；projection期间观察到的caller cancellation直接传播为
+`OperationCanceledException`，不会被折叠为typed success或`Unavailable`。
 
 ## Resume frozen Building
 
