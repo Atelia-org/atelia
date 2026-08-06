@@ -149,7 +149,8 @@ internal static class SessionRequestCanonicalizer {
                 writer.WriteString("originApiSpecId", block.Reasoning.OriginApiSpecId);
                 writer.WriteString("originModel", block.Reasoning.OriginModel);
                 writer.WriteBase64String("payload", block.Reasoning.Payload);
-                WriteNullableString(writer, "plainTextForDebug", block.Reasoning.PlainTextForDebug);
+                // Keep canonical request codec v1 byte-stable while the CLR property is renamed.
+                WriteNullableString(writer, "plainTextForDebug", block.Reasoning.PlainText);
                 break;
             default:
                 throw new InvalidOperationException($"Unsupported serialized action block '{block.Kind}'.");
@@ -314,18 +315,18 @@ internal static class SessionRequestCanonicalizer {
 
     private static ToolSchema.Object ReadObjectSchema(JsonElement element, string? description, string? example) {
         JsonElement propertiesElement = ReadRequiredProperty(element, "properties");
-        if (propertiesElement.ValueKind != JsonValueKind.Array) {
-            throw new InvalidDataException("Tool object schema 'properties' must be an array.");
-        }
+        if (propertiesElement.ValueKind != JsonValueKind.Array) { throw new InvalidDataException("Tool object schema 'properties' must be an array."); }
 
         var properties = new List<ToolSchema.Property>();
         foreach (JsonElement property in propertiesElement.EnumerateArray()) {
             RequireExactProperties(property, "tool schema property", "name", "required", "schema");
-            properties.Add(new ToolSchema.Property(
-                ReadRequiredString(property, "name"),
-                ReadToolSchema(ReadRequiredProperty(property, "schema")),
-                ReadRequiredBoolean(property, "required")
-            ));
+            properties.Add(
+                new ToolSchema.Property(
+                    ReadRequiredString(property, "name"),
+                    ReadToolSchema(ReadRequiredProperty(property, "schema")),
+                    ReadRequiredBoolean(property, "required")
+                )
+            );
         }
 
         return new ToolSchema.Object(
@@ -342,13 +343,13 @@ internal static class SessionRequestCanonicalizer {
             ? new ParamDefault(ReadTypedValue(defaultElement, valueKind))
             : null;
         JsonElement enumElement = ReadRequiredProperty(element, "stringEnumValues");
-        if (enumElement.ValueKind != JsonValueKind.Array) {
-            throw new InvalidDataException("Tool value schema 'stringEnumValues' must be an array.");
-        }
+        if (enumElement.ValueKind != JsonValueKind.Array) { throw new InvalidDataException("Tool value schema 'stringEnumValues' must be an array."); }
         string[] enumValues = enumElement.EnumerateArray()
-            .Select(static item => item.ValueKind == JsonValueKind.String
+            .Select(
+            static item => item.ValueKind == JsonValueKind.String
                 ? item.GetString()!
-                : throw new InvalidDataException("Tool string enum values must be strings."))
+                : throw new InvalidDataException("Tool string enum values must be strings.")
+        )
             .ToArray();
 
         return new ToolSchema.Value(
@@ -492,17 +493,13 @@ internal static class SessionRequestCanonicalizer {
     }
 
     private static void RequireObject(JsonElement element, string name) {
-        if (element.ValueKind != JsonValueKind.Object) {
-            throw new InvalidDataException($"Expected {name} to be a JSON object.");
-        }
+        if (element.ValueKind != JsonValueKind.Object) { throw new InvalidDataException($"Expected {name} to be a JSON object."); }
     }
 
     private static void RequireNoDuplicateProperties(JsonElement element, string name) {
         var seen = new HashSet<string>(StringComparer.Ordinal);
         foreach (JsonProperty property in element.EnumerateObject()) {
-            if (!seen.Add(property.Name)) {
-                throw new InvalidDataException($"{name} contains duplicate property '{property.Name}'.");
-            }
+            if (!seen.Add(property.Name)) { throw new InvalidDataException($"{name} contains duplicate property '{property.Name}'."); }
         }
     }
 
@@ -511,12 +508,8 @@ internal static class SessionRequestCanonicalizer {
         var allowed = new HashSet<string>(allowedProperties, StringComparer.Ordinal);
         var seen = new HashSet<string>(StringComparer.Ordinal);
         foreach (JsonProperty property in element.EnumerateObject()) {
-            if (!seen.Add(property.Name)) {
-                throw new InvalidDataException($"{name} contains duplicate property '{property.Name}'.");
-            }
-            if (!allowed.Contains(property.Name)) {
-                throw new InvalidDataException($"{name} contains unknown property '{property.Name}'.");
-            }
+            if (!seen.Add(property.Name)) { throw new InvalidDataException($"{name} contains duplicate property '{property.Name}'."); }
+            if (!allowed.Contains(property.Name)) { throw new InvalidDataException($"{name} contains unknown property '{property.Name}'."); }
         }
     }
 }

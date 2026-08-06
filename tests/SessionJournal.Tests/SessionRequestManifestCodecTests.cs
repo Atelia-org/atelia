@@ -31,17 +31,21 @@ public sealed class SessionRequestManifestCodecTests {
         );
 
         Assert.Equal(5, version);
-        Assert.Equal(encoded, SessionEventCodec.Encode(
-            SessionEventKind.CompletionRequestPrepared,
-            decoded
-        ));
+        Assert.Equal(encoded,
+            SessionEventCodec.Encode(
+                SessionEventKind.CompletionRequestPrepared,
+                decoded
+            )
+        );
         Assert.Equal(body.Origin, decoded.Origin);
         Assert.Equal(body.Execution, decoded.Execution);
         Assert.Equal(body.Plan.RawStartExclusive, decoded.Plan.RawStartExclusive);
         Assert.Equal(body.Plan.RawRangeSha256, decoded.Plan.RawRangeSha256);
-        Assert.True(body.Plan.ExactContextInputs.SequenceEqual(
-            decoded.Plan.ExactContextInputs
-        ));
+        Assert.True(
+            body.Plan.ExactContextInputs.SequenceEqual(
+                decoded.Plan.ExactContextInputs
+            )
+        );
         Assert.Equal(body.Plan.RawStartSetups, decoded.Plan.RawStartSetups);
         Assert.Equal(body.Setups, decoded.Setups);
         Assert.Equal(body.Parameters, decoded.Parameters);
@@ -91,18 +95,22 @@ public sealed class SessionRequestManifestCodecTests {
     public void ManifestValidation_RejectsUnsupportedRecipeAndRequestCodec() {
         CompletionRequestPreparedBody body = CreateManifest();
 
-        Assert.Throws<NotSupportedException>(() => SessionRequestManifestCodec.Validate(
-            body with {
-                Recipe = body.Recipe with { RecipeId = "unsupported-recipe" }
-            }
-        ));
-        Assert.Throws<NotSupportedException>(() => SessionRequestManifestCodec.Validate(
-            body with {
-                Recipe = body.Recipe with {
-                    CanonicalRequestCodecId = "unsupported-codec"
+        Assert.Throws<NotSupportedException>(
+            () => SessionRequestManifestCodec.Validate(
+                body with {
+                    Recipe = body.Recipe with { RecipeId = "unsupported-recipe" }
                 }
-            }
-        ));
+            )
+        );
+        Assert.Throws<NotSupportedException>(
+            () => SessionRequestManifestCodec.Validate(
+                body with {
+                    Recipe = body.Recipe with {
+                        CanonicalRequestCodecId = "unsupported-codec"
+                    }
+                }
+            )
+        );
     }
 
     [Fact]
@@ -117,26 +125,32 @@ public sealed class SessionRequestManifestCodecTests {
                 }
             }
         );
-        SessionRequestManifestCodec.Validate(body with {
-            Plan = body.Plan with { ExactContextInputs = [first] }
-        });
-        Assert.Throws<InvalidDataException>(() => SessionRequestManifestCodec.Validate(
+        SessionRequestManifestCodec.Validate(
             body with {
-                Plan = body.Plan with {
-                    ExactContextInputs = Enumerable.Repeat(first, 129).ToImmutableArray()
-                }
+                Plan = body.Plan with { ExactContextInputs = [first] }
             }
-        ));
-        Assert.Throws<InvalidDataException>(() => SessionRequestManifestCodec.Validate(
-            body with {
-                Plan = body.Plan with {
-                    ExactContextInputs = [
+        );
+        Assert.Throws<InvalidDataException>(
+            () => SessionRequestManifestCodec.Validate(
+                body with {
+                    Plan = body.Plan with {
+                        ExactContextInputs = Enumerable.Repeat(first, 129).ToImmutableArray()
+                    }
+                }
+            )
+        );
+        Assert.Throws<InvalidDataException>(
+            () => SessionRequestManifestCodec.Validate(
+                body with {
+                    Plan = body.Plan with {
+                        ExactContextInputs = [
                         first with { ContentSha256 = new string('0', 64) },
                         body.Plan.ExactContextInputs[1]
                     ]
+                    }
                 }
-            }
-        ));
+            )
+        );
 
         ImmutableArray<ToolDefinition> tools = [
             new ToolDefinition("sample", "sample tool", new ToolSchema.Object())
@@ -147,9 +161,11 @@ public sealed class SessionRequestManifestCodecTests {
             tools,
             RuntimeIdentity: null
         );
-        Assert.Throws<InvalidDataException>(() => SessionRequestManifestCodec.Validate(
-            body with { ToolSet = toolSet }
-        ));
+        Assert.Throws<InvalidDataException>(
+            () => SessionRequestManifestCodec.Validate(
+                body with { ToolSet = toolSet }
+            )
+        );
     }
 
     [Fact]
@@ -160,12 +176,14 @@ public sealed class SessionRequestManifestCodecTests {
             "system",
             [
                 new ObservationMessage("observe"),
-                new ActionMessage([
+                new ActionMessage(
+                    [
                     new ActionBlock.TextReasoningBlock("opaque", descriptor, "debug"),
                     new ActionBlock.ToolCall(
                         new RawToolCall("sample", "call-1", """{"value":1}""")
                     )
-                ]),
+                ]
+                ),
                 new ToolResultsMessage(
                     null,
                     [ToolResult.FromText(
@@ -231,10 +249,12 @@ public sealed class SessionRequestManifestCodecTests {
         Assert.IsType<long>(int64.Maximum);
         Assert.IsType<float>(float32.Default.GetValueOrDefault().Value);
         Assert.IsType<decimal>(decimalValue.Default.GetValueOrDefault().Value);
-        Assert.Equal(encoded, SessionEventCodec.Encode(
-            SessionEventKind.CompletionRequestPrepared,
-            decoded
-        ));
+        Assert.Equal(encoded,
+            SessionEventCodec.Encode(
+                SessionEventKind.CompletionRequestPrepared,
+                decoded
+            )
+        );
     }
 
     [Fact]
@@ -258,8 +278,10 @@ public sealed class SessionRequestManifestCodecTests {
             decoded.ToolSet.Definitions[1].InputSchema
         );
 
-        Assert.Equal(["sample", "complex"], decoded.ToolSet.Definitions
-            .Select(static definition => definition.Name));
+        Assert.Equal(["sample", "complex"],
+            decoded.ToolSet.Definitions
+            .Select(static definition => definition.Name)
+        );
         Assert.True(root.AdditionalProperties);
         Assert.Equal("complex root", root.Description);
         Assert.Equal("root example", root.Example);
@@ -282,10 +304,12 @@ public sealed class SessionRequestManifestCodecTests {
         Assert.Equal(12, item.MaxLength);
         Assert.Equal("^[a-z]+$", item.Pattern);
         Assert.IsType<ToolSchema.Object>(root.Properties[4].Schema);
-        Assert.Equal(encoded, SessionEventCodec.Encode(
-            SessionEventKind.CompletionRequestPrepared,
-            decoded
-        ));
+        Assert.Equal(encoded,
+            SessionEventCodec.Encode(
+                SessionEventKind.CompletionRequestPrepared,
+                decoded
+            )
+        );
     }
 
     [Fact]
@@ -296,7 +320,8 @@ public sealed class SessionRequestManifestCodecTests {
             "system <raw> & prompt",
             [
                 new ObservationMessage("observe"),
-                new ActionMessage([
+                new ActionMessage(
+                    [
                     new ActionBlock.Text("answer"),
                     new ActionBlock.TextReasoningBlock(
                         "think",
@@ -310,7 +335,8 @@ public sealed class SessionRequestManifestCodecTests {
                     new ActionBlock.ToolCall(
                         new RawToolCall("sample", "call-1", "{\"x\":1}")
                     )
-                ]),
+                ]
+                ),
                 new ToolResultsMessage(
                     null,
                     [ToolResult.FromText(
@@ -353,53 +379,72 @@ public sealed class SessionRequestManifestCodecTests {
             new ToolDefinition("ping", "Ping tool", new ToolSchema.Object())
         ];
 
-        Assert.NotEqual(hash, SessionRequestCanonicalizer.CreateCommitment(
-            baseline with { ModelId = "model-2" }
-        ).Sha256);
-        Assert.NotEqual(hash, SessionRequestCanonicalizer.CreateCommitment(
-            baseline with { SystemPrompt = "system-2" }
-        ).Sha256);
-        Assert.NotEqual(hash, SessionRequestCanonicalizer.CreateCommitment(
-            baseline with {
-                Context = [new ObservationMessage("observation-2")]
-            }
-        ).Sha256);
-        Assert.NotEqual(hash, SessionRequestCanonicalizer.CreateCommitment(
-            baseline with { Tools = changedTools }
-        ).Sha256);
-        Assert.NotEqual(hash, SessionRequestCanonicalizer.CreateCommitment(
-            baseline with { MaxTokens = 101 }
-        ).Sha256);
+        Assert.NotEqual(hash,
+            SessionRequestCanonicalizer.CreateCommitment(
+                baseline with { ModelId = "model-2" }
+            ).Sha256
+        );
+        Assert.NotEqual(hash,
+            SessionRequestCanonicalizer.CreateCommitment(
+                baseline with { SystemPrompt = "system-2" }
+            ).Sha256
+        );
+        Assert.NotEqual(hash,
+            SessionRequestCanonicalizer.CreateCommitment(
+                baseline with {
+                    Context = [new ObservationMessage("observation-2")]
+                }
+            ).Sha256
+        );
+        Assert.NotEqual(hash,
+            SessionRequestCanonicalizer.CreateCommitment(
+                baseline with { Tools = changedTools }
+            ).Sha256
+        );
+        Assert.NotEqual(hash,
+            SessionRequestCanonicalizer.CreateCommitment(
+                baseline with { MaxTokens = 101 }
+            ).Sha256
+        );
     }
 
     [Fact]
     public void CanonicalRequest_RejectsContextHeaderUnknownAndDerivedHistoryMessages() {
-        Assert.Throws<InvalidOperationException>(() =>
-            SessionRequestCanonicalizer.Canonicalize(new CompletionRequest(
-                "model",
-                "system",
-                [new UnsupportedHistoryMessage(HistoryMessageKind.ContextHeader)],
-                [],
-                null
-            ))
+        Assert.Throws<InvalidOperationException>(
+            () =>
+            SessionRequestCanonicalizer.Canonicalize(
+                new CompletionRequest(
+                    "model",
+                    "system",
+                    [new UnsupportedHistoryMessage(HistoryMessageKind.ContextHeader)],
+                    [],
+                    null
+                )
+            )
         );
-        Assert.Throws<InvalidOperationException>(() =>
-            SessionRequestCanonicalizer.Canonicalize(new CompletionRequest(
-                "model",
-                "system",
-                [new UnsupportedHistoryMessage(HistoryMessageKind.Observation)],
-                [],
-                null
-            ))
+        Assert.Throws<InvalidOperationException>(
+            () =>
+            SessionRequestCanonicalizer.Canonicalize(
+                new CompletionRequest(
+                    "model",
+                    "system",
+                    [new UnsupportedHistoryMessage(HistoryMessageKind.Observation)],
+                    [],
+                    null
+                )
+            )
         );
-        Assert.Throws<InvalidOperationException>(() =>
-            SessionRequestCanonicalizer.Canonicalize(new CompletionRequest(
-                "model",
-                "system",
-                [new DerivedObservationMessage("derived")],
-                [],
-                null
-            ))
+        Assert.Throws<InvalidOperationException>(
+            () =>
+            SessionRequestCanonicalizer.Canonicalize(
+                new CompletionRequest(
+                    "model",
+                    "system",
+                    [new DerivedObservationMessage("derived")],
+                    [],
+                    null
+                )
+            )
         );
     }
 
@@ -418,15 +463,21 @@ public sealed class SessionRequestManifestCodecTests {
             "2e89e9acf6c1e7dbcef6874a602a51cb425f76404b2b89124d5990891832f5fc",
             hash
         );
-        Assert.NotEqual(hash, SessionArtifactContextSnapshotHasher.ComputeSha256(
-            snapshot with { SystemPromptFragment = "changed" }
-        ));
-        Assert.NotEqual(hash, SessionArtifactContextSnapshotHasher.ComputeSha256(
-            snapshot with { ObservationMessage = "changed" }
-        ));
-        Assert.NotEqual(hash, SessionArtifactContextSnapshotHasher.ComputeSha256(
-            snapshot with { ActionMessage = "changed" }
-        ));
+        Assert.NotEqual(hash,
+            SessionArtifactContextSnapshotHasher.ComputeSha256(
+                snapshot with { SystemPromptFragment = "changed" }
+            )
+        );
+        Assert.NotEqual(hash,
+            SessionArtifactContextSnapshotHasher.ComputeSha256(
+                snapshot with { ObservationMessage = "changed" }
+            )
+        );
+        Assert.NotEqual(hash,
+            SessionArtifactContextSnapshotHasher.ComputeSha256(
+                snapshot with { ActionMessage = "changed" }
+            )
+        );
     }
 
     [Fact]
@@ -540,13 +591,16 @@ public sealed class SessionRequestManifestCodecTests {
     private static string EncodeManifestJson(
         ImmutableArray<ToolDefinition>? tools = null
     )
-        => Encoding.UTF8.GetString(SessionEventCodec.Encode(
-            SessionEventKind.CompletionRequestPrepared,
-            CreateManifest(tools)
-        ));
+        => Encoding.UTF8.GetString(
+            SessionEventCodec.Encode(
+                SessionEventKind.CompletionRequestPrepared,
+                CreateManifest(tools)
+            )
+        );
 
     private static ImmutableArray<ToolDefinition> CreateToolDefinitions() {
-        var schema = new ToolSchema.Object([
+        var schema = new ToolSchema.Object(
+            [
             new ToolSchema.Property(
                 "withoutDefault",
                 new ToolSchema.Value(
@@ -590,13 +644,15 @@ public sealed class SessionRequestManifestCodecTests {
                 ),
                 isRequired: false
             )
-        ]);
+        ]
+        );
         return [new ToolDefinition("sample", "Sample tool", schema)];
     }
 
     private static ImmutableArray<ToolDefinition>
         CreateComprehensiveToolDefinitions() {
-        var nested = new ToolSchema.Object([
+        var nested = new ToolSchema.Object(
+            [
             new ToolSchema.Property(
                 "name",
                 new ToolSchema.Value(
@@ -605,7 +661,8 @@ public sealed class SessionRequestManifestCodecTests {
                 ),
                 isRequired: true
             )
-        ], description: "nested object", example: "nested example");
+        ], description: "nested object", example: "nested example"
+        );
         var complex = new ToolSchema.Object(
             [
                 new ToolSchema.Property(
@@ -670,11 +727,13 @@ public sealed class SessionRequestManifestCodecTests {
     }
 
     private static void AssertStrictDecodeRejected(string json) {
-        Assert.Throws<InvalidDataException>(() => SessionEventCodec.Decode(
-            SessionEventKind.CompletionRequestPrepared,
-            Encoding.UTF8.GetBytes(json),
-            out _
-        ));
+        Assert.Throws<InvalidDataException>(
+            () => SessionEventCodec.Decode(
+                SessionEventKind.CompletionRequestPrepared,
+                Encoding.UTF8.GetBytes(json),
+                out _
+            )
+        );
     }
 
     private static string ReplaceOnce(

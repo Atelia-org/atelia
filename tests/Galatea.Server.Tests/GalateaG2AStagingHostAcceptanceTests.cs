@@ -426,7 +426,7 @@ public sealed class GalateaG2AStagingHostAcceptanceTests {
             SearchOption.AllDirectories
         ),
         static path => File.ReadAllText(path).Contains(
-            "atelia.completion.call-log.v2",
+            "atelia.completion.call-log.v3",
             StringComparison.Ordinal
         )
     );

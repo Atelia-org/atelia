@@ -18,8 +18,8 @@ internal static class GalateaRecentTurnDisplayAdapter {
                 case ActionBlock.Text textBlock:
                     text.Append(textBlock.Content);
                     break;
-                case ActionBlock.TextReasoningBlock reasoningBlock:
-                    reasoning.Append(reasoningBlock.Content);
+                case ActionBlock.ReasoningBlock reasoningBlock when reasoningBlock.PlainText is not null:
+                    reasoning.Append(reasoningBlock.PlainText);
                     break;
             }
         }
@@ -48,11 +48,13 @@ internal static class GalateaRecentTurnDisplayAdapter {
                 "A visible completed-turn rewind requires a terminal Action.",
                 nameof(source)
             );
-        return Project(new SessionCompletedTurnProjection(
-            source.ObservationAddress,
-            source.ObservationContent,
-            terminal
-        ));
+        return Project(
+            new SessionCompletedTurnProjection(
+                source.ObservationAddress,
+                source.ObservationContent,
+                terminal
+            )
+        );
     }
 }
 
@@ -68,19 +70,15 @@ internal static class GalateaUserMessageEnvelope {
     internal static string UnwrapForDisplay(
         string? storedUserMessage
     ) {
-        if (string.IsNullOrEmpty(storedUserMessage)) {
-            return string.Empty;
-        }
+        if (string.IsNullOrEmpty(storedUserMessage)) { return string.Empty; }
         if (!storedUserMessage.StartsWith(
-                Prefix,
-                StringComparison.Ordinal
-            )
+            Prefix,
+            StringComparison.Ordinal
+        )
             || !storedUserMessage.EndsWith(
                 Suffix,
                 StringComparison.Ordinal
-            )) {
-            return storedUserMessage;
-        }
+            )) { return storedUserMessage; }
         return storedUserMessage.Substring(
             Prefix.Length,
             storedUserMessage.Length - Prefix.Length - Suffix.Length

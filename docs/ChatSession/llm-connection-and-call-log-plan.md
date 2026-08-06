@@ -191,7 +191,7 @@ gitignore/backtest/rolling-summary-calls/
 
 ```json
 {
-  "schema": "atelia.completion.call-log.v2",
+  "schema": "atelia.completion.call-log.v3",
   "callId": 1,
   "timestampUtc": "2026-07-20T00:00:00Z",
   "elapsedMs": 12345,
@@ -200,7 +200,9 @@ gitignore/backtest/rolling-summary-calls/
     "kind": "openai-chat",
     "modelId": "deepseek-v4",
     "completionSurfaceId": "openai-chat/deepseek-v4",
-    "baseAddress": "http://localhost:8888/"
+    "baseAddress": "http://localhost:8888/",
+    "maxTokens": 32768,
+    "reasoningEffort": "high"
   },
   "context": {
     "command": "replay-rolling-summary",

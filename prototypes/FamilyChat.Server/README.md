@@ -83,7 +83,7 @@ http://0.0.0.0:3510
       "displayName": "本地模型",
       "kind": "openai-chat",
       "modelId": "REPLACE_WITH_YOUR_LOCAL_MODEL_ID",
-      "completionSurfaceId": "openai-chat/sglang-compatible",
+      "completionSurfaceId": "openai-chat/qwen-sglang",
       "baseAddress": "http://localhost:8888/",
       "apiKey": "sk-local-placeholder"
     }

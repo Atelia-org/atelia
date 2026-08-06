@@ -1332,7 +1332,7 @@ internal static class GalateaConfigTemplateFactory {
                     Id: DefaultConnectionId,
                     Kind: "openai-chat",
                     ModelId: PlaceholderModelId,
-                    CompletionSurfaceId: "openai-chat/sglang-compatible",
+                    CompletionSurfaceId: "openai-chat/qwen-sglang",
                     // Points at a local OpenAI-compatible server by default. The inline
                     // placeholder key lets the config load out of the box; swap in a real
                     // key, or move it to an env var via ApiKeyEnv, before going live.

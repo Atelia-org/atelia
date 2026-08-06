@@ -5,7 +5,7 @@
 **前置**：[Turn 内 LlmProfile 锁定](./memory-notebook.md#turn-与-llmprofile-锁定硬约束) 已落地
 **适用范围**：Atelia Agent.Core / Completion / Completion.Abstractions
 
-> **与 capability system 的关系**：本文描述的是 `Agent.Core` 内部使用的 **history / projection / replay substrate**。  
+> **与 capability system 的关系**：本文描述的是 `Agent.Core` 内部使用的 **history / projection / replay substrate**。
 > 但底层能表达 reasoning replay，不自动等于某个 surface 就能进入当前 `Agent.Core` runtime。当前实现阶段，`Agent.Core` 只接受 `SupportsAgentCoreFullFeatures == true` 的 profile；其他 surface 即便未来能复用本文某些底层设计，也不属于当前主链范围。
 
 ---
@@ -118,7 +118,7 @@ public abstract record ActionBlock {
     public sealed record Thinking(
         CompletionDescriptor Origin,
         ReadOnlyMemory<byte> OpaquePayload,
-        string? PlainTextForDebug = null
+        string? PlainText = null
     ) : ActionBlock {
         public override ActionBlockKind Kind => ActionBlockKind.Thinking;
     }
@@ -136,7 +136,7 @@ public enum ActionBlockKind {
 - 私有构造 + 嵌套 sealed records 实现 closed-by-default sum type；新增子类型必须显式扩展（非 `UnknownBlock` 万能逃生口，迫使新协议特性被一等公民设计）
 - `Thinking.Origin` 直接复用 `CompletionDescriptor`（与 Turn lock 同构，replay 兼容性判定可直接 `block.Origin == options.TargetInvocation`）
 - `OpaquePayload` 用 `ReadOnlyMemory<byte>` 而非 `string`：减少 UTF-8 编解码开销，且能容纳二进制（理论上 base64 字段也常见）
-- `PlainTextForDebug` 可选：仅供日志/UI/调试，**不参与回灌**
+- `PlainText` 可选：明文展示出口（UI/日志/审计），**不参与回灌**
 
 ### 3.2 `ActionEntry` 升级
 
@@ -306,7 +306,7 @@ public sealed record CompletionChunk {
 /// </summary>
 public sealed record ThinkingChunk(
     ReadOnlyMemory<byte> OpaquePayload,
-    string? PlainTextForDebug = null
+    string? PlainText = null
 );
 ```
 
@@ -344,7 +344,7 @@ internal sealed class CompletionAccumulator {
                 _blocks.Add(new ActionBlock.Thinking(
                     invocation,
                     chunk.Thinking!.OpaquePayload,
-                    chunk.Thinking.PlainTextForDebug
+                    chunk.Thinking.PlainText
                 ));
                 break;
 

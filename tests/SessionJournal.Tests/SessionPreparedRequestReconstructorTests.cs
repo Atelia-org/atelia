@@ -56,9 +56,11 @@ public sealed class SessionPreparedRequestReconstructorTests : IDisposable {
         );
         Assert.Equal(expected, direct.CanonicalBytes);
         Assert.Equal(expected, committed.CanonicalBytes);
-        Assert.Equal(scenario.Manifest.Commitment, SessionRequestCanonicalizer.CreateCommitment(
-            committed.Request
-        ));
+        Assert.Equal(scenario.Manifest.Commitment,
+            SessionRequestCanonicalizer.CreateCommitment(
+                committed.Request
+            )
+        );
         var action = Assert.IsType<ActionMessage>(committed.Request.Context[^2]);
         var reasoning = Assert.IsType<OpaqueReasoningBlock>(action.Blocks[0]);
         Assert.Equal([0, 1, 2, 254, 255], reasoning.Payload);
@@ -95,7 +97,8 @@ public sealed class SessionPreparedRequestReconstructorTests : IDisposable {
             scenario.RawEnd
         );
 
-        Assert.Throws<InvalidDataException>(() =>
+        Assert.Throws<InvalidDataException>(
+            () =>
             SessionPreparedRequestReconstructor.Reconstruct(
                 journal,
                 scenario.Manifest with {
@@ -111,7 +114,8 @@ public sealed class SessionPreparedRequestReconstructorTests : IDisposable {
                 scenario.RawEnd
             )
         );
-        Assert.Throws<InvalidDataException>(() =>
+        Assert.Throws<InvalidDataException>(
+            () =>
             SessionPreparedRequestReconstructor.Reconstruct(
                 journal,
                 scenario.Manifest with {
@@ -180,7 +184,8 @@ public sealed class SessionPreparedRequestReconstructorTests : IDisposable {
             )
         };
 
-        InvalidDataException error = Assert.Throws<InvalidDataException>(() =>
+        InvalidDataException error = Assert.Throws<InvalidDataException>(
+            () =>
             SessionPreparedRequestReconstructor.Reconstruct(
                 journal,
                 forged,
@@ -221,7 +226,8 @@ public sealed class SessionPreparedRequestReconstructorTests : IDisposable {
             Commitment = SessionRequestCanonicalizer.CreateCommitment(forgedRequest)
         };
 
-        InvalidDataException error = Assert.Throws<InvalidDataException>(() =>
+        InvalidDataException error = Assert.Throws<InvalidDataException>(
+            () =>
             SessionPreparedRequestReconstructor.Reconstruct(journal, forged, scenario.RawEnd)
         );
         Assert.Contains("rawStartSetups", error.Message, StringComparison.Ordinal);
@@ -303,7 +309,8 @@ public sealed class SessionPreparedRequestReconstructorTests : IDisposable {
         );
 
         InvalidDataException parentError =
-            Assert.Throws<InvalidDataException>(() =>
+            Assert.Throws<InvalidDataException>(
+                () =>
                 SessionPreparedRequestReconstructor.Reconstruct(
                     journal,
                     scenario.Manifest with {
@@ -330,7 +337,8 @@ public sealed class SessionPreparedRequestReconstructorTests : IDisposable {
             }
         );
 
-        Assert.Throws<InvalidDataException>(() =>
+        Assert.Throws<InvalidDataException>(
+            () =>
             SessionPreparedRequestReconstructor.Reconstruct(
                 malformedJournal,
                 malformed.Manifest,
@@ -346,11 +354,15 @@ public sealed class SessionPreparedRequestReconstructorTests : IDisposable {
             "model", [], null
         );
         SessionRequestContextInput first = manifest.Plan.ExactContextInputs[0];
-        Assert.Throws<InvalidDataException>(() => SessionRequestManifestCodec.Validate(
-            manifest with { Plan = manifest.Plan with {
-                ExactContextInputs = [first with { ContextSnapshot = new("a", "b", "") }, manifest.Plan.ExactContextInputs[1]]
-            }}
-        ));
+        Assert.Throws<InvalidDataException>(
+            () => SessionRequestManifestCodec.Validate(
+                manifest with {
+                    Plan = manifest.Plan with {
+                        ExactContextInputs = [first with { ContextSnapshot = new("a", "b", "") }, manifest.Plan.ExactContextInputs[1]]
+                    }
+                }
+            )
+        );
     }
 
     [Fact]
@@ -485,7 +497,8 @@ public sealed class SessionPreparedRequestReconstructorTests : IDisposable {
             SessionEventKind.CompletionRequestPrepared,
             initialManifest
         );
-        var actionMessage = new ActionMessage([
+        var actionMessage = new ActionMessage(
+            [
             new OpaqueReasoningBlock(
                 [0, 1, 2, 254, 255],
                 new CompletionDescriptor("provider", "api", "model-A"),
@@ -494,7 +507,8 @@ public sealed class SessionPreparedRequestReconstructorTests : IDisposable {
             new ActionBlock.ToolCall(
                 new RawToolCall("sample", "call-1", """{"value":1}""")
             )
-        ]);
+        ]
+        );
         EventAddress completionStarted = Commit(
             journal,
             initialPrepared,
@@ -670,13 +684,15 @@ public sealed class SessionPreparedRequestReconstructorTests : IDisposable {
             using EventFrame frame = journal.ReadEvent(address).Unwrap();
             var kind = (SessionEventKind)frame.Header.OpaqueEventKind;
             _ = SessionEventCodec.Decode(kind, frame.Payload, out int version);
-            entries.Add(new(
+            entries.Add(
+                new(
                 address,
                 frame.Header.Parent,
                 frame.Header.OpaqueEventKind,
                 version,
                 SessionRequestCanonicalizer.Sha256Hex(frame.Payload)
-            ));
+            )
+            );
         }
         return SessionRawRangeHasher.Compute(rawStart, rawEnd, entries);
     }
@@ -748,8 +764,8 @@ public sealed class SessionPreparedRequestReconstructorTests : IDisposable {
     private sealed record OpaqueReasoningBlock(
         byte[] Payload,
         CompletionDescriptor Origin,
-        string? PlainTextForDebug
-    ) : ActionBlock.ReasoningBlock(Origin, PlainTextForDebug);
+        string? PlainText
+    ) : ActionBlock.ReasoningBlock(Origin, PlainText);
 
     private sealed class OpaqueReasoningCodec : IReasoningBlockCodec {
         public string CodecId => "atelia.tests.opaque-reasoning.v1";
@@ -763,7 +779,7 @@ public sealed class SessionPreparedRequestReconstructorTests : IDisposable {
                 CodecId,
                 opaque.Origin,
                 opaque.Payload,
-                opaque.PlainTextForDebug
+                opaque.PlainText
             );
         }
 
@@ -772,7 +788,7 @@ public sealed class SessionPreparedRequestReconstructorTests : IDisposable {
         ) => new OpaqueReasoningBlock(
             serialized.Payload,
             serialized.ToOrigin(),
-            serialized.PlainTextForDebug
+            serialized.PlainText
         );
     }
 }

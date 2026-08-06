@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Atelia.Completion.Abstractions;
+using Atelia.Completion.OpenAI;
 using Atelia.SessionJournal;
 using Xunit;
 
@@ -59,6 +60,20 @@ public sealed class GalateaRecentTurnDisplayAdapterTests {
             "reasoning-areasoning-b",
             projected.Assistant.ReasoningText
         );
+    }
+
+    [Fact]
+    public void Project_ExposesProviderNativeReasoningPlainText() {
+        RecentTurnDto projected = GalateaRecentTurnDisplayAdapter.Project(
+            Turn(
+                "user",
+                new OpenAIChatReasoningBlock("provider reasoning", Invocation),
+                new ActionBlock.Text("answer")
+            )
+        );
+
+        Assert.Equal("answer", projected.Assistant.Text);
+        Assert.Equal("provider reasoning", projected.Assistant.ReasoningText);
     }
 
     [Fact]

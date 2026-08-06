@@ -459,8 +459,8 @@ public sealed class FamilyChatHostService : IAsyncDisposable {
                 case ActionBlock.Text text:
                     textBuilder.Append(text.Content);
                     break;
-                case ActionBlock.TextReasoningBlock reasoning:
-                    reasoningBuilder.Append(reasoning.Content);
+                case ActionBlock.ReasoningBlock reasoning when reasoning.PlainText is not null:
+                    reasoningBuilder.Append(reasoning.PlainText);
                     break;
             }
         }
@@ -825,7 +825,7 @@ internal static class FamilyChatConfigTemplateFactory {
                     Id: DefaultConnectionId,
                     Kind: "openai-chat",
                     ModelId: PlaceholderModelId,
-                    CompletionSurfaceId: "openai-chat/sglang-compatible",
+                    CompletionSurfaceId: "openai-chat/qwen-sglang",
                     // Points at a local OpenAI-compatible server by default. The inline
                     // placeholder key lets the config load out of the box; swap in a real
                     // key, or move it to an env var via ApiKeyEnv, before going live.

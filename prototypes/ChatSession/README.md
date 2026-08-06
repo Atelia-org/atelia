@@ -94,7 +94,7 @@ using var completionClient = new OpenAIChatClient(
 
 var runtime = new ChatSessionRuntime(
     CompletionClient: completionClient,
-    CompletionSurfaceId: "openai-chat/strict",
+    CompletionSurfaceId: "openai-chat/sglang-compatible",
     ToolSession: new ToolRegistry(Array.Empty<ITool>()).CreateSession()
 );
 ```

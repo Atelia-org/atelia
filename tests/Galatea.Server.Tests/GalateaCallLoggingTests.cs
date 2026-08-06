@@ -189,7 +189,7 @@ public sealed class GalateaCallLoggingTests {
                     SearchOption.AllDirectories
                 ),
                 static path => File.ReadAllText(path).Contains(
-                    "atelia.completion.call-log.v2",
+                    "atelia.completion.call-log.v3",
                     StringComparison.Ordinal
                 )
             );
@@ -286,7 +286,7 @@ public sealed class GalateaCallLoggingTests {
                     SearchOption.AllDirectories
                 ),
                 static path => File.ReadAllText(path).Contains(
-                    "atelia.completion.call-log.v2",
+                    "atelia.completion.call-log.v3",
                     StringComparison.Ordinal
                 )
             );
@@ -351,7 +351,7 @@ public sealed class GalateaCallLoggingTests {
             File.ReadAllText(path)
         );
         Assert.Equal(
-            "atelia.completion.call-log.v2",
+            "atelia.completion.call-log.v3",
             document.RootElement.GetProperty("schema").GetString()
         );
         JsonElement context =

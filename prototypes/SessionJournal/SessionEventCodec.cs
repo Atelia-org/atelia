@@ -56,9 +56,7 @@ internal static class SessionEventCodec {
             }
 
             RequireExactProperties(root, $"{kind} envelope", "v", "body");
-            if (!root.TryGetProperty("body", out JsonElement body)) {
-                throw new InvalidDataException("Session event envelope is missing required property 'body'.");
-            }
+            if (!root.TryGetProperty("body", out JsonElement body)) { throw new InvalidDataException("Session event envelope is missing required property 'body'."); }
 
             try {
                 return kind switch {
@@ -392,9 +390,9 @@ internal static class SessionEventCodec {
             "derivedContext"
         );
         if (!body.TryGetProperty(
-                "derivedContext",
-                out JsonElement derivedContext
-            )) {
+            "derivedContext",
+            out JsonElement derivedContext
+        )) {
             throw new InvalidDataException(
                 "runtime-config-setup body is missing required property 'derivedContext'."
             );
@@ -470,18 +468,14 @@ internal static class SessionEventCodec {
             "execution",
             "toolRuntimeIdentity"
         );
-        if (!body.TryGetProperty("action", out JsonElement actionElement) || actionElement.ValueKind != JsonValueKind.Array) {
-            throw new InvalidDataException("agent-action-produced body requires array property 'action'.");
-        }
+        if (!body.TryGetProperty("action", out JsonElement actionElement) || actionElement.ValueKind != JsonValueKind.Array) { throw new InvalidDataException("agent-action-produced body requires array property 'action'."); }
 
         var blocks = new List<SerializedActionBlock>();
         foreach (JsonElement blockElement in actionElement.EnumerateArray()) {
             blocks.Add(ReadSerializedActionBlock(blockElement));
         }
 
-        if (!body.TryGetProperty("invocation", out JsonElement invocationElement)) {
-            throw new InvalidDataException("agent-action-produced body requires object property 'invocation'.");
-        }
+        if (!body.TryGetProperty("invocation", out JsonElement invocationElement)) { throw new InvalidDataException("agent-action-produced body requires object property 'invocation'."); }
 
         RequireExactProperties(invocationElement, "invocation", "providerId", "apiSpecId", "model");
         var action = new ActionMessage(ActionMessageSerialization.FromSerializedBlocks(blocks));
@@ -547,9 +541,7 @@ internal static class SessionEventCodec {
             "status",
             "blocks"
         );
-        if (!body.TryGetProperty("blocks", out JsonElement blocksElement) || blocksElement.ValueKind != JsonValueKind.Array) {
-            throw new InvalidDataException("tool-result-observed body requires array property 'blocks'.");
-        }
+        if (!body.TryGetProperty("blocks", out JsonElement blocksElement) || blocksElement.ValueKind != JsonValueKind.Array) { throw new InvalidDataException("tool-result-observed body requires array property 'blocks'."); }
 
         var blocks = new List<ToolResultBlock>();
         foreach (JsonElement blockElement in blocksElement.EnumerateArray()) {
@@ -579,14 +571,10 @@ internal static class SessionEventCodec {
             "errors"
         );
         if (!body.TryGetProperty("errors", out JsonElement errorsElement)
-            || errorsElement.ValueKind != JsonValueKind.Array) {
-            throw new InvalidDataException("completion-attempt-failed body requires array property 'errors'.");
-        }
+            || errorsElement.ValueKind != JsonValueKind.Array) { throw new InvalidDataException("completion-attempt-failed body requires array property 'errors'."); }
         var errors = new List<string>();
         foreach (JsonElement errorElement in errorsElement.EnumerateArray()) {
-            if (errorElement.ValueKind != JsonValueKind.String) {
-                throw new InvalidDataException("completion-attempt-failed errors must be strings.");
-            }
+            if (errorElement.ValueKind != JsonValueKind.String) { throw new InvalidDataException("completion-attempt-failed errors must be strings."); }
             errors.Add(errorElement.GetString()!);
         }
 
@@ -603,9 +591,7 @@ internal static class SessionEventCodec {
 
     private static CompletionAttemptStartedBody DecodeCompletionAttemptStarted(JsonElement body) {
         RequireObject(body, "completion-attempt-started body");
-        if (body.EnumerateObject().Any()) {
-            throw new InvalidDataException("completion-attempt-started body must be empty.");
-        }
+        if (body.EnumerateObject().Any()) { throw new InvalidDataException("completion-attempt-started body must be empty."); }
         return new CompletionAttemptStartedBody();
     }
 
@@ -656,9 +642,7 @@ internal static class SessionEventCodec {
         JsonElement element,
         string propertyName
     ) {
-        if (!element.TryGetProperty(propertyName, out JsonElement property)) {
-            throw new InvalidDataException($"Required property '{propertyName}' is missing.");
-        }
+        if (!element.TryGetProperty(propertyName, out JsonElement property)) { throw new InvalidDataException($"Required property '{propertyName}' is missing."); }
         if (property.ValueKind == JsonValueKind.Null) { return null; }
         RequireExactProperties(
             property,
@@ -715,7 +699,8 @@ internal static class SessionEventCodec {
             writer.WriteString("originApiSpecId", block.Reasoning.OriginApiSpecId);
             writer.WriteString("originModel", block.Reasoning.OriginModel);
             writer.WriteBase64String("payload", block.Reasoning.Payload);
-            if (block.Reasoning.PlainTextForDebug is not null) { writer.WriteString("plainTextForDebug", block.Reasoning.PlainTextForDebug); }
+            // Stable v1 wire name; the public CLR view is ReasoningBlock.PlainText.
+            if (block.Reasoning.PlainText is not null) { writer.WriteString("plainTextForDebug", block.Reasoning.PlainText); }
             writer.WriteEndObject();
         }
         writer.WriteEndObject();
@@ -843,9 +828,7 @@ internal static class SessionEventCodec {
         };
 
     private static void ValidateFailureTerminationKind(CompletionTerminationKind kind) {
-        if (kind is not (CompletionTerminationKind.Incomplete or CompletionTerminationKind.Failed)) {
-            throw new ArgumentOutOfRangeException(nameof(kind), kind, "Only known incomplete/failed outcomes are durable failure events.");
-        }
+        if (kind is not (CompletionTerminationKind.Incomplete or CompletionTerminationKind.Failed)) { throw new ArgumentOutOfRangeException(nameof(kind), kind, "Only known incomplete/failed outcomes are durable failure events."); }
     }
 
     private static void WriteNullableString(Utf8JsonWriter writer, string propertyName, string? value) {
@@ -854,9 +837,7 @@ internal static class SessionEventCodec {
     }
 
     private static void RequireObject(JsonElement element, string name) {
-        if (element.ValueKind != JsonValueKind.Object) {
-            throw new InvalidDataException($"Expected {name} to be a JSON object.");
-        }
+        if (element.ValueKind != JsonValueKind.Object) { throw new InvalidDataException($"Expected {name} to be a JSON object."); }
     }
 
     private static void RequireExactProperties(JsonElement element, string name, params string[] allowedProperties) {
@@ -864,35 +845,25 @@ internal static class SessionEventCodec {
         var allowed = new HashSet<string>(allowedProperties, StringComparer.Ordinal);
         var seen = new HashSet<string>(StringComparer.Ordinal);
         foreach (JsonProperty property in element.EnumerateObject()) {
-            if (!seen.Add(property.Name)) {
-                throw new InvalidDataException($"{name} contains duplicate property '{property.Name}'.");
-            }
-            if (!allowed.Contains(property.Name)) {
-                throw new InvalidDataException($"{name} contains unknown property '{property.Name}'.");
-            }
+            if (!seen.Add(property.Name)) { throw new InvalidDataException($"{name} contains duplicate property '{property.Name}'."); }
+            if (!allowed.Contains(property.Name)) { throw new InvalidDataException($"{name} contains unknown property '{property.Name}'."); }
         }
     }
 
     private static int ReadRequiredInt32(JsonElement element, string propertyName) {
-        if (!element.TryGetProperty(propertyName, out JsonElement property) || property.ValueKind != JsonValueKind.Number || !property.TryGetInt32(out int value)) {
-            throw new InvalidDataException($"Required numeric property '{propertyName}' is missing or invalid.");
-        }
+        if (!element.TryGetProperty(propertyName, out JsonElement property) || property.ValueKind != JsonValueKind.Number || !property.TryGetInt32(out int value)) { throw new InvalidDataException($"Required numeric property '{propertyName}' is missing or invalid."); }
         return value;
     }
 
     private static long ReadRequiredInt64(JsonElement element, string propertyName) {
         if (!element.TryGetProperty(propertyName, out JsonElement property)
             || property.ValueKind != JsonValueKind.Number
-            || !property.TryGetInt64(out long value)) {
-            throw new InvalidDataException($"Required long numeric property '{propertyName}' is missing or invalid.");
-        }
+            || !property.TryGetInt64(out long value)) { throw new InvalidDataException($"Required long numeric property '{propertyName}' is missing or invalid."); }
         return value;
     }
 
     private static JsonElement ReadRequiredObject(JsonElement element, string propertyName) {
-        if (!element.TryGetProperty(propertyName, out JsonElement property)) {
-            throw new InvalidDataException($"Required property '{propertyName}' is missing.");
-        }
+        if (!element.TryGetProperty(propertyName, out JsonElement property)) { throw new InvalidDataException($"Required property '{propertyName}' is missing."); }
         RequireObject(property, propertyName);
         return property;
     }
@@ -909,9 +880,7 @@ internal static class SessionEventCodec {
     }
 
     private static void ValidateExecutionSequence(long value, string name) {
-        if (value <= 0) {
-            throw new ArgumentOutOfRangeException(name, value, "Execution sequence must be greater than zero.");
-        }
+        if (value <= 0) { throw new ArgumentOutOfRangeException(name, value, "Execution sequence must be greater than zero."); }
     }
 
     private static void ValidateToolRuntimeIdentity(SessionToolRuntimeIdentity value) {
@@ -922,43 +891,31 @@ internal static class SessionEventCodec {
     }
 
     private static string ReadRequiredString(JsonElement element, string propertyName) {
-        if (!element.TryGetProperty(propertyName, out JsonElement property) || property.ValueKind != JsonValueKind.String) {
-            throw new InvalidDataException($"Required string property '{propertyName}' is missing or invalid.");
-        }
+        if (!element.TryGetProperty(propertyName, out JsonElement property) || property.ValueKind != JsonValueKind.String) { throw new InvalidDataException($"Required string property '{propertyName}' is missing or invalid."); }
         return property.GetString()!;
     }
 
     private static string? ReadOptionalString(JsonElement element, string propertyName) {
         if (!element.TryGetProperty(propertyName, out JsonElement property)) { return null; }
         if (property.ValueKind == JsonValueKind.Null) { return null; }
-        if (property.ValueKind != JsonValueKind.String) {
-            throw new InvalidDataException($"Optional string property '{propertyName}' is invalid.");
-        }
+        if (property.ValueKind != JsonValueKind.String) { throw new InvalidDataException($"Optional string property '{propertyName}' is invalid."); }
         return property.GetString();
     }
 
     private static string? ReadRequiredNullableString(JsonElement element, string propertyName) {
-        if (!element.TryGetProperty(propertyName, out JsonElement property)) {
-            throw new InvalidDataException($"Required nullable string property '{propertyName}' is missing.");
-        }
+        if (!element.TryGetProperty(propertyName, out JsonElement property)) { throw new InvalidDataException($"Required nullable string property '{propertyName}' is missing."); }
         if (property.ValueKind == JsonValueKind.Null) { return null; }
-        if (property.ValueKind != JsonValueKind.String) {
-            throw new InvalidDataException($"Required nullable string property '{propertyName}' is invalid.");
-        }
+        if (property.ValueKind != JsonValueKind.String) { throw new InvalidDataException($"Required nullable string property '{propertyName}' is invalid."); }
         return property.GetString();
     }
 
     private static byte[] ReadRequiredBytes(JsonElement element, string propertyName) {
-        if (!element.TryGetProperty(propertyName, out JsonElement property) || property.ValueKind != JsonValueKind.String) {
-            throw new InvalidDataException($"Required base64 property '{propertyName}' is missing or invalid.");
-        }
+        if (!element.TryGetProperty(propertyName, out JsonElement property) || property.ValueKind != JsonValueKind.String) { throw new InvalidDataException($"Required base64 property '{propertyName}' is missing or invalid."); }
         return property.GetBytesFromBase64();
     }
 
     private static void ValidateRequired(string value, string name) {
-        if (string.IsNullOrWhiteSpace(value)) {
-            throw new ArgumentException("Value must not be null, empty, or whitespace.", name);
-        }
+        if (string.IsNullOrWhiteSpace(value)) { throw new ArgumentException("Value must not be null, empty, or whitespace.", name); }
     }
 
     public static string ToUtf8String(byte[] payload) => Encoding.UTF8.GetString(payload);
