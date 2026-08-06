@@ -2,12 +2,46 @@ using System.Net;
 using System.Net.Http.Json;
 using Atelia.Completion;
 using Atelia.Completion.Abstractions;
+using Atelia.SessionJournal;
 using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 
 namespace Atelia.Galatea.Server.Tests;
 
 public sealed class GalateaHostSmokeTests {
+    [Fact]
+    public async Task RecapHeadMismatch_DowngradesSnapshotAndClearsRewindAuthority() {
+        var completionFactory = new TrackingCompletionClientFactory();
+        await using var host = GalateaTestHost.Create(
+            completionFactory,
+            DisabledGalateaUserMessageNormalizer.Instance
+        );
+        GalateaHostService service = host.Factory.Services
+            .GetRequiredService<GalateaHostService>();
+        UserSessionHost session = await service.GetSessionAsync(
+            "alice",
+            CancellationToken.None
+        );
+        var recent = new RecentTurnsResponseDto([], "rewind-authority");
+        var mismatched = new RecapPlanningSnapshotDto(
+            "exact",
+            "below-cadence-threshold",
+            ObservedRawHead: "not-the-recent-head"
+        );
+
+        RecentTurnsResponseDto bound =
+            GalateaHostService.BindRecapPlanningSnapshot(
+                recent,
+                session.Engine.ReadCurrentHead(),
+                mismatched
+            );
+
+        Assert.Null(bound.RewindLatestToken);
+        Assert.Equal("stale", bound.RecapPlanning?.Freshness);
+        Assert.Equal("unavailable", bound.RecapPlanning?.State);
+        Assert.Equal("session-head-changed", bound.RecapPlanning?.Code);
+    }
+
     [Fact]
     public async Task ActualProgram_UsesAuthenticationAndInjectedServices() {
         var completionFactory = new TrackingCompletionClientFactory();
@@ -51,9 +85,92 @@ public sealed class GalateaHostSmokeTests {
             .GetFromJsonAsync<RecentTurnsResponseDto>("/api/recent-turns");
         Assert.NotNull(recent);
         Assert.Empty(recent!.Turns);
+        RecapPlanningSnapshotDto recap = Assert.IsType<
+            RecapPlanningSnapshotDto
+        >(recent.RecapPlanning);
+        Assert.Equal("exact", recap.Freshness);
+        Assert.Equal("below-cadence-threshold", recap.State);
+        Assert.Equal(0, recap.RecentHistoryUnitCount);
+        Assert.Equal(0, recap.RecentHistoryLoad);
+        Assert.Equal(1_000_000, recap.MinimumRecentHistoryLoad);
+        Assert.Equal(1_000_000, recap.RecapBuildIntervalHistoryLoad);
+        Assert.Equal(2_000_000, recap.BuildThresholdHistoryLoad);
+        Assert.Equal(2_000_000, recap.RemainingHistoryLoad);
+        GalateaHostService service = host.Factory.Services
+            .GetRequiredService<GalateaHostService>();
+        UserSessionHost session = await service.GetSessionAsync(
+            "alice",
+            CancellationToken.None
+        );
+        Assert.Equal(
+            EventAddressTextCodec.Format(
+                Assert.IsType<Atelia.EventJournal.EventAddress>(
+                    session.Engine.ReadCurrentHead()
+                )
+            ),
+            recap.ObservedRawHead
+        );
         Assert.Equal(0, completionFactory.CreateCallCount);
         Assert.Equal(0, completionFactory.Client.DispatchCallCount);
         Assert.Equal(0, normalizer.NormalizeCallCount);
+    }
+
+    [Fact]
+    public async Task PlannerUnavailable_DoesNotSuppressRecentTurns() {
+        var completionFactory = new TrackingCompletionClientFactory();
+        await using var host = GalateaTestHost.Create(
+            completionFactory,
+            DisabledGalateaUserMessageNormalizer.Instance
+        );
+        GalateaHostService service = host.Factory.Services
+            .GetRequiredService<GalateaHostService>();
+        UserSessionHost session = await service.GetSessionAsync(
+            "alice",
+            CancellationToken.None
+        );
+        _ = session.Engine.AppendObservation(
+            GalateaUserMessageEnvelope.Wrap("visible user")
+        );
+        _ = session.Engine.AppendImportedAgentAction(
+            new ActionMessage([
+                new ActionBlock.Text("visible assistant")
+            ]),
+            new CompletionDescriptor(
+                "planner-unavailable-fixture",
+                "fixture-v1",
+                "model-a"
+            )
+        );
+        File.Delete(Path.Combine(
+            host.SessionDirectory,
+            "config",
+            "recap-planner-config.json"
+        ));
+
+        using HttpClient client = host.CreateClient();
+        using HttpResponseMessage login = await GalateaTestHost.LoginAsync(
+            client
+        );
+        Assert.Equal(HttpStatusCode.Redirect, login.StatusCode);
+
+        using HttpResponseMessage response = await client.GetAsync(
+            "/api/recent-turns"
+        );
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        RecentTurnsResponseDto? recent = await response.Content
+            .ReadFromJsonAsync<RecentTurnsResponseDto>();
+        Assert.NotNull(recent);
+        RecentTurnDto turn = Assert.Single(recent!.Turns);
+        Assert.Equal("visible user", turn.UserText);
+        Assert.Equal("visible assistant", turn.Assistant.Text);
+        Assert.NotNull(recent.RewindLatestToken);
+        RecapPlanningSnapshotDto recap = Assert.IsType<
+            RecapPlanningSnapshotDto
+        >(recent.RecapPlanning);
+        Assert.Equal("stale", recap.Freshness);
+        Assert.Equal("unavailable", recap.State);
+        Assert.Equal("PlannerConfigMissing", recap.Code);
+        Assert.Equal(0, completionFactory.CreateCallCount);
     }
 
     private sealed class TrackingCompletionClientFactory

@@ -1,5 +1,6 @@
 using Atelia.Completion;
 using Atelia.Completion.Abstractions;
+using Atelia.Diagnostics;
 using Atelia.SessionJournal;
 using Atelia.SessionJournal.DerivedRecap.Maintainers;
 using Atelia.SessionJournal.DerivedRecap.Planner;
@@ -20,6 +21,70 @@ internal sealed record GalateaPreparedRecap(
 /// requested by the lifecycle executor.
 /// </summary>
 internal static class GalateaRecapComposition {
+    internal const string ExactFreshness = "exact";
+    internal const string StaleFreshness = "stale";
+    internal const string BelowCadenceThresholdState =
+        "below-cadence-threshold";
+    internal const string AwaitingReplaySafeAdmissionState =
+        "awaiting-replay-safe-admission";
+    internal const string CadenceReadyState = "cadence-ready";
+    internal const string FrozenBuildingState = "frozen-building";
+    internal const string RawSafetyRejectedState = "raw-safety-rejected";
+    internal const string UnavailableState = "unavailable";
+    internal const string NotObservedState = "not-observed";
+
+    internal static async ValueTask<RecapPlanningSnapshotDto>
+        InspectPlanningAsync(
+        SessionJournalEngine engine,
+        CancellationToken cancellationToken
+    ) {
+        ArgumentNullException.ThrowIfNull(engine);
+
+        try {
+            RecapMaintainerProfileCatalog catalog =
+                RecapMaintainerProfileCatalog.BuiltIn;
+            RecapMaintainerCapabilitySnapshot capabilities =
+                ProjectCapabilities(catalog);
+            DerivedRecapStore store = DerivedRecapStore.Open(
+                engine.Path,
+                engine.BranchRefId
+            );
+            var source =
+                new RepositoryRecapActivePlanningConfigurationSource(
+                    store.SessionRepositoryPath,
+                    capabilities
+                );
+            DerivedRecapPlanningProgressInspectionResult result =
+                await DerivedRecapPlanningProgressInspector.InspectAsync(
+                        engine.ReadView,
+                        store,
+                        capabilities,
+                        source,
+                        cancellationToken
+                    )
+                    .ConfigureAwait(false);
+            return MapPlanningInspection(result);
+        }
+        catch (OperationCanceledException) when (
+            cancellationToken.IsCancellationRequested
+        ) {
+            throw;
+        }
+        catch (Exception exception) when (
+            GalateaExceptionClassifier.IsNonFatal(exception)
+        ) {
+            DebugUtil.Warning(
+                "Galatea.Recap",
+                "Read-only DerivedRecap planning inspection failed.",
+                exception
+            );
+            return UnavailablePlanningSnapshot(
+                "recap-planning-inspection-failed",
+                "DerivedRecap进度暂时不可用。"
+            );
+        }
+    }
+
     internal static async ValueTask<GalateaPreparedRecap> PrepareAsync(
         SessionJournalEngine engine,
         CancellationToken cancellationToken
@@ -115,6 +180,138 @@ internal static class GalateaRecapComposition {
         + ".",
         "recap-beyond-prefix"
     );
+
+    private static RecapPlanningSnapshotDto MapPlanningInspection(
+        DerivedRecapPlanningProgressInspectionResult result
+    ) {
+        ArgumentNullException.ThrowIfNull(result);
+        return result switch {
+            DerivedRecapPlanningProgressInspectionResult
+                .BelowCadenceThreshold below => MapProgress(
+                    below.Snapshot,
+                    BelowCadenceThresholdState
+                ),
+            DerivedRecapPlanningProgressInspectionResult
+                .AwaitingReplaySafeAdmission awaiting => MapProgress(
+                    awaiting.Snapshot,
+                    AwaitingReplaySafeAdmissionState
+                ),
+            DerivedRecapPlanningProgressInspectionResult
+                .CadenceReady ready => MapProgress(
+                    ready.Snapshot,
+                    CadenceReadyState
+                ),
+            DerivedRecapPlanningProgressInspectionResult
+                .FrozenBuilding frozen => new RecapPlanningSnapshotDto(
+                    ExactFreshness,
+                    FrozenBuildingState,
+                    ObservedRawHead: EventAddressTextCodec.Format(
+                        frozen.CapturedRawHead
+                    ),
+                    Detail: "存在frozen Building；下次lifecycle将尝试恢复。"
+                ),
+            DerivedRecapPlanningProgressInspectionResult
+                .RawSafetyRejected rejected => new RecapPlanningSnapshotDto(
+                    ExactFreshness,
+                    RawSafetyRejectedState,
+                    ObservedRawHead: EventAddressTextCodec.Format(
+                        rejected.CapturedRawHead
+                    ),
+                    CadenceBaseline: EventAddressTextCodec.Format(
+                        rejected.CadenceBaseline
+                    ),
+                    MinimumRecentHistoryLoad: rejected.Cadence
+                        .MinimumRecentHistoryLoad.Value,
+                    RecapBuildIntervalHistoryLoad: rejected.Cadence
+                        .RecapBuildIntervalHistoryLoad.Value,
+                    BuildThresholdHistoryLoad: rejected.Cadence
+                        .BuildThresholdHistoryLoad.Value,
+                    Code: FirstDefectCode(rejected.Defects),
+                    Detail: "DerivedRecap进度因raw safety限制而不可用。"
+                ),
+            DerivedRecapPlanningProgressInspectionResult.Retryable
+                retryable => UnavailablePlanningSnapshot(
+                    retryable.Code,
+                    retryable.Kind switch {
+                        DerivedRecapOperationPreparationRetryKind
+                            .RawHeadChanged =>
+                            "会话边界在DerivedRecap进度检查期间发生变化，请重试。",
+                        DerivedRecapOperationPreparationRetryKind
+                            .SourceChanged =>
+                            "DerivedRecap来源在进度检查期间发生变化，请重试。",
+                        _ => "DerivedRecap进度检查需要重试。"
+                    }
+                ),
+            DerivedRecapPlanningProgressInspectionResult.Unavailable
+                unavailable => unavailable.Snapshot is { } snapshot
+                    ? MapProgress(
+                        snapshot,
+                        UnavailableState,
+                        FirstDefectCode(unavailable.Defects),
+                        "DerivedRecap进度当前不可用。"
+                    )
+                    : UnavailablePlanningSnapshot(
+                        FirstDefectCode(unavailable.Defects),
+                        "DerivedRecap进度当前不可用。"
+                    ),
+            DerivedRecapPlanningProgressInspectionResult.BeyondPrefix
+                beyond => new RecapPlanningSnapshotDto(
+                    ExactFreshness,
+                    UnavailableState,
+                    ObservedRawHead: EventAddressTextCodec.Format(
+                        beyond.Evidence.CapturedHead
+                    ),
+                    Code: "recap-beyond-prefix",
+                    Detail: "DerivedRecap进度所需raw lineage超出bounded prefix"
+                        + $"（stage={beyond.Stage}）。"
+                ),
+            _ => throw new InvalidDataException(
+                "Unknown DerivedRecap planning inspection result."
+            )
+        };
+    }
+
+    private static RecapPlanningSnapshotDto MapProgress(
+        DerivedRecapPlanningProgressSnapshot snapshot,
+        string state,
+        string? code = null,
+        string? detail = null
+    ) => new(
+        ExactFreshness,
+        state,
+        ObservedRawHead: EventAddressTextCodec.Format(
+            snapshot.CapturedRawHead
+        ),
+        CadenceBaseline: EventAddressTextCodec.Format(
+            snapshot.CadenceBaseline
+        ),
+        RecentHistoryUnitCount: snapshot.Measurement
+            .GrowthHistoryUnitCount,
+        RecentHistoryLoad: snapshot.Measurement.GrowthHistoryLoad.Value,
+        MinimumRecentHistoryLoad: snapshot.Cadence
+            .MinimumRecentHistoryLoad.Value,
+        RecapBuildIntervalHistoryLoad: snapshot.Cadence
+            .RecapBuildIntervalHistoryLoad.Value,
+        BuildThresholdHistoryLoad: snapshot.BuildThresholdHistoryLoad.Value,
+        RemainingHistoryLoad: snapshot.RemainingHistoryLoad.Value,
+        Code: code,
+        Detail: detail
+    );
+
+    private static RecapPlanningSnapshotDto UnavailablePlanningSnapshot(
+        string code,
+        string detail
+    ) => new(
+        StaleFreshness,
+        UnavailableState,
+        Code: code,
+        Detail: detail
+    );
+
+    private static string FirstDefectCode(
+        IReadOnlyList<DerivedRecapExecutionDefect> defects
+    ) => defects.FirstOrDefault()?.Code
+        ?? "recap-planning-unavailable";
 
     internal static DerivedRecapOnlineLifecycleCoordinator
         CreateLifecycle(

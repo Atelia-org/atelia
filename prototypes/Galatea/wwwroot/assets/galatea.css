@@ -112,6 +112,38 @@ body {
   font-family: "IBM Plex Mono", "Maple Mono", monospace;
 }
 
+.recap-planning-status {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border: 1px solid rgba(31, 79, 70, 0.16);
+  border-radius: 12px;
+  background: rgba(31, 79, 70, 0.045);
+  color: #4d4639;
+  font-size: 0.82rem;
+}
+
+.recap-planning-summary {
+  font-weight: 600;
+}
+
+.recap-planning-progress {
+  display: block;
+  width: 100%;
+  height: 8px;
+  margin: 7px 0 5px;
+  accent-color: #1f4f46;
+}
+
+.recap-planning-detail,
+.recap-planning-note {
+  color: #786f60;
+}
+
+.recap-planning-note {
+  margin-top: 3px;
+  font-size: 0.72rem;
+}
+
 .login-form {
   display: grid;
   gap: 12px;

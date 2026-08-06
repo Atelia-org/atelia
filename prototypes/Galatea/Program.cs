@@ -281,7 +281,10 @@ api.MapPost(
                         hostService.FinishTurn(session, liveTurn);
                         liveTurn.Complete();
                     }
-                    hostService.RefreshRecentTurnsBestEffort(session);
+                    await hostService.RefreshRecentTurnsBestEffortAsync(
+                        session,
+                        applicationLifetime.ApplicationStopping
+                    );
                 }
                 finally {
                     session.TurnLock.Release();
@@ -428,7 +431,10 @@ api.MapPost(
                         hostService.FinishTurn(session, liveTurn);
                         liveTurn.Complete();
                     }
-                    hostService.RefreshRecentTurnsBestEffort(session);
+                    await hostService.RefreshRecentTurnsBestEffortAsync(
+                        session,
+                        applicationLifetime.ApplicationStopping
+                    );
                 }
                 finally {
                     session.TurnLock.Release();
@@ -461,10 +467,12 @@ api.MapPost(
                     error = "rewindLatestToken格式无效。"
                 });
             }
-            var poppedTurn = hostService.PopLatestTurn(
-                session,
-                expectedHead
-            );
+            var poppedTurn = await hostService.PopLatestTurnAsync(
+                    session,
+                    expectedHead,
+                    httpContext.RequestAborted
+                )
+                .ConfigureAwait(false);
             if (poppedTurn is null) {
                 DebugUtil.Warning("Galatea.Api", $"POST /api/chat/turns/pop-latest user={userId} returned null, head={session.Engine.ReadCurrentHead()}");
                 return Results.Json(
@@ -616,7 +624,18 @@ static IResult StartAcceptedTurn(
                 try {
                     hostService.FinishTurn(session, liveTurn);
                     liveTurn.Complete();
-                    hostService.RefreshRecentTurnsBestEffort(session);
+                    if (!string.Equals(
+                            liveTurn.Status,
+                            "completed",
+                            StringComparison.Ordinal
+                        )) {
+                        await hostService
+                            .RefreshRecentTurnsBestEffortAsync(
+                                session,
+                                applicationLifetime.ApplicationStopping
+                            )
+                            .ConfigureAwait(false);
+                    }
                     DebugUtil.Info(
                         "Galatea.Api",
                         $"StartAcceptedTurn background finish: user={session.User.UserId}, turnId={liveTurn.TurnId}, status={liveTurn.Status}"

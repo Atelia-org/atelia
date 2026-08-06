@@ -93,9 +93,25 @@ public sealed record RecentTurnDto(
     AssistantMessageDto Assistant
 );
 
+public sealed record RecapPlanningSnapshotDto(
+    string Freshness,
+    string State,
+    string? ObservedRawHead = null,
+    string? CadenceBaseline = null,
+    int? RecentHistoryUnitCount = null,
+    long? RecentHistoryLoad = null,
+    long? MinimumRecentHistoryLoad = null,
+    long? RecapBuildIntervalHistoryLoad = null,
+    long? BuildThresholdHistoryLoad = null,
+    long? RemainingHistoryLoad = null,
+    string? Code = null,
+    string? Detail = null
+);
+
 public sealed record RecentTurnsResponseDto(
     IReadOnlyList<RecentTurnDto> Turns,
-    string? RewindLatestToken
+    string? RewindLatestToken,
+    RecapPlanningSnapshotDto? RecapPlanning = null
 );
 
 public sealed record AssistantMessageDto(

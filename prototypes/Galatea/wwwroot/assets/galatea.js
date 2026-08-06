@@ -16,6 +16,7 @@
     activeTurnId: null,
     streamGeneration: 0,
     selectedConnectionId: null,
+    recapPlanning: null,
   };
 
   function resolveConnectionId(candidate) {
@@ -44,6 +45,10 @@
   const connectionPicker = document.getElementById("connection-picker");
   const composerModeHint = document.getElementById("composer-mode-hint");
   const statusText = document.getElementById("status-text");
+  const recapPlanningStatus = document.getElementById("recap-planning-status");
+  const recapPlanningSummary = document.getElementById("recap-planning-summary");
+  const recapPlanningProgress = document.getElementById("recap-planning-progress");
+  const recapPlanningDetail = document.getElementById("recap-planning-detail");
   const liveTurn = document.getElementById("live-turn");
   const liveText = document.getElementById("live-text");
   const liveReasoning = document.getElementById("live-reasoning");
@@ -241,6 +246,96 @@
   function applyRecentTurnsPayload(payload) {
     state.recentTurns = payload?.turns ?? [];
     state.rewindLatestToken = payload?.rewindLatestToken ?? null;
+    state.recapPlanning = payload?.recapPlanning ?? null;
+    renderRecapPlanning();
+  }
+
+  const historyLoadFormatter = new Intl.NumberFormat("zh-CN");
+
+  function renderRecapPlanning() {
+    if (!recapPlanningStatus || !recapPlanningSummary || !recapPlanningDetail) {
+      return;
+    }
+
+    const snapshot = state.recapPlanning;
+    if (!snapshot) {
+      recapPlanningStatus.classList.add("hidden");
+      return;
+    }
+
+    recapPlanningStatus.classList.remove("hidden");
+    recapPlanningSummary.textContent = "";
+    recapPlanningDetail.textContent = "";
+    recapPlanningProgress?.classList.add("hidden");
+
+    const unitCount = snapshot.recentHistoryUnitCount;
+    const currentLoad = snapshot.recentHistoryLoad;
+    const minimumLoad = snapshot.minimumRecentHistoryLoad;
+    const intervalLoad = snapshot.recapBuildIntervalHistoryLoad;
+    const threshold = snapshot.buildThresholdHistoryLoad;
+    const remaining = snapshot.remainingHistoryLoad;
+    const hasMeasurement = Number.isFinite(unitCount)
+      && Number.isFinite(currentLoad)
+      && Number.isFinite(threshold)
+      && threshold > 0;
+
+    if (hasMeasurement) {
+      const cadence = Number.isFinite(minimumLoad) && Number.isFinite(intervalLoad)
+        ? `（R ${historyLoadFormatter.format(minimumLoad)} + B ${historyLoadFormatter.format(intervalLoad)}）`
+        : "";
+      recapPlanningSummary.textContent = `近期历史：${historyLoadFormatter.format(unitCount)} 个 PlanningUnit · HistoryLoad ${historyLoadFormatter.format(currentLoad)} / ${historyLoadFormatter.format(threshold)}${cadence}`;
+      if (recapPlanningProgress) {
+        recapPlanningProgress.max = threshold;
+        recapPlanningProgress.value = Math.min(Math.max(currentLoad, 0), threshold);
+        recapPlanningProgress.classList.remove("hidden");
+      }
+    }
+
+    switch (snapshot.state) {
+      case "below-cadence-threshold":
+        recapPlanningDetail.textContent = Number.isFinite(remaining)
+          ? `距下次 Recap：${historyLoadFormatter.format(remaining)} HistoryLoad`
+          : "尚未达到 DerivedRecap cadence。";
+        break;
+      case "awaiting-replay-safe-admission":
+        recapPlanningDetail.textContent = "已达 cadence，等待 replay-safe boundary。";
+        break;
+      case "cadence-ready":
+        recapPlanningDetail.textContent = "已达 cadence；下次 lifecycle 将尝试 build。";
+        break;
+      case "frozen-building":
+        recapPlanningSummary.textContent = "DerivedRecap：frozen Building";
+        recapPlanningDetail.textContent = "下次 lifecycle 将尝试恢复。";
+        break;
+      case "raw-safety-rejected":
+        recapPlanningSummary.textContent = "DerivedRecap 进度触及 raw safety 限制";
+        recapPlanningDetail.textContent = snapshot.code
+          ? `需要先处理 Planner raw safety 状态。（${snapshot.code}）`
+          : "需要先处理 Planner raw safety 状态。";
+        break;
+      case "unavailable":
+        if (!hasMeasurement) {
+          recapPlanningSummary.textContent = "DerivedRecap 进度暂时不可用";
+        }
+        recapPlanningDetail.textContent = snapshot.code
+          ? `${snapshot.detail || "请稍后重试。"}（${snapshot.code}）`
+          : (snapshot.detail || "请稍后重试。");
+        break;
+      case "not-observed":
+        recapPlanningSummary.textContent = "DerivedRecap 进度尚未读取";
+        recapPlanningDetail.textContent = snapshot.detail || "等待稳定会话边界。";
+        break;
+      default:
+        recapPlanningSummary.textContent = "DerivedRecap 进度状态未知";
+        recapPlanningDetail.textContent = "请刷新页面后重试。";
+        break;
+    }
+
+    if (snapshot.freshness === "stale" && hasMeasurement) {
+      recapPlanningDetail.textContent += " 生成中；显示上一稳定边界。";
+    } else if (snapshot.freshness === "stale" && snapshot.state === "unavailable") {
+      recapPlanningDetail.textContent += " 当前无法确认精确边界。";
+    }
   }
 
   async function loadCurrentTurn() {
@@ -446,6 +541,7 @@
         if (state.activeTurnId !== normalizedTurnId || generation !== state.streamGeneration) {
           if (!state.activeTurnId) {
             const currentTurn = await waitForCurrentTurnTerminal();
+            await loadRecentTurns().catch(() => {});
             if (currentTurn?.status === "recovery-required") {
               setStreaming(false, currentTurn.restartRequired
                 ? "上次模型调用结果不确定；需要明确授权后才能恢复。"

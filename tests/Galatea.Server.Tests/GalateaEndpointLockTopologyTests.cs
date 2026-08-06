@@ -203,6 +203,10 @@ public sealed class GalateaEndpointLockTopologyTests {
             );
         Assert.NotNull(idleRecent);
         Assert.NotNull(idleRecent!.RewindLatestToken);
+        RecapPlanningSnapshotDto idleRecap = Assert.IsType<
+            RecapPlanningSnapshotDto
+        >(idleRecent.RecapPlanning);
+        Assert.Equal("exact", idleRecap.Freshness);
 
         GalateaLiveTurn? liveTurn = null;
         bool lockHeld = false;
@@ -242,6 +246,14 @@ public sealed class GalateaEndpointLockTopologyTests {
             );
             Assert.Equal("completed user", cachedTurn.UserText);
             Assert.Null(activeRecent.RewindLatestToken);
+            RecapPlanningSnapshotDto activeRecap = Assert.IsType<
+                RecapPlanningSnapshotDto
+            >(activeRecent.RecapPlanning);
+            Assert.Equal("stale", activeRecap.Freshness);
+            Assert.Equal(
+                idleRecap.ObservedRawHead,
+                activeRecap.ObservedRawHead
+            );
 
             using HttpResponseMessage busy = await client
                 .PostAsJsonAsync(
@@ -345,6 +357,36 @@ public sealed class GalateaEndpointLockTopologyTests {
         );
         Assert.Contains(
             "currentTurn = await waitForPublishedCurrentTurn(currentTurn);",
+            script,
+            StringComparison.Ordinal
+        );
+        Assert.Contains(
+            "state.recapPlanning = payload?.recapPlanning ?? null;",
+            script,
+            StringComparison.Ordinal
+        );
+        Assert.Contains(
+            "new Intl.NumberFormat(\"zh-CN\")",
+            script,
+            StringComparison.Ordinal
+        );
+        Assert.Contains(
+            "Math.min(Math.max(currentLoad, 0), threshold)",
+            script,
+            StringComparison.Ordinal
+        );
+        Assert.Contains(
+            "snapshot.minimumRecentHistoryLoad",
+            script,
+            StringComparison.Ordinal
+        );
+        Assert.Contains(
+            "snapshot.recapBuildIntervalHistoryLoad",
+            script,
+            StringComparison.Ordinal
+        );
+        Assert.Contains(
+            "await loadRecentTurns().catch(() => {});",
             script,
             StringComparison.Ordinal
         );

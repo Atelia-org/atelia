@@ -77,8 +77,9 @@ public sealed class GalateaHostService : IAsyncDisposable {
         return session;
     }
 
-    private RecentTurnsResponseDto BuildRecentTurnsResponse(
+    private StableRecentTurnsProjection BuildRecentTurnsResponse(
         SessionJournalEngine engine,
+        RecapPlanningSnapshotDto? recapPlanning = null,
         int maxTurns = RecentTurnLimit
     ) {
         ArgumentNullException.ThrowIfNull(engine);
@@ -98,21 +99,28 @@ public sealed class GalateaHostService : IAsyncDisposable {
             "Galatea.Session",
             $"BuildRecentTurnsResponse: head={snapshot.CapturedHead}, responseTurns={turns.Count}, rewindEligible={rewindLatestToken is not null}, firstTurn={DescribeTurn(turns.FirstOrDefault())}"
         );
-        return new RecentTurnsResponseDto(turns, rewindLatestToken);
+        return new StableRecentTurnsProjection(
+            new RecentTurnsResponseDto(
+                turns,
+                rewindLatestToken,
+                recapPlanning ?? NotObservedRecapPlanning()
+            ),
+            snapshot.CapturedHead
+        );
     }
 
-    public Task<RecentTurnsResponseDto> GetRecentTurnsAsync(
+    public async Task<RecentTurnsResponseDto> GetRecentTurnsAsync(
         UserSessionHost host,
         CancellationToken ct
     ) {
         ArgumentNullException.ThrowIfNull(host);
 
         if (!host.TurnLock.Wait(0)) {
-            return Task.FromResult(host.GetRecentTurns());
+            return host.GetRecentTurns();
         }
         try {
-            ct.ThrowIfCancellationRequested();
-            return Task.FromResult(RefreshRecentTurns(host));
+            return await RefreshRecentTurnsAsync(host, ct)
+                .ConfigureAwait(false);
         }
         finally {
             host.TurnLock.Release();
@@ -179,35 +187,105 @@ public sealed class GalateaHostService : IAsyncDisposable {
         return result;
     }
 
-    internal RecentTurnsResponseDto RefreshRecentTurnsBestEffort(
-        UserSessionHost host
+    internal async ValueTask<RecentTurnsResponseDto>
+        RefreshRecentTurnsBestEffortAsync(
+        UserSessionHost host,
+        CancellationToken cancellationToken = default
     ) {
         ArgumentNullException.ThrowIfNull(host);
         try {
-            return RefreshRecentTurns(host);
+            return await RefreshRecentTurnsAsync(
+                    host,
+                    cancellationToken
+                )
+                .ConfigureAwait(false);
         }
         catch (Exception ex) when (
             GalateaExceptionClassifier.IsNonFatal(ex)
+            && !cancellationToken.IsCancellationRequested
         ) {
-            host.InvalidateRecentRewindToken();
+            host.MarkRecentSnapshotStale();
             RecentTurnsResponseDto fallback = host.GetRecentTurns();
             DebugUtil.Warning(
                 "Galatea.Session",
-                $"Recent-turn cache refresh failed: user={host.User.UserId}, error={ex.GetType().Name}: {ex.Message}"
+                $"Stable session snapshot refresh failed: user={host.User.UserId}",
+                ex
             );
             return fallback;
         }
     }
 
-    private RecentTurnsResponseDto RefreshRecentTurns(
-        UserSessionHost host
+    private async ValueTask<RecentTurnsResponseDto>
+        RefreshRecentTurnsAsync(
+        UserSessionHost host,
+        CancellationToken cancellationToken
     ) {
-        RecentTurnsResponseDto recent = BuildRecentTurnsResponse(
+        cancellationToken.ThrowIfCancellationRequested();
+        StableRecentTurnsProjection projection = BuildRecentTurnsResponse(
             host.Engine
+        );
+        RecapPlanningSnapshotDto recapPlanning =
+            await GalateaRecapComposition.InspectPlanningAsync(
+                    host.Engine,
+                    cancellationToken
+                )
+                .ConfigureAwait(false);
+        RecentTurnsResponseDto recent = BindRecapPlanningSnapshot(
+            projection.Response,
+            projection.CapturedHead,
+            recapPlanning
         );
         host.SetRecentTurns(recent);
         return recent;
     }
+
+    internal static RecentTurnsResponseDto BindRecapPlanningSnapshot(
+        RecentTurnsResponseDto recent,
+        EventAddress? recentCapturedHead,
+        RecapPlanningSnapshotDto recapPlanning
+    ) {
+        ArgumentNullException.ThrowIfNull(recent);
+        ArgumentNullException.ThrowIfNull(recapPlanning);
+        bool headMismatch = recapPlanning.Freshness
+                == GalateaRecapComposition.ExactFreshness
+            && (recentCapturedHead is not { } capturedHead
+                || !string.Equals(
+                    recapPlanning.ObservedRawHead,
+                    EventAddressTextCodec.Format(capturedHead),
+                    StringComparison.Ordinal
+                ));
+        if (headMismatch) {
+            DebugUtil.Warning(
+                "Galatea.Session",
+                "Discarding exact DerivedRecap progress because its raw "
+                + "head differs from the recent-turn projection."
+            );
+            recapPlanning = new RecapPlanningSnapshotDto(
+                GalateaRecapComposition.StaleFreshness,
+                GalateaRecapComposition.UnavailableState,
+                Code: "session-head-changed",
+                Detail: "会话边界在稳定快照读取期间发生变化，请刷新重试。"
+            );
+        }
+        return recent with {
+            RewindLatestToken = headMismatch
+                ? null
+                : recent.RewindLatestToken,
+            RecapPlanning = recapPlanning
+        };
+    }
+
+    private static RecapPlanningSnapshotDto NotObservedRecapPlanning()
+        => new(
+            GalateaRecapComposition.StaleFreshness,
+            GalateaRecapComposition.NotObservedState,
+            Detail: "DerivedRecap进度尚未在稳定会话边界读取。"
+        );
+
+    private sealed record StableRecentTurnsProjection(
+        RecentTurnsResponseDto Response,
+        EventAddress? CapturedHead
+    );
 
     private static CurrentTurnDto BuildDurableCurrentTurn(
         SessionRuntimeRecoveryRequirements recovery
@@ -277,13 +355,25 @@ public sealed class GalateaHostService : IAsyncDisposable {
         return host.StartRecovery(options);
     }
 
-    internal PopLatestTurnResponseDto? PopLatestTurn(
+    internal async ValueTask<PopLatestTurnResponseDto?>
+        PopLatestTurnAsync(
         UserSessionHost host,
-        EventAddress expectedHead
+        EventAddress expectedHead,
+        CancellationToken cancellationToken = default
     ) {
         ArgumentNullException.ThrowIfNull(host);
+        host.MarkRecentSnapshotStale();
         SessionTurnRetractionResult result =
-            host.Engine.RewindLatestCompletedTurn(expectedHead);
+            host.Engine.RewindLatestCompletedTurn(
+                expectedHead,
+                cancellationToken
+            );
+        RecentTurnsResponseDto recent =
+            await RefreshRecentTurnsBestEffortAsync(
+                    host,
+                    cancellationToken
+                )
+                .ConfigureAwait(false);
         if (result is not SessionTurnRetractionResult.Moved moved
             || moved.Turn.TerminalAction is null) {
             return null;
@@ -291,8 +381,6 @@ public sealed class GalateaHostService : IAsyncDisposable {
         RecentTurnDto turn = GalateaRecentTurnDisplayAdapter.Project(
             moved.Turn
         );
-        RecentTurnsResponseDto recent =
-            RefreshRecentTurnsBestEffort(host);
         return new PopLatestTurnResponseDto(turn, recent);
     }
 
@@ -414,7 +502,11 @@ public sealed class GalateaHostService : IAsyncDisposable {
                 ex.Termination.ProviderReason ?? ex.Termination.Kind.ToString()
             );
         }
-        var snapshot = RefreshRecentTurnsBestEffort(host);
+        var snapshot = await RefreshRecentTurnsBestEffortAsync(
+                host,
+                ct
+            )
+            .ConfigureAwait(false);
         DebugUtil.Info(
             "Galatea.Session",
             $"RunTurnAsync send done: user={host.User.UserId}, turnId={liveTurn.TurnId}, errors={completed.Errors?.Count ?? 0}, snapshotTurns={snapshot.Turns.Count}, head={host.Engine.ReadCurrentHead()}"
@@ -786,7 +878,8 @@ public sealed class GalateaHostService : IAsyncDisposable {
             "Galatea.Session",
             $"CreateSessionAsync: user={user.UserId}, sessionDir={sessionDir}, phase={boundary.Phase}, head={boundary.Head}"
         );
-        RecentTurnsResponseDto recent = BuildRecentTurnsResponse(engine);
+        RecentTurnsResponseDto recent = BuildRecentTurnsResponse(engine)
+            .Response;
         return Task.FromResult(new UserSessionHost(user, engine, recent));
     }
 
@@ -967,9 +1060,7 @@ public sealed class UserSessionHost : IAsyncDisposable {
         lock (_turnStateGate) {
             _lastTurn = null;
             _currentTurn = liveTurn;
-            _recentTurns = _recentTurns with {
-                RewindLatestToken = null
-            };
+            _recentTurns = MarkStale(_recentTurns);
         }
 
         return liveTurn;
@@ -983,9 +1074,7 @@ public sealed class UserSessionHost : IAsyncDisposable {
         lock (_turnStateGate) {
             _lastTurn = null;
             _currentTurn = liveTurn;
-            _recentTurns = _recentTurns with {
-                RewindLatestToken = null
-            };
+            _recentTurns = MarkStale(_recentTurns);
         }
         return liveTurn;
     }
@@ -1003,13 +1092,26 @@ public sealed class UserSessionHost : IAsyncDisposable {
         }
     }
 
-    internal void InvalidateRecentRewindToken() {
+    internal void MarkRecentSnapshotStale() {
         lock (_turnStateGate) {
-            _recentTurns = _recentTurns with {
-                RewindLatestToken = null
-            };
+            _recentTurns = MarkStale(_recentTurns);
         }
     }
+
+    private static RecentTurnsResponseDto MarkStale(
+        RecentTurnsResponseDto recent
+    ) => recent with {
+        RewindLatestToken = null,
+        RecapPlanning = recent.RecapPlanning is { } recap
+            ? recap with {
+                Freshness = GalateaRecapComposition.StaleFreshness
+            }
+            : new RecapPlanningSnapshotDto(
+                GalateaRecapComposition.StaleFreshness,
+                GalateaRecapComposition.NotObservedState,
+                Detail: "DerivedRecap进度尚未在稳定会话边界读取。"
+            )
+    };
 
     internal GalateaLiveTurn? GetCurrentTurn() {
         lock (_turnStateGate) {
@@ -1435,6 +1537,12 @@ internal static class GalateaHtml {
         <fieldset id="connection-picker" class="connection-picker" aria-label="模型连接">
           <legend>模型连接</legend>
         </fieldset>
+        <section id="recap-planning-status" class="recap-planning-status hidden" aria-live="polite" title="HistoryLoad 是 DerivedRecap cadence 的内部度量，不是模型 token 数。">
+          <div id="recap-planning-summary" class="recap-planning-summary"></div>
+          <progress id="recap-planning-progress" class="recap-planning-progress hidden" max="1" value="0"></progress>
+          <div id="recap-planning-detail" class="recap-planning-detail"></div>
+          <div class="recap-planning-note">HistoryLoad 不是模型 token 数</div>
+        </section>
         <textarea id="message-input" rows="3" placeholder="说点什么……" required{{maintenanceDisabled}}></textarea>
         <div class="composer-actions">
           <div class="composer-status">

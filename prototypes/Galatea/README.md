@@ -19,8 +19,10 @@ Galatea 不会在第一次 Send 时自动创建或补齐会话仓库。每个 `s
 
 可使用 `prototypes/SessionJournal.Cli` 的 import/provision/config 命令完成这一步。Host启动只加载并
 验证配置，不会遍历或打开各账号的raw repo。某个账号第一次访问需要session的endpoint时，Host才按
-`sessionDir` lazy open该用户repo并检查durable phase；此时仍不会创建Completion client、
-DerivedRecap scaffolding或加载active Planner config。
+`sessionDir` lazy open该用户repo并检查durable phase；单独读取current仍不会创建Completion client、
+DerivedRecap scaffolding或加载active Planner config。`GET /api/recent-turns`还会在取得该session的
+writer gate后执行一次只读DerivedRecap planning progress inspection；它只打开已有Store、读取repo
+config与bounded raw planning facts，不创建Completion client、Maintainer或lifecycle，也不写Store。
 
 ## 配置
 
@@ -59,7 +61,8 @@ orphan文件。只有完成serialize/write/flush/close并成功登记的文件�
 `maintenanceMode`是startup-time只读开关，默认`false`。设为`true`后，fresh send、durable
 resume、Undo与stop endpoint都会在打开session前返回typed `503 maintenance-mode`。登录、页面和
 `/api/me`不打开repo；current、recent等首次需要该用户session的读取endpoint会lazy open
-read-only `SessionJournalEngine`，形成第二层写保护。SSE成功订阅只附着已有in-memory turn，但endpoint
+read-only `SessionJournalEngine`，形成第二层写保护；recent中的planning inspection同样保持纯只读。
+SSE成功订阅只附着已有in-memory turn，但endpoint
 首次访问仍会先解析并lazy open用户session，再查找turn。页面会显示维护提示并禁用所有写按钮。该开关
 不会热加载，也没有admin bypass；解除维护需要修改config并重启，外部
 ingress应保持关闭直到重启后对目标用户完成所需的只读检查。
@@ -142,6 +145,23 @@ Action时才重新返回该token。Undo必须原样回传此token；server使用
 继续逐轮Undo；每次只回填刚撤销轮次的用户输入。若用户已修改该回填文本，再次Undo会先确认，避免静默
 覆盖未发送草稿。setup-only suffix、active/recovery tail或已经到达初始setup边界时不会跨边界继续回退。
 DerivedRecap不会被投影为conversation turn。
+
+`RecentTurnsResponseDto.recapPlanning`同时暴露当前stable raw head上的DerivedRecap cadence快照：
+
+- `recentHistoryUnitCount`是latest Published `SetAdmissionAnchor`（首次build前为SessionCreated
+  boundary）之后dependency-closed `SessionHistoryPlanningUnit`的数量；它用于解释history suffix，
+  不是cadence trigger；
+- `recentHistoryLoad`、`minimumRecentHistoryLoad`（R）、`recapBuildIntervalHistoryLoad`（B）、
+  `buildThresholdHistoryLoad`（R+B）与`remainingHistoryLoad`给出exact cadence进度；HistoryLoad是
+  Planner内部度量，不是provider/model token数；
+- `cadence-ready`只表示下次lifecycle会尝试build，不承诺后台立即运行；达到阈值后仍可能处于
+  `awaiting-replay-safe-admission`；current-lineage Building则显示`frozen-building`，下一次lifecycle
+  按frozen authority恢复；
+- `freshness=exact`只有在recent raw projection与Planner inspection观察到同一raw head时才发布。
+  active writer期间recent endpoint绝不读取Engine/Store/config，只返回`freshness=stale`的上一稳定
+  cache并清除rewind token；terminal success、failure/stop收尾与Undo都会在释放writer gate前刷新；
+- Planner/Store/config inspection defect只把`recapPlanning`标为typed `unavailable`，不会吞掉已经
+  成功投影的recent turns。无同次captured head的retry/exception状态不得声称`exact`。
 
 ## 输入清洗与停止
 

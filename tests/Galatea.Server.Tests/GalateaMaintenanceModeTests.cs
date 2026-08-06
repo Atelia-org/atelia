@@ -95,6 +95,15 @@ public sealed class GalateaMaintenanceModeTests {
             );
         Assert.NotNull(recent);
         Assert.Empty(recent!.Turns);
+        RecapPlanningSnapshotDto recap = Assert.IsType<
+            RecapPlanningSnapshotDto
+        >(recent.RecapPlanning);
+        Assert.Equal("exact", recap.Freshness);
+        Assert.Equal("below-cadence-threshold", recap.State);
+        Assert.Equal(
+            EventAddressTextCodec.Format(initialHead),
+            recap.ObservedRawHead
+        );
 
         CurrentTurnDto? current = await client
             .GetFromJsonAsync<CurrentTurnDto>(
@@ -108,6 +117,8 @@ public sealed class GalateaMaintenanceModeTests {
         Assert.Contains("维护模式：会话只读", page);
         Assert.Contains("maintenanceMode: true", page);
         Assert.Contains("id=\"message-input\"", page);
+        Assert.Contains("id=\"recap-planning-status\"", page);
+        Assert.Contains("HistoryLoad 不是模型 token 数", page);
         Assert.Contains("required disabled", page);
         Assert.Contains("id=\"send-button\" type=\"submit\" disabled", page);
 

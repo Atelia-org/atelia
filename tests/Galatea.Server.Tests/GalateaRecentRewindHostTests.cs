@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Http.Json;
+using System.Text.Json;
 using Atelia.Completion;
 using Atelia.Completion.Abstractions;
 using Atelia.SessionJournal;
@@ -110,6 +111,85 @@ public sealed class GalateaRecentRewindHostTests {
     }
 
     [Fact]
+    public async Task SuccessfulTurn_DoneCarriesExactTerminalRecapSnapshot() {
+        await using var host = CreateHost(
+            new QueueCompletionClient("assistant result")
+        );
+        using HttpClient client = host.CreateClient();
+        await LoginAsync(client);
+        (GalateaHostService service, UserSessionHost session) =
+            await GetSessionAsync(host);
+
+        GalateaLiveTurn liveTurn = await CompleteTurnAsync(
+            client,
+            service,
+            session,
+            "user input"
+        );
+
+        using GalateaTurnSubscription subscription = liveTurn.Subscribe();
+        StreamEventDto done = Assert.Single(
+            subscription.ReplayEvents,
+            static item => item.Type == "done"
+        );
+        JsonElement payload = JsonSerializer.SerializeToElement(
+            done.Payload,
+            GalateaJson.Options
+        );
+        JsonElement recap = payload.GetProperty("recent")
+            .GetProperty("recapPlanning");
+        Assert.Equal("exact", recap.GetProperty("freshness").GetString());
+        Assert.Equal(
+            EventAddressTextCodec.Format(
+                Assert.IsType<Atelia.EventJournal.EventAddress>(
+                    session.Engine.ReadCurrentHead()
+                )
+            ),
+            recap.GetProperty("observedRawHead").GetString()
+        );
+    }
+
+    [Fact]
+    public async Task FailedTurn_FinallyRefreshesExactRecapSnapshot() {
+        await using var host = CreateHost(new QueueCompletionClient());
+        using HttpClient client = host.CreateClient();
+        await LoginAsync(client);
+        (GalateaHostService service, UserSessionHost session) =
+            await GetSessionAsync(host);
+        RecentTurnsResponseDto before = await GetRecentAsync(client);
+        Assert.Equal("exact", before.RecapPlanning?.Freshness);
+
+        using HttpResponseMessage response = await client.PostAsJsonAsync(
+            "/api/chat/turns",
+            new ChatStreamRequest("will fail", ConnectionId: "test")
+        );
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        StartTurnResponseDto? started = await response.Content
+            .ReadFromJsonAsync<StartTurnResponseDto>();
+        Assert.NotNull(started);
+        GalateaLiveTurn liveTurn = Assert.IsType<GalateaLiveTurn>(
+            service.FindTurn(session, started!.TurnId)
+        );
+        await Assert.IsAssignableFrom<Task>(liveTurn.RunTask)
+            .WaitAsync(OperationDeadline);
+
+        Assert.Equal("failed", liveTurn.Status);
+        RecentTurnsResponseDto cached = session.GetRecentTurns();
+        RecapPlanningSnapshotDto recap = Assert.IsType<
+            RecapPlanningSnapshotDto
+        >(cached.RecapPlanning);
+        Assert.Equal("exact", recap.Freshness);
+        Assert.Equal(
+            EventAddressTextCodec.Format(
+                Assert.IsType<Atelia.EventJournal.EventAddress>(
+                    session.Engine.ReadCurrentHead()
+                )
+            ),
+            recap.ObservedRawHead
+        );
+    }
+
+    [Fact]
     public async Task ExactUndo_ReturnsMovedTurnAndReopenKeepsItOffLineage() {
         var completion = new QueueCompletionClient(
             "assistant one",
@@ -148,6 +228,15 @@ public sealed class GalateaRecentRewindHostTests {
                     token,
                     out var oldHead
                 ));
+                RecapPlanningSnapshotDto beforeRecap = Assert.IsType<
+                    RecapPlanningSnapshotDto
+                >(before.RecapPlanning);
+                Assert.Equal("exact", beforeRecap.Freshness);
+                Assert.Equal(
+                    EventAddressTextCodec.Format(oldHead),
+                    beforeRecap.ObservedRawHead
+                );
+                Assert.Equal(4, beforeRecap.RecentHistoryUnitCount);
 
                 PopLatestTurnResponseDto moved =
                     await PopLatestAsync(client, token);
@@ -172,6 +261,19 @@ public sealed class GalateaRecentRewindHostTests {
                     remainingToken,
                     out var newHead
                 ));
+                RecapPlanningSnapshotDto movedRecap = Assert.IsType<
+                    RecapPlanningSnapshotDto
+                >(moved.Recent.RecapPlanning);
+                Assert.Equal("exact", movedRecap.Freshness);
+                Assert.Equal(
+                    EventAddressTextCodec.Format(newHead),
+                    movedRecap.ObservedRawHead
+                );
+                Assert.Equal(2, movedRecap.RecentHistoryUnitCount);
+                Assert.True(
+                    movedRecap.RecentHistoryLoad
+                    < beforeRecap.RecentHistoryLoad
+                );
                 RecentTurnsResponseDto undoCache =
                     session.GetRecentTurns();
                 Assert.Equal(
@@ -416,11 +518,12 @@ public sealed class GalateaRecentRewindHostTests {
         session.Engine.Dispose();
 
         RecentTurnsResponseDto fallback =
-            service.RefreshRecentTurnsBestEffort(session);
+            await service.RefreshRecentTurnsBestEffortAsync(session);
 
         RecentTurnDto turn = Assert.Single(fallback.Turns);
         AssertTurn(turn, "cached user", "cached assistant");
         Assert.Null(fallback.RewindLatestToken);
+        Assert.Equal("stale", fallback.RecapPlanning?.Freshness);
         Assert.Same(fallback, session.GetRecentTurns());
     }
 
@@ -452,7 +555,7 @@ public sealed class GalateaRecentRewindHostTests {
         return (service, session);
     }
 
-    private static async Task CompleteTurnAsync(
+    private static async Task<GalateaLiveTurn> CompleteTurnAsync(
         HttpClient client,
         GalateaHostService service,
         UserSessionHost session,
@@ -474,6 +577,7 @@ public sealed class GalateaRecentRewindHostTests {
         );
         await runTask.WaitAsync(OperationDeadline);
         Assert.Equal("completed", liveTurn.Status);
+        return liveTurn;
     }
 
     private static async Task<RecentTurnsResponseDto> GetRecentAsync(
