@@ -160,7 +160,8 @@ durable completion target。
 
 具体Maintainer registry继续延迟到首次真实binding lookup才构造。`NoBuild`、readiness failure以及只需
 精确恢复frozen agent completion的路径都不会因此创建recap-only client或logger；当前首次lookup仍会
-一次构造完整built-in catalog。
+一次构造完整built-in catalog。active Building重启后的剩余步骤使用当次启动加载的当前route，
+connection/model不会冻结进Building。
 
 Completion runtime不设置elapsed-operation timeout：provider在不可见reasoning或排队期间即使长时间没有
 输出，client也会继续等待。调用只会因caller cancellation、明确的HTTP/连接错误，或stream在provider

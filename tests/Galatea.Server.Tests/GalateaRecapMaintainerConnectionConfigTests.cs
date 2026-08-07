@@ -214,6 +214,97 @@ public sealed class GalateaRecapMaintainerConnectionConfigTests {
         }
     }
 
+    [Fact]
+    public void TypoedTopLevelRouteProperty_IsRejectedInsteadOfBecomingLegacy() {
+        string root = NewRoot();
+        try {
+            string configPath = WriteConfiguration(
+                root,
+                recapMaintainerConnections: null
+            );
+            WriteRawConnections(
+                root,
+                "\"recapMaintainerConnection\": []"
+            );
+
+            JsonException failure = Assert.Throws<JsonException>(
+                () => GalateaConfigLoader.Load(configPath)
+            );
+
+            Assert.Contains("recapMaintainerConnection", failure.Message);
+        }
+        finally {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void TypoedBindingProperty_IsRejectedAsUnmapped() {
+        string root = NewRoot();
+        try {
+            string configPath = WriteConfiguration(
+                root,
+                recapMaintainerConnections: null
+            );
+            WriteRawConnections(
+                root,
+                $$"""
+                "recapMaintainerConnections": [
+                  {
+                    "maintainerId": "{{WorldUnderstandingRewriteProfiles.MaintainerId}}",
+                    "connection": "world"
+                  }
+                ]
+                """
+            );
+
+            JsonException failure = Assert.Throws<JsonException>(
+                () => GalateaConfigLoader.Load(configPath)
+            );
+
+            Assert.Contains("connection", failure.Message);
+        }
+        finally {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Theory]
+    [InlineData(
+        "recapMaintainerConnections",
+        "recapMaintainerConnections"
+    )]
+    [InlineData(
+        "recapMaintainerConnections",
+        "RecapMaintainerConnections"
+    )]
+    public void DuplicateRouteProperties_AreRejectedBeforeLastWins(
+        string firstPropertyName,
+        string secondPropertyName
+    ) {
+        string root = NewRoot();
+        try {
+            string configPath = WriteConfiguration(
+                root,
+                recapMaintainerConnections: null
+            );
+            WriteRawConnections(
+                root,
+                $"\"{firstPropertyName}\": [],\n"
+                    + $"\"{secondPropertyName}\": []"
+            );
+
+            InvalidOperationException failure = Assert.Throws<
+                InvalidOperationException
+            >(() => GalateaConfigLoader.Load(configPath));
+
+            Assert.Contains("more than once", failure.Message);
+        }
+        finally {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
     private static string WriteConfiguration(
         string root,
         IReadOnlyList<GalateaRecapMaintainerConnectionBinding>?
@@ -246,6 +337,26 @@ public sealed class GalateaRecapMaintainerConnectionConfigTests {
             )
         );
         return configPath;
+    }
+
+    private static void WriteRawConnections(
+        string root,
+        string additionalProperties
+    ) {
+        string serializedConnections = JsonSerializer.Serialize(
+            Connections,
+            GalateaJson.Options
+        );
+        File.WriteAllText(
+            Path.Combine(root, GalateaConfigLoader.ConnectionsFileName),
+            $$"""
+            {
+              "defaultConnectionId": "agent",
+              "connections": {{serializedConnections}},
+              {{additionalProperties}}
+            }
+            """
+        );
     }
 
     private static GalateaRecapMaintainerConnectionBinding[]

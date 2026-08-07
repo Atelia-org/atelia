@@ -24,6 +24,7 @@ public sealed record GalateaConfig(
 /// Galatea-owned envelope for connections.json. Recap routing is deliberately
 /// kept out of the shared Completion connection-file contract.
 /// </summary>
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
 public sealed record GalateaConnectionsFileConfig(
     IReadOnlyList<CompletionConnectionConfig> Connections,
     string? DefaultConnectionId = null,
@@ -32,6 +33,7 @@ public sealed record GalateaConnectionsFileConfig(
         RecapMaintainerConnections = null
 );
 
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
 public sealed record GalateaRecapMaintainerConnectionBinding(
     string MaintainerId,
     string ConnectionId

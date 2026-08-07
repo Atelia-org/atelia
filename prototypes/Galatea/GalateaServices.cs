@@ -1201,14 +1201,22 @@ internal static class GalateaConfigLoader {
         using JsonDocument connectionsDocument = JsonDocument.Parse(
             connectionsJson
         );
-        bool recapMaintainerConnectionsSpecified =
+        int recapMaintainerConnectionsPropertyCount =
             connectionsDocument.RootElement
                 .EnumerateObject()
-                .Any(static property => string.Equals(
+                .Count(static property => string.Equals(
                     property.Name,
                     "recapMaintainerConnections",
                     StringComparison.OrdinalIgnoreCase
                 ));
+        if (recapMaintainerConnectionsPropertyCount > 1) {
+            throw new InvalidOperationException(
+                "Galatea connections file contains "
+                + "recapMaintainerConnections more than once."
+            );
+        }
+        bool recapMaintainerConnectionsSpecified =
+            recapMaintainerConnectionsPropertyCount == 1;
         var galateaConnectionsFile = JsonSerializer.Deserialize(
             connectionsJson,
             GalateaJsonContext.Default.GalateaConnectionsFileConfig
