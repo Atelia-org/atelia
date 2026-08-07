@@ -44,11 +44,12 @@ assembly拥有。raw `Atelia.SessionJournal`只在neutral `IRecapBlockMaintainer
 
 ## Rewrite completion cache policy
 
-`RewriteRecapBlockMaintainer`把一次rewrite视为single-shot workload：当前block、recent history与维护
-instruction组成的输入不会被后续请求按相同prefix复用。因此它通过同一份只读
-`CompletionInvocationOptions`同时暴露`PromptCacheReuseHint` getter并执行completion dispatch，固定返回
-和传递`NoReuseExpected`。这避免getter与实际wire策略分叉；Anthropic会据此省略显式prompt-cache
-breakpoint，其他provider则按其可表达的最近行为处理。
+`RewriteRecapBlockMaintainer`把一次rewrite视为single-shot workload：占主要体积的当前block与recent
+history在正常成功路径中不预期被后续请求按相同prefix复用。统一使用单一hint也意味着有意放弃较小的
+稳定instruction prefix以及罕见完全相同重试可能获得的缓存收益，以避免引入分段策略复杂性。因此它
+通过同一份只读`CompletionInvocationOptions`同时暴露`PromptCacheReuseHint` getter并执行completion
+dispatch，固定返回和传递`NoReuseExpected`。这避免getter与实际wire策略分叉；Anthropic会据此省略
+显式prompt-cache breakpoint，其他provider则按其可表达的最近行为处理。
 
 该hint只是经济性的per-invocation运行策略，不是隐私或retention保证，也不改变rewrite的逻辑请求。
 它不进入`MaintainerCapabilityFingerprint`、maintainer identity或durable planning/recovery identity。
