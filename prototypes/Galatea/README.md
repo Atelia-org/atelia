@@ -56,7 +56,9 @@ repo之外且按敏感数据管理。日志是best-effort operational evidence�
 或cleanup失败都不会令agent Send或Maintainer调用失败，也不会替换provider异常；相应调用可能没有
 call-log文件。初始化失败会在该wrapper的剩余生命周期禁用日志；cleanup失败可能留下未登记且不完整的
 orphan文件。只有完成serialize/write/flush/close并成功登记的文件才计为成功日志，orphan不得用于推断
-调用次数、provider结果或recovery状态。
+调用次数、provider结果或recovery状态。call-log v5在connection snapshot之外另行记录每次调用请求的
+`invocationOptions.promptCacheReuseHint`，因此可以区分继承connection默认值与workload显式override；
+该运行hint不会改变wrapper透传的dispatch identity。
 
 `maintenanceMode`是startup-time只读开关，默认`false`。设为`true`后，fresh send、durable
 resume、Undo与stop endpoint都会在打开session前返回typed `503 maintenance-mode`。登录、页面和
@@ -104,7 +106,13 @@ Anthropic route 可以通过 `anthropicPromptCacheTtl` 选择 prompt cache 的�
 }
 ```
 
-允许值为 `provider-default|5m|1h`。缺省的 `provider-default` 保持厂商默认行为，并在 wire 中省略 `ttl`；非 Anthropic connection 配置非默认值会 fail fast。该值会写入 Completion call-log v4 的 connection snapshot，但作为可调整的运行策略不进入 durable dispatch fingerprint。当前配置在创建 client 时确定，尚不会根据连续 tool-loop 或等待用户回复动态切换。
+允许值为 `provider-default|5m|1h`。缺省的 `provider-default` 保持厂商默认行为，并在 wire 中省略
+`ttl`；非 Anthropic connection 配置非默认值会 fail fast。该值会写入Completion call-log v5的
+connection snapshot，但作为可调整的运行策略不进入durable dispatch fingerprint。Galatea agent当前
+使用`ConnectionDefault` invocation hint，所以继续继承connection配置的一小时TTL；single-shot的
+`RewriteRecapBlockMaintainer`则显式传递`NoReuseExpected`，在Anthropic上不创建这份one-shot prompt
+cache。连续tool-loop采用短TTL、停下来等待用户时采用长TTL的动态策略尚未实现；connection配置仍在
+创建client时确定。
 
 Completion runtime不设置elapsed-operation timeout：provider在不可见reasoning或排队期间即使长时间没有
 输出，client也会继续等待。调用只会因caller cancellation、明确的HTTP/连接错误，或stream在provider

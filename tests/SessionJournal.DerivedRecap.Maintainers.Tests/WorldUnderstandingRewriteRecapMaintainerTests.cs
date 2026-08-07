@@ -103,8 +103,18 @@ public class WorldUnderstandingRewriteProfileTests {
             CompletionRequest request,
             CompletionStreamObserver? observer,
             CancellationToken cancellationToken = default
+        ) => throw new InvalidOperationException(
+            "Rewrite recap must dispatch with explicit invocation options."
+        );
+
+        public Task<CompletionResult> StreamCompletionAsync(
+            CompletionRequest request,
+            CompletionInvocationOptions invocationOptions,
+            CompletionStreamObserver? observer,
+            CancellationToken cancellationToken = default
         ) {
             _ = observer;
+            invocationOptions.Validate();
             cancellationToken.ThrowIfCancellationRequested();
             if (_responses.Count == 0) { throw new InvalidOperationException("No scripted response remaining."); }
             return Task.FromResult(_responses.Dequeue()(request));

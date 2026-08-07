@@ -30,8 +30,16 @@ public class AutobiographicalRewriteProfileTests {
         );
 
         var maintainer = CreateMaintainer(completionClient);
+        Assert.Equal(
+            PromptCacheReuseHint.NoReuseExpected,
+            maintainer.PromptCacheReuseHint
+        );
         var result = await maintainer.MaintainAsync(CreateRequest("从前，我还不明白。"), CancellationToken.None);
 
+        Assert.Equal(
+            maintainer.PromptCacheReuseHint,
+            completionClient.LastInvocationOptions?.PromptCacheReuseHint
+        );
         Assert.Equal("我把那句话留了下来。\n\n此刻，我仍在等待。", result.NewBlock.Text);
     }
 
@@ -101,6 +109,8 @@ public class AutobiographicalRewriteProfileTests {
     private sealed class ScriptedCompletionClient : ICompletionClient {
         private readonly Queue<Func<CompletionRequest, CompletionResult>> _responses = new();
 
+        public CompletionInvocationOptions? LastInvocationOptions { get; private set; }
+
         public string Name => "scripted";
 
         public string ApiSpecId => "openai-chat-v1";
@@ -112,10 +122,21 @@ public class AutobiographicalRewriteProfileTests {
             CompletionRequest request,
             CompletionStreamObserver? observer,
             CancellationToken cancellationToken = default
+        ) => throw new InvalidOperationException(
+            "Rewrite recap must dispatch with explicit invocation options."
+        );
+
+        public Task<CompletionResult> StreamCompletionAsync(
+            CompletionRequest request,
+            CompletionInvocationOptions invocationOptions,
+            CompletionStreamObserver? observer,
+            CancellationToken cancellationToken = default
         ) {
             _ = observer;
+            invocationOptions.Validate();
             cancellationToken.ThrowIfCancellationRequested();
             if (_responses.Count == 0) { throw new InvalidOperationException("No scripted response remaining."); }
+            LastInvocationOptions = invocationOptions;
             return Task.FromResult(_responses.Dequeue()(request));
         }
     }

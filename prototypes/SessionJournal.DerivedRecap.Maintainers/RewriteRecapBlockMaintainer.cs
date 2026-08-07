@@ -24,6 +24,11 @@ public sealed class RewriteRecapBlockMaintainer : IRecapBlockMaintainer {
     public const string ImplementationId =
         "atelia.session-journal.recap-maintainer.rewrite.v1";
 
+    private static readonly CompletionInvocationOptions InvocationOptions =
+        new() {
+            PromptCacheReuseHint = PromptCacheReuseHint.NoReuseExpected
+        };
+
     private readonly RecapRewriteProfile _profile;
 
     public RewriteRecapBlockMaintainer(
@@ -56,6 +61,8 @@ public sealed class RewriteRecapBlockMaintainer : IRecapBlockMaintainer {
     public string CapabilityFingerprint { get; }
     public ICompletionClient CompletionClient { get; }
     public string ModelId { get; }
+    public PromptCacheReuseHint PromptCacheReuseHint
+        => InvocationOptions.PromptCacheReuseHint;
 
     public async ValueTask<RecapBlockMaintenanceResult> MaintainAsync(
         RecapBlockMaintenanceRequest request,
@@ -70,6 +77,7 @@ public sealed class RewriteRecapBlockMaintainer : IRecapBlockMaintainer {
                 Context: workingContext,
                 Tools: []
             ),
+            InvocationOptions,
             observer: null,
             ct
         ).ConfigureAwait(false);

@@ -129,7 +129,12 @@ public sealed class GalateaCallLoggingTests {
                     "*.json"
                 )
             );
-            AssertLogContext(agentLog, "galatea/agent", null);
+            AssertLogContext(
+                agentLog,
+                "galatea/agent",
+                expectedMaintainerId: null,
+                expectedPromptCacheReuseHint: "connectionDefault"
+            );
 
             CompletionConnectionConfig connection = host.Factory
                 .Services.GetRequiredService<GalateaConfig>()
@@ -161,6 +166,16 @@ public sealed class GalateaCallLoggingTests {
                     callLogDirectory,
                     descriptor
                 );
+            Assert.Equal(
+                CompletionDispatchIdentityFactory.Create(
+                    connection,
+                    inner
+                ),
+                CompletionDispatchIdentityFactory.Create(
+                    connection,
+                    maintainer
+                )
+            );
             _ = await maintainer.StreamCompletionAsync(
                 new CompletionRequest(
                     connection.ModelId,
@@ -168,6 +183,10 @@ public sealed class GalateaCallLoggingTests {
                     [new ObservationMessage("fixture")],
                     []
                 ),
+                new CompletionInvocationOptions {
+                    PromptCacheReuseHint =
+                        PromptCacheReuseHint.NoReuseExpected
+                },
                 observer: null
             );
             string maintainerLog = Assert.Single(
@@ -180,7 +199,8 @@ public sealed class GalateaCallLoggingTests {
             AssertLogContext(
                 maintainerLog,
                 "galatea/maintenance",
-                descriptor.MaintainerId
+                descriptor.MaintainerId,
+                "noReuseExpected"
             );
             Assert.DoesNotContain(
                 Directory.EnumerateFiles(
@@ -345,14 +365,22 @@ public sealed class GalateaCallLoggingTests {
     private static void AssertLogContext(
         string path,
         string expectedCommand,
-        string? expectedMaintainerId
+        string? expectedMaintainerId,
+        string expectedPromptCacheReuseHint
     ) {
         using JsonDocument document = JsonDocument.Parse(
             File.ReadAllText(path)
         );
         Assert.Equal(
-            "atelia.completion.call-log.v4",
+            "atelia.completion.call-log.v5",
             document.RootElement.GetProperty("schema").GetString()
+        );
+        Assert.Equal(
+            expectedPromptCacheReuseHint,
+            document.RootElement
+                .GetProperty("invocationOptions")
+                .GetProperty("promptCacheReuseHint")
+                .GetString()
         );
         JsonElement context =
             document.RootElement.GetProperty("context");
@@ -397,6 +425,22 @@ public sealed class GalateaCallLoggingTests {
             CompletionRequest request,
             CompletionStreamObserver? observer,
             CancellationToken cancellationToken = default
+        ) => Complete(request, observer, cancellationToken);
+
+        public Task<CompletionResult> StreamCompletionAsync(
+            CompletionRequest request,
+            CompletionInvocationOptions invocationOptions,
+            CompletionStreamObserver? observer,
+            CancellationToken cancellationToken = default
+        ) {
+            invocationOptions.Validate();
+            return Complete(request, observer, cancellationToken);
+        }
+
+        private Task<CompletionResult> Complete(
+            CompletionRequest request,
+            CompletionStreamObserver? observer,
+            CancellationToken cancellationToken
         ) {
             ArgumentNullException.ThrowIfNull(request);
             cancellationToken.ThrowIfCancellationRequested();

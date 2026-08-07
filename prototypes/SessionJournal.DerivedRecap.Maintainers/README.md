@@ -42,6 +42,19 @@ assembly拥有。raw `Atelia.SessionJournal`只在neutral `IRecapBlockMaintainer
 `RewriteRecapBlockMaintainer`的public constructor始终从exact profile与`ImplementationId`计算该值，
 不接受caller-supplied fingerprint；operator遇到旧v4 sidecar仍必须显式abandon/reset后重建。
 
+## Rewrite completion cache policy
+
+`RewriteRecapBlockMaintainer`把一次rewrite视为single-shot workload：当前block、recent history与维护
+instruction组成的输入不会被后续请求按相同prefix复用。因此它通过同一份只读
+`CompletionInvocationOptions`同时暴露`PromptCacheReuseHint` getter并执行completion dispatch，固定返回
+和传递`NoReuseExpected`。这避免getter与实际wire策略分叉；Anthropic会据此省略显式prompt-cache
+breakpoint，其他provider则按其可表达的最近行为处理。
+
+该hint只是经济性的per-invocation运行策略，不是隐私或retention保证，也不改变rewrite的逻辑请求。
+它不进入`MaintainerCapabilityFingerprint`、maintainer identity或durable planning/recovery identity。
+neutral `IRecapBlockMaintainer`也不承诺一次Maintain恰好对应一次completion，所以policy保留在这个
+concrete single-shot实现上，不上提到neutral contract或Planner。
+
 离线开发 composition root 是
 [`SessionJournal.Cli`](../SessionJournal.Cli/README.md)：它通过
 `RecapMaintainerProfileCatalog` 解析 stable role/profile descriptor，注入 Completion
