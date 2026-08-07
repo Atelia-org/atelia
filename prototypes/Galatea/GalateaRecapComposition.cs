@@ -317,31 +317,97 @@ internal static class GalateaRecapComposition {
         CreateLifecycle(
         SessionJournalEngine engine,
         GalateaPreparedRecap prepared,
-        CompletionConnectionConfig connection,
-        ICompletionClient sharedInnerClient,
+        CompletionConnectionRegistry connections,
+        CompletionConnectionConfig agentConnection,
+        IReadOnlyDictionary<string, string>?
+            recapMaintainerConnections,
         string? callLogDirectory
     ) {
-        var maintainers = new DeferredRecapBlockMaintainerRegistry(
-            () => new RecapBlockMaintainerRegistry([
-                .. prepared.CapabilityCatalog.All.Select(descriptor =>
-                    descriptor.Create(
-                        GalateaCompletionLogging.CreateMaintainerClient(
-                            sharedInnerClient,
-                            connection,
-                            callLogDirectory,
-                            descriptor
-                        ),
-                        connection.ModelId
-                    )
-                )
-            ])
-        );
+        IRecapBlockMaintainerRegistry maintainers =
+            CreateMaintainerRegistry(
+                prepared.CapabilityCatalog,
+                connections,
+                agentConnection,
+                recapMaintainerConnections,
+                callLogDirectory
+            );
         return DerivedRecapOnlineLifecycleCoordinator.Create(
             engine.ReadView,
             prepared.Store,
             prepared.Authority,
             maintainers
         );
+    }
+
+    internal static IRecapBlockMaintainerRegistry
+        CreateMaintainerRegistry(
+        RecapMaintainerProfileCatalog capabilityCatalog,
+        CompletionConnectionRegistry connections,
+        CompletionConnectionConfig agentConnection,
+        IReadOnlyDictionary<string, string>?
+            recapMaintainerConnections,
+        string? callLogDirectory
+    ) {
+        ArgumentNullException.ThrowIfNull(capabilityCatalog);
+        ArgumentNullException.ThrowIfNull(connections);
+        ArgumentNullException.ThrowIfNull(agentConnection);
+
+        return new DeferredRecapBlockMaintainerRegistry(
+            () => new RecapBlockMaintainerRegistry([
+                .. capabilityCatalog.All.Select(descriptor => {
+                    CompletionConnectionConfig connection =
+                        ResolveMaintainerConnection(
+                            descriptor,
+                            connections,
+                            agentConnection,
+                            recapMaintainerConnections
+                        );
+                    ICompletionClient innerClient =
+                        connections.GetClient(connection.Id);
+                    return descriptor.Create(
+                        GalateaCompletionLogging.CreateMaintainerClient(
+                            innerClient,
+                            connection,
+                            callLogDirectory,
+                            descriptor
+                        ),
+                        connection.ModelId
+                    );
+                })
+            ])
+        );
+    }
+
+    private static CompletionConnectionConfig
+        ResolveMaintainerConnection(
+        RecapMaintainerProfileDescriptor descriptor,
+        CompletionConnectionRegistry connections,
+        CompletionConnectionConfig agentConnection,
+        IReadOnlyDictionary<string, string>?
+            recapMaintainerConnections
+    ) {
+        if (recapMaintainerConnections is null) {
+            return agentConnection;
+        }
+        if (!recapMaintainerConnections.TryGetValue(
+                descriptor.MaintainerId,
+                out string? connectionId
+            )) {
+            throw new InvalidOperationException(
+                "Validated Galatea recap maintainer routing is missing "
+                + $"maintainer '{descriptor.MaintainerId}'."
+            );
+        }
+        if (!connections.TryGet(
+                connectionId,
+                out CompletionConnectionConfig? connection
+            )) {
+            throw new InvalidOperationException(
+                "Validated Galatea recap maintainer routing references "
+                + $"unknown connection '{connectionId}'."
+            );
+        }
+        return connection;
     }
 
     internal static SessionCompletionTargetIdentity

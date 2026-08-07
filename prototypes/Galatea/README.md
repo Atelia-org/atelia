@@ -114,6 +114,54 @@ connection snapshot，但作为可调整的运行策略不进入durable dispatch
 cache。连续tool-loop采用短TTL、停下来等待用户时采用长TTL的动态策略尚未实现；connection配置仍在
 创建client时确定。
 
+Galatea的`connections.json`还可在shared Completion connection字段之外，显式绑定每个built-in
+Recap Maintainer所用的connection：
+
+```json
+{
+  "defaultConnectionId": "opus",
+  "recapMaintainerConnections": [
+    {
+      "maintainerId": "roleplay.world-understanding.rewrite",
+      "connectionId": "deepseek"
+    },
+    {
+      "maintainerId": "roleplay.first-person-autobiography.rewrite",
+      "connectionId": "opus"
+    }
+  ],
+  "connections": [
+    {
+      "id": "deepseek",
+      "kind": "openai-chat",
+      "modelId": "deepseek-v4-pro",
+      "completionSurfaceId": "openai-chat/deepseek-v4",
+      "baseAddress": "https://example.invalid/v1/",
+      "apiKeyEnv": "DEEPSEEK_API_KEY"
+    },
+    {
+      "id": "opus",
+      "kind": "anthropic",
+      "modelId": "claude-opus-4-6",
+      "baseAddress": "https://api.anthropic.com/",
+      "apiKeyEnv": "ANTHROPIC_API_KEY",
+      "anthropicPromptCacheTtl": "1h"
+    }
+  ]
+}
+```
+
+`recapMaintainerConnections`整段缺失时保持legacy行为：两个Maintainer都跟随本轮选中的agent
+connection。该字段一旦出现（包括空数组），就必须按case-sensitive exact ID完整覆盖当前built-in
+catalog；blank、duplicate、unknown、missing maintainer或unknown connection都会在config load时
+fail fast，不会回退default connection。该mapping只属于Galatea runtime composition：它不写入
+`recap-planner-config.json`、Store/Planner/raw schema、Maintainer capability fingerprint或agent的
+durable completion target。
+
+具体Maintainer registry继续延迟到首次真实binding lookup才构造。`NoBuild`、readiness failure以及只需
+精确恢复frozen agent completion的路径都不会因此创建recap-only client或logger；当前首次lookup仍会
+一次构造完整built-in catalog。
+
 Completion runtime不设置elapsed-operation timeout：provider在不可见reasoning或排队期间即使长时间没有
 输出，client也会继续等待。调用只会因caller cancellation、明确的HTTP/连接错误，或stream在provider
 terminal event之前断开而结束；静默本身不被解释为LLM failure。连接等待策略不进入durable dispatch

@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Collections.ObjectModel;
 using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
@@ -12,6 +13,7 @@ using Atelia.Completion.Abstractions;
 using Atelia.Completion.Tools;
 using Atelia.EventJournal;
 using Atelia.SessionJournal;
+using Atelia.SessionJournal.DerivedRecap.Maintainers;
 using Atelia.SessionJournal.DerivedRecap.Planner;
 
 namespace Atelia.Galatea.Server;
@@ -23,6 +25,8 @@ public sealed class GalateaHostService : IAsyncDisposable {
     private readonly GalateaInputPreprocessor _inputPreprocessor;
     private readonly string? _callLogDirectory;
     private readonly bool _maintenanceMode;
+    private readonly IReadOnlyDictionary<string, string>?
+        _recapMaintainerConnections;
     private readonly ConcurrentDictionary<string, Lazy<Task<UserSessionHost>>> _sessions = new(StringComparer.Ordinal);
     private readonly IReadOnlyDictionary<string, GalateaUserConfig> _users;
 
@@ -41,6 +45,8 @@ public sealed class GalateaHostService : IAsyncDisposable {
         );
         _callLogDirectory = config.CallLogDir;
         _maintenanceMode = config.MaintenanceMode;
+        _recapMaintainerConnections =
+            config.RecapMaintainerConnections;
         _users = config.Users.ToDictionary(x => x.UserId, StringComparer.Ordinal);
     }
 
@@ -622,8 +628,9 @@ public sealed class GalateaHostService : IAsyncDisposable {
             GalateaRecapComposition.CreateLifecycle(
                 host.Engine,
                 prepared,
+                _connections,
                 connection,
-                innerClient,
+                _recapMaintainerConnections,
                 _callLogDirectory
             );
         var lifecycleGate = new GalateaFreshSendLifecycleGate(
@@ -702,8 +709,9 @@ public sealed class GalateaHostService : IAsyncDisposable {
                 GalateaRecapComposition.CreateLifecycle(
                     host.Engine,
                     prepared,
+                    _connections,
                     connection,
-                    innerClient,
+                    _recapMaintainerConnections,
                     _callLogDirectory
                 );
             var lifecycleGate = new GalateaRecoveryLifecycleGate(
@@ -1183,7 +1191,45 @@ internal static class GalateaConfigLoader {
         var usersFile = JsonSerializer.Deserialize(File.ReadAllText(resolvedPath), GalateaJsonContext.Default.GalateaUsersFileConfig);
         if (usersFile is null) { throw new InvalidOperationException($"Failed to deserialize Galatea config: {resolvedPath}"); }
 
-        var connectionsFile = CompletionConnectionConfigLoader.LoadFile(connectionsPath);
+        if (!File.Exists(connectionsPath)) {
+            throw new FileNotFoundException(
+                $"Galatea connections file was not found: {connectionsPath}",
+                connectionsPath
+            );
+        }
+        string connectionsJson = File.ReadAllText(connectionsPath);
+        using JsonDocument connectionsDocument = JsonDocument.Parse(
+            connectionsJson
+        );
+        bool recapMaintainerConnectionsSpecified =
+            connectionsDocument.RootElement
+                .EnumerateObject()
+                .Any(static property => string.Equals(
+                    property.Name,
+                    "recapMaintainerConnections",
+                    StringComparison.OrdinalIgnoreCase
+                ));
+        var galateaConnectionsFile = JsonSerializer.Deserialize(
+            connectionsJson,
+            GalateaJsonContext.Default.GalateaConnectionsFileConfig
+        ) ?? throw new InvalidOperationException(
+            $"Failed to deserialize Galatea connections file: {connectionsPath}"
+        );
+        CompletionConnectionsFileConfig connectionsFile =
+            CompletionConnectionConfigLoader.NormalizeAndValidate(
+                new CompletionConnectionsFileConfig(
+                    galateaConnectionsFile.Connections,
+                    galateaConnectionsFile.DefaultConnectionId
+                )
+            );
+        IReadOnlyDictionary<string, string>?
+            recapMaintainerConnections =
+                NormalizeRecapMaintainerConnections(
+                    galateaConnectionsFile
+                        .RecapMaintainerConnections,
+                    recapMaintainerConnectionsSpecified,
+                    connectionsFile.Connections
+                );
 
         if (usersFile.Users is not { Count: > 0 }) { throw new InvalidOperationException("Galatea config must contain at least one user."); }
 
@@ -1196,12 +1242,101 @@ internal static class GalateaConfigLoader {
                 usersFile.CallLogDir,
                 configDir
             ),
-            MaintenanceMode: usersFile.MaintenanceMode
+            MaintenanceMode: usersFile.MaintenanceMode,
+            RecapMaintainerConnections:
+                recapMaintainerConnections
         );
 
         config = ResolveSystemPromptFiles(config, resolvedPath);
         Validate(config);
         return config;
+    }
+
+    private static IReadOnlyDictionary<string, string>?
+        NormalizeRecapMaintainerConnections(
+        IReadOnlyList<GalateaRecapMaintainerConnectionBinding>?
+            configuredBindings,
+        bool configuredBindingsSpecified,
+        IReadOnlyList<CompletionConnectionConfig> connections
+    ) {
+        if (!configuredBindingsSpecified) { return null; }
+        if (configuredBindings is null) {
+            throw new InvalidOperationException(
+                "Galatea recapMaintainerConnections must be an array "
+                + "when specified."
+            );
+        }
+
+        HashSet<string> requiredMaintainerIds =
+            RecapMaintainerProfileCatalog.BuiltIn.All
+                .Select(static descriptor => descriptor.MaintainerId)
+                .ToHashSet(StringComparer.Ordinal);
+        var connectionIds = connections
+            .Select(static connection => connection.Id)
+            .ToHashSet(StringComparer.Ordinal);
+        var normalized = new Dictionary<string, string>(
+            StringComparer.Ordinal
+        );
+
+        for (int index = 0; index < configuredBindings.Count; index++) {
+            GalateaRecapMaintainerConnectionBinding binding =
+                configuredBindings[index]
+                ?? throw new InvalidOperationException(
+                    "Galatea recapMaintainerConnections"
+                    + $"[{index}] must not be null."
+                );
+            if (string.IsNullOrWhiteSpace(binding.MaintainerId)) {
+                throw new InvalidOperationException(
+                    "Galatea recapMaintainerConnections"
+                    + $"[{index}] must have a non-empty maintainerId."
+                );
+            }
+            if (string.IsNullOrWhiteSpace(binding.ConnectionId)) {
+                throw new InvalidOperationException(
+                    "Galatea recapMaintainerConnections entry for "
+                    + $"maintainer '{binding.MaintainerId}' must have "
+                    + "a non-empty connectionId."
+                );
+            }
+            if (!requiredMaintainerIds.Contains(binding.MaintainerId)) {
+                throw new InvalidOperationException(
+                    "Galatea recapMaintainerConnections contains "
+                    + $"unknown maintainerId '{binding.MaintainerId}'."
+                );
+            }
+            if (!connectionIds.Contains(binding.ConnectionId)) {
+                throw new InvalidOperationException(
+                    "Galatea recapMaintainerConnections entry for "
+                    + $"maintainer '{binding.MaintainerId}' references "
+                    + $"unknown connectionId '{binding.ConnectionId}'."
+                );
+            }
+            if (!normalized.TryAdd(
+                    binding.MaintainerId,
+                    binding.ConnectionId
+                )) {
+                throw new InvalidOperationException(
+                    "Galatea recapMaintainerConnections contains "
+                    + $"duplicate maintainerId '{binding.MaintainerId}'."
+                );
+            }
+        }
+
+        string[] missing = [
+            .. requiredMaintainerIds
+                .Where(id => !normalized.ContainsKey(id))
+                .Order(StringComparer.Ordinal)
+        ];
+        if (missing.Length > 0) {
+            throw new InvalidOperationException(
+                "Galatea recapMaintainerConnections must completely "
+                + "cover the built-in recap maintainers; missing: "
+                + string.Join(", ", missing)
+                + "."
+            );
+        }
+
+        return new ReadOnlyDictionary<string, string>(normalized);
     }
 
     private static GalateaConfig ResolveSystemPromptFiles(GalateaConfig config, string configPath) {
@@ -1434,8 +1569,8 @@ internal static class GalateaConfigTemplateFactory {
         );
     }
 
-    public static CompletionConnectionsFileConfig CreateConnectionsFile() {
-        return new CompletionConnectionsFileConfig(
+    public static GalateaConnectionsFileConfig CreateConnectionsFile() {
+        return new GalateaConnectionsFileConfig(
             Connections: [
                 new CompletionConnectionConfig(
                     Id: DefaultConnectionId,
@@ -1640,4 +1775,6 @@ internal static class GalateaJson {
 [JsonSourceGenerationOptions(JsonSerializerDefaults.Web)]
 [JsonSerializable(typeof(GalateaUsersFileConfig))]
 [JsonSerializable(typeof(GalateaUserConfig))]
+[JsonSerializable(typeof(GalateaConnectionsFileConfig))]
+[JsonSerializable(typeof(GalateaRecapMaintainerConnectionBinding))]
 internal sealed partial class GalateaJsonContext : JsonSerializerContext;

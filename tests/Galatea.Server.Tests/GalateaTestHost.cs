@@ -51,7 +51,9 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
         IGalateaUserMessageNormalizer normalizer,
         bool deleteFilesOnDispose = true,
         string? callLogDirectory = null,
-        bool maintenanceMode = false
+        bool maintenanceMode = false,
+        IReadOnlyList<GalateaRecapMaintainerConnectionBinding>?
+            recapMaintainerConnections = null
     ) {
         ArgumentNullException.ThrowIfNull(completionClientFactory);
         ArgumentNullException.ThrowIfNull(normalizer);
@@ -134,7 +136,8 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
             "test",
             "test system prompt",
             callLogDirectory,
-            maintenanceMode
+            maintenanceMode,
+            recapMaintainerConnections
         );
 
         return new GalateaTestHost(
@@ -161,7 +164,9 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
         IGalateaUserMessageNormalizer normalizer,
         string systemPrompt = "test system prompt",
         string? callLogDirectory = null,
-        bool maintenanceMode = false
+        bool maintenanceMode = false,
+        IReadOnlyList<GalateaRecapMaintainerConnectionBinding>?
+            recapMaintainerConnections = null
     ) {
         ArgumentException.ThrowIfNullOrWhiteSpace(sessionDirectory);
         ArgumentNullException.ThrowIfNull(connections);
@@ -194,7 +199,8 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
                 defaultConnectionId,
                 systemPrompt,
                 callLogDirectory,
-                maintenanceMode
+                maintenanceMode,
+                recapMaintainerConnections
             );
             return new GalateaTestHost(
                 configurationRoot,
@@ -245,7 +251,9 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
         string defaultConnectionId,
         string systemPrompt,
         string? callLogDirectory,
-        bool maintenanceMode
+        bool maintenanceMode,
+        IReadOnlyList<GalateaRecapMaintainerConnectionBinding>?
+            recapMaintainerConnections
     ) {
         var users = new GalateaUsersFileConfig(
             [
@@ -259,9 +267,10 @@ internal sealed class GalateaTestHost : IAsyncDisposable {
             CallLogDir: callLogDirectory,
             MaintenanceMode: maintenanceMode
         );
-        var connectionsFile = new CompletionConnectionsFileConfig(
+        var connectionsFile = new GalateaConnectionsFileConfig(
             connections,
-            defaultConnectionId
+            defaultConnectionId,
+            recapMaintainerConnections
         );
         var jsonOptions = new JsonSerializerOptions(
             JsonSerializerDefaults.Web

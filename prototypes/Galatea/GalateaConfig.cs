@@ -15,7 +15,26 @@ public sealed record GalateaConfig(
     string DefaultConnectionId,
     IReadOnlyList<string>? ListenUrls = null,
     string? CallLogDir = null,
-    bool MaintenanceMode = false
+    bool MaintenanceMode = false,
+    IReadOnlyDictionary<string, string>?
+        RecapMaintainerConnections = null
+);
+
+/// <summary>
+/// Galatea-owned envelope for connections.json. Recap routing is deliberately
+/// kept out of the shared Completion connection-file contract.
+/// </summary>
+public sealed record GalateaConnectionsFileConfig(
+    IReadOnlyList<CompletionConnectionConfig> Connections,
+    string? DefaultConnectionId = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    IReadOnlyList<GalateaRecapMaintainerConnectionBinding>?
+        RecapMaintainerConnections = null
+);
+
+public sealed record GalateaRecapMaintainerConnectionBinding(
+    string MaintainerId,
+    string ConnectionId
 );
 
 /// <summary>Shape of config.json: user accounts + server settings, with no LLM binding.</summary>

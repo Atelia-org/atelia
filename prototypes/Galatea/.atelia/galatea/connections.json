@@ -1,0 +1,47 @@
+{
+  "defaultConnectionId": "opus4-6",
+  "recapMaintainerConnections": [
+    {
+      "maintainerId": "roleplay.world-understanding.rewrite",
+      "connectionId": "dsv4p"
+    },
+    {
+      "maintainerId": "roleplay.first-person-autobiography.rewrite",
+      "connectionId": "opus4-6"
+    }
+  ],
+  "connections": [
+    {
+      "id": "dsv4p",
+      "kind": "openai-chat",
+      "modelId": "deepseek-v4-pro",
+      "completionSurfaceId": "openai-chat/deepseek-v4",
+      "baseAddressEnv": "TAVERN_BASE_URL",
+      "apiKeyEnv": "TAVERN_API_KEY"
+    },
+    {
+      "id": "opus4-6",
+      "kind": "anthropic",
+      "modelId": "claude-opus-4-6",
+      "baseAddressEnv": "CLAUDE_BASE_URL",
+      "apiKeyEnv": "CLAUDE_API_KEY",
+      "anthropicPromptCacheTtl": "1h"
+    },
+    {
+      "id": "opus5",
+      "kind": "anthropic",
+      "modelId": "claude-opus-5",
+      "baseAddressEnv": "CLAUDE_BASE_URL",
+      "apiKeyEnv": "CLAUDE_API_KEY",
+      "anthropicPromptCacheTtl": "1h"
+    },
+    {
+      "id": "fable5",
+      "kind": "anthropic",
+      "modelId": "claude-fable-5",
+      "baseAddressEnv": "CLAUDE_BASE_URL",
+      "apiKeyEnv": "CLAUDE_API_KEY",
+      "anthropicPromptCacheTtl": "1h"
+    }
+  ]
+}
