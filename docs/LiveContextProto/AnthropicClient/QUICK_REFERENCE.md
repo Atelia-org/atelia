@@ -177,13 +177,13 @@ export ATELIA_DEBUG_CATEGORIES="Provider"
 
 ### 提示缓存（Prompt Caching）
 
-Anthropic 的提示缓存**不是自动的**，必须在请求里显式放置 `cache_control` 断点。`AnthropicClient` 通过构造参数 `enablePromptCaching`（默认 `true`）开启；开启后 `AnthropicMessageConverter` 会在稳定前缀的各段末尾打上 `ephemeral` 断点（Anthropic 前缀顺序：tools → system → messages）：
+Anthropic 的提示缓存**不是自动的**，必须在请求里显式放置 `cache_control` 断点。`AnthropicClient` 通过构造参数 `enablePromptCaching`（默认 `true`）开启，并通过 `promptCacheTtl` 选择 `ProviderDefault`、`FiveMinutes` 或 `OneHour`；开启后 `AnthropicMessageConverter` 会在稳定前缀的各段末尾打上 `ephemeral` 断点（Anthropic 前缀顺序：tools → system → messages）：
 
 - tools 段：最后一个 tool 上打断点；
 - system 段：转为 content-block 数组形式并打断点；
 - messages 段：最后一条消息的最后一个内容块打断点。
 
-这样多轮 tool loop 的后续轮次只重算新增尾部，稳定前缀按缓存读取计费。单次（非多轮）调用会有约 1.25× 的缓存写入开销且无读取收益，若为纯单次场景可将 `enablePromptCaching` 设为 `false`。
+这样多轮 tool loop 的后续轮次只重算新增尾部，稳定前缀按缓存读取计费。`ProviderDefault` 省略 wire-level `ttl`；`FiveMinutes` / `OneHour` 分别显式发送 `5m` / `1h`。单次（非多轮）调用会产生缓存写入开销且无读取收益，若为纯单次场景可将 `enablePromptCaching` 设为 `false`。
 
 查看缓存统计：
 

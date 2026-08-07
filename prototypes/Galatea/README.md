@@ -85,6 +85,27 @@ ingress应保持关闭直到重启后对目标用户完成所需的只读检查�
 }
 ```
 
+Anthropic route 可以通过 `anthropicPromptCacheTtl` 选择 prompt cache 的存续档位；例如人在回合间可能需要超过五分钟回复时，可配置为一小时：
+
+```json
+{
+  "defaultConnectionId": "opus",
+  "connections": [
+    {
+      "id": "opus",
+      "kind": "anthropic",
+      "modelId": "claude-opus-4-6",
+      "completionSurfaceId": "anthropic",
+      "baseAddress": "https://api.anthropic.com/",
+      "apiKeyEnv": "ANTHROPIC_API_KEY",
+      "anthropicPromptCacheTtl": "1h"
+    }
+  ]
+}
+```
+
+允许值为 `provider-default|5m|1h`。缺省的 `provider-default` 保持厂商默认行为，并在 wire 中省略 `ttl`；非 Anthropic connection 配置非默认值会 fail fast。该值会写入 Completion call-log v4 的 connection snapshot，但作为可调整的运行策略不进入 durable dispatch fingerprint。当前配置在创建 client 时确定，尚不会根据连续 tool-loop 或等待用户回复动态切换。
+
 Completion runtime不设置elapsed-operation timeout：provider在不可见reasoning或排队期间即使长时间没有
 输出，client也会继续等待。调用只会因caller cancellation、明确的HTTP/连接错误，或stream在provider
 terminal event之前断开而结束；静默本身不被解释为LLM failure。连接等待策略不进入durable dispatch
