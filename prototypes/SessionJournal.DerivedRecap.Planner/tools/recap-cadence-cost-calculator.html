@@ -1,0 +1,1051 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>SessionJournal Recap Cadence 成本求解器</title>
+    <style>
+        :root {
+            color-scheme: light;
+            --ink: #17211b;
+            --muted: #5f6d64;
+            --paper: #f4f1e8;
+            --panel: rgba(255, 255, 255, 0.78);
+            --line: #d8d4c8;
+            --green: #116a50;
+            --green-soft: #dceee6;
+            --orange: #c5662d;
+            --blue: #315f9c;
+            --red: #a43d35;
+            --shadow: 0 16px 45px rgba(35, 51, 42, 0.09);
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            color: var(--ink);
+            background:
+                radial-gradient(circle at 85% 0%, #cfe5d8 0, transparent 32rem),
+                radial-gradient(circle at 0% 60%, #f0d9c8 0, transparent 28rem),
+                var(--paper);
+            font-family:
+                Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+                "Segoe UI", sans-serif;
+            line-height: 1.55;
+        }
+
+        a {
+            color: var(--green);
+        }
+
+        code, .mono {
+            font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+        }
+
+        .page {
+            width: min(1440px, calc(100% - 32px));
+            margin: 0 auto;
+            padding: 40px 0 64px;
+        }
+
+        .hero {
+            display: grid;
+            grid-template-columns: 1.5fr 1fr;
+            gap: 28px;
+            align-items: end;
+            margin-bottom: 28px;
+        }
+
+        .eyebrow {
+            margin: 0 0 8px;
+            color: var(--green);
+            font-weight: 750;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+            font-size: 0.78rem;
+        }
+
+        h1 {
+            margin: 0;
+            max-width: 900px;
+            font-family: Georgia, "Noto Serif SC", serif;
+            font-size: clamp(2.2rem, 5vw, 4.5rem);
+            line-height: 1.02;
+            letter-spacing: -0.045em;
+            font-weight: 600;
+        }
+
+        .lede {
+            margin: 18px 0 0;
+            max-width: 760px;
+            color: var(--muted);
+            font-size: 1.05rem;
+        }
+
+        .equation-card {
+            padding: 22px;
+            border: 1px solid rgba(17, 106, 80, 0.22);
+            border-radius: 18px;
+            background: rgba(220, 238, 230, 0.76);
+            box-shadow: var(--shadow);
+        }
+
+        .equation-card .equation {
+            display: block;
+            margin: 6px 0;
+            font-size: clamp(1rem, 2vw, 1.35rem);
+            white-space: nowrap;
+        }
+
+        .equation-card p {
+            margin: 8px 0 0;
+            color: var(--muted);
+            font-size: 0.9rem;
+        }
+
+        .layout {
+            display: grid;
+            grid-template-columns: minmax(320px, 430px) minmax(0, 1fr);
+            gap: 24px;
+            align-items: start;
+        }
+
+        .panel {
+            border: 1px solid rgba(38, 51, 43, 0.11);
+            border-radius: 20px;
+            background: var(--panel);
+            box-shadow: var(--shadow);
+            backdrop-filter: blur(10px);
+        }
+
+        .controls {
+            position: sticky;
+            top: 16px;
+            padding: 20px;
+        }
+
+        .section + .section {
+            margin-top: 22px;
+            padding-top: 20px;
+            border-top: 1px solid var(--line);
+        }
+
+        h2, h3 {
+            margin: 0;
+        }
+
+        h2 {
+            font-size: 1.15rem;
+        }
+
+        h3 {
+            color: var(--green);
+            font-size: 0.78rem;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+        }
+
+        .section-note {
+            margin: 5px 0 14px;
+            color: var(--muted);
+            font-size: 0.83rem;
+        }
+
+        .field-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+        }
+
+        label {
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+            color: var(--muted);
+            font-size: 0.78rem;
+        }
+
+        label.wide {
+            grid-column: 1 / -1;
+        }
+
+        input {
+            width: 100%;
+            min-width: 0;
+            padding: 10px 11px;
+            color: var(--ink);
+            border: 1px solid var(--line);
+            border-radius: 10px;
+            outline: none;
+            background: rgba(255, 255, 255, 0.86);
+            font: 600 0.92rem "SFMono-Regular", Consolas, monospace;
+        }
+
+        input:focus {
+            border-color: var(--green);
+            box-shadow: 0 0 0 3px rgba(17, 106, 80, 0.12);
+        }
+
+        .preset-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin: 10px 0 14px;
+        }
+
+        button {
+            padding: 8px 11px;
+            color: var(--green);
+            border: 1px solid rgba(17, 106, 80, 0.3);
+            border-radius: 999px;
+            background: rgba(255, 255, 255, 0.78);
+            font: 700 0.78rem inherit;
+            cursor: pointer;
+        }
+
+        button:hover {
+            background: var(--green-soft);
+        }
+
+        .price-fact {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 7px;
+            margin: 0 0 12px;
+        }
+
+        .price-fact span {
+            padding: 8px;
+            border-radius: 9px;
+            background: rgba(220, 238, 230, 0.62);
+            text-align: center;
+            color: var(--muted);
+            font-size: 0.68rem;
+        }
+
+        .price-fact strong {
+            display: block;
+            color: var(--ink);
+            font: 700 0.88rem "SFMono-Regular", Consolas, monospace;
+        }
+
+        .error {
+            display: none;
+            margin-top: 14px;
+            padding: 10px 12px;
+            color: var(--red);
+            border: 1px solid rgba(164, 61, 53, 0.25);
+            border-radius: 10px;
+            background: rgba(255, 235, 231, 0.75);
+            font-size: 0.82rem;
+        }
+
+        .results {
+            display: grid;
+            gap: 20px;
+        }
+
+        .result-hero {
+            padding: 26px;
+        }
+
+        .result-topline {
+            display: flex;
+            justify-content: space-between;
+            gap: 16px;
+            align-items: flex-start;
+        }
+
+        .optimum {
+            margin-top: 5px;
+            color: var(--green);
+            font-family: Georgia, "Noto Serif SC", serif;
+            font-size: clamp(2.4rem, 6vw, 5.6rem);
+            line-height: 1;
+            letter-spacing: -0.055em;
+        }
+
+        .unit {
+            color: var(--muted);
+            font-size: 0.9rem;
+        }
+
+        .badges {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            justify-content: flex-end;
+        }
+
+        .badge {
+            padding: 7px 10px;
+            border-radius: 999px;
+            background: var(--green-soft);
+            color: var(--green);
+            font-size: 0.78rem;
+            font-weight: 750;
+        }
+
+        .metrics {
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 10px;
+            margin-top: 24px;
+        }
+
+        .metric {
+            padding: 13px;
+            border-radius: 12px;
+            background: rgba(244, 241, 232, 0.74);
+        }
+
+        .metric span {
+            display: block;
+            color: var(--muted);
+            font-size: 0.72rem;
+        }
+
+        .metric strong {
+            display: block;
+            margin-top: 4px;
+            font-size: 1.05rem;
+        }
+
+        .formula-values {
+            margin: 18px 0 0;
+            padding: 12px 14px;
+            overflow-x: auto;
+            border-left: 3px solid var(--green);
+            background: rgba(220, 238, 230, 0.42);
+            color: var(--muted);
+            font-size: 0.82rem;
+        }
+
+        .chart-panel, .table-panel, .notes-panel {
+            padding: 22px;
+        }
+
+        .panel-heading {
+            display: flex;
+            align-items: baseline;
+            justify-content: space-between;
+            gap: 16px;
+            margin-bottom: 14px;
+        }
+
+        .panel-heading p {
+            margin: 0;
+            color: var(--muted);
+            font-size: 0.8rem;
+        }
+
+        .chart-wrap {
+            position: relative;
+            min-height: 330px;
+        }
+
+        canvas {
+            display: block;
+            width: 100%;
+            height: 330px;
+        }
+
+        .legend {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 14px;
+            margin-top: 8px;
+            color: var(--muted);
+            font-size: 0.75rem;
+        }
+
+        .legend i {
+            display: inline-block;
+            width: 20px;
+            height: 3px;
+            margin-right: 6px;
+            vertical-align: middle;
+            border-radius: 2px;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.84rem;
+        }
+
+        th, td {
+            padding: 9px 8px;
+            border-bottom: 1px solid var(--line);
+            text-align: right;
+        }
+
+        th:first-child, td:first-child {
+            text-align: left;
+        }
+
+        th {
+            color: var(--muted);
+            font-size: 0.72rem;
+            font-weight: 700;
+        }
+
+        tfoot td {
+            border-bottom: 0;
+            font-weight: 800;
+        }
+
+        .config-row {
+            display: grid;
+            grid-template-columns: 1fr auto;
+            gap: 12px;
+            align-items: start;
+            margin-top: 18px;
+        }
+
+        pre {
+            margin: 0;
+            padding: 14px;
+            overflow: auto;
+            border-radius: 12px;
+            background: #17211b;
+            color: #e7f3ec;
+            font-size: 0.78rem;
+        }
+
+        .notes-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 20px;
+        }
+
+        .notes-grid p, .notes-grid li {
+            color: var(--muted);
+            font-size: 0.86rem;
+        }
+
+        .notes-grid ul {
+            margin: 8px 0 0;
+            padding-left: 18px;
+        }
+
+        .status {
+            min-height: 1.4em;
+            margin-top: 8px;
+            color: var(--green);
+            font-size: 0.76rem;
+        }
+
+        @media (max-width: 980px) {
+            .hero, .layout {
+                grid-template-columns: 1fr;
+            }
+
+            .controls {
+                position: static;
+            }
+
+            .metrics {
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+            }
+        }
+
+        @media (max-width: 620px) {
+            .page {
+                width: min(100% - 18px, 1440px);
+                padding-top: 24px;
+            }
+
+            .field-grid, .notes-grid {
+                grid-template-columns: 1fr;
+            }
+
+            label.wide {
+                grid-column: auto;
+            }
+
+            .result-topline, .panel-heading {
+                display: block;
+            }
+
+            .badges {
+                justify-content: flex-start;
+                margin-top: 14px;
+            }
+
+            .config-row {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <main class="page">
+        <header class="hero">
+            <div>
+                <p class="eyebrow">SessionJournal · DerivedRecap Planner</p>
+                <h1>Recap cadence<br>经济最优点</h1>
+                <p class="lede">
+                    把 recent suffix 的重复 prefill 成本，与每次 rewrite / cache refresh
+                    的固定成本放在同一个稳态模型中。结果是严格凸函数，不需要优化库。
+                </p>
+            </div>
+            <aside class="equation-card" aria-label="成本模型公式">
+                <span class="mono equation">C(B) = C₀ + aB + K/B</span>
+                <span class="mono equation">B* = √(K/a)</span>
+                <p>
+                    <strong>B</strong> 是 <code>recapBuildIntervalHistoryLoad</code>。
+                    <strong>R</strong> 是先由质量约束决定的 minimum recent reserve。
+                </p>
+            </aside>
+        </header>
+
+        <div class="layout">
+            <form class="panel controls" id="controls">
+                <section class="section">
+                    <h2>参数</h2>
+                    <p class="section-note">
+                        修改任意值会立即重算。默认 workload 只是可运行示例，不是生产推荐。
+                    </p>
+                    <div class="field-grid">
+                        <label>
+                            minimum recent R · HistoryLoad
+                            <input data-field="minimumRecentHistoryLoad" type="number" min="0" step="1" value="18000">
+                        </label>
+                        <label>
+                            当前 interval B · HistoryLoad
+                            <input data-field="currentIntervalHistoryLoad" type="number" min="1" step="1" value="21000">
+                        </label>
+                        <label>
+                            每次 online request 新增 HistoryLoad
+                            <input data-field="historyLoadPerRequest" type="number" min="0.001" step="any" value="950">
+                        </label>
+                        <label>
+                            provider tokens / HistoryLoad
+                            <input data-field="providerTokensPerHistoryLoad" type="number" min="0.001" step="any" value="1">
+                        </label>
+                        <label>
+                            稳定 prompt tokens（不含 recap）
+                            <input data-field="stablePromptTokens" type="number" min="0" step="1" value="6000">
+                        </label>
+                        <label>
+                            Published recap tokens / build
+                            <input data-field="publishedRecapTokens" type="number" min="0" step="1" value="3000">
+                        </label>
+                        <label>
+                            online output tokens / request
+                            <input data-field="onlineOutputTokensPerRequest" type="number" min="0" step="1" value="900">
+                        </label>
+                        <label>
+                            rewrite 固定 input tokens / build
+                            <input data-field="fixedRewriteInputTokens" type="number" min="0" step="1" value="8000">
+                        </label>
+                        <label class="wide">
+                            absorbed history 被 rewrite 读取的平均遍数
+                            <input data-field="sourcePassesPerBuild" type="number" min="0" step="any" value="2">
+                        </label>
+                    </div>
+                </section>
+
+                <section class="section">
+                    <h3>Claude 价格 · USD / MTok</h3>
+                    <div class="price-fact" aria-label="官方价格摘要">
+                        <span><strong>$5.00</strong>base input</span>
+                        <span><strong>$0.50</strong>cache hit</span>
+                        <span><strong>$25.00</strong>output</span>
+                    </div>
+                    <div class="preset-row">
+                        <button type="button" data-preset="cache">Opus 5 / 4.6 · 5m cache</button>
+                        <button type="button" data-preset="no-cache">Opus 5 / 4.6 · no cache</button>
+                    </div>
+                    <div class="field-grid">
+                        <label>
+                            重复 context input
+                            <input data-field="repeatInputPrice" type="number" min="0" step="any" value="0.5">
+                        </label>
+                        <label>
+                            新 history 首次 input
+                            <input data-field="firstPassInputPrice" type="number" min="0" step="any" value="6.25">
+                        </label>
+                        <label>
+                            build 后 prefix refresh
+                            <input data-field="recapRefreshInputPrice" type="number" min="0" step="any" value="6.25">
+                        </label>
+                        <label>
+                            rewrite input
+                            <input data-field="rewriteInputPrice" type="number" min="0" step="any" value="5">
+                        </label>
+                        <label class="wide">
+                            output
+                            <input data-field="outputPrice" type="number" min="0" step="any" value="25">
+                        </label>
+                    </div>
+                    <p class="section-note">
+                        默认价格核对于 2026-08-06。5m cache write 为 $6.25/MTok；
+                        <a href="https://platform.claude.com/docs/en/about-claude/pricing">官方 pricing</a>。
+                    </p>
+                </section>
+
+                <section class="section">
+                    <h3>可行区间</h3>
+                    <p class="section-note">
+                        这是外部质量/安全约束，不从 raw-event ceiling 或 context window 猜测。
+                    </p>
+                    <div class="field-grid">
+                        <label>
+                            最小 B
+                            <input data-field="minimumIntervalHistoryLoad" type="number" min="1" step="1" value="1">
+                        </label>
+                        <label>
+                            最大 B（留空 = 无）
+                            <input data-field="maximumIntervalHistoryLoad" type="number" min="1" step="1" value="">
+                        </label>
+                    </div>
+                </section>
+
+                <div class="error" id="error" role="alert"></div>
+            </form>
+
+            <section class="results" aria-live="polite">
+                <article class="panel result-hero">
+                    <div class="result-topline">
+                        <div>
+                            <h3>建议 recapBuildIntervalHistoryLoad</h3>
+                            <div class="optimum" id="optimum">—</div>
+                            <div class="unit">HistoryLoad · 连续最优点取最优整数并应用约束</div>
+                        </div>
+                        <div class="badges">
+                            <span class="badge" id="build-threshold">R + B = —</span>
+                            <span class="badge" id="constraint-badge">解析内部解</span>
+                        </div>
+                    </div>
+
+                    <div class="metrics">
+                        <div class="metric">
+                            <span>每 build 约 requests</span>
+                            <strong id="requests-per-build">—</strong>
+                        </div>
+                        <div class="metric">
+                            <span>建议总成本</span>
+                            <strong id="recommended-cost">—</strong>
+                        </div>
+                        <div class="metric">
+                            <span>相对当前总成本</span>
+                            <strong id="total-savings">—</strong>
+                        </div>
+                        <div class="metric">
+                            <span>B-sensitive 节省</span>
+                            <strong id="sensitive-savings">—</strong>
+                        </div>
+                    </div>
+
+                    <div class="formula-values mono" id="formula-values"></div>
+                </article>
+
+                <article class="panel chart-panel">
+                    <div class="panel-heading">
+                        <h2>成本曲线</h2>
+                        <p>USD / 1M 新增 HistoryLoad；只画 B-sensitive 部分</p>
+                    </div>
+                    <div class="chart-wrap">
+                        <canvas id="chart" aria-label="Recap cadence 成本曲线"></canvas>
+                    </div>
+                    <div class="legend">
+                        <span><i style="background:#315f9c"></i>可调总成本 aB + K/B</span>
+                        <span><i style="background:#c5662d"></i>增长 suffix aB</span>
+                        <span><i style="background:#116a50"></i>固定 build K/B</span>
+                    </div>
+                </article>
+
+                <article class="panel table-panel">
+                    <div class="panel-heading">
+                        <h2>成本分解</h2>
+                        <p>常数项不会改变 B*，但仍计入总 API 成本</p>
+                    </div>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>项目</th>
+                                <th>当前 B</th>
+                                <th>建议 B</th>
+                            </tr>
+                        </thead>
+                        <tbody id="breakdown"></tbody>
+                        <tfoot>
+                            <tr>
+                                <td>合计</td>
+                                <td id="current-total">—</td>
+                                <td id="recommended-total">—</td>
+                            </tr>
+                        </tfoot>
+                    </table>
+
+                    <div class="config-row">
+                        <pre id="config-fragment"></pre>
+                        <button type="button" id="copy-config">复制 config fragment</button>
+                    </div>
+                    <div class="status" id="copy-status"></div>
+                </article>
+
+                <article class="panel notes-panel">
+                    <div class="notes-grid">
+                        <section>
+                            <h3>这个极值为什么存在</h3>
+                            <p>
+                                recent suffix 在一个周期内大致从 R 增长到 R+B，平均多出 B/2；
+                                因此重复 prefill 是线性项 <code>aB</code>。每次 build 的固定
+                                rewrite/output/cache-refresh 成本按 B 摊薄，形成 <code>K/B</code>。
+                                二阶导数 <code>2K/B³ &gt; 0</code>，所以内部驻点是唯一全局最小值。
+                            </p>
+                            <p id="band-note"></p>
+                        </section>
+                        <section>
+                            <h3>边界与校准</h3>
+                            <ul>
+                                <li><code>HistoryLoad</code> 不是 provider token；换算系数必须用真实 usage 校准。</li>
+                                <li>纯费用目标会把 R 和 recap 长度推向 0；它们必须先由质量约束给下界。</li>
+                                <li>模型采用稳态 fluid approximation，并假设固定 recap 输出长度与有效单价。</li>
+                                <li>若增大 B 会跨越 bounded step、增加 Maintainer call 数，成本会变成分段函数，应枚举真实候选值。</li>
+                                <li>到达 R+B 仍可能等待 replay-safe admission；建议值不是立即 build 承诺。</li>
+                            </ul>
+                        </section>
+                    </div>
+                </article>
+            </section>
+        </div>
+    </main>
+
+    <script src="recap-cadence-cost-model.js"></script>
+    <script>
+        "use strict";
+
+        const form = document.getElementById("controls");
+        const fields = Object.fromEntries(
+            [...form.querySelectorAll("[data-field]")]
+                .map(field => [field.dataset.field, field])
+        );
+        const canvas = document.getElementById("chart");
+        let lastResult = null;
+
+        const breakdownLabels = {
+            onlineStableInput: "online 稳定 prompt + recap input",
+            onlineRecentReserve: "online minimum recent reserve",
+            onlineGrowingSuffix: "online 增长 recent suffix · aB",
+            newHistoryFirstPassSurcharge: "新 history 首次 input 差价",
+            onlineOutput: "online output（与 B 无关）",
+            rewriteSourceInput: "rewrite absorbed source input",
+            rewriteFixedInput: "rewrite 固定 input · K/B",
+            rewriteOutput: "rewrite output · K/B",
+            postBuildCacheRefresh: "build 后 prefix cache refresh · K/B"
+        };
+
+        const breakdownOrder = [
+            "onlineStableInput",
+            "onlineRecentReserve",
+            "onlineGrowingSuffix",
+            "newHistoryFirstPassSurcharge",
+            "onlineOutput",
+            "rewriteSourceInput",
+            "rewriteFixedInput",
+            "rewriteOutput",
+            "postBuildCacheRefresh"
+        ];
+
+        function readInputs() {
+            return Object.fromEntries(Object.entries(fields).map(([name, field]) => [
+                name,
+                name === "maximumIntervalHistoryLoad" && field.value.trim() === ""
+                    ? null
+                    : Number(field.value)
+            ]));
+        }
+
+        function setPricePreset(kind) {
+            const cache = kind === "cache";
+            fields.repeatInputPrice.value = cache ? "0.5" : "5";
+            fields.firstPassInputPrice.value = cache ? "6.25" : "5";
+            fields.recapRefreshInputPrice.value = cache ? "6.25" : "5";
+            fields.rewriteInputPrice.value = "5";
+            fields.outputPrice.value = "25";
+            update();
+        }
+
+        function number(value, maximumFractionDigits = 0) {
+            return new Intl.NumberFormat("zh-CN", {
+                maximumFractionDigits
+            }).format(value);
+        }
+
+        function usd(value) {
+            return new Intl.NumberFormat("en-US", {
+                style: "currency",
+                currency: "USD",
+                minimumFractionDigits: 2,
+                maximumFractionDigits: 3
+            }).format(value);
+        }
+
+        function percent(value) {
+            const sign = value > 0 ? "−" : value < 0 ? "+" : "";
+            return `${sign}${number(Math.abs(value) * 100, 2)}%`;
+        }
+
+        function renderSummary(result) {
+            const recommended = result.recommended;
+            const input = result.coefficients.input;
+            document.getElementById("optimum").textContent =
+                number(recommended.intervalHistoryLoad);
+            document.getElementById("build-threshold").textContent =
+                `R + B = ${number(
+                    input.minimumRecentHistoryLoad
+                    + recommended.intervalHistoryLoad
+                )}`;
+            document.getElementById("constraint-badge").textContent =
+                result.constrained
+                    ? "已应用可行区间约束"
+                    : `连续解 ${number(result.continuousOptimum, 1)}`;
+            document.getElementById("requests-per-build").textContent =
+                number(recommended.requestsPerBuild, 1);
+            document.getElementById("recommended-cost").textContent =
+                `${usd(recommended.total)} / M HL`;
+            document.getElementById("total-savings").textContent =
+                percent(result.totalSavingsFraction);
+            document.getElementById("sensitive-savings").textContent =
+                percent(result.sensitiveSavingsFraction);
+
+            const coefficient = result.coefficients.growingContextCoefficient;
+            const numerator = result.coefficients.fixedBuildNumerator;
+            document.getElementById("formula-values").textContent =
+                `C(B) = ${number(result.coefficients.constantCost, 4)}`
+                + ` + ${number(coefficient, 8)} × B`
+                + ` + ${number(numerator, 2)} / B`
+                + `  ·  fixed build ≈ ${usd(
+                    result.coefficients.fixedBuildCostDollars
+                )}`;
+
+            const band = result.fivePercentSensitiveBand;
+            document.getElementById("band-note").textContent =
+                `仅看 B-sensitive 成本，连续最优点的 5% 近优区间约为 `
+                + `${number(band.lower)}～${number(band.upper)} HistoryLoad。`
+                + `这条 U 形曲线通常比“精确命中一个魔法数字”更宽容。`;
+        }
+
+        function renderBreakdown(result) {
+            const body = document.getElementById("breakdown");
+            body.replaceChildren();
+
+            for (const key of breakdownOrder) {
+                const row = document.createElement("tr");
+                const label = document.createElement("td");
+                const current = document.createElement("td");
+                const recommended = document.createElement("td");
+                label.textContent = breakdownLabels[key];
+                current.textContent = usd(result.current.breakdown[key]);
+                recommended.textContent = usd(
+                    result.recommended.breakdown[key]
+                );
+                row.append(label, current, recommended);
+                body.append(row);
+            }
+
+            document.getElementById("current-total").textContent =
+                usd(result.current.total);
+            document.getElementById("recommended-total").textContent =
+                usd(result.recommended.total);
+        }
+
+        function renderConfig(result) {
+            const input = result.coefficients.input;
+            const fragment = {
+                cadence: {
+                    historyUnitLoadEstimatorId:
+                        "atelia.history-load.o200k-base.history-unit-v1",
+                    minimumRecentHistoryLoad:
+                        Math.round(input.minimumRecentHistoryLoad),
+                    recapBuildIntervalHistoryLoad:
+                        result.recommended.intervalHistoryLoad
+                }
+            };
+            document.getElementById("config-fragment").textContent =
+                JSON.stringify(fragment, null, 2);
+        }
+
+        function drawChart(result) {
+            const context = canvas.getContext("2d");
+            const rect = canvas.getBoundingClientRect();
+            const ratio = window.devicePixelRatio || 1;
+            canvas.width = Math.max(1, Math.floor(rect.width * ratio));
+            canvas.height = Math.max(1, Math.floor(rect.height * ratio));
+            context.setTransform(ratio, 0, 0, ratio, 0, 0);
+
+            const width = rect.width;
+            const height = rect.height;
+            const pad = { left: 62, right: 22, top: 20, bottom: 46 };
+            const naturalLow = Math.max(
+                1,
+                Math.min(
+                    result.current.intervalHistoryLoad,
+                    result.continuousOptimum,
+                    result.recommended.intervalHistoryLoad
+                ) * 0.25
+            );
+            const naturalHigh = Math.max(
+                result.current.intervalHistoryLoad,
+                result.fivePercentSensitiveBand.upper,
+                result.continuousOptimum * 2.2,
+                result.recommended.intervalHistoryLoad * 2.2
+            );
+            const xMin = naturalLow;
+            const xMax = naturalHigh;
+            const samples = Array.from({ length: 180 }, (_, index) => {
+                const b = xMin + (xMax - xMin) * index / 179;
+                return RecapCadenceCostModel.costAtInterval(
+                    result.coefficients,
+                    b
+                );
+            });
+            const yMax = Math.max(...samples.map(sample =>
+                sample.cadenceSensitive
+            )) * 1.08;
+            const x = value => pad.left
+                + (value - xMin) / (xMax - xMin)
+                * (width - pad.left - pad.right);
+            const y = value => height - pad.bottom
+                - value / yMax * (height - pad.top - pad.bottom);
+
+            context.clearRect(0, 0, width, height);
+            context.font = "12px system-ui, sans-serif";
+            context.fillStyle = "#5f6d64";
+            context.strokeStyle = "#d8d4c8";
+            context.lineWidth = 1;
+
+            for (let index = 0; index <= 4; index += 1) {
+                const value = yMax * index / 4;
+                const py = y(value);
+                context.beginPath();
+                context.moveTo(pad.left, py);
+                context.lineTo(width - pad.right, py);
+                context.stroke();
+                context.textAlign = "right";
+                context.fillText(number(value, 1), pad.left - 8, py + 4);
+            }
+
+            for (let index = 0; index <= 4; index += 1) {
+                const value = xMin + (xMax - xMin) * index / 4;
+                const px = x(value);
+                context.textAlign = "center";
+                context.fillText(number(value), px, height - 18);
+            }
+
+            function line(key, color, widthValue) {
+                context.beginPath();
+                for (let index = 0; index < samples.length; index += 1) {
+                    const sample = samples[index];
+                    const value = key === "cadenceSensitive"
+                        ? sample.cadenceSensitive
+                        : sample[key];
+                    const px = x(sample.intervalHistoryLoad);
+                    const py = y(value);
+                    if (index === 0) {
+                        context.moveTo(px, py);
+                    }
+                    else {
+                        context.lineTo(px, py);
+                    }
+                }
+                context.strokeStyle = color;
+                context.lineWidth = widthValue;
+                context.stroke();
+            }
+
+            line("growingSuffix", "#c5662d", 1.8);
+            line("fixedBuild", "#116a50", 1.8);
+            line("cadenceSensitive", "#315f9c", 3);
+
+            function marker(value, color, label, dash) {
+                if (value < xMin || value > xMax) {
+                    return;
+                }
+                const px = x(value);
+                context.save();
+                context.setLineDash(dash);
+                context.strokeStyle = color;
+                context.lineWidth = 1.5;
+                context.beginPath();
+                context.moveTo(px, pad.top);
+                context.lineTo(px, height - pad.bottom);
+                context.stroke();
+                context.setLineDash([]);
+                context.fillStyle = color;
+                context.textAlign = "left";
+                context.fillText(label, px + 5, pad.top + 12);
+                context.restore();
+            }
+
+            marker(
+                result.current.intervalHistoryLoad,
+                "#7b7469",
+                "当前",
+                [5, 4]
+            );
+            marker(
+                result.recommended.intervalHistoryLoad,
+                "#315f9c",
+                "建议",
+                []
+            );
+        }
+
+        function update() {
+            const error = document.getElementById("error");
+            try {
+                const result = RecapCadenceCostModel.solve(readInputs());
+                lastResult = result;
+                error.style.display = "none";
+                error.textContent = "";
+                renderSummary(result);
+                renderBreakdown(result);
+                renderConfig(result);
+                drawChart(result);
+            }
+            catch (exception) {
+                lastResult = null;
+                error.textContent = exception.message;
+                error.style.display = "block";
+            }
+        }
+
+        async function copyConfig() {
+            const text = document.getElementById("config-fragment").textContent;
+            const status = document.getElementById("copy-status");
+            try {
+                await navigator.clipboard.writeText(text);
+                status.textContent = "已复制；落盘前仍需验证 raw safety 与 replay-safe admission。";
+            }
+            catch {
+                status.textContent = "浏览器未授予剪贴板权限，请手动复制左侧 fragment。";
+            }
+        }
+
+        form.addEventListener("input", update);
+        form.addEventListener("submit", event => event.preventDefault());
+        for (const button of form.querySelectorAll("[data-preset]")) {
+            button.addEventListener("click", () =>
+                setPricePreset(button.dataset.preset)
+            );
+        }
+        document.getElementById("copy-config")
+            .addEventListener("click", copyConfig);
+        window.addEventListener("resize", () => {
+            if (lastResult !== null) {
+                drawChart(lastResult);
+            }
+        });
+
+        update();
+    </script>
+</body>
+</html>

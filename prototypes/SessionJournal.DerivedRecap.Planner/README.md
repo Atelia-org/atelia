@@ -673,6 +673,48 @@ RecapHistoryLoadMeasurement measurement =
 离线校准优先使用 CLI的 content-free
 [`recap history-load inspect`](../SessionJournal.Cli/README.md#recap-history-load-inspect)。
 
+## API 费用校准工具
+
+[`tools/recap-cadence-cost-calculator.html`](tools/recap-cadence-cost-calculator.html)
+是一个无外部依赖的静态求解器，用于在质量约束已经给定
+`MinimumRecentHistoryLoad = R`后，估算经济上合适的
+`RecapBuildIntervalHistoryLoad = B`。直接在浏览器打开即可；纯计算核心在
+[`recap-cadence-cost-model.js`](tools/recap-cadence-cost-model.js)，可用 Node focused test复核：
+
+```bash
+node --test \
+  prototypes/SessionJournal.DerivedRecap.Planner/tools/recap-cadence-cost-model.test.js
+```
+
+首版使用 steady-state fluid approximation：recent suffix在一个build周期内大致从`R`增长到
+`R + B`，平均增长量为`B / 2`；rewrite固定输入、recap输出和build后的prompt-cache refresh则按
+`B`摊薄。归一化为每一百万新增HistoryLoad的费用后：
+
+```text
+C(B) = C0 + aB + K/B
+B* = sqrt(K/a)
+d²C/dB² = 2K/B³ > 0
+```
+
+因此`a > 0 && K > 0`时有唯一连续全局最小值，不需要least-squares或通用优化库。页面会应用operator
+提供的可行区间、选择相邻最优整数、显示当前config对比、成本分解、5%近优区间，并生成候选cadence
+JSON fragment。
+
+页面默认价格在2026-08-06按Claude Platform官方表校准：Opus 5与Opus 4.6均为base input
+`$5/MTok`、5分钟cache write `$6.25/MTok`、cache hit `$0.50/MTok`、output
+`$25/MTok`；价格字段可编辑。当前价格仍应以
+[Anthropic pricing](https://platform.claude.com/docs/en/about-claude/pricing)为准。
+
+这个工具不是新的scheduling authority：
+
+- `HistoryLoad`不是provider token；`providerTokensPerHistoryLoad`与每次request新增HistoryLoad必须用
+  真实provider usage和session telemetry校准；
+- 纯费用最小化会把`R`、recap长度和质量推到零，因此`R`与recap内容下界必须先由任务质量约束确定；
+- 模型假设固定recap输出长度、稳定有效单价和固定source pass数；若`B`跨越bounded step后增加
+  Maintainer call数，真实成本是分段函数，应按真实候选interval枚举；
+- 达到`R + B`仍可能等待replay-safe admission；求解结果不承诺在exact threshold立即build；
+- config更新只影响未来NewPlanning；frozen Building Resume与Published Restore仍不读取active config。
+
 ## 常见误用
 
 - 不要把 `HistoryUnitCount`或 raw event count重新用作 cadence trigger。
