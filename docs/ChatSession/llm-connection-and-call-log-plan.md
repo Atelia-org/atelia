@@ -162,6 +162,7 @@ public sealed class LoggingCompletionClient : ICompletionClient
 
 - 每次 completion 调用分配递增 call id。
 - 捕获完整 canonical request。
+- 捕获与 canonical request 分离的 per-invocation operational options。
 - 捕获 response 或 exception。
 - 记录开始时间、结束时间、耗时。
 - 记录 connection id、model id、api spec id、completion surface id。
@@ -191,7 +192,7 @@ gitignore/backtest/rolling-summary-calls/
 
 ```json
 {
-  "schema": "atelia.completion.call-log.v4",
+  "schema": "atelia.completion.call-log.v5",
   "callId": 1,
   "timestampUtc": "2026-07-20T00:00:00Z",
   "elapsedMs": 12345,
@@ -214,6 +215,9 @@ gitignore/backtest/rolling-summary-calls/
     "targetBlockId": "session.rolling-summary"
   },
   "request": {},
+  "invocationOptions": {
+    "promptCacheReuseHint": "noReuseExpected"
+  },
   "response": {},
   "exception": null
 }
@@ -222,6 +226,7 @@ gitignore/backtest/rolling-summary-calls/
 注意：
 
 - 日志应保存 prompt 文本快照或 prompt 文件 hash，便于复现实验。
+- `invocationOptions.promptCacheReuseHint` 只记录调用方请求的 best-effort hint，不代表 provider 的 effective cache 行为；它不属于 durable request identity。
 - 日志不应保存真实 `apiKey`；connection snapshot 中不要出现 inline key 值。
 - JSONL backtest report 只引用 call log 文件路径，不内嵌完整 request / response。
 
