@@ -232,6 +232,21 @@ public sealed class SessionSelectedLineageAuditTests : IDisposable {
         );
         Assert.Equal(finalAction, cursor.Materialize(remaining).ObservedRawHead);
         Assert.Null(cursor.ReadNextRange(1));
+
+        using SessionSelectedLineageForwardCursor membership =
+            engine.OpenSelectedLineageForwardCursor(
+                new InMemoryPageSnapshot(audit.Capture, pages)
+            );
+        Assert.Equal(
+            finalAction,
+            membership.FindLatestMatchingBoundary(
+                new HashSet<EventAddress> {
+                    firstAction,
+                    finalAction
+                }
+            )
+        );
+        Assert.Null(membership.ReadNextRange(1));
     }
 
     [Fact]

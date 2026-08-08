@@ -381,6 +381,21 @@ public sealed class SessionSelectedLineageForwardCursor : IDisposable {
         cancellationToken
     );
 
+    /// <summary>
+    /// Performs one content-free forward membership pass and returns the last
+    /// audited boundary contained in <paramref name="candidates"/>. The
+    /// cursor becomes inspection-exhausted after this call and cannot be used
+    /// for materialization.
+    /// </summary>
+    public EventAddress? FindLatestMatchingBoundary(
+        IReadOnlySet<EventAddress> candidates,
+        CancellationToken cancellationToken = default
+    ) => _owner.FindLatestSelectedLineageBoundary(
+        this,
+        candidates,
+        cancellationToken
+    );
+
     public void Dispose() {
         if (_disposed) {
             return;
@@ -487,6 +502,15 @@ public sealed class SessionSelectedLineageForwardCursor : IDisposable {
         }
         _currentSeed = seed;
         _finished = finished;
+    }
+
+    internal void CompleteInspection() {
+        if (_pendingRange is not null || _previewedRange is not null) {
+            throw new InvalidOperationException(
+                "Cannot complete inspection while a range is pending."
+            );
+        }
+        _finished = true;
     }
 
     internal bool MoveNext(

@@ -639,6 +639,53 @@ public sealed partial class SessionJournalEngine {
         );
     }
 
+    internal EventAddress? FindLatestSelectedLineageBoundary(
+        SessionSelectedLineageForwardCursor cursor,
+        IReadOnlySet<EventAddress> candidates,
+        CancellationToken cancellationToken
+    ) {
+        ThrowIfDisposed();
+        RequireOfflineAuditEngine();
+        ArgumentNullException.ThrowIfNull(cursor);
+        ArgumentNullException.ThrowIfNull(candidates);
+        if (!ReferenceEquals(cursor.Owner, this)
+            || cursor.IsDisposed
+            || cursor.PendingRange is not null) {
+            throw new ArgumentException(
+                "Forward cursor is unavailable for a membership pass.",
+                nameof(cursor)
+            );
+        }
+        if (candidates.Count
+            > SessionSelectedLineageAuditLimits
+                .MaximumForwardRangeEventCount
+            || candidates.Contains(default)) {
+            throw new ArgumentException(
+                "Forward membership candidates are invalid or unbounded.",
+                nameof(candidates)
+            );
+        }
+        EventAddress? latest = candidates.Contains(
+            cursor.CurrentSeed.Address
+        )
+            ? cursor.CurrentSeed.Address
+            : null;
+        while (cursor.MoveNext(out SessionSelectedLineageAuditEntry entry)) {
+            cancellationToken.ThrowIfCancellationRequested();
+            ValidateSelectedLineageEntryAgainstRaw(
+                entry,
+                reconstructPrepared: false,
+                cancellationToken
+            );
+            if (candidates.Contains(entry.Address)) {
+                latest = entry.Address;
+            }
+        }
+        RequireSelectedLineageCaptureCurrent(cursor.Authority.Capture);
+        cursor.CompleteInspection();
+        return latest;
+    }
+
     private void ValidateForwardCursorRange(
         SessionSelectedLineageForwardCursor cursor,
         SessionSelectedLineageForwardRange range
