@@ -275,33 +275,6 @@ public sealed class SessionSelectedLineageForwardRange {
     public bool IsFinal { get; }
     internal SessionSelectedLineageAuditAuthority Owner => _owner;
 
-    public SessionSelectedLineageForwardRange PrefixThrough(
-        EventAddress endInclusive
-    ) {
-        int index = -1;
-        for (int candidate = 0;
-             candidate < Entries.Count;
-             candidate++) {
-            if (Entries[candidate].Address == endInclusive) {
-                index = candidate;
-                break;
-            }
-        }
-        if (index < 0) {
-            throw new ArgumentException(
-                "Requested end is outside this forward range.",
-                nameof(endInclusive)
-            );
-        }
-        return new SessionSelectedLineageForwardRange(
-            _owner,
-            StartExclusive,
-            Array.AsReadOnly([
-                .. Entries.Take(index + 1)
-            ]),
-            IsFinal && index == Entries.Count - 1
-        );
-    }
 }
 
 /// <summary>
@@ -313,7 +286,8 @@ public sealed class SessionSelectedLineageForwardCursor : IDisposable {
     private readonly ISessionSelectedLineageAuditPageSnapshot _snapshot;
     private readonly IEnumerator<SessionSelectedLineageAuditEntry>
         _entries;
-    private EventAddress _nextParent;
+    private SessionHistoryPlanningSeed _currentSeed;
+    private SessionSelectedLineageForwardRange? _pendingRange;
     private bool _finished;
     private bool _disposed;
 
@@ -322,13 +296,15 @@ public sealed class SessionSelectedLineageForwardCursor : IDisposable {
         ISessionSelectedLineageAuditPageSnapshot snapshot,
         SessionSelectedLineageAuditAuthority authority,
         IEnumerator<SessionSelectedLineageAuditEntry> entries,
-        EventAddress nextParent
+        SessionHistoryPlanningSeed bootstrapSeed
     ) {
         _owner = owner;
         _snapshot = snapshot;
         Authority = authority;
         _entries = entries;
-        _nextParent = nextParent;
+        _currentSeed = bootstrapSeed;
+        _finished = bootstrapSeed.Address
+            == authority.Capture.CapturedHead;
     }
 
     public SessionSelectedLineageAuditAuthority Authority { get; }
@@ -344,12 +320,10 @@ public sealed class SessionSelectedLineageForwardCursor : IDisposable {
 
     public SessionHistoryPlanningWindow Materialize(
         SessionSelectedLineageForwardRange range,
-        SessionHistoryPlanningSeed startSeed,
         CancellationToken cancellationToken = default
     ) => _owner.MaterializeSelectedLineageForwardRange(
         this,
         range,
-        startSeed,
         cancellationToken
     );
 
@@ -363,16 +337,40 @@ public sealed class SessionSelectedLineageForwardCursor : IDisposable {
     }
 
     internal SessionJournalEngine Owner => _owner;
-    internal EventAddress NextParent => _nextParent;
+    internal SessionHistoryPlanningSeed CurrentSeed => _currentSeed;
+    internal SessionSelectedLineageForwardRange? PendingRange =>
+        _pendingRange;
     internal bool Finished => _finished;
     internal bool IsDisposed => _disposed;
 
-    internal void Advance(
-        EventAddress nextParent,
-        bool finished
+    internal void SetPending(
+        SessionSelectedLineageForwardRange range
     ) {
-        _nextParent = nextParent;
-        _finished = finished;
+        if (_pendingRange is not null) {
+            throw new InvalidOperationException(
+                "A forward range is already pending materialization."
+            );
+        }
+        _pendingRange = range;
+    }
+
+    internal void Advance(
+        SessionSelectedLineageForwardRange range,
+        SessionHistoryPlanningSeed? nextSeed
+    ) {
+        if (!ReferenceEquals(_pendingRange, range)) {
+            throw new InvalidOperationException(
+                "Only the exact pending forward range may advance this cursor."
+            );
+        }
+        if (!range.IsFinal && nextSeed is null) {
+            throw new InvalidOperationException(
+                "A non-final forward range requires its next planning seed."
+            );
+        }
+        _currentSeed = nextSeed ?? _currentSeed;
+        _pendingRange = null;
+        _finished = range.IsFinal;
     }
 
     internal bool MoveNext(

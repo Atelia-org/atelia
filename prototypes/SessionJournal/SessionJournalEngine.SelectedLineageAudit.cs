@@ -354,7 +354,7 @@ public sealed partial class SessionJournalEngine {
                 snapshot,
                 authority,
                 entries,
-                authority.BootstrapSeed.Address
+                authority.BootstrapSeed
             );
         }
         catch {
@@ -390,13 +390,18 @@ public sealed partial class SessionJournalEngine {
         if (cursor.Finished) {
             return null;
         }
+        if (cursor.PendingRange is not null) {
+            throw new InvalidOperationException(
+                "The pending forward range must be materialized before another range can be read."
+            );
+        }
         RequireSelectedLineageCaptureCurrent(
             cursor.Authority.Capture
         );
         var entries = new List<SessionSelectedLineageAuditEntry>(
             maxRawEventCount
         );
-        EventAddress expectedParent = cursor.NextParent;
+        EventAddress expectedParent = cursor.CurrentSeed.Address;
         while (entries.Count < maxRawEventCount
                && cursor.MoveNext(out
                    SessionSelectedLineageAuditEntry entry)) {
@@ -421,42 +426,44 @@ public sealed partial class SessionJournalEngine {
                     "Forward spool enumeration ended before the captured raw head."
                 );
             }
-            cursor.Advance(expectedParent, finished: true);
-            return null;
+            throw new InvalidDataException(
+                "Forward spool enumeration ended without issuing a final range."
+            );
         }
         bool isFinal = entries[^1].Address
             == cursor.Authority.Capture.CapturedHead;
-        cursor.Advance(entries[^1].Address, isFinal);
         RequireSelectedLineageCaptureCurrent(
             cursor.Authority.Capture
         );
-        return new SessionSelectedLineageForwardRange(
+        var range = new SessionSelectedLineageForwardRange(
             cursor.Authority,
             entries[0].Parent!.Value,
             entries.AsReadOnly(),
             isFinal
         );
+        cursor.SetPending(range);
+        return range;
     }
 
     internal SessionHistoryPlanningWindow
         MaterializeSelectedLineageForwardRange(
         SessionSelectedLineageForwardCursor cursor,
         SessionSelectedLineageForwardRange range,
-        SessionHistoryPlanningSeed startSeed,
         CancellationToken cancellationToken
     ) {
         ThrowIfDisposed();
         RequireOfflineAuditEngine();
         ArgumentNullException.ThrowIfNull(cursor);
         ArgumentNullException.ThrowIfNull(range);
-        ArgumentNullException.ThrowIfNull(startSeed);
         if (!ReferenceEquals(cursor.Owner, this)
-            || !ReferenceEquals(range.Owner, cursor.Authority)) {
+            || !ReferenceEquals(range.Owner, cursor.Authority)
+            || !ReferenceEquals(range, cursor.PendingRange)) {
             throw new ArgumentException(
-                "Forward range does not belong to this cursor authority.",
+                "Forward range is not the exact pending range of this cursor.",
                 nameof(range)
             );
         }
+        SessionHistoryPlanningSeed startSeed = cursor.CurrentSeed;
         if (startSeed.Address != range.StartExclusive) {
             throw new ArgumentException(
                 "Planning seed does not match the opaque forward range start.",
@@ -542,6 +549,14 @@ public sealed partial class SessionJournalEngine {
         RequireSelectedLineageCaptureCurrent(
             cursor.Authority.Capture
         );
+        SessionHistoryPlanningSeed? nextSeed = range.IsFinal
+            ? null
+            : CreateHistoryPlanningSeed(
+                range.EndInclusive,
+                window.EndSetups,
+                cancellationToken
+            );
+        cursor.Advance(range, nextSeed);
         return window;
     }
 

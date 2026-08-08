@@ -54,10 +54,7 @@ public sealed class DerivedRecapRebuildSpoolTests : IDisposable {
                 cursor.ReadNextRange(64)
             );
         Assert.True(range.IsFinal);
-        SessionHistoryPlanningWindow window = cursor.Materialize(
-            range,
-            cursor.Authority.BootstrapSeed
-        );
+        SessionHistoryPlanningWindow window = cursor.Materialize(range);
         Assert.Equal(raw.Head, window.ObservedRawHead);
 
         EventAddress headBeforeDelete = engine.ReadCurrentHead()!.Value;
