@@ -12,7 +12,7 @@ namespace Atelia.SessionJournal.DerivedRecap.Planner;
 /// state. Every newly admitted epoch freezes one input and invokes every
 /// roster member exactly once unless a healthy direct final already exists.
 /// </summary>
-public sealed class DerivedRecapEpochCampaignExecutor {
+public sealed partial class DerivedRecapEpochCampaignExecutor {
     private readonly SessionJournalReadView _engine;
     private readonly DerivedRecapEpochStore _store;
     private readonly RecapEpochPlanningConfiguration _configuration;
