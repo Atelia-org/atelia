@@ -55,14 +55,14 @@ public sealed class GalateaRecapMaintainerConnectionConfigTests {
             >(config.RecapMaintainerConnections);
             Assert.Equal(
                 "world",
-                routes[WorldUnderstandingRewriteProfiles.MaintainerId]
+                routes[WorldUnderstandingRecapMaintainers.MaintainerId]
             );
             Assert.Equal(
                 "autobiography",
-                routes[AutobiographicalRewriteProfiles.MaintainerId]
+                routes[AutobiographicalRecapMaintainers.MaintainerId]
             );
             Assert.False(routes.ContainsKey(
-                WorldUnderstandingRewriteProfiles.MaintainerId
+                WorldUnderstandingRecapMaintainers.MaintainerId
                     .ToUpperInvariant()
             ));
             Assert.Throws<NotSupportedException>(() =>
@@ -96,10 +96,10 @@ public sealed class GalateaRecapMaintainerConnectionConfigTests {
         { [], "missing:" },
         {
             [new(
-                WorldUnderstandingRewriteProfiles.MaintainerId,
+                WorldUnderstandingRecapMaintainers.MaintainerId,
                 "world"
             )],
-            AutobiographicalRewriteProfiles.MaintainerId
+            AutobiographicalRecapMaintainers.MaintainerId
         },
         {
             [
@@ -112,7 +112,7 @@ public sealed class GalateaRecapMaintainerConnectionConfigTests {
             [
                 .. CompleteBindings(),
                 new(
-                    WorldUnderstandingRewriteProfiles.MaintainerId,
+                    WorldUnderstandingRecapMaintainers.MaintainerId,
                     "world"
                 )
             ],
@@ -122,7 +122,7 @@ public sealed class GalateaRecapMaintainerConnectionConfigTests {
             [
                 new(" ", "world"),
                 new(
-                    AutobiographicalRewriteProfiles.MaintainerId,
+                    AutobiographicalRecapMaintainers.MaintainerId,
                     "autobiography"
                 )
             ],
@@ -131,11 +131,11 @@ public sealed class GalateaRecapMaintainerConnectionConfigTests {
         {
             [
                 new(
-                    WorldUnderstandingRewriteProfiles.MaintainerId,
+                    WorldUnderstandingRecapMaintainers.MaintainerId,
                     " "
                 ),
                 new(
-                    AutobiographicalRewriteProfiles.MaintainerId,
+                    AutobiographicalRecapMaintainers.MaintainerId,
                     "autobiography"
                 )
             ],
@@ -144,11 +144,11 @@ public sealed class GalateaRecapMaintainerConnectionConfigTests {
         {
             [
                 new(
-                    WorldUnderstandingRewriteProfiles.MaintainerId,
+                    WorldUnderstandingRecapMaintainers.MaintainerId,
                     "missing-connection"
                 ),
                 new(
-                    AutobiographicalRewriteProfiles.MaintainerId,
+                    AutobiographicalRecapMaintainers.MaintainerId,
                     "autobiography"
                 )
             ],
@@ -251,7 +251,7 @@ public sealed class GalateaRecapMaintainerConnectionConfigTests {
                 $$"""
                 "recapMaintainerConnections": [
                   {
-                    "maintainerId": "{{WorldUnderstandingRewriteProfiles.MaintainerId}}",
+                    "maintainerId": "{{WorldUnderstandingRecapMaintainers.MaintainerId}}",
                     "connection": "world"
                   }
                 ]
@@ -362,11 +362,11 @@ public sealed class GalateaRecapMaintainerConnectionConfigTests {
     private static GalateaRecapMaintainerConnectionBinding[]
         CompleteBindings() => [
             new(
-                WorldUnderstandingRewriteProfiles.MaintainerId,
+                WorldUnderstandingRecapMaintainers.MaintainerId,
                 "world"
             ),
             new(
-                AutobiographicalRewriteProfiles.MaintainerId,
+                AutobiographicalRecapMaintainers.MaintainerId,
                 "autobiography"
             )
         ];

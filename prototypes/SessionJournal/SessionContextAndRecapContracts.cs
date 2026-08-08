@@ -44,30 +44,6 @@ public sealed record ContextHeaderSnapshot(
         );
 }
 
-public sealed record RecentHistorySlice {
-    public RecentHistorySlice(
-        ContextHeaderSnapshot PriorContext,
-        IReadOnlyList<IHistoryMessage> Messages,
-        string? SourceId = null,
-        ulong? EstimatedTokens = null
-    ) {
-        this.PriorContext = PriorContext ?? throw new ArgumentNullException(nameof(PriorContext));
-        this.Messages = FreezeMessages(Messages);
-        this.SourceId = SourceId;
-        this.EstimatedTokens = EstimatedTokens;
-    }
-
-    public ContextHeaderSnapshot PriorContext { get; }
-    public IReadOnlyList<IHistoryMessage> Messages { get; }
-    public string? SourceId { get; }
-    public ulong? EstimatedTokens { get; }
-
-    private static IReadOnlyList<IHistoryMessage> FreezeMessages(IReadOnlyList<IHistoryMessage> messages) {
-        ArgumentNullException.ThrowIfNull(messages);
-        return Array.AsReadOnly(messages.ToArray());
-    }
-}
-
 public enum ContextHeaderCarrier {
     System,
     Observation,
@@ -224,32 +200,3 @@ public sealed class ContextHeaderPackDraft {
 
     public ContextHeaderPack Build() => _working.Clone();
 }
-
-public interface IRecapBlockMaintainer {
-    string Id { get; }
-
-    ContextHeaderBlockPath Target { get; }
-
-    /// <summary>
-    /// Opaque semantic capability identity frozen by derived-recap plans.
-    /// </summary>
-    string CapabilityFingerprint { get; }
-
-    ValueTask<RecapBlockMaintenanceResult> MaintainAsync(
-        RecapBlockMaintenanceRequest request,
-        CancellationToken ct
-    );
-}
-
-public sealed record RecapBlockMaintenanceRequest(
-    RecentHistorySlice RecentHistory,
-    ContextHeaderBlock OldBlock
-);
-
-public sealed record RecapBlockMaintenanceResult(
-    string MaintainerId,
-    ContextHeaderBlockPath Target,
-    ContextHeaderBlock NewBlock,
-    CompletionDescriptor? Invocation = null,
-    IReadOnlyList<string>? Errors = null
-);

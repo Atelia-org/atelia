@@ -139,7 +139,7 @@ public sealed class ProgramRecapPlannerConfigCommandTests
         );
         Assert.All(catalog, item => Assert.StartsWith(
             "sha256:",
-            String(item, "promptFingerprint"),
+            String(item, "familyFingerprint"),
             StringComparison.Ordinal
         ));
         Assert.All(catalog, item => Assert.StartsWith(

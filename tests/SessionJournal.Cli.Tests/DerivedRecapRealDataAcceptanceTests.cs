@@ -5,6 +5,7 @@ using System.Text.Json;
 using Atelia.Completion;
 using Atelia.Completion.Abstractions;
 using Atelia.EventJournal;
+using Atelia.SessionJournal.DerivedRecap.Maintainers;
 using Atelia.SessionJournal.DerivedRecap.Planner;
 using Atelia.SessionJournal.DerivedRecap.Store;
 using Xunit;
@@ -1475,12 +1476,37 @@ public sealed class DerivedRecapRealDataAcceptanceTests {
                     "scripted acceptance interruption"
                 );
             }
-            return Task.FromResult(new CompletionResult(
+            return Task.FromResult(Complete(request));
+        }
+
+        public Task<CompletionResult> StreamCompletionAsync(
+            CompletionRequest request,
+            CompletionInvocationOptions invocationOptions,
+            CompletionStreamObserver? observer,
+            CancellationToken cancellationToken = default
+        ) {
+            invocationOptions.Validate();
+            return StreamCompletionAsync(
+                request,
+                observer,
+                cancellationToken
+            );
+        }
+
+        private CompletionResult Complete(CompletionRequest request)
+            => new(
                 new ActionMessage([
-                    new ActionBlock.Text(responseText)
+                    new ActionBlock.ToolCall(new RawToolCall(
+                        StructuredRecapMaintainerOutputProtocol
+                            .SubmitToolName,
+                        "call-1",
+                        JsonSerializer.Serialize(new {
+                            outcome = "updated",
+                            content = responseText
+                        })
+                    ))
                 ]),
                 CompletionDescriptor.From(this, request)
-            ));
-        }
+            );
     }
 }

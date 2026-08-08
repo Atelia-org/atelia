@@ -1,93 +1,61 @@
-using System.Buffers;
-using System.Security.Cryptography;
-using System.Text.Encodings.Web;
-using System.Text.Json;
 using Atelia.Completion.Abstractions;
-using Atelia.SessionJournal;
+using Atelia.SessionJournal.DerivedRecap.Abstractions;
 
 namespace Atelia.SessionJournal.DerivedRecap.Maintainers;
 
 /// <summary>
-/// Stable application-level identity and factory for one concrete memory-maintainer profile.
-/// Role identity is deliberately owned here rather than by SessionJournal raw core.
+/// Host-visible profile metadata around one immutable member definition.
 /// </summary>
-public sealed record RecapMaintainerProfileDescriptor(
-    string ProfileName,
-    string RoleId,
-    string RecapBlockIdValue,
-    RecapRewriteProfile RewriteProfile
-) {
-    public const string PromptFingerprintSchema =
-        "atelia.session-journal.memory-maintainer-prompt.v1";
-
-    public string ProfileName { get; init; } =
-        string.IsNullOrWhiteSpace(ProfileName)
+public sealed class RecapMaintainerProfileDescriptor {
+    public RecapMaintainerProfileDescriptor(
+        string profileName,
+        string recapBlockIdValue,
+        RecapMaintainerDefinition definition
+    ) {
+        ProfileName = string.IsNullOrWhiteSpace(profileName)
             ? throw new ArgumentException(
                 "Recap maintainer profile name cannot be empty.",
-                nameof(ProfileName)
+                nameof(profileName)
             )
-            : ProfileName;
-
-    public string RoleId { get; init; } =
-        string.IsNullOrWhiteSpace(RoleId)
-            ? throw new ArgumentException(
-                "Recap maintainer role id cannot be empty.",
-                nameof(RoleId)
-            )
-            : RoleId;
-
-    public string RecapBlockIdValue { get; init; } =
-        IsValidRecapBlockIdValue(RecapBlockIdValue)
-            ? RecapBlockIdValue
+            : profileName;
+        RecapBlockIdValue = IsValidRecapBlockIdValue(
+            recapBlockIdValue
+        )
+            ? recapBlockIdValue
             : throw new ArgumentException(
-                "RecapBlockIdValue must match "
-                + "[a-z0-9][a-z0-9._-]{0,127}.",
-                nameof(RecapBlockIdValue)
+                "RecapBlockIdValue must match [a-z0-9][a-z0-9._-]{0,127}.",
+                nameof(recapBlockIdValue)
             );
+        Definition = definition
+            ?? throw new ArgumentNullException(nameof(definition));
+    }
 
-    public RecapRewriteProfile RewriteProfile { get; init; } =
-        RewriteProfile
-        ?? throw new ArgumentNullException(nameof(RewriteProfile));
+    public string ProfileName { get; }
 
-    public string MaintainerId => RewriteProfile.Id;
-    public ContextHeaderBlockPath Target => RewriteProfile.Target;
-    public string ImplementationId =>
-        RewriteRecapBlockMaintainer.ImplementationId;
+    public string RecapBlockIdValue { get; }
 
-    public string PromptFingerprint =>
-        RecapMaintainerCapabilityFingerprint.ComputePrompt(
-            PromptFingerprintSchema,
-            RewriteProfile.SystemPrompt,
-            RewriteProfile.UserPrompt
-        );
+    public RecapMaintainerDefinition Definition { get; }
+
+    public string MaintainerId => Definition.MaintainerId;
+
+    public ContextHeaderBlockPath Target => Definition.Target;
+
+    public string ImplementationId => Definition.ImplementationId;
+
+    public string FamilyFingerprint =>
+        Definition.Family.SemanticFingerprint;
 
     public string CapabilityFingerprint =>
-        RecapMaintainerCapabilityFingerprint.Compute(
-            ImplementationId,
-            MaintainerId,
-            Target,
-            PromptFingerprint
-        );
+        Definition.CapabilityFingerprint;
 
     public IRecapBlockMaintainer Create(
         ICompletionClient completionClient,
         string modelId
     ) => new RewriteRecapBlockMaintainer(
-        RewriteProfile,
+        Definition,
         completionClient,
         modelId
     );
-
-    public RecapMaintainerProfileDescriptor WithPromptOverrides(
-        string? systemPrompt,
-        string? userPrompt
-    ) => this with {
-        RewriteProfile = RewriteProfile with {
-            SystemPrompt =
-                systemPrompt ?? RewriteProfile.SystemPrompt,
-            UserPrompt = userPrompt ?? RewriteProfile.UserPrompt
-        }
-    };
 
     private static bool IsValidRecapBlockIdValue(string? value) {
         if (string.IsNullOrEmpty(value) || value.Length > 128) {
@@ -111,111 +79,11 @@ public sealed record RecapMaintainerProfileDescriptor(
             || (ch >= '0' && ch <= '9');
 }
 
-public static class RecapMaintainerCapabilityFingerprint {
-    public const string Schema =
-        "atelia.session-journal.recap-maintainer-capability.v1";
-
-    private static readonly JsonWriterOptions WriterOptions = new() {
-        Indented = false,
-        Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
-        SkipValidation = false
-    };
-
-    public static string Compute(
-        string implementationId,
-        string maintainerId,
-        ContextHeaderBlockPath target,
-        string promptFingerprint
-    ) {
-        ArgumentException.ThrowIfNullOrWhiteSpace(implementationId);
-        ArgumentException.ThrowIfNullOrWhiteSpace(maintainerId);
-        ArgumentNullException.ThrowIfNull(target);
-        RequireFingerprint(promptFingerprint, nameof(promptFingerprint));
-        byte[] preimage = Write(writer => {
-            writer.WriteStartObject();
-            writer.WriteString("schema", Schema);
-            writer.WriteString("implementationId", implementationId);
-            writer.WriteString("maintainerId", maintainerId);
-            writer.WriteStartObject("target");
-            writer.WriteString(
-                "carrier",
-                ContextHeaderCarrierTokens.ToStorageToken(
-                    target.Carrier
-                )
-            );
-            writer.WriteString("blockKey", target.BlockKey);
-            writer.WriteEndObject();
-            writer.WriteString(
-                "promptFingerprint",
-                promptFingerprint
-            );
-            writer.WriteEndObject();
-        });
-        return Hash(preimage);
-    }
-
-    internal static string ComputePrompt(
-        string schema,
-        string systemPrompt,
-        string userPrompt
-    ) {
-        ArgumentException.ThrowIfNullOrWhiteSpace(schema);
-        ArgumentNullException.ThrowIfNull(systemPrompt);
-        ArgumentNullException.ThrowIfNull(userPrompt);
-        byte[] preimage = Write(writer => {
-            writer.WriteStartObject();
-            writer.WriteString("schema", schema);
-            writer.WriteString("systemPrompt", systemPrompt);
-            writer.WriteString("userPrompt", userPrompt);
-            writer.WriteEndObject();
-        });
-        return Hash(preimage);
-    }
-
-    private static byte[] Write(Action<Utf8JsonWriter> action) {
-        var buffer = new ArrayBufferWriter<byte>();
-        using (var writer = new Utf8JsonWriter(
-                   buffer,
-                   WriterOptions
-               )) {
-            action(writer);
-        }
-        return buffer.WrittenMemory.ToArray();
-    }
-
-    private static string Hash(ReadOnlySpan<byte> bytes) =>
-        $"sha256:{Convert.ToHexStringLower(SHA256.HashData(bytes))}";
-
-    private static string RequireFingerprint(
-        string value,
-        string parameterName
-    ) {
-        const string Prefix = "sha256:";
-        if (value is null
-            || !value.StartsWith(Prefix, StringComparison.Ordinal)
-            || value.Length != Prefix.Length + 64
-            || value.AsSpan(Prefix.Length).ContainsAnyExcept(
-                "0123456789abcdef"
-            )) {
-            throw new ArgumentException(
-                "Fingerprint must be sha256: followed by lowercase "
-                + "SHA-256 hex.",
-                parameterName
-            );
-        }
-        return value;
-    }
-}
-
 public sealed class RecapMaintainerProfileCatalog {
     public const string AutobiographicalRewrite =
         "autobiographical-rewrite";
     public const string WorldUnderstandingRewrite =
         "world-understanding-rewrite";
-    public const string AutobiographyRole = "autobiography";
-    public const string WorldUnderstandingRole =
-        "world-understanding";
-
     private static readonly Lazy<RecapMaintainerProfileCatalog>
         BuiltInSnapshot = new(
             CreateBuiltIn,
@@ -236,9 +104,7 @@ public sealed class RecapMaintainerProfileCatalog {
         IReadOnlyList<RecapMaintainerProfileDescriptor> descriptors
     ) {
         ArgumentNullException.ThrowIfNull(descriptors);
-
-        RecapMaintainerProfileDescriptor[] snapshot =
-            [.. descriptors];
+        RecapMaintainerProfileDescriptor[] snapshot = [.. descriptors];
         var byProfileName = new Dictionary<
             string,
             RecapMaintainerProfileDescriptor
@@ -248,6 +114,10 @@ public sealed class RecapMaintainerProfileCatalog {
                 string CapabilityFingerprint),
             RecapMaintainerProfileDescriptor
         >();
+        var familyBySemanticFingerprint = new Dictionary<
+            string,
+            RecapMaintainerFamilyDefinition
+        >(StringComparer.Ordinal);
 
         foreach (RecapMaintainerProfileDescriptor? descriptor
             in snapshot) {
@@ -257,9 +127,8 @@ public sealed class RecapMaintainerProfileCatalog {
                     descriptor
                 )) {
                 throw new ArgumentException(
-                    "Recap maintainer profile catalog contains "
-                    + "duplicate profile name "
-                    + $"'{descriptor.ProfileName}'.",
+                    "Recap maintainer profile catalog contains duplicate profile name "
+                        + $"'{descriptor.ProfileName}'.",
                     nameof(descriptors)
                 );
             }
@@ -274,12 +143,30 @@ public sealed class RecapMaintainerProfileCatalog {
                     descriptor
                 )) {
                 throw new ArgumentException(
-                    "Recap maintainer profile catalog contains "
-                    + "duplicate frozen identity "
-                    + $"('{descriptor.MaintainerId}', "
-                    + $"'{descriptor.Target}', "
-                    + $"'{descriptor.CapabilityFingerprint}').",
+                    "Recap maintainer profile catalog contains duplicate frozen identity "
+                        + $"('{descriptor.MaintainerId}', '{descriptor.Target}', "
+                        + $"'{descriptor.CapabilityFingerprint}').",
                     nameof(descriptors)
+                );
+            }
+
+            RecapMaintainerFamilyDefinition family =
+                descriptor.Definition.Family;
+            if (familyBySemanticFingerprint.TryGetValue(
+                    family.SemanticFingerprint,
+                    out RecapMaintainerFamilyDefinition? existingFamily
+                )) {
+                if (!ReferenceEquals(existingFamily, family)) {
+                    throw new ArgumentException(
+                        "Recap maintainer profile catalog contains distinct family instances with the same semantic fingerprint.",
+                        nameof(descriptors)
+                    );
+                }
+            }
+            else {
+                familyBySemanticFingerprint.Add(
+                    family.SemanticFingerprint,
+                    family
                 );
             }
         }
@@ -307,7 +194,6 @@ public sealed class RecapMaintainerProfileCatalog {
             )) {
             return true;
         }
-
         descriptor = null!;
         return false;
     }
@@ -327,7 +213,6 @@ public sealed class RecapMaintainerProfileCatalog {
             )) {
             return true;
         }
-
         descriptor = null!;
         return false;
     }
@@ -339,8 +224,7 @@ public sealed class RecapMaintainerProfileCatalog {
         return TryResolveProfileName(profileName, out var descriptor)
             ? descriptor
             : throw new ArgumentException(
-                $"Unsupported recap maintainer profile "
-                + $"'{profileName}'.",
+                $"Unsupported recap maintainer profile '{profileName}'.",
                 nameof(profileName)
             );
     }
@@ -349,17 +233,14 @@ public sealed class RecapMaintainerProfileCatalog {
         => new([
             new(
                 WorldUnderstandingRewrite,
-                WorldUnderstandingRole,
-                RolePlayRecapBlockPaths
-                    .WorldUnderstandingBlockKey,
-                WorldUnderstandingRewriteProfiles.Default
+                RolePlayRecapBlockPaths.WorldUnderstandingBlockKey,
+                WorldUnderstandingRecapMaintainers.Default
             ),
             new(
                 AutobiographicalRewrite,
-                AutobiographyRole,
                 RolePlayRecapBlockPaths
                     .FirstPersonAutobiographyBlockKey,
-                AutobiographicalRewriteProfiles.Default
+                AutobiographicalRecapMaintainers.Default
             )
         ]);
 }

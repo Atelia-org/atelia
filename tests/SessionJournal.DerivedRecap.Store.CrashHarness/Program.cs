@@ -454,8 +454,8 @@ internal static class Program {
         public string CapabilityFingerprint { get; } =
             "sha256:0000000000000000000000000000000000000000000000000000000000000000";
 
-        public ValueTask<RecapBlockMaintenanceResult> MaintainAsync(
-            RecapBlockMaintenanceRequest request,
+        public ValueTask<RecapMaintenanceSuccess> MaintainAsync(
+            RecapMaintenanceEpochInput request,
             CancellationToken ct
         ) {
             ct.ThrowIfCancellationRequested();
@@ -469,11 +469,10 @@ internal static class Program {
             var entry = new MaintainerCallLogEntry(
                 Id,
                 ordinal + 1,
-                request.OldBlock.Text,
-                request.RecentHistory.SourceId ?? string.Empty,
-                request.RecentHistory.PriorContext.SystemPromptFragment,
-                request.RecentHistory.PriorContext.ObservationMessage,
-                request.RecentHistory.PriorContext.ActionMessage
+                request.SourceId ?? string.Empty,
+                request.PriorContext.SystemPromptFragment,
+                request.PriorContext.ObservationMessage,
+                request.PriorContext.ActionMessage
             );
             byte[] line = Encoding.UTF8.GetBytes(
                 JsonSerializer.Serialize(entry) + "\n"
@@ -500,14 +499,10 @@ internal static class Program {
                 );
             }
             return ValueTask.FromResult(
-                new RecapBlockMaintenanceResult(
-                    Id,
-                    Target,
-                    new ContextHeaderBlock(
-                        request.OldBlock.Text
-                        + $"|{Id}:{ordinal + 1}"
+                (RecapMaintenanceSuccess)new
+                    RecapMaintenanceSuccess.Updated(
+                        $"{Id}:{ordinal + 1}"
                     )
-                )
             );
         }
     }
@@ -515,7 +510,6 @@ internal static class Program {
     private sealed record MaintainerCallLogEntry(
         string MaintainerId,
         int Ordinal,
-        string OldContent,
         string SourceDescription,
         string PriorSystem,
         string PriorObservation,

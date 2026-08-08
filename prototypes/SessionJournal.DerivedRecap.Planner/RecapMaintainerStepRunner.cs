@@ -1,5 +1,6 @@
 using System.Text;
 using Atelia.EventJournal;
+using Atelia.SessionJournal.DerivedRecap.Abstractions;
 using Atelia.SessionJournal.DerivedRecap.Store;
 
 namespace Atelia.SessionJournal.DerivedRecap.Planner;
@@ -36,25 +37,36 @@ internal static class RecapMaintainerStepRunner {
         ArgumentNullException.ThrowIfNull(priorContext);
         ArgumentNullException.ThrowIfNull(window);
 
-        RecapBlockMaintenanceResult result;
+        if (!string.Equals(
+                maintainer.Id,
+                plan.MaintainerId,
+                StringComparison.Ordinal
+            )
+            || maintainer.Target != plan.Target
+            || !string.Equals(
+                maintainer.CapabilityFingerprint,
+                plan.MaintainerCapabilityFingerprint,
+                StringComparison.Ordinal
+            )) {
+            return new RecapMaintainerStepResult.ResultInvalid(
+                "Resolved Maintainer identity does not match the frozen block plan."
+            );
+        }
+
+        RecapMaintenanceSuccess result;
         try {
             result = await maintainer.MaintainAsync(
-                    new RecapBlockMaintenanceRequest(
-                        new RecentHistorySlice(
-                            priorContext,
-                            window.Units
-                                .Select(static unit => unit.Message)
-                                .ToArray(),
-                            EventAddressTextCodec.Format(
-                                window.StartExclusive
-                            )
-                            + ".."
-                            + EventAddressTextCodec.Format(
-                                window.ObservedRawHead
-                            )
-                        ),
-                        new ContextHeaderBlock(
-                            currentBlock?.Content ?? string.Empty
+                    new RecapMaintenanceEpochInput(
+                        priorContext,
+                        window.Units
+                            .Select(static unit => unit.Message)
+                            .ToArray(),
+                        EventAddressTextCodec.Format(
+                            window.StartExclusive
+                        )
+                        + ".."
+                        + EventAddressTextCodec.Format(
+                            window.ObservedRawHead
                         )
                     ),
                     cancellationToken
@@ -71,7 +83,23 @@ internal static class RecapMaintainerStepRunner {
             );
         }
 
-        string? invalidResult = ValidateResult(plan, result);
+        string? content = result switch {
+            RecapMaintenanceSuccess.Updated updated =>
+                updated.Content,
+            RecapMaintenanceSuccess.KeepUnchanged
+                when currentBlock is not null => currentBlock.Content,
+            RecapMaintenanceSuccess.KeepUnchanged => null,
+            null => null,
+            _ => null
+        };
+        if (result is RecapMaintenanceSuccess.KeepUnchanged
+            && currentBlock is null) {
+            return new RecapMaintainerStepResult.ResultInvalid(
+                "KeepUnchanged requires an existing recap block."
+            );
+        }
+
+        string? invalidResult = ValidateContent(plan, content);
         if (invalidResult is not null) {
             return new RecapMaintainerStepResult.ResultInvalid(
                 invalidResult
@@ -81,7 +109,7 @@ internal static class RecapMaintainerStepRunner {
             DerivedRecapCodec.CreateBlock(
                 plan,
                 endpoint,
-                result.NewBlock.Text
+                content!
             )
         );
     }
@@ -96,33 +124,19 @@ internal static class RecapMaintainerStepRunner {
         )
     };
 
-    private static string? ValidateResult(
+    private static string? ValidateContent(
         MaintainRecapBlockPlan plan,
-        RecapBlockMaintenanceResult? result
+        string? content
     ) {
-        if (result is null) {
+        if (content is null) {
             return "Maintainer returned null.";
         }
-        if (!string.Equals(
-                result.MaintainerId,
-                plan.MaintainerId,
-                StringComparison.Ordinal
-            )
-            || result.Target != plan.Target) {
-            return "Maintainer result Id or Target does not match "
-                + "the frozen block plan.";
-        }
-        if (result.NewBlock is null
-            || string.IsNullOrEmpty(result.NewBlock.Text)) {
+        if (string.IsNullOrEmpty(content)) {
             return "Maintainer result content cannot be empty.";
-        }
-        if (result.Errors is { Count: > 0 }) {
-            return "Maintainer returned errors: "
-                + string.Join("; ", result.Errors);
         }
         try {
             if (new UTF8Encoding(false, true).GetByteCount(
-                    result.NewBlock.Text
+                    content
                 ) > plan.MaxContentUtf8Bytes) {
                 return $"Maintainer result exceeds "
                     + $"{plan.MaxContentUtf8Bytes} UTF-8 bytes.";

@@ -5,6 +5,7 @@ using Atelia.Completion;
 using Atelia.Completion.Abstractions;
 using Atelia.Completion.Tools;
 using Atelia.EventJournal;
+using Atelia.SessionJournal.DerivedRecap.Maintainers;
 using Atelia.SessionJournal.DerivedRecap.Planner;
 using Atelia.SessionJournal.DerivedRecap.Store;
 using Xunit;
@@ -1642,12 +1643,50 @@ public sealed class ProgramDerivedRecapOnlineTurnTests : IDisposable {
             cancellationToken.ThrowIfCancellationRequested();
             _requests.Enqueue(request);
             Interlocked.Increment(ref _callCount);
-            return Task.FromResult(new CompletionResult(
-                new ActionMessage([
+            return Task.FromResult(Complete(request));
+        }
+
+        public Task<CompletionResult> StreamCompletionAsync(
+            CompletionRequest request,
+            CompletionInvocationOptions invocationOptions,
+            CompletionStreamObserver? observer,
+            CancellationToken cancellationToken = default
+        ) {
+            invocationOptions.Validate();
+            return StreamCompletionAsync(
+                request,
+                observer,
+                cancellationToken
+            );
+        }
+
+        private CompletionResult Complete(CompletionRequest request) {
+            bool isRecap = request.PromptPrefix.OutputContract.Tools.Any(
+                static tool => string.Equals(
+                    tool.Name,
+                    StructuredRecapMaintainerOutputProtocol.SubmitToolName,
+                    StringComparison.Ordinal
+                )
+            );
+            ActionMessage message = isRecap
+                ? new ActionMessage([
+                    new ActionBlock.ToolCall(new RawToolCall(
+                        StructuredRecapMaintainerOutputProtocol
+                            .SubmitToolName,
+                        "call-1",
+                        JsonSerializer.Serialize(new {
+                            outcome = "updated",
+                            content = responseText
+                        })
+                    ))
+                ])
+                : new ActionMessage([
                     new ActionBlock.Text(responseText)
-                ]),
+                ]);
+            return new CompletionResult(
+                message,
                 CompletionDescriptor.From(this, request)
-            ));
+            );
         }
     }
 

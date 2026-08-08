@@ -14,6 +14,11 @@
 Planner不保存 active config，不拥有 concrete prompt/profile，也不改变 Published strict
 ordinal。Store、Planner、Maintainers和 Host composition必须保持分离。
 
+Maintainer execution contract来自`SessionJournal.DerivedRecap.Abstractions`。Planner发送
+`RecapMaintenanceEpochInput`（shared prior context + history slab），不再发送per-block旧正文；成功结果只处理
+`Updated | KeepUnchanged`。`KeepUnchanged`仅在已有 current block时合法，Planner复制其正文并照常推进
+当前 endpoint；首轮返回该结果是 typed invalid output。
+
 ## 30 秒心智模型
 
 ```text
@@ -83,6 +88,7 @@ Maintainers，还需：
 
 ```csharp
 using Atelia.SessionJournal;
+using Atelia.SessionJournal.DerivedRecap.Abstractions;
 using Atelia.SessionJournal.DerivedRecap.Planner;
 using Atelia.SessionJournal.DerivedRecap.Store;
 using Atelia.SessionJournal.DerivedRecap.Maintainers;
@@ -469,9 +475,9 @@ exact envelope double-read所得的同一个`PublishedRecapSourceSnapshot`上，
 回显或改写prior；它从authoritative shared prior派生`EffectivePriorContext`。只要plan含Maintain，
 manifest根级冻结一次该exact snapshot及其canonical digest，每个Maintain plan只冻结相同digest；
 all-Inherit则冻结Empty。snapshot包含每个Maintainer自己的上一版和其他blocks的上一版，但不读取
-当前Building的partial output；因此block执行顺序和crash/reopen不会改变输入。`OldBlock`仍作为
-neutral request contract交付，但current rewrite只消费上述shared prior context，避免当前block正文
-重复进入prompt。
+当前Building的partial output；因此block执行顺序和crash/reopen不会改变输入。neutral maintenance
+contract只交付set-level shared prior与同一epoch history，旧的per-block payload已删除；
+current rewrite不会把当前block正文作为第二份输入重复进prompt。
 
 Inline prior的anchor表示previous Published full-pack container，必须等于每个Existing Maintain的
 `SourceSetAnchor`，而不是该block的`AbsorbedThrough` cursor。source-set仍必须是target admission的

@@ -27,11 +27,11 @@ public sealed class GalateaRecapCompositionRoutingTests {
                 callLogDirectory: callLogDirectory,
                 recapMaintainerConnections: [
                     new(
-                        WorldUnderstandingRewriteProfiles.MaintainerId,
+                        WorldUnderstandingRecapMaintainers.MaintainerId,
                         "test"
                     ),
                     new(
-                        AutobiographicalRewriteProfiles.MaintainerId,
+                        AutobiographicalRecapMaintainers.MaintainerId,
                         "test"
                     )
                 ]
@@ -93,9 +93,9 @@ public sealed class GalateaRecapCompositionRoutingTests {
         );
         IReadOnlyDictionary<string, string> routes =
             new Dictionary<string, string>(StringComparer.Ordinal) {
-                [WorldUnderstandingRewriteProfiles.MaintainerId] =
+                [WorldUnderstandingRecapMaintainers.MaintainerId] =
                     "world",
-                [AutobiographicalRewriteProfiles.MaintainerId] =
+                [AutobiographicalRecapMaintainers.MaintainerId] =
                     "autobiography"
             };
         IRecapBlockMaintainerRegistry maintainers =
@@ -161,7 +161,7 @@ public sealed class GalateaRecapCompositionRoutingTests {
                     .GetString()
             );
             Assert.Equal(
-                WorldUnderstandingRewriteProfiles.MaintainerId,
+                WorldUnderstandingRecapMaintainers.MaintainerId,
                 root.GetProperty("context")
                     .GetProperty("maintainerId")
                     .GetString()
@@ -225,9 +225,9 @@ public sealed class GalateaRecapCompositionRoutingTests {
         );
         IReadOnlyDictionary<string, string> routes =
             new Dictionary<string, string>(StringComparer.Ordinal) {
-                [WorldUnderstandingRewriteProfiles.MaintainerId] =
+                [WorldUnderstandingRecapMaintainers.MaintainerId] =
                     "not-registered",
-                [AutobiographicalRewriteProfiles.MaintainerId] =
+                [AutobiographicalRecapMaintainers.MaintainerId] =
                     "autobiography"
             };
         IRecapBlockMaintainerRegistry maintainers =
@@ -265,7 +265,7 @@ public sealed class GalateaRecapCompositionRoutingTests {
         return Assert.IsType<RewriteRecapBlockMaintainer>(maintainer);
     }
 
-    private static RecapBlockMaintenanceRequest CreateRequest(
+    private static RecapMaintenanceEpochInput CreateRequest(
         ContextHeaderBlockPath target
     ) {
         var context = new ContextHeaderPack();
@@ -280,12 +280,9 @@ public sealed class GalateaRecapCompositionRoutingTests {
             default:
                 throw new ArgumentOutOfRangeException(nameof(target));
         }
-        return new RecapBlockMaintenanceRequest(
-            new RecentHistorySlice(
-                context.Render(),
-                [new ObservationMessage("new history")]
-            ),
-            new ContextHeaderBlock("old recap")
+        return new RecapMaintenanceEpochInput(
+            context.Render(),
+            [new ObservationMessage("new history")]
         );
     }
 
@@ -369,10 +366,29 @@ public sealed class GalateaRecapCompositionRoutingTests {
             CancellationToken cancellationToken
         ) {
             cancellationToken.ThrowIfCancellationRequested();
-            const string text = "rewritten recap";
-            observer?.OnTextDelta(text);
+            if (!request.PromptPrefix.OutputContract.Tools.Any(
+                    static tool => string.Equals(
+                        tool.Name,
+                        StructuredRecapMaintainerOutputProtocol
+                            .SubmitToolName,
+                        StringComparison.Ordinal
+                    )
+                )) {
+                const string text = "agent response";
+                observer?.OnTextDelta(text);
+                return Task.FromResult(new CompletionResult(
+                    new ActionMessage([new ActionBlock.Text(text)]),
+                    CompletionDescriptor.From(this, request)
+                ));
+            }
+            var call = new RawToolCall(
+                StructuredRecapMaintainerOutputProtocol.SubmitToolName,
+                "call-1",
+                "{\"outcome\":\"updated\",\"content\":\"rewritten recap\"}"
+            );
+            observer?.OnToolCall(call);
             return Task.FromResult(new CompletionResult(
-                new ActionMessage([new ActionBlock.Text(text)]),
+                new ActionMessage([new ActionBlock.ToolCall(call)]),
                 CompletionDescriptor.From(this, request)
             ));
         }

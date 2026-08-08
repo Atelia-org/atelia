@@ -366,18 +366,15 @@ public sealed class DerivedRecapPreparedRecoveryIntegrationTests
 
         public int CallCount { get; private set; }
 
-        public ValueTask<RecapBlockMaintenanceResult> MaintainAsync(
-            RecapBlockMaintenanceRequest request,
+        public ValueTask<RecapMaintenanceSuccess> MaintainAsync(
+            RecapMaintenanceEpochInput request,
             CancellationToken ct
         ) {
             ct.ThrowIfCancellationRequested();
             CallCount++;
             return ValueTask.FromResult(
-                new RecapBlockMaintenanceResult(
-                    Id,
-                    Target,
-                    new ContextHeaderBlock(RecapText)
-                )
+                (RecapMaintenanceSuccess)new
+                    RecapMaintenanceSuccess.Updated(RecapText)
             );
         }
     }

@@ -7,6 +7,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <ProjectReference Include="../SessionJournal.DerivedRecap.Abstractions/SessionJournal.DerivedRecap.Abstractions.csproj" />
     <ProjectReference Include="../SessionJournal.DerivedRecap.Store/SessionJournal.DerivedRecap.Store.csproj" />
   </ItemGroup>
 

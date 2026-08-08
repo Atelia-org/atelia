@@ -217,8 +217,8 @@ public sealed class DeferredRecapBlockMaintainerRegistryTests {
             capabilityFingerprint;
         public ContextHeaderBlockPath Target { get; } = target;
 
-        public ValueTask<RecapBlockMaintenanceResult> MaintainAsync(
-            RecapBlockMaintenanceRequest request,
+        public ValueTask<RecapMaintenanceSuccess> MaintainAsync(
+            RecapMaintenanceEpochInput request,
             CancellationToken ct
         ) => throw new NotSupportedException();
     }

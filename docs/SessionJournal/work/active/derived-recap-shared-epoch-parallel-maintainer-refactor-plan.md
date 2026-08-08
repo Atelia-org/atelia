@@ -11,13 +11,20 @@ Context baseline：`6a80afdda7f12d6c9ce432066dfb51d1b3326762`
 |---|---|---|
 | R0 | Complete | fresh inventory at `359bdfc0`; related Completion/Maintainers/Planner/Store/Galatea test projects built with 0 warnings/errors; Completion 438/438 and Maintainers 29/29 baseline passed |
 | R1 | Complete | `6d273515` + tail fix `e846ea14`; immutable typed prefix/output/tail, provider projection, call-log v6 and Prepared fail-closed boundary; independent tail review found no P0/P1 |
-| R2A | Next | introduce DerivedRecap Abstractions and family/member/output-protocol single source |
-| R2B–R7 | Pending | follow the package gates in §11; do not infer implementation from this target document |
+| R2A | Complete | new DerivedRecap Abstractions; immutable family/member/output-protocol single source; structured `Updated \| KeepUnchanged`; old per-block request/result path removed; focused Maintainers/Planner/Host tests and solution build validated |
+| R2B | Next | introduce ExecutionLane / RuntimeGroup / BoundMaintainer and remove concrete Maintainer private client/model dispatch |
+| R3A–R7 | Pending | follow the package gates in §11; do not infer implementation from this target document |
 
 R1 deterministic evidence: Completion 456 non-live tests, SessionJournal 409, Agent.Core 117, Galatea 94 passed / 4
 environment-skipped, solution build 0 warnings/errors. The existing full CLI baseline still has 16 recap fakes that reject the
 already-production `NoReuseExpected` options overload and one stale connection-fingerprint golden; these were independently
 shown not to originate in R1 and remain visible gates for the R2/R6 test migration rather than accepted final-state failures.
+
+R2A deterministic evidence: Completion 456 non-live tests and Maintainers 24 tests passed; Planner full suite passed in the
+independent review run and the two new KeepUnchanged regressions passed again after the review tail. Galatea recap tests
+18/18, CLI recap execution 15/15, two online recap/agent routing tests, and CLI recap-config 5/5 passed. The prior
+`NoReuseExpected` recap fakes are migrated; CLI still retains the pre-existing stale connection-fingerprint golden noted
+above, which R2A does not rewrite.
 
 ## 1. 新会话快速入口
 

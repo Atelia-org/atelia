@@ -460,7 +460,7 @@ public sealed class DerivedRecapPlannerExecutorTests {
                 admission,
                 Assert.Single(seeds.Seeds)
             );
-        var maintainer = new InvalidIdentityMaintainer(
+        var maintainer = new InvalidContentMaintainer(
             "self-maintainer",
             fixture.SelfTarget
         );
@@ -505,7 +505,7 @@ public sealed class DerivedRecapPlannerExecutorTests {
             "self-maintainer",
             fixture.SelfTarget,
             (_, request) => {
-                observedSourceId = request.RecentHistory.SourceId;
+                observedSourceId = request.SourceId;
                 return "canonical";
             }
         );
@@ -527,6 +527,93 @@ public sealed class DerivedRecapPlannerExecutorTests {
             + ".."
             + EventAddressTextCodec.Format(window.ObservedRawHead),
             observedSourceId
+        );
+    }
+
+    [Fact]
+    public async Task MaintainerStepKeepUnchangedCopiesExistingContentAndAdvances() {
+        using TestFixture fixture = await TestFixture.CreateAsync(
+            historyPairs: 1
+        );
+        EventAddress start = fixture.ReplayStart();
+        EventAddress admission = fixture.Engine.ReadCurrentHead()!.Value;
+        MaintainRecapBlockPlan plan = fixture.CreateEmptyPlan(
+            fixture.SelfId,
+            fixture.SelfTarget,
+            "self-maintainer",
+            start,
+            [admission]
+        );
+        SessionHistoryPlanningSeedBatch seeds =
+            fixture.Engine.ReadHistoryPlanningSeeds([start]);
+        SessionHistoryPlanningWindow window =
+            fixture.Engine.ReadHistoryPlanningWindowAt(
+                admission,
+                Assert.Single(seeds.Seeds)
+            );
+        DerivedRecapBlock current = DerivedRecapCodec.CreateBlock(
+            plan,
+            start,
+            "stable"
+        );
+
+        var succeeded = Assert.IsType<
+            RecapMaintainerStepResult.Succeeded
+        >(await RecapMaintainerStepRunner.RunAsync(
+            new FixedOutcomeMaintainer(
+                "self-maintainer",
+                fixture.SelfTarget,
+                RecapMaintenanceSuccess.KeepUnchanged.Instance
+            ),
+            plan,
+            ContextHeaderSnapshot.Empty,
+            current,
+            window,
+            admission,
+            CancellationToken.None
+        ));
+
+        Assert.Equal("stable", succeeded.Candidate.Content);
+        Assert.Equal(admission, succeeded.Candidate.AbsorbedThrough);
+    }
+
+    [Fact]
+    public async Task MaintainerStepKeepUnchangedWithoutExistingBlockIsInvalid() {
+        using TestFixture fixture = await TestFixture.CreateAsync(
+            historyPairs: 1
+        );
+        EventAddress start = fixture.ReplayStart();
+        EventAddress admission = fixture.Engine.ReadCurrentHead()!.Value;
+        MaintainRecapBlockPlan plan = fixture.CreateEmptyPlan(
+            fixture.SelfId,
+            fixture.SelfTarget,
+            "self-maintainer",
+            start,
+            [admission]
+        );
+        SessionHistoryPlanningWindow window =
+            fixture.Engine.ReadHistoryPlanningWindowAt(
+                admission,
+                Assert.Single(
+                    fixture.Engine.ReadHistoryPlanningSeeds([start])
+                        .Seeds
+                )
+            );
+
+        Assert.IsType<RecapMaintainerStepResult.ResultInvalid>(
+            await RecapMaintainerStepRunner.RunAsync(
+                new FixedOutcomeMaintainer(
+                    "self-maintainer",
+                    fixture.SelfTarget,
+                    RecapMaintenanceSuccess.KeepUnchanged.Instance
+                ),
+                plan,
+                ContextHeaderSnapshot.Empty,
+                currentBlock: null,
+                window,
+                admission,
+                CancellationToken.None
+            )
         );
     }
 
@@ -1000,8 +1087,9 @@ public sealed class DerivedRecapPlannerExecutorTests {
         var maintainer = new ScriptedMaintainer(
             "self-maintainer",
             fixture.SelfTarget,
-            static (call, request) =>
-                $"{request.OldBlock.Text}|step-{call}"
+            static (call, _) => call == 1
+                ? "|step-1"
+                : "|step-1|step-2"
         );
         DerivedRecapPlannerExecutor executor = fixture.CreateExecutor(
             new BoundedMaintainAllRecapPlanningPolicy(),
@@ -1043,14 +1131,14 @@ public sealed class DerivedRecapPlannerExecutorTests {
         var self = new ScriptedMaintainer(
             "self-maintainer",
             fixture.SelfTarget,
-            static (_, request) => request.OldBlock.Text.Length == 0
+            static (_, request) => request.PriorContext.IsEmpty
                 ? "fact-A"
                 : "fact-A+fact-B"
         );
         var peer = new ScriptedMaintainer(
             "peer-maintainer",
             peerTarget,
-            static (_, request) => request.OldBlock.Text.Length == 0
+            static (_, request) => request.PriorContext.IsEmpty
                 ? "fact-C"
                 : "fact-C+fact-D"
         );
@@ -1083,11 +1171,11 @@ public sealed class DerivedRecapPlannerExecutorTests {
         );
         Assert.True(
             Assert.Single(self.Requests)
-                .RecentHistory.PriorContext.IsEmpty
+                .PriorContext.IsEmpty
         );
         Assert.True(
             Assert.Single(peer.Requests)
-                .RecentHistory.PriorContext.IsEmpty
+                .PriorContext.IsEmpty
         );
         PublishedRecapSourceSnapshot firstSource =
             await fixture.ReadSourceAsync(
@@ -1115,17 +1203,15 @@ public sealed class DerivedRecapPlannerExecutorTests {
             "## peer\n\nfact-C",
             string.Empty
         );
-        RecapBlockMaintenanceRequest selfRequest =
+        RecapMaintenanceEpochInput selfRequest =
             Assert.Single(self.Requests);
-        RecapBlockMaintenanceRequest peerRequest =
+        RecapMaintenanceEpochInput peerRequest =
             Assert.Single(peer.Requests);
-        Assert.Equal(expectedPrior, selfRequest.RecentHistory.PriorContext);
-        Assert.Equal(expectedPrior, peerRequest.RecentHistory.PriorContext);
-        Assert.Equal("fact-A", selfRequest.OldBlock.Text);
-        Assert.Equal("fact-C", peerRequest.OldBlock.Text);
+        Assert.Equal(expectedPrior, selfRequest.PriorContext);
+        Assert.Equal(expectedPrior, peerRequest.PriorContext);
         Assert.DoesNotContain(
             "fact-A+fact-B",
-            peerRequest.RecentHistory.PriorContext.SystemPromptFragment,
+            peerRequest.PriorContext.SystemPromptFragment,
             StringComparison.Ordinal
         );
 
@@ -1598,10 +1684,7 @@ public sealed class DerivedRecapPlannerExecutorTests {
         var maintainer = new ScriptedMaintainer(
             "self-maintainer",
             fixture.SelfTarget,
-            static (_, request) =>
-                request.OldBlock.Text.Length == 0
-                    ? "stable"
-                    : request.OldBlock.Text
+            static (_, _) => "stable"
         );
         var policy = new DelegatePolicy(context =>
             new RecapPlanningPolicyDecision.Build(
@@ -1804,7 +1887,7 @@ public sealed class DerivedRecapPlannerExecutorTests {
             static (call, request) => call switch {
                 1 => "checkpoint-one",
                 2 => throw new InvalidOperationException("zeta failed"),
-                _ => request.OldBlock.Text + "+checkpoint-two"
+                _ => "checkpoint-one+checkpoint-two"
             }
         );
         DerivedRecapBuildingExecutor executor =
@@ -1823,9 +1906,9 @@ public sealed class DerivedRecapPlannerExecutorTests {
                 await executor.ResumeAsync(admission)
             );
 
-        Assert.Equal(
-            ["", "checkpoint-one", "checkpoint-one"],
-            maintainer.OldBlocks
+        Assert.All(
+            maintainer.PriorContexts,
+            static prior => Assert.True(prior.IsEmpty)
         );
         PublishedRecapSourceSnapshot source =
             await fixture.ReadSourceAsync(
@@ -1954,7 +2037,7 @@ public sealed class DerivedRecapPlannerExecutorTests {
         var firstMaintainer = new ScriptedMaintainer(
             "self-maintainer",
             fixture.SelfTarget,
-            static (_, request) => request.OldBlock.Text + "+done"
+            static (_, _) => "checkpoint+done"
         );
         captureComponentPhase = true;
 
@@ -3851,7 +3934,7 @@ public sealed class DerivedRecapPlannerExecutorTests {
     private sealed class ScriptedMaintainer : IRecapBlockMaintainer {
         private readonly Func<
             int,
-            RecapBlockMaintenanceRequest,
+            RecapMaintenanceEpochInput,
             string
         > _maintain;
         private readonly Action? _beforeReturn;
@@ -3859,7 +3942,7 @@ public sealed class DerivedRecapPlannerExecutorTests {
         public ScriptedMaintainer(
             string id,
             ContextHeaderBlockPath target,
-            Func<int, RecapBlockMaintenanceRequest, string> maintain,
+            Func<int, RecapMaintenanceEpochInput, string> maintain,
             string capabilityFingerprint =
                 RecapPlannerTestIdentity.CapabilityFingerprint,
             Action? beforeReturn = null
@@ -3875,36 +3958,33 @@ public sealed class DerivedRecapPlannerExecutorTests {
         public string CapabilityFingerprint { get; }
         public ContextHeaderBlockPath Target { get; }
         public int CallCount { get; private set; }
-        public List<string> OldBlocks { get; } = [];
-        public List<RecapBlockMaintenanceRequest> Requests { get; } = [];
+        public List<ContextHeaderSnapshot> PriorContexts { get; } = [];
+        public List<RecapMaintenanceEpochInput> Requests { get; } = [];
 
-        public ValueTask<RecapBlockMaintenanceResult> MaintainAsync(
-            RecapBlockMaintenanceRequest request,
+        public ValueTask<RecapMaintenanceSuccess> MaintainAsync(
+            RecapMaintenanceEpochInput request,
             CancellationToken ct
         ) {
             ct.ThrowIfCancellationRequested();
             CallCount++;
-            OldBlocks.Add(request.OldBlock.Text);
+            PriorContexts.Add(request.PriorContext);
             Requests.Add(request);
             string content = _maintain(CallCount, request);
             _beforeReturn?.Invoke();
             return ValueTask.FromResult(
-                new RecapBlockMaintenanceResult(
-                    Id,
-                    Target,
-                    new ContextHeaderBlock(content)
-                )
+                (RecapMaintenanceSuccess)new
+                    RecapMaintenanceSuccess.Updated(content)
             );
         }
 
         public void Reset() {
             CallCount = 0;
-            OldBlocks.Clear();
+            PriorContexts.Clear();
             Requests.Clear();
         }
     }
 
-    private sealed class InvalidIdentityMaintainer(
+    private sealed class InvalidContentMaintainer(
         string id,
         ContextHeaderBlockPath target
     ) : IRecapBlockMaintainer {
@@ -3913,16 +3993,32 @@ public sealed class DerivedRecapPlannerExecutorTests {
             "sha256:0000000000000000000000000000000000000000000000000000000000000000";
         public ContextHeaderBlockPath Target { get; } = target;
 
-        public ValueTask<RecapBlockMaintenanceResult> MaintainAsync(
-            RecapBlockMaintenanceRequest request,
+        public ValueTask<RecapMaintenanceSuccess> MaintainAsync(
+            RecapMaintenanceEpochInput request,
             CancellationToken ct
         ) => ValueTask.FromResult(
-            new RecapBlockMaintenanceResult(
-                Id + "-wrong",
-                Target,
-                new ContextHeaderBlock("invalid")
-            )
+            (RecapMaintenanceSuccess)new
+                RecapMaintenanceSuccess.Updated(string.Empty)
         );
+    }
+
+    private sealed class FixedOutcomeMaintainer(
+        string id,
+        ContextHeaderBlockPath target,
+        RecapMaintenanceSuccess outcome
+    ) : IRecapBlockMaintainer {
+        public string Id { get; } = id;
+        public string CapabilityFingerprint { get; } =
+            RecapPlannerTestIdentity.CapabilityFingerprint;
+        public ContextHeaderBlockPath Target { get; } = target;
+
+        public ValueTask<RecapMaintenanceSuccess> MaintainAsync(
+            RecapMaintenanceEpochInput input,
+            CancellationToken cancellationToken
+        ) {
+            cancellationToken.ThrowIfCancellationRequested();
+            return ValueTask.FromResult(outcome);
+        }
     }
 
     private sealed class TestFixture : IDisposable {

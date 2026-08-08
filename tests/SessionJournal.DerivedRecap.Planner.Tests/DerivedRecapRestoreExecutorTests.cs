@@ -645,7 +645,7 @@ public sealed class DerivedRecapRestoreExecutorTests {
 
         _ = Assert.IsType<DerivedRecapRestoreResult.Restored>(result);
         Assert.Equal(1, maintainer.CallCount);
-        Assert.Equal(["checkpoint"], maintainer.OldBlocks);
+        Assert.Single(maintainer.PriorContexts);
         Assert.Equal(
             "target-content",
             await fixture.MaterializedTextAsync(target)
@@ -873,7 +873,7 @@ public sealed class DerivedRecapRestoreExecutorTests {
         );
         var maintainer = fixture.CreateMaintainer(
             plan,
-            static (_, request) => request.OldBlock.Text + "+suffix"
+            static (_, _) => "checkpoint+suffix"
         );
 
         DerivedRecapRestoreResult result =
@@ -884,7 +884,7 @@ public sealed class DerivedRecapRestoreExecutorTests {
             result
         );
         Assert.Equal(1, maintainer.CallCount);
-        Assert.Equal(["checkpoint"], maintainer.OldBlocks);
+        Assert.Single(maintainer.PriorContexts);
         Assert.Equal(
             "checkpoint+suffix",
             await fixture.MaterializedTextAsync(anchor)
@@ -981,7 +981,7 @@ public sealed class DerivedRecapRestoreExecutorTests {
         );
         var maintainer = fixture.CreateMaintainer(
             plan,
-            static (_, request) => request.OldBlock.Text + "+suffix",
+            static (_, _) => "checkpoint+suffix",
             beforeReturn: () => headersAtMaintainer = fixture.Engine
                 .CaptureReadDiagnostics()
                 .HeaderPreviewReadCount
@@ -1111,8 +1111,9 @@ public sealed class DerivedRecapRestoreExecutorTests {
         );
         var maintainer = fixture.CreateMaintainer(
             plan,
-            static (call, request) =>
-                request.OldBlock.Text + $"step-{call}"
+            static (call, _) => call == 1
+                ? "step-1"
+                : "step-1step-2"
         );
 
         DerivedRecapRestoreResult result =
@@ -1123,7 +1124,7 @@ public sealed class DerivedRecapRestoreExecutorTests {
             result
         );
         Assert.Equal(2, maintainer.CallCount);
-        Assert.Equal(["", "step-1"], maintainer.OldBlocks);
+        Assert.Equal(2, maintainer.PriorContexts.Count);
         Assert.Equal(
             "step-1step-2",
             await fixture.MaterializedTextAsync(anchor)
@@ -1229,7 +1230,7 @@ public sealed class DerivedRecapRestoreExecutorTests {
         );
         var maintainer = fixture.CreateMaintainer(
             plan,
-            static (_, request) => request.OldBlock.Text + "+suffix"
+            static (_, _) => "checkpoint+suffix"
         );
         var restored =
             Assert.IsType<DerivedRecapRestoreResult.Restored>(
@@ -1824,7 +1825,7 @@ public sealed class DerivedRecapRestoreExecutorTests {
     private sealed class ScriptedMaintainer : IRecapBlockMaintainer {
         private readonly Func<
             int,
-            RecapBlockMaintenanceRequest,
+            RecapMaintenanceEpochInput,
             string
         > _maintain;
         private readonly Action? _beforeReturn;
@@ -1832,7 +1833,7 @@ public sealed class DerivedRecapRestoreExecutorTests {
         public ScriptedMaintainer(
             string id,
             ContextHeaderBlockPath target,
-            Func<int, RecapBlockMaintenanceRequest, string> maintain,
+            Func<int, RecapMaintenanceEpochInput, string> maintain,
             Action? beforeReturn,
             string capabilityFingerprint =
                 RecapPlannerTestIdentity.CapabilityFingerprint
@@ -1848,23 +1849,20 @@ public sealed class DerivedRecapRestoreExecutorTests {
         public string CapabilityFingerprint { get; }
         public ContextHeaderBlockPath Target { get; }
         public int CallCount { get; private set; }
-        public List<string> OldBlocks { get; } = [];
+        public List<ContextHeaderSnapshot> PriorContexts { get; } = [];
 
-        public ValueTask<RecapBlockMaintenanceResult> MaintainAsync(
-            RecapBlockMaintenanceRequest request,
+        public ValueTask<RecapMaintenanceSuccess> MaintainAsync(
+            RecapMaintenanceEpochInput request,
             CancellationToken ct
         ) {
             ct.ThrowIfCancellationRequested();
             CallCount++;
-            OldBlocks.Add(request.OldBlock.Text);
+            PriorContexts.Add(request.PriorContext);
             string content = _maintain(CallCount, request);
             _beforeReturn?.Invoke();
             return ValueTask.FromResult(
-                new RecapBlockMaintenanceResult(
-                    Id,
-                    Target,
-                    new ContextHeaderBlock(content)
-                )
+                (RecapMaintenanceSuccess)new
+                    RecapMaintenanceSuccess.Updated(content)
             );
         }
     }
@@ -1878,15 +1876,12 @@ public sealed class DerivedRecapRestoreExecutorTests {
             "sha256:0000000000000000000000000000000000000000000000000000000000000000";
         public ContextHeaderBlockPath Target { get; } = target;
 
-        public ValueTask<RecapBlockMaintenanceResult> MaintainAsync(
-            RecapBlockMaintenanceRequest request,
+        public ValueTask<RecapMaintenanceSuccess> MaintainAsync(
+            RecapMaintenanceEpochInput request,
             CancellationToken ct
         ) => ValueTask.FromResult(
-            new RecapBlockMaintenanceResult(
-                Id + "-wrong",
-                Target,
-                new ContextHeaderBlock("invalid")
-            )
+            (RecapMaintenanceSuccess)new
+                RecapMaintenanceSuccess.Updated(string.Empty)
         );
     }
 
@@ -2366,7 +2361,7 @@ public sealed class DerivedRecapRestoreExecutorTests {
             MaintainRecapBlockPlan plan,
             Func<
                 int,
-                RecapBlockMaintenanceRequest,
+                RecapMaintenanceEpochInput,
                 string
             >? maintain = null,
             Action? beforeReturn = null

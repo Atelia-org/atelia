@@ -151,8 +151,11 @@ public sealed class SessionJournalPublicAuthorityTests : IDisposable {
         Assert.Null(engineType.Assembly.GetType(
             "Atelia.SessionJournal.RecentHistoryAnalysisContext"
         ));
-        Assert.NotNull(engineType.Assembly.GetType(
-            "Atelia.SessionJournal.RecentHistorySlice"
+        Assert.Null(engineType.Assembly.GetType(
+            "Atelia.SessionJournal.RecentHistory" + "Slice"
+        ));
+        Assert.NotNull(typeof(RecapMaintenanceEpochInput).Assembly.GetType(
+            "Atelia.SessionJournal.DerivedRecap.Abstractions.RecapMaintenanceEpochInput"
         ));
     }
 

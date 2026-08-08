@@ -203,7 +203,7 @@ internal static class RecapPlannerConfigCommands {
                             profile.CatalogEntry.MaintainerId,
                             profile.CatalogEntry
                                 .MaxContentUtf8Bytes,
-                            profile.Capability.PromptFingerprint,
+                            profile.Capability.FamilyFingerprint,
                             profile.Capability.CapabilityFingerprint
                         )
                 )
@@ -361,7 +361,7 @@ internal sealed record RecapPlannerConfigCatalogReport(
     string TargetBlockKey,
     string MaintainerId,
     int MaxContentUtf8Bytes,
-    string PromptFingerprint,
+    string FamilyFingerprint,
     string CapabilityFingerprint
 );
 

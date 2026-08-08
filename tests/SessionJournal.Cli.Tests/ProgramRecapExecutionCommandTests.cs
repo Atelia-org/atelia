@@ -78,7 +78,7 @@ public sealed class ProgramRecapExecutionCommandTests : IDisposable {
                     world.Target
                 );
                 Assert.Equal(
-                    WorldUnderstandingRewriteProfiles.MaintainerId,
+                    WorldUnderstandingRecapMaintainers.MaintainerId,
                     world.MaintainerId
                 );
                 Assert.Equal(
@@ -102,7 +102,7 @@ public sealed class ProgramRecapExecutionCommandTests : IDisposable {
                     autobiography.Target
                 );
                 Assert.Equal(
-                    AutobiographicalRewriteProfiles.MaintainerId,
+                    AutobiographicalRecapMaintainers.MaintainerId,
                     autobiography.MaintainerId
                 );
                 Assert.Equal(
@@ -1569,12 +1569,39 @@ public sealed class ProgramRecapExecutionCommandTests : IDisposable {
             if (call == failAtCall) {
                 throw new HttpRequestException(failureMessage);
             }
-            return Task.FromResult(new CompletionResult(
+            return Task.FromResult(Complete(request));
+        }
+
+        public Task<CompletionResult> StreamCompletionAsync(
+            CompletionRequest request,
+            CompletionInvocationOptions invocationOptions,
+            CompletionStreamObserver? observer,
+            CancellationToken cancellationToken = default
+        ) {
+            invocationOptions.Validate();
+            return StreamCompletionAsync(
+                request,
+                observer,
+                cancellationToken
+            );
+        }
+
+        private CompletionResult Complete(CompletionRequest request) {
+            string arguments = JsonSerializer.Serialize(new {
+                outcome = "updated",
+                content = responseText
+            });
+            return new CompletionResult(
                 new ActionMessage([
-                    new ActionBlock.Text(responseText)
+                    new ActionBlock.ToolCall(new RawToolCall(
+                        StructuredRecapMaintainerOutputProtocol
+                            .SubmitToolName,
+                        "call-1",
+                        arguments
+                    ))
                 ]),
                 CompletionDescriptor.From(this, request)
-            ));
+            );
         }
     }
 }

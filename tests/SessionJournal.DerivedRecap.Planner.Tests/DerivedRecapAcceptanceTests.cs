@@ -157,12 +157,8 @@ public sealed class DerivedRecapAcceptanceTests {
             maintainer.Requests.Skip(1),
             request => Assert.Equal(
                 finalPrior.Snapshot,
-                request.RecentHistory.PriorContext
+                request.PriorContext
             )
-        );
-        Assert.Equal(
-            Assert.Single(a12Source.FrozenInputs).Content,
-            maintainer.Requests[1].OldBlock.Text
         );
         Assert.Equal(
             [a[5], a[11], a[20]],
@@ -698,24 +694,20 @@ public sealed class DerivedRecapAcceptanceTests {
             "sha256:0000000000000000000000000000000000000000000000000000000000000000";
         public ContextHeaderBlockPath Target { get; }
         public int CallCount { get; private set; }
-        public List<RecapBlockMaintenanceRequest> Requests { get; } = [];
+        public List<RecapMaintenanceEpochInput> Requests { get; } = [];
 
-        public ValueTask<RecapBlockMaintenanceResult> MaintainAsync(
-            RecapBlockMaintenanceRequest request,
+        public ValueTask<RecapMaintenanceSuccess> MaintainAsync(
+            RecapMaintenanceEpochInput request,
             CancellationToken ct
         ) {
             ct.ThrowIfCancellationRequested();
             CallCount++;
             Requests.Add(request);
             return ValueTask.FromResult(
-                new RecapBlockMaintenanceResult(
-                    Id,
-                    Target,
-                    new ContextHeaderBlock(
-                        request.OldBlock.Text
-                        + $"|review:{CallCount}"
+                (RecapMaintenanceSuccess)new
+                    RecapMaintenanceSuccess.Updated(
+                        $"review:{CallCount}"
                     )
-                )
             );
         }
     }
