@@ -30,7 +30,8 @@ internal abstract record SerialEpochBlockOutcome(
 internal sealed record SerialEpochKernelResult(
     RecapMaintenanceEpochInput RuntimeInput,
     IReadOnlyList<SerialEpochBlockOutcome> Outcomes,
-    SerialEpochFailure? PrimaryFailure
+    SerialEpochFailure? PrimaryFailure,
+    int StartedCallCount
 ) {
     public bool Succeeded => PrimaryFailure is null;
 }
@@ -180,14 +181,21 @@ internal static class DerivedRecapSerialEpochKernel {
                         failure
                     );
             }
-            return Finish(runtimeInput, outcomes, preflightFailure);
+            return Finish(
+                runtimeInput,
+                outcomes,
+                preflightFailure,
+                startedCallCount: 0
+            );
         }
 
+        int startedCallCount = 0;
         foreach (PendingMaintainer item in pending) {
             cancellationToken.ThrowIfCancellationRequested();
             RecapEpochBlockDefinition definition = item.Inspection.Definition;
             RecapMaintenanceSuccess result;
             try {
+                startedCallCount = checked(startedCallCount + 1);
                 result = await item.Maintainer!.MaintainAsync(
                         runtimeInput,
                         cancellationToken
@@ -315,7 +323,12 @@ internal static class DerivedRecapSerialEpochKernel {
             .OfType<SerialEpochBlockOutcome.Failed>()
             .Select(static outcome => outcome.Failure)
             .FirstOrDefault();
-        return Finish(runtimeInput, outcomes, primary);
+        return Finish(
+            runtimeInput,
+            outcomes,
+            primary,
+            startedCallCount
+        );
     }
 
     internal static RecapMaintenanceEpochInput ProjectRuntimeInput(
@@ -399,7 +412,8 @@ internal static class DerivedRecapSerialEpochKernel {
     private static SerialEpochKernelResult Finish(
         RecapMaintenanceEpochInput runtimeInput,
         SerialEpochBlockOutcome?[] outcomes,
-        SerialEpochFailure? primary
+        SerialEpochFailure? primary,
+        int startedCallCount
     ) {
         if (outcomes.Any(static outcome => outcome is null)) {
             throw new InvalidDataException(
@@ -409,7 +423,8 @@ internal static class DerivedRecapSerialEpochKernel {
         return new SerialEpochKernelResult(
             runtimeInput,
             Array.AsReadOnly(outcomes.Cast<SerialEpochBlockOutcome>().ToArray()),
-            primary
+            primary,
+            startedCallCount
         );
     }
 

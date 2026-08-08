@@ -65,6 +65,7 @@ public sealed class DerivedRecapSerialEpochKernelTests {
             );
 
         Assert.True(result.Succeeded);
+        Assert.Equal(2, result.StartedCallCount);
         Assert.Same(Assert.Single(self.Inputs), Assert.Single(world.Inputs));
         Assert.Same(result.RuntimeInput, self.Inputs[0]);
         Assert.Equal(2, result.RuntimeInput.HistoryMessages.Count);
@@ -107,6 +108,7 @@ public sealed class DerivedRecapSerialEpochKernelTests {
             );
 
         Assert.False(result.Succeeded);
+        Assert.Equal(0, result.StartedCallCount);
         Assert.Empty(self.Inputs);
         Assert.Equal("MaintainerUnavailable", result.PrimaryFailure!.Code);
         Assert.All(
@@ -193,6 +195,7 @@ public sealed class DerivedRecapSerialEpochKernelTests {
             );
 
         Assert.False(result.Succeeded);
+        Assert.Equal(0, result.StartedCallCount);
         Assert.Equal("FinalSlotUnavailable", result.PrimaryFailure!.Code);
         Assert.Empty(self.Inputs);
         Assert.Empty(world.Inputs);
@@ -235,6 +238,7 @@ public sealed class DerivedRecapSerialEpochKernelTests {
             );
 
         Assert.False(result.Succeeded);
+        Assert.Equal(2, result.StartedCallCount);
         Assert.Equal(roster[0].RecapBlockId, result.PrimaryFailure!.RecapBlockId);
         Assert.Single(self.Inputs);
         Assert.Single(world.Inputs);
@@ -287,6 +291,7 @@ public sealed class DerivedRecapSerialEpochKernelTests {
             );
 
         Assert.True(result.Succeeded);
+        Assert.Equal(0, result.StartedCallCount);
         Assert.Equal(0, installs);
         Assert.All(
             result.Outcomes,
