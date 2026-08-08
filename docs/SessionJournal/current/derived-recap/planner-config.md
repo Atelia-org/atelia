@@ -53,7 +53,7 @@ repo-owned operator intent：
 |---|---|---|
 | raw SessionJournal | session facts、Parent lineage、governing setup、`NthPrevious` | concrete Recap policy、Maintainer roster |
 | `recap-planner-config.json` | 未来 planning intent、active profile roster、planning ceilings | 已冻结 Building 的 route、Published membership |
-| Building manifest | exact admission、block bindings、source、route、prior、content limits | 后续新 set 的调度策略 |
+| Building manifest | exact admission、block bindings、source、route、set-level prior/digest、content limits | 后续新 set 的调度策略 |
 | Published publication | strict ordinal membership与 exact materialization | Planner配置 |
 
 配置文件丢失或损坏不会令 raw repo或已 Published Recap变成不合法，也不妨碍：

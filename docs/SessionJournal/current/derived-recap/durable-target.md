@@ -143,16 +143,19 @@ Store backend 必须支持：
 
 ## 3. Frozen Building plan
 
-> **实现分期注记**：R0 持久化完整 union 的 canonical shape，但只允许
-> `Maintain { Source = Empty }` 创建 Building。`Inherit` 与
-> `Maintain { Source = Existing }` 必须等 R1 exact source envelope double-read/copy 后启用；
-> 这不改变下述最终态 contract。
-
 ```text
 DerivedRecapSetManifest {
   Schema
   RefId
   SetAdmissionAnchor
+  SetAdmissionAnchorSetups
+  PriorContext =
+    Empty
+    | Inline {
+        AdmissionAnchor
+        Snapshot
+      }
+  PriorContextPayloadSha256
   Blocks[]
   ManifestPayloadSha256
 }
@@ -180,13 +183,8 @@ RecapBlockPlan =
       | Empty {
         ReplayStartExclusive
       }
-    CatchUpThrough[]
-    PriorContext =
-      Empty
-      | Inline {
-          AdmissionAnchor
-          Snapshot
-        }
+    CatchUpBoundaries[]
+    PriorContextPayloadSha256
     MaxContentUtf8Bytes
   }
 ```
@@ -196,8 +194,10 @@ RecapBlockPlan =
 - source inputs 先于 manifest durable；manifest 先于任何 Maintainer 调用或 output；
 - 无 healthy manifest 的 pre-build files 是 orphan，整体隔离，不被新 manifest复用；
 - `ManifestPayloadSha256` 覆盖 manifest 的 canonical bytes（排除该 hash 字段本身），包括
-  schema、RefId、SetAdmissionAnchor 与 ordered block plans；它只检测 accidental corruption，
-  不是 identity；
+  schema、RefId、SetAdmissionAnchor、set-level prior payload/digest与ordered block plans；它只检测
+  accidental corruption，不是 identity；
+- `PriorContextPayloadSha256`覆盖canonical prior union的kind、Inline admission anchor与完整snapshot；
+  每个Maintain plan只保存同一个digest，`BlockPlanSha256`由此传递绑定root execution input；
 - `SetAdmissionAnchor` 等于 directory key，是同一 `RefId` 上 replay-safe raw boundary；
 - `RecapBlockId` 与 Target 均不得重复；
 - explicit discriminated union 决定 Maintain/Inherit，不从 nullable fields猜测；
@@ -206,14 +206,21 @@ RecapBlockPlan =
   `sha256:<64 lowercase hex>`，Store/Planner不从当前catalog推断或解释其preimage；
 - Existing first replay start 由 frozen input `AbsorbedThrough` 得出；
 - Empty 显式保存 replay seed；
-- 只持久化 ordered `CatchUpThrough[]`；step start 由 source cursor/previous endpoint 推导；
+- 只持久化 ordered `CatchUpBoundaries[]`，每项冻结Address与Setups；step start由source cursor/previous
+  endpoint推导；
 - endpoints 同 lineage、strictly increasing、dependency-closed bounded materializable；
 - final endpoint 等于 `SetAdmissionAnchor`；
-- first build的prior context显式Empty；已有source时，从同一次exact previous Published snapshot按
-  frozen plan顺序投影全部frozen blocks，得到所有Maintain plans共享的Inline snapshot；
+- policy不输出per-block prior；Evaluator冻结
+  `EffectivePriorContext = any Maintain ? authoritative shared : Empty`；all-Inherit只冻结Empty；
+- first-maintain的prior context显式Empty；已有source且需要Maintain时，从同一次exact previous
+  Published snapshot按frozen plan顺序投影全部frozen blocks，在manifest根级冻结一次Inline snapshot；
 - shared prior context整条route复用，包含当前block及其他blocks的上一版；Inline anchor是first
   replay start的同-lineage ancestor；
 - prior context不读取当前Building的partial output；current rewrite不再把`OldBlock`重复放入prompt；
+- first-maintain只允许Empty source；existing-maintain只允许Existing source；两者不得在同一manifest
+  混用；Resume/Restore共享root snapshot，不从inputs重新render或读取live Published；
+- 完整canonical manifest/publication encoded bytes分别在写前受2 MiB/3 MiB上限约束；JSON escaping与
+  ordered metadata同样计入；
 - raw-core candidate limits 与 Store publication gate 使用同一 versioned validator。
 
 ### 3.1 Exact source snapshot
@@ -257,8 +264,9 @@ DerivedRecapBlock {
 ```
 
 `PayloadSha256` 覆盖 ID、Target、cursor 与 Content。`BlockPlanSha256` 覆盖 authoritative frozen
-manifest 中该 block 的 exact discriminated `RecapBlockPlan` canonical bytes，把 wrapper 绑定到
-当前 phase authoritative frozen plan。
+manifest 中该 block 的 exact discriminated `RecapBlockPlan` canonical bytes。Maintain plan canonical
+bytes包含root `PriorContextPayloadSha256`，而manifest validator要求该digest匹配root prior正文，因此
+wrapper被传递绑定到当前phase的exact set-level prior execution input；无需在plan内重复snapshot。
 
 规则：
 
@@ -443,7 +451,9 @@ open exact raw boundary + healthy Recap Store
   -> select strict-later SetAdmissionAnchor，admission后至少保留 reserve
   -> decide each block Maintain/Inherit
   -> exact-envelope copy frozen sources
-  -> project previous Published pack once + freeze route/shared prior context
+  -> project previous Published pack once
+  -> Evaluator freeze one EffectivePriorContext + canonical digest
+  -> freeze route and per-Maintain prior digest commitment
   -> write manifest
   -> execute phase-specific final-block actions
   -> CanPublish + latest revalidation
@@ -487,9 +497,11 @@ one Maintainer step runner
 
 Published Restore：
 
-- frozen plan、anchor、roster、mode、source、route、prior context、MaintainerId、
+- frozen plan、anchor、roster、mode、source、route、root prior context/digest、MaintainerId、
   MaintainerCapabilityFingerprint 与 per-block
   `MaxContentUtf8Bytes` exact不变；当前 operator trigger/planning ceilings不参与恢复裁决；
+- 所有需要重跑/续跑的Maintain action共享authoritative manifest中的exact snapshot；不从frozen inputs
+  重新render，也不读取live Published source；
 - 只允许 regenerated block commitments 和 envelope token 改变；
 - component 逐个 atomic replace，publication envelope last；
 - block replace 后、envelope 前 exact set保持 unavailable；
@@ -563,6 +575,9 @@ bounded Restore 与显式运维。
 - final gate拒绝 retroactive insertion 与 concurrent publish race；
 - rolling checkpoint健康时只补 suffix，损坏时只重跑该 block；
 - 其他 healthy final blocks不重跑；
+- manifest只保存一份prior snapshot；所有Maintain plans只保存并匹配root prior digest；
+- all-Inherit manifest冻结Empty；policy不能输出或篡改per-block prior；
+- manifest/publication canonical encoded bytes超过2 MiB/3 MiB时在durable write前拒绝；
 - Maintain unchanged content仍推进 cursor；
 - 老王 block可跨 leisure sets Inherit，随后从真实 old cursor分段 catch up；
 - A5/A11 不进入 ordinal或成为 inheritance source；
@@ -580,13 +595,15 @@ bounded Restore 与显式运维。
 - Prepared 后删除整个 `derived/recap/v4`仍 exact reopen；
 - active target 不再使用 DerivedArtifactSet/DerivedMemory 作为 V4 Recap 领域名。
 
-## 12. Maintainer capability schema cutover
+## 12. Set-level prior 与 Maintainer capability schema cutover
 
-durable layout、Store header与block schema继续使用v4；manifest与publication envelope使用v6，
-frozen input使用v5。canonical payload hash覆盖每个Maintain plan的
-`MaintainerCapabilityFingerprint`以及 admission、source cursor、replay start、catch-up boundary 所需的
-exact governing-setup references。manifest/publication v5与frozen-input v4不提供兼容读取、默认值或
-current-ID推断。采用该 direct cut 前必须显式处理旧sidecar：只有Building时执行
+durable layout、Store header与block schema继续使用v4，frozen input继续使用v5；manifest与publication
+envelope使用v7。canonical manifest hash覆盖root prior正文/digest、每个Maintain plan的相同prior digest、
+`MaintainerCapabilityFingerprint`以及admission、source cursor、replay start、catch-up boundary所需的exact
+governing-setup references。`BlockPlanSha256`通过prior digest绑定root snapshot。manifest/publication v6
+及更早版本与frozen-input v4不提供兼容读取、默认值、runtime re-render或current-ID推断；本版也不引入
+独立`prior-context.json`。完整canonical manifest/publication encoded bytes必须在对应durable write前分别
+通过2 MiB/3 MiB gate。采用该 direct cut 前必须显式处理旧sidecar：只有Building时执行
 `recap abandon-building`；存在Published membership时执行带exact `--confirm-ref`的`recap reset`，随后
 显式`recap run`重建。这里定义 accepted durable target；current codec常量与reader language仍以Store
 README、`DerivedRecapCodec`及其focused tests为核验入口。

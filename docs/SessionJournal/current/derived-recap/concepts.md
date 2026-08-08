@@ -1,7 +1,7 @@
 # SessionJournal Event-addressed Derived Recap：核心概念
 
 > **状态**：Canonical Current Vocabulary（EADR V4）
-> **日期**：2026-07-30
+> **日期**：2026-08-08
 > **目标设计**：
 > [Event-addressed Derived Recap V4](durable-target.md)
 >
@@ -194,7 +194,8 @@ workflow authority。
 - ordered `CatchUpBoundaries[]`，每项冻结 `(Address, Setups)`；
 - source replay start 与 frozen input cursor 的 exact governing setup refs；
 - frozen shared prior context：首轮显式 Empty；后续build把exact previous Published set的全部
-  frozen blocks投影成同一个`ContextHeaderPack` snapshot，并复制到每个Maintain plan；
+  frozen blocks投影成同一个`ContextHeaderPack` snapshot，在manifest根级只冻结一次正文及其
+  `PriorContextPayloadSha256`；每个Maintain plan只提交相同digest；
 - content limit。
 
 每步 start 由 source replay boundary 或前一 frozen boundary 推导；address 与 setups共同构成
@@ -204,10 +205,14 @@ replay authority，执行时不得重新发现后静默替换。
 blocks的上一版；不得读取当前Building的partial results。其admission anchor必须不晚于first replay
 start，保证block执行顺序与crash/reopen不改变输入。neutral maintenance request仍携带`OldBlock`，
 但current rewrite以shared prior context作为旧recap唯一prompt表示，避免当前block重复出现。
-policy只能把authoritative shared prior按值保留到每个Maintain decision；Evaluator必须拒绝Empty/
-Inline kind、anchor或snapshot内容发生变化的输出。Evaluator还必须先验证phase：first build只接受
-Empty；existing build只接受位于exact latest Published anchor且snapshot非null的Inline（snapshot
-正文允许为空）。
+
+policy可以只读authoritative shared prior，但不输出per-block prior。Evaluator冻结
+`EffectivePriorContext = any Maintain ? authoritative shared : Empty`，所以all-Inherit manifest不会携带
+无用snapshot。Evaluator与manifest validator共同验证phase：first-maintain只接受Empty source与Empty
+prior；existing-maintain只接受Existing source与位于exact latest Published anchor、snapshot非null的
+Inline；Existing/Empty Maintain source不得混用。manifest根级digest覆盖kind、Inline anchor与完整
+snapshot；`BlockPlanSha256`通过每个Maintain plan中的相同digest绑定exact set-level execution input。
+Resume/Restore直接共享manifest中的snapshot，不从frozen inputs重新render，也不读取live Published。
 
 ## 6. Published membership 与 strict ordinal
 

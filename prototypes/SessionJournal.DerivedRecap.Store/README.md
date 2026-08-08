@@ -13,13 +13,40 @@ Maintainer or defaults it from `MaintainerId`.
 
 The durable directory and Store header remain `derived/recap/v4` and Store
 schema v4. Final blocks also remain v4. The manifest and Published publication
-envelope are schema v6, and frozen inputs are schema v5. Their canonical
+envelope are schema v7, and frozen inputs are schema v5. Their canonical
 payloads freeze the exact governing setup references for admission, source
 cursor, replay start, and every catch-up boundary. Maintain routes use
 `RecapReplayBoundary(Address, Setups)`, and the final boundary must exactly
 equal both manifest admission fields. There are deliberately no readers for
-manifest/publication v5 or frozen-input v4: an old Building must be explicitly
-abandoned; an old Published Store must be explicitly reset and rebuilt.
+manifest/publication v6 or earlier, or frozen-input v4: an old Building must be
+explicitly abandoned; an old Published Store must be explicitly reset and
+rebuilt.
+
+## Set-level frozen prior context
+
+Manifest v7 freezes prior context once at the manifest root as
+`PriorContext + PriorContextPayloadSha256`. A Maintain plan carries only the
+same `PriorContextPayloadSha256`; it never repeats the snapshot body. The
+digest covers the canonical prior-context union, including kind, Inline
+admission anchor, and all snapshot fields. Because `BlockPlanSha256` covers the
+Maintain plan, each final/checkpoint block remains transitively bound to the
+exact set-level execution input while the manifest size grows only by one
+snapshot plus one digest per Maintain plan.
+
+Store validates the root payload/digest pair and requires every Maintain digest
+to match it. An all-Inherit plan freezes Empty because it has no Maintainer
+execution input. A first-maintain plan uses Empty sources and Empty prior; an
+existing-maintain plan uses Existing sources and one Inline prior. Existing and
+Empty Maintain sources cannot be mixed in one manifest. Resume and Restore
+reuse the exact root snapshot for every Maintainer step; they do not render it
+again from frozen inputs or read a live Published source.
+
+The 2 MiB manifest and 3 MiB publication limits apply to the actual canonical
+encoded JSON, including escaping and all plan metadata. Creation and envelope
+rewrite reject over-limit encoded bytes before the corresponding durable write;
+the larger shape-level Inline UTF-8 guard is not a substitute for these wire
+caps. The prior snapshot remains inline in the manifest: there is no separate
+`prior-context.json` dependency.
 
 ## Publication authority
 
@@ -96,9 +123,9 @@ referenced Published sources are reread exactly and frozen into the Building.
 `Published`, `NotPublishable`, `BeyondPrefix`, `StoreUnavailable`, or
 `RawHeadChanged`. Admission and historical source validation occurs before
 staging/sealing writes, and the final raw-head fence remains immediately before
-promotion. The Store directory/header and final-block schemas remain v4; the
-frozen wire cutover above intentionally changes manifest, frozen-input, and
-publication schemas without a compatibility layer.
+promotion. The Store directory/header and final-block schemas remain v4,
+frozen inputs remain v5, and the set-level-prior cutover intentionally changes
+manifest and publication to v7 without a compatibility layer.
 
 Contract changes must follow the
 [canonical normalization gate](../../docs/SessionJournal/current/derived-recap/concepts.md#contract-normalization-gate).

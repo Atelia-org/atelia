@@ -455,7 +455,7 @@ DerivedRecapExecutionResult resumed =
 ```
 
 Resume不需要、也不应接收 `RecapPlanningInputs`或 `RecapPlanningLimits`。它使用 frozen route、
-source、prior context、content ceiling与 code-owned `RecapProtocolHardCaps.V4`。schema v6
+source、set-level prior context、content ceiling与 code-owned `RecapProtocolHardCaps.V4`。schema v7
 manifest中的 admission/source/replay boundary均冻结 exact governing setup refs；Resume验证
 这些 refs并用它们构造 replay seed。healthy final block直接复用；只补缺失或未完成工作。
 
@@ -465,10 +465,18 @@ window。线上路径不调用full-lineage header/setup discovery；无法证明
 
 `bounded-maintain-all-v1`在首轮使用显式Empty prior context。已有Published source时，Planner在
 exact envelope double-read所得的同一个`PublishedRecapSourceSnapshot`上，按其frozen plan顺序把
-全部frozen block inputs投影成一个`ContextHeaderPack`，并将同一个Inline snapshot冻结到所有
-Maintain plans。它包含每个Maintainer自己的上一版和其他blocks的上一版，但不读取当前Building的
-partial output；因此block执行顺序和crash/reopen不会改变输入。`OldBlock`仍作为neutral request
-contract交付，但current rewrite只消费上述shared prior context，避免当前block正文重复进入prompt。
+全部frozen block inputs投影成一个`ContextHeaderPack`。Evaluator不允许policy在per-block decision中
+回显或改写prior；它从authoritative shared prior派生`EffectivePriorContext`。只要plan含Maintain，
+manifest根级冻结一次该exact snapshot及其canonical digest，每个Maintain plan只冻结相同digest；
+all-Inherit则冻结Empty。snapshot包含每个Maintainer自己的上一版和其他blocks的上一版，但不读取
+当前Building的partial output；因此block执行顺序和crash/reopen不会改变输入。`OldBlock`仍作为
+neutral request contract交付，但current rewrite只消费上述shared prior context，避免当前block正文
+重复进入prompt。
+
+Resume与Restore都从authoritative manifest读取同一份root prior，并把同一个runtime snapshot共享给
+所有pending Maintainer steps。它们不从build-local inputs重新render，也不读取live Published source。
+Planner/Store在任何对应durable write前分别检查完整manifest/publication canonical encoded bytes不超过
+2 MiB/3 MiB；JSON escaping与ordered plans同样计入，不以snapshot正文的单独UTF-8 guard替代wire cap。
 
 `None`、`Multiple`、`Stale`、`Invalid`和 `StoreUnavailable`必须分别处理，不要按目录时间选择
 “最新 Building”。
@@ -738,6 +746,9 @@ JSON fragment。
 - 不要在 Resume/Restore读取 active config、重新选择 roster或重新计算 admission。
 - 不要从当前Building的checkpoint/final block拼装prior context；它只能来自planning时捕获并冻结的
   previous Published source，首轮则显式Empty。
+- 不要让policy输出per-block prior context；Evaluator拥有`EffectivePriorContext`，durable Maintain plan
+  只提交manifest根级prior的canonical digest。
+- 不要在Resume/Restore从frozen inputs重新render prior；exact snapshot已由schema v7 manifest冻结。
 - 不要把 Building当作 Published，也不要用 filesystem timestamp实现 latest。
 - 不要缓存 provider token count来替代 HistoryLoad。未来 load cache也只能是可删除重建的
   Planner/Host optimization。

@@ -1,11 +1,12 @@
 # SessionJournal Beta contract snapshot
 
-状态：Beta-supported；candidate-specific gate 见 §7  
-Product candidate：`49ebb4634e5b4136032db983dd92a9a4560b33eb`  
-Prior Beta-supported candidate：`681fc02bb9f1e4a45cd012aa7feadefe3f33fa9e`
+状态：Current contract；manifest/publication v7 candidate-specific gate **NotRun**，见 §7  
+Product candidate：尚未冻结  
+Prior Beta-supported candidate：`49ebb4634e5b4136032db983dd92a9a4560b33eb`
 
-本文冻结首个 Beta 准备支持的边界。它不是所有当前 `public` 类型的兼容性承诺；未列入角色 allowlist 的
-diagnostic、low-level 或 first-party cross-assembly mechanics 仍可在 Beta 前后按明确决策收窄。
+本文维护当前 Beta contract shape。它不是所有当前 `public` 类型的兼容性承诺；未列入角色 allowlist 的
+diagnostic、low-level 或 first-party cross-assembly mechanics 仍可在 Beta 前后按明确决策收窄。§7保留
+prior candidate的exact历史证据，并明确它不能认证本次v7 direct cut。
 
 ## 1. Authority model
 
@@ -29,7 +30,7 @@ diagnostic、low-level 或 first-party cross-assembly mechanics 仍可在 Beta �
 普通 consumer 不应依赖 public diagnostic records、test/trusted seams、Planner/Building low-level executors或伪造
 descriptor。是否 `public` 本身不构成 Beta support 证据。
 
-本candidate的public factory不接收`SessionRuntime`；writable Host唯一public runtime attachment是无-runtime
+当前contract的public factory不接收`SessionRuntime`；writable Host唯一public runtime attachment是无-runtime
 `Create/Open`之后的`UseRuntime`。三个runtime-bearing factory overload是direct cut，不保留compatibility
 overload。`ReadPayloadBytes(EventAddress)`已internal；普通consumer应使用completed/recovery projection、
 engine-bound `SessionJournalReadView`或Offline checked audit。
@@ -74,7 +75,7 @@ Prepared exact inputs 最多 128；artifact context snapshot 最大 4 MiB。unkn
 strict decode semantics 与 Prepared reconstruction canonical bytes 使用同一 authority rules；只有 schema 明确声明为
 nullable 的字段接受 null。
 
-Candidate `49ebb463`没有A-level raw/recovery wire变化。
+Prior candidate `49ebb463`没有A-level raw/recovery wire变化；本次v7 cut同样不修改A-level wire。
 
 ## 4. B-level repo-owned Planner config
 
@@ -102,13 +103,20 @@ root：`<repo>/derived/recap/v4/refs/<ref-id>/`
 | Artifact | Schema | Read cap |
 |---|---|---:|
 | `store.json` | `atelia.session-journal.derived-recap-store.v4` | 16 KiB |
-| `manifest.json` | `atelia.session-journal.derived-recap-manifest.v6` | 2 MiB |
+| `manifest.json` | `atelia.session-journal.derived-recap-manifest.v7` | 2 MiB |
 | frozen input | `atelia.session-journal.derived-recap-frozen-input.v5` | 5 MiB |
 | final block | `atelia.session-journal.derived-recap-block.v4` | 512 KiB |
-| `publication.json` | `atelia.session-journal.published-recap-set.v6` | 3 MiB |
+| `publication.json` | `atelia.session-journal.published-recap-set.v7` | 3 MiB |
 
-Building inventory 最多 1024 entries；bounded lineage proof 最多 513 headers。old manifest/publication v5 与
-frozen-input v4 是 direct cut，严格拒绝，不提供 compatibility reader。
+Manifest v7在根级只保存一份`PriorContext + PriorContextPayloadSha256`；每个Maintain plan只保存相同
+digest，`BlockPlanSha256`由此绑定exact set-level execution input。all-Inherit使用Empty；policy不输出
+per-block prior，Resume/Restore不从inputs重新render。Building inventory 最多1024 entries；bounded lineage
+proof最多513 headers。old manifest/publication v6及更早版本与frozen-input v4严格拒绝，不提供
+compatibility reader。
+
+2 MiB/3 MiB是完整canonical manifest/publication encoded bytes的读写边界。创建Building或写入/重写
+publication envelope前必须先编码并检查实际bytes；JSON escaping、ordered plans与commitments全部计入。
+本版不增加独立`prior-context.json`。
 
 Linux durability path 使用 same-directory temporary、flush/fsync、no-replace rename 与 directory fsync。
 `Selected` 只认证 publication/manifest metadata descriptor；component missing/corrupt 由 exact-slot Restore
@@ -141,7 +149,7 @@ publication、block、checkpoint bytes与schema均未改变。
 ## 7. Verification boundary
 
 `681fc02b`的历史R4在两个独立`--no-local` fresh clone上合计通过2080 tests、10 expected skips、0 failed，
-并完成real-provider/staging workflow；该证据只认证prior Beta-supported candidate，不自动转移到本candidate。
+并完成real-provider/staging workflow；该证据只认证对应prior candidate，不自动转移到current v7 candidate。
 
 Gate-tooling实施前，`49ebb463`的独立local Release solution build为0 warnings、0 errors；七套default
 tests合计1044 passed、5 expected opt-in skips、0 failed。另以已验证的1,281,881-byte真实legacy export
@@ -159,6 +167,7 @@ fixture显式运行4项disposable-Host staging acceptance，各自4 passed、0 s
 Gate-tooling commit `81a1fa24`只修改tests/runbook，不改变product assemblies或candidate contract；其提交后
 Release solution build为0 warnings、0 errors，CLI全套116 passed、1 expected opt-in skip、0 failed，Galatea带
 v6 fixture全套70 passed、0 skipped、0 failed。这些scripted gates不包含real-provider dispatch或real Host canary；
-本轮provider request construction未变，external provider calls为0。因此本快照将`49ebb463`记为
-Beta-supported。完整证据边界见
+本轮provider request construction未变，external provider calls为0。因此`49ebb463`是prior
+Beta-supported candidate。上述build/tests/fixture均早于set-level prior与manifest/publication v7 direct cut，
+不能认证current contract；current v7 candidate-specific gate状态为**NotRun**。完整历史证据边界见
 [`contract-normalization-review.md`](../../evidence/contract-normalization-review.md)。
