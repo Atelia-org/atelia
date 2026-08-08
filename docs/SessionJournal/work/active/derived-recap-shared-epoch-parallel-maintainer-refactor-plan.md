@@ -1,9 +1,23 @@
 # DerivedRecap Shared Epoch / Maintainer Family 并行重构计划
 
-状态：Active / Independently reviewed / Ready for implementation  
+状态：Active / Implementation in progress  
 Context baseline：`6a80afdda7f12d6c9ce432066dfb51d1b3326762`  
 目标阶段：首次发布前 direct-cut refactor；现有 DerivedRecap sidecar 将由 operator reset 后从 raw history rebuild  
 本文性质：Shape / Rule / Plan authority candidate，不描述 current implementation 已经具备的行为
+
+### Implementation progress
+
+| Package | State | Evidence |
+|---|---|---|
+| R0 | Complete | fresh inventory at `359bdfc0`; related Completion/Maintainers/Planner/Store/Galatea test projects built with 0 warnings/errors; Completion 438/438 and Maintainers 29/29 baseline passed |
+| R1 | Complete | `6d273515` + tail fix `e846ea14`; immutable typed prefix/output/tail, provider projection, call-log v6 and Prepared fail-closed boundary; independent tail review found no P0/P1 |
+| R2A | Next | introduce DerivedRecap Abstractions and family/member/output-protocol single source |
+| R2B–R7 | Pending | follow the package gates in §11; do not infer implementation from this target document |
+
+R1 deterministic evidence: Completion 456 non-live tests, SessionJournal 409, Agent.Core 117, Galatea 94 passed / 4
+environment-skipped, solution build 0 warnings/errors. The existing full CLI baseline still has 16 recap fakes that reject the
+already-production `NoReuseExpected` options overload and one stale connection-fingerprint golden; these were independently
+shown not to originate in R1 and remain visible gates for the R2/R6 test migration rather than accepted final-state failures.
 
 ## 1. 新会话快速入口
 
