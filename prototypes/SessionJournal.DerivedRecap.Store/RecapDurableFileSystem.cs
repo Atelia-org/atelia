@@ -343,6 +343,19 @@ internal sealed class RecapDurableFileSystem {
         );
     }
 
+    public void DeleteDirectoryTree(string path) {
+        EnsureSafeDescendant(path);
+        if (!Directory.Exists(path)) {
+            return;
+        }
+        DeleteDirectoryTreeCore(path);
+        string parent = Path.GetDirectoryName(path)
+            ?? throw new InvalidDataException(
+                $"Directory has no parent: {path}"
+            );
+        FlushDirectory(parent);
+    }
+
     public async ValueTask<FileStream> AcquireExclusiveLockAsync(
         string path,
         CancellationToken cancellationToken
@@ -561,6 +574,35 @@ internal sealed class RecapDurableFileSystem {
         }
         catch {
         }
+    }
+
+    private void DeleteDirectoryTreeCore(string directory) {
+        EnsureSafeDescendant(directory);
+        FileAttributes directoryAttributes =
+            File.GetAttributes(directory);
+        if ((directoryAttributes & FileAttributes.ReparsePoint) != 0) {
+            throw new InvalidDataException(
+                $"Refusing to traverse rebuild spool reparse point: {directory}"
+            );
+        }
+        foreach (string entry in Directory.EnumerateFileSystemEntries(
+                     directory
+                 )) {
+            EnsureSafeDescendant(entry);
+            FileAttributes attributes = File.GetAttributes(entry);
+            if ((attributes & FileAttributes.ReparsePoint) != 0) {
+                throw new InvalidDataException(
+                    $"Refusing to delete rebuild spool reparse point: {entry}"
+                );
+            }
+            if ((attributes & FileAttributes.Directory) != 0) {
+                DeleteDirectoryTreeCore(entry);
+            }
+            else {
+                File.Delete(entry);
+            }
+        }
+        Directory.Delete(directory, recursive: false);
     }
 
     [DllImport(

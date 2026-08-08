@@ -28,7 +28,11 @@ internal sealed record RecapStoreTestHooks(
     Action? BeforeRestoreEnvelopeRawHeadRecheck = null,
     Action? BeforeBuildingComponentRead = null,
     Action? BeforeBuildingQuarantineRename = null,
-    Action? AfterBuildingQuarantineRename = null
+    Action? AfterBuildingQuarantineRename = null,
+    Action? AfterRebuildPageInstalledBeforeCheckpoint = null,
+    Action? BeforeRebuildCheckpointReplace = null,
+    Action? BeforeRebuildSealInstall = null,
+    Action? AfterRebuildDeleteQuarantineRename = null
 );
 
 public sealed class DerivedRecapStore {
