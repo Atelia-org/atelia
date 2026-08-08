@@ -924,23 +924,26 @@ public sealed class DerivedRecapEpochStore {
                     stagePath,
                     "publication.json"
                 );
-                string publicationStateToken;
-                if (!File.Exists(publicationPath)) {
-                    if (!allowManifestWitness) {
-                        throw new InvalidDataException(
-                            "Published recap has no publication envelope."
-                        );
-                    }
-                    publicationStateToken = "missing";
-                }
-                else {
-                    byte[] publicationBytes =
+                string? publicationStateToken = null;
+                byte[]? publicationBytes = null;
+                try {
+                    publicationBytes =
                         await _fileSystem.ReadBoundedAsync(
                                 publicationPath,
                                 Limits.MaxPublicationBytes,
                                 cancellationToken
                             )
                             .ConfigureAwait(false);
+                }
+                catch (Exception exception)
+                    when (allowManifestWitness
+                          && exception is (
+                              FileNotFoundException
+                              or DirectoryNotFoundException
+                          )) {
+                    publicationStateToken = "missing";
+                }
+                if (publicationBytes is not null) {
                     try {
                         publication = DerivedRecapV8Codec.DecodePublication(
                             publicationBytes
@@ -987,6 +990,9 @@ public sealed class DerivedRecapEpochStore {
                         ? RecapEpochPublishedAuthorityKind.ManifestWitness
                         : RecapEpochPublishedAuthorityKind.Publication,
                     publicationStateToken
+                        ?? throw new InvalidDataException(
+                            "Published envelope state was not captured."
+                        )
                 );
             }
 
@@ -1058,9 +1064,6 @@ public sealed class DerivedRecapEpochStore {
             "blocks",
             $"{definition.RecapBlockId.Value}.json"
         );
-        if (!File.Exists(path)) {
-            return new RecapEpochFinalHealth.Missing("missing");
-        }
         byte[] bytes;
         try {
             bytes = await _fileSystem.ReadBoundedAsync(
@@ -1069,6 +1072,11 @@ public sealed class DerivedRecapEpochStore {
                     cancellationToken
                 )
                 .ConfigureAwait(false);
+        }
+        catch (Exception exception)
+            when (exception is FileNotFoundException
+                  or DirectoryNotFoundException) {
+            return new RecapEpochFinalHealth.Missing("missing");
         }
         catch (Exception exception)
             when (exception is InvalidDataException
