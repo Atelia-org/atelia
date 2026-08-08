@@ -675,7 +675,7 @@ public sealed class DerivedRecapCrashRecoveryTests {
         DerivedRecapMaterialization materialized =
             await store.MaterializeAsync(selected.Descriptor);
         Assert.Equal(
-            "|roleplay.autobiographical:1",
+            "roleplay.autobiographical:1",
             Assert.Single(materialized.Contributions).ExactText
         );
     }
