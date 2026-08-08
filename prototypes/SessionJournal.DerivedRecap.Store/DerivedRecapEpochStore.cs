@@ -335,7 +335,7 @@ public sealed class DerivedRecapEpochStore {
     ) => ReadStageAsync(
         RecapEpochFinalStage.Published,
         admissionAnchor,
-        requireCommittedFinals: false,
+        requireCommittedFinals: true,
         allowManifestWitness: true,
         cancellationToken
     );
@@ -386,7 +386,8 @@ public sealed class DerivedRecapEpochStore {
         RecapEpochStoreReadResult read = await ReadStageCoreAsync(
                 authority.Stage,
                 authority.Building.AdmissionAnchor,
-                requireCommittedFinals: false,
+                requireCommittedFinals:
+                    authority.Stage == RecapEpochFinalStage.Published,
                 allowManifestWitness:
                     authority.Stage == RecapEpochFinalStage.Published,
                 cancellationToken
@@ -790,6 +791,99 @@ public sealed class DerivedRecapEpochStore {
             }
         }
         return new RecapEpochSelectionResult.Empty();
+    }
+
+    public async ValueTask<IReadOnlyList<EventAddress>>
+        ListPublishedAnchorsAsync(
+        CancellationToken cancellationToken = default
+    ) {
+        await using FileStream readLock =
+            await AcquireReadyReadLockAsync(cancellationToken)
+                .ConfigureAwait(false);
+        var anchors = new List<EventAddress>();
+        int count = 0;
+        foreach (string entry in Directory.EnumerateFileSystemEntries(
+                     _publishedRoot
+                 )) {
+            if (++count > MaxInventoryEntries) {
+                throw new InvalidDataException(
+                    "Published inventory exceeds the Store bound."
+                );
+            }
+            if (!Directory.Exists(entry)
+                || !EventAddressFileNameCodec.TryParse(
+                    Path.GetFileName(entry),
+                    out EventAddress address
+                )) {
+                throw new InvalidDataException(
+                    "Published inventory contains a non-canonical entry."
+                );
+            }
+            anchors.Add(address);
+        }
+        return Array.AsReadOnly(anchors.ToArray());
+    }
+
+    public async ValueTask<RecapEpochBuildingSelectionResult>
+        SelectBuildingAsync(
+        CancellationToken cancellationToken = default
+    ) {
+        await using FileStream writeLock =
+            await AcquireReadyWriteLockAsync(cancellationToken)
+                .ConfigureAwait(false);
+        RecoverBuildingStaging();
+        EventAddress? found = null;
+        int count = 0;
+        foreach (string entry in Directory.EnumerateFileSystemEntries(
+                     _buildingRoot
+                 )) {
+            if (++count > MaxInventoryEntries) {
+                throw new InvalidDataException(
+                    "Building inventory exceeds the Store bound."
+                );
+            }
+            string name = Path.GetFileName(entry);
+            if (name.StartsWith(".", StringComparison.Ordinal)) {
+                continue;
+            }
+            if (!Directory.Exists(entry)
+                || !EventAddressFileNameCodec.TryParse(
+                    name,
+                    out EventAddress address
+                )
+                || found is not null) {
+                throw new InvalidDataException(
+                    "Building inventory must contain at most one canonical epoch directory."
+                );
+            }
+            found = address;
+        }
+        if (found is not EventAddress admission) {
+            return new RecapEpochBuildingSelectionResult.Empty();
+        }
+        RecapEpochStoreReadResult read = await ReadStageCoreAsync(
+                RecapEpochFinalStage.Building,
+                admission,
+                requireCommittedFinals: false,
+                allowManifestWitness: false,
+                cancellationToken
+            )
+            .ConfigureAwait(false);
+        return read switch {
+            RecapEpochStoreReadResult.Available available =>
+                new RecapEpochBuildingSelectionResult.Selected(
+                    available.Snapshot
+                ),
+            RecapEpochStoreReadResult.Invalid invalid =>
+                new RecapEpochBuildingSelectionResult.Invalid(
+                    admission,
+                    invalid.Detail
+                ),
+            _ => new RecapEpochBuildingSelectionResult.Invalid(
+                admission,
+                "Building disappeared during locked selection."
+            )
+        };
     }
 
     public async ValueTask<DerivedRecapMaterialization> MaterializeAsync(

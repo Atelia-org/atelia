@@ -259,3 +259,18 @@ public abstract record RecapEpochSelectionResult {
         string Detail
     ) : RecapEpochSelectionResult;
 }
+
+public abstract record RecapEpochBuildingSelectionResult {
+    private RecapEpochBuildingSelectionResult() {
+    }
+
+    public sealed record Selected(RecapEpochStoreSnapshot Snapshot)
+        : RecapEpochBuildingSelectionResult;
+
+    public sealed record Empty : RecapEpochBuildingSelectionResult;
+
+    public sealed record Invalid(
+        EventAddress AdmissionAnchor,
+        string Detail
+    ) : RecapEpochBuildingSelectionResult;
+}

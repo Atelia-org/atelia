@@ -9,6 +9,36 @@ public sealed class DerivedRecapEpochStoreCandidateTests {
         "3333333333333333333333333333333333333333333333333333333333333333";
 
     [Fact]
+    public async Task BuildingSelectionRecoversBoundedStagingBacklogAcrossRetries() {
+        using RecapStoreFixture fixture =
+            await RecapStoreFixture.CreateAsync(historyPairs: 1);
+        DerivedRecapEpochStore store = DerivedRecapEpochStore.Open(
+            fixture.Path,
+            fixture.Engine.BranchRefId
+        );
+        await store.CreateAsync();
+        EventAddress rawHead = fixture.RawLineage().CapturedHead;
+        string buildingRoot = Path.GetDirectoryName(BuildingPath(
+            fixture,
+            rawHead
+        ))!;
+        string anchor = EventAddressFileNameCodec.Format(rawHead);
+        for (int index = 0; index < 1025; index++) {
+            Directory.CreateDirectory(Path.Combine(
+                buildingRoot,
+                $".{anchor}.create.{index:x32}"
+            ));
+        }
+
+        await Assert.ThrowsAsync<InvalidDataException>(async () =>
+            await store.SelectBuildingAsync());
+        Assert.IsType<RecapEpochBuildingSelectionResult.Empty>(
+            await store.SelectBuildingAsync()
+        );
+        Assert.Empty(Directory.EnumerateFileSystemEntries(buildingRoot));
+    }
+
+    [Fact]
     public async Task TwoEpochsFreezePriorAndResumeWithoutSource() {
         using RecapStoreFixture fixture =
             await RecapStoreFixture.CreateAsync(historyPairs: 4);
