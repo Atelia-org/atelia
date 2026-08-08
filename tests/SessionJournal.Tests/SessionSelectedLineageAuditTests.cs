@@ -106,6 +106,135 @@ public sealed class SessionSelectedLineageAuditTests : IDisposable {
     }
 
     [Fact]
+    public void ForwardCursor_PreviewConsumesReplaySafePrefixWithoutLosingSuffix() {
+        string path = NewPath();
+        EventAddress firstAction;
+        EventAddress secondAction;
+        using (var writer = SessionJournalEngine.Create(
+            path,
+            new SessionCreateOptions(
+                "model-A",
+                "system-A",
+                "surface-A"
+            )
+        )) {
+            _ = writer.AppendObservation("first");
+            firstAction = writer.AppendImportedAgentAction(
+                new ActionMessage([new ActionBlock.Text("one")]),
+                new CompletionDescriptor("import", "v1", "model-A")
+            );
+            _ = writer.AppendObservation("second");
+            secondAction = writer.AppendImportedAgentAction(
+                new ActionMessage([new ActionBlock.Text("two")]),
+                new CompletionDescriptor("import", "v1", "model-A")
+            );
+        }
+        using var engine = SessionJournalEngine.OpenReadOnly(path);
+        SessionSelectedLineageAuditSession audit =
+            engine.BeginSelectedLineageAudit();
+        var pages = new List<SessionSelectedLineageAuditPage>();
+        while (!audit.IsCaptureComplete) {
+            pages.Add(audit.ReadNextPage(2));
+        }
+        _ = audit.Complete();
+        using SessionSelectedLineageForwardCursor cursor =
+            engine.OpenSelectedLineageForwardCursor(
+                new InMemoryPageSnapshot(audit.Capture, pages)
+            );
+        SessionSelectedLineageForwardRange range = Assert.IsType<
+            SessionSelectedLineageForwardRange
+        >(cursor.ReadNextRange(10));
+
+        SessionHistoryPlanningWindow preview = cursor.Preview(range);
+        Assert.Equal(secondAction, preview.ObservedRawHead);
+        SessionSelectedLineageForwardConsumption first =
+            cursor.ConsumePreviewedPrefix(range, firstAction);
+        Assert.Equal(firstAction, first.Window.ObservedRawHead);
+        Assert.NotNull(first.RemainingRange);
+        Assert.Equal(firstAction, first.RemainingRange!.StartExclusive);
+        Assert.Equal(secondAction, first.RemainingRange.EndInclusive);
+
+        SessionHistoryPlanningWindow remainingPreview = cursor.Preview(
+            first.RemainingRange
+        );
+        Assert.Equal(firstAction, remainingPreview.StartExclusive);
+        SessionSelectedLineageForwardConsumption second =
+            cursor.ConsumePreviewedPrefix(
+                first.RemainingRange,
+                secondAction
+            );
+        Assert.Null(second.RemainingRange);
+        Assert.Null(cursor.ReadNextRange(1));
+    }
+
+    [Fact]
+    public void ForwardCursor_SeekRequiresExactGoverningSetupsAndContinuesAfterBoundary() {
+        string path = NewPath();
+        EventAddress firstAction;
+        EventAddress laterSetup;
+        EventAddress finalAction;
+        SessionContextAnchorSetupReferences firstSetups;
+        SessionContextAnchorSetupReferences laterSetups;
+        using (var writer = SessionJournalEngine.Create(
+            path,
+            new SessionCreateOptions(
+                "model-A",
+                "system-A",
+                "surface-A"
+            )
+        )) {
+            _ = writer.AppendObservation("first");
+            firstAction = writer.AppendImportedAgentAction(
+                new ActionMessage([new ActionBlock.Text("one")]),
+                new CompletionDescriptor("import", "v1", "model-A")
+            );
+            firstSetups = writer.ResolveContextAnchorSetupReferences(
+                firstAction
+            );
+            laterSetup = writer.AppendSystemPromptSetup("system-B");
+            laterSetups = writer.ResolveContextAnchorSetupReferences(
+                laterSetup
+            );
+            _ = writer.AppendObservation("second");
+            finalAction = writer.AppendImportedAgentAction(
+                new ActionMessage([new ActionBlock.Text("two")]),
+                new CompletionDescriptor("import", "v1", "model-A")
+            );
+        }
+        using var engine = SessionJournalEngine.OpenReadOnly(path);
+        SessionSelectedLineageAuditSession audit =
+            engine.BeginSelectedLineageAudit();
+        var pages = new List<SessionSelectedLineageAuditPage>();
+        while (!audit.IsCaptureComplete) {
+            pages.Add(audit.ReadNextPage(2));
+        }
+        _ = audit.Complete();
+        var snapshot = new InMemoryPageSnapshot(audit.Capture, pages);
+
+        using (SessionSelectedLineageForwardCursor forged =
+               engine.OpenSelectedLineageForwardCursor(snapshot)) {
+            Assert.Throws<InvalidDataException>(() =>
+                forged.SeekToBoundary(firstAction, laterSetups));
+        }
+
+        using SessionSelectedLineageForwardCursor cursor =
+            engine.OpenSelectedLineageForwardCursor(snapshot);
+        cursor.SeekToBoundary(firstAction, firstSetups);
+        Assert.Equal(firstAction, cursor.CurrentBoundary);
+        SessionSelectedLineageForwardRange remaining = Assert.IsType<
+            SessionSelectedLineageForwardRange
+        >(cursor.ReadNextRange(8));
+        Assert.Equal(firstAction, remaining.StartExclusive);
+        Assert.Equal(finalAction, remaining.EndInclusive);
+        Assert.Contains(
+            remaining.Entries,
+            entry => entry.Address == laterSetup
+        );
+        Assert.Equal(finalAction, cursor.Materialize(remaining).ObservedRawHead);
+        Assert.Null(cursor.ReadNextRange(1));
+    }
+
+    [Fact]
     public void ForwardCursor_BootstrapOnlyLineageIsAlreadyComplete() {
         string path = NewPath();
         using (SessionJournalEngine.Create(

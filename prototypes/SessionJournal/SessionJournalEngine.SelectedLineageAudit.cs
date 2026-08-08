@@ -451,6 +451,198 @@ public sealed partial class SessionJournalEngine {
         SessionSelectedLineageForwardRange range,
         CancellationToken cancellationToken
     ) {
+        ValidateForwardCursorRange(cursor, range);
+        SessionHistoryPlanningWindow window =
+            MaterializeSelectedLineageForwardEntries(
+                cursor,
+                range.Entries,
+                cancellationToken
+            );
+        SessionHistoryPlanningSeed? nextSeed = range.IsFinal
+            ? null
+            : CreateHistoryPlanningSeed(
+                range.EndInclusive,
+                window.EndSetups,
+                cancellationToken
+            );
+        cursor.Advance(range, nextSeed);
+        return window;
+    }
+
+    internal SessionHistoryPlanningWindow
+        PreviewSelectedLineageForwardRange(
+        SessionSelectedLineageForwardCursor cursor,
+        SessionSelectedLineageForwardRange range,
+        CancellationToken cancellationToken
+    ) {
+        ValidateForwardCursorRange(cursor, range);
+        if (ReferenceEquals(cursor.PreviewedRange, range)
+            && cursor.PreviewedWindow is { } existing) {
+            return existing;
+        }
+        SessionHistoryPlanningWindow window =
+            MaterializeSelectedLineageForwardEntries(
+                cursor,
+                range.Entries,
+                cancellationToken
+            );
+        cursor.SetPreview(range, window);
+        return window;
+    }
+
+    internal SessionSelectedLineageForwardConsumption
+        ConsumePreviewedSelectedLineagePrefix(
+        SessionSelectedLineageForwardCursor cursor,
+        SessionSelectedLineageForwardRange range,
+        EventAddress endInclusive,
+        CancellationToken cancellationToken
+    ) {
+        ValidateForwardCursorRange(cursor, range);
+        if (!ReferenceEquals(cursor.PreviewedRange, range)
+            || cursor.PreviewedWindow is null) {
+            throw new InvalidOperationException(
+                "Forward range must be previewed before consuming a prefix."
+            );
+        }
+        int endIndex = -1;
+        for (int index = 0; index < range.Entries.Count; index++) {
+            if (range.Entries[index].Address == endInclusive) {
+                endIndex = index;
+                break;
+            }
+        }
+        if (endIndex < 0
+            || !cursor.PreviewedWindow.ReplaySafeBoundaries.Any(
+                boundary => boundary.Address == endInclusive)) {
+            throw new ArgumentException(
+                "Consumed forward prefix must end at a replay-safe boundary inside the pending range.",
+                nameof(endInclusive)
+            );
+        }
+        int prefixCount = checked(endIndex + 1);
+        SessionHistoryPlanningWindow window =
+            prefixCount == range.Entries.Count
+                ? cursor.PreviewedWindow
+                : MaterializeSelectedLineageForwardEntries(
+                    cursor,
+                    Array.AsReadOnly([
+                        .. range.Entries.Take(prefixCount)
+                    ]),
+                    cancellationToken
+                );
+        SessionSelectedLineageForwardRange? remaining =
+            prefixCount == range.Entries.Count
+                ? null
+                : new SessionSelectedLineageForwardRange(
+                    cursor.Authority,
+                    endInclusive,
+                    Array.AsReadOnly([
+                        .. range.Entries.Skip(prefixCount)
+                    ]),
+                    range.IsFinal
+                );
+        SessionHistoryPlanningSeed? nextSeed = remaining is null
+            && range.IsFinal
+                ? null
+                : CreateHistoryPlanningSeed(
+                    endInclusive,
+                    window.EndSetups,
+                    cancellationToken
+                );
+        cursor.AdvancePrefix(range, nextSeed, remaining);
+        return new SessionSelectedLineageForwardConsumption(
+            window,
+            remaining
+        );
+    }
+
+    internal void SeekSelectedLineageForwardCursor(
+        SessionSelectedLineageForwardCursor cursor,
+        EventAddress boundary,
+        SessionContextAnchorSetupReferences setups,
+        CancellationToken cancellationToken
+    ) {
+        ThrowIfDisposed();
+        RequireOfflineAuditEngine();
+        ArgumentNullException.ThrowIfNull(cursor);
+        ArgumentNullException.ThrowIfNull(setups);
+        if (!ReferenceEquals(cursor.Owner, this)
+            || cursor.IsDisposed
+            || cursor.PendingRange is not null) {
+            throw new ArgumentException(
+                "Forward cursor is unavailable for seeking.",
+                nameof(cursor)
+            );
+        }
+        if (boundary == cursor.CurrentSeed.Address) {
+            if (setups != cursor.CurrentSeed.Setups) {
+                throw new InvalidDataException(
+                    "Seek setup authority differs at the current boundary."
+                );
+            }
+            return;
+        }
+        SessionContextSetupReference runtime =
+            cursor.CurrentSeed.Setups.RuntimeConfig;
+        SessionContextSetupReference prompt =
+            cursor.CurrentSeed.Setups.SystemPrompt;
+        bool found = false;
+        while (cursor.MoveNext(out SessionSelectedLineageAuditEntry entry)) {
+            cancellationToken.ThrowIfCancellationRequested();
+            ValidateSelectedLineageEntryAgainstRaw(
+                entry,
+                reconstructPrepared: false,
+                cancellationToken
+            );
+            if (entry.Kind == SessionEventKind.RuntimeConfigSetup) {
+                runtime = new SessionContextSetupReference(
+                    entry.Address,
+                    entry.BodySchemaVersion,
+                    entry.PayloadSha256
+                );
+            }
+            else if (entry.Kind == SessionEventKind.SystemPromptSetup) {
+                prompt = new SessionContextSetupReference(
+                    entry.Address,
+                    entry.BodySchemaVersion,
+                    entry.PayloadSha256
+                );
+            }
+            if (entry.Address == boundary) {
+                found = true;
+                break;
+            }
+        }
+        if (!found) {
+            throw new InvalidDataException(
+                "Seek boundary is not a forward member of the audited selected lineage."
+            );
+        }
+        var observed = new SessionContextAnchorSetupReferences(
+            runtime,
+            prompt
+        );
+        if (observed != setups) {
+            throw new InvalidDataException(
+                "Seek boundary setup authority differs from audited selected-lineage provenance."
+            );
+        }
+        RequireSelectedLineageCaptureCurrent(cursor.Authority.Capture);
+        SessionHistoryPlanningSeed seed = CreateHistoryPlanningSeed(
+            boundary,
+            setups,
+            cancellationToken
+        );
+        cursor.Seek(
+            seed,
+            boundary == cursor.Authority.Capture.CapturedHead
+        );
+    }
+
+    private void ValidateForwardCursorRange(
+        SessionSelectedLineageForwardCursor cursor,
+        SessionSelectedLineageForwardRange range
+    ) {
         ThrowIfDisposed();
         RequireOfflineAuditEngine();
         ArgumentNullException.ThrowIfNull(cursor);
@@ -463,17 +655,25 @@ public sealed partial class SessionJournalEngine {
                 nameof(range)
             );
         }
+    }
+
+    private SessionHistoryPlanningWindow
+        MaterializeSelectedLineageForwardEntries(
+        SessionSelectedLineageForwardCursor cursor,
+        IReadOnlyList<SessionSelectedLineageAuditEntry> entries,
+        CancellationToken cancellationToken
+    ) {
         SessionHistoryPlanningSeed startSeed = cursor.CurrentSeed;
-        if (startSeed.Address != range.StartExclusive) {
+        if (entries.Count == 0
+            || startSeed.Address != entries[0].Parent) {
             throw new ArgumentException(
-                "Planning seed does not match the opaque forward range start.",
-                nameof(startSeed)
+                "Planning seed does not match the forward entries start.",
+                nameof(entries)
             );
         }
         EventAddress expectedParent = startSeed.Address;
         ulong priorSequence = 0;
-        foreach (SessionSelectedLineageAuditEntry entry
-                 in range.Entries) {
+        foreach (SessionSelectedLineageAuditEntry entry in entries) {
             if (entry.Parent != expectedParent) {
                 throw new InvalidDataException(
                     $"Forward audit range has a gap or overlap at {entry.Address}."
@@ -487,76 +687,50 @@ public sealed partial class SessionJournalEngine {
             expectedParent = entry.Address;
             priorSequence = entry.SequenceNumber;
         }
-
-        RequireSelectedLineageCaptureCurrent(
-            cursor.Authority.Capture
-        );
-        EventAddress endInclusive = range.EndInclusive;
+        RequireSelectedLineageCaptureCurrent(cursor.Authority.Capture);
         SessionHistoryPlanningWindowReadResult read =
             ReadHistoryPlanningWindowAtBounded(
-                endInclusive,
+                entries[^1].Address,
                 startSeed,
-                range.Entries.Count,
+                entries.Count,
                 cancellationToken
             );
         SessionHistoryPlanningWindow window = read switch {
             SessionHistoryPlanningWindowReadResult.Available available
                 => available.Window,
-            SessionHistoryPlanningWindowReadResult.BeyondPrefix
-                => throw new InvalidDataException(
-                    "Validated forward audit range exceeded its declared bound."
-                ),
             _ => throw new InvalidDataException(
-                "Unknown history planning read result."
+                "Validated forward audit range exceeded its declared bound."
             )
         };
-        if (window.RawAddresses.Count != range.Entries.Count
-            || window.RawHashEntries.Count
-                != range.Entries.Count) {
+        if (window.RawAddresses.Count != entries.Count
+            || window.RawHashEntries.Count != entries.Count) {
             throw new InvalidDataException(
                 "Materialized forward range has a different raw-event count."
             );
         }
-        for (int index = 0;
-             index < range.Entries.Count;
-             index++) {
-            SessionSelectedLineageAuditEntry expected =
-                range.Entries[index];
-            SessionRawRangeHashEntry actual =
-                window.RawHashEntries[index];
+        for (int index = 0; index < entries.Count; index++) {
+            SessionSelectedLineageAuditEntry expected = entries[index];
+            SessionRawRangeHashEntry actual = window.RawHashEntries[index];
             EventFrameHeader header =
-                _reader.ReadEventHeaderPreview(expected.Address)
-                    .Unwrap();
+                _reader.ReadEventHeaderPreview(expected.Address).Unwrap();
             ValidateSessionHeaderPreview(expected.Address, header);
             if (actual.Address != expected.Address
                 || actual.Parent != expected.Parent
                 || actual.EventKind != (uint)expected.Kind
-                || actual.BodySchemaVersion
-                    != expected.BodySchemaVersion
+                || actual.BodySchemaVersion != expected.BodySchemaVersion
                 || !string.Equals(
                     actual.PayloadSha256,
                     expected.PayloadSha256,
                     StringComparison.Ordinal
                 )
                 || header.SequenceNumber != expected.SequenceNumber
-                || header.PayloadLength
-                    != expected.LogicalPayloadBytes) {
+                || header.PayloadLength != expected.LogicalPayloadBytes) {
                 throw new InvalidDataException(
                     $"Materialized forward range does not match audit entry {expected.Address}."
                 );
             }
         }
-        RequireSelectedLineageCaptureCurrent(
-            cursor.Authority.Capture
-        );
-        SessionHistoryPlanningSeed? nextSeed = range.IsFinal
-            ? null
-            : CreateHistoryPlanningSeed(
-                range.EndInclusive,
-                window.EndSetups,
-                cancellationToken
-            );
-        cursor.Advance(range, nextSeed);
+        RequireSelectedLineageCaptureCurrent(cursor.Authority.Capture);
         return window;
     }
 

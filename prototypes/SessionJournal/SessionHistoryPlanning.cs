@@ -46,6 +46,13 @@ public sealed record SessionHistoryPlanningWindow(
     > ReplaySafeBoundarySetups,
     SessionHistoryPlanningDiagnostics Diagnostics
 ) {
+    /// <summary>
+    /// Canonical commitment to the exact raw interval represented by this
+    /// materialized window. The value is produced by SessionJournal from the
+    /// authoritative event headers and payload hashes.
+    /// </summary>
+    public string RawRangeSha256 { get; internal init; } = string.Empty;
+
     internal IReadOnlyList<SessionRawRangeHashEntry> RawHashEntries {
         get;
         init;

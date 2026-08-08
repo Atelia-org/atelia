@@ -2232,6 +2232,11 @@ public sealed partial class SessionJournalEngine : IDisposable {
                 events.Count
             )
         ) {
+            RawRangeSha256 = SessionRawRangeHasher.Compute(
+                resolvedStart,
+                capturedHead,
+                rawHashEntries
+            ),
             RawHashEntries = rawHashEntries.AsReadOnly(),
             Folded = folded
         };

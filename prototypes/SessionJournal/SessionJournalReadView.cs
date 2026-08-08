@@ -175,6 +175,23 @@ public sealed class SessionJournalReadView {
         );
     }
 
+    /// <summary>
+    /// Rehydrates an exact durable setup boundary without searching toward
+    /// the selected-lineage root.
+    /// </summary>
+    public SessionHistoryPlanningSeed CreateHistoryPlanningSeed(
+        EventAddress startExclusive,
+        SessionContextAnchorSetupReferences setups,
+        CancellationToken cancellationToken = default
+    ) {
+        EnsureOwnerAlive();
+        return _owner.CreateHistoryPlanningSeed(
+            startExclusive,
+            setups,
+            cancellationToken
+        );
+    }
+
     public SessionGoverningSetupProofResult ProveGoverningSetupAtBounded(
         EventAddress boundary,
         SessionContextAnchorSetupReferences expectedSetups,

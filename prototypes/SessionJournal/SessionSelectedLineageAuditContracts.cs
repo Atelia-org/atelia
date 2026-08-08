@@ -277,6 +277,11 @@ public sealed class SessionSelectedLineageForwardRange {
 
 }
 
+public sealed record SessionSelectedLineageForwardConsumption(
+    SessionHistoryPlanningWindow Window,
+    SessionSelectedLineageForwardRange? RemainingRange
+);
+
 /// <summary>
 /// Sequential root-to-captured-head reader over one revalidated sealed spool.
 /// It begins immediately after the SessionCreated bootstrap boundary.
@@ -288,6 +293,8 @@ public sealed class SessionSelectedLineageForwardCursor : IDisposable {
         _entries;
     private SessionHistoryPlanningSeed _currentSeed;
     private SessionSelectedLineageForwardRange? _pendingRange;
+    private SessionSelectedLineageForwardRange? _previewedRange;
+    private SessionHistoryPlanningWindow? _previewedWindow;
     private bool _finished;
     private bool _disposed;
 
@@ -308,6 +315,7 @@ public sealed class SessionSelectedLineageForwardCursor : IDisposable {
     }
 
     public SessionSelectedLineageAuditAuthority Authority { get; }
+    public EventAddress CurrentBoundary => _currentSeed.Address;
 
     public SessionSelectedLineageForwardRange? ReadNextRange(
         int maxRawEventCount,
@@ -327,6 +335,52 @@ public sealed class SessionSelectedLineageForwardCursor : IDisposable {
         cancellationToken
     );
 
+    /// <summary>
+    /// Materializes the exact pending range without advancing the cursor, so
+    /// an offline rebuild policy can select a replay-safe admission inside a
+    /// bounded range.
+    /// </summary>
+    public SessionHistoryPlanningWindow Preview(
+        SessionSelectedLineageForwardRange range,
+        CancellationToken cancellationToken = default
+    ) => _owner.PreviewSelectedLineageForwardRange(
+        this,
+        range,
+        cancellationToken
+    );
+
+    /// <summary>
+    /// Advances only through one replay-safe prefix of a previewed range and
+    /// returns the still-authority-bound suffix, if any.
+    /// </summary>
+    public SessionSelectedLineageForwardConsumption
+        ConsumePreviewedPrefix(
+        SessionSelectedLineageForwardRange range,
+        EventAddress endInclusive,
+        CancellationToken cancellationToken = default
+    ) => _owner.ConsumePreviewedSelectedLineagePrefix(
+        this,
+        range,
+        endInclusive,
+        cancellationToken
+    );
+
+    /// <summary>
+    /// Replays content-free audited entries to one exact selected-lineage
+    /// boundary. This is used only to resume an explicit rebuild from a
+    /// previously Published admission.
+    /// </summary>
+    public void SeekToBoundary(
+        EventAddress boundary,
+        SessionContextAnchorSetupReferences setups,
+        CancellationToken cancellationToken = default
+    ) => _owner.SeekSelectedLineageForwardCursor(
+        this,
+        boundary,
+        setups,
+        cancellationToken
+    );
+
     public void Dispose() {
         if (_disposed) {
             return;
@@ -342,6 +396,10 @@ public sealed class SessionSelectedLineageForwardCursor : IDisposable {
         _pendingRange;
     internal bool Finished => _finished;
     internal bool IsDisposed => _disposed;
+    internal SessionSelectedLineageForwardRange? PreviewedRange =>
+        _previewedRange;
+    internal SessionHistoryPlanningWindow? PreviewedWindow =>
+        _previewedWindow;
 
     internal void SetPending(
         SessionSelectedLineageForwardRange range
@@ -370,7 +428,65 @@ public sealed class SessionSelectedLineageForwardCursor : IDisposable {
         }
         _currentSeed = nextSeed ?? _currentSeed;
         _pendingRange = null;
+        _previewedRange = null;
+        _previewedWindow = null;
         _finished = range.IsFinal;
+    }
+
+    internal void SetPreview(
+        SessionSelectedLineageForwardRange range,
+        SessionHistoryPlanningWindow window
+    ) {
+        if (!ReferenceEquals(_pendingRange, range)) {
+            throw new InvalidOperationException(
+                "Only the exact pending range may be previewed."
+            );
+        }
+        if (_previewedRange is not null
+            && !ReferenceEquals(_previewedRange, range)) {
+            throw new InvalidOperationException(
+                "Another forward range preview is already active."
+            );
+        }
+        _previewedRange = range;
+        _previewedWindow = window;
+    }
+
+    internal void AdvancePrefix(
+        SessionSelectedLineageForwardRange range,
+        SessionHistoryPlanningSeed? nextSeed,
+        SessionSelectedLineageForwardRange? remaining
+    ) {
+        if (!ReferenceEquals(_pendingRange, range)
+            || !ReferenceEquals(_previewedRange, range)
+            || _previewedWindow is null) {
+            throw new InvalidOperationException(
+                "Only the exact previewed pending range may advance."
+            );
+        }
+        if (remaining is not null && nextSeed is null) {
+            throw new InvalidOperationException(
+                "A remaining suffix requires a next planning seed."
+            );
+        }
+        _currentSeed = nextSeed ?? _currentSeed;
+        _pendingRange = remaining;
+        _previewedRange = null;
+        _previewedWindow = null;
+        _finished = remaining is null && range.IsFinal;
+    }
+
+    internal void Seek(
+        SessionHistoryPlanningSeed seed,
+        bool finished
+    ) {
+        if (_pendingRange is not null || _previewedRange is not null) {
+            throw new InvalidOperationException(
+                "Cannot seek while a forward range is pending."
+            );
+        }
+        _currentSeed = seed;
+        _finished = finished;
     }
 
     internal bool MoveNext(
