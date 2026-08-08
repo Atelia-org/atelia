@@ -16,6 +16,7 @@
 
   <ItemGroup>
     <ProjectReference Include="../../prototypes/SessionJournal.DerivedRecap.Maintainers/SessionJournal.DerivedRecap.Maintainers.csproj" />
+    <ProjectReference Include="../../prototypes/SessionJournal.DerivedRecap.Runtime/SessionJournal.DerivedRecap.Runtime.csproj" />
   </ItemGroup>
 
 </Project>

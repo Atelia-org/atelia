@@ -693,6 +693,7 @@ public sealed class DerivedRecapAcceptanceTests {
         public string CapabilityFingerprint { get; } =
             "sha256:0000000000000000000000000000000000000000000000000000000000000000";
         public ContextHeaderBlockPath Target { get; }
+        public object RuntimeGroupAffinity => this;
         public int CallCount { get; private set; }
         public List<RecapMaintenanceEpochInput> Requests { get; } = [];
 

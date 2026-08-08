@@ -21,8 +21,9 @@ Maintainer runtime，Store 也不认识 Completion client/model。
 - catalog 按 frozen member identity索引，并拒绝 semantic fingerprint相同但 object reference不同的
   family copies，防止 runtime family分组静默漂移。
 
-`RewriteRecapBlockMaintainer`把 family system/output contract/prior/history放进 typed prompt prefix，只把
-target和member task放进 tail。模型必须恰好调用一次 `recap.submit`：`updated`携带完整替换正文，
+`RecapMaintainerFamilyDefinition.CreatePromptPrefix`把 family system/output contract/prior/history放进 typed
+prompt prefix；`RecapMaintainerDefinition.CreateTaskTailMessages`只生成target和member task tail。模型必须恰好
+调用一次 `recap.submit`：`updated`携带完整替换正文，
 `keep-unchanged`要求`content: null`；plain-text response不再是合法结果。
 
 ## Fingerprint
@@ -33,9 +34,9 @@ family fingerprint绑定 system prompt、context projection schema与output prot
 implementation、maintainer id、target、family fingerprint和tail task。connection、model、secret、logging与
 cache hint都不进入 durable capability。
 
-当前仍是 R2A 过渡切口：`RewriteRecapBlockMaintainer`暂时持有 client/model并使用
-`PromptCacheReuseHint.NoReuseExpected`，以保持 production可执行。R2B 将把 dispatch唯一收口到 shared
-ExecutionLane/RuntimeGroup；在此之前不要把该过渡构造方式误写成最终 runtime ownership。
+本assembly不持有Completion client/model，也不构造完整request或dispatch。production execution由
+`SessionJournal.DerivedRecap.Runtime`中的shared `RecapExecutionLane`、interned `RecapRuntimeGroup`与
+`BoundRecapBlockMaintainer`唯一完成；lane固定使用`PromptCacheReuseHint.NoReuseExpected`。
 
-Host composition继续通过`RecapMaintainerProfileCatalog`解析 profile metadata并注入 runtime client；Planner
-只依赖 neutral Abstractions与 opaque capability，不引用本 concrete assembly。
+Host composition继续通过`RecapMaintainerProfileCatalog`解析profile metadata并绑定shared runtime lane；Planner
+只依赖neutral Abstractions与opaque executable capability，不引用本concrete assembly或Runtime。

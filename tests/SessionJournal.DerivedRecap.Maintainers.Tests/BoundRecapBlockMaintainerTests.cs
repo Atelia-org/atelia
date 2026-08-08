@@ -1,25 +1,28 @@
 using Atelia.Completion.Abstractions;
 using Atelia.SessionJournal;
 using Atelia.SessionJournal.DerivedRecap.Abstractions;
+using Atelia.SessionJournal.DerivedRecap.Runtime;
 using Xunit;
 
 namespace Atelia.SessionJournal.DerivedRecap.Maintainers.Tests;
 
-public sealed class RewriteRecapBlockMaintainerTests {
+public sealed class BoundRecapBlockMaintainerTests {
     [Fact]
-    public async Task SameFamilyMembers_UseSharedPrefixInputsAndDistinctTails() {
+    public async Task SameGroupMembers_UseSharedInputsAndDistinctTails() {
         var client = new ScriptedCompletionClient();
         client.Enqueue(Updated("world"));
         client.Enqueue(Updated("self"));
-        var world = new RewriteRecapBlockMaintainer(
-            WorldUnderstandingRecapMaintainers.Default,
-            client,
-            "model"
+        var lane = new RecapExecutionLane(client, "model", 321);
+        var groups = new RecapRuntimeGroupInterner();
+        RecapRuntimeGroup group = groups.GetOrAdd(
+            lane,
+            BuiltInRecapMaintainerFamilies.Default
         );
-        var autobiography = new RewriteRecapBlockMaintainer(
-            AutobiographicalRecapMaintainers.Default,
-            client,
-            "model"
+        BoundRecapBlockMaintainer world = group.Bind(
+            WorldUnderstandingRecapMaintainers.Default
+        );
+        BoundRecapBlockMaintainer autobiography = group.Bind(
+            AutobiographicalRecapMaintainers.Default
         );
         var prior = new ContextHeaderPack();
         prior.Observation.Add("own", new ContextHeaderBlock("old-own"));
@@ -33,44 +36,48 @@ public sealed class RewriteRecapBlockMaintainerTests {
         await world.MaintainAsync(epoch, CancellationToken.None);
         await autobiography.MaintainAsync(epoch, CancellationToken.None);
 
+        Assert.Same(world.RuntimeGroup, autobiography.RuntimeGroup);
+        Assert.Same(group, world.RuntimeGroupAffinity);
+        Assert.Same(group, autobiography.RuntimeGroupAffinity);
         CompletionRequest first = client.Requests[0];
         CompletionRequest second = client.Requests[1];
+        Assert.Equal("model", first.ModelId);
+        Assert.Equal(321, first.MaxTokens);
         Assert.Equal(
             first.PromptPrefix.SystemPrompt,
             second.PromptPrefix.SystemPrompt
         );
         Assert.Same(
             first.PromptPrefix.OutputContract,
-            second.PromptPrefix.OutputContract
+            group.Family.OutputProtocol.RequestContract
         );
         Assert.Equal(
             Flatten(first.PromptPrefix.SharedContextMessages),
             Flatten(second.PromptPrefix.SharedContextMessages)
         );
-        Assert.Equal(
-            1,
-            CountOccurrences(
-                first.PromptPrefix.SharedContextMessages,
-                "old-own"
-            )
-        );
-        Assert.Equal(
-            1,
-            CountOccurrences(
-                first.PromptPrefix.SharedContextMessages,
-                "old-peer"
-            )
-        );
-        Assert.Equal(
-            1,
-            CountOccurrences(
-                first.PromptPrefix.SharedContextMessages,
-                "new-history"
-            )
-        );
+        Assert.Equal(1, CountOccurrences(
+            first.PromptPrefix.SharedContextMessages,
+            "old-own"
+        ));
+        Assert.Equal(1, CountOccurrences(
+            first.PromptPrefix.SharedContextMessages,
+            "old-peer"
+        ));
+        Assert.Equal(1, CountOccurrences(
+            first.PromptPrefix.SharedContextMessages,
+            "new-history"
+        ));
         Assert.DoesNotContain(
             WorldUnderstandingRecapMaintainers.Default.TaskInstruction,
             Flatten(first.PromptPrefix.SharedContextMessages)
+        );
+        Assert.Contains(
+            WorldUnderstandingRecapMaintainers.Default.TaskInstruction,
+            Flatten(first.TailMessages)
+        );
+        Assert.Contains(
+            AutobiographicalRecapMaintainers.Default.TaskInstruction,
+            Flatten(second.TailMessages)
         );
         Assert.NotEqual(
             Flatten(first.TailMessages),
@@ -83,10 +90,9 @@ public sealed class RewriteRecapBlockMaintainerTests {
         var client = new ScriptedCompletionClient();
         client.Enqueue(Updated("new content"));
         client.Enqueue(KeepUnchanged());
-        var maintainer = new RewriteRecapBlockMaintainer(
+        BoundRecapBlockMaintainer maintainer = Bind(
             WorldUnderstandingRecapMaintainers.Default,
-            client,
-            "model"
+            client
         );
         var input = new RecapMaintenanceEpochInput(
             ContextHeaderSnapshot.Empty,
@@ -94,10 +100,7 @@ public sealed class RewriteRecapBlockMaintainerTests {
         );
 
         var updated = Assert.IsType<RecapMaintenanceSuccess.Updated>(
-            await maintainer.MaintainAsync(
-                input,
-                CancellationToken.None
-            )
+            await maintainer.MaintainAsync(input, CancellationToken.None)
         );
         Assert.Equal("new content", updated.Content);
         Assert.Same(
@@ -124,10 +127,9 @@ public sealed class RewriteRecapBlockMaintainerTests {
             Descriptor(request),
             termination: CompletionTermination.Incomplete("length")
         ));
-        var maintainer = new RewriteRecapBlockMaintainer(
+        BoundRecapBlockMaintainer maintainer = Bind(
             WorldUnderstandingRecapMaintainers.Default,
-            client,
-            "model"
+            client
         );
 
         await Assert.ThrowsAsync<SessionJournalTurnAbortedException>(
@@ -149,10 +151,9 @@ public sealed class RewriteRecapBlockMaintainerTests {
             Descriptor(request),
             errors: ["provider stream reported an error"]
         ));
-        var maintainer = new RewriteRecapBlockMaintainer(
+        BoundRecapBlockMaintainer maintainer = Bind(
             WorldUnderstandingRecapMaintainers.Default,
-            client,
-            "model"
+            client
         );
 
         await Assert.ThrowsAsync<InvalidOperationException>(
@@ -164,6 +165,16 @@ public sealed class RewriteRecapBlockMaintainerTests {
                 CancellationToken.None
             )
         );
+    }
+
+    private static BoundRecapBlockMaintainer Bind(
+        RecapMaintainerDefinition definition,
+        ICompletionClient client
+    ) {
+        var lane = new RecapExecutionLane(client, "model");
+        RecapRuntimeGroup group = new RecapRuntimeGroupInterner()
+            .GetOrAdd(lane, definition.Family);
+        return group.Bind(definition);
     }
 
     private static Func<CompletionRequest, CompletionResult> Updated(

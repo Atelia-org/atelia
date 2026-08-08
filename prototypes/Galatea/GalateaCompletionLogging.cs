@@ -1,7 +1,6 @@
 using Atelia.Completion;
 using Atelia.Completion.Abstractions;
-using Atelia.SessionJournal;
-using Atelia.SessionJournal.DerivedRecap.Maintainers;
+using Atelia.SessionJournal.DerivedRecap.Runtime;
 
 namespace Atelia.Galatea.Server;
 
@@ -30,34 +29,32 @@ internal static class GalateaCompletionLogging {
             );
     }
 
-    internal static ICompletionClient CreateMaintainerClient(
+    internal static RecapExecutionLane CreateMaintainerLane(
+        RecapExecutionLaneInterner lanes,
         ICompletionClient inner,
         CompletionConnectionConfig connection,
-        string? callLogDirectory,
-        RecapMaintainerProfileDescriptor descriptor
+        string? callLogDirectory
     ) {
+        ArgumentNullException.ThrowIfNull(lanes);
         ArgumentNullException.ThrowIfNull(inner);
         ArgumentNullException.ThrowIfNull(connection);
-        ArgumentNullException.ThrowIfNull(descriptor);
         return callLogDirectory is null
-            ? inner
-            : new LoggingCompletionClient(
+            ? lanes.GetOrAdd(
+                connection,
+                inner,
+                connection.ModelId,
+                connection.MaxTokens
+            )
+            : lanes.GetOrAddWithLogging(
+                connection,
                 inner,
                 connection,
                 Path.Combine(
                     callLogDirectory,
                     "maintenance",
-                    SafePathSegment(descriptor.MaintainerId)
+                    SafePathSegment(connection.Id)
                 ),
-                new CompletionCallLogContext(
-                    Command: "galatea/maintenance",
-                    MaintainerId: descriptor.MaintainerId,
-                    TargetCarrier:
-                        ContextHeaderCarrierTokens.ToStorageToken(
-                            descriptor.Target.Carrier
-                        ),
-                    TargetBlockId: descriptor.Target.BlockKey
-                )
+                "galatea/maintenance"
             );
     }
 

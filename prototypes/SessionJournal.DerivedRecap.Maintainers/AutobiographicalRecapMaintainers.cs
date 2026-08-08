@@ -33,7 +33,7 @@ public static class AutobiographicalRecapMaintainers {
         string roleResourceName,
         string taskResourceName
     ) => new(
-        RewriteRecapBlockMaintainer.ImplementationId,
+        RecapMaintainerImplementationIds.StructuredRewrite,
         MaintainerId,
         RolePlayRecapBlockPaths.FirstPersonAutobiography,
         family,

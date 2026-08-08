@@ -732,7 +732,7 @@ JSON fragment。
 `$25/MTok`；价格字段可编辑。当前价格仍应以
 [Anthropic pricing](https://platform.claude.com/docs/en/about-claude/pricing)为准。
 
-当前`RewriteRecapBlockMaintainer`在每次completion dispatch显式传递
+当前`RecapExecutionLane`在每次recap completion dispatch显式传递
 `PromptCacheReuseHint.NoReuseExpected`。对支持禁用显式prompt cache的Anthropic，这与计算器默认
 `rewriteInputPrice = $5/MTok`的base-input假设对齐，而不会继承Galatea connection的一小时TTL。
 该hint只影响provider运行成本，不进入capability fingerprint，也不改变cadence公式或`HistoryLoad`

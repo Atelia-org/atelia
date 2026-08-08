@@ -85,18 +85,21 @@ DerivedRecap.Planner
   Planner / Resume / Restore / online lifecycle
 
 DerivedRecap.Maintainers
-  concrete profiles + prompts + factories
+  concrete family/member definitions + prompts + output protocol
+
+DerivedRecap.Runtime
+  shared ExecutionLane + interned RuntimeGroup + BoundMaintainer
 
 CLI / Galatea
   phase gate + capability projection
-  connection/model/logging/tools
+  connection/model/lane composition/logging/tools
   SessionRuntime + application/UI mapping
 ```
 
 约束：
 
-- Planner不得引用 `SessionJournal.DerivedRecap.Maintainers`或 `Atelia.Completion` concrete
-  provider；
+- Planner不得引用 `SessionJournal.DerivedRecap.Maintainers`、`SessionJournal.DerivedRecap.Runtime`或
+  `Atelia.Completion` concrete provider；
 - Store不获得config、policy或Maintainer；
 - Host从同一个immutable concrete catalog投影planning metadata，并保留原catalog用于执行；
 - raw events始终是correctness source；Recap config和Store都是repo-owned companion，不进入
@@ -303,7 +306,7 @@ DerivedRecapOnlineLifecycleCoordinator.Create(
 - 当前没有baseline的online constructor直接降为internal；public production入口只接受prepared
   authority，不保留兼容层。
 
-Planner提供Maintainers-neutral、具有thread-safe once-only activation的
+neutral Abstractions提供具有thread-safe once-only activation的
 `DeferredRecapBlockMaintainerRegistry(Func<IRecapBlockMaintainerRegistry>)`：
 
 - 第一次真实`TryResolve`才激活inner registry；
@@ -311,8 +314,10 @@ Planner提供Maintainers-neutral、具有thread-safe once-only activation的
 - readiness failure和NoBuild时factory调用零次；
 - Host factory必须从完整capability catalog构造inner registry，而不是active roster。
 
-Host可以在preparation成功后创建agent Completion client；concrete recap Maintainer与其logger则由
-deferred registry延迟创建。
+Host可以在preparation成功后创建agent Completion client；recap lane/group/binding与其logger则由deferred
+registry延迟创建。同一exact route共享一个lane/raw client；同一exact `(lane ref, family ref)`共享一个group，
+但每次call仍携带独立member/target/source attribution。binding把group作为reference-only opaque affinity交给
+neutral contract；它不进入manifest/capability，未来Planner scheduler必须显式按reference equality分组。
 
 阶段归属：prepared authority、lazy active-composition source与authority-only lifecycle factory已在
 H1完成；`DeferredRecapBlockMaintainerRegistry`及CLI lazy wiring已在H2完成。whole-registry

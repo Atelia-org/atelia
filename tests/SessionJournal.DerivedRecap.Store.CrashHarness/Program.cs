@@ -453,6 +453,7 @@ internal static class Program {
         public ContextHeaderBlockPath Target { get; }
         public string CapabilityFingerprint { get; } =
             "sha256:0000000000000000000000000000000000000000000000000000000000000000";
+        public object RuntimeGroupAffinity => this;
 
         public ValueTask<RecapMaintenanceSuccess> MaintainAsync(
             RecapMaintenanceEpochInput request,

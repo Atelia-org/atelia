@@ -192,7 +192,7 @@ gitignore/backtest/rolling-summary-calls/
 
 ```json
 {
-  "schema": "atelia.completion.call-log.v6",
+  "schema": "atelia.completion.call-log.v7",
   "callId": 1,
   "timestampUtc": "2026-07-20T00:00:00Z",
   "elapsedMs": 12345,
@@ -212,7 +212,8 @@ gitignore/backtest/rolling-summary-calls/
     "eventOrdinal": 57,
     "maintainerId": "rolling-summary",
     "targetCarrier": "System",
-    "targetBlockId": "session.rolling-summary"
+    "targetBlockId": "session.rolling-summary",
+    "sourceId": "recap-epoch-source"
   },
   "request": {
     "modelId": "deepseek-v4",
@@ -240,6 +241,7 @@ gitignore/backtest/rolling-summary-calls/
 
 - 日志应保存 prompt 文本快照或 prompt 文件 hash，便于复现实验。
 - `invocationOptions.promptCacheReuseHint` 只记录调用方请求的 best-effort hint，不代表 provider 的 effective cache 行为；它不属于 durable request identity。
+- `context.sourceId` 是可选的 call-scoped observability 字段，与 Maintainer/target 一起用于单次调用归因；它不参与 durable Maintainer capability、plan manifest 或 recovery identity。
 - 日志不应保存真实 `apiKey`；connection snapshot 中不要出现 inline key 值。
 - JSONL backtest report 只引用 call log 文件路径，不内嵌完整 request / response。
 

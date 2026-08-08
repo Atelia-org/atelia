@@ -1,4 +1,3 @@
-using Atelia.Completion.Abstractions;
 using Atelia.SessionJournal.DerivedRecap.Abstractions;
 
 namespace Atelia.SessionJournal.DerivedRecap.Maintainers;
@@ -47,15 +46,6 @@ public sealed class RecapMaintainerProfileDescriptor {
 
     public string CapabilityFingerprint =>
         Definition.CapabilityFingerprint;
-
-    public IRecapBlockMaintainer Create(
-        ICompletionClient completionClient,
-        string modelId
-    ) => new RewriteRecapBlockMaintainer(
-        Definition,
-        completionClient,
-        modelId
-    );
 
     private static bool IsValidRecapBlockIdValue(string? value) {
         if (string.IsNullOrEmpty(value) || value.Length > 128) {

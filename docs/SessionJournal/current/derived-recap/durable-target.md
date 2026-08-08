@@ -47,10 +47,11 @@ provider exactly-once 或 byte-identical LLM regeneration。
 
 | Assembly | 职责 |
 |---|---|
-| `Atelia.SessionJournal.DerivedRecap.Abstractions` | neutral `RecapMaintenanceEpochInput`、`RecapMaintenanceSuccess` 与 `IRecapBlockMaintainer` execution contracts |
+| `Atelia.SessionJournal.DerivedRecap.Abstractions` | neutral epoch/success、opaque runtime-group affinity、`IRecapBlockMaintainer`与exact/deferred registry contracts |
 | `Atelia.SessionJournal.DerivedRecap.Store` | event-addressed point IO、validation、Building/Published directories、strict selection descriptor 与 structural defects |
 | `Atelia.SessionJournal.DerivedRecap.Planner` | trigger、NoBuild/Maintain/Inherit、frozen plan、bounded Resume/Restore |
 | `Atelia.SessionJournal.DerivedRecap.Maintainers` | concrete family/member/output-protocol definitions、structured rewrite 与 prompts |
+| `Atelia.SessionJournal.DerivedRecap.Runtime` | shared execution lane、reference-identity runtime group、bound executable Maintainer与per-call logging |
 
 依赖：
 
@@ -59,9 +60,10 @@ DerivedRecap.Abstractions ─> SessionJournal context-header contracts + Complet
 DerivedRecap.Store ────────> SessionJournal
 DerivedRecap.Planner ──────> Store + DerivedRecap.Abstractions
 DerivedRecap.Maintainers ──> DerivedRecap.Abstractions + SessionJournal + Completion.Abstractions
+DerivedRecap.Runtime ──────> DerivedRecap.Abstractions + Maintainers + Completion
 
 SessionJournal.Cli / Agent Host
-  └─ composition root：组合 Store / Planner / Maintainers并引用neutral contracts
+  └─ composition root：组合 Store / Planner / Maintainers / Runtime并引用neutral contracts
 ```
 
 约束：
@@ -69,6 +71,7 @@ SessionJournal.Cli / Agent Host
 - raw `Atelia.SessionJournal` 不引用 concrete Recap assemblies；
 - Store 不引用 Planner 或 Maintainers；
 - Planner 只接收从 `DerivedRecap.Abstractions` 注入的 `IRecapBlockMaintainer`；
+- Planner不引用concrete Maintainers或Runtime；Runtime和connection/model不进入Store manifest；
 - Store 不回调 Planner；
 - Store 与 Planner 都不得修改 raw SessionJournal；
 - current `MemoryPack* / IMemoryBlockMaintainer` 已在 R0 完成一次无兼容层 contract cutover：

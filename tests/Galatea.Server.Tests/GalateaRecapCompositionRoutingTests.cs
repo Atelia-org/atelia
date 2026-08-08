@@ -4,8 +4,10 @@ using System.Text.Json;
 using Atelia.Completion;
 using Atelia.Completion.Abstractions;
 using Atelia.SessionJournal;
+using Atelia.SessionJournal.DerivedRecap.Abstractions;
 using Atelia.SessionJournal.DerivedRecap.Maintainers;
 using Atelia.SessionJournal.DerivedRecap.Planner;
+using Atelia.SessionJournal.DerivedRecap.Runtime;
 using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 
@@ -98,38 +100,56 @@ public sealed class GalateaRecapCompositionRoutingTests {
                 [AutobiographicalRecapMaintainers.MaintainerId] =
                     "autobiography"
             };
+        var lanes = new RecapExecutionLaneInterner();
+        var groups = new RecapRuntimeGroupInterner();
         IRecapBlockMaintainerRegistry maintainers =
             GalateaRecapComposition.CreateMaintainerRegistry(
                 RecapMaintainerProfileCatalog.BuiltIn,
                 connections,
                 agentConnection,
                 routes,
-                callLogDirectory
+                callLogDirectory,
+                lanes,
+                groups
             );
         try {
             Assert.Equal(0, factory.CreateCallCount);
             Assert.False(Directory.Exists(callLogDirectory));
 
-            RewriteRecapBlockMaintainer world = Resolve(
+            BoundRecapBlockMaintainer world = Resolve(
                 maintainers,
                 RecapMaintainerProfileCatalog.WorldUnderstandingRewrite
             );
-            RewriteRecapBlockMaintainer autobiography = Resolve(
+            BoundRecapBlockMaintainer autobiography = Resolve(
                 maintainers,
                 RecapMaintainerProfileCatalog.AutobiographicalRewrite
             );
 
             Assert.Equal(2, factory.CreateCallCount);
-            Assert.Equal("world-model", world.ModelId);
-            Assert.Equal("autobiography-model", autobiography.ModelId);
-            Assert.Equal("client/world", world.CompletionClient.Name);
             Assert.Equal(
-                "client/autobiography",
-                autobiography.CompletionClient.Name
+                "world-model",
+                world.RuntimeGroup.Lane.ModelId
+            );
+            Assert.Equal(
+                "autobiography-model",
+                autobiography.RuntimeGroup.Lane.ModelId
             );
             Assert.NotSame(
-                world.CompletionClient,
-                autobiography.CompletionClient
+                world.RuntimeGroup.Lane,
+                autobiography.RuntimeGroup.Lane
+            );
+            Assert.NotSame(world.RuntimeGroup, autobiography.RuntimeGroup);
+            Assert.Same(
+                world.Definition.Family,
+                autobiography.Definition.Family
+            );
+            Assert.Equal(
+                "client/world",
+                world.RuntimeGroup.Lane.RawClient.Name
+            );
+            Assert.Equal(
+                "client/autobiography",
+                autobiography.RuntimeGroup.Lane.RawClient.Name
             );
 
             _ = await world.MaintainAsync(
@@ -181,38 +201,65 @@ public sealed class GalateaRecapCompositionRoutingTests {
     }
 
     [Fact]
-    public void MissingRoutes_LegacyMaintainersShareSelectedAgentConnection() {
+    public void MissingRoutes_BuiltInsShareSelectedAgentLaneAndGroup() {
         var factory = new RecordingFactory();
         using var connections = CreateRegistry(factory);
         CompletionConnectionConfig agentConnection = Get(
             connections,
             "agent"
         );
-        IRecapBlockMaintainerRegistry maintainers =
+        var lanes = new RecapExecutionLaneInterner();
+        var groups = new RecapRuntimeGroupInterner();
+        IRecapBlockMaintainerRegistry firstOperation =
             GalateaRecapComposition.CreateMaintainerRegistry(
                 RecapMaintainerProfileCatalog.BuiltIn,
                 connections,
                 agentConnection,
                 recapMaintainerConnections: null,
-                callLogDirectory: null
+                callLogDirectory: null,
+                lanes,
+                groups
+            );
+        IRecapBlockMaintainerRegistry secondOperation =
+            GalateaRecapComposition.CreateMaintainerRegistry(
+                RecapMaintainerProfileCatalog.BuiltIn,
+                connections,
+                agentConnection,
+                recapMaintainerConnections: null,
+                callLogDirectory: null,
+                lanes,
+                groups
             );
 
         Assert.Equal(0, factory.CreateCallCount);
 
-        RewriteRecapBlockMaintainer world = Resolve(
-            maintainers,
+        BoundRecapBlockMaintainer world = Resolve(
+            firstOperation,
             RecapMaintainerProfileCatalog.WorldUnderstandingRewrite
         );
-        RewriteRecapBlockMaintainer autobiography = Resolve(
-            maintainers,
+        BoundRecapBlockMaintainer autobiography = Resolve(
+            secondOperation,
             RecapMaintainerProfileCatalog.AutobiographicalRewrite
         );
 
         Assert.Equal(1, factory.CreateCallCount);
-        Assert.Equal("agent-model", world.ModelId);
-        Assert.Equal("agent-model", autobiography.ModelId);
-        Assert.Same(world.CompletionClient, autobiography.CompletionClient);
-        Assert.Equal("client/agent", world.CompletionClient.Name);
+        Assert.Same(world.RuntimeGroup, autobiography.RuntimeGroup);
+        Assert.Same(
+            world.RuntimeGroup.Lane,
+            autobiography.RuntimeGroup.Lane
+        );
+        Assert.Same(
+            world.RuntimeGroup.Lane.RawClient,
+            autobiography.RuntimeGroup.Lane.RawClient
+        );
+        Assert.Equal(
+            "agent-model",
+            world.RuntimeGroup.Lane.ModelId
+        );
+        Assert.Equal(
+            "client/agent",
+            world.RuntimeGroup.Lane.RawClient.Name
+        );
     }
 
     [Fact]
@@ -230,13 +277,17 @@ public sealed class GalateaRecapCompositionRoutingTests {
                 [AutobiographicalRecapMaintainers.MaintainerId] =
                     "autobiography"
             };
+        var lanes = new RecapExecutionLaneInterner();
+        var groups = new RecapRuntimeGroupInterner();
         IRecapBlockMaintainerRegistry maintainers =
             GalateaRecapComposition.CreateMaintainerRegistry(
                 RecapMaintainerProfileCatalog.BuiltIn,
                 connections,
                 agentConnection,
                 routes,
-                callLogDirectory: null
+                callLogDirectory: null,
+                lanes,
+                groups
             );
 
         InvalidOperationException failure = Assert.Throws<
@@ -250,7 +301,7 @@ public sealed class GalateaRecapCompositionRoutingTests {
         Assert.Equal(0, factory.CreateCallCount);
     }
 
-    private static RewriteRecapBlockMaintainer Resolve(
+    private static BoundRecapBlockMaintainer Resolve(
         IRecapBlockMaintainerRegistry registry,
         string profileName
     ) {
@@ -262,7 +313,7 @@ public sealed class GalateaRecapCompositionRoutingTests {
             descriptor.CapabilityFingerprint,
             out IRecapBlockMaintainer? maintainer
         ));
-        return Assert.IsType<RewriteRecapBlockMaintainer>(maintainer);
+        return Assert.IsType<BoundRecapBlockMaintainer>(maintainer);
     }
 
     private static RecapMaintenanceEpochInput CreateRequest(

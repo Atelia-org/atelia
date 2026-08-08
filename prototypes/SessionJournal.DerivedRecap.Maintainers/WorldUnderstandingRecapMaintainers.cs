@@ -33,7 +33,7 @@ public static class WorldUnderstandingRecapMaintainers {
         string roleResourceName,
         string taskResourceName
     ) => new(
-        RewriteRecapBlockMaintainer.ImplementationId,
+        RecapMaintainerImplementationIds.StructuredRewrite,
         MaintainerId,
         RolePlayRecapBlockPaths.WorldUnderstanding,
         family,

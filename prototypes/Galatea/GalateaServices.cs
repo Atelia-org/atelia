@@ -15,6 +15,7 @@ using Atelia.EventJournal;
 using Atelia.SessionJournal;
 using Atelia.SessionJournal.DerivedRecap.Maintainers;
 using Atelia.SessionJournal.DerivedRecap.Planner;
+using Atelia.SessionJournal.DerivedRecap.Runtime;
 
 namespace Atelia.Galatea.Server;
 
@@ -27,6 +28,10 @@ public sealed class GalateaHostService : IAsyncDisposable {
     private readonly bool _maintenanceMode;
     private readonly IReadOnlyDictionary<string, string>?
         _recapMaintainerConnections;
+    private readonly RecapExecutionLaneInterner _recapExecutionLanes =
+        new();
+    private readonly RecapRuntimeGroupInterner _recapRuntimeGroups =
+        new();
     private readonly ConcurrentDictionary<string, Lazy<Task<UserSessionHost>>> _sessions = new(StringComparer.Ordinal);
     private readonly IReadOnlyDictionary<string, GalateaUserConfig> _users;
 
@@ -631,7 +636,9 @@ public sealed class GalateaHostService : IAsyncDisposable {
                 _connections,
                 connection,
                 _recapMaintainerConnections,
-                _callLogDirectory
+                _callLogDirectory,
+                _recapExecutionLanes,
+                _recapRuntimeGroups
             );
         var lifecycleGate = new GalateaFreshSendLifecycleGate(
             recap,
@@ -712,7 +719,9 @@ public sealed class GalateaHostService : IAsyncDisposable {
                     _connections,
                     connection,
                     _recapMaintainerConnections,
-                    _callLogDirectory
+                    _callLogDirectory,
+                    _recapExecutionLanes,
+                    _recapRuntimeGroups
                 );
             var lifecycleGate = new GalateaRecoveryLifecycleGate(
                 recap,

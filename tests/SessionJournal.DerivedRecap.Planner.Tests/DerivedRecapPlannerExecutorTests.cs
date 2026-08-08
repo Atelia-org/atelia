@@ -3957,6 +3957,7 @@ public sealed class DerivedRecapPlannerExecutorTests {
         public string Id { get; }
         public string CapabilityFingerprint { get; }
         public ContextHeaderBlockPath Target { get; }
+        public object RuntimeGroupAffinity => this;
         public int CallCount { get; private set; }
         public List<ContextHeaderSnapshot> PriorContexts { get; } = [];
         public List<RecapMaintenanceEpochInput> Requests { get; } = [];
@@ -3992,6 +3993,7 @@ public sealed class DerivedRecapPlannerExecutorTests {
         public string CapabilityFingerprint { get; } =
             "sha256:0000000000000000000000000000000000000000000000000000000000000000";
         public ContextHeaderBlockPath Target { get; } = target;
+        public object RuntimeGroupAffinity => this;
 
         public ValueTask<RecapMaintenanceSuccess> MaintainAsync(
             RecapMaintenanceEpochInput request,
@@ -4011,6 +4013,7 @@ public sealed class DerivedRecapPlannerExecutorTests {
         public string CapabilityFingerprint { get; } =
             RecapPlannerTestIdentity.CapabilityFingerprint;
         public ContextHeaderBlockPath Target { get; } = target;
+        public object RuntimeGroupAffinity => this;
 
         public ValueTask<RecapMaintenanceSuccess> MaintainAsync(
             RecapMaintenanceEpochInput input,

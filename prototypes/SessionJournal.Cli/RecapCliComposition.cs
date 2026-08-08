@@ -3,8 +3,8 @@ using Atelia.Completion.Abstractions;
 using Atelia.SessionJournal.DerivedRecap.Abstractions;
 using Atelia.SessionJournal.DerivedRecap.Maintainers;
 using Atelia.SessionJournal.DerivedRecap.Planner;
+using Atelia.SessionJournal.DerivedRecap.Runtime;
 using Atelia.SessionJournal.DerivedRecap.Store;
-using SJ = Atelia.SessionJournal;
 
 namespace Atelia.SessionJournal.Cli;
 
@@ -33,52 +33,32 @@ internal static class RecapCliComposition {
         RecapMaintainerProfileDescriptor[] capabilities = [
             .. capabilityCatalog.All
         ];
-        LoggingCompletionClient[] loggingClients = [
-            .. capabilities.Select(descriptor => LoggingClient(
-                sharedInnerClient,
-                connection,
-                callLogDirectory,
-                command,
-                descriptor
-            ))
-        ];
+        var lanes = new RecapExecutionLaneInterner();
+        RecapExecutionLane lane = lanes.GetOrAddWithLogging(
+            connection,
+            sharedInnerClient,
+            connection,
+            callLogDirectory,
+            command
+        );
+        var groups = new RecapRuntimeGroupInterner();
         IRecapBlockMaintainer[] maintainers = [
-            .. capabilities.Select((descriptor, index) =>
-                descriptor.Create(
-                    loggingClients[index],
-                    connection.ModelId
-                )
+            .. capabilities.Select(descriptor =>
+                groups.GetOrAdd(
+                        lane,
+                        descriptor.Definition.Family
+                    )
+                    .Bind(descriptor.Definition)
             )
         ];
         return new RecapCliMaintainerComposition(
             new RecapBlockMaintainerRegistry(maintainers),
-            Array.AsReadOnly(loggingClients)
+            [lane]
         );
     }
-
-    private static LoggingCompletionClient LoggingClient(
-        ICompletionClient inner,
-        CompletionConnectionConfig connection,
-        string callLogDirectory,
-        string command,
-        RecapMaintainerProfileDescriptor descriptor
-    ) => new(
-        inner,
-        connection,
-        callLogDirectory,
-        new CompletionCallLogContext(
-            Command: command,
-            MaintainerId: descriptor.MaintainerId,
-            TargetCarrier:
-                SJ.ContextHeaderCarrierTokens.ToStorageToken(
-                    descriptor.Target.Carrier
-                ),
-            TargetBlockId: descriptor.Target.BlockKey
-        )
-    );
 }
 
 internal sealed record RecapCliMaintainerComposition(
     IRecapBlockMaintainerRegistry Registry,
-    IReadOnlyList<LoggingCompletionClient> LoggingClients
+    IReadOnlyList<RecapExecutionLane> Lanes
 );

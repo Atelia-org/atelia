@@ -5,6 +5,7 @@ using Atelia.SessionJournal;
 using Atelia.SessionJournal.DerivedRecap.Abstractions;
 using Atelia.SessionJournal.DerivedRecap.Maintainers;
 using Atelia.SessionJournal.DerivedRecap.Planner;
+using Atelia.SessionJournal.DerivedRecap.Runtime;
 using Atelia.SessionJournal.DerivedRecap.Store;
 
 namespace Atelia.Galatea.Server;
@@ -322,7 +323,9 @@ internal static class GalateaRecapComposition {
         CompletionConnectionConfig agentConnection,
         IReadOnlyDictionary<string, string>?
             recapMaintainerConnections,
-        string? callLogDirectory
+        string? callLogDirectory,
+        RecapExecutionLaneInterner lanes,
+        RecapRuntimeGroupInterner groups
     ) {
         IRecapBlockMaintainerRegistry maintainers =
             CreateMaintainerRegistry(
@@ -330,7 +333,9 @@ internal static class GalateaRecapComposition {
                 connections,
                 agentConnection,
                 recapMaintainerConnections,
-                callLogDirectory
+                callLogDirectory,
+                lanes,
+                groups
             );
         return DerivedRecapOnlineLifecycleCoordinator.Create(
             engine.ReadView,
@@ -347,15 +352,20 @@ internal static class GalateaRecapComposition {
         CompletionConnectionConfig agentConnection,
         IReadOnlyDictionary<string, string>?
             recapMaintainerConnections,
-        string? callLogDirectory
+        string? callLogDirectory,
+        RecapExecutionLaneInterner lanes,
+        RecapRuntimeGroupInterner groups
     ) {
         ArgumentNullException.ThrowIfNull(capabilityCatalog);
         ArgumentNullException.ThrowIfNull(connections);
         ArgumentNullException.ThrowIfNull(agentConnection);
+        ArgumentNullException.ThrowIfNull(lanes);
+        ArgumentNullException.ThrowIfNull(groups);
 
         return new DeferredRecapBlockMaintainerRegistry(
-            () => new RecapBlockMaintainerRegistry([
-                .. capabilityCatalog.All.Select(descriptor => {
+            () => {
+                return new RecapBlockMaintainerRegistry([
+                    .. capabilityCatalog.All.Select(descriptor => {
                     CompletionConnectionConfig connection =
                         ResolveMaintainerConnection(
                             descriptor,
@@ -363,19 +373,21 @@ internal static class GalateaRecapComposition {
                             agentConnection,
                             recapMaintainerConnections
                         );
-                    ICompletionClient innerClient =
-                        connections.GetClient(connection.Id);
-                    return descriptor.Create(
-                        GalateaCompletionLogging.CreateMaintainerClient(
-                            innerClient,
+                    RecapExecutionLane lane = GalateaCompletionLogging
+                        .CreateMaintainerLane(
+                            lanes,
+                            connections.GetClient(connection.Id),
                             connection,
-                            callLogDirectory,
-                            descriptor
-                        ),
-                        connection.ModelId
+                            callLogDirectory
                     );
+                    return groups.GetOrAdd(
+                            lane,
+                            descriptor.Definition.Family
+                        )
+                        .Bind(descriptor.Definition);
                 })
-            ])
+                ]);
+            }
         );
     }
 

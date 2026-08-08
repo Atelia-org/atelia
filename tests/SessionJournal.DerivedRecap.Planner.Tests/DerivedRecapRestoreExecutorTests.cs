@@ -723,9 +723,19 @@ public sealed class DerivedRecapRestoreExecutorTests {
             PublishedRecapDescriptor descriptor
         ) = await fixture.PublishMaintainAsync(endpointCount: 1);
         var maintainer = fixture.CreateMaintainer(plan);
+        int registryFactoryCalls = 0;
+        var registry = new DeferredRecapBlockMaintainerRegistry(() => {
+            registryFactoryCalls++;
+            return new RecapBlockMaintainerRegistry([maintainer]);
+        });
 
         DerivedRecapRestoreResult result =
-            await fixture.CreateExecutor([maintainer])
+            await new DerivedRecapRestoreExecutor(
+                    fixture.Engine.ReadView,
+                    fixture.Store,
+                    registry,
+                    fixture.CreateHardCaps()
+                )
                 .RestoreAsync(
                     plan.CatchUpBoundaries[^1].Address,
                     fixture.CurrentHead
@@ -737,6 +747,7 @@ public sealed class DerivedRecapRestoreExecutorTests {
             );
         Assert.Equal(descriptor, restored.Descriptor);
         Assert.Equal(0, maintainer.CallCount);
+        Assert.Equal(0, registryFactoryCalls);
     }
 
     [Fact]
@@ -1848,6 +1859,7 @@ public sealed class DerivedRecapRestoreExecutorTests {
         public string Id { get; }
         public string CapabilityFingerprint { get; }
         public ContextHeaderBlockPath Target { get; }
+        public object RuntimeGroupAffinity => this;
         public int CallCount { get; private set; }
         public List<ContextHeaderSnapshot> PriorContexts { get; } = [];
 
@@ -1875,6 +1887,7 @@ public sealed class DerivedRecapRestoreExecutorTests {
         public string CapabilityFingerprint { get; } =
             "sha256:0000000000000000000000000000000000000000000000000000000000000000";
         public ContextHeaderBlockPath Target { get; } = target;
+        public object RuntimeGroupAffinity => this;
 
         public ValueTask<RecapMaintenanceSuccess> MaintainAsync(
             RecapMaintenanceEpochInput request,

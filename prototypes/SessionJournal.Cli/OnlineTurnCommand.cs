@@ -1,6 +1,7 @@
 using Atelia.Completion;
 using Atelia.Completion.Abstractions;
 using Atelia.EventJournal;
+using Atelia.SessionJournal.DerivedRecap.Abstractions;
 using Atelia.SessionJournal.DerivedRecap.Maintainers;
 using Atelia.SessionJournal.DerivedRecap.Planner;
 using Atelia.SessionJournal.DerivedRecap.Store;

@@ -1,6 +1,7 @@
 using Atelia.Completion.Abstractions;
 using Atelia.SessionJournal;
 using Atelia.SessionJournal.DerivedRecap.Abstractions;
+using Atelia.SessionJournal.DerivedRecap.Runtime;
 using Xunit;
 
 namespace Atelia.SessionJournal.DerivedRecap.Maintainers.Tests;
@@ -154,21 +155,10 @@ public sealed class RecapMaintainerFamilyContractTests {
             ),
             "task"
         );
-        var client = new NoCallCompletionClient();
-        var routeA = new RewriteRecapBlockMaintainer(
-            original,
-            client,
-            "model-a"
-        );
-        var routeB = new RewriteRecapBlockMaintainer(
-            original,
-            client,
-            "model-b"
-        );
-
         Assert.Equal(
-            routeA.CapabilityFingerprint,
-            routeB.CapabilityFingerprint
+            original.CapabilityFingerprint,
+            Definition("member", original.Family, "task")
+                .CapabilityFingerprint
         );
         Assert.NotEqual(
             original.CapabilityFingerprint,
@@ -185,23 +175,37 @@ public sealed class RecapMaintainerFamilyContractTests {
     }
 
     [Fact]
-    public void MemberAndRewriteApisHaveNoPrivatePromptProtocolOverrides() {
+    public void MemberAndBindingApisHaveNoPrivateDispatchOverrides() {
         Assert.DoesNotContain(
             typeof(RecapMaintainerDefinition).GetProperties(),
             static property => property.Name is
                 "SystemPrompt" or "OutputProtocol" or "Tools"
         );
-        var constructor = Assert.Single(
-            typeof(RewriteRecapBlockMaintainer).GetConstructors()
+        Assert.DoesNotContain(
+            typeof(RecapMaintainerDefinition).GetProperties(),
+            static property => property.PropertyType
+                == typeof(ICompletionClient)
+        );
+        Assert.Empty(
+            typeof(BoundRecapBlockMaintainer).GetConstructors()
+        );
+        var bind = Assert.Single(
+            typeof(RecapRuntimeGroup).GetMethods(),
+            static method => method.Name == nameof(
+                RecapRuntimeGroup.Bind
+            )
         );
         Assert.Equal(
-            [
-                typeof(RecapMaintainerDefinition),
-                typeof(ICompletionClient),
-                typeof(string)
-            ],
-            constructor.GetParameters()
-                .Select(static parameter => parameter.ParameterType)
+            typeof(RecapMaintainerDefinition),
+            Assert.Single(bind.GetParameters()).ParameterType
+        );
+        Assert.Empty(typeof(RecapExecutionLane).GetConstructors());
+        Assert.DoesNotContain(
+            typeof(RecapExecutionLane).GetMethods(),
+            static method => method.Name.Contains(
+                "Send",
+                StringComparison.Ordinal
+            )
         );
     }
 
@@ -264,7 +268,7 @@ public sealed class RecapMaintainerFamilyContractTests {
         RecapMaintainerFamilyDefinition family,
         string task = "task"
     ) => new(
-        RewriteRecapBlockMaintainer.ImplementationId,
+        RecapMaintainerImplementationIds.StructuredRewrite,
         id,
         new ContextHeaderBlockPath(
             ContextHeaderCarrier.Observation,
@@ -273,17 +277,6 @@ public sealed class RecapMaintainerFamilyContractTests {
         family,
         task
     );
-
-    private sealed class NoCallCompletionClient : ICompletionClient {
-        public string Name => "no-call";
-        public string ApiSpecId => "test-v1";
-
-        public Task<CompletionResult> StreamCompletionAsync(
-            CompletionRequest request,
-            CompletionStreamObserver? observer,
-            CancellationToken cancellationToken = default
-        ) => throw new InvalidOperationException();
-    }
 
     private sealed class TestOutputProtocol(
         CompletionOutputContract contract

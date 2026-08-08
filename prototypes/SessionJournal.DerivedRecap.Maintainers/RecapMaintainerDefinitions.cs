@@ -371,6 +371,22 @@ public sealed class RecapMaintainerDefinition {
     public string TaskInstruction { get; }
 
     public string CapabilityFingerprint { get; }
+
+    public IReadOnlyList<IHistoryMessage> CreateTaskTailMessages()
+        => [new ObservationMessage(
+            "Maintain this recap block.\n"
+                + "Target: "
+                + ContextHeaderCarrierTokens.ToStorageToken(Target.Carrier)
+                + "/"
+                + Target.BlockKey
+                + "\n\nInstruction:\n"
+                + TaskInstruction
+        )];
+}
+
+public static class RecapMaintainerImplementationIds {
+    public const string StructuredRewrite =
+        "atelia.session-journal.recap-maintainer.rewrite.v2";
 }
 
 public static class RecapMaintainerCapabilityFingerprint {

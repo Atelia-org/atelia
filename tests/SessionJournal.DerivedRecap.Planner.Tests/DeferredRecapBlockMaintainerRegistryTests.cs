@@ -216,6 +216,7 @@ public sealed class DeferredRecapBlockMaintainerRegistryTests {
         public string CapabilityFingerprint { get; } =
             capabilityFingerprint;
         public ContextHeaderBlockPath Target { get; } = target;
+        public object RuntimeGroupAffinity => this;
 
         public ValueTask<RecapMaintenanceSuccess> MaintainAsync(
             RecapMaintenanceEpochInput request,

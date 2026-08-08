@@ -12,7 +12,8 @@ Context baseline：`6a80afdda7f12d6c9ce432066dfb51d1b3326762`
 | R0 | Complete | fresh inventory at `359bdfc0`; related Completion/Maintainers/Planner/Store/Galatea test projects built with 0 warnings/errors; Completion 438/438 and Maintainers 29/29 baseline passed |
 | R1 | Complete | `6d273515` + tail fix `e846ea14`; immutable typed prefix/output/tail, provider projection, call-log v6 and Prepared fail-closed boundary; independent tail review found no P0/P1 |
 | R2A | Complete | new DerivedRecap Abstractions; immutable family/member/output-protocol single source; structured `Updated \| KeepUnchanged`; old per-block request/result path removed; focused Maintainers/Planner/Host tests and solution build validated |
-| R2B | Next | introduce ExecutionLane / RuntimeGroup / BoundMaintainer and remove concrete Maintainer private client/model dispatch |
+| R2B | Complete | shared ExecutionLane、reference-interned RuntimeGroup、BoundMaintainer single dispatch path；Galatea/CLI route sharing与per-call attribution wired，仍串行且NoReuseExpected |
+| R3A | Next | design full-rebuild raw authority / forward spool before Store vNext cut |
 | R3A–R7 | Pending | follow the package gates in §11; do not infer implementation from this target document |
 
 R1 deterministic evidence: Completion 456 non-live tests, SessionJournal 409, Agent.Core 117, Galatea 94 passed / 4
@@ -107,7 +108,7 @@ execution failure semantics 和 cache boundary 都与目标模型不一致。
 | Building execution | `DerivedRecapPlannerExecutor.cs`、`RecapMaintainerStepRunner.cs` | `DerivedRecapPlannerExecutorTests.cs` |
 | Published Restore execution | `DerivedRecapRestoreExecutor.cs` | `DerivedRecapRestoreExecutorTests.cs` |
 | runtime registry | `DerivedRecapExecutionContracts.cs` | Planner registry/operation tests |
-| concrete family/profile/rewrite placeholder | `RecapMaintainerProfileCatalog.cs`、`RewriteRecapBlockMaintainer.cs` | `MaintainerIdentityTests.cs`、rewrite tests |
+| concrete family/profile + runtime binding | `RecapMaintainerProfileCatalog.cs`、`DerivedRecap.Runtime/RecapExecutionLane.cs`、`BoundRecapBlockMaintainer.cs` | family/runtime binding tests |
 | legacy parallel helper | `RecapMaintenanceOrchestrator.cs` | `SessionRecapContextContractsTests.cs` |
 | Completion request/cache hint/result | `Completion.Abstractions/CompletionRequest.cs`、`CompletionInvocationOptions.cs`、`CompletionResult.cs` | `Completion.Tests` provider acceptance/wire tests |
 | provider prefix projection | `Completion/Anthropic/AnthropicMessageConverter.cs` 与 OpenAI/Gemini converters | provider request serialization tests |
@@ -598,9 +599,12 @@ Completion.Abstractions        <- SessionJournal.DerivedRecap.Abstractions
 DerivedRecap.Abstractions      <- DerivedRecap.Maintainers
 DerivedRecap.Abstractions      <- DerivedRecap.Planner
 DerivedRecap.Store             <- DerivedRecap.Planner
+DerivedRecap.Abstractions      <- DerivedRecap.Runtime
+DerivedRecap.Maintainers       <- DerivedRecap.Runtime
+Completion                    <- DerivedRecap.Runtime
 
 Galatea / CLI
-  -> Store + Planner + Maintainers + Completion
+  -> Store + Planner + Maintainers + Runtime + Completion
 ```
 
 Store不引用runtime abstractions；Planner不引用concrete Maintainers；新的Abstractions不拥有prompt内容、provider

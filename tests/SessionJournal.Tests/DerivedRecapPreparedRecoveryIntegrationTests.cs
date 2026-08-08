@@ -364,6 +364,8 @@ public sealed class DerivedRecapPreparedRecoveryIntegrationTests
 
         public ContextHeaderBlockPath Target { get; } = target;
 
+        public object RuntimeGroupAffinity => this;
+
         public int CallCount { get; private set; }
 
         public ValueTask<RecapMaintenanceSuccess> MaintainAsync(

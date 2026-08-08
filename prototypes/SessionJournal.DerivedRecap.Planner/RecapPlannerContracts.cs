@@ -3,28 +3,6 @@ using Atelia.SessionJournal.DerivedRecap.Store;
 
 namespace Atelia.SessionJournal.DerivedRecap.Planner;
 
-internal static class RecapMaintainerCapabilityFingerprintSyntax {
-    internal static string Require(
-        string value,
-        string parameterName
-    ) {
-        const string Prefix = "sha256:";
-        if (value is null
-            || !value.StartsWith(Prefix, StringComparison.Ordinal)
-            || value.Length != Prefix.Length + 64
-            || value.AsSpan(Prefix.Length).ContainsAnyExcept(
-                "0123456789abcdef"
-            )) {
-            throw new ArgumentException(
-                "Maintainer capability fingerprint must be sha256: "
-                + "followed by lowercase SHA-256 hex.",
-                parameterName
-            );
-        }
-        return value;
-    }
-}
-
 public sealed record RecapBlockCatalogEntry {
     public RecapBlockCatalogEntry(
         RecapBlockId recapBlockId,

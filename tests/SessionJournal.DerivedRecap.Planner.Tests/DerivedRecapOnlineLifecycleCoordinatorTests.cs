@@ -1085,6 +1085,7 @@ public sealed class DerivedRecapOnlineLifecycleCoordinatorTests {
         public string CapabilityFingerprint { get; } =
             "sha256:0000000000000000000000000000000000000000000000000000000000000000";
         public ContextHeaderBlockPath Target { get; } = target;
+        public object RuntimeGroupAffinity => this;
         public int CallCount { get; private set; }
 
         public ValueTask<RecapMaintenanceSuccess> MaintainAsync(

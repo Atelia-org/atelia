@@ -4,7 +4,9 @@ using System.Text.Json;
 using Atelia.Completion;
 using Atelia.Completion.Abstractions;
 using Atelia.SessionJournal;
+using Atelia.SessionJournal.DerivedRecap.Abstractions;
 using Atelia.SessionJournal.DerivedRecap.Maintainers;
+using Atelia.SessionJournal.DerivedRecap.Runtime;
 using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 using Xunit.Sdk;
@@ -159,38 +161,29 @@ public sealed class GalateaCallLoggingTests {
 
             RecapMaintainerProfileDescriptor descriptor =
                 RecapMaintainerProfileCatalog.BuiltIn.All.First();
-            ICompletionClient maintainer =
-                GalateaCompletionLogging.CreateMaintainerClient(
+            RecapExecutionLane lane =
+                GalateaCompletionLogging.CreateMaintainerLane(
+                    new RecapExecutionLaneInterner(),
                     inner,
                     connection,
-                    callLogDirectory,
-                    descriptor
+                    callLogDirectory
                 );
-            Assert.Equal(
-                CompletionDispatchIdentityFactory.Create(
-                    connection,
-                    inner
-                ),
-                CompletionDispatchIdentityFactory.Create(
-                    connection,
-                    maintainer
+            Assert.Same(inner, lane.RawClient);
+            Assert.Equal(connection.ModelId, lane.ModelId);
+            BoundRecapBlockMaintainer maintainer =
+                new RecapRuntimeGroupInterner().GetOrAdd(
+                    lane,
+                    descriptor.Definition.Family
                 )
-            );
-            _ = await maintainer.StreamCompletionAsync(
-                new CompletionRequest(
-                    connection.ModelId,
-                    new CompletionPromptPrefix(
-                        "maintainer test",
-                        CompletionOutputContract.ProviderDefault([]),
+                .Bind(descriptor.Definition);
+            await Assert.ThrowsAsync<InvalidDataException>(async () =>
+                await maintainer.MaintainAsync(
+                    new RecapMaintenanceEpochInput(
+                        ContextHeaderSnapshot.Empty,
                         [new ObservationMessage("fixture")]
                     ),
-                    tailMessages: []
-                ),
-                new CompletionInvocationOptions {
-                    PromptCacheReuseHint =
-                        PromptCacheReuseHint.NoReuseExpected
-                },
-                observer: null
+                    CancellationToken.None
+                )
             );
             string maintainerLog = Assert.Single(
                 Directory.EnumerateFiles(
@@ -375,7 +368,7 @@ public sealed class GalateaCallLoggingTests {
             File.ReadAllText(path)
         );
         Assert.Equal(
-            "atelia.completion.call-log.v6",
+            "atelia.completion.call-log.v7",
             document.RootElement.GetProperty("schema").GetString()
         );
         Assert.Equal(

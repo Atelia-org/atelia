@@ -1,8 +1,10 @@
 using Atelia.Completion;
 using Atelia.Completion.Abstractions;
 using Atelia.EventJournal;
+using Atelia.SessionJournal.DerivedRecap.Abstractions;
 using Atelia.SessionJournal.DerivedRecap.Maintainers;
 using Atelia.SessionJournal.DerivedRecap.Planner;
+using Atelia.SessionJournal.DerivedRecap.Runtime;
 using Atelia.SessionJournal.DerivedRecap.Store;
 using SJ = Atelia.SessionJournal;
 
@@ -305,7 +307,7 @@ internal static class RecapExecutionCommands {
                 lineage!.CapturedHead,
                 result,
                 anchor,
-                composition?.LoggingClients ?? [],
+                composition?.Lanes ?? [],
                 callLogDirectory
             );
         }
@@ -327,7 +329,7 @@ internal static class RecapExecutionCommands {
                 anchor,
                 configReport: null,
                 planningDiagnostics: null,
-                composition?.LoggingClients ?? [],
+                composition?.Lanes ?? [],
                 callLogDirectory
             );
         }
@@ -350,7 +352,7 @@ internal static class RecapExecutionCommands {
                 requestedAnchor: null,
                 planningConfigReport,
                 planningDiagnostics,
-                composition?.LoggingClients ?? [],
+                composition?.Lanes ?? [],
                 callLogDirectory
             );
         }
@@ -368,11 +370,11 @@ internal static class RecapExecutionCommands {
         EventAddress? requestedAnchor,
         RecapExecutionConfigReport? configReport,
         DerivedRecapPlanningDiagnostics? planningDiagnostics,
-        IReadOnlyList<LoggingCompletionClient> loggingClients,
+        IReadOnlyList<RecapExecutionLane> lanes,
         string callLogDirectory
     ) {
-        int calls = loggingClients.Sum(
-            static client => client.WrittenCallLogPaths.Count
+        int calls = lanes.Sum(
+            static lane => lane.WrittenCallLogPaths.Count
         );
         return result switch {
             DerivedRecapExecutionResult.Published published => (
@@ -497,11 +499,11 @@ internal static class RecapExecutionCommands {
         EventAddress rawHead,
         DerivedRecapRestoreResult result,
         EventAddress? requestedAnchor,
-        IReadOnlyList<LoggingCompletionClient> loggingClients,
+        IReadOnlyList<RecapExecutionLane> lanes,
         string callLogDirectory
     ) {
-        int calls = loggingClients.Sum(
-            static client => client.WrittenCallLogPaths.Count
+        int calls = lanes.Sum(
+            static lane => lane.WrittenCallLogPaths.Count
         );
         return result switch {
             DerivedRecapRestoreResult.Restored restored => (

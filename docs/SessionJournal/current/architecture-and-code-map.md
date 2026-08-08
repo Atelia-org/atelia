@@ -50,19 +50,21 @@ DerivedRecap.Store        -> SessionJournal Core
 DerivedRecap.Planner      -> Store + DerivedRecap.Abstractions
 DerivedRecap.Maintainers  -> SessionJournal Core + DerivedRecap.Abstractions
                              + Completion.Abstractions
+DerivedRecap.Runtime      -> DerivedRecap.Abstractions + Maintainers + Completion
 
 SessionJournal.Offline -> Core + EventJournal
-SessionJournal.Cli     -> Core + Store + Planner + Maintainers + Offline + Completion
-Galatea.Server         -> Core + Store + Planner + Maintainers + Completion
+SessionJournal.Cli     -> Core + Store + Planner + Maintainers + Runtime + Offline + Completion
+Galatea.Server         -> Core + Store + Planner + Maintainers + Runtime + Completion
 ```
 
 | 组件 | 当前职责 | 明确不负责 |
 |---|---|---|
 | Core | raw event/wire、Parent lineage、setup、Send/Resume、Prepared recovery、context-header data contracts | Recap filesystem、Maintainer execution contract、active planning policy、concrete prompt/profile |
-| DerivedRecap Abstractions | neutral epoch input、closed success union、`IRecapBlockMaintainer` | Store wire、planning policy、concrete prompt、provider dispatch |
+| DerivedRecap Abstractions | neutral epoch input、closed success union、opaque runtime-group affinity、`IRecapBlockMaintainer`与exact/deferred registry | Store wire、planning policy、concrete prompt、provider dispatch |
 | Store | Building/Published IO、selection、materialization、publication、exact-slot Restore primitives | cadence、active config、Maintainer prompt、raw mutation |
 | Planner | NewPlanning cadence、frozen Building execution、Published Restore orchestration、online lifecycle | durable membership、concrete Maintainer、Host secrets/provider |
-| Maintainers | concrete family/member/output protocol、prompts、stable identity/fingerprint、rewrite implementation | Store/Planner workflow、raw journal、Host composition |
+| Maintainers | concrete family/member/output protocol、prompts、stable identity/fingerprint | Store/Planner workflow、raw journal、client/model/dispatch |
+| Runtime | shared lane、reference-identity runtime group、bound executable Maintainer、per-call logging attribution | Store wire、planning、parallel scheduling、provider cache policy |
 | CLI / Galatea | composition、phase ordering、Completion connection、operator surface | 重新定义 Core/Store authority |
 | Offline | checked forward fold与只读 validation | tail repair、online recovery、derived publication |
 
@@ -71,6 +73,7 @@ Galatea.Server         -> Core + Store + Planner + Maintainers + Completion
 [Abstractions csproj](../../../prototypes/SessionJournal.DerivedRecap.Abstractions/SessionJournal.DerivedRecap.Abstractions.csproj)、
 [Planner csproj](../../../prototypes/SessionJournal.DerivedRecap.Planner/SessionJournal.DerivedRecap.Planner.csproj)、
 [Maintainers csproj](../../../prototypes/SessionJournal.DerivedRecap.Maintainers/SessionJournal.DerivedRecap.Maintainers.csproj)、
+[Runtime csproj](../../../prototypes/SessionJournal.DerivedRecap.Runtime/SessionJournal.DerivedRecap.Runtime.csproj)、
 [Offline csproj](../../../prototypes/SessionJournal.Offline/SessionJournal.Offline.csproj)、
 [CLI csproj](../../../prototypes/SessionJournal.Cli/SessionJournal.Cli.csproj)、
 [Galatea csproj](../../../prototypes/Galatea/Galatea.Server.csproj)。
@@ -122,9 +125,10 @@ Galatea.Server         -> Core + Store + Planner + Maintainers + Completion
 | NewPlanning/Building execution | [`DerivedRecapPreparedExecutor.cs`](../../../prototypes/SessionJournal.DerivedRecap.Planner/DerivedRecapPreparedExecutor.cs) | [`DerivedRecapPlannerExecutorTests.cs`](../../../tests/SessionJournal.DerivedRecap.Planner.Tests/DerivedRecapPlannerExecutorTests.cs) |
 | exact Published Restore | [`DerivedRecapRestoreExecutor.cs`](../../../prototypes/SessionJournal.DerivedRecap.Planner/DerivedRecapRestoreExecutor.cs) | [`DerivedRecapRestoreExecutorTests.cs`](../../../tests/SessionJournal.DerivedRecap.Planner.Tests/DerivedRecapRestoreExecutorTests.cs) |
 | online candidate/lifecycle | [`DerivedRecapOnlineLifecycleCoordinator.cs`](../../../prototypes/SessionJournal.DerivedRecap.Planner/DerivedRecapOnlineLifecycleCoordinator.cs) | [`DerivedRecapOnlineLifecycleCoordinatorTests.cs`](../../../tests/SessionJournal.DerivedRecap.Planner.Tests/DerivedRecapOnlineLifecycleCoordinatorTests.cs) |
-| neutral epoch/success contracts | [`RecapMaintenanceContracts.cs`](../../../prototypes/SessionJournal.DerivedRecap.Abstractions/RecapMaintenanceContracts.cs) | [`RecapMaintainerFamilyContractTests.cs`](../../../tests/SessionJournal.DerivedRecap.Maintainers.Tests/RecapMaintainerFamilyContractTests.cs) |
+| neutral epoch/success/registry contracts | [`RecapMaintenanceContracts.cs`](../../../prototypes/SessionJournal.DerivedRecap.Abstractions/RecapMaintenanceContracts.cs) | [`DeferredRecapBlockMaintainerRegistryTests.cs`](../../../tests/SessionJournal.DerivedRecap.Planner.Tests/DeferredRecapBlockMaintainerRegistryTests.cs) |
 | family/member/fingerprint catalog | [`RecapMaintainerDefinitions.cs`](../../../prototypes/SessionJournal.DerivedRecap.Maintainers/RecapMaintainerDefinitions.cs)、[`RecapMaintainerProfileCatalog.cs`](../../../prototypes/SessionJournal.DerivedRecap.Maintainers/RecapMaintainerProfileCatalog.cs) | [`RecapMaintainerFamilyContractTests.cs`](../../../tests/SessionJournal.DerivedRecap.Maintainers.Tests/RecapMaintainerFamilyContractTests.cs) |
-| concrete structured rewrite | [`RewriteRecapBlockMaintainer.cs`](../../../prototypes/SessionJournal.DerivedRecap.Maintainers/RewriteRecapBlockMaintainer.cs) | [`RewriteRecapBlockMaintainerTests.cs`](../../../tests/SessionJournal.DerivedRecap.Maintainers.Tests/RewriteRecapBlockMaintainerTests.cs)、[`StructuredRecapMaintainerOutputProtocolTests.cs`](../../../tests/SessionJournal.DerivedRecap.Maintainers.Tests/StructuredRecapMaintainerOutputProtocolTests.cs) |
+| lane/group/bound dispatch | [`RecapExecutionLane.cs`](../../../prototypes/SessionJournal.DerivedRecap.Runtime/RecapExecutionLane.cs)、[`BoundRecapBlockMaintainer.cs`](../../../prototypes/SessionJournal.DerivedRecap.Runtime/BoundRecapBlockMaintainer.cs) | [`RecapRuntimeBindingTests.cs`](../../../tests/SessionJournal.DerivedRecap.Maintainers.Tests/RecapRuntimeBindingTests.cs)、[`BoundRecapBlockMaintainerTests.cs`](../../../tests/SessionJournal.DerivedRecap.Maintainers.Tests/BoundRecapBlockMaintainerTests.cs) |
+| structured output protocol | [`RecapMaintainerDefinitions.cs`](../../../prototypes/SessionJournal.DerivedRecap.Maintainers/RecapMaintainerDefinitions.cs) | [`StructuredRecapMaintainerOutputProtocolTests.cs`](../../../tests/SessionJournal.DerivedRecap.Maintainers.Tests/StructuredRecapMaintainerOutputProtocolTests.cs) |
 
 按需细读 [Planner README](../../../prototypes/SessionJournal.DerivedRecap.Planner/README.md) 与
 [Maintainers README](../../../prototypes/SessionJournal.DerivedRecap.Maintainers/README.md)。可运行 composition
