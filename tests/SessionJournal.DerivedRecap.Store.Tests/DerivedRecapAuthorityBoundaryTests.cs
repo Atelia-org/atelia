@@ -1026,6 +1026,30 @@ public sealed class DerivedRecapAuthorityBoundaryTests {
             target = lineage.CurrentPrefix.HeadToOldest[2].Address;
             replayStart = lineage.CurrentPrefix.HeadToOldest[4].Address;
         }
+        PublishedRecapDescriptor? priorSource = null;
+        DerivedRecapFrozenInput? priorInput = null;
+        if (defectKind == "prior") {
+            // Freeze a real older cursor so preflight can reach the
+            // manifest-level prior ancestry check.
+            EventAddress sourceAnchor =
+                lineage.CurrentPrefix.HeadToOldest[4].Address;
+            EventAddress sourceReplayStart =
+                lineage.CurrentPrefix.HeadToOldest[6].Address;
+            const string sourceContent = "source recap";
+            priorSource = await fixture.PublishAsync(
+                sourceAnchor,
+                sourceReplayStart,
+                content: sourceContent
+            );
+            priorInput = RecapWireTestFacts.CreateFrozenInput(
+                fixture.Engine,
+                new RecapBlockId("roleplay.self"),
+                Target("roleplay.self"),
+                sourceAnchor,
+                sourceContent
+            );
+            replayStart = sourceAnchor;
+        }
         SessionContextAnchorSetupReferences targetSetups =
             fixture.Setups(target);
         RecapPriorContext manifestPrior = defectKind == "prior"
@@ -1068,10 +1092,10 @@ public sealed class DerivedRecapAuthorityBoundaryTests {
                 "roleplay.autobiographical",
                 RecapTestIdentity.CapabilityFingerprint,
                 new ExistingRecapMaintainSource(
-                    replayStart,
-                    fixture.Setups(replayStart),
-                    new string('a', 64),
-                    new string('b', 64)
+                    priorSource!.SetAdmissionAnchor,
+                    priorInput!.AbsorbedThroughSetups,
+                    priorSource!.EnvelopeSha256,
+                    priorInput!.PayloadSha256
                 ),
                 [new RecapReplayBoundary(target, targetSetups)],
                 RecapWireTestFacts.PriorDigest(manifestPrior)

@@ -586,6 +586,7 @@ public sealed class DerivedRecapStore {
             );
         }
 
+        IReadOnlyDictionary<EventAddress, int>? frozenLineageIndex = null;
         if (currentLineage is not null) {
             if (currentLineage.CapturedHead != expectedRawHead) {
                 return new CreateBuildingResult.RawHeadChanged(
@@ -621,6 +622,7 @@ public sealed class DerivedRecapStore {
                     admission;
                 IReadOnlyDictionary<EventAddress, int> lineageIndex =
                     IndexPrefix(available.AdmissionPrefix);
+                frozenLineageIndex = lineageIndex;
                 if (FindBeyondPrefix(
                         manifest,
                         available.AdmissionPrefix
@@ -768,6 +770,20 @@ public sealed class DerivedRecapStore {
         }
         FrozenInputIndex inputIndex =
             ValidateAndIndexInputs(manifest, frozenInputs);
+        if (frozenLineageIndex is not null) {
+            var exactPriorDefects = new List<RecapStructuralDefect>();
+            ValidatePriorContextAgainstExactReplayStarts(
+                manifest,
+                inputIndex.ById,
+                frozenLineageIndex,
+                exactPriorDefects
+            );
+            if (exactPriorDefects.Count != 0) {
+                return new CreateBuildingResult.InvalidPlan(
+                    Array.AsReadOnly(exactPriorDefects.ToArray())
+                );
+            }
+        }
 
         string stagingPath = Path.Combine(
             _buildingRoot,
@@ -3784,6 +3800,47 @@ public sealed class DerivedRecapStore {
                 $"Block '{plan.RecapBlockId}' prior context is not "
                 + "an ancestor of its frozen replay start."
             );
+        }
+    }
+
+    private static void ValidatePriorContextAgainstExactReplayStarts(
+        DerivedRecapSetManifest manifest,
+        IReadOnlyDictionary<RecapBlockId, DerivedRecapFrozenInput>
+            inputsById,
+        IReadOnlyDictionary<EventAddress, int> lineage,
+        List<RecapStructuralDefect> defects
+    ) {
+        if (manifest.PriorContext
+                is not InlineRecapPriorContext inline
+            || !lineage.TryGetValue(
+                inline.AdmissionAnchor,
+                out int priorContextIndex
+            )) {
+            return;
+        }
+        foreach (MaintainRecapBlockPlan maintain
+                 in manifest.Blocks.OfType<MaintainRecapBlockPlan>()) {
+            EventAddress replayStart = maintain.Source switch {
+                EmptyRecapMaintainSource empty =>
+                    empty.ReplayStartExclusive,
+                ExistingRecapMaintainSource =>
+                    inputsById[maintain.RecapBlockId].AbsorbedThrough,
+                _ => throw new InvalidDataException(
+                    "Unsupported Maintain source."
+                )
+            };
+            if (!lineage.TryGetValue(
+                    replayStart,
+                    out int replayStartIndex
+                )
+                || priorContextIndex < replayStartIndex) {
+                AddDefect(
+                    defects,
+                    "PriorContextAnchorInvalid",
+                    $"Block '{maintain.RecapBlockId}' prior context "
+                    + "is not an ancestor of its exact replay start."
+                );
+            }
         }
     }
 
